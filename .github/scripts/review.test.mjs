@@ -2,6 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   applyPlanIntentGate,
   classifyReviewRun,
@@ -19,7 +20,9 @@ import {
   normalizeVote,
   parseHiddenMarkers,
   redactCodexPromptEcho,
+  renderCircuitSkipComment,
   renderHiddenMarker,
+  renderInfrastructureHandoffComment,
 } from "./review.mjs";
 
 const reviewer = { id: "A", name: "Plan 原意核查" };
@@ -44,6 +47,23 @@ test("hidden marker: 可往返解析并忽略普通/损坏评论", () => {
   assert.equal(parsed[0].reason, "429 —— upstream");
 });
 
+
+test("handoff marker: 中文降级评论可被主 agent 机器识别", () => {
+  const event = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00.000Z", phase: "reviewer_execution" };
+  const body = renderInfrastructureHandoffComment(event, { open: true, openUntil: "2026-07-10T01:00:00.000Z" });
+  assert.match(body, /本次 Action review 结果请忽略/);
+  assert.match(body, /改走 agent 自己的博弈式 review 流程，并会向用户反馈/);
+  assert.match(body, /\/review/);
+  assert.deepEqual(parseHiddenMarkers(body, "bong-review-handoff"), [event]);
+});
+
+test("熔断跳过评论: 明示截止时间、成功退出和 /review 手动旁路", () => {
+  const body = renderCircuitSkipComment({ open: true, openUntil: "2026-07-10T01:00:00.000Z" });
+  assert.match(body, /快速跳过并成功退出，不影响其他 CI/);
+  assert.match(body, /2026-07-10T01:00:00.000Z/);
+  assert.match(body, /\/review/);
+  assert.equal(parseHiddenMarkers(body, "bong-review-handoff")[0].kind, "circuit_skip");
+});
 test("evaluateCircuit: 阈值前关闭，达到阈值后开启", () => {
   const events = ["00:00", "00:10", "00:20"].map((time) => ({
     kind: "infra_failure",
@@ -75,6 +95,20 @@ test("infra-only classification: reviewer 执行失败才算 infra，真实 REQU
   assert.equal(classifyReviewRun([realRequestChanges], [realRequestChanges]), "gate_failure");
   const approve = { vote: "APPROVE", confidence: 90, findings: [] };
   assert.equal(classifyReviewRun([approve], [approve, approve, approve, realRequestChanges]), "passed");
+});
+
+test("infra-only classification: 模型给出真实审查或不可解析内容都不伪造 infra", () => {
+  const malformed = normalizeResult("不是 JSON", reviewer);
+  assert.equal(classifyReviewRun([malformed], [malformed]), "gate_failure");
+});
+
+test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍进入预检旁路", () => {
+  const workflow = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
+  assert.ok(workflow.indexOf("Review 熔断预检") < workflow.indexOf("安装 Codex CLI"));
+  assert.match(workflow, /REVIEW_TRIGGER: \$\{\{ github\.event_name \}\}/);
+  assert.match(workflow, /continue-on-error: true/);
+  assert.match(workflow, /workflow-finalize/);
+  assert.match(workflow, /REVIEW_INFRA_FAILURE_THRESHOLD.*'3'/);
 });
 
 test("extractJSON: 支持纯 JSON、围栏、前后废话、字符串内括号", () => {

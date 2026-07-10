@@ -45,26 +45,46 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: 暂存脚本 + 切到 PR head
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRNUM: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
-        run: |
-          mkdir -p /tmp/rev
-          cp .github/scripts/review.mjs /tmp/rev/review.mjs
-          gh pr checkout "$PRNUM" \
-            || echo "::warning::gh pr checkout 失败，review 将基于当前 checkout + PR diff 审核"
-
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
 
+      - name: Review 熔断预检
+        id: circuit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+          REVIEW_TRIGGER: ${{ github.event_name }}
+          REVIEW_INFRA_FAILURE_THRESHOLD: ${{ vars.REVIEW_INFRA_FAILURE_THRESHOLD || '3' }}
+          REVIEW_INFRA_FAILURE_WINDOW_MINUTES: ${{ vars.REVIEW_INFRA_FAILURE_WINDOW_MINUTES || '60' }}
+          REVIEW_CIRCUIT_MINUTES: ${{ vars.REVIEW_CIRCUIT_MINUTES || '60' }}
+          REVIEW_CIRCUIT_ISSUE_NUMBER: ${{ vars.REVIEW_CIRCUIT_ISSUE_NUMBER }}
+        run: |
+          mkdir -p /tmp/rev
+          cp .github/scripts/review.mjs /tmp/rev/review.mjs
+          node /tmp/rev/review.mjs circuit-preflight
+
+      - name: 切到 PR head
+        if: steps.circuit.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRNUM: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+        run: |
+          gh pr checkout "$PRNUM" \
+            || echo "::warning::gh pr checkout 失败，review 将基于当前 checkout + PR diff 审核"
+
       - name: 安装 Codex CLI
+        id: install
+        if: steps.circuit.outputs.should_run == 'true'
+        continue-on-error: true
         run: |
           npm install -g @openai/codex@0.143.0
           codex --version
 
       - name: 配置 Codex hlool provider
+        id: configure
+        if: steps.circuit.outputs.should_run == 'true' && steps.install.outcome == 'success'
+        continue-on-error: true
         env:
           REVIEW_CODEX_API_KEY: ${{ secrets.REVIEW_CODEX_API_KEY || secrets.HLOOL_API_KEY || secrets.OPENAI_API_KEY || secrets.PI_CLIPROXY_KEY }}
           REVIEW_CODEX_BASE_URL: ${{ vars.REVIEW_CODEX_BASE_URL || 'https://api.hlool.top' }}
@@ -95,6 +115,9 @@ jobs:
           EOF
 
       - name: Review (4× Codex gpt-5.6-sol high)
+        id: review_run
+        if: steps.circuit.outputs.should_run == 'true' && steps.configure.outcome == 'success'
+        continue-on-error: true
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -107,4 +130,22 @@ jobs:
           REVIEW_CODEX_CONCURRENCY: ${{ vars.REVIEW_CODEX_CONCURRENCY || '1' }}
           REVIEW_CODEX_RETRIES: ${{ vars.REVIEW_CODEX_RETRIES || '3' }}
           REVIEW_CODEX_RETRY_MS: ${{ vars.REVIEW_CODEX_RETRY_MS || '15000' }}
+          REVIEW_INFRA_FAILURE_THRESHOLD: ${{ vars.REVIEW_INFRA_FAILURE_THRESHOLD || '3' }}
+          REVIEW_INFRA_FAILURE_WINDOW_MINUTES: ${{ vars.REVIEW_INFRA_FAILURE_WINDOW_MINUTES || '60' }}
+          REVIEW_CIRCUIT_MINUTES: ${{ vars.REVIEW_CIRCUIT_MINUTES || '60' }}
+          REVIEW_CIRCUIT_ISSUE_NUMBER: ${{ vars.REVIEW_CIRCUIT_ISSUE_NUMBER }}
         run: node /tmp/rev/review.mjs
+
+      - name: 汇总 Review 结果并执行降级
+        if: always() && steps.circuit.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+          REVIEW_INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          REVIEW_CONFIGURE_OUTCOME: ${{ steps.configure.outcome }}
+          REVIEW_STEP_OUTCOME: ${{ steps.review_run.outcome }}
+          REVIEW_INFRA_FAILURE_THRESHOLD: ${{ vars.REVIEW_INFRA_FAILURE_THRESHOLD || '3' }}
+          REVIEW_INFRA_FAILURE_WINDOW_MINUTES: ${{ vars.REVIEW_INFRA_FAILURE_WINDOW_MINUTES || '60' }}
+          REVIEW_CIRCUIT_MINUTES: ${{ vars.REVIEW_CIRCUIT_MINUTES || '60' }}
+          REVIEW_CIRCUIT_ISSUE_NUMBER: ${{ vars.REVIEW_CIRCUIT_ISSUE_NUMBER }}
+        run: node /tmp/rev/review.mjs workflow-finalize
