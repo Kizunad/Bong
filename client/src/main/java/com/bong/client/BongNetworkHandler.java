@@ -883,6 +883,11 @@ public class BongNetworkHandler {
         // TiandaoPresenceStore 漏掉，导致断线重连后旧 presence（watch/pressure/
         // tribulation/annihilate vignette）继续渲染/播放。
         com.bong.client.tiandao.TiandaoPresenceStore.clear();
+        // plan-bughunt-hud-state-session-reset — 断线时重置生产 HUD snapshot（zoneState +
+        // visualEffectState）；此前 static BongHudStateStore 不在这份清理清单里，导致上一
+        // server 的区域 overlay/atmosphere 与 HUD tint/相机/FOV 视觉特效跨 session 残留，
+        // 直到新服首个 zone_info 到达或旧 visual effect 自然过期。
+        BongHudStateStore.clear();
         // plan-era-state-v1 P3 — 断线时重置时代天象状态
         com.bong.client.era.EraAmbianceState.reset();
         // plan-agent-ui-data-v1 P1 — 断线时清理天道 UI 面板状态
