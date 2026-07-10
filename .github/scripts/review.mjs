@@ -955,8 +955,6 @@ function loadCircuitEvents() {
 }
 
 function findCircuitStateIssues() {
-  const configured = process.env.REVIEW_CIRCUIT_ISSUE_NUMBER;
-  if (configured && /^\d+$/.test(configured)) return [configured];
   const repo = resolveRepository();
   const pages = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues?state=all&per_page=100`]));
   const issues = Array.isArray(pages[0]) ? pages.flat() : pages;

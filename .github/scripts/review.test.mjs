@@ -187,6 +187,7 @@ test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍
   assert.doesNotMatch(workflow, /pull-requests: write/);
   assert.match(workflow, /REVIEW_TOTAL_TIMEOUT_MINUTES.*'35'/);
   assert.match(workflow, /REVIEW_GH_TIMEOUT_MS.*'30000'/);
+  assert.doesNotMatch(workflow, /REVIEW_CIRCUIT_ISSUE_NUMBER/);
   const jobTimeout = Number(workflow.match(/^    timeout-minutes: (\d+)$/m)[1]);
   const stepTimeouts = [...workflow.matchAll(/^        timeout-minutes: (\d+)$/gm)].map((match) => Number(match[1]));
   assert.equal(stepTimeouts.length, 8, "每个 workflow step 都必须有独立 timeout");
