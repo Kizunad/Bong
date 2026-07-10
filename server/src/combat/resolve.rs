@@ -1622,10 +1622,14 @@ pub fn resolve_attack_intents(
         // `Sensory`），取代此前分别反压三次 legacy `BodyPart`（`MAIN_ARM` 字面量比较 /
         // `LegL|LegR` 匹配 / `Head` 比较）的写法——任意 `BodyPlan`（含非人形构型，如
         // 未来 whale 的 `tail_fin`=Locomotion）都能触发正确的功能性后果，不再要求
-        // "命中部位必须是这 8 个 legacy 变体之一"这个人形专属前提。未知 part id
-        // （`consequence_for` 返回 `None`）走显式 `warn` 分支，不静默无后果。
-        match target_body_plan.consequence_for(&hit_probe.part_id) {
-            Some(crate::body_plan::PartConsequence::Manipulator { main_hand: true }) => {
+        // "命中部位必须是这 8 个 legacy 变体之一"这个人形专属前提。**决策**（该做
+        // 什么）与**副作用**（怎么做）拆成两步：[`dispatch_part_consequence`] 是纯
+        // 函数，直接单测锁死"未知 part id 显式无后果"这条在当前几何架构下无法通过
+        // 完整攻击管线触达的分支（`hit_probe.part_id` 恒来自同一份已校验 plan 的
+        // `hit_geometry`，与 `plan.parts` 失配理论上不会发生——这是纵深防御，不是
+        // 死代码，见该函数文档）。
+        match dispatch_part_consequence(target_body_plan, &hit_probe.part_id, wound_severity) {
+            PartConsequenceOutcome::SeverMainHandManipulator => {
                 // plan-combat-hit-location-v1 P4（决议 §8.1 #2 Severed 行为级后果 #1 —
                 // 消除 arm_wound::ArmWoundFactors.main_arm_severed 零消费孤岛）——
                 // 主手臂本次命中直接判定为 Severed 分级 → 该侧持械立即脱手落地。
@@ -1637,97 +1641,87 @@ pub fn resolve_attack_intents(
                 // `sync_weapon_component_from_equipped` 的选择顺序是
                 // main_hand.held > off_hand.held，若目标此刻的 `Weapon` component
                 // 追踪的其实是副手武器（主手空手/主手非武器），断主手臂不应误删副手件。
-                if arm_wound::is_severed(arm_wound::wound_severity_to_grade(wound_severity)) {
-                    if let Ok(severed_weapon) = weapons.get(target_entity) {
-                        if severed_weapon.slot == EquipSlot::MainHand {
-                            let dropped_instance_id = severed_weapon.instance_id;
-                            if let Ok(mut target_inventory) = inventories.get_mut(target_entity) {
-                                if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut()
-                                {
-                                    match discard_inventory_item_to_dropped_loot(
-                                        &mut target_inventory,
-                                        dropped_loot_registry,
-                                        [target_position.x, target_position.y, target_position.z],
-                                        crate::world::dimension::DimensionKind::Overworld,
-                                        dropped_instance_id,
-                                        &InventoryLocationV1::Equip {
-                                            slot: EquipSlotV1::MainHand,
-                                            state: EquipStateV1::Held,
-                                        },
-                                    ) {
-                                        Ok(_) => {
-                                            commands.entity(target_entity).remove::<Weapon>();
-                                        }
-                                        Err(drop_error) => {
-                                            tracing::warn!(
-                                                "[bong][combat][arm_wound] main arm severed but failed to drop weapon instance {} for target: {}",
-                                                dropped_instance_id,
-                                                drop_error
-                                            );
-                                        }
+                if let Ok(severed_weapon) = weapons.get(target_entity) {
+                    if severed_weapon.slot == EquipSlot::MainHand {
+                        let dropped_instance_id = severed_weapon.instance_id;
+                        if let Ok(mut target_inventory) = inventories.get_mut(target_entity) {
+                            if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut() {
+                                match discard_inventory_item_to_dropped_loot(
+                                    &mut target_inventory,
+                                    dropped_loot_registry,
+                                    [target_position.x, target_position.y, target_position.z],
+                                    crate::world::dimension::DimensionKind::Overworld,
+                                    dropped_instance_id,
+                                    &InventoryLocationV1::Equip {
+                                        slot: EquipSlotV1::MainHand,
+                                        state: EquipStateV1::Held,
+                                    },
+                                ) {
+                                    Ok(_) => {
+                                        commands.entity(target_entity).remove::<Weapon>();
                                     }
-                                } else {
-                                    tracing::warn!(
-                                        "[bong][combat][arm_wound] main arm severed weapon instance {} cannot fall back to dropped loot because DroppedLootRegistry is unavailable",
-                                        dropped_instance_id
-                                    );
+                                    Err(drop_error) => {
+                                        tracing::warn!(
+                                            "[bong][combat][arm_wound] main arm severed but failed to drop weapon instance {} for target: {}",
+                                            dropped_instance_id,
+                                            drop_error
+                                        );
+                                    }
                                 }
+                            } else {
+                                tracing::warn!(
+                                    "[bong][combat][arm_wound] main arm severed weapon instance {} cannot fall back to dropped loot because DroppedLootRegistry is unavailable",
+                                    dropped_instance_id
+                                );
                             }
                         }
                     }
                 }
             }
-            Some(crate::body_plan::PartConsequence::Manipulator { main_hand: false }) => {
-                // 副手臂断裂当前无独立"行为级"后果（脱手判定只认主手，副手断裂只通过
-                // `arm_wound::combined_factor().block_multiplier` 影响格挡减伤）——
-                // 显式空分支，不是遗漏。
-            }
-            Some(crate::body_plan::PartConsequence::Locomotion) => {
-                if wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD {
-                    event_writers
-                        .status_effect_intents
-                        .send(ApplyStatusEffectIntent {
-                            target: target_entity,
-                            kind: StatusEffectKind::Slowed,
-                            magnitude: 0.4,
-                            duration_ticks: LEG_SLOWED_DURATION_TICKS,
-                            issued_at_tick: clock.tick,
-                        });
-                    // plan-combat-hit-location-v1 P3 — 腿伤减速触发时目标脚下血渍 decal
-                    // （复用 client BongGroundDecalParticle 基类，lifetime 100t，无新贴图）。
-                    if let Some(events) = event_writers.vfx_events.as_deref_mut() {
-                        gameplay_vfx::send_spawn(
-                            events,
-                            gameplay_vfx::spawn_request(
-                                gameplay_vfx::COMBAT_LEG_WOUND_DECAL,
-                                target_position,
-                                None,
-                                "#8C1F1F",
-                                (wound_severity / 20.0).clamp(0.3, 1.0),
-                                1,
-                                100,
-                            ),
-                        );
-                    }
+            PartConsequenceOutcome::ApplyLegSlow => {
+                event_writers
+                    .status_effect_intents
+                    .send(ApplyStatusEffectIntent {
+                        target: target_entity,
+                        kind: StatusEffectKind::Slowed,
+                        magnitude: 0.4,
+                        duration_ticks: LEG_SLOWED_DURATION_TICKS,
+                        issued_at_tick: clock.tick,
+                    });
+                // plan-combat-hit-location-v1 P3 — 腿伤减速触发时目标脚下血渍 decal
+                // （复用 client BongGroundDecalParticle 基类，lifetime 100t，无新贴图）。
+                if let Some(events) = event_writers.vfx_events.as_deref_mut() {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::COMBAT_LEG_WOUND_DECAL,
+                            target_position,
+                            None,
+                            "#8C1F1F",
+                            (wound_severity / 20.0).clamp(0.3, 1.0),
+                            1,
+                            100,
+                        ),
+                    );
                 }
             }
-            Some(crate::body_plan::PartConsequence::Sensory) => {
-                if wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
-                    event_writers
-                        .status_effect_intents
-                        .send(ApplyStatusEffectIntent {
-                            target: target_entity,
-                            kind: StatusEffectKind::Stunned,
-                            magnitude: 1.0,
-                            duration_ticks: HEAD_STUN_DURATION_TICKS,
-                            issued_at_tick: clock.tick,
-                        });
-                }
+            PartConsequenceOutcome::ApplyHeadStun => {
+                event_writers
+                    .status_effect_intents
+                    .send(ApplyStatusEffectIntent {
+                        target: target_entity,
+                        kind: StatusEffectKind::Stunned,
+                        magnitude: 1.0,
+                        duration_ticks: HEAD_STUN_DURATION_TICKS,
+                        issued_at_tick: clock.tick,
+                    });
             }
-            Some(crate::body_plan::PartConsequence::Core) => {
-                // 躯干核心命中对"肢体功能性后果"（脱手/减速/眩晕）无影响——显式空分支。
+            PartConsequenceOutcome::NoConsequence => {
+                // 已知 consequence，但本次命中无外部可观察后果（Core 命中 / 未达阈值的
+                // Locomotion·Sensory / Manipulator{main_hand:false} / 未达 Severed 的
+                // Manipulator{main_hand:true}）——显式空分支，不是遗漏。
             }
-            None => {
+            PartConsequenceOutcome::UnknownPart => {
                 // plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 未知 part id
                 // （命中部位不在 `target_body_plan.parts` 里，理论上不会发生：命中几何
                 // 与部位定义同出一份 `BodyPlan`）：显式 warn + 无功能性后果，不静默吞掉。
@@ -2115,6 +2109,71 @@ fn record_anticheat_violation(
         return;
     };
     counter.record_violation(kind, details);
+}
+
+/// plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 断臂脱手 / 腿伤减速 / 头伤
+/// 眩晕三条部位功能性后果的**决策**（不含副作用：不 emit 事件、不碰 ECS World/
+/// Commands）。拆成纯函数是为了让"命中部位 id 不在目标 plan.parts 里"这条分支能被
+/// 直接单元测试锁住而不必构造一整条会触发几何求交失配的生产管线——在当前架构下，
+/// `resolve_attack_intents` 里传入的 `part_id` 恒来自 `raycast_humanoid` 对同一份
+/// `plan.hit_geometry` 的求交结果，与 `plan.parts` 失配理论上不会发生（
+/// `validate_body_plan` 在 registry 加载期就拒绝 `PartBoxes`/`HeightBands` 引用悬空
+/// 部位 id），这条分支是纵深防御，不是遗忘的死代码。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PartConsequenceOutcome {
+    /// 命中部位是 `Manipulator{main_hand:true}` 且本次伤势判定为 `Severed`——目标该侧
+    /// 持械应立即脱手落地。
+    SeverMainHandManipulator,
+    /// 命中部位是 `Locomotion` 且伤势达到 `LEG_SLOWED_SEVERITY_THRESHOLD`。
+    ApplyLegSlow,
+    /// 命中部位是 `Sensory` 且伤势达到 `HEAD_STUN_SEVERITY_THRESHOLD`。
+    ApplyHeadStun,
+    /// 命中部位有已知 `PartConsequence`，但本次命中不触发任何外部可观察后果——
+    /// `Core` 命中 / 未达阈值的 `Locomotion`·`Sensory` / `Manipulator{main_hand:false}`
+    /// / 未达 `Severed` 的 `Manipulator{main_hand:true}` 均落在这一档。
+    NoConsequence,
+    /// 命中部位 id 不在目标 `BodyPlan.parts` 里——显式未知，调用方必须 warn 而非静默。
+    UnknownPart,
+}
+
+fn dispatch_part_consequence(
+    plan: &crate::body_plan::BodyPlan,
+    part_id: &crate::body_plan::BodyPartId,
+    wound_severity: f32,
+) -> PartConsequenceOutcome {
+    match plan.consequence_for(part_id) {
+        Some(crate::body_plan::PartConsequence::Manipulator { main_hand: true }) => {
+            if arm_wound::is_severed(arm_wound::wound_severity_to_grade(wound_severity)) {
+                PartConsequenceOutcome::SeverMainHandManipulator
+            } else {
+                PartConsequenceOutcome::NoConsequence
+            }
+        }
+        // 副手臂断裂当前无独立"行为级"后果（脱手判定只认主手，副手断裂只通过
+        // `arm_wound::combined_factor().block_multiplier` 影响格挡减伤）——显式归入
+        // NoConsequence，不是遗漏。
+        Some(crate::body_plan::PartConsequence::Manipulator { main_hand: false }) => {
+            PartConsequenceOutcome::NoConsequence
+        }
+        Some(crate::body_plan::PartConsequence::Locomotion) => {
+            if wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD {
+                PartConsequenceOutcome::ApplyLegSlow
+            } else {
+                PartConsequenceOutcome::NoConsequence
+            }
+        }
+        Some(crate::body_plan::PartConsequence::Sensory) => {
+            if wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
+                PartConsequenceOutcome::ApplyHeadStun
+            } else {
+                PartConsequenceOutcome::NoConsequence
+            }
+        }
+        // 躯干核心命中对"肢体功能性后果"（脱手/减速/眩晕）无影响——显式归入
+        // NoConsequence，不是遗漏。
+        Some(crate::body_plan::PartConsequence::Core) => PartConsequenceOutcome::NoConsequence,
+        None => PartConsequenceOutcome::UnknownPart,
+    }
 }
 
 /// plan-race-system-v1 P0b —— 部位倍率不再是本文件的硬编 8 分支 match，改查目标实体
@@ -11206,6 +11265,435 @@ mod tests {
             "变异挂载部位（Back）与命中部位（Chest）不一致时不应产生任何折算，\
              baseline={baseline_severity} mismatched={mismatched_severity}"
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— dispatch_part_consequence
+    // 决策纯函数饱和测试：happy path × 4 个 PartConsequence 变体 × 阈值上下边界 +
+    // 未知 part id（这条分支在真实几何管线下不可达，见函数文档，只能在这个层级直接
+    // 单测锁死）。
+    // ══════════════════════════════════════════════════════════════════════════
+    mod dispatch_part_consequence_tests {
+        use super::*;
+        use crate::body_plan::types::{
+            BodyPartDef, HitGeometry, PartConsequence, StandingAabbSpec,
+        };
+        use crate::body_plan::BodyPartId;
+        use std::collections::HashMap;
+
+        /// 四类 `PartConsequence` 各一个部位的合成非人形构型（`hit_geometry` 本身在
+        /// 本测试模块不参与求交，随便给一个合法值即可满足 `validate_body_plan`）。
+        fn four_consequence_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: "test_dispatch_consequence".into(),
+                display_name: "测试用四类后果构型".to_string(),
+                is_humanoid: false,
+                parts: vec![
+                    BodyPartDef {
+                        id: "claw".into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Manipulator { main_hand: true },
+                    },
+                    BodyPartDef {
+                        id: "off_claw".into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Manipulator { main_hand: false },
+                    },
+                    BodyPartDef {
+                        id: "fin".into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Locomotion,
+                    },
+                    BodyPartDef {
+                        id: "eye".into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Sensory,
+                    },
+                    BodyPartDef {
+                        id: "shell".into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Core,
+                    },
+                ],
+                hit_geometry: HitGeometry::HeightBands {
+                    aabb: StandingAabbSpec {
+                        half_width: 0.3,
+                        height: 1.8,
+                    },
+                    bands: vec![crate::body_plan::HeightBand {
+                        min_rel_y: -1.0,
+                        assignment: crate::body_plan::HeightBandAssignment::Single {
+                            part: "shell".into(),
+                        },
+                    }],
+                    lateral_threshold: 0.19,
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: HashMap::new(),
+            }
+        }
+
+        #[test]
+        fn manipulator_main_hand_severed_dispatches_sever_outcome() {
+            let plan = four_consequence_plan();
+            assert_eq!(
+                dispatch_part_consequence(&plan, &BodyPartId::new("claw"), 70.0),
+                PartConsequenceOutcome::SeverMainHandManipulator,
+                "主手 Manipulator 命中且 severity 达到 Severed 分级（70.0）必须脱手"
+            );
+        }
+
+        #[test]
+        fn manipulator_main_hand_below_severed_threshold_is_no_consequence() {
+            let plan = four_consequence_plan();
+            assert_eq!(
+                dispatch_part_consequence(&plan, &BodyPartId::new("claw"), 69.999),
+                PartConsequenceOutcome::NoConsequence,
+                "主手 Manipulator 命中但未到 Severed 分级（<70.0）不应脱手"
+            );
+        }
+
+        #[test]
+        fn manipulator_off_hand_never_severs_regardless_of_severity() {
+            let plan = four_consequence_plan();
+            assert_eq!(
+                dispatch_part_consequence(&plan, &BodyPartId::new("off_claw"), 999.0),
+                PartConsequenceOutcome::NoConsequence,
+                "副手 Manipulator（main_hand:false）即便伤势极高也不应触发脱手——\
+                 脱手判定只认主手"
+            );
+        }
+
+        #[test]
+        fn locomotion_at_or_above_slow_threshold_dispatches_leg_slow() {
+            let plan = four_consequence_plan();
+            assert_eq!(
+                dispatch_part_consequence(
+                    &plan,
+                    &BodyPartId::new("fin"),
+                    LEG_SLOWED_SEVERITY_THRESHOLD
+                ),
+                PartConsequenceOutcome::ApplyLegSlow,
+                "Locomotion 命中且 severity 恰好等于阈值（闭区间）应触发减速"
+            );
+        }
+
+        #[test]
+        fn locomotion_below_slow_threshold_is_no_consequence() {
+            let plan = four_consequence_plan();
+            assert_eq!(
+                dispatch_part_consequence(
+                    &plan,
+                    &BodyPartId::new("fin"),
+                    LEG_SLOWED_SEVERITY_THRESHOLD - 0.001
+                ),
+                PartConsequenceOutcome::NoConsequence,
+                "Locomotion 命中但 severity 未达阈值不应触发减速"
+            );
+        }
+
+        #[test]
+        fn sensory_at_or_above_stun_threshold_dispatches_head_stun() {
+            let plan = four_consequence_plan();
+            assert_eq!(
+                dispatch_part_consequence(
+                    &plan,
+                    &BodyPartId::new("eye"),
+                    HEAD_STUN_SEVERITY_THRESHOLD
+                ),
+                PartConsequenceOutcome::ApplyHeadStun,
+                "Sensory 命中且 severity 恰好等于阈值（闭区间）应触发眩晕"
+            );
+        }
+
+        #[test]
+        fn sensory_below_stun_threshold_is_no_consequence() {
+            let plan = four_consequence_plan();
+            assert_eq!(
+                dispatch_part_consequence(
+                    &plan,
+                    &BodyPartId::new("eye"),
+                    HEAD_STUN_SEVERITY_THRESHOLD - 0.001
+                ),
+                PartConsequenceOutcome::NoConsequence,
+                "Sensory 命中但 severity 未达阈值不应触发眩晕"
+            );
+        }
+
+        #[test]
+        fn core_never_dispatches_any_limb_consequence_regardless_of_severity() {
+            let plan = four_consequence_plan();
+            for severity in [0.0_f32, 0.3, 0.5, 70.0, 9999.0] {
+                assert_eq!(
+                    dispatch_part_consequence(&plan, &BodyPartId::new("shell"), severity),
+                    PartConsequenceOutcome::NoConsequence,
+                    "Core 命中在任意 severity（{severity}）下都不应触发脱手/减速/眩晕"
+                );
+            }
+        }
+
+        #[test]
+        fn unknown_part_id_dispatches_explicit_unknown_outcome() {
+            // 命中几何与部位定义理论上同出一份 BodyPlan，这条分支在真实攻击管线里
+            // 不可达（见 dispatch_part_consequence 文档）——但决策函数本身必须对
+            // "根本不认识的部位 id" 显式返回 UnknownPart，而不是默默当 NoConsequence
+            // 处理掉（两者调用方后续行为不同：UnknownPart 要 warn）。
+            let plan = four_consequence_plan();
+            assert_eq!(
+                dispatch_part_consequence(&plan, &BodyPartId::new("does_not_exist"), 999.0),
+                PartConsequenceOutcome::UnknownPart,
+                "未知 part id 必须显式返回 UnknownPart，不能被悄悄归为 NoConsequence"
+            );
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 非人形构型伤残后果状态
+    // 转换集成测试：合成非人形 BodyPlan 走真实 resolve_attack_intents 全链路，验证
+    // 四类 PartConsequence 各自的**外部可观察**后果（status effect 事件 / 装备被移除），
+    // 而不是只测 dispatch_part_consequence 这个决策函数本身。
+    // ══════════════════════════════════════════════════════════════════════════
+    mod non_humanoid_consequence_integration_tests {
+        use super::*;
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::types::{BodyPartDef, HitGeometry, PartBox, PartConsequence};
+        use crate::body_plan::BodyPartId;
+        use std::collections::HashMap;
+
+        /// 单部位合成构型：复用 plan-race-system-v1 PartBoxes 集成测试同款已核验几何
+        /// （攻方 feet=[-2,64,0] 无 Look 回落 chest_aim_direction、目标 feet=[0,64,0]
+        /// 默认朝向 yaw=0、局部盒偏移 [-1,1.2,0]、reach=FIST_REACH.max=2.0、求交距离
+        /// 0.5619966636911647 blocks），只替换 `consequence`/`damage_mul`，几何行为
+        /// bit-for-bit 与 `partboxes_production_integration_tests` 一致。
+        fn single_part_plan(
+            part_id: &str,
+            consequence: PartConsequence,
+            damage_mul: f32,
+        ) -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: format!("test_single_part_{part_id}").into(),
+                display_name: "测试单部位构型".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: part_id.into(),
+                    damage_mul,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence,
+                }],
+                hit_geometry: HitGeometry::PartBoxes {
+                    boxes: vec![PartBox {
+                        part_id: part_id.into(),
+                        offset: [-1.0, 1.2, 0.0],
+                        half_extents: [0.45, 0.45, 0.45],
+                        priority: 0,
+                    }],
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: HashMap::new(),
+            }
+        }
+
+        fn single_part_registries(
+            plan: crate::body_plan::BodyPlan,
+        ) -> (BodyPlanRegistry, RaceRegistry) {
+            let plan_id = plan.id.clone();
+            let body_plans =
+                BodyPlanRegistry::from_plans(vec![plan]).expect("single-part plan must validate");
+            let races = RaceRegistry::from_parts_for_test(
+                vec![RaceEntry {
+                    id: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    display_name: "单部位测试替身".to_string(),
+                    body_plan_id: plan_id,
+                    beast_kinds: vec![],
+                }],
+                vec![],
+                &body_plans,
+            )
+            .expect("races fixture must validate");
+            (body_plans, races)
+        }
+
+        /// 组装最小 App：合成 registries + `resolve_attack_intents` + 攻防双方玩家
+        /// （几何与 `partboxes_production_integration_tests::setup_alien_carrier_app`
+        /// 完全相同）。调用方负责 `send_event(AttackIntent)` + `app.update()`。
+        fn setup_single_part_app(plan: crate::body_plan::BodyPlan) -> (App, Entity, Entity) {
+            let (body_plans, races) = single_part_registries(plan);
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 700 });
+            app.insert_resource(body_plans);
+            app.insert_resource(races);
+            app.add_event::<AttackIntent>();
+            app.add_event::<ApplyStatusEffectIntent>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<DeathEvent>();
+            app.add_event::<crate::combat::weapon::WeaponBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+            app.add_event::<InventoryDurabilityChangedEvent>();
+            app.add_systems(Update, resolve_attack_intents);
+
+            let attacker = spawn_player(
+                &mut app,
+                "SinglePartAttacker",
+                [-2.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let target = spawn_player(
+                &mut app,
+                "SinglePartTarget",
+                [0.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            (app, attacker, target)
+        }
+
+        fn send_single_part_attack(app: &mut App, attacker: Entity, qi_invest: f32) {
+            app.world_mut().send_event(AttackIntent {
+                attacker,
+                target: None,
+                issued_at_tick: 699,
+                reach: FIST_REACH,
+                qi_invest,
+                wound_kind: WoundKind::Cut,
+                source: AttackSource::Melee,
+                debug_command: Some(crate::player::gameplay::CombatAction {
+                    target: "SinglePartTarget".to_string(),
+                    qi_invest: f64::from(qi_invest),
+                }),
+            });
+            app.update();
+        }
+
+        #[test]
+        fn locomotion_hit_applies_slowed_status_effect() {
+            let plan = single_part_plan("fin", PartConsequence::Locomotion, 1.0);
+            let (mut app, attacker, target) = setup_single_part_app(plan);
+            send_single_part_attack(&mut app, attacker, 10.0);
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+            assert_eq!(wounds.entries.len(), 1, "应恰好写入一条 Wound");
+            assert_eq!(wounds.entries[0].location, BodyPartId::new("fin"));
+
+            let slow_intents: Vec<_> = app
+                .world()
+                .resource::<Events<ApplyStatusEffectIntent>>()
+                .iter_current_update_events()
+                .filter(|intent| intent.target == target)
+                .collect();
+            assert!(
+                slow_intents
+                    .iter()
+                    .any(|intent| intent.kind == StatusEffectKind::Slowed),
+                "命中 Locomotion 部位且伤势达阈值应对目标施加 Slowed 状态效果（外部可\
+                 观察后果），实测意图列表：{slow_intents:?}"
+            );
+        }
+
+        #[test]
+        fn sensory_hit_applies_stunned_status_effect() {
+            let plan = single_part_plan("eye", PartConsequence::Sensory, 1.0);
+            let (mut app, attacker, target) = setup_single_part_app(plan);
+            send_single_part_attack(&mut app, attacker, 10.0);
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+            assert_eq!(wounds.entries.len(), 1);
+            assert_eq!(wounds.entries[0].location, BodyPartId::new("eye"));
+
+            let stun_intents: Vec<_> = app
+                .world()
+                .resource::<Events<ApplyStatusEffectIntent>>()
+                .iter_current_update_events()
+                .filter(|intent| intent.target == target)
+                .collect();
+            assert!(
+                stun_intents
+                    .iter()
+                    .any(|intent| intent.kind == StatusEffectKind::Stunned),
+                "命中 Sensory 部位且伤势达阈值应对目标施加 Stunned 状态效果（外部可\
+                 观察后果），实测意图列表：{stun_intents:?}"
+            );
+        }
+
+        #[test]
+        fn core_hit_applies_neither_slowed_nor_stunned() {
+            let plan = single_part_plan("shell", PartConsequence::Core, 1.0);
+            let (mut app, attacker, target) = setup_single_part_app(plan);
+            send_single_part_attack(&mut app, attacker, 10.0);
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+            assert_eq!(wounds.entries.len(), 1);
+            assert_eq!(wounds.entries[0].location, BodyPartId::new("shell"));
+
+            let limb_intents: Vec<_> = app
+                .world()
+                .resource::<Events<ApplyStatusEffectIntent>>()
+                .iter_current_update_events()
+                .filter(|intent| intent.target == target)
+                .collect();
+            assert!(
+                !limb_intents.iter().any(|intent| matches!(
+                    intent.kind,
+                    StatusEffectKind::Slowed | StatusEffectKind::Stunned
+                )),
+                "命中 Core 部位不应触发减速/眩晕这两条肢体功能性后果，实测意图列表：\
+                 {limb_intents:?}"
+            );
+        }
+
+        #[test]
+        fn manipulator_main_hand_severed_drops_weapon_for_non_humanoid_plan() {
+            // damage_mul=10.0 + qi_invest 接近 spawn_player 给的 60.0 全额真元预算，
+            // 确保伤势稳超 Severed 分级阈值（70.0）——留足浮点/常量裕度。
+            let plan = single_part_plan(
+                "claw",
+                PartConsequence::Manipulator { main_hand: true },
+                10.0,
+            );
+            let (mut app, attacker, target) = setup_single_part_app(plan);
+            app.insert_resource(weapon_test_registry());
+            app.insert_resource(DroppedLootRegistry::default());
+            equip_main_hand_weapon(&mut app, target, 70601);
+
+            send_single_part_attack(&mut app, attacker, 60.0);
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+            assert_eq!(wounds.entries.len(), 1, "应恰好写入一条 Wound");
+            assert_eq!(wounds.entries[0].location, BodyPartId::new("claw"));
+            assert_eq!(
+                arm_wound::wound_severity_to_grade(wounds.entries[0].severity),
+                arm_wound::ArmWoundGrade::Severed,
+                "本次命中伤势应达到 Severed 分级（前置条件），实测 severity={}",
+                wounds.entries[0].severity
+            );
+
+            assert!(
+                app.world().entity(target).get::<Weapon>().is_none(),
+                "非人形构型的 Manipulator{{main_hand:true}} 部位 Severed 后，Weapon \
+                 runtime component 应被 remove（脱手）——外部可观察后果，不局限于\
+                 legacy ArmR/humanoid 才生效"
+            );
+            let dropped_registry = app.world().resource::<DroppedLootRegistry>();
+            let dropped = dropped_registry.entries.get(&70601).expect(
+                "断臂脱手的武器 instance 应出现在 DroppedLootRegistry（世界掉落），\
+                 而不是被静默丢弃",
+            );
+            assert_eq!(dropped.instance_id, 70601);
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
