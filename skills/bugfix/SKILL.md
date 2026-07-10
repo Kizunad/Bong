@@ -24,13 +24,27 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 - 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 worktree 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
 - 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
 - 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，active implementation 必须满足 `min(N, platform_total - 2)`；容量不可查时保守按 2 路实施。超出有效实施并发的任务进入 FIFO，不 spawn。
-- validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干用平台容量元数据与 `collaboration.list_agents` 对拍 live agent。容量不可查时 validator 一次只授权 1 个，禁止用逻辑 token 假装存在实际执行槽。
+- validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。容量不可查时 validator 一次只授权 1 个，禁止用逻辑 token 假装存在实际执行槽。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
 - 所有运行者执行 `df -h /`。磁盘超过 90% 时，只删除本轮已闭环 worktree 的私有可再生生成物。
 - **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR`**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 也只用于该前提下的故障恢复。
 
-### 主干唯一 token 准入与 collaboration 协议
+### harness 能力探测与适配
+
+启动时先枚举当前宿主真实可用工具，只选择一个适配分支；禁止把任一命名空间描述成通用 Codex API，也禁止调用当前分支未暴露的接口。
+
+| harness | 启动/消息/等待/恢复/状态映射 |
+|---|---|
+| 有 `collaboration` namespace | `spawn_agent` / `send_message` / `wait_agent` / `followup_task` / `list_agents` |
+| `multi_agent_v1` | `spawn_agent` / `send_input` / `wait_agent` / `resume_agent` / `close_agent`；状态只使用该运行时实际暴露的 agent status/list 返回，不虚构查询名 |
+| Claude | `Agent` / `SendMessage` / `ScheduleWakeup`；agent 完成通知与 Agent 状态作为恢复依据 |
+
+- 支持子 agent 主动发消息的 harness：用本分支真实 message API 发送结构化 token 消息；主干用本分支真实 wait/status API 接收和对拍。
+- 不支持子 agent 在运行中等待父级输入，或能力探测不确定时：强制使用 **phase-yield/checkpoint**。实施 agent 结构化返回 `TOKEN_REQUEST + checkpoint` 后结束当前 turn，主干入 FIFO；获准后通过该 harness 的 `resume_agent` / `followup_task` / `send_input` / Agent continuation 恢复同一任务。不得假设子 agent 能主动 `wait_agent` 等父级。
+- 能力不足以恢复同一任务时，持久化绝对 worktree、phase、HEAD、request/token、测试证据，启动同任务 continuation；不得传实施结论或丢失 checkpoint。
+
+### 主干唯一 token 准入协议
 
 主干是资源状态表、等待队列和授权消息的**唯一持有者**，串行处理申请，禁止 subagent 自行计数或先做后报：
 
@@ -39,15 +53,15 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 | `compile_token` | 2 | 进入任何编译/完整门禁前至该轮命令结束 | token id、task、agent、grant time、phase |
 | `validator_token` | 3 | spawn validator 前至 validator 已关闭 | token id、task、agent、validator、target SHA、grant time |
 
-使用当前真实 collaboration API 完成可恢复握手：
+按上方适配器选择真实接口完成可恢复握手：
 
-1. 实施 agent 调用 `collaboration.send_message` 给主干发送单行结构化消息：`TOKEN_REQUEST{"request_id":"<uuid>","type":"compile|validator","task":"<id>","agent":"<canonical agent id>","phase":"<phase>","head":"<sha>","checkpoint":"<resume data>"}`，随后调用 `collaboration.wait_agent` 挂起等待；**未收到有效 grant 禁止编译或 spawn validator**。
-2. 主干收到请求后按 `request_id` 幂等去重，落唯一状态表、排入对应 FIFO。容量与平台实际槽位都满足时，主干先原子登记 token 持有者，再用 `collaboration.send_message` 返回 `TOKEN_GRANTED{"request_id":"...","token_id":"...","type":"...","task":"...","phase":"...","head":"..."}`。
-3. 实施 agent 核对 request/task/phase/head 后用 `collaboration.send_message` 返回 `TOKEN_ACK{"request_id":"...","token_id":"...","head":"..."}`，ACK 后 token 才可使用。重复 request 返回同一队列状态或同一 grant；重复 ACK 幂等。
-4. agent 若已结束或 idle、普通 `send_message` 无法触发续跑，主干使用 `collaboration.followup_task`，把持久化 `checkpoint + request_id + token_id + phase + head` 发送给**同一任务 agent**恢复；恢复后仍必须 ACK。禁止另开无状态 agent 猜测续点。
-5. 完成、FAIL、超时、异常时，实施 agent发送 `TOKEN_RELEASED{"request_id":"...","token_id":"...","reason":"PASS|FAIL|TIMEOUT|ERROR","checkpoint":"...","head":"..."}`；排队取消或 grant 失效发送 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`。
+1. 实施 agent 发送或 phase-yield 返回：`TOKEN_REQUEST{"request_id":"<uuid>","type":"compile|validator","task":"<id>","agent":"<canonical agent id>","phase":"<phase>","head":"<sha>","checkpoint":"<resume data>"}`；**未收到有效 grant 禁止编译或 spawn validator**。
+2. 主干按 `request_id` 幂等去重，落唯一状态表、排入 FIFO。逻辑容量与实时平台槽位都满足时，先原子登记 holder，再通过当前 harness 的真实 message/resume 入口返回 `TOKEN_GRANTED{"request_id":"...","token_id":"...","type":"...","task":"...","phase":"...","head":"...","expires_at":"..."}`。
+3. 实施 agent 核对 request/task/phase/head/expiry 后发送或返回 `TOKEN_ACK{...}`，ACK 后 token 才可使用。重复 request 返回同一队列状态或同一 grant；重复 ACK 幂等。
+4. 已结束/idle agent 通过当前 harness 的 resume/followup 入口恢复，payload 必须包含 `checkpoint + request_id + token_id + phase + head`；恢复后仍须 ACK。禁止另开无状态 agent 猜测续点。
+5. 完成、FAIL、超时、异常时，实施 agent 发送或返回 `TOKEN_RELEASED{...}`；排队取消或 grant 失效返回 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`。
 6. grant 绑定 request_id、task、agent、phase、head。HEAD/phase 已变、token 已回收、非 FIFO 当前授权或 ACK 前过期的 grant 都是 stale：禁止使用，发送 CANCELLED 后重新申请。
-7. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用 `collaboration.list_agents` 对拍 holder；agent 崩溃/失联时先尝试 `followup_task` 按 checkpoint 恢复，确定不可恢复才回收悬挂 token并重新排队任务。
+7. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用当前 harness 实际状态查询对拍 holder；失联先进入 `RECOVERING`，只有 resume/send-input/followup 明确失败或恢复 TTL 到期才回收。回收后的旧 token 迟到 ACK/RELEASE 一律拒绝。
 8. `compile_token` 在该轮门禁任一出口释放；`validator_token` 在 validator 关闭后任一出口释放，spawn 失败也释放。任务 BLOCKED/CLOSED、用户停止或 worktree 清理前，主干取消排队项并核验无悬挂 token。
 
 从仓库根运行 `python3 skills/bugfix/scripts/state_machine_dry_run.py` 验证这套状态机。该 dry-run 不调用 GitHub 写 API，覆盖容量/FIFO、消息握手、异常回收、claim/main-sync/verdict 与持续等待契约；修改资源协议时必须同步更新并运行。
@@ -58,10 +72,10 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 
 维护唯一任务/资源状态表；以下字段不得省略：
 
-| skeleton | agent | worktree | branch | phase | token_type | request_id | token_id | queue_pos | holder | request_phase | requested_at | granted_at | ack | release_reason | checkpoint | head | validator SHA | PR | review/e2e |
-|---|---|---|---|---|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|---|
+| skeleton | agent | worktree | branch | phase | token_type | request_id | token_id | queue_pos | holder | request_phase | requested_at | granted_at | expires_at | ack | recovery_deadline | release_reason | checkpoint | head | validator SHA | PR | review/e2e |
+|---|---|---|---|---|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
-phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → VALIDATING → GATING → REBASING → ARCHIVING → PR_OPEN → GATES → CLOSED`，或 `BLOCKED`。
+phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → VALIDATING → GATING → REBASING → ARCHIVING → PR_OPEN → GATES → CLOSED`，失联暂态 `RECOVERING`，或终态 `BLOCKED`。合法边、互斥分支、终态和返工回流以 dry-run 的 `TaskPhase/ALLOWED_EDGES` 为可执行契约。
 
 ## 选择与派发 skeleton
 
@@ -72,9 +86,9 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 
 ## 等待协议
 
-- 等待新 skeleton、空闲编译槽、validator 槽、`/review`、CodeRabbit 或 e2e 时，使用 `ScheduleWakeup delaySeconds=1200`。每次唤醒后刷新任务、PR/check 状态并巡检孤儿 claim，再决定补位或继续等待。
-- 同一等待对象连续 3 轮（约 60 分钟）无进展时升级告警、记录证据并继续 `ScheduleWakeup`；不得因此结束 loop。只有用户明确停止，或出现确定性且必须由用户选择的决策点，才暂停等待输入。
-- 禁止 shell `sleep` loop、短周期 GitHub 查询和持续占用 agent 的 busy-poll。Codex/harness 没有 `ScheduleWakeup` 时，使用产品提供的 wait/monitor 机制，同样采用约 1200 秒节奏，不用 shell 轮询替代。
+- 等待新 skeleton、资源槽、review 或 e2e 时采用约 1200 秒节奏：Claude 使用 `ScheduleWakeup`；Codex 使用产品 wait/monitor 或 goal continuation；其它 harness 使用其真实等待/续跑入口。不要声称未暴露的 harness 具有 `ScheduleWakeup`。
+- 同一等待对象连续 3 轮无进展时升级告警、记录证据并继续对应 harness 的等待机制；不得因此结束 loop。只有用户明确停止，或出现确定性且必须由用户选择的决策点，才暂停等待输入。
+- 禁止 shell `sleep` loop、短周期 GitHub 查询和持续占用 agent 的 busy-poll。
 
 ## 实施 subagent 强制状态机
 
