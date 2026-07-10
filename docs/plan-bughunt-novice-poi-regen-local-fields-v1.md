@@ -10,7 +10,7 @@
 | P1：完整选择窗口契约 | ✅ 2026-07-10 | `novice_poi_selection_tile_ids` 从 plan + 最大 2000 格搜索半径 + 一采样步梯度 halo 独立推导 required tiles |
 | P2：console 有界重算 | ✅ 2026-07-10 | 目标 rewrite tiles 与 novice window 相交时 `synthesize_fields(tile_filter=...)`；默认蓝图 305 active tiles → 16 required tiles |
 | P3：worldgen 回归与原子性 | ✅ 2026-07-10 | 远区保留、近区非 spawn/spawn 重算、fields/manifest 缺 tile、写盘前失败、非目标 POI 哨兵测试 |
-| P4：server 启动加载闭环 | ✅ 2026-07-10 | 真实 v2 manifest → `TerrainProvider::load` → 生产 `poi_novice::register` Startup → registry + `PoiSpawned` 六类完整载荷；Bot 只读诊断 |
+| P4：server 启动加载闭环 | ✅ 2026-07-10 | 真实 v2 fixture → `TerrainProvider::load` → 生产 `poi_novice::register` Startup → registry + `PoiSpawned` 六类独立全字段对拍；Bot 强制六类各 1 并核对 selection |
 | P5：PR gates 与归档 | ⏳ | PR #1153 e2e / snapshot / `/review`；全绿后 `scripts/plan-finish.sh` |
 
 ## 1. 实际游玩体验影响
@@ -50,7 +50,7 @@
 - [x] P1：选择器从 generation plan、最大 relaxed radius 与一采样步梯度 halo 独立推导 required tile IDs；full/bounded 输入统一裁剪到固定网格，局部 `GeneratedFieldSet` 不能用自身 IDs 或外接矩形自证完整。
 - [x] P2：console `/api/regen` 先合成本地 rewrite fields；其 tile 与 16-tile novice window 相交时再有界合成完整 window 并重算（含近区非 spawn），完全不相交的远区 regen 保留全局 novice POI，不做全图 synthesis。
 - [x] P3：补 regression pin：远区非 spawn novice 逐项保留、近区非 spawn/spawn 完整窗口重算、目标 zone profile POI 刷新、非目标 zone authored/profile POI 逐字段保留。
-- [x] P4：文档化边界：blueprint/profile POI 仅按目标 zone patch；global novice POI 由 spawn 周边选择窗口独立管理。真实 manifest 测试经生产 `poi_novice::register` 触发 loader，逐类锁定坐标、selection tag、选择半径及 `PoiSpawned` 完整载荷；`/tppoi novice` + `terrain_poi_novice_startup` 提供协议 Bot 只读可观察面。
+- [x] P4：文档化边界：blueprint/profile POI 仅按目标 zone patch；global novice POI 由 spawn 周边选择窗口独立管理。真实 manifest 测试经生产 `poi_novice::register` 触发 loader，以独立期望逐字段锁定六类 registry / `PoiSpawned` 的 id、kind、zone、name、坐标、selection、qi、danger 与完整 tags；Bot e2e 默认生成含六类各 1 的真实 v2 raster fixture，`/tppoi novice` 黑盒核对目标类别计数与 selection，并允许合法运行时 `surface_stash` 扩展项。
 
 ## 5. 验证计划
 
@@ -58,7 +58,7 @@
 - [x] worldgen：spawn 使用 plan-derived 完整选择窗口重算；默认 blueprint 305 active tiles 降为 16 required tiles；远端额外 fields 不再改变 `np.gradient` 边缘语义，bounded/full 坐标一致。
 - [x] console：目标 zone profile-derived POI 刷新；非目标 zone authored/profile 哨兵条目原样保留。
 - [x] 原子性：novice fields 缺 required tile、existing manifest 缺 required tile、`--zone-filter` full export 缺窗口时，均在 raster/manifest 写入前失败。
-- [x] server：真实磁盘 v2 manifest 经 `TerrainProvider::load` 与生产 `poi_novice::register` Startup，六类 registry ID/坐标/半径/selection tag 与六个 `PoiSpawned` 完整载荷全部命中；Bot 场景黑盒确认 registry 资源由真实 world 注册链提供且可观察。
+- [x] server：真实磁盘 v2 manifest 经 `TerrainProvider::load` 与生产 `poi_novice::register` Startup，六类 registry / `PoiSpawned` 与独立完整期望逐字段相等；Bot 场景用真实 fixture 黑盒确认六个目标类别各 1、selection 精确且 registry 总计数自洽，loader 断链或任一类别缺失都会失败。
 - [ ] PR gate：#1153 e2e、snapshot、统一 `/review` 完成；CodeRabbit 额度/Review 429 仅按 infra 失败记录，不伪装为代码通过。
 
 ## 6. 对抗复核结论
@@ -75,3 +75,4 @@
 - 四轮无上下文 Ultra validator：首轮 FAIL 发现非整除 `tile_size/sample_stride` 跨 tile 样本碰撞；`13d2bea8` 改为 selection-bounds 全局采样相位并补正/负 seam 回归。全新 gpt-5.6-sol Ultra 复审 PASS，独立覆盖 630 组正负坐标、缺口、非矩形、单 tile、非整除及 `tile_size < stride`。
 - PR `/review` 二轮 substantive findings：近区非 spawn 与 required window 相交仍保留旧 novice POI、Startup 测试未走生产 register/完整载荷断言、缺 Bot e2e、active plan 未记录 validator PASS；均已纳入本轮返工。
 - 五轮无上下文 Ultra validator：PASS（HEAD `0e34c238`）；独立执行 990 组属性检查，复核空间相交重算、非整除采样网格、目标 zone POI patch、生产 register Startup、`PoiSpawned` 完整载荷及 Bot 只读观察面，未发现 blocking/major correctness finding。
+- PR `/review` 三轮 substantive findings：Bot 接受空 registry、Startup 测试以同源 registry/event 互证而未独立锁定 zone/name/qi/danger/full tags；现已改为 stdlib-only 真实 v2 Bot fixture + 六类各 1/selection 黑盒断言，并让 registry 与事件分别对拍独立全字段期望。聚焦验证为 worldgen/console `74 passed + 3 subtests`、server `poi_novice` 24 项、`tppoi` 6 项、命令树 3 项、raster 映射 1 项，以及真实 fixture 启服 Bot 单场景 PASS。
