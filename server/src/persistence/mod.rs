@@ -669,7 +669,9 @@ pub fn register(app: &mut App) {
         .init_resource::<ZoneInfluenceSnapshotState>()
         .add_systems(
             Startup,
-            bootstrap_persistence_system.in_set(PersistenceBootstrapSet),
+            bootstrap_persistence_system
+                .in_set(PersistenceBootstrapSet)
+                .after(crate::world::zone::ZoneRegistryStartupSet),
         )
         .add_systems(
             Update,
@@ -10572,6 +10574,61 @@ mod persistence_tests {
                 .iter()
                 .any(|event| event == crate::world::heartbeat::EVENT_PSEUDO_VEIN),
             "恢复出的动态 zone 必须继续带 pseudo_vein active_event"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_startup_order_restores_pseudo_vein_before_first_snapshot() {
+        let (settings, root) = persistence_settings("heartbeat-production-startup-order");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        record.qi_current = 0.41;
+        let mut seed_heartbeat = WorldHeartbeat::default();
+        let mut seed_zones = crate::world::zone::ZoneRegistry::fallback();
+        let seeded = seed_heartbeat.restore_pseudo_vein_records(
+            &mut seed_zones,
+            std::slice::from_ref(&record),
+            record.last_tick,
+        );
+        assert_eq!(
+            seeded, 1,
+            "expected one seed pseudo-vein before production startup test, actual {seeded}"
+        );
+        persist_heartbeat_pseudo_veins_snapshot(&settings, &seed_heartbeat, &seed_zones)
+            .expect("seed pseudo-vein snapshot should persist");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(CultivationClock { tick: 25 });
+        app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+        crate::world::zone::register(&mut app);
+        register(&mut app);
+
+        app.update();
+
+        let heartbeat = app.world().resource::<WorldHeartbeat>();
+        assert_eq!(
+            heartbeat.active_pseudo_vein_count(),
+            1,
+            "expected production Startup ordering to hydrate one pseudo-vein, actual {}",
+            heartbeat.active_pseudo_vein_count()
+        );
+        let persisted_after_update = load_heartbeat_pseudo_veins_snapshot(&settings)
+            .expect("first Update should leave a readable pseudo-vein snapshot");
+        assert_eq!(
+            persisted_after_update.len(),
+            1,
+            "expected first Update snapshot to preserve hydrated SQLite row, actual {}",
+            persisted_after_update.len()
+        );
+        assert_eq!(
+            persisted_after_update[0].zone_id, record.zone_id,
+            "expected first Update to retain the restored pseudo-vein id"
         );
 
         let _ = fs::remove_dir_all(root);
