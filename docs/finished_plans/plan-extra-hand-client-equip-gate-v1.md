@@ -156,8 +156,8 @@
   - `6921a924`（2026-07-06）：修复多臂额外手槽客户端装备门控。
   - `41b9a73c`（2026-07-06）：通过 PR #900 接入 `origin/main`。
 - **测试结果**：
-  - 2026-07-10 使用 JDK 17 运行 Gradle 定向测试：`InventoryEquipRulesTest` 43 条 + `EquipmentPanelTest` 11 条 + `InspectScreenMoveIntentTest` 21 条，75/75 PASS。
+  - 2026-07-10 使用 JDK 17 运行 Gradle 定向测试：`InventoryEquipRulesTest` 43 条 + `EquipmentPanelTest` 11 条 + `InspectScreenMoveIntentTest` 22 条，76/76 PASS。
 - **跨仓库核验**：
   - server 已有 `validate_move_semantics_accepts_weapon_to_extra_hand_0/1` 与 `validate_two_handed_main_hand_does_not_lock_extra_hand` pin；extra-hand 实现子集未改 server/schema。本 PR 是 31 项本地分叉的统一 reconciliation 容器，另含伪灵脉恢复与 social 回归等独立残余语义，不属于本 plan 的交付范围。
   - client `InspectScreen` 拖拽与 shift quick-equip 继续经 `InventoryEquipRules.canEquip()` / `preferredWeaponQuickEquipSlot()`，规则层已补 pin。
-- **验证边界 / 后续**：headless 回归从 owo hit-test 后的生产编排边界开始，覆盖拖拽/Shift 快装、本地传输拒绝或异常后的普通 grid／浮动 pack 精确回源、`EquipLoc` 与 `InventoryMoveIntent`；当前自动化不声称覆盖 mounted owo 的像素坐标命中。`EXTRA_HAND_0/1` 实际坐标命中与 disabled 视觉回退保留为 `runClient` 人工 UI 回归项。
+- **验证边界 / 后续**：headless 回归从 owo hit-test 后的生产编排边界开始，覆盖拖拽/Shift 快装、本地传输拒绝或异常后的普通 grid／浮动 pack 精确回源，以及 QUICK_USE 回绑失败保留拖拽并在传输恢复后重试；同时锁住 `EquipLoc` 与 `InventoryMoveIntent`。当前自动化不声称覆盖 mounted owo 的像素坐标命中。`EXTRA_HAND_0/1` 实际坐标命中与 disabled 视觉回退保留为 `runClient` 人工 UI 回归项。
