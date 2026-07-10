@@ -783,6 +783,9 @@ fn bootstrap_persistence_system(
                 settings.db_path().display()
             );
         }
+        if let Some(heartbeat) = heartbeat.as_deref_mut() {
+            heartbeat.sync_active_pseudo_vein_qi_from_zones(zone_registry);
+        }
         // WorldQiAccount 按架构在每次启动时重置；zones_runtime 才是跨重启字段权威。
         // 动态伪灵脉恢复后把该字段同步成 zone ledger 镜像，不发生转账，也不重复从
         // pending pool 借款。后续消散会通过 PseudoVeinSettle 把剩余余额真实转回池中。
@@ -10597,6 +10600,10 @@ mod persistence_tests {
             "zones_runtime 三列表应在动态 zone 重建后照常覆盖最新 spirit_qi"
         );
         assert_eq!(
+            restored_records[0].qi_current, 0.33,
+            "expected zones_runtime physical balance to realign the restored lifecycle qi"
+        );
+        assert_eq!(
             app.world()
                 .resource::<WorldQiAccount>()
                 .balance(&QiAccountId::zone("pseudo_vein_heartbeat_7")),
@@ -10693,6 +10700,14 @@ mod persistence_tests {
             persisted_pseudo_vein.spirit_qi, record.qi_current,
             "expected first Update to persist hydrated pseudo-vein spirit_qi {}, actual {}",
             record.qi_current, persisted_pseudo_vein.spirit_qi
+        );
+        let persisted_heartbeat_record = persisted_after_update
+            .iter()
+            .find(|persisted| persisted.zone_id == record.zone_id)
+            .expect("first Update must retain the restored pseudo-vein lifecycle record");
+        assert_eq!(
+            persisted_heartbeat_record.qi_current, persisted_pseudo_vein.spirit_qi,
+            "expected first Update to persist identical lifecycle and zone qi values"
         );
         assert_eq!(
             app.world()

@@ -36,6 +36,7 @@ use crate::world::events::{
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
 use crate::world::pseudo_vein_runtime::{
     inject_zone_for_pseudo_vein_target, settle_ephemeral_pseudo_vein_zone,
+    settle_ephemeral_pseudo_vein_zone_to_target,
 };
 use crate::world::risk_heatmap::QI_HIGH_DANGER_THRESHOLD;
 use crate::world::season::{query_season, Season, WorldSeasonState};
@@ -385,6 +386,17 @@ impl WorldHeartbeat {
         let mut zone_ids = self.active_pseudo_veins.keys().cloned().collect::<Vec<_>>();
         zone_ids.sort();
         zone_ids
+    }
+
+    /// `zones_runtime` 是跨重启的物理余额权威；生命周期记录只保存时钟与阶段元数据。
+    /// 两张表恢复完毕后，用 zone 余额校准 state，避免旧版本遗留的不一致继续传播。
+    pub(crate) fn sync_active_pseudo_vein_qi_from_zones(&mut self, zones: &ZoneRegistry) {
+        for (zone_id, state) in &mut self.active_pseudo_veins {
+            let Some(zone) = zones.find_zone_by_name(zone_id.as_str()) else {
+                continue;
+            };
+            state.qi_current = zone.spirit_qi.clamp(0.0, 1.0);
+        }
     }
 
     pub(crate) fn active_pseudo_vein_records(
@@ -1210,12 +1222,39 @@ fn advance_active_pseudo_veins(
 ) {
     let mut dissipated = Vec::new();
     for (zone_name, state) in &mut heartbeat.active_pseudo_veins {
+        let Some(zone) = zone_registry.find_zone_mut(zone_name.as_str()) else {
+            tracing::warn!(
+                "[bong][heartbeat] dynamic pseudo-vein state has no zone {}; retaining runtime",
+                zone_name
+            );
+            continue;
+        };
+        // zone 是玩家吸收、释放及持久化共同读取的物理余额权威。每次推进前先校准
+        // lifecycle，再把本 tick 的衰减通过 PseudoVeinSettle 真实归还 pending pool。
+        state.qi_current = zone.spirit_qi.clamp(0.0, 1.0);
+        let state_before_advance = state.clone();
         let occupants = player_samples
             .iter()
             .filter(|sample| sample.zone_name.as_deref() == Some(zone_name.as_str()))
             .map(|sample| sample.player_id.clone())
             .collect::<Vec<_>>();
         let advance = state.advance(current_tick, occupants);
+        match settle_ephemeral_pseudo_vein_zone_to_target(zone, qi_ledger, state.qi_current) {
+            Ok(Some(transfer)) => {
+                qi_transfers.send(transfer);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][heartbeat] failed to apply dynamic pseudo-vein decay zone={}: {error}",
+                    zone_name
+                );
+                // 账本未落地时回滚 lifecycle，避免 warning/dissipated 先走而物理余额未动。
+                *state = state_before_advance;
+                continue;
+            }
+        }
+        state.qi_current = zone.spirit_qi.clamp(0.0, 1.0);
         if advance.warning_threshold_crossed {
             emit_omen_vfx(
                 OmenKind::PseudoVeinForming,
@@ -2934,6 +2973,98 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep() {
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.eval_interval_ticks = 1;
+        let mut zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let mut active_events = ActiveEventsResource::default();
+        let mut qi_ledger = WorldQiAccount::default();
+        qi_ledger
+            .set_balance(pending_inflow_account(), 100.0)
+            .expect("pending pool fixture should accept a finite balance");
+        let omen = WorldEventOmen {
+            kind: OmenKind::PseudoVeinForming,
+            zone_name: "waste".to_string(),
+            target_player: None,
+            origin: DVec3::new(10.0, 65.0, 10.0),
+            intensity: 0.6,
+            scheduled_at_tick: 0,
+            fires_at_tick: 0,
+            expires_at_tick: 200,
+        };
+        spawn_pseudo_vein_from_omen(
+            &mut heartbeat,
+            &mut zones,
+            &mut active_events,
+            &mut qi_ledger,
+            &omen,
+            Season::Summer,
+            0,
+        )
+        .expect("funded pending pool should spawn the dynamic pseudo-vein fixture");
+        let total_before = qi_ledger.total();
+
+        let mut app = App::new();
+        app.insert_resource(heartbeat);
+        app.insert_resource(zones);
+        app.insert_resource(active_events);
+        app.insert_resource(CultivationClock { tick: 1 });
+        app.insert_resource(qi_ledger);
+        app.add_event::<EventChainTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, heartbeat_tick);
+
+        app.update();
+
+        let heartbeat = app.world().resource::<WorldHeartbeat>();
+        let zones = app.world().resource::<ZoneRegistry>();
+        let record = heartbeat
+            .active_pseudo_vein_records(zones)
+            .into_iter()
+            .next()
+            .expect("one active pseudo-vein should remain after a single decay tick");
+        let zone = zones
+            .find_zone_by_name(record.zone_id.as_str())
+            .expect("active pseudo-vein record must retain its dynamic zone");
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let zone_account = QiAccountId::zone(record.zone_id.as_str());
+        let ledger_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            record.qi_current < 0.6,
+            "expected lifecycle qi to decay below 0.6 after one tick, actual {}",
+            record.qi_current
+        );
+        assert!(
+            (record.qi_current - zone.spirit_qi).abs() < 1e-12,
+            "expected lifecycle and zone qi to match, state={} zone={}",
+            record.qi_current,
+            zone.spirit_qi
+        );
+        assert!(
+            (zone.spirit_qi - ledger_fraction).abs() < 1e-12,
+            "expected zone field and ledger mirror to match, zone={} ledger={}",
+            zone.spirit_qi,
+            ledger_fraction
+        );
+        assert_eq!(
+            ledger.total(),
+            total_before,
+            "expected continuous pseudo-vein decay to preserve total ledger qi"
+        );
+        assert!(
+            ledger.transfers().iter().any(|transfer| {
+                transfer.from == zone_account
+                    && transfer.to == pending_inflow_account()
+                    && transfer.reason == QiTransferReason::PseudoVeinSettle
+                    && transfer.amount > 0.0
+            }),
+            "expected one auditable PseudoVeinSettle transfer for the decay delta"
+        );
+    }
+
+    #[test]
     fn restored_pseudo_vein_first_tick_returns_dynamic_zone_balance_to_pending_pool() {
         let mut heartbeat = WorldHeartbeat::default();
         heartbeat.eval_interval_ticks = 1;
@@ -2950,7 +3081,7 @@ mod tests {
         let restored_zone = zones
             .find_zone_mut(record.zone_id.as_str())
             .expect("restored pseudo-vein topology must exist before runtime overlay");
-        restored_zone.spirit_qi = 0.41;
+        restored_zone.spirit_qi = record.qi_current;
 
         let zone_account = QiAccountId::zone(record.zone_id.as_str());
         let zone_absolute = restored_zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;

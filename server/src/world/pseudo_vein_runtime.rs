@@ -530,18 +530,35 @@ pub(crate) fn settle_ephemeral_pseudo_vein_zone(
     zone: &mut Zone,
     ledger: &mut WorldQiAccount,
 ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+    settle_ephemeral_pseudo_vein_zone_to_target(zone, ledger, 0.0)
+}
+
+/// 将 heartbeat 动态伪灵脉 zone 的真实余额守恒收敛到生命周期目标值。
+///
+/// `PseudoVeinRuntimeState::advance` 只负责计算目标浓度；这里把减少量从 zone 账户真实
+/// 转回 pending pool，再用账本结果回写 `zone.spirit_qi`。因此运行期衰减与最终删除共用
+/// 同一条可审计路径，不会出现 state 已衰减、zone/ledger 仍停在旧值的三份状态分叉。
+pub(crate) fn settle_ephemeral_pseudo_vein_zone_to_target(
+    zone: &mut Zone,
+    ledger: &mut WorldQiAccount,
+    target_spirit_qi: f64,
+) -> Result<Option<QiTransfer>, QiPhysicsError> {
     let zone_account = QiAccountId::zone(zone.name.as_str());
-    let current_absolute = round3(zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY);
+    let current_absolute = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
     ledger.set_balance(zone_account.clone(), current_absolute)?;
-    if current_absolute <= f64::EPSILON {
-        zone.spirit_qi = 0.0;
+    let target_absolute = (target_spirit_qi.clamp(0.0, ZONE_SPIRIT_QI_MAX) * QI_ZONE_UNIT_CAPACITY)
+        .min(current_absolute);
+    let returned_absolute = (current_absolute - target_absolute).max(0.0);
+    if returned_absolute == 0.0 {
+        zone.spirit_qi = (current_absolute / QI_ZONE_UNIT_CAPACITY)
+            .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
         return Ok(None);
     }
 
     let transfer = QiTransfer::new(
         zone_account.clone(),
         pending_inflow_account(),
-        current_absolute,
+        returned_absolute,
         QiTransferReason::PseudoVeinSettle,
     )?;
     ledger.transfer(transfer.clone())?;
