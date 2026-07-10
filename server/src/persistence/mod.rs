@@ -3162,6 +3162,14 @@ fn persist_zone_runtime_records(
     zones: &crate::world::zone::ZoneRegistry,
     wall_clock: i64,
 ) -> io::Result<()> {
+    // heartbeat 动态 zone 会在消散后从 ZoneRegistry 删除。先在同一事务中清掉该命名域的
+    // 旧行，再由下方当前 registry 全量重插仍活跃者，避免已结算余额的孤儿行永久残留。
+    transaction
+        .execute(
+            "DELETE FROM zones_runtime WHERE zone_id GLOB 'pseudo_vein_heartbeat_*'",
+            [],
+        )
+        .map_err(io::Error::other)?;
     for zone in &zones.zones {
         upsert_zone_runtime(
             transaction,
@@ -9990,6 +9998,10 @@ mod persistence_tests {
             restored, 1,
             "fixture record must restore into heartbeat before persistence roundtrip"
         );
+        zones
+            .find_zone_mut(record.zone_id.as_str())
+            .expect("restored heartbeat zone must exist")
+            .spirit_qi = record.qi_current;
 
         persist_heartbeat_pseudo_veins_snapshot(&settings, &heartbeat, &zones)
             .expect("heartbeat pseudo-vein snapshot should persist");
@@ -10000,6 +10012,112 @@ mod persistence_tests {
             records,
             vec![record],
             "伪灵脉 heartbeat runtime 必须完整保留 bounds/dimension/lifecycle/warning/season"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn atomic_pseudo_vein_snapshot_uses_physical_zone_qi_between_heartbeat_ticks() {
+        let (settings, root) = persistence_settings("heartbeat-zone-qi-atomic-snapshot");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = crate::world::zone::ZoneRegistry::fallback();
+        assert_eq!(
+            heartbeat.restore_pseudo_vein_records(
+                &mut zones,
+                std::slice::from_ref(&record),
+                record.last_tick,
+            ),
+            1,
+            "fixture record must restore before atomic snapshot"
+        );
+        zones
+            .find_zone_mut(record.zone_id.as_str())
+            .expect("restored dynamic zone must exist")
+            .spirit_qi = 0.29;
+
+        persist_zone_runtime_snapshot_with_heartbeat(&settings, &zones, Some(&heartbeat))
+            .expect("atomic zone/lifecycle snapshot should persist");
+
+        let heartbeat_rows =
+            load_heartbeat_pseudo_veins_snapshot(&settings).expect("heartbeat rows should load");
+        let zone_rows =
+            load_zone_runtime_snapshot(&settings).expect("zone runtime rows should load");
+        assert_eq!(
+            heartbeat_rows
+                .iter()
+                .find(|row| row.zone_id == record.zone_id)
+                .expect("dynamic heartbeat row must persist")
+                .qi_current,
+            0.29,
+            "expected lifecycle row to use the physical zone balance, not stale heartbeat state"
+        );
+        assert_eq!(
+            zone_rows
+                .iter()
+                .find(|row| row.zone_id == record.zone_id)
+                .expect("dynamic zone runtime row must persist")
+                .spirit_qi,
+            0.29,
+            "expected atomic zones_runtime row to match heartbeat lifecycle qi"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zone_runtime_snapshot_removes_dissipated_heartbeat_zone_orphan() {
+        let (settings, root) = persistence_settings("heartbeat-zone-runtime-orphan-cleanup");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = crate::world::zone::ZoneRegistry::fallback();
+        assert_eq!(
+            heartbeat.restore_pseudo_vein_records(
+                &mut zones,
+                std::slice::from_ref(&record),
+                record.last_tick,
+            ),
+            1,
+            "fixture record must restore before first snapshot"
+        );
+        zones
+            .find_zone_mut(record.zone_id.as_str())
+            .expect("restored dynamic zone must exist")
+            .spirit_qi = record.qi_current;
+        persist_zone_runtime_snapshot_with_heartbeat(&settings, &zones, Some(&heartbeat))
+            .expect("active pseudo-vein snapshot should persist");
+        assert!(
+            load_zone_runtime_snapshot(&settings)
+                .expect("first zone runtime snapshot should load")
+                .iter()
+                .any(|row| row.zone_id == record.zone_id),
+            "expected active dynamic zone row before dissipation"
+        );
+
+        zones.zones.retain(|zone| zone.name != record.zone_id);
+        let no_active_heartbeat = WorldHeartbeat::default();
+        persist_zone_runtime_snapshot_with_heartbeat(&settings, &zones, Some(&no_active_heartbeat))
+            .expect("post-dissipation snapshot should commit");
+
+        assert!(
+            load_heartbeat_pseudo_veins_snapshot(&settings)
+                .expect("post-dissipation heartbeat snapshot should load")
+                .is_empty(),
+            "expected lifecycle row to disappear after dissipation"
+        );
+        assert!(
+            load_zone_runtime_snapshot(&settings)
+                .expect("post-dissipation zone runtime snapshot should load")
+                .iter()
+                .all(|row| row.zone_id != record.zone_id),
+            "expected stale dynamic zones_runtime row to be deleted in the same snapshot"
         );
 
         let _ = fs::remove_dir_all(root);
