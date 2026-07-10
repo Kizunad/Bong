@@ -40,10 +40,12 @@ class AgentUiCloseFeedbackTest {
     void showForReasonAt_publishesWarningToastWithExactLifetime() {
         long now = 10_000L;
 
-        assertTrue(AgentUiCloseFeedback.showForReasonAt("session_expired", now));
+        assertTrue(AgentUiCloseFeedback.showForReasonAt("session_expired", now),
+            "session_expired 是错误 close，期望发布玩家可见 toast，实际返回 false");
 
         BongToast toast = BongToast.current(now);
-        assertFalse(toast.isEmpty());
+        assertFalse(toast.isEmpty(),
+            "showForReasonAt 返回 true 后应存在 active toast，实际 toast 为空");
         assertEquals("这次天道面板已过期，请重新尝试", toast.text().getString());
         assertEquals(AgentUiCloseFeedback.WARNING_COLOR, toast.color());
         assertEquals(now + AgentUiCloseFeedback.DURATION_MILLIS, toast.expiresAtMillis());
@@ -53,7 +55,8 @@ class AgentUiCloseFeedbackTest {
     void silentReplacementDoesNotOverwriteExistingToast() {
         BongToast.show("既有提示", 0xFFFFFF, 1_000L, 5_000L);
 
-        assertFalse(AgentUiCloseFeedback.showForReasonAt(null, 2_000L));
+        assertFalse(AgentUiCloseFeedback.showForReasonAt(null, 2_000L),
+            "null reason 表示 Replaced，期望静默且不替换既有 toast，实际返回 true");
 
         assertEquals("既有提示", BongToast.current(2_000L).text().getString());
     }
