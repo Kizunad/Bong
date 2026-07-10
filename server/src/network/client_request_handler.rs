@@ -4549,8 +4549,11 @@ mod tests {
         let (client_bundle, helper) = create_mock_client("Azure");
         let player = app
             .world_mut()
-            .spawn((client_bundle, Position::new(position), player_inventory))
+            .spawn((client_bundle, player_inventory))
             .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(position));
         let npc = app
             .world_mut()
             .spawn((
