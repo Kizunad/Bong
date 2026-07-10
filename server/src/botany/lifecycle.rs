@@ -287,7 +287,7 @@ pub(crate) fn roll_variant_for_zone(
         return PlantVariant::None;
     }
 
-    if splitmix(seed) % u64::from(roll_cfg.chance_inverse) != 0 {
+    if !splitmix(seed).is_multiple_of(u64::from(roll_cfg.chance_inverse)) {
         return PlantVariant::None;
     }
 
@@ -762,6 +762,159 @@ mod tests {
             plant_count, 0,
             "expected no plant entity to consume an ephemeral pseudo-vein loan"
         );
+    }
+
+    #[test]
+    fn ephemeral_pseudo_vein_never_seeds_static_points_but_normal_zone_does() {
+        let mut ephemeral = Zone {
+            name: "pseudo_vein_heartbeat_0".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds: (
+                Position::new([0.0, 0.0, 0.0]).get(),
+                Position::new([1.0, 1.0, 1.0]).get(),
+            ),
+            spirit_qi: 0.6,
+            danger_level: 1,
+            active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
+            patrol_anchors: vec![],
+            blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+        };
+        assert!(
+            spawn_static_points_for_zone(&ephemeral).is_empty(),
+            "expected heartbeat pseudo-vein topology not to seed unledgered static plants"
+        );
+        ephemeral.name = "lingquan_marsh".to_string();
+        ephemeral.active_events.clear();
+        assert_eq!(
+            spawn_static_points_for_zone(&ephemeral).len(),
+            1,
+            "expected an ordinary supported zone to retain normal static-point seeding"
+        );
+    }
+
+    #[test]
+    fn existing_ephemeral_pseudo_vein_plant_is_removed_without_qi_refund_or_vfx() {
+        let mut app = App::new();
+        app.insert_resource(BotanyKindRegistry::default());
+        app.insert_resource(PlantStaticPointStore::default());
+        app.insert_resource(BotanyVariantRoll::default());
+        app.insert_resource(PlantLifecycleClock {
+            tick: LIFECYCLE_INTERVAL_TICKS - 1,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "pseudo_vein_heartbeat_0".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (
+                    Position::new([0.0, 0.0, 0.0]).get(),
+                    Position::new([1.0, 1.0, 1.0]).get(),
+                ),
+                spirit_qi: 0.6,
+                danger_level: 1,
+                active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+        });
+        app.add_event::<VfxEventRequest>();
+        app.world_mut().spawn(Plant {
+            id: BotanyPlantId::NingMaiCao,
+            zone_name: "pseudo_vein_heartbeat_0".to_string(),
+            position: [0.5, 1.0, 0.5],
+            planted_at_tick: 0,
+            wither_progress: 0,
+            source_point: None,
+            harvested: false,
+            trampled: false,
+            variant: PlantVariant::None,
+        });
+        app.add_systems(Update, run_botany_lifecycle_tick);
+
+        app.update();
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert_eq!(
+            zones.zones[0].spirit_qi, 0.6,
+            "expected cleanup not to refund qi that was never botany-ledgered"
+        );
+        let plant_count = {
+            let world = app.world_mut();
+            let mut query = world.query::<&Plant>();
+            query.iter(world).count()
+        };
+        assert_eq!(
+            plant_count, 0,
+            "expected orphan pseudo-vein plant to despawn"
+        );
+        assert_eq!(
+            app.world().resource::<Events<VfxEventRequest>>().len(),
+            0,
+            "expected orphan cleanup not to emit growth/aura VFX"
+        );
+    }
+
+    #[test]
+    fn ephemeral_static_point_stays_unbound_and_spends_no_qi() {
+        let mut static_points = PlantStaticPointStore::default();
+        static_points.upsert(PlantStaticPoint {
+            id: 7,
+            zone_name: "pseudo_vein_heartbeat_0".to_string(),
+            position: [0.5, 1.0, 0.5],
+            preferred_plant: BotanyPlantId::GuYuanGen,
+            last_spawn_tick: None,
+            regen_ticks: 1,
+            bound_entity: None,
+        });
+        let mut app = App::new();
+        app.insert_resource(BotanyKindRegistry::default());
+        app.insert_resource(static_points);
+        app.insert_resource(BotanyVariantRoll::default());
+        app.insert_resource(PlantLifecycleClock {
+            tick: LIFECYCLE_INTERVAL_TICKS - 1,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "pseudo_vein_heartbeat_0".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (
+                    Position::new([0.0, 0.0, 0.0]).get(),
+                    Position::new([1.0, 1.0, 1.0]).get(),
+                ),
+                spirit_qi: 0.9,
+                danger_level: 1,
+                active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+        });
+        app.add_systems(Update, run_botany_lifecycle_tick);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ZoneRegistry>().zones[0].spirit_qi,
+            0.9,
+            "expected static-point path not to debit a pseudo-vein loan"
+        );
+        let point = app
+            .world()
+            .resource::<PlantStaticPointStore>()
+            .iter()
+            .next()
+            .expect("fixture point should remain");
+        assert_eq!(point.bound_entity, None, "expected point to remain unbound");
+        let plant_count = {
+            let world = app.world_mut();
+            let mut query = world.query::<&Plant>();
+            query.iter(world).count()
+        };
+        assert_eq!(plant_count, 0, "expected no static plant to spawn");
     }
 
     #[test]
