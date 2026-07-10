@@ -1800,6 +1800,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         quickEquipFromGrid(item);
     }
 
+    /** Headless 回归复用真实 QUICK_USE 拾起语义（解绑 → dragState 记录来源）。 */
+    void beginQuickUseEquipDragForTests(InventoryItem item, int index) {
+        publishQuickUseSlot(index, item);
+        publishQuickUseSlot(index, null);
+        dragState.pickupFromQuickUse(item, index);
+    }
+
+    /** Headless 回归复用 attemptDrop 的装备提交/失败回源编排。 */
+    boolean commitCurrentDragToEquipForTests(EquipSlotType targetSlot) {
+        InventoryItem dragged = dragState.draggedItem();
+        return dragged != null && commitEquipDropOrReturnToSource(
+            dragged,
+            snapshotSourceLocation(),
+            targetSlot
+        );
+    }
+
+    InventoryItem quickUseItemForTests(int index) {
+        return quickUseItems[index];
+    }
+
     boolean dispatchSetMeridianTarget() {
         MeridianChannel selected = bodyInspect == null ? null : bodyInspect.selectedChannel();
         MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
@@ -2744,12 +2765,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 clearAllHighlights();
                 return;
             }
+            var toLoc = new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                wg.containerId(), pos.row(), pos.col());
+            if (!dispatchMoveIntent(dragged, fromLoc, toLoc, dropRotated)) {
+                returnDragToSource();
+                clearAllHighlights();
+                return;
+            }
             wg.place(dragged, pos.row(), pos.col());
             dragState.drop();
-            dispatchMoveIntent(dragged, fromLoc,
-                new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                    wg.containerId(), pos.row(), pos.col()),
-                dropRotated);
             clearAllHighlights();
             return;
         }
@@ -2770,12 +2794,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     clearAllHighlights();
                     return;
                 }
+                var toLoc = new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                    grid.containerId(), pos.row(), pos.col());
+                if (!dispatchMoveIntent(dragged, fromLoc, toLoc, dropRotated)) {
+                    returnDragToSource();
+                    clearAllHighlights();
+                    return;
+                }
                 grid.place(dragged, pos.row(), pos.col());
                 dragState.drop();
-                dispatchMoveIntent(dragged, fromLoc,
-                    new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                        grid.containerId(), pos.row(), pos.col()),
-                    dropRotated);
                 clearAllHighlights();
                 return;
             }
@@ -2787,8 +2814,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
-                if (!commitEquipDrop(dragged, fromLoc, eq.slotType())) {
-                    returnDragToSource();
+                if (!commitEquipDropOrReturnToSource(dragged, fromLoc, eq.slotType())) {
                     clearAllHighlights();
                     return;
                 }
@@ -2826,6 +2852,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // Hotbar
         int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
         if (hIdx >= 0 && InventoryEquipRules.canPlaceIntoHotbar(dragged)) {
+            if (!dispatchMoveIntent(
+                dragged,
+                fromLoc,
+                new com.bong.client.network.ClientRequestProtocol.HotbarLoc(hIdx),
+                false
+            )) {
+                returnDragToSource();
+                clearAllHighlights();
+                return;
+            }
             if (hotbarItems[hIdx] == null) {
                 hotbarItems[hIdx] = dragged;
                 hotbarSlots[hIdx].setItem(dragged, true);
@@ -2837,10 +2873,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 dragState.drop();
                 placeItemAnywhere(old);
             }
-            // plan-rotate-v1 — hotbar 仅收 1x1（不可旋转形状），非网格落位恒发 false。
-            dispatchMoveIntent(dragged, fromLoc,
-                new com.bong.client.network.ClientRequestProtocol.HotbarLoc(hIdx),
-                false);
             clearAllHighlights();
             return;
         }
@@ -3226,7 +3258,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return true;
     }
 
-    void dispatchMoveIntent(
+    boolean dispatchMoveIntent(
         InventoryItem item,
         com.bong.client.network.ClientRequestProtocol.InvLocation from,
         com.bong.client.network.ClientRequestProtocol.InvLocation to,
@@ -3235,26 +3267,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item == null) {
             com.bong.client.BongClient.LOGGER.warn(
                 "[bong][inspect] dispatchMoveIntent skipped: item is null");
-            return;
+            return false;
         }
         if (from == null || to == null) {
             com.bong.client.BongClient.LOGGER.warn(
                 "[bong][inspect] dispatchMoveIntent skipped: from={} to={} item={}",
                 from, to, item.itemId());
-            return;
+            return false;
         }
         if (item.instanceId() == 0L) {
             com.bong.client.BongClient.LOGGER.warn(
                 "[bong][inspect] dispatchMoveIntent skipped: item {} has instanceId=0 "
                     + "(likely Mock data — server snapshot didn't load)",
                 item.itemId());
-            return;
+            return false;
         }
         com.bong.client.BongClient.LOGGER.info(
             "[bong][inspect] dispatchMoveIntent instance={} from={} to={} rotated={} item={}",
             item.instanceId(), from, to, rotated, item.itemId());
         com.bong.client.network.ClientRequestSender.sendInventoryMove(
             item.instanceId(), from, to, rotated);
+        return true;
     }
 
     boolean dispatchDiscardIntent(
@@ -3626,7 +3659,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     /**
-     * 拖拽命中装备槽后的最薄编排边界：校验目标、乐观落位并发送权威 move intent。
+     * 拖拽命中装备槽后的最薄编排边界：校验目标，确认权威 move intent 可发送后再乐观落位。
      * 生产 {@link #attemptDrop(double, double)} 与 headless 交互回归共用此路径，避免测试只锁
      * {@link InventoryEquipRules} 而漏掉 {@code EquipLoc} 构造或 C2S dispatch。
      */
@@ -3641,6 +3674,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return false;
         }
 
+        var toLoc = new com.bong.client.network.ClientRequestProtocol.EquipLoc(
+            targetSlot.name().toLowerCase(java.util.Locale.ROOT), targetSlot.wireState());
+        if (!dispatchMoveIntent(dragged, fromLoc, toLoc, false)) {
+            return false;
+        }
+
         if (targetSlot.isHand()) {
             eq.setContents(com.bong.client.inventory.model.SlotContents.ofHeld(dragged));
         } else {
@@ -3650,14 +3689,20 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, eq.held()));
         }
         dragState.drop();
-        dispatchMoveIntent(
-            dragged,
-            fromLoc,
-            new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                targetSlot.name().toLowerCase(java.util.Locale.ROOT), targetSlot.wireState()),
-            false
-        );
         return true;
+    }
+
+    /** attemptDrop 与 headless 回归共用：提交失败时把拖拽物完整恢复到原来源。 */
+    boolean commitEquipDropOrReturnToSource(
+        InventoryItem dragged,
+        com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc,
+        EquipSlotType targetSlot
+    ) {
+        if (commitEquipDrop(dragged, fromLoc, targetSlot)) {
+            return true;
+        }
+        returnDragToSource();
+        return false;
     }
 
     /**
@@ -3701,11 +3746,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         );
         if (targetSlot == null) return;
 
-        grid.remove(item);
-        // 手槽 quick-equip → held 单件。
-        equipPanel.slotFor(targetSlot).setContents(
-            com.bong.client.inventory.model.SlotContents.ofHeld(item));
-        dispatchMoveIntent(
+        if (!dispatchMoveIntent(
             item,
             new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
                 grid.containerId(),
@@ -3717,7 +3758,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             ),
             // plan-rotate-v1 — shift 快捷穿戴不经拖拽，无旋转语义。
             false
-        );
+        )) {
+            return;
+        }
+        grid.remove(item);
+        // 手槽 quick-equip → held 单件。
+        equipPanel.slotFor(targetSlot).setContents(
+            com.bong.client.inventory.model.SlotContents.ofHeld(item));
     }
 
     private void quickUnequipToGrid(EquipSlotType slotType, InventoryItem item) {
@@ -3725,10 +3772,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null) return;
         var pos = grid.findFreeSpace(item);
         if (pos != null) {
-            // 决议 #12：卸下仅弹出栈顶/held（被压住下层不动）。
-            popSlotTop(equipPanel.slotFor(slotType));
-            grid.place(item, pos.row(), pos.col());
-            dispatchMoveIntent(
+            if (!dispatchMoveIntent(
                 item,
                 new com.bong.client.network.ClientRequestProtocol.EquipLoc(
                     slotType.name().toLowerCase(java.util.Locale.ROOT), slotType.wireState()
@@ -3738,9 +3782,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     pos.row(),
                     pos.col()
                 ),
-                // plan-rotate-v1 — 快捷卸下不经拖拽，无旋转语义。
                 false
-            );
+            )) {
+                return;
+            }
+            // 决议 #12：卸下仅弹出栈顶/held（被压住下层不动）。
+            popSlotTop(equipPanel.slotFor(slotType));
+            grid.place(item, pos.row(), pos.col());
         }
     }
 
@@ -3751,10 +3799,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null) return;
         var pos = grid.findFreeSpace(item);
         if (pos != null) {
-            hotbarItems[index] = null;
-            hotbarSlots[index].clearItem();
-            grid.place(item, pos.row(), pos.col());
-            dispatchMoveIntent(
+            if (!dispatchMoveIntent(
                 item,
                 new com.bong.client.network.ClientRequestProtocol.HotbarLoc(index),
                 new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
@@ -3762,9 +3807,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     pos.row(),
                     pos.col()
                 ),
-                // plan-rotate-v1 — hotbar 快捷收纳不经拖拽，无旋转语义。
                 false
-            );
+            )) {
+                return;
+            }
+            hotbarItems[index] = null;
+            hotbarSlots[index].clearItem();
+            grid.place(item, pos.row(), pos.col());
         }
     }
 

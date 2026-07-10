@@ -1,5 +1,6 @@
 package com.bong.client.inventory;
 
+import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.component.EquipmentPanel;
 import com.bong.client.inventory.model.EquipSlotType;
@@ -29,6 +30,7 @@ public class InspectScreenMoveIntentTest {
     @AfterEach
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
+        QuickUseSlotStore.resetForTests();
     }
 
     private void install() {
@@ -376,6 +378,67 @@ public class InspectScreenMoveIntentTest {
         assertTrue(
             sent.isEmpty(),
             "expected rejected ineligible-item drop to send no InventoryMoveIntent, actual " + sent.size()
+        );
+    }
+
+    @Test
+    void quickUseDragToEquipRestoresSourceWhenMoveLocationCannotBeEncoded() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem tool = item(2290L, "stone_pickaxe");
+        screen.configureEquipInteractionForTests(null, panel);
+        screen.beginQuickUseEquipDragForTests(tool, 2);
+        sent.clear();
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_1);
+
+        assertFalse(committed, "expected QUICK_USE source without InvLocation to be rejected, actual true");
+        assertEquals(
+            tool,
+            screen.quickUseItemForTests(2),
+            "expected failed QUICK_USE-to-equip move to restore the source slot item"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_1).contents().isEmpty(),
+            "expected failed QUICK_USE-to-equip move to leave EXTRA_HAND_1 unchanged, actual non-empty"
+        );
+        assertTrue(
+            sent.stream().noneMatch(message -> message.body().contains("inventory_move_intent")),
+            "expected no InventoryMoveIntent for an unencodable QUICK_USE source, actual " + sent
+        );
+    }
+
+    @Test
+    void dragEquipCommitRejectsMockInstanceBeforeMutatingTarget() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem mockTool = InventoryItem.create(
+            "stone_pickaxe",
+            "stone_pickaxe",
+            1,
+            1,
+            0.2,
+            "common",
+            "mock instance without authoritative id"
+        );
+        screen.configureEquipInteractionForTests(null, panel);
+
+        boolean committed = screen.commitEquipDrop(
+            mockTool,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 1, 1),
+            EquipSlotType.EXTRA_HAND_0
+        );
+
+        assertFalse(committed, "expected instanceId=0 equip drop to be rejected, actual true");
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().isEmpty(),
+            "expected rejected mock-instance drop to leave EXTRA_HAND_0 unchanged, actual non-empty"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejected mock-instance drop to send no request, actual " + sent.size()
         );
     }
 
