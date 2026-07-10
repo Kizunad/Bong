@@ -562,11 +562,11 @@ mod tests {
     }
 
     #[test]
-    fn fog_bank_at_threshold_compresses_view_distance_zone_scoped() {
+    fn fog_bank_at_threshold_compresses_only_players_inside_aabb() {
         let mut app = setup_app_with_vision();
         let center = fallback_zone_center(&app);
         let executor = spawn_client_with_vision(&mut app, "Alice", center);
-        // 同 zone 另一角、远在雾堤 AABB 之外的玩家——遮蔽是 zone-scoped 契约，同样被压
+        // 同 zone 另一角、远在雾堤 AABB 之外的玩家——局部雾堤不得致盲整个相交 zone
         let (zone_min, _) = app.world().resource::<ZoneRegistry>().zones[0].bounds;
         let bystander = spawn_client_with_vision(
             &mut app,
@@ -579,13 +579,13 @@ mod tests {
 
         assert!(
             view_distance(&app, executor) < TEST_VIEW_DISTANCE,
-            "density 恰为 0.85（OPAQUE_FOG_DENSITY_THRESHOLD，>= 判定）应触发压缩，实际 vd={}",
+            "density 恰为 0.85（OPAQUE_FOG_DENSITY_THRESHOLD，>= 判定）且玩家在 AABB 内应触发压缩，实际 vd={}",
             view_distance(&app, executor)
         );
-        assert!(
-            view_distance(&app, bystander) < TEST_VIEW_DISTANCE,
-            "遮蔽按 zone-scoped 判定：同 zone 但在雾堤 AABB 外的玩家也应被压，实际 vd={}",
-            view_distance(&app, bystander)
+        assert_eq!(
+            view_distance(&app, bystander),
+            TEST_VIEW_DISTANCE,
+            "同 zone 但在雾堤 AABB 外的玩家不应被压（遮蔽按 AABB 包含判定，非 zone-wide）"
         );
     }
 
