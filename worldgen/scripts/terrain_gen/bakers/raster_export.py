@@ -31,7 +31,11 @@ from ..profiles.spawn_plain import spawn_tutorial_pois_for_zone
 from ..structures.ascension_pit import ascension_pits_for_zone
 from ..structures.corpse_mound import corpse_mounds_for_zone
 from ..structures.whale_fossil import fossil_bboxes_for_zone
-from ...poi_novice_selector import PoiType, build_novice_poi_manifest_payload
+from ...poi_novice_selector import (
+    PoiType,
+    build_novice_poi_manifest_payload,
+    novice_poi_selection_tile_ids,
+)
 from ..zones_export import bake_zone_qi
 
 BIOME_PALETTE = (
@@ -218,6 +222,11 @@ def export_rasters(
     if plan.bake_plan is None:
         raise ValueError("raster bake plan is required before export")
 
+    # Validate global novice metadata before deleting or writing any raster
+    # bytes. The required window is derived from the plan, so a --zone-filter
+    # field set cannot certify its own partial tile list as complete.
+    novice_poi_payload = build_novice_poi_manifest_payload(fields, plan=plan)
+
     output_dir = plan.bake_plan.output_dir
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -251,12 +260,7 @@ def export_rasters(
         )
 
     pois_payload = _collect_poi_payload(plan.blueprint_zones)
-    pois_payload.extend(
-        build_novice_poi_manifest_payload(
-            fields,
-            complete_selection_tile_ids=(tile.tile.tile_id for tile in fields.tiles),
-        )
-    )
+    pois_payload.extend(novice_poi_payload)
     zone_params_payload = _collect_zone_params(plan.blueprint_zones)
     ecology_payload = _collect_profile_ecology()
     global_decoration_palette = _collect_global_decoration_palette()
@@ -505,9 +509,22 @@ def regen_zone(
     }
     novice_payload: list[dict[str, object]] | None = None
     if novice_poi_fields is not None:
+        required_tile_ids = novice_poi_selection_tile_ids(plan)
+        missing_manifest_tile_ids = sorted(required_tile_ids - manifest_tile_ids)
+        if missing_manifest_tile_ids:
+            preview = ", ".join(missing_manifest_tile_ids[:8])
+            suffix = (
+                ""
+                if len(missing_manifest_tile_ids) <= 8
+                else f" (+{len(missing_manifest_tile_ids) - 8} more)"
+            )
+            raise ValueError(
+                "existing manifest does not cover the complete novice POI "
+                f"selection window; missing tile(s): {preview}{suffix}"
+            )
         novice_payload = build_novice_poi_manifest_payload(
             novice_poi_fields,
-            complete_selection_tile_ids=manifest_tile_ids,
+            plan=plan,
         )
 
     written_layer_names: set[str] = set()

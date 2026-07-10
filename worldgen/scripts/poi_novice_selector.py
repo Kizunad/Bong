@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Iterable
 import numpy as np
 
 if TYPE_CHECKING:
-    from .terrain_gen.fields import GeneratedFieldSet
+    from .terrain_gen.fields import GeneratedFieldSet, TerrainGenerationPlan
 
 
 class PoiType(StrEnum):
@@ -36,6 +36,10 @@ class Vec3:
 
     def as_tuple(self) -> tuple[float, float, float]:
         return (self.x, self.y, self.z)
+
+
+DEFAULT_NOVICE_POI_SPAWN_CENTER = Vec3(0.0, 70.0, 0.0)
+DEFAULT_NOVICE_POI_RADIUS = 1500
 
 
 @dataclass(frozen=True)
@@ -180,6 +184,47 @@ _RELAXATION_STEPS: tuple[tuple[int, float, str], ...] = (
 )
 
 
+def novice_poi_max_search_radius(radius: int = DEFAULT_NOVICE_POI_RADIUS) -> int:
+    """Return the farthest radius any novice selector relaxation may inspect."""
+    return max(
+        radius,
+        *(step_radius for step_radius, _margin, _label in _RELAXATION_STEPS),
+    )
+
+
+def novice_poi_selection_tile_ids(
+    plan: "TerrainGenerationPlan",
+    *,
+    spawn_center: Vec3 = DEFAULT_NOVICE_POI_SPAWN_CENTER,
+    radius: int = DEFAULT_NOVICE_POI_RADIUS,
+) -> set[str]:
+    """Derive the active tiles required by the complete novice search window.
+
+    This is intentionally derived from the generation plan rather than from a
+    caller-provided ``GeneratedFieldSet``.  A zone-filtered field set therefore
+    cannot certify its own partial tile list as complete.
+    """
+    search_radius = novice_poi_max_search_radius(radius)
+    radius_sq = float(search_radius * search_radius)
+    required: set[str] = set()
+    for tile in plan.tiles:
+        nearest_x = min(max(spawn_center.x, tile.min_x), tile.max_x)
+        nearest_z = min(max(spawn_center.z, tile.min_z), tile.max_z)
+        dx = nearest_x - spawn_center.x
+        dz = nearest_z - spawn_center.z
+        if dx * dx + dz * dz > radius_sq:
+            continue
+        if not any(
+            zone.bounds_xz.expanded(zone.worldgen.boundary.width).intersects(
+                tile.bounds
+            )
+            for zone in plan.blueprint_zones
+        ):
+            continue
+        required.add(tile.tile_id)
+    return required
+
+
 def select_poi_locations(
     spawn_center: Vec3,
     radius: int,
@@ -241,20 +286,23 @@ def select_poi_location_records(
 def build_novice_poi_manifest_payload(
     fields: "GeneratedFieldSet",
     *,
-    complete_selection_tile_ids: Iterable[str],
-    spawn_center: Vec3 = Vec3(0.0, 70.0, 0.0),
-    radius: int = 1500,
+    plan: "TerrainGenerationPlan",
+    spawn_center: Vec3 = DEFAULT_NOVICE_POI_SPAWN_CENTER,
+    radius: int = DEFAULT_NOVICE_POI_RADIUS,
     sample_stride: int = 8,
 ) -> list[dict[str, object]]:
     """Build the six global novice POIs from a complete selection field set.
 
-    ``complete_selection_tile_ids`` is the caller's authoritative tile window.
-    Full exports pass their complete synthesized tile set; incremental regen
-    passes the tile set from the already-baked manifest.  Requiring the caller
-    to name that window prevents a zone-filtered ``GeneratedFieldSet`` from
-    silently producing fixed fallbacks and replacing global spawn POIs.
+    The required tile window is independently derived from ``plan`` and the
+    selector's maximum relaxation radius.  This prevents a zone-filtered
+    ``GeneratedFieldSet`` from passing its own tile IDs and silently replacing
+    global spawn POIs with fixed fallbacks.
     """
-    required_tile_ids = set(complete_selection_tile_ids)
+    required_tile_ids = novice_poi_selection_tile_ids(
+        plan,
+        spawn_center=spawn_center,
+        radius=radius,
+    )
     if not required_tile_ids:
         raise ValueError(
             "novice POI selection requires a non-empty complete tile window"

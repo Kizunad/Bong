@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -10,9 +11,16 @@ from scripts.poi_novice_selector import (
     TerrainField,
     Vec3,
     build_novice_poi_manifest_payload,
+    novice_poi_selection_tile_ids,
     select_poi_location_records,
 )
-from scripts.terrain_gen.fields import GeneratedFieldSet, SurfacePalette, TileFieldBuffer, WorldTile
+from scripts.terrain_gen.fields import (
+    Bounds2D,
+    GeneratedFieldSet,
+    SurfacePalette,
+    TileFieldBuffer,
+    WorldTile,
+)
 
 
 def test_selector_picks_valid_qi_and_avoids_spawn_core_water_and_slope() -> None:
@@ -107,12 +115,29 @@ def _single_tile_fields() -> tuple[GeneratedFieldSet, WorldTile]:
     return fields, tile
 
 
+def _selection_plan(*tiles: WorldTile, include_zone: bool = True) -> SimpleNamespace:
+    if not include_zone:
+        return SimpleNamespace(tiles=list(tiles), blueprint_zones=[])
+    bounds = Bounds2D(
+        min_x=min(tile.min_x for tile in tiles),
+        max_x=max(tile.max_x for tile in tiles),
+        min_z=min(tile.min_z for tile in tiles),
+        max_z=max(tile.max_z for tile in tiles),
+    )
+    zone = SimpleNamespace(
+        bounds_xz=bounds,
+        worldgen=SimpleNamespace(boundary=SimpleNamespace(width=0)),
+    )
+    return SimpleNamespace(tiles=list(tiles), blueprint_zones=[zone])
+
+
 def test_manifest_payload_exports_six_novice_pois_with_selection_tags() -> None:
     fields, tile = _single_tile_fields()
+    plan = _selection_plan(tile)
 
     payload = build_novice_poi_manifest_payload(
         fields,
-        complete_selection_tile_ids={tile.tile_id},
+        plan=plan,
         spawn_center=Vec3(-300.0, 70.0, -300.0),
         radius=1500,
         sample_stride=8,
@@ -135,21 +160,53 @@ def test_manifest_payload_exports_six_novice_pois_with_selection_tags() -> None:
 
 def test_manifest_payload_rejects_incomplete_selection_tile_window() -> None:
     fields, tile = _single_tile_fields()
+    second_tile = WorldTile(
+        tile_x=1,
+        tile_z=0,
+        min_x=32,
+        max_x=63,
+        min_z=0,
+        max_z=31,
+    )
+    plan = _selection_plan(tile, second_tile)
 
     with pytest.raises(ValueError, match="complete novice POI selection window"):
         build_novice_poi_manifest_payload(
             fields,
-            complete_selection_tile_ids={tile.tile_id, "tile_1_0"},
+            plan=plan,
             sample_stride=8,
         )
 
 
 def test_manifest_payload_rejects_empty_selection_tile_window() -> None:
-    fields, _tile = _single_tile_fields()
+    fields, tile = _single_tile_fields()
+    plan = _selection_plan(tile, include_zone=False)
 
     with pytest.raises(ValueError, match="non-empty complete tile window"):
         build_novice_poi_manifest_payload(
             fields,
-            complete_selection_tile_ids=(),
+            plan=plan,
             sample_stride=8,
         )
+
+
+def test_selection_window_excludes_active_tiles_beyond_relaxed_radius() -> None:
+    near = WorldTile(
+        tile_x=0,
+        tile_z=0,
+        min_x=0,
+        max_x=31,
+        min_z=0,
+        max_z=31,
+    )
+    remote = WorldTile(
+        tile_x=100,
+        tile_z=100,
+        min_x=3200,
+        max_x=3231,
+        min_z=3200,
+        max_z=3231,
+    )
+    plan = _selection_plan(near, remote)
+
+    assert novice_poi_selection_tile_ids(plan) == {near.tile_id}
