@@ -299,6 +299,7 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
 
     private void onButtonClicked(String buttonId) {
         if (!closed) {
+            AgentUiStore.markAwaitingErrorClose(this);
             closed = true;
             sendResponse("button_click", Map.of("button_id", buttonId));
             closeWithoutResponse();

@@ -9,14 +9,21 @@ import org.jetbrains.annotations.Nullable;
  * 新请求覆盖旧 session（server close 信号先到时由 {@link #receiveClose} 清除）。
  */
 public final class AgentUiStore {
+    /** 本地按钮响应等待 server 错误 close 的最长窗口。 */
+    static final long PENDING_ERROR_CLOSE_TTL_MILLIS = 10_000L;
+
     private AgentUiStore() {}
 
     @Nullable
     private static volatile AgentUiScreen activeScreen = null;
+    @Nullable
+    private static volatile PendingErrorClose pendingErrorClose = null;
 
     /** 设置当前活跃 screen（替换旧的，旧的由调用方负责关闭）。 */
     public static void setActive(@Nullable AgentUiScreen screen) {
         activeScreen = screen;
+        // 新面板（或显式生命周期重置）开始后，旧 request 的迟到错误不得污染新生命周期。
+        pendingErrorClose = null;
     }
 
     /** 若给定 screen 仍是当前活跃面板，则清除；防止旧面板迟到关闭误清新面板。 */
@@ -41,20 +48,63 @@ public final class AgentUiStore {
      * @param reason    关闭原因（null / "" = Replaced；非空 = 错误）
      */
     public static void receiveClose(String requestId, @Nullable String reason) {
+        receiveCloseAt(requestId, reason, System.currentTimeMillis());
+    }
+
+    static void receiveCloseAt(String requestId, @Nullable String reason, long nowMillis) {
+        expirePendingErrorClose(nowMillis);
         AgentUiScreen screen = activeScreen;
         if (screen != null && screen.requestId().equals(requestId)) {
             activeScreen = null;
+            clearPendingErrorCloseIfMatch(requestId);
             screen.receiveCloseSignal(reason);
             return;
         }
         if (screen == null) {
-            // 按钮点击会先本地关屏；server 的错误 close 随后到达时仍须给玩家反馈。
-            AgentUiCloseFeedback.showForReason(reason);
+            PendingErrorClose pending = pendingErrorClose;
+            if (pending != null && pending.requestId().equals(requestId)) {
+                // 按钮点击会先本地关屏；只允许匹配且未过期的 server close 消费一次。
+                pendingErrorClose = null;
+                AgentUiCloseFeedback.showForReasonAt(reason, Math.max(0L, nowMillis));
+            }
+        }
+    }
+
+    /** 按钮响应已发出且 screen 将本地关闭，登记仍待 server 错误终态确认的 request。 */
+    static void markAwaitingErrorClose(AgentUiScreen screen) {
+        markAwaitingErrorCloseAt(screen, System.currentTimeMillis());
+    }
+
+    static void markAwaitingErrorCloseAt(AgentUiScreen screen, long nowMillis) {
+        if (activeScreen != screen) {
+            return;
+        }
+        long normalizedNow = Math.max(0L, nowMillis);
+        long expiresAt = normalizedNow > Long.MAX_VALUE - PENDING_ERROR_CLOSE_TTL_MILLIS
+            ? Long.MAX_VALUE
+            : normalizedNow + PENDING_ERROR_CLOSE_TTL_MILLIS;
+        pendingErrorClose = new PendingErrorClose(screen.requestId(), expiresAt);
+    }
+
+    private static void expirePendingErrorClose(long nowMillis) {
+        PendingErrorClose pending = pendingErrorClose;
+        if (pending != null && Math.max(0L, nowMillis) >= pending.expiresAtMillis()) {
+            pendingErrorClose = null;
+        }
+    }
+
+    private static void clearPendingErrorCloseIfMatch(String requestId) {
+        PendingErrorClose pending = pendingErrorClose;
+        if (pending != null && pending.requestId().equals(requestId)) {
+            pendingErrorClose = null;
         }
     }
 
     /** 清除存储（用于测试 / 连接断开时清理）。 */
     public static void clear() {
         activeScreen = null;
+        pendingErrorClose = null;
     }
+
+    private record PendingErrorClose(String requestId, long expiresAtMillis) {}
 }
