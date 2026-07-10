@@ -23,12 +23,14 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 - 启动时读取并保持三个独立参数：实施数量 `N`、实施模型、validator 模型。用户未指定时才默认 `N=2`、实施模型 `gpt-5.6-sol-xhigh`、validator 模型 `gpt-5.6-sol-xhigh`；不得用默认值覆盖用户输入。
 - 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 worktree 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
 - 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
+- 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，active implementation 必须满足 `min(N, platform_total - 2)`；容量不可查时保守按 2 路实施。超出有效实施并发的任务进入 FIFO，不 spawn。
+- validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干用平台容量元数据与 `collaboration.list_agents` 对拍 live agent。容量不可查时 validator 一次只授权 1 个，禁止用逻辑 token 假装存在实际执行槽。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
 - 所有运行者执行 `df -h /`。磁盘超过 90% 时，只删除本轮已闭环 worktree 的私有可再生生成物。
 - **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR`**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 也只用于该前提下的故障恢复。
 
-### 主干唯一 token 准入
+### 主干唯一 token 准入与 collaboration 协议
 
 主干是资源状态表、等待队列和授权消息的**唯一持有者**，串行处理申请，禁止 subagent 自行计数或先做后报：
 
@@ -37,20 +39,27 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 | `compile_token` | 2 | 进入任何编译/完整门禁前至该轮命令结束 | token id、task、agent、grant time、phase |
 | `validator_token` | 3 | spawn validator 前至 validator 已关闭 | token id、task、agent、validator、target SHA、grant time |
 
-1. subagent 先向主干申请对应 token，进入 FIFO 队列；**未收到主干包含 token id 的明确授权，禁止进入编译门禁或 spawn validator**。
-2. 主干只在当前持有数小于容量、申请 task/agent 仍存活且 phase 合法时原子地“登记持有者 → 发授权”；不得先发授权后记表。
-3. `compile_token` 在该轮门禁 PASS、FAIL、超时、异常或取消时都立即释放；需要返工后重跑时重新排队申请。
-4. `validator_token` 在 validator PASS、FAIL、超时、异常或取消后，先关闭 validator，再释放；spawn 失败也立即释放。新 HEAD 的新 validator 必须重新申请。
-5. agent 崩溃、任务 BLOCKED/CLOSED、用户停止、worktree 清理前，主干核对并取消该 task 的排队项，回收全部持有 token。每次补位/唤醒都对拍状态表持有者与存活 agent，发现悬挂 token 先回收再授权。
+使用当前真实 collaboration API 完成可恢复握手：
+
+1. 实施 agent 调用 `collaboration.send_message` 给主干发送单行结构化消息：`TOKEN_REQUEST{"request_id":"<uuid>","type":"compile|validator","task":"<id>","agent":"<canonical agent id>","phase":"<phase>","head":"<sha>","checkpoint":"<resume data>"}`，随后调用 `collaboration.wait_agent` 挂起等待；**未收到有效 grant 禁止编译或 spawn validator**。
+2. 主干收到请求后按 `request_id` 幂等去重，落唯一状态表、排入对应 FIFO。容量与平台实际槽位都满足时，主干先原子登记 token 持有者，再用 `collaboration.send_message` 返回 `TOKEN_GRANTED{"request_id":"...","token_id":"...","type":"...","task":"...","phase":"...","head":"..."}`。
+3. 实施 agent 核对 request/task/phase/head 后用 `collaboration.send_message` 返回 `TOKEN_ACK{"request_id":"...","token_id":"...","head":"..."}`，ACK 后 token 才可使用。重复 request 返回同一队列状态或同一 grant；重复 ACK 幂等。
+4. agent 若已结束或 idle、普通 `send_message` 无法触发续跑，主干使用 `collaboration.followup_task`，把持久化 `checkpoint + request_id + token_id + phase + head` 发送给**同一任务 agent**恢复；恢复后仍必须 ACK。禁止另开无状态 agent 猜测续点。
+5. 完成、FAIL、超时、异常时，实施 agent发送 `TOKEN_RELEASED{"request_id":"...","token_id":"...","reason":"PASS|FAIL|TIMEOUT|ERROR","checkpoint":"...","head":"..."}`；排队取消或 grant 失效发送 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`。
+6. grant 绑定 request_id、task、agent、phase、head。HEAD/phase 已变、token 已回收、非 FIFO 当前授权或 ACK 前过期的 grant 都是 stale：禁止使用，发送 CANCELLED 后重新申请。
+7. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用 `collaboration.list_agents` 对拍 holder；agent 崩溃/失联时先尝试 `followup_task` 按 checkpoint 恢复，确定不可恢复才回收悬挂 token并重新排队任务。
+8. `compile_token` 在该轮门禁任一出口释放；`validator_token` 在 validator 关闭后任一出口释放，spawn 失败也释放。任务 BLOCKED/CLOSED、用户停止或 worktree 清理前，主干取消排队项并核验无悬挂 token。
+
+从仓库根运行 `python3 skills/bugfix/scripts/state_machine_dry_run.py` 验证这套状态机。该 dry-run 不调用 GitHub 写 API，覆盖容量/FIFO、消息握手、异常回收、claim/main-sync/verdict 与持续等待契约；修改资源协议时必须同步更新并运行。
 
 ## 启动上下文与任务表
 
 在任何 skeleton 四查、claim 或 promotion 之前，主干与实施/返工 subagent 都必须无条件完整读取 `docs/CLAUDE.md`；根 `AGENTS.md`、`CLAUDE.md` 与 `docs/plans-skeleton/README.md` 同时读取，但不能替代 `docs/CLAUDE.md`。worktree 建立后在任务面再次读取这些文件；涉及 gameplay/真元时额外读取 `docs/worldview.md`。
 
-维护最小任务表：
+维护唯一任务/资源状态表；以下字段不得省略：
 
-| skeleton | agent | worktree | branch | phase | validator SHA | PR | review/e2e |
-|---|---|---|---|---|---|---|---|
+| skeleton | agent | worktree | branch | phase | token_type | request_id | token_id | queue_pos | holder | request_phase | requested_at | granted_at | ack | release_reason | checkpoint | head | validator SHA | PR | review/e2e |
+|---|---|---|---|---|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|---|
 
 phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → VALIDATING → GATING → REBASING → ARCHIVING → PR_OPEN → GATES → CLOSED`，或 `BLOCKED`。
 
@@ -64,7 +73,7 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 ## 等待协议
 
 - 等待新 skeleton、空闲编译槽、validator 槽、`/review`、CodeRabbit 或 e2e 时，使用 `ScheduleWakeup delaySeconds=1200`。每次唤醒后刷新任务、PR/check 状态并巡检孤儿 claim，再决定补位或继续等待。
-- 同一等待对象连续最多 3 轮（约 60 分钟）无进展时，保留证据并停交人工；其它可运行任务继续调度。
+- 同一等待对象连续 3 轮（约 60 分钟）无进展时升级告警、记录证据并继续 `ScheduleWakeup`；不得因此结束 loop。只有用户明确停止，或出现确定性且必须由用户选择的决策点，才暂停等待输入。
 - 禁止 shell `sleep` loop、短周期 GitHub 查询和持续占用 agent 的 busy-poll。Codex/harness 没有 `ScheduleWakeup` 时，使用产品提供的 wait/monitor 机制，同样采用约 1200 秒节奏，不用 shell 轮询替代。
 
 ## 实施 subagent 强制状态机
