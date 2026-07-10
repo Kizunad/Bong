@@ -150,6 +150,35 @@ bash scripts/smoke-test.sh
 
 其他 `docs/` 文件 / `CLAUDE.md` / `worldview.md` 严禁自动改——遇到必须改的情况停下交人工。
 
+## BugFix 工作流（多 agent 并行修复 bughunt skeleton）
+
+bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费（feature plan 走 `/consume-plan`，别混）。形态：**1 个主干调度 agent + N 个并行修复 subagent**——N 和 subagent 模型由用户启动时指定（原型默认 2 个，惯例 gpt-5.6 sol xhigh）。整体 loop 直到用户明确叫停：配额接近阈值只暂停（`ScheduleWakeup` 等 reset），**不自行终止**。
+
+### 主干（调度）职责——只调度，不动代码
+
+主干保持上下文干净，只做：分派 skeleton、等待、验收关闭 subagent、清理已闭环 worktree 的生成目录、派发 review 返工、补齐并发。**不 push、不 merge、不开 PR、不直接修代码。**
+
+- 任务清单以 **origin/main** 为准：`git fetch` 后读 skeleton 列表。**防重的权威机制是原子 claim 锁，唯一创建主体是 subagent**（执行命令见 Subagent step 1，主干只派任务、绝不抢先创建 claim ref——两个角色都建 ref 会让正常派发必得 422 死锁）。普通 `git push` 没有 create-only 语义（两会话同 base 时第二个 push 是 no-op 也"成功"），不得用作互斥依据；查询式检查有 TOCTOU 竞态。派发前**四查**只作辅助诊断：① skeleton 在 origin/main 上仍存在 ② 无同名 active plan ③ 目标 symbol 未被已 merge 的修复覆盖 ④ 无同名远端分支 / 开放 PR（`gh pr list --state open --search "plan-X"`）。占用持续到对应 PR merge/close 才解除（promotion 只发生在 subagent 分支上，PR 未合并时 origin/main 依旧满足前三查）
+- **一个 skeleton = 一个 subagent = 一个 worktree = 一个 PR**（对齐「一个 PR 只动一个 plan」）
+- 编译型 worktree 并发 **≤2**（3 个并行 cargo 编译历史上 OOM + 塞盘）；validator/验证类 agent 并发 **≤3**。共享 `CARGO_TARGET_DIR` 时删过 worktree 后若报 `No such file` → `cargo clean -p valence_generated`（这是故障修复手段，须确认无并行编译在跑时才执行）
+- subagent 回报只带结论（PR 链接 / commit hash / validator PASS 证据），不回灌大段 diff/日志进主干上下文
+- subagent 闭环（PR 开出 + e2e 绿）后**必须完整清理再补位**：关闭 agent → `git worktree unlock` + `remove` → **`git branch -D bugfix/plan-X` 删本地分支**（顺序不能反：分支被 worktree 检出时删不掉）→ 删 worktree **私有**生成物（**共享 `CARGO_TARGET_DIR` 严禁任务级清理**——并行任务还在用，共享缓存只能由主干在确认全部编译停止后统一清）→ `git worktree prune`。本地只留 in-flight 的 worktree/分支，历史上残留 worktree + 缓存曾塞掉上百 G。远端分支不动（返工/merge 还要用），PR merge 后由 squash-merge 删或 `git push origin --delete`
+- **claim 锁的释放也归主干**：PR merge 后核验远端 claim 分支确已删除（不依赖仓库自动删分支设置，没删就 `git push origin --delete bugfix/plan-X`）；PR close 未合并且确认放弃时，先核验无开放 PR、无在跑 subagent，再删 ref 让任务重新开放——锁不能靠"大概会自动清"悬着。**孤儿锁回收**：claim 成功但 PR 尚未创建时 subagent 异常退出/失联，主干确认无开放 PR、无存活 subagent、远端无需保留的提交后删 claim ref 重开任务；每轮补位时顺带巡检一遍孤儿锁。claim ref 的创建/删除是**锁运维**，是主干「不 push」禁令的唯一例外（该禁令约束的是提交/分支内容，不是锁 ref 生命周期管理）
+- **review 返工也是主干的调度责任**：主干盯 in-flight PR 的 `/review` / CodeRabbit 结果，出现修改意见时派**返工 subagent** 从 PR 分支重建 worktree（原 worktree 已清理无妨，分支在远端）。返工序列（幂等，**不得重复 promotion / Finish Evidence 追加 / git mv 归档**）：修代码 → validator（step 4）→ 按栈门禁（step 5）→ fetch/merge 最新主线（step 6，带进变更则复验）→ 结论或证据变化时只**原地更新**已归档 plan 的 Finish Evidence → push 同一远端分支 → 等新 HEAD 的 e2e → **重发 `/review` 评论**（引擎对后续提交不自动跑）——review 意见永远有责任主体，不悬空
+
+### Subagent（修复）流程
+
+1. **Claim + 开独立 worktree/branch**：subagent 是 claim ref 的**唯一创建主体**。分支名固定 `bugfix/<plan-basename>`，认领 = create-ref API 原子创建远端分支：`gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/bugfix/plan-X" -f sha="$(git rev-parse origin/main)"`——**201 = 认领到手**；**422 先甄别再判占用**（查响应体 / `git ls-remote` 确认同名 ref 确实存在才算被占、回报主干换任务；其他原因的 422 = 流程错误，上报诊断而不是换任务）。认领成功后 `git fetch origin bugfix/plan-X` 同步远端引用，再 **`git worktree add --lock`**（一步完成创建 + 锁定，消除 add→lock 之间被外部 orchestrator prune 的竞态；本地分支显式跟踪该 ref，核验 worktree HEAD = claim SHA）；worktree 建立失败 → 删刚创建的 claim ref 回滚，不留孤儿锁
+2. **Promotion**：`git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，单独中文 commit（本工作流内的 promotion 由 subagent 在自己分支内完成，是「骨架 → Active 人工流转」的授权例外）
+3. **第一性原理验真**：不信 skeleton 的结论，自己读代码 / 写复现证明是不是真 bug
+   - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
+   - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
+4. **对抗验证（强制闭环门）**：修复完成后 subagent **必须自己**再开一个**无上下文、read-only、第一性原理**的 validator agent 对抗审查。启动时**显式传入 worktree 绝对路径 + 待审 HEAD SHA**，validator 第一步回报 `git rev-parse HEAD` 与目标对拍，PASS/FAIL 结论必须携带该 SHA（防对错误代码的假 PASS）。validator 只输出 PASS/FAIL + 理由，不改代码；**出结论即关闭**——PASS / FAIL / 超时 / 异常四条路径都要关，不留活 validator 占并发槽。FAIL → 返工 → **对新 HEAD 开新的无上下文 validator 重验**，循环直到 PASS 才算闭环；此后任何 HEAD 变化（返工、合并主线）都必须对新 SHA 重验
+5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；client：`cd client && ./gradlew test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；worldgen：`bash scripts/dev-reload.sh`（仓库根目录执行，`set -euo pipefail` 任一步失败即非零退出；[1/4] regen + [2/4] raster 后验走 `scripts.terrain_gen.harness.raster_check.validate_rasters`）。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
+6. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或 merge 触及修复相关文件 → **回 step 4 重跑 validator** 直到 PASS
+7. **归档**：把 plan 各阶段状态更新为 `✅ YYYY-MM-DD` + 补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3）——归档前置与三态流转契约一致（全部阶段 ✅ 且 Finish Evidence 齐），然后独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
+8. **Push + 开 PR + 触发 review**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 validator 模型），随后 `gh pr comment <PR> --body "/review"` **显式发独立评论触发首轮审查**（不依赖自动触发假设；引擎就算自动跑了，重复评论也无害）。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
+
 ## Testing — 饱和化测试
 
 **核心原则**：测试要把"目标行为"完全锁住，让任何回归都立刻撞红。我不接受"smoke 过了就行"或"happy path 跑通"的节流——目标没被测试稳稳锁住，就等于没写。
@@ -182,6 +211,7 @@ bash scripts/smoke-test.sh
 
 - commit message **中文**，匹配仓库近 30 提交风格；每个逻辑单元一个 atomic commit，不堆积巨型 commit
 - 归档 commit 形如：`归档 plan-<name>：<一句话总结>`
+- **模型署名（供后续统计，必填）**：agent 产出的每个 commit 末尾必须带 trailer 注明**真实执行模型**：`Model: <精确模型 id>`（如 `claude-fable-5` / `claude-opus-4-8` / `gpt-5.6-sol-xhigh`），`Co-Authored-By` 照旧保留。PR body 末尾同样注明主导模型及参与模型（validator / reviewer 用了不同模型也逐个列出）。不许漏署，不许写泛称 "AI" / "agent"。统计入口：`git log --format='%(trailers:key=Model,valueonly)'`
 
 ## 世界观正典硬锚（写代码/schema/命名前先对，别凭"修仙常识"）
 
