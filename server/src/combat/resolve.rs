@@ -271,6 +271,10 @@ pub fn resolve_attack_intents(
     // 同款——大量既有单测未插入这两个资源，缺失时 `body_part_multipliers` 优雅退化到
     // `body_plan::humanoid_plan_static()`（生产环境 `body_plan::register()` 恒装载，
     // 这条退化分支不会在真实部署触发）。
+    // plan-race-system-v1 P0 review 修复（BLOCKING-2）：`mutation_states`（第 16 位）
+    // 是 dandao `mutation_slot_mapping` 的真实消费点——顶层新增一个 system param 会撞
+    // `resolve_attack_intents` 自身函数元数的 16 上限（实测：加了会直接编译失败,
+    // `SystemParamFunction` 未对 17 元实现），只能继续塞进这个 bucket tuple。
     weapon_break: (
         Query<&mut Weapon>,
         EventWriter<WeaponBroken>,
@@ -287,6 +291,7 @@ pub fn resolve_attack_intents(
         Query<Option<&DeadMeridianArmor>>,
         Option<Res<BodyPlanRegistry>>,
         Option<Res<RaceRegistry>>,
+        Query<&crate::dandao::mutation::MutationState>,
     ),
 ) {
     let (
@@ -305,6 +310,7 @@ pub fn resolve_attack_intents(
         dead_armor_q,
         body_plan_registry,
         race_registry,
+        mutation_states,
     ) = weapon_break;
 
     for intent in intents.read() {
@@ -1460,8 +1466,19 @@ pub fn resolve_attack_intents(
                 }
             }
         }
+        // plan-race-system-v1 P0 review 修复（BLOCKING-2）—— dandao 变异（如脊突
+        // SpineSpurs 的背部 DamageReduction）经 `mutation_slot_mapping` 解析出的
+        // 目标实体部位，与丹药/状态效果驱动的 `body_part_damage_multiplier` 同一处
+        // 叠乘生效；`target_body_plan` 已在本轮命中判定时按目标实体解析（见上方
+        // "raycast_humanoid 命中几何按目标实体分派"注释）。
+        let defender_mutation_state = mutation_states.get(target_entity).ok();
         let pill_part_multiplier =
-            body_part_damage_multiplier(defender_status_effects, hit_probe.body_part);
+            body_part_damage_multiplier(defender_status_effects, hit_probe.body_part)
+                * crate::dandao::mutation::mutation_damage_multiplier_for_part(
+                    defender_mutation_state,
+                    target_body_plan,
+                    hit_probe.body_part,
+                );
         if (pill_part_multiplier - 1.0).abs() > f32::EPSILON {
             wound.severity *= pill_part_multiplier;
             wound.bleeding_per_sec *= pill_part_multiplier;
@@ -10913,5 +10930,130 @@ mod tests {
                  实际 entries 为空（说明 Abdomen 命中被误判为免疫）"
             );
         }
+    }
+
+    // ── plan-race-system-v1 P0 review 修复（BLOCKING-2）：dandao 变异部位减伤真实
+    // 消费链端到端测试——不止单元测试锁住 `mutation_damage_multiplier_for_part` 这个
+    // 孤立函数，而是证明 `resolve_attack_intents` 真的按 `mutation_slot_mapping` 解析
+    // 出的部位对命中伤害生效 ─────────────────────────────────────────────────────
+
+    /// 攻方在 `[0,64,0]`、目标在 `[1,64,0]`、无自定义 Look 时 raycast 默认正面近距离
+    /// 命中 Chest（`dead_armor_multi_region_set_chest_is_blocked` 等既有测试已锁定
+    /// 这条几何前提），故本测试把变异挂在 `BodySlot::Torso`（humanoid.json 映射到
+    /// legacy `Chest`）以获得确定性命中部位。
+    fn run_chest_hit_and_read_severity(
+        mutation_state: Option<crate::dandao::mutation::MutationState>,
+    ) -> f32 {
+        let mut app = make_arm_wound_app();
+        let attacker = spawn_player(
+            &mut app,
+            "MutDmgAtk",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "MutDmgTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        if let Some(state) = mutation_state {
+            app.world_mut().entity_mut(target).insert(state);
+        }
+
+        send_qi_attack(&mut app, attacker, target, 7700);
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(
+            events.len(),
+            1,
+            "期望本次攻击恰好产生 1 个 CombatEvent；实际 {}",
+            events.len()
+        );
+        assert_eq!(
+            events[0].body_part,
+            BodyPart::Chest,
+            "测试前提：正面近距离攻击必须命中 Chest（否则本用例的 BodySlot::Torso 挂载点\
+             对不上命中部位，断言会失去意义）；实际命中 {:?}",
+            events[0].body_part
+        );
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target must retain Wounds component");
+        wounds
+            .entries
+            .iter()
+            .find(|w| w.location == BodyPart::Chest)
+            .expect("命中 Chest 必须写入一条 Chest 位置的 Wound")
+            .severity
+    }
+
+    #[test]
+    fn mutation_damage_reduction_reduces_matching_hit_body_part_severity_end_to_end() {
+        use crate::dandao::components::MutationStage;
+        use crate::dandao::mutation::{ActiveMutation, MutationKind, MutationState};
+
+        let baseline_severity = run_chest_hit_and_read_severity(None);
+        assert!(
+            baseline_severity > 0.0,
+            "测试前提：无变异时命中 Chest 必须造成非零伤害才能观测折算比例，实际 {baseline_severity}"
+        );
+
+        let mutated_state = MutationState {
+            stage: MutationStage::Heavy,
+            slots: vec![ActiveMutation {
+                kind: MutationKind::SpineSpurs, // effect() = DamageReduction { reduction_pct: 0.20, .. }
+                slot: crate::dandao::mutation::BodySlot::Torso, // humanoid.json 映射到 chest
+                level: 1,
+                acquired_tick: 0,
+            }],
+            meridian_penalty: 0.0,
+        };
+        let mutated_severity = run_chest_hit_and_read_severity(Some(mutated_state));
+
+        let ratio = mutated_severity / baseline_severity;
+        assert!(
+            (ratio - 0.80).abs() < 0.01,
+            "目标挂载 DamageReduction(20%) 变异（BodySlot::Torso 经 mutation_slot_mapping \
+             解析为 legacy Chest）后，命中 Chest 的伤害应打八折，实际比例 {ratio:.4}\
+             （baseline={baseline_severity}, mutated={mutated_severity}）——若失败说明 \
+             `resolve_attack_intents` 未真正消费 mutation_slot_mapping 解析结果"
+        );
+    }
+
+    #[test]
+    fn mutation_damage_reduction_does_not_affect_non_matching_hit_body_part_end_to_end() {
+        use crate::dandao::components::MutationStage;
+        use crate::dandao::mutation::{ActiveMutation, MutationKind, MutationState};
+
+        // 变异挂在 BodySlot::Back（映射到 legacy Back），但本测试的攻击几何恒定命中
+        // Chest——命中部位与变异挂载部位不一致时，伤害不应受任何影响。
+        let baseline_severity = run_chest_hit_and_read_severity(None);
+        let mismatched_state = MutationState {
+            stage: MutationStage::Heavy,
+            slots: vec![ActiveMutation {
+                kind: MutationKind::SpineSpurs,
+                slot: crate::dandao::mutation::BodySlot::Back,
+                level: 1,
+                acquired_tick: 0,
+            }],
+            meridian_penalty: 0.0,
+        };
+        let mismatched_severity = run_chest_hit_and_read_severity(Some(mismatched_state));
+
+        assert!(
+            (mismatched_severity - baseline_severity).abs() < 1e-4,
+            "变异挂载部位（Back）与命中部位（Chest）不一致时不应产生任何折算，\
+             baseline={baseline_severity} mismatched={mismatched_severity}"
+        );
     }
 }
