@@ -245,12 +245,7 @@ impl PoiNoviceLoader {
         let Some(providers) = providers else {
             return;
         };
-        let sites = providers
-            .overworld
-            .pois()
-            .iter()
-            .filter_map(site_from_manifest_poi)
-            .collect::<Vec<_>>();
+        let sites = novice_sites_from_manifest(providers.overworld.pois());
         for site in &sites {
             spawned.send(PoiSpawned { site: site.clone() });
         }
@@ -272,6 +267,10 @@ impl PoiNoviceLoader {
             );
         }
     }
+}
+
+fn novice_sites_from_manifest(pois: &[crate::world::terrain::Poi]) -> Vec<PoiNoviceSite> {
+    pois.iter().filter_map(site_from_manifest_poi).collect()
 }
 
 pub fn register(app: &mut App) {
@@ -749,6 +748,53 @@ mod tests {
         assert_eq!(site.kind, PoiNoviceKind::ForgeStation);
         assert_eq!(site.selection_strategy, "strict_radius_1500");
         assert_eq!(site.pos_xyz, [304.0, 71.0, 208.0]);
+    }
+
+    #[test]
+    fn loader_mapping_keeps_regenerated_manifest_coordinates_exact() {
+        let mut forge = novice_poi();
+        forge.pos_xyz = [224.0, 71.0, -240.0];
+
+        let mut alchemy = novice_poi();
+        alchemy.kind = "novice_alchemy_furnace".to_string();
+        alchemy.name = "凡铁丹炉".to_string();
+        alchemy.pos_xyz = [0.0, 72.0, -200.0];
+        alchemy.tags[1] = "poi_type:alchemy_furnace".to_string();
+
+        let mut scroll = novice_poi();
+        scroll.kind = "novice_scroll_hidden".to_string();
+        scroll.name = "残卷藏匿点".to_string();
+        scroll.pos_xyz = [176.0, 72.0, -96.0];
+        scroll.tags[1] = "poi_type:scroll_hidden".to_string();
+
+        let sites = novice_sites_from_manifest(&[forge, alchemy, scroll]);
+        let mut registry = PoiNoviceRegistry::default();
+        registry.replace_all(sites);
+
+        assert_eq!(
+            registry
+                .by_kind(PoiNoviceKind::ForgeStation)
+                .next()
+                .expect("forge site")
+                .pos_xyz,
+            [224.0, 71.0, -240.0]
+        );
+        assert_eq!(
+            registry
+                .by_kind(PoiNoviceKind::AlchemyFurnace)
+                .next()
+                .expect("alchemy site")
+                .pos_xyz,
+            [0.0, 72.0, -200.0]
+        );
+        assert_eq!(
+            registry
+                .by_kind(PoiNoviceKind::ScrollHidden)
+                .next()
+                .expect("scroll site")
+                .pos_xyz,
+            [176.0, 72.0, -96.0]
+        );
     }
 
     #[test]
