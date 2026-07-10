@@ -1,0 +1,439 @@
+//! plan-race-system-v1 P0 — 通用身体构型数据模型。
+//!
+//! `BodyPlan` 是「部位 / 命中几何 / 装备槽 / 经脉档案」的数据驱动真源，替代当前散落在
+//! `combat::components::BodyPart`（8 段人形 unit enum）+ `combat::raycast`（唯一 1.8m
+//! 直立 AABB）+ `combat::resolve::body_part_multipliers`（8 分支 match）里的硬编码人形
+//! 假设。P0 只交付类型 + `humanoid.json` 与现状 bit-for-bit 对齐的数据；`combat::*` 消费点
+//! 改造（`body_part_multipliers` / `classify_body_part` / `standing_humanoid_aabb` /
+//! `carrier.rs` 投射物分支）在后续阶段接入，本文件不改动 `combat` 模块任何行为。
+
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+use valence::prelude::{bevy_ecs, Component};
+
+use crate::dandao::mutation::BodySlot;
+use crate::schema::inventory::EquipSlotV1;
+
+/// `BodyPlanRegistry` 主键——`server/assets/body_plans/plans/*.json` 每个文件的 `id` 字段。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BodyPlanId(pub String);
+
+impl BodyPlanId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for BodyPlanId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for BodyPlanId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl std::fmt::Display for BodyPlanId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// 部位 id（string，取代 `combat::components::BodyPart` unit enum 的封闭 8 段假设）。
+/// humanoid plan 沿用现有 wire 字符串（`head`/`chest`/`back`/`abdomen`/`arm_l`/`arm_r`/
+/// `leg_l`/`leg_r`，见 `network::cast_emit::parse_wound_heal_body_part`），确保 P0b 接入
+/// 消费点时无需重新定义映射表。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BodyPartId(pub String);
+
+impl BodyPartId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for BodyPartId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for BodyPartId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl std::fmt::Display for BodyPartId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// 种族 id（string，`server/assets/body_plans/races.json` 的 `races[].id`）。
+/// `Cultivation.race` 默认值、`IntrinsicRace` 组件负载均为本类型。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RaceId(pub String);
+
+impl RaceId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for RaceId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for RaceId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl std::fmt::Display for RaceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// 部位受击后果语义（决议 §P0）——枚举化现有「腿伤减速 / 头伤眩晕 / 臂伤六维」的隐性分类，
+/// 非人形部位挂同一枚举（如鲸尾鳍 = `Locomotion`）。
+///
+/// - `Locomotion`：移动相关（人形 `leg_l`/`leg_r`，对应 `movement::leg_wound`）。
+/// - `Sensory`：感知相关（人形 `head`，眩晕/视觉减益）。
+/// - `Manipulator { main_hand }`：持械/操作相关（人形 `arm_l`/`arm_r`，对应
+///   `combat::arm_wound`；`main_hand` 标记是否为主手——人形 `MAIN_ARM = ArmR`，见
+///   `combat/arm_wound.rs:97`）。
+/// - `Core`：躯干核心，无肢体级功能性后果（人形 `chest`/`back`/`abdomen`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PartConsequence {
+    Locomotion,
+    Sensory,
+    Manipulator { main_hand: bool },
+    Core,
+}
+
+/// 单个部位的伤害/污染/流血倍率 + 功能性后果标签。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPartDef {
+    pub id: BodyPartId,
+    pub damage_mul: f32,
+    pub contam_mul: f32,
+    pub bleed_mul: f32,
+    pub consequence: PartConsequence,
+}
+
+/// `HeightBands` 模式的直立包围盒规格——`combat::raycast::standing_humanoid_aabb` 的
+/// 参数化（`half_width`/`height` 对应现 `STANDING_HALF_WIDTH=0.3`/`STANDING_HEIGHT=1.8`）。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StandingAabbSpec {
+    pub half_width: f64,
+    pub height: f64,
+}
+
+/// 单条高度带的部位判定规则（见 `body_plan::geometry::classify_height_bands`）。
+///
+/// - `Single`：无论 lateral 为何值，恒定指派该部位（人形 `head`/`abdomen`）。
+/// - `LateralSplitWithCenter`：`|lateral| > HeightBands.lateral_threshold` 时按符号分
+///   `left`/`right`，否则落 `center`——唯一消费顶层 `lateral_threshold` 的分支（人形
+///   胸/臂分支，对应现 `ARM_LATERAL_THRESHOLD`）。
+/// - `LateralSplit`：任意非零 lateral 立即按符号分 `left`/`right`，无阈值、无 center
+///   兜底（人形腿分支——现 `classify_body_part` 的 `else` 分支没有独立阈值）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HeightBandAssignment {
+    Single {
+        part: BodyPartId,
+    },
+    LateralSplitWithCenter {
+        left: BodyPartId,
+        right: BodyPartId,
+        center: BodyPartId,
+    },
+    LateralSplit {
+        left: BodyPartId,
+        right: BodyPartId,
+    },
+}
+
+impl HeightBandAssignment {
+    /// 本条 assignment 引用到的全部部位 id（供 `validate_body_plan` 悬空检测使用）。
+    pub fn referenced_part_ids(&self) -> Vec<&BodyPartId> {
+        match self {
+            HeightBandAssignment::Single { part } => vec![part],
+            HeightBandAssignment::LateralSplitWithCenter {
+                left,
+                right,
+                center,
+            } => {
+                vec![left, right, center]
+            }
+            HeightBandAssignment::LateralSplit { left, right } => vec![left, right],
+        }
+    }
+}
+
+/// 单条高度带：`rel_y`（命中点相对脚底高度 / 身高，clamp 到 `[0,1]`）严格大于
+/// `min_rel_y` 时命中本带（`bands` 数组要求按 `min_rel_y` 严格降序排列，从上到下
+/// 第一个匹配的带生效——`validate_body_plan` 校验排序与全覆盖，见 `validate.rs`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeightBand {
+    pub min_rel_y: f64,
+    pub assignment: HeightBandAssignment,
+}
+
+/// `PartBoxes` 模式下单个部位的局部系包围盒。坐标系：原点 = 实体位置，+Z 沿实体 yaw
+/// 正前（P0 只支持 yaw，不做 pitch/roll，见 `body_plan::geometry`）。`priority` 用于
+/// 等距命中时的稳定裁决（数值越大优先级越高；同 priority 再按声明顺序稳定裁决）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartBox {
+    pub part_id: BodyPartId,
+    pub offset: [f64; 3],
+    pub half_extents: [f64; 3],
+    pub priority: i32,
+}
+
+/// 命中几何双模式：`HeightBands`（人形，`classify_body_part` 高度带 + 横向阈值的参数化）
+/// / `PartBoxes`（非人形，逐部位局部盒——单一直立 AABB + 人体比例高度带表达不了飞鲸横长
+/// 构型，见 plan §P0）。
+///
+/// 注：`PartBoxes` 用具名字段 `boxes` 而非 plan 原文的元组 `PartBoxes(Vec<PartBox>)`——
+/// serde internally-tagged 枚举（`#[serde(tag = "mode")]`）不支持"newtype 包裹序列"的
+/// 变体形状（序列化目标是 JSON 数组，无法与外层 tag 合并进同一个 JSON 对象），具名字段
+/// 包一层是等价的最小改动。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HitGeometry {
+    HeightBands {
+        aabb: StandingAabbSpec,
+        bands: Vec<HeightBand>,
+        lateral_threshold: f64,
+    },
+    PartBoxes {
+        boxes: Vec<PartBox>,
+    },
+}
+
+/// 经脉构型档案占位——P1 起填充 `channels: Vec<ChannelDef>` / `topology_edges` /
+/// `realm_requirements: [RealmMeridianReq; 6]`（见 plan §P1）。P0 仅锁定
+/// `BodyPlan.meridian_profile: Option<MeridianProfile>` 的存在性语义：humanoid.json
+/// 缺省该字段 = `None`（合法），显式提供 `{}` = `Some(MeridianProfile::default())`
+/// （同样合法）——两条路径各有一条 pin 测试（见 `registry.rs` 测试）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeridianProfile {}
+
+/// 单个种族/构型的完整身体定义。`is_humanoid` 是 P3 `RaceGate::Humanoid` 档的唯一判据
+/// （不做名单硬编码）；易形配对不在本结构体内——唯一真源是 `races.json` 全局
+/// `morph_pairs`（见 `race_registry`），防双真源。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlan {
+    pub id: BodyPlanId,
+    pub display_name: String,
+    pub is_humanoid: bool,
+    pub parts: Vec<BodyPartDef>,
+    pub hit_geometry: HitGeometry,
+    pub equip_slots: Vec<EquipSlotV1>,
+    #[serde(default)]
+    pub meridian_profile: Option<MeridianProfile>,
+    /// dandao `BodySlot`（变异挂载部位，`dandao/mutation.rs:97-103`）→ 本 plan 部位 id
+    /// 的映射表（§7 声明的落点）。非 humanoid plan 可留空（`{}`）——变异体系目前只在
+    /// 人形构型上生效。查询 API 见 `resolve::body_part_for_mutation_slot`。
+    #[serde(default)]
+    pub mutation_slot_mapping: HashMap<BodySlot, BodyPartId>,
+}
+
+/// 实体的「本体」种族标识——与 `Cultivation.race`（玩家身份 / gate 判定用，见
+/// `resolve::resolve_body_plan` 优先级）正交存在，供 P4 `resolve_morph_pair` 取
+/// from 端。P0 仅锁定组件形状 + `RaceRegistry::race_id_for_beast_kind` 派生查询机制；
+/// 尚无生产 spawn 链路主动 insert 本组件（P5 起给 whale 换，见 plan §P0 races 段）。
+#[derive(Debug, Clone, PartialEq, Eq, Component, Serialize, Deserialize)]
+pub struct IntrinsicRace(pub RaceId);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn body_plan_id_display_and_accessors_round_trip() {
+        let id = BodyPlanId::new("humanoid");
+        assert_eq!(id.as_str(), "humanoid");
+        assert_eq!(id.to_string(), "humanoid");
+        assert_eq!(BodyPlanId::from("humanoid"), id);
+        assert_eq!(BodyPlanId::from("humanoid".to_string()), id);
+    }
+
+    #[test]
+    fn body_part_id_display_and_accessors_round_trip() {
+        let id = BodyPartId::new("head");
+        assert_eq!(id.as_str(), "head");
+        assert_eq!(id.to_string(), "head");
+        assert_eq!(BodyPartId::from("head"), id);
+    }
+
+    #[test]
+    fn race_id_display_and_accessors_round_trip() {
+        let id = RaceId::new("human");
+        assert_eq!(id.as_str(), "human");
+        assert_eq!(id.to_string(), "human");
+        assert_eq!(RaceId::from("human".to_string()), id);
+    }
+
+    #[test]
+    fn part_consequence_serde_pin_every_variant() {
+        let cases: [(PartConsequence, &str); 4] = [
+            (PartConsequence::Locomotion, r#"{"kind":"locomotion"}"#),
+            (PartConsequence::Sensory, r#"{"kind":"sensory"}"#),
+            (
+                PartConsequence::Manipulator { main_hand: true },
+                r#"{"kind":"manipulator","main_hand":true}"#,
+            ),
+            (PartConsequence::Core, r#"{"kind":"core"}"#),
+        ];
+        for (value, expected_json) in cases {
+            let serialized = serde_json::to_string(&value).expect("serialize");
+            assert_eq!(
+                serialized, expected_json,
+                "PartConsequence {value:?} 序列化形状漂移"
+            );
+            let deserialized: PartConsequence =
+                serde_json::from_str(expected_json).expect("deserialize");
+            assert_eq!(deserialized, value, "PartConsequence 反序列化往返不一致");
+        }
+    }
+
+    #[test]
+    fn part_consequence_manipulator_main_hand_false_variant() {
+        let value = PartConsequence::Manipulator { main_hand: false };
+        let serialized = serde_json::to_string(&value).expect("serialize");
+        assert_eq!(serialized, r#"{"kind":"manipulator","main_hand":false}"#);
+    }
+
+    #[test]
+    fn part_consequence_rejects_unknown_kind() {
+        let err = serde_json::from_str::<PartConsequence>(r#"{"kind":"unknown_kind"}"#)
+            .expect_err("unknown kind must fail closed, not silently default");
+        assert!(err.to_string().contains("unknown_kind") || err.to_string().contains("kind"));
+    }
+
+    #[test]
+    fn height_band_assignment_referenced_part_ids_every_variant() {
+        let single = HeightBandAssignment::Single {
+            part: BodyPartId::new("head"),
+        };
+        assert_eq!(single.referenced_part_ids(), vec![&BodyPartId::new("head")]);
+
+        let split_with_center = HeightBandAssignment::LateralSplitWithCenter {
+            left: BodyPartId::new("arm_l"),
+            right: BodyPartId::new("arm_r"),
+            center: BodyPartId::new("chest"),
+        };
+        assert_eq!(
+            split_with_center.referenced_part_ids(),
+            vec![
+                &BodyPartId::new("arm_l"),
+                &BodyPartId::new("arm_r"),
+                &BodyPartId::new("chest"),
+            ]
+        );
+
+        let split = HeightBandAssignment::LateralSplit {
+            left: BodyPartId::new("leg_l"),
+            right: BodyPartId::new("leg_r"),
+        };
+        assert_eq!(
+            split.referenced_part_ids(),
+            vec![&BodyPartId::new("leg_l"), &BodyPartId::new("leg_r")]
+        );
+    }
+
+    #[test]
+    fn hit_geometry_height_bands_serde_round_trip() {
+        let geometry = HitGeometry::HeightBands {
+            aabb: StandingAabbSpec {
+                half_width: 0.3,
+                height: 1.8,
+            },
+            bands: vec![HeightBand {
+                min_rel_y: 0.88,
+                assignment: HeightBandAssignment::Single {
+                    part: BodyPartId::new("head"),
+                },
+            }],
+            lateral_threshold: 0.19,
+        };
+        let json = serde_json::to_value(&geometry).expect("serialize");
+        assert_eq!(json["mode"], "height_bands");
+        let round_tripped: HitGeometry = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(round_tripped, geometry);
+    }
+
+    #[test]
+    fn hit_geometry_part_boxes_serde_round_trip() {
+        let geometry = HitGeometry::PartBoxes {
+            boxes: vec![PartBox {
+                part_id: BodyPartId::new("skull"),
+                offset: [0.0, 1.5, 0.0],
+                half_extents: [0.3, 0.3, 0.3],
+                priority: 10,
+            }],
+        };
+        let json = serde_json::to_value(&geometry).expect("serialize");
+        assert_eq!(json["mode"], "part_boxes");
+        let round_tripped: HitGeometry = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(round_tripped, geometry);
+    }
+
+    #[test]
+    fn meridian_profile_missing_field_defaults_to_none_present_field_is_some() {
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[serde(default)]
+            meridian_profile: Option<MeridianProfile>,
+        }
+        let missing: Wrapper =
+            serde_json::from_str("{}").expect("missing field should deserialize");
+        assert_eq!(missing.meridian_profile, None);
+
+        let present: Wrapper = serde_json::from_str(r#"{"meridian_profile":{}}"#)
+            .expect("present empty object should deserialize");
+        assert_eq!(present.meridian_profile, Some(MeridianProfile::default()));
+    }
+
+    #[test]
+    fn intrinsic_race_component_equality() {
+        let a = IntrinsicRace(RaceId::new("human"));
+        let b = IntrinsicRace(RaceId::new("human"));
+        let c = IntrinsicRace(RaceId::new("beast_common"));
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+}

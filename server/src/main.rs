@@ -6,10 +6,10 @@
 //! owns the CLI / startup-smoke entry points exactly as before.
 
 use bong_server::{
-    alchemy, audio, botany, cmd, coffin, combat, craft, cultivation, dandao, death_lifecycle,
-    economy, fauna, forge, gathering, identity, inventory, lingtian, mineral, movement, network,
-    npc, persistence, player, preview, qi_physics, shader, shelflife, skill, skin, social,
-    spiritwood, supply_coffin, sword_path, tools, world, zhenfa,
+    alchemy, audio, body_plan, botany, cmd, coffin, combat, craft, cultivation, dandao,
+    death_lifecycle, economy, fauna, forge, gathering, identity, inventory, lingtian, mineral,
+    movement, network, npc, persistence, player, preview, qi_physics, shader, shelflife, skill,
+    skin, social, spiritwood, supply_coffin, sword_path, tools, world, zhenfa,
 };
 
 use crossbeam_channel::unbounded;
@@ -84,6 +84,7 @@ fn build_server_app() -> App {
     world::register(&mut app);
     player::register(&mut app);
     qi_physics::register(&mut app);
+    body_plan::register(&mut app);
     skin::register(&mut app);
     inventory::register(&mut app);
     botany::register(&mut app);

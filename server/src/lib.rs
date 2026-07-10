@@ -34,6 +34,12 @@
 pub mod alchemy;
 pub mod armor;
 pub mod audio;
+// body_plan：plan-race-system-v1 P0a 底盘（BodyPlanRegistry / RaceRegistry /
+// resolve_body_plan）。combat::raycast 等实际消费点改造是后续阶段的工作，本阶段
+// 交付的部分 API（resolve_body_plan / body_part_for_mutation_slot）暂无生产调用点，
+// 仅被本模块自身测试覆盖，保留 allow 直到消费点接入。
+#[allow(dead_code)]
+pub mod body_plan;
 pub mod botany;
 pub mod cmd;
 pub mod coffin;
