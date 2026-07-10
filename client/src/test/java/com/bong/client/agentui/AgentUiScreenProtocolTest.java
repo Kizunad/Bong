@@ -278,15 +278,16 @@ public class AgentUiScreenProtocolTest {
         AgentUiStore.setActive(screen);
         AgentUiStore.markAwaitingErrorCloseAt(screen, 1_000L);
         screen.receiveCloseSignal();
+        long expiryBoundary = 1_000L + AgentUiStore.PENDING_ERROR_CLOSE_TTL_MILLIS;
 
         AgentUiStore.receiveCloseAt(
             "req-expiring-pending",
             "session_expired",
-            1_000L + AgentUiStore.PENDING_ERROR_CLOSE_TTL_MILLIS
+            expiryBoundary
         );
 
-        assertTrue(BongToast.current(20_000L).isEmpty(),
-            "pending error close 在 TTL 精确边界应过期，迟到 reason 不得显示");
+        assertTrue(BongToast.current(expiryBoundary).isEmpty(),
+            "pending error close 在 TTL 精确边界应立即过期，边界时刻不得显示迟到 reason");
     }
 
     @Test
