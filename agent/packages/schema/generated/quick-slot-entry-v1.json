@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "item_id",
+    "display_name",
+    "cast_duration_ms",
+    "cooldown_ms",
+    "icon_texture"
+  ],
+  "properties": {
+    "item_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "display_name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "cast_duration_ms": {
+      "minimum": 0,
+      "maximum": 4294967295,
+      "type": "integer"
+    },
+    "cooldown_ms": {
+      "minimum": 0,
+      "maximum": 4294967295,
+      "type": "integer"
+    },
+    "icon_texture": {
+      "type": "string"
+    }
+  }
+}
