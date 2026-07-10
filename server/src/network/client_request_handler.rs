@@ -130,7 +130,7 @@ use crate::npc::interaction_memory::{
 };
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
-use crate::npc::trade::NpcPlayerReputation;
+use crate::npc::trade::{NpcPlayerReputation, NpcTradeInventory};
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
@@ -423,6 +423,7 @@ type NpcEngagementItem = (
 #[derive(SystemParam)]
 pub struct NpcEngagementRequestParams<'w, 's> {
     pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
+    pub trade_inventories: Query<'w, 's, &'static NpcTradeInventory, With<NpcMarker>>,
     pub lifecycles: Query<'w, 's, &'static Lifecycle>,
     pub memories: Query<
         'w,
@@ -1365,7 +1366,7 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
-                let Some((template_id, base_price)) =
+                let Some((template_id, _catalogue_price)) =
                     npc_trade_catalog_entry(target.archetype, &requested_item_id)
                 else {
                     emit_npc_refuse_audio(
@@ -1393,6 +1394,40 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
+                let Ok(trade_inventory) =
+                    npc_engagement_params.trade_inventories.get(target.entity)
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 当前没有可成交的货物。", target.display_name),
+                    );
+                    continue;
+                };
+                let Some(offer) = trade_inventory
+                    .offers
+                    .iter()
+                    .find(|offer| offer.template_id == template_id)
+                    .cloned()
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 当前没有这件货。", target.display_name),
+                    );
+                    continue;
+                };
+                let base_price = u64::from(offer.price_bone_coins);
                 // P3: 将旧 i32 信誉转为 0.0-1.0 范围用于新定价系统。
                 // plan-territory-v1 P1: 叠加 NpcPlayerReputation（霸主驻守 rep 加成写入此组件）。
                 // 叠加策略：先取 FactionMembership baseline (i32 → [0,1])，
@@ -1509,7 +1544,7 @@ pub fn handle_client_request_payloads(
                     &alchemy_params.item_registry,
                     instance_allocator,
                     template_id,
-                    1,
+                    offer.count,
                     combat_clock.tick,
                 ) {
                     send_npc_interaction_feedback(
@@ -1525,8 +1560,8 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 client.send_chat_message(format!(
-                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {}。",
-                    target.display_name, template_id
+                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {} x{}。",
+                    target.display_name, offer.display_name, offer.count
                 ));
                 record_player_npc_interaction(
                     &mut npc_engagement_params.memories,
