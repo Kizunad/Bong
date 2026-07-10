@@ -1,6 +1,6 @@
 # plan-bughunt-bot-realm-invalid-feedback-v1
 
-> **Active plan（2026-07-10 由 bughunt skeleton promotion）**。一句话主题：bot-e2e live run 发现 `/realm set <非法 id>` 被命令解析层拒绝后没有玩家可见 chat 反馈；玩家只看到命令静默失败，无法从客户端判断错误是拼写、境界 id 还是命令链路丢包。
+> **已完成（2026-07-10，由 bughunt skeleton promotion）**。一句话主题：bot-e2e live run 发现 `/realm set <非法 id>` 被命令解析层拒绝后没有玩家可见 chat 反馈；玩家只看到命令静默失败，无法从客户端判断错误是拼写、境界 id 还是命令链路丢包。
 
 > 立项动机：PR #978 的 `cultivation_realm_qi` 场景曾按“dev 命令非法值也应有反馈”建模，但 CI live bot 证明 `/realm set bot_e2e_no_such_realm` 10 秒内无任何 chat。`/qi set -1` 已有明确 `[dev] qi set rejected: value must be finite >= 0`，realm 命令在同类 dev 调试体验上缺一条可观测错误面。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `/realm set` 非法 id 无玩家可见反馈 | fix_pr | ⏳ |
+| P0 | `/realm set` 非法 id 无玩家可见反馈 | fix_pr | ✅ 2026-07-10 |
 
 ## P0 — `/realm set` 非法 id 无玩家可见反馈
 
@@ -48,3 +48,37 @@
 ## 审计来源
 
 bot 覆盖发现，后续 fix。来源为 PR #978 `bot-e2e` live run：`cultivation_realm_qi` 中 `/realm set bot_e2e_no_such_realm` 10 秒超时无 chat；同 run 中其他场景通过，`cultivation_breakthrough` 通过，说明 bot 连接和修炼基础链路本身可用。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 server 命令链路**：`server/src/cmd/dev/realm.rs` 将 realm id 作为 `String` 接入命令图，在 `handle_realm` 内调用 `parse_realm`；非法 id 通过 `Client::send_chat_message` 返回原输入与 `awaken|induce|condense|solidify|spirit|void`，合法 `realm set induce` 保持原成功反馈和状态变化。
+- **P0 server 协议回归**：同模块测试以真实 `CommandExecutionC2s` 驱动命令管理器并解码 `GameMessageS2c`；合法路径锁定 `Awaken -> Induce`，非法路径从非默认 `Realm::Induce` 出发锁定状态不变。
+- **P0 bot 黑盒回归**：`scripts/bot/scenarios/cultivation_realm_qi.py` 先执行合法 `realm set induce`，再发送非法 id 并精确断言玩家 chat；`scripts/bot/test_protocol.py` pin 该场景可被 runner 自动发现。
+
+### 关键 commit
+
+- `10f5c685` · 2026-07-10 · 将 bughunt skeleton 提升为 active plan。
+- `d332f41a` · 2026-07-10 · 修复 realm 非法境界反馈并补真实 C2S/S2C 集成测试。
+- `e5785f0e` · 2026-07-10 · 恢复 bot realm 非法反馈黑盒回归与 discovery pin。
+- `247ac07c` · 2026-07-10 · 以非默认 `Realm::Induce` 锁定非法输入不修改既有境界。
+
+### 测试结果
+
+- `env BONG_SKIP_SKIN_PREFETCH=1 cargo test --manifest-path server/Cargo.toml cmd::dev::realm::tests`：4 passed，0 failed。
+- `python3 scripts/bot/test_protocol.py`：47 passed，0 failed。
+- `cd server && cargo fmt --check`、`git diff --check`：通过。
+- PR #1151 CI run `29088759260`（HEAD `f33860b4`）：client、schema、agent、server 全量 `cargo test`、smoke 均通过；`cultivation_realm_qi` 明确 PASS（0.4s）。Bot e2e 总计 21/22，唯一失败为本 plan 范围外的 `production_forge_station_real_place` 锻造快照超时。
+- 较早 CI run `29064915661` 同样记录 `cultivation_realm_qi` PASS；两轮均证明 realm 目标场景稳定通过，整体红灯与该修复无因果关系。
+
+### 跨仓库核验
+
+- **server**：`RealmCmd::Set { raw }`、`ALLOWED_REALM_IDS`、`handle_realm`、`CommandExecutionC2s` 与 `GameMessageS2c` 均可 grep 命中，构成命令输入到玩家 chat 的真实链路。
+- **bot harness**：`cultivation_realm_qi.run` 与 `RunnerLogicTest::test_discover_scenarios_finds_committed_set` 均可 grep 命中，CI 的 `run_scenarios.py --all` 会消费该场景。
+- **agent / client**：本修复沿用原版命令执行包与玩家 chat，不新增 schema、Redis key 或 Fabric 客户端协议，故无需跨端代码变更。
+
+### 遗留 / 后续
+
+- `production_forge_station_real_place` 的 forge session 快照超时连续两轮导致整体 Bot e2e 红灯，属于炼器场景范围，不在本 plan 内处理。
+- CodeRabbit 本轮因 review 服务失败/额度状态未给出有效审查；realm 最终提交已由独立 `fork_context:false`、`gpt-5.6-sol` Ultra read-only validator 对抗验证为 PASS。
