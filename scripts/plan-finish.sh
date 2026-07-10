@@ -11,7 +11,7 @@
 #   例：bash scripts/plan-finish.sh HUD-v1
 #
 # 注意：
-#   - 不做 push，push 由 scripts/bong-plan-auto.sh 统一处理
+#   - 不做 push，push 由调用方（/consume-plan 等）统一处理
 #   - 若 plan 已在 finished_plans 下，视为已归档，退出 0
 #   - 若 .sisyphus/plans/<name>.md 有 [BLOCKED: 标记，拒绝归档（exit 2）
 

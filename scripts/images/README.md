@@ -65,5 +65,5 @@ python scripts/images/gen.py "four-corner sumi-e ink splashes, center transparen
 
 ## 对外 skill
 
-Claude Code / opencode agent 用 `/gen-image` skill（`.claude/skills/gen-image/SKILL.md`）
+Claude Code agent 用 `/gen-image` skill（`.claude/skills/gen-image/SKILL.md`）
 包装调用 `gen.py`，自动挑画风、处理后处理、提示用户文件位置。

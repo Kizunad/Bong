@@ -579,8 +579,8 @@ C. 先服半瓶凝脉散再进——药力护脉，但只剩半瓶，不值
 
 - `docs/worldview.md` — 世界观锚点 (必读)
 - `docs/library/` — 馆藏条目 (层一注入上下文)
-- `.pi/skills/library-lore/SKILL.md` — 三层查书策略
-- `.pi/skills/write-tale/SKILL.md` — 修士手记协议 (文学写作用，本 skill 仅参考不强制)
+- `skills/library-lore/SKILL.md` — 三层查书策略
+- `skills/write-tale/SKILL.md` — 修士手记协议 (文学写作用，本 skill 仅参考不强制)
 - `server/zones.json` — 六域坐标和灵压实值
 - `server/src/qi_physics/constants.rs` — 真元物理常量
 - `server/src/cultivation/components.rs` — 修炼体系定义
