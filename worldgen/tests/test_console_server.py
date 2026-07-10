@@ -562,12 +562,53 @@ def test_remote_zone_regen_preserves_global_novice_pois(tmp_path) -> None:
         tile_size=NOVICE_REGEN_TILE_SIZE,
         output_dir=out_dir,
     )
-    response = _call_regen_endpoint(
-        app,
-        "peaks",
-        overrides={"worldgen": {"terrain_profile": "spawn_plain"}},
+    blueprint = load_blueprint(blueprint_path)
+    plan = build_generation_plan(
+        blueprint=blueprint,
+        profile_catalog=load_profile_catalog(PROFILES_PATH),
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        output_dir=out_dir,
+        tile_size=NOVICE_REGEN_TILE_SIZE,
+        zone_overlays=load_zone_overlays(None),
     )
+    required_tile_ids = novice_poi_selection_tile_ids(plan)
+    remote_tile_ids = {
+        tile.tile.tile_id
+        for tile in synthesize_fields(plan, zone_filter={"peaks"}).tiles
+    }
+    assert remote_tile_ids.isdisjoint(required_tile_ids), (
+        "remote fixture must not touch the novice selection window"
+    )
+    synthesis_calls: list[tuple[set[str] | None, set[str] | None]] = []
+
+    def recording_synthesize(active_plan, zone_filter=None, tile_filter=None):
+        synthesis_calls.append(
+            (
+                None if zone_filter is None else set(zone_filter),
+                None if tile_filter is None else set(tile_filter),
+            )
+        )
+        return synthesize_fields(
+            active_plan,
+            zone_filter=zone_filter,
+            tile_filter=tile_filter,
+        )
+
+    with patch(
+        "scripts.terrain_gen.console_server.synthesize_fields",
+        side_effect=recording_synthesize,
+    ):
+        response = _call_regen_endpoint(
+            app,
+            "peaks",
+            overrides={"worldgen": {"terrain_profile": "spawn_plain"}},
+        )
     assert response["rewritten_tiles"], "remote regen must rewrite its tiles"
+    assert synthesis_calls == [({"peaks"}, None)], (
+        "a remote zone disjoint from the novice window must stay a one-pass "
+        "local synthesis and preserve the existing global novice payload"
+    )
 
     manifest_after = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert _generated_novice_pois(manifest_after) == original_novice, (
@@ -581,6 +622,95 @@ def test_remote_zone_regen_preserves_global_novice_pois(tmp_path) -> None:
         poi["zone"] == "peaks" and poi["kind"] == "spawn_tutorial_coffin"
         for poi in manifest_after["pois"]
     ), "the target zone's profile-derived POIs must still refresh"
+
+
+def test_near_non_spawn_regen_recomputes_novice_pois_from_complete_window(
+    tmp_path,
+) -> None:
+    blueprint_path = tmp_path / "bp.json"
+    blueprint_path.write_text(json.dumps(_TINY_BLUEPRINT), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    _full_bake(out_dir, blueprint_path, tile_size=TILE_SIZE)
+    manifest_path = out_dir / "rasters" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    poisoned_forge = next(
+        poi
+        for poi in _generated_novice_pois(manifest)
+        if poi["kind"] == "novice_forge_station"
+    )
+    poisoned_forge["pos_xyz"] = [9999.0, 1.0, 9999.0]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        out_dir / "rasters",
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        tile_size=TILE_SIZE,
+        output_dir=out_dir,
+    )
+    plan = build_generation_plan(
+        blueprint=load_blueprint(blueprint_path),
+        profile_catalog=load_profile_catalog(PROFILES_PATH),
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        output_dir=out_dir,
+        tile_size=TILE_SIZE,
+        zone_overlays=load_zone_overlays(None),
+    )
+    required_tile_ids = novice_poi_selection_tile_ids(plan)
+    near_tile_ids = {
+        tile.tile.tile_id
+        for tile in synthesize_fields(plan, zone_filter={"peaks"}).tiles
+    }
+    assert near_tile_ids & required_tile_ids, (
+        "adjacent peaks fixture must overlap the novice selection window"
+    )
+    synthesis_calls: list[tuple[set[str] | None, set[str] | None]] = []
+
+    def recording_synthesize(active_plan, zone_filter=None, tile_filter=None):
+        synthesis_calls.append(
+            (
+                None if zone_filter is None else set(zone_filter),
+                None if tile_filter is None else set(tile_filter),
+            )
+        )
+        return synthesize_fields(
+            active_plan,
+            zone_filter=zone_filter,
+            tile_filter=tile_filter,
+        )
+
+    with patch(
+        "scripts.terrain_gen.console_server.synthesize_fields",
+        side_effect=recording_synthesize,
+    ):
+        response = _call_regen_endpoint(
+            app,
+            "peaks",
+            overrides={"spirit_qi": 0.65},
+        )
+    assert response["rewritten_tiles"], "near non-spawn regen must rewrite its tiles"
+    assert synthesis_calls == [
+        ({"peaks"}, None),
+        (None, required_tile_ids),
+    ], (
+        "a non-spawn zone overlapping the novice window must recompute from the "
+        "complete plan-derived window, never preserve stale coordinates"
+    )
+
+    manifest_after = json.loads(manifest_path.read_text(encoding="utf-8"))
+    repaired_forge = next(
+        poi
+        for poi in _generated_novice_pois(manifest_after)
+        if poi["kind"] == "novice_forge_station"
+    )
+    assert repaired_forge["pos_xyz"] != [9999.0, 1.0, 9999.0], (
+        "near non-spawn regen must replace a stale novice coordinate using the "
+        "complete current selection fields"
+    )
 
 
 def test_spawn_regen_recomputes_novice_pois_from_complete_fields(tmp_path) -> None:
@@ -1117,9 +1247,16 @@ def test_regen_worldgen_override_changes_terrain(tmp_path) -> None:
         "zone/profile-derived POIs must still refresh when a non-spawn zone is "
         "overridden to spawn_plain"
     )
-    assert _generated_novice_pois(manifest_after_override) == novice_before_override, (
-        "refreshing blueprint/profile POIs must not clobber global novice POIs"
+    novice_after_override = _generated_novice_pois(manifest_after_override)
+    assert len(novice_after_override) == 6
+    assert novice_after_override != novice_before_override, (
+        "peaks overlaps the novice selection window, so a terrain profile swap "
+        "must recompute the six global novice POIs from the current full window"
     )
+    assert all(
+        any(str(tag).startswith("selection:") for tag in poi["tags"])
+        for poi in novice_after_override
+    ), "recomputed novice POIs must preserve an explicit selection strategy"
 
 
 def test_apply_overrides_deep_merges_nested_worldgen(tmp_path) -> None:

@@ -367,16 +367,18 @@ def create_app(
         plan.bake_plan = build_raster_bake_plan(plan, output_dir)
         fields = synthesize_fields(plan, zone_filter={req.zone_name})
         novice_poi_fields = None
-        if req.zone_name == blueprint.spawn_zone:
-            # The spawn zone itself is smaller than the novice selector's
-            # relaxed search window. Synthesize exactly the active tiles that
-            # intersect its maximum radius plus one slope-gradient sample of
-            # halo; the selector crops bounded/full inputs to that same fixed
-            # grid. A full-world synthesis is unnecessary and prohibitively
-            # large on the default map.
+        novice_tile_ids = novice_poi_selection_tile_ids(plan)
+        rewritten_tile_ids = {tile.tile.tile_id for tile in fields.tiles}
+        if rewritten_tile_ids & novice_tile_ids:
+            # Any zone whose rewritten tiles overlap the novice selector's
+            # input window can invalidate the six global spawn POIs. Recompute
+            # from the complete bounded window rather than keying this decision
+            # to the spawn zone's name; far-away zones remain a one-pass local
+            # regen. The selector crops bounded/full inputs to the same fixed
+            # grid, including its one-sample slope-gradient halo.
             novice_poi_fields = synthesize_fields(
                 plan,
-                tile_filter=novice_poi_selection_tile_ids(plan),
+                tile_filter=novice_tile_ids,
             )
         try:
             rewritten = regen_zone(
