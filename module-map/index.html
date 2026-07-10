@@ -1320,23 +1320,11 @@ const MODULES = [
     "gaps": [
       {
         "severity": "info",
-        "note": "✅ RESOLVED #803(gap retriage 校正模块/特性级重复): baomai-v4.ts 的 5 个生产 Redis payload 类型（BaomaiV4Scar*/IronCocoon*/ResonanceLock*）已有 Rust 对齐结构体（server/src/schema/baomai_v4.rs）且 channels.ts BAOMAI_V4_* 通道已激活，但未进入 SCHEMA_REGISTRY/GENERATED_SCHEMA_FILES——无 JSON Schema export，TS↔Rust 字段漂移无自动捕获（可达的契约盲区）"
-      },
-      {
-        "severity": "info",
-        "note": "✅ RESOLVED #803(gap retriage 校正模块/特性级重复): woliu_erosion.ts 的 VoidErosion* 系列已有 Rust 对齐结构体（server/src/schema/woliu_erosion.rs）但未进 SCHEMA_REGISTRY，同上无 pin 测试"
-      },
-      {
-        "severity": "info",
-        "note": "✅ RESOLVED #803(gap retriage 校正模块/特性级重复): HalfStepRechallengeTriggerPayloadV1（tribulation.ts）已有 Rust 对齐结构体（server/src/schema/halfstep_rechallenge.rs）、channels.ts HALFSTEP_RECHALLENGE 已激活，但未进 SCHEMA_REGISTRY，无 JSON Schema export"
-      },
-      {
-        "severity": "info",
         "note": "AgentUiClosePayloadV1 / AgentUiCloseReasonV1（payloads/agent-ui.ts）已从 index.ts 导出但未注册进 SCHEMA_REGISTRY——server→client close 信号由 Rust 内联 serde 处理，无 pin 测试"
       },
       {
         "severity": "info",
-        "note": "已核实 SCHEMA_REGISTRY=GENERATED_SCHEMA_FILES=generated/ 三者均 378 条且一一对应、无数量漂移；上述 4 个未注册类型是真正的隐性契约漂移面——channels.ts 已列入 REDIS_V1_CHANNELS（生产激活）但 payload schema 不进导出管线"
+        "note": "2026-07-10 复核：BaomaiV4Scar*/IronCocoon*/ResonanceLock*、VoidErosion*、HalfStepRechallengeTriggerPayloadV1 均已注册进 SCHEMA_REGISTRY（schema-registry.ts），此前三条契约盲区 gap 已闭环删除；仅余 AgentUiClosePayloadV1/AgentUiCloseReasonV1 未注册（见上条）"
       }
     ]
   },
@@ -9249,7 +9237,7 @@ const MODULES = [
         "gaps": [
           {
             "severity": "info",
-            "note": "InspectScreen 打开时 PhysicalBody 仍 fallback 到 MockPhysicalData.create()（InspectScreen.java L382，随本轮改动上移几行但逻辑未变），而经脉层无快照时正确地保持加载态不 mock — 两者策略不一致，体表数据在服务端快照未到达时显示虚假测试伤势"
+            "note": "InspectScreen 打开时 PhysicalBody 仍 fallback 到 MockPhysicalData.create()（InspectScreen.java L382），而经脉层无快照时正确地保持加载态不 mock — 两者策略不一致，体表数据在服务端快照未到达时显示虚假测试伤势"
           }
         ]
       },
@@ -9579,7 +9567,7 @@ const MODULES = [
         "gaps": [
           {
             "severity": "info",
-            "note": "遗骸（RemainsStore）没有对应的世界空间渲染器落在本模块——遗骸是服务端真实生成的实体（RemainsStore.Entry.remainsId 是实体 UUID，非客户端 marker），其视觉表现由各自的实体渲染管线负责，本模块只承接 G 键拾取交互，不是遗漏"
+            "note": "遗骸（RemainsStore）在本模块无世界空间渲染器不是遗漏——服务端 server/src/inventory/mod.rs::spawn_player_remains_entity 用 vanilla PlayerEntityBundle（Pose::Sleeping 躺平 + NoGravity + CustomName）+ PlayerListEntryBundle 生成真实可见实体，走原版实体协议由客户端 vanilla 渲染管线直接呈现（remains_id 即该实体 UUID，见 server/src/network/remains_sync_emit.rs remains_snapshot）；本模块只承接 G 键拾取交互（RemainsLootIntentHandler）"
           }
         ]
       },
@@ -9673,16 +9661,7 @@ const MODULES = [
         "via": "PlayerStateHandler → PlayerStateState.record() → StatusBarsPanel.resolveRealm()/resolveQiRatio()"
       }
     ],
-    "gaps": [
-      {
-        "severity": "info",
-        "note": "InspectScreen 打开时 PhysicalBody fallback 到 MockPhysicalData（InspectScreen.java L382），经脉层不 mock；策略不一致，体表数据在快照未达时显示虚假测试伤势（仅显示层，非守恒/状态 bug）"
-      },
-      {
-        "severity": "warn",
-        "note": "BuffBarPanel（新增，component/BuffBarPanel.java）宽度按效果数量无上限线性增长且不换行/不横向滚动，宿主 mainPanel 是 Sizing.content()（InspectScreen.java build()）——效果数量多（多源 DoT/debuff 同时命中）时可能撑宽整个检视界面主面板，缺少同文件里 cultivationActionScroll 那样的 horizontalScroll 兜底"
-      }
-    ]
+    "gaps": []
   },
   {
     "id": "client/iris",
