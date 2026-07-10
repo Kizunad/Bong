@@ -479,8 +479,9 @@ def regen_zone(
     still covers ``zone_name``'s tiles). ``novice_poi_fields`` is intentionally
     separate: when omitted, existing global novice POIs are preserved; when
     supplied, it must cover every active tile in the plan-derived maximum novice
-    selection window, and the existing manifest must contain that same window,
-    before the six novice POIs may be recomputed. Returns rewritten tile ids.
+    selection window plus its slope-gradient halo, and the existing manifest
+    must contain that same window before the six novice POIs may be recomputed.
+    Returns rewritten tile ids.
 
     Raises ``KeyError`` if ``zone_name`` is not a blueprint zone.
     """

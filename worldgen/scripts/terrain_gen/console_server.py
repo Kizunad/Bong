@@ -370,8 +370,10 @@ def create_app(
         if req.zone_name == blueprint.spawn_zone:
             # The spawn zone itself is smaller than the novice selector's
             # relaxed search window. Synthesize exactly the active tiles that
-            # intersect the selector's maximum radius; a full-world synthesis
-            # is both unnecessary and prohibitively large on the default map.
+            # intersect its maximum radius plus one slope-gradient sample of
+            # halo; the selector crops bounded/full inputs to that same fixed
+            # grid. A full-world synthesis is unnecessary and prohibitively
+            # large on the default map.
             novice_poi_fields = synthesize_fields(
                 plan,
                 tile_filter=novice_poi_selection_tile_ids(plan),

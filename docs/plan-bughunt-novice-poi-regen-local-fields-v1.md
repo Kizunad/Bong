@@ -7,7 +7,7 @@
 | 阶段 | 状态 | 可核验交付物 |
 |---|---|---|
 | P0：POI 局部合并语义 | ✅ 2026-07-10 | `raster_export._merge_regen_poi_payload` 仅替换目标 zone，保留其他 zone 与全局 novice 条目 |
-| P1：完整选择窗口契约 | ✅ 2026-07-10 | `novice_poi_selection_tile_ids` 从 plan + 最大 2000 格搜索半径独立推导 required tiles |
+| P1：完整选择窗口契约 | ✅ 2026-07-10 | `novice_poi_selection_tile_ids` 从 plan + 最大 2000 格搜索半径 + 一采样步梯度 halo 独立推导 required tiles |
 | P2：console 有界重算 | ✅ 2026-07-10 | `synthesize_fields(tile_filter=...)`；默认蓝图 305 active tiles → 16 required tiles |
 | P3：worldgen 回归与原子性 | ✅ 2026-07-10 | 远区保留、spawn 重算、fields/manifest 缺 tile、写盘前失败、非目标 POI 哨兵测试 |
 | P4：server 启动加载闭环 | ✅ 2026-07-10 | 真实 v2 manifest → `TerrainProvider::load` → Startup `PoiNoviceLoader::load` → registry + `PoiSpawned` 六类断言 |
@@ -47,7 +47,7 @@
 ## 4. 实施阶段
 
 - [x] P0：拆分 manifest POI 刷新语义。`regen_zone()` 只刷新被重烘 zone 的 blueprint 静态 POI / profile 派生 POI；全局 spawn novice POI 保留旧 manifest 值，除非调用方提供完整选择窗口。
-- [x] P1：选择器从 generation plan 与最大 relaxed radius 独立推导 required tile IDs；局部 `GeneratedFieldSet` 不能用自身 IDs 自证完整。
+- [x] P1：选择器从 generation plan、最大 relaxed radius 与一采样步梯度 halo 独立推导 required tile IDs；full/bounded 输入统一裁剪到固定网格，局部 `GeneratedFieldSet` 不能用自身 IDs 或外接矩形自证完整。
 - [x] P2：console `/api/regen` 对非 spawn zone 保留全局 novice POI；spawn regen 只合成本地 rewrite fields 与 16-tile novice window，不再全图 synthesis。
 - [x] P3：补 regression pin：非 spawn novice 逐项保留、目标 zone profile POI 刷新、非目标 zone authored/profile POI 逐字段保留；spawn 完整窗口允许重算。
 - [x] P4：文档化边界：blueprint/profile POI 仅按目标 zone patch；global novice POI 由 spawn 周边选择窗口独立管理。
@@ -55,7 +55,7 @@
 ## 5. 验证计划
 
 - [x] worldgen：完整 manifest + 远区非 spawn 局部 fields 后，六类 `poi_novice` entries 逐项不变。
-- [x] worldgen：spawn 使用 plan-derived 完整选择窗口重算；默认 blueprint 305 active tiles 降为 16 required tiles，bounded/full 坐标一致。
+- [x] worldgen：spawn 使用 plan-derived 完整选择窗口重算；默认 blueprint 305 active tiles 降为 16 required tiles；远端额外 fields 不再改变 `np.gradient` 边缘语义，bounded/full 坐标一致。
 - [x] console：目标 zone profile-derived POI 刷新；非目标 zone authored/profile 哨兵条目原样保留。
 - [x] 原子性：novice fields 缺 required tile、existing manifest 缺 required tile、`--zone-filter` full export 缺窗口时，均在 raster/manifest 写入前失败。
 - [x] server：真实磁盘 v2 manifest 经 `TerrainProvider::load` 与 Startup `PoiNoviceLoader::load`，六类 registry 坐标、半径、selection tag 与六个 `PoiSpawned` 全部命中。
@@ -71,3 +71,4 @@
 - 首轮无上下文 Ultra validator：FAIL，发现局部 fields 自证完整与 spawn 全图 9.75 GiB synthesis；已分别由 `60343597`、`c98d5c83`、`52417abc` 修复。
 - 二轮无上下文 Ultra validator：PASS；独立确认 305→16、bounded/full 坐标一致、fields/manifest 原子拒绝及 server 坐标直传。
 - PR `/review` 首轮 substantive findings：目标 zone 之外 POI 被全量重建、server pin 绕过生产 Startup、active plan 仍标 skeleton；均已纳入本阶段返工。
+- 三轮无上下文 Ultra validator：FAIL；复现 full 输入多带远端 tile 会扩大 selector 外接矩形，使 required tile 边缘从单边梯度切到中央梯度并改变 POI。`db8f6e3f` 改为 plan-derived 固定网格 + 一采样步 halo，并补 edge-only bounded/full 对拍；待全新 validator 复审。
