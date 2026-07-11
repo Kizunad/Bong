@@ -714,7 +714,7 @@ class TokenBroker:
                 reclaimed.append(request_id)
         return reclaimed
 
-    def followup_payload(self, request_id: str) -> dict[str, str]:
+    def followup_payload(self, request_id: str) -> dict[str, object]:
         state = self.requests[request_id]
         if state.status != RequestStatus.RECOVERING or state.token_id is None:
             raise ProtocolError("request has no recovery checkpoint")
@@ -724,6 +724,7 @@ class TokenBroker:
             "token_id": state.token_id,
             "phase": state.payload.phase.value,
             "head": state.payload.head,
+            "generation": state.payload.generation,
         }
 
     def _invalidate(
@@ -1736,8 +1737,15 @@ class StateMachineDryRun(unittest.TestCase):
             broker.mark_lost(request_id)
             if request_id == "ok":
                 self.assertEqual(
-                    broker.followup_payload(request_id)["token_id"],
-                    grant.token_id,
+                    broker.followup_payload(request_id),
+                    {
+                        "checkpoint": "checkpoint-ok",
+                        "request_id": "ok",
+                        "token_id": grant.token_id,
+                        "phase": task.phase.value,
+                        "head": task.head,
+                        "generation": task.generation,
+                    },
                 )
                 broker.recovery_result(request_id, True)
                 broker.ack(
