@@ -155,6 +155,11 @@ class TaskState:
     )
     repository: str = "Kizunad/Bong"
     required_checks: tuple[str, ...] = ("review", "e2e", "CodeRabbit")
+    expected_models: tuple[str, str, str] = (
+        "gpt-5",
+        "gpt-5.6-sol-xhigh",
+        "gpt-5.5",
+    )
 
     def __post_init__(self) -> None:
         if self.validator_evidence is None:
@@ -172,6 +177,8 @@ class TaskState:
         elif target in BRANCH_PHASES and self.resolution != target:
             raise ProtocolError("FIXING and NOT_BUG are mutually exclusive")
         if target in BRANCH_PHASES:
+            if self.phase != TaskPhase.VERIFYING:
+                self.generation += 1
             self._reset_closure_milestones()
         if self.phase == TaskPhase.FIX_VALIDATING and target == TaskPhase.GATING:
             self._require_validator_pass(TaskPhase.FIX_VALIDATING)
@@ -250,8 +257,10 @@ class TaskState:
                     checks.get(name) != "SUCCESS"
                     for name in self.required_checks
                 )
+                or len(checks) != len(evidence.checks)
                 or any(result != "SUCCESS" for result in checks.values())
                 or len(models) != 3
+                or models != self.expected_models
                 or any(
                     model != model.strip()
                     or model.lower() in {value.lower() for value in invalid_models}
@@ -277,7 +286,12 @@ class TaskState:
         self.closure_evidence = None
 
     def update_head(self, new_head: str) -> None:
-        if self.phase in {TaskPhase.PR_OPEN, TaskPhase.GATES}:
+        effective_phase = (
+            self.recovery_from
+            if self.phase == TaskPhase.RECOVERING
+            else self.phase
+        )
+        if effective_phase in {TaskPhase.PR_OPEN, TaskPhase.GATES}:
             raise ProtocolError("PR phases must enter rework before HEAD changes")
         if new_head == self.head:
             return
@@ -600,13 +614,16 @@ class TokenBroker:
     def available(self, token_type: str) -> int:
         logical = self.logical_capacity[token_type] - self.held(token_type)
         if token_type == "validator":
+            snapshot = self.capacity_provider()
+            if snapshot.total is None:
+                return max(0, min(logical, 1 - self.held("validator")))
             outstanding_reservations = sum(
                 state.payload.token_type == "validator"
                 and state.status in ACTIVE_TOKEN_STATUSES
                 and not state.platform_accounted
                 for state in self.requests.values()
             )
-            platform = self.capacity_provider().validator_slots(
+            platform = snapshot.validator_slots(
                 outstanding_reservations
             )
             return max(0, min(logical, platform))
@@ -1293,6 +1310,13 @@ class StateMachineDryRun(unittest.TestCase):
         task.recovery_result(False)
         self.assertEqual(task.phase, TaskPhase.BLOCKED)
 
+        for pr_phase in (TaskPhase.PR_OPEN, TaskPhase.GATES):
+            with self.subTest(pr_recovery_phase=pr_phase):
+                pr_task = TaskState(phase=pr_phase)
+                pr_task.mark_recovering()
+                with self.assertRaises(ProtocolError):
+                    pr_task.update_head("new-head")
+
     def test_complete_path_requires_every_closure_stage(self) -> None:
         task = TaskState(phase=TaskPhase.VERIFYING)
         drive_closure_to_pr(task)
@@ -1342,6 +1366,16 @@ class StateMachineDryRun(unittest.TestCase):
             ),
             replace(valid_closure, implementation_model=" gpt-5 "),
             replace(valid_closure, reviewer_model="Pending"),
+            replace(valid_closure, implementation_model="model-id"),
+            replace(
+                valid_closure,
+                checks=(
+                    ("review", "FAIL"),
+                    ("review", "SUCCESS"),
+                    ("e2e", "SUCCESS"),
+                    ("CodeRabbit", "SUCCESS"),
+                ),
+            ),
         )
         for evidence in invalid_closures:
             task.record_closure(evidence)
@@ -1595,6 +1629,25 @@ class StateMachineDryRun(unittest.TestCase):
         self.assertIsNotNone(broker.grant_next("compile"))
         self.assertIsNone(broker.grant_next("compile"))
 
+    def test_rework_generation_invalidates_queued_validator(self) -> None:
+        broker, _, _ = fixture(total=6, live=2)
+        task = TaskState(phase=TaskPhase.FIX_VALIDATING)
+        task.resolution = TaskPhase.FIXING
+        submit(
+            broker,
+            make_payload("old-validator", "validator", "agent", task),
+            task,
+        )
+        old_generation = task.generation
+        task.transition(TaskPhase.FIXING)
+        self.assertEqual(task.generation, old_generation + 1)
+        task.transition(TaskPhase.FIX_VALIDATING)
+        self.assertIsNone(broker.grant_next("validator"))
+        self.assertEqual(
+            broker.requests["old-validator"].release_reason,
+            "STALE_AUTHORITY",
+        )
+
     def test_validator_capacity_shrinks_and_queue_recovers(self) -> None:
         broker, provider, _ = fixture(total=5, live=3)
         task = TaskState(phase=TaskPhase.FIX_VALIDATING)
@@ -1615,6 +1668,41 @@ class StateMachineDryRun(unittest.TestCase):
         self.assertEqual(
             broker.grant_next("validator").payload.request_id, "v2"
         )
+
+        unknown_broker, unknown_provider, _ = fixture(total=None, live=0)
+        unknown_task = TaskState(phase=TaskPhase.FIX_VALIDATING)
+        for request_id in ("unknown-1", "unknown-2"):
+            submit(
+                unknown_broker,
+                make_payload(
+                    request_id, "validator", request_id, unknown_task
+                ),
+                unknown_task,
+            )
+        unknown_first = unknown_broker.grant_next("validator")
+        unknown_broker.ack(
+            "unknown-1",
+            unknown_first.token_id,
+            unknown_task.phase,
+            unknown_task.head,
+            unknown_task.generation,
+        )
+        unknown_broker.bind_validator_spawn(
+            "unknown-1",
+            unknown_first.token_id,
+            "unknown-validator",
+            unknown_task.task_id,
+            unknown_task.phase,
+            unknown_task.head,
+            unknown_task.generation,
+        )
+        unknown_provider.snapshot.live_agent_ids = frozenset(
+            {"unknown-validator"}
+        )
+        unknown_broker.mark_platform_accounted(
+            "unknown-1", "unknown-validator"
+        )
+        self.assertIsNone(unknown_broker.grant_next("validator"))
 
     def test_validator_reservation_blocks_duplicate_real_slot(self) -> None:
         broker, provider, _ = fixture(total=4, live=3)
