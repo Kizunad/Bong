@@ -4706,7 +4706,7 @@ mod tests {
 
         let target_payloads = collect_server_data_payloads(&mut target_helper);
         assert_eq!(target_payloads.len(), 1);
-        match &target_payloads[0] {
+        match &target_payloads[0].payload {
             ServerDataPayloadV1::TradeOffer(offer) => {
                 assert_eq!(offer.initiator, "char:initiator");
                 assert_eq!(offer.target, "char:target");
