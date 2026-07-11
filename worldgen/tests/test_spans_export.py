@@ -19,15 +19,14 @@ import unittest
 from pathlib import Path
 
 from scripts.terrain_gen.bakers.raster_export import (
-    CARVE_SEED,
     SPANS_COUNT_FILE,
     SPANS_FILE,
-    _tile_carver_chain,
+    _carved_spans_for_tile,
+    _tile_carver_assignments,
     _zone_carver_chains,
     build_raster_bake_plan,
     export_rasters,
 )
-from scripts.terrain_gen.carvers import apply_carver_chain
 from scripts.terrain_gen.blueprint import (
     BlueprintZone,
     BoundarySpec,
@@ -267,32 +266,28 @@ class SpansExportLayoutTest(unittest.TestCase):
             count_bytes = (tile_dir / SPANS_COUNT_FILE).read_bytes()
             spans_bytes = (tile_dir / SPANS_FILE).read_bytes()
 
-            # Find the matching in-memory tile buffer, fold, then carve exactly
-            # as the export does (same chain lookup + CARVE_SEED).
+            # Find the matching in-memory tile buffer, then reproduce the exact
+            # per-column owner fold+carve path used by export.
             buf = next(
                 t for t in fields.tiles if t.tile.tile_id == tile_meta["dir"]
             )
             zone_chains = _zone_carver_chains(plan)
-            chain = _tile_carver_chain(buf, zone_chains)
+            assignments = _tile_carver_assignments(buf, zone_chains)
             self.assertTrue(
-                chain,
+                assignments,
                 "sky_isle tile must resolve a floating_island carver chain — "
                 "the export carves it, so the round-trip reference must too",
             )
-            # worldgen-v4 P3 §6.1 双源收口: the export folds with
-            # suppress_fold_isle=True whenever the chain owns the isle, so the
-            # round-trip baseline MUST mirror that flag or it would silently
-            # diverge from the on-disk bytes when the 2D fold also has isle data.
-            suppress_fold_isle = any(c.name == "floating_island" for c in chain)
-            folded = spans_for_tile(buf, suppress_fold_isle=suppress_fold_isle)
-            carved = apply_carver_chain(
-                folded,
-                chain,
-                origin_x=buf.tile.min_x,
-                origin_z=buf.tile.min_z,
-                tile_size=buf.tile_size,
-                seed=CARVE_SEED,
+            self.assertTrue(
+                any(
+                    carver.name == "floating_island"
+                    for _zone_name, _mask, chain in assignments
+                    for carver in chain
+                ),
+                "sky_isle assignment 必须包含 floating_island carver",
             )
+            folded = spans_for_tile(buf)
+            carved = _carved_spans_for_tile(buf, zone_chains)
             # The chain actually changed at least one column (a real isle span),
             # else this test would pass even if carving silently no-op'd.
             self.assertNotEqual(
