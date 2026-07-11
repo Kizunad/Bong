@@ -94,20 +94,20 @@ first_diff_world (3072, -3584) ((-64, 77),) -> ((59, 77), (-64, 32))
 
 ## 修复计划骨架
 
-- [ ] 明确拆分字段语义：保留 `tiles[].zones` 作为 manifest / console provenance 时，新增或派生 `carver_owner_zones` / `positive_contributing_zones` / `dominant_zone`，避免 `_tile_carver_chain` 继续从 provenance 字段取控制权。
-- [ ] 修改 `_blend_tile_layers` 或合成主循环，让“正权重实际改过几何/层”的 zone 单独记录；零权重 AABB 命中可以继续记录到 provenance，但不能成为 carver owner。
-- [ ] 修改 `_tile_carver_chain`：只从正贡献 owner 列表选 chain；若没有正贡献 carver owner，则不应用 carver，而不是退回第一个 provenance zone。
-- [ ] 保持 manifest / console 兼容：若现有消费者依赖 `tiles[].zones` 显示粗相交 zone，不要在修复中顺手删除零权重 provenance。
-- [ ] 加 `tile_6_-7` 或最小 fixture 回归：`blood_valley weight_max == 0` 时不能让 `rift_valley` canyon chain 改写该 tile spans。
+- [x] ✅ 2026-07-11 明确拆分字段语义：保留 `tiles[].zones` 作为 manifest / console provenance 时，新增 `carver_owner_zones`，避免 `_tile_carver_chain` 继续从 provenance 字段取控制权。
+- [x] ✅ 2026-07-11 修改 `_blend_tile_layers`，让“正权重实际改过几何/层”的 zone 单独记录；零权重 AABB 命中继续记录到 provenance，但不能成为 carver owner。
+- [x] ✅ 2026-07-11 修改 `_tile_carver_chain`：只从正贡献 owner 列表选 chain；没有正贡献 carver owner 时不应用 carver。
+- [x] ✅ 2026-07-11 保持 manifest / console 兼容：`tiles[].zones` 继续输出原 `contributing_zones`。
+- [x] ✅ 2026-07-11 加入最小 fixture 与真实 `tile_6_-7` 回归，锁定零权重 `blood_valley` 不得改写 spans。
 
 ## 验证计划
 
-- [ ] `cd worldgen && python3 -m unittest discover -s tests -p 'test_spans_export.py' -v`
-- [ ] `cd worldgen && python3 -m unittest discover -s tests -p 'test_span_blend.py' -v`
-- [ ] `cd worldgen && python3 -m unittest discover -s tests -p 'test_v3_behavior_baseline.py' -v`
-- [ ] `cd worldgen && python3 -m scripts.terrain_gen --backend raster --zone-filter blood_valley,zhanhun_plain`
-- [ ] `cd worldgen && python3 -m scripts.terrain_gen.harness.raster_check generated/terrain-gen/rasters`
-- [ ] 抽样验证 `tile_6_-7`：`blood_valley` 仍可作为 provenance 出现时，也不得作为 carver owner；spans 差异列应回归为 0 或仅来自真正正权重 owner。
+- [x] ✅ 2026-07-11 `cd worldgen && python3 -m unittest discover -s tests -p 'test_spans_export.py' -v`
+- [x] ✅ 2026-07-11 `cd worldgen && python3 -m unittest discover -s tests -p 'test_span_blend.py' -v`
+- [x] ✅ 2026-07-11 `cd worldgen && python3 -m unittest discover -s tests -p 'test_v3_behavior_baseline.py' -v`
+- [x] ✅ 2026-07-11 `cd worldgen && python3 -m scripts.terrain_gen --backend raster --zone-filter blood_valley,zhanhun_plain`
+- [x] ✅ 2026-07-11 `cd worldgen && python3 -m scripts.terrain_gen.harness.raster_check generated/terrain-gen/rasters`
+- [x] ✅ 2026-07-11 抽样验证 `tile_6_-7`：`blood_valley` 保留为 provenance，但不再成为 carver owner；chain 为空且 spans 差异列为 0。
 
 ## 对抗复核结论
 
@@ -116,3 +116,11 @@ first_diff_world (3072, -3584) ((-64, 77),) -> ((59, 77), (-64, 32))
 第一轮反方质疑指出：`contributing_zones` 未明确定义为“正权重 zone”，粗 AABB 命中可能是合法 provenance；不能单凭零权重 append 判定 bug。
 
 第二轮修正口径后，反方最终裁决通过：问题成立点是同一字段同时做 provenance 和 export control。`_blend_tile_layers` 零权重分支只记录、不改层，但 `_tile_carver_chain` 把记录顺序解释为几何主导 zone；`tile_6_-7` 证据覆盖真实配置、选错 chain、spans 被实际改写，不是元数据误标。
+
+## Finish Evidence
+
+- RED：新增回归在修复前出现 2 个 `AttributeError` 与 2 个行为失败，分别证明缺少独立 owner 字段、export 仍选择 provenance-only chain、无 owner 时仍回退 provenance 雕刻。
+- 修复 commits：`7be3664f` 锁定失败契约，`9c1e8c3a` 分离 owner/provenance，`bd7225d6` 补齐真实边界 tile 回归；同步 main 后 HEAD 为 `73c5c0324a7e4da5c86ba8eaa12a3701e11ecf9b`。
+- 自动测试：新回归 5 项、`test_spans_export.py` 14 项、`test_span_blend.py` 9 项、`test_stitcher_dispatch.py` 10 项、`test_v3_behavior_baseline.py` 12 项，共 50 项通过。
+- pipeline：`blood_valley,zhanhun_plain` raster 生成 36 tiles 成功；`raster_check` 退出码 0；生成目录已清理，worktree 保持干净。
+- 第一轮 fresh validator：`gpt-5.6-sol-xhigh` 在精确 HEAD `73c5c0324a7e4da5c86ba8eaa12a3701e11ecf9b` 上确认真实 bug、最小正确修复、manifest 兼容、真实 witness 与提交 trailer，结论 `VERDICT: PASS`。
