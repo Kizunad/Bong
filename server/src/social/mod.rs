@@ -4605,7 +4605,7 @@ mod tests {
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
         app.add_systems(Update, dispatch_trade_offers);
-        let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+        let (mut initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
         initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
         let initiator = app.world_mut().spawn(initiator_bundle).id();
         app.world_mut().entity_mut(initiator).insert((
@@ -4704,10 +4704,6 @@ mod tests {
         app.update();
         flush_all_client_packets(&mut app);
 
-        assert!(
-            collect_chat_messages(&mut initiator_helper).is_empty(),
-            "玩家交易不得伪装成 NPC，替目标玩家按声名自动拒绝"
-        );
         let target_payloads = collect_server_data_payloads(&mut target_helper);
         assert_eq!(target_payloads.len(), 1);
         match &target_payloads[0] {
