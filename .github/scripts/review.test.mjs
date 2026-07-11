@@ -110,6 +110,7 @@ function openCircuitGhScript() {
 const args = process.argv.slice(2).join(" ");
 if (args.includes("search/issues")) process.stdout.write(${JSON.stringify(JSON.stringify(stateIssue))});
 else if (args.includes("issues/1149/comments")) process.stdout.write(${JSON.stringify(comments.map(JSON.stringify).join("\n"))});
+else if (args.includes("issues/1148/comments")) process.stdout.write("{}");
 else process.exit(92);
 `;
 }
@@ -465,6 +466,7 @@ test("circuit-preflight 命令: 熔断中仅精确 /review 旁路，自动与兜
     assert.equal(paused.status, 0, paused.stderr);
     assert.equal(paused.githubOutput, "should_run=false\n", `${trigger}:${body} 应在熔断期暂停`);
     assert.match(paused.stderr, /熔断跳过/);
+    assert.doesNotMatch(paused.stderr, /发布 Review 熔断跳过评论失败/);
   }
 });
 
