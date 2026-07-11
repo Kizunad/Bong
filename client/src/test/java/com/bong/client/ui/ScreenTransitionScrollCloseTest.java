@@ -79,6 +79,23 @@ class ScreenTransitionScrollCloseTest {
     }
 
     @Test
+    void rejectedTerminalTransportStillClearsPendingScrollSession() {
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_rejected", "《残卷》", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen pendingScreen = new ScrollReadScreen(offer);
+        ScreenTransition.TransitionHandle handle = activatePending(pendingScreen);
+
+        ScreenTransitionController.cancelAndClose(null);
+        ScreenTransitionController.cancelAndClose(null);
+
+        assertTrue(handle.cancelled(), "transport 拒绝也必须完成视觉转场取消");
+        assertNull(ScreenTransitionController.activeTransition(), "transport 拒绝后不得残留 active transition");
+        assertNull(ScrollReadStore.snapshot(),
+            "视觉已关闭时，本地阅读 store 必须完成终态，不能因 transport 拒绝永久悬挂");
+    }
+
+    @Test
     void pendingProtocolSettlementRunsAfterCurrentScreenDirectClose() {
         boolean[] currentScreenClosed = {false};
         OrderingAwareScreen pendingScreen = new OrderingAwareScreen(currentScreenClosed);

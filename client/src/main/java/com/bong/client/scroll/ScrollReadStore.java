@@ -49,6 +49,8 @@ public final class ScrollReadStore {
         if (snapshot == null) {
             return;
         }
+        // 关闭是本地不可逆终态：即使当前 play transport 已断开或拒绝 payload，也不能让
+        // 已经视觉关闭的阅读会话继续残留在 store。server 侧断线清理负责兜底 marker。
         ClientRequestSender.sendScrollReadClosed();
         replace(null);
     }
