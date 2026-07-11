@@ -58,6 +58,9 @@ pub mod lifespan;
 pub mod luck_pool;
 pub mod meridian;
 pub mod meridian_open;
+// plan-race-system-v1 P1 对抗审查 M2 —— 非人合成构型全链测试。
+#[cfg(test)]
+mod non_humanoid_meridian_synthetic_chain_test;
 pub mod neg_pressure;
 pub mod negative_zone;
 pub mod overload;
@@ -1375,6 +1378,57 @@ pub(crate) mod legacy_meridian_bundle {
             let decoded =
                 decode_meridian_severed(sample, 1).expect("empty v1 sample should migrate");
             assert_eq!(decoded.severed_count(), 0);
+        }
+
+        /// plan-race-system-v1 P1 对抗审查 MINOR ③：`LegacyMeridian` 的标量字段（除
+        /// `cracks` 外）均无 `#[serde(default)]`——缺失任一必填标量字段的 v1 存档条目
+        /// 必须被拒绝而不是静默补零/静默丢弃该经脉（那会悄悄伪造一条"从未存在过"的
+        /// 经脉状态）。本用例逐个删掉 `opened_at`/`flow_rate` 验证两者都触发拒绝。
+        #[test]
+        fn decode_meridian_system_rejects_legacy_entry_missing_required_scalar_field() {
+            // "opened_at" 字段缺失（其余标量字段齐全）。
+            let entry_missing_opened_at = serde_json::json!({
+                "id": "Lung",
+                "opened": false,
+                "open_progress": 0.0,
+                "flow_rate": 1.0,
+                "flow_capacity": 10.0,
+                "rate_tier": 0,
+                "capacity_tier": 0,
+                "throughput_current": 0.0,
+                "integrity": 1.0,
+                "cracks": [],
+            });
+            let broken = serde_json::json!({
+                "regular": [entry_missing_opened_at],
+                "extraordinary": [],
+            });
+            assert!(
+                decode_meridian_system(broken, 1).is_err(),
+                "缺 opened_at 的 legacy meridian 条目必须被拒绝，不能静默补 0"
+            );
+
+            // "flow_rate" 字段缺失（其余标量字段齐全）。
+            let entry_missing_flow_rate = serde_json::json!({
+                "id": "Lung",
+                "opened": false,
+                "open_progress": 0.0,
+                "flow_capacity": 10.0,
+                "rate_tier": 0,
+                "capacity_tier": 0,
+                "throughput_current": 0.0,
+                "integrity": 1.0,
+                "cracks": [],
+                "opened_at": 0,
+            });
+            let broken2 = serde_json::json!({
+                "regular": [entry_missing_flow_rate],
+                "extraordinary": [],
+            });
+            assert!(
+                decode_meridian_system(broken2, 1).is_err(),
+                "缺 flow_rate 的 legacy meridian 条目必须被拒绝，不能静默补 0"
+            );
         }
 
         #[test]
