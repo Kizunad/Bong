@@ -1,5 +1,6 @@
 package com.bong.client;
 
+import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.craft.CraftCategory;
 import com.bong.client.craft.CraftRecipe;
 import com.bong.client.craft.CraftSessionStateView;
@@ -35,6 +36,7 @@ public class BongNetworkHandlerTest {
         DroppedItemStore.resetForTests();
         BongToast.resetForTests();
         IdentityPanelStateStore.resetForTest();
+        FalseSkinHudStateStore.resetForTests();
     }
 
     @Test
@@ -266,6 +268,63 @@ public class BongNetworkHandlerTest {
             newSessionState,
             IdentityPanelStateStore.snapshot(),
             "回归防线：断线清理不能变成一次性开关——新 session 收到新 identity_panel_state 后"
+                + "正常 replace() 写入必须继续生效"
+        );
+    }
+
+    /**
+     * plan-bughunt-client-false-skin-cross-session-v1 — FalseSkinHudStateStore 此前只有
+     * resetForTests()（测试专用），生产态清理清单里完全没有它。server 的 false_skin_state
+     * 只在 Changed/RemovedComponents 时增量发包，断线切 session 不会有任何 removed 事件，
+     * 新 session 若角色本身没有伪皮也不会有 payload 覆盖旧快照，导致 FalseSkinStackHud（伪皮
+     * 层数块）和 ContamLoadHud（污染负载条）无限跨 session 残留。本测试锁住"断线清理路径
+     * 必须清空 FalseSkinHudStateStore"。
+     */
+    @Test
+    void disconnectClearsFalseSkinHudStateStoreToPreventCrossSessionResidualHud() {
+        FalseSkinHudStateStore.replace(new FalseSkinHudStateStore.State(
+            "player-1", "rotten_wood_armor", 2, 50f, 12.5f, 100L, List.of()));
+
+        assertTrue(
+            FalseSkinHudStateStore.snapshot().active(),
+            "测试前必须模拟断线前残留的 active 伪皮快照，否则无法锁住跨 session 残留回归"
+        );
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+
+        assertEquals(
+            FalseSkinHudStateStore.State.NONE,
+            FalseSkinHudStateStore.snapshot(),
+            "断线必须把 FalseSkinHudStateStore 整体复位为 State.NONE，否则新 session 在未收到"
+                + "任何 false_skin_state 前，FalseSkinStackHud/ContamLoadHud 会继续渲染上一局的"
+                + "伪皮层数和污染负载"
+        );
+        assertFalse(
+            FalseSkinHudStateStore.snapshot().active(),
+            "断线后 active() 必须为 false，否则 FalseSkinStackHud/ContamLoadHud 的渲染门槛条件仍会通过"
+        );
+    }
+
+    @Test
+    void disconnectClearingFalseSkinHudStateStoreDoesNotBlockNewSessionSnapshotAfterReconnect() {
+        FalseSkinHudStateStore.replace(new FalseSkinHudStateStore.State(
+            "player-1", "rotten_wood_armor", 2, 50f, 12.5f, 100L, List.of()));
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+        assertEquals(
+            FalseSkinHudStateStore.State.NONE,
+            FalseSkinHudStateStore.snapshot(),
+            "测试前置：断线后 store 应已复位为 State.NONE"
+        );
+
+        FalseSkinHudStateStore.State newSessionState = new FalseSkinHudStateStore.State(
+            "player-2", "spirit_wood_scroll", 1, 40f, 0f, 900L, List.of());
+        FalseSkinHudStateStore.replace(newSessionState);
+
+        assertEquals(
+            newSessionState,
+            FalseSkinHudStateStore.snapshot(),
+            "回归防线：断线清理不能变成一次性开关——新 session 收到新 false_skin_state 后"
                 + "正常 replace() 写入必须继续生效"
         );
     }
