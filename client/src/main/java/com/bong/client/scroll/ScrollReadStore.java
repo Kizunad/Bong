@@ -46,13 +46,19 @@ public final class ScrollReadStore {
      * {@code ScrollReadClosed}（例如 Screen.close() 与 store 监听器都可能触发关闭路径）。
      */
     public static void close() {
-        if (snapshot == null) {
+        closeIfCurrent(snapshot);
+    }
+
+    static void closeIfCurrent(ScrollOpenViewModel expected) {
+        if (expected == null || snapshot != expected) {
             return;
         }
         // 关闭是本地不可逆终态：即使当前 play transport 已断开或拒绝 payload，也不能让
         // 已经视觉关闭的阅读会话继续残留在 store。server 侧断线清理负责兜底 marker。
         ClientRequestSender.sendScrollReadClosed();
-        replace(null);
+        if (snapshot == expected) {
+            replace(null);
+        }
     }
 
     /** 断线时调用：仅清当前快照，保留监听器（对齐 InsightOfferStore.clearOnDisconnect）。 */

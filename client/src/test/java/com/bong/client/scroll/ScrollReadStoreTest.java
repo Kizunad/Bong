@@ -11,6 +11,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -103,6 +104,38 @@ class ScrollReadStoreTest {
 
         assertEquals(1, sent.size(),
             "连续两次 close() 只应发出一条 ScrollReadClosed（第二次因 store 已空而 no-op），实际=" + sent);
+    }
+
+    @Test
+    void closeIfCurrent_whenExpectedSessionWasReplaced_isNoOp() {
+        installNetworkCapture();
+        ScrollOpenViewModel first = fixture("scroll_old");
+        ScrollOpenViewModel replacement = fixture("scroll_new");
+        ScrollReadStore.replace(first);
+        ScrollReadStore.replace(replacement);
+
+        ScrollReadStore.closeIfCurrent(first);
+
+        assertSame(replacement, ScrollReadStore.snapshot(),
+            "旧 screen 的取消回调不得清掉后来替换的新阅读会话");
+        assertTrue(sent.isEmpty(), "旧 screen 的取消回调不得替新会话发送终态，实际=" + sent);
+    }
+
+    @Test
+    void closeIfCurrent_whenTransportReplacesSession_preservesReplacement() {
+        ScrollOpenViewModel current = fixture("scroll_current");
+        ScrollOpenViewModel replacement = fixture("scroll_reentrant");
+        ScrollReadStore.replace(current);
+        ClientRequestSender.setBackendForTests((channel, payload) -> {
+            sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8)));
+            ScrollReadStore.replace(replacement);
+        });
+
+        ScrollReadStore.closeIfCurrent(current);
+
+        assertSame(replacement, ScrollReadStore.snapshot(),
+            "终态发送期间重入的新会话不得被旧关闭流程清空");
+        assertEquals(1, sent.size(), "当前会话仍应恰好发送一条终态请求");
     }
 
     // ─── 监听器通知 ─────────────────────────────────────────────────────
