@@ -96,6 +96,25 @@ class ScreenTransitionScrollCloseTest {
     }
 
     @Test
+    void terminalTransportExceptionStillClearsPendingScrollSessionIdempotently() {
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> {
+            throw new IllegalStateException("simulated disconnect");
+        });
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_exception", "《残卷》", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen pendingScreen = new ScrollReadScreen(offer);
+        ScreenTransition.TransitionHandle handle = activatePending(pendingScreen);
+
+        ScreenTransitionController.cancelAndClose(null);
+        ScreenTransitionController.cancelAndClose(null);
+
+        assertTrue(handle.cancelled(), "transport 异常也必须完成视觉转场取消");
+        assertNull(ScreenTransitionController.activeTransition(), "transport 异常后不得残留 active transition");
+        assertNull(ScrollReadStore.snapshot(),
+            "transport 异常已被 tryDispatch 收敛时，本地阅读 store 仍必须幂等完成终态");
+    }
+
+    @Test
     void pendingProtocolSettlementRunsAfterCurrentScreenDirectClose() {
         boolean[] currentScreenClosed = {false};
         OrderingAwareScreen pendingScreen = new OrderingAwareScreen(currentScreenClosed);

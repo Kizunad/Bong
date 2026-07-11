@@ -116,15 +116,16 @@
 
 - RED（JDK 17）：`./gradlew test --tests com.bong.client.ui.ScreenTransitionScrollCloseTest`
   - 修复前 `1 test completed, 1 failed`，失败点为阅读 store 未清空。
-- targeted GREEN（JDK 17）：同命令，最终 `4/4 PASS`：
+- targeted GREEN（JDK 17）：同命令，最终 `5/5 PASS`：
   - pending ScrollRead 发送且仅发送一条 `scroll_read_closed`；
   - 重复 Esc 幂等；
   - 无关 pending screen 不误结算；
   - direct-close 发生在 pending settle 之前。
   - transport 拒绝 `scroll_read_closed` 时仍清空本地 store，不让视觉已关闭的会话永久悬挂。
+  - transport 抛 `RuntimeException` 时同样完成本地终态，重复 Esc 保持幂等。
 - 完整门禁（JDK 17）：`./gradlew test build`
   - 修复后：`BUILD SUCCESSFUL`。
-  - 合并 `origin/main@7cfcba5f` 并完成 transport 拒绝返工后：`3788/3788 PASS`，`BUILD SUCCESSFUL`，产物 `client/build/libs/bong-client-0.1.0.jar`。
+  - 合并 `origin/main@307ab4db` 并完成 transport 拒绝/异常返工后：`3789/3789 PASS`，`BUILD SUCCESSFUL`，产物 `client/build/libs/bong-client-0.1.0.jar`。
 
 ### 跨仓库核验
 
