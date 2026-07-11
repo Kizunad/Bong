@@ -1556,6 +1556,8 @@ message OptionalQuickSlotEntry {
 message QuickSlotConfig {
   repeated OptionalQuickSlotEntry slots = 1; // 固定 9 槽
   repeated uint64 cooldown_until_ms     = 2; // 固定 9 个 cooldown 截止时间
+  optional string ack_request_id        = 3;
+  optional bool bind_accepted           = 4;
 }
 
 // 与 Rust SkillBarEntryV1 精确对应 — tagged union (Item / Skill)。
@@ -1975,6 +1977,7 @@ message UseQuickSlot {
 message QuickSlotBind {
   uint32          slot    = 1; // Rust u8 (0..=8)
   optional string item_id = 2;
+  string request_id       = 3;
 }
 
 // 与 Rust ClientRequestV1::SkillBarCast 精确对应。

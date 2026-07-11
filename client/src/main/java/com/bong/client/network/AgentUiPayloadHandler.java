@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +39,8 @@ import java.util.function.Consumer;
  */
 public final class AgentUiPayloadHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(AgentUiPayloadHandler.class);
+    public static final Identifier AGENT_UI_CLOSE_CHANNEL =
+        new Identifier("bong", "agent_ui_close");
 
     static ServerDataDispatch openReadyRequestForTests(
         String payloadType,
@@ -121,6 +124,23 @@ public final class AgentUiPayloadHandler {
     }
 
     // ─── 专属 channel 原始 JSON 解析（bong:agent_ui_request / bong:agent_ui_close）─────────
+
+    /**
+     * 生产 close channel 的主线程调度入口。
+     *
+     * <p>Fabric receiver 先复制原始 payload bytes，再经此处 UTF-8 解码并提交到
+     * {@code MinecraftClient.execute}；测试可注入可控 executor，覆盖与生产相同的线程边界。
+     */
+    public static void dispatchRawClose(byte[] payloadBytes, Consumer<Runnable> mainThreadExecutor) {
+        String jsonPayload = ServerDataEnvelope.decodeUtf8(payloadBytes);
+        mainThreadExecutor.accept(() -> {
+            try {
+                handleRawClose(jsonPayload);
+            } catch (Exception e) {
+                LOGGER.error("[bong][agent_ui] bong:agent_ui_close dispatch failed: {}", e.getMessage());
+            }
+        });
+    }
 
     /**
      * 解析来自 {@code bong:agent_ui_request} 专属 channel 的裸 JSON payload。
@@ -223,6 +243,15 @@ public final class AgentUiPayloadHandler {
         String requestId = readString(payload, "request_id");
         if (requestId == null || requestId.isBlank()) {
             LOGGER.warn("[bong][agent_ui] bong:agent_ui_close: 'request_id' 缺失，payload 忽略");
+            return;
+        }
+
+        var reasonElement = payload.get("reason");
+        if (reasonElement != null
+            && !reasonElement.isJsonNull()
+            && (!reasonElement.isJsonPrimitive()
+                || !reasonElement.getAsJsonPrimitive().isString())) {
+            LOGGER.warn("[bong][agent_ui] bong:agent_ui_close: 'reason' 类型非法，payload 忽略");
             return;
         }
 

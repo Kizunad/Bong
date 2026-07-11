@@ -155,13 +155,12 @@ mod tests {
     use super::*;
     use crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL;
 
-    /// plan-zone-qi-economy-v1 P0 §8.1 决议 #1（历史注水清算 = 起服重置，不迁移）：
-    /// `WorldQiAccount`（含独立待分配池账户）从不持久化（`persistence::mod` 文档锚点：
-    /// "持久层完全不碰 WorldQiAccount / ledger"），每次 `register(app)`（服务器启动路径）
-    /// 都通过 `init_resource::<WorldQiAccount>()` 得到一个全新的空账本——旧 bug 攒下的错误
-    /// 余额天然清零，不需要额外迁移逻辑。
+    /// `qi_physics::register` 本身只创建空运行期账本，不携带上一进程的审计轨迹或镜像。
+    /// 生产 Startup 随后由 persistence 从各自物理权威恢复：zone 账户来自 zones_runtime；
+    /// 唯一没有 ECS/zone 字段承载的 pending inflow 自 v34 起由 qi_runtime_accounts 恢复。
+    /// 本测试刻意只调用 register，锁住“资源初始化不暗中注水”的边界。
     #[test]
-    fn register_resets_ledger_and_pending_inflow_pool_to_empty_on_every_boot() {
+    fn register_starts_empty_before_persistence_hydration() {
         let mut app = App::new();
         register(&mut app);
 

@@ -1993,6 +1993,8 @@ fn quick_slot_config_to_proto(c: &super::combat_hud::QuickSlotConfigV1) -> bong:
             })
             .collect(),
         cooldown_until_ms: c.cooldown_until_ms.to_vec(),
+        ack_request_id: c.ack_request_id.clone(),
+        bind_accepted: c.bind_accepted,
     }
 }
 
@@ -3809,12 +3811,16 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             ClientRequestV1::UseQuickSlot { slot, .. } => {
                 Payload::UseQuickSlot(bong::UseQuickSlot { slot: *slot as u32 })
             }
-            ClientRequestV1::QuickSlotBind { slot, item_id, .. } => {
-                Payload::QuickSlotBind(bong::QuickSlotBind {
-                    slot: *slot as u32,
-                    item_id: item_id.clone(),
-                })
-            }
+            ClientRequestV1::QuickSlotBind {
+                slot,
+                item_id,
+                request_id,
+                ..
+            } => Payload::QuickSlotBind(bong::QuickSlotBind {
+                slot: *slot as u32,
+                item_id: item_id.clone(),
+                request_id: request_id.clone(),
+            }),
             ClientRequestV1::SkillBarCast { slot, target, .. } => {
                 Payload::SkillBarCast(bong::SkillBarCast {
                     slot: *slot as u32,
@@ -6223,6 +6229,8 @@ mod tests {
             fix!(ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
                 slots: vec![None; 9],
                 cooldown_until_ms: vec![0; 9],
+                ack_request_id: None,
+                bind_accepted: None,
             })),
             fix!(ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
                 slots: vec![None; 9],
@@ -7664,6 +7672,7 @@ mod tests {
                 v: 1,
                 slot: 0,
                 item_id: Some("herb_a".to_string()),
+                request_id: "quick-bind-1".to_string(),
             }),
             build(ClientRequestV1::SkillBarCast {
                 v: 1,

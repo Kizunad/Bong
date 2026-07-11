@@ -9,6 +9,7 @@ import {
 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
 import {
+  QuickSlotConfigV1,
   SkillBarConfigV1,
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
@@ -190,6 +191,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("full_power_charging_state"),
   Type.Literal("full_power_release"),
   Type.Literal("full_power_exhausted_state"),
+  Type.Literal("quickslot_config"),
   Type.Literal("skillbar_config"),
   Type.Literal("techniques_snapshot"),
   Type.Literal("skill_config_snapshot"),
@@ -1009,6 +1011,18 @@ export const ServerDataFullPowerExhaustedStateV1 = Type.Object(
 );
 export type ServerDataFullPowerExhaustedStateV1 = Static<
   typeof ServerDataFullPowerExhaustedStateV1
+>;
+
+export const ServerDataQuickSlotConfigV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("quickslot_config"),
+    ...QuickSlotConfigV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataQuickSlotConfigV1 = Static<
+  typeof ServerDataQuickSlotConfigV1
 >;
 
 export const ServerDataSkillBarConfigV1 = Type.Object(
@@ -1837,6 +1851,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataFullPowerChargingStateV1,
   ServerDataFullPowerReleaseV1,
   ServerDataFullPowerExhaustedStateV1,
+  ServerDataQuickSlotConfigV1,
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataSkillConfigSnapshotV1,

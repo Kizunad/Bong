@@ -1583,6 +1583,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.quickslot-config.sample.json", () => {
+    const data = loadSample("server-data.quickslot-config.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.techniques-snapshot.sample.json", () => {
     const data = loadSample("server-data.techniques-snapshot.sample.json");
     const result = validate(ServerDataV1, data);
@@ -3193,6 +3199,21 @@ describe("negative sample files fail schema validation", () => {
     const data = loadObjectSample("server-data.skillbar-config.sample.json");
     const slots = data.slots as Array<Record<string, unknown> | null>;
     slots[0] = { kind: "skill", display_name: "崩拳" };
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects malformed quickslot_config slot entry", () => {
+    const data = loadObjectSample("server-data.quickslot-config.sample.json");
+    const slots = data.slots as Array<Record<string, unknown> | null>;
+    slots[0] = { item_id: "kai_mai_pill", display_name: "开脉丹" };
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects quickslot_config arrays that are not exactly nine slots", () => {
+    const data = loadObjectSample("server-data.quickslot-config.sample.json");
+    (data.cooldown_until_ms as unknown[]).pop();
     const result = validate(ServerDataV1, data);
     expect(result.ok).toBe(false);
   });
