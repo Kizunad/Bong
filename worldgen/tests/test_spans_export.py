@@ -417,6 +417,30 @@ class ZoneFilterValidationTest(unittest.TestCase):
             fields = synthesize_fields(plan, zone_filter=None)
         self.assertTrue(fields.tiles, "no filter must export the full world")
 
+    def test_tile_filter_synthesizes_only_named_active_tiles(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, _ = self._plan(td)
+            full_fields = synthesize_fields(plan)
+            selected_id = full_fields.tiles[0].tile.tile_id
+            fields = synthesize_fields(plan, tile_filter={selected_id})
+        self.assertEqual(
+            [tile.tile.tile_id for tile in fields.tiles],
+            [selected_id],
+            "tile_filter must bound synthesis to the exact requested plan tile",
+        )
+
+    def test_unknown_tile_filter_raises_before_synthesis(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, _ = self._plan(td)
+            with self.assertRaisesRegex(ValueError, "unknown plan tile"):
+                synthesize_fields(plan, tile_filter={"tile_999_999"})
+
+    def test_empty_tile_filter_synthesizes_no_tiles(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, _ = self._plan(td)
+            fields = synthesize_fields(plan, tile_filter=set())
+        self.assertEqual(fields.tiles, [])
+
 
 if __name__ == "__main__":
     unittest.main()
