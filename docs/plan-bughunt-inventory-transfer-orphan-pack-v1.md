@@ -1,6 +1,6 @@
-# plan-bughunt-inventory-transfer-orphan-pack-v1（骨架）
+# plan-bughunt-inventory-transfer-orphan-pack-v1
 
-> **骨架（草案）**。一句话主题：**截劫夺包复用 `transfer_all_inventory_contents` 后，受害者 inventory 会残留孤儿 `pack_<id>` 容器；该脏状态一旦 autosave / shutdown 落盘，下次登录会被 loader 当成 `#736-corrupted v2 inventory` 丢弃，并回退默认 loadout。**
+> 一句话主题：**截劫夺包复用 `transfer_all_inventory_contents` 后，受害者 inventory 会残留孤儿 `pack_<id>` 容器；该脏状态一旦 autosave / shutdown 落盘，下次登录会被 loader 当成 `#736-corrupted v2 inventory` 丢弃，并回退默认 loadout。**
 
 > 去重说明：本条不是你点名排除的 **extra hand equip gate / TSY death drop 分流 / tool weapon HUD leak / BaiYanPeng 引怪漂移**，也不是最近文档里已立项的 container filter / nested pack / dead armor contamination 题。核心缺口落在 **inventory 全量转移 helper 没有维护 `pack_<id>` 派生容器不变量**。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 截劫夺包后受害者落盘为孤儿 `pack_<id>` 脏档，重登回退默认 loadout | fix_pr | ⬜ |
+| P0 | 截劫夺包后受害者落盘为孤儿 `pack_<id>` 脏档，重登回退默认 loadout | fix_pr | ✅ 2026-07-12 |
 
 ## P0 — 截劫夺包后受害者落盘为孤儿 `pack_<id>` 脏档
 

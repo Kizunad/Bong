@@ -7741,6 +7741,7 @@ mod tests {
         let mut app = App::new();
         let (settings, root) = persistence_settings("intercept-loot-transfer");
         app.insert_resource(settings.clone());
+        app.insert_resource(ItemRegistry::default());
         app.add_event::<DeathEvent>();
         app.add_event::<TribulationSettled>();
         app.add_systems(Update, tribulation_intercept_death_system);
@@ -7837,6 +7838,7 @@ mod tests {
         let mut app = App::new();
         let (settings, root) = persistence_settings("intercept-killer-must-be-participant");
         app.insert_resource(settings);
+        app.insert_resource(ItemRegistry::default());
         app.add_event::<DeathEvent>();
         app.add_event::<TribulationSettled>();
         app.add_systems(Update, tribulation_intercept_death_system);

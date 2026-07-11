@@ -4187,13 +4187,16 @@ mod player_state_tests {
             "重载后仍不应出现孤儿 `{pack_id}` 容器"
         );
 
-        // 击杀者应完整收到 pack 本体（worn）+ loot（原容器内含物），战利品不丢。
+        // 击杀者应完整收到 pack 本体 + loot（原容器内含物），战利品不丢。
+        // 注：transfer 走 force_attach_item_to_inventory，全部塞进击杀者的容器格
+        // （包括夺来的 pack 本体——作为物品转移，不自动穿戴）。
         assert!(
             killer
-                .equipped
-                .get(EQUIP_SLOT_CHEST)
-                .is_some_and(|slot| slot.worn.iter().any(|i| i.instance_id == 9_101)),
-            "击杀者应在 chest.worn 收到夺来的 pack 本体（instance 9101）"
+                .containers
+                .iter()
+                .flat_map(|c| c.items.iter())
+                .any(|p| p.instance.instance_id == 9_101),
+            "击杀者应在容器格收到夺来的 pack 本体（instance 9101），不得在转移中丢件"
         );
         assert!(
             killer
