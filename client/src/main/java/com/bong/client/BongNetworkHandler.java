@@ -916,6 +916,12 @@ public class BongNetworkHandler {
         // 此前没有生产态清理入口，断线不清会让 HUD 角标和刚打开的身份面板短暂展示上一局
         // 身份数据；面板一旦在旧快照上 init 完，按钮回调还会冻结在旧 identityId 上。
         IdentityPanelStateStore.clearOnDisconnect();
+        // plan-bughunt-client-false-skin-cross-session-v1 — FalseSkinHudStateStore 此前只有
+        // resetForTests()，生产态断线清理清单里完全没有它。server 的 false_skin_state 只在
+        // Changed/RemovedComponents 时增量发包，断线切 session 不会有任何 payload 覆盖旧
+        // 快照，会让上一局的伪皮层数块（FalseSkinStackHud）和污染负载条（ContamLoadHud）
+        // 无限跨 session 残留，直到再次收到一条 false_skin_state。
+        com.bong.client.combat.store.FalseSkinHudStateStore.clearOnDisconnect();
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {
