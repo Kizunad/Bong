@@ -755,7 +755,7 @@ mod tests {
     use crate::skill::components::{SkillEntry, SkillSet};
     use crate::world::zone::ZoneRegistry;
     use std::collections::HashMap;
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, Events, IntoSystemConfigs, Update};
     use valence::testing::create_mock_client;
 
     /// plan-skill-v1 §7.1 botany 行 XP 数值锚点：野外采集 手动 +2 · 自动 +5。
