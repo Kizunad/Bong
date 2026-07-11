@@ -52,12 +52,12 @@ public final class WeaponHotbarHudPlanner {
         int totalHeight = (lowerY + QuickBarHudPlanner.SLOT_SIZE) - upperY;
 
         EquippedWeapon mainHand = WeaponEquippedStore.get("main_hand");
-        if (mainHand != null) {
+        if (isHudWeapon(mainHand)) {
             int x = hotbarLeftX - SLOT_GAP_TO_HOTBAR - SLOT_W;
             drawWeaponSlot(out, x, upperY, totalHeight, mainHand);
         }
         EquippedWeapon offHand = WeaponEquippedStore.get("off_hand");
-        if (offHand != null) {
+        if (isHudWeapon(offHand)) {
             int x = hotbarLeftX + hotbarWidth + SLOT_GAP_TO_HOTBAR;
             drawWeaponSlot(out, x, upperY, totalHeight, offHand);
         } else {
@@ -83,6 +83,10 @@ public final class WeaponHotbarHudPlanner {
         // 不再单独查 two_hand 槽。
 
         return out;
+    }
+
+    private static boolean isHudWeapon(EquippedWeapon weapon) {
+        return weapon != null && !"tool".equals(weapon.weaponKind());
     }
 
     // plan-layered-equip-v1 P4（决议 #8）：取首个占用的触发位法宝（trigger_0 起），供 HUD 单槽展示。
