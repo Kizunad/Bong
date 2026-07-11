@@ -1,6 +1,6 @@
 # plan-agent-ui-close-reason-drop-v1
 
-> **活跃 BugFix plan**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
+> **已完成 BugFix plan**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
 
 > 立项动机：本轮只看 `agent-ui / client bridge / panel runtime`，重点筛 `screen open path / panel state / overlay scope / fallback route / payload 字段`。已避开已知重复题：realm gate 广播泄漏、`button_click` 回流天道推演丢 `player_uuid/scenario`、agent_ui 覆层被 screen gate 提前吞掉、`tiandao_revelation` VFX 语义位丢失；也未与 `#931`/`#927` 重复。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
-| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ⏳ |
+| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ✅ 2026-07-11 |
 
 ## P0 — `agent_ui_close.reason` 生产/消费断链
 
@@ -132,9 +132,13 @@ bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loo
   - `invalid_button_id` / `session_expired` 独立中文文案；未知非空 reason 有可见兜底；空 reason 保持 Replaced 静默。
   - 复用现有 `BongToast` HUD 活链路，警示色展示 3 秒。
 - `AgentUiStore` / `AgentUiScreen`
-  - reason 传入 screen close 语义；active 为空时仍显示迟到错误反馈；active request_id 不匹配时不污染新面板。
+  - reason 传入 screen close 语义；按钮响应先登记 pending request，再本地关屏。
+  - pending 只允许匹配 request_id、TTL 内的错误 close 消费一次；重复、未知、跨 request、新生命周期、TTL 边界与单调时钟回拨均 fail-closed。
 - client tests
-  - `AgentUiCloseFeedbackTest`、`AgentUiPayloadHandlerTest`、`AgentUiScreenProtocolTest` 覆盖映射、wire、状态转换、静默 Replaced、迟到 close 与不回包契约。
+  - `AgentUiCloseFeedbackTest`、`AgentUiPayloadHandlerTest`、`AgentUiScreenProtocolTest` 覆盖映射、状态转换、静默 Replaced、迟到 close 与不回包契约。
+  - `AgentUiCloseChannelIntegrationTest` 从共享 fixture 原始 bytes 经生产 dispatch/main-thread 入口直到 `BongToast` HUD command，并覆盖畸形 payload 隔离。
+- `agent/packages/schema/samples/agent-ui-close.channel-wire.sample.json`
+  - 共享 fixture 锁定专属 channel 与 Replaced / `session_expired` / `invalid_button_id` 三种生产 wire；server encoder、schema 与 client receiver 三端对拍。
 
 ### 关键 commit（2026-07-10）
 
@@ -143,30 +147,36 @@ bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loo
 - `de3d4488` — 传递 agent UI 关闭原因到面板状态
 - `9ed1b4a4` — 锁定 agent UI 关闭原因全链路回归
 - `a015d0e0` — 收束非法按钮为 agent UI 错误关闭
+- `53addd8e` / `6965cdf2` — 关联并锁定迟到 close 的完整 request 生命周期
+- `4f5725d1` / `a42bd573` — 复用生产线程调度入口并补原始 bytes 集成验收
+- `24f4a43f` / `504b8d5e` — 共享 wire fixture 与 server 生产 encoder 对拍
+- `1e52e097` / `f2428f57` — 收紧单调 TTL、非法输入与时钟边界
 
 ### 测试结果
 
-- client：Java 17，`./gradlew test build` → **3716 passed / 0 failed**；其中本题三组测试 **59 passed**。
-- schema：`agent/packages/schema npm test` → **790 passed / 0 failed**，其中 `agent-ui.test.ts` 44 passed。
-- server 定向：`cargo test network::agent_ui::tests` → **48 passed / 0 failed**。
-- server 格式：`cargo fmt --check` → 通过。
+- client 既有全量：Java 17，`./gradlew test build` → **3716 passed / 0 failed**。
+- client 最终聚焦：Java 17，四组 agent UI close 测试 → **73 passed / 0 failed**。
+- schema 既有全量：`npm test` → **790 passed / 0 failed**；最终聚焦 `npm test -- --run tests/agent-ui.test.ts` → **45 passed / 0 failed**。
+- server 最终聚焦：`cargo test network::agent_ui::tests` → **49 passed / 0 failed**；`cargo fmt --check` → 通过。
 - server 全量：`cargo test` → **10930 passed / 1 timing failure / 1 ignored**；唯一失败为无关的 `world::poi_novice::scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb`（并发负载下 11.8 秒越过耗时阈值），立即单独复跑 → **1 passed，6.65 秒**。
 - server clippy：规定命令在 Rust 1.96 下被仓库基线 **69 个**无关 lint 拦截（集中于 botany/combat/cultivation/fauna/world 等）；本次改动文件 `server/src/network/agent_ui.rs` 没有 clippy diagnostic，未越界修改这些模块。
-- 首轮无上下文只读 validator：`fork_context:false`、`gpt-5.6-sol` Ultra/priority → PASS；随后 PR 统一 review 发现更完整的跨生命周期迟到 close 缺口，已重新打开本 plan，不作为最终验收。
+- GitHub e2e：run `29122770407` attempt 2 在同一 HEAD `f2428f57` → **success**；client、schema、agent、server、smoke 与 bot e2e 全部通过。attempt 1 唯一失败为无关 forge 场景超时，原样重跑恢复，未跨域修改 forge。
+- CodeRabbit：唯一 inline thread 已 `resolved + outdated`，当前未解决 thread **0**。
+- 最终无上下文只读 validator：`fork_context:false`、`gpt-5.6-sol` Ultra/priority → **VERDICT: PASS**，明确 blocker 为 **无**。
 
 ### 跨栈核验
 
 - schema：`AgentUiCloseReasonV1 = "invalid_button_id" | "session_expired"` 保持不变。
-- server：`send_agent_ui_close_to_client`、`receive_agent_ui_response_system`。
-- client：`AgentUiPayloadHandler.handleRawClose` → `AgentUiStore.receiveClose` → `AgentUiScreen.receiveCloseSignal(reason)` → `AgentUiCloseFeedback` → `BongToast`。
+- server：`receive_agent_ui_response_system` → `encode_agent_ui_close_payload` → `send_agent_ui_close_to_client`，生产 bytes 与共享 fixture 完全一致。
+- client：`BongNetworkHandler.registerAgentUiChannels` → `AgentUiPayloadHandler.dispatchRawClose` → `AgentUiStore.receiveClose` → `AgentUiScreen.receiveCloseSignal(reason)` → `AgentUiCloseFeedback` → `BongToast`。
 
 ### 遗留 / 后续
 
 - 本修复不修改 schema/wire 版本，不涉及 agent 推演逻辑、世界观或真元守恒。
-- PR 后等待 e2e/相关 checks；仓库级 Rust 1.96 clippy 基线清理不纳入本单一 BugFix plan。
+- 仓库级 Rust 1.96 clippy 基线清理不纳入本单一 BugFix plan；本次最终闭环无 blocker。
 
 ### Review 返工（2026-07-10）
 
 - PR #1159 首轮统一 review 有效指出：active screen 为空时不能无条件接受任意 reason close，必须关联“本地按钮响应已发出、仍待 server 确认”的 request_id。
 - 返工状态机：待确认 request 只在 request_id 匹配且 TTL 未过期时消费一次；重复 close、未知 request、TTL 到期均忽略；新 request 开始时清除旧 pending，避免新生命周期结束后旧 close 误弹。
-- plan 已从 finished 恢复为 active/⏳；完成等价跨端集成或真实 runClient 验收、e2e/相关 checks 与复审 PASS 后再归档。
+- 等价跨端集成、e2e/相关 checks、CodeRabbit 清零与最终 Ultra validator PASS 均已完成；P0 于 2026-07-11 重新验收并归档。
