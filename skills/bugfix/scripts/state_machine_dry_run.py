@@ -966,10 +966,17 @@ class TokenBroker:
 
     def _authority_matches(self, state: RequestState) -> bool:
         task = self.authority.get(state.payload.task)
+        phase_matches = task is not None and (
+            task.phase == state.payload.phase
+            or (
+                task.phase == TaskPhase.RECOVERING
+                and task.recovery_from == state.payload.phase
+            )
+        )
         return (
             task is not None
             and task.task_id == state.payload.task
-            and task.phase == state.payload.phase
+            and phase_matches
             and task.head == state.payload.head
             and task.generation == state.payload.generation
         )
@@ -2471,6 +2478,34 @@ class StateMachineDryRun(unittest.TestCase):
                     broker.requests["drift"].release_reason,
                     "STALE_RECOVERY",
                 )
+
+    def test_task_and_broker_recovery_states_are_linked(self) -> None:
+        broker, _, _ = fixture()
+        task = TaskState(phase=TaskPhase.GATING)
+        submit(
+            broker,
+            make_payload("linked", "compile", "agent", task),
+            task,
+        )
+        grant = broker.grant_next("compile")
+        broker.ack(
+            "linked", grant.token_id, task.phase, task.head, task.generation
+        )
+        broker.mark_lost("linked")
+        task.mark_recovering()
+        self.assertEqual(broker.sweep_recovery(), [])
+        self.assertEqual(
+            broker.followup_payload("linked")["phase"],
+            TaskPhase.GATING.value,
+        )
+        task.recovery_result(True)
+        recover_request(broker, "linked", True)
+        broker.ack(
+            "linked", grant.token_id, task.phase, task.head, task.generation
+        )
+        self.assertTrue(
+            release_request(broker, "linked", grant.token_id, "PASS")
+        )
 
     def test_repeated_recovery_is_idempotent(self) -> None:
         broker, _, _ = fixture()
