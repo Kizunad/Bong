@@ -74,7 +74,7 @@ pub fn weather_vision_obscure_system(
         let should_obscure = registry
             .current(zone.name.as_str())
             .iter()
-            .any(is_opaque_fog_veil);
+            .any(|effect| opaque_fog_veil_contains(effect, position.get()));
         if should_obscure {
             let radius = profile_vision_radius(profiles.as_deref(), zone.name.as_str());
             match restore.copied() {
@@ -122,11 +122,27 @@ fn obscure_vision_from_original(
     view_distance.set(original_chunks.min(target));
 }
 
-fn is_opaque_fog_veil(effect: &EnvironmentEffect) -> bool {
-    matches!(
-        effect,
-        EnvironmentEffect::FogVeil { density, .. } if *density >= OPAQUE_FOG_DENSITY_THRESHOLD
-    )
+/// 高密度 FogVeil 且**玩家位于其 AABB 内（闭区间，三轴）**才触发权威遮蔽。
+/// 天气雾（HeavyHaze 等）的 AABB = 整 zone bounds，玩家能被 find_zone 命中即必在其内，
+/// 行为与旧 zone-scoped 判定一致；局部雾堤（EnvironmentOverlays）只压制盒内玩家，
+/// 不致盲整个相交 zone。
+fn opaque_fog_veil_contains(effect: &EnvironmentEffect, pos: valence::prelude::DVec3) -> bool {
+    match effect {
+        EnvironmentEffect::FogVeil {
+            aabb_min,
+            aabb_max,
+            density,
+            ..
+        } if *density >= OPAQUE_FOG_DENSITY_THRESHOLD => {
+            pos.x >= aabb_min[0]
+                && pos.x <= aabb_max[0]
+                && pos.y >= aabb_min[1]
+                && pos.y <= aabb_max[1]
+                && pos.z >= aabb_min[2]
+                && pos.z <= aabb_max[2]
+        }
+        _ => false,
+    }
 }
 
 fn chunks_for_radius(radius_blocks: f32) -> u8 {
@@ -141,6 +157,56 @@ mod tests {
     use super::*;
     use crate::lingtian::ZoneWeatherProfile;
     use valence::prelude::ViewDistance;
+
+    fn veil(density: f32) -> EnvironmentEffect {
+        EnvironmentEffect::FogVeil {
+            aabb_min: [0.0, 40.0, 0.0],
+            aabb_max: [100.0, 120.0, 100.0],
+            tint_rgb: [120, 126, 133],
+            density,
+        }
+    }
+
+    #[test]
+    fn opaque_fog_veil_contains_requires_density_and_position() {
+        use valence::prelude::DVec3;
+        let inside = DVec3::new(50.0, 64.0, 50.0);
+        let edge = DVec3::new(100.0, 40.0, 0.0);
+        let outside_xz = DVec3::new(101.0, 64.0, 50.0);
+        let outside_y = DVec3::new(50.0, 121.0, 50.0);
+
+        assert!(
+            opaque_fog_veil_contains(&veil(0.85), inside),
+            "恰好 0.85（>= 判定）+ 盒内应触发"
+        );
+        assert!(
+            opaque_fog_veil_contains(&veil(0.85), edge),
+            "闭区间：贴边应算盒内"
+        );
+        assert!(
+            !opaque_fog_veil_contains(&veil(0.84), inside),
+            "0.84 < 阈值不触发（哪怕盒内）"
+        );
+        assert!(
+            !opaque_fog_veil_contains(&veil(1.0), outside_xz),
+            "盒外（x 超界）不触发——局部雾堤不得致盲整个 zone"
+        );
+        assert!(
+            !opaque_fog_veil_contains(&veil(1.0), outside_y),
+            "盒外（y 超界）不触发"
+        );
+        assert!(
+            !opaque_fog_veil_contains(
+                &EnvironmentEffect::AshFall {
+                    aabb_min: [0.0; 3],
+                    aabb_max: [100.0; 3],
+                    density: 1.0,
+                },
+                inside
+            ),
+            "非 FogVeil 变体不触发"
+        );
+    }
 
     #[test]
     fn obscure_vision_reduces_view_distance_inside_aabb() {

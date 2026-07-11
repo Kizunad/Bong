@@ -6,6 +6,7 @@ use crate::lingtian::weather::{ActiveWeather, WeatherEvent};
 use crate::lingtian::weather_profile::ZoneWeatherProfile;
 use crate::lingtian::ZoneWeatherProfileRegistry;
 use crate::world::environment::{EnvironmentEffect, ZoneEnvironmentRegistry};
+use crate::world::environment_overlay::EnvironmentOverlays;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 /// Fixed visual bundle for a weather event in one zone.
@@ -90,14 +91,17 @@ pub fn weather_to_environment_bundle(
     }
 }
 
-/// Runtime sync entrypoint: ZoneRegistry + ActiveWeather + profile registry → registry state.
+/// Runtime sync entrypoint: ZoneRegistry + ActiveWeather + profile registry + overlays → registry state.
 pub fn weather_environment_sync_system(
     zones: Option<Res<ZoneRegistry>>,
     weather: Option<Res<ActiveWeather>>,
     profiles: Option<Res<ZoneWeatherProfileRegistry>>,
+    overlays: Option<ResMut<EnvironmentOverlays>>,
     registry: ResMut<ZoneEnvironmentRegistry>,
 ) {
-    crate::world::environment::sync_zone_environment_effects(zones, weather, profiles, registry);
+    crate::world::environment::sync_zone_environment_effects(
+        zones, weather, profiles, overlays, registry,
+    );
 }
 
 fn center_array(zone: &Zone) -> [f64; 3] {
