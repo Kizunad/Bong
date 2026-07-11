@@ -6,9 +6,9 @@
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 第一性原理复现转场取消绕过阅读关闭语义 | ⏳ | — |
-| P1 | 最小修复 + 幂等关闭饱和回归 | ⬜ | — |
-| P2 | JDK 17 完整门禁、主线同步与对抗验证 | ⬜ | — |
+| P0 | 第一性原理复现转场取消绕过阅读关闭语义 | ✅ | 2026-07-11 |
+| P1 | 最小修复 + 幂等关闭饱和回归 | ✅ | 2026-07-11 |
+| P2 | JDK 17 完整门禁、主线同步与对抗验证 | ✅ | 2026-07-11 |
 
 ## Bug 摘要
 
@@ -69,10 +69,10 @@
 
 ## Skeleton Fix Plan
 
-- [ ] 给需要协议终态的 Screen 增加统一的 transition-cancel close hook，`cancelAndClose()` 取消 pending/open screen 时必须调用 screen 自身的 close/settle 语义，而不是只 `setScreen(null)`。
-- [ ] 对 `ScrollReadScreen` 增加最小兜底：无论是 `close()`、`removed()`、还是转场取消，都必须幂等执行 `ScrollReadStore.close()`，确保最多发送一次 `scroll_read_closed`。
-- [ ] 评估 `InsightOfferScreen`、`AgentUiScreen`、`SparringInviteScreen`、`TradeOfferScreen` 等同样把协议终态放在 `close()` 的 screen，避免修 ScrollRead 后留下同类转场取消缺口。
-- [ ] 为 `ScreenTransitionController.cancelAndClose()` 增加面向 pending newScreen 的单测，覆盖“open transition 尚未 complete 时按 Esc”的路径。
+- [x] 增加显式 opt-in 的 `PendingOpenCancellationHandler`；`cancelAndClose()` 只结算声明了协议终态的 pending screen，不把所有 `Screen.close()` 泛化调用。
+- [x] `ScrollReadScreen.onPendingOpenCancelled()` 复用 `ScrollReadStore.close()` 的幂等终态；未直接覆盖 `removed()`，因为 A→B 正常替换时旧 A 的 `removed()` 不能误清新 B 的全局 store，本 plan 以 transition-cancel 专用 hook 最小收口。
+- [x] 评估 `InsightOfferScreen`、`AgentUiScreen`、`SparringInviteScreen`、`TradeOfferScreen`：本修复不自动改变它们的 close/settle 语义；是否 opt-in 需各自按协议契约独立立项，避免跨题扩散。
+- [x] 新增 `ScreenTransitionScrollCloseTest`，覆盖 pending ScrollRead、重复 Esc、无关 screen 隔离及“先 direct-close 当前 screen、后结算 pending”重入顺序。
 
 ## 验收测试计划
 
@@ -86,3 +86,51 @@
 - 直接让 `cancelAndClose()` 调 `Screen.close()` 可能改变部分 screen 对 `Esc` 的语义，尤其是“关闭即拒绝/取消/提交”的弹窗；需要按 screen 类型区分 pending-open、already-open、server-close 三种来源。
 - `removed()` 兜底必须幂等，否则可能和正常 `close()` 重复发送终态。
 - 如果统一修复覆盖所有 screen，需要额外检查 owo `BaseOwoScreen` 生命周期，避免 adapter dispose 顺序和协议回调互相递归。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`client/src/test/java/com/bong/client/ui/ScreenTransitionScrollCloseTest.java`
+  - RED 在修复前证明 `cancelAndClose()` 只取消 handle，`ScrollReadStore.snapshot()` 仍残留。
+- P1：`client/src/main/java/com/bong/client/ui/ScreenTransitionController.java`
+  - 新增 `PendingOpenCancellationHandler` 与 `closeCurrentThenSettlePending(...)`。
+  - 先 direct-close 当前 screen，再结算 pending 协议，避免 A→pending B 时 store listener 重入生成残留 transition。
+- P1：`client/src/main/java/com/bong/client/scroll/ScrollReadScreen.java`
+  - 实现 pending-open 取消回调，幂等发送 `scroll_read_closed` 并清空 store。
+- P2：同步 `origin/main@7cdbbb51`，merge commit `554849f2` 未触及本修复文件；合入的身份面板/伪皮会话清理与本链路无交叉。
+
+### 关键 commit
+
+- `815b2cfc`（2026-07-11）：提升残卷转场关闭丢失计划为 active。
+- `a701d0aa`（2026-07-11）：锁定残卷开屏转场取消丢失关闭终态（RED）。
+- `23941f27`（2026-07-11）：修复残卷开屏转场取消遗漏关闭终态。
+- `0de85b76`（2026-07-11）：补齐重复 Esc 幂等与无关 screen 隔离回归。
+- `d161135c`（2026-07-11）：依据 validator FAIL 修正 A→B 重入收口顺序。
+- `554849f2`（2026-07-11）：合并最新 `origin/main` 并复验。
+
+### 测试结果
+
+- RED（JDK 17）：`./gradlew test --tests com.bong.client.ui.ScreenTransitionScrollCloseTest`
+  - 修复前 `1 test completed, 1 failed`，失败点为阅读 store 未清空。
+- targeted GREEN（JDK 17）：同命令，最终 `3/3 PASS`：
+  - pending ScrollRead 发送且仅发送一条 `scroll_read_closed`；
+  - 重复 Esc 幂等；
+  - 无关 pending screen 不误结算；
+  - direct-close 发生在 pending settle 之前。
+- 完整门禁（JDK 17）：`./gradlew test build`
+  - 修复后：`BUILD SUCCESSFUL`。
+  - 合并最新主线后：`3770/3770 PASS`，`BUILD SUCCESSFUL`，产物 `client/build/libs/bong-client-0.1.0.jar`。
+
+### 跨仓库核验
+
+- client 终态入口：`ClientRequestSender.sendScrollReadClosed()` → `ClientRequestProtocol.encodeScrollReadClosed()`。
+- server 既有消费契约：`ClientRequestV1::ScrollReadClosed` 停止动画并移除 `ScrollReading` marker；本 PR 不修改 server/schema。
+- fresh validator：
+  - `d161135c`：`PASS d161135c9295e3880ae4a4a24287471b41271726`。
+  - post-merge `554849f2`：`PASS 554849f2bd0ed7da2ac7fd86c0751eb270fb1922`。
+
+### 遗留 / 后续
+
+- 其它携带协议终态的 screen 是否实现 `PendingOpenCancellationHandler`，必须按各自 close/decline/replace 契约单独验真；本 plan 不做跨题批量行为改变。
+- 无依赖、生产配置、工具链或视觉资产变更。
