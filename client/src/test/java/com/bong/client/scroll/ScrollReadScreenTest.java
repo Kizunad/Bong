@@ -172,7 +172,8 @@ class ScrollReadScreenTest {
 
         assertSame(reopenedSession, ScrollReadStore.snapshot(),
             "经历空态后重开的同卷是新会话，旧 screen 不得结算");
-        assertTrue(sentPayloads.isEmpty(), "旧 screen 不得替重开的同卷会话发送终态");
+        assertTrue(sentPayloads.isEmpty(),
+            "旧 screen 不得替重开的同卷会话发送终态，实际=" + sentPayloads);
     }
 
     @Test
@@ -190,7 +191,8 @@ class ScrollReadScreenTest {
 
         assertSame(reusedViewModel, ScrollReadStore.snapshot(),
             "经历空态后即使复用同一 viewModel 实例也必须创建新会话，旧 screen 不得结算");
-        assertTrue(sentPayloads.isEmpty(), "旧 screen 不得依靠 ABA 对象身份误发新会话终态");
+        assertTrue(sentPayloads.isEmpty(),
+            "旧 screen 不得依靠 ABA 对象身份误发新会话终态，实际=" + sentPayloads);
     }
 
     @Test
@@ -223,7 +225,8 @@ class ScrollReadScreenTest {
         oldScreen.removed();
 
         assertSame(replacement, ScrollReadStore.snapshot(), "旧 screen 的 removed 不得结算后来会话");
-        assertTrue(sentPayloads.isEmpty(), "旧 screen 的 removed 不得替新会话发送终态");
+        assertTrue(sentPayloads.isEmpty(),
+            "旧 screen 的 removed 不得替新会话发送终态，实际=" + sentPayloads);
     }
 
     @Test
@@ -240,6 +243,7 @@ class ScrollReadScreenTest {
 
         assertSame(current, ScrollReadStore.snapshot(),
             "仅 scrollId 相同的游离 screen 不得借用当前会话 token");
-        assertTrue(sentPayloads.isEmpty(), "未绑定 token 的 screen 不得发送关闭终态");
+        assertTrue(sentPayloads.isEmpty(),
+            "未绑定 token 的 screen 不得发送关闭终态，实际=" + sentPayloads);
     }
 }

@@ -200,7 +200,7 @@ class ScreenTransitionScrollCloseTest {
 
         assertTrue(firstHandle.cancelled(), "rapid replacement 必须取消旧 handle");
         assertSame(offer, ScrollReadStore.snapshot(), "同 token replacement 必须延续当前阅读会话");
-        assertTrue(sent.isEmpty(), "同 token replacement 不得误发关闭终态");
+        assertTrue(sent.isEmpty(), "同 token replacement 不得误发关闭终态，实际=" + sent);
 
         ScreenTransition.TransitionHandle continuedHandle = activatePending(sameSessionReplacement);
         ScreenTransitionController.cancelActiveTransitionForReplacement(new DummyScreen());
@@ -246,7 +246,7 @@ class ScreenTransitionScrollCloseTest {
         assertTrue(oldHandle.cancelled(), "旧 pending handle 必须被新会话 screen 覆盖");
         assertSame(reused, ScrollReadStore.snapshot(),
             "同 scrollId 的新 token 会话不得被旧 pending 回调误清");
-        assertTrue(sent.isEmpty(), "旧 token 取消回调不得替重开会话发送终态");
+        assertTrue(sent.isEmpty(), "旧 token 取消回调不得替重开会话发送终态，实际=" + sent);
     }
 
     private static ScreenTransition.TransitionHandle activatePending(Screen pendingScreen) {

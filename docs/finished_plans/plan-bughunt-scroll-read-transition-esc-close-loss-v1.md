@@ -74,6 +74,50 @@
 - [x] 评估 `InsightOfferScreen`、`AgentUiScreen`、`SparringInviteScreen`、`TradeOfferScreen`：本修复不自动改变它们的 close/settle 语义；是否 opt-in 需各自按协议契约独立立项，避免跨题扩散。
 - [x] 新增 `ScreenTransitionScrollCloseTest` 与 `ScrollReadScreenBootstrapTest`，覆盖 pending ScrollRead、重复 Esc、rapid replacement continuation、断线 pending 清理、同卷空态重开及“先 direct-close 当前 screen、后结算 pending”重入顺序。
 
+### 玩家可感知规格
+
+- 关闭动画：保留 `ScrollReadScreen` 已有关闭音效及默认 200ms screen fade，不新增骨骼动画；转场期间按 `Esc` 时取消尚未完成的 fade，界面立即回到原 screen/世界画面。
+- 粒子/VFX：无变化。本修复只补齐既有关闭协议终态，不新增或移除残卷粒子；server 已有开卷 glow 粒子仍按原契约播放。
+- SFX：普通已打开屏幕关闭继续播放既有 `ScrollReadAudio.playClose()`；pending screen 尚未真正显示时取消不播放关闭音，避免玩家听到未打开界面的伪反馈。
+- HUD：阅读面板消失后不保留 overlay、toast 或状态提示；修复目标是让 UI 消失与 server 阅读 marker 清理保持一致。
+- 环境反馈：不适用；关闭残卷不改变天空、雾、方块或区域状态。
+- narration：不适用；这是本地 UI 生命周期与既有 C2S 终态修复，不产生天道叙事或聊天文案。
+
+## §1 开放问题
+
+1. 转场控制器应统一调用所有 pending screen 的 `close()`，还是由需要协议终态的 screen 显式 opt-in？
+2. 如何区分同卷刷新、空态重开和旧 screen 迟到回调，避免 ABA 身份误判？
+3. 当前 screen 与 pending screen 同时存在时，`Esc` 的结算顺序如何避免 store listener 重入留下新 transition？
+4. 断线时应否继续发送 `scroll_read_closed`，以及迟到的开屏任务如何拒绝？
+
+## §1.1 决议（实施前已收口，2026-07-11；归档补录）
+
+以下决议来自 2026-07-11 的 RED/validator 返工过程；本节在 CodeRabbit 归档审计时补录，以恢复“开放问题 → 决议 → 落点”的可追溯证据，不声称该章节在实施前已写入磁盘。
+
+### #1 显式 opt-in 协议终态
+
+**决议**：只让携带终态契约的 screen 实现 `PendingOpenCancellationHandler` / `CurrentScreenCancellationHandler`；转场控制器不泛化调用任意 `Screen.close()`。`continuesWith(...)` 允许同 session replacement 延续。边界是其它弹窗的拒绝/提交语义不在本 plan 中改变。
+
+**落点**：`client/src/main/java/com/bong/client/ui/ScreenTransitionController.java:29`、`client/src/main/java/com/bong/client/scroll/ScrollReadScreen.java:47`；plan `Skeleton Fix Plan` 第 1、3 项。
+
+### #2 不可复用会话身份
+
+**决议**：store 用不可复用 `SessionToken` 区分会话；同一活跃卷刷新保留 token，经过空态后无论 `scrollId` 或 view model 实例是否复用都创建新 token。所有终态经 token-CAS 结算，旧 screen 只能 no-op。
+
+**落点**：`client/src/main/java/com/bong/client/scroll/ScrollReadStore.java:31`、`client/src/main/java/com/bong/client/scroll/ScrollReadStore.java:90`；plan `Skeleton Fix Plan` 第 2 项。
+
+### #3 current 先于 pending 结算
+
+**决议**：`cancelAndClose()` 先 direct-close 当前 screen，再回调 current/pending 的显式终态处理器。这样 store listener 的重入发生在 pending settle 之前，最终 pending 可被精确取消。边界是同 token replacement 只取消旧 handle，不结束会话。
+
+**落点**：`client/src/main/java/com/bong/client/ui/ScreenTransitionController.java:149`、`client/src/test/java/com/bong/client/ui/ScreenTransitionScrollCloseTest.java:111`；plan `Skeleton Fix Plan` 第 1、4 项。
+
+### #4 断线清理与迟到任务
+
+**决议**：断线只清本地 store，不在失效 transport 上补发终态；server 由既有 disconnect cleanup 移除 marker。bootstrap 任务携带精确 `ActiveSession`，执行前以 `isCurrent(...)` 拒绝迟到任务，并取消已失效的 pending screen。
+
+**落点**：`client/src/main/java/com/bong/client/scroll/ScrollReadStore.java:109`、`client/src/main/java/com/bong/client/scroll/ScrollReadScreenBootstrap.java:39`；plan `Skeleton Fix Plan` 第 2、4 项。
+
 ## 验收测试计划
 
 - client 单测：构造 active transition 的 pending `ScrollReadScreen`，模拟 `Esc` 触发 `cancelAndClose()`，断言 `ScrollReadStore.close()` 被执行且 `scroll_read_closed` 只发送一次。
@@ -155,6 +199,10 @@
   - 合并 `origin/main@340d7776` 并补齐最终饱和边界后：`3838/3838 PASS`，零失败零错误零跳过，`:test` 实际执行，`BUILD SUCCESSFUL`。
   - 最终合并 `origin/main@d6237cc7` 的同栈 Dugu HUD 断线测试后：`3847/3847 PASS`，零失败零错误零跳过，`:test`、remap、assemble、check、build 全部实际执行，`BUILD SUCCESSFUL`。
   - 合并 `origin/main@efa10384` 的 worldgen-only 变更后再次执行 client gate：13 task 全部 up-to-date，`BUILD SUCCESSFUL`；无 client 输入变化。
+- server 既有完整请求链路测试：`cargo test scroll_read_closed_emits_stop_anim_and_removes_marker`
+  - 2026-07-12 实测 `1/1 PASS`，零失败；`11196` 个无关 lib tests 被 filter，目标测试实际执行而非缓存跳过。
+  - 测试先发送 `ScrollReadRequest` 建立 `ScrollReading` marker 与播放动画，再发送序列化后的 `ScrollReadClosed` payload 经真实 handler 消费，断言发出 `StopAnim{anim_id="bong:read_scroll"}` 且 marker 被移除。
+  - 本 PR 不修改 server wire/handler；该定向测试与 client 端 `scroll_read_closed` 编码及 Esc/转场回归共同覆盖目标链路。共享 e2e check 另为 SUCCESS，但不将其泛化成功替代此目标场景证据。
 
 ### 跨仓库核验
 

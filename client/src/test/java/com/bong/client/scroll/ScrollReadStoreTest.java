@@ -206,7 +206,7 @@ class ScrollReadStoreTest {
 
         assertSame(reused, ScrollReadStore.snapshot(),
             "同一 viewModel 实例经历空态后属于新会话，旧 token 不得通过 ABA 误结算");
-        assertTrue(sent.isEmpty(), "旧 token 不得替重开会话发送 scroll_read_closed");
+        assertTrue(sent.isEmpty(), "旧 token 不得替重开会话发送 scroll_read_closed，实际=" + sent);
     }
 
     @Test
