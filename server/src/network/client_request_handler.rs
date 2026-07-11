@@ -4774,6 +4774,39 @@ mod tests {
     }
 
     #[test]
+    fn npc_trade_request_rejects_when_only_catalogue_price_is_affordable() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 11;
+        inventory.revision = InventoryRevision(13);
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            0,
+            "affording the catalogue price must not grant any part of a dearer live bundle"
+        );
+        assert_eq!(inventory.bone_coins, 11);
+        assert_eq!(inventory.revision, InventoryRevision(13));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("骨币不足，需要 12 枚")),
+            "rejection must expose the live bundle total, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "an unaffordable live bundle must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
     fn npc_trade_request_rejects_missing_trade_inventory_without_side_effects() {
         let mut inventory = empty_inventory();
         inventory.bone_coins = 100;
@@ -4806,6 +4839,49 @@ mod tests {
         let inventory = app.world().get::<PlayerInventory>(player).unwrap();
         assert_eq!(inventory.bone_coins, 100);
         assert_eq!(inventory.revision, InventoryRevision(11));
+    }
+
+    #[test]
+    fn npc_trade_request_partial_bundle_capacity_fails_atomically() {
+        let registry = crate::inventory::load_item_registry().unwrap();
+        let mut allocator = crate::inventory::InventoryInstanceIdAllocator::default();
+        let mut inventory = empty_inventory();
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "spirit_grass",
+            63,
+            0,
+        )
+        .expect("test precondition: one compatible spirit grass stack must fit");
+        inventory.containers[0].rows = 1;
+        inventory.containers[0].cols = 1;
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(17);
+
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 2, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            63,
+            "a bundle that can merge only one of two items must not partially mutate the stack"
+        );
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(17));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("交易失败")),
+            "partial-capacity rejection must remain player-visible, messages={messages:?}"
+        );
+        assert!(messages.iter().all(|message| !message.contains("买下")));
     }
 
     #[test]
