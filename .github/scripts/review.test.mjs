@@ -2,7 +2,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   applyPlanIntentGate,
   boundedAttemptTimeout,
@@ -52,6 +56,63 @@ const realRequestChanges = {
   confidence: 95,
   findings: [{ file: "server/src/main.rs", title: "真实代码缺陷" }],
 };
+const reviewScript = fileURLToPath(new URL("./review.mjs", import.meta.url));
+
+function runReviewCommand(command, { env = {}, ghScript = "process.exit(91);", outcome = null } = {}) {
+  const directory = mkdtempSync(join(tmpdir(), "bong-review-command-"));
+  const ghPath = join(directory, "gh");
+  const outputPath = join(directory, "github-output");
+  const outcomePath = join(directory, "review-outcome.json");
+  writeFileSync(ghPath, `#!/usr/bin/env node\n${ghScript}\n`);
+  chmodSync(ghPath, 0o755);
+  if (outcome) writeFileSync(outcomePath, `${JSON.stringify(outcome)}\n`);
+
+  try {
+    const result = spawnSync(process.execPath, [reviewScript, command], {
+      encoding: "utf8",
+      timeout: 5_000,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH || ""}`,
+        PR_NUMBER: "1148",
+        GITHUB_REPOSITORY: "Kizunad/Bong",
+        GITHUB_OUTPUT: outputPath,
+        REVIEW_OUTCOME_FILE: outcomePath,
+        ...env,
+      },
+    });
+    return {
+      ...result,
+      githubOutput: result.error ? "" : readFileSync(outputPath, { encoding: "utf8", flag: "a+" }),
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function openCircuitGhScript() {
+  const stateIssue = {
+    number: 1149,
+    title: "[automation] Review infrastructure circuit state",
+    body: "<!-- bong-review-circuit-state:v1 -->",
+    user: { login: "github-actions[bot]", type: "Bot" },
+  };
+  const comments = ["00:00", "00:10", "00:20"].map((time, index) => ({
+    body: renderHiddenMarker("bong-review-circuit", {
+      v: 1,
+      kind: "infra_failure",
+      run_id: String(100 + index),
+      at: `2026-07-10T${time}:00.000Z`,
+    }),
+    user: { login: "github-actions[bot]", type: "Bot" },
+  }));
+  return `
+const args = process.argv.slice(2).join(" ");
+if (args.includes("search/issues")) process.stdout.write(${JSON.stringify(JSON.stringify(stateIssue))});
+else if (args.includes("issues/1149/comments")) process.stdout.write(${JSON.stringify(comments.map(JSON.stringify).join("\n"))});
+else process.exit(92);
+`;
+}
 
 test("hidden marker: 可往返解析并忽略普通/损坏评论", () => {
   const marker = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00.000Z", reason: "429 } -- upstream" };
@@ -379,6 +440,34 @@ test("manual bypass: 熔断期间仅 issue_comment 的精确 /review 入口可�
   }
 });
 
+test("circuit-preflight 命令: 熔断中仅精确 /review 旁路，自动与兜底触发均暂停", () => {
+  const common = {
+    REVIEW_NOW: "2026-07-10T00:20:00.000Z",
+    REVIEW_INFRA_FAILURE_THRESHOLD: "3",
+    REVIEW_INFRA_FAILURE_WINDOW_MINUTES: "60",
+    REVIEW_CIRCUIT_MINUTES: "60",
+  };
+  const manual = runReviewCommand("circuit-preflight", {
+    env: { ...common, REVIEW_TRIGGER: "issue_comment", REVIEW_COMMENT_BODY: "/review" },
+  });
+  assert.equal(manual.status, 0, manual.stderr);
+  assert.equal(manual.githubOutput, "should_run=true\n");
+
+  for (const [trigger, body] of [
+    ["pull_request", ""],
+    ["workflow_dispatch", ""],
+    ["issue_comment", "/review now"],
+  ]) {
+    const paused = runReviewCommand("circuit-preflight", {
+      env: { ...common, REVIEW_TRIGGER: trigger, REVIEW_COMMENT_BODY: body },
+      ghScript: openCircuitGhScript(),
+    });
+    assert.equal(paused.status, 0, paused.stderr);
+    assert.equal(paused.githubOutput, "should_run=false\n", `${trigger}:${body} 应在熔断期暂停`);
+    assert.match(paused.stderr, /熔断跳过/);
+  }
+});
+
 test("infra-only classification: 仅四路纯执行失败降级，混合结果保留真实 REQUEST_CHANGES", () => {
   const allInfra = ["A", "B", "C", "D"].map((id) => ({
     ...infraResult,
@@ -463,6 +552,19 @@ test("workflow finalize: 真实 gate failure 原样失败，setup/reviewer 异�
     classifyWorkflowFinalization({ install: "success", configure: "success", review: "success", outcomeKind: "passed" }),
     { kind: "passed", shouldRecord: false },
   );
+});
+
+test("workflow-finalize 命令: step success 的真实 REQUEST_CHANGES 仍失败且不写 infra", () => {
+  const result = runReviewCommand("workflow-finalize", {
+    env: {
+      REVIEW_INSTALL_OUTCOME: "success",
+      REVIEW_CONFIGURE_OUTCOME: "success",
+      REVIEW_STEP_OUTCOME: "success",
+    },
+    outcome: { kind: "gate_failure", gate: "REQUEST_CHANGES" },
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.doesNotMatch(result.stderr, /持久化 Review infra failure/);
 });
 test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍进入预检旁路", () => {
   const workflow = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
