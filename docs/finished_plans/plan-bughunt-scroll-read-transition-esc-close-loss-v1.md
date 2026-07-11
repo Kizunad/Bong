@@ -126,6 +126,7 @@
 
 - client 终态入口：`ClientRequestSender.sendScrollReadClosed()` → `ClientRequestProtocol.encodeScrollReadClosed()`。
 - server 既有消费契约：`ClientRequestV1::ScrollReadClosed` 停止动画并移除 `ScrollReading` marker；本 PR 不修改 server/schema。
+- agent/schema 既有 wire 契约：`agent/packages/schema/src/client-request.ts::ScrollReadClosedRequestV1` 与 `ClientRequestV1` union 保留 `type="scroll_read_closed", v=1`；本 PR 不修改 schema 构建产物。
 - fresh validator：
   - `d161135c`：`PASS d161135c9295e3880ae4a4a24287471b41271726`。
   - post-merge `554849f2`：`PASS 554849f2bd0ed7da2ac7fd86c0751eb270fb1922`。
