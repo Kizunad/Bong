@@ -207,7 +207,11 @@ pub fn meridian_open_tick(
         // 见 `combat::baomai_v4` 同一惯例）。非 humanoid channel（尚无非人形玩法数据）
         // 显式跳过整个实体，而非 panic 或静默误判为某个哨兵经脉。
         let Some(target_meridian_id) = target.0.to_meridian_id() else {
-            tracing::warn!(
+            // plan-race-system-v1 P1 对抗审查 M4：本分支在非 humanoid `MeridianTarget`
+            // 持续挂靠期间**每 tick**都会命中（该 entity 的目标经脉永远无法被本
+            // humanoid-only boundary 推进）——`warn!` 级别会在长期运行下刷屏；降级为
+            // `debug!`（仍保留可观测性，日常运行日志不再被淹没）。
+            tracing::debug!(
                 "[bong][cultivation][meridian_open] entity={:?} MeridianTarget channel {} has no \
                  legacy MeridianId mapping — meridian_open_tick cannot advance non-humanoid \
                  channels yet, skipping",

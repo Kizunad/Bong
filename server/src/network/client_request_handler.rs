@@ -4658,6 +4658,78 @@ mod tests {
         );
     }
 
+    /// plan-race-system-v1 P1 对抗审查 M4：`SetMeridianTarget` 消费边界收到未知
+    /// channel id（伪造串 / 旧 PascalCase `MeridianId::Lung` 字面量 "Lung"）时必须
+    /// 安全处理（回执标注"未知经脉"，`MeridianTarget` component 允许被设置但下游
+    /// `meridian_open_tick` 会安全跳过，见该 system 的 debug 分支）——绝不 panic，
+    /// 也不能把未知串误当合法经脉给出中文标签回执。
+    #[test]
+    fn set_meridian_target_with_unknown_channel_id_is_handled_safely_not_panicking() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: crate::cultivation::components::MeridianChannelId::new(
+                        "totally_made_up_channel",
+                    ),
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        // 必须不 panic —— 这是本用例的核心断言。
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("未知经脉")),
+            "unknown channel id 必须回执'未知经脉'占位而不是伪造某个真实经脉名，\
+             actual messages={messages:?}"
+        );
+    }
+
+    /// 旧 PascalCase 字面量 "Lung"（`MeridianId::Lung` 的 `Debug`/枚举名拼写，非合法
+    /// wire channel id）同样必须走"未知经脉"安全分支，不能被误认成合法的 lung 经脉。
+    #[test]
+    fn set_meridian_target_with_legacy_pascal_case_lung_string_is_rejected_as_unknown() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: crate::cultivation::components::MeridianChannelId::new("Lung"),
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("未知经脉")),
+            "旧 PascalCase 'Lung' 不是合法 snake_case wire channel id ('lung')，必须走\
+             未知经脉分支而非被误认作肺经，actual messages={messages:?}"
+        );
+    }
+
     #[test]
     fn qi_scatter_bead_use_dispatches_zhenfa_event() {
         let mut app = App::new();
