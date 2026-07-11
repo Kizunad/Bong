@@ -9,10 +9,13 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SocialServerDataHandlerTest {
@@ -187,6 +190,109 @@ public class SocialServerDataHandlerTest {
     }
 
     @Test
+    void duplicateSparringInvitePayloadIsIgnoredWithoutRepublishing() {
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        String payload = sparringInvitePayload("sparring:duplicate", 5_000L);
+
+        ServerDataRouter.RouteResult first = router.route(payload, 0);
+        ServerDataRouter.RouteResult duplicate = router.route(payload, 0);
+
+        assertTrue(first.isHandled(), first.logMessage());
+        assertTrue(duplicate.isNoOp(), duplicate.logMessage());
+        assertEquals("sparring:duplicate", SocialStateStore.sparringInvite().inviteId());
+        assertEquals(1, UnifiedEventStore.stream().size(), "重复邀请不能重复发布 HUD 事件");
+    }
+
+    @Test
+    void lateOlderSparringInviteCannotReplaceNewerInvite() {
+        ServerDataRouter router = ServerDataRouter.createDefault();
+
+        assertTrue(router.route(sparringInvitePayload("sparring:0002", 6_000L), 0).isHandled());
+        ServerDataRouter.RouteResult late = router.route(sparringInvitePayload("sparring:0001", 5_000L), 0);
+
+        assertTrue(late.isNoOp(), late.logMessage());
+        assertEquals("sparring:0002", SocialStateStore.sparringInvite().inviteId());
+        assertEquals(1, UnifiedEventStore.stream().size(), "迟到旧邀请不能覆盖新邀请或重复发布 HUD 事件");
+    }
+
+    @Test
+    void lateOlderSparringInviteWithSameExpiryIsIgnoredByUuidV7Order() {
+        ServerDataRouter router = ServerDataRouter.createDefault();
+
+        assertTrue(router.route(sparringInvitePayload("sparring:0002", 6_000L), 0).isHandled());
+        ServerDataRouter.RouteResult late = router.route(sparringInvitePayload("sparring:0001", 6_000L), 0);
+
+        assertTrue(late.isNoOp(), late.logMessage());
+        assertEquals("sparring:0002", SocialStateStore.sparringInvite().inviteId());
+    }
+
+    @Test
+    void settledInviteReplayCannotDisplaceQueuedInvite() {
+        SocialStateStore.SparringInvite first = sparringInvite("sparring:first", 5_000L);
+        SocialStateStore.SparringInvite second = sparringInvite("sparring:second", 6_000L);
+
+        assertEquals(SocialStateStore.SparringInviteUpdate.ACCEPTED, SocialStateStore.enqueueSparringInvite(first));
+        assertEquals(SocialStateStore.SparringInviteUpdate.ACCEPTED, SocialStateStore.enqueueSparringInvite(second));
+        assertEquals("sparring:first", SocialStateStore.sparringInvite().inviteId());
+
+        SocialStateStore.clearSparringInvite(first.inviteId());
+        assertEquals("sparring:second", SocialStateStore.sparringInvite().inviteId());
+        assertEquals(SocialStateStore.SparringInviteUpdate.SETTLED, SocialStateStore.enqueueSparringInvite(first));
+        assertEquals("sparring:second", SocialStateStore.sparringInvite().inviteId());
+    }
+
+    @Test
+    void clearAndConcurrentEnqueueNeverLoseNewInvite() throws InterruptedException {
+        for (int iteration = 0; iteration < 32; iteration++) {
+            SocialStateStore.resetForTests();
+            SocialStateStore.SparringInvite first = sparringInvite("sparring:first:" + iteration, 5_000L);
+            SocialStateStore.SparringInvite second = sparringInvite("sparring:second:" + iteration, 6_000L);
+            SocialStateStore.enqueueSparringInvite(first);
+            CountDownLatch start = new CountDownLatch(1);
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread clearThread = new Thread(() -> runAfter(start, failure, () ->
+                SocialStateStore.clearSparringInvite(first.inviteId())
+            ));
+            Thread enqueueThread = new Thread(() -> runAfter(start, failure, () ->
+                SocialStateStore.enqueueSparringInvite(second)
+            ));
+
+            clearThread.start();
+            enqueueThread.start();
+            start.countDown();
+            clearThread.join();
+            enqueueThread.join();
+
+            if (failure.get() != null) {
+                throw new AssertionError("并发邀请 store 操作异常，iteration=" + iteration, failure.get());
+            }
+            assertEquals(
+                second.inviteId(),
+                SocialStateStore.sparringInvite().inviteId(),
+                "clear A 与 enqueue B 任意交错都不能吞掉 B，iteration=" + iteration
+            );
+        }
+    }
+
+    @Test
+    void invalidInviteAndUnknownClearLeaveStoreEmpty() {
+        assertEquals(SocialStateStore.SparringInviteUpdate.INVALID, SocialStateStore.enqueueSparringInvite(null));
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.INVALID,
+            SocialStateStore.enqueueSparringInvite(sparringInvite("   ", 5_000L))
+        );
+
+        SocialStateStore.clearSparringInvite("unknown");
+
+        assertNull(SocialStateStore.sparringInvite());
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.ACCEPTED,
+            SocialStateStore.enqueueSparringInvite(sparringInvite("unknown", 5_000L)),
+            "清理不存在的 ID 不能制造 tombstone"
+        );
+    }
+
+    @Test
     void nicheIntrusionAndGuardianEventsUpdateDefenseStore() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
@@ -220,6 +326,34 @@ public class SocialServerDataHandlerTest {
 
     private static SocialServerDataHandler handler() {
         return new SocialServerDataHandler();
+    }
+
+    private static String sparringInvitePayload(String inviteId, long expiresAtMs) {
+        return "{\"v\":1,\"type\":\"sparring_invite\",\"invite_id\":\"" + inviteId
+            + "\",\"initiator\":\"char:a\",\"target\":\"char:b\",\"realm_band\":\"凝脉\","
+            + "\"breath_hint\":\"气息相试\",\"terms\":\"点到为止\",\"expires_at_ms\":"
+            + expiresAtMs + "}";
+    }
+
+    private static SocialStateStore.SparringInvite sparringInvite(String inviteId, long expiresAtMs) {
+        return new SocialStateStore.SparringInvite(
+            inviteId,
+            "char:a",
+            "char:b",
+            "凝脉",
+            "气息相试",
+            "点到为止",
+            expiresAtMs
+        );
+    }
+
+    private static void runAfter(CountDownLatch start, AtomicReference<Throwable> failure, Runnable action) {
+        try {
+            start.await();
+            action.run();
+        } catch (Throwable throwable) {
+            failure.compareAndSet(null, throwable);
+        }
     }
 
     private static ServerDataEnvelope parseEnvelope(String json) {
