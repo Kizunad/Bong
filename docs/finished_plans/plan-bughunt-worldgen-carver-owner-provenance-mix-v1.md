@@ -142,6 +142,7 @@ first_diff_world (3072, -3584) ((-64, 77),) -> ((59, 77), (-64, 32))
 - 第一轮 fresh validator：`gpt-5.6-sol-xhigh` 在精确 HEAD `73c5c0324a7e4da5c86ba8eaa12a3701e11ecf9b` 上确认真实 bug、最小正确修复、manifest 兼容、真实 witness 与提交 trailer，结论 `VERDICT: PASS`。
 - 第二轮最终 validator：在归档后 HEAD `a2c82ae363946a9ccbe9526aebefb5f0f7837ec0` 确认实现正确，但因真实 witness 未精确断言空 chain/0 spans 差异，以及 Finish Evidence 结构不完整，结论 `VERDICT: FAIL`；前者由 `80da3626` 精确锁定，后者由 `23442aeb` 与本轮证据更新补齐。
 - CodeRabbit 返工：有效 inline finding 要求 `base.contributing_zones` 断言补中文失败诊断；`7edc4006` 补入诊断，`4e9443ee` 进一步显式写出期望、原因、实际值，并消除 3 处 RUF001 全角标点告警，比较逻辑未变。
+- 最终 fresh validator：无上下文、严格只读的 `gpt-5.6-sol` Ultra 在精确 HEAD `127c3e003c2610cc4883f05c39692a6d2cedbc82` 对拍工作树与 `origin/main`，复核 owner/provenance、真实 witness、CodeRabbit/RUF001、manifest、测试与 plan 证据，未发现 actionable finding，结论 `VERDICT: PASS`。
 
 ### 归档顺序与遗留/后续
 
