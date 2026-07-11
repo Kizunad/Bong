@@ -107,7 +107,7 @@
 - P1：`client/src/main/java/com/bong/client/scroll/ScrollReadScreenBootstrap.java`
   - listener 携带精确 `ActiveSession` 快照；迟到 open/close 任务先经 `isCurrent(...)` 拒绝。
   - current/pending screen 按 token 而非 `scrollId` 判归属；断线空态会精确取消 pending ScrollRead，防止清理后迟到开屏。
-- P2：最终同步 `origin/main@d6237cc7`；先合入 botany server，后合入 Dugu HUD 断线清理的 client 代码/测试，均未触及 ScrollRead 文件且完整 client gate 复验通过。`f4035e33` 引入的 transport 拒绝语义已由 `58932dc4` 及后续 token-CAS 回归覆盖。
+- P2：最终同步 `origin/main@efa10384`；依次合入 botany server、Dugu HUD client 断线清理与 worldgen carver 修复，均未触及 ScrollRead 文件；Dugu 同栈变更完整复验，后续 worldgen-only 同步的 client gate 仍通过。`f4035e33` 引入的 transport 拒绝语义已由 `58932dc4` 及后续 token-CAS 回归覆盖。
 
 ### 关键 commit
 
@@ -128,6 +128,7 @@
 - `c76c13b6`（2026-07-11）：合并 `origin/main@340d7776`，无 client 冲突。
 - `168fea58`（2026-07-11）：补齐 detached screen、无 live client 与同卷新 token 覆盖边界。
 - `84165061`（2026-07-11）：合并 `origin/main@d6237cc7` 的 Dugu HUD 断线清理，并完成同栈复验。
+- `f5037ab4`（2026-07-11）：合并 `origin/main@efa10384` 的 worldgen carver 修复，无 client 冲突。
 
 ### 测试结果
 
@@ -153,6 +154,7 @@
   - session token / removed / rapid replacement 实现：`3835/3835 PASS`，零失败零错误零跳过，`BUILD SUCCESSFUL`，产物 `client/build/libs/bong-client-0.1.0.jar`（194 MiB）。
   - 合并 `origin/main@340d7776` 并补齐最终饱和边界后：`3838/3838 PASS`，零失败零错误零跳过，`:test` 实际执行，`BUILD SUCCESSFUL`。
   - 最终合并 `origin/main@d6237cc7` 的同栈 Dugu HUD 断线测试后：`3847/3847 PASS`，零失败零错误零跳过，`:test`、remap、assemble、check、build 全部实际执行，`BUILD SUCCESSFUL`。
+  - 合并 `origin/main@efa10384` 的 worldgen-only 变更后再次执行 client gate：13 task 全部 up-to-date，`BUILD SUCCESSFUL`；无 client 输入变化。
 
 ### 跨仓库核验
 
