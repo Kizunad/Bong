@@ -1,6 +1,6 @@
 # plan-bughunt-sparring-invite-screen-hijack-v1
 
-> **状态：✅ 2026-07-11**。一句话主题：`client/social` 的 `sparringInvite` store → tick bootstrap 链路会在玩家正开其他 GUI 时强行抢屏，导致 UI 状态被中断；同目录 `trade offer` 已有“被其他 GUI 挡住时只 toast、不抢屏”的修复先例，因此这是高置信真实 bug，而不是预期 UX。
+> **状态：已归档 ✅ 2026-07-11**。一句话主题：`client/social` 的 `sparringInvite` store → tick bootstrap 链路会在玩家正开其他 GUI 时强行抢屏，导致 UI 状态被中断；同目录 `trade offer` 已有“被其他 GUI 挡住时只 toast、不抢屏”的修复先例，因此这是高置信真实 bug，而不是预期 UX。
 
 ## 1. 结论
 
