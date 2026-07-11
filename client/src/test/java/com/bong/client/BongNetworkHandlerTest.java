@@ -8,6 +8,7 @@ import com.bong.client.craft.CraftStore;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.DuguV2HudStateStore;
 import com.bong.client.identity.IdentityPanelEntry;
 import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
@@ -37,6 +38,7 @@ public class BongNetworkHandlerTest {
         BongToast.resetForTests();
         IdentityPanelStateStore.resetForTest();
         FalseSkinHudStateStore.resetForTests();
+        DuguV2HudStateStore.resetForTests();
     }
 
     @Test
@@ -325,6 +327,73 @@ public class BongNetworkHandlerTest {
             newSessionState,
             FalseSkinHudStateStore.snapshot(),
             "回归防线：断线清理不能变成一次性开关——新 session 收到新 false_skin_state 后"
+                + "正常 replace() 写入必须继续生效"
+        );
+    }
+
+    /**
+     * plan-bughunt-dugu-v2-hud-disconnect-bleed-v1 — DuguV2HudStateStore 此前只有
+     * resetForTests()（测试专用），生产态断线清理清单里完全没有它。server 的
+     * dugu_v2_skill_cast / dugu_v2_self_cure / dugu_v2_shroud_active /
+     * permanent_qi_max_decay_applied bridge 只在毒蛊 v2 事件发生时推增量/状态，没有
+     * join/disconnect reset payload；revealRisk 没有 expiry 字段、selfRevealed 是 sticky
+     * merge，新 session 若没再触发毒蛊 v2 事件也不会有 payload 覆盖旧快照，导致上一局的
+     * "暴露 xx%" "自蕴 xx% 已露" 或遮蔽 tint 无限期跨 session 残留到下一局。本测试锁住
+     * "断线清理路径必须清空 DuguV2HudStateStore"。
+     */
+    @Test
+    void disconnectClearsDuguV2HudStateStoreToPreventCrossSessionResidualHud() {
+        DuguV2HudStateStore.replace(new DuguV2HudStateStore.State(
+            true, 0.8f, "剧毒攻心", 0.65f, 72.5f, true, true, 999_000L, 5.5f, 40f, 999_500L));
+
+        assertTrue(
+            DuguV2HudStateStore.snapshot().selfRevealed(),
+            "测试前必须模拟断线前残留的 sticky selfRevealed=true 快照，否则无法锁住跨 session 残留回归"
+        );
+        assertTrue(
+            DuguV2HudStateStore.snapshot().revealRisk() > 0f,
+            "测试前必须模拟断线前残留的 revealRisk > 0 快照（该字段无 expiry，是跨 session 残留的核心症状）"
+        );
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+
+        assertEquals(
+            DuguV2HudStateStore.State.NONE,
+            DuguV2HudStateStore.snapshot(),
+            "断线必须把 DuguV2HudStateStore 整体复位为 State.NONE，否则新 session 在未收到任何"
+                + "毒蛊 v2 payload 前，DuguV2HudPlanner 会继续渲染上一局的暴露/自蕴/遮蔽 HUD"
+        );
+        assertFalse(
+            DuguV2HudStateStore.snapshot().selfRevealed(),
+            "断线后 sticky selfRevealed 必须回 false，否则下一局没中毒的角色也会显示已自曝"
+        );
+        assertEquals(
+            0f,
+            DuguV2HudStateStore.snapshot().revealRisk(),
+            "断线后 revealRisk 必须归零，否则 DuguV2HudPlanner 的 revealRisk > 0 渲染门槛条件仍会通过"
+        );
+    }
+
+    @Test
+    void disconnectClearingDuguV2HudStateStoreDoesNotBlockNewSessionSnapshotAfterReconnect() {
+        DuguV2HudStateStore.replace(new DuguV2HudStateStore.State(
+            true, 0.8f, "剧毒攻心", 0.65f, 72.5f, true, true, 999_000L, 5.5f, 40f, 999_500L));
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+        assertEquals(
+            DuguV2HudStateStore.State.NONE,
+            DuguV2HudStateStore.snapshot(),
+            "测试前置：断线后 store 应已复位为 State.NONE"
+        );
+
+        DuguV2HudStateStore.State newSessionState = new DuguV2HudStateStore.State(
+            true, 0.4f, "新局中毒提示", 0.2f, 15f, false, false, 0L, 0f, 0f, 0L);
+        DuguV2HudStateStore.replace(newSessionState);
+
+        assertEquals(
+            newSessionState,
+            DuguV2HudStateStore.snapshot(),
+            "回归防线：断线清理不能变成一次性开关——新 session 收到新 dugu_v2_* payload 后"
                 + "正常 replace() 写入必须继续生效"
         );
     }
