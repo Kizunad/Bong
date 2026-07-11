@@ -1,8 +1,9 @@
 //! 定期向 Fabric 客户端推送 `cultivation_detail` CustomPayload（`bong:server_data`）。
 //!
-//! payload 使用 SoA(parallel arrays) 布局，顺序为
-//! `MeridianId::REGULAR` (0..12) 紧接 `MeridianId::EXTRAORDINARY` (12..20)，
-//! 与 `MeridianId` 判别式一致；客户端解析时按索引还原。
+//! payload 使用 SoA(parallel arrays) 布局，顺序为 `MeridianSystem::regular` 紧接
+//! `MeridianSystem::extraordinary`（plan-race-system-v1 P1c——不再假设恰好 20 条
+//! TCM 经脉；数组长度随实体 `MeridianProfile` 变化）。`channel_ids[i]` 携带第 i 条
+//! 经脉的 snake_case channel id，客户端按 channel id 而非固定索引还原。
 //!
 //! 节流：每 20 tick 最多发一次（~1s @ 20TPS）。
 
@@ -10,7 +11,7 @@ use valence::prelude::{bevy_ecs, Client, Entity, Position, Query, Res, ResMut, R
 
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
-    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor,
+    ColorKind, Contamination, Cultivation, MeridianSystem, QiColor,
 };
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{
@@ -75,17 +76,20 @@ pub fn emit_cultivation_detail_payloads(
         meridian_target,
     ) in &mut clients
     {
-        let mut opened = Vec::with_capacity(20);
-        let mut flow_rate = Vec::with_capacity(20);
-        let mut flow_capacity = Vec::with_capacity(20);
-        let mut integrity = Vec::with_capacity(20);
-        let mut open_progress = Vec::with_capacity(20);
-        let mut cracks_count = Vec::with_capacity(20);
+        let channel_count = meridians.regular.len() + meridians.extraordinary.len();
+        let mut channel_ids = Vec::with_capacity(channel_count);
+        let mut opened = Vec::with_capacity(channel_count);
+        let mut flow_rate = Vec::with_capacity(channel_count);
+        let mut flow_capacity = Vec::with_capacity(channel_count);
+        let mut integrity = Vec::with_capacity(channel_count);
+        let mut open_progress = Vec::with_capacity(channel_count);
+        let mut cracks_count = Vec::with_capacity(channel_count);
         for m in meridians
             .regular
             .iter()
             .chain(meridians.extraordinary.iter())
         {
+            channel_ids.push(m.id.as_str().to_string());
             opened.push(m.opened);
             flow_rate.push(m.flow_rate);
             flow_capacity.push(m.flow_capacity);
@@ -123,6 +127,7 @@ pub fn emit_cultivation_detail_payloads(
 
         let payload = ServerDataV1::new(ServerDataPayloadV1::CultivationDetail {
             realm: format!("{:?}", cultivation.realm),
+            channel_ids,
             opened,
             flow_rate,
             flow_capacity,
@@ -140,14 +145,10 @@ pub fn emit_cultivation_detail_payloads(
             qi_color_chaotic: qi_color.is_some_and(|color| color.is_chaotic),
             qi_color_hunyuan: qi_color.is_some_and(|color| color.is_hunyuan),
             practice_weights: practice_weights_payload(practice_log),
-            // plan-race-system-v1 P1b：`MeridianTarget` 现为 `MeridianChannelId`——
-            // wire `target_meridian` 仍是 legacy 0..20 索引（本轮不迁移，与
-            // `cultivation_detail` SoA 数组固定 20 长度同一惯例），非 humanoid channel
-            // （尚无非人形玩法数据）落 `None`。
-            target_meridian: meridian_target
-                .and_then(|t| t.0.to_meridian_id())
-                .and_then(|mid| MeridianId::ALL.iter().position(|&m| m == mid))
-                .map(|i| i as u8),
+            // plan-race-system-v1 P1c：wire 开放化后 `target_meridian` 直接下发
+            // channel id 字符串（与 `channel_ids` 同形态），非 humanoid channel 也能
+            // 合法表达，不再依赖 `MeridianId::ALL` 数组下标。
+            target_meridian: meridian_target.map(|t| t.0.as_str().to_string()),
         });
         let label = payload_type_label(payload.payload_type());
         let bytes = match serialize_server_data_payload(&payload) {
