@@ -3,14 +3,31 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
 
-from scripts.terrain_gen.bakers.raster_export import _tile_carver_chain
+from scripts.terrain_gen.bakers.raster_export import (
+    _tile_carver_chain,
+    _zone_carver_chains,
+)
+from scripts.terrain_gen.blueprint import (
+    DEFAULT_BLUEPRINT_PATH,
+    DEFAULT_PROFILES_PATH,
+    load_blueprint,
+    load_profile_catalog,
+)
 from scripts.terrain_gen.fields import TileFieldBuffer, WorldTile
-from scripts.terrain_gen.stitcher import _blend_tile_layers
+from scripts.terrain_gen.noise import _tile_coords
+from scripts.terrain_gen.stitcher import (
+    _blend_tile_layers,
+    _compute_boundary_weight_array,
+    build_generation_plan,
+    synthesize_fields,
+)
 
 
 TILE_SIZE = 2
@@ -118,6 +135,65 @@ class TileCarverChainOwnershipTest(unittest.TestCase):
             _tile_carver_chain(buffer, {"provenance_only": [object()]}),
             [],
             "owner 为空时不得回退到 provenance zone 雕刻整块 tile",
+        )
+
+
+class RealBlueprintCarverOwnerTest(unittest.TestCase):
+    def test_tile_6_minus_7_keeps_blood_valley_as_provenance_only(self) -> None:
+        blueprint = load_blueprint(DEFAULT_BLUEPRINT_PATH)
+        catalog = load_profile_catalog(DEFAULT_PROFILES_PATH)
+        tile_size = 512
+        tile = WorldTile(
+            tile_x=6,
+            tile_z=-7,
+            min_x=6 * tile_size,
+            max_x=7 * tile_size - 1,
+            min_z=-7 * tile_size,
+            max_z=-6 * tile_size - 1,
+        )
+        blood_valley = next(
+            zone for zone in blueprint.zones if zone.name == "blood_valley"
+        )
+        wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
+        blood_weight = _compute_boundary_weight_array(blood_valley, wx, wz)
+        self.assertEqual(
+            float(np.nanmax(blood_weight)),
+            0.0,
+            "真实 witness 前提漂移：tile_6_-7 上 blood_valley 权重应全零",
+        )
+
+        with TemporaryDirectory() as temp_dir:
+            plan = build_generation_plan(
+                blueprint,
+                catalog,
+                DEFAULT_BLUEPRINT_PATH,
+                DEFAULT_PROFILES_PATH,
+                Path(temp_dir),
+                tile_size,
+            )
+            plan.tiles = [tile]
+            buffer = synthesize_fields(plan).tiles[0]
+            chain = _tile_carver_chain(buffer, _zone_carver_chains(plan))
+
+        self.assertIn(
+            "blood_valley",
+            buffer.contributing_zones,
+            "粗 AABB provenance 仍应记录 blood_valley，避免破坏 manifest/debug 兼容",
+        )
+        self.assertNotIn(
+            "blood_valley",
+            buffer.carver_owner_zones,
+            "零权重 blood_valley 不得取得 tile_6_-7 的 carver ownership",
+        )
+        self.assertIn(
+            "zhanhun_plain",
+            buffer.carver_owner_zones,
+            "真实正权重的战魂平野应保留为该 tile 的几何 owner",
+        )
+        self.assertNotIn(
+            "canyon",
+            [carver.name for carver in chain],
+            "战魂平野边缘不得再继承 blood_valley 的峡谷 carver",
         )
 
 
