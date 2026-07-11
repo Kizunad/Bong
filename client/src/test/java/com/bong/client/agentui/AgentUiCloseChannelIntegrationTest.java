@@ -95,6 +95,57 @@ class AgentUiCloseChannelIntegrationTest {
     }
 
     @Test
+    void sessionExpiredAfterEsc_rawBytesConsumePendingOnceWithoutSecondResponse() {
+        WireCase wireCase = loadWireCase("session_expired");
+        AgentUiScreen screen = openScreen(wireCase.requestId());
+        screen.close();
+
+        assertNull(AgentUiStore.getActive(),
+            "ESC 应先本地关屏并保留同 request 的错误 close 等待态");
+        assertEquals(1, sentResponses.size(),
+            "ESC 应精确产生一条 dismissed C2S response");
+
+        String close = wireCase.payloadUtf8();
+        dispatch(close);
+        runQueuedTask();
+
+        assertEquals("这次天道面板已过期，请重新尝试", currentToastCommand().text(),
+            "ESC 后迟到的 session_expired 应进入真实 BongToast HUD command");
+        assertEquals(1, sentResponses.size(),
+            "处理迟到 close 后不得追加第二条 C2S response");
+
+        BongToast.resetForTests();
+        dispatch(close);
+        runQueuedTask();
+
+        assertTrue(BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "同一 session_expired 重复到达时等待态已消费，不得重复提示");
+        assertEquals(1, sentResponses.size(),
+            "重复 close 仍不得追加 C2S response");
+    }
+
+    @Test
+    void sessionExpiredAfterEsc_oldRequestCannotPolluteCompletedNewLifecycle() {
+        WireCase oldClose = loadWireCase("session_expired");
+        AgentUiScreen oldScreen = openScreen(oldClose.requestId());
+        oldScreen.close();
+
+        String newRequestId = "req-after-esc-new-lifecycle";
+        openScreen(newRequestId);
+        AgentUiStore.receiveClose(newRequestId, null);
+
+        dispatch(oldClose.payloadUtf8());
+        runQueuedTask();
+
+        assertNull(AgentUiStore.getActive(),
+            "新 request 生命周期完成后不应恢复旧 ESC screen");
+        assertTrue(BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "新 request 已开始并完成后，旧 request 的迟到 close 不得污染 HUD");
+        assertEquals(1, sentResponses.size(),
+            "新生命周期隔离期间只应保留旧 ESC 的 dismissed response");
+    }
+
+    @Test
     void invalidButtonAfterLocalClick_consumesMatchingCloseOnceAndKeepsSingleC2sResponse() {
         WireCase wireCase = loadWireCase("invalid_button_id");
         AgentUiScreen screen = openScreen(wireCase.requestId());

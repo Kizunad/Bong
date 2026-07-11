@@ -334,6 +334,29 @@ public class AgentUiScreenProtocolTest {
             "回拨已清除 pending；后续时钟恢复也不得让旧 request 重新有效");
     }
 
+    @Test
+    void agentUiScreen_escPendingErrorClose_expiresAtExactTtlBoundary() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-esc-ttl-boundary", xml, 600, 0L);
+        AgentUiStore.setActive(screen);
+        long startedAtNanos = 3_000_000_000L;
+        screen.closeAtNanosForTests(startedAtNanos);
+        long expiryBoundaryNanos = startedAtNanos + AgentUiStore.PENDING_ERROR_CLOSE_TTL_NANOS;
+        long feedbackNowMillis = 13_000L;
+
+        AgentUiStore.receiveCloseAtNanos(
+            "req-esc-ttl-boundary",
+            "session_expired",
+            expiryBoundaryNanos,
+            feedbackNowMillis
+        );
+
+        assertTrue(BongToast.current(feedbackNowMillis).isEmpty(),
+            "ESC 登记的 pending 在 TTL 精确边界必须 fail-closed，不得显示迟到 reason");
+        assertEquals(1, sentPayloads.size(),
+            "TTL 边界处理不得追加 dismissed 之外的 C2S response");
+    }
+
     // ─── 关闭语义四条状态转换 ────────────────────────────────────────────────
 
     /**
