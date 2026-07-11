@@ -24,7 +24,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 - 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 worktree 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
 - 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
 - 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，active implementation 必须满足 `min(N, platform_total - 2)`；容量不可查时保守按 2 路实施。超出有效实施并发的任务进入 FIFO，不 spawn。
-- validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。容量不可查时 validator 一次只授权 1 个，禁止用逻辑 token 假装存在实际执行槽。
+- validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。每个已 GRANTED/ACKED/RECOVERING、但尚未出现在 live snapshot 的 validator token 都先预占 1 个平台槽；只有状态查询确认对应 validator 已出现后才转为 snapshot-accounted，避免重复授权或双扣。容量不可查时 validator 一次只授权 1 个。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
 - 所有运行者执行 `df -h /`。磁盘超过 90% 时，只删除本轮已闭环 worktree 的私有可再生生成物。
@@ -75,7 +75,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 | skeleton | agent | worktree | branch | phase | token_type | request_id | token_id | queue_pos | holder | request_phase | requested_at | granted_at | expires_at | ack | recovery_deadline | release_reason | checkpoint | head | validator SHA | PR | review/e2e |
 |---|---|---|---|---|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
-phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → VALIDATING → GATING → REBASING → ARCHIVING → PR_OPEN → GATES → CLOSED`，失联暂态 `RECOVERING`，或终态 `BLOCKED`。合法边、互斥分支、终态和返工回流以 dry-run 的 `TaskPhase/ALLOWED_EDGES` 为可执行契约。
+phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → FIX_VALIDATING → GATING → REBASING → REBASE_VALIDATING → ARCHIVING → FINAL_VALIDATING → PR_OPEN → GATES → CLOSED`，失联暂态 `RECOVERING`，或终态 `BLOCKED`。只有 `FINAL_VALIDATING → PR_OPEN`；合法边、必经里程碑、互斥分支、终态和返工回流以 dry-run 的 `TaskPhase/ALLOWED_EDGES` 为可执行契约。
 
 ## 选择与派发 skeleton
 
@@ -141,10 +141,11 @@ Model: gpt-5.6-sol-xhigh
 - 真 bug：先加入修复前可失败的契约测试或最小复现，再做断点最小正确修复；按小阶段中文 commit，不顺手重构、不扩大 scope。
 - 非 bug：不造空修复；把玩家路径、已有防护、复现结果、`file:line` 与测试证据写入 active plan，并独立提交证伪结论。
 - gameplay/真元改动必须满足守恒、世界观和 A/V 硬约束。改 schema 时重建 `@bong/schema` dist；headless/e2e 启服设置 `BONG_SKIP_SKIN_PREFETCH=1`。
+- 在 `VERIFYING`、`FIXING` 或 `NOT_BUG` 阶段运行任何会编译/构建的复现或针对性测试前，同样必须申请 `compile_token`；针对性测试与完整门禁共享容量，但用途和结果分开记录。
 
 ### 4. 绑定 HEAD 的无上下文 validator
 
-修复或证伪提交完成后，先执行 `git status --porcelain=v1 --untracked-files=all` 并要求输出为空；确认 index、工作区和所有预期生成文件都已分类，需进入 PR 的改动已形成带 `Model:` trailer 的 commit。脏工作区禁止启动 validator。
+修复或证伪提交完成后进入 `FIX_VALIDATING`。先执行 `git status --porcelain=v1 --untracked-files=all` 并要求输出为空；确认 index、工作区和所有预期生成文件都已分类，需进入 PR 的改动已形成带 `Model:` trailer 的 commit。脏工作区禁止启动 validator。
 
 实施 subagent 必须先申请并收到主干的 `validator_token` 明确授权，才能创建全新 validator；主干不得代开，实施者不得自证。每轮 prompt 只提供：
 
@@ -180,11 +181,13 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 
 门禁全绿后执行 `git fetch origin`，立即用 merge-base 分类，不允许直接运行会默认生成提交的 `git merge origin/main`：
 
-- **already-up-to-date**：`origin/main` 已是 HEAD 祖先，不改 HEAD，保留当前门禁与同 SHA validator PASS。
-- **fast-forward**：HEAD 是 `origin/main` 祖先，执行 `git merge --ff-only origin/main`。fast-forward 没有 agent 新建 commit，因此无需新增 trailer；HEAD 变化后重跑受影响栈完整门禁，并对新 SHA 重新申请 validator token 验证。
-- **diverged**：执行 `git merge --no-commit --no-ff origin/main`，禁止自动 commit。解决冲突后，先持有 `compile_token` 对未提交的合并结果运行受影响栈完整门禁；PASS 后用中文消息和精确 trailer 显式提交，例如 `git commit -m "合并主线：复验 plan-X 修复" -m "Model: <实际实施模型精确 id>"`。随后确认工作区干净，并对 merge commit 的新 SHA 重新申请 validator token。
+- **already-up-to-date**：`origin/main` 已是 HEAD 祖先，不改 HEAD，保留当前门禁证据。
+- **fast-forward**：HEAD 是 `origin/main` 祖先，执行 `git merge --ff-only origin/main`。fast-forward 没有 agent 新建 commit，因此无需新增 trailer；HEAD 变化后重跑受影响栈完整门禁，再进入下方 `REBASE_VALIDATING`。
+- **diverged**：执行 `git merge --no-commit --no-ff origin/main`，禁止自动 commit。解决冲突后，先持有 `compile_token` 对未提交的合并结果运行受影响栈完整门禁；PASS 后用中文消息和精确 trailer 显式提交，例如 `git commit -m "合并主线：复验 plan-X 修复" -m "Model: <实际实施模型精确 id>"`。随后确认工作区干净并进入下方 `REBASE_VALIDATING`。
 
 任何同步带入变化都必须重跑受影响栈完整门禁；冲突或触及修复相关文件时扩大针对性复验。**HEAD 或工作区变化会使旧 validator verdict 失效。**
+
+三种同步分支收口后都进入 `REBASE_VALIDATING`，对同步判定后的当前干净 HEAD 重新申请 validator token；PASS 后才能进入 `ARCHIVING`。不得从首次 `FIX_VALIDATING` 或 `ARCHIVING` 直接开 PR。
 
 任何返工或新提交都回到 step 4，按“新 SHA validator → 完整门禁 → fetch 后分类同步主线 → 条件复验”重新闭环。
 
@@ -197,7 +200,7 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 3. 运行 `bash scripts/plan-finish.sh <name>`，确认它把 active plan 移到 `docs/finished_plans/`。
 4. 以独立中文归档 commit 提交，并带精确 `Model:` trailer。
 
-归档是开 PR 前最后一次允许的 mutation。归档 commit 改变 HEAD，因此旧 verdict 作废；立即对归档后的**最终 HEAD SHA**再启动一个全新无上下文 read-only validator，取得 `PASS <final_sha>`。若 FAIL，返工时只原地更新现有 Finish Evidence/归档文件，不重复 promotion、追加第二份 Finish Evidence 或再次移动文件，并重新走 step 4–7。最终 PASS 后禁止再修改分支内容。
+归档是开 PR 前最后一次允许的 mutation。归档 commit 后进入 `FINAL_VALIDATING`；立即对归档后的**最终 HEAD SHA**再启动一个全新无上下文 read-only validator，取得 `PASS <final_sha>`。只有该 phase 能转入 `PR_OPEN`。若 FAIL，返工时只原地更新现有 Finish Evidence/归档文件，不重复 promotion、追加第二份 Finish Evidence 或再次移动文件，并重新走 step 4–7。最终 PASS 后禁止再修改分支内容。
 
 ### 8. Push、PR 与 gates
 
