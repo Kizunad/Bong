@@ -968,6 +968,57 @@ public class ClientRequestProtocolTest {
         );
     }
 
+    // plan-race-system-v1 P1 对抗审查 MINOR ①：`MeridianChannel.channelId()`/
+    // `fromChannelId()` 与 `ClientRequestProtocol.MeridianId.wireId()` 是两张独立
+    // 维护的 20-case snake_case 字符串表——没有共享真源，容易在其中一张改名/漏项时
+    // 悄悄漂移出另一张。本测试对全部 20 条经脉做 all-20 roundtrip + 互相对拍。
+    @Test
+    void meridianIdWireIdAndMeridianChannelChannelIdAgreeForAll20ChannelsRoundTrip() {
+        assertEquals(20, ClientRequestProtocol.MeridianId.values().length);
+        assertEquals(20, com.bong.client.inventory.model.MeridianChannel.values().length);
+
+        for (ClientRequestProtocol.MeridianId id : ClientRequestProtocol.MeridianId.values()) {
+            String wireId = id.wireId();
+
+            // 两张表对同一枚举变体（经 toMeridianId 桥接）必须产出同一 snake_case 串。
+            com.bong.client.inventory.model.MeridianChannel matchingChannel = null;
+            for (com.bong.client.inventory.model.MeridianChannel ch :
+                    com.bong.client.inventory.model.MeridianChannel.values()) {
+                if (ClientRequestProtocol.toMeridianId(ch) == id) {
+                    matchingChannel = ch;
+                    break;
+                }
+            }
+            assertNotNull(matchingChannel, "MeridianId." + id + " 在 toMeridianId 映射里没有对应 MeridianChannel");
+            assertEquals(
+                wireId,
+                matchingChannel.channelId(),
+                "MeridianId." + id + ".wireId()=" + wireId + " 与对应 MeridianChannel."
+                    + matchingChannel + ".channelId()=" + matchingChannel.channelId() + " 不一致——两张表已漂移"
+            );
+
+            // fromChannelId 反函数 roundtrip：wireId -> MeridianChannel -> channelId 应恒等。
+            com.bong.client.inventory.model.MeridianChannel roundTripped =
+                com.bong.client.inventory.model.MeridianChannel.fromChannelId(wireId);
+            assertEquals(matchingChannel, roundTripped,
+                "fromChannelId(\"" + wireId + "\") 未 roundtrip 回同一 MeridianChannel");
+        }
+    }
+
+    // MINOR ①：`fromChannelId` 对未知 / 旧 PascalCase 串必须安全返回 null，不能
+    // 抛异常或误认成某个真实经脉。
+    @Test
+    void fromChannelIdReturnsNullForUnknownOrLegacyPascalCaseStrings() {
+        assertEquals(null,
+            com.bong.client.inventory.model.MeridianChannel.fromChannelId("Lung"));
+        assertEquals(null,
+            com.bong.client.inventory.model.MeridianChannel.fromChannelId("totally_made_up_channel"));
+        assertEquals(null,
+            com.bong.client.inventory.model.MeridianChannel.fromChannelId(""));
+        assertEquals(null,
+            com.bong.client.inventory.model.MeridianChannel.fromChannelId(null));
+    }
+
     @Test
     void toMeridianIdMapsSampleChannels() {
         assertEquals(ClientRequestProtocol.MeridianId.Heart,
