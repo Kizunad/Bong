@@ -105,8 +105,14 @@ pub(crate) fn pick_next_meridian_to_open(
 
     for opened_id in &opened {
         for cand in topology.neighbors(*opened_id) {
-            if !system.get(*cand).opened {
-                return Some(*cand);
+            // plan-race-system-v1 P1b：拓扑邻接现按 `MeridianChannelId` 派生
+            // （humanoid-only boundary，本函数返回类型仍是 `MeridianId`，非 humanoid
+            // channel——尚无非人形玩法数据——显式跳过而非 panic）。
+            let Some(cand_id) = cand.to_meridian_id() else {
+                continue;
+            };
+            if !system.get(cand_id).opened {
+                return Some(cand_id);
             }
         }
     }

@@ -140,8 +140,13 @@ pub fn emit_cultivation_detail_payloads(
             qi_color_chaotic: qi_color.is_some_and(|color| color.is_chaotic),
             qi_color_hunyuan: qi_color.is_some_and(|color| color.is_hunyuan),
             practice_weights: practice_weights_payload(practice_log),
+            // plan-race-system-v1 P1b：`MeridianTarget` 现为 `MeridianChannelId`——
+            // wire `target_meridian` 仍是 legacy 0..20 索引（本轮不迁移，与
+            // `cultivation_detail` SoA 数组固定 20 长度同一惯例），非 humanoid channel
+            // （尚无非人形玩法数据）落 `None`。
             target_meridian: meridian_target
-                .and_then(|t| MeridianId::ALL.iter().position(|&m| m == t.0))
+                .and_then(|t| t.0.to_meridian_id())
+                .and_then(|mid| MeridianId::ALL.iter().position(|&m| m == mid))
                 .map(|i| i as u8),
         });
         let label = payload_type_label(payload.payload_type());

@@ -5,6 +5,10 @@ use valence::prelude::{
     ResMut, With, Without,
 };
 
+use crate::body_plan::{
+    resolve_meridian_topology_for_target, BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs,
+    RaceRegistry,
+};
 use crate::cultivation::breakthrough::{
     breakthrough_actor_account_id, breakthrough_qi_cost, credit_active_breakthrough_cost,
     try_breakthrough, BreakthroughError, BreakthroughSuccess, RollSource, XorshiftRoll,
@@ -12,7 +16,6 @@ use crate::cultivation::breakthrough::{
 use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian_open::MeridianTarget;
-use crate::cultivation::topology::MeridianTopology;
 use crate::cultivation::tribulation::InitiateXuhuaTribulation;
 use crate::npc::hunger::{Hunger, HungerConfig};
 use crate::npc::lifecycle::{NpcRetireRequest, PendingRetirement};
@@ -780,7 +783,8 @@ pub(crate) fn cultivate_action_system(
     mut npcs: Query<CultivateNpcQueryItem<'_>, With<NpcMarker>>,
     mut actions: Query<(&Actor, &mut ActionState), With<CultivateAction>>,
     zone_registry: Option<Res<ZoneRegistry>>,
-    topology: Option<Res<MeridianTopology>>,
+    body_plans: Option<Res<BodyPlanRegistry>>,
+    races: Option<Res<RaceRegistry>>,
     mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut rng_state: valence::prelude::Local<CultivateRngState>,
 ) {
@@ -809,6 +813,20 @@ pub(crate) fn cultivate_action_system(
             *state = ActionState::Failure;
             continue;
         };
+        let topo = resolve_meridian_topology_for_target(
+            *actor,
+            BodyPlanPurpose::Intrinsic,
+            BodyPlanResolveInputs {
+                cultivation: Some(&*cultivation),
+                // `BeastKind` 不是 `Component`（既有 `combat::resolve`/`combat::carrier`
+                // 消费点同款简化）——races.json 现阶段全部 BeastKind 派生种族均落
+                // humanoid body plan，`None` 与"真的查了 BeastKind"结果 bit-for-bit
+                // 一致。
+                beast_kind: None,
+            },
+            body_plans.as_deref(),
+            races.as_deref(),
+        );
 
         match *state {
             ActionState::Requested => {
@@ -825,10 +843,10 @@ pub(crate) fn cultivate_action_system(
                 }
 
                 if existing_target.is_none() {
-                    if let Some(topology) = topology.as_deref() {
-                        if let Some(next_m) = pick_next_meridian_to_open(&meridians, topology) {
-                            commands.entity(*actor).insert(MeridianTarget(next_m));
-                        }
+                    if let Some(next_m) = pick_next_meridian_to_open(&meridians, topo) {
+                        commands
+                            .entity(*actor)
+                            .insert(MeridianTarget(next_m.channel_id()));
                     }
                 }
                 let drift = cultivate_drift_target(position.get(), &mut roll);
@@ -844,13 +862,13 @@ pub(crate) fn cultivate_action_system(
                 }
 
                 let need_retarget = existing_target
-                    .map(|t| meridians.get(t.0).opened)
+                    .map(|t| meridians.get(t.0.clone()).opened)
                     .unwrap_or(true);
                 if need_retarget {
-                    if let Some(topology) = topology.as_deref() {
-                        if let Some(next_m) = pick_next_meridian_to_open(&meridians, topology) {
-                            commands.entity(*actor).insert(MeridianTarget(next_m));
-                        }
+                    if let Some(next_m) = pick_next_meridian_to_open(&meridians, topo) {
+                        commands
+                            .entity(*actor)
+                            .insert(MeridianTarget(next_m.channel_id()));
                     }
                 }
 

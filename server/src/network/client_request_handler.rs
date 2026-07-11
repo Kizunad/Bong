@@ -658,7 +658,9 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     meridian
                 );
-                commands.entity(ev.client).insert(MeridianTarget(meridian));
+                commands
+                    .entity(ev.client)
+                    .insert(MeridianTarget(meridian.channel_id()));
                 if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
                     client.send_chat_message(format!(
                         "§a[修炼] 已收到经脉目标：{}。",
@@ -4560,10 +4562,10 @@ mod tests {
         let actual_target = app
             .world()
             .get::<MeridianTarget>(entity)
-            .map(|target| target.0);
+            .map(|target| target.0.clone());
         assert_eq!(
             actual_target,
-            Some(MeridianId::Du),
+            Some(MeridianId::Du.channel_id()),
             "expected SetMeridianTarget to insert selected meridian target, actual={:?}",
             actual_target
         );

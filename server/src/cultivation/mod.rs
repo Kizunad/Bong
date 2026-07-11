@@ -167,7 +167,6 @@ use self::tick::{
     prune_cultivation_session_practice_accumulator, qi_regen_and_zone_drain_tick, CultivationClock,
     CultivationSessionPracticeAccumulator,
 };
-use self::topology::MeridianTopology;
 use self::tribulation::{
     abort_du_xu_on_client_removed, dispatch_rechallenge_on_quota_opened_system,
     emit_tribulation_boundary_vfx_system, heart_demon_choice_system, heart_demon_timeout_system,
@@ -233,7 +232,8 @@ pub fn register(app: &mut App) {
     // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
     crate::cultivation::dugu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
 
-    app.insert_resource(MeridianTopology::standard());
+    // plan-race-system-v1 P1b：`MeridianTopology` 不再是全局单例 Resource——拓扑数据
+    // 按实体解析出的 BodyPlan 现场派生（见 `body_plan::resolve_meridian_topology_for_target`）。
     app.insert_resource(CultivationClock::default());
     app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
