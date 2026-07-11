@@ -63,7 +63,7 @@ pub fn build_report(
         total_stay = total_stay.saturating_add(current_tick.saturating_sub(state.entered_at));
         count = count.saturating_add(1);
     }
-    let avg = if count > 0 { total_stay / count } else { 0 };
+    let avg = total_stay.checked_div(count).unwrap_or(0);
     TribulationDebugReport {
         halfstep_count: metrics.halfstep_count,
         ascended_count: metrics.ascended_count,

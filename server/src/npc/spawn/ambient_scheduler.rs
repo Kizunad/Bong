@@ -411,7 +411,7 @@ pub fn decide_ambient_check(
     era_spawn_seed: u64,
 ) -> AmbientCheckOutcome {
     let budget = dead_zone_threat_budget(threat_budget(danger_level), zone_kind);
-    if !should_run_interval(now_tick, budget.spawn_interval_ticks as u32) {
+    if !should_run_interval(now_tick, budget.spawn_interval_ticks) {
         return AmbientCheckOutcome::Throttled;
     }
     if counts_against_threat_budget && alive_count >= budget.max_alive {

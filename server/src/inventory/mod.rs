@@ -1936,9 +1936,7 @@ fn add_item_to_player_inventory_inner(
     }
 
     let mut created_instance_ids = Vec::new();
-    for ((row, col, new_stack_count), instance_id) in
-        new_stacks.into_iter().zip(new_instance_ids.into_iter())
-    {
+    for ((row, col, new_stack_count), instance_id) in new_stacks.into_iter().zip(new_instance_ids) {
         created_instance_ids.push(instance_id);
         let mut instance =
             runtime_instance_from_template(template, instance_id, new_stack_count, current_tick);
@@ -4403,8 +4401,8 @@ pub fn apply_death_drop_to_inventory(
     // 免 50% 掉落 Roll；武器从手槽 held 派生（双手兵器即 main_hand.held，决议 #7，不再有 two_hand 槽）。
     let protected_weapon_ids = inventory
         .equipped
-        .iter()
-        .filter_map(|(_, contents)| contents.held.as_ref())
+        .values()
+        .filter_map(|contents| contents.held.as_ref())
         .filter(|item| item.durability >= 0.5)
         .filter_map(|item| {
             registry
