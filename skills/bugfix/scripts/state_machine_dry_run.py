@@ -969,7 +969,8 @@ class TokenBroker:
         phase_matches = task is not None and (
             task.phase == state.payload.phase
             or (
-                task.phase == TaskPhase.RECOVERING
+                state.status == RequestStatus.RECOVERING
+                and task.phase == TaskPhase.RECOVERING
                 and task.recovery_from == state.payload.phase
             )
         )
@@ -2506,6 +2507,50 @@ class StateMachineDryRun(unittest.TestCase):
         self.assertTrue(
             release_request(broker, "linked", grant.token_id, "PASS")
         )
+
+    def test_task_recovering_cannot_bypass_nonrecovering_request(self) -> None:
+        for request_status in ("queued", "granted", "acked"):
+            with self.subTest(request_status=request_status):
+                broker, _, _ = fixture()
+                task = TaskState(
+                    task_id=f"task-{request_status}",
+                    phase=TaskPhase.GATING,
+                )
+                request_id = f"request-{request_status}"
+                submit(
+                    broker,
+                    make_payload(request_id, "compile", "agent", task),
+                    task,
+                )
+                grant = None
+                if request_status != "queued":
+                    grant = broker.grant_next("compile")
+                if request_status == "acked":
+                    broker.ack(
+                        request_id,
+                        grant.token_id,
+                        task.phase,
+                        task.head,
+                        task.generation,
+                    )
+                task.mark_recovering()
+                if request_status == "queued":
+                    self.assertIsNone(broker.grant_next("compile"))
+                elif request_status == "granted":
+                    with self.assertRaises(ProtocolError):
+                        broker.ack(
+                            request_id,
+                            grant.token_id,
+                            TaskPhase.GATING,
+                            task.head,
+                            task.generation,
+                        )
+                else:
+                    with self.assertRaises(ProtocolError):
+                        release_request(
+                            broker, request_id, grant.token_id, "PASS"
+                        )
+                self.assertEqual(broker.held("compile"), 0)
 
     def test_repeated_recovery_is_idempotent(self) -> None:
         broker, _, _ = fixture()
