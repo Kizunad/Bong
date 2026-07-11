@@ -1403,25 +1403,30 @@ mod tests {
         }
 
         let payloads = collect_server_data_payloads(&mut helper);
+        let session_payloads: Vec<_> = payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                ServerDataPayloadV1::ForgeSession(session) if session.session_id == 1 => {
+                    Some(session)
+                }
+                _ => None,
+            })
+            .collect();
         assert!(
-            payloads.iter().any(|payload| {
-                matches!(
-                    payload,
-                    ServerDataPayloadV1::ForgeSession(session)
-                        if session.session_id == 1
-                            && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
-                            && matches!(
-                                &session.step_state,
-                                crate::schema::forge::ForgeStepStateDataV1::Tempering {
-                                    beat_cursor: 1,
-                                    hits: 1,
-                                    misses: 0,
-                                    ..
-                                }
-                            )
-                )
-            }),
-            "同帧 step_advance 后接 tempering_hit 必须回推 hits=1 的 forge_session，实际={payloads:?}"
+            !session_payloads.is_empty()
+                && session_payloads.iter().all(|session| {
+                    session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                        && matches!(
+                            &session.step_state,
+                            crate::schema::forge::ForgeStepStateDataV1::Tempering {
+                                beat_cursor: 1,
+                                hits: 1,
+                                misses: 0,
+                                ..
+                            }
+                        )
+                }),
+            "同帧 step_advance 后接 tempering_hit 时，交互快照与推进快照都必须在击键处理后发送，不能夹带旧状态，实际={session_payloads:?}；全部 payload={payloads:?}"
         );
     }
 
