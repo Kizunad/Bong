@@ -56,6 +56,7 @@ bash scripts/smoke-test.sh
 | `/give <template_id> [count]` | 给予物品 |
 | `/clearinv [pack\|all\|naked]` | 清背包 / hotbar / 装备槽 |
 | `/zone_qi set <name> <value>` | 直写区域灵气浓度 |
+| `/fog spawn <radius> <density> [duration_ticks]` / `/fog clear <id>` / `/fog clear_all` / `/fog list` | 以自己为中心生成/清除动态雾堤（density ≥ 0.85 触发视距遮蔽） |
 | `/kill self` / `/revive self` | 触发玩家死亡 / 复活事件链路 |
 | `/time advance <ticks>` | 快进 `CultivationClock` |
 

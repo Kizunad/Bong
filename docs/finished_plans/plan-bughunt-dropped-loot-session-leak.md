@@ -1,5 +1,7 @@
 # BugHunt: dropped loot 断线不清导致短窗口旧掉落物串 session
 
+**状态**：✅ 2026-07-11 —— 真 bug，已修复（`BongNetworkHandler.clearClientStateOnDisconnect()` 补接 `DroppedItemStore.clearOnDisconnect()`）。
+
 ## Bug 摘要
 
 `DroppedItemStore` 是 client 侧地面掉落物的静态缓存，断线/切服时虽然提供了 `clearOnDisconnect()`，但没有被任何 client disconnect/JOIN 清理路径调用。玩家从一个 server/world 断开后，如果旧缓存里有掉落物，新服首个 `dropped_loot_sync` 抵达前，旧坐标会被新 world 解释为当前 session 的 dropped loot。
@@ -42,11 +44,11 @@
 
 ## Skeleton Fix Plan
 
-- [ ] 在 client disconnect 清理路径补接 `DroppedItemStore.clearOnDisconnect()`，位置优先跟 `RemainsStore.clearOnDisconnect()` 相邻，保持同类地面对象缓存一致。
-- [ ] 评估是否也在 JOIN 前置清理一次 dropped loot，以抵消 DISCONNECT 回调未执行或单机/测试路径绕过 disconnect 的情况；若做，需避免与 join-time `dropped_loot_sync` 产生竞态。
-- [ ] 给 `DroppedItemPickupBootstrap` 或 `BongNetworkHandler` 增加单测/集成测试，断言 disconnect 后 `DroppedItemStore.snapshot()` 为空。
-- [ ] 给 G 键候选增加回归测试：断线清理后旧 dropped loot 不再参与 `InteractKeyRouter` 候选选择；同级遗骸不被旧 dropped item 抢走。
-- [ ] 保持 server 权威拒绝不变，不在 client 侧凭空推断拾取成功。
+- [x] 在 client disconnect 清理路径补接 `DroppedItemStore.clearOnDisconnect()`，位置优先跟 `RemainsStore.clearOnDisconnect()` 相邻，保持同类地面对象缓存一致。✅ 2026-07-11
+- [x] 评估是否也在 JOIN 前置清理一次 dropped loot，以抵消 DISCONNECT 回调未执行或单机/测试路径绕过 disconnect 的情况；若做，需避免与 join-time `dropped_loot_sync` 产生竞态。✅ 2026-07-11 —— 评估结论：**不做 JOIN 侧清理**。核实 `server/src/network/dropped_loot_sync_emit.rs` 的 `emit_join_dropped_loot_syncs` 挂载在 `Added<Client>` filter 上，且通过 `server/src/network/mod.rs:962` 的 `register(app)`（`server/src/main.rs:117` 调用）真正接入生产 App，join 必发全量 `dropped_loot_sync`。只做 DISCONNECT 侧清理已消灭本 bug 描述的窗口，且与 `RemainsStore` 现有先例（同样只在 DISCONNECT 清理、不在 JOIN 清理）保持一致，避免额外引入与 join-time sync 竞态的风险面。
+- [x] 给 `DroppedItemPickupBootstrap` 或 `BongNetworkHandler` 增加单测/集成测试，断言 disconnect 后 `DroppedItemStore.snapshot()` 为空。✅ 2026-07-11 —— `BongNetworkHandlerTest.disconnectClearsDroppedItemStoreToPreventStaleSessionBleed`（走真实 `clearClientStateOnDisconnect()` 生产路径）+ `DroppedItemStoreTest.clearOnDisconnectEmptiesStoreAndNearestToReturnsNull`（store 层直接单测）。
+- [x] 给 G 键候选增加回归测试：断线清理后旧 dropped loot 不再参与 `InteractKeyRouter` 候选选择；同级遗骸不被旧 dropped item 抢走。✅ 2026-07-11 —— `DroppedItemPickupIntentHandler.candidate()` 直接委托 `DroppedItemStore.nearestTo(...)`（无额外状态），`clearOnDisconnectEmptiesStoreAndNearestToReturnsNull` 断言清空后 `nearestTo()` 返回 null，从而锁住"清理后不再产生候选"这一契约；未额外新增 `InteractKeyRouter` 层测试，因为该层已有独立 `InteractKeyRouterTest` 用 stub handler 覆盖候选择优逻辑，不需要为本 bug 重复搭建 `MinecraftClient` fixture。
+- [x] 保持 server 权威拒绝不变，不在 client 侧凭空推断拾取成功。✅ 2026-07-11 —— 本次修复未改动 `DroppedItemPickupIntentHandler.dispatch()` 或 `ClientRequestSender.sendPickupDroppedItem`，拾取仍是纯请求-等待 server 权威回执，未引入任何 client 侧乐观推断。
 
 ## 验收测试计划
 
@@ -60,3 +62,34 @@
 - 低风险：这是 session 生命周期清理，和 `RemainsStore` 同类；主要风险是清理时机过早导致 join-time 首包前没有 dropped loot 视觉，但这正是目标行为。
 - 若同时在 DISCONNECT 与 JOIN 清理，需要确认不会清掉已经到达的 `dropped_loot_sync`；优先只在 DISCONNECT 补接，JOIN 清理需单独证明无竞态。
 - 不应引入 dimension/session 猜测逻辑；真正权威仍应由 server 的 dropped loot sync 和拾取校验负责。
+
+## Finish Evidence
+
+**落地清单**：
+
+- `client/src/main/java/com/bong/client/BongNetworkHandler.java`（`clearClientStateOnDisconnect()`，紧邻 `RemainsStore.clearOnDisconnect()` 调用点补接 `DroppedItemStore.clearOnDisconnect()`）
+- `client/src/test/java/com/bong/client/inventory/DroppedItemStoreTest.java`（新增 `clearOnDisconnectEmptiesStoreAndNearestToReturnsNull`）
+- `client/src/test/java/com/bong/client/BongNetworkHandlerTest.java`（新增 `disconnectClearsDroppedItemStoreToPreventStaleSessionBleed`，走真实 `clearClientStateOnDisconnect()` 生产路径而非直接调 store）
+
+**关键 commit**：
+
+- `a929b679`（2026-07-11）docs(plan): plan-bughunt-dropped-loot-session-leak 骨架升 active
+- `bacded6b`（2026-07-11）fix(client): 断线清理接上 DroppedItemStore，堵住 dropped loot session 串味
+
+**测试结果**：
+
+- `cd client && ./gradlew test --tests "com.bong.client.BongNetworkHandlerTest" --tests "com.bong.client.inventory.DroppedItemStoreTest"` → BUILD SUCCESSFUL（含新增 2 条测试全绿）
+- `cd client && ./gradlew test build` → BUILD SUCCESSFUL（client 全量单测 + build 门禁绿，无回归）
+
+**跨仓库核验**：
+
+- client：`DroppedItemStore.clearOnDisconnect()`（原有方法，本次接线调用）、`BongNetworkHandler.clearClientStateOnDisconnect()`（调用点新增）
+- server：`server/src/network/dropped_loot_sync_emit.rs::emit_join_dropped_loot_syncs`（只读核验，确认 join-time 全量 sync 兜底存在，未改动）——已核实其挂载 `Added<Client>` filter 并通过 `server/src/network/mod.rs` 的 `register(app)`（`server/src/main.rs` 调用）接入生产 App，非孤岛
+- agent：不涉及（纯 client 会话生命周期清理，无 IPC/schema 变更）
+
+**Validator**：无上下文 read-only 对抗验证 PASS，验证 HEAD `bacded6b02c4d31f8844e783e54914a641322870`（逐条核实：调用链真连通 DISCONNECT 事件、与 RemainsStore 结构对称、测试非 mock/非 tautological（mental revert 后会撞红）、无遗漏的其他 disconnect 路径、无下游代码假设 DroppedItemStore 跨重连存活、join-time sync 系统确实注册进生产 App、实测两个新测试真实通过）。
+
+**遗留 / 后续**：
+
+- 未新增 `InteractKeyRouter` 层的端到端候选选择测试——该路由层已有独立 `InteractKeyRouterTest`（stub handler 覆盖优先级择优逻辑），且 `DroppedItemPickupIntentHandler.candidate()` 无额外状态、直接委托 `DroppedItemStore.nearestTo()`，store 层测试已充分锁住"清理后不再产生候选"契约，无需为本 bug 重复搭建 `MinecraftClient` fixture。
+- skeleton 中提到的"低优先级 harvest 交互未来可能被旧 dropped loot 抢占"风险不在本次修复范围（本次已消灭旧 dropped loot 存活窗口本身，该风险随之消解，无需额外设计）。
