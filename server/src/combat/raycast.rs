@@ -205,9 +205,16 @@ pub fn standing_humanoid_aabb(plan: &BodyPlan, feet_position: DVec3) -> Aabb {
 /// plan-race-system-v1 P0 review r2（BLOCKING-1 收口）—— 统一分类入口：按
 /// `plan.hit_geometry` 完整分派 `HeightBands`（人形，参数化高度带 + 横向阈值）/
 /// `PartBoxes`（非人形，逐部位局部盒——`hit_point` 视为已知命中点，不重新做射线求交，
-/// 用 [`crate::body_plan::geometry::classify_part_boxes_point`] 按局部系包含关系 /
-/// 最近盒回退分类；供 `combat::carrier` 投射物这类"命中点已经由别的手段算出，只需要
-/// 分类"的消费点使用）。
+/// 用 [`crate::body_plan::geometry::classify_part_boxes_point`] 按局部系包含关系分类，
+/// 命中点落在盒间空隙时返回 `None`，不再退化为就近回退）。
+///
+/// **`PartBoxes` 分支现状（plan-race-system-v1 P0 review r3 后）**：此分支已无已知
+/// 生产调用者——`combat::carrier`（原先唯一经"已知命中点"消费本函数的生产入口）已
+/// 改为对弹道线段直接调用 [`crate::body_plan::geometry::raycast_part_boxes`]（真实
+/// 射线-盒求交），`raycast_humanoid` 的 `PartBoxes` 分支同样直接调用
+/// `raycast_part_boxes`、从不经过本函数。保留这个分支是因为“给定已知命中点、无方向、
+/// 只按包含关系归类”仍是合法契约，未来若有这样的消费点可以直接复用；但当前没有任何
+/// 生产路径依赖它。
 ///
 /// `HeightBands` 分支数值与算法均 bit-for-bit 不变（原 `ARM_LATERAL_THRESHOLD=0.19` /
 /// `LEG_ABDOMEN_BOUNDARY=0.53` / `0.88`/`0.55` 头/臂高度带等 plan-combat-hit-location-v1
@@ -253,10 +260,21 @@ pub fn classify_body_part(
             classify_part_boxes_point(hit_point, target_feet_position, target_yaw_radians, boxes)
                 .unwrap_or_else(|| {
                     panic!(
-                        "[bong][body_plan] body plan {} declares PartBoxes hit_geometry with \
-                         zero boxes — this must be rejected at BodyPlanRegistry load time by \
-                         validate_body_plan (part_boxes_empty_rejected), classify_body_part \
-                         must never observe an empty PartBoxes plan in production",
+                        "[bong][body_plan] classify_body_part(plan={}) observed a PartBoxes \
+                         hit_point with no containing box — either the plan declares zero boxes \
+                         (must be rejected at BodyPlanRegistry load time by validate_body_plan / \
+                         part_boxes_empty_rejected) or hit_point genuinely fell in a gap between \
+                         declared boxes (a legitimate PartBoxes scenario, see \
+                         classify_part_boxes_point's doc comment). This branch has no known \
+                         production caller as of plan-race-system-v1 P0 review r3 — \
+                         combat::carrier and raycast_humanoid's PartBoxes branch both call \
+                         crate::body_plan::geometry::raycast_part_boxes directly instead, which \
+                         handles the gap case by returning None to its caller rather than \
+                         panicking. If you're adding a new caller here that can legitimately \
+                         observe a gap hit_point, decide an explicit non-panicking policy at \
+                         your call site (skip Wound construction + tracing::debug, see \
+                         combat::carrier::projectile_tick_system) instead of relying on this \
+                         function to fail gracefully — it does not.",
                         plan.id
                     )
                 })

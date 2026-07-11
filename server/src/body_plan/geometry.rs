@@ -9,8 +9,14 @@
 //! `classify_matches_independent_legacy_oracle_across_batch_of_npc_aim_samples` 锁死
 //! ——该测试用 PR 前旧算法字面量重新实现的独立 oracle（不读 `humanoid_plan_static`/
 //! `humanoid.json`，不调用生产 `classify_body_part`）逐样本对拍，防止"改造后的代码
-//! 拿自己当基准"这类自证陷阱。`PartBoxes`（非人形局部盒求交，`raycast_part_boxes`）
-//! 尚未接入任何生产消费点，留给 P5 whale 等非人形构型。
+//! 拿自己当基准"这类自证陷阱。**`PartBoxes`（非人形局部盒求交，`raycast_part_boxes`）
+//! 现已接入两个生产消费点**：近战统一入口 `combat::raycast::raycast_humanoid` 与
+//! 投射物 `combat::carrier::projectile_tick_system`（plan-race-system-v1 P0 review r3
+//! 收口——carrier 原先经 `classify_part_boxes_point` 的"已知命中点 + 就近回退"反推部位，
+//! 就近回退会把盒间空隙伪造成有效命中，现已改为对弹道线段直接调用
+//! `raycast_part_boxes` 真实射线-盒求交）。两个消费点都直接调用 `raycast_part_boxes`
+//! 本身，不经过 `classify_part_boxes_point`（后者现已降级为无生产调用者的测试/工具向
+//! 几何原语，见该函数文档）。
 //!
 //! 坐标系约定（`PartBoxes` 专用，P0 只支持 yaw，不支持 pitch/roll）：
 //! - 局部系原点 = 实体位置（`entity_position_world`）
@@ -248,18 +254,27 @@ pub fn raycast_part_boxes(
 }
 
 /// `PartBoxes` 模式的**点**分类：给定一个已知世界坐标命中点（不是射线——用于调用方已经
-/// 用别的手段算出命中点、只需要"这个点归哪个部位管"的场景，如投射物弹道终点分类，见
-/// `combat::raycast::classify_body_part` 的 `PartBoxes` 分支）。
+/// 用别的手段算出命中点、只需要"这个点归哪个部位管"的场景）。
 ///
-/// 语义：世界点变换到实体局部系后，优先选**包含该点**的盒（局部系下逐轴都落在
-/// `[min,max]` 闭区间内，等价于到盒的欧氏距离为 0）；若没有任何盒包含该点（弹道终点落在
-/// 两盒之间的空隙——`PartBoxes` 不要求像 `HeightBands` 那样全高度覆盖，盒间空隙是合法
-/// 状态），退化为按"点到盒表面最近距离"挑最近的盒（标准 AABB 点距离：逐轴 clamp 到
-/// `[min,max]` 内取差值再取模长）。距离相同时优先级裁决与 [`raycast_part_boxes`] 完全一致
-/// （`priority` 越大越优先，再等则声明顺序越靠前越优先）——两个函数共享同一个
-/// [`pick_better`] 裁决器，保证"射线求交"与"点分类"两条路径的稳定序语义永不分叉。
-/// 空集合返回 `None`（防御性——不 panic；调用方对已校验的非空 `PartBoxes` plan 可视为
-/// 必然 `Some`）。
+/// plan-race-system-v1 P0 review r3（blocker 收口）—— **containment-only，无就近回退**：
+/// 世界点变换到实体局部系后，只有落在某个盒的闭区间 `[min,max]`（逐轴同时满足）才判定
+/// 命中该盒；若没有任何盒包含该点（命中点落在两盒之间的空隙——`PartBoxes` 不要求像
+/// `HeightBands` 那样全高度覆盖，盒间空隙是合法状态），**返回 `None`，不再**退化为"点到
+/// 盒表面最近距离"选最近的盒。旧版就近回退是一处语义缺陷：真实弹道根本没有打中任何
+/// 部位，却被强行分类成离得最近的那个，把空隙伪造成了有效命中（plan-race-system-v1 P0
+/// review r3 blocker/major）。命中多个重叠盒时优先级裁决与 [`raycast_part_boxes`] 一致
+/// （`priority` 越大越优先，再等则声明顺序越靠前越优先，见 [`pick_better_containment`]）。
+///
+/// **调用者身份（review r3 后）**：本函数唯一的非测试调用点是
+/// `combat::raycast::classify_body_part` 的 `PartBoxes` 分支——但该分支自身已无任何已知
+/// 生产调用者：`combat::carrier`（原先唯一的生产消费点，`projectile_tick_system`）已改为
+/// 对弹道线段直接调用 [`raycast_part_boxes`]（真实射线-盒求交，权威决定"是否命中"与
+/// "命中哪个部位"），`combat::raycast::raycast_humanoid` 的 `PartBoxes` 分支同样直接调用
+/// [`raycast_part_boxes`]、从未经过 `classify_body_part`/本函数。本函数因此实质上只剩
+/// 测试/工具用途——保留是因为"给定已知命中点、不给方向、只要按包含关系归类"仍是一个
+/// 独立自洽的几何原语（未来若出现这样的消费场景可以直接复用），但**当前没有任何生产
+/// 路径依赖它对空隙的处理方式**，本文件下方 `classify_part_boxes_point_*` 测试组是
+/// 它行为的唯一权威 pin。空集合同样返回 `None`（防御性——不 panic）。
 pub fn classify_part_boxes_point(
     world_point: DVec3,
     entity_position_world: DVec3,
@@ -272,7 +287,7 @@ pub fn classify_part_boxes_point(
 
     let local_point = world_point_to_local(world_point, entity_position_world, entity_yaw_radians);
 
-    let mut best: Option<(f64, i32, usize)> = None;
+    let mut best: Option<(i32, usize)> = None;
     for (index, part_box) in boxes.iter().enumerate() {
         let min = DVec3::new(
             part_box.offset[0] - part_box.half_extents[0],
@@ -284,24 +299,42 @@ pub fn classify_part_boxes_point(
             part_box.offset[1] + part_box.half_extents[1],
             part_box.offset[2] + part_box.half_extents[2],
         );
-        let clamp_axis = |value: f64, lo: f64, hi: f64| -> f64 {
-            let delta_below = (lo - value).max(0.0);
-            let delta_above = (value - hi).max(0.0);
-            delta_below + delta_above
-        };
-        let dx = clamp_axis(local_point.x, min.x, max.x);
-        let dy = clamp_axis(local_point.y, min.y, max.y);
-        let dz = clamp_axis(local_point.z, min.z, max.z);
-        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+        let contains_point = local_point.x >= min.x
+            && local_point.x <= max.x
+            && local_point.y >= min.y
+            && local_point.y <= max.y
+            && local_point.z >= min.z
+            && local_point.z <= max.z;
+        if !contains_point {
+            continue;
+        }
 
-        let candidate = (distance, part_box.priority, index);
+        let candidate = (part_box.priority, index);
         best = Some(match best {
             None => candidate,
-            Some(current) => pick_better(current, candidate),
+            Some(current) => pick_better_containment(current, candidate),
         });
     }
 
-    best.map(|(_distance, _priority, index)| &boxes[index].part_id)
+    best.map(|(_priority, index)| &boxes[index].part_id)
+}
+
+/// containment-only 场景下的裁决：所有候选距离恒为 0（都真正包含该点），只需比较
+/// `priority`（越大越优先），再等则声明顺序越靠前越优先——与 [`pick_better`] 的第二/
+/// 第三裁决层级完全一致，抽成独立的二元组版本，避免为了复用三元组裁决器而给不存在的
+/// 距离维度硬凑一个恒定 `0.0`。
+fn pick_better_containment(a: (i32, usize), b: (i32, usize)) -> (i32, usize) {
+    if a.0 != b.0 {
+        if a.0 > b.0 {
+            a
+        } else {
+            b
+        }
+    } else if a.1 <= b.1 {
+        a
+    } else {
+        b
+    }
 }
 
 /// 距离越小越好；等距时 priority 越大越好；再等则原始下标越小越好（稳定序，先声明者赢）。
@@ -891,6 +924,44 @@ mod tests {
         assert!(hit.is_none());
     }
 
+    // plan-race-system-v1 P0 review r3（blocker 收口，负向测试三类之一：射线穿过空隙
+    // 未命中）—— `raycast_part_boxes` 本身从未有过就近回退，这条测试专门锁死"多盒
+    // 构型下，射线笔直穿过两盒之间的空隙"这个场景恒定返回 `None`，作为
+    // `combat::carrier` 新接线（弹道线段直接调用本函数）的权威依据：carrier 目标若是
+    // 这样的 PartBoxes 构型，空隙弹道必须被判定为未命中任何具体部位，而不是像旧版
+    // `classify_part_boxes_point` 那样伪造出"最近"的部位。
+    #[test]
+    fn raycast_part_boxes_ray_through_gap_between_boxes_misses() {
+        let boxes = vec![
+            PartBox {
+                part_id: "left".into(),
+                offset: [-1.0, 0.0, 2.0],
+                half_extents: [0.3, 0.3, 0.3],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "right".into(),
+                offset: [1.0, 0.0, 2.0],
+                half_extents: [0.3, 0.3, 0.3],
+                priority: 0,
+            },
+        ];
+        // 射线沿局部 +Z 笔直穿过 x=0（两盒分别在 x=-1±0.3 / x=1±0.3，中间 x∈(-0.7,0.7)
+        // 是空隙），必须不命中任何一个盒。
+        let hit = raycast_part_boxes(
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(0.0, 0.0, 1.0),
+            10.0,
+            DVec3::new(0.0, 0.0, 0.0),
+            0.0,
+            &boxes,
+        );
+        assert!(
+            hit.is_none(),
+            "射线沿 x=0 穿过 left/right 两盒之间的空隙必须未命中，实测 {hit:?}"
+        );
+    }
+
     /// yaw 旋转 + 平移不变性：把「实体在原点不转向」的场景整体平移 + 绕 Y 轴旋转
     /// yaw 后，只要射线同步做相同的刚体变换，命中的 part_id + 局部系距离必须不变。
     #[test]
@@ -985,9 +1056,15 @@ mod tests {
         assert_eq!(part, &BodyPartId::new("near"));
     }
 
+    // plan-race-system-v1 P0 review r3（blocker 收口）—— 就近回退已删除，以下三个
+    // 测试锁死 containment-only 语义下的负向行为：盒间空隙 / 完全在所有盒之外，两者
+    // 都必须返回 `None`，不得伪造出一个"最近"的命中部位。
+
     #[test]
-    fn classify_part_boxes_point_gap_between_boxes_falls_back_to_nearest() {
-        // 点落在两盒之间的空隙（PartBoxes 不要求全覆盖）——必须退化为"点到盒表面最近"。
+    fn classify_part_boxes_point_gap_between_boxes_returns_none() {
+        // 点落在两盒之间的空隙（PartBoxes 不要求全覆盖，空隙是合法状态）——曾经的
+        // "就近回退"会把这里错分类成 left（距离 1.5 < right 距离 7.5），现在必须显式
+        // 返回 None：没有任何盒真正包含这个点，就不该产出命中部位。
         let boxes = vec![
             PartBox {
                 part_id: "left".into(),
@@ -1002,19 +1079,60 @@ mod tests {
                 priority: 0,
             },
         ];
-        // z=2.0: 到 left 盒表面 (z=0.5) 距离 1.5；到 right 盒表面 (z=9.5) 距离 7.5——left 更近。
         let part = classify_part_boxes_point(
             DVec3::new(0.0, 0.0, 2.0),
             DVec3::new(0.0, 0.0, 0.0),
             0.0,
             &boxes,
-        )
-        .expect("gap point must still classify via nearest-box fallback");
-        assert_eq!(part, &BodyPartId::new("left"));
+        );
+        assert!(
+            part.is_none(),
+            "点落在两盒之间的空隙必须返回 None（不再退化为就近回退），实测 {part:?}"
+        );
     }
 
     #[test]
-    fn classify_part_boxes_point_equal_distance_prefers_higher_priority() {
+    fn classify_part_boxes_point_all_boxes_missed_returns_none() {
+        // 点整体上并不在任何盒附近的"夹缝"里，而是径直落在三个盒的公共包围范围之外
+        // （侧向偏移量远超过任何单个盒的 half_extents）——与"盒间空隙"场景（点仍大致
+        // 位于盒群跨度内）区分开的独立负向 case：即使拉远到明显在外面，也绝不允许
+        // 兜底选中"最近"的那个盒。
+        let boxes = vec![
+            PartBox {
+                part_id: "left".into(),
+                offset: [-1.0, 0.0, 0.0],
+                half_extents: [0.3, 0.3, 0.3],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "center".into(),
+                offset: [0.0, 0.0, 0.0],
+                half_extents: [0.3, 0.3, 0.3],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "right".into(),
+                offset: [1.0, 0.0, 0.0],
+                half_extents: [0.3, 0.3, 0.3],
+                priority: 0,
+            },
+        ];
+        let part = classify_part_boxes_point(
+            DVec3::new(0.0, 0.0, 50.0),
+            DVec3::new(0.0, 0.0, 0.0),
+            0.0,
+            &boxes,
+        );
+        assert!(
+            part.is_none(),
+            "点远离全部三个盒（z=50 对比盒群 z≈0）必须返回 None，实测 {part:?}"
+        );
+    }
+
+    #[test]
+    fn classify_part_boxes_point_multiple_containing_boxes_prefer_higher_priority() {
+        // 两个盒同一偏移/同一尺寸完全重叠——点被两者同时真正包含（containment，非距离
+        // 相等的回退场景），裁决必须落到 priority 更高的盒。
         let boxes = vec![
             PartBox {
                 part_id: "low_priority".into(),
@@ -1040,7 +1158,9 @@ mod tests {
     }
 
     #[test]
-    fn classify_part_boxes_point_equal_distance_equal_priority_prefers_earlier_declaration() {
+    fn classify_part_boxes_point_multiple_containing_boxes_equal_priority_prefers_earlier_declaration(
+    ) {
+        // 两个完全重叠、优先级也相同的盒都真正包含该点——稳定裁决必须选声明顺序更靠前的。
         let boxes = vec![
             PartBox {
                 part_id: "first".into(),

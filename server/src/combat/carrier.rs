@@ -990,20 +990,47 @@ fn projectile_tick_system(
             let target_feet = target_pos.get();
             let target_center = target_feet + DVec3::new(0.0, 1.0, 0.0);
             let segment = next - current;
-            let segment_len_sq = segment.length_squared();
-            let t = if segment_len_sq <= f64::EPSILON {
-                0.0
-            } else {
-                ((target_center - current).dot(segment) / segment_len_sq).clamp(0.0, 1.0)
+            // plan-race-system-v1 P0 review r3（blocker 收口）—— PartBoxes 目标不再用
+            // "已知命中点（离目标中心最近的线段投影点）+ classify_part_boxes_point 的
+            // 就近回退"反推部位：命中点落在盒间空隙时，就近回退会把空隙伪造成有效命中
+            // （语义缺陷）。改为对本 tick 弹道线段（`current` → `next`，即"上一位置→
+            // 命中位置"）做真实射线-盒求交 `body_plan::geometry::raycast_part_boxes`
+            // ——与 `raycast_humanoid` 的 `PartBoxes` 分支（近战统一入口）完全同一个几何
+            // 原语，以首次相交的 part_id 为权威；线段穿过空隙、未与任何盒相交时
+            // 忠实返回 `None`（不伪造命中部位），由下方 Wound 构造处显式处理。
+            // `HeightBands` 目标路径 bit-for-bit 不变：仍是"线段→目标中心最近点投影 +
+            // `classify_body_part`"这条既有实现，未做任何改动。
+            let body_part: Option<crate::body_plan::BodyPartId> = match &target_body_plan
+                .hit_geometry
+            {
+                crate::body_plan::HitGeometry::HeightBands { .. } => {
+                    let segment_len_sq = segment.length_squared();
+                    let t = if segment_len_sq <= f64::EPSILON {
+                        0.0
+                    } else {
+                        ((target_center - current).dot(segment) / segment_len_sq).clamp(0.0, 1.0)
+                    };
+                    let projectile_hit_point = current + segment * t;
+                    Some(crate::combat::raycast::classify_body_part(
+                        target_body_plan,
+                        projectile_hit_point,
+                        target_feet,
+                        flight.spawn_pos,
+                        target_yaw_radians,
+                    ))
+                }
+                crate::body_plan::HitGeometry::PartBoxes { boxes } => {
+                    crate::body_plan::geometry::raycast_part_boxes(
+                        current,
+                        segment,
+                        segment.length(),
+                        target_feet,
+                        target_yaw_radians,
+                        boxes,
+                    )
+                    .map(|part_hit| part_hit.part_id)
+                }
             };
-            let projectile_hit_point = current + segment * t;
-            let body_part = crate::combat::raycast::classify_body_part(
-                target_body_plan,
-                projectile_hit_point,
-                target_feet,
-                flight.spawn_pos,
-                target_yaw_radians,
-            );
             let ratio = hit_qi_ratio(hit_distance, flight.qi_color, flight.carrier_grade);
             let hit_qi = projectile.qi_payload * ratio;
             if hit_qi <= f32::EPSILON {
@@ -1030,14 +1057,33 @@ fn projectile_tick_system(
                 .unwrap_or_else(|| "entity:unknown".to_string());
             wounds.health_current =
                 (wounds.health_current - wound_damage).clamp(0.0, wounds.health_max);
-            wounds.entries.push(Wound {
-                location: body_part.clone(),
-                kind: WoundKind::Pierce,
-                severity: wound_damage,
-                bleeding_per_sec: wound_damage * 0.05,
-                created_at_tick: clock.tick,
-                inflicted_by: Some(attacker_id.clone()),
-            });
+            // plan-race-system-v1 P0 review r3 —— PartBoxes 目标弹道穿过部位间空隙时
+            // （粗筛 capsule 判定"够近"，但精细求交没有命中任何具体局部盒），显式策略：
+            // 跳过 Wound 构造（不伪造命中部位）；伤害/沾染/事件仍照常结算（粗筛已确认
+            // 真实物理接触）——carrier 本身没有部位伤害倍率概念，`wound_damage` 不因
+            // 缺失部位而打折/加成，等价于"部位倍率中性"。`tracing::debug` 记录，行为由
+            // `projectile_through_partboxes_gap_skips_wound_but_still_applies_damage`
+            // 等专属测试锁死。
+            match &body_part {
+                Some(part_id) => {
+                    wounds.entries.push(Wound {
+                        location: part_id.clone(),
+                        kind: WoundKind::Pierce,
+                        severity: wound_damage,
+                        bleeding_per_sec: wound_damage * 0.05,
+                        created_at_tick: clock.tick,
+                        inflicted_by: Some(attacker_id.clone()),
+                    });
+                }
+                None => {
+                    tracing::debug!(
+                        "[bong][carrier] projectile {:?} 弹道穿过目标 {:?} 的 PartBoxes 空隙\
+                         （未与任何局部盒相交）——跳过 Wound 构造，伤害/沾染/事件仍照常结算",
+                        projectile_entity,
+                        target_entity
+                    );
+                }
+            }
             contamination.entries.push(ContamSource {
                 amount: f64::from(contam_amount),
                 color: flight.qi_color,
@@ -1061,18 +1107,29 @@ fn projectile_tick_system(
                 resolved_at_tick: clock.tick,
                 // humanoid-only boundary（P0 决议，边界①，同 combat::resolve 同名分支）：
                 // `CombatEvent.body_part` 是 legacy 8 值枚举，非人形部位 id 落回 Chest
-                // 占位 + warn（不是静默默认）。
-                body_part: crate::body_plan::id_to_legacy_body_part(&body_part).unwrap_or_else(
-                    || {
-                        tracing::warn!(
-                            "[bong][body_plan] carrier CombatEvent wire: part id {} has no \
-                             legacy BodyPart mapping — emitting BodyPart::Chest as an explicit \
-                             placeholder (not a silent default)",
-                            body_part
+                // 占位 + warn（不是静默默认）。plan-race-system-v1 P0 review r3 —— 弹道
+                // 穿过 PartBoxes 空隙（`body_part == None`）同样落回 Chest 占位，但用
+                // `debug`（非 `warn`）记录：这是几何上合法的空隙场景，不是数据缺陷。
+                body_part: match &body_part {
+                    Some(part_id) => crate::body_plan::id_to_legacy_body_part(part_id)
+                        .unwrap_or_else(|| {
+                            tracing::warn!(
+                                "[bong][body_plan] carrier CombatEvent wire: part id {} has no \
+                                 legacy BodyPart mapping — emitting BodyPart::Chest as an \
+                                 explicit placeholder (not a silent default)",
+                                part_id
+                            );
+                            crate::combat::components::BodyPart::Chest
+                        }),
+                    None => {
+                        tracing::debug!(
+                            "[bong][body_plan] carrier CombatEvent wire: PartBoxes 目标本次弹道\
+                             未命中任何局部盒 —— emitting BodyPart::Chest as an explicit \
+                             placeholder (gap hit, not a silent default)"
                         );
                         crate::combat::components::BodyPart::Chest
-                    },
-                ),
+                    }
+                },
                 wound_kind: WoundKind::Pierce,
                 source: crate::combat::events::AttackSource::Melee,
                 debug_command: false,
@@ -1729,6 +1786,257 @@ mod tests {
             BodyPartId::new("chest"),
             "投射沿胸口高度（y=1.0，脚底 y=0）飞行应命中 chest，实测 {part:?}"
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P0 review r3（blocker+major 收口）—— carrier 投射物对
+    // PartBoxes 目标改用弹道线段真求交（`body_plan::geometry::raycast_part_boxes`），
+    // 取代此前"已知命中点 + classify_part_boxes_point 就近回退"的语义缺陷（盒间空隙
+    // 会被伪造成有效命中）。以下测试全部走真实 `projectile_tick_system`
+    // 生产系统（不直接调用几何纯函数），合成非人形 PartBoxes 构型 + 真实
+    // BodyPlanRegistry/RaceRegistry，覆盖：①前后部位遮挡（近盒挡远盒）②平移后仍
+    // 正确命中 ③射线穿过空隙时跳过 Wound 构造但伤害/事件仍照常结算。
+    // ══════════════════════════════════════════════════════════════════════════
+    mod partboxes_carrier_production_integration_tests {
+        use super::*;
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::types::{BodyPartDef, HitGeometry, PartBox, PartConsequence};
+        use crate::body_plan::{BodyPlanRegistry, RaceRegistry};
+        use crate::cultivation::components::Cultivation;
+        use std::collections::HashMap as StdHashMap;
+
+        /// 双盒合成构型：`near_part`/`far_part` 沿局部 +X（=世界 +X，target yaw=0 时
+        /// 局部系与世界系重合）前后排列，`near_part` 更靠近射线起点。
+        fn two_box_plan(near_part: &str, far_part: &str) -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: format!("test_carrier_two_box_{near_part}_{far_part}").into(),
+                display_name: "测试用 carrier 双盒构型".to_string(),
+                is_humanoid: false,
+                parts: vec![
+                    BodyPartDef {
+                        id: near_part.into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Core,
+                    },
+                    BodyPartDef {
+                        id: far_part.into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Core,
+                    },
+                ],
+                hit_geometry: HitGeometry::PartBoxes {
+                    boxes: vec![
+                        // 局部 offset y=1.0 对齐粗筛 capsule 判定用的 target_center
+                        // （`target_pos + (0,1,0)`），确保粗筛与精细求交在同一高度。
+                        PartBox {
+                            part_id: near_part.into(),
+                            offset: [0.0, 1.0, 0.0],
+                            half_extents: [0.3, 0.3, 0.3],
+                            priority: 0,
+                        },
+                        PartBox {
+                            part_id: far_part.into(),
+                            offset: [1.5, 1.0, 0.0],
+                            half_extents: [0.3, 0.3, 0.3],
+                            priority: 0,
+                        },
+                    ],
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: StdHashMap::new(),
+            }
+        }
+
+        /// 空隙构型：唯一的盒偏移远离射线路径（局部 x=5.0，射线只走到 x≈2.0 就结束），
+        /// 粗筛 capsule（只判定到 target_center 点的距离，与盒位置无关）仍会命中，
+        /// 但精细 PartBoxes 求交必须落空。
+        fn gap_plan(part_id: &str) -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: format!("test_carrier_gap_{part_id}").into(),
+                display_name: "测试用 carrier 空隙构型".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: part_id.into(),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::PartBoxes {
+                    boxes: vec![PartBox {
+                        part_id: part_id.into(),
+                        offset: [5.0, 1.0, 0.0],
+                        half_extents: [0.3, 0.3, 0.3],
+                        priority: 0,
+                    }],
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: StdHashMap::new(),
+            }
+        }
+
+        fn registries_for(plan: crate::body_plan::BodyPlan) -> (BodyPlanRegistry, RaceRegistry) {
+            let plan_id = plan.id.clone();
+            let body_plans = BodyPlanRegistry::from_plans(vec![plan])
+                .expect("synthetic carrier plan must validate");
+            let races = RaceRegistry::from_parts_for_test(
+                vec![RaceEntry {
+                    id: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    display_name: "carrier PartBoxes 测试替身".to_string(),
+                    body_plan_id: plan_id,
+                    beast_kinds: vec![],
+                }],
+                vec![],
+                &body_plans,
+            )
+            .expect("races fixture must validate");
+            (body_plans, races)
+        }
+
+        /// 组装最小 App：合成 registries + `projectile_tick_system` + 一发沿世界 +X
+        /// 飞行的投射物 + 一个携带 `Cultivation::default()`（race 解析到合成 plan）的
+        /// 目标。`target_feet` 允许任意平移，验证生产链路的世界→局部变换真的用了
+        /// 目标的实际位置，而不是隐式假设原点。
+        fn run_projectile_at_target(
+            plan: crate::body_plan::BodyPlan,
+            target_feet: DVec3,
+        ) -> (Wounds, Vec<CombatEvent>, Vec<ProjectileDespawnedEvent>) {
+            let (body_plans, races) = registries_for(plan);
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 900 });
+            app.insert_resource(body_plans);
+            app.insert_resource(races);
+            app.add_event::<CombatEvent>();
+            app.add_event::<CarrierImpactEvent>();
+            app.add_event::<ProjectileDespawnedEvent>();
+            app.add_systems(Update, projectile_tick_system);
+
+            // 射线沿世界 +X：spawn 于 target 局部 x=-3（射线起点），一 tick 内飞抵
+            // 局部 x=+2（速度 100，dt=1/20s，单 tick 位移 5.0 blocks），覆盖两盒
+            // 构型的 near(x∈[-0.3,0.3])/far(x∈[1.2,1.8]) 与空隙构型的射线终点(x=2)
+            // 均落在 gap 盒(x∈[4.7,5.3])之外。
+            let spawn_pos = target_feet + DVec3::new(-3.0, 1.0, 0.0);
+            app.world_mut().spawn((
+                Position::new([spawn_pos.x, spawn_pos.y, spawn_pos.z]),
+                QiProjectile {
+                    owner: None,
+                    qi_payload: 20.0,
+                },
+                AnqiProjectileFlight {
+                    carrier_kind: CarrierKind::BoneChip,
+                    qi_color: ColorKind::Sharp,
+                    carrier_grade: CarrierKind::BoneChip.grade(),
+                    spawn_pos,
+                    prev_pos: spawn_pos,
+                    velocity: DVec3::new(100.0, 0.0, 0.0),
+                    max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
+                    hitbox_inflation: ANQI_HITBOX_INFLATION,
+                },
+            ));
+            let target = app
+                .world_mut()
+                .spawn((
+                    Position::new([target_feet.x, target_feet.y, target_feet.z]),
+                    Wounds::default(),
+                    Contamination::default(),
+                    Cultivation::default(),
+                ))
+                .id();
+
+            app.update();
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap().clone();
+            let combat_events: Vec<CombatEvent> = app
+                .world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            let despawns: Vec<ProjectileDespawnedEvent> = app
+                .world()
+                .resource::<Events<ProjectileDespawnedEvent>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            (wounds, combat_events, despawns)
+        }
+
+        #[test]
+        fn near_box_occludes_far_box_at_origin() {
+            let plan = two_box_plan("near_plate", "far_plate");
+            let (wounds, _events, _despawns) =
+                run_projectile_at_target(plan, DVec3::new(0.0, 64.0, 0.0));
+            assert_eq!(
+                wounds.entries.len(),
+                1,
+                "PartBoxes 真求交应恰好命中一个部位，实测 {:?}",
+                wounds.entries
+            );
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPartId::new("near_plate"),
+                "两盒都在射线路径上时，near_plate（离投射起点更近）必须遮挡 far_plate，\
+                 实测命中 {:?}",
+                wounds.entries[0].location
+            );
+        }
+
+        #[test]
+        fn near_box_occludes_far_box_after_target_translation() {
+            // 与上一测试几何完全相同，唯一变量是目标整体平移到远离原点的坐标——
+            // 证明生产链路的世界→局部变换用的是目标实际位置，不是隐式硬编码原点。
+            let plan = two_box_plan("near_plate", "far_plate");
+            let (wounds, _events, _despawns) =
+                run_projectile_at_target(plan, DVec3::new(437.0, 64.0, -812.0));
+            assert_eq!(wounds.entries.len(), 1);
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPartId::new("near_plate"),
+                "平移后仍应命中 near_plate（局部系不变性在生产链路中成立），实测 {:?}",
+                wounds.entries[0].location
+            );
+        }
+
+        #[test]
+        fn ray_through_partboxes_gap_skips_wound_but_still_applies_damage() {
+            let plan = gap_plan("shell");
+            let (wounds, combat_events, despawns) =
+                run_projectile_at_target(plan, DVec3::new(0.0, 64.0, 0.0));
+
+            assert!(
+                wounds.entries.is_empty(),
+                "弹道穿过 PartBoxes 空隙必须跳过 Wound 构造，不伪造命中部位，实测 {:?}",
+                wounds.entries
+            );
+            assert!(
+                wounds.health_current < Wounds::default().health_max,
+                "即便跳过 Wound 构造，粗筛已确认的真实物理接触仍应照常结算伤害（health_current \
+                 应低于满血），实测 {}",
+                wounds.health_current
+            );
+            assert_eq!(
+                combat_events.len(),
+                1,
+                "空隙命中仍应发出恰好一条 CombatEvent（伤害/事件照常结算），实测 {combat_events:?}"
+            );
+            assert_eq!(
+                combat_events[0].body_part,
+                crate::combat::components::BodyPart::Chest,
+                "空隙命中的 CombatEvent.body_part 应落回 Chest 占位（显式 fallback，非静默默认）"
+            );
+            assert_eq!(
+                despawns.len(),
+                1,
+                "空隙命中仍应作为 HitTarget 消耗投射物（despawn 恰好一次），实测 {despawns:?}"
+            );
+            assert_eq!(despawns[0].reason, ProjectileDespawnReason::HitTarget);
+        }
     }
 
     #[test]
