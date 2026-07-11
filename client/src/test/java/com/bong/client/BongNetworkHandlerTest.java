@@ -4,6 +4,8 @@ import com.bong.client.craft.CraftCategory;
 import com.bong.client.craft.CraftRecipe;
 import com.bong.client.craft.CraftSessionStateView;
 import com.bong.client.craft.CraftStore;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.state.DroppedItemStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +13,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BongNetworkHandlerTest {
@@ -19,6 +22,7 @@ public class BongNetworkHandlerTest {
         BongNetworkHandler.resetUnknownTypeLogTimesForTests();
         CraftStore.clearAllListenersForTests();
         CraftStore.clear();
+        DroppedItemStore.resetForTests();
     }
 
     @Test
@@ -80,6 +84,37 @@ public class BongNetworkHandlerTest {
         assertFalse(
             CraftStore.lastUnlocked().isPresent(),
             "断线必须清空 lastUnlocked，避免上一连接解锁提示串到新 session"
+        );
+    }
+
+    /**
+     * plan-bughunt-dropped-loot-session-leak — DroppedItemStore.clearOnDisconnect() 此前
+     * 定义了却没有被 clearClientStateOnDisconnect() 调用，切服/重连后旧 server 的地面掉落物
+     * 坐标会在新 world 首个 dropped_loot_sync 抵达前被误渲染为当前 session 掉落物，G 键还会
+     * 带着旧 instanceId 发 pickup 请求。本测试锁住"断线清理路径必须清空 DroppedItemStore"。
+     */
+    @Test
+    void disconnectClearsDroppedItemStoreToPreventStaleSessionBleed() {
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            7001L, "main_pack", 0, 0,
+            10.0, 64.0, 10.0, InventoryItem.simple("relic", "残器")
+        ));
+        assertEquals(
+            1,
+            DroppedItemStore.snapshot().size(),
+            "测试前必须模拟断线前残留的地面掉落物，否则无法锁住 session leak 回归"
+        );
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+
+        assertEquals(
+            0,
+            DroppedItemStore.snapshot().size(),
+            "断线必须清空 DroppedItemStore，否则旧 server 掉落物坐标会串到新 server world 渲染"
+        );
+        assertNull(
+            DroppedItemStore.nearestTo(10.0, 64.0, 10.0),
+            "断线后 nearestTo 必须返回 null，否则 G 键会带着旧 instanceId 向新 server 发 pickup 请求"
         );
     }
 
