@@ -142,7 +142,7 @@ public class InspectScreenApplyPillTest {
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
-            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":1002,\"target\":{\"kind\":\"meridian\",\"meridian_id\":\"Lung\"}}",
+            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":1002,\"target\":{\"kind\":\"meridian\",\"meridian_id\":\"lung\"}}",
             sent.get(0).body()
         );
     }
@@ -186,7 +186,7 @@ public class InspectScreenApplyPillTest {
         assertFalse(screen.hasPendingMeridianUse());
         assertEquals(1, sent.size());
         assertEquals(
-            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":1002,\"target\":{\"kind\":\"meridian\",\"meridian_id\":\"Lung\"}}",
+            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":1002,\"target\":{\"kind\":\"meridian\",\"meridian_id\":\"lung\"}}",
             sent.get(0).body()
         );
     }

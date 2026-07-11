@@ -16,11 +16,14 @@ public class ClientRequestProtocolTest {
 
     @Test
     void encodesSetMeridianTarget() {
+        // plan-race-system-v1 P1c：server 侧 SetMeridianTarget.meridian 已从闭合
+        // MeridianId 枚举换轨为 snake_case channel id string，wire 值随之从 PascalCase
+        // "Lung" 改为 "lung"。
         String json = ClientRequestProtocol.encodeSetMeridianTarget(
             ClientRequestProtocol.MeridianId.Lung
         );
         assertEquals(
-            "{\"type\":\"set_meridian_target\",\"v\":1,\"meridian\":\"Lung\"}",
+            "{\"type\":\"set_meridian_target\",\"v\":1,\"meridian\":\"lung\"}",
             json
         );
     }
@@ -133,7 +136,7 @@ public class ClientRequestProtocolTest {
             ClientRequestProtocol.ForgeAxis.Rate
         );
         assertEquals(
-            "{\"type\":\"forge_request\",\"v\":1,\"meridian\":\"Ren\",\"axis\":\"Rate\"}",
+            "{\"type\":\"forge_request\",\"v\":1,\"meridian\":\"ren\",\"axis\":\"Rate\"}",
             json
         );
     }
@@ -145,7 +148,7 @@ public class ClientRequestProtocolTest {
             ClientRequestProtocol.ForgeAxis.Capacity
         );
         assertEquals(
-            "{\"type\":\"forge_request\",\"v\":1,\"meridian\":\"Du\",\"axis\":\"Capacity\"}",
+            "{\"type\":\"forge_request\",\"v\":1,\"meridian\":\"du\",\"axis\":\"Capacity\"}",
             json
         );
     }
@@ -177,7 +180,7 @@ public class ClientRequestProtocolTest {
             new ClientRequestProtocol.MeridianTarget(ClientRequestProtocol.MeridianId.Ren)
         );
         assertEquals(
-            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":2002,\"target\":{\"kind\":\"meridian\",\"meridian_id\":\"Ren\"}}",
+            "{\"type\":\"apply_pill\",\"v\":1,\"instance_id\":2002,\"target\":{\"kind\":\"meridian\",\"meridian_id\":\"ren\"}}",
             json
         );
     }
