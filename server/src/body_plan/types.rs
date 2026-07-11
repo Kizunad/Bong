@@ -284,6 +284,16 @@ pub struct ChannelDef {
     pub roles: Vec<ChannelRole>,
 }
 
+/// plan-race-system-v1 P1b —— `cultivation::dugu::body_part_to_meridian` 私表的数据
+/// 落地（体表命中部位 → 排异毒素累积到哪条经脉，多对一、代表性映射，方向与值域都与
+/// [`ChannelDef::body_part`] 不同——**不是**其逆函数，见 `ChannelDef` 文档的说明）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DuguInjectionEntry {
+    pub body_part: BodyPartId,
+    pub channel: crate::cultivation::components::MeridianChannelId,
+}
+
 /// 经脉拓扑边——无向，声明一次即代表双向相邻（替换 `cultivation::topology::
 /// MeridianTopology::standard()` 的单张全局 Rust 图；P1a 只交付数据 + 校验，
 /// `topology.rs` 及其消费点`meridian_open`/NPC 选招在后续 P1 子阶段改为读取本字段）。
@@ -326,6 +336,11 @@ pub struct MeridianProfile {
     #[serde(default)]
     pub topology_edges: Vec<TopologyEdge>,
     pub realm_requirements: [RealmMeridianReq; 6],
+    /// plan-race-system-v1 P1b —— `cultivation::dugu::body_part_to_meridian` 私表数据
+    /// （见 [`DuguInjectionEntry`]）。`#[serde(default)]` 空数组对非人形 plan / 未接入
+    /// dugu 玩法的构型是合法状态（`resolve::dugu_injection_channel` 返回 `None`）。
+    #[serde(default)]
+    pub dugu_injection: Vec<DuguInjectionEntry>,
 }
 
 /// 单个种族/构型的完整身体定义。`is_humanoid` 是 P3 `RaceGate::Humanoid` 档的唯一判据
@@ -560,6 +575,7 @@ mod tests {
                 roles: vec![],
             }],
             topology_edges: vec![],
+            dugu_injection: vec![],
             realm_requirements: [RealmMeridianReq {
                 total: 1,
                 regular_min: 1,

@@ -364,6 +364,7 @@ mod tests {
                 roles: vec![],
             }],
             topology_edges: vec![],
+            dugu_injection: vec![],
             realm_requirements: [RealmMeridianReq {
                 total: 1,
                 regular_min: 1,
@@ -760,6 +761,7 @@ mod tests {
                 from: "lung".into(),
                 to: "ren".into(),
             }],
+            dugu_injection: vec![],
             realm_requirements: [RealmMeridianReq {
                 total: 2,
                 regular_min: 1,
@@ -775,6 +777,7 @@ mod tests {
         plan.meridian_profile = Some(crate::body_plan::types::MeridianProfile {
             channels: vec![],
             topology_edges: vec![],
+            dugu_injection: vec![],
             realm_requirements: [RealmMeridianReq::default(); 6],
         });
         let err = validate_body_plan(&plan).unwrap_err();
@@ -929,6 +932,7 @@ mod tests {
                 },
             ],
             topology_edges: vec![],
+            dugu_injection: vec![],
             realm_requirements: [RealmMeridianReq {
                 total: 2,
                 regular_min: 1,

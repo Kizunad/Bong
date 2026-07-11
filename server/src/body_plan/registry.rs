@@ -14,6 +14,8 @@ use std::sync::OnceLock;
 
 use valence::prelude::Resource;
 
+use crate::cultivation::topology::MeridianTopology;
+
 use super::types::{BodyPlan, BodyPlanId};
 use super::validate::validate_body_plan;
 
@@ -62,9 +64,28 @@ pub fn humanoid_plan_static() -> &'static BodyPlan {
     })
 }
 
+/// plan-race-system-v1 P1b —— 供无 ECS 访问权限的纯函数消费点使用的 humanoid 拓扑
+/// 单例，与 [`humanoid_plan_static`] 同一份 `humanoid.json` 派生（`MeridianTopology::
+/// from_edges` 读其 `meridian_profile.topology_edges`），不产生第二份硬编码拓扑数据。
+pub fn humanoid_topology_static() -> &'static MeridianTopology {
+    static TOPOLOGY: OnceLock<MeridianTopology> = OnceLock::new();
+    TOPOLOGY.get_or_init(|| {
+        let profile = humanoid_plan_static().meridian_profile.as_ref().expect(
+            "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+             onward — validate_body_plan should have rejected a humanoid plan missing it",
+        );
+        MeridianTopology::from_edges(&profile.topology_edges)
+    })
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct BodyPlanRegistry {
     by_id: HashMap<BodyPlanId, BodyPlan>,
+    /// plan-race-system-v1 P1b —— 每个声明了 `meridian_profile` 的 plan 预计算一份
+    /// `MeridianTopology`（`insert_validated` 时构建一次，避免消费点热路径每 tick 重建
+    /// HashMap）。未声明 `meridian_profile` 的 plan（P0 遗留 fixture / 尚未接入经脉的
+    /// 非人形构型）不产生条目，`topology_for` 返回 `None`。
+    topology_by_id: HashMap<BodyPlanId, MeridianTopology>,
 }
 
 impl Resource for BodyPlanRegistry {}
@@ -152,6 +173,14 @@ impl BodyPlanRegistry {
             .expect("humanoid body plan must always be loaded — register() asserts this at startup")
     }
 
+    /// 按 plan id 查预计算的 `MeridianTopology`——`meridian_open`/NPC 选招消费点走本
+    /// 接口而非全局单例。`None` 表示该 plan 未声明 `meridian_profile`（P0 遗留 fixture
+    /// 或尚未接入经脉的非人形构型），调用方应把"无拓扑数据"当作"无邻接约束可查"处理，
+    /// 而非 panic。
+    pub fn topology_for(&self, id: &BodyPlanId) -> Option<&MeridianTopology> {
+        self.topology_by_id.get(id)
+    }
+
     /// 供测试直接构造 registry，不走文件 IO（跨 registry 校验 / resolve 矩阵测试用）。
     #[cfg(test)]
     pub fn from_plans(plans: Vec<BodyPlan>) -> Result<Self, BodyPlanLoadError> {
@@ -180,6 +209,12 @@ impl BodyPlanRegistry {
         }
         if self.by_id.contains_key(&plan.id) {
             return Err(BodyPlanLoadError::DuplicatePlanId { path, plan_id });
+        }
+        if let Some(profile) = plan.meridian_profile.as_ref() {
+            self.topology_by_id.insert(
+                plan.id.clone(),
+                MeridianTopology::from_edges(&profile.topology_edges),
+            );
         }
         self.by_id.insert(plan.id.clone(), plan);
         Ok(())
@@ -604,6 +639,60 @@ mod tests {
             slots_obj.len(),
             slots_obj.keys().collect::<Vec<_>>()
         );
+    }
+
+    // ───────────────────────── topology_for / humanoid_topology_static ─────────
+
+    #[test]
+    fn topology_for_returns_none_for_plan_without_meridian_profile() {
+        let registry = BodyPlanRegistry::from_plans(vec![minimal_plan("no_profile")])
+            .expect("plan without meridian_profile should still validate (non-humanoid)");
+        assert!(registry.topology_for(&BodyPlanId::new("no_profile")).is_none());
+    }
+
+    #[test]
+    fn topology_for_returns_none_for_unknown_plan_id() {
+        let registry = BodyPlanRegistry::from_plans(vec![minimal_plan("plan_a")])
+            .expect("plan should validate");
+        assert!(registry
+            .topology_for(&BodyPlanId::new("does_not_exist"))
+            .is_none());
+    }
+
+    #[test]
+    fn topology_for_returns_some_for_humanoid_loaded_from_real_assets() {
+        let plans_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(super::DEFAULT_BODY_PLANS_DIR);
+        let registry = BodyPlanRegistry::load_dir(&plans_dir)
+            .expect("real assets/body_plans/plans dir must load");
+        let topology = registry
+            .topology_for(&BodyPlanId::new(HUMANOID_BODY_PLAN_ID))
+            .expect("humanoid.json declares meridian_profile — topology must be cached");
+        assert!(topology.contains(crate::cultivation::components::MeridianId::Lung));
+    }
+
+    #[test]
+    fn humanoid_topology_static_matches_registry_derived_topology() {
+        let plans_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(super::DEFAULT_BODY_PLANS_DIR);
+        let registry = BodyPlanRegistry::load_dir(&plans_dir)
+            .expect("real assets/body_plans/plans dir must load");
+        let from_registry = registry
+            .topology_for(&BodyPlanId::new(HUMANOID_BODY_PLAN_ID))
+            .expect("humanoid topology must be cached");
+        let from_static = humanoid_topology_static();
+        for id in crate::cultivation::components::MeridianId::ALL {
+            let mut a: Vec<_> = from_registry.neighbors(id).to_vec();
+            let mut b: Vec<_> = from_static.neighbors(id).to_vec();
+            a.sort_by(|x, y| x.as_str().cmp(y.as_str()));
+            b.sort_by(|x, y| x.as_str().cmp(y.as_str()));
+            assert_eq!(a, b, "humanoid_topology_static 必须与 registry 派生结果一致（{id:?}）");
+        }
+    }
+
+    #[test]
+    fn humanoid_topology_static_is_cached_across_calls() {
+        let first: *const MeridianTopology = humanoid_topology_static();
+        let second: *const MeridianTopology = humanoid_topology_static();
+        assert_eq!(first, second, "humanoid_topology_static 必须缓存单例");
     }
 
     fn tempdir() -> PathBuf {
