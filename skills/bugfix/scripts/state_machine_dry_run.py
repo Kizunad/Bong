@@ -92,8 +92,27 @@ ALLOWED_EDGES: dict[TaskPhase, set[TaskPhase]] = {
 
 
 @dataclass
+class ValidatorEvidence:
+    validator_id: str
+    phase: TaskPhase
+    target_sha: str
+    verdict: str
+    completed_at: float
+
+
+@dataclass
+class GateEvidence:
+    phase: TaskPhase
+    target_sha: str
+    success: bool
+
+
+@dataclass
 class TaskState:
+    task_id: str = "task"
     phase: TaskPhase = TaskPhase.DISPATCHED
+    head: str = "abc123"
+    generation: int = 0
     resolution: Optional[TaskPhase] = None
     recovery_from: Optional[TaskPhase] = None
     fix_validated: bool = False
@@ -102,6 +121,15 @@ class TaskState:
     rebase_validated: bool = False
     archived: bool = False
     final_validated: bool = False
+    validator_evidence: dict[TaskPhase, ValidatorEvidence] = None
+    gate_evidence: dict[TaskPhase, GateEvidence] = None
+    sync_head: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.validator_evidence is None:
+            self.validator_evidence = {}
+        if self.gate_evidence is None:
+            self.gate_evidence = {}
 
     def transition(self, target: TaskPhase) -> None:
         if self.phase in TERMINAL_PHASES:
@@ -115,28 +143,38 @@ class TaskState:
         if target in BRANCH_PHASES:
             self._reset_closure_milestones()
         if self.phase == TaskPhase.FIX_VALIDATING and target == TaskPhase.GATING:
+            self._require_validator_pass(TaskPhase.FIX_VALIDATING)
             self.fix_validated = True
         if self.phase == TaskPhase.GATING and target == TaskPhase.REBASING:
+            self._require_gate_pass(TaskPhase.GATING)
             self.gated = True
         if (
             self.phase == TaskPhase.REBASING
             and target == TaskPhase.REBASE_VALIDATING
         ):
+            if self.sync_head != self.head:
+                raise ProtocolError("main sync evidence missing for current HEAD")
+            self._require_gate_pass(TaskPhase.REBASING)
             self.rebased = True
+            self.gated = True
         if (
             self.phase == TaskPhase.REBASE_VALIDATING
             and target == TaskPhase.ARCHIVING
         ):
+            self._require_validator_pass(TaskPhase.REBASE_VALIDATING)
             self.rebase_validated = True
         if (
             self.phase == TaskPhase.ARCHIVING
             and target == TaskPhase.FINAL_VALIDATING
         ):
+            if not self.archived:
+                raise ProtocolError("archive commit evidence missing")
             self.archived = True
         if (
             self.phase == TaskPhase.FINAL_VALIDATING
             and target == TaskPhase.PR_OPEN
         ):
+            self._require_validator_pass(TaskPhase.FINAL_VALIDATING)
             if not all(
                 (
                     self.fix_validated,
@@ -157,6 +195,71 @@ class TaskState:
         self.rebase_validated = False
         self.archived = False
         self.final_validated = False
+        self.validator_evidence.clear()
+        self.gate_evidence.clear()
+        self.sync_head = None
+
+    def update_head(self, new_head: str) -> None:
+        if new_head == self.head:
+            return
+        self.head = new_head
+        self.generation += 1
+        self._reset_closure_milestones()
+
+    def record_validator(self, evidence: ValidatorEvidence) -> None:
+        if evidence.phase != self.phase:
+            raise ProtocolError("validator evidence phase mismatch")
+        if evidence.target_sha != self.head:
+            raise ProtocolError("validator evidence HEAD mismatch")
+        if evidence.verdict != "PASS":
+            raise ProtocolError("validator did not PASS")
+        self.validator_evidence[self.phase] = evidence
+
+    def record_gate(self, evidence: GateEvidence) -> None:
+        if evidence.phase != self.phase or evidence.target_sha != self.head:
+            raise ProtocolError("gate evidence phase/HEAD mismatch")
+        if not evidence.success:
+            raise ProtocolError("gate failed")
+        self.gate_evidence[self.phase] = evidence
+
+    def record_sync(self, target_sha: str) -> None:
+        if self.phase != TaskPhase.REBASING or target_sha != self.head:
+            raise ProtocolError("sync evidence phase/HEAD mismatch")
+        self.sync_head = target_sha
+
+    def record_rebase_head(self, rebased_head: str) -> None:
+        if self.phase != TaskPhase.REBASING or rebased_head == self.head:
+            raise ProtocolError("rebase HEAD update is not applicable")
+        self.head = rebased_head
+        self.generation += 1
+        self.validator_evidence.clear()
+        self.gate_evidence.clear()
+        self.sync_head = None
+        self.gated = False
+        self.rebased = False
+        self.rebase_validated = False
+        self.archived = False
+        self.final_validated = False
+
+    def record_archive(self, archived_head: str) -> None:
+        if self.phase != TaskPhase.ARCHIVING or archived_head == self.head:
+            raise ProtocolError("archive must create a new HEAD")
+        self.head = archived_head
+        self.generation += 1
+        self.validator_evidence.clear()
+        self.gate_evidence.clear()
+        self.sync_head = None
+        self.archived = True
+
+    def _require_validator_pass(self, phase: TaskPhase) -> None:
+        evidence = self.validator_evidence.get(phase)
+        if evidence is None or evidence.target_sha != self.head:
+            raise ProtocolError("current HEAD validator PASS missing")
+
+    def _require_gate_pass(self, phase: TaskPhase) -> None:
+        evidence = self.gate_evidence.get(phase)
+        if evidence is None or evidence.target_sha != self.head:
+            raise ProtocolError("current HEAD gate PASS missing")
 
     def mark_recovering(self) -> None:
         if self.phase in TERMINAL_PHASES:
@@ -191,14 +294,23 @@ class PlatformSnapshot:
     total: Optional[int]
     live_agents: int
     validator_reserve: int = 1
+    main_in_snapshot: bool = True
+    live_agent_ids: frozenset[str] = frozenset()
 
-    def implementation_limit(self, user_n: int) -> int:
-        available = (
-            2
-            if self.total is None
-            else max(0, self.total - 1 - self.validator_reserve)
+    def implementation_limit(
+        self, user_n: int, outstanding_reservations: int = 0
+    ) -> int:
+        if self.total is None:
+            return min(user_n, 2)
+        occupied = self.live_agents + (0 if self.main_in_snapshot else 1)
+        available = max(
+            0,
+            self.total
+            - occupied
+            - outstanding_reservations
+            - self.validator_reserve,
         )
-        return min(user_n, available)
+        return min(user_n, 2, available)
 
     def validator_slots(self) -> int:
         if self.total is None:
@@ -234,6 +346,7 @@ class RequestPayload:
     agent: str
     phase: TaskPhase
     head: str
+    generation: int
     checkpoint: str
 
 
@@ -248,7 +361,7 @@ class RequestState:
     pre_recovery_status: Optional[RequestStatus] = None
     recovery_deadline: Optional[float] = None
     platform_accounted: bool = False
-    live_agents_at_grant: Optional[int] = None
+    validator_agent_id: Optional[str] = None
 
 
 TOKEN_PHASES = {
@@ -292,15 +405,22 @@ class TokenBroker:
             "validator": validator_capacity,
         }
         self.requests: dict[str, RequestState] = {}
+        self.tasks: dict[str, TaskState] = {}
         self.queues: dict[str, list[str]] = {"compile": [], "validator": []}
+        self.validator_agents: dict[str, str] = {}
         self.invalid_tokens: set[str] = set()
         self.next_token = 1
 
     def request(self, payload: RequestPayload, task: TaskState) -> RequestState:
         if payload.token_type not in TOKEN_PHASES:
             raise ProtocolError("unknown token type")
-        if payload.phase != task.phase:
-            raise ProtocolError("request phase differs from task phase")
+        if (
+            payload.task != task.task_id
+            or payload.phase != task.phase
+            or payload.head != task.head
+            or payload.generation != task.generation
+        ):
+            raise ProtocolError("request differs from authoritative task state")
         if payload.phase not in TOKEN_PHASES[payload.token_type]:
             raise ProtocolError("token is not allowed in this phase")
         existing = self.requests.get(payload.request_id)
@@ -310,6 +430,7 @@ class TokenBroker:
             return existing
         state = RequestState(payload=payload)
         self.requests[payload.request_id] = state
+        self.tasks[payload.task] = task
         self.queues[payload.token_type].append(payload.request_id)
         return state
 
@@ -324,6 +445,17 @@ class TokenBroker:
             state.payload.token_type == token_type
             and state.status in ACTIVE_TOKEN_STATUSES
             for state in self.requests.values()
+        )
+
+    def implementation_limit(self, user_n: int) -> int:
+        outstanding = sum(
+            state.payload.token_type == "validator"
+            and state.status in ACTIVE_TOKEN_STATUSES
+            and not state.platform_accounted
+            for state in self.requests.values()
+        )
+        return self.capacity_provider().implementation_limit(
+            user_n, outstanding_reservations=outstanding
         )
 
     def available(self, token_type: str) -> int:
@@ -351,6 +483,11 @@ class TokenBroker:
             state = self.requests[request_id]
             if state.status != RequestStatus.QUEUED:
                 continue
+            if not self._authority_matches(state):
+                self._invalidate(
+                    state, RequestStatus.CANCELLED, "STALE_AUTHORITY"
+                )
+                continue
             token_id = f"{token_type}-{self.next_token}"
             self.next_token += 1
             now = self.clock.now()
@@ -359,38 +496,77 @@ class TokenBroker:
             state.granted_at = now
             state.expires_at = now + self.grant_ttl
             state.platform_accounted = False
-            state.live_agents_at_grant = self.capacity_provider().live_agents
             return state
         return None
 
-    def mark_platform_accounted(self, request_id: str) -> None:
+    def bind_validator_spawn(
+        self,
+        request_id: str,
+        token_id: str,
+        validator_agent_id: str,
+        task_id: str,
+        target_sha: str,
+    ) -> None:
         state = self.requests[request_id]
         if (
             state.payload.token_type != "validator"
             or state.status not in ACTIVE_TOKEN_STATUSES
         ):
-            raise ProtocolError("only active validator can be accounted")
+            raise ProtocolError("only active validator can bind spawn")
         if (
-            state.live_agents_at_grant is None
-            or self.capacity_provider().live_agents <= state.live_agents_at_grant
+            state.token_id != token_id
+            or state.payload.task != task_id
+            or state.payload.head != target_sha
+            or not self._authority_matches(state)
         ):
-            raise ProtocolError("live snapshot has not observed validator spawn")
+            raise ProtocolError("validator spawn identity mismatch")
+        owner = self.validator_agents.get(validator_agent_id)
+        if owner is not None and owner != request_id:
+            raise ProtocolError("validator agent already consumed a reservation")
+        state.validator_agent_id = validator_agent_id
+        self.validator_agents[validator_agent_id] = request_id
+
+    def mark_platform_accounted(
+        self, request_id: str, validator_agent_id: str
+    ) -> None:
+        state = self.requests[request_id]
+        if state.validator_agent_id != validator_agent_id:
+            raise ProtocolError("validator canonical id mismatch")
+        if self.validator_agents.get(validator_agent_id) != request_id:
+            raise ProtocolError("validator reservation ownership mismatch")
+        if validator_agent_id not in self.capacity_provider().live_agent_ids:
+            raise ProtocolError("corresponding validator is not live")
+        if not self._authority_matches(state):
+            self._invalidate(state, RequestStatus.CANCELLED, "STALE_AUTHORITY")
+            raise ProtocolError("validator authority became stale")
         state.platform_accounted = True
 
     def ack(
-        self, request_id: str, token_id: str, phase: TaskPhase, head: str
+        self,
+        request_id: str,
+        token_id: str,
+        phase: TaskPhase,
+        head: str,
+        generation: int,
     ) -> bool:
         self.expire_grants()
         state = self.requests[request_id]
+        if not self._authority_matches(state):
+            self._invalidate(state, RequestStatus.CANCELLED, "STALE_AUTHORITY")
+            raise ProtocolError("ACK authority became stale")
+        if (
+            phase != state.payload.phase
+            or head != state.payload.head
+            or generation != state.payload.generation
+        ):
+            self._invalidate(state, RequestStatus.CANCELLED, "STALE_GRANT")
+            raise ProtocolError("grant phase/head/generation mismatch")
         if state.status == RequestStatus.ACKED and state.token_id == token_id:
             return True
         if token_id in self.invalid_tokens:
             raise ProtocolError("old token rejected")
         if state.status != RequestStatus.GRANTED or state.token_id != token_id:
             raise ProtocolError("grant is not active")
-        if state.payload.phase != phase or state.payload.head != head:
-            self._invalidate(state, RequestStatus.CANCELLED, "STALE_GRANT")
-            raise ProtocolError("grant phase/head mismatch")
         state.status = RequestStatus.ACKED
         return True
 
@@ -445,6 +621,11 @@ class TokenBroker:
         if state.status != RequestStatus.RECOVERING:
             raise ProtocolError("request is not recovering")
         if success:
+            if not self._authority_matches(state):
+                self._invalidate(
+                    state, RequestStatus.CANCELLED, "STALE_AUTHORITY"
+                )
+                raise ProtocolError("recovery authority became stale")
             state.status = state.pre_recovery_status or RequestStatus.GRANTED
             state.pre_recovery_status = None
             state.recovery_deadline = None
@@ -483,12 +664,24 @@ class TokenBroker:
     ) -> None:
         if state.token_id is not None:
             self.invalid_tokens.add(state.token_id)
+        if state.validator_agent_id is not None:
+            self.validator_agents.pop(state.validator_agent_id, None)
         state.status = status
         state.release_reason = reason
         state.pre_recovery_status = None
         state.recovery_deadline = None
         state.platform_accounted = False
-        state.live_agents_at_grant = None
+        state.validator_agent_id = None
+
+    def _authority_matches(self, state: RequestState) -> bool:
+        task = self.tasks.get(state.payload.task)
+        return (
+            task is not None
+            and task.task_id == state.payload.task
+            and task.phase == state.payload.phase
+            and task.head == state.payload.head
+            and task.generation == state.payload.generation
+        )
 
 
 def claim_result(
@@ -546,16 +739,16 @@ def make_payload(
     request_id: str,
     token_type: str,
     agent: str,
-    phase: TaskPhase,
-    head: str = "abc123",
+    task: TaskState,
 ) -> RequestPayload:
     return RequestPayload(
         request_id=request_id,
         token_type=token_type,
-        task=f"task-{request_id}",
+        task=task.task_id,
         agent=agent,
-        phase=phase,
-        head=head,
+        phase=task.phase,
+        head=task.head,
+        generation=task.generation,
         checkpoint=f"checkpoint-{request_id}",
     )
 
@@ -568,7 +761,10 @@ def fixture(
     recovery_ttl: float = 60.0,
 ) -> tuple[TokenBroker, MutableCapacityProvider, ManualClock]:
     clock = ManualClock()
-    provider = MutableCapacityProvider(PlatformSnapshot(total, live))
+    live_ids = frozenset(f"agent-{index}" for index in range(live))
+    provider = MutableCapacityProvider(
+        PlatformSnapshot(total, live, live_agent_ids=live_ids)
+    )
     return (
         TokenBroker(
             provider,
@@ -581,27 +777,110 @@ def fixture(
     )
 
 
+def record_pass(task: TaskState, validator_id: str) -> None:
+    task.record_validator(
+        ValidatorEvidence(
+            validator_id=validator_id,
+            phase=task.phase,
+            target_sha=task.head,
+            verdict="PASS",
+            completed_at=1.0,
+        )
+    )
+
+
+def drive_closure_to_pr(
+    task: TaskState,
+    branch: TaskPhase = TaskPhase.FIXING,
+    archive_suffix: str = "archive",
+) -> None:
+    task.transition(branch)
+    task.transition(TaskPhase.FIX_VALIDATING)
+    record_pass(task, "validator-fix")
+    task.transition(TaskPhase.GATING)
+    task.record_gate(GateEvidence(TaskPhase.GATING, task.head, True))
+    task.transition(TaskPhase.REBASING)
+    task.record_sync(task.head)
+    task.record_gate(GateEvidence(TaskPhase.REBASING, task.head, True))
+    task.transition(TaskPhase.REBASE_VALIDATING)
+    record_pass(task, "validator-rebase")
+    task.transition(TaskPhase.ARCHIVING)
+    task.record_archive(f"{task.head}-{archive_suffix}")
+    task.transition(TaskPhase.FINAL_VALIDATING)
+    record_pass(task, "validator-final")
+    task.transition(TaskPhase.PR_OPEN)
+
+
 class StateMachineDryRun(unittest.TestCase):
     def test_all_allowed_phase_edges(self) -> None:
-        for source, targets in ALLOWED_EDGES.items():
-            for target in targets:
-                with self.subTest(source=source, target=target):
-                    task = TaskState(phase=source)
-                    if source not in {TaskPhase.VERIFYING}:
-                        task.resolution = (
-                            target if target in BRANCH_PHASES else TaskPhase.FIXING
-                        )
-                    if (
-                        source == TaskPhase.FINAL_VALIDATING
-                        and target == TaskPhase.PR_OPEN
-                    ):
-                        task.fix_validated = True
-                        task.gated = True
-                        task.rebased = True
-                        task.rebase_validated = True
-                        task.archived = True
-                    task.transition(target)
-                    self.assertEqual(task.phase, target)
+        expected = {
+            TaskPhase.DISPATCHED: {TaskPhase.CLAIMED, TaskPhase.BLOCKED},
+            TaskPhase.CLAIMED: {TaskPhase.PROMOTED, TaskPhase.BLOCKED},
+            TaskPhase.PROMOTED: {TaskPhase.VERIFYING, TaskPhase.BLOCKED},
+            TaskPhase.VERIFYING: {
+                TaskPhase.FIXING,
+                TaskPhase.NOT_BUG,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.FIXING: {
+                TaskPhase.FIX_VALIDATING,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.NOT_BUG: {
+                TaskPhase.FIX_VALIDATING,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.FIX_VALIDATING: {
+                TaskPhase.GATING,
+                TaskPhase.FIXING,
+                TaskPhase.NOT_BUG,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.GATING: {
+                TaskPhase.REBASING,
+                TaskPhase.FIXING,
+                TaskPhase.NOT_BUG,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.REBASING: {
+                TaskPhase.REBASE_VALIDATING,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.REBASE_VALIDATING: {
+                TaskPhase.ARCHIVING,
+                TaskPhase.FIXING,
+                TaskPhase.NOT_BUG,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.ARCHIVING: {
+                TaskPhase.FINAL_VALIDATING,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.FINAL_VALIDATING: {
+                TaskPhase.PR_OPEN,
+                TaskPhase.FIXING,
+                TaskPhase.NOT_BUG,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.PR_OPEN: {TaskPhase.GATES, TaskPhase.BLOCKED},
+            TaskPhase.GATES: {
+                TaskPhase.CLOSED,
+                TaskPhase.FIXING,
+                TaskPhase.NOT_BUG,
+                TaskPhase.BLOCKED,
+            },
+            TaskPhase.RECOVERING: set(),
+            TaskPhase.BLOCKED: set(),
+            TaskPhase.CLOSED: set(),
+        }
+        self.assertEqual(ALLOWED_EDGES, expected)
+        for source in TaskPhase:
+            for target in TaskPhase:
+                if target in expected[source]:
+                    continue
+                with self.subTest(illegal_source=source, illegal_target=target):
+                    with self.assertRaises(ProtocolError):
+                        TaskState(phase=source).transition(target)
 
     def test_illegal_mutual_and_terminal_phase_edges(self) -> None:
         with self.assertRaises(ProtocolError):
@@ -628,20 +907,9 @@ class StateMachineDryRun(unittest.TestCase):
 
     def test_complete_path_requires_every_closure_stage(self) -> None:
         task = TaskState(phase=TaskPhase.VERIFYING)
-        path = (
-            TaskPhase.FIXING,
-            TaskPhase.FIX_VALIDATING,
-            TaskPhase.GATING,
-            TaskPhase.REBASING,
-            TaskPhase.REBASE_VALIDATING,
-            TaskPhase.ARCHIVING,
-            TaskPhase.FINAL_VALIDATING,
-            TaskPhase.PR_OPEN,
-            TaskPhase.GATES,
-            TaskPhase.CLOSED,
-        )
-        for phase in path:
-            task.transition(phase)
+        drive_closure_to_pr(task)
+        task.transition(TaskPhase.GATES)
+        task.transition(TaskPhase.CLOSED)
         self.assertEqual(task.phase, TaskPhase.CLOSED)
         self.assertTrue(task.final_validated)
 
@@ -658,40 +926,100 @@ class StateMachineDryRun(unittest.TestCase):
                 resolution=TaskPhase.FIXING,
             ).transition(TaskPhase.PR_OPEN)
 
+    def test_validator_and_gate_evidence_are_required_and_sha_bound(self) -> None:
+        task = TaskState(phase=TaskPhase.FIX_VALIDATING)
+        task.resolution = TaskPhase.FIXING
+        with self.assertRaises(ProtocolError):
+            task.transition(TaskPhase.GATING)
+        with self.assertRaises(ProtocolError):
+            task.record_validator(
+                ValidatorEvidence(
+                    "v",
+                    task.phase,
+                    "old-sha",
+                    "PASS",
+                    1.0,
+                )
+            )
+        with self.assertRaises(ProtocolError):
+            task.record_validator(
+                ValidatorEvidence("v", task.phase, task.head, "FAIL", 1.0)
+            )
+        record_pass(task, "v-pass")
+        task.update_head("new-head")
+        with self.assertRaises(ProtocolError):
+            task.transition(TaskPhase.GATING)
+
+        gate_task = TaskState(
+            phase=TaskPhase.GATING, resolution=TaskPhase.FIXING
+        )
+        with self.assertRaises(ProtocolError):
+            gate_task.record_gate(
+                GateEvidence(TaskPhase.GATING, gate_task.head, False)
+            )
+        with self.assertRaises(ProtocolError):
+            gate_task.transition(TaskPhase.REBASING)
+
+    def test_rebase_head_change_clears_old_gate_and_sync_evidence(self) -> None:
+        task = TaskState(phase=TaskPhase.VERIFYING)
+        task.transition(TaskPhase.FIXING)
+        task.transition(TaskPhase.FIX_VALIDATING)
+        record_pass(task, "fix-pass")
+        task.transition(TaskPhase.GATING)
+        task.record_gate(GateEvidence(TaskPhase.GATING, task.head, True))
+        task.transition(TaskPhase.REBASING)
+        task.record_sync(task.head)
+        task.record_gate(GateEvidence(TaskPhase.REBASING, task.head, True))
+        task.record_rebase_head("merged-head")
+        with self.assertRaises(ProtocolError):
+            task.transition(TaskPhase.REBASE_VALIDATING)
+        task.record_sync(task.head)
+        task.record_gate(GateEvidence(TaskPhase.REBASING, task.head, True))
+        task.transition(TaskPhase.REBASE_VALIDATING)
+
     def test_review_rework_resets_and_repeats_full_closure(self) -> None:
         task = TaskState(phase=TaskPhase.VERIFYING)
-        for phase in (
-            TaskPhase.FIXING,
-            TaskPhase.FIX_VALIDATING,
-            TaskPhase.GATING,
-            TaskPhase.REBASING,
-            TaskPhase.REBASE_VALIDATING,
-            TaskPhase.ARCHIVING,
-            TaskPhase.FINAL_VALIDATING,
-            TaskPhase.PR_OPEN,
-            TaskPhase.GATES,
-        ):
-            task.transition(phase)
+        drive_closure_to_pr(task, archive_suffix="archive-1")
+        task.transition(TaskPhase.GATES)
         task.transition(TaskPhase.FIXING)
         self.assertFalse(task.final_validated)
         with self.assertRaises(ProtocolError):
             task.transition(TaskPhase.PR_OPEN)
-        for phase in (
-            TaskPhase.FIX_VALIDATING,
-            TaskPhase.GATING,
-            TaskPhase.REBASING,
-            TaskPhase.REBASE_VALIDATING,
-            TaskPhase.ARCHIVING,
-            TaskPhase.FINAL_VALIDATING,
-            TaskPhase.PR_OPEN,
-        ):
-            task.transition(phase)
+        task.transition(TaskPhase.FIX_VALIDATING)
+        record_pass(task, "validator-fix-2")
+        task.transition(TaskPhase.GATING)
+        task.record_gate(GateEvidence(TaskPhase.GATING, task.head, True))
+        task.transition(TaskPhase.REBASING)
+        task.record_sync(task.head)
+        task.record_gate(GateEvidence(TaskPhase.REBASING, task.head, True))
+        task.transition(TaskPhase.REBASE_VALIDATING)
+        record_pass(task, "validator-rebase-2")
+        task.transition(TaskPhase.ARCHIVING)
+        task.record_archive(f"{task.head}-archive-2")
+        task.transition(TaskPhase.FINAL_VALIDATING)
+        record_pass(task, "validator-final-2")
+        task.transition(TaskPhase.PR_OPEN)
         self.assertTrue(task.final_validated)
 
     def test_platform_reserve_and_dynamic_validator_capacity(self) -> None:
-        snapshot = PlatformSnapshot(total=4, live_agents=3)
+        snapshot = PlatformSnapshot(total=4, live_agents=1)
         self.assertEqual(snapshot.implementation_limit(9), 2)
-        self.assertEqual(snapshot.validator_slots(), 1)
+        self.assertEqual(snapshot.validator_slots(), 3)
+        self.assertEqual(PlatformSnapshot(4, 2).implementation_limit(9), 1)
+        self.assertEqual(PlatformSnapshot(4, 3).implementation_limit(9), 0)
+        self.assertEqual(PlatformSnapshot(4, 4).implementation_limit(9), 0)
+        self.assertEqual(
+            PlatformSnapshot(4, 1).implementation_limit(
+                9, outstanding_reservations=1
+            ),
+            1,
+        )
+        self.assertEqual(
+            PlatformSnapshot(
+                4, 0, main_in_snapshot=False
+            ).implementation_limit(9),
+            2,
+        )
         self.assertEqual(
             PlatformSnapshot(4, 3, validator_reserve=0).validator_slots(), 0
         )
@@ -699,26 +1027,30 @@ class StateMachineDryRun(unittest.TestCase):
             PlatformSnapshot(None, 99).implementation_limit(9), 2
         )
         broker, provider, _ = fixture(total=4, live=4)
+        self.assertEqual(broker.implementation_limit(9), 0)
         task = TaskState(phase=TaskPhase.FIX_VALIDATING)
         broker.request(
-            make_payload("v1", "validator", "agent-a", task.phase), task
+            make_payload("v1", "validator", "agent-a", task), task
         )
         self.assertIsNone(broker.grant_next("validator"))
         provider.snapshot.live_agents = 3
         self.assertIsNotNone(broker.grant_next("validator"))
+        self.assertEqual(broker.implementation_limit(9), 0)
 
     def test_validator_capacity_shrinks_and_queue_recovers(self) -> None:
         broker, provider, _ = fixture(total=5, live=3)
         task = TaskState(phase=TaskPhase.FIX_VALIDATING)
         for request_id in ("v1", "v2", "v3"):
             broker.request(
-                make_payload(request_id, "validator", request_id, task.phase),
+                make_payload(request_id, "validator", request_id, task),
                 task,
             )
         first = broker.grant_next("validator")
         provider.snapshot.live_agents = 5
         self.assertIsNone(broker.grant_next("validator"))
-        broker.ack("v1", first.token_id, task.phase, "abc123")
+        broker.ack(
+            "v1", first.token_id, task.phase, task.head, task.generation
+        )
         broker.release("v1", first.token_id, "PASS")
         provider.snapshot.live_agents = 4
         self.assertEqual(
@@ -730,21 +1062,33 @@ class StateMachineDryRun(unittest.TestCase):
         task = TaskState(phase=TaskPhase.FIX_VALIDATING)
         for request_id in ("v1", "v2"):
             broker.request(
-                make_payload(request_id, "validator", request_id, task.phase),
+                make_payload(request_id, "validator", request_id, task),
                 task,
             )
         first = broker.grant_next("validator")
         self.assertIsNotNone(first)
         self.assertIsNone(broker.grant_next("validator"))
-        broker.ack("v1", first.token_id, task.phase, "abc123")
+        broker.ack(
+            "v1", first.token_id, task.phase, task.head, task.generation
+        )
         self.assertIsNone(broker.grant_next("validator"))
         broker.mark_lost("v1")
         self.assertIsNone(broker.grant_next("validator"))
         broker.recovery_result("v1", True)
+        broker.bind_validator_spawn(
+            "v1",
+            first.token_id,
+            "validator-v1",
+            task.task_id,
+            task.head,
+        )
         with self.assertRaises(ProtocolError):
-            broker.mark_platform_accounted("v1")
+            broker.mark_platform_accounted("v1", "validator-v1")
         provider.snapshot.live_agents = 4
-        broker.mark_platform_accounted("v1")
+        provider.snapshot.live_agent_ids = (
+            provider.snapshot.live_agent_ids | {"validator-v1"}
+        )
+        broker.mark_platform_accounted("v1", "validator-v1")
         self.assertIsNone(broker.grant_next("validator"))
         broker.release("v1", first.token_id, "PASS")
         provider.snapshot.live_agents = 3
@@ -752,25 +1096,188 @@ class StateMachineDryRun(unittest.TestCase):
             broker.grant_next("validator").payload.request_id, "v2"
         )
 
+    def test_validator_spawn_identity_is_exact_and_one_to_one(self) -> None:
+        broker, provider, _ = fixture(total=5, live=3)
+        task = TaskState(
+            task_id="trade-fix", phase=TaskPhase.FIX_VALIDATING
+        )
+        for request_id in ("v1", "v2"):
+            broker.request(
+                make_payload(request_id, "validator", request_id, task), task
+            )
+        first = broker.grant_next("validator")
+        second = broker.grant_next("validator")
+        broker.bind_validator_spawn(
+            "v1",
+            first.token_id,
+            "validator-one",
+            task.task_id,
+            task.head,
+        )
+        with self.assertRaises(ProtocolError):
+            broker.bind_validator_spawn(
+                "v2",
+                second.token_id,
+                "validator-one",
+                task.task_id,
+                task.head,
+            )
+        broker.bind_validator_spawn(
+            "v2",
+            second.token_id,
+            "validator-two",
+            task.task_id,
+            task.head,
+        )
+        provider.snapshot.live_agents = 4
+        provider.snapshot.live_agent_ids = (
+            provider.snapshot.live_agent_ids | {"unrelated-agent"}
+        )
+        with self.assertRaises(ProtocolError):
+            broker.mark_platform_accounted("v1", "validator-one")
+        provider.snapshot.live_agents = 5
+        provider.snapshot.live_agent_ids = (
+            provider.snapshot.live_agent_ids | {"validator-two"}
+        )
+        broker.mark_platform_accounted("v2", "validator-two")
+        self.assertFalse(broker.requests["v1"].platform_accounted)
+        self.assertTrue(broker.requests["v2"].platform_accounted)
+        with self.assertRaises(ProtocolError):
+            broker.mark_platform_accounted("v1", "validator-two")
+        provider.snapshot.live_agent_ids = (
+            provider.snapshot.live_agent_ids
+            - {"unrelated-agent"}
+            | {"validator-one"}
+        )
+        broker.mark_platform_accounted("v1", "validator-one")
+
+    def test_grant_ack_and_recovery_recheck_authoritative_generation(self) -> None:
+        broker, _, _ = fixture()
+        task = TaskState(
+            task_id="authority", phase=TaskPhase.FIX_VALIDATING
+        )
+        broker.request(make_payload("queued", "validator", "a", task), task)
+        task.update_head("head-after-queue")
+        self.assertIsNone(broker.grant_next("validator"))
+        self.assertEqual(
+            broker.requests["queued"].release_reason, "STALE_AUTHORITY"
+        )
+
+        phase_task = TaskState(
+            task_id="phase-queue", phase=TaskPhase.FIX_VALIDATING
+        )
+        broker.request(
+            make_payload("phase-queued", "validator", "a", phase_task),
+            phase_task,
+        )
+        phase_task.phase = TaskPhase.FIXING
+        self.assertIsNone(broker.grant_next("validator"))
+        self.assertEqual(
+            broker.requests["phase-queued"].release_reason,
+            "STALE_AUTHORITY",
+        )
+
+        task2 = TaskState(
+            task_id="ack-authority", phase=TaskPhase.FIX_VALIDATING
+        )
+        broker.request(make_payload("ack", "validator", "a", task2), task2)
+        grant = broker.grant_next("validator")
+        task2.update_head("head-before-ack")
+        with self.assertRaises(ProtocolError):
+            broker.ack(
+                "ack",
+                grant.token_id,
+                TaskPhase.FIX_VALIDATING,
+                "abc123",
+                0,
+            )
+
+        generation_task = TaskState(
+            task_id="generation-ack", phase=TaskPhase.FIX_VALIDATING
+        )
+        broker.request(
+            make_payload(
+                "generation", "validator", "a", generation_task
+            ),
+            generation_task,
+        )
+        generation_grant = broker.grant_next("validator")
+        with self.assertRaises(ProtocolError):
+            broker.ack(
+                "generation",
+                generation_grant.token_id,
+                generation_task.phase,
+                generation_task.head,
+                generation_task.generation + 1,
+            )
+
+        task3 = TaskState(
+            task_id="repeat-ack", phase=TaskPhase.FIX_VALIDATING
+        )
+        broker.request(
+            make_payload("repeat", "validator", "a", task3), task3
+        )
+        grant3 = broker.grant_next("validator")
+        broker.ack(
+            "repeat",
+            grant3.token_id,
+            task3.phase,
+            task3.head,
+            task3.generation,
+        )
+        task3.update_head("head-after-ack")
+        with self.assertRaises(ProtocolError):
+            broker.ack(
+                "repeat",
+                grant3.token_id,
+                TaskPhase.FIX_VALIDATING,
+                "abc123",
+                0,
+            )
+
+        task4 = TaskState(
+            task_id="recovery-authority", phase=TaskPhase.GATING
+        )
+        broker.request(make_payload("recover", "compile", "a", task4), task4)
+        grant4 = broker.grant_next("compile")
+        broker.ack(
+            "recover",
+            grant4.token_id,
+            task4.phase,
+            task4.head,
+            task4.generation,
+        )
+        broker.mark_lost("recover")
+        task4.update_head("head-during-recovery")
+        with self.assertRaises(ProtocolError):
+            broker.recovery_result("recover", True)
+
     def test_fifo_request_ack_release_cancel_and_collision(self) -> None:
         broker, _, _ = fixture()
         task = TaskState(phase=TaskPhase.GATING)
-        first_payload = make_payload("r1", "compile", "a", task.phase)
+        first_payload = make_payload("r1", "compile", "a", task)
         first = broker.request(first_payload, task)
-        broker.request(make_payload("r2", "compile", "b", task.phase), task)
+        broker.request(make_payload("r2", "compile", "b", task), task)
         self.assertEqual(broker.queue_position("r1"), 1)
         self.assertEqual(broker.queue_position("r2"), 2)
         self.assertIs(broker.request(first_payload, task), first)
         grant = broker.grant_next("compile")
         with self.assertRaises(ProtocolError):
             broker.release("r1", grant.token_id, "PASS")
-        broker.ack("r1", grant.token_id, task.phase, "abc123")
+        broker.ack(
+            "r1", grant.token_id, task.phase, task.head, task.generation
+        )
         self.assertTrue(broker.release("r1", grant.token_id, "PASS"))
         self.assertFalse(broker.release("r1", grant.token_id, "PASS"))
         self.assertTrue(broker.cancel("r2", "CANCELLED"))
         with self.assertRaises(ProtocolError):
             broker.request(
-                make_payload("r1", "validator", "a", TaskPhase.FIX_VALIDATING),
+                make_payload(
+                    "r1",
+                    "validator",
+                    "a",
+                    TaskState(phase=TaskPhase.FIX_VALIDATING),
+                ),
                 TaskState(phase=TaskPhase.FIX_VALIDATING),
             )
 
@@ -791,10 +1298,7 @@ class StateMachineDryRun(unittest.TestCase):
                 )
                 state = local_broker.request(
                     make_payload(
-                        f"compile-{phase.value}",
-                        "compile",
-                        "a",
-                        phase,
+                        f"compile-{phase.value}", "compile", "a", task
                     ),
                     task,
                 )
@@ -802,13 +1306,21 @@ class StateMachineDryRun(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             broker.request(
                 make_payload(
-                    "x", "compile", "a", TaskPhase.FIX_VALIDATING
+                    "x",
+                    "compile",
+                    "a",
+                    TaskState(phase=TaskPhase.FIX_VALIDATING),
                 ),
                 TaskState(phase=TaskPhase.FIX_VALIDATING),
             )
         with self.assertRaises(ProtocolError):
             broker.request(
-                make_payload("y", "validator", "a", TaskPhase.FIX_VALIDATING),
+                make_payload(
+                    "y",
+                    "validator",
+                    "a",
+                    TaskState(phase=TaskPhase.FIX_VALIDATING),
+                ),
                 TaskState(phase=TaskPhase.GATING),
             )
 
@@ -816,12 +1328,14 @@ class StateMachineDryRun(unittest.TestCase):
         broker, _, clock = fixture(grant_ttl=10)
         task = TaskState(phase=TaskPhase.FIX_VALIDATING)
         broker.request(
-            make_payload("v1", "validator", "a", task.phase), task
+            make_payload("v1", "validator", "a", task), task
         )
         grant = broker.grant_next("validator")
         clock.advance(9.999)
         self.assertTrue(
-            broker.ack("v1", grant.token_id, task.phase, "abc123")
+            broker.ack(
+                "v1", grant.token_id, task.phase, task.head, task.generation
+            )
         )
 
     def test_grant_ttl_boundary_expiry_fifo_and_old_token(self) -> None:
@@ -829,7 +1343,7 @@ class StateMachineDryRun(unittest.TestCase):
         task = TaskState(phase=TaskPhase.FIX_VALIDATING)
         for request_id in ("v1", "v2"):
             broker.request(
-                make_payload(request_id, "validator", request_id, task.phase),
+                make_payload(request_id, "validator", request_id, task),
                 task,
             )
         old = broker.grant_next("validator")
@@ -837,7 +1351,9 @@ class StateMachineDryRun(unittest.TestCase):
         self.assertEqual(broker.expire_grants(), ["v1"])
         self.assertEqual(broker.expire_grants(), [])
         with self.assertRaises(ProtocolError):
-            broker.ack("v1", old.token_id, task.phase, "abc123")
+            broker.ack(
+                "v1", old.token_id, task.phase, task.head, task.generation
+            )
         with self.assertRaises(ProtocolError):
             broker.release("v1", old.token_id, "PASS")
         self.assertEqual(
@@ -850,10 +1366,16 @@ class StateMachineDryRun(unittest.TestCase):
                 broker, _, _ = fixture()
                 task = TaskState(phase=TaskPhase.FIX_VALIDATING)
                 broker.request(
-                    make_payload(reason, "validator", "v", task.phase), task
+                    make_payload(reason, "validator", "v", task), task
                 )
                 grant = broker.grant_next("validator")
-                broker.ack(reason, grant.token_id, task.phase, "abc123")
+                broker.ack(
+                    reason,
+                    grant.token_id,
+                    task.phase,
+                    task.head,
+                    task.generation,
+                )
                 broker.release(reason, grant.token_id, reason)
                 self.assertEqual(broker.held("validator"), 0)
 
@@ -862,11 +1384,17 @@ class StateMachineDryRun(unittest.TestCase):
         task = TaskState(phase=TaskPhase.GATING)
         for request_id in ("ok", "fail", "timeout"):
             broker.request(
-                make_payload(request_id, "compile", request_id, task.phase),
+                make_payload(request_id, "compile", request_id, task),
                 task,
             )
             grant = broker.grant_next("compile")
-            broker.ack(request_id, grant.token_id, task.phase, "abc123")
+            broker.ack(
+                request_id,
+                grant.token_id,
+                task.phase,
+                task.head,
+                task.generation,
+            )
             broker.mark_lost(request_id)
             if request_id == "ok":
                 self.assertEqual(
@@ -884,15 +1412,21 @@ class StateMachineDryRun(unittest.TestCase):
                 self.assertEqual(broker.sweep_recovery(), ["timeout"])
                 with self.assertRaises(ProtocolError):
                     broker.ack(
-                        request_id, grant.token_id, task.phase, "abc123"
+                        request_id,
+                        grant.token_id,
+                        task.phase,
+                        task.head,
+                        task.generation,
                     )
 
     def test_repeated_recovery_is_idempotent(self) -> None:
         broker, _, _ = fixture()
         task = TaskState(phase=TaskPhase.GATING)
-        broker.request(make_payload("r", "compile", "a", task.phase), task)
+        broker.request(make_payload("r", "compile", "a", task), task)
         grant = broker.grant_next("compile")
-        broker.ack("r", grant.token_id, task.phase, "abc123")
+        broker.ack(
+            "r", grant.token_id, task.phase, task.head, task.generation
+        )
         self.assertTrue(broker.mark_lost("r"))
         self.assertFalse(broker.mark_lost("r"))
 

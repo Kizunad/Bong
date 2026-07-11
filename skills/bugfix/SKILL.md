@@ -23,7 +23,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 - 启动时读取并保持三个独立参数：实施数量 `N`、实施模型、validator 模型。用户未指定时才默认 `N=2`、实施模型 `gpt-5.6-sol-xhigh`、validator 模型 `gpt-5.6-sol-xhigh`；不得用默认值覆盖用户输入。
 - 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 worktree 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
 - 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
-- 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，active implementation 必须满足 `min(N, platform_total - 2)`；容量不可查时保守按 2 路实施。超出有效实施并发的任务进入 FIFO，不 spawn。
+- 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，每次补位按实时快照计算 `min(N, 2, max(0, platform_total - live_agents - 未入 snapshot reservation - validator_reserve - 未计入 live 的主干占位))`；容量不可查时保守按 2 路实施。平台满载、已有无关 agent 或 outstanding reservation 都会减少可启动数；超额任务进 FIFO，不 spawn。
 - validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。每个已 GRANTED/ACKED/RECOVERING、但尚未出现在 live snapshot 的 validator token 都先预占 1 个平台槽；只有状态查询确认对应 validator 已出现后才转为 snapshot-accounted，避免重复授权或双扣。容量不可查时 validator 一次只授权 1 个。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
@@ -56,13 +56,14 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 按上方适配器选择真实接口完成可恢复握手：
 
 1. 实施 agent 发送或 phase-yield 返回：`TOKEN_REQUEST{"request_id":"<uuid>","type":"compile|validator","task":"<id>","agent":"<canonical agent id>","phase":"<phase>","head":"<sha>","checkpoint":"<resume data>"}`；**未收到有效 grant 禁止编译或 spawn validator**。
-2. 主干按 `request_id` 幂等去重，落唯一状态表、排入 FIFO。逻辑容量与实时平台槽位都满足时，先原子登记 holder，再通过当前 harness 的真实 message/resume 入口返回 `TOKEN_GRANTED{"request_id":"...","token_id":"...","type":"...","task":"...","phase":"...","head":"...","expires_at":"..."}`。
-3. 实施 agent 核对 request/task/phase/head/expiry 后发送或返回 `TOKEN_ACK{...}`，ACK 后 token 才可使用。重复 request 返回同一队列状态或同一 grant；重复 ACK 幂等。
-4. 已结束/idle agent 通过当前 harness 的 resume/followup 入口恢复，payload 必须包含 `checkpoint + request_id + token_id + phase + head`；恢复后仍须 ACK。禁止另开无状态 agent 猜测续点。
-5. 完成、FAIL、超时、异常时，实施 agent 发送或返回 `TOKEN_RELEASED{...}`；排队取消或 grant 失效返回 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`。
-6. grant 绑定 request_id、task、agent、phase、head。HEAD/phase 已变、token 已回收、非 FIFO 当前授权或 ACK 前过期的 grant 都是 stale：禁止使用，发送 CANCELLED 后重新申请。
-7. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用当前 harness 实际状态查询对拍 holder；失联先进入 `RECOVERING`，只有 resume/send-input/followup 明确失败或恢复 TTL 到期才回收。回收后的旧 token 迟到 ACK/RELEASE 一律拒绝。
-8. `compile_token` 在该轮门禁任一出口释放；`validator_token` 在 validator 关闭后任一出口释放，spawn 失败也释放。任务 BLOCKED/CLOSED、用户停止或 worktree 清理前，主干取消排队项并核验无悬挂 token。
+2. 主干按 `request_id` 幂等去重，落唯一状态表、排入 FIFO。grant 前重新读取权威 task 的 task/phase/head/generation；逻辑容量与实时平台槽位都满足时，先原子登记 holder，再返回 `TOKEN_GRANTED{"request_id":"...","token_id":"...","type":"...","task":"...","phase":"...","head":"...","generation":N,"expires_at":"..."}`。
+3. 实施 agent 核对 request/task/phase/head/generation/expiry 后发送或返回 `TOKEN_ACK{...}`，ACK 后 token 才可使用。主干对**每次** ACK（包括重复 ACK）重新读取权威状态；任何漂移都原子 stale/cancel。重复 request 返回同一队列状态或同一 grant；状态未漂移时重复 ACK 幂等。
+4. validator token ACK 后，实施 agent 用 harness spawn 返回的 **canonical validator agent ID** 上报 `VALIDATOR_SPAWNED{"request_id":"...","token_id":"...","validator_agent_id":"...","task":"...","phase":"...","target_sha":"...","generation":N}`。该 ID 与 request/token/task/phase/SHA/generation 一对一绑定；一个 validator 实例只能消费一个 reservation。只有 live snapshot 精确包含同一 canonical ID 才可标 snapshot-accounted；无关 agent、另一 validator 或仅总数增长均无效。
+5. 已结束/idle agent 通过当前 harness 的 resume/followup 入口恢复，payload 必须包含 `checkpoint + request_id + token_id + phase + head + generation`；恢复成功前状态为 `RECOVERING`，恢复边界再次对拍权威状态。禁止另开无状态 agent 猜测续点。
+6. 完成、FAIL、超时、异常时，实施 agent 发送或返回 `TOKEN_RELEASED{...}`；排队取消或 grant 失效返回 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`。
+7. grant 绑定 request_id、task、agent、phase、head、generation。任一变化、token 已回收、非 FIFO 当前授权或 ACK 前过期都原子 stale；旧 token 禁止 ACK/recovery/release。
+8. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用当前 harness 实际状态查询对拍 holder；失联先进入 `RECOVERING`，只有 resume/send-input/followup 明确失败或恢复 TTL 到期才回收。回收后的迟到消息一律拒绝。
+9. `compile_token` 在该轮门禁任一出口释放；`validator_token` 在 validator 关闭后任一出口释放，spawn 失败也释放。任务 BLOCKED/CLOSED、用户停止或 worktree 清理前，主干取消排队项并核验无悬挂 token。
 
 从仓库根运行 `python3 skills/bugfix/scripts/state_machine_dry_run.py` 验证这套状态机。该 dry-run 不调用 GitHub 写 API，覆盖容量/FIFO、消息握手、异常回收、claim/main-sync/verdict 与持续等待契约；修改资源协议时必须同步更新并运行。
 
@@ -72,10 +73,12 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 
 维护唯一任务/资源状态表；以下字段不得省略：
 
-| skeleton | agent | worktree | branch | phase | token_type | request_id | token_id | queue_pos | holder | request_phase | requested_at | granted_at | expires_at | ack | recovery_deadline | release_reason | checkpoint | head | validator SHA | PR | review/e2e |
-|---|---|---|---|---|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| skeleton | agent | worktree | branch | phase | generation | token_type | request_id | token_id | queue_pos | holder | request_phase | requested_at | granted_at | expires_at | ack | validator_agent_id | recovery_deadline | release_reason | checkpoint | head | validator evidence | gate evidence | PR | review/e2e |
+|---|---|---|---|---|---:|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
 phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → FIX_VALIDATING → GATING → REBASING → REBASE_VALIDATING → ARCHIVING → FINAL_VALIDATING → PR_OPEN → GATES → CLOSED`，失联暂态 `RECOVERING`，或终态 `BLOCKED`。只有 `FINAL_VALIDATING → PR_OPEN`；合法边、必经里程碑、互斥分支、终态和返工回流以 dry-run 的 `TaskPhase/ALLOWED_EDGES` 为可执行契约。
+
+状态迁移不能靠“走过 phase”解锁：三个 validating 关口都必须提交 `validator_agent_id + phase + target_sha + PASS + completed_at`，且 target SHA 等于权威当前 HEAD；`GATING → REBASING` 必须有当前 HEAD 的成功 gate evidence；主线同步、HEAD 变化或返工会递增 generation，并清除旧 SHA 的 validator/gate 证据与闭环里程碑。FAIL、缺证据、错误 SHA 或旧 generation 均不得推进。
 
 ## 选择与派发 skeleton
 
