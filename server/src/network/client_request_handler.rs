@@ -68,6 +68,7 @@ use crate::forge::events::{
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
+use crate::forge::steps::next_step_after;
 use crate::inventory::{
     add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
@@ -78,7 +79,7 @@ use crate::inventory::{
     InventoryMoveRejectReason, ItemInstance, ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
-    AlchemyItemData, ItemEffect, ItemRegistry,
+    AlchemyItemData, ItemCategory, ItemEffect, ItemRegistry,
     DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
@@ -117,6 +118,9 @@ use crate::network::qi_attrition_emit::{
     emit_attrition_applied_if_lost, item_abs_qi_for_attrition, AttritionAppliedEvent,
 };
 use crate::network::qi_color_observed_emit::QiColorInspectRequest;
+use crate::network::quickslot_config_emit::{
+    build_quickslot_config, current_unix_millis_for_quickslot, send_quickslot_config_to_client,
+};
 use crate::network::send_server_data_payload;
 use crate::network::skill_config_emit::send_skill_config_snapshot_to_client;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
@@ -505,6 +509,7 @@ pub fn handle_client_request_payloads(
     mut skill_scroll_params: SkillScrollRequestParams,
     mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
+    let mut pending_forge_steps: HashMap<(u64, ForgeSessionId), ForgeStep> = HashMap::new();
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
             continue;
@@ -525,16 +530,18 @@ pub fn handle_client_request_payloads(
             Ok(r) => r,
             Err(err) => {
                 tracing::warn!(
-                    "[bong][network] client_request deserialize failed from {:?}: {err}; body={payload}",
-                    ev.client
+                    "[bong][network] client_request deserialize failed from {:?}: {err}; payload_bytes={}",
+                    ev.client,
+                    ev.data.len()
                 );
                 continue;
             }
         };
-        // 调试：每条 intent 都 log 一行，帮助诊断 client 到 server 通路。
+        // 只记录长度，避免聊天、目标与请求参数进入 server 日志或支持包。
         tracing::info!(
-            "[bong][network] client_request received entity={:?} body={payload}",
-            ev.client
+            "[bong][network] client_request received entity={:?} payload_bytes={}",
+            ev.client,
+            ev.data.len()
         );
 
         let v = match &request {
@@ -645,8 +652,9 @@ pub fn handle_client_request_payloads(
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
-                "[bong][network] client_request unsupported version v={v} from {:?}; body={payload}",
-                ev.client
+                "[bong][network] client_request unsupported version v={v} from {:?}; payload_bytes={}",
+                ev.client,
+                ev.data.len()
             );
             continue;
         }
@@ -2124,15 +2132,27 @@ pub fn handle_client_request_payloads(
                     &inventories,
                 );
             }
-            ClientRequestV1::QuickSlotBind { slot, item_id, .. } => {
-                handle_quick_slot_bind(
-                    ev.client,
-                    slot,
-                    item_id,
+            ClientRequestV1::QuickSlotBind {
+                slot,
+                item_id,
+                request_id,
+                ..
+            } => {
+                let (quick_bindings, skillbar_bindings) = (
                     &mut combat_params.bindings_q,
+                    &mut combat_params.skillbar_bindings_q,
+                );
+                handle_quick_slot_bind(
+                    (ev.client, slot, item_id, request_id),
+                    quick_bindings,
+                    skillbar_bindings,
                     &inventories,
-                    &clients,
-                    persistence.as_deref(),
+                    &mut clients,
+                    (
+                        &combat_params.item_registry,
+                        persistence.as_deref(),
+                        &combat_clock,
+                    ),
                 );
             }
             ClientRequestV1::SkillBarCast { slot, target, .. } => {
@@ -2545,6 +2565,10 @@ pub fn handle_client_request_payloads(
                 inscription_id,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_inscription_scroll(
                     ev.client,
                     session_id,
@@ -2556,6 +2580,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &mut skill_scroll_params.inscription_scroll_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeTemperingHit {
@@ -2564,6 +2589,10 @@ pub fn handle_client_request_payloads(
                 ticks_remaining,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_tempering_hit(
                     ev.client,
                     session_id,
@@ -2571,6 +2600,7 @@ pub fn handle_client_request_payloads(
                     ticks_remaining,
                     &mut dispatch.tempering_hit_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeConsecrationInject {
@@ -2578,21 +2608,29 @@ pub fn handle_client_request_payloads(
                 qi_amount,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_consecration_inject(
                     ev.client,
                     session_id,
                     qi_amount,
                     &mut dispatch.consecration_inject_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeStepAdvance { session_id, .. } => {
-                handle_forge_step_advance(
+                if let Some((session, next_step)) = handle_forge_step_advance(
                     ev.client,
                     session_id,
                     &mut dispatch.step_advance_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
-                );
+                    skill_scroll_params.blueprint_registry.as_deref(),
+                ) {
+                    pending_forge_steps.insert((ev.client.to_bits(), session), next_step);
+                }
             }
             ClientRequestV1::ForgeLearnBlueprint { blueprint_id, .. } => {
                 handle_forge_learn_blueprint(
@@ -3381,6 +3419,7 @@ fn require_owned_active_step(
     session: ForgeSessionId,
     entity: Entity,
     expected: ForgeStep,
+    pending_step: Option<ForgeStep>,
     request_label: &str,
 ) -> bool {
     let Some(forge_sessions) = forge_sessions else {
@@ -3396,19 +3435,19 @@ fn require_owned_active_step(
         );
         return false;
     };
-    if session_state.current_step != expected {
-        tracing::warn!(
-            "[bong][network][forge] {request_label} rejected: session_id={} step={:?}, expected={expected:?}",
-            session.0,
-            session_state.current_step
-        );
-        return false;
-    }
     if session_state.caster != entity {
         tracing::warn!(
             "[bong][network][forge] {request_label} rejected: session_id={} caster mismatch entity={entity:?} session_caster={:?}",
             session.0,
             session_state.caster
+        );
+        return false;
+    }
+    if session_state.current_step != expected && pending_step != Some(expected) {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: session_id={} step={:?}, pending={pending_step:?}, expected={expected:?}",
+            session.0,
+            session_state.current_step
         );
         return false;
     }
@@ -3427,6 +3466,7 @@ fn handle_forge_inscription_scroll(
     cultivations: &Query<&Cultivation>,
     inscription_scroll_tx: &mut Option<ResMut<Events<InscriptionScrollSubmit>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     let inscription_id = inscription_id.trim();
     if inscription_id.is_empty() {
@@ -3438,6 +3478,7 @@ fn handle_forge_inscription_scroll(
         session,
         entity,
         ForgeStep::Inscription,
+        pending_step,
         "inscription_scroll",
     ) {
         return;
@@ -3468,26 +3509,12 @@ fn handle_forge_inscription_scroll(
         return;
     };
 
-    let Ok(mut inventory) = inventories.get_mut(entity) else {
-        return;
-    };
-    if let Err(err) = consume_item_instance_once(&mut inventory, instance_id) {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll consume failed for instance_id={instance_id}: {err}"
-        );
-        return;
-    }
-    resync_snapshot(
-        entity,
-        &inventory,
-        clients,
-        player_states,
-        cultivations,
-        "forge_inscription_scroll_consumed",
-    );
-
+    // 只把精确实例交给 forge 权威系统。实际消费必须等前一步结算完成并确认
+    // session 真实进入 Inscription，避免同帧 Tempering Waste 时先扣残卷再丢事件。
     inscription_scroll_tx.send(InscriptionScrollSubmit {
         session,
+        caster: entity,
+        item_instance_id: instance_id,
         inscription_id: inscription_id.to_string(),
     });
 }
@@ -3499,6 +3526,7 @@ fn handle_forge_tempering_hit(
     ticks_remaining: u32,
     tempering_hit_tx: &mut Option<ResMut<Events<TemperingHit>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     let Some(beat) = parse_temper_beat(beat) else {
         tracing::warn!("[bong][network][forge] tempering_hit rejected: unknown beat `{beat}`");
@@ -3510,6 +3538,7 @@ fn handle_forge_tempering_hit(
         session,
         entity,
         ForgeStep::Tempering,
+        pending_step,
         "tempering_hit",
     ) {
         return;
@@ -3533,6 +3562,7 @@ fn handle_forge_consecration_inject(
     qi_amount: f64,
     consecration_inject_tx: &mut Option<ResMut<Events<ConsecrationInject>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     if !qi_amount.is_finite() || qi_amount < 0.0 {
         tracing::warn!(
@@ -3546,6 +3576,7 @@ fn handle_forge_consecration_inject(
         session,
         entity,
         ForgeStep::Consecration,
+        pending_step,
         "consecration_inject",
     ) {
         return;
@@ -3564,38 +3595,45 @@ fn handle_forge_step_advance(
     session_id: u64,
     step_advance_tx: &mut Option<ResMut<Events<StepAdvance>>>,
     forge_sessions: Option<&ForgeSessions>,
-) {
+    blueprint_registry: Option<&BlueprintRegistry>,
+) -> Option<(ForgeSessionId, ForgeStep)> {
     let session = ForgeSessionId(session_id);
     let Some(forge_sessions) = forge_sessions else {
         tracing::warn!("[bong][network][forge] step_advance rejected: ForgeSessions unavailable");
-        return;
+        return None;
     };
     let Some(session_state) = forge_sessions.get(session) else {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: missing session_id={session_id}"
         );
-        return;
+        return None;
     };
     if session_state.caster != entity {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",
             session_state.caster
         );
-        return;
+        return None;
     }
     if matches!(session_state.current_step, ForgeStep::Done) {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: session_id={session_id} already done"
         );
-        return;
+        return None;
     }
     let Some(step_advance_tx) = step_advance_tx.as_deref_mut() else {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: ForgePlugin events unavailable"
         );
-        return;
+        return None;
     };
-    step_advance_tx.send(StepAdvance { session });
+    let from_step = session_state.current_step;
+    step_advance_tx.send(StepAdvance { session, from_step });
+    let next_step = blueprint_registry
+        .and_then(|registry| registry.get(session_state.blueprint.as_str()))
+        .map(|blueprint| next_step_after(blueprint, session_state.step_index))
+        .unwrap_or(ForgeStep::Done);
+    Some((session, next_step))
 }
 
 fn parse_temper_beat(raw: &str) -> Option<TemperBeat> {
@@ -4219,6 +4257,50 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    fn collect_quickslot_configs(
+        helper: &mut MockClientHelper,
+    ) -> Vec<crate::schema::combat_hud::QuickSlotConfigV1> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::QuickSlotConfig(config) => Some(config),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    fn send_quick_slot_bind_request(
+        app: &mut App,
+        entity: Entity,
+        slot: u8,
+        item_id: Option<&str>,
+        request_id: &str,
+    ) {
+        let body = serde_json::json!({
+            "type": "quick_slot_bind",
+            "v": 1,
+            "slot": slot,
+            "item_id": item_id,
+            "request_id": request_id,
+        });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: body.to_string().into_bytes().into_boxed_slice(),
+            });
     }
 
     fn collect_game_messages(helper: &mut MockClientHelper) -> Vec<String> {
@@ -6117,24 +6199,30 @@ mod tests {
     fn quick_slot_bind_resolves_equipped_template_instance() {
         let mut app = App::new();
         register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
 
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
-            crate::inventory::SlotContents::held_single(inventory_test_item(77, "bone_whistle", 1)),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "earth_crumb", 1)),
         );
 
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app
             .world_mut()
-            .spawn((client_bundle, QuickSlotBindings::default(), inventory))
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
             .id();
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"quick_slot_bind","v":1,"slot":0,"item_id":"bone_whistle"}"#
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":0,"item_id":"earth_crumb","request_id":"bind-equipped"}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -6150,6 +6238,295 @@ mod tests {
             Some(77),
             "quick_slot_bind must resolve template ids from equipped held/worn items"
         );
+    }
+
+    #[test]
+    fn quick_slot_bind_atomically_mirrors_block_item_into_skill_bar() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":3,"item_id":"earth_crumb","request_id":"bind-block"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let quick = app
+            .world()
+            .get::<QuickSlotBindings>(entity)
+            .expect("player should keep quick slot bindings");
+        assert_eq!(
+            quick.get(3),
+            Some(88),
+            "expected block quick-slot intent to bind instance 88, actual {:?}",
+            quick.get(3)
+        );
+        let skillbar = app
+            .world()
+            .get::<SkillBarBindings>(entity)
+            .expect("player should keep skill bar bindings");
+        assert_eq!(
+            skillbar.get(3),
+            Some(&SkillSlot::Item { instance_id: 88 }),
+            "expected the same server intent to atomically mirror the block into skill bar"
+        );
+    }
+
+    #[test]
+    fn quick_slot_bind_rejects_unheld_item_without_mutating_or_persisting() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        let mut quick = QuickSlotBindings::default();
+        let _ = quick.set(3, Some(77));
+        let mut skillbar = SkillBarBindings::default();
+        let _ = skillbar.set(3, SkillSlot::Item { instance_id: 77 });
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick, skillbar, empty_inventory()))
+            .id();
+
+        send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), "reject-unheld");
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            Some(77)
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Item { instance_id: 77 })
+        );
+        let configs = collect_quickslot_configs(&mut helper);
+        assert!(configs.iter().any(|config| {
+            config.ack_request_id.as_deref() == Some("reject-unheld")
+                && config.bind_accepted == Some(false)
+        }));
+    }
+
+    #[test]
+    fn quick_slot_bind_missing_skillbar_rejects_before_quick_slot_mutation() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, QuickSlotBindings::default(), inventory))
+            .id();
+
+        send_quick_slot_bind_request(
+            &mut app,
+            entity,
+            3,
+            Some("earth_crumb"),
+            "reject-missing-skillbar",
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            None
+        );
+        let configs = collect_quickslot_configs(&mut helper);
+        assert!(configs.iter().any(|config| {
+            config.ack_request_id.as_deref() == Some("reject-missing-skillbar")
+                && config.bind_accepted == Some(false)
+        }));
+    }
+
+    #[test]
+    fn quick_slot_bind_clears_only_the_old_auto_mirrored_item() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        let mut inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        inventory.hotbar[0] = Some(inventory_test_item(89, "guyuan_pill", 1));
+        let mut quick = QuickSlotBindings::default();
+        let _ = quick.set(3, Some(88));
+        let mut skillbar = SkillBarBindings::default();
+        let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick, skillbar, inventory))
+            .id();
+
+        send_quick_slot_bind_request(&mut app, entity, 3, Some("guyuan_pill"), "block-to-pill");
+        app.update();
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            Some(89)
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Empty),
+            "expected block→non-block to clear only the stale automatic item mirror"
+        );
+
+        let mut quick = app
+            .world_mut()
+            .get_mut::<QuickSlotBindings>(entity)
+            .unwrap();
+        let _ = quick.set(3, Some(88));
+        drop(quick);
+        let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
+        let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
+        drop(skillbar);
+        send_quick_slot_bind_request(&mut app, entity, 3, None, "block-to-clear");
+        app.update();
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            None
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Empty),
+            "expected block→clear to remove the matching automatic item mirror"
+        );
+
+        let mut quick = app
+            .world_mut()
+            .get_mut::<QuickSlotBindings>(entity)
+            .unwrap();
+        let _ = quick.set(3, Some(88));
+        drop(quick);
+        let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
+        let _ = skillbar.set(
+            3,
+            SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string(),
+            },
+        );
+        drop(skillbar);
+        send_quick_slot_bind_request(&mut app, entity, 3, None, "protect-independent-skill");
+        app.update();
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            None
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string()
+            }),
+            "expected clearing quick slot not to overwrite a later independent skill binding"
+        );
+    }
+
+    #[test]
+    fn quick_slot_bind_persistence_failure_leaves_both_components_unchanged() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        let invalid_db_path = std::env::temp_dir();
+        app.insert_resource(PlayerStatePersistence::with_db_path(
+            std::env::temp_dir(),
+            invalid_db_path,
+        ));
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+
+        send_quick_slot_bind_request(
+            &mut app,
+            entity,
+            3,
+            Some("earth_crumb"),
+            "reject-persistence",
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            None
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Empty)
+        );
+        assert!(collect_quickslot_configs(&mut helper).iter().any(|config| {
+            config.ack_request_id.as_deref() == Some("reject-persistence")
+                && config.bind_accepted == Some(false)
+        }));
+    }
+
+    #[test]
+    fn quick_slot_bind_persists_atomic_block_mirror_for_reload() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bong-quick-bind-{unique}"));
+        let db_path = root.join("bong.db");
+        crate::persistence::bootstrap_sqlite(&db_path, "quick-bind-test")
+            .expect("test sqlite should bootstrap");
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(PlayerStatePersistence::with_db_path(&root, &db_path));
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+
+        send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), "persist-block");
+        app.update();
+
+        let connection = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
+        let prefs_json: String = connection
+            .query_row(
+                "SELECT prefs_json FROM player_ui_prefs WHERE username = 'Azure'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("accepted bind should persist UI prefs");
+        let prefs: serde_json::Value =
+            serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
+        assert_eq!(prefs["quick_slots"][3], "earth_crumb");
+        assert_eq!(prefs["skill_bar"][3]["kind"], "item");
+        assert_eq!(prefs["skill_bar"][3]["template_id"], "earth_crumb");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -7920,7 +8297,7 @@ mod tests {
     }
 
     #[test]
-    fn forge_inscription_scroll_consumes_item_and_emits_event() {
+    fn forge_inscription_scroll_defers_consumption_and_emits_exact_item_event() {
         let mut app = App::new();
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
@@ -7986,10 +8363,16 @@ mod tests {
         app.update();
 
         let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
-        assert!(inventory.containers[0].items.is_empty());
+        assert_eq!(
+            inventory.containers[0].items.len(),
+            1,
+            "C2S 网关只能预检残卷，实际消费必须留给确认进入 Inscription 的 forge 系统"
+        );
         let captured = app.world().resource::<CapturedInscriptionScrolls>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(9));
+        assert_eq!(captured.0[0].caster, entity);
+        assert_eq!(captured.0[0].item_instance_id, 43);
         assert_eq!(captured.0[0].inscription_id, "sharp_v0");
     }
 
@@ -8368,6 +8751,7 @@ mod tests {
         let captured = app.world().resource::<CapturedStepAdvances>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(12));
+        assert_eq!(captured.0[0].from_step, ForgeStep::Tempering);
     }
 
     #[test]
@@ -10683,56 +11067,231 @@ fn inventory_instance_id_by_template(inv: &PlayerInventory, template: &str) -> O
 }
 
 fn handle_quick_slot_bind(
-    entity: valence::prelude::Entity,
-    slot: u8,
-    item_id: Option<String>,
+    request: (valence::prelude::Entity, u8, Option<String>, String),
     bindings_q: &mut Query<&mut QuickSlotBindings>,
+    skillbar_bindings_q: &mut Query<&mut SkillBarBindings>,
     inventories: &Query<&mut PlayerInventory>,
-    clients: &Query<(&Username, &mut Client)>,
-    persistence: Option<&PlayerStatePersistence>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    runtime: (&ItemRegistry, Option<&PlayerStatePersistence>, &CombatClock),
 ) {
-    let mut bindings = match bindings_q.get_mut(entity) {
-        Ok(b) => b,
+    let (entity, slot, item_id, request_id) = request;
+    let (item_registry, persistence, combat_clock) = runtime;
+    if request_id.is_empty() || request_id.len() > 128 {
+        tracing::warn!(
+            "[bong][network] quick_slot_bind entity={entity:?} rejected invalid request_id length={}",
+            request_id.len()
+        );
+        return;
+    }
+    if slot >= QuickSlotBindings::SLOT_COUNT as u8 {
+        tracing::warn!(
+            "[bong][network] quick_slot_bind entity={entity:?} slot={slot} out of range"
+        );
+        send_quick_slot_bind_response(
+            entity,
+            request_id,
+            false,
+            bindings_q,
+            inventories,
+            item_registry,
+            combat_clock,
+            clients,
+        );
+        return;
+    }
+    let username = match clients.get_mut(entity) {
+        Ok((username, _)) => username.0.clone(),
         Err(_) => {
             tracing::warn!(
-                "[bong][network] quick_slot_bind entity={entity:?} has no QuickSlotBindings"
+                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing client"
             );
             return;
         }
     };
-    // 把 item_id (template) 解析成实际持有的第一个 instance_id。
-    // None / "" → 清空。Plan §10.4 wire 是 ItemId（template id），server 自己
-    // 在 player inventory 里查匹配的 instance。
-    let persisted_item_id = item_id.as_deref().filter(|item_id| !item_id.is_empty());
-    let instance_id = match persisted_item_id {
+    let requested_template = item_id.as_deref().filter(|item_id| !item_id.is_empty());
+    let instance_id = match requested_template {
         None => None,
-        Some(template) => inventories
-            .get(entity)
-            .ok()
-            .and_then(|inv| inventory_instance_id_by_template(inv, template)),
+        Some(template) => {
+            let instance_id = inventories
+                .get(entity)
+                .ok()
+                .and_then(|inventory| inventory_instance_id_by_template(inventory, template));
+            let Some(instance_id) = instance_id else {
+                tracing::warn!(
+                    "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: item template `{template}` not in inventory"
+                );
+                send_quick_slot_bind_response(
+                    entity,
+                    request_id,
+                    false,
+                    bindings_q,
+                    inventories,
+                    item_registry,
+                    combat_clock,
+                    clients,
+                );
+                return;
+            };
+            if item_registry.get(template).is_none() {
+                tracing::warn!(
+                    "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: unknown item template `{template}`"
+                );
+                send_quick_slot_bind_response(
+                    entity,
+                    request_id,
+                    false,
+                    bindings_q,
+                    inventories,
+                    item_registry,
+                    combat_clock,
+                    clients,
+                );
+                return;
+            }
+            Some(instance_id)
+        }
     };
-    if !bindings.set(slot, instance_id) {
-        tracing::warn!(
-            "[bong][network] quick_slot_bind entity={entity:?} slot={slot} out of range"
-        );
-        return;
-    }
-    let persisted_item_id = persisted_item_id.map(str::to_string);
-    if let (Some(persistence), Ok((username, _))) = (persistence, clients.get(entity)) {
-        if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
-            prefs.quick_slots[slot as usize] = persisted_item_id.clone()
+    let mirror_block_to_skillbar = instance_id.is_some()
+        && requested_template
+            .and_then(|template| item_registry.get(template))
+            .is_some_and(|template| template.category == ItemCategory::Block);
+    let old_instance_id = match bindings_q.get_mut(entity) {
+        Ok(bindings) => bindings.get(slot),
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing QuickSlotBindings"
+            );
+            send_quick_slot_bind_response(
+                entity,
+                request_id,
+                false,
+                bindings_q,
+                inventories,
+                item_registry,
+                combat_clock,
+                clients,
+            );
+            return;
+        }
+    };
+    let current_skill_slot = match skillbar_bindings_q.get_mut(entity) {
+        Ok(bindings) => bindings.get(slot).cloned().unwrap_or_default(),
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing SkillBarBindings"
+            );
+            send_quick_slot_bind_response(
+                entity,
+                request_id,
+                false,
+                bindings_q,
+                inventories,
+                item_registry,
+                combat_clock,
+                clients,
+            );
+            return;
+        }
+    };
+    let clears_old_auto_mirror = old_instance_id.is_some_and(|old_instance_id| {
+        current_skill_slot
+            == SkillSlot::Item {
+                instance_id: old_instance_id,
+            }
+            && (!mirror_block_to_skillbar || instance_id != Some(old_instance_id))
+    });
+    let desired_skill_slot = if mirror_block_to_skillbar {
+        instance_id.map(|instance_id| SkillSlot::Item { instance_id })
+    } else if clears_old_auto_mirror {
+        Some(SkillSlot::Empty)
+    } else {
+        None
+    };
+    let persisted_item_id = requested_template.map(str::to_string);
+    if let Some(persistence) = persistence {
+        if let Err(error) = update_player_ui_prefs(persistence, username.as_str(), |prefs| {
+            prefs.quick_slots[slot as usize] = persisted_item_id.clone();
+            if mirror_block_to_skillbar {
+                prefs.skill_bar[slot as usize] = crate::player::state::SkillSlotPersist::Item {
+                    template_id: persisted_item_id.clone().unwrap_or_default(),
+                };
+            } else if clears_old_auto_mirror {
+                prefs.skill_bar[slot as usize] = crate::player::state::SkillSlotPersist::Empty;
+            }
         }) {
             tracing::warn!(
                 "[bong][network] failed to persist quick_slot_bind for `{}` slot={slot}: {error}",
-                username.0
+                username
             );
+            send_quick_slot_bind_response(
+                entity,
+                request_id,
+                false,
+                bindings_q,
+                inventories,
+                item_registry,
+                combat_clock,
+                clients,
+            );
+            return;
         }
     }
+    let mut bindings = bindings_q
+        .get_mut(entity)
+        .expect("quick-slot component was preflighted in the same system");
+    let _ = bindings.set(slot, instance_id);
+    if let Some(desired_skill_slot) = desired_skill_slot {
+        let mut skillbar = skillbar_bindings_q
+            .get_mut(entity)
+            .expect("skill-bar component was preflighted in the same system");
+        let _ = skillbar.set(slot, desired_skill_slot);
+    }
+    send_quick_slot_bind_response(
+        entity,
+        request_id.clone(),
+        true,
+        bindings_q,
+        inventories,
+        item_registry,
+        combat_clock,
+        clients,
+    );
     tracing::info!(
-        "[bong][network] quick_slot_bind entity={entity:?} slot={slot} item_id={:?} → instance={:?}",
+        "[bong][network] quick_slot_bind entity={entity:?} slot={slot} request_id={} item_id={:?} → instance={:?} mirror_skillbar={mirror_block_to_skillbar} cleared_old_mirror={clears_old_auto_mirror}",
+        request_id,
         item_id,
         instance_id
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_quick_slot_bind_response(
+    entity: valence::prelude::Entity,
+    request_id: String,
+    accepted: bool,
+    bindings_q: &mut Query<&mut QuickSlotBindings>,
+    inventories: &Query<&mut PlayerInventory>,
+    item_registry: &ItemRegistry,
+    combat_clock: &CombatClock,
+    clients: &mut Query<(&Username, &mut Client)>,
+) {
+    let config = {
+        let bindings = bindings_q.get_mut(entity).ok();
+        let inventory = inventories.get(entity).ok();
+        build_quickslot_config(
+            bindings.as_deref(),
+            inventory,
+            item_registry,
+            combat_clock.tick,
+            current_unix_millis_for_quickslot(),
+            Some(request_id),
+            Some(accepted),
+        )
+    };
+    if let Ok((username, mut client)) = clients.get_mut(entity) {
+        let username = username.0.clone();
+        send_quickslot_config_to_client(&mut client, config, entity, username.as_str());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

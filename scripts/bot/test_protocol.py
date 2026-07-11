@@ -29,6 +29,9 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
+from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
+    _selection_strategy,
+)
 from bot.run_scenarios import (  # noqa: E402
     ScenarioEnv,
     check_server_reachable,
@@ -195,6 +198,29 @@ class InventoryHelperTest(unittest.TestCase):
 
         self.assertEqual(snapshot["revision"], 3)
         self.assertEqual(snapshot["marker"], "command_final")
+
+
+class NovicePoiScenarioParsingTest(unittest.TestCase):
+    def test_selection_strategy_requires_exact_token_not_known_prefix(self):
+        relaxed = "relaxed_radius_2000"
+        qi_margin = "relaxed_radius_2000_qi_margin_0_1"
+
+        self.assertEqual(
+            _selection_strategy(f"[dev] novice_poi mutant_nest pos=1,2,3 selection={relaxed}"),
+            relaxed,
+        )
+        self.assertEqual(
+            _selection_strategy(
+                f"[dev] novice_poi spirit_herb_valley pos=1,2,3 selection={qi_margin}"
+            ),
+            qi_margin,
+        )
+        self.assertNotEqual(_selection_strategy(f"selection={qi_margin}"), relaxed)
+        self.assertNotEqual(_selection_strategy(f"selection={relaxed}"), qi_margin)
+
+    def test_selection_strategy_rejects_missing_or_empty_value(self):
+        self.assertIsNone(_selection_strategy("[dev] novice_poi mutant_nest pos=1,2,3"))
+        self.assertIsNone(_selection_strategy("[dev] novice_poi mutant_nest selection="))
 
 
 class _FakeEvent:
@@ -452,6 +478,7 @@ class RunnerLogicTest(unittest.TestCase):
         names = set(discover_scenarios())
         expected = {
             "cmd_dev_give_feedback",
+            "cultivation_realm_qi",
             "network_client_request_tolerance",
             "network_session_tolerance",
             "terrain_join_chunk_delivery",

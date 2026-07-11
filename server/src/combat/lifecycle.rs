@@ -2282,7 +2282,7 @@ mod tests {
                 health_current: 2.0,
                 health_max: 30.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.3,
                     bleeding_per_sec: 3.0,
@@ -2319,7 +2319,7 @@ mod tests {
                 health_current: 12.0,
                 health_max: 30.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.3,
                     bleeding_per_sec: 3.0,
@@ -2356,7 +2356,7 @@ mod tests {
                 health_current: 12.0,
                 health_max: 30.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.3,
                     bleeding_per_sec: 3.0,
@@ -2477,7 +2477,7 @@ mod tests {
                 health_current: 12.0,
                 health_max: 30.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.3,
                     bleeding_per_sec: 0.1,
@@ -4566,7 +4566,7 @@ mod tests {
                     health_current: 0.0,
                     health_max: 30.0,
                     entries: vec![Wound {
-                        location: BodyPart::Chest,
+                        location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                         kind: WoundKind::Cut,
                         severity: 0.9,
                         bleeding_per_sec: 2.0,

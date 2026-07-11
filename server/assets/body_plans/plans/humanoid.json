@@ -1,0 +1,103 @@
+{
+  "id": "humanoid",
+  "display_name": "人形",
+  "is_humanoid": true,
+  "parts": [
+    {
+      "id": "head",
+      "damage_mul": 2.0,
+      "contam_mul": 1.5,
+      "bleed_mul": 1.5,
+      "consequence": { "kind": "sensory" }
+    },
+    {
+      "id": "chest",
+      "damage_mul": 1.0,
+      "contam_mul": 1.0,
+      "bleed_mul": 1.0,
+      "consequence": { "kind": "core" }
+    },
+    {
+      "id": "back",
+      "damage_mul": 0.9,
+      "contam_mul": 1.0,
+      "bleed_mul": 1.0,
+      "consequence": { "kind": "core" }
+    },
+    {
+      "id": "abdomen",
+      "damage_mul": 0.9,
+      "contam_mul": 1.2,
+      "bleed_mul": 1.3,
+      "consequence": { "kind": "core" }
+    },
+    {
+      "id": "arm_l",
+      "damage_mul": 0.7,
+      "contam_mul": 0.8,
+      "bleed_mul": 0.8,
+      "consequence": { "kind": "manipulator", "main_hand": false }
+    },
+    {
+      "id": "arm_r",
+      "damage_mul": 0.7,
+      "contam_mul": 0.8,
+      "bleed_mul": 0.8,
+      "consequence": { "kind": "manipulator", "main_hand": true }
+    },
+    {
+      "id": "leg_l",
+      "damage_mul": 0.6,
+      "contam_mul": 0.7,
+      "bleed_mul": 1.0,
+      "consequence": { "kind": "locomotion" }
+    },
+    {
+      "id": "leg_r",
+      "damage_mul": 0.6,
+      "contam_mul": 0.7,
+      "bleed_mul": 1.0,
+      "consequence": { "kind": "locomotion" }
+    }
+  ],
+  "hit_geometry": {
+    "mode": "height_bands",
+    "aabb": { "half_width": 0.3, "height": 1.8 },
+    "bands": [
+      {
+        "min_rel_y": 0.88,
+        "assignment": { "kind": "single", "part": "head" }
+      },
+      {
+        "min_rel_y": 0.55,
+        "assignment": {
+          "kind": "lateral_split_with_center",
+          "left": "arm_l",
+          "right": "arm_r",
+          "center": "chest"
+        }
+      },
+      {
+        "min_rel_y": 0.53,
+        "assignment": { "kind": "single", "part": "abdomen" }
+      },
+      {
+        "min_rel_y": -1.0,
+        "assignment": {
+          "kind": "lateral_split",
+          "left": "leg_l",
+          "right": "leg_r"
+        }
+      }
+    ],
+    "lateral_threshold": 0.19
+  },
+  "equip_slots": ["head", "chest", "legs", "feet"],
+  "mutation_slot_mapping": {
+    "Head": "head",
+    "Forearm": "arm_r",
+    "Back": "back",
+    "Torso": "chest",
+    "Lower": "abdomen"
+  }
+}

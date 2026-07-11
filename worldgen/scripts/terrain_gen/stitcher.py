@@ -219,6 +219,8 @@ FOLD_PATCH_BLEND_MODES: dict[str, str] = {
     "cavern_floor_y": "minimum",          # coordinate sentinel 9999 preserved
 }
 
+STRUCTURAL_OWNER_WEIGHT_THRESHOLD = 0.5
+
 
 def blend_spans(
     base_spans: tuple[tuple[int, int], ...],
@@ -247,13 +249,21 @@ def blend_spans(
     if not base_spans:
         # No wilderness ground here — only adopt the overlay once we are mostly
         # inside the zone, else keep the void.
-        return overlay_spans if weight >= 0.5 else ()
+        return (
+            overlay_spans
+            if weight >= STRUCTURAL_OWNER_WEIGHT_THRESHOLD
+            else ()
+        )
 
     # The column's vertical STRUCTURE (caves below / isles above) belongs to the
     # dominant side — crossing the 0.5 dither line hands the structure to the
     # zone overlay.  Only the surface ceiling lerps continuously so the ground
     # height transitions smoothly across the boundary instead of stepping.
-    structural = overlay_spans if weight >= 0.5 else base_spans
+    structural = (
+        overlay_spans
+        if weight >= STRUCTURAL_OWNER_WEIGHT_THRESHOLD
+        else base_spans
+    )
     base_ceiling = base_spans[0][1]
     ov_ceiling = overlay_spans[0][1]
     blended_ceiling = round(base_ceiling + (ov_ceiling - base_ceiling) * weight)
@@ -402,6 +412,29 @@ def _blend_tile_layers(
 
     if zone.name not in base_tile.contributing_zones:
         base_tile.contributing_zones.append(zone.name)
+    structural_owner = weight >= STRUCTURAL_OWNER_WEIGHT_THRESHOLD
+    if np.any(structural_owner):
+        if base_tile.carver_owner_index.size != weight.size:
+            raise ValueError(
+                "carver_owner_index size does not match the tile area: "
+                f"{base_tile.carver_owner_index.size} != {weight.size}"
+            )
+        if not np.issubdtype(base_tile.carver_owner_index.dtype, np.integer):
+            raise TypeError(
+                "carver_owner_index must use an integer dtype, got "
+                f"{base_tile.carver_owner_index.dtype}"
+            )
+        if zone.name not in base_tile.carver_owner_zones:
+            next_owner_index = len(base_tile.carver_owner_zones) + 1
+            if next_owner_index > np.iinfo(base_tile.carver_owner_index.dtype).max:
+                raise ValueError(
+                    "carver owner palette exceeds carver_owner_index capacity: "
+                    f"index={next_owner_index}, "
+                    f"dtype={base_tile.carver_owner_index.dtype}"
+                )
+            base_tile.carver_owner_zones.append(zone.name)
+        owner_index = base_tile.carver_owner_zones.index(zone.name) + 1
+        base_tile.carver_owner_index[structural_owner] = owner_index
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +718,7 @@ def _resolve_layout_target_height(zone: BlueprintZone) -> float:
 def synthesize_fields(
     plan: TerrainGenerationPlan,
     zone_filter: set[str] | None = None,
+    tile_filter: set[str] | None = None,
 ) -> GeneratedFieldSet:
     """Synthesize the blended field set for every active tile.
 
@@ -697,13 +731,18 @@ def synthesize_fields(
     only narrows *which tiles* get touched, never *which zones* contribute to a
     touched tile.
 
+    ``tile_filter`` independently restricts synthesis to exact plan tile IDs.
+    When both filters are supplied their intersection is synthesized.  This is
+    used by global metadata selectors that need a bounded spatial window rather
+    than every tile belonging to a named zone.
+
     A ``zone_filter`` naming a zone that does not exist in the blueprint is a
     caller error (typo on ``--zone-filter`` / a stale console request), not a
     silent no-op: it would otherwise select *zero* tiles and export an empty
     world that looks successful.  We fail fast with the unknown name(s) and the
     available zone names so the mistake is obvious.
     """
-    if zone_filter:
+    if zone_filter is not None:
         known_zones = {zone.name for zone in plan.blueprint_zones}
         unknown = sorted(zone_filter - known_zones)
         if unknown:
@@ -712,6 +751,19 @@ def synthesize_fields(
                 f"zone_filter names unknown zone(s) {unknown}; the blueprint "
                 f"defines no such zone, so they would select no tiles and "
                 f"silently export an empty world. Available zones: {available}"
+            )
+    if tile_filter is not None:
+        known_tile_ids = {tile.tile_id for tile in plan.tiles}
+        unknown_tile_ids = sorted(tile_filter - known_tile_ids)
+        if unknown_tile_ids:
+            preview = ", ".join(unknown_tile_ids[:8])
+            suffix = (
+                ""
+                if len(unknown_tile_ids) <= 8
+                else f" (+{len(unknown_tile_ids) - 8} more)"
+            )
+            raise ValueError(
+                f"tile_filter names unknown plan tile(s): {preview}{suffix}"
             )
     palette = SurfacePalette()
     palette.extend(("stone", "coarse_dirt", "gravel"))
@@ -731,6 +783,8 @@ def synthesize_fields(
         # A tile is synthesized when it intersects *any* zone.  With a
         # zone_filter, restrict to tiles intersecting one of the named zones —
         # but blending below still walks all blueprint_zones for that tile.
+        if tile_filter is not None and tile.tile_id not in tile_filter:
+            return False
         for zone in plan.blueprint_zones:
             if not _zone_intersects_tile(zone, tile):
                 continue

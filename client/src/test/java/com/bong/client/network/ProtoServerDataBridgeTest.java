@@ -1110,12 +1110,16 @@ class ProtoServerDataBridgeTest {
         for (int i = 0; i < 9; i++) {
             qsc.addCooldownUntilMs(0);
         }
+        qsc.setAckRequestId("bind-1");
+        qsc.setBindAccepted(true);
 
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setQuickSlotConfig(qsc).build();
 
         JsonObject json = bridgeAndParse(envelope);
         assertEquals("quickslot_config", json.get("type").getAsString());
+        assertEquals("bind-1", json.get("ack_request_id").getAsString());
+        assertTrue(json.get("bind_accepted").getAsBoolean());
 
         JsonArray slots = json.getAsJsonArray("slots");
         assertEquals(9, slots.size(), "should have 9 slots");

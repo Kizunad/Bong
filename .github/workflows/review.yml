@@ -6,7 +6,7 @@ name: Review
 # - workflow_dispatch 只作人工兜底。
 #
 # 引擎：.github/scripts/review.mjs 自包含编排 4 个 Codex reviewer。
-# 每个 reviewer 都使用 gpt-5.5 + high reasoning，经自定义 OpenAI-compatible Responses 端点。
+# 每个 reviewer 都使用 gpt-5.6-sol + high reasoning，经 OpenAI-compatible Responses 端点。
 # 4 人首轮独立审查，随后读取同伴意见复投；只有 3/1 或 4/0 APPROVE 才算通过，2/2 视为未通过。
 on:
   pull_request:
@@ -61,7 +61,7 @@ jobs:
 
       - name: 安装 Codex CLI
         run: |
-          npm install -g @openai/codex@0.142.5
+          npm install -g @openai/codex@0.143.0
           codex --version
 
       - name: 配置 Codex hlool provider
@@ -83,35 +83,28 @@ jobs:
           mkdir -p ~/.codex
           cat > ~/.codex/config.toml <<EOF
           model_provider = "hlool"
-          model = "gpt-5.5"
+          model = "gpt-5.6-sol"
           model_reasoning_effort = "high"
           disable_response_storage = true
 
           [model_providers.hlool]
           name = "hlool"
           wire_api = "responses"
-          requires_openai_auth = true
+          env_key = "REVIEW_CODEX_API_KEY"
           base_url = "${API_BASE}"
           EOF
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
 
-          Path.home().joinpath(".codex", "auth.json").write_text(
-              json.dumps({"OPENAI_API_KEY": os.environ["REVIEW_CODEX_API_KEY"]}),
-              encoding="utf-8",
-          )
-          PY
-          chmod 600 ~/.codex/auth.json
-
-      - name: Review (4× Codex gpt-5.5 high)
+      - name: Review (4× Codex gpt-5.6-sol high)
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
           REVIEW_CODEX_API_KEY: ${{ secrets.REVIEW_CODEX_API_KEY || secrets.HLOOL_API_KEY || secrets.OPENAI_API_KEY || secrets.PI_CLIPROXY_KEY }}
-          REVIEW_CODEX_MODEL: ${{ vars.REVIEW_CODEX_MODEL || 'gpt-5.5' }}
-          REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '120000' }}
+          REVIEW_CODEX_MODEL: ${{ vars.REVIEW_CODEX_MODEL || 'gpt-5.6-sol' }}
+          REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '40000' }}
+          REVIEW_MAX_PLAN: ${{ vars.REVIEW_MAX_PLAN || '20000' }}
           REVIEW_CODEX_TIMEOUT_MS: ${{ vars.REVIEW_CODEX_TIMEOUT_MS || '900000' }}
+          REVIEW_CODEX_CONCURRENCY: ${{ vars.REVIEW_CODEX_CONCURRENCY || '1' }}
+          REVIEW_CODEX_RETRIES: ${{ vars.REVIEW_CODEX_RETRIES || '3' }}
+          REVIEW_CODEX_RETRY_MS: ${{ vars.REVIEW_CODEX_RETRY_MS || '15000' }}
         run: node /tmp/rev/review.mjs

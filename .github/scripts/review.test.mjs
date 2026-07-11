@@ -4,12 +4,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPlanIntentGate,
+  codexFailureText,
   decideGate,
+  excerptLog,
   extractJSON,
+  findPlanName,
+  isRetryableCodexFailure,
   mergeFindings,
   normalizePlanStatus,
   normalizeResult,
   normalizeVote,
+  redactCodexPromptEcho,
 } from "./review.mjs";
 
 const reviewer = { id: "A", name: "Plan 原意核查" };
@@ -62,6 +67,17 @@ test("applyPlanIntentGate: 有关联 plan 时未 aligned 的票强制 REQUEST_CH
   assert.deepEqual(applyPlanIntentGate(rows, false), rows, "非 plan PR 不强制 plan gate");
 });
 
+test("findPlanName: 从标题/分支/body 或变更文件里识别 plan", () => {
+  assert.equal(findPlanName({ title: "实现 plan-foo-v1", files: [] }), "plan-foo-v1");
+  assert.equal(findPlanName({ headRefName: "fix/plan-bar-v2", files: [] }), "plan-bar-v2");
+  assert.equal(findPlanName({ body: "refs plan-baz-v3", files: [] }), "plan-baz-v3");
+  assert.equal(
+    findPlanName({ title: "修复制作退款", files: [{ path: "docs/plan-bughunt-craft-refund-full-inventory-loss-v1.md" }] }),
+    "plan-bughunt-craft-refund-full-inventory-loss-v1",
+  );
+  assert.equal(findPlanName({ title: "no plan", files: [{ path: "server/src/foo.rs" }] }), null);
+});
+
 test("normalizeResult: 合法 JSON 归一字段，非法输出按未通过处理", () => {
   const ok = normalizeResult(
     JSON.stringify({
@@ -105,4 +121,45 @@ test("mergeFindings: 同 file/line/title 合并 reviewer，取更高严重度和
   assert.equal(out[0].severity, "blocker");
   assert.deepEqual(out[0].reviewers, ["A", "B"]);
   assert.equal(out[0].evidence, "更长的证据");
+});
+
+test("redactCodexPromptEcho: 删除 Codex stderr 里的用户 prompt echo，保留真实错误", () => {
+  const stderr = [
+    "Reading additional input from stdin...",
+    "OpenAI Codex v0.143.0",
+    "--------",
+    "user",
+    "很长的 diff",
+    "+ dangerous prompt echo",
+    "ERROR: stream disconnected before completion: status code 401",
+  ].join("\n");
+
+  const redacted = redactCodexPromptEcho(stderr);
+  assert.match(redacted, /\[prompt echo omitted\]/);
+  assert.doesNotMatch(redacted, /dangerous prompt echo/);
+  assert.match(redacted, /status code 401/);
+});
+
+test("codexFailureText: 失败摘要保留 exit 与 stderr 头尾", () => {
+  const long = `HEAD-${"x".repeat(2000)}-TAIL`;
+  const text = codexFailureText({ code: 1, signal: null, stderr: long, stdout: "" });
+  assert.match(text, /exit=1/);
+  assert.match(text, /HEAD-/);
+  assert.match(text, /-TAIL/);
+  assert.match(text, /truncated/);
+});
+
+test("isRetryableCodexFailure: 仅重试限流、上游暂时失败和超时", () => {
+  assert.equal(isRetryableCodexFailure({ code: 1, stderr: "429 Too Many Requests" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 1, stderr: "channel is temporarily unavailable; upstream_400" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 1, stderr: "503 Service Unavailable" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 124, stderr: "" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 1, stderr: "invalid API key" }), false);
+});
+
+test("excerptLog: 短文本不改，长文本保留头尾", () => {
+  assert.equal(excerptLog("abc", 10), "abc");
+  const out = excerptLog(`A${"b".repeat(100)}Z`, 40);
+  assert.match(out, /^A/);
+  assert.match(out, /Z$/);
 });

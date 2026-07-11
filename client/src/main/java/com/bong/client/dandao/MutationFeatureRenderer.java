@@ -30,6 +30,16 @@ import java.util.List;
  * will be wired when server-side entity sync is complete (P3 full pipeline).
  * For now, the renderer validates that all mutation textures are loadable and
  * marks the player with a visual tint when mutations are active.
+ *
+ * <p><b>plan-race-system-v1 P0 review r3 (major x3 收口)</b> -- slot positioning now
+ * reads {@link MutationSlotLayoutRegistry} (backed by the shared
+ * {@code assets/bong/body_plans/humanoid_mutation_slots.json} contract, pinned
+ * against the server's {@code humanoid.json mutation_slot_mapping}) instead of the
+ * previous private hardcoded table ({@code MutationKind.defaultBodySlot}, which was
+ * unused dead weight) and the ordinal-based z-fight scale hack. An unknown mutation
+ * kind or a {@code body_slot} with no layout mapping is an explicit "do not render"
+ * decision ({@link #resolveRenderable}), logged at debug level -- never a silent
+ * guessed fallback position.
  */
 public final class MutationFeatureRenderer<T extends PlayerEntity>
     extends FeatureRenderer<T, PlayerEntityModel<T>> {
@@ -58,16 +68,42 @@ public final class MutationFeatureRenderer<T extends PlayerEntity>
             return;
         }
 
+        MutationSlotLayout layout = MutationSlotLayoutRegistry.get();
         for (MutationVisualState.MutationSlotEntry slot : slots) {
-            MutationKind kind = MutationKind.fromServerName(slot.kind());
-            if (kind == null) {
-                LOGGER.debug("Unknown mutation kind '{}', skipping render", slot.kind());
+            RenderableSlot renderable = resolveRenderable(slot, layout);
+            if (renderable == null) {
                 continue;
             }
-
-            Identifier textureId = kind.textureId();
-            renderMutationOverlay(matrices, vertexConsumers, light, textureId, kind, slot.level());
+            renderMutationOverlay(
+                matrices, vertexConsumers, light,
+                renderable.kind().textureId(), renderable, slot.level()
+            );
         }
+    }
+
+    /**
+     * Pure decision logic (no GL calls) -- resolves which mutation kind + layout
+     * anchor a wire slot entry should render with, or {@code null} if it should be
+     * explicitly skipped. Package-private + static so it is unit-testable without a
+     * real MC render context (see {@code MutationFeatureRendererTest}).
+     */
+    static RenderableSlot resolveRenderable(MutationVisualState.MutationSlotEntry slot, MutationSlotLayout layout) {
+        MutationKind kind = MutationKind.fromServerName(slot.kind());
+        if (kind == null) {
+            LOGGER.debug("Unknown mutation kind '{}', skipping render", slot.kind());
+            return null;
+        }
+        MutationSlotLayout.SlotEntry layoutEntry = layout.forBodySlot(slot.bodySlot());
+        if (layoutEntry == null) {
+            LOGGER.debug(
+                "No mutation slot layout mapping for body_slot '{}' (kind={}), skipping render "
+                    + "-- explicit fallback: unknown/unmapped slots render nothing rather than "
+                    + "guessing a position",
+                slot.bodySlot(), slot.kind()
+            );
+            return null;
+        }
+        return new RenderableSlot(kind, layoutEntry);
     }
 
     private void renderMutationOverlay(
@@ -75,7 +111,7 @@ public final class MutationFeatureRenderer<T extends PlayerEntity>
         VertexConsumerProvider vertexConsumers,
         int light,
         Identifier textureId,
-        MutationKind kind,
+        RenderableSlot renderable,
         int level
     ) {
         // Render the mutation texture as a translucent overlay on the player model.
@@ -84,11 +120,20 @@ public final class MutationFeatureRenderer<T extends PlayerEntity>
         RenderLayer renderLayer = RenderLayer.getEntityTranslucent(textureId);
         VertexConsumer buffer = vertexConsumers.getBuffer(renderLayer);
 
-        // Apply slight scale offset based on body slot to prevent z-fighting
+        MutationSlotLayout.Anchor anchor = renderable.layoutEntry().anchor();
         matrices.push();
-        float scaleOffset = 1.001f + 0.001f * kind.ordinal();
-        matrices.scale(scaleOffset, scaleOffset, scaleOffset);
+        matrices.translate(anchor.offsetX(), anchor.offsetY(), anchor.offsetZ());
+        // Base scale comes from the shared per-part anchor contract; a tiny
+        // per-mutation-kind epsilon is layered on top (not the sole source of
+        // offset any more) so two different mutation kinds that happen to share
+        // the same BodySlot (e.g. ToughSkin + BodyEnlarge both attach to Torso)
+        // still avoid z-fighting when both are simultaneously active.
+        float scale = anchor.scale() + 0.001f * renderable.kind().ordinal();
+        matrices.scale(scale, scale, scale);
         this.getContextModel().render(matrices, buffer, light, OverlayTexture.DEFAULT_UV, 1.0f, 1.0f, 1.0f, alpha);
         matrices.pop();
     }
+
+    /** A wire slot entry resolved to a renderable (kind, layout anchor) pair. */
+    record RenderableSlot(MutationKind kind, MutationSlotLayout.SlotEntry layoutEntry) {}
 }

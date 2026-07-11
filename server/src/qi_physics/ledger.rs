@@ -323,15 +323,16 @@ pub enum QiTransferReason {
     ///     范本先用 `set_balance` 把 zone 镜像同步到 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY`
     ///     真实值，转账后再把结果写回 `zone.spirit_qi`。
     ZoneInflow,
-    /// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮（伪灵脉）dissipate 时把注入借款如数
-    /// 归还独立待分配池。
+    /// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮（伪灵脉）生命周期归还：运行期
+    /// 衰减与最终 dissipate 都把动态 zone 减少的真实余额归还独立待分配池。
     ///
     /// 修复旧版本缺陷：`settle_pseudo_vein_qi` 曾经只收回 30%、70% 永久留在 zone（凭空创生，
     /// 因为注入侧的 `from` 是不存在真实余额的 `QiAccountId::tiandao()`）。P3 改为
     /// `inject_zone_for_pseudo_vein` 从 `pending_inflow_account` 真实借出（`ReleaseToZone`），
-    /// dissipate 时用本 reason 把**能还多少还多少**（`min(injected_qi, zone 当前绝对余额)`，
-    /// 不是固定比例）转回 `pending_inflow_account`——借款期间被玩家/NPC 正常吸收的部分已经
-    /// 通过既有 `regen_from_zone` 路径守恒记账，剩余未被吸收的部分才需要"还款"。
+    /// heartbeat 动态 zone 的生命周期衰减与 dissipate 使用本 reason 把减少量逐 tick 转回
+    /// `pending_inflow_account`；依附既有 zone 的 runtime 则在 dissipate 时把**能还多少还多少**
+    /// （`min(injected_qi, zone 当前绝对余额)`，不是固定比例）。借款期间被玩家/NPC 正常吸收的
+    /// 部分已经通过既有 `regen_from_zone` 路径守恒记账，剩余未被吸收的部分才需要"还款"。
     ///
     /// 守恒约束：
     ///   - `zone.spirit_qi` 减少量 == `pending_inflow_account` 增加量（换算系数

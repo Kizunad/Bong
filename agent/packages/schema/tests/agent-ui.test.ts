@@ -371,6 +371,37 @@ describe("sample roundtrip: server-data.agent-ui-close.sample.json", () => {
   });
 });
 
+describe("shared wire fixture: agent-ui-close.channel-wire.sample.json", () => {
+  it("锁定专属 channel 与三种 server 实际裸 JSON payload", () => {
+    const fixture = loadSample("agent-ui-close.channel-wire.sample.json") as {
+      channel: string;
+      cases: Array<{
+        name: string;
+        request_id: string;
+        reason?: string;
+        payload_utf8: string;
+      }>;
+    };
+
+    expect(fixture.channel).toBe("bong:agent_ui_close");
+    expect(fixture.cases.map((entry) => entry.name)).toEqual([
+      "replaced",
+      "session_expired",
+      "invalid_button_id",
+    ]);
+
+    for (const entry of fixture.cases) {
+      const payload = JSON.parse(entry.payload_utf8) as unknown;
+      expect(Value.Check(AgentUiClosePayloadV1, payload), entry.name).toBe(true);
+      expect(payload).toEqual({
+        request_id: entry.request_id,
+        ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+      });
+      expect(JSON.stringify(payload)).toBe(entry.payload_utf8);
+    }
+  });
+});
+
 describe("sample roundtrip: server-data.agent-ui-request.sample.json", () => {
   it("符合 AgentUiRequestPayloadV1 schema（server→client server_data）", () => {
     const sample = loadSample("server-data.agent-ui-request.sample.json");

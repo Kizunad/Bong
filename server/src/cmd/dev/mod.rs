@@ -4,6 +4,7 @@ pub mod baolongwang;
 pub mod block_picker;
 pub mod clearinv;
 pub mod coffin;
+pub mod fog;
 pub mod gallery;
 pub mod give;
 pub mod gm;
@@ -48,6 +49,7 @@ pub fn register(app: &mut App) {
     gallery::register(app);
     coffin::register(app);
     clearinv::register(app);
+    fog::register(app);
     give::register(app);
     heiwushi::register(app);
     spawn::register(app);

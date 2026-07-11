@@ -54,9 +54,29 @@ fn default_wound_kind() -> WoundKind {
     WoundKind::Blunt
 }
 
+/// plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— `location` 从 legacy 8 段
+/// `BodyPart` unit enum 迁移为通用 `body_plan::BodyPartId`（string），伤口不再假设
+/// 人形躯体。命中几何（`combat::raycast`）现在按目标实体的 `BodyPlan.hit_geometry`
+/// 分派（`HeightBands`/`PartBoxes`），产出的部位 id 直接就是本字段的值——非人形构型
+/// （如 P5 whale 的 `tail_fin`）不再需要"能反向映射回 legacy enum"这个前提才能受伤。
+///
+/// **迁移范围**：仅本字段与直接读取它的伤残后果消费点（`combat::arm_wound` /
+/// `movement::leg_wound` / 腿伤减速 / 头伤眩晕 / 臂伤脱手，均已改为按目标实体解析出
+/// 的 `BodyPlan.parts[].consequence` 分派）。仍以 legacy `BodyPart` 工作的人形专属
+/// 子系统（`CombatEvent.body_part` wire / `DerivedAttrs.defense_profile` / 护甲
+/// `body_coverage` / `DeadMeridianArmor.immune_regions` / `dugu::body_part_to_meridian`
+/// / 状态效果 `BodyPartResist`/`BodyPartWeaken` / dandao 变异伤害倍率）本轮**不**跟进
+/// 迁移（P1 经脉/wire 批次范围）——消费这些系统时在各自调用点显式转换
+/// `body_plan::id_to_legacy_body_part`，非人形部位 id 转换失败时的行为逐点注释说明，
+/// 不做静默 filter_map。
+///
+/// **不影响持久化 / wire**：`Wound`/`Wounds` 是纯战斗运行时 ECS 组件，从不写入 sqlite
+/// （`Wounds::default()` 在重连/重生时重置）；`wounds_snapshot` wire 的 `part` 字段
+/// 本就是 `String`（`network::wounds_snapshot_emit::body_part_wire` 只是把 legacy 8 段
+/// 映射到更细的 16 段字符串——非人形 id 现在原样透传，见该函数注释）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Wound {
-    pub location: BodyPart,
+    pub location: crate::body_plan::BodyPartId,
     #[serde(default = "default_wound_kind")]
     pub kind: WoundKind,
     pub severity: f32,

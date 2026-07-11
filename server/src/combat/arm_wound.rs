@@ -50,6 +50,29 @@
 //! （决议表数值已锁定、可随时被下游系统读取），暂不改动上述宿主文件，避免单个 P1
 //! 阶段同时牵动过多不相关模块导致测试面失焦。
 //!
+//! ## plan-race-system-v1 P0b —— 主/副手臂身份判定改为 PartConsequence 分发
+//!
+//! `MAIN_ARM`/`OFF_ARM` 两个 `pub const BodyPart` 因外部既有调用点
+//! （`combat/needle.rs`、`combat/anqi_v2.rs`、`combat/resolve.rs` 均以编译期字面量
+//! 使用）而保留——Rust `const` 无法承载"运行时查表得到的 BodyPart"，且改这两处的类型
+//! 会牵动本 work item 声明范围外的文件。真正泛化的是 [`combined_factor`] 的**内部
+//! 分发逻辑**：不再假设"`ArmL`/`ArmR` 这两个 enum 变体就是双臂"，而是查询
+//! **调用方按目标实体解析出的** `&BodyPlan` 的 `PartConsequence::Manipulator{main_hand}`
+//! 标签（`assets/body_plans/plans/humanoid.json`）——`main_off_arm_consts_match_humanoid_plan_manipulator_consequence`
+//! pin 测试锁死 `MAIN_ARM`/`OFF_ARM` 与该数据表一致，数值行为 bit-for-bit 不变。
+//!
+//! ## plan-race-system-v1 P0 review 修复 —— `combined_factor` 不再固定读 humanoid 单例
+//!
+//! [`combined_factor`] / [`combined_factor_from_optional`] 现在接受一个 `plan: &BodyPlan`
+//! 参数，由**生产调用点**（`combat/resolve.rs` 攻方伤害倍率 / 防方格挡倍率、
+//! `combat/anqi_v2.rs::multi_shot_cone_degrees`、`combat/needle.rs::resolve_shoot_needle_intents`）
+//! 经 [`crate::body_plan::resolve_body_plan_for_target`] 按**目标实体**（施法者/受击者）
+//! 解析后传入——不再无条件绑死 [`crate::body_plan::humanoid_plan_static`]。资源缺失
+//! （大量既有单测未插入 `BodyPlanRegistry`/`RaceRegistry`）时 `resolve_body_plan_for_target`
+//! 优雅退化到 `humanoid_plan_static()`，humanoid 行为 bit-for-bit 不变；非人形实体
+//! （携带非 humanoid `BodyPlan` 的实体）现在会真的按自己的 `PartConsequence` 标签分发，
+//! 不再被静默按人形规则误判。
+//!
 //! ## Severed 行为级后果落地状态（决议 §8.1 #2 原文额外强调的两条）
 //!
 //! 决议对 Severed 分级除六维倍率外，还点名两条"行为级"后果——本节显式记录两条各自
@@ -80,6 +103,7 @@
 //!   network handler）加一个可选的"当前臂伤态"输入，命中"目标槽=weapon 类 && 对侧
 //!   OFF_ARM already Severed"时拒绝，返回新增的 `InventoryMoveRejectReason` 变体。
 
+use crate::body_plan::{BodyPartId, BodyPlan};
 use crate::combat::components::{BodyPart, Wound, Wounds};
 
 /// 与 `movement::leg_wound::LegWoundGrade` 同构的五级分级（决议 §8.1 #2）。
@@ -131,13 +155,17 @@ fn wound_grade(wound: &Wound) -> ArmWoundGrade {
     wound_severity_to_grade(wound.severity)
 }
 
-/// 给定 body part（`ArmL`/`ArmR`），取该侧所有伤口中最严重的分级。
-/// 镜像 `movement::leg_wound::worst_wound_grade` 签名与语义。
-pub fn worst_wound_grade(wounds: &Wounds, part: BodyPart) -> ArmWoundGrade {
+/// 给定部位 id，取该部位所有伤口中最严重的分级。镜像
+/// `movement::leg_wound::worst_wound_grade` 签名与语义。
+///
+/// plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 参数从 legacy `BodyPart` 迁移
+/// 为 `&BodyPartId`：`Wound.location` 本身已经是 `BodyPartId`，直接比较部位 id 不再需要
+/// 反压 legacy enum 才能过滤。
+pub fn worst_wound_grade(wounds: &Wounds, part_id: &BodyPartId) -> ArmWoundGrade {
     wounds
         .entries
         .iter()
-        .filter(|wound| wound.location == part)
+        .filter(|wound| &wound.location == part_id)
         .map(wound_grade)
         .max_by_key(|grade| grade_rank(*grade))
         .unwrap_or(ArmWoundGrade::Intact)
@@ -264,11 +292,35 @@ impl Default for ArmWoundFactors {
     }
 }
 
+/// plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 按
+/// `PartConsequence::Manipulator{main_hand}` 标签查询**调用方传入的** `&BodyPlan`
+/// （不再固定读 `humanoid_plan_static`），取该档全部部位中最重的伤势分级（humanoid plan
+/// 每档恰好一个部位——`arm_r`=`main_hand:true`/`arm_l`=`main_hand:false`——故本函数对
+/// humanoid plan 的结果与旧版直接 `worst_wound_grade(wounds, MAIN_ARM/OFF_ARM)`
+/// bit-for-bit 相同；泛化后天然支持非人形 plan 声明多个同档 Manipulator 部位，或把
+/// Manipulator 标签挂在完全不同的部位 id 上）。
+///
+/// 改用 `BodyPlan::parts_matching`（直接产出部位 id）取代
+/// `legacy::legacy_body_parts_matching`（产出 legacy `BodyPart`，会在遇到非人形部位 id
+/// 时静默跳过——`Wound.location` 已经是 `BodyPartId`，不再需要这层 legacy 反压）。
+fn manipulator_worst_grade(wounds: &Wounds, main_hand: bool, plan: &BodyPlan) -> ArmWoundGrade {
+    plan.parts_matching(move |consequence| {
+        matches!(consequence, crate::body_plan::PartConsequence::Manipulator { main_hand: mh } if *mh == main_hand)
+    })
+    .map(|part_id| worst_wound_grade(wounds, part_id))
+    .max_by_key(|grade| grade_rank(*grade))
+    .unwrap_or(ArmWoundGrade::Intact)
+}
+
 /// 双臂皆伤取各维度最重值不叠乘（决议 §8.1 #2）：主手臂驱动攻击/冷却/散布/蓄力，
 /// 副手臂驱动格挡，cast_ticks 取两臂较重者——六个维度各自独立读取，互不相乘。
-pub fn combined_factor(wounds: &Wounds) -> ArmWoundFactors {
-    let main_grade = worst_wound_grade(wounds, MAIN_ARM);
-    let off_grade = worst_wound_grade(wounds, OFF_ARM);
+///
+/// `plan` 必须是**目标实体**经 [`crate::body_plan::resolve_body_plan_for_target`]
+/// 解析出的 `BodyPlanPurpose::Intrinsic` 结果——生产调用点不得再传入固定的
+/// `humanoid_plan_static()`（见模块顶部"P0 review 修复"文档）。
+pub fn combined_factor(wounds: &Wounds, plan: &BodyPlan) -> ArmWoundFactors {
+    let main_grade = manipulator_worst_grade(wounds, true, plan);
+    let off_grade = manipulator_worst_grade(wounds, false, plan);
     let cast_grade = worst_of_grades(main_grade, off_grade);
 
     ArmWoundFactors {
@@ -285,18 +337,73 @@ pub fn combined_factor(wounds: &Wounds) -> ArmWoundFactors {
     }
 }
 
-pub fn combined_factor_from_optional(wounds: Option<&Wounds>) -> ArmWoundFactors {
-    wounds.map(combined_factor).unwrap_or_default()
+pub fn combined_factor_from_optional(wounds: Option<&Wounds>, plan: &BodyPlan) -> ArmWoundFactors {
+    wounds
+        .map(|wounds| combined_factor(wounds, plan))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::body_plan::{BodyPartDef, PartConsequence};
     use crate::combat::components::WoundKind;
+
+    // ── plan-race-system-v1 P0b：MAIN_ARM/OFF_ARM 编译期字面量必须与 humanoid.json 的
+    // PartConsequence 数据一致——防止未来有人只改 JSON 忘了 JSON 与硬编码 const 已经脱节 ──
+
+    #[test]
+    fn main_off_arm_consts_match_humanoid_plan_manipulator_consequence() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        let main_id = crate::body_plan::legacy_body_part_to_id(MAIN_ARM);
+        let off_id = crate::body_plan::legacy_body_part_to_id(OFF_ARM);
+        let main_def = plan
+            .parts
+            .iter()
+            .find(|def| def.id == main_id)
+            .expect("humanoid.json must declare MAIN_ARM's part id");
+        let off_def = plan
+            .parts
+            .iter()
+            .find(|def| def.id == off_id)
+            .expect("humanoid.json must declare OFF_ARM's part id");
+        assert_eq!(
+            main_def.consequence,
+            PartConsequence::Manipulator { main_hand: true },
+            "MAIN_ARM const ({MAIN_ARM:?}) must be tagged Manipulator{{main_hand:true}} in humanoid.json"
+        );
+        assert_eq!(
+            off_def.consequence,
+            PartConsequence::Manipulator { main_hand: false },
+            "OFF_ARM const ({OFF_ARM:?}) must be tagged Manipulator{{main_hand:false}} in humanoid.json"
+        );
+    }
+
+    #[test]
+    fn manipulator_worst_grade_ignores_non_manipulator_wounds() {
+        // Chest/Leg 伤势不应被 main_hand 分发误纳入——即使严重度拉满。
+        let wounds = Wounds {
+            entries: vec![
+                wound(BodyPart::Chest, 99.0),
+                wound(BodyPart::LegL, 99.0),
+                wound(BodyPart::LegR, 99.0),
+            ],
+            ..Default::default()
+        };
+        let plan = crate::body_plan::humanoid_plan_static();
+        assert_eq!(
+            manipulator_worst_grade(&wounds, true, plan),
+            ArmWoundGrade::Intact
+        );
+        assert_eq!(
+            manipulator_worst_grade(&wounds, false, plan),
+            ArmWoundGrade::Intact
+        );
+    }
 
     fn wound(location: BodyPart, severity: f32) -> Wound {
         Wound {
-            location,
+            location: crate::body_plan::legacy_body_part_to_id(location),
             kind: WoundKind::Blunt,
             severity,
             bleeding_per_sec: 0.0,
@@ -430,11 +537,17 @@ mod tests {
         };
 
         assert_eq!(
-            worst_wound_grade(&wounds, BodyPart::ArmR),
+            worst_wound_grade(
+                &wounds,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR)
+            ),
             ArmWoundGrade::Fracture
         );
         assert_eq!(
-            worst_wound_grade(&wounds, BodyPart::ArmL),
+            worst_wound_grade(
+                &wounds,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL)
+            ),
             ArmWoundGrade::Severed
         );
     }
@@ -447,11 +560,17 @@ mod tests {
         };
 
         assert_eq!(
-            worst_wound_grade(&wounds, BodyPart::ArmL),
+            worst_wound_grade(
+                &wounds,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL)
+            ),
             ArmWoundGrade::Intact
         );
         assert_eq!(
-            worst_wound_grade(&wounds, BodyPart::ArmR),
+            worst_wound_grade(
+                &wounds,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR)
+            ),
             ArmWoundGrade::Intact
         );
     }
@@ -460,14 +579,14 @@ mod tests {
 
     #[test]
     fn combined_factor_defaults_to_neutral_when_wounds_empty() {
-        let factors = combined_factor(&Wounds::default());
+        let factors = combined_factor(&Wounds::default(), crate::body_plan::humanoid_plan_static());
         assert_eq!(factors, ArmWoundFactors::default());
     }
 
     #[test]
     fn combined_factor_from_optional_none_is_neutral() {
         assert_eq!(
-            combined_factor_from_optional(None),
+            combined_factor_from_optional(None, crate::body_plan::humanoid_plan_static()),
             ArmWoundFactors::default()
         );
     }
@@ -480,7 +599,7 @@ mod tests {
             entries: vec![wound(BodyPart::ArmR, 40.0)], // Fracture on MAIN_ARM
             ..Default::default()
         };
-        let factors = combined_factor(&wounds);
+        let factors = combined_factor(&wounds, crate::body_plan::humanoid_plan_static());
 
         assert_eq!(factors.main_arm_grade, ArmWoundGrade::Fracture);
         assert_eq!(factors.off_arm_grade, ArmWoundGrade::Intact);
@@ -503,7 +622,7 @@ mod tests {
             entries: vec![wound(BodyPart::ArmL, 40.0)], // Fracture on OFF_ARM
             ..Default::default()
         };
-        let factors = combined_factor(&wounds);
+        let factors = combined_factor(&wounds, crate::body_plan::humanoid_plan_static());
 
         assert_eq!(factors.block_multiplier, 0.60);
         assert_eq!(
@@ -527,7 +646,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let factors = combined_factor(&wounds);
+        let factors = combined_factor(&wounds, crate::body_plan::humanoid_plan_static());
 
         assert_eq!(
             factors.attack_damage_multiplier, 0.60,
@@ -548,7 +667,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            combined_factor(&off_severed).cast_ticks_multiplier,
+            combined_factor(&off_severed, crate::body_plan::humanoid_plan_static())
+                .cast_ticks_multiplier,
             1.25,
             "副手臂断裂也应触发 cast_ticks 惩罚（结印需要双手，不偏主副手）"
         );
@@ -558,14 +678,22 @@ mod tests {
             entries: vec![wound(BodyPart::ArmR, 75.0)], // Severed on MAIN_ARM
             ..Default::default()
         };
-        assert_eq!(combined_factor(&main_severed).cast_ticks_multiplier, 1.25);
+        assert_eq!(
+            combined_factor(&main_severed, crate::body_plan::humanoid_plan_static())
+                .cast_ticks_multiplier,
+            1.25
+        );
 
         // Case C：两臂都只是 Bruise → cast_ticks 不触发。
         let both_bruise = Wounds {
             entries: vec![wound(BodyPart::ArmR, 2.0), wound(BodyPart::ArmL, 2.0)],
             ..Default::default()
         };
-        assert_eq!(combined_factor(&both_bruise).cast_ticks_multiplier, 1.0);
+        assert_eq!(
+            combined_factor(&both_bruise, crate::body_plan::humanoid_plan_static())
+                .cast_ticks_multiplier,
+            1.0
+        );
     }
 
     #[test]
@@ -577,7 +705,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let factors = combined_factor(&wounds);
+        let factors = combined_factor(&wounds, crate::body_plan::humanoid_plan_static());
 
         assert!(factors.main_arm_severed);
         assert!(!factors.off_arm_severed);
@@ -598,7 +726,7 @@ mod tests {
                 entries: vec![wound(BodyPart::ArmR, severity)],
                 ..Default::default()
             };
-            let factors = combined_factor(&wounds);
+            let factors = combined_factor(&wounds, crate::body_plan::humanoid_plan_static());
             assert_eq!(
                 factors.main_arm_grade, expected_grade,
                 "severity={severity} 应映射到 {expected_grade:?}"
@@ -608,5 +736,107 @@ mod tests {
                 "severity={severity} ({expected_grade:?}) 的攻击倍率应为 {expected_damage_mul}"
             );
         }
+    }
+
+    // ── plan-race-system-v1 P0 review 修复：`combined_factor` 必须真的按调用方传入的
+    // `plan` 分发，而不是内部悄悄查 `humanoid_plan_static()`（BLOCKING-1）───────────
+
+    /// 合成一个"外星"身体构型：主手臂 `Manipulator{main_hand:true}` 标签挂在 legacy
+    /// `LegR` 上而不是 humanoid.json 的 `ArmR`，`ArmR` 本身在这个构型里退化成 `Core`
+    /// （不再是操作肢体）。用于证明 [`combined_factor`] 的结果完全来自**调用时传入的
+    /// `plan` 参数**，不是从 `humanoid_plan_static()` 硬读、也不是从 `BodyPart::ArmR`
+    /// 这个 legacy enum 变体本身推断出"这就是主手臂"。
+    fn alien_manipulator_plan() -> BodyPlan {
+        BodyPlan {
+            id: crate::body_plan::BodyPlanId::new("test_alien_manipulator"),
+            display_name: "测试用外星构型".to_string(),
+            is_humanoid: false,
+            parts: vec![
+                BodyPartDef {
+                    id: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                },
+                BodyPartDef {
+                    id: crate::body_plan::legacy_body_part_to_id(BodyPart::LegR),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Manipulator { main_hand: true },
+                },
+                BodyPartDef {
+                    id: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Manipulator { main_hand: false },
+                },
+            ],
+            hit_geometry: crate::body_plan::humanoid_plan_static()
+                .hit_geometry
+                .clone(),
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn combined_factor_reads_manipulator_tag_from_supplied_plan_not_humanoid_static() {
+        let alien = alien_manipulator_plan();
+
+        // ArmR Severed：humanoid.json 把 ArmR 标为主手臂，但这个外星构型把 ArmR 标成
+        // Core——伤害倍率必须保持中性 1.0，证明不是硬编码"ArmR 就是主手臂"。
+        let arm_r_severed = Wounds {
+            entries: vec![wound(BodyPart::ArmR, 75.0)],
+            ..Default::default()
+        };
+        let factors_arm_r = combined_factor(&arm_r_severed, &alien);
+        assert_eq!(
+            factors_arm_r.attack_damage_multiplier, 1.0,
+            "外星构型里 ArmR 是 Core 非 Manipulator，ArmR 断裂不应触发主手臂伤害惩罚"
+        );
+        assert!(
+            !factors_arm_r.main_arm_severed,
+            "ArmR 在外星构型里不是主手臂，不应被标记为 main_arm_severed"
+        );
+
+        // LegR Severed：外星构型把 LegR 标成主手臂 Manipulator{main_hand:true}——
+        // 伤害倍率必须真的按 Severed 分级打到 0.40，证明结果来自传入 plan 的数据，
+        // 而不是 humanoid_plan_static()（humanoid.json 里 LegR 是 Locomotion，与
+        // arm_wound 毫无关系）。
+        let leg_r_severed = Wounds {
+            entries: vec![wound(BodyPart::LegR, 75.0)],
+            ..Default::default()
+        };
+        let factors_leg_r = combined_factor(&leg_r_severed, &alien);
+        assert_eq!(
+            factors_leg_r.main_arm_grade,
+            ArmWoundGrade::Severed,
+            "外星构型的主手臂标签落在 LegR 上，LegR 断裂必须被判定为主手臂 Severed"
+        );
+        assert_eq!(
+            factors_leg_r.attack_damage_multiplier, 0.40,
+            "主手臂（本构型里是 LegR）Severed 应打到 0.40 倍攻击伤害"
+        );
+        assert!(
+            factors_leg_r.main_arm_severed,
+            "LegR 在外星构型里是主手臂，Severed 后必须标记 main_arm_severed"
+        );
+
+        // 同一份伤口喂给 humanoid_plan_static() 时行为必须完全不同（LegR 在 humanoid
+        // plan 里只挂 Locomotion，不影响任何臂伤维度）——同一个 Wounds 值、不同 plan
+        // 产出不同结果，锁死"结果随 plan 数据变化"这条核心断言，而非源自 humanoid
+        // 静态表或 BodyPart 枚举变体本身。
+        let factors_leg_r_humanoid =
+            combined_factor(&leg_r_severed, crate::body_plan::humanoid_plan_static());
+        assert_eq!(
+            factors_leg_r_humanoid.attack_damage_multiplier, 1.0,
+            "同一伤口在 humanoid plan 下 LegR 不是 Manipulator，不应触发臂伤惩罚——\
+             与外星构型的 0.40 形成对照，证明 combined_factor 结果随 plan 数据变化"
+        );
+        assert!(!factors_leg_r_humanoid.main_arm_severed);
     }
 }

@@ -465,6 +465,8 @@ pub enum ClientRequestV1 {
         #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         item_id: Option<String>,
+        #[serde(default)]
+        request_id: String,
     },
     /// plan-hotbar-modify-v1 §3.2：触发 1-9 技能栏槽位。
     SkillBarCast {
@@ -1311,7 +1313,7 @@ mod tests {
 
     #[test]
     fn quick_slot_bind_roundtrip_and_clear() {
-        let bind_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"kai_mai_pill"}"#;
+        let bind_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"kai_mai_pill","request_id":"bind-1"}"#;
         let req: ClientRequestV1 = serde_json::from_str(bind_json).unwrap();
         assert!(matches!(
             req,
@@ -1319,10 +1321,12 @@ mod tests {
                 v: 1,
                 slot: 1,
                 item_id: Some(ref item_id),
-            } if item_id == "kai_mai_pill"
+                ref request_id,
+            } if item_id == "kai_mai_pill" && request_id == "bind-1"
         ));
 
-        let clear_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":null}"#;
+        let clear_json =
+            r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":null,"request_id":"clear-1"}"#;
         let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
         assert!(matches!(
             req,
@@ -1330,7 +1334,8 @@ mod tests {
                 v: 1,
                 slot: 1,
                 item_id: None,
-            }
+                ref request_id,
+            } if request_id == "clear-1"
         ));
     }
 
@@ -1428,7 +1433,7 @@ mod tests {
     fn hotbar_slot_indices_reject_out_of_range_values() {
         for json in [
             r#"{"type":"use_quick_slot","v":1,"slot":9}"#,
-            r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null}"#,
+            r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null,"request_id":"bad-slot"}"#,
             r#"{"type":"skill_bar_cast","v":1,"slot":9}"#,
             r#"{"type":"skill_bar_bind","v":1,"slot":9,"binding":null}"#,
         ] {

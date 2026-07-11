@@ -455,7 +455,9 @@ pub fn cast_blood_burn(
         let severity = (outcome.hp_burned / wounds.health_max.max(1.0)).clamp(0.0, 1.0);
         wounds.health_current = (wounds.health_current - outcome.hp_burned).max(0.0);
         wounds.entries.push(Wound {
-            location: BodyPart::ArmL,
+            // humanoid-only boundary（P0 决议，本轮不迁移）：血炼是自伤真元转化，无攻击
+            // 几何，固定命中 ArmL 代表部位；玩家恒为人形。
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             kind: WoundKind::Cut,
             severity,
             bleeding_per_sec: 0.0,

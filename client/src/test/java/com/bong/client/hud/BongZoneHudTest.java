@@ -13,6 +13,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class BongZoneHudTest {
     private static final HudTextHelper.WidthMeasurer FIXED_WIDTH = text -> text == null ? 0 : text.length() * 6;
 
+    // plan-bughunt-hud-state-session-reset — 断线 reset 后 BongHudStateStore 会把
+    // zoneState 落回 ZoneState.empty()；这里锁住 renderer 收到空 zoneState 时必须
+    // 产出零渲染指令，否则即便 store 正确 reset，HUD 仍可能残留旧区域 overlay。
+    @Test
+    void emptyZoneStateProducesNoCommands() {
+        List<HudRenderCommand> commands = BongZoneHud.buildCommands(
+            ZoneState.empty(), 1_000L, FIXED_WIDTH, 220, 10, 22, 320, 180);
+
+        assertTrue(commands.isEmpty(),
+            "reset 后的空 zoneState 必须产出零渲染指令，实际=" + commands.size() + " 条");
+    }
+
+    @Test
+    void nullZoneStateProducesNoCommands() {
+        List<HudRenderCommand> commands = BongZoneHud.buildCommands(
+            null, 1_000L, FIXED_WIDTH, 220, 10, 22, 320, 180);
+
+        assertTrue(commands.isEmpty(), "null zoneState 必须安全降级为空 commands，不能抛异常");
+    }
+
     @Test
     void buildCommandsIncludesCenteredFadeAndPersistentOverlay() {
         ZoneState zoneState = ZoneState.create("blood_valley", "Blood Valley", 0.42, 3, 1_000L);

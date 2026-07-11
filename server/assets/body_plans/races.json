@@ -1,0 +1,34 @@
+{
+  "races": [
+    {
+      "id": "human",
+      "display_name": "人族",
+      "body_plan_id": "humanoid",
+      "beast_kinds": []
+    },
+    {
+      "id": "beast_common",
+      "display_name": "凡兽通用",
+      "body_plan_id": "humanoid",
+      "beast_kinds": [
+        "rat",
+        "spider",
+        "green_spider",
+        "jungle_scorpion",
+        "cockade_snake",
+        "blue_spider",
+        "ice_scorpion",
+        "mandrake_snake",
+        "hybrid_beast",
+        "void_distorted",
+        "dark_tiger",
+        "living_pillar",
+        "heiwushi",
+        "poison_dragon",
+        "bone_dragon",
+        "whale"
+      ]
+    }
+  ],
+  "morph_pairs": []
+}

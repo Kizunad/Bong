@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Review v3 —— 4 个 Codex gpt-5.5 high reviewer 对同一 PR 做博弈式审核。
+// Review v3 —— 4 个 Codex gpt-5.6-sol high reviewer 对同一 PR 做博弈式审核。
 //
 // 流程：
 // 1. 拉取 PR metadata / diff / 关联 plan。
@@ -15,9 +15,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const PR = process.env.PR_NUMBER;
-const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.5";
-const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 120_000, 10_000);
+const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.6-sol";
+const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
+const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
+const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
+const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
+const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
 
@@ -176,6 +180,19 @@ export function applyPlanIntentGate(results, hasPlan) {
   });
 }
 
+export function findPlanName(meta) {
+  const haystack = `${meta.title || ""} ${meta.headRefName || ""} ${meta.body || ""}`;
+  const textMatch = haystack.match(/plan-[a-z0-9-]+-v\d+/i);
+  if (textMatch) return textMatch[0];
+
+  for (const file of meta.files || []) {
+    const path = String(file.path || "");
+    const pathMatch = path.match(/(?:^|\/)(plan-[a-z0-9-]+-v\d+)\.md$/i);
+    if (pathMatch) return pathMatch[1];
+  }
+  return null;
+}
+
 export function mergeFindings(results) {
   const byKey = new Map();
   for (const result of results) {
@@ -223,18 +240,19 @@ async function main() {
   const context = loadPrContext(PR);
   console.error(`Review v3: PR #${PR} · ${context.changedLines} 行/${context.changedFiles} 文件 · 4×${MODEL} high`);
 
-  const firstRound = await Promise.all(
-    REVIEWERS.map((reviewer) =>
-      runCodex(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
-    ),
+  const firstRound = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
+    runCodex(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
   );
 
   const debateContext = firstRound.map(compactResultForPrompt);
-  const finalRoundRaw = await Promise.all(
-    REVIEWERS.map((reviewer) =>
-      runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
-    ),
-  );
+  const finalRoundRaw = firstRound.every(isCodexExecutionFailure)
+    ? firstRound
+    : await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
+        runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
+      );
+  if (finalRoundRaw === firstRound) {
+    console.error("首轮 Codex reviewer 全部执行失败，跳过复投以保留原始失败诊断。");
+  }
   const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
 
   const gate = decideGate(finalRound);
@@ -283,14 +301,12 @@ function loadPrContext(pr) {
 }
 
 function findPlan(meta) {
-  const haystack = `${meta.title || ""} ${meta.headRefName || ""} ${meta.body || ""}`;
-  const match = haystack.match(/plan-[a-z0-9-]+-v\d+/i);
-  if (!match) return null;
-  const name = match[0];
+  const name = findPlanName(meta);
+  if (!name) return null;
   for (const dir of ["docs", "docs/finished_plans", "docs/plans-skeleton"]) {
     const path = `${dir}/${name}.md`;
     if (existsSync(path)) {
-      return { name, path, text: truncate(readFileSync(path, "utf8"), 40_000) };
+      return { name, path, text: truncate(readFileSync(path, "utf8"), MAX_PLAN) };
     }
   }
   return { name, path: null, text: "" };
@@ -349,7 +365,7 @@ ${GUIDELINES}
 ## 首轮意见
 ${JSON.stringify(peerResults, null, 2)}
 
-${contextBlock(context)}
+${contextBlock(context, { includeDiff: false })}
 
 只输出 JSON，不要 markdown，不要前言：
 {
@@ -376,12 +392,18 @@ ${contextBlock(context)}
 `.trim();
 }
 
-function contextBlock(context) {
+function contextBlock(context, { includeDiff = true } = {}) {
   const planBlock = context.plan
     ? context.plan.text
       ? `## 关联 Plan：${context.plan.name} (${context.plan.path})\n${context.plan.text}`
       : `## 关联 Plan：${context.plan.name}\n仓库内未找到 plan 文件，请按无法完整确认处理。`
     : "## 关联 Plan\n未检测到 plan 名称；plan 原意项标 not_plan。";
+  const diffBlock = includeDiff
+    ? `## Diff${context.diffTruncated ? `（已截断到 ${MAX_DIFF} 字符）` : ""}
+\`\`\`diff
+${context.diff}
+\`\`\``
+    : "## Diff\n复投阶段不重复粘贴完整 diff；请结合首轮意见、文件列表和只读工具核对真实仓库。";
 
   return `
 ## PR
@@ -395,10 +417,7 @@ ${context.fileList || "(无)"}
 
 ${planBlock}
 
-## Diff${context.diffTruncated ? `（已截断到 ${MAX_DIFF} 字符）` : ""}
-\`\`\`diff
-${context.diff}
-\`\`\`
+${diffBlock}
 `.trim();
 }
 
@@ -431,6 +450,7 @@ async function runCodex(prompt, label) {
     process.cwd(),
     "-s",
     "read-only",
+    "--ephemeral",
     "--output-last-message",
     outputFile,
     "-c",
@@ -440,30 +460,50 @@ async function runCodex(prompt, label) {
 
   console.error(`▶ codex ${label}`);
   try {
-    const result = await spawnCodex(args, prompt, CODEX_TIMEOUT_MS);
-    const text = existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout;
-    if (result.code !== 0 || !text.trim()) {
+    for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
+      rmSync(outputFile, { force: true });
+      const result = await spawnCodex(args, prompt, CODEX_TIMEOUT_MS);
+      const text = existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout;
+      if (text.trim()) {
+        if (result.code !== 0) {
+          console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
+        }
+        return text;
+      }
+
+      const failure = codexFailureText(result);
+      if (attempt < CODEX_RETRIES && isRetryableCodexFailure(result)) {
+        const waitMs = CODEX_RETRY_MS * attempt;
+        console.error(`  codex ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
+        await delay(waitMs);
+        continue;
+      }
+
+      console.error(`  codex ${label} failed: ${failure}`);
       return JSON.stringify({
         vote: "REQUEST_CHANGES",
         confidence: 0,
         plan_intent: { status: "unclear", reason: `Codex ${label} 执行失败`, missing: [] },
-        summary: `Codex ${label} 执行失败：${truncate(result.stderr || result.stdout, 1000)}`,
+        summary: `Codex ${label} 执行失败：${failure}`,
         findings: [
           {
             severity: "major",
             file: ".github/scripts/review.mjs",
             line: "0",
             title: `Codex reviewer ${label} 执行失败`,
-            evidence: truncate(result.stderr || result.stdout, 1000),
+            evidence: failure,
             recommendation: "检查 Codex CLI、模型端点和 API key 后重新触发 /review。",
           },
         ],
       });
     }
-    return text;
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function spawnCodex(args, stdin, timeoutMs) {
@@ -471,6 +511,7 @@ function spawnCodex(args, stdin, timeoutMs) {
     const env = {
       ...process.env,
       OPENAI_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
+      CODEX_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
     };
     const child = spawn("codex", args, { env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -493,6 +534,72 @@ function spawnCodex(args, stdin, timeoutMs) {
     });
     child.stdin.end(stdin);
   });
+}
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const idx = next++;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+export function codexFailureText(result) {
+  const stderr = excerptLog(redactCodexPromptEcho(result.stderr || ""), 2000);
+  const stdout = excerptLog(redactCodexPromptEcho(result.stdout || ""), 1200);
+  return [
+    `exit=${result.code}`,
+    result.signal ? `signal=${result.signal}` : "",
+    stderr ? `stderr: ${stderr}` : "",
+    stdout ? `stdout: ${stdout}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+export function isRetryableCodexFailure(result) {
+  if (result?.code === 124) return true;
+  const log = `${result?.stderr || ""}\n${result?.stdout || ""}`;
+  return /(429|503|too many requests|service unavailable|temporarily unavailable|upstream_(?:error|400)|stream disconnected|connection (?:reset|closed)|timed? out|timeout)/i.test(
+    log,
+  );
+}
+
+export function redactCodexPromptEcho(value) {
+  const text = String(value || "");
+  const marker = "\n--------\nuser\n";
+  const markerAt = text.indexOf(marker);
+  if (markerAt < 0) return text;
+
+  const promptStart = markerAt + marker.length;
+  const rest = text.slice(promptStart);
+  const diagnosticAt = rest.search(
+    /\n(?:\d{4}-\d{2}-\d{2}T[^\n]*\b(?:ERROR|WARN)\b|ERROR:|error:|warning:|Turn failed|stream disconnected|OpenAI API error|status code:)/,
+  );
+  if (diagnosticAt < 0) {
+    return `${text.slice(0, promptStart)}[prompt echo omitted]\n`;
+  }
+  return `${text.slice(0, promptStart)}[prompt echo omitted]\n${rest.slice(diagnosticAt + 1)}`;
+}
+
+export function excerptLog(value, limit) {
+  const text = String(value || "").trim();
+  if (text.length <= limit) return text;
+  const head = Math.floor(limit * 0.45);
+  const tail = Math.max(200, limit - head - 80);
+  return `${text.slice(0, head)}\n...[truncated ${text.length - head - tail} chars]...\n${text.slice(text.length - tail)}`;
+}
+
+function isCodexExecutionFailure(result) {
+  return (
+    result?.confidence === 0 &&
+    result?.findings?.some((finding) => finding.file === ".github/scripts/review.mjs" && /Codex reviewer .*执行失败/.test(finding.title))
+  );
 }
 
 function renderComment(context, firstRound, finalRound, gate) {
@@ -606,7 +713,7 @@ function truncate(value, limit) {
   return s.length <= limit ? s : `${s.slice(0, Math.max(0, limit - 20))}\n...[truncated]`;
 }
 
-function appendCap(current, chunk, limit = 20_000) {
+function appendCap(current, chunk, limit = 200_000) {
   const next = current + chunk.toString("utf8");
   return next.length > limit ? next.slice(next.length - limit) : next;
 }

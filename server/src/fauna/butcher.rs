@@ -158,7 +158,9 @@ pub fn apply_bare_hand_butcher_hazard(
     now_tick: u64,
 ) {
     wounds.entries.push(Wound {
-        location: BodyPart::ArmR,
+        // humanoid-only boundary（P0 决议，本轮不迁移）：徒手屠宰划伤没有攻击几何，固定
+        // 命中持械手（ArmR）代表部位；玩家恒为人形。
+        location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR),
         kind: WoundKind::Cut,
         severity: 0.35,
         bleeding_per_sec: 0.0,
