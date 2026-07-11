@@ -105,6 +105,9 @@ import {
 import { TribulationKindV1 } from "./tribulation.js";
 
 export const SERVER_DATA_MAX_PAYLOAD_BYTES = 32_768;
+const ANQI_HUD_ECHO_COUNT_MAX = 4_294_967_295;
+const ANQI_HUD_CONTAINER_MAX_LENGTH = SERVER_DATA_MAX_PAYLOAD_BYTES;
+const ANQI_HUD_TICK_MAX = Number.MAX_SAFE_INTEGER;
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -178,14 +181,14 @@ export type AnqiHudKindV1 = Static<typeof AnqiHudKindV1>;
 export const AnqiHudV1 = Type.Object(
   {
     kind: AnqiHudKindV1,
-    echo_count: Type.Integer({ minimum: 0, maximum: 4294967295 }),
+    echo_count: Type.Integer({ minimum: 0, maximum: ANQI_HUD_ECHO_COUNT_MAX }),
     aim_progress: Type.Number({ minimum: 0, maximum: 1 }),
     charge_progress: Type.Number({ minimum: 0, maximum: 1 }),
     abrasion_container: Type.String({
-      maxLength: SERVER_DATA_MAX_PAYLOAD_BYTES,
+      maxLength: ANQI_HUD_CONTAINER_MAX_LENGTH,
     }),
     abrasion_qi_payload: Type.Number({ minimum: 0 }),
-    tick: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+    tick: Type.Integer({ minimum: 0, maximum: ANQI_HUD_TICK_MAX }),
   },
   { additionalProperties: false },
 );
