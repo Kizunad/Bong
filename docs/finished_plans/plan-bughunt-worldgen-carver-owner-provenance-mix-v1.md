@@ -105,8 +105,10 @@ first_diff_world (3072, -3584) ((-64, 77),) -> ((59, 77), (-64, 32))
 - [x] ✅ 2026-07-11 `cd worldgen && python3 -m unittest discover -s tests -p 'test_spans_export.py' -v`
 - [x] ✅ 2026-07-11 `cd worldgen && python3 -m unittest discover -s tests -p 'test_span_blend.py' -v`
 - [x] ✅ 2026-07-11 `cd worldgen && python3 -m unittest discover -s tests -p 'test_v3_behavior_baseline.py' -v`
-- [x] ✅ 2026-07-11 `cd worldgen && python3 -m scripts.terrain_gen --backend raster --zone-filter blood_valley,zhanhun_plain`
-- [x] ✅ 2026-07-11 `cd worldgen && python3 -m scripts.terrain_gen.harness.raster_check generated/terrain-gen/rasters`
+- [x] ✅ 2026-07-11 `cd worldgen && python3 -m scripts.terrain_gen --backend raster --zone-filter spawn,blood_valley,zhanhun_plain --output-dir /tmp/pr1174-carver-raster-4e9443ee`（同步 main 后 `spawn` 覆盖完整 novice POI 选择窗口）
+- [x] ✅ 2026-07-11 `cd worldgen && python3 -m scripts.terrain_gen.harness.raster_check /tmp/pr1174-carver-raster-4e9443ee/rasters`
+- [x] ✅ 2026-07-11 `cd worldgen && uvx --from ruff==0.15.20 ruff check scripts/terrain_gen/fields.py scripts/terrain_gen/stitcher.py scripts/terrain_gen/bakers/raster_export.py tests/test_carver_owner_provenance.py`
+- [x] ✅ 2026-07-11 `cd worldgen && uvx --from ruff==0.15.20 ruff format --check tests/test_carver_owner_provenance.py`
 - [x] ✅ 2026-07-11 抽样验证 `tile_6_-7`：`blood_valley` 保留为 provenance，但不再成为 carver owner；chain 为空且 spans 差异列为 0。
 
 ## 对抗复核结论
@@ -130,15 +132,18 @@ first_diff_world (3072, -3584) ((-64, 77),) -> ((59, 77), (-64, 32))
 ### 验证与跨仓库核验
 
 - RED：新增回归在修复前出现 2 个 `AttributeError` 与 2 个行为失败，分别证明缺少独立 owner 字段、export 仍选择 provenance-only chain、无 owner 时仍回退 provenance 雕刻。
-- 修复 commits：`7be3664f` 锁定失败契约，`9c1e8c3a` 分离 owner/provenance，`bd7225d6` 补齐真实边界 tile 回归；同步 main 后 HEAD 为 `73c5c0324a7e4da5c86ba8eaa12a3701e11ecf9b`。
-- 自动测试：新回归 5 项、`test_spans_export.py` 14 项、`test_span_blend.py` 9 项、`test_stitcher_dispatch.py` 10 项、`test_v3_behavior_baseline.py` 12 项，共 50 项通过。
-- pipeline：`blood_valley,zhanhun_plain` raster 生成 36 tiles 成功；`raster_check` 退出码 0；生成目录已清理，worktree 保持干净。
+- 修复 commits：`7be3664f` 锁定失败契约，`9c1e8c3a` 分离 owner/provenance，`bd7225d6` 补齐真实边界 tile 回归，`80da3626` 锁定空 chain/零 spans 差异，`7edc4006` 补断言上下文，`4e9443ee` 以中文诊断和 ASCII 标点闭环 CodeRabbit/RUF001；`4618c56d` 仅为同步 `origin/main` 的普通 merge。
+- 聚焦测试：新回归 5 项、`test_spans_export.py` 17 项、`test_span_blend.py` 9 项、`test_stitcher_dispatch.py` 10 项、`test_v3_behavior_baseline.py` 12 项，共 53 项通过。
+- snapshot 相关验证：anvil export/region/spans/world-spans、span codec/fold/raster-check、layer registry 共 119 项通过；`scripts/preview/test_*.py` 31 项通过。
+- Ruff：4 个 PR Python 文件 `ruff check` 通过；本轮实际修改的 `test_carver_owner_provenance.py` 通过 `ruff format --check`。其余 3 个实现文件全文件 formatter 会重排 main 既有大量无关代码，未把该噪音混入返工。
+- pipeline：同步 main 后，旧 `blood_valley,zhanhun_plain` 过滤因缺完整 novice POI 选择窗口按新合同正确拒绝；加入覆盖 16 个必需 tile 的 `spawn` 后，生产 CLI raster 生成 52 tiles 成功，`raster_check` 退出码 0，manifest 中 `tile_6_-7` provenance 仍为 `['blood_valley', 'zhanhun_plain']`。
 - 跨仓库核验：变更仅落在 `worldgen/` 与 plan 文档；读取 `server/zones.worldview.example.json` 验证 `blood_valley → rift_valley`、`zhanhun_plain → ancient_battlefield` 的真实配置；未改 server/client/agent schema、依赖或 manifest 合同。
 - 第一轮 fresh validator：`gpt-5.6-sol-xhigh` 在精确 HEAD `73c5c0324a7e4da5c86ba8eaa12a3701e11ecf9b` 上确认真实 bug、最小正确修复、manifest 兼容、真实 witness 与提交 trailer，结论 `VERDICT: PASS`。
-- 第二轮最终 validator：在归档后 HEAD `a2c82ae363946a9ccbe9526aebefb5f0f7837ec0` 确认实现正确，但因真实 witness 未精确断言空 chain/0 spans 差异，以及 Finish Evidence 结构不完整，结论 `VERDICT: FAIL`；本次返工按 finding 补齐后重新验证。
+- 第二轮最终 validator：在归档后 HEAD `a2c82ae363946a9ccbe9526aebefb5f0f7837ec0` 确认实现正确，但因真实 witness 未精确断言空 chain/0 spans 差异，以及 Finish Evidence 结构不完整，结论 `VERDICT: FAIL`；前者由 `80da3626` 精确锁定，后者由 `23442aeb` 与本轮证据更新补齐。
+- CodeRabbit 返工：有效 inline finding 要求 `base.contributing_zones` 断言补中文失败诊断；`7edc4006` 补入诊断，`4e9443ee` 进一步显式写出期望、原因、实际值，并消除 3 处 RUF001 全角标点告警，比较逻辑未变。
 
 ### 归档顺序与遗留/后续
 
 - 归档 rename commit `2abeed58` 先于 Finish Evidence commit `a2c82ae3` 落下，这是执行顺序偏差；未改写历史，改以独立证据 commit 和本次返工 commit 诚实保留审计轨迹，最终 fresh validator 以最新 HEAD 为准。
-- 遗留：无已知代码、测试或跨栈阻塞；生成 raster 属私有验证产物，验证后已清理，不纳入版本控制。
-- 后续：PR 创建后以 `/review`、CodeRabbit 与 e2e 为合并 gate；任何 FAIL 都在当前分支最小返工并重新触发审核。
+- 遗留：无已知代码、测试或跨栈阻塞；验证 raster 写入 `/tmp/pr1174-carver-raster-4e9443ee`，不纳入版本控制。
+- 后续：PR #1174 的 worldgen diff 触发 snapshot；e2e workflow 的 path filter 不含 `worldgen/**`/`docs/**`，因此本 PR 不适用 e2e。最终以 snapshot、CodeRabbit、独立 validator 与 mergeable 状态为合并 gate；`/review` 若仅为 `hlool` 503 则按降级策略忽略，真实 finding 必须返工。
