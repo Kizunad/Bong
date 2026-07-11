@@ -44,7 +44,10 @@ pub struct ForgeOutcome {
 pub enum ForgeError {
     MeridianClosed,
     AtMaxTier,
-    NotEnoughQi { need: f64, have: f64 },
+    NotEnoughQi {
+        need: f64,
+        have: f64,
+    },
     LedgerUnavailable,
     /// plan-race-system-v1 P1 对抗审查 B1：wire 上的 channel id 不属于该实体的
     /// `MeridianSystem`（未知构型 / 伪造串 / 旧 PascalCase `MeridianId` 字面量如

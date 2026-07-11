@@ -844,9 +844,7 @@ pub(crate) fn cultivate_action_system(
 
                 if existing_target.is_none() {
                     if let Some(next_m) = pick_next_meridian_to_open(&meridians, topo) {
-                        commands
-                            .entity(*actor)
-                            .insert(MeridianTarget(next_m));
+                        commands.entity(*actor).insert(MeridianTarget(next_m));
                     }
                 }
                 let drift = cultivate_drift_target(position.get(), &mut roll);
@@ -866,9 +864,7 @@ pub(crate) fn cultivate_action_system(
                     .unwrap_or(true);
                 if need_retarget {
                     if let Some(next_m) = pick_next_meridian_to_open(&meridians, topo) {
-                        commands
-                            .entity(*actor)
-                            .insert(MeridianTarget(next_m));
+                        commands.entity(*actor).insert(MeridianTarget(next_m));
                     }
                 }
 

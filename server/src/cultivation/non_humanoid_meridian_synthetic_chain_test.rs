@@ -21,7 +21,9 @@ use crate::body_plan::types::{
     MeridianFamily, MeridianProfile, PartConsequence, RealmMeridianReq, StandingAabbSpec,
     TopologyEdge,
 };
-use crate::cultivation::breakthrough::{breakthrough_precondition_error_for_profile, BreakthroughError};
+use crate::cultivation::breakthrough::{
+    breakthrough_precondition_error_for_profile, BreakthroughError,
+};
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::meridian::severed::{
     meridian_severed_detection_tick, MeridianSeveredEvent, MeridianSeveredPermanent,
@@ -153,7 +155,9 @@ fn synthetic_whale_body_plan() -> BodyPlan {
             },
             bands: vec![HeightBand {
                 min_rel_y: -1.0,
-                assignment: HeightBandAssignment::Single { part: "body".into() },
+                assignment: HeightBandAssignment::Single {
+                    part: "body".into(),
+                },
             }],
             lateral_threshold: 0.5,
         },
@@ -169,7 +173,11 @@ fn synthetic_whale_body_plan() -> BodyPlan {
 fn for_profile_builds_non_humanoid_skeleton_with_correct_channel_split() {
     let profile = synthetic_whale_profile();
     let sys = MeridianSystem::for_profile(&profile);
-    assert_eq!(sys.regular.len(), 4, "4 条合成 fin channel 应落入 regular 桶");
+    assert_eq!(
+        sys.regular.len(),
+        4,
+        "4 条合成 fin channel 应落入 regular 桶"
+    );
     assert_eq!(
         sys.extraordinary.len(),
         2,
@@ -193,7 +201,10 @@ fn opening_channels_in_topology_order_succeeds_without_panicking() {
     sys.get_mut("fin_1").opened = true;
 
     // fin_2 邻接 fin_1（已开）——按拓扑合法打通。
-    assert!(topo.neighbors("fin_1").iter().any(|c| c.as_str() == "fin_2"));
+    assert!(topo
+        .neighbors("fin_1")
+        .iter()
+        .any(|c| c.as_str() == "fin_2"));
     sys.get_mut("fin_2").opened = true;
     sys.get_mut("fin_3").opened = true;
     sys.get_mut("fin_4").opened = true;
@@ -272,12 +283,13 @@ fn severed_detection_skips_non_humanoid_channel_safely_without_panicking() {
         let m = sys.get_mut("tail_core");
         m.opened = true;
         m.integrity = 0.0;
-        m.cracks.push(crate::cultivation::components::MeridianCrack {
-            severity: 1.0,
-            healing_progress: 0.0,
-            cause: crate::cultivation::components::CrackCause::Overload,
-            created_at: 3,
-        });
+        m.cracks
+            .push(crate::cultivation::components::MeridianCrack {
+                severity: 1.0,
+                healing_progress: 0.0,
+                cause: crate::cultivation::components::CrackCause::Overload,
+                created_at: 3,
+            });
     }
 
     let mut app = App::new();
@@ -314,8 +326,16 @@ fn npc_meridian_system_for_realm_uses_synthetic_profile_not_humanoid_default() {
     // Awaken 档：本 profile total=1（humanoid 曲线是 1，容易掩盖 bug）——用 Condense
     // 档（本 profile total=3，humanoid 曲线是 6）更能暴露"误用 humanoid 骨架/曲线"。
     let sys = npc_meridian_system_for_realm(Realm::Condense, &plan);
-    assert_eq!(sys.regular.len(), 4, "骨架必须来自本 profile（4 正经），不是 humanoid 12 正经");
-    assert_eq!(sys.extraordinary.len(), 2, "骨架必须来自本 profile（2 奇经），不是 humanoid 8 奇经");
+    assert_eq!(
+        sys.regular.len(),
+        4,
+        "骨架必须来自本 profile（4 正经），不是 humanoid 12 正经"
+    );
+    assert_eq!(
+        sys.extraordinary.len(),
+        2,
+        "骨架必须来自本 profile（2 奇经），不是 humanoid 8 奇经"
+    );
     assert_eq!(
         sys.opened_count(),
         3,

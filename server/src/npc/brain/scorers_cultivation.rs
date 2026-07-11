@@ -103,10 +103,7 @@ pub(crate) fn pick_next_meridian_to_open(
         .collect();
 
     if opened.is_empty() {
-        return system
-            .iter()
-            .find(|m| !m.opened)
-            .map(|m| m.id.clone());
+        return system.iter().find(|m| !m.opened).map(|m| m.id.clone());
     }
 
     for opened_id in &opened {

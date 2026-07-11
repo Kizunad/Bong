@@ -59,10 +59,10 @@ pub mod luck_pool;
 pub mod meridian;
 pub mod meridian_open;
 // plan-race-system-v1 P1 对抗审查 M2 —— 非人合成构型全链测试。
-#[cfg(test)]
-mod non_humanoid_meridian_synthetic_chain_test;
 pub mod neg_pressure;
 pub mod negative_zone;
+#[cfg(test)]
+mod non_humanoid_meridian_synthetic_chain_test;
 pub mod overload;
 pub mod perception;
 pub mod poison_trait;
