@@ -1,6 +1,14 @@
 # plan-bughunt-scroll-read-transition-esc-close-loss-v1
 
-> Skeleton-only BugHunt plan。只记录 client UI / screen transition / C2S close 丢失问题，不消费、不归档、不修改运行时代码。
+> **Active BugFix plan**。主题：残卷阅读屏在默认开屏转场期间被 `Esc` 取消时，视觉界面关闭但 `scroll_read_closed` 协议终态丢失，导致 client store 与 server 阅读 marker 悬挂。
+
+## 阶段总览
+
+| 阶段 | 主题 | 状态 | 验收日期 |
+|------|------|------|----------|
+| P0 | 第一性原理复现转场取消绕过阅读关闭语义 | ⏳ | — |
+| P1 | 最小修复 + 幂等关闭饱和回归 | ⬜ | — |
+| P2 | JDK 17 完整门禁、主线同步与对抗验证 | ⬜ | — |
 
 ## Bug 摘要
 
