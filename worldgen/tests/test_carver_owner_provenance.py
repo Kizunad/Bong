@@ -97,7 +97,11 @@ class BlendTileCarverOwnerTest(unittest.TestCase):
         ):
             _blend_tile_layers(base, overlay, zone)
 
-        self.assertEqual(base.contributing_zones, ["positive_owner"])
+        self.assertEqual(
+            base.contributing_zones,
+            ["positive_owner"],
+            "正权重 zone 应保留为 provenance；实际列表必须只含 positive_owner",
+        )
         self.assertEqual(
             base.carver_owner_zones,
             ["positive_owner"],
