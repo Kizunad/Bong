@@ -4605,7 +4605,7 @@ mod tests {
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
         app.add_systems(Update, dispatch_trade_offers);
-        let (mut initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
+        let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
         initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
         let initiator = app.world_mut().spawn(initiator_bundle).id();
         app.world_mut().entity_mut(initiator).insert((
@@ -4663,7 +4663,7 @@ mod tests {
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
         app.add_systems(Update, dispatch_trade_offers);
-        let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+        let (mut initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
         initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
         let initiator = app.world_mut().spawn(initiator_bundle).id();
         let mut initiator_identities = PlayerIdentities::with_default("毒蛊师", 0);
