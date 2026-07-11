@@ -147,3 +147,29 @@
 - bughunt 目标范围：client state / runtime store
 - 排除项：toast cross-session、dugu v2 HUD disconnect bleed、zone_info stale、ui-state 近期题
 - 结论性质：**report-only**
+
+## Finish Evidence
+
+**验证结论**：skeleton 描述为**真 bug**，已实地读代码核实：
+
+1. **断线不清**：修复前 `client/src/main/java/com/bong/client/combat/store/FalseSkinHudStateStore.java` 只有 `snapshot()` / `replace()` / `resetForTests()`（测试专用），没有任何生产态清理入口；`client/src/main/java/com/bong/client/BongNetworkHandler.java` 的 `clearClientStateOnDisconnect()`（挂在 `ClientPlayConnectionEvents.DISCONNECT`）清理清单里完全没有它。
+2. **server 只做增量推送**：`server/src/network/false_skin_state_emit.rs` 的 `emit_false_skin_state_payloads` / `emit_tuike_v2_false_skin_state_payloads` 只扫 `Changed<FalseSkin>` / `RemovedComponents<FalseSkin>`（及 `StackedFalseSkins` 等价物），`server/src/network/mod.rs` 未给这条链注册任何 join-time / 周期性 baseline 全量重发（对比 `craft_emit::emit_recipe_list_on_join` 等其他确实有 join baseline 的链路）。断线切 session 时旧 client 不会等到新 session 的 removed 事件；新 session 若角色本身没有伪皮，也压根没有 removed 事件可发。
+3. **HUD 无其他兜底**：`BongHudOrchestrator.java` 每帧直接读 `FalseSkinHudStateStore.snapshot()`，喂给 `FalseSkinStackHud` / `ContamLoadHud`，两者仅以 `state.active()`（`layersRemaining > 0`）为渲染门槛，无 session-id / connection-state 等其他守卫。`FalseSkinStateHandler` 收包后无条件 `replace(...)`，同样无 session 校验。
+
+**落地清单**：
+- `client/src/main/java/com/bong/client/combat/store/FalseSkinHudStateStore.java` — 新增生产态 `clearOnDisconnect()`，把静态 `snapshot` 复位为 `State.NONE`。
+- `client/src/main/java/com/bong/client/BongNetworkHandler.java` — `clearClientStateOnDisconnect()` 接入 `FalseSkinHudStateStore.clearOnDisconnect()`。
+
+**关键 commit**：
+- `84b5ad62`（2026-07-11）骨架转正：plan-bughunt-client-false-skin-cross-session-v1
+- `f21d7bc8`（2026-07-11）修复 FalseSkinHudStateStore 断线不清导致伪皮 HUD 跨 session 残留
+
+**测试结果**：
+- `client/src/test/java/com/bong/client/BongNetworkHandlerTest.java` 按既有三段式追加 2 用例（`disconnectClearsFalseSkinHudStateStoreToPreventCrossSessionResidualHud` / `disconnectClearingFalseSkinHudStateStoreDoesNotBlockNewSessionSnapshotAfterReconnect`），`@AfterEach` 补 `FalseSkinHudStateStore.resetForTests()`。
+- `cd client && ./gradlew test build` 全绿（`BUILD SUCCESSFUL`，13 actionable tasks，`BongNetworkHandlerTest` 13/13 通过含新增 2 例）。
+- 对抗验证：无上下文 read-only validator（Explore agent）对 HEAD `f21d7bc8583043cd5814a6828d944914c3ade3d0` 独立复核 `FalseSkinHudStateStore`/`BongNetworkHandler`/`BongHudOrchestrator`/`false_skin_state_emit.rs`/新测试 + 单独跑 `./gradlew test --tests "com.bong.client.BongNetworkHandlerTest"`，结论 `VERDICT: PASS`，无遗留 concern。
+
+**跨仓库核验**：本修复为 client-only（static store + disconnect 事件清理），未改 server 侧 `false_skin_state` payload 契约；server 端 `false_skin_state_emit.rs` 的增量发包模型保持不变（本修复不需要 server 补 baseline，client 断线清理已足够消除残留）。
+
+**遗留 / 后续**（超出本 plan 范围）：
+- skeleton 附带的「加固修法」——对所有「server 仅增量推送、client 用静态 store 持有」的 HUD/store 做统一 session-bound 审计——未在本次范围内处理，留给后续同类 bughunt 题目按需覆盖。
