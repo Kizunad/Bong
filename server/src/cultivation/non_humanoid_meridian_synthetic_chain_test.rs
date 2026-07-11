@@ -95,7 +95,10 @@ fn synthetic_whale_profile() -> MeridianProfile {
             to: "tail_core".into(),
         },
     ];
-    // §8.1 #8 whale 草案曲线：醒灵1 / 引气2 / 凝脉3 / 固元6(全通) / 通灵6 / 化虚6。
+    // 曲线形态参考 §8.1 #8 whale 草案（醒灵1 / 引气2 / 凝脉3 / … / 化虚全通），但
+    // 固元/通灵档刻意设 total=5（< 全通 6）且带 3+2 子配额——若 total 与全通相等，
+    // 任何子配额缺口都会先撞 NotEnoughMeridians，"total 已达标但奇经子配额不足"的
+    // 判定分支永远测不到（本文件是合成测试构型，不是生产 whale 数据）。
     let realm_requirements = [
         RealmMeridianReq {
             total: 1,
@@ -113,13 +116,13 @@ fn synthetic_whale_profile() -> MeridianProfile {
             extraordinary_min: 0,
         },
         RealmMeridianReq {
-            total: 6,
-            regular_min: 4,
+            total: 5,
+            regular_min: 3,
             extraordinary_min: 2,
         },
         RealmMeridianReq {
-            total: 6,
-            regular_min: 4,
+            total: 5,
+            regular_min: 3,
             extraordinary_min: 2,
         },
         RealmMeridianReq {
@@ -251,7 +254,9 @@ fn breakthrough_precondition_uses_synthetic_profile_quota_not_humanoid_curve() {
 fn breakthrough_precondition_rejects_missing_extraordinary_sub_quota() {
     let profile = synthetic_whale_profile();
     let mut sys = MeridianSystem::for_profile(&profile);
-    // Solidify 档要求 regular_min=4 / extraordinary_min=2 / total=6。
+    // Solidify -> Spirit 档（realm_requirements[4]）要求 total=5 / regular_min=3 /
+    // extraordinary_min=2。开 4 正经 + 1 奇经 = total 5 已达标、regular 4≥3 已达标，
+    // 唯独 extraordinary 1<2——精确命中子配额判定分支（total 分支已被满足，不会先撞）。
     for id in ["fin_1", "fin_2", "fin_3", "fin_4"] {
         sys.get_mut(id).opened = true;
     }
@@ -267,7 +272,8 @@ fn breakthrough_precondition_rejects_missing_extraordinary_sub_quota() {
     assert_eq!(
         err,
         Some(BreakthroughError::NotEnoughExtraordinaryMeridians { need: 2, have: 1 }),
-        "total 已达标（5≥... 实际 5<6 也会先撞 total，这里刻意补满 total 前先测子配额缺口"
+        "期望 NotEnoughExtraordinaryMeridians{{need:2,have:1}}：total(5/5) 与 regular(4/3) \
+         都已达标，只有奇经子配额缺口——若返回其他错误说明子配额判定没按本 profile 走"
     );
 }
 
