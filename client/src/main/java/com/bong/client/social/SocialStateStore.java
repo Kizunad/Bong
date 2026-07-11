@@ -9,6 +9,7 @@ import java.util.Map;
 /** Client-side mirror for plan-social-v1 server_data payloads. */
 public final class SocialStateStore {
     private static final int MAX_EVENTS = 32;
+    private static final int MAX_PENDING_SPARRING_INVITES = 64;
     private static final int MAX_SETTLED_SPARRING_INVITES = 64;
 
     private static volatile SocialAnonymitySnapshot anonymity = SocialAnonymitySnapshot.empty();
@@ -86,6 +87,9 @@ public final class SocialStateStore {
         }
         if (isOlderSparringInvite(invite)) {
             return SparringInviteUpdate.STALE;
+        }
+        if (sparringInvites.size() >= MAX_PENDING_SPARRING_INVITES) {
+            return SparringInviteUpdate.CAPACITY;
         }
         latestSparringInviteExpiresAtMs = invite.expiresAtMs();
         latestSparringInviteId = invite.inviteId();
@@ -317,6 +321,7 @@ public final class SocialStateStore {
         DUPLICATE,
         SETTLED,
         STALE,
+        CAPACITY,
         INVALID
     }
 
