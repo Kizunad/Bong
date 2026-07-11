@@ -188,7 +188,7 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
         if (!closed) {
             closed = true;
             ScrollReadAudio.playClose();
-            ScrollReadStore.close();
+            ScrollReadStore.closeIfCurrent(viewModel);
         }
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.currentScreen == this) {

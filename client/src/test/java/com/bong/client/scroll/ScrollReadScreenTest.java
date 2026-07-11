@@ -1,11 +1,16 @@
 package com.bong.client.scroll;
 
+import com.bong.client.network.ClientRequestSender;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -18,6 +23,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 不 hardcode 任何具体残卷内容。
  */
 class ScrollReadScreenTest {
+    private final List<String> sentPayloads = new ArrayList<>();
+
+    @AfterEach
+    void cleanup() {
+        ScrollReadStore.resetForTests();
+        ClientRequestSender.resetBackendForTests();
+    }
 
     private static ScrollOpenViewModel multiPage() {
         return new ScrollOpenViewModel(
@@ -93,5 +105,39 @@ class ScrollReadScreenTest {
             "首行应为卷名标题，实际=" + content.lines());
         assertTrue(content.lines().contains("[ 合上卷轴 ]"),
             "应包含关闭提示行，实际=" + content.lines());
+    }
+
+    @Test
+    void close_staleScreenDoesNotSettleReplacementSession() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, java.nio.charset.StandardCharsets.UTF_8)));
+        ScrollOpenViewModel oldOffer = new ScrollOpenViewModel("scroll_old", "旧卷", List.of("旧正文"));
+        ScrollOpenViewModel replacement = new ScrollOpenViewModel("scroll_new", "新卷", List.of("新正文"));
+        ScrollReadStore.replace(oldOffer);
+        ScrollReadScreen oldScreen = new ScrollReadScreen(oldOffer);
+        ScrollReadStore.replace(replacement);
+
+        oldScreen.close();
+
+        assertSame(replacement, ScrollReadStore.snapshot(),
+            "旧 screen 的普通 close 不得结算后来替换的新阅读会话");
+        assertTrue(sentPayloads.isEmpty(),
+            "旧 screen 的普通 close 不得替新会话发送 scroll_read_closed，实际=" + sentPayloads);
+    }
+
+    @Test
+    void close_currentScreenSettlesItsSessionExactlyOnce() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, java.nio.charset.StandardCharsets.UTF_8)));
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_current", "当前卷", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen screen = new ScrollReadScreen(offer);
+
+        screen.close();
+        screen.close();
+
+        assertNull(ScrollReadStore.snapshot(), "当前 screen 关闭后必须清空对应阅读会话");
+        assertEquals(List.of("{\"type\":\"scroll_read_closed\",\"v\":1}"), sentPayloads,
+            "当前 screen 重复关闭必须恰好发送一条 scroll_read_closed");
     }
 }
