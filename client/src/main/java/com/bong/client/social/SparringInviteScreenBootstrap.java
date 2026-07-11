@@ -57,11 +57,14 @@ public final class SparringInviteScreenBootstrap {
         return screenKind == ScreenKind.NONE ? Decision.OPEN_SCREEN : Decision.BLOCKED_TOAST;
     }
 
+    static Decision decide(SocialStateStore.SparringInvite invite, Screen current, long nowMs) {
+        return decide(invite, screenKindOf(current, invite), nowMs);
+    }
+
     private static void handleIncomingInvite(MinecraftClient client) {
         SocialStateStore.SparringInvite invite = SocialStateStore.sparringInvite();
         Screen current = client.currentScreen;
-        ScreenKind screenKind = screenKindOf(current, invite);
-        Decision decision = decide(invite, screenKind, System.currentTimeMillis());
+        Decision decision = decide(invite, current, System.currentTimeMillis());
         switch (decision) {
             case CLOSE_SCREEN -> {
                 client.setScreen(null);

@@ -122,6 +122,23 @@ class SparringInviteScreenBootstrapTest {
     }
 
     @Test
+    void actualSparringScreenIdentityControlsSameAndDifferentTransitions() {
+        SocialStateStore.SparringInvite first = invite("first", 5_000L);
+        SocialStateStore.SparringInvite second = invite("second", 6_000L);
+
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.NOOP,
+            SparringInviteScreenBootstrap.decide(first, new SparringInviteScreen(first), 1_000L),
+            "真实 screen identity 匹配时必须保持当前邀请屏"
+        );
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.BLOCKED_TOAST,
+            SparringInviteScreenBootstrap.decide(second, new SparringInviteScreen(first), 1_000L),
+            "真实 screen identity 不同时只能阻塞提示，不能替换当前邀请屏"
+        );
+    }
+
+    @Test
     void blockedToastIsVisibleAndDeduplicatedPerInviteId() {
         SparringInviteScreenBootstrap.notifyBlocked("invite-1");
         assertFalse(BongToast.current(System.currentTimeMillis()).isEmpty());
