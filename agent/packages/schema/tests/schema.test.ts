@@ -3283,21 +3283,30 @@ describe("alchemy insight server wire parity", () => {
       delete payload.ts;
     }
     const result = validate(AlchemyInsightV1, payload);
-    expect(result.ok, `expected invalid ts=${String(ts)} to be rejected`).toBe(false);
+    expect(
+      result.ok,
+      `expected invalid ts=${String(ts)} to be rejected, actual ok=${result.ok}, errors=${result.errors.join("; ")}`,
+    ).toBe(false);
   });
 
   it("keeps rejecting unknown fields after timestamp alignment", () => {
     const payload = serverShapedAlchemyInsight();
     payload.unexpected = true;
     const result = validate(AlchemyInsightV1, payload);
-    expect(result.ok, "expected additionalProperties=false to reject unknown fields").toBe(false);
+    expect(
+      result.ok,
+      `expected additionalProperties=false to reject unknown fields, actual ok=${result.ok}, errors=${result.errors.join("; ")}`,
+    ).toBe(false);
   });
 
   it.each([-0.01, 1.01])("keeps rejecting out-of-range accuracy %s", (accuracy) => {
     const payload = serverShapedAlchemyInsight();
     payload.accuracy = accuracy;
     const result = validate(AlchemyInsightV1, payload);
-    expect(result.ok, `expected accuracy=${accuracy} to remain outside [0, 1]`).toBe(false);
+    expect(
+      result.ok,
+      `expected accuracy=${accuracy} to remain outside [0, 1], actual ok=${result.ok}, errors=${result.errors.join("; ")}`,
+    ).toBe(false);
   });
 });
 
