@@ -495,6 +495,19 @@ impl MeridianSystem {
                 )
             })
     }
+
+    /// 非 panic 归属校验——plan-race-system-v1 P1 对抗审查 B1：任意 C2S 消费点
+    /// （forge_request 等）把 wire 上的任意字符串 channel id 直送 `get`/`get_mut`
+    /// 之前，必须先在消费边界用本方法确认该 id 属于该实体的经脉构型；未知 id
+    /// （含旧 PascalCase `MeridianId` 字面量、伪造串）应安全拒绝，不得触发
+    /// `get`/`get_mut` 的 panic 分支。
+    pub fn contains(&self, id: impl Into<MeridianChannelId>) -> bool {
+        let id = id.into();
+        self.regular
+            .iter()
+            .chain(self.extraordinary.iter())
+            .any(|m| m.id == id)
+    }
 }
 
 /// 10 种真元色（plan §1.1 / worldview §六）。

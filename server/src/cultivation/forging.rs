@@ -46,6 +46,10 @@ pub enum ForgeError {
     AtMaxTier,
     NotEnoughQi { need: f64, have: f64 },
     LedgerUnavailable,
+    /// plan-race-system-v1 P1 对抗审查 B1：wire 上的 channel id 不属于该实体的
+    /// `MeridianSystem`（未知构型 / 伪造串 / 旧 PascalCase `MeridianId` 字面量如
+    /// `"Lung"`）——安全拒绝，绝不 panic。
+    UnknownChannel,
 }
 
 /// tier n→n+1 的 qi 消耗（递增）。
@@ -215,6 +219,9 @@ fn forge_with_ledger(
     meridian_id: MeridianChannelId,
     axis: ForgeAxis,
 ) -> Result<u8, ForgeError> {
+    if !meridians.contains(meridian_id.clone()) {
+        return Err(ForgeError::UnknownChannel);
+    }
     let (_, cost) = forge_next_tier(cultivation, meridians.get(meridian_id.clone()), axis)?;
     let zone_name = resolve_forge_zone_name(zones, position, current_dimension)
         .ok_or(ForgeError::LedgerUnavailable)?;
@@ -453,5 +460,68 @@ mod tests {
     fn tier_cost_monotonic() {
         assert!(tier_cost(1) < tier_cost(2));
         assert!(tier_cost(2) < tier_cost(3));
+    }
+
+    // ── plan-race-system-v1 P1 对抗审查 B1：forge_request 消费边界必须安全拒绝未知
+    // channel id，绝不 panic（`MeridianSystem::get`/`get_mut` 对未知 id 是 panic 分支，
+    // `forge_with_ledger` 现在必须在到达它们之前用 `MeridianSystem::contains` 拦截）。
+
+    #[test]
+    fn forge_with_ledger_rejects_unknown_channel_id_without_panicking() {
+        let mut app = App::new();
+        add_forging_system(&mut app, true);
+        let player = spawn_open_lung_player(&mut app, 100.0);
+
+        app.world_mut().send_event(ForgeRequest {
+            entity: player,
+            meridian: MeridianChannelId::new("totally_made_up_channel"),
+            axis: ForgeAxis::Rate,
+        });
+        // 必须不 panic —— 这是本用例的核心断言。
+        app.update();
+
+        let outcomes = collect_forge_outcomes(&app);
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].result, Err(ForgeError::UnknownChannel));
+        let player_ref = app.world().entity(player);
+        let cultivation = player_ref.get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current, 100.0,
+            "unknown channel 请求必须完全无副作用——qi 不应被扣除"
+        );
+    }
+
+    #[test]
+    fn forge_with_ledger_rejects_legacy_pascal_case_lung_string_as_unknown_channel() {
+        // `MeridianChannelId` 的规范形态是 snake_case（如 "lung"）；旧 `MeridianId::Lung`
+        // 的 `Debug`/字面量拼写 "Lung" 不是合法 channel id —— 消费边界必须把它当未知
+        // channel 安全拒绝，而不是误认成合法经脉或 panic。
+        let mut app = App::new();
+        add_forging_system(&mut app, true);
+        let player = spawn_open_lung_player(&mut app, 100.0);
+
+        app.world_mut().send_event(ForgeRequest {
+            entity: player,
+            meridian: MeridianChannelId::new("Lung"),
+            axis: ForgeAxis::Rate,
+        });
+        app.update();
+
+        let outcomes = collect_forge_outcomes(&app);
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].result,
+            Err(ForgeError::UnknownChannel),
+            "旧 PascalCase 字面量 'Lung' 不是合法 wire channel id，必须被拒绝而非误认作 \
+             regular Lung meridian"
+        );
+    }
+
+    #[test]
+    fn meridian_system_contains_true_for_known_false_for_unknown() {
+        let ms = MeridianSystem::default();
+        assert!(ms.contains(MeridianId::Lung.channel_id()));
+        assert!(!ms.contains(MeridianChannelId::new("Lung"))); // legacy PascalCase 串
+        assert!(!ms.contains(MeridianChannelId::new("nonexistent_channel")));
     }
 }
