@@ -859,6 +859,9 @@ class TokenBroker:
 
     def mark_lost(self, request_id: str) -> bool:
         state = self.requests[request_id]
+        if not self._authority_matches(state):
+            self._invalidate(state, RequestStatus.CANCELLED, "STALE_AUTHORITY")
+            raise ProtocolError("recovery entry authority became stale")
         if state.status == RequestStatus.RECOVERING:
             return False
         if state.status not in {RequestStatus.GRANTED, RequestStatus.ACKED}:
@@ -923,6 +926,9 @@ class TokenBroker:
 
     def followup_payload(self, request_id: str) -> dict[str, object]:
         state = self.requests[request_id]
+        if not self._authority_matches(state):
+            self._invalidate(state, RequestStatus.CANCELLED, "STALE_AUTHORITY")
+            raise ProtocolError("followup authority became stale")
         if state.status != RequestStatus.RECOVERING or state.token_id is None:
             raise ProtocolError("request has no recovery checkpoint")
         return {
@@ -2129,6 +2135,43 @@ class StateMachineDryRun(unittest.TestCase):
             broker.requests["release-stale"].release_reason,
             "STALE_AUTHORITY",
         )
+
+        task6 = TaskState(task_id="lost-entry", phase=TaskPhase.GATING)
+        submit(
+            broker, make_payload("lost-entry", "compile", "a", task6), task6
+        )
+        grant6 = broker.grant_next("compile")
+        broker.ack(
+            "lost-entry",
+            grant6.token_id,
+            task6.phase,
+            task6.head,
+            task6.generation,
+        )
+        task6.update_head("changed-before-lost")
+        with self.assertRaises(ProtocolError):
+            broker.mark_lost("lost-entry")
+        self.assertEqual(broker.held("compile"), 0)
+
+        task7 = TaskState(task_id="followup-entry", phase=TaskPhase.GATING)
+        submit(
+            broker,
+            make_payload("followup-entry", "compile", "a", task7),
+            task7,
+        )
+        grant7 = broker.grant_next("compile")
+        broker.ack(
+            "followup-entry",
+            grant7.token_id,
+            task7.phase,
+            task7.head,
+            task7.generation,
+        )
+        broker.mark_lost("followup-entry")
+        task7.update_head("changed-before-followup")
+        with self.assertRaises(ProtocolError):
+            broker.followup_payload("followup-entry")
+        self.assertEqual(broker.held("compile"), 0)
 
     def test_fifo_request_ack_release_cancel_and_collision(self) -> None:
         broker, _, _ = fixture()
