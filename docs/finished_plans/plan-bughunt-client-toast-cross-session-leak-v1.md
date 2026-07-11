@@ -1,6 +1,6 @@
-# plan-bughunt-client-toast-cross-session-leak-v1（骨架）
+# plan-bughunt-client-toast-cross-session-leak-v1
 
-> **骨架（草案）**。一句话主题：client HUD 的单槽 `BongToast.activeToast` 在断线/切服/重连时从未清场，导致上一局残留的 warning / era / event / inventory toast 会在下一次进世界后的前几秒继续显示，形成 **跨 session 的 stale toast 泄漏**。
+> 一句话主题：client HUD 的单槽 `BongToast.activeToast` 在断线/切服/重连时从未清场，导致上一局残留的 warning / era / event / inventory toast 会在下一次进世界后的前几秒继续显示，形成 **跨 session 的 stale toast 泄漏**。
 
 > 立项动机：当前 `BongNetworkHandler` 的 DISCONNECT 清单已经显式收过多类“旧状态跨 session 续命”问题（`realm_collapse`、`TiandaoPresenceStore` 等），但 toast 单例没有纳入同一清场路径。该缺口属于 client HUD / toast / runtime state bridge 的活路径：不需要服务器出错，只要玩家在 toast 未过期前断线再重连，就会把上一局提示串进下一局。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `BongToast` 断线未清导致跨 session 串 toast | fix_pr | ⬜ |
+| P0 | `BongToast` 断线未清导致跨 session 串 toast | fix_pr | ✅ 2026-07-11 |
 
 ## P0 — `BongToast` 断线未清导致跨 session 串 toast
 
@@ -53,3 +53,44 @@
 ## 审计来源
 
 bughunt 定点轮（范围只看 client HUD / toast / overlay / runtime state bridge，避开已点名的 `zone_info stale`、`locust warning duration drift`、`silent signal runtime bridge`、`movement dash HUD`、`tool weapon HUD leak`）。结论为 **report-only**：本次只新增 skeleton，不改源码。
+
+## Finish Evidence
+
+### 验证结论
+
+**第一性原理复核确认：真 bug**，skeleton 结论成立。BugFix subagent 独立读取 `BongToast.java` / `BongNetworkHandler.java` 复核：
+
+- `BongToast.activeToast` 确为 `private static volatile` 单槽（`client/src/main/java/com/bong/client/hud/BongToast.java:19`）；`show(...)` 只覆盖写（65-77），`current(now)` 只在 `expiresAtMillis` 过期后清空（79-86），除测试专用 `resetForTests()`（原 156-158）外无生产态清零入口。
+- `BongNetworkHandler.clearClientStateOnDisconnect()`（原 857-901）确认挂在 `ClientPlayConnectionEvents.DISCONNECT`（132-133）上，清单里覆盖了 `RealmCollapseHudStateStore`、`TiandaoPresenceStore`、`CraftStore` 等十余个 static store，但**唯独没有 `BongToast`**，与同函数内其余注释一致确认"跨 session 续命"是本仓已知反模式。
+- 开放问题 #1（是否顺带收 `BongHudStateStore`）核实：`BongHudStateStore` 的断线清理属于**另一个已在跑的独立 skeleton** `plan-bughunt-hud-state-session-reset`（远端分支 `origin/bugfix/plan-bughunt-hud-state-session-reset`，commit `4236b32b`），与本 plan 不重叠，本 PR **不touch** `BongHudStateStore.java`，避免跨 PR 撞车。
+
+### 落地清单
+
+- `client/src/main/java/com/bong/client/hud/BongToast.java`：新增生产态 `clearOnDisconnect()`（不复用 `resetForTests()`），把 `activeToast` 复位为 `empty()`。
+- `client/src/main/java/com/bong/client/BongNetworkHandler.java`：`clearClientStateOnDisconnect()` 尾部补上 `BongToast.clearOnDisconnect()` 调用 + 说明注释。
+- `client/src/test/java/com/bong/client/hud/BongToastTest.java`：新增 4 条用例——`clearOnDisconnectRemovesActiveUnexpiredToast` / `clearOnDisconnectIsIdempotentOnAlreadyEmptyState` / `clearOnDisconnectDoesNotBlockSubsequentShowAfterReconnect` / `clearOnDisconnectDoesNotAffectSameSessionNaturalExpiryContract`（回归既有同 session 存活到自然过期契约不被误伤）。
+- `client/src/test/java/com/bong/client/BongNetworkHandlerTest.java`：新增 2 条集成用例——`disconnectClearsBongToastToPreventCrossSessionLeak` / `disconnectClearingBongToastDoesNotBlockNewToastAfterReconnect`；`@AfterEach` 补 `BongToast.resetForTests()` 防跨测试污染。
+
+### 关键 commit
+
+- `c9b043f7`（2026-07-11）：docs(plan): plan-bughunt-client-toast-cross-session-leak-v1 骨架升 active
+- `75c644f034519c1fd5a0050766f8fa22b348cee8`（2026-07-11）：修复：断线清理清单补上 BongToast，防跨 session 串旧 toast
+
+### 测试结果
+
+- `cd client && ./gradlew test --tests "com.bong.client.hud.BongToastTest" --tests "com.bong.client.BongNetworkHandlerTest"` → `BUILD SUCCESSFUL`（BongToastTest 10/10、BongNetworkHandlerTest 6/6，含新增 6 条用例全绿）。
+- `cd client && ./gradlew test build` → `BUILD SUCCESSFUL`（全量 client 单测 + `check` + `assemble` 全绿）。
+
+### 跨仓库核验
+
+- **client**：`BongToast.clearOnDisconnect()` ↔ `BongNetworkHandler.clearClientStateOnDisconnect()` 单点接线，命中 symbol：`BongToast`、`BongNetworkHandler`、`ClientPlayConnectionEvents.DISCONNECT`。
+- **server / agent**：本 bug 纯 client HUD runtime state，不涉及 server↔agent↔client IPC 契约，无跨仓库 symbol 改动。
+
+### 对抗验证
+
+无上下文 read-only validator（`Explore` agent）对 HEAD `75c644f034519c1fd5a0050766f8fa22b348cee8` 独立复核：确认 disconnect 挂钩真实存在、修复正确关闭 gap、既有同 session 契约未被误伤、新测试非 tautological（实测跑绿）、无 `BongHudStateStore` 越界改动、导入无编译错误 —— **结论 PASS**。
+
+### 遗留 / 后续
+
+- 开放问题 #2（"HUD runtime state reset" 统一入口）本 plan 不处理，留给未来若再漏 static singleton 时按需立新 plan/骨架讨论；`clearClientStateOnDisconnect()` 目前逐项显式调用的模式已被本仓库多个先例（`plan-craft-session-reconnect-lock-v1`、F19、F9 等）验证足够可维护，不阻塞本次归档。
+- `BongHudStateStore` 断线清理由独立在跑的 `plan-bughunt-hud-state-session-reset` 负责，不在本 plan 范围。
