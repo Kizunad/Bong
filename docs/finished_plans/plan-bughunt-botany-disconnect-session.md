@@ -1,5 +1,7 @@
 # plan-bughunt-botany-disconnect-session
 
+> 阶段总览：P0 ✅ 2026-07-11 · P1 ✅ 2026-07-11 · P2 ✅ 2026-07-11
+
 > 一句话主题：botany 野外采集 session 断线后仍按旧 `client_entity` 继续计时；到完成 tick 时先清掉 `HarvestSessionStore` 里的 session，再因旧实体缺 `Client` 查不到 `PlayerInventory` 而失败，日志说可重试但进度已丢。玩家重连前旧 session 会挡住新实体继续采集，重连后若已被完成路径清掉，则只能从头再采。
 
 > 立项动机：这是持久化 / 重连 / session lifecycle 交界处的真实玩家可达 bug。它不是 #990 普通世界容器断线锁、#894 craft 重连 session、#876 矿脉移动打断，也不同于 `plan-botany-harvest-mode-request-misroute-v1` 的模式请求错接。本 plan 只固化 skeleton，不改代码。
@@ -68,7 +70,7 @@
 
 ## Skeleton Fix Plan
 
-### P0 - 明确断线语义：取消或迁移，二选一落地
+### P0 ✅ 2026-07-11 - 明确断线语义：取消或迁移，二选一落地（选定方案 A：断线即取消）
 
 - 方案 A：断线即取消 botany session。
   - 在 player disconnect cleanup 之前或其中接入 `HarvestSessionStore`，按 `canonical_player_id` 找 session，移除并发 `HarvestTerminalEvent { interrupted: true, detail: "断线打断" }`。
@@ -80,13 +82,13 @@
 
 建议 P0 先选方案 A。它更符合当前客户端断线清 store 的行为，修复面小，且避免离线期间自动完成采集带来的库存/掉落/危险结算歧义。
 
-### P1 - 修正完成路径原子性
+### P1 ✅ 2026-07-11 - 修正完成路径原子性
 
 - `complete_harvest_for_player` 不应在所有结构性前置校验成功前 `remove_session`。
 - 对缺 `Client` / 缺 `PlayerInventory` 的活跃 session，要么保留 session 等待明确取消 / 迁移，要么走统一断线取消路径。
 - 日志文案要与实际状态一致：如果 session 已清，就不要写 `for retry`；如果要 retry，就必须保留或恢复 session。
 
-### P2 - 清理测试语义
+### P2 ✅ 2026-07-11 - 清理测试语义
 
 - 改写 `harvest_completion_missing_player_inventory_leaves_plant_unharvested`：缺 inventory 不应把断线场景固定为“session 清掉”。
 - 增加专门的 disconnect lifecycle 测试，不再用“系统装配缺陷”间接覆盖断线。
@@ -107,3 +109,38 @@
 - `HarvestSessionStore` 同时保存技能 XP，改资源结构时不能误清 `skills_by_player`。
 - disconnect 系统顺序要放在 `despawn_disconnected_clients` 之前或在仍可解析 username/player_id 的位置执行，否则会丢失 canonical player id。
 - 修 `complete_harvest_for_player` 的 remove 时机时，要保护既有“植物未标 harvested 前结构性失败不吞产物”的回归意图。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 方案 A（断线即取消）**：`server/src/botany/harvest.rs` 新增系统 `release_disconnected_harvest_sessions`——消费 `RemovedComponents<Client>`（范式同 `world::container_open::release_disconnected_container_locks`），断线当帧按旧 `client_entity` 定位 session，移除并补发 `HarvestTerminalEvent { interrupted: true, detail: "断线打断" }`；`skills_by_player`（采集熟练度）有意保留。注册在 `server/src/botany/mod.rs` Update 链 `enforce_harvest_session_constraints` / `tick_harvest_sessions` 之前（整组 `.chain()` 锁序），保证断线当帧 session 恰到完成 tick 时取消路径胜出。重连后同 `player_id` 可立即用新实体重新开始采集。
+- **P1（完成路径原子性/诚实语义）**：`complete_harvest_for_player` 两条结构性前置校验失败分支（缺 kind / 缺 `Client`+`PlayerInventory`）经 `send_structural_cancel_terminal` 补发 `interrupted=true, detail="结算异常打断"` 终结帧——session 在入口已移除，不发帧客户端 HUD 停在进度满格永远等不到收口。grant 阶段结构性失败的"无终结帧"语义系 plan-botany-harvest-full-inventory-loss-v1 §8.1 已 pin，不翻案。`tick_harvest_sessions` Err 日志文案改为与实际状态一致（session cancelled、需重新发起采集，不再谎称 for retry）。
+- **P2（测试语义）**：`harvest_completion_missing_player_inventory_leaves_plant_unharvested` 不再间接覆盖断线场景（断线语义归 P0 专属测试组），改锁结构性失败显式取消契约（恰一条 interrupted 终结帧 + detail + session_id + client_entity）；`harvest_completion_missing_kind_registry_leaves_plant_unharvested` 同步补终结帧断言。grant 失败无终结帧 pin、无 session 断线 no-op pin 均保持。
+
+### 关键 commit
+
+- `e54874e8` 2026-07-11 — P0 方案 A：断线即取消系统 + 6 例饱和测试（Model: claude-sonnet-5）
+- `b5016c13` / `9ff44a2c` 2026-07-11 — 测试导入修复 + 触碰文件 clippy 清零（Model: claude-sonnet-5）
+- `08642f42` 2026-07-11 — P1+P2：结构性失败显式取消语义 + 测试改锁新契约（Model: claude-fable-5）
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo test`：全绿（TEST_EXIT:0，含 full_app_startup smoke 与全部集成测试）
+- 新增/改写测试：P0 断线取消 + 终结事件断言 / 断线当帧完成竞态（植物不标 harvested、无产出、仅一条 interrupt 事件）/ 重连新实体可重新开始 / 无 session 断线 no-op / 多玩家只取消断线者 / skill XP 保留（6 例）；P1/P2 结构性失败恰一帧断言（missing inventory / missing kind 各一）
+- clippy：触碰文件 0 命中（全仓 `manual_is_multiple_of` 等为本机 rustc 1.96 pre-existing 噪声，CI pinned 版本不受影响）
+
+### 跨仓库核验
+
+- server：`release_disconnected_harvest_sessions` / `send_structural_cancel_terminal` / `HarvestTerminalEvent.interrupted`（`server/src/botany/harvest.rs`、`server/src/botany/mod.rs`）
+- client：无需改动——`HarvestTerminalEvent` 走既有 `bong:server_data` 桥；下游消费者（audio/vfx/overflow）按 `!completed || interrupted` 跳过，对断线旧实体安全（validator 双轮核验确认）
+- agent：不涉及
+
+### 对抗验证
+
+- 无上下文 Explore validator 两轮：`PASS dafaedff...`（P0+merge main）、`PASS 08642f42...`（P1+P2 增量，专项质疑双发帧/§8.1 pin 破坏/下游 panic 均排除）
+
+### 遗留 / 后续
+
+- 方案 B（断线暂停+重连迁移 session）未采用——与客户端断线清 store 行为不符且扩大离屏结算歧义，如未来需要"断线保进度"体验再立新 plan
+- `botany/mod.rs` 注册顺序本身无专属 pin 测试（由竞态测试间接锁定），validator 判定可接受
