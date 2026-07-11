@@ -443,6 +443,7 @@ class RequestState:
     platform_accounted: bool = False
     validator_agent_id: Optional[str] = None
     terminal_message: Optional[tuple[object, ...]] = None
+    terminal_kind: Optional[str] = None
 
 
 TOKEN_PHASES = {
@@ -506,6 +507,7 @@ class TokenBroker:
         self.requests: dict[str, RequestState] = {}
         self.queues: dict[str, list[str]] = {"compile": [], "validator": []}
         self.validator_agents: dict[str, str] = {}
+        self.consumed_validator_agents: set[str] = set()
         self.invalid_tokens: set[str] = set()
         self.next_token = 1
 
@@ -630,12 +632,18 @@ class TokenBroker:
         if owner is not None and owner != request_id:
             raise ProtocolError("validator agent already consumed a reservation")
         if (
+            validator_agent_id in self.consumed_validator_agents
+            and state.validator_agent_id != validator_agent_id
+        ):
+            raise ProtocolError("validator agent cannot cross reservations")
+        if (
             state.validator_agent_id is not None
             and state.validator_agent_id != validator_agent_id
         ):
             raise ProtocolError("validator reservation already bound")
         state.validator_agent_id = validator_agent_id
         self.validator_agents[validator_agent_id] = request_id
+        self.consumed_validator_agents.add(validator_agent_id)
 
     def mark_platform_accounted(
         self, request_id: str, validator_agent_id: str
@@ -737,6 +745,7 @@ class TokenBroker:
         ):
             raise ProtocolError("release requires ACKED active token")
         state.terminal_message = message
+        state.terminal_kind = "RELEASED"
         self._invalidate(state, RequestStatus.RELEASED, reason)
         return True
 
@@ -756,9 +765,10 @@ class TokenBroker:
             RequestStatus.CANCELLED,
             RequestStatus.EXPIRED,
         }:
-            if (
-                state.status == RequestStatus.CANCELLED
-                and state.terminal_message != message
+            if state.terminal_kind == "RELEASED":
+                raise ProtocolError("cancel collides with prior release")
+            if state.status == RequestStatus.CANCELLED and (
+                state.terminal_message != message
             ):
                 raise ProtocolError("duplicate cancel payload collision")
             return False
@@ -770,6 +780,7 @@ class TokenBroker:
         ):
             raise ProtocolError("cancel payload differs from request")
         state.terminal_message = message
+        state.terminal_kind = "CANCELLED"
         self._invalidate(state, RequestStatus.CANCELLED, reason)
         return True
 
@@ -858,6 +869,7 @@ class TokenBroker:
             "checkpoint": state.payload.checkpoint,
             "request_id": request_id,
             "token_id": state.token_id,
+            "agent": state.payload.agent,
             "phase": state.payload.phase.value,
             "head": state.payload.head,
             "generation": state.payload.generation,
@@ -1635,6 +1647,37 @@ class StateMachineDryRun(unittest.TestCase):
                 1.0,
             ),
         )
+        release_request(broker, "v1", first.token_id, "PASS")
+        provider.snapshot.live_agents -= 1
+        provider.snapshot.live_agent_ids = (
+            provider.snapshot.live_agent_ids - {"validator-one"}
+        )
+        reuse_task = TaskState(
+            task_id="reuse-validator", phase=TaskPhase.FIX_VALIDATING
+        )
+        submit(
+            broker,
+            make_payload("v3", "validator", "third", reuse_task),
+            reuse_task,
+        )
+        third = broker.grant_next("validator")
+        broker.ack(
+            "v3",
+            third.token_id,
+            reuse_task.phase,
+            reuse_task.head,
+            reuse_task.generation,
+        )
+        with self.assertRaises(ProtocolError):
+            broker.bind_validator_spawn(
+                "v3",
+                third.token_id,
+                "validator-one",
+                reuse_task.task_id,
+                reuse_task.phase,
+                reuse_task.head,
+                reuse_task.generation,
+            )
         task.resolution = TaskPhase.FIXING
         task.transition(TaskPhase.GATING)
 
@@ -1876,6 +1919,8 @@ class StateMachineDryRun(unittest.TestCase):
         self.assertFalse(release_request(broker, "r1", grant.token_id, "PASS"))
         with self.assertRaises(ProtocolError):
             release_request(broker, "r1", grant.token_id, "DIFFERENT")
+        with self.assertRaises(ProtocolError):
+            cancel_request(broker, "r1", "CANCELLED")
         self.assertTrue(cancel_request(broker, "r2", "CANCELLED"))
         self.assertFalse(cancel_request(broker, "r2", "CANCELLED"))
         with self.assertRaises(ProtocolError):
@@ -2025,6 +2070,7 @@ class StateMachineDryRun(unittest.TestCase):
                         "checkpoint": "checkpoint-ok",
                         "request_id": "ok",
                         "token_id": grant.token_id,
+                        "agent": "ok",
                         "phase": task.phase.value,
                         "head": task.head,
                         "generation": task.generation,
