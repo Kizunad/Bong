@@ -76,8 +76,10 @@
 
 - Promotion：`33aaae28`，canonical skeleton 已独立升格为 active plan。
 - 第一性原理 RED：`b8614841` 新增纯决策与 toast 契约后，JDK 17 targeted 在 `compileTestJava` 以 29 个缺失符号失败；生产类确实没有 `ScreenKind`、`Decision`、`decide`、blocked/expired toast 或去重状态，且现有 tick 路径会直接 `setScreen` 抢占其他 GUI。
-- 最小修复：`94ddd91a` 仅调整 client `SparringInviteScreenBootstrap`，把当前屏幕分类后交给纯决策矩阵；`OTHER` 只发一次性非阻塞 toast，`NONE` / 陈旧切磋屏正常打开当前邀请，matching screen 保持 no-op，过期邀请继续自动拒绝并新增明确提示。
-- Targeted GREEN：JDK 17 执行 `./gradlew test --tests com.bong.client.social.SparringInviteScreenBootstrapTest` 为 `BUILD SUCCESSFUL`，9 个契约测试全部通过，覆盖 null/expired 边界、NONE/matching/stale/OTHER 分支与 toast 去重/重触发。
+- 初版修复：`94ddd91a` 把当前屏幕分类后交给纯决策矩阵；`OTHER` 只发一次性非阻塞 toast，`NONE` 打开当前邀请，matching screen 保持 no-op，过期邀请继续自动拒绝并新增明确提示。
+- 首轮对抗审查：Ultra read-only validator 对 `1dc14dc4ae70989d7975b8aebe45f759d22bdde8` 判定 FAIL，指出 store 的 clear/replace 竞态会吞新邀请、不同 inviteId 的邀请屏仍会互相抢占、关闭后迟到/重复 payload 可重开，以及测试仅覆盖纯决策而未锁运行态。
+- 生命周期返工：`6e5363d7` 将 pending 邀请改为同步有序队列，按 `expiresAtMs + UUIDv7 inviteId` 拒绝迟到 payload，并用有界 settled tombstone 拒绝关闭后的重放；`d194e26c` 禁止任何不同邀请屏被新邀请替换，过期时也只关闭 identity 匹配的屏；`2e1b22b0` 用真实 `SparringInviteScreen.close()` 锁住精确清理与后继邀请提升。
+- Targeted GREEN：Temurin JDK 17.0.19 强制重编译执行 bootstrap / screen / handler 三组聚焦套件，27/27 PASS，覆盖无 screen、同 screen、不同 screen、迟到邀请、重复邀请、关闭、过期边界及 clear/enqueue 并发交错。
 - 范围：未修改 server、schema、依赖、生产配置、工具链或视觉资产；同一 bug 的重复 skeleton `plan-bughunt-v-sparring-invite-screen-hijack-v1` 留给后续主干去重处理，本 PR 不跨 plan 修改。
 - 后续门禁：fresh validator PASS 后，以 JDK 17 执行完整 `./gradlew test build`；合并最新 `origin/main` 后任何 HEAD 变化都重新验证。
 
@@ -87,11 +89,21 @@
 
 - `client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java`
   - 新增 `ScreenKind` / `Decision` 纯决策矩阵。
-  - 其他 GUI 打开时走 `BLOCKED_TOAST`，不再调用 `setScreen` 抢屏。
-  - 保留无屏开邀请、陈旧邀请屏替换、matching no-op、过期自动拒绝与 store 清理语义。
+  - 其他 GUI 或不同 inviteId 的切磋屏打开时走 `BLOCKED_TOAST`，不再调用 `setScreen` 抢屏。
+  - 保留无屏开邀请、matching no-op、过期自动拒绝；过期只关闭 identity 匹配的邀请屏。
   - blocked toast 按 inviteId 去重，新邀请可重新提示。
+- `client/src/main/java/com/bong/client/social/SocialStateStore.java`
+  - pending 邀请按到达顺序排队，所有读取、入队与 identity 清理在同一 monitor 下线性化。
+  - `expiresAtMs + UUIDv7 inviteId` 固定新旧顺序；重复、迟到和已结算 payload 不进入队列。
+  - settled tombstone 有界保留 64 个 ID，断线时与队列、版本高水位一起清空。
+- `client/src/main/java/com/bong/client/network/SocialServerDataHandler.java`
+  - 只为首次接受的邀请发布 HUD 事件；重复、迟到、已结算和非法 payload 安全 no-op。
 - `client/src/test/java/com/bong/client/social/SparringInviteScreenBootstrapTest.java`
-  - 9 个测试覆盖 null、过期边界、NONE、matching、stale、OTHER 与 toast 去重/重触发。
+  - 10 个测试覆盖 null、过期边界、NONE、matching、不同邀请屏、OTHER、真实 screen identity 与 toast 去重/重触发。
+- `client/src/test/java/com/bong/client/social/SparringInviteScreenTest.java`
+  - 真实 `close()` 验证只拒绝并清理自身 identity，后继邀请提升，旧 screen 迟到关闭不能误清新邀请。
+- `client/src/test/java/com/bong/client/network/SocialServerDataHandlerTest.java`
+  - 覆盖同 ID 重放、版本迟到、同毫秒 UUIDv7 顺序、settled 重放、非法输入与 32 轮 clear/enqueue 并发交错。
 
 ### 关键 commit
 
@@ -100,22 +112,26 @@
 - `94ddd91a`（2026-07-11）：最小修复切磋邀请屏幕调度。
 - `72775467`（2026-07-11）：记录第一性原理 RED / GREEN 证据。
 - `a4ce546c`（2026-07-11）：同步最新 `origin/main`，无冲突且未触及本修复三文件。
+- `6e5363d7`（2026-07-11）：原子排队邀请并拒绝迟到、重复与已结算重放。
+- `d194e26c`（2026-07-11）：禁止不同 inviteId 的切磋邀请屏互相替换。
+- `2e1b22b0`（2026-07-11）：锁定真实 screen 关闭后的 identity 清理与队列提升。
 
 ### 测试结果
 
 - JDK 17 targeted RED：`compileTestJava` 因生产类缺少 `Decision` / `ScreenKind` / `decide` / toast 接口而失败，共 29 个缺失符号。
 - JDK 17 targeted GREEN：`./gradlew test --tests com.bong.client.social.SparringInviteScreenBootstrapTest` → `BUILD SUCCESSFUL`，9/9 PASS。
+- Temurin JDK 17.0.19 lifecycle targeted：bootstrap 10 + screen 3 + social handler/store 14 = 27/27 PASS，`11 actionable tasks: 11 executed`。
+- 首轮 Ultra read-only validator：`FAIL — SHA 1dc14dc4ae70989d7975b8aebe45f759d22bdde8`；四项 finding 已由 `6e5363d7` / `d194e26c` / `2e1b22b0` 返工并补测。
 - JDK 17 pre-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`。
-- JDK 17 post-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`，13 tasks（7 executed / 6 up-to-date）。
-- Fresh read-only validator：`VERDICT: PASS — HEAD a4ce546c4b4729e188f73df147f15d2af7d5afd9`。
+- JDK 17 post-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`。
 
 ### 跨仓库核验
 
 - client-only 修复；未修改 server / agent / schema / proto。
-- `SocialServerDataHandler → SocialStateStore.sparringInvite → SparringInviteScreenBootstrap` 接收链保持不变，仅收紧最后一段 screen 调度。
+- `SocialServerDataHandler → SocialStateStore.sparringInvite → SparringInviteScreenBootstrap` 接收链保持不变；client 内部补充队列、版本/tombstone 与 identity 调度。
 - 独立 NPC/玩家切磋协议、server 超时与响应语义均未改变。
 
 ### 遗留 / 后续
 
 - `docs/plans-skeleton/plan-bughunt-v-sparring-invite-screen-hijack-v1.md` 是同 bug 的重复 skeleton，留给主干在本 PR 合并后按锁运维/去重流程处理；本 PR 遵守一个 plan 一个 PR，不跨 plan 删除。
-- 测试以纯决策与 toast 状态为主，未直接 mock `MinecraftClient#setScreen`；validator 已静态核对 runtime switch 中 `OTHER` 分支无 `setScreen` 路径。
+- 无头测试通过真实 `SparringInviteScreen.close()` 与可注入 C2S backend 验证关闭副作用；`MinecraftClient#setScreen` 分支由纯决策矩阵和 runtime switch 静态对拍锁定。
