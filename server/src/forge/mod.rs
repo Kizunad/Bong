@@ -111,22 +111,6 @@ pub fn register(app: &mut App) {
             // 真实生产调用点）。
             crate::network::forge_snapshot_emit::push_forge_start_snapshot_on_accept
                 .after(handle_start_forge_requests),
-            handle_billet_step_advance
-                .after(handle_start_forge_requests)
-                .after(crate::network::client_request_handler::handle_client_request_payloads),
-            handle_tempering_hits.after(handle_billet_step_advance),
-            handle_tempering_step_advance.after(handle_tempering_hits),
-            handle_scroll_submits.after(handle_tempering_step_advance),
-            handle_inscription_step_advance.after(handle_scroll_submits),
-            handle_consecration_injects.after(handle_inscription_step_advance),
-            // 单步交互（淬炼击键/铭文投入/开光注真元）后回推 session 快照，供
-            // ForgeScreen 实时反映进度。
-            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
-                .after(handle_consecration_injects),
-            handle_consecration_step_advance.after(handle_consecration_injects),
-            // step 推进后回推快照（第二个 send_forge_snapshots_to_player 真实调用点）。
-            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
-                .after(handle_consecration_step_advance),
             inventory_bridge::forge_outcome_to_inventory.after(handle_consecration_step_advance),
             crate::network::forge_bridge::publish_forge_outcome
                 .after(handle_consecration_step_advance),
@@ -139,6 +123,7 @@ pub fn register(app: &mut App) {
             cleanup_completed_sessions.after(handle_consecration_step_advance),
         ),
     );
+    add_forge_c2s_step_advance_systems(app);
 
     app.add_systems(
         Update,
@@ -153,6 +138,30 @@ pub fn register(app: &mut App) {
                 .in_set(crate::combat::CombatSystemSet::Emit),
             artifact_meridian::artifact_meridian_maintenance_tick
                 .in_set(crate::combat::CombatSystemSet::Emit),
+        ),
+    );
+}
+
+/// 注册炼器 C2S 阶段推进的唯一生产顺序契约，集成测试复用同一条系统链。
+fn add_forge_c2s_step_advance_systems(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            handle_billet_step_advance
+                .after(handle_start_forge_requests)
+                .after(crate::network::client_request_handler::handle_client_request_payloads),
+            handle_tempering_hits.after(handle_billet_step_advance),
+            handle_tempering_step_advance.after(handle_tempering_hits),
+            handle_scroll_submits.after(handle_tempering_step_advance),
+            handle_inscription_step_advance.after(handle_scroll_submits),
+            handle_consecration_injects.after(handle_inscription_step_advance),
+            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
+                .after(handle_consecration_injects),
+            handle_consecration_step_advance.after(
+                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction,
+            ),
+            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
+                .after(handle_consecration_step_advance),
         ),
     );
 }
@@ -1227,44 +1236,6 @@ mod tests {
             .collect()
     }
 
-    fn insert_qing_feng_billet_session(
-        app: &mut App,
-        session_id: u64,
-        station: Entity,
-        caster: Entity,
-    ) {
-        let mut sessions = ForgeSessions::new();
-        let mut session = ForgeSession::new(
-            ForgeSessionId(session_id),
-            "qing_feng_v0".to_string(),
-            station,
-            caster,
-        );
-        session.step_state = StepState::Billet(Default::default());
-        sessions.insert(session);
-        app.insert_resource(sessions);
-    }
-
-    fn insert_qing_feng_tempering_session(
-        app: &mut App,
-        session_id: u64,
-        station: Entity,
-        caster: Entity,
-    ) {
-        let mut sessions = ForgeSessions::new();
-        let mut session = ForgeSession::new(
-            ForgeSessionId(session_id),
-            "qing_feng_v0".to_string(),
-            station,
-            caster,
-        );
-        session.current_step = ForgeStep::Tempering;
-        session.step_index = 1;
-        session.step_state = StepState::Tempering(Default::default());
-        sessions.insert(session);
-        app.insert_resource(sessions);
-    }
-
     fn registry_with_qing_feng() -> BlueprintRegistry {
         let mut registry = BlueprintRegistry::new();
         let blueprint: blueprint::Blueprint = serde_json::from_str(include_str!(
@@ -1286,34 +1257,36 @@ mod tests {
     }
 
     fn add_production_forge_c2s_systems(app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                handle_client_request_payloads,
-                handle_billet_step_advance.after(handle_client_request_payloads),
-                handle_tempering_hits.after(handle_billet_step_advance),
-                handle_tempering_step_advance.after(handle_tempering_hits),
-                handle_scroll_submits.after(handle_tempering_step_advance),
-                handle_inscription_step_advance.after(handle_scroll_submits),
-                handle_consecration_injects.after(handle_inscription_step_advance),
-                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
-                    .after(handle_consecration_injects),
-                handle_consecration_step_advance.after(handle_consecration_injects),
-                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
-                    .after(handle_consecration_step_advance),
-            ),
-        );
+        app.add_systems(Update, handle_client_request_payloads);
+        add_forge_c2s_step_advance_systems(app);
     }
 
-    #[test]
-    fn forge_step_advance_c2s_advances_and_pushes_tempering_session() {
+    fn forge_c2s_test_app() -> App {
         let mut app = App::new();
         add_minimal_client_request_resources(&mut app);
         add_forge_c2s_events(&mut app);
         app.insert_resource(registry_with_qing_feng());
         add_production_forge_c2s_systems(&mut app);
+        app
+    }
 
-        let (client_bundle, mut helper) = create_mock_client("Azure");
+    fn send_forge_c2s(app: &mut App, client: Entity, data: &[u8]) {
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: data.to_vec().into_boxed_slice(),
+            });
+    }
+
+    fn spawn_qing_feng_c2s_session(
+        app: &mut App,
+        session_id: u64,
+        username: &str,
+        initial_step: ForgeStep,
+    ) -> (Entity, Entity, MockClientHelper) {
+        let (client_bundle, helper) = create_mock_client(username);
         let mut learned = LearnedBlueprints::new();
         learned.learn("qing_feng_v0".into());
         let caster = app
@@ -1326,25 +1299,48 @@ mod tests {
                 learned,
             ))
             .id();
-        let station = app
-            .world_mut()
-            .spawn(WeaponForgeStation::placed(
-                BlockPos::new(4, 64, 4),
-                2,
-                caster,
-            ))
-            .id();
-        insert_qing_feng_billet_session(&mut app, 1, station, caster);
 
-        app.world_mut()
-            .resource_mut::<Events<CustomPayloadEvent>>()
-            .send(CustomPayloadEvent {
-                client: caster,
-                channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"forge_step_advance","v":1,"session_id":1}"#
-                    .to_vec()
-                    .into_boxed_slice(),
-            });
+        let session_id = ForgeSessionId(session_id);
+        let mut station = WeaponForgeStation::placed(BlockPos::new(4, 64, 4), 2, caster);
+        station.session = (initial_step != ForgeStep::Done).then_some(session_id);
+        let station = app.world_mut().spawn(station).id();
+
+        let mut session =
+            ForgeSession::new(session_id, "qing_feng_v0".to_string(), station, caster);
+        match initial_step {
+            ForgeStep::Billet => {
+                session.step_state = StepState::Billet(Default::default());
+            }
+            ForgeStep::Tempering => {
+                session.current_step = ForgeStep::Tempering;
+                session.step_index = 1;
+                session.step_state = StepState::Tempering(Default::default());
+            }
+            ForgeStep::Done => {
+                session.current_step = ForgeStep::Done;
+                session.step_index = 2;
+                session.step_state = StepState::None;
+            }
+            unsupported => panic!("qing_feng_v0 fixture does not contain {unsupported:?}"),
+        }
+        let mut sessions = ForgeSessions::new();
+        sessions.insert(session);
+        app.insert_resource(sessions);
+
+        (caster, station, helper)
+    }
+
+    #[test]
+    fn forge_step_advance_c2s_advances_and_pushes_tempering_session() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
 
         app.update();
         flush_all_client_packets(&mut app);
@@ -1374,52 +1370,20 @@ mod tests {
 
     #[test]
     fn forge_step_advance_then_tempering_hit_same_update_applies_hit_and_pushes_snapshot() {
-        let mut app = App::new();
-        add_minimal_client_request_resources(&mut app);
-        add_forge_c2s_events(&mut app);
-        app.insert_resource(registry_with_qing_feng());
-        add_production_forge_c2s_systems(&mut app);
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
 
-        let (client_bundle, mut helper) = create_mock_client("Azure");
-        let mut learned = LearnedBlueprints::new();
-        learned.learn("qing_feng_v0".into());
-        let caster = app
-            .world_mut()
-            .spawn((
-                client_bundle,
-                Cultivation::default(),
-                QiColor::default(),
-                SkillSet::default(),
-                learned,
-            ))
-            .id();
-        let station = app
-            .world_mut()
-            .spawn(WeaponForgeStation::placed(
-                BlockPos::new(4, 64, 4),
-                2,
-                caster,
-            ))
-            .id();
-        insert_qing_feng_billet_session(&mut app, 1, station, caster);
-
-        {
-            let mut events = app.world_mut().resource_mut::<Events<CustomPayloadEvent>>();
-            events.send(CustomPayloadEvent {
-                client: caster,
-                channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"forge_step_advance","v":1,"session_id":1}"#
-                    .to_vec()
-                    .into_boxed_slice(),
-            });
-            events.send(CustomPayloadEvent {
-                client: caster,
-                channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#
-                    .to_vec()
-                    .into_boxed_slice(),
-            });
-        }
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#,
+        );
 
         app.update();
         flush_all_client_packets(&mut app);
@@ -1462,45 +1426,245 @@ mod tests {
     }
 
     #[test]
-    fn forge_tempering_hit_c2s_updates_hits_and_pushes_session_snapshot() {
-        let mut app = App::new();
-        add_minimal_client_request_resources(&mut app);
-        add_forge_c2s_events(&mut app);
-        app.insert_resource(registry_with_qing_feng());
-        add_production_forge_c2s_systems(&mut app);
+    fn forge_tempering_hit_before_step_advance_same_update_is_rejected() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
 
-        let (client_bundle, mut helper) = create_mock_client("Azure");
-        let mut learned = LearnedBlueprints::new();
-        learned.learn("qing_feng_v0".into());
-        let caster = app
-            .world_mut()
-            .spawn((
-                client_bundle,
-                Cultivation::default(),
-                QiColor::default(),
-                SkillSet::default(),
-                learned,
-            ))
-            .id();
-        let station = app
-            .world_mut()
-            .spawn(WeaponForgeStation::placed(
-                BlockPos::new(4, 64, 4),
-                2,
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("step advance 后 session 应继续存在");
+        assert_eq!(
+            session.current_step,
+            ForgeStep::Tempering,
+            "击键先到时应仅拒绝击键，随后同帧推进仍须进入 Tempering，实际={:?}",
+            session.current_step
+        );
+        match &session.step_state {
+            StepState::Tempering(state) => assert_eq!(
+                (state.beat_cursor, state.hits, state.misses),
+                (0, 0, 0),
+                "击键发生在 step_advance 前时不得借未来步骤生效，实际 state={state:?}"
+            ),
+            other => panic!("推进后应初始化 Tempering state，实际={other:?}"),
+        }
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| {
+                matches!(
+                    payload,
+                    ServerDataPayloadV1::ForgeSession(session)
+                        if session.session_id == 1
+                            && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                            && matches!(
+                                &session.step_state,
+                                crate::schema::forge::ForgeStepStateDataV1::Tempering {
+                                    beat_cursor: 0,
+                                    hits: 0,
+                                    misses: 0,
+                                    ..
+                                }
+                            )
+                )
+            }),
+            "逆序请求后必须只回推未击中的 Tempering 快照，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_duplicate_step_advance_same_update_advances_only_once() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
+
+        for _ in 0..2 {
+            send_forge_c2s(
+                &mut app,
                 caster,
-            ))
-            .id();
-        insert_qing_feng_tempering_session(&mut app, 1, station, caster);
+                br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+            );
+        }
 
-        app.world_mut()
-            .resource_mut::<Events<CustomPayloadEvent>>()
-            .send(CustomPayloadEvent {
-                client: caster,
-                channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#
-                    .to_vec()
-                    .into_boxed_slice(),
-            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("重复推进后 session 不得被跨步结算移除");
+        assert_eq!(
+            (session.current_step, session.step_index),
+            (ForgeStep::Tempering, 1),
+            "同帧重复 step_advance 必须按 from_step 幂等，只从 Billet 推进一步，实际=({:?}, {})",
+            session.current_step,
+            session.step_index
+        );
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        let forge_sessions: Vec<_> = payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                ServerDataPayloadV1::ForgeSession(session) if session.session_id == 1 => {
+                    Some(session)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !forge_sessions.is_empty()
+                && forge_sessions.iter().all(|session| {
+                    session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                        && session.step_index == 1
+                }),
+            "重复推进只能回推同一个 Tempering 状态，不得出现跨步快照，实际={forge_sessions:?}"
+        );
+    }
+
+    #[test]
+    fn forge_pending_step_does_not_authorize_other_client_same_update() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut owner_helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Owner", ForgeStep::Billet);
+        let (attacker_bundle, mut attacker_helper) = create_mock_client("Attacker");
+        let attacker = app.world_mut().spawn(attacker_bundle).id();
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            attacker,
+            br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("owner 推进后 session 应继续存在");
+        match &session.step_state {
+            StepState::Tempering(state) => assert_eq!(
+                (state.beat_cursor, state.hits, state.misses),
+                (0, 0, 0),
+                "owner 的 pending step 不得授权其他 client 击键，实际 state={state:?}"
+            ),
+            other => panic!("owner 推进后应处于 Tempering，实际={other:?}"),
+        }
+
+        let owner_payloads = collect_server_data_payloads(&mut owner_helper);
+        assert!(
+            owner_payloads.iter().any(|payload| matches!(
+                payload,
+                ServerDataPayloadV1::ForgeSession(session)
+                    if session.session_id == 1
+                        && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+            )),
+            "合法 owner 必须收到推进快照，实际={owner_payloads:?}"
+        );
+        let attacker_payloads = collect_server_data_payloads(&mut attacker_helper);
+        assert!(
+            attacker_payloads.is_empty(),
+            "非 caster 的连续请求必须无状态或 S2C 副作用，实际={attacker_payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_step_advance_missing_session_is_noop_without_snapshot() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":999}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let existing = sessions
+            .get(ForgeSessionId(1))
+            .expect("无效 session 请求不得影响既有会话");
+        assert_eq!(
+            (existing.current_step, existing.step_index),
+            (ForgeStep::Billet, 0),
+            "缺失 session 的推进请求必须完全无状态副作用，实际=({:?}, {})",
+            existing.current_step,
+            existing.step_index
+        );
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "缺失 session 的推进请求不得伪造 forge 快照，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_step_advance_done_session_is_noop_without_snapshot() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Done);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("Done session 在 retention 窗口内应继续存在");
+        assert_eq!(
+            (session.current_step, session.step_index),
+            (ForgeStep::Done, 2),
+            "Done session 必须拒绝再次推进，实际=({:?}, {})",
+            session.current_step,
+            session.step_index
+        );
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "Done session 的非法推进不得回推伪造快照，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_tempering_hit_c2s_updates_hits_and_pushes_session_snapshot() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Tempering);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#,
+        );
 
         app.update();
         flush_all_client_packets(&mut app);
