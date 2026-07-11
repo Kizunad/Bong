@@ -76,6 +76,9 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
 }
 
 fn to_proto_bytes_checked(payload: &ServerDataV1) -> Result<Vec<u8>, PayloadBuildError> {
+    if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = &payload.payload {
+        serde_json::to_value(hud).map_err(PayloadBuildError::Json)?;
+    }
     enforce_payload_size(payload.to_proto_bytes())
 }
 
@@ -391,7 +394,8 @@ mod server_data_tests {
     };
     use crate::schema::narration::Narration;
     use crate::schema::server_data::{
-        ServerDataPayloadV1, HEARTBEAT_MESSAGE, SERVER_DATA_VERSION, WELCOME_MESSAGE,
+        AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1, ANQI_HUD_TICK_MAX, HEARTBEAT_MESSAGE,
+        SERVER_DATA_VERSION, WELCOME_MESSAGE,
     };
     use crate::schema::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
     use serde_json::json;
@@ -779,6 +783,49 @@ mod server_data_tests {
             PayloadBuildError::Json(err) => {
                 panic!("proto size check should not route through JSON serialization: {err}");
             }
+        }
+    }
+
+    #[test]
+    fn proto_path_rejects_invalid_anqi_hud_before_encoding() {
+        let invalid_payloads = [
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Aim,
+                echo_count: 0,
+                aim_progress: 1.01,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: -0.5,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Echo,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: ANQI_HUD_TICK_MAX + 1,
+            },
+        ];
+
+        for hud in invalid_payloads {
+            let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(hud));
+            let error = to_proto_bytes_checked(&payload)
+                .expect_err("invalid anqi_hud must be rejected before protobuf encoding");
+            assert!(
+                matches!(error, PayloadBuildError::Json(_)),
+                "invalid anqi_hud should fail serde preflight, got {error:?}"
+            );
         }
     }
 

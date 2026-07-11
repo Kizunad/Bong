@@ -29,7 +29,7 @@ use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1, ServerDataV1};
+use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1, ServerDataV1};
 
 /// plan-combat-skill-feedback-bridges-v1 P4 断链修复：
 /// `DecoyDeployEvent`    → HUD kind="echo" 推送（echo_count 直取）。
@@ -49,7 +49,7 @@ pub fn emit_anqi_hud_payloads(
             continue;
         };
         let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "echo".to_string(),
+            kind: AnqiHudKindV1::Echo,
             echo_count: event.echo_count,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -86,7 +86,7 @@ pub fn emit_anqi_hud_payloads(
         };
         let overload = event.outcome.overload_ratio.clamp(0.0, 1.0);
         let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "charge".to_string(),
+            kind: AnqiHudKindV1::Charge,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: overload,
@@ -120,7 +120,7 @@ pub fn emit_anqi_hud_payloads(
         };
         let container_str = event.container.as_wire_str().to_string();
         let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -156,7 +156,7 @@ pub fn emit_anqi_hud_payloads(
         };
         let charge = event.outcome.ignored_defense_ratio.clamp(0.0, 1.0);
         let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "charge".to_string(),
+            kind: AnqiHudKindV1::Charge,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: charge,
@@ -191,7 +191,7 @@ pub fn emit_anqi_hud_payloads(
             continue;
         };
         let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "multishot".to_string(),
+            kind: AnqiHudKindV1::Multishot,
             echo_count: u32::from(event.projectile_count),
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -221,7 +221,7 @@ pub fn emit_anqi_hud_payloads(
 #[cfg(test)]
 mod tests {
     use crate::qi_physics::AnqiContainerKind;
-    use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+    use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
 
     // ── emit 契约 pin：DecoyDeployEvent → payload.kind=="echo" ────
 
@@ -229,7 +229,7 @@ mod tests {
     fn anqi_hud_echo_payload_kind_and_echo_count() {
         // 构造 echo payload，验证 kind + echo_count 按事件值取，不重算
         let payload = AnqiHudV1 {
-            kind: "echo".to_string(),
+            kind: AnqiHudKindV1::Echo,
             echo_count: 7,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -238,9 +238,10 @@ mod tests {
             tick: 42,
         };
         assert_eq!(
-            payload.kind, "echo",
+            payload.kind,
+            AnqiHudKindV1::Echo,
             "echo payload kind must be 'echo'，实际={}",
-            payload.kind
+            payload.kind.as_str()
         );
         assert_eq!(
             payload.echo_count, 7,
@@ -265,7 +266,7 @@ mod tests {
         // overload_ratio = payload_qi / qi_max，作蓄力度量；kind="charge" 不再是 "aim"
         let overload_ratio = 0.73_f64;
         let payload = AnqiHudV1 {
-            kind: "charge".to_string(),
+            kind: AnqiHudKindV1::Charge,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: overload_ratio.clamp(0.0, 1.0),
@@ -274,9 +275,10 @@ mod tests {
             tick: 100,
         };
         assert_eq!(
-            payload.kind, "charge",
+            payload.kind,
+            AnqiHudKindV1::Charge,
             "QiInjection payload kind 必须为 'charge'（非 'aim'，overload_ratio 是载荷比而非瞄准进度）；实际={}",
-            payload.kind
+            payload.kind.as_str()
         );
         assert!(
             (payload.charge_progress - 0.73).abs() < 1e-9,
@@ -300,7 +302,7 @@ mod tests {
         // CarrierAbrasionEvent.after_qi → abrasion_qi_payload（只读，不重算）
         let after_qi = 58.4_f64;
         let payload = AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -309,9 +311,10 @@ mod tests {
             tick: 200,
         };
         assert_eq!(
-            payload.kind, "abrasion",
+            payload.kind,
+            AnqiHudKindV1::Abrasion,
             "abrasion payload kind must be 'abrasion'；实际={}",
-            payload.kind
+            payload.kind.as_str()
         );
         assert!(
             (payload.abrasion_qi_payload - 58.4).abs() < 1e-9,
@@ -330,7 +333,7 @@ mod tests {
         use crate::network::agent_bridge::payload_type_label;
         use crate::schema::server_data::{ServerDataType, ServerDataV1};
         let v1 = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "echo".to_string(),
+            kind: AnqiHudKindV1::Echo,
             echo_count: 1,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -355,7 +358,7 @@ mod tests {
     fn anqi_hud_v1_serde_roundtrip() {
         // schema pin test：JSON 往返不丢字段
         let original = AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 3,
             aim_progress: 0.5,
             charge_progress: 0.25,
@@ -402,7 +405,7 @@ mod tests {
         // abrasion_container = event.container.as_wire_str().to_string()
         // 此处对每个非 HandSlot（会触发 abrasion emit 的容器）逐一验证 wire 字符串。
         let quiver_payload = AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -417,7 +420,7 @@ mod tests {
         );
 
         let pocket_payload = AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -436,7 +439,7 @@ mod tests {
     fn abrasion_payload_hand_slot_wire_str() {
         // HandSlot 的 as_wire_str 验证（'hand_slot' 非 Debug 'handslot'）
         let payload = AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -454,7 +457,7 @@ mod tests {
     #[test]
     fn abrasion_payload_fenglinghe_wire_str() {
         let payload = AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -537,7 +540,7 @@ mod tests {
                 serde_json::from_slice(packet.data.0 .0)
                     .expect("server_data payload should deserialize");
             if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = payload.payload {
-                if hud.kind == "abrasion" {
+                if hud.kind == AnqiHudKindV1::Abrasion {
                     found_container = Some(hud.abrasion_container);
                     break;
                 }
@@ -600,7 +603,7 @@ mod tests {
             }
         }
 
-        let mut found: Option<(String, f64)> = None;
+        let mut found: Option<(AnqiHudKindV1, f64)> = None;
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                 continue;
@@ -617,8 +620,10 @@ mod tests {
         }
         let (kind, charge) = found.expect("ArmorPierceEvent 必须 emit anqi_hud payload");
         assert_eq!(
-            kind, "charge",
-            "破甲注射应复用 charge HUD 维度（无新 schema 字段）；实际 kind='{kind}'"
+            kind,
+            AnqiHudKindV1::Charge,
+            "破甲注射应复用 charge HUD 维度（无新 schema 字段）；实际 kind='{}'",
+            kind.as_str()
         );
         assert!(
             (charge - 0.6).abs() < 1e-6,
@@ -666,7 +671,7 @@ mod tests {
             }
         }
 
-        let mut found: Option<(String, u32)> = None;
+        let mut found: Option<(AnqiHudKindV1, u32)> = None;
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                 continue;
@@ -683,8 +688,10 @@ mod tests {
         }
         let (kind, count) = found.expect("MultiShotEvent 必须 emit anqi_hud payload");
         assert_eq!(
-            kind, "multishot",
-            "多发齐射应用 kind='multishot'（client 路由到独立 multishot 维度）；实际 kind='{kind}'"
+            kind,
+            AnqiHudKindV1::Multishot,
+            "多发齐射应用 kind='multishot'（client 路由到独立 multishot 维度）；实际 kind='{}'",
+            kind.as_str()
         );
         assert_eq!(
             count, 5,

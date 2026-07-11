@@ -11627,11 +11627,11 @@ mod tests {
     fn anqi_hud_proto_roundtrip_echo() {
         use crate::schema::proto_convert::server_data_to_proto_payload;
         use crate::schema::proto_gen::bong::ServerDataEnvelope;
-        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
         use prost::Message;
 
         let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "echo".to_string(),
+            kind: AnqiHudKindV1::Echo,
             echo_count: 5,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -11683,11 +11683,11 @@ mod tests {
     fn anqi_hud_proto_roundtrip_abrasion() {
         use crate::schema::proto_convert::server_data_to_proto_payload;
         use crate::schema::proto_gen::bong::ServerDataEnvelope;
-        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
         use prost::Message;
 
         let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -11739,11 +11739,11 @@ mod tests {
         // 此测试锁住 charge_progress 字段在 proto 链中不丢。
         use crate::schema::proto_convert::server_data_to_proto_payload;
         use crate::schema::proto_gen::bong::ServerDataEnvelope;
-        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
         use prost::Message;
 
         let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "charge".to_string(),
+            kind: AnqiHudKindV1::Charge,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.85,

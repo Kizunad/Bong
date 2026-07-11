@@ -1443,7 +1443,7 @@ impl From<&ServerDataPayloadV1> for Payload {
             }
             // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD（守恒红线：只读事件字段）
             ServerDataPayloadV1::AnqiHud(s) => Payload::AnqiHud(bong::AnqiHud {
-                kind: s.kind.clone(),
+                kind: s.kind.as_str().to_string(),
                 echo_count: s.echo_count,
                 aim_progress: s.aim_progress,
                 charge_progress: s.charge_progress,
@@ -4105,6 +4105,7 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::server_data::AnqiHudKindV1;
     use prost::Message;
 
     /// S2C: encode -> decode roundtrip preserves payload variant.
@@ -6914,7 +6915,7 @@ mod tests {
                 loser_group: None,
             })),
             fix!(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-                kind: "echo".to_string(),
+                kind: AnqiHudKindV1::Echo,
                 echo_count: 0,
                 aim_progress: 0.0,
                 charge_progress: 0.0,
