@@ -304,6 +304,32 @@ public class SocialServerDataHandlerTest {
     }
 
     @Test
+    void pendingSparringInviteQueueHasStableCapacityBoundary() {
+        for (int index = 0; index < 64; index++) {
+            assertEquals(
+                SocialStateStore.SparringInviteUpdate.ACCEPTED,
+                SocialStateStore.enqueueSparringInvite(sparringInvite("sparring:" + index, 5_000L + index)),
+                "容量边界内的邀请必须保留，index=" + index
+            );
+        }
+        SocialStateStore.SparringInvite overflow = sparringInvite("sparring:overflow", 6_000L);
+
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.CAPACITY,
+            SocialStateStore.enqueueSparringInvite(overflow),
+            "第 65 份 pending 邀请必须被拒绝，避免网络输入导致客户端队列无界增长"
+        );
+        assertEquals("sparring:0", SocialStateStore.sparringInvite().inviteId(), "容量拒绝不能扰动当前邀请 identity");
+
+        SocialStateStore.clearSparringInvite("sparring:0");
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.ACCEPTED,
+            SocialStateStore.enqueueSparringInvite(overflow),
+            "释放容量后，先前被拒邀请必须可重试；CAPACITY 不能污染版本高水位或 tombstone"
+        );
+    }
+
+    @Test
     void nicheIntrusionAndGuardianEventsUpdateDefenseStore() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
