@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use valence::prelude::{Entity, EventReader, EventWriter, Position, Query, Res, ResMut, With};
+use valence::prelude::{
+    Entity, EventReader, EventWriter, Position, Query, RemovedComponents, Res, ResMut, With,
+};
 
 use crate::combat::components::Wounds;
 use crate::combat::events::CombatEvent;
@@ -503,6 +505,65 @@ pub fn enforce_harvest_session_constraints(
             target_pos,
             spirit_quality: 0.0,
             duration_ticks: target.duration_ticks,
+            gathering_quality: None,
+            tool_used: None,
+            overflow_to_ground: false,
+        });
+    }
+}
+
+/// plan-bughunt-botany-disconnect-session P0 方案 A：断线即取消 botany 采集 session。
+///
+/// 消费 `RemovedComponents<Client>`——valence 在客户端连接丢失时移除该组件；
+/// `player::despawn_disconnected_clients` 也读同一信号做玩家持久化，两个系统各自持有
+/// 独立的 reader cursor 互不影响（范式同 `world::container_open::release_disconnected_container_locks`，
+/// 该系统已用相同机制清理断线容器占用锁）。
+///
+/// 必须排在 `tick_harvest_sessions` 之前跑（见 `botany/mod.rs` 的 `.chain()` 顺序）：
+/// 否则断线当帧若 session 恰好到达完成 tick，`complete_harvest_for_player` 会先
+/// `remove_session` 再因旧实体缺 `Client`/`PlayerInventory` 失败，静默吞掉玩家已等待的
+/// 采集进度——这是本 bug 的核心触发路径。这里抢先移除 session 并发送
+/// `interrupted=true` 的终结事件，让 `tick_harvest_sessions` 在同一 tick 内再也看不到
+/// 该 session；同时清掉旧 `client_entity` 对该 `player_id` 的占位，玩家重连后
+/// `start_or_resume_harvest` 能立刻用新实体重新开始，不会被旧 session 卡住。
+///
+/// 不清理 `HarvestSessionStore::skills_by_player`——断线只取消进行中的采集动作，
+/// 已经获得的采集熟练度 XP 是玩家的既得进度，不随断线清零。
+pub fn release_disconnected_harvest_sessions(
+    mut disconnected_clients: RemovedComponents<valence::prelude::Client>,
+    mut store: ResMut<HarvestSessionStore>,
+    mut terminal_events: EventWriter<HarvestTerminalEvent>,
+) {
+    for entity in disconnected_clients.read() {
+        let Some(player_id) = store
+            .iter()
+            .find(|session| session.client_entity == entity)
+            .map(|session| session.player_id.clone())
+        else {
+            continue;
+        };
+
+        let Some(session) = store.remove_session(player_id.as_str()) else {
+            continue;
+        };
+
+        tracing::info!(
+            "[bong][botany] cancelling harvest session for `{player_id}` — client {entity:?} disconnected mid-harvest"
+        );
+
+        terminal_events.send(HarvestTerminalEvent {
+            client_entity: session.client_entity,
+            session_id: session.player_id.clone(),
+            target_id: format_target_id(session.target_entity),
+            target_name: session.target_plant.as_str().to_string(),
+            plant_kind: session.target_plant.as_str().to_string(),
+            mode: session.mode,
+            interrupted: true,
+            completed: false,
+            detail: "断线打断".to_string(),
+            target_pos: None,
+            spirit_quality: 0.0,
+            duration_ticks: session.duration_ticks,
             gathering_quality: None,
             tool_used: None,
             overflow_to_ground: false,
@@ -2210,6 +2271,349 @@ mod tests {
         assert!(
             store.session_for("offline:Azure").is_none(),
             "Auto session should break on hit"
+        );
+    }
+
+    // ---- plan-bughunt-botany-disconnect-session: release_disconnected_harvest_sessions ----
+
+    #[test]
+    fn disconnect_cancels_session_and_emits_interrupted_terminal_event() {
+        let mut app = make_app_with_combat_events();
+        app.add_systems(Update, release_disconnected_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app.world_mut().spawn(client_bundle).id();
+        let target = plant_entity(&mut app, "spawn");
+
+        {
+            let mut store = app.world_mut().resource_mut::<HarvestSessionStore>();
+            start_or_resume_harvest(
+                &mut store,
+                "Azure",
+                client_entity,
+                Some(target),
+                BotanyPlantId::CiSheHao,
+                BotanyHarvestMode::Manual,
+                [10.0, 64.0, 10.0],
+                1,
+            );
+        }
+
+        // 模拟断线：valence 在连接丢失时移除 Client 组件。
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<valence::prelude::Client>();
+
+        app.update();
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(
+            store.session_for("offline:Azure").is_none(),
+            "disconnect must cancel the in-progress session immediately, not leave it \
+             dangling for a later completion tick to silently swallow"
+        );
+
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            frames.len(),
+            1,
+            "disconnect must send exactly one terminal event for the cancelled session"
+        );
+        let frame = &frames[0];
+        assert!(
+            frame.interrupted && !frame.completed,
+            "disconnect cancellation must be an explicit interrupt, not a silent completion — \
+             got interrupted={} completed={}",
+            frame.interrupted,
+            frame.completed
+        );
+        assert!(
+            frame.detail.contains("断线"),
+            "detail must clearly state the cancellation reason is disconnect, got {:?}",
+            frame.detail
+        );
+        assert_eq!(frame.session_id, "offline:Azure");
+        assert_eq!(frame.client_entity, client_entity);
+    }
+
+    #[test]
+    fn disconnect_at_completion_tick_does_not_reach_completion_path() {
+        // 复现 skeleton 的第二条触发路径：session 恰好在断线当帧达到完成进度。
+        // release_disconnected_harvest_sessions 必须在 tick_harvest_sessions 之前拦截，
+        // 否则 complete_harvest_for_player 会先 remove_session 再因旧实体缺 Client
+        // 查库存失败，静默吞掉玩家已等待完成的采集产出。
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(
+            Update,
+            (release_disconnected_harvest_sessions, tick_harvest_sessions).chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(empty_inventory_8x8())
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        // duration_ticks=0 => progress_at(any tick) >= 1.0 immediately, same as the
+        // existing `queue_completed_ci_she_harvest` helper's "already complete" setup.
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<valence::prelude::Client>();
+
+        app.update();
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(
+            store.session_for("offline:Azure").is_none(),
+            "session must be gone after the tick regardless of path taken"
+        );
+
+        let plant = app
+            .world()
+            .entity(target)
+            .get::<Plant>()
+            .expect("plant entity should still exist");
+        assert!(
+            !plant.harvested,
+            "the disconnect path must win the race — plant must NOT be marked harvested via \
+             complete_harvest_for_player, which would require a live Client/PlayerInventory \
+             that no longer exists on the disconnected entity"
+        );
+
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            frames.len(),
+            1,
+            "exactly one terminal event must fire — the disconnect cancellation, not a \
+             completion event from complete_harvest_for_player"
+        );
+        assert!(
+            frames[0].interrupted && !frames[0].completed,
+            "must be the disconnect interrupt, not a completion — got interrupted={} completed={}",
+            frames[0].interrupted,
+            frames[0].completed
+        );
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert!(
+            dropped.entries.is_empty(),
+            "no product should ever be granted or dropped for a session cancelled by disconnect"
+        );
+    }
+
+    #[test]
+    fn reconnect_after_disconnect_can_start_a_fresh_session() {
+        let mut app = make_app_with_combat_events();
+        app.add_systems(Update, release_disconnected_harvest_sessions);
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_client_entity = app.world_mut().spawn(old_bundle).id();
+        let target = plant_entity(&mut app, "spawn");
+
+        {
+            let mut store = app.world_mut().resource_mut::<HarvestSessionStore>();
+            start_or_resume_harvest(
+                &mut store,
+                "Azure",
+                old_client_entity,
+                Some(target),
+                BotanyPlantId::CiSheHao,
+                BotanyHarvestMode::Manual,
+                [10.0, 64.0, 10.0],
+                1,
+            );
+        }
+
+        app.world_mut()
+            .entity_mut(old_client_entity)
+            .remove::<valence::prelude::Client>();
+        app.update();
+
+        // 重连：新 client_entity，同一 player_id。
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_client_entity = app.world_mut().spawn(new_bundle).id();
+        assert_ne!(
+            old_client_entity, new_client_entity,
+            "reconnect must produce a fresh ECS entity distinct from the disconnected one"
+        );
+
+        {
+            let mut store = app.world_mut().resource_mut::<HarvestSessionStore>();
+            start_or_resume_harvest(
+                &mut store,
+                "Azure",
+                new_client_entity,
+                Some(target),
+                BotanyPlantId::CiSheHao,
+                BotanyHarvestMode::Manual,
+                [10.0, 64.0, 10.0],
+                5,
+            );
+        }
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        let session = store
+            .session_for("offline:Azure")
+            .expect("reconnecting player must be able to start a brand new session");
+        assert_eq!(
+            session.client_entity, new_client_entity,
+            "the new session must be bound to the new client entity, not blocked or \
+             misrouted by any residue from the disconnected old session"
+        );
+        assert_eq!(session.started_at_tick, 5);
+    }
+
+    #[test]
+    fn disconnect_without_active_session_is_a_no_op() {
+        let mut app = make_app_with_combat_events();
+        app.add_systems(Update, release_disconnected_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app.world_mut().spawn(client_bundle).id();
+
+        // 没有为该玩家创建任何 HarvestSession —— 断线时该系统必须安全地什么都不做。
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<valence::prelude::Client>();
+
+        app.update();
+
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            frames.is_empty(),
+            "disconnecting a client with no active harvest session must not fabricate a \
+             terminal event, got {frames:?}"
+        );
+        assert_eq!(
+            app.world().resource::<HarvestSessionStore>().iter().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn disconnect_only_cancels_the_matching_players_session() {
+        let mut app = make_app_with_combat_events();
+        app.add_systems(Update, release_disconnected_harvest_sessions);
+
+        let (azure_bundle, _azure_helper) = create_mock_client("Azure");
+        let azure_entity = app.world_mut().spawn(azure_bundle).id();
+        let (breeze_bundle, _breeze_helper) = create_mock_client("Breeze");
+        let breeze_entity = app.world_mut().spawn(breeze_bundle).id();
+        let target_a = plant_entity(&mut app, "spawn");
+        let target_b = plant_entity(&mut app, "spawn");
+
+        {
+            let mut store = app.world_mut().resource_mut::<HarvestSessionStore>();
+            start_or_resume_harvest(
+                &mut store,
+                "Azure",
+                azure_entity,
+                Some(target_a),
+                BotanyPlantId::CiSheHao,
+                BotanyHarvestMode::Manual,
+                [10.0, 64.0, 10.0],
+                1,
+            );
+            start_or_resume_harvest(
+                &mut store,
+                "Breeze",
+                breeze_entity,
+                Some(target_b),
+                BotanyPlantId::CiSheHao,
+                BotanyHarvestMode::Auto,
+                [20.0, 64.0, 20.0],
+                1,
+            );
+        }
+
+        // 只断线 Azure。
+        app.world_mut()
+            .entity_mut(azure_entity)
+            .remove::<valence::prelude::Client>();
+
+        app.update();
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(
+            store.session_for("offline:Azure").is_none(),
+            "Azure's session must be cancelled"
+        );
+        let breeze_session = store
+            .session_for("offline:Breeze")
+            .expect("Breeze stayed connected — session must be untouched");
+        assert_eq!(breeze_session.client_entity, breeze_entity);
+        assert_eq!(breeze_session.mode, BotanyHarvestMode::Auto);
+
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            frames.len(),
+            1,
+            "only one terminal event for the one disconnected player"
+        );
+        assert_eq!(frames[0].session_id, "offline:Azure");
+    }
+
+    #[test]
+    fn disconnect_cancellation_preserves_gathering_skill_xp() {
+        let mut app = make_app_with_combat_events();
+        app.add_systems(Update, release_disconnected_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app.world_mut().spawn(client_bundle).id();
+        let target = plant_entity(&mut app, "spawn");
+
+        {
+            let mut store = app.world_mut().resource_mut::<HarvestSessionStore>();
+            store.add_skill_xp("offline:Azure", 40);
+            start_or_resume_harvest(
+                &mut store,
+                "Azure",
+                client_entity,
+                Some(target),
+                BotanyPlantId::CiSheHao,
+                BotanyHarvestMode::Manual,
+                [10.0, 64.0, 10.0],
+                1,
+            );
+        }
+
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<valence::prelude::Client>();
+        app.update();
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(store.session_for("offline:Azure").is_none());
+        assert_eq!(
+            store.skill_for("offline:Azure").xp,
+            40,
+            "disconnect must only cancel the in-progress session, never touch \
+             skills_by_player — earned gathering XP is persistent player progress"
         );
     }
 }

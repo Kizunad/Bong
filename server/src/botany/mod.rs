@@ -47,7 +47,8 @@ use components::{
 use ecology::emit_botany_ecology_snapshot;
 use events::{spawn_event_triggered_plants_on_death, BotanyEventSpawnRoll};
 use harvest::{
-    detect_non_session_trample, enforce_harvest_session_constraints, tick_harvest_sessions,
+    detect_non_session_trample, enforce_harvest_session_constraints,
+    release_disconnected_harvest_sessions, tick_harvest_sessions,
 };
 use hazard::{hazard_hints_for_kind, spawn_attracted_mobs_from_harvest, tick_harvest_hazards};
 use lifecycle::{initialize_static_points_from_zones, run_botany_lifecycle_tick};
@@ -91,6 +92,11 @@ pub fn register(app: &mut App) {
             detect_non_session_trample,
             run_botany_lifecycle_tick,
             tick_harvest_hazards,
+            // plan-bughunt-botany-disconnect-session P0：断线取消必须排在
+            // enforce_harvest_session_constraints / tick_harvest_sessions 之前，
+            // 防止断线当帧 session 恰好到达完成 tick 时被 complete_harvest_for_player
+            // 静默吞掉进度（见 harvest::release_disconnected_harvest_sessions 文档注释）。
+            release_disconnected_harvest_sessions,
             enforce_harvest_session_constraints,
             tick_harvest_sessions,
             spawn_attracted_mobs_from_harvest,
