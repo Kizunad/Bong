@@ -1306,7 +1306,7 @@ fn migrate_dormant_realm_distribution_v1(
             // with new_realm.required_meridians() — same double-source bug as the
             // seeder, just on the migration path.
             snapshot.meridian_system =
-                crate::npc::technique::npc_meridian_system_for_realm(new_realm);
+                crate::npc::technique::npc_meridian_system_for_realm(new_realm, crate::body_plan::humanoid_plan_static());
             // minor fix：重新派生的 meridian_system 会把所有经脉按 new_realm 全量
             // 重开（opened=true），却没核对 meridian_severed（永久断脉登记）——一条
             // 已被记录 SEVERED 的经脉会在迁移后被"复活"，与 MeridianSeveredPermanent
@@ -1546,7 +1546,7 @@ fn dormant_rogue_seed_snapshot(
     // ends up with realm.required_meridians()==6/12/16 but a frozen single-meridian
     // (Lung-only) MeridianSystem — a realm↔经脉 double-source split visible on ~1000
     // seeded dormant snapshots.
-    let meridian_system = crate::npc::technique::npc_meridian_system_for_realm(realm);
+    let meridian_system = crate::npc::technique::npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
     let lifespan = NpcLifespan::new(
         initial_age_for_index(
             index,
@@ -3498,7 +3498,7 @@ mod tests {
                  {expected} 条经脉（realm.required_meridians()），实得 {actual} 条 \
                  ——若恒为 1 说明退回了 P0-era 恒开肺经的 bug"
             );
-            let expected_system = crate::npc::technique::npc_meridian_system_for_realm(realm);
+            let expected_system = crate::npc::technique::npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
             let opened_mismatch = snapshot
                 .meridian_system
                 .iter()

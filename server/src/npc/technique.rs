@@ -105,14 +105,29 @@ impl NpcCooldownMap {
 /// 根据境界生成 NPC 用的 MeridianSystem（按 worldview §8.1 #5 规则开脉）。
 ///
 /// Awaken=1, Induce=3, Condense=6, Solidify=12, Spirit=16, Void=20。
-/// 打开顺序：先 12 正经（REGULAR），再 8 奇经（EXTRAORDINARY）。
-pub fn npc_meridian_system_for_realm(realm: Realm) -> MeridianSystem {
-    use crate::cultivation::components::MeridianId;
-
+/// 打开顺序：按 `body_plan.meridian_profile.channels` 声明顺序（humanoid.json 与退役前
+/// `MeridianId::ALL`——先 12 正经（REGULAR），再 8 奇经（EXTRAORDINARY）——逐条 bit-for-
+/// bit 一致，见 `body_plan` 侧对拍测试）。
+///
+/// plan-race-system-v1 P1b：从硬编码 `MeridianId::ALL` 换轨为按实体 `BodyPlan` 派生
+/// （所有现存调用点均传 `body_plan::humanoid_plan_static()`——`races.json` 现阶段全部
+/// NPC/fauna 种族均落 humanoid body plan，数值不受影响；P4/P5 引入非人形战斗构型时，
+/// 调用点改传该实体解析出的 plan 即可，无需再改本函数签名）。
+pub fn npc_meridian_system_for_realm(
+    realm: Realm,
+    body_plan: &crate::body_plan::BodyPlan,
+) -> MeridianSystem {
+    let profile = body_plan.meridian_profile.as_ref().unwrap_or_else(|| {
+        panic!(
+            "[bong][npc][technique] npc_meridian_system_for_realm: body plan {} has no \
+             meridian_profile — cannot generate NPC MeridianSystem",
+            body_plan.id
+        )
+    });
     let count = realm.required_meridians();
     let mut sys = MeridianSystem::default();
-    for &id in MeridianId::ALL.iter().take(count) {
-        let m = sys.get_mut(id);
+    for channel in profile.channels.iter().take(count) {
+        let m = sys.get_mut(channel.id.clone());
         m.opened = true;
         m.integrity = 1.0;
         m.throughput_current = 1.0;
