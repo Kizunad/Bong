@@ -1,7 +1,9 @@
 package com.bong.client.combat;
 
 import com.bong.client.hud.HudImmersionMode;
+import com.bong.client.hud.BongToast;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.social.SparringInviteScreenBootstrap;
 import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.VisualEffectState;
 import org.junit.jupiter.api.AfterEach;
@@ -78,6 +80,22 @@ class CombatHudBootstrapTest {
         );
     }
 
+    @Test
+    void resetOnDisconnectClearsBlockedSparringToastDeduplication() {
+        String inviteId = "sparring:disconnect-toast";
+        notifyBlockedSparringInvite(inviteId);
+        assertFalse(BongToast.current(System.currentTimeMillis()).isEmpty(), "旧 session 应先显示邀请提示");
+
+        BongToast.resetForTests();
+        CombatHudBootstrap.resetOnDisconnect();
+        notifyBlockedSparringInvite(inviteId);
+
+        assertFalse(
+            BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "生产断线入口必须复位 blocked-toast 去重状态，使新 session 的同 ID 邀请重新提示"
+        );
+    }
+
     // ── interaction-intent-cleanup-v1 P3 — 截脉窗口守卫 ────────────────────────
 
     @Test
@@ -149,5 +167,15 @@ class CombatHudBootstrapTest {
             "点到为止",
             expiresAtMs
         );
+    }
+
+    private static void notifyBlockedSparringInvite(String inviteId) {
+        try {
+            var method = SparringInviteScreenBootstrap.class.getDeclaredMethod("notifyBlocked", String.class);
+            method.setAccessible(true);
+            method.invoke(null, inviteId);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法驱动切磋邀请 blocked-toast 生产入口", exception);
+        }
     }
 }
