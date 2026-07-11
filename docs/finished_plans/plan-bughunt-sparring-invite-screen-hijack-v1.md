@@ -80,8 +80,12 @@
 - 首轮对抗审查：Ultra read-only validator 对 `1dc14dc4ae70989d7975b8aebe45f759d22bdde8` 判定 FAIL，指出 store 的 clear/replace 竞态会吞新邀请、不同 inviteId 的邀请屏仍会互相抢占、关闭后迟到/重复 payload 可重开，以及测试仅覆盖纯决策而未锁运行态。
 - 生命周期返工：`6e5363d7` 将 pending 邀请改为同步有序队列，按 `expiresAtMs + UUIDv7 inviteId` 拒绝迟到 payload，并用有界 settled tombstone 拒绝关闭后的重放；`d194e26c` 禁止任何不同邀请屏被新邀请替换，过期时也只关闭 identity 匹配的屏；`2e1b22b0` 用真实 `SparringInviteScreen.close()` 锁住精确清理与后继邀请提升。
 - Targeted GREEN：Temurin JDK 17.0.19 强制重编译执行 bootstrap / screen / handler 三组聚焦套件，27/27 PASS，覆盖无 screen、同 screen、不同 screen、迟到邀请、重复邀请、关闭、过期边界及 clear/enqueue 并发交错。
+- 最终生命周期收紧：`43960581` 将邀请清理改成精确 identity-CAS，只有首次 claim 成功者发送 C2S；`a38f50c3` 在应战时原子 tombstone 并清空其余 pending，避免进入切磋后继续弹邀请；`ef953fbd` 将网络可写 pending 队列限制为 64 项，容量拒绝不推进版本高水位。
+- 最新主线与门禁：`ed360c4a` 合入 `origin/main@340d7776`，主线只带入 botany server/docs，未触及本修复客户端文件；Temurin JDK 17.0.19 聚焦 37/37 与完整 3832/3832 均为 GREEN。
+- 旧 e2e 归因：run `29144858927` / artifact `8246606606` 中 Task 13 smoke 8/8、Redis 15/15、Bot 23/24；唯一失败是共享 `production_forge_station_real_place` 的 `forge_session current_step=tempering` 45 秒超时。同一 run 的 Java 17 client stage 实际执行 `./gradlew test`，11/11 tasks 全执行并成功，目标 screen 测试未失败。
+- 独立复审：全新 `fork_context:false`、`gpt-5.6-sol` Ultra 只读 validator 对 `ed360c4ae11b3e85f8146852f9a14e1c1818d409` 判定 PASS，确认屏幕身份隔离、队列线性化/容量、精确结算、断线清理成立，旧 e2e forge 超时与客户端变更无关。
 - 范围：未修改 server、schema、依赖、生产配置、工具链或视觉资产；同一 bug 的重复 skeleton `plan-bughunt-v-sparring-invite-screen-hijack-v1` 留给后续主干去重处理，本 PR 不跨 plan 修改。
-- 后续门禁：fresh validator PASS 后，以 JDK 17 执行完整 `./gradlew test build`；合并最新 `origin/main` 后任何 HEAD 变化都重新验证。
+- 后续门禁：plan 证据提交会改变 HEAD，因此该文档新 HEAD 仍须再跑一次全新只读 Ultra validator；push 后重新等新 HEAD 的 e2e 与 `/review`。
 
 ## Finish Evidence
 
@@ -91,19 +95,24 @@
   - 新增 `ScreenKind` / `Decision` 纯决策矩阵。
   - 其他 GUI 或不同 inviteId 的切磋屏打开时走 `BLOCKED_TOAST`，不再调用 `setScreen` 抢屏。
   - 保留无屏开邀请、matching no-op、过期自动拒绝；过期只关闭 identity 匹配的邀请屏。
+  - 过期响应先原子 claim identity，重复 screen/tick 不能重复发送 C2S。
   - blocked toast 按 inviteId 去重，新邀请可重新提示。
 - `client/src/main/java/com/bong/client/social/SocialStateStore.java`
   - pending 邀请按到达顺序排队，所有读取、入队与 identity 清理在同一 monitor 下线性化。
   - `expiresAtMs + UUIDv7 inviteId` 固定新旧顺序；重复、迟到和已结算 payload 不进入队列。
-  - settled tombstone 有界保留 64 个 ID，断线时与队列、版本高水位一起清空。
+  - `clearSparringInvite` 只接受非空精确 identity 并返回首次 claim 结果；空/未知/已结算 identity 安全 no-op。
+  - 应战时原子清空并 tombstone 其余 pending；拒绝/超时只清当前并提升后继。
+  - pending 与 settled tombstone 均有界保留 64 个 ID；生产 `CombatHudBootstrap.resetOnDisconnect` 会同时清空队列、tombstone 与版本高水位。
 - `client/src/main/java/com/bong/client/network/SocialServerDataHandler.java`
-  - 只为首次接受的邀请发布 HUD 事件；重复、迟到、已结算和非法 payload 安全 no-op。
+  - 只为首次接受的邀请发布 HUD 事件；重复、迟到、已结算、容量溢出和非法 payload 安全 no-op。
 - `client/src/test/java/com/bong/client/social/SparringInviteScreenBootstrapTest.java`
   - 10 个测试覆盖 null、过期边界、NONE、matching、不同邀请屏、OTHER、真实 screen identity 与 toast 去重/重触发。
 - `client/src/test/java/com/bong/client/social/SparringInviteScreenTest.java`
-  - 真实 `close()` 验证只拒绝并清理自身 identity，后继邀请提升，旧 screen 迟到关闭不能误清新邀请。
+  - 5 个真实 screen 测试验证精确关闭、后继提升、迟到/重复 screen 零重复 C2S，以及应战后原子结清队列。
 - `client/src/test/java/com/bong/client/network/SocialServerDataHandlerTest.java`
-  - 覆盖同 ID 重放、版本迟到、同毫秒 UUIDv7 顺序、settled 重放、非法输入与 32 轮 clear/enqueue 并发交错。
+  - 16 个测试覆盖同 ID 重放、版本迟到、同毫秒 UUIDv7 顺序、settled 重放、空 identity、64 项容量与 32 轮 clear/enqueue 并发交错。
+- `client/src/test/java/com/bong/client/combat/CombatHudBootstrapTest.java`
+  - 经生产断线 helper 验证 pending、tombstone、版本高水位全复位，并允许新 session 重新接受旧 identity。
 
 ### 关键 commit
 
@@ -116,6 +125,11 @@
 - `d194e26c`（2026-07-11）：禁止不同 inviteId 的切磋邀请屏互相替换。
 - `2e1b22b0`（2026-07-11）：锁定真实 screen 关闭后的 identity 清理与队列提升。
 - `0ef01f0b`（2026-07-11）：合并最新 `origin/main@37447572`，无冲突且未触及本修复文件。
+- `ac9efcf0`（2026-07-11）：以 RED 锁定空 identity、重复/迟到 screen 与生产断线清理边界。
+- `43960581`（2026-07-11）：原子 claim 精确 identity，禁止重复响应与空 ID 清当前。
+- `9512defd` / `a38f50c3`（2026-07-11）：以 RED/GREEN 锁定应战后结清排队邀请。
+- `eae7f4e9` / `ef953fbd`（2026-07-11）：以 RED/GREEN 锁定 64 项 pending 容量。
+- `ed360c4a`（2026-07-11）：合并最新 `origin/main@340d7776`，未触及本修复客户端文件。
 
 ### 测试结果
 
@@ -125,14 +139,20 @@
 - 首轮 Ultra read-only validator：`FAIL — SHA 1dc14dc4ae70989d7975b8aebe45f759d22bdde8`；四项 finding 已由 `6e5363d7` / `d194e26c` / `2e1b22b0` 返工并补测。
 - JDK 17 pre-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`。
 - JDK 17 post-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`，3827 tests，0 skipped / failures / errors，13 tasks（3 executed / 10 up-to-date）。
+- 最终 RED：精确结算套件 25 tests 中 3 项按预期失败；应战清场 5 tests 中 1 项按预期失败；容量测试在缺失 `CAPACITY` enum 处按预期编译失败。
+- 最终 targeted GREEN：Temurin JDK 17.0.19，bootstrap 10 + screen 5 + handler/store 16 + `CombatHudBootstrapTest` 6（其中 1 条锁生产断线清理）= 37 tests，0 skipped / failures / errors，11/11 tasks 强制执行。
+- 最终 full gate：`./gradlew test build --rerun-tasks` → `BUILD SUCCESSFUL`，447 suites / 3832 tests，0 skipped / failures / errors，13/13 tasks 实际执行。
+- 最终 Ultra read-only validator：`PASS — SHA ed360c4ae11b3e85f8146852f9a14e1c1818d409`；模型 `gpt-5.6-sol`、reasoning `ultra`、`fork_context:false`。
+- 旧共享 e2e：run `29144858927` 的 Java 17 client `./gradlew test` 成功；artifact `e2e-evidence` 显示 Task 13 smoke 8/8、Redis 15/15、Bot 23/24，唯一红项为无关 forge station 超时。
 
 ### 跨仓库核验
 
 - client-only 修复；未修改 server / agent / schema / proto。
 - `SocialServerDataHandler → SocialStateStore.sparringInvite → SparringInviteScreenBootstrap` 接收链保持不变；client 内部补充队列、版本/tombstone 与 identity 调度。
 - 独立 NPC/玩家切磋协议、server 超时与响应语义均未改变。
+- 最新 `origin/main@340d7776` 已合入；PR 相对主线仍只有 client + 本 plan 证据变更。
 
 ### 遗留 / 后续
 
 - `docs/plans-skeleton/plan-bughunt-v-sparring-invite-screen-hijack-v1.md` 是同 bug 的重复 skeleton，留给主干在本 PR 合并后按锁运维/去重流程处理；本 PR 遵守一个 plan 一个 PR，不跨 plan 删除。
-- 无头测试通过真实 `SparringInviteScreen.close()` 与可注入 C2S backend 验证关闭副作用；`MinecraftClient#setScreen` 分支由纯决策矩阵和 runtime switch 静态对拍锁定。
+- 无头测试通过真实 `SparringInviteScreen.close()`、接受回调与可注入 C2S backend 验证关闭/应战副作用；`MinecraftClient#setScreen` 分支由真实 screen identity + 纯决策矩阵和 runtime switch 对拍锁定。
