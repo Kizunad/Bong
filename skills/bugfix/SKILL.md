@@ -23,7 +23,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 - 启动时读取并保持三个独立参数：实施数量 `N`、实施模型、validator 模型。用户未指定时才默认 `N=2`、实施模型 `gpt-5.6-sol-xhigh`、validator 模型 `gpt-5.6-sol-xhigh`；不得用默认值覆盖用户输入。
 - 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 worktree 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
 - 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
-- 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，每次补位按实时快照计算 `min(N, 2, max(0, platform_total - live_agents - 未入 snapshot reservation - validator_reserve - 未计入 live 的主干占位))`；容量不可查时保守按 2 路实施。平台满载、已有无关 agent 或 outstanding reservation 都会减少可启动数；超额任务进 FIFO，不 spawn。
+- 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，每次补位按实时快照计算 `min(max(0, N - 当前实施 agent 数), max(0, platform_total - live_agents - 未入 snapshot reservation - validator_reserve - 未计入 live 的主干占位))`；容量不可查时只按 `max(0, N - 当前实施 agent 数)` 补位，编译并发仍由独立 token 限制为 2。平台满载、已有无关 agent 或 outstanding reservation 都会减少可启动数；超额任务进 FIFO，不 spawn。
 - validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。每个已 GRANTED/ACKED/RECOVERING、但尚未出现在 live snapshot 的 validator token 都先预占 1 个平台槽；只有状态查询确认对应 validator 已出现后才转为 snapshot-accounted，避免重复授权或双扣。容量不可查时 validator 一次只授权 1 个。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
@@ -78,7 +78,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 
 phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → FIX_VALIDATING → GATING → REBASING → REBASE_VALIDATING → ARCHIVING → FINAL_VALIDATING → PR_OPEN → GATES → CLOSED`，失联暂态 `RECOVERING`，或终态 `BLOCKED`。只有 `FINAL_VALIDATING → PR_OPEN`；合法边、必经里程碑、互斥分支、终态和返工回流以 dry-run 的 `TaskPhase/ALLOWED_EDGES` 为可执行契约。
 
-状态迁移不能靠“走过 phase”解锁：三个 validating 关口都必须提交 `validator_agent_id + phase + target_sha + PASS + completed_at`，且 target SHA 等于权威当前 HEAD；`GATING → REBASING` 必须有当前 HEAD 的成功 gate evidence；主线同步、HEAD 变化或返工会递增 generation，并清除旧 SHA 的 validator/gate 证据与闭环里程碑。FAIL、缺证据、错误 SHA 或旧 generation 均不得推进。
+状态迁移不能靠“走过 phase”解锁：三个 validating 关口都必须提交 `validator_agent_id + phase + target_sha + generation + PASS + completed_at`，且 target SHA/generation 等于权威当前状态；`GATING → REBASING` 必须有当前 HEAD/generation 的成功 gate evidence；主线同步也必须记录当前 HEAD/generation 的成功 sync evidence。主线同步、HEAD 变化或返工会递增 generation，并清除旧 SHA/generation 的 validator/gate/sync 证据与闭环里程碑。FAIL、缺证据、错误 SHA 或旧 generation 均不得推进。
 
 ## 选择与派发 skeleton
 
