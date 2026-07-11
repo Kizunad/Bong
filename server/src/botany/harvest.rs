@@ -113,7 +113,6 @@ pub(crate) fn request_harvest_mode(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 /// plan-bughunt-botany-disconnect-session P1：结构性前置校验失败（缺 kind /
 /// 缺 Client+PlayerInventory）时补发 `interrupted=true` 终结帧。session 在完成路径
 /// 入口就已移除，不发帧客户端会永远等不到收口。grant 阶段的结构性失败**不**在此列——
@@ -142,6 +141,7 @@ fn send_structural_cancel_terminal(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn complete_harvest_for_player(
     store: &mut HarvestSessionStore,
     player_id: &str,
