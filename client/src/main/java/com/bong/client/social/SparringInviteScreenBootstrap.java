@@ -115,7 +115,11 @@ public final class SparringInviteScreenBootstrap {
         BongToast.show("切磋邀请已过期", TOAST_COLOR, System.currentTimeMillis(), 3_000L);
     }
 
-    static void resetForTests() {
+    public static void clearOnDisconnect() {
         lastBlockedToastInviteId = "";
+    }
+
+    static void resetForTests() {
+        clearOnDisconnect();
     }
 }
