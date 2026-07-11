@@ -314,20 +314,25 @@ pub fn meridian_severed_detection_tick(
                 // 或被显式 close_meridian 调用过；那种情况由调用方决定是否 emit）
                 continue;
             };
+            // `MeridianSeveredEvent.meridian_id` 仍是 `MeridianId`（该 event 走 network
+            // 广播，wire 开放化留待后续 P1 子阶段）——humanoid 20 条经脉的 channel id
+            // 均可逆映射回 `MeridianId`。plan-race-system-v1 P1 对抗审查 M3/M4：非
+            // humanoid channel（P1 起 `npc_meridian_system_for_realm` 已可对非 humanoid
+            // `BodyPlan` 生成真实非 20-条经脉的 `MeridianSystem`）没有对应 `MeridianId`
+            // 是合法运行时状态，不是数据完整性 bug——安全跳过（debug 日志）而非 panic，
+            // 等该 event 换轨承载 `MeridianChannelId` 后再补发。
+            let Some(meridian_id) = m.id.to_meridian_id() else {
+                tracing::debug!(
+                    "[bong][cultivation][severed] skipping MeridianSeveredEvent for \
+                     non-humanoid channel {} (entity {entity:?}) — event wire not yet \
+                     channel-id-aware",
+                    m.id
+                );
+                continue;
+            };
             severed_events.send(MeridianSeveredEvent {
                 entity,
-                // `MeridianSeveredEvent.meridian_id` 仍是 `MeridianId`（该 event 走
-                // network 广播，wire 开放化留待后续 P1 子阶段）——humanoid 20 条经脉的
-                // channel id 均可逆映射回 `MeridianId`，非 humanoid 构型（P5 起）尚未
-                // 挂载本系统，届时需要把这条 event 也换轨。
-                meridian_id: m.id.to_meridian_id().unwrap_or_else(|| {
-                    panic!(
-                        "[bong][cultivation][severed] channel id {} has no legacy MeridianId \
-                         mapping — MeridianSeveredEvent cannot represent non-humanoid channels \
-                         yet",
-                        m.id
-                    )
-                }),
+                meridian_id,
                 source: severed_source_from_crack(latest_crack.cause),
                 at_tick: now,
             });

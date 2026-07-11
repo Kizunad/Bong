@@ -2,7 +2,7 @@ use big_brain::prelude::{Actor, Score, ScorerBuilder};
 use valence::client::ClientMarker;
 use valence::prelude::{bevy_ecs, Commands, Component, DVec3, Entity, Query, Res, With};
 
-use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::components::{Cultivation, MeridianChannelId, MeridianSystem, Realm};
 use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::topology::MeridianTopology;
 use crate::cultivation::tribulation::TribulationState;
@@ -84,43 +84,39 @@ pub(crate) fn next_realm(current: Realm) -> Option<Realm> {
 }
 
 /// Pick next meridian to open: prefer adjacent to already opened, else any unopened.
+///
+/// plan-race-system-v1 P1 对抗审查 M3：此前本函数硬编码迭代闭合 `MeridianId::
+/// REGULAR`/`EXTRAORDINARY`（20 条 humanoid 常量）并对每条调用 `system.get(*id)`——
+/// 对非 humanoid `MeridianSystem`（如 P1 6-channel 合成构型）传入的 `id` 根本不在
+/// `system` 里，`MeridianSystem::get` 会直接 panic。现改为只迭代 `system` 自身实际
+/// 持有的 channel（`system.iter()`），候选集与拓扑邻接查询全部走 `MeridianChannelId`，
+/// 不再假设 20 个 TCM 名字集合；humanoid 数值 bit-for-bit 不变（迭代序沿用
+/// `MeridianSystem::for_profile` 的声明顺序，即 humanoid.json 12 正经 + 8 奇经）。
 pub(crate) fn pick_next_meridian_to_open(
     system: &MeridianSystem,
     topology: &MeridianTopology,
-) -> Option<MeridianId> {
-    let opened: Vec<MeridianId> = MeridianId::REGULAR
+) -> Option<MeridianChannelId> {
+    let opened: Vec<MeridianChannelId> = system
         .iter()
-        .chain(MeridianId::EXTRAORDINARY.iter())
-        .copied()
-        .filter(|id| system.get(*id).opened)
+        .filter(|m| m.opened)
+        .map(|m| m.id.clone())
         .collect();
 
     if opened.is_empty() {
-        return MeridianId::REGULAR
+        return system
             .iter()
-            .chain(MeridianId::EXTRAORDINARY.iter())
-            .copied()
-            .find(|id| !system.get(*id).opened);
+            .find(|m| !m.opened)
+            .map(|m| m.id.clone());
     }
 
     for opened_id in &opened {
-        for cand in topology.neighbors(*opened_id) {
-            // plan-race-system-v1 P1b：拓扑邻接现按 `MeridianChannelId` 派生
-            // （humanoid-only boundary，本函数返回类型仍是 `MeridianId`，非 humanoid
-            // channel——尚无非人形玩法数据——显式跳过而非 panic）。
-            let Some(cand_id) = cand.to_meridian_id() else {
-                continue;
-            };
-            if !system.get(cand_id).opened {
-                return Some(cand_id);
+        for cand_id in topology.neighbors(opened_id.clone()) {
+            if !system.get(cand_id.clone()).opened {
+                return Some(cand_id.clone());
             }
         }
     }
-    MeridianId::REGULAR
-        .iter()
-        .chain(MeridianId::EXTRAORDINARY.iter())
-        .copied()
-        .find(|id| !system.get(*id).opened)
+    system.iter().find(|m| !m.opened).map(|m| m.id.clone())
 }
 
 #[allow(clippy::type_complexity)]
