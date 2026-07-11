@@ -85,8 +85,9 @@ public final class SparringInviteScreen extends Screen {
     private void settle(boolean accepted, boolean timedOut) {
         if (settled) return;
         settled = true;
-        ClientRequestSender.sendSparringInviteResponse(invite.inviteId(), accepted, timedOut);
-        SocialStateStore.clearSparringInvite(invite.inviteId());
+        if (SocialStateStore.clearSparringInvite(invite.inviteId())) {
+            ClientRequestSender.sendSparringInviteResponse(invite.inviteId(), accepted, timedOut);
+        }
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.currentScreen == this) {
             mc.setScreen(null);

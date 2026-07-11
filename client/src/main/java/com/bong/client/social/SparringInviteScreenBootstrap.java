@@ -71,12 +71,14 @@ public final class SparringInviteScreenBootstrap {
                 lastBlockedToastInviteId = "";
             }
             case DECLINE_EXPIRED, DECLINE_EXPIRED_AND_CLOSE_SCREEN -> {
-                ClientRequestSender.sendSparringInviteResponse(invite.inviteId(), false, true);
-                SocialStateStore.clearSparringInvite(invite.inviteId());
+                boolean settled = SocialStateStore.clearSparringInvite(invite.inviteId());
+                if (settled) {
+                    ClientRequestSender.sendSparringInviteResponse(invite.inviteId(), false, true);
+                    notifyExpired();
+                }
                 if (decision == Decision.DECLINE_EXPIRED_AND_CLOSE_SCREEN) {
                     client.setScreen(null);
                 }
-                notifyExpired();
                 lastBlockedToastInviteId = "";
             }
             case OPEN_SCREEN -> {

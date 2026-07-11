@@ -93,17 +93,17 @@ public final class SocialStateStore {
         return SparringInviteUpdate.ACCEPTED;
     }
 
-    public static synchronized void clearSparringInvite(String inviteId) {
+    public static synchronized boolean clearSparringInvite(String inviteId) {
         String resolvedInviteId = normalize(inviteId);
         if (resolvedInviteId.isBlank()) {
-            SparringInvite current = sparringInvite();
-            if (current == null) return;
-            resolvedInviteId = current.inviteId();
+            return false;
         }
         SparringInvite removed = sparringInvites.remove(resolvedInviteId);
-        if (removed != null) {
-            rememberSettledSparringInvite(resolvedInviteId);
+        if (removed == null) {
+            return false;
         }
+        rememberSettledSparringInvite(resolvedInviteId);
+        return true;
     }
 
     public static void replaceTradeOffer(TradeOffer offer) {
