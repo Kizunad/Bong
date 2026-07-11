@@ -128,7 +128,11 @@ class WorldContainerInteractIntentHandlerTest {
 
     @Test
     void isWithinInteractRangeAcceptsZeroDistance() {
-        assertTrue(ContainerOpenIntentSupport.isWithinInteractRange(0.0));
+        assertTrue(
+            ContainerOpenIntentSupport.isWithinInteractRange(0.0),
+            "expected in range because distSq = 0.0 (standing on the container) is trivially "
+                + "within the 4.5-block boundary, actual was out-of-range"
+        );
     }
 
     private static void assertDeadDropKind(BongEntityModelKind kind, boolean expected) {

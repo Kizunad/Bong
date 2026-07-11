@@ -80,7 +80,8 @@ class WorkbenchInteractIntentHandlerTest {
     void withinRangeAtOrigin() {
         assertTrue(WorkbenchInteractIntentHandler.isWithinInteractRange(
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        ));
+        ), "expected in range because player stands exactly on the workbench block "
+            + "(Chebyshev distance = 0.0 <= 3.0 boundary), actual was out-of-range");
     }
 
     @Test
@@ -88,7 +89,8 @@ class WorkbenchInteractIntentHandlerTest {
         // Exactly 3 blocks away on x axis must still be a candidate.
         assertTrue(WorkbenchInteractIntentHandler.isWithinInteractRange(
             3.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        ));
+        ), "expected in range because Chebyshev distance = 3.0 is exactly at the inclusive "
+            + "3.0 boundary (server accepts <= 3.0), actual was out-of-range");
     }
 
     @Test
@@ -96,7 +98,9 @@ class WorkbenchInteractIntentHandlerTest {
         // Exactly 3 blocks away on all axes (Chebyshev = 3) must still be a candidate.
         assertTrue(WorkbenchInteractIntentHandler.isWithinInteractRange(
             3.0, 3.0, 3.0, 0.0, 0.0, 0.0
-        ));
+        ), "expected in range because Chebyshev distance = max(3,3,3) = 3.0 is exactly at "
+            + "the inclusive boundary — a euclidean gate would wrongly reject this corner "
+            + "(sqrt(27) ~ 5.2 > 3.0), actual was out-of-range");
     }
 
     @Test
@@ -133,20 +137,24 @@ class WorkbenchInteractIntentHandlerTest {
     void withinRangeNegativeCoords() {
         assertTrue(WorkbenchInteractIntentHandler.isWithinInteractRange(
             -2.0, 5.0, -3.0, -5.0, 5.0, -3.0
-        ));
+        ), "expected in range because Chebyshev distance = max(3,0,0) = 3.0 in negative "
+            + "coordinate space (mirrors server within_range_negative_coords), actual was "
+            + "out-of-range — abs() handling of negative coords is likely broken");
     }
 
     @Test
     void outOfRangeFarAway() {
         assertFalse(WorkbenchInteractIntentHandler.isWithinInteractRange(
             100.0, 64.0, 200.0, 0.0, 64.0, 0.0
-        ));
+        ), "expected out of range because Chebyshev distance = max(100,0,200) = 200.0 "
+            + "far exceeds the 3.0 boundary, actual was in-range");
     }
 
     @Test
     void withinRangeFractionalPlayerPos() {
         assertTrue(WorkbenchInteractIntentHandler.isWithinInteractRange(
             2.9, 0.5, 1.0, 0.0, 0.0, 0.0
-        ));
+        ), "expected in range because Chebyshev distance = max(2.9,0.5,1.0) = 2.9 < 3.0 "
+            + "boundary with a fractional player position, actual was out-of-range");
     }
 }

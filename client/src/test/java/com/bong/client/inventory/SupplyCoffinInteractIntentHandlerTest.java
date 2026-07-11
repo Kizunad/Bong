@@ -96,6 +96,10 @@ class SupplyCoffinInteractIntentHandlerTest {
 
     @Test
     void isWithinInteractRangeAcceptsZeroDistance() {
-        assertTrue(SupplyCoffinInteractIntentHandler.isWithinInteractRange(0.0));
+        assertTrue(
+            SupplyCoffinInteractIntentHandler.isWithinInteractRange(0.0),
+            "expected in range because distSq = 0.0 (standing on the coffin) is trivially "
+                + "within the 4.5-block boundary, actual was out-of-range"
+        );
     }
 }
