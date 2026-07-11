@@ -69,10 +69,10 @@
 
 ## Skeleton Fix Plan
 
-- [x] 增加显式 opt-in 的 `PendingOpenCancellationHandler`；`cancelAndClose()` 只结算声明了协议终态的 pending screen，不把所有 `Screen.close()` 泛化调用。
-- [x] `ScrollReadScreen.onPendingOpenCancelled()` 复用 `ScrollReadStore.close()` 的幂等终态；未直接覆盖 `removed()`，因为 A→B 正常替换时旧 A 的 `removed()` 不能误清新 B 的全局 store，本 plan 以 transition-cancel 专用 hook 最小收口。
+- [x] 增加显式 opt-in 的 `PendingOpenCancellationHandler`；`cancelAndClose()` 与 rapid replacement 只结算声明了协议终态且未被同 session screen 延续的 pending screen，不把所有 `Screen.close()` 泛化调用。
+- [x] `ScrollReadScreen` 捕获不可复用 `SessionToken`，`close()` / transition cancel / `removed()` 全部复用 token-CAS 幂等终态；旧 screen 的 `removed()` 因 token 不匹配不能误清后来会话。
 - [x] 评估 `InsightOfferScreen`、`AgentUiScreen`、`SparringInviteScreen`、`TradeOfferScreen`：本修复不自动改变它们的 close/settle 语义；是否 opt-in 需各自按协议契约独立立项，避免跨题扩散。
-- [x] 新增 `ScreenTransitionScrollCloseTest`，覆盖 pending ScrollRead、重复 Esc、无关 screen 隔离及“先 direct-close 当前 screen、后结算 pending”重入顺序。
+- [x] 新增 `ScreenTransitionScrollCloseTest` 与 `ScrollReadScreenBootstrapTest`，覆盖 pending ScrollRead、重复 Esc、rapid replacement continuation、断线 pending 清理、同卷空态重开及“先 direct-close 当前 screen、后结算 pending”重入顺序。
 
 ## 验收测试计划
 
@@ -91,17 +91,23 @@
 
 ### 落地清单
 
-- P0：`client/src/test/java/com/bong/client/ui/ScreenTransitionScrollCloseTest.java`
+- P0：`client/src/test/java/com/bong/client/ui/ScreenTransitionScrollCloseTest.java`、`client/src/test/java/com/bong/client/scroll/ScrollReadScreenTest.java`
   - RED 在修复前证明 `cancelAndClose()` 只取消 handle，`ScrollReadStore.snapshot()` 仍残留。
   - fresh validator 追加 RED：当前已打开残卷、pending 为无关 screen 时，Esc 不能只结算 pending；当前残卷被 direct-close 后同样必须发送终态。
+  - 本轮追加 RED：空态后复用同一 `ScrollOpenViewModel` 实例时，旧 screen 会通过 ABA 对象身份误结算新会话；旧实现 `1/1 FAIL`。
 - P1：`client/src/main/java/com/bong/client/ui/ScreenTransitionController.java`
-  - 新增 `PendingOpenCancellationHandler`、`CurrentScreenCancellationHandler` 与 `closeCurrentThenSettlePending(...)`。
+  - 新增 `PendingOpenCancellationHandler.continuesWith(...)`、`CurrentScreenCancellationHandler`、`cancelPendingOpen(...)` 与 `closeCurrentThenSettlePending(...)`。
   - 先 direct-close 当前 screen，再依次结算显式 opt-in 的 current / pending 协议，避免 A→pending B 时 store listener 重入生成残留 transition。
+  - rapid replacement、禁用/零时长转场及 same-screen 清理都会结算被覆盖的 opt-in pending screen；同 token replacement 作为会话延续，不误发终态。
 - P1：`client/src/main/java/com/bong/client/scroll/ScrollReadScreen.java`
-  - 实现 pending-open 与 current-screen 取消回调，幂等发送 `scroll_read_closed` 并清空 store。
+  - screen 构造时捕获 `SessionToken`；pending/current 取消、普通 `close()` 与 `removed()` 均经同一 token-CAS 幂等发送 `scroll_read_closed` 并清空 store。
 - P1：`client/src/main/java/com/bong/client/scroll/ScrollReadStore.java`
-  - 新增按 `ScrollOpenViewModel` 对象身份结算的 `closeIfCurrent(...)`，旧 screen 与发包重入均不能误清后来替换的新会话。
-- P2：同步 `origin/main@307ab4db`；`f4035e33` 引入新的 transport 拒绝语义，据 fresh validator finding 补齐发送失败时仍完成本地关闭终态的处理与回归；`2f2d5081` 同步的后续主线仅涉及 worldgen/server。
+  - `AtomicReference<ActiveSession>` 分离 view model 与不可复用 token；同会话同卷刷新保留 token，经过空态后即使复用同一对象也必须换 token。
+  - `closeIfCurrent(SessionToken)` 用 CAS 抢占终态，并发 close、旧 screen、transport 重入均不能重复发包或误清后来会话。
+- P1：`client/src/main/java/com/bong/client/scroll/ScrollReadScreenBootstrap.java`
+  - listener 携带精确 `ActiveSession` 快照；迟到 open/close 任务先经 `isCurrent(...)` 拒绝。
+  - current/pending screen 按 token 而非 `scrollId` 判归属；断线空态会精确取消 pending ScrollRead，防止清理后迟到开屏。
+- P2：同步 `origin/main@340d7776`；最终主线合并只涉及 botany server 与其 plan 归档，未触及本 PR client 文件。`f4035e33` 引入的 transport 拒绝语义已由 `58932dc4` 及后续 token-CAS 回归覆盖。
 
 ### 关键 commit
 
@@ -116,12 +122,21 @@
 - `2f2d5081`（2026-07-11）：合并 `origin/main@307ab4db`，同步新手兴趣点修复。
 - `dea0f08b`（2026-07-11）：保护残卷关闭的会话身份，覆盖旧 screen 与 transport 重入替换边界。
 - `d1b233e1`（2026-07-11）：结算转场 direct-close 移除的当前残卷并补精确回归。
+- `22cec694`（2026-07-11）：保护残卷普通关闭的旧 screen 身份。
+- `dfca9786`（2026-07-11）：以不可复用 session token 收口 close/removed/并发终态与 ABA 重开。
+- `2e63c386`（2026-07-11）：按 token 收口 bootstrap 迟到任务、rapid replacement 与断线 pending 转场。
+- `c76c13b6`（2026-07-11）：合并 `origin/main@340d7776`，无 client 冲突。
+- `168fea58`（2026-07-11）：补齐 detached screen、无 live client 与同卷新 token 覆盖边界。
 
 ### 测试结果
 
 - RED（JDK 17）：`./gradlew test --tests com.bong.client.ui.ScreenTransitionScrollCloseTest`
   - 修复前 `1 test completed, 1 failed`，失败点为阅读 store 未清空。
-- targeted GREEN（JDK 17）：同命令，最终 `6/6 PASS`：
+- ABA RED（JDK 17）：`./gradlew test --tests 'com.bong.client.scroll.ScrollReadScreenTest.close_oldScreenDoesNotSettleReopenedSessionWhenViewModelInstanceIsReused'`
+  - 前 worker 的对象身份/CAS 补丁下 `1 test completed, 1 failed`，失败点为旧 screen 清掉空态后重开的同对象新会话。
+- targeted GREEN（JDK 17）：四组定向测试最终 `44/44 PASS`：
+  - `ScrollReadScreenTest`：`15/15`；`ScrollReadStoreTest`：`15/15`；
+  - `ScrollReadScreenBootstrapTest`：`4/4`；`ScreenTransitionScrollCloseTest`：`10/10`；
   - pending ScrollRead 发送且仅发送一条 `scroll_read_closed`；
   - 重复 Esc 幂等；
   - 无关 pending screen 不误结算；
@@ -129,11 +144,13 @@
   - direct-close 发生在 pending settle 之前。
   - transport 拒绝 `scroll_read_closed` 时仍清空本地 store，不让视觉已关闭的会话永久悬挂。
   - transport 抛 `RuntimeException` 时同样完成本地终态，重复 Esc 保持幂等。
-- store targeted GREEN（JDK 17）：`ScrollReadStoreTest` 最终 `10/10 PASS`，覆盖旧 screen 身份隔离与 transport 发包重入替换。
+  - 同卷刷新保留 token、空态重开轮换 token、同对象 ABA、并发双 close、removed、rapid replacement continuation 与断线 pending 清理均有专属用例。
 - 完整门禁（JDK 17）：`./gradlew test build`
   - 修复后：`BUILD SUCCESSFUL`。
   - 合并 `origin/main@307ab4db` 并完成 transport 拒绝/异常返工后：`3789/3789 PASS`，`BUILD SUCCESSFUL`，产物 `client/build/libs/bong-client-0.1.0.jar`。
   - current-screen 结算返工后：`3792/3792 PASS`，零失败零跳过，`BUILD SUCCESSFUL`。
+  - session token / removed / rapid replacement 实现：`3835/3835 PASS`，零失败零错误零跳过，`BUILD SUCCESSFUL`，产物 `client/build/libs/bong-client-0.1.0.jar`（194 MiB）。
+  - 合并 `origin/main@340d7776` 并补齐最终饱和边界后：`3838/3838 PASS`，零失败零错误零跳过，`:test` 实际执行，`BUILD SUCCESSFUL`。
 
 ### 跨仓库核验
 
