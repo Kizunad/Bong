@@ -529,7 +529,7 @@ pub fn scatter_surface_stashes(
     let mut attempt = 0u64;
 
     while points.len() < SURFACE_STASH_COUNT && attempt < SURFACE_STASH_MAX_SCATTER_ATTEMPTS {
-        if attempt > 0 && attempt % 10000 == 0 {
+        if attempt > 0 && attempt.is_multiple_of(10000) {
             // 放宽 min_dist 继续尝试
             current_min_dist *= 0.5;
         }

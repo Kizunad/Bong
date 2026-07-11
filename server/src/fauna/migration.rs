@@ -573,7 +573,7 @@ pub fn horde_migration_system(
                 position.set(target.target_pos);
             }
             NpcLodTier::Far => {
-                if now % 1_200 == 0 {
+                if now.is_multiple_of(1_200) {
                     let direction = horde_migration_direction(horde, &flow_fields, current, target);
                     position.set(step_by_direction_preserving_y(
                         current,
@@ -583,7 +583,7 @@ pub fn horde_migration_system(
                 }
             }
             NpcLodTier::Mid => {
-                if now % 600 == 0 {
+                if now.is_multiple_of(600) {
                     let direction = horde_migration_direction(horde, &flow_fields, current, target);
                     position.set(step_by_direction_preserving_y(
                         current,
@@ -667,7 +667,7 @@ pub fn migration_move_system(
                 position.set(target.target_pos);
             }
             NpcLodTier::Far => {
-                if now % 1_200 == 0 {
+                if now.is_multiple_of(1_200) {
                     position.set(step_toward_xz_preserving_y(
                         current,
                         target.target_pos,
@@ -677,7 +677,7 @@ pub fn migration_move_system(
             }
             // Mid（Drowsy）：hydrated live entity，降频步进（同 Far 语义，稍快）
             NpcLodTier::Mid => {
-                if now % 600 == 0 {
+                if now.is_multiple_of(600) {
                     position.set(step_toward_xz_preserving_y(
                         current,
                         target.target_pos,

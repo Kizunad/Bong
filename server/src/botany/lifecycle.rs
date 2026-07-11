@@ -277,7 +277,7 @@ pub(crate) fn roll_variant_for_zone(
         return PlantVariant::None;
     }
 
-    if splitmix(seed) % u64::from(roll_cfg.chance_inverse) != 0 {
+    if !splitmix(seed).is_multiple_of(u64::from(roll_cfg.chance_inverse)) {
         return PlantVariant::None;
     }
 

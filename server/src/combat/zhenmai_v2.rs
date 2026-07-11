@@ -962,7 +962,7 @@ fn multipoint_duration_tick(
             continue;
         }
         if clock.tick > active.started_at_tick
-            && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
+            && (clock.tick - active.started_at_tick).is_multiple_of(TICKS_PER_SECOND)
         {
             if let Some(mut cultivation) = cultivation {
                 let before = cultivation.qi_current;
@@ -1008,7 +1008,7 @@ fn harden_duration_tick(
             continue;
         }
         if clock.tick > active.started_at_tick
-            && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
+            && (clock.tick - active.started_at_tick).is_multiple_of(TICKS_PER_SECOND)
         {
             if let Some(mut cultivation) = cultivation {
                 let before = cultivation.qi_current;

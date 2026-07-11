@@ -110,7 +110,7 @@ pub fn false_skin_maintenance_tick(
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
-    if tick % crate::combat::components::TICKS_PER_SECOND != 0 {
+    if !tick.is_multiple_of(crate::combat::components::TICKS_PER_SECOND) {
         return;
     }
     for (

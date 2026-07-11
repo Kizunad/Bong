@@ -229,7 +229,7 @@ pub fn should_emit_memory_bubble(
     npc_id.hash(&mut hasher);
     player_uuid.hash(&mut hasher);
     interaction_count.hash(&mut hasher);
-    hasher.finish() % 2 == 0
+    hasher.finish().is_multiple_of(2)
 }
 
 #[cfg(test)]

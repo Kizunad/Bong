@@ -338,7 +338,7 @@ fn emit_active_lumber_progress(
             continue;
         };
         let progress = session.progress_at(now_tick);
-        if now_tick % PROGRESS_SYNC_INTERVAL_TICKS == 0 {
+        if now_tick.is_multiple_of(PROGRESS_SYNC_INTERVAL_TICKS) {
             let active_tool = inventories
                 .get(session.player)
                 .ok()

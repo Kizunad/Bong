@@ -230,7 +230,7 @@ impl SpiritEyeRegistry {
     }
 
     pub fn tick_migration(&mut self, tick: u64) -> Vec<SpiritEyeMigrateV1> {
-        if tick > 0 && tick % TICKS_PER_DAY == 0 {
+        if tick > 0 && tick.is_multiple_of(TICKS_PER_DAY) {
             for eye in &mut self.eyes {
                 eye.usage_pressure =
                     (eye.usage_pressure - SPIRIT_EYE_DAILY_PRESSURE_DECAY).max(0.0);
