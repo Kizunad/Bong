@@ -9,7 +9,7 @@ import org.jetbrains.annotations.Nullable;
  * 新请求覆盖旧 session（server close 信号先到时由 {@link #receiveClose} 清除）。
  */
 public final class AgentUiStore {
-    /** 本地按钮响应等待 server 错误 close 的最长窗口。 */
+    /** 本地响应等待 server 错误 close 的最长窗口。 */
     static final long PENDING_ERROR_CLOSE_TTL_MILLIS = 10_000L;
     static final long PENDING_ERROR_CLOSE_TTL_NANOS =
         PENDING_ERROR_CLOSE_TTL_MILLIS * 1_000_000L;
@@ -70,14 +70,14 @@ public final class AgentUiStore {
         if (screen == null) {
             PendingErrorClose pending = pendingErrorClose;
             if (pending != null && pending.requestId().equals(requestId)) {
-                // 按钮点击会先本地关屏；只允许匹配且未过期的 server close 消费一次。
+                // 本地响应会先关屏；只允许匹配且未过期的 server close 消费一次。
                 pendingErrorClose = null;
                 AgentUiCloseFeedback.showForReasonAt(reason, Math.max(0L, feedbackNowMillis));
             }
         }
     }
 
-    /** 按钮响应已发出且 screen 将本地关闭，登记仍待 server 错误终态确认的 request。 */
+    /** 本地响应已发出且 screen 将关闭，登记仍待 server 错误终态确认的 request。 */
     static void markAwaitingErrorClose(AgentUiScreen screen) {
         markAwaitingErrorCloseAtNanos(screen, System.nanoTime());
     }

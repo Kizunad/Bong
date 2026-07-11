@@ -240,7 +240,12 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
      */
     @Override
     public void close() {
+        closeAtNanos(System.nanoTime());
+    }
+
+    private void closeAtNanos(long nowNanos) {
         if (!closed) {
+            AgentUiStore.markAwaitingErrorCloseAtNanos(this, nowNanos);
             closed = true;
             sendResponse("dismissed", Map.of());
         }
@@ -323,6 +328,10 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
      */
     void simulateButtonClickForTests(String buttonId) {
         onButtonClicked(buttonId);
+    }
+
+    void closeAtNanosForTests(long nowNanos) {
+        closeAtNanos(nowNanos);
     }
 
     /**
