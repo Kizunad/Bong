@@ -538,6 +538,70 @@ mod tests {
         }
     }
 
+    #[test]
+    fn humanoid_plan_static_mutation_slot_mapping_matches_client_shared_resource() {
+        // plan-race-system-v1 P0 review r3（major×3 收口）—— client
+        // `MutationFeatureRenderer` 不得维护私有硬编码定位表（此前 `MutationKind`
+        // 携带的 `defaultBodySlot` 是完全未被消费的死代码，且与本文件的
+        // `mutation_slot_mapping` 各自独立演进，随时可能漂移）。唯一映射契约现在落在
+        // `client/src/main/resources/assets/bong/body_plans/humanoid_mutation_slots.json`
+        // （client `MutationSlotLayoutRegistry` 启动加载，供 `MutationFeatureRenderer`
+        // 按 slot→part→锚 定位渲染）——本测试从 server 侧跨目录读取该文件（precedent:
+        // `network::resourcepack` 用 `include_str!("../../../client/resourcepack/
+        // manifest.json")` 读同一仓库下 client 目录的文件），逐个 `BodySlot` 变体断言
+        // 两份数据的 `part_id` 完全一致，防止静默漂移。
+        use crate::dandao::mutation::BodySlot;
+
+        let plan = humanoid_plan_static();
+        let json_str = include_str!(
+            "../../../client/src/main/resources/assets/bong/body_plans/humanoid_mutation_slots.json"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(json_str)
+            .expect("client shared mutation slot resource must be valid JSON");
+        let slots_obj = parsed
+            .get("slots")
+            .and_then(|v| v.as_object())
+            .expect("shared resource must declare a `slots` object");
+
+        let known_slots: [(&str, BodySlot); 5] = [
+            ("Head", BodySlot::Head),
+            ("Forearm", BodySlot::Forearm),
+            ("Back", BodySlot::Back),
+            ("Torso", BodySlot::Torso),
+            ("Lower", BodySlot::Lower),
+        ];
+
+        for (key, slot) in known_slots {
+            let entry = slots_obj
+                .get(key)
+                .unwrap_or_else(|| panic!("client shared resource missing slot key '{key}'"));
+            let resource_part_id = entry
+                .get("part_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("client shared resource slot '{key}' missing part_id"));
+            let plan_part_id = plan
+                .mutation_slot_mapping
+                .get(&slot)
+                .unwrap_or_else(|| panic!("humanoid.json mutation_slot_mapping missing {slot:?}"));
+            assert_eq!(
+                resource_part_id,
+                plan_part_id.as_str(),
+                "BodySlot::{slot:?} 在 humanoid.json（{plan_part_id}）与 client 共享资源\
+                 humanoid_mutation_slots.json（{resource_part_id}）之间的映射不一致——\
+                 两份数据已漂移，必须同步更新"
+            );
+        }
+
+        assert_eq!(
+            slots_obj.len(),
+            known_slots.len(),
+            "client 共享资源的 slots 键数量应恰好是 5 个 BodySlot 变体，不多不少——\
+             实测 {} 个键：{:?}",
+            slots_obj.len(),
+            slots_obj.keys().collect::<Vec<_>>()
+        );
+    }
+
     fn tempdir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "bong-body-plan-registry-test-{}-{}",
