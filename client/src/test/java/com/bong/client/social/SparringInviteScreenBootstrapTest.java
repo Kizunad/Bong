@@ -55,13 +55,17 @@ class SparringInviteScreenBootstrapTest {
     }
 
     @Test
-    void expiredInviteDeclinesForEveryScreenKindIncludingBoundary() {
+    void expiredInviteDeclinesWithoutClosingDifferentScreen() {
         SocialStateStore.SparringInvite expired = invite("expired", 1_000L);
         for (SparringInviteScreenBootstrap.ScreenKind kind : SparringInviteScreenBootstrap.ScreenKind.values()) {
+            SparringInviteScreenBootstrap.Decision expected =
+                kind == SparringInviteScreenBootstrap.ScreenKind.MATCHING_SPARRING_INVITE
+                    ? SparringInviteScreenBootstrap.Decision.DECLINE_EXPIRED_AND_CLOSE_SCREEN
+                    : SparringInviteScreenBootstrap.Decision.DECLINE_EXPIRED;
             assertEquals(
-                SparringInviteScreenBootstrap.Decision.DECLINE_EXPIRED,
+                expected,
                 SparringInviteScreenBootstrap.decide(expired, kind, 1_000L),
-                "expiresAtMs == nowMs 时必须拒绝，kind=" + kind
+                "过期邀请只可关闭 identity 匹配的邀请屏，kind=" + kind
             );
         }
     }
@@ -79,19 +83,20 @@ class SparringInviteScreenBootstrapTest {
     }
 
     @Test
-    void activeInviteOpensOnlyWhenNoScreenOrStaleSparringScreen() {
+    void activeInviteOpensOnlyWhenNoScreen() {
         SocialStateStore.SparringInvite active = invite("active", 5_000L);
         assertEquals(
             SparringInviteScreenBootstrap.Decision.OPEN_SCREEN,
             SparringInviteScreenBootstrap.decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L)
         );
         assertEquals(
-            SparringInviteScreenBootstrap.Decision.OPEN_SCREEN,
+            SparringInviteScreenBootstrap.Decision.BLOCKED_TOAST,
             SparringInviteScreenBootstrap.decide(
                 active,
                 SparringInviteScreenBootstrap.ScreenKind.OTHER_SPARRING_INVITE,
                 1_000L
-            )
+            ),
+            "不同 inviteId 的切磋屏也属于占用态，不能被新邀请强制替换"
         );
         assertEquals(
             SparringInviteScreenBootstrap.Decision.NOOP,

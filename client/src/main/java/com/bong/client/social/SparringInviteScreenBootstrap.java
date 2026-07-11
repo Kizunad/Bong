@@ -34,6 +34,7 @@ public final class SparringInviteScreenBootstrap {
         NOOP,
         CLOSE_SCREEN,
         DECLINE_EXPIRED,
+        DECLINE_EXPIRED_AND_CLOSE_SCREEN,
         OPEN_SCREEN,
         BLOCKED_TOAST
     }
@@ -46,15 +47,14 @@ public final class SparringInviteScreenBootstrap {
                 : Decision.NOOP;
         }
         if (invite.expiresAtMs() <= nowMs) {
-            return Decision.DECLINE_EXPIRED;
+            return screenKind == ScreenKind.MATCHING_SPARRING_INVITE
+                ? Decision.DECLINE_EXPIRED_AND_CLOSE_SCREEN
+                : Decision.DECLINE_EXPIRED;
         }
         if (screenKind == ScreenKind.MATCHING_SPARRING_INVITE) {
             return Decision.NOOP;
         }
-        if (screenKind == ScreenKind.OTHER) {
-            return Decision.BLOCKED_TOAST;
-        }
-        return Decision.OPEN_SCREEN;
+        return screenKind == ScreenKind.NONE ? Decision.OPEN_SCREEN : Decision.BLOCKED_TOAST;
     }
 
     private static void handleIncomingInvite(MinecraftClient client) {
@@ -67,10 +67,10 @@ public final class SparringInviteScreenBootstrap {
                 client.setScreen(null);
                 lastBlockedToastInviteId = "";
             }
-            case DECLINE_EXPIRED -> {
+            case DECLINE_EXPIRED, DECLINE_EXPIRED_AND_CLOSE_SCREEN -> {
                 ClientRequestSender.sendSparringInviteResponse(invite.inviteId(), false, true);
                 SocialStateStore.clearSparringInvite(invite.inviteId());
-                if (current instanceof SparringInviteScreen) {
+                if (decision == Decision.DECLINE_EXPIRED_AND_CLOSE_SCREEN) {
                     client.setScreen(null);
                 }
                 notifyExpired();
