@@ -141,18 +141,20 @@ first_diff_world (3072, -3584) ((-64, 77),) -> ((59, 77), (-64, 32))
 - 最终 RED/修复 commits：`c6a88c24` 锁定逐列 owner、部分权重、多 owner、浮岛 suppression、full/regen 写盘合同；`5458745d` 实现逐列结构 ownership。此前 `7be3664f`、`9c1e8c3a`、`bd7225d6`、`80da3626`、`7edc4006`、`4e9443ee` 保留初版修复与 CodeRabbit/RUF001 审计轨迹；`4618c56d`、`a4b3731a` 仅为普通 main merge。
 - 本轮聚焦测试：owner 13 项、`test_carvers.py` 76 项、spans 16 项、fold 19 项、blend 9 项、export 17 项、stitcher 10 项、v3 baseline 12 项、layer fixture 2 项，共 174 项通过。
 - snapshot 相关验证：anvil export/region/spans/world-spans、span codec/fold/raster-check、layer registry 共 119 项通过；`scripts/preview/test_*.py` 31 项通过。
+- 本轮 snapshot 本地覆盖：anvil export/region/spans/world-spans 74 项、raster span checker 8 项、preview validator 31 项，共 113 项通过；snapshot workflow 已新增 owner 专属 13 项。
 - Ruff：`fields.py`、`stitcher.py`、`spans_fold.py`、`raster_export.py` 与两份测试 `ruff check` 通过；`test_carver_owner_provenance.py` 通过 `ruff format --check`。
 - pipeline：同步 main 后，旧 `blood_valley,zhanhun_plain` 过滤因缺完整 novice POI 选择窗口按新合同正确拒绝；加入覆盖 16 个必需 tile 的 `spawn` 后，生产 CLI raster 生成 52 tiles 成功，`raster_check` 退出码 0，manifest 中 `tile_6_-7` provenance 仍为 `['blood_valley', 'zhanhun_plain']`。
-- 本轮开始基线：`a4b3731a` 已合入 `origin/main@37447572`；返工后将在 push 前重新 fetch/merge 最新 `origin/main`，若 HEAD 变化则重跑完整门禁与新 Ultra。
+- 返工后生产 pipeline：`spawn,blood_valley,zhanhun_plain` 生成 52 tiles 到 `/tmp/pr1174-carver-raster-dbc70ff9` 成功，正式 `raster_check` 退出码 0；`tile_4_-7` / `tile_6_-7` 的 manifest provenance 均保持 `['blood_valley', 'zhanhun_plain']`，spans_count/spans 尺寸分别为 262,144 / 4,194,304 bytes。
+- 最终 main 同步：提交返工证据后紧邻执行 `git fetch origin && git merge origin/main`，结果 `Already up to date`；最终基线为 `origin/main@374475721657ea7c01f08b577474aeff42dd0627`，没有引入额外 merge commit。
 - 跨仓库核验：变更仅落在 `worldgen/` 与 plan 文档；读取 `server/zones.worldview.example.json` 验证 `blood_valley → rift_valley`、`zhanhun_plain → ancient_battlefield` 的真实配置；未改 server/client/agent schema、依赖或 manifest 合同。
 - 第一轮 fresh validator：`gpt-5.6-sol-xhigh` 在精确 HEAD `73c5c0324a7e4da5c86ba8eaa12a3701e11ecf9b` 上确认真实 bug、最小正确修复、manifest 兼容、真实 witness 与提交 trailer，结论 `VERDICT: PASS`。
 - 第二轮最终 validator：在归档后 HEAD `a2c82ae363946a9ccbe9526aebefb5f0f7837ec0` 确认实现正确，但因真实 witness 未精确断言空 chain/0 spans 差异，以及 Finish Evidence 结构不完整，结论 `VERDICT: FAIL`；前者由 `80da3626` 精确锁定，后者由 `23442aeb` 与本轮证据更新补齐。
 - CodeRabbit 返工：有效 inline finding 要求 `base.contributing_zones` 断言补中文失败诊断；`7edc4006` 补入诊断，`4e9443ee` 进一步显式写出期望、原因、实际值，并消除 3 处 RUF001 全角标点告警，比较逻辑未变。
 - 被推翻的旧 PASS：无上下文、严格只读的 `gpt-5.6-sol` Ultra 曾在 `127c3e003c2610cc4883f05c39692a6d2cedbc82` 判 PASS；后续更强制的全新 Ultra 在 `5121932dbbbccda8ddec5adac8fbc182155043a3` 以 `tile_4_-7` 的 49,093 个零权重越界差异列给出 `VERDICT: FAIL`，因此旧 PASS 不再作为最终 gate。
-- 最终 fresh validator：待本证据 commit、最新 main 同步与完整门禁完成后，对精确最终 HEAD 启动新的 `fork_context:false`、`gpt-5.6-sol` Ultra 只读复核；PASS 绑定 SHA 写入 PR 评论与最终报告。
+- 最终 fresh validator：待本证据 commit 完成后，对精确最终 HEAD 启动新的 `fork_context:false`、`gpt-5.6-sol` Ultra 只读复核；PASS 绑定 SHA 写入 PR 评论与最终报告。
 
 ### 归档顺序与遗留/后续
 
 - 归档 rename commit `2abeed58` 先于 Finish Evidence commit `a2c82ae3` 落下，这是执行顺序偏差；未改写历史，改以独立证据 commit 和本次返工 commit 诚实保留审计轨迹，最终 fresh validator 以最新 HEAD 为准。
-- 遗留：当前无已知代码 finding；尚待最新 main 同步、最终 Ultra PASS、push 后 snapshot/CodeRabbit 与 review 降级说明 gate。
+- 遗留：当前无已知代码 finding；尚待最终 Ultra PASS、push 后 snapshot/CodeRabbit 与 review 降级说明 gate。
 - 后续：PR #1174 的 worldgen diff 触发 snapshot；e2e workflow 的 path filter 不含 `worldgen/**`/`docs/**`，因此本 PR 不适用 e2e。最终以 snapshot、CodeRabbit、独立 validator 与 mergeable 状态为合并 gate；`/review` 若仅为 `hlool` 503 则按降级策略忽略，真实 finding 必须返工。
