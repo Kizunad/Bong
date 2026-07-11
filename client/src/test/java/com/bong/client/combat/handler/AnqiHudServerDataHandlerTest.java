@@ -273,6 +273,45 @@ class AnqiHudServerDataHandlerTest {
             "charge_progress 必须为 0.85（proto 链不丢字段）；实际=" + json.get("charge_progress"));
     }
 
+    @Test
+    void protoAnqiHudJavaSafeMaximaReachStoreWithoutOverflow() {
+        Envelope.ServerDataEnvelope echoEnvelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAnqiHud(Envelope.AnqiHud.newBuilder()
+                        .setKind("echo")
+                        .setEchoCount(Integer.MAX_VALUE)
+                        .setTick(9007199254740991L))
+                .build();
+        ProtoServerDataBridge.BridgeResult echoBridge =
+                ProtoServerDataBridge.bridge(echoEnvelope.toByteArray());
+        assertTrue(echoBridge.isSuccess(),
+            "最大合法 echo_count proto bridge 必须成功；错误=" + echoBridge.errorMessage());
+        assertTrue(handler.handle(parse(echoBridge.legacyJson())).handled(),
+            "最大合法 echo_count 必须进入 handler");
+        assertEquals(Integer.MAX_VALUE, AnqiHudStateStore.snapshot().echoCount(),
+            "最大合法 echo_count 不得在 Java int 消费端溢出为负数或归零");
+
+        AnqiHudStateStore.clear();
+        Envelope.ServerDataEnvelope abrasionEnvelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAnqiHud(Envelope.AnqiHud.newBuilder()
+                        .setKind("abrasion")
+                        .setAbrasionContainer("quiver")
+                        .setAbrasionQiPayload(3.4028234e38)
+                        .setTick(9007199254740991L))
+                .build();
+        ProtoServerDataBridge.BridgeResult abrasionBridge =
+                ProtoServerDataBridge.bridge(abrasionEnvelope.toByteArray());
+        assertTrue(abrasionBridge.isSuccess(),
+            "最大合法 abrasion_qi_payload proto bridge 必须成功；错误="
+                + abrasionBridge.errorMessage());
+        assertTrue(handler.handle(parse(abrasionBridge.legacyJson())).handled(),
+            "最大合法 abrasion_qi_payload 必须进入 handler");
+        float storedQi = AnqiHudStateStore.snapshot().abrasionQiPayload();
+        assertTrue(Float.isFinite(storedQi),
+            "最大合法 abrasion_qi_payload 转成 Java float 后必须仍为有限数，实际=" + storedQi);
+        assertEquals(Float.MAX_VALUE, storedQi,
+            "稳定上界应无损落到 Java Float.MAX_VALUE");
+    }
+
     // ─── ServerDataRouter 路由测试 ───────────────────────────────
 
     @Test

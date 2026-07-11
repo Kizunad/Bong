@@ -11789,6 +11789,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn anqi_hud_proto_roundtrip_covers_every_kind_wire_tag() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        for kind in AnqiHudKindV1::ALL {
+            let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+                kind,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            });
+            let envelope = ServerDataEnvelope {
+                payload: Some(server_data_to_proto_payload(&payload)),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .expect("every anqi_hud kind must survive protobuf decoding");
+            let Some(super::bong::server_data_envelope::Payload::AnqiHud(inner)) = decoded.payload
+            else {
+                panic!("every anqi_hud kind must stay on the AnqiHud oneof arm");
+            };
+
+            assert_eq!(
+                inner.kind,
+                kind.as_str(),
+                "protobuf kind tag drifted for {kind:?}"
+            );
+        }
+    }
+
     // ─── plan-combat-skill-feedback-bridges-v1 P5：DuguV2 proto pin ─
 
     /// proto 链 pin 测试：DuguV2SkillCast encode → decode 字段不丢失。
