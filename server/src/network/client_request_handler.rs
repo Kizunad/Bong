@@ -4753,7 +4753,7 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.bone_coins = 100;
         let original_revision = inventory.revision;
-        let (app, player, _helper) = run_npc_trade_request(
+        let (app, player, mut helper) = run_npc_trade_request(
             inventory,
             Some(crate::npc::trade::NpcTradeInventory {
                 offers: vec![live_trade_offer(
@@ -4769,6 +4769,44 @@ mod tests {
         assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
         assert_eq!(inventory.bone_coins, 100);
         assert_eq!(inventory.revision, original_revision);
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有这件货")),
+            "live subset rejection must be visible to the player, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "live subset rejection must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_empty_live_inventory_without_side_effects() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(8);
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory { offers: vec![] }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(8));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有这件货")),
+            "empty live inventory must use the visible missing-offer rejection, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "empty live inventory must not emit success feedback, messages={messages:?}"
+        );
     }
 
     #[test]
@@ -4909,11 +4947,22 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.bone_coins = 100;
         inventory.revision = InventoryRevision(7);
-        let (app, player, _helper) = run_npc_trade_request(inventory, None, "spirit_grass");
+        let (app, player, mut helper) = run_npc_trade_request(inventory, None, "spirit_grass");
         let inventory = app.world().get::<PlayerInventory>(player).unwrap();
         assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
         assert_eq!(inventory.bone_coins, 100);
         assert_eq!(inventory.revision, InventoryRevision(7));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有可成交的货物")),
+            "missing trade component rejection must be visible, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "missing trade component must not emit success feedback, messages={messages:?}"
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@
 |---|---|---|
 | P0 | 核心修复：服务端成交必须消费 live `NpcTradeInventory` offer，而不是只看静态 catalogue | ✅ 2026-07-11 |
 | P1 | 契约与 UI 对齐：`count` / `price_bone_coins` / 当前 offer subset 全链路锁定 | ✅ 2026-07-11 |
-| P2 | 饱和测试与完整 server 门禁 | [BLOCKED: `stable` Rust 1.96.1 下 `cargo clippy --all-targets -- -D warnings` 在全仓触发 69 条新 lint；见 Finish Evidence] |
+| P2 | 饱和测试与完整 server 门禁 | [BLOCKED: `stable` Rust 1.96.1 下 `cargo clippy --all-targets -- -D warnings` 在全仓触发 69 条新 lint；见“过程验证与阻塞证据”] |
 
 验收日期：未验收；P0/P1 已于 2026-07-11 完成，P2 等待独立 clippy 基线治理后重跑。
 
@@ -98,13 +98,15 @@
    - live offer 总价与静态 catalogue 价格刻意不同时，以 live 总价结算一次，证明 `price_bone_coins` 不是单件价也不会被静态表覆盖。
 7. `npc_trade_request_rejects_missing_trade_inventory_without_side_effects`
    - NPC 缺失 `NpcTradeInventory` 时拒绝；背包物品、骨币、revision 均不变。
-8. `npc_trade_request_rejects_when_only_catalogue_price_is_affordable`
+8. `npc_trade_request_rejects_empty_live_inventory_without_side_effects`
+   - NPC 显式挂载空 `offers` 时走“当前没有这件货”的可见拒绝；背包物品、骨币、revision 均不变，且不发送成功消息。
+9. `npc_trade_request_rejects_when_only_catalogue_price_is_affordable`
    - 玩家余额高于 catalogue 价但低于 live bundle 总价时拒绝；物品、骨币、revision 不变，反馈显示 live 总价且无成功消息。
-9. `npc_trade_request_partial_bundle_capacity_fails_atomically`
+10. `npc_trade_request_partial_bundle_capacity_fails_atomically`
    - 背包已有 63/64 同类堆叠且无第二格、live bundle `count=2` 时整笔失败；不得先合入 1 件，也不得扣币或改变 revision。
-10. `npc_trade_request_applies_non_neutral_reputation_to_live_bundle_total`
+11. `npc_trade_request_applies_non_neutral_reputation_to_live_bundle_total`
    - 注入非中立 `NpcPlayerReputation`，证明信誉修正以 live bundle 总价为基数，而非退回静态 catalogue 价格。
-11. `npc_trade_request_applies_faction_reputation_to_live_bundle_total`
+12. `npc_trade_request_applies_faction_reputation_to_live_bundle_total`
    - 在青云残峰注入非中立 `FactionReputation`，证明区域 faction baseline 同样修正 live bundle 总价；与 per-NPC delta 两条输入链分别锁定。
 
 ## 开放问题（已收口）
@@ -152,7 +154,7 @@
 
 bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bughunt-loop-20260705-ad-preview-npc-ui`，基线 `origin/main@fb41c96a4`）在 `npc/world/preview/inventory-ui` 主路径专项扫描中确认。该题与既有 `npc trade gate` 主题不同：这里不是“能不能交易”的门控错误，而是“正常交易后稳定少发货”的成交语义断裂。
 
-## Finish Evidence
+## 过程验证与阻塞证据
 
 ### 验真结论
 
@@ -163,7 +165,7 @@ bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bugh
 
 - **P0**：`server/src/network/client_request_handler.rs::NpcEngagementRequestParams.trade_inventories` 二次读取已通过距离、维度和生命周期校验的目标 NPC；成交数量、展示名与 bundle 总价来自匹配 live `TradeOffer`。
 - **P1**：历史 alias 仍由 `npc_trade_catalog_entry` canonicalize，但 canonical id 必须命中当前 live subset；成功反馈回显 `display_name x count`。
-- **P2**：同文件新增完整 `NpcTradeRequest` dispatch 测试夹具与 12 条交易行为用例，覆盖 bundle / 单件 / alias / subset / live 总价 / `NpcPlayerReputation` 与 `FactionReputation` 两路非中立修价 / 缺 component / 成功反馈 / 入包失败原子性；连同既有 schema 与 Wanted 门控共 14 条 targeted 用例。
+- **P2**：同文件新增完整 `NpcTradeRequest` dispatch 测试夹具与 13 条交易行为用例，覆盖 bundle / 单件 / alias / subset / 空 offers / live 总价 / `NpcPlayerReputation` 与 `FactionReputation` 两路非中立修价 / 缺 component / 成功反馈 / 入包失败原子性；连同既有 schema 与 Wanted 门控共 15 条 targeted 用例。
 
 ### 关键 commit
 
@@ -174,8 +176,8 @@ bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bugh
 
 ### 测试结果与阻塞
 
-- `cargo test npc_trade_request_ -- --nocapture`：14 passed，0 failed；锁住 live bundle 成功/失败、subset、两路非中立信誉修价与两类新增原子失败边界。
-- `TMPDIR="$PWD/.tmp" cargo test`：lib 10943 passed / 0 failed / 1 ignored；main 11 passed；integration 1 + 4 passed；doc-test 0 failed。
+- `cargo test npc_trade_request_ -- --nocapture`：15 passed，0 failed；锁住 live bundle 成功/失败、subset、空 offers、两路非中立信誉修价与两类新增原子失败边界。
+- `TMPDIR="$PWD/.tmp" cargo test`：两轮完整复跑均为 lib 10943 passed / 1 failed / 1 ignored；唯一失败是 `world::poi_novice::tests::scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb` 的全仓高负载耗时阈值（分别 11.91s / 11.72s）。同一用例单独复核 6.76s PASS；本 PR 不虚报完整 `cargo test` PASS，且不跨域修改该 POI 性能用例。
 - `cargo fmt --check`：通过。
 - `[BLOCKED: 强制 clippy 门禁未通过]`：仓库 `server/rust-toolchain.toml` 自初始提交 `c98bb986` 起只声明浮动 `channel = "stable"`；当前解析为 `rustc 1.96.1 (31fca3adb 2026-06-26)` / `clippy 0.1.96`，GitHub e2e 同样使用 `dtolnay/rust-toolchain@stable`，没有另一个被仓库声明的旧可信 clippy 基线。
   - 精确命令：`TMPDIR="$PWD/.tmp" cargo clippy --all-targets -- -D warnings`。
