@@ -1,5 +1,6 @@
 package com.bong.client.agentui;
 
+import com.bong.client.hud.BongToast;
 import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
 import com.google.gson.JsonObject;
@@ -48,6 +49,7 @@ public class AgentUiScreenProtocolTest {
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
         AgentUiStore.clear();
+        BongToast.resetForTests();
         sentPayloads.clear();
     }
 
@@ -269,6 +271,92 @@ public class AgentUiScreenProtocolTest {
             "clear() 后 getActive() 应为 null");
     }
 
+    @Test
+    void agentUiStore_pendingErrorClose_expiresAtBoundary() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-expiring-pending", xml, 600, 0L);
+        AgentUiStore.setActive(screen);
+        long startedAtNanos = 1_000_000_000L;
+        AgentUiStore.markAwaitingErrorCloseAtNanos(screen, startedAtNanos);
+        screen.receiveCloseSignal();
+        long expiryBoundaryNanos = startedAtNanos + AgentUiStore.PENDING_ERROR_CLOSE_TTL_NANOS;
+        long feedbackNowMillis = 11_000L;
+
+        AgentUiStore.receiveCloseAtNanos(
+            "req-expiring-pending",
+            "session_expired",
+            expiryBoundaryNanos,
+            feedbackNowMillis
+        );
+
+        assertTrue(BongToast.current(feedbackNowMillis).isEmpty(),
+            "pending error close 在 TTL 精确边界应立即过期，边界时刻不得显示迟到 reason");
+    }
+
+    @Test
+    void agentUiStore_pendingErrorClose_beforeExpiry_isAccepted() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-fresh-pending", xml, 600, 0L);
+        AgentUiStore.setActive(screen);
+        long startedAtNanos = 1_000_000_000L;
+        AgentUiStore.markAwaitingErrorCloseAtNanos(screen, startedAtNanos);
+        screen.receiveCloseSignal();
+
+        long beforeExpiryNanos = startedAtNanos
+            + AgentUiStore.PENDING_ERROR_CLOSE_TTL_NANOS - 1L;
+        long feedbackNowMillis = 10_999L;
+        AgentUiStore.receiveCloseAtNanos(
+            "req-fresh-pending", "session_expired", beforeExpiryNanos, feedbackNowMillis);
+
+        assertEquals("这次天道面板已过期，请重新尝试",
+            BongToast.current(feedbackNowMillis).text().getString(),
+            "pending error close 在 TTL 内且 request_id 匹配时应显示提示");
+    }
+
+    @Test
+    void agentUiStore_pendingErrorClose_clockRollbackExpiresFailClosed() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-clock-rollback", xml, 600, 0L);
+        AgentUiStore.setActive(screen);
+        long startedAtNanos = 5_000_000_000L;
+        AgentUiStore.markAwaitingErrorCloseAtNanos(screen, startedAtNanos);
+        screen.receiveCloseSignal();
+
+        AgentUiStore.receiveCloseAtNanos(
+            "req-clock-rollback", "session_expired", startedAtNanos - 1L, 20_000L);
+
+        assertTrue(BongToast.current(20_000L).isEmpty(),
+            "单调时钟若异常回拨，pending 应 fail-closed 过期，不得延长窗口或显示提示");
+
+        AgentUiStore.receiveCloseAtNanos(
+            "req-clock-rollback", "session_expired", startedAtNanos + 1L, 20_001L);
+        assertTrue(BongToast.current(20_001L).isEmpty(),
+            "回拨已清除 pending；后续时钟恢复也不得让旧 request 重新有效");
+    }
+
+    @Test
+    void agentUiScreen_escPendingErrorClose_expiresAtExactTtlBoundary() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-esc-ttl-boundary", xml, 600, 0L);
+        AgentUiStore.setActive(screen);
+        long startedAtNanos = 3_000_000_000L;
+        screen.closeAtNanosForTests(startedAtNanos);
+        long expiryBoundaryNanos = startedAtNanos + AgentUiStore.PENDING_ERROR_CLOSE_TTL_NANOS;
+        long feedbackNowMillis = 13_000L;
+
+        AgentUiStore.receiveCloseAtNanos(
+            "req-esc-ttl-boundary",
+            "session_expired",
+            expiryBoundaryNanos,
+            feedbackNowMillis
+        );
+
+        assertTrue(BongToast.current(feedbackNowMillis).isEmpty(),
+            "ESC 登记的 pending 在 TTL 精确边界必须 fail-closed，不得显示迟到 reason");
+        assertEquals(1, sentPayloads.size(),
+            "TTL 边界处理不得追加 dismissed 之外的 C2S response");
+    }
+
     // ─── 关闭语义四条状态转换 ────────────────────────────────────────────────
 
     /**
@@ -361,6 +449,28 @@ public class AgentUiScreenProtocolTest {
             "receiveCloseSignal 后不应发任何包，实际发了 " + sentPayloads.size() + " 个包");
         assertNull(AgentUiStore.getActive(),
             "receiveCloseSignal closeWithoutResponse 后应清空 AgentUiStore");
+        assertTrue(BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "无 reason 的 receiveCloseSignal 表示 Replaced，应保持静默");
+    }
+
+    /**
+     * ④b receiveCloseSignal(reason)（Error close）→ 不发包，但显示错误提示。
+     */
+    @Test
+    void agentUiScreen_receiveCloseSignalWithReason_showsFeedbackAndSendsNoPacket() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-server-error-close-001", xml, 600, 1000L);
+        AgentUiStore.setActive(screen);
+
+        screen.receiveCloseSignal("invalid_button_id");
+
+        assertEquals(0, sentPayloads.size(),
+            "receiveCloseSignal(reason) 后不应发任何包，实际发了 " + sentPayloads.size() + " 个包");
+        assertNull(AgentUiStore.getActive(),
+            "receiveCloseSignal(reason) closeWithoutResponse 后应清空 AgentUiStore");
+        assertEquals("天道拒绝了这次操作",
+            BongToast.current(System.currentTimeMillis()).text().getString(),
+            "invalid_button_id 应显示拒绝提示");
     }
 
     /**
