@@ -10,7 +10,7 @@ use valence::prelude::{Added, Client, Entity, EventReader, Query, Res, Username,
 use crate::forge::blueprint::{Blueprint, BlueprintRegistry, StepSpec};
 use crate::forge::events::{
     ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted,
-    InscriptionScrollSubmit, StepAdvance, TemperingHit,
+    InscriptionScrollApplied, StepAdvance, TemperingHit,
 };
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSession, ForgeSessionId, ForgeSessions, ForgeStep, StepState};
@@ -197,7 +197,7 @@ pub fn push_forge_start_snapshot_on_accept(
 /// 只推 session，不重发 station/blueprint_book（避免每次击键都重发三件套）。
 pub fn push_forge_session_snapshot_on_interaction(
     mut tempering_hits: EventReader<TemperingHit>,
-    mut scroll_submits: EventReader<InscriptionScrollSubmit>,
+    mut scroll_applied: EventReader<InscriptionScrollApplied>,
     mut consecration_injects: EventReader<ConsecrationInject>,
     sessions: Res<ForgeSessions>,
     registry: Res<BlueprintRegistry>,
@@ -207,8 +207,8 @@ pub fn push_forge_session_snapshot_on_interaction(
     for hit in tempering_hits.read() {
         touched.push(hit.session);
     }
-    for submit in scroll_submits.read() {
-        touched.push(submit.session);
+    for applied in scroll_applied.read() {
+        touched.push(applied.session);
     }
     for inject in consecration_injects.read() {
         touched.push(inject.session);
@@ -753,7 +753,7 @@ mod tests {
     fn tempering_hit_pushes_session_only_snapshot() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());
@@ -797,7 +797,7 @@ mod tests {
     fn consecration_inject_pushes_session_snapshot() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());
@@ -831,7 +831,7 @@ mod tests {
     fn interaction_snapshot_skips_unknown_session_without_panic() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());

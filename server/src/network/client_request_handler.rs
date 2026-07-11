@@ -3491,26 +3491,12 @@ fn handle_forge_inscription_scroll(
         return;
     };
 
-    let Ok(mut inventory) = inventories.get_mut(entity) else {
-        return;
-    };
-    if let Err(err) = consume_item_instance_once(&mut inventory, instance_id) {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll consume failed for instance_id={instance_id}: {err}"
-        );
-        return;
-    }
-    resync_snapshot(
-        entity,
-        &inventory,
-        clients,
-        player_states,
-        cultivations,
-        "forge_inscription_scroll_consumed",
-    );
-
+    // 只把精确实例交给 forge 权威系统。实际消费必须等前一步结算完成并确认
+    // session 真实进入 Inscription，避免同帧 Tempering Waste 时先扣残卷再丢事件。
     inscription_scroll_tx.send(InscriptionScrollSubmit {
         session,
+        caster: entity,
+        item_instance_id: instance_id,
         inscription_id: inscription_id.to_string(),
     });
 }
@@ -7954,7 +7940,7 @@ mod tests {
     }
 
     #[test]
-    fn forge_inscription_scroll_consumes_item_and_emits_event() {
+    fn forge_inscription_scroll_defers_consumption_and_emits_exact_item_event() {
         let mut app = App::new();
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
@@ -8020,10 +8006,16 @@ mod tests {
         app.update();
 
         let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
-        assert!(inventory.containers[0].items.is_empty());
+        assert_eq!(
+            inventory.containers[0].items.len(),
+            1,
+            "C2S 网关只能预检残卷，实际消费必须留给确认进入 Inscription 的 forge 系统"
+        );
         let captured = app.world().resource::<CapturedInscriptionScrolls>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(9));
+        assert_eq!(captured.0[0].caster, entity);
+        assert_eq!(captured.0[0].item_instance_id, 43);
         assert_eq!(captured.0[0].inscription_id, "sharp_v0");
     }
 

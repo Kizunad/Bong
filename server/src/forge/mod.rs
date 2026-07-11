@@ -32,13 +32,15 @@ pub mod steps;
 use std::collections::HashMap;
 
 use valence::prelude::{
-    App, DVec3, EventReader, EventWriter, Events, IntoSystemConfigs, Query, Res, ResMut, Update,
+    App, Client, DVec3, EventReader, EventWriter, Events, IntoSystemConfigs, Query, Res, ResMut,
+    Update, Username,
 };
 
 use self::blueprint::{BlueprintRegistry, MaterialStack, StepKind, DEFAULT_BLUEPRINTS_DIR};
 use self::events::{
     ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted,
-    InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
+    InscriptionScrollApplied, InscriptionScrollSubmit, StartForgeRequest, StepAdvance,
+    TemperingHit,
 };
 use self::history::{ForgeAttempt, ForgeHistory};
 use self::learned::LearnedBlueprints;
@@ -53,10 +55,17 @@ use self::steps::{
 };
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Cultivation, QiColor};
-use crate::inventory::{consume_forge_materials_atomic, PlayerInventory};
+use crate::inventory::{
+    consume_forge_materials_atomic, consume_item_instance_once, inventory_item_by_instance_borrow,
+    ItemRegistry, PlayerInventory,
+};
 use crate::mineral::MineralFeedbackEvent;
 use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
-use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
+use crate::network::{
+    gameplay_vfx, inventory_snapshot_emit::send_inventory_snapshot_to_client,
+    vfx_event_emit::VfxEventRequest,
+};
+use crate::player::state::PlayerState;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
@@ -88,6 +97,7 @@ pub fn register(app: &mut App) {
     app.add_event::<StartForgeRequest>();
     app.add_event::<TemperingHit>();
     app.add_event::<InscriptionScrollSubmit>();
+    app.add_event::<InscriptionScrollApplied>();
     app.add_event::<ConsecrationInject>();
     app.add_event::<StepAdvance>();
     app.add_event::<ForgeStartAccepted>();
@@ -459,38 +469,85 @@ fn handle_tempering_hits(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_scroll_submits(
     mut ev: EventReader<InscriptionScrollSubmit>,
     mut sessions: ResMut<ForgeSessions>,
+    registry: Res<ItemRegistry>,
+    mut inventories: Query<&mut PlayerInventory>,
+    mut clients: Query<(&Username, &mut Client, &PlayerState, &Cultivation)>,
     stations: Query<&WeaponForgeStation>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut applied_events: EventWriter<InscriptionScrollApplied>,
 ) {
     for submit in ev.read() {
         let Some(session) = sessions.get_mut(submit.session) else {
             continue;
         };
-        if session.current_step != ForgeStep::Inscription {
+        if session.current_step != ForgeStep::Inscription || session.caster != submit.caster {
             continue;
         }
-        if let StepState::Inscription(state) = &mut session.step_state {
-            apply_scroll(state, submit.inscription_id.clone());
-            if let (Some(events), Ok(station)) =
-                (vfx_events.as_deref_mut(), stations.get(session.station))
-            {
-                if let Some(origin) = forge_station_origin(station) {
-                    gameplay_vfx::send_spawn(
-                        events,
-                        gameplay_vfx::spawn_request(
-                            gameplay_vfx::FORGE_INSCRIPTION,
-                            origin,
-                            None,
-                            "#4488FF",
-                            0.8,
-                            1,
-                            20,
-                        ),
-                    );
-                }
+        let StepState::Inscription(state) = &mut session.step_state else {
+            continue;
+        };
+        let Ok(mut inventory) = inventories.get_mut(submit.caster) else {
+            continue;
+        };
+        let instance_matches =
+            inventory_item_by_instance_borrow(&inventory, submit.item_instance_id)
+                .and_then(|instance| registry.get(instance.template_id.as_str()))
+                .and_then(|template| template.inscription_scroll_spec.as_ref())
+                .is_some_and(|spec| spec.inscription_id == submit.inscription_id);
+        if !instance_matches {
+            tracing::warn!(
+                "[bong][forge] inscription submit rejected: caster={:?} instance_id={} no longer matches inscription_id={}",
+                submit.caster,
+                submit.item_instance_id,
+                submit.inscription_id
+            );
+            continue;
+        }
+        if let Err(err) = consume_item_instance_once(&mut inventory, submit.item_instance_id) {
+            tracing::warn!(
+                "[bong][forge] inscription submit rejected: consume instance_id={} failed: {err}",
+                submit.item_instance_id
+            );
+            continue;
+        }
+
+        apply_scroll(state, submit.inscription_id.clone());
+        applied_events.send(InscriptionScrollApplied {
+            session: submit.session,
+        });
+        if let Ok((username, mut client, player_state, cultivation)) =
+            clients.get_mut(submit.caster)
+        {
+            send_inventory_snapshot_to_client(
+                submit.caster,
+                &mut client,
+                username.0.as_str(),
+                &inventory,
+                player_state,
+                cultivation,
+                "forge_inscription_scroll_consumed",
+            );
+        }
+        if let (Some(events), Ok(station)) =
+            (vfx_events.as_deref_mut(), stations.get(session.station))
+        {
+            if let Some(origin) = forge_station_origin(station) {
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        gameplay_vfx::FORGE_INSCRIPTION,
+                        origin,
+                        None,
+                        "#4488FF",
+                        0.8,
+                        1,
+                        20,
+                    ),
+                );
             }
         }
     }
@@ -1252,6 +1309,7 @@ mod tests {
         app.add_event::<StepAdvance>();
         app.add_event::<TemperingHit>();
         app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.add_event::<ForgeOutcomeEvent>();
     }
