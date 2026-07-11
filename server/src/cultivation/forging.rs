@@ -9,7 +9,7 @@ use valence::prelude::{
     bevy_ecs, Entity, Event, EventReader, EventWriter, Position, Query, Res, ResMut,
 };
 
-use super::components::{Cultivation, Meridian, MeridianChannelId, MeridianId, MeridianSystem};
+use super::components::{Cultivation, Meridian, MeridianChannelId, MeridianSystem};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 use crate::npc::spawn::NpcMarker;
@@ -301,6 +301,7 @@ fn credit_forge_cost(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::MeridianId;
     use crate::qi_physics::QiAccountKind;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update};
