@@ -3,7 +3,9 @@ use std::fs;
 use std::path::Path;
 
 use serde::Deserialize;
-use valence::prelude::{App, Commands, DVec3, Resource, Startup};
+use valence::prelude::{
+    bevy_ecs, App, Commands, DVec3, IntoSystemConfigs, Resource, Startup, SystemSet,
+};
 
 use super::dimension::DimensionKind;
 use super::TEST_AREA_BLOCK_EXTENT;
@@ -12,6 +14,9 @@ use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord, ZONE_OVERLAY_PAYL
 pub const DEFAULT_ZONES_PATH: &str = "zones.json";
 pub const DEFAULT_TSY_ZONES_PATH: &str = "zones.tsy.json";
 pub const DEFAULT_SPAWN_ZONE_NAME: &str = "spawn";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub(crate) struct ZoneRegistryStartupSet;
 
 const DEFAULT_SPAWN_BOUNDS_MIN: [f64; 3] = [-128.0, 64.0, -128.0];
 const DEFAULT_SPAWN_BOUNDS_MAX_Y: f64 = 80.0;
@@ -838,7 +843,10 @@ pub fn default_spawn_bounds() -> (DVec3, DVec3) {
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering zone registry startup system");
-    app.add_systems(Startup, initialize_zone_registry);
+    app.add_systems(
+        Startup,
+        initialize_zone_registry.in_set(ZoneRegistryStartupSet),
+    );
 }
 
 fn initialize_zone_registry(mut commands: Commands) {

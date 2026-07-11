@@ -3929,6 +3929,8 @@ mod tests {
             ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
                 slots: vec![None; 9],
                 cooldown_until_ms: vec![0; 9],
+                ack_request_id: None,
+                bind_accepted: None,
             }),
             ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
                 slots: vec![None; 9],
