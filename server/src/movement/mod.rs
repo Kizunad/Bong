@@ -20,7 +20,7 @@ use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
 use crate::network::agent_bridge::{
-    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+    serialize_server_data_payload, PayloadBuildError, SERVER_DATA_CHANNEL,
 };
 use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
@@ -489,29 +489,42 @@ fn emit_movement_state_payloads(
     >,
 ) {
     for (mut client, mut movement, stamina) in &mut players {
-        let movement_payload = movement.to_payload(clock.tick, stamina);
-        let rejection_sent = movement_payload.rejected_action.is_some();
-        let payload = ServerDataV1::new(ServerDataPayloadV1::MovementState(movement_payload));
-        let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                log_payload_build_error(payload_type, &error);
-                continue;
-            }
-        };
-        send_server_data_payload(&mut client, payload_bytes.as_slice());
-        if rejection_sent {
-            movement.acknowledge_payload_sent();
+        if let Err(error) = send_movement_state_payload(
+            &mut client,
+            &mut movement,
+            stamina,
+            clock.tick,
+            serialize_server_data_payload,
+        ) {
+            log_payload_build_error("movement_state", &error);
+            continue;
         }
         tracing::debug!(
             "[bong][movement] sent {} {} payload action={:?} speed={:.3}",
             SERVER_DATA_CHANNEL,
-            payload_type,
+            "movement_state",
             movement.action,
             movement.current_speed_multiplier
         );
     }
+}
+
+fn send_movement_state_payload(
+    client: &mut Client,
+    movement: &mut MovementState,
+    stamina: Option<&Stamina>,
+    now_tick: u64,
+    serialize: impl FnOnce(&ServerDataV1) -> Result<Vec<u8>, PayloadBuildError>,
+) -> Result<(), PayloadBuildError> {
+    let movement_payload = movement.to_payload(now_tick, stamina);
+    let rejection_sent = movement_payload.rejected_action.is_some();
+    let payload = ServerDataV1::new(ServerDataPayloadV1::MovementState(movement_payload));
+    let payload_bytes = serialize(&payload)?;
+    send_server_data_payload(client, payload_bytes.as_slice());
+    if rejection_sent {
+        movement.acknowledge_payload_sent();
+    }
+    Ok(())
 }
 
 impl MovementState {
@@ -949,6 +962,56 @@ fn is_residue_ash_block(block: BlockState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn flush_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock movement client packets should flush");
+        }
+    }
+
+    fn collect_movement_payloads(helper: &mut MockClientHelper) -> Vec<MovementStateV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(payload) = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0) else {
+                continue;
+            };
+            if let ServerDataPayloadV1::MovementState(state) = payload.payload {
+                payloads.push(state);
+            }
+        }
+        payloads
+    }
+
+    fn spawn_movement_emit_client(
+        app: &mut App,
+        rejected_action: Option<MovementActionRequestV1>,
+    ) -> (Entity, MockClientHelper) {
+        let (client_bundle, helper) = create_mock_client("MovementEmit");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                MovementState {
+                    rejected_action,
+                    ..Default::default()
+                },
+                Stamina::default(),
+            ))
+            .id();
+        (entity, helper)
+    }
 
     fn assert_close(actual: f32, expected: f32) {
         assert!(
@@ -1183,60 +1246,133 @@ mod tests {
     }
 
     #[test]
-    fn rejected_action_payload_is_one_shot_after_successful_send_and_can_be_rearmed() {
-        let mut state = MovementState {
-            rejected_action: Some(MovementActionRequestV1::Dash),
-            ..Default::default()
-        };
+    fn movement_emit_system_consumes_reject_and_stamina_followups_stay_clear() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_systems(Update, emit_movement_state_payloads);
+        let (entity, mut helper) =
+            spawn_movement_emit_client(&mut app, Some(MovementActionRequestV1::Dash));
 
-        let first = state.to_payload(100, None);
+        app.update();
+        flush_client_packets(&mut app);
+        let first = collect_movement_payloads(&mut helper);
         assert_eq!(
-            first.rejected_action,
+            first.len(),
+            1,
+            "首次 Added<MovementState> 应实际发送一份 payload"
+        );
+        assert_eq!(
+            first[0].rejected_action,
             Some(MovementActionRequestV1::Dash),
-            "第一次下发必须携带刚发生的 dash reject"
+            "首次实际发送必须携带刚发生的 dash reject"
         );
-        state.acknowledge_payload_sent();
-        let stamina_only_followup = state.to_payload(101, None);
         assert_eq!(
-            stamina_only_followup.rejected_action, None,
-            "没有新玩家输入时，后续状态包不得重复携带旧 dash reject"
-        );
-
-        state.rejected_action = Some(MovementActionRequestV1::Dash);
-        let second_real_reject = state.to_payload(102, None);
-        assert_eq!(
-            second_real_reject.rejected_action,
-            Some(MovementActionRequestV1::Dash),
-            "新的独立玩家输入必须能够重新触发 dash reject"
-        );
-        state.acknowledge_payload_sent();
-        assert_eq!(
-            state.to_payload(103, None).rejected_action,
+            app.world()
+                .get::<MovementState>(entity)
+                .unwrap()
+                .rejected_action,
             None,
-            "重新触发的 reject 也只能下发一次"
+            "成功序列化并交付后 server 状态必须消费 reject"
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+        let clear_after_ack = collect_movement_payloads(&mut helper);
+        assert!(
+            clear_after_ack.is_empty(),
+            "emit 内 ack 不应在下一 tick 自激发送，否则会形成清理包循环"
+        );
+
+        app.world_mut().get_mut::<Stamina>(entity).unwrap().current -= 1.0;
+        app.world_mut().resource_mut::<CombatClock>().tick = 101;
+        app.update();
+        flush_client_packets(&mut app);
+        let stamina_followup = collect_movement_payloads(&mut helper);
+        assert_eq!(
+            stamina_followup.len(),
+            1,
+            "仅 Changed<Stamina> 也必须真实触发 movement_state 发送"
+        );
+        assert_eq!(
+            stamina_followup[0].rejected_action, None,
+            "体力恢复/变化包不得再次携带已经消费的 dash reject"
+        );
+
+        app.world_mut()
+            .get_mut::<MovementState>(entity)
+            .unwrap()
+            .rejected_action = Some(MovementActionRequestV1::Dash);
+        app.world_mut().resource_mut::<CombatClock>().tick = 102;
+        app.update();
+        flush_client_packets(&mut app);
+        let second_reject = collect_movement_payloads(&mut helper);
+        assert_eq!(second_reject.len(), 1);
+        assert_eq!(
+            second_reject[0].rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "新的独立玩家输入必须能通过真实 emit 链重新触发 dash reject"
         );
     }
 
     #[test]
-    fn rejection_is_retained_until_payload_send_is_acknowledged() {
-        let mut state = MovementState {
-            rejected_action: Some(MovementActionRequestV1::Dash),
-            ..Default::default()
-        };
+    fn serialization_failure_keeps_reject_for_next_successful_send() {
+        let mut app = App::new();
+        let (entity, mut helper) =
+            spawn_movement_emit_client(&mut app, Some(MovementActionRequestV1::Dash));
 
-        let serialization_attempt = state.to_payload(0, None);
-        assert_eq!(
-            serialization_attempt.rejected_action,
-            Some(MovementActionRequestV1::Dash)
+        {
+            let world = app.world_mut();
+            let mut query = world.query::<(&mut Client, &mut MovementState, &Stamina)>();
+            let (mut client, mut movement, stamina) = query.get_mut(world, entity).unwrap();
+            let result =
+                send_movement_state_payload(&mut client, &mut movement, Some(stamina), 100, |_| {
+                    Err(PayloadBuildError::Oversize { size: 2, max: 1 })
+                });
+            assert!(matches!(result, Err(PayloadBuildError::Oversize { .. })));
+        }
+        flush_client_packets(&mut app);
+        assert!(
+            collect_movement_payloads(&mut helper).is_empty(),
+            "序列化失败时不得向 client 交付半成品 payload"
         );
         assert_eq!(
-            state.to_payload(1, None).rejected_action,
+            app.world()
+                .get::<MovementState>(entity)
+                .unwrap()
+                .rejected_action,
             Some(MovementActionRequestV1::Dash),
-            "序列化或发送失败时没有 ack，reject 必须保留以便重试"
+            "序列化失败发生在 ack 前，reject 必须保留等待重试"
         );
 
-        state.acknowledge_payload_sent();
-        assert_eq!(state.to_payload(2, None).rejected_action, None);
+        {
+            let world = app.world_mut();
+            let mut query = world.query::<(&mut Client, &mut MovementState, &Stamina)>();
+            let (mut client, mut movement, stamina) = query.get_mut(world, entity).unwrap();
+            send_movement_state_payload(
+                &mut client,
+                &mut movement,
+                Some(stamina),
+                101,
+                serialize_server_data_payload,
+            )
+            .expect("下一次真实序列化应成功并交付");
+        }
+        flush_client_packets(&mut app);
+        let retried = collect_movement_payloads(&mut helper);
+        assert_eq!(retried.len(), 1);
+        assert_eq!(
+            retried[0].rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "重试成功时必须仍携带此前未吞掉的 reject"
+        );
+        assert_eq!(
+            app.world()
+                .get::<MovementState>(entity)
+                .unwrap()
+                .rejected_action,
+            None,
+            "只有成功交付后才消费 reject"
+        );
     }
 
     #[test]
