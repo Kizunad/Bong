@@ -6,9 +6,9 @@
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |---|---|---|---|
-| P0 | 第一性原理 RED：证明真实 server-shaped payload 被 schema 拒收 | ⏳ | — |
-| P1 | 最小 schema/sample/generated/dist 修复与饱和测试 | ⬜ | — |
-| P2 | 完整 agent/schema 门禁、主线复验、对抗验证与归档 | ⬜ | — |
+| P0 | 第一性原理 RED：证明真实 server-shaped payload 被 schema 拒收 | ✅ | 2026-07-11 |
+| P1 | 最小 schema/sample/generated/dist 修复与饱和测试 | ✅ | 2026-07-11 |
+| P2 | 完整 agent/schema 门禁、主线复验、对抗验证与归档 | ✅ | 2026-07-11 |
 
 ## 接入面与范围
 
@@ -42,7 +42,7 @@
 
 - `agent/packages/schema/src/alchemy.ts::AlchemyInsightV1` 增加 `ts: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })`。
 - 更新 `agent/packages/schema/samples/alchemy-insight.sample.json` 与 `agent/packages/schema/generated/alchemy-insight-v1.json`。
-- 重建并提交 `agent/packages/schema/dist/` 中受影响产物，避免 Tiandao 引用旧 dist。
+- 重建 `agent/packages/schema/dist/` 中受影响产物并由 Tiandao typecheck/test 消费验证；`dist/` 是 ignored 构建产物，不纳入 commit。
 - Tiandao 回归使用真实 server-shaped payload，断言 callback 与 `getLatestAlchemyEvents()` 均保留 `ts`。
 - 饱和测试覆盖：`0`、`Number.MAX_SAFE_INTEGER` 可接收；负数、小数、超上界、缺失 `ts`、其它未知字段均拒绝；`accuracy` 既有边界不放宽。
 
@@ -69,3 +69,42 @@
 - 当前证据不证明 live client 已有完整丹心识别入口；本修复只恢复已经存在的 server → Redis → Tiandao 接收/观测契约。
 - 不把“允许 `ts`”实现成放宽未知字段；`additionalProperties: false` 必须保持。
 - schema source 改动后必须重建 dist，否则 Tiandao 测试可能继续加载旧产物而产生假红或假绿。
+
+## Finish Evidence
+
+### 落地清单
+
+- `agent/packages/schema/src/alchemy.ts`：`AlchemyInsightV1` 新增必填 `ts` 安全整数契约。
+- `agent/packages/schema/samples/alchemy-insight.sample.json`：共享正样本补齐真实 server-shaped `ts`。
+- `agent/packages/schema/generated/alchemy-insight-v1.json`：required/properties 与 TypeBox source 对齐。
+- `agent/packages/schema/tests/schema.test.ts`：新增 server wire parity 饱和边界矩阵。
+- `agent/packages/tiandao/tests/redis-ipc.test.ts`：真实 Redis payload 验证 callback/latest buffer 保留 `ts`。
+
+### 关键 commit
+
+- `11c593a41e1eb02a366baf59608d49e313e59e52`（2026-07-11）：升格 skeleton 并收口为纯 agent/schema 契约修复。
+- `8d1e18c7d54242db6187bdb38a06a999f35f6bbf`（2026-07-11）：提交 RED，schema 3 项失败且 Tiandao callback 为 0。
+- `f8a67b0219947ce8acaeb6f1d1f0c836d3fa1378`（2026-07-11）：补齐 `ts` source/sample/generated，保持严格未知字段拒绝。
+
+### 测试结果
+
+- RED：schema server-wire 套件因 `/ts: Unexpected property` 与缺失 `ts` 被误接收共 3 项失败；Tiandao Redis 用例记录 `/ts: Unexpected property`，callback 0。
+- 定向 GREEN：schema `10 passed`；Tiandao Redis `1 passed`。
+- `cd agent/packages/schema && npm test`：28 files / 799 tests，全部通过。
+- `cd agent/packages/tiandao && npm test`：72 files / 825 tests，全部通过。
+- `cd agent && npm run build`：`@bong/schema` 与 `@bong/tiandao` TypeScript build 全部通过，schema dist 已重建。
+- `cd agent && npm run generate:check -w @bong/schema`：392 个 generated schema 全部 fresh。
+- 主线同步：`origin/main=3c8bf9253680795136f152f5504f6f709c5e16cb`，`merge-base` 相同，分类 `already-up-to-date`。
+- 无上下文 read-only validator：`PASS f8a67b0219947ce8acaeb6f1d1f0c836d3fa1378`（修复后）与同步后复验再次 PASS。
+
+### 跨仓库核验
+
+- server（只读证据）：`server/src/schema/alchemy.rs::AlchemyInsightV1.ts`、`server/src/network/alchemy_bridge.rs::publish_alchemy_insight_events`、Redis channel `bong:alchemy_insight`。
+- schema：`AlchemyInsightV1`、`validateAlchemyInsightV1Contract`、`alchemy-insight-v1.json` 三者字段一致。
+- agent：`RedisIpc.handleAlchemyRuntimeEventMessage` 校验后进入 callback 与 `getLatestAlchemyEvents()`，`ts` 不再被拒收或丢失。
+- client：本 plan 不涉及 client wire 或 UI。
+
+### 遗留 / 后续
+
+- 不在本 plan 内补 live client 的丹心识别入口，也不新增 alchemy narration consumer；本修复边界是恢复既有 Redis 接收与运行时观测契约。
+- `agent/packages/schema/dist/` 为 ignored 构建产物，已按门禁重建并由 Tiandao 全量 typecheck/test 消费验证，不提交到 Git。
