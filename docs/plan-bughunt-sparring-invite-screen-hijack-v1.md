@@ -71,3 +71,12 @@
 - `client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java`
 - 参考：`client/src/main/java/com/bong/client/social/TradeOfferScreenBootstrap.java`
 - 可选补测：`client/src/test/java/com/bong/client/social/SparringInviteScreenBootstrapTest.java`
+
+## 实施证据
+
+- Promotion：`33aaae28`，canonical skeleton 已独立升格为 active plan。
+- 第一性原理 RED：`b8614841` 新增纯决策与 toast 契约后，JDK 17 targeted 在 `compileTestJava` 以 29 个缺失符号失败；生产类确实没有 `ScreenKind`、`Decision`、`decide`、blocked/expired toast 或去重状态，且现有 tick 路径会直接 `setScreen` 抢占其他 GUI。
+- 最小修复：`94ddd91a` 仅调整 client `SparringInviteScreenBootstrap`，把当前屏幕分类后交给纯决策矩阵；`OTHER` 只发一次性非阻塞 toast，`NONE` / 陈旧切磋屏正常打开当前邀请，matching screen 保持 no-op，过期邀请继续自动拒绝并新增明确提示。
+- Targeted GREEN：JDK 17 执行 `./gradlew test --tests com.bong.client.social.SparringInviteScreenBootstrapTest` 为 `BUILD SUCCESSFUL`，9 个契约测试全部通过，覆盖 null/expired 边界、NONE/matching/stale/OTHER 分支与 toast 去重/重触发。
+- 范围：未修改 server、schema、依赖、生产配置、工具链或视觉资产；同一 bug 的重复 skeleton `plan-bughunt-v-sparring-invite-screen-hijack-v1` 留给后续主干去重处理，本 PR 不跨 plan 修改。
+- 后续门禁：fresh validator PASS 后，以 JDK 17 执行完整 `./gradlew test build`；合并最新 `origin/main` 后任何 HEAD 变化都重新验证。
