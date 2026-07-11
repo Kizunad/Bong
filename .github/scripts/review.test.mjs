@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import {
   applyPlanIntentGate,
   boundedAttemptTimeout,
+  buildCircuitStateSearchQuery,
   classifyReviewRun,
   classifyWorkflowFinalization,
   codexFailureText,
@@ -13,6 +14,7 @@ import {
   evaluateCircuit,
   excerptLog,
   extractJSON,
+  findCircuitStateIssues,
   findPlanName,
   isManualReviewTrigger,
   isRetryableCodexFailure,
@@ -21,6 +23,7 @@ import {
   normalizeResult,
   normalizeVote,
   normalizeCircuitEvent,
+  parseGitHubJsonLines,
   parseHiddenMarkers,
   parseTrustedCircuitEvents,
   redactCodexPromptEcho,
@@ -103,21 +106,85 @@ test("circuit event validation: 当前轮与跨 run 对空/非法 run_id 使用�
 test("state issue concurrency: 两个并发创建者重查后选择相同 canonical issue", () => {
   assert.deepEqual(resolveCircuitStateIssueNumbers("20", ["21", "20"]), ["20", "21"]);
   assert.deepEqual(resolveCircuitStateIssueNumbers("21", ["20", "21"]), ["20", "21"]);
+  assert.deepEqual(resolveCircuitStateIssueNumbers("20", ["21"]), ["20", "21"], "搜索索引只看见对方副本时仍须并入本轮新建号");
+  assert.deepEqual(resolveCircuitStateIssueNumbers("21", ["20"]), ["20", "21"], "并发双方必须收敛到相同排序集合");
+  assert.deepEqual(resolveCircuitStateIssueNumbers("21", ["21", "bad", "20", "21"]), ["20", "21"]);
   assert.deepEqual(resolveCircuitStateIssueNumbers("20", []), ["20"]);
+  assert.throws(() => resolveCircuitStateIssueNumbers("bad", ["20"]), /issue number 非法/);
 });
-test("state issues: 重复初始化时聚合所有合法状态 issue，并确定性排序", () => {
+test("state issues: 聚合合法重复状态 issue，并拒绝伪标题、非 bot、缺 marker 与 PR", () => {
   const body = "<!-- bong-review-circuit-state:v1 -->";
   const bot = { login: "github-actions[bot]", type: "Bot" };
   assert.deepEqual(
     selectCircuitStateIssues([
+      { number: 20, title: "[automation] Review infrastructure circuit state", body, user: bot, pull_request: null },
+      { number: 3, title: "[automation] Review infrastructure circuit state", body, user: bot, state: "closed" },
       { number: 20, title: "[automation] Review infrastructure circuit state", body, user: bot },
-      { number: 3, title: "[automation] Review infrastructure circuit state", body, user: bot },
       { number: 1, title: "其他", body, user: bot },
+      { number: 5, title: "[automation] Review infrastructure circuit state injected", body, user: bot },
+      { number: 6, title: '[automation] Review infrastructure circuit state" is:pr', body, user: bot },
       { number: 2, title: "[automation] Review infrastructure circuit state", body, user: { login: "attacker", type: "User" } },
       { number: 4, title: "[automation] Review infrastructure circuit state", body, user: bot, pull_request: {} },
+      { number: 7, title: "[automation] Review infrastructure circuit state", body: "marker missing", user: bot },
+      { number: "not-a-number", title: "[automation] Review infrastructure circuit state", body, user: bot },
     ]),
     ["3", "20"],
   );
+});
+
+test("state issue search query: 固定 repo/title/is:issue，拒绝 repo 与 title 查询注入", () => {
+  assert.equal(
+    buildCircuitStateSearchQuery("Kizunad/Bong"),
+    'repo:Kizunad/Bong is:issue in:title "[automation] Review infrastructure circuit state"',
+  );
+  for (const repo of ["", "Kizunad", "Kizunad/Bong is:pr", "Kizunad/Bong\norg:attacker", "Kizunad/Bong/extra"]) {
+    assert.throws(() => buildCircuitStateSearchQuery(repo), /GITHUB_REPOSITORY 非法/);
+  }
+  for (const title of [
+    '[automation] Review infrastructure circuit state" is:pr',
+    "[automation] Review infrastructure circuit state\nrepo:attacker/repo",
+    "其他状态标题",
+  ]) {
+    assert.throws(() => buildCircuitStateSearchQuery("Kizunad/Bong", title), /title 非法/);
+  }
+});
+
+test("GitHub pagination parsing: 空结果、多页 NDJSON 与损坏响应边界", () => {
+  assert.deepEqual(parseGitHubJsonLines(""), []);
+  assert.deepEqual(parseGitHubJsonLines('\n{"number":3}\r\n{"number":20}\n'), [{ number: 3 }, { number: 20 }]);
+  assert.throws(() => parseGitHubJsonLines('{"number":3}\nnot-json'), SyntaxError);
+});
+
+test("findCircuitStateIssues: Search API 标题限流并保留 duplicate resolution，绝不全仓扫描", () => {
+  const body = "<!-- bong-review-circuit-state:v1 -->";
+  const bot = { login: "github-actions[bot]", type: "Bot" };
+  let calledArgs;
+  const found = findCircuitStateIssues("Kizunad/Bong", (args) => {
+    calledArgs = args;
+    return [
+      { number: 20, title: "[automation] Review infrastructure circuit state", body, user: bot },
+      { number: 3, title: "[automation] Review infrastructure circuit state", body, user: bot },
+      { number: 4, title: "[automation] Review infrastructure circuit state", body, user: bot, pull_request: {} },
+    ]
+      .map(JSON.stringify)
+      .join("\n");
+  });
+
+  assert.deepEqual(found, ["3", "20"]);
+  assert.deepEqual(calledArgs, [
+    "api",
+    "--paginate",
+    "--method",
+    "GET",
+    "search/issues",
+    "-f",
+    'q=repo:Kizunad/Bong is:issue in:title "[automation] Review infrastructure circuit state"',
+    "-f",
+    "per_page=100",
+    "--jq",
+    ".items[]",
+  ]);
+  assert.doesNotMatch(calledArgs.join(" "), /repos\/Kizunad\/Bong\/issues\?|state=all|is:pr/);
 });
 
 test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理时间", () => {

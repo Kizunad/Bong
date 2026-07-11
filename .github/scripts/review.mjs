@@ -129,26 +129,47 @@ export function parseTrustedCircuitEvents(comments, trustedLogin = "github-actio
 }
 
 export function selectCircuitStateIssues(issues) {
-  return (issues || [])
-    .filter(
-      (issue) =>
-        !issue?.pull_request &&
-        issue?.user?.login === "github-actions[bot]" &&
-        issue?.user?.type === "Bot" &&
-        issue?.title === CIRCUIT_STATE_TITLE &&
-        String(issue.body || "").includes(CIRCUIT_STATE_MARKER),
-    )
-    .map((issue) => String(issue.number))
-    .filter((number) => /^\d+$/.test(number))
-    .sort((a, b) => Number(a) - Number(b));
+  return [
+    ...new Set(
+      (issues || [])
+        .filter(
+          (issue) =>
+            !issue?.pull_request &&
+            issue?.user?.login === "github-actions[bot]" &&
+            issue?.user?.type === "Bot" &&
+            issue?.title === CIRCUIT_STATE_TITLE &&
+            String(issue.body || "").includes(CIRCUIT_STATE_MARKER),
+        )
+        .map((issue) => String(issue.number))
+        .filter((number) => /^\d+$/.test(number)),
+    ),
+  ].sort((a, b) => Number(a) - Number(b));
 }
 
 export function resolveCircuitStateIssueNumbers(createdNumber, refreshedNumbers) {
-  const refreshed = (refreshedNumbers || [])
-    .map(String)
-    .filter((number) => /^\d+$/.test(number))
-    .sort((a, b) => Number(a) - Number(b));
-  return refreshed.length ? refreshed : [String(createdNumber)];
+  const created = String(createdNumber);
+  if (!/^\d+$/.test(created)) throw new Error(`新建 Review 熔断状态 issue number 非法：${createdNumber}`);
+  const refreshed = (refreshedNumbers || []).map(String).filter((number) => /^\d+$/.test(number));
+  return [...new Set([created, ...refreshed])].sort((a, b) => Number(a) - Number(b));
+}
+
+export function buildCircuitStateSearchQuery(repo, title = CIRCUIT_STATE_TITLE) {
+  const normalizedRepo = String(repo || "").trim();
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalizedRepo)) {
+    throw new Error(`GITHUB_REPOSITORY 非法：${repo}`);
+  }
+  if (title !== CIRCUIT_STATE_TITLE || /[\u0000-\u001f\u007f"\\]/u.test(title)) {
+    throw new Error("Review 熔断状态 title 非法。");
+  }
+  return `repo:${normalizedRepo} is:issue in:title "${title}"`;
+}
+
+export function parseGitHubJsonLines(output) {
+  const lines = String(output || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.map((line) => JSON.parse(line));
 }
 
 export function boundedAttemptTimeout(configuredMs, remainingMs, cleanupReserveMs = 180_000) {
@@ -956,11 +977,22 @@ function loadCircuitEvents() {
   return parseTrustedCircuitEvents(ensureCircuitStateIssues().flatMap(listIssueComments));
 }
 
-function findCircuitStateIssues() {
-  const repo = resolveRepository();
-  const pages = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues?state=all&per_page=100`]));
-  const issues = Array.isArray(pages[0]) ? pages.flat() : pages;
-  return selectCircuitStateIssues(issues);
+export function findCircuitStateIssues(repo = resolveRepository(), runGh = gh) {
+  const query = buildCircuitStateSearchQuery(repo);
+  const output = runGh([
+    "api",
+    "--paginate",
+    "--method",
+    "GET",
+    "search/issues",
+    "-f",
+    `q=${query}`,
+    "-f",
+    "per_page=100",
+    "--jq",
+    ".items[]",
+  ]);
+  return selectCircuitStateIssues(parseGitHubJsonLines(output));
 }
 
 function ensureCircuitStateIssues() {
@@ -982,8 +1014,8 @@ function ensureCircuitStateIssues() {
 }
 function listIssueComments(issue) {
   const repo = resolveRepository();
-  const pages = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues/${issue}/comments?per_page=100`]));
-  return Array.isArray(pages[0]) ? pages.flat() : pages;
+  const output = gh(["api", "--paginate", `repos/${repo}/issues/${issue}/comments?per_page=100`, "--jq", ".[]"]);
+  return parseGitHubJsonLines(output);
 }
 
 async function recordInfrastructureFailure(phase, reason) {
