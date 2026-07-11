@@ -1651,7 +1651,8 @@
         "v",
         "type",
         "slot",
-        "item_id"
+        "item_id",
+        "request_id"
       ],
       "properties": {
         "v": {
@@ -1677,6 +1678,11 @@
               "type": "string"
             }
           ]
+        },
+        "request_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
         }
       }
     },

@@ -84,6 +84,58 @@ public class SocialServerDataHandlerTest {
     }
 
     @Test
+    void exposureKeepsNameTagHiddenUntilAuthoritativeAnonymityRefreshArrives() {
+        SocialStateStore.replaceAnonymity("char:witness", List.of(
+            new SocialStateStore.SocialRemoteIdentity(
+                "char:steve",
+                true,
+                "",
+                "",
+                "无名修士",
+                List.of()
+            )
+        ));
+
+        ServerDataRouter.RouteResult exposure = ServerDataRouter.createDefault().route("""
+            {"v":1,"type":"social_exposure","actor":"char:steve","kind":"chat",
+             "witnesses":["char:witness"],"tick":84000,"zone":"starter_valley"}
+            """, 0);
+        boolean exposureHandled = exposure.isHandled();
+        assertTrue(
+            exposureHandled,
+            "expected social_exposure to be handled because it updates event history, actual "
+                + exposureHandled + "; log=" + exposure.logMessage()
+        );
+        boolean visibleAfterExposure =
+            SocialStateStore.shouldShowRemoteNameTag("char:steve", "Steve");
+        assertFalse(
+            visibleAfterExposure,
+            "expected name tag hidden because social_exposure is history-only until social_anonymity, actual "
+                + visibleAfterExposure
+        );
+
+        ServerDataRouter.RouteResult anonymity = ServerDataRouter.createDefault().route("""
+            {"v":1,"type":"social_anonymity","viewer":"char:witness","remotes":[
+              {"player_uuid":"char:steve","anonymous":false,"display_name":"char:steve",
+               "realm_band":null,"breath_hint":"无名修士","renown_tags":[]}
+            ]}
+            """, 0);
+        boolean anonymityHandled = anonymity.isHandled();
+        assertTrue(
+            anonymityHandled,
+            "expected social_anonymity refresh to be handled because it is authoritative, actual "
+                + anonymityHandled + "; log=" + anonymity.logMessage()
+        );
+        boolean visibleAfterAnonymity =
+            SocialStateStore.shouldShowRemoteNameTag("char:steve", "Steve");
+        assertTrue(
+            visibleAfterAnonymity,
+            "expected name tag visible because authoritative social_anonymity removed anonymity, actual "
+                + visibleAfterAnonymity
+        );
+    }
+
+    @Test
     void pactFeudRenownAndSparringUpdateStores() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 

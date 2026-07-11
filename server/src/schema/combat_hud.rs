@@ -110,6 +110,12 @@ pub struct QuickSlotConfigV1 {
     pub slots: Vec<Option<QuickSlotEntryV1>>,
     /// 0 表示无冷却；否则为 unix ms 截止时间。
     pub cooldown_until_ms: Vec<u64>,
+    /// 仅 quick_slot_bind 的直接权威回推携带；普通 cooldown/config 广播为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack_request_id: Option<String>,
+    /// 与 ack_request_id 同时出现；true=已持久化并提交，false=拒绝且状态未变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_accepted: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -594,6 +600,8 @@ mod tests {
                 None,
             ],
             cooldown_until_ms: vec![1_700_000_001_500, 0, 0, 0, 0, 0, 0, 0, 0],
+            ack_request_id: Some("bind-42".to_string()),
+            bind_accepted: Some(true),
         };
         let json = serde_json::to_string(&original).expect("serialize");
         let parsed: QuickSlotConfigV1 = serde_json::from_str(&json).expect("deserialize");
