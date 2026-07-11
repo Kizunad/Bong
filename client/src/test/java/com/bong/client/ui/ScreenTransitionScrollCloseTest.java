@@ -165,6 +165,12 @@ class ScreenTransitionScrollCloseTest {
         ScrollReadScreen pendingScreen = new ScrollReadScreen(offer);
         ScreenTransition.TransitionHandle handle = activatePending(pendingScreen);
 
+        assertFalse(ScreenTransitionController.cancelPendingOpen(null),
+            "null expected 不得取消任意 pending transition");
+        assertFalse(ScreenTransitionController.cancelPendingOpen(new DummyScreen()),
+            "非当前 pending screen 不得误取消 active transition");
+        assertSame(handle, ScreenTransitionController.activeTransition().handle(),
+            "guard 拒绝后原 transition 必须保持 active");
         boolean cancelled = ScreenTransitionController.cancelPendingOpen(pendingScreen);
         boolean repeated = ScreenTransitionController.cancelPendingOpen(pendingScreen);
 
@@ -221,6 +227,26 @@ class ScreenTransitionScrollCloseTest {
         assertNull(ScreenTransitionController.activeTransition(), "断线清理后不得残留 active transition");
         assertNull(ScrollReadStore.snapshot(), "断线清理后 store 必须保持空态");
         assertTrue(sent.isEmpty(), "连接已断时不得补发 scroll_read_closed");
+    }
+
+    @Test
+    void sameScrollReopenUsesNewTokenAndOldPendingCannotCloseIt() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8))));
+        ScrollOpenViewModel reused = new ScrollOpenViewModel("scroll_same", "《残卷》", List.of("正文"));
+        ScrollReadStore.replace(reused);
+        ScrollReadScreen oldPending = new ScrollReadScreen(reused);
+        ScreenTransition.TransitionHandle oldHandle = activatePending(oldPending);
+        ScrollReadStore.clearOnDisconnect();
+        ScrollReadStore.replace(reused);
+        ScrollReadScreen reopened = new ScrollReadScreen(reused);
+
+        ScreenTransitionController.cancelActiveTransitionForReplacement(reopened);
+
+        assertTrue(oldHandle.cancelled(), "旧 pending handle 必须被新会话 screen 覆盖");
+        assertSame(reused, ScrollReadStore.snapshot(),
+            "同 scrollId 的新 token 会话不得被旧 pending 回调误清");
+        assertTrue(sent.isEmpty(), "旧 token 取消回调不得替重开会话发送终态");
     }
 
     private static ScreenTransition.TransitionHandle activatePending(Screen pendingScreen) {

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,6 +16,18 @@ class ScrollReadScreenBootstrapTest {
     @AfterEach
     void cleanup() {
         ScrollReadStore.resetForTests();
+    }
+
+    @Test
+    void storeCallbackWithoutLiveClientIsNoOpForOpenAndClear() {
+        List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
+        ScrollReadStore.addSessionListener(sessions::add);
+        ScrollReadStore.replace(fixture("正文"));
+
+        assertDoesNotThrow(() -> ScrollReadScreenBootstrap.onStoreChanged(sessions.get(0)),
+            "无 live MinecraftClient 时 open 回调必须安全 short-circuit");
+        assertDoesNotThrow(() -> ScrollReadScreenBootstrap.onStoreChanged(null),
+            "无 live MinecraftClient 时 clear 回调必须安全 short-circuit");
     }
 
     @Test

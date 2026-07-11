@@ -225,4 +225,21 @@ class ScrollReadScreenTest {
         assertSame(replacement, ScrollReadStore.snapshot(), "旧 screen 的 removed 不得结算后来会话");
         assertTrue(sentPayloads.isEmpty(), "旧 screen 的 removed 不得替新会话发送终态");
     }
+
+    @Test
+    void detachedSameScrollScreenCannotBorrowCurrentSessionToken() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, java.nio.charset.StandardCharsets.UTF_8)));
+        ScrollOpenViewModel current = new ScrollOpenViewModel("scroll_same", "当前卷", List.of("当前正文"));
+        ScrollReadStore.replace(current);
+        ScrollReadScreen detached = new ScrollReadScreen(
+            new ScrollOpenViewModel("scroll_same", "游离屏", List.of("游离正文"))
+        );
+
+        detached.close();
+
+        assertSame(current, ScrollReadStore.snapshot(),
+            "仅 scrollId 相同的游离 screen 不得借用当前会话 token");
+        assertTrue(sentPayloads.isEmpty(), "未绑定 token 的 screen 不得发送关闭终态");
+    }
 }
