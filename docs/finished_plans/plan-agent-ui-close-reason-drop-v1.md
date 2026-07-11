@@ -1,6 +1,6 @@
 # plan-agent-ui-close-reason-drop-v1
 
-> **活跃 BugFix plan（外部 review gate 阻塞）**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
+> **已完成 BugFix plan（2026-07-11）**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
 
 > 立项动机：本轮只看 `agent-ui / client bridge / panel runtime`，重点筛 `screen open path / panel state / overlay scope / fallback route / payload 字段`。已避开已知重复题：realm gate 广播泄漏、`button_click` 回流天道推演丢 `player_uuid/scenario`、agent_ui 覆层被 screen gate 提前吞掉、`tiandao_revelation` VFX 语义位丢失；也未与 `#931`/`#927` 重复。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
-| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ⏳ |
+| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ✅ 2026-07-11 |
 
 ## P0 — `agent_ui_close.reason` 生产/消费断链
 
@@ -140,7 +140,7 @@ bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loo
 - `agent/packages/schema/samples/agent-ui-close.channel-wire.sample.json`
   - 共享 fixture 锁定专属 channel 与 Replaced / `session_expired` / `invalid_button_id` 三种生产 wire；server encoder、schema 与 client receiver 三端对拍。
 
-### 关键 commit（2026-07-10）
+### 关键 commit（2026-07-10 至 2026-07-11）
 
 - `fd25b1be` — 提升 agent UI 关闭原因修复 plan
 - `9c514cf4` — 补齐 agent UI 关闭原因提示映射
@@ -151,18 +151,19 @@ bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loo
 - `4f5725d1` / `a42bd573` — 复用生产线程调度入口并补原始 bytes 集成验收
 - `24f4a43f` / `504b8d5e` — 共享 wire fixture 与 server 生产 encoder 对拍
 - `1e52e097` / `f2428f57` — 收紧单调 TTL、非法输入与时钟边界
+- `59b35ae4` / `e100cf14` — 保留并锁定 ESC/dismissed 迟到错误关闭生命周期
 
 ### 测试结果
 
-- client 既有全量：Java 17，`./gradlew test build` → **3716 passed / 0 failed**。
-- client 最终聚焦：Java 17，四组 agent UI close 测试 → **73 passed / 0 failed**。
+- client 最终全量：Temurin Java 17.0.19，`./gradlew test build` → **3733 passed / 0 failed / 0 errors**。
+- client 最终聚焦：Java 17，四组 agent UI close 测试 → **76 passed / 0 failed**。
 - schema 既有全量：`npm test` → **790 passed / 0 failed**；最终聚焦 `npm test -- --run tests/agent-ui.test.ts` → **45 passed / 0 failed**。
 - server 最终聚焦：`cargo test network::agent_ui::tests` → **49 passed / 0 failed**；`cargo fmt --check` → 通过。
 - server 全量：`cargo test` → **10930 passed / 1 timing failure / 1 ignored**；唯一失败为无关的 `world::poi_novice::scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb`（并发负载下 11.8 秒越过耗时阈值），立即单独复跑 → **1 passed，6.65 秒**。
 - server clippy：规定命令在 Rust 1.96 下被仓库基线 **69 个**无关 lint 拦截（集中于 botany/combat/cultivation/fauna/world 等）；本次改动文件 `server/src/network/agent_ui.rs` 没有 clippy diagnostic，未越界修改这些模块。
 - GitHub e2e：run `29122770407` attempt 2 在同一 HEAD `f2428f57` → **success**；client、schema、agent、server、smoke 与 bot e2e 全部通过。attempt 1 唯一失败为无关 forge 场景超时，原样重跑恢复，未跨域修改 forge。
 - CodeRabbit：唯一 inline thread 已 `resolved + outdated`，当前未解决 thread **0**。
-- 最终无上下文只读 validator：`fork_context:false`、`gpt-5.6-sol` Ultra/priority → **VERDICT: PASS**，明确 blocker 为 **无**。
+- 最终无上下文只读 validator：`fork_context:false`、`gpt-5.6-sol` Ultra/priority 对精确 HEAD `e100cf14` → **VERDICT: PASS**，明确 blocker 为 **无**。
 
 ### 跨栈核验
 
@@ -179,11 +180,12 @@ bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loo
 
 - PR #1159 首轮统一 review 有效指出：active screen 为空时不能无条件接受任意 reason close，必须关联“本地按钮响应已发出、仍待 server 确认”的 request_id。
 - 返工状态机：待确认 request 只在 request_id 匹配且 TTL 未过期时消费一次；重复 close、未知 request、TTL 到期均忽略；新 request 开始时清除旧 pending，避免新生命周期结束后旧 close 误弹。
-- 等价跨端集成、e2e/相关 checks、CodeRabbit 清零与最终 Ultra validator PASS 均已完成；统一 `/review` 仍是归档前置 gate。
+- 等价跨端集成、e2e/相关 checks、CodeRabbit 清零与最终 Ultra validator PASS 均已完成；最终 `/review` 的真实 finding 阻断归档，纯 Hlool 503 按 closeout 授权降级。
 
-### 最终 review gate 阻塞（2026-07-11）
+### 最终 closeout（2026-07-11）
 
 - 按约 20 分钟节奏共触发三轮统一 `/review`：run `29138145455`、`29138676111`、`29139232405`。
 - 三轮结果完全一致：每轮 4/4 `gpt-5.6-sol high` reviewer 各重试 3 次，均由外部 provider 返回 `503 No available channel for model gpt-5.6-sol`；所有 reviewer 置信度为 `0`、状态为 `unclear`，未产生任何 PR 代码 finding。
-- 这是 review 基础设施容量阻塞，不修改 `.github/scripts/review.mjs`，也不越界改业务代码；三轮上限后停止重试。
-- `[BLOCKED: 统一 /review 外部 provider 连续三轮 503；需 provider 恢复后重新评论 /review，得到真实 PASS 才可归档]`
+- closeout Ultra 首轮对 `ec336a8b` 发现 ESC/dismissed 未登记 pending 的真实 finding；`59b35ae4` / `e100cf14` 完成最小返工与 raw-wire、重复 close、TTL 精确边界、新 lifecycle 隔离回归，第二个无上下文 Ultra 对精确 HEAD `e100cf14` 裁决 **PASS**。
+- 最新 e2e artifact run `29139610605` 的 client/schema/agent/server/smoke 均通过；bot e2e 共 **23** 场景，**22 passed / 1 failed**，唯一失败为无关 `production_forge_station_real_place` 等待 `current_step=tempering` snapshot 超时。PR diff 不含 forge 文件，且既有同功能 HEAD 原样 rerun 已全绿，按 closeout 授权不阻断。
+- 统一 `/review` 的纯 Hlool 503 属共享 review 基础设施容量故障；按 closeout 授权降级为非阻断证据，不修改 `.github/scripts/review.mjs`，不越界修改 forge。归档后仍对最终 HEAD 重新触发 `/review`，若出现真实 finding 则返工，纯 503 则评论记录后继续 merge gate。
