@@ -915,6 +915,15 @@ class TokenBroker:
         for request_id, state in self.requests.items():
             if (
                 state.status == RequestStatus.RECOVERING
+                and not self._authority_matches(state)
+            ):
+                self._invalidate(
+                    state, RequestStatus.CANCELLED, "STALE_AUTHORITY"
+                )
+                reclaimed.append(request_id)
+                continue
+            if (
+                state.status == RequestStatus.RECOVERING
                 and state.recovery_deadline is not None
                 and now >= state.recovery_deadline
             ):
@@ -2171,6 +2180,29 @@ class StateMachineDryRun(unittest.TestCase):
         task7.update_head("changed-before-followup")
         with self.assertRaises(ProtocolError):
             broker.followup_payload("followup-entry")
+        self.assertEqual(broker.held("compile"), 0)
+
+        task8 = TaskState(task_id="sweep-entry", phase=TaskPhase.GATING)
+        submit(
+            broker,
+            make_payload("sweep-entry", "compile", "a", task8),
+            task8,
+        )
+        grant8 = broker.grant_next("compile")
+        broker.ack(
+            "sweep-entry",
+            grant8.token_id,
+            task8.phase,
+            task8.head,
+            task8.generation,
+        )
+        broker.mark_lost("sweep-entry")
+        task8.update_head("changed-before-sweep")
+        self.assertEqual(broker.sweep_recovery(), ["sweep-entry"])
+        self.assertEqual(
+            broker.requests["sweep-entry"].release_reason,
+            "STALE_AUTHORITY",
+        )
         self.assertEqual(broker.held("compile"), 0)
 
     def test_fifo_request_ack_release_cancel_and_collision(self) -> None:

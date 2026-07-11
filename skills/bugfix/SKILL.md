@@ -62,7 +62,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 5. 已结束/idle agent 通过当前 harness 的 resume/followup 入口恢复，payload 必须包含 `checkpoint + request_id + token_id + agent + phase + head + generation`；进入 `RECOVERING` 前、生成每一份 followup payload 前、处理恢复结果时都重新读取权威 task，任一漂移立即 stale/cancel 且不再占 token。恢复结果逐字段回传并与原 grant 对拍，恢复成功前状态为 `RECOVERING`。禁止另开无状态 agent 猜测续点。
 6. 完成、FAIL、超时、异常时，实施 agent 发送或返回绑定 `request_id + token_id + agent + phase + head + generation + reason` 的 `TOKEN_RELEASED{...}`；排队取消或 grant 失效返回绑定原 request 身份与 reason 的 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`；同 request 的重复终态消息只有完整 payload 相同才幂等。
 7. grant 绑定 request_id、task、agent、phase、head、generation。任一变化、token 已回收、非 FIFO 当前授权或 ACK 前过期都原子 stale；旧 token 禁止 ACK/recovery/release。
-8. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用当前 harness 实际状态查询对拍 holder；失联先进入 `RECOVERING`，只有 resume/send-input/followup 明确失败或恢复 TTL 到期才回收。回收后的迟到消息一律拒绝。
+8. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用当前 harness 实际状态查询对拍 holder；失联先进入 `RECOVERING`，每轮 recovery sweep 都先对拍权威 task，漂移立即 stale/cancel；状态未漂移时只有 resume/send-input/followup 明确失败或恢复 TTL 到期才回收。回收后的迟到消息一律拒绝。
 9. `compile_token` 在该轮门禁任一出口释放；`validator_token` 在 validator 关闭后任一出口释放，spawn 失败也释放。任务 BLOCKED/CLOSED、用户停止或 worktree 清理前，主干取消排队项并核验无悬挂 token。
 
 从仓库根运行 `python3 skills/bugfix/scripts/state_machine_dry_run.py` 验证这套状态机。该 dry-run 不调用 GitHub 写 API，覆盖容量/FIFO、消息握手、异常回收、claim/main-sync/verdict 与持续等待契约；修改资源协议时必须同步更新并运行。
