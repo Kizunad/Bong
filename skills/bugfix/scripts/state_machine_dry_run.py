@@ -122,10 +122,13 @@ class SyncEvidence:
 class ClosureEvidence:
     target_sha: str
     generation: int
-    remote_sha_verified: bool
-    review_passed: bool
-    e2e_passed: bool
-    model_fields_complete: bool
+    pr_number: int
+    pr_url: str
+    remote_sha: str
+    checks: tuple[tuple[str, str], ...]
+    implementation_model: str
+    validator_model: str
+    reviewer_model: str
 
 
 @dataclass
@@ -218,14 +221,25 @@ class TaskState:
             self.final_validated = True
         if self.phase == TaskPhase.GATES and target == TaskPhase.CLOSED:
             evidence = self.closure_evidence
+            checks = dict(evidence.checks) if evidence is not None else {}
+            models = (
+                evidence.implementation_model,
+                evidence.validator_model,
+                evidence.reviewer_model,
+            ) if evidence is not None else ()
+            invalid_models = {"", "AI", "agent", "unknown", "pending"}
             if (
                 evidence is None
                 or evidence.target_sha != self.head
                 or evidence.generation != self.generation
-                or not evidence.remote_sha_verified
-                or not evidence.review_passed
-                or not evidence.e2e_passed
-                or not evidence.model_fields_complete
+                or evidence.pr_number <= 0
+                or not evidence.pr_url.startswith("https://github.com/")
+                or evidence.remote_sha != self.head
+                or checks.get("review") != "SUCCESS"
+                or checks.get("e2e") != "SUCCESS"
+                or any(result != "SUCCESS" for result in checks.values())
+                or len(models) != 3
+                or any(model in invalid_models for model in models)
             ):
                 raise ProtocolError("CLOSED gate evidence incomplete")
         self.phase = target
@@ -760,18 +774,6 @@ class TokenBroker:
     ) -> bool:
         state = self.requests[request_id]
         message = (agent, phase, head, generation, reason)
-        if state.status in {
-            RequestStatus.RELEASED,
-            RequestStatus.CANCELLED,
-            RequestStatus.EXPIRED,
-        }:
-            if state.terminal_kind == "RELEASED":
-                raise ProtocolError("cancel collides with prior release")
-            if state.status == RequestStatus.CANCELLED and (
-                state.terminal_message != message
-            ):
-                raise ProtocolError("duplicate cancel payload collision")
-            return False
         if (
             state.payload.agent != agent
             or state.payload.phase != phase
@@ -779,6 +781,20 @@ class TokenBroker:
             or state.payload.generation != generation
         ):
             raise ProtocolError("cancel payload differs from request")
+        if state.status in {
+            RequestStatus.RELEASED,
+            RequestStatus.CANCELLED,
+            RequestStatus.EXPIRED,
+        }:
+            if state.terminal_kind == "RELEASED":
+                raise ProtocolError("cancel collides with prior release")
+            if state.status == RequestStatus.EXPIRED:
+                raise ProtocolError("cancel collides with prior expiry")
+            if state.status == RequestStatus.CANCELLED and (
+                state.terminal_message != message
+            ):
+                raise ProtocolError("duplicate cancel payload collision")
+            return False
         state.terminal_message = message
         state.terminal_kind = "CANCELLED"
         self._invalidate(state, RequestStatus.CANCELLED, reason)
@@ -1116,7 +1132,17 @@ def record_sync_pass(task: TaskState) -> None:
 
 def record_closure_pass(task: TaskState) -> None:
     task.record_closure(
-        ClosureEvidence(task.head, task.generation, True, True, True, True)
+        ClosureEvidence(
+            target_sha=task.head,
+            generation=task.generation,
+            pr_number=1163,
+            pr_url="https://github.com/Kizunad/Bong/pull/1163",
+            remote_sha=task.head,
+            checks=(("review", "SUCCESS"), ("e2e", "SUCCESS")),
+            implementation_model="gpt-5",
+            validator_model="gpt-5.6-sol-xhigh",
+            reviewer_model="gpt-5.5",
+        )
     )
 
 
@@ -1244,6 +1270,21 @@ class StateMachineDryRun(unittest.TestCase):
         task = TaskState(phase=TaskPhase.VERIFYING)
         drive_closure_to_pr(task)
         task.transition(TaskPhase.GATES)
+        with self.assertRaises(ProtocolError):
+            task.transition(TaskPhase.CLOSED)
+        task.record_closure(
+            ClosureEvidence(
+                target_sha=task.head,
+                generation=task.generation,
+                pr_number=0,
+                pr_url="",
+                remote_sha=task.head,
+                checks=(),
+                implementation_model="pending",
+                validator_model="pending",
+                reviewer_model="pending",
+            )
+        )
         with self.assertRaises(ProtocolError):
             task.transition(TaskPhase.CLOSED)
         record_closure_pass(task)
@@ -2021,6 +2062,8 @@ class StateMachineDryRun(unittest.TestCase):
             )
         with self.assertRaises(ProtocolError):
             release_request(broker, "v1", old.token_id, "PASS")
+        with self.assertRaises(ProtocolError):
+            cancel_request(broker, "v1", "CANCELLED")
         self.assertEqual(
             broker.grant_next("validator").payload.request_id, "v2"
         )
