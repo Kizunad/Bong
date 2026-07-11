@@ -100,7 +100,8 @@ class BlendTileCarverOwnerTest(unittest.TestCase):
         self.assertEqual(
             base.contributing_zones,
             ["positive_owner"],
-            "正权重 zone 应保留为 provenance；实际列表必须只含 positive_owner",
+            "期望 provenance 为 ['positive_owner'], 因为正权重 zone 应保留记录; "
+            f"实际为 {base.contributing_zones!r}",
         )
         self.assertEqual(
             base.carver_owner_zones,
@@ -166,7 +167,7 @@ class RealBlueprintCarverOwnerTest(unittest.TestCase):
         self.assertEqual(
             float(np.nanmax(blood_weight)),
             0.0,
-            "真实 witness 前提漂移：tile_6_-7 上 blood_valley 权重应全零",
+            "真实 witness 前提漂移: tile_6_-7 上 blood_valley 权重应全零",
         )
 
         with TemporaryDirectory() as temp_dir:
@@ -185,7 +186,7 @@ class RealBlueprintCarverOwnerTest(unittest.TestCase):
         self.assertIn(
             "blood_valley",
             buffer.contributing_zones,
-            "粗 AABB provenance 仍应记录 blood_valley，避免破坏 manifest/debug 兼容",
+            "粗 AABB provenance 仍应记录 blood_valley, 避免破坏 manifest/debug 兼容",
         )
         self.assertNotIn(
             "blood_valley",
@@ -200,7 +201,7 @@ class RealBlueprintCarverOwnerTest(unittest.TestCase):
         self.assertEqual(
             chain,
             [],
-            "战魂平野边缘没有正贡献 carver owner，chain 必须精确为空",
+            "战魂平野边缘没有正贡献 carver owner, chain 必须精确为空",
         )
         folded = spans_for_tile(buffer, suppress_fold_isle=False)
         carved = apply_carver_chain(
