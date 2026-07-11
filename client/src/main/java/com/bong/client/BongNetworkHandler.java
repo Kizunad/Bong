@@ -1085,23 +1085,15 @@ public class BongNetworkHandler {
         );
         // bong:agent_ui_close — 裸 AgentUiClosePayloadV1 JSON
         ClientPlayNetworking.registerGlobalReceiver(
-            new Identifier("bong", "agent_ui_close"),
+            com.bong.client.network.AgentUiPayloadHandler.AGENT_UI_CLOSE_CHANNEL,
             (client, handler, buf, responseSender) -> {
                 int readableBytes = buf.readableBytes();
                 byte[] bytes = new byte[readableBytes];
                 buf.readBytes(bytes);
-                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
                 markConnectionPayload();
-                client.execute(() -> {
-                    try {
-                        com.bong.client.network.AgentUiPayloadHandler.handleRawClose(jsonPayload);
-                        BongClient.LOGGER.debug(
-                            "Processed bong:agent_ui_close payload ({} bytes)", readableBytes);
-                    } catch (Exception ex) {
-                        BongClient.LOGGER.error(
-                            "Failed to handle bong:agent_ui_close payload: {}", ex.getMessage());
-                    }
-                });
+                com.bong.client.network.AgentUiPayloadHandler.dispatchRawClose(bytes, client::execute);
+                BongClient.LOGGER.debug(
+                    "Queued bong:agent_ui_close payload ({} bytes) for client thread", readableBytes);
             }
         );
     }
