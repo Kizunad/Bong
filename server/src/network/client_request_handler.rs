@@ -68,6 +68,7 @@ use crate::forge::events::{
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
+use crate::forge::steps::next_step_after;
 use crate::inventory::{
     add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
@@ -508,6 +509,7 @@ pub fn handle_client_request_payloads(
     mut skill_scroll_params: SkillScrollRequestParams,
     mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
+    let mut pending_forge_steps: HashMap<(u64, ForgeSessionId), ForgeStep> = HashMap::new();
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
             continue;
@@ -2563,6 +2565,10 @@ pub fn handle_client_request_payloads(
                 inscription_id,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_inscription_scroll(
                     ev.client,
                     session_id,
@@ -2574,6 +2580,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &mut skill_scroll_params.inscription_scroll_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeTemperingHit {
@@ -2582,6 +2589,10 @@ pub fn handle_client_request_payloads(
                 ticks_remaining,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_tempering_hit(
                     ev.client,
                     session_id,
@@ -2589,6 +2600,7 @@ pub fn handle_client_request_payloads(
                     ticks_remaining,
                     &mut dispatch.tempering_hit_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeConsecrationInject {
@@ -2596,21 +2608,29 @@ pub fn handle_client_request_payloads(
                 qi_amount,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_consecration_inject(
                     ev.client,
                     session_id,
                     qi_amount,
                     &mut dispatch.consecration_inject_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeStepAdvance { session_id, .. } => {
-                handle_forge_step_advance(
+                if let Some((session, next_step)) = handle_forge_step_advance(
                     ev.client,
                     session_id,
                     &mut dispatch.step_advance_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
-                );
+                    skill_scroll_params.blueprint_registry.as_deref(),
+                ) {
+                    pending_forge_steps.insert((ev.client.to_bits(), session), next_step);
+                }
             }
             ClientRequestV1::ForgeLearnBlueprint { blueprint_id, .. } => {
                 handle_forge_learn_blueprint(
@@ -3399,6 +3419,7 @@ fn require_owned_active_step(
     session: ForgeSessionId,
     entity: Entity,
     expected: ForgeStep,
+    pending_step: Option<ForgeStep>,
     request_label: &str,
 ) -> bool {
     let Some(forge_sessions) = forge_sessions else {
@@ -3414,19 +3435,19 @@ fn require_owned_active_step(
         );
         return false;
     };
-    if session_state.current_step != expected {
-        tracing::warn!(
-            "[bong][network][forge] {request_label} rejected: session_id={} step={:?}, expected={expected:?}",
-            session.0,
-            session_state.current_step
-        );
-        return false;
-    }
     if session_state.caster != entity {
         tracing::warn!(
             "[bong][network][forge] {request_label} rejected: session_id={} caster mismatch entity={entity:?} session_caster={:?}",
             session.0,
             session_state.caster
+        );
+        return false;
+    }
+    if session_state.current_step != expected && pending_step != Some(expected) {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: session_id={} step={:?}, pending={pending_step:?}, expected={expected:?}",
+            session.0,
+            session_state.current_step
         );
         return false;
     }
@@ -3445,6 +3466,7 @@ fn handle_forge_inscription_scroll(
     cultivations: &Query<&Cultivation>,
     inscription_scroll_tx: &mut Option<ResMut<Events<InscriptionScrollSubmit>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     let inscription_id = inscription_id.trim();
     if inscription_id.is_empty() {
@@ -3456,6 +3478,7 @@ fn handle_forge_inscription_scroll(
         session,
         entity,
         ForgeStep::Inscription,
+        pending_step,
         "inscription_scroll",
     ) {
         return;
@@ -3486,26 +3509,12 @@ fn handle_forge_inscription_scroll(
         return;
     };
 
-    let Ok(mut inventory) = inventories.get_mut(entity) else {
-        return;
-    };
-    if let Err(err) = consume_item_instance_once(&mut inventory, instance_id) {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll consume failed for instance_id={instance_id}: {err}"
-        );
-        return;
-    }
-    resync_snapshot(
-        entity,
-        &inventory,
-        clients,
-        player_states,
-        cultivations,
-        "forge_inscription_scroll_consumed",
-    );
-
+    // 只把精确实例交给 forge 权威系统。实际消费必须等前一步结算完成并确认
+    // session 真实进入 Inscription，避免同帧 Tempering Waste 时先扣残卷再丢事件。
     inscription_scroll_tx.send(InscriptionScrollSubmit {
         session,
+        caster: entity,
+        item_instance_id: instance_id,
         inscription_id: inscription_id.to_string(),
     });
 }
@@ -3517,6 +3526,7 @@ fn handle_forge_tempering_hit(
     ticks_remaining: u32,
     tempering_hit_tx: &mut Option<ResMut<Events<TemperingHit>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     let Some(beat) = parse_temper_beat(beat) else {
         tracing::warn!("[bong][network][forge] tempering_hit rejected: unknown beat `{beat}`");
@@ -3528,6 +3538,7 @@ fn handle_forge_tempering_hit(
         session,
         entity,
         ForgeStep::Tempering,
+        pending_step,
         "tempering_hit",
     ) {
         return;
@@ -3551,6 +3562,7 @@ fn handle_forge_consecration_inject(
     qi_amount: f64,
     consecration_inject_tx: &mut Option<ResMut<Events<ConsecrationInject>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     if !qi_amount.is_finite() || qi_amount < 0.0 {
         tracing::warn!(
@@ -3564,6 +3576,7 @@ fn handle_forge_consecration_inject(
         session,
         entity,
         ForgeStep::Consecration,
+        pending_step,
         "consecration_inject",
     ) {
         return;
@@ -3582,38 +3595,45 @@ fn handle_forge_step_advance(
     session_id: u64,
     step_advance_tx: &mut Option<ResMut<Events<StepAdvance>>>,
     forge_sessions: Option<&ForgeSessions>,
-) {
+    blueprint_registry: Option<&BlueprintRegistry>,
+) -> Option<(ForgeSessionId, ForgeStep)> {
     let session = ForgeSessionId(session_id);
     let Some(forge_sessions) = forge_sessions else {
         tracing::warn!("[bong][network][forge] step_advance rejected: ForgeSessions unavailable");
-        return;
+        return None;
     };
     let Some(session_state) = forge_sessions.get(session) else {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: missing session_id={session_id}"
         );
-        return;
+        return None;
     };
     if session_state.caster != entity {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",
             session_state.caster
         );
-        return;
+        return None;
     }
     if matches!(session_state.current_step, ForgeStep::Done) {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: session_id={session_id} already done"
         );
-        return;
+        return None;
     }
     let Some(step_advance_tx) = step_advance_tx.as_deref_mut() else {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: ForgePlugin events unavailable"
         );
-        return;
+        return None;
     };
-    step_advance_tx.send(StepAdvance { session });
+    let from_step = session_state.current_step;
+    step_advance_tx.send(StepAdvance { session, from_step });
+    let next_step = blueprint_registry
+        .and_then(|registry| registry.get(session_state.blueprint.as_str()))
+        .map(|blueprint| next_step_after(blueprint, session_state.step_index))
+        .unwrap_or(ForgeStep::Done);
+    Some((session, next_step))
 }
 
 fn parse_temper_beat(raw: &str) -> Option<TemperBeat> {
@@ -8277,7 +8297,7 @@ mod tests {
     }
 
     #[test]
-    fn forge_inscription_scroll_consumes_item_and_emits_event() {
+    fn forge_inscription_scroll_defers_consumption_and_emits_exact_item_event() {
         let mut app = App::new();
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
@@ -8343,10 +8363,16 @@ mod tests {
         app.update();
 
         let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
-        assert!(inventory.containers[0].items.is_empty());
+        assert_eq!(
+            inventory.containers[0].items.len(),
+            1,
+            "C2S 网关只能预检残卷，实际消费必须留给确认进入 Inscription 的 forge 系统"
+        );
         let captured = app.world().resource::<CapturedInscriptionScrolls>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(9));
+        assert_eq!(captured.0[0].caster, entity);
+        assert_eq!(captured.0[0].item_instance_id, 43);
         assert_eq!(captured.0[0].inscription_id, "sharp_v0");
     }
 
@@ -8725,6 +8751,7 @@ mod tests {
         let captured = app.world().resource::<CapturedStepAdvances>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(12));
+        assert_eq!(captured.0[0].from_step, ForgeStep::Tempering);
     }
 
     #[test]
