@@ -4,6 +4,8 @@ import com.bong.client.network.ClientRequestSender;
 import com.bong.client.scroll.ScrollOpenViewModel;
 import com.bong.client.scroll.ScrollReadScreen;
 import com.bong.client.scroll.ScrollReadStore;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -40,6 +43,42 @@ class ScreenTransitionScrollCloseTest {
         ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_red", "《残卷》", List.of("正文"));
         ScrollReadStore.replace(offer);
         ScrollReadScreen pendingScreen = new ScrollReadScreen(offer);
+        ScreenTransition.TransitionHandle handle = activatePending(pendingScreen);
+
+        ScreenTransitionController.cancelAndClose(null);
+        ScreenTransitionController.cancelAndClose(null);
+
+        assertTrue(handle.cancelled(), "Esc 取消应终止尚未完成的开屏转场");
+        assertNull(ScreenTransitionController.activeTransition(), "取消后不应残留 active transition");
+        assertNull(ScrollReadStore.snapshot(),
+            "视觉上取消残卷开屏时也必须清空阅读 store，不能留下 client 半开会话");
+        assertEquals(
+            List.of(new Sent(
+                new Identifier("bong", "client_request"),
+                "{\"type\":\"scroll_read_closed\",\"v\":1}"
+            )),
+            sent,
+            "重复 Esc 也必须恰好发送一条 scroll_read_closed，不能静默丢失或重复发送"
+        );
+    }
+
+    @Test
+    void cancelUnrelatedPendingScreenDoesNotSettleScrollSession() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8))));
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_keep", "《残卷》", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScreenTransition.TransitionHandle handle = activatePending(new DummyScreen());
+
+        ScreenTransitionController.cancelAndClose(null);
+
+        assertTrue(handle.cancelled(), "不携带终态的普通 screen 仍应正常取消转场");
+        assertSame(offer, ScrollReadStore.snapshot(),
+            "取消无关 screen 不得误结算仍在等待的残卷会话");
+        assertTrue(sent.isEmpty(), "取消无关 screen 不得误发 scroll_read_closed，实际=" + sent);
+    }
+
+    private static ScreenTransition.TransitionHandle activatePending(Screen pendingScreen) {
         ScreenTransition.TransitionHandle handle = ScreenTransition.play(
             null,
             pendingScreen,
@@ -60,20 +99,12 @@ class ScreenTransitionScrollCloseTest {
             ),
             ScreenTransition.nowMillis()
         ));
+        return handle;
+    }
 
-        ScreenTransitionController.cancelAndClose(null);
-
-        assertTrue(handle.cancelled(), "Esc 取消应终止尚未完成的开屏转场");
-        assertNull(ScreenTransitionController.activeTransition(), "取消后不应残留 active transition");
-        assertNull(ScrollReadStore.snapshot(),
-            "视觉上取消残卷开屏时也必须清空阅读 store，不能留下 client 半开会话");
-        assertEquals(
-            List.of(new Sent(
-                new Identifier("bong", "client_request"),
-                "{\"type\":\"scroll_read_closed\",\"v\":1}"
-            )),
-            sent,
-            "转场取消必须恰好发送一条 scroll_read_closed 终态，不能静默丢失或重复发送"
-        );
+    private static final class DummyScreen extends Screen {
+        private DummyScreen() {
+            super(Text.literal("dummy"));
+        }
     }
 }
