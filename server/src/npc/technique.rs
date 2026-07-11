@@ -102,17 +102,20 @@ impl NpcCooldownMap {
 
 // ─── Meridian system builder ────────────────────────────────────────────────
 
-/// 根据境界生成 NPC 用的 MeridianSystem（按 worldview §8.1 #5 规则开脉）。
+/// 根据境界生成 NPC 用的 MeridianSystem（§8.1 #8 "公式即数据"决议：配额来自
+/// `body_plan.meridian_profile.realm_requirements`，不是全局曲线）。
 ///
-/// Awaken=1, Induce=3, Condense=6, Solidify=12, Spirit=16, Void=20。
-/// 打开顺序：按 `body_plan.meridian_profile.channels` 声明顺序（humanoid.json 与退役前
-/// `MeridianId::ALL`——先 12 正经（REGULAR），再 8 奇经（EXTRAORDINARY）——逐条 bit-for-
-/// bit 一致，见 `body_plan` 侧对拍测试）。
+/// humanoid 曲线 Awaken=1, Induce=3, Condense=6, Solidify=12, Spirit=16, Void=20 由
+/// `humanoid.json` 自身声明；打开顺序：按 `body_plan.meridian_profile.channels` 声明
+/// 顺序（humanoid.json 与退役前 `MeridianId::ALL`——先 12 正经（REGULAR），再 8 奇经
+/// （EXTRAORDINARY）——逐条 bit-for-bit 一致，见 `body_plan` 侧对拍测试）。
 ///
-/// plan-race-system-v1 P1b：从硬编码 `MeridianId::ALL` 换轨为按实体 `BodyPlan` 派生
-/// （所有现存调用点均传 `body_plan::humanoid_plan_static()`——`races.json` 现阶段全部
-/// NPC/fauna 种族均落 humanoid body plan，数值不受影响；P4/P5 引入非人形战斗构型时，
-/// 调用点改传该实体解析出的 plan 即可，无需再改本函数签名）。
+/// plan-race-system-v1 P1 对抗审查 M1：此前骨架恒用 `MeridianSystem::default()`
+/// （humanoid 骨架）+ `realm.required_meridians()`（humanoid 全局曲线），传入非人
+/// `body_plan` 时会假参数化——数值仍按 humanoid 走，与传入的 profile 无关。现改为
+/// `MeridianSystem::for_profile(profile)` 建骨架 + 从**本 profile 自身**
+/// `realm_requirements[realm.rank() - 1].total` 读取应开脉数，非人 profile（如 P1
+/// 6-channel 合成构型）不再 panic 或误用 humanoid 数值。
 pub fn npc_meridian_system_for_realm(
     realm: Realm,
     body_plan: &crate::body_plan::BodyPlan,
@@ -124,8 +127,8 @@ pub fn npc_meridian_system_for_realm(
             body_plan.id
         )
     });
-    let count = realm.required_meridians();
-    let mut sys = MeridianSystem::default();
+    let count = profile.realm_requirements[realm.rank() as usize - 1].total as usize;
+    let mut sys = MeridianSystem::for_profile(profile);
     for channel in profile.channels.iter().take(count) {
         let m = sys.get_mut(channel.id.clone());
         m.opened = true;
