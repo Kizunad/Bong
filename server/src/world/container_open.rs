@@ -731,6 +731,18 @@ mod tests {
             "opened_by must stay with A while A is still connected; B's request must be rejected"
         );
 
+        // Mock clients buffer packets until explicitly flushed; without this the
+        // helper sees an empty stream even though send_chat_message was called
+        // (same pattern as cmd::completions tests).
+        {
+            let mut client = app
+                .world_mut()
+                .get_mut::<Client>(player_b)
+                .expect("player B should still have a Client");
+            client
+                .flush_packets()
+                .expect("mock client flush should succeed");
+        }
         let messages = collect_chat_messages(&mut helper_b);
         assert!(
             messages.iter().any(|m| m.contains("有人正在翻找")),
