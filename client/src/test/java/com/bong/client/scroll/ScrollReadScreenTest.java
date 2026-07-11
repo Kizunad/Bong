@@ -140,4 +140,89 @@ class ScrollReadScreenTest {
         assertEquals(List.of("{\"type\":\"scroll_read_closed\",\"v\":1}"), sentPayloads,
             "当前 screen 重复关闭必须恰好发送一条 scroll_read_closed");
     }
+
+    @Test
+    void close_sameScrollRefreshSettlesCanonicalActiveSession() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, java.nio.charset.StandardCharsets.UTF_8)));
+        ScrollOpenViewModel original = new ScrollOpenViewModel("scroll_same", "同卷", List.of("原正文"));
+        ScrollReadStore.replace(original);
+        ScrollReadScreen retainedScreen = new ScrollReadScreen(original);
+        ScrollReadStore.replace(new ScrollOpenViewModel("scroll_same", "同卷", List.of("刷新正文")));
+
+        retainedScreen.close();
+
+        assertNull(ScrollReadStore.snapshot(), "同卷刷新保留的 screen 仍必须能结算 canonical 会话");
+        assertEquals(List.of("{\"type\":\"scroll_read_closed\",\"v\":1}"), sentPayloads,
+            "同卷刷新后关闭必须恰好发送一条 scroll_read_closed");
+    }
+
+    @Test
+    void close_oldScreenDoesNotSettleReopenedSameScrollSession() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, java.nio.charset.StandardCharsets.UTF_8)));
+        ScrollOpenViewModel oldSession = new ScrollOpenViewModel("scroll_same", "同卷", List.of("旧会话"));
+        ScrollReadStore.replace(oldSession);
+        ScrollReadScreen oldScreen = new ScrollReadScreen(oldSession);
+        ScrollReadStore.clearOnDisconnect();
+        ScrollOpenViewModel reopenedSession = new ScrollOpenViewModel("scroll_same", "同卷", List.of("新会话"));
+        ScrollReadStore.replace(reopenedSession);
+
+        oldScreen.close();
+
+        assertSame(reopenedSession, ScrollReadStore.snapshot(),
+            "经历空态后重开的同卷是新会话，旧 screen 不得结算");
+        assertTrue(sentPayloads.isEmpty(), "旧 screen 不得替重开的同卷会话发送终态");
+    }
+
+    @Test
+    void close_oldScreenDoesNotSettleReopenedSessionWhenViewModelInstanceIsReused() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, java.nio.charset.StandardCharsets.UTF_8)));
+        ScrollOpenViewModel reusedViewModel =
+            new ScrollOpenViewModel("scroll_reused", "同卷", List.of("正文"));
+        ScrollReadStore.replace(reusedViewModel);
+        ScrollReadScreen oldScreen = new ScrollReadScreen(reusedViewModel);
+        ScrollReadStore.clearOnDisconnect();
+        ScrollReadStore.replace(reusedViewModel);
+
+        oldScreen.close();
+
+        assertSame(reusedViewModel, ScrollReadStore.snapshot(),
+            "经历空态后即使复用同一 viewModel 实例也必须创建新会话，旧 screen 不得结算");
+        assertTrue(sentPayloads.isEmpty(), "旧 screen 不得依靠 ABA 对象身份误发新会话终态");
+    }
+
+    @Test
+    void removed_currentScreenSettlesItsSessionExactlyOnce() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, java.nio.charset.StandardCharsets.UTF_8)));
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_removed", "当前卷", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen screen = new ScrollReadScreen(offer);
+
+        screen.removed();
+        screen.close();
+        screen.onCurrentScreenCancelled();
+
+        assertNull(ScrollReadStore.snapshot(), "外部切屏移除当前阅读屏也必须结算会话");
+        assertEquals(List.of("{\"type\":\"scroll_read_closed\",\"v\":1}"), sentPayloads,
+            "removed/close/转场回调重复到达也只能发送一条终态");
+    }
+
+    @Test
+    void removed_staleScreenDoesNotSettleReplacementSession() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, java.nio.charset.StandardCharsets.UTF_8)));
+        ScrollOpenViewModel oldOffer = new ScrollOpenViewModel("scroll_old", "旧卷", List.of("旧正文"));
+        ScrollOpenViewModel replacement = new ScrollOpenViewModel("scroll_new", "新卷", List.of("新正文"));
+        ScrollReadStore.replace(oldOffer);
+        ScrollReadScreen oldScreen = new ScrollReadScreen(oldOffer);
+        ScrollReadStore.replace(replacement);
+
+        oldScreen.removed();
+
+        assertSame(replacement, ScrollReadStore.snapshot(), "旧 screen 的 removed 不得结算后来会话");
+        assertTrue(sentPayloads.isEmpty(), "旧 screen 的 removed 不得替新会话发送终态");
+    }
 }

@@ -39,9 +39,9 @@ import java.util.Objects;
  *       回弹到顶部（仿 {@code CraftRecipeListWidget} 的 diff 原地更新模式）。</li>
  * </ul>
  *
- * <p>关闭方式：ESC 或点击关闭按钮 → {@link ScrollReadStore#close()}（回传 C2S
- * {@code ScrollReadClosed} + 清空 store）→ {@code setScreen(null)}。{@link #shouldPause()}
- * 恒为 {@code false}（阅读不暂停游戏，对齐全仓其余 owo screen 惯例）。
+ * <p>关闭方式：ESC、关闭按钮、转场取消或外部切屏移除均按不可复用 session token 幂等结算
+ * （回传 C2S {@code ScrollReadClosed} + 清空 store）；旧 screen 永远不能结算后来会话。
+ * {@link #shouldPause()} 恒为 {@code false}（阅读不暂停游戏，对齐全仓其余 owo screen 惯例）。
  */
 public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
     implements ScreenTransitionController.PendingOpenCancellationHandler,
@@ -58,6 +58,7 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
     private static final int COLOR_CLOSE = 0xFFAAAAAA;
 
     private final ScrollOpenViewModel viewModel;
+    private final ScrollReadStore.SessionToken sessionToken;
 
     private int currentPage;
     private LabelComponent bodyLabel;
@@ -65,8 +66,13 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
     private boolean closed;
 
     public ScrollReadScreen(ScrollOpenViewModel viewModel) {
+        this(viewModel, ScrollReadStore.sessionTokenFor(viewModel));
+    }
+
+    ScrollReadScreen(ScrollOpenViewModel viewModel, ScrollReadStore.SessionToken sessionToken) {
         super(Text.literal(Objects.requireNonNull(viewModel, "viewModel").title()));
         this.viewModel = viewModel;
+        this.sessionToken = sessionToken;
         this.currentPage = 0;
     }
 
@@ -188,12 +194,18 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
         if (!closed) {
             closed = true;
             ScrollReadAudio.playClose();
-            ScrollReadStore.closeIfCurrent(viewModel);
+            ScrollReadStore.closeIfCurrent(sessionToken);
         }
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.currentScreen == this) {
             mc.setScreen(null);
         }
+    }
+
+    @Override
+    public void removed() {
+        settleSession();
+        super.removed();
     }
 
     @Override
@@ -207,9 +219,13 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
     }
 
     private void settleTransitionCancellation() {
+        settleSession();
+    }
+
+    private void settleSession() {
         if (!closed) {
             closed = true;
-            ScrollReadStore.closeIfCurrent(viewModel);
+            ScrollReadStore.closeIfCurrent(sessionToken);
         }
     }
 
@@ -220,6 +236,10 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
 
     ScrollOpenViewModel viewModel() {
         return viewModel;
+    }
+
+    boolean ownsSession(ScrollReadStore.SessionToken expected) {
+        return sessionToken == expected;
     }
 
     int currentPageForTests() {
