@@ -59,8 +59,8 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 2. 主干按 `request_id` 幂等去重，落唯一状态表、排入 FIFO。grant 前重新读取权威 task 的 task/phase/head/generation；逻辑容量与实时平台槽位都满足时，先原子登记 holder，再返回 `TOKEN_GRANTED{"request_id":"...","token_id":"...","type":"...","task":"...","phase":"...","head":"...","generation":N,"expires_at":"..."}`。
 3. 实施 agent 核对 request/task/phase/head/generation/expiry 后发送或返回 `TOKEN_ACK{...}`，ACK 后 token 才可使用。主干对**每次** ACK（包括重复 ACK）重新读取权威状态；任何漂移都原子 stale/cancel。重复 request 返回同一队列状态或同一 grant；状态未漂移时重复 ACK 幂等。
 4. validator token ACK 后，实施 agent 用 harness spawn 返回的 **canonical validator agent ID** 上报 `VALIDATOR_SPAWNED{"request_id":"...","token_id":"...","validator_agent_id":"...","task":"...","phase":"...","target_sha":"...","generation":N}`。该 ID 与 request/token/task/phase/SHA/generation 一对一绑定；一个 validator 实例只能消费一个 reservation。只有 live snapshot 精确包含同一 canonical ID 才可标 snapshot-accounted；无关 agent、另一 validator 或仅总数增长均无效。
-5. 已结束/idle agent 通过当前 harness 的 resume/followup 入口恢复，payload 必须包含 `checkpoint + request_id + token_id + phase + head + generation`；恢复成功前状态为 `RECOVERING`，恢复边界再次对拍权威状态。禁止另开无状态 agent 猜测续点。
-6. 完成、FAIL、超时、异常时，实施 agent 发送或返回 `TOKEN_RELEASED{...}`；排队取消或 grant 失效返回 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`。
+5. 已结束/idle agent 通过当前 harness 的 resume/followup 入口恢复，payload 必须包含 `checkpoint + request_id + token_id + agent + phase + head + generation`；恢复结果逐字段回传并与原 grant 对拍，恢复成功前状态为 `RECOVERING`，恢复边界再次对拍权威状态。禁止另开无状态 agent 猜测续点。
+6. 完成、FAIL、超时、异常时，实施 agent 发送或返回绑定 `request_id + token_id + agent + phase + head + generation + reason` 的 `TOKEN_RELEASED{...}`；排队取消或 grant 失效返回绑定原 request 身份与 reason 的 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`；同 request 的重复终态消息只有完整 payload 相同才幂等。
 7. grant 绑定 request_id、task、agent、phase、head、generation。任一变化、token 已回收、非 FIFO 当前授权或 ACK 前过期都原子 stale；旧 token 禁止 ACK/recovery/release。
 8. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用当前 harness 实际状态查询对拍 holder；失联先进入 `RECOVERING`，只有 resume/send-input/followup 明确失败或恢复 TTL 到期才回收。回收后的迟到消息一律拒绝。
 9. `compile_token` 在该轮门禁任一出口释放；`validator_token` 在 validator 关闭后任一出口释放，spawn 失败也释放。任务 BLOCKED/CLOSED、用户停止或 worktree 清理前，主干取消排队项并核验无悬挂 token。
@@ -78,7 +78,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 
 phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → FIX_VALIDATING → GATING → REBASING → REBASE_VALIDATING → ARCHIVING → FINAL_VALIDATING → PR_OPEN → GATES → CLOSED`，失联暂态 `RECOVERING`，或终态 `BLOCKED`。只有 `FINAL_VALIDATING → PR_OPEN`；合法边、必经里程碑、互斥分支、终态和返工回流以 dry-run 的 `TaskPhase/ALLOWED_EDGES` 为可执行契约。
 
-状态迁移不能靠“走过 phase”解锁：三个 validating 关口都必须提交 `validator_agent_id + phase + target_sha + generation + PASS + completed_at`，且 target SHA/generation 等于权威当前状态；`GATING → REBASING` 必须有当前 HEAD/generation 的成功 gate evidence；主线同步也必须记录当前 HEAD/generation 的成功 sync evidence。主线同步、HEAD 变化或返工会递增 generation，并清除旧 SHA/generation 的 validator/gate/sync 证据与闭环里程碑。FAIL、缺证据、错误 SHA 或旧 generation 均不得推进。
+状态迁移不能靠“走过 phase”解锁：三个 validating 关口都必须由 token broker 消费 `request_id + token_id + canonical validator_agent_id + phase + target_sha + generation + PASS + completed_at`；只有 token 仍为 ACKED、实例完成一对一绑定、canonical ID 确实 live 且已 snapshot-accounted、所有字段与权威 grant 一致时才落证据。`GATING → REBASING` 必须有当前 HEAD/generation 的成功 gate evidence；主线同步也必须记录当前 HEAD/generation 的成功 sync evidence。主线同步、HEAD 变化或返工会递增 generation，并清除旧 SHA/generation 的 validator/gate/sync 证据与闭环里程碑。FAIL、缺证据、错误 SHA 或旧 generation 均不得推进；`GATES → CLOSED` 还必须有同一 HEAD/generation 的远端 SHA 对拍、review、e2e/相关 checks 与三模型字段完整证据。
 
 ## 选择与派发 skeleton
 

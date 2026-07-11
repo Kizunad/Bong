@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
@@ -93,6 +93,8 @@ ALLOWED_EDGES: dict[TaskPhase, set[TaskPhase]] = {
 
 @dataclass
 class ValidatorEvidence:
+    request_id: str
+    token_id: str
     validator_id: str
     phase: TaskPhase
     target_sha: str
@@ -117,6 +119,16 @@ class SyncEvidence:
 
 
 @dataclass
+class ClosureEvidence:
+    target_sha: str
+    generation: int
+    remote_sha_verified: bool
+    review_passed: bool
+    e2e_passed: bool
+    model_fields_complete: bool
+
+
+@dataclass
 class TaskState:
     task_id: str = "task"
     phase: TaskPhase = TaskPhase.DISPATCHED
@@ -133,6 +145,10 @@ class TaskState:
     validator_evidence: dict[TaskPhase, ValidatorEvidence] = None
     gate_evidence: dict[TaskPhase, GateEvidence] = None
     sync_evidence: Optional[SyncEvidence] = None
+    closure_evidence: Optional[ClosureEvidence] = None
+    _validator_capability: object = field(
+        default_factory=object, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.validator_evidence is None:
@@ -200,6 +216,18 @@ class TaskState:
             ):
                 raise ProtocolError("PR_OPEN closure prerequisites missing")
             self.final_validated = True
+        if self.phase == TaskPhase.GATES and target == TaskPhase.CLOSED:
+            evidence = self.closure_evidence
+            if (
+                evidence is None
+                or evidence.target_sha != self.head
+                or evidence.generation != self.generation
+                or not evidence.remote_sha_verified
+                or not evidence.review_passed
+                or not evidence.e2e_passed
+                or not evidence.model_fields_complete
+            ):
+                raise ProtocolError("CLOSED gate evidence incomplete")
         self.phase = target
 
     def _reset_closure_milestones(self) -> None:
@@ -212,6 +240,7 @@ class TaskState:
         self.validator_evidence.clear()
         self.gate_evidence.clear()
         self.sync_evidence = None
+        self.closure_evidence = None
 
     def update_head(self, new_head: str) -> None:
         if new_head == self.head:
@@ -220,7 +249,11 @@ class TaskState:
         self.generation += 1
         self._reset_closure_milestones()
 
-    def record_validator(self, evidence: ValidatorEvidence) -> None:
+    def _record_validator(
+        self, evidence: ValidatorEvidence, capability: object
+    ) -> None:
+        if capability is not self._validator_capability:
+            raise ProtocolError("validator evidence requires broker capability")
         if evidence.phase != self.phase:
             raise ProtocolError("validator evidence phase mismatch")
         if evidence.target_sha != self.head:
@@ -230,6 +263,16 @@ class TaskState:
         if evidence.verdict != "PASS":
             raise ProtocolError("validator did not PASS")
         self.validator_evidence[self.phase] = evidence
+
+    def record_closure(self, evidence: ClosureEvidence) -> None:
+        if self.phase != TaskPhase.GATES:
+            raise ProtocolError("closure evidence only applies in GATES")
+        if (
+            evidence.target_sha != self.head
+            or evidence.generation != self.generation
+        ):
+            raise ProtocolError("closure evidence authority mismatch")
+        self.closure_evidence = evidence
 
     def record_gate(self, evidence: GateEvidence) -> None:
         if evidence.phase != self.phase or evidence.target_sha != self.head:
@@ -258,6 +301,7 @@ class TaskState:
         self.validator_evidence.clear()
         self.gate_evidence.clear()
         self.sync_evidence = None
+        self.closure_evidence = None
         self.gated = False
         self.rebased = False
         self.rebase_validated = False
@@ -272,6 +316,7 @@ class TaskState:
         self.validator_evidence.clear()
         self.gate_evidence.clear()
         self.sync_evidence = None
+        self.closure_evidence = None
         self.archived = True
 
     def _require_validator_pass(self, phase: TaskPhase) -> None:
@@ -397,6 +442,7 @@ class RequestState:
     recovery_deadline: Optional[float] = None
     platform_accounted: bool = False
     validator_agent_id: Optional[str] = None
+    terminal_message: Optional[tuple[object, ...]] = None
 
 
 TOKEN_PHASES = {
@@ -606,6 +652,34 @@ class TokenBroker:
             raise ProtocolError("validator authority became stale")
         state.platform_accounted = True
 
+    def consume_validator_evidence(
+        self,
+        request_id: str,
+        token_id: str,
+        evidence: ValidatorEvidence,
+    ) -> None:
+        state = self.requests[request_id]
+        task = self.authority.get(state.payload.task)
+        validator_id = state.validator_agent_id
+        if (
+            state.status != RequestStatus.ACKED
+            or state.payload.token_type != "validator"
+            or state.token_id != token_id
+            or evidence.request_id != request_id
+            or evidence.token_id != token_id
+            or validator_id is None
+            or evidence.validator_id != validator_id
+            or not state.platform_accounted
+            or validator_id not in self.capacity_provider().live_agent_ids
+            or task is None
+            or not self._authority_matches(state)
+            or evidence.phase != state.payload.phase
+            or evidence.target_sha != state.payload.head
+            or evidence.generation != state.payload.generation
+        ):
+            raise ProtocolError("validator evidence is not bound to live grant")
+        task._record_validator(evidence, task._validator_capability)
+
     def ack(
         self,
         request_id: str,
@@ -635,25 +709,67 @@ class TokenBroker:
         state.status = RequestStatus.ACKED
         return True
 
-    def release(self, request_id: str, token_id: str, reason: str) -> bool:
+    def release(
+        self,
+        request_id: str,
+        token_id: str,
+        agent: str,
+        phase: TaskPhase,
+        head: str,
+        generation: int,
+        reason: str,
+    ) -> bool:
         state = self.requests[request_id]
+        message = (token_id, agent, phase, head, generation, reason)
         if state.status == RequestStatus.RELEASED:
+            if state.terminal_message != message:
+                raise ProtocolError("duplicate release payload collision")
             return False
         if token_id in self.invalid_tokens:
             raise ProtocolError("late release rejected")
-        if state.status != RequestStatus.ACKED or state.token_id != token_id:
+        if (
+            state.status != RequestStatus.ACKED
+            or state.token_id != token_id
+            or state.payload.agent != agent
+            or state.payload.phase != phase
+            or state.payload.head != head
+            or state.payload.generation != generation
+        ):
             raise ProtocolError("release requires ACKED active token")
+        state.terminal_message = message
         self._invalidate(state, RequestStatus.RELEASED, reason)
         return True
 
-    def cancel(self, request_id: str, reason: str) -> bool:
+    def cancel(
+        self,
+        request_id: str,
+        agent: str,
+        phase: TaskPhase,
+        head: str,
+        generation: int,
+        reason: str,
+    ) -> bool:
         state = self.requests[request_id]
+        message = (agent, phase, head, generation, reason)
         if state.status in {
             RequestStatus.RELEASED,
             RequestStatus.CANCELLED,
             RequestStatus.EXPIRED,
         }:
+            if (
+                state.status == RequestStatus.CANCELLED
+                and state.terminal_message != message
+            ):
+                raise ProtocolError("duplicate cancel payload collision")
             return False
+        if (
+            state.payload.agent != agent
+            or state.payload.phase != phase
+            or state.payload.head != head
+            or state.payload.generation != generation
+        ):
+            raise ProtocolError("cancel payload differs from request")
+        state.terminal_message = message
         self._invalidate(state, RequestStatus.CANCELLED, reason)
         return True
 
@@ -681,10 +797,30 @@ class TokenBroker:
         state.recovery_deadline = self.clock.now() + self.recovery_ttl
         return True
 
-    def recovery_result(self, request_id: str, success: bool) -> None:
+    def recovery_result(
+        self,
+        request_id: str,
+        token_id: str,
+        agent: str,
+        checkpoint: str,
+        phase: TaskPhase,
+        head: str,
+        generation: int,
+        success: bool,
+    ) -> None:
         state = self.requests[request_id]
         if state.status != RequestStatus.RECOVERING:
             raise ProtocolError("request is not recovering")
+        if (
+            state.token_id != token_id
+            or state.payload.agent != agent
+            or state.payload.checkpoint != checkpoint
+            or state.payload.phase != phase
+            or state.payload.head != head
+            or state.payload.generation != generation
+        ):
+            self._invalidate(state, RequestStatus.CANCELLED, "STALE_RECOVERY")
+            raise ProtocolError("recovery payload mismatch")
         if success:
             if not self._authority_matches(state):
                 self._invalidate(
@@ -856,15 +992,103 @@ def submit(
 
 
 def record_pass(task: TaskState, validator_id: str) -> None:
-    task.record_validator(
+    broker, provider, _ = fixture(total=4, live=1)
+    request_id = f"{validator_id}-{task.phase.value}-{task.generation}"
+    payload = make_payload(request_id, "validator", "implementer", task)
+    submit(broker, payload, task)
+    grant = broker.grant_next("validator")
+    broker.ack(
+        request_id,
+        grant.token_id,
+        task.phase,
+        task.head,
+        task.generation,
+    )
+    broker.bind_validator_spawn(
+        request_id,
+        grant.token_id,
+        validator_id,
+        task.task_id,
+        task.phase,
+        task.head,
+        task.generation,
+    )
+    provider.snapshot.live_agents += 1
+    provider.snapshot.live_agent_ids = (
+        provider.snapshot.live_agent_ids | {validator_id}
+    )
+    broker.mark_platform_accounted(request_id, validator_id)
+    broker.consume_validator_evidence(
+        request_id,
+        grant.token_id,
         ValidatorEvidence(
+            request_id=request_id,
+            token_id=grant.token_id,
             validator_id=validator_id,
             phase=task.phase,
             target_sha=task.head,
             generation=task.generation,
             verdict="PASS",
             completed_at=1.0,
-        )
+        ),
+    )
+    broker.release(
+        request_id,
+        grant.token_id,
+        payload.agent,
+        payload.phase,
+        payload.head,
+        payload.generation,
+        "PASS",
+    )
+
+
+def release_request(
+    broker: TokenBroker,
+    request_id: str,
+    token_id: str,
+    reason: str,
+) -> bool:
+    payload = broker.requests[request_id].payload
+    return broker.release(
+        request_id,
+        token_id,
+        payload.agent,
+        payload.phase,
+        payload.head,
+        payload.generation,
+        reason,
+    )
+
+
+def cancel_request(
+    broker: TokenBroker, request_id: str, reason: str
+) -> bool:
+    payload = broker.requests[request_id].payload
+    return broker.cancel(
+        request_id,
+        payload.agent,
+        payload.phase,
+        payload.head,
+        payload.generation,
+        reason,
+    )
+
+
+def recover_request(
+    broker: TokenBroker, request_id: str, success: bool
+) -> None:
+    state = broker.requests[request_id]
+    payload = state.payload
+    broker.recovery_result(
+        request_id,
+        state.token_id,
+        payload.agent,
+        payload.checkpoint,
+        payload.phase,
+        payload.head,
+        payload.generation,
+        success,
     )
 
 
@@ -876,6 +1100,12 @@ def record_gate_pass(task: TaskState) -> None:
 
 def record_sync_pass(task: TaskState) -> None:
     task.record_sync(SyncEvidence(task.head, task.generation, True))
+
+
+def record_closure_pass(task: TaskState) -> None:
+    task.record_closure(
+        ClosureEvidence(task.head, task.generation, True, True, True, True)
+    )
 
 
 def drive_closure_to_pr(
@@ -966,6 +1196,10 @@ class StateMachineDryRun(unittest.TestCase):
         for source in TaskPhase:
             for target in TaskPhase:
                 if target in expected[source]:
+                    if source == TaskPhase.GATES and target == TaskPhase.CLOSED:
+                        task = TaskState(phase=source)
+                        record_closure_pass(task)
+                        task.transition(target)
                     continue
                 with self.subTest(illegal_source=source, illegal_target=target):
                     with self.assertRaises(ProtocolError):
@@ -998,6 +1232,9 @@ class StateMachineDryRun(unittest.TestCase):
         task = TaskState(phase=TaskPhase.VERIFYING)
         drive_closure_to_pr(task)
         task.transition(TaskPhase.GATES)
+        with self.assertRaises(ProtocolError):
+            task.transition(TaskPhase.CLOSED)
+        record_closure_pass(task)
         task.transition(TaskPhase.CLOSED)
         self.assertEqual(task.phase, TaskPhase.CLOSED)
         self.assertTrue(task.final_validated)
@@ -1021,26 +1258,32 @@ class StateMachineDryRun(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             task.transition(TaskPhase.GATING)
         with self.assertRaises(ProtocolError):
-            task.record_validator(
+            task._record_validator(
                 ValidatorEvidence(
+                    "request-old",
+                    "token-old",
                     "v",
                     task.phase,
                     "old-sha",
                     task.generation,
                     "PASS",
                     1.0,
-                )
+                ),
+                task._validator_capability,
             )
         with self.assertRaises(ProtocolError):
-            task.record_validator(
+            task._record_validator(
                 ValidatorEvidence(
+                    "request-fail",
+                    "token-fail",
                     "v",
                     task.phase,
                     task.head,
                     task.generation,
                     "FAIL",
                     1.0,
-                )
+                ),
+                task._validator_capability,
             )
         record_pass(task, "v-pass")
         task.update_head("new-head")
@@ -1084,6 +1327,8 @@ class StateMachineDryRun(unittest.TestCase):
             phase=TaskPhase.FIX_VALIDATING, head="A"
         )
         old_validator = ValidatorEvidence(
+            "request-old",
+            "token-old",
             "old-validator",
             validator_task.phase,
             "A",
@@ -1094,7 +1339,9 @@ class StateMachineDryRun(unittest.TestCase):
         validator_task.update_head("B")
         validator_task.update_head("A")
         with self.assertRaises(ProtocolError):
-            validator_task.record_validator(old_validator)
+            validator_task._record_validator(
+                old_validator, validator_task._validator_capability
+            )
         record_pass(validator_task, "current-validator")
 
         gate_task = TaskState(phase=TaskPhase.GATING, head="A")
@@ -1241,7 +1488,7 @@ class StateMachineDryRun(unittest.TestCase):
         broker.ack(
             "v1", first.token_id, task.phase, task.head, task.generation
         )
-        broker.release("v1", first.token_id, "PASS")
+        release_request(broker, "v1", first.token_id, "PASS")
         provider.snapshot.live_agents = 4
         self.assertEqual(
             broker.grant_next("validator").payload.request_id, "v2"
@@ -1265,7 +1512,7 @@ class StateMachineDryRun(unittest.TestCase):
         self.assertIsNone(broker.grant_next("validator"))
         broker.mark_lost("v1")
         self.assertIsNone(broker.grant_next("validator"))
-        broker.recovery_result("v1", True)
+        recover_request(broker, "v1", True)
         broker.ack(
             "v1", first.token_id, task.phase, task.head, task.generation
         )
@@ -1286,7 +1533,7 @@ class StateMachineDryRun(unittest.TestCase):
         )
         broker.mark_platform_accounted("v1", "validator-v1")
         self.assertIsNone(broker.grant_next("validator"))
-        broker.release("v1", first.token_id, "PASS")
+        release_request(broker, "v1", first.token_id, "PASS")
         provider.snapshot.live_agents = 3
         self.assertEqual(
             broker.grant_next("validator").payload.request_id, "v2"
@@ -1359,6 +1606,37 @@ class StateMachineDryRun(unittest.TestCase):
             | {"validator-one"}
         )
         broker.mark_platform_accounted("v1", "validator-one")
+        with self.assertRaises(ProtocolError):
+            broker.consume_validator_evidence(
+                "v1",
+                first.token_id,
+                ValidatorEvidence(
+                    "v1",
+                    first.token_id,
+                    "validator-two",
+                    task.phase,
+                    task.head,
+                    task.generation,
+                    "PASS",
+                    1.0,
+                ),
+            )
+        broker.consume_validator_evidence(
+            "v1",
+            first.token_id,
+            ValidatorEvidence(
+                "v1",
+                first.token_id,
+                "validator-one",
+                task.phase,
+                task.head,
+                task.generation,
+                "PASS",
+                1.0,
+            ),
+        )
+        task.resolution = TaskPhase.FIXING
+        task.transition(TaskPhase.GATING)
 
     def test_authority_provider_rejects_forged_task_replacement(self) -> None:
         broker, _, _ = fixture()
@@ -1435,7 +1713,7 @@ class StateMachineDryRun(unittest.TestCase):
                 task.head,
                 task.generation,
             )
-        broker.recovery_result("bind", True)
+        recover_request(broker, "bind", True)
         with self.assertRaises(ProtocolError):
             broker.bind_validator_spawn(
                 "bind",
@@ -1577,7 +1855,7 @@ class StateMachineDryRun(unittest.TestCase):
         broker.mark_lost("recover")
         task4.update_head("head-during-recovery")
         with self.assertRaises(ProtocolError):
-            broker.recovery_result("recover", True)
+            recover_request(broker, "recover", True)
 
     def test_fifo_request_ack_release_cancel_and_collision(self) -> None:
         broker, _, _ = fixture()
@@ -1590,13 +1868,18 @@ class StateMachineDryRun(unittest.TestCase):
         self.assertIs(broker.request(first_payload), first)
         grant = broker.grant_next("compile")
         with self.assertRaises(ProtocolError):
-            broker.release("r1", grant.token_id, "PASS")
+            release_request(broker, "r1", grant.token_id, "PASS")
         broker.ack(
             "r1", grant.token_id, task.phase, task.head, task.generation
         )
-        self.assertTrue(broker.release("r1", grant.token_id, "PASS"))
-        self.assertFalse(broker.release("r1", grant.token_id, "PASS"))
-        self.assertTrue(broker.cancel("r2", "CANCELLED"))
+        self.assertTrue(release_request(broker, "r1", grant.token_id, "PASS"))
+        self.assertFalse(release_request(broker, "r1", grant.token_id, "PASS"))
+        with self.assertRaises(ProtocolError):
+            release_request(broker, "r1", grant.token_id, "DIFFERENT")
+        self.assertTrue(cancel_request(broker, "r2", "CANCELLED"))
+        self.assertFalse(cancel_request(broker, "r2", "CANCELLED"))
+        with self.assertRaises(ProtocolError):
+            cancel_request(broker, "r2", "DIFFERENT")
         with self.assertRaises(ProtocolError):
             submit(
                 broker,
@@ -1692,7 +1975,7 @@ class StateMachineDryRun(unittest.TestCase):
                 "v1", old.token_id, task.phase, task.head, task.generation
             )
         with self.assertRaises(ProtocolError):
-            broker.release("v1", old.token_id, "PASS")
+            release_request(broker, "v1", old.token_id, "PASS")
         self.assertEqual(
             broker.grant_next("validator").payload.request_id, "v2"
         )
@@ -1714,7 +1997,7 @@ class StateMachineDryRun(unittest.TestCase):
                     task.head,
                     task.generation,
                 )
-                broker.release(reason, grant.token_id, reason)
+                release_request(broker, reason, grant.token_id, reason)
                 self.assertEqual(broker.held("validator"), 0)
 
     def test_recovery_success_failure_timeout_and_late_messages(self) -> None:
@@ -1747,7 +2030,7 @@ class StateMachineDryRun(unittest.TestCase):
                         "generation": task.generation,
                     },
                 )
-                broker.recovery_result(request_id, True)
+                recover_request(broker, request_id, True)
                 broker.ack(
                     request_id,
                     grant.token_id,
@@ -1755,11 +2038,11 @@ class StateMachineDryRun(unittest.TestCase):
                     task.head,
                     task.generation,
                 )
-                broker.release(request_id, grant.token_id, "PASS")
+                release_request(broker, request_id, grant.token_id, "PASS")
             elif request_id == "fail":
-                broker.recovery_result(request_id, False)
+                recover_request(broker, request_id, False)
                 with self.assertRaises(ProtocolError):
-                    broker.release(request_id, grant.token_id, "LATE")
+                    release_request(broker, request_id, grant.token_id, "LATE")
             else:
                 clock.advance(10)
                 self.assertEqual(broker.sweep_recovery(), ["timeout"])
@@ -1786,7 +2069,7 @@ class StateMachineDryRun(unittest.TestCase):
         )
         broker.mark_lost("renew")
         clock.advance(6)
-        broker.recovery_result("renew", True)
+        recover_request(broker, "renew", True)
         self.assertTrue(
             broker.ack(
                 "renew",
@@ -1796,7 +2079,45 @@ class StateMachineDryRun(unittest.TestCase):
                 task.generation,
             )
         )
-        self.assertTrue(broker.release("renew", grant.token_id, "PASS"))
+        self.assertTrue(release_request(broker, "renew", grant.token_id, "PASS"))
+
+    def test_recovery_rejects_token_agent_and_checkpoint_drift(self) -> None:
+        for field_name in ("token", "agent", "checkpoint"):
+            with self.subTest(field=field_name):
+                broker, _, _ = fixture()
+                task = TaskState(phase=TaskPhase.GATING)
+                payload = make_payload("drift", "compile", "agent", task)
+                submit(broker, payload, task)
+                grant = broker.grant_next("compile")
+                broker.ack(
+                    "drift",
+                    grant.token_id,
+                    task.phase,
+                    task.head,
+                    task.generation,
+                )
+                broker.mark_lost("drift")
+                values = {
+                    "token": grant.token_id,
+                    "agent": payload.agent,
+                    "checkpoint": payload.checkpoint,
+                }
+                values[field_name] = f"wrong-{field_name}"
+                with self.assertRaises(ProtocolError):
+                    broker.recovery_result(
+                        "drift",
+                        values["token"],
+                        values["agent"],
+                        values["checkpoint"],
+                        task.phase,
+                        task.head,
+                        task.generation,
+                        True,
+                    )
+                self.assertEqual(
+                    broker.requests["drift"].release_reason,
+                    "STALE_RECOVERY",
+                )
 
     def test_repeated_recovery_is_idempotent(self) -> None:
         broker, _, _ = fixture()
