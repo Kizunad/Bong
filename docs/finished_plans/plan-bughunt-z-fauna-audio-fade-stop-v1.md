@@ -1,7 +1,7 @@
 # plan-bughunt-z-fauna-audio-fade-stop-v1
 
 > 一句话主题：`mob/fauna/audio-client` 主路径确认 1 个高置信真 bug：**client `MinecraftSoundSink.stop()` 直接硬停 `SoundInstance`，把上层精心传下来的 `fadeOutTicks` 全部吞掉**。结果不是“音频按设定淡出”，而是 **Fuya 压迫 hum、环境 loop、音乐切换统一硬切**。
-
+>
 > 立项动机：这不是“体验可以更好”的 polish，而是**契约已设计、server/client 中层已完整传值、最终实现层失配**的真功能缺失。对实际游玩最直观的影响是：Fuya 死亡时压迫 hum 不会按 20 tick 收尾，而是瞬间断掉；离开环境特效半径、区域音乐切换也不会 crossfade，而是像开关一样被掐断。
 
 ## 阶段总览

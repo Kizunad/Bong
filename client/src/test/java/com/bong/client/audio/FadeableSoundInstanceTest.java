@@ -95,11 +95,11 @@ class FadeableSoundInstanceTest {
 
         sound.tick();
         assertEquals(0.75f, sound.volumeForTests(), 1e-6f, "第 1/4 tick 后音量应为 3/4 base");
-        assertFalse(sound.isDone());
+        assertFalse(sound.isDone(), "第 1/4 tick 后淡出未结束，不应标记完成");
 
         sound.tick();
         assertEquals(0.5f, sound.volumeForTests(), 1e-6f, "第 2/4 tick 后音量应为 1/2 base");
-        assertFalse(sound.isDone());
+        assertFalse(sound.isDone(), "第 2/4 tick 后淡出未结束，不应标记完成");
 
         sound.tick();
         assertEquals(0.25f, sound.volumeForTests(), 1e-6f, "第 3/4 tick 后音量应为 1/4 base");
@@ -122,7 +122,7 @@ class FadeableSoundInstanceTest {
 
         sound.tick();
         assertEquals(0.0f, sound.volumeForTests(), 1e-6f, "第 2/2 tick 后应归零");
-        assertTrue(sound.isDone());
+        assertTrue(sound.isDone(), "base=0.6 的 2-tick 窗口耗尽后应标记完成");
     }
 
     // ─── 边界：单 tick 淡出窗口 ─────────────────────────────────────────────
@@ -147,7 +147,7 @@ class FadeableSoundInstanceTest {
         sound.beginFadeOut(2);
         sound.tick();
         sound.tick();
-        assertTrue(sound.isDone());
+        assertTrue(sound.isDone(), "2-tick 窗口耗尽后应标记完成，为后续幂等断言建立前置");
 
         // done 之后继续 tick（引擎摘除 channel 前可能还会跑一两个 tick）不应抛异常，
         // 不应让 fadeTicksRemaining 继续往负数走、更不应让音量重新变化。
@@ -172,7 +172,7 @@ class FadeableSoundInstanceTest {
 
         // 中途重新调用 stop（例如同一 flag 再次触发）：应重新起算，而不是叠加/忽略。
         sound.beginFadeOut(4);
-        assertFalse(sound.isDone());
+        assertFalse(sound.isDone(), "重新起算 4-tick 新窗口后不应立即完成");
 
         sound.tick();
         assertEquals(0.75f, sound.volumeForTests(), 1e-6f, "重新起算后第 1/4 tick 应为 3/4 base（新 base 取当前调用时刻的 baseVolume）");
