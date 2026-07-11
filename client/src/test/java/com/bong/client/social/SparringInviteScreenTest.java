@@ -1,21 +1,28 @@
 package com.bong.client.social;
 
+import com.bong.client.network.ClientRequestSender;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SparringInviteScreenTest {
+    private final List<String> sentPayloads = new ArrayList<>();
+
+    @AfterEach
+    void reset() {
+        ClientRequestSender.resetBackendForTests();
+        SocialStateStore.resetForTests();
+    }
+
     @Test
     void describeShowsAnonymousTermsAndCountdown() {
-        SocialStateStore.SparringInvite invite = new SocialStateStore.SparringInvite(
-            "sparring:1:a:b",
-            "char:a",
-            "char:b",
-            "condense_solidify",
-            "气息相试",
-            "点到为止",
-            1234L
-        );
+        SocialStateStore.SparringInvite invite = invite("sparring:1:a:b", 1234L);
 
         SparringInviteScreen.RenderContent content = SparringInviteScreen.describe(invite, 9_000L);
 
@@ -24,5 +31,62 @@ public class SparringInviteScreenTest {
         assertTrue(content.lines().contains("条款: 点到为止"));
         assertTrue(content.lines().contains("倒计时: 9s"));
         assertTrue(content.lines().contains("失败方: 5min 谦抑, 真元回复 -30%"));
+    }
+
+    @Test
+    void closeSettlesExactInviteAndPromotesQueuedInvite() {
+        SocialStateStore.SparringInvite first = invite("sparring:first", 5_000L);
+        SocialStateStore.SparringInvite second = invite("sparring:second", 6_000L);
+        SocialStateStore.enqueueSparringInvite(first);
+        SocialStateStore.enqueueSparringInvite(second);
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, StandardCharsets.UTF_8))
+        );
+
+        new SparringInviteScreen(first).close();
+
+        assertEquals(1, sentPayloads.size(), "关闭邀请屏只发送一次拒绝响应");
+        assertTrue(sentPayloads.get(0).contains("\"invite_id\":\"sparring:first\""));
+        assertTrue(sentPayloads.get(0).contains("\"accepted\":false"));
+        assertEquals("sparring:second", SocialStateStore.sparringInvite().inviteId());
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.OPEN_SCREEN,
+            SparringInviteScreenBootstrap.decide(
+                SocialStateStore.sparringInvite(),
+                SparringInviteScreenBootstrap.ScreenKind.NONE,
+                1_000L
+            ),
+            "关闭 A 后，无其他屏时应展示排队的 B"
+        );
+    }
+
+    @Test
+    void lateCloseOfOldScreenCannotClearReplacement() {
+        SocialStateStore.SparringInvite first = invite("sparring:first", 5_000L);
+        SocialStateStore.SparringInvite second = invite("sparring:second", 6_000L);
+        SocialStateStore.enqueueSparringInvite(first);
+        SocialStateStore.enqueueSparringInvite(second);
+        SocialStateStore.clearSparringInvite(first.inviteId());
+        ClientRequestSender.setBackendForTests((channel, payload) -> { });
+
+        new SparringInviteScreen(first).close();
+
+        assertEquals(
+            "sparring:second",
+            SocialStateStore.sparringInvite().inviteId(),
+            "旧 screen 的迟到 close 只能清自己的 identity，不能误清后继邀请"
+        );
+    }
+
+    private static SocialStateStore.SparringInvite invite(String inviteId, long expiresAtMs) {
+        return new SocialStateStore.SparringInvite(
+            inviteId,
+            "char:a",
+            "char:b",
+            "condense_solidify",
+            "气息相试",
+            "点到为止",
+            expiresAtMs
+        );
     }
 }
