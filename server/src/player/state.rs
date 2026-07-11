@@ -4050,6 +4050,163 @@ mod player_state_tests {
         let _ = fs::remove_dir_all(&data_dir);
     }
 
+    /// plan-bughunt-inventory-transfer-orphan-pack-v1 P0 — 截劫夺包全量转移后不得残留孤儿
+    /// `pack_<id>` 容器脏档。
+    ///
+    /// 复现链路：受害者穿戴一个 chest pack（rebuild 建 `pack_<id>` 容器 + 内含物）→
+    /// `transfer_all_inventory_contents` 把受害者 `equipped`（含 worn pack 本体）+ 所有容器
+    /// 内含物 + hotbar 全部搬给击杀者 → 受害者随即落盘。修复前：`from.containers` 里的
+    /// `pack_<id>` 容器壳原样残留但已无 backing worn 件，`load_player_slices` 重载时命中
+    /// `inventory_has_orphan_pack_container` → 整份 inventory 被丢弃回落默认 loadout。
+    /// 修复后：`transfer_all_inventory_contents` 内部收口 `rebuild_containers_from_equipment`，
+    /// 孤儿容器壳被同步清掉，重载必须拿回受害者的（空）inventory，而不是 `None`。
+    #[test]
+    fn transfer_all_inventory_contents_does_not_leave_orphan_pack_after_reload() {
+        use crate::inventory::{
+            container_id_for_worn_pack, transfer_all_inventory_contents, ContainerSpec,
+            ItemCategory, ItemRegistry, ItemTemplate, PlacedItemState, SlotContents,
+            EQUIP_SLOT_CHEST,
+        };
+
+        let (persistence, data_dir) = sqlite_persistence("transfer-orphan-pack-reload");
+
+        // 合成 registry：一个 worn chest pack 模板 + 一个可移动 misc 内含物模板。
+        let pack_template = ItemTemplate {
+            id: "tribulation_chest_pack".to_string(),
+            display_name: "夺魂背包".to_string(),
+            category: ItemCategory::Container,
+            placeable: None,
+            max_stack_count: 1,
+            grid_w: 2,
+            grid_h: 2,
+            base_weight: 0.5,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 1.0,
+            description: "tribulation loot pack".to_string(),
+            effect: None,
+            cast_duration_ms: 0,
+            cooldown_ms: 0,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            readable_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: Some(ContainerSpec {
+                quick_access: false,
+                rows: 3,
+                cols: 3,
+                weight_capacity: 10.0,
+                equip_slot: EQUIP_SLOT_CHEST.to_string(),
+                durability_cost_per_op: 0.0,
+                attrition_exempt: false,
+                accept_filter: None,
+            }),
+            shield_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
+        };
+        let mut loot = pack_template.clone();
+        loot.id = "tribulation_loot".to_string();
+        loot.display_name = "劫灰".to_string();
+        loot.category = ItemCategory::Misc;
+        loot.container_spec = None;
+        loot.grid_w = 1;
+        loot.grid_h = 1;
+        let registry = ItemRegistry::from_map(HashMap::from([
+            ("tribulation_chest_pack".to_string(), pack_template),
+            ("tribulation_loot".to_string(), loot),
+        ]));
+
+        // 受害者：穿戴 chest pack（instance 9101）→ rebuild 建 pack_9101 容器 + 1 件内含物。
+        let mut victim = empty_weapon_inventory();
+        let mut pack_item = iron_sword_instance(9_101, 1.0);
+        pack_item.template_id = "tribulation_chest_pack".to_string();
+        pack_item.grid_w = 2;
+        pack_item.grid_h = 2;
+        victim.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(pack_item),
+        );
+        let _ = crate::inventory::rebuild_containers_from_equipment(&mut victim, &registry);
+
+        let pack_id = container_id_for_worn_pack(9_101);
+        let mut loot_item = iron_sword_instance(9_102, 1.0);
+        loot_item.template_id = "tribulation_loot".to_string();
+        loot_item.grid_w = 1;
+        loot_item.grid_h = 1;
+        {
+            let pack = victim
+                .containers
+                .iter_mut()
+                .find(|c| c.id == pack_id)
+                .expect("rebuild should have created pack_9101");
+            pack.items.push(PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: loot_item,
+            });
+        }
+        assert!(
+            victim.containers.iter().any(|c| c.id == pack_id),
+            "前置条件：受害者身上应存在 live pack_9101 容器"
+        );
+
+        let mut killer = empty_weapon_inventory();
+
+        // 截劫夺包：全量转移受害者 inventory 给击杀者。
+        let outcome = transfer_all_inventory_contents(&mut victim, &mut killer, &registry);
+        assert_eq!(
+            outcome.items_moved, 2,
+            "应转移 2 件（pack 本体 + 其内含物 loot）"
+        );
+
+        // 核心断言①：转移后受害者身上不得残留任何 pack_<id> 容器壳（孤儿）。
+        assert!(
+            !victim.containers.iter().any(|c| c.id == pack_id),
+            "transfer 后受害者不得残留孤儿 `{pack_id}` 容器；实际容器列表={:?}",
+            victim.containers.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+        // 核心断言②：转移产物自身不得触发孤儿判定（与 loader 侧检测镜像一致）。
+        assert!(
+            !inventory_has_orphan_pack_container(&victim),
+            "transfer_all_inventory_contents 产物必须自洽，不得被 loader 判为 #736 污染档"
+        );
+
+        // 核心断言③：落盘 + 重载，受害者 inventory 必须能拿回（不得被 loader 丢弃回落默认 loadout）。
+        persist_player_with_inventory(&persistence, "TribulationVictim", &victim);
+        let loaded = load_player_slices(&persistence, "TribulationVictim");
+        assert!(
+            loaded.inventory.is_some(),
+            "受害者被截劫夺包后重登，inventory 不应被 loader 判为污染档丢弃回落默认 loadout"
+        );
+        let reloaded_victim = loaded.inventory.unwrap();
+        assert!(
+            !reloaded_victim.containers.iter().any(|c| c.id == pack_id),
+            "重载后仍不应出现孤儿 `{pack_id}` 容器"
+        );
+
+        // 击杀者应完整收到 pack 本体（worn）+ loot（原容器内含物），战利品不丢。
+        assert!(
+            killer
+                .equipped
+                .get(EQUIP_SLOT_CHEST)
+                .is_some_and(|slot| slot.worn.iter().any(|i| i.instance_id == 9_101)),
+            "击杀者应在 chest.worn 收到夺来的 pack 本体（instance 9101）"
+        );
+        assert!(
+            killer
+                .containers
+                .iter()
+                .flat_map(|c| c.items.iter())
+                .any(|p| p.instance.instance_id == 9_102),
+            "击杀者应收到 pack 内含物 loot（instance 9102），不得在转移中丢件"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
     #[test]
     fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
         let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({

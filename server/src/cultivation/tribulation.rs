@@ -23,7 +23,7 @@ use crate::combat::CombatClock;
 use crate::cultivation::death_hooks::CultivationDeathTrigger;
 use crate::cultivation::life_record::{BiographyEntry, HeartDemonOutcome, LifeRecord};
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
-use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
+use crate::inventory::{transfer_all_inventory_contents, ItemRegistry, PlayerInventory};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE;
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -3674,6 +3674,7 @@ pub fn tribulation_intercept_death_system(
     mut deaths: EventReader<DeathEvent>,
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
+    item_registry: Res<ItemRegistry>,
     mut q: Query<(&TribulationState, &Lifecycle)>,
     mut inventories: Query<&mut PlayerInventory>,
     mut life_records: Query<&mut LifeRecord>,
@@ -3704,7 +3705,11 @@ pub fn tribulation_intercept_death_system(
                 .get_many_mut([death.target, killer_entity])
                 .ok()
                 .map(|[mut victim_inventory, mut killer_inventory]| {
-                    transfer_all_inventory_contents(&mut victim_inventory, &mut killer_inventory)
+                    transfer_all_inventory_contents(
+                        &mut victim_inventory,
+                        &mut killer_inventory,
+                        &item_registry,
+                    )
                 });
             if let Some(outcome) = loot_outcome {
                 tracing::info!(
