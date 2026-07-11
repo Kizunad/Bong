@@ -1,6 +1,6 @@
-# plan-bughunt-player-trade-npc-gate-v1（骨架）
+# plan-bughunt-player-trade-npc-gate-v1
 
-> **骨架（草案）**。一句话主题：`server/src/social/mod.rs` 的玩家交易派发链把仅供 NPC 使用的 `npc_should_decline_trade()` 门禁误接到了 `TradeOfferRequest` 上，导致 **Low / Wanted 声名玩家无法向任何其他玩家发起交易**；目标端不会收到 `trade_offer` payload，发起方只看到一条“对方听过这张面孔的事，不愿交易”的提示，但实际对方根本不是 NPC。
+> **状态：ACTIVE（BugFix 实施中）**。一句话主题：`server/src/social/mod.rs` 的玩家交易派发链把仅供 NPC 使用的 `npc_should_decline_trade()` 门禁误接到了 `TradeOfferRequest` 上，导致 **Low / Wanted 声名玩家无法向任何其他玩家发起交易**；目标端不会收到 `trade_offer` payload，发起方只看到一条“对方听过这张面孔的事，不愿交易”的提示，但实际对方根本不是 NPC。
 
 > 立项动机：这条链路落在 `plan-social-v1` / `plan-input-binding-v1` 已上线的 **玩家↔玩家交易** 主玩法上，且当前仓库已经用单测把错误行为固定成“应拒绝”。它不属于你列出的 cross-dimension witness leak、social anonymity live refresh、identity/social renown bridge、silent signal runtime bridge 几条已知支线，适合作为 server/social 的另一条侧路径 bug skeleton。
 
@@ -41,7 +41,7 @@
 
 ## 反方裁决摘要
 
-> 退化说明：当前会话没有可用的 subagent / delegate 工具，无法按理想流程拉独立只读审查代理做外部裁决；以下两轮为主代理在同一会话内按“默认怀疑”标准做的降级反方裁决，已显式记录反方论点与驳回理由。
+> 下列两轮为 skeleton 立项时按“默认怀疑”标准记录的反方论点与驳回理由；实施完成后还需由全新无上下文只读 validator 对最终 HEAD 做独立裁决。
 
 1. **Round 1 反方论点**：“也许 `TradeOfferRequest` 其实同时服务 NPC 和玩家，`npc_should_decline_trade()` 放这里是统一门禁，不算 bug。”
    **驳回理由**：client `TradeOfferIntentHandler` 只命中 `PlayerEntity`；server `dispatch_trade_offers()` / `handle_trade_offer_responses()` 两端 Query 也都是 `With<Client>`；`resolve_trade_offer_target()` 没有任何 NPC 专用支路。代码证据表明这是纯玩家↔玩家链，而不是共用 trade abstraction。
