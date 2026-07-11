@@ -93,11 +93,14 @@
 
 - P0：`client/src/test/java/com/bong/client/ui/ScreenTransitionScrollCloseTest.java`
   - RED 在修复前证明 `cancelAndClose()` 只取消 handle，`ScrollReadStore.snapshot()` 仍残留。
+  - fresh validator 追加 RED：当前已打开残卷、pending 为无关 screen 时，Esc 不能只结算 pending；当前残卷被 direct-close 后同样必须发送终态。
 - P1：`client/src/main/java/com/bong/client/ui/ScreenTransitionController.java`
-  - 新增 `PendingOpenCancellationHandler` 与 `closeCurrentThenSettlePending(...)`。
-  - 先 direct-close 当前 screen，再结算 pending 协议，避免 A→pending B 时 store listener 重入生成残留 transition。
+  - 新增 `PendingOpenCancellationHandler`、`CurrentScreenCancellationHandler` 与 `closeCurrentThenSettlePending(...)`。
+  - 先 direct-close 当前 screen，再依次结算显式 opt-in 的 current / pending 协议，避免 A→pending B 时 store listener 重入生成残留 transition。
 - P1：`client/src/main/java/com/bong/client/scroll/ScrollReadScreen.java`
-  - 实现 pending-open 取消回调，幂等发送 `scroll_read_closed` 并清空 store。
+  - 实现 pending-open 与 current-screen 取消回调，幂等发送 `scroll_read_closed` 并清空 store。
+- P1：`client/src/main/java/com/bong/client/scroll/ScrollReadStore.java`
+  - 新增按 `ScrollOpenViewModel` 对象身份结算的 `closeIfCurrent(...)`，旧 screen 与发包重入均不能误清后来替换的新会话。
 - P2：同步 `origin/main@307ab4db`；`f4035e33` 引入新的 transport 拒绝语义，据 fresh validator finding 补齐发送失败时仍完成本地关闭终态的处理与回归；`2f2d5081` 同步的后续主线仅涉及 worldgen/server。
 
 ### 关键 commit
@@ -111,21 +114,26 @@
 - `f4035e33`（2026-07-11）：再次合并 `origin/main@7cfcba5f`，同步 transport 拒绝语义。
 - `58932dc4`（2026-07-11）：依据 validator FAIL 修复 transport 拒绝时本地 store 悬挂。
 - `2f2d5081`（2026-07-11）：合并 `origin/main@307ab4db`，同步新手兴趣点修复。
+- `dea0f08b`（2026-07-11）：保护残卷关闭的会话身份，覆盖旧 screen 与 transport 重入替换边界。
+- `d1b233e1`（2026-07-11）：结算转场 direct-close 移除的当前残卷并补精确回归。
 
 ### 测试结果
 
 - RED（JDK 17）：`./gradlew test --tests com.bong.client.ui.ScreenTransitionScrollCloseTest`
   - 修复前 `1 test completed, 1 failed`，失败点为阅读 store 未清空。
-- targeted GREEN（JDK 17）：同命令，最终 `5/5 PASS`：
+- targeted GREEN（JDK 17）：同命令，最终 `6/6 PASS`：
   - pending ScrollRead 发送且仅发送一条 `scroll_read_closed`；
   - 重复 Esc 幂等；
   - 无关 pending screen 不误结算；
+  - 当前 ScrollRead → 无关 pending screen 时，当前会话恰好结算一次；
   - direct-close 发生在 pending settle 之前。
   - transport 拒绝 `scroll_read_closed` 时仍清空本地 store，不让视觉已关闭的会话永久悬挂。
   - transport 抛 `RuntimeException` 时同样完成本地终态，重复 Esc 保持幂等。
+- store targeted GREEN（JDK 17）：`ScrollReadStoreTest` 最终 `10/10 PASS`，覆盖旧 screen 身份隔离与 transport 发包重入替换。
 - 完整门禁（JDK 17）：`./gradlew test build`
   - 修复后：`BUILD SUCCESSFUL`。
   - 合并 `origin/main@307ab4db` 并完成 transport 拒绝/异常返工后：`3789/3789 PASS`，`BUILD SUCCESSFUL`，产物 `client/build/libs/bong-client-0.1.0.jar`。
+  - current-screen 结算返工后：`3792/3792 PASS`，零失败零跳过，`BUILD SUCCESSFUL`。
 
 ### 跨仓库核验
 
@@ -136,6 +144,7 @@
   - `d161135c`：`PASS d161135c9295e3880ae4a4a24287471b41271726`。
   - post-merge `554849f2`：`PASS 554849f2bd0ed7da2ac7fd86c0751eb270fb1922`。
   - `f4035e33`：`FAIL`，发现最新 main 的 transport 拒绝会使本地 store 悬挂；已由 `58932dc4` 返工并补回归。
+  - `f6b5f6aa`：`FAIL`，发现当前 ScrollRead → 无关 pending screen 时 direct-close 会遗漏当前会话终态；已由 `dea0f08b` + `d1b233e1` 返工并补身份隔离与精确回归。
 
 ### 遗留 / 后续
 
