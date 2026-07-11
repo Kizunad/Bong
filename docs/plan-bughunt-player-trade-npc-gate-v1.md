@@ -1,6 +1,6 @@
 # plan-bughunt-player-trade-npc-gate-v1
 
-> **状态：ACTIVE（BugFix 实施中）**。一句话主题：`server/src/social/mod.rs` 的玩家交易派发链把仅供 NPC 使用的 `npc_should_decline_trade()` 门禁误接到了 `TradeOfferRequest` 上，导致 **Low / Wanted 声名玩家无法向任何其他玩家发起交易**；目标端不会收到 `trade_offer` payload，发起方只看到一条“对方听过这张面孔的事，不愿交易”的提示，但实际对方根本不是 NPC。
+> **状态：BLOCKED（metadata-authority）**。代码、饱和回归与实质 validator 审查均已通过；分支前 8 个历史 commit 缺少强制 `Model:` trailer，补齐必须 amend/rebase + force-push，当前未获该破坏性历史改写授权。一句话主题：`server/src/social/mod.rs` 的玩家交易派发链把仅供 NPC 使用的 `npc_should_decline_trade()` 门禁误接到了 `TradeOfferRequest` 上，导致 **Low / Wanted 声名玩家无法向任何其他玩家发起交易**；目标端不会收到 `trade_offer` payload，发起方只看到一条“对方听过这张面孔的事，不愿交易”的提示，但实际对方根本不是 NPC。
 
 > 立项动机：这条链路落在 `plan-social-v1` / `plan-input-binding-v1` 已上线的 **玩家↔玩家交易** 主玩法上，且当前仓库已经用单测把错误行为固定成“应拒绝”。它不属于你列出的 cross-dimension witness leak、social anonymity live refresh、identity/social renown bridge、silent signal runtime bridge 几条已知支线，适合作为 server/social 的另一条侧路径 bug skeleton。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 玩家交易误套 NPC 拒交易门禁 | fix_pr | 🔄 修复完成，待完整门禁 |
+| P0 | 玩家交易误套 NPC 拒交易门禁 | fix_pr | BLOCKED：metadata-authority |
 
 ## P0 — 玩家交易误套 NPC 拒交易门禁
 
@@ -62,6 +62,7 @@
 - 全量测试预跑：设置 `BONG_SKIP_SKIN_PREFETCH=1` 后执行 `cargo test`，lib 为 `11156 passed / 0 failed / 1 ignored`，main 为 `11/11 PASS`，full-app startup 为 `1/1 PASS`，Tarkov backpack e2e 为 `4/4 PASS`，doc-tests 为 `0 failed / 5 ignored`。
 - Validator r1：对 `c3f11874` 判 FAIL；指出 Low 分级与错误拒绝文案未被测试锁住、审计来源仍写当前 report-only。已在 `8f38d898` / `549a1f25` 完成表驱动饱和回归与文档状态修正，targeted test 为 `1/1 PASS`。
 - 返工后全量测试：`cargo test` 为 `11155 passed / 1 failed / 1 ignored`，唯一失败是与本次仅改 social 测试/helper 无关的 POI 墙钟阈值 `scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb`（并发编译负载下耗时 `12.3129s`）；同一修复分支在返工前全量测试曾为 `11156/0/1`。按编译并发调度要求不继续重跑、不跨 scope 修改 POI。
+- Validator r2：全新只读 validator 对 `16a8fb79` 的实质代码、测试、回归面与文档审查全部通过；唯一结论为 `VERDICT: FAIL — 唯一阻塞=metadata-authority`。缺 trailer 的历史提交为 `8467f570`、`8758bdf3`、`084ac90b`、`5ce33163`、`4f777deb`、`76fbb974`、`ed50c5fe`、`c3f11874`；后续提交均带 `Model: gpt-5.6-sol-xhigh`。在获得明确的 amend/rebase/force-push 授权前，不归档、不开 PR。
 - 完整 server gate：仍须等待 Rust stable clippy baseline PR #1170 合入后，基于最新 `origin/main` 重新执行整组 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；当前不得把 baseline 的 69 项跨 scope 复制进本修复。
 - 最终裁决：完整门禁后须在最终 HEAD 上启动全新、无上下文、只读的 `gpt-5.6-sol xhigh` validator；归档导致 HEAD 变化后再次 fresh validator。
 
