@@ -4658,12 +4658,12 @@ mod tests {
     }
 
     #[test]
-    fn trade_offer_dispatch_rejects_wanted_initiator_identity() {
+    fn trade_offer_dispatch_allows_wanted_initiator_identity_between_players() {
         let mut app = App::new();
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
         app.add_systems(Update, dispatch_trade_offers);
-        let (mut initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
+        let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
         initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
         let initiator = app.world_mut().spawn(initiator_bundle).id();
         let mut initiator_identities = PlayerIdentities::with_default("毒蛊师", 0);
@@ -4705,12 +4705,24 @@ mod tests {
         flush_all_client_packets(&mut app);
 
         assert!(
-            collect_server_data_payloads(&mut target_helper).is_empty(),
-            "Wanted initiator should be rejected before trade_offer payload reaches target"
+            collect_chat_messages(&mut initiator_helper).is_empty(),
+            "玩家交易不得伪装成 NPC，替目标玩家按声名自动拒绝"
         );
+        let target_payloads = collect_server_data_payloads(&mut target_helper);
+        assert_eq!(target_payloads.len(), 1);
+        match &target_payloads[0] {
+            ServerDataPayloadV1::TradeOffer(offer) => {
+                assert_eq!(offer.initiator, "char:initiator");
+                assert_eq!(offer.target, "char:target");
+                assert_eq!(offer.offered_item.instance_id, 1001);
+                assert_eq!(offer.requested_items[0].instance_id, 2002);
+            }
+            other => panic!("expected trade offer payload, got {other:?}"),
+        }
         assert_eq!(
             app.world().resource::<TradeOfferRegistry>().pending.len(),
-            0
+            1,
+            "Wanted/Low 只约束 NPC 反应，不得阻断玩家对玩家交易"
         );
     }
 
