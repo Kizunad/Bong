@@ -21,7 +21,9 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  # 同源 PR 评论仍按 PR 资源授权；run 29062098910 已证明仅 issues:write 会返回 403。
+  pull-requests: write
+  # 创建并维护独立熔断状态 issue 及其事件评论。
   issues: write
 
 concurrency:

@@ -274,8 +274,6 @@ test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍
   assert.match(workflow, /continue-on-error: true/);
   assert.match(workflow, /workflow-finalize/);
   assert.match(workflow, /REVIEW_INFRA_FAILURE_THRESHOLD.*'3'/);
-  assert.match(workflow, /pull-requests: read/);
-  assert.doesNotMatch(workflow, /pull-requests: write/);
   assert.match(workflow, /REVIEW_TOTAL_TIMEOUT_MINUTES.*'35'/);
   assert.match(workflow, /REVIEW_GH_TIMEOUT_MS.*'30000'/);
   assert.doesNotMatch(workflow, /REVIEW_CIRCUIT_ISSUE_NUMBER/);
@@ -284,6 +282,21 @@ test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍
   assert.equal(stepTimeouts.length, 8, "每个 workflow step 都必须有独立 timeout");
   assert.ok(stepTimeouts.reduce((sum, value) => sum + value, 0) <= jobTimeout - 15, "必须给调度与 finalize 留至少 15 分钟");
   assert.match(workflow, /timeout-minutes: 40[^]*REVIEW_TOTAL_TIMEOUT_MINUTES:.*'35'/);
+});
+
+test("workflow permissions: PR 评论与独立状态 issue 仅获各自必要写权限并记录依据", () => {
+  const workflow = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
+  const block = workflow.match(/^permissions:\n((?:  (?:#.*|[a-z-]+:.*)\n)+)/m)?.[1] || "";
+  const entries = Object.fromEntries(
+    [...block.matchAll(/^  ([a-z-]+):\s*(read|write|none)\s*(?:#.*)?$/gm)].map((match) => [match[1], match[2]]),
+  );
+
+  assert.deepEqual(entries, { contents: "read", "pull-requests": "write", issues: "write" });
+  assert.doesNotMatch(block, /pull-requests:\s*read/);
+  assert.match(block, /run 29062098910.*403/);
+  assert.match(block, /独立熔断状态 issue/);
+  assert.equal([...workflow.matchAll(/^permissions:/gm)].length, 1, "权限必须集中在顶层，避免 job 级覆盖漂移");
+  assert.equal([...workflow.matchAll(/^\s{2,}permissions:/gm)].length, 0, "job/step 不得覆盖最小权限矩阵");
 });
 
 test("extractJSON: 支持纯 JSON、围栏、前后废话、字符串内括号", () => {
