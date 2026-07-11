@@ -1036,8 +1036,8 @@ function isLocustSwarmSpawnCommand(command: Command): boolean {
 /**
  * plan-agent-ui-data-v1 P2 Fix① — TSY 秘境激活 → triggerUi 参考生产路径。
  *
- * 当 tsy_zone_activated 事件到达时，从 world state 找出秘境内（zone 名匹配 family_id）
- * 或全体在线玩家（若秘境内无人），选第一个玩家触发 tsy_discovery UI 面板。
+ * 当 tsy_zone_activated 事件到达时，按事件携带的 player_id 精确找到触发玩家，
+ * 仅向该玩家触发 tsy_discovery UI 面板。
  *
  * 设计决议（plan §P2 验收 line 167-170）：
  *   - 仅作为"参考生产路径"：垂死传承/天道启示触发源属下游 skeleton plan，不在本 plan 范围
@@ -1052,12 +1052,18 @@ export async function processTsyZoneActivatedForUi(args: {
 }): Promise<void> {
   const { state, events, agentUiRuntime, logger } = args;
   for (const event of events) {
-    // 优先用 event.player_id 直接命中触发玩家（server bridge 已解析为 canonical_player_id）；
+    // 用 event.player_id 直接命中触发玩家（server bridge 已解析为 canonical_player_id）；
     // 旧逻辑「p.zone === event.family_id」在 zone 名带 _shallow/_mid/_deep 后缀时永不匹配，
-    // 已弃用。fallback 到在线第一个玩家以确保面板总能送达。
-    const targetPlayer =
-      state.players.find((p) => p.uuid === event.player_id) ?? state.players[0];
+    // 已弃用。目标玩家未出现在本轮 world state 时必须跳过，不能错投给其他在线玩家。
+    const targetPlayer = state.players.find((p) => p.uuid === event.player_id);
     if (!targetPlayer) {
+      if (state.players.length > 0) {
+        logger.warn(
+          `[tiandao] tsy_zone_activated family=${event.family_id} tick=${event.tick}: ` +
+          `target_player=${event.player_id} missing from world state, skipping triggerUi`,
+        );
+        continue;
+      }
       logger.log(
         `[tiandao] tsy_zone_activated family=${event.family_id} tick=${event.tick}: ` +
         `no online players, skipping triggerUi`,
