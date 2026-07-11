@@ -79,6 +79,31 @@ class ScreenTransitionScrollCloseTest {
     }
 
     @Test
+    void cancelFromCurrentScrollToUnrelatedPendingScreenSettlesCurrentSession() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8))));
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_current", "《残卷》", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen currentScreen = new ScrollReadScreen(offer);
+        ScreenTransition.TransitionHandle handle = activateTransition(currentScreen, new DummyScreen());
+
+        ScreenTransitionController.cancelAndClose(null);
+        ScreenTransitionController.cancelAndClose(null);
+
+        assertTrue(handle.cancelled(), "Esc 取消应终止从当前残卷离开的转场");
+        assertNull(ScrollReadStore.snapshot(),
+            "当前残卷被转场直接移除时也必须结算阅读终态，不能只检查无关 pending screen");
+        assertEquals(
+            List.of(new Sent(
+                new Identifier("bong", "client_request"),
+                "{\"type\":\"scroll_read_closed\",\"v\":1}"
+            )),
+            sent,
+            "当前残卷关闭与重复 Esc 必须合计恰好发送一条 scroll_read_closed"
+        );
+    }
+
+    @Test
     void rejectedTerminalTransportStillClearsPendingScrollSession() {
         ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
         ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_rejected", "《残卷》", List.of("正文"));
@@ -120,6 +145,7 @@ class ScreenTransitionScrollCloseTest {
         OrderingAwareScreen pendingScreen = new OrderingAwareScreen(currentScreenClosed);
 
         ScreenTransitionController.closeCurrentThenSettlePending(
+            null,
             pendingScreen,
             () -> currentScreenClosed[0] = true
         );
@@ -130,8 +156,12 @@ class ScreenTransitionScrollCloseTest {
     }
 
     private static ScreenTransition.TransitionHandle activatePending(Screen pendingScreen) {
+        return activateTransition(null, pendingScreen);
+    }
+
+    private static ScreenTransition.TransitionHandle activateTransition(Screen currentScreen, Screen pendingScreen) {
         ScreenTransition.TransitionHandle handle = ScreenTransition.play(
-            null,
+            currentScreen,
             pendingScreen,
             ScreenTransition.Type.FADE,
             200,

@@ -75,9 +75,11 @@ public final class ScreenTransitionController {
     }
 
     public static void cancelAndClose(MinecraftClient client) {
+        Screen currentScreen = currentScreenForCancellation(client);
         Screen pendingScreen = pendingScreenForCancellation();
         clearActiveTransition();
         closeCurrentThenSettlePending(
+            currentScreen,
             pendingScreen,
             () -> {
                 if (client != null) {
@@ -147,9 +149,27 @@ public final class ScreenTransitionController {
         return active.handle().newScreen();
     }
 
-    static void closeCurrentThenSettlePending(Screen pendingScreen, Runnable closeCurrentScreen) {
+    private static Screen currentScreenForCancellation(MinecraftClient client) {
+        if (client != null) {
+            return client.currentScreen;
+        }
+        ActiveTransition active = activeTransition;
+        if (active == null || active.handle().completed()) {
+            return null;
+        }
+        return active.handle().oldScreen();
+    }
+
+    static void closeCurrentThenSettlePending(
+        Screen currentScreen,
+        Screen pendingScreen,
+        Runnable closeCurrentScreen
+    ) {
         if (closeCurrentScreen != null) {
             closeCurrentScreen.run();
+        }
+        if (currentScreen instanceof CurrentScreenCancellationHandler handler) {
+            handler.onCurrentScreenCancelled();
         }
         if (pendingScreen instanceof PendingOpenCancellationHandler handler) {
             handler.onPendingOpenCancelled();
@@ -161,6 +181,13 @@ public final class ScreenTransitionController {
      */
     public interface PendingOpenCancellationHandler {
         void onPendingOpenCancelled();
+    }
+
+    /**
+     * 转场取消会直接移除的当前 screen 若携带协议终态，可实现此接口在移除后幂等收口。
+     */
+    public interface CurrentScreenCancellationHandler {
+        void onCurrentScreenCancelled();
     }
 
     public record ActiveTransition(

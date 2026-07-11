@@ -44,7 +44,8 @@ import java.util.Objects;
  * 恒为 {@code false}（阅读不暂停游戏，对齐全仓其余 owo screen 惯例）。
  */
 public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
-    implements ScreenTransitionController.PendingOpenCancellationHandler {
+    implements ScreenTransitionController.PendingOpenCancellationHandler,
+    ScreenTransitionController.CurrentScreenCancellationHandler {
     private static final int PANEL_WIDTH = 260;
     private static final int OUTER_PADDING = 14;
     private static final int VIEWPORT_HEIGHT_PX = 160;
@@ -197,9 +198,18 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
 
     @Override
     public void onPendingOpenCancelled() {
+        settleTransitionCancellation();
+    }
+
+    @Override
+    public void onCurrentScreenCancelled() {
+        settleTransitionCancellation();
+    }
+
+    private void settleTransitionCancellation() {
         if (!closed) {
             closed = true;
-            ScrollReadStore.close();
+            ScrollReadStore.closeIfCurrent(viewModel);
         }
     }
 
