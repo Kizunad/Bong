@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 证真、修复 dash reject one-shot 生命周期并锁定跨层 HUD 时序 | ✅ 2026-07-11 |
+| P0 | 证真、修复 dash reject one-shot 生命周期并锁定跨层 HUD 时序 | [BLOCKED: Rust 1.96.0 下 `cargo clippy --all-targets -- -D warnings` 命中 origin/main 既有 69 个 lint，本 plan 不跨 scope 修全仓] |
 
 ## 接入面
 
@@ -36,7 +36,7 @@
 ### 可核验交付物
 
 - `server/src/movement/mod.rs`：`MovementState::take_payload`（或等价发送后消费函数）与 `emit_movement_state_payloads` one-shot 接线。
-- server pin：首次 take/send payload 携带 `MovementActionRequestV1::Dash`，紧接的第二次 payload 为 `None`；无 reject、连续两次新 reject、序列化失败保留重试语义均有覆盖。
+- server pin：`movement_emit_system_consumes_reject_and_stamina_followups_stay_clear` 使用 `MockClient` 真实执行 `emit_movement_state_payloads`，锁定 Added 首包 `Dash`、ack 不自激、`Changed<Stamina>` 后续包 `None`、第二次新 reject 可再发；`serialization_failure_keeps_reject_for_next_successful_send` 用可测 seam 注入 `Oversize` 序列化失败，锁定零发送、保留 reject 与下次真实序列化重试。
 - `client/src/test/java/com/bong/client/hud/MovementHudPlannerTest.java` / `client/src/test/java/com/bong/client/movement/MovementStateTest.java`：单次 reject 在 300ms 边界后不再闪红，HUD 在 3000ms visible + 500ms fade 后 auto-hide；新的独立 reject 仍可重新触发。
 - 门禁：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；`cd client && JAVA_HOME=<JDK17> PATH=<JDK17>/bin:$PATH ./gradlew test build`。
 
@@ -55,16 +55,18 @@
 2. **重发链成立**：`MovementStateEmitFilter` 在 `server/src/movement/mod.rs:475-481` 包含 `Changed<Stamina>`；`stamina_tick` 在 `server/src/combat/lifecycle.rs:272-304` 每 4 tick 写回恢复中的 `Stamina.current`。修复前 `to_payload` 会在每次下发原样复制同一个持久 reject。
 3. **HUD 续命链成立**：`MovementStateStore.replace` 在 `client/src/main/java/com/bong/client/movement/MovementStateStore.java:21-34` 对每个非空 reject 重置 `rejectedAtMs` 与 `hudActivityAtMs`；重发间隔 200ms 小于 `MovementHudPlanner.REJECT_FLASH_MS = 300ms`，因此会连续刷新闪红与 3.5s auto-hide 计时。
 4. **反方路线排除**：client 不能按相同枚举值去重，因为两次独立合法拒绝同样是 `Dash`，而协议没有 sequence。最小正确断点是 server 发送边界。
-5. **修复结果**：`emit_movement_state_payloads` 现在先构造和序列化 payload，仅在 `send_server_data_payload` 交付后调用 `acknowledge_payload_sent`消费 reject（`server/src/movement/mod.rs:484-538`）。序列化失败路径直接 `continue`，不会丢失待重试标记；消费造成的 `Changed<MovementState>` 只会额外下发一份 reject 为空的清理状态，不会再次续命。
+5. **修复结果**：`emit_movement_state_payloads` 通过 `send_movement_state_payload` 先构造、序列化并交付 payload，仅成功后调用 `acknowledge_payload_sent` 消费 reject。序列化失败在 ack 之前返回，不会发送半成品或丢失待重试标记。真实 ECS 测试还确认 emit 内 ack 不会在下一 tick 自激发送，之后仅 `Changed<Stamina>` 触发的 payload 为 `rejected_action=None`。
 6. **RED 证据**：修复前运行 `cargo test movement::tests::rejected_action_payload_is_one_shot_and_can_be_rearmed -- --exact` 因 one-shot 消费入口缺失而编译红（`E0599: no method named take_payload`）；代码对拍同时确认连续 `to_payload` 会原样复制持久 reject。
-7. **局部 GREEN 证据**：`cargo test movement::tests::` 通过（44 passed, 0 failed）；JDK 17.0.19 下 `./gradlew test --tests 'com.bong.client.hud.MovementHudPlannerTest' --tests 'com.bong.client.network.MovementStateHandlerTest'` 通过。完整门禁与 validator 结果在归档时填入 Finish Evidence。
+7. **局部 GREEN 证据**：`movement_emit_system_consumes_reject_and_stamina_followups_stay_clear` 与 `serialization_failure_keeps_reject_for_next_successful_send` 各 `1 passed`；既有 `cargo test movement::tests::` 为 44 passed；JDK 17.0.19 下 client 相关两组测试通过。
 
-## Finish Evidence
+## 当前验证证据（未满足 Finish Evidence，不可归档）
+
+`[BLOCKED: Rust 1.96.0 下执行 cd server && cargo clippy --all-targets -- -D warnings 失败；origin/main 既有 69 个 clippy 诊断，主要为 manual_is_multiple_of / derivable_impls / manual_checked_ops。本 movement PR 新增段无独立诊断，且不获授权跨 scope 修复全仓基线，因此 P0 保持 BLOCKED 且 plan 撤回 active。]`
 
 ### 落地清单
 
 - P0 server：`server/src/movement/mod.rs::emit_movement_state_payloads` 在 payload 序列化并交付后调用 `MovementState::acknowledge_payload_sent`，使 `rejected_action` 成为可重试的 edge-triggered one-shot。
-- P0 server tests：覆盖首次拒绝、stamina-only 后续包、连续独立拒绝、未 ack 保留重试、空拒绝幂等性与 tick 边界。
+- P0 server tests：真实 `MockClient + App + emit_movement_state_payloads` 路径覆盖 Added、无自激、`Changed<Stamina>` 与再次 reject；可测 serializer seam 覆盖失败前不 ack 与下次成功重试。
 - P0 client tests：`MovementStateHandlerTest` 锁定 stamina-only 包不刷新历史 reject 时间；`MovementHudPlannerTest` 锁定 300ms 闪红边界与 3000ms + 500ms auto-hide。
 
 ### 关键 commit
@@ -73,6 +75,7 @@
 - `dc22011c` · 2026-07-11 · 增加 server/client 跨层 one-shot 时序 pin。
 - `14845dbd` · 2026-07-11 · 在 server 成功发送边界消费 dash reject。
 - `1dce0256` · 2026-07-11 · 回填第一性原理证真证据。
+- `c0525b83` · 2026-07-11 · 按 `/review` 要求改为真实 ECS 发送链与可注入失败路径测试。
 
 ### 测试结果
 
@@ -80,8 +83,7 @@
 - `cd server && cargo test`：`10934 passed, 0 failed, 1 ignored`；其他 test target 为 `11/11`、`1/1`、`4/4` 通过，5 项显式 ignored。
 - `cd client && JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=<worktree-private> JAVA_HOME=<JDK17> PATH=<JDK17>/bin:$PATH ./gradlew test build`：JDK `17.0.19`，`3710` tests，`BUILD SUCCESSFUL`。
 - `cd server && cargo clippy --all-targets -- -D warnings`：当前 Rust `1.96.0` 对 `origin/main` 既有代码报 69 个新 lint（主要为 `manual_is_multiple_of` / `derivable_impls`）；本 PR 新增段无 clippy 诊断。原始结果已如实保留，未跨 scope 修改全仓基线。
-- 无上下文 read-only validator：`PASS 1dce0256a090e752d8b62b231c6803ad7745045d`。
-- `git fetch origin && git merge origin/main`：`Already up to date`，validator 绑定 HEAD 未变。
+- 无上下文 read-only validator：旧 verdict 只绑定反馈前 HEAD，因 `c0525b83` 变更已作废；当前 HEAD 待 fresh validator。
 
 ### 跨仓库核验
 
@@ -91,5 +93,5 @@
 
 ### 遗留 / 后续
 
-- Rust 1.96 新 clippy lint 导致 `origin/main` 级全仓 `-D warnings` 基线不绿，需独立的仓库维护 PR 统一处理；与本 movement 生命周期修复无代码依赖。
+- Rust 1.96 新 clippy lint 导致 `origin/main` 级全仓 `-D warnings` 基线不绿；当前 plan 因此保持 `[BLOCKED]`、不归档，待独立仓库维护 PR 修复基线后再完成归档。
 - 本 plan 不新增 schema sequence，因为 server one-shot 边界已能区分两次独立 `Dash` reject，避免扩大协议 scope。
