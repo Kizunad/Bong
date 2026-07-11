@@ -293,6 +293,17 @@ public class SocialServerDataHandlerTest {
     }
 
     @Test
+    void blankInviteIdentityCannotClearCurrentInvite() {
+        SocialStateStore.SparringInvite current = sparringInvite("sparring:current", 5_000L);
+        assertEquals(SocialStateStore.SparringInviteUpdate.ACCEPTED, SocialStateStore.enqueueSparringInvite(current));
+
+        SocialStateStore.clearSparringInvite("   ");
+
+        assertNotNull(SocialStateStore.sparringInvite(), "空 identity 不能退化为清理当前邀请，否则迟到 UI 会误清后继状态");
+        assertEquals(current.inviteId(), SocialStateStore.sparringInvite().inviteId());
+    }
+
+    @Test
     void nicheIntrusionAndGuardianEventsUpdateDefenseStore() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 

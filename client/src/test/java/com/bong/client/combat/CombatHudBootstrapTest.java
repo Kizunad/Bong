@@ -2,6 +2,7 @@ package com.bong.client.combat;
 
 import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.VisualEffectState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +14,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CombatHudBootstrapTest {
@@ -31,6 +33,7 @@ class CombatHudBootstrapTest {
     void reset() {
         HudImmersionMode.resetForTests();
         DefenseWindowStore.resetForTests();
+        SocialStateStore.resetForTests();
         ClientRequestSender.resetBackendForTests();
     }
 
@@ -47,6 +50,31 @@ class CombatHudBootstrapTest {
         assertEquals(
             HudImmersionMode.Mode.PEACE,
             HudImmersionMode.resolve(CombatHudState.empty(), VisualEffectState.none(), 1_500L)
+        );
+    }
+
+    @Test
+    void resetOnDisconnectClearsEntireSparringInviteLifecycle() {
+        SocialStateStore.SparringInvite previous = invite("sparring:0002", 6_000L);
+        assertEquals(SocialStateStore.SparringInviteUpdate.ACCEPTED, SocialStateStore.enqueueSparringInvite(previous));
+        SocialStateStore.clearSparringInvite(previous.inviteId());
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.SETTLED,
+            SocialStateStore.enqueueSparringInvite(previous),
+            "测试前置：旧 session 应已留下 settled tombstone"
+        );
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.ACCEPTED,
+            SocialStateStore.enqueueSparringInvite(invite("sparring:0003", 7_000L))
+        );
+
+        CombatHudBootstrap.resetOnDisconnect();
+
+        assertNull(SocialStateStore.sparringInvite(), "生产断线入口必须清空旧 session 的 pending 邀请");
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.ACCEPTED,
+            SocialStateStore.enqueueSparringInvite(previous),
+            "新 session 必须同时复位 tombstone 与版本高水位，不能拒绝合法复用 identity"
         );
     }
 
@@ -109,5 +137,17 @@ class CombatHudBootstrapTest {
 
         assertTrue(sentPayloads.isEmpty(),
             "期望窗口未开时连按截脉键依旧零发包（无累积洪流），实际发了：" + sentPayloads);
+    }
+
+    private static SocialStateStore.SparringInvite invite(String inviteId, long expiresAtMs) {
+        return new SocialStateStore.SparringInvite(
+            inviteId,
+            "char:a",
+            "char:b",
+            "凝脉",
+            "气息相试",
+            "点到为止",
+            expiresAtMs
+        );
     }
 }

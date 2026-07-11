@@ -67,15 +67,32 @@ public class SparringInviteScreenTest {
         SocialStateStore.enqueueSparringInvite(first);
         SocialStateStore.enqueueSparringInvite(second);
         SocialStateStore.clearSparringInvite(first.inviteId());
-        ClientRequestSender.setBackendForTests((channel, payload) -> { });
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, StandardCharsets.UTF_8))
+        );
 
         new SparringInviteScreen(first).close();
 
+        assertTrue(sentPayloads.isEmpty(), "已结算旧 screen 的迟到 close 不得重复发送拒绝响应");
         assertEquals(
             "sparring:second",
             SocialStateStore.sparringInvite().inviteId(),
             "旧 screen 的迟到 close 只能清自己的 identity，不能误清后继邀请"
         );
+    }
+
+    @Test
+    void duplicateScreensForSameInviteSendOnlyOneResponse() {
+        SocialStateStore.SparringInvite invite = invite("sparring:duplicate-screen", 5_000L);
+        SocialStateStore.enqueueSparringInvite(invite);
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sentPayloads.add(new String(payload, StandardCharsets.UTF_8))
+        );
+
+        new SparringInviteScreen(invite).close();
+        new SparringInviteScreen(invite).close();
+
+        assertEquals(1, sentPayloads.size(), "同一 invite identity 即使残留两个 screen，也只能结算一次");
     }
 
     private static SocialStateStore.SparringInvite invite(String inviteId, long expiresAtMs) {
