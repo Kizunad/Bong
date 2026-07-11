@@ -205,7 +205,7 @@ Agent(
 
 ### §10.4 CodeRabbit ScheduleWakeup 等待协议
 
-每 PR 走完整等待：`gh pr checks <PR>` pending → `ScheduleWakeup delaySeconds=1200`，最多 3 回合 60min；fail 按 commands/consume-plan.md step 7 严重性桶处理；修完 review 必重等 CR re-review，不自判通过；前一个 PR 未 APPROVED/收敛不开下一个。
+每 PR 走完整等待：`gh pr checks <PR>` pending → `ScheduleWakeup delaySeconds=1200`，最多 3 回合 60min；fail 按 skills/consume-plan/SKILL.md step 7 严重性桶处理；修完 review 必重等 CR re-review，不自判通过；前一个 PR 未 APPROVED/收敛不开下一个。
 
 ### §10.5 单次 consume-plan 全自动到 merge
 

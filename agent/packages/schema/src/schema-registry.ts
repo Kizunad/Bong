@@ -109,6 +109,8 @@ import {
   ZhenfaTriggerRequestV1,
 } from "./client-request.js";
 import {
+  QuickSlotConfigV1,
+  QuickSlotEntryV1,
   SkillBarConfigV1,
   SkillBarEntryV1,
   TechniquesSnapshotV1,
@@ -289,6 +291,7 @@ import {
   ServerDataExtractStartedV1,
   ServerDataRiftPortalRemovedV1,
   ServerDataRiftPortalStateV1,
+  ServerDataQuickSlotConfigV1,
   ServerDataSkillCapChangedV1,
   ServerDataSkillBarConfigV1,
   ServerDataSkillLvUpV1,
@@ -703,11 +706,14 @@ export const SCHEMA_REGISTRY = {
   serverDataFullPowerReleaseV1: ServerDataFullPowerReleaseV1,
   serverDataFullPowerExhaustedStateV1: ServerDataFullPowerExhaustedStateV1,
   qiColorObservedV1: QiColorObservedV1,
+  quickSlotEntryV1: QuickSlotEntryV1,
+  quickSlotConfigV1: QuickSlotConfigV1,
   skillBarEntryV1: SkillBarEntryV1,
   skillBarConfigV1: SkillBarConfigV1,
   techniquesSnapshotV1: TechniquesSnapshotV1,
   skillConfigV1: SkillConfigV1,
   skillConfigSnapshotV1: SkillConfigSnapshotV1,
+  serverDataQuickSlotConfigV1: ServerDataQuickSlotConfigV1,
   serverDataSkillBarConfigV1: ServerDataSkillBarConfigV1,
   serverDataTechniquesSnapshotV1: ServerDataTechniquesSnapshotV1,
   serverDataSkillConfigSnapshotV1: ServerDataSkillConfigSnapshotV1,
@@ -1227,11 +1233,15 @@ export const GENERATED_SCHEMA_FILES = {
   "server-data-full-power-exhausted-state-v1.json":
     SCHEMA_REGISTRY.serverDataFullPowerExhaustedStateV1,
   "qi-color-observed-v1.json": SCHEMA_REGISTRY.qiColorObservedV1,
+  "quick-slot-entry-v1.json": SCHEMA_REGISTRY.quickSlotEntryV1,
+  "quick-slot-config-v1.json": SCHEMA_REGISTRY.quickSlotConfigV1,
   "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
   "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,
   "techniques-snapshot-v1.json": SCHEMA_REGISTRY.techniquesSnapshotV1,
   "skill-config-v1.json": SCHEMA_REGISTRY.skillConfigV1,
   "skill-config-snapshot-v1.json": SCHEMA_REGISTRY.skillConfigSnapshotV1,
+  "server-data-quick-slot-config-v1.json":
+    SCHEMA_REGISTRY.serverDataQuickSlotConfigV1,
   "server-data-skill-bar-config-v1.json":
     SCHEMA_REGISTRY.serverDataSkillBarConfigV1,
   "server-data-techniques-snapshot-v1.json":

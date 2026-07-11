@@ -1454,7 +1454,9 @@ pub fn tribulation_aoe_system(
             wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
             for _ in 0..profile.strikes {
                 wounds.entries.push(Wound {
-                    location: BodyPart::Chest,
+                    // humanoid-only boundary（P0 决议，本轮不迁移）：渡劫雷击是无差别范围
+                    // 伤害，固定命中 Chest 代表部位；玩家恒为人形。
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Burn,
                     severity: strike_damage * damage_multiplier,
                     bleeding_per_sec: 0.0,
@@ -1692,7 +1694,9 @@ fn apply_juebi_phase_damage(
     let was_alive = wounds.health_current > 0.0;
     wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
     wounds.entries.push(Wound {
-        location: BodyPart::Chest,
+        // humanoid-only boundary（P0 决议，本轮不迁移）：绝壁天劫波是无差别范围伤害，
+        // 固定命中 Chest 代表部位；玩家恒为人形。
+        location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
         kind: WoundKind::Concussion,
         severity: damage,
         bleeding_per_sec: 0.0,

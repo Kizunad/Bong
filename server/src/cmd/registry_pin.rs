@@ -9,6 +9,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "coffin",
     // plan-offscreen-war-v1 P6：玩家参与涌现冲突（/faction join|mercenary|intercept）
     "faction",
+    // plan-dense-fog-v1 P1 前置：动态雾堤 dev 命令
+    "fog",
     // plan-worldgen-v4 P5：画廊审阅闭环 stamp 命令（/gallery）
     "gallery",
     "give",
@@ -69,6 +71,12 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "faction join <target:string>",
     "faction list",
     "faction mercenary <group:integer>",
+    // plan-dense-fog-v1 P1 前置：动态雾堤 dev 命令
+    "fog clear <id:string>",
+    "fog clear_all",
+    "fog list",
+    "fog spawn <radius:double> <density:double>",
+    "fog spawn <radius:double> <density:double> <duration_ticks:integer>",
     // plan-worldgen-v4 P5：画廊审阅闭环 stamp 命令（无参数）
     "gallery",
     // plan-worldgen-v4 P6：装饰虚空审阅台（出生点上空铺全部 54 个 NBT 装饰变体）
@@ -119,6 +127,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "time advance <ticks:integer>",
     "top",
     "tppoi <zone:string> <poi:string>",
+    "tppoi novice",
     "tptree <tree:string>",
     "tpzone <zone:string>",
     "tribulation_debug",
@@ -154,6 +163,7 @@ mod tests {
                 "clearinv",
                 "coffin",
                 "faction",
+                "fog",
                 "gallery",
                 "give",
                 "gm",

@@ -362,7 +362,10 @@ pub(crate) fn apply_alchemy_explode_outcomes(
         if damage > f32::EPSILON {
             wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
             wounds.entries.push(Wound {
-                location: BodyPart::Chest,
+                // humanoid-only boundary（P0 决议，本轮不迁移）：丹炉炸炉没有攻击几何/瞄准
+                // 方向，历来固定命中 Chest 代表部位——玩家现阶段恒为人形，legacy_body_part_to_id
+                // 全双射转换，行为不变。
+                location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                 kind: WoundKind::Burn,
                 severity: damage,
                 bleeding_per_sec: 0.0,

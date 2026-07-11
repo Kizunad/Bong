@@ -56,6 +56,7 @@ bash scripts/smoke-test.sh
 | `/give <template_id> [count]` | 给予物品 |
 | `/clearinv [pack\|all\|naked]` | 清背包 / hotbar / 装备槽 |
 | `/zone_qi set <name> <value>` | 直写区域灵气浓度 |
+| `/fog spawn <radius> <density> [duration_ticks]` / `/fog clear <id>` / `/fog clear_all` / `/fog list` | 以自己为中心生成/清除动态雾堤（density ≥ 0.85 触发视距遮蔽） |
 | `/kill self` / `/revive self` | 触发玩家死亡 / 复活事件链路 |
 | `/time advance <ticks>` | 快进 `CultivationClock` |
 
@@ -150,6 +151,35 @@ bash scripts/smoke-test.sh
 
 其他 `docs/` 文件 / `CLAUDE.md` / `worldview.md` 严禁自动改——遇到必须改的情况停下交人工。
 
+## BugFix 工作流（多 agent 并行修复 bughunt skeleton）
+
+bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费（feature plan 走 `/consume-plan`，别混）。形态：**1 个主干调度 agent + N 个并行修复 subagent**——N 和 subagent 模型由用户启动时指定（原型默认 2 个，惯例 gpt-5.6 sol xhigh）。整体 loop 直到用户明确叫停：配额接近阈值只暂停（`ScheduleWakeup` 等 reset），**不自行终止**。
+
+### 主干（调度）职责——只调度，不动代码
+
+主干保持上下文干净，只做：分派 skeleton、等待、验收关闭 subagent、清理已闭环 worktree 的生成目录、派发 review 返工、补齐并发。**不 push、不 merge、不开 PR、不直接修代码。**
+
+- 任务清单以 **origin/main** 为准：`git fetch` 后读 skeleton 列表。**防重的权威机制是原子 claim 锁，唯一创建主体是 subagent**（执行命令见 Subagent step 1，主干只派任务、绝不抢先创建 claim ref——两个角色都建 ref 会让正常派发必得 422 死锁）。普通 `git push` 没有 create-only 语义（两会话同 base 时第二个 push 是 no-op 也"成功"），不得用作互斥依据；查询式检查有 TOCTOU 竞态。派发前**四查**只作辅助诊断：① skeleton 在 origin/main 上仍存在 ② 无同名 active plan ③ 目标 symbol 未被已 merge 的修复覆盖 ④ 无同名远端分支 / 开放 PR（`gh pr list --state open --search "plan-X"`）。占用持续到对应 PR merge/close 才解除（promotion 只发生在 subagent 分支上，PR 未合并时 origin/main 依旧满足前三查）
+- **一个 skeleton = 一个 subagent = 一个 worktree = 一个 PR**（对齐「一个 PR 只动一个 plan」）
+- 编译型 worktree 并发 **≤2**（3 个并行 cargo 编译历史上 OOM + 塞盘）；validator/验证类 agent 并发 **≤3**。共享 `CARGO_TARGET_DIR` 时删过 worktree 后若报 `No such file` → `cargo clean -p valence_generated`（这是故障修复手段，须确认无并行编译在跑时才执行）
+- subagent 回报只带结论（PR 链接 / commit hash / validator PASS 证据），不回灌大段 diff/日志进主干上下文
+- subagent 闭环（PR 开出 + e2e 绿）后**必须完整清理再补位**：关闭 agent → `git worktree unlock` + `remove` → **`git branch -D bugfix/plan-X` 删本地分支**（顺序不能反：分支被 worktree 检出时删不掉）→ 删 worktree **私有**生成物（**共享 `CARGO_TARGET_DIR` 严禁任务级清理**——并行任务还在用，共享缓存只能由主干在确认全部编译停止后统一清）→ `git worktree prune`。本地只留 in-flight 的 worktree/分支，历史上残留 worktree + 缓存曾塞掉上百 G。远端分支不动（返工/merge 还要用），PR merge 后由 squash-merge 删或 `git push origin --delete`
+- **claim 锁的释放也归主干**：PR merge 后核验远端 claim 分支确已删除（不依赖仓库自动删分支设置，没删就 `git push origin --delete bugfix/plan-X`）；PR close 未合并且确认放弃时，先核验无开放 PR、无在跑 subagent，再删 ref 让任务重新开放——锁不能靠"大概会自动清"悬着。**孤儿锁回收**：claim 成功但 PR 尚未创建时 subagent 异常退出/失联，主干确认无开放 PR、无存活 subagent、远端无需保留的提交后删 claim ref 重开任务；每轮补位时顺带巡检一遍孤儿锁。claim ref 的创建/删除是**锁运维**，是主干「不 push」禁令的唯一例外（该禁令约束的是提交/分支内容，不是锁 ref 生命周期管理）
+- **review 返工也是主干的调度责任**：主干盯 in-flight PR 的 `/review` / CodeRabbit 结果，出现修改意见时派**返工 subagent** 从 PR 分支重建 worktree（原 worktree 已清理无妨，分支在远端）。返工序列（幂等，**不得重复 promotion / Finish Evidence 追加 / git mv 归档**）：修代码 → validator（step 4）→ 按栈门禁（step 5）→ fetch/merge 最新主线（step 6，带进变更则复验）→ 结论或证据变化时只**原地更新**已归档 plan 的 Finish Evidence → push 同一远端分支 → 等新 HEAD 的 e2e → **重发 `/review` 评论**（引擎对后续提交不自动跑）——review 意见永远有责任主体，不悬空
+
+### Subagent（修复）流程
+
+1. **Claim + 开独立 worktree/branch**：subagent 是 claim ref 的**唯一创建主体**。分支名固定 `bugfix/<plan-basename>`，认领 = create-ref API 原子创建远端分支：`gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/bugfix/plan-X" -f sha="$(git rev-parse origin/main)"`——**201 = 认领到手**；**422 先甄别再判占用**（查响应体 / `git ls-remote` 确认同名 ref 确实存在才算被占、回报主干换任务；其他原因的 422 = 流程错误，上报诊断而不是换任务）。认领成功后 `git fetch origin bugfix/plan-X` 同步远端引用，再 **`git worktree add --lock`**（一步完成创建 + 锁定，消除 add→lock 之间被外部 orchestrator prune 的竞态；本地分支显式跟踪该 ref，核验 worktree HEAD = claim SHA）；worktree 建立失败 → 删刚创建的 claim ref 回滚，不留孤儿锁
+2. **Promotion**：`git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，单独中文 commit（本工作流内的 promotion 由 subagent 在自己分支内完成，是「骨架 → Active 人工流转」的授权例外）
+3. **第一性原理验真**：不信 skeleton 的结论，自己读代码 / 写复现证明是不是真 bug
+   - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
+   - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
+4. **对抗验证（强制闭环门）**：修复完成后 subagent **必须自己**再开一个**无上下文、read-only、第一性原理**的 validator agent 对抗审查。启动时**显式传入 worktree 绝对路径 + 待审 HEAD SHA**，validator 第一步回报 `git rev-parse HEAD` 与目标对拍，PASS/FAIL 结论必须携带该 SHA（防对错误代码的假 PASS）。validator 只输出 PASS/FAIL + 理由，不改代码；**出结论即关闭**——PASS / FAIL / 超时 / 异常四条路径都要关，不留活 validator 占并发槽。FAIL → 返工 → **对新 HEAD 开新的无上下文 validator 重验**，循环直到 PASS 才算闭环；此后任何 HEAD 变化（返工、合并主线）都必须对新 SHA 重验
+5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；client：`cd client && ./gradlew test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；worldgen：`bash scripts/dev-reload.sh`（仓库根目录执行，`set -euo pipefail` 任一步失败即非零退出；[1/4] regen + [2/4] raster 后验走 `scripts.terrain_gen.harness.raster_check.validate_rasters`）。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
+6. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或 merge 触及修复相关文件 → **回 step 4 重跑 validator** 直到 PASS
+7. **归档**：把 plan 各阶段状态更新为 `✅ YYYY-MM-DD` + 补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3）——归档前置与三态流转契约一致（全部阶段 ✅ 且 Finish Evidence 齐），然后独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
+8. **Push + 开 PR + 触发 review**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 validator 模型），随后 `gh pr comment <PR> --body "/review"` **显式发独立评论触发首轮审查**（不依赖自动触发假设；引擎就算自动跑了，重复评论也无害）。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
+
 ## Testing — 饱和化测试
 
 **核心原则**：测试要把"目标行为"完全锁住，让任何回归都立刻撞红。我不接受"smoke 过了就行"或"happy path 跑通"的节流——目标没被测试稳稳锁住，就等于没写。
@@ -160,3 +190,89 @@ bash scripts/smoke-test.sh
 - **schema / enum / 状态机有专属 pin 测试**：每个 TypeBox / serde variant 都要有正反 sample 对拍；每个 enum 变体至少一条专属 case；每个 state transition (A→B、A→C、A→A) 都有命中用例。schema 改动连同 sample 一起改
 - **集成测试走完整链路**：单元测试不能替代集成测试。client 发请求 → server 处理 → emit payload → client 收到 这种端到端路径要有专门的 e2e 用例，不要假设单元拼起来就是对的
 - **失败信息带修复线索**：assert 写清"期望是 X 因为 Y，实际是 Z"，而不是 `assertEq(a, b)` 一行带过。撞红时不需要 git blame 才能理解为什么
+
+---
+
+# Agent 行为硬约束
+
+> 以下各节自原 `AGENTS.md` 并入（原文件是 oh-my-opencode 注入层，随多 harness 布局废弃）；`AGENTS.md` 现为指向本文件的 symlink，供按惯例读取 AGENTS.md 的 harness（Codex 等外部 orchestrator）共用同一份约束。
+
+## 禁止动作
+
+- 用户明确要求 `commit` / `push` / `开 PR` / `gh pr create` 时，视为已授权普通提交、普通推送和 PR 创建，**无需二次确认**
+- 仍需明确确认：`git push --force`、`git reset --hard`、`git commit --amend`、交互式 rebase、批量删除/移动文件、依赖版本或生产配置改动
+- 严禁 `--no-verify`、`--no-gpg-sign`、`-c commit.gpgsign=false`
+- 不绕过 "Java 17 for Fabric" 约定；不要跨栈调命令（server 里不跑 npm、agent 里不跑 cargo）
+- 不改 `.gitignore`、`package.json`、`Cargo.toml` 的依赖版本（除非当前 plan 明确要求）
+- 不向 `docs/worldview.md` 回写——世界观锚点只在核心 canon 改动时人工修，且必须单独 PR 人工 review
+- 不向 `docs/library/` 主动回写（图书馆域走 `/write-book` / `/review-book` 专门流程，plan 流水线不跨界）
+- **`git stash push` 无对等 `git stash pop`**：任何 auto-stash 的流程，完成时必须把自己产生的 WIP stash pop 回来；不得在主仓库留下 `WIP before inspecting ...` 孤儿 stash（历史教训：曾 stash + `reset --hard` 主仓库但不 pop，用户 worktree 改动凭空"消失"直到从 stash 捞出）
+
+## Commit 约定
+
+- commit message **中文**，匹配仓库近 30 提交风格；每个逻辑单元一个 atomic commit，不堆积巨型 commit
+- 归档 commit 形如：`归档 plan-<name>：<一句话总结>`
+- **模型署名（供后续统计，必填）**：agent 产出的每个 commit 末尾必须带 trailer 注明**真实执行模型**：`Model: <精确模型 id>`（如 `claude-fable-5` / `claude-opus-4-8` / `gpt-5.6-sol-xhigh`），`Co-Authored-By` 照旧保留。PR body 末尾同样注明主导模型及参与模型（validator / reviewer 用了不同模型也逐个列出）。不许漏署，不许写泛称 "AI" / "agent"。统计入口：`git log --format='%(trailers:key=Model,valueonly)'`
+
+## 世界观正典硬锚（写代码/schema/命名前先对，别凭"修仙常识"）
+
+唯一权威 `docs/worldview.md`。下面是**最常被违反**的几条，违反 = review 直接打回：
+
+- **六境界**（worldview.md §三 L67-L72，顺序固定；worldview.md §三 L63 明禁旧称）：**醒灵 → 引气 → 凝脉 → 固元 → 通灵 → 化虚**。严禁上古称呼：练气 / 筑基 / 金丹 / 元婴。
+- **命名禁词**（worldview.md §三 L63 的命名原则落地速查）：末法时代禁用 玄/陨/星/仙/太/古；优选衰败素朴意象 残/碎/锈/杂/粗/髓/朴/枯。例外：已入世俗医药的矿名（丹砂/朱砂/雄黄）OK。
+- **经济**：唯一真货币 = **骨币**（异变兽骨+阵法锁真元）；矿物=交易筹码非货币；灵石=劣质衰变物+燃料；金银=废土。
+- **zone 命名**：写新 zone 前查 worldview.md §十三 L1253-L1260 区域表和 `server/zones.json` 既有 ID（已立：spawn / 青云残峰 / 血谷 / north_wastes / lingquan_marsh 等）。
+- 引用格式统一 `worldview.md §X L<line>`，便于回查。
+
+## 真元/灵气守恒律（最高优先级硬约束，吞真元 = 阻塞合并）
+
+全服灵气总量 `SPIRIT_QI_TOTAL` 恒定（const 当前 100.0；**测试断言取 const 引用，不写字面 100**）。所有真元/灵气流动**必须**走 `qi_physics::ledger::QiTransfer { from, to, amount, reason }`。
+
+**红旗（出现就停下重设计）**：
+- `cultivation.qi_current += X`（无对应 zone 减）、`zone.spirit_qi -= Y`（无对应玩家增）、容器/衰变把真元"凭空消失"不归还 zone、招式释放只扣攻方不写入环境 —— 全是守恒律红旗。
+- 离屏/抽象战斗死亡：携 `qi_current > 0` 的快照直接 `store.remove` 丢弃、或只 `emit QiTransfer` 事件却**无 system 消费**应用到 `WorldQiAccount` = 吞真元。离屏战死必须走 `release_dormant_qi_to_zone` → `ledger.transfer(ReleaseToZone)`。
+- **自定真元物理常数/公式**：新模块出现 `*_DECAY*` / `*_DRAIN*` / `*_ATTEN*` / `*_HALF_LIFE*` / `RHO` / `BETA` / 形如 `0.0X_f64` 的"看起来像衰减率"常数 / `fn *_decay()` → **必查 `qi_physics`**（plan-qi-physics-v1）。已存在就调用；不存在就**先扩 `qi_physics::constants` 再 import**，**禁止 plan 自己写一份**。
+- 唯一允许的"系统外流"= 天道每时代衰减 1-3%（`qi_physics::tiandao::era_decay_step`，常数 `QI_TIANDAO_DECAY_PER_ERA_MIN/MAX`）。注意它**不是凭空蒸发**：`WorldQiBudget::apply_era_decay` 把衰减量挪进被追踪的沉降槽 `era_decay_accum`，不变式 `current_total + era_decay_accum == initial_total` 恒成立。守恒口径用 `qi_physics::ledger::assert_conservation(before, after, era_decay)` 断言。
+- 释放走 `qi_release_to_zone`，吸收走 `qi_excretion`，坍缩渊塌缩走 `collapse_redistribute_qi`（中转站不是终点）。
+
+> 完整孤岛红旗清单见 `docs/CLAUDE.md §四`——碰 gameplay/qi plan 时先读一遍。
+
+## 招式/技能 A/V 差异化（战斗/skill 类 plan 的红线）
+
+任何 skill / cast / 招式 / 主动能力落地，**必须**携带**每招独立可辨**的：① animation ② particle/VFX ③ SFX ④ HUD 反馈 ⑤ hotbar/SkillBar 槽位 PNG icon。
+
+- "只动 server 算子先 ship、客户端 P 后补" = **红旗**——招式没视觉就不算 P0/P1 完成。仅 server 算子/仅 schema enum 不算"实装"。
+- skill plan 的 `§N 客户端动画/VFX/SFX` 段必须**表格化列出每招独立的 animation+粒子+音效+HUD+icon 名**（基线范本：`docs/finished_plans/plan-yidao-v1.md §5`）。
+- 验收末阶段必须含**视觉/听觉差异化回归 + icon 显示回归**（玩家能从远处分辨"对面在用 X 不是 Y"）。
+- icon 资产：新招 PNG 走 `/gen-image item`（`scripts/images/gen.py`），路径 `client/src/main/resources/assets/bong/textures/skill/<style>/<skill_id>.png`（16×16/32×32，化虚级 `<skill_id>_void.png` 高分辨率+染色描边）；server `SkillDef.icon_id` → schema 双端镜像 → client `SkillIconRegistry` 查图。
+- **当前 harness 跑不了 `/gen-image` 时**：写好 server/schema/client 接线 + 占位资源 + 在该 TODO 标 `[BLOCKED: 需 /gen-image 生成 <清单>]`，继续其它 TODO，不要画手绘糊弄、也不要跳过接线。
+
+## 视觉资产纪律（NBT 建筑 / layout / 模型 / 贴图）
+
+- **3 轮打磨 + `<PROMISE>` 担保**：NBT 建筑、worldgen layout 摆位、复杂模型、视觉资产**禁止一把 commit**。Round 1 first cut → Round 2 自评（截图渲染/structure dump/ASCII 平面投影）→ Round 3 终轮，commit message 标 `(round N/3)`；终轮 commit 末尾写 `<PROMISE>...已 3 轮打磨...已检查[...]...仍存局限[...]</PROMISE>` 块（**拼写是 PROMISE 不是 PROMIS**）。纯 Rust/TS 逻辑 TODO 不适用。
+- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / ... 函数，逐件单独预览，最后 `all_cubes()` 拼接（别整件一把梭埋掉单件缺陷）。bbmodel 真长相用 `scripts/models/render_bbmodel.py` 看，别只信平涂示意图。
+- **item icon 批量出**：新增 ItemTemplate 必配 icon，走 `/gen-image item`（批量、不需多轮）。跑不了 `/gen-image` 的 harness 标 `[BLOCKED: 需 /gen-image]`。
+
+## 架构硬约束（entity / 动画）
+
+- **禁止 vanilla MC entity hack**：不准用 armor stand / invisible mob 充当碰撞箱或交互载体。Bong 的 entity 是 **Marker + 自定义渲染**，交互走 **C2S 请求**（client 注册 IntentHandler / InteractKeyRouter / 右键准星检测 → C2S → server），不走 vanilla InteractEntityEvent。范本：NPC 的 `NpcEngagementIntentHandler → NpcInspectRequest`。绝不切到有碰撞箱的 EntityBundle。
+- **PlayerAnimator 四大库坑**（写动画必读，不看源码猜不到）：
+  1. **循环动画单帧衰减**：`isLooped=true` 时只在 tick 0 放关键帧的 axis 会被插值回 `defaultValue`——每个用到的 axis 必须在 `endTick` 补一个同值 keyframe。
+  2. **MC 无 IK**：`leg.pitch > ~35°` 腿腹断连。大 pitch 用 `bend`（小腿后折）承担，pitch 控在 40° 内；别给 leg 加 z 偏移（更糟）。
+  3. **`body.*` 走 MatrixStack 不是 ModelPart**：整体位移/旋转（含头发盔甲手持物）。要"上半身扭下盘不动"用 `torso.yaw`，不用 `body.yaw`。
+  4. **`bend` 需 bendy-lib 否则静默 no-op**：已配 `bendy-lib 4.0.0`（MC 1.20.1 唯一可用版本）于 client depends，别动版本。
+  迭代姿态用 headless 工具 `client/tools/render_animation.py`（出三视图 PNG，免 build jar + runClient）。完整约定见 `docs/player-animation-conventions.md`。
+
+## 测试诚实性 + 构建/CI 坑
+
+- **绝不把自己引入的失败甩锅 "pre-existing"**：上一已 merge 阶段是 `0 failed`、本阶段突现 N failed = 本 PR 引入；共同 signature（registry/asset 加载、schema parse、template exist）= 单点根因（一个坏 config 连锁红一片）。
+- **`ItemCategory` 合法集**（`server/src/inventory/mod.rs`）：Pill / Herb / Scroll / Misc / Weapon / Armor / Tool / Treasure / RecipeFragment / RecipeHint / BoneCoin / Container —— **无 Material**。炼丹材料用 `Misc`（用 `material` 会让整个 item registry 加载失败 → 连锁红几十个测试）。
+- **schema 改了必重建 dist**：`agent/packages/tiandao` 经 `@bong/schema` 引用的是构建产物 `dist/`，不是 src。改了 `agent/packages/schema/src/*.ts`（新增 export/改 schema）后必须 `cd agent && npm run build -w @bong/schema`，否则 agent 启动崩 `SyntaxError: does not provide an export named 'X'`。
+- **headless/CI 启服必设 `export BONG_SKIP_SKIN_PREFETCH=1`**：否则 `maintain_skin_pool` 因缺 `MINESKIN_API_KEY` panic（`src/skin/pool.rs`）。配 dummy key 没用（超时再 panic）。
+- **真集成 gate = `e2e`**（`bash scripts/smoke-test-e2e.sh` / `e2e` CI check），不是 snapshot；判 worldgen/server 改动看 e2e + 单测最可靠。`main` 未设保护，多数 check 非 required。
+
+## PR review gate
+
+- **gate 只看 `/review` + CodeRabbit，绝不等 Codex**。`chatgpt-codex-connector`（"Codex usage limits reached"）是与本仓库无关的噪音，忽略。
+- **单一 `/review` 入口**：在 PR 评论 `/review` 触发（独立 issue comment，写在 PR body 不生效）。不要用 `@pi`/`@hive`/`@claude`——会 mention 到 GitHub 上的真实陌生用户。CodeRabbit 仍自动跑（额度耗尽限流失败是计费问题不是代码问题）。
+- 等待用 `ScheduleWakeup delaySeconds=1200`（~20 min/回合，最多 3 回合卡死才停交人工），禁止 sleep loop / busy-poll。修完 review 意见要重新等 re-review，不自判"应该过了"（完整协议见 `docs/CLAUDE.md §6.5`）。

@@ -10,6 +10,8 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
+use crate::body_plan::RaceId;
+
 /// 修为境界 — see plan §1.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Realm {
@@ -381,6 +383,16 @@ pub struct Cultivation {
     pub pending_material_bonus: f64,
     pub composure: f64, // 0.0..=1.0
     pub composure_recover_rate: f64,
+    /// plan-race-system-v1 P0 — 种族标识，`body_plan::resolve_body_plan` 的玩家身份
+    /// 权威真源（未知 id 拒绝解析，见该函数文档）。`#[serde(default)]` 让旧存档
+    /// （`cultivation_json` bundle 缺该字段）反序列化时自动落 `"human"`，
+    /// persistence 层（`persist_player_cultivation_bundle` 等）零改动即可透传。
+    #[serde(default = "default_race_id")]
+    pub race: RaceId,
+}
+
+fn default_race_id() -> RaceId {
+    RaceId::new(crate::body_plan::HUMAN_RACE_ID)
 }
 
 impl Default for Cultivation {
@@ -394,6 +406,7 @@ impl Default for Cultivation {
             pending_material_bonus: 0.0,
             composure: 1.0,
             composure_recover_rate: 0.001,
+            race: default_race_id(),
         }
     }
 }

@@ -196,6 +196,7 @@ fn sync_stamina_regen_from_realm(mut players: Query<(&Cultivation, &mut Stamina)
 }
 
 type MovementSpeedQueryItem<'a> = (
+    Entity,
     &'a mut MovementState,
     Option<&'a Cultivation>,
     Option<&'a Stamina>,
@@ -213,10 +214,13 @@ fn apply_movement_speed_system(
     clock: Res<CombatClock>,
     zones: Option<Res<ZoneRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
+    body_plans: Option<Res<crate::body_plan::BodyPlanRegistry>>,
+    races: Option<Res<crate::body_plan::RaceRegistry>>,
     layers: Query<&ChunkLayer>,
     mut players: Query<MovementSpeedQueryItem<'_>, With<Client>>,
 ) {
     for (
+        entity,
         mut movement,
         cultivation,
         stamina,
@@ -241,7 +245,25 @@ fn apply_movement_speed_system(
             &layers,
         );
         let stamina_current = stamina.map(|stamina| stamina.current).unwrap_or(100.0);
-        let leg_wound_factor = wounds.map(leg_wound::combined_leg_factor).unwrap_or(1.0);
+        // plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 腿伤减速改为按本实体
+        // 解析出的 BodyPlan 分发（`BodyPlanPurpose::Intrinsic`），不再固定读
+        // `humanoid_plan_static()`；查询带 `With<Client>` 过滤器恒为玩家实体，走
+        // `Cultivation.race` Tier2 分支（`beast_kind: None` 对玩家身份天然正确，
+        // 玩家实体本就不挂 `BeastKind` 组件）。资源缺失时 `resolve_body_plan_for_target`
+        // 自身已内建退化到 humanoid，行为 bit-for-bit 不变。
+        let body_plan = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation,
+                beast_kind: None,
+            },
+            body_plans.as_deref(),
+            races.as_deref(),
+        );
+        let leg_wound_factor = wounds
+            .map(|wounds| leg_wound::combined_leg_factor(wounds, body_plan))
+            .unwrap_or(1.0);
         let armor_weight_factor = body_mass
             .map(|mass| armor_weight::armor_weight_to_speed(mass.armor_mass))
             .unwrap_or(1.0);
@@ -306,8 +328,15 @@ type MovementActionQueryItem<'a> = (
     Option<&'a player_knockback::ActivePlayerKnockback>,
 );
 
+// plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 新增 `body_plans`/`races` 两个
+// system param 把参数数推到 8，触发 clippy::too_many_arguments；系统函数签名是 Bevy
+// 惯例（每个 system param 对应一个函数参数），拆结构体收拢会改变既有调用点/测试的
+// 构造方式，收益不足以抵消改动面。
+#[allow(clippy::too_many_arguments)]
 fn handle_movement_action_intents(
     clock: Res<CombatClock>,
+    body_plans: Option<Res<crate::body_plan::BodyPlanRegistry>>,
+    races: Option<Res<crate::body_plan::RaceRegistry>>,
     mut intents: EventReader<MovementActionIntent>,
     skill_meridian_deps: Option<Res<SkillMeridianDependencies>>,
     mut players: Query<MovementActionQueryItem<'_>, With<Client>>,
@@ -348,6 +377,23 @@ fn handle_movement_action_intents(
             .map(dash_proficiency::known_dash_proficiency)
             .unwrap_or_default();
 
+        // plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 腿伤移动限速判定改为按
+        // 本实体解析出的 BodyPlan 分发，不再固定读 `humanoid_plan_static()`；查询带
+        // `With<Client>` 过滤器恒为玩家实体，走 `Cultivation.race` Tier2 分支
+        // （`beast_kind: None` 对玩家身份天然正确）。资源缺失时
+        // `resolve_body_plan_for_target` 自身已内建退化到 humanoid，行为
+        // bit-for-bit 不变。
+        let body_plan = crate::body_plan::resolve_body_plan_for_target(
+            intent.entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation,
+                beast_kind: None,
+            },
+            body_plans.as_deref(),
+            races.as_deref(),
+        );
+
         if let Some(reason) = reject_reason(
             action,
             MovementRejectContext {
@@ -356,7 +402,7 @@ fn handle_movement_action_intents(
                 dash_proficiency,
                 now,
                 active_knockback,
-                leg_wound_factor: leg_wound::combined_leg_factor_from_optional(wounds),
+                leg_wound_factor: leg_wound::combined_leg_factor_from_optional(wounds, body_plan),
                 skill_meridian_deps: skill_meridian_deps.as_deref(),
                 severed,
             },

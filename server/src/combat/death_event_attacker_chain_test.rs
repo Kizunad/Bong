@@ -24,7 +24,9 @@ mod tests {
     fn bleeding_wounds(health: f32) -> Wounds {
         Wounds {
             entries: vec![Wound {
-                location: crate::combat::components::BodyPart::Chest,
+                location: crate::body_plan::legacy_body_part_to_id(
+                    crate::combat::components::BodyPart::Chest,
+                ),
                 kind: crate::combat::components::WoundKind::Pierce,
                 severity: 5.0,
                 bleeding_per_sec: 50.0,

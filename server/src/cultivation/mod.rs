@@ -557,6 +557,10 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<crate::inventory::InventoryInstanceIdAllocator>>,
     mut pending_narrations: Option<ResMut<crate::player::gameplay::PendingGameplayNarrations>>,
+    // plan-race-system-v1 P0 —— 持久化 `Cultivation.race` 拒载执行点：`Option<Res<...>>`
+    // 同 `body_plan::register()` 恒装载的既有约定（大量既有测试未插入该资源，缺失时
+    // 无法校验，退回本函数原有"信任解码结果"行为，不是新的宽松分支）。
+    race_registry: Option<Res<crate::body_plan::RaceRegistry>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
     for (entity, username, player_state, restored_lifespan) in &joined_clients {
@@ -596,7 +600,31 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             // Best-effort hydration; schema is versioned and may evolve.
             if let Some(value) = persisted_bundle.get("cultivation") {
                 match serde_json::from_value::<Cultivation>(value.clone()) {
-                    Ok(decoded) => cultivation = decoded,
+                    Ok(decoded) => {
+                        // plan-race-system-v1 P0 —— race 字段显式 RaceRegistry 校验：
+                        // 未知 RaceId 不静默兜底 humanoid 白得身份，而是把整份
+                        // `cultivation` bundle 按本函数既有的"解码失败"损坏路径处理
+                        // （保留上面已初始化的 `Cultivation::default()`，不只是把
+                        // race 字段单独改写成 human——一旦种族 id 在当前部署的
+                        // RaceRegistry 里找不到，说明这份存档来自不兼容的版本，
+                        // 其余字段同样不可信，整体回退比"部分接受"更安全）。
+                        // 缺失 race 字段的旧存档会经 `#[serde(default = "default_race_id")]`
+                        // 在 `serde_json::from_value` 这一步就已经落 "human"——那种
+                        // bundle 走的是下面 `None`/`Some(known race)` 分支，正常接受。
+                        match race_registry.as_deref() {
+                            Some(registry) if registry.get(&decoded.race).is_none() => {
+                                tracing::warn!(
+                                    "[bong][cultivation] rejecting persisted cultivation bundle \
+                                     for `{}`: unknown race id `{}` not found in RaceRegistry — \
+                                     falling back to default Cultivation instead of silently \
+                                     granting humanoid identity",
+                                    username.0,
+                                    decoded.race,
+                                );
+                            }
+                            _ => cultivation = decoded,
+                        }
+                    }
                     Err(error) => {
                         warn_cultivation_decode(username.0.as_str(), "cultivation", error)
                     }
@@ -1033,6 +1061,7 @@ fn emit_skill_caps_on_realm_regressed(
 mod tests {
     use super::*;
 
+    use crate::body_plan::{RaceId, RaceRegistry};
     use crate::combat::components::Lifecycle;
     use crate::cultivation::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
     use crate::persistence::{
@@ -2093,6 +2122,201 @@ mod tests {
             .collect();
         assert_eq!(quota_events.len(), 1);
         assert_eq!(quota_events[0].occupied_slots, 0);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // ─── plan-race-system-v1 P0：持久化 RaceId 拒载执行点 ──────────────────────
+
+    /// 只含 "human" 一条种族的最小 `RaceRegistry` 测试夹具——`body_plan_id` 复用真实
+    /// `humanoid_plan_static()` 的克隆，不另起一份几何数据（保持与生产 registry
+    /// bit-for-bit 一致，只是脱离磁盘 glob 加载）。
+    fn race_registry_with_only_human() -> RaceRegistry {
+        use crate::body_plan::race_registry::RaceEntry;
+
+        let body_plans = crate::body_plan::BodyPlanRegistry::from_plans(vec![
+            crate::body_plan::humanoid_plan_static().clone(),
+        ])
+        .expect("humanoid plan clone must validate as a standalone registry");
+        RaceRegistry::from_parts_for_test(
+            vec![RaceEntry {
+                id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                display_name: "人族".to_string(),
+                body_plan_id: crate::body_plan::HUMANOID_BODY_PLAN_ID.into(),
+                beast_kinds: vec![],
+            }],
+            vec![],
+            &body_plans,
+        )
+        .expect("human-only race registry fixture must validate")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_cultivation_bundle_with_race(
+        settings: &PersistenceSettings,
+        username: &str,
+        realm: Realm,
+        race: RaceId,
+        life_record: &LifeRecord,
+    ) {
+        crate::persistence::persist_player_cultivation_bundle(
+            settings,
+            username,
+            &Cultivation {
+                realm,
+                race,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            life_record,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            None,
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect("seeding cultivation bundle with a custom race should succeed");
+    }
+
+    /// 手写 SQL 插入模拟"race 字段加入前"的旧存档形状：`persist_player_cultivation_bundle`
+    /// 恒序列化完整 `Cultivation`（`race` 字段总在场），无法产出缺 race 字段的 bundle，
+    /// 所以这里绕开它直接拼一份不含 "race" key 的 JSON 落库。
+    fn seed_raw_cultivation_bundle_without_race_field(
+        settings: &PersistenceSettings,
+        username: &str,
+        realm: Realm,
+    ) {
+        let mut cultivation_value = serde_json::to_value(Cultivation {
+            realm,
+            ..Default::default()
+        })
+        .expect("Cultivation must serialize to JSON");
+        cultivation_value
+            .as_object_mut()
+            .expect("Cultivation serializes to a JSON object")
+            .remove("race");
+
+        let bundle = serde_json::json!({
+            "v": 1,
+            "cultivation": cultivation_value,
+            "meridians": MeridianSystem::default(),
+            "qi_color": QiColor::default(),
+            "karma": Karma::default(),
+            "contamination": Contamination::default(),
+            "life_record": LifeRecord::new(canonical_player_id(username)),
+            "practice_log": PracticeLog::default(),
+            "insight_quota": InsightQuota::default(),
+            "unlocked_perceptions": UnlockedPerceptions::default(),
+            "insight_modifiers": InsightModifiers::new(),
+        });
+        let cultivation_json =
+            serde_json::to_string(&bundle).expect("hand-built legacy bundle must serialize");
+
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("open sqlite connection to seed a raw legacy bundle");
+        connection
+            .execute(
+                "
+                INSERT INTO player_cultivation (
+                    username,
+                    cultivation_json,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, 1, 0)
+                ON CONFLICT(username) DO UPDATE SET
+                    cultivation_json = excluded.cultivation_json,
+                    schema_version = excluded.schema_version,
+                    last_updated_wall = excluded.last_updated_wall
+                ",
+                rusqlite::params![username, cultivation_json],
+            )
+            .expect("insert raw legacy cultivation bundle");
+    }
+
+    #[test]
+    fn joined_clients_reject_persisted_bundle_with_unknown_race() {
+        let (settings, root) = temp_persistence_settings("reject-unknown-race");
+        seed_cultivation_bundle_with_race(
+            &settings,
+            "Ghoul",
+            Realm::Solidify,
+            RaceId::new("nonexistent"),
+            &LifeRecord::new(canonical_player_id("Ghoul")),
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(race_registry_with_only_human());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Ghoul");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation must still attach (reject into error state, not skip attach)");
+        assert_eq!(
+            cultivation.race,
+            RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            "an unknown persisted race must never end up on the live component — the safe \
+             default fallback is the only acceptable outcome, not a silent pass-through of \
+             `nonexistent`"
+        );
+        assert_eq!(
+            cultivation.realm,
+            Realm::Awaken,
+            "unknown race must reject the *entire* persisted cultivation bundle (realm=Solidify \
+             was persisted alongside it but must NOT survive) — proving this is bundle-level \
+             corrupted-path handling, not a narrow 'only overwrite the race field' patch that \
+             would silently keep the rest of an untrusted bundle"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_default_race_for_legacy_bundle_missing_race_field() {
+        let (settings, root) = temp_persistence_settings("legacy-missing-race");
+        seed_raw_cultivation_bundle_without_race_field(&settings, "OldTimer", Realm::Solidify);
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(race_registry_with_only_human());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("OldTimer");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation must attach");
+        assert_eq!(
+            cultivation.race,
+            RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            "a legacy bundle with no \"race\" key at all must fall back to \
+             #[serde(default = \"default_race_id\")] = \"human\", exactly like any other \
+             pre-P0 archived save"
+        );
+        assert_eq!(
+            cultivation.realm,
+            Realm::Solidify,
+            "unlike the unknown-race case, a merely *missing* race field is not corruption — \
+             the rest of the bundle (realm=Solidify) must survive intact, proving the reject \
+             path is keyed on 'race id present but unresolvable', not on 'race field \
+             untouched by the persisted payload'"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

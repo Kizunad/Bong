@@ -529,7 +529,7 @@ mod tests {
             50.0,
             100.0,
             vec![Wound {
-                location: BodyPart::Chest,
+                location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                 kind: WoundKind::Cut,
                 severity: 0.5,
                 bleeding_per_sec: 0.0,
@@ -581,7 +581,7 @@ mod tests {
                 20.0,
                 100.0,
                 vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.6,
                     bleeding_per_sec: 0.0,

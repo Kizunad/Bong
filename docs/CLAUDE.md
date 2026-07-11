@@ -118,7 +118,7 @@ plan 立完后常带 **§N 开放问题**（设计未决 / 数值待校准 / 接
 
 ## 六、Plan 消费规范：写入 plan §10 章节
 
-任何 scope ≥ 4 PR 的 plan，**必须在 plan 末尾写一节 §10 实施工作流**，写清以下 5 条。consume-plan agent 跑这份 plan 时按 §10 执行；这是对 `commands/consume-plan.md` 通用流程在该 plan 特殊场景下的细化，不是替代。
+任何 scope ≥ 4 PR 的 plan，**必须在 plan 末尾写一节 §10 实施工作流**，写清以下 5 条。consume-plan agent 跑这份 plan 时按 §10 执行；这是对 `skills/consume-plan/SKILL.md` 通用流程在该 plan 特殊场景下的细化，不是替代。
 
 ### 6.1 建筑 / 视觉资产类：3 轮自我打磨 + `<PROMISE>` 担保
 
@@ -213,7 +213,7 @@ CodeRabbit 是 GitHub Actions check run，`gh pr checks <PR>` 看状态：
 |------|------|------|
 | `pass` | review 通过 | 进 merge |
 | `pending` | 仍在跑（典型 ~20 min） | `ScheduleWakeup delaySeconds=1200` 等下回合 |
-| `fail` | 不通过 | 按 commands/consume-plan.md step 7 严重性桶处理 |
+| `fail` | 不通过 | 按 skills/consume-plan/SKILL.md step 7 严重性桶处理 |
 
 **等待节奏硬约束**：
 

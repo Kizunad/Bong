@@ -1,1 +1,0 @@
-../../commands/consume-plan.md
