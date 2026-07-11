@@ -1,5 +1,6 @@
 package com.bong.client.scroll;
 
+import com.bong.client.ui.ScreenTransitionController;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
@@ -42,7 +43,8 @@ import java.util.Objects;
  * {@code ScrollReadClosed} + 清空 store）→ {@code setScreen(null)}。{@link #shouldPause()}
  * 恒为 {@code false}（阅读不暂停游戏，对齐全仓其余 owo screen 惯例）。
  */
-public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout> {
+public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
+    implements ScreenTransitionController.PendingOpenCancellationHandler {
     private static final int PANEL_WIDTH = 260;
     private static final int OUTER_PADDING = 14;
     private static final int VIEWPORT_HEIGHT_PX = 160;
@@ -190,6 +192,14 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout> {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.currentScreen == this) {
             mc.setScreen(null);
+        }
+    }
+
+    @Override
+    public void onPendingOpenCancelled() {
+        if (!closed) {
+            closed = true;
+            ScrollReadStore.close();
         }
     }
 

@@ -75,7 +75,11 @@ public final class ScreenTransitionController {
     }
 
     public static void cancelAndClose(MinecraftClient client) {
+        Screen pendingScreen = pendingScreenForCancellation();
         clearActiveTransition();
+        if (pendingScreen instanceof PendingOpenCancellationHandler handler) {
+            handler.onPendingOpenCancelled();
+        }
         if (client != null) {
             applyDirect(client, null);
         }
@@ -131,6 +135,21 @@ public final class ScreenTransitionController {
             cancelledTransitions++;
             activeTransition = null;
         }
+    }
+
+    private static Screen pendingScreenForCancellation() {
+        ActiveTransition active = activeTransition;
+        if (active == null || active.handle().completed()) {
+            return null;
+        }
+        return active.handle().newScreen();
+    }
+
+    /**
+     * 尚未完成开屏的 screen 若携带协议终态，可实现此接口在 Esc 取消转场时幂等收口。
+     */
+    public interface PendingOpenCancellationHandler {
+        void onPendingOpenCancelled();
     }
 
     public record ActiveTransition(
