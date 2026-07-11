@@ -239,6 +239,8 @@ class TaskState:
             )
             if (
                 evidence is None
+                or not self.head
+                or not self.final_validated
                 or evidence.target_sha != self.head
                 or evidence.generation != self.generation
                 or evidence.pr_number <= 0
@@ -259,6 +261,7 @@ class TaskState:
                 )
             ):
                 raise ProtocolError("CLOSED gate evidence incomplete")
+            self._require_validator_pass(TaskPhase.FINAL_VALIDATING)
         self.phase = target
 
     def _reset_closure_milestones(self) -> None:
@@ -274,6 +277,8 @@ class TaskState:
         self.closure_evidence = None
 
     def update_head(self, new_head: str) -> None:
+        if self.phase in {TaskPhase.PR_OPEN, TaskPhase.GATES}:
+            raise ProtocolError("PR phases must enter rework before HEAD changes")
         if new_head == self.head:
             return
         self.head = new_head
@@ -1260,10 +1265,6 @@ class StateMachineDryRun(unittest.TestCase):
         for source in TaskPhase:
             for target in TaskPhase:
                 if target in expected[source]:
-                    if source == TaskPhase.GATES and target == TaskPhase.CLOSED:
-                        task = TaskState(phase=source)
-                        record_closure_pass(task)
-                        task.transition(target)
                     continue
                 with self.subTest(illegal_source=source, illegal_target=target):
                     with self.assertRaises(ProtocolError):
@@ -1296,6 +1297,8 @@ class StateMachineDryRun(unittest.TestCase):
         task = TaskState(phase=TaskPhase.VERIFYING)
         drive_closure_to_pr(task)
         task.transition(TaskPhase.GATES)
+        with self.assertRaises(ProtocolError):
+            task.update_head("")
         with self.assertRaises(ProtocolError):
             task.transition(TaskPhase.CLOSED)
         task.record_closure(
@@ -1348,6 +1351,15 @@ class StateMachineDryRun(unittest.TestCase):
         task.transition(TaskPhase.CLOSED)
         self.assertEqual(task.phase, TaskPhase.CLOSED)
         self.assertTrue(task.final_validated)
+
+        forged = TaskState(
+            phase=TaskPhase.GATES,
+            head="forged-head",
+            final_validated=True,
+        )
+        record_closure_pass(forged)
+        with self.assertRaises(ProtocolError):
+            forged.transition(TaskPhase.CLOSED)
 
     def test_pr_open_bypasses_are_rejected(self) -> None:
         for phase in (TaskPhase.FIX_VALIDATING, TaskPhase.ARCHIVING):
