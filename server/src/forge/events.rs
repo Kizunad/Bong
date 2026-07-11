@@ -3,7 +3,7 @@
 use valence::prelude::{bevy_ecs, Entity, Event};
 
 use super::blueprint::{BlueprintId, TemperBeat};
-use super::session::ForgeSessionId;
+use super::session::{ForgeSessionId, ForgeStep};
 use crate::cultivation::components::ColorKind;
 
 /// 客户端请求起炉 —— 需 station tier 达标且已学该图。
@@ -38,7 +38,15 @@ pub struct TemperingHit {
 #[derive(Debug, Clone, Event)]
 pub struct InscriptionScrollSubmit {
     pub session: ForgeSessionId,
+    pub caster: Entity,
+    pub item_instance_id: u64,
     pub inscription_id: String,
+}
+
+/// 铭文残卷已在权威 Inscription 步中完成校验、消费并写入 session。
+#[derive(Debug, Clone, Event)]
+pub struct InscriptionScrollApplied {
+    pub session: ForgeSessionId,
 }
 
 /// 开光真元注入（客户端每 tick 上报注入量）。
@@ -52,6 +60,7 @@ pub struct ConsecrationInject {
 #[derive(Debug, Clone, Event)]
 pub struct StepAdvance {
     pub session: ForgeSessionId,
+    pub from_step: ForgeStep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
