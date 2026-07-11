@@ -58,7 +58,13 @@ public final class QuickSlotConfigHandler implements ServerDataHandler {
             cooldowns[i] = v;
         }
 
-        QuickUseSlotStore.replace(QuickSlotConfig.of(entries, cooldowns));
+        String ackRequestId = readString(payload, "ack_request_id");
+        Boolean bindAccepted = readBoolean(payload, "bind_accepted");
+        QuickUseSlotStore.replaceAuthoritative(
+            QuickSlotConfig.of(entries, cooldowns),
+            ackRequestId,
+            bindAccepted
+        );
         return ServerDataDispatch.handled(envelope.type(),
             "Applied quickslot_config (" + countNonNull(entries) + " bound slots)");
     }
@@ -104,5 +110,12 @@ public final class QuickSlotConfigHandler implements ServerDataHandler {
         if (!p.isNumber()) return fallback;
         long v = p.getAsLong();
         return v < 0 ? fallback : v;
+    }
+
+    private static Boolean readBoolean(JsonObject obj, String field) {
+        JsonElement el = obj.get(field);
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return null;
+        JsonPrimitive p = el.getAsJsonPrimitive();
+        return p.isBoolean() ? p.getAsBoolean() : null;
     }
 }

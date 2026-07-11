@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 客户端 → 服务端 {@code bong:client_request} 通道的协议常量与 JSON 编码。
@@ -1102,6 +1103,11 @@ public final class ClientRequestProtocol {
 
     /** itemId == null → 清空槽位。 */
     public static String encodeQuickSlotBind(int slot, String itemId) {
+        return encodeQuickSlotBind(slot, itemId, "untracked");
+    }
+
+    /** itemId == null → 清空槽位；requestId 用于匹配服务端权威接受/拒绝。 */
+    public static String encodeQuickSlotBind(int slot, String itemId, String requestId) {
         JsonObject obj = envelope("quick_slot_bind");
         obj.addProperty("slot", slot);
         if (itemId == null || itemId.isEmpty()) {
@@ -1109,6 +1115,7 @@ public final class ClientRequestProtocol {
         } else {
             obj.addProperty("item_id", itemId);
         }
+        obj.addProperty("request_id", Objects.requireNonNull(requestId, "requestId"));
         return obj.toString();
     }
 
