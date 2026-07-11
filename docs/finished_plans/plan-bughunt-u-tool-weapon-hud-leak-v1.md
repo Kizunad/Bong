@@ -6,9 +6,9 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 第一性原理 RED：证明工具进入 HUD 且副手工具遮蔽 trigger 法宝 | ⏳ |
-| P1 | 最小修复：HUD 过滤 `weapon_kind="tool"`，保留手持模型链 | ⬜ |
-| P2 | JDK 17 完整门禁、主线同步与验收 | ⬜ |
+| P0 | 第一性原理 RED：证明工具进入 HUD 且副手工具遮蔽 trigger 法宝 | ✅ 2026-07-11 |
+| P1 | 最小修复：HUD 过滤 `weapon_kind="tool"`，保留手持模型链 | ✅ 2026-07-11 |
+| P2 | JDK 17 完整门禁、主线同步与验收 | ✅ 2026-07-11 |
 
 ## 接入面与范围
 
@@ -61,3 +61,36 @@
 2. 副手工具与 trigger 法宝并存时，法宝 HUD 正常显示。
 3. 工具手持 3D 模型链不回归，真武器/盾牌/法宝 HUD 行为不变。
 4. JDK 17 `./gradlew test build` 全绿，最终 HEAD 获得无上下文 read-only validator 的 `PASS <sha>`。
+
+## Finish Evidence
+
+### 落地清单
+
+- `client/src/main/java/com/bong/client/hud/WeaponHotbarHudPlanner.java`：新增 `isHudWeapon(EquippedWeapon)`，主手/副手仅过滤 `weapon_kind="tool"`；副手工具继续进入既有盾牌/法宝 fallback。
+- `client/src/test/java/com/bong/client/hud/WeaponHotbarHudPlannerTreasureTriggerTest.java`：新增主手工具隐藏与副手工具不遮蔽 trigger 法宝两条契约测试。
+- 未修改 `WeaponEquippedHandler`、`WeaponEquippedStore`、`HeldItemStackResolver`、server wire、schema、资源或依赖。
+
+### 关键 commit
+
+- `8a4ac598`（2026-07-11）：升格 skeleton，收口 client-only 修复范围与测试矩阵。
+- `30abaa9a`（2026-07-11）：提交修复前 RED 契约；JDK 17 精确测试 7 项中新增 2 项按预期失败。
+- `848f78b2`（2026-07-11）：在 HUD consumer 最小过滤工具，保留共享手持模型状态。
+
+### 测试结果
+
+- RED：`./gradlew test --tests com.bong.client.hud.WeaponHotbarHudPlannerTreasureTriggerTest`，JDK 17.0.19；7 tests，2 failed（两条新增契约，符合修复前预期）。
+- 针对性 GREEN：`WeaponHotbarHudPlannerTreasureTriggerTest`、`WeaponHotbarHudPlannerShieldTest`、`HeldItemStackResolverTest` 同批通过。
+- 完整 client gate：`cd client && ./gradlew test build`，JDK 17.0.19；3757 tests / 0 failures / 0 errors / 0 skipped，`BUILD SUCCESSFUL`。
+- 主线同步：`origin/main=3c8bf9253680795136f152f5504f6f709c5e16cb` 是修复 HEAD 祖先，判定 `already-up-to-date`，无需产生 merge commit。
+- 无上下文只读 validator：`FIX_VALIDATING` 与 `REBASE_VALIDATING` 均为 `PASS 848f78b22781c39b8fa7dce4e59540547abe91d2`。
+
+### 跨仓库核验
+
+- client：`WeaponEquippedStore` 继续接收工具供 `HeldItemStackResolver` 使用；`WeaponHotbarHudPlanner` 不再消费工具为战斗槽。
+- server：`weapon_equipped.weapon_kind="tool"` 契约保持不变，无 server diff。
+- agent/schema/worldgen：本 plan 无接入面，无 diff、无需跨栈构建。
+
+### 遗留 / 后续
+
+- 未知的非 `tool` `weapon_kind` 继续显示 `?`，保持既有兼容行为；若未来需要严格 kind 白名单，应另立独立协议健壮性任务。
+- 本 plan 不新增凡器专属 HUD；若产品未来需要工具耐久 UI，应使用独立 planner/store 语义，不复用战斗武器槽。
