@@ -529,15 +529,28 @@ pub fn can_infuse_dugu(
         && pending.is_none()
 }
 
+/// plan-race-system-v1 P1b —— 私表退役：数据唯一真源是 `humanoid.json
+/// meridian_profile.dugu_injection`（见 `body_plan::types::DuguInjectionEntry` 文档，
+/// 与 `combat::baomai_v4::dead_armor::meridian_to_body_part` 方向相反、语义不同，不是
+/// 其逆映射），本函数改为查询 `body_plan::dugu_injection_channel`。签名保持
+/// `BodyPart -> MeridianId` 不变（既有调用点/测试无需改写），humanoid 全 8 部位数值
+/// bit-for-bit 与退役前私表一致——panic 仅在 humanoid.json 数据被破坏（缺条目 / 该
+/// channel 无法逆映射回 legacy 枚举）时触发，属数据完整性 bug 而非正常运行时分支。
 pub fn body_part_to_meridian(body_part: BodyPart) -> MeridianId {
-    match body_part {
-        BodyPart::Head => MeridianId::Du,
-        BodyPart::Chest => MeridianId::Heart,
-        BodyPart::Back => MeridianId::Du,
-        BodyPart::Abdomen => MeridianId::Spleen,
-        BodyPart::ArmL | BodyPart::ArmR => MeridianId::LargeIntestine,
-        BodyPart::LegL | BodyPart::LegR => MeridianId::Bladder,
-    }
+    let plan = crate::body_plan::humanoid_plan_static();
+    let part_id = crate::body_plan::legacy_body_part_to_id(body_part);
+    let channel = crate::body_plan::dugu_injection_channel(plan, &part_id).unwrap_or_else(|| {
+        panic!(
+            "[bong][cultivation][dugu] humanoid.json meridian_profile.dugu_injection missing \
+             entry for body_part {part_id} — data integrity bug"
+        )
+    });
+    channel.to_meridian_id().unwrap_or_else(|| {
+        panic!(
+            "[bong][cultivation][dugu] humanoid.json dugu_injection channel {channel} has no \
+             legacy MeridianId mapping — data integrity bug"
+        )
+    })
 }
 
 pub fn recompute_qi_max(meridians: &MeridianSystem) -> f64 {
