@@ -2643,12 +2643,15 @@ describe("sample files pass schema validation", () => {
       ).toBe(true);
     }
   });
-  it("CombatBodyPartV1 rejects unknown body part", () => {
-    const result = validate(CombatBodyPartV1, "shoulder");
+  // plan-race-system-v1 P1c — wire 开放化：CombatBodyPartV1 从闭合 8 段人形 union
+  // 改为任意 string part id，非 humanoid 构型（P5 飞鲸等）的部位不在这 8 段之列，
+  // 必须能合法通过校验（旧断言"拒绝未声明变体"随开放化推翻，改锁"开放接受"）。
+  it("CombatBodyPartV1 accepts non-humanoid part id (wire opened up)", () => {
+    const result = validate(CombatBodyPartV1, "tail_fin");
     expect(
       result.ok,
-      `Expected CombatBodyPartV1 to reject "shoulder" (not a declared variant), but it was accepted`,
-    ).toBe(false);
+      `Expected CombatBodyPartV1 to accept "tail_fin" after wire open-up, errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
   });
   it("CombatBodyPartV1 rejects empty string", () => {
     const result = validate(CombatBodyPartV1, "");

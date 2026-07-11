@@ -105,41 +105,28 @@ import { TribulationKindV1 } from "./tribulation.js";
 
 export const SERVER_DATA_MAX_PAYLOAD_BYTES = 32_768;
 
-const MERIDIAN_CHANNEL_COUNT = 20;
+// plan-race-system-v1 P1c：经脉 SoA 数组不再假设恰好 20 条（`MERIDIAN_CHANNEL_COUNT`
+// 固定长度约束已放开）——非 humanoid 构型（P5 飞鲸等）的经脉数随 `MeridianProfile`
+// 变化。数组间长度一致性（`channel_ids.length === opened.length === ...`）由 server
+// 侧发送时保证，schema 层只做元素类型/范围校验。
 
-const CultivationOpenedArrayV1 = Type.Array(Type.Boolean(), {
-  minItems: MERIDIAN_CHANNEL_COUNT,
-  maxItems: MERIDIAN_CHANNEL_COUNT,
-});
+const CultivationOpenedArrayV1 = Type.Array(Type.Boolean());
 
-const CultivationFlowArrayV1 = Type.Array(Type.Number({ minimum: 0 }), {
-  minItems: MERIDIAN_CHANNEL_COUNT,
-  maxItems: MERIDIAN_CHANNEL_COUNT,
-});
+const CultivationFlowArrayV1 = Type.Array(Type.Number({ minimum: 0 }));
 
 const CultivationIntegrityArrayV1 = Type.Array(
   Type.Number({ minimum: 0, maximum: 1 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
 
 const CultivationProgressArrayV1 = Type.Array(
   Type.Number({ minimum: 0, maximum: 1 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
 
 const CultivationCracksArrayV1 = Type.Array(
   Type.Integer({ minimum: 0, maximum: 255 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
+
+const CultivationChannelIdArrayV1 = Type.Array(Type.String({ minLength: 1 }));
 
 const LifespanPreviewV1 = Type.Object(
   {
@@ -371,6 +358,9 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("cultivation_detail"),
     realm: Type.String(),
+    // plan-race-system-v1 P1c：每条经脉的 snake_case channel id，与 opened/flow_rate/...
+    // 等并行数组同序同长；不再假设恰好 20 条。
+    channel_ids: Type.Optional(CultivationChannelIdArrayV1),
     opened: CultivationOpenedArrayV1,
     flow_rate: CultivationFlowArrayV1,
     flow_capacity: CultivationFlowArrayV1,
@@ -386,6 +376,9 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     qi_color_chaotic: Type.Optional(Type.Boolean()),
     qi_color_hunyuan: Type.Optional(Type.Boolean()),
     practice_weights: Type.Optional(Type.Array(QiColorPracticeWeightV1, { maxItems: 10 })),
+    // plan-race-system-v1 P1c：当前冲脉目标的 channel id 字符串（此前 schema 漂移，
+    // Rust 侧早已下发该字段但 TS 侧未声明——本轮随 wire 开放化一并补齐）。
+    target_meridian: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
