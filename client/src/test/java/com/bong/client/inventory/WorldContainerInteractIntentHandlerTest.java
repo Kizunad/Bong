@@ -86,6 +86,55 @@ class WorldContainerInteractIntentHandlerTest {
         );
     }
 
+    // ============= ContainerOpenIntentSupport.isWithinInteractRange =============
+    //
+    // Pin tests locking the shared world-container gate to the server-side
+    // OPEN_RANGE_BLOCKS + OPEN_RANGE_TOLERANCE = 4.5 boundary
+    // (server/src/world/container_open.rs), preventing regression to the
+    // client=5.0/server=4.5 drift from plan-bughunt-entity-interact-range-desync-v1.
+
+    @Test
+    void isWithinInteractRangeAcceptsExactlyAtBoundary() {
+        double boundaryDistSq = 4.5 * 4.5;
+        assertTrue(
+            ContainerOpenIntentSupport.isWithinInteractRange(boundaryDistSq),
+            "distSq exactly at 4.5^2 (server's OPEN_RANGE_BLOCKS + OPEN_RANGE_TOLERANCE) must be a candidate"
+        );
+    }
+
+    @Test
+    void isWithinInteractRangeRejectsJustBeyondBoundary() {
+        double justBeyondDistSq = 4.51 * 4.51;
+        assertFalse(
+            ContainerOpenIntentSupport.isWithinInteractRange(justBeyondDistSq),
+            "distSq just beyond 4.5 blocks must not be a candidate — server rejects here, "
+                + "so this is exactly the phantom-interact window closed by "
+                + "plan-bughunt-entity-interact-range-desync-v1 (old client gate was 5.0)"
+        );
+    }
+
+    @Test
+    void isWithinInteractRangeRejectsOldFivePointZeroWindow() {
+        // The old client constant was 5.0 blocks. A distance strictly between the
+        // server boundary (4.5) and the old client boundary (5.0) is exactly the
+        // phantom-interact band this fix must close.
+        double phantomWindowDistSq = 4.8 * 4.8;
+        assertFalse(
+            ContainerOpenIntentSupport.isWithinInteractRange(phantomWindowDistSq),
+            "4.8 blocks is inside the old (incorrect) 5.0 client radius but outside the "
+                + "true 4.5 server radius — must be rejected now"
+        );
+    }
+
+    @Test
+    void isWithinInteractRangeAcceptsZeroDistance() {
+        assertTrue(
+            ContainerOpenIntentSupport.isWithinInteractRange(0.0),
+            "expected in range because distSq = 0.0 (standing on the container) is trivially "
+                + "within the 4.5-block boundary, actual was out-of-range"
+        );
+    }
+
     private static void assertDeadDropKind(BongEntityModelKind kind, boolean expected) {
         boolean actual = DeadDropInteractIntentHandler.isDeadDropKind(kind);
         assertEquals(
