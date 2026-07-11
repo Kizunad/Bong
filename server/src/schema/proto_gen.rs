@@ -4248,6 +4248,8 @@ mod tests {
                 OptionalQuickSlotEntry { entry: None },
             ],
             cooldown_until_ms: vec![1_700_000_001_500, 0, 0],
+            ack_request_id: Some("bind-1".to_string()),
+            bind_accepted: Some(true),
         };
         let bytes = msg.encode_to_vec();
         let decoded =
@@ -5193,6 +5195,7 @@ mod tests {
                 QuickSlotBind {
                     slot: 1,
                     item_id: Some("kai_mai_pill".to_string()),
+                    request_id: "bind-1".to_string(),
                 },
             )),
         };
@@ -5203,6 +5206,7 @@ mod tests {
             Some(client_request_envelope::Payload::QuickSlotBind(b)) => {
                 assert_eq!(b.slot, 1);
                 assert_eq!(b.item_id.as_deref(), Some("kai_mai_pill"));
+                assert_eq!(b.request_id, "bind-1");
             }
             other => panic!("期望 QuickSlotBind payload，实际 {other:?}"),
         }
@@ -5215,6 +5219,7 @@ mod tests {
                 QuickSlotBind {
                     slot: 5,
                     item_id: None,
+                    request_id: "clear-1".to_string(),
                 },
             )),
         };
@@ -5225,6 +5230,7 @@ mod tests {
             Some(client_request_envelope::Payload::QuickSlotBind(b)) => {
                 assert_eq!(b.slot, 5);
                 assert!(b.item_id.is_none(), "清空槽位 item_id 应为 None");
+                assert_eq!(b.request_id, "clear-1");
             }
             other => panic!("期望 QuickSlotBind payload，实际 {other:?}"),
         }
@@ -5470,6 +5476,8 @@ mod tests {
                 server_data_envelope::Payload::QuickSlotConfig(QuickSlotConfig {
                     slots: vec![],
                     cooldown_until_ms: vec![],
+                    ack_request_id: None,
+                    bind_accepted: None,
                 }),
                 "QuickSlotConfig",
             ),
@@ -5733,6 +5741,7 @@ mod tests {
                 client_request_envelope::Payload::QuickSlotBind(QuickSlotBind {
                     slot: 0,
                     item_id: None,
+                    request_id: "pin-bind".to_string(),
                 }),
                 "QuickSlotBind",
             ),
