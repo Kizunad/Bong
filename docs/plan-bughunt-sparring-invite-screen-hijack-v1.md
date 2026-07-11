@@ -1,6 +1,6 @@
-# plan-bughunt-sparring-invite-screen-hijack-v1（骨架）
+# plan-bughunt-sparring-invite-screen-hijack-v1
 
-> **骨架（草案）**。一句话主题：`client/social` 的 `sparringInvite` store → tick bootstrap 链路会在玩家正开其他 GUI 时强行抢屏，导致 UI 状态被中断；同目录 `trade offer` 已有“被其他 GUI 挡住时只 toast、不抢屏”的修复先例，因此这是高置信真实 bug，而不是预期 UX。
+> **状态：ACTIVE（BugFix 实施中）**。一句话主题：`client/social` 的 `sparringInvite` store → tick bootstrap 链路会在玩家正开其他 GUI 时强行抢屏，导致 UI 状态被中断；同目录 `trade offer` 已有“被其他 GUI 挡住时只 toast、不抢屏”的修复先例，因此这是高置信真实 bug，而不是预期 UX。
 
 ## 1. 结论
 
@@ -52,9 +52,9 @@
 - 为 `SparringInviteScreenBootstrap` 增加和 trade offer 对等的纯决策单测，至少覆盖：
   `NONE / MATCHING / OTHER_SPARRING / OTHER / expired`。
 
-## 7. 反方裁决（本地退化）
+## 7. Skeleton 反方裁决记录
 
-> 说明：当前会话未提供可用的 subagent / delegate 工具，本次两轮反方裁决为**本地退化处理**；仍按要求显式记录反方论点与驳回理由。
+> 下列两轮是 skeleton 立项时记录的反方论点与驳回理由；实施完成后仍须由全新无上下文只读 validator 对最终 HEAD 独立裁决。
 
 ### Round 1
 
