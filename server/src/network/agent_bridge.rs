@@ -394,8 +394,9 @@ mod server_data_tests {
     };
     use crate::schema::narration::Narration;
     use crate::schema::server_data::{
-        AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1, ANQI_HUD_TICK_MAX, HEARTBEAT_MESSAGE,
-        SERVER_DATA_VERSION, WELCOME_MESSAGE,
+        AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1, ANQI_HUD_ECHO_COUNT_MAX,
+        ANQI_HUD_QI_PAYLOAD_MAX, ANQI_HUD_TICK_MAX, HEARTBEAT_MESSAGE, SERVER_DATA_VERSION,
+        WELCOME_MESSAGE,
     };
     use crate::schema::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
     use serde_json::json;
@@ -805,6 +806,33 @@ mod server_data_tests {
                 charge_progress: 0.0,
                 abrasion_container: String::new(),
                 abrasion_qi_payload: -0.5,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Multishot,
+                echo_count: ANQI_HUD_ECHO_COUNT_MAX + 1,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "unknown".to_string(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "quiver".to_string(),
+                abrasion_qi_payload: ANQI_HUD_QI_PAYLOAD_MAX * 2.0,
                 tick: 0,
             },
             AnqiHudV1 {

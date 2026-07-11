@@ -210,7 +210,7 @@ describe("anqi_hud ServerDataV1 contract", () => {
     });
     expect(generatedWrapper.properties.abrasion_qi_payload).toEqual({
       minimum: 0,
-      maximum: 3.4028234663852886e38,
+      maximum: 3.4028234e38,
       type: "number",
     });
     expect(generatedWrapper.properties.tick).toEqual({

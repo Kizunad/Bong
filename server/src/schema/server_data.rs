@@ -48,8 +48,9 @@ use crate::skill::config::SkillConfigSnapshot;
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
+pub(crate) const ANQI_HUD_ECHO_COUNT_MAX: u32 = i32::MAX as u32;
+pub(crate) const ANQI_HUD_QI_PAYLOAD_MAX: f64 = 3.4028234e38;
 pub(crate) const ANQI_HUD_TICK_MAX: u64 = 9_007_199_254_740_991;
-pub(crate) const ANQI_HUD_CONTAINER_MAX_LENGTH: usize = MAX_PAYLOAD_BYTES;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -771,8 +772,7 @@ pub struct FactionWarStateV1 {
     pub loser_group: Option<u16>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnqiHudKindV1 {
     Echo,
     Aim,
@@ -782,6 +782,14 @@ pub enum AnqiHudKindV1 {
 }
 
 impl AnqiHudKindV1 {
+    pub const ALL: [Self; 5] = [
+        Self::Echo,
+        Self::Aim,
+        Self::Charge,
+        Self::Abrasion,
+        Self::Multishot,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Echo => "echo",
@@ -791,6 +799,139 @@ impl AnqiHudKindV1 {
             Self::Multishot => "multishot",
         }
     }
+
+    fn from_wire_str(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    }
+}
+
+impl Serialize for AnqiHudKindV1 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AnqiHudKindV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_wire_str(&value)
+            .ok_or_else(|| D::Error::custom(format!("unknown anqi_hud kind `{value}`")))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AnqiHudBoundedIntegerVisitor {
+    field: &'static str,
+    maximum: u64,
+}
+
+impl AnqiHudBoundedIntegerVisitor {
+    fn validate<E>(self, value: u64) -> Result<u64, E>
+    where
+        E: serde::de::Error,
+    {
+        if value <= self.maximum {
+            Ok(value)
+        } else {
+            Err(E::custom(format!(
+                "anqi_hud {} must be <= {}, got {value}",
+                self.field, self.maximum
+            )))
+        }
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for AnqiHudBoundedIntegerVisitor {
+    type Value = u64;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "a non-negative integer no greater than {} for anqi_hud {}",
+            self.maximum, self.field
+        )
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.validate(value)
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let value = u64::try_from(value).map_err(|_| {
+            E::custom(format!(
+                "anqi_hud {} must be non-negative, got {value}",
+                self.field
+            ))
+        })?;
+        self.validate(value)
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > self.maximum as f64
+        {
+            return Err(E::custom(format!(
+                "anqi_hud {} must be an integral number in 0..={}, got {value}",
+                self.field, self.maximum
+            )));
+        }
+        Ok(value as u64)
+    }
+}
+
+fn deserialize_anqi_hud_bounded_integer<'de, D>(
+    deserializer: D,
+    field: &'static str,
+    maximum: u64,
+) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_any(AnqiHudBoundedIntegerVisitor { field, maximum })
+}
+
+fn validate_anqi_hud_echo_count(value: u32) -> Result<(), String> {
+    if value <= ANQI_HUD_ECHO_COUNT_MAX {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud echo_count must be <= {ANQI_HUD_ECHO_COUNT_MAX}, got {value}"
+        ))
+    }
+}
+
+fn serialize_anqi_hud_echo_count<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_echo_count(*value).map_err(S::Error::custom)?;
+    serializer.serialize_u32(*value)
+}
+
+fn deserialize_anqi_hud_echo_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_anqi_hud_bounded_integer(
+        deserializer,
+        "echo_count",
+        u64::from(ANQI_HUD_ECHO_COUNT_MAX),
+    )?;
+    u32::try_from(value).map_err(D::Error::custom)
 }
 
 fn validate_anqi_hud_unit_interval(value: f64) -> Result<(), String> {
@@ -804,22 +945,30 @@ fn validate_anqi_hud_unit_interval(value: f64) -> Result<(), String> {
 }
 
 fn validate_anqi_hud_container(value: &str) -> Result<(), String> {
-    let length = value.encode_utf16().count();
-    if length <= ANQI_HUD_CONTAINER_MAX_LENGTH {
+    let is_known = value.is_empty()
+        || [
+            crate::qi_physics::AnqiContainerKind::HandSlot,
+            crate::qi_physics::AnqiContainerKind::Quiver,
+            crate::qi_physics::AnqiContainerKind::PocketPouch,
+            crate::qi_physics::AnqiContainerKind::Fenglinghe,
+        ]
+        .into_iter()
+        .any(|container| container.as_wire_str() == value);
+    if is_known {
         Ok(())
     } else {
         Err(format!(
-            "anqi_hud abrasion_container must have at most {ANQI_HUD_CONTAINER_MAX_LENGTH} UTF-16 code units, got {length}"
+            "anqi_hud abrasion_container must be empty or a canonical container wire tag, got `{value}`"
         ))
     }
 }
 
 fn validate_anqi_hud_qi_payload(value: f64) -> Result<(), String> {
-    if value.is_finite() && value >= 0.0 {
+    if value.is_finite() && (0.0..=ANQI_HUD_QI_PAYLOAD_MAX).contains(&value) {
         Ok(())
     } else {
         Err(format!(
-            "anqi_hud abrasion_qi_payload must be finite and >= 0, got {value}"
+            "anqi_hud abrasion_qi_payload must be finite in 0..={ANQI_HUD_QI_PAYLOAD_MAX}, got {value}"
         ))
     }
 }
@@ -897,9 +1046,7 @@ fn deserialize_anqi_hud_tick<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let value = u64::deserialize(deserializer)?;
-    validate_anqi_hud_tick(value).map_err(D::Error::custom)?;
-    Ok(value)
+    deserialize_anqi_hud_bounded_integer(deserializer, "tick", ANQI_HUD_TICK_MAX)
 }
 
 /// plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD 状态推送（server → client）。
@@ -908,6 +1055,10 @@ where
 #[serde(deny_unknown_fields)]
 pub struct AnqiHudV1 {
     pub kind: AnqiHudKindV1,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_echo_count",
+        deserialize_with = "deserialize_anqi_hud_echo_count"
+    )]
     pub echo_count: u32,
     #[serde(
         serialize_with = "serialize_anqi_hud_unit_interval",
@@ -5939,14 +6090,6 @@ mod tests {
         accepted: bool,
         set: Option<serde_json::Map<String, serde_json::Value>>,
         remove: Option<String>,
-        repeat: Option<AnqiHudWireCorpusRepeat>,
-    }
-
-    #[derive(Debug, serde::Deserialize)]
-    struct AnqiHudWireCorpusRepeat {
-        field: String,
-        value: String,
-        count: usize,
     }
 
     fn materialize_anqi_hud_wire_case(
@@ -5958,8 +6101,7 @@ mod tests {
             .expect("anqi_hud wire corpus base must be an object")
             .clone();
         let mutation_count = test_case.set.as_ref().map_or(0, serde_json::Map::len)
-            + usize::from(test_case.remove.is_some())
-            + usize::from(test_case.repeat.is_some());
+            + usize::from(test_case.remove.is_some());
         assert!(
             mutation_count <= 1,
             "corpus case '{}' must isolate at most one field constraint",
@@ -5974,13 +6116,6 @@ mod tests {
         if let Some(field) = &test_case.remove {
             payload.remove(field);
         }
-        if let Some(repeat) = &test_case.repeat {
-            payload.insert(
-                repeat.field.clone(),
-                serde_json::Value::String(repeat.value.repeat(repeat.count)),
-            );
-        }
-
         serde_json::Value::Object(payload)
     }
 
@@ -6164,12 +6299,30 @@ mod tests {
                 tick: 0,
             },
             AnqiHudV1 {
+                kind: AnqiHudKindV1::Multishot,
+                echo_count: ANQI_HUD_ECHO_COUNT_MAX + 1,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
                 kind: AnqiHudKindV1::Abrasion,
                 echo_count: 0,
                 aim_progress: 0.0,
                 charge_progress: 0.0,
-                abrasion_container: "a".repeat(ANQI_HUD_CONTAINER_MAX_LENGTH + 1),
+                abrasion_container: "unknown".to_string(),
                 abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "quiver".to_string(),
+                abrasion_qi_payload: ANQI_HUD_QI_PAYLOAD_MAX * 2.0,
                 tick: 0,
             },
             AnqiHudV1 {

@@ -107,7 +107,7 @@ import { TribulationKindV1 } from "./tribulation.js";
 export const SERVER_DATA_MAX_PAYLOAD_BYTES = 32_768;
 // Java HUD store consumes these fields as int/float after protobuf bridging.
 const ANQI_HUD_ECHO_COUNT_MAX = 2_147_483_647;
-const ANQI_HUD_QI_PAYLOAD_MAX = 3.4028234663852886e38;
+const ANQI_HUD_QI_PAYLOAD_MAX = 3.4028234e38;
 const ANQI_HUD_TICK_MAX = Number.MAX_SAFE_INTEGER;
 
 const MERIDIAN_CHANNEL_COUNT = 20;

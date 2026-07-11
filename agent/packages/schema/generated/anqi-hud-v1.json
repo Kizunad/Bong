@@ -76,7 +76,7 @@
     },
     "abrasion_qi_payload": {
       "minimum": 0,
-      "maximum": 3.4028234663852886e+38,
+      "maximum": 3.4028234e+38,
       "type": "number"
     },
     "tick": {
