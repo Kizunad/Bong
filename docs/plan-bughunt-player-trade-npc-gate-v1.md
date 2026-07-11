@@ -60,6 +60,8 @@
 - 最小修复：`76fbb974` 仅从 `dispatch_trade_offers` 的纯 `With<Client>` 玩家链移除 `npc_should_decline_trade()` 及其冗余 query 字段；NPC reaction helper 与 NPC 子系统保持不变。
 - Targeted GREEN：上述 RED 用例经 validator 返工后扩为 Low / Wanted 表驱动契约，`trade_offer_dispatch_allows_low_and_wanted_initiators_between_players` 为 `1/1 PASS`；同时断言发起方不再收到伪 NPC 拒绝文案、目标收到 offer、pending 已登记。`cargo test social::tests::trade_offer -- --nocapture` 覆盖正常派发、Low/Wanted 发起者派发、非法请求拒绝、装备中物品拒绝。
 - 全量测试预跑：设置 `BONG_SKIP_SKIN_PREFETCH=1` 后执行 `cargo test`，lib 为 `11156 passed / 0 failed / 1 ignored`，main 为 `11/11 PASS`，full-app startup 为 `1/1 PASS`，Tarkov backpack e2e 为 `4/4 PASS`，doc-tests 为 `0 failed / 5 ignored`。
+- Validator r1：对 `c3f11874` 判 FAIL；指出 Low 分级与错误拒绝文案未被测试锁住、审计来源仍写当前 report-only。已在 `8f38d898` / `549a1f25` 完成表驱动饱和回归与文档状态修正，targeted test 为 `1/1 PASS`。
+- 返工后全量测试：`cargo test` 为 `11155 passed / 1 failed / 1 ignored`，唯一失败是与本次仅改 social 测试/helper 无关的 POI 墙钟阈值 `scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb`（并发编译负载下耗时 `12.3129s`）；同一修复分支在返工前全量测试曾为 `11156/0/1`。按编译并发调度要求不继续重跑、不跨 scope 修改 POI。
 - 完整 server gate：仍须等待 Rust stable clippy baseline PR #1170 合入后，基于最新 `origin/main` 重新执行整组 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；当前不得把 baseline 的 69 项跨 scope 复制进本修复。
 - 最终裁决：完整门禁后须在最终 HEAD 上启动全新、无上下文、只读的 `gpt-5.6-sol xhigh` validator；归档导致 HEAD 变化后再次 fresh validator。
 
