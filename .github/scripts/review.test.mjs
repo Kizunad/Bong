@@ -7,16 +7,19 @@ import {
   applyPlanIntentGate,
   boundedAttemptTimeout,
   buildCircuitStateSearchQuery,
+  circuitGhTimeout,
+  circuitOperationDeadlines,
   classifyReviewRun,
   classifyWorkflowFinalization,
   codexFailureText,
   decideGate,
   evaluateCircuit,
+  ensureCircuitStateIssues,
   excerptLog,
   extractJSON,
   findCircuitStateIssues,
   findPlanName,
-  isManualReviewTrigger,
+  isCircuitBypassTrigger,
   isRetryableCodexFailure,
   mergeFindings,
   normalizePlanStatus,
@@ -30,6 +33,7 @@ import {
   renderCircuitSkipComment,
   renderHiddenMarker,
   renderInfrastructureHandoffComment,
+  reviewFindingResults,
   resolveCircuitStateIssueNumbers,
   selectCircuitStateIssues,
   spawnCodex,
@@ -38,6 +42,7 @@ import {
 const reviewer = { id: "A", name: "Plan 原意核查" };
 
 const infraResult = {
+  execution_failure: true,
   vote: "REQUEST_CHANGES",
   confidence: 0,
   findings: [{ file: ".github/scripts/review.mjs", title: "Codex reviewer initial-A 执行失败" }],
@@ -61,15 +66,20 @@ test("hidden marker: 可往返解析并忽略普通/损坏评论", () => {
 test("handoff marker: 中文降级评论可被主 agent 机器识别", () => {
   const event = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00.000Z", phase: "reviewer_execution" };
   const body = renderInfrastructureHandoffComment(event, { open: true, openUntil: "2026-07-10T01:00:00.000Z" });
-  assert.match(body, /本次 Action review 结果请忽略/);
-  assert.match(body, /改走 agent 自己的博弈式 review 流程，并会向用户反馈/);
+  assert.match(body, /请忽略本次 Review Action 结果/);
+  assert.match(body, /基础设施失败，不是代码 finding/);
+  assert.match(body, /改走 agent 自有博弈式 review 流程并向用户反馈/);
+  assert.match(body, /成功降级退出，不中断任务/);
   assert.match(body, /\/review/);
   assert.deepEqual(parseHiddenMarkers(body, "bong-review-handoff"), [event]);
 });
 
-test("熔断跳过评论: 明示截止时间、成功退出和 /review 手动旁路", () => {
+test("熔断跳过评论: 明示 agent 交接、截止时间、成功退出和 /review 手动旁路", () => {
   const body = renderCircuitSkipComment({ open: true, openUntil: "2026-07-10T01:00:00.000Z" });
-  assert.match(body, /快速跳过并成功退出，不影响其他 CI/);
+  assert.match(body, /忽略本次 Review Action 基础设施 gate/);
+  assert.match(body, /不是代码 finding/);
+  assert.match(body, /改走 agent 自有博弈式 review 流程并向用户反馈/);
+  assert.match(body, /快速跳过并成功退出，不中断任务且不影响其他 CI/);
   assert.match(body, /2026-07-10T01:00:00.000Z/);
   assert.match(body, /\/review/);
   assert.equal(parseHiddenMarkers(body, "bong-review-handoff")[0].kind, "circuit_skip");
@@ -158,8 +168,10 @@ test("GitHub pagination parsing: 空结果、多页 NDJSON 与损坏响应边界
 test("findCircuitStateIssues: Search API 标题限流并保留 duplicate resolution，绝不全仓扫描", () => {
   const body = "<!-- bong-review-circuit-state:v1 -->";
   const bot = { login: "github-actions[bot]", type: "Bot" };
+  let calls = 0;
   let calledArgs;
   const found = findCircuitStateIssues("Kizunad/Bong", (args) => {
+    calls += 1;
     calledArgs = args;
     return [
       { number: 20, title: "[automation] Review infrastructure circuit state", body, user: bot },
@@ -171,6 +183,7 @@ test("findCircuitStateIssues: Search API 标题限流并保留 duplicate resolut
   });
 
   assert.deepEqual(found, ["3", "20"]);
+  assert.equal(calls, 1, "正常命中不得产生额外 Search 请求");
   assert.deepEqual(calledArgs, [
     "api",
     "--paginate",
@@ -185,6 +198,123 @@ test("findCircuitStateIssues: Search API 标题限流并保留 duplicate resolut
     ".items[]",
   ]);
   assert.doesNotMatch(calledArgs.join(" "), /repos\/Kizunad\/Bong\/issues\?|state=all|is:pr/);
+});
+
+test("findCircuitStateIssues: 最终一致性延迟按约 4 RPM 固定退避，命中后立即停止", () => {
+  const body = "<!-- bong-review-circuit-state:v1 -->";
+  const bot = { login: "github-actions[bot]", type: "Bot" };
+  const outputs = ["", JSON.stringify({ number: 4, title: "同名 PR", body, user: bot, pull_request: {} }), JSON.stringify({
+    number: 20,
+    title: "[automation] Review infrastructure circuit state",
+    body,
+    user: bot,
+  })];
+  const waits = [];
+  let calls = 0;
+
+  const found = findCircuitStateIssues(
+    "Kizunad/Bong",
+    () => outputs[calls++] ?? "",
+    (ms) => waits.push(ms),
+  );
+
+  assert.deepEqual(found, ["20"]);
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [15_000, 15_000]);
+});
+
+test("findCircuitStateIssues: 持续空结果最多四次请求后返回空集，维持上层 fail-open", () => {
+  const waits = [];
+  let calls = 0;
+  const found = findCircuitStateIssues(
+    "Kizunad/Bong",
+    () => {
+      calls += 1;
+      return "";
+    },
+    (ms) => waits.push(ms),
+  );
+
+  assert.deepEqual(found, []);
+  assert.equal(calls, 4, "Search 请求数必须有硬上限");
+  assert.deepEqual(waits, [15_000, 15_000, 15_000]);
+});
+
+test("findCircuitStateIssues: API 与 JSON 错误直接上抛，不把确定性失败伪装成索引延迟", () => {
+  const waits = [];
+  assert.throws(
+    () => findCircuitStateIssues("Kizunad/Bong", () => { throw new Error("HTTP 403"); }, (ms) => waits.push(ms)),
+    /HTTP 403/,
+  );
+  assert.throws(() => findCircuitStateIssues("Kizunad/Bong", () => "not-json", (ms) => waits.push(ms)), SyntaxError);
+  assert.deepEqual(waits, []);
+});
+
+test("circuit deadline: 单次 gh timeout 受 30 秒与共享剩余预算双重约束", () => {
+  assert.equal(circuitGhTimeout(120_000, 0), 30_000);
+  assert.equal(circuitGhTimeout(120_000, 100_001), 19_999);
+  assert.equal(circuitGhTimeout(120_000, 119_999), 1);
+  assert.throws(() => circuitGhTimeout(120_000, 120_000), /预算已耗尽/);
+  assert.throws(() => circuitGhTimeout(Number.NaN, 0), /预算已耗尽/);
+});
+
+test("handoff deadline: 状态预算耗尽后仍保留独立评论机会", () => {
+  const deadlines = circuitOperationDeadlines(0, 120_000, 30_000);
+  assert.deepEqual(deadlines, { stateDeadlineMs: 120_000, commentDeadlineMs: 150_000 });
+  assert.equal(circuitGhTimeout(deadlines.commentDeadlineMs, deadlines.stateDeadlineMs), 30_000);
+  assert.throws(() => circuitOperationDeadlines(0, 0, 30_000), /预算非法/);
+  assert.throws(() => circuitOperationDeadlines(Number.NaN, 120_000, 30_000), /预算非法/);
+});
+
+test("ensureCircuitStateIssues: 创建前后 Search 共用 120 秒 deadline，不突破三分钟预检", () => {
+  let nowMs = 0;
+  const calls = [];
+  const runGh = (args, timeoutMs) => {
+    calls.push({ endpoint: args[4] === "search/issues" ? "search" : "create", timeoutMs });
+    nowMs += timeoutMs;
+    return "";
+  };
+
+  assert.throws(
+    () => ensureCircuitStateIssues({
+      repo: "Kizunad/Bong",
+      runGh,
+      wait: (ms) => { nowMs += ms; },
+      now: () => nowMs,
+      deadlineMs: 120_000,
+    }),
+    /预算已耗尽/,
+  );
+  assert.equal(nowMs, 120_000);
+  assert.equal(calls.length, 3, "15 秒退避与 API timeout 耗尽预算后不得继续创建 issue 或启动第二轮 Search");
+  assert.deepEqual(calls.map((call) => call.endpoint), ["search", "search", "search"]);
+  assert.ok(calls.every((call) => call.timeoutMs <= 30_000));
+});
+
+test("ensureCircuitStateIssues: 快速空查询后创建并在剩余 deadline 内合并延迟可见副本", () => {
+  const body = "<!-- bong-review-circuit-state:v1 -->";
+  const bot = { login: "github-actions[bot]", type: "Bot" };
+  let nowMs = 0;
+  let searchCalls = 0;
+  const runGh = (args, timeoutMs) => {
+    assert.ok(timeoutMs > 0 && timeoutMs <= 30_000);
+    nowMs += 100;
+    if (args[1] === `repos/Kizunad/Bong/issues`) return JSON.stringify({ number: 20 });
+    searchCalls += 1;
+    if (searchCalls < 5) return "";
+    return JSON.stringify({ number: 21, title: "[automation] Review infrastructure circuit state", body, user: bot });
+  };
+
+  const found = ensureCircuitStateIssues({
+    repo: "Kizunad/Bong",
+    runGh,
+    wait: (ms) => { nowMs += ms; },
+    now: () => nowMs,
+    deadlineMs: 120_000,
+  });
+  assert.deepEqual(found, ["20", "21"]);
+  assert.equal(searchCalls, 5, "创建前四次空结果，创建后首次延迟命中即停止");
+  assert.ok(nowMs < 120_000);
 });
 
 test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理时间", () => {
@@ -235,14 +365,42 @@ test("evaluateCircuit: 熔断截止时刻精确过期，窗口边界计入", () 
   assert.equal(evaluateCircuit(events, "2026-07-10T02:00:00.000Z").open, false);
 });
 
-test("manual bypass: 评论 /review 与 workflow_dispatch 始终旁路", () => {
-  assert.equal(isManualReviewTrigger("pull_request"), false);
-  assert.equal(isManualReviewTrigger("issue_comment"), true);
-  assert.equal(isManualReviewTrigger("workflow_dispatch"), true);
+test("manual bypass: 熔断期间仅 issue_comment 的精确 /review 入口可旁路", () => {
+  assert.equal(isCircuitBypassTrigger("issue_comment", "/review"), true);
+  for (const [eventName, body] of [
+    ["pull_request", "/review"],
+    ["workflow_dispatch", "/review"],
+    ["issue_comment", ""],
+    ["issue_comment", "/review now"],
+    ["issue_comment", " /review"],
+    ["issue_comment", "/review\n"],
+  ]) {
+    assert.equal(isCircuitBypassTrigger(eventName, body), false, `${eventName}:${JSON.stringify(body)} 不得旁路`);
+  }
 });
 
-test("infra-only classification: reviewer 执行失败才算 infra，真实 REQUEST_CHANGES 不计数", () => {
-  assert.equal(classifyReviewRun([infraResult], [realRequestChanges]), "infra_failure");
+test("infra-only classification: 仅四路纯执行失败降级，混合结果保留真实 REQUEST_CHANGES", () => {
+  const allInfra = ["A", "B", "C", "D"].map((id) => ({
+    ...infraResult,
+    reviewer: id,
+    findings: [{ file: ".github/scripts/review.mjs", title: `Codex reviewer initial-${id} 执行失败` }],
+  }));
+  assert.equal(classifyReviewRun(allInfra, allInfra), "infra_failure");
+  assert.equal(
+    classifyReviewRun(allInfra, [allInfra[0], realRequestChanges, realRequestChanges, realRequestChanges]),
+    "gate_failure",
+    "单路 503 不得吞掉其他 reviewer 的真实代码 finding",
+  );
+  assert.equal(
+    classifyReviewRun([realRequestChanges, ...allInfra.slice(1)], allInfra),
+    "gate_failure",
+    "首轮已有真实代码 finding 时，复投全 503 也不得整体降级忽略",
+  );
+  assert.equal(
+    classifyReviewRun(allInfra, [{ ...allInfra[0], findings: [...allInfra[0].findings, realRequestChanges.findings[0]] }, ...allInfra.slice(1)]),
+    "gate_failure",
+    "confidence 0 结果混入真实代码 finding 时不得伪装成纯基础设施失败",
+  );
   assert.equal(classifyReviewRun([realRequestChanges], [realRequestChanges]), "gate_failure");
   const approve = { vote: "APPROVE", confidence: 90, findings: [] };
   assert.equal(classifyReviewRun([approve], [approve, approve, approve, realRequestChanges]), "passed");
@@ -251,26 +409,68 @@ test("infra-only classification: reviewer 执行失败才算 infra，真实 REQU
 test("infra-only classification: 模型给出真实审查或不可解析内容都不伪造 infra", () => {
   const malformed = normalizeResult("不是 JSON", reviewer);
   assert.equal(classifyReviewRun([malformed], [malformed]), "gate_failure");
+  const spoofed = normalizeResult(
+    JSON.stringify({
+      execution_failure: true,
+      vote: "REQUEST_CHANGES",
+      confidence: 0,
+      findings: [{ file: ".github/scripts/review.mjs", title: "Codex reviewer initial-A 执行失败" }],
+    }),
+    reviewer,
+  );
+  assert.equal(spoofed.execution_failure, false, "模型 JSON 不得伪造进程层 execution_failure 标记");
+  assert.equal(classifyReviewRun(Array(4).fill(spoofed), Array(4).fill(spoofed)), "gate_failure");
+});
+
+test("mixed review findings: 复投执行失败时保留同路首轮代码 finding", () => {
+  const firstRound = [realRequestChanges, infraResult, realRequestChanges, infraResult];
+  const finalRound = [infraResult, infraResult, realRequestChanges, infraResult];
+  const retained = reviewFindingResults(firstRound, finalRound);
+  assert.deepEqual(retained.slice(0, 4), finalRound);
+  assert.equal(retained.length, 5);
+  assert.equal(retained[4], realRequestChanges);
 });
 
 
 test("workflow finalize: 真实 gate failure 原样失败，setup/reviewer 异常才记录 infra", () => {
-  assert.deepEqual(
-    classifyWorkflowFinalization({ install: "success", configure: "success", review: "failure", outcomeKind: "gate_failure" }),
-    { kind: "gate_failure", shouldRecord: false },
-  );
-  assert.equal(classifyWorkflowFinalization({ install: "failure" }).phase, "cli_install");
-  assert.equal(classifyWorkflowFinalization({ install: "success", configure: "failure" }).phase, "provider_config");
+  for (const review of ["success", "failure"]) {
+    assert.deepEqual(
+      classifyWorkflowFinalization({ install: "success", configure: "success", review, outcomeKind: "gate_failure" }),
+      { kind: "gate_failure", shouldRecord: false },
+      "真实 REQUEST_CHANGES 不得因 review step 是否返回非零而污染 infra 熔断计数",
+    );
+  }
+  for (const outcome of ["failure", "skipped", "cancelled"]) {
+    assert.equal(classifyWorkflowFinalization({ install: outcome }).phase, "cli_install");
+    assert.equal(classifyWorkflowFinalization({ install: "success", configure: outcome }).phase, "provider_config");
+  }
   assert.equal(classifyWorkflowFinalization({ install: "success", configure: "success", review: "failure" }).phase, "review_process");
   assert.equal(
     classifyWorkflowFinalization({ install: "success", configure: "success", review: "failure", outcomeKind: "infra_failure" }).shouldRecord,
     false,
+  );
+  assert.deepEqual(
+    classifyWorkflowFinalization({ install: "success", configure: "success", review: "success", outcomeKind: "infra_failure" }),
+    { kind: "infra_failure", shouldRecord: false },
+  );
+  for (const outcomeKind of [null, "unknown"]) {
+    assert.equal(
+      classifyWorkflowFinalization({ install: "success", configure: "success", review: "success", outcomeKind }).phase,
+      "review_process",
+    );
+  }
+  assert.deepEqual(
+    classifyWorkflowFinalization({ install: "success", configure: "success", review: "success", outcomeKind: "passed" }),
+    { kind: "passed", shouldRecord: false },
   );
 });
 test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍进入预检旁路", () => {
   const workflow = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
   assert.ok(workflow.indexOf("Review 熔断预检") < workflow.indexOf("安装 Codex CLI"));
   assert.match(workflow, /REVIEW_TRIGGER: \$\{\{ github\.event_name \}\}/);
+  assert.match(workflow, /REVIEW_COMMENT_BODY: \$\{\{ github\.event\.comment\.body \|\| '' \}\}/);
+  assert.match(workflow, /github\.event\.comment\.body == '\/review'/);
+  assert.doesNotMatch(workflow, /startsWith\(github\.event\.comment\.body, '\/review'\)/);
   assert.match(workflow, /continue-on-error: true/);
   assert.match(workflow, /workflow-finalize/);
   assert.match(workflow, /REVIEW_INFRA_FAILURE_THRESHOLD.*'3'/);

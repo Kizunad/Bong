@@ -36,7 +36,7 @@ jobs:
       github.event_name == 'pull_request' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
-       startsWith(github.event.comment.body, '/review') &&
+       github.event.comment.body == '/review' &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -60,6 +60,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
           REVIEW_TRIGGER: ${{ github.event_name }}
+          REVIEW_COMMENT_BODY: ${{ github.event.comment.body || '' }}
           REVIEW_INFRA_FAILURE_THRESHOLD: ${{ vars.REVIEW_INFRA_FAILURE_THRESHOLD || '3' }}
           REVIEW_INFRA_FAILURE_WINDOW_MINUTES: ${{ vars.REVIEW_INFRA_FAILURE_WINDOW_MINUTES || '60' }}
           REVIEW_CIRCUIT_MINUTES: ${{ vars.REVIEW_CIRCUIT_MINUTES || '60' }}

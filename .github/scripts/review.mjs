@@ -30,6 +30,8 @@ const CIRCUIT_MARKER = "bong-review-circuit";
 const HANDOFF_MARKER = "bong-review-handoff";
 const CIRCUIT_STATE_MARKER = "<!-- bong-review-circuit-state:v1 -->";
 const CIRCUIT_STATE_TITLE = "[automation] Review infrastructure circuit state";
+const CIRCUIT_SEARCH_RETRY_DELAYS_MS = Object.freeze([15_000, 15_000, 15_000]);
+const CIRCUIT_OPERATION_BUDGET_MS = 120_000;
 const CIRCUIT_THRESHOLD = intEnv("REVIEW_INFRA_FAILURE_THRESHOLD", 3, 1);
 const CIRCUIT_WINDOW_MS = intEnv("REVIEW_INFRA_FAILURE_WINDOW_MINUTES", 60, 1) * 60_000;
 const CIRCUIT_DURATION_MS = intEnv("REVIEW_CIRCUIT_MINUTES", 60, 1) * 60_000;
@@ -78,8 +80,8 @@ export function intEnv(name, fallback, min = Number.MIN_SAFE_INTEGER) {
   return Number.isFinite(n) ? Math.max(min, n) : fallback;
 }
 
-export function isManualReviewTrigger(eventName) {
-  return eventName === "issue_comment" || eventName === "workflow_dispatch";
+export function isCircuitBypassTrigger(eventName, commentBody) {
+  return eventName === "issue_comment" && commentBody === "/review";
 }
 
 export function renderHiddenMarker(name, payload) {
@@ -176,6 +178,20 @@ export function boundedAttemptTimeout(configuredMs, remainingMs, cleanupReserveM
   return Math.max(0, Math.min(configuredMs, remainingMs - cleanupReserveMs));
 }
 
+export function circuitOperationDeadlines(
+  startMs,
+  stateBudgetMs = CIRCUIT_OPERATION_BUDGET_MS,
+  commentBudgetMs = GH_TIMEOUT_MS,
+) {
+  if (![startMs, stateBudgetMs, commentBudgetMs].every(Number.isFinite) || stateBudgetMs <= 0 || commentBudgetMs <= 0) {
+    throw new Error("Review 熔断操作预算非法。");
+  }
+  return {
+    stateDeadlineMs: startMs + stateBudgetMs,
+    commentDeadlineMs: startMs + stateBudgetMs + commentBudgetMs,
+  };
+}
+
 export function evaluateCircuit(events, now, { threshold = 3, windowMs = 3_600_000, durationMs = 3_600_000 } = {}) {
   const nowMs = new Date(now).getTime();
   const failures = events
@@ -205,29 +221,50 @@ export function evaluateCircuit(events, now, { threshold = 3, windowMs = 3_600_0
 }
 
 export function classifyReviewRun(firstRound, finalRound) {
-  const results = [...(firstRound || []), ...(finalRound || [])];
-  if (results.some(isCodexExecutionFailure)) return "infra_failure";
-  return decideGate(finalRound || []).passed ? "passed" : "gate_failure";
+  const firstResults = firstRound || [];
+  const finalResults = finalRound || [];
+  const allResults = [...firstResults, ...finalResults];
+  if (
+    firstResults.length === REVIEWERS.length &&
+    finalResults.length === REVIEWERS.length &&
+    allResults.every(isCodexExecutionFailure)
+  ) {
+    return "infra_failure";
+  }
+  return decideGate(finalResults).passed ? "passed" : "gate_failure";
 }
 
 export function classifyWorkflowFinalization({ install = "skipped", configure = "skipped", review = "skipped", outcomeKind = null }) {
-  if (install === "failure") {
-    return { kind: "infra_failure", phase: "cli_install", reason: "Codex CLI 安装或版本检查失败", shouldRecord: true };
+  if (install !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "cli_install",
+      reason: `Codex CLI 安装或版本检查未成功（${install}）`,
+      shouldRecord: true,
+    };
   }
-  if (configure === "failure" || (install === "success" && configure === "skipped")) {
-    return { kind: "infra_failure", phase: "provider_config", reason: "Codex provider 配置失败或被意外跳过", shouldRecord: true };
+  if (configure !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "provider_config",
+      reason: `Codex provider 配置未成功（${configure}）`,
+      shouldRecord: true,
+    };
   }
-  if (review === "failure" && outcomeKind === "gate_failure") {
+  if (outcomeKind === "gate_failure") {
     return { kind: "gate_failure", shouldRecord: false };
   }
-  if (review === "failure" && outcomeKind === "infra_failure") {
+  if (outcomeKind === "infra_failure") {
     return { kind: "infra_failure", shouldRecord: false };
   }
-  if (review === "failure" || (review === "skipped" && configure === "success")) {
+  if (review !== "success" || outcomeKind !== "passed") {
     return {
       kind: "infra_failure",
       phase: "review_process",
-      reason: review === "failure" ? "Review 脚本、CLI 或沙箱异常退出，且未产出可识别结果" : "Review 步骤被意外跳过，未执行 reviewer",
+      reason:
+        review === "failure"
+          ? "Review 脚本、CLI 或沙箱异常退出，且未产出可识别结果"
+          : `Review 步骤或结果异常（step=${review}, outcome=${outcomeKind || "missing"}）`,
       shouldRecord: true,
     };
   }
@@ -284,10 +321,11 @@ export function normalizePlanStatus(v) {
   return "unclear";
 }
 
-export function normalizeResult(raw, reviewer) {
+export function normalizeResult(raw, reviewer, { executionFailure = false } = {}) {
   const parsed = extractJSON(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return {
+      execution_failure: executionFailure,
       reviewer: reviewer.id,
       name: reviewer.name,
       vote: "REQUEST_CHANGES",
@@ -308,6 +346,7 @@ export function normalizeResult(raw, reviewer) {
   }
 
   return {
+    execution_failure: executionFailure,
     reviewer: String(parsed.reviewer || reviewer.id),
     name: reviewer.name,
     vote: normalizeVote(parsed.vote),
@@ -414,14 +453,18 @@ async function runReview() {
   console.error(`Review v3: PR #${PR} · ${context.changedLines} 行/${context.changedFiles} 文件 · 4×${MODEL} high`);
 
   const firstRound = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-    runCodex(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
+    runCodex(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((result) =>
+      normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
+    ),
   );
 
   const debateContext = firstRound.map(compactResultForPrompt);
   const finalRoundRaw = firstRound.every(isCodexExecutionFailure)
     ? firstRound
     : await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-        runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
+        runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((result) =>
+          normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
+        ),
       );
   if (finalRoundRaw === firstRound) {
     console.error("首轮 Codex reviewer 全部执行失败，跳过复投以保留原始失败诊断。");
@@ -429,7 +472,7 @@ async function runReview() {
   const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
   const outcome = classifyReviewRun(firstRound, finalRound);
   if (outcome === "infra_failure") {
-    const failed = [...firstRound, ...finalRound].filter(isCodexExecutionFailure);
+    const failed = finalRound.filter(isCodexExecutionFailure);
     const reason = failed.map((result) => result.summary).filter(Boolean).join(" | ");
     await recordInfrastructureFailure("reviewer_execution", reason || "Codex reviewer 执行失败");
     writeOutcome("infra_failure");
@@ -458,15 +501,17 @@ async function runReview() {
 async function circuitPreflight() {
   requirePrNumber();
   const trigger = process.env.REVIEW_TRIGGER || process.env.GITHUB_EVENT_NAME || "";
-  if (isManualReviewTrigger(trigger)) {
+  const commentBody = process.env.REVIEW_COMMENT_BODY || "";
+  if (isCircuitBypassTrigger(trigger, commentBody)) {
     console.error(`手动触发 ${trigger} 旁路 Review 熔断。`);
     setOutput("should_run", "true");
     return 0;
   }
 
+  const deadlines = circuitOperationDeadlines(Date.now());
   let state;
   try {
-    state = currentCircuitState(loadCircuitEvents());
+    state = currentCircuitState(loadCircuitEvents(deadlines.stateDeadlineMs));
   } catch (error) {
     console.error(`::warning::读取 Review 熔断状态失败，按 fail-open 继续执行：${errorText(error)}`);
   }
@@ -474,7 +519,7 @@ async function circuitPreflight() {
     const body = renderCircuitSkipComment(state);
     try {
       if (DRY_RUN) console.log(body);
-      else postIssueComment(PR, body);
+      else postIssueComment(PR, body, deadlines.commentDeadlineMs);
     } catch (error) {
       console.error(`::warning::发布 Review 熔断跳过评论失败：${errorText(error)}`);
     }
@@ -697,7 +742,10 @@ async function runCodex(prompt, label) {
       const remainingMs = reviewDeadlineMs - Date.now();
       const attemptTimeoutMs = boundedAttemptTimeout(CODEX_TIMEOUT_MS, remainingMs);
       if (attemptTimeoutMs <= 0) {
-        return codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止启动新的 Codex 进程");
+        return {
+          raw: codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止启动新的 Codex 进程"),
+          executionFailure: true,
+        };
       }
 
       rmSync(outputFile, { force: true });
@@ -707,7 +755,7 @@ async function runCodex(prompt, label) {
         if (result.code !== 0) {
           console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
         }
-        return text;
+        return { raw: text, executionFailure: false };
       }
 
       const failure = codexFailureText(result);
@@ -721,7 +769,7 @@ async function runCodex(prompt, label) {
       }
 
       console.error(`  codex ${label} failed: ${failure}`);
-      return codexExecutionFailureJson(label, failure);
+      return { raw: codexExecutionFailureJson(label, failure), executionFailure: true };
     }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -880,14 +928,22 @@ export function excerptLog(value, limit) {
 }
 
 export function isCodexExecutionFailure(result) {
+  const findings = result?.findings;
   return (
+    result?.execution_failure === true &&
     result?.confidence === 0 &&
-    result?.findings?.some((finding) => finding.file === ".github/scripts/review.mjs" && /Codex reviewer .*执行失败/.test(finding.title))
+    Array.isArray(findings) &&
+    findings.length > 0 &&
+    findings.every(isCodexFailureFinding)
   );
 }
 
+function isCodexFailureFinding(finding) {
+  return finding?.file === ".github/scripts/review.mjs" && /Codex reviewer .*执行失败/.test(String(finding.title || ""));
+}
+
 function renderComment(context, firstRound, finalRound, gate) {
-  const findings = mergeFindings(finalRound);
+  const findings = mergeFindings(reviewFindingResults(firstRound, finalRound));
   const planRows = finalRound
     .map((r) => `| ${r.reviewer} | ${r.plan_intent.status} | ${escapeCell(r.plan_intent.reason || "-")} |`)
     .join("\n");
@@ -952,6 +1008,17 @@ ${truncate(finalRoundDetails, 24_000)}
   return truncate(body, 64_000);
 }
 
+export function reviewFindingResults(firstRound, finalRound) {
+  const results = [...(finalRound || [])];
+  const finalResultCount = results.length;
+  for (let index = 0; index < finalResultCount; index += 1) {
+    if (isCodexExecutionFailure(results[index]) && !isCodexExecutionFailure(firstRound?.[index])) {
+      results.push(firstRound[index]);
+    }
+  }
+  return results;
+}
+
 function requirePrNumber() {
   if (!PR || !/^\d+$/.test(String(PR))) {
     throw new Error("PR_NUMBER 未设置或非法，必须是纯数字。");
@@ -973,13 +1040,15 @@ function nowIso() {
   return date.toISOString();
 }
 
-function loadCircuitEvents() {
-  return parseTrustedCircuitEvents(ensureCircuitStateIssues().flatMap(listIssueComments));
+function loadCircuitEvents(deadlineMs = Date.now() + CIRCUIT_OPERATION_BUDGET_MS) {
+  return parseTrustedCircuitEvents(ensureCircuitStateIssues({ deadlineMs }).flatMap((issue) => listIssueComments(issue, deadlineMs)));
 }
 
-export function findCircuitStateIssues(repo = resolveRepository(), runGh = gh) {
+export function findCircuitStateIssues(repo = resolveRepository(), runGh = gh, wait = sleepSync, timing = {}) {
+  const now = timing.now || Date.now;
+  const deadlineMs = timing.deadlineMs ?? now() + CIRCUIT_OPERATION_BUDGET_MS;
   const query = buildCircuitStateSearchQuery(repo);
-  const output = runGh([
+  const args = [
     "api",
     "--paginate",
     "--method",
@@ -991,35 +1060,53 @@ export function findCircuitStateIssues(repo = resolveRepository(), runGh = gh) {
     "per_page=100",
     "--jq",
     ".items[]",
-  ]);
-  return selectCircuitStateIssues(parseGitHubJsonLines(output));
+  ];
+  for (let attempt = 0; ; attempt += 1) {
+    const found = selectCircuitStateIssues(parseGitHubJsonLines(runGh(args, circuitGhTimeout(deadlineMs, now()))));
+    if (found.length || attempt === CIRCUIT_SEARCH_RETRY_DELAYS_MS.length) return found;
+    const delayMs = CIRCUIT_SEARCH_RETRY_DELAYS_MS[attempt];
+    if (deadlineMs - now() <= delayMs) throw new Error("Review 熔断状态查询预算已耗尽。");
+    wait(delayMs);
+  }
 }
 
-function ensureCircuitStateIssues() {
-  const existing = findCircuitStateIssues();
+export function ensureCircuitStateIssues(options = {}) {
+  const repo = options.repo || resolveRepository();
+  const runGh = options.runGh || gh;
+  const wait = options.wait || sleepSync;
+  const now = options.now || Date.now;
+  const deadlineMs = options.deadlineMs ?? now() + CIRCUIT_OPERATION_BUDGET_MS;
+  const timing = { deadlineMs, now };
+  const existing = findCircuitStateIssues(repo, runGh, wait, timing);
   if (existing.length) return existing;
 
-  const repo = resolveRepository();
   const created = JSON.parse(
-    gh([
-      "api",
-      `repos/${repo}/issues`,
-      "-f",
-      `title=${CIRCUIT_STATE_TITLE}`,
-      "-f",
-      `body=此 issue 由 Review Action 自动维护，用隐藏 marker 持久化 reviewer 基础设施失败；请勿手工编辑。\n\n${CIRCUIT_STATE_MARKER}`,
-    ]),
+    runGh(
+      [
+        "api",
+        `repos/${repo}/issues`,
+        "-f",
+        `title=${CIRCUIT_STATE_TITLE}`,
+        "-f",
+        `body=此 issue 由 Review Action 自动维护，用隐藏 marker 持久化 reviewer 基础设施失败；请勿手工编辑。\n\n${CIRCUIT_STATE_MARKER}`,
+      ],
+      circuitGhTimeout(deadlineMs, now()),
+    ),
   );
-  return resolveCircuitStateIssueNumbers(created.number, findCircuitStateIssues());
+  return resolveCircuitStateIssueNumbers(created.number, findCircuitStateIssues(repo, runGh, wait, timing));
 }
-function listIssueComments(issue) {
+function listIssueComments(issue, deadlineMs = Date.now() + CIRCUIT_OPERATION_BUDGET_MS) {
   const repo = resolveRepository();
-  const output = gh(["api", "--paginate", `repos/${repo}/issues/${issue}/comments?per_page=100`, "--jq", ".[]"]);
+  const output = gh(
+    ["api", "--paginate", `repos/${repo}/issues/${issue}/comments?per_page=100`, "--jq", ".[]"],
+    circuitGhTimeout(deadlineMs),
+  );
   return parseGitHubJsonLines(output);
 }
 
 async function recordInfrastructureFailure(phase, reason) {
   requirePrNumber();
+  const deadlines = circuitOperationDeadlines(Date.now());
   const event = {
     v: 1,
     kind: "infra_failure",
@@ -1032,11 +1119,22 @@ async function recordInfrastructureFailure(phase, reason) {
   const circuitEvent = normalizeCircuitEvent(event);
 
   let events = [];
+  let eventPersisted = false;
   if (circuitEvent) {
     try {
-      const issues = ensureCircuitStateIssues();
-      events = parseTrustedCircuitEvents(issues.flatMap(listIssueComments));
-      postIssueComment(issues[0], `Review infra failure · PR #${PR} · ${event.phase}\n\n${renderHiddenMarker(CIRCUIT_MARKER, circuitEvent)}`);
+      const issues = ensureCircuitStateIssues({ deadlineMs: deadlines.stateDeadlineMs });
+      events = parseTrustedCircuitEvents(
+        issues.flatMap((issue) => listIssueComments(issue, deadlines.stateDeadlineMs)),
+      );
+      eventPersisted = events.some((existing) => existing.run_id === circuitEvent.run_id);
+      if (!eventPersisted) {
+        postIssueComment(
+          issues[0],
+          `Review infra failure · PR #${PR} · ${event.phase}\n\n${renderHiddenMarker(CIRCUIT_MARKER, circuitEvent)}`,
+          deadlines.stateDeadlineMs,
+        );
+        eventPersisted = true;
+      }
     } catch (error) {
       console.error(`::warning::持久化 Review infra failure 失败：${errorText(error)}`);
     }
@@ -1045,12 +1143,14 @@ async function recordInfrastructureFailure(phase, reason) {
   }
 
   const combinedEvents =
-    circuitEvent && !events.some((existing) => existing.run_id === circuitEvent.run_id) ? [...events, circuitEvent] : events;
+    eventPersisted && circuitEvent && !events.some((existing) => existing.run_id === circuitEvent.run_id)
+      ? [...events, circuitEvent]
+      : events;
   const state = currentCircuitState(combinedEvents, event.at);
   const body = renderInfrastructureHandoffComment(event, state);
   try {
     if (DRY_RUN) console.log(body);
-    else postIssueComment(PR, body);
+    else postIssueComment(PR, body, deadlines.commentDeadlineMs);
   } catch (error) {
     console.error(`::warning::发布 Review 降级评论失败：${errorText(error)}`);
   }
@@ -1058,9 +1158,9 @@ async function recordInfrastructureFailure(phase, reason) {
 
 export function renderInfrastructureHandoffComment(event, state) {
   const circuitLine = state.open
-    ? `\n\n已达到基础设施失败阈值，自动触发将熔断至 **${state.openUntil}**；评论 \`/review\` 或 \`workflow_dispatch\` 可始终手动旁路重试。`
+    ? `\n\n已达到基础设施失败阈值，自动触发将熔断至 **${state.openUntil}**；可信成员评论精确命令 \`/review\` 可手动旁路重试。`
     : "";
-  return `## ⚠️ Review Action 基础设施降级\n\n本次 Action review 结果请忽略，改走 agent 自己的博弈式 review 流程，并会向用户反馈。\n\n失败阶段：\`${event.phase}\`。${circuitLine}\n\n${renderHiddenMarker(HANDOFF_MARKER, event)}`;
+  return `## ⚠️ Review Action 基础设施降级\n\n请忽略本次 Review Action 结果：这是基础设施失败，不是代码 finding。改走 agent 自有博弈式 review 流程并向用户反馈；本 workflow 已成功降级退出，不中断任务。\n\n失败阶段：\`${event.phase}\`。${circuitLine}\n\n${renderHiddenMarker(HANDOFF_MARKER, event)}`;
 }
 
 export function renderCircuitSkipComment(state) {
@@ -1072,12 +1172,12 @@ export function renderCircuitSkipComment(state) {
     run_id: process.env.GITHUB_RUN_ID || "",
     open_until: state.openUntil,
   };
-  return `## ⚡ Review Action 自动熔断跳过\n\nreviewer 基础设施熔断中，本次自动触发已快速跳过并成功退出，不影响其他 CI。\n\n熔断截止：**${state.openUntil}**。评论 \`/review\` 或使用 \`workflow_dispatch\` 可始终手动旁路重试。\n\n${renderHiddenMarker(HANDOFF_MARKER, marker)}`;
+  return `## ⚡ Review Action 自动熔断跳过\n\nreviewer 基础设施熔断中，请忽略本次 Review Action 基础设施 gate：这不是代码 finding。改走 agent 自有博弈式 review 流程并向用户反馈；本次自动触发已快速跳过并成功退出，不中断任务且不影响其他 CI。\n\n熔断截止：**${state.openUntil}**。可信成员评论精确命令 \`/review\` 可手动旁路重试。\n\n${renderHiddenMarker(HANDOFF_MARKER, marker)}`;
 }
 
-function postIssueComment(issue, body) {
+function postIssueComment(issue, body, deadlineMs = Date.now() + GH_TIMEOUT_MS) {
   const repo = resolveRepository();
-  gh(["api", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}`]);
+  gh(["api", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}`], circuitGhTimeout(deadlineMs));
 }
 
 function resolveRepository() {
@@ -1107,8 +1207,17 @@ function setOutput(name, value) {
 function errorText(error) {
   return excerptLog(error?.stderr || error?.message || String(error), 1200);
 }
-function gh(args) {
-  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: GH_TIMEOUT_MS });
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+export function circuitGhTimeout(deadlineMs, nowMs = Date.now()) {
+  const remainingMs = Math.floor(deadlineMs - nowMs);
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) throw new Error("Review 熔断操作预算已耗尽。");
+  return Math.max(1, Math.min(GH_TIMEOUT_MS, remainingMs));
+}
+function gh(args, timeoutMs = GH_TIMEOUT_MS) {
+  const timeout = Math.max(1, Math.min(GH_TIMEOUT_MS, Math.floor(timeoutMs)));
+  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout });
 }
 
 function normalizeFindings(value) {
