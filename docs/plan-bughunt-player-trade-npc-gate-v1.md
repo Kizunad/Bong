@@ -58,11 +58,11 @@
 - Promotion：`8467f570`，骨架已独立升格为 active plan。
 - 第一性原理 RED：`4f777deb` 所在测试 HEAD 上，`trade_offer_dispatch_allows_wanted_initiator_identity_between_players` 编译通过后按行为失败；目标玩家收到的 `TradeOffer` 数量为 `0`，而契约期望为 `1`，证明 server authority 的 NPC 声名门禁真实吞掉玩家 offer。
 - 最小修复：`76fbb974` 仅从 `dispatch_trade_offers` 的纯 `With<Client>` 玩家链移除 `npc_should_decline_trade()` 及其冗余 query 字段；NPC reaction helper 与 NPC 子系统保持不变。
-- Targeted GREEN：上述 RED 用例 `1/1 PASS`；`cargo test social::tests::trade_offer -- --nocapture` 为 `4/4 PASS`，覆盖正常派发、Wanted 发起者派发、非法请求拒绝、装备中物品拒绝。
+- Targeted GREEN：上述 RED 用例经 validator 返工后扩为 Low / Wanted 表驱动契约，`trade_offer_dispatch_allows_low_and_wanted_initiators_between_players` 为 `1/1 PASS`；同时断言发起方不再收到伪 NPC 拒绝文案、目标收到 offer、pending 已登记。`cargo test social::tests::trade_offer -- --nocapture` 覆盖正常派发、Low/Wanted 发起者派发、非法请求拒绝、装备中物品拒绝。
 - 全量测试预跑：设置 `BONG_SKIP_SKIN_PREFETCH=1` 后执行 `cargo test`，lib 为 `11156 passed / 0 failed / 1 ignored`，main 为 `11/11 PASS`，full-app startup 为 `1/1 PASS`，Tarkov backpack e2e 为 `4/4 PASS`，doc-tests 为 `0 failed / 5 ignored`。
 - 完整 server gate：仍须等待 Rust stable clippy baseline PR #1170 合入后，基于最新 `origin/main` 重新执行整组 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；当前不得把 baseline 的 69 项跨 scope 复制进本修复。
 - 最终裁决：完整门禁后须在最终 HEAD 上启动全新、无上下文、只读的 `gpt-5.6-sol xhigh` validator；归档导致 HEAD 变化后再次 fresh validator。
 
 ## 审计来源
 
-bug-hunt 定点轮（server/social 侧路径，避开 cross-dimension witness leak、social anonymity live refresh、identity/social renown bridge、silent signal runtime bridge）。证据来自 client 交互入口、server request handler、social 派发主链、identity helper 文档与仓内现有单测的交叉复核；当前结论为 **report-only**，仅新增 skeleton，不改源码。
+bug-hunt 定点轮（server/social 侧路径，避开 cross-dimension witness leak、social anonymity live refresh、identity/social renown bridge、silent signal runtime bridge）。证据来自 client 交互入口、server request handler、social 派发主链、identity helper 文档与仓内现有单测的交叉复核；**skeleton 立项阶段**的结论为 report-only，当时仅新增骨架、不改源码，随后已进入本 plan 记录的 BugFix 实施与验证阶段。
