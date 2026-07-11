@@ -1,6 +1,6 @@
 # plan-bughunt-scroll-read-transition-esc-close-loss-v1
 
-> **Active BugFix plan**。主题：残卷阅读屏在默认开屏转场期间被 `Esc` 取消时，视觉界面关闭但 `scroll_read_closed` 协议终态丢失，导致 client store 与 server 阅读 marker 悬挂。
+> **Finished BugFix plan**。主题：残卷阅读屏在默认开屏转场期间被 `Esc` 取消时，视觉界面关闭但 `scroll_read_closed` 协议终态丢失，导致 client store 与 server 阅读 marker 悬挂。
 
 ## 阶段总览
 
@@ -98,7 +98,7 @@
   - 先 direct-close 当前 screen，再结算 pending 协议，避免 A→pending B 时 store listener 重入生成残留 transition。
 - P1：`client/src/main/java/com/bong/client/scroll/ScrollReadScreen.java`
   - 实现 pending-open 取消回调，幂等发送 `scroll_read_closed` 并清空 store。
-- P2：同步 `origin/main@7cfcba5f`，merge commit `f4035e33` 引入新的 transport 拒绝语义；据 fresh validator finding 补齐发送失败时仍完成本地关闭终态的处理与回归。
+- P2：同步 `origin/main@307ab4db`；`f4035e33` 引入新的 transport 拒绝语义，据 fresh validator finding 补齐发送失败时仍完成本地关闭终态的处理与回归；`2f2d5081` 同步的后续主线仅涉及 worldgen/server。
 
 ### 关键 commit
 
@@ -110,6 +110,7 @@
 - `554849f2`（2026-07-11）：合并最新 `origin/main` 并复验。
 - `f4035e33`（2026-07-11）：再次合并 `origin/main@7cfcba5f`，同步 transport 拒绝语义。
 - `58932dc4`（2026-07-11）：依据 validator FAIL 修复 transport 拒绝时本地 store 悬挂。
+- `2f2d5081`（2026-07-11）：合并 `origin/main@307ab4db`，同步新手兴趣点修复。
 
 ### 测试结果
 
