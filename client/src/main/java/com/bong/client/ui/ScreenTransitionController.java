@@ -27,7 +27,7 @@ public final class ScreenTransitionController {
             return false;
         }
         if (!UiTransitionSettings.enabled()) {
-            clearActiveTransition();
+            cancelActiveTransitionForReplacement(nextScreen);
             return false;
         }
         Screen oldScreen = client.currentScreen;
@@ -38,15 +38,11 @@ public final class ScreenTransitionController {
         TransitionConfig.TransitionSpec spec = ScreenTransitionRegistry.resolve(oldScreen, nextScreen);
         int durationMs = UiTransitionSettings.durationFor(spec.durationMs());
         if (!spec.animates() || durationMs == 0) {
-            clearActiveTransition();
+            cancelActiveTransitionForReplacement(nextScreen);
             return false;
         }
 
-        ActiveTransition previous = activeTransition;
-        if (previous != null) {
-            previous.handle().cancel();
-            cancelledTransitions++;
-        }
+        cancelActiveTransitionForReplacement(nextScreen);
 
         long now = ScreenTransition.nowMillis();
         ScreenTransition.TransitionHandle handle = ScreenTransition.play(
@@ -101,6 +97,28 @@ public final class ScreenTransitionController {
         return activeTransition;
     }
 
+    public static Screen pendingScreen() {
+        return pendingScreenForCancellation();
+    }
+
+    /** 精确取消指定 pending screen；不关闭当前 screen，也不影响后来替换的 transition。 */
+    public static boolean cancelPendingOpen(Screen expected) {
+        ActiveTransition active = activeTransition;
+        if (expected == null
+            || active == null
+            || active.handle().completed()
+            || active.handle().newScreen() != expected) {
+            return false;
+        }
+        active.handle().cancel();
+        cancelledTransitions++;
+        activeTransition = null;
+        if (expected instanceof PendingOpenCancellationHandler handler) {
+            handler.onPendingOpenCancelled();
+        }
+        return true;
+    }
+
     static int cancelledTransitionsForTests() {
         return cancelledTransitions;
     }
@@ -128,17 +146,32 @@ public final class ScreenTransitionController {
         if (oldScreen != nextScreen) {
             return false;
         }
-        clearActiveTransition();
+        cancelActiveTransitionForReplacement(nextScreen);
         return true;
     }
 
-    private static void clearActiveTransition() {
+    static void cancelActiveTransitionForReplacement(Screen replacementScreen) {
+        ActiveTransition cancelled = clearActiveTransition();
+        if (cancelled == null) {
+            return;
+        }
+        Screen pendingScreen = cancelled.handle().completed()
+            ? null
+            : cancelled.handle().newScreen();
+        if (pendingScreen instanceof PendingOpenCancellationHandler handler
+            && !handler.continuesWith(replacementScreen)) {
+            handler.onPendingOpenCancelled();
+        }
+    }
+
+    private static ActiveTransition clearActiveTransition() {
         ActiveTransition active = activeTransition;
         if (active != null) {
             active.handle().cancel();
             cancelledTransitions++;
             activeTransition = null;
         }
+        return active;
     }
 
     private static Screen pendingScreenForCancellation() {
@@ -176,11 +209,13 @@ public final class ScreenTransitionController {
         }
     }
 
-    /**
-     * 尚未完成开屏的 screen 若携带协议终态，可实现此接口在 Esc 取消转场时幂等收口。
-     */
+    /** 尚未完成开屏的 screen 若携带协议终态，可在 Esc 或后续 screen 覆盖时幂等收口。 */
     public interface PendingOpenCancellationHandler {
         void onPendingOpenCancelled();
+
+        default boolean continuesWith(Screen replacementScreen) {
+            return replacementScreen == this;
+        }
     }
 
     /**

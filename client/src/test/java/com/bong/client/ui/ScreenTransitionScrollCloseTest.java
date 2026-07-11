@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -153,6 +154,73 @@ class ScreenTransitionScrollCloseTest {
         assertTrue(pendingScreen.settled(), "pending screen 必须收到取消结算回调");
         assertTrue(pendingScreen.sawCurrentScreenClosed(),
             "必须先直接关闭当前 screen，再结算 pending 协议；否则 store listener 可重入创建残留转场");
+    }
+
+    @Test
+    void supersededPendingScrollCanBeCancelledWithoutClosingCurrentScreen() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8))));
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_superseded", "《残卷》", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen pendingScreen = new ScrollReadScreen(offer);
+        ScreenTransition.TransitionHandle handle = activatePending(pendingScreen);
+
+        boolean cancelled = ScreenTransitionController.cancelPendingOpen(pendingScreen);
+        boolean repeated = ScreenTransitionController.cancelPendingOpen(pendingScreen);
+
+        assertTrue(cancelled, "被后续 screen 替换的 pending 残卷必须能精确取消");
+        assertFalse(repeated, "同一个 pending transition 重复取消必须 no-op");
+        assertTrue(handle.cancelled(), "pending transition handle 必须进入取消态");
+        assertNull(ScreenTransitionController.activeTransition(), "精确取消后不得残留 active transition");
+        assertNull(ScrollReadStore.snapshot(), "被替换的 pending 残卷必须完成协议终态");
+        assertEquals(List.of(new Sent(
+            new Identifier("bong", "client_request"),
+            "{\"type\":\"scroll_read_closed\",\"v\":1}"
+        )), sent,
+            "superseded pending 残卷必须且只能发送一条终态");
+    }
+
+    @Test
+    void rapidReplacementSettlesPendingScrollUnlessSessionContinues() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8))));
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_rapid", "《残卷》", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen firstPending = new ScrollReadScreen(offer);
+        ScreenTransition.TransitionHandle firstHandle = activatePending(firstPending);
+        ScrollReadScreen sameSessionReplacement = new ScrollReadScreen(offer);
+
+        ScreenTransitionController.cancelActiveTransitionForReplacement(sameSessionReplacement);
+
+        assertTrue(firstHandle.cancelled(), "rapid replacement 必须取消旧 handle");
+        assertSame(offer, ScrollReadStore.snapshot(), "同 token replacement 必须延续当前阅读会话");
+        assertTrue(sent.isEmpty(), "同 token replacement 不得误发关闭终态");
+
+        ScreenTransition.TransitionHandle continuedHandle = activatePending(sameSessionReplacement);
+        ScreenTransitionController.cancelActiveTransitionForReplacement(new DummyScreen());
+
+        assertTrue(continuedHandle.cancelled(), "无关 screen 覆盖必须取消 pending handle");
+        assertNull(ScrollReadStore.snapshot(), "无关 screen 覆盖必须结算 pending 阅读会话");
+        assertEquals(1, sent.size(), "同会话延续后再被无关 screen 覆盖，只能发送一次终态");
+    }
+
+    @Test
+    void disconnectClearCancelsPendingVisualStateWithoutSendingTerminalRequest() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8))));
+        ScrollOpenViewModel offer = new ScrollOpenViewModel("scroll_disconnect", "《残卷》", List.of("正文"));
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen pendingScreen = new ScrollReadScreen(offer);
+        ScreenTransition.TransitionHandle handle = activatePending(pendingScreen);
+        ScrollReadStore.clearOnDisconnect();
+
+        boolean cancelled = ScreenTransitionController.cancelPendingOpen(pendingScreen);
+
+        assertTrue(cancelled, "断线清空后必须取消尚未完成的视觉转场");
+        assertTrue(handle.cancelled(), "断线清理必须取消 pending handle");
+        assertNull(ScreenTransitionController.activeTransition(), "断线清理后不得残留 active transition");
+        assertNull(ScrollReadStore.snapshot(), "断线清理后 store 必须保持空态");
+        assertTrue(sent.isEmpty(), "连接已断时不得补发 scroll_read_closed");
     }
 
     private static ScreenTransition.TransitionHandle activatePending(Screen pendingScreen) {

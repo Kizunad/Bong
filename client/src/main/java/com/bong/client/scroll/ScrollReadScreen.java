@@ -14,6 +14,7 @@ import io.wispforest.owo.ui.core.Sizing;
 import io.wispforest.owo.ui.core.Surface;
 import io.wispforest.owo.ui.core.VerticalAlignment;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 
@@ -216,6 +217,12 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout>
     @Override
     public void onCurrentScreenCancelled() {
         settleTransitionCancellation();
+    }
+
+    @Override
+    public boolean continuesWith(Screen replacementScreen) {
+        return replacementScreen instanceof ScrollReadScreen replacement
+            && replacement.sessionToken == sessionToken;
     }
 
     private void settleTransitionCancellation() {

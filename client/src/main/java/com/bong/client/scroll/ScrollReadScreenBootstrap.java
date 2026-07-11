@@ -1,6 +1,7 @@
 package com.bong.client.scroll;
 
 import com.bong.client.BongClient;
+import com.bong.client.ui.ScreenTransitionController;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
@@ -19,7 +20,7 @@ public final class ScrollReadScreenBootstrap {
     }
 
     public static void register() {
-        ScrollReadStore.addListener(ScrollReadScreenBootstrap::onStoreChanged);
+        ScrollReadStore.addSessionListener(ScrollReadScreenBootstrap::onStoreChanged);
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
             client.execute(ScrollReadStore::clearOnDisconnect));
@@ -27,17 +28,25 @@ public final class ScrollReadScreenBootstrap {
         BongClient.LOGGER.info("Registered scroll read screen bootstrap via store listener");
     }
 
-    static void onStoreChanged(ScrollOpenViewModel offer) {
+    static void onStoreChanged(ScrollReadStore.ActiveSession session) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null) {
             return;
         }
-        client.execute(() -> applyStoreChange(client, offer));
+        client.execute(() -> applyStoreChange(client, session));
     }
 
-    static void applyStoreChange(MinecraftClient client, ScrollOpenViewModel offer) {
+    static void applyStoreChange(MinecraftClient client, ScrollReadStore.ActiveSession session) {
+        if (!ScrollReadStore.isCurrent(session)) {
+            return;
+        }
+        ScrollOpenViewModel offer = session == null ? null : session.viewModel();
         Screen current = client.currentScreen;
+        Screen pending = ScreenTransitionController.pendingScreen();
         if (offer == null) {
+            if (pending instanceof ScrollReadScreen) {
+                ScreenTransitionController.cancelPendingOpen(pending);
+            }
             // store 被清空：若当前正显示阅读屏，则关掉（走 setScreen 而非再次调用
             // ScrollReadStore.close()，避免和触发本次清空的路径重复回传 ScrollReadClosed）。
             if (current instanceof ScrollReadScreen) {
@@ -45,11 +54,16 @@ public final class ScrollReadScreenBootstrap {
             }
             return;
         }
-        // 来了新 ScrollOpen：同一卷（scrollId 相同）不重建屏，避免打断玩家正在看的页；
-        // 不同卷（或当前根本没开着阅读屏）则打开新屏。
-        if (!(current instanceof ScrollReadScreen existing)
-            || !existing.viewModel().scrollId().equals(offer.scrollId())) {
-            client.setScreen(new ScrollReadScreen(offer));
+        // 同一会话的 refresh 不重建当前或 pending screen，避免打断玩家正在看的页；
+        // 经历空态后的同卷会换 token，必须打开新 screen，不能复用旧会话身份。
+        if (!belongsToSession(current, session) && !belongsToSession(pending, session)) {
+            client.setScreen(new ScrollReadScreen(offer, session.token()));
         }
+    }
+
+    static boolean belongsToSession(Screen screen, ScrollReadStore.ActiveSession session) {
+        return screen instanceof ScrollReadScreen scrollScreen
+            && session != null
+            && scrollScreen.ownsSession(session.token());
     }
 }
