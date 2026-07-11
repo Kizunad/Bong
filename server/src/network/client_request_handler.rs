@@ -4574,13 +4574,51 @@ mod tests {
         trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
         requested_item_id: &str,
     ) -> (App, Entity, MockClientHelper) {
+        run_npc_trade_request_with_reputation(
+            player_inventory,
+            trade_inventory,
+            requested_item_id,
+            None,
+        )
+    }
+
+    fn run_npc_trade_request_with_reputation(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+        npc_player_reputation: Option<NpcPlayerReputation>,
+    ) -> (App, Entity, MockClientHelper) {
+        run_npc_trade_request_with_context(
+            player_inventory,
+            trade_inventory,
+            requested_item_id,
+            npc_player_reputation,
+            None,
+            DVec3::new(0.0, 64.0, 0.0),
+            None,
+        )
+    }
+
+    fn run_npc_trade_request_with_context(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+        npc_player_reputation: Option<NpcPlayerReputation>,
+        player_faction_reputation: Option<FactionReputation>,
+        position: DVec3,
+        npc_membership: Option<FactionMembership>,
+    ) -> (App, Entity, MockClientHelper) {
         let mut app = App::new();
         app.add_plugins(EntityPlugin);
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().unwrap());
         app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+        if player_faction_reputation.is_some() {
+            app.insert_resource(ZoneRegistry::load_from_path(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"),
+            ));
+        }
 
-        let position = DVec3::new(0.0, 64.0, 0.0);
         let (client_bundle, helper) = create_mock_client("Azure");
         let player = app
             .world_mut()
@@ -4589,6 +4627,11 @@ mod tests {
         app.world_mut()
             .entity_mut(player)
             .insert(Position::new(position));
+        if let Some(player_faction_reputation) = player_faction_reputation {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(player_faction_reputation);
+        }
         let npc = app
             .world_mut()
             .spawn((
@@ -4602,6 +4645,14 @@ mod tests {
             .id();
         if let Some(trade_inventory) = trade_inventory {
             app.world_mut().entity_mut(npc).insert(trade_inventory);
+        }
+        if let Some(npc_player_reputation) = npc_player_reputation {
+            app.world_mut()
+                .entity_mut(npc)
+                .insert(npc_player_reputation);
+        }
+        if let Some(npc_membership) = npc_membership {
+            app.world_mut().entity_mut(npc).insert(npc_membership);
         }
 
         app.update();
@@ -4770,6 +4821,53 @@ mod tests {
         assert_eq!(
             inventory.bone_coins, 83,
             "live offer price is the bundle total and must override catalogue price"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_applies_non_neutral_reputation_to_live_bundle_total() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 18;
+        let mut reputation = NpcPlayerReputation::default();
+        reputation.adjust("offline:Azure", 0.3);
+        let (app, player, _helper) = run_npc_trade_request_with_reputation(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 20)],
+            }),
+            "spirit_grass",
+            Some(reputation),
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 0,
+            "high reputation discount must apply to live total 20 (current ceil result 18), not catalogue 10"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_applies_faction_reputation_to_live_bundle_total() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 18;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 51);
+        let (app, player, _helper) = run_npc_trade_request_with_context(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 20)],
+            }),
+            "spirit_grass",
+            None,
+            Some(faction_reputation),
+            DVec3::new(-3000.0, 120.0, -2000.0),
+            Some(neutral_faction_membership()),
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 0,
+            "Qingyun high faction reputation must discount live total 20, not catalogue 10"
         );
     }
 

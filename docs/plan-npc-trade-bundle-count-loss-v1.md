@@ -102,6 +102,10 @@
    - 玩家余额高于 catalogue 价但低于 live bundle 总价时拒绝；物品、骨币、revision 不变，反馈显示 live 总价且无成功消息。
 9. `npc_trade_request_partial_bundle_capacity_fails_atomically`
    - 背包已有 63/64 同类堆叠且无第二格、live bundle `count=2` 时整笔失败；不得先合入 1 件，也不得扣币或改变 revision。
+10. `npc_trade_request_applies_non_neutral_reputation_to_live_bundle_total`
+   - 注入非中立 `NpcPlayerReputation`，证明信誉修正以 live bundle 总价为基数，而非退回静态 catalogue 价格。
+11. `npc_trade_request_applies_faction_reputation_to_live_bundle_total`
+   - 在青云残峰注入非中立 `FactionReputation`，证明区域 faction baseline 同样修正 live bundle 总价；与 per-NPC delta 两条输入链分别锁定。
 
 ## 开放问题（已收口）
 
@@ -159,7 +163,7 @@ bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bugh
 
 - **P0**：`server/src/network/client_request_handler.rs::NpcEngagementRequestParams.trade_inventories` 二次读取已通过距离、维度和生命周期校验的目标 NPC；成交数量、展示名与 bundle 总价来自匹配 live `TradeOffer`。
 - **P1**：历史 alias 仍由 `npc_trade_catalog_entry` canonicalize，但 canonical id 必须命中当前 live subset；成功反馈回显 `display_name x count`。
-- **P2**：同文件新增完整 `NpcTradeRequest` dispatch 测试夹具与 8 条交易行为用例，覆盖 bundle / 单件 / alias / subset / live 总价 / 缺 component / 成功反馈 / 入包失败原子性；连同既有 schema 与 Wanted 门控共 10 条 targeted 用例。
+- **P2**：同文件新增完整 `NpcTradeRequest` dispatch 测试夹具与 12 条交易行为用例，覆盖 bundle / 单件 / alias / subset / live 总价 / `NpcPlayerReputation` 与 `FactionReputation` 两路非中立修价 / 缺 component / 成功反馈 / 入包失败原子性；连同既有 schema 与 Wanted 门控共 14 条 targeted 用例。
 
 ### 关键 commit
 
@@ -170,8 +174,8 @@ bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bugh
 
 ### 测试结果与阻塞
 
-- `cargo test npc_trade_request_ -- --nocapture`：12 passed，0 failed；新增锁住“只够 catalogue 单价但不足 live bundle 总价”和“背包只能容纳 bundle 部分数量”两类零副作用失败边界。
-- `TMPDIR="$PWD/.tmp" cargo test`：lib 10941 passed / 0 failed / 1 ignored；main 11 passed；integration 1 + 4 passed；doc-test 0 failed。
+- `cargo test npc_trade_request_ -- --nocapture`：14 passed，0 failed；锁住 live bundle 成功/失败、subset、两路非中立信誉修价与两类新增原子失败边界。
+- `TMPDIR="$PWD/.tmp" cargo test`：lib 10943 passed / 0 failed / 1 ignored；main 11 passed；integration 1 + 4 passed；doc-test 0 failed。
 - `cargo fmt --check`：通过。
 - `[BLOCKED: 强制 clippy 门禁未通过]`：仓库 `server/rust-toolchain.toml` 自初始提交 `c98bb986` 起只声明浮动 `channel = "stable"`；当前解析为 `rustc 1.96.1 (31fca3adb 2026-06-26)` / `clippy 0.1.96`，GitHub e2e 同样使用 `dtolnay/rust-toolchain@stable`，没有另一个被仓库声明的旧可信 clippy 基线。
   - 精确命令：`TMPDIR="$PWD/.tmp" cargo clippy --all-targets -- -D warnings`。
