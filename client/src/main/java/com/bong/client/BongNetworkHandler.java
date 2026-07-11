@@ -12,6 +12,7 @@ import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.DuguV2HudStateStore;
 import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
@@ -922,6 +923,14 @@ public class BongNetworkHandler {
         // 快照，会让上一局的伪皮层数块（FalseSkinStackHud）和污染负载条（ContamLoadHud）
         // 无限跨 session 残留，直到再次收到一条 false_skin_state。
         com.bong.client.combat.store.FalseSkinHudStateStore.clearOnDisconnect();
+        // plan-bughunt-dugu-v2-hud-disconnect-bleed-v1 P0 — DuguV2HudStateStore 此前只有
+        // resetForTests()，生产态断线清理清单里完全没有它。server 的 dugu_v2_skill_cast /
+        // dugu_v2_self_cure / dugu_v2_shroud_active / permanent_qi_max_decay_applied bridge
+        // 只在毒蛊 v2 事件发生时推增量/状态，没有 join/disconnect reset payload；revealRisk
+        // 无 expiry 字段、selfRevealed 是 sticky merge，新 session 若没再触发毒蛊 v2 事件也不
+        // 会有 payload 覆盖旧快照，导致上一局的“暴露 xx%”“自蕴 xx% 已露”或遮蔽 tint 无限期
+        // 跨 session 残留到下一局。
+        DuguV2HudStateStore.clearOnDisconnect();
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {
