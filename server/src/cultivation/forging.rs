@@ -9,7 +9,7 @@ use valence::prelude::{
     bevy_ecs, Entity, Event, EventReader, EventWriter, Position, Query, Res, ResMut,
 };
 
-use super::components::{Cultivation, Meridian, MeridianId, MeridianSystem};
+use super::components::{Cultivation, Meridian, MeridianChannelId, MeridianId, MeridianSystem};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 use crate::npc::spawn::NpcMarker;
@@ -28,14 +28,14 @@ pub enum ForgeAxis {
 #[derive(Debug, Clone, Event)]
 pub struct ForgeRequest {
     pub entity: Entity,
-    pub meridian: MeridianId,
+    pub meridian: MeridianChannelId,
     pub axis: ForgeAxis,
 }
 
 #[derive(Debug, Clone, Event)]
 pub struct ForgeOutcome {
     pub entity: Entity,
-    pub meridian: MeridianId,
+    pub meridian: MeridianChannelId,
     pub axis: ForgeAxis,
     pub result: Result<u8, ForgeError>, // Ok(new_tier)
 }
@@ -146,24 +146,39 @@ pub fn forging_system(
             current_dimension,
             zones.as_deref(),
             qi_account.as_deref_mut(),
-            req.meridian,
+            req.meridian.clone(),
             req.axis,
         );
         match &result {
             Ok(tier) => {
-                let entry = match req.axis {
-                    ForgeAxis::Rate => BiographyEntry::ForgedRate {
-                        id: req.meridian,
-                        tier: *tier,
-                        tick: now,
-                    },
-                    ForgeAxis::Capacity => BiographyEntry::ForgedCapacity {
-                        id: req.meridian,
-                        tier: *tier,
-                        tick: now,
-                    },
-                };
-                life.push(entry);
+                // life_record::BiographyEntry 仍以闭合 MeridianId 为公共接口（plan §7
+                // 撞车面声明范围外，非本轮 wire 开放化任务）——非 humanoid channel（P5
+                // 飞鲸等）没有对应 MeridianId 时显式跳过传记条目（不伪造哨兵 id），只记
+                // debug 日志，不影响锻造结算本身。
+                match req.meridian.to_meridian_id() {
+                    Some(legacy_id) => {
+                        let entry = match req.axis {
+                            ForgeAxis::Rate => BiographyEntry::ForgedRate {
+                                id: legacy_id,
+                                tier: *tier,
+                                tick: now,
+                            },
+                            ForgeAxis::Capacity => BiographyEntry::ForgedCapacity {
+                                id: legacy_id,
+                                tier: *tier,
+                                tick: now,
+                            },
+                        };
+                        life.push(entry);
+                    }
+                    None => {
+                        tracing::debug!(
+                            "[bong][cultivation] forge biography skipped for non-humanoid \
+                             channel {:?} (no legacy MeridianId mapping)",
+                            req.meridian
+                        );
+                    }
+                }
                 tracing::info!(
                     "[bong][cultivation] {:?} forged {:?}.{:?} -> tier {tier}",
                     req.entity,
@@ -180,7 +195,7 @@ pub fn forging_system(
         }
         outcomes.send(ForgeOutcome {
             entity: req.entity,
-            meridian: req.meridian,
+            meridian: req.meridian.clone(),
             axis: req.axis,
             result,
         });
@@ -197,10 +212,10 @@ fn forge_with_ledger(
     current_dimension: Option<&CurrentDimension>,
     zones: Option<&ZoneRegistry>,
     qi_account: Option<&mut WorldQiAccount>,
-    meridian_id: MeridianId,
+    meridian_id: MeridianChannelId,
     axis: ForgeAxis,
 ) -> Result<u8, ForgeError> {
-    let (_, cost) = forge_next_tier(cultivation, meridians.get(meridian_id), axis)?;
+    let (_, cost) = forge_next_tier(cultivation, meridians.get(meridian_id.clone()), axis)?;
     let zone_name = resolve_forge_zone_name(zones, position, current_dimension)
         .ok_or(ForgeError::LedgerUnavailable)?;
     let actor_account = forge_actor_account_id(life, is_npc)?;
@@ -382,7 +397,7 @@ mod tests {
 
         app.world_mut().send_event(ForgeRequest {
             entity: player,
-            meridian: MeridianId::Lung,
+            meridian: MeridianId::Lung.channel_id(),
             axis: ForgeAxis::Rate,
         });
         app.update();
@@ -405,7 +420,7 @@ mod tests {
 
         app.world_mut().send_event(ForgeRequest {
             entity: player,
-            meridian: MeridianId::Lung,
+            meridian: MeridianId::Lung.channel_id(),
             axis: ForgeAxis::Rate,
         });
         app.update();

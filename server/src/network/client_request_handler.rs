@@ -40,7 +40,9 @@ use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianId, MeridianSystem};
+use crate::cultivation::components::{
+    recover_current_qi, Cultivation, MeridianChannelId, MeridianId, MeridianSystem,
+};
 use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
@@ -461,8 +463,14 @@ const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
 const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
 const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
 
-fn meridian_label(id: MeridianId) -> &'static str {
-    match id {
+/// plan-race-system-v1 P1c — 参数改为 `MeridianChannelId`（wire 开放化后
+/// `SetMeridianTarget.meridian` 不再是闭合 `MeridianId` 枚举）；仅 humanoid 20 条
+/// channel id 有中文标签，非 humanoid 构型（P5 飞鲸等）落显式"未知经脉"占位，不伪造。
+fn meridian_label(id: &MeridianChannelId) -> &'static str {
+    let Some(legacy_id) = id.to_meridian_id() else {
+        return "未知经脉";
+    };
+    match legacy_id {
         MeridianId::Lung => "肺经",
         MeridianId::LargeIntestine => "大肠经",
         MeridianId::Stomach => "胃经",
@@ -660,11 +668,11 @@ pub fn handle_client_request_payloads(
                 );
                 commands
                     .entity(ev.client)
-                    .insert(MeridianTarget(meridian.channel_id()));
+                    .insert(MeridianTarget(meridian.clone()));
                 if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
                     client.send_chat_message(format!(
                         "§a[修炼] 已收到经脉目标：{}。",
-                        meridian_label(meridian)
+                        meridian_label(&meridian)
                     ));
                 }
             }
@@ -4445,11 +4453,21 @@ mod tests {
 
         for (id, expected) in cases {
             assert_eq!(
-                meridian_label(id),
+                meridian_label(&id.channel_id()),
                 expected,
                 "expected stable chat label for {id:?}"
             );
         }
+    }
+
+    #[test]
+    fn meridian_label_falls_back_for_unknown_channel_id() {
+        // plan-race-system-v1 P1c — 非 humanoid channel id（如未来 whale 部位）没有中文
+        // 标签映射时，必须显式回落"未知经脉"，不得 panic 或伪造某个已知标签。
+        assert_eq!(
+            meridian_label(&MeridianChannelId::new("tail_fin_channel")),
+            "未知经脉"
+        );
     }
 
     #[test]
@@ -4550,7 +4568,7 @@ mod tests {
                 channel: ident!("bong:client_request").into(),
                 data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
                     v: 1,
-                    meridian: MeridianId::Du,
+                    meridian: MeridianId::Du.channel_id(),
                 })
                 .expect("set meridian target request should serialize")
                 .into_boxed_slice(),
