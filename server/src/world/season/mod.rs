@@ -11,7 +11,9 @@ pub const VANILLA_DAY_TICKS: u64 = 24_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Season {
+    #[default]
     Summer,
     SummerToWinter,
     Winter,
@@ -123,12 +125,6 @@ impl Season {
         } else {
             1.0
         }
-    }
-}
-
-impl Default for Season {
-    fn default() -> Self {
-        Self::Summer
     }
 }
 

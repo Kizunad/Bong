@@ -16,15 +16,11 @@ pub const TSY_DIMENSION_IDENT: &str = "bong:tsy";
 /// Logical dimension a player or NPC is currently inhabiting.
 #[derive(Resource, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DimensionKind {
+    #[default]
     Overworld,
     Tsy,
-}
-
-impl Default for DimensionKind {
-    fn default() -> Self {
-        Self::Overworld
-    }
 }
 
 impl DimensionKind {
