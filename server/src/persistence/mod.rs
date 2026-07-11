@@ -14412,7 +14412,7 @@ mod persistence_tests {
             .prepare("PRAGMA table_info(heartbeat_pseudo_veins)")
             .expect("heartbeat_pseudo_veins table_info should prepare");
         let columns = statement
-            .query_map([], |row| Ok(row.get::<_, String>(1)?))
+            .query_map([], |row| row.get::<_, String>(1))
             .expect("heartbeat_pseudo_veins table_info should query")
             .collect::<Result<Vec<_>, _>>()
             .expect("heartbeat_pseudo_veins columns should collect");

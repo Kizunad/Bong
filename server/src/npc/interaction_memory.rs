@@ -239,7 +239,7 @@ mod tests {
     fn entry(i: u64) -> NpcMemoryEntry {
         NpcMemoryEntry {
             player_uuid: "offline:Azure".to_string(),
-            interaction_type: if i % 2 == 0 {
+            interaction_type: if i.is_multiple_of(2) {
                 NpcInteractionType::Trade
             } else {
                 NpcInteractionType::Attack

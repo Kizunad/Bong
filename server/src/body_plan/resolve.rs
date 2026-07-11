@@ -261,8 +261,10 @@ mod tests {
     #[test]
     fn player_with_unknown_race_is_rejected_not_defaulted() {
         let (body_plans, races) = registries();
-        let mut cultivation = Cultivation::default();
-        cultivation.race = RaceId::new("does_not_exist");
+        let cultivation = Cultivation {
+            race: RaceId::new("does_not_exist"),
+            ..Default::default()
+        };
         let err = resolve_body_plan(
             dummy_entity(),
             BodyPlanPurpose::Intrinsic,
@@ -283,8 +285,10 @@ mod tests {
     #[test]
     fn player_with_unknown_race_rejected_for_form_purpose_too() {
         let (body_plans, races) = registries();
-        let mut cultivation = Cultivation::default();
-        cultivation.race = RaceId::new("does_not_exist");
+        let cultivation = Cultivation {
+            race: RaceId::new("does_not_exist"),
+            ..Default::default()
+        };
         let err = resolve_body_plan(
             dummy_entity(),
             BodyPlanPurpose::Form,
@@ -311,8 +315,10 @@ mod tests {
         // 同一条 Tier2 分支——本测试锁定 Tier2 判定不依赖"是不是玩家"这个身份，
         // 只认 Cultivation.race，任何携带该组件的实体（NPC 亦然）都走这条路径。
         let (body_plans, races) = registries();
-        let mut cultivation = Cultivation::default();
-        cultivation.race = RaceId::new("beast_common");
+        let cultivation = Cultivation {
+            race: RaceId::new("beast_common"),
+            ..Default::default()
+        };
         for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
             let plan = resolve_body_plan(
                 dummy_entity(),
@@ -332,8 +338,10 @@ mod tests {
     #[test]
     fn npc_with_cultivation_and_unknown_race_rejected_for_both_purposes() {
         let (body_plans, races) = registries();
-        let mut cultivation = Cultivation::default();
-        cultivation.race = RaceId::new("npc_ghost_race");
+        let cultivation = Cultivation {
+            race: RaceId::new("npc_ghost_race"),
+            ..Default::default()
+        };
         for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
             let err = resolve_body_plan(
                 dummy_entity(),
@@ -405,8 +413,10 @@ mod tests {
         // BeastKind 判定几何，不能被误判为「玩家」（否则会消费 Cultivation.race，
         // 这不是它的身份来源）——两种 purpose 下都要保持这一优先级。
         let (body_plans, races) = registries();
-        let mut cultivation = Cultivation::default();
-        cultivation.race = RaceId::new("does_not_exist"); // 若被误当玩家会直接报错
+        let cultivation = Cultivation {
+            race: RaceId::new("does_not_exist"), // 若被误当玩家会直接报错
+            ..Default::default()
+        };
         for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
             let plan = resolve_body_plan(
                 dummy_entity(),

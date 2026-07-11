@@ -604,7 +604,7 @@ mod tests {
         let mut sessions = app
             .world_mut()
             .remove_resource::<ForgeSessions>()
-            .unwrap_or_else(ForgeSessions::new);
+            .unwrap_or_default();
         let mut session =
             ForgeSession::new(session_id, "qing_feng_v0".to_string(), station, caster);
         session.current_step = current_step;
