@@ -1,6 +1,6 @@
 # plan-bughunt-novice-poi-regen-local-fields-v1
 
-> Active Plan. 一句话主题：worldgen console / incremental regen 在重烘非 spawn zone 时，用局部 `fields` 重算并覆盖全局新手 POI manifest，导致下一次用该 raster manifest 启服时，新手炼器台、丹炉、残卷等 POI 坐标漂移到 fallback 或错误局部语义。
+> Finished Plan（2026-07-11）。一句话主题：worldgen console / incremental regen 在重烘非 spawn zone 时，用局部 `fields` 重算并覆盖全局新手 POI manifest，导致下一次用该 raster manifest 启服时，新手炼器台、丹炉、残卷等 POI 坐标漂移到 fallback 或错误局部语义。
 
 ## 阶段总览
 
@@ -11,7 +11,7 @@
 | P2：console 有界重算 | ✅ 2026-07-10 | 目标 rewrite tiles 与 novice window 相交时 `synthesize_fields(tile_filter=...)`；默认蓝图 305 active tiles → 16 required tiles |
 | P3：worldgen 回归与原子性 | ✅ 2026-07-10 | 远区保留、近区非 spawn/spawn 重算、fields/manifest 缺 tile、写盘前失败、非目标 POI 哨兵测试 |
 | P4：server 启动加载闭环 | ✅ 2026-07-10 | 真实 v2 fixture → `TerrainProvider::load` → 生产 `poi_novice::register` Startup → registry + `PoiSpawned` 六类独立全字段对拍；Bot 强制六类各 1 并核对 selection |
-| P5：PR gates 与归档 | ⏳ | PR #1153 e2e / snapshot / `/review`；全绿后 `scripts/plan-finish.sh` |
+| P5：PR gates 与归档 | ✅ 2026-07-11 | `a019a085` 的 e2e、snapshot、CodeRabbit 全绿并完成独立 Ultra PASS；归档提交后的新 HEAD 需重新 `/review`，以有效 4/0 作为 PR merge gate |
 
 ## 1. 实际游玩体验影响
 
@@ -51,6 +51,7 @@
 - [x] P2：console `/api/regen` 先合成本地 rewrite fields；其 tile 与 16-tile novice window 相交时再有界合成完整 window 并重算（含近区非 spawn），完全不相交的远区 regen 保留全局 novice POI，不做全图 synthesis。
 - [x] P3：补 regression pin：远区非 spawn novice 逐项保留、近区非 spawn/spawn 完整窗口重算、目标 zone profile POI 刷新、非目标 zone authored/profile POI 逐字段保留。
 - [x] P4：文档化边界：blueprint/profile POI 仅按目标 zone patch；global novice POI 由 spawn 周边选择窗口独立管理。真实 manifest 测试经生产 `poi_novice::register` 触发 loader，以独立期望逐字段锁定六类 registry / `PoiSpawned` 的 id、kind、zone、name、坐标、selection、qi、danger 与完整 tags；Bot e2e 默认生成含六类各 1 的真实 v2 raster fixture，`/tppoi novice` 黑盒核对目标类别计数与 selection，并允许合法运行时 `surface_stash` 扩展项。
+- [x] P5：核验 PR #1153 在 `a019a085` 上的 e2e run `29086695644`、snapshot run `29086695634` 与 CodeRabbit 均为 SUCCESS，补齐最终独立 Ultra PASS 及本节 Finish Evidence，并通过 `scripts/plan-finish.sh` 归档。由于归档本身生成新 HEAD，统一 `/review` 必须在归档提交推送后重新触发；该有效 4/0 是 merge gate，不在归档前伪记为已完成。
 
 ## 5. 验证计划
 
@@ -59,11 +60,11 @@
 - [x] console：目标 zone profile-derived POI 刷新；非目标 zone authored/profile 哨兵条目原样保留。
 - [x] 原子性：novice fields 缺 required tile、existing manifest 缺 required tile、`--zone-filter` full export 缺窗口时，均在 raster/manifest 写入前失败。
 - [x] server：真实磁盘 v2 manifest 经 `TerrainProvider::load` 与生产 `poi_novice::register` Startup，六类 registry / `PoiSpawned` 与独立完整期望逐字段相等；Bot 场景用真实 fixture 黑盒确认六个目标类别各 1、selection 精确且 registry 总计数自洽，loader 断链或任一类别缺失都会失败。
-- [ ] PR gate：#1153 e2e、snapshot、统一 `/review` 完成；CodeRabbit 额度/Review 429 仅按 infra 失败记录，不伪装为代码通过。
+- [x] PR gate（归档前可核验部分）：#1153 在 `a019a085` 上的 e2e、snapshot、CodeRabbit 均成功；此前 `/review` 的 substantive findings 已逐轮返工。归档后新 HEAD 尚无有效 4/0，必须重新评论 `/review` 并等待四票 APPROVE 后才可 merge；CodeRabbit 额度或 Review 429 仅按 infra 失败记录，不伪装为代码通过。
 
 ## 6. 对抗复核结论
 
-已完成两轮对抗复核。
+已完成多轮对抗复核。
 
 - 候选观点：非 spawn 增量 regen 用局部 `fields` 重算全局 novice POI，并覆盖同一 `manifest["pois"]`。
 - 反方质疑：影响面可能只是 dev console；`manifest["pois"]` 刷新可能是有意；fallback 本身是设计路径；缺少 server 启服后的玩家可见闭环。
@@ -79,3 +80,13 @@
 - 六轮无上下文 Ultra validator：FAIL（HEAD `fd17a04a`），发现 `bot-e2e.sh` 在 raster 模式仍等待 fallback 专属日志、selection 子串断言会把 `relaxed_radius_2000_qi_margin_0_1` 误认成 `relaxed_radius_2000`。已改为 fallback/raster/anvil 共用的 world bootstrap 完成锚点，并解析完整 `selection=` token 精确比较；Bot 纯逻辑 49 项含两种合法策略互相混淆的正反回归，debug 编排实际越过就绪门，真实 fixture 单场景再次 PASS。
 - 七轮无上下文 Ultra validator：FAIL（HEAD `edfdc40c`），发现 cargo 编译窗口内若旧 listener 抢占 25565，新进程可完成 Startup 锚点但 TCP bind 失败，脚本仍可能连到旧服。已增加 listener PID → `/proc` 父链归属校验，只有端口由本次 `cargo run` 进程树持有才算就绪，并对 Valence `failed to start TCP listener` 日志立即失败；独立 listener 归属正/反测试及真实 debug 编排均通过。
 - 八轮无上下文 Ultra validator：FAIL（HEAD `9408d286`），发现 ownership 汇总 IPv4/IPv6 全部 listener，而 Bot 可被配置去连另一地址族旧服。已将自起模式限定为 `127.0.0.1` 且 ownership 仅检查 `ss -4`；远端/IPv6 必须显式 `BOT_E2E_REUSE=1`。IPv6 自起负分支 exit 2、IPv4 ownership 正/反测试及真实 debug 编排均通过。
+- 九轮无上下文 Ultra validator：PASS（HEAD `a019a085`）。全新 `fork_context:false`、gpt-5.6-sol Ultra/priority 严格只读审查 `abf2d44a..a019a085` 的 17 个改动文件，复核前三轮连续 FAIL 的 listener 归属、地址族和真实 fixture 诚实性返工，未发现 blocking/major correctness finding。
+
+## Finish Evidence
+
+- 完成范围：P0-P4 的局部 POI 合并、固定选择窗口、有界重算、写盘原子性与生产 Startup/Bot 闭环均已落地；实现提交范围为 `abf2d44a..a019a085`，共 17 个改动文件。
+- 聚焦测试：worldgen/console `74 passed + 3 subtests`；server `poi_novice` 24 项、`tppoi` 6 项、命令树 3 项、raster 映射 1 项；Bot 纯逻辑 49 项；真实 v2 raster fixture 启服场景 PASS。
+- 端到端证据：PR #1153 的 e2e run `29086695644` 在 `a019a085` 上 SUCCESS，完整 server tests、smoke harness 与 Bot e2e 23/23；snapshot run `29086695634` SUCCESS；CodeRabbit / Review SUCCESS。
+- 独立审计：归档前最终 `fork_context:false` gpt-5.6-sol Ultra/priority validator 对 `a019a085` 给出 PASS，未发现 blocking/major；此前每项 FAIL 均有对应修复提交与正反回归记录，未将失败轮伪写为通过。
+- Review 边界：`a019a085` 缺少有效统一 `/review` 4/0，本文不声明其已通过。归档提交会产生新 HEAD；推送后必须针对该 HEAD 评论 `/review`，仅在有效 4/0 且 e2e、snapshot、CodeRabbit 保持绿色时合并 PR。
+- 遗留：无已知业务代码 blocker；仅剩归档后 PR merge gates。CodeRabbit 额度或 Review 429 属基础设施失败，可以按约定评论说明，但不得替代有效 4/0，也不得强合。
