@@ -1,6 +1,6 @@
 # plan-agent-ui-close-reason-drop-v1
 
-> **已完成 BugFix plan**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
+> **活跃 BugFix plan（外部 review gate 阻塞）**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
 
 > 立项动机：本轮只看 `agent-ui / client bridge / panel runtime`，重点筛 `screen open path / panel state / overlay scope / fallback route / payload 字段`。已避开已知重复题：realm gate 广播泄漏、`button_click` 回流天道推演丢 `player_uuid/scenario`、agent_ui 覆层被 screen gate 提前吞掉、`tiandao_revelation` VFX 语义位丢失；也未与 `#931`/`#927` 重复。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
-| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ✅ 2026-07-11 |
+| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ⏳ |
 
 ## P0 — `agent_ui_close.reason` 生产/消费断链
 
@@ -179,4 +179,11 @@ bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loo
 
 - PR #1159 首轮统一 review 有效指出：active screen 为空时不能无条件接受任意 reason close，必须关联“本地按钮响应已发出、仍待 server 确认”的 request_id。
 - 返工状态机：待确认 request 只在 request_id 匹配且 TTL 未过期时消费一次；重复 close、未知 request、TTL 到期均忽略；新 request 开始时清除旧 pending，避免新生命周期结束后旧 close 误弹。
-- 等价跨端集成、e2e/相关 checks、CodeRabbit 清零与最终 Ultra validator PASS 均已完成；P0 于 2026-07-11 重新验收并归档。
+- 等价跨端集成、e2e/相关 checks、CodeRabbit 清零与最终 Ultra validator PASS 均已完成；统一 `/review` 仍是归档前置 gate。
+
+### 最终 review gate 阻塞（2026-07-11）
+
+- 按约 20 分钟节奏共触发三轮统一 `/review`：run `29138145455`、`29138676111`、`29139232405`。
+- 三轮结果完全一致：每轮 4/4 `gpt-5.6-sol high` reviewer 各重试 3 次，均由外部 provider 返回 `503 No available channel for model gpt-5.6-sol`；所有 reviewer 置信度为 `0`、状态为 `unclear`，未产生任何 PR 代码 finding。
+- 这是 review 基础设施容量阻塞，不修改 `.github/scripts/review.mjs`，也不越界改业务代码；三轮上限后停止重试。
+- `[BLOCKED: 统一 /review 外部 provider 连续三轮 503；需 provider 恢复后重新评论 /review，得到真实 PASS 才可归档]`
