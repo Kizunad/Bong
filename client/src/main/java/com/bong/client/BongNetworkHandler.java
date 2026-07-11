@@ -883,6 +883,11 @@ public class BongNetworkHandler {
         // TiandaoPresenceStore 漏掉，导致断线重连后旧 presence（watch/pressure/
         // tribulation/annihilate vignette）继续渲染/播放。
         com.bong.client.tiandao.TiandaoPresenceStore.clear();
+        // plan-bughunt-hud-state-session-reset — 断线时重置生产 HUD snapshot（zoneState +
+        // visualEffectState）；此前 static BongHudStateStore 不在这份清理清单里，导致上一
+        // server 的区域 overlay/atmosphere 与 HUD tint/相机/FOV 视觉特效跨 session 残留，
+        // 直到新服首个 zone_info 到达或旧 visual effect 自然过期。
+        BongHudStateStore.clear();
         // plan-era-state-v1 P3 — 断线时重置时代天象状态
         com.bong.client.era.EraAmbianceState.reset();
         // plan-agent-ui-data-v1 P1 — 断线时清理天道 UI 面板状态
@@ -895,6 +900,11 @@ public class BongNetworkHandler {
         // plan-remains-suite P0 — 断线时清理遗骸缓存；不同 server 的遗骸完全无关，
         // 留着旧快照会让 reconnect 后 G 键短暂命中一具已经不存在的遗骸。
         com.bong.client.inventory.state.RemainsStore.clearOnDisconnect();
+        // plan-bughunt-dropped-loot-session-leak — 断线时清理地面掉落物缓存；此前
+        // DroppedItemStore.clearOnDisconnect() 定义了却从未被调用，导致切服/重连后
+        // 在新 server 首个 dropped_loot_sync 抵达前，旧 server 的掉落物坐标会被当
+        // 前 world 渲染 billboard、G 键还会带着旧 instanceId 发 pickup 请求。
+        com.bong.client.inventory.state.DroppedItemStore.clearOnDisconnect();
         // plan-craft-session-reconnect-lock-v1 P0 — craft store 是静态跨屏状态；
         // 断线不清会把旧 active session 带进新连接，导致手搓/制作台主操作永久灰掉。
         CraftStore.clear();

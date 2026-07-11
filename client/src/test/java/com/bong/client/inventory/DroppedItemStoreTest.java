@@ -186,4 +186,32 @@ public class DroppedItemStoreTest {
         // 5002 是最后 put 的，等距时 5002 应胜。
         assertEquals(5002L, DroppedItemStore.nearestTo(0.0, 0.0, 0.0).instanceId());
     }
+
+    /**
+     * plan-bughunt-dropped-loot-session-leak — clearOnDisconnect 必须清空 entries 与
+     * insertionOrders，snapshot()/nearestTo() 断线后都不应再看到旧掉落物。这是本 bug 的
+     * 底层契约：BongNetworkHandler 断线钩子最终依赖此方法真正清空状态。
+     */
+    @Test
+    void clearOnDisconnectEmptiesStoreAndNearestToReturnsNull() {
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            6001L, "main_pack", 0, 0,
+            0.0, 64.0, 0.0, InventoryItem.simple("relic", "残器")
+        ));
+        DroppedItemStore.putOrReplace(new DroppedItemStore.Entry(
+            6002L, "main_pack", 0, 1,
+            1.0, 64.0, 1.0, InventoryItem.simple("shard", "碎片")
+        ));
+        assertEquals(2, DroppedItemStore.snapshot().size(),
+            "测试前必须先模拟断线前残留的两条 dropped loot，否则无法锁住清空回归");
+
+        DroppedItemStore.clearOnDisconnect();
+
+        assertEquals(0, DroppedItemStore.snapshot().size(),
+            "断线必须清空 dropped loot 缓存，否则旧 server 坐标会被新 world 当作当前 session 掉落物渲染");
+        assertNull(DroppedItemStore.get(6001L));
+        assertNull(DroppedItemStore.get(6002L));
+        assertNull(DroppedItemStore.nearestTo(0.0, 64.0, 0.0),
+            "清空后 nearestTo 必须返回 null，否则 G 键拾取会带着旧 instanceId 向新 server 发请求");
+    }
 }
