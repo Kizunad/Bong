@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 玩家交易误套 NPC 拒交易门禁 | fix_pr | ⬜ |
+| P0 | 玩家交易误套 NPC 拒交易门禁 | fix_pr | 🔄 修复完成，待完整门禁 |
 
 ## P0 — 玩家交易误套 NPC 拒交易门禁
 
@@ -52,6 +52,15 @@
 
 1. 是否要在修复 PR 里顺手补一条 client 端 toast / chat regression case，明确“玩家对玩家交易不会再被 notoriety 档位静默吞掉”？
 2. 是否存在其他把 `npc_should_decline_trade()` / `npc_should_seek_attack()` 误接到 `With<Client>` 玩家链路的旁支，值得同 PR 一并全仓 grep 排查？
+
+## 实施证据
+
+- Promotion：`8467f570`，骨架已独立升格为 active plan。
+- 第一性原理 RED：`4f777deb` 所在测试 HEAD 上，`trade_offer_dispatch_allows_wanted_initiator_identity_between_players` 编译通过后按行为失败；目标玩家收到的 `TradeOffer` 数量为 `0`，而契约期望为 `1`，证明 server authority 的 NPC 声名门禁真实吞掉玩家 offer。
+- 最小修复：`76fbb974` 仅从 `dispatch_trade_offers` 的纯 `With<Client>` 玩家链移除 `npc_should_decline_trade()` 及其冗余 query 字段；NPC reaction helper 与 NPC 子系统保持不变。
+- Targeted GREEN：上述 RED 用例 `1/1 PASS`；`cargo test social::tests::trade_offer -- --nocapture` 为 `4/4 PASS`，覆盖正常派发、Wanted 发起者派发、非法请求拒绝、装备中物品拒绝。
+- 完整 server gate：等待 Rust stable clippy baseline PR #1170 合入后，基于最新 `origin/main` 重跑 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；当前不得把 baseline 的 69 项跨 scope 复制进本修复。
+- 最终裁决：完整门禁后须在最终 HEAD 上启动全新、无上下文、只读的 `gpt-5.6-sol xhigh` validator；归档导致 HEAD 变化后再次 fresh validator。
 
 ## 审计来源
 
