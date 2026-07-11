@@ -85,6 +85,7 @@
 - `11c593a41e1eb02a366baf59608d49e313e59e52`（2026-07-11）：升格 skeleton 并收口为纯 agent/schema 契约修复。
 - `8d1e18c7d54242db6187bdb38a06a999f35f6bbf`（2026-07-11）：提交 RED，schema 3 项失败且 Tiandao callback 为 0。
 - `f8a67b0219947ce8acaeb6f1d1f0c836d3fa1378`（2026-07-11）：补齐 `ts` source/sample/generated，保持严格未知字段拒绝。
+- `025db31b834030ece64bdeef134c00f5567734db`（2026-07-11）：按 CodeRabbit 意见补齐三类拒绝断言的实际 `ok/errors` 诊断。
 
 ### 测试结果
 
@@ -94,6 +95,7 @@
 - `cd agent/packages/tiandao && npm test`：72 files / 825 tests，全部通过。
 - `cd agent && npm run build`：`@bong/schema` 与 `@bong/tiandao` TypeScript build 全部通过，schema dist 已重建。
 - `cd agent && npm run generate:check -w @bong/schema`：392 个 generated schema 全部 fresh。
+- CodeRabbit 返工后定向 `alchemy insight server wire parity`：9 tests 全部通过；schema 全量仍为 28 files / 799 tests，workspace build 仍通过。
 - 主线同步：`origin/main=3c8bf9253680795136f152f5504f6f709c5e16cb`，`merge-base` 相同，分类 `already-up-to-date`。
 - 无上下文 read-only validator：`PASS f8a67b0219947ce8acaeb6f1d1f0c836d3fa1378`（修复后）与同步后复验再次 PASS。
 
