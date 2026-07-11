@@ -1042,7 +1042,7 @@ function isLocustSwarmSpawnCommand(command: Command): boolean {
  * 设计决议（plan §P2 验收 line 167-170）：
  *   - 仅作为"参考生产路径"：垂死传承/天道启示触发源属下游 skeleton plan，不在本 plan 范围
  *   - dangerTier 从 zone snapshot 的 danger_level 推算（0-7 → 低危/中危/高危/极危）
- *   - 若无在线玩家则静默跳过（不 emit）
+ *   - 若目标玩家不在本轮 world state 则记录原因并跳过（不 emit）
  */
 export async function processTsyZoneActivatedForUi(args: {
   state: WorldStateV1;
@@ -1412,7 +1412,7 @@ export async function runRuntime(
                 }
 
                 // plan-agent-ui-data-v1 P2 Fix①: TSY 秘境发现 → triggerUi 生产路径接通。
-                // drain tsy_zone_activated 事件，为秘境内的玩家触发 tsy_discovery UI 面板。
+                // drain tsy_zone_activated 事件，为事件中的 first-enter 触发玩家打开面板。
                 if (agentUiRuntime) {
                   const tsyActivatedEvents = redis.drainTsyZoneActivatedEvents?.() ?? [];
                   if (tsyActivatedEvents.length > 0) {

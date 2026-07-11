@@ -2529,6 +2529,40 @@ describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () 
     );
   });
 
+  it("同批次目标 miss 后继续把后续 TSY 面板发给其真实触发者", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState();
+    const warnSpy = vi.fn();
+    const events = [
+      makeTsyZoneActivatedV1({
+        family_id: "tsy_missing",
+        player_id: "offline:unknown-player",
+        tick: 1100,
+      }),
+      makeTsyZoneActivatedV1({
+        family_id: "tsy_valid",
+        player_id: "offline:test-player",
+        tick: 1101,
+      }),
+    ];
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events,
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: warnSpy },
+    });
+
+    expect(warnSpy, "首个事件 target miss 应记录一次告警").toHaveBeenCalledOnce();
+    expect(
+      uiRuntime.triggerUi.mock.calls,
+      "首个 miss 不得阻断后续有效事件，也不得为 miss 事件创建面板",
+    ).toHaveLength(1);
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    expect((opts["targetPlayer"] as { uuid: string }).uuid).toBe("offline:test-player");
+    expect((opts["params"] as Record<string, string>)["zone_name"]).toBe("tsy_valid");
+  });
+
   it("skips triggerUi and logs when there are no online players", async () => {
     const uiRuntime = makeMockUiRuntime();
     const state = { ...createTestWorldState(), players: [] };
