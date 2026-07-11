@@ -7,6 +7,9 @@ import com.bong.client.craft.CraftStore;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.identity.IdentityPanelEntry;
+import com.bong.client.identity.IdentityPanelState;
+import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.state.NarrationState;
@@ -31,6 +34,7 @@ public class BongNetworkHandlerTest {
         BongHudStateStore.clear();
         DroppedItemStore.resetForTests();
         BongToast.resetForTests();
+        IdentityPanelStateStore.resetForTest();
     }
 
     @Test
@@ -210,6 +214,59 @@ public class BongNetworkHandlerTest {
         assertNull(
             DroppedItemStore.nearestTo(10.0, 64.0, 10.0),
             "断线后 nearestTo 必须返回 null，否则 G 键会带着旧 instanceId 向新 server 发 pickup 请求"
+        );
+    }
+
+    /**
+     * plan-bughunt-client-identity-panel-stale-session-v1 — IdentityPanelStateStore 此前只有
+     * resetForTest()（测试专用），生产态清理清单里完全没有它。断线重连后 HUD 角标
+     * （{@code IdentityHudCornerLabel}）会短暂展示上一 session 的 active identity，且若玩家在
+     * 这段窗口打开 {@code IdentityPanelScreen}，面板会用旧快照 init 出按钮（回调固化旧
+     * identityId），后续新 session 的 fresh payload 只能改文字改不了按钮，形成 split-brain UI。
+     * 本测试锁住"断线清理路径必须清空 IdentityPanelStateStore"。
+     */
+    @Test
+    void disconnectClearsIdentityPanelStateStoreToPreventStaleSessionIdentityLeak() {
+        IdentityPanelStateStore.replace(new IdentityPanelState(
+            3, 400L, 0L,
+            List.of(new IdentityPanelEntry(3, "断线前身份", 20, false, List.of()))));
+        assertFalse(
+            IdentityPanelStateStore.snapshot().identities().isEmpty(),
+            "测试前必须模拟断线前残留的非空身份快照，否则无法锁住跨 session 身份泄漏回归"
+        );
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+
+        assertEquals(
+            IdentityPanelState.empty(),
+            IdentityPanelStateStore.snapshot(),
+            "断线必须把 IdentityPanelStateStore 整体复位为 empty()，否则新 session 首个 "
+                + "identity_panel_state 到达前，HUD 角标和刚打开的身份面板会继续展示上一局身份数据"
+        );
+    }
+
+    @Test
+    void disconnectClearingIdentityPanelStateStoreDoesNotBlockNewSessionSnapshotAfterReconnect() {
+        IdentityPanelStateStore.replace(new IdentityPanelState(
+            3, 400L, 0L,
+            List.of(new IdentityPanelEntry(3, "断线前身份", 20, false, List.of()))));
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+        assertEquals(
+            IdentityPanelState.empty(),
+            IdentityPanelStateStore.snapshot(),
+            "测试前置：断线后 store 应已复位为空"
+        );
+
+        IdentityPanelState newSessionState = new IdentityPanelState(
+            7, 900L, 0L, List.of(new IdentityPanelEntry(7, "新局身份", 0, false, List.of())));
+        IdentityPanelStateStore.replace(newSessionState);
+
+        assertEquals(
+            newSessionState,
+            IdentityPanelStateStore.snapshot(),
+            "回归防线：断线清理不能变成一次性开关——新 session 收到新 identity_panel_state 后"
+                + "正常 replace() 写入必须继续生效"
         );
     }
 

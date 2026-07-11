@@ -912,6 +912,10 @@ public class BongNetworkHandler {
         // 是静态单槽，只在自然过期后自清；断线不清会让上一 server 未过期的 warning/
         // era/event/inventory toast 在 reconnect 后的首几秒继续渲染，串成跨 session 泄漏。
         BongToast.clearOnDisconnect();
+        // plan-bughunt-client-identity-panel-stale-session-v1 — IdentityPanelStateStore
+        // 此前没有生产态清理入口，断线不清会让 HUD 角标和刚打开的身份面板短暂展示上一局
+        // 身份数据；面板一旦在旧快照上 init 完，按钮回调还会冻结在旧 identityId 上。
+        IdentityPanelStateStore.clearOnDisconnect();
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {
