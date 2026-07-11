@@ -77,12 +77,14 @@ public final class ScreenTransitionController {
     public static void cancelAndClose(MinecraftClient client) {
         Screen pendingScreen = pendingScreenForCancellation();
         clearActiveTransition();
-        if (pendingScreen instanceof PendingOpenCancellationHandler handler) {
-            handler.onPendingOpenCancelled();
-        }
-        if (client != null) {
-            applyDirect(client, null);
-        }
+        closeCurrentThenSettlePending(
+            pendingScreen,
+            () -> {
+                if (client != null) {
+                    applyDirect(client, null);
+                }
+            }
+        );
     }
 
     public static boolean inputLocked() {
@@ -143,6 +145,15 @@ public final class ScreenTransitionController {
             return null;
         }
         return active.handle().newScreen();
+    }
+
+    static void closeCurrentThenSettlePending(Screen pendingScreen, Runnable closeCurrentScreen) {
+        if (closeCurrentScreen != null) {
+            closeCurrentScreen.run();
+        }
+        if (pendingScreen instanceof PendingOpenCancellationHandler handler) {
+            handler.onPendingOpenCancelled();
+        }
     }
 
     /**

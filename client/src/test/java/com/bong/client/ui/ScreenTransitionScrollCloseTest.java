@@ -78,6 +78,21 @@ class ScreenTransitionScrollCloseTest {
         assertTrue(sent.isEmpty(), "取消无关 screen 不得误发 scroll_read_closed，实际=" + sent);
     }
 
+    @Test
+    void pendingProtocolSettlementRunsAfterCurrentScreenDirectClose() {
+        boolean[] currentScreenClosed = {false};
+        OrderingAwareScreen pendingScreen = new OrderingAwareScreen(currentScreenClosed);
+
+        ScreenTransitionController.closeCurrentThenSettlePending(
+            pendingScreen,
+            () -> currentScreenClosed[0] = true
+        );
+
+        assertTrue(pendingScreen.settled(), "pending screen 必须收到取消结算回调");
+        assertTrue(pendingScreen.sawCurrentScreenClosed(),
+            "必须先直接关闭当前 screen，再结算 pending 协议；否则 store listener 可重入创建残留转场");
+    }
+
     private static ScreenTransition.TransitionHandle activatePending(Screen pendingScreen) {
         ScreenTransition.TransitionHandle handle = ScreenTransition.play(
             null,
@@ -105,6 +120,32 @@ class ScreenTransitionScrollCloseTest {
     private static final class DummyScreen extends Screen {
         private DummyScreen() {
             super(Text.literal("dummy"));
+        }
+    }
+
+    private static final class OrderingAwareScreen extends Screen
+        implements ScreenTransitionController.PendingOpenCancellationHandler {
+        private final boolean[] currentScreenClosed;
+        private boolean settled;
+        private boolean sawCurrentScreenClosed;
+
+        private OrderingAwareScreen(boolean[] currentScreenClosed) {
+            super(Text.literal("ordering-aware"));
+            this.currentScreenClosed = currentScreenClosed;
+        }
+
+        @Override
+        public void onPendingOpenCancelled() {
+            settled = true;
+            sawCurrentScreenClosed = currentScreenClosed[0];
+        }
+
+        private boolean settled() {
+            return settled;
+        }
+
+        private boolean sawCurrentScreenClosed() {
+            return sawCurrentScreenClosed;
         }
     }
 }
