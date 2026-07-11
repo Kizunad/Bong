@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 证真、修复 dash reject one-shot 生命周期并锁定跨层 HUD 时序 | [BLOCKED: Rust 1.96.0 下 `cargo clippy --all-targets -- -D warnings` 命中 origin/main 既有 69 个 lint，本 plan 不跨 scope 修全仓] |
+| P0 | 证真、修复 dash reject one-shot 生命周期并锁定跨层 HUD 时序 | [BLOCKED: Rust 1.96.1 下 `cargo clippy --all-targets -- -D warnings` 命中 origin/main 既有 69 个 lint；full `cargo test` 还稳定命中 1 个无关 POI 墙钟性能阈值失败，本 plan 不跨 scope 修全仓基线] |
 
 ## 接入面
 
@@ -61,7 +61,7 @@
 
 ## 当前验证证据（未满足 Finish Evidence，不可归档）
 
-`[BLOCKED: Rust 1.96.0 下执行 cd server && cargo clippy --all-targets -- -D warnings 失败；origin/main 既有 69 个 clippy 诊断，主要为 manual_is_multiple_of / derivable_impls / manual_checked_ops。本 movement PR 新增段无独立诊断，且不获授权跨 scope 修复全仓基线，因此 P0 保持 BLOCKED 且 plan 撤回 active。]`
+`[BLOCKED: Rust 1.96.1 下执行 cd server && cargo clippy --all-targets -- -D warnings 失败；origin/main 既有 69 个 clippy 诊断，主要为 manual_is_multiple_of / derivable_impls / manual_checked_ops。本 movement PR 新增段无独立诊断。低负载 full cargo test 连续三轮均为 10933 passed / 1 failed / 1 ignored，唯一失败 world::poi_novice::tests::scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb，墙钟分别为 12.5747s、12.7438s、11.8222s；该用例单独 exact 复跑 1 passed、7.15s，表明当前全套并行门禁仍存在与 movement 无关的性能阈值阻塞。未获授权跨 scope 修复全仓基线，因此 P0 保持 BLOCKED 且 plan 维持 active。]`
 
 ### 落地清单
 
@@ -80,9 +80,9 @@
 ### 测试结果
 
 - `cd server && cargo fmt --check`：通过。
-- `cd server && cargo test`：`10934 passed, 0 failed, 1 ignored`；其他 test target 为 `11/11`、`1/1`、`4/4` 通过，5 项显式 ignored。
+- `cd server && cargo test`：当前 HEAD 连续三轮均为 `10933 passed, 1 failed, 1 ignored`；唯一失败为 `world::poi_novice::tests::scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb` 的 10s 墙钟阈值，实测 `12.5747s`、`12.7438s`、`11.8222s`。该用例单独 `--exact` 复跑为 `1 passed`、`7.15s`；因此不宣称 full suite 全绿。
 - `cd client && JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=<worktree-private> JAVA_HOME=<JDK17> PATH=<JDK17>/bin:$PATH ./gradlew test build`：JDK `17.0.19`，`3710` tests，`BUILD SUCCESSFUL`。
-- `cd server && cargo clippy --all-targets -- -D warnings`：当前 Rust `1.96.0` 对 `origin/main` 既有代码报 69 个新 lint（主要为 `manual_is_multiple_of` / `derivable_impls`）；本 PR 新增段无 clippy 诊断。原始结果已如实保留，未跨 scope 修改全仓基线。
+- `cd server && cargo clippy --all-targets -- -D warnings`：当前 `rustc 1.96.1 (31fca3adb 2026-06-26)` 对 `origin/main` 既有代码报 69 个 lint（主要为 `manual_is_multiple_of` / `derivable_impls` / `manual_checked_ops`）；本 PR 新增 helper/tests 无独立诊断。原始结果已如实保留，未跨 scope 修改全仓基线。
 - 无上下文 read-only validator：旧 verdict 只绑定反馈前 HEAD，因 `c0525b83` 变更已作废；当前 HEAD 待 fresh validator。
 
 ### 跨仓库核验
@@ -93,5 +93,5 @@
 
 ### 遗留 / 后续
 
-- Rust 1.96 新 clippy lint 导致 `origin/main` 级全仓 `-D warnings` 基线不绿；当前 plan 因此保持 `[BLOCKED]`、不归档，待独立仓库维护 PR 修复基线后再完成归档。
+- Rust 1.96.1 新 clippy lint 导致 `origin/main` 级全仓 `-D warnings` 基线不绿；full suite 还存在无关 POI 墙钟性能阈值阻塞。当前 plan 因此保持 `[BLOCKED]`、不归档，待独立仓库维护 PR 修复基线后再完成归档。
 - 本 plan 不新增 schema sequence，因为 server one-shot 边界已能区分两次独立 `Dash` reject，避免扩大协议 scope。
