@@ -115,6 +115,7 @@
 - `6e5363d7`（2026-07-11）：原子排队邀请并拒绝迟到、重复与已结算重放。
 - `d194e26c`（2026-07-11）：禁止不同 inviteId 的切磋邀请屏互相替换。
 - `2e1b22b0`（2026-07-11）：锁定真实 screen 关闭后的 identity 清理与队列提升。
+- `0ef01f0b`（2026-07-11）：合并最新 `origin/main@37447572`，无冲突且未触及本修复文件。
 
 ### 测试结果
 
@@ -123,7 +124,7 @@
 - Temurin JDK 17.0.19 lifecycle targeted：bootstrap 10 + screen 3 + social handler/store 14 = 27/27 PASS，`11 actionable tasks: 11 executed`。
 - 首轮 Ultra read-only validator：`FAIL — SHA 1dc14dc4ae70989d7975b8aebe45f759d22bdde8`；四项 finding 已由 `6e5363d7` / `d194e26c` / `2e1b22b0` 返工并补测。
 - JDK 17 pre-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`。
-- JDK 17 post-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`。
+- JDK 17 post-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`，3827 tests，0 skipped / failures / errors，13 tasks（3 executed / 10 up-to-date）。
 
 ### 跨仓库核验
 
