@@ -105,8 +105,9 @@ import {
 import { TribulationKindV1 } from "./tribulation.js";
 
 export const SERVER_DATA_MAX_PAYLOAD_BYTES = 32_768;
-const ANQI_HUD_ECHO_COUNT_MAX = 4_294_967_295;
-const ANQI_HUD_CONTAINER_MAX_LENGTH = SERVER_DATA_MAX_PAYLOAD_BYTES;
+// Java HUD store consumes these fields as int/float after protobuf bridging.
+const ANQI_HUD_ECHO_COUNT_MAX = 2_147_483_647;
+const ANQI_HUD_QI_PAYLOAD_MAX = 3.4028234663852886e38;
 const ANQI_HUD_TICK_MAX = Number.MAX_SAFE_INTEGER;
 
 const MERIDIAN_CHANNEL_COUNT = 20;
@@ -177,6 +178,15 @@ export const AnqiHudKindV1 = Type.Union([
 ]);
 export type AnqiHudKindV1 = Static<typeof AnqiHudKindV1>;
 
+export const AnqiHudContainerV1 = Type.Union([
+  Type.Literal(""),
+  Type.Literal("hand_slot"),
+  Type.Literal("quiver"),
+  Type.Literal("pocket_pouch"),
+  Type.Literal("fenglinghe"),
+]);
+export type AnqiHudContainerV1 = Static<typeof AnqiHudContainerV1>;
+
 /** Rust `AnqiHudV1` 的 TypeBox wire 镜像（不含 server_data wrapper）。 */
 export const AnqiHudV1 = Type.Object(
   {
@@ -184,10 +194,11 @@ export const AnqiHudV1 = Type.Object(
     echo_count: Type.Integer({ minimum: 0, maximum: ANQI_HUD_ECHO_COUNT_MAX }),
     aim_progress: Type.Number({ minimum: 0, maximum: 1 }),
     charge_progress: Type.Number({ minimum: 0, maximum: 1 }),
-    abrasion_container: Type.String({
-      maxLength: ANQI_HUD_CONTAINER_MAX_LENGTH,
+    abrasion_container: AnqiHudContainerV1,
+    abrasion_qi_payload: Type.Number({
+      minimum: 0,
+      maximum: ANQI_HUD_QI_PAYLOAD_MAX,
     }),
-    abrasion_qi_payload: Type.Number({ minimum: 0 }),
     tick: Type.Integer({ minimum: 0, maximum: ANQI_HUD_TICK_MAX }),
   },
   { additionalProperties: false },

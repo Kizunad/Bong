@@ -44,11 +44,6 @@ interface WireCorpusCase {
   accepted: boolean;
   set?: Record<string, unknown>;
   remove?: string;
-  repeat?: {
-    field: string;
-    value: string;
-    count: number;
-  };
 }
 
 interface WireCorpus {
@@ -67,11 +62,6 @@ function materializeCorpusCase(
   const payload = { ...base, ...testCase.set };
   if (testCase.remove !== undefined) {
     delete payload[testCase.remove];
-  }
-  if (testCase.repeat !== undefined) {
-    payload[testCase.repeat.field] = testCase.repeat.value.repeat(
-      testCase.repeat.count,
-    );
   }
   return payload;
 }
@@ -124,8 +114,7 @@ describe("anqi_hud ServerDataV1 contract", () => {
 
       const mutationCount =
         (testCase.set === undefined ? 0 : Object.keys(testCase.set).length) +
-        (testCase.remove === undefined ? 0 : 1) +
-        (testCase.repeat === undefined ? 0 : 1);
+        (testCase.remove === undefined ? 0 : 1);
       expect(
         mutationCount,
         `${testCase.name} must isolate at most one field constraint`,
@@ -201,7 +190,7 @@ describe("anqi_hud ServerDataV1 contract", () => {
     });
     expect(generatedWrapper.properties.echo_count).toEqual({
       minimum: 0,
-      maximum: 4_294_967_295,
+      maximum: 2_147_483_647,
       type: "integer",
     });
     expect(generatedWrapper.properties.aim_progress).toEqual({
@@ -215,11 +204,13 @@ describe("anqi_hud ServerDataV1 contract", () => {
       type: "number",
     });
     expect(generatedWrapper.properties.abrasion_container).toEqual({
-      maxLength: 32_768,
-      type: "string",
+      anyOf: ["", "hand_slot", "quiver", "pocket_pouch", "fenglinghe"].map(
+        (container) => ({ const: container, type: "string" }),
+      ),
     });
     expect(generatedWrapper.properties.abrasion_qi_payload).toEqual({
       minimum: 0,
+      maximum: 3.4028234663852886e38,
       type: "number",
     });
     expect(generatedWrapper.properties.tick).toEqual({
