@@ -2048,7 +2048,9 @@ mod tests {
             health_current: 0.0,
             health_max: 100.0,
             entries: vec![crate::combat::components::Wound {
-                location: crate::combat::components::BodyPart::Chest,
+                location: crate::body_plan::legacy_body_part_to_id(
+                    crate::combat::components::BodyPart::Chest,
+                ),
                 kind: crate::combat::components::WoundKind::Cut,
                 severity: 0.8,
                 bleeding_per_sec: 8.0,
@@ -2088,7 +2090,9 @@ mod tests {
             health_current: 0.0,
             health_max: 100.0,
             entries: vec![crate::combat::components::Wound {
-                location: crate::combat::components::BodyPart::Chest,
+                location: crate::body_plan::legacy_body_part_to_id(
+                    crate::combat::components::BodyPart::Chest,
+                ),
                 kind: crate::combat::components::WoundKind::Cut,
                 severity: 0.8,
                 bleeding_per_sec: 8.0,

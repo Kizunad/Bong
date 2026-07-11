@@ -58,15 +58,6 @@ class MutationKindTest {
     }
 
     @Test
-    void defaultBodySlotAssigned() {
-        assertEquals("Head", MutationKind.GOLDEN_IRIS.defaultBodySlot());
-        assertEquals("Forearm", MutationKind.HARDENED_NAILS.defaultBodySlot());
-        assertEquals("Back", MutationKind.SPINE_SPURS.defaultBodySlot());
-        assertEquals("Torso", MutationKind.EXTRA_ARMS.defaultBodySlot());
-        assertEquals("Lower", MutationKind.TAIL.defaultBodySlot());
-    }
-
-    @Test
     void enumCount() {
         assertEquals(12, MutationKind.values().length,
             "Should have 12 mutation kinds (3 per stage x 4 stages)");

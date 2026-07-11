@@ -242,7 +242,7 @@ fn eclipse_penetrate_reverse_all_wound_location_stay_chest() {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::Chest,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
             "Eclipse 内功侵蚀应恒命中 Chest（代表真元枢纽），实测 {:?}",
             wounds.entries[0].location
         );
@@ -280,7 +280,7 @@ fn eclipse_penetrate_reverse_all_wound_location_stay_chest() {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::Chest,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
             "Penetrate 内功侵蚀应恒命中 Chest（代表真元枢纽），实测 {:?}",
             wounds.entries[0].location
         );
@@ -318,7 +318,7 @@ fn eclipse_penetrate_reverse_all_wound_location_stay_chest() {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::Chest,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
             "Reverse 内功侵蚀应恒命中 Chest（代表真元枢纽），实测 {:?}",
             wounds.entries[0].location
         );

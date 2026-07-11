@@ -1229,7 +1229,7 @@ mod tests {
     fn wound_heal_targets_all_wounds_when_target_missing() {
         let mut wounds = Wounds::default();
         wounds.entries.push(Wound {
-            location: BodyPart::ArmL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             kind: WoundKind::Cut,
             severity: 0.20,
             bleeding_per_sec: 1.0,
@@ -1237,7 +1237,7 @@ mod tests {
             inflicted_by: None,
         });
         wounds.entries.push(Wound {
-            location: BodyPart::LegR,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::LegR),
             kind: WoundKind::Blunt,
             severity: 0.75,
             bleeding_per_sec: 1.0,
@@ -1266,7 +1266,7 @@ mod tests {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::LegR,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::LegR),
             "expected remaining wound to be LegR because ArmL cut was healed below removal threshold, actual {:?}",
             wounds.entries[0].location
         );
@@ -1281,7 +1281,7 @@ mod tests {
     fn wound_heal_slash_target_filters_body_part_group() {
         let mut wounds = Wounds::default();
         wounds.entries.push(Wound {
-            location: BodyPart::ArmL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             kind: WoundKind::Blunt,
             severity: 0.40,
             bleeding_per_sec: 1.0,
@@ -1289,7 +1289,7 @@ mod tests {
             inflicted_by: None,
         });
         wounds.entries.push(Wound {
-            location: BodyPart::LegL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::LegL),
             kind: WoundKind::Blunt,
             severity: 0.70,
             bleeding_per_sec: 1.0,
@@ -1318,7 +1318,7 @@ mod tests {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::LegL,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::LegL),
             "expected remaining wound to be LegL because target was arm_l/arm_r, actual {:?}",
             wounds.entries[0].location
         );
@@ -1333,7 +1333,7 @@ mod tests {
     fn wound_heal_slash_target_shares_grade_budget_across_group() {
         let mut wounds = Wounds::default();
         wounds.entries.push(Wound {
-            location: BodyPart::ArmL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             kind: WoundKind::Blunt,
             severity: 0.75,
             bleeding_per_sec: 1.0,
@@ -1341,7 +1341,7 @@ mod tests {
             inflicted_by: None,
         });
         wounds.entries.push(Wound {
-            location: BodyPart::ArmR,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR),
             kind: WoundKind::Blunt,
             severity: 0.75,
             bleeding_per_sec: 1.0,
@@ -1365,12 +1365,16 @@ mod tests {
         let arm_l = wounds
             .entries
             .iter()
-            .find(|wound| wound.location == BodyPart::ArmL)
+            .find(|wound| {
+                wound.location == crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL)
+            })
             .expect("ArmL wound should remain after shared-budget heal");
         let arm_r = wounds
             .entries
             .iter()
-            .find(|wound| wound.location == BodyPart::ArmR)
+            .find(|wound| {
+                wound.location == crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR)
+            })
             .expect("ArmR wound should remain after shared-budget heal");
         assert!(
             (arm_l.severity - 0.25).abs() < f32::EPSILON,
@@ -1460,7 +1464,7 @@ mod tests {
                 .get_mut::<Wounds>()
                 .expect("Wounds should be present on player");
             wounds.entries.push(Wound {
-                location: BodyPart::LegL,
+                location: crate::body_plan::legacy_body_part_to_id(BodyPart::LegL),
                 kind: WoundKind::Blunt,
                 severity: 0.40,
                 bleeding_per_sec: 1.0,
@@ -1468,7 +1472,7 @@ mod tests {
                 inflicted_by: None,
             });
             wounds.entries.push(Wound {
-                location: BodyPart::ArmL,
+                location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
                 kind: WoundKind::Blunt,
                 severity: 0.40,
                 bleeding_per_sec: 1.0,
@@ -1497,7 +1501,7 @@ mod tests {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::ArmL,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             "expected ArmL wound to remain because leg_splint targets only legs, actual {:?}",
             wounds.entries[0].location
         );

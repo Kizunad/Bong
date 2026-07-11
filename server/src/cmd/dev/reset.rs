@@ -403,6 +403,7 @@ fn reset_lifecycle(lifecycle: &mut Lifecycle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::body_plan::RaceId;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::combat::components::{LifecycleState, SkillSlot, StaminaState};
     use crate::craft::recipe::RecipeId;
@@ -528,6 +529,7 @@ mod tests {
                 pending_material_bonus: 5.0,
                 composure: 0.2,
                 composure_recover_rate: 0.4,
+                race: RaceId::new("human"),
             },
             meridians,
             QiColor {
