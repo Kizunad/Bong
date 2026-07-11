@@ -3248,6 +3248,59 @@ describe("alchemy bridge payload samples pass schema validation", () => {
   });
 });
 
+describe("alchemy insight server wire parity", () => {
+  function serverShapedAlchemyInsight(ts: unknown = 84_120): Record<string, unknown> {
+    return {
+      v: 1,
+      player_id: "offline:Azure",
+      source_pill: "hui_yuan_pill",
+      recipe_id: "hui_yuan_pill_v0",
+      accuracy: 0.86,
+      ingredients: ["ling_grass", "qingxin_leaf"],
+      ts,
+    };
+  }
+
+  it.each([0, Number.MAX_SAFE_INTEGER])(
+    "accepts the server timestamp boundary %s",
+    (ts) => {
+      const result = validate(AlchemyInsightV1, serverShapedAlchemyInsight(ts));
+      expect(
+        result.ok,
+        `expected AlchemyInsightV1 to accept server-shaped ts=${ts}, errors=${result.errors.join("; ")}`,
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    ["missing", undefined],
+    ["negative", -1],
+    ["fractional", 1.5],
+    ["above safe integer", Number.MAX_SAFE_INTEGER + 1],
+  ])("rejects %s server timestamp", (_label, ts) => {
+    const payload = serverShapedAlchemyInsight(ts);
+    if (ts === undefined) {
+      delete payload.ts;
+    }
+    const result = validate(AlchemyInsightV1, payload);
+    expect(result.ok, `expected invalid ts=${String(ts)} to be rejected`).toBe(false);
+  });
+
+  it("keeps rejecting unknown fields after timestamp alignment", () => {
+    const payload = serverShapedAlchemyInsight();
+    payload.unexpected = true;
+    const result = validate(AlchemyInsightV1, payload);
+    expect(result.ok, "expected additionalProperties=false to reject unknown fields").toBe(false);
+  });
+
+  it.each([-0.01, 1.01])("keeps rejecting out-of-range accuracy %s", (accuracy) => {
+    const payload = serverShapedAlchemyInsight();
+    payload.accuracy = accuracy;
+    const result = validate(AlchemyInsightV1, payload);
+    expect(result.ok, `expected accuracy=${accuracy} to remain outside [0, 1]`).toBe(false);
+  });
+});
+
 describe("schema rejects invalid data", () => {
   it("rejects world state with wrong version", () => {
     const data = loadObjectSample("world-state.sample.json");

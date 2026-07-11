@@ -549,6 +549,7 @@ describe("redis-ipc", () => {
         recipe_id: "hui_yuan_pill_v0",
         accuracy: 0.86,
         ingredients: ["ling_grass", "qingxin_leaf"],
+        ts: 84120,
       }),
     );
 
@@ -557,6 +558,7 @@ describe("redis-ipc", () => {
       expect.objectContaining({
         player_id: "offline:Azure",
         accuracy: 0.86,
+        ts: 84120,
       }),
     ]);
   });
