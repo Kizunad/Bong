@@ -132,11 +132,12 @@ first_diff_world (3072, -3584) ((-64, 77),) -> ((59, 77), (-64, 32))
 ### 验证与跨仓库核验
 
 - RED：新增回归在修复前出现 2 个 `AttributeError` 与 2 个行为失败，分别证明缺少独立 owner 字段、export 仍选择 provenance-only chain、无 owner 时仍回退 provenance 雕刻。
-- 修复 commits：`7be3664f` 锁定失败契约，`9c1e8c3a` 分离 owner/provenance，`bd7225d6` 补齐真实边界 tile 回归，`80da3626` 锁定空 chain/零 spans 差异，`7edc4006` 补断言上下文，`4e9443ee` 以中文诊断和 ASCII 标点闭环 CodeRabbit/RUF001；`4618c56d` 仅为同步 `origin/main` 的普通 merge。
+- 修复 commits：`7be3664f` 锁定失败契约，`9c1e8c3a` 分离 owner/provenance，`bd7225d6` 补齐真实边界 tile 回归，`80da3626` 锁定空 chain/零 spans 差异，`7edc4006` 补断言上下文，`4e9443ee` 以中文诊断和 ASCII 标点闭环 CodeRabbit/RUF001；`4618c56d` 与 `a4b3731a` 均仅为同步 `origin/main` 的普通 merge。
 - 聚焦测试：新回归 5 项、`test_spans_export.py` 17 项、`test_span_blend.py` 9 项、`test_stitcher_dispatch.py` 10 项、`test_v3_behavior_baseline.py` 12 项，共 53 项通过。
 - snapshot 相关验证：anvil export/region/spans/world-spans、span codec/fold/raster-check、layer registry 共 119 项通过；`scripts/preview/test_*.py` 31 项通过。
 - Ruff：4 个 PR Python 文件 `ruff check` 通过；本轮实际修改的 `test_carver_owner_provenance.py` 通过 `ruff format --check`。其余 3 个实现文件全文件 formatter 会重排 main 既有大量无关代码，未把该噪音混入返工。
 - pipeline：同步 main 后，旧 `blood_valley,zhanhun_plain` 过滤因缺完整 novice POI 选择窗口按新合同正确拒绝；加入覆盖 16 个必需 tile 的 `spawn` 后，生产 CLI raster 生成 52 tiles 成功，`raster_check` 退出码 0，manifest 中 `tile_6_-7` provenance 仍为 `['blood_valley', 'zhanhun_plain']`。
+- 最终 main 同步：`a4b3731a` 合入 `origin/main@37447572`；主线新增 26 个提交与本 PR 的 5 个文件零交集，合并前后目标文件 blob 对拍一致。合并后重跑 carver 5 项、`test_spans_export.py` 17 项、snapshot validator 31 项及 Ruff lint/当前测试文件格式检查，均通过。
 - 跨仓库核验：变更仅落在 `worldgen/` 与 plan 文档；读取 `server/zones.worldview.example.json` 验证 `blood_valley → rift_valley`、`zhanhun_plain → ancient_battlefield` 的真实配置；未改 server/client/agent schema、依赖或 manifest 合同。
 - 第一轮 fresh validator：`gpt-5.6-sol-xhigh` 在精确 HEAD `73c5c0324a7e4da5c86ba8eaa12a3701e11ecf9b` 上确认真实 bug、最小正确修复、manifest 兼容、真实 witness 与提交 trailer，结论 `VERDICT: PASS`。
 - 第二轮最终 validator：在归档后 HEAD `a2c82ae363946a9ccbe9526aebefb5f0f7837ec0` 确认实现正确，但因真实 witness 未精确断言空 chain/0 spans 差异，以及 Finish Evidence 结构不完整，结论 `VERDICT: FAIL`；前者由 `80da3626` 精确锁定，后者由 `23442aeb` 与本轮证据更新补齐。
