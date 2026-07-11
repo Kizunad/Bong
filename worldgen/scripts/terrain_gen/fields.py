@@ -495,6 +495,7 @@ class TileFieldBuffer:
     tile_size: int
     layers: dict[str, np.ndarray]
     contributing_zones: list[str] = field(default_factory=list)
+    carver_owner_zones: list[str] = field(default_factory=list)
 
     @classmethod
     def create(

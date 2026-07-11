@@ -154,16 +154,16 @@ def _zone_carver_chains(
 def _tile_carver_chain(
     buffer, zone_chains: dict[str, list[Carver]]
 ) -> list[Carver]:
-    """Resolve the carver chain for *buffer* from its contributing zones.
+    """Resolve the carver chain from zones that positively blended this tile.
 
-    A tile's geometry is dominated by its first contributing zone (the base
-    zone the wilderness/overlay blend was applied onto), so the carve chain is
-    taken from that zone.  Carvers are self-gating on 3D noise, so a boundary
-    column that does not meet a carver's threshold is left as its flat fold —
-    the chain only sculpts where the landscape actually warrants it.  Returns
-    an empty chain (no carve) when no contributing zone declares carvers.
+    ``contributing_zones`` is manifest/debug provenance and may include a zone
+    whose expanded AABB intersects the tile while every boundary weight is
+    zero.  Such a zone never modified the tile and must not control export-time
+    geometry.  ``carver_owner_zones`` records only positive-weight blends, in
+    their original order; the first owner that declares carvers supplies the
+    chain.  Returns an empty chain when no positive owner declares carvers.
     """
-    for zone_name in buffer.contributing_zones:
+    for zone_name in buffer.carver_owner_zones:
         chain = zone_chains.get(zone_name)
         if chain:
             return chain

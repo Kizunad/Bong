@@ -402,6 +402,8 @@ def _blend_tile_layers(
 
     if zone.name not in base_tile.contributing_zones:
         base_tile.contributing_zones.append(zone.name)
+    if zone.name not in base_tile.carver_owner_zones:
+        base_tile.carver_owner_zones.append(zone.name)
 
 
 # ---------------------------------------------------------------------------
