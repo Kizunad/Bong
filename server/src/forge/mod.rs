@@ -1208,8 +1208,11 @@ mod tests {
         BilletProfile, BilletTolerance, CarrierSpec, MaterialStack, TemperBeat,
     };
     use crate::forge::learned::LearnedBlueprints;
-    use crate::forge::session::ForgeSessionId;
-    use crate::inventory::{DroppedLootRegistry, ItemRegistry};
+    use crate::forge::session::{ForgeSessionId, TemperingState};
+    use crate::inventory::{
+        ContainerState, DroppedLootRegistry, InventoryRevision, ItemInstance, ItemRarity,
+        ItemRegistry, PlacedItemState,
+    };
     use crate::lingtian::events::{
         StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
         StartReplenishRequest, StartTillRequest,
@@ -1232,6 +1235,9 @@ mod tests {
     use valence::prelude::{ident, App, BlockPos, Client, Entity, Events, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
+
+    const INSCRIPTION_SCROLL_INSTANCE_ID: u64 = 43;
+    const INSCRIPTION_INITIAL_REVISION: InventoryRevision = InventoryRevision(17);
 
     fn add_minimal_client_request_resources(app: &mut App) {
         app.insert_resource(CombatClock::default());
@@ -1305,6 +1311,18 @@ mod tests {
         registry
     }
 
+    fn registry_with_ling_feng() -> BlueprintRegistry {
+        let mut registry = BlueprintRegistry::new();
+        let blueprint: blueprint::Blueprint = serde_json::from_str(include_str!(
+            "../../assets/forge/blueprints/ling_feng_v0.json"
+        ))
+        .expect("ling_feng_v0 blueprint should parse");
+        registry
+            .insert(blueprint)
+            .expect("ling_feng_v0 should insert into fresh registry");
+        registry
+    }
+
     fn add_forge_c2s_events(app: &mut App) {
         app.add_event::<StepAdvance>();
         app.add_event::<TemperingHit>();
@@ -1319,12 +1337,24 @@ mod tests {
         add_forge_c2s_step_advance_systems(app);
     }
 
-    fn forge_c2s_test_app() -> App {
+    fn forge_c2s_test_app_with_registry(registry: BlueprintRegistry) -> App {
         let mut app = App::new();
         add_minimal_client_request_resources(&mut app);
         add_forge_c2s_events(&mut app);
-        app.insert_resource(registry_with_qing_feng());
+        app.insert_resource(registry);
         add_production_forge_c2s_systems(&mut app);
+        app
+    }
+
+    fn forge_c2s_test_app() -> App {
+        forge_c2s_test_app_with_registry(registry_with_qing_feng())
+    }
+
+    fn ling_feng_inscription_race_app() -> App {
+        let mut app = forge_c2s_test_app_with_registry(registry_with_ling_feng());
+        app.insert_resource(
+            crate::inventory::load_item_registry().expect("production item registry should load"),
+        );
         app
     }
 
@@ -1386,6 +1416,111 @@ mod tests {
         app.insert_resource(sessions);
 
         (caster, station, helper)
+    }
+
+    fn inscription_scroll_item(instance_id: u64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: "inscription_scroll_sharp_v0".to_string(),
+            display_name: "锐意铭文残卷".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.03,
+            rarity: ItemRarity::Uncommon,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.8,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn inventory_with_inscription_scroll(
+        instance_id: u64,
+        revision: InventoryRevision,
+    ) -> PlayerInventory {
+        PlayerInventory {
+            revision,
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "main_pack".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: inscription_scroll_item(instance_id),
+                }],
+                owner_instance_id: None,
+                quick_access: false,
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+            triggered_treasures: Vec::new(),
+        }
+    }
+
+    fn spawn_ling_feng_tempering_session(
+        app: &mut App,
+        session_id: u64,
+        misses: u32,
+    ) -> (Entity, MockClientHelper) {
+        let (client_bundle, helper) = create_mock_client("Azure");
+        let mut learned = LearnedBlueprints::new();
+        learned.learn("ling_feng_v0".into());
+        let caster = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation::default(),
+                QiColor::default(),
+                SkillSet::default(),
+                learned,
+                PlayerState::default(),
+                inventory_with_inscription_scroll(
+                    INSCRIPTION_SCROLL_INSTANCE_ID,
+                    INSCRIPTION_INITIAL_REVISION,
+                ),
+            ))
+            .id();
+
+        let session_id = ForgeSessionId(session_id);
+        let mut station = WeaponForgeStation::placed(BlockPos::new(4, 64, 4), 2, caster);
+        station.session = Some(session_id);
+        let station = app.world_mut().spawn(station).id();
+
+        let mut tempering = TemperingState {
+            beat_cursor: 15,
+            hits: 15,
+            ..Default::default()
+        };
+        if misses > 0 {
+            tempering.beat_cursor = misses as usize;
+            tempering.hits = 0;
+            tempering.misses = misses;
+            tempering.deviation = misses;
+        }
+        let mut session =
+            ForgeSession::new(session_id, "ling_feng_v0".to_string(), station, caster);
+        session.current_step = ForgeStep::Tempering;
+        session.step_index = 1;
+        session.step_state = StepState::Tempering(tempering);
+        session.achieved_tier = 1;
+        let mut sessions = ForgeSessions::new();
+        sessions.insert(session);
+        app.insert_resource(sessions);
+
+        (caster, helper)
     }
 
     #[test]
@@ -1485,6 +1620,168 @@ mod tests {
                         )
                 }),
             "同帧 step_advance 后接 tempering_hit 时，交互快照与推进快照都必须在击键处理后发送，不能夹带旧状态，实际={session_payloads:?}；全部 payload={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_tempering_waste_then_inscription_scroll_same_update_preserves_scroll() {
+        let mut app = ling_feng_inscription_race_app();
+        let (caster, mut helper) = spawn_ling_feng_tempering_session(&mut app, 7, 3);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":7}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_inscription_scroll","v":1,"session_id":7,"inscription_id":"sharp_v0"}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let session = app
+            .world()
+            .resource::<ForgeSessions>()
+            .get(ForgeSessionId(7))
+            .expect("Waste session should remain during the retention window");
+        assert_eq!(session.current_step, ForgeStep::Done);
+        assert_eq!(session.tempering_result, Some(TemperingResult::Waste));
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(caster)
+            .expect("caster should retain inventory");
+        assert_eq!(inventory.revision, INSCRIPTION_INITIAL_REVISION);
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(
+            inventory.containers[0].items[0].instance.instance_id, INSCRIPTION_SCROLL_INSTANCE_ID,
+            "Tempering 结算为 Waste 时，同帧预测授权不得提前消费铭文残卷"
+        );
+
+        let applied_count = app
+            .world()
+            .resource::<Events<InscriptionScrollApplied>>()
+            .iter_current_update_events()
+            .count();
+        assert_eq!(
+            applied_count, 0,
+            "未真实进入 Inscription 时不得发出成功应用事件"
+        );
+        let outcomes = app.world().resource::<Events<ForgeOutcomeEvent>>();
+        assert!(outcomes.iter_current_update_events().any(|outcome| {
+            outcome.session == ForgeSessionId(7) && outcome.bucket == ForgeBucket::Waste
+        }));
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().all(|payload| !matches!(
+                payload,
+                ServerDataPayloadV1::InventorySnapshot(_) | ServerDataPayloadV1::ForgeSession(_)
+            )),
+            "Waste 后不得伪造残卷消费快照或铭文交互成功快照，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_tempering_success_then_inscription_scroll_same_update_consumes_once() {
+        let mut app = ling_feng_inscription_race_app();
+        let (caster, mut helper) = spawn_ling_feng_tempering_session(&mut app, 8, 0);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":8}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_inscription_scroll","v":1,"session_id":8,"inscription_id":"sharp_v0"}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let session = app
+            .world()
+            .resource::<ForgeSessions>()
+            .get(ForgeSessionId(8))
+            .expect("successful Tempering should advance into Inscription");
+        assert_eq!(session.current_step, ForgeStep::Inscription);
+        assert_eq!(session.tempering_result, Some(TemperingResult::Perfect));
+        match &session.step_state {
+            StepState::Inscription(state) => {
+                assert_eq!(state.filled_slots, 1);
+                assert_eq!(state.scrolls_in, vec!["sharp_v0".to_string()]);
+            }
+            other => panic!("expected post-apply Inscription state, got {other:?}"),
+        }
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(caster)
+            .expect("caster should retain inventory component");
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(INSCRIPTION_INITIAL_REVISION.0 + 1),
+            "权威应用成功只能消费一次并递增一次 revision"
+        );
+        assert!(inventory.containers[0].items.is_empty());
+
+        let applied: Vec<_> = app
+            .world()
+            .resource::<Events<InscriptionScrollApplied>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].session, ForgeSessionId(8));
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        let inventory_snapshots: Vec<_> = payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                ServerDataPayloadV1::InventorySnapshot(snapshot) => Some(snapshot),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            inventory_snapshots.len(),
+            1,
+            "残卷消费成功后必须回推且只回推一次 inventory_snapshot，实际={payloads:?}"
+        );
+        assert_eq!(
+            inventory_snapshots[0].revision,
+            INSCRIPTION_INITIAL_REVISION.0 + 1
+        );
+        assert!(inventory_snapshots[0]
+            .placed_items
+            .iter()
+            .all(|placed| placed.item.instance_id != INSCRIPTION_SCROLL_INSTANCE_ID));
+
+        let session_snapshots: Vec<_> = payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                ServerDataPayloadV1::ForgeSession(snapshot) if snapshot.session_id == 8 => {
+                    Some(snapshot)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !session_snapshots.is_empty()
+                && session_snapshots.iter().all(|snapshot| {
+                    snapshot.current_step == crate::schema::forge::ForgeStepV1::Inscription
+                        && matches!(
+                            snapshot.step_state,
+                            crate::schema::forge::ForgeStepStateDataV1::Inscription {
+                                filled_slots: 1,
+                                ..
+                            }
+                        )
+                }),
+            "同帧成功链的所有 session 快照都必须在残卷应用后发送，实际={session_snapshots:?}；全部 payload={payloads:?}"
         );
     }
 
