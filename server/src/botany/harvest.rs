@@ -114,6 +114,34 @@ pub(crate) fn request_harvest_mode(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// plan-bughunt-botany-disconnect-session P1：结构性前置校验失败（缺 kind /
+/// 缺 Client+PlayerInventory）时补发 `interrupted=true` 终结帧。session 在完成路径
+/// 入口就已移除，不发帧客户端会永远等不到收口。grant 阶段的结构性失败**不**在此列——
+/// 那条路径的"无终结帧"语义由 plan-botany-harvest-full-inventory-loss-v1 §8.1 已 pin，
+/// 本 plan 不翻案。
+fn send_structural_cancel_terminal(
+    session: &HarvestSession,
+    terminal_events: &mut EventWriter<HarvestTerminalEvent>,
+) {
+    terminal_events.send(HarvestTerminalEvent {
+        client_entity: session.client_entity,
+        session_id: session.player_id.clone(),
+        target_id: format_target_id(session.target_entity),
+        target_name: session.target_plant.as_str().to_string(),
+        plant_kind: session.target_plant.as_str().to_string(),
+        mode: session.mode,
+        interrupted: true,
+        completed: false,
+        detail: "结算异常打断".to_string(),
+        target_pos: None,
+        spirit_quality: 0.0,
+        duration_ticks: session.duration_ticks,
+        gathering_quality: None,
+        tool_used: None,
+        overflow_to_ground: false,
+    });
+}
+
 pub fn complete_harvest_for_player(
     store: &mut HarvestSessionStore,
     player_id: &str,
@@ -139,20 +167,34 @@ pub fn complete_harvest_for_player(
 
     // plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #2：结构性校验必须挪到
     // `plant.harvested = true` 这段不可逆副作用之前——否则 kind/inventory 缺失时植物已被
-    // 标记收获，随后 lifecycle tick 把它当 wither 回收，玩家却什么都没拿到。两个 `?`
-    // 只要有一个失败，下面的 grant 调用就不会执行，plant.harvested 保持 false 可重收。
-    let kind = kind_registry
-        .get(session.target_plant)
-        .ok_or_else(|| format!("missing kind for `{}`", session.target_plant.as_str()))?;
+    // 标记收获，随后 lifecycle tick 把它当 wither 回收，玩家却什么都没拿到。任一前置
+    // 校验失败，下面的 grant 调用就不会执行，plant.harvested 保持 false 可重收。
+    //
+    // plan-bughunt-botany-disconnect-session P1：前置校验失败走显式取消语义——session
+    // 已被上面移除，若不发终结帧，客户端 HUD 会停在进度满格等一个永远不来的 terminal。
+    // 缺 Client 的情形理论上已被 release_disconnected_harvest_sessions 在同帧更早拦截
+    // （见 botany/mod.rs 的 .chain() 顺序），这里是权威侧最后一道兜底。
+    let kind = match kind_registry.get(session.target_plant) {
+        Some(kind) => kind,
+        None => {
+            send_structural_cancel_terminal(&session, terminal_events);
+            return Err(format!(
+                "missing kind for `{}`",
+                session.target_plant.as_str()
+            ));
+        }
+    };
 
-    let mut inventory = inventory_query
-        .get_mut(session.client_entity)
-        .map_err(|_| {
-            format!(
+    let mut inventory = match inventory_query.get_mut(session.client_entity) {
+        Ok(inventory) => inventory,
+        Err(_) => {
+            send_structural_cancel_terminal(&session, terminal_events);
+            return Err(format!(
                 "player inventory missing on entity {:?}",
                 session.client_entity
-            )
-        })?;
+            ));
+        }
+    };
 
     // 博弈 gate major 修复（同根因彻底兑现）：这里只读取 grant / 品质计算需要的字段
     // （position / zone_name / variant），**不**在此处做任何不可逆写入。旧实现在这里就把
@@ -655,9 +697,11 @@ pub fn tick_harvest_sessions(
             now,
             dropped_loot.as_deref_mut(),
         ) {
+            // plan-bughunt-botany-disconnect-session P1：文案与实际状态一致——session
+            // 已取消（不会自动 retry），植物保持未收获，玩家需重新发起采集。
             tracing::warn!(
                 "[bong][botany] harvest completion failed for `{player_id}`: {err} — \
-                 session cleared, plant left un-harvested for retry"
+                 session cancelled, plant left un-harvested; player must restart the harvest"
             );
         }
     }
@@ -1365,10 +1409,39 @@ mod tests {
             dropped.entries.is_empty(),
             "no product should ever be created when kind lookup fails before any grant is attempted"
         );
+
+        // plan-bughunt-botany-disconnect-session P1 显式取消语义：missing-kind 与
+        // missing-inventory 同属结构性前置校验失败，必须补发 interrupted 终结帧。
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            frames.len(),
+            1,
+            "missing-kind failure must emit exactly one cancellation terminal frame \
+             (explicit cancel, not silent swallow), got {frames:?}"
+        );
+        assert!(
+            frames[0].interrupted && !frames[0].completed,
+            "must be an interrupt frame because nothing was granted, \
+             got interrupted={} completed={}",
+            frames[0].interrupted,
+            frames[0].completed
+        );
+        assert_eq!(
+            frames[0].detail, "结算异常打断",
+            "detail must state the structural-failure cancellation reason"
+        );
     }
 
     #[test]
     fn harvest_completion_missing_player_inventory_leaves_plant_unharvested() {
+        // plan-bughunt-botany-disconnect-session P2：本测试**不再**覆盖断线场景——断线
+        // 语义由 release_disconnected_harvest_sessions 的专属测试组锁定。这里 pin 的是
+        // 纯结构性装配缺陷（实体带 Client 但缺 PlayerInventory）下完成路径的显式取消
+        // 语义：植物不收获、session 清掉、且必须补发 interrupted 终结帧而非静默失败。
         let mut app = make_app_with_combat_events();
         app.insert_resource(load_item_registry().expect("item registry should load"));
         app.insert_resource(InventoryInstanceIdAllocator::default());
@@ -1402,8 +1475,37 @@ mod tests {
         let store = app.world().resource::<HarvestSessionStore>();
         assert!(
             store.session_for("offline:Azure").is_none(),
-            "session should still be cleared even on structural failure"
+            "session must be cancelled (removed) on structural precheck failure — \
+             keeping it would retry-loop the completion path every tick"
         );
+
+        // P1 显式取消语义：结构性前置校验失败必须补发 interrupted 终结帧，
+        // 否则客户端 HUD 停在进度满格永远等不到收口。
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            frames.len(),
+            1,
+            "structural precheck failure must emit exactly one cancellation terminal frame \
+             (explicit cancel, not silent swallow), got {frames:?}"
+        );
+        let frame = &frames[0];
+        assert!(
+            frame.interrupted && !frame.completed,
+            "the terminal frame must be an interrupt (interrupted=true, completed=false) \
+             because nothing was granted, got interrupted={} completed={}",
+            frame.interrupted,
+            frame.completed
+        );
+        assert_eq!(
+            frame.detail, "结算异常打断",
+            "detail must state the structural-failure cancellation reason"
+        );
+        assert_eq!(frame.session_id, "offline:Azure");
+        assert_eq!(frame.client_entity, client_entity);
     }
 
     /// 博弈 gate major 的 tripwire：满包 + 故意不 insert `DroppedLootRegistry`（让
