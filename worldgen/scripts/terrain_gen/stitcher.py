@@ -219,6 +219,8 @@ FOLD_PATCH_BLEND_MODES: dict[str, str] = {
     "cavern_floor_y": "minimum",          # coordinate sentinel 9999 preserved
 }
 
+STRUCTURAL_OWNER_WEIGHT_THRESHOLD = 0.5
+
 
 def blend_spans(
     base_spans: tuple[tuple[int, int], ...],
@@ -247,13 +249,21 @@ def blend_spans(
     if not base_spans:
         # No wilderness ground here — only adopt the overlay once we are mostly
         # inside the zone, else keep the void.
-        return overlay_spans if weight >= 0.5 else ()
+        return (
+            overlay_spans
+            if weight >= STRUCTURAL_OWNER_WEIGHT_THRESHOLD
+            else ()
+        )
 
     # The column's vertical STRUCTURE (caves below / isles above) belongs to the
     # dominant side — crossing the 0.5 dither line hands the structure to the
     # zone overlay.  Only the surface ceiling lerps continuously so the ground
     # height transitions smoothly across the boundary instead of stepping.
-    structural = overlay_spans if weight >= 0.5 else base_spans
+    structural = (
+        overlay_spans
+        if weight >= STRUCTURAL_OWNER_WEIGHT_THRESHOLD
+        else base_spans
+    )
     base_ceiling = base_spans[0][1]
     ov_ceiling = overlay_spans[0][1]
     blended_ceiling = round(base_ceiling + (ov_ceiling - base_ceiling) * weight)
@@ -402,8 +412,29 @@ def _blend_tile_layers(
 
     if zone.name not in base_tile.contributing_zones:
         base_tile.contributing_zones.append(zone.name)
-    if zone.name not in base_tile.carver_owner_zones:
-        base_tile.carver_owner_zones.append(zone.name)
+    structural_owner = weight >= STRUCTURAL_OWNER_WEIGHT_THRESHOLD
+    if np.any(structural_owner):
+        if base_tile.carver_owner_index.size != weight.size:
+            raise ValueError(
+                "carver_owner_index size does not match the tile area: "
+                f"{base_tile.carver_owner_index.size} != {weight.size}"
+            )
+        if not np.issubdtype(base_tile.carver_owner_index.dtype, np.integer):
+            raise TypeError(
+                "carver_owner_index must use an integer dtype, got "
+                f"{base_tile.carver_owner_index.dtype}"
+            )
+        if zone.name not in base_tile.carver_owner_zones:
+            next_owner_index = len(base_tile.carver_owner_zones) + 1
+            if next_owner_index > np.iinfo(base_tile.carver_owner_index.dtype).max:
+                raise ValueError(
+                    "carver owner palette exceeds carver_owner_index capacity: "
+                    f"index={next_owner_index}, "
+                    f"dtype={base_tile.carver_owner_index.dtype}"
+                )
+            base_tile.carver_owner_zones.append(zone.name)
+        owner_index = base_tile.carver_owner_zones.index(zone.name) + 1
+        base_tile.carver_owner_index[structural_owner] = owner_index
 
 
 # ---------------------------------------------------------------------------

@@ -496,6 +496,9 @@ class TileFieldBuffer:
     layers: dict[str, np.ndarray]
     contributing_zones: list[str] = field(default_factory=list)
     carver_owner_zones: list[str] = field(default_factory=list)
+    carver_owner_index: np.ndarray = field(
+        default_factory=lambda: np.zeros(0, dtype=np.uint16)
+    )
 
     @classmethod
     def create(
@@ -507,7 +510,12 @@ class TileFieldBuffer:
             spec = LAYER_REGISTRY.get(name)
             default = spec.safe_default if spec is not None else 0.0
             layers[name] = np.full(area, default, dtype=layer_storage_dtype(name))
-        return cls(tile=tile, tile_size=tile_size, layers=layers)
+        return cls(
+            tile=tile,
+            tile_size=tile_size,
+            layers=layers,
+            carver_owner_index=np.zeros(area, dtype=np.uint16),
+        )
 
     def index(self, local_x: int, local_z: int) -> int:
         return local_z * self.tile_size + local_x

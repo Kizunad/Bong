@@ -110,7 +110,44 @@ class BlendTileCarverOwnerTest(unittest.TestCase):
             err_msg="零权重 zone 不得取得任何列的结构 ownership",
         )
 
-    def test_positive_weight_zone_is_recorded_as_carver_owner(self) -> None:
+    def test_weak_positive_weight_stays_provenance_only(self) -> None:
+        base = _buffer()
+        overlay = _buffer()
+        zone = SimpleNamespace(name="weak_blend")
+
+        with (
+            patch(
+                "scripts.terrain_gen.stitcher._compute_boundary_weight_array",
+                return_value=np.full(
+                    (TILE_SIZE, TILE_SIZE),
+                    0.49,
+                    dtype=np.float32,
+                ),
+            ),
+            patch(
+                "scripts.terrain_gen.stitcher._coherent_noise_2d_array",
+                return_value=np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.float32),
+            ),
+        ):
+            _blend_tile_layers(base, overlay, zone)
+
+        self.assertEqual(
+            base.contributing_zones,
+            ["weak_blend"],
+            "弱正权重 blend 仍应保留 provenance",
+        )
+        self.assertEqual(
+            base.carver_owner_zones,
+            [],
+            "weight < 0.5 时 overlay 尚未取得结构 ownership",
+        )
+        np.testing.assert_array_equal(
+            base.carver_owner_index,
+            np.zeros(TILE_SIZE * TILE_SIZE, dtype=np.uint16),
+            err_msg="弱正权重不得沿用旧的任意正权重整 tile carver 语义",
+        )
+
+    def test_dominant_zone_is_recorded_as_carver_owner(self) -> None:
         base = _buffer()
         overlay = _buffer()
         zone = SimpleNamespace(name="positive_owner")
@@ -130,13 +167,13 @@ class BlendTileCarverOwnerTest(unittest.TestCase):
         self.assertEqual(
             base.contributing_zones,
             ["positive_owner"],
-            "期望 provenance 为 ['positive_owner'], 因为正权重 zone 应保留记录; "
+            "期望 provenance 为 ['positive_owner'], 因为主导 zone 应保留记录; "
             f"实际为 {base.contributing_zones!r}",
         )
         self.assertEqual(
             base.carver_owner_zones,
             ["positive_owner"],
-            "实际参与过 blend 的 zone 才能成为 carver owner",
+            "达到结构交接阈值的 zone 才能成为 carver owner",
         )
         np.testing.assert_array_equal(
             base.carver_owner_index,
@@ -277,6 +314,45 @@ class TileCarverChainOwnershipTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "owner palette"):
             _tile_carver_assignments(unknown_owner, {"owner": [object()]})
 
+        negative_owner = SimpleNamespace(
+            tile_size=2,
+            carver_owner_zones=["owner"],
+            carver_owner_index=np.array([0, 1, -1, 0], dtype=np.int16),
+        )
+        with self.assertRaisesRegex(ValueError, "owner palette"):
+            _tile_carver_assignments(negative_owner, {"owner": [object()]})
+
+        float_owner = SimpleNamespace(
+            tile_size=2,
+            carver_owner_zones=["owner"],
+            carver_owner_index=np.array([0.0, 1.0, 1.0, 0.0]),
+        )
+        with self.assertRaisesRegex(TypeError, "integer dtype"):
+            _tile_carver_assignments(float_owner, {"owner": [object()]})
+
+    def test_blend_rejects_malformed_owner_index(self) -> None:
+        base = _buffer()
+        base.carver_owner_index = np.zeros(3, dtype=np.uint16)
+        overlay = _buffer()
+        zone = SimpleNamespace(name="owner")
+        with (
+            patch(
+                "scripts.terrain_gen.stitcher._compute_boundary_weight_array",
+                return_value=np.ones((TILE_SIZE, TILE_SIZE), dtype=np.float32),
+            ),
+            patch(
+                "scripts.terrain_gen.stitcher._coherent_noise_2d_array",
+                return_value=np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.float32),
+            ),
+            self.assertRaisesRegex(ValueError, "carver_owner_index"),
+        ):
+            _blend_tile_layers(base, overlay, zone)
+        self.assertEqual(
+            base.carver_owner_zones,
+            [],
+            "owner index 形状错误时不得留下半更新的 owner palette",
+        )
+
     def test_each_owner_chain_only_carves_its_assigned_columns(self) -> None:
         buffer = _buffer()
         buffer.carver_owner_zones = ["first_owner", "second_owner"]
@@ -346,6 +422,13 @@ class TileCarverChainOwnershipTest(unittest.TestCase):
                 carved[index].spans,
                 pure_fold[index].spans,
                 f"非 floating owner 的第 {index} 列不得被全 tile suppression 改写",
+            )
+
+    def test_fold_rejects_wrong_suppression_mask_shape(self) -> None:
+        with self.assertRaisesRegex(ValueError, "suppress_fold_isle"):
+            spans_for_tile(
+                _buffer(),
+                suppress_fold_isle=np.zeros(3, dtype=bool),
             )
 
 

@@ -14,6 +14,7 @@ from ..fields import (
     SPAN_BYTES_PER_COLUMN,
     SPAN_SENTINEL,
     BakePlan,
+    ColumnSpans,
     GeneratedFieldSet,
     TerrainGenerationPlan,
     encode_spans_arrays,
@@ -155,23 +156,90 @@ def _zone_carver_chains(
     return chains
 
 
-def _tile_carver_chain(
+def _tile_carver_assignments(
     buffer, zone_chains: dict[str, list[Carver]]
-) -> list[Carver]:
-    """Resolve the carver chain from zones that positively blended this tile.
+) -> list[tuple[str, np.ndarray, list[Carver]]]:
+    """Resolve each carver chain with the columns its zone finally owns."""
+    area = buffer.tile_size * buffer.tile_size
+    owner_index = np.asarray(buffer.carver_owner_index).reshape(-1)
+    if owner_index.size != area:
+        raise ValueError(
+            "carver_owner_index size does not match the tile area: "
+            f"{owner_index.size} != {area}"
+        )
+    if not np.issubdtype(owner_index.dtype, np.integer):
+        raise TypeError(
+            "carver_owner_index must use an integer dtype, got "
+            f"{owner_index.dtype}"
+        )
+    if owner_index.size and (
+        int(owner_index.min()) < 0
+        or int(owner_index.max()) > len(buffer.carver_owner_zones)
+    ):
+        raise ValueError(
+            "carver_owner_index references outside the owner palette: "
+            f"range={int(owner_index.min())}..{int(owner_index.max())}, "
+            f"palette_size={len(buffer.carver_owner_zones)}"
+        )
 
-    ``contributing_zones`` is manifest/debug provenance and may include a zone
-    whose expanded AABB intersects the tile while every boundary weight is
-    zero.  Such a zone never modified the tile and must not control export-time
-    geometry.  ``carver_owner_zones`` records only positive-weight blends, in
-    their original order; the first owner that declares carvers supplies the
-    chain.  Returns an empty chain when no positive owner declares carvers.
-    """
-    for zone_name in buffer.carver_owner_zones:
+    assignments: list[tuple[str, np.ndarray, list[Carver]]] = []
+    for palette_index, zone_name in enumerate(buffer.carver_owner_zones, start=1):
+        mask = owner_index == palette_index
+        if not np.any(mask):
+            continue
         chain = zone_chains.get(zone_name)
         if chain:
-            return chain
-    return []
+            assignments.append((zone_name, mask, chain))
+    return assignments
+
+
+def _apply_carver_chain_to_mask(
+    columns: list[ColumnSpans],
+    mask: np.ndarray,
+    chain: list[Carver],
+    *,
+    buffer,
+) -> list[ColumnSpans]:
+    """Apply one chain at full tile coordinates, retaining only owned columns."""
+    void_column = ColumnSpans(())
+    masked_columns = [
+        column if bool(mask[index]) else void_column
+        for index, column in enumerate(columns)
+    ]
+    carved = apply_carver_chain(
+        masked_columns,
+        chain,
+        origin_x=buffer.tile.min_x,
+        origin_z=buffer.tile.min_z,
+        tile_size=buffer.tile_size,
+        seed=CARVE_SEED,
+    )
+    return [
+        carved[index] if bool(mask[index]) else column
+        for index, column in enumerate(columns)
+    ]
+
+
+def _carved_spans_for_tile(
+    buffer, zone_chains: dict[str, list[Carver]]
+) -> list[ColumnSpans]:
+    """Fold and carve a tile according to its final per-column structural owner."""
+    assignments = _tile_carver_assignments(buffer, zone_chains)
+    area = buffer.tile_size * buffer.tile_size
+    suppress_fold_isle = np.zeros(area, dtype=bool)
+    for _zone_name, mask, chain in assignments:
+        if any(carver.name == "floating_island" for carver in chain):
+            suppress_fold_isle |= mask
+
+    columns = spans_for_tile(buffer, suppress_fold_isle=suppress_fold_isle)
+    for _zone_name, mask, chain in assignments:
+        columns = _apply_carver_chain_to_mask(
+            columns,
+            mask,
+            chain,
+            buffer=buffer,
+        )
+    return columns
 
 
 def _write_spans(
@@ -183,27 +251,12 @@ def _write_spans(
     spans.bin       : SPAN_BYTES_PER_COLUMN bytes per column, little-endian i16
                       pairs, sentinel-padded; Rust mmaps at col_idx * stride.
 
-    worldgen-v4 P3 §8.1 #1: after the 2.5D fold, the tile's zone carver chain
-    (canyon / floating_island / cave_network) sculpts the columns into 3D
-    geometry.  Carving mutates only spans — it never adds a raster layer — and
-    is deterministic for a given world coordinate + ``CARVE_SEED``.
+    worldgen-v4 P3 §8.1 #1: after the 2.5D fold, every column is sculpted only by
+    its final structural owner's chain (canyon / floating_island / cave_network).
+    Carving mutates only spans — it never adds a raster layer — and is
+    deterministic for a given world coordinate + ``CARVE_SEED``.
     """
-    chain = _tile_carver_chain(buffer, zone_chains or {})
-    # worldgen-v4 P3 §6.1 双源收口: when a floating_island carver owns the isle
-    # geometry, suppress the redundant 2D sky_island_base_y/thickness fold so the
-    # carver is the SOLE isle source (otherwise the flat fold slab + the carver's
-    # 3D body double-source the column → 3~4 redundant stacked spans).
-    suppress_fold_isle = any(c.name == "floating_island" for c in chain)
-    columns = spans_for_tile(buffer, suppress_fold_isle=suppress_fold_isle)
-    if chain:
-        columns = apply_carver_chain(
-            columns,
-            chain,
-            origin_x=buffer.tile.min_x,
-            origin_z=buffer.tile.min_z,
-            tile_size=buffer.tile_size,
-            seed=CARVE_SEED,
-        )
+    columns = _carved_spans_for_tile(buffer, zone_chains or {})
     count_arr, spans_arr = encode_spans_arrays(columns)
     (tile_dir / SPANS_COUNT_FILE).write_bytes(count_arr.tobytes())
     (tile_dir / SPANS_FILE).write_bytes(spans_arr.tobytes())
