@@ -3511,7 +3511,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Events, Position, Update};
-    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper};
 
     fn item_instance(instance_id: u64, template_id: &str, display_name: &str) -> ItemInstance {
@@ -3726,6 +3726,20 @@ mod tests {
             );
         }
         payloads
+    }
+
+    fn collect_chat_messages(helper: &mut MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
     }
 
     fn spawn_social_payload_client(
@@ -4639,68 +4653,74 @@ mod tests {
     }
 
     #[test]
-    fn trade_offer_dispatch_allows_wanted_initiator_identity_between_players() {
-        let mut app = App::new();
-        app.init_resource::<TradeOfferRegistry>();
-        app.add_event::<TradeOfferRequest>();
-        app.add_systems(Update, dispatch_trade_offers);
-        let (mut initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
-        initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
-        let initiator = app.world_mut().spawn(initiator_bundle).id();
-        let mut initiator_identities = PlayerIdentities::with_default("毒蛊师", 0);
-        initiator_identities.identities[0].renown.notoriety = 30;
-        initiator_identities.identities[0]
-            .revealed_tags
-            .push(RevealedTag {
-                kind: RevealedTagKind::DuguRevealed,
-                witnessed_at_tick: 20,
-                witness_realm: Realm::Spirit,
-                permanent: true,
+    fn trade_offer_dispatch_allows_low_and_wanted_initiators_between_players() {
+        for (tier, notoriety) in [("Low", 0), ("Wanted", 30)] {
+            let mut app = App::new();
+            app.init_resource::<TradeOfferRegistry>();
+            app.add_event::<TradeOfferRequest>();
+            app.add_systems(Update, dispatch_trade_offers);
+            let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+            initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+            let initiator = app.world_mut().spawn(initiator_bundle).id();
+            let mut initiator_identities = PlayerIdentities::with_default("毒蛊师", 0);
+            initiator_identities.identities[0].renown.notoriety = notoriety;
+            initiator_identities.identities[0]
+                .revealed_tags
+                .push(RevealedTag {
+                    kind: RevealedTagKind::DuguRevealed,
+                    witnessed_at_tick: 20,
+                    witness_realm: Realm::Spirit,
+                    permanent: true,
+                });
+            app.world_mut().entity_mut(initiator).insert((
+                Lifecycle {
+                    character_id: "char:initiator".to_string(),
+                    ..Default::default()
+                },
+                trade_inventory(1001, "出物"),
+                initiator_identities,
+            ));
+            let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+            target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
+            let target = app.world_mut().spawn(target_bundle).id();
+            app.world_mut().entity_mut(target).insert((
+                Lifecycle {
+                    character_id: "char:target".to_string(),
+                    ..Default::default()
+                },
+                trade_inventory(2002, "回物"),
+            ));
+
+            app.world_mut().send_event(TradeOfferRequest {
+                initiator,
+                target,
+                offered_instance_id: 1001,
+                tick: 42,
             });
-        app.world_mut().entity_mut(initiator).insert((
-            Lifecycle {
-                character_id: "char:initiator".to_string(),
-                ..Default::default()
-            },
-            trade_inventory(1001, "出物"),
-            initiator_identities,
-        ));
-        let (mut target_bundle, mut target_helper) = create_mock_client("Target");
-        target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
-        let target = app.world_mut().spawn(target_bundle).id();
-        app.world_mut().entity_mut(target).insert((
-            Lifecycle {
-                character_id: "char:target".to_string(),
-                ..Default::default()
-            },
-            trade_inventory(2002, "回物"),
-        ));
+            app.update();
+            flush_all_client_packets(&mut app);
 
-        app.world_mut().send_event(TradeOfferRequest {
-            initiator,
-            target,
-            offered_instance_id: 1001,
-            tick: 42,
-        });
-        app.update();
-        flush_all_client_packets(&mut app);
-
-        let target_payloads = collect_server_data_payloads(&mut target_helper);
-        assert_eq!(target_payloads.len(), 1);
-        match &target_payloads[0].payload {
-            ServerDataPayloadV1::TradeOffer(offer) => {
-                assert_eq!(offer.initiator, "char:initiator");
-                assert_eq!(offer.target, "char:target");
-                assert_eq!(offer.offered_item.instance_id, 1001);
-                assert_eq!(offer.requested_items[0].instance_id, 2002);
+            assert!(
+                collect_chat_messages(&mut initiator_helper).is_empty(),
+                "{tier} 玩家发起玩家交易时不得收到伪 NPC 拒绝文案"
+            );
+            let target_payloads = collect_server_data_payloads(&mut target_helper);
+            assert_eq!(target_payloads.len(), 1, "{tier} 玩家 offer 应送达目标");
+            match &target_payloads[0].payload {
+                ServerDataPayloadV1::TradeOffer(offer) => {
+                    assert_eq!(offer.initiator, "char:initiator");
+                    assert_eq!(offer.target, "char:target");
+                    assert_eq!(offer.offered_item.instance_id, 1001);
+                    assert_eq!(offer.requested_items[0].instance_id, 2002);
+                }
+                other => panic!("expected trade offer payload for {tier}, got {other:?}"),
             }
-            other => panic!("expected trade offer payload, got {other:?}"),
+            assert_eq!(
+                app.world().resource::<TradeOfferRegistry>().pending.len(),
+                1,
+                "{tier} 只约束 NPC 反应，不得阻断玩家对玩家交易"
+            );
         }
-        assert_eq!(
-            app.world().resource::<TradeOfferRegistry>().pending.len(),
-            1,
-            "Wanted/Low 只约束 NPC 反应，不得阻断玩家对玩家交易"
-        );
     }
 
     #[test]
