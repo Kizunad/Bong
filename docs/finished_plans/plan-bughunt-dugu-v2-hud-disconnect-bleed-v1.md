@@ -1,7 +1,7 @@
 # plan-bughunt-dugu-v2-hud-disconnect-bleed-v1
 
 > 一句话主题：`dugu_v2_*` / `permanent_qi_max_decay_applied` 这条 server bridge 已经打通，但 client runtime wiring 漏了 disconnect reset，导致上一局的毒蛊 v2 HUD 状态会跨 session 残留到下一局；其中 `revealRisk` / `selfCurePercent` / `selfRevealed` 甚至可无限续命，直到再次收到新的毒蛊 v2 payload。
-
+>
 > 范围声明：本条只聚焦 `server_data` S2C → `ServerDataRouter` → `DuguV2ServerDataHandler` → `DuguV2HudStateStore` → `BongHudOrchestrator` 的 bridge / runtime wiring 路径；不涉及已排除的 tsy discovery target fallback、locust warning duration drift、forge step_state contract drift、zone_info stale。
 
 ## 阶段总览

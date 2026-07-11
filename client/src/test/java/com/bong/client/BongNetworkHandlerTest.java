@@ -348,11 +348,13 @@ public class BongNetworkHandlerTest {
 
         assertTrue(
             DuguV2HudStateStore.snapshot().selfRevealed(),
-            "测试前必须模拟断线前残留的 sticky selfRevealed=true 快照，否则无法锁住跨 session 残留回归"
+            "测试前必须模拟断线前残留的 sticky selfRevealed=true 快照，否则无法锁住跨 session 残留回归；"
+                + "实际 selfRevealed=" + DuguV2HudStateStore.snapshot().selfRevealed()
         );
         assertTrue(
             DuguV2HudStateStore.snapshot().revealRisk() > 0f,
-            "测试前必须模拟断线前残留的 revealRisk > 0 快照（该字段无 expiry，是跨 session 残留的核心症状）"
+            "测试前必须模拟断线前残留的 revealRisk > 0 快照（该字段无 expiry，是跨 session 残留的核心症状）；"
+                + "实际 revealRisk=" + DuguV2HudStateStore.snapshot().revealRisk()
         );
 
         BongNetworkHandler.clearClientStateOnDisconnect();
@@ -365,7 +367,8 @@ public class BongNetworkHandlerTest {
         );
         assertFalse(
             DuguV2HudStateStore.snapshot().selfRevealed(),
-            "断线后 sticky selfRevealed 必须回 false，否则下一局没中毒的角色也会显示已自曝"
+            "断线后 sticky selfRevealed 必须回 false，否则下一局没中毒的角色也会显示已自曝；"
+                + "实际 selfRevealed=" + DuguV2HudStateStore.snapshot().selfRevealed()
         );
         assertEquals(
             0f,
@@ -395,6 +398,81 @@ public class BongNetworkHandlerTest {
             DuguV2HudStateStore.snapshot(),
             "回归防线：断线清理不能变成一次性开关——新 session 收到新 dugu_v2_* payload 后"
                 + "正常 replace() 写入必须继续生效"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // plan-bughunt-dugu-v2-hud-disconnect-bleed-v1 — 断线注册接线断言。
+    // 上面两条用例只驱动 clearClientStateOnDisconnect() helper 本体；若有人把
+    // ClientPlayConnectionEvents.DISCONNECT 注册块删掉、或把 helper 里的
+    // DuguV2HudStateStore.clearOnDisconnect() 调用移走，helper 级测试依然全绿，
+    // 生产态断线清理却已断链。register() 挂的 Fabric DISCONNECT 回调需要活的
+    // Minecraft client 实例，单测无法直接触发；镜像
+    // TiandaoPresencePayloadHandlerTest 的 source-scan 模式锁住这条接线。
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void bongNetworkHandlerRegistersDisconnectWiringThatClearsDuguV2HudStateStore() throws Exception {
+        java.nio.file.Path testClasses = java.nio.file.Path.of("").toAbsolutePath().normalize();
+        java.nio.file.Path clientRoot;
+        if (java.nio.file.Files.isDirectory(testClasses.resolve("src"))) {
+            clientRoot = testClasses;
+        } else if (java.nio.file.Files.isDirectory(testClasses.resolve("client").resolve("src"))) {
+            clientRoot = testClasses.resolve("client");
+        } else {
+            clientRoot = testClasses;
+        }
+        java.nio.file.Path handlerSrc = clientRoot.resolve(
+            "src/main/java/com/bong/client/BongNetworkHandler.java"
+        );
+        assertTrue(
+            java.nio.file.Files.exists(handlerSrc),
+            "BongNetworkHandler.java 必须存在于 " + handlerSrc.toAbsolutePath()
+                + "，否则无法核验毒蛊 v2 HUD 断线接线；实际 exists=false"
+        );
+        String src = java.nio.file.Files.readString(handlerSrc);
+
+        int disconnectBlockStart = src.indexOf("ClientPlayConnectionEvents.DISCONNECT.register(");
+        assertTrue(
+            disconnectBlockStart >= 0,
+            "期望 BongNetworkHandler 中存在 ClientPlayConnectionEvents.DISCONNECT.register(...) 注册块"
+                + "（断线清理的生产态入口），实际：源码中未找到"
+        );
+        int disconnectBlockEnd = src.indexOf("ClientPlayConnectionEvents.JOIN.register(", disconnectBlockStart);
+        assertTrue(
+            disconnectBlockEnd > disconnectBlockStart,
+            "期望 DISCONNECT.register(...) 之后存在 JOIN.register(...) 块用于圈定断线注册块范围，"
+                + "实际 disconnectBlockEnd=" + disconnectBlockEnd
+        );
+        String disconnectBlock = src.substring(disconnectBlockStart, disconnectBlockEnd);
+
+        assertTrue(
+            disconnectBlock.contains("clearClientStateOnDisconnect"),
+            "期望 DISCONNECT 注册块路由到 BongNetworkHandler.clearClientStateOnDisconnect()（统一断线"
+                + "清理 helper），否则毒蛊 v2 等所有跨 session store 清理都不会在真实断线时执行；"
+                + "实际：注册块内未找到该 helper 调用"
+        );
+
+        int clearHelperStart = src.indexOf("static void clearClientStateOnDisconnect()");
+        assertTrue(
+            clearHelperStart >= 0,
+            "期望 BongNetworkHandler.clearClientStateOnDisconnect() helper 存在（断线清理逻辑从 Fabric"
+                + "回调中抽出的统一入口），实际：源码中未找到方法定义"
+        );
+        int clearHelperEnd = src.indexOf("private static void logNoOp", clearHelperStart);
+        assertTrue(
+            clearHelperEnd > clearHelperStart,
+            "期望 clearClientStateOnDisconnect() 之后存在 logNoOp(...) 用于圈定清理 helper 范围，"
+                + "实际 clearHelperEnd=" + clearHelperEnd
+        );
+        String clearHelper = src.substring(clearHelperStart, clearHelperEnd);
+
+        assertTrue(
+            clearHelper.contains("DuguV2HudStateStore.clearOnDisconnect()"),
+            "期望 clearClientStateOnDisconnect() 调用 DuguV2HudStateStore.clearOnDisconnect()——server 的"
+                + " dugu_v2_* bridge 没有 join/disconnect reset payload，revealRisk 无 expiry、selfRevealed"
+                + " 是 sticky merge，漏掉这条调用会让上一局毒蛊 v2 HUD 跨 session 无限残留"
+                + "（plan-bughunt-dugu-v2-hud-disconnect-bleed-v1）；实际：清理 helper 内未找到该调用"
         );
     }
 

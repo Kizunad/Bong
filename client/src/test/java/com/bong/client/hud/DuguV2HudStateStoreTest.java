@@ -62,20 +62,29 @@ class DuguV2HudStateStoreTest {
     @Test
     void clearOnDisconnectResetsStickyRevealAndSelfCureFieldsToNone() {
         DuguV2HudStateStore.replace(fullState());
-        assertTrue(DuguV2HudStateStore.snapshot().selfRevealed(), "测试前置：selfRevealed 必须已置 true");
-        assertTrue(DuguV2HudStateStore.snapshot().revealRisk() > 0f, "测试前置：revealRisk 必须已 > 0");
+        assertTrue(
+            DuguV2HudStateStore.snapshot().selfRevealed(),
+            "测试前置：selfRevealed 必须已置 true；实际 selfRevealed=" + DuguV2HudStateStore.snapshot().selfRevealed()
+        );
+        assertTrue(
+            DuguV2HudStateStore.snapshot().revealRisk() > 0f,
+            "测试前置：revealRisk 必须已 > 0；实际 revealRisk=" + DuguV2HudStateStore.snapshot().revealRisk()
+        );
 
         DuguV2HudStateStore.clearOnDisconnect();
 
         DuguV2HudStateStore.State cleared = DuguV2HudStateStore.snapshot();
         assertEquals(DuguV2HudStateStore.State.NONE, cleared, "clearOnDisconnect() 必须把整体 State 复位为 State.NONE");
-        assertFalse(cleared.tainted(), "断线后 tainted 必须归 false");
+        assertFalse(cleared.tainted(), "断线后 tainted 必须归 false；实际 tainted=" + cleared.tainted());
         assertEquals(0f, cleared.taintIntensity(), "断线后 taintIntensity 必须归零");
         assertEquals("", cleared.taintHint(), "断线后 taintHint 必须清空");
         assertEquals(0f, cleared.revealRisk(), "断线后 revealRisk（无 expiry 字段的粘滞值）必须归零");
         assertEquals(0f, cleared.selfCurePercent(), "断线后 selfCurePercent 必须归零");
-        assertFalse(cleared.selfRevealed(), "断线后 sticky selfRevealed 必须回 false，否则下一局会继续显示已自曝");
-        assertFalse(cleared.shroudActive(), "断线后 shroudActive 必须归 false");
+        assertFalse(
+            cleared.selfRevealed(),
+            "断线后 sticky selfRevealed 必须回 false，否则下一局会继续显示已自曝；实际 selfRevealed=" + cleared.selfRevealed()
+        );
+        assertFalse(cleared.shroudActive(), "断线后 shroudActive 必须归 false；实际 shroudActive=" + cleared.shroudActive());
         assertEquals(0L, cleared.shroudUntilMs(), "断线后 shroudUntilMs 必须归零");
         assertEquals(0f, cleared.qiMaxDecayLoss(), "断线后 qiMaxDecayLoss 必须归零");
         assertEquals(0f, cleared.qiMaxAfter(), "断线后 qiMaxAfter 必须归零");
