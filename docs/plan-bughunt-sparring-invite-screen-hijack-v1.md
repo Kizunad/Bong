@@ -1,6 +1,6 @@
 # plan-bughunt-sparring-invite-screen-hijack-v1
 
-> **状态：ACTIVE（BugFix 实施中）**。一句话主题：`client/social` 的 `sparringInvite` store → tick bootstrap 链路会在玩家正开其他 GUI 时强行抢屏，导致 UI 状态被中断；同目录 `trade offer` 已有“被其他 GUI 挡住时只 toast、不抢屏”的修复先例，因此这是高置信真实 bug，而不是预期 UX。
+> **状态：✅ 2026-07-11**。一句话主题：`client/social` 的 `sparringInvite` store → tick bootstrap 链路会在玩家正开其他 GUI 时强行抢屏，导致 UI 状态被中断；同目录 `trade offer` 已有“被其他 GUI 挡住时只 toast、不抢屏”的修复先例，因此这是高置信真实 bug，而不是预期 UX。
 
 ## 1. 结论
 
@@ -80,3 +80,42 @@
 - Targeted GREEN：JDK 17 执行 `./gradlew test --tests com.bong.client.social.SparringInviteScreenBootstrapTest` 为 `BUILD SUCCESSFUL`，9 个契约测试全部通过，覆盖 null/expired 边界、NONE/matching/stale/OTHER 分支与 toast 去重/重触发。
 - 范围：未修改 server、schema、依赖、生产配置、工具链或视觉资产；同一 bug 的重复 skeleton `plan-bughunt-v-sparring-invite-screen-hijack-v1` 留给后续主干去重处理，本 PR 不跨 plan 修改。
 - 后续门禁：fresh validator PASS 后，以 JDK 17 执行完整 `./gradlew test build`；合并最新 `origin/main` 后任何 HEAD 变化都重新验证。
+
+## Finish Evidence
+
+### 落地清单
+
+- `client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java`
+  - 新增 `ScreenKind` / `Decision` 纯决策矩阵。
+  - 其他 GUI 打开时走 `BLOCKED_TOAST`，不再调用 `setScreen` 抢屏。
+  - 保留无屏开邀请、陈旧邀请屏替换、matching no-op、过期自动拒绝与 store 清理语义。
+  - blocked toast 按 inviteId 去重，新邀请可重新提示。
+- `client/src/test/java/com/bong/client/social/SparringInviteScreenBootstrapTest.java`
+  - 9 个测试覆盖 null、过期边界、NONE、matching、stale、OTHER 与 toast 去重/重触发。
+
+### 关键 commit
+
+- `33aaae28`（2026-07-11）：提升 canonical BugFix plan。
+- `b8614841`（2026-07-11）：先写 RED 契约，锁定不得抢占其他界面。
+- `94ddd91a`（2026-07-11）：最小修复切磋邀请屏幕调度。
+- `72775467`（2026-07-11）：记录第一性原理 RED / GREEN 证据。
+- `a4ce546c`（2026-07-11）：同步最新 `origin/main`，无冲突且未触及本修复三文件。
+
+### 测试结果
+
+- JDK 17 targeted RED：`compileTestJava` 因生产类缺少 `Decision` / `ScreenKind` / `decide` / toast 接口而失败，共 29 个缺失符号。
+- JDK 17 targeted GREEN：`./gradlew test --tests com.bong.client.social.SparringInviteScreenBootstrapTest` → `BUILD SUCCESSFUL`，9/9 PASS。
+- JDK 17 pre-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`。
+- JDK 17 post-merge full gate：`./gradlew test build` → `BUILD SUCCESSFUL`，13 tasks（7 executed / 6 up-to-date）。
+- Fresh read-only validator：`VERDICT: PASS — HEAD a4ce546c4b4729e188f73df147f15d2af7d5afd9`。
+
+### 跨仓库核验
+
+- client-only 修复；未修改 server / agent / schema / proto。
+- `SocialServerDataHandler → SocialStateStore.sparringInvite → SparringInviteScreenBootstrap` 接收链保持不变，仅收紧最后一段 screen 调度。
+- 独立 NPC/玩家切磋协议、server 超时与响应语义均未改变。
+
+### 遗留 / 后续
+
+- `docs/plans-skeleton/plan-bughunt-v-sparring-invite-screen-hijack-v1.md` 是同 bug 的重复 skeleton，留给主干在本 PR 合并后按锁运维/去重流程处理；本 PR 遵守一个 plan 一个 PR，不跨 plan 删除。
+- 测试以纯决策与 toast 状态为主，未直接 mock `MinecraftClient#setScreen`；validator 已静态核对 runtime switch 中 `OTHER` 分支无 `setScreen` 路径。
