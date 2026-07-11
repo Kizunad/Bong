@@ -1,7 +1,6 @@
 package com.bong.client.audio;
 
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.sound.PositionedSoundInstance;
 import net.minecraft.client.sound.SoundInstance;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.util.math.random.Random;
@@ -12,7 +11,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class MinecraftSoundSink implements SoundSink {
-    private final Map<Long, List<SoundInstance>> activeByInstance = new ConcurrentHashMap<>();
+    private final Map<Long, List<FadeableSoundInstance>> activeByInstance = new ConcurrentHashMap<>();
 
     @Override
     public boolean play(AudioScheduledSound sound) {
@@ -37,7 +36,7 @@ public final class MinecraftSoundSink implements SoundSink {
             return new AudioPosition(0, 0, 0);
         });
 
-        PositionedSoundInstance instance = new PositionedSoundInstance(
+        FadeableSoundInstance instance = new FadeableSoundInstance(
             sound.sound(),
             toMinecraftCategory(sound.category()),
             sound.volume(),
@@ -59,12 +58,19 @@ public final class MinecraftSoundSink implements SoundSink {
     @Override
     public void stop(long instanceId, int fadeOutTicks) {
         MinecraftClient client = MinecraftClient.getInstance();
-        List<SoundInstance> instances = activeByInstance.remove(instanceId);
+        List<FadeableSoundInstance> instances = activeByInstance.remove(instanceId);
         if (client == null || client.getSoundManager() == null || instances == null) {
             return;
         }
-        for (SoundInstance instance : instances) {
-            client.getSoundManager().stop(instance);
+        for (FadeableSoundInstance instance : instances) {
+            if (fadeOutTicks <= 0) {
+                client.getSoundManager().stop(instance);
+            } else {
+                // 交给 Minecraft 自身的 TickableSoundInstance 循环逐 tick 渐弱；
+                // 淡出结束（isDone()==true）后引擎会自己摘除 channel，无需我们再调用
+                // soundManager.stop()（那样会打断刚起步的淡出，变回硬切）。
+                instance.beginFadeOut(fadeOutTicks);
+            }
         }
     }
 
