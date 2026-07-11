@@ -6,6 +6,7 @@ import com.bong.client.craft.CraftSessionStateView;
 import com.bong.client.craft.CraftStore;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
+import com.bong.client.hud.BongToast;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.state.NarrationState;
@@ -29,6 +30,7 @@ public class BongNetworkHandlerTest {
         CraftStore.clear();
         BongHudStateStore.clear();
         DroppedItemStore.resetForTests();
+        BongToast.resetForTests();
     }
 
     @Test
@@ -91,6 +93,36 @@ public class BongNetworkHandlerTest {
             CraftStore.lastUnlocked().isPresent(),
             "断线必须清空 lastUnlocked，避免上一连接解锁提示串到新 session"
         );
+    }
+
+    @Test
+    void disconnectClearsBongToastToPreventCrossSessionLeak() {
+        BongToast.show(NarrationState.create("broadcast", null, "雷劫将至", "system_warning"), 1_000L);
+
+        assertFalse(
+            BongToast.current(1_001L).isEmpty(),
+            "测试前必须模拟断线前一个尚未过期的活跃 toast，否则无法锁住跨 session 泄漏回归"
+        );
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+
+        assertTrue(
+            BongToast.current(1_002L).isEmpty(),
+            "断线必须立即清空 BongToast.activeToast；否则 reconnect 到新 server 后的首批 HUD 帧" +
+                "会继续渲染上一 server 未过期的 warning/era/event toast，误导玩家判断当前局势"
+        );
+    }
+
+    @Test
+    void disconnectClearingBongToastDoesNotBlockNewToastAfterReconnect() {
+        BongToast.show(NarrationState.create("broadcast", null, "旧服警示", "system_warning"), 0L);
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+        BongToast.show(NarrationState.create("broadcast", null, "新服提示", "era_decree"), 100L);
+
+        BongToast toast = BongToast.current(101L);
+        assertFalse(toast.isEmpty(), "断线清场后 reconnect 收到的新 toast 必须能正常显示，不能被清场逻辑永久锁死");
+        assertEquals("时代法旨：新服提示", toast.text().getString());
     }
 
     // ──────────────────────────────────────────────────────────────────────
