@@ -40,7 +40,7 @@ use crate::cultivation::components::{Cultivation, Karma, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
-use crate::identity::{reaction::npc_should_decline_trade, IdentityId, PlayerIdentities};
+use crate::identity::{IdentityId, PlayerIdentities};
 use crate::inventory::{
     consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
     PlayerInventory,
@@ -1024,29 +1024,19 @@ fn handle_sparring_invite_responses(
 fn dispatch_trade_offers(
     mut requests: EventReader<TradeOfferRequest>,
     mut registry: ResMut<TradeOfferRegistry>,
-    players: Query<
-        (
-            Entity,
-            &Lifecycle,
-            &Position,
-            &PlayerInventory,
-            Option<&PlayerIdentities>,
-        ),
-        With<Client>,
-    >,
+    players: Query<(Entity, &Lifecycle, &Position, &PlayerInventory), With<Client>>,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     for request in requests.read() {
         if request.initiator == request.target {
             continue;
         }
-        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory, initiator_identities)) =
+        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory)) =
             players.get(request.initiator)
         else {
             continue;
         };
-        let Ok((_, target_lifecycle, target_pos, target_inventory, _)) =
-            players.get(request.target)
+        let Ok((_, target_lifecycle, target_pos, target_inventory)) = players.get(request.target)
         else {
             continue;
         };
@@ -1063,15 +1053,6 @@ fn dispatch_trade_offers(
         };
         let requested_items = trade_item_summaries(target_inventory);
         if requested_items.is_empty() {
-            continue;
-        }
-        if initiator_identities
-            .and_then(PlayerIdentities::active)
-            .is_some_and(npc_should_decline_trade)
-        {
-            if let Ok(mut initiator_client) = clients.get_mut(request.initiator) {
-                initiator_client.send_chat_message("对方听过这张面孔的事，不愿交易");
-            }
             continue;
         }
         registry.pending.retain(|_, pending| {
