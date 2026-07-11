@@ -53,10 +53,11 @@
 
 - `cargo fmt --check`：PASS。
 - `cargo clippy --all-targets -- -D warnings`：PASS，0 warning / 0 error。
+- 最终 `git fetch origin && git merge origin/main` 同步至 `origin/main@3c8bf925`；主线带入 `server/src/cmd/dev/realm.rs` 变化后，重新执行完整 server 门禁仍全绿。
 - `cargo test`：PASS：
-  - lib：11154 passed / 0 failed / 1 ignored；
+  - lib：11156 passed / 0 failed / 1 ignored；
   - main：11 passed；`full_app_startup`：1 passed；`tarkov_backpack_p0_e2e`：4 passed；
-  - doc tests：0 failed / 5 ignored；合计 **11170 passed / 0 failed / 6 ignored**。
+  - doc tests：0 failed / 5 ignored；合计 **11172 passed / 0 failed / 6 ignored**。
 
 ## Finish Evidence
 
@@ -72,10 +73,11 @@
 - `b9b3938d`（2026-07-11）：派生 14 个枚举默认值。
 - `5e29e9bb`（2026-07-11）：收敛 lib 剩余标准库与 Bevy lint。
 - `db50bc17`（2026-07-11）：清理全 targets 的 12 条 test-only lint。
+- `a07c5516`（2026-07-11）：同步 `origin/main@3c8bf925`，带入 server 变更后重新验收。
 
 ### 测试结果
 
-- Rust 1.96.1 下 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 全绿；原始日志保存在本次执行环境 `/tmp/bong-rust-1961-*.log`，不进入仓库。
+- Rust 1.96.1 下 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 在同步最新主线前后均全绿；post-merge 最终计数 11172 passed / 0 failed / 6 ignored。原始日志保存在本次执行环境 `/tmp/bong-rust-1961-*.log`，不进入仓库。
 
 ### 跨仓库核验
 
