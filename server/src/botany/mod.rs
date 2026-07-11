@@ -250,7 +250,7 @@ fn emit_botany_harvest_progress(
         let target_pos = session
             .target_entity
             .and_then(|entity| plants.get(entity).ok().map(|plant| plant.position));
-        if now_tick % PROGRESS_SYNC_INTERVAL_TICKS == 0 {
+        if now_tick.is_multiple_of(PROGRESS_SYNC_INTERVAL_TICKS) {
             let origin_position = target_pos.unwrap_or(session.origin_position);
             let active_tool = inventories
                 .get(session.client_entity)
