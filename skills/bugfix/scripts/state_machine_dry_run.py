@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
+import re
 from typing import Optional
 
 
@@ -152,6 +153,8 @@ class TaskState:
     _validator_capability: object = field(
         default_factory=object, init=False, repr=False
     )
+    repository: str = "Kizunad/Bong"
+    required_checks: tuple[str, ...] = ("review", "e2e", "CodeRabbit")
 
     def __post_init__(self) -> None:
         if self.validator_evidence is None:
@@ -228,18 +231,32 @@ class TaskState:
                 evidence.reviewer_model,
             ) if evidence is not None else ()
             invalid_models = {"", "AI", "agent", "unknown", "pending"}
+            expected_pr_url = (
+                f"https://github.com/{self.repository}/pull/"
+                f"{evidence.pr_number}"
+                if evidence is not None
+                else ""
+            )
             if (
                 evidence is None
                 or evidence.target_sha != self.head
                 or evidence.generation != self.generation
                 or evidence.pr_number <= 0
-                or not evidence.pr_url.startswith("https://github.com/")
+                or evidence.pr_url != expected_pr_url
                 or evidence.remote_sha != self.head
-                or checks.get("review") != "SUCCESS"
-                or checks.get("e2e") != "SUCCESS"
+                or any(
+                    checks.get(name) != "SUCCESS"
+                    for name in self.required_checks
+                )
                 or any(result != "SUCCESS" for result in checks.values())
                 or len(models) != 3
-                or any(model in invalid_models for model in models)
+                or any(
+                    model != model.strip()
+                    or model.lower() in {value.lower() for value in invalid_models}
+                    or re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)+", model)
+                    is None
+                    for model in models
+                )
             ):
                 raise ProtocolError("CLOSED gate evidence incomplete")
         self.phase = target
@@ -628,6 +645,8 @@ class TokenBroker:
         generation: int,
     ) -> None:
         state = self.requests[request_id]
+        if not validator_agent_id.strip():
+            raise ProtocolError("canonical validator id is empty")
         if (
             state.payload.token_type != "validator"
             or state.status != RequestStatus.ACKED
@@ -747,6 +766,9 @@ class TokenBroker:
             if state.terminal_message != message:
                 raise ProtocolError("duplicate release payload collision")
             return False
+        if not self._authority_matches(state):
+            self._invalidate(state, RequestStatus.CANCELLED, "STALE_AUTHORITY")
+            raise ProtocolError("release authority became stale")
         if token_id in self.invalid_tokens:
             raise ProtocolError("late release rejected")
         if (
@@ -1138,7 +1160,11 @@ def record_closure_pass(task: TaskState) -> None:
             pr_number=1163,
             pr_url="https://github.com/Kizunad/Bong/pull/1163",
             remote_sha=task.head,
-            checks=(("review", "SUCCESS"), ("e2e", "SUCCESS")),
+            checks=(
+                ("review", "SUCCESS"),
+                ("e2e", "SUCCESS"),
+                ("CodeRabbit", "SUCCESS"),
+            ),
             implementation_model="gpt-5",
             validator_model="gpt-5.6-sol-xhigh",
             reviewer_model="gpt-5.5",
@@ -1287,6 +1313,37 @@ class StateMachineDryRun(unittest.TestCase):
         )
         with self.assertRaises(ProtocolError):
             task.transition(TaskPhase.CLOSED)
+        valid_closure = ClosureEvidence(
+            target_sha=task.head,
+            generation=task.generation,
+            pr_number=1163,
+            pr_url="https://github.com/Kizunad/Bong/pull/1163",
+            remote_sha=task.head,
+            checks=(
+                ("review", "SUCCESS"),
+                ("e2e", "SUCCESS"),
+                ("CodeRabbit", "SUCCESS"),
+            ),
+            implementation_model="gpt-5",
+            validator_model="gpt-5.6-sol-xhigh",
+            reviewer_model="gpt-5.5",
+        )
+        invalid_closures = (
+            replace(
+                valid_closure,
+                pr_url="https://github.com/other/repo/pull/1163",
+            ),
+            replace(
+                valid_closure,
+                checks=(("review", "SUCCESS"), ("e2e", "SUCCESS")),
+            ),
+            replace(valid_closure, implementation_model=" gpt-5 "),
+            replace(valid_closure, reviewer_model="Pending"),
+        )
+        for evidence in invalid_closures:
+            task.record_closure(evidence)
+            with self.assertRaises(ProtocolError):
+                task.transition(TaskPhase.CLOSED)
         record_closure_pass(task)
         task.transition(TaskPhase.CLOSED)
         self.assertEqual(task.phase, TaskPhase.CLOSED)
@@ -1770,6 +1827,16 @@ class StateMachineDryRun(unittest.TestCase):
             broker.bind_validator_spawn(
                 "bind",
                 grant.token_id,
+                "   ",
+                task.task_id,
+                task.phase,
+                task.head,
+                task.generation,
+            )
+        with self.assertRaises(ProtocolError):
+            broker.bind_validator_spawn(
+                "bind",
+                grant.token_id,
                 "validator-bind",
                 task.task_id,
                 TaskPhase.REBASE_VALIDATING,
@@ -1940,6 +2007,28 @@ class StateMachineDryRun(unittest.TestCase):
         task4.update_head("head-during-recovery")
         with self.assertRaises(ProtocolError):
             recover_request(broker, "recover", True)
+
+        task5 = TaskState(
+            task_id="release-authority", phase=TaskPhase.GATING
+        )
+        submit(
+            broker, make_payload("release-stale", "compile", "a", task5), task5
+        )
+        grant5 = broker.grant_next("compile")
+        broker.ack(
+            "release-stale",
+            grant5.token_id,
+            task5.phase,
+            task5.head,
+            task5.generation,
+        )
+        task5.phase = TaskPhase.BLOCKED
+        with self.assertRaises(ProtocolError):
+            release_request(broker, "release-stale", grant5.token_id, "PASS")
+        self.assertEqual(
+            broker.requests["release-stale"].release_reason,
+            "STALE_AUTHORITY",
+        )
 
     def test_fifo_request_ack_release_cancel_and_collision(self) -> None:
         broker, _, _ = fixture()
