@@ -452,6 +452,7 @@ class RunnerLogicTest(unittest.TestCase):
         names = set(discover_scenarios())
         expected = {
             "cmd_dev_give_feedback",
+            "cultivation_realm_qi",
             "network_client_request_tolerance",
             "network_session_tolerance",
             "terrain_join_chunk_delivery",
