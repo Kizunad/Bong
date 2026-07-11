@@ -1312,7 +1312,9 @@ fn migrate_dormant_realm_distribution_v1(
             // 已被记录 SEVERED 的经脉会在迁移后被"复活"，与 MeridianSeveredPermanent
             // 记录矛盾。永久断脉是跨周目才重置的长期状态，realm 迁移不应抹掉它。
             for severed_id in &snapshot.meridian_severed.severed_meridians {
-                snapshot.meridian_system.get_mut(*severed_id).opened = false;
+                // plan-race-system-v1 P1a：`severed_id` 是 `&MeridianChannelId`（非
+                // `Copy`），`*severed_id` 移动出引用不合法，改 `.clone()`。
+                snapshot.meridian_system.get_mut(severed_id.clone()).opened = false;
             }
             changed = true;
             if matches!(new_realm, Realm::Condense | Realm::Solidify) {
@@ -5117,9 +5119,9 @@ mod tests {
             snap.meridian_system = MeridianSystem::default();
             snap.meridian_severed
                 .severed_meridians
-                .insert(crate::cultivation::components::MeridianId::Lung);
+                .insert(crate::cultivation::components::MeridianId::Lung.channel_id());
             snap.meridian_severed.severed_at.insert(
-                crate::cultivation::components::MeridianId::Lung,
+                crate::cultivation::components::MeridianId::Lung.channel_id(),
                 crate::cultivation::meridian::severed::SeveredRecord {
                     at_tick: 0,
                     source: crate::cultivation::meridian::severed::SeveredSource::CombatWound,
@@ -5159,7 +5161,7 @@ mod tests {
             assert!(
                 snap.meridian_severed
                     .severed_meridians
-                    .contains(&crate::cultivation::components::MeridianId::Lung),
+                    .contains(&crate::cultivation::components::MeridianId::Lung.channel_id()),
                 "char_id={char_id}: 迁移不应改动 meridian_severed 记录本身"
             );
         }

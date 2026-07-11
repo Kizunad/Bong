@@ -241,14 +241,92 @@ pub enum HitGeometry {
     },
 }
 
-/// 经脉构型档案占位——P1 起填充 `channels: Vec<ChannelDef>` / `topology_edges` /
-/// `realm_requirements: [RealmMeridianReq; 6]`（见 plan §P1）。P0 仅锁定
-/// `BodyPlan.meridian_profile: Option<MeridianProfile>` 的存在性语义：humanoid.json
-/// 缺省该字段 = `None`（合法），显式提供 `{}` = `Some(MeridianProfile::default())`
-/// （同样合法）——两条路径各有一条 pin 测试（见 `registry.rs` 测试）。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// 经脉 family（沿用现有 12 正经 / 8 奇经二分——`realm_requirements` 子配额与
+/// `MeridianSystem.regular`/`extraordinary` 分桶依据，见 `MeridianSystem::for_profile`）。
+/// 与 `cultivation::components::MeridianFamily` 是两个独立类型——后者是 `MeridianId`
+/// 的既有派生便捷方法（服务 legacy 桥接），本类型是 body_plan JSON schema 的权威定义，
+/// 刻意不互相依赖以避免制造循环耦合。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeridianFamily {
+    Regular,
+    Extraordinary,
+}
+
+/// 经脉在特定玩法场景里的语义角色标签（plan §P4 决议 —— `FormAnchor` = 易形前置检查
+/// 关注的经脉；本类型 P1a 只声明枚举 + 序列化，尚无消费点，供 humanoid.json 提前给
+/// Ren/Du 标注，P4 落地"易形前置＝本体 profile 内全部 form_anchor 已通且未断"时直接
+/// 消费，不必再改一次 schema）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelRole {
+    FormAnchor,
+}
+
+/// 单条经脉声明（`MeridianProfile.channels`）。
+///
+/// `body_part` 承接 `combat::baomai_v4::dead_armor::meridian_to_body_part` 私表的数据
+/// （channel → 可选体表部位，`None` = 无可命中体表映射，如 6 条排除的奇经——见该函数
+/// 文档）——本字段是 plan §P1 "经脉↔部位映射数据化"目标里**数据落地**的部分；
+/// `dead_armor` 自身改为消费本字段（而非维护私表）与 `cultivation::dugu` 的另一张
+/// **方向相反、语义不同**的私表（`body_part_to_meridian: BodyPart -> MeridianId`，
+/// 体表命中→"排异注入哪条经脉"，多对一且值域不覆盖全部 20 条经脉，不是本字段的逆
+/// 映射）留待后续 P1 消费点改造子阶段——P1a 范围只到"数据在 humanoid.json 里有唯一
+/// 权威来源"，两张私表各自的运行时改造不在本次交付。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MeridianProfile {}
+pub struct ChannelDef {
+    pub id: crate::cultivation::components::MeridianChannelId,
+    pub family: MeridianFamily,
+    #[serde(default)]
+    pub body_part: Option<BodyPartId>,
+    #[serde(default)]
+    pub roles: Vec<ChannelRole>,
+}
+
+/// 经脉拓扑边——无向，声明一次即代表双向相邻（替换 `cultivation::topology::
+/// MeridianTopology::standard()` 的单张全局 Rust 图；P1a 只交付数据 + 校验，
+/// `topology.rs` 及其消费点`meridian_open`/NPC 选招在后续 P1 子阶段改为读取本字段）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TopologyEdge {
+    pub from: crate::cultivation::components::MeridianChannelId,
+    pub to: crate::cultivation::components::MeridianChannelId,
+}
+
+/// 单一境界的经脉配额声明（§8.1 #8 "公式即数据"决议——每种构型在自己的
+/// `realm_requirements` 里直接声明各境界所需 channel 总数与正/奇子配额，不设全局换算
+/// 公式）。数组下标与 `cultivation::components::Realm::rank()` 对齐：
+/// `realm_requirements[realm.rank() as usize - 1]`（rank 1..=6 对应 醒灵..化虚）。
+/// `regular_min`/`extraordinary_min` 为 0 表示该境界不对相应 family 设子配额下限
+/// （只受 `total` 约束）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RealmMeridianReq {
+    pub total: u8,
+    #[serde(default)]
+    pub regular_min: u8,
+    #[serde(default)]
+    pub extraordinary_min: u8,
+}
+
+/// 经脉构型档案——`channels`（每条经脉的 id/family/体部映射/角色标签）+
+/// `topology_edges`（拓扑邻接，替换 `MeridianTopology::standard()` 单张全局图）+
+/// `realm_requirements`（六境界配额曲线，替换 `Realm::required_meridians` /
+/// `breakthrough::breakthrough_precondition_error` 的硬编码 match，见 plan §P1）。
+///
+/// P0 仅锁定 `BodyPlan.meridian_profile: Option<MeridianProfile>` 的存在性语义；
+/// **P1a 起本类型不再是空占位**——`validate_body_plan` 现在要求 `is_humanoid == true`
+/// 的 plan 必须提供 `Some(meridian_profile)`（humanoid.json 缺省该字段不再合法，见
+/// `validate.rs`），非人形 plan（P0 现存的测试 fixture）仍可留 `None`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeridianProfile {
+    pub channels: Vec<ChannelDef>,
+    #[serde(default)]
+    pub topology_edges: Vec<TopologyEdge>,
+    pub realm_requirements: [RealmMeridianReq; 6],
+}
 
 /// 单个种族/构型的完整身体定义。`is_humanoid` 是 P3 `RaceGate::Humanoid` 档的唯一判据
 /// （不做名单硬编码）；易形配对不在本结构体内——唯一真源是 `races.json` 全局
@@ -444,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn meridian_profile_missing_field_defaults_to_none_present_field_is_some() {
+    fn meridian_profile_missing_field_defaults_to_none() {
         #[derive(Debug, Deserialize)]
         struct Wrapper {
             #[serde(default)]
@@ -453,10 +531,152 @@ mod tests {
         let missing: Wrapper =
             serde_json::from_str("{}").expect("missing field should deserialize");
         assert_eq!(missing.meridian_profile, None);
+    }
 
-        let present: Wrapper = serde_json::from_str(r#"{"meridian_profile":{}}"#)
-            .expect("present empty object should deserialize");
-        assert_eq!(present.meridian_profile, Some(MeridianProfile::default()));
+    /// P1a 起 `MeridianProfile` 不再是空占位结构体——`channels`/`realm_requirements`
+    /// 是必填字段，空对象 `{}` 不再是合法内容（P0 时期曾合法，见该测试此前版本）。
+    #[test]
+    fn meridian_profile_present_but_empty_object_is_now_rejected() {
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[serde(default)]
+            meridian_profile: Option<MeridianProfile>,
+        }
+        let err = serde_json::from_str::<Wrapper>(r#"{"meridian_profile":{}}"#)
+            .expect_err("P1a 起空对象缺少必填 channels/realm_requirements，必须拒绝而非静默默认");
+        let message = err.to_string();
+        assert!(
+            message.contains("channels") || message.contains("missing field"),
+            "错误消息应指出缺失字段，got: {message}"
+        );
+    }
+
+    fn one_channel_profile() -> MeridianProfile {
+        MeridianProfile {
+            channels: vec![ChannelDef {
+                id: "lung".into(),
+                family: MeridianFamily::Regular,
+                body_part: Some(BodyPartId::new("arm_l")),
+                roles: vec![],
+            }],
+            topology_edges: vec![],
+            realm_requirements: [RealmMeridianReq {
+                total: 1,
+                regular_min: 1,
+                extraordinary_min: 0,
+            }; 6],
+        }
+    }
+
+    #[test]
+    fn meridian_profile_present_with_full_content_is_some() {
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[serde(default)]
+            meridian_profile: Option<MeridianProfile>,
+        }
+        let profile = one_channel_profile();
+        let json = serde_json::json!({ "meridian_profile": profile });
+        let present: Wrapper =
+            serde_json::from_value(json).expect("fully populated profile should deserialize");
+        assert_eq!(present.meridian_profile, Some(profile));
+    }
+
+    #[test]
+    fn meridian_family_serde_pin_both_variants() {
+        assert_eq!(
+            serde_json::to_string(&MeridianFamily::Regular).unwrap(),
+            r#""regular""#
+        );
+        assert_eq!(
+            serde_json::to_string(&MeridianFamily::Extraordinary).unwrap(),
+            r#""extraordinary""#
+        );
+        assert_eq!(
+            serde_json::from_str::<MeridianFamily>(r#""regular""#).unwrap(),
+            MeridianFamily::Regular
+        );
+        assert_eq!(
+            serde_json::from_str::<MeridianFamily>(r#""extraordinary""#).unwrap(),
+            MeridianFamily::Extraordinary
+        );
+    }
+
+    #[test]
+    fn meridian_family_rejects_unknown_variant() {
+        assert!(serde_json::from_str::<MeridianFamily>(r#""mystic""#).is_err());
+    }
+
+    #[test]
+    fn channel_role_serde_pin() {
+        assert_eq!(
+            serde_json::to_string(&ChannelRole::FormAnchor).unwrap(),
+            r#""form_anchor""#
+        );
+        assert_eq!(
+            serde_json::from_str::<ChannelRole>(r#""form_anchor""#).unwrap(),
+            ChannelRole::FormAnchor
+        );
+    }
+
+    #[test]
+    fn channel_def_body_part_defaults_to_none_when_absent() {
+        let json = serde_json::json!({
+            "id": "chong",
+            "family": "extraordinary",
+        });
+        let decoded: ChannelDef = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(decoded.body_part, None);
+        assert!(decoded.roles.is_empty());
+    }
+
+    #[test]
+    fn channel_def_body_part_some_round_trips() {
+        let def = ChannelDef {
+            id: "ren".into(),
+            family: MeridianFamily::Extraordinary,
+            body_part: Some(BodyPartId::new("chest")),
+            roles: vec![ChannelRole::FormAnchor],
+        };
+        let json = serde_json::to_value(&def).expect("serialize");
+        let round_tripped: ChannelDef = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(round_tripped, def);
+    }
+
+    #[test]
+    fn topology_edge_serde_round_trip() {
+        let edge = TopologyEdge {
+            from: "lung".into(),
+            to: "large_intestine".into(),
+        };
+        let json = serde_json::to_value(&edge).expect("serialize");
+        let round_tripped: TopologyEdge = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(round_tripped, edge);
+    }
+
+    #[test]
+    fn realm_meridian_req_default_is_all_zero() {
+        let req = RealmMeridianReq::default();
+        assert_eq!(req.total, 0);
+        assert_eq!(req.regular_min, 0);
+        assert_eq!(req.extraordinary_min, 0);
+    }
+
+    #[test]
+    fn realm_meridian_req_sub_quota_fields_default_when_absent() {
+        let json = serde_json::json!({ "total": 6 });
+        let decoded: RealmMeridianReq = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(decoded.total, 6);
+        assert_eq!(decoded.regular_min, 0);
+        assert_eq!(decoded.extraordinary_min, 0);
+    }
+
+    #[test]
+    fn meridian_profile_channels_topology_realm_requirements_round_trip() {
+        let profile = one_channel_profile();
+        let json = serde_json::to_value(&profile).expect("serialize");
+        let round_tripped: MeridianProfile = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(round_tripped, profile);
     }
 
     #[test]

@@ -197,7 +197,23 @@ mod tests {
                 lateral_threshold: 0.19,
             },
             equip_slots: vec![],
-            meridian_profile: None,
+            // plan-race-system-v1 P1a：validate_body_plan 现在要求 is_humanoid==true
+            // 必须提供 meridian_profile；本 fixture 明确代表"the humanoid plan"，给一条
+            // 最小合法 channel + 六境界配额，保持语义忠实而非改 is_humanoid=false。
+            meridian_profile: Some(crate::body_plan::types::MeridianProfile {
+                channels: vec![crate::body_plan::types::ChannelDef {
+                    id: "lung".into(),
+                    family: crate::body_plan::types::MeridianFamily::Regular,
+                    body_part: Some(BodyPartId::new("head")),
+                    roles: vec![],
+                }],
+                topology_edges: vec![],
+                realm_requirements: [crate::body_plan::types::RealmMeridianReq {
+                    total: 1,
+                    regular_min: 1,
+                    extraordinary_min: 0,
+                }; 6],
+            }),
             mutation_slot_mapping: {
                 let mut map = HashMap::new();
                 map.insert(BodySlot::Head, BodyPartId::new("head"));

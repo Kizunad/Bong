@@ -56,8 +56,9 @@ pub use resolve::{
     BodyPlanResolveInputs, ResolveBodyPlanError,
 };
 pub use types::{
-    BodyPartDef, BodyPartId, BodyPlan, BodyPlanId, HeightBand, HeightBandAssignment, HitGeometry,
-    IntrinsicRace, MeridianProfile, PartBox, PartConsequence, RaceId, StandingAabbSpec,
+    BodyPartDef, BodyPartId, BodyPlan, BodyPlanId, ChannelDef, ChannelRole, HeightBand,
+    HeightBandAssignment, HitGeometry, IntrinsicRace, MeridianFamily, MeridianProfile, PartBox,
+    PartConsequence, RaceId, RealmMeridianReq, StandingAabbSpec, TopologyEdge,
 };
 
 use std::path::Path;

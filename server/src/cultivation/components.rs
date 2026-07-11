@@ -36,15 +36,24 @@ impl Realm {
     }
 
     /// 此境界需要已打通的经脉数量（含正经 + 奇经，参考 plan §3.1）。
+    ///
+    /// plan-race-system-v1 P1a：数值来源已从本文件硬编码 match 迁移至
+    /// `body_plan::MeridianProfile.realm_requirements`（`humanoid.json`，§8.1 #8
+    /// "公式即数据"决议）——本函数读取 humanoid 曲线，数值 1/3/6/12/16/20 bit-for-bit
+    /// 不变。当前全部已注册种族均映射到 humanoid body plan（`races.json`），尚无
+    /// 需要按 `Cultivation.race` 差异化取值的真实调用场景；等 P5 引入非 humanoid
+    /// 战斗构型时，需要真正"目标实体"上下文的调用点（如 `breakthrough_precondition_error`）
+    /// 再各自改走 `resolve_body_plan_for_target` 解析出的 profile，本函数签名保持
+    /// 零参数不变（大量既有调用点无 entity 上下文，见该函数文档）。
     pub fn required_meridians(self) -> usize {
-        match self {
-            Realm::Awaken => 1,
-            Realm::Induce => 3,
-            Realm::Condense => 6,
-            Realm::Solidify => 12,
-            Realm::Spirit => 16,
-            Realm::Void => 20,
-        }
+        let profile = crate::body_plan::humanoid_plan_static()
+            .meridian_profile
+            .as_ref()
+            .expect(
+                "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+                 onward — validate_body_plan should have rejected a humanoid plan missing it",
+            );
+        profile.realm_requirements[self.rank() as usize - 1].total as usize
     }
 
     /// plan-agent-ui-data-v1 P0 — 境界 1-indexed rank（与 `realm_gate` 比较）。
@@ -63,7 +72,73 @@ impl Realm {
     }
 }
 
+/// 经脉 channel id（string，plan-race-system-v1 P1）——`MeridianSystem`/`Meridian.id`
+/// 的系统真源，`body_plan::MeridianProfile.channels[].id` 同型。取代 `MeridianId`
+/// 20 变体闭合枚举作为运行时存储 key：非人形构型（如 P5 飞鲸）的经脉不在这 20 个
+/// TCM 名字之列，必须能用任意 snake_case 字符串表达。
+///
+/// `MeridianId` 仍保留（见其文档），二者互转走 [`MeridianId::channel_id`] /
+/// [`MeridianChannelId::to_meridian_id`]；`MeridianSystem::get`/`get_mut` 接受
+/// `impl Into<MeridianChannelId>`，故现存传 `MeridianId::X` 字面量的调用点无需改写。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct MeridianChannelId(pub String);
+
+impl MeridianChannelId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// 反向查询——仅当本 id 恰好是 humanoid 20 条经脉之一的规范 snake_case 名时返回
+    /// `Some`。供仍以 `MeridianId` 为公共接口的既有消费点（`life_record::BiographyEntry`
+    /// / `combat::baomai_v4` 私表 / `MeridianSeveredEvent` 等）在读取 `Meridian.id` 时
+    /// 转回旧类型；非 humanoid 构型（P5 飞鲸等）的 channel id 会合法地返回 `None`——
+    /// 调用方必须显式处理，不允许静默 fallback 到某个哨兵 id（那会伪造数据）。
+    pub fn to_meridian_id(&self) -> Option<MeridianId> {
+        MeridianId::from_channel_str(self.0.as_str())
+    }
+}
+
+impl std::fmt::Display for MeridianChannelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for MeridianChannelId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for MeridianChannelId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<MeridianId> for MeridianChannelId {
+    fn from(id: MeridianId) -> Self {
+        id.channel_id()
+    }
+}
+
 /// 20 条经脉（12 正经 + 8 奇经）。
+///
+/// **migration-only（plan-race-system-v1 P1a）**：`MeridianSystem`/`Meridian.id` 的
+/// 系统真源已换轨为 [`MeridianChannelId`]（string，见其文档）。本枚举 + `REGULAR` /
+/// `EXTRAORDINARY` / `ALL` 常量保留，仅用于：① 旧存档迁移（`persistence` bundle 里
+/// PascalCase 枚举名 → 新 snake_case channel id 的一次性重映射）② 尚未迁移到
+/// channel-id 原生表达的既有公共接口的桥接类型（`MeridianTopology` / 各流派技能
+/// 依赖表 / `life_record::BiographyEntry` / `combat::baomai_v4` 私表等——它们仍以
+/// `MeridianId` 作为参数/字段类型，本枚举经 [`channel_id`](MeridianId::channel_id) /
+/// [`MeridianChannelId::to_meridian_id`] 与新类型互转）。**运行时新增引用请优先走
+/// `MeridianChannelId`**——直接依赖本枚举意味着无法表达非 humanoid 构型的经脉
+/// （P5 飞鲸等），只在对接上述尚未迁移的旧接口时才应继续使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MeridianId {
     // 12 正经
@@ -153,13 +228,74 @@ impl MeridianId {
             MeridianFamily::Extraordinary
         }
     }
+
+    /// 规范 snake_case channel id（`body_plan::registry::humanoid_plan_static()` 的
+    /// `humanoid.json meridian_profile.channels[].id` 必须与本表逐条 bit-for-bit 一致
+    /// ——见 `body_plan` 侧对拍测试）。
+    pub fn channel_id(self) -> MeridianChannelId {
+        MeridianChannelId::new(match self {
+            MeridianId::Lung => "lung",
+            MeridianId::LargeIntestine => "large_intestine",
+            MeridianId::Stomach => "stomach",
+            MeridianId::Spleen => "spleen",
+            MeridianId::Heart => "heart",
+            MeridianId::SmallIntestine => "small_intestine",
+            MeridianId::Bladder => "bladder",
+            MeridianId::Kidney => "kidney",
+            MeridianId::Pericardium => "pericardium",
+            MeridianId::TripleEnergizer => "triple_energizer",
+            MeridianId::Gallbladder => "gallbladder",
+            MeridianId::Liver => "liver",
+            MeridianId::Ren => "ren",
+            MeridianId::Du => "du",
+            MeridianId::Chong => "chong",
+            MeridianId::Dai => "dai",
+            MeridianId::YinQiao => "yin_qiao",
+            MeridianId::YangQiao => "yang_qiao",
+            MeridianId::YinWei => "yin_wei",
+            MeridianId::YangWei => "yang_wei",
+        })
+    }
+
+    /// [`channel_id`](Self::channel_id) 的反函数，仅接受规范 snake_case 字符串——不接受
+    /// 旧版 PascalCase 变体名（那是 `Debug`/`serde` 派生的另一种表示，迁移函数按需自行
+    /// 用 `serde_json` 解码，不走本函数）。
+    fn from_channel_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "lung" => MeridianId::Lung,
+            "large_intestine" => MeridianId::LargeIntestine,
+            "stomach" => MeridianId::Stomach,
+            "spleen" => MeridianId::Spleen,
+            "heart" => MeridianId::Heart,
+            "small_intestine" => MeridianId::SmallIntestine,
+            "bladder" => MeridianId::Bladder,
+            "kidney" => MeridianId::Kidney,
+            "pericardium" => MeridianId::Pericardium,
+            "triple_energizer" => MeridianId::TripleEnergizer,
+            "gallbladder" => MeridianId::Gallbladder,
+            "liver" => MeridianId::Liver,
+            "ren" => MeridianId::Ren,
+            "du" => MeridianId::Du,
+            "chong" => MeridianId::Chong,
+            "dai" => MeridianId::Dai,
+            "yin_qiao" => MeridianId::YinQiao,
+            "yang_qiao" => MeridianId::YangQiao,
+            "yin_wei" => MeridianId::YinWei,
+            "yang_wei" => MeridianId::YangWei,
+            _ => return None,
+        })
+    }
 }
 
 /// 单条经脉。`flow_rate` / `flow_capacity` 是相互独立的锻造轴
 /// （plan §3.3）。
+///
+/// `id` 类型是 plan-race-system-v1 P1a 的核心换轨点：从闭合枚举 [`MeridianId`] 改为
+/// string [`MeridianChannelId`]，使非 humanoid 构型（P5 飞鲸等）的经脉可以拥有 TCM
+/// 20 名之外的 id。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Meridian {
-    pub id: MeridianId,
+    pub id: MeridianChannelId,
     pub opened: bool,
     pub open_progress: f64, // 0.0..=1.0, 未打通时累积
     pub flow_rate: f64,
@@ -194,7 +330,7 @@ pub enum CrackCause {
 }
 
 impl Meridian {
-    pub fn new(id: MeridianId) -> Self {
+    pub fn new(id: MeridianChannelId) -> Self {
         Self {
             id,
             opened: false,
@@ -208,6 +344,11 @@ impl Meridian {
             cracks: Vec::new(),
             opened_at: 0,
         }
+    }
+
+    /// 供仍以 [`MeridianId`] 为公共接口的既有调用点（测试 / migration）直接构造。
+    pub fn from_meridian_id(id: MeridianId) -> Self {
+        Self::new(id.channel_id())
     }
 
     /// plan §3.3.2 渐进非线性 flow_rate 曲线。
@@ -243,24 +384,55 @@ pub struct Contamination {
     pub entries: Vec<ContamSource>,
 }
 
-/// 玩家 20 经脉系统。固定长度数组，顺序与 `MeridianId::REGULAR` /
-/// `MeridianId::EXTRAORDINARY` 一致。
+/// 玩家经脉系统（plan-race-system-v1 P1a——从 `[Meridian;12]+[Meridian;8]` 定长数组
+/// 改造为 `Vec<Meridian>`，解除"恰好 20 条 TCM 经脉"的硬编码假设，容纳按
+/// `body_plan::MeridianProfile` 声明的任意条数/构型（P5 飞鲸等）。字段名 `regular` /
+/// `extraordinary` 保留（沿用 `MeridianFamily` 二分），但类型从定长数组换成
+/// `Vec`——绝大多数既有消费点（`.iter()`/`.iter_mut()`/`[idx]` 索引）语法不变，
+/// 只是不再假设固定 12/8 条数。**查找按 `MeridianChannelId` 字符串键**（`get`/
+/// `get_mut` 均已改为 `impl Into<MeridianChannelId>` 参数，见下方实现）。
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct MeridianSystem {
-    pub regular: [Meridian; 12],
-    pub extraordinary: [Meridian; 8],
+    pub regular: Vec<Meridian>,
+    pub extraordinary: Vec<Meridian>,
 }
 
 impl Default for MeridianSystem {
+    /// humanoid 20 经曲线的唯一入口——数据源已从本文件的 Rust match 表迁移进
+    /// `server/assets/body_plans/plans/humanoid.json` 的 `meridian_profile.channels`
+    /// （plan §P1）。`Default` 不代表 humanoid 是特权路径，只是"迄今唯一存在的构型"
+    /// 的便捷构造；未来构型走 [`MeridianSystem::for_profile`] 直接传自己的 profile。
     fn default() -> Self {
-        Self {
-            regular: MeridianId::REGULAR.map(Meridian::new),
-            extraordinary: MeridianId::EXTRAORDINARY.map(Meridian::new),
-        }
+        let profile = crate::body_plan::humanoid_plan_static()
+            .meridian_profile
+            .as_ref()
+            .expect(
+                "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+                 onward — validate_body_plan should have rejected a humanoid plan missing it",
+            );
+        Self::for_profile(profile)
     }
 }
 
 impl MeridianSystem {
+    /// 从任意 [`crate::body_plan::MeridianProfile`] 构造——`channels` 按声明顺序分桶进
+    /// `regular`/`extraordinary`（顺序即 profile 声明顺序，不重排）。
+    pub fn for_profile(profile: &crate::body_plan::MeridianProfile) -> Self {
+        let mut regular = Vec::new();
+        let mut extraordinary = Vec::new();
+        for channel in &profile.channels {
+            let meridian = Meridian::new(channel.id.clone());
+            match channel.family {
+                crate::body_plan::MeridianFamily::Regular => regular.push(meridian),
+                crate::body_plan::MeridianFamily::Extraordinary => extraordinary.push(meridian),
+            }
+        }
+        Self {
+            regular,
+            extraordinary,
+        }
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Meridian> {
         self.regular.iter().chain(self.extraordinary.iter())
     }
@@ -292,28 +464,36 @@ impl MeridianSystem {
         self.iter().filter(|m| m.opened).map(|m| m.flow_rate).sum()
     }
 
-    pub fn get(&self, id: MeridianId) -> &Meridian {
-        if let Some(idx) = MeridianId::REGULAR.iter().position(|x| *x == id) {
-            &self.regular[idx]
-        } else {
-            let idx = MeridianId::EXTRAORDINARY
-                .iter()
-                .position(|x| *x == id)
-                .expect("MeridianId must be regular or extraordinary");
-            &self.extraordinary[idx]
-        }
+    /// 按 channel id 查找（接受 `MeridianChannelId` 或 legacy `MeridianId`——后者经
+    /// `impl Into<MeridianChannelId>` 自动转换，既有传 `MeridianId::X` 字面量的调用点
+    /// 无需改写）。未知 channel id 是编程错误（entity 的 profile 不该被查询它不拥有的
+    /// 经脉）——panic 而非静默返回哨兵，防止调用方在错误分支里悄悄读到错误经脉。
+    pub fn get(&self, id: impl Into<MeridianChannelId>) -> &Meridian {
+        let id = id.into();
+        self.regular
+            .iter()
+            .chain(self.extraordinary.iter())
+            .find(|m| m.id == id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "[bong][cultivation] MeridianSystem::get: unknown channel id {id} — entity's \
+                     meridian profile does not declare this channel"
+                )
+            })
     }
 
-    pub fn get_mut(&mut self, id: MeridianId) -> &mut Meridian {
-        if let Some(idx) = MeridianId::REGULAR.iter().position(|x| *x == id) {
-            &mut self.regular[idx]
-        } else {
-            let idx = MeridianId::EXTRAORDINARY
-                .iter()
-                .position(|x| *x == id)
-                .expect("MeridianId must be regular or extraordinary");
-            &mut self.extraordinary[idx]
-        }
+    pub fn get_mut(&mut self, id: impl Into<MeridianChannelId>) -> &mut Meridian {
+        let id = id.into();
+        self.regular
+            .iter_mut()
+            .chain(self.extraordinary.iter_mut())
+            .find(|m| m.id == id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "[bong][cultivation] MeridianSystem::get_mut: unknown channel id {id} — \
+                     entity's meridian profile does not declare this channel"
+                )
+            })
     }
 }
 

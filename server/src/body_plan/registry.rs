@@ -241,7 +241,11 @@ mod tests {
         BodyPlan {
             id: BodyPlanId::new(id),
             display_name: "测试构型".to_string(),
-            is_humanoid: true,
+            // plan-race-system-v1 P1a：validate_body_plan 现在要求 is_humanoid==true 的
+            // plan 必须提供 meridian_profile；本 fixture 只用于练registry加载机制
+            // （重复 id / glob / 校验失败等），与 humanoid 语义无关，故设 false 避免
+            // 每处调用都要多写一份 profile 数据。
+            is_humanoid: false,
             parts: vec![BodyPartDef {
                 id: "core".into(),
                 damage_mul: 1.0,

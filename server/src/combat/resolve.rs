@@ -2459,7 +2459,10 @@ mod tests {
             crate::body_plan::BodyPlan {
                 id: "distinctive_test_plan".into(),
                 display_name: "测试专用构型".to_string(),
-                is_humanoid: true,
+                // plan-race-system-v1 P1a：validate_body_plan 现在要求 is_humanoid==true
+                // 必须提供 meridian_profile；本 fixture 只测倍率 wiring，与经脉语义
+                // 无关，设 false 避免每处都补一份 profile 数据。
+                is_humanoid: false,
                 parts: vec![
                     BodyPartDef {
                         id: "head".into(),
