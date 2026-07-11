@@ -13,7 +13,16 @@ import java.util.Optional;
 import java.util.function.Predicate;
 
 final class ContainerOpenIntentSupport {
-    private static final double MAX_INTERACT_DISTANCE_SQ = 5.0 * 5.0;
+    /**
+     * 世界容器交互半径的平方（方块数），必须与 server 侧
+     * {@code OPEN_RANGE_BLOCKS + OPEN_RANGE_TOLERANCE}（4.0 + 0.5 = 4.5，
+     * server/src/world/container_open.rs）保持一致，两端都是欧氏距离，只要
+     * 数值对齐即可——不对齐会出现 client 候选可交互、server 却拒绝的假交互带
+     * （plan-bughunt-entity-interact-range-desync-v1）。
+     */
+    private static final double MAX_INTERACT_DISTANCE_BLOCKS = 4.5;
+    private static final double MAX_INTERACT_DISTANCE_SQ =
+        MAX_INTERACT_DISTANCE_BLOCKS * MAX_INTERACT_DISTANCE_BLOCKS;
 
     private ContainerOpenIntentSupport() {
     }
@@ -34,7 +43,7 @@ final class ContainerOpenIntentSupport {
             return Optional.empty();
         }
         double distSq = client.player.squaredDistanceTo(hit.getEntity());
-        if (distSq > MAX_INTERACT_DISTANCE_SQ) {
+        if (!isWithinInteractRange(distSq)) {
             return Optional.empty();
         }
         return Optional.of(InteractCandidate.of(
@@ -56,6 +65,10 @@ final class ContainerOpenIntentSupport {
         }
         ClientRequestSender.sendContainerOpen(candidateEntityId);
         return true;
+    }
+
+    static boolean isWithinInteractRange(double distSq) {
+        return distSq <= MAX_INTERACT_DISTANCE_SQ;
     }
 
     static int candidateEntityId(InteractCandidate candidate, String debugPrefix) {
