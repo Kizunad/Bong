@@ -106,6 +106,18 @@ public final class SocialStateStore {
         return true;
     }
 
+    public static synchronized boolean acceptSparringInvite(String inviteId) {
+        String resolvedInviteId = normalize(inviteId);
+        if (resolvedInviteId.isBlank() || !sparringInvites.containsKey(resolvedInviteId)) {
+            return false;
+        }
+        for (String pendingInviteId : sparringInvites.keySet()) {
+            rememberSettledSparringInvite(pendingInviteId);
+        }
+        sparringInvites.clear();
+        return true;
+    }
+
     public static void replaceTradeOffer(TradeOffer offer) {
         tradeOffer = offer;
     }
