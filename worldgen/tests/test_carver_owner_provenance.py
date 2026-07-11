@@ -11,6 +11,7 @@ from unittest.mock import patch
 import numpy as np
 
 from scripts.terrain_gen.bakers.raster_export import (
+    CARVE_SEED,
     _tile_carver_chain,
     _zone_carver_chains,
 )
@@ -22,6 +23,8 @@ from scripts.terrain_gen.blueprint import (
 )
 from scripts.terrain_gen.fields import TileFieldBuffer, WorldTile
 from scripts.terrain_gen.noise import _tile_coords
+from scripts.terrain_gen.carvers import apply_carver_chain
+from scripts.terrain_gen.spans_fold import spans_for_tile
 from scripts.terrain_gen.stitcher import (
     _blend_tile_layers,
     _compute_boundary_weight_array,
@@ -190,10 +193,24 @@ class RealBlueprintCarverOwnerTest(unittest.TestCase):
             buffer.carver_owner_zones,
             "真实正权重的战魂平野应保留为该 tile 的几何 owner",
         )
-        self.assertNotIn(
-            "canyon",
-            [carver.name for carver in chain],
-            "战魂平野边缘不得再继承 blood_valley 的峡谷 carver",
+        self.assertEqual(
+            chain,
+            [],
+            "战魂平野边缘没有正贡献 carver owner，chain 必须精确为空",
+        )
+        folded = spans_for_tile(buffer, suppress_fold_isle=False)
+        carved = apply_carver_chain(
+            folded,
+            chain,
+            origin_x=buffer.tile.min_x,
+            origin_z=buffer.tile.min_z,
+            tile_size=buffer.tile_size,
+            seed=CARVE_SEED,
+        )
+        self.assertEqual(
+            [column.spans for column in carved],
+            [column.spans for column in folded],
+            "空 owner chain 必须保证 tile_6_-7 的所有 spans 差异列为 0",
         )
 
 
