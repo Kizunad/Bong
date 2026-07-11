@@ -12,9 +12,9 @@
 |---|---|---|
 | P0 | 核心修复：服务端成交必须消费 live `NpcTradeInventory` offer，而不是只看静态 catalogue | ✅ 2026-07-11 |
 | P1 | 契约与 UI 对齐：`count` / `price_bone_coins` / 当前 offer subset 全链路锁定 | ✅ 2026-07-11 |
-| P2 | 饱和测试：bundle 成交、单件成交、不可见报价拒绝、金额扣减全覆盖 | ✅ 2026-07-11 |
+| P2 | 饱和测试与完整 server 门禁 | [BLOCKED: `stable` Rust 1.96.1 下 `cargo clippy --all-targets -- -D warnings` 在全仓触发 69 条新 lint；见 Finish Evidence] |
 
-验收日期：2026-07-11。
+验收日期：未验收；P0/P1 已于 2026-07-11 完成，P2 等待独立 clippy 基线治理后重跑。
 
 ## 接入面
 
@@ -98,6 +98,10 @@
    - live offer 总价与静态 catalogue 价格刻意不同时，以 live 总价结算一次，证明 `price_bone_coins` 不是单件价也不会被静态表覆盖。
 7. `npc_trade_request_rejects_missing_trade_inventory_without_side_effects`
    - NPC 缺失 `NpcTradeInventory` 时拒绝；背包物品、骨币、revision 均不变。
+8. `npc_trade_request_rejects_when_only_catalogue_price_is_affordable`
+   - 玩家余额高于 catalogue 价但低于 live bundle 总价时拒绝；物品、骨币、revision 不变，反馈显示 live 总价且无成功消息。
+9. `npc_trade_request_partial_bundle_capacity_fails_atomically`
+   - 背包已有 63/64 同类堆叠且无第二格、live bundle `count=2` 时整笔失败；不得先合入 1 件，也不得扣币或改变 revision。
 
 ## 开放问题（已收口）
 
@@ -163,14 +167,18 @@ bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bugh
 - `d7e0467d`、`11afa09b`（2026-07-11）：加入完整请求复现矩阵并修正 mock client 位置夹具。
 - `6b767b1a`（2026-07-11）：按 live offer 发放 bundle、结算总价并拒绝非当前报价。
 
-### 测试结果
+### 测试结果与阻塞
 
-- `cargo test npc_trade_request_ -- --nocapture`：10 passed，0 failed。
+- `cargo test npc_trade_request_ -- --nocapture`：12 passed，0 failed；新增锁住“只够 catalogue 单价但不足 live bundle 总价”和“背包只能容纳 bundle 部分数量”两类零副作用失败边界。
 - `TMPDIR="$PWD/.tmp" cargo test`：lib 10939 passed / 0 failed / 1 ignored；main 11 passed；integration 1 + 4 passed；doc-test 0 failed。
 - `cargo fmt --check`：通过。
-- `cargo clippy --all-targets -- -D warnings`：当前机器 Rust 1.96 对 `origin/main` 触发 69 条新启用 lint（如 `manual_is_multiple_of`），均不在本 PR diff；独立 validator 已核验本 diff 未新增 clippy 诊断。共享 `/tmp` 曾满载，重跑时改用 worktree 私有 `server/.tmp`，未清理其他流程目录。
+- `[BLOCKED: 强制 clippy 门禁未通过]`：仓库 `server/rust-toolchain.toml` 自初始提交 `c98bb986` 起只声明浮动 `channel = "stable"`；当前解析为 `rustc 1.96.1 (31fca3adb 2026-06-26)` / `clippy 0.1.96`，GitHub e2e 同样使用 `dtolnay/rust-toolchain@stable`，没有另一个被仓库声明的旧可信 clippy 基线。
+  - 精确命令：`TMPDIR="$PWD/.tmp" cargo clippy --all-targets -- -D warnings`。
+  - 结果：全仓 69 条 Rust 1.96 新启用 lint，代表性错误为 `botany/events.rs:97 manual_is_multiple_of`、`combat/body_mass.rs:126 derivable_impls`、`inventory/mod.rs:1940 useless_conversion`；均不在本 PR 的 `origin/main...HEAD` 代码 diff。
+  - 处理：本 BugFix 不批量改写 69 个无关位置，也不把失败称为 PASS。需独立基线治理恢复 CLAUDE.md 规定命令后，才能重跑 P2、改为 ✅ 并重新归档。
+  - 共享 `/tmp` 曾满载；复跑改用 worktree 私有 `server/.tmp`，未清理其他流程目录。
 - fresh `git fetch origin && git merge origin/main`：Already up to date；待审 HEAD 未因主线合并变化。
-- 全新无上下文 read-only validator：`PASS 6b767b1ab69d7af89a1950437275df47c4b8ce47`。
+- 全新无上下文 read-only validator：代码 HEAD `6b767b1ab69d7af89a1950437275df47c4b8ce47` PASS；归档后 HEAD `77d6784d553a326d3c9bbc846c80a91aad48f66c` 亦由第二个 fresh validator PASS。当前返工 HEAD 变化后须再次 fresh 验证，结论以 PR `/review` 证据为准。
 
 ### 跨仓库核验
 
@@ -180,4 +188,4 @@ bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bugh
 
 ### 遗留 / 后续
 
-- 无本 plan 范围内遗留。Rust 1.96 全仓 clippy 新 lint 属工具链基线治理，不在本 BugFix 内批量改写。
+- `[BLOCKED: stable Rust 1.96.1 全仓 clippy 基线]`。代码修复与交易测试已完成，但 P2 尚未满足强制完整门禁，因此本 plan 保持 active，不归档。
