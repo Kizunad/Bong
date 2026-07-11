@@ -166,11 +166,12 @@ bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bugh
 - `c76504ec`（2026-07-11）：升格 active plan 并收口 live offer 查询与静态 catalogue 职责。
 - `d7e0467d`、`11afa09b`（2026-07-11）：加入完整请求复现矩阵并修正 mock client 位置夹具。
 - `6b767b1a`（2026-07-11）：按 live offer 发放 bundle、结算总价并拒绝非当前报价。
+- `fe50f8a6`（2026-07-11）：补齐 live 总价余额不足与 bundle 部分容量两类原子失败边界。
 
 ### 测试结果与阻塞
 
 - `cargo test npc_trade_request_ -- --nocapture`：12 passed，0 failed；新增锁住“只够 catalogue 单价但不足 live bundle 总价”和“背包只能容纳 bundle 部分数量”两类零副作用失败边界。
-- `TMPDIR="$PWD/.tmp" cargo test`：lib 10939 passed / 0 failed / 1 ignored；main 11 passed；integration 1 + 4 passed；doc-test 0 failed。
+- `TMPDIR="$PWD/.tmp" cargo test`：lib 10941 passed / 0 failed / 1 ignored；main 11 passed；integration 1 + 4 passed；doc-test 0 failed。
 - `cargo fmt --check`：通过。
 - `[BLOCKED: 强制 clippy 门禁未通过]`：仓库 `server/rust-toolchain.toml` 自初始提交 `c98bb986` 起只声明浮动 `channel = "stable"`；当前解析为 `rustc 1.96.1 (31fca3adb 2026-06-26)` / `clippy 0.1.96`，GitHub e2e 同样使用 `dtolnay/rust-toolchain@stable`，没有另一个被仓库声明的旧可信 clippy 基线。
   - 精确命令：`TMPDIR="$PWD/.tmp" cargo clippy --all-targets -- -D warnings`。
