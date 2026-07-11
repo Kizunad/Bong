@@ -638,7 +638,10 @@ pub fn npc_runtime_bundle_with_age(
         // 否则 spawn 侧用 npc_meridian_system_for_realm(realm) 算出「已开 N 脉」去
         // 筛技能，entity 上真正落地的 MeridianSystem 却仍是全闭的 default()——
         // 一个 realm 派生出两份互相矛盾的经脉状态。
-        meridian_system: crate::npc::technique::npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static()),
+        meridian_system: crate::npc::technique::npc_meridian_system_for_realm(
+            realm,
+            crate::body_plan::humanoid_plan_static(),
+        ),
         contamination: Contamination::default(),
         wounds: Wounds::default(),
         stamina: Stamina::default(),

@@ -269,7 +269,10 @@ pub fn spawn_rogue_npc_at(
     ));
 
     // P1: NPC 功法 + 交易库存
-    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(
+        realm,
+        crate::body_plan::humanoid_plan_static(),
+    );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = assign_npc_techniques(
         NpcArchetype::Rogue,

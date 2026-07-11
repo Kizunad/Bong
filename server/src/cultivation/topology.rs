@@ -117,7 +117,9 @@ mod tests {
     fn unknown_channel_id_is_absent_not_panicking() {
         let t = humanoid_topology();
         assert!(!t.contains(MeridianChannelId::new("whale_dorsal_fin")));
-        assert!(t.neighbors(MeridianChannelId::new("whale_dorsal_fin")).is_empty());
+        assert!(t
+            .neighbors(MeridianChannelId::new("whale_dorsal_fin"))
+            .is_empty());
     }
 
     #[test]
@@ -128,13 +130,32 @@ mod tests {
         let expected: [(MeridianId, &[MeridianId]); 20] = [
             (
                 MeridianId::Lung,
-                &[MeridianId::LargeIntestine, MeridianId::Liver, MeridianId::Ren],
+                &[
+                    MeridianId::LargeIntestine,
+                    MeridianId::Liver,
+                    MeridianId::Ren,
+                ],
             ),
-            (MeridianId::LargeIntestine, &[MeridianId::Lung, MeridianId::Stomach]),
-            (MeridianId::Stomach, &[MeridianId::LargeIntestine, MeridianId::Spleen]),
-            (MeridianId::Spleen, &[MeridianId::Heart, MeridianId::Stomach]),
-            (MeridianId::Heart, &[MeridianId::SmallIntestine, MeridianId::Spleen]),
-            (MeridianId::SmallIntestine, &[MeridianId::Bladder, MeridianId::Heart]),
+            (
+                MeridianId::LargeIntestine,
+                &[MeridianId::Lung, MeridianId::Stomach],
+            ),
+            (
+                MeridianId::Stomach,
+                &[MeridianId::LargeIntestine, MeridianId::Spleen],
+            ),
+            (
+                MeridianId::Spleen,
+                &[MeridianId::Heart, MeridianId::Stomach],
+            ),
+            (
+                MeridianId::Heart,
+                &[MeridianId::SmallIntestine, MeridianId::Spleen],
+            ),
+            (
+                MeridianId::SmallIntestine,
+                &[MeridianId::Bladder, MeridianId::Heart],
+            ),
             (
                 MeridianId::Bladder,
                 &[
@@ -157,28 +178,64 @@ mod tests {
             ),
             (
                 MeridianId::Pericardium,
-                &[MeridianId::Kidney, MeridianId::TripleEnergizer, MeridianId::YinWei],
+                &[
+                    MeridianId::Kidney,
+                    MeridianId::TripleEnergizer,
+                    MeridianId::YinWei,
+                ],
             ),
             (
                 MeridianId::TripleEnergizer,
-                &[MeridianId::Gallbladder, MeridianId::Pericardium, MeridianId::YangWei],
+                &[
+                    MeridianId::Gallbladder,
+                    MeridianId::Pericardium,
+                    MeridianId::YangWei,
+                ],
             ),
             (
                 MeridianId::Gallbladder,
-                &[MeridianId::Dai, MeridianId::Liver, MeridianId::TripleEnergizer],
+                &[
+                    MeridianId::Dai,
+                    MeridianId::Liver,
+                    MeridianId::TripleEnergizer,
+                ],
             ),
             (
                 MeridianId::Liver,
                 &[MeridianId::Dai, MeridianId::Gallbladder, MeridianId::Lung],
             ),
-            (MeridianId::Ren, &[MeridianId::Chong, MeridianId::Kidney, MeridianId::Lung]),
-            (MeridianId::Du, &[MeridianId::Bladder, MeridianId::Chong, MeridianId::Kidney]),
-            (MeridianId::Chong, &[MeridianId::Du, MeridianId::Kidney, MeridianId::Ren]),
-            (MeridianId::Dai, &[MeridianId::Gallbladder, MeridianId::Liver]),
-            (MeridianId::YinQiao, &[MeridianId::Kidney, MeridianId::YangQiao]),
-            (MeridianId::YangQiao, &[MeridianId::Bladder, MeridianId::YinQiao]),
-            (MeridianId::YinWei, &[MeridianId::Pericardium, MeridianId::YangWei]),
-            (MeridianId::YangWei, &[MeridianId::TripleEnergizer, MeridianId::YinWei]),
+            (
+                MeridianId::Ren,
+                &[MeridianId::Chong, MeridianId::Kidney, MeridianId::Lung],
+            ),
+            (
+                MeridianId::Du,
+                &[MeridianId::Bladder, MeridianId::Chong, MeridianId::Kidney],
+            ),
+            (
+                MeridianId::Chong,
+                &[MeridianId::Du, MeridianId::Kidney, MeridianId::Ren],
+            ),
+            (
+                MeridianId::Dai,
+                &[MeridianId::Gallbladder, MeridianId::Liver],
+            ),
+            (
+                MeridianId::YinQiao,
+                &[MeridianId::Kidney, MeridianId::YangQiao],
+            ),
+            (
+                MeridianId::YangQiao,
+                &[MeridianId::Bladder, MeridianId::YinQiao],
+            ),
+            (
+                MeridianId::YinWei,
+                &[MeridianId::Pericardium, MeridianId::YangWei],
+            ),
+            (
+                MeridianId::YangWei,
+                &[MeridianId::TripleEnergizer, MeridianId::YinWei],
+            ),
         ];
         for (id, expected_neighbors) in expected {
             let mut actual: Vec<MeridianChannelId> = t.neighbors(id).to_vec();

@@ -140,7 +140,10 @@ pub fn channel_body_part(plan: &BodyPlan, channel: &MeridianChannelId) -> Option
 /// plan-race-system-v1 P1b —— `cultivation::dugu::body_part_to_meridian` 私表退役后的
 /// 查询入口：给定体表部位，返回排异毒素累积到哪条 channel（`None` = plan 未声明该
 /// body_part 的 dugu 注入映射，如非人形构型或未接入 dugu 玩法）。
-pub fn dugu_injection_channel(plan: &BodyPlan, body_part: &BodyPartId) -> Option<MeridianChannelId> {
+pub fn dugu_injection_channel(
+    plan: &BodyPlan,
+    body_part: &BodyPartId,
+) -> Option<MeridianChannelId> {
     plan.meridian_profile
         .as_ref()?
         .dugu_injection
@@ -264,7 +267,7 @@ mod tests {
                     roles: vec![],
                 }],
                 topology_edges: vec![],
-            dugu_injection: vec![],
+                dugu_injection: vec![],
                 realm_requirements: [crate::body_plan::types::RealmMeridianReq {
                     total: 1,
                     regular_min: 1,
@@ -594,7 +597,10 @@ mod tests {
     fn channel_body_part_returns_none_when_plan_has_no_meridian_profile() {
         let mut plan = humanoid_plan();
         plan.meridian_profile = None;
-        assert_eq!(channel_body_part(&plan, &MeridianChannelId::new("lung")), None);
+        assert_eq!(
+            channel_body_part(&plan, &MeridianChannelId::new("lung")),
+            None
+        );
     }
 
     #[test]
@@ -602,7 +608,14 @@ mod tests {
         // 奇经排除表：`body_part: None` 的 channel（fixture 未声明该 channel 时同样
         // 视为"无映射"——本用例用真实 humanoid.json 覆盖 6 条无体部映射的奇经）。
         let plan = crate::body_plan::registry::humanoid_plan_static();
-        for id in ["chong", "dai", "yin_qiao", "yang_qiao", "yin_wei", "yang_wei"] {
+        for id in [
+            "chong",
+            "dai",
+            "yin_qiao",
+            "yang_qiao",
+            "yin_wei",
+            "yang_wei",
+        ] {
             assert_eq!(
                 channel_body_part(plan, &MeridianChannelId::new(id)),
                 None,
@@ -642,12 +655,11 @@ mod tests {
     #[test]
     fn dugu_injection_channel_returns_mapped_channel_for_unknown_free_fixture() {
         let mut plan = humanoid_plan();
-        plan.meridian_profile.as_mut().unwrap().dugu_injection = vec![
-            crate::body_plan::types::DuguInjectionEntry {
+        plan.meridian_profile.as_mut().unwrap().dugu_injection =
+            vec![crate::body_plan::types::DuguInjectionEntry {
                 body_part: BodyPartId::new("head"),
                 channel: MeridianChannelId::new("du"),
-            },
-        ];
+            }];
         assert_eq!(
             dugu_injection_channel(&plan, &BodyPartId::new("head")),
             Some(MeridianChannelId::new("du"))

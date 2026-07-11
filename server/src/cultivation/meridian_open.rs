@@ -20,7 +20,9 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
-use super::components::{Cultivation, MeridianChannelId, MeridianFamily, MeridianId, MeridianSystem};
+use super::components::{
+    Cultivation, MeridianChannelId, MeridianFamily, MeridianId, MeridianSystem,
+};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 use super::topology::MeridianTopology;
@@ -387,9 +389,7 @@ fn extraordinary_meridian_acceleration_multiplier(se: &StatusEffects) -> f64 {
 /// 仅影响粒子朝向的美术细节，不阻塞打通逻辑本身，故显式默认而非 panic。
 fn meridian_flash_direction(target: MeridianChannelId) -> [f64; 3] {
     match target.to_meridian_id() {
-        Some(MeridianId::Lung | MeridianId::LargeIntestine | MeridianId::Heart) => {
-            [0.5, -0.2, 0.0]
-        }
+        Some(MeridianId::Lung | MeridianId::LargeIntestine | MeridianId::Heart) => [0.5, -0.2, 0.0],
         Some(MeridianId::Stomach | MeridianId::Spleen | MeridianId::SmallIntestine) => {
             [-0.5, -0.2, 0.0]
         }

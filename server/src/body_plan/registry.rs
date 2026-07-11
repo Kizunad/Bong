@@ -647,7 +647,9 @@ mod tests {
     fn topology_for_returns_none_for_plan_without_meridian_profile() {
         let registry = BodyPlanRegistry::from_plans(vec![minimal_plan("no_profile")])
             .expect("plan without meridian_profile should still validate (non-humanoid)");
-        assert!(registry.topology_for(&BodyPlanId::new("no_profile")).is_none());
+        assert!(registry
+            .topology_for(&BodyPlanId::new("no_profile"))
+            .is_none());
     }
 
     #[test]
@@ -684,7 +686,10 @@ mod tests {
             let mut b: Vec<_> = from_static.neighbors(id).to_vec();
             a.sort_by(|x, y| x.as_str().cmp(y.as_str()));
             b.sort_by(|x, y| x.as_str().cmp(y.as_str()));
-            assert_eq!(a, b, "humanoid_topology_static 必须与 registry 派生结果一致（{id:?}）");
+            assert_eq!(
+                a, b,
+                "humanoid_topology_static 必须与 registry 派生结果一致（{id:?}）"
+            );
         }
     }
 
