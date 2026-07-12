@@ -4,6 +4,7 @@ import com.bong.client.cultivation.ColorKind;
 import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.inventory.state.MeridianStateStore;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillMilestoneStore;
@@ -24,13 +25,17 @@ public class CultivationDetailHandlerTest {
     private final CultivationDetailHandler handler = new CultivationDetailHandler();
 
     @BeforeEach
-    void setUp() { MeridianStateStore.resetForTests(); }
+    void setUp() {
+        MeridianStateStore.resetForTests();
+        BodyPlanLayoutStore.resetForTests();
+    }
 
     @AfterEach
     void tearDown() {
         MeridianStateStore.resetForTests();
         SkillSetStore.resetForTests();
         SkillMilestoneStore.resetForTests();
+        BodyPlanLayoutStore.resetForTests();
     }
 
     private static ServerDataEnvelope envelope(JsonObject payload) {
@@ -71,6 +76,38 @@ public class CultivationDetailHandlerTest {
         assertEquals(1.5, lu.currentFlow());
         assertEquals(ChannelState.DamageLevel.INTACT, lu.damage());
         assertFalse(lu.blocked());
+    }
+
+    // plan-race-system-v1 P2b — cultivation_detail.body_plan_id 是
+    // BodyPlanLayoutStore"当前"指针的唯一权威来源。
+    @Test
+    void bodyPlanIdSetsBodyPlanLayoutStoreCurrentPointer() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("body_plan_id", "humanoid");
+        handler.handle(envelope(payload));
+        assertEquals("humanoid", BodyPlanLayoutStore.currentPlanId());
+    }
+
+    @Test
+    void missingBodyPlanIdLeavesCurrentPointerNull() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        handler.handle(envelope(payload));
+        // 字段缺失（非空字符串）时读到 null，不会误把指针钉死在空字符串上。
+        assertNull(BodyPlanLayoutStore.currentPlanId());
+    }
+
+    @Test
+    void bodyPlanIdChangeUpdatesPointerOnRealRaceChange() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("body_plan_id", "humanoid");
+        handler.handle(envelope(payload));
+        assertEquals("humanoid", BodyPlanLayoutStore.currentPlanId());
+
+        var payload2 = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload2.addProperty("body_plan_id", "whale");
+        handler.handle(envelope(payload2));
+        assertEquals("whale", BodyPlanLayoutStore.currentPlanId(),
+            "真实换 race（body_plan_id 变化）必须更新 store 当前指针");
     }
 
     @Test

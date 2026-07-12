@@ -206,6 +206,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("inventory_snapshot"),
   Type.Literal("dropped_loot_sync"),
   Type.Literal("remains_sync"),
+  Type.Literal("body_plan_layout"),
   Type.Literal("botany_harvest_progress"),
   Type.Literal("gathering_session"),
   Type.Literal("botany_plant_v2_render_profiles"),
@@ -422,6 +423,9 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     // plan-race-system-v1 P1c：当前冲脉目标的 channel id 字符串（此前 schema 漂移，
     // Rust 侧早已下发该字段但 TS 侧未声明——本轮随 wire 开放化一并补齐）。
     target_meridian: Type.Optional(Type.String()),
+    // plan-race-system-v1 P2a：实体本体 body_plan id（BodyPlanLayout 寻址键，client
+    // 按此缓存对应布局）。Rust 侧 #[serde(default)]，故 TS 侧 Optional。
+    body_plan_id: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
@@ -504,6 +508,77 @@ export const ServerDataRemainsSyncV1 = Type.Object(
   { additionalProperties: false },
 );
 export type ServerDataRemainsSyncV1 = Static<typeof ServerDataRemainsSyncV1>;
+
+// ─── plan-race-system-v1 P2a：BodyPlanLayout ──────────────────────
+// 动态部位 / 经脉面板布局元数据（与 Rust BodyPlanLayoutV1 精确对应）。
+// 坐标均为归一化 [0,1]（原点 = 布局画布左上角）。
+
+export const BodyPlanPoint2V1 = Type.Object(
+  {
+    x: Type.Number({ minimum: 0, maximum: 1 }),
+    y: Type.Number({ minimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanPoint2V1 = Static<typeof BodyPlanPoint2V1>;
+
+export const BodyPlanSilhouettePartV1 = Type.Object(
+  {
+    part_id: Type.String({ minLength: 1 }),
+    polygon: Type.Array(BodyPlanPoint2V1, { minItems: 3 }),
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanSilhouettePartV1 = Static<typeof BodyPlanSilhouettePartV1>;
+
+export const BodyPlanPartAnchorV1 = Type.Object(
+  {
+    part_id: Type.String({ minLength: 1 }),
+    point: BodyPlanPoint2V1,
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanPartAnchorV1 = Static<typeof BodyPlanPartAnchorV1>;
+
+export const BodyPlanMeridianPathV1 = Type.Object(
+  {
+    channel_id: Type.String({ minLength: 1 }),
+    points: Type.Array(BodyPlanPoint2V1, { minItems: 2 }),
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanMeridianPathV1 = Static<typeof BodyPlanMeridianPathV1>;
+
+export const BodyPlanPartDisplayMappingV1 = Type.Object(
+  {
+    server_part_id: Type.String({ minLength: 1 }),
+    display_segment_id: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanPartDisplayMappingV1 = Static<
+  typeof BodyPlanPartDisplayMappingV1
+>;
+
+export const ServerDataBodyPlanLayoutV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("body_plan_layout"),
+    body_plan_id: Type.String({ minLength: 1 }),
+    silhouette: Type.Array(BodyPlanSilhouettePartV1, { minItems: 1 }),
+    anchors: Type.Array(BodyPlanPartAnchorV1),
+    meridian_paths: Type.Array(BodyPlanMeridianPathV1),
+    part_display_map: Type.Array(BodyPlanPartDisplayMappingV1),
+    // P2 major 修复：mini HUD（30×75 粗网格，比例与 anchors 的 168×236 精细画布不同）
+    // 专用第二锚点组，可选（未配置时 client 回退到 anchors 缩放推导）。恒为数组字段
+    // （空数组 = 未配置），与 Rust `#[serde(default)]` 对齐。
+    hud_anchors: Type.Array(BodyPlanPartAnchorV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBodyPlanLayoutV1 = Static<
+  typeof ServerDataBodyPlanLayoutV1
+>;
 
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
@@ -1876,6 +1951,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataInventoryEventV1,
   ServerDataDroppedLootSyncV1,
   ServerDataRemainsSyncV1,
+  ServerDataBodyPlanLayoutV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,

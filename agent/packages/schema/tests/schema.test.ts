@@ -2067,6 +2067,181 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  // plan-race-system-v1 P2a — 动态部位 / 经脉面板布局 S2C schema pin
+  it("server-data.body-plan-layout.sample.json 正样本通过", () => {
+    const data = loadSample("server-data.body-plan-layout.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  const validBodyPlanLayout = () => ({
+    v: 1,
+    type: "body_plan_layout",
+    body_plan_id: "humanoid",
+    silhouette: [
+      {
+        part_id: "chest",
+        polygon: [
+          { x: 0.3, y: 0.1 },
+          { x: 0.7, y: 0.1 },
+          { x: 0.7, y: 0.3 },
+        ],
+      },
+    ],
+    anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.2 } }],
+    meridian_paths: [
+      { channel_id: "ren", points: [{ x: 0.5, y: 0.4 }, { x: 0.5, y: 0.1 }] },
+    ],
+    part_display_map: [
+      { server_part_id: "chest", display_segment_id: "chest" },
+    ],
+    // P2 major 修复：mini HUD 专用第二锚点组，恒为数组字段（空 = 未配置）。
+    hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.19 } }],
+  });
+
+  it("body_plan_layout 正样本（最小合法形状）通过", () => {
+    const result = validate(ServerDataV1, validBodyPlanLayout());
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it.each([
+    ["body_plan_id 缺失", (() => {
+      const d = validBodyPlanLayout() as Record<string, unknown>;
+      delete d.body_plan_id;
+      return d;
+    })()],
+    ["body_plan_id 空字符串", { ...validBodyPlanLayout(), body_plan_id: "" }],
+    ["silhouette 空数组", { ...validBodyPlanLayout(), silhouette: [] }],
+    ["silhouette 多边形只有 2 个顶点", {
+      ...validBodyPlanLayout(),
+      silhouette: [
+        { part_id: "chest", polygon: [{ x: 0.3, y: 0.1 }, { x: 0.7, y: 0.1 }] },
+      ],
+    }],
+    ["坐标越界 x>1", {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: 1.5, y: 0.2 } }],
+    }],
+    ["坐标为负", {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: -0.1, y: 0.2 } }],
+    }],
+    ["hud_anchors 缺失（非 Optional，恒为数组字段）", (() => {
+      const d = validBodyPlanLayout() as Record<string, unknown>;
+      delete d.hud_anchors;
+      return d;
+    })()],
+    ["hud_anchors 坐标越界 x>1", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ part_id: "chest", point: { x: 1.2, y: 0.2 } }],
+    }],
+    ["hud_anchors 坐标为负", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: -0.1 } }],
+    }],
+    ["hud_anchors 条目缺 part_id", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ point: { x: 0.5, y: 0.2 } }],
+    }],
+    ["meridian path 只有 1 个点", {
+      ...validBodyPlanLayout(),
+      meridian_paths: [{ channel_id: "ren", points: [{ x: 0.5, y: 0.4 }] }],
+    }],
+    ["part_display_map 缺 display_segment_id", {
+      ...validBodyPlanLayout(),
+      part_display_map: [{ server_part_id: "chest" }],
+    }],
+    ["顶层多余字段", { ...validBodyPlanLayout(), unexpected: true }],
+  ])("body_plan_layout 负样本：%s 应拒绝", (_name, payload) => {
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("cultivation_detail 附带 body_plan_id 字符串通过、数字形状拒绝", () => {
+    const base = loadSample("server-data.cultivation-detail.sample.json") as Record<
+      string,
+      unknown
+    >;
+    expect(base.body_plan_id, "sample 必须携带 body_plan_id 与 Rust wire 对齐").toBe(
+      "humanoid",
+    );
+    const ok = validate(ServerDataV1, base);
+    expect(ok.ok, ok.errors.join("; ")).toBe(true);
+    const bad = { ...base, body_plan_id: 42 };
+    expect(validate(ServerDataV1, bad).ok).toBe(false);
+  });
+
+  it("cultivation_detail 缺失 body_plan_id 仍通过（Optional 字段，join 首帧竞态前尚未取得 plan id 的旧存档兼容）", () => {
+    const base = loadSample("server-data.cultivation-detail.sample.json") as Record<
+      string,
+      unknown
+    >;
+    const withoutPlanId = { ...base };
+    delete withoutPlanId.body_plan_id;
+    const result = validate(ServerDataV1, withoutPlanId);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-race-system-v1 P2c —— BodyPlanLayoutV1 四个 section 的边界补测：
+  // anchors/meridian_paths/part_display_map 三个字段 Rust 侧
+  // （validate_body_plan_layout）与 TS 侧 schema 均**没有** minItems 约束
+  // （只有 silhouette 要求非空），空数组是合法状态（Rust body_plan/layout.rs
+  // 的 fixture_layout() 也用 meridian_paths: vec![] 佐证），不是"没写全"的疏漏。
+  it("anchors 空数组是合法边界（非人形构型渲染阶段可以暂无红点锚点）", () => {
+    const payload = { ...validBodyPlanLayout(), anchors: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("meridian_paths 空数组是合法边界（非人形构型可以没有经脉折线，如 P0 fixture 无 meridian_profile）", () => {
+    const payload = { ...validBodyPlanLayout(), meridian_paths: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("part_display_map 空数组是合法边界（渲染层可暂不提供 server 部位 → 展示段映射）", () => {
+    const payload = { ...validBodyPlanLayout(), part_display_map: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-race-system-v1 P2 major 修复 —— hud_anchors 是可选的第二锚点组（mini HUD
+  // 专用，画布比例与 anchors 的精细画布不同），空数组合法（未来非人 plan 常态：
+  // 只给主 anchors，client 回退到缩放推导，见 MiniBodyHudPlanner.locatePart）。
+  it("hud_anchors 空数组是合法边界（未配置时 client 回退到 anchors 缩放推导）", () => {
+    const payload = { ...validBodyPlanLayout(), hud_anchors: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("hud_anchors 非空且与 anchors 数值不同也合法（两套锚点独立声明，互不联动）", () => {
+    const payload = {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.2 } }],
+      hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.226667 } }],
+    };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("silhouette 多边形恰好 3 个顶点是合法边界（minItems: 3 的下边界，非人形三角剪影段的最小合法形状）", () => {
+    const payload = {
+      ...validBodyPlanLayout(),
+      silhouette: [
+        {
+          part_id: "chest",
+          polygon: [
+            { x: 0.3, y: 0.1 },
+            { x: 0.7, y: 0.1 },
+            { x: 0.5, y: 0.3 },
+          ],
+        },
+      ],
+    };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.mineral-probe.sample.json", () => {
     const data = loadSample("client-request.mineral-probe.sample.json");
     const result = validate(ClientRequestV1, data);

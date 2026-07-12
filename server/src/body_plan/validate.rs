@@ -294,6 +294,201 @@ fn validate_part_boxes(
     Ok(())
 }
 
+/// plan-race-system-v1 P2a — `BodyPlanLayoutV1` 的跨 registry 校验（需要同时持有目标
+/// `BodyPlan`，归属与 [`race_registry::RaceRegistry::load_file`] 的跨 registry 校验同一
+/// 设计：`layout::BodyPlanLayoutRegistry::load_dir`/`layout::humanoid_layout_static` 是
+/// 唯一调用方）。
+///
+/// 校验范围（**不**要求 `part_display_map.display_segment_id` 反向存在于 `silhouette`
+/// ——展示段 id 是一个符号性字符串，允许没有专属剪影多边形，例如人形 `back` 目前没有
+/// 独立于 `chest` 的可视区块，这是刻意的最小校验面，不是遗漏）：
+/// - `silhouette`：非空、`part_id` 非空且唯一、多边形至少 3 个顶点、坐标落在 `[0,1]`
+/// - `anchors`：`part_id` 非空且唯一、坐标落在 `[0,1]`
+/// - `meridian_paths`：`channel_id` 非空且唯一、至少 2 个点、坐标落在 `[0,1]`、
+///   引用的 channel id 必须存在于 `plan.meridian_profile.channels`（`plan` 未声明
+///   `meridian_profile` 时任何 `meridian_paths` 条目都是悬空引用）
+/// - `part_display_map`：`server_part_id`/`display_segment_id` 均非空、
+///   `server_part_id` 唯一、`server_part_id` 必须存在于 `plan.parts`
+pub fn validate_body_plan_layout(
+    layout: &crate::schema::server_data::BodyPlanLayoutV1,
+    plan: &BodyPlan,
+) -> Result<(), String> {
+    if layout.body_plan_id != plan.id.as_str() {
+        return Err(format!(
+            "body plan layout body_plan_id {} does not match target body plan id {}",
+            layout.body_plan_id, plan.id
+        ));
+    }
+    if layout.silhouette.is_empty() {
+        return Err(format!(
+            "body plan layout {} must declare at least one silhouette part",
+            layout.body_plan_id
+        ));
+    }
+
+    fn point_in_unit_range(x: f64, y: f64) -> bool {
+        x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)
+    }
+
+    let mut silhouette_ids: HashSet<String> = HashSet::new();
+    for part in &layout.silhouette {
+        if part.part_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has a silhouette part with an empty part_id",
+                layout.body_plan_id
+            ));
+        }
+        if part.polygon.len() < 3 {
+            return Err(format!(
+                "body plan layout {} silhouette part {} must declare at least 3 polygon vertices, got {}",
+                layout.body_plan_id, part.part_id, part.polygon.len()
+            ));
+        }
+        for p in &part.polygon {
+            if !point_in_unit_range(p.x, p.y) {
+                return Err(format!(
+                    "body plan layout {} silhouette part {} has an out-of-range vertex ({}, {}) — coordinates must be normalized to [0,1]",
+                    layout.body_plan_id, part.part_id, p.x, p.y
+                ));
+            }
+        }
+        if !silhouette_ids.insert(part.part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate silhouette part_id {}",
+                layout.body_plan_id, part.part_id
+            ));
+        }
+    }
+
+    let mut anchor_ids: HashSet<String> = HashSet::new();
+    for anchor in &layout.anchors {
+        if anchor.part_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has an anchor with an empty part_id",
+                layout.body_plan_id
+            ));
+        }
+        if !point_in_unit_range(anchor.point.x, anchor.point.y) {
+            return Err(format!(
+                "body plan layout {} anchor {} has an out-of-range point ({}, {}) — coordinates must be normalized to [0,1]",
+                layout.body_plan_id, anchor.part_id, anchor.point.x, anchor.point.y
+            ));
+        }
+        if !anchor_ids.insert(anchor.part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate anchor for part_id {}",
+                layout.body_plan_id, anchor.part_id
+            ));
+        }
+    }
+
+    // plan-race-system-v1 P2 major 修复 — `hud_anchors` 是可选的第二套锚点组（mini
+    // HUD 专用画布比例），校验规则与 `anchors` 完全对称（同样允许留空，同样不要求
+    // 覆盖 plan.parts 全集——非人形构型可以只给部分部位配 mini HUD 锚点）。
+    let mut hud_anchor_ids: HashSet<String> = HashSet::new();
+    for anchor in &layout.hud_anchors {
+        if anchor.part_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has a hud_anchor with an empty part_id",
+                layout.body_plan_id
+            ));
+        }
+        if !point_in_unit_range(anchor.point.x, anchor.point.y) {
+            return Err(format!(
+                "body plan layout {} hud_anchor {} has an out-of-range point ({}, {}) — coordinates must be normalized to [0,1]",
+                layout.body_plan_id, anchor.part_id, anchor.point.x, anchor.point.y
+            ));
+        }
+        if !hud_anchor_ids.insert(anchor.part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate hud_anchor for part_id {}",
+                layout.body_plan_id, anchor.part_id
+            ));
+        }
+    }
+
+    let plan_channel_ids: Option<HashSet<&str>> = plan
+        .meridian_profile
+        .as_ref()
+        .map(|profile| profile.channels.iter().map(|c| c.id.as_str()).collect());
+    let mut seen_channels: HashSet<String> = HashSet::new();
+    for mp in &layout.meridian_paths {
+        if mp.channel_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has a meridian path with an empty channel_id",
+                layout.body_plan_id
+            ));
+        }
+        match &plan_channel_ids {
+            Some(ids) => {
+                if !ids.contains(mp.channel_id.as_str()) {
+                    return Err(format!(
+                        "body plan layout {} meridian_paths references unknown channel id {} \
+                         (not declared in body plan {} meridian_profile)",
+                        layout.body_plan_id, mp.channel_id, plan.id
+                    ));
+                }
+            }
+            None => {
+                return Err(format!(
+                    "body plan layout {} declares meridian_paths for channel {} but body plan {} \
+                     has no meridian_profile at all",
+                    layout.body_plan_id, mp.channel_id, plan.id
+                ));
+            }
+        }
+        if mp.points.len() < 2 {
+            return Err(format!(
+                "body plan layout {} meridian path {} must declare at least 2 points, got {}",
+                layout.body_plan_id,
+                mp.channel_id,
+                mp.points.len()
+            ));
+        }
+        for p in &mp.points {
+            if !point_in_unit_range(p.x, p.y) {
+                return Err(format!(
+                    "body plan layout {} meridian path {} has an out-of-range point ({}, {}) — coordinates must be normalized to [0,1]",
+                    layout.body_plan_id, mp.channel_id, p.x, p.y
+                ));
+            }
+        }
+        if !seen_channels.insert(mp.channel_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate meridian_paths entry for channel {}",
+                layout.body_plan_id, mp.channel_id
+            ));
+        }
+    }
+
+    let plan_part_ids: HashSet<&str> = plan.parts.iter().map(|p| p.id.as_str()).collect();
+    let mut seen_server_parts: HashSet<String> = HashSet::new();
+    for mapping in &layout.part_display_map {
+        if mapping.server_part_id.trim().is_empty() || mapping.display_segment_id.trim().is_empty()
+        {
+            return Err(format!(
+                "body plan layout {} has a part_display_map entry with an empty server_part_id or display_segment_id",
+                layout.body_plan_id
+            ));
+        }
+        if !plan_part_ids.contains(mapping.server_part_id.as_str()) {
+            return Err(format!(
+                "body plan layout {} part_display_map references unknown server part id {} \
+                 (not declared on body plan {})",
+                layout.body_plan_id, mapping.server_part_id, plan.id
+            ));
+        }
+        if !seen_server_parts.insert(mapping.server_part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate part_display_map entry for server part {}",
+                layout.body_plan_id, mapping.server_part_id
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -955,5 +1150,282 @@ mod tests {
         let profile = base_meridian_profile(); // 全部 6 项 total=1，天然相等
         plan.meridian_profile = Some(profile);
         assert!(validate_body_plan(&plan).is_ok());
+    }
+
+    // ───────────────────────── validate_body_plan_layout ─────────────────────────
+
+    mod layout_tests {
+        use super::*;
+        use crate::schema::server_data::{
+            BodyPlanLayoutV1, BodyPlanMeridianPathV1, BodyPlanPartAnchorV1,
+            BodyPlanPartDisplayMappingV1, BodyPlanPoint2V1, BodyPlanSilhouettePartV1,
+        };
+
+        fn p(x: f64, y: f64) -> BodyPlanPoint2V1 {
+            BodyPlanPoint2V1 { x, y }
+        }
+
+        fn happy_layout() -> BodyPlanLayoutV1 {
+            BodyPlanLayoutV1 {
+                body_plan_id: "fixture".to_string(),
+                silhouette: vec![BodyPlanSilhouettePartV1 {
+                    part_id: "chest".to_string(),
+                    polygon: vec![p(0.3, 0.1), p(0.7, 0.1), p(0.7, 0.3), p(0.3, 0.3)],
+                }],
+                anchors: vec![BodyPlanPartAnchorV1 {
+                    part_id: "chest".to_string(),
+                    point: p(0.5, 0.2),
+                }],
+                meridian_paths: vec![BodyPlanMeridianPathV1 {
+                    channel_id: "lung".to_string(),
+                    points: vec![p(0.4, 0.2), p(0.4, 0.4)],
+                }],
+                part_display_map: vec![BodyPlanPartDisplayMappingV1 {
+                    server_part_id: "chest".to_string(),
+                    display_segment_id: "chest".to_string(),
+                }],
+                hud_anchors: vec![BodyPlanPartAnchorV1 {
+                    part_id: "chest".to_string(),
+                    point: p(0.5, 0.25),
+                }],
+            }
+        }
+
+        fn plan_with_lung_channel() -> BodyPlan {
+            // 外层 `base_plan()` 已声明 parts head/chest + meridian_profile 含
+            // channel "lung"（映射到 head），本 fixture 只需改 id 与 happy_layout 对齐。
+            let mut plan = base_plan();
+            plan.id = "fixture".into();
+            plan
+        }
+
+        #[test]
+        fn happy_path_passes() {
+            let plan = plan_with_lung_channel();
+            assert!(validate_body_plan_layout(&happy_layout(), &plan).is_ok());
+        }
+
+        #[test]
+        fn real_humanoid_layout_passes_against_real_humanoid_plan() {
+            // 与磁盘上真实 layouts/humanoid.json + plans/humanoid.json 对拍。
+            let layout_json = std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets/body_plans/layouts/humanoid.json"),
+            )
+            .expect("real humanoid layout json should exist");
+            let layout: BodyPlanLayoutV1 =
+                serde_json::from_str(&layout_json).expect("real humanoid layout should parse");
+            let plan = crate::body_plan::humanoid_plan_static();
+            assert!(
+                validate_body_plan_layout(&layout, plan).is_ok(),
+                "real humanoid.json layout must validate against real humanoid.json plan"
+            );
+        }
+
+        #[test]
+        fn body_plan_id_mismatch_rejected() {
+            let mut layout = happy_layout();
+            layout.body_plan_id = "other".to_string();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(
+                err.contains("does not match target body plan id"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn empty_silhouette_rejected() {
+            let mut layout = happy_layout();
+            layout.silhouette.clear();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("at least one silhouette part"), "got: {err}");
+        }
+
+        #[test]
+        fn silhouette_empty_part_id_rejected() {
+            let mut layout = happy_layout();
+            layout.silhouette[0].part_id = String::new();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("empty part_id"), "got: {err}");
+        }
+
+        #[test]
+        fn silhouette_polygon_with_two_vertices_rejected() {
+            let mut layout = happy_layout();
+            layout.silhouette[0].polygon = vec![p(0.3, 0.1), p(0.7, 0.1)];
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("at least 3 polygon vertices"), "got: {err}");
+        }
+
+        #[test]
+        fn silhouette_out_of_range_vertex_rejected() {
+            let mut layout = happy_layout();
+            layout.silhouette[0].polygon[0] = p(1.2, 0.1);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("out-of-range vertex"), "got: {err}");
+        }
+
+        #[test]
+        fn duplicate_silhouette_part_id_rejected() {
+            let mut layout = happy_layout();
+            let dup = layout.silhouette[0].clone();
+            layout.silhouette.push(dup);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("duplicate silhouette part_id"), "got: {err}");
+        }
+
+        #[test]
+        fn anchor_empty_part_id_rejected() {
+            let mut layout = happy_layout();
+            layout.anchors[0].part_id = String::new();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("anchor with an empty part_id"), "got: {err}");
+        }
+
+        #[test]
+        fn anchor_out_of_range_point_rejected() {
+            let mut layout = happy_layout();
+            layout.anchors[0].point = p(-0.1, 0.2);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("out-of-range point"), "got: {err}");
+        }
+
+        #[test]
+        fn duplicate_anchor_part_id_rejected() {
+            let mut layout = happy_layout();
+            let dup = layout.anchors[0].clone();
+            layout.anchors.push(dup);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("duplicate anchor"), "got: {err}");
+        }
+
+        #[test]
+        fn hud_anchor_empty_layout_is_valid() {
+            // hud_anchors 是可选的第二锚点组——空列表必须合法（未来非人 plan 不配的常态）。
+            let mut layout = happy_layout();
+            layout.hud_anchors.clear();
+            assert!(validate_body_plan_layout(&layout, &plan_with_lung_channel()).is_ok());
+        }
+
+        #[test]
+        fn hud_anchor_empty_part_id_rejected() {
+            let mut layout = happy_layout();
+            layout.hud_anchors[0].part_id = String::new();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(
+                err.contains("hud_anchor with an empty part_id"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn hud_anchor_out_of_range_point_rejected() {
+            let mut layout = happy_layout();
+            layout.hud_anchors[0].point = p(1.5, 0.2);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(
+                err.contains("hud_anchor") && err.contains("out-of-range point"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn duplicate_hud_anchor_part_id_rejected() {
+            let mut layout = happy_layout();
+            let dup = layout.hud_anchors[0].clone();
+            layout.hud_anchors.push(dup);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("duplicate hud_anchor"), "got: {err}");
+        }
+
+        #[test]
+        fn meridian_path_empty_channel_id_rejected() {
+            let mut layout = happy_layout();
+            layout.meridian_paths[0].channel_id = String::new();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("empty channel_id"), "got: {err}");
+        }
+
+        #[test]
+        fn meridian_path_unknown_channel_rejected_when_profile_present() {
+            let mut layout = happy_layout();
+            layout.meridian_paths[0].channel_id = "heart".to_string();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("references unknown channel id"), "got: {err}");
+        }
+
+        #[test]
+        fn meridian_path_rejected_when_plan_has_no_meridian_profile_at_all() {
+            let layout = happy_layout();
+            let mut plan = plan_with_lung_channel();
+            plan.meridian_profile = None;
+            let err = validate_body_plan_layout(&layout, &plan).unwrap_err();
+            assert!(err.contains("has no meridian_profile at all"), "got: {err}");
+        }
+
+        #[test]
+        fn meridian_path_single_point_rejected() {
+            let mut layout = happy_layout();
+            layout.meridian_paths[0].points = vec![p(0.4, 0.2)];
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("at least 2 points"), "got: {err}");
+        }
+
+        #[test]
+        fn meridian_path_out_of_range_point_rejected() {
+            let mut layout = happy_layout();
+            layout.meridian_paths[0].points[0] = p(2.0, 0.2);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("out-of-range point"), "got: {err}");
+        }
+
+        #[test]
+        fn duplicate_meridian_path_channel_rejected() {
+            let mut layout = happy_layout();
+            let dup = layout.meridian_paths[0].clone();
+            layout.meridian_paths.push(dup);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("duplicate meridian_paths entry"), "got: {err}");
+        }
+
+        #[test]
+        fn part_display_map_empty_server_part_id_rejected() {
+            let mut layout = happy_layout();
+            layout.part_display_map[0].server_part_id = String::new();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("empty server_part_id"), "got: {err}");
+        }
+
+        #[test]
+        fn part_display_map_unknown_server_part_rejected() {
+            let mut layout = happy_layout();
+            layout.part_display_map[0].server_part_id = "does_not_exist".to_string();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(
+                err.contains("references unknown server part id"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn duplicate_part_display_map_server_part_rejected() {
+            let mut layout = happy_layout();
+            let dup = layout.part_display_map[0].clone();
+            layout.part_display_map.push(dup);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(
+                err.contains("duplicate part_display_map entry"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn part_display_map_display_segment_id_need_not_exist_in_silhouette() {
+            // 刻意的最小校验面：display_segment_id 是符号性字符串，不要求反向存在于
+            // silhouette（见函数文档"人形 back 目前没有独立于 chest 的可视区块"）。
+            let mut layout = happy_layout();
+            layout.part_display_map[0].display_segment_id = "back".to_string();
+            assert!(validate_body_plan_layout(&layout, &plan_with_lung_channel()).is_ok());
+        }
     }
 }

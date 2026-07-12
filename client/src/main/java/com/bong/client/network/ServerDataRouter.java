@@ -117,6 +117,8 @@ public final class ServerDataRouter {
         handlers.put("player_state", playerStateHandler);
         handlers.put("ui_open", uiOpenHandler);
         handlers.put("cultivation_detail", cultivationDetailHandler);
+        // plan-race-system-v1 P2b — 动态部位/经脉面板布局元数据（BodyPlanLayoutStore 按 body_plan_id 缓存）
+        handlers.put("body_plan_layout", new BodyPlanLayoutHandler());
         handlers.put("qi_color_observed", qiColorObservedHandler);
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);

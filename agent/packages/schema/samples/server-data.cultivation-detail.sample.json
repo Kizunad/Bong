@@ -175,5 +175,6 @@
     { "color": "Insidious", "weight": 20.0, "ratio": 0.2 },
     { "color": "Violent", "weight": 20.0, "ratio": 0.2 }
   ],
-  "target_meridian": "ren"
+  "target_meridian": "ren",
+  "body_plan_id": "humanoid"
 }

@@ -156,6 +156,7 @@ pub enum ServerDataType {
     InventoryEvent,
     DroppedLootSync,
     RemainsSync,
+    BodyPlanLayout,
     BotanyHarvestProgress,
     BotanyPlantV2RenderProfiles,
     MiningProgress,
@@ -376,6 +377,9 @@ pub enum ServerDataPayloadV1 {
         /// 当前冲脉目标的 channel id（snake_case，与 `channel_ids` 同形态）。
         /// None 表示未设定目标。
         target_meridian: Option<String>,
+        /// plan-race-system-v1 P2a — 实体本体（`BodyPlanPurpose::Intrinsic`）的
+        /// `body_plan_id`，供 client 按 id 寻址 `BodyPlanLayout` 缓存。
+        body_plan_id: String,
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
@@ -384,6 +388,9 @@ pub enum ServerDataPayloadV1 {
     /// plan-remains-suite P0 — 世界内遗骸容器快照（join 时 + 内容变化时广播，照
     /// `DroppedLootSync` 的内容 diff 节流套路，见 `network::remains_sync_emit`）。
     RemainsSync(Vec<RemainsEntryV1>),
+    /// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据（见
+    /// `BodyPlanLayoutV1` 文档）。
+    BodyPlanLayout(BodyPlanLayoutV1),
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -1590,6 +1597,8 @@ enum ServerDataPayloadWireV1 {
         practice_weights: Vec<PracticeWeightV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_meridian: Option<String>,
+        #[serde(default)]
+        body_plan_id: String,
     },
     QiColorObserved {
         #[serde(flatten)]
@@ -1608,6 +1617,10 @@ enum ServerDataPayloadWireV1 {
     },
     RemainsSync {
         remains: Vec<RemainsEntryV1>,
+    },
+    BodyPlanLayout {
+        #[serde(flatten)]
+        layout: BodyPlanLayoutV1,
     },
     BotanyHarvestProgress {
         session_id: String,
@@ -2228,6 +2241,73 @@ pub struct RemainsEntryV1 {
     pub bone_coins: u64,
 }
 
+/// plan-race-system-v1 P2a — `BodyPlanLayoutV1` 的坐标点，归一化到 `[0,1]`（原点 =
+/// 布局画布左上角）。同一类型既用作磁盘 `layouts/*.json` 的数据源，也直接是
+/// wire payload 的字段（无独立域模型/wire 模型两份拷贝，仿 `RemainsEntryV1` 先例）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPoint2V1 {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// 单个部位的剪影多边形（顶点归一化坐标，按声明顺序首尾相连）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanSilhouettePartV1 {
+    pub part_id: String,
+    pub polygon: Vec<BodyPlanPoint2V1>,
+}
+
+/// 部位锚点（伤口红点位 / 状态图标定位点）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPartAnchorV1 {
+    pub part_id: String,
+    pub point: BodyPlanPoint2V1,
+}
+
+/// 单条经脉的多段折线路径（替代 client `BodyInspectComponent.MERIDIAN_PATHS` 硬编码）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanMeridianPathV1 {
+    pub channel_id: String,
+    pub points: Vec<BodyPlanPoint2V1>,
+}
+
+/// server 部位 id → client 展示段 id 映射（替代
+/// `network::wounds_snapshot_emit::body_part_wire` 的硬编码 match）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPartDisplayMappingV1 {
+    pub server_part_id: String,
+    pub display_segment_id: String,
+}
+
+/// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据。以 `body_plan_id` 为
+/// 主键，随 `cultivation_detail` 首帧下发；实体 body_plan 变化（真实换 race）时重发，
+/// 易形不触发（P4 语义）。
+///
+/// `hud_anchors`（P2 major 修复）—— **可选的第二套锚点组**，专供 mini HUD
+/// （`MiniBodyHudPlanner`，30×75 粗网格，宽高比 0.40）使用，与 `anchors`
+/// （`BodyInspectComponent`，168×236 精细画布，宽高比 0.71）分离：两个消费者画布
+/// 比例不同，均匀缩放同一套 `anchors` 会在 mini HUD 上产生 4-6px 像素漂移，违反 plan
+/// 「首版渲染与现状像素级一致」红线。humanoid.json 把 `hud_anchors` 原样抽取自
+/// `MiniBodyHudPlanner` 改造前的硬编码表（逐值相等，见 `layout.rs` 底部 pin 测试）；
+/// 未来非人 plan 可不配（留空 `Vec::new()`），此时 client 回退到用 `anchors` 缩放推导
+/// （`locatePart` 换轨逻辑，非人形没有另一份权威像素表可抽取，缩放推导是唯一选择）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanLayoutV1 {
+    pub body_plan_id: String,
+    pub silhouette: Vec<BodyPlanSilhouettePartV1>,
+    pub anchors: Vec<BodyPlanPartAnchorV1>,
+    pub meridian_paths: Vec<BodyPlanMeridianPathV1>,
+    pub part_display_map: Vec<BodyPlanPartDisplayMappingV1>,
+    #[serde(default)]
+    pub hud_anchors: Vec<BodyPlanPartAnchorV1>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RiftPortalKindV1 {
@@ -2591,6 +2671,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
             } => Ok(Self::CultivationDetail {
                 realm,
                 channel_ids,
@@ -2610,6 +2691,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
             }),
             ServerDataPayloadWireV1::QiColorObserved { observed } => {
                 Ok(Self::QiColorObserved(observed))
@@ -2622,6 +2704,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
             ServerDataPayloadWireV1::RemainsSync { remains } => Ok(Self::RemainsSync(remains)),
+            ServerDataPayloadWireV1::BodyPlanLayout { layout } => Ok(Self::BodyPlanLayout(layout)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -3187,6 +3270,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
                 channel_ids: channel_ids.clone(),
@@ -3206,6 +3290,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_hunyuan: *qi_color_hunyuan,
                 practice_weights: practice_weights.clone(),
                 target_meridian: target_meridian.clone(),
+                body_plan_id: body_plan_id.clone(),
             },
             ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
                 observed: observed.clone(),
@@ -3221,6 +3306,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::RemainsSync(remains) => Self::RemainsSync {
                 remains: remains.clone(),
+            },
+            ServerDataPayloadV1::BodyPlanLayout(layout) => Self::BodyPlanLayout {
+                layout: layout.clone(),
             },
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
@@ -3919,6 +4007,7 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::RemainsSync(..) => ServerDataType::RemainsSync,
+            Self::BodyPlanLayout(..) => ServerDataType::BodyPlanLayout,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
@@ -4082,6 +4171,7 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => false,
             Self::DroppedLootSync(..) => false,
             Self::RemainsSync(..) => false,
+            Self::BodyPlanLayout(..) => false,
             Self::BotanyHarvestProgress { .. } => false,
             Self::BotanyPlantV2RenderProfiles(..) => false,
             Self::MiningProgress { .. } => false,
@@ -4953,6 +5043,7 @@ mod tests {
                 ratio: 0.7,
             }],
             target_meridian: Some(channel_ids[4].clone()),
+            body_plan_id: "humanoid".to_string(),
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -5030,6 +5121,7 @@ mod tests {
             qi_color_hunyuan: false,
             practice_weights: Vec::new(),
             target_meridian: Some("tail_fin_channel".to_string()),
+            body_plan_id: "whale".to_string(),
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -5146,6 +5238,198 @@ mod tests {
         );
     }
 
+    /// plan-race-system-v1 P2a — body_plan_layout 双端 sample 对拍：字段值必须与
+    /// agent/packages/schema/samples/server-data.body-plan-layout.sample.json 完全一致，
+    /// 改 schema 必须连同 sample 一起改。
+    #[test]
+    fn body_plan_layout_sample_pins_wire_shape() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/server-data.body-plan-layout.sample.json"
+        );
+        let payload: ServerDataV1 =
+            serde_json::from_str(json).expect("body-plan-layout sample should deserialize");
+        match payload.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert_eq!(layout.body_plan_id, "humanoid");
+                assert_eq!(
+                    layout.silhouette.len(),
+                    2,
+                    "sample 固定 head+chest 两段剪影"
+                );
+                assert_eq!(layout.silhouette[0].part_id, "head");
+                assert_eq!(layout.silhouette[0].polygon.len(), 4);
+                assert_eq!(
+                    layout.silhouette[0].polygon[0],
+                    BodyPlanPoint2V1 {
+                        x: 0.434524,
+                        y: 0.025424
+                    }
+                );
+                assert_eq!(layout.anchors.len(), 2);
+                assert_eq!(layout.anchors[0].part_id, "head");
+                assert_eq!(
+                    layout.anchors[0].point,
+                    BodyPlanPoint2V1 {
+                        x: 0.5,
+                        y: 0.042373
+                    }
+                );
+                assert_eq!(layout.meridian_paths.len(), 1);
+                assert_eq!(layout.meridian_paths[0].channel_id, "ren");
+                assert_eq!(layout.meridian_paths[0].points.len(), 2);
+                assert_eq!(layout.part_display_map.len(), 2);
+                assert_eq!(layout.part_display_map[0].server_part_id, "head");
+                assert_eq!(layout.part_display_map[0].display_segment_id, "head");
+            }
+            other => panic!("expected BodyPlanLayout, got {other:?}"),
+        }
+    }
+
+    /// wire 往返：BodyPlanLayout 序列化 → 反序列化必须无损（含空 anchors /
+    /// meridian_paths 边界）。
+    #[test]
+    fn body_plan_layout_roundtrips_including_empty_optional_sections() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::BodyPlanLayout(BodyPlanLayoutV1 {
+            body_plan_id: "whale".to_string(),
+            silhouette: vec![BodyPlanSilhouettePartV1 {
+                part_id: "tail_fin".to_string(),
+                polygon: vec![
+                    BodyPlanPoint2V1 { x: 0.1, y: 0.9 },
+                    BodyPlanPoint2V1 { x: 0.5, y: 0.8 },
+                    BodyPlanPoint2V1 { x: 0.9, y: 0.9 },
+                ],
+            }],
+            anchors: Vec::new(),
+            meridian_paths: Vec::new(),
+            part_display_map: Vec::new(),
+            hud_anchors: Vec::new(),
+        }));
+        let bytes = payload
+            .to_json_bytes_checked()
+            .expect("body_plan_layout must serialize");
+        let back: ServerDataV1 =
+            serde_json::from_slice(&bytes).expect("body_plan_layout must deserialize back");
+        match back.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert_eq!(layout.body_plan_id, "whale");
+                assert_eq!(layout.silhouette.len(), 1);
+                assert_eq!(layout.silhouette[0].part_id, "tail_fin");
+                assert!(layout.anchors.is_empty());
+                assert!(layout.meridian_paths.is_empty());
+                assert!(layout.part_display_map.is_empty());
+                assert!(
+                    layout.hud_anchors.is_empty(),
+                    "hud_anchors 是可选第二锚点组，非人形/未配置构型必须留空往返"
+                );
+            }
+            other => panic!("expected BodyPlanLayout after roundtrip, got {other:?}"),
+        }
+    }
+
+    /// plan-race-system-v1 P2 major 修复 —— `hud_anchors` 非空往返必须逐值保留，
+    /// 且缺省 JSON（旧数据 / 未配置该字段的 plan）反序列化必须默认落空 `Vec`（不是
+    /// 反序列化失败），两条转换分支各有专属 pin。
+    #[test]
+    fn body_plan_layout_hud_anchors_roundtrip_and_missing_field_defaults_to_empty() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::BodyPlanLayout(BodyPlanLayoutV1 {
+            body_plan_id: "humanoid".to_string(),
+            silhouette: vec![BodyPlanSilhouettePartV1 {
+                part_id: "head".to_string(),
+                polygon: vec![
+                    BodyPlanPoint2V1 { x: 0.4, y: 0.0 },
+                    BodyPlanPoint2V1 { x: 0.6, y: 0.0 },
+                    BodyPlanPoint2V1 { x: 0.5, y: 0.1 },
+                ],
+            }],
+            anchors: Vec::new(),
+            meridian_paths: Vec::new(),
+            part_display_map: Vec::new(),
+            hud_anchors: vec![BodyPlanPartAnchorV1 {
+                part_id: "head".to_string(),
+                point: BodyPlanPoint2V1 { x: 0.5, y: 0.04 },
+            }],
+        }));
+        let bytes = payload
+            .to_json_bytes_checked()
+            .expect("body_plan_layout with hud_anchors must serialize");
+        let back: ServerDataV1 = serde_json::from_slice(&bytes)
+            .expect("body_plan_layout with hud_anchors must deserialize back");
+        match back.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert_eq!(layout.hud_anchors.len(), 1);
+                assert_eq!(layout.hud_anchors[0].part_id, "head");
+                assert_eq!(layout.hud_anchors[0].point.x, 0.5);
+                assert_eq!(layout.hud_anchors[0].point.y, 0.04);
+            }
+            other => panic!("expected BodyPlanLayout after roundtrip, got {other:?}"),
+        }
+
+        // 缺省字段（旧数据 / 未来非人 plan 不配置）反序列化必须默认空 Vec，不是 error。
+        let legacy_json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "body_plan_layout",
+            "body_plan_id": "whale",
+            "silhouette": [{
+                "part_id": "tail_fin",
+                "polygon": [{"x": 0.1, "y": 0.9}, {"x": 0.5, "y": 0.8}, {"x": 0.9, "y": 0.9}],
+            }],
+            "anchors": [],
+            "meridian_paths": [],
+            "part_display_map": [],
+        });
+        let decoded: ServerDataV1 = serde_json::from_value(legacy_json)
+            .expect("body_plan_layout missing hud_anchors field must default to empty, not fail");
+        match decoded.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert!(
+                    layout.hud_anchors.is_empty(),
+                    "missing hud_anchors field must default to an empty Vec"
+                );
+            }
+            other => panic!("expected BodyPlanLayout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn body_plan_layout_rejects_unknown_field_in_point() {
+        let json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "body_plan_layout",
+            "body_plan_id": "humanoid",
+            "silhouette": [{
+                "part_id": "chest",
+                "polygon": [
+                    {"x": 0.3, "y": 0.1, "z": 0.0},
+                    {"x": 0.7, "y": 0.1},
+                    {"x": 0.7, "y": 0.3}
+                ]
+            }],
+            "anchors": [],
+            "meridian_paths": [],
+            "part_display_map": []
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(json).is_err(),
+            "BodyPlanPoint2V1 额外字段（z）应被 deny_unknown_fields 拒绝——布局是 2D 归一化坐标"
+        );
+    }
+
+    #[test]
+    fn body_plan_layout_rejects_missing_body_plan_id() {
+        let json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "body_plan_layout",
+            "silhouette": [],
+            "anchors": [],
+            "meridian_paths": [],
+            "part_display_map": []
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(json).is_err(),
+            "BodyPlanLayoutV1 缺 body_plan_id 应反序列化失败——它是 client 寻址缓存的主键"
+        );
+    }
+
     #[test]
     fn deserialize_server_data_samples() {
         let samples = [
@@ -5177,6 +5461,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.remains-sync.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.body-plan-layout.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"

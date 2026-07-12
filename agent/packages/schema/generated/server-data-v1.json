@@ -969,6 +969,9 @@
         },
         "target_meridian": {
           "type": "string"
+        },
+        "body_plan_id": {
+          "type": "string"
         }
       }
     },
@@ -13255,6 +13258,212 @@
               "bone_coins": {
                 "minimum": 0,
                 "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "body_plan_id",
+        "silhouette",
+        "anchors",
+        "meridian_paths",
+        "part_display_map",
+        "hud_anchors"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "body_plan_layout",
+          "type": "string"
+        },
+        "body_plan_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "silhouette": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "part_id",
+              "polygon"
+            ],
+            "properties": {
+              "part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "polygon": {
+                "minItems": 3,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "properties": {
+                    "x": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "y": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "anchors": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "part_id",
+              "point"
+            ],
+            "properties": {
+              "part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "point": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "properties": {
+                  "x": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "y": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "meridian_paths": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "channel_id",
+              "points"
+            ],
+            "properties": {
+              "channel_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "points": {
+                "minItems": 2,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "properties": {
+                    "x": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "y": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "part_display_map": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "server_part_id",
+              "display_segment_id"
+            ],
+            "properties": {
+              "server_part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "display_segment_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "hud_anchors": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "part_id",
+              "point"
+            ],
+            "properties": {
+              "part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "point": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "properties": {
+                  "x": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "y": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  }
+                }
               }
             }
           }
