@@ -1,4 +1,4 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::agent_ui::{AgentUiClosePayloadV1, AgentUiRequestPayloadV1};
@@ -48,6 +48,9 @@ use crate::skill::config::SkillConfigSnapshot;
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
+pub(crate) const ANQI_HUD_ECHO_COUNT_MAX: u32 = i32::MAX as u32;
+pub(crate) const ANQI_HUD_QI_PAYLOAD_MAX: f64 = 3.4028234e38;
+pub(crate) const ANQI_HUD_TICK_MAX: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -773,19 +776,318 @@ pub struct FactionWarStateV1 {
     pub loser_group: Option<u16>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnqiHudKindV1 {
+    Echo,
+    Aim,
+    Charge,
+    Abrasion,
+    Multishot,
+}
+
+impl AnqiHudKindV1 {
+    pub const ALL: [Self; 5] = [
+        Self::Echo,
+        Self::Aim,
+        Self::Charge,
+        Self::Abrasion,
+        Self::Multishot,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Echo => "echo",
+            Self::Aim => "aim",
+            Self::Charge => "charge",
+            Self::Abrasion => "abrasion",
+            Self::Multishot => "multishot",
+        }
+    }
+
+    fn from_wire_str(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    }
+}
+
+impl Serialize for AnqiHudKindV1 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AnqiHudKindV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_wire_str(&value)
+            .ok_or_else(|| D::Error::custom(format!("unknown anqi_hud kind `{value}`")))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AnqiHudBoundedIntegerVisitor {
+    field: &'static str,
+    maximum: u64,
+}
+
+impl AnqiHudBoundedIntegerVisitor {
+    fn validate<E>(self, value: u64) -> Result<u64, E>
+    where
+        E: serde::de::Error,
+    {
+        if value <= self.maximum {
+            Ok(value)
+        } else {
+            Err(E::custom(format!(
+                "anqi_hud {} must be <= {}, got {value}",
+                self.field, self.maximum
+            )))
+        }
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for AnqiHudBoundedIntegerVisitor {
+    type Value = u64;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "a non-negative integer no greater than {} for anqi_hud {}",
+            self.maximum, self.field
+        )
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.validate(value)
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let value = u64::try_from(value).map_err(|_| {
+            E::custom(format!(
+                "anqi_hud {} must be non-negative, got {value}",
+                self.field
+            ))
+        })?;
+        self.validate(value)
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > self.maximum as f64
+        {
+            return Err(E::custom(format!(
+                "anqi_hud {} must be an integral number in 0..={}, got {value}",
+                self.field, self.maximum
+            )));
+        }
+        Ok(value as u64)
+    }
+}
+
+fn deserialize_anqi_hud_bounded_integer<'de, D>(
+    deserializer: D,
+    field: &'static str,
+    maximum: u64,
+) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_any(AnqiHudBoundedIntegerVisitor { field, maximum })
+}
+
+fn validate_anqi_hud_echo_count(value: u32) -> Result<(), String> {
+    if value <= ANQI_HUD_ECHO_COUNT_MAX {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud echo_count must be <= {ANQI_HUD_ECHO_COUNT_MAX}, got {value}"
+        ))
+    }
+}
+
+fn serialize_anqi_hud_echo_count<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_echo_count(*value).map_err(S::Error::custom)?;
+    serializer.serialize_u32(*value)
+}
+
+fn deserialize_anqi_hud_echo_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_anqi_hud_bounded_integer(
+        deserializer,
+        "echo_count",
+        u64::from(ANQI_HUD_ECHO_COUNT_MAX),
+    )?;
+    u32::try_from(value).map_err(D::Error::custom)
+}
+
+fn validate_anqi_hud_unit_interval(value: f64) -> Result<(), String> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud progress must be finite in 0..=1, got {value}"
+        ))
+    }
+}
+
+fn validate_anqi_hud_container(value: &str) -> Result<(), String> {
+    let is_known = value.is_empty()
+        || [
+            crate::qi_physics::AnqiContainerKind::HandSlot,
+            crate::qi_physics::AnqiContainerKind::Quiver,
+            crate::qi_physics::AnqiContainerKind::PocketPouch,
+            crate::qi_physics::AnqiContainerKind::Fenglinghe,
+        ]
+        .into_iter()
+        .any(|container| container.as_wire_str() == value);
+    if is_known {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud abrasion_container must be empty or a canonical container wire tag, got `{value}`"
+        ))
+    }
+}
+
+fn validate_anqi_hud_qi_payload(value: f64) -> Result<(), String> {
+    if value.is_finite() && (0.0..=ANQI_HUD_QI_PAYLOAD_MAX).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud abrasion_qi_payload must be finite in 0..={ANQI_HUD_QI_PAYLOAD_MAX}, got {value}"
+        ))
+    }
+}
+
+fn validate_anqi_hud_tick(value: u64) -> Result<(), String> {
+    if value <= ANQI_HUD_TICK_MAX {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud tick must be <= {ANQI_HUD_TICK_MAX}, got {value}"
+        ))
+    }
+}
+
+fn serialize_anqi_hud_unit_interval<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_unit_interval(*value).map_err(S::Error::custom)?;
+    serializer.serialize_f64(*value)
+}
+
+fn deserialize_anqi_hud_unit_interval<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    validate_anqi_hud_unit_interval(value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_container<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_container(value).map_err(S::Error::custom)?;
+    serializer.serialize_str(value)
+}
+
+fn deserialize_anqi_hud_container<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    validate_anqi_hud_container(&value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_qi_payload<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_qi_payload(*value).map_err(S::Error::custom)?;
+    serializer.serialize_f64(*value)
+}
+
+fn deserialize_anqi_hud_qi_payload<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    validate_anqi_hud_qi_payload(value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_tick<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_tick(*value).map_err(S::Error::custom)?;
+    serializer.serialize_u64(*value)
+}
+
+fn deserialize_anqi_hud_tick<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_anqi_hud_bounded_integer(deserializer, "tick", ANQI_HUD_TICK_MAX)
+}
+
 /// plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD 状态推送（server → client）。
-///
-/// `kind` 取值："echo" | "aim" | "charge" | "abrasion"
 /// 守恒红线：全部字段只读自 ECS Event，不重算真元，不扣 qi。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnqiHudV1 {
-    pub kind: String,
+    pub kind: AnqiHudKindV1,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_echo_count",
+        deserialize_with = "deserialize_anqi_hud_echo_count"
+    )]
     pub echo_count: u32,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_unit_interval",
+        deserialize_with = "deserialize_anqi_hud_unit_interval"
+    )]
     pub aim_progress: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_unit_interval",
+        deserialize_with = "deserialize_anqi_hud_unit_interval"
+    )]
     pub charge_progress: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_container",
+        deserialize_with = "deserialize_anqi_hud_container"
+    )]
     pub abrasion_container: String,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_qi_payload",
+        deserialize_with = "deserialize_anqi_hud_qi_payload"
+    )]
     pub abrasion_qi_payload: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_tick",
+        deserialize_with = "deserialize_anqi_hud_tick"
+    )]
     pub tick: u64,
 }
 
@@ -5874,10 +6176,147 @@ mod tests {
 
     // ─── plan-combat-skill-feedback-bridges-v1 P4：AnqiHud schema pin ─
 
+    #[derive(Debug, serde::Deserialize)]
+    struct AnqiHudWireCorpus {
+        base: serde_json::Value,
+        cases: Vec<AnqiHudWireCorpusCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct AnqiHudWireCorpusCase {
+        name: String,
+        accepted: bool,
+        set: Option<serde_json::Map<String, serde_json::Value>>,
+        remove: Option<String>,
+    }
+
+    fn materialize_anqi_hud_wire_case(
+        base: &serde_json::Value,
+        test_case: &AnqiHudWireCorpusCase,
+    ) -> serde_json::Value {
+        let mut payload = base
+            .as_object()
+            .expect("anqi_hud wire corpus base must be an object")
+            .clone();
+        let mutation_count = test_case.set.as_ref().map_or(0, serde_json::Map::len)
+            + usize::from(test_case.remove.is_some());
+        assert!(
+            mutation_count <= 1,
+            "corpus case '{}' must isolate at most one field constraint",
+            test_case.name
+        );
+
+        if let Some(fields) = &test_case.set {
+            for (field, value) in fields {
+                payload.insert(field.clone(), value.clone());
+            }
+        }
+        if let Some(field) = &test_case.remove {
+            payload.remove(field);
+        }
+        serde_json::Value::Object(payload)
+    }
+
+    #[test]
+    fn anqi_hud_shared_wire_corpus_matches_rust_serde() {
+        let corpus: AnqiHudWireCorpus = serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/server-data.anqi-hud.wire-corpus.json"
+        ))
+        .expect("shared anqi_hud wire corpus must be valid JSON");
+        let mut names = std::collections::HashSet::new();
+
+        for test_case in &corpus.cases {
+            assert!(
+                names.insert(test_case.name.as_str()),
+                "duplicate corpus case '{}'",
+                test_case.name
+            );
+            let payload = materialize_anqi_hud_wire_case(&corpus.base, test_case);
+            let result = serde_json::from_value::<ServerDataV1>(payload.clone());
+            assert_eq!(
+                result.is_ok(),
+                test_case.accepted,
+                "Rust serde verdict drifted for case '{}'; payload={payload}; result={result:?}",
+                test_case.name
+            );
+
+            if let Ok(wrapper) = result {
+                assert_eq!(
+                    wrapper.payload_type(),
+                    ServerDataType::AnqiHud,
+                    "accepted corpus case '{}' must retain the anqi_hud payload type",
+                    test_case.name
+                );
+                assert!(
+                    matches!(&wrapper.payload, ServerDataPayloadV1::AnqiHud(_)),
+                    "accepted corpus case '{}' must deserialize to the AnqiHud variant; actual={:?}",
+                    test_case.name,
+                    wrapper.payload
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn anqi_hud_shared_samples_match_rust_serde_verdicts() {
+        let valid_samples = [
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.echo.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.aim.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.charge.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.abrasion.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.multishot.sample.json"
+            ),
+        ];
+        for sample in valid_samples {
+            let wrapper: ServerDataV1 = serde_json::from_str(sample)
+                .expect("valid shared anqi_hud sample must deserialize");
+            assert_eq!(
+                wrapper.payload_type(),
+                ServerDataType::AnqiHud,
+                "valid shared sample must retain the anqi_hud payload type; sample={sample}"
+            );
+            assert!(
+                matches!(&wrapper.payload, ServerDataPayloadV1::AnqiHud(_)),
+                "valid shared sample must deserialize to the AnqiHud variant; actual={:?}; sample={sample}",
+                wrapper.payload
+            );
+        }
+
+        let invalid_samples = [
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.invalid-missing-field.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.invalid-extra-field.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.invalid-kind.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.invalid-tick-overflow.sample.json"
+            ),
+        ];
+        for sample in invalid_samples {
+            assert!(
+                serde_json::from_str::<ServerDataV1>(sample).is_err(),
+                "invalid shared anqi_hud sample must be rejected: {sample}"
+            );
+        }
+    }
+
     #[test]
     fn anqi_hud_v1_roundtrip() {
         let original = crate::schema::server_data::AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 3,
             aim_progress: 0.5,
             charge_progress: 0.25,
@@ -5904,9 +6343,9 @@ mod tests {
     }
 
     #[test]
-    fn anqi_hud_wire_type_serializes_correctly() {
+    fn anqi_hud_variant_type_and_complete_wire_shape_serialize_together() {
         let inner = crate::schema::server_data::AnqiHudV1 {
-            kind: "echo".to_string(),
+            kind: AnqiHudKindV1::Echo,
             echo_count: 5,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -5915,31 +6354,127 @@ mod tests {
             tick: 42,
         };
         let wrapper = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(inner));
-        let json = serde_json::to_string(&wrapper).expect("serialize AnqiHud wrapper");
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            v["type"],
-            serde_json::json!("anqi_hud"),
-            "期望 wire type = 'anqi_hud'（client 路由键），实际 {}",
-            v["type"]
+            wrapper.payload_type(),
+            ServerDataType::AnqiHud,
+            "AnqiHud wrapper must report the payload type used by client routing"
+        );
+        let value = serde_json::to_value(&wrapper).expect("serialize AnqiHud wrapper");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "v": SERVER_DATA_VERSION,
+                "type": "anqi_hud",
+                "kind": "echo",
+                "echo_count": 5,
+                "aim_progress": 0.0,
+                "charge_progress": 0.0,
+                "abrasion_container": "",
+                "abrasion_qi_payload": 0.0,
+                "tick": 42
+            }),
+            "AnqiHud wrapper must serialize every canonical v1 wire field together"
         );
         assert_eq!(
-            v["kind"],
-            serde_json::json!("echo"),
-            "期望 kind = 'echo'，实际 {}",
-            v["kind"]
+            payload_type_label(wrapper.payload_type()),
+            value["type"].as_str().expect("wire type must be a string"),
+            "payload_type_label must match the serialized wire type used by client routing"
+        );
+        let decoded: ServerDataV1 =
+            serde_json::from_value(value).expect("serialized wrapper must deserialize");
+        let ServerDataPayloadV1::AnqiHud(decoded_hud) = decoded.payload else {
+            panic!("wire type anqi_hud must deserialize to the AnqiHud payload variant");
+        };
+        assert_eq!(
+            decoded_hud.kind,
+            AnqiHudKindV1::Echo,
+            "complete wire shape must preserve the echo kind after deserialization"
         );
         assert_eq!(
-            v["echo_count"],
-            serde_json::json!(5u32),
-            "期望 echo_count = 5，实际 {}",
-            v["echo_count"]
+            decoded_hud.echo_count, 5,
+            "complete wire shape must preserve echo_count=5 after deserialization"
         );
-        // 守恒红线：echo payload 不含 qi 字段（只读）
-        assert!(
-            !json.contains("\"qi_") || json.contains("abrasion_qi_payload"),
-            "echo payload 不应包含真元计算字段"
+        assert_eq!(
+            decoded_hud.tick, 42,
+            "complete wire shape must preserve tick=42 after deserialization"
         );
+    }
+
+    #[test]
+    fn anqi_hud_invalid_outbound_values_fail_serialization() {
+        let invalid_payloads = [
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Aim,
+                echo_count: 0,
+                aim_progress: f64::NAN,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Charge,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: f64::INFINITY,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: -1.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Multishot,
+                echo_count: ANQI_HUD_ECHO_COUNT_MAX + 1,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "unknown".to_string(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "quiver".to_string(),
+                abrasion_qi_payload: ANQI_HUD_QI_PAYLOAD_MAX * 2.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Echo,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: ANQI_HUD_TICK_MAX + 1,
+            },
+        ];
+
+        for payload in invalid_payloads {
+            let wrapper = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(payload));
+            assert!(
+                serde_json::to_value(wrapper).is_err(),
+                "invalid outbound anqi_hud payload must fail serialization"
+            );
+        }
     }
 
     // ─── 震脉 v2 HUD S2C：schema pin（字段须与 client ZhenmaiHudServerDataHandler 逐一对齐） ─

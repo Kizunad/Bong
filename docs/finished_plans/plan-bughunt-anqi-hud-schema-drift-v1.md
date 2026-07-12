@@ -1,6 +1,6 @@
 # plan-bughunt-anqi-hud-schema-drift-v1
 
-状态：Skeleton Plan
+状态：✅ 2026-07-12
 分区：BugHunt worker / agent-schema / r12
 
 ## 1. 一句话 bug
@@ -41,19 +41,19 @@
 
 ## 6. 修复计划骨架
 
-- [ ] 在 `agent/packages/schema/src/server-data.ts` 增加 `AnqiHudV1` / `ServerDataAnqiHudV1` TypeBox schema，字段与 Rust `AnqiHudV1` 对齐。
-- [ ] 将 `Type.Literal("anqi_hud")` 加入 `ServerDataType`，并将 `ServerDataAnqiHudV1` 加入 `ServerDataV1` union。
-- [ ] 在 `SCHEMA_REGISTRY` / `GENERATED_SCHEMA_FILES` 登记 `server-data-anqi-hud-v1.json`，生成对应 artifact。
-- [ ] 增加正反 sample 与 schema 测试：`kind="echo"` / `kind="charge"` / `kind="abrasion"` 正例，缺字段、额外字段、非法数值反例。
-- [ ] 增加 Rust/TS parity pin：至少覆盖 Rust wire shape 中的 `type:"anqi_hud"` 与所有必需字段。
+- [x] 在 `agent/packages/schema/src/server-data.ts` 增加 `AnqiHudV1` / `ServerDataAnqiHudV1` TypeBox schema，字段与 Rust `AnqiHudV1` 对齐。
+- [x] 将 `Type.Literal("anqi_hud")` 加入 `ServerDataType`，并将 `ServerDataAnqiHudV1` 加入 `ServerDataV1` union。
+- [x] 在 `SCHEMA_REGISTRY` / `GENERATED_SCHEMA_FILES` 登记 `server-data-anqi-hud-v1.json`，生成对应 artifact。
+- [x] 增加正反 sample 与 schema 测试：`kind="echo"` / `kind="charge"` / `kind="abrasion"` 正例，缺字段、额外字段、非法数值反例。
+- [x] 增加 Rust/TS parity pin：至少覆盖 Rust wire shape 中的 `type:"anqi_hud"` 与所有必需字段。
 
 ## 7. 验证计划
 
-- [ ] `cd agent/packages/schema && npm test`
-- [ ] `cd agent/packages/schema && npm run generate:check`
-- [ ] `cd agent && npm run build -w @bong/schema`
-- [ ] 抽查 `agent/packages/schema/generated/server-data-v1.json` 包含 `anqi_hud` 分支。
-- [ ] 抽查 `agent/packages/schema/generated/server-data-anqi-hud-v1.json` 存在，且删除后 freshness gate 会红。
+- [x] `cd agent/packages/schema && npm test`
+- [x] `cd agent/packages/schema && npm run generate:check`
+- [x] `cd agent && npm run build -w @bong/schema`
+- [x] 抽查 `agent/packages/schema/generated/server-data-v1.json` 包含 `anqi_hud` 分支。
+- [x] 抽查 `agent/packages/schema/generated/server-data-anqi-hud-v1.json` 存在，且删除后 freshness gate 会红。
 
 ## 8. 对抗复核记录
 
@@ -62,3 +62,41 @@
 第二轮收窄为 `anqi_hud`：两名 adversarial reviewer 独立确认 server 已发、client 已路由、TS `ServerDataType` / `ServerDataV1` 无 `anqi_hud`，且不重复 #1059/#1061/#1093/#1111/#1068-#1072。
 
 Adversarial conclusion：PASS。`anqi_hud` 是正式 server_data payload，但 agent/schema 完全漏镜像；实际游玩主链路未必立即断，核心 bug 是暗器 HUD 回归与协议漂移保护缺口。
+
+## Finish Evidence
+
+### 落地清单
+
+- TypeBox 与 generated：`agent/packages/schema/src/server-data.ts`、`schema-registry.ts`、`generated/{anqi-hud-v1,server-data-anqi-hud-v1,server-data-v1}.json`。
+- 共享 wire 语料：`agent/packages/schema/samples/server-data.anqi-hud.*.json`，由 TypeScript、Rust、Java 三端共同执行。
+- Rust 真实 wire：`server/src/schema/server_data.rs` 锁定 serde/kind/边界，`server/src/schema/proto_gen.rs` 锁定全部 kind 与非零 aim，`server/src/network/anqi_hud_emit.rs` 通过生产 protobuf serializer 验证五路 emitter。
+- Java 消费边界：`AnqiHudServerDataHandler` 严格校验完整字段集合、数值上限和 canonical 容器；`AnqiHudServerDataHandlerTest` 覆盖 Proto→bridge→router→store 及共享 corpus。
+
+### 关键 commit
+
+- `0ef81bd9`（2026-07-09）：补齐暗器 HUD TypeBox 契约与注册表。
+- `8cf4817f` / `b0baa846`（2026-07-10）：补齐共享 wire 语料并锁定 Rust 对拍。
+- `856137a2` / `35bee849` / `b11753e2`（2026-07-10）：统一跨端数值边界、Rust kind 与 Proto 消费边界。
+- `793d20ec` / `90cad8f5` / `61903b34`（2026-07-12）：接通 Java aim，拒绝窄化/形状漂移，并执行共享 corpus。
+- `7a006604` / `c1f758ab`（2026-07-12）：锁定真实 emitter、非零 aim Proto 与生产 protobuf 出站。
+
+### 测试结果
+
+- `cd agent/packages/schema && npm test`：29 files / 816 tests PASS。
+- `npm run generate:check`：397 个 generated artifacts fresh；删除独立 artifact 的 freshness 负分支 PASS。
+- `npm run build`（`@bong/schema`）：PASS；ignored `dist/` 已在本地重建。
+- `cargo test anqi_hud`：25/25 PASS；`s2c_all_proto_variants_encode_without_panic` PASS。
+- `cargo test`：目标代码全绿；全仓并发运行 11,288 PASS，两个最新主线的时序/耗时用例抖动，随后各自 `--exact` 单独 PASS。
+- Java 17 `./gradlew test build`：PASS；`AnqiHudServerDataHandlerTest` 含共享 corpus 与 Proto 闭环。
+- PR #1147 旧 CI run `29060370791`：schema、agent、client、server、smoke 全部 PASS；bot e2e 21/22，唯一失败为本 PR 未触碰的 `cultivation_pill_consume`。
+
+### 跨仓库核验
+
+- server：`AnqiHudKindV1::ALL`、`ServerDataPayloadV1::AnqiHud`、`serialize_server_data_payload_proto`。
+- schema：`AnqiHudV1`、`ServerDataAnqiHudV1`、`server-data.anqi-hud.wire-corpus.json`。
+- client：`ProtoServerDataBridge` → `AnqiHudServerDataHandler` → `AnqiHudStateStore`。
+
+### 遗留 / 后续
+
+- 本 plan 无未完成代码项；PR gate 仍以最终 HEAD 的 CI 与 `/review` / CodeRabbit 闭环结果为准。
+- Follow-up（仓库级 blocker，非本 PR 新增）：Rust 1.96 全仓 clippy 受 `origin/main` 既有 66 个新 lint 阻塞；未在本 PR 扩大范围修整。

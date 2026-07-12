@@ -3887,7 +3887,7 @@ message FactionWarState {
 }
 
 // plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD 推送（server → client）。
-// kind: "echo" | "aim" | "charge" | "abrasion"
+// kind: "echo" | "aim" | "charge" | "abrasion" | "multishot"
 message AnqiHud {
   string kind                 = 1;
   uint32 echo_count           = 2;

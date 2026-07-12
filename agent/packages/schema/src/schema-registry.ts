@@ -309,6 +309,8 @@ import {
   ServerDataTreasureEquippedV1,
   ServerDataFalseSkinStateV1,
   ServerDataVortexStateV1,
+  AnqiHudV1,
+  ServerDataAnqiHudV1,
   ServerDataCarrierStateV1,
   ServerDataDuguPoisonStateV1,
   ServerDataPoisonDoseEventV1,
@@ -733,6 +735,8 @@ export const SCHEMA_REGISTRY = {
   zhenmaiSkillEventV1: ZhenmaiSkillEventV1,
   zhenfaV2EventV1: ZhenfaV2EventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
+  anqiHudV1: AnqiHudV1,
+  serverDataAnqiHudV1: ServerDataAnqiHudV1,
   woliuSkillIdV1: WoliuSkillIdV1,
   woliuBackfireLevelV1: WoliuBackfireLevelV1,
   woliuSkillCastV1: WoliuSkillCastV1,
@@ -1260,6 +1264,9 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataShieldBlockHitV1,
   "server-data-treasure-equipped-v1.json":
     SCHEMA_REGISTRY.serverDataTreasureEquippedV1,
+  "anqi-hud-v1.json": SCHEMA_REGISTRY.anqiHudV1,
+  "server-data-anqi-hud-v1.json":
+    SCHEMA_REGISTRY.serverDataAnqiHudV1,
   "dugu-poison-state-v1.json": SCHEMA_REGISTRY.duguPoisonStateV1,
   "dugu-poison-progress-event-v1.json":
     SCHEMA_REGISTRY.duguPoisonProgressEventV1,
