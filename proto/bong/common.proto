@@ -18,33 +18,13 @@ enum Realm {
   REALM_VOID        = 6; // 化虚
 }
 
-// ─── 经脉（20 条：12 正经 + 8 奇经） ────────────────────────────
-
-enum MeridianId {
-  MERIDIAN_ID_UNSPECIFIED      = 0;
-  // 12 正经
-  MERIDIAN_ID_LUNG             = 1;
-  MERIDIAN_ID_LARGE_INTESTINE  = 2;
-  MERIDIAN_ID_STOMACH          = 3;
-  MERIDIAN_ID_SPLEEN           = 4;
-  MERIDIAN_ID_HEART            = 5;
-  MERIDIAN_ID_SMALL_INTESTINE  = 6;
-  MERIDIAN_ID_BLADDER          = 7;
-  MERIDIAN_ID_KIDNEY           = 8;
-  MERIDIAN_ID_PERICARDIUM      = 9;
-  MERIDIAN_ID_TRIPLE_ENERGIZER = 10;
-  MERIDIAN_ID_GALLBLADDER      = 11;
-  MERIDIAN_ID_LIVER            = 12;
-  // 8 奇经
-  MERIDIAN_ID_REN              = 13;
-  MERIDIAN_ID_DU               = 14;
-  MERIDIAN_ID_CHONG            = 15;
-  MERIDIAN_ID_DAI              = 16;
-  MERIDIAN_ID_YIN_QIAO         = 17;
-  MERIDIAN_ID_YANG_QIAO        = 18;
-  MERIDIAN_ID_YIN_WEI          = 19;
-  MERIDIAN_ID_YANG_WEI         = 20;
-}
+// ─── 经脉 ────────────────────────────────────────────────────────
+//
+// plan-race-system-v1 P1c：闭合 `MeridianId` enum（20 条 TCM 经脉）已退役——非 humanoid
+// 构型（如 P5 飞鲸）的经脉不在这 20 个名字之列，物理装不下闭合 int enum。所有曾引用
+// `MeridianId` 的字段（`MeridianState.id` / `CultivationDetail.target_meridian` /
+// `SetMeridianTarget.meridian` / `ForgeRequestC2s.meridian` / `ApplyPill.meridian_id`）
+// 已直改为 string channel id（snake_case），不留 dual-form 兼容层（§8.1 #4 决议）。
 
 // ─── 技能 ───────────────────────────────────────────────────────
 

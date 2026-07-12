@@ -38,7 +38,7 @@ public class ClientRequestSenderTest {
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
-            "{\"type\":\"set_meridian_target\",\"v\":1,\"meridian\":\"Heart\"}",
+            "{\"type\":\"set_meridian_target\",\"v\":1,\"meridian\":\"heart\"}",
             sent.get(0).body()
         );
     }
@@ -104,7 +104,7 @@ public class ClientRequestSenderTest {
         );
         assertEquals(1, sent.size());
         assertEquals(
-            "{\"type\":\"forge_request\",\"v\":1,\"meridian\":\"Kidney\",\"axis\":\"Capacity\"}",
+            "{\"type\":\"forge_request\",\"v\":1,\"meridian\":\"kidney\",\"axis\":\"Capacity\"}",
             sent.get(0).body()
         );
     }

@@ -15,7 +15,7 @@
 
 use std::collections::HashSet;
 
-use super::types::{BodyPartId, BodyPlan, HitGeometry, PartBox};
+use super::types::{BodyPartId, BodyPlan, HitGeometry, MeridianProfile, PartBox};
 
 pub fn validate_body_plan(plan: &BodyPlan) -> Result<(), String> {
     if plan.id.as_str().trim().is_empty() {
@@ -133,10 +133,125 @@ pub fn validate_body_plan(plan: &BodyPlan) -> Result<(), String> {
         }
     }
 
-    // P1 起 meridian_profile.channels 落地后，在此追加 channel id 唯一性 /
-    // realm_requirements 单调性 <= channel 总数的校验；P0 stub `MeridianProfile {}`
-    // 无字段可校验，本函数当前对 meridian_profile 内容免检（存在性本身已由类型系统
-    // 的 Option 语义 + types.rs 的 pin 测试锁定）。
+    // plan-race-system-v1 P1a：is_humanoid plan 的 meridian_profile 从 P0 的"可选"转为
+    // "必填"（§P1 决议——humanoid.json 缺该字段不再合法）。非 humanoid plan（P0 现存
+    // fixture / 未来非战斗构型）仍可留 `None`。
+    match (&plan.meridian_profile, plan.is_humanoid) {
+        (None, true) => {
+            return Err(format!(
+                "body plan {} is_humanoid=true but declares no meridian_profile (mandatory from \
+                 plan-race-system-v1 P1 onward)",
+                plan.id
+            ));
+        }
+        (Some(profile), _) => validate_meridian_profile(plan, profile)?,
+        (None, false) => {}
+    }
+
+    Ok(())
+}
+
+fn validate_meridian_profile(plan: &BodyPlan, profile: &MeridianProfile) -> Result<(), String> {
+    use super::types::MeridianFamily;
+    use crate::cultivation::components::MeridianChannelId;
+
+    if profile.channels.is_empty() {
+        return Err(format!(
+            "body plan {} meridian_profile.channels must declare at least one channel",
+            plan.id
+        ));
+    }
+
+    let part_ids: HashSet<&BodyPartId> = plan.parts.iter().map(|p| &p.id).collect();
+    let mut channel_ids: HashSet<MeridianChannelId> = HashSet::new();
+    let mut regular_count = 0usize;
+    let mut extraordinary_count = 0usize;
+    for channel in &profile.channels {
+        if channel.id.as_str().trim().is_empty() {
+            return Err(format!(
+                "body plan {} meridian_profile has a channel with an empty id",
+                plan.id
+            ));
+        }
+        if !channel_ids.insert(channel.id.clone()) {
+            return Err(format!(
+                "body plan {} meridian_profile has duplicate channel id {}",
+                plan.id, channel.id
+            ));
+        }
+        match channel.family {
+            MeridianFamily::Regular => regular_count += 1,
+            MeridianFamily::Extraordinary => extraordinary_count += 1,
+        }
+        if let Some(body_part) = &channel.body_part {
+            if !part_ids.contains(body_part) {
+                return Err(format!(
+                    "body plan {} meridian_profile channel {} references unknown body_part {}",
+                    plan.id, channel.id, body_part
+                ));
+            }
+        }
+    }
+
+    for edge in &profile.topology_edges {
+        if !channel_ids.contains(&edge.from) {
+            return Err(format!(
+                "body plan {} meridian_profile.topology_edges references unknown channel id {} \
+                 (from)",
+                plan.id, edge.from
+            ));
+        }
+        if !channel_ids.contains(&edge.to) {
+            return Err(format!(
+                "body plan {} meridian_profile.topology_edges references unknown channel id {} \
+                 (to)",
+                plan.id, edge.to
+            ));
+        }
+    }
+
+    let total_channels = profile.channels.len();
+    let mut previous_total: Option<u8> = None;
+    for (index, req) in profile.realm_requirements.iter().enumerate() {
+        if let Some(previous) = previous_total {
+            if req.total < previous {
+                return Err(format!(
+                    "body plan {} meridian_profile.realm_requirements must be monotonically \
+                     non-decreasing by total (index {index}: {} < previous {previous})",
+                    plan.id, req.total
+                ));
+            }
+        }
+        previous_total = Some(req.total);
+        if req.total as usize > total_channels {
+            return Err(format!(
+                "body plan {} meridian_profile.realm_requirements[{index}].total={} exceeds \
+                 declared channel count {total_channels}",
+                plan.id, req.total
+            ));
+        }
+        if req.regular_min as usize > regular_count {
+            return Err(format!(
+                "body plan {} meridian_profile.realm_requirements[{index}].regular_min={} \
+                 exceeds declared regular channel count {regular_count}",
+                plan.id, req.regular_min
+            ));
+        }
+        if req.extraordinary_min as usize > extraordinary_count {
+            return Err(format!(
+                "body plan {} meridian_profile.realm_requirements[{index}].extraordinary_min={} \
+                 exceeds declared extraordinary channel count {extraordinary_count}",
+                plan.id, req.extraordinary_min
+            ));
+        }
+        if (req.regular_min as usize + req.extraordinary_min as usize) > req.total as usize {
+            return Err(format!(
+                "body plan {} meridian_profile.realm_requirements[{index}] regular_min+\
+                 extraordinary_min ({}+{}) exceeds total ({})",
+                plan.id, req.regular_min, req.extraordinary_min, req.total
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -231,8 +346,30 @@ mod tests {
                 lateral_threshold: 0.19,
             },
             equip_slots: vec![],
-            meridian_profile: None,
+            meridian_profile: Some(base_meridian_profile()),
             mutation_slot_mapping: HashMap::new(),
+        }
+    }
+
+    /// 最小合法 `MeridianProfile`——1 条 Regular channel（映射到 `base_plan()` 的
+    /// `head` 部位）+ 六境界配额全为 1/1/0（`base_plan()` 是 `is_humanoid: true`，
+    /// P1a 起该字段必填，见 `validate_body_plan`）。
+    fn base_meridian_profile() -> crate::body_plan::types::MeridianProfile {
+        use crate::body_plan::types::{ChannelDef, MeridianFamily, RealmMeridianReq};
+        crate::body_plan::types::MeridianProfile {
+            channels: vec![ChannelDef {
+                id: "lung".into(),
+                family: MeridianFamily::Regular,
+                body_part: Some(BodyPartId::new("head")),
+                roles: vec![],
+            }],
+            topology_edges: vec![],
+            dugu_injection: vec![],
+            realm_requirements: [RealmMeridianReq {
+                total: 1,
+                regular_min: 1,
+                extraordinary_min: 0,
+            }; 6],
         }
     }
 
@@ -574,5 +711,249 @@ mod tests {
             .insert(BodySlot::Lower, "ghost_part".into());
         let err = validate_body_plan(&plan).unwrap_err();
         assert!(err.contains("mutation_slot_mapping"), "got: {err}");
+    }
+
+    // ───────────────────── meridian_profile（plan-race-system-v1 P1a） ─────────────────────
+
+    use crate::body_plan::types::{ChannelDef, MeridianFamily, RealmMeridianReq, TopologyEdge};
+
+    #[test]
+    fn is_humanoid_true_without_meridian_profile_rejected() {
+        let mut plan = base_plan();
+        plan.meridian_profile = None;
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(
+            err.contains("meridian_profile"),
+            "is_humanoid=true 缺 meridian_profile 必须被拒绝，got: {err}"
+        );
+    }
+
+    #[test]
+    fn is_humanoid_false_without_meridian_profile_is_valid() {
+        let mut plan = base_plan();
+        plan.is_humanoid = false;
+        plan.meridian_profile = None;
+        assert!(
+            validate_body_plan(&plan).is_ok(),
+            "非 humanoid plan 缺 meridian_profile 应合法（P0 现存行为不应回归）"
+        );
+    }
+
+    #[test]
+    fn meridian_profile_happy_path_with_full_humanoid_style_data_passes() {
+        let mut plan = base_plan();
+        plan.meridian_profile = Some(crate::body_plan::types::MeridianProfile {
+            channels: vec![
+                ChannelDef {
+                    id: "lung".into(),
+                    family: MeridianFamily::Regular,
+                    body_part: Some(BodyPartId::new("head")),
+                    roles: vec![],
+                },
+                ChannelDef {
+                    id: "ren".into(),
+                    family: MeridianFamily::Extraordinary,
+                    body_part: Some(BodyPartId::new("chest")),
+                    roles: vec![crate::body_plan::types::ChannelRole::FormAnchor],
+                },
+            ],
+            topology_edges: vec![TopologyEdge {
+                from: "lung".into(),
+                to: "ren".into(),
+            }],
+            dugu_injection: vec![],
+            realm_requirements: [RealmMeridianReq {
+                total: 2,
+                regular_min: 1,
+                extraordinary_min: 1,
+            }; 6],
+        });
+        assert!(validate_body_plan(&plan).is_ok());
+    }
+
+    #[test]
+    fn meridian_profile_empty_channels_rejected() {
+        let mut plan = base_plan();
+        plan.meridian_profile = Some(crate::body_plan::types::MeridianProfile {
+            channels: vec![],
+            topology_edges: vec![],
+            dugu_injection: vec![],
+            realm_requirements: [RealmMeridianReq::default(); 6],
+        });
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("at least one channel"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_duplicate_channel_id_rejected() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile();
+        let dup = profile.channels[0].clone();
+        profile.channels.push(dup);
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("duplicate channel id"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_empty_channel_id_rejected() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile();
+        profile.channels[0].id = "".into();
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("empty id"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_dangling_body_part_rejected() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile();
+        profile.channels[0].body_part = Some(BodyPartId::new("ghost_part"));
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("unknown body_part"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_none_body_part_is_valid() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile();
+        profile.channels[0].body_part = None;
+        plan.meridian_profile = Some(profile);
+        assert!(
+            validate_body_plan(&plan).is_ok(),
+            "body_part=None（如 6 条排除的奇经）必须合法"
+        );
+    }
+
+    #[test]
+    fn meridian_profile_topology_edge_dangling_from_rejected() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile();
+        profile.topology_edges.push(TopologyEdge {
+            from: "ghost_channel".into(),
+            to: "lung".into(),
+        });
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("unknown channel id"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_topology_edge_dangling_to_rejected() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile();
+        profile.topology_edges.push(TopologyEdge {
+            from: "lung".into(),
+            to: "ghost_channel".into(),
+        });
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("unknown channel id"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_non_monotonic_realm_requirements_rejected() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile();
+        profile.realm_requirements[1] = RealmMeridianReq {
+            total: 0,
+            regular_min: 0,
+            extraordinary_min: 0,
+        };
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("monotonically"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_realm_requirements_total_exceeds_channel_count_rejected() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile();
+        profile.realm_requirements[5].total = 5; // 只声明了 1 条 channel
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("exceeds declared channel count"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_realm_requirements_regular_min_exceeds_regular_count_rejected() {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile(); // 1 条 Regular channel
+        profile.realm_requirements[0].regular_min = 2;
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(
+            err.contains("exceeds declared regular channel count"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn meridian_profile_realm_requirements_extraordinary_min_exceeds_extraordinary_count_rejected()
+    {
+        let mut plan = base_plan();
+        let mut profile = base_meridian_profile(); // 0 条 Extraordinary channel
+        profile.realm_requirements[0].extraordinary_min = 1;
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(
+            err.contains("exceeds declared extraordinary channel count"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn meridian_profile_realm_requirements_sub_quota_sum_exceeds_total_rejected() {
+        let mut plan = base_plan();
+        // 2 条 Regular + 1 条 Extraordinary，保证 regular_min=2/extraordinary_min=1
+        // 各自都不超过声明的 channel 数（不触发前两条更早的校验），专门孤立测试
+        // "sum 超过 total" 这一条。
+        let mut profile = crate::body_plan::types::MeridianProfile {
+            channels: vec![
+                ChannelDef {
+                    id: "lung".into(),
+                    family: MeridianFamily::Regular,
+                    body_part: Some(BodyPartId::new("head")),
+                    roles: vec![],
+                },
+                ChannelDef {
+                    id: "heart".into(),
+                    family: MeridianFamily::Regular,
+                    body_part: Some(BodyPartId::new("chest")),
+                    roles: vec![],
+                },
+                ChannelDef {
+                    id: "ren".into(),
+                    family: MeridianFamily::Extraordinary,
+                    body_part: Some(BodyPartId::new("chest")),
+                    roles: vec![],
+                },
+            ],
+            topology_edges: vec![],
+            dugu_injection: vec![],
+            realm_requirements: [RealmMeridianReq {
+                total: 2,
+                regular_min: 1,
+                extraordinary_min: 1,
+            }; 6],
+        };
+        // total=2 但 regular_min+extraordinary_min=1+1=2，恰好等于 total（应通过）；
+        // 提高 regular_min 到 2（仍 <= 声明的 2 条 Regular，不触发 regular_min 越界）
+        // 使 sum=2+1=3 > total=2（专门触发"sum 超过 total"）。
+        profile.realm_requirements[3].regular_min = 2;
+        plan.meridian_profile = Some(profile);
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("exceeds total"), "got: {err}");
+    }
+
+    #[test]
+    fn meridian_profile_realm_requirements_equal_totals_across_realms_is_valid() {
+        // 单调性要求"非递减"，允许相邻境界 total 相等（不要求严格递增）。
+        let mut plan = base_plan();
+        let profile = base_meridian_profile(); // 全部 6 项 total=1，天然相等
+        plan.meridian_profile = Some(profile);
+        assert!(validate_body_plan(&plan).is_ok());
     }
 }

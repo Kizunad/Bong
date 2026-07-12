@@ -341,11 +341,15 @@ pub enum ServerDataPayloadV1 {
         ui: Option<String>,
         xml: String,
     },
-    /// 经脉详细快照。20 条经脉以 SoA(parallel arrays) 布局，顺序与 `MeridianId` 判别式一致
-    /// (Lung=0..Liver=11, Ren=12..YangWei=19)。保持 ≤ MAX_PAYLOAD_BYTES 预算。
+    /// 经脉详细快照。经脉以 SoA(parallel arrays) 布局，长度随实体 `MeridianProfile`
+    /// 变化（plan-race-system-v1 P1c——不再假设恰好 20 条 TCM 经脉）；`channel_ids[i]`
+    /// 是第 i 条经脉的 snake_case channel id，与 `opened`/`flow_rate`/... 等数组下标
+    /// 一一对应。保持 ≤ MAX_PAYLOAD_BYTES 预算。
     CultivationDetail {
         /// 境界字面量（Awaken/Induce/Condense/Solidify/Spirit/Void，与 `Realm` 判别式对齐）。
         realm: String,
+        /// 每条经脉的 channel id（snake_case），与其余并行数组同序、同长。
+        channel_ids: Vec<String>,
         opened: Vec<bool>,
         flow_rate: Vec<f64>,
         flow_capacity: Vec<f64>,
@@ -366,9 +370,9 @@ pub enum ServerDataPayloadV1 {
         qi_color_chaotic: bool,
         qi_color_hunyuan: bool,
         practice_weights: Vec<PracticeWeightV1>,
-        /// 当前冲脉目标的数组下标（0..19，与 opened/open_progress 等并行数组一致）。
+        /// 当前冲脉目标的 channel id（snake_case，与 `channel_ids` 同形态）。
         /// None 表示未设定目标。
-        target_meridian: Option<u8>,
+        target_meridian: Option<String>,
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
@@ -1257,6 +1261,8 @@ enum ServerDataPayloadWireV1 {
     },
     CultivationDetail {
         realm: String,
+        #[serde(default)]
+        channel_ids: Vec<String>,
         opened: Vec<bool>,
         flow_rate: Vec<f64>,
         flow_capacity: Vec<f64>,
@@ -1281,7 +1287,7 @@ enum ServerDataPayloadWireV1 {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         practice_weights: Vec<PracticeWeightV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        target_meridian: Option<u8>,
+        target_meridian: Option<String>,
     },
     QiColorObserved {
         #[serde(flatten)]
@@ -2266,6 +2272,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2284,6 +2291,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 target_meridian,
             } => Ok(Self::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2860,6 +2868,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2878,6 +2887,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 target_meridian,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
+                channel_ids: channel_ids.clone(),
                 opened: opened.clone(),
                 flow_rate: flow_rate.clone(),
                 flow_capacity: flow_capacity.clone(),
@@ -2893,7 +2903,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_chaotic: *qi_color_chaotic,
                 qi_color_hunyuan: *qi_color_hunyuan,
                 practice_weights: practice_weights.clone(),
-                target_meridian: *target_meridian,
+                target_meridian: target_meridian.clone(),
             },
             ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
                 observed: observed.clone(),
@@ -4601,8 +4611,13 @@ mod tests {
 
     #[test]
     fn cultivation_detail_roundtrip_and_size_budget() {
+        let channel_ids: Vec<String> = crate::cultivation::components::MeridianId::ALL
+            .iter()
+            .map(|m| m.channel_id().to_string())
+            .collect();
         let payload = ServerDataV1::new(ServerDataPayloadV1::CultivationDetail {
             realm: "Induce".to_string(),
+            channel_ids: channel_ids.clone(),
             opened: vec![true; 20],
             flow_rate: vec![1.5; 20],
             flow_capacity: vec![10.25; 20],
@@ -4635,7 +4650,7 @@ mod tests {
                 weight: 42.0,
                 ratio: 0.7,
             }],
-            target_meridian: Some(4),
+            target_meridian: Some(channel_ids[4].clone()),
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -4648,6 +4663,7 @@ mod tests {
         let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
         match back.payload {
             ServerDataPayloadV1::CultivationDetail {
+                channel_ids: back_channel_ids,
                 opened,
                 flow_rate,
                 lifespan,
@@ -4659,6 +4675,7 @@ mod tests {
                 target_meridian,
                 ..
             } => {
+                assert_eq!(back_channel_ids, channel_ids);
                 assert_eq!(opened.len(), 20);
                 assert_eq!(flow_rate.len(), 20);
                 assert_eq!(flow_rate[0], 1.5);
@@ -4673,10 +4690,91 @@ mod tests {
                 assert_eq!(qi_color_secondary, Some(ColorKind::Heavy));
                 assert_eq!(practice_weights[0].color, ColorKind::Intricate);
                 assert_eq!(practice_weights[0].weight, 42.0);
-                assert_eq!(target_meridian, Some(4));
+                assert_eq!(target_meridian, Some(channel_ids[4].clone()));
             }
             other => panic!("expected CultivationDetail, got {other:?}"),
         }
+    }
+
+    /// plan-race-system-v1 P1c — `channel_ids`/其余并行数组不再假设恰好 20 条；一个
+    /// 合成的 6 脉非 humanoid 构型（如 P5 飞鲸草案）必须同样 round-trip 成功。
+    #[test]
+    fn cultivation_detail_non_humanoid_channel_count_roundtrips() {
+        let channel_ids = vec![
+            "skull_channel".to_string(),
+            "spine_channel".to_string(),
+            "dorsal_fin_channel".to_string(),
+            "pect_fin_l_channel".to_string(),
+            "pect_fin_r_channel".to_string(),
+            "tail_fin_channel".to_string(),
+        ];
+        let n = channel_ids.len();
+        let payload = ServerDataV1::new(ServerDataPayloadV1::CultivationDetail {
+            realm: "Awaken".to_string(),
+            channel_ids: channel_ids.clone(),
+            opened: vec![false; n],
+            flow_rate: vec![1.0; n],
+            flow_capacity: vec![10.0; n],
+            integrity: vec![1.0; n],
+            open_progress: vec![0.0; n],
+            cracks_count: vec![0; n],
+            contamination_total: 0.0,
+            lifespan: None,
+            recent_skill_milestones_summary: String::new(),
+            skill_milestones: Vec::new(),
+            qi_color_main: ColorKind::Mellow,
+            qi_color_secondary: None,
+            qi_color_chaotic: false,
+            qi_color_hunyuan: false,
+            practice_weights: Vec::new(),
+            target_meridian: Some("tail_fin_channel".to_string()),
+        });
+        let bytes = payload
+            .to_json_bytes_checked()
+            .expect("6-channel cultivation_detail must fit MAX_PAYLOAD_BYTES");
+        let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
+        match back.payload {
+            ServerDataPayloadV1::CultivationDetail {
+                channel_ids: back_channel_ids,
+                opened,
+                target_meridian,
+                ..
+            } => {
+                assert_eq!(
+                    back_channel_ids.len(),
+                    6,
+                    "non-humanoid channel array length must not be forced to 20"
+                );
+                assert_eq!(back_channel_ids, channel_ids);
+                assert_eq!(opened.len(), 6);
+                assert_eq!(target_meridian, Some("tail_fin_channel".to_string()));
+            }
+            other => panic!("expected CultivationDetail, got {other:?}"),
+        }
+    }
+
+    /// plan-race-system-v1 P1c — wire 直改新形状不留兼容层：`target_meridian` 旧形态
+    /// 是数组下标（`u8`），新形态必须是 channel id 字符串；旧数字形状必须被拒绝，
+    /// 不允许静默兼容解析成某个 channel。
+    #[test]
+    fn cultivation_detail_rejects_legacy_numeric_target_meridian() {
+        let legacy_json = r#"{
+            "v": 1,
+            "type": "cultivation_detail",
+            "realm": "Induce",
+            "opened": [true],
+            "flow_rate": [1.5],
+            "flow_capacity": [10.25],
+            "integrity": [0.87],
+            "contamination_total": 0.0,
+            "target_meridian": 4
+        }"#;
+        let result: Result<ServerDataV1, _> = serde_json::from_str(legacy_json);
+        assert!(
+            result.is_err(),
+            "legacy numeric target_meridian (index-based) must be rejected after wire \
+             open-up to channel id string, got {result:?}"
+        );
     }
 
     /// plan-remains-suite P0 — remains_sync 双端 sample 对拍：字段值必须与

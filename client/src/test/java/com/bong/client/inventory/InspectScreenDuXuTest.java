@@ -119,7 +119,7 @@ public class InspectScreenDuXuTest {
 
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
-        assertEquals("{\"type\":\"set_meridian_target\",\"v\":1,\"meridian\":\"Lung\"}", sent.get(0).body());
+        assertEquals("{\"type\":\"set_meridian_target\",\"v\":1,\"meridian\":\"lung\"}", sent.get(0).body());
 
         bodyInspect.setSelectedChannel(MeridianChannel.REN);
         assertFalse(screen.dispatchSetMeridianTarget());
