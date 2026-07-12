@@ -30,6 +30,8 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from ..poi_novice_selector import novice_poi_selection_tile_ids
+
 from .blueprint import (
     DEFAULT_BLUEPRINT_PATH,
     DEFAULT_PROFILES_PATH,
@@ -364,12 +366,27 @@ def create_app(
         )
         plan.bake_plan = build_raster_bake_plan(plan, output_dir)
         fields = synthesize_fields(plan, zone_filter={req.zone_name})
+        novice_poi_fields = None
+        novice_tile_ids = novice_poi_selection_tile_ids(plan)
+        rewritten_tile_ids = {tile.tile.tile_id for tile in fields.tiles}
+        if rewritten_tile_ids & novice_tile_ids:
+            # Any zone whose rewritten tiles overlap the novice selector's
+            # input window can invalidate the six global spawn POIs. Recompute
+            # from the complete bounded window rather than keying this decision
+            # to the spawn zone's name; far-away zones remain a one-pass local
+            # regen. The selector crops bounded/full inputs to the same fixed
+            # grid, including its one-sample slope-gradient halo.
+            novice_poi_fields = synthesize_fields(
+                plan,
+                tile_filter=novice_tile_ids,
+            )
         try:
             rewritten = regen_zone(
                 plan,
                 fields,
                 req.zone_name,
                 layer_whitelist=regen_whitelist,
+                novice_poi_fields=novice_poi_fields,
             )
         except FileNotFoundError as exc:
             # No prior full bake → manifest.json is absent. Incremental regen has

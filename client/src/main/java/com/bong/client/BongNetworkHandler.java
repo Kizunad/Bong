@@ -12,6 +12,7 @@ import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.DuguV2HudStateStore;
 import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
@@ -912,6 +913,24 @@ public class BongNetworkHandler {
         // 是静态单槽，只在自然过期后自清；断线不清会让上一 server 未过期的 warning/
         // era/event/inventory toast 在 reconnect 后的首几秒继续渲染，串成跨 session 泄漏。
         BongToast.clearOnDisconnect();
+        // plan-bughunt-client-identity-panel-stale-session-v1 — IdentityPanelStateStore
+        // 此前没有生产态清理入口，断线不清会让 HUD 角标和刚打开的身份面板短暂展示上一局
+        // 身份数据；面板一旦在旧快照上 init 完，按钮回调还会冻结在旧 identityId 上。
+        IdentityPanelStateStore.clearOnDisconnect();
+        // plan-bughunt-client-false-skin-cross-session-v1 — FalseSkinHudStateStore 此前只有
+        // resetForTests()，生产态断线清理清单里完全没有它。server 的 false_skin_state 只在
+        // Changed/RemovedComponents 时增量发包，断线切 session 不会有任何 payload 覆盖旧
+        // 快照，会让上一局的伪皮层数块（FalseSkinStackHud）和污染负载条（ContamLoadHud）
+        // 无限跨 session 残留，直到再次收到一条 false_skin_state。
+        com.bong.client.combat.store.FalseSkinHudStateStore.clearOnDisconnect();
+        // plan-bughunt-dugu-v2-hud-disconnect-bleed-v1 P0 — DuguV2HudStateStore 此前只有
+        // resetForTests()，生产态断线清理清单里完全没有它。server 的 dugu_v2_skill_cast /
+        // dugu_v2_self_cure / dugu_v2_shroud_active / permanent_qi_max_decay_applied bridge
+        // 只在毒蛊 v2 事件发生时推增量/状态，没有 join/disconnect reset payload；revealRisk
+        // 无 expiry 字段、selfRevealed 是 sticky merge，新 session 若没再触发毒蛊 v2 事件也不
+        // 会有 payload 覆盖旧快照，导致上一局的“暴露 xx%”“自蕴 xx% 已露”或遮蔽 tint 无限期
+        // 跨 session 残留到下一局。
+        DuguV2HudStateStore.clearOnDisconnect();
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {
@@ -1075,23 +1094,15 @@ public class BongNetworkHandler {
         );
         // bong:agent_ui_close — 裸 AgentUiClosePayloadV1 JSON
         ClientPlayNetworking.registerGlobalReceiver(
-            new Identifier("bong", "agent_ui_close"),
+            com.bong.client.network.AgentUiPayloadHandler.AGENT_UI_CLOSE_CHANNEL,
             (client, handler, buf, responseSender) -> {
                 int readableBytes = buf.readableBytes();
                 byte[] bytes = new byte[readableBytes];
                 buf.readBytes(bytes);
-                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
                 markConnectionPayload();
-                client.execute(() -> {
-                    try {
-                        com.bong.client.network.AgentUiPayloadHandler.handleRawClose(jsonPayload);
-                        BongClient.LOGGER.debug(
-                            "Processed bong:agent_ui_close payload ({} bytes)", readableBytes);
-                    } catch (Exception ex) {
-                        BongClient.LOGGER.error(
-                            "Failed to handle bong:agent_ui_close payload: {}", ex.getMessage());
-                    }
-                });
+                com.bong.client.network.AgentUiPayloadHandler.dispatchRawClose(bytes, client::execute);
+                BongClient.LOGGER.debug(
+                    "Queued bong:agent_ui_close payload ({} bytes) for client thread", readableBytes);
             }
         );
     }

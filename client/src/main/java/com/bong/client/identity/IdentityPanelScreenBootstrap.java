@@ -21,7 +21,25 @@ public final class IdentityPanelScreenBootstrap {
     public static void register() {
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(IdentityPanelScreenBootstrap::onEndClientTick);
+        // plan-bughunt-client-identity-panel-stale-session-v1 — IdentityPanelScreen 是
+        // 普通 vanilla Screen，ButtonWidget 的 onPress 回调在 init() 时把 identityId /
+        // cooldown 固化进 lambda，不像 owo 组件能就地 refresh。面板已打开时若只靠 render()
+        // 重画文字，新 snapshot 到达也改不动按钮，出现"文字新、按钮仍绑旧 identityId"的
+        // split-brain（含断线清理触发的清空快照）。订阅 store，面板开着就整份重建。
+        IdentityPanelStateStore.addListener(IdentityPanelScreenBootstrap::onStoreChanged);
         BongClient.LOGGER.info("Registered identity panel bootstrap keybinding on key: O");
+    }
+
+    static void onStoreChanged(IdentityPanelState state) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) {
+            return;
+        }
+        client.execute(() -> {
+            if (client.currentScreen instanceof IdentityPanelScreen) {
+                client.setScreen(new IdentityPanelScreen());
+            }
+        });
     }
 
     private static void onEndClientTick(MinecraftClient client) {

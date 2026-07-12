@@ -1,5 +1,7 @@
 package com.bong.client.inventory;
 
+import com.bong.client.combat.EquippedShield;
+import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.WeaponEquippedStore;
 import com.bong.client.cultivation.ColorKind;
@@ -25,6 +27,7 @@ public class InspectScreenBootstrapTest {
     @AfterEach
     void resetStore() {
         InventoryStateStore.resetForTests();
+        EquippedShieldStore.resetForTests();
         WeaponEquippedStore.resetForTests();
         QiColorObservedStore.resetForTests();
     }
@@ -69,11 +72,12 @@ public class InspectScreenBootstrapTest {
     }
 
     @Test
-    void clearInventorySnapshotAlsoClearsWeaponStore() {
+    void clearInventorySnapshotClearsAllEquipmentHudStores() {
         WeaponEquippedStore.putOrClear(
             "main_hand",
             new EquippedWeapon("main_hand", 1L, "iron_sword", "sword", 200.0f, 200.0f, 0)
         );
+        EquippedShieldStore.equip(new EquippedShield(2L, "wooden_shield", 100.0f, 100.0f));
         QiColorObservedStore.replace(new QiColorObservedState(
             "offline:Observer",
             "offline:Observed",
@@ -87,6 +91,8 @@ public class InspectScreenBootstrapTest {
         InspectScreenBootstrap.clearInventorySnapshot();
 
         assertNull(WeaponEquippedStore.get("main_hand"));
+        assertNull(EquippedShieldStore.snapshot(),
+            "断线必须清空盾牌 fallback；否则新 session 主副手为空或为 tool 时旧盾会重返战斗 HUD");
         assertNull(QiColorObservedStore.snapshot());
     }
 

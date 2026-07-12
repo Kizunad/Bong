@@ -565,6 +565,22 @@ struct ManifestPoi {
     danger_bias: i32,
 }
 
+fn manifest_pois_into_runtime(raw_pois: Vec<ManifestPoi>) -> Vec<Poi> {
+    raw_pois
+        .into_iter()
+        .map(|raw| Poi {
+            zone: raw.zone,
+            kind: raw.kind,
+            name: raw.name,
+            pos_xyz: raw.pos_xyz,
+            tags: raw.tags,
+            unlock: raw.unlock,
+            qi_affinity: raw.qi_affinity,
+            danger_bias: raw.danger_bias,
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ManifestDecoration {
     global_id: u32,
@@ -762,20 +778,7 @@ impl TerrainProvider {
         }
 
         // --- Narrative / event metadata ---
-        let pois = manifest
-            .pois
-            .into_iter()
-            .map(|raw| Poi {
-                zone: raw.zone,
-                kind: raw.kind,
-                name: raw.name,
-                pos_xyz: raw.pos_xyz,
-                tags: raw.tags,
-                unlock: raw.unlock,
-                qi_affinity: raw.qi_affinity,
-                danger_bias: raw.danger_bias,
-            })
-            .collect::<Vec<_>>();
+        let pois = manifest_pois_into_runtime(manifest.pois);
 
         let anomaly_kinds = manifest
             .anomaly_kinds
@@ -1846,6 +1849,53 @@ mod tests {
             "a manifest with no `version` field must fail to deserialize (no default), \
              so a missing version can never be mistaken for a supported one"
         );
+    }
+
+    #[test]
+    fn manifest_novice_poi_coordinates_survive_deserialize_and_runtime_mapping() {
+        let json = r#"{
+            "version": 2,
+            "tile_size": 1,
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["minecraft:stone"],
+            "biome_palette": ["minecraft:plains"],
+            "tiles": [],
+            "pois": [
+                {
+                    "zone": "spawn",
+                    "kind": "novice_forge_station",
+                    "name": "破败炼器台",
+                    "pos_xyz": [224.0, 71.0, -240.0],
+                    "tags": ["poi_novice", "poi_type:forge_station", "selection:strict_radius_1500"]
+                },
+                {
+                    "zone": "spawn",
+                    "kind": "novice_alchemy_furnace",
+                    "name": "凡铁丹炉",
+                    "pos_xyz": [0.0, 72.0, -200.0],
+                    "tags": ["poi_novice", "poi_type:alchemy_furnace", "selection:relaxed_radius_2000"]
+                },
+                {
+                    "zone": "spawn",
+                    "kind": "novice_scroll_hidden",
+                    "name": "残卷藏匿点",
+                    "pos_xyz": [176.0, 72.0, -96.0],
+                    "tags": ["poi_novice", "poi_type:scroll_hidden", "selection:strict_radius_1500"]
+                }
+            ]
+        }"#;
+
+        let manifest: RasterManifest =
+            serde_json::from_str(json).expect("valid raster manifest fixture");
+        let pois = manifest_pois_into_runtime(manifest.pois);
+
+        assert_eq!(pois.len(), 3);
+        assert_eq!(pois[0].pos_xyz, [224.0, 71.0, -240.0]);
+        assert_eq!(pois[1].pos_xyz, [0.0, 72.0, -200.0]);
+        assert_eq!(pois[2].pos_xyz, [176.0, 72.0, -96.0]);
+        assert!(pois
+            .iter()
+            .all(|poi| poi.tags.iter().any(|tag| tag == "poi_novice")));
     }
 
     #[test]

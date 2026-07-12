@@ -645,17 +645,20 @@
         "realm": {
           "type": "string"
         },
+        "channel_ids": {
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
         "opened": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "type": "boolean"
           }
         },
         "flow_rate": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -663,8 +666,6 @@
           }
         },
         "flow_capacity": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -672,8 +673,6 @@
           }
         },
         "integrity": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -682,8 +681,6 @@
           }
         },
         "open_progress": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -692,8 +689,6 @@
           }
         },
         "cracks_count": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -971,6 +966,9 @@
               }
             }
           }
+        },
+        "target_meridian": {
+          "type": "string"
         }
       }
     },
@@ -15489,6 +15487,89 @@
         "recovery_at_tick": {
           "minimum": 0,
           "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "slots",
+        "cooldown_until_ms"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "quickslot_config",
+          "type": "string"
+        },
+        "slots": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "item_id",
+                  "display_name",
+                  "cast_duration_ms",
+                  "cooldown_ms",
+                  "icon_texture"
+                ],
+                "properties": {
+                  "item_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "cast_duration_ms": {
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "type": "integer"
+                  },
+                  "cooldown_ms": {
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "type": "integer"
+                  },
+                  "icon_texture": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "cooldown_until_ms": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "ack_request_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "bind_accepted": {
+          "type": "boolean"
         }
       }
     },

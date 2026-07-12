@@ -49,15 +49,18 @@ pub mod validate;
 pub use legacy::{id_to_legacy_body_part, legacy_body_part_to_id, legacy_body_parts_matching};
 pub use race_registry::{RaceLoadError, RaceRegistry, HUMAN_RACE_ID};
 pub use registry::{
-    humanoid_plan_static, BodyPlanLoadError, BodyPlanRegistry, HUMANOID_BODY_PLAN_ID,
+    humanoid_plan_static, humanoid_topology_static, BodyPlanLoadError, BodyPlanRegistry,
+    HUMANOID_BODY_PLAN_ID,
 };
 pub use resolve::{
-    body_part_for_mutation_slot, resolve_body_plan, resolve_body_plan_for_target, BodyPlanPurpose,
+    body_part_for_mutation_slot, channel_body_part, dugu_injection_channel, resolve_body_plan,
+    resolve_body_plan_for_target, resolve_meridian_topology_for_target, BodyPlanPurpose,
     BodyPlanResolveInputs, ResolveBodyPlanError,
 };
 pub use types::{
-    BodyPartDef, BodyPartId, BodyPlan, BodyPlanId, HeightBand, HeightBandAssignment, HitGeometry,
-    IntrinsicRace, MeridianProfile, PartBox, PartConsequence, RaceId, StandingAabbSpec,
+    BodyPartDef, BodyPartId, BodyPlan, BodyPlanId, ChannelDef, ChannelRole, DuguInjectionEntry,
+    HeightBand, HeightBandAssignment, HitGeometry, IntrinsicRace, MeridianFamily, MeridianProfile,
+    PartBox, PartConsequence, RaceId, RealmMeridianReq, StandingAabbSpec, TopologyEdge,
 };
 
 use std::path::Path;

@@ -80,7 +80,7 @@ pub enum AgentUiSessionState {
     TimedOut,
     /// 同一玩家的新请求替换了此 session（terminal）。
     Replaced,
-    /// 校验错误（境界/离线/allowed_button_ids）。server 侧仅 emit error response（terminal）。
+    /// 校验错误（境界/离线/allowed_button_ids）。server emit error response（terminal）。
     Error,
 }
 
@@ -456,11 +456,7 @@ fn process_agent_ui_cmd(
         // 向 client 发 AgentUiClose（reason=None 表示 Replaced，client 静默关闭）
         // 走专属 bong:agent_ui_close JSON channel，绕开 bong:server_data/proto 路径
         // （proto_convert.rs 对 AgentUiClose 是 unreachable!()，生产会 panic）。
-        let close_payload = AgentUiClosePayloadV1 {
-            request_id: old.request_id.clone(),
-            reason: None,
-        };
-        match serde_json::to_vec(&close_payload) {
+        match encode_agent_ui_close_payload(&old.request_id, None) {
             Ok(bytes) => {
                 if let Ok(mut client) = clients.get_mut(player_entity) {
                     client
@@ -515,6 +511,17 @@ fn process_agent_ui_cmd(
     );
 }
 
+/// 使用生产 serde 镜像编码专属 close channel 的裸 JSON bytes。
+fn encode_agent_ui_close_payload(
+    request_id: &str,
+    reason: Option<&str>,
+) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&AgentUiClosePayloadV1 {
+        request_id: request_id.to_string(),
+        reason: reason.map(str::to_string),
+    })
+}
+
 /// 向指定 client entity 发送 `AgentUiClosePayloadV1`（专属 bong:agent_ui_close JSON channel）。
 /// `reason` = None 表示 Replaced（client 静默关闭），Some(str) 表示具体原因。
 ///
@@ -526,11 +533,7 @@ fn send_agent_ui_close_to_client(
     reason: Option<&str>,
     clients: &mut Query<&mut Client>,
 ) {
-    let close_payload = AgentUiClosePayloadV1 {
-        request_id: request_id.to_string(),
-        reason: reason.map(|r| r.to_string()),
-    };
-    match serde_json::to_vec(&close_payload) {
+    match encode_agent_ui_close_payload(request_id, reason) {
         Ok(bytes) => {
             if let Ok(mut client) = clients.get_mut(player) {
                 client.send_custom_payload(ident!("bong:agent_ui_close"), &bytes);
@@ -664,7 +667,7 @@ pub fn receive_agent_ui_response_system(
                     "[bong][agent_ui] button_id={button_id} not in allowed_button_ids for request_id={}",
                     ev.request_id,
                 );
-                // 发 error response；session 仍为 Open（不消耗 session）
+                // 发 error response，并下发 close(reason) 让 client 给出玩家可见反馈。
                 let resp = AgentUiResponsePayloadV1 {
                     request_id: ev.request_id.clone(),
                     action: AgentUiActionType::Error,
@@ -673,6 +676,13 @@ pub fn receive_agent_ui_response_system(
                         .collect(),
                 };
                 let _ = redis.tx_outbound.send(RedisOutbound::AgentUiResponse(resp));
+                let _ = store.take_if_match(ev.player, &ev.request_id);
+                send_agent_ui_close_to_client(
+                    ev.player,
+                    &ev.request_id,
+                    Some("invalid_button_id"),
+                    &mut clients,
+                );
                 continue;
             }
         }
@@ -791,6 +801,55 @@ mod tests {
             timeout_ticks: 600,
             realm_gate,
             allowed_button_ids: vec!["btn_a".to_string(), "btn_b".to_string()],
+        }
+    }
+
+    /// 共享 wire fixture 必须由生产 encoder 精确产出，并锁定专属 channel ID。
+    #[test]
+    fn agent_ui_close_channel_wire_fixture_matches_production_encoder() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/agent-ui-close.channel-wire.sample.json"
+        ))
+        .expect("agent_ui_close 共享 wire fixture 应是合法 JSON");
+
+        assert_eq!(
+            fixture["channel"].as_str(),
+            Some(AGENT_UI_CLOSE_CHANNEL),
+            "共享 fixture channel 必须与 server 生产 channel 常量一致"
+        );
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("agent_ui_close 共享 fixture 应包含 cases 数组");
+        assert_eq!(
+            cases.len(),
+            3,
+            "共享 fixture 应覆盖 Replaced 与两种错误 reason"
+        );
+
+        for case in cases {
+            let name = case["name"].as_str().expect("fixture case.name 应为字符串");
+            let request_id = case["request_id"]
+                .as_str()
+                .expect("fixture case.request_id 应为字符串");
+            let reason = case.get("reason").and_then(serde_json::Value::as_str);
+            let expected_utf8 = case["payload_utf8"]
+                .as_str()
+                .expect("fixture case.payload_utf8 应为字符串");
+
+            let actual = encode_agent_ui_close_payload(request_id, reason)
+                .unwrap_or_else(|err| panic!("{name} 生产 close payload 编码失败：{err}"));
+            assert_eq!(
+                actual,
+                expected_utf8.as_bytes(),
+                "{name} fixture 必须与 server 生产 encoder 的原始 bytes 完全一致"
+            );
+
+            let parsed: AgentUiClosePayloadV1 =
+                serde_json::from_slice(&actual).unwrap_or_else(|err| {
+                    panic!("{name} 生产 bytes 无法按 AgentUiClosePayloadV1 解析：{err}")
+                });
+            assert_eq!(parsed.request_id, request_id, "{name} request_id 漂移");
+            assert_eq!(parsed.reason.as_deref(), reason, "{name} reason 漂移");
         }
     }
 
@@ -969,17 +1028,24 @@ mod tests {
         }
     }
 
-    /// allowed_button_ids 非法 → Redis emit {action:error, reason:invalid_button_id}；session 保持 Open
+    /// allowed_button_ids 非法 → Redis emit error + client close(reason=invalid_button_id)，session 结束
     #[test]
-    fn system_invalid_button_id_emits_error_response() {
+    fn system_invalid_button_id_emits_error_response_and_close_s2c() {
         let (mut app, rx) = build_agent_ui_app();
-        let entity = spawn_test_player(&mut app, "TestPlayer", Realm::Induce);
+        let (bundle, mut helper) = create_mock_client("TestPlayer");
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(entity).insert(Cultivation {
+            realm: Realm::Induce,
+            ..Cultivation::default()
+        });
 
         // 建立 Open session
         let cmd = make_cmd("req-btn", "TestPlayer", 0);
         app.world_mut().send_event(AgentUiCmdEvent(cmd));
         app.update();
         while rx.try_recv().is_ok() {} // 清掉 session 创建时的消息
+        flush_all_clients(&mut app);
+        let _ = helper.collect_received(); // 清掉初始 agent_ui_request S2C
 
         // 发非法 button_id
         app.world_mut().send_event(AgentUiResponseEvent {
@@ -1010,11 +1076,31 @@ mod tests {
             "reason 应为 invalid_button_id，实为 {:?}",
             resp.params.get("reason")
         );
-        // session 应仍为 Open
+        let payloads = collect_agent_ui_close_payloads(&mut app, &mut helper);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "invalid_button_id 时 client 应收 1 条 bong:agent_ui_close S2C，实际 {}",
+            payloads.len()
+        );
+        assert_eq!(
+            payloads[0]["request_id"].as_str(),
+            Some("req-btn"),
+            "AgentUiClose 的 request_id 应为 req-btn，实为 {}",
+            payloads[0]["request_id"]
+        );
+        assert_eq!(
+            payloads[0]["reason"].as_str(),
+            Some("invalid_button_id"),
+            "AgentUiClose 的 reason 应为 invalid_button_id，实为 {}",
+            payloads[0]["reason"]
+        );
+
+        // invalid_button_id 是 Error 终态，不能残留 Open session 等待 timeout。
         let store = app.world().resource::<AgentUiSessionStore>();
         assert!(
-            store.get(entity).is_some(),
-            "invalid_button_id 后 session 应仍为 Open"
+            store.get(entity).is_none(),
+            "invalid_button_id 后 session 应已终止并从 store 移除"
         );
     }
 

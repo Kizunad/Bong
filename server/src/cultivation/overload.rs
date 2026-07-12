@@ -108,11 +108,23 @@ pub fn apply_meridian_crack_to_system(
         return None;
     }
     let severity = severity.clamp(0.0, 1.0);
+    // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本函数返回值
+    // 仍是 legacy `Option<MeridianId>`（调用方尚未迁移，见函数签名）——humanoid 20 条
+    // 经脉均可逆映射回 `MeridianId`。
     let target_id = meridians
         .iter()
         .filter(|meridian| meridian.opened)
         .max_by_key(|meridian| meridian.opened_at)
-        .map(|meridian| meridian.id)
+        .map(|meridian| {
+            meridian.id.to_meridian_id().unwrap_or_else(|| {
+                panic!(
+                    "[bong][cultivation][overload] channel id {} has no legacy MeridianId \
+                     mapping — apply_meridian_crack_to_system cannot represent non-humanoid \
+                     channels yet",
+                    meridian.id
+                )
+            })
+        })
         .unwrap_or(MeridianId::Lung);
     let target = meridians.get_mut(target_id);
     target.cracks.push(MeridianCrack {

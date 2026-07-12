@@ -296,7 +296,10 @@ mod tests {
         BodyPlan {
             id: BodyPlanId::new(id),
             display_name: id.to_string(),
-            is_humanoid: true,
+            // plan-race-system-v1 P1a：validate_body_plan 现在要求 is_humanoid==true 必须
+            // 附带 meridian_profile；本 fixture 只练 race registry 加载/morph pair 机制，
+            // 与经脉语义无关，设 false 避免每处都补一份 profile 数据。
+            is_humanoid: false,
             parts: part_ids
                 .iter()
                 .map(|part_id| BodyPartDef {

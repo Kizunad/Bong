@@ -9,6 +9,10 @@
 
 use valence::prelude::{bevy_ecs, Component, Entity, Event, Events, Position, Query, Res, ResMut};
 
+use crate::body_plan::{
+    resolve_meridian_topology_for_target, BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs,
+    RaceRegistry,
+};
 use crate::combat::components::StatusEffects;
 use crate::combat::events::StatusEffectKind;
 use crate::cultivation::tick::cultivation_acceleration_multiplier;
@@ -16,7 +20,9 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
-use super::components::{Cultivation, MeridianFamily, MeridianId, MeridianSystem};
+use super::components::{
+    Cultivation, MeridianChannelId, MeridianFamily, MeridianId, MeridianSystem,
+};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 use super::topology::MeridianTopology;
@@ -27,8 +33,15 @@ use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
 /// 玩家客户端发起的"选择下一条经脉"目标。未选目标时此 component 不存在。
-#[derive(Debug, Clone, Copy, Component)]
-pub struct MeridianTarget(pub MeridianId);
+///
+/// plan-race-system-v1 P1b：从闭合枚举 `MeridianId` 换轨为 string
+/// [`MeridianChannelId`]（非人形构型的经脉不在 20 个 TCM 名字之列）。内部推进逻辑
+/// （`advance_open_progress_at`/`is_target_adjacent`）仍以 `MeridianId` 为参数类型
+/// （humanoid-only boundary，本轮不迁移——与 `combat::baomai_v4` 同一惯例），
+/// `meridian_open_tick` 在消费边界处经 [`MeridianChannelId::to_meridian_id`] 转换，
+/// 非 humanoid channel（尚无非人形玩法数据）显式跳过而非 panic。
+#[derive(Debug, Clone, Component)]
+pub struct MeridianTarget(pub MeridianChannelId);
 
 #[derive(Debug, Clone, Copy, Event)]
 pub struct MeridianOpenedEvent {
@@ -156,13 +169,14 @@ pub fn is_target_adjacent(
     }
     topo.neighbors(target)
         .iter()
-        .any(|n| meridians.get(*n).opened)
+        .any(|n| meridians.get(n.clone()).opened)
 }
 
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub fn meridian_open_tick(
-    topo: Res<MeridianTopology>,
+    body_plans: Option<Res<BodyPlanRegistry>>,
+    races: Option<Res<RaceRegistry>>,
     clock: Res<CultivationClock>,
     zones: Option<Res<ZoneRegistry>>,
     mut qi_account: Option<ResMut<WorldQiAccount>>,
@@ -187,6 +201,25 @@ pub fn meridian_open_tick(
         statuses,
     ) in entities.iter_mut()
     {
+        // plan-race-system-v1 P1b：`MeridianTarget` 现为 `MeridianChannelId`——
+        // `advance_open_progress_at`/`is_target_adjacent`/`meridian_difficulty_factor`
+        // 仍是 humanoid-only boundary（本轮不迁移，legacy `MeridianId` 参数类型不变，
+        // 见 `combat::baomai_v4` 同一惯例）。非 humanoid channel（尚无非人形玩法数据）
+        // 显式跳过整个实体，而非 panic 或静默误判为某个哨兵经脉。
+        let Some(target_meridian_id) = target.0.to_meridian_id() else {
+            // plan-race-system-v1 P1 对抗审查 M4：本分支在非 humanoid `MeridianTarget`
+            // 持续挂靠期间**每 tick**都会命中（该 entity 的目标经脉永远无法被本
+            // humanoid-only boundary 推进）——`warn!` 级别会在长期运行下刷屏；降级为
+            // `debug!`（仍保留可观测性，日常运行日志不再被淹没）。
+            tracing::debug!(
+                "[bong][cultivation][meridian_open] entity={:?} MeridianTarget channel {} has no \
+                 legacy MeridianId mapping — meridian_open_tick cannot advance non-humanoid \
+                 channels yet, skipping",
+                entity,
+                target.0,
+            );
+            continue;
+        };
         let dimension = current_dimension
             .map(|current| current.0)
             .unwrap_or(DimensionKind::Overworld);
@@ -205,12 +238,26 @@ pub fn meridian_open_tick(
         let Some(account) = qi_account.as_deref_mut() else {
             continue;
         };
-        let adj = is_target_adjacent(&topo, &meridians, target.0);
+        let topo = resolve_meridian_topology_for_target(
+            entity,
+            BodyPlanPurpose::Intrinsic,
+            BodyPlanResolveInputs {
+                cultivation: Some(&*cultivation),
+                // `BeastKind` 不是 `Component`（既有 `combat::resolve`/`combat::carrier`
+                // 消费点同款简化，见其文档）——races.json 现阶段全部 BeastKind 派生种族
+                // 均落 humanoid body plan，`None` 与"真的查了 BeastKind"结果 bit-for-bit
+                // 一致，P5 引入差异化非人形 NPC 经脉时需要回来补上。
+                beast_kind: None,
+            },
+            body_plans.as_deref(),
+            races.as_deref(),
+        );
+        let adj = is_target_adjacent(topo, &meridians, target_meridian_id);
         let cultivation_boost = {
             let accel = statuses
                 .map(cultivation_acceleration_multiplier)
                 .unwrap_or(1.0);
-            let extra = if target.0.family() == MeridianFamily::Extraordinary {
+            let extra = if target_meridian_id.family() == MeridianFamily::Extraordinary {
                 statuses
                     .map(extraordinary_meridian_acceleration_multiplier)
                     .unwrap_or(1.0)
@@ -224,7 +271,7 @@ pub fn meridian_open_tick(
         if let Ok((delta, just_opened)) = advance_open_progress_at(
             &mut cultivation,
             &mut meridians,
-            target.0,
+            target_meridian_id,
             zone_qi,
             adj,
             now,
@@ -240,11 +287,11 @@ pub fn meridian_open_tick(
                 }
                 if let Some(mut life) = life {
                     life.push(BiographyEntry::MeridianOpened {
-                        id: target.0,
+                        id: target_meridian_id,
                         tick: now,
                     });
                     if life.spirit_root_first.is_none() {
-                        life.spirit_root_first = Some(target.0);
+                        life.spirit_root_first = Some(target_meridian_id);
                     }
                 }
                 if let Some(skill_xp_events) = skill_xp_events.as_deref_mut() {
@@ -265,7 +312,7 @@ pub fn meridian_open_tick(
                         gameplay_vfx::spawn_request(
                             gameplay_vfx::MERIDIAN_OPEN,
                             p,
-                            Some(meridian_flash_direction(target.0)),
+                            Some(meridian_flash_direction(target.0.clone())),
                             "#22FFAA",
                             1.0,
                             4,
@@ -339,22 +386,34 @@ fn extraordinary_meridian_acceleration_multiplier(se: &StatusEffects) -> f64 {
     1.0 + sum as f64
 }
 
-fn meridian_flash_direction(target: MeridianId) -> [f64; 3] {
-    match target {
-        MeridianId::Lung | MeridianId::LargeIntestine | MeridianId::Heart => [0.5, -0.2, 0.0],
-        MeridianId::Stomach | MeridianId::Spleen | MeridianId::SmallIntestine => [-0.5, -0.2, 0.0],
-        MeridianId::Bladder | MeridianId::Kidney | MeridianId::Gallbladder => [0.0, -0.3, 0.5],
-        MeridianId::Liver | MeridianId::Pericardium | MeridianId::TripleEnergizer => {
+/// plan-race-system-v1 P1b：签名换轨为 [`MeridianChannelId`]（`MeridianTarget` 的新
+/// 字段类型），内部经 [`MeridianChannelId::to_meridian_id`] 桥回 legacy 枚举复用既有
+/// 8 方向分组（纯视觉 VFX 方向，非 humanoid channel 尚无对应美术语义）。非 humanoid /
+/// 未知 channel id 落一个中性正上方向（`[0.0, 0.8, 0.0]`，与既有奇经分组同向）——
+/// 仅影响粒子朝向的美术细节，不阻塞打通逻辑本身，故显式默认而非 panic。
+fn meridian_flash_direction(target: MeridianChannelId) -> [f64; 3] {
+    match target.to_meridian_id() {
+        Some(MeridianId::Lung | MeridianId::LargeIntestine | MeridianId::Heart) => [0.5, -0.2, 0.0],
+        Some(MeridianId::Stomach | MeridianId::Spleen | MeridianId::SmallIntestine) => {
+            [-0.5, -0.2, 0.0]
+        }
+        Some(MeridianId::Bladder | MeridianId::Kidney | MeridianId::Gallbladder) => {
+            [0.0, -0.3, 0.5]
+        }
+        Some(MeridianId::Liver | MeridianId::Pericardium | MeridianId::TripleEnergizer) => {
             [0.0, -0.3, -0.5]
         }
-        MeridianId::Du
-        | MeridianId::Ren
-        | MeridianId::Chong
-        | MeridianId::Dai
-        | MeridianId::YinQiao
-        | MeridianId::YangQiao
-        | MeridianId::YinWei
-        | MeridianId::YangWei => [0.0, 0.8, 0.0],
+        Some(
+            MeridianId::Du
+            | MeridianId::Ren
+            | MeridianId::Chong
+            | MeridianId::Dai
+            | MeridianId::YinQiao
+            | MeridianId::YangQiao
+            | MeridianId::YinWei
+            | MeridianId::YangWei,
+        )
+        | None => [0.0, 0.8, 0.0],
     }
 }
 
@@ -381,19 +440,19 @@ mod tests {
 
     #[test]
     fn first_meridian_allows_regular_only() {
-        let t = MeridianTopology::standard();
+        let t = crate::body_plan::humanoid_topology_static();
         let ms = MeridianSystem::default();
-        assert!(is_target_adjacent(&t, &ms, MeridianId::Lung));
-        assert!(!is_target_adjacent(&t, &ms, MeridianId::YangWei));
+        assert!(is_target_adjacent(t, &ms, MeridianId::Lung));
+        assert!(!is_target_adjacent(t, &ms, MeridianId::YangWei));
     }
 
     #[test]
     fn second_meridian_requires_real_adjacency() {
-        let t = MeridianTopology::standard();
+        let t = crate::body_plan::humanoid_topology_static();
         let mut ms = MeridianSystem::default();
         ms.get_mut(MeridianId::Lung).opened = true;
-        assert!(is_target_adjacent(&t, &ms, MeridianId::LargeIntestine));
-        assert!(!is_target_adjacent(&t, &ms, MeridianId::Stomach));
+        assert!(is_target_adjacent(t, &ms, MeridianId::LargeIntestine));
+        assert!(!is_target_adjacent(t, &ms, MeridianId::Stomach));
     }
 
     #[test]
@@ -444,7 +503,6 @@ mod tests {
     fn meridian_open_requires_qi_account_before_consuming_qi() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
-        app.insert_resource(MeridianTopology::standard());
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
         app.insert_resource(zones);
@@ -456,7 +514,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::new([8.0, 66.0, 8.0]),
-                MeridianTarget(MeridianId::Lung),
+                MeridianTarget(MeridianId::Lung.channel_id()),
                 cultivation,
                 MeridianSystem::default(),
             ))
@@ -474,7 +532,6 @@ mod tests {
     fn meridian_open_cost_is_credited_to_pending_inflow_pool_not_zone_ledger() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
-        app.insert_resource(MeridianTopology::standard());
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
         app.insert_resource(zones);
@@ -486,7 +543,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::new([8.0, 66.0, 8.0]),
-                MeridianTarget(MeridianId::Lung),
+                MeridianTarget(MeridianId::Lung.channel_id()),
                 cultivation,
                 MeridianSystem::default(),
             ))
@@ -533,7 +590,6 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
-        app.insert_resource(MeridianTopology::standard());
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
         app.insert_resource(zones);
@@ -545,7 +601,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::new([8.0, 66.0, 8.0]),
-                MeridianTarget(MeridianId::Lung),
+                MeridianTarget(MeridianId::Lung.channel_id()),
                 cultivation,
                 MeridianSystem::default(),
             ))
@@ -574,7 +630,6 @@ mod tests {
     fn collapsed_zone_blocks_meridian_open_progress_even_with_stale_qi() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
-        app.insert_resource(MeridianTopology::standard());
         let mut zones = ZoneRegistry::fallback();
         let zone = zones.find_zone_mut("spawn").unwrap();
         zone.spirit_qi = 0.9;
@@ -586,7 +641,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::new([8.0, 66.0, 8.0]),
-                MeridianTarget(MeridianId::Lung),
+                MeridianTarget(MeridianId::Lung.channel_id()),
                 player_with_qi(10.0),
                 MeridianSystem::default(),
             ))
@@ -605,7 +660,6 @@ mod tests {
     fn meridian_open_uses_current_dimension_for_zone_lookup() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
-        app.insert_resource(MeridianTopology::standard());
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
         app.insert_resource(zones);
@@ -616,7 +670,7 @@ mod tests {
             .spawn((
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Tsy),
-                MeridianTarget(MeridianId::Lung),
+                MeridianTarget(MeridianId::Lung.channel_id()),
                 player_with_qi(10.0),
                 MeridianSystem::default(),
             ))
@@ -634,7 +688,6 @@ mod tests {
     fn meridian_open_emits_vfx() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
-        app.insert_resource(MeridianTopology::standard());
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
         app.insert_resource(zones);
@@ -649,7 +702,7 @@ mod tests {
         meridians.get_mut(MeridianId::Lung).open_progress = 1.0 - 1e-6;
         app.world_mut().spawn((
             Position::new([8.0, 66.0, 8.0]),
-            MeridianTarget(MeridianId::Lung),
+            MeridianTarget(MeridianId::Lung.channel_id()),
             cultivation,
             meridians,
         ));
@@ -673,7 +726,6 @@ mod tests {
     fn meridian_open_emits_opened_event() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
-        app.insert_resource(MeridianTopology::standard());
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
         app.insert_resource(zones);
@@ -689,7 +741,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::new([8.0, 66.0, 8.0]),
-                MeridianTarget(MeridianId::Lung),
+                MeridianTarget(MeridianId::Lung.channel_id()),
                 cultivation,
                 meridians,
             ))
