@@ -54,6 +54,15 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
       "resume": "resume_agent",
       "status": "runtime_status_or_list"
     },
+    "claude_code_cli": {
+      "required_tools": ["Bash", "Monitor"],
+      "adapter": "skills/bugfix/scripts/claude_code_adapter.py",
+      "spawn": "Bash adapter spawn",
+      "message": "phase-yield result or adapter resume prompt",
+      "wait": "Monitor adapter wait",
+      "resume": "Bash adapter resume by canonical sessionId",
+      "status": "Bash adapter status via claude agents --json --all"
+    },
     "claude_tools": {
       "required_tools": ["Agent", "SendMessage", "ScheduleWakeup"],
       "spawn": "Agent",
@@ -66,9 +75,10 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 }
 ```
 
-- `claude_tools` 只适用于宿主在**当前会话工具清单**中真实暴露全部三个工具的 Claude harness；Claude Code CLI 的 `claude agents`/`--background`/`--resume` 和 Claude Agent SDK 的 session/subagent API 不等于 `Agent` 或 `ScheduleWakeup` 工具，不能据此选中该分支。
-- 当前宿主缺任一 `required_tools` 时必须 fail closed：记录缺失能力并停止启动 BugFix loop，不得执行部分状态机。尤其缺 `ScheduleWakeup` 时不能用 shell sleep/busy-poll 冒充等待；缺可枚举 canonical ID 的 status 时不能授权 validator token。
-- Claude Code CLI 可用 `claude agents` 管理后台 agent、用 `--resume`/`--continue` 恢复会话；Claude Agent SDK 可通过宿主集成提供 session/subagent。但两者的状态查询、等待调度与 canonical ID 必须由目标宿主显式接入并出现在能力清单后，才能新增对应 adapter。说明文档不是生产接线证据。
+- `claude_code_cli` 是当前 Claude Code 2.1.207 的生产 adapter：宿主必须暴露 `Bash` 与 `Monitor`，并通过 `python3 skills/bugfix/scripts/claude_code_adapter.py` 调用真实 CLI。`spawn` 使用 `claude --background`；`status` 使用 `claude agents --json --all` 并以完整 `sessionId` 作为 canonical ID；`resume` 使用 `claude --resume <sessionId> --background`；`wait` 必须把 adapter 的有限 `wait` 子命令交给宿主 `Monitor`，由退出/超时事件唤醒主干。该 CLI 没有父子 agent 双向 message API，因此 token 协议强制 phase-yield：子任务在结果中返回结构化请求后结束，主干再把 grant/checkpoint 放入 resume prompt。
+- `claude_tools` 只适用于宿主在**当前会话工具清单**中真实暴露全部三个工具的旧 Claude harness；不得把 `claude_code_cli` 的 CLI 命令冒充这些工具。Claude Agent SDK 若由产品接入 Managed Agents，可用 session/thread event stream 实现 spawn/message/status/wait/resume，但必须另写可执行 adapter 并验证事件链，不能只凭 SDK 文档选中分支。
+- 当前宿主缺任一 `required_tools` 时必须 fail closed：记录缺失能力并停止启动 BugFix loop，不得执行部分状态机。尤其等待能力缺失时不能用 shell sleep/busy-poll 冒充；缺可枚举 canonical ID 的 status 时不能授权 validator token。
+- 修改 `claude_code_cli` adapter 或契约时，除纯内存 dry-run 外必须运行 `python3 skills/bugfix/scripts/claude_code_adapter_test.py`；该测试驱动真实 `claude --background` → `claude agents --json` → 有限 wait → `claude --resume`，并清理探针 session。provider 429 时至少退避 120 秒再重跑。
 - 支持子 agent 主动发消息的 harness：用本分支真实 message API 发送结构化 token 消息；主干用本分支真实 wait/status API 接收和对拍。
 - 不支持子 agent 在运行中等待父级输入，或能力探测不确定时：强制使用 **phase-yield/checkpoint**。实施 agent 结构化返回 `TOKEN_REQUEST + checkpoint` 后结束当前 turn，主干入 FIFO；获准后通过该 harness 的 `resume_agent` / `followup_task` / `send_input` / Agent continuation 恢复同一任务。不得假设子 agent 能主动 `wait_agent` 等父级。
 - 能力不足以恢复同一任务时，持久化绝对 worktree、phase、HEAD、request/token、测试证据，启动同任务 continuation；不得传实施结论或丢失 checkpoint。
@@ -118,7 +128,7 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 
 ## 等待协议
 
-- 等待新 skeleton、资源槽、review 或 e2e 时采用约 1200 秒节奏：Claude 使用 `ScheduleWakeup`；Codex 使用产品 wait/monitor 或 goal continuation；其它 harness 使用其真实等待/续跑入口。不要声称未暴露的 harness 具有 `ScheduleWakeup`。
+- 等待新 skeleton、资源槽、review 或 e2e 时采用约 1200 秒节奏：`claude_tools` 使用 `ScheduleWakeup`；`claude_code_cli` 使用宿主 `Monitor` 执行 adapter 的有限 `wait` 子命令；Codex 使用产品 wait/monitor 或 goal continuation；其它 harness 使用其真实等待/续跑入口。不要声称未暴露的 harness 具有 `ScheduleWakeup`。
 - 同一等待对象连续 3 轮无进展时升级告警、记录证据并继续对应 harness 的等待机制；不得因此结束 loop。只有用户明确停止，或出现确定性且必须由用户选择的决策点，才暂停等待输入。
 - 禁止 shell `sleep` loop、短周期 GitHub 查询和持续占用 agent 的 busy-poll。
 

@@ -20,6 +20,7 @@ CONTRACT_PATTERN = re.compile(
     r"```harness-contract\s*(\{.*?\})\s*```", re.DOTALL
 )
 ADAPTER_OPERATIONS = {"spawn", "message", "wait", "resume", "status"}
+ADAPTER_SCRIPT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def load_harness_contract(skill_path: Path) -> dict[str, object]:
@@ -48,6 +49,13 @@ def load_harness_contract(skill_path: Path) -> dict[str, object]:
             raise ProtocolError(
                 f"adapter {name} operations missing: {missing_operations}"
             )
+        script = adapter.get("adapter")
+        if script is not None:
+            if not isinstance(script, str) or not script:
+                raise ProtocolError(f"adapter {name} script invalid")
+            script_path = ADAPTER_SCRIPT_ROOT / script
+            if not script_path.is_file():
+                raise ProtocolError(f"adapter {name} script missing: {script}")
     return contract
 
 
@@ -1305,6 +1313,12 @@ class StateMachineDryRun(unittest.TestCase):
                     self.assertIsNone(
                         select_harness_adapter(contract, required - {missing})
                     )
+        self.assertEqual(
+            select_harness_adapter(contract, {"Bash", "Monitor"}),
+            "claude_code_cli",
+        )
+        self.assertIsNone(select_harness_adapter(contract, {"Bash"}))
+        self.assertIsNone(select_harness_adapter(contract, {"Monitor"}))
         self.assertIsNone(
             select_harness_adapter(
                 contract,
