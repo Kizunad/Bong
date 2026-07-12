@@ -6,14 +6,12 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 ADAPTER = Path(__file__).with_name("claude_code_adapter.py")
 PROMPT_READY = "只回复字符串 BUGFIX_ADAPTER_E2E_READY，不调用工具。"
 PROMPT_RESUMED = "只回复字符串 BUGFIX_ADAPTER_E2E_RESUMED，不调用工具。"
-TERMINAL = {"completed", "failed", "stopped"}
 
 
 def run_adapter(*args: str) -> dict[str, object]:
@@ -35,14 +33,15 @@ def stop(short_id: object) -> None:
 
 
 def wait_terminal(session_id: str, timeout: float = 180.0) -> dict[str, object]:
-    deadline = time.monotonic() + timeout
-    while True:
-        status = run_adapter("status", "--session-id", session_id)
-        if status.get("state") in TERMINAL or status.get("status") == "idle":
-            return status
-        if time.monotonic() >= deadline:
-            raise AssertionError(f"session {session_id} did not terminate: {status}")
-        time.sleep(2.0)
+    return run_adapter(
+        "wait",
+        "--session-id",
+        session_id,
+        "--interval",
+        "2",
+        "--timeout",
+        str(timeout),
+    )
 
 
 def main() -> int:

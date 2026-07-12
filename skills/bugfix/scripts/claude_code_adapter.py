@@ -93,14 +93,21 @@ def resume(
 
 def wait(cwd: Path, session_id: str, interval: float, timeout: float) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
+    first_poll = True
     while True:
         item = require_session(cwd, session_id)
         state = item.get("state")
         status = item.get("status")
-        if state in TERMINAL_STATES or status == "idle":
+        if state in TERMINAL_STATES:
+            return item
+        # A freshly backgrounded session is briefly reported as working/idle
+        # before its process changes to busy. Require one settled poll before
+        # accepting idle, otherwise wait returns before the task starts.
+        if status == "idle" and not first_poll:
             return item
         if time.monotonic() >= deadline:
             raise AdapterError(f"wait timed out for {session_id} in state={state!r}")
+        first_poll = False
         time.sleep(interval)
 
 
