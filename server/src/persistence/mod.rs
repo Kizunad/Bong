@@ -15401,7 +15401,7 @@ mod persistence_tests {
             .prepare("PRAGMA table_info(qi_runtime_accounts)")
             .expect("qi_runtime_accounts table_info should prepare");
         let columns = statement
-            .query_map([], |row| Ok(row.get::<_, String>(1)?))
+            .query_map([], |row| row.get::<_, String>(1))
             .expect("qi_runtime_accounts table_info should query")
             .collect::<Result<Vec<_>, _>>()
             .expect("qi_runtime_accounts columns should collect");

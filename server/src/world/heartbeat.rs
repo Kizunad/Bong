@@ -3201,8 +3201,10 @@ mod tests {
 
     #[test]
     fn heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep() {
-        let mut heartbeat = WorldHeartbeat::default();
-        heartbeat.eval_interval_ticks = 1;
+        let mut heartbeat = WorldHeartbeat {
+            eval_interval_ticks: 1,
+            ..Default::default()
+        };
         let mut zones = ZoneRegistry {
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
@@ -3391,8 +3393,10 @@ mod tests {
 
     #[test]
     fn restored_pseudo_vein_first_tick_returns_dynamic_zone_balance_to_pending_pool() {
-        let mut heartbeat = WorldHeartbeat::default();
-        heartbeat.eval_interval_ticks = 1;
+        let mut heartbeat = WorldHeartbeat {
+            eval_interval_ticks: 1,
+            ..Default::default()
+        };
         let mut zones = ZoneRegistry {
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
