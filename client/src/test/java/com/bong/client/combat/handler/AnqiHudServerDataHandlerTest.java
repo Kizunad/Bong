@@ -62,18 +62,17 @@ class AnqiHudServerDataHandlerTest {
             "echo_count=0 应被接受；实际=" + AnqiHudStateStore.snapshot().echoCount());
     }
 
-    // ─── kind="aim" 是 server 未发送的预留 kind，handler 应 no-op ──
+    // ─── kind="aim" 是正式 wire 变体，即使 server 暂无事件源也必须可消费 ──
 
     @Test
-    void aimKindIsNoOpBecauseServerDoesNotEmitAim() {
-        // anqi_v2 无 aim 前摇事件；server 不发 kind="aim"；handler 应 no-op 不修改 store
+    void aimKindWritesAimProgressToStore() {
         ServerDataDispatch dispatch = handler.handle(parse(
-            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"aim\",\"aim_progress\":0.73}"
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"aim\",\"aim_progress\":0.73,\"tick\":9}"
         ));
-        assertFalse(dispatch.handled(),
-            "kind='aim' server 当前不发送，handler 应 no-op（延后至 aim-phase plan）；dispatch=" + dispatch.logMessage());
-        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(),
-            "kind='aim' 不应修改 store；实际=" + AnqiHudStateStore.snapshot());
+        assertTrue(dispatch.handled(),
+            "kind='aim' 是正式 wire 变体，handler 必须消费；dispatch=" + dispatch.logMessage());
+        assertEquals(0.73f, AnqiHudStateStore.snapshot().aimProgress(), 0.001f,
+            "aim_progress 必须原样写入 aim 维度；实际=" + AnqiHudStateStore.snapshot());
     }
 
     // ─── kind="charge" → chargeProgress ─────────────────────────
@@ -310,6 +309,54 @@ class AnqiHudServerDataHandlerTest {
             "最大合法 abrasion_qi_payload 转成 Java float 后必须仍为有限数，实际=" + storedQi);
         assertEquals(Float.MAX_VALUE, storedQi,
             "稳定上界应无损落到 Java Float.MAX_VALUE");
+    }
+
+    @Test
+    void protoEchoCountAboveJavaIntBoundaryIsRejectedWithoutStoreMutation() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAnqiHud(Envelope.AnqiHud.newBuilder()
+                        .setKind("echo")
+                        // protobuf uint32 使用 signed int API；MIN_VALUE 的 wire 值是 2^31。
+                        .setEchoCount(Integer.MIN_VALUE)
+                        .setTick(1L))
+                .build();
+        ProtoServerDataBridge.BridgeResult bridge =
+                ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridge.isSuccess(),
+            "uint32=2^31 应能通过 protobuf bridge，边界拒绝属于 Java HUD 消费层");
+        JsonObject json = JsonParser.parseString(bridge.legacyJson()).getAsJsonObject();
+        assertEquals(2_147_483_648L, json.get("echo_count").getAsLong(),
+            "bridge 必须保留 protobuf uint32 的无符号值");
+
+        ServerDataDispatch dispatch = handler.handle(parse(bridge.legacyJson()));
+        assertFalse(dispatch.handled(),
+            "超过 Java int 上界的 echo_count 必须拒绝，不能窄化成负数");
+        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(),
+            "拒绝越界 echo_count 后 store 必须保持空状态");
+    }
+
+    @Test
+    void invalidNumericAndContainerBoundariesAreRejectedIndependently() {
+        String[] invalidPayloads = {
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":0.5}",
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"aim\",\"aim_progress\":1.000001}",
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"charge\",\"charge_progress\":-0.000001}",
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"abrasion\","
+                + "\"abrasion_container\":\"unknown\",\"abrasion_qi_payload\":1}",
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"abrasion\","
+                + "\"abrasion_container\":\"quiver\",\"abrasion_qi_payload\":3.4028235e38}",
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":1,"
+                + "\"tick\":9007199254740992}"
+        };
+
+        for (String payload : invalidPayloads) {
+            AnqiHudStateStore.clear();
+            ServerDataDispatch dispatch = handler.handle(parse(payload));
+            assertFalse(dispatch.handled(),
+                "每个越界字段都必须独立拒绝；payload=" + payload);
+            assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(),
+                "拒绝后不得污染 store；payload=" + payload);
+        }
     }
 
     // ─── ServerDataRouter 路由测试 ───────────────────────────────

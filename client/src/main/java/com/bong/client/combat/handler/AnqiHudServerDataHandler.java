@@ -17,6 +17,7 @@ import com.google.gson.JsonPrimitive;
  * <p>payload.kind 路由（server 实际发送的各路）：
  * <ul>
  *   <li>"echo"      → {@link AnqiHudStateStore#updateEcho}（DecoyDeployEvent.echo_count）</li>
+ *   <li>"aim"       → {@link AnqiHudStateStore#updateAim}（协议预留的瞄准进度）</li>
  *   <li>"charge"    → {@link AnqiHudStateStore#updateCharge}（QiInjectionEvent.overload_ratio /
  *       ArmorPierceEvent.ignored_defense_ratio 作蓄力度量）</li>
  *   <li>"abrasion"  → {@link AnqiHudStateStore#updateAbrasion}（CarrierAbrasionEvent.after_qi）</li>
@@ -30,9 +31,8 @@ import com.google.gson.JsonPrimitive;
  * <p>tick 守序修复（major）：payload 带 tick 字段，handler 传给 Store；Store 按维度记录
  * lastTick，仅 tick >= lastTick 才更新，乱序旧包静默丢弃。同帧不同维度允许相同 tick。
  *
- * <p>"aim" 路由暂不实现：anqi_v2 当前无 aim 前摇/进度事件源，aim HUD 延后至未来
- * 引入 aim-phase 事件的 plan。{@link AnqiHudState#aim} factory 及 {@code AnqiHudPlanner.appendAim}
- * 留作预留接口，未来 plan 接入时无需改动 handler 以外的代码。
+ * <p>anqi_v2 当前没有生产 aim 事件源，但 {@code aim} 已是 Rust/TypeBox/protobuf 的正式 wire
+ * 变体。handler 必须消费该变体，避免未来发送端接入后出现 schema 通过但 HUD 静默丢包。
  *
  * <p>守恒红线：只读 payload 字段，不重算真元，不修改任何其他 store。
  */
@@ -40,35 +40,73 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
 
     /** 默认显示时长（毫秒），足够玩家观察 HUD 反馈。 */
     private static final long DISPLAY_DURATION_MS = 2_000L;
+    private static final long MAX_SAFE_TICK = 9_007_199_254_740_991L;
+    private static final long MAX_ECHO_COUNT = Integer.MAX_VALUE;
+    private static final double MAX_ABRASION_QI_PAYLOAD = 3.4028234e38;
 
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
         JsonObject payload = envelope.payload();
         String kind = readString(payload, "kind");
         long now  = System.currentTimeMillis();
-        long tick = readLong(payload, "tick", 0L);
+        Long tickValue = readBoundedInteger(payload, "tick", 0L, MAX_SAFE_TICK);
+        if (tickValue == null) {
+            return invalid(envelope, "tick must be an integer in [0, " + MAX_SAFE_TICK + "]");
+        }
+        long tick = tickValue;
 
         switch (kind) {
             case "echo" -> {
-                int echoCount = (int) readLong(payload, "echo_count", 0L);
-                AnqiHudStateStore.updateEcho(echoCount, now, DISPLAY_DURATION_MS, tick);
+                Long echoCount = readBoundedInteger(payload, "echo_count", 0L, MAX_ECHO_COUNT);
+                if (echoCount == null) {
+                    return invalid(envelope, "echo_count must fit the Java HUD int boundary");
+                }
+                AnqiHudStateStore.updateEcho(echoCount.intValue(), now, DISPLAY_DURATION_MS, tick);
+            }
+            case "aim" -> {
+                Double aimProgress = readBoundedDouble(payload, "aim_progress", 0.0, 0.0, 1.0);
+                if (aimProgress == null) {
+                    return invalid(envelope, "aim_progress must be finite in [0, 1]");
+                }
+                AnqiHudStateStore.updateAim(aimProgress.floatValue(), now, DISPLAY_DURATION_MS, tick);
             }
             case "charge" -> {
-                float chargeProgress = (float) readDouble(payload, "charge_progress", 0.0);
-                AnqiHudStateStore.updateCharge(chargeProgress, now, DISPLAY_DURATION_MS, tick);
+                Double chargeProgress = readBoundedDouble(
+                        payload, "charge_progress", 0.0, 0.0, 1.0);
+                if (chargeProgress == null) {
+                    return invalid(envelope, "charge_progress must be finite in [0, 1]");
+                }
+                AnqiHudStateStore.updateCharge(
+                        chargeProgress.floatValue(), now, DISPLAY_DURATION_MS, tick);
             }
             case "abrasion" -> {
                 String container = readString(payload, "abrasion_container");
-                float qiPayload = (float) readDouble(payload, "abrasion_qi_payload", 0.0);
-                AnqiHudStateStore.updateAbrasion(container, qiPayload, now, DISPLAY_DURATION_MS, tick);
+                if (!isCanonicalContainer(container)) {
+                    return invalid(envelope, "abrasion_container is not a canonical wire tag");
+                }
+                Double qiPayload = readBoundedDouble(
+                        payload,
+                        "abrasion_qi_payload",
+                        0.0,
+                        0.0,
+                        MAX_ABRASION_QI_PAYLOAD);
+                if (qiPayload == null) {
+                    return invalid(envelope, "abrasion_qi_payload is outside the Java float boundary");
+                }
+                AnqiHudStateStore.updateAbrasion(
+                        container, qiPayload.floatValue(), now, DISPLAY_DURATION_MS, tick);
             }
             case "multishot" -> {
                 // 多发齐射：server 用 echo_count 字段承载 projectile_count（复用字段，无新 proto 字段）。
-                int volley = (int) readLong(payload, "echo_count", 0L);
-                AnqiHudStateStore.updateMultiShot(volley, now, DISPLAY_DURATION_MS, tick);
+                Long volley = readBoundedInteger(payload, "echo_count", 0L, MAX_ECHO_COUNT);
+                if (volley == null) {
+                    return invalid(envelope, "multishot echo_count must fit the Java HUD int boundary");
+                }
+                AnqiHudStateStore.updateMultiShot(
+                        volley.intValue(), now, DISPLAY_DURATION_MS, tick);
             }
             default -> {
-                // 未知 kind（包括 "aim"——server 当前不发，预留给未来 aim-phase plan）静默忽略，不修改 store
+                // 未知 kind 静默忽略，不修改 store。
                 return ServerDataDispatch.noOp(
                         envelope.type(),
                         "anqi_hud: unknown kind='" + kind + "', ignoring safely"
@@ -91,21 +129,56 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
         return p.isString() ? p.getAsString() : "";
     }
 
-    private static double readDouble(JsonObject obj, String field, double fallback) {
+    private static Double readBoundedDouble(
+            JsonObject obj,
+            String field,
+            double fallback,
+            double minimum,
+            double maximum) {
         JsonElement el = obj.get(field);
         if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return fallback;
         JsonPrimitive p = el.getAsJsonPrimitive();
-        if (!p.isNumber()) return fallback;
-        double value = p.getAsDouble();
-        return Double.isFinite(value) ? value : fallback;
+        if (!p.isNumber()) return null;
+        try {
+            double value = p.getAsDouble();
+            return Double.isFinite(value) && value >= minimum && value <= maximum
+                    ? value
+                    : null;
+        } catch (NumberFormatException error) {
+            return null;
+        }
     }
 
-    private static long readLong(JsonObject obj, String field, long fallback) {
+    private static Long readBoundedInteger(
+            JsonObject obj, String field, long fallback, long maximum) {
         JsonElement el = obj.get(field);
         if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return fallback;
         JsonPrimitive p = el.getAsJsonPrimitive();
-        if (!p.isNumber()) return fallback;
-        long value = p.getAsLong();
-        return value < 0 ? fallback : value;
+        if (!p.isNumber()) return null;
+        try {
+            double numeric = p.getAsDouble();
+            if (!Double.isFinite(numeric)
+                    || numeric < 0.0
+                    || numeric > maximum
+                    || numeric != Math.rint(numeric)) {
+                return null;
+            }
+            long value = p.getAsLong();
+            return value >= 0 && value <= maximum && (double) value == numeric ? value : null;
+        } catch (NumberFormatException error) {
+            return null;
+        }
+    }
+
+    private static boolean isCanonicalContainer(String value) {
+        return value.isEmpty()
+                || value.equals("hand_slot")
+                || value.equals("quiver")
+                || value.equals("pocket_pouch")
+                || value.equals("fenglinghe");
+    }
+
+    private static ServerDataDispatch invalid(ServerDataEnvelope envelope, String reason) {
+        return ServerDataDispatch.noOp(envelope.type(), "anqi_hud: invalid payload: " + reason);
     }
 }
