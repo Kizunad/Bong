@@ -26,12 +26,15 @@ public final class ScreenTransitionController {
         if (client == null || applyingDirectly) {
             return false;
         }
-        if (!UiTransitionSettings.enabled()) {
-            cancelActiveTransitionForReplacement(nextScreen);
-            return false;
-        }
         Screen oldScreen = client.currentScreen;
         if (clearActiveTransitionIfSameScreen(oldScreen, nextScreen)) {
+            // Re-applying the same Screen instance would make vanilla call removed() and
+            // init() on that instance. Protocol-backed screens treat removed() as terminal,
+            // so consume the redundant request after settling any stale transition.
+            return true;
+        }
+        if (!UiTransitionSettings.enabled()) {
+            cancelActiveTransitionForReplacement(nextScreen);
             return false;
         }
 

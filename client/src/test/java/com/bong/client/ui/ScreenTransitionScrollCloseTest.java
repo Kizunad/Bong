@@ -211,6 +211,40 @@ class ScreenTransitionScrollCloseTest {
     }
 
     @Test
+    void sameInstanceRequestIsConsumedBeforeRemovedCanSettleCurrentScroll() {
+        ClientRequestSender.setBackendForTests((channel, payload) ->
+            sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8))));
+        ScrollOpenViewModel offer = new ScrollOpenViewModel(
+            "scroll_same_instance", "《残卷》", List.of("正文")
+        );
+        ScrollReadStore.replace(offer);
+        ScrollReadScreen currentScreen = new ScrollReadScreen(offer);
+        ScreenTransition.TransitionHandle staleHandle = activateTransition(
+            new DummyScreen(),
+            new DummyScreen()
+        );
+
+        boolean consumed = ScreenTransitionController.clearActiveTransitionIfSameScreen(
+            currentScreen,
+            currentScreen
+        );
+        if (!consumed) {
+            // Mirrors ScreenSetMixin: a non-consumed request would reach vanilla setScreen,
+            // which invokes removed() on the current screen before assigning it again.
+            currentScreen.removed();
+        }
+
+        assertTrue(consumed,
+            "same-instance setScreen 必须在 vanilla removed() 前被消费，实际 consumed=" + consumed);
+        assertTrue(staleHandle.cancelled(),
+            "same-instance 请求仍须取消旧 transition，实际 cancelled=" + staleHandle.cancelled());
+        assertSame(offer, ScrollReadStore.snapshot(),
+            "冗余 setScreen 不得结算仍在显示的残卷会话");
+        assertTrue(sent.isEmpty(),
+            "冗余 setScreen 不得发送 scroll_read_closed，实际=" + sent);
+    }
+
+    @Test
     void disconnectClearCancelsPendingVisualStateWithoutSendingTerminalRequest() {
         ClientRequestSender.setBackendForTests((channel, payload) ->
             sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8))));
