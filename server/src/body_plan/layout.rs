@@ -676,6 +676,272 @@ mod tests {
         }
     }
 
+    // ───────────── plan-race-system-v1 P2c — 合成非人 layout（6 段构型）端到端 ─────────────
+    //
+    // §P5 whale 草案部位集合（颅 / 躯干 / 背鳍 / 左胸鳍 / 右胸鳍 / 尾鳍）不是生产数据
+    // （真实 whale.json 归 P5），本节只验证 P2 的渲染管线在「部位集合与 humanoid 完全
+    // 不同」的非人形构型上端到端跑通：BodyPlan（PartBoxes 命中几何，对齐 §P5「只用
+    // PartBoxes 模式」）→ BodyPlanLayoutV1 校验 → 加载进 registry → 序列化/反序列化
+    // wire 往返 → 坐标不越界 [0,1] + 每个部位红点锚点都落在其剪影多边形范围内。
+
+    fn synthetic_whale_body_plan() -> crate::body_plan::types::BodyPlan {
+        use crate::body_plan::types::{
+            BodyPartDef, BodyPlan, HitGeometry, PartBox, PartConsequence,
+        };
+
+        let parts = vec!["skull", "torso", "dorsal_fin", "left_pectoral_fin", "right_pectoral_fin", "tail_fin"];
+        BodyPlan {
+            id: BodyPlanId::new("whale_synthetic"),
+            display_name: "合成飞鲸测试构型".to_string(),
+            is_humanoid: false,
+            parts: parts
+                .iter()
+                .map(|id| BodyPartDef {
+                    id: (*id).into(),
+                    damage_mul: if *id == "skull" { 2.0 } else { 1.0 },
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: match *id {
+                        "skull" => PartConsequence::Sensory,
+                        "tail_fin" => PartConsequence::Locomotion,
+                        "torso" => PartConsequence::Core,
+                        _ => PartConsequence::Manipulator { main_hand: false },
+                    },
+                })
+                .collect(),
+            hit_geometry: HitGeometry::PartBoxes {
+                boxes: parts
+                    .iter()
+                    .map(|id| PartBox {
+                        part_id: (*id).into(),
+                        offset: [0.0, 1.0, 0.0],
+                        half_extents: [0.5, 0.5, 0.5],
+                        priority: 0,
+                    })
+                    .collect(),
+            },
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: HashMap::new(),
+        }
+    }
+
+    /// 6 段部位各配一个 3 点最小三角剪影 + 落在剪影内的锚点——覆盖率与
+    /// `synthetic_whale_body_plan()` 的部位集合完全一致（非 humanoid 的 8/16 段）。
+    fn synthetic_whale_layout() -> BodyPlanLayoutV1 {
+        // 沿 x 轴从左到右排布 6 段互不重叠的三角形，锚点取各自重心（必然落在三角形内）。
+        let slots: [(&str, f64); 6] = [
+            ("skull", 0.0),
+            ("torso", 0.15),
+            ("dorsal_fin", 0.3),
+            ("left_pectoral_fin", 0.45),
+            ("right_pectoral_fin", 0.6),
+            ("tail_fin", 0.75),
+        ];
+        let silhouette = slots
+            .iter()
+            .map(|(id, x0)| BodyPlanSilhouettePartV1 {
+                part_id: (*id).to_string(),
+                polygon: vec![p(*x0, 0.1), p(x0 + 0.1, 0.1), p(x0 + 0.05, 0.9)],
+            })
+            .collect();
+        let anchors = slots
+            .iter()
+            .map(|(id, x0)| BodyPlanPartAnchorV1 {
+                part_id: (*id).to_string(),
+                // 三角形 (x0,0.1) (x0+0.1,0.1) (x0+0.05,0.9) 的重心。
+                point: p(x0 + 0.05, 0.1 + (0.9 - 0.1) / 3.0),
+            })
+            .collect();
+        let part_display_map = slots
+            .iter()
+            .map(|(id, _)| BodyPlanPartDisplayMappingV1 {
+                server_part_id: (*id).to_string(),
+                display_segment_id: (*id).to_string(),
+            })
+            .collect();
+        BodyPlanLayoutV1 {
+            body_plan_id: "whale_synthetic".to_string(),
+            silhouette,
+            anchors,
+            meridian_paths: vec![],
+            part_display_map,
+        }
+    }
+
+    #[test]
+    fn synthetic_six_part_non_humanoid_layout_validates_and_loads_into_registry() {
+        let body_plans = BodyPlanRegistry::from_plans(vec![synthetic_whale_body_plan()])
+            .expect("synthetic whale plan (6 PartBoxes 部位) must validate as a BodyPlan");
+        let dir = tempdir();
+        write_json(&dir, "whale_synthetic.json", &synthetic_whale_layout());
+
+        let registry = BodyPlanLayoutRegistry::load_dir(&dir, &body_plans)
+            .expect("synthetic 6-part non-humanoid layout must pass validate_body_plan_layout and load");
+        assert_eq!(registry.len(), 1);
+        let loaded = registry
+            .get(&BodyPlanId::new("whale_synthetic"))
+            .expect("loaded registry must contain the synthetic whale layout");
+        assert_eq!(loaded.silhouette.len(), 6, "6 段构型必须全部保留，不能被静默丢段");
+        assert_eq!(loaded.anchors.len(), 6);
+        assert_eq!(loaded.part_display_map.len(), 6);
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn synthetic_six_part_non_humanoid_layout_coordinates_stay_within_unit_range() {
+        let layout = synthetic_whale_layout();
+        for part in &layout.silhouette {
+            for v in &part.polygon {
+                assert!(
+                    (0.0..=1.0).contains(&v.x) && (0.0..=1.0).contains(&v.y),
+                    "非人形合成构型剪影顶点必须归一化落在 [0,1]，部位 {} 得到 ({}, {})",
+                    part.part_id,
+                    v.x,
+                    v.y
+                );
+            }
+        }
+        for anchor in &layout.anchors {
+            assert!(
+                (0.0..=1.0).contains(&anchor.point.x) && (0.0..=1.0).contains(&anchor.point.y),
+                "非人形合成构型锚点必须归一化落在 [0,1]，部位 {} 得到 ({}, {})",
+                anchor.part_id,
+                anchor.point.x,
+                anchor.point.y
+            );
+        }
+    }
+
+    /// 每个部位的红点锚点必须落在**该部位自己的**剪影多边形内（而非任意其它段），
+    /// 用简单的射线法（三角形专属：叉积同号判定）核验——防止「渲染不越界」退化成
+    /// 「坐标凑巧都在 [0,1] 但锚点其实点在别的段上」这种更隐蔽的错位。
+    #[test]
+    fn synthetic_six_part_non_humanoid_layout_anchor_falls_within_its_own_silhouette() {
+        fn sign(p1: &BodyPlanPoint2V1, p2: &BodyPlanPoint2V1, p3: &BodyPlanPoint2V1) -> f64 {
+            (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+        }
+        fn point_in_triangle(pt: &BodyPlanPoint2V1, tri: &[BodyPlanPoint2V1]) -> bool {
+            assert_eq!(tri.len(), 3, "fixture 三角形固定 3 顶点");
+            let d1 = sign(pt, &tri[0], &tri[1]);
+            let d2 = sign(pt, &tri[1], &tri[2]);
+            let d3 = sign(pt, &tri[2], &tri[0]);
+            let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+            let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+            !(has_neg && has_pos)
+        }
+
+        let layout = synthetic_whale_layout();
+        for anchor in &layout.anchors {
+            let silhouette = layout
+                .silhouette
+                .iter()
+                .find(|s| s.part_id == anchor.part_id)
+                .unwrap_or_else(|| panic!("锚点部位 {} 必须有对应剪影段", anchor.part_id));
+            assert!(
+                point_in_triangle(&anchor.point, &silhouette.polygon),
+                "部位 {} 的锚点 ({}, {}) 必须落在自己的剪影多边形内，不能漂到相邻段",
+                anchor.part_id,
+                anchor.point.x,
+                anchor.point.y
+            );
+        }
+    }
+
+    #[test]
+    fn synthetic_six_part_non_humanoid_layout_survives_json_wire_round_trip() {
+        let layout = synthetic_whale_layout();
+        let wire = serde_json::to_string(&layout).expect("layout must serialize to JSON wire");
+        let decoded: BodyPlanLayoutV1 =
+            serde_json::from_str(&wire).expect("wire JSON must decode back into BodyPlanLayoutV1");
+        assert_eq!(
+            layout, decoded,
+            "非人形合成 layout 经 JSON wire 往返（serialize→deserialize）必须逐字段相等"
+        );
+
+        // 往返之后仍必须通过跨 registry 校验（防止序列化丢字段导致的隐性损坏）。
+        let body_plans = BodyPlanRegistry::from_plans(vec![synthetic_whale_body_plan()])
+            .expect("synthetic whale plan must validate");
+        let plan = body_plans
+            .get(&BodyPlanId::new("whale_synthetic"))
+            .expect("synthetic whale plan must be registered");
+        assert!(
+            validate_body_plan_layout(&decoded, plan).is_ok(),
+            "wire 往返解码后的 layout 必须仍能通过 validate_body_plan_layout"
+        );
+    }
+
+    // ───────────── plan-race-system-v1 P2c — 缺段 / 冗余段 wire 容错 ─────────────
+    //
+    // 部位集合不完全重叠（layout 声明的部位 ≠ 实际会在 wounds/status wire 上出现的
+    // server 部位 id 集合）是非人形构型的常态——不同种族的 wounds 系统仍按各自
+    // `BodyPlan.parts` 上报，layout 只是渲染层数据，二者不保证 1:1。这里锁定的是
+    // **server 端**校验/加载层面对该错配的容错边界：display_map 引用未声明的
+    // wounds 部位（冗余段——layout 比 plan.parts 多）在**加载期**是 fail-fast 悬空
+    // 引用（已有 `part_display_map_unknown_server_part_rejected` 覆盖）；而"缺段"
+    // ——plan 声明了部位但 layout 未覆盖（如此处 whale 6 段只给 4 段配 anchor/
+    // silhouette）——必须是合法状态，不能因为没覆盖全部 parts 就在加载期被拒绝
+    // （client 侧渲染缺段时的 fallback 行为见
+    // `MiniBodyHudPlannerGeometryTest.partMissingFromLoadedLayoutFallsBack` /
+    // `BodyInspectComponentGeometryTest.bodyPartMissingFromLayoutFallsBackToHardcodedTable`）。
+    #[test]
+    fn layout_covering_only_a_subset_of_plan_parts_is_valid_missing_segments_are_not_an_error() {
+        let plan = synthetic_whale_body_plan();
+        let body_plans = BodyPlanRegistry::from_plans(vec![plan])
+            .expect("synthetic whale plan must validate");
+
+        let mut partial = synthetic_whale_layout();
+        // 只保留前 2 段（skull/torso），故意漏掉 dorsal_fin/left_pectoral_fin/
+        // right_pectoral_fin/tail_fin 4 段——这是"缺段"场景。
+        partial.silhouette.truncate(2);
+        partial.anchors.truncate(2);
+        partial.part_display_map.truncate(2);
+
+        let dir = tempdir();
+        write_json(&dir, "whale_partial.json", &partial);
+        let registry = BodyPlanLayoutRegistry::load_dir(&dir, &body_plans).expect(
+            "layout 覆盖 plan.parts 的一个真子集必须合法加载——缺段不是校验错误，是渲染层 fallback 的正常输入",
+        );
+        let loaded = registry
+            .get(&BodyPlanId::new("whale_synthetic"))
+            .expect("partial layout must still load under its body_plan_id");
+        assert_eq!(loaded.silhouette.len(), 2, "缺段 layout 必须原样保留其声明的子集，不做隐式补全");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn layout_part_display_map_referencing_a_part_absent_from_the_target_plan_is_rejected_as_dangling(
+    ) {
+        // "冗余段"——layout 引用了一个 plan.parts 里根本不存在的部位 id——必须在
+        // 加载期 fail-fast（不是静默丢弃，也不是放到 client 才炸），呼应
+        // `validate_body_plan_layout` 文档中 `part_display_map` 悬空引用检测。
+        let plan = synthetic_whale_body_plan();
+        let body_plans =
+            BodyPlanRegistry::from_plans(vec![plan]).expect("synthetic whale plan must validate");
+
+        let mut redundant = synthetic_whale_layout();
+        redundant.part_display_map.push(BodyPlanPartDisplayMappingV1 {
+            server_part_id: "phantom_blowhole".to_string(),
+            display_segment_id: "phantom_blowhole".to_string(),
+        });
+
+        let dir = tempdir();
+        write_json(&dir, "whale_redundant.json", &redundant);
+        let err = BodyPlanLayoutRegistry::load_dir(&dir, &body_plans)
+            .expect_err("引用 plan 未声明部位的冗余 display_map 条目必须被拒绝，不能悄悄放过");
+        match err {
+            BodyPlanLayoutLoadError::Invalid { reason, .. } => {
+                assert!(
+                    reason.contains("unknown server part id"),
+                    "got: {reason}"
+                );
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+        cleanup(&dir);
+    }
+
     #[test]
     fn humanoid_layout_meridian_paths_pin_client_meridian_paths_verbatim() {
         let layout = humanoid_layout_static();
