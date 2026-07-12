@@ -158,6 +158,35 @@ fn assert_full_app_core_resources(app: &App) {
         world.contains_resource::<PersistenceSettings>(),
         "full server App must install PersistenceSettings"
     );
+    // bughunt minor④ —— body_plan::register() 资产加载全靠 panic 兜底数据完整性
+    // （humanoid plan 缺失 / 磁盘文件读取失败等），本身没有"加载失败但静默继续"的
+    // 退化路径；但 `run_full_app_startup_smoke` 此前只验证网络/持久化侧资源，从未
+    // 断言这两个 registry 真的落进了 `World`——`body_plan::resolve_assets_root()`
+    // 的运行时路径解析（bughunt major-3）一旦在某种部署形态下解析出一个"存在但是
+    // 空目录"的 assets 根（`load_dir`/`load_file` 返回 Ok 但内容为空/缺 humanoid），
+    // 光靠 `register()` 内部的 panic 兜底不了这种情况——必须有一条独立的启动期
+    // smoke 断言直接核验 registry 内容非空、且强制存在的 humanoid 构型确实在场。
+    let body_plans = world
+        .get_resource::<body_plan::BodyPlanRegistry>()
+        .expect("full server App must install BodyPlanRegistry (body_plan::register())");
+    assert!(
+        body_plans.contains(&body_plan::BodyPlanId::new(
+            body_plan::HUMANOID_BODY_PLAN_ID
+        )),
+        "BodyPlanRegistry must contain the mandatory \"{}\" body plan — every entity resolution \
+         path falls back to it",
+        body_plan::HUMANOID_BODY_PLAN_ID,
+    );
+    let races = world
+        .get_resource::<body_plan::RaceRegistry>()
+        .expect("full server App must install RaceRegistry (body_plan::register())");
+    assert!(
+        races
+            .get(&body_plan::RaceId::new(body_plan::HUMAN_RACE_ID))
+            .is_some(),
+        "RaceRegistry must contain the mandatory \"{}\" race",
+        body_plan::HUMAN_RACE_ID,
+    );
 }
 
 fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
