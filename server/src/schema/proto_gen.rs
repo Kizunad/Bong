@@ -11745,6 +11745,41 @@ mod tests {
     }
 
     #[test]
+    fn anqi_hud_proto_roundtrip_aim_preserves_nonzero_progress() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+            kind: AnqiHudKindV1::Aim,
+            echo_count: 0,
+            aim_progress: 0.625,
+            charge_progress: 0.0,
+            abrasion_container: String::new(),
+            abrasion_qi_payload: 0.0,
+            tick: 77,
+        });
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_to_proto_payload(&payload)),
+        };
+        let decoded = ServerDataEnvelope::decode(envelope.encode_to_vec().as_slice())
+            .expect("AnqiHud aim proto roundtrip should decode");
+        let Some(super::bong::server_data_envelope::Payload::AnqiHud(inner)) = decoded.payload
+        else {
+            panic!("decoded payload should remain on the AnqiHud oneof arm");
+        };
+
+        assert_eq!(inner.kind, "aim");
+        assert!(
+            (inner.aim_progress - 0.625).abs() < f64::EPSILON,
+            "aim_progress must survive Rust -> protobuf conversion; actual={}",
+            inner.aim_progress
+        );
+        assert_eq!(inner.tick, 77);
+    }
+
+    #[test]
     fn anqi_hud_proto_roundtrip_abrasion() {
         use crate::schema::proto_convert::server_data_to_proto_payload;
         use crate::schema::proto_gen::bong::ServerDataEnvelope;

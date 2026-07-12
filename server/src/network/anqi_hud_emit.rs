@@ -480,6 +480,91 @@ mod tests {
     // 这样 emit:111（event.container.as_wire_str()）被真正执行——改回
     // format!("{:?}") 此测试会红（PocketPouch Debug="PocketPouch" ≠ "pocket_pouch"）。
     #[test]
+    fn emit_system_decoy_and_injection_bind_production_kinds() {
+        use valence::prelude::{App, Update};
+        use valence::protocol::packets::play::CustomPayloadS2c;
+        use valence::testing::create_mock_client;
+
+        use crate::combat::anqi_v2::{
+            AnqiSkillId, ArmorPierceEvent, CarrierAbrasionEvent, DecoyDeployEvent, MultiShotEvent,
+            QiInjectionEvent,
+        };
+        use crate::combat::carrier::CarrierKind;
+        use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+        use crate::qi_physics::HighDensityInjectionOutcome;
+
+        let mut app = App::new();
+        app.add_event::<DecoyDeployEvent>();
+        app.add_event::<QiInjectionEvent>();
+        app.add_event::<CarrierAbrasionEvent>();
+        app.add_event::<ArmorPierceEvent>();
+        app.add_event::<MultiShotEvent>();
+        app.add_systems(Update, super::emit_anqi_hud_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("AnqiKinds");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().send_event(DecoyDeployEvent {
+            caster: entity,
+            echo_count: 7,
+            tick: 61,
+        });
+        app.world_mut().send_event(QiInjectionEvent {
+            caster: entity,
+            target: None,
+            skill: AnqiSkillId::SoulInject,
+            carrier_kind: CarrierKind::DyedBone,
+            outcome: HighDensityInjectionOutcome {
+                payload_qi: 12.0,
+                wound_qi: 18.0,
+                contamination_qi: 3.6,
+                overload_ratio: 0.73,
+                triggers_overload_tear: true,
+            },
+            tick: 62,
+        });
+        app.update();
+        {
+            let mut query = app.world_mut().query::<&mut valence::prelude::Client>();
+            for mut client in query.iter_mut(app.world_mut()) {
+                client.flush_packets().expect("flush anqi HUD payloads");
+            }
+        }
+
+        let mut echo = None;
+        let mut charge = None;
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let payload: crate::schema::server_data::ServerDataV1 =
+                serde_json::from_slice(packet.data.0 .0).expect("deserialize anqi HUD payload");
+            let ServerDataPayloadV1::AnqiHud(hud) = payload.payload else {
+                continue;
+            };
+            match hud.kind {
+                AnqiHudKindV1::Echo => echo = Some((hud.echo_count, hud.tick)),
+                AnqiHudKindV1::Charge => charge = Some((hud.charge_progress, hud.tick)),
+                _ => {}
+            }
+        }
+
+        assert_eq!(
+            echo,
+            Some((7, 61)),
+            "DecoyDeployEvent must bind the production emitter to echo/count/tick"
+        );
+        let (progress, tick) = charge.expect("QiInjectionEvent must emit charge HUD feedback");
+        assert!(
+            (progress - 0.73).abs() < 1e-9,
+            "QiInjectionEvent overload_ratio must reach charge_progress; actual={progress}"
+        );
+        assert_eq!(tick, 62);
+    }
+
+    #[test]
     fn emit_system_abrasion_pocket_pouch_uses_wire_str_not_debug() {
         use valence::prelude::{App, Update};
         use valence::protocol::packets::play::CustomPayloadS2c;

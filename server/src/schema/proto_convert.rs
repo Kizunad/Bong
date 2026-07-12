@@ -6901,7 +6901,7 @@ mod tests {
                 echo_count: 0,
                 aim_progress: 0.0,
                 charge_progress: 0.0,
-                abrasion_container: "none".to_string(),
+                abrasion_container: String::new(),
                 abrasion_qi_payload: 0.0,
                 tick: 1,
             })),
