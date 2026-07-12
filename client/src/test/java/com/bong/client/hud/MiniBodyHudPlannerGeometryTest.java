@@ -1,5 +1,8 @@
 package com.bong.client.hud;
 
+import com.bong.client.combat.CombatHudState;
+import com.bong.client.combat.DerivedAttrFlags;
+import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.inventory.model.BodyPart;
 import com.bong.client.inventory.model.bodyplan.BodyPlanLayout;
 import com.bong.client.inventory.model.bodyplan.PartAnchor;
@@ -11,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -34,6 +38,7 @@ class MiniBodyHudPlannerGeometryTest {
     @AfterEach
     void tearDown() {
         BodyPlanLayoutStore.resetForTests();
+        StatusEffectStore.resetForTests();
     }
 
     private static BodyPlanLayout humanoidAnchorsLayout() {
@@ -132,5 +137,52 @@ class MiniBodyHudPlannerGeometryTest {
             assertTrue(xy[1] >= BY && xy[1] <= BY + MiniBodyHudPlanner.BODY_H,
                 bp + " y=" + xy[1] + " escaped panel vertical bounds");
         }
+    }
+
+    // ── body_part_resist:/body_part_weaken: 前缀机制在改造后行为不变 ──────────
+    // locatePart 换轨（fallback ↔ store-driven）只改坐标，addPartsFromStatus 的
+    // 前缀 → BodyPart 分组映射完全独立于本次改造，帧数量必须不受 layout 状态影响。
+    @Test
+    void bodyPartResistPrefixMechanismUnchangedRegardlessOfLayoutState() {
+        CombatHudState hud = CombatHudState.create(0.9f, 0.5f, 0.5f, DerivedAttrFlags.none());
+        StatusEffectStore.replace(List.of(
+            new StatusEffectStore.Effect("body_part_resist:leg_l", "左腿硬化", StatusEffectStore.Kind.BUFF, 1, 4_000, 0, "", 0)
+        ));
+
+        long noLayoutFrames = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).stream()
+            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
+            .count();
+
+        BodyPlanLayoutStore.putLayout(humanoidAnchorsLayout());
+        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
+        long withLayoutFrames = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).stream()
+            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
+            .count();
+
+        assertEquals(24L, noLayoutFrames, "leg_l maps to thigh/calf/foot × 2 corners = 6 frames × 4 border rects");
+        assertEquals(noLayoutFrames, withLayoutFrames,
+            "loading a humanoid layout must not change how many resist frames get drawn, only where");
+    }
+
+    @Test
+    void bodyPartWeakenPrefixMechanismUnchangedRegardlessOfLayoutState() {
+        CombatHudState hud = CombatHudState.create(0.9f, 0.5f, 0.5f, DerivedAttrFlags.none());
+        StatusEffectStore.replace(List.of(
+            new StatusEffectStore.Effect("body_part_weaken:chest", "胸部脆弱", StatusEffectStore.Kind.DEBUFF, 1, 4_000, 0, "", 0)
+        ));
+
+        long noLayoutFrames = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).stream()
+            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_WEAKEN_FRAME_COLOR)
+            .count();
+
+        BodyPlanLayoutStore.putLayout(humanoidAnchorsLayout());
+        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
+        long withLayoutFrames = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).stream()
+            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_WEAKEN_FRAME_COLOR)
+            .count();
+
+        assertEquals(8L, noLayoutFrames);
+        assertEquals(noLayoutFrames, withLayoutFrames,
+            "loading a humanoid layout must not change how many weaken frames get drawn, only where");
     }
 }
