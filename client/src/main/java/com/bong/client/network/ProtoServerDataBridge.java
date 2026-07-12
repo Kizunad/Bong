@@ -1266,6 +1266,9 @@ public final class ProtoServerDataBridge {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             normalizeRealmField(root, "realm");
+            if (root.has("season_state") && root.get("season_state").isJsonObject()) {
+                stripEnumPrefix(root.getAsJsonObject("season_state"), "season", "SEASON_");
+            }
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
