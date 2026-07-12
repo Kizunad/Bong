@@ -645,17 +645,20 @@
         "realm": {
           "type": "string"
         },
+        "channel_ids": {
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
         "opened": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "type": "boolean"
           }
         },
         "flow_rate": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -663,8 +666,6 @@
           }
         },
         "flow_capacity": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -672,8 +673,6 @@
           }
         },
         "integrity": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -682,8 +681,6 @@
           }
         },
         "open_progress": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -692,8 +689,6 @@
           }
         },
         "cracks_count": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -971,6 +966,9 @@
               }
             }
           }
+        },
+        "target_meridian": {
+          "type": "string"
         }
       }
     },

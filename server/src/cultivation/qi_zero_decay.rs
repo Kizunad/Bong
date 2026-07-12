@@ -103,17 +103,28 @@ pub fn qi_zero_decay_tick(
             let closures = pick_closures(&meridians, keep);
             let closed_count = closures.len();
             for (is_regular, idx) in closures {
-                let id: MeridianId = if is_regular {
+                // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，
+                // `BiographyEntry::MeridianClosed.id` 仍是 legacy `MeridianId`（生平卷
+                // 持久化格式，wire 开放化留待后续 P1 子阶段）——humanoid 20 条经脉的
+                // channel id 均可逆映射回 `MeridianId`，故用 `.expect` 而非静默兜底。
+                let channel_id = if is_regular {
                     let m = &mut meridians.regular[idx];
-                    let id = m.id;
+                    let channel_id = m.id.clone();
                     close_meridian(m);
-                    id
+                    channel_id
                 } else {
                     let m = &mut meridians.extraordinary[idx];
-                    let id = m.id;
+                    let channel_id = m.id.clone();
                     close_meridian(m);
-                    id
+                    channel_id
                 };
+                let id: MeridianId = channel_id.to_meridian_id().unwrap_or_else(|| {
+                    panic!(
+                        "[bong][cultivation][qi_zero_decay] channel id {channel_id} has no \
+                         legacy MeridianId mapping — BiographyEntry::MeridianClosed cannot \
+                         represent non-humanoid channels yet"
+                    )
+                });
                 if let Some(life) = life.as_deref_mut() {
                     life.push(BiographyEntry::MeridianClosed {
                         id,
@@ -185,7 +196,7 @@ mod tests {
 
     #[test]
     fn close_meridian_preserves_tier() {
-        let mut m = Meridian::new(MeridianId::Lung);
+        let mut m = Meridian::from_meridian_id(MeridianId::Lung);
         m.opened = true;
         m.open_progress = 1.0;
         m.rate_tier = 2;

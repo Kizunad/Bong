@@ -308,9 +308,43 @@ pub fn add_pending_material_bonus(cultivation: &mut Cultivation, magnitude: f64)
     cultivation.pending_material_bonus
 }
 
+/// plan-race-system-v1 P1a：regular/extraordinary 子配额阈值不再是本函数内的硬编码
+/// match（旧值 3/6/12/12/4），改查目标实体 body plan 的
+/// `MeridianProfile.realm_requirements`（`humanoid.json`，§8.1 #8 "公式即数据"决议）。
+/// 数值 bit-for-bit 不变——`humanoid.json` 的曲线就是把旧 Rust match 表原样迁移过去。
+///
+/// 当前全部已注册种族（`races.json`）均映射到 humanoid body plan，尚无"目标实体走
+/// 非 humanoid 曲线"的真实场景，故本包装函数直接读 `body_plan::humanoid_plan_static()`
+/// 而非经 `resolve_body_plan_for_target` 解析 `cultivation.race`——等 P5 引入非
+/// humanoid 战斗构型、真的需要按实体差异化取值时，再把这里换成真正的按实体解析
+/// （`cultivation.race` 字段已在 P0 就位，届时改造无需再动调用点）。
+///
+/// plan-race-system-v1 P1 对抗审查 M3：核心判定逻辑已抽成
+/// [`breakthrough_precondition_error_for_profile`]（接受任意 `MeridianProfile`），本
+/// 函数只是"调用方拿不到实体 / 目标 profile 时"的 humanoid 保底包装——供 P4/P5 引入
+/// 真正实体解析时直接换成带 profile 的版本，无需再拆一次函数。
 fn breakthrough_precondition_error(
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
+) -> Option<BreakthroughError> {
+    let profile = crate::body_plan::humanoid_plan_static()
+        .meridian_profile
+        .as_ref()
+        .expect(
+            "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+             onward — validate_body_plan should have rejected a humanoid plan missing it",
+        );
+    breakthrough_precondition_error_for_profile(cultivation, meridians, profile)
+}
+
+/// 按目标实体的 `MeridianProfile` 判定突破前置条件（配额 / 子配额 / qi 消耗）——
+/// plan-race-system-v1 P1 对抗审查 M2/M3：非 humanoid 构型（P1 合成样本 / P5 whale
+/// 等）走本函数即可拿到正确判定，不再假设 humanoid 曲线。`breakthrough_precondition_error`
+/// 是本函数的 humanoid 保底包装，行为 bit-for-bit 一致。
+pub(crate) fn breakthrough_precondition_error_for_profile(
+    cultivation: &Cultivation,
+    meridians: &MeridianSystem,
+    profile: &crate::body_plan::MeridianProfile,
 ) -> Option<BreakthroughError> {
     let next = match cultivation.realm {
         Realm::Awaken => Realm::Induce,
@@ -320,7 +354,8 @@ fn breakthrough_precondition_error(
         Realm::Spirit => return Some(BreakthroughError::RequiresTribulation),
         Realm::Void => return Some(BreakthroughError::AtMaxRealm),
     };
-    let need = next.required_meridians();
+    let req = profile.realm_requirements[next.rank() as usize - 1];
+    let need = req.total as usize;
     let have = meridians.opened_count();
     if have < need {
         return Some(BreakthroughError::NotEnoughMeridians { need, have });
@@ -328,38 +363,19 @@ fn breakthrough_precondition_error(
 
     let regular_have = meridians.regular_opened_count();
     let extraordinary_have = meridians.extraordinary_opened_count();
-    match next {
-        Realm::Induce if regular_have < 3 => {
-            return Some(BreakthroughError::NotEnoughRegularMeridians {
-                need: 3,
-                have: regular_have,
-            });
-        }
-        Realm::Condense if regular_have < 6 => {
-            return Some(BreakthroughError::NotEnoughRegularMeridians {
-                need: 6,
-                have: regular_have,
-            });
-        }
-        Realm::Solidify if regular_have < 12 => {
-            return Some(BreakthroughError::NotEnoughRegularMeridians {
-                need: 12,
-                have: regular_have,
-            });
-        }
-        Realm::Spirit if regular_have < 12 => {
-            return Some(BreakthroughError::NotEnoughRegularMeridians {
-                need: 12,
-                have: regular_have,
-            });
-        }
-        Realm::Spirit if extraordinary_have < 4 => {
-            return Some(BreakthroughError::NotEnoughExtraordinaryMeridians {
-                need: 4,
-                have: extraordinary_have,
-            });
-        }
-        _ => {}
+    let regular_need = req.regular_min as usize;
+    let extraordinary_need = req.extraordinary_min as usize;
+    if regular_have < regular_need {
+        return Some(BreakthroughError::NotEnoughRegularMeridians {
+            need: regular_need,
+            have: regular_have,
+        });
+    }
+    if extraordinary_have < extraordinary_need {
+        return Some(BreakthroughError::NotEnoughExtraordinaryMeridians {
+            need: extraordinary_need,
+            have: extraordinary_have,
+        });
     }
 
     let cost = breakthrough_qi_cost(next);

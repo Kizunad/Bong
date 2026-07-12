@@ -2,6 +2,28 @@
   "v": 1,
   "type": "cultivation_detail",
   "realm": "Induce",
+  "channel_ids": [
+    "lung",
+    "large_intestine",
+    "stomach",
+    "spleen",
+    "heart",
+    "small_intestine",
+    "bladder",
+    "kidney",
+    "pericardium",
+    "triple_energizer",
+    "gallbladder",
+    "liver",
+    "ren",
+    "du",
+    "chong",
+    "dai",
+    "yin_qiao",
+    "yang_qiao",
+    "yin_wei",
+    "yang_wei"
+  ],
   "opened": [
     true,
     true,
@@ -152,5 +174,6 @@
     { "color": "Intricate", "weight": 20.0, "ratio": 0.2 },
     { "color": "Insidious", "weight": 20.0, "ratio": 0.2 },
     { "color": "Violent", "weight": 20.0, "ratio": 0.2 }
-  ]
+  ],
+  "target_meridian": "ren"
 }

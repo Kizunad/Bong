@@ -308,7 +308,9 @@ mod tests {
         let mut meridians = MeridianSystem::default();
         open_required_meridians(&mut meridians, "woliu.vortex");
         let mut severed = MeridianSeveredPermanent::default();
-        severed.severed_meridians.insert(MeridianId::Lung);
+        severed
+            .severed_meridians
+            .insert(MeridianId::Lung.channel_id());
 
         let outcome = read_combat_technique_scroll(
             &mut known,
