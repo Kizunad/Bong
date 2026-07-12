@@ -10,7 +10,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * plan-race-system-v1 P2b — {@link BodyPlanLayoutStore} 首帧竞态 + 未知 plan id +
@@ -149,7 +148,6 @@ class BodyPlanLayoutStoreTest {
     @Test
     void putLayoutWithNullOrBlankIdIsIgnored() {
         BodyPlanLayoutStore.putLayout(new BodyPlanLayout("", List.of(), List.of(), List.of(), List.of()));
-        assertNull(BodyPlanLayoutStore.byId(""));
-        assertTrue(true, "空白 body_plan_id 的 layout 必须被丢弃，不能污染缓存索引");
+        assertNull(BodyPlanLayoutStore.byId(""), "空白 body_plan_id 的 layout 必须被丢弃，不能污染缓存索引");
     }
 }
