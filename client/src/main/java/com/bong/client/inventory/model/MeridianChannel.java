@@ -1,5 +1,8 @@
 package com.bong.client.inventory.model;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * 中医经络学标准 — 12 正经 + 8 奇经 = 20 条经脉。
  *
@@ -64,5 +67,56 @@ public enum MeridianChannel {
 
     public Family family() {
         return ordinal() < 12 ? Family.REGULAR : Family.EXTRAORDINARY;
+    }
+
+    /**
+     * plan-race-system-v1 P1c — server wire 经脉 channel id 已从闭合 20 变体 PascalCase
+     * 枚举名换轨为 snake_case string（{@code MeridianChannelId}，见 server
+     * {@code cultivation/components.rs}）。本方法是该 wire 形态在 UI 侧的唯一真源，
+     * {@link #fromChannelId(String)} 是其反函数。
+     */
+    public String channelId() {
+        return switch (this) {
+            case LU -> "lung";
+            case LI -> "large_intestine";
+            case ST -> "stomach";
+            case SP -> "spleen";
+            case HT -> "heart";
+            case SI -> "small_intestine";
+            case BL -> "bladder";
+            case KI -> "kidney";
+            case PC -> "pericardium";
+            case TE -> "triple_energizer";
+            case GB -> "gallbladder";
+            case LR -> "liver";
+            case REN -> "ren";
+            case DU -> "du";
+            case CHONG -> "chong";
+            case DAI -> "dai";
+            case YIN_QIAO -> "yin_qiao";
+            case YANG_QIAO -> "yang_qiao";
+            case YIN_WEI -> "yin_wei";
+            case YANG_WEI -> "yang_wei";
+        };
+    }
+
+    private static final Map<String, MeridianChannel> BY_CHANNEL_ID = buildChannelIdIndex();
+
+    private static Map<String, MeridianChannel> buildChannelIdIndex() {
+        Map<String, MeridianChannel> map = new HashMap<>();
+        for (MeridianChannel channel : values()) {
+            map.put(channel.channelId(), channel);
+        }
+        return map;
+    }
+
+    /**
+     * {@link #channelId()} 的反函数——仅当 {@code channelId} 恰好是 humanoid 20 条经脉
+     * 之一的规范 snake_case 名时返回非 null。非 humanoid 构型（P5 飞鲸等）的 channel id
+     * 合法地返回 {@code null}——调用方必须显式处理，不允许静默 fallback 到某个哨兵值。
+     */
+    public static MeridianChannel fromChannelId(String channelId) {
+        if (channelId == null) return null;
+        return BY_CHANNEL_ID.get(channelId);
     }
 }

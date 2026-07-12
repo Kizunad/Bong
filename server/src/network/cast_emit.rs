@@ -273,12 +273,12 @@ pub fn tick_casts_or_interrupt(
                 duration_ticks,
             }) = effect_to_apply.as_ref()
             {
-                let freshness_pair = cast_item_freshness.as_ref().and_then(|f| {
+                let freshness_profile = cast_item_freshness.as_ref().and_then(|freshness| {
                     decay_profiles
                         .as_deref()
-                        .and_then(|reg| reg.get(&f.profile))
-                        .map(|profile| (f, profile))
+                        .and_then(|registry| registry.get(&freshness.profile))
                 });
+                let freshness_pair = cast_item_freshness.as_ref().zip(freshness_profile);
                 let pre_check = consume_food(
                     freshness_pair,
                     *bonus_factor,
@@ -685,12 +685,12 @@ fn apply_cast_item_effect(
             // 2) CriticalBlock → 拒绝消费，不写 status effect。
             // 3) SpoiledWarn → 降效消费（按折算 magnitude）。
             // 4) FoodApplied / Noop → 正常写入 CultivationAcceleration。
-            let freshness_pair = context.item_freshness.as_ref().and_then(|f| {
+            let freshness_profile = context.item_freshness.as_ref().and_then(|freshness| {
                 context
                     .decay_profiles
-                    .and_then(|reg| reg.get(&f.profile))
-                    .map(|profile| (f, profile))
+                    .and_then(|registry| registry.get(&freshness.profile))
             });
+            let freshness_pair = context.item_freshness.as_ref().zip(freshness_profile);
             let food_result = consume_food(
                 freshness_pair,
                 *bonus_factor,

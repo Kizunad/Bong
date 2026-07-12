@@ -2374,7 +2374,10 @@ fn backfill_legacy_player_cultivation(
         }
 
         let bundle = serde_json::json!({
-            "v": 1,
+            // plan-race-system-v1 P1a：写入的是当前形态 `MeridianSystem::default()`
+            // （snake_case channel id），必须标当前 bundle 版本号，否则加载时会误走
+            // legacy 迁移分支去解析本就不是 legacy 形态的数据。
+            "v": crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
             "cultivation": cultivation,
             "meridians": crate::cultivation::components::MeridianSystem::default(),
             "qi_color": crate::cultivation::components::QiColor::default(),
@@ -6143,7 +6146,12 @@ pub fn persist_player_cultivation_bundle(
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
     let bundle = serde_json::json!({
-        "v": 1,
+        // plan-race-system-v1 P1a —— bump 1→2：`meridians`/`meridian_severed` 子字段
+        // channel id 从 `MeridianId` PascalCase 枚举名换轨为 humanoid.json 声明的
+        // snake_case `MeridianChannelId`（见
+        // `crate::cultivation::legacy_meridian_bundle`）。旧存档（v1 或缺失 `"v"`）
+        // 载入时在该模块显式迁移，此处只负责新写入必须标最新版本号。
+        "v": crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
         "cultivation": cultivation,
         "meridians": meridians,
         "qi_color": qi_color,
@@ -15482,7 +15490,7 @@ mod persistence_tests {
             .prepare("PRAGMA table_info(heartbeat_pseudo_veins)")
             .expect("heartbeat_pseudo_veins table_info should prepare");
         let columns = statement
-            .query_map([], |row| Ok(row.get::<_, String>(1)?))
+            .query_map([], |row| row.get::<_, String>(1))
             .expect("heartbeat_pseudo_veins table_info should query")
             .collect::<Result<Vec<_>, _>>()
             .expect("heartbeat_pseudo_veins columns should collect");
@@ -15632,7 +15640,7 @@ mod persistence_tests {
             .prepare("PRAGMA table_info(qi_runtime_accounts)")
             .expect("qi_runtime_accounts table_info should prepare");
         let columns = statement
-            .query_map([], |row| Ok(row.get::<_, String>(1)?))
+            .query_map([], |row| row.get::<_, String>(1))
             .expect("qi_runtime_accounts table_info should query")
             .collect::<Result<Vec<_>, _>>()
             .expect("qi_runtime_accounts columns should collect");

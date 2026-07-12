@@ -73,16 +73,14 @@ type RatPhaseVisualQuery<'w, 's> = Query<
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Component)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RatPhase {
+    #[default]
     Solitary,
-    Transitioning { progress: u16 },
+    Transitioning {
+        progress: u16,
+    },
     Gregarious,
-}
-
-impl Default for RatPhase {
-    fn default() -> Self {
-        Self::Solitary
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Component)]

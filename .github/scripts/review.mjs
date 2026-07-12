@@ -7,23 +7,40 @@
 // 3. 把首轮意见互相公开，4 个 reviewer 复投最终票。
 // 4. 只有 3/1 或 4/0 APPROVE 才通过；2/2 直接视为未通过。
 //
-// 依赖：Node 内置模块 + gh + codex CLI。无 npm runtime dependency。
+// 依赖：Node 内置模块 + gh + OpenAI-compatible Responses 端点。无 npm runtime dependency。
 
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 
 const PR = process.env.PR_NUMBER;
 const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.6-sol";
 const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
 const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
+const REVIEW_TOTAL_TIMEOUT_MS = intEnv("REVIEW_TOTAL_TIMEOUT_MINUTES", 35, 5) * 60_000;
+const GH_TIMEOUT_MS = intEnv("REVIEW_GH_TIMEOUT_MS", 30_000, 1_000);
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
 const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
 const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
+const RESPONSES_BASE_URL = process.env.REVIEW_CODEX_BASE_URL || "https://api.hlool.top";
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
+const CIRCUIT_MARKER = "bong-review-circuit";
+const HANDOFF_MARKER = "bong-review-handoff";
+const CIRCUIT_STATE_MARKER = "<!-- bong-review-circuit-state:v1 -->";
+const CIRCUIT_STATE_TITLE = "[automation] Review infrastructure circuit state";
+const CIRCUIT_SEARCH_ATTEMPTS = 4;
+const CIRCUIT_SEARCH_INTERVAL_MS = intEnv("REVIEW_CIRCUIT_SEARCH_INTERVAL_MS", 15_000, 1);
+const CIRCUIT_OPERATION_BUDGET_MS = 120_000;
+const CIRCUIT_THRESHOLD = intEnv("REVIEW_INFRA_FAILURE_THRESHOLD", 3, 1);
+const CIRCUIT_WINDOW_MS = intEnv("REVIEW_INFRA_FAILURE_WINDOW_MINUTES", 60, 1) * 60_000;
+const CIRCUIT_DURATION_MS = intEnv("REVIEW_CIRCUIT_MINUTES", 60, 1) * 60_000;
+const OUTCOME_FILE = process.env.REVIEW_OUTCOME_FILE || "/tmp/review-run-outcome.json";
+const COMMENT_FILE = process.env.REVIEW_COMMENT_FILE || "/tmp/review.md";
+const DEFER_COMMENT = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DEFER_COMMENT || "").trim());
+const DEFERRED_RESULT = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DEFERRED_RESULT || "").trim());
+let reviewDeadlineMs = Number.POSITIVE_INFINITY;
 
 const REVIEWERS = [
   {
@@ -65,6 +82,260 @@ const GUIDELINES = `
 export function intEnv(name, fallback, min = Number.MIN_SAFE_INTEGER) {
   const n = parseInt(process.env[name] || "", 10);
   return Number.isFinite(n) ? Math.max(min, n) : fallback;
+}
+
+export function isCircuitBypassTrigger(eventName, commentBody) {
+  return eventName === "issue_comment" && commentBody === "/review";
+}
+
+export function renderHiddenMarker(name, payload) {
+  const safe = JSON.stringify(payload).replaceAll("--", "——");
+  return `<!-- ${name} ${safe} -->`;
+}
+
+export function parseHiddenMarkers(value, name = CIRCUIT_MARKER) {
+  const bodies = Array.isArray(value) ? value : [value];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`<!--\\s*${escaped}\\s+([^]*?)-->`, "g");
+  const parsed = [];
+  for (const item of bodies) {
+    const body = String(item?.body ?? item ?? "");
+    for (const match of body.matchAll(pattern)) {
+      const marker = extractJSON(match[1]);
+      if (marker && typeof marker === "object" && !Array.isArray(marker)) parsed.push(marker);
+    }
+  }
+  return parsed;
+}
+
+export function normalizeCircuitEvent(value) {
+  const runId = String(value?.run_id || "");
+  if (
+    value?.v !== 1 ||
+    value?.kind !== "infra_failure" ||
+    !/^\d+$/.test(runId) ||
+    !isCanonicalUtcTimestamp(value.at)
+  ) {
+    return null;
+  }
+  return { ...value, run_id: runId };
+}
+
+function isCanonicalUtcTimestamp(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+export function parseTrustedCircuitEvents(comments, trustedLogin = "github-actions[bot]") {
+  const seenRuns = new Set();
+  const events = [];
+  for (const comment of comments || []) {
+    if (comment?.user?.login !== trustedLogin || comment?.user?.type !== "Bot") continue;
+    const marker = normalizeCircuitEvent(parseHiddenMarkers(comment.body)[0]);
+    if (!marker || seenRuns.has(marker.run_id)) continue;
+    seenRuns.add(marker.run_id);
+    events.push(marker);
+  }
+  return events;
+}
+
+export function selectCircuitStateIssues(issues) {
+  return [
+    ...new Set(
+      (issues || [])
+        .filter(
+          (issue) =>
+            !issue?.pull_request &&
+            issue?.user?.login === "github-actions[bot]" &&
+            issue?.user?.type === "Bot" &&
+            issue?.title === CIRCUIT_STATE_TITLE &&
+            String(issue.body || "").includes(CIRCUIT_STATE_MARKER),
+        )
+        .map((issue) => String(issue.number))
+        .filter((number) => /^\d+$/.test(number)),
+    ),
+  ].sort((a, b) => Number(a) - Number(b));
+}
+
+export function resolveCircuitStateIssueNumbers(createdNumber, refreshedNumbers) {
+  const created = String(createdNumber);
+  if (!/^\d+$/.test(created)) throw new Error(`新建 Review 熔断状态 issue number 非法：${createdNumber}`);
+  const refreshed = (refreshedNumbers || []).map(String).filter((number) => /^\d+$/.test(number));
+  return [...new Set([created, ...refreshed])].sort((a, b) => Number(a) - Number(b));
+}
+
+export function buildCircuitStateSearchQuery(repo, title = CIRCUIT_STATE_TITLE) {
+  const normalizedRepo = String(repo || "").trim();
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalizedRepo)) {
+    throw new Error(`GITHUB_REPOSITORY 非法：${repo}`);
+  }
+  if (title !== CIRCUIT_STATE_TITLE || /[\u0000-\u001f\u007f"\\]/u.test(title)) {
+    throw new Error("Review 熔断状态 title 非法。");
+  }
+  return `repo:${normalizedRepo} is:issue in:title "${title}"`;
+}
+
+export function parseGitHubJsonLines(output) {
+  const lines = String(output || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.map((line) => JSON.parse(line));
+}
+
+export function boundedAttemptTimeout(configuredMs, remainingMs, cleanupReserveMs = 180_000) {
+  return Math.max(0, Math.min(configuredMs, remainingMs - cleanupReserveMs));
+}
+
+export function circuitOperationDeadlines(
+  startMs,
+  stateBudgetMs = CIRCUIT_OPERATION_BUDGET_MS,
+  commentBudgetMs = GH_TIMEOUT_MS,
+) {
+  if (![startMs, stateBudgetMs, commentBudgetMs].every(Number.isFinite) || stateBudgetMs <= 0 || commentBudgetMs <= 0) {
+    throw new Error("Review 熔断操作预算非法。");
+  }
+  return {
+    stateDeadlineMs: startMs + stateBudgetMs,
+    commentDeadlineMs: startMs + stateBudgetMs + commentBudgetMs,
+  };
+}
+
+export function evaluateCircuit(events, now, { threshold = 3, windowMs = 3_600_000, durationMs = 3_600_000 } = {}) {
+  const nowMs = new Date(now).getTime();
+  const failures = events
+    .filter((event) => event?.kind === "infra_failure")
+    .map((event) => new Date(event.at).getTime())
+    .filter((at) => Number.isFinite(at) && at <= nowMs)
+    .sort((a, b) => a - b);
+
+  let openedAt = null;
+  let openUntil = null;
+  for (let i = threshold - 1; i < failures.length; i += 1) {
+    if (failures[i] - failures[i - threshold + 1] <= windowMs) {
+      const candidateUntil = failures[i] + durationMs;
+      if (candidateUntil > (openUntil ?? Number.NEGATIVE_INFINITY)) {
+        openedAt = failures[i];
+        openUntil = candidateUntil;
+      }
+    }
+  }
+
+  return {
+    open: openUntil !== null && nowMs < openUntil,
+    openedAt: openedAt === null ? null : new Date(openedAt).toISOString(),
+    openUntil: openUntil === null ? null : new Date(openUntil).toISOString(),
+    failureCount: failures.filter((at) => nowMs - at <= windowMs).length,
+  };
+}
+
+export function classifyReviewRun(firstRound, finalRound) {
+  const firstResults = firstRound || [];
+  const finalResults = finalRound || [];
+  const allResults = [...firstResults, ...finalResults];
+  if (collectRealFindings(allResults).length) return "gate_failure";
+  if (
+    firstResults.length !== REVIEWERS.length ||
+    finalResults.length !== REVIEWERS.length ||
+    allResults.some((result) => result?.execution_failure === true)
+  ) {
+    return "infra_failure";
+  }
+  return decideGate(finalResults).passed ? "passed" : "gate_failure";
+}
+
+export function decideReviewGate(results, findingResults = results) {
+  const voteGate = decideGate(results);
+  const realFindings = collectRealFindings(findingResults);
+  if (!realFindings.length) return voteGate;
+  return {
+    ...voteGate,
+    passed: false,
+    status: "REQUEST_CHANGES",
+    label: `${voteGate.approve}/${voteGate.request}，存在 ${realFindings.length} 项真实 finding，要求修改`,
+  };
+}
+
+function collectRealFindings(results) {
+  const unique = new Map();
+  for (const result of results || []) {
+    for (const finding of result.findings || []) {
+      if (result.execution_failure === true && isCodexFailureFinding(finding)) continue;
+      const key = `${finding.file || ""}|${finding.line || ""}|${String(finding.title || "").trim().toLowerCase()}`;
+      if (!unique.has(key)) unique.set(key, finding);
+    }
+  }
+  return [...unique.values()];
+}
+
+export function classifyWorkflowFinalization({
+  circuit = "success",
+  reviewJob = "success",
+  install = "skipped",
+  configure = "skipped",
+  checkout = "success",
+  review = "skipped",
+  outcomeKind = null,
+}) {
+  if (circuit !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "circuit_preflight",
+      reason: `Review 熔断预检未成功（${circuit}）`,
+      shouldRecord: true,
+    };
+  }
+  if (reviewJob !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "review_job",
+      reason: `只读 Review job 未成功（${reviewJob}）`,
+      shouldRecord: true,
+    };
+  }
+  if (install !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "cli_install",
+      reason: `Codex CLI 安装或版本检查未成功（${install}）`,
+      shouldRecord: true,
+    };
+  }
+  if (configure !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "provider_config",
+      reason: `Codex provider 配置未成功（${configure}）`,
+      shouldRecord: true,
+    };
+  }
+  if (checkout !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "pr_checkout",
+      reason: `PR head checkout 或 commit 校验未成功（${checkout}）`,
+      shouldRecord: true,
+    };
+  }
+  if (outcomeKind === "gate_failure") {
+    return { kind: "gate_failure", shouldRecord: false };
+  }
+  if (outcomeKind === "infra_failure") {
+    return { kind: "infra_failure", shouldRecord: false };
+  }
+  if (review !== "success" || outcomeKind !== "passed") {
+    return {
+      kind: "infra_failure",
+      phase: "review_process",
+      reason:
+        review === "failure"
+          ? "Review 脚本、CLI 或沙箱异常退出，且未产出可识别结果"
+          : `Review 步骤或结果异常（step=${review}, outcome=${outcomeKind || "missing"}）`,
+      shouldRecord: true,
+    };
+  }
+  return { kind: "passed", shouldRecord: false };
 }
 
 export function extractJSON(text) {
@@ -117,10 +388,11 @@ export function normalizePlanStatus(v) {
   return "unclear";
 }
 
-export function normalizeResult(raw, reviewer) {
+export function normalizeResult(raw, reviewer, { executionFailure = false } = {}) {
   const parsed = extractJSON(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return {
+      execution_failure: executionFailure,
       reviewer: reviewer.id,
       name: reviewer.name,
       vote: "REQUEST_CHANGES",
@@ -141,6 +413,7 @@ export function normalizeResult(raw, reviewer) {
   }
 
   return {
+    execution_failure: executionFailure,
     reviewer: String(parsed.reviewer || reviewer.id),
     name: reviewer.name,
     vote: normalizeVote(parsed.vote),
@@ -213,7 +486,7 @@ export function mergeFindings(results) {
         });
         continue;
       }
-      current.reviewers.push(result.reviewer);
+      if (!current.reviewers.includes(result.reviewer)) current.reviewers.push(result.reviewer);
       if (severityRank(finding.severity) < severityRank(current.severity)) current.severity = finding.severity;
       if (String(finding.evidence || "").length > String(current.evidence || "").length) current.evidence = finding.evidence;
       if (String(finding.recommendation || "").length > String(current.recommendation || "").length) {
@@ -228,48 +501,149 @@ export function mergeFindings(results) {
 
 // ── 主流程 ───────────────────────────────────────────────────────────────────
 async function main() {
-  if (!PR || !/^\d+$/.test(String(PR))) {
-    console.error("PR_NUMBER 未设置或非法，必须是纯数字。");
-    process.exit(1);
-  }
+  const command = process.argv[2] || "review";
+  if (command === "circuit-preflight") return circuitPreflight();
+  if (command === "workflow-finalize") return workflowFinalize();
+  return runReview();
+}
+
+async function runReview() {
+  requirePrNumber();
+  reviewDeadlineMs = Date.now() + REVIEW_TOTAL_TIMEOUT_MS;
   if (!process.env.REVIEW_CODEX_API_KEY && !process.env.OPENAI_API_KEY) {
-    console.error("缺 REVIEW_CODEX_API_KEY / OPENAI_API_KEY。");
-    process.exit(1);
+    return finishInfrastructureFailure("provider_config", "缺 REVIEW_CODEX_API_KEY / OPENAI_API_KEY");
   }
 
   const context = loadPrContext(PR);
   console.error(`Review v3: PR #${PR} · ${context.changedLines} 行/${context.changedFiles} 文件 · 4×${MODEL} high`);
+  const { firstRound, finalRound, outcome } = await runReviewPanel(context);
+  if (outcome === "infra_failure") {
+    const failed = finalRound.filter(isCodexExecutionFailure);
+    const reason = failed.map((result) => result.summary).filter(Boolean).join(" | ");
+    return finishInfrastructureFailure("reviewer_execution", reason || "Codex reviewer 执行失败");
+  }
 
+  const gate = decideReviewGate(finalRound, [...firstRound, ...finalRound]);
+  const body = renderComment(context, firstRound, finalRound, gate);
+  writeFileSync(COMMENT_FILE, body);
+
+  if (DRY_RUN) {
+    console.log(body);
+  } else if (!DEFER_COMMENT) {
+    gh(["pr", "comment", PR, "--body-file", COMMENT_FILE]);
+    console.error("已发布 review 评论。");
+  } else {
+    console.error("review 评论已延迟到可信 finalize job 发布。");
+  }
+
+  writeOutcome(gate.passed ? "passed" : "gate_failure", { gate: gate.status });
+  if (FAIL_ON_GATE && !gate.passed) {
+    console.error(`Review gate 未通过：${gate.label}`);
+    return 1;
+  }
+  return 0;
+}
+
+export async function runReviewPanel(context, reviewerRunner = runCodex) {
   const firstRound = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-    runCodex(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
+    reviewerRunner(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((result) =>
+      normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
+    ),
   );
 
   const debateContext = firstRound.map(compactResultForPrompt);
   const finalRoundRaw = firstRound.every(isCodexExecutionFailure)
     ? firstRound
     : await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-        runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
+        reviewerRunner(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((result) =>
+          normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
+        ),
       );
-  if (finalRoundRaw === firstRound) {
-    console.error("首轮 Codex reviewer 全部执行失败，跳过复投以保留原始失败诊断。");
-  }
   const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
+  return { firstRound, finalRound, outcome: classifyReviewRun(firstRound, finalRound) };
+}
 
-  const gate = decideGate(finalRound);
-  const body = renderComment(context, firstRound, finalRound, gate);
-  writeFileSync("/tmp/review.md", body);
+async function finishInfrastructureFailure(phase, reason) {
+  const safeReason = truncate(String(reason || "Review 基础设施失败"), 4000);
+  if (!DEFER_COMMENT) await recordInfrastructureFailure(phase, safeReason);
+  writeOutcome("infra_failure", { phase, reason: safeReason });
+  return 0;
+}
 
-  if (DRY_RUN) {
-    console.log(body);
-  } else {
-    gh(["pr", "comment", PR, "--body-file", "/tmp/review.md"]);
-    console.error("已发布 review 评论。");
+async function circuitPreflight() {
+  requirePrNumber();
+  const trigger = process.env.REVIEW_TRIGGER || process.env.GITHUB_EVENT_NAME || "";
+  const commentBody = process.env.REVIEW_COMMENT_BODY || "";
+  if (isCircuitBypassTrigger(trigger, commentBody)) {
+    console.error(`手动触发 ${trigger} 旁路 Review 熔断。`);
+    setOutput("should_run", "true");
+    return 0;
   }
 
-  if (FAIL_ON_GATE && !gate.passed) {
-    console.error(`Review gate 未通过：${gate.label}`);
-    process.exit(1);
+  const deadlines = circuitOperationDeadlines(Date.now());
+  let state;
+  try {
+    state = currentCircuitState(loadCircuitEvents(deadlines.stateDeadlineMs));
+  } catch (error) {
+    console.error(`::warning::读取 Review 熔断状态失败，按 fail-open 继续执行：${errorText(error)}`);
   }
+  if (state?.open) {
+    const body = renderCircuitSkipComment(state);
+    try {
+      if (DRY_RUN) console.log(body);
+      else postIssueComment(PR, body, deadlines.commentDeadlineMs);
+    } catch (error) {
+      console.error(`::warning::发布 Review 熔断跳过评论失败：${errorText(error)}`);
+    }
+    writeOutcome("circuit_skipped", { openUntil: state.openUntil });
+    setOutput("should_run", "false");
+    console.error(`Review 自动触发已熔断跳过，截止 ${state.openUntil}。`);
+    return 0;
+  }
+
+  setOutput("should_run", "true");
+  return 0;
+}
+
+async function workflowFinalize() {
+  requirePrNumber();
+  const outcome = readOutcome();
+  const decision = classifyWorkflowFinalization({
+    circuit: process.env.REVIEW_CIRCUIT_OUTCOME || "success",
+    reviewJob: process.env.REVIEW_JOB_OUTCOME || "success",
+    install: process.env.REVIEW_INSTALL_OUTCOME || "skipped",
+    configure: process.env.REVIEW_CONFIGURE_OUTCOME || "skipped",
+    checkout: process.env.REVIEW_CHECKOUT_OUTCOME || "success",
+    review: process.env.REVIEW_STEP_OUTCOME || "skipped",
+    outcomeKind: outcome?.kind || null,
+  });
+
+  if (decision.kind === "infra_failure") {
+    if (decision.shouldRecord || DEFERRED_RESULT) {
+      await recordInfrastructureFailure(
+        decision.phase || outcome?.phase || "review_process",
+        decision.reason || outcome?.reason || "Review 基础设施失败",
+      );
+      writeOutcome("infra_failure", {
+        phase: decision.phase || outcome?.phase || "review_process",
+      });
+    }
+    return 0;
+  }
+
+  if (DEFERRED_RESULT) {
+    try {
+      if (!existsSync(COMMENT_FILE)) throw new Error(`缺延迟 review 评论文件：${COMMENT_FILE}`);
+      gh(["pr", "comment", PR, "--body-file", COMMENT_FILE]);
+      console.error("可信 finalize job 已发布 review 评论。");
+    } catch (error) {
+      await recordInfrastructureFailure("review_comment", errorText(error));
+      writeOutcome("infra_failure", { phase: "review_comment" });
+      return 0;
+    }
+  }
+
+  return decision.kind === "gate_failure" ? 1 : 0;
 }
 
 function loadPrContext(pr) {
@@ -305,11 +679,26 @@ function findPlan(meta) {
   if (!name) return null;
   for (const dir of ["docs", "docs/finished_plans", "docs/plans-skeleton"]) {
     const path = `${dir}/${name}.md`;
-    if (existsSync(path)) {
-      return { name, path, text: truncate(readFileSync(path, "utf8"), MAX_PLAN) };
-    }
+    const text = readWorkspaceRegularFile(path);
+    if (text !== null) return { name, path, text: truncate(text, MAX_PLAN) };
   }
   return { name, path: null, text: "" };
+}
+
+export function readWorkspaceRegularFile(path, workspace = process.cwd()) {
+  try {
+    const workspaceReal = realpathSync(workspace);
+    const candidate = resolve(workspaceReal, path);
+    const candidateRelative = relative(workspaceReal, candidate);
+    if (candidateRelative === ".." || candidateRelative.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) return null;
+    if (!lstatSync(candidate).isFile()) return null;
+    const candidateReal = realpathSync(candidate);
+    const realRelative = relative(workspaceReal, candidateReal);
+    if (realRelative === ".." || realRelative.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) return null;
+    return readFileSync(candidateReal, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 function initialPrompt(context, reviewer) {
@@ -319,8 +708,8 @@ function initialPrompt(context, reviewer) {
 
 ${GUIDELINES}
 
-请审查 PR #${context.pr}。你可以用只读工具打开仓库真实文件、grep 调用方、核对 plan 和测试。
-不要修改文件。不要给泛泛建议；只报可核验问题。
+请审查 PR #${context.pr}。请求不提供任何工具；下面已包含 PR diff、文件清单和关联 plan。
+只根据这些材料审查，不要给泛泛建议；只报可核验问题。
 
 ${contextBlock(context)}
 
@@ -365,7 +754,7 @@ ${GUIDELINES}
 ## 首轮意见
 ${JSON.stringify(peerResults, null, 2)}
 
-${contextBlock(context, { includeDiff: false })}
+${contextBlock(context, { includeDiff: true })}
 
 只输出 JSON，不要 markdown，不要前言：
 {
@@ -440,100 +829,142 @@ function compactResultForPrompt(result) {
 }
 
 async function runCodex(prompt, label) {
-  const tmp = mkdtempSync(join(tmpdir(), `bong-review-${label}-`));
-  const outputFile = join(tmp, "last-message.md");
-  const args = [
-    "exec",
-    "-m",
-    MODEL,
-    "-C",
-    process.cwd(),
-    "-s",
-    "read-only",
-    "--ephemeral",
-    "--output-last-message",
-    outputFile,
-    "-c",
-    'model_reasoning_effort="high"',
-    "-",
-  ];
+  return runCodexResponses(prompt, label);
+}
 
-  console.error(`▶ codex ${label}`);
-  try {
-    for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
-      rmSync(outputFile, { force: true });
-      const result = await spawnCodex(args, prompt, CODEX_TIMEOUT_MS);
-      const text = existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout;
-      if (text.trim()) {
-        if (result.code !== 0) {
-          console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
-        }
-        return text;
-      }
+async function runCodexResponses(prompt, label) {
+  console.error(`▶ responses ${label}`);
+  for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
+    const remainingMs = reviewDeadlineMs - Date.now();
+    const attemptTimeoutMs = boundedAttemptTimeout(CODEX_TIMEOUT_MS, remainingMs);
+    if (attemptTimeoutMs <= 0) {
+      return {
+        raw: codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止新的 Responses 请求"),
+        executionFailure: true,
+      };
+    }
 
-      const failure = codexFailureText(result);
-      if (attempt < CODEX_RETRIES && isRetryableCodexFailure(result)) {
-        const waitMs = CODEX_RETRY_MS * attempt;
-        console.error(`  codex ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
+    const result = await requestResponses(prompt, attemptTimeoutMs);
+    const text = redactRuntimeSecrets(result.stdout || "");
+    const zeroConfidenceInfra = isZeroConfidenceWithoutCodeFindings(text);
+    if (isSuccessfulCodexResponse(result, text)) return { raw: text, executionFailure: false };
+
+    const failure = codexFailureText(result);
+    const retryableFailure = zeroConfidenceInfra || isRetryableCodexFailure(result);
+    if (attempt < CODEX_RETRIES && retryableFailure) {
+      const waitMs = codexRetryDelayMs(result, attempt, CODEX_RETRY_MS);
+      if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
+        console.error(`  responses ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
         await delay(waitMs);
         continue;
       }
-
-      console.error(`  codex ${label} failed: ${failure}`);
-      return JSON.stringify({
-        vote: "REQUEST_CHANGES",
-        confidence: 0,
-        plan_intent: { status: "unclear", reason: `Codex ${label} 执行失败`, missing: [] },
-        summary: `Codex ${label} 执行失败：${failure}`,
-        findings: [
-          {
-            severity: "major",
-            file: ".github/scripts/review.mjs",
-            line: "0",
-            title: `Codex reviewer ${label} 执行失败`,
-            evidence: failure,
-            recommendation: "检查 Codex CLI、模型端点和 API key 后重新触发 /review。",
-          },
-        ],
-      });
     }
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
+
+    console.error(`  responses ${label} failed: ${failure}`);
+    const parsed = extractJSON(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { raw: text, executionFailure: true };
+    }
+    return { raw: codexExecutionFailureJson(label, failure), executionFailure: true };
   }
+}
+
+export function isSuccessfulCodexResponse(result, text = result?.stdout || "") {
+  return result?.code === 0 && String(text).trim().length > 0 && !isZeroConfidenceWithoutCodeFindings(text);
+}
+
+export function buildResponsesEndpoint(baseUrl, allowHttp = false) {
+  const url = new URL(String(baseUrl || "").trim());
+  if (url.username || url.password || url.search || url.hash) throw new Error("Review Responses base URL 不得含凭据、查询或 fragment。");
+  if (url.protocol !== "https:" && !(allowHttp && url.protocol === "http:")) {
+    throw new Error("Review Responses base URL 必须使用 HTTPS。");
+  }
+  const path = url.pathname.replace(/\/+$/, "");
+  url.pathname = path.endsWith("/responses") ? path : path.endsWith("/v1") ? `${path}/responses` : `${path}/v1/responses`;
+  return url.toString();
+}
+
+export function extractResponsesOutputText(payload) {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text;
+  const chunks = [];
+  for (const item of payload?.output || []) {
+    if (item?.type !== "message") continue;
+    for (const content of item.content || []) {
+      if ((content?.type === "output_text" || content?.type === "text") && typeof content.text === "string") {
+        chunks.push(content.text);
+      }
+    }
+  }
+  return chunks.join("\n");
+}
+
+export async function requestResponses(prompt, timeoutMs, options = {}) {
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const apiKey = options.apiKey ?? process.env.REVIEW_CODEX_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+  const endpoint = buildResponsesEndpoint(
+    options.baseUrl || RESPONSES_BASE_URL,
+    options.allowHttp === true,
+  );
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: options.model || MODEL,
+        input: prompt,
+        reasoning: { effort: "high" },
+        store: false,
+      }),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let payload = null;
+    try {
+      payload = raw ? JSON.parse(raw) : null;
+    } catch {
+      /* HTTP error text or malformed provider response is reported below. */
+    }
+    const output = extractResponsesOutputText(payload);
+    if (!response.ok) {
+      const detail = payload?.error?.message || raw || response.statusText || "unknown provider error";
+      return { code: response.status, signal: null, stdout: output, stderr: `HTTP ${response.status}: ${detail}` };
+    }
+    if (!payload) return { code: 1, signal: null, stdout: "", stderr: "Responses 返回了无法解析的 JSON。" };
+    return { code: 0, signal: null, stdout: output, stderr: output ? "" : "Responses 未返回 output_text。" };
+  } catch (error) {
+    const timedOut = error?.name === "AbortError" || controller.signal.aborted;
+    return { code: timedOut ? 124 : 1, signal: timedOut ? "SIGTERM" : null, stdout: "", stderr: error?.message || String(error) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function codexExecutionFailureJson(label, failure) {
+  return JSON.stringify({
+    vote: "REQUEST_CHANGES",
+    confidence: 0,
+    plan_intent: { status: "unclear", reason: `Codex ${label} 执行失败`, missing: [] },
+    summary: `Codex ${label} 执行失败：${failure}`,
+    findings: [
+      {
+        severity: "major",
+        file: ".github/scripts/review.mjs",
+        line: "0",
+        title: `Codex reviewer ${label} 执行失败`,
+        evidence: failure,
+        recommendation: "检查 Codex CLI、模型端点和 API key 后重新触发 /review。",
+      },
+    ],
+  });
 }
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function spawnCodex(args, stdin, timeoutMs) {
-  return new Promise((resolve) => {
-    const env = {
-      ...process.env,
-      OPENAI_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
-      CODEX_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
-    };
-    const child = spawn("codex", args, { env, stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk) => {
-      stdout = appendCap(stdout, chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr = appendCap(stderr, chunk);
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      resolve({ code: timedOut ? 124 : code, signal, stdout, stderr });
-    });
-    child.stdin.end(stdin);
-  });
 }
 
 async function mapLimit(items, limit, fn) {
@@ -550,8 +981,8 @@ async function mapLimit(items, limit, fn) {
 }
 
 export function codexFailureText(result) {
-  const stderr = excerptLog(redactCodexPromptEcho(result.stderr || ""), 2000);
-  const stdout = excerptLog(redactCodexPromptEcho(result.stdout || ""), 1200);
+  const stderr = excerptLog(redactRuntimeSecrets(result.stderr || ""), 2000);
+  const stdout = excerptLog(redactRuntimeSecrets(result.stdout || ""), 1200);
   return [
     `exit=${result.code}`,
     result.signal ? `signal=${result.signal}` : "",
@@ -562,29 +993,39 @@ export function codexFailureText(result) {
     .join(" | ");
 }
 
+export function isZeroConfidenceWithoutCodeFindings(raw) {
+  const parsed = extractJSON(raw);
+  return (
+    parsed &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed) &&
+    Number(parsed.confidence) === 0 &&
+    Array.isArray(parsed.findings) &&
+    parsed.findings.length === 0
+  );
+}
+
+export function redactRuntimeSecrets(value, env = process.env) {
+  let text = String(value || "");
+  const secrets = Object.entries(env)
+    .filter(([name, secret]) => /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|PROXY)/i.test(name) && String(secret || "").length >= 4)
+    .map(([, secret]) => String(secret))
+    .sort((a, b) => b.length - a.length);
+  for (const secret of new Set(secrets)) text = text.replaceAll(secret, "[REDACTED]");
+  return text;
+}
+
+export function codexRetryDelayMs(result, attempt, configuredMs = CODEX_RETRY_MS) {
+  const baseDelay = Math.max(1_000, configuredMs * attempt);
+  return result?.code === 429 ? Math.max(120_000, baseDelay) : baseDelay;
+}
+
 export function isRetryableCodexFailure(result) {
   if (result?.code === 124) return true;
   const log = `${result?.stderr || ""}\n${result?.stdout || ""}`;
   return /(429|503|too many requests|service unavailable|temporarily unavailable|upstream_(?:error|400)|stream disconnected|connection (?:reset|closed)|timed? out|timeout)/i.test(
     log,
   );
-}
-
-export function redactCodexPromptEcho(value) {
-  const text = String(value || "");
-  const marker = "\n--------\nuser\n";
-  const markerAt = text.indexOf(marker);
-  if (markerAt < 0) return text;
-
-  const promptStart = markerAt + marker.length;
-  const rest = text.slice(promptStart);
-  const diagnosticAt = rest.search(
-    /\n(?:\d{4}-\d{2}-\d{2}T[^\n]*\b(?:ERROR|WARN)\b|ERROR:|error:|warning:|Turn failed|stream disconnected|OpenAI API error|status code:)/,
-  );
-  if (diagnosticAt < 0) {
-    return `${text.slice(0, promptStart)}[prompt echo omitted]\n`;
-  }
-  return `${text.slice(0, promptStart)}[prompt echo omitted]\n${rest.slice(diagnosticAt + 1)}`;
 }
 
 export function excerptLog(value, limit) {
@@ -595,15 +1036,22 @@ export function excerptLog(value, limit) {
   return `${text.slice(0, head)}\n...[truncated ${text.length - head - tail} chars]...\n${text.slice(text.length - tail)}`;
 }
 
-function isCodexExecutionFailure(result) {
+export function isCodexExecutionFailure(result) {
+  const findings = result?.findings;
   return (
+    result?.execution_failure === true &&
     result?.confidence === 0 &&
-    result?.findings?.some((finding) => finding.file === ".github/scripts/review.mjs" && /Codex reviewer .*执行失败/.test(finding.title))
+    Array.isArray(findings) &&
+    findings.every(isCodexFailureFinding)
   );
 }
 
-function renderComment(context, firstRound, finalRound, gate) {
-  const findings = mergeFindings(finalRound);
+function isCodexFailureFinding(finding) {
+  return finding?.file === ".github/scripts/review.mjs" && /Codex reviewer .*执行失败/.test(String(finding.title || ""));
+}
+
+export function renderComment(context, firstRound, finalRound, gate) {
+  const findings = mergeFindings(reviewFindingResults(firstRound, finalRound));
   const planRows = finalRound
     .map((r) => `| ${r.reviewer} | ${r.plan_intent.status} | ${escapeCell(r.plan_intent.reason || "-")} |`)
     .join("\n");
@@ -668,8 +1116,224 @@ ${truncate(finalRoundDetails, 24_000)}
   return truncate(body, 64_000);
 }
 
-function gh(args) {
-  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+export function reviewFindingResults(firstRound, finalRound) {
+  return [...(firstRound || []), ...(finalRound || [])];
+}
+
+function requirePrNumber() {
+  if (!PR || !/^\d+$/.test(String(PR))) {
+    throw new Error("PR_NUMBER 未设置或非法，必须是纯数字。");
+  }
+}
+
+function currentCircuitState(events, now = nowIso()) {
+  return evaluateCircuit(events, now, {
+    threshold: CIRCUIT_THRESHOLD,
+    windowMs: CIRCUIT_WINDOW_MS,
+    durationMs: CIRCUIT_DURATION_MS,
+  });
+}
+
+function nowIso() {
+  const configured = process.env.REVIEW_NOW;
+  const date = configured ? new Date(configured) : new Date();
+  if (!Number.isFinite(date.getTime())) throw new Error(`REVIEW_NOW 非法：${configured}`);
+  return date.toISOString();
+}
+
+function loadCircuitEvents(deadlineMs = Date.now() + CIRCUIT_OPERATION_BUDGET_MS) {
+  return parseTrustedCircuitEvents(ensureCircuitStateIssues({ deadlineMs }).flatMap((issue) => listIssueComments(issue, deadlineMs)));
+}
+
+export function findCircuitStateIssues(repo = resolveRepository(), runGh = gh, wait = sleepSync, timing = {}) {
+  const now = timing.now || Date.now;
+  const deadlineMs = timing.deadlineMs ?? now() + CIRCUIT_OPERATION_BUDGET_MS;
+  const attempts = timing.searchAttempts ?? CIRCUIT_SEARCH_ATTEMPTS;
+  const intervalMs = timing.searchIntervalMs ?? CIRCUIT_SEARCH_INTERVAL_MS;
+  if (!Number.isInteger(attempts) || attempts < 1 || !Number.isFinite(intervalMs) || intervalMs < 1) {
+    throw new Error("Review 熔断 Search 节流配置非法。");
+  }
+  const query = buildCircuitStateSearchQuery(repo);
+  const args = [
+    "api",
+    "--paginate",
+    "--method",
+    "GET",
+    "search/issues",
+    "-f",
+    `q=${query}`,
+    "-f",
+    "per_page=100",
+    "--jq",
+    ".items[]",
+  ];
+  const issueNumbers = new Set();
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const delayMs = Math.max(0, Number(timing.nextSearchAtMs || 0) - now());
+    if (delayMs > 0) {
+      if (deadlineMs - now() <= delayMs) throw new Error("Review 熔断状态查询预算已耗尽。");
+      wait(delayMs);
+    }
+    const found = selectCircuitStateIssues(parseGitHubJsonLines(runGh(args, circuitGhTimeout(deadlineMs, now()))));
+    found.forEach((number) => issueNumbers.add(number));
+    timing.nextSearchAtMs = now() + intervalMs;
+  }
+  return [...issueNumbers].sort((a, b) => Number(a) - Number(b));
+}
+
+export function ensureCircuitStateIssues(options = {}) {
+  const repo = options.repo || resolveRepository();
+  const runGh = options.runGh || gh;
+  const wait = options.wait || sleepSync;
+  const now = options.now || Date.now;
+  const deadlineMs = options.deadlineMs ?? now() + CIRCUIT_OPERATION_BUDGET_MS;
+  const timing = {
+    deadlineMs,
+    now,
+    searchAttempts: options.searchAttempts,
+    searchIntervalMs: options.searchIntervalMs,
+  };
+  const existing = findCircuitStateIssues(repo, runGh, wait, timing);
+  if (existing.length) return existing;
+
+  const created = JSON.parse(
+    runGh(
+      [
+        "api",
+        `repos/${repo}/issues`,
+        "-f",
+        `title=${CIRCUIT_STATE_TITLE}`,
+        "-f",
+        `body=此 issue 由 Review Action 自动维护，用隐藏 marker 持久化 reviewer 基础设施失败；请勿手工编辑。\n\n${CIRCUIT_STATE_MARKER}`,
+      ],
+      circuitGhTimeout(deadlineMs, now()),
+    ),
+  );
+  return resolveCircuitStateIssueNumbers(created.number, findCircuitStateIssues(repo, runGh, wait, timing));
+}
+function listIssueComments(issue, deadlineMs = Date.now() + CIRCUIT_OPERATION_BUDGET_MS) {
+  const repo = resolveRepository();
+  const output = gh(
+    ["api", "--paginate", `repos/${repo}/issues/${issue}/comments?per_page=100`, "--jq", ".[]"],
+    circuitGhTimeout(deadlineMs),
+  );
+  return parseGitHubJsonLines(output);
+}
+
+async function recordInfrastructureFailure(phase, reason) {
+  requirePrNumber();
+  const deadlines = circuitOperationDeadlines(Date.now());
+  const event = {
+    v: 1,
+    kind: "infra_failure",
+    at: nowIso(),
+    pr: Number(PR),
+    run_id: process.env.GITHUB_RUN_ID || "",
+    phase: truncate(String(phase || "unknown"), 80),
+    reason: truncate(String(reason || "reviewer 执行失败"), 1200),
+  };
+  const circuitEvent = normalizeCircuitEvent(event);
+
+  let events = [];
+  let eventPersisted = false;
+  if (circuitEvent) {
+    try {
+      const issues = ensureCircuitStateIssues({ deadlineMs: deadlines.stateDeadlineMs });
+      events = parseTrustedCircuitEvents(
+        issues.flatMap((issue) => listIssueComments(issue, deadlines.stateDeadlineMs)),
+      );
+      eventPersisted = events.some((existing) => existing.run_id === circuitEvent.run_id);
+      if (!eventPersisted) {
+        postIssueComment(
+          issues[0],
+          `Review infra failure · PR #${PR} · ${event.phase}\n\n${renderHiddenMarker(CIRCUIT_MARKER, circuitEvent)}`,
+          deadlines.stateDeadlineMs,
+        );
+        eventPersisted = true;
+      }
+    } catch (error) {
+      console.error(`::warning::持久化 Review infra failure 失败：${errorText(error)}`);
+    }
+  } else {
+    console.error("::warning::GITHUB_RUN_ID 缺失或非法，本次仅发布 handoff，不写入熔断计数。");
+  }
+
+  const combinedEvents =
+    eventPersisted && circuitEvent && !events.some((existing) => existing.run_id === circuitEvent.run_id)
+      ? [...events, circuitEvent]
+      : events;
+  const state = currentCircuitState(combinedEvents, event.at);
+  const body = renderInfrastructureHandoffComment(event, state);
+  try {
+    if (DRY_RUN) console.log(body);
+    else postIssueComment(PR, body, deadlines.commentDeadlineMs);
+  } catch (error) {
+    console.error(`::warning::发布 Review 降级评论失败：${errorText(error)}`);
+  }
+}
+
+export function renderInfrastructureHandoffComment(event, state) {
+  const circuitLine = state.open
+    ? `\n\n已达到基础设施失败阈值，自动触发将熔断至 **${state.openUntil}**；可信成员评论精确命令 \`/review\` 可手动旁路重试。`
+    : "";
+  return `## ⚠️ Review Action 基础设施降级\n\n请忽略本次 Review Action 结果：这是基础设施失败，不是代码 finding。改走 agent 自有博弈式 review 流程并向用户反馈；本 workflow 已成功降级退出，不中断任务。\n\n失败阶段：\`${event.phase}\`。${circuitLine}\n\n${renderHiddenMarker(HANDOFF_MARKER, event)}`;
+}
+
+export function renderCircuitSkipComment(state) {
+  const marker = {
+    v: 1,
+    kind: "circuit_skip",
+    at: nowIso(),
+    pr: Number(PR),
+    run_id: process.env.GITHUB_RUN_ID || "",
+    open_until: state.openUntil,
+  };
+  return `## ⚡ Review Action 自动熔断跳过\n\nreviewer 基础设施熔断中，请忽略本次 Review Action 基础设施 gate：这不是代码 finding。改走 agent 自有博弈式 review 流程并向用户反馈；本次自动触发已快速跳过并成功退出，不中断任务且不影响其他 CI。\n\n熔断截止：**${state.openUntil}**。可信成员评论精确命令 \`/review\` 可手动旁路重试。\n\n${renderHiddenMarker(HANDOFF_MARKER, marker)}`;
+}
+
+function postIssueComment(issue, body, deadlineMs = Date.now() + GH_TIMEOUT_MS) {
+  const repo = resolveRepository();
+  gh(["api", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}`], circuitGhTimeout(deadlineMs));
+}
+
+function resolveRepository() {
+  if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY;
+  return gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]).trim();
+}
+
+function writeOutcome(kind, extra = {}) {
+  writeFileSync(OUTCOME_FILE, `${JSON.stringify({ kind, ...extra })}\n`);
+}
+
+function readOutcome() {
+  if (!existsSync(OUTCOME_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(OUTCOME_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function setOutput(name, value) {
+  const output = process.env.GITHUB_OUTPUT;
+  if (output) writeFileSync(output, `${name}=${value}\n`, { flag: "a" });
+  else console.log(`${name}=${value}`);
+}
+
+function errorText(error) {
+  return excerptLog(error?.stderr || error?.message || String(error), 1200);
+}
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+export function circuitGhTimeout(deadlineMs, nowMs = Date.now()) {
+  const remainingMs = Math.floor(deadlineMs - nowMs);
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) throw new Error("Review 熔断操作预算已耗尽。");
+  return Math.max(1, Math.min(GH_TIMEOUT_MS, remainingMs));
+}
+function gh(args, timeoutMs = GH_TIMEOUT_MS) {
+  const timeout = Math.max(1, Math.min(GH_TIMEOUT_MS, Math.floor(timeoutMs)));
+  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout });
 }
 
 function normalizeFindings(value) {
@@ -713,19 +1377,18 @@ function truncate(value, limit) {
   return s.length <= limit ? s : `${s.slice(0, Math.max(0, limit - 20))}\n...[truncated]`;
 }
 
-function appendCap(current, chunk, limit = 200_000) {
-  const next = current + chunk.toString("utf8");
-  return next.length > limit ? next.slice(next.length - limit) : next;
-}
-
 function escapeCell(value) {
   return truncate(String(value || ""), 500).replace(/\n/g, "<br>").replace(/\|/g, "\\|");
 }
 
 const isEntry = import.meta.url === `file://${process.argv[1]}`;
 if (isEntry) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  main()
+    .then((code) => {
+      process.exitCode = code || 0;
+    })
+    .catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    });
 }

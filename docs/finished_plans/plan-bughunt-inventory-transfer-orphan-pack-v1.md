@@ -1,16 +1,18 @@
-# plan-bughunt-inventory-transfer-orphan-pack-v1（骨架）
+# plan-bughunt-inventory-transfer-orphan-pack-v1
 
-> **骨架（草案）**。一句话主题：**截劫夺包复用 `transfer_all_inventory_contents` 后，受害者 inventory 会残留孤儿 `pack_<id>` 容器；该脏状态一旦 autosave / shutdown 落盘，下次登录会被 loader 当成 `#736-corrupted v2 inventory` 丢弃，并回退默认 loadout。**
+> 一句话主题：**截劫夺包复用 `transfer_all_inventory_contents` 后，受害者 inventory 会残留孤儿 `pack_<id>` 容器；该脏状态一旦 autosave / shutdown 落盘，下次登录会被 loader 当成 `#736-corrupted v2 inventory` 丢弃，并回退默认 loadout。**
 
 > 去重说明：本条不是你点名排除的 **extra hand equip gate / TSY death drop 分流 / tool weapon HUD leak / BaiYanPeng 引怪漂移**，也不是最近文档里已立项的 container filter / nested pack / dead armor contamination 题。核心缺口落在 **inventory 全量转移 helper 没有维护 `pack_<id>` 派生容器不变量**。
 
 ## 阶段总览
 
+> P0 ✅ 2026-07-12（修复 + 饱和测试 + validator PASS）
+
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 截劫夺包后受害者落盘为孤儿 `pack_<id>` 脏档，重登回退默认 loadout | fix_pr | ⬜ |
+| P0 | 截劫夺包后受害者落盘为孤儿 `pack_<id>` 脏档，重登回退默认 loadout | fix_pr | ✅ 2026-07-12 |
 
-## P0 — 截劫夺包后受害者落盘为孤儿 `pack_<id>` 脏档
+## P0 ✅ 2026-07-12 — 截劫夺包后受害者落盘为孤儿 `pack_<id>` 脏档
 
 - **复现路径（真实玩法链，不是 dev-only 命令）**
   1. 玩家 A 穿着任意带 `container_spec` 的背包件，使运行时存在 `pack_<instance_id>` 容器。
@@ -71,3 +73,35 @@
 - bughunt 2026-07-05，范围聚焦 inventory / container / equipment side paths。
 - 证据链仅来自仓库现状静态核对：`tribulation_intercept_death_system` → `transfer_all_inventory_contents` → immediate inventory flush → orphan-pack loader guard → joined-client default loadout attach。
 - report-only：本 skeleton 不含任何源码修改建议的落地实现。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 修复**：`server/src/inventory/mod.rs` `transfer_all_inventory_contents` 末尾对 `from` 显式调用 `rebuild_containers_from_equipment` 收口——清孤儿 `pack_<id>` 容器壳（drain 后必为空壳，零溢出）、补 `body_pocket`、重算 `max_weight`，恢复「源码态合法 == 持久化态合法」不变量；生产 caller `tribulation_intercept_death_system`（`server/src/cultivation/tribulation.rs`）注入 `Res<ItemRegistry>` 传参。击杀者侧安全性经 validator 独立核验：夺得的 pack 以货物态入容器格（`force_attach_item_to_inventory` 不自动穿戴），`find_pack_instances_anywhere` 不扫货物格，不派生新 `pack_<id>`、不产生对称脏态。
+- **测试**：`server/src/player/state.rs` 新增 `transfer_all_inventory_contents_does_not_leave_orphan_pack_after_reload`（SQLite 全链路：transfer → flush 落盘 → loader 重载不触发 #736 orphan 判定、不回退默认 loadout、pack 本体+loot 双双不丢）；tribulation 两例 intercept 测试装配补 `Res<ItemRegistry>` 与生产对齐；reload 断言对齐 transfer 实际语义（货物入格、不自动穿戴，仍锁「不丢件」）。
+
+### 关键 commit
+
+- `30ae0ad0` 2026-07-12 — 骨架转正（Model: claude-sonnet-5）
+- `ca4e5e0f` 2026-07-12 — 修复：transfer 后收口 rebuild 杜绝孤儿脏档（Model: claude-sonnet-5）
+- `3148f7a1` 2026-07-12 — 测试装配修正 + reload 断言对齐语义（Model: claude-sonnet-5，主循环 claude-fable-5 接手收尾提交）
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo test --lib`：合并 origin/main（含 #1145/#1179）后 **11207 passed / 0 failed**
+- 域内目标测试 3/3 绿（intercepted_tribulation_transfers_all_inventory_to_killer / unregistered_player_kill_does_not_claim_interception_settlement / transfer_all_inventory_contents_does_not_leave_orphan_pack_after_reload）
+- 期间观察到 `bootstrap_hydrates_heartbeat_pseudo_vein_before_zone_runtime_overlay` 与 `scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb` 在并行编译高压下偶发红（时序敏感 flaky，本分支未触及其模块，安静复跑全绿）——非本 PR 引入
+
+### 跨仓库核验
+
+- server：`transfer_all_inventory_contents` / `rebuild_containers_from_equipment` / `inventory_has_orphan_pack_container`（inventory/mod.rs、player/state.rs、cultivation/tribulation.rs）
+- client / agent：不涉及（纯服务端持久化不变量修复）
+
+### 对抗验证
+
+- 无上下文 Explore validator：`PASS 3148f7a141d4e43576157c2f266fdd11f0ec2ae2`——独立核验 bug 可复现、rebuild 收口零溢出（debug_assert 成立）、击杀者侧无对称脏态、断言改动是语义修正非迁就实现、守恒 items_moved==2 无复制/蒸发
+
+### 遗留 / 后续
+
+- `heartbeat_pseudo_vein` hydration 与 `scatter_surface_stashes` max-attempts 两处时序 flaky 由本机其他修复线处理中（对应 skeleton 仍在），不在本 plan 范围

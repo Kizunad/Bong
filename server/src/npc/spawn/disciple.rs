@@ -140,7 +140,10 @@ pub fn spawn_disciple_npc_at(
     ));
 
     // P1: NPC 功法 + 交易库存
-    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(realm);
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(
+        realm,
+        crate::body_plan::humanoid_plan_static(),
+    );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = assign_npc_techniques(
         NpcArchetype::Disciple,
@@ -216,7 +219,10 @@ pub fn spawn_relic_guard_npc_at(
 
     // P1: NPC 功法（GuardianRelic 默认 Spirit 境界）
     let guard_realm = Realm::Spirit;
-    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(guard_realm);
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(
+        guard_realm,
+        crate::body_plan::humanoid_plan_static(),
+    );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = assign_npc_techniques(
         NpcArchetype::GuardianRelic,

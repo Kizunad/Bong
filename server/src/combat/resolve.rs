@@ -1805,15 +1805,29 @@ pub fn resolve_attack_intents(
             // legacy 对应物时，`CombatBodyPartV1` 无法表达该部位——显式记 warn + 落一个
             // 占位值（`BodyPart::Chest`，与 dead_armor/dugu 等模块的躯干核心占位惯例
             // 一致），不是静默默认；wire 精确度的开放化留给 P1。
+            //
+            // bughunt minor：这条 warn 此前无节流——非人形 `PartBoxes` 构型一旦上线，
+            // 每次命中该类目标都会打一条 warn，高频战斗场景（连续普攻/AOE）会刷屏。
+            // 按 `combat::shield_block::shield_low_stamina_narration_tick` 的既有 tick
+            // 取样节流惯例改成同一 tick 只警一次；只节流日志，返回值（占位
+            // `BodyPart::Chest`）不受影响。
             body_part: crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id).unwrap_or_else(
                 || {
-                    tracing::warn!(
-                        "[bong][body_plan] CombatEvent wire: part id {} has no legacy BodyPart \
-                         mapping — CombatBodyPartV1 is humanoid-only until P1 opens it up; \
-                         emitting BodyPart::Chest as an explicit placeholder (not a silent \
-                         default)",
-                        hit_probe.part_id
-                    );
+                    const UNMAPPED_BODY_PART_WARN_INTERVAL_TICKS: u64 = 80;
+                    if clock
+                        .tick
+                        .is_multiple_of(UNMAPPED_BODY_PART_WARN_INTERVAL_TICKS)
+                    {
+                        tracing::warn!(
+                            "[bong][body_plan] CombatEvent wire: part id {} has no legacy \
+                             BodyPart mapping — CombatBodyPartV1 is humanoid-only until P1 \
+                             opens it up; emitting BodyPart::Chest as an explicit placeholder \
+                             (not a silent default); further occurrences within the next {} \
+                             ticks are throttled",
+                            hit_probe.part_id,
+                            UNMAPPED_BODY_PART_WARN_INTERVAL_TICKS,
+                        );
+                    }
                     BodyPart::Chest
                 },
             ),
@@ -2459,7 +2473,10 @@ mod tests {
             crate::body_plan::BodyPlan {
                 id: "distinctive_test_plan".into(),
                 display_name: "测试专用构型".to_string(),
-                is_humanoid: true,
+                // plan-race-system-v1 P1a：validate_body_plan 现在要求 is_humanoid==true
+                // 必须提供 meridian_profile；本 fixture 只测倍率 wiring，与经脉语义
+                // 无关，设 false 避免每处都补一份 profile 数据。
+                is_humanoid: false,
                 parts: vec![
                     BodyPartDef {
                         id: "head".into(),
@@ -2598,8 +2615,10 @@ mod tests {
         #[test]
         fn unknown_player_race_falls_back_to_humanoid_static_not_panic() {
             let (body_plans, races) = registries_with_distinctive_human_plan();
-            let mut cultivation = Cultivation::default();
-            cultivation.race = crate::body_plan::RaceId::new("does_not_exist");
+            let cultivation = Cultivation {
+                race: crate::body_plan::RaceId::new("does_not_exist"),
+                ..Default::default()
+            };
             for part in ALL_LEGACY_PARTS {
                 assert_eq!(
                     body_part_multipliers(
@@ -11849,10 +11868,20 @@ mod tests {
             (body_plans, races)
         }
 
+        /// plan-race-system-v1 bughunt major-1 修复后的 reach：这组测试的目的是纯粹
+        /// 验证"目标 yaw 旋转是否真的驱动 `PartBoxes` 局部系变换"，不是验证战斗 reach
+        /// 数值本身——按修复前错误符号约定凑出来的 `FIST_REACH.max=2.0` 只够在旧
+        /// （错误）局部系下命中，修复符号后同一条世界系射线在正确局部系里到 `tail_fin`
+        /// 的距离变长（约 2.6~3.5，见下方 yaw=90°/270° 测试注释的推导），必须放宽
+        /// reach 才能继续验出"转向确实改变命中部位"这个目标行为，而不是被无关的 reach
+        /// 上限提前截断成假阴性。6.6 留有充分余量覆盖全部 4 个象限。
+        const ALIEN_CARRIER_TEST_REACH: AttackReach = AttackReach::new(6.0, 0.6);
+
         /// 攻方 feet=[-2,64,0]（无 Look，回落 chest_aim_direction）、目标 feet=[0,64,0]
         /// （按 `target_look_yaw_degrees` 显式设置朝向）。`resolve_attack_intents` 用
         /// `debug_command` 直接按用户名定向目标（跳过近战朝向锥搜索），但命中几何
-        /// 仍走真实 `raycast_humanoid` + `intent.reach`（`FIST_REACH.max=2.0`）。
+        /// 仍走真实 `raycast_humanoid` + `intent.reach`（`ALIEN_CARRIER_TEST_REACH`，
+        /// 见上方常量注释）。
         fn setup_alien_carrier_app(
             plan: crate::body_plan::BodyPlan,
             target_look_yaw_degrees: f32,
@@ -11895,7 +11924,7 @@ mod tests {
                 attacker,
                 target: None,
                 issued_at_tick: 499,
-                reach: FIST_REACH,
+                reach: ALIEN_CARRIER_TEST_REACH,
                 qi_invest: 0.0,
                 wound_kind: WoundKind::Cut,
                 source: AttackSource::Melee,
@@ -11932,6 +11961,12 @@ mod tests {
 
         #[test]
         fn partboxes_hit_rotates_with_target_yaw_90_degrees() {
+            // plan-race-system-v1 bughunt major-1：与 valence `Look::to_vec()`
+            // 约定对齐后，yaw=90° 时攻方这条固定世界系射线在目标局部系里到 `tail_fin`
+            // 的实际距离约 2.6~3.5（推导见 `ALIEN_CARRIER_TEST_REACH` 注释），比修复前
+            // 错误符号约定下的 ~0.56~1.48 更远——`tail_fin` 仍是唯一在射线路径上的盒
+            // （left/right pincer 的局部 x 范围此时被旋转到射线轨迹之外），只是需要
+            // 放宽 reach 才能验出来。
             let (app, target) = setup_alien_carrier_app(alien_carrier_plan(), 90.0);
             let wounds = app
                 .world()
@@ -11945,6 +11980,27 @@ mod tests {
                 "目标转 yaw=90° 后，同一条世界系攻击射线应改命中 tail_fin（局部盒随目标\
                  朝向旋转），实测 {:?}——若仍是 left_pincer 说明 target 朝向没有真正接入\
                  PartBoxes 分派",
+                wounds.entries[0].location
+            );
+        }
+
+        #[test]
+        fn partboxes_hit_rotates_with_target_yaw_270_degrees() {
+            // 第四象限 pin（配合 yaw=0/90/180 补齐四象限覆盖）：yaw=270° 下目标局部系
+            // 相对攻方射线的朝向与"yaw=90° 但符号取反"等价，命中距离落回近距离
+            // （~0.56~1.48），同样应命中 tail_fin——与 yaw=90° 对照，证明两个象限
+            // 不是靠同一套符号巧合各自蒙对。
+            let (app, target) = setup_alien_carrier_app(alien_carrier_plan(), 270.0);
+            let wounds = app
+                .world()
+                .entity(target)
+                .get::<Wounds>()
+                .expect("target should keep wounds");
+            assert_eq!(wounds.entries.len(), 1);
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPartId::new("tail_fin"),
+                "目标转 yaw=270° 后应命中 tail_fin，实测 {:?}",
                 wounds.entries[0].location
             );
         }

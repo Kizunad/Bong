@@ -66,16 +66,12 @@ pub const SPIDER_TRAP_TIMEOUT_TICKS: u64 = 72 * 24_000;
 /// - `Retreat`：危险时向低灵气区撤退，完成后回 `Disguised`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Component)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SpiderDisguiseState {
+    #[default]
     Disguised,
     Ambush,
     Retreat,
-}
-
-impl Default for SpiderDisguiseState {
-    fn default() -> Self {
-        Self::Disguised
-    }
 }
 
 /// 拟态灰烬蛛个体 blackboard。

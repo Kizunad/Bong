@@ -40,7 +40,9 @@ use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianId, MeridianSystem};
+use crate::cultivation::components::{
+    recover_current_qi, Cultivation, MeridianChannelId, MeridianId, MeridianSystem,
+};
 use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
@@ -134,7 +136,7 @@ use crate::npc::interaction_memory::{
 };
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
-use crate::npc::trade::NpcPlayerReputation;
+use crate::npc::trade::{NpcPlayerReputation, NpcTradeInventory};
 use crate::persistence::ZoneRuntimeRecord;
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
@@ -429,6 +431,7 @@ type NpcEngagementItem = (
 #[derive(SystemParam)]
 pub struct NpcEngagementRequestParams<'w, 's> {
     pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
+    pub trade_inventories: Query<'w, 's, &'static NpcTradeInventory, With<NpcMarker>>,
     pub lifecycles: Query<'w, 's, &'static Lifecycle>,
     pub memories: Query<
         'w,
@@ -467,8 +470,14 @@ const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
 const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
 const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
 
-fn meridian_label(id: MeridianId) -> &'static str {
-    match id {
+/// plan-race-system-v1 P1c — 参数改为 `MeridianChannelId`（wire 开放化后
+/// `SetMeridianTarget.meridian` 不再是闭合 `MeridianId` 枚举）；仅 humanoid 20 条
+/// channel id 有中文标签，非 humanoid 构型（P5 飞鲸等）落显式"未知经脉"占位，不伪造。
+fn meridian_label(id: &MeridianChannelId) -> &'static str {
+    let Some(legacy_id) = id.to_meridian_id() else {
+        return "未知经脉";
+    };
+    match legacy_id {
         MeridianId::Lung => "肺经",
         MeridianId::LargeIntestine => "大肠经",
         MeridianId::Stomach => "胃经",
@@ -668,11 +677,13 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     meridian
                 );
-                commands.entity(ev.client).insert(MeridianTarget(meridian));
+                commands
+                    .entity(ev.client)
+                    .insert(MeridianTarget(meridian.clone()));
                 if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
                     client.send_chat_message(format!(
                         "§a[修炼] 已收到经脉目标：{}。",
-                        meridian_label(meridian)
+                        meridian_label(&meridian)
                     ));
                 }
             }
@@ -1375,7 +1386,7 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
-                let Some((template_id, base_price)) =
+                let Some((template_id, _catalogue_price)) =
                     npc_trade_catalog_entry(target.archetype, &requested_item_id)
                 else {
                     emit_npc_refuse_audio(
@@ -1403,6 +1414,40 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
+                let Ok(trade_inventory) =
+                    npc_engagement_params.trade_inventories.get(target.entity)
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 当前没有可成交的货物。", target.display_name),
+                    );
+                    continue;
+                };
+                let Some(offer) = trade_inventory
+                    .offers
+                    .iter()
+                    .find(|offer| offer.template_id == template_id)
+                    .cloned()
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 当前没有这件货。", target.display_name),
+                    );
+                    continue;
+                };
+                let base_price = u64::from(offer.price_bone_coins);
                 // P3: 将旧 i32 信誉转为 0.0-1.0 范围用于新定价系统。
                 // plan-territory-v1 P1: 叠加 NpcPlayerReputation（霸主驻守 rep 加成写入此组件）。
                 // 叠加策略：先取 FactionMembership baseline (i32 → [0,1])，
@@ -1519,7 +1564,7 @@ pub fn handle_client_request_payloads(
                     &alchemy_params.item_registry,
                     instance_allocator,
                     template_id,
-                    1,
+                    offer.count,
                     combat_clock.tick,
                 ) {
                     send_npc_interaction_feedback(
@@ -1535,8 +1580,8 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 client.send_chat_message(format!(
-                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {}。",
-                    target.display_name, template_id
+                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {} x{}。",
+                    target.display_name, offer.display_name, offer.count
                 ));
                 record_player_npc_interaction(
                     &mut npc_engagement_params.memories,
@@ -4528,11 +4573,21 @@ mod tests {
 
         for (id, expected) in cases {
             assert_eq!(
-                meridian_label(id),
+                meridian_label(&id.channel_id()),
                 expected,
                 "expected stable chat label for {id:?}"
             );
         }
+    }
+
+    #[test]
+    fn meridian_label_falls_back_for_unknown_channel_id() {
+        // plan-race-system-v1 P1c — 非 humanoid channel id（如未来 whale 部位）没有中文
+        // 标签映射时，必须显式回落"未知经脉"，不得 panic 或伪造某个已知标签。
+        assert_eq!(
+            meridian_label(&MeridianChannelId::new("tail_fin_channel")),
+            "未知经脉"
+        );
     }
 
     #[test]
@@ -4619,6 +4674,468 @@ mod tests {
         );
     }
 
+    fn run_npc_trade_request(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+    ) -> (App, Entity, MockClientHelper) {
+        run_npc_trade_request_with_reputation(
+            player_inventory,
+            trade_inventory,
+            requested_item_id,
+            None,
+        )
+    }
+
+    fn run_npc_trade_request_with_reputation(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+        npc_player_reputation: Option<NpcPlayerReputation>,
+    ) -> (App, Entity, MockClientHelper) {
+        run_npc_trade_request_with_context(
+            player_inventory,
+            trade_inventory,
+            requested_item_id,
+            npc_player_reputation,
+            None,
+            DVec3::new(0.0, 64.0, 0.0),
+            None,
+        )
+    }
+
+    fn run_npc_trade_request_with_context(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+        npc_player_reputation: Option<NpcPlayerReputation>,
+        player_faction_reputation: Option<FactionReputation>,
+        position: DVec3,
+        npc_membership: Option<FactionMembership>,
+    ) -> (App, Entity, MockClientHelper) {
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().unwrap());
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+        if player_faction_reputation.is_some() {
+            app.insert_resource(ZoneRegistry::load_from_path(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"),
+            ));
+        }
+
+        let (client_bundle, helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((client_bundle, player_inventory))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(position));
+        if let Some(player_faction_reputation) = player_faction_reputation {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(player_faction_reputation);
+        }
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityKind::VILLAGER,
+                EntityId::default(),
+                Position::new(position + DVec3::new(1.0, 0.0, 0.0)),
+                OldPosition::new(position + DVec3::new(1.0, 0.0, 0.0)),
+                NpcArchetype::Commoner,
+            ))
+            .id();
+        if let Some(trade_inventory) = trade_inventory {
+            app.world_mut().entity_mut(npc).insert(trade_inventory);
+        }
+        if let Some(npc_player_reputation) = npc_player_reputation {
+            app.world_mut()
+                .entity_mut(npc)
+                .insert(npc_player_reputation);
+        }
+        if let Some(npc_membership) = npc_membership {
+            app.world_mut().entity_mut(npc).insert(npc_membership);
+        }
+
+        app.update();
+        let npc_entity_id = app
+            .world()
+            .get::<EntityId>(npc)
+            .expect("EntityPlugin must assign protocol id to NPC")
+            .get();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::NpcTradeRequest {
+                    v: 1,
+                    npc_entity_id,
+                    offered_items: Vec::new(),
+                    requested_item_id: requested_item_id.to_string(),
+                })
+                .expect("npc trade request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        (app, player, helper)
+    }
+
+    fn live_trade_offer(
+        template_id: &str,
+        display_name: &str,
+        count: u32,
+        price_bone_coins: u32,
+    ) -> crate::npc::trade::TradeOffer {
+        crate::npc::trade::TradeOffer {
+            template_id: template_id.to_string(),
+            display_name: display_name.to_string(),
+            count,
+            price_bone_coins,
+        }
+    }
+
+    fn inventory_item_count(inventory: &PlayerInventory, template_id: &str) -> u32 {
+        inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .filter(|placed| placed.instance.template_id == template_id)
+            .map(|placed| placed.instance.stack_count)
+            .sum()
+    }
+
+    #[test]
+    fn npc_trade_request_grants_full_bundle_count() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("trade should keep player inventory attached");
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            3,
+            "one accepted bundle offer must grant its full live count"
+        );
+        assert_eq!(
+            inventory.bone_coins, 88,
+            "one accepted bundle offer must deduct its live total price exactly once"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_single_count_offer_still_grants_one() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 1, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 1);
+        assert_eq!(inventory.bone_coins, 88);
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_offer_not_present_in_live_inventory() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let original_revision = inventory.revision;
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer(
+                    "ling_xi_wan_flawed",
+                    "灵息丸（次品）",
+                    2,
+                    8,
+                )],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, original_revision);
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有这件货")),
+            "live subset rejection must be visible to the player, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "live subset rejection must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_empty_live_inventory_without_side_effects() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(8);
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory { offers: vec![] }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(8));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有这件货")),
+            "empty live inventory must use the visible missing-offer rejection, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "empty live inventory must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_uses_live_offer_count_not_catalogue_default() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 5, 10)],
+            }),
+            "lingcao",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 5);
+        assert_eq!(inventory.bone_coins, 90);
+    }
+
+    #[test]
+    fn npc_trade_request_success_message_includes_bundle_count() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (_app, _player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("灵草 x3")),
+            "success feedback must expose the granted bundle count, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_uses_live_offer_total_price() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 17)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 83,
+            "live offer price is the bundle total and must override catalogue price"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_applies_non_neutral_reputation_to_live_bundle_total() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 18;
+        let mut reputation = NpcPlayerReputation::default();
+        reputation.adjust("offline:Azure", 0.3);
+        let (app, player, _helper) = run_npc_trade_request_with_reputation(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 20)],
+            }),
+            "spirit_grass",
+            Some(reputation),
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 0,
+            "high reputation discount must apply to live total 20 (current ceil result 18), not catalogue 10"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_applies_faction_reputation_to_live_bundle_total() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 18;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 51);
+        let (app, player, _helper) = run_npc_trade_request_with_context(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 20)],
+            }),
+            "spirit_grass",
+            None,
+            Some(faction_reputation),
+            DVec3::new(-3000.0, 120.0, -2000.0),
+            Some(neutral_faction_membership()),
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 0,
+            "Qingyun high faction reputation must discount live total 20, not catalogue 10"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_when_only_catalogue_price_is_affordable() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 11;
+        inventory.revision = InventoryRevision(13);
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            0,
+            "affording the catalogue price must not grant any part of a dearer live bundle"
+        );
+        assert_eq!(inventory.bone_coins, 11);
+        assert_eq!(inventory.revision, InventoryRevision(13));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("骨币不足，需要 12 枚")),
+            "rejection must expose the live bundle total, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "an unaffordable live bundle must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_missing_trade_inventory_without_side_effects() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(7);
+        let (app, player, mut helper) = run_npc_trade_request(inventory, None, "spirit_grass");
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(7));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有可成交的货物")),
+            "missing trade component rejection must be visible, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "missing trade component must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_inventory_failure_keeps_coins_and_revision() {
+        let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(11),
+            containers: Vec::new(),
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 100,
+            max_weight: 50.0,
+        };
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(11));
+    }
+
+    #[test]
+    fn npc_trade_request_partial_bundle_capacity_fails_atomically() {
+        let registry = crate::inventory::load_item_registry().unwrap();
+        let mut allocator = crate::inventory::InventoryInstanceIdAllocator::default();
+        let mut inventory = empty_inventory();
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "spirit_grass",
+            63,
+            0,
+        )
+        .expect("test precondition: one compatible spirit grass stack must fit");
+        inventory.containers[0].rows = 1;
+        inventory.containers[0].cols = 1;
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(17);
+
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 2, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            63,
+            "a bundle that can merge only one of two items must not partially mutate the stack"
+        );
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(17));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("交易失败")),
+            "partial-capacity rejection must remain player-visible, messages={messages:?}"
+        );
+        assert!(messages.iter().all(|message| !message.contains("买下")));
+    }
+
     #[test]
     fn set_meridian_target_sends_generic_meridian_chat_echo() {
         let mut app = App::new();
@@ -4633,7 +5150,7 @@ mod tests {
                 channel: ident!("bong:client_request").into(),
                 data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
                     v: 1,
-                    meridian: MeridianId::Du,
+                    meridian: MeridianId::Du.channel_id(),
                 })
                 .expect("set meridian target request should serialize")
                 .into_boxed_slice(),
@@ -4645,10 +5162,10 @@ mod tests {
         let actual_target = app
             .world()
             .get::<MeridianTarget>(entity)
-            .map(|target| target.0);
+            .map(|target| target.0.clone());
         assert_eq!(
             actual_target,
-            Some(MeridianId::Du),
+            Some(MeridianId::Du.channel_id()),
             "expected SetMeridianTarget to insert selected meridian target, actual={:?}",
             actual_target
         );
@@ -4658,6 +5175,78 @@ mod tests {
                 .iter()
                 .any(|message| message.contains("[修炼] 已收到经脉目标：督脉。")),
             "expected generic meridian target chat echo because request is not limited to Chong, actual messages={messages:?}"
+        );
+    }
+
+    /// plan-race-system-v1 P1 对抗审查 M4：`SetMeridianTarget` 消费边界收到未知
+    /// channel id（伪造串 / 旧 PascalCase `MeridianId::Lung` 字面量 "Lung"）时必须
+    /// 安全处理（回执标注"未知经脉"，`MeridianTarget` component 允许被设置但下游
+    /// `meridian_open_tick` 会安全跳过，见该 system 的 debug 分支）——绝不 panic，
+    /// 也不能把未知串误当合法经脉给出中文标签回执。
+    #[test]
+    fn set_meridian_target_with_unknown_channel_id_is_handled_safely_not_panicking() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: crate::cultivation::components::MeridianChannelId::new(
+                        "totally_made_up_channel",
+                    ),
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        // 必须不 panic —— 这是本用例的核心断言。
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("未知经脉")),
+            "unknown channel id 必须回执'未知经脉'占位而不是伪造某个真实经脉名，\
+             actual messages={messages:?}"
+        );
+    }
+
+    /// 旧 PascalCase 字面量 "Lung"（`MeridianId::Lung` 的 `Debug`/枚举名拼写，非合法
+    /// wire channel id）同样必须走"未知经脉"安全分支，不能被误认成合法的 lung 经脉。
+    #[test]
+    fn set_meridian_target_with_legacy_pascal_case_lung_string_is_rejected_as_unknown() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: crate::cultivation::components::MeridianChannelId::new("Lung"),
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("未知经脉")),
+            "旧 PascalCase 'Lung' 不是合法 snake_case wire channel id ('lung')，必须走\
+             未知经脉分支而非被误认作肺经，actual messages={messages:?}"
         );
     }
 
@@ -6390,15 +6979,17 @@ mod tests {
             "expected block→non-block to clear only the stale automatic item mirror"
         );
 
-        let mut quick = app
-            .world_mut()
-            .get_mut::<QuickSlotBindings>(entity)
-            .unwrap();
-        let _ = quick.set(3, Some(88));
-        drop(quick);
-        let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
-        let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
-        drop(skillbar);
+        {
+            let mut quick = app
+                .world_mut()
+                .get_mut::<QuickSlotBindings>(entity)
+                .unwrap();
+            let _ = quick.set(3, Some(88));
+        }
+        {
+            let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
+            let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
+        }
         send_quick_slot_bind_request(&mut app, entity, 3, None, "block-to-clear");
         app.update();
         assert_eq!(
@@ -6411,20 +7002,22 @@ mod tests {
             "expected block→clear to remove the matching automatic item mirror"
         );
 
-        let mut quick = app
-            .world_mut()
-            .get_mut::<QuickSlotBindings>(entity)
-            .unwrap();
-        let _ = quick.set(3, Some(88));
-        drop(quick);
-        let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
-        let _ = skillbar.set(
-            3,
-            SkillSlot::Skill {
-                skill_id: "sword.cleave".to_string(),
-            },
-        );
-        drop(skillbar);
+        {
+            let mut quick = app
+                .world_mut()
+                .get_mut::<QuickSlotBindings>(entity)
+                .unwrap();
+            let _ = quick.set(3, Some(88));
+        }
+        {
+            let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
+            let _ = skillbar.set(
+                3,
+                SkillSlot::Skill {
+                    skill_id: "sword.cleave".to_string(),
+                },
+            );
+        }
         send_quick_slot_bind_request(&mut app, entity, 3, None, "protect-independent-skill");
         app.update();
 

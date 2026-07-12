@@ -291,7 +291,9 @@ mod tests {
         let mut inventory = inventory(100);
         let mut known = KnownTechniques::default();
         let mut severed = MeridianSeveredPermanent::default();
-        severed.severed_meridians.insert(MeridianId::Lung);
+        severed
+            .severed_meridians
+            .insert(MeridianId::Lung.channel_id());
 
         let outcome = super::mentor_teaches_technique(
             &mut inventory,

@@ -1986,9 +1986,7 @@ fn add_item_to_player_inventory_inner(
     }
 
     let mut created_instance_ids = Vec::new();
-    for ((row, col, new_stack_count), instance_id) in
-        new_stacks.into_iter().zip(new_instance_ids.into_iter())
-    {
+    for ((row, col, new_stack_count), instance_id) in new_stacks.into_iter().zip(new_instance_ids) {
         created_instance_ids.push(instance_id);
         let mut instance =
             runtime_instance_from_template(template, instance_id, new_stack_count, current_tick);
@@ -4453,8 +4451,8 @@ pub fn apply_death_drop_to_inventory(
     // 免 50% 掉落 Roll；武器从手槽 held 派生（双手兵器即 main_hand.held，决议 #7，不再有 two_hand 槽）。
     let protected_weapon_ids = inventory
         .equipped
-        .iter()
-        .filter_map(|(_, contents)| contents.held.as_ref())
+        .values()
+        .filter_map(|contents| contents.held.as_ref())
         .filter(|item| item.durability >= 0.5)
         .filter_map(|item| {
             registry
@@ -4578,6 +4576,7 @@ pub fn apply_death_drop_to_inventory(
 pub fn transfer_all_inventory_contents(
     from: &mut PlayerInventory,
     to: &mut PlayerInventory,
+    registry: &ItemRegistry,
 ) -> FullInventoryTransferOutcome {
     let mut items = Vec::new();
     for container in &mut from.containers {
@@ -4606,6 +4605,18 @@ pub fn transfer_all_inventory_contents(
         from.bone_coins = from.bone_coins.saturating_sub(moved_bone_coins);
         to.bone_coins = to.bone_coins.saturating_add(moved_bone_coins);
     }
+
+    // plan-bughunt-inventory-transfer-orphan-pack-v1 P0：全量 drain 后 `from.equipped` 已清空，
+    // 任何 `pack_<id>` 容器此刻必定失去 owner、成为孤儿——但上面只 drain 了 items，容器壳本身
+    // 仍留在 `from.containers` 里（此时已空，drain 后没有可 spill 的内含物）。不显式 rebuild 的话，
+    // loader（`inventory_has_orphan_pack_container`）后续会把这份 inventory 判成污染档整体丢弃，
+    // 回退默认新手 loadout（详见 plan 文档复现链路）。此处用 rebuild 统一收口：清空孤儿容器壳、
+    // 补齐 body_pocket、重算 max_weight，恢复「源码态合法 == 持久化态合法」的不变量。
+    let leftover = rebuild_containers_from_equipment(from, registry);
+    debug_assert!(
+        leftover.is_empty(),
+        "transfer_all_inventory_contents: rebuild 后不应有 spill 溢出物（drain 已清空容器内含物）"
+    );
 
     if moved_items > 0 || moved_bone_coins > 0 {
         bump_revision(from);
@@ -13333,7 +13344,7 @@ cols = 4
             owner_instance_id: None,
         });
 
-        let outcome = transfer_all_inventory_contents(&mut from, &mut to);
+        let outcome = transfer_all_inventory_contents(&mut from, &mut to, &ItemRegistry::default());
 
         assert_eq!(outcome.items_moved, 3);
         assert_eq!(outcome.bone_coins_moved, 9);

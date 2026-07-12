@@ -7,8 +7,10 @@ bot-e2e.sh 在起 server 之前先跑本文件——编解码坏了没必要浪�
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+import pathlib
 import socket
 import struct
 import sys
@@ -487,6 +489,30 @@ class RunnerLogicTest(unittest.TestCase):
             expected <= names,
             f"已提交场景应全部被发现（模块更新必配场景的 CI 抓手），实际 {names}",
         )
+
+    def test_scenarios_do_not_reuse_literal_bot_tags(self):
+        owners: dict[str, str] = {}
+        scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
+        for path in scenarios_dir.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "new_bot"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    continue
+                tag = node.args[0].value
+                previous = owners.setdefault(tag, path.name)
+                self.assertEqual(
+                    previous,
+                    path.name,
+                    f"bot tag {tag!r} 被 {previous} 与 {path.name} 跨场景复用；"
+                    "持久玩家状态会污染后续场景",
+                )
 
     def test_check_server_reachable(self):
         listener = socket.socket()

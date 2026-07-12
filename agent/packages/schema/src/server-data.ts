@@ -105,42 +105,33 @@ import {
 import { TribulationKindV1 } from "./tribulation.js";
 
 export const SERVER_DATA_MAX_PAYLOAD_BYTES = 32_768;
+// Java HUD store consumes these fields as int/float after protobuf bridging.
+const ANQI_HUD_ECHO_COUNT_MAX = 2_147_483_647;
+const ANQI_HUD_QI_PAYLOAD_MAX = 3.4028234e38;
+const ANQI_HUD_TICK_MAX = Number.MAX_SAFE_INTEGER;
 
-const MERIDIAN_CHANNEL_COUNT = 20;
+// plan-race-system-v1 P1c：经脉 SoA 数组不再假设恰好 20 条（`MERIDIAN_CHANNEL_COUNT`
+// 固定长度约束已放开）——非 humanoid 构型（P5 飞鲸等）的经脉数随 `MeridianProfile`
+// 变化。数组间长度一致性（`channel_ids.length === opened.length === ...`）由 server
+// 侧发送时保证，schema 层只做元素类型/范围校验。
 
-const CultivationOpenedArrayV1 = Type.Array(Type.Boolean(), {
-  minItems: MERIDIAN_CHANNEL_COUNT,
-  maxItems: MERIDIAN_CHANNEL_COUNT,
-});
+const CultivationOpenedArrayV1 = Type.Array(Type.Boolean());
 
-const CultivationFlowArrayV1 = Type.Array(Type.Number({ minimum: 0 }), {
-  minItems: MERIDIAN_CHANNEL_COUNT,
-  maxItems: MERIDIAN_CHANNEL_COUNT,
-});
+const CultivationFlowArrayV1 = Type.Array(Type.Number({ minimum: 0 }));
 
 const CultivationIntegrityArrayV1 = Type.Array(
   Type.Number({ minimum: 0, maximum: 1 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
 
 const CultivationProgressArrayV1 = Type.Array(
   Type.Number({ minimum: 0, maximum: 1 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
 
 const CultivationCracksArrayV1 = Type.Array(
   Type.Integer({ minimum: 0, maximum: 255 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
+
+const CultivationChannelIdArrayV1 = Type.Array(Type.String({ minLength: 1 }));
 
 const LifespanPreviewV1 = Type.Object(
   {
@@ -164,6 +155,42 @@ const DeathScreenZoneKindV1 = Type.Union([
   Type.Literal("death"),
   Type.Literal("negative"),
 ]);
+
+export const AnqiHudKindV1 = Type.Union([
+  Type.Literal("echo"),
+  Type.Literal("aim"),
+  Type.Literal("charge"),
+  Type.Literal("abrasion"),
+  Type.Literal("multishot"),
+]);
+export type AnqiHudKindV1 = Static<typeof AnqiHudKindV1>;
+
+export const AnqiHudContainerV1 = Type.Union([
+  Type.Literal(""),
+  Type.Literal("hand_slot"),
+  Type.Literal("quiver"),
+  Type.Literal("pocket_pouch"),
+  Type.Literal("fenglinghe"),
+]);
+export type AnqiHudContainerV1 = Static<typeof AnqiHudContainerV1>;
+
+/** Rust `AnqiHudV1` 的 TypeBox wire 镜像（不含 server_data wrapper）。 */
+export const AnqiHudV1 = Type.Object(
+  {
+    kind: AnqiHudKindV1,
+    echo_count: Type.Integer({ minimum: 0, maximum: ANQI_HUD_ECHO_COUNT_MAX }),
+    aim_progress: Type.Number({ minimum: 0, maximum: 1 }),
+    charge_progress: Type.Number({ minimum: 0, maximum: 1 }),
+    abrasion_container: AnqiHudContainerV1,
+    abrasion_qi_payload: Type.Number({
+      minimum: 0,
+      maximum: ANQI_HUD_QI_PAYLOAD_MAX,
+    }),
+    tick: Type.Integer({ minimum: 0, maximum: ANQI_HUD_TICK_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type AnqiHudV1 = Static<typeof AnqiHudV1>;
 
 export const ServerDataType = Type.Union([
   Type.Literal("welcome"),
@@ -255,6 +282,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("healer_npc_ai_state"),
   Type.Literal("yidao_hud_state"),
   Type.Literal("movement_state"),
+  Type.Literal("anqi_hud"),
   Type.Literal("spirit_treasure_state"),
   Type.Literal("spirit_treasure_dialogue"),
   Type.Literal("knockback_sync"),
@@ -373,6 +401,9 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("cultivation_detail"),
     realm: Type.String(),
+    // plan-race-system-v1 P1c：每条经脉的 snake_case channel id，与 opened/flow_rate/...
+    // 等并行数组同序同长；不再假设恰好 20 条。
+    channel_ids: Type.Optional(CultivationChannelIdArrayV1),
     opened: CultivationOpenedArrayV1,
     flow_rate: CultivationFlowArrayV1,
     flow_capacity: CultivationFlowArrayV1,
@@ -388,6 +419,9 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     qi_color_chaotic: Type.Optional(Type.Boolean()),
     qi_color_hunyuan: Type.Optional(Type.Boolean()),
     practice_weights: Type.Optional(Type.Array(QiColorPracticeWeightV1, { maxItems: 10 })),
+    // plan-race-system-v1 P1c：当前冲脉目标的 channel id 字符串（此前 schema 漂移，
+    // Rust 侧早已下发该字段但 TS 侧未声明——本轮随 wire 开放化一并补齐）。
+    target_meridian: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
@@ -1071,6 +1105,16 @@ export const ServerDataVortexStateV1 = Type.Object(
   { additionalProperties: false },
 );
 export type ServerDataVortexStateV1 = Static<typeof ServerDataVortexStateV1>;
+
+export const ServerDataAnqiHudV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("anqi_hud"),
+    ...AnqiHudV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAnqiHudV1 = Static<typeof ServerDataAnqiHudV1>;
 
 export const ServerDataDuguPoisonStateV1 = Type.Object(
   {
@@ -1863,6 +1907,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataTechniquesSnapshotV1,
   ServerDataSkillConfigSnapshotV1,
   ServerDataVortexStateV1,
+  ServerDataAnqiHudV1,
   ServerDataDuguPoisonStateV1,
   ServerDataPoisonDoseEventV1,
   ServerDataPoisonOverdoseEventV1,

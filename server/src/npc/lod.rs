@@ -226,7 +226,7 @@ fn update_npc_lod_tier_system(
     players: PlayerPosQuery<'_, '_>,
 ) {
     let should_reassess_existing =
-        counter.0 == 1 || counter.0 % config.reassess_interval.max(1) == 0;
+        counter.0 == 1 || counter.0.is_multiple_of(config.reassess_interval.max(1));
     let player_positions: Vec<DVec3> = players.iter().map(|p| p.get()).collect();
     let mut transitions = [0u32; 4]; // near, mid, far, dormant
     for (entity, pos, current) in &npcs {
@@ -425,11 +425,11 @@ pub fn should_skip_scorer_tick_for(
             // Cosmetic 在 Mid 也跳过（同 Far 语义）。
             // Standard/Critical：按 mid_skip_interval 降频。
             matches!(scorer_kind, ScorerKind::Cosmetic)
-                || tick % config.mid_skip_interval.max(1) != 0
+                || !tick.is_multiple_of(config.mid_skip_interval.max(1))
         }
         NpcLodTier::Far => {
             matches!(scorer_kind, ScorerKind::Cosmetic)
-                || tick % config.far_skip_interval.max(1) != 0
+                || !tick.is_multiple_of(config.far_skip_interval.max(1))
         }
         NpcLodTier::Dormant => true,
     }

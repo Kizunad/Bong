@@ -272,13 +272,9 @@ fn attach_social_bundle_to_joined_clients(
     >,
 ) {
     for (entity, mut lifecycle) in &mut joined_clients {
-        let social_state = lifecycle
+        let social_state = persistence
             .as_deref()
-            .and_then(|lifecycle| {
-                persistence
-                    .as_deref()
-                    .map(|persistence| (persistence, lifecycle))
-            })
+            .zip(lifecycle.as_deref())
             .and_then(|(persistence, lifecycle)| {
                 match load_social_components(persistence, lifecycle.character_id.as_str()) {
                     Ok(components) => Some(components),
@@ -1667,17 +1663,19 @@ fn apply_faction_reputation_deltas(
     }
 }
 
+type FactionMembershipDecisionPlayer<'a> = (
+    Entity,
+    &'a Lifecycle,
+    Option<&'a mut FactionMembership>,
+    Option<&'a mut Karma>,
+    Option<&'a PlayerIdentities>,
+);
+
 fn apply_faction_membership_decisions(
     persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<FactionMembershipDecisionEvent>,
     mut commands: Commands,
-    mut players: Query<(
-        Entity,
-        &Lifecycle,
-        Option<&mut FactionMembership>,
-        Option<&mut Karma>,
-        Option<&PlayerIdentities>,
-    )>,
+    mut players: Query<FactionMembershipDecisionPlayer<'_>>,
     mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
 ) {
     for event in events.read() {

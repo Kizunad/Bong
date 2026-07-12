@@ -37,7 +37,8 @@ mod tests {
     #[test]
     fn near_tier_full_hp_prefers_attack_over_heal() {
         let realm = Realm::Condense;
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
 
         let mut attack_selected = 0u32;
@@ -101,7 +102,8 @@ mod tests {
     #[test]
     fn near_tier_low_hp_triggers_heal_scorer() {
         let realm = Realm::Condense;
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
 
         let mut heal_count = 0u32;
@@ -205,7 +207,8 @@ mod tests {
     #[test]
     fn near_tier_buff_appears_in_selection_pool() {
         let realm = Realm::Condense;
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
 
         let mut buff_ever_selected = false;
@@ -647,7 +650,8 @@ mod tests {
     #[test]
     fn integration_full_combat_cycle_near_tier() {
         let realm = Realm::Condense;
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
 
         let mut categories_seen = std::collections::HashSet::new();

@@ -203,29 +203,17 @@ impl DeadMeridianArmor {
 ///   让玩家断 Du 真能换到保护。
 /// - `Head` 与 `Abdomen` 无任何经脉映射，是刻意设计的永久弱点区，
 ///   死脉甲对头/腹命中无保护（攻方可绕过全部免疫）。
+///
+/// plan-race-system-v1 P1b —— 私表退役：数据唯一真源是 `humanoid.json` 中的
+/// `meridian_profile.channels[].body_part`（见 `body_plan::types::ChannelDef` 文档），
+/// 本函数改为查询 `body_plan::channel_body_part`。签名保持 `MeridianId ->
+/// Option<BodyPart>` 不变（`crack_reading.rs` 等既有调用点无需改写），humanoid 全 20
+/// 条经脉（含 6 条无体部映射的奇经，返回 `None`）数值 bit-for-bit 与退役前私表一致。
 pub fn meridian_to_body_part(id: MeridianId) -> Option<BodyPart> {
-    match id {
-        // 左臂·手三阴
-        MeridianId::Lung | MeridianId::Heart | MeridianId::Pericardium => Some(BodyPart::ArmL),
-        // 右臂·手三阳
-        MeridianId::LargeIntestine | MeridianId::SmallIntestine | MeridianId::TripleEnergizer => {
-            Some(BodyPart::ArmR)
-        }
-        // 左腿·足三阴
-        MeridianId::Spleen | MeridianId::Kidney | MeridianId::Liver => Some(BodyPart::LegL),
-        // 右腿·足三阳
-        MeridianId::Stomach | MeridianId::Bladder | MeridianId::Gallbladder => Some(BodyPart::LegR),
-        // 躯干（任督两脉共享 Chest——Back 不可命中，见上方决议注释）
-        MeridianId::Ren => Some(BodyPart::Chest),
-        MeridianId::Du => Some(BodyPart::Chest),
-        // 其余 6 条奇经无体部映射
-        MeridianId::Chong
-        | MeridianId::Dai
-        | MeridianId::YinQiao
-        | MeridianId::YangQiao
-        | MeridianId::YinWei
-        | MeridianId::YangWei => None,
-    }
+    let plan = crate::body_plan::humanoid_plan_static();
+    let channel = id.channel_id();
+    let part_id = crate::body_plan::channel_body_part(plan, &channel)?;
+    crate::body_plan::id_to_legacy_body_part(&part_id)
 }
 
 // ── 系统 ──
@@ -319,4 +307,69 @@ pub fn voluntary_sever_apply_system(
 /// 拦截后 release_to_zone 反而向 zone 注入从未扣走的真元，造成通胀。
 pub fn should_block_contamination(armor: &DeadMeridianArmor, body_part: BodyPart) -> bool {
     armor.is_immune(body_part)
+}
+
+#[cfg(test)]
+mod meridian_to_body_part_tests {
+    use super::*;
+
+    // plan-race-system-v1 P1b —— 私表退役后的 bit-for-bit 回归锁（数据现由
+    // `body_plan::channel_body_part` 查询 humanoid.json，见该函数文档）。
+
+    #[test]
+    fn maps_all_14_allowed_meridians_to_expected_body_part() {
+        let expected: [(MeridianId, BodyPart); 14] = [
+            (MeridianId::Lung, BodyPart::ArmL),
+            (MeridianId::Heart, BodyPart::ArmL),
+            (MeridianId::Pericardium, BodyPart::ArmL),
+            (MeridianId::LargeIntestine, BodyPart::ArmR),
+            (MeridianId::SmallIntestine, BodyPart::ArmR),
+            (MeridianId::TripleEnergizer, BodyPart::ArmR),
+            (MeridianId::Spleen, BodyPart::LegL),
+            (MeridianId::Kidney, BodyPart::LegL),
+            (MeridianId::Liver, BodyPart::LegL),
+            (MeridianId::Stomach, BodyPart::LegR),
+            (MeridianId::Bladder, BodyPart::LegR),
+            (MeridianId::Gallbladder, BodyPart::LegR),
+            (MeridianId::Ren, BodyPart::Chest),
+            (MeridianId::Du, BodyPart::Chest),
+        ];
+        for (id, expected_part) in expected {
+            assert_eq!(
+                meridian_to_body_part(id),
+                Some(expected_part),
+                "{id:?} must map to {expected_part:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn six_excluded_extraordinary_meridians_map_to_none() {
+        for id in [
+            MeridianId::Chong,
+            MeridianId::Dai,
+            MeridianId::YinQiao,
+            MeridianId::YangQiao,
+            MeridianId::YinWei,
+            MeridianId::YangWei,
+        ] {
+            assert_eq!(
+                meridian_to_body_part(id),
+                None,
+                "{id:?} must have no body part mapping (excluded per §8.1 #3)"
+            );
+        }
+    }
+
+    #[test]
+    fn back_is_never_produced_since_du_and_ren_both_map_to_chest() {
+        // 决议注释：Du 走背脊但映射到 Chest（Back 不是 classify_body_part 可命中区域）。
+        for id in MeridianId::ALL {
+            assert_ne!(
+                meridian_to_body_part(id),
+                Some(BodyPart::Back),
+                "{id:?} must never map to BodyPart::Back"
+            );
+        }
+    }
 }

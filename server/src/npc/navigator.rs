@@ -508,7 +508,11 @@ fn snap_idle_position_to_ground(
 }
 
 pub(crate) fn should_repath_in_bucket(entity: Entity, tick: u32, force: bool) -> bool {
-    force || (entity.index().wrapping_add(tick) % NAVIGATOR_REPATH_BUCKET_COUNT == 0)
+    force
+        || entity
+            .index()
+            .wrapping_add(tick)
+            .is_multiple_of(NAVIGATOR_REPATH_BUCKET_COUNT)
 }
 
 // ---------------------------------------------------------------------------

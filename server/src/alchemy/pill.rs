@@ -499,17 +499,31 @@ pub fn apply_wound_worsen(
     parts.len()
 }
 
-/// 找不到"最重非断裂伤"（无匹配伤口 / 该伤所在部位没有 legacy `BodyPart` 对应物——
-/// 非人形构型目前不会走本丹药子系统，理论上不会命中后者）时返回 `None`，调用方
-/// （`worst_non_severed_part` 全部生产调用点）本就把 `None` 当"无定向目标，回落到
-/// `apply_wound_heal(..., None, ...)` 不限部位疗伤"处理，因此这里不需要额外的中间态。
+/// 找不到"最重非断裂伤"（无匹配伤口 / 全部候选伤口所在部位都没有 legacy `BodyPart`
+/// 对应物——非人形构型目前不会走本丹药子系统，理论上不会命中后者）时返回 `None`，
+/// 调用方（`worst_non_severed_part` 全部生产调用点）本就把 `None` 当"无定向目标，
+/// 回落到 `apply_wound_heal(..., None, ...)` 不限部位疗伤"处理，因此这里不需要额外
+/// 的中间态。
+///
+/// bughunt minor：必须先按 `id_to_legacy_body_part` 过滤掉无 legacy 对应物的伤口，
+/// 再在**剩下这些**里挑最重的——不能反过来"先在全部伤口里挑全局最重，再转换"。
+/// 反过来做时，一旦全局最重伤恰好落在无 legacy 对应物的部位（未来非人形 `PartBoxes`
+/// 部位 id），转换会返回 `None`，整个函数就跟着返回 `None`——即便同一具身体上还
+/// 躺着一个可定向、legacy 有对应物、只是severity 略低的伤口，也会被无声吞掉，
+/// 定向丹药凭空退化成"什么都没找到"。当前唯一部署的 `humanoid.json` 8 段部位全部
+/// 有 legacy 对应物，这条分支眼下不会被触发，但函数本身的逻辑必须先天正确，不能
+/// 靠"数据凑巧全覆盖"侥幸过关（P5 飞鲸等非人形构型上线后就是活的）。
 pub fn worst_non_severed_part(wounds: &Wounds) -> Option<BodyPart> {
     wounds
         .entries
         .iter()
         .filter(|wound| !is_severed_like(wound))
-        .max_by(|a, b| a.severity.total_cmp(&b.severity))
-        .and_then(|wound| crate::body_plan::id_to_legacy_body_part(&wound.location))
+        .filter_map(|wound| {
+            crate::body_plan::id_to_legacy_body_part(&wound.location)
+                .map(|part| (part, wound.severity))
+        })
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(part, _)| part)
 }
 
 pub fn worst_severed_part(wounds: &Wounds) -> Option<BodyPart> {
@@ -517,8 +531,12 @@ pub fn worst_severed_part(wounds: &Wounds) -> Option<BodyPart> {
         .entries
         .iter()
         .filter(|wound| is_severed_like(wound))
-        .max_by(|a, b| a.severity.total_cmp(&b.severity))
-        .and_then(|wound| crate::body_plan::id_to_legacy_body_part(&wound.location))
+        .filter_map(|wound| {
+            crate::body_plan::id_to_legacy_body_part(&wound.location)
+                .map(|part| (part, wound.severity))
+        })
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(part, _)| part)
 }
 
 pub fn combat_pill_status_intents(
@@ -1088,10 +1106,116 @@ pub fn activate_meridian_progress_bonus(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::body_plan::BodyPartId;
     use crate::cultivation::components::{Contamination, Cultivation};
 
     fn fresh_contam() -> Contamination {
         Contamination::default()
+    }
+
+    fn wound_at(location: &str, severity: f32) -> Wound {
+        Wound {
+            location: BodyPartId::new(location),
+            kind: WoundKind::Cut,
+            severity,
+            bleeding_per_sec: 0.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        }
+    }
+
+    fn wounds_with(entries: Vec<Wound>) -> Wounds {
+        Wounds {
+            entries,
+            ..Default::default()
+        }
+    }
+
+    // ─── bughunt minor：worst_non_severed_part / worst_severed_part 必须先过滤
+    // 无 legacy `BodyPart` 对应物的伤口，再在剩下的里选最重的，不能反过来 ───────────
+
+    #[test]
+    fn worst_non_severed_part_skips_unmappable_higher_severity_and_returns_mappable_lower_one() {
+        let wounds = wounds_with(vec![
+            // 全局最重伤（0.7）落在无 legacy 对应物的非人形部位 id 上。
+            wound_at("tail_fin", 0.7),
+            // 次重伤（0.4，仍 < 0.85 断裂阈值）落在合法 legacy 部位上。
+            wound_at("chest", 0.4),
+        ]);
+        assert_eq!(
+            worst_non_severed_part(&wounds),
+            Some(BodyPart::Chest),
+            "全局最重伤(tail_fin=0.7)没有 legacy 对应物时，必须回落到次重但可定向的 \
+             chest(0.4)，而不是因为全局最重伤转换失败就返回 None——先转换失败才丢弃 \
+             是把'找不到最重伤'和'最重伤无法定向'混为一谈"
+        );
+    }
+
+    #[test]
+    fn worst_non_severed_part_returns_none_when_every_wound_is_unmappable() {
+        let wounds = wounds_with(vec![
+            wound_at("tail_fin", 0.7),
+            wound_at("left_pincer", 0.3),
+        ]);
+        assert_eq!(
+            worst_non_severed_part(&wounds),
+            None,
+            "全部候选伤口都没有 legacy 对应物时，仍必须返回 None（不能瞎猜一个部位）"
+        );
+    }
+
+    #[test]
+    fn worst_non_severed_part_ignores_severed_like_wounds_regardless_of_mappability() {
+        let wounds = wounds_with(vec![
+            // severity >= 0.85 视为"断裂样"，即便是合法 legacy 部位也应被
+            // worst_non_severed_part 过滤掉。
+            wound_at("head", 0.9),
+            wound_at("chest", 0.5),
+        ]);
+        assert_eq!(
+            worst_non_severed_part(&wounds),
+            Some(BodyPart::Chest),
+            "断裂样伤口(head=0.9)必须被排除在'非断裂伤'候选之外"
+        );
+    }
+
+    #[test]
+    fn worst_severed_part_skips_unmappable_higher_severity_and_returns_mappable_lower_one() {
+        let wounds = wounds_with(vec![
+            // 全局最重断裂样伤（0.95）落在无 legacy 对应物的部位上。
+            wound_at("tail_fin", 0.95),
+            // 次重断裂样伤（0.86）落在合法 legacy 部位上。
+            wound_at("leg_l", 0.86),
+        ]);
+        assert_eq!(
+            worst_severed_part(&wounds),
+            Some(BodyPart::LegL),
+            "全局最重断裂样伤(tail_fin=0.95)没有 legacy 对应物时，必须回落到次重但可\
+             定向的 leg_l(0.86)"
+        );
+    }
+
+    #[test]
+    fn worst_severed_part_ignores_non_severed_wounds_regardless_of_mappability() {
+        let wounds = wounds_with(vec![
+            wound_at("chest", 0.5), // 非断裂样，应被排除
+            wound_at("arm_r", 0.9), // 断裂样，合法部位
+        ]);
+        assert_eq!(
+            worst_severed_part(&wounds),
+            Some(BodyPart::ArmR),
+            "非断裂样伤口(chest=0.5)必须被排除在'断裂伤'候选之外"
+        );
+    }
+
+    #[test]
+    fn worst_non_severed_part_empty_wounds_returns_none() {
+        assert_eq!(worst_non_severed_part(&wounds_with(vec![])), None);
+    }
+
+    #[test]
+    fn worst_severed_part_empty_wounds_returns_none() {
+        assert_eq!(worst_severed_part(&wounds_with(vec![])), None);
     }
 
     fn basic_effect(qi_gain: Option<f64>) -> PillEffect {
@@ -2706,7 +2830,7 @@ mod tests {
         );
         assert_eq!(value["buff_id"], "huo_xue_dan");
         assert_eq!(
-            value["remaining_ticks"], spec.positive_duration_ticks as u64,
+            value["remaining_ticks"], spec.positive_duration_ticks,
             "remaining_ticks should match spec positive_duration_ticks"
         );
     }

@@ -2,18 +2,24 @@ package com.bong.client.social;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
 /** Client-side mirror for plan-social-v1 server_data payloads. */
 public final class SocialStateStore {
     private static final int MAX_EVENTS = 32;
+    private static final int MAX_PENDING_SPARRING_INVITES = 64;
+    private static final int MAX_SETTLED_SPARRING_INVITES = 64;
 
     private static volatile SocialAnonymitySnapshot anonymity = SocialAnonymitySnapshot.empty();
     private static volatile List<SocialExposure> exposures = List.of();
     private static volatile List<SocialRelationshipSignal> relationships = List.of();
     private static volatile List<SocialRenownDelta> renownDeltas = List.of();
-    private static volatile SparringInvite sparringInvite = null;
+    private static final LinkedHashMap<String, SparringInvite> sparringInvites = new LinkedHashMap<>();
+    private static final LinkedHashSet<String> settledSparringInviteIds = new LinkedHashSet<>();
+    private static long latestSparringInviteExpiresAtMs;
+    private static String latestSparringInviteId = "";
     private static volatile TradeOffer tradeOffer = null;
 
     private SocialStateStore() {
@@ -35,8 +41,8 @@ public final class SocialStateStore {
         return renownDeltas;
     }
 
-    public static SparringInvite sparringInvite() {
-        return sparringInvite;
+    public static synchronized SparringInvite sparringInvite() {
+        return sparringInvites.values().stream().findFirst().orElse(null);
     }
 
     public static TradeOffer tradeOffer() {
@@ -69,16 +75,51 @@ public final class SocialStateStore {
         renownDeltas = appendBounded(renownDeltas, delta);
     }
 
-    public static void replaceSparringInvite(SparringInvite invite) {
-        sparringInvite = invite;
+    public static synchronized SparringInviteUpdate enqueueSparringInvite(SparringInvite invite) {
+        if (invite == null || invite.inviteId().isBlank()) {
+            return SparringInviteUpdate.INVALID;
+        }
+        if (settledSparringInviteIds.contains(invite.inviteId())) {
+            return SparringInviteUpdate.SETTLED;
+        }
+        if (sparringInvites.containsKey(invite.inviteId())) {
+            return SparringInviteUpdate.DUPLICATE;
+        }
+        if (isOlderSparringInvite(invite)) {
+            return SparringInviteUpdate.STALE;
+        }
+        if (sparringInvites.size() >= MAX_PENDING_SPARRING_INVITES) {
+            return SparringInviteUpdate.CAPACITY;
+        }
+        latestSparringInviteExpiresAtMs = invite.expiresAtMs();
+        latestSparringInviteId = invite.inviteId();
+        sparringInvites.put(invite.inviteId(), invite);
+        return SparringInviteUpdate.ACCEPTED;
     }
 
-    public static void clearSparringInvite(String inviteId) {
-        SparringInvite current = sparringInvite;
-        if (current == null) return;
-        if (inviteId == null || inviteId.isBlank() || current.inviteId().equals(inviteId)) {
-            sparringInvite = null;
+    public static synchronized boolean clearSparringInvite(String inviteId) {
+        String resolvedInviteId = normalize(inviteId);
+        if (resolvedInviteId.isBlank()) {
+            return false;
         }
+        SparringInvite removed = sparringInvites.remove(resolvedInviteId);
+        if (removed == null) {
+            return false;
+        }
+        rememberSettledSparringInvite(resolvedInviteId);
+        return true;
+    }
+
+    public static synchronized boolean acceptSparringInvite(String inviteId) {
+        String resolvedInviteId = normalize(inviteId);
+        if (resolvedInviteId.isBlank() || !sparringInvites.containsKey(resolvedInviteId)) {
+            return false;
+        }
+        for (String pendingInviteId : sparringInvites.keySet()) {
+            rememberSettledSparringInvite(pendingInviteId);
+        }
+        sparringInvites.clear();
+        return true;
     }
 
     public static void replaceTradeOffer(TradeOffer offer) {
@@ -93,12 +134,15 @@ public final class SocialStateStore {
         }
     }
 
-    public static void clearOnDisconnect() {
+    public static synchronized void clearOnDisconnect() {
         anonymity = SocialAnonymitySnapshot.empty();
         exposures = List.of();
         relationships = List.of();
         renownDeltas = List.of();
-        sparringInvite = null;
+        sparringInvites.clear();
+        settledSparringInviteIds.clear();
+        latestSparringInviteExpiresAtMs = 0L;
+        latestSparringInviteId = "";
         tradeOffer = null;
     }
 
@@ -123,6 +167,21 @@ public final class SocialStateStore {
 
     private static String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static void rememberSettledSparringInvite(String inviteId) {
+        settledSparringInviteIds.add(inviteId);
+        while (settledSparringInviteIds.size() > MAX_SETTLED_SPARRING_INVITES) {
+            String oldest = settledSparringInviteIds.iterator().next();
+            settledSparringInviteIds.remove(oldest);
+        }
+    }
+
+    private static boolean isOlderSparringInvite(SparringInvite invite) {
+        if (invite.expiresAtMs() != latestSparringInviteExpiresAtMs) {
+            return invite.expiresAtMs() < latestSparringInviteExpiresAtMs;
+        }
+        return invite.inviteId().compareTo(latestSparringInviteId) < 0;
     }
 
     private static SocialRemoteIdentity findRemoteIdentity(String playerUuid, String playerName) {
@@ -255,6 +314,15 @@ public final class SocialStateStore {
             terms = normalize(terms);
             expiresAtMs = Math.max(0L, expiresAtMs);
         }
+    }
+
+    public enum SparringInviteUpdate {
+        ACCEPTED,
+        DUPLICATE,
+        SETTLED,
+        STALE,
+        CAPACITY,
+        INVALID
     }
 
     public record TradeItemSummary(
