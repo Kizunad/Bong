@@ -1,6 +1,12 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.inventory.model.*;
+import com.bong.client.inventory.model.bodyplan.BodyPlanLayout;
+import com.bong.client.inventory.model.bodyplan.MeridianPath;
+import com.bong.client.inventory.model.bodyplan.PartAnchor;
+import com.bong.client.inventory.model.bodyplan.Point2;
+import com.bong.client.inventory.model.bodyplan.SilhouettePart;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
@@ -539,7 +545,7 @@ public class BodyInspectComponent extends BaseComponent {
 
     /** 未选中/未显示脉的参考线（极淡） */
     private void drawMeridianGhost(OwoUIDrawContext ctx, int cx, int by, MeridianChannel ch) {
-        int[][] wp = MERIDIAN_PATHS.get(ch);
+        int[][] wp = meridianPathPoints(ch);
         if (wp == null) return;
         int color = 0x22FFFFFF;
         for (int i = 0; i < wp.length - 1; i++) {
@@ -552,7 +558,7 @@ public class BodyInspectComponent extends BaseComponent {
                                   MeridianChannel ch, ChannelState cs,
                                   boolean hover, boolean selected, boolean target,
                                   boolean techniqueHighlighted) {
-        int[][] wp = MERIDIAN_PATHS.get(ch);
+        int[][] wp = meridianPathPoints(ch);
         if (wp == null) return;
 
         boolean active = hover || selected || target || techniqueHighlighted;
@@ -769,10 +775,49 @@ public class BodyInspectComponent extends BaseComponent {
     }
 
     // ==================== Geometry tables ====================
+    //
+    // plan-race-system-v1 P2b — 部位剪影 / 锚点 / 经脉折线改读
+    // BodyPlanLayoutStore.current()（server 下发的归一化 [0,1] 坐标，按本组件画布
+    // W×H 反推回局部坐标）。store 尚无当前 layout（首帧竞态 / 未知 plan id）时
+    // 回退到下方 FALLBACK_* 硬编码表——这些表就是 humanoid.json 的原始抽取来源，
+    // 因此"无 layout 时仅视觉 fallback"与"读 store 后渲染"在 humanoid 构型上产生
+    // 完全相同的像素坐标（server/assets/body_plans/layouts/humanoid.json 与本表
+    // 逐值对拍见 body_plan::layout 的 pin 测试）。gate 判定不读这里——纯渲染几何。
 
-    /** Body part bounding rect relative to (center_x, top_y) → [x1, y1, x2, y2]
-     *  尺度相对原设计放大 1.2x (H=175→210)。 */
+    /**
+     * 归一化坐标 → 本组件局部坐标（原点=画布左上角，X 以 cx 为中心偏移）。
+     * 与 server humanoid.json 抽取时使用的反函数 x=(84+px)/168、y=py/236 精确对应
+     * （W=168, H=236）。
+     */
+    private static int[] fromNormalized(Point2 p) {
+        int px = (int) Math.round(p.x() * W - (W / 2.0));
+        int py = (int) Math.round(p.y() * H);
+        return new int[]{px, py};
+    }
+
+    /** Body part bounding rect relative to (center_x, top_y) → [x1, y1, x2, y2]。 */
     private static int[] bodyPartRect(BodyPart bp) {
+        BodyPlanLayout layout = BodyPlanLayoutStore.current();
+        if (layout != null) {
+            SilhouettePart part = layout.silhouetteFor(bp.name().toLowerCase(java.util.Locale.ROOT));
+            if (part != null && !part.polygon().isEmpty()) {
+                int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
+                int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
+                for (Point2 pt : part.polygon()) {
+                    int[] xy = fromNormalized(pt);
+                    minX = Math.min(minX, xy[0]);
+                    maxX = Math.max(maxX, xy[0]);
+                    minY = Math.min(minY, xy[1]);
+                    maxY = Math.max(maxY, xy[1]);
+                }
+                return new int[]{minX, minY, maxX, maxY};
+            }
+        }
+        return fallbackBodyPartRect(bp);
+    }
+
+    /** 内建常量保底（layout 缺失时的仅视觉 fallback，见类头文档）。 */
+    static int[] fallbackBodyPartRect(BodyPart bp) {
         return switch (bp) {
             case HEAD             -> new int[]{-11, 6, 11, 28};
             case NECK             -> new int[]{-4, 28, 4, 34};
@@ -794,6 +839,18 @@ public class BodyInspectComponent extends BaseComponent {
     }
 
     private static int[] bodyPartAnchor(BodyPart bp) {
+        BodyPlanLayout layout = BodyPlanLayoutStore.current();
+        if (layout != null) {
+            PartAnchor anchor = layout.anchorFor(bp.name().toLowerCase(java.util.Locale.ROOT));
+            if (anchor != null) {
+                return fromNormalized(anchor.point());
+            }
+        }
+        return fallbackBodyPartAnchor(bp);
+    }
+
+    /** 内建常量保底（layout 缺失时的仅视觉 fallback，见类头文档）。 */
+    static int[] fallbackBodyPartAnchor(BodyPart bp) {
         return switch (bp) {
             case HEAD             -> new int[]{0, 10};
             case NECK             -> new int[]{0, 30};
@@ -816,97 +873,120 @@ public class BodyInspectComponent extends BaseComponent {
 
     /** 经脉 tooltip icon 锚点 — 取路径末端 */
     private static int[] meridianAnchor(MeridianChannel ch) {
-        int[][] wp = MERIDIAN_PATHS.get(ch);
+        int[][] wp = meridianPathPoints(ch);
         if (wp == null || wp.length == 0) return new int[]{0, 0};
         return wp[wp.length - 1];
     }
 
-    // ==================== Meridian path waypoints ====================
+    /**
+     * 单条经脉的折线路径（局部坐标）。优先读 {@link BodyPlanLayoutStore#current()}
+     * 的 {@code meridian_paths}（按 {@link MeridianChannel#channelId()} 查找）；
+     * store 缺失该 layout，或 layout 未声明这条经脉（非 humanoid 构型，例如飞鲸没有
+     * 十二正经）时回退到 {@link #FALLBACK_MERIDIAN_PATHS}——回退表同样可能没有该
+     * channel（不存在，理论上 humanoid 20 条恒有），届时返回 {@code null}，调用方
+     * （{@link #meridianAnchor} / {@link #distanceToPath}）必须处理 {@code null}。
+     */
+    private static int[][] meridianPathPoints(MeridianChannel ch) {
+        BodyPlanLayout layout = BodyPlanLayoutStore.current();
+        if (layout != null) {
+            MeridianPath path = layout.meridianPathFor(ch.channelId());
+            if (path != null && !path.points().isEmpty()) {
+                int[][] pts = new int[path.points().size()][];
+                for (int i = 0; i < pts.length; i++) {
+                    pts[i] = fromNormalized(path.points().get(i));
+                }
+                return pts;
+            }
+        }
+        return FALLBACK_MERIDIAN_PATHS.get(ch);
+    }
 
-    /** 每条经脉的多段折线路径（cx 相对坐标），按画布 H=210 调教。 */
-    private static final Map<MeridianChannel, int[][]> MERIDIAN_PATHS = new EnumMap<>(MeridianChannel.class);
+    // ==================== Meridian path waypoints (fallback) ====================
+
+    /** 内建常量保底：每条经脉的多段折线路径（cx 相对坐标），按画布 H=210 调教。 */
+    private static final Map<MeridianChannel, int[][]> FALLBACK_MERIDIAN_PATHS = new EnumMap<>(MeridianChannel.class);
     static {
         // ===== 手三阴 (左臂) — 从胸肩出发扇形展开到手部 =====
         // LU 肺经：胸前上 → 肩前外 → 前臂外侧 → 拇指端
-        MERIDIAN_PATHS.put(MeridianChannel.LU, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.LU, new int[][]{
             {-8, 40}, {-18, 50}, {-28, 74}, {-34, 100}, {-36, 112}
         });
         // HT 心经：腋下 → 肘内 → 腕尺 → 小指端（最内侧，贴体）
-        MERIDIAN_PATHS.put(MeridianChannel.HT, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.HT, new int[][]{
             {-16, 48}, {-22, 64}, {-26, 88}, {-28, 108}, {-26, 113}
         });
         // PC 心包经：胸中 → 肘中 → 腕中 → 中指端（中间路径）
-        MERIDIAN_PATHS.put(MeridianChannel.PC, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.PC, new int[][]{
             {-2, 50}, {-14, 66}, {-22, 86}, {-30, 107}, {-32, 113}
         });
 
         // ===== 手三阳 (右臂) — 镜像 =====
-        MERIDIAN_PATHS.put(MeridianChannel.LI, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.LI, new int[][]{
             {8, 40}, {18, 50}, {28, 74}, {34, 100}, {36, 112}
         });
-        MERIDIAN_PATHS.put(MeridianChannel.SI, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.SI, new int[][]{
             {16, 48}, {22, 64}, {26, 88}, {28, 108}, {26, 113}
         });
-        MERIDIAN_PATHS.put(MeridianChannel.TE, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.TE, new int[][]{
             {2, 50}, {14, 66}, {22, 86}, {30, 107}, {32, 113}
         });
 
         // ===== 足三阴 (左腿) — 从足端上行至腹 =====
         // SP 脾经：大趾 → 腿内侧中 → 腹侧
-        MERIDIAN_PATHS.put(MeridianChannel.SP, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.SP, new int[][]{
             {-17, 188}, {-14, 170}, {-11, 140}, {-8, 110}, {-14, 90}
         });
         // KI 肾经：足心 → 小腿内 → 大腿内 → 胸
-        MERIDIAN_PATHS.put(MeridianChannel.KI, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.KI, new int[][]{
             {-13, 190}, {-11, 170}, {-7, 140}, {-4, 105}, {-2, 72}
         });
         // LR 肝经：大趾外 → 腿内 → 胁
-        MERIDIAN_PATHS.put(MeridianChannel.LR, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.LR, new int[][]{
             {-15, 188}, {-12, 170}, {-9, 142}, {-6, 112}, {-10, 82}
         });
 
         // ===== 足三阳 (右腿) — 镜像 =====
-        MERIDIAN_PATHS.put(MeridianChannel.ST, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.ST, new int[][]{
             {17, 188}, {14, 170}, {11, 140}, {8, 110}, {14, 90}
         });
-        MERIDIAN_PATHS.put(MeridianChannel.BL, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.BL, new int[][]{
             {13, 190}, {11, 170}, {7, 140}, {4, 105}, {2, 72}
         });
-        MERIDIAN_PATHS.put(MeridianChannel.GB, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.GB, new int[][]{
             {15, 188}, {12, 170}, {9, 142}, {6, 112}, {10, 82}
         });
 
         // ===== 8 奇经 =====
         // 任脉：前正中，腹→咽
-        MERIDIAN_PATHS.put(MeridianChannel.REN, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.REN, new int[][]{
             {-3, 98}, {-3, 80}, {-3, 62}, {-3, 44}, {-3, 30}
         });
         // 督脉：后正中（右偏绘制以区分）
-        MERIDIAN_PATHS.put(MeridianChannel.DU, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.DU, new int[][]{
             {3, 98}, {3, 80}, {3, 62}, {3, 44}, {3, 30}
         });
         // 冲脉：深部正中
-        MERIDIAN_PATHS.put(MeridianChannel.CHONG, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.CHONG, new int[][]{
             {0, 94}, {0, 74}, {0, 54}, {0, 34}
         });
         // 带脉：腰间环行
-        MERIDIAN_PATHS.put(MeridianChannel.DAI, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.DAI, new int[][]{
             {-20, 84}, {-10, 86}, {0, 87}, {10, 86}, {20, 84}
         });
         // 阴维：左侧躯干弧
-        MERIDIAN_PATHS.put(MeridianChannel.YIN_WEI, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.YIN_WEI, new int[][]{
             {-12, 100}, {-16, 78}, {-16, 54}, {-10, 36}
         });
         // 阳维：右侧躯干弧
-        MERIDIAN_PATHS.put(MeridianChannel.YANG_WEI, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.YANG_WEI, new int[][]{
             {12, 100}, {16, 78}, {16, 54}, {10, 36}
         });
         // 阴跷：内踝 → 内眼（腿内侧长链）
-        MERIDIAN_PATHS.put(MeridianChannel.YIN_QIAO, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.YIN_QIAO, new int[][]{
             {-8, 180}, {-6, 145}, {-5, 110}, {-4, 75}, {-2, 26}
         });
         // 阳跷：外踝 → 外眼
-        MERIDIAN_PATHS.put(MeridianChannel.YANG_QIAO, new int[][]{
+        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.YANG_QIAO, new int[][]{
             {8, 180}, {6, 145}, {5, 110}, {4, 75}, {2, 26}
         });
     }
@@ -922,7 +1002,7 @@ public class BodyInspectComponent extends BaseComponent {
 
     /** 鼠标到某条脉路径的最小距离（折线段距离）。 */
     private static double distanceToPath(int mx, int my, int cx, MeridianChannel ch) {
-        int[][] wp = MERIDIAN_PATHS.get(ch);
+        int[][] wp = meridianPathPoints(ch);
         if (wp == null || wp.length < 2) return Double.MAX_VALUE;
         double best = Double.MAX_VALUE;
         for (int i = 0; i < wp.length - 1; i++) {
@@ -984,4 +1064,15 @@ public class BodyInspectComponent extends BaseComponent {
     protected int determineHorizontalContentSize(Sizing sizing) { return W; }
     @Override
     protected int determineVerticalContentSize(Sizing sizing) { return H; }
+
+    // ==================== Test-only geometry accessors ====================
+    // plan-race-system-v1 P2b — bodyPartRect/bodyPartAnchor/meridianPathPoints 是
+    // private static，像素回归 pin 测试需要直接核验其输出（含 BodyPlanLayoutStore
+    // 已加载 / 未加载两条路径），走既有 "*ForTests()" 命名约定暴露只读快照。
+
+    static int[] bodyPartRectForTests(BodyPart bp) { return bodyPartRect(bp); }
+    static int[] bodyPartAnchorForTests(BodyPart bp) { return bodyPartAnchor(bp); }
+    static int[][] meridianPathPointsForTests(MeridianChannel ch) { return meridianPathPoints(ch); }
+    static int[] meridianAnchorForTests(MeridianChannel ch) { return meridianAnchor(ch); }
+    static int[] fromNormalizedForTests(double x, double y) { return fromNormalized(new Point2(x, y)); }
 }
