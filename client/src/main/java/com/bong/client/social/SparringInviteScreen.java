@@ -101,7 +101,7 @@ public final class SparringInviteScreen extends Screen {
         return Math.max(0L, invite.expiresAtMs() - System.currentTimeMillis());
     }
 
-    public String inviteIdForTests() {
+    public String inviteId() {
         return invite.inviteId();
     }
 

@@ -96,7 +96,7 @@ public final class SparringInviteScreenBootstrap {
 
     private static ScreenKind screenKindOf(Screen current, SocialStateStore.SparringInvite invite) {
         if (current instanceof SparringInviteScreen screen) {
-            return invite != null && screen.inviteIdForTests().equals(invite.inviteId())
+            return invite != null && screen.inviteId().equals(invite.inviteId())
                 ? ScreenKind.MATCHING_SPARRING_INVITE
                 : ScreenKind.OTHER_SPARRING_INVITE;
         }
