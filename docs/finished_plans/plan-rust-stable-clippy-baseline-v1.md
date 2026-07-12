@@ -72,6 +72,7 @@
 - 后续完整门禁又证实 `fauna::migration` 的 5 ms 墙钟阈值会在并发负载下以 5.511743 ms 假红；`39d7592e` 改为确定性状态契约，覆盖非调度 tick 不移动、调度 tick 全部移动、每只最多一步且 Y 不变，定向测试约 0.02 秒通过。
 - 在 `39d7592e` 上重新执行完整 server 三门禁：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 全部 PASS；lib 11283 passed / 1 ignored，main 11 passed，两个 integration target 共 5 passed，doc tests 5 ignored，合计 **11299 passed / 0 failed / 6 ignored**。
 - 最后普通合并 `origin/main@f6322e6a`；增量仅涉及 client 与另一份归档 plan，合并前后 `server/` tree 均为 `fcff3848201755900b433d9ddd09d87fb7414df2`，上述 Rust 门禁仍绑定最终组合树。
+- 最终 HEAD 首轮 e2e run `29180908460` 的 proto/client/schema/agent/server test 与 Smoke/E2E harness 均 PASS，协议级 bot 24 个场景中 23 PASS；artifact 证明唯一失败并非 `sword.cleave` 音频断链，而是连续两个场景复用持久身份 `BciCast`，前一场景恢复期跨重连导致后者收到 `RejectInRecovery`。剑技 AV 场景改用独立 `SwordAV` tag，隔离场景状态，不改生产施放或音频逻辑。
 
 ## Finish Evidence
 
