@@ -11,12 +11,16 @@ import com.bong.client.inventory.model.BodyPartState;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.PhysicalBody;
 import com.bong.client.inventory.model.WoundLevel;
+import com.bong.client.inventory.model.bodyplan.BodyPlanLayout;
+import com.bong.client.inventory.model.bodyplan.PartAnchor;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.state.SeasonState;
 import com.bong.client.visual.season.SeasonVisuals;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -361,8 +365,35 @@ public final class MiniBodyHudPlanner {
         }
     }
 
-    // Wound marker positions (relative to silhouette top-left). 全部按 1/2 缩放。
+    // Wound marker positions (relative to silhouette top-left).
+    //
+    // plan-race-system-v1 P2b — 优先读 BodyPlanLayoutStore.current() 的 anchors
+    // （归一化 [0,1] 坐标），按本面板自己的粗网格尺寸 BODY_W×BODY_H 线性缩放推导
+    // （nx*BODY_W, ny*BODY_H）。注意这与 BodyInspectComponent 的坐标反推不是同一
+    // 函数——本面板的剪影比例（30×75，仅头/躯干/四肢六块粗矩形）与
+    // BodyInspectComponent 的 168×236 精细画布比例并不相似，均匀缩放后的红点位置
+    // 相对本面板历史硬编码值会有 1-6px 漂移（四肢末端漂移最大，见类注释）。这是
+    // 有意为之的新基线：像素级回归 pin 测试锁定的是"改造后"的坐标（
+    // MiniBodyHudPlannerGeometryTest），不是逐值复刻旧硬编码表——旧表本就是手调
+    // 的粗略近似，不是从任何权威数据抽取而来（对照 BodyInspectComponent 的
+    // fromNormalized，那里坐标是逐值验证过与来源表完全互逆）。store 缺当前
+    // layout，或 layout 未声明该部位时，回退到 {@link #fallbackLocatePart}
+    // （即本面板改造前的原硬编码表，逐值保留，仅视觉 fallback）。
     private static int[] locatePart(int bx, int by, BodyPart part) {
+        BodyPlanLayout layout = BodyPlanLayoutStore.current();
+        if (layout != null) {
+            PartAnchor anchor = layout.anchorFor(part.name().toLowerCase(Locale.ROOT));
+            if (anchor != null) {
+                int px = (int) Math.round(anchor.point().x() * BODY_W);
+                int py = (int) Math.round(anchor.point().y() * BODY_H);
+                return new int[]{bx + px, by + py};
+            }
+        }
+        return fallbackLocatePart(bx, by, part);
+    }
+
+    /** 内建常量保底（layout 缺失 / 未声明该部位时的仅视觉 fallback）。全部按 1/2 缩放。 */
+    static int[] fallbackLocatePart(int bx, int by, BodyPart part) {
         return switch (part) {
             case HEAD -> new int[]{bx + BODY_W / 2, by + 4};
             case NECK -> new int[]{bx + BODY_W / 2, by + 9};
@@ -463,4 +494,10 @@ public final class MiniBodyHudPlanner {
         out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, 1, h, color));
         out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + w - 1, y, 1, h, color));
     }
+
+    // ==================== Test-only geometry accessors ====================
+    // plan-race-system-v1 P2b — locatePart 是 private static，像素回归 pin 测试需要
+    // 直接核验其输出（含 BodyPlanLayoutStore 已加载 / 未加载两条路径）。
+
+    static int[] locatePartForTests(int bx, int by, BodyPart part) { return locatePart(bx, by, part); }
 }
