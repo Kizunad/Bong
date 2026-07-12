@@ -36,6 +36,8 @@ class CombatHudBootstrapTest {
         HudImmersionMode.resetForTests();
         DefenseWindowStore.resetForTests();
         SocialStateStore.resetForTests();
+        SparringInviteScreenBootstrap.clearOnDisconnect();
+        BongToast.resetForTests();
         ClientRequestSender.resetBackendForTests();
     }
 
