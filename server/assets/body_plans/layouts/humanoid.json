@@ -975,5 +975,119 @@
       "server_part_id": "leg_r",
       "display_segment_id": "right_thigh"
     }
+  ],
+  "hud_anchors": [
+    {
+      "part_id": "head",
+      "point": {
+        "x": 0.5,
+        "y": 0.053333
+      }
+    },
+    {
+      "part_id": "neck",
+      "point": {
+        "x": 0.5,
+        "y": 0.12
+      }
+    },
+    {
+      "part_id": "chest",
+      "point": {
+        "x": 0.5,
+        "y": 0.226667
+      }
+    },
+    {
+      "part_id": "abdomen",
+      "point": {
+        "x": 0.5,
+        "y": 0.373333
+      }
+    },
+    {
+      "part_id": "left_upper_arm",
+      "point": {
+        "x": 0.2,
+        "y": 0.186667
+      }
+    },
+    {
+      "part_id": "left_forearm",
+      "point": {
+        "x": 0.2,
+        "y": 0.306667
+      }
+    },
+    {
+      "part_id": "left_hand",
+      "point": {
+        "x": 0.2,
+        "y": 0.413333
+      }
+    },
+    {
+      "part_id": "right_upper_arm",
+      "point": {
+        "x": 0.8,
+        "y": 0.186667
+      }
+    },
+    {
+      "part_id": "right_forearm",
+      "point": {
+        "x": 0.8,
+        "y": 0.306667
+      }
+    },
+    {
+      "part_id": "right_hand",
+      "point": {
+        "x": 0.8,
+        "y": 0.413333
+      }
+    },
+    {
+      "part_id": "left_thigh",
+      "point": {
+        "x": 0.366667,
+        "y": 0.546667
+      }
+    },
+    {
+      "part_id": "left_calf",
+      "point": {
+        "x": 0.366667,
+        "y": 0.72
+      }
+    },
+    {
+      "part_id": "left_foot",
+      "point": {
+        "x": 0.366667,
+        "y": 0.88
+      }
+    },
+    {
+      "part_id": "right_thigh",
+      "point": {
+        "x": 0.6,
+        "y": 0.546667
+      }
+    },
+    {
+      "part_id": "right_calf",
+      "point": {
+        "x": 0.6,
+        "y": 0.72
+      }
+    },
+    {
+      "part_id": "right_foot",
+      "point": {
+        "x": 0.6,
+        "y": 0.88
+      }
+    }
   ]
 }

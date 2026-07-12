@@ -2095,6 +2095,8 @@ describe("sample files pass schema validation", () => {
     part_display_map: [
       { server_part_id: "chest", display_segment_id: "chest" },
     ],
+    // P2 major 修复：mini HUD 专用第二锚点组，恒为数组字段（空 = 未配置）。
+    hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.19 } }],
   });
 
   it("body_plan_layout 正样本（最小合法形状）通过", () => {
@@ -2123,6 +2125,23 @@ describe("sample files pass schema validation", () => {
     ["坐标为负", {
       ...validBodyPlanLayout(),
       anchors: [{ part_id: "chest", point: { x: -0.1, y: 0.2 } }],
+    }],
+    ["hud_anchors 缺失（非 Optional，恒为数组字段）", (() => {
+      const d = validBodyPlanLayout() as Record<string, unknown>;
+      delete d.hud_anchors;
+      return d;
+    })()],
+    ["hud_anchors 坐标越界 x>1", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ part_id: "chest", point: { x: 1.2, y: 0.2 } }],
+    }],
+    ["hud_anchors 坐标为负", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: -0.1 } }],
+    }],
+    ["hud_anchors 条目缺 part_id", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ point: { x: 0.5, y: 0.2 } }],
     }],
     ["meridian path 只有 1 个点", {
       ...validBodyPlanLayout(),
@@ -2182,6 +2201,25 @@ describe("sample files pass schema validation", () => {
 
   it("part_display_map 空数组是合法边界（渲染层可暂不提供 server 部位 → 展示段映射）", () => {
     const payload = { ...validBodyPlanLayout(), part_display_map: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-race-system-v1 P2 major 修复 —— hud_anchors 是可选的第二锚点组（mini HUD
+  // 专用，画布比例与 anchors 的精细画布不同），空数组合法（未来非人 plan 常态：
+  // 只给主 anchors，client 回退到缩放推导，见 MiniBodyHudPlanner.locatePart）。
+  it("hud_anchors 空数组是合法边界（未配置时 client 回退到 anchors 缩放推导）", () => {
+    const payload = { ...validBodyPlanLayout(), hud_anchors: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("hud_anchors 非空且与 anchors 数值不同也合法（两套锚点独立声明，互不联动）", () => {
+    const payload = {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.2 } }],
+      hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.226667 } }],
+    };
     const result = validate(ServerDataV1, payload);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });

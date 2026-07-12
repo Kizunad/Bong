@@ -2287,6 +2287,15 @@ pub struct BodyPlanPartDisplayMappingV1 {
 /// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据。以 `body_plan_id` 为
 /// 主键，随 `cultivation_detail` 首帧下发；实体 body_plan 变化（真实换 race）时重发，
 /// 易形不触发（P4 语义）。
+///
+/// `hud_anchors`（P2 major 修复）—— **可选的第二套锚点组**，专供 mini HUD
+/// （`MiniBodyHudPlanner`，30×75 粗网格，宽高比 0.40）使用，与 `anchors`
+/// （`BodyInspectComponent`，168×236 精细画布，宽高比 0.71）分离：两个消费者画布
+/// 比例不同，均匀缩放同一套 `anchors` 会在 mini HUD 上产生 4-6px 像素漂移，违反 plan
+/// 「首版渲染与现状像素级一致」红线。humanoid.json 把 `hud_anchors` 原样抽取自
+/// `MiniBodyHudPlanner` 改造前的硬编码表（逐值相等，见 `layout.rs` 底部 pin 测试）；
+/// 未来非人 plan 可不配（留空 `Vec::new()`），此时 client 回退到用 `anchors` 缩放推导
+/// （`locatePart` 换轨逻辑，非人形没有另一份权威像素表可抽取，缩放推导是唯一选择）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BodyPlanLayoutV1 {
@@ -2295,6 +2304,8 @@ pub struct BodyPlanLayoutV1 {
     pub anchors: Vec<BodyPlanPartAnchorV1>,
     pub meridian_paths: Vec<BodyPlanMeridianPathV1>,
     pub part_display_map: Vec<BodyPlanPartDisplayMappingV1>,
+    #[serde(default)]
+    pub hud_anchors: Vec<BodyPlanPartAnchorV1>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -5291,6 +5302,7 @@ mod tests {
             anchors: Vec::new(),
             meridian_paths: Vec::new(),
             part_display_map: Vec::new(),
+            hud_anchors: Vec::new(),
         }));
         let bytes = payload
             .to_json_bytes_checked()
@@ -5305,8 +5317,76 @@ mod tests {
                 assert!(layout.anchors.is_empty());
                 assert!(layout.meridian_paths.is_empty());
                 assert!(layout.part_display_map.is_empty());
+                assert!(
+                    layout.hud_anchors.is_empty(),
+                    "hud_anchors 是可选第二锚点组，非人形/未配置构型必须留空往返"
+                );
             }
             other => panic!("expected BodyPlanLayout after roundtrip, got {other:?}"),
+        }
+    }
+
+    /// plan-race-system-v1 P2 major 修复 —— `hud_anchors` 非空往返必须逐值保留，
+    /// 且缺省 JSON（旧数据 / 未配置该字段的 plan）反序列化必须默认落空 `Vec`（不是
+    /// 反序列化失败），两条转换分支各有专属 pin。
+    #[test]
+    fn body_plan_layout_hud_anchors_roundtrip_and_missing_field_defaults_to_empty() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::BodyPlanLayout(BodyPlanLayoutV1 {
+            body_plan_id: "humanoid".to_string(),
+            silhouette: vec![BodyPlanSilhouettePartV1 {
+                part_id: "head".to_string(),
+                polygon: vec![
+                    BodyPlanPoint2V1 { x: 0.4, y: 0.0 },
+                    BodyPlanPoint2V1 { x: 0.6, y: 0.0 },
+                    BodyPlanPoint2V1 { x: 0.5, y: 0.1 },
+                ],
+            }],
+            anchors: Vec::new(),
+            meridian_paths: Vec::new(),
+            part_display_map: Vec::new(),
+            hud_anchors: vec![BodyPlanPartAnchorV1 {
+                part_id: "head".to_string(),
+                point: BodyPlanPoint2V1 { x: 0.5, y: 0.04 },
+            }],
+        }));
+        let bytes = payload
+            .to_json_bytes_checked()
+            .expect("body_plan_layout with hud_anchors must serialize");
+        let back: ServerDataV1 = serde_json::from_slice(&bytes)
+            .expect("body_plan_layout with hud_anchors must deserialize back");
+        match back.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert_eq!(layout.hud_anchors.len(), 1);
+                assert_eq!(layout.hud_anchors[0].part_id, "head");
+                assert_eq!(layout.hud_anchors[0].point.x, 0.5);
+                assert_eq!(layout.hud_anchors[0].point.y, 0.04);
+            }
+            other => panic!("expected BodyPlanLayout after roundtrip, got {other:?}"),
+        }
+
+        // 缺省字段（旧数据 / 未来非人 plan 不配置）反序列化必须默认空 Vec，不是 error。
+        let legacy_json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "body_plan_layout",
+            "body_plan_id": "whale",
+            "silhouette": [{
+                "part_id": "tail_fin",
+                "polygon": [{"x": 0.1, "y": 0.9}, {"x": 0.5, "y": 0.8}, {"x": 0.9, "y": 0.9}],
+            }],
+            "anchors": [],
+            "meridian_paths": [],
+            "part_display_map": [],
+        });
+        let decoded: ServerDataV1 = serde_json::from_value(legacy_json)
+            .expect("body_plan_layout missing hud_anchors field must default to empty, not fail");
+        match decoded.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert!(
+                    layout.hud_anchors.is_empty(),
+                    "missing hud_anchors field must default to an empty Vec"
+                );
+            }
+            other => panic!("expected BodyPlanLayout, got {other:?}"),
         }
     }
 

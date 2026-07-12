@@ -332,6 +332,7 @@ mod body_plan_layout_emit_tests {
                 server_part_id: "chest".to_string(),
                 display_segment_id: "chest".to_string(),
             }],
+            hud_anchors: vec![],
         };
         BodyPlanLayoutRegistry::from_layouts(vec![layout], &body_plans)
             .expect("fixture layout should validate against humanoid plan")
@@ -446,6 +447,7 @@ mod body_plan_layout_emit_tests {
             anchors: vec![],
             meridian_paths: vec![],
             part_display_map: vec![],
+            hud_anchors: vec![],
         };
         let layouts = BodyPlanLayoutRegistry::from_layouts(vec![other_layout], &body_plans)
             .expect("other layout should validate against other plan");

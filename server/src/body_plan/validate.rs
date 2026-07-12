@@ -382,6 +382,31 @@ pub fn validate_body_plan_layout(
         }
     }
 
+    // plan-race-system-v1 P2 major 修复 — `hud_anchors` 是可选的第二套锚点组（mini
+    // HUD 专用画布比例），校验规则与 `anchors` 完全对称（同样允许留空，同样不要求
+    // 覆盖 plan.parts 全集——非人形构型可以只给部分部位配 mini HUD 锚点）。
+    let mut hud_anchor_ids: HashSet<String> = HashSet::new();
+    for anchor in &layout.hud_anchors {
+        if anchor.part_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has a hud_anchor with an empty part_id",
+                layout.body_plan_id
+            ));
+        }
+        if !point_in_unit_range(anchor.point.x, anchor.point.y) {
+            return Err(format!(
+                "body plan layout {} hud_anchor {} has an out-of-range point ({}, {}) — coordinates must be normalized to [0,1]",
+                layout.body_plan_id, anchor.part_id, anchor.point.x, anchor.point.y
+            ));
+        }
+        if !hud_anchor_ids.insert(anchor.part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate hud_anchor for part_id {}",
+                layout.body_plan_id, anchor.part_id
+            ));
+        }
+    }
+
     let plan_channel_ids: Option<HashSet<&str>> = plan
         .meridian_profile
         .as_ref()
@@ -1159,6 +1184,10 @@ mod tests {
                     server_part_id: "chest".to_string(),
                     display_segment_id: "chest".to_string(),
                 }],
+                hud_anchors: vec![BodyPlanPartAnchorV1 {
+                    part_id: "chest".to_string(),
+                    point: p(0.5, 0.25),
+                }],
             }
         }
 
@@ -1268,6 +1297,45 @@ mod tests {
             layout.anchors.push(dup);
             let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
             assert!(err.contains("duplicate anchor"), "got: {err}");
+        }
+
+        #[test]
+        fn hud_anchor_empty_layout_is_valid() {
+            // hud_anchors 是可选的第二锚点组——空列表必须合法（未来非人 plan 不配的常态）。
+            let mut layout = happy_layout();
+            layout.hud_anchors.clear();
+            assert!(validate_body_plan_layout(&layout, &plan_with_lung_channel()).is_ok());
+        }
+
+        #[test]
+        fn hud_anchor_empty_part_id_rejected() {
+            let mut layout = happy_layout();
+            layout.hud_anchors[0].part_id = String::new();
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(
+                err.contains("hud_anchor with an empty part_id"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn hud_anchor_out_of_range_point_rejected() {
+            let mut layout = happy_layout();
+            layout.hud_anchors[0].point = p(1.5, 0.2);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(
+                err.contains("hud_anchor") && err.contains("out-of-range point"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn duplicate_hud_anchor_part_id_rejected() {
+            let mut layout = happy_layout();
+            let dup = layout.hud_anchors[0].clone();
+            layout.hud_anchors.push(dup);
+            let err = validate_body_plan_layout(&layout, &plan_with_lung_channel()).unwrap_err();
+            assert!(err.contains("duplicate hud_anchor"), "got: {err}");
         }
 
         #[test]

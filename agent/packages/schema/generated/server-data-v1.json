@@ -13274,7 +13274,8 @@
         "silhouette",
         "anchors",
         "meridian_paths",
-        "part_display_map"
+        "part_display_map",
+        "hud_anchors"
       ],
       "properties": {
         "v": {
@@ -13426,6 +13427,43 @@
               "display_segment_id": {
                 "minLength": 1,
                 "type": "string"
+              }
+            }
+          }
+        },
+        "hud_anchors": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "part_id",
+              "point"
+            ],
+            "properties": {
+              "part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "point": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "properties": {
+                  "x": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "y": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  }
+                }
               }
             }
           }

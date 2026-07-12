@@ -796,6 +796,17 @@ impl From<&ServerDataPayloadV1> for Payload {
                             display_segment_id: m.display_segment_id.clone(),
                         })
                         .collect(),
+                    hud_anchors: layout
+                        .hud_anchors
+                        .iter()
+                        .map(|a| bong::BodyPlanPartAnchor {
+                            part_id: a.part_id.clone(),
+                            point: Some(bong::BodyPlanPoint2 {
+                                x: a.point.x as f32,
+                                y: a.point.y as f32,
+                            }),
+                        })
+                        .collect(),
                 })
             }
             ServerDataPayloadV1::BotanyHarvestProgress {
@@ -6178,6 +6189,10 @@ mod tests {
                             display_segment_id: "head".to_string(),
                         }
                     ],
+                    hud_anchors: vec![super::super::server_data::BodyPlanPartAnchorV1 {
+                        part_id: "chest".to_string(),
+                        point: super::super::server_data::BodyPlanPoint2V1 { x: 0.5, y: 0.19 },
+                    }],
                 }
             )),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {

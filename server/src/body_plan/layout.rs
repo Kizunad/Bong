@@ -256,6 +256,7 @@ mod tests {
                 server_part_id: "chest".to_string(),
                 display_segment_id: "chest".to_string(),
             }],
+            hud_anchors: vec![],
         }
     }
 
@@ -676,6 +677,78 @@ mod tests {
         }
     }
 
+    // ───────────── plan-race-system-v1 P2 major 修复 ─────────────
+    //
+    // `hud_anchors` ↔ `MiniBodyHudPlanner` 改造前硬编码红点表逐值对拍。归一化公式与
+    // client `MiniBodyHudPlanner` 的粗网格画布一致：`nx = px / 30`（`BODY_W`），
+    // `ny = py / 75`（`BODY_H`）——**不是**上面 `nx`/`ny`（168×236 精细画布，那是
+    // `anchors` 用的）。这是本 major 修复新增的第二套坐标系，防止 mini HUD 与
+    // BodyInspectComponent 共用一套锚点导致的宽高比失配像素漂移。
+    const MINI_HUD_BODY_W: f64 = 30.0;
+    const MINI_HUD_BODY_H: f64 = 75.0;
+
+    fn mini_hud_nx(px: i32) -> f64 {
+        f64::from(px) / MINI_HUD_BODY_W
+    }
+
+    fn mini_hud_ny(py: i32) -> f64 {
+        f64::from(py) / MINI_HUD_BODY_H
+    }
+
+    fn assert_mini_hud_point_pins(actual: &BodyPlanPoint2V1, px: i32, py: i32, context: &str) {
+        assert!(
+            (actual.x - mini_hud_nx(px)).abs() < PIN_TOLERANCE,
+            "{context}: x 期望 {} (= {px} / 30，MiniBodyHudPlanner 原硬编码)，实际 {}",
+            mini_hud_nx(px),
+            actual.x
+        );
+        assert!(
+            (actual.y - mini_hud_ny(py)).abs() < PIN_TOLERANCE,
+            "{context}: y 期望 {} (= {py} / 75，MiniBodyHudPlanner 原硬编码)，实际 {}",
+            mini_hud_ny(py),
+            actual.y
+        );
+    }
+
+    /// client `MiniBodyHudPlanner.fallbackLocatePart`（改造前原硬编码）的 16 段 `[x, y]`
+    /// 原表，画布 30×75（`BODY_W`×`BODY_H`）。
+    const CLIENT_MINI_HUD_FALLBACK_ANCHORS: [(&str, [i32; 2]); 16] = [
+        ("head", [15, 4]),
+        ("neck", [15, 9]),
+        ("chest", [15, 17]),
+        ("abdomen", [15, 28]),
+        ("left_upper_arm", [6, 14]),
+        ("left_forearm", [6, 23]),
+        ("left_hand", [6, 31]),
+        ("right_upper_arm", [24, 14]),
+        ("right_forearm", [24, 23]),
+        ("right_hand", [24, 31]),
+        ("left_thigh", [11, 41]),
+        ("left_calf", [11, 54]),
+        ("left_foot", [11, 66]),
+        ("right_thigh", [18, 41]),
+        ("right_calf", [18, 54]),
+        ("right_foot", [18, 66]),
+    ];
+
+    #[test]
+    fn humanoid_layout_hud_anchors_pin_mini_hud_fallback_table_verbatim() {
+        let layout = humanoid_layout_static();
+        assert_eq!(
+            layout.hud_anchors.len(),
+            CLIENT_MINI_HUD_FALLBACK_ANCHORS.len(),
+            "humanoid.json hud_anchors 数必须与 MiniBodyHudPlanner 原硬编码表的 16 段一致"
+        );
+        for (part_id, [ax, ay]) in CLIENT_MINI_HUD_FALLBACK_ANCHORS {
+            let anchor = layout
+                .hud_anchors
+                .iter()
+                .find(|a| a.part_id == part_id)
+                .unwrap_or_else(|| panic!("humanoid.json 缺 hud_anchor {part_id}"));
+            assert_mini_hud_point_pins(&anchor.point, ax, ay, &format!("hud_anchor {part_id}"));
+        }
+    }
+
     // ───────────── plan-race-system-v1 P2c — 合成非人 layout（6 段构型）端到端 ─────────────
     //
     // §P5 whale 草案部位集合（颅 / 躯干 / 背鳍 / 左胸鳍 / 右胸鳍 / 尾鳍）不是生产数据
@@ -773,6 +846,10 @@ mod tests {
             anchors,
             meridian_paths: vec![],
             part_display_map,
+            // whale 是非人形合成构型的 P2c 端到端测试，没有另一份权威 mini-HUD 像素表
+            // 可抽取——留空验证 client locatePart 的「无 hud_anchors → 用 anchors 缩放
+            // 推导」换轨分支（syntheticSixPartLayoutIngestedThroughRealWireDecode... 测试）。
+            hud_anchors: vec![],
         }
     }
 

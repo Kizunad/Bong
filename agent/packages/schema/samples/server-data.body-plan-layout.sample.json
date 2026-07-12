@@ -38,5 +38,9 @@
   "part_display_map": [
     { "server_part_id": "head", "display_segment_id": "head" },
     { "server_part_id": "chest", "display_segment_id": "chest" }
+  ],
+  "hud_anchors": [
+    { "part_id": "head", "point": { "x": 0.5, "y": 0.053333 } },
+    { "part_id": "chest", "point": { "x": 0.5, "y": 0.226667 } }
   ]
 }

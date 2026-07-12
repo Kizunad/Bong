@@ -569,6 +569,10 @@ export const ServerDataBodyPlanLayoutV1 = Type.Object(
     anchors: Type.Array(BodyPlanPartAnchorV1),
     meridian_paths: Type.Array(BodyPlanMeridianPathV1),
     part_display_map: Type.Array(BodyPlanPartDisplayMappingV1),
+    // P2 major 修复：mini HUD（30×75 粗网格，比例与 anchors 的 168×236 精细画布不同）
+    // 专用第二锚点组，可选（未配置时 client 回退到 anchors 缩放推导）。恒为数组字段
+    // （空数组 = 未配置），与 Rust `#[serde(default)]` 对齐。
+    hud_anchors: Type.Array(BodyPlanPartAnchorV1),
   },
   { additionalProperties: false },
 );
