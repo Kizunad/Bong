@@ -563,6 +563,101 @@ describe("redis-ipc", () => {
     ]);
   });
 
+  it("preserves delayed and out-of-order alchemy insights in Redis arrival order", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+    const callback = vi.fn();
+    ipc.onAlchemyRuntimeEvent(callback);
+    await ipc.connect();
+
+    for (const [recipeId, ts] of [
+      ["newer_session", 2_000],
+      ["delayed_older_session", 1_000],
+    ] as const) {
+      await sub.publish(ALCHEMY_INSIGHT, JSON.stringify({
+        v: 1,
+        player_id: "offline:Azure",
+        source_pill: "hui_yuan_pill",
+        recipe_id: recipeId,
+        accuracy: 0.86,
+        ingredients: ["ling_grass"],
+        ts,
+      }));
+    }
+
+    expect(callback.mock.calls.map(([event]) => event.ts)).toEqual([2_000, 1_000]);
+    expect(ipc.getLatestAlchemyEvents().map((event) => event.ts)).toEqual([2_000, 1_000]);
+  });
+
+  it("isolates alchemy insight buffers between RedisIpc sessions", async () => {
+    const firstSub = new FakeRedisListClient();
+    const firstIpc = new RedisIpc(
+      { url: "redis://first" },
+      {
+        createClient: vi.fn()
+          .mockReturnValueOnce(firstSub)
+          .mockReturnValueOnce(new FakeRedisListClient()),
+      },
+    );
+    await firstIpc.connect();
+    await firstSub.publish(ALCHEMY_INSIGHT, JSON.stringify({
+      v: 1,
+      player_id: "offline:Azure",
+      source_pill: "old_pill",
+      recipe_id: "old_session",
+      accuracy: 0.8,
+      ingredients: [],
+      ts: 1_000,
+    }));
+
+    const secondIpc = new RedisIpc(
+      { url: "redis://second" },
+      {
+        createClient: vi.fn()
+          .mockReturnValueOnce(new FakeRedisListClient())
+          .mockReturnValueOnce(new FakeRedisListClient()),
+      },
+    );
+    await secondIpc.connect();
+
+    expect(firstIpc.getLatestAlchemyEvents()).toHaveLength(1);
+    expect(secondIpc.getLatestAlchemyEvents()).toEqual([]);
+  });
+
+  it("retains exactly the newest 128 alchemy arrivals without timestamp sorting", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+    await ipc.connect();
+
+    for (let arrival = 0; arrival < 129; arrival += 1) {
+      await sub.publish(ALCHEMY_INSIGHT, JSON.stringify({
+        v: 1,
+        player_id: "offline:Azure",
+        source_pill: "hui_yuan_pill",
+        recipe_id: `session_${arrival}`,
+        accuracy: 0.86,
+        ingredients: [],
+        ts: 10_000 - arrival,
+      }));
+    }
+
+    const buffered = ipc.getLatestAlchemyEvents();
+    expect(buffered).toHaveLength(128);
+    expect(buffered.map((event) => event.ts)).toEqual(
+      Array.from({ length: 128 }, (_, index) => 9_999 - index),
+    );
+  });
+
   it("observes valid botany ecology snapshots and skips invalid payloads", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();

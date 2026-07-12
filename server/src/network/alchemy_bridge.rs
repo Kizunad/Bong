@@ -133,8 +133,11 @@ fn session_end_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alchemy::danxin::RecipeHint;
     use crate::alchemy::outcome::OutcomeBucket;
+    use crate::inventory::JS_SAFE_INTEGER_MAX;
     use crossbeam_channel::unbounded;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Update};
 
     #[test]
@@ -188,5 +191,64 @@ mod tests {
         );
         assert_eq!(payload.damage, Some(12.0));
         assert_eq!(payload.elapsed_ticks, 120);
+    }
+
+    #[test]
+    fn publish_alchemy_insight_uses_js_safe_unix_milliseconds() {
+        let before_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock should be after Unix epoch")
+            .as_millis() as u64;
+        let (tx_outbound, rx_outbound) = unbounded();
+        let (_tx_inbound, rx_inbound) = unbounded();
+        let mut app = App::new();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<AlchemyInsightEvent>();
+        app.add_systems(Update, publish_alchemy_insight_events);
+        let player = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(AlchemyInsightEvent {
+            player,
+            player_id: "offline:Azure".to_string(),
+            hint: RecipeHint {
+                source_pill: "hui_yuan_pill".to_string(),
+                recipe_id: Some("hui_yuan_pill_v0".into()),
+                accuracy: 0.86,
+                ingredients: vec!["ling_grass".to_string()],
+            },
+        });
+
+        app.update();
+        let after_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock should be after Unix epoch")
+            .as_millis() as u64;
+
+        let payload = match rx_outbound
+            .try_recv()
+            .expect("alchemy insight should publish")
+        {
+            RedisOutbound::AlchemyInsight(payload) => payload,
+            other => panic!("expected AlchemyInsight, got {other:?}"),
+        };
+        assert!(
+            (before_ms..=after_ms).contains(&payload.ts),
+            "alchemy insight ts must be Unix milliseconds: before={before_ms}, actual={}, after={after_ms}",
+            payload.ts
+        );
+        assert!(
+            payload.ts <= JS_SAFE_INTEGER_MAX,
+            "alchemy insight ts must serialize exactly in JavaScript, actual={}",
+            payload.ts
+        );
+        let json = serde_json::to_string(&payload).expect("alchemy insight should serialize");
+        let decoded: AlchemyInsightV1 =
+            serde_json::from_str(&json).expect("serialized alchemy insight should round-trip");
+        assert_eq!(
+            decoded.ts, payload.ts,
+            "AlchemyInsightV1 serialization must preserve Unix milliseconds exactly"
+        );
     }
 }
