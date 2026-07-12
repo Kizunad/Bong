@@ -137,7 +137,8 @@ use crate::npc::spawn::NpcMarker;
 use crate::npc::trade::NpcPlayerReputation;
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
-    canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
+    canonical_player_id, save_player_inventory_and_delete_dropped_loot, update_player_ui_prefs,
+    PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
@@ -1902,6 +1903,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
+                    persistence.as_deref(),
                 );
             }
             ClientRequestV1::RemainsLoot { remains_id, .. } => {
@@ -12877,6 +12879,7 @@ fn handle_pickup_dropped_item(
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
     attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
+    persistence: Option<&PlayerStatePersistence>,
 ) {
     let player_pos = client_position(positions, entity);
     let mut inventory = match inventories.get_mut(entity) {
@@ -12889,13 +12892,39 @@ fn handle_pickup_dropped_item(
         }
     };
 
+    let mut staged_inventory = inventory.clone();
+    let mut staged_dropped_loot = dropped_loot_registry.clone();
     match pickup_dropped_loot_instance(
-        &mut inventory,
-        dropped_loot_registry,
+        &mut staged_inventory,
+        &mut staged_dropped_loot,
         player_pos,
         instance_id,
     ) {
         Ok(revision) => {
+            if let Some(persistence) = persistence {
+                let username = match clients.get_mut(entity) {
+                    Ok((username, _)) => username.0.clone(),
+                    Err(_) => {
+                        tracing::error!(
+                            "[bong][network][inventory] refusing durable pickup for {entity:?} without Username"
+                        );
+                        return;
+                    }
+                };
+                if let Err(error) = save_player_inventory_and_delete_dropped_loot(
+                    persistence,
+                    username.as_str(),
+                    &staged_inventory,
+                    instance_id,
+                ) {
+                    tracing::error!(
+                        "[bong][network][inventory] durable pickup persistence failed player={username} instance={instance_id}: {error}"
+                    );
+                    return;
+                }
+            }
+            *inventory = staged_inventory;
+            *dropped_loot_registry = staged_dropped_loot;
             tracing::info!(
                 "[bong][network][inventory] picked up dropped instance={instance_id} revision={}",
                 revision.0

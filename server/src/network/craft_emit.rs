@@ -5,8 +5,8 @@
 //!      `CraftStartIntent` / `CraftCancelIntent`，跑 `start_craft` /
 //!      `cancel_craft`，产生 `CraftStartedEvent` / `CraftFailedEvent`，并在
 //!      caster 上 insert/remove `CraftSession` component
-//!   2. `tick_craft_sessions` — 每 tick 推进所有在线玩家的 session（worldview §九
-//!      "玩家在场是基本要求"，下线 Entity 自动清空，session 随之消失）
+//!   2. `tick_craft_sessions` — 每 tick 推进所有在线玩家的 session；断线时与
+//!      inventory 同事务持久化，重连恢复后继续推进
 //!   3. `emit_craft_session_state` — 定期把当前 session 进度推到 client（每 20 tick
 //!      一次 / 状态切换时立刻推一次）
 //!   4. `emit_craft_outcome_payloads` — 监听 Completed/Failed → push `CraftOutcomeV1`
@@ -41,15 +41,19 @@ use crate::craft::{
 };
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::inventory::{
-    add_item_to_player_inventory, add_item_to_player_inventory_or_ground, DroppedLootRegistry,
-    GrantOrGroundOutcome, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
+    add_item_to_player_inventory, add_item_to_player_inventory_or_ground, DroppedLootEntry,
+    DroppedLootRegistry, GrantOrGroundOutcome, InventoryInstanceIdAllocator, ItemRegistry,
+    PlayerInventory,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::gameplay::PendingGameplayNarrations;
-use crate::player::state::canonical_player_id;
+use crate::player::state::{
+    canonical_player_id, save_player_craft_checkpoint,
+    save_player_inventory_and_craft_session_slices, PlayerStatePersistence,
+};
 use crate::qi_physics::ledger::WorldQiAccount;
 use crate::schema::common::NarrationStyle;
 use crate::schema::craft::{
@@ -72,6 +76,9 @@ const SESSION_STATE_PUSH_INTERVAL_TICKS: u64 = 20;
 /// 标记某玩家本帧需要立刻推一次 SessionState（启动 / 取消 / 完成时打上）。
 #[derive(Component, Default, Debug)]
 pub struct CraftSessionStateDirty;
+
+#[derive(Component, Default, Debug)]
+pub struct CraftSessionPersistenceDirty;
 
 fn current_unix_millis() -> u64 {
     SystemTime::now()
@@ -168,21 +175,26 @@ fn grant_refund_manifest_to_inventory_or_ground(
     inventory: &mut PlayerInventory,
     item_registry: &ItemRegistry,
     allocator: &mut InventoryInstanceIdAllocator,
-    mut dropped_loot: Option<&mut DroppedLootRegistry>,
+    dropped_loot: Option<&mut DroppedLootRegistry>,
     refund_manifest: impl IntoIterator<Item = (String, u32)>,
     current_tick: u64,
     ground_target: RefundGroundTarget,
 ) -> RefundGrantSummary {
+    let mut staged_inventory = inventory.clone();
+    let mut staged_allocator = allocator.clone();
+    let mut staged_dropped_loot = dropped_loot.as_deref().map(|registry| DroppedLootRegistry {
+        entries: registry.entries.clone(),
+    });
     let mut summary = RefundGrantSummary::default();
     for (template, count) in refund_manifest {
         if count == 0 {
             continue;
         }
         let outcome = add_item_to_player_inventory_or_ground(
-            inventory,
+            &mut staged_inventory,
             item_registry,
-            allocator,
-            dropped_loot.as_deref_mut(),
+            &mut staged_allocator,
+            staged_dropped_loot.as_mut(),
             &template,
             count,
             current_tick,
@@ -204,6 +216,17 @@ fn grant_refund_manifest_to_inventory_or_ground(
             }
         }
     }
+    if summary.errors.is_empty() {
+        *inventory = staged_inventory;
+        *allocator = staged_allocator;
+        if let (Some(target), Some(staged)) = (dropped_loot, staged_dropped_loot) {
+            target.entries = staged.entries;
+        }
+    } else {
+        summary.material_returned = 0;
+        summary.granted_count = 0;
+        summary.dropped_count = 0;
+    }
     summary
 }
 
@@ -220,6 +243,7 @@ pub fn apply_craft_start_intents(
     registry: Res<CraftRegistry>,
     unlock_state: Res<RecipeUnlockState>,
     mut ledger: ResMut<WorldQiAccount>,
+    persistence: Option<Res<PlayerStatePersistence>>,
     clock: Res<CombatClock>,
     mut commands: Commands,
     names: Query<&Username>,
@@ -233,7 +257,15 @@ pub fn apply_craft_start_intents(
     )>,
 ) {
     // ── start ───────────────────────────────────────────────
+    let mut processed_start_casters = HashSet::new();
     for intent in start_intents.read() {
+        if !processed_start_casters.insert(intent.caster) {
+            tracing::debug!(
+                "[bong][craft] duplicate start intent on caster {:?} in same frame — noop",
+                intent.caster
+            );
+            continue;
+        }
         let Ok((mut inventory, mut cultivation, qi_color, existing)) =
             casters.get_mut(intent.caster)
         else {
@@ -243,11 +275,13 @@ pub fn apply_craft_start_intents(
             );
             continue;
         };
-        let player_id = names
-            .get(intent.caster)
+        let username = names.get(intent.caster).ok();
+        let player_id = username
             .map(|u| canonical_player_id(u.0.as_str()))
-            .unwrap_or_else(|_| format!("entity:{}", intent.caster.to_bits()));
-
+            .unwrap_or_else(|| format!("entity:{}", intent.caster.to_bits()));
+        let mut staged_inventory = inventory.clone();
+        let mut staged_cultivation = cultivation.clone();
+        let mut staged_ledger = ledger.clone();
         let req = StartCraftRequest {
             caster: intent.caster,
             player_id: &player_id,
@@ -275,16 +309,54 @@ pub fn apply_craft_start_intents(
         let deps = StartCraftDeps {
             registry: &registry,
             unlock_state: &unlock_state,
-            inventory: &mut inventory,
-            cultivation: &mut cultivation,
+            inventory: &mut staged_inventory,
+            cultivation: &mut staged_cultivation,
             qi_color,
-            ledger: &mut ledger,
+            ledger: &mut staged_ledger,
             existing_session: existing,
             has_nearby_workbench,
         };
 
         match start_craft(req, deps) {
             Ok(success) => {
+                if let Some(persistence) = persistence.as_deref() {
+                    let Some(username) = username else {
+                        tracing::error!(
+                            "[bong][craft] refusing to persist start for {:?} without Username",
+                            intent.caster
+                        );
+                        continue;
+                    };
+                    if let Err(error) = save_player_craft_checkpoint(
+                        persistence,
+                        username.0.as_str(),
+                        Some(&staged_inventory),
+                        Some(&success.session),
+                        Some(&staged_cultivation),
+                        Some(&staged_ledger),
+                        &[],
+                    ) {
+                        tracing::error!(
+                            "[bong][craft] start persistence failed player={} recipe={}: {error}",
+                            player_id,
+                            success.event.recipe_id
+                        );
+                        failed_tx.send(CraftFailedEvent {
+                            caster: intent.caster,
+                            recipe_id: intent.recipe_id.clone(),
+                            reason: CraftFailureReason::InternalError,
+                            material_returned: 0,
+                            qi_refunded: 0.0,
+                        });
+                        commands
+                            .entity(intent.caster)
+                            .insert(CraftSessionStateDirty);
+                        continue;
+                    }
+                }
+                *inventory = staged_inventory;
+                *cultivation = staged_cultivation;
+                *ledger = staged_ledger;
                 tracing::info!(
                     "[bong][craft] start ok player={} recipe={} ticks={} quantity={}",
                     player_id,
@@ -333,8 +405,10 @@ pub fn apply_craft_cancel_intents(
     item_registry: Res<ItemRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
+    persistence: Option<Res<PlayerStatePersistence>>,
     clock: Res<CombatClock>,
     mut commands: Commands,
+    names: Query<&Username>,
     player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
     mut casters: Query<(&mut PlayerInventory, Option<&CraftSession>)>,
 ) {
@@ -359,19 +433,11 @@ pub fn apply_craft_cancel_intents(
         }
         let Some(recipe) = registry.get(&session.recipe_id) else {
             tracing::warn!(
-                "[bong][craft] cancel intent recipe `{}` missing — emitting InternalError",
+                "[bong][craft] cancel intent recipe `{}` missing — preserving session",
                 session.recipe_id
             );
-            failed_tx.send(CraftFailedEvent {
-                caster: intent.caster,
-                recipe_id: session.recipe_id.clone(),
-                reason: CraftFailureReason::InternalError,
-                material_returned: 0,
-                qi_refunded: 0.0,
-            });
             commands
                 .entity(intent.caster)
-                .remove::<CraftSession>()
                 .insert(CraftSessionStateDirty);
             continue;
         };
@@ -384,12 +450,15 @@ pub fn apply_craft_cancel_intents(
             intent.caster,
             CraftFailureReason::PlayerCancelled,
         );
+        let mut staged_inventory = inventory.clone();
+        let mut staged_allocator = allocator.clone();
+        let mut staged_dropped_loot = dropped_loot.as_deref().cloned();
         let ground_target = refund_ground_context(player_contexts.get(intent.caster).ok());
         let refund_summary = grant_refund_manifest_to_inventory_or_ground(
-            &mut inventory,
+            &mut staged_inventory,
             &item_registry,
-            &mut allocator,
-            dropped_loot.as_deref_mut(),
+            &mut staged_allocator,
+            staged_dropped_loot.as_mut(),
             refund_manifest,
             clock.tick,
             ground_target,
@@ -401,6 +470,57 @@ pub fn apply_craft_cancel_intents(
                 event.recipe_id,
                 refund_summary.errors
             );
+            commands
+                .entity(intent.caster)
+                .insert(CraftSessionStateDirty);
+            continue;
+        }
+        let durable_drops: Vec<DroppedLootEntry> = staged_dropped_loot
+            .as_ref()
+            .into_iter()
+            .flat_map(|staged| staged.entries.values())
+            .filter(|entry| {
+                dropped_loot
+                    .as_deref()
+                    .is_none_or(|current| !current.entries.contains_key(&entry.instance_id))
+            })
+            .cloned()
+            .collect();
+        if let Some(persistence) = persistence.as_deref() {
+            let Ok(username) = names.get(intent.caster) else {
+                tracing::error!(
+                    "[bong][craft] refusing to persist cancel for {:?} without Username",
+                    intent.caster
+                );
+                commands
+                    .entity(intent.caster)
+                    .insert(CraftSessionStateDirty);
+                continue;
+            };
+            if let Err(error) = save_player_craft_checkpoint(
+                persistence,
+                username.0.as_str(),
+                Some(&staged_inventory),
+                None,
+                None,
+                None,
+                &durable_drops,
+            ) {
+                tracing::error!(
+                    "[bong][craft] cancel persistence failed player={} recipe={}: {error}",
+                    username.0,
+                    event.recipe_id
+                );
+                commands
+                    .entity(intent.caster)
+                    .insert(CraftSessionStateDirty);
+                continue;
+            }
+        }
+        *inventory = staged_inventory;
+        *allocator = staged_allocator;
+        if let (Some(current), Some(staged)) = (dropped_loot.as_deref_mut(), staged_dropped_loot) {
+            current.entries = staged.entries;
         }
         event.material_returned = refund_summary.material_returned;
         tracing::info!(
@@ -427,63 +547,92 @@ pub fn tick_craft_sessions(
     registry: Res<CraftRegistry>,
     item_registry: Res<ItemRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
+    persistence: Option<Res<PlayerStatePersistence>>,
     clock: Res<CombatClock>,
     mut commands: Commands,
     mut completed_tx: EventWriter<CraftCompletedEvent>,
     mut failed_tx: EventWriter<CraftFailedEvent>,
     mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
+    names: Query<&Username>,
     player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
     mut sessions: Query<(Entity, &mut CraftSession, &mut PlayerInventory), With<Client>>,
 ) {
     for (entity, mut session, mut inventory) in sessions.iter_mut() {
-        if tick_session(&mut session, 1) {
+        let mut staged_session = session.clone();
+        if tick_session(&mut staged_session, 1) {
             // session 完成
-            let Some(recipe) = registry.get(&session.recipe_id) else {
-                tracing::warn!(
-                    "[bong][craft] tick finalize: recipe `{}` missing in registry",
-                    session.recipe_id
+            let Some(recipe) = registry.get(&staged_session.recipe_id) else {
+                tracing::error!(
+                    "[bong][craft] tick finalize: recipe `{}` missing; preserving completed session for recovery",
+                    staged_session.recipe_id
                 );
-                failed_tx.send(CraftFailedEvent {
-                    caster: entity,
-                    recipe_id: session.recipe_id.clone(),
-                    reason: CraftFailureReason::InternalError,
-                    material_returned: 0,
-                    qi_refunded: 0.0,
-                });
+                *session = staged_session;
                 commands
                     .entity(entity)
-                    .remove::<CraftSession>()
-                    .insert(CraftSessionStateDirty);
+                    .insert((CraftSessionStateDirty, CraftSessionPersistenceDirty));
                 continue;
             };
             let FinalizeCraftOutcome {
                 event,
                 output_manifest,
-            } = finalize_craft(&session, recipe, entity, clock.tick);
+            } = finalize_craft(&staged_session, recipe, entity, clock.tick);
             let (template, count) = output_manifest;
+            let mut staged_inventory = inventory.clone();
+            let mut staged_allocator = allocator.clone();
+            let mut staged_dropped_loot = dropped_loot.as_deref().cloned();
             // review fix (Codex P1)：产物入背包失败时不能静默——qi 已扣材料已耗，
             // 玩家必须知道任务失败而不是显示一条假"出炉成功"。改 emit Failed
             // (InternalError)，让 client 渲染失败 toast；不送 Completed 事件。
             match add_item_to_player_inventory(
-                &mut inventory,
+                &mut staged_inventory,
                 &item_registry,
-                &mut allocator,
+                &mut staged_allocator,
                 &template,
                 count,
                 clock.tick,
             ) {
                 Ok(_) => {
-                    let next_completed = session.completed_count.saturating_add(1);
+                    let next_completed = staged_session.completed_count.saturating_add(1);
+                    let has_more = next_completed < staged_session.quantity_total;
+                    if has_more {
+                        staged_session.completed_count = next_completed;
+                        staged_session.remaining_ticks = staged_session.total_ticks;
+                    }
+                    if let Some(persistence) = persistence.as_deref() {
+                        let Some(username) = names.get(entity).ok() else {
+                            tracing::error!(
+                                "[bong][craft] refusing to persist finalize for {entity:?} without Username"
+                            );
+                            continue;
+                        };
+                        if let Err(error) = save_player_craft_checkpoint(
+                            persistence,
+                            username.0.as_str(),
+                            Some(&staged_inventory),
+                            has_more.then_some(&staged_session),
+                            None,
+                            None,
+                            &[],
+                        ) {
+                            tracing::error!(
+                                "[bong][craft] finalize persistence failed player={} recipe={}: {error}",
+                                username.0,
+                                event.recipe_id
+                            );
+                            continue;
+                        }
+                    }
+                    *inventory = staged_inventory;
+                    *allocator = staged_allocator;
                     tracing::info!(
                         "[bong][craft] finalize caster={entity:?} recipe={} output={template} x{count} completed={}/{}",
                         event.recipe_id,
                         next_completed,
-                        session.quantity_total
+                        staged_session.quantity_total
                     );
                     completed_tx.send(event);
-                    if next_completed < session.quantity_total {
-                        session.completed_count = next_completed;
-                        session.remaining_ticks = session.total_ticks;
+                    if has_more {
+                        *session = staged_session;
                         commands.entity(entity).insert(CraftSessionStateDirty);
                         continue;
                     }
@@ -496,13 +645,18 @@ pub fn tick_craft_sessions(
                     let CancelCraftOutcome {
                         mut event,
                         refund_manifest,
-                    } = cancel_craft(&session, recipe, entity, CraftFailureReason::InternalError);
+                    } = cancel_craft(
+                        &staged_session,
+                        recipe,
+                        entity,
+                        CraftFailureReason::InternalError,
+                    );
                     let ground_target = refund_ground_context(player_contexts.get(entity).ok());
                     let refund_summary = grant_refund_manifest_to_inventory_or_ground(
-                        &mut inventory,
+                        &mut staged_inventory,
                         &item_registry,
-                        &mut allocator,
-                        dropped_loot.as_deref_mut(),
+                        &mut staged_allocator,
+                        staged_dropped_loot.as_mut(),
                         refund_manifest,
                         clock.tick,
                         ground_target,
@@ -513,6 +667,50 @@ pub fn tick_craft_sessions(
                             event.recipe_id,
                             refund_summary.errors
                         );
+                        commands.entity(entity).insert(CraftSessionStateDirty);
+                        continue;
+                    }
+                    let durable_drops: Vec<DroppedLootEntry> = staged_dropped_loot
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|staged| staged.entries.values())
+                        .filter(|entry| {
+                            dropped_loot.as_deref().is_none_or(|current| {
+                                !current.entries.contains_key(&entry.instance_id)
+                            })
+                        })
+                        .cloned()
+                        .collect();
+                    if let Some(persistence) = persistence.as_deref() {
+                        let Some(username) = names.get(entity).ok() else {
+                            tracing::error!(
+                                "[bong][craft] refusing to persist failed finalize for {entity:?} without Username"
+                            );
+                            continue;
+                        };
+                        if let Err(error) = save_player_craft_checkpoint(
+                            persistence,
+                            username.0.as_str(),
+                            Some(&staged_inventory),
+                            None,
+                            None,
+                            None,
+                            &durable_drops,
+                        ) {
+                            tracing::error!(
+                                "[bong][craft] failed-finalize persistence failed player={} recipe={}: {error}",
+                                username.0,
+                                event.recipe_id
+                            );
+                            continue;
+                        }
+                    }
+                    *inventory = staged_inventory;
+                    *allocator = staged_allocator;
+                    if let (Some(current), Some(staged)) =
+                        (dropped_loot.as_deref_mut(), staged_dropped_loot)
+                    {
+                        current.entries = staged.entries;
                     }
                     event.material_returned = refund_summary.material_returned;
                     failed_tx.send(event);
@@ -523,8 +721,43 @@ pub fn tick_craft_sessions(
                 .remove::<CraftSession>()
                 .insert(CraftSessionStateDirty);
         } else if clock.tick.is_multiple_of(SESSION_STATE_PUSH_INTERVAL_TICKS) {
+            *session = staged_session;
             // 每秒标脏一次让 emit 系统下一帧推 progress
-            commands.entity(entity).insert(CraftSessionStateDirty);
+            commands
+                .entity(entity)
+                .insert((CraftSessionStateDirty, CraftSessionPersistenceDirty));
+        } else {
+            *session = staged_session;
+        }
+    }
+}
+
+/// inventory 与 session 在同一 SQLite transaction 中保存；只有成功后才清持久化
+/// dirty 标记。断线和进程退出另由 player flush 以相同事务再次兜底。
+pub fn persist_dirty_craft_sessions(
+    mut commands: Commands,
+    persistence: Res<PlayerStatePersistence>,
+    players: Query<
+        (Entity, &Username, &PlayerInventory, Option<&CraftSession>),
+        With<CraftSessionPersistenceDirty>,
+    >,
+) {
+    for (entity, username, inventory, session) in players.iter() {
+        match save_player_inventory_and_craft_session_slices(
+            &persistence,
+            username.0.as_str(),
+            Some(inventory),
+            session,
+        ) {
+            Ok(_) => {
+                commands
+                    .entity(entity)
+                    .remove::<CraftSessionPersistenceDirty>();
+            }
+            Err(error) => tracing::error!(
+                "[bong][craft] failed to persist inventory/session atomically for `{}`: {error}",
+                username.0
+            ),
         }
     }
 }
@@ -881,8 +1114,13 @@ mod tests {
     use crate::inventory::{
         ContainerState, DroppedLootRegistry, InventoryInstanceIdAllocator, InventoryRevision,
         ItemCategory, ItemInstance, ItemRarity, ItemRegistry, ItemTemplate, PlacedItemState,
+        JS_SAFE_INTEGER_MAX,
     };
+    use crate::persistence::bootstrap_sqlite;
+    use crate::player::state::{load_player_slices, save_player_state, PlayerState};
+    use crate::qi_physics::ledger::pending_inflow_account;
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use valence::prelude::{App, Events, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -1001,6 +1239,24 @@ mod tests {
         app.add_event::<CraftCompletedEvent>();
         app.add_event::<CraftFailedEvent>();
         app
+    }
+
+    fn craft_test_persistence(test_name: &str) -> (PlayerStatePersistence, PathBuf) {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let data_dir = std::env::temp_dir().join(format!(
+            "bong-craft-emit-{test_name}-{}-{suffix}",
+            std::process::id()
+        ));
+        let db_path = data_dir.join("bong.db");
+        bootstrap_sqlite(&db_path, &format!("craft-emit-{test_name}"))
+            .expect("sqlite bootstrap should succeed");
+        let persistence = PlayerStatePersistence::with_db_path(&data_dir, &db_path);
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("test player should initialize");
+        (persistence, data_dir)
     }
 
     fn current_failed_events(app: &App) -> Vec<CraftFailedEvent> {
@@ -1365,6 +1621,149 @@ mod tests {
     }
 
     #[test]
+    fn refund_manifest_structural_error_rolls_back_earlier_grants_atomically() {
+        let registry = registry_with_templates(&[("fan_tie", 64)]);
+        let mut inventory = inv_with(&[("fan_tie", 63)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        let original_revision = inventory.revision;
+        let mut allocator = InventoryInstanceIdAllocator::new(60);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            vec![
+                ("fan_tie".to_string(), 1),
+                ("missing_template".to_string(), 1),
+            ],
+            1,
+            RefundGroundTarget {
+                pos: [0.0, 64.0, 0.0],
+                dimension: DimensionKind::Overworld,
+            },
+        );
+
+        assert_eq!(
+            summary.material_returned, 0,
+            "manifest 后项结构错误时前项也不得提交，否则重试会复制已成功项"
+        );
+        assert_eq!(summary.errors.len(), 1, "应保留唯一结构错误供调用方诊断");
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 63,
+            "事务失败必须回滚先前已合并到背包的退款"
+        );
+        assert_eq!(
+            inventory.revision, original_revision,
+            "事务失败不应留下虚假的 inventory revision 变化"
+        );
+        assert!(
+            dropped_loot.entries.is_empty(),
+            "事务失败不得留下部分地面掉落"
+        );
+        assert_eq!(
+            allocator.next_id().unwrap(),
+            60,
+            "事务失败必须回滚 instance id allocator，避免无效退款消耗 id"
+        );
+    }
+
+    #[test]
+    fn refund_manifest_allocator_boundary_rolls_back_without_drop_id_collision() {
+        let registry = registry_with_templates(&[("fan_tie", 64), ("zhu_pi", 64)]);
+        let mut inventory = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        let mut allocator = InventoryInstanceIdAllocator::new(JS_SAFE_INTEGER_MAX);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            vec![("fan_tie".to_string(), 1), ("zhu_pi".to_string(), 1)],
+            1,
+            RefundGroundTarget {
+                pos: [0.0, 64.0, 0.0],
+                dimension: DimensionKind::Overworld,
+            },
+        );
+
+        assert_eq!(
+            summary.material_returned, 0,
+            "第二个掉落无法分配安全 ID 时整批退款必须回滚"
+        );
+        assert_eq!(summary.errors.len(), 1, "allocator 越界应作为结构错误暴露");
+        assert!(
+            dropped_loot.entries.is_empty(),
+            "allocator 边界失败不得让相同 ID 的后项覆盖前项并虚报两份退款"
+        );
+        assert_eq!(
+            allocator.next_id().unwrap(),
+            JS_SAFE_INTEGER_MAX,
+            "失败事务应回滚 allocator，保留原始可分配边界 ID"
+        );
+    }
+
+    #[test]
+    fn refund_manifest_rejects_existing_drop_id_collision_without_overwrite() {
+        let registry = registry_with_templates(&[("fan_tie", 64), ("zhu_pi", 64)]);
+        let mut inventory = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        let mut dropped_loot = DroppedLootRegistry::default();
+        let target = RefundGroundTarget {
+            pos: [0.0, 64.0, 0.0],
+            dimension: DimensionKind::Overworld,
+        };
+        let mut allocator = InventoryInstanceIdAllocator::new(60);
+        let seeded = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            vec![("fan_tie".to_string(), 1)],
+            1,
+            target,
+        );
+        assert_eq!(seeded.dropped_count, 1, "夹具应先落地 instance_id=60");
+
+        let mut colliding_allocator = InventoryInstanceIdAllocator::new(60);
+        let summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut colliding_allocator,
+            Some(&mut dropped_loot),
+            vec![("zhu_pi".to_string(), 1)],
+            2,
+            target,
+        );
+
+        assert_eq!(
+            summary.material_returned, 0,
+            "已有掉落 ID 冲突时不能虚报新退款已返还"
+        );
+        assert!(
+            summary
+                .errors
+                .iter()
+                .any(|error| error.contains("instance id collision")),
+            "碰撞错误应保留可诊断原因，实际={:?}",
+            summary.errors
+        );
+        assert_eq!(
+            dropped_loot.entries.len(),
+            1,
+            "碰撞不得新增或覆盖 registry 条目"
+        );
+        assert_eq!(
+            dropped_loot.entries.get(&60).unwrap().item.template_id,
+            "fan_tie",
+            "新退款不得覆盖已有同 ID 掉落并吞掉旧物品"
+        );
+    }
+
+    #[test]
     fn cancel_intent_missing_caster_is_noop_without_failed_event() {
         let recipe = make_recipe(
             "craft.test.cancel_missing_caster",
@@ -1390,6 +1789,134 @@ mod tests {
                 .is_none(),
             "缺少 inventory/session 的 caster 不应被 cancel 路径补写 CraftSession"
         );
+    }
+
+    #[test]
+    fn duplicate_start_intents_same_frame_consume_materials_only_once() {
+        let recipe = make_recipe("craft.tool.workbench", &[("fan_tie", 2)], vec![]);
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);
+        app.add_systems(Update, apply_craft_start_intents);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inv_with(&[("fan_tie", 4)]))
+            .insert(Cultivation::default())
+            .insert(QiColor::default())
+            .insert(Position::new([0.0, 64.0, 0.0]))
+            .id();
+        for _ in 0..2 {
+            app.world_mut().send_event(CraftStartIntent {
+                caster: player,
+                recipe_id: RecipeId::new("craft.tool.workbench"),
+                quantity: 1,
+            });
+        }
+
+        app.update();
+
+        let started: Vec<_> = app
+            .world()
+            .resource::<Events<CraftStartedEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(
+            started.len(),
+            1,
+            "同帧重复 start 只能创建一个 session/Started 事件，实际={started:?}"
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            count_template_in_inventory(inventory, "fan_tie"),
+            2,
+            "同帧重复 start 只能预扣一次 fan_tie x2，不能在 deferred insert 前重复扣料"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_some(),
+            "首个 start 成功后应保留唯一 CraftSession"
+        );
+    }
+
+    #[test]
+    fn start_persistence_failure_keeps_inventory_qi_ledger_and_session_at_pre_state() {
+        let mut recipe = make_recipe("craft.tool.workbench", &[("fan_tie", 2)], vec![]);
+        recipe.qi_cost = 5.0;
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);
+        app.add_systems(Update, apply_craft_start_intents);
+        let (persistence, data_dir) = craft_test_persistence("start-rollback");
+        let connection = rusqlite::Connection::open(persistence.db_path())
+            .expect("sqlite should open for failure injection");
+        connection
+            .execute_batch(
+                "
+                CREATE TRIGGER fail_craft_session_insert
+                BEFORE INSERT ON player_craft_sessions
+                BEGIN
+                    SELECT RAISE(FAIL, 'forced craft session failure');
+                END;
+                ",
+            )
+            .expect("failure trigger should install");
+        app.insert_resource(persistence.clone());
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut cultivation = Cultivation::default();
+        cultivation.qi_current = 10.0;
+        cultivation.qi_max = cultivation.qi_max.max(10.0);
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inv_with(&[("fan_tie", 2)]))
+            .insert(cultivation)
+            .insert(QiColor::default())
+            .insert(Position::new([0.0, 64.0, 0.0]))
+            .id();
+        let player_account =
+            crate::qi_physics::ledger::QiAccountId::player(canonical_player_id("Azure"));
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(player_account.clone(), 10.0)
+            .expect("player qi fixture should be valid");
+        app.world_mut().send_event(CraftStartIntent {
+            caster: player,
+            recipe_id: RecipeId::new("craft.tool.workbench"),
+            quantity: 1,
+        });
+
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            count_template_in_inventory(inventory, "fan_tie"),
+            2,
+            "failed durable start must not publish the staged material debit"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current,
+            10.0,
+            "failed durable start must not publish the staged qi debit"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_none(),
+            "failed durable start must not create an in-memory session"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&player_account), 10.0);
+        assert_eq!(ledger.balance(&pending_inflow_account()), 0.0);
+        assert!(
+            ledger.transfers().is_empty(),
+            "failed durable start must not publish a transfer audit entry"
+        );
+        assert_eq!(
+            current_failed_events(&app).len(),
+            1,
+            "persistence rejection should produce one client-visible failure"
+        );
+        let reloaded = load_player_slices(&persistence, "Azure");
+        assert!(reloaded.inventory.is_none());
+        assert!(reloaded.craft_session.is_none());
+        std::fs::remove_dir_all(data_dir).ok();
     }
 
     #[test]
@@ -1424,7 +1951,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_intent_unknown_recipe_emits_internal_error_and_removes_session() {
+    fn cancel_intent_unknown_recipe_preserves_session_without_terminal_event() {
         let recipe = make_recipe("craft.test.cancel_known_recipe", &[("fan_tie", 2)], vec![]);
         let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 13);
         app.add_systems(Update, apply_craft_cancel_intents);
@@ -1448,32 +1975,75 @@ mod tests {
             .send_event(CraftCancelIntent { caster: player });
         app.update();
 
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "未知 recipe 尚未终止 session，不能发布语义为终结的 CraftFailedEvent"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_some(),
+            "未知 recipe 时无法重建退款 manifest，必须保留 session 避免吞掉预扣材料"
+        );
+    }
+
+    #[test]
+    fn cancel_refund_missing_drop_registry_preserves_session_then_retries_once() {
+        let recipe = make_recipe("craft.test.refund_retry", &[("fan_tie", 2)], vec![]);
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 455);
+        app.add_systems(Update, apply_craft_cancel_intents);
+        app.world_mut().remove_resource::<DroppedLootRegistry>();
+
+        let mut inventory = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        let player = app
+            .world_mut()
+            .spawn(inventory)
+            .insert(Position::new([3.0, 65.0, 4.0]))
+            .insert(CraftSession {
+                recipe_id: RecipeId::new("craft.test.refund_retry"),
+                started_at_tick: 400,
+                remaining_ticks: 20,
+                total_ticks: 40,
+                owner_player_id: canonical_player_id("Azure"),
+                qi_paid: 0.0,
+                quantity_total: 1,
+                completed_count: 0,
+            })
+            .id();
+
+        app.world_mut()
+            .send_event(CraftCancelIntent { caster: player });
+        app.update();
+
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "退款事务未提交时不能下发已取消 outcome"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_some(),
+            "缺少落地 registry 时必须保留 session 作为可重试退款凭证"
+        );
+
+        app.world_mut()
+            .insert_resource(DroppedLootRegistry::default());
+        app.world_mut()
+            .send_event(CraftCancelIntent { caster: player });
+        app.update();
+
         let failed = current_failed_events(&app);
+        assert_eq!(failed.len(), 1, "依赖恢复后重试应只产生一次已提交退款事件");
         assert_eq!(
-            failed.len(),
-            1,
-            "未知 recipe 的 cancel 应恰好发一条 CraftFailedEvent，实际={failed:?}"
-        );
-        assert_eq!(
-            failed[0].caster, player,
-            "CraftFailedEvent 应回填触发取消的 caster"
-        );
-        assert_eq!(
-            failed[0].recipe_id,
-            RecipeId::new("craft.test.cancel_missing_recipe")
-        );
-        assert_eq!(
-            failed[0].reason,
-            CraftFailureReason::InternalError,
-            "session.recipe_id 在 registry 缺失属 fail-safe 路径，应报 InternalError"
-        );
-        assert_eq!(
-            failed[0].material_returned, 0,
-            "未知 recipe 无法计算退款 manifest，不能虚报返还数量"
+            failed[0].material_returned, 1,
+            "重试应返还配方约定的一个材料"
         );
         assert!(
             app.world().get::<CraftSession>(player).is_none(),
-            "未知 recipe 是不可恢复 session，必须移除避免下一帧重复报错"
+            "退款成功提交后才可移除 session"
+        );
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(
+            dropped.entries.len(),
+            1,
+            "跨帧重试只能落地一次，不能复制首次失败的退款"
         );
     }
 
@@ -1673,6 +2243,52 @@ mod tests {
         assert_eq!(entry.item.stack_count, 1);
         assert_eq!(entry.world_pos, [-4.0, 66.0, 9.0]);
         assert_eq!(entry.dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn finalize_missing_recipe_preserves_completed_session_without_terminal_event() {
+        let recipe = make_recipe("craft.test.known", &[("fan_tie", 2)], vec![]);
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 790);
+        app.add_systems(Update, tick_craft_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inv_with(&[]))
+            .insert(CraftSession {
+                recipe_id: RecipeId::new("craft.test.missing"),
+                started_at_tick: 700,
+                remaining_ticks: 1,
+                total_ticks: 1,
+                owner_player_id: canonical_player_id("Azure"),
+                qi_paid: 0.0,
+                quantity_total: 2,
+                completed_count: 0,
+            })
+            .id();
+
+        app.update();
+
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "配方缺失时退款 manifest 不可重建，不能发布终止事件后吞掉预扣材料"
+        );
+        assert!(
+            current_completed_events(&app).is_empty(),
+            "配方缺失时不能伪造完成事件"
+        );
+        let session = app.world().get::<CraftSession>(player).unwrap();
+        assert_eq!(
+            session.remaining_ticks, 0,
+            "完成边界应被持久化为可恢复的 remaining_ticks=0 session"
+        );
+        assert!(
+            app.world()
+                .get::<CraftSessionPersistenceDirty>(player)
+                .is_some(),
+            "缺失配方的完成 session 必须标脏等待持久化，不能只留易失 ECS 状态"
+        );
     }
 
     #[test]

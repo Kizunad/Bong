@@ -12,6 +12,7 @@ use self::state::{
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
 use crate::combat::woliu_v2::erosion::VoidErosion;
+use crate::craft::CraftSession;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
@@ -32,9 +33,9 @@ use valence::entity::entity::Flags;
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
-    Added, App, AppExit, Changed, Client, Commands, Entity, EntityLayerId, EventReader, GameMode,
-    IntoSystemConfigs, Last, Position, Query, RemovedComponents, Res, ResMut, Update, Username,
-    VisibleChunkLayer, VisibleEntityLayers, With, Without,
+    bevy_ecs, Added, App, AppExit, Changed, Client, Commands, Component, Entity, EntityLayerId,
+    EventReader, GameMode, IntoSystemConfigs, Last, Or, Position, Query, RemovedComponents, Res,
+    ResMut, Update, Username, VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
 const WELCOME_MESSAGE: &str =
@@ -64,8 +65,15 @@ type JoinedClientsWithoutStateQueryItem<'a> = (
     Option<&'a mut Flags>,
 );
 type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
-type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
-type ChangedInventoryClientsQueryFilter = (With<Client>, Changed<PlayerInventory>);
+#[derive(Component, Default)]
+struct InventoryPersistenceDirty;
+
+type ChangedInventoryClientsQueryItem<'a> = (Entity, &'a Username, &'a PlayerInventory);
+type ChangedInventoryClientsQueryFilter = (
+    With<Client>,
+    Without<crate::network::craft_emit::CraftSessionPersistenceDirty>,
+    Or<(Changed<PlayerInventory>, With<InventoryPersistenceDirty>)>,
+);
 type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
 type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
 type ChangedKnownTechniquesClientsQueryItem<'a> = (&'a Username, &'a KnownTechniques);
@@ -109,7 +117,8 @@ pub fn register(app: &mut App) {
             flush_changed_player_known_techniques.after(flush_changed_player_skills),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
-                .after(flush_changed_player_known_techniques),
+                .after(flush_changed_player_known_techniques)
+                .after(crate::network::craft_emit::persist_dirty_craft_sessions),
             despawn_disconnected_clients.after(flush_changed_player_inventories),
         ),
     );
@@ -252,6 +261,9 @@ pub(crate) fn attach_player_state_to_joined_clients(
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
         }
+        if let Some(craft_session) = persisted.craft_session {
+            entity_commands.insert(craft_session);
+        }
         if let Some(lifespan) = persisted.lifespan {
             entity_commands.insert(lifespan);
         }
@@ -331,6 +343,7 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&SkillSet>,
         Option<&KnownTechniques>,
         Option<&CoffinComponent>,
+        Option<&CraftSession>,
     )>,
     cultivation_bundle: Query<(
         &Cultivation,
@@ -360,6 +373,7 @@ pub(crate) fn despawn_disconnected_clients(
             skill_set,
             known_techniques,
             coffin,
+            craft_session,
         )) = core_players.get(entity)
         {
             let last_dimension = current_dimension
@@ -418,6 +432,7 @@ pub(crate) fn despawn_disconnected_clients(
                 lifespan,
                 skill_set.unwrap_or(&SkillSet::default()),
                 coffin.map(|c| c.grade),
+                craft_session,
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -474,6 +489,7 @@ fn flush_connected_players_on_shutdown(
             Option<&SkillSet>,
             Option<&KnownTechniques>,
             Option<&CoffinComponent>,
+            Option<&CraftSession>,
         ),
         With<Client>,
     >,
@@ -509,6 +525,7 @@ fn flush_connected_players_on_shutdown(
         skill_set,
         known_techniques,
         coffin,
+        craft_session,
     ) in &players
     {
         let last_dimension = current_dimension
@@ -567,6 +584,7 @@ fn flush_connected_players_on_shutdown(
             lifespan,
             skill_set.unwrap_or(&SkillSet::default()),
             coffin.map(|c| c.grade),
+            craft_session,
         ) {
             Ok(path) => tracing::info!(
                 "[bong][player] saved player slices for shutdown flush `{}` to {}",
@@ -752,17 +770,25 @@ fn autosave_player_lifespan_slices(
 }
 
 fn flush_changed_player_inventories(
+    mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
     players: Query<ChangedInventoryClientsQueryItem<'_>, ChangedInventoryClientsQueryFilter>,
 ) {
-    for (username, player_inventory) in &players {
-        if let Err(error) =
-            save_player_inventory_slice(&persistence, username.0.as_str(), Some(player_inventory))
+    for (entity, username, player_inventory) in &players {
+        match save_player_inventory_slice(&persistence, username.0.as_str(), Some(player_inventory))
         {
-            tracing::warn!(
-                "[bong][player] immediate inventory flush failed for `{}`: {error}",
-                username.0,
-            );
+            Ok(_) => {
+                commands
+                    .entity(entity)
+                    .remove::<InventoryPersistenceDirty>();
+            }
+            Err(error) => {
+                commands.entity(entity).insert(InventoryPersistenceDirty);
+                tracing::warn!(
+                    "[bong][player] immediate inventory flush failed for `{}`: {error}",
+                    username.0,
+                );
+            }
         }
     }
 }
