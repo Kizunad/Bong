@@ -71,8 +71,15 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
     }
     #[cfg(not(test))]
     {
-        to_proto_bytes_checked(payload)
+        serialize_server_data_payload_proto(payload)
     }
+}
+
+/// 始终走生产 protobuf 编码；供必须验证真实 wire 的定向集成测试复用。
+pub fn serialize_server_data_payload_proto(
+    payload: &ServerDataV1,
+) -> Result<Vec<u8>, PayloadBuildError> {
+    to_proto_bytes_checked(payload)
 }
 
 fn to_proto_bytes_checked(payload: &ServerDataV1) -> Result<Vec<u8>, PayloadBuildError> {

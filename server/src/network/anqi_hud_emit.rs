@@ -26,7 +26,7 @@ use crate::combat::anqi_v2::{
     ArmorPierceEvent, CarrierAbrasionEvent, DecoyDeployEvent, MultiShotEvent, QiInjectionEvent,
 };
 use crate::network::agent_bridge::{
-    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+    payload_type_label, serialize_server_data_payload_proto, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1, ServerDataV1};
@@ -58,7 +58,7 @@ pub fn emit_anqi_hud_payloads(
             tick: event.tick,
         }));
         let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
+        let payload_bytes = match serialize_server_data_payload_proto(&payload) {
             Ok(bytes) => bytes,
             Err(error) => {
                 log_payload_build_error(payload_type, &error);
@@ -95,7 +95,7 @@ pub fn emit_anqi_hud_payloads(
             tick: event.tick,
         }));
         let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
+        let payload_bytes = match serialize_server_data_payload_proto(&payload) {
             Ok(bytes) => bytes,
             Err(error) => {
                 log_payload_build_error(payload_type, &error);
@@ -129,7 +129,7 @@ pub fn emit_anqi_hud_payloads(
             tick: event.tick,
         }));
         let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
+        let payload_bytes = match serialize_server_data_payload_proto(&payload) {
             Ok(bytes) => bytes,
             Err(error) => {
                 log_payload_build_error(payload_type, &error);
@@ -165,7 +165,7 @@ pub fn emit_anqi_hud_payloads(
             tick: event.tick,
         }));
         let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
+        let payload_bytes = match serialize_server_data_payload_proto(&payload) {
             Ok(bytes) => bytes,
             Err(error) => {
                 log_payload_build_error(payload_type, &error);
@@ -200,7 +200,7 @@ pub fn emit_anqi_hud_payloads(
             tick: event.tick,
         }));
         let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
+        let payload_bytes = match serialize_server_data_payload_proto(&payload) {
             Ok(bytes) => bytes,
             Err(error) => {
                 log_payload_build_error(payload_type, &error);
@@ -222,6 +222,18 @@ pub fn emit_anqi_hud_payloads(
 mod tests {
     use crate::qi_physics::AnqiContainerKind;
     use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
+
+    fn decode_anqi_hud_proto(data: &[u8]) -> Option<crate::schema::proto_gen::bong::AnqiHud> {
+        use crate::schema::proto_gen::bong::server_data_envelope::Payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use prost::Message;
+
+        let envelope = ServerDataEnvelope::decode(data).ok()?;
+        let Payload::AnqiHud(hud) = envelope.payload? else {
+            return None;
+        };
+        Some(hud)
+    }
 
     // ── emit 契约 pin：DecoyDeployEvent → payload.kind=="echo" ────
 
@@ -539,14 +551,12 @@ mod tests {
             if packet.channel.as_str() != SERVER_DATA_CHANNEL {
                 continue;
             }
-            let payload: crate::schema::server_data::ServerDataV1 =
-                serde_json::from_slice(packet.data.0 .0).expect("deserialize anqi HUD payload");
-            let ServerDataPayloadV1::AnqiHud(hud) = payload.payload else {
+            let Some(hud) = decode_anqi_hud_proto(packet.data.0 .0) else {
                 continue;
             };
-            match hud.kind {
-                AnqiHudKindV1::Echo => echo = Some((hud.echo_count, hud.tick)),
-                AnqiHudKindV1::Charge => charge = Some((hud.charge_progress, hud.tick)),
+            match hud.kind.as_str() {
+                "echo" => echo = Some((hud.echo_count, hud.tick)),
+                "charge" => charge = Some((hud.charge_progress, hud.tick)),
                 _ => {}
             }
         }
@@ -621,14 +631,12 @@ mod tests {
             if packet.channel.as_str() != SERVER_DATA_CHANNEL {
                 continue;
             }
-            let payload: crate::schema::server_data::ServerDataV1 =
-                serde_json::from_slice(packet.data.0 .0)
-                    .expect("server_data payload should deserialize");
-            if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = payload.payload {
-                if hud.kind == AnqiHudKindV1::Abrasion {
-                    found_container = Some(hud.abrasion_container);
-                    break;
-                }
+            let Some(hud) = decode_anqi_hud_proto(packet.data.0 .0) else {
+                continue;
+            };
+            if hud.kind == "abrasion" {
+                found_container = Some(hud.abrasion_container);
+                break;
             }
         }
 
@@ -688,7 +696,7 @@ mod tests {
             }
         }
 
-        let mut found: Option<(AnqiHudKindV1, f64)> = None;
+        let mut found: Option<(String, f64)> = None;
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                 continue;
@@ -696,19 +704,16 @@ mod tests {
             if packet.channel.as_str() != SERVER_DATA_CHANNEL {
                 continue;
             }
-            let payload: crate::schema::server_data::ServerDataV1 =
-                serde_json::from_slice(packet.data.0 .0).expect("deserialize");
-            if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = payload.payload {
-                found = Some((hud.kind, hud.charge_progress));
-                break;
-            }
+            let Some(hud) = decode_anqi_hud_proto(packet.data.0 .0) else {
+                continue;
+            };
+            found = Some((hud.kind, hud.charge_progress));
+            break;
         }
         let (kind, charge) = found.expect("ArmorPierceEvent 必须 emit anqi_hud payload");
         assert_eq!(
-            kind,
-            AnqiHudKindV1::Charge,
-            "破甲注射应复用 charge HUD 维度（无新 schema 字段）；实际 kind='{}'",
-            kind.as_str()
+            kind, "charge",
+            "破甲注射应复用 charge HUD 维度（无新 schema 字段）；实际 kind='{kind}'"
         );
         assert!(
             (charge - 0.6).abs() < 1e-6,
@@ -756,7 +761,7 @@ mod tests {
             }
         }
 
-        let mut found: Option<(AnqiHudKindV1, u32)> = None;
+        let mut found: Option<(String, u32)> = None;
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                 continue;
@@ -764,19 +769,16 @@ mod tests {
             if packet.channel.as_str() != SERVER_DATA_CHANNEL {
                 continue;
             }
-            let payload: crate::schema::server_data::ServerDataV1 =
-                serde_json::from_slice(packet.data.0 .0).expect("deserialize");
-            if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = payload.payload {
-                found = Some((hud.kind, hud.echo_count));
-                break;
-            }
+            let Some(hud) = decode_anqi_hud_proto(packet.data.0 .0) else {
+                continue;
+            };
+            found = Some((hud.kind, hud.echo_count));
+            break;
         }
         let (kind, count) = found.expect("MultiShotEvent 必须 emit anqi_hud payload");
         assert_eq!(
-            kind,
-            AnqiHudKindV1::Multishot,
-            "多发齐射应用 kind='multishot'（client 路由到独立 multishot 维度）；实际 kind='{}'",
-            kind.as_str()
+            kind, "multishot",
+            "多发齐射应用 kind='multishot'（client 路由到独立 multishot 维度）；实际 kind='{kind}'"
         );
         assert_eq!(
             count, 5,
