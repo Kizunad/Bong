@@ -59,6 +59,15 @@
   - main：11 passed；`full_app_startup`：1 passed；`tarkov_backpack_p0_e2e`：4 passed；
   - doc tests：0 failed / 5 ignored；合计 **11172 passed / 0 failed / 6 ignored**。
 
+### 2026-07-12 PR #1170 closeout 复验
+
+- 先后普通合并 `origin/main@8baba137` 与 `origin/main@f8b4ab11`；第二次同步只带入 client/docs，合并前后的 `server/` tree 均为 `5a416df62205b09f3f3bb3e62a07cad3005f96f9`。
+- 在最新组合树上重新运行 Rust 1.96.1 全 targets clippy，发现并修复主线新增的 **13 条真实 lint**：`doc_lazy_continuation` 3、`too_many_arguments` 2、`drop_non_drop` 4、`needless_question_mark` 1、`implicit_saturating_sub` 1、`field_reassign_with_default` 2。
+- 生产代码仅对两个独立 Bevy ECS system params 增加函数级定点 lint 边界；其余均为文档结构与 test fixture 等价清理，不改变 gameplay、schema 或真元流动。
+- 最终组合树重新执行 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`：全部 PASS，合计 **11299 passed / 0 failed / 6 ignored**。
+- 风险匹配测试逐项 PASS：`quick_slot_bind_clears_only_the_old_auto_mirrored_item`、`v34_migration_creates_pending_inflow_runtime_account_table`、`cultivation_detail_all_20_meridians`、`heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep`、`restored_pseudo_vein_first_tick_returns_dynamic_zone_balance_to_pending_pool`。
+- 旧 `/review` 的 A/B/C/D 四路 reviewer 均为 `confidence: 0`；其唯一“finding”指向 `.github/scripts/review.mjs:0`，证据均为 `hlool` 无可用 `gpt-5.6-sol` 通道的 HTTP 503，未包含任何 PR 代码路径或行为 finding。
+
 ## Finish Evidence
 
 ### 落地清单
@@ -74,10 +83,13 @@
 - `5e29e9bb`（2026-07-11）：收敛 lib 剩余标准库与 Bevy lint。
 - `db50bc17`（2026-07-11）：清理全 targets 的 12 条 test-only lint。
 - `a07c5516`（2026-07-11）：同步 `origin/main@3c8bf925`，带入 server 变更后重新验收。
+- `c7f7155c`（2026-07-12）：收敛最新主线生产 lib 的 5 条 Rust 1.96 lint。
+- `a8c26295`（2026-07-12）：清理最新主线全 targets 的 8 条 test-only lint。
+- `af4c854e`（2026-07-12）：同步 `origin/main@f8b4ab11`，确认 `server/` tree 未变并重新执行完整门禁。
 
 ### 测试结果
 
-- Rust 1.96.1 下 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 在同步最新主线前后均全绿；post-merge 最终计数 11172 passed / 0 failed / 6 ignored。原始日志保存在本次执行环境 `/tmp/bong-rust-1961-*.log`，不进入仓库。
+- Rust 1.96.1 下 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 在两轮最新主线同步后均全绿；PR closeout 最终计数 11299 passed / 0 failed / 6 ignored。五组风险匹配测试单独复跑均 PASS。
 
 ### 跨仓库核验
 
@@ -85,4 +97,4 @@
 
 ### 遗留 / 后续
 
-- 无功能遗留。归档 commit 产生最终 HEAD 后，由 fresh 无上下文 read-only validator 绑定该 SHA 做对抗验证；其 PASS/FAIL 作为 PR gate 证据，不能用归档前审查代替。
+- 无功能遗留。PR closeout 最终 evidence commit 后，由 fresh 无上下文 read-only `gpt-5.6-sol high` validator 绑定该 SHA 做对抗验证；其 PASS/FAIL 作为 PR gate 证据，不能用归档前审查代替。
