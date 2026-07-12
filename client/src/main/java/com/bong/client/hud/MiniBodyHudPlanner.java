@@ -367,29 +367,36 @@ public final class MiniBodyHudPlanner {
 
     // Wound marker positions (relative to silhouette top-left).
     //
-    // plan-race-system-v1 P2b — 优先读 BodyPlanLayoutStore.current() 的 anchors
-    // （归一化 [0,1] 坐标），按本面板自己的粗网格尺寸 BODY_W×BODY_H 线性缩放推导
-    // （nx*BODY_W, ny*BODY_H）。注意这与 BodyInspectComponent 的坐标反推不是同一
-    // 函数——本面板的剪影比例（30×75，仅头/躯干/四肢六块粗矩形）与
-    // BodyInspectComponent 的 168×236 精细画布比例并不相似，均匀缩放后的红点位置
-    // 相对本面板历史硬编码值会有 1-6px 漂移（四肢末端漂移最大，见类注释）。这是
-    // 有意为之的新基线：像素级回归 pin 测试锁定的是"改造后"的坐标（
-    // MiniBodyHudPlannerGeometryTest），不是逐值复刻旧硬编码表——旧表本就是手调
-    // 的粗略近似，不是从任何权威数据抽取而来（对照 BodyInspectComponent 的
-    // fromNormalized，那里坐标是逐值验证过与来源表完全互逆）。store 缺当前
-    // layout，或 layout 未声明该部位时，回退到 {@link #fallbackLocatePart}
-    // （即本面板改造前的原硬编码表，逐值保留，仅视觉 fallback）。
+    // plan-race-system-v1 P2 major 修复 —— 三级换轨，按优先级：
+    //   1. layout.hudAnchorFor(part)：mini HUD 专用第二锚点组（本面板 30×75 粗网格，
+    //      宽高比 0.40），humanoid.json 的 hud_anchors 原样抽取自本面板改造前的硬编码
+    //      表，走这条路径与旧表逐像素相等（见 MiniBodyHudPlannerGeometryTest）。
+    //   2. layout.anchorFor(part)：主锚点组（BodyInspectComponent 168×236 精细画布，
+    //      宽高比 0.71）按本面板 BODY_W×BODY_H 线性缩放推导——仅当该 layout 没有配置
+    //      hud_anchors 时才走这条路径（未来非人 plan 的常态，没有另一份权威 mini HUD
+    //      像素表可抽取，缩放推导是唯一选择，可能有几像素漂移，可接受）。
+    //   3. fallbackLocatePart：store 缺当前 layout，或 layout 两组锚点都未声明该部位
+    //      时的仅视觉 fallback（本面板改造前的原硬编码表，逐值保留）。
     private static int[] locatePart(int bx, int by, BodyPart part) {
         BodyPlanLayout layout = BodyPlanLayoutStore.current();
         if (layout != null) {
-            PartAnchor anchor = layout.anchorFor(part.name().toLowerCase(Locale.ROOT));
+            String partId = part.name().toLowerCase(Locale.ROOT);
+            PartAnchor hudAnchor = layout.hudAnchorFor(partId);
+            if (hudAnchor != null) {
+                return scaledPoint(bx, by, hudAnchor);
+            }
+            PartAnchor anchor = layout.anchorFor(partId);
             if (anchor != null) {
-                int px = (int) Math.round(anchor.point().x() * BODY_W);
-                int py = (int) Math.round(anchor.point().y() * BODY_H);
-                return new int[]{bx + px, by + py};
+                return scaledPoint(bx, by, anchor);
             }
         }
         return fallbackLocatePart(bx, by, part);
+    }
+
+    private static int[] scaledPoint(int bx, int by, PartAnchor anchor) {
+        int px = (int) Math.round(anchor.point().x() * BODY_W);
+        int py = (int) Math.round(anchor.point().y() * BODY_H);
+        return new int[]{bx + px, by + py};
     }
 
     /** 内建常量保底（layout 缺失 / 未声明该部位时的仅视觉 fallback）。全部按 1/2 缩放。 */

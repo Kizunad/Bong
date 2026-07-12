@@ -43,15 +43,20 @@ public final class BodyPlanLayoutHandler implements ServerDataHandler {
         List<PartAnchor> anchors = parseAnchors(readArray(payload, "anchors"));
         List<MeridianPath> meridianPaths = parseMeridianPaths(readArray(payload, "meridian_paths"));
         List<PartDisplayMapping> partDisplayMap = parsePartDisplayMap(readArray(payload, "part_display_map"));
+        // plan-race-system-v1 P2 major 修复 —— 可选的第二锚点组（mini HUD 专用画布比例），
+        // 缺该字段（未来非人 plan 常态）时 parseAnchors(null) 已经返回空 List，安全 no-op。
+        List<PartAnchor> hudAnchors = parseAnchors(readArray(payload, "hud_anchors"));
 
-        BodyPlanLayout layout = new BodyPlanLayout(bodyPlanId, silhouette, anchors, meridianPaths, partDisplayMap);
+        BodyPlanLayout layout =
+            new BodyPlanLayout(bodyPlanId, silhouette, anchors, meridianPaths, partDisplayMap, hudAnchors);
         BodyPlanLayoutStore.putLayout(layout);
 
         return ServerDataDispatch.handled(
             envelope.type(),
             "Cached body_plan_layout for plan '" + bodyPlanId + "' ("
                 + silhouette.size() + " silhouette parts, " + anchors.size() + " anchors, "
-                + meridianPaths.size() + " meridian paths, " + partDisplayMap.size() + " display mappings)"
+                + meridianPaths.size() + " meridian paths, " + partDisplayMap.size() + " display mappings, "
+                + hudAnchors.size() + " hud anchors)"
         );
     }
 

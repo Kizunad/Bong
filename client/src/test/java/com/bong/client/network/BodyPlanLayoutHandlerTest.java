@@ -81,6 +81,13 @@ public class BodyPlanLayoutHandlerTest {
         displayMap.add(mapping);
         payload.add("part_display_map", displayMap);
 
+        JsonArray hudAnchors = new JsonArray();
+        JsonObject headHudAnchor = new JsonObject();
+        headHudAnchor.addProperty("part_id", "head");
+        headHudAnchor.add("point", point(0.5, 0.053333));
+        hudAnchors.add(headHudAnchor);
+        payload.add("hud_anchors", hudAnchors);
+
         return payload;
     }
 
@@ -96,8 +103,42 @@ public class BodyPlanLayoutHandlerTest {
         assertEquals(1, layout.anchors().size());
         assertEquals(1, layout.meridianPaths().size());
         assertEquals(1, layout.partDisplayMap().size());
+        assertEquals(1, layout.hudAnchors().size());
         assertEquals(0.5, layout.anchorFor("head").point().x());
+        assertEquals(0.5, layout.hudAnchorFor("head").point().x());
+        assertEquals(0.053333, layout.hudAnchorFor("head").point().y());
         assertEquals("head", layout.displaySegmentFor("head"));
+    }
+
+    @Test
+    void missingHudAnchorsFieldDefaultsToEmptyNotCrash() {
+        JsonObject payload = fullPayload();
+        payload.remove("hud_anchors");
+        var result = handler.handle(envelope(payload));
+        assertTrue(result.handled(), result.logMessage());
+
+        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
+        BodyPlanLayout layout = BodyPlanLayoutStore.current();
+        assertTrue(layout.hudAnchors().isEmpty(),
+            "missing hud_anchors field (non-humanoid plan / older server) must default to empty, not crash");
+        assertNull(layout.hudAnchorFor("head"),
+            "no hud_anchors means MiniBodyHudPlanner falls back to anchors scaling for this layout");
+    }
+
+    @Test
+    void malformedHudAnchorEntryIsSkippedNotCrashed() {
+        JsonObject payload = fullPayload();
+        JsonArray hudAnchors = payload.getAsJsonArray("hud_anchors");
+        JsonObject badHudAnchor = new JsonObject();
+        badHudAnchor.addProperty("part_id", "ghost_part");
+        // missing "point" — should be skipped, not crash
+        hudAnchors.add(badHudAnchor);
+
+        var result = handler.handle(envelope(payload));
+        assertTrue(result.handled(), result.logMessage());
+        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
+        assertEquals(1, BodyPlanLayoutStore.current().hudAnchors().size(),
+            "malformed hud_anchor entry (missing point) must be dropped, not crash the parse");
     }
 
     @Test

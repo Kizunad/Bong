@@ -24,17 +24,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * plan-race-system-v1 P2b — {@code MiniBodyHudPlanner.locatePart} 几何改造回归。
+ * plan-race-system-v1 P2 major 修复 — {@code MiniBodyHudPlanner.locatePart} 几何回归。
  *
- * <p>与 {@code BodyInspectComponentGeometryTest} 不同：本面板的粗网格（30×75）比例
- * 与它自己的原硬编码红点表并非从同一份权威数据线性推导（原硬编码表是手调近似，
- * 不是从任何 JSON 抽取而来），因此"读 store 后"与"无 layout fallback"在 humanoid
- * 构型上**不再逐值相等**（四肢末端漂移最大 6px，见 MiniBodyHudPlanner.locatePart
- * 类头文档）。本测试锁定的是改造后的**新基线**——数值全部由
- * {@code round(normalized * BODY_W/BODY_H)} 从
- * {@code server/assets/body_plans/layouts/humanoid.json} 的 anchors 独立算出并写死，
- * 任何未来回归都会撞红；同时锁定"无 layout"路径与改造前硬编码表逐值相等（这条
- * 路径的字节码完全未变，理应恒等）。
+ * <p>P2b 曾把本面板改成均匀缩放 {@code anchors}（{@code BodyInspectComponent} 的
+ * 168×236 精细画布锚点，宽高比 0.71）推导坐标，但本面板自己的粗网格画布是 30×75
+ * （宽高比 0.40）——两个消费者画布比例不同，均匀缩放同一套锚点必然在 mini HUD 上
+ * 产生 1-6px 像素漂移，违反 plan「首版渲染与现状像素级一致」红线。对抗审查抓出
+ * 该 major 问题后改为：{@code BodyPlanLayoutV1} 新增可选的第二套锚点组
+ * {@code hud_anchors}，humanoid.json 把本面板改造前的硬编码红点表原样抽取进去
+ * （逐值相等，见 server {@code layout.rs} 的
+ * {@code humanoid_layout_hud_anchors_pin_mini_hud_fallback_table_verbatim} pin 测试）。
+ * {@code locatePart} 现按优先级换轨：① layout 有 {@code hud_anchors} → 用之（humanoid
+ * 走这条路径，与旧硬编码表逐像素相等，Δ=0）② 无 {@code hud_anchors}（未来非人 plan
+ * 可以不配）→ 回退到 {@code anchors} 缩放推导（本文件的合成非人构型测试组覆盖这条
+ * 路径）③ store 无当前 layout / 两组锚点都未声明该部位 → {@link
+ * MiniBodyHudPlanner#fallbackLocatePart} 仅视觉 fallback。
  *
  * <p><b>P2c 降级说明（数值对拍而非截图对拍）</b>：plan §P2 测试项首选
  * {@code client/tools} render harness 截图对拍，但该目录现有工具
@@ -55,8 +59,13 @@ class MiniBodyHudPlannerGeometryTest {
         StatusEffectStore.resetForTests();
     }
 
-    private static BodyPlanLayout humanoidAnchorsLayout() {
-        return new BodyPlanLayout("humanoid", List.of(), List.of(
+    /**
+     * 主锚点组（{@code BodyInspectComponent} 168×236 精细画布锚点，来自真实
+     * {@code humanoid.json} 的 {@code anchors} 段）——独立于本面板 {@code hud_anchors}，
+     * 用于覆盖「无 hud_anchors → 回退 anchors 缩放推导」换轨分支。
+     */
+    private static List<PartAnchor> humanoidMainAnchors() {
+        return List.of(
             new PartAnchor("head", new Point2(0.5, 0.042373)),
             new PartAnchor("neck", new Point2(0.5, 0.127119)),
             new PartAnchor("chest", new Point2(0.5, 0.20339)),
@@ -73,7 +82,46 @@ class MiniBodyHudPlannerGeometryTest {
             new PartAnchor("right_thigh", new Point2(0.630952, 0.559322)),
             new PartAnchor("right_calf", new Point2(0.630952, 0.720339)),
             new PartAnchor("right_foot", new Point2(0.613095, 0.805085))
-        ), List.of(), List.of());
+        );
+    }
+
+    /**
+     * mini HUD 专用第二锚点组——{@code MiniBodyHudPlanner.fallbackLocatePart}
+     * 改造前硬编码表（30×75 画布）原样抽取为归一化坐标（{@code /BODY_W}、
+     * {@code /BODY_H}），与 server {@code humanoid.json} 的 {@code hud_anchors}
+     * 段逐值对拍来源一致。
+     */
+    private static List<PartAnchor> humanoidHudAnchors() {
+        return List.of(
+            new PartAnchor("head", new Point2(15.0 / 30.0, 4.0 / 75.0)),
+            new PartAnchor("neck", new Point2(15.0 / 30.0, 9.0 / 75.0)),
+            new PartAnchor("chest", new Point2(15.0 / 30.0, 17.0 / 75.0)),
+            new PartAnchor("abdomen", new Point2(15.0 / 30.0, 28.0 / 75.0)),
+            new PartAnchor("left_upper_arm", new Point2(6.0 / 30.0, 14.0 / 75.0)),
+            new PartAnchor("left_forearm", new Point2(6.0 / 30.0, 23.0 / 75.0)),
+            new PartAnchor("left_hand", new Point2(6.0 / 30.0, 31.0 / 75.0)),
+            new PartAnchor("right_upper_arm", new Point2(24.0 / 30.0, 14.0 / 75.0)),
+            new PartAnchor("right_forearm", new Point2(24.0 / 30.0, 23.0 / 75.0)),
+            new PartAnchor("right_hand", new Point2(24.0 / 30.0, 31.0 / 75.0)),
+            new PartAnchor("left_thigh", new Point2(11.0 / 30.0, 41.0 / 75.0)),
+            new PartAnchor("left_calf", new Point2(11.0 / 30.0, 54.0 / 75.0)),
+            new PartAnchor("left_foot", new Point2(11.0 / 30.0, 66.0 / 75.0)),
+            new PartAnchor("right_thigh", new Point2(18.0 / 30.0, 41.0 / 75.0)),
+            new PartAnchor("right_calf", new Point2(18.0 / 30.0, 54.0 / 75.0)),
+            new PartAnchor("right_foot", new Point2(18.0 / 30.0, 66.0 / 75.0))
+        );
+    }
+
+    /** 完整 humanoid layout：主 anchors + hud_anchors 均声明（对齐真实 humanoid.json）。 */
+    private static BodyPlanLayout humanoidAnchorsLayout() {
+        return new BodyPlanLayout(
+            "humanoid", List.of(), humanoidMainAnchors(), List.of(), List.of(), humanoidHudAnchors()
+        );
+    }
+
+    /** 只声明主 anchors、没有 hud_anchors 的 humanoid layout——覆盖回退到 anchors 缩放推导的换轨分支。 */
+    private static BodyPlanLayout humanoidMainAnchorsOnlyLayout() {
+        return new BodyPlanLayout("humanoid", List.of(), humanoidMainAnchors(), List.of(), List.of());
     }
 
     @Test
@@ -95,19 +143,60 @@ class MiniBodyHudPlannerGeometryTest {
             MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.CHEST));
     }
 
+    // ── plan-race-system-v1 P2 major 修复：humanoid + hud_anchors → 与改造前
+    // 硬编码表逐像素相等（Δ=0），锁死 plan「首版渲染与现状像素级一致」红线 ──
+
     @Test
-    void humanoidLayoutLoadedProducesNewCalibratedBaseline_head() {
+    void humanoidLayoutWithHudAnchorsIsPixelIdenticalToPreRefactorFallback_allParts() {
         BodyPlanLayoutStore.putLayout(humanoidAnchorsLayout());
         BodyPlanLayoutStore.setCurrentPlanId("humanoid");
 
-        // round(0.5*30)=15, round(0.042373*75)=3 — computed independently from the
-        // json anchor values, not copy-pasted from the pre-refactor fallback (which was 4).
+        for (BodyPart bp : BodyPart.values()) {
+            assertArrayEquals(
+                MiniBodyHudPlanner.fallbackLocatePart(BX, BY, bp),
+                MiniBodyHudPlanner.locatePartForTests(BX, BY, bp),
+                "humanoid layout with hud_anchors must reproduce the pre-refactor hardcoded "
+                    + "table verbatim (Δ=0) for " + bp + " — hud_anchors was extracted from "
+                    + "that exact table, this is the plan's pixel-parity red line"
+            );
+        }
+    }
+
+    @Test
+    void humanoidLayoutWithHudAnchorsMatchesExpectedFallbackConstants_spotCheck() {
+        // 外部锚点（不从实现反推）：直接写死 MiniBodyHudPlanner.fallbackLocatePart 改造前
+        // 硬编码表的原始数值，逐个 spot check（对拍上面 allParts 循环断言用的同一份数据源，
+        // 双保险防止 fallbackLocatePart 本身被意外改动而让 allParts 测试跟着漂移失去意义）。
+        BodyPlanLayoutStore.putLayout(humanoidAnchorsLayout());
+        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
+
+        assertArrayEquals(new int[]{BX + 15, BY + 4}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.HEAD));
+        assertArrayEquals(new int[]{BX + 15, BY + 9}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.NECK));
+        assertArrayEquals(new int[]{BX + 15, BY + 17}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.CHEST));
+        assertArrayEquals(new int[]{BX + 15, BY + 28}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.ABDOMEN));
+        assertArrayEquals(new int[]{BX + 6, BY + 14}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.LEFT_UPPER_ARM));
+        assertArrayEquals(new int[]{BX + 24, BY + 31}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.RIGHT_HAND));
+        assertArrayEquals(new int[]{BX + 11, BY + 66}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.LEFT_FOOT));
+        assertArrayEquals(new int[]{BX + 18, BY + 66}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.RIGHT_FOOT));
+    }
+
+    // ── 无 hud_anchors（只声明主 anchors）时的回退换轨分支：缩放推导，允许与
+    // 硬编码表存在几像素漂移（未来非人 plan 没有另一份权威 mini HUD 像素表可抽取时的
+    // 唯一合法路径） ──
+
+    @Test
+    void humanoidLayoutWithoutHudAnchorsFallsBackToScaledMainAnchors_head() {
+        BodyPlanLayoutStore.putLayout(humanoidMainAnchorsOnlyLayout());
+        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
+
+        // round(0.5*30)=15, round(0.042373*75)=3 — 从主 anchors 独立缩放推导，
+        // 与 hud_anchors 路径的 4 不同（无 hud_anchors 时的合法漂移）。
         assertArrayEquals(new int[]{BX + 15, BY + 3}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.HEAD));
     }
 
     @Test
-    void humanoidLayoutLoadedProducesNewCalibratedBaseline_torsoAndLimbs() {
-        BodyPlanLayoutStore.putLayout(humanoidAnchorsLayout());
+    void humanoidLayoutWithoutHudAnchorsFallsBackToScaledMainAnchors_torsoAndLimbs() {
+        BodyPlanLayoutStore.putLayout(humanoidMainAnchorsOnlyLayout());
         BodyPlanLayoutStore.setCurrentPlanId("humanoid");
 
         assertArrayEquals(new int[]{BX + 15, BY + 10}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.NECK));
@@ -117,6 +206,25 @@ class MiniBodyHudPlannerGeometryTest {
         assertArrayEquals(new int[]{BX + 22, BY + 35}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.RIGHT_HAND));
         assertArrayEquals(new int[]{BX + 12, BY + 60}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.LEFT_FOOT));
         assertArrayEquals(new int[]{BX + 18, BY + 60}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.RIGHT_FOOT));
+    }
+
+    @Test
+    void hudAnchorTakesPriorityOverMainAnchorWhenBothDeclareSamePart() {
+        // 两组锚点都声明同一部位时，hud_anchors 优先——这是换轨顺序的核心契约，
+        // 不能靠上面两组测试间接推断（万一某天顺序被颠倒，这两组测试各自单独看仍会
+        // 通过，只有本测试直接锁死"谁赢"）。
+        BodyPlanLayoutStore.putLayout(new BodyPlanLayout("humanoid", List.of(),
+            List.of(new PartAnchor("chest", new Point2(0.9, 0.9))),
+            List.of(), List.of(),
+            List.of(new PartAnchor("chest", new Point2(0.1, 0.1)))
+        ));
+        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
+
+        assertArrayEquals(
+            new int[]{BX + (int) Math.round(0.1 * MiniBodyHudPlanner.BODY_W), BY + (int) Math.round(0.1 * MiniBodyHudPlanner.BODY_H)},
+            MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.CHEST),
+            "hud_anchors must win over anchors when both declare the same part"
+        );
     }
 
     @Test
