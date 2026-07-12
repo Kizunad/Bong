@@ -68,6 +68,7 @@
 
 - `client/src/main/java/com/bong/client/hud/WeaponHotbarHudPlanner.java`：新增 `isHudWeapon(EquippedWeapon)`，主手/副手仅过滤 `weapon_kind="tool"`；副手工具继续进入既有盾牌/法宝 fallback。
 - `client/src/main/java/com/bong/client/inventory/InspectScreenBootstrap.java`：断线装备快照清场补齐 `EquippedShieldStore`，避免旧 session 盾牌在新 session 工具/空手 fallback 时重返战斗 HUD。
+- `client/src/main/java/com/bong/client/network/WeaponEquippedHandler.java`：写 store 前严格校验 slot 与 weapon JSON 类型，畸形/迟到包不能伪装成卸下并清空权威状态。
 - `client/src/test/java/com/bong/client/hud/WeaponHotbarHudPlannerTreasureTriggerTest.java`：新增主手工具隐藏与副手工具不遮蔽 trigger 法宝两条契约测试。
 - 未修改 `WeaponEquippedHandler`、`WeaponEquippedStore`、`HeldItemStackResolver`、server wire、schema、资源或依赖。
 
@@ -77,15 +78,17 @@
 - `30abaa9a`（2026-07-11）：提交修复前 RED 契约；JDK 17 精确测试 7 项中新增 2 项按预期失败。
 - `848f78b2`（2026-07-11）：在 HUD consumer 最小过滤工具，保留共享手持模型状态。
 - `88bac38c`（2026-07-12）：补齐盾牌跨 session 清理，并锁住全武器 kind、代表性工具、切换/卸下和拒绝 payload 生命周期。
+- `c10e2865`（2026-07-12）：修复 validator 指出的畸形装备包清场漏洞，覆盖所有非对象 JSON 类型及非法 slot。
+- `6e3538fd`（2026-07-12）：校准 proto roundtrip fixture 的合法装备 slot，锁住跨端正向链路。
 
 ### 测试结果
 
 - RED：`./gradlew test --tests com.bong.client.hud.WeaponHotbarHudPlannerTreasureTriggerTest`，JDK 17.0.19；7 tests，2 failed（两条新增契约，符合修复前预期）。
 - 针对性 GREEN：`WeaponHotbarHudPlannerTreasureTriggerTest`、`WeaponHotbarHudPlannerShieldTest`、`HeldItemStackResolverTest` 同批通过。
 - closeout 定向 gate：JDK 17.0.19 下运行 planner、装备 handler、断线清理、手持模型与破盾旧实例测试；80 tests / 0 failures / 0 errors。
-- closeout 完整 client gate：同步最新主线前为 3761 tests；合并 `origin/main=f8b4ab112424db62a008c4fc17d20cf8f49c4b28` 后重跑为 3925 tests / 0 failures / 0 errors / 0 skipped，JDK 17.0.19，`BUILD SUCCESSFUL`。
+- closeout 完整 client gate：同步最新主线前为 3761 tests；合并 `origin/main=f8b4ab112424db62a008c4fc17d20cf8f49c4b28` 后为 3925 tests；validator 返工后最终重跑为 3927 tests / 0 failures / 0 errors / 0 skipped，JDK 17.0.19，`BUILD SUCCESSFUL`。
 - 主线同步：`origin/main=f8b4ab112424db62a008c4fc17d20cf8f49c4b28` 是最终修复 HEAD 祖先；自动 merge 无冲突，相关 client 完整门禁已在 merge 后重跑。
-- 无上下文只读 validator：`FIX_VALIDATING` 与 `REBASE_VALIDATING` 均为 `PASS 848f78b22781c39b8fa7dce4e59540547abe91d2`。
+- closeout 第一轮无上下文只读 validator：`FAIL 9f681bd84bb0c388a42bb613a71c1c9e7deb5e56`，发现非对象 `weapon` / 非法 `slot` 可误清权威状态；已由 `c10e2865` 修复并补饱和测试。
 
 ### 跨仓库核验
 
