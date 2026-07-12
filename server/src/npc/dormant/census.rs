@@ -138,7 +138,7 @@ pub(crate) fn compute_faction_census(
         })
         .collect();
     // 按 group_id 升序——确定性输出（EmergentGroupId 派生 Ord）。
-    entries.sort_by(|a, b| a.group_id.cmp(&b.group_id));
+    entries.sort_by_key(|a| a.group_id);
     entries
 }
 

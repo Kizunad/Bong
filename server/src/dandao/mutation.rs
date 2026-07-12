@@ -310,7 +310,7 @@ pub fn mutation_advance_system(
     let current_tick = clock.map(|c| c.tick).unwrap_or(0);
 
     // 600-tick 节流：非整数倍 tick 直接跳过。
-    if current_tick % MUTATION_ADVANCE_INTERVAL_TICKS != 0 {
+    if !current_tick.is_multiple_of(MUTATION_ADVANCE_INTERVAL_TICKS) {
         return;
     }
 

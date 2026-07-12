@@ -2706,7 +2706,7 @@ mod tests {
         );
         assert_eq!(value["buff_id"], "huo_xue_dan");
         assert_eq!(
-            value["remaining_ticks"], spec.positive_duration_ticks as u64,
+            value["remaining_ticks"], spec.positive_duration_ticks,
             "remaining_ticks should match spec positive_duration_ticks"
         );
     }

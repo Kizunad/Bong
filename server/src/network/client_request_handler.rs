@@ -6479,15 +6479,17 @@ mod tests {
             "expected block→non-block to clear only the stale automatic item mirror"
         );
 
-        let mut quick = app
-            .world_mut()
-            .get_mut::<QuickSlotBindings>(entity)
-            .unwrap();
-        let _ = quick.set(3, Some(88));
-        drop(quick);
-        let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
-        let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
-        drop(skillbar);
+        {
+            let mut quick = app
+                .world_mut()
+                .get_mut::<QuickSlotBindings>(entity)
+                .unwrap();
+            let _ = quick.set(3, Some(88));
+        }
+        {
+            let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
+            let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
+        }
         send_quick_slot_bind_request(&mut app, entity, 3, None, "block-to-clear");
         app.update();
         assert_eq!(
@@ -6500,20 +6502,22 @@ mod tests {
             "expected block→clear to remove the matching automatic item mirror"
         );
 
-        let mut quick = app
-            .world_mut()
-            .get_mut::<QuickSlotBindings>(entity)
-            .unwrap();
-        let _ = quick.set(3, Some(88));
-        drop(quick);
-        let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
-        let _ = skillbar.set(
-            3,
-            SkillSlot::Skill {
-                skill_id: "sword.cleave".to_string(),
-            },
-        );
-        drop(skillbar);
+        {
+            let mut quick = app
+                .world_mut()
+                .get_mut::<QuickSlotBindings>(entity)
+                .unwrap();
+            let _ = quick.set(3, Some(88));
+        }
+        {
+            let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
+            let _ = skillbar.set(
+                3,
+                SkillSlot::Skill {
+                    skill_id: "sword.cleave".to_string(),
+                },
+            );
+        }
         send_quick_slot_bind_request(&mut app, entity, 3, None, "protect-independent-skill");
         app.update();
 

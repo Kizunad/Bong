@@ -525,6 +525,7 @@ pub fn charge_interrupt_system(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy ECS system params are independently scheduled resources/queries.
 pub fn full_power_kill_detection_system(
     clock: Res<CombatClock>,
     mut combat_events: EventReader<CombatEvent>,

@@ -1471,7 +1471,7 @@ fn dormant_seed_scatter_position(zone: &crate::world::zone::Zone, zone_local_ind
 ///
 /// 用与 RNG 同源的 `deterministic_hash`（salt=0），保证同 char_id 跨重启稳定分派。
 fn seed_rogue_faction(char_id: &str) -> FactionMembership {
-    let faction_id = if deterministic_hash(char_id, 0) % 2 == 0 {
+    let faction_id = if deterministic_hash(char_id, 0).is_multiple_of(2) {
         FactionId::Attack
     } else {
         FactionId::Defend

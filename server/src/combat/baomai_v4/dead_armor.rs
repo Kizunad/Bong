@@ -203,8 +203,9 @@ impl DeadMeridianArmor {
 ///   让玩家断 Du 真能换到保护。
 /// - `Head` 与 `Abdomen` 无任何经脉映射，是刻意设计的永久弱点区，
 ///   死脉甲对头/腹命中无保护（攻方可绕过全部免疫）。
-/// plan-race-system-v1 P1b —— 私表退役：数据唯一真源是 `humanoid.json
-/// meridian_profile.channels[].body_part`（见 `body_plan::types::ChannelDef` 文档），
+///
+/// plan-race-system-v1 P1b —— 私表退役：数据唯一真源是 `humanoid.json` 中的
+/// `meridian_profile.channels[].body_part`（见 `body_plan::types::ChannelDef` 文档），
 /// 本函数改为查询 `body_plan::channel_body_part`。签名保持 `MeridianId ->
 /// Option<BodyPart>` 不变（`crack_reading.rs` 等既有调用点无需改写），humanoid 全 20
 /// 条经脉（含 6 条无体部映射的奇经，返回 `None`）数值 bit-for-bit 与退役前私表一致。

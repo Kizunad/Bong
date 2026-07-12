@@ -945,7 +945,7 @@ mod tests {
                     flow_capacity: 1.0,
                     integrity: 1.0 - (i as f64 * 0.01),
                     open_progress: if i <= 12 { 1.0 } else { i as f64 * 0.05 },
-                    cracks_count: if i > 15 { i - 15 } else { 0 },
+                    cracks_count: i.saturating_sub(15),
                 }
             })
             .collect();

@@ -229,7 +229,7 @@ fn fossil_mineral_for_mask(mask: u8, hash: u64) -> MineralId {
             3 | 4 => MineralId::LingJing,
             _ => MineralId::SuiTie,
         }
-    } else if hash % 3 == 0 {
+    } else if hash.is_multiple_of(3) {
         MineralId::LingJing
     } else {
         MineralId::YuSui

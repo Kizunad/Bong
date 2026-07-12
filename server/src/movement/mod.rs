@@ -52,16 +52,11 @@ pub const DASH_ATTACK_BONUS_WINDOW_TICKS: u64 = 10;
 const LEG_STRAIN_REFRESH_TICKS: u64 = 40;
 const MOVEMENT_SPEED_ATTRIBUTE_UUID: Uuid = Uuid::from_u128(0x426f_6e67_4d6f_7665_6d65_6e74_5631);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MovementAction {
+    #[default]
     None,
     Dashing,
-}
-
-impl Default for MovementAction {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl From<MovementAction> for MovementActionV1 {
@@ -81,18 +76,13 @@ impl From<MovementActionRequestV1> for MovementAction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MovementZoneKind {
+    #[default]
     Normal,
     Dead,
     Negative,
     ResidueAsh,
-}
-
-impl Default for MovementZoneKind {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 impl From<MovementZoneKind> for MovementZoneKindV1 {

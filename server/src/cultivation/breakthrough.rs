@@ -554,7 +554,7 @@ pub fn try_breakthrough_with_env_season_bonus<R: RollSource>(
         // 给 integrity 最高 2 条经脉上裂痕
         let mut targets: Vec<_> = meridians.iter_mut().filter(|m| m.opened).collect();
         targets
-            .sort_by(|a, b| (b.rate_tier + b.capacity_tier).cmp(&(a.rate_tier + a.capacity_tier)));
+            .sort_by_key(|meridian| std::cmp::Reverse(meridian.rate_tier + meridian.capacity_tier));
         for m in targets.into_iter().take(2) {
             m.cracks.push(MeridianCrack {
                 severity,

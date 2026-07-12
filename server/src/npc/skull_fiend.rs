@@ -124,8 +124,9 @@ pub struct SkullFiendChargeProfile {
     pub enraged: bool,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
 pub enum SkullFiendState {
+    #[default]
     Idle,
     Locking {
         target: Entity,
@@ -144,12 +145,6 @@ pub enum SkullFiendState {
         until_tick: u32,
         reason: SkullFiendStunReason,
     },
-}
-
-impl Default for SkullFiendState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

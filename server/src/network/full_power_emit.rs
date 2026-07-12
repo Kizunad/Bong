@@ -53,7 +53,7 @@ pub fn emit_full_power_charged_orb_vfx(
     charging_q: Query<(&ChargingState, &Position)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
-    if clock.tick % CHARGING_ORB_REFRESH_TICKS != 0 {
+    if !clock.tick.is_multiple_of(CHARGING_ORB_REFRESH_TICKS) {
         return;
     }
     for (charging, position) in &charging_q {
@@ -184,7 +184,7 @@ pub fn emit_full_power_exhausted_mist_refresh_vfx(
     exhausted_q: Query<(&StatusEffects, &Position)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
-    if clock.tick % EXHAUSTED_MIST_REFRESH_TICKS != 0 {
+    if !clock.tick.is_multiple_of(EXHAUSTED_MIST_REFRESH_TICKS) {
         return;
     }
     for (status, position) in &exhausted_q {
