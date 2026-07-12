@@ -106,8 +106,14 @@ class MovementStateHandlerTest {
             }
             """);
 
-        assertTrue(new MovementStateHandler().handle(rejected, 3_000L).handled());
-        assertTrue(new MovementStateHandler().handle(staminaOnlyFollowup, 3_200L).handled());
+        assertTrue(
+            new MovementStateHandler().handle(rejected, 3_000L).handled(),
+            "expected complete rejected payload to be handled, actual: false"
+        );
+        assertTrue(
+            new MovementStateHandler().handle(staminaOnlyFollowup, 3_200L).handled(),
+            "expected complete stamina-only followup to be handled, actual: false"
+        );
 
         MovementState state = MovementStateStore.snapshot();
         assertEquals("", state.rejectedAction());

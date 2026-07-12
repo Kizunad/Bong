@@ -1306,7 +1306,12 @@ mod tests {
         app.update();
         flush_client_packets(&mut app);
         let second_reject = collect_movement_payloads(&mut helper);
-        assert_eq!(second_reject.len(), 1);
+        assert_eq!(
+            second_reject.len(),
+            1,
+            "新的玩家输入应重新触发一份 movement_state，实际 {} 份",
+            second_reject.len()
+        );
         assert_eq!(
             second_reject[0].rejected_action,
             Some(MovementActionRequestV1::Dash),
@@ -1328,7 +1333,10 @@ mod tests {
                 send_movement_state_payload(&mut client, &mut movement, Some(stamina), 100, |_| {
                     Err(PayloadBuildError::Oversize { size: 2, max: 1 })
                 });
-            assert!(matches!(result, Err(PayloadBuildError::Oversize { .. })));
+            assert!(
+                matches!(result, Err(PayloadBuildError::Oversize { .. })),
+                "序列化失败应返回 Oversize 以保留 reject，实际 {result:?}"
+            );
         }
         flush_client_packets(&mut app);
         assert!(
@@ -1359,7 +1367,12 @@ mod tests {
         }
         flush_client_packets(&mut app);
         let retried = collect_movement_payloads(&mut helper);
-        assert_eq!(retried.len(), 1);
+        assert_eq!(
+            retried.len(),
+            1,
+            "重试成功应交付一份 movement_state，实际 {} 份",
+            retried.len()
+        );
         assert_eq!(
             retried[0].rejected_action,
             Some(MovementActionRequestV1::Dash),

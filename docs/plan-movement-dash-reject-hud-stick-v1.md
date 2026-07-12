@@ -37,7 +37,7 @@
 
 - `server/src/movement/mod.rs`：`MovementState::take_payload`（或等价发送后消费函数）与 `emit_movement_state_payloads` one-shot 接线。
 - server pin：`movement_emit_system_consumes_reject_and_stamina_followups_stay_clear` 使用 `MockClient` 真实执行 `emit_movement_state_payloads`，锁定 Added 首包 `Dash`、ack 不自激、`Changed<Stamina>` 后续包 `None`、第二次新 reject 可再发；`serialization_failure_keeps_reject_for_next_successful_send` 用可测 seam 注入 `Oversize` 序列化失败，锁定零发送、保留 reject 与下次真实序列化重试。
-- `client/src/test/java/com/bong/client/hud/MovementHudPlannerTest.java` / `client/src/test/java/com/bong/client/movement/MovementStateTest.java`：单次 reject 在 300ms 边界后不再闪红，HUD 在 3000ms visible + 500ms fade 后 auto-hide；新的独立 reject 仍可重新触发。
+- `client/src/test/java/com/bong/client/hud/MovementHudPlannerTest.java` / `client/src/test/java/com/bong/client/network/MovementStateHandlerTest.java`：单次 reject 在 300ms 边界后不再闪红，HUD 在 3000ms visible + 500ms fade 后 auto-hide；新的独立 reject 仍可重新触发。
 - 门禁：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；`cd client && JAVA_HOME=<JDK17> PATH=<JDK17>/bin:$PATH ./gradlew test build`。
 
 ### 验收标准
