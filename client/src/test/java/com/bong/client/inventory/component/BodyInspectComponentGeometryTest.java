@@ -8,12 +8,19 @@ import com.bong.client.inventory.model.bodyplan.PartAnchor;
 import com.bong.client.inventory.model.bodyplan.Point2;
 import com.bong.client.inventory.model.bodyplan.SilhouettePart;
 import com.bong.client.inventory.state.BodyPlanLayoutStore;
+import com.bong.client.network.BodyPlanLayoutHandler;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -149,6 +156,70 @@ class BodyInspectComponentGeometryTest {
         BodyPlanLayoutStore.setCurrentPlanId("nonexistent_race");
         assertArrayEquals(BodyInspectComponent.fallbackBodyPartRect(BodyPart.CHEST),
             BodyInspectComponent.bodyPartRectForTests(BodyPart.CHEST));
+    }
+
+    // ── plan-race-system-v1 P2c: 合成非人 layout 走真实 JSON wire 往返（BodyPlanLayoutHandler
+    // 解码，不是直接 new BodyPlanLayout 对象）——验证 store 里由 wire 解码得到的剪影多边形
+    // 顶点，经 fromNormalized 换算后仍不越出画布边界。部位 id（skull/torso/...）是非人形
+    // 自定义命名，不对应任何 BodyPart 枚举，因此按顶点而非 BodyPart 逐一核验。 ──
+    private static JsonObject point(double x, double y) {
+        JsonObject p = new JsonObject();
+        p.addProperty("x", x);
+        p.addProperty("y", y);
+        return p;
+    }
+
+    private static JsonObject triangleSilhouette(String partId, double x0) {
+        JsonObject s = new JsonObject();
+        s.addProperty("part_id", partId);
+        JsonArray poly = new JsonArray();
+        poly.add(point(x0, 0.1));
+        poly.add(point(x0 + 0.1, 0.1));
+        poly.add(point(x0 + 0.05, 0.9));
+        s.add("polygon", poly);
+        return s;
+    }
+
+    private static void ingestSyntheticSixPartLayoutThroughWire() {
+        JsonObject payload = new JsonObject();
+        payload.addProperty("body_plan_id", "whale_synthetic");
+        JsonArray silhouette = new JsonArray();
+        String[] parts = {"skull", "torso", "dorsal_fin", "left_pectoral_fin", "right_pectoral_fin", "tail_fin"};
+        double[] xs = {0.0, 0.15, 0.3, 0.45, 0.6, 0.75};
+        for (int i = 0; i < parts.length; i++) {
+            silhouette.add(triangleSilhouette(parts[i], xs[i]));
+        }
+        payload.add("silhouette", silhouette);
+        payload.add("anchors", new JsonArray());
+        payload.add("meridian_paths", new JsonArray());
+        payload.add("part_display_map", new JsonArray());
+        payload.addProperty("type", "body_plan_layout");
+        payload.addProperty("v", 1);
+
+        String json = new Gson().toJson(payload);
+        ServerPayloadParseResult parsed = ServerDataEnvelope.parse(json, json.length());
+        assertTrue(parsed.isSuccess(), "synthetic wire payload must parse: " + parsed.errorMessage());
+        var result = new BodyPlanLayoutHandler().handle(parsed.envelope());
+        assertTrue(result.handled(), "handler must accept the synthetic 6-part payload: " + result.logMessage());
+        BodyPlanLayoutStore.setCurrentPlanId("whale_synthetic");
+    }
+
+    @Test
+    void syntheticSixPartLayoutIngestedThroughRealWireDecodeStaysWithinCanvasBounds() {
+        ingestSyntheticSixPartLayoutThroughWire();
+        BodyPlanLayout layout = BodyPlanLayoutStore.current();
+        assertEquals("whale_synthetic", layout.bodyPlanId());
+        assertEquals(6, layout.silhouette().size(), "wire 解码后 6 段剪影必须全部保留");
+
+        for (SilhouettePart part : layout.silhouette()) {
+            for (Point2 v : part.polygon()) {
+                int[] xy = BodyInspectComponent.fromNormalizedForTests(v.x(), v.y());
+                assertTrue(xy[0] >= -84 && xy[0] <= 84,
+                    "wire-decoded part " + part.partId() + " x=" + xy[0] + " escaped canvas half-width bounds");
+                assertTrue(xy[1] >= 0 && xy[1] <= 236,
+                    "wire-decoded part " + part.partId() + " y=" + xy[1] + " escaped canvas height bounds");
+            }
+        }
     }
 
     // ── synthetic non-humanoid layout: any normalized [0,1] point maps within canvas bounds ──

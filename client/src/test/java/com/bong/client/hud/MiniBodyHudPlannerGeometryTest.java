@@ -8,6 +8,12 @@ import com.bong.client.inventory.model.bodyplan.BodyPlanLayout;
 import com.bong.client.inventory.model.bodyplan.PartAnchor;
 import com.bong.client.inventory.model.bodyplan.Point2;
 import com.bong.client.inventory.state.BodyPlanLayoutStore;
+import com.bong.client.network.BodyPlanLayoutHandler;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -114,6 +120,77 @@ class MiniBodyHudPlannerGeometryTest {
 
         assertArrayEquals(MiniBodyHudPlanner.fallbackLocatePart(BX, BY, BodyPart.CHEST),
             MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.CHEST));
+    }
+
+    // ── plan-race-system-v1 P2c: 合成非人 layout 走真实 JSON wire 往返（不是直接 new
+    // BodyPlanLayout 对象），验证 handler 解码后写入的 store 驱动渲染同样不越界 ──
+    private static JsonObject point(double x, double y) {
+        JsonObject p = new JsonObject();
+        p.addProperty("x", x);
+        p.addProperty("y", y);
+        return p;
+    }
+
+    private static JsonObject anchor(String partId, double x, double y) {
+        JsonObject a = new JsonObject();
+        a.addProperty("part_id", partId);
+        a.add("point", point(x, y));
+        return a;
+    }
+
+    /** 6 段合成非人形构型的完整 wire payload（对齐 server 侧
+     * `body_plan/layout.rs::synthetic_whale_layout` 的部位命名与坐标结构）。 */
+    private static JsonObject syntheticSixPartWirePayload() {
+        JsonObject payload = new JsonObject();
+        payload.addProperty("body_plan_id", "whale_synthetic");
+        payload.add("silhouette", new JsonArray());
+        JsonArray anchors = new JsonArray();
+        anchors.add(anchor("skull", 0.05, 0.36));
+        anchors.add(anchor("torso", 0.2, 0.36));
+        anchors.add(anchor("dorsal_fin", 0.35, 0.36));
+        anchors.add(anchor("left_pectoral_fin", 0.5, 0.36));
+        anchors.add(anchor("right_pectoral_fin", 0.65, 0.36));
+        anchors.add(anchor("tail_fin", 0.8, 0.36));
+        payload.add("anchors", anchors);
+        payload.add("meridian_paths", new JsonArray());
+        payload.add("part_display_map", new JsonArray());
+        return payload;
+    }
+
+    private static void ingestSyntheticSixPartLayoutThroughWire() {
+        JsonObject payload = syntheticSixPartWirePayload();
+        payload.addProperty("type", "body_plan_layout");
+        payload.addProperty("v", 1);
+        String json = new Gson().toJson(payload);
+        ServerPayloadParseResult parsed = ServerDataEnvelope.parse(json, json.length());
+        assertTrue(parsed.isSuccess(), "synthetic wire payload must parse: " + parsed.errorMessage());
+        var result = new BodyPlanLayoutHandler().handle(parsed.envelope());
+        assertTrue(result.handled(), "BodyPlanLayoutHandler must accept the synthetic 6-part payload: " + result.logMessage());
+        BodyPlanLayoutStore.setCurrentPlanId("whale_synthetic");
+    }
+
+    @Test
+    void syntheticSixPartLayoutIngestedThroughRealWireDecodeRendersWithinPanelBounds() {
+        ingestSyntheticSixPartLayoutThroughWire();
+        assertEquals("whale_synthetic", BodyPlanLayoutStore.current().bodyPlanId(),
+            "handler must have populated the store for the wire's own body_plan_id");
+
+        // 部位 id 是非人形自定义命名（skull/torso/...），resolvePart 类查询都会落空
+        // （不属于 16 段人形枚举），因此这里直接用 anchors 的归一化坐标独立验证渲染
+        // 数学（与 locatePart 内部同一套 fromNormalized 换算）不越界，锚点数据本身
+        // 来自真实 wire 解码，不是测试里直接构造的 Java 对象。
+        for (String partId : List.of("skull", "torso", "dorsal_fin", "left_pectoral_fin",
+                "right_pectoral_fin", "tail_fin")) {
+            BodyPlanLayout layout = BodyPlanLayoutStore.current();
+            var a = layout.anchorFor(partId);
+            assertTrue(a != null, "wire-decoded layout must retain anchor for " + partId);
+            int rx = BX + (int) Math.round(a.point().x() * MiniBodyHudPlanner.BODY_W);
+            int ry = BY + (int) Math.round(a.point().y() * MiniBodyHudPlanner.BODY_H);
+            assertTrue(rx >= BX && rx <= BX + MiniBodyHudPlanner.BODY_W,
+                partId + " wire-decoded anchor x=" + rx + " escaped panel horizontal bounds");
+            assertTrue(ry >= BY && ry <= BY + MiniBodyHudPlanner.BODY_H,
+                partId + " wire-decoded anchor y=" + ry + " escaped panel vertical bounds");
+        }
     }
 
     // ── synthetic non-humanoid (6-part) layout: dots never escape the mini-body box ──
