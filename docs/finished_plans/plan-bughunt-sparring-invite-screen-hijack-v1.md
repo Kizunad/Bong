@@ -84,6 +84,7 @@
 - 最新主线与门禁：`ed360c4a` 合入 `origin/main@340d7776`，主线只带入 botany server/docs，未触及本修复客户端文件；Temurin JDK 17.0.19 聚焦 37/37 与完整 3832/3832 均为 GREEN。
 - 推送前最新主线复核：`129bf6ab` 合入 `origin/main@f3a2709a`；新增 client 音频/断线回归与 worldgen 变更均未触及本修复的 `client/social` 目标文件。Temurin JDK 17.0.19 完整强制重编译门禁为 450 suites / 3858 tests，0 skipped / failures / errors，13/13 tasks 实际执行。
 - 断线提示复位：`5464f21b` / `10817e55` 以生产 `CombatHudBootstrap.resetOnDisconnect()` 对拍，补齐 blocked-toast inviteId 去重状态的跨 session 清理；本轮 Temurin JDK 17.0.19 聚焦四组套件强制重跑为 38/38 PASS，11/11 tasks 实际执行。
+- 最终主线同步：`aec09c58` 普通合入 `origin/main@3123e60f`；主线新增工作台/容器交互与 forge 修复，未触及本 PR 的 `client/social` 文件。合并后 Temurin JDK 17.0.19 完整强制重跑为 451 suites / 3880 tests，0 skipped / failures / errors，并成功产出客户端 jar。
 - 旧 e2e 归因：run `29144858927` / artifact `8246606606` 中 Task 13 smoke 8/8、Redis 15/15、Bot 23/24；唯一失败是共享 `production_forge_station_real_place` 的 `forge_session current_step=tempering` 45 秒超时。同一 run 的 Java 17 client stage 实际执行 `./gradlew test`，11/11 tasks 全执行并成功，目标 screen 测试未失败。
 - 独立复审：全新 `fork_context:false`、`gpt-5.6-sol` Ultra 只读 validator 对 `ed360c4ae11b3e85f8146852f9a14e1c1818d409` 判定 PASS，确认屏幕身份隔离、队列线性化/容量、精确结算、断线清理成立，旧 e2e forge 超时与客户端变更无关。
 - 范围：未修改 server、schema、依赖、生产配置、工具链或视觉资产；同一 bug 的重复 skeleton `plan-bughunt-v-sparring-invite-screen-hijack-v1` 留给后续主干去重处理，本 PR 不跨 plan 修改。
@@ -148,6 +149,7 @@
 - 最终 full gate：`./gradlew test build --rerun-tasks` → `BUILD SUCCESSFUL`，447 suites / 3832 tests，0 skipped / failures / errors，13/13 tasks 实际执行。
 - 最新主线合并后 full gate：Temurin JDK 17.0.19，`./gradlew test build --rerun-tasks` → `BUILD SUCCESSFUL`，450 suites / 3858 tests，0 skipped / failures / errors，13/13 tasks 实际执行。
 - 断线复位聚焦门禁：Temurin JDK 17.0.19，bootstrap + screen + handler/store + `CombatHudBootstrapTest` 四组套件共 38 tests，0 skipped / failures / errors，11/11 tasks 强制执行。
+- 最终主线合并后 full gate：Temurin JDK 17.0.19，`./gradlew test build --rerun-tasks` 实际生成 451 suites / 3880 tests，0 skipped / failures / errors；测试后成功产出 `bong-client-0.1.0.jar`。
 - 最终 Ultra read-only validator：`PASS — SHA ed360c4ae11b3e85f8146852f9a14e1c1818d409`；模型 `gpt-5.6-sol`、reasoning `ultra`、`fork_context:false`。
 - 旧共享 e2e：run `29144858927` 的 Java 17 client `./gradlew test` 成功；artifact `e2e-evidence` 显示 Task 13 smoke 8/8、Redis 15/15、Bot 23/24，唯一红项为无关 forge station 超时。
 
