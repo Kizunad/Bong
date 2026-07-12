@@ -117,9 +117,23 @@ pub struct PartBoxHit {
 }
 
 /// 世界坐标点/方向 → 实体局部系（仅 yaw 旋转）。
+///
+/// plan-race-system-v1 bughunt major-1 修复：此前实现的符号与本文件顶部文档注释
+/// 自称的"绕 Y 轴旋转 `-yaw`"相反——实际算出的是绕 `+yaw` 旋转，与 valence
+/// `Look::to_vec()`（`valence_entity::Look`，pitch=0 时 `forward = (-sin(yaw), 0,
+/// cos(yaw))`）的朝向约定对不上。旧实现下 yaw 的 sin 分量符号取反，使得非人形
+/// `PartBoxes` 命中在实体转向后算出的局部系与"实体实际面朝方向"相反——一个偏
+/// 移到实体右侧的部位盒，会被误判成"在左侧"。此前的 yaw 不变性测试之所以没测出
+/// 来：`raycast_part_boxes_yaw_and_translation_invariance` 用同一个错误符号的
+/// `world_forward` 公式反推期望值（旋转与逆旋转用同一套错误约定自证），
+/// `combat::resolve` 里的 alien_carrier 系列测试则因攻方射线恰好沿目标局部系对称
+/// 轴线（世界 x 轴，z 分量为 0）入射，旋转 90°/180° 后 sin 项刚好不影响结果，属于
+/// "巧合过关"而非真验证。修复后符号与 valence 约定对齐，现有 yaw 象限/非对称盒
+/// pin 测试见下方 `raycast_part_boxes_yaw_quadrants_match_valence_look_convention`
+/// 与 `raycast_part_boxes_yaw_quadrants_reject_mirrored_convention`。
 fn rotate_world_to_local(v: DVec3, yaw_radians: f64) -> DVec3 {
     let (sin_y, cos_y) = yaw_radians.sin_cos();
-    DVec3::new(v.x * cos_y - v.z * sin_y, v.y, v.x * sin_y + v.z * cos_y)
+    DVec3::new(v.x * cos_y + v.z * sin_y, v.y, -v.x * sin_y + v.z * cos_y)
 }
 
 fn world_point_to_local(world_point: DVec3, entity_position: DVec3, yaw_radians: f64) -> DVec3 {
@@ -999,8 +1013,12 @@ mod tests {
             (180.0_f64, DVec3::new(1.0, 0.0, 1.0)),
         ] {
             let yaw = yaw_degrees.to_radians();
-            // 世界系下"实体局部 +Z 方向"随 yaw 旋转：local (0,0,1) -> world.
-            let world_forward = DVec3::new(yaw.sin(), 0.0, yaw.cos());
+            // 世界系下"实体局部 +Z 方向"随 yaw 旋转：local (0,0,1) -> world。
+            // plan-race-system-v1 bughunt major-1：与 valence `Look::to_vec()`
+            // （pitch=0）一致的公式是 forward = (-sin(yaw), 0, cos(yaw))——此前这里
+            // 写成 `(sin(yaw), 0, cos(yaw))`，与当时 `rotate_world_to_local` 的错误
+            // 符号自洽（旋转/逆旋转用同一套错误约定），测不出符号反转。
+            let world_forward = DVec3::new(-yaw.sin(), 0.0, yaw.cos());
             let ray_origin_world = entity_position; // 从实体位置本身发出，等价于局部原点。
             let ray_direction_world = world_forward;
 
@@ -1024,6 +1042,107 @@ mod tests {
                 "yaw={yaw_degrees} 距离应与基准一致：baseline={} got={}",
                 baseline.distance,
                 hit.distance
+            );
+        }
+    }
+
+    // plan-race-system-v1 bughunt major-1：非对称盒 + 独立于 `rotate_world_to_local`
+    // 内部实现的物理语义 pin。攻击射线沿世界 -Y 方向垂直下砸，完全不经过任何 yaw
+    // 旋转，因此不会重蹈"用同一套（可能错误的）旋转公式反推期望值，旋转与逆旋转
+    // 自证"的覆辙——期望的盒子世界坐标只由 valence `Look::to_vec()`（pitch=0）
+    // 的独立公式 `right = (cos(yaw), 0, sin(yaw))` 算出。
+
+    /// 独立于生产代码的 ground-truth：valence `Look::to_vec()`（`valence_entity::Look`，
+    /// pitch=0）化简后 forward = (-sin(yaw), 0, cos(yaw))，right（forward 顺时针转
+    /// 90°）= (cos(yaw), 0, sin(yaw))。
+    fn valence_right_world(yaw_radians: f64) -> DVec3 {
+        DVec3::new(yaw_radians.cos(), 0.0, yaw_radians.sin())
+    }
+
+    #[test]
+    fn raycast_part_boxes_yaw_quadrants_match_valence_look_convention() {
+        let entity_position = DVec3::new(5.0, 64.0, -3.0);
+        let boxes = vec![PartBox {
+            part_id: "right_fin".into(),
+            offset: [1.0, 0.0, 0.0],
+            half_extents: [0.2, 0.5, 0.2],
+            priority: 0,
+        }];
+
+        for yaw_degrees in [0.0_f64, 90.0, 180.0, 270.0] {
+            let yaw = yaw_degrees.to_radians();
+            let expected_box_world = entity_position + valence_right_world(yaw);
+
+            // 从正上方垂直下砸：射线本身不带任何 yaw 旋转假设，只依赖
+            // `raycast_part_boxes` 内部把 (entity_position, yaw) 变换到局部系的
+            // 正确性。
+            let ray_origin = DVec3::new(
+                expected_box_world.x,
+                entity_position.y + 10.0,
+                expected_box_world.z,
+            );
+            let ray_direction = DVec3::new(0.0, -1.0, 0.0);
+
+            let hit = raycast_part_boxes(
+                ray_origin,
+                ray_direction,
+                20.0,
+                entity_position,
+                yaw,
+                &boxes,
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "yaw={yaw_degrees}: 按 valence Look 右手系推算出的盒世界坐标 \
+                         {expected_box_world:?} 应命中 right_fin，实测未命中"
+                )
+            });
+            assert_eq!(
+                hit.part_id,
+                BodyPartId::new("right_fin"),
+                "yaw={yaw_degrees}: 应命中 right_fin"
+            );
+        }
+    }
+
+    #[test]
+    fn raycast_part_boxes_yaw_quadrants_reject_mirrored_convention() {
+        // 反向 pin：若符号约定被镜像（right = (cos(yaw), 0, -sin(yaw))，即本次修复
+        // 前的错误约定），除了 sin(yaw)=0 的 yaw=0°/180°（两种约定重合，非判别性
+        // case）之外，用镜像坐标去打必须全部落空——证明修复后的实现不是"凑巧两种
+        // 约定都能过"。
+        let entity_position = DVec3::new(5.0, 64.0, -3.0);
+        let boxes = vec![PartBox {
+            part_id: "right_fin".into(),
+            offset: [1.0, 0.0, 0.0],
+            half_extents: [0.2, 0.5, 0.2],
+            priority: 0,
+        }];
+
+        for yaw_degrees in [90.0_f64, 270.0] {
+            let yaw = yaw_degrees.to_radians();
+            let mirrored_right_world = DVec3::new(yaw.cos(), 0.0, -yaw.sin());
+            let mirrored_box_world = entity_position + mirrored_right_world;
+
+            let ray_origin = DVec3::new(
+                mirrored_box_world.x,
+                entity_position.y + 10.0,
+                mirrored_box_world.z,
+            );
+            let ray_direction = DVec3::new(0.0, -1.0, 0.0);
+
+            let hit = raycast_part_boxes(
+                ray_origin,
+                ray_direction,
+                20.0,
+                entity_position,
+                yaw,
+                &boxes,
+            );
+            assert!(
+                hit.is_none(),
+                "yaw={yaw_degrees}: 镜像（错误）符号约定推出的坐标 {mirrored_box_world:?} \
+                 不应命中任何部位，实测 {hit:?}"
             );
         }
     }
