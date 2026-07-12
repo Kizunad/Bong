@@ -2129,6 +2129,65 @@ class ProtoServerDataBridgeTest {
                 + "HudRealmGate.tier() 小写后比对），否则所有境界门控 HUD 恒判醒灵");
     }
 
+    // ─── plan-bughunt-niche-guardian-proto-kind: guardian_kind 顶层枚举 ─────
+    // niche_guardian_fatigue/broken 之前走 generic path，未剥 GUARDIAN_KIND_
+    // 前缀，玩家会在灵龛守护 HUD/事件流看到裸 "GUARDIAN_KIND_PUPPET"。
+
+    @Test
+    void bridgeNicheGuardianFatigueStripsGuardianKindPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_PUPPET)
+                        .setChargesRemaining(4))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("niche_guardian_fatigue", json.get("type").getAsString());
+        assertEquals("puppet", json.get("guardian_kind").getAsString(),
+                "guardian_kind 必须从 GUARDIAN_KIND_PUPPET 剥成 'puppet'（SocialServerDataHandler."
+                + "handleNicheGuardianFatigue 只认 legacy snake_case），否则 HUD/事件流显示裸"
+                + "proto 常量");
+    }
+
+    @Test
+    void bridgeNicheGuardianBrokenStripsMultiSegmentGuardianKind() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setIntruderId("char:raider"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("niche_guardian_broken", json.get("type").getAsString());
+        assertEquals("zhenfa_trap", json.get("guardian_kind").getAsString(),
+                "多段 GUARDIAN_KIND_ZHENFA_TRAP 必须整体剥成 'zhenfa_trap'（保留下划线分段），"
+                + "只测 PUPPET 会漏掉多段 case");
+    }
+
+    @Test
+    void bridgeNicheGuardianRouteUpdatesGuardianStoreWithoutRawEnum() {
+        NicheGuardianStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_BONDED_DAOXIANG)
+                        .setChargesRemaining(2))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for niche_guardian_fatigue: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), route.logMessage());
+
+        assertTrue(NicheGuardianStore.guardianStatuses().containsKey("bonded_daoxiang"),
+                "真实 proto bytes 经 bridge+router 后 NicheGuardianStore 只应出现 'bonded_daoxiang' "
+                + "key，不应出现 'GUARDIAN_KIND_BONDED_DAOXIANG'（否则灵龛守护 HUD 泄漏 proto 常量）");
+        assertFalse(NicheGuardianStore.guardianStatuses().keySet().stream()
+                .anyMatch(key -> key.startsWith("GUARDIAN_KIND_")),
+                "NicheGuardianStore 不应出现任何裸 GUARDIAN_KIND_ 前缀 key");
+    }
+
     @Test
     void bridgeSocialExposureStripsKindEnumPrefix() {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
