@@ -3704,8 +3704,10 @@ mod player_state_tests {
             quantity_total: 1,
             completed_count: 0,
         };
-        let mut cultivation = Cultivation::default();
-        cultivation.qi_current = 7.0;
+        let cultivation = Cultivation {
+            qi_current: 7.0,
+            ..Default::default()
+        };
         let mut qi_ledger = WorldQiAccount::default();
         qi_ledger
             .set_balance(pending_inflow_account(), 3.0)

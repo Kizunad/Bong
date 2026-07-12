@@ -2826,8 +2826,10 @@ mod tests {
         poisoned_practice_log
             .weights
             .insert(ColorKind::Sharp, 12345.0);
-        let mut poisoned_insight_quota = InsightQuota::default();
-        poisoned_insight_quota.used_this_realm = 9;
+        let mut poisoned_insight_quota = InsightQuota {
+            used_this_realm: 9,
+            ..Default::default()
+        };
         poisoned_insight_quota
             .fired_triggers
             .push("stolen_trigger".to_string());
