@@ -13470,8 +13470,8 @@ fn handle_pickup_dropped_item(
     positions: &Query<&valence::prelude::Position>,
     dimensions: &Query<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
-    mut qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
-    mut attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
+    qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
+    attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
     persistence: Option<&PlayerStatePersistence>,
 ) {
@@ -13572,10 +13572,10 @@ fn handle_pickup_dropped_item(
             if let (Some(zones), Some(staged_zones)) = (zones, staged_zones) {
                 *zones = staged_zones;
             }
-            if let Some(qi_transfers) = qi_transfers.as_deref_mut() {
+            if let Some(qi_transfers) = qi_transfers {
                 qi_transfers.extend(staged_qi_transfers.drain());
             }
-            if let Some(attrition_events) = attrition_events.as_deref_mut() {
+            if let Some(attrition_events) = attrition_events {
                 attrition_events.extend(staged_attrition_events.drain());
             }
             tracing::info!(
