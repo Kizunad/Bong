@@ -86,6 +86,7 @@
 - 断线提示复位：`5464f21b` / `10817e55` 以生产 `CombatHudBootstrap.resetOnDisconnect()` 对拍，补齐 blocked-toast inviteId 去重状态的跨 session 清理；本轮 Temurin JDK 17.0.19 聚焦四组套件强制重跑为 38/38 PASS，11/11 tasks 实际执行。
 - 前次主线同步：`aec09c58` 普通合入 `origin/main@3123e60f`；主线新增工作台/容器交互与 forge 修复，未触及本 PR 的 `client/social` 文件。合并后 Temurin JDK 17.0.19 完整强制重跑为 451 suites / 3880 tests，0 skipped / failures / errors，并成功产出客户端 jar。
 - High validator 返工：全新 `fork_context:false`、`gpt-5.6-sol` high 只读 validator 对 `528edfa5` 判定 FAIL；代码行为无 finding，阻塞项是审查期间主线前进及 4 个历史提交缺少 `Model:` trailer。`0e4bf610` 随后普通合入 `origin/main@d0f1a766`，Temurin JDK 17.0.19 完整强制重跑 451 suites / 3886 tests 全绿，13/13 tasks 实际执行。
+- CodeRabbit 返工：新 HEAD review 提出 7 项测试质量 finding；`2725cea3` 清理 teardown 的 toast/去重残留，`7a4fd0fc` 将生产 identity accessor 改为中性 `inviteId()`，`b8e10855` 以包级接受入口替代私有反射并补齐 DUPLICATE/断言诊断。返工后聚焦 38/38 与完整 3886/3886 均为 GREEN。
 - 旧 e2e 归因：run `29144858927` / artifact `8246606606` 中 Task 13 smoke 8/8、Redis 15/15、Bot 23/24；唯一失败是共享 `production_forge_station_real_place` 的 `forge_session current_step=tempering` 45 秒超时。同一 run 的 Java 17 client stage 实际执行 `./gradlew test`，11/11 tasks 全执行并成功，目标 screen 测试未失败。
 - 独立复审：全新 `fork_context:false`、`gpt-5.6-sol` Ultra 只读 validator 对 `ed360c4ae11b3e85f8146852f9a14e1c1818d409` 判定 PASS，确认屏幕身份隔离、队列线性化/容量、精确结算、断线清理成立，旧 e2e forge 超时与客户端变更无关。
 - 范围：未修改 server、schema、依赖、生产配置、工具链或视觉资产；同一 bug 的重复 skeleton `plan-bughunt-v-sparring-invite-screen-hijack-v1` 留给后续主干去重处理，本 PR 不跨 plan 修改。
@@ -137,6 +138,7 @@
 - `129bf6ab`（2026-07-11）：推送前合并最新 `origin/main@f3a2709a`，无冲突且未触及本修复 `client/social` 文件。
 - `5464f21b` / `10817e55`（2026-07-11）：以 RED/GREEN 锁定生产断线入口复位切磋邀请 blocked-toast 去重状态。
 - `0e4bf610`（2026-07-12）：普通合入最新 `origin/main@d0f1a766`，覆盖 race-system 的 proto/schema/client 请求链变更。
+- `2725cea3` / `7a4fd0fc` / `b8e10855`（2026-07-12）：闭环 CodeRabbit 的测试隔离、生产命名与契约诊断 finding。
 - 历史模型 provenance 补记：执行会话记录确认 `129bf6ab` / `f16b6f16` 为 `gpt-5.6-sol-ultra`，`5464f21b` / `10817e55` 为 `gpt-5.6-sol-high`。用户要求保留这些提交且禁止 amend/rebase，因此仅以追加证据补记，不改写既有 SHA。
 
 ### 测试结果
@@ -154,6 +156,7 @@
 - 断线复位聚焦门禁：Temurin JDK 17.0.19，bootstrap + screen + handler/store + `CombatHudBootstrapTest` 四组套件共 38 tests，0 skipped / failures / errors，11/11 tasks 强制执行。
 - 最终主线合并后 full gate：Temurin JDK 17.0.19，`./gradlew test build --rerun-tasks` 实际生成 451 suites / 3880 tests，0 skipped / failures / errors；测试后成功产出 `bong-client-0.1.0.jar`。
 - Validator 返工后 full gate：Temurin JDK 17.0.19，`./gradlew test build --rerun-tasks` → `BUILD SUCCESSFUL in 2m 6s`，451 suites / 3886 tests，0 skipped / failures / errors，13/13 tasks 实际执行。
+- CodeRabbit 返工 targeted/full gate：Temurin JDK 17.0.19，四组聚焦 38 tests 全绿；`./gradlew test build --rerun-tasks` → `BUILD SUCCESSFUL in 5m 6s`，451 suites / 3886 tests，0 skipped / failures / errors，13/13 tasks 实际执行。
 - 最终 Ultra read-only validator：`PASS — SHA ed360c4ae11b3e85f8146852f9a14e1c1818d409`；模型 `gpt-5.6-sol`、reasoning `ultra`、`fork_context:false`。
 - 旧共享 e2e：run `29144858927` 的 Java 17 client `./gradlew test` 成功；artifact `e2e-evidence` 显示 Task 13 smoke 8/8、Redis 15/15、Bot 23/24，唯一红项为无关 forge station 超时。
 
