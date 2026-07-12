@@ -284,7 +284,7 @@ class ScreenTransitionTest {
     }
 
     @Test
-    void same_screen_request_clears_previous_transition() {
+    void same_screen_request_is_consumed_and_clears_previous_transition() {
         DummyScreen current = new DummyScreen("current");
         ScreenTransition.TransitionHandle stale = ScreenTransition.play(
             new DummyScreen("old"),
@@ -309,10 +309,14 @@ class ScreenTransitionTest {
 
         boolean sameScreen = ScreenTransitionController.clearActiveTransitionIfSameScreen(current, current);
 
-        assertTrue(sameScreen);
-        assertNull(ScreenTransitionController.activeTransition());
-        assertTrue(stale.cancelled());
-        assertEquals(1, ScreenTransitionController.cancelledTransitionsForTests());
+        assertTrue(sameScreen,
+            "same-instance setScreen 必须被消费，避免 vanilla removed() 误结算协议终态，实际=" + sameScreen);
+        assertNull(ScreenTransitionController.activeTransition(),
+            "same-instance 请求消费后不得残留旧 transition");
+        assertTrue(stale.cancelled(),
+            "same-instance 请求必须取消旧 transition handle，实际 cancelled=" + stale.cancelled());
+        assertEquals(1, ScreenTransitionController.cancelledTransitionsForTests(),
+            "same-instance 请求只能结算一次旧 transition");
     }
 
     private static class DummyScreen extends Screen {
