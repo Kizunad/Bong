@@ -4,6 +4,7 @@ import com.bong.client.cultivation.ColorKind;
 import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.inventory.state.MeridianStateStore;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillMilestoneSnapshot;
@@ -95,6 +96,11 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         // 下标），直接经 MeridianChannel.fromChannelId 查找；非 humanoid channel（无
         // 对应 UI 枚举）合法地解析为 null，不 crash。
         MeridianChannel targetMeridian = MeridianChannel.fromChannelId(readString(payload, "target_meridian"));
+
+        // plan-race-system-v1 P2b — cultivation_detail 附带的本体 body_plan_id 是
+        // BodyPlanLayoutStore"当前"指针的唯一权威来源；body_plan_layout payload 本身
+        // 只按 id 建缓存（见 BodyPlanLayoutHandler），两者到达顺序不定，store 内部处理竞态。
+        BodyPlanLayoutStore.setCurrentPlanId(readString(payload, "body_plan_id"));
 
         MeridianBody body = buildBody(
             channelOrder,
