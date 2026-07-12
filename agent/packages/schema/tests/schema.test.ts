@@ -2067,6 +2067,91 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  // plan-race-system-v1 P2a — 动态部位 / 经脉面板布局 S2C schema pin
+  it("server-data.body-plan-layout.sample.json 正样本通过", () => {
+    const data = loadSample("server-data.body-plan-layout.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  const validBodyPlanLayout = () => ({
+    v: 1,
+    type: "body_plan_layout",
+    body_plan_id: "humanoid",
+    silhouette: [
+      {
+        part_id: "chest",
+        polygon: [
+          { x: 0.3, y: 0.1 },
+          { x: 0.7, y: 0.1 },
+          { x: 0.7, y: 0.3 },
+        ],
+      },
+    ],
+    anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.2 } }],
+    meridian_paths: [
+      { channel_id: "ren", points: [{ x: 0.5, y: 0.4 }, { x: 0.5, y: 0.1 }] },
+    ],
+    part_display_map: [
+      { server_part_id: "chest", display_segment_id: "chest" },
+    ],
+  });
+
+  it("body_plan_layout 正样本（最小合法形状）通过", () => {
+    const result = validate(ServerDataV1, validBodyPlanLayout());
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it.each([
+    ["body_plan_id 缺失", (() => {
+      const d = validBodyPlanLayout() as Record<string, unknown>;
+      delete d.body_plan_id;
+      return d;
+    })()],
+    ["body_plan_id 空字符串", { ...validBodyPlanLayout(), body_plan_id: "" }],
+    ["silhouette 空数组", { ...validBodyPlanLayout(), silhouette: [] }],
+    ["silhouette 多边形只有 2 个顶点", {
+      ...validBodyPlanLayout(),
+      silhouette: [
+        { part_id: "chest", polygon: [{ x: 0.3, y: 0.1 }, { x: 0.7, y: 0.1 }] },
+      ],
+    }],
+    ["坐标越界 x>1", {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: 1.5, y: 0.2 } }],
+    }],
+    ["坐标为负", {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: -0.1, y: 0.2 } }],
+    }],
+    ["meridian path 只有 1 个点", {
+      ...validBodyPlanLayout(),
+      meridian_paths: [{ channel_id: "ren", points: [{ x: 0.5, y: 0.4 }] }],
+    }],
+    ["part_display_map 缺 display_segment_id", {
+      ...validBodyPlanLayout(),
+      part_display_map: [{ server_part_id: "chest" }],
+    }],
+    ["顶层多余字段", { ...validBodyPlanLayout(), unexpected: true }],
+  ])("body_plan_layout 负样本：%s 应拒绝", (_name, payload) => {
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("cultivation_detail 附带 body_plan_id 字符串通过、数字形状拒绝", () => {
+    const base = loadSample("server-data.cultivation-detail.sample.json") as Record<
+      string,
+      unknown
+    >;
+    expect(base.body_plan_id, "sample 必须携带 body_plan_id 与 Rust wire 对齐").toBe(
+      "humanoid",
+    );
+    const ok = validate(ServerDataV1, base);
+    expect(ok.ok, ok.errors.join("; ")).toBe(true);
+    const bad = { ...base, body_plan_id: 42 };
+    expect(validate(ServerDataV1, bad).ok).toBe(false);
+  });
+
   it("client-request.mineral-probe.sample.json", () => {
     const data = loadSample("client-request.mineral-probe.sample.json");
     const result = validate(ClientRequestV1, data);

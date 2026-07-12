@@ -648,6 +648,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
             } => {
                 // SoA → AoS: 并行数组打包成 repeated MeridianState（plan-race-system-v1
                 // P1c：长度随 `channel_ids` 走，不再假设恰好 20 条）。
@@ -691,6 +692,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                             ratio: pw.ratio,
                         })
                         .collect(),
+                    body_plan_id: body_plan_id.clone(),
                 })
             }
             ServerDataPayloadV1::QiColorObserved(o) => {
@@ -742,6 +744,60 @@ impl From<&ServerDataPayloadV1> for Payload {
                     })
                     .collect(),
             }),
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                Payload::BodyPlanLayout(bong::BodyPlanLayout {
+                    body_plan_id: layout.body_plan_id.clone(),
+                    silhouette: layout
+                        .silhouette
+                        .iter()
+                        .map(|part| bong::BodyPlanSilhouettePart {
+                            part_id: part.part_id.clone(),
+                            polygon: part
+                                .polygon
+                                .iter()
+                                .map(|p| bong::BodyPlanPoint2 {
+                                    x: p.x as f32,
+                                    y: p.y as f32,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                    anchors: layout
+                        .anchors
+                        .iter()
+                        .map(|a| bong::BodyPlanPartAnchor {
+                            part_id: a.part_id.clone(),
+                            point: Some(bong::BodyPlanPoint2 {
+                                x: a.point.x as f32,
+                                y: a.point.y as f32,
+                            }),
+                        })
+                        .collect(),
+                    meridian_paths: layout
+                        .meridian_paths
+                        .iter()
+                        .map(|mp| bong::BodyPlanMeridianPath {
+                            channel_id: mp.channel_id.clone(),
+                            points: mp
+                                .points
+                                .iter()
+                                .map(|p| bong::BodyPlanPoint2 {
+                                    x: p.x as f32,
+                                    y: p.y as f32,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                    part_display_map: layout
+                        .part_display_map
+                        .iter()
+                        .map(|m| bong::BodyPlanPartDisplayMapping {
+                            server_part_id: m.server_part_id.clone(),
+                            display_segment_id: m.display_segment_id.clone(),
+                        })
+                        .collect(),
+                })
+            }
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -6045,6 +6101,7 @@ mod tests {
                 qi_color_hunyuan: false,
                 practice_weights: vec![],
                 target_meridian: None,
+                body_plan_id: "humanoid".to_string(),
             }),
             fix!(ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
                 observer: "offline:Kiz".to_string(),
@@ -6091,6 +6148,38 @@ mod tests {
                     bone_coins: 12,
                 }
             ])),
+            // plan-race-system-v1 P2a：动态部位 / 经脉面板布局元数据。
+            fix!(ServerDataPayloadV1::BodyPlanLayout(
+                super::super::server_data::BodyPlanLayoutV1 {
+                    body_plan_id: "humanoid".to_string(),
+                    silhouette: vec![super::super::server_data::BodyPlanSilhouettePartV1 {
+                        part_id: "chest".to_string(),
+                        polygon: vec![
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.37, y: 0.14 },
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.63, y: 0.14 },
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.63, y: 0.28 },
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.37, y: 0.28 },
+                        ],
+                    }],
+                    anchors: vec![super::super::server_data::BodyPlanPartAnchorV1 {
+                        part_id: "chest".to_string(),
+                        point: super::super::server_data::BodyPlanPoint2V1 { x: 0.5, y: 0.2 },
+                    }],
+                    meridian_paths: vec![super::super::server_data::BodyPlanMeridianPathV1 {
+                        channel_id: "ren".to_string(),
+                        points: vec![
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.49, y: 0.42 },
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.49, y: 0.13 },
+                        ],
+                    }],
+                    part_display_map: vec![
+                        super::super::server_data::BodyPlanPartDisplayMappingV1 {
+                            server_part_id: "head".to_string(),
+                            display_segment_id: "head".to_string(),
+                        }
+                    ],
+                }
+            )),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id: "ses:1".to_string(),
                 target_id: "entity:1".to_string(),
@@ -7059,6 +7148,7 @@ mod tests {
             ServerDataType::InventoryEvent,
             ServerDataType::DroppedLootSync,
             ServerDataType::RemainsSync,
+            ServerDataType::BodyPlanLayout,
             ServerDataType::BotanyHarvestProgress,
             ServerDataType::BotanyPlantV2RenderProfiles,
             ServerDataType::MiningProgress,
@@ -7214,9 +7304,9 @@ mod tests {
         );
     }
 
-    /// Exhaustive proto encoding guard for all 127 `ServerDataPayloadV1` variants.
+    /// Exhaustive proto encoding guard for all 128 `ServerDataPayloadV1` variants.
     ///
-    /// For each of the 124 proto-encodable variants (is_json_bypass=false):
+    /// For each of the 125 proto-encodable variants (is_json_bypass=false):
     ///   - Calls `ServerDataV1::new(variant).to_proto_bytes()`.
     ///   - Asserts the bytes are non-empty (proto envelope was built).
     ///   - Decodes and asserts the envelope contains a payload (proto arm exists in From impl).
@@ -7282,8 +7372,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 127,
-            "Expected 127 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 128,
+            "Expected 128 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(

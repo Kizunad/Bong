@@ -192,6 +192,7 @@ mod tests {
                     cracks_count: 2,
                 },
             ],
+            body_plan_id: "humanoid".to_string(),
             target_meridian: Some("heart".to_string()),
             contamination_total: 0.0,
             lifespan: None,
@@ -252,6 +253,7 @@ mod tests {
                     cracks_count: 0,
                 })
                 .collect(),
+            body_plan_id: "humanoid".to_string(),
             target_meridian: Some("tail_fin_channel".to_string()),
             contamination_total: 0.0,
             lifespan: None,
@@ -840,6 +842,7 @@ mod tests {
                 open_progress: 1.0,
                 cracks_count: 0,
             }],
+            body_plan_id: "humanoid".to_string(),
             target_meridian: Some("heart".to_string()),
             contamination_total: 12.5,
             lifespan: Some(LifespanPreview {
@@ -896,6 +899,7 @@ mod tests {
         let detail = CultivationDetail {
             realm: Realm::Awaken as i32,
             meridians: vec![],
+            body_plan_id: "humanoid".to_string(),
             target_meridian: None,
             contamination_total: 0.0,
             lifespan: None,
@@ -952,6 +956,7 @@ mod tests {
         let detail = CultivationDetail {
             realm: Realm::Void as i32,
             meridians: all_meridians,
+            body_plan_id: "humanoid".to_string(),
             target_meridian: Some("yang_wei".to_string()),
             contamination_total: 0.0,
             lifespan: None,
@@ -1001,6 +1006,7 @@ mod tests {
         let detail = CultivationDetail {
             realm: Realm::Condense as i32,
             meridians: vec![],
+            body_plan_id: "humanoid".to_string(),
             target_meridian: None,
             contamination_total: 0.0,
             lifespan: None,
@@ -1040,6 +1046,7 @@ mod tests {
                         open_progress: 1.0,
                         cracks_count: 0,
                     }],
+                    body_plan_id: "humanoid".to_string(),
                     target_meridian: None,
                     contamination_total: 1.5,
                     lifespan: Some(LifespanPreview {
@@ -11048,6 +11055,7 @@ mod tests {
         let detail = CultivationDetail {
             realm: 999, // 不存在的 Realm 值
             meridians: vec![],
+            body_plan_id: "humanoid".to_string(),
             target_meridian: None,
             contamination_total: 0.0,
             lifespan: None,
@@ -11176,6 +11184,7 @@ mod tests {
                             }
                         })
                         .collect(),
+                    body_plan_id: "humanoid".to_string(),
                     target_meridian: Some("ren".to_string()),
                     contamination_total: 12.5,
                     lifespan: Some(LifespanPreview {

@@ -172,8 +172,47 @@ message ServerDataEnvelope {
     ScrollOpen scroll_open = 138;
     // plan-remains-suite P0 — 遗骸容器世界同步（G 键统一交互链路，对齐 dropped_loot_sync 形状）。
     RemainsSync remains_sync = 139;
+    // ─── plan-race-system-v1 P2a：动态部位 / 经脉面板布局元数据 ────
+    BodyPlanLayout body_plan_layout = 140;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
+}
+
+// ─── plan-race-system-v1 P2a：BodyPlanLayout ──────────────────────
+// 与 Rust BodyPlanLayoutV1 精确对应。join 首帧随 cultivation_detail 下发，
+// 实体 body_plan 变化（真实换 race）时重发；坐标均为归一化 [0,1]。
+
+message BodyPlanPoint2 {
+  float x = 1;
+  float y = 2;
+}
+
+message BodyPlanSilhouettePart {
+  string part_id = 1;
+  repeated BodyPlanPoint2 polygon = 2;
+}
+
+message BodyPlanPartAnchor {
+  string part_id = 1;
+  BodyPlanPoint2 point = 2;
+}
+
+message BodyPlanMeridianPath {
+  string channel_id = 1;
+  repeated BodyPlanPoint2 points = 2;
+}
+
+message BodyPlanPartDisplayMapping {
+  string server_part_id = 1;
+  string display_segment_id = 2;
+}
+
+message BodyPlanLayout {
+  string body_plan_id = 1;
+  repeated BodyPlanSilhouettePart silhouette = 2;
+  repeated BodyPlanPartAnchor anchors = 3;
+  repeated BodyPlanMeridianPath meridian_paths = 4;
+  repeated BodyPlanPartDisplayMapping part_display_map = 5;
 }
 
 message WorkbenchOpen {
@@ -504,6 +543,9 @@ message CultivationDetail {
   bool                           qi_color_chaotic                  = 10;
   bool                           qi_color_hunyuan                  = 11;
   repeated PracticeWeight        practice_weights                  = 12;
+  // plan-race-system-v1 P2a：实体本体 body_plan id（`BodyPlanLayout.body_plan_id`
+  // 寻址键，client 按此缓存对应布局）。
+  string                         body_plan_id                      = 13;
 }
 
 // ─── 7. SkillXpGain ────────────────────────────────────────────
