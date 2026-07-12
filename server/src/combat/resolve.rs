@@ -1805,15 +1805,29 @@ pub fn resolve_attack_intents(
             // legacy 对应物时，`CombatBodyPartV1` 无法表达该部位——显式记 warn + 落一个
             // 占位值（`BodyPart::Chest`，与 dead_armor/dugu 等模块的躯干核心占位惯例
             // 一致），不是静默默认；wire 精确度的开放化留给 P1。
+            //
+            // bughunt minor：这条 warn 此前无节流——非人形 `PartBoxes` 构型一旦上线，
+            // 每次命中该类目标都会打一条 warn，高频战斗场景（连续普攻/AOE）会刷屏。
+            // 按 `combat::shield_block::shield_low_stamina_narration_tick` 的既有 tick
+            // 取样节流惯例改成同一 tick 只警一次；只节流日志，返回值（占位
+            // `BodyPart::Chest`）不受影响。
             body_part: crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id).unwrap_or_else(
                 || {
-                    tracing::warn!(
-                        "[bong][body_plan] CombatEvent wire: part id {} has no legacy BodyPart \
-                         mapping — CombatBodyPartV1 is humanoid-only until P1 opens it up; \
-                         emitting BodyPart::Chest as an explicit placeholder (not a silent \
-                         default)",
-                        hit_probe.part_id
-                    );
+                    const UNMAPPED_BODY_PART_WARN_INTERVAL_TICKS: u64 = 80;
+                    if clock
+                        .tick
+                        .is_multiple_of(UNMAPPED_BODY_PART_WARN_INTERVAL_TICKS)
+                    {
+                        tracing::warn!(
+                            "[bong][body_plan] CombatEvent wire: part id {} has no legacy \
+                             BodyPart mapping — CombatBodyPartV1 is humanoid-only until P1 \
+                             opens it up; emitting BodyPart::Chest as an explicit placeholder \
+                             (not a silent default); further occurrences within the next {} \
+                             ticks are throttled",
+                            hit_probe.part_id,
+                            UNMAPPED_BODY_PART_WARN_INTERVAL_TICKS,
+                        );
+                    }
                     BodyPart::Chest
                 },
             ),
