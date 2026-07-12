@@ -235,7 +235,13 @@ export function classifyReviewRun(firstRound, finalRound) {
   const finalResults = finalRound || [];
   const allResults = [...firstResults, ...finalResults];
   if (collectRealFindings(allResults).length) return "gate_failure";
-  if (finalResults.length !== REVIEWERS.length || finalResults.some(isCodexExecutionFailure)) return "infra_failure";
+  if (
+    firstResults.length !== REVIEWERS.length ||
+    finalResults.length !== REVIEWERS.length ||
+    allResults.some((result) => result?.execution_failure === true)
+  ) {
+    return "infra_failure";
+  }
   return decideGate(finalResults).passed ? "passed" : "gate_failure";
 }
 
@@ -841,7 +847,7 @@ async function runCodexResponses(prompt, label) {
     const result = await requestResponses(prompt, attemptTimeoutMs);
     const text = redactRuntimeSecrets(result.stdout || "");
     const zeroConfidenceInfra = isZeroConfidenceWithoutCodeFindings(text);
-    if (text.trim() && !zeroConfidenceInfra) return { raw: text, executionFailure: false };
+    if (isSuccessfulCodexResponse(result, text)) return { raw: text, executionFailure: false };
 
     const failure = codexFailureText(result);
     const retryableFailure = zeroConfidenceInfra || isRetryableCodexFailure(result);
@@ -855,9 +861,16 @@ async function runCodexResponses(prompt, label) {
     }
 
     console.error(`  responses ${label} failed: ${failure}`);
-    if (text.trim() && zeroConfidenceInfra) return { raw: text, executionFailure: true };
+    const parsed = extractJSON(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { raw: text, executionFailure: true };
+    }
     return { raw: codexExecutionFailureJson(label, failure), executionFailure: true };
   }
+}
+
+export function isSuccessfulCodexResponse(result, text = result?.stdout || "") {
+  return result?.code === 0 && String(text).trim().length > 0 && !isZeroConfidenceWithoutCodeFindings(text);
 }
 
 export function buildResponsesEndpoint(baseUrl, allowHttp = false) {

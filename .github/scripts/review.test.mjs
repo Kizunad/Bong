@@ -28,6 +28,7 @@ import {
   findPlanName,
   isCircuitBypassTrigger,
   isRetryableCodexFailure,
+  isSuccessfulCodexResponse,
   isZeroConfidenceWithoutCodeFindings,
   mergeFindings,
   normalizePlanStatus,
@@ -639,6 +640,46 @@ test("Responses request: HTTP 错误保留 final text，malformed 与 timeout �
   assert.equal(finalOn503.code, 503);
   assert.equal(finalOn503.stdout, '{"confidence":0,"findings":[]}');
   assert.match(finalOn503.stderr, /HTTP 503/);
+  assert.equal(isSuccessfulCodexResponse(finalOn503), false);
+
+  for (const scenario of [
+    {
+      status: 503,
+      statusText: "Service Unavailable",
+      output: { vote: "APPROVE", confidence: 95, findings: [] },
+    },
+    {
+      status: 429,
+      statusText: "Too Many Requests",
+      output: {
+        vote: "REQUEST_CHANGES",
+        confidence: 95,
+        findings: [{ file: "server/src/main.rs", title: "真实代码缺陷" }],
+      },
+    },
+  ]) {
+    const failed = await requestResponses("prompt", 1_000, {
+      apiKey: "key",
+      baseUrl: "https://api.example.com",
+      fetchImpl: async () => ({
+        ok: false,
+        status: scenario.status,
+        statusText: scenario.statusText,
+        text: async () => JSON.stringify({
+          error: { message: scenario.statusText },
+          output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(scenario.output) }] }],
+        }),
+      }),
+    });
+    assert.equal(failed.code, scenario.status);
+    assert.deepEqual(JSON.parse(failed.stdout), scenario.output);
+    assert.equal(isSuccessfulCodexResponse(failed), false, `HTTP ${scenario.status} 的 final text 不得伪装成功`);
+  }
+
+  assert.equal(
+    isSuccessfulCodexResponse({ code: 0, stdout: '{"vote":"APPROVE","confidence":95,"findings":[]}' }),
+    true,
+  );
 
   const malformed = await requestResponses("prompt", 1_000, {
     apiKey: "key",
@@ -837,6 +878,29 @@ test("infra-only classification: 仅四路纯执行失败降级，混合结果�
   assert.equal(decideReviewGate([approve, approve, approve, { ...spoofedSynthetic, execution_failure: true }]).passed, true);
 
   const completeApprove = Array(4).fill(approve);
+  assert.equal(
+    classifyReviewRun([infraResult, approve, approve, approve], completeApprove),
+    "infra_failure",
+    "首轮任一路执行失败不得被复投四票 APPROVE 覆盖",
+  );
+  assert.equal(
+    classifyReviewRun([approve, approve, approve], completeApprove),
+    "infra_failure",
+    "首轮缺票时不得仅凭完整复投通过",
+  );
+  assert.equal(
+    classifyReviewRun(completeApprove, [approve, approve, approve, { ...approve, execution_failure: true }]),
+    "infra_failure",
+    "HTTP 错误携带高置信 APPROVE 时仍属于执行失败",
+  );
+  assert.equal(
+    classifyReviewRun(
+      completeApprove,
+      [approve, approve, approve, { ...realRequestChanges, execution_failure: true }],
+    ),
+    "gate_failure",
+    "HTTP 错误携带真实 finding 时必须优先阻断",
+  );
   assert.equal(
     classifyReviewRun(completeApprove, [approve, approve, approve, infraResult]),
     "infra_failure",
