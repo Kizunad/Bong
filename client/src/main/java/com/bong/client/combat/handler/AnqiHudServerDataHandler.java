@@ -63,63 +63,42 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
             return invalid(envelope, "payload fields must exactly match the anqi_hud v1 schema");
         }
         String kind = readString(payload, "kind");
-        long now  = System.currentTimeMillis();
-        Long tickValue = readBoundedInteger(payload, "tick", 0L, MAX_SAFE_TICK);
-        if (tickValue == null) {
-            return invalid(envelope, "tick must be an integer in [0, " + MAX_SAFE_TICK + "]");
+        Long echoCount = readBoundedInteger(payload, "echo_count", MAX_ECHO_COUNT);
+        Double aimProgress = readBoundedDouble(payload, "aim_progress", 0.0, 1.0);
+        Double chargeProgress = readBoundedDouble(payload, "charge_progress", 0.0, 1.0);
+        String container = readString(payload, "abrasion_container");
+        Double qiPayload = readBoundedDouble(
+                payload, "abrasion_qi_payload", 0.0, MAX_ABRASION_QI_PAYLOAD);
+        Long tickValue = readBoundedInteger(payload, "tick", MAX_SAFE_TICK);
+        if (kind == null
+                || echoCount == null
+                || aimProgress == null
+                || chargeProgress == null
+                || container == null
+                || !isCanonicalContainer(container)
+                || qiPayload == null
+                || tickValue == null) {
+            return invalid(envelope, "one or more fields violate the anqi_hud v1 schema");
         }
+
+        long now  = System.currentTimeMillis();
         long tick = tickValue;
 
         switch (kind) {
-            case "echo" -> {
-                Long echoCount = readBoundedInteger(payload, "echo_count", 0L, MAX_ECHO_COUNT);
-                if (echoCount == null) {
-                    return invalid(envelope, "echo_count must fit the Java HUD int boundary");
-                }
+            case "echo" ->
                 AnqiHudStateStore.updateEcho(echoCount.intValue(), now, DISPLAY_DURATION_MS, tick);
-            }
-            case "aim" -> {
-                Double aimProgress = readBoundedDouble(payload, "aim_progress", 0.0, 0.0, 1.0);
-                if (aimProgress == null) {
-                    return invalid(envelope, "aim_progress must be finite in [0, 1]");
-                }
+            case "aim" ->
                 AnqiHudStateStore.updateAim(aimProgress.floatValue(), now, DISPLAY_DURATION_MS, tick);
-            }
-            case "charge" -> {
-                Double chargeProgress = readBoundedDouble(
-                        payload, "charge_progress", 0.0, 0.0, 1.0);
-                if (chargeProgress == null) {
-                    return invalid(envelope, "charge_progress must be finite in [0, 1]");
-                }
+            case "charge" ->
                 AnqiHudStateStore.updateCharge(
                         chargeProgress.floatValue(), now, DISPLAY_DURATION_MS, tick);
-            }
-            case "abrasion" -> {
-                String container = readString(payload, "abrasion_container");
-                if (!isCanonicalContainer(container)) {
-                    return invalid(envelope, "abrasion_container is not a canonical wire tag");
-                }
-                Double qiPayload = readBoundedDouble(
-                        payload,
-                        "abrasion_qi_payload",
-                        0.0,
-                        0.0,
-                        MAX_ABRASION_QI_PAYLOAD);
-                if (qiPayload == null) {
-                    return invalid(envelope, "abrasion_qi_payload is outside the Java float boundary");
-                }
+            case "abrasion" ->
                 AnqiHudStateStore.updateAbrasion(
                         container, qiPayload.floatValue(), now, DISPLAY_DURATION_MS, tick);
-            }
-            case "multishot" -> {
+            case "multishot" ->
                 // 多发齐射：server 用 echo_count 字段承载 projectile_count（复用字段，无新 proto 字段）。
-                Long volley = readBoundedInteger(payload, "echo_count", 0L, MAX_ECHO_COUNT);
-                if (volley == null) {
-                    return invalid(envelope, "multishot echo_count must fit the Java HUD int boundary");
-                }
                 AnqiHudStateStore.updateMultiShot(
-                        volley.intValue(), now, DISPLAY_DURATION_MS, tick);
-            }
+                        echoCount.intValue(), now, DISPLAY_DURATION_MS, tick);
             default -> {
                 // 未知 kind 静默忽略，不修改 store。
                 return ServerDataDispatch.noOp(
@@ -139,19 +118,18 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
 
     private static String readString(JsonObject obj, String field) {
         JsonElement el = obj.get(field);
-        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return "";
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return null;
         JsonPrimitive p = el.getAsJsonPrimitive();
-        return p.isString() ? p.getAsString() : "";
+        return p.isString() ? p.getAsString() : null;
     }
 
     private static Double readBoundedDouble(
             JsonObject obj,
             String field,
-            double fallback,
             double minimum,
             double maximum) {
         JsonElement el = obj.get(field);
-        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return fallback;
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return null;
         JsonPrimitive p = el.getAsJsonPrimitive();
         if (!p.isNumber()) return null;
         try {
@@ -164,10 +142,9 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
         }
     }
 
-    private static Long readBoundedInteger(
-            JsonObject obj, String field, long fallback, long maximum) {
+    private static Long readBoundedInteger(JsonObject obj, String field, long maximum) {
         JsonElement el = obj.get(field);
-        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return fallback;
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return null;
         JsonPrimitive p = el.getAsJsonPrimitive();
         if (!p.isNumber()) return null;
         try {

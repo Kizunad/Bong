@@ -14,6 +14,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -392,7 +394,12 @@ class AnqiHudServerDataHandlerTest {
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"abrasion\","
                 + "\"abrasion_container\":\"quiver\",\"abrasion_qi_payload\":3.4028235e38}",
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":1,"
-                + "\"tick\":9007199254740992}"
+                + "\"tick\":9007199254740992}",
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"aim\",\"aim_progress\":null}",
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":1,"
+                + "\"aim_progress\":2}",
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":1,"
+                + "\"abrasion_container\":\"unknown\"}"
         };
 
         for (String payload : invalidPayloads) {
@@ -402,6 +409,44 @@ class AnqiHudServerDataHandlerTest {
                 "每个越界字段都必须独立拒绝；payload=" + payload);
             assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(),
                 "拒绝后不得污染 store；payload=" + payload);
+        }
+    }
+
+    @Test
+    void sharedWireCorpusMatchesJavaRouterVerdicts() throws Exception {
+        Path root = Path.of(System.getProperty("user.dir")).toAbsolutePath();
+        while (root != null && !Files.exists(root.resolve("agent/packages/schema/samples"))) {
+            root = root.getParent();
+        }
+        assertNotNull(root, "test must locate the repository root for the shared wire corpus");
+        Path corpusPath = root.resolve(
+            "agent/packages/schema/samples/server-data.anqi-hud.wire-corpus.json"
+        );
+        JsonObject corpus = JsonParser.parseString(Files.readString(corpusPath)).getAsJsonObject();
+        JsonObject base = corpus.getAsJsonObject("base");
+        ServerDataRouter router = ServerDataRouter.createDefault();
+
+        for (var element : corpus.getAsJsonArray("cases")) {
+            JsonObject testCase = element.getAsJsonObject();
+            JsonObject payload = base.deepCopy();
+            if (testCase.has("set")) {
+                for (var entry : testCase.getAsJsonObject("set").entrySet()) {
+                    payload.add(entry.getKey(), entry.getValue().deepCopy());
+                }
+            }
+            if (testCase.has("remove")) {
+                payload.remove(testCase.get("remove").getAsString());
+            }
+
+            AnqiHudStateStore.clear();
+            String json = payload.toString();
+            ServerDataRouter.RouteResult result = router.route(
+                json, json.getBytes(StandardCharsets.UTF_8).length
+            );
+            boolean expected = testCase.get("accepted").getAsBoolean();
+            assertEquals(expected, result.isHandled(),
+                "Java verdict drifted for shared case " + testCase.get("name").getAsString()
+                    + "; payload=" + json + "; result=" + result.logMessage());
         }
     }
 
