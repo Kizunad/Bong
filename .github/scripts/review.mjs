@@ -30,7 +30,8 @@ const CIRCUIT_MARKER = "bong-review-circuit";
 const HANDOFF_MARKER = "bong-review-handoff";
 const CIRCUIT_STATE_MARKER = "<!-- bong-review-circuit-state:v1 -->";
 const CIRCUIT_STATE_TITLE = "[automation] Review infrastructure circuit state";
-const CIRCUIT_SEARCH_RETRY_DELAYS_MS = Object.freeze([15_000, 15_000, 15_000]);
+const CIRCUIT_SEARCH_ATTEMPTS = 4;
+const CIRCUIT_SEARCH_INTERVAL_MS = intEnv("REVIEW_CIRCUIT_SEARCH_INTERVAL_MS", 15_000, 1);
 const CIRCUIT_OPERATION_BUDGET_MS = 120_000;
 const CIRCUIT_THRESHOLD = intEnv("REVIEW_INFRA_FAILURE_THRESHOLD", 3, 1);
 const CIRCUIT_WINDOW_MS = intEnv("REVIEW_INFRA_FAILURE_WINDOW_MINUTES", 60, 1) * 60_000;
@@ -110,11 +111,17 @@ export function normalizeCircuitEvent(value) {
     value?.v !== 1 ||
     value?.kind !== "infra_failure" ||
     !/^\d+$/.test(runId) ||
-    !Number.isFinite(new Date(value.at).getTime())
+    !isCanonicalUtcTimestamp(value.at)
   ) {
     return null;
   }
   return { ...value, run_id: runId };
+}
+
+function isCanonicalUtcTimestamp(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 export function parseTrustedCircuitEvents(comments, trustedLogin = "github-actions[bot]") {
@@ -234,7 +241,22 @@ export function classifyReviewRun(firstRound, finalRound) {
   return decideGate(finalResults).passed ? "passed" : "gate_failure";
 }
 
-export function classifyWorkflowFinalization({ install = "skipped", configure = "skipped", review = "skipped", outcomeKind = null }) {
+export function classifyWorkflowFinalization({
+  circuit = "success",
+  install = "skipped",
+  configure = "skipped",
+  checkout = "success",
+  review = "skipped",
+  outcomeKind = null,
+}) {
+  if (circuit !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "circuit_preflight",
+      reason: `Review 熔断预检未成功（${circuit}）`,
+      shouldRecord: true,
+    };
+  }
   if (install !== "success") {
     return {
       kind: "infra_failure",
@@ -248,6 +270,14 @@ export function classifyWorkflowFinalization({ install = "skipped", configure = 
       kind: "infra_failure",
       phase: "provider_config",
       reason: `Codex provider 配置未成功（${configure}）`,
+      shouldRecord: true,
+    };
+  }
+  if (checkout !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "pr_checkout",
+      reason: `PR head checkout 或 commit 校验未成功（${checkout}）`,
       shouldRecord: true,
     };
   }
@@ -536,8 +566,10 @@ async function circuitPreflight() {
 async function workflowFinalize() {
   requirePrNumber();
   const decision = classifyWorkflowFinalization({
+    circuit: process.env.REVIEW_CIRCUIT_OUTCOME || "success",
     install: process.env.REVIEW_INSTALL_OUTCOME || "skipped",
     configure: process.env.REVIEW_CONFIGURE_OUTCOME || "skipped",
+    checkout: process.env.REVIEW_CHECKOUT_OUTCOME || "success",
     review: process.env.REVIEW_STEP_OUTCOME || "skipped",
     outcomeKind: readOutcome()?.kind || null,
   });
@@ -1047,6 +1079,11 @@ function loadCircuitEvents(deadlineMs = Date.now() + CIRCUIT_OPERATION_BUDGET_MS
 export function findCircuitStateIssues(repo = resolveRepository(), runGh = gh, wait = sleepSync, timing = {}) {
   const now = timing.now || Date.now;
   const deadlineMs = timing.deadlineMs ?? now() + CIRCUIT_OPERATION_BUDGET_MS;
+  const attempts = timing.searchAttempts ?? CIRCUIT_SEARCH_ATTEMPTS;
+  const intervalMs = timing.searchIntervalMs ?? CIRCUIT_SEARCH_INTERVAL_MS;
+  if (!Number.isInteger(attempts) || attempts < 1 || !Number.isFinite(intervalMs) || intervalMs < 1) {
+    throw new Error("Review 熔断 Search 节流配置非法。");
+  }
   const query = buildCircuitStateSearchQuery(repo);
   const args = [
     "api",
@@ -1061,13 +1098,18 @@ export function findCircuitStateIssues(repo = resolveRepository(), runGh = gh, w
     "--jq",
     ".items[]",
   ];
-  for (let attempt = 0; ; attempt += 1) {
+  const issueNumbers = new Set();
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const delayMs = Math.max(0, Number(timing.nextSearchAtMs || 0) - now());
+    if (delayMs > 0) {
+      if (deadlineMs - now() <= delayMs) throw new Error("Review 熔断状态查询预算已耗尽。");
+      wait(delayMs);
+    }
     const found = selectCircuitStateIssues(parseGitHubJsonLines(runGh(args, circuitGhTimeout(deadlineMs, now()))));
-    if (found.length || attempt === CIRCUIT_SEARCH_RETRY_DELAYS_MS.length) return found;
-    const delayMs = CIRCUIT_SEARCH_RETRY_DELAYS_MS[attempt];
-    if (deadlineMs - now() <= delayMs) throw new Error("Review 熔断状态查询预算已耗尽。");
-    wait(delayMs);
+    found.forEach((number) => issueNumbers.add(number));
+    timing.nextSearchAtMs = now() + intervalMs;
   }
+  return [...issueNumbers].sort((a, b) => Number(a) - Number(b));
 }
 
 export function ensureCircuitStateIssues(options = {}) {
@@ -1076,7 +1118,12 @@ export function ensureCircuitStateIssues(options = {}) {
   const wait = options.wait || sleepSync;
   const now = options.now || Date.now;
   const deadlineMs = options.deadlineMs ?? now() + CIRCUIT_OPERATION_BUDGET_MS;
-  const timing = { deadlineMs, now };
+  const timing = {
+    deadlineMs,
+    now,
+    searchAttempts: options.searchAttempts,
+    searchIntervalMs: options.searchIntervalMs,
+  };
   const existing = findCircuitStateIssues(repo, runGh, wait, timing);
   if (existing.length) return existing;
 

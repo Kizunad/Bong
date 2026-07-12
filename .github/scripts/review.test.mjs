@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,32 +58,48 @@ const realRequestChanges = {
 };
 const reviewScript = fileURLToPath(new URL("./review.mjs", import.meta.url));
 
-function runReviewCommand(command, { env = {}, ghScript = "process.exit(91);", outcome = null } = {}) {
+function runReviewCommand(
+  command,
+  { env = {}, ghScript = "process.exit(91);", codexScript = "process.exit(93);", outcome = null } = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), "bong-review-command-"));
   const ghPath = join(directory, "gh");
+  const codexPath = join(directory, "codex");
   const outputPath = join(directory, "github-output");
   const outcomePath = join(directory, "review-outcome.json");
+  const ghLogPath = join(directory, "gh.log");
+  const codexLogPath = join(directory, "codex.log");
   writeFileSync(ghPath, `#!/usr/bin/env node\n${ghScript}\n`);
+  writeFileSync(codexPath, `#!/usr/bin/env node\n${codexScript}\n`);
   chmodSync(ghPath, 0o755);
+  chmodSync(codexPath, 0o755);
   if (outcome) writeFileSync(outcomePath, `${JSON.stringify(outcome)}\n`);
 
   try {
     const result = spawnSync(process.execPath, [reviewScript, command], {
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: 30_000,
       env: {
         ...process.env,
         PATH: `${directory}:${process.env.PATH || ""}`,
         PR_NUMBER: "1148",
         GITHUB_REPOSITORY: "Kizunad/Bong",
+        GITHUB_RUN_ID: "9001",
         GITHUB_OUTPUT: outputPath,
+        GH_TEST_LOG: ghLogPath,
+        CODEX_TEST_LOG: codexLogPath,
         REVIEW_OUTCOME_FILE: outcomePath,
+        REVIEW_CIRCUIT_SEARCH_INTERVAL_MS: "1",
+        REVIEW_NOW: "2026-07-10T00:20:00.000Z",
         ...env,
       },
     });
     return {
       ...result,
-      githubOutput: result.error ? "" : readFileSync(outputPath, { encoding: "utf8", flag: "a+" }),
+      githubOutput: existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "",
+      reviewOutcome: existsSync(outcomePath) ? JSON.parse(readFileSync(outcomePath, "utf8")) : null,
+      ghLog: existsSync(ghLogPath) ? readFileSync(ghLogPath, "utf8") : "",
+      codexLog: existsSync(codexLogPath) ? readFileSync(codexLogPath, "utf8") : "",
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -112,6 +128,69 @@ if (args.includes("search/issues")) process.stdout.write(${JSON.stringify(JSON.s
 else if (args.includes("issues/1149/comments")) process.stdout.write(${JSON.stringify(comments.map(JSON.stringify).join("\n"))});
 else if (args.includes("issues/1148/comments")) process.stdout.write("{}");
 else process.exit(92);
+`;
+}
+
+function recordingGhScript(stateComments = []) {
+  const stateIssue = {
+    number: 1149,
+    title: "[automation] Review infrastructure circuit state",
+    body: "<!-- bong-review-circuit-state:v1 -->",
+    user: { login: "github-actions[bot]", type: "Bot" },
+  };
+  return `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const joined = args.join(" ");
+const log = (entry) => fs.appendFileSync(process.env.GH_TEST_LOG, JSON.stringify(entry) + "\\n");
+log({ args });
+if (args[0] === "pr" && args[1] === "view") {
+  process.stdout.write(${JSON.stringify(JSON.stringify({ title: "review infra", body: "", headRefName: "fix/review", files: [] }))});
+} else if (args[0] === "pr" && args[1] === "diff") {
+  process.stdout.write("");
+} else if (args[0] === "pr" && args[1] === "comment") {
+  const bodyFile = args[args.indexOf("--body-file") + 1];
+  log({ kind: "pr_comment", body: fs.readFileSync(bodyFile, "utf8") });
+  process.stdout.write("{}");
+} else if (joined.includes("search/issues")) {
+  process.stdout.write(${JSON.stringify(JSON.stringify(stateIssue))});
+} else if (joined.includes("issues/1149/comments?")) {
+  process.stdout.write(${JSON.stringify(stateComments.map(JSON.stringify).join("\n"))});
+} else if (joined.includes("issues/1149/comments")) {
+  log({ kind: "state_comment", body: args.find((arg) => arg.startsWith("body="))?.slice(5) || "" });
+  process.stdout.write("{}");
+} else if (joined.includes("issues/1148/comments")) {
+  log({ kind: "handoff_comment", body: args.find((arg) => arg.startsWith("body="))?.slice(5) || "" });
+  process.stdout.write("{}");
+} else {
+  process.exit(92);
+}
+`;
+}
+
+function codexVoteScript(mode = "approve") {
+  return `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const previous = fs.existsSync(process.env.CODEX_TEST_LOG)
+  ? fs.readFileSync(process.env.CODEX_TEST_LOG, "utf8").trim().split(/\\n/).filter(Boolean).length
+  : 0;
+fs.appendFileSync(process.env.CODEX_TEST_LOG, JSON.stringify(args) + "\\n");
+const mode = ${JSON.stringify(mode)};
+const vote =
+  (mode === "tie" && previous >= 6) || (mode === "three_one" && previous >= 7)
+    ? "REQUEST_CHANGES"
+    : "APPROVE";
+const output = args[args.indexOf("--output-last-message") + 1];
+fs.writeFileSync(output, JSON.stringify({
+  reviewer: "A",
+  vote,
+  confidence: 95,
+  plan_intent: { status: "not_plan", reason: "非 plan PR", missing: [] },
+  summary: vote === "APPROVE" ? "通过" : "要求修改",
+  findings: vote === "APPROVE" ? [] : [{ severity: "major", file: "server/src/main.rs", line: "1", title: "真实问题" }],
+}));
+if (mode === "nonzero_message") process.exit(1);
 `;
 }
 
@@ -155,24 +234,36 @@ test("trusted circuit events: 只接受 github-actions bot、单评论单 marker
     at,
   });
   const comments = [
-    { body: marker("100", "2026-07-10T00:00:00Z"), user: { login: "attacker", type: "User" } },
+    { body: marker("100", "2026-07-10T00:00:00.000Z"), user: { login: "attacker", type: "User" } },
     {
-      body: `${marker("101", "2026-07-10T00:01:00Z")}\n${marker("102", "2026-07-10T00:02:00Z")}`,
+      body: `${marker("101", "2026-07-10T00:01:00.000Z")}\n${marker("102", "2026-07-10T00:02:00.000Z")}`,
       user: { login: "github-actions[bot]", type: "Bot" },
     },
-    { body: marker("101", "2026-07-10T00:03:00Z"), user: { login: "github-actions[bot]", type: "Bot" } },
-    { body: marker("103", "2026-07-10T00:04:00Z"), user: { login: "github-actions[bot]", type: "User" } },
-    { body: marker("104", "2026-07-10T00:05:00Z"), user: { login: "github-actions[bot]", type: "Bot" } },
+    { body: marker("101", "2026-07-10T00:03:00.000Z"), user: { login: "github-actions[bot]", type: "Bot" } },
+    { body: marker("103", "2026-07-10T00:04:00.000Z"), user: { login: "github-actions[bot]", type: "User" } },
+    { body: marker("104", "2026-07-10T00:05:00.000Z"), user: { login: "github-actions[bot]", type: "Bot" } },
   ];
   assert.deepEqual(parseTrustedCircuitEvents(comments).map((event) => event.run_id), ["101", "104"]);
 });
 
 
 test("circuit event validation: 当前轮与跨 run 对空/非法 run_id 使用同一规则", () => {
-  const base = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00Z" };
+  const base = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00.000Z" };
   assert.equal(normalizeCircuitEvent({ ...base, run_id: "" }), null);
   assert.equal(normalizeCircuitEvent({ ...base, run_id: "abc" }), null);
   assert.equal(normalizeCircuitEvent({ ...base, run_id: "123" }).run_id, "123");
+  for (const invalid of [
+    { ...base, v: 2, run_id: "123" },
+    { ...base, kind: "gate_failure", run_id: "123" },
+    { ...base, at: null, run_id: "123" },
+    { ...base, at: false, run_id: "123" },
+    { ...base, at: 1_783_641_600_000, run_id: "123" },
+    { ...base, at: "2026-07-10", run_id: "123" },
+    { ...base, at: "2026-02-30T00:00:00.000Z", run_id: "123" },
+    { ...base, at: "2026-07-10T00:00:00Z", run_id: "123" },
+  ]) {
+    assert.equal(normalizeCircuitEvent(invalid), null, `非法事件不得计数：${JSON.stringify(invalid)}`);
+  }
 });
 
 test("state issue concurrency: 两个并发创建者重查后选择相同 canonical issue", () => {
@@ -227,25 +318,33 @@ test("GitHub pagination parsing: 空结果、多页 NDJSON 与损坏响应边界
   assert.throws(() => parseGitHubJsonLines('{"number":3}\nnot-json'), SyntaxError);
 });
 
-test("findCircuitStateIssues: Search API 标题限流并保留 duplicate resolution，绝不全仓扫描", () => {
+test("findCircuitStateIssues: 四轮 Search 均限定标题并累积 duplicate resolution，绝不全仓扫描", () => {
   const body = "<!-- bong-review-circuit-state:v1 -->";
   const bot = { login: "github-actions[bot]", type: "Bot" };
   let calls = 0;
   let calledArgs;
-  const found = findCircuitStateIssues("Kizunad/Bong", (args) => {
-    calls += 1;
-    calledArgs = args;
-    return [
-      { number: 20, title: "[automation] Review infrastructure circuit state", body, user: bot },
-      { number: 3, title: "[automation] Review infrastructure circuit state", body, user: bot },
-      { number: 4, title: "[automation] Review infrastructure circuit state", body, user: bot, pull_request: {} },
-    ]
-      .map(JSON.stringify)
-      .join("\n");
-  });
+  let nowMs = 0;
+  const waits = [];
+  const found = findCircuitStateIssues(
+    "Kizunad/Bong",
+    (args) => {
+      calls += 1;
+      calledArgs = args;
+      return [
+        { number: 20, title: "[automation] Review infrastructure circuit state", body, user: bot },
+        { number: 3, title: "[automation] Review infrastructure circuit state", body, user: bot },
+        { number: 4, title: "[automation] Review infrastructure circuit state", body, user: bot, pull_request: {} },
+      ]
+        .map(JSON.stringify)
+        .join("\n");
+    },
+    (ms) => { waits.push(ms); nowMs += ms; },
+    { now: () => nowMs, deadlineMs: 120_000 },
+  );
 
   assert.deepEqual(found, ["3", "20"]);
-  assert.equal(calls, 1, "正常命中不得产生额外 Search 请求");
+  assert.equal(calls, 4, "必须走完有限观察窗，避免漏掉稍后可见的并发副本");
+  assert.deepEqual(waits, [15_000, 15_000, 15_000]);
   assert.deepEqual(calledArgs, [
     "api",
     "--paginate",
@@ -262,39 +361,44 @@ test("findCircuitStateIssues: Search API 标题限流并保留 duplicate resolut
   assert.doesNotMatch(calledArgs.join(" "), /repos\/Kizunad\/Bong\/issues\?|state=all|is:pr/);
 });
 
-test("findCircuitStateIssues: 最终一致性延迟按约 4 RPM 固定退避，命中后立即停止", () => {
+test("findCircuitStateIssues: 最终一致性期间累积部分可见结果且不丢已解析状态", () => {
   const body = "<!-- bong-review-circuit-state:v1 -->";
   const bot = { login: "github-actions[bot]", type: "Bot" };
-  const outputs = ["", JSON.stringify({ number: 4, title: "同名 PR", body, user: bot, pull_request: {} }), JSON.stringify({
-    number: 20,
+  const issue = (number) => JSON.stringify({
+    number,
     title: "[automation] Review infrastructure circuit state",
     body,
     user: bot,
-  })];
+  });
+  const outputs = [issue(20), "", issue(21), issue(20)];
   const waits = [];
   let calls = 0;
+  let nowMs = 0;
 
   const found = findCircuitStateIssues(
     "Kizunad/Bong",
     () => outputs[calls++] ?? "",
-    (ms) => waits.push(ms),
+    (ms) => { waits.push(ms); nowMs += ms; },
+    { now: () => nowMs, deadlineMs: 120_000 },
   );
 
-  assert.deepEqual(found, ["20"]);
-  assert.equal(calls, 3);
-  assert.deepEqual(waits, [15_000, 15_000]);
+  assert.deepEqual(found, ["20", "21"]);
+  assert.equal(calls, 4);
+  assert.deepEqual(waits, [15_000, 15_000, 15_000]);
 });
 
 test("findCircuitStateIssues: 持续空结果最多四次请求后返回空集，维持上层 fail-open", () => {
   const waits = [];
   let calls = 0;
+  let nowMs = 0;
   const found = findCircuitStateIssues(
     "Kizunad/Bong",
     () => {
       calls += 1;
       return "";
     },
-    (ms) => waits.push(ms),
+    (ms) => { waits.push(ms); nowMs += ms; },
+    { now: () => nowMs, deadlineMs: 120_000 },
   );
 
   assert.deepEqual(found, []);
@@ -310,6 +414,20 @@ test("findCircuitStateIssues: API 与 JSON 错误直接上抛，不把确定性�
   );
   assert.throws(() => findCircuitStateIssues("Kizunad/Bong", () => "not-json", (ms) => waits.push(ms)), SyntaxError);
   assert.deepEqual(waits, []);
+});
+
+test("findCircuitStateIssues: 非法 Search 次数与间隔在发请求前拒绝", () => {
+  let calls = 0;
+  const runGh = () => { calls += 1; return ""; };
+  for (const timing of [
+    { searchAttempts: 0 },
+    { searchAttempts: 1.5 },
+    { searchIntervalMs: 0 },
+    { searchIntervalMs: Number.NaN },
+  ]) {
+    assert.throws(() => findCircuitStateIssues("Kizunad/Bong", runGh, () => {}, timing), /节流配置非法/);
+  }
+  assert.equal(calls, 0);
 });
 
 test("circuit deadline: 单次 gh timeout 受 30 秒与共享剩余预算双重约束", () => {
@@ -358,8 +476,10 @@ test("ensureCircuitStateIssues: 快速空查询后创建并在剩余 deadline �
   const bot = { login: "github-actions[bot]", type: "Bot" };
   let nowMs = 0;
   let searchCalls = 0;
+  const searchStarts = [];
   const runGh = (args, timeoutMs) => {
     assert.ok(timeoutMs > 0 && timeoutMs <= 30_000);
+    if (args[1] !== `repos/Kizunad/Bong/issues`) searchStarts.push(nowMs);
     nowMs += 100;
     if (args[1] === `repos/Kizunad/Bong/issues`) return JSON.stringify({ number: 20 });
     searchCalls += 1;
@@ -375,7 +495,11 @@ test("ensureCircuitStateIssues: 快速空查询后创建并在剩余 deadline �
     deadlineMs: 120_000,
   });
   assert.deepEqual(found, ["20", "21"]);
-  assert.equal(searchCalls, 5, "创建前四次空结果，创建后首次延迟命中即停止");
+  assert.equal(searchCalls, 8, "创建前后各四次查询都必须完成并累积结果");
+  assert.ok(
+    searchStarts.slice(1).every((start, index) => start - searchStarts[index] >= 15_000),
+    `所有 Search 起点必须至少间隔 15 秒：${searchStarts.join(",")}`,
+  );
   assert.ok(nowMs < 120_000);
 });
 
@@ -427,6 +551,42 @@ test("evaluateCircuit: 熔断截止时刻精确过期，窗口边界计入", () 
   assert.equal(evaluateCircuit(events, "2026-07-10T02:00:00.000Z").open, false);
 });
 
+test("evaluateCircuit: 窗口外 1ms、未来事件、threshold=1 与后续失败延长", () => {
+  const base = [
+    { kind: "infra_failure", at: "2026-07-10T00:00:00.000Z" },
+    { kind: "infra_failure", at: "2026-07-10T00:30:00.000Z" },
+    { kind: "infra_failure", at: "2026-07-10T01:00:00.001Z" },
+  ];
+  assert.equal(evaluateCircuit(base, "2026-07-10T01:00:00.001Z").open, false, "超过闭区间 1ms 不得开闸");
+  assert.equal(
+    evaluateCircuit([{ kind: "infra_failure", at: "2026-07-10T00:00:00.000Z" }], "2026-07-10T00:00:00.000Z", {
+      threshold: 1,
+      windowMs: 60_000,
+      durationMs: 60_000,
+    }).open,
+    true,
+  );
+  assert.equal(
+    evaluateCircuit(
+      ["00:00", "00:10", "00:21"].map((time) => ({
+        kind: "infra_failure",
+        at: `2026-07-10T${time}:00.000Z`,
+      })),
+      "2026-07-10T00:20:00.000Z",
+    ).failureCount,
+    2,
+    "未来事件不得进入当前失败计数",
+  );
+  const extended = evaluateCircuit(
+    ["00:00", "00:10", "00:20", "00:30"].map((time) => ({
+      kind: "infra_failure",
+      at: `2026-07-10T${time}:00.000Z`,
+    })),
+    "2026-07-10T00:30:00.000Z",
+  );
+  assert.equal(extended.openUntil, "2026-07-10T01:30:00.000Z");
+});
+
 test("manual bypass: 熔断期间仅 issue_comment 的精确 /review 入口可旁路", () => {
   assert.equal(isCircuitBypassTrigger("issue_comment", "/review"), true);
   for (const [eventName, body] of [
@@ -468,6 +628,40 @@ test("circuit-preflight 命令: 熔断中仅精确 /review 旁路，自动与兜
     assert.match(paused.stderr, /熔断跳过/);
     assert.doesNotMatch(paused.stderr, /发布 Review 熔断跳过评论失败/);
   }
+});
+
+test("circuit-preflight 命令: 未熔断继续，Search 失败 fail-open，跳过评论失败仍成功", () => {
+  const closed = runReviewCommand("circuit-preflight", {
+    env: { REVIEW_TRIGGER: "pull_request_target" },
+    ghScript: recordingGhScript(),
+  });
+  assert.equal(closed.status, 0, closed.stderr);
+  assert.equal(closed.githubOutput, "should_run=true\n");
+
+  const failOpen = runReviewCommand("circuit-preflight", {
+    env: { REVIEW_TRIGGER: "pull_request_target" },
+    ghScript: `
+const args = process.argv.slice(2).join(" ");
+if (args.includes("search/issues")) process.exit(1);
+process.exit(92);
+`,
+  });
+  assert.equal(failOpen.status, 0, failOpen.stderr);
+  assert.equal(failOpen.githubOutput, "should_run=true\n");
+  assert.match(failOpen.stderr, /fail-open/);
+
+  const commentFailureScript = openCircuitGhScript().replace(
+    'else if (args.includes("issues/1148/comments")) process.stdout.write("{}");',
+    'else if (args.includes("issues/1148/comments")) process.exit(1);',
+  );
+  const skipped = runReviewCommand("circuit-preflight", {
+    env: { REVIEW_TRIGGER: "pull_request_target" },
+    ghScript: commentFailureScript,
+  });
+  assert.equal(skipped.status, 0, skipped.stderr);
+  assert.equal(skipped.githubOutput, "should_run=false\n");
+  assert.equal(skipped.reviewOutcome.kind, "circuit_skipped");
+  assert.match(skipped.stderr, /发布 Review 熔断跳过评论失败/);
 });
 
 test("infra-only classification: 仅四路纯执行失败降级，混合结果保留真实 REQUEST_CHANGES", () => {
@@ -532,8 +726,13 @@ test("workflow finalize: 真实 gate failure 原样失败，setup/reviewer 异�
     );
   }
   for (const outcome of ["failure", "skipped", "cancelled"]) {
+    assert.equal(classifyWorkflowFinalization({ circuit: outcome }).phase, "circuit_preflight");
     assert.equal(classifyWorkflowFinalization({ install: outcome }).phase, "cli_install");
     assert.equal(classifyWorkflowFinalization({ install: "success", configure: outcome }).phase, "provider_config");
+    assert.equal(
+      classifyWorkflowFinalization({ install: "success", configure: "success", checkout: outcome }).phase,
+      "pr_checkout",
+    );
   }
   assert.equal(classifyWorkflowFinalization({ install: "success", configure: "success", review: "failure" }).phase, "review_process");
   assert.equal(
@@ -568,9 +767,180 @@ test("workflow-finalize 命令: step success 的真实 REQUEST_CHANGES 仍失败
   assert.equal(result.status, 1, result.stderr);
   assert.doesNotMatch(result.stderr, /持久化 Review infra failure/);
 });
+
+test("workflow-finalize 命令: setup/预检/checkout 失败持久化 marker 并发布 handoff 后成功退出", () => {
+  const cases = [
+    { env: { REVIEW_CIRCUIT_OUTCOME: "failure" }, phase: "circuit_preflight" },
+    { env: { REVIEW_INSTALL_OUTCOME: "failure" }, phase: "cli_install" },
+    {
+      env: { REVIEW_INSTALL_OUTCOME: "success", REVIEW_CONFIGURE_OUTCOME: "failure" },
+      phase: "provider_config",
+    },
+    {
+      env: {
+        REVIEW_INSTALL_OUTCOME: "success",
+        REVIEW_CONFIGURE_OUTCOME: "success",
+        REVIEW_CHECKOUT_OUTCOME: "failure",
+      },
+      phase: "pr_checkout",
+    },
+    {
+      env: {
+        REVIEW_INSTALL_OUTCOME: "success",
+        REVIEW_CONFIGURE_OUTCOME: "success",
+        REVIEW_CHECKOUT_OUTCOME: "success",
+        REVIEW_STEP_OUTCOME: "failure",
+      },
+      phase: "review_process",
+    },
+  ];
+
+  for (const row of cases) {
+    const result = runReviewCommand("workflow-finalize", {
+      env: row.env,
+      ghScript: recordingGhScript(),
+    });
+    assert.equal(result.status, 0, `${row.phase}: ${result.stderr}`);
+    assert.equal(result.reviewOutcome.kind, "infra_failure");
+    const log = parseGitHubJsonLines(result.ghLog);
+    const stateComment = log.find((entry) => entry.kind === "state_comment");
+    const handoff = log.find((entry) => entry.kind === "handoff_comment");
+    assert.match(stateComment?.body || "", /bong-review-circuit/);
+    assert.match(stateComment?.body || "", new RegExp(row.phase));
+    assert.match(handoff?.body || "", /请忽略本次 Review Action 结果/);
+    assert.match(handoff?.body || "", /改走 agent 自有博弈式 review 流程并向用户反馈/);
+  }
+});
+
+test("workflow-finalize 命令: 同 run 去重；状态持久化或 handoff 评论失败均不中断", () => {
+  const existing = {
+    body: renderHiddenMarker("bong-review-circuit", {
+      v: 1,
+      kind: "infra_failure",
+      run_id: "9001",
+      at: "2026-07-10T00:10:00.000Z",
+    }),
+    user: { login: "github-actions[bot]", type: "Bot" },
+  };
+  const deduped = runReviewCommand("workflow-finalize", {
+    env: { REVIEW_INSTALL_OUTCOME: "failure" },
+    ghScript: recordingGhScript([existing]),
+  });
+  assert.equal(deduped.status, 0, deduped.stderr);
+  const dedupeLog = parseGitHubJsonLines(deduped.ghLog);
+  assert.equal(dedupeLog.filter((entry) => entry.kind === "state_comment").length, 0);
+  assert.equal(dedupeLog.filter((entry) => entry.kind === "handoff_comment").length, 1);
+
+  const persistenceFailure = runReviewCommand("workflow-finalize", {
+    env: { REVIEW_INSTALL_OUTCOME: "failure" },
+    ghScript: `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const joined = args.join(" ");
+fs.appendFileSync(process.env.GH_TEST_LOG, JSON.stringify({ args }) + "\\n");
+if (joined.includes("search/issues")) process.exit(1);
+if (joined.includes("issues/1148/comments")) {
+  fs.appendFileSync(process.env.GH_TEST_LOG, JSON.stringify({ kind: "handoff_after_state_failure" }) + "\\n");
+  process.stdout.write("{}");
+} else process.exit(92);
+`,
+  });
+  assert.equal(persistenceFailure.status, 0, persistenceFailure.stderr);
+  assert.match(persistenceFailure.stderr, /持久化 Review infra failure 失败/);
+  assert.match(persistenceFailure.ghLog, /handoff_after_state_failure/);
+
+  const allCommentsFail = runReviewCommand("workflow-finalize", {
+    env: { REVIEW_INSTALL_OUTCOME: "failure" },
+    ghScript: `
+const args = process.argv.slice(2).join(" ");
+if (args.includes("search/issues")) process.exit(1);
+if (args.includes("issues/1148/comments")) process.exit(1);
+process.exit(92);
+`,
+  });
+  assert.equal(allCommentsFail.status, 0, allCommentsFail.stderr);
+  assert.equal(allCommentsFail.reviewOutcome.kind, "infra_failure");
+  assert.match(allCommentsFail.stderr, /发布 Review 降级评论失败/);
+});
+
+test("review 命令: 4/0、3/1 与非零但有 final message 均发布通过评论", () => {
+  for (const mode of ["approve", "three_one", "nonzero_message"]) {
+    const result = runReviewCommand("review", {
+      env: {
+        REVIEW_CODEX_API_KEY: "test-key",
+        REVIEW_CODEX_RETRIES: "1",
+        REVIEW_TOTAL_TIMEOUT_MINUTES: "5",
+      },
+      ghScript: recordingGhScript(),
+      codexScript: codexVoteScript(mode),
+    });
+    assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
+    assert.equal(result.reviewOutcome.kind, "passed");
+    const codexCalls = parseGitHubJsonLines(result.codexLog);
+    assert.equal(codexCalls.length, 8, `${mode}: 首轮和复投各四路`);
+    for (const args of codexCalls) {
+      assert.ok(args.includes("read-only"), `${mode}: Codex 必须只读运行`);
+      assert.ok(args.includes("gpt-5.6-sol"), `${mode}: 模型必须固定`);
+      assert.ok(args.includes('model_reasoning_effort="high"'), `${mode}: reasoning 必须 high`);
+    }
+    const comment = parseGitHubJsonLines(result.ghLog).find((entry) => entry.kind === "pr_comment");
+    assert.match(comment?.body || "", /\*\*通过\*\*/);
+  }
+});
+
+test("review 命令: 2/2 保留真实 finding 并失败，不污染 infra 熔断", () => {
+  const result = runReviewCommand("review", {
+    env: {
+      REVIEW_CODEX_API_KEY: "test-key",
+      REVIEW_CODEX_RETRIES: "1",
+      REVIEW_TOTAL_TIMEOUT_MINUTES: "5",
+    },
+    ghScript: recordingGhScript(),
+    codexScript: codexVoteScript("tie"),
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(result.reviewOutcome, { kind: "gate_failure", gate: "TIE" });
+  const log = parseGitHubJsonLines(result.ghLog);
+  assert.equal(log.filter((entry) => entry.kind === "state_comment").length, 0);
+  const comment = log.find((entry) => entry.kind === "pr_comment");
+  assert.match(comment?.body || "", /未通过/);
+  assert.match(comment?.body || "", /server\/src\/main\.rs/);
+});
+
+test("review 命令: 四路纯 503 与缺 key 只走 infra handoff 并成功退出", () => {
+  const infraCodex = `
+const fs = require("node:fs");
+fs.appendFileSync(process.env.CODEX_TEST_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");
+console.error("503 Service Unavailable from hlool");
+process.exit(1);
+`;
+  const provider503 = runReviewCommand("review", {
+    env: { REVIEW_CODEX_API_KEY: "test-key", REVIEW_CODEX_RETRIES: "1", REVIEW_TOTAL_TIMEOUT_MINUTES: "5" },
+    ghScript: recordingGhScript(),
+    codexScript: infraCodex,
+  });
+  assert.equal(provider503.status, 0, provider503.stderr);
+  assert.equal(provider503.reviewOutcome.kind, "infra_failure");
+  assert.equal(parseGitHubJsonLines(provider503.codexLog).length, 4, "首轮全失败后不得继续复投");
+  const handoff503 = parseGitHubJsonLines(provider503.ghLog).find((entry) => entry.kind === "handoff_comment");
+  assert.match(handoff503?.body || "", /基础设施失败，不是代码 finding/);
+  assert.match(handoff503?.body || "", /改走 agent 自有博弈式 review 流程并向用户反馈/);
+
+  const missingKey = runReviewCommand("review", {
+    env: { REVIEW_CODEX_API_KEY: "", OPENAI_API_KEY: "" },
+    ghScript: recordingGhScript(),
+  });
+  assert.equal(missingKey.status, 0, missingKey.stderr);
+  assert.equal(missingKey.reviewOutcome.kind, "infra_failure");
+  assert.equal(missingKey.codexLog, "");
+  assert.ok(parseGitHubJsonLines(missingKey.ghLog).some((entry) => entry.kind === "handoff_comment"));
+});
 test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍进入预检旁路", () => {
   const workflow = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
   assert.ok(workflow.indexOf("Review 熔断预检") < workflow.indexOf("安装 Codex CLI"));
+  assert.match(workflow, /^  pull_request_target:\n    types: \[opened\]$/m);
+  assert.doesNotMatch(workflow, /^  pull_request:\n/m);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.repository\.default_branch \}\}/);
   assert.match(workflow, /REVIEW_TRIGGER: \$\{\{ github\.event_name \}\}/);
   assert.match(workflow, /REVIEW_COMMENT_BODY: \$\{\{ github\.event\.comment\.body \|\| '' \}\}/);
   assert.match(workflow, /github\.event\.comment\.body == '\/review'/);
@@ -581,11 +951,43 @@ test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍
   assert.match(workflow, /REVIEW_TOTAL_TIMEOUT_MINUTES.*'35'/);
   assert.match(workflow, /REVIEW_GH_TIMEOUT_MS.*'30000'/);
   assert.doesNotMatch(workflow, /REVIEW_CIRCUIT_ISSUE_NUMBER/);
+  const circuitStep = workflow.match(/      - name: Review 熔断预检\n[^]*?(?=\n      - name: 安装 Codex CLI)/)?.[0] || "";
+  assert.match(circuitStep, /id: circuit/);
+  assert.match(circuitStep, /continue-on-error: true/);
+  const checkoutStep = workflow.match(/      - name: 切到并校验 PR head\n[^]*?(?=\n      - name: Review \()/)?.[0] || "";
+  assert.match(checkoutStep, /continue-on-error: true/);
+  assert.match(checkoutStep, /gh pr checkout "\$PRNUM" --detach/);
+  assert.match(checkoutStep, /headRefOid/);
+  assert.match(checkoutStep, /git rev-parse HEAD/);
+  assert.match(checkoutStep, /"\$ACTUAL_HEAD" != "\$EXPECTED_HEAD"/);
+  assert.doesNotMatch(checkoutStep, /\|\| echo/);
+  const finalizeStep = workflow.match(/      - name: 汇总 Review 结果并执行降级\n[^]*/)?.[0] || "";
+  assert.match(finalizeStep, /steps\.circuit\.outcome != 'success'/);
+  assert.match(finalizeStep, /REVIEW_CIRCUIT_OUTCOME: \$\{\{ steps\.circuit\.outcome \}\}/);
+  assert.match(finalizeStep, /REVIEW_CHECKOUT_OUTCOME: \$\{\{ steps\.checkout\.outcome \}\}/);
   const jobTimeout = Number(workflow.match(/^    timeout-minutes: (\d+)$/m)[1]);
   const stepTimeouts = [...workflow.matchAll(/^        timeout-minutes: (\d+)$/gm)].map((match) => Number(match[1]));
   assert.equal(stepTimeouts.length, 8, "每个 workflow step 都必须有独立 timeout");
   assert.ok(stepTimeouts.reduce((sum, value) => sum + value, 0) <= jobTimeout - 15, "必须给调度与 finalize 留至少 15 分钟");
   assert.match(workflow, /timeout-minutes: 40[^]*REVIEW_TOTAL_TIMEOUT_MINUTES:.*'35'/);
+});
+
+test("review script tests workflow: Node 24 自动 gate 仅获 contents:read", () => {
+  const workflow = readFileSync(new URL("../workflows/review-script-tests.yml", import.meta.url), "utf8");
+  assert.match(workflow, /^  pull_request:\n    paths:$/m);
+  for (const path of [
+    ".github/scripts/review.mjs",
+    ".github/scripts/review.test.mjs",
+    ".github/workflows/review.yml",
+    ".github/workflows/review-script-tests.yml",
+  ]) {
+    assert.match(workflow, new RegExp(`- ${path.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}`));
+  }
+  assert.match(workflow, /^permissions:\n  contents: read$/m);
+  assert.doesNotMatch(workflow, /pull-requests: write|issues: write/);
+  assert.match(workflow, /node-version: "24"/);
+  assert.match(workflow, /node --check \.github\/scripts\/review\.mjs/);
+  assert.match(workflow, /node --test \.github\/scripts\/review\.test\.mjs/);
 });
 
 test("workflow permissions: PR 评论与独立状态 issue 仅获各自必要写权限并记录依据", () => {
