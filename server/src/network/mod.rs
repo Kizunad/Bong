@@ -691,6 +691,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             cultivation_detail_emit::emit_cultivation_detail_payloads,
+            cultivation_detail_emit::emit_body_plan_layout_payloads,
             qi_color_observed_emit::emit_qi_color_observed_payloads
                 .after(client_request_handler::handle_client_request_payloads),
             audio_event_emit::handle_audio_debug_commands,
