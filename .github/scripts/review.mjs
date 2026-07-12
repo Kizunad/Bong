@@ -852,7 +852,7 @@ async function runCodexResponses(prompt, label) {
     const failure = codexFailureText(result);
     const retryableFailure = zeroConfidenceInfra || isRetryableCodexFailure(result);
     if (attempt < CODEX_RETRIES && retryableFailure) {
-      const waitMs = CODEX_RETRY_MS * attempt;
+      const waitMs = codexRetryDelayMs(result, attempt, CODEX_RETRY_MS);
       if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
         console.error(`  responses ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
         await delay(waitMs);
@@ -1013,6 +1013,11 @@ export function redactRuntimeSecrets(value, env = process.env) {
     .sort((a, b) => b.length - a.length);
   for (const secret of new Set(secrets)) text = text.replaceAll(secret, "[REDACTED]");
   return text;
+}
+
+export function codexRetryDelayMs(result, attempt, configuredMs = CODEX_RETRY_MS) {
+  const baseDelay = Math.max(1_000, configuredMs * attempt);
+  return result?.code === 429 ? Math.max(120_000, baseDelay) : baseDelay;
 }
 
 export function isRetryableCodexFailure(result) {

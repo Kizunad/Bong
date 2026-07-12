@@ -16,6 +16,7 @@ import {
   circuitOperationDeadlines,
   classifyReviewRun,
   classifyWorkflowFinalization,
+  codexRetryDelayMs,
   codexFailureText,
   decideGate,
   decideReviewGate,
@@ -1460,6 +1461,13 @@ test("codexFailureText: 失败摘要保留 exit 与 stderr 头尾", () => {
     redactRuntimeSecrets("token=provider-secret", { REVIEW_CODEX_API_KEY: "provider-secret" }),
     "token=[REDACTED]",
   );
+});
+
+test("provider retry delay: 429 至少退避 120 秒，其他暂时故障保留递增配置", () => {
+  assert.equal(codexRetryDelayMs({ code: 429 }, 1, 1_000), 120_000);
+  assert.equal(codexRetryDelayMs({ code: 429 }, 2, 70_000), 140_000);
+  assert.equal(codexRetryDelayMs({ code: 503 }, 1, 15_000), 15_000);
+  assert.equal(codexRetryDelayMs({ code: 124 }, 3, 15_000), 45_000);
 });
 
 test("isRetryableCodexFailure: 仅重试限流、上游暂时失败和超时", () => {
