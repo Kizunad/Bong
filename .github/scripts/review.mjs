@@ -7,7 +7,7 @@
 // 3. 把首轮意见互相公开，4 个 reviewer 复投最终票。
 // 4. 只有 3/1 或 4/0 APPROVE 才通过；2/2 直接视为未通过。
 //
-// 依赖：Node 内置模块 + gh + codex CLI。无 npm runtime dependency。
+// 依赖：Node 内置模块 + gh + OpenAI-compatible Responses 端点。无 npm runtime dependency。
 
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -24,6 +24,7 @@ const GH_TIMEOUT_MS = intEnv("REVIEW_GH_TIMEOUT_MS", 30_000, 1_000);
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
 const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
 const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
+const RESPONSES_BASE_URL = process.env.REVIEW_CODEX_BASE_URL || "https://api.hlool.top";
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
 const CIRCUIT_MARKER = "bong-review-circuit";
@@ -241,7 +242,23 @@ export function classifyReviewRun(firstRound, finalRound) {
   ) {
     return "infra_failure";
   }
-  return decideGate(finalResults).passed ? "passed" : "gate_failure";
+  return decideReviewGate(finalResults).passed ? "passed" : "gate_failure";
+}
+
+export function decideReviewGate(results) {
+  const voteGate = decideGate(results);
+  const realFindings = (results || []).flatMap((result) =>
+    (result.findings || []).filter(
+      (finding) => !(result.execution_failure === true && isCodexFailureFinding(finding)),
+    ),
+  );
+  if (!realFindings.length) return voteGate;
+  return {
+    ...voteGate,
+    passed: false,
+    status: "REQUEST_CHANGES",
+    label: `${voteGate.approve}/${voteGate.request}，存在 ${realFindings.length} 项真实 finding，要求修改`,
+  };
 }
 
 export function classifyWorkflowFinalization({
@@ -517,7 +534,7 @@ async function runReview() {
     return finishInfrastructureFailure("reviewer_execution", reason || "Codex reviewer 执行失败");
   }
 
-  const gate = decideGate(finalRound);
+  const gate = decideReviewGate(finalRound);
   const body = renderComment(context, firstRound, finalRound, gate);
   writeFileSync(COMMENT_FILE, body);
 
@@ -668,8 +685,8 @@ function initialPrompt(context, reviewer) {
 
 ${GUIDELINES}
 
-请审查 PR #${context.pr}。你可以用只读工具打开仓库真实文件、grep 调用方、核对 plan 和测试。
-不要修改文件。不要给泛泛建议；只报可核验问题。
+请审查 PR #${context.pr}。请求不提供任何工具；下面已包含 PR diff、文件清单和关联 plan。
+只根据这些材料审查，不要给泛泛建议；只报可核验问题。
 
 ${contextBlock(context)}
 
@@ -714,7 +731,7 @@ ${GUIDELINES}
 ## 首轮意见
 ${JSON.stringify(peerResults, null, 2)}
 
-${contextBlock(context, { includeDiff: false })}
+${contextBlock(context, { includeDiff: true })}
 
 只输出 JSON，不要 markdown，不要前言：
 {
@@ -789,6 +806,116 @@ function compactResultForPrompt(result) {
 }
 
 async function runCodex(prompt, label) {
+  if (process.env.REVIEW_TEST_MODE === "1") return runCodexCliForTests(prompt, label);
+  return runCodexResponses(prompt, label);
+}
+
+async function runCodexResponses(prompt, label) {
+  console.error(`▶ responses ${label}`);
+  for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
+    const remainingMs = reviewDeadlineMs - Date.now();
+    const attemptTimeoutMs = boundedAttemptTimeout(CODEX_TIMEOUT_MS, remainingMs);
+    if (attemptTimeoutMs <= 0) {
+      return {
+        raw: codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止新的 Responses 请求"),
+        executionFailure: true,
+      };
+    }
+
+    const result = await requestResponses(prompt, attemptTimeoutMs);
+    const text = redactRuntimeSecrets(result.stdout || "");
+    const zeroConfidenceInfra = isZeroConfidenceWithoutCodeFindings(text);
+    if (text.trim() && !zeroConfidenceInfra) return { raw: text, executionFailure: false };
+
+    const failure = codexFailureText(result);
+    const retryableFailure = zeroConfidenceInfra || isRetryableCodexFailure(result);
+    if (attempt < CODEX_RETRIES && retryableFailure) {
+      const waitMs = CODEX_RETRY_MS * attempt;
+      if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
+        console.error(`  responses ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
+        await delay(waitMs);
+        continue;
+      }
+    }
+
+    console.error(`  responses ${label} failed: ${failure}`);
+    if (text.trim() && zeroConfidenceInfra) return { raw: text, executionFailure: true };
+    return { raw: codexExecutionFailureJson(label, failure), executionFailure: true };
+  }
+}
+
+export function buildResponsesEndpoint(baseUrl, allowHttp = false) {
+  const url = new URL(String(baseUrl || "").trim());
+  if (url.username || url.password || url.search || url.hash) throw new Error("Review Responses base URL 不得含凭据、查询或 fragment。");
+  if (url.protocol !== "https:" && !(allowHttp && url.protocol === "http:")) {
+    throw new Error("Review Responses base URL 必须使用 HTTPS。");
+  }
+  const path = url.pathname.replace(/\/+$/, "");
+  url.pathname = path.endsWith("/responses") ? path : path.endsWith("/v1") ? `${path}/responses` : `${path}/v1/responses`;
+  return url.toString();
+}
+
+export function extractResponsesOutputText(payload) {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text;
+  const chunks = [];
+  for (const item of payload?.output || []) {
+    if (item?.type !== "message") continue;
+    for (const content of item.content || []) {
+      if ((content?.type === "output_text" || content?.type === "text") && typeof content.text === "string") {
+        chunks.push(content.text);
+      }
+    }
+  }
+  return chunks.join("\n");
+}
+
+export async function requestResponses(prompt, timeoutMs, options = {}) {
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const apiKey = options.apiKey ?? process.env.REVIEW_CODEX_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+  const endpoint = buildResponsesEndpoint(
+    options.baseUrl || RESPONSES_BASE_URL,
+    options.allowHttp === true,
+  );
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: options.model || MODEL,
+        input: prompt,
+        reasoning: { effort: "high" },
+        store: false,
+      }),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let payload = null;
+    try {
+      payload = raw ? JSON.parse(raw) : null;
+    } catch {
+      /* HTTP error text or malformed provider response is reported below. */
+    }
+    const output = extractResponsesOutputText(payload);
+    if (!response.ok) {
+      const detail = payload?.error?.message || raw || response.statusText || "unknown provider error";
+      return { code: response.status, signal: null, stdout: output, stderr: `HTTP ${response.status}: ${detail}` };
+    }
+    if (!payload) return { code: 1, signal: null, stdout: "", stderr: "Responses 返回了无法解析的 JSON。" };
+    return { code: 0, signal: null, stdout: output, stderr: output ? "" : "Responses 未返回 output_text。" };
+  } catch (error) {
+    const timedOut = error?.name === "AbortError" || controller.signal.aborted;
+    return { code: timedOut ? 124 : 1, signal: timedOut ? "SIGTERM" : null, stdout: "", stderr: error?.message || String(error) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runCodexCliForTests(prompt, label) {
   const tmp = mkdtempSync(join(tmpdir(), `bong-review-${label}-`));
   const outputFile = join(tmp, "last-message.md");
   const args = [
@@ -826,8 +953,8 @@ async function runCodex(prompt, label) {
       rmSync(outputFile, { force: true });
       const result = await spawnCodex(args, prompt, attemptTimeoutMs);
       const text = redactRuntimeSecrets(existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout);
-      const retryableFailure = result.code !== 0 && isRetryableCodexFailure(result);
-      const zeroConfidenceInfra = retryableFailure && isZeroConfidenceWithoutCodeFindings(text);
+      const zeroConfidenceInfra = isZeroConfidenceWithoutCodeFindings(text);
+      const retryableFailure = isRetryableCodexFailure(result);
       if (text.trim() && !zeroConfidenceInfra) {
         if (result.code !== 0) {
           console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
@@ -836,7 +963,7 @@ async function runCodex(prompt, label) {
       }
 
       const failure = codexFailureText(result);
-      if (attempt < CODEX_RETRIES && retryableFailure) {
+      if (attempt < CODEX_RETRIES && (retryableFailure || zeroConfidenceInfra)) {
         const waitMs = CODEX_RETRY_MS * attempt;
         if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
           console.error(`  codex ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);

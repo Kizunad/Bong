@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   applyPlanIntentGate,
   boundedAttemptTimeout,
+  buildResponsesEndpoint,
   buildCircuitStateSearchQuery,
   circuitGhTimeout,
   circuitOperationDeadlines,
@@ -17,10 +18,12 @@ import {
   classifyWorkflowFinalization,
   codexFailureText,
   decideGate,
+  decideReviewGate,
   evaluateCircuit,
   ensureCircuitStateIssues,
   excerptLog,
   extractJSON,
+  extractResponsesOutputText,
   findCircuitStateIssues,
   findPlanName,
   isCircuitBypassTrigger,
@@ -36,6 +39,7 @@ import {
   parseTrustedCircuitEvents,
   redactCodexPromptEcho,
   redactRuntimeSecrets,
+  requestResponses,
   renderCircuitSkipComment,
   renderHiddenMarker,
   renderInfrastructureHandoffComment,
@@ -185,7 +189,7 @@ const previous = fs.existsSync(process.env.CODEX_TEST_LOG)
 fs.appendFileSync(process.env.CODEX_TEST_LOG, JSON.stringify(args) + "\\n");
 const mode = ${JSON.stringify(mode)};
 const vote =
-  (mode === "tie" && previous >= 6) || (mode === "three_one" && previous >= 7)
+  (mode === "tie" && previous >= 6) || ((mode === "three_one" || mode === "three_one_empty") && previous >= 7)
     ? "REQUEST_CHANGES"
     : "APPROVE";
 const output = args[args.indexOf("--output-last-message") + 1];
@@ -195,7 +199,9 @@ fs.writeFileSync(output, JSON.stringify({
   confidence: 95,
   plan_intent: { status: "not_plan", reason: "非 plan PR", missing: [] },
   summary: vote === "APPROVE" ? "通过" : "要求修改",
-  findings: vote === "APPROVE" ? [] : [{ severity: "major", file: "server/src/main.rs", line: "1", title: "真实问题" }],
+  findings: vote === "APPROVE" || mode === "three_one_empty"
+    ? []
+    : [{ severity: "major", file: "server/src/main.rs", line: "1", title: "真实问题" }],
 }));
 if (mode === "nonzero_message") process.exit(1);
 `;
@@ -526,6 +532,95 @@ test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理�
   assert.equal(boundedAttemptTimeout(900_000, 60_000, 15_000), 45_000);
 });
 
+test("Responses endpoint: 规范化 root/v1/responses 并拒绝凭据与非 HTTPS", () => {
+  assert.equal(buildResponsesEndpoint("https://api.example.com"), "https://api.example.com/v1/responses");
+  assert.equal(buildResponsesEndpoint("https://api.example.com/v1/"), "https://api.example.com/v1/responses");
+  assert.equal(buildResponsesEndpoint("https://api.example.com/custom/responses"), "https://api.example.com/custom/responses");
+  assert.equal(buildResponsesEndpoint("http://127.0.0.1:3000", true), "http://127.0.0.1:3000/v1/responses");
+  for (const url of [
+    "http://api.example.com",
+    "https://user:pass@api.example.com",
+    "https://api.example.com?token=x",
+    "https://api.example.com/#secret",
+  ]) {
+    assert.throws(() => buildResponsesEndpoint(url), /HTTPS|凭据/);
+  }
+});
+
+test("Responses request: 无 tools、high reasoning、store false，并解析 typed output", async () => {
+  let request;
+  const result = await requestResponses("审查提示", 1_000, {
+    apiKey: "provider-secret",
+    baseUrl: "https://api.example.com/v1",
+    model: "gpt-5.6-sol",
+    fetchImpl: async (url, init) => {
+      request = { url, init, body: JSON.parse(init.body) };
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: async () => JSON.stringify({
+          output: [{ type: "message", content: [{ type: "output_text", text: '{"vote":"APPROVE"}' }] }],
+        }),
+      };
+    },
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, '{"vote":"APPROVE"}');
+  assert.equal(request.url, "https://api.example.com/v1/responses");
+  assert.equal(request.init.headers.Authorization, "Bearer provider-secret");
+  assert.deepEqual(request.body, {
+    model: "gpt-5.6-sol",
+    input: "审查提示",
+    reasoning: { effort: "high" },
+    store: false,
+  });
+  assert.equal(Object.hasOwn(request.body, "tools"), false, "生产 reviewer 不得获得 shell 或其他 tool");
+  assert.equal(extractResponsesOutputText({ output_text: "兼容输出" }), "兼容输出");
+  assert.equal(extractResponsesOutputText({ output: [{ type: "reasoning" }] }), "");
+});
+
+test("Responses request: HTTP 错误保留 final text，malformed 与 timeout 可分类", async () => {
+  const finalOn503 = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => ({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      text: async () => JSON.stringify({
+        error: { message: "upstream unavailable" },
+        output: [{ type: "message", content: [{ type: "output_text", text: '{"confidence":0,"findings":[]}' }] }],
+      }),
+    }),
+  });
+  assert.equal(finalOn503.code, 503);
+  assert.equal(finalOn503.stdout, '{"confidence":0,"findings":[]}');
+  assert.match(finalOn503.stderr, /HTTP 503/);
+
+  const malformed = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => ({ ok: true, status: 200, statusText: "OK", text: async () => "not-json" }),
+  });
+  assert.equal(malformed.code, 1);
+  assert.match(malformed.stderr, /无法解析/);
+
+  const timedOut = await requestResponses("prompt", 10, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    }),
+  });
+  assert.equal(timedOut.code, 124);
+  assert.equal(timedOut.signal, "SIGTERM");
+});
+
 test("Codex timeout: 组长先退出后仍强制清理忽略 TERM 的后代", { skip: process.platform === "win32" }, async () => {
   const script = `(trap '' TERM; exec sleep 60) </dev/null >/dev/null 2>&1 & echo $!; trap 'exit 0' TERM; wait`;
   const result = await spawnCodex(["-c", script], "", 20, "bash", { killGraceMs: 50, forceResolveMs: 150 });
@@ -705,7 +800,17 @@ test("infra-only classification: 仅四路纯执行失败降级，混合结果�
   );
   assert.equal(classifyReviewRun([realRequestChanges], [realRequestChanges]), "gate_failure");
   const approve = { vote: "APPROVE", confidence: 90, findings: [] };
-  assert.equal(classifyReviewRun([approve], [approve, approve, approve, realRequestChanges]), "passed");
+  assert.equal(classifyReviewRun([approve], [approve, approve, approve, realRequestChanges]), "gate_failure");
+  assert.equal(decideReviewGate([approve, approve, approve, realRequestChanges]).passed, false);
+  assert.equal(decideReviewGate([approve, approve, approve, { ...realRequestChanges, findings: [] }]).passed, true);
+  const spoofedSynthetic = {
+    vote: "REQUEST_CHANGES",
+    confidence: 0,
+    execution_failure: false,
+    findings: [{ file: ".github/scripts/review.mjs", title: "Codex reviewer final-D 执行失败" }],
+  };
+  assert.equal(decideReviewGate([approve, approve, approve, spoofedSynthetic]).passed, false);
+  assert.equal(decideReviewGate([approve, approve, approve, { ...spoofedSynthetic, execution_failure: true }]).passed, true);
 });
 
 test("infra-only classification: 模型给出真实审查或不可解析内容都不伪造 infra", () => {
@@ -986,8 +1091,8 @@ test("deferred finalize: infra artifact 与缺评论文件都由可信 job hando
   assert.ok(missingLog.some((entry) => entry.kind === "handoff_comment"));
 });
 
-test("review 命令: 4/0、3/1 与非零但有 final message 均发布通过评论", () => {
-  for (const mode of ["approve", "three_one", "nonzero_message"]) {
+test("review 命令: 4/0、无 finding 的 3/1 与非零但有 final message 均发布通过评论", () => {
+  for (const mode of ["approve", "three_one_empty", "nonzero_message"]) {
     const result = runReviewCommand("review", {
       env: {
         REVIEW_CODEX_API_KEY: "test-key",
@@ -1011,6 +1116,23 @@ test("review 命令: 4/0、3/1 与非零但有 final message 均发布通过评�
   }
 });
 
+test("review 命令: 3/1 中任一真实 finding 强制失败", () => {
+  const result = runReviewCommand("review", {
+    env: {
+      REVIEW_CODEX_API_KEY: "test-key",
+      REVIEW_CODEX_RETRIES: "1",
+      REVIEW_TOTAL_TIMEOUT_MINUTES: "5",
+    },
+    ghScript: recordingGhScript(),
+    codexScript: codexVoteScript("three_one"),
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(result.reviewOutcome, { kind: "gate_failure", gate: "REQUEST_CHANGES" });
+  const comment = parseGitHubJsonLines(result.ghLog).find((entry) => entry.kind === "pr_comment");
+  assert.match(comment?.body || "", /存在 1 项真实 finding/);
+  assert.match(comment?.body || "", /server\/src\/main\.rs/);
+});
+
 test("review 命令: 2/2 保留真实 finding 并失败，不污染 infra 熔断", () => {
   const result = runReviewCommand("review", {
     env: {
@@ -1022,7 +1144,7 @@ test("review 命令: 2/2 保留真实 finding 并失败，不污染 infra 熔断
     codexScript: codexVoteScript("tie"),
   });
   assert.equal(result.status, 1, result.stderr);
-  assert.deepEqual(result.reviewOutcome, { kind: "gate_failure", gate: "TIE" });
+  assert.deepEqual(result.reviewOutcome, { kind: "gate_failure", gate: "REQUEST_CHANGES" });
   const log = parseGitHubJsonLines(result.ghLog);
   assert.equal(log.filter((entry) => entry.kind === "state_comment").length, 0);
   const comment = log.find((entry) => entry.kind === "pr_comment");
@@ -1073,6 +1195,27 @@ process.exit(1);
   assert.equal(parseGitHubJsonLines(finalMessageInfra.codexLog).length, 4);
   assert.ok(parseGitHubJsonLines(finalMessageInfra.ghLog).some((entry) => entry.kind === "handoff_comment"));
 
+  const exitZeroEmpty = runReviewCommand("review", {
+    env: { REVIEW_CODEX_API_KEY: "test-key", REVIEW_CODEX_RETRIES: "1", REVIEW_TOTAL_TIMEOUT_MINUTES: "5" },
+    ghScript: recordingGhScript(),
+    codexScript: `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.CODEX_TEST_LOG, JSON.stringify(args) + "\\n");
+const output = args[args.indexOf("--output-last-message") + 1];
+fs.writeFileSync(output, JSON.stringify({
+  vote: "REQUEST_CHANGES",
+  confidence: 0,
+  plan_intent: { status: "unclear", reason: "空结果", missing: [] },
+  summary: "zero confidence",
+  findings: [],
+}));
+`,
+  });
+  assert.equal(exitZeroEmpty.status, 0, exitZeroEmpty.stderr);
+  assert.equal(exitZeroEmpty.reviewOutcome.kind, "infra_failure");
+  assert.ok(parseGitHubJsonLines(exitZeroEmpty.ghLog).some((entry) => entry.kind === "handoff_comment"));
+
   const missingKey = runReviewCommand("review", {
     env: { REVIEW_CODEX_API_KEY: "", OPENAI_API_KEY: "" },
     ghScript: recordingGhScript(),
@@ -1083,7 +1226,7 @@ process.exit(1);
   assert.ok(parseGitHubJsonLines(missingKey.ghLog).some((entry) => entry.kind === "handoff_comment"));
 });
 
-test("Codex 子进程: 环境白名单移除 GitHub token，shell 排除 secrets，输出再次脱敏", () => {
+test("测试专用 CLI transport: 环境白名单移除 GitHub token，shell 排除 secrets，输出再次脱敏", () => {
   const ghSecret = "gh-write-token-must-not-leak";
   const providerSecret = "provider-key-must-not-leak";
   const result = runReviewCommand("review", {
@@ -1157,6 +1300,8 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   assert.match(review, /"\$ACTUAL_HEAD" != "\$EXPECTED_HEAD"/);
   assert.doesNotMatch(review, /\|\| echo/);
   assert.match(review, /REVIEW_DEFER_COMMENT: "1"/);
+  assert.match(review, /REVIEW_CODEX_BASE_URL/);
+  assert.doesNotMatch(review, /REVIEW_TEST_MODE|npm install|codex --version|config\.toml/);
   assert.match(review, /actions\/upload-artifact@v4/);
   assert.match(review, /review-run-outcome\.json/);
   assert.match(review, /review\.md/);
@@ -1167,6 +1312,8 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   assert.match(finalize, /actions\/download-artifact@v4/);
   assert.match(finalize, /REVIEW_DEFERRED_RESULT: "1"/);
   assert.match(finalize, /REVIEW_JOB_OUTCOME: \$\{\{ needs\.review\.result/);
+  assert.match(finalize, /REVIEW_INSTALL_OUTCOME: success/);
+  assert.match(finalize, /REVIEW_CONFIGURE_OUTCOME: success/);
   assert.match(finalize, /node \.github\/scripts\/review\.mjs workflow-finalize/);
   assert.doesNotMatch(finalize, /REVIEW_CODEX_API_KEY|gh pr checkout/);
 
