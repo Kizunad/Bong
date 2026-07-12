@@ -1567,6 +1567,8 @@ enum CastOutcome {
   CAST_OUTCOME_REJECT_NO_WEAPON       = 14;
   // 招式未习得或未激活（KnownTechniques 缺失 / active=false）——此前冒用 INVALID_TARGET。
   CAST_OUTCOME_REJECT_TECHNIQUE_INACTIVE = 15;
+  // plan-race-system-v1 P3a：种族门拒绝（本体 race_id / is_humanoid 未通过 RaceGate）。
+  CAST_OUTCOME_REJECT_RACE_MISMATCH = 16;
 }
 
 // 与 Rust CastSyncV1 精确对应。

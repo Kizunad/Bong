@@ -580,6 +580,26 @@ export type ServerDataBodyPlanLayoutV1 = Static<
   typeof ServerDataBodyPlanLayoutV1
 >;
 
+// ─── plan-race-system-v1 P3a：RaceGate ─────────────────────────────
+// 装备 / 功法种族三档匹配门的 wire 形状（与 Rust body_plan::types::RaceGateOwned /
+// proto bong.RaceGate 精确对应）。`kind` 用 string tag（非 proto enum，避免枚举前缀
+// noOp，见 plan-wire-format-bridge-v1 教训）；`species` 仅 `kind="species"` 时非空。
+// 未知 kind 必须被拒绝（fail-closed，不静默兜底 any）——校验层用 `validate()` 走
+// `RaceGateV1` schema 即可拒绝，本类型尚未挂在任何 ServerData oneof payload 下
+// （P3 后续接入功法列表 / 装备 wire 时复用，见 plan §P3 身份快照 bullet）。
+export const RaceGateV1 = Type.Object(
+  {
+    kind: Type.Union([
+      Type.Literal("any"),
+      Type.Literal("humanoid"),
+      Type.Literal("species"),
+    ]),
+    species: Type.Array(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+export type RaceGateV1 = Static<typeof RaceGateV1>;
+
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
     v: Type.Literal(1),

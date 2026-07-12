@@ -116,6 +116,7 @@ import {
   ServerDataShieldBrokenV1,
   ShieldBlockHitV1,
   ServerDataShieldBlockHitV1,
+  RaceGateV1,
 } from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
@@ -4487,5 +4488,73 @@ describe("MutationEventV1 schema pin tests (plan-dandao-runtime-wiring-v1 P2)", 
     expect(SchemaPackage.NamedFactionStateV1).toBe(NamedFactionStateV1);
     expect(SchemaPackage.FactionStatusV1).toBe(FactionStatusV1);
     expect(typeof SchemaPackage.validateNamedFactionStateV1Contract).toBe("function");
+  });
+});
+
+// ─── plan-race-system-v1 P3a：RaceGate wire pin ─────────────────────────────
+describe("RaceGateV1 (plan-race-system-v1 P3a)", () => {
+  it("race-gate.any.sample.json 通过且 species 为空", () => {
+    const data = loadObjectSample("race-gate.any.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual([]);
+  });
+
+  it("race-gate.humanoid.sample.json 通过且 species 为空", () => {
+    const data = loadObjectSample("race-gate.humanoid.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual([]);
+  });
+
+  it("race-gate.species.sample.json 通过且携带精确种族名单", () => {
+    const data = loadObjectSample("race-gate.species.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual(["whale"]);
+  });
+
+  it("三变体正向 pin：any/humanoid/species 均通过", () => {
+    for (const kind of ["any", "humanoid", "species"] as const) {
+      const payload = { kind, species: kind === "species" ? ["whale"] : [] };
+      const result = validate(RaceGateV1, payload);
+      expect(result.ok, `${kind}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("未知 kind 必须 fail-closed 拒绝，不静默兜底 any", () => {
+    const bad = { kind: "bogus", species: [] };
+    const result = validate(RaceGateV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("species 为空数组是合法边界（即便 kind=species，无实际放行对象但结构合法）", () => {
+    const payload = { kind: "species", species: [] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("species 重复条目原样通过（去重是校验层的事，不是 wire schema 的事）", () => {
+    const payload = { kind: "species", species: ["whale", "whale"] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("species 元素空字符串应拒绝（minLength: 1）", () => {
+    const payload = { kind: "species", species: [""] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("顶层多余字段应拒绝（additionalProperties: false）", () => {
+    const payload = { kind: "any", species: [], unexpected: true };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("缺 species 字段应拒绝（恒为必填数组字段，未配置用空数组表达）", () => {
+    const payload = { kind: "any" };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
   });
 });

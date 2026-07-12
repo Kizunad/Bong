@@ -12,6 +12,158 @@ use super::proto_gen::bong;
 use super::server_data::ServerDataPayloadV1;
 
 // ═══════════════════════════════════════════════════════════════
+// plan-race-system-v1 P3a —— RaceGate <-> proto RaceGate。
+//
+// `RaceGateOwned`（`body_plan::types`）尚未挂在任何 `ServerDataPayloadV1` oneof 字段
+// 下（本段是 P3 后续接入功法列表 / 装备 wire 时的复用底座，见 plan §P3 身份快照
+// bullet），故不在本文件的 `From<&ServerDataPayloadV1>` 主转换路径里；转换函数独立
+// 导出供直接单测 + 未来接入点调用。decode 方向对未知 kind fail-closed（返回 Err，
+// 不静默兜底 Any）。
+// ═══════════════════════════════════════════════════════════════
+
+pub fn race_gate_owned_to_proto(gate: &crate::body_plan::RaceGateOwned) -> bong::RaceGate {
+    use crate::body_plan::RaceGateOwned;
+    match gate {
+        RaceGateOwned::Any => bong::RaceGate {
+            kind: "any".to_string(),
+            species: Vec::new(),
+        },
+        RaceGateOwned::Humanoid => bong::RaceGate {
+            kind: "humanoid".to_string(),
+            species: Vec::new(),
+        },
+        RaceGateOwned::Species { species } => bong::RaceGate {
+            kind: "species".to_string(),
+            species: species.iter().map(|id| id.as_str().to_string()).collect(),
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RaceGateDecodeError {
+    /// 未知 `kind`——fail-closed，调用方必须拒绝而非兜底 `Any`。
+    UnknownKind(String),
+}
+
+impl std::fmt::Display for RaceGateDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RaceGateDecodeError::UnknownKind(kind) => {
+                write!(
+                    f,
+                    "unknown RaceGate wire kind {kind:?} — refusing to decode"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RaceGateDecodeError {}
+
+pub fn race_gate_owned_from_proto(
+    wire: &bong::RaceGate,
+) -> Result<crate::body_plan::RaceGateOwned, RaceGateDecodeError> {
+    use crate::body_plan::{RaceGateOwned, RaceId};
+    match wire.kind.as_str() {
+        "any" => Ok(RaceGateOwned::Any),
+        "humanoid" => Ok(RaceGateOwned::Humanoid),
+        "species" => Ok(RaceGateOwned::Species {
+            species: wire
+                .species
+                .iter()
+                .map(|s| RaceId::new(s.clone()))
+                .collect(),
+        }),
+        other => Err(RaceGateDecodeError::UnknownKind(other.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod race_gate_wire_tests {
+    use super::*;
+    use crate::body_plan::{RaceGateOwned, RaceId};
+
+    #[test]
+    fn any_round_trips() {
+        let value = RaceGateOwned::Any;
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "any");
+        assert!(wire.species.is_empty());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn humanoid_round_trips() {
+        let value = RaceGateOwned::Humanoid;
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "humanoid");
+        assert!(wire.species.is_empty());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_round_trips() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale")],
+        };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "species");
+        assert_eq!(wire.species, vec!["whale".to_string()]);
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_empty_list_round_trips() {
+        let value = RaceGateOwned::Species { species: vec![] };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.species, Vec::<String>::new());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_duplicate_entries_preserved_through_wire() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale"), RaceId::new("whale")],
+        };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.species, vec!["whale".to_string(), "whale".to_string()]);
+        let decoded = race_gate_owned_from_proto(&wire).unwrap();
+        match decoded {
+            RaceGateOwned::Species { species } => assert_eq!(species.len(), 2),
+            other => panic!("expected Species, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_kind_decode_fails_closed() {
+        let wire = bong::RaceGate {
+            kind: "bogus".to_string(),
+            species: Vec::new(),
+        };
+        let err = race_gate_owned_from_proto(&wire)
+            .expect_err("unknown kind must fail closed, not silently default to Any");
+        assert_eq!(err, RaceGateDecodeError::UnknownKind("bogus".to_string()));
+    }
+
+    /// plan-race-system-v1 P3a —— 施放门 race gate 拒绝的 wire pin：
+    /// `CastOutcomeV1::RejectRaceMismatch` 必须映射到新增 proto 变体
+    /// `bong::CastOutcome::RejectRaceMismatch`（非默认 `Unspecified`/其余已存在变体）。
+    #[test]
+    fn cast_outcome_reject_race_mismatch_maps_to_dedicated_proto_variant() {
+        use super::super::combat_hud::CastOutcomeV1;
+        let proto_value = cast_outcome_to_proto(&CastOutcomeV1::RejectRaceMismatch);
+        assert_eq!(proto_value, bong::CastOutcome::RejectRaceMismatch as i32);
+        // 不与其余已存在的 reject 变体撞值（防止手滑复制粘贴出重复映射）。
+        assert_ne!(
+            proto_value,
+            bong::CastOutcome::RejectTechniqueInactive as i32
+        );
+        assert_ne!(proto_value, bong::CastOutcome::RejectNoWeapon as i32);
+        assert_ne!(proto_value, bong::CastOutcome::Unspecified as i32);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // helper: Rust enum → proto i32
 // ═══════════════════════════════════════════════════════════════
 
@@ -2031,6 +2183,7 @@ fn cast_outcome_to_proto(o: &super::combat_hud::CastOutcomeV1) -> i32 {
         CastOutcomeV1::RejectRealmTooLow => bong::CastOutcome::RejectRealmTooLow as i32,
         CastOutcomeV1::RejectNoWeapon => bong::CastOutcome::RejectNoWeapon as i32,
         CastOutcomeV1::RejectTechniqueInactive => bong::CastOutcome::RejectTechniqueInactive as i32,
+        CastOutcomeV1::RejectRaceMismatch => bong::CastOutcome::RejectRaceMismatch as i32,
     }
 }
 
