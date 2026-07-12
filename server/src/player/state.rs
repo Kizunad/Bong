@@ -11,14 +11,16 @@ use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
 
 use crate::coffin::CoffinGrade;
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
+use crate::craft::CraftSession;
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
-use crate::inventory::PlayerInventory;
+use crate::inventory::{DroppedLootEntry, PlayerInventory};
 use crate::persistence::{DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
 use crate::player::spawn_selector::SpawnPurpose;
+use crate::qi_physics::ledger::WorldQiAccount;
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::PlayerSocialSnapshotV1;
@@ -158,6 +160,7 @@ pub struct LoadedPlayerSlices {
     pub position: [f64; 3],
     pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
+    pub craft_session: Option<CraftSession>,
     pub lifespan: Option<LifespanComponent>,
     pub in_coffin: bool,
     /// 棺材档级：Some(grade) = 在棺内 + 档级；None = 不在棺内（与 in_coffin=false 语义对齐）
@@ -437,6 +440,7 @@ pub fn load_player_slices(
                 ),
                 last_dimension: DimensionKind::default(),
                 inventory: None,
+                craft_session: None,
                 lifespan: None,
                 in_coffin: false,
                 coffin_grade: None,
@@ -470,6 +474,17 @@ pub fn load_player_slices(
         Err(error) => {
             tracing::warn!(
                 "[bong][player] failed to load persisted inventory for `{}` from sqlite {}: {error}; using default inventory fallback",
+                username,
+                persistence.db_path().display()
+            );
+            None
+        }
+    };
+    let craft_session = match load_player_craft_session_from_sqlite(&connection, username) {
+        Ok(session) => session,
+        Err(error) => {
+            tracing::error!(
+                "[bong][player] failed to load persisted craft session for `{}` from sqlite {}: {error}; refusing to invent a replacement session",
                 username,
                 persistence.db_path().display()
             );
@@ -534,6 +549,7 @@ pub fn load_player_slices(
         position,
         last_dimension,
         inventory,
+        craft_session,
         lifespan,
         in_coffin,
         coffin_grade,
@@ -602,6 +618,7 @@ pub fn save_player_slices(
         skill_set,
         None,
         None,
+        None,
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -617,6 +634,7 @@ pub fn save_player_slices_with_coffin(
     lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
     grade: Option<CoffinGrade>,
+    craft_session: Option<&CraftSession>,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_slices_in_sqlite(
@@ -630,6 +648,7 @@ pub fn save_player_slices_with_coffin(
         skill_set,
         Some(grade.is_some()),
         grade,
+        Some(craft_session),
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -723,6 +742,98 @@ pub fn save_player_inventory_slice(
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_inventory_slice_in_sqlite(&mut connection, username, inventory)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_inventory_and_craft_session_slices(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    inventory: Option<&PlayerInventory>,
+    craft_session: Option<&CraftSession>,
+) -> io::Result<PathBuf> {
+    save_player_craft_checkpoint(
+        persistence,
+        username,
+        inventory,
+        craft_session,
+        None,
+        None,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn save_player_craft_checkpoint(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    inventory: Option<&PlayerInventory>,
+    craft_session: Option<&CraftSession>,
+    cultivation: Option<&Cultivation>,
+    qi_ledger: Option<&WorldQiAccount>,
+    durable_drops: &[DroppedLootEntry],
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    let inventory_json = serialize_inventory_json(inventory)?;
+    let craft_session_json = craft_session
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let last_updated_wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    persist_player_inventory_json_in_transaction(
+        &transaction,
+        username,
+        &inventory_json,
+        last_updated_wall,
+    )?;
+    persist_player_craft_session_in_transaction(
+        &transaction,
+        username,
+        craft_session_json.as_deref(),
+        last_updated_wall,
+    )?;
+    if let Some(cultivation) = cultivation {
+        crate::persistence::upsert_player_cultivation_slice(
+            &transaction,
+            username,
+            cultivation,
+            last_updated_wall,
+        )?;
+    }
+    if let Some(qi_ledger) = qi_ledger {
+        crate::persistence::upsert_pending_inflow_balance(
+            &transaction,
+            qi_ledger,
+            last_updated_wall,
+        )?;
+    }
+    crate::persistence::upsert_dropped_loot_entries(
+        &transaction,
+        durable_drops,
+        last_updated_wall,
+    )?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_inventory_and_delete_dropped_loot(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    inventory: &PlayerInventory,
+    dropped_instance_id: u64,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    let inventory_json = serialize_inventory_json(Some(inventory))?;
+    let last_updated_wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    persist_player_inventory_json_in_transaction(
+        &transaction,
+        username,
+        &inventory_json,
+        last_updated_wall,
+    )?;
+    crate::persistence::delete_dropped_loot_entry(&transaction, dropped_instance_id)?;
+    transaction.commit().map_err(io::Error::other)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -1259,6 +1370,26 @@ fn load_player_inventory_from_sqlite(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+fn load_player_craft_session_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<CraftSession>> {
+    let session_json: Option<String> = connection
+        .query_row(
+            "SELECT session_json FROM player_craft_sessions WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    session_json
+        .map(|json| {
+            serde_json::from_str::<CraftSession>(&json)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        })
+        .transpose()
+}
+
 /// plan-layered-equip-v1 P0.6（决议 #4 / #17）— inventory v1→v2 存档迁移（原地改写 Value）。
 ///
 /// v1 `equipped` 形态：`{ "<slot>": <ItemInstance object>, ... }`（每槽单件）。
@@ -1786,6 +1917,7 @@ fn persist_player_core_slice_in_sqlite(
             &SkillSet::default(),
             None,
             None,
+            None,
         )?;
     }
 
@@ -1981,6 +2113,8 @@ fn persist_player_slices_in_sqlite(
     in_coffin: Option<bool>,
     // None = 回读 DB 既有 grade（无棺上下文保存路径，防止洗掉 Jade/Stone/Bronze）
     coffin_grade: Option<CoffinGrade>,
+    // None = 调用方无 craft 上下文，保留数据库原值；Some(None) = 删除 session。
+    craft_session: Option<Option<&CraftSession>>,
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let karma = normalized.karma;
@@ -1991,6 +2125,11 @@ fn persist_player_slices_in_sqlite(
     let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())?;
     let last_updated_wall = current_unix_seconds();
     let prefs_json = default_ui_prefs_json()?;
+    let craft_session_json = craft_session
+        .flatten()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let in_coffin_value = resolve_in_coffin_for_persist(connection, username, in_coffin)?;
     let coffin_grade_value = resolve_coffin_grade_for_persist(connection, username, coffin_grade)?;
 
@@ -2185,7 +2324,79 @@ fn persist_player_slices_in_sqlite(
             )
             .map_err(io::Error::other)?;
     }
+    if craft_session.is_some() {
+        persist_player_craft_session_in_transaction(
+            &transaction,
+            username,
+            craft_session_json.as_deref(),
+            last_updated_wall,
+        )?;
+    }
     transaction.commit().map_err(io::Error::other)
+}
+
+fn persist_player_inventory_json_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    inventory_json: &str,
+    last_updated_wall: i64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                inventory_json = excluded.inventory_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                inventory_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn persist_player_craft_session_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    session_json: Option<&str>,
+    last_updated_wall: i64,
+) -> io::Result<()> {
+    if let Some(session_json) = session_json {
+        transaction
+            .execute(
+                "
+                INSERT INTO player_craft_sessions (
+                    username, session_json, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(username) DO UPDATE SET
+                    session_json = excluded.session_json,
+                    schema_version = excluded.schema_version,
+                    last_updated_wall = excluded.last_updated_wall
+                ",
+                params![
+                    username,
+                    session_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    } else {
+        transaction
+            .execute(
+                "DELETE FROM player_craft_sessions WHERE username = ?1",
+                params![username],
+            )
+            .map_err(io::Error::other)?;
+    }
+    Ok(())
 }
 
 fn ensure_player_auxiliary_rows(connection: &mut Connection, username: &str) -> io::Result<()> {
@@ -2326,6 +2537,7 @@ fn migrate_legacy_player_json_to_sqlite(
         &SkillSet::default(),
         None,
         None,
+        None,
     )?;
     fs::rename(&path, persistence.migrated_path_for_username(username))?;
     Ok(Some(state))
@@ -2410,11 +2622,12 @@ mod player_state_tests {
     use crate::cultivation::lifespan::LifespanCapTable;
     use crate::inventory::{
         move_equipped_item_to_first_container_slot, set_item_instance_durability, ContainerState,
-        InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
-        MAIN_PACK_CONTAINER_ID,
+        DroppedLootEntry, InventoryRevision, ItemInstance, ItemRarity, PlayerInventory,
+        EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
     };
     use crate::network::agent_bridge::serialize_server_data_payload;
     use crate::persistence::bootstrap_sqlite;
+    use crate::qi_physics::ledger::pending_inflow_account;
     use crate::schema::server_data::{ServerDataPayloadV1, SERVER_DATA_VERSION};
     use rusqlite::{params, Connection};
     use std::collections::HashMap;
@@ -3387,6 +3600,239 @@ mod player_state_tests {
         assert_eq!(prefs, PlayerUiPrefs::default());
 
         let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn inventory_and_craft_session_roundtrip_and_clear_atomically() {
+        let (persistence, data_dir) = sqlite_persistence("craft-session-roundtrip");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("active craft persistence requires an initialized player row");
+        let inventory = empty_weapon_inventory();
+        let session = CraftSession {
+            recipe_id: crate::craft::RecipeId::new("craft.test.persisted"),
+            started_at_tick: 10,
+            remaining_ticks: 37,
+            total_ticks: 40,
+            owner_player_id: canonical_player_id("Azure"),
+            qi_paid: 0.0,
+            quantity_total: 3,
+            completed_count: 1,
+        };
+
+        save_player_inventory_and_craft_session_slices(
+            &persistence,
+            "Azure",
+            Some(&inventory),
+            Some(&session),
+        )
+        .expect("inventory + craft session should persist in one transaction");
+
+        let reloaded = load_player_slices(&persistence, "Azure");
+        assert_eq!(
+            reloaded.inventory.as_ref().map(|value| value.revision),
+            Some(inventory.revision),
+            "重启加载必须恢复与 session 同事务保存的预扣后 inventory"
+        );
+        assert_eq!(
+            reloaded.craft_session.as_ref(),
+            Some(&session),
+            "重启加载必须恢复完整 CraftSession，避免预扣材料失去结算凭证"
+        );
+
+        let mut completed_inventory = inventory.clone();
+        completed_inventory.revision = InventoryRevision(42);
+        save_player_inventory_and_craft_session_slices(
+            &persistence,
+            "Azure",
+            Some(&completed_inventory),
+            None,
+        )
+        .expect("terminal inventory + session delete should commit atomically");
+        let cleared = load_player_slices(&persistence, "Azure");
+        assert_eq!(
+            cleared.inventory.as_ref().map(|value| value.revision),
+            Some(InventoryRevision(42)),
+            "终止结算应保存最终 inventory"
+        );
+        assert!(
+            cleared.craft_session.is_none(),
+            "终止结算与 session 删除必须同事务提交，重连不能重复完成或退款"
+        );
+
+        std::fs::remove_dir_all(data_dir).ok();
+    }
+
+    #[test]
+    fn craft_checkpoint_rolls_back_every_slice_when_durable_drop_write_fails() {
+        let (persistence, data_dir) = sqlite_persistence("craft-checkpoint-rollback");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("test player should initialize");
+        let baseline_inventory = empty_weapon_inventory();
+        save_player_inventory_and_craft_session_slices(
+            &persistence,
+            "Azure",
+            Some(&baseline_inventory),
+            None,
+        )
+        .expect("baseline inventory should persist");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TRIGGER fail_craft_drop_insert
+                BEFORE INSERT ON dropped_loot
+                BEGIN
+                    SELECT RAISE(FAIL, 'forced durable drop failure');
+                END;
+                ",
+            )
+            .expect("failure trigger should install");
+
+        let mut staged_inventory = baseline_inventory.clone();
+        staged_inventory.revision = InventoryRevision(42);
+        let session = CraftSession {
+            recipe_id: crate::craft::RecipeId::new("craft.test.rollback"),
+            started_at_tick: 10,
+            remaining_ticks: 30,
+            total_ticks: 40,
+            owner_player_id: canonical_player_id("Azure"),
+            qi_paid: 3.0,
+            quantity_total: 1,
+            completed_count: 0,
+        };
+        let mut cultivation = Cultivation::default();
+        cultivation.qi_current = 7.0;
+        let mut qi_ledger = WorldQiAccount::default();
+        qi_ledger
+            .set_balance(pending_inflow_account(), 3.0)
+            .expect("pending inflow fixture should be valid");
+        let drop = DroppedLootEntry {
+            instance_id: 9_000,
+            source_container_id: "craft_refund".to_string(),
+            source_row: 0,
+            source_col: 0,
+            world_pos: [1.0, 64.0, 2.0],
+            dimension: DimensionKind::Overworld,
+            item: iron_sword_instance(9_000, 1.0),
+        };
+
+        let error = save_player_craft_checkpoint(
+            &persistence,
+            "Azure",
+            Some(&staged_inventory),
+            Some(&session),
+            Some(&cultivation),
+            Some(&qi_ledger),
+            &[drop],
+        )
+        .expect_err("last transaction step must fail through the trigger");
+        assert!(
+            error.to_string().contains("forced durable drop failure"),
+            "failure should retain the injected repair hint, actual={error}"
+        );
+
+        let reloaded = load_player_slices(&persistence, "Azure");
+        assert_eq!(
+            reloaded.inventory.as_ref().map(|value| value.revision),
+            Some(InventoryRevision(41)),
+            "failed checkpoint must roll inventory back to the complete pre-state"
+        );
+        assert!(
+            reloaded.craft_session.is_none(),
+            "failed checkpoint must not leave an active session beside the old inventory"
+        );
+        let settings = crate::persistence::PersistenceSettings::with_paths(
+            persistence.db_path(),
+            data_dir.join("deceased"),
+            "craft-checkpoint-rollback",
+        );
+        assert!(
+            crate::persistence::load_player_cultivation_bundle(&settings, "Azure")
+                .expect("cultivation lookup should succeed")
+                .is_none(),
+            "failed checkpoint must roll back cultivation upsert"
+        );
+        assert!(
+            crate::persistence::load_durable_dropped_loot(&settings)
+                .expect("durable drop lookup should succeed")
+                .is_empty(),
+            "failed checkpoint must not leak a partially durable drop"
+        );
+        assert_eq!(
+            crate::persistence::load_pending_inflow_balance(&settings)
+                .expect("pending inflow lookup should succeed"),
+            0.0,
+            "failed checkpoint must roll back the durable qi receiver"
+        );
+        std::fs::remove_dir_all(data_dir).ok();
+    }
+
+    #[test]
+    fn durable_craft_drop_roundtrips_seeds_allocator_and_stays_deleted_after_pickup() {
+        let (persistence, data_dir) = sqlite_persistence("durable-craft-drop-roundtrip");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("test player should initialize");
+        let inventory = empty_weapon_inventory();
+        let drop = DroppedLootEntry {
+            instance_id: 9_100,
+            source_container_id: "craft_refund".to_string(),
+            source_row: 0,
+            source_col: 0,
+            world_pos: [3.0, 65.0, 4.0],
+            dimension: DimensionKind::Overworld,
+            item: iron_sword_instance(9_100, 1.0),
+        };
+        save_player_craft_checkpoint(
+            &persistence,
+            "Azure",
+            Some(&inventory),
+            None,
+            None,
+            None,
+            std::slice::from_ref(&drop),
+        )
+        .expect("craft drop should commit with terminal inventory");
+        let settings = crate::persistence::PersistenceSettings::with_paths(
+            persistence.db_path(),
+            data_dir.join("deceased"),
+            "durable-craft-drop-roundtrip",
+        );
+        let first_hydrate = crate::persistence::load_durable_dropped_loot(&settings)
+            .expect("first restart hydrate should succeed");
+        let second_hydrate = crate::persistence::load_durable_dropped_loot(&settings)
+            .expect("repeated restart hydrate should be idempotent");
+        assert_eq!(first_hydrate, second_hydrate);
+        assert_eq!(first_hydrate.get(&9_100), Some(&drop));
+        assert_eq!(
+            crate::persistence::persisted_inventory_instance_id_high_water(&settings)
+                .expect("allocator high-water scan should succeed"),
+            Some(9_100),
+            "durable ground IDs must advance the post-restart allocator"
+        );
+
+        let mut picked_inventory = inventory.clone();
+        picked_inventory.revision = InventoryRevision(42);
+        save_player_inventory_and_delete_dropped_loot(
+            &persistence,
+            "Azure",
+            &picked_inventory,
+            9_100,
+        )
+        .expect("pickup inventory + durable delete should commit atomically");
+        assert!(
+            crate::persistence::load_durable_dropped_loot(&settings)
+                .expect("post-pickup restart hydrate should succeed")
+                .is_empty(),
+            "a committed pickup must not resurrect its durable ground row"
+        );
+        assert_eq!(
+            load_player_slices(&persistence, "Azure")
+                .inventory
+                .map(|value| value.revision),
+            Some(InventoryRevision(42)),
+            "the same pickup transaction must retain the receiving inventory"
+        );
+        std::fs::remove_dir_all(data_dir).ok();
     }
 
     #[test]
