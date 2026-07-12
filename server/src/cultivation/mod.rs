@@ -188,6 +188,7 @@ use self::tribulation::{
     TribulationOmenCloudBlocks, TribulationOriginDimension, TribulationSettled, TribulationState,
     TribulationWaveCleared,
 };
+use crate::body_plan::RaceId;
 use crate::cultivation::components::Realm;
 use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
@@ -579,6 +580,45 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             }
         };
 
+        // plan-race-system-v1 P0 review r4（bughunt major-2 收口）—— 未知 race id 必须
+        // 拒载**整份** bundle，不只是 `cultivation` 这一个 slice：此前的实现只在下面
+        // `cultivation` 字段的解码分支里做校验，一旦拒绝也只把 `cultivation` 变量留在
+        // `Cultivation::default()`，但 `meridians`/`qi_color`/`karma`/`practice_log`/
+        // `contamination`/`life_record`/`insight_quota`/`unlocked_perceptions`/
+        // `insight_modifiers`/`meridian_severed`/`poison_toxicity`/`digestion_load`
+        // 这 12 个 sibling slice 全部照常从同一份不可信 bundle 里正常水合——一份来自
+        // 不兼容部署（race 在当前 RaceRegistry 里根本不存在）的存档，其经脉拓扑/
+        // 真元/毒性等字段同样不可信，"只挡 race 字段本身"等于开了个后门：醒灵后
+        // 立刻嵌合体全通经脉、满毒素抗性表白跳突破。这里在任何字段解码之前先窥探
+        // 原始 JSON 里的 `cultivation.race`，一旦命中未知 race 就把整份 bundle 提前
+        // 归零成 `None`，让下面所有 slice 的 hydration 分支统一走"无持久化数据"的
+        // 默认路径（缺失 race 字段的旧存档 `cultivation.race` 键本身不存在，
+        // `as_str()` 拿不到值，不受影响，仍走既有 legacy 迁移路径）。
+        let persisted_bundle = persisted_bundle.and_then(|bundle| {
+            let unknown_persisted_race = race_registry.as_deref().and_then(|registry| {
+                bundle
+                    .get("cultivation")
+                    .and_then(|cultivation_value| cultivation_value.get("race"))
+                    .and_then(|race_value| race_value.as_str())
+                    .map(|race_str| registry.get(&RaceId::new(race_str)).is_none())
+            });
+            if unknown_persisted_race == Some(true) {
+                tracing::warn!(
+                    "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
+                     unknown race id in persisted `cultivation.race` is not found in \
+                     RaceRegistry — falling back to default state for every slice \
+                     (cultivation/meridians/qi_color/karma/practice_log/contamination/\
+                     life_record/insight_quota/unlocked_perceptions/insight_modifiers/\
+                     meridian_severed/poison_toxicity/digestion_load), not just the \
+                     `cultivation` field",
+                    username.0,
+                );
+                None
+            } else {
+                Some(bundle)
+            }
+        });
+
         // plan-race-system-v1 P1a —— bundle 内嵌版本号（`persist_player_cultivation_bundle`
         // 的 `"v"` 字段，与全局 `CURRENT_SCHEMA_VERSION`/`CURRENT_USER_VERSION` 是两套
         // 独立版本号，只管 `cultivation_json` blob 自身的形态演进）。缺失该字段的旧存档
@@ -615,32 +655,13 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         if let Some(persisted_bundle) = persisted_bundle.as_ref() {
             // Best-effort hydration; schema is versioned and may evolve.
             if let Some(value) = persisted_bundle.get("cultivation") {
+                // plan-race-system-v1 P0 review r4（bughunt major-2 收口）—— 未知
+                // race id 的整份 bundle 拒载已经在上面按原始 JSON 提前判定并把
+                // `persisted_bundle` 归零成 `None`（见该处注释），本分支只在 race
+                // 已知（或缺失、经 `#[serde(default = "default_race_id")]` 落
+                // "human"）时才会执行，不再需要重复校验 `decoded.race`。
                 match serde_json::from_value::<Cultivation>(value.clone()) {
-                    Ok(decoded) => {
-                        // plan-race-system-v1 P0 —— race 字段显式 RaceRegistry 校验：
-                        // 未知 RaceId 不静默兜底 humanoid 白得身份，而是把整份
-                        // `cultivation` bundle 按本函数既有的"解码失败"损坏路径处理
-                        // （保留上面已初始化的 `Cultivation::default()`，不只是把
-                        // race 字段单独改写成 human——一旦种族 id 在当前部署的
-                        // RaceRegistry 里找不到，说明这份存档来自不兼容的版本，
-                        // 其余字段同样不可信，整体回退比"部分接受"更安全）。
-                        // 缺失 race 字段的旧存档会经 `#[serde(default = "default_race_id")]`
-                        // 在 `serde_json::from_value` 这一步就已经落 "human"——那种
-                        // bundle 走的是下面 `None`/`Some(known race)` 分支，正常接受。
-                        match race_registry.as_deref() {
-                            Some(registry) if registry.get(&decoded.race).is_none() => {
-                                tracing::warn!(
-                                    "[bong][cultivation] rejecting persisted cultivation bundle \
-                                     for `{}`: unknown race id `{}` not found in RaceRegistry — \
-                                     falling back to default Cultivation instead of silently \
-                                     granting humanoid identity",
-                                    username.0,
-                                    decoded.race,
-                                );
-                            }
-                            _ => cultivation = decoded,
-                        }
-                    }
+                    Ok(decoded) => cultivation = decoded,
                     Err(error) => {
                         warn_cultivation_decode(username.0.as_str(), "cultivation", error)
                     }
@@ -1540,6 +1561,7 @@ mod tests {
 
     use crate::body_plan::{RaceId, RaceRegistry};
     use crate::combat::components::Lifecycle;
+    use crate::cultivation::components::{ColorKind, ContamSource};
     use crate::cultivation::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
     use crate::persistence::{
         load_active_tribulation, load_ascension_quota, persist_active_tribulation,
@@ -2761,6 +2783,192 @@ mod tests {
              was persisted alongside it but must NOT survive) — proving this is bundle-level \
              corrupted-path handling, not a narrow 'only overwrite the race field' patch that \
              would silently keep the rest of an untrusted bundle"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// plan-race-system-v1 bughunt major-2：未知 race 的 bundle 里 sibling slice 全部
+    /// 塞进明显偏离默认值的数据（经脉全开/带毒/带污染/带洞察额度……），用来证明拒载
+    /// 覆盖的不只是 `Cultivation` 一个组件——旧实现只回退 `cultivation`，其余约 12 个
+    /// slice 会原样水合，相当于"醒灵即刻全通经脉 + 满毒素抗性表"的白嫖突破后门。
+    #[test]
+    fn joined_clients_reject_persisted_bundle_with_unknown_race_resets_every_sibling_slice() {
+        let (settings, root) =
+            temp_persistence_settings("reject-unknown-race-full-bundle-rollback");
+        let username = "ChimeraGhoul";
+
+        let mut poisoned_meridians = MeridianSystem::default();
+        for meridian in poisoned_meridians
+            .regular
+            .iter_mut()
+            .chain(poisoned_meridians.extraordinary.iter_mut())
+        {
+            meridian.opened = true;
+            meridian.open_progress = 1.0;
+        }
+        let poisoned_qi_color = QiColor {
+            is_chaotic: true,
+            is_hunyuan: true,
+            ..Default::default()
+        };
+        let poisoned_karma = Karma { weight: 999.0 };
+        let poisoned_contamination = Contamination {
+            entries: vec![ContamSource {
+                amount: 50.0,
+                color: ColorKind::Sharp,
+                meridian_id: None,
+                attacker_id: Some("intruder".to_string()),
+                introduced_at: 1,
+            }],
+        };
+        let mut poisoned_practice_log = PracticeLog::default();
+        poisoned_practice_log
+            .weights
+            .insert(ColorKind::Sharp, 12345.0);
+        let mut poisoned_insight_quota = InsightQuota::default();
+        poisoned_insight_quota.used_this_realm = 9;
+        poisoned_insight_quota
+            .fired_triggers
+            .push("stolen_trigger".to_string());
+        let mut poisoned_unlocked_perceptions = UnlockedPerceptions::default();
+        poisoned_unlocked_perceptions
+            .set
+            .insert("stolen_perception".to_string());
+        let poisoned_insight_modifiers = InsightModifiers {
+            qi_regen_mul: 7.0,
+            ..InsightModifiers::new()
+        };
+        let poisoned_severed = MeridianSeveredPermanent::default();
+        let poisoned_poison_toxicity = PoisonToxicity {
+            level: 88.0,
+            source_history: Vec::new(),
+            last_dose_tick: 1,
+            last_decay_tick: 0,
+            ..Default::default()
+        };
+        let poisoned_digestion_load = DigestionLoad {
+            current: 500.0,
+            capacity: 1.0,
+            decay_rate: 0.0,
+            digest_lock_until_tick: None,
+            ..Default::default()
+        };
+
+        crate::persistence::persist_player_cultivation_bundle(
+            &settings,
+            username,
+            &Cultivation {
+                realm: Realm::Solidify,
+                race: RaceId::new("nonexistent"),
+                ..Default::default()
+            },
+            &poisoned_meridians,
+            &poisoned_qi_color,
+            &poisoned_karma,
+            &poisoned_contamination,
+            &LifeRecord::new(canonical_player_id(username)),
+            &poisoned_practice_log,
+            &poisoned_insight_quota,
+            &poisoned_unlocked_perceptions,
+            &poisoned_insight_modifiers,
+            None,
+            &poisoned_severed,
+            Some(&poisoned_poison_toxicity),
+            Some(&poisoned_digestion_load),
+        )
+        .expect("seeding a poisoned unknown-race bundle should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(race_registry_with_only_human());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client(username);
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let world = app.world();
+        assert_eq!(
+            world.get::<Cultivation>(entity).unwrap().race,
+            RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            "cultivation slice must reset"
+        );
+        let live_meridians = world
+            .get::<MeridianSystem>(entity)
+            .expect("meridians must still attach");
+        assert!(
+            live_meridians
+                .regular
+                .iter()
+                .chain(live_meridians.extraordinary.iter())
+                .all(|m| !m.opened),
+            "meridians sibling slice must reset to the closed default, not inherit the \
+             poisoned all-opened bundle from the rejected unknown-race save — a chimera that \
+             never validated a race would otherwise wake up with every meridian already open"
+        );
+        let live_qi_color = world.get::<QiColor>(entity).unwrap();
+        assert!(
+            !live_qi_color.is_chaotic && !live_qi_color.is_hunyuan,
+            "qi_color sibling slice must reset to default (is_chaotic=false, is_hunyuan=false), \
+             not inherit the poisoned is_chaotic=true/is_hunyuan=true, 实测 {live_qi_color:?}"
+        );
+        assert_eq!(
+            world.get::<Karma>(entity).unwrap().weight,
+            0.0,
+            "karma sibling slice must reset to default (weight=0.0), not the poisoned 999.0"
+        );
+        assert!(
+            world
+                .get::<Contamination>(entity)
+                .unwrap()
+                .entries
+                .is_empty(),
+            "contamination sibling slice must reset to empty, not inherit the poisoned entry"
+        );
+        assert!(
+            world.get::<PracticeLog>(entity).unwrap().weights.is_empty(),
+            "practice_log sibling slice must reset to default, not inherit the poisoned weights"
+        );
+        let live_insight_quota = world.get::<InsightQuota>(entity).unwrap();
+        assert_eq!(
+            live_insight_quota.used_this_realm, 0,
+            "insight_quota sibling slice must reset to default"
+        );
+        assert!(
+            live_insight_quota.fired_triggers.is_empty(),
+            "insight_quota.fired_triggers must reset to empty, not inherit the stolen trigger"
+        );
+        assert!(
+            world
+                .get::<UnlockedPerceptions>(entity)
+                .unwrap()
+                .set
+                .is_empty(),
+            "unlocked_perceptions sibling slice must reset to empty, not inherit the stolen \
+             perception"
+        );
+        assert_eq!(
+            world.get::<InsightModifiers>(entity).unwrap().qi_regen_mul,
+            InsightModifiers::new().qi_regen_mul,
+            "insight_modifiers sibling slice must reset to default, not the poisoned 7.0x"
+        );
+        let live_poison_toxicity = world
+            .get::<PoisonToxicity>(entity)
+            .expect("poison_toxicity must still attach");
+        assert_eq!(
+            live_poison_toxicity.level, 0.0,
+            "poison_toxicity sibling slice must reset to default (level=0.0), not the poisoned \
+             88.0"
+        );
+        let live_digestion_load = world
+            .get::<DigestionLoad>(entity)
+            .expect("digestion_load must still attach");
+        assert_ne!(
+            live_digestion_load.current, 500.0,
+            "digestion_load sibling slice must reset to the realm default, not inherit the \
+             poisoned current=500.0"
         );
 
         let _ = std::fs::remove_dir_all(root);
