@@ -154,7 +154,7 @@ pub fn scar_circuit_check_system(
     mut formed_events: EventWriter<ScarCircuitFormedEvent>,
     mut broken_events: EventWriter<ScarCircuitBrokenEvent>,
 ) {
-    if clock.tick % SCAR_CIRCUIT_CHECK_INTERVAL_TICKS != 0 {
+    if !clock.tick.is_multiple_of(SCAR_CIRCUIT_CHECK_INTERVAL_TICKS) {
         return;
     }
 

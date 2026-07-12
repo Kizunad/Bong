@@ -99,17 +99,13 @@ pub const DAOZHAN_LOW_QI_RATIO: f64 = 0.20;
 /// 无 Retreat 态：道伥不撤退，只有死亡才会退场（与灰烬蛛三态不同）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Component)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DaoZhangState {
     /// 伪装态：伪装为日常玩家行为（Swing / Sneak / Mine）诱近目标。
+    #[default]
     Mimicry,
     /// 伏击态：暴露后连续 3 次 QiTransfer{DaoZhangDrain}，吸取真元。
     Ambush,
-}
-
-impl Default for DaoZhangState {
-    fn default() -> Self {
-        Self::Mimicry
-    }
 }
 
 // ── Mimicry 假动作 ────────────────────────────────────────────────────────────

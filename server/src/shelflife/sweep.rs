@@ -35,7 +35,7 @@ pub fn sweep_shelflife_variants(
     mut tick_counter: ResMut<ShelflifeSweepTick>,
 ) {
     tick_counter.0 = tick_counter.0.wrapping_add(1);
-    if tick_counter.0 % 200 != 0 {
+    if !tick_counter.0.is_multiple_of(200) {
         return;
     }
 

@@ -777,7 +777,7 @@ type CultivateNpcQueryItem<'a> = (
 #[derive(Default)]
 pub(crate) struct CultivateRngState(Option<u64>);
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn cultivate_action_system(
     mut commands: Commands,
     mut npcs: Query<CultivateNpcQueryItem<'_>, With<NpcMarker>>,

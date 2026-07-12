@@ -102,17 +102,13 @@ pub enum ZhenfaSystemSet {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ZhenfaCarrierKind {
+    #[default]
     CommonStone,
     LingqiBlock,
     NightWitheredVine,
     BeastCoreInlaid,
-}
-
-impl Default for ZhenfaCarrierKind {
-    fn default() -> Self {
-        Self::CommonStone
-    }
 }
 
 impl ZhenfaCarrierKind {
@@ -3023,7 +3019,7 @@ fn tick_zhenfa_registry(
                 }
             }
             ZhenfaKind::DecoyStake => {
-                if now % 10 == 0 {
+                if now.is_multiple_of(10) {
                     emit_zhenfa_vfx(
                         vfx_events.as_deref_mut(),
                         gameplay_vfx::DECOY_TAUNT,

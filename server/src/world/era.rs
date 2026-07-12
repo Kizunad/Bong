@@ -366,7 +366,7 @@ pub fn era_faction_drift_system(
 ) {
     let tick = clock.map(|c| c.tick).unwrap_or(0);
     // 按 interval 节流
-    if tick == 0 || tick % ERA_FACTION_DRIFT_INTERVAL_TICKS != 0 {
+    if tick == 0 || !tick.is_multiple_of(ERA_FACTION_DRIFT_INTERVAL_TICKS) {
         return;
     }
 

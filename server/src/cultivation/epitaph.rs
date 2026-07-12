@@ -220,7 +220,7 @@ pub fn summarize(life_record: &LifeRecord, death_count: u32) -> LifeRecordSummar
 
     // signature_skill_ids：按 new_lv 降序取前 3
     let mut sorted_milestones: Vec<&SkillMilestone> = life_record.skill_milestones.iter().collect();
-    sorted_milestones.sort_by(|a, b| b.new_lv.cmp(&a.new_lv));
+    sorted_milestones.sort_by_key(|milestone| std::cmp::Reverse(milestone.new_lv));
     // 去重（同一 skill 取最高 level 那条），然后取前 N
     let mut seen_skills: std::collections::HashSet<&SkillId> = std::collections::HashSet::new();
     let signature_skill_ids: Vec<SkillId> = sorted_milestones

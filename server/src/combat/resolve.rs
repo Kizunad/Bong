@@ -2615,8 +2615,10 @@ mod tests {
         #[test]
         fn unknown_player_race_falls_back_to_humanoid_static_not_panic() {
             let (body_plans, races) = registries_with_distinctive_human_plan();
-            let mut cultivation = Cultivation::default();
-            cultivation.race = crate::body_plan::RaceId::new("does_not_exist");
+            let cultivation = Cultivation {
+                race: crate::body_plan::RaceId::new("does_not_exist"),
+                ..Default::default()
+            };
             for part in ALL_LEGACY_PARTS {
                 assert_eq!(
                     body_part_multipliers(

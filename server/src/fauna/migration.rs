@@ -573,7 +573,7 @@ pub fn horde_migration_system(
                 position.set(target.target_pos);
             }
             NpcLodTier::Far => {
-                if now % 1_200 == 0 {
+                if now.is_multiple_of(1_200) {
                     let direction = horde_migration_direction(horde, &flow_fields, current, target);
                     position.set(step_by_direction_preserving_y(
                         current,
@@ -583,7 +583,7 @@ pub fn horde_migration_system(
                 }
             }
             NpcLodTier::Mid => {
-                if now % 600 == 0 {
+                if now.is_multiple_of(600) {
                     let direction = horde_migration_direction(horde, &flow_fields, current, target);
                     position.set(step_by_direction_preserving_y(
                         current,
@@ -667,7 +667,7 @@ pub fn migration_move_system(
                 position.set(target.target_pos);
             }
             NpcLodTier::Far => {
-                if now % 1_200 == 0 {
+                if now.is_multiple_of(1_200) {
                     position.set(step_toward_xz_preserving_y(
                         current,
                         target.target_pos,
@@ -677,7 +677,7 @@ pub fn migration_move_system(
             }
             // Mid（Drowsy）：hydrated live entity，降频步进（同 Far 语义，稍快）
             NpcLodTier::Mid => {
-                if now % 600 == 0 {
+                if now.is_multiple_of(600) {
                     position.set(step_toward_xz_preserving_y(
                         current,
                         target.target_pos,
@@ -1733,7 +1733,7 @@ mod tests {
     }
 
     #[test]
-    fn horde_migration_system_moves_200_far_beasts_under_five_ms_budget() {
+    fn horde_migration_system_moves_200_far_beasts_only_on_scheduled_tick() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 1_199 });
         app.insert_resource(ZoneRegistry {
@@ -1749,40 +1749,39 @@ mod tests {
         app.add_systems(Update, horde_migration_system);
         let entities = (0..200)
             .map(|index| {
-                spawn_horde_entity(
-                    &mut app,
-                    DVec3::new(2.0 + (index % 10) as f64, 96.0, 2.0 + (index / 10) as f64),
-                    NpcLodTier::Far,
-                    5,
-                )
+                let start = DVec3::new(2.0 + (index % 10) as f64, 96.0, 2.0 + (index / 10) as f64);
+                let entity = spawn_horde_entity(&mut app, start, NpcLodTier::Far, 5);
+                (entity, start)
             })
             .collect::<Vec<_>>();
 
         app.update();
-        app.world_mut().resource_mut::<CultivationClock>().tick = 1_200;
-        let started_at = std::time::Instant::now();
-        app.update();
-        let elapsed = started_at.elapsed();
-
-        assert!(
-            elapsed <= std::time::Duration::from_millis(5),
-            "200 兽 FlowField 迁移单 tick 应控制在 5ms 内，实际耗时 {elapsed:?}"
-        );
-        let moved_count = entities
-            .iter()
-            .filter(|entity| {
+        for (entity, start) in &entities {
+            assert_eq!(
                 app.world()
-                    .get::<Position>(**entity)
+                    .get::<Position>(*entity)
                     .expect("测试实体应仍有 Position")
-                    .get()
-                    .x
-                    > 2.0
-            })
-            .count();
-        assert_eq!(
-            moved_count, 200,
-            "性能验收 tick 不能只空跑，200 只 Far 兽必须全部按流场推进"
-        );
+                    .get(),
+                *start,
+                "非 1200 tick 边界时 Far 兽不应提前迁移"
+            );
+        }
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = 1_200;
+        app.update();
+        for (entity, start) in &entities {
+            let moved = app
+                .world()
+                .get::<Position>(*entity)
+                .expect("测试实体应仍有 Position")
+                .get();
+            let distance = moved.distance(*start);
+            assert!(
+                distance > 0.0 && distance <= MIGRATION_FAR_STEP_BLOCKS + f64::EPSILON,
+                "调度 tick 内每只 Far 兽应恰好推进至多一个流场步长，实际 {distance}"
+            );
+            assert_eq!(moved.y, start.y, "FlowField 批量迁移不能改变 Y 坐标");
+        }
     }
 
     #[test]

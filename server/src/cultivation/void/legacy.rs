@@ -12,18 +12,14 @@ pub const LEGACY_REJECTION_WINDOW_TICKS: u64 = 24 * 60 * 60 * 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LegacyLetterboxStatus {
+    #[default]
     Pending,
     Accepted,
     Rejected,
     Drifted,
     Finalized,
-}
-
-impl Default for LegacyLetterboxStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

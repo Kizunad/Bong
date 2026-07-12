@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "anqi_hud",
+  "kind": "multishot",
+  "echo_count": 2147483647,
+  "aim_progress": 0,
+  "charge_progress": 1,
+  "abrasion_container": "",
+  "abrasion_qi_payload": 0,
+  "tick": 9007199254740991
+}
