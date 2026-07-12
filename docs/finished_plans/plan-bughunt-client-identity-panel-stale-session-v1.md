@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | identity 面板跨 session stale snapshot + 按钮回调冻结 | fix_pr | ⬜ |
+| P0 | identity 面板跨 session stale snapshot + 按钮回调冻结 | fix_pr | ✅ 2026-07-11 |
 
 ## P0 — identity 面板跨 session stale snapshot + 按钮回调冻结
 
@@ -63,3 +63,32 @@
 ## 审计来源
 
 bug-hunt round（worktree `bughunt-loop-20260705-by-client-overlay`，范围限定 client overlay / screen / surface sidepaths）。本条为 **report-only**；未改源码，只落一份 skeleton。候选经“disconnect 清理缺口 → stale store → 开屏固化回调 → render 不重建按钮”链路逐步收敛，未与 toast cross-session、visual tide sky、dash HUD、tool/weapon HUD leak 既有题目重叠。
+
+## Finish Evidence
+
+**验证结论**：skeleton 描述的两个子问题均为**真 bug**，已用代码现状（含修复前 `git show` 对照）核实：
+
+1. **断线不清**：修复前 `client/src/main/java/com/bong/client/BongNetworkHandler.java` 的 `clearClientStateOnDisconnect()`（约 28 项 store 清理清单）里没有任何 `IdentityPanelStateStore` 调用；该 store（`client/src/main/java/com/bong/client/identity/IdentityPanelStateStore.java:19`）是跨 session 存活的 `static volatile snapshot`，此前只有测试专用 `resetForTest()`。断线重连后 HUD 角标（`IdentityHudCornerLabel`）和刚打开的身份面板会短暂展示上一局的身份数据。
+2. **按钮回调冻结**：`IdentityPanelScreen.init()`（`client/src/main/java/com/bong/client/identity/IdentityPanelScreen.java:25-58`）把当时快照的 `identityId`/`cooldownPassed()` 固化进 `ButtonWidget.onPress` lambda，`render()`（同文件 61-81 行）只重画文字、不重建按钮；一旦面板在某个快照上 `init()` 完成，后续新快照到达只能改屏上文字，改不动按钮绑定的旧 `identityId`。
+
+**落地清单**：
+- `client/src/main/java/com/bong/client/identity/IdentityPanelStateStore.java` — 新增生产态 `clearOnDisconnect()`（复用 `replace(IdentityPanelState.empty())`，保证清空快照同时通知监听者，不误清监听者列表）。
+- `client/src/main/java/com/bong/client/BongNetworkHandler.java` — `clearClientStateOnDisconnect()` 接入 `IdentityPanelStateStore.clearOnDisconnect()`。
+- `client/src/main/java/com/bong/client/identity/IdentityPanelScreenBootstrap.java` — `register()` 新增 `IdentityPanelStateStore.addListener(...)`，回调 `onStoreChanged(IdentityPanelState)`：面板打开期间任何一次 store 更新（含断线清空）都用全新 `IdentityPanelScreen()` 实例整个替换当前面板，逼它重新 `init()` 拿新鲜数据重建按钮；`MinecraftClient.getInstance()==null` 时 short-circuit。
+
+**关键 commit**：
+- `ba8fbf88`（2026-07-11）修复 plan-bughunt-client-identity-panel-stale-session-v1：断线清理清单补上 IdentityPanelStateStore
+- `fff0335a`（2026-07-11）修复 plan-bughunt-client-identity-panel-stale-session-v1：面板订阅 store 消除按钮回调冻结
+
+**测试结果**：
+- 新增 `client/src/test/java/com/bong/client/identity/IdentityPanelStateStoreTest.java`（6 用例：清空非空快照 / 已空态幂等 / 通知单个监听者 / 通知多个监听者 / 不误清监听者注册表 / reconnect 后 `replace()` 仍生效）。
+- 新增 `client/src/test/java/com/bong/client/identity/IdentityPanelScreenBootstrapTest.java`（2 用例：`onStoreChanged` 在无头环境 `MinecraftClient.getInstance()==null` 时对空态/非空态均 null-safe）。
+- `client/src/test/java/com/bong/client/BongNetworkHandlerTest.java` 按既有三段式追加 2 用例（`disconnectClearsIdentityPanelStateStoreToPreventStaleSessionIdentityLeak` / `disconnectClearingIdentityPanelStateStoreDoesNotBlockNewSessionSnapshotAfterReconnect`），`@AfterEach` 补 `IdentityPanelStateStore.resetForTest()`。
+- `cd client && ./gradlew test build` 全绿（`BUILD SUCCESSFUL`，13 actionable tasks）。
+- 对抗验证：无上下文 read-only validator（opus）对 HEAD `fff0335ab5fea6e82eb35ca7c8fac3be4756cd17` 独立复核代码 + 编译 + 目标测试类，结论 `VERDICT: PASS`（附非阻塞观察：`IdentityPanelEntry` 未覆盖 `equals/hashCode`，当前测试未因此产生假阳性；`onStoreChanged` 未做 state 去重，面板打开时收到推送会清空正在输入的 `nameField`——均记为后续可选优化，不阻塞本次修复）。
+
+**跨仓库核验**：本修复为 client-only（vanilla Fabric Screen + static store），无需 server/agent 侧改动；server 端 `identity_panel_state` payload 契约未变。
+
+**遗留 / 后续**（超出本 plan 范围，供后续 plan 参考）：
+- `IdentityPanelEntry` 可考虑补 `equals/hashCode`（或改 `record`），避免未来新增依赖值相等比较的测试产生假阳性。
+- `IdentityPanelScreenBootstrap.onStoreChanged` 未做 snapshot 去重，面板打开期间任何一次 store 推送都会整份重建（含清空正在输入的 `nameField`）；若后续发现频繁推送影响输入体验，可加 `equals` 比对后跳过无变化的重建。

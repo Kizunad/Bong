@@ -5,6 +5,7 @@ use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{App, Client, DVec3, EventReader, Position, Query, Res, Update};
 
+use crate::world::poi_novice::PoiNoviceRegistry;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 const DAN_ZONG_ZONE: &str = "dan_zong_yi_yuan";
@@ -34,11 +35,17 @@ const DAN_ZONG_POI_OFFSETS: &[PoiOffset] = &[
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TppoiCmd {
+    InspectNovice,
     Teleport { zone: String, poi: String },
 }
 
 impl Command for TppoiCmd {
     fn assemble_graph(graph: &mut CommandGraphBuilder<Self>) {
+        graph
+            .root()
+            .literal("tppoi")
+            .literal("novice")
+            .with_executable(|_| TppoiCmd::InspectNovice);
         graph
             .root()
             .literal("tppoi")
@@ -61,6 +68,7 @@ pub fn register(app: &mut App) {
 pub fn handle_tppoi(
     mut events: EventReader<CommandResultEvent<TppoiCmd>>,
     zone_registry: Option<Res<ZoneRegistry>>,
+    novice_registry: Option<Res<PoiNoviceRegistry>>,
     mut players: Query<(&mut Position, &mut Client)>,
 ) {
     let fallback_registry;
@@ -72,21 +80,66 @@ pub fn handle_tppoi(
     };
 
     for event in events.read() {
-        let TppoiCmd::Teleport { zone, poi } = &event.result;
         let Ok((mut position, mut client)) = players.get_mut(event.executor) else {
             continue;
         };
-        let Some(zone_def) = zones.find_zone_by_name(zone.as_str()) else {
-            client.send_chat_message("Unknown zone.");
-            continue;
-        };
-        let Some(target) = poi_position(zone_def, poi.as_str()) else {
-            client.send_chat_message("Unknown POI.");
-            continue;
-        };
-        position.set([target.x, target.y, target.z]);
-        client.send_chat_message(format!("Teleported to POI `{zone}/{poi}`."));
+        match &event.result {
+            TppoiCmd::InspectNovice => {
+                for line in novice_registry_chat_lines(novice_registry.as_deref()) {
+                    client.send_chat_message(line);
+                }
+            }
+            TppoiCmd::Teleport { zone, poi } => {
+                let Some(zone_def) = zones.find_zone_by_name(zone.as_str()) else {
+                    client.send_chat_message("Unknown zone.");
+                    continue;
+                };
+                let Some(target) = poi_position(zone_def, poi.as_str()) else {
+                    client.send_chat_message("Unknown POI.");
+                    continue;
+                };
+                position.set([target.x, target.y, target.z]);
+                client.send_chat_message(format!("Teleported to POI `{zone}/{poi}`."));
+            }
+        }
     }
+}
+
+pub fn novice_registry_chat_lines(registry: Option<&PoiNoviceRegistry>) -> Vec<String> {
+    let Some(registry) = registry else {
+        return vec!["[dev] novice_poi registry missing".to_string()];
+    };
+    let mut sites = registry.sites().iter().collect::<Vec<_>>();
+    sites.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let mut kind_counts = std::collections::BTreeMap::<&str, usize>::new();
+    for site in &sites {
+        *kind_counts.entry(site.kind.as_str()).or_default() += 1;
+    }
+    let kinds = if kind_counts.is_empty() {
+        "none".to_string()
+    } else {
+        kind_counts
+            .into_iter()
+            .map(|(kind, count)| format!("{kind}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let mut lines = vec![format!(
+        "[dev] novice_poi registry count={} kinds={kinds}",
+        sites.len()
+    )];
+    for site in sites {
+        lines.push(format!(
+            "[dev] novice_poi {} pos={:.0},{:.0},{:.0} selection={}",
+            site.kind.as_str(),
+            site.pos_xyz[0],
+            site.pos_xyz[1],
+            site.pos_xyz[2],
+            site.selection_strategy
+        ));
+    }
+    lines
 }
 
 fn poi_position(zone: &Zone, poi: &str) -> Option<DVec3> {
@@ -109,6 +162,7 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::world::dimension::DimensionKind;
+    use crate::world::poi_novice::{PoiNoviceKind, PoiNoviceSite};
     use valence::prelude::Events;
 
     fn setup_app_with_dan_zong() -> App {
@@ -146,6 +200,40 @@ mod tests {
                 executor,
                 modifiers: Default::default(),
             });
+    }
+
+    #[test]
+    fn novice_registry_chat_lines_distinguish_missing_empty_and_loaded() {
+        assert_eq!(
+            novice_registry_chat_lines(None),
+            vec!["[dev] novice_poi registry missing".to_string()]
+        );
+
+        let mut registry = PoiNoviceRegistry::default();
+        assert_eq!(
+            novice_registry_chat_lines(Some(&registry)),
+            vec!["[dev] novice_poi registry count=0 kinds=none".to_string()]
+        );
+
+        registry.replace_all(vec![PoiNoviceSite {
+            id: "spawn:forge_station:test".to_string(),
+            kind: PoiNoviceKind::ForgeStation,
+            zone: "spawn".to_string(),
+            name: "破败炼器台".to_string(),
+            pos_xyz: [224.0, 71.0, -240.0],
+            selection_strategy: "strict_radius_1500".to_string(),
+            qi_affinity: 0.15,
+            danger_bias: 0,
+            tags: vec!["poi_novice".to_string()],
+        }]);
+        assert_eq!(
+            novice_registry_chat_lines(Some(&registry)),
+            vec![
+                "[dev] novice_poi registry count=1 kinds=forge_station:1".to_string(),
+                "[dev] novice_poi forge_station pos=224,71,-240 selection=strict_radius_1500"
+                    .to_string(),
+            ]
+        );
     }
 
     #[test]

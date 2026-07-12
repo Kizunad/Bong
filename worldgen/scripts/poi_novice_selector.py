@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Iterable
 import numpy as np
 
 if TYPE_CHECKING:
-    from .terrain_gen.fields import GeneratedFieldSet
+    from .terrain_gen.fields import GeneratedFieldSet, TerrainGenerationPlan
 
 
 class PoiType(StrEnum):
@@ -36,6 +36,11 @@ class Vec3:
 
     def as_tuple(self) -> tuple[float, float, float]:
         return (self.x, self.y, self.z)
+
+
+DEFAULT_NOVICE_POI_SPAWN_CENTER = Vec3(0.0, 70.0, 0.0)
+DEFAULT_NOVICE_POI_RADIUS = 1500
+DEFAULT_NOVICE_POI_SAMPLE_STRIDE = 8
 
 
 @dataclass(frozen=True)
@@ -180,6 +185,52 @@ _RELAXATION_STEPS: tuple[tuple[int, float, str], ...] = (
 )
 
 
+def novice_poi_max_search_radius(radius: int = DEFAULT_NOVICE_POI_RADIUS) -> int:
+    """Return the farthest radius any novice selector relaxation may inspect."""
+    return max(
+        radius,
+        *(step_radius for step_radius, _margin, _label in _RELAXATION_STEPS),
+    )
+
+
+def novice_poi_selection_tile_ids(
+    plan: "TerrainGenerationPlan",
+    *,
+    spawn_center: Vec3 = DEFAULT_NOVICE_POI_SPAWN_CENTER,
+    radius: int = DEFAULT_NOVICE_POI_RADIUS,
+    sample_stride: int = DEFAULT_NOVICE_POI_SAMPLE_STRIDE,
+) -> set[str]:
+    """Derive active tiles for the complete search window and slope halo.
+
+    This is intentionally derived from the generation plan rather than from a
+    caller-provided ``GeneratedFieldSet``.  A zone-filtered field set therefore
+    cannot certify its own partial tile list as complete.  One sample of halo
+    supplies the central-difference neighbours used by ``np.gradient`` at the
+    edge of the maximum relaxed radius.
+    """
+    if sample_stride <= 0:
+        raise ValueError("sample_stride must be positive")
+    search_radius = novice_poi_max_search_radius(radius) + sample_stride
+    radius_sq = float(search_radius * search_radius)
+    required: set[str] = set()
+    for tile in plan.tiles:
+        nearest_x = min(max(spawn_center.x, tile.min_x), tile.max_x)
+        nearest_z = min(max(spawn_center.z, tile.min_z), tile.max_z)
+        dx = nearest_x - spawn_center.x
+        dz = nearest_z - spawn_center.z
+        if dx * dx + dz * dz > radius_sq:
+            continue
+        if not any(
+            zone.bounds_xz.expanded(zone.worldgen.boundary.width).intersects(
+                tile.bounds
+            )
+            for zone in plan.blueprint_zones
+        ):
+            continue
+        required.add(tile.tile_id)
+    return required
+
+
 def select_poi_locations(
     spawn_center: Vec3,
     radius: int,
@@ -241,11 +292,48 @@ def select_poi_location_records(
 def build_novice_poi_manifest_payload(
     fields: "GeneratedFieldSet",
     *,
-    spawn_center: Vec3 = Vec3(0.0, 70.0, 0.0),
-    radius: int = 1500,
-    sample_stride: int = 8,
+    plan: "TerrainGenerationPlan",
+    spawn_center: Vec3 = DEFAULT_NOVICE_POI_SPAWN_CENTER,
+    radius: int = DEFAULT_NOVICE_POI_RADIUS,
+    sample_stride: int = DEFAULT_NOVICE_POI_SAMPLE_STRIDE,
 ) -> list[dict[str, object]]:
-    qi, terrain = _field_set_to_selector_inputs(fields, sample_stride=sample_stride)
+    """Build the six global novice POIs from a complete selection field set.
+
+    The required tile window is independently derived from ``plan`` and the
+    selector's maximum relaxation radius.  This prevents a zone-filtered
+    ``GeneratedFieldSet`` from passing its own tile IDs and silently replacing
+    global spawn POIs with fixed fallbacks.
+    """
+    required_tile_ids = novice_poi_selection_tile_ids(
+        plan,
+        spawn_center=spawn_center,
+        radius=radius,
+        sample_stride=sample_stride,
+    )
+    if not required_tile_ids:
+        raise ValueError(
+            "novice POI selection requires a non-empty complete tile window"
+        )
+    actual_tile_ids = {tile.tile.tile_id for tile in fields.tiles}
+    missing_tile_ids = sorted(required_tile_ids - actual_tile_ids)
+    if missing_tile_ids:
+        preview = ", ".join(missing_tile_ids[:8])
+        suffix = (
+            ""
+            if len(missing_tile_ids) <= 8
+            else f" (+{len(missing_tile_ids) - 8} more)"
+        )
+        raise ValueError(
+            "GeneratedFieldSet does not cover the complete novice POI selection "
+            f"window; missing tile(s): {preview}{suffix}"
+        )
+
+    qi, terrain = _field_set_to_selector_inputs(
+        fields,
+        plan=plan,
+        required_tile_ids=required_tile_ids,
+        sample_stride=sample_stride,
+    )
     records = select_poi_location_records(
         spawn_center,
         radius,
@@ -385,44 +473,87 @@ def _pos_from_index(row: int, col: int, terrain: TerrainField) -> Vec3:
 
 
 def _field_set_to_selector_inputs(
-    fields: "GeneratedFieldSet", *, sample_stride: int
+    fields: "GeneratedFieldSet",
+    *,
+    plan: "TerrainGenerationPlan",
+    required_tile_ids: set[str],
+    sample_stride: int,
 ) -> tuple[np.ndarray, TerrainField]:
     if sample_stride <= 0:
         raise ValueError("sample_stride must be positive")
     if "qi_density" not in fields.layers:
         raise ValueError("GeneratedFieldSet must include qi_density for novice POI selection")
 
-    tiles = fields.tiles
-    if not tiles:
+    if not fields.tiles:
         raise ValueError("GeneratedFieldSet has no tiles")
 
-    min_x = min(tile.tile.min_x for tile in tiles)
-    max_x = max(tile.tile.max_x for tile in tiles)
-    min_z = min(tile.tile.min_z for tile in tiles)
-    max_z = max(tile.tile.max_z for tile in tiles)
+    plan_tiles_by_id = {tile.tile_id: tile for tile in plan.tiles}
+    selection_tiles = [
+        plan_tiles_by_id[tile_id] for tile_id in sorted(required_tile_ids)
+    ]
+
+    # The grid depends only on the plan-derived required tiles.  A full-world
+    # field set and a bounded field set therefore get identical origins, shapes,
+    # defaults and gradient edge semantics.  Anchor one sampling phase at the
+    # selection bounds instead of restarting local=0 in every tile: otherwise
+    # adjacent tiles whose size is not divisible by sample_stride can collapse
+    # distinct world samples into the same grid cell.  The one-cell default
+    # border keeps every real sample on the central-difference path; active
+    # neighbours needed by that gradient are already included by the
+    # required-tile halo above.
+    sample_origin_x = min(tile.min_x for tile in selection_tiles)
+    sample_origin_z = min(tile.min_z for tile in selection_tiles)
+    last_sample_x = sample_origin_x + (
+        (max(tile.max_x for tile in selection_tiles) - sample_origin_x)
+        // sample_stride
+    ) * sample_stride
+    last_sample_z = sample_origin_z + (
+        (max(tile.max_z for tile in selection_tiles) - sample_origin_z)
+        // sample_stride
+    ) * sample_stride
+    min_x = sample_origin_x - sample_stride
+    max_x = last_sample_x + sample_stride
+    min_z = sample_origin_z - sample_stride
+    max_z = last_sample_z + sample_stride
     width = ((max_x - min_x) // sample_stride) + 1
     depth = ((max_z - min_z) // sample_stride) + 1
 
     qi = np.full((depth, width), np.nan, dtype=np.float64)
     height = np.full((depth, width), 70.0, dtype=np.float64)
     water_mask = np.ones((depth, width), dtype=bool)
+    populated = np.zeros((depth, width), dtype=bool)
 
-    for tile in tiles:
+    field_tiles_by_id = {
+        tile.tile.tile_id: tile
+        for tile in fields.tiles
+        if tile.tile.tile_id in required_tile_ids
+    }
+
+    for tile_id in sorted(required_tile_ids):
+        tile = field_tiles_by_id[tile_id]
         tile_size = tile.tile_size
         height_tile = tile.layers["height"].reshape((tile_size, tile_size))
         qi_tile = tile.layers["qi_density"].reshape((tile_size, tile_size))
         water_tile = tile.layers["water_level"].reshape((tile_size, tile_size))
-        for local_z in range(0, tile_size, sample_stride):
+        first_local_z = (sample_origin_z - tile.tile.min_z) % sample_stride
+        first_local_x = (sample_origin_x - tile.tile.min_x) % sample_stride
+        for local_z in range(first_local_z, tile_size, sample_stride):
             world_z = tile.tile.min_z + local_z
             row = (world_z - min_z) // sample_stride
-            for local_x in range(0, tile_size, sample_stride):
+            for local_x in range(first_local_x, tile_size, sample_stride):
                 world_x = tile.tile.min_x + local_x
                 col = (world_x - min_x) // sample_stride
+                if populated[row, col]:
+                    raise ValueError(
+                        "novice POI sampling grid collision at "
+                        f"({world_x}, {world_z}) while reading tile {tile_id}"
+                    )
                 h = float(height_tile[local_z, local_x])
                 water = float(water_tile[local_z, local_x])
                 qi[row, col] = float(qi_tile[local_z, local_x])
                 height[row, col] = h
                 water_mask[row, col] = water >= 0.0 and h < water + 0.75
+                populated[row, col] = True
 
     terrain = TerrainField.from_height(
         height,

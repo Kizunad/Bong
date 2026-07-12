@@ -135,11 +135,17 @@ pub fn handle_meridian(
                     .iter()
                     .filter(|meridian| meridian.opened)
                     .map(|meridian| {
+                        // plan-race-system-v1 P1a：`Meridian.id` 已换轨为
+                        // `MeridianChannelId`；`meridian_label` 仍是 legacy
+                        // `MeridianId` 接口（dev 命令展示用，humanoid 20 条经脉均可
+                        // 逆映射回 `MeridianId`）。
+                        let label = meridian.id.to_meridian_id().map_or_else(
+                            || meridian.id.to_string(),
+                            |legacy| meridian_label(legacy).to_string(),
+                        );
                         format!(
-                            "{} progress={:.2} cap={:.1}",
-                            meridian_label(meridian.id),
-                            meridian.open_progress,
-                            meridian.flow_capacity
+                            "{label} progress={:.2} cap={:.1}",
+                            meridian.open_progress, meridian.flow_capacity
                         )
                     })
                     .collect::<Vec<_>>();

@@ -4581,7 +4581,7 @@ mod redis_bridge_tests {
                 tick: 44,
                 target_id: "offline:Crimson".to_string(),
                 attacker_id: Some("offline:Azure".to_string()),
-                body_part: Some(crate::schema::combat_event::CombatBodyPartV1::Chest),
+                body_part: Some(crate::schema::combat_event::CombatBodyPartV1::chest()),
                 wound_kind: Some(crate::schema::combat_event::CombatWoundKindV1::Blunt),
                 source: Some(CombatAttackSourceV1::Melee),
                 damage: Some(20.0),
