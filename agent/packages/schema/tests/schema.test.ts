@@ -2152,6 +2152,58 @@ describe("sample files pass schema validation", () => {
     expect(validate(ServerDataV1, bad).ok).toBe(false);
   });
 
+  it("cultivation_detail 缺失 body_plan_id 仍通过（Optional 字段，join 首帧竞态前尚未取得 plan id 的旧存档兼容）", () => {
+    const base = loadSample("server-data.cultivation-detail.sample.json") as Record<
+      string,
+      unknown
+    >;
+    const withoutPlanId = { ...base };
+    delete withoutPlanId.body_plan_id;
+    const result = validate(ServerDataV1, withoutPlanId);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-race-system-v1 P2c —— BodyPlanLayoutV1 四个 section 的边界补测：
+  // anchors/meridian_paths/part_display_map 三个字段 Rust 侧
+  // （validate_body_plan_layout）与 TS 侧 schema 均**没有** minItems 约束
+  // （只有 silhouette 要求非空），空数组是合法状态（Rust body_plan/layout.rs
+  // 的 fixture_layout() 也用 meridian_paths: vec![] 佐证），不是"没写全"的疏漏。
+  it("anchors 空数组是合法边界（非人形构型渲染阶段可以暂无红点锚点）", () => {
+    const payload = { ...validBodyPlanLayout(), anchors: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("meridian_paths 空数组是合法边界（非人形构型可以没有经脉折线，如 P0 fixture 无 meridian_profile）", () => {
+    const payload = { ...validBodyPlanLayout(), meridian_paths: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("part_display_map 空数组是合法边界（渲染层可暂不提供 server 部位 → 展示段映射）", () => {
+    const payload = { ...validBodyPlanLayout(), part_display_map: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("silhouette 多边形恰好 3 个顶点是合法边界（minItems: 3 的下边界，非人形三角剪影段的最小合法形状）", () => {
+    const payload = {
+      ...validBodyPlanLayout(),
+      silhouette: [
+        {
+          part_id: "chest",
+          polygon: [
+            { x: 0.3, y: 0.1 },
+            { x: 0.7, y: 0.1 },
+            { x: 0.5, y: 0.3 },
+          ],
+        },
+      ],
+    };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.mineral-probe.sample.json", () => {
     const data = loadSample("client-request.mineral-probe.sample.json");
     const result = validate(ClientRequestV1, data);
