@@ -93,21 +93,25 @@ def resume(
 
 def wait(cwd: Path, session_id: str, interval: float, timeout: float) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
-    first_poll = True
+    saw_active = False
     while True:
         item = require_session(cwd, session_id)
         state = item.get("state")
         status = item.get("status")
         if state in TERMINAL_STATES:
             return item
-        # A freshly backgrounded session is briefly reported as working/idle
-        # before its process changes to busy. Require one settled poll before
-        # accepting idle, otherwise wait returns before the task starts.
-        if status == "idle" and not first_poll:
-            return item
+        # ``working/idle`` is transient before startup. After the worker has
+        # reported an active status, its return to idle is the CLI's observable
+        # completion transition even though ``agents --json`` keeps the
+        # background session reusable as ``state=working``.
+        if status == "idle" and saw_active:
+            completed = dict(item)
+            completed["state"] = "completed"
+            return completed
+        if status != "idle":
+            saw_active = True
         if time.monotonic() >= deadline:
             raise AdapterError(f"wait timed out for {session_id} in state={state!r}")
-        first_poll = False
         time.sleep(interval)
 
 
