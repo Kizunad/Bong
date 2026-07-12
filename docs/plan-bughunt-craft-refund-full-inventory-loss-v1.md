@@ -68,11 +68,11 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 钉死 refund grant 语义：退款项必须入包或落地，不能只 log 后丢弃 | fix_pr | ⬜ |
-| P1 | 给 craft refund 路径接入 `DroppedLootRegistry`、玩家 `Position` 与 dimension | fix_pr | ⬜ |
-| P2 | 显式取消分支按实际 grant / drop 结果统计 `material_returned`，避免虚报 | fix_pr | ⬜ |
-| P3 | finalize 输出 grant 失败后的剩余批次退款同样使用入包或落地兜底 | fix_pr | ⬜ |
-| P4 | 补满包、混合成功、无 registry、配置错误等回归测试 | fix_pr | ⬜ |
+| P0 | 钉死 refund grant 语义：退款项必须入包或落地，不能只 log 后丢弃 | fix_pr | ✅ 2026-07-12 |
+| P1 | 给 craft refund 路径接入 `DroppedLootRegistry`、玩家 `Position` 与 dimension | fix_pr | ✅ 2026-07-12 |
+| P2 | 显式取消分支按实际 grant / drop 结果统计 `material_returned`，避免虚报 | fix_pr | ✅ 2026-07-12 |
+| P3 | finalize 输出 grant 失败后的剩余批次退款同样使用入包或落地兜底 | fix_pr | ✅ 2026-07-12 |
+| P4 | 补满包、混合成功、无 registry、配置错误等回归测试 | fix_pr | ✅ 2026-07-12 |
 
 建议实现方向：
 
@@ -97,8 +97,19 @@
 - 如果继续沿用预计算 `material_returned`，客户端会保留“显示返还但实际没返还/落地”的反馈漂移。
 - 不应把 unknown template、无容器、allocator 错误全部伪装成地面掉落；只有 `inventory full:` 适合走 `DroppedLootRegistry` fallback。
 
+## Finish Evidence
+
+- **落地清单**：`server/src/network/craft_emit.rs` 对 start/cancel/finalize 做 clone staging，成功写入 SQLite 后才发布 inventory/session/事件；退款满包落入 durable `DroppedLootRegistry`，结构错误整批回滚，同帧重复请求幂等。
+- **持久化闭环**：`server/src/persistence/mod.rs` v37 增加 `dropped_loot`；`server/src/player/state.rs` 将 inventory、craft session、cultivation qi、pending inflow 与退款掉落同事务提交，拾取时 inventory 与 durable row 删除同事务提交；重启 hydrate 同时推进 instance allocator 高水位。
+- **生命周期**：`server/src/player/mod.rs`、`server/src/network/mod.rs`、`server/src/cmd/dev/reset.rs` 覆盖通用 inventory flush 排序、失败 dirty 重试、登录恢复、断线/停服保存和 dev reset 清理。
+- **协议与 Bot**：`scripts/bot/proto_min.py` 解码 `craft_outcome.material_returned` 与 `dropped_loot_sync`；两个 production 场景验证满包双 cancel、唯一掉落/逐份拾取、断线暂停恢复和精确一次退款。
+- **关键 commit**：本 PR 的三笔最终提交分别锁定 durable 持久化、退款运行时守恒和 Bot/evidence；具体 hash 以 PR #1142 最终 HEAD 为准。
+- **测试结果**：`cargo check --all-targets` PASS；`cargo fmt --check` PASS；craft emit 39/39、craft session 41/41、事务故障注入与重启往返定向测试 PASS；Python protocol 50/50 PASS；production Bot 2/2 PASS。全量 `cargo test` 为 11226 PASS、1 ignored、唯一共享 POI 并发耗时阈值失败，单线程定向复跑 PASS（7.10s）。
+- **跨仓库核验**：server `CraftSessionPersistenceDirty` / `save_player_craft_checkpoint` / `dropped_loot`；Bot `craft_session_state` / `craft_outcome` / `dropped_loot_sync`；本修复不改 client 或 agent schema。
+- **遗留 / 后续**：`cargo clippy --all-targets -- -D warnings` 仍被 Rust 1.96 引入的 66 项共享基线 lint 阻断，本 PR 新增代码无诊断；不在 #1142 范围内追改。
+
 ## 审计说明
 
-- 本轮只做 BugHunt skeleton，不修代码、不改配置、不改依赖、不消费或归档 plan。
+- BugHunt skeleton 已由 PR #1142 消费并完成修复；未改依赖或生产配置。
 - 已用 `gh pr list --state open --limit 100` 检查开放 PR；已避开 #973/#981/#990/#1004/#1007/#1014/#1022/#1029/#1034 以及相邻 craft close / craft outcome 题目。
 - 反方 subagent 已完成两轮对抗审查，结论均为“成立且不重复”。
