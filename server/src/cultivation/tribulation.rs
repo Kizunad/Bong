@@ -3669,7 +3669,7 @@ fn settle_fled_tribulation(
     )>();
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn tribulation_intercept_death_system(
     mut deaths: EventReader<DeathEvent>,
     mut commands: Commands,
