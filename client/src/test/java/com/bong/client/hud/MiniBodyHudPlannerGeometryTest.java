@@ -35,6 +35,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code server/assets/body_plans/layouts/humanoid.json} 的 anchors 独立算出并写死，
  * 任何未来回归都会撞红；同时锁定"无 layout"路径与改造前硬编码表逐值相等（这条
  * 路径的字节码完全未变，理应恒等）。
+ *
+ * <p><b>P2c 降级说明（数值对拍而非截图对拍）</b>：plan §P2 测试项首选
+ * {@code client/tools} render harness 截图对拍，但该目录现有工具
+ * （render_animation.py / render_held_item.py / screenshot_weapon.sh）只覆盖
+ * 玩家动画姿态与手持物模型渲染，均不驱动 HUD 渲染层（本 planner 产出的
+ * HudRenderCommand 由游戏内 HudRenderer 消费，headless 工具链无对应入口），
+ * 因此按 plan 允许的降级路径改用逐坐标数值 pin——buildCommands 输出的 rect
+ * 几何完全由这些坐标决定，数值锁死等价于像素级锁死。
  */
 class MiniBodyHudPlannerGeometryTest {
 

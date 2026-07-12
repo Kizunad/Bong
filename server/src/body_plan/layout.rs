@@ -689,7 +689,14 @@ mod tests {
             BodyPartDef, BodyPlan, HitGeometry, PartBox, PartConsequence,
         };
 
-        let parts = vec!["skull", "torso", "dorsal_fin", "left_pectoral_fin", "right_pectoral_fin", "tail_fin"];
+        let parts = vec![
+            "skull",
+            "torso",
+            "dorsal_fin",
+            "left_pectoral_fin",
+            "right_pectoral_fin",
+            "tail_fin",
+        ];
         BodyPlan {
             id: BodyPlanId::new("whale_synthetic"),
             display_name: "合成飞鲸测试构型".to_string(),
@@ -776,13 +783,18 @@ mod tests {
         let dir = tempdir();
         write_json(&dir, "whale_synthetic.json", &synthetic_whale_layout());
 
-        let registry = BodyPlanLayoutRegistry::load_dir(&dir, &body_plans)
-            .expect("synthetic 6-part non-humanoid layout must pass validate_body_plan_layout and load");
+        let registry = BodyPlanLayoutRegistry::load_dir(&dir, &body_plans).expect(
+            "synthetic 6-part non-humanoid layout must pass validate_body_plan_layout and load",
+        );
         assert_eq!(registry.len(), 1);
         let loaded = registry
             .get(&BodyPlanId::new("whale_synthetic"))
             .expect("loaded registry must contain the synthetic whale layout");
-        assert_eq!(loaded.silhouette.len(), 6, "6 段构型必须全部保留，不能被静默丢段");
+        assert_eq!(
+            loaded.silhouette.len(),
+            6,
+            "6 段构型必须全部保留，不能被静默丢段"
+        );
         assert_eq!(loaded.anchors.len(), 6);
         assert_eq!(loaded.part_display_map.len(), 6);
 
@@ -888,8 +900,8 @@ mod tests {
     #[test]
     fn layout_covering_only_a_subset_of_plan_parts_is_valid_missing_segments_are_not_an_error() {
         let plan = synthetic_whale_body_plan();
-        let body_plans = BodyPlanRegistry::from_plans(vec![plan])
-            .expect("synthetic whale plan must validate");
+        let body_plans =
+            BodyPlanRegistry::from_plans(vec![plan]).expect("synthetic whale plan must validate");
 
         let mut partial = synthetic_whale_layout();
         // 只保留前 2 段（skull/torso），故意漏掉 dorsal_fin/left_pectoral_fin/
@@ -906,7 +918,11 @@ mod tests {
         let loaded = registry
             .get(&BodyPlanId::new("whale_synthetic"))
             .expect("partial layout must still load under its body_plan_id");
-        assert_eq!(loaded.silhouette.len(), 2, "缺段 layout 必须原样保留其声明的子集，不做隐式补全");
+        assert_eq!(
+            loaded.silhouette.len(),
+            2,
+            "缺段 layout 必须原样保留其声明的子集，不做隐式补全"
+        );
         cleanup(&dir);
     }
 
@@ -921,10 +937,12 @@ mod tests {
             BodyPlanRegistry::from_plans(vec![plan]).expect("synthetic whale plan must validate");
 
         let mut redundant = synthetic_whale_layout();
-        redundant.part_display_map.push(BodyPlanPartDisplayMappingV1 {
-            server_part_id: "phantom_blowhole".to_string(),
-            display_segment_id: "phantom_blowhole".to_string(),
-        });
+        redundant
+            .part_display_map
+            .push(BodyPlanPartDisplayMappingV1 {
+                server_part_id: "phantom_blowhole".to_string(),
+                display_segment_id: "phantom_blowhole".to_string(),
+            });
 
         let dir = tempdir();
         write_json(&dir, "whale_redundant.json", &redundant);
@@ -932,10 +950,7 @@ mod tests {
             .expect_err("引用 plan 未声明部位的冗余 display_map 条目必须被拒绝，不能悄悄放过");
         match err {
             BodyPlanLayoutLoadError::Invalid { reason, .. } => {
-                assert!(
-                    reason.contains("unknown server part id"),
-                    "got: {reason}"
-                );
+                assert!(reason.contains("unknown server part id"), "got: {reason}");
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
