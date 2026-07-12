@@ -39,6 +39,7 @@
 //! 对拍测试 + `humanoid.json` 数值与旧硬编码表的逐项 pin 测试来保证。
 
 pub mod geometry;
+pub mod layout;
 pub mod legacy;
 pub mod race_registry;
 pub mod registry;
@@ -46,6 +47,7 @@ pub mod resolve;
 pub mod types;
 pub mod validate;
 
+pub use layout::{humanoid_layout_static, BodyPlanLayoutLoadError, BodyPlanLayoutRegistry};
 pub use legacy::{id_to_legacy_body_part, legacy_body_part_to_id, legacy_body_parts_matching};
 pub use race_registry::{RaceLoadError, RaceRegistry, HUMAN_RACE_ID};
 pub use registry::{
@@ -140,8 +142,22 @@ pub fn register(app: &mut App) {
         });
     tracing::info!("[bong][body_plan] loaded {} race(s)", races.len());
 
+    let layouts_dir = assets_root.join(layout::DEFAULT_BODY_PLAN_LAYOUTS_DIR);
+    let layouts = layout::BodyPlanLayoutRegistry::load_dir(&layouts_dir, &body_plans)
+        .unwrap_or_else(|error| {
+            panic!(
+                "[bong][body_plan] failed to load body plan layouts from {}: {error}",
+                layouts_dir.display()
+            )
+        });
+    tracing::info!(
+        "[bong][body_plan] loaded {} body plan layout(s)",
+        layouts.len()
+    );
+
     app.insert_resource(body_plans);
     app.insert_resource(races);
+    app.insert_resource(layouts);
 }
 
 #[cfg(test)]
