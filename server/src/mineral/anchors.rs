@@ -588,4 +588,78 @@ mod tests {
         }
         let _ = fs::remove_file(path);
     }
+
+    // ─── plan-bughunt-mineral-anchor-position-drift-v1 ──────────────
+    // 回归契约：`worldgen/blueprint/mineral_anchors.json` 的每条固定矿脉
+    // anchor 必须（1）声明一个当前 runtime zone 表里真实存在的 zone，
+    // （2）position 落在该 zone 的 AABB 内。此前 qingyun_peaks / blood_valley /
+    // lingquan_marsh 的 9 条 anchor 全部用旧世界坐标，实际都落在 spawn AABB
+    // 内；`rift_valley` 更是不存在的旧 zone id。加这条契约测试防止未来 zone
+    // 坐标迁移时同类漂移静默复发。
+
+    #[test]
+    fn manifest_anchors_declare_zones_that_exist_in_runtime_registry() {
+        let registry = build_default_registry();
+        let anchors = load_mineral_anchors(MineralAnchorConfig::default().path, &registry).unwrap();
+        let zones = crate::world::zone::ZoneRegistry::load();
+
+        assert!(
+            !anchors.is_empty(),
+            "sanity: manifest 应至少含一条 anchor，否则本测试没有覆盖到任何数据"
+        );
+
+        for anchor in &anchors {
+            let zone = zones.find_zone_by_name(&anchor.zone).unwrap_or_else(|| {
+                panic!(
+                    "mineral anchor `{}`({:?}) 声明的 zone `{}` 在当前 runtime zone 表(server/zones.json)中不存在——\
+                     旧 zone id 迁移后必须同步更新 anchor 的 zone 字段",
+                    anchor.mineral_id, anchor.center, anchor.zone
+                )
+            });
+            let pos = valence::prelude::DVec3::new(
+                anchor.center.x as f64,
+                anchor.center.y as f64,
+                anchor.center.z as f64,
+            );
+            assert!(
+                zone.contains(pos),
+                "mineral anchor `{}`({:?}) 声明 zone `{}`，但 position 不在该 zone 的 AABB {:?} 内——\
+                 anchor 坐标已随 zone 坐标迁移漂移（远端矿脉门槛被压低到 spawn 附近）",
+                anchor.mineral_id,
+                anchor.center,
+                anchor.zone,
+                zone.bounds
+            );
+        }
+    }
+
+    #[test]
+    fn manifest_only_spawn_anchor_is_the_teaching_fan_tie_vein() {
+        let registry = build_default_registry();
+        let anchors = load_mineral_anchors(MineralAnchorConfig::default().path, &registry).unwrap();
+
+        let spawn_anchors: Vec<_> = anchors.iter().filter(|a| a.zone == "spawn").collect();
+        assert_eq!(
+            spawn_anchors.len(),
+            1,
+            "spawn 区应只保留教学用凡铁矿脉一条 anchor，其余矿点必须归属各自远端 zone"
+        );
+        assert_eq!(
+            spawn_anchors[0].mineral_id,
+            MineralId::FanTie,
+            "spawn 区唯一保留的 anchor 必须是教学凡铁矿，不是任何远端稀有矿"
+        );
+    }
+
+    #[test]
+    fn manifest_no_longer_references_nonexistent_rift_valley_zone() {
+        let registry = build_default_registry();
+        let anchors = load_mineral_anchors(MineralAnchorConfig::default().path, &registry).unwrap();
+
+        assert!(
+            anchors.iter().all(|a| a.zone != "rift_valley"),
+            "`rift_valley` 不是当前 runtime zone 表中的合法 zone id（血谷 zone 名已是 \
+             `blood_valley`），manifest 不应再引用这个旧 id"
+        );
+    }
 }
