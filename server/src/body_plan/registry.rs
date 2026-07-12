@@ -32,14 +32,16 @@ pub const HUMANOID_BODY_PLAN_ID: &str = "humanoid";
 /// 数据"又不能改变函数签名去牵动这些既有调用点——因此不能像 `resolve_attack_intents`
 /// 那样接 `Res<BodyPlanRegistry>`。
 ///
-/// 本函数与 `load_dir()` 读同一份磁盘文件（`CARGO_MANIFEST_DIR`-relative，与
-/// `body_plan::register()` 启动期加载路径一致），`OnceLock` 保证进程生命周期内只做一次
-/// 文件 IO + JSON 解析，此后是一次原子读的开销——不产生第二份硬编码数据源，humanoid
-/// 的部位倍率 / 命中几何 / PartConsequence 标签只在 `humanoid.json` 里写一次。
+/// 本函数与 `load_dir()` 读同一份磁盘文件（资产根目录经
+/// [`super::resolve_assets_root`] 运行时解析，与 `body_plan::register()` 启动期加载
+/// 路径一致——bughunt major-3 修复前两者都是编译期烙死的 `CARGO_MANIFEST_DIR`，
+/// 脱离源码树部署会 panic），`OnceLock` 保证进程生命周期内只做一次文件 IO + JSON
+/// 解析，此后是一次原子读的开销——不产生第二份硬编码数据源，humanoid 的部位倍率 /
+/// 命中几何 / PartConsequence 标签只在 `humanoid.json` 里写一次。
 pub fn humanoid_plan_static() -> &'static BodyPlan {
     static PLAN: OnceLock<BodyPlan> = OnceLock::new();
     PLAN.get_or_init(|| {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = super::resolve_assets_root()
             .join(DEFAULT_BODY_PLANS_DIR)
             .join(format!("{HUMANOID_BODY_PLAN_ID}.json"));
         let text = fs::read_to_string(&path).unwrap_or_else(|error| {
