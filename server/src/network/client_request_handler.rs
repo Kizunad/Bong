@@ -136,7 +136,7 @@ use crate::npc::interaction_memory::{
 };
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
-use crate::npc::trade::NpcPlayerReputation;
+use crate::npc::trade::{NpcPlayerReputation, NpcTradeInventory};
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
@@ -429,6 +429,7 @@ type NpcEngagementItem = (
 #[derive(SystemParam)]
 pub struct NpcEngagementRequestParams<'w, 's> {
     pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
+    pub trade_inventories: Query<'w, 's, &'static NpcTradeInventory, With<NpcMarker>>,
     pub lifecycles: Query<'w, 's, &'static Lifecycle>,
     pub memories: Query<
         'w,
@@ -1383,7 +1384,7 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
-                let Some((template_id, base_price)) =
+                let Some((template_id, _catalogue_price)) =
                     npc_trade_catalog_entry(target.archetype, &requested_item_id)
                 else {
                     emit_npc_refuse_audio(
@@ -1411,6 +1412,40 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
+                let Ok(trade_inventory) =
+                    npc_engagement_params.trade_inventories.get(target.entity)
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 当前没有可成交的货物。", target.display_name),
+                    );
+                    continue;
+                };
+                let Some(offer) = trade_inventory
+                    .offers
+                    .iter()
+                    .find(|offer| offer.template_id == template_id)
+                    .cloned()
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 当前没有这件货。", target.display_name),
+                    );
+                    continue;
+                };
+                let base_price = u64::from(offer.price_bone_coins);
                 // P3: 将旧 i32 信誉转为 0.0-1.0 范围用于新定价系统。
                 // plan-territory-v1 P1: 叠加 NpcPlayerReputation（霸主驻守 rep 加成写入此组件）。
                 // 叠加策略：先取 FactionMembership baseline (i32 → [0,1])，
@@ -1527,7 +1562,7 @@ pub fn handle_client_request_payloads(
                     &alchemy_params.item_registry,
                     instance_allocator,
                     template_id,
-                    1,
+                    offer.count,
                     combat_clock.tick,
                 ) {
                     send_npc_interaction_feedback(
@@ -1543,8 +1578,8 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 client.send_chat_message(format!(
-                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {}。",
-                    target.display_name, template_id
+                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {} x{}。",
+                    target.display_name, offer.display_name, offer.count
                 ));
                 record_player_npc_interaction(
                     &mut npc_engagement_params.memories,
@@ -4634,6 +4669,468 @@ mod tests {
             app.world().get::<PlayerInventory>(player).is_none(),
             "Wanted rejection happens before trade side effects or inventory mutation"
         );
+    }
+
+    fn run_npc_trade_request(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+    ) -> (App, Entity, MockClientHelper) {
+        run_npc_trade_request_with_reputation(
+            player_inventory,
+            trade_inventory,
+            requested_item_id,
+            None,
+        )
+    }
+
+    fn run_npc_trade_request_with_reputation(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+        npc_player_reputation: Option<NpcPlayerReputation>,
+    ) -> (App, Entity, MockClientHelper) {
+        run_npc_trade_request_with_context(
+            player_inventory,
+            trade_inventory,
+            requested_item_id,
+            npc_player_reputation,
+            None,
+            DVec3::new(0.0, 64.0, 0.0),
+            None,
+        )
+    }
+
+    fn run_npc_trade_request_with_context(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+        npc_player_reputation: Option<NpcPlayerReputation>,
+        player_faction_reputation: Option<FactionReputation>,
+        position: DVec3,
+        npc_membership: Option<FactionMembership>,
+    ) -> (App, Entity, MockClientHelper) {
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().unwrap());
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+        if player_faction_reputation.is_some() {
+            app.insert_resource(ZoneRegistry::load_from_path(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"),
+            ));
+        }
+
+        let (client_bundle, helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((client_bundle, player_inventory))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(position));
+        if let Some(player_faction_reputation) = player_faction_reputation {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(player_faction_reputation);
+        }
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityKind::VILLAGER,
+                EntityId::default(),
+                Position::new(position + DVec3::new(1.0, 0.0, 0.0)),
+                OldPosition::new(position + DVec3::new(1.0, 0.0, 0.0)),
+                NpcArchetype::Commoner,
+            ))
+            .id();
+        if let Some(trade_inventory) = trade_inventory {
+            app.world_mut().entity_mut(npc).insert(trade_inventory);
+        }
+        if let Some(npc_player_reputation) = npc_player_reputation {
+            app.world_mut()
+                .entity_mut(npc)
+                .insert(npc_player_reputation);
+        }
+        if let Some(npc_membership) = npc_membership {
+            app.world_mut().entity_mut(npc).insert(npc_membership);
+        }
+
+        app.update();
+        let npc_entity_id = app
+            .world()
+            .get::<EntityId>(npc)
+            .expect("EntityPlugin must assign protocol id to NPC")
+            .get();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::NpcTradeRequest {
+                    v: 1,
+                    npc_entity_id,
+                    offered_items: Vec::new(),
+                    requested_item_id: requested_item_id.to_string(),
+                })
+                .expect("npc trade request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        (app, player, helper)
+    }
+
+    fn live_trade_offer(
+        template_id: &str,
+        display_name: &str,
+        count: u32,
+        price_bone_coins: u32,
+    ) -> crate::npc::trade::TradeOffer {
+        crate::npc::trade::TradeOffer {
+            template_id: template_id.to_string(),
+            display_name: display_name.to_string(),
+            count,
+            price_bone_coins,
+        }
+    }
+
+    fn inventory_item_count(inventory: &PlayerInventory, template_id: &str) -> u32 {
+        inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .filter(|placed| placed.instance.template_id == template_id)
+            .map(|placed| placed.instance.stack_count)
+            .sum()
+    }
+
+    #[test]
+    fn npc_trade_request_grants_full_bundle_count() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("trade should keep player inventory attached");
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            3,
+            "one accepted bundle offer must grant its full live count"
+        );
+        assert_eq!(
+            inventory.bone_coins, 88,
+            "one accepted bundle offer must deduct its live total price exactly once"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_single_count_offer_still_grants_one() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 1, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 1);
+        assert_eq!(inventory.bone_coins, 88);
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_offer_not_present_in_live_inventory() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let original_revision = inventory.revision;
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer(
+                    "ling_xi_wan_flawed",
+                    "灵息丸（次品）",
+                    2,
+                    8,
+                )],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, original_revision);
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有这件货")),
+            "live subset rejection must be visible to the player, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "live subset rejection must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_empty_live_inventory_without_side_effects() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(8);
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory { offers: vec![] }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(8));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有这件货")),
+            "empty live inventory must use the visible missing-offer rejection, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "empty live inventory must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_uses_live_offer_count_not_catalogue_default() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 5, 10)],
+            }),
+            "lingcao",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 5);
+        assert_eq!(inventory.bone_coins, 90);
+    }
+
+    #[test]
+    fn npc_trade_request_success_message_includes_bundle_count() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (_app, _player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("灵草 x3")),
+            "success feedback must expose the granted bundle count, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_uses_live_offer_total_price() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 17)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 83,
+            "live offer price is the bundle total and must override catalogue price"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_applies_non_neutral_reputation_to_live_bundle_total() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 18;
+        let mut reputation = NpcPlayerReputation::default();
+        reputation.adjust("offline:Azure", 0.3);
+        let (app, player, _helper) = run_npc_trade_request_with_reputation(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 20)],
+            }),
+            "spirit_grass",
+            Some(reputation),
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 0,
+            "high reputation discount must apply to live total 20 (current ceil result 18), not catalogue 10"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_applies_faction_reputation_to_live_bundle_total() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 18;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 51);
+        let (app, player, _helper) = run_npc_trade_request_with_context(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 20)],
+            }),
+            "spirit_grass",
+            None,
+            Some(faction_reputation),
+            DVec3::new(-3000.0, 120.0, -2000.0),
+            Some(neutral_faction_membership()),
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 0,
+            "Qingyun high faction reputation must discount live total 20, not catalogue 10"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_when_only_catalogue_price_is_affordable() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 11;
+        inventory.revision = InventoryRevision(13);
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            0,
+            "affording the catalogue price must not grant any part of a dearer live bundle"
+        );
+        assert_eq!(inventory.bone_coins, 11);
+        assert_eq!(inventory.revision, InventoryRevision(13));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("骨币不足，需要 12 枚")),
+            "rejection must expose the live bundle total, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "an unaffordable live bundle must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_missing_trade_inventory_without_side_effects() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(7);
+        let (app, player, mut helper) = run_npc_trade_request(inventory, None, "spirit_grass");
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(7));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有可成交的货物")),
+            "missing trade component rejection must be visible, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "missing trade component must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_inventory_failure_keeps_coins_and_revision() {
+        let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(11),
+            containers: Vec::new(),
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 100,
+            max_weight: 50.0,
+        };
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(11));
+    }
+
+    #[test]
+    fn npc_trade_request_partial_bundle_capacity_fails_atomically() {
+        let registry = crate::inventory::load_item_registry().unwrap();
+        let mut allocator = crate::inventory::InventoryInstanceIdAllocator::default();
+        let mut inventory = empty_inventory();
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "spirit_grass",
+            63,
+            0,
+        )
+        .expect("test precondition: one compatible spirit grass stack must fit");
+        inventory.containers[0].rows = 1;
+        inventory.containers[0].cols = 1;
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(17);
+
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 2, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            63,
+            "a bundle that can merge only one of two items must not partially mutate the stack"
+        );
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(17));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("交易失败")),
+            "partial-capacity rejection must remain player-visible, messages={messages:?}"
+        );
+        assert!(messages.iter().all(|message| !message.contains("买下")));
     }
 
     #[test]

@@ -8,6 +8,7 @@
 skills/                       ← 唯一 canonical（直接改这里）
 ├── audit-plans-progress/     ← 审计计划进度
 ├── browser-cdp/              ← 浏览器 CDP 操控（来自 oh-story-claudecode）
+├── bugfix/                   ← 持续调度 bug skeleton 闭环
 ├── bughunt/                  ← 自治 bug 狩猎一轮
 ├── consume-plan/             ← plan 消费流水线（worktree → 实施 → PR → merge）
 ├── deduce-tale/              ← 第一人称剧情推演
