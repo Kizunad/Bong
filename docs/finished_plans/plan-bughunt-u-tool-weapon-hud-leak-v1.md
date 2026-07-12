@@ -67,6 +67,7 @@
 ### 落地清单
 
 - `client/src/main/java/com/bong/client/hud/WeaponHotbarHudPlanner.java`：新增 `isHudWeapon(EquippedWeapon)`，主手/副手仅过滤 `weapon_kind="tool"`；副手工具继续进入既有盾牌/法宝 fallback。
+- `client/src/main/java/com/bong/client/inventory/InspectScreenBootstrap.java`：断线装备快照清场补齐 `EquippedShieldStore`，避免旧 session 盾牌在新 session 工具/空手 fallback 时重返战斗 HUD。
 - `client/src/test/java/com/bong/client/hud/WeaponHotbarHudPlannerTreasureTriggerTest.java`：新增主手工具隐藏与副手工具不遮蔽 trigger 法宝两条契约测试。
 - 未修改 `WeaponEquippedHandler`、`WeaponEquippedStore`、`HeldItemStackResolver`、server wire、schema、资源或依赖。
 
@@ -75,18 +76,20 @@
 - `8a4ac598`（2026-07-11）：升格 skeleton，收口 client-only 修复范围与测试矩阵。
 - `30abaa9a`（2026-07-11）：提交修复前 RED 契约；JDK 17 精确测试 7 项中新增 2 项按预期失败。
 - `848f78b2`（2026-07-11）：在 HUD consumer 最小过滤工具，保留共享手持模型状态。
+- `88bac38c`（2026-07-12）：补齐盾牌跨 session 清理，并锁住全武器 kind、代表性工具、切换/卸下和拒绝 payload 生命周期。
 
 ### 测试结果
 
 - RED：`./gradlew test --tests com.bong.client.hud.WeaponHotbarHudPlannerTreasureTriggerTest`，JDK 17.0.19；7 tests，2 failed（两条新增契约，符合修复前预期）。
 - 针对性 GREEN：`WeaponHotbarHudPlannerTreasureTriggerTest`、`WeaponHotbarHudPlannerShieldTest`、`HeldItemStackResolverTest` 同批通过。
-- 完整 client gate：`cd client && ./gradlew test build`，JDK 17.0.19；3757 tests / 0 failures / 0 errors / 0 skipped，`BUILD SUCCESSFUL`。
+- closeout 定向 gate：JDK 17.0.19 下运行 planner、装备 handler、断线清理、手持模型与破盾旧实例测试；80 tests / 0 failures / 0 errors。
+- closeout 完整 client gate：`cd client && ./gradlew test build`，JDK 17.0.19；3761 tests / 0 failures / 0 errors / 0 skipped，`BUILD SUCCESSFUL`。
 - 主线同步：`origin/main=3c8bf9253680795136f152f5504f6f709c5e16cb` 是修复 HEAD 祖先，判定 `already-up-to-date`，无需产生 merge commit。
 - 无上下文只读 validator：`FIX_VALIDATING` 与 `REBASE_VALIDATING` 均为 `PASS 848f78b22781c39b8fa7dce4e59540547abe91d2`。
 
 ### 跨仓库核验
 
-- client：`WeaponEquippedStore` 继续接收工具供 `HeldItemStackResolver` 使用；`WeaponHotbarHudPlanner` 不再消费工具为战斗槽。
+- client：`WeaponEquippedStore` 继续接收工具供 `HeldItemStackResolver` 使用；`WeaponHotbarHudPlanner` 不再消费工具为战斗槽；断线统一清理武器、盾牌与法宝 HUD fallback。
 - server：`weapon_equipped.weapon_kind="tool"` 契约保持不变，无 server diff。
 - agent/schema/worldgen：本 plan 无接入面，无 diff、无需跨栈构建。
 
