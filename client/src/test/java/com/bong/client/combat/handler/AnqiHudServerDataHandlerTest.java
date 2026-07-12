@@ -41,7 +41,7 @@ class AnqiHudServerDataHandlerTest {
 
     @Test
     void echoKindWritesEchoCountToStore() {
-        ServerDataDispatch dispatch = handler.handle(parse(
+        ServerDataDispatch dispatch = handler.handle(parseComplete(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":3}"
         ));
         assertTrue(dispatch.handled(),
@@ -55,7 +55,7 @@ class AnqiHudServerDataHandlerTest {
 
     @Test
     void echoCountZeroIsAccepted() {
-        handler.handle(parse(
+        handler.handle(parseComplete(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":0}"
         ));
         assertEquals(0, AnqiHudStateStore.snapshot().echoCount(),
@@ -66,7 +66,7 @@ class AnqiHudServerDataHandlerTest {
 
     @Test
     void aimKindWritesAimProgressToStore() {
-        ServerDataDispatch dispatch = handler.handle(parse(
+        ServerDataDispatch dispatch = handler.handle(parseComplete(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"aim\",\"aim_progress\":0.73,\"tick\":9}"
         ));
         assertTrue(dispatch.handled(),
@@ -79,7 +79,7 @@ class AnqiHudServerDataHandlerTest {
 
     @Test
     void chargeKindWritesChargeProgressToStore() {
-        handler.handle(parse(
+        handler.handle(parseComplete(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"charge\",\"charge_progress\":0.5}"
         ));
         AnqiHudState state = AnqiHudStateStore.snapshot();
@@ -93,7 +93,7 @@ class AnqiHudServerDataHandlerTest {
 
     @Test
     void abrasionKindWritesContainerAndQiToStore() {
-        handler.handle(parse(
+        handler.handle(parseComplete(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"abrasion\","
             + "\"abrasion_container\":\"hand_slot\",\"abrasion_qi_payload\":58.4}"
         ));
@@ -112,7 +112,7 @@ class AnqiHudServerDataHandlerTest {
     void abrasionPocketPouchContainerReachesStore() {
         // pocket_pouch 是本轮修复的核心变体（生产可达），确保 handler 路径端到端不丢
         // server emit 写 as_wire_str()="pocket_pouch"；handler 应原样写入 store，不改写
-        handler.handle(parse(
+        handler.handle(parseComplete(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"abrasion\","
             + "\"abrasion_container\":\"pocket_pouch\",\"abrasion_qi_payload\":72.0}"
         ));
@@ -130,7 +130,7 @@ class AnqiHudServerDataHandlerTest {
 
     @Test
     void unknownKindIsNoOp() {
-        ServerDataDispatch dispatch = handler.handle(parse(
+        ServerDataDispatch dispatch = handler.handle(parseComplete(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"unknown_kind\"}"
         ));
         assertFalse(dispatch.handled(),
@@ -148,6 +148,25 @@ class AnqiHudServerDataHandlerTest {
         ));
         assertFalse(dispatch.handled(),
             "缺 kind 字段应 no-op；dispatch=" + dispatch.logMessage());
+    }
+
+    @Test
+    void missingOrExtraFieldIsRejectedWithoutStoreMutation() {
+        String missingTick = "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\","
+                + "\"echo_count\":1,\"aim_progress\":0,\"charge_progress\":0,"
+                + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0}";
+        String extraField = "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\","
+                + "\"echo_count\":1,\"aim_progress\":0,\"charge_progress\":0,"
+                + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0,\"tick\":1,"
+                + "\"debug_only\":true}";
+
+        for (String payload : new String[] { missingTick, extraField }) {
+            AnqiHudStateStore.clear();
+            ServerDataDispatch dispatch = handler.handle(parse(payload));
+            assertFalse(dispatch.handled(),
+                "Java consumer must match Rust/TypeBox exact field shape; payload=" + payload);
+            assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot());
+        }
     }
 
     // ─── proto 双端对拍：server proto encode → ProtoServerDataBridge ─
@@ -183,6 +202,33 @@ class AnqiHudServerDataHandlerTest {
             "echo_count 必须为 7（proto 链不丢字段）；实际=" + json.get("echo_count"));
         assertEquals(42L, json.get("tick").getAsLong(),
             "tick 必须为 42（proto 链不丢字段）；实际=" + json.get("tick"));
+    }
+
+    @Test
+    void e2eProtoAimReachesRouterAndAimStore() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAnqiHud(Envelope.AnqiHud.newBuilder()
+                        .setKind("aim")
+                        .setEchoCount(0)
+                        .setAimProgress(0.73)
+                        .setChargeProgress(0.0)
+                        .setAbrasionContainer("")
+                        .setAbrasionQiPayload(0.0)
+                        .setTick(43L))
+                .build();
+        ProtoServerDataBridge.BridgeResult bridge =
+                ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridge.isSuccess(),
+            "aim protobuf must bridge to the legacy handler envelope; error=" + bridge.errorMessage());
+
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        String legacyJson = bridge.legacyJson();
+        ServerDataRouter.RouteResult route = router.route(
+                legacyJson, legacyJson.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+            "aim protobuf must route through anqi_hud handler; actual=" + route.logMessage());
+        assertEquals(0.73f, AnqiHudStateStore.snapshot().aimProgress(), 0.001f,
+            "non-zero aim_progress must survive proto -> bridge -> router -> store");
     }
 
     @Test
@@ -351,7 +397,7 @@ class AnqiHudServerDataHandlerTest {
 
         for (String payload : invalidPayloads) {
             AnqiHudStateStore.clear();
-            ServerDataDispatch dispatch = handler.handle(parse(payload));
+            ServerDataDispatch dispatch = handler.handle(parseComplete(payload));
             assertFalse(dispatch.handled(),
                 "每个越界字段都必须独立拒绝；payload=" + payload);
             assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(),
@@ -366,7 +412,9 @@ class AnqiHudServerDataHandlerTest {
         // 锁 ServerDataRouter：anqi_hud 路由到 AnqiHudServerDataHandler → store.replace
         ServerDataRouter router = ServerDataRouter.createDefault();
 
-        String json = "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":5}";
+        String json = completeJson(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\",\"echo_count\":5}"
+        );
         ServerDataRouter.RouteResult result = router.route(json, json.getBytes(StandardCharsets.UTF_8).length);
 
         assertTrue(result.isHandled(),
@@ -470,7 +518,7 @@ class AnqiHudServerDataHandlerTest {
     @Test
     void multiShotKindWritesMultiShotCountToStore() {
         // server 用 echo_count 字段承载 projectile_count；handler 路由到 multishot 维度
-        ServerDataDispatch dispatch = handler.handle(parse(
+        ServerDataDispatch dispatch = handler.handle(parseComplete(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"multishot\",\"echo_count\":5}"
         ));
         assertTrue(dispatch.handled(),
@@ -528,5 +576,23 @@ class AnqiHudServerDataHandlerTest {
         ServerPayloadParseResult r = ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
         assertTrue(r.isSuccess(), () -> "parse failed: " + r.errorMessage());
         return r.envelope();
+    }
+
+    private static ServerDataEnvelope parseComplete(String json) {
+        return parse(completeJson(json));
+    }
+
+    private static String completeJson(String json) {
+        JsonObject payload = JsonParser.parseString(json).getAsJsonObject();
+        if (!payload.has("v")) payload.addProperty("v", 1);
+        if (!payload.has("type")) payload.addProperty("type", "anqi_hud");
+        if (!payload.has("kind")) payload.addProperty("kind", "");
+        if (!payload.has("echo_count")) payload.addProperty("echo_count", 0);
+        if (!payload.has("aim_progress")) payload.addProperty("aim_progress", 0.0);
+        if (!payload.has("charge_progress")) payload.addProperty("charge_progress", 0.0);
+        if (!payload.has("abrasion_container")) payload.addProperty("abrasion_container", "");
+        if (!payload.has("abrasion_qi_payload")) payload.addProperty("abrasion_qi_payload", 0.0);
+        if (!payload.has("tick")) payload.addProperty("tick", 0L);
+        return payload.toString();
     }
 }

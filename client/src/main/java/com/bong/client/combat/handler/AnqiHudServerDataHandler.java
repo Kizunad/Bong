@@ -9,6 +9,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
+import java.util.Set;
+
 /**
  * plan-combat-skill-feedback-bridges-v1 P4 断链修复（@hive blocker+major 修复）：
  * 处理 {@code anqi_hud} server-data payloads，将 server emit 的暗器 HUD 状态写入
@@ -43,10 +45,23 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
     private static final long MAX_SAFE_TICK = 9_007_199_254_740_991L;
     private static final long MAX_ECHO_COUNT = Integer.MAX_VALUE;
     private static final double MAX_ABRASION_QI_PAYLOAD = 3.4028234e38;
+    private static final Set<String> REQUIRED_FIELDS = Set.of(
+            "v",
+            "type",
+            "kind",
+            "echo_count",
+            "aim_progress",
+            "charge_progress",
+            "abrasion_container",
+            "abrasion_qi_payload",
+            "tick");
 
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
         JsonObject payload = envelope.payload();
+        if (!payload.keySet().equals(REQUIRED_FIELDS)) {
+            return invalid(envelope, "payload fields must exactly match the anqi_hud v1 schema");
+        }
         String kind = readString(payload, "kind");
         long now  = System.currentTimeMillis();
         Long tickValue = readBoundedInteger(payload, "tick", 0L, MAX_SAFE_TICK);
