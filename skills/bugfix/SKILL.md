@@ -32,14 +32,43 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 
 ### harness 能力探测与适配
 
-启动时先枚举当前宿主真实可用工具，只选择一个适配分支；禁止把任一命名空间描述成通用 Codex API，也禁止调用当前分支未暴露的接口。
+启动时先枚举当前宿主真实可用工具，只选择一个适配分支；禁止把任一命名空间描述成通用 Codex API，也禁止调用当前分支未暴露的接口。下列 `harness-contract` JSON 是脚本与文档共享的权威适配表，修改后必须运行 dry-run；`required_tools` 必须全部存在才允许选择该分支，不能用 CLI 子命令、说明性映射或相似名字顶替宿主工具。
 
-| harness | 启动/消息/等待/恢复/状态映射 |
-|---|---|
-| 有 `collaboration` namespace | `spawn_agent` / `send_message` / `wait_agent` / `followup_task` / `list_agents` |
-| `multi_agent_v1` | `spawn_agent` / `send_input` / `wait_agent` / `resume_agent` / `close_agent`；状态只使用该运行时实际暴露的 agent status/list 返回，不虚构查询名 |
-| Claude | `Agent` / `SendMessage` / `ScheduleWakeup`；agent 完成通知与 Agent 状态作为恢复依据 |
+```harness-contract
+{
+  "version": 1,
+  "adapters": {
+    "collaboration": {
+      "required_tools": ["spawn_agent", "send_message", "wait_agent", "followup_task", "list_agents"],
+      "spawn": "spawn_agent",
+      "message": "send_message",
+      "wait": "wait_agent",
+      "resume": "followup_task",
+      "status": "list_agents"
+    },
+    "multi_agent_v1": {
+      "required_tools": ["spawn_agent", "send_input", "wait_agent", "resume_agent", "close_agent"],
+      "spawn": "spawn_agent",
+      "message": "send_input",
+      "wait": "wait_agent",
+      "resume": "resume_agent",
+      "status": "runtime_status_or_list"
+    },
+    "claude_tools": {
+      "required_tools": ["Agent", "SendMessage", "ScheduleWakeup"],
+      "spawn": "Agent",
+      "message": "SendMessage",
+      "wait": "ScheduleWakeup",
+      "resume": "Agent continuation",
+      "status": "Agent result and completion notification"
+    }
+  }
+}
+```
 
+- `claude_tools` 只适用于宿主在**当前会话工具清单**中真实暴露全部三个工具的 Claude harness；Claude Code CLI 的 `claude agents`/`--background`/`--resume` 和 Claude Agent SDK 的 session/subagent API 不等于 `Agent` 或 `ScheduleWakeup` 工具，不能据此选中该分支。
+- 当前宿主缺任一 `required_tools` 时必须 fail closed：记录缺失能力并停止启动 BugFix loop，不得执行部分状态机。尤其缺 `ScheduleWakeup` 时不能用 shell sleep/busy-poll 冒充等待；缺可枚举 canonical ID 的 status 时不能授权 validator token。
+- Claude Code CLI 可用 `claude agents` 管理后台 agent、用 `--resume`/`--continue` 恢复会话；Claude Agent SDK 可通过宿主集成提供 session/subagent。但两者的状态查询、等待调度与 canonical ID 必须由目标宿主显式接入并出现在能力清单后，才能新增对应 adapter。说明文档不是生产接线证据。
 - 支持子 agent 主动发消息的 harness：用本分支真实 message API 发送结构化 token 消息；主干用本分支真实 wait/status API 接收和对拍。
 - 不支持子 agent 在运行中等待父级输入，或能力探测不确定时：强制使用 **phase-yield/checkpoint**。实施 agent 结构化返回 `TOKEN_REQUEST + checkpoint` 后结束当前 turn，主干入 FIFO；获准后通过该 harness 的 `resume_agent` / `followup_task` / `send_input` / Agent continuation 恢复同一任务。不得假设子 agent 能主动 `wait_agent` 等父级。
 - 能力不足以恢复同一任务时，持久化绝对 worktree、phase、HEAD、request/token、测试证据，启动同任务 continuation；不得传实施结论或丢失 checkpoint。

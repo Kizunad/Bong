@@ -6,12 +6,63 @@ from __future__ import annotations
 import unittest
 from dataclasses import dataclass, field, replace
 from enum import Enum
+import json
+from pathlib import Path
 import re
 from typing import Optional
 
 
 class ProtocolError(RuntimeError):
     pass
+
+
+CONTRACT_PATTERN = re.compile(
+    r"```harness-contract\s*(\{.*?\})\s*```", re.DOTALL
+)
+ADAPTER_OPERATIONS = {"spawn", "message", "wait", "resume", "status"}
+
+
+def load_harness_contract(skill_path: Path) -> dict[str, object]:
+    match = CONTRACT_PATTERN.search(skill_path.read_text(encoding="utf-8"))
+    if match is None:
+        raise ProtocolError("SKILL.md harness contract block missing")
+    contract = json.loads(match.group(1))
+    if contract.get("version") != 1:
+        raise ProtocolError("unsupported harness contract version")
+    adapters = contract.get("adapters")
+    if not isinstance(adapters, dict) or not adapters:
+        raise ProtocolError("harness adapters missing")
+    for name, adapter in adapters.items():
+        if not isinstance(adapter, dict):
+            raise ProtocolError(f"adapter {name} is not an object")
+        required = adapter.get("required_tools")
+        if (
+            not isinstance(required, list)
+            or not required
+            or any(not isinstance(tool, str) or not tool for tool in required)
+            or len(required) != len(set(required))
+        ):
+            raise ProtocolError(f"adapter {name} required_tools invalid")
+        missing_operations = ADAPTER_OPERATIONS - adapter.keys()
+        if missing_operations:
+            raise ProtocolError(
+                f"adapter {name} operations missing: {missing_operations}"
+            )
+    return contract
+
+
+def select_harness_adapter(
+    contract: dict[str, object], exposed_tools: set[str]
+) -> Optional[str]:
+    adapters = contract["adapters"]
+    matches = [
+        name
+        for name, adapter in adapters.items()
+        if set(adapter["required_tools"]).issubset(exposed_tools)
+    ]
+    if len(matches) > 1:
+        raise ProtocolError("ambiguous harness capability set")
+    return matches[0] if matches else None
 
 
 class TaskPhase(str, Enum):
@@ -1240,6 +1291,35 @@ def drive_closure_to_pr(
 
 
 class StateMachineDryRun(unittest.TestCase):
+    def test_skill_harness_contract_is_executable_and_fail_closed(self) -> None:
+        skill_path = Path(__file__).resolve().parents[1] / "SKILL.md"
+        contract = load_harness_contract(skill_path)
+        adapters = contract["adapters"]
+        for name, adapter in adapters.items():
+            with self.subTest(adapter=name):
+                required = set(adapter["required_tools"])
+                self.assertEqual(
+                    select_harness_adapter(contract, required), name
+                )
+                for missing in required:
+                    self.assertIsNone(
+                        select_harness_adapter(contract, required - {missing})
+                    )
+        self.assertIsNone(
+            select_harness_adapter(
+                contract,
+                {"claude", "agents", "--background", "--resume"},
+            )
+        )
+        self.assertIsNone(
+            select_harness_adapter(contract, {"Agent", "SendMessage"})
+        )
+        self.assertIsNone(
+            select_harness_adapter(
+                contract, {"Agent", "SendMessage", "TaskList"}
+            )
+        )
+
     def test_all_allowed_phase_edges(self) -> None:
         expected = {
             TaskPhase.DISPATCHED: {TaskPhase.CLAIMED, TaskPhase.BLOCKED},
