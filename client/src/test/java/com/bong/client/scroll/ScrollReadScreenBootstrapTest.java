@@ -9,7 +9,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScrollReadScreenBootstrapTest {
@@ -71,6 +74,67 @@ class ScrollReadScreenBootstrapTest {
             new DummyScreen(), sessions.get(0)), "无关 screen 不得阻止当前阅读会话开屏");
         assertFalse(ScrollReadScreenBootstrap.belongsToSession(null, sessions.get(0)),
             "空 screen 不得被误判为当前阅读会话");
+    }
+
+    @Test
+    void disconnectInvalidatesQueuedOpenBeforeItCanSetScreen() {
+        List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
+        List<Screen> setScreens = new ArrayList<>();
+        ScrollReadStore.addSessionListener(sessions::add);
+        ScrollReadStore.replace(fixture("正文"));
+        ScrollReadStore.ActiveSession queuedOpen = sessions.get(0);
+
+        ScrollReadScreenBootstrap.onDisconnect();
+        ScrollReadScreenBootstrap.applyStoreChange(null, null, setScreens::add, queuedOpen);
+
+        assertNull(ScrollReadStore.snapshot(),
+            "disconnect 回调返回前必须同步使阅读 session 失效");
+        assertTrue(setScreens.isEmpty(),
+            "断线前排队的 open 任务不得在断线后开屏，实际 setScreen=" + setScreens);
+    }
+
+    @Test
+    void lateClearTaskAfterReopenDoesNotCloseNewSession() {
+        List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
+        List<Screen> setScreens = new ArrayList<>();
+        ScrollReadStore.addSessionListener(sessions::add);
+        ScrollReadStore.replace(fixture("旧会话"));
+        ScrollReadScreenBootstrap.onDisconnect();
+        ScrollOpenViewModel reopenedModel = fixture("重开会话");
+        ScrollReadStore.replace(reopenedModel);
+        ScrollReadStore.ActiveSession reopened = sessions.get(2);
+        ScrollReadScreen reopenedScreen = new ScrollReadScreen(reopenedModel, reopened.token());
+
+        ScrollReadScreenBootstrap.applyStoreChange(
+            reopenedScreen,
+            null,
+            setScreens::add,
+            null
+        );
+
+        assertSame(reopenedModel, ScrollReadStore.snapshot(),
+            "迟到的 clear 任务不得清理后来重开的 session");
+        assertTrue(setScreens.isEmpty(),
+            "迟到的 clear 任务不得关闭新 screen，实际 setScreen=" + setScreens);
+    }
+
+    @Test
+    void currentOpenTaskCreatesExactlyOneSessionBoundScreen() {
+        List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
+        List<Screen> setScreens = new ArrayList<>();
+        ScrollReadStore.addSessionListener(sessions::add);
+        ScrollOpenViewModel model = fixture("正文");
+        ScrollReadStore.replace(model);
+        ScrollReadStore.ActiveSession current = sessions.get(0);
+
+        ScrollReadScreenBootstrap.applyStoreChange(null, null, setScreens::add, current);
+
+        assertEquals(1, setScreens.size(),
+            "当前 open 任务必须恰好请求一次 setScreen，实际=" + setScreens);
+        assertTrue(setScreens.get(0) instanceof ScrollReadScreen,
+            "当前 open 任务必须创建 ScrollReadScreen，实际=" + setScreens.get(0));
+        assertTrue(ScrollReadScreenBootstrap.belongsToSession(setScreens.get(0), current),
+            "新 screen 必须绑定当前不可复用 token，实际 screen=" + setScreens.get(0));
     }
 
     private static ScrollOpenViewModel fixture(String body) {
