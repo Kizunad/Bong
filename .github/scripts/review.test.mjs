@@ -190,6 +190,7 @@ fs.appendFileSync(process.env.CODEX_TEST_LOG, JSON.stringify(args) + "\\n");
 const mode = ${JSON.stringify(mode)};
 const vote =
   (mode === "tie" && previous >= 6) || ((mode === "three_one" || mode === "three_one_empty") && previous >= 7)
+    || (mode === "first_finding_withdrawn" && previous === 0)
     ? "REQUEST_CHANGES"
     : "APPROVE";
 const output = args[args.indexOf("--output-last-message") + 1];
@@ -802,6 +803,10 @@ test("infra-only classification: 仅四路纯执行失败降级，混合结果�
   const approve = { vote: "APPROVE", confidence: 90, findings: [] };
   assert.equal(classifyReviewRun([approve], [approve, approve, approve, realRequestChanges]), "gate_failure");
   assert.equal(decideReviewGate([approve, approve, approve, realRequestChanges]).passed, false);
+  assert.match(
+    decideReviewGate([approve, approve, approve, realRequestChanges], [realRequestChanges, realRequestChanges]).label,
+    /存在 1 项真实 finding/,
+  );
   assert.equal(decideReviewGate([approve, approve, approve, { ...realRequestChanges, findings: [] }]).passed, true);
   const spoofedSynthetic = {
     vote: "REQUEST_CHANGES",
@@ -811,6 +816,23 @@ test("infra-only classification: 仅四路纯执行失败降级，混合结果�
   };
   assert.equal(decideReviewGate([approve, approve, approve, spoofedSynthetic]).passed, false);
   assert.equal(decideReviewGate([approve, approve, approve, { ...spoofedSynthetic, execution_failure: true }]).passed, true);
+
+  const completeApprove = Array(4).fill(approve);
+  assert.equal(
+    classifyReviewRun(completeApprove, [approve, approve, approve, infraResult]),
+    "infra_failure",
+    "复投任一路执行失败时面板不完整，不得靠 3/1 通过",
+  );
+  assert.equal(
+    classifyReviewRun([realRequestChanges, approve, approve, approve], completeApprove),
+    "gate_failure",
+    "首轮真实 finding 即使复投撤回也必须阻塞",
+  );
+  assert.equal(
+    classifyReviewRun([realRequestChanges, approve, approve, approve], [approve, approve, approve, infraResult]),
+    "gate_failure",
+    "真实 finding 与执行失败并存时，真实代码问题优先于 infra handoff",
+  );
 });
 
 test("infra-only classification: 模型给出真实审查或不可解析内容都不伪造 infra", () => {
@@ -860,9 +882,9 @@ test("mixed review findings: 复投执行失败时保留同路首轮代码 findi
   const firstRound = [realRequestChanges, infraResult, realRequestChanges, infraResult];
   const finalRound = [infraResult, infraResult, realRequestChanges, infraResult];
   const retained = reviewFindingResults(firstRound, finalRound);
-  assert.deepEqual(retained.slice(0, 4), finalRound);
-  assert.equal(retained.length, 5);
-  assert.equal(retained[4], realRequestChanges);
+  assert.deepEqual(retained.slice(0, 4), firstRound);
+  assert.deepEqual(retained.slice(4), finalRound);
+  assert.equal(retained.length, 8);
 });
 
 
@@ -1125,6 +1147,23 @@ test("review 命令: 3/1 中任一真实 finding 强制失败", () => {
     },
     ghScript: recordingGhScript(),
     codexScript: codexVoteScript("three_one"),
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(result.reviewOutcome, { kind: "gate_failure", gate: "REQUEST_CHANGES" });
+  const comment = parseGitHubJsonLines(result.ghLog).find((entry) => entry.kind === "pr_comment");
+  assert.match(comment?.body || "", /存在 1 项真实 finding/);
+  assert.match(comment?.body || "", /server\/src\/main\.rs/);
+});
+
+test("review 命令: 首轮 finding 即使复投四票 APPROVE 仍保留并失败", () => {
+  const result = runReviewCommand("review", {
+    env: {
+      REVIEW_CODEX_API_KEY: "test-key",
+      REVIEW_CODEX_RETRIES: "1",
+      REVIEW_TOTAL_TIMEOUT_MINUTES: "5",
+    },
+    ghScript: recordingGhScript(),
+    codexScript: codexVoteScript("first_finding_withdrawn"),
   });
   assert.equal(result.status, 1, result.stderr);
   assert.deepEqual(result.reviewOutcome, { kind: "gate_failure", gate: "REQUEST_CHANGES" });

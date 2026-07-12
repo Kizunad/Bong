@@ -235,23 +235,14 @@ export function classifyReviewRun(firstRound, finalRound) {
   const firstResults = firstRound || [];
   const finalResults = finalRound || [];
   const allResults = [...firstResults, ...finalResults];
-  if (
-    firstResults.length === REVIEWERS.length &&
-    finalResults.length === REVIEWERS.length &&
-    allResults.every(isCodexExecutionFailure)
-  ) {
-    return "infra_failure";
-  }
-  return decideReviewGate(finalResults).passed ? "passed" : "gate_failure";
+  if (collectRealFindings(allResults).length) return "gate_failure";
+  if (finalResults.length !== REVIEWERS.length || finalResults.some(isCodexExecutionFailure)) return "infra_failure";
+  return decideGate(finalResults).passed ? "passed" : "gate_failure";
 }
 
-export function decideReviewGate(results) {
+export function decideReviewGate(results, findingResults = results) {
   const voteGate = decideGate(results);
-  const realFindings = (results || []).flatMap((result) =>
-    (result.findings || []).filter(
-      (finding) => !(result.execution_failure === true && isCodexFailureFinding(finding)),
-    ),
-  );
+  const realFindings = collectRealFindings(findingResults);
   if (!realFindings.length) return voteGate;
   return {
     ...voteGate,
@@ -259,6 +250,18 @@ export function decideReviewGate(results) {
     status: "REQUEST_CHANGES",
     label: `${voteGate.approve}/${voteGate.request}，存在 ${realFindings.length} 项真实 finding，要求修改`,
   };
+}
+
+function collectRealFindings(results) {
+  const unique = new Map();
+  for (const result of results || []) {
+    for (const finding of result.findings || []) {
+      if (result.execution_failure === true && isCodexFailureFinding(finding)) continue;
+      const key = `${finding.file || ""}|${finding.line || ""}|${String(finding.title || "").trim().toLowerCase()}`;
+      if (!unique.has(key)) unique.set(key, finding);
+    }
+  }
+  return [...unique.values()];
 }
 
 export function classifyWorkflowFinalization({
@@ -478,7 +481,7 @@ export function mergeFindings(results) {
         });
         continue;
       }
-      current.reviewers.push(result.reviewer);
+      if (!current.reviewers.includes(result.reviewer)) current.reviewers.push(result.reviewer);
       if (severityRank(finding.severity) < severityRank(current.severity)) current.severity = finding.severity;
       if (String(finding.evidence || "").length > String(current.evidence || "").length) current.evidence = finding.evidence;
       if (String(finding.recommendation || "").length > String(current.recommendation || "").length) {
@@ -534,7 +537,7 @@ async function runReview() {
     return finishInfrastructureFailure("reviewer_execution", reason || "Codex reviewer 执行失败");
   }
 
-  const gate = decideReviewGate(finalRound);
+  const gate = decideReviewGate(finalRound, [...firstRound, ...finalRound]);
   const body = renderComment(context, firstRound, finalRound, gate);
   writeFileSync(COMMENT_FILE, body);
 
@@ -1261,14 +1264,7 @@ ${truncate(finalRoundDetails, 24_000)}
 }
 
 export function reviewFindingResults(firstRound, finalRound) {
-  const results = [...(finalRound || [])];
-  const finalResultCount = results.length;
-  for (let index = 0; index < finalResultCount; index += 1) {
-    if (isCodexExecutionFailure(results[index]) && !isCodexExecutionFailure(firstRound?.[index])) {
-      results.push(firstRound[index]);
-    }
-  }
-  return results;
+  return [...(firstRound || []), ...(finalRound || [])];
 }
 
 function requirePrNumber() {
