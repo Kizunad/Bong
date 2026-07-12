@@ -18,7 +18,7 @@ use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
 use crate::inventory::{DroppedLootEntry, PlayerInventory};
-use crate::persistence::{DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
+use crate::persistence::{ZoneRuntimeRecord, DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
 use crate::player::spawn_selector::SpawnPurpose;
 use crate::qi_physics::ledger::WorldQiAccount;
 use crate::schema::cultivation::realm_to_string;
@@ -821,6 +821,7 @@ pub fn save_player_inventory_and_delete_dropped_loot(
     username: &str,
     inventory: &PlayerInventory,
     dropped_instance_id: u64,
+    zone_runtime: Option<&ZoneRuntimeRecord>,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     let inventory_json = serialize_inventory_json(Some(inventory))?;
@@ -833,6 +834,9 @@ pub fn save_player_inventory_and_delete_dropped_loot(
         last_updated_wall,
     )?;
     crate::persistence::delete_dropped_loot_entry(&transaction, dropped_instance_id)?;
+    if let Some(zone_runtime) = zone_runtime {
+        crate::persistence::upsert_zone_runtime(&transaction, zone_runtime, last_updated_wall)?;
+    }
     transaction.commit().map_err(io::Error::other)?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -3817,6 +3821,7 @@ mod player_state_tests {
             "Azure",
             &picked_inventory,
             9_100,
+            None,
         )
         .expect("pickup inventory + durable delete should commit atomically");
         assert!(
@@ -3832,6 +3837,94 @@ mod player_state_tests {
             Some(InventoryRevision(42)),
             "the same pickup transaction must retain the receiving inventory"
         );
+        std::fs::remove_dir_all(data_dir).ok();
+    }
+
+    #[test]
+    fn pickup_checkpoint_rolls_back_inventory_drop_and_zone_together() {
+        let (persistence, data_dir) = sqlite_persistence("pickup-checkpoint-zone-rollback");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("test player should initialize");
+        let baseline_inventory = empty_weapon_inventory();
+        let drop = DroppedLootEntry {
+            instance_id: 9_101,
+            source_container_id: "craft_refund".to_string(),
+            source_row: 0,
+            source_col: 0,
+            world_pos: [3.0, 65.0, 4.0],
+            dimension: DimensionKind::Overworld,
+            item: iron_sword_instance(9_101, 1.0),
+        };
+        save_player_craft_checkpoint(
+            &persistence,
+            "Azure",
+            Some(&baseline_inventory),
+            None,
+            None,
+            None,
+            std::slice::from_ref(&drop),
+        )
+        .expect("baseline inventory and drop should persist");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TRIGGER fail_pickup_zone_update
+                BEFORE INSERT ON zones_runtime
+                BEGIN
+                    SELECT RAISE(FAIL, 'forced pickup zone failure');
+                END;
+                ",
+            )
+            .expect("failure trigger should install");
+
+        let mut picked_inventory = baseline_inventory.clone();
+        picked_inventory.revision = InventoryRevision(42);
+        let zone_runtime = ZoneRuntimeRecord {
+            zone_id: "spawn".to_string(),
+            spirit_qi: 7.5,
+            danger_level: 1,
+        };
+        let error = save_player_inventory_and_delete_dropped_loot(
+            &persistence,
+            "Azure",
+            &picked_inventory,
+            9_101,
+            Some(&zone_runtime),
+        )
+        .expect_err("zone write failure must abort the entire pickup transaction");
+        assert!(
+            error.to_string().contains("forced pickup zone failure"),
+            "failure should retain the injected repair hint, actual={error}"
+        );
+
+        let settings = crate::persistence::PersistenceSettings::with_paths(
+            persistence.db_path(),
+            data_dir.join("deceased"),
+            "pickup-checkpoint-zone-rollback",
+        );
+        assert_eq!(
+            load_player_slices(&persistence, "Azure")
+                .inventory
+                .map(|value| value.revision),
+            Some(InventoryRevision(41)),
+            "failed pickup checkpoint must not commit the receiving inventory"
+        );
+        assert_eq!(
+            crate::persistence::load_durable_dropped_loot(&settings)
+                .expect("durable drop lookup should succeed")
+                .get(&9_101),
+            Some(&drop),
+            "failed pickup checkpoint must retain the durable ground row for retry"
+        );
+        let zone_rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM zones_runtime", [], |row| row.get(0))
+            .expect("zone row count should be readable");
+        assert_eq!(
+            zone_rows, 0,
+            "failed pickup checkpoint must not leak a partial zone update"
+        );
+
         std::fs::remove_dir_all(data_dir).ok();
     }
 

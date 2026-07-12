@@ -135,6 +135,7 @@ use crate::npc::interaction_memory::{
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::trade::NpcPlayerReputation;
+use crate::persistence::ZoneRuntimeRecord;
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
     canonical_player_id, save_player_inventory_and_delete_dropped_loot, update_player_ui_prefs,
@@ -12876,8 +12877,8 @@ fn handle_pickup_dropped_item(
     positions: &Query<&valence::prelude::Position>,
     dimensions: &Query<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
-    qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
-    attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
+    mut qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
+    mut attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
     persistence: Option<&PlayerStatePersistence>,
 ) {
@@ -12894,6 +12895,9 @@ fn handle_pickup_dropped_item(
 
     let mut staged_inventory = inventory.clone();
     let mut staged_dropped_loot = dropped_loot_registry.clone();
+    let mut staged_zones = zones.as_deref().cloned();
+    let mut staged_qi_transfers = Events::default();
+    let mut staged_attrition_events = Events::default();
     match pickup_dropped_loot_instance(
         &mut staged_inventory,
         &mut staged_dropped_loot,
@@ -12901,6 +12905,52 @@ fn handle_pickup_dropped_item(
         instance_id,
     ) {
         Ok(revision) => {
+            let dim = dimensions
+                .get(entity)
+                .map(|d| d.0)
+                .unwrap_or(DimensionKind::Overworld);
+            let pos = valence::prelude::DVec3::new(player_pos[0], player_pos[1], player_pos[2]);
+            let mut zone_runtime = None;
+            if let Some(staged_zones) = staged_zones.as_mut() {
+                let zone_name = staged_zones
+                    .find_zone(dim, pos)
+                    .map(|zone| zone.name.clone());
+                if let Some(zone_name) = zone_name {
+                    if let Some(zone) = staged_zones.find_zone_mut(&zone_name) {
+                        let target_container_exempt = inventory_instance_container_attrition_exempt(
+                            &staged_inventory,
+                            item_registry,
+                            instance_id,
+                        );
+                        if let Some(item) =
+                            inventory_item_by_instance_mut(&mut staged_inventory, instance_id)
+                        {
+                            if !target_container_exempt && !is_attrition_exempt(item) {
+                                let before_abs_qi = item_abs_qi_for_attrition(item);
+                                apply_attrition_checked(
+                                    item,
+                                    AttritionOpKind::Pickup,
+                                    Some(zone),
+                                    Some(&mut staged_qi_transfers),
+                                    tsy_lifecycle,
+                                );
+                                emit_attrition_applied_if_lost(
+                                    Some(&mut staged_attrition_events),
+                                    entity,
+                                    item,
+                                    before_abs_qi,
+                                    player_pos,
+                                );
+                            }
+                        }
+                        zone_runtime = Some(ZoneRuntimeRecord {
+                            zone_id: zone.name.clone(),
+                            spirit_qi: zone.spirit_qi,
+                            danger_level: zone.danger_level,
+                        });
+                    }
+                }
+            }
             if let Some(persistence) = persistence {
                 let username = match clients.get_mut(entity) {
                     Ok((username, _)) => username.0.clone(),
@@ -12916,6 +12966,7 @@ fn handle_pickup_dropped_item(
                     username.as_str(),
                     &staged_inventory,
                     instance_id,
+                    zone_runtime.as_ref(),
                 ) {
                     tracing::error!(
                         "[bong][network][inventory] durable pickup persistence failed player={username} instance={instance_id}: {error}"
@@ -12925,52 +12976,19 @@ fn handle_pickup_dropped_item(
             }
             *inventory = staged_inventory;
             *dropped_loot_registry = staged_dropped_loot;
+            if let (Some(zones), Some(staged_zones)) = (zones, staged_zones) {
+                *zones = staged_zones;
+            }
+            if let Some(qi_transfers) = qi_transfers.as_deref_mut() {
+                qi_transfers.extend(staged_qi_transfers.drain());
+            }
+            if let Some(attrition_events) = attrition_events.as_deref_mut() {
+                attrition_events.extend(staged_attrition_events.drain());
+            }
             tracing::info!(
                 "[bong][network][inventory] picked up dropped instance={instance_id} revision={}",
                 revision.0
             );
-
-            // plan-qi-handling-attrition-v1 P0: Pickup 磨损，逸散守恒归还 zone
-            if let Some(zones) = zones {
-                let dim = dimensions
-                    .get(entity)
-                    .map(|d| d.0)
-                    .unwrap_or(DimensionKind::Overworld);
-                let pos = valence::prelude::DVec3::new(player_pos[0], player_pos[1], player_pos[2]);
-                // find_zone 借不可变引用获取 zone_name，再 find_zone_mut 借可变引用
-                let zone_name = zones.find_zone(dim, pos).map(|z| z.name.clone());
-                if let Some(zone_name) = zone_name {
-                    if let Some(zone) = zones.find_zone_mut(&zone_name) {
-                        // 在 inventory 里按 instance_id 找到拾起的 item 并应用磨损
-                        let target_container_exempt = inventory_instance_container_attrition_exempt(
-                            &inventory,
-                            item_registry,
-                            instance_id,
-                        );
-                        if let Some(item) =
-                            inventory_item_by_instance_mut(&mut inventory, instance_id)
-                        {
-                            if !target_container_exempt && !is_attrition_exempt(item) {
-                                let before_abs_qi = item_abs_qi_for_attrition(item);
-                                apply_attrition_checked(
-                                    item,
-                                    AttritionOpKind::Pickup,
-                                    Some(zone),
-                                    qi_transfers,
-                                    tsy_lifecycle,
-                                );
-                                emit_attrition_applied_if_lost(
-                                    attrition_events,
-                                    entity,
-                                    item,
-                                    before_abs_qi,
-                                    player_pos,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
 
             resync_snapshot(
                 entity,

@@ -5396,7 +5396,7 @@ fn upsert_ascension_quota(
     Ok(())
 }
 
-fn upsert_zone_runtime(
+pub(crate) fn upsert_zone_runtime(
     transaction: &rusqlite::Transaction<'_>,
     record: &ZoneRuntimeRecord,
     wall_clock: i64,
