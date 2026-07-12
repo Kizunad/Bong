@@ -86,6 +86,7 @@
 - `8d1e18c7d54242db6187bdb38a06a999f35f6bbf`（2026-07-11）：提交 RED，schema 3 项失败且 Tiandao callback 为 0。
 - `f8a67b0219947ce8acaeb6f1d1f0c836d3fa1378`（2026-07-11）：补齐 `ts` source/sample/generated，保持严格未知字段拒绝。
 - `025db31b834030ece64bdeef134c00f5567734db`（2026-07-11）：按 CodeRabbit 意见补齐三类拒绝断言的实际 `ok/errors` 诊断。
+- `9059f16c`（2026-07-12）：补齐 server Unix 毫秒/JS 安全整数序列化与 Tiandao 迟到、乱序、跨 session、缓冲边界回归。
 
 ### 测试结果
 
@@ -96,6 +97,7 @@
 - `cd agent && npm run build`：`@bong/schema` 与 `@bong/tiandao` TypeScript build 全部通过，schema dist 已重建。
 - `cd agent && npm run generate:check -w @bong/schema`：392 个 generated schema 全部 fresh。
 - CodeRabbit 返工后定向 `alchemy insight server wire parity`：9 tests 全部通过；schema 全量仍为 28 files / 799 tests，workspace build 仍通过。
+- closeout 定向：server `publish_alchemy_insight_uses_js_safe_unix_milliseconds` 1/1 通过；Tiandao `redis-ipc.test.ts` 31/31 通过（含乱序、迟到、跨实例 session 隔离及 128/129 缓冲边界）。
 - 主线同步：`origin/main=3c8bf9253680795136f152f5504f6f709c5e16cb`，`merge-base` 相同，分类 `already-up-to-date`。
 - 无上下文 read-only validator：`PASS f8a67b0219947ce8acaeb6f1d1f0c836d3fa1378`（修复后）与同步后复验再次 PASS。
 
@@ -104,6 +106,7 @@
 - server（只读证据）：`server/src/schema/alchemy.rs::AlchemyInsightV1.ts`、`server/src/network/alchemy_bridge.rs::publish_alchemy_insight_events`、Redis channel `bong:alchemy_insight`。
 - schema：`AlchemyInsightV1`、`validateAlchemyInsightV1Contract`、`alchemy-insight-v1.json` 三者字段一致。
 - agent：`RedisIpc.handleAlchemyRuntimeEventMessage` 校验后进入 callback 与 `getLatestAlchemyEvents()`，`ts` 不再被拒收或丢失。
+- 时序语义：`ts` 是 Unix 毫秒观测值而非 session cursor；Redis 到达顺序原样保留，不按 `ts` 丢弃或重排，独立 `RedisIpc` 实例之间不共享缓冲。
 - client：本 plan 不涉及 client wire 或 UI。
 
 ### 遗留 / 后续
