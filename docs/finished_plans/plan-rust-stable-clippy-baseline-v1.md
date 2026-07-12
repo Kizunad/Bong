@@ -67,6 +67,11 @@
 - 最终组合树重新执行 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`：全部 PASS，合计 **11299 passed / 0 failed / 6 ignored**。
 - 风险匹配测试逐项 PASS：`quick_slot_bind_clears_only_the_old_auto_mirrored_item`、`v34_migration_creates_pending_inflow_runtime_account_table`、`cultivation_detail_all_20_meridians`、`heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep`、`restored_pseudo_vein_first_tick_returns_dynamic_zone_balance_to_pending_pool`。
 - 旧 `/review` 的 A/B/C/D 四路 reviewer 均为 `confidence: 0`；其唯一“finding”指向 `.github/scripts/review.mjs:0`，证据均为 `hlool` 无可用 `gpt-5.6-sol` 通道的 HTTP 503，未包含任何 PR 代码路径或行为 finding。
+- 首轮 fresh read-only `gpt-5.6-sol high` validator（`019f547f-01f6-74c0-a7e8-9c0fb257836f`）绑定 `e4d79143` 从零复核后给出 FAIL：代码、工具链、clippy 与 review 证据均无问题，唯一失败是 `poi_novice` 的 10 秒墙钟断言在并发负载下耗时 12.218 秒。
+- `c2a19353` 抽出共享采样 helper，生产路径仍保留 500,000 次上限；测试改为断言确定性的实际尝试次数。全阻塞与 POI 铺满两条定向测试分别约 0.22 秒、0.14 秒通过。
+- 后续完整门禁又证实 `fauna::migration` 的 5 ms 墙钟阈值会在并发负载下以 5.511743 ms 假红；`39d7592e` 改为确定性状态契约，覆盖非调度 tick 不移动、调度 tick 全部移动、每只最多一步且 Y 不变，定向测试约 0.02 秒通过。
+- 在 `39d7592e` 上重新执行完整 server 三门禁：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 全部 PASS；lib 11283 passed / 1 ignored，main 11 passed，两个 integration target 共 5 passed，doc tests 5 ignored，合计 **11299 passed / 0 failed / 6 ignored**。
+- 最后普通合并 `origin/main@f6322e6a`；增量仅涉及 client 与另一份归档 plan，合并前后 `server/` tree 均为 `fcff3848201755900b433d9ddd09d87fb7414df2`，上述 Rust 门禁仍绑定最终组合树。
 
 ## Finish Evidence
 
@@ -86,10 +91,13 @@
 - `c7f7155c`（2026-07-12）：收敛最新主线生产 lib 的 5 条 Rust 1.96 lint。
 - `a8c26295`（2026-07-12）：清理最新主线全 targets 的 8 条 test-only lint。
 - `af4c854e`（2026-07-12）：同步 `origin/main@f8b4ab11`，确认 `server/` tree 未变并重新执行完整门禁。
+- `c2a19353`（2026-07-12）：以确定性尝试次数契约替代 POI 散布墙钟门禁。
+- `39d7592e`（2026-07-12）：以确定性状态契约替代兽潮迁移墙钟门禁。
+- `9f6a5632`（2026-07-12）：同步 `origin/main@f6322e6a`，确认最终 `server/` tree 未变。
 
 ### 测试结果
 
-- Rust 1.96.1 下 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 在两轮最新主线同步后均全绿；PR closeout 最终计数 11299 passed / 0 failed / 6 ignored。五组风险匹配测试单独复跑均 PASS。
+- Rust 1.96.1 下 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 在最终 `server/` tree 上全绿；PR closeout 最终计数 11299 passed / 0 failed / 6 ignored。五组风险匹配测试与两项负载敏感测试的确定性替代契约均单独复跑 PASS。
 
 ### 跨仓库核验
 
@@ -97,4 +105,4 @@
 
 ### 遗留 / 后续
 
-- 无功能遗留。PR closeout 最终 evidence commit 后，由 fresh 无上下文 read-only `gpt-5.6-sol high` validator 绑定该 SHA 做对抗验证；其 PASS/FAIL 作为 PR gate 证据，不能用归档前审查代替。
+- 无功能遗留。首轮 validator 揭露的两项负载敏感墙钟门禁均已改为确定性契约；PR closeout 最终 evidence commit 后，仍须由另一名 fresh 无上下文 read-only `gpt-5.6-sol high` validator 绑定该 SHA 做最终对抗验证，不能用首轮审查代替。
