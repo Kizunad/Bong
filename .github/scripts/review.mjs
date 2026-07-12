@@ -9,10 +9,9 @@
 //
 // 依赖：Node 内置模块 + gh + OpenAI-compatible Responses 端点。无 npm runtime dependency。
 
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 
 const PR = process.env.PR_NUMBER;
 const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.6-sol";
@@ -511,26 +510,7 @@ async function runReview() {
 
   const context = loadPrContext(PR);
   console.error(`Review v3: PR #${PR} · ${context.changedLines} 行/${context.changedFiles} 文件 · 4×${MODEL} high`);
-
-  const firstRound = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-    runCodex(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((result) =>
-      normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
-    ),
-  );
-
-  const debateContext = firstRound.map(compactResultForPrompt);
-  const finalRoundRaw = firstRound.every(isCodexExecutionFailure)
-    ? firstRound
-    : await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-        runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((result) =>
-          normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
-        ),
-      );
-  if (finalRoundRaw === firstRound) {
-    console.error("首轮 Codex reviewer 全部执行失败，跳过复投以保留原始失败诊断。");
-  }
-  const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
-  const outcome = classifyReviewRun(firstRound, finalRound);
+  const { firstRound, finalRound, outcome } = await runReviewPanel(context);
   if (outcome === "infra_failure") {
     const failed = finalRound.filter(isCodexExecutionFailure);
     const reason = failed.map((result) => result.summary).filter(Boolean).join(" | ");
@@ -556,6 +536,25 @@ async function runReview() {
     return 1;
   }
   return 0;
+}
+
+export async function runReviewPanel(context, reviewerRunner = runCodex) {
+  const firstRound = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
+    reviewerRunner(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((result) =>
+      normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
+    ),
+  );
+
+  const debateContext = firstRound.map(compactResultForPrompt);
+  const finalRoundRaw = firstRound.every(isCodexExecutionFailure)
+    ? firstRound
+    : await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
+        reviewerRunner(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((result) =>
+          normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
+        ),
+      );
+  const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
+  return { firstRound, finalRound, outcome: classifyReviewRun(firstRound, finalRound) };
 }
 
 async function finishInfrastructureFailure(phase, reason) {
@@ -674,11 +673,26 @@ function findPlan(meta) {
   if (!name) return null;
   for (const dir of ["docs", "docs/finished_plans", "docs/plans-skeleton"]) {
     const path = `${dir}/${name}.md`;
-    if (existsSync(path)) {
-      return { name, path, text: truncate(readFileSync(path, "utf8"), MAX_PLAN) };
-    }
+    const text = readWorkspaceRegularFile(path);
+    if (text !== null) return { name, path, text: truncate(text, MAX_PLAN) };
   }
   return { name, path: null, text: "" };
+}
+
+export function readWorkspaceRegularFile(path, workspace = process.cwd()) {
+  try {
+    const workspaceReal = realpathSync(workspace);
+    const candidate = resolve(workspaceReal, path);
+    const candidateRelative = relative(workspaceReal, candidate);
+    if (candidateRelative === ".." || candidateRelative.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) return null;
+    if (!lstatSync(candidate).isFile()) return null;
+    const candidateReal = realpathSync(candidate);
+    const realRelative = relative(workspaceReal, candidateReal);
+    if (realRelative === ".." || realRelative.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) return null;
+    return readFileSync(candidateReal, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 function initialPrompt(context, reviewer) {
@@ -809,7 +823,6 @@ function compactResultForPrompt(result) {
 }
 
 async function runCodex(prompt, label) {
-  if (process.env.REVIEW_TEST_MODE === "1") return runCodexCliForTests(prompt, label);
   return runCodexResponses(prompt, label);
 }
 
@@ -918,72 +931,6 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
   }
 }
 
-async function runCodexCliForTests(prompt, label) {
-  const tmp = mkdtempSync(join(tmpdir(), `bong-review-${label}-`));
-  const outputFile = join(tmp, "last-message.md");
-  const args = [
-    "exec",
-    "-m",
-    MODEL,
-    "-C",
-    process.cwd(),
-    "-s",
-    "read-only",
-    "--ephemeral",
-    "--output-last-message",
-    outputFile,
-    "-c",
-    'model_reasoning_effort="high"',
-    "-c",
-    'shell_environment_policy.inherit="core"',
-    "-c",
-    'shell_environment_policy.exclude=["REVIEW_CODEX_API_KEY","OPENAI_API_KEY","CODEX_API_KEY","GH_TOKEN","GITHUB_TOKEN"]',
-    "-",
-  ];
-
-  console.error(`▶ codex ${label}`);
-  try {
-    for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
-      const remainingMs = reviewDeadlineMs - Date.now();
-      const attemptTimeoutMs = boundedAttemptTimeout(CODEX_TIMEOUT_MS, remainingMs);
-      if (attemptTimeoutMs <= 0) {
-        return {
-          raw: codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止启动新的 Codex 进程"),
-          executionFailure: true,
-        };
-      }
-
-      rmSync(outputFile, { force: true });
-      const result = await spawnCodex(args, prompt, attemptTimeoutMs);
-      const text = redactRuntimeSecrets(existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout);
-      const zeroConfidenceInfra = isZeroConfidenceWithoutCodeFindings(text);
-      const retryableFailure = isRetryableCodexFailure(result);
-      if (text.trim() && !zeroConfidenceInfra) {
-        if (result.code !== 0) {
-          console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
-        }
-        return { raw: text, executionFailure: false };
-      }
-
-      const failure = codexFailureText(result);
-      if (attempt < CODEX_RETRIES && (retryableFailure || zeroConfidenceInfra)) {
-        const waitMs = CODEX_RETRY_MS * attempt;
-        if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
-          console.error(`  codex ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
-          await delay(waitMs);
-          continue;
-        }
-      }
-
-      console.error(`  codex ${label} failed: ${failure}`);
-      if (text.trim() && zeroConfidenceInfra) return { raw: text, executionFailure: true };
-      return { raw: codexExecutionFailureJson(label, failure), executionFailure: true };
-    }
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
 function codexExecutionFailureJson(label, failure) {
   return JSON.stringify({
     vote: "REQUEST_CHANGES",
@@ -1007,101 +954,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function spawnCodex(args, stdin, timeoutMs, command = "codex", timers = {}) {
-  return new Promise((resolve) => {
-    const env = {};
-    for (const name of [
-      "PATH",
-      "HOME",
-      "USER",
-      "LOGNAME",
-      "LANG",
-      "LC_ALL",
-      "TERM",
-      "TMPDIR",
-      "PWD",
-      "CODEX_HOME",
-      "SSL_CERT_FILE",
-      "SSL_CERT_DIR",
-      "NODE_EXTRA_CA_CERTS",
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "ALL_PROXY",
-      "NO_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "all_proxy",
-      "no_proxy",
-    ]) {
-      if (process.env[name]) env[name] = process.env[name];
-    }
-    const apiKey = process.env.REVIEW_CODEX_API_KEY || process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || "";
-    env.REVIEW_CODEX_API_KEY = apiKey;
-    env.OPENAI_API_KEY = apiKey;
-    env.CODEX_API_KEY = apiKey;
-    if (process.env.REVIEW_TEST_MODE === "1") env.CODEX_TEST_LOG = process.env.CODEX_TEST_LOG || "";
-    const child = spawn(command, args, {
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-    });
-    const killGraceMs = timers.killGraceMs ?? 5_000;
-    const forceResolveMs = timers.forceResolveMs ?? 10_000;
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let settled = false;
-    let killTimer = null;
-    let forceResolveTimer = null;
-    let timer = null;
-    const finish = (result, { preserveKillTimer = false } = {}) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (!preserveKillTimer) clearTimeout(killTimer);
-      clearTimeout(forceResolveTimer);
-      resolve(result);
-    };
-    timer = setTimeout(() => {
-      timedOut = true;
-      killCodexProcess(child, "SIGTERM");
-      killTimer = setTimeout(() => killCodexProcess(child, "SIGKILL"), killGraceMs);
-      forceResolveTimer = setTimeout(
-        () => finish({ code: 124, signal: "SIGKILL", stdout, stderr: `${stderr}\nCodex 进程组超时后未正常关闭` }),
-        forceResolveMs,
-      );
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk) => {
-      stdout = appendCap(stdout, chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr = appendCap(stderr, chunk);
-    });
-    child.on("error", (error) => {
-      finish({ code: 127, signal: null, stdout, stderr: `${stderr}\n${error.message}` });
-    });
-    child.on("close", (code, signal) => {
-      finish({ code: timedOut ? 124 : code, signal, stdout, stderr }, { preserveKillTimer: timedOut });
-    });
-    child.stdin.on("error", () => {});
-    child.stdin.end(stdin);
-  });
-}
-
-function killCodexProcess(child, signal) {
-  try {
-    if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
-    else child.kill(signal);
-  } catch {
-    try {
-      child.kill(signal);
-    } catch {
-      // 进程已退出。
-    }
-  }
-}
-
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
@@ -1116,8 +968,8 @@ async function mapLimit(items, limit, fn) {
 }
 
 export function codexFailureText(result) {
-  const stderr = excerptLog(redactRuntimeSecrets(redactCodexPromptEcho(result.stderr || "")), 2000);
-  const stdout = excerptLog(redactRuntimeSecrets(redactCodexPromptEcho(result.stdout || "")), 1200);
+  const stderr = excerptLog(redactRuntimeSecrets(result.stderr || ""), 2000);
+  const stdout = excerptLog(redactRuntimeSecrets(result.stdout || ""), 1200);
   return [
     `exit=${result.code}`,
     result.signal ? `signal=${result.signal}` : "",
@@ -1158,23 +1010,6 @@ export function isRetryableCodexFailure(result) {
   );
 }
 
-export function redactCodexPromptEcho(value) {
-  const text = String(value || "");
-  const marker = "\n--------\nuser\n";
-  const markerAt = text.indexOf(marker);
-  if (markerAt < 0) return text;
-
-  const promptStart = markerAt + marker.length;
-  const rest = text.slice(promptStart);
-  const diagnosticAt = rest.search(
-    /\n(?:\d{4}-\d{2}-\d{2}T[^\n]*\b(?:ERROR|WARN)\b|ERROR:|error:|warning:|Turn failed|stream disconnected|OpenAI API error|status code:)/,
-  );
-  if (diagnosticAt < 0) {
-    return `${text.slice(0, promptStart)}[prompt echo omitted]\n`;
-  }
-  return `${text.slice(0, promptStart)}[prompt echo omitted]\n${rest.slice(diagnosticAt + 1)}`;
-}
-
 export function excerptLog(value, limit) {
   const text = String(value || "").trim();
   if (text.length <= limit) return text;
@@ -1197,7 +1032,7 @@ function isCodexFailureFinding(finding) {
   return finding?.file === ".github/scripts/review.mjs" && /Codex reviewer .*执行失败/.test(String(finding.title || ""));
 }
 
-function renderComment(context, firstRound, finalRound, gate) {
+export function renderComment(context, firstRound, finalRound, gate) {
   const findings = mergeFindings(reviewFindingResults(firstRound, finalRound));
   const planRows = finalRound
     .map((r) => `| ${r.reviewer} | ${r.plan_intent.status} | ${escapeCell(r.plan_intent.reason || "-")} |`)
@@ -1522,11 +1357,6 @@ function clampInt(value, min, max, fallback) {
 function truncate(value, limit) {
   const s = String(value || "");
   return s.length <= limit ? s : `${s.slice(0, Math.max(0, limit - 20))}\n...[truncated]`;
-}
-
-function appendCap(current, chunk, limit = 200_000) {
-  const next = current + chunk.toString("utf8");
-  return next.length > limit ? next.slice(next.length - limit) : next;
 }
 
 function escapeCell(value) {
