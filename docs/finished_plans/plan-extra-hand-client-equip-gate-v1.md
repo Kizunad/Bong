@@ -8,9 +8,9 @@
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | client extra hand 装备规则与 server 对齐 | ⬜ |
-| P1 | 多臂槽双手锁视觉/交互回归 | ⬜ |
-| P2 | 快装/拖拽/契约 pin 测试补齐 | ⬜ |
+| P0 | client extra hand 装备规则与 server 对齐 | ✅ 2026-07-06 |
+| P1 | 多臂槽双手锁视觉/交互回归 | ✅ 2026-07-06 |
+| P2 | 快装/拖拽/契约 pin 测试补齐 | ✅ 2026-07-06 |
 
 ## 接入面
 
@@ -64,7 +64,7 @@
   - shift 快装同样坏掉：`quickEquipFromGrid()` 依赖同一套 `canEquip()` / `preferredWeaponQuickEquipSlot()`，主手占用后不会把一般武器路由到 extra hand
 - 体感上表现为：**丹道阶段 4 的“多臂 +2 手槽”看得见、摸不着**。玩家辛苦打到高变异阶段，UI 却把最核心的持械收益封死，构成明确的实际游玩损害。
 
-## P0 client extra hand 装备规则与 server 对齐 ⬜
+## P0 client extra hand 装备规则与 server 对齐 ✅ 2026-07-06
 
 - 交付物：
   - `client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java`
@@ -78,7 +78,7 @@
   - `starter_talisman` / `wooden_shield` 仍只能走 `OFF_HAND`，不可进 `EXTRA_HAND_0/1`
   - 主手双手杖时，`OFF_HAND` 被锁、`EXTRA_HAND_0/1` 不锁
 
-## P1 多臂槽双手锁视觉/交互回归 ⬜
+## P1 多臂槽双手锁视觉/交互回归 ✅ 2026-07-06
 
 - 交付物：
   - `client/src/main/java/com/bong/client/inventory/component/EquipmentPanel.java`
@@ -90,7 +90,7 @@
   - 主手持 `wooden_staff` 时，装备面板中 `OFF_HAND` 灰显，但 `EXTRA_HAND_0/1` 仍可高亮落点
   - grid 里的 `iron_sword` 在主手已占、off_hand 不合法时，`quickEquipFromGrid()` 会把它路由到 `EXTRA_HAND_0/1`
 
-## P2 快装/拖拽/契约 pin 测试补齐 ⬜
+## P2 快装/拖拽/契约 pin 测试补齐 ✅ 2026-07-06
 
 - 交付物：
   - `client/src/test/java/com/bong/client/inventory/InventoryEquipRulesTest.java`
@@ -103,8 +103,10 @@
   - `client/src/test/java/com/bong/client/inventory/component/EquipmentPanelTest.java`
     - 改写现有错误断言：双手武器只锁 `OFF_HAND`
     - 补多臂槽仍可交互/不灰显的 panel 状态测试
-  - 视现有 harness 选择 `InspectScreen*Test` 增补 1 条 UI 级回归：
-    - shift 点 grid 中的 `iron_sword`，在 `MAIN_HAND` 已占情况下可落到 `EXTRA_HAND_0`
+  - `client/src/test/java/com/bong/client/inventory/InspectScreenMoveIntentTest.java`
+    - 通过生产路径共用的最薄 headless 编排 seam 覆盖拖拽落入 `EXTRA_HAND_1`
+    - 覆盖 shift 快装在主手占用、副手不合法时落入 `EXTRA_HAND_0`
+    - 断言最终发送的 `InventoryMoveIntent` 携带正确 `EquipLoc`；无合法槽位/目标已占时不发请求
 - 验收抓手：
   - client 单测能直接表达“server 接受的一般武器，client 也必须接受”
   - 不再把当前错误行为写进测试名称/断言文案
@@ -140,3 +142,22 @@
 
 - 反方一主张“多臂只是 UI 装饰或后续能力，client 现在限制更多种类也合理”。裁决：驳回。server 与 finished plan 已明确把 extra hand 定义成真实 held 槽，并且有运行时/测试双重证据证明一般武器应可进入。
 - 反方二主张“主手双手武器锁 extra hand 可能是为了避免四持 OP”。裁决：驳回。阶段 4 的限制是“快速切换，非同时攻击”，不是“额外手槽失效”；`plan-layered-equip-v1` 已明写 **extra_hand 独立不锁**，当前 client 是违背既有决议，不是平衡设计。
+
+## Finish Evidence
+
+- **落地清单**：
+  - `client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java`：拆分 `OFF_HAND` 与 `EXTRA_HAND_0/1`，extra hand 允许 `weapon/tool/hoe`，不继承 `shield/treasure` 副手特权；主手双手武器只检查 `OFF_HAND` 空闲。
+  - `client/src/main/java/com/bong/client/inventory/component/EquipmentPanel.java`：双手武器只 disable 空闲 `OFF_HAND`，不再灰显 `EXTRA_HAND_0/1`。
+  - `client/src/test/java/com/bong/client/inventory/InventoryEquipRulesTest.java`：锁住一般武器可进 extra hand、主手双手武器不锁 extra hand、quick-equip 路由 extra hand、shield/treasure 不进 extra hand。
+  - `client/src/test/java/com/bong/client/inventory/component/EquipmentPanelTest.java`：锁住双手武器只灰副手、多臂槽仍可交互。
+  - `client/src/main/java/com/bong/client/inventory/InspectScreen.java`：拖拽装备提交抽取为生产/headless 共用编排边界，shift 快装继续调用同一生产方法。
+  - `client/src/test/java/com/bong/client/inventory/InspectScreenMoveIntentTest.java`：锁住拖拽与 shift 快装从输入编排到 extra-hand `EquipLoc`、`InventoryMoveIntent` 的真实接入链路。
+- **关键 commit**：
+  - `6921a924`（2026-07-06）：修复多臂额外手槽客户端装备门控。
+  - `41b9a73c`（2026-07-06）：通过 PR #900 接入 `origin/main`。
+- **测试结果**：
+  - 2026-07-10 使用 JDK 17 运行 Gradle 定向测试：`InventoryEquipRulesTest` 43 条 + `EquipmentPanelTest` 11 条 + `InspectScreenMoveIntentTest` 22 条，76/76 PASS。
+- **跨仓库核验**：
+  - server 已有 `validate_move_semantics_accepts_weapon_to_extra_hand_0/1` 与 `validate_two_handed_main_hand_does_not_lock_extra_hand` pin；extra-hand 实现子集未改 server/schema。本 PR 是 31 项本地分叉的统一 reconciliation 容器，另含伪灵脉恢复与 social 回归等独立残余语义，不属于本 plan 的交付范围。
+  - client `InspectScreen` 拖拽与 shift quick-equip 继续经 `InventoryEquipRules.canEquip()` / `preferredWeaponQuickEquipSlot()`，规则层已补 pin。
+- **验证边界 / 后续**：headless 回归从 owo hit-test 后的生产编排边界开始，覆盖拖拽/Shift 快装、本地传输拒绝或异常后的普通 grid／浮动 pack 精确回源，以及 QUICK_USE 回绑失败保留拖拽并在传输恢复后重试；同时锁住 `EquipLoc` 与 `InventoryMoveIntent`。当前自动化不声称覆盖 mounted owo 的像素坐标命中。`EXTRA_HAND_0/1` 实际坐标命中与 disabled 视觉回退保留为 `runClient` 人工 UI 回归项。

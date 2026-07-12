@@ -48,32 +48,17 @@ export const ColorKind = Type.Union(
 );
 export type ColorKind = Static<typeof ColorKind>;
 
-/** 20 条经脉（12 正经 + 8 奇经）。 */
-export const MeridianId = Type.Union(
-  [
-    Type.Literal("Lung"),
-    Type.Literal("LargeIntestine"),
-    Type.Literal("Stomach"),
-    Type.Literal("Spleen"),
-    Type.Literal("Heart"),
-    Type.Literal("SmallIntestine"),
-    Type.Literal("Bladder"),
-    Type.Literal("Kidney"),
-    Type.Literal("Pericardium"),
-    Type.Literal("TripleEnergizer"),
-    Type.Literal("Gallbladder"),
-    Type.Literal("Liver"),
-    Type.Literal("Ren"),
-    Type.Literal("Du"),
-    Type.Literal("Chong"),
-    Type.Literal("Dai"),
-    Type.Literal("YinQiao"),
-    Type.Literal("YangQiao"),
-    Type.Literal("YinWei"),
-    Type.Literal("YangWei"),
-  ],
-  { description: "20 条经脉（12 正经 + 8 奇经）" },
-);
+/**
+ * 经脉 channel id（plan-race-system-v1 P1c）。
+ *
+ * 曾是 20 条 TCM 经脉（12 正经 + 8 奇经）的闭合 union，wire 开放化后改为任意 string
+ * channel id（humanoid 沿用 20 个既有名字，非 humanoid 构型如 P5 飞鲸的经脉不在这
+ * 20 个名字之列，物理装不下闭合 union）。不留 dual-form 兼容层。
+ */
+export const MeridianId = Type.String({
+  minLength: 1,
+  description: "经脉 channel id（humanoid 沿用 20 条既有名字，非 humanoid 构型可为任意 id）",
+});
 export type MeridianId = Static<typeof MeridianId>;
 
 /** 顿悟类别 A–G（plan §5.2）。 */

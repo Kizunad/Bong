@@ -81,6 +81,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_spans_fold.py' -v
           python3 -m unittest discover -s tests -p 'test_span_blend.py' -v
           python3 -m unittest discover -s tests -p 'test_spans_export.py' -v
+          python3 -m unittest discover -s tests -p 'test_carver_owner_provenance.py' -v
           python3 -m unittest discover -s tests -p 'test_raster_check_spans.py' -v
           python3 -m unittest discover -s tests -p 'test_v3_behavior_baseline.py' -v
           python3 -m unittest discover -s tests -p 'test_layer_registry_fixture.py' -v

@@ -724,7 +724,7 @@ mod tests {
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
         app.world_mut().entity_mut(player).insert((
             InsightModifiers::default(),
-            MeridianTarget(MeridianId::Chong),
+            MeridianTarget(MeridianId::Chong.channel_id()),
             ActivePlayerKnockback {
                 velocity: DVec3::new(1.0, 0.0, 0.0),
                 remaining_ticks: 3,

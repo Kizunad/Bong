@@ -15,7 +15,7 @@ use super::inventory::{EquipSlotV1, InventoryLocationV1};
 use super::movement::MovementActionRequestV1;
 use super::tuike::FalseSkinKindV1;
 use super::void_actions::VoidActionRequestV1;
-use crate::cultivation::components::MeridianId;
+use crate::cultivation::components::MeridianChannelId;
 use crate::cultivation::forging::ForgeAxis;
 use crate::zhenfa::{
     trap_content::TrapTargetFace, ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaKind,
@@ -27,7 +27,7 @@ pub enum ApplyPillTargetV1 {
     #[serde(rename = "self")]
     SelfTarget,
     Meridian {
-        meridian_id: MeridianId,
+        meridian_id: MeridianChannelId,
     },
 }
 
@@ -36,7 +36,7 @@ pub enum ApplyPillTargetV1 {
 pub enum ClientRequestV1 {
     SetMeridianTarget {
         v: u8,
-        meridian: MeridianId,
+        meridian: MeridianChannelId,
     },
     BreakthroughRequest {
         v: u8,
@@ -65,7 +65,7 @@ pub enum ClientRequestV1 {
     },
     ForgeRequest {
         v: u8,
-        meridian: MeridianId,
+        meridian: MeridianChannelId,
         axis: ForgeAxis,
     },
     /// 顿悟邀约回执：玩家选择 / 拒绝 / 超时。
@@ -465,6 +465,8 @@ pub enum ClientRequestV1 {
         #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         item_id: Option<String>,
+        #[serde(default)]
+        request_id: String,
     },
     /// plan-hotbar-modify-v1 §3.2：触发 1-9 技能栏槽位。
     SkillBarCast {
@@ -802,12 +804,26 @@ mod tests {
 
     #[test]
     fn set_meridian_target_roundtrip() {
-        let json = r#"{"type":"set_meridian_target","v":1,"meridian":"Lung"}"#;
+        let json = r#"{"type":"set_meridian_target","v":1,"meridian":"lung"}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
             ClientRequestV1::SetMeridianTarget { v, meridian } => {
                 assert_eq!(v, 1);
-                assert_eq!(meridian, MeridianId::Lung);
+                assert_eq!(meridian, MeridianChannelId::new("lung"));
+            }
+            other => panic!("expected SetMeridianTarget, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn set_meridian_target_accepts_non_humanoid_channel_id() {
+        // plan-race-system-v1 P1c — wire 开放化后任意 snake_case channel id 都应合法
+        // 解析（非 humanoid 构型如 P5 飞鲸的经脉不在 20 个 TCM 名字之列）。
+        let json = r#"{"type":"set_meridian_target","v":1,"meridian":"tail_fin_channel"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SetMeridianTarget { meridian, .. } => {
+                assert_eq!(meridian, MeridianChannelId::new("tail_fin_channel"));
             }
             other => panic!("expected SetMeridianTarget, got {other:?}"),
         }
@@ -1183,11 +1199,11 @@ mod tests {
 
     #[test]
     fn forge_request_roundtrip() {
-        let json = r#"{"type":"forge_request","v":1,"meridian":"Ren","axis":"Rate"}"#;
+        let json = r#"{"type":"forge_request","v":1,"meridian":"ren","axis":"Rate"}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
             ClientRequestV1::ForgeRequest { meridian, axis, .. } => {
-                assert_eq!(meridian, MeridianId::Ren);
+                assert_eq!(meridian, MeridianChannelId::new("ren"));
                 assert!(matches!(axis, ForgeAxis::Rate));
             }
             other => panic!("expected ForgeRequest, got {other:?}"),
@@ -1198,7 +1214,7 @@ mod tests {
     fn forge_request_capacity_axis_roundtrip() {
         let v = ClientRequestV1::ForgeRequest {
             v: 1,
-            meridian: MeridianId::Du,
+            meridian: MeridianChannelId::new("du"),
             axis: ForgeAxis::Capacity,
         };
         let s = serde_json::to_string(&v).unwrap();
@@ -1266,7 +1282,7 @@ mod tests {
 
     #[test]
     fn apply_pill_meridian_roundtrip() {
-        let json = r#"{"type":"apply_pill","v":1,"instance_id":2002,"target":{"kind":"meridian","meridian_id":"Ren"}}"#;
+        let json = r#"{"type":"apply_pill","v":1,"instance_id":2002,"target":{"kind":"meridian","meridian_id":"ren"}}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
             ClientRequestV1::ApplyPill {
@@ -1278,7 +1294,7 @@ mod tests {
                 assert_eq!(
                     target,
                     ApplyPillTargetV1::Meridian {
-                        meridian_id: MeridianId::Ren,
+                        meridian_id: MeridianChannelId::new("ren"),
                     }
                 );
             }
@@ -1311,7 +1327,7 @@ mod tests {
 
     #[test]
     fn quick_slot_bind_roundtrip_and_clear() {
-        let bind_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"kai_mai_pill"}"#;
+        let bind_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"kai_mai_pill","request_id":"bind-1"}"#;
         let req: ClientRequestV1 = serde_json::from_str(bind_json).unwrap();
         assert!(matches!(
             req,
@@ -1319,10 +1335,12 @@ mod tests {
                 v: 1,
                 slot: 1,
                 item_id: Some(ref item_id),
-            } if item_id == "kai_mai_pill"
+                ref request_id,
+            } if item_id == "kai_mai_pill" && request_id == "bind-1"
         ));
 
-        let clear_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":null}"#;
+        let clear_json =
+            r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":null,"request_id":"clear-1"}"#;
         let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
         assert!(matches!(
             req,
@@ -1330,7 +1348,8 @@ mod tests {
                 v: 1,
                 slot: 1,
                 item_id: None,
-            }
+                ref request_id,
+            } if request_id == "clear-1"
         ));
     }
 
@@ -1428,7 +1447,7 @@ mod tests {
     fn hotbar_slot_indices_reject_out_of_range_values() {
         for json in [
             r#"{"type":"use_quick_slot","v":1,"slot":9}"#,
-            r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null}"#,
+            r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null,"request_id":"bad-slot"}"#,
             r#"{"type":"skill_bar_cast","v":1,"slot":9}"#,
             r#"{"type":"skill_bar_bind","v":1,"slot":9,"binding":null}"#,
         ] {

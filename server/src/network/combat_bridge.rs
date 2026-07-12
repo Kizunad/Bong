@@ -251,17 +251,16 @@ fn attacker_id_from_cause(cause: &str) -> Option<String> {
     })
 }
 
+/// plan-race-system-v1 P1c — `CombatBodyPartV1` 开放化为 string part id 后，直接复用
+/// `body_plan::legacy_body_part_to_id`（P0b 既有的 legacy `BodyPart` ↔ `BodyPartId`
+/// 全双射转换，humanoid 8 段恒有值）取 snake_case 字符串，不再需要闭合枚举判别式
+/// match——这条转换本身就是 P0 resolve.rs 注释里"留给 P1"的那件事。
 fn map_body_part(body_part: crate::combat::components::BodyPart) -> CombatBodyPartV1 {
-    match body_part {
-        crate::combat::components::BodyPart::Head => CombatBodyPartV1::Head,
-        crate::combat::components::BodyPart::Chest => CombatBodyPartV1::Chest,
-        crate::combat::components::BodyPart::Back => CombatBodyPartV1::Back,
-        crate::combat::components::BodyPart::Abdomen => CombatBodyPartV1::Abdomen,
-        crate::combat::components::BodyPart::ArmL => CombatBodyPartV1::ArmL,
-        crate::combat::components::BodyPart::ArmR => CombatBodyPartV1::ArmR,
-        crate::combat::components::BodyPart::LegL => CombatBodyPartV1::LegL,
-        crate::combat::components::BodyPart::LegR => CombatBodyPartV1::LegR,
-    }
+    CombatBodyPartV1::new(
+        crate::body_plan::legacy_body_part_to_id(body_part)
+            .as_str()
+            .to_string(),
+    )
 }
 
 fn map_wound_kind(wound_kind: crate::combat::components::WoundKind) -> CombatWoundKindV1 {
@@ -509,7 +508,7 @@ mod tests {
                     payload.attacker_id.as_deref(),
                     Some("offline:AttackerCanonical")
                 );
-                assert_eq!(payload.body_part, Some(CombatBodyPartV1::Chest));
+                assert_eq!(payload.body_part, Some(CombatBodyPartV1::chest()));
                 assert_eq!(payload.wound_kind, Some(CombatWoundKindV1::Blunt));
                 assert_eq!(payload.damage, Some(20.0));
                 assert_eq!(payload.contam_delta, Some(5.0));

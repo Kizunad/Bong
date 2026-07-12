@@ -2,6 +2,35 @@ import { Type, type Static } from "@sinclair/typebox";
 
 const HOTBAR_SLOT_COUNT = 9;
 
+export const QuickSlotEntryV1 = Type.Object(
+  {
+    item_id: Type.String({ minLength: 1 }),
+    display_name: Type.String({ minLength: 1 }),
+    cast_duration_ms: Type.Integer({ minimum: 0, maximum: 0xffff_ffff }),
+    cooldown_ms: Type.Integer({ minimum: 0, maximum: 0xffff_ffff }),
+    icon_texture: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type QuickSlotEntryV1 = Static<typeof QuickSlotEntryV1>;
+
+export const QuickSlotConfigV1 = Type.Object(
+  {
+    slots: Type.Array(Type.Union([QuickSlotEntryV1, Type.Null()]), {
+      minItems: HOTBAR_SLOT_COUNT,
+      maxItems: HOTBAR_SLOT_COUNT,
+    }),
+    cooldown_until_ms: Type.Array(Type.Integer({ minimum: 0 }), {
+      minItems: HOTBAR_SLOT_COUNT,
+      maxItems: HOTBAR_SLOT_COUNT,
+    }),
+    ack_request_id: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    bind_accepted: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+export type QuickSlotConfigV1 = Static<typeof QuickSlotConfigV1>;
+
 export const SkillBarItemEntryV1 = Type.Object(
   {
     kind: Type.Literal("item"),

@@ -15,7 +15,8 @@ use crate::combat::status::has_active_status;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
-    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
+    ColorKind, Contamination, Cultivation, MeridianChannelId, MeridianId, MeridianSystem, QiColor,
+    Realm,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, enforce_severed_state, MeridianSeveredEvent,
@@ -1367,12 +1368,24 @@ fn is_meridian_severed(
         .is_some_and(|severed| severed.is_severed(meridian_id))
 }
 
+/// plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本函数返回值
+/// 仍是 legacy `MeridianId`（zhenmai_v2 内部依赖表尚未迁移）——humanoid 20 条经脉均可
+/// 逆映射回 `MeridianId`。
+fn meridian_channel_id_to_legacy(channel_id: &MeridianChannelId) -> MeridianId {
+    channel_id.to_meridian_id().unwrap_or_else(|| {
+        panic!(
+            "[bong][combat][zhenmai_v2] channel id {channel_id} has no legacy MeridianId \
+             mapping — zhenmai_v2 cannot represent non-humanoid channels yet"
+        )
+    })
+}
+
 fn first_open_meridian(world: &bevy_ecs::world::World, caster: Entity) -> Option<MeridianId> {
     world.get::<MeridianSystem>(caster).and_then(|meridians| {
         meridians
             .iter()
             .find(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
-            .map(|meridian| meridian.id)
+            .map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
     })
 }
 
@@ -1383,7 +1396,7 @@ fn open_meridians(world: &bevy_ecs::world::World, caster: Entity) -> Vec<Meridia
             meridians
                 .iter()
                 .filter(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
-                .map(|meridian| meridian.id)
+                .map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
                 .collect()
         })
         .unwrap_or_default()

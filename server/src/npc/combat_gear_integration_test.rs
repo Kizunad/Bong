@@ -68,7 +68,8 @@ mod tests {
         }
 
         // 2. MeridianSystem — via npc_meridian_system_for_realm
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let opened_count = MeridianId::ALL
             .iter()
             .filter(|id| meridian_sys.get(**id).opened)
@@ -157,7 +158,8 @@ mod tests {
             "Disciple should always have main_hand weapon"
         );
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
         let techniques = assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, seed);
         assert!(
@@ -209,7 +211,8 @@ mod tests {
         assert_eq!(main.quality_tier, 2);
         assert!(equipment.armor_slots().count() >= 2);
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
         let techniques = assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, seed);
         assert!(
@@ -229,7 +232,8 @@ mod tests {
         let archetype = NpcArchetype::Rogue;
         let seed = 99u64;
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
         let techniques = assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, seed);
 
@@ -459,7 +463,10 @@ mod tests {
     #[test]
     fn integration_protocol_full_metadata_roundtrip() {
         let equipment = assign_npc_equipment(NpcArchetype::Rogue, Realm::Condense, None, 42);
-        let meridian_sys = npc_meridian_system_for_realm(Realm::Condense);
+        let meridian_sys = npc_meridian_system_for_realm(
+            Realm::Condense,
+            crate::body_plan::humanoid_plan_static(),
+        );
         let deps = empty_deps();
         let techniques = assign_npc_techniques(
             NpcArchetype::Rogue,
@@ -675,7 +682,8 @@ mod tests {
         let realm = Realm::Awaken;
         let min_interval: u64 = 60 + realm_rank(realm) as u64 * 10; // 60 + 0 = 60
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
 
         let mut technique_uses = 0u64;
@@ -761,7 +769,8 @@ mod tests {
         let realm = Realm::Condense;
         let min_interval: u64 = 60 + realm_rank(realm) as u64 * 10; // 60 + 20 = 80
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
 
         let mut technique_uses = 0u64;
@@ -841,7 +850,8 @@ mod tests {
         let realm = Realm::Spirit;
         let min_interval: u64 = 60 + realm_rank(realm) as u64 * 10; // 60 + 40 = 100
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
 
         let mut technique_uses = 0u64;
@@ -922,7 +932,8 @@ mod tests {
         let realm = Realm::Induce;
         let min_interval: u64 = 60 + realm_rank(realm) as u64 * 10; // 60 + 10 = 70
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
 
         let mut technique_uses = 0u64;
@@ -1021,7 +1032,8 @@ mod tests {
         );
 
         // Techniques
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
         let techniques = assign_npc_techniques(
             NpcArchetype::Zhinian,
@@ -1090,7 +1102,8 @@ mod tests {
             Realm::Spirit,
             Realm::Void,
         ] {
-            let sys = npc_meridian_system_for_realm(realm);
+            let sys =
+                npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
             let opened = MeridianId::ALL
                 .iter()
                 .filter(|id| sys.get(**id).opened)
@@ -1111,7 +1124,8 @@ mod tests {
     fn integration_protocol_max_payload_not_exceeded() {
         // Worst case: GuardianRelic with full equipment + 5 techniques + trade offers
         let equipment = assign_npc_equipment(NpcArchetype::GuardianRelic, Realm::Void, None, 42);
-        let meridian_sys = npc_meridian_system_for_realm(Realm::Void);
+        let meridian_sys =
+            npc_meridian_system_for_realm(Realm::Void, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
         let techniques = assign_npc_techniques(
             NpcArchetype::GuardianRelic,
@@ -1198,7 +1212,8 @@ mod tests {
                     archetype
                 );
 
-                let meridian_sys = npc_meridian_system_for_realm(realm);
+                let meridian_sys =
+                    npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
                 let deps = empty_deps();
                 let techniques =
                     assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, 42);

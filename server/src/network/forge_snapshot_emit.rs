@@ -10,7 +10,7 @@ use valence::prelude::{Added, Client, Entity, EventReader, Query, Res, Username,
 use crate::forge::blueprint::{Blueprint, BlueprintRegistry, StepSpec};
 use crate::forge::events::{
     ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted,
-    InscriptionScrollSubmit, StepAdvance, TemperingHit,
+    InscriptionScrollApplied, StepAdvance, TemperingHit,
 };
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSession, ForgeSessionId, ForgeSessions, ForgeStep, StepState};
@@ -197,7 +197,7 @@ pub fn push_forge_start_snapshot_on_accept(
 /// 只推 session，不重发 station/blueprint_book（避免每次击键都重发三件套）。
 pub fn push_forge_session_snapshot_on_interaction(
     mut tempering_hits: EventReader<TemperingHit>,
-    mut scroll_submits: EventReader<InscriptionScrollSubmit>,
+    mut scroll_applied: EventReader<InscriptionScrollApplied>,
     mut consecration_injects: EventReader<ConsecrationInject>,
     sessions: Res<ForgeSessions>,
     registry: Res<BlueprintRegistry>,
@@ -207,8 +207,8 @@ pub fn push_forge_session_snapshot_on_interaction(
     for hit in tempering_hits.read() {
         touched.push(hit.session);
     }
-    for submit in scroll_submits.read() {
-        touched.push(submit.session);
+    for applied in scroll_applied.read() {
+        touched.push(applied.session);
     }
     for inject in consecration_injects.read() {
         touched.push(inject.session);
@@ -229,7 +229,7 @@ pub fn push_forge_session_snapshot_on_interaction(
     }
 }
 
-/// `ForgeStepAdvance` 处理后（`handle_step_advance` 之后）回推最新快照：未完成则和
+/// `ForgeStepAdvance` 处理后（forge step advance 阶段之后）回推最新快照：未完成则和
 /// 起炉受理一样推 station+session+blueprint_book 三件套（`send_forge_snapshots_to_player`
 /// 的第二个真实调用点）；已到 Done 则只推 station（`has_session` 已被引擎清 false）+
 /// blueprint_book，不带 session（结算内容由 `push_forge_outcome_on_event` 的
@@ -753,7 +753,7 @@ mod tests {
     fn tempering_hit_pushes_session_only_snapshot() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());
@@ -797,7 +797,7 @@ mod tests {
     fn consecration_inject_pushes_session_snapshot() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());
@@ -831,7 +831,7 @@ mod tests {
     fn interaction_snapshot_skips_unknown_session_without_panic() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());
@@ -882,6 +882,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(9),
+            from_step: ForgeStep::Tempering,
         });
         app.update();
         flush_all_client_packets(&mut app);
@@ -919,6 +920,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(10),
+            from_step: ForgeStep::Consecration,
         });
         app.update();
         flush_all_client_packets(&mut app);
@@ -955,6 +957,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(11),
+            from_step: ForgeStep::Tempering,
         });
         app.update();
         flush_all_client_packets(&mut app);
