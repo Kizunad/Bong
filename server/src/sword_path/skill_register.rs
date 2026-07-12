@@ -21,6 +21,7 @@ use valence::prelude::{
     ResMut,
 };
 
+use crate::body_plan::intrinsic_is_humanoid_from_world;
 use crate::combat::components::{
     Casting, SkillBarBindings, Stamina, StaminaState, StatusEffects, WoundKind,
 };
@@ -30,7 +31,7 @@ use crate::combat::events::{
 use crate::combat::weapon::{Weapon, WeaponKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
@@ -857,6 +858,23 @@ fn build_cast_context(
     };
     if !known.entries.iter().any(|e| e.id == skill_id && e.active) {
         return Err(CastRejectReason::TechniqueInactive);
+    }
+
+    // plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— race gate：拥有门后、境界门前。
+    // 剑道五招（sword_path.*）全数据表标 RaceGate::Humanoid（依赖人体专属经脉拓扑 +
+    // 双臂持械机能），本体非人形（`intrinsic_is_humanoid_from_world` 判 false）一律拒绝。
+    if let Some(definition) = technique_definition(skill_id) {
+        let cultivation_race = world
+            .get::<Cultivation>(caster)
+            .map(|c| c.race.clone())
+            .unwrap_or_else(|| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+        let intrinsic_is_humanoid = intrinsic_is_humanoid_from_world(world, caster);
+        if !definition
+            .required_race
+            .allows(&cultivation_race, intrinsic_is_humanoid)
+        {
+            return Err(CastRejectReason::RaceMismatch);
+        }
     }
 
     // 境界（plan §techniques::required_realm）

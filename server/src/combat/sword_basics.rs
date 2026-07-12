@@ -3,6 +3,7 @@ use valence::prelude::{
     Res, ResMut, UniqueId,
 };
 
+use crate::body_plan::intrinsic_is_humanoid_from_world;
 use crate::combat::components::{
     CastSource, Casting, SkillBarBindings, Stamina, StaminaState, StatusEffects, WoundKind,
     TICKS_PER_SECOND,
@@ -12,7 +13,7 @@ use crate::combat::status::{has_active_status, upsert_status_effect};
 use crate::combat::weapon::{Weapon, WeaponKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
@@ -489,6 +490,9 @@ fn cast_sword_attack(
     let Some(proficiency) = known_active_proficiency(world, caster, technique) else {
         return rejected(CastRejectReason::TechniqueInactive);
     };
+    if !race_gate_allows(world, caster, technique.id()) {
+        return rejected(CastRejectReason::RaceMismatch);
+    }
     let profile = sword_profile(technique, proficiency);
     spend_stamina(world, caster, profile.stamina_cost);
     set_cooldown(
@@ -633,6 +637,9 @@ fn cast_sword_parry(
     let Some(proficiency) = known_active_proficiency(world, caster, SwordTechnique::Parry) else {
         return rejected(CastRejectReason::TechniqueInactive);
     };
+    if !race_gate_allows(world, caster, SwordTechnique::Parry.id()) {
+        return rejected(CastRejectReason::RaceMismatch);
+    }
     let profile = sword_profile(SwordTechnique::Parry, proficiency);
     spend_stamina(world, caster, profile.stamina_cost);
     set_cooldown(
@@ -696,6 +703,9 @@ fn cast_sword_infuse(
     let Some(proficiency) = known_active_proficiency(world, caster, SwordTechnique::Infuse) else {
         return rejected(CastRejectReason::TechniqueInactive);
     };
+    if !race_gate_allows(world, caster, SwordTechnique::Infuse.id()) {
+        return rejected(CastRejectReason::RaceMismatch);
+    }
     let profile = sword_profile(SwordTechnique::Infuse, proficiency);
     let amount = (cultivation.qi_current * SWORD_INFUSE_MAX_FRACTION)
         .max(0.0)
@@ -1082,6 +1092,27 @@ fn lerp_round(start: f32, end: f32, t: f32) -> u32 {
 
 fn rejected(reason: CastRejectReason) -> CastResult {
     CastResult::Rejected { reason }
+}
+
+/// plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— sword.cleave/thrust/parry/infuse 四招
+/// 全数据表标 `RaceGate::Humanoid`；本函数是三个 resolver（cleave+thrust 共用
+/// `cast_sword_attack`、`cast_sword_parry`、`cast_sword_infuse`）共享的 race gate 判定，
+/// 与 `sword_path::skill_register::build_cast_context` 的插入位置镜像一致：拥有门
+/// （`known_active_proficiency` 返回 `Some`）之后，其余门禁（体力/境界/经脉）之前。
+fn race_gate_allows(world: &bevy_ecs::world::World, caster: Entity, skill_id: &str) -> bool {
+    let Some(definition) = technique_definition(skill_id) else {
+        // 未知 skill_id 不在本函数职责——调用点各自已有 technique_definition 校验
+        // （或压根不需要，本 gate 缺 definition 时不拦截，交由后续逻辑处理）。
+        return true;
+    };
+    let cultivation_race = world
+        .get::<Cultivation>(caster)
+        .map(|c| c.race.clone())
+        .unwrap_or_else(|| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+    let intrinsic_is_humanoid = intrinsic_is_humanoid_from_world(world, caster);
+    definition
+        .required_race
+        .allows(&cultivation_race, intrinsic_is_humanoid)
 }
 
 #[cfg(test)]

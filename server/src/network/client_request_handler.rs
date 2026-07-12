@@ -257,6 +257,11 @@ pub struct CombatRequestParams<'w, 's> {
     /// plan-scroll-reading-v1 P2：读卷中标记（真相源），供 `ScrollReadClosed` 分支查询以
     /// 决定是否需要发 `StopAnim` + 移除 marker。
     pub scroll_reading_q: Query<'w, 's, &'static crate::network::scroll_open_emit::ScrollReading>,
+    /// plan-race-system-v1 P3a —— 施放门 race gate（`handle_skill_bar_cast` 拥有门后、
+    /// 经脉门前判定，见该函数内插入点）。`Option` 与其余 registry 同规则。
+    pub cultivations: Query<'w, 's, &'static Cultivation>,
+    pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
 
 #[derive(SystemParam)]
@@ -413,6 +418,12 @@ pub struct SkillScrollRequestParams<'w, 's> {
     /// blueprint 的 display_name/tier_cap/step_count。`Option` 与 `forge_sessions` 同规则：
     /// 资源缺失时优雅跳过 S2C 回推而不 panic（`forge::register` 正常路径下恒 Some）。
     pub blueprint_registry: Option<Res<'w, BlueprintRegistry>>,
+    /// plan-race-system-v1 P3a —— 习得门 race gate 判定（`RaceGate::Humanoid` 档需要本体
+    /// `is_humanoid`，见 `learn_technique_if_allowed` 调用点）。`Option` 与其余 registry
+    /// 同规则：既有单测未插入这两个资源时优雅退化到 humanoid（`resolve_body_plan_for_target`
+    /// 文档化的退化行为）。
+    pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
 
 type NpcEngagementItem = (
@@ -3117,12 +3128,24 @@ fn handle_learn_technique_scroll(
             .get(entity)
             .ok()
             .flatten();
+        let intrinsic_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: Some(cultivation),
+                beast_kind: None,
+            },
+            skill_scroll_params.body_plans.as_deref(),
+            skill_scroll_params.race_registry.as_deref(),
+        )
+        .is_humanoid;
         can_learn_technique(
             known,
             cultivation,
             &meridians,
             severed,
             technique_id.as_str(),
+            intrinsic_is_humanoid,
         )
     };
 
@@ -3151,6 +3174,17 @@ fn handle_learn_technique_scroll(
                 .get(entity)
                 .ok()
                 .flatten();
+            let intrinsic_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+                entity,
+                crate::body_plan::BodyPlanPurpose::Intrinsic,
+                crate::body_plan::BodyPlanResolveInputs {
+                    cultivation: Some(cultivation),
+                    beast_kind: None,
+                },
+                skill_scroll_params.body_plans.as_deref(),
+                skill_scroll_params.race_registry.as_deref(),
+            )
+            .is_humanoid;
             matches!(
                 learn_technique_if_allowed(
                     &mut known,
@@ -3159,6 +3193,7 @@ fn handle_learn_technique_scroll(
                     severed,
                     technique_id.as_str(),
                     0.0,
+                    intrinsic_is_humanoid,
                 ),
                 ScrollReadOutcome::Learned
             )
@@ -3195,6 +3230,7 @@ fn handle_learn_technique_scroll(
             ScrollReadOutcome::Learned => "technique_scroll_learned",
             ScrollReadOutcome::AlreadyKnown => "technique_scroll_already_known",
             ScrollReadOutcome::RealmTooLow { .. } => "technique_scroll_realm_too_low",
+            ScrollReadOutcome::RaceMismatch => "technique_scroll_race_mismatch",
             ScrollReadOutcome::MeridianSevered { .. } => "technique_scroll_meridian_severed",
             ScrollReadOutcome::MeridianMissing { .. } => "technique_scroll_meridian_missing",
             ScrollReadOutcome::InvalidScroll => "technique_scroll_invalid",
@@ -11937,6 +11973,53 @@ fn handle_skill_bar_cast(
         );
         return;
     }
+
+    // plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— race gate：拥有门后、经脉门前。
+    // 镜像 sword_path::skill_register::build_cast_context 的插入位置（该 resolver 路径
+    // 独立于本通用路径，各自需要一份）。
+    {
+        let cultivation_race = combat_params
+            .cultivations
+            .get(entity)
+            .map(|c| c.race.clone())
+            .unwrap_or_else(|_| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+        let intrinsic_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: combat_params.cultivations.get(entity).ok(),
+                beast_kind: None,
+            },
+            combat_params.body_plans.as_deref(),
+            combat_params.race_registry.as_deref(),
+        )
+        .is_humanoid;
+        if !definition
+            .required_race
+            .allows(&cultivation_race, intrinsic_is_humanoid)
+        {
+            tracing::warn!(
+                "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+                 rejected: race gate (RaceGate::allows returned false)"
+            );
+            if let Ok((username, mut client)) = clients.get_mut(entity) {
+                push_cast_sync(
+                    &mut client,
+                    CastSyncV1 {
+                        phase: CastPhaseV1::Idle,
+                        slot,
+                        duration_ms: 0,
+                        started_at_ms: current_unix_millis(),
+                        outcome: CastOutcomeV1::RejectRaceMismatch,
+                    },
+                    username.0.as_str(),
+                    entity,
+                );
+            }
+            return;
+        }
+    }
+
     let skill_fn = combat_params
         .skill_registry
         .as_deref()
