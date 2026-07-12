@@ -44,6 +44,7 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
     private static final long DISPLAY_DURATION_MS = 2_000L;
     private static final long MAX_SAFE_TICK = 9_007_199_254_740_991L;
     private static final long MAX_ECHO_COUNT = Integer.MAX_VALUE;
+    // 略低于 Float.MAX_VALUE 的 double 精确值：收窄仍为 Float.MAX_VALUE，更大 wire 值在转换前拒绝。
     private static final double MAX_ABRASION_QI_PAYLOAD = 3.4028234e38;
     private static final Set<String> REQUIRED_FIELDS = Set.of(
             "v",

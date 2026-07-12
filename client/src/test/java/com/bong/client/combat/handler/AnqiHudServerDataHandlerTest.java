@@ -146,7 +146,9 @@ class AnqiHudServerDataHandlerTest {
     @Test
     void missingKindIsNoOp() {
         ServerDataDispatch dispatch = handler.handle(parse(
-            "{\"v\":1,\"type\":\"anqi_hud\",\"echo_count\":5}"
+            "{\"v\":1,\"type\":\"anqi_hud\",\"echo_count\":5,"
+                + "\"aim_progress\":0,\"charge_progress\":0,\"abrasion_container\":\"\","
+                + "\"abrasion_qi_payload\":0,\"tick\":1}"
         ));
         assertFalse(dispatch.handled(),
             "缺 kind 字段应 no-op；dispatch=" + dispatch.logMessage());
