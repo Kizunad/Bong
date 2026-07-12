@@ -25,6 +25,7 @@ import {
   findPlanName,
   isCircuitBypassTrigger,
   isRetryableCodexFailure,
+  isZeroConfidenceWithoutCodeFindings,
   mergeFindings,
   normalizePlanStatus,
   normalizeResult,
@@ -34,6 +35,7 @@ import {
   parseHiddenMarkers,
   parseTrustedCircuitEvents,
   redactCodexPromptEcho,
+  redactRuntimeSecrets,
   renderCircuitSkipComment,
   renderHiddenMarker,
   renderInfrastructureHandoffComment,
@@ -60,13 +62,14 @@ const reviewScript = fileURLToPath(new URL("./review.mjs", import.meta.url));
 
 function runReviewCommand(
   command,
-  { env = {}, ghScript = "process.exit(91);", codexScript = "process.exit(93);", outcome = null } = {},
+  { env = {}, ghScript = "process.exit(91);", codexScript = "process.exit(93);", outcome = null, comment = null } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), "bong-review-command-"));
   const ghPath = join(directory, "gh");
   const codexPath = join(directory, "codex");
   const outputPath = join(directory, "github-output");
   const outcomePath = join(directory, "review-outcome.json");
+  const commentPath = join(directory, "review.md");
   const ghLogPath = join(directory, "gh.log");
   const codexLogPath = join(directory, "codex.log");
   writeFileSync(ghPath, `#!/usr/bin/env node\n${ghScript}\n`);
@@ -74,6 +77,7 @@ function runReviewCommand(
   chmodSync(ghPath, 0o755);
   chmodSync(codexPath, 0o755);
   if (outcome) writeFileSync(outcomePath, `${JSON.stringify(outcome)}\n`);
+  if (comment !== null) writeFileSync(commentPath, String(comment));
 
   try {
     const result = spawnSync(process.execPath, [reviewScript, command], {
@@ -89,8 +93,10 @@ function runReviewCommand(
         GH_TEST_LOG: ghLogPath,
         CODEX_TEST_LOG: codexLogPath,
         REVIEW_OUTCOME_FILE: outcomePath,
+        REVIEW_COMMENT_FILE: commentPath,
         REVIEW_CIRCUIT_SEARCH_INTERVAL_MS: "1",
         REVIEW_NOW: "2026-07-10T00:20:00.000Z",
+        REVIEW_TEST_MODE: "1",
         ...env,
       },
     });
@@ -98,6 +104,7 @@ function runReviewCommand(
       ...result,
       githubOutput: existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "",
       reviewOutcome: existsSync(outcomePath) ? JSON.parse(readFileSync(outcomePath, "utf8")) : null,
+      reviewComment: existsSync(commentPath) ? readFileSync(commentPath, "utf8") : "",
       ghLog: existsSync(ghLogPath) ? readFileSync(ghLogPath, "utf8") : "",
       codexLog: existsSync(codexLogPath) ? readFileSync(codexLogPath, "utf8") : "",
     };
@@ -192,6 +199,16 @@ fs.writeFileSync(output, JSON.stringify({
 }));
 if (mode === "nonzero_message") process.exit(1);
 `;
+}
+
+function workflowJob(workflow, name) {
+  const jobs = workflow.slice(workflow.indexOf("\njobs:"));
+  const marker = `\n  ${name}:\n`;
+  const start = jobs.indexOf(marker);
+  if (start < 0) return "";
+  const rest = jobs.slice(start + marker.length);
+  const next = rest.search(/\n  [a-z][a-z0-9_-]*:\n/);
+  return next < 0 ? rest : rest.slice(0, next);
 }
 
 test("hidden marker: 可往返解析并忽略普通/损坏评论", () => {
@@ -707,6 +724,33 @@ test("infra-only classification: 模型给出真实审查或不可解析内容�
   assert.equal(classifyReviewRun(Array(4).fill(spoofed), Array(4).fill(spoofed)), "gate_failure");
 });
 
+test("provider final message: 仅 confidence 0 且无代码 finding 识别为 infra", () => {
+  const emptyFailureRaw = JSON.stringify({
+    vote: "REQUEST_CHANGES",
+    confidence: 0,
+    plan_intent: { status: "unclear", reason: "503", missing: [] },
+    summary: "provider 503",
+    findings: [],
+  });
+  assert.equal(isZeroConfidenceWithoutCodeFindings(emptyFailureRaw), true);
+  const emptyFailure = normalizeResult(emptyFailureRaw, reviewer, { executionFailure: true });
+  assert.equal(classifyReviewRun(Array(4).fill(emptyFailure), Array(4).fill(emptyFailure)), "infra_failure");
+
+  const codeFindingRaw = JSON.stringify({
+    vote: "REQUEST_CHANGES",
+    confidence: 0,
+    plan_intent: { status: "not_plan", reason: "发现代码问题", missing: [] },
+    summary: "真实问题",
+    findings: [{ severity: "major", file: "server/src/main.rs", line: "1", title: "真实代码缺陷" }],
+  });
+  assert.equal(isZeroConfidenceWithoutCodeFindings(codeFindingRaw), false);
+  const codeFinding = normalizeResult(codeFindingRaw, reviewer, { executionFailure: true });
+  assert.equal(classifyReviewRun(Array(4).fill(codeFinding), Array(4).fill(codeFinding)), "gate_failure");
+  for (const malformed of ["", "not-json", JSON.stringify({ confidence: 0 }), JSON.stringify({ confidence: 1, findings: [] })]) {
+    assert.equal(Boolean(isZeroConfidenceWithoutCodeFindings(malformed)), false);
+  }
+});
+
 test("mixed review findings: 复投执行失败时保留同路首轮代码 finding", () => {
   const firstRound = [realRequestChanges, infraResult, realRequestChanges, infraResult];
   const finalRound = [infraResult, infraResult, realRequestChanges, infraResult];
@@ -727,6 +771,7 @@ test("workflow finalize: 真实 gate failure 原样失败，setup/reviewer 异�
   }
   for (const outcome of ["failure", "skipped", "cancelled"]) {
     assert.equal(classifyWorkflowFinalization({ circuit: outcome }).phase, "circuit_preflight");
+    assert.equal(classifyWorkflowFinalization({ reviewJob: outcome }).phase, "review_job");
     assert.equal(classifyWorkflowFinalization({ install: outcome }).phase, "cli_install");
     assert.equal(classifyWorkflowFinalization({ install: "success", configure: outcome }).phase, "provider_config");
     assert.equal(
@@ -863,6 +908,84 @@ process.exit(92);
   assert.match(allCommentsFail.stderr, /发布 Review 降级评论失败/);
 });
 
+test("deferred review: 只读 review job 不评论，可信 finalize 发布 passed/gate artifact", () => {
+  const deferredReview = runReviewCommand("review", {
+    env: {
+      REVIEW_CODEX_API_KEY: "test-key",
+      REVIEW_CODEX_RETRIES: "1",
+      REVIEW_TOTAL_TIMEOUT_MINUTES: "5",
+      REVIEW_DEFER_COMMENT: "1",
+    },
+    ghScript: recordingGhScript(),
+    codexScript: codexVoteScript("approve"),
+  });
+  assert.equal(deferredReview.status, 0, deferredReview.stderr);
+  assert.equal(deferredReview.reviewOutcome.kind, "passed");
+  assert.match(deferredReview.reviewComment, /\*\*通过\*\*/);
+  assert.equal(parseGitHubJsonLines(deferredReview.ghLog).filter((entry) => entry.kind === "pr_comment").length, 0);
+
+  for (const row of [
+    { outcome: { kind: "passed", gate: "APPROVED" }, step: "success", status: 0, body: "通过评论" },
+    { outcome: { kind: "gate_failure", gate: "TIE" }, step: "failure", status: 1, body: "未通过评论" },
+  ]) {
+    const finalized = runReviewCommand("workflow-finalize", {
+      env: {
+        REVIEW_DEFERRED_RESULT: "1",
+        REVIEW_JOB_OUTCOME: "success",
+        REVIEW_INSTALL_OUTCOME: "success",
+        REVIEW_CONFIGURE_OUTCOME: "success",
+        REVIEW_CHECKOUT_OUTCOME: "success",
+        REVIEW_STEP_OUTCOME: row.step,
+      },
+      outcome: row.outcome,
+      comment: row.body,
+      ghScript: recordingGhScript(),
+    });
+    assert.equal(finalized.status, row.status, finalized.stderr);
+    const comments = parseGitHubJsonLines(finalized.ghLog).filter((entry) => entry.kind === "pr_comment");
+    assert.equal(comments.length, 1);
+    assert.equal(comments[0].body, row.body);
+  }
+});
+
+test("deferred finalize: infra artifact 与缺评论文件都由可信 job handoff 且不中断", () => {
+  const infra = runReviewCommand("workflow-finalize", {
+    env: {
+      REVIEW_DEFERRED_RESULT: "1",
+      REVIEW_JOB_OUTCOME: "success",
+      REVIEW_INSTALL_OUTCOME: "success",
+      REVIEW_CONFIGURE_OUTCOME: "success",
+      REVIEW_CHECKOUT_OUTCOME: "success",
+      REVIEW_STEP_OUTCOME: "success",
+    },
+    outcome: { kind: "infra_failure", phase: "reviewer_execution", reason: "四路 provider 503" },
+    ghScript: recordingGhScript(),
+  });
+  assert.equal(infra.status, 0, infra.stderr);
+  const infraLog = parseGitHubJsonLines(infra.ghLog);
+  assert.match(infraLog.find((entry) => entry.kind === "state_comment")?.body || "", /reviewer_execution/);
+  assert.match(infraLog.find((entry) => entry.kind === "handoff_comment")?.body || "", /请忽略本次 Review Action 结果/);
+
+  const missingComment = runReviewCommand("workflow-finalize", {
+    env: {
+      REVIEW_DEFERRED_RESULT: "1",
+      REVIEW_JOB_OUTCOME: "success",
+      REVIEW_INSTALL_OUTCOME: "success",
+      REVIEW_CONFIGURE_OUTCOME: "success",
+      REVIEW_CHECKOUT_OUTCOME: "success",
+      REVIEW_STEP_OUTCOME: "success",
+    },
+    outcome: { kind: "passed", gate: "APPROVED" },
+    ghScript: recordingGhScript(),
+  });
+  assert.equal(missingComment.status, 0, missingComment.stderr);
+  assert.equal(missingComment.reviewOutcome.kind, "infra_failure");
+  assert.equal(missingComment.reviewOutcome.phase, "review_comment");
+  const missingLog = parseGitHubJsonLines(missingComment.ghLog);
+  assert.match(missingLog.find((entry) => entry.kind === "state_comment")?.body || "", /review_comment/);
+  assert.ok(missingLog.some((entry) => entry.kind === "handoff_comment"));
+});
+
 test("review 命令: 4/0、3/1 与非零但有 final message 均发布通过评论", () => {
   for (const mode of ["approve", "three_one", "nonzero_message"]) {
     const result = runReviewCommand("review", {
@@ -926,6 +1049,30 @@ process.exit(1);
   assert.match(handoff503?.body || "", /基础设施失败，不是代码 finding/);
   assert.match(handoff503?.body || "", /改走 agent 自有博弈式 review 流程并向用户反馈/);
 
+  const finalMessageInfra = runReviewCommand("review", {
+    env: { REVIEW_CODEX_API_KEY: "test-key", REVIEW_CODEX_RETRIES: "1", REVIEW_TOTAL_TIMEOUT_MINUTES: "5" },
+    ghScript: recordingGhScript(),
+    codexScript: `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.CODEX_TEST_LOG, JSON.stringify(args) + "\\n");
+const output = args[args.indexOf("--output-last-message") + 1];
+fs.writeFileSync(output, JSON.stringify({
+  vote: "REQUEST_CHANGES",
+  confidence: 0,
+  plan_intent: { status: "unclear", reason: "provider 503", missing: [] },
+  summary: "provider 503",
+  findings: [],
+}));
+console.error("503 Service Unavailable from hlool");
+process.exit(1);
+`,
+  });
+  assert.equal(finalMessageInfra.status, 0, finalMessageInfra.stderr);
+  assert.equal(finalMessageInfra.reviewOutcome.kind, "infra_failure");
+  assert.equal(parseGitHubJsonLines(finalMessageInfra.codexLog).length, 4);
+  assert.ok(parseGitHubJsonLines(finalMessageInfra.ghLog).some((entry) => entry.kind === "handoff_comment"));
+
   const missingKey = runReviewCommand("review", {
     env: { REVIEW_CODEX_API_KEY: "", OPENAI_API_KEY: "" },
     ghScript: recordingGhScript(),
@@ -935,41 +1082,105 @@ process.exit(1);
   assert.equal(missingKey.codexLog, "");
   assert.ok(parseGitHubJsonLines(missingKey.ghLog).some((entry) => entry.kind === "handoff_comment"));
 });
-test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍进入预检旁路", () => {
+
+test("Codex 子进程: 环境白名单移除 GitHub token，shell 排除 secrets，输出再次脱敏", () => {
+  const ghSecret = "gh-write-token-must-not-leak";
+  const providerSecret = "provider-key-must-not-leak";
+  const result = runReviewCommand("review", {
+    env: {
+      GH_TOKEN: ghSecret,
+      GITHUB_TOKEN: ghSecret,
+      REVIEW_CODEX_API_KEY: providerSecret,
+      REVIEW_CODEX_RETRIES: "1",
+      REVIEW_TOTAL_TIMEOUT_MINUTES: "5",
+    },
+    ghScript: recordingGhScript(),
+    codexScript: `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.CODEX_TEST_LOG, JSON.stringify({
+  args,
+  gh: process.env.GH_TOKEN || null,
+  github: process.env.GITHUB_TOKEN || null,
+}) + "\\n");
+const output = args[args.indexOf("--output-last-message") + 1];
+fs.writeFileSync(output, JSON.stringify({
+  vote: "APPROVE",
+  confidence: 95,
+  plan_intent: { status: "not_plan", reason: "非 plan", missing: [] },
+  summary: "provider=" + process.env.REVIEW_CODEX_API_KEY,
+  findings: [],
+}));
+`,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const calls = parseGitHubJsonLines(result.codexLog);
+  assert.equal(calls.length, 8);
+  assert.ok(calls.every((call) => call.gh === null && call.github === null));
+  assert.ok(calls.every((call) => call.args.includes('shell_environment_policy.inherit="core"')));
+  assert.ok(calls.every((call) => call.args.some((arg) => arg.includes("shell_environment_policy.exclude"))));
+  assert.doesNotMatch(result.reviewComment, new RegExp(ghSecret));
+  assert.doesNotMatch(result.reviewComment, new RegExp(providerSecret));
+  assert.match(result.reviewComment, /\[REDACTED\]/);
+  assert.equal(redactRuntimeSecrets(`a=${providerSecret}`, { REVIEW_CODEX_API_KEY: providerSecret }), "a=[REDACTED]");
+});
+test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred artifact", () => {
   const workflow = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
-  assert.ok(workflow.indexOf("Review 熔断预检") < workflow.indexOf("安装 Codex CLI"));
+  const preflight = workflowJob(workflow, "preflight");
+  const review = workflowJob(workflow, "review");
+  const finalize = workflowJob(workflow, "finalize");
+
   assert.match(workflow, /^  pull_request_target:\n    types: \[opened\]$/m);
   assert.doesNotMatch(workflow, /^  pull_request:\n/m);
-  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.repository\.default_branch \}\}/);
-  assert.match(workflow, /REVIEW_TRIGGER: \$\{\{ github\.event_name \}\}/);
-  assert.match(workflow, /REVIEW_COMMENT_BODY: \$\{\{ github\.event\.comment\.body \|\| '' \}\}/);
+  assert.match(workflow, /^permissions: \{\}$/m);
   assert.match(workflow, /github\.event\.comment\.body == '\/review'/);
   assert.doesNotMatch(workflow, /startsWith\(github\.event\.comment\.body, '\/review'\)/);
-  assert.match(workflow, /continue-on-error: true/);
-  assert.match(workflow, /workflow-finalize/);
-  assert.match(workflow, /REVIEW_INFRA_FAILURE_THRESHOLD.*'3'/);
-  assert.match(workflow, /REVIEW_TOTAL_TIMEOUT_MINUTES.*'35'/);
-  assert.match(workflow, /REVIEW_GH_TIMEOUT_MS.*'30000'/);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.repository\.default_branch \}\}/);
   assert.doesNotMatch(workflow, /REVIEW_CIRCUIT_ISSUE_NUMBER/);
-  const circuitStep = workflow.match(/      - name: Review 熔断预检\n[^]*?(?=\n      - name: 安装 Codex CLI)/)?.[0] || "";
-  assert.match(circuitStep, /id: circuit/);
-  assert.match(circuitStep, /continue-on-error: true/);
-  const checkoutStep = workflow.match(/      - name: 切到并校验 PR head\n[^]*?(?=\n      - name: Review \()/)?.[0] || "";
-  assert.match(checkoutStep, /continue-on-error: true/);
-  assert.match(checkoutStep, /gh pr checkout "\$PRNUM" --detach/);
-  assert.match(checkoutStep, /headRefOid/);
-  assert.match(checkoutStep, /git rev-parse HEAD/);
-  assert.match(checkoutStep, /"\$ACTUAL_HEAD" != "\$EXPECTED_HEAD"/);
-  assert.doesNotMatch(checkoutStep, /\|\| echo/);
-  const finalizeStep = workflow.match(/      - name: 汇总 Review 结果并执行降级\n[^]*/)?.[0] || "";
-  assert.match(finalizeStep, /steps\.circuit\.outcome != 'success'/);
-  assert.match(finalizeStep, /REVIEW_CIRCUIT_OUTCOME: \$\{\{ steps\.circuit\.outcome \}\}/);
-  assert.match(finalizeStep, /REVIEW_CHECKOUT_OUTCOME: \$\{\{ steps\.checkout\.outcome \}\}/);
-  const jobTimeout = Number(workflow.match(/^    timeout-minutes: (\d+)$/m)[1]);
-  const stepTimeouts = [...workflow.matchAll(/^        timeout-minutes: (\d+)$/gm)].map((match) => Number(match[1]));
-  assert.equal(stepTimeouts.length, 8, "每个 workflow step 都必须有独立 timeout");
-  assert.ok(stepTimeouts.reduce((sum, value) => sum + value, 0) <= jobTimeout - 15, "必须给调度与 finalize 留至少 15 分钟");
-  assert.match(workflow, /timeout-minutes: 40[^]*REVIEW_TOTAL_TIMEOUT_MINUTES:.*'35'/);
+
+  assert.match(preflight, /pull-requests: write/);
+  assert.match(preflight, /issues: write/);
+  assert.match(preflight, /Review 熔断预检/);
+  assert.match(preflight, /continue-on-error: true/);
+  assert.match(preflight, /REVIEW_TRIGGER: \$\{\{ github\.event_name \}\}/);
+  assert.match(preflight, /REVIEW_COMMENT_BODY: \$\{\{ github\.event\.comment\.body \|\| '' \}\}/);
+  assert.doesNotMatch(preflight, /REVIEW_CODEX_API_KEY|切到并校验 PR head/);
+
+  assert.match(review, /contents: read/);
+  assert.match(review, /pull-requests: read/);
+  assert.doesNotMatch(review, /pull-requests: write|issues: write/);
+  assert.match(review, /暂存可信 Review 脚本/);
+  assert.ok(review.indexOf("暂存可信 Review 脚本") < review.indexOf("切到并校验 PR head"));
+  assert.match(review, /gh pr checkout "\$PRNUM" --detach/);
+  assert.match(review, /headRefOid/);
+  assert.match(review, /git rev-parse HEAD/);
+  assert.match(review, /"\$ACTUAL_HEAD" != "\$EXPECTED_HEAD"/);
+  assert.doesNotMatch(review, /\|\| echo/);
+  assert.match(review, /REVIEW_DEFER_COMMENT: "1"/);
+  assert.match(review, /actions\/upload-artifact@v4/);
+  assert.match(review, /review-run-outcome\.json/);
+  assert.match(review, /review\.md/);
+  assert.match(review, /timeout-minutes: 40[^]*REVIEW_TOTAL_TIMEOUT_MINUTES:.*'35'/);
+
+  assert.match(finalize, /pull-requests: write/);
+  assert.match(finalize, /issues: write/);
+  assert.match(finalize, /actions\/download-artifact@v4/);
+  assert.match(finalize, /REVIEW_DEFERRED_RESULT: "1"/);
+  assert.match(finalize, /REVIEW_JOB_OUTCOME: \$\{\{ needs\.review\.result/);
+  assert.match(finalize, /node \.github\/scripts\/review\.mjs workflow-finalize/);
+  assert.doesNotMatch(finalize, /REVIEW_CODEX_API_KEY|gh pr checkout/);
+
+  for (const [name, block, reserve] of [
+    ["preflight", preflight, 5],
+    ["review", review, 15],
+    ["finalize", finalize, 5],
+  ]) {
+    const jobTimeout = Number(block.match(/^    timeout-minutes: (\d+)$/m)?.[1]);
+    const stepTimeouts = [...block.matchAll(/^        timeout-minutes: (\d+)$/gm)].map((match) => Number(match[1]));
+    assert.ok(Number.isFinite(jobTimeout), `${name} 必须有 job timeout`);
+    assert.ok(stepTimeouts.length > 0, `${name} 每个外部步骤必须有 timeout`);
+    assert.ok(stepTimeouts.reduce((sum, value) => sum + value, 0) <= jobTimeout - reserve, `${name} 必须保留调度余量`);
+  }
 });
 
 test("review script tests workflow: Node 24 自动 gate 仅获 contents:read", () => {
@@ -990,19 +1201,19 @@ test("review script tests workflow: Node 24 自动 gate 仅获 contents:read", (
   assert.match(workflow, /node --test \.github\/scripts\/review\.test\.mjs/);
 });
 
-test("workflow permissions: PR 评论与独立状态 issue 仅获各自必要写权限并记录依据", () => {
+test("workflow permissions: 写权限仅在可信 preflight/finalize，review job 只读", () => {
   const workflow = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
-  const block = workflow.match(/^permissions:\n((?:  (?:#.*|[a-z-]+:.*)\n)+)/m)?.[1] || "";
-  const entries = Object.fromEntries(
-    [...block.matchAll(/^  ([a-z-]+):\s*(read|write|none)\s*(?:#.*)?$/gm)].map((match) => [match[1], match[2]]),
-  );
-
-  assert.deepEqual(entries, { contents: "read", "pull-requests": "write", issues: "write" });
-  assert.doesNotMatch(block, /pull-requests:\s*read/);
-  assert.match(block, /run 29062098910.*403/);
-  assert.match(block, /独立熔断状态 issue/);
-  assert.equal([...workflow.matchAll(/^permissions:/gm)].length, 1, "权限必须集中在顶层，避免 job 级覆盖漂移");
-  assert.equal([...workflow.matchAll(/^\s{2,}permissions:/gm)].length, 0, "job/step 不得覆盖最小权限矩阵");
+  const preflight = workflowJob(workflow, "preflight");
+  const review = workflowJob(workflow, "review");
+  const finalize = workflowJob(workflow, "finalize");
+  assert.match(workflow, /^permissions: \{\}$/m);
+  assert.match(preflight, /contents: read[^]*pull-requests: write[^]*issues: write/);
+  assert.match(preflight, /run 29062098910.*403/);
+  assert.match(preflight, /独立熔断状态 issue/);
+  assert.match(review, /contents: read[^]*pull-requests: read/);
+  assert.doesNotMatch(review, /: write/);
+  assert.match(finalize, /contents: read[^]*pull-requests: write[^]*issues: write/);
+  assert.equal([...workflow.matchAll(/^    permissions:/gm)].length, 3, "三个 job 必须显式声明最小权限");
 });
 
 test("extractJSON: 支持纯 JSON、围栏、前后废话、字符串内括号", () => {

@@ -37,6 +37,9 @@ const CIRCUIT_THRESHOLD = intEnv("REVIEW_INFRA_FAILURE_THRESHOLD", 3, 1);
 const CIRCUIT_WINDOW_MS = intEnv("REVIEW_INFRA_FAILURE_WINDOW_MINUTES", 60, 1) * 60_000;
 const CIRCUIT_DURATION_MS = intEnv("REVIEW_CIRCUIT_MINUTES", 60, 1) * 60_000;
 const OUTCOME_FILE = process.env.REVIEW_OUTCOME_FILE || "/tmp/review-run-outcome.json";
+const COMMENT_FILE = process.env.REVIEW_COMMENT_FILE || "/tmp/review.md";
+const DEFER_COMMENT = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DEFER_COMMENT || "").trim());
+const DEFERRED_RESULT = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DEFERRED_RESULT || "").trim());
 let reviewDeadlineMs = Number.POSITIVE_INFINITY;
 
 const REVIEWERS = [
@@ -243,6 +246,7 @@ export function classifyReviewRun(firstRound, finalRound) {
 
 export function classifyWorkflowFinalization({
   circuit = "success",
+  reviewJob = "success",
   install = "skipped",
   configure = "skipped",
   checkout = "success",
@@ -254,6 +258,14 @@ export function classifyWorkflowFinalization({
       kind: "infra_failure",
       phase: "circuit_preflight",
       reason: `Review 熔断预检未成功（${circuit}）`,
+      shouldRecord: true,
+    };
+  }
+  if (reviewJob !== "success") {
+    return {
+      kind: "infra_failure",
+      phase: "review_job",
+      reason: `只读 Review job 未成功（${reviewJob}）`,
       shouldRecord: true,
     };
   }
@@ -474,9 +486,7 @@ async function runReview() {
   requirePrNumber();
   reviewDeadlineMs = Date.now() + REVIEW_TOTAL_TIMEOUT_MS;
   if (!process.env.REVIEW_CODEX_API_KEY && !process.env.OPENAI_API_KEY) {
-    await recordInfrastructureFailure("provider_config", "缺 REVIEW_CODEX_API_KEY / OPENAI_API_KEY");
-    writeOutcome("infra_failure");
-    return 0;
+    return finishInfrastructureFailure("provider_config", "缺 REVIEW_CODEX_API_KEY / OPENAI_API_KEY");
   }
 
   const context = loadPrContext(PR);
@@ -504,20 +514,20 @@ async function runReview() {
   if (outcome === "infra_failure") {
     const failed = finalRound.filter(isCodexExecutionFailure);
     const reason = failed.map((result) => result.summary).filter(Boolean).join(" | ");
-    await recordInfrastructureFailure("reviewer_execution", reason || "Codex reviewer 执行失败");
-    writeOutcome("infra_failure");
-    return 0;
+    return finishInfrastructureFailure("reviewer_execution", reason || "Codex reviewer 执行失败");
   }
 
   const gate = decideGate(finalRound);
   const body = renderComment(context, firstRound, finalRound, gate);
-  writeFileSync("/tmp/review.md", body);
+  writeFileSync(COMMENT_FILE, body);
 
   if (DRY_RUN) {
     console.log(body);
-  } else {
-    gh(["pr", "comment", PR, "--body-file", "/tmp/review.md"]);
+  } else if (!DEFER_COMMENT) {
+    gh(["pr", "comment", PR, "--body-file", COMMENT_FILE]);
     console.error("已发布 review 评论。");
+  } else {
+    console.error("review 评论已延迟到可信 finalize job 发布。");
   }
 
   writeOutcome(gate.passed ? "passed" : "gate_failure", { gate: gate.status });
@@ -525,6 +535,13 @@ async function runReview() {
     console.error(`Review gate 未通过：${gate.label}`);
     return 1;
   }
+  return 0;
+}
+
+async function finishInfrastructureFailure(phase, reason) {
+  const safeReason = truncate(String(reason || "Review 基础设施失败"), 4000);
+  if (!DEFER_COMMENT) await recordInfrastructureFailure(phase, safeReason);
+  writeOutcome("infra_failure", { phase, reason: safeReason });
   return 0;
 }
 
@@ -565,21 +582,43 @@ async function circuitPreflight() {
 
 async function workflowFinalize() {
   requirePrNumber();
+  const outcome = readOutcome();
   const decision = classifyWorkflowFinalization({
     circuit: process.env.REVIEW_CIRCUIT_OUTCOME || "success",
+    reviewJob: process.env.REVIEW_JOB_OUTCOME || "success",
     install: process.env.REVIEW_INSTALL_OUTCOME || "skipped",
     configure: process.env.REVIEW_CONFIGURE_OUTCOME || "skipped",
     checkout: process.env.REVIEW_CHECKOUT_OUTCOME || "success",
     review: process.env.REVIEW_STEP_OUTCOME || "skipped",
-    outcomeKind: readOutcome()?.kind || null,
+    outcomeKind: outcome?.kind || null,
   });
 
-  if (decision.kind === "gate_failure") return 1;
-  if (decision.kind === "infra_failure" && decision.shouldRecord) {
-    await recordInfrastructureFailure(decision.phase, decision.reason);
-    writeOutcome("infra_failure");
+  if (decision.kind === "infra_failure") {
+    if (decision.shouldRecord || DEFERRED_RESULT) {
+      await recordInfrastructureFailure(
+        decision.phase || outcome?.phase || "review_process",
+        decision.reason || outcome?.reason || "Review 基础设施失败",
+      );
+      writeOutcome("infra_failure", {
+        phase: decision.phase || outcome?.phase || "review_process",
+      });
+    }
+    return 0;
   }
-  return 0;
+
+  if (DEFERRED_RESULT) {
+    try {
+      if (!existsSync(COMMENT_FILE)) throw new Error(`缺延迟 review 评论文件：${COMMENT_FILE}`);
+      gh(["pr", "comment", PR, "--body-file", COMMENT_FILE]);
+      console.error("可信 finalize job 已发布 review 评论。");
+    } catch (error) {
+      await recordInfrastructureFailure("review_comment", errorText(error));
+      writeOutcome("infra_failure", { phase: "review_comment" });
+      return 0;
+    }
+  }
+
+  return decision.kind === "gate_failure" ? 1 : 0;
 }
 
 function loadPrContext(pr) {
@@ -765,6 +804,10 @@ async function runCodex(prompt, label) {
     outputFile,
     "-c",
     'model_reasoning_effort="high"',
+    "-c",
+    'shell_environment_policy.inherit="core"',
+    "-c",
+    'shell_environment_policy.exclude=["REVIEW_CODEX_API_KEY","OPENAI_API_KEY","CODEX_API_KEY","GH_TOKEN","GITHUB_TOKEN"]',
     "-",
   ];
 
@@ -782,8 +825,10 @@ async function runCodex(prompt, label) {
 
       rmSync(outputFile, { force: true });
       const result = await spawnCodex(args, prompt, attemptTimeoutMs);
-      const text = existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout;
-      if (text.trim()) {
+      const text = redactRuntimeSecrets(existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout);
+      const retryableFailure = result.code !== 0 && isRetryableCodexFailure(result);
+      const zeroConfidenceInfra = retryableFailure && isZeroConfidenceWithoutCodeFindings(text);
+      if (text.trim() && !zeroConfidenceInfra) {
         if (result.code !== 0) {
           console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
         }
@@ -791,7 +836,7 @@ async function runCodex(prompt, label) {
       }
 
       const failure = codexFailureText(result);
-      if (attempt < CODEX_RETRIES && isRetryableCodexFailure(result)) {
+      if (attempt < CODEX_RETRIES && retryableFailure) {
         const waitMs = CODEX_RETRY_MS * attempt;
         if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
           console.error(`  codex ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
@@ -801,6 +846,7 @@ async function runCodex(prompt, label) {
       }
 
       console.error(`  codex ${label} failed: ${failure}`);
+      if (text.trim() && zeroConfidenceInfra) return { raw: text, executionFailure: true };
       return { raw: codexExecutionFailureJson(label, failure), executionFailure: true };
     }
   } finally {
@@ -833,11 +879,37 @@ function delay(ms) {
 
 export function spawnCodex(args, stdin, timeoutMs, command = "codex", timers = {}) {
   return new Promise((resolve) => {
-    const env = {
-      ...process.env,
-      OPENAI_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
-      CODEX_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
-    };
+    const env = {};
+    for (const name of [
+      "PATH",
+      "HOME",
+      "USER",
+      "LOGNAME",
+      "LANG",
+      "LC_ALL",
+      "TERM",
+      "TMPDIR",
+      "PWD",
+      "CODEX_HOME",
+      "SSL_CERT_FILE",
+      "SSL_CERT_DIR",
+      "NODE_EXTRA_CA_CERTS",
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "ALL_PROXY",
+      "NO_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "all_proxy",
+      "no_proxy",
+    ]) {
+      if (process.env[name]) env[name] = process.env[name];
+    }
+    const apiKey = process.env.REVIEW_CODEX_API_KEY || process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || "";
+    env.REVIEW_CODEX_API_KEY = apiKey;
+    env.OPENAI_API_KEY = apiKey;
+    env.CODEX_API_KEY = apiKey;
+    if (process.env.REVIEW_TEST_MODE === "1") env.CODEX_TEST_LOG = process.env.CODEX_TEST_LOG || "";
     const child = spawn(command, args, {
       env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -914,8 +986,8 @@ async function mapLimit(items, limit, fn) {
 }
 
 export function codexFailureText(result) {
-  const stderr = excerptLog(redactCodexPromptEcho(result.stderr || ""), 2000);
-  const stdout = excerptLog(redactCodexPromptEcho(result.stdout || ""), 1200);
+  const stderr = excerptLog(redactRuntimeSecrets(redactCodexPromptEcho(result.stderr || "")), 2000);
+  const stdout = excerptLog(redactRuntimeSecrets(redactCodexPromptEcho(result.stdout || "")), 1200);
   return [
     `exit=${result.code}`,
     result.signal ? `signal=${result.signal}` : "",
@@ -924,6 +996,28 @@ export function codexFailureText(result) {
   ]
     .filter(Boolean)
     .join(" | ");
+}
+
+export function isZeroConfidenceWithoutCodeFindings(raw) {
+  const parsed = extractJSON(raw);
+  return (
+    parsed &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed) &&
+    Number(parsed.confidence) === 0 &&
+    Array.isArray(parsed.findings) &&
+    parsed.findings.length === 0
+  );
+}
+
+export function redactRuntimeSecrets(value, env = process.env) {
+  let text = String(value || "");
+  const secrets = Object.entries(env)
+    .filter(([name, secret]) => /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|PROXY)/i.test(name) && String(secret || "").length >= 4)
+    .map(([, secret]) => String(secret))
+    .sort((a, b) => b.length - a.length);
+  for (const secret of new Set(secrets)) text = text.replaceAll(secret, "[REDACTED]");
+  return text;
 }
 
 export function isRetryableCodexFailure(result) {
@@ -965,7 +1059,6 @@ export function isCodexExecutionFailure(result) {
     result?.execution_failure === true &&
     result?.confidence === 0 &&
     Array.isArray(findings) &&
-    findings.length > 0 &&
     findings.every(isCodexFailureFinding)
   );
 }
