@@ -586,6 +586,9 @@ class ProtoServerDataBridgeTest {
             case BOOLEAN:
                 return true;
             case STRING:
+                if ("bong.WeaponEquipped.slot".equals(field.getFullName())) {
+                    return "main_hand";
+                }
                 return "rt_probe_" + field.getName();
             case BYTE_STRING:
                 return com.google.protobuf.ByteString.copyFromUtf8("rt_probe");
