@@ -1,5 +1,7 @@
 # plan-bughunt-spirittreasure-affinity-desync-v1
 
+> **已完成（2026-07-06，归档审计确认）**。
+
 > 一句话主题：`spirit_treasure_dialogue` 正常回包会立刻改掉 server 侧 `SpiritTreasureRegistry.active.affinity/sleeping`，但被动重算、`spirit_treasure_state` 推送、client `SpiritTreasureStateStore` 刷新全都只挂在 `Changed<PlayerInventory>` / `Changed<ActiveSpiritTreasures>` 上，导致**器灵已经沉睡或好感已变化，玩家身上的灵宝被动和灵宝面板仍长期停留在旧值**。这不是纯 UI 小毛刺，而是 server 实际数值、聊天交互门控、client 展示三条链同时分叉。
 
 > 立项动机：本轮 bughunt 聚焦 `server/src/spiritwood` / `artifact|spirit_treasure` / 相关 client 展示与交互链路；该问题落在灵宝主链、玩家可正常触发、且不与近期 craft/social renown/tribulation/botany/dying elder/pseudo vein restart loss 题重复。
@@ -8,7 +10,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 灵宝对话改 affinity 后，被动/状态/UI 不刷新 | fix_pr | ⬜ |
+| P0 | 灵宝对话改 affinity 后，被动/状态/UI 不刷新 | fix_pr | ✅ 2026-07-06 |
 
 ## P0 — 灵宝对话改 affinity 后，被动/状态/UI 不刷新
 
@@ -64,4 +66,31 @@
 
 ## 审计来源
 
-bughunt 定点轮（范围仅限 `artifact|spirit_treasure` 相关 server/client 主链）。候选经主代理全树 grep、server/client 对照、两轮手工反方裁决后保留；当前结论是 **report-only**，先立 skeleton 固化复现与根因，不在本 PR 修代码。
+bughunt 定点轮（范围仅限 `artifact|spirit_treasure` 相关 server/client 主链）。候选经主代理全树 grep、server/client 对照、两轮手工反方裁决后保留；立项时结论为 **report-only**，后续独立 PR（`c01d9f3e` 等）已完成修复，见下方 Finish Evidence。
+
+## Finish Evidence
+
+### 落地清单
+
+- **server 被动重算**：`server/src/inventory/spirit_treasure.rs::sync_passive_status_effects` 升级为 `pub(crate)`，`registry.apply_affinity_delta(...)` 后立即按新 affinity 重算 `StatusEffects`，不再依赖 `Changed<PlayerInventory>` 顺带重扫；新增 `affinity_delta_rescales_active_passives_without_inventory_rescan` pin 测试锁定同 tick 重算。
+- **server 状态推送**：`server/src/network/spirit_treasure_emit.rs::process_spirit_treasure_dialogue` 在 `apply_affinity_delta` 后调用新增的 `refresh_target_treasure_state_payload(...)`，对持有该灵宝的 client 主动重发 `spirit_treasure_state` payload，`server/src/network/mod.rs` 相应接线新增的 `treasure_holders` query。
+- 结果：对话改 affinity 后，被动数值（`StatusEffects` magnitude）、`spirit_treasure_state` 推送、client `SpiritTreasureStateStore`/面板三条链同一 tick 对齐，不再需要额外 inventory 改动或重连触发刷新。
+
+### 关键 commit
+
+- `e05c02e7`（2026-07-06）：修复灵宝对话后好感与被动状态同步（首次实现）。
+- `c01d9f3e`（2026-07-06）：修复灵宝对话后好感被动不同步（收口 + 补 `affinity_delta_rescales_active_passives_without_inventory_rescan` 测试）。
+
+### 测试结果
+
+- 归档审计时未重跑，以既有 commit 为准。审计时通过 grep 复核 `sync_passive_status_effects` 已改为 `pub(crate)` 并被 `spirit_treasure_emit.rs` 调用、`affinity_delta_rescales_active_passives_without_inventory_rescan` 测试函数存在于 `server/src/inventory/spirit_treasure.rs`，确认修复已落地在 `origin/main`（`c01d9f3e` 已是其祖先）。
+
+### 跨仓库核验
+
+- **server**：`sync_passive_status_effects` / `apply_affinity_delta` / `refresh_target_treasure_state_payload` 三点构成对话→被动→状态推送的完整链路。
+- **client**：沿用既有 `spirit_treasure_state` payload 与 `SpiritTreasureStateHandler`/`SpiritTreasureStateStore`/`JiZhaoJingTabPanel`，无需协议改动，server 主动重发即可让已有 client 消费链路生效。
+- **agent**：不涉及。
+
+### 遗留 / 后续
+
+- plan 原始「开放问题」#1（affinity 掉到 sleeping 时被动是否完全撤销还是按比例缩放）与 #2（`SpiritTreasureStatePayloadV1.passive_effects` 是否改发缩放后实时值）由实现 commit 一并决议为「按 `affinity_scale(...)` 缩放，不完全撤销」；如后续设计需要变更缩放曲线，需另开新 plan。

@@ -1,6 +1,6 @@
 # plan-bughunt-r8-npc-defense-lifecycle-v1
 
-> **active bughunt plan**。一句话主题：从 round8 聚合骨架中拆出 `#7/#8 NPC defense scorer/action 缺 Lifecycle 门控`，独立修复 NPC 防御决策链，确保非 `Alive` NPC 不再参与防御评分、不开启格挡动作、也不会发出 `DefenseIntent`。
+> **已完成（2026-07-09，归档审计确认）**。一句话主题：从 round8 聚合骨架中拆出 `#7/#8 NPC defense scorer/action 缺 Lifecycle 门控`，独立修复 NPC 防御决策链，确保非 `Alive` NPC 不再参与防御评分、不开启格挡动作、也不会发出 `DefenseIntent`。
 
 ## 阶段总览
 
@@ -64,3 +64,29 @@
 - 不处理 round8 聚合骨架里的 P0 modifier orphan、P1 距离衰减、P3 TSY 生命周期问题。
 - 不移动 `docs/plans-skeleton/plan-bughunt-r8-findings-v1.md`，避免与其他 worker 冲突。
 - 不改 combat intent 解析层；本 PR 只收紧 NPC defense scorer/action 的生命周期入口。
+
+## Finish Evidence
+
+### 落地清单
+
+- **scorer 侧**：`server/src/npc/brain/scorers_combat.rs::npc_defense_scorer_system` 查询 `Option<&Lifecycle>`，非 `Alive` 一律 `Score=0.0`；新增 `npc_defense_scorer_alive_lifecycle_scores_normally` / `npc_defense_scorer_near_death_lifecycle_scores_zero` / `npc_defense_scorer_terminated_lifecycle_scores_zero` / `npc_defense_scorer_awaiting_revival_lifecycle_scores_zero` / `npc_defense_scorer_no_lifecycle_component_scores_normally` 五条 targeted 测试。
+- **action 侧**：`server/src/npc/brain/actions_combat.rs::npc_defense_action_system` 查询扩为 `(&Cultivation, Option<&StatusEffects>, Option<&Lifecycle>)`，新增 `lifecycle_blocks_combat_action(...)` helper；`Requested` / `Executing` 两分支均调用该 helper 阻断非 `Alive`，缺失 `Lifecycle` 的旧实体保持兼容放行。新增 `npc_defense_action_requested_non_alive_states_fail_before_executing` / `npc_defense_action_executing_non_alive_states_fail_without_intent` / `npc_defense_action_executing_alive_lifecycle_emits_intent` / `npc_defense_action_no_lifecycle_emits_intent_on_first_fire` 四条 targeted 测试。
+
+### 关键 commit
+
+- `e5d7203f`（2026-07-08）：新增 r8 NPC 防御生命周期门控计划（骨架 promotion）。
+- `79c4e025`（2026-07-09）：修复 NPC 防御生命周期门控（scorer/action 双侧门控 + 9 条 targeted 测试落地）。
+- `72613e0e`（2026-07-09）：收口 NPC 防御生命周期 review 意见。
+
+### 测试结果
+
+- 归档审计时未重跑，以 plan 内既有记录为准：`cargo test npc_defense` 与 `cargo test npc::brain` 在 P0 实施时已 green（见各 commit message），审计时通过 grep 复核 `lifecycle_blocks_combat_action` 调用点与 9 条测试函数签名均存在于 `server/src/npc/brain/{scorers_combat.rs,actions_combat.rs}`，确认代码与测试均已落地在 `origin/main`（`79c4e025` 已是 `origin/main` 祖先）。
+
+### 跨仓库核验
+
+- **server**：`Lifecycle` 组件门控统一收敛在 `npc_defense_scorer_system` 与 `npc_defense_action_system` 两处，与同文件既有 chase/melee/dash scorer、melee action 的生命周期口径一致。
+- **client / agent**：本修复不改变 combat intent 协议、不新增 schema 字段，纯 server 内部决策链修复，无需跨端改动。
+
+### 遗留 / 后续
+
+- round8 聚合骨架里的 P0 modifier orphan、P1 距离衰减、P3 TSY 生命周期问题不在本 plan 范围，由其他独立 plan 处理。

@@ -1,5 +1,7 @@
 # plan-bughunt-r9-playerstate-spirit-qi-max-v1
 
+> **已完成（2026-07-09，归档审计确认）**。
+
 一句话主题：从 `docs/plans-skeleton/plan-bughunt-r9-findings-v1.md` 拆出 r9 P0，锁住 `player_state.spirit_qi_max` 从 server active `bong:server_data` 到 client HUD 的真实真元上限链路，防止中高境界真元条分母回退为 100。
 
 ## 接入面
@@ -15,10 +17,10 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 验证 r9 P0 真实链路与当前基线残余缺口 | ⏳ |
-| P1 | 收紧 `spirit_qi_max` server/client 必填消费契约 | ⬜ |
-| P2 | 同步 schema/proto/samples/generated/dist/tests 并跑 targeted 验证 | ⬜ |
-| P3 | 无上下文 gpt-5.5 xhigh read-only validator + PR | ⬜ |
+| P0 | 验证 r9 P0 真实链路与当前基线残余缺口 | ✅ 2026-07-09 |
+| P1 | 收紧 `spirit_qi_max` server/client 必填消费契约 | ✅ 2026-07-09 |
+| P2 | 同步 schema/proto/samples/generated/dist/tests 并跑 targeted 验证 | ✅ 2026-07-09 |
+| P3 | 无上下文 gpt-5.5 xhigh read-only validator + PR | ✅ 2026-07-09 |
 
 ## P0 — 真实链路与残余缺口
 
@@ -55,4 +57,26 @@
 
 ## Finish Evidence
 
-待 P0-P3 全部完成后填写。
+### 落地清单
+
+- **P1 server**：`server/src/schema/server_data.rs` 的 `player_state` 反序列化拒绝缺失/非正 `spirit_qi_max`（`return Err("player_state.spirit_qi_max must be positive")`），新增 pin 测试 `player_state_requires_spirit_qi_max`。
+- **P1 client**：`client/src/main/java/com/bong/client/network/PlayerStateHandler.java` 用 `readRequiredPositiveDouble(payload, "spirit_qi_max")` 把该字段纳入必填校验，缺字段进入 `invalidFields` 拒绝路径；`PlayerStateHandlerTest` / `ProtoServerDataBridgeTest` 新增高境界分母用例。
+- **P2 schema**：`agent/packages/schema/src/server-data.ts`、`generated/server-data-v1.json`、`tests/schema.test.ts`（新增 35 行用例）、`resources/.../valid-player-state.json` sample 均已同步必填 `spirit_qi_max`。
+
+### 关键 commit
+
+- `f4b3cd97`（2026-07-09）：修复 player_state 真元上限 HUD 分母，收紧 server/schema/client 三端必填契约。
+
+### 测试结果
+
+- 归档审计时未重跑，以 commit message 既有记录为准："GitHub e2e 通过；本地 schema build/generate:check/schema.test.ts、client PlayerStateHandlerTest/ProtoServerDataBridgeTest、server cargo fmt --check + cargo test player_state_ 通过"。审计时通过 grep 复核 `player_state_requires_spirit_qi_max`（server）、`readRequiredPositiveDouble`（client）均存在于 `origin/main`（`f4b3cd97` 已是其祖先）。
+
+### 跨仓库核验
+
+- **server**：`ServerDataPayloadV1::PlayerState.spirit_qi_max` 反序列化必填校验。
+- **agent/schema**：`ServerDataPlayerStateV1` / `generated/server-data-v1.json` / sample 均含必填 `spirit_qi_max`。
+- **client**：`PlayerStateHandler` / `PlayerStateViewModel` 使用真实分母，不再回退 `max(100,current)` 作为 wire 契约（viewmodel 侧防御性 fallback 保留，但不再是必填字段的替代）。
+
+### 遗留 / 后续
+
+- 无。本 plan 范围内 P0-P3 均已闭环，未发现遗留缺口。
