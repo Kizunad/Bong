@@ -338,6 +338,34 @@ mod body_plan_layout_emit_tests {
             .expect("fixture layout should validate against humanoid plan")
     }
 
+    /// plan-race-system-v1 P2 minor① 修复 —— 给定 `body_plan_id`/plan 组装一份最小
+    /// 合法 layout（供 changed_body_plan_id_resends 测试需要「两个不同 body_plan_id
+    /// 各自的 layout」）。
+    fn layout_for(body_plan_id: &str) -> crate::schema::server_data::BodyPlanLayoutV1 {
+        crate::schema::server_data::BodyPlanLayoutV1 {
+            body_plan_id: body_plan_id.to_string(),
+            silhouette: vec![BodyPlanSilhouettePartV1 {
+                part_id: "chest".to_string(),
+                polygon: vec![
+                    BodyPlanPoint2V1 { x: 0.3, y: 0.1 },
+                    BodyPlanPoint2V1 { x: 0.7, y: 0.1 },
+                    BodyPlanPoint2V1 { x: 0.7, y: 0.3 },
+                    BodyPlanPoint2V1 { x: 0.3, y: 0.3 },
+                ],
+            }],
+            anchors: vec![BodyPlanPartAnchorV1 {
+                part_id: "chest".to_string(),
+                point: BodyPlanPoint2V1 { x: 0.5, y: 0.2 },
+            }],
+            meridian_paths: vec![],
+            part_display_map: vec![BodyPlanPartDisplayMappingV1 {
+                server_part_id: "chest".to_string(),
+                display_segment_id: "chest".to_string(),
+            }],
+            hud_anchors: vec![],
+        }
+    }
+
     fn flush_client_packets(app: &mut App) {
         let world = app.world_mut();
         let mut query = world.query::<&mut Client>();
@@ -420,6 +448,93 @@ mod body_plan_layout_emit_tests {
         assert!(
             collect_body_plan_layout_payloads(&mut helper).is_empty(),
             "第二个 tick body_plan_id 未变化不应重发"
+        );
+    }
+
+    /// plan-race-system-v1 P2 minor① 修复 —— `LastSentBodyPlanLayout` 重发正向分支
+    /// （实体本体 `body_plan_id` 真的变化——真实换 race——时必须重发一次新 layout）
+    /// 此前完全没有测试覆盖，只测了"缺失资源"/"不变不重发"/"未知 id 跳过"三条分支。
+    /// 这里让 `Cultivation.race` 在两个 tick 之间从 human 变到 otherrace，驱动
+    /// `resolve_body_plan_for_target` 解析出不同的 body_plan_id。
+    #[test]
+    fn changed_body_plan_id_resends() {
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::{BodyPlanId, RaceId};
+
+        let other_plan = {
+            let mut plan = crate::body_plan::humanoid_plan_static().clone();
+            plan.id = BodyPlanId::new("other");
+            plan
+        };
+        let body_plans = BodyPlanRegistry::from_plans(vec![
+            crate::body_plan::humanoid_plan_static().clone(),
+            other_plan,
+        ])
+        .expect("humanoid + other plan should both validate");
+
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                RaceEntry {
+                    id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    display_name: "人族".to_string(),
+                    body_plan_id: BodyPlanId::new("humanoid"),
+                    beast_kinds: vec![],
+                },
+                RaceEntry {
+                    id: RaceId::new("otherrace"),
+                    display_name: "异构测试种族".to_string(),
+                    body_plan_id: BodyPlanId::new("other"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![],
+            &body_plans,
+        )
+        .expect("race registry with two races should validate");
+
+        let layouts = BodyPlanLayoutRegistry::from_layouts(
+            vec![layout_for("humanoid"), layout_for("other")],
+            &body_plans,
+        )
+        .expect("both humanoid and other layouts should validate");
+
+        let mut app = App::new();
+        app.insert_resource(body_plans);
+        app.insert_resource(races);
+        app.insert_resource(layouts);
+        app.add_systems(Update, emit_body_plan_layout_payloads);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, Cultivation::default()))
+            .id();
+
+        app.update();
+        flush_client_packets(&mut app);
+        let first = collect_body_plan_layout_payloads(&mut helper);
+        assert_eq!(first.len(), 1, "join 首帧必须恰好发一次 BodyPlanLayout");
+        assert_eq!(
+            first[0].body_plan_id, "humanoid",
+            "Cultivation::default().race 是 human，必须解析到 humanoid body_plan_id"
+        );
+
+        // 真实换 race：本体 body_plan 从 humanoid 变为 other。
+        app.world_mut()
+            .get_mut::<Cultivation>(entity)
+            .expect("entity must still have Cultivation")
+            .race = RaceId::new("otherrace");
+
+        app.update();
+        flush_client_packets(&mut app);
+        let second = collect_body_plan_layout_payloads(&mut helper);
+        assert_eq!(
+            second.len(),
+            1,
+            "body_plan_id 真实变化（换 race）必须重发恰好一次新 layout，不是 0 次（吞更新）也不是 >1 次"
+        );
+        assert_eq!(
+            second[0].body_plan_id, "other",
+            "重发的 layout 必须对应变化后的新 body_plan_id，不是旧的 humanoid"
         );
     }
 
