@@ -56,7 +56,7 @@ def _inventory_count(snapshot: dict, item_id: str) -> int:
 
 def run(env) -> None:
     refund_ids: set[int]
-    with env.new_bot("CraftRefund") as bot:
+    with env.new_bot("Refund") as bot:
         wait_join_and_inventory(bot)
         baseline_ids = {drop["instance_id"] for drop in _latest_drops(bot)}
 
@@ -178,7 +178,7 @@ def run(env) -> None:
             f"退款掉落 instance_id 必须非零且互异，实际 {refund_ids}"
         )
 
-    with env.new_bot("CraftRefund") as bot:
+    with env.new_bot("Refund") as bot:
         wait_join_and_inventory(bot)
         reconnect_drops = _latest_drops(bot)
         assert refund_ids.issubset(
