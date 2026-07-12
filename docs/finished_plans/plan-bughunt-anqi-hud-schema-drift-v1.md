@@ -98,5 +98,5 @@ Adversarial conclusion：PASS。`anqi_hud` 是正式 server_data payload，但 a
 
 ### 遗留 / 后续
 
-- 本 plan 无未完成代码项。最终 PR HEAD 的 CI 与 `/review` / CodeRabbit 结果由 PR gate 继续闭环。
-- Rust 1.96 全仓 clippy 当前受 `origin/main` 既有 66 个新 lint 阻塞；未在本 PR 扩大范围修整。
+- 本 plan 无未完成代码项；PR gate 仍以最终 HEAD 的 CI 与 `/review` / CodeRabbit 闭环结果为准。
+- Follow-up（仓库级 blocker，非本 PR 新增）：Rust 1.96 全仓 clippy 受 `origin/main` 既有 66 个新 lint 阻塞；未在本 PR 扩大范围修整。

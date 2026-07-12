@@ -143,13 +143,25 @@ describe("anqi_hud ServerDataV1 contract", () => {
   ] as const)("rejects non-finite %s=%s", (field, value) => {
     const corpus = loadWireCorpus();
     const payload = { ...corpus.base, [field]: value };
-    expect(validate(ServerDataAnqiHudV1, payload).ok).toBe(false);
-    expect(validate(ServerDataV1, payload).ok).toBe(false);
+    expect(
+      validate(ServerDataAnqiHudV1, payload).ok,
+      `${field}=${String(value)} must fail the isolated anqi_hud schema because wire numbers are finite`,
+    ).toBe(false);
+    expect(
+      validate(ServerDataV1, payload).ok,
+      `${field}=${String(value)} must also fail the ServerDataV1 union because wire numbers are finite`,
+    ).toBe(false);
   });
 
   it("registers anqi_hud in ServerDataType and rejects unknown type", () => {
-    expect(validate(ServerDataType, "anqi_hud").ok).toBe(true);
-    expect(validate(ServerDataType, "anqi_hud_v2").ok).toBe(false);
+    expect(
+      validate(ServerDataType, "anqi_hud").ok,
+      "anqi_hud must remain registered as the canonical ServerDataType wire tag",
+    ).toBe(true);
+    expect(
+      validate(ServerDataType, "anqi_hud_v2").ok,
+      "unknown anqi_hud_v2 must remain rejected to prevent an unversioned wire extension",
+    ).toBe(false);
   });
 
   it("pins every TypeBox field and generated JSON constraint", () => {
