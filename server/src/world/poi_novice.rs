@@ -518,6 +518,21 @@ pub fn scatter_surface_stashes(
     existing_poi_xz: &[(f64, f64)],
     is_passable: &dyn Fn(f64, f64) -> bool,
 ) -> Vec<ScatteredStash> {
+    scatter_surface_stashes_with_limit(
+        seed,
+        existing_poi_xz,
+        is_passable,
+        SURFACE_STASH_MAX_SCATTER_ATTEMPTS,
+    )
+    .0
+}
+
+fn scatter_surface_stashes_with_limit(
+    seed: u64,
+    existing_poi_xz: &[(f64, f64)],
+    is_passable: &dyn Fn(f64, f64) -> bool,
+    max_attempts: u64,
+) -> (Vec<ScatteredStash>, u64) {
     debug_assert_eq!(
         BASIC_COUNT + SCROLL_COUNT + CRAFT_COUNT,
         SURFACE_STASH_COUNT,
@@ -527,7 +542,7 @@ pub fn scatter_surface_stashes(
     let mut current_min_dist = SURFACE_STASH_MIN_DIST;
     let mut attempt = 0u64;
 
-    while points.len() < SURFACE_STASH_COUNT && attempt < SURFACE_STASH_MAX_SCATTER_ATTEMPTS {
+    while points.len() < SURFACE_STASH_COUNT && attempt < max_attempts {
         if attempt > 0 && attempt.is_multiple_of(10000) {
             // 放宽 min_dist 继续尝试
             current_min_dist *= 0.5;
@@ -583,7 +598,7 @@ pub fn scatter_surface_stashes(
              surface_stash point(s); likely cause: passable ∩ zone-AABB ∩ far-from-existing-POI \
              feasible region is too small or empty (terrain changed?) — degrading gracefully \
              instead of hanging Startup",
-            SURFACE_STASH_MAX_SCATTER_ATTEMPTS,
+            max_attempts,
             points.len(),
             SURFACE_STASH_COUNT
         );
@@ -607,7 +622,7 @@ pub fn scatter_surface_stashes(
         };
     }
 
-    points
+    (points, attempt)
 }
 
 /// Startup 一次性生产系统：真实把 `scatter_surface_stashes` 的纯函数产出接进
@@ -1337,14 +1352,17 @@ mod tests {
         // 在加 SURFACE_STASH_MAX_SCATTER_ATTEMPTS 兜底之前，这个 while-loop 没有
         // 任何随尝试次数收紧的终止条件能应对这种输入——会无限循环，若这段代码跑在
         // Startup 调度里，服务器永远起不来。这条测试是该挂起路径唯一的 CI 覆盖。
-        let start = std::time::Instant::now();
-        let stashes = super::scatter_surface_stashes(42, &[], &|_, _| false);
-        let elapsed = start.elapsed();
+        let (stashes, attempts) = super::scatter_surface_stashes_with_limit(
+            42,
+            &[],
+            &|_, _| false,
+            super::SURFACE_STASH_MAX_SCATTER_ATTEMPTS,
+        );
 
-        assert!(
-            elapsed < std::time::Duration::from_secs(10),
-            "scatter_surface_stashes 在全不可通行地形下耗时 {elapsed:?} 才返回——\
-             max-attempts 兜底未生效或上限设得过大，Startup 调度上等价于挂死"
+        assert_eq!(
+            attempts,
+            super::SURFACE_STASH_MAX_SCATTER_ATTEMPTS,
+            "全不可通行地形下应恰好耗尽生产 max-attempts 上限后返回"
         );
         assert!(
             stashes.len() < super::SURFACE_STASH_COUNT,
@@ -1373,14 +1391,17 @@ mod tests {
             coord += 50;
         }
 
-        let start = std::time::Instant::now();
-        let stashes = super::scatter_surface_stashes(7, &existing, &|_, _| true);
-        let elapsed = start.elapsed();
+        const TEST_MAX_ATTEMPTS: u64 = 10_000;
+        let (stashes, attempts) = super::scatter_surface_stashes_with_limit(
+            7,
+            &existing,
+            &|_, _| true,
+            TEST_MAX_ATTEMPTS,
+        );
 
-        assert!(
-            elapsed < std::time::Duration::from_secs(10),
-            "既有 POI 铺满可行域时 scatter_surface_stashes 耗时 {elapsed:?} 才返回——\
-             max-attempts 兜底未生效"
+        assert_eq!(
+            attempts, TEST_MAX_ATTEMPTS,
+            "既有 POI 铺满可行域时应恰好耗尽显式 max-attempts 上限后返回"
         );
         assert!(
             stashes.len() < super::SURFACE_STASH_COUNT,
