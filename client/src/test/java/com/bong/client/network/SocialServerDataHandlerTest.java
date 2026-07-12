@@ -195,9 +195,14 @@ public class SocialServerDataHandlerTest {
         String payload = sparringInvitePayload("sparring:duplicate", 5_000L);
 
         ServerDataRouter.RouteResult first = router.route(payload, 0);
+        assertTrue(first.isHandled(), first.logMessage());
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.DUPLICATE,
+            SocialStateStore.enqueueSparringInvite(sparringInvite("sparring:duplicate", 5_000L)),
+            "同 identity 的直接 store 入队必须明确返回 DUPLICATE"
+        );
         ServerDataRouter.RouteResult duplicate = router.route(payload, 0);
 
-        assertTrue(first.isHandled(), first.logMessage());
         assertTrue(duplicate.isNoOp(), duplicate.logMessage());
         assertEquals("sparring:duplicate", SocialStateStore.sparringInvite().inviteId());
         assertEquals(1, UnifiedEventStore.stream().size(), "重复邀请不能重复发布 HUD 事件");
@@ -207,7 +212,8 @@ public class SocialServerDataHandlerTest {
     void lateOlderSparringInviteCannotReplaceNewerInvite() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
-        assertTrue(router.route(sparringInvitePayload("sparring:0002", 6_000L), 0).isHandled());
+        ServerDataRouter.RouteResult current = router.route(sparringInvitePayload("sparring:0002", 6_000L), 0);
+        assertTrue(current.isHandled(), current.logMessage());
         ServerDataRouter.RouteResult late = router.route(sparringInvitePayload("sparring:0001", 5_000L), 0);
 
         assertTrue(late.isNoOp(), late.logMessage());
@@ -219,7 +225,8 @@ public class SocialServerDataHandlerTest {
     void lateOlderSparringInviteWithSameExpiryIsIgnoredByUuidV7Order() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
-        assertTrue(router.route(sparringInvitePayload("sparring:0002", 6_000L), 0).isHandled());
+        ServerDataRouter.RouteResult current = router.route(sparringInvitePayload("sparring:0002", 6_000L), 0);
+        assertTrue(current.isHandled(), current.logMessage());
         ServerDataRouter.RouteResult late = router.route(sparringInvitePayload("sparring:0001", 6_000L), 0);
 
         assertTrue(late.isNoOp(), late.logMessage());

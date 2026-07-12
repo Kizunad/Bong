@@ -27,11 +27,14 @@ public class SparringInviteScreenTest {
 
         SparringInviteScreen.RenderContent content = SparringInviteScreen.describe(invite, 9_000L);
 
-        assertTrue(content.lines().contains("发起者气息: 气息相试"));
-        assertTrue(content.lines().contains("境界段: condense_solidify"));
-        assertTrue(content.lines().contains("条款: 点到为止"));
-        assertTrue(content.lines().contains("倒计时: 9s"));
-        assertTrue(content.lines().contains("失败方: 5min 谦抑, 真元回复 -30%"));
+        assertTrue(content.lines().contains("发起者气息: 气息相试"), "描述必须展示匿名气息提示");
+        assertTrue(content.lines().contains("境界段: condense_solidify"), "描述必须展示境界段");
+        assertTrue(content.lines().contains("条款: 点到为止"), "描述必须展示切磋条款");
+        assertTrue(content.lines().contains("倒计时: 9s"), "描述必须展示剩余秒数");
+        assertTrue(
+            content.lines().contains("失败方: 5min 谦抑, 真元回复 -30%"),
+            "描述必须展示失败代价"
+        );
     }
 
     @Test
@@ -47,8 +50,14 @@ public class SparringInviteScreenTest {
         new SparringInviteScreen(first).close();
 
         assertEquals(1, sentPayloads.size(), "关闭邀请屏只发送一次拒绝响应");
-        assertTrue(sentPayloads.get(0).contains("\"invite_id\":\"sparring:first\""));
-        assertTrue(sentPayloads.get(0).contains("\"accepted\":false"));
+        assertTrue(
+            sentPayloads.get(0).contains("\"invite_id\":\"sparring:first\""),
+            "关闭响应必须携带当前 invite identity，实际 payload=" + sentPayloads.get(0)
+        );
+        assertTrue(
+            sentPayloads.get(0).contains("\"accepted\":false"),
+            "关闭邀请屏必须发送拒绝语义，实际 payload=" + sentPayloads.get(0)
+        );
         assertEquals("sparring:second", SocialStateStore.sparringInvite().inviteId());
         assertEquals(
             SparringInviteScreenBootstrap.Decision.OPEN_SCREEN,
@@ -97,7 +106,7 @@ public class SparringInviteScreenTest {
     }
 
     @Test
-    void acceptingInviteAtomicallySettlesQueuedInvites() throws ReflectiveOperationException {
+    void acceptingInviteAtomicallySettlesQueuedInvites() {
         SocialStateStore.SparringInvite first = invite("sparring:first", 5_000L);
         SocialStateStore.SparringInvite second = invite("sparring:second", 6_000L);
         SocialStateStore.SparringInvite third = invite("sparring:third", 7_000L);
@@ -108,18 +117,18 @@ public class SparringInviteScreenTest {
             sentPayloads.add(new String(payload, StandardCharsets.UTF_8))
         );
 
-        java.lang.reflect.Method settle = SparringInviteScreen.class.getDeclaredMethod(
-            "settle",
-            boolean.class,
-            boolean.class
-        );
-        settle.setAccessible(true);
-        settle.invoke(new SparringInviteScreen(first), true, false);
+        new SparringInviteScreen(first).acceptForTests();
 
         assertNull(SocialStateStore.sparringInvite(), "接受一场切磋后不得继续弹出排队邀请");
         assertEquals(1, sentPayloads.size(), "接受当前邀请只发送自身响应，其他 pending 由本地 tombstone 与服务端 TTL 清理");
-        assertTrue(sentPayloads.get(0).contains("\"invite_id\":\"sparring:first\""));
-        assertTrue(sentPayloads.get(0).contains("\"accepted\":true"));
+        assertTrue(
+            sentPayloads.get(0).contains("\"invite_id\":\"sparring:first\""),
+            "接受响应必须携带当前 invite identity，实际 payload=" + sentPayloads.get(0)
+        );
+        assertTrue(
+            sentPayloads.get(0).contains("\"accepted\":true"),
+            "接受入口必须发送应战语义，实际 payload=" + sentPayloads.get(0)
+        );
         assertEquals(
             SocialStateStore.SparringInviteUpdate.SETTLED,
             SocialStateStore.enqueueSparringInvite(second),

@@ -141,7 +141,10 @@ class SparringInviteScreenBootstrapTest {
     @Test
     void blockedToastIsVisibleAndDeduplicatedPerInviteId() {
         SparringInviteScreenBootstrap.notifyBlocked("invite-1");
-        assertFalse(BongToast.current(System.currentTimeMillis()).isEmpty());
+        assertFalse(
+            BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "首次 blocked 邀请必须显示非阻塞提示"
+        );
 
         BongToast.resetForTests();
         SparringInviteScreenBootstrap.notifyBlocked("invite-1");
@@ -160,20 +163,27 @@ class SparringInviteScreenBootstrapTest {
     @Test
     void blockedToastIgnoresInvalidIdAndResetRestoresNotification() {
         SparringInviteScreenBootstrap.notifyBlocked("   ");
-        assertTrue(BongToast.current(System.currentTimeMillis()).isEmpty());
+        assertTrue(
+            BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "空 inviteId 不得生成无身份提示"
+        );
 
         SparringInviteScreenBootstrap.notifyBlocked("invite-1");
         BongToast.resetForTests();
         SparringInviteScreenBootstrap.resetForTests();
         SparringInviteScreenBootstrap.notifyBlocked("invite-1");
-        assertFalse(BongToast.current(System.currentTimeMillis()).isEmpty());
+        assertFalse(
+            BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "去重状态复位后，同 identity 必须可在新 session 再次提示"
+        );
     }
 
     @Test
     void expiredToastExplainsOutcome() {
         SparringInviteScreenBootstrap.notifyExpired();
         assertTrue(
-            BongToast.current(System.currentTimeMillis()).text().getString().contains("过期")
+            BongToast.current(System.currentTimeMillis()).text().getString().contains("过期"),
+            "过期提示必须明确说明邀请已过期"
         );
     }
 }

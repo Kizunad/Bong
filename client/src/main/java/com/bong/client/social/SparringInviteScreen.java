@@ -97,6 +97,10 @@ public final class SparringInviteScreen extends Screen {
         }
     }
 
+    void acceptForTests() {
+        settle(true, false);
+    }
+
     private long remainingMillis() {
         return Math.max(0L, invite.expiresAtMs() - System.currentTimeMillis());
     }
