@@ -24,7 +24,8 @@
 
 use valence::prelude::Entity;
 
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Cultivation, MeridianChannelId};
+use crate::cultivation::topology::MeridianTopology;
 use crate::dandao::mutation::BodySlot;
 use crate::fauna::components::BeastKind;
 
@@ -124,6 +125,33 @@ pub fn body_part_for_mutation_slot(plan: &BodyPlan, slot: BodySlot) -> Option<&B
     plan.mutation_slot_mapping.get(&slot)
 }
 
+/// plan-race-system-v1 P1b —— `combat::baomai_v4::dead_armor::meridian_to_body_part`
+/// 私表退役后的查询入口：给定 channel id，返回其 `ChannelDef.body_part`（`None` = 无
+/// 可命中体表映射的奇经，或 plan 未声明该 channel）。
+pub fn channel_body_part(plan: &BodyPlan, channel: &MeridianChannelId) -> Option<BodyPartId> {
+    plan.meridian_profile
+        .as_ref()?
+        .channels
+        .iter()
+        .find(|c| &c.id == channel)
+        .and_then(|c| c.body_part.clone())
+}
+
+/// plan-race-system-v1 P1b —— `cultivation::dugu::body_part_to_meridian` 私表退役后的
+/// 查询入口：给定体表部位，返回排异毒素累积到哪条 channel（`None` = plan 未声明该
+/// body_part 的 dugu 注入映射，如非人形构型或未接入 dugu 玩法）。
+pub fn dugu_injection_channel(
+    plan: &BodyPlan,
+    body_part: &BodyPartId,
+) -> Option<MeridianChannelId> {
+    plan.meridian_profile
+        .as_ref()?
+        .dugu_injection
+        .iter()
+        .find(|e| &e.body_part == body_part)
+        .map(|e| e.channel.clone())
+}
+
 /// plan-race-system-v1 P0c —— 消费点通用封装：`combat::resolve::body_part_multipliers`
 /// 首创的"resource missing / unknown race → humanoid 兜底"约定在这里被抽成公共入口，
 /// 供 `combat::raycast`（`classify_body_part`/`standing_humanoid_aabb`/`raycast_humanoid`
@@ -157,6 +185,37 @@ pub fn resolve_body_plan_for_target<'a>(
             }
         }
         _ => super::registry::humanoid_plan_static(),
+    }
+}
+
+/// plan-race-system-v1 P1b —— `meridian_open`/NPC 选招消费点的经脉拓扑解析入口，
+/// 语义与 [`resolve_body_plan_for_target`] 完全对齐（同一套退化规则：解析失败或资源
+/// 缺失退化到 humanoid 单例）。目标 plan 未声明 `meridian_profile`（P0 遗留 fixture /
+/// 尚未接入经脉的非人形构型）时同样退化到 humanoid 拓扑——`meridian_open_tick` 等
+/// 消费点始终需要"某种拓扑数据"才能判定邻接，不能对着 `None` 停摆。
+pub fn resolve_meridian_topology_for_target<'a>(
+    entity: Entity,
+    purpose: BodyPlanPurpose,
+    inputs: BodyPlanResolveInputs<'_>,
+    body_plans: Option<&'a BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
+) -> &'a MeridianTopology {
+    match (body_plans, races) {
+        (Some(body_plans), Some(races)) => {
+            match resolve_body_plan(entity, purpose, inputs, body_plans, races) {
+                Ok(plan) => body_plans
+                    .topology_for(&plan.id)
+                    .unwrap_or_else(|| super::registry::humanoid_topology_static()),
+                Err(error) => {
+                    tracing::error!(
+                        "[bong][body_plan] resolve_meridian_topology_for_target: {error} — \
+                         falling back to humanoid"
+                    );
+                    super::registry::humanoid_topology_static()
+                }
+            }
+        }
+        _ => super::registry::humanoid_topology_static(),
     }
 }
 
@@ -197,7 +256,24 @@ mod tests {
                 lateral_threshold: 0.19,
             },
             equip_slots: vec![],
-            meridian_profile: None,
+            // plan-race-system-v1 P1a：validate_body_plan 现在要求 is_humanoid==true
+            // 必须提供 meridian_profile；本 fixture 明确代表"the humanoid plan"，给一条
+            // 最小合法 channel + 六境界配额，保持语义忠实而非改 is_humanoid=false。
+            meridian_profile: Some(crate::body_plan::types::MeridianProfile {
+                channels: vec![crate::body_plan::types::ChannelDef {
+                    id: "lung".into(),
+                    family: crate::body_plan::types::MeridianFamily::Regular,
+                    body_part: Some(BodyPartId::new("head")),
+                    roles: vec![],
+                }],
+                topology_edges: vec![],
+                dugu_injection: vec![],
+                realm_requirements: [crate::body_plan::types::RealmMeridianReq {
+                    total: 1,
+                    regular_min: 1,
+                    extraordinary_min: 0,
+                }; 6],
+            }),
             mutation_slot_mapping: {
                 let mut map = HashMap::new();
                 map.insert(BodySlot::Head, BodyPartId::new("head"));
@@ -494,5 +570,138 @@ mod tests {
     fn resolve_body_plan_error_display_mentions_race_id() {
         let err = ResolveBodyPlanError::UnknownPlayerRace(RaceId::new("phantom"));
         assert!(err.to_string().contains("phantom"));
+    }
+
+    // ───────────────────────── channel_body_part / dugu_injection_channel ──────
+    // plan-race-system-v1 P1b —— `combat::baomai_v4::dead_armor::meridian_to_body_part`
+    // / `cultivation::dugu::body_part_to_meridian` 两张私表退役后的查询 API。
+
+    #[test]
+    fn channel_body_part_returns_mapped_part_on_fixture_plan() {
+        let plan = humanoid_plan();
+        let part = channel_body_part(&plan, &MeridianChannelId::new("lung"))
+            .expect("fixture plan maps lung -> head");
+        assert_eq!(part, BodyPartId::new("head"));
+    }
+
+    #[test]
+    fn channel_body_part_returns_none_for_unknown_channel() {
+        let plan = humanoid_plan();
+        assert_eq!(
+            channel_body_part(&plan, &MeridianChannelId::new("does_not_exist")),
+            None
+        );
+    }
+
+    #[test]
+    fn channel_body_part_returns_none_when_plan_has_no_meridian_profile() {
+        let mut plan = humanoid_plan();
+        plan.meridian_profile = None;
+        assert_eq!(
+            channel_body_part(&plan, &MeridianChannelId::new("lung")),
+            None
+        );
+    }
+
+    #[test]
+    fn channel_body_part_returns_none_for_channel_without_body_part_mapping() {
+        // 奇经排除表：`body_part: None` 的 channel（fixture 未声明该 channel 时同样
+        // 视为"无映射"——本用例用真实 humanoid.json 覆盖 6 条无体部映射的奇经）。
+        let plan = crate::body_plan::registry::humanoid_plan_static();
+        for id in [
+            "chong",
+            "dai",
+            "yin_qiao",
+            "yang_qiao",
+            "yin_wei",
+            "yang_wei",
+        ] {
+            assert_eq!(
+                channel_body_part(plan, &MeridianChannelId::new(id)),
+                None,
+                "channel {id} 在 humanoid.json 中应无体部映射"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_body_part_matches_retired_dead_armor_table_bit_for_bit_on_real_humanoid_plan() {
+        use crate::cultivation::components::MeridianId;
+
+        let plan = crate::body_plan::registry::humanoid_plan_static();
+        let expected: [(MeridianId, &str); 14] = [
+            (MeridianId::Lung, "arm_l"),
+            (MeridianId::Heart, "arm_l"),
+            (MeridianId::Pericardium, "arm_l"),
+            (MeridianId::LargeIntestine, "arm_r"),
+            (MeridianId::SmallIntestine, "arm_r"),
+            (MeridianId::TripleEnergizer, "arm_r"),
+            (MeridianId::Spleen, "leg_l"),
+            (MeridianId::Kidney, "leg_l"),
+            (MeridianId::Liver, "leg_l"),
+            (MeridianId::Stomach, "leg_r"),
+            (MeridianId::Bladder, "leg_r"),
+            (MeridianId::Gallbladder, "leg_r"),
+            (MeridianId::Ren, "chest"),
+            (MeridianId::Du, "chest"),
+        ];
+        for (id, expected_part) in expected {
+            let part = channel_body_part(plan, &id.channel_id())
+                .unwrap_or_else(|| panic!("{id:?} must map to a body part"));
+            assert_eq!(part.as_str(), expected_part, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn dugu_injection_channel_returns_mapped_channel_for_unknown_free_fixture() {
+        let mut plan = humanoid_plan();
+        plan.meridian_profile.as_mut().unwrap().dugu_injection =
+            vec![crate::body_plan::types::DuguInjectionEntry {
+                body_part: BodyPartId::new("head"),
+                channel: MeridianChannelId::new("du"),
+            }];
+        assert_eq!(
+            dugu_injection_channel(&plan, &BodyPartId::new("head")),
+            Some(MeridianChannelId::new("du"))
+        );
+    }
+
+    #[test]
+    fn dugu_injection_channel_returns_none_for_unmapped_body_part() {
+        let plan = humanoid_plan();
+        assert_eq!(
+            dugu_injection_channel(&plan, &BodyPartId::new("does_not_exist")),
+            None
+        );
+    }
+
+    #[test]
+    fn dugu_injection_channel_returns_none_when_plan_has_no_meridian_profile() {
+        let mut plan = humanoid_plan();
+        plan.meridian_profile = None;
+        assert_eq!(
+            dugu_injection_channel(&plan, &BodyPartId::new("head")),
+            None
+        );
+    }
+
+    #[test]
+    fn dugu_injection_channel_matches_retired_dugu_table_bit_for_bit_on_real_humanoid_plan() {
+        let plan = crate::body_plan::registry::humanoid_plan_static();
+        let expected: [(&str, &str); 8] = [
+            ("head", "du"),
+            ("chest", "heart"),
+            ("back", "du"),
+            ("abdomen", "spleen"),
+            ("arm_l", "large_intestine"),
+            ("arm_r", "large_intestine"),
+            ("leg_l", "bladder"),
+            ("leg_r", "bladder"),
+        ];
+        for (body_part, expected_channel) in expected {
+            let channel = dugu_injection_channel(plan, &BodyPartId::new(body_part))
+                .unwrap_or_else(|| panic!("body_part {body_part} must map to a dugu channel"));
+            assert_eq!(channel.as_str(), expected_channel, "body_part={body_part}");
+        }
     }
 }

@@ -17,6 +17,7 @@ import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { validateQiInjectionEventV1Contract } from "../src/combat-carrier.js";
 import { CombatBodyPartV1, CombatDefenseKindV1, CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
+import { MeridianId } from "../src/cultivation.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import {
   HeartDemonOfferDraftV1,
@@ -2649,12 +2650,15 @@ describe("sample files pass schema validation", () => {
       ).toBe(true);
     }
   });
-  it("CombatBodyPartV1 rejects unknown body part", () => {
-    const result = validate(CombatBodyPartV1, "shoulder");
+  // plan-race-system-v1 P1c — wire 开放化：CombatBodyPartV1 从闭合 8 段人形 union
+  // 改为任意 string part id，非 humanoid 构型（P5 飞鲸等）的部位不在这 8 段之列，
+  // 必须能合法通过校验（旧断言"拒绝未声明变体"随开放化推翻，改锁"开放接受"）。
+  it("CombatBodyPartV1 accepts non-humanoid part id (wire opened up)", () => {
+    const result = validate(CombatBodyPartV1, "tail_fin");
     expect(
       result.ok,
-      `Expected CombatBodyPartV1 to reject "shoulder" (not a declared variant), but it was accepted`,
-    ).toBe(false);
+      `Expected CombatBodyPartV1 to accept "tail_fin" after wire open-up, errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
   });
   it("CombatBodyPartV1 rejects empty string", () => {
     const result = validate(CombatBodyPartV1, "");
@@ -2663,6 +2667,34 @@ describe("sample files pass schema validation", () => {
       `Expected CombatBodyPartV1 to reject empty string, but it was accepted`,
     ).toBe(false);
   });
+  // plan-race-system-v1 P1 对抗审查 MINOR ②：`MeridianId`（cultivation.ts）与
+  // `CombatBodyPartV1` 同批 wire 开放化（P1c），但此前从未有专属 pin 测试锁住其
+  // 开放 string 语义——对齐 `CombatBodyPartV1` 的 3 条基线（合法样本 / 非 humanoid
+  // 开放接受 / 空串拒绝）补齐。
+  it("MeridianId accepts humanoid channel id samples (regular + extraordinary)", () => {
+    for (const channel of ["lung", "heart", "ren", "yin_qiao"]) {
+      const result = validate(MeridianId, channel);
+      expect(
+        result.ok,
+        `MeridianId must accept "${channel}" — humanoid.json declares it as a channel id: ${result.errors.join("; ")}`,
+      ).toBe(true);
+    }
+  });
+  it("MeridianId accepts non-humanoid channel id (wire opened up)", () => {
+    const result = validate(MeridianId, "blowhole");
+    expect(
+      result.ok,
+      `Expected MeridianId to accept "blowhole" after wire open-up (non-humanoid channel), errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+  it("MeridianId rejects empty string", () => {
+    const result = validate(MeridianId, "");
+    expect(
+      result.ok,
+      `Expected MeridianId to reject empty string, but it was accepted`,
+    ).toBe(false);
+  });
+
   it("combat-event.realtime.back.sample.json validates: back body_part is a parseable IPC value", () => {
     const data = loadSample("combat-event.realtime.back.sample.json");
     const result = validate(CombatRealtimeEventV1, data);

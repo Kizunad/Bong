@@ -575,7 +575,9 @@ mod skill_tests {
         let qi_cost = dandao_qi_cost_base(Realm::Awaken);
         let (mut world, caster) = make_world_with_caster(Realm::Awaken, qi_cost + 1.0, 100.0);
         let mut severed = MeridianSeveredPermanent::default();
-        severed.severed_meridians.insert(MeridianId::Spleen);
+        severed
+            .severed_meridians
+            .insert(MeridianId::Spleen.channel_id());
         world.entity_mut(caster).insert(severed);
 
         let result = resolve_pill_rush(&mut world, caster, 0, None);
@@ -593,7 +595,9 @@ mod skill_tests {
         let qi_cost = dandao_qi_cost_base(Realm::Awaken);
         let (mut world, caster) = make_world_with_caster(Realm::Awaken, qi_cost + 1.0, 100.0);
         let mut severed = MeridianSeveredPermanent::default();
-        severed.severed_meridians.insert(MeridianId::Kidney);
+        severed
+            .severed_meridians
+            .insert(MeridianId::Kidney.channel_id());
         world.entity_mut(caster).insert(severed);
 
         let result = resolve_pill_rush(&mut world, caster, 0, None);
@@ -610,7 +614,9 @@ mod skill_tests {
     fn pill_bomb_rejects_severed_lung() {
         let (mut world, caster) = make_world_with_caster(Realm::Induce, 40.0, 100.0);
         let mut severed = MeridianSeveredPermanent::default();
-        severed.severed_meridians.insert(MeridianId::Lung);
+        severed
+            .severed_meridians
+            .insert(MeridianId::Lung.channel_id());
         world.entity_mut(caster).insert(severed);
 
         let result = resolve_pill_bomb(&mut world, caster, 0, None);
@@ -627,7 +633,9 @@ mod skill_tests {
     fn pill_mist_rejects_severed_liver() {
         let (mut world, caster) = make_world_with_caster(Realm::Condense, 150.0, 150.0);
         let mut severed = MeridianSeveredPermanent::default();
-        severed.severed_meridians.insert(MeridianId::Liver);
+        severed
+            .severed_meridians
+            .insert(MeridianId::Liver.channel_id());
         world.entity_mut(caster).insert(severed);
 
         let result = resolve_pill_mist(&mut world, caster, 0, None);

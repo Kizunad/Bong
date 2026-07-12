@@ -46,7 +46,18 @@ pub fn resolve_crack_target(
 ) -> Option<super::components::MeridianId> {
     match meridian_id {
         Some(id) if meridians.get(id).opened => Some(id),
-        _ => meridians.iter().find(|m| m.opened).map(|m| m.id),
+        // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本函数
+        // 返回值仍是 legacy `Option<MeridianId>`——humanoid 20 条经脉均可逆映射回
+        // `MeridianId`。
+        _ => meridians.iter().find(|m| m.opened).map(|m| {
+            m.id.to_meridian_id().unwrap_or_else(|| {
+                panic!(
+                    "[bong][cultivation][contamination] channel id {} has no legacy MeridianId \
+                     mapping — resolve_crack_target cannot represent non-humanoid channels yet",
+                    m.id
+                )
+            })
+        }),
     }
 }
 

@@ -58,8 +58,11 @@ pub mod lifespan;
 pub mod luck_pool;
 pub mod meridian;
 pub mod meridian_open;
+// plan-race-system-v1 P1 对抗审查 M2 —— 非人合成构型全链测试。
 pub mod neg_pressure;
 pub mod negative_zone;
+#[cfg(test)]
+mod non_humanoid_meridian_synthetic_chain_test;
 pub mod overload;
 pub mod perception;
 pub mod poison_trait;
@@ -167,7 +170,6 @@ use self::tick::{
     prune_cultivation_session_practice_accumulator, qi_regen_and_zone_drain_tick, CultivationClock,
     CultivationSessionPracticeAccumulator,
 };
-use self::topology::MeridianTopology;
 use self::tribulation::{
     abort_du_xu_on_client_removed, dispatch_rechallenge_on_quota_opened_system,
     emit_tribulation_boundary_vfx_system, heart_demon_choice_system, heart_demon_timeout_system,
@@ -233,7 +235,8 @@ pub fn register(app: &mut App) {
     // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
     crate::cultivation::dugu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
 
-    app.insert_resource(MeridianTopology::standard());
+    // plan-race-system-v1 P1b：`MeridianTopology` 不再是全局单例 Resource——拓扑数据
+    // 按实体解析出的 BodyPlan 现场派生（见 `body_plan::resolve_meridian_topology_for_target`）。
     app.insert_resource(CultivationClock::default());
     app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
@@ -576,6 +579,19 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             }
         };
 
+        // plan-race-system-v1 P1a —— bundle 内嵌版本号（`persist_player_cultivation_bundle`
+        // 的 `"v"` 字段，与全局 `CURRENT_SCHEMA_VERSION`/`CURRENT_USER_VERSION` 是两套
+        // 独立版本号，只管 `cultivation_json` blob 自身的形态演进）。缺失该字段的旧存档
+        // 视为 v1（`MeridianSystem`/`MeridianSeveredPermanent` 的 `MeridianId` PascalCase
+        // 枚举名 channel id 形态）；`legacy_meridian_bundle::CURRENT_BUNDLE_VERSION`（本次
+        // 提升到 2）起 channel id 换轨为 humanoid.json 声明的 snake_case
+        // `MeridianChannelId`——两种形态字段名/嵌套结构完全相同，差异只在 id 字符串本身。
+        let bundle_version = persisted_bundle
+            .as_ref()
+            .and_then(|bundle| bundle.get("v"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
+
         let mut cultivation = Cultivation::default();
         let mut meridians = MeridianSystem::default();
         let mut qi_color = QiColor::default();
@@ -631,7 +647,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 }
             }
             if let Some(value) = persisted_bundle.get("meridians") {
-                match serde_json::from_value::<MeridianSystem>(value.clone()) {
+                match legacy_meridian_bundle::decode_meridian_system(value.clone(), bundle_version)
+                {
                     Ok(decoded) => meridians = decoded,
                     Err(error) => warn_cultivation_decode(username.0.as_str(), "meridians", error),
                 }
@@ -841,7 +858,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         let mut severed_permanent = MeridianSeveredPermanent::default();
         if let Some(persisted_bundle) = persisted_bundle.as_ref() {
             if let Some(value) = persisted_bundle.get("meridian_severed") {
-                match serde_json::from_value::<MeridianSeveredPermanent>(value.clone()) {
+                match legacy_meridian_bundle::decode_meridian_severed(value.clone(), bundle_version)
+                {
                     Ok(decoded) => severed_permanent = decoded,
                     Err(error) => {
                         warn_cultivation_decode(username.0.as_str(), "meridian_severed", error)
@@ -1021,6 +1039,465 @@ fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error
     tracing::warn!(
         "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}"
     );
+}
+
+/// plan-race-system-v1 P1a —— `cultivation_json` bundle 里 `meridians` / `meridian_severed`
+/// 两个子字段的旧存档显式迁移。
+///
+/// **为什么需要迁移而不能直接 `serde_json::from_value`**：`MeridianSystem`/
+/// `MeridianSeveredPermanent` 的容器形状（`regular`/`extraordinary` 两个 Vec 字段名、
+/// `severed_meridians`/`severed_at`/`dead_meridians` 三个字段名）迁移前后完全不变——
+/// 变的只是"经脉 channel id 用什么字符串表示"：v1（bump 前）用 `MeridianId` 闭合枚举
+/// 的 serde 默认表示（unit variant 名，PascalCase，如 `"Lung"`）；v2 起换成
+/// `body_plan::MeridianProfile`（`humanoid.json`）声明的规范 snake_case
+/// `MeridianChannelId`（如 `"lung"`）。`MeridianChannelId` 是 `#[serde(transparent)]`
+/// 包裹的裸字符串，对**任意**字符串都能"成功"反序列化——这意味着如果不做迁移，
+/// 旧存档的 `"id":"Lung"` 会被静默解析成 `MeridianChannelId("Lung")`（大小写、内容都
+/// 对不上 humanoid.json 的 `"lung"`），后续 `MeridianSystem::get`/`get_mut` 找不到这条
+/// 经脉直接 panic——不是"解析失败"而是"解析成功但语义损坏"，比崩溃更危险，必须
+/// 显式迁移拦下。
+pub(crate) mod legacy_meridian_bundle {
+    use std::collections::{HashMap, HashSet};
+
+    use serde::Deserialize;
+
+    use super::components::{Meridian, MeridianCrack, MeridianId, MeridianSystem};
+    use super::meridian::severed::{MeridianSeveredPermanent, SeveredRecord};
+
+    /// bundle 内嵌版本号阈值——`>= CURRENT_BUNDLE_VERSION` 走新形态直接反序列化，
+    /// 更旧的（含缺失 `"v"` 字段、隐式视为 1）先按 legacy 形态解码再逐条转换 channel id。
+    /// `persistence::persist_player_cultivation_bundle` 写入 bundle 时的 `"v"` 字段必须
+    /// 引用同一常量（`crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION`），
+    /// 不允许两处各自维护一份数字。
+    pub(crate) const CURRENT_BUNDLE_VERSION: i64 = 2;
+
+    #[derive(Debug, Deserialize)]
+    struct LegacyMeridian {
+        id: MeridianId,
+        opened: bool,
+        open_progress: f64,
+        flow_rate: f64,
+        flow_capacity: f64,
+        rate_tier: u8,
+        capacity_tier: u8,
+        throughput_current: f64,
+        integrity: f64,
+        #[serde(default)]
+        cracks: Vec<MeridianCrack>,
+        opened_at: u64,
+    }
+
+    impl From<LegacyMeridian> for Meridian {
+        fn from(legacy: LegacyMeridian) -> Self {
+            Meridian {
+                id: legacy.id.channel_id(),
+                opened: legacy.opened,
+                open_progress: legacy.open_progress,
+                flow_rate: legacy.flow_rate,
+                flow_capacity: legacy.flow_capacity,
+                rate_tier: legacy.rate_tier,
+                capacity_tier: legacy.capacity_tier,
+                throughput_current: legacy.throughput_current,
+                integrity: legacy.integrity,
+                cracks: legacy.cracks,
+                opened_at: legacy.opened_at,
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LegacyMeridianSystem {
+        regular: Vec<LegacyMeridian>,
+        extraordinary: Vec<LegacyMeridian>,
+    }
+
+    /// 解码 `meridians` bundle 子字段。`bundle_version >= CURRENT_BUNDLE_VERSION` 时
+    /// 直接按当前 `MeridianSystem` 形态解析（新存档，channel id 已是 snake_case）；
+    /// 否则先按 v1 legacy 形态（`MeridianId` PascalCase 枚举名）解析再迁移。
+    pub fn decode_meridian_system(
+        value: serde_json::Value,
+        bundle_version: i64,
+    ) -> Result<MeridianSystem, serde_json::Error> {
+        if bundle_version >= CURRENT_BUNDLE_VERSION {
+            return serde_json::from_value(value);
+        }
+        let legacy: LegacyMeridianSystem = serde_json::from_value(value)?;
+        Ok(MeridianSystem {
+            regular: legacy.regular.into_iter().map(Meridian::from).collect(),
+            extraordinary: legacy
+                .extraordinary
+                .into_iter()
+                .map(Meridian::from)
+                .collect(),
+        })
+    }
+
+    #[derive(Debug, Default, Deserialize)]
+    struct LegacyMeridianSeveredPermanent {
+        #[serde(default)]
+        severed_meridians: HashSet<MeridianId>,
+        #[serde(default)]
+        severed_at: HashMap<MeridianId, SeveredRecord>,
+        #[serde(default)]
+        dead_meridians: HashSet<MeridianId>,
+    }
+
+    /// 解码 `meridian_severed` bundle 子字段，语义同 [`decode_meridian_system`]——
+    /// **未映射通道不删除不洗白**（§8.1 #9 决议）：v1 存档里出现的 SEVERED/死脉记录
+    /// 在本函数内 100% 覆盖 humanoid 20 条经脉（`MeridianId::channel_id` 是全函数，
+    /// 无法产出"未映射"的 legacy 条目），迁移后逐条转换、一个不丢；`meridian_mapping`
+    /// 式"部分不可逆映射"只在 P5 `RaceChange`（种族切换）场景出现，不属于本函数处理的
+    /// "同一构型内 id 表示法换代"范畴。
+    pub fn decode_meridian_severed(
+        value: serde_json::Value,
+        bundle_version: i64,
+    ) -> Result<MeridianSeveredPermanent, serde_json::Error> {
+        if bundle_version >= CURRENT_BUNDLE_VERSION {
+            return serde_json::from_value(value);
+        }
+        let legacy: LegacyMeridianSeveredPermanent = serde_json::from_value(value)?;
+        Ok(MeridianSeveredPermanent {
+            severed_meridians: legacy
+                .severed_meridians
+                .into_iter()
+                .map(MeridianId::channel_id)
+                .collect(),
+            severed_at: legacy
+                .severed_at
+                .into_iter()
+                .map(|(id, record)| (id.channel_id(), record))
+                .collect(),
+            dead_meridians: legacy
+                .dead_meridians
+                .into_iter()
+                .map(MeridianId::channel_id)
+                .collect(),
+        })
+    }
+
+    /// 全闭合的 v1 legacy `meridians` JSON 样本（`MeridianId` PascalCase 枚举名
+    /// channel id）——供**本模块之外**（`cultivation::mod` 的持久化 e2e 测试）构造
+    /// "早于 P1 的旧存档" fixture 时复用，避免那类测试意外用上当前形态的
+    /// `MeridianSystem::default()` 掩盖迁移分支未被真正走通的问题。
+    #[cfg(test)]
+    pub(crate) fn v1_all_closed_meridian_system_sample() -> serde_json::Value {
+        fn entry(id: MeridianId) -> serde_json::Value {
+            serde_json::json!({
+                "id": format!("{id:?}"),
+                "opened": false,
+                "open_progress": 0.0,
+                "flow_rate": 1.0,
+                "flow_capacity": 10.0,
+                "rate_tier": 0,
+                "capacity_tier": 0,
+                "throughput_current": 0.0,
+                "integrity": 1.0,
+                "cracks": [],
+                "opened_at": 0,
+            })
+        }
+        let regular: Vec<serde_json::Value> =
+            MeridianId::REGULAR.iter().copied().map(entry).collect();
+        let extraordinary: Vec<serde_json::Value> = MeridianId::EXTRAORDINARY
+            .iter()
+            .copied()
+            .map(entry)
+            .collect();
+        serde_json::json!({ "regular": regular, "extraordinary": extraordinary })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::cultivation::components::{CrackCause, MeridianChannelId};
+        use crate::cultivation::meridian::severed::SeveredSource;
+
+        /// 真实 v1 旧存档样本（`MeridianId` PascalCase 枚举名 channel id，
+        /// `regular`/`extraordinary` 定长 12+8）——不是只测新形状的合成样本。
+        fn v1_meridian_system_sample() -> serde_json::Value {
+            let mut regular = Vec::new();
+            for id in MeridianId::REGULAR {
+                regular.push(serde_json::json!({
+                    "id": format!("{id:?}"),
+                    "opened": id == MeridianId::Lung,
+                    "open_progress": if id == MeridianId::Lung { 1.0 } else { 0.3 },
+                    "flow_rate": 1.0,
+                    "flow_capacity": 10.0,
+                    "rate_tier": 0,
+                    "capacity_tier": 0,
+                    "throughput_current": 0.0,
+                    "integrity": 1.0,
+                    "cracks": [],
+                    "opened_at": if id == MeridianId::Lung { 42 } else { 0 },
+                }));
+            }
+            let mut extraordinary = Vec::new();
+            for id in MeridianId::EXTRAORDINARY {
+                extraordinary.push(serde_json::json!({
+                    "id": format!("{id:?}"),
+                    "opened": id == MeridianId::Ren,
+                    "open_progress": if id == MeridianId::Ren { 1.0 } else { 0.0 },
+                    "flow_rate": 1.0,
+                    "flow_capacity": 10.0,
+                    "rate_tier": if id == MeridianId::Ren { 2 } else { 0 },
+                    "capacity_tier": 0,
+                    "throughput_current": 0.0,
+                    "integrity": if id == MeridianId::Ren { 0.6 } else { 1.0 },
+                    "cracks": [],
+                    "opened_at": if id == MeridianId::Ren { 7 } else { 0 },
+                }));
+            }
+            serde_json::json!({ "regular": regular, "extraordinary": extraordinary })
+        }
+
+        #[test]
+        fn decode_meridian_system_migrates_v1_pascal_case_ids_to_snake_case_channel_ids() {
+            let sample = v1_meridian_system_sample();
+            let decoded = decode_meridian_system(sample, 1).expect("v1 sample should migrate");
+
+            assert_eq!(decoded.regular.len(), 12);
+            assert_eq!(decoded.extraordinary.len(), 8);
+
+            let lung = decoded
+                .regular
+                .iter()
+                .find(|m| m.id == MeridianChannelId::new("lung"))
+                .expect("Lung must migrate to channel id \"lung\"");
+            assert!(lung.opened, "Lung 逐脉状态（opened）必须在迁移中原样保留");
+            assert_eq!(lung.opened_at, 42, "Lung opened_at 必须原样保留");
+
+            let ren = decoded
+                .extraordinary
+                .iter()
+                .find(|m| m.id == MeridianChannelId::new("ren"))
+                .expect("Ren must migrate to channel id \"ren\"");
+            assert!(ren.opened);
+            assert_eq!(ren.rate_tier, 2, "Ren rate_tier 必须原样保留");
+            assert_eq!(ren.integrity, 0.6, "Ren integrity 必须原样保留");
+            assert_eq!(ren.opened_at, 7);
+
+            // 逐脉状态对拍：除 Lung/Ren 外全部保持"未开、integrity=1.0"的样本基线。
+            for m in decoded.regular.iter().chain(decoded.extraordinary.iter()) {
+                if m.id == MeridianChannelId::new("lung") || m.id == MeridianChannelId::new("ren") {
+                    continue;
+                }
+                assert!(
+                    !m.opened,
+                    "channel {} 样本基线未开，迁移不应把它变成 opened=true",
+                    m.id
+                );
+                assert_eq!(
+                    m.integrity, 1.0,
+                    "channel {} integrity 样本基线应保持 1.0",
+                    m.id
+                );
+            }
+        }
+
+        #[test]
+        fn decode_meridian_system_v2_bundle_parses_directly_without_migration() {
+            let fresh = MeridianSystem::default();
+            let json = serde_json::to_value(&fresh).expect("serialize fresh MeridianSystem");
+            let decoded = decode_meridian_system(json, CURRENT_BUNDLE_VERSION)
+                .expect("v2 bundle should parse directly");
+            assert_eq!(decoded.regular.len(), fresh.regular.len());
+            assert_eq!(decoded.extraordinary.len(), fresh.extraordinary.len());
+            assert_eq!(decoded.regular[0].id, fresh.regular[0].id);
+        }
+
+        #[test]
+        fn decode_meridian_system_missing_version_defaults_to_legacy_path() {
+            // bundle_version 参数由调用方从 `"v"` 字段推导，缺失时上游约定 unwrap_or(1)
+            // ——本测试直接传 1 模拟"旧存档完全没有 v 字段"的路径,不经调用方那层。
+            let sample = v1_meridian_system_sample();
+            assert!(decode_meridian_system(sample, 1).is_ok());
+        }
+
+        #[test]
+        fn decode_meridian_severed_migrates_v1_pascal_case_ids() {
+            let sample = serde_json::json!({
+                "severed_meridians": ["Lung", "Heart"],
+                "severed_at": {
+                    "Lung": { "at_tick": 100, "source": "CombatWound" },
+                    "Heart": { "at_tick": 200, "source": "TribulationFail" },
+                },
+                "dead_meridians": ["Lung"],
+            });
+            let decoded =
+                decode_meridian_severed(sample, 1).expect("v1 severed sample should migrate");
+
+            assert!(decoded.is_severed(MeridianChannelId::new("lung")));
+            assert!(decoded.is_severed(MeridianChannelId::new("heart")));
+            assert!(
+                !decoded.is_severed(MeridianChannelId::new("kidney")),
+                "未在旧样本中出现的经脉不应被迁移函数意外标记为 SEVERED"
+            );
+            assert!(
+                decoded.is_dead(MeridianChannelId::new("lung")),
+                "Lung 的 dead 标记必须在迁移中保留"
+            );
+            assert!(
+                !decoded.is_dead(MeridianChannelId::new("heart")),
+                "Heart 只 SEVERED 不 dead，迁移不应误将其升级为死脉"
+            );
+
+            let lung_record = decoded
+                .record_for(MeridianChannelId::new("lung"))
+                .expect("Lung severed_at record must migrate");
+            assert_eq!(lung_record.at_tick, 100);
+            assert_eq!(lung_record.source, SeveredSource::CombatWound);
+
+            let heart_record = decoded
+                .record_for(MeridianChannelId::new("heart"))
+                .expect("Heart severed_at record must migrate");
+            assert_eq!(heart_record.at_tick, 200);
+            assert_eq!(heart_record.source, SeveredSource::TribulationFail);
+        }
+
+        #[test]
+        fn decode_meridian_severed_v2_bundle_parses_directly_without_migration() {
+            let mut permanent = MeridianSeveredPermanent::default();
+            permanent.insert(
+                MeridianId::Kidney.channel_id(),
+                SeveredSource::OverloadTear,
+                55,
+            );
+            let json = serde_json::to_value(&permanent).expect("serialize");
+            let decoded = decode_meridian_severed(json, CURRENT_BUNDLE_VERSION)
+                .expect("v2 bundle should parse directly");
+            assert_eq!(decoded, permanent);
+        }
+
+        #[test]
+        fn decode_meridian_severed_empty_v1_sample_is_valid() {
+            let sample = serde_json::json!({
+                "severed_meridians": [],
+                "severed_at": {},
+                "dead_meridians": [],
+            });
+            let decoded =
+                decode_meridian_severed(sample, 1).expect("empty v1 sample should migrate");
+            assert_eq!(decoded.severed_count(), 0);
+        }
+
+        /// plan-race-system-v1 P1 对抗审查 MINOR ③：`LegacyMeridian` 的标量字段（除
+        /// `cracks` 外）均无 `#[serde(default)]`——缺失任一必填标量字段的 v1 存档条目
+        /// 必须被拒绝而不是静默补零/静默丢弃该经脉（那会悄悄伪造一条"从未存在过"的
+        /// 经脉状态）。本用例逐个删掉 `opened_at`/`flow_rate` 验证两者都触发拒绝。
+        #[test]
+        fn decode_meridian_system_rejects_legacy_entry_missing_required_scalar_field() {
+            // "opened_at" 字段缺失（其余标量字段齐全）。
+            let entry_missing_opened_at = serde_json::json!({
+                "id": "Lung",
+                "opened": false,
+                "open_progress": 0.0,
+                "flow_rate": 1.0,
+                "flow_capacity": 10.0,
+                "rate_tier": 0,
+                "capacity_tier": 0,
+                "throughput_current": 0.0,
+                "integrity": 1.0,
+                "cracks": [],
+            });
+            let broken = serde_json::json!({
+                "regular": [entry_missing_opened_at],
+                "extraordinary": [],
+            });
+            assert!(
+                decode_meridian_system(broken, 1).is_err(),
+                "缺 opened_at 的 legacy meridian 条目必须被拒绝，不能静默补 0"
+            );
+
+            // "flow_rate" 字段缺失（其余标量字段齐全）。
+            let entry_missing_flow_rate = serde_json::json!({
+                "id": "Lung",
+                "opened": false,
+                "open_progress": 0.0,
+                "flow_capacity": 10.0,
+                "rate_tier": 0,
+                "capacity_tier": 0,
+                "throughput_current": 0.0,
+                "integrity": 1.0,
+                "cracks": [],
+                "opened_at": 0,
+            });
+            let broken2 = serde_json::json!({
+                "regular": [entry_missing_flow_rate],
+                "extraordinary": [],
+            });
+            assert!(
+                decode_meridian_system(broken2, 1).is_err(),
+                "缺 flow_rate 的 legacy meridian 条目必须被拒绝，不能静默补 0"
+            );
+        }
+
+        #[test]
+        fn decode_meridian_system_rejects_malformed_legacy_json() {
+            let broken = serde_json::json!({ "regular": "not an array" });
+            assert!(decode_meridian_system(broken, 1).is_err());
+        }
+
+        /// `CrackCause` 走 legacy `Meridian.cracks` 字段——确认迁移路径下 crack 列表
+        /// （含 cause 枚举）本身也被正确保留，不只是顶层标量字段。
+        #[test]
+        fn decode_meridian_system_preserves_cracks_through_migration() {
+            let mut regular = Vec::new();
+            for id in MeridianId::REGULAR {
+                let cracks = if id == MeridianId::Lung {
+                    serde_json::json!([{
+                        "severity": 0.4,
+                        "healing_progress": 0.1,
+                        "cause": "Overload",
+                        "created_at": 10,
+                    }])
+                } else {
+                    serde_json::json!([])
+                };
+                regular.push(serde_json::json!({
+                    "id": format!("{id:?}"),
+                    "opened": false,
+                    "open_progress": 0.0,
+                    "flow_rate": 1.0,
+                    "flow_capacity": 10.0,
+                    "rate_tier": 0,
+                    "capacity_tier": 0,
+                    "throughput_current": 0.0,
+                    "integrity": 1.0,
+                    "cracks": cracks,
+                    "opened_at": 0,
+                }));
+            }
+            let extraordinary: Vec<serde_json::Value> = MeridianId::EXTRAORDINARY
+                .iter()
+                .map(|id| {
+                    serde_json::json!({
+                        "id": format!("{id:?}"),
+                        "opened": false,
+                        "open_progress": 0.0,
+                        "flow_rate": 1.0,
+                        "flow_capacity": 10.0,
+                        "rate_tier": 0,
+                        "capacity_tier": 0,
+                        "throughput_current": 0.0,
+                        "integrity": 1.0,
+                        "cracks": [],
+                        "opened_at": 0,
+                    })
+                })
+                .collect();
+            let sample = serde_json::json!({ "regular": regular, "extraordinary": extraordinary });
+
+            let decoded = decode_meridian_system(sample, 1).expect("sample should migrate");
+            let lung = decoded
+                .regular
+                .iter()
+                .find(|m| m.id == MeridianChannelId::new("lung"))
+                .unwrap();
+            assert_eq!(lung.cracks.len(), 1);
+            assert_eq!(lung.cracks[0].severity, 0.4);
+            assert_eq!(lung.cracks[0].cause, CrackCause::Overload);
+        }
+    }
 }
 
 fn emit_skill_caps_on_realm_regressed(
@@ -2205,7 +2682,13 @@ mod tests {
         let bundle = serde_json::json!({
             "v": 1,
             "cultivation": cultivation_value,
-            "meridians": MeridianSystem::default(),
+            // plan-race-system-v1 P1a：本 fixture 显式标 "v":1（race 字段加入前的旧
+            // 存档），`meridians` 必须同样是真实 v1 legacy 形状（`MeridianId`
+            // PascalCase 枚举名 channel id）而不是 `MeridianSystem::default()`（那是
+            // *当前* snake_case 形态）——否则会静默触发本模块的 legacy 迁移分支解析
+            // 失败又静默 fallback 回默认值，恰好凑出同一个值掩盖了问题，而不是真的
+            // 走通迁移路径。
+            "meridians": legacy_meridian_bundle::v1_all_closed_meridian_system_sample(),
             "qi_color": QiColor::default(),
             "karma": Karma::default(),
             "contamination": Contamination::default(),
