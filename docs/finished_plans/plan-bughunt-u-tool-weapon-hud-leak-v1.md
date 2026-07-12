@@ -83,8 +83,8 @@
 - RED：`./gradlew test --tests com.bong.client.hud.WeaponHotbarHudPlannerTreasureTriggerTest`，JDK 17.0.19；7 tests，2 failed（两条新增契约，符合修复前预期）。
 - 针对性 GREEN：`WeaponHotbarHudPlannerTreasureTriggerTest`、`WeaponHotbarHudPlannerShieldTest`、`HeldItemStackResolverTest` 同批通过。
 - closeout 定向 gate：JDK 17.0.19 下运行 planner、装备 handler、断线清理、手持模型与破盾旧实例测试；80 tests / 0 failures / 0 errors。
-- closeout 完整 client gate：`cd client && ./gradlew test build`，JDK 17.0.19；3761 tests / 0 failures / 0 errors / 0 skipped，`BUILD SUCCESSFUL`。
-- 主线同步：`origin/main=3c8bf9253680795136f152f5504f6f709c5e16cb` 是修复 HEAD 祖先，判定 `already-up-to-date`，无需产生 merge commit。
+- closeout 完整 client gate：同步最新主线前为 3761 tests；合并 `origin/main=f8b4ab112424db62a008c4fc17d20cf8f49c4b28` 后重跑为 3925 tests / 0 failures / 0 errors / 0 skipped，JDK 17.0.19，`BUILD SUCCESSFUL`。
+- 主线同步：`origin/main=f8b4ab112424db62a008c4fc17d20cf8f49c4b28` 是最终修复 HEAD 祖先；自动 merge 无冲突，相关 client 完整门禁已在 merge 后重跑。
 - 无上下文只读 validator：`FIX_VALIDATING` 与 `REBASE_VALIDATING` 均为 `PASS 848f78b22781c39b8fa7dce4e59540547abe91d2`。
 
 ### 跨仓库核验
