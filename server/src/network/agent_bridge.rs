@@ -63,6 +63,8 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
     //   2. The corresponding `From<&…>` proto arm in proto_convert.rs (if `false`).
     //   3. The exhaustive-guard fixture list in `s2c_all_proto_variants_encode_without_panic` /
     //      `c2s_all_proto_variants_encode_without_panic`.
+    //   4. A corresponding serde preflight arm in `to_proto_bytes_checked` whenever the variant
+    //      contains constrained numeric fields.
     // Failure to do so causes either a compile error (missing is_json_bypass arm) or a test
     // panic (missing fixture in guard / missing proto arm).
     #[cfg(test)]

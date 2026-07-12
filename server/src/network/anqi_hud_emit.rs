@@ -571,7 +571,10 @@ mod tests {
             (progress - 0.73).abs() < 1e-9,
             "QiInjectionEvent overload_ratio must reach charge_progress; actual={progress}"
         );
-        assert_eq!(tick, 62);
+        assert_eq!(
+            tick, 62,
+            "QiInjectionEvent must pass tick 62 through to charge HUD feedback; actual={tick}"
+        );
     }
 
     #[test]

@@ -11770,13 +11770,19 @@ mod tests {
             panic!("decoded payload should remain on the AnqiHud oneof arm");
         };
 
-        assert_eq!(inner.kind, "aim");
+        assert_eq!(
+            inner.kind, "aim",
+            "AnqiHud kind must survive Rust -> protobuf conversion as aim"
+        );
         assert!(
             (inner.aim_progress - 0.625).abs() < f64::EPSILON,
             "aim_progress must survive Rust -> protobuf conversion; actual={}",
             inner.aim_progress
         );
-        assert_eq!(inner.tick, 77);
+        assert_eq!(
+            inner.tick, 77,
+            "AnqiHud tick must survive Rust -> protobuf conversion unchanged"
+        );
     }
 
     #[test]

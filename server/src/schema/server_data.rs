@@ -6241,8 +6241,18 @@ mod tests {
             );
 
             if let Ok(wrapper) = result {
-                assert_eq!(wrapper.payload_type(), ServerDataType::AnqiHud);
-                assert!(matches!(wrapper.payload, ServerDataPayloadV1::AnqiHud(_)));
+                assert_eq!(
+                    wrapper.payload_type(),
+                    ServerDataType::AnqiHud,
+                    "accepted corpus case '{}' must retain the anqi_hud payload type",
+                    test_case.name
+                );
+                assert!(
+                    matches!(&wrapper.payload, ServerDataPayloadV1::AnqiHud(_)),
+                    "accepted corpus case '{}' must deserialize to the AnqiHud variant; actual={:?}",
+                    test_case.name,
+                    wrapper.payload
+                );
             }
         }
     }
@@ -6269,8 +6279,16 @@ mod tests {
         for sample in valid_samples {
             let wrapper: ServerDataV1 = serde_json::from_str(sample)
                 .expect("valid shared anqi_hud sample must deserialize");
-            assert_eq!(wrapper.payload_type(), ServerDataType::AnqiHud);
-            assert!(matches!(wrapper.payload, ServerDataPayloadV1::AnqiHud(_)));
+            assert_eq!(
+                wrapper.payload_type(),
+                ServerDataType::AnqiHud,
+                "valid shared sample must retain the anqi_hud payload type; sample={sample}"
+            );
+            assert!(
+                matches!(&wrapper.payload, ServerDataPayloadV1::AnqiHud(_)),
+                "valid shared sample must deserialize to the AnqiHud variant; actual={:?}; sample={sample}",
+                wrapper.payload
+            );
         }
 
         let invalid_samples = [
@@ -6336,7 +6354,11 @@ mod tests {
             tick: 42,
         };
         let wrapper = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(inner));
-        assert_eq!(wrapper.payload_type(), ServerDataType::AnqiHud);
+        assert_eq!(
+            wrapper.payload_type(),
+            ServerDataType::AnqiHud,
+            "AnqiHud wrapper must report the payload type used by client routing"
+        );
         let value = serde_json::to_value(&wrapper).expect("serialize AnqiHud wrapper");
         assert_eq!(
             value,
@@ -6350,20 +6372,32 @@ mod tests {
                 "abrasion_container": "",
                 "abrasion_qi_payload": 0.0,
                 "tick": 42
-            })
+            }),
+            "AnqiHud wrapper must serialize every canonical v1 wire field together"
         );
         assert_eq!(
             payload_type_label(wrapper.payload_type()),
-            value["type"].as_str().expect("wire type must be a string")
+            value["type"].as_str().expect("wire type must be a string"),
+            "payload_type_label must match the serialized wire type used by client routing"
         );
         let decoded: ServerDataV1 =
             serde_json::from_value(value).expect("serialized wrapper must deserialize");
         let ServerDataPayloadV1::AnqiHud(decoded_hud) = decoded.payload else {
             panic!("wire type anqi_hud must deserialize to the AnqiHud payload variant");
         };
-        assert_eq!(decoded_hud.kind, AnqiHudKindV1::Echo);
-        assert_eq!(decoded_hud.echo_count, 5);
-        assert_eq!(decoded_hud.tick, 42);
+        assert_eq!(
+            decoded_hud.kind,
+            AnqiHudKindV1::Echo,
+            "complete wire shape must preserve the echo kind after deserialization"
+        );
+        assert_eq!(
+            decoded_hud.echo_count, 5,
+            "complete wire shape must preserve echo_count=5 after deserialization"
+        );
+        assert_eq!(
+            decoded_hud.tick, 42,
+            "complete wire shape must preserve tick=42 after deserialization"
+        );
     }
 
     #[test]
