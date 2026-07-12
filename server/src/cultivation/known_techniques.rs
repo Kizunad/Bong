@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
+use crate::body_plan::RaceGate;
+
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(not(feature = "dev-techniques"), derive(Default))]
 pub struct KnownTechniques {
@@ -104,6 +106,10 @@ pub struct TechniqueDefinition {
     pub description: &'static str,
     pub required_realm: &'static str,
     pub required_meridians: &'static [TechniqueRequiredMeridian],
+    /// plan-race-system-v1 P3a（决议 §8.1 #6）——种族三档匹配门。存量 48 条按「强依赖
+    /// 人体专属经脉拓扑 / 肢体机能者标 `Humanoid`，其余（含飞剑类神识/真元驱动）保持
+    /// `Any`」划定，逐条依据见本文件各条目就近注释。
+    pub required_race: RaceGate,
     pub qi_cost: f32,
     pub stamina_cost: f32,
     pub cast_ticks: u32,
@@ -139,6 +145,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 8.0,
         cast_ticks: 16,
         cooldown_ticks: 30,
@@ -154,6 +161,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 4.0,
         cast_ticks: 10,
         cooldown_ticks: 20,
@@ -169,6 +177,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 6.0,
         cast_ticks: 4,
         cooldown_ticks: 40,
@@ -184,6 +193,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 3.0,
         cast_ticks: 40,
         cooldown_ticks: 100,
@@ -199,6 +209,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 15.0,
         cast_ticks: 0,
         cooldown_ticks: 40,
@@ -215,6 +226,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0, // 耗体力由 ShieldDrainOverride / stamina_tick 管理，非 cast 消耗
         cast_ticks: 0,
         cooldown_ticks: 0,
@@ -243,6 +255,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             },
         ],
         qi_cost: 0.4,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 60,
@@ -261,6 +274,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.5,
         }],
         qi_cost: 35.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 70,
@@ -279,6 +293,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.4,
         }],
         qi_cost: 25.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 50,
@@ -297,6 +312,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.55,
         }],
         qi_cost: 45.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 12,
         cooldown_ticks: 120,
@@ -312,6 +328,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 100.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 0,
@@ -327,6 +344,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 20,
@@ -345,6 +363,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 600,
@@ -363,6 +382,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 18.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 4,
         cooldown_ticks: 200,
@@ -378,6 +398,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 12.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 600,
@@ -396,6 +417,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 5,
         cooldown_ticks: 300,
@@ -411,6 +433,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 50.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 1200,
@@ -429,6 +452,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 20,
@@ -447,6 +471,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 10,
@@ -465,6 +490,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 100,
@@ -483,6 +509,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 12.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 160,
@@ -501,6 +528,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 25.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 5,
         cooldown_ticks: 600,
@@ -519,6 +547,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 50.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 400,
@@ -534,6 +563,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 20.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 60,
@@ -549,6 +579,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 50.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 240,
@@ -564,6 +595,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 35.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 300,
@@ -579,6 +611,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 50.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 80,
         cooldown_ticks: 400,
@@ -594,6 +627,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 80.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 40,
         cooldown_ticks: 600,
@@ -609,6 +643,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 1.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 12,
@@ -624,6 +659,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 5.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 40,
@@ -639,6 +675,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 12,
         cooldown_ticks: 20,
@@ -654,6 +691,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 160,
@@ -669,6 +707,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 100,
@@ -687,6 +726,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 400,
         cooldown_ticks: 400,
@@ -715,6 +755,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             },
         ],
         qi_cost: 0.25,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 60,
@@ -733,6 +774,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.40,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 30,
         cooldown_ticks: 240,
@@ -751,6 +793,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.35,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 20,
         cooldown_ticks: 360,
@@ -769,6 +812,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.45,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 40,
         cooldown_ticks: 500,
@@ -787,6 +831,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.60,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 60,
         cooldown_ticks: 6000,
@@ -802,6 +847,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 1.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 5.0,
         cast_ticks: 60,
         cooldown_ticks: 200,
@@ -819,6 +865,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &SWORD_PATH_BASE_MERIDIANS,
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 8.0,
         cast_ticks: 12,
         cooldown_ticks: 40,
@@ -834,6 +881,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Condense",
         required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
         qi_cost: 3.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 12.0,
         cast_ticks: 20,
         cooldown_ticks: 60,
@@ -849,6 +897,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Solidify",
         required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
         qi_cost: 20.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 15.0,
         cast_ticks: 30,
         cooldown_ticks: 120,
@@ -864,6 +913,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Spirit",
         required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
         qi_cost: 40.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 20.0,
         cast_ticks: 40,
         cooldown_ticks: 200,
@@ -879,6 +929,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Void",
         required_meridians: &SWORD_PATH_HEAVEN_GATE_MERIDIANS,
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 80,
         cooldown_ticks: u32::MAX,
@@ -894,6 +945,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &NPC_HEAL_REQUIRED_MERIDIANS,
         qi_cost: 8.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 20,
         cooldown_ticks: 200,
@@ -909,6 +961,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Condense",
         required_meridians: &NPC_BUFF_SPEED_REQUIRED_MERIDIANS,
         qi_cost: 5.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 400,
@@ -924,6 +977,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Condense",
         required_meridians: &NPC_BUFF_DEFENSE_REQUIRED_MERIDIANS,
         qi_cost: 6.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 400,
@@ -1382,5 +1436,148 @@ mod tests {
             !TECHNIQUE_IDS.contains(&"bao_mai.full_power_release"),
             "stale 'bao_mai.full_power_release' must not appear in TECHNIQUE_IDS"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // plan-race-system-v1 P3a（决议 §8.1 #6）—— 48 条存量功法 required_race 逐条 pin。
+    // 表驱动逐条断言，不写笼统「全 Any」——划定依据：强依赖人体专属经脉拓扑 / 双臂
+    // 持械机能者标 Humanoid，飞剑类神识 / 真元驱动、不依赖人体结构者保持 Any。
+    // ─────────────────────────────────────────────────────────────────
+
+    const HUMANOID_GATED_SKILL_IDS: [&str; 28] = [
+        "sword.cleave",
+        "sword.thrust",
+        "sword.parry",
+        "sword.infuse",
+        "shield_block",
+        "burst_meridian.beng_quan",
+        "burst_meridian.tie_shan_kao",
+        "burst_meridian.xue_beng_bu",
+        "burst_meridian.ni_mai_hu_ti",
+        "baomai.full_power_charge",
+        "baomai.full_power_release",
+        "woliu.vortex",
+        "woliu.hold",
+        "woliu.burst",
+        "woliu.mouth",
+        "woliu.pull",
+        "woliu.heart",
+        "woliu.vacuum_palm",
+        "woliu.vortex_shield",
+        "woliu.vacuum_lock",
+        "woliu.vortex_resonance",
+        "woliu.turbulence_burst",
+        "body.guangbo_ticao",
+        "sword_path.condense_edge",
+        "sword_path.qi_slash",
+        "sword_path.resonance",
+        "sword_path.manifest",
+        "sword_path.heaven_gate",
+    ];
+
+    const ANY_GATED_SKILL_IDS: [&str; 20] = [
+        "movement.dash",
+        "zhenmai.parry",
+        "zhenmai.neutralize",
+        "zhenmai.multipoint",
+        "zhenmai.harden",
+        "zhenmai.sever_chain",
+        "dugu.shoot_needle",
+        "dugu.infuse_poison",
+        "tuike.don",
+        "tuike.shed",
+        "tuike.transfer_taint",
+        "anqi.charge_carrier",
+        "anqi.single_snipe",
+        "anqi.multi_shot",
+        "anqi.soul_inject",
+        "anqi.armor_pierce",
+        "anqi.echo_fractal",
+        "npc.heal_basic",
+        "npc.buff_speed",
+        "npc.buff_defense",
+    ];
+
+    #[test]
+    fn humanoid_gated_skill_ids_pin_28_entries_exhaustively() {
+        assert_eq!(HUMANOID_GATED_SKILL_IDS.len(), 28);
+        for id in HUMANOID_GATED_SKILL_IDS {
+            let def = technique_definition(id)
+                .unwrap_or_else(|| panic!("expected a definition for {id}"));
+            assert_eq!(
+                def.required_race,
+                RaceGate::Humanoid,
+                "{id} must be RaceGate::Humanoid per §8.1 #6 划定（人体专属经脉拓扑 / 肢体机能）"
+            );
+        }
+    }
+
+    #[test]
+    fn any_gated_skill_ids_pin_20_entries_exhaustively() {
+        assert_eq!(ANY_GATED_SKILL_IDS.len(), 20);
+        for id in ANY_GATED_SKILL_IDS {
+            let def = technique_definition(id)
+                .unwrap_or_else(|| panic!("expected a definition for {id}"));
+            assert_eq!(
+                def.required_race,
+                RaceGate::Any,
+                "{id} must be RaceGate::Any per §8.1 #6 划定（神识/真元驱动，不依赖人体结构）"
+            );
+        }
+    }
+
+    #[test]
+    fn humanoid_and_any_lists_partition_all_48_definitions_without_overlap_or_gap() {
+        let humanoid: std::collections::BTreeSet<&str> =
+            HUMANOID_GATED_SKILL_IDS.iter().copied().collect();
+        let any: std::collections::BTreeSet<&str> = ANY_GATED_SKILL_IDS.iter().copied().collect();
+        assert!(
+            humanoid.is_disjoint(&any),
+            "Humanoid 与 Any 两份清单不得重叠"
+        );
+        let all_ids: std::collections::BTreeSet<&str> =
+            TECHNIQUE_DEFINITIONS.iter().map(|d| d.id).collect();
+        let union: std::collections::BTreeSet<&str> = humanoid.union(&any).copied().collect();
+        assert_eq!(
+            all_ids, union,
+            "两份清单合并必须恰好覆盖全部 48 条存量功法，无遗漏无多余"
+        );
+        assert_eq!(TECHNIQUE_DEFINITIONS.len(), 48);
+    }
+
+    /// plan-race-system-v1 P3a —— 交叉一致性：`required_race.allows(...)` 是习得门
+    /// （`technique_scroll::learn_technique_if_allowed`）与施放门（`sword_path::
+    /// skill_register::build_cast_context` / `combat::sword_basics::race_gate_allows` /
+    /// `client_request_handler::handle_skill_bar_cast`）共享调用的**同一个函数**——本
+    /// 测试对全部 48 条功法、两种代表性身份（人形 humanoid=true / 非人形 humanoid=false）
+    /// 逐条断言该函数的判定结果，锁死两处收拢点镜像不漂移的前提（共享函数值不变）。
+    #[test]
+    fn required_race_allows_matrix_locked_for_every_definition_both_gates_agree_by_construction() {
+        use crate::body_plan::RaceId;
+
+        let humanoid_identity = (RaceId::new("human"), true);
+        let non_humanoid_identity = (RaceId::new("whale"), false);
+
+        for def in TECHNIQUE_DEFINITIONS.iter() {
+            // 人形本体：Any 与 Humanoid 两档均放行——两处收拢点用同一函数，结果天然一致。
+            assert!(
+                def.required_race
+                    .allows(&humanoid_identity.0, humanoid_identity.1),
+                "{}：人形本体（race=human, is_humanoid=true）必须通过 required_race={:?}",
+                def.id,
+                def.required_race
+            );
+            // 非人形本体：只有 Any 档放行，Humanoid 档必须拒绝——按划定表逐条核验。
+            let expects_pass = matches!(def.required_race, RaceGate::Any);
+            assert_eq!(
+                def.required_race
+                    .allows(&non_humanoid_identity.0, non_humanoid_identity.1),
+                expects_pass,
+                "{}：非人形本体（race=whale, is_humanoid=false）放行结果应为 {expects_pass}，\
+                 required_race={:?}",
+                def.id,
+                def.required_race
+            );
+        }
     }
 }
