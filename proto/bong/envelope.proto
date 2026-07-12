@@ -454,7 +454,10 @@ message PlayerState {
 // 额外字段与 Rust CultivationDetail variant 精确对应。
 
 message MeridianState {
-  MeridianId id            = 1;
+  // plan-race-system-v1 P1c：`MeridianId` 闭合 enum → string channel id（snake_case，
+  // 如 "lung"/"ren"），不再假设恰好 20 条 TCM 经脉——非 humanoid 构型（P5 飞鲸等）的
+  // 经脉不在这 20 个名字之列。直改新形状，不留 int enum 兼容层。
+  string id                = 1;
   bool       opened        = 2;
   double     flow_rate     = 3;
   double     flow_capacity = 4;
@@ -489,7 +492,9 @@ message PracticeWeight {
 message CultivationDetail {
   Realm                          realm                             = 1;
   repeated MeridianState         meridians                         = 2;
-  optional MeridianId            target_meridian                   = 3;
+  // plan-race-system-v1 P1c：channel id 字符串（见 MeridianState.id），非 humanoid
+  // channel 也可合法出现。
+  optional string                 target_meridian                   = 3;
   double                         contamination_total               = 4;
   optional LifespanPreview       lifespan                          = 5;
   string                         recent_skill_milestones_summary   = 6;
@@ -705,7 +710,8 @@ message KnockbackSync {
 // ─── C2S payloads ──────────────────────────────────────────────
 
 message SetMeridianTarget {
-  MeridianId meridian = 1;
+  // plan-race-system-v1 P1c：string channel id（snake_case），MeridianId 闭合 enum 退役。
+  string meridian = 1;
 }
 
 message BreakthroughRequest {
@@ -3575,7 +3581,8 @@ enum ForgeAxis {
 }
 
 message ForgeRequestC2s {
-  MeridianId meridian = 1;
+  // plan-race-system-v1 P1c：string channel id（snake_case），MeridianId 闭合 enum 退役。
+  string    meridian = 1;
   ForgeAxis  axis     = 2;
 }
 
@@ -3801,7 +3808,9 @@ enum ApplyPillTargetKind {
 message ApplyPill {
   uint64                instance_id = 1;
   ApplyPillTargetKind   target_kind = 2;
-  optional MeridianId   meridian_id = 3; // 仅 target_kind == MERIDIAN 时有值
+  // plan-race-system-v1 P1c：string channel id（snake_case），仅 target_kind == MERIDIAN
+  // 时有值；MeridianId 闭合 enum 退役。
+  optional string       meridian_id = 3;
 }
 
 // 与 Rust ClientRequestV1::SelfAntidote 精确对应。

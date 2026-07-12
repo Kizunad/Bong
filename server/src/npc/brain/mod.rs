@@ -560,7 +560,6 @@ pub fn register(app: &mut App) {
 mod tests {
     use super::*;
     use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
-    use crate::cultivation::topology::MeridianTopology;
     use crate::npc::navigator::Navigator;
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::NpcMeleeProfile;
@@ -803,7 +802,6 @@ mod tests {
         zones.zones[0].name = DEFAULT_SPAWN_ZONE_NAME.to_string();
         zones.zones[0].spirit_qi = 0.95;
         app.insert_resource(zones);
-        app.insert_resource(MeridianTopology::standard());
         app.insert_resource(CultivationClock::default());
         app.insert_resource(WorldQiAccount::default());
         app.add_systems(

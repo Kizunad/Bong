@@ -115,11 +115,6 @@ fn relationship_kind_to_proto(k: &super::social::RelationshipKindV1) -> i32 {
     }
 }
 
-fn meridian_idx_to_proto(idx: u8) -> i32 {
-    // idx 0..19 直接映射到 MeridianId 1..20（+1 偏移因 0 = UNSPECIFIED）
-    (idx as i32) + 1
-}
-
 fn skill_id_to_proto(s: &super::skill::SkillIdV1) -> i32 {
     use super::skill::SkillIdV1;
     match s {
@@ -636,6 +631,7 @@ impl From<&ServerDataPayloadV1> for Payload {
             }),
             ServerDataPayloadV1::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -653,10 +649,11 @@ impl From<&ServerDataPayloadV1> for Payload {
                 practice_weights,
                 target_meridian,
             } => {
-                // SoA → AoS: 并行数组打包成 repeated MeridianState
-                let meridians: Vec<bong::MeridianState> = (0..20)
+                // SoA → AoS: 并行数组打包成 repeated MeridianState（plan-race-system-v1
+                // P1c：长度随 `channel_ids` 走，不再假设恰好 20 条）。
+                let meridians: Vec<bong::MeridianState> = (0..channel_ids.len())
                     .map(|i| bong::MeridianState {
-                        id: meridian_idx_to_proto(i as u8),
+                        id: channel_ids[i].clone(),
                         opened: opened.get(i).copied().unwrap_or(false),
                         flow_rate: flow_rate.get(i).copied().unwrap_or(0.0),
                         flow_capacity: flow_capacity.get(i).copied().unwrap_or(0.0),
@@ -668,7 +665,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                 Payload::CultivationDetail(bong::CultivationDetail {
                     realm: realm_str_to_proto(realm),
                     meridians,
-                    target_meridian: target_meridian.map(meridian_idx_to_proto),
+                    target_meridian: target_meridian.clone(),
                     contamination_total: *contamination_total,
                     lifespan: lifespan.as_ref().map(lifespan_to_proto),
                     recent_skill_milestones_summary: recent_skill_milestones_summary.clone(),
@@ -3125,30 +3122,12 @@ fn recipe_unlocked_to_proto(r: &super::craft::RecipeUnlockedV1) -> bong::RecipeU
 // C2S: ClientRequestV1 → bong::client_request_envelope::Payload
 // ═══════════════════════════════════════════════════════════════
 
-fn meridian_id_to_proto(m: &crate::cultivation::components::MeridianId) -> i32 {
-    use crate::cultivation::components::MeridianId;
-    match m {
-        MeridianId::Lung => bong::MeridianId::Lung as i32,
-        MeridianId::LargeIntestine => bong::MeridianId::LargeIntestine as i32,
-        MeridianId::Stomach => bong::MeridianId::Stomach as i32,
-        MeridianId::Spleen => bong::MeridianId::Spleen as i32,
-        MeridianId::Heart => bong::MeridianId::Heart as i32,
-        MeridianId::SmallIntestine => bong::MeridianId::SmallIntestine as i32,
-        MeridianId::Bladder => bong::MeridianId::Bladder as i32,
-        MeridianId::Kidney => bong::MeridianId::Kidney as i32,
-        MeridianId::Pericardium => bong::MeridianId::Pericardium as i32,
-        MeridianId::TripleEnergizer => bong::MeridianId::TripleEnergizer as i32,
-        MeridianId::Gallbladder => bong::MeridianId::Gallbladder as i32,
-        MeridianId::Liver => bong::MeridianId::Liver as i32,
-        MeridianId::Ren => bong::MeridianId::Ren as i32,
-        MeridianId::Du => bong::MeridianId::Du as i32,
-        MeridianId::Chong => bong::MeridianId::Chong as i32,
-        MeridianId::Dai => bong::MeridianId::Dai as i32,
-        MeridianId::YinQiao => bong::MeridianId::YinQiao as i32,
-        MeridianId::YangQiao => bong::MeridianId::YangQiao as i32,
-        MeridianId::YinWei => bong::MeridianId::YinWei as i32,
-        MeridianId::YangWei => bong::MeridianId::YangWei as i32,
-    }
+/// plan-race-system-v1 P1c — `MeridianId` 闭合 enum → proto string channel id。
+/// C2S 三处 wire 字段（`SetMeridianTarget.meridian` / `ForgeRequestC2s.meridian` /
+/// `ApplyPill.meridian_id`）现直接携带 `MeridianChannelId`（本身就是 string），故
+/// 只需取其 `as_str()`——不再需要枚举 → proto i32 判别式映射。
+fn meridian_channel_to_proto(m: &crate::cultivation::components::MeridianChannelId) -> String {
+    m.as_str().to_string()
 }
 
 fn forge_axis_to_proto(a: &crate::cultivation::forging::ForgeAxis) -> i32 {
@@ -3301,13 +3280,15 @@ fn alchemy_intervention_to_proto(
     }
 }
 
-fn apply_pill_target_to_proto(t: &super::client_request::ApplyPillTargetV1) -> (i32, Option<i32>) {
+fn apply_pill_target_to_proto(
+    t: &super::client_request::ApplyPillTargetV1,
+) -> (i32, Option<String>) {
     use super::client_request::ApplyPillTargetV1;
     match t {
         ApplyPillTargetV1::SelfTarget => (bong::ApplyPillTargetKind::Self_ as i32, None),
         ApplyPillTargetV1::Meridian { meridian_id } => (
             bong::ApplyPillTargetKind::Meridian as i32,
-            Some(meridian_id_to_proto(meridian_id)),
+            Some(meridian_channel_to_proto(meridian_id)),
         ),
     }
 }
@@ -3342,7 +3323,7 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
         match req {
             ClientRequestV1::SetMeridianTarget { meridian, .. } => {
                 Payload::SetMeridianTarget(bong::SetMeridianTarget {
-                    meridian: meridian_id_to_proto(meridian),
+                    meridian: meridian_channel_to_proto(meridian),
                 })
             }
             ClientRequestV1::BreakthroughRequest { .. } => {
@@ -3370,7 +3351,7 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             }
             ClientRequestV1::ForgeRequest { meridian, axis, .. } => {
                 Payload::ForgeRequest(bong::ForgeRequestC2s {
-                    meridian: meridian_id_to_proto(meridian),
+                    meridian: meridian_channel_to_proto(meridian),
                     axis: forge_axis_to_proto(axis),
                 })
             }
@@ -5118,7 +5099,7 @@ mod tests {
         c2s_encode_decode_roundtrip(
             super::super::client_request::ClientRequestV1::SetMeridianTarget {
                 v: 1,
-                meridian: crate::cultivation::components::MeridianId::Lung,
+                meridian: crate::cultivation::components::MeridianId::Lung.channel_id(),
             },
         );
     }
@@ -5272,7 +5253,7 @@ mod tests {
             v: 1,
             instance_id: 42,
             target: super::super::client_request::ApplyPillTargetV1::Meridian {
-                meridian_id: crate::cultivation::components::MeridianId::Heart,
+                meridian_id: crate::cultivation::components::MeridianId::Heart.channel_id(),
             },
         });
     }
@@ -6046,6 +6027,7 @@ mod tests {
             }),
             fix!(ServerDataPayloadV1::CultivationDetail {
                 realm: "Induce".to_string(),
+                channel_ids: vec!["lung".to_string(); 20],
                 opened: vec![false; 20],
                 flow_rate: vec![0.0; 20],
                 flow_capacity: vec![10.0; 20],
@@ -7352,7 +7334,7 @@ mod tests {
         vec![
             build(ClientRequestV1::SetMeridianTarget {
                 v: 1,
-                meridian: MeridianId::Lung,
+                meridian: MeridianId::Lung.channel_id(),
             }),
             build(ClientRequestV1::BreakthroughRequest { v: 1 }),
             build(ClientRequestV1::StartDuXu { v: 1 }),
@@ -7378,7 +7360,7 @@ mod tests {
             }),
             build(ClientRequestV1::ForgeRequest {
                 v: 1,
-                meridian: MeridianId::Lung,
+                meridian: MeridianId::Lung.channel_id(),
                 axis: ForgeAxis::Rate,
             }),
             build(ClientRequestV1::InsightDecision {

@@ -4052,17 +4052,27 @@ fn apply_tribulation_failure_penalty(
         let keep = Realm::Spirit.required_meridians();
         let closures = pick_closures(&meridians, keep);
         for (is_regular, idx) in closures {
-            let id = if is_regular {
+            // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，
+            // 本函数返回值仍是 legacy `Vec<MeridianId>`（wire 开放化留待后续 P1 子阶段）
+            // ——humanoid 20 条经脉均可逆映射回 `MeridianId`。
+            let channel_id = if is_regular {
                 let m = &mut meridians.regular[idx];
-                let id = m.id;
+                let channel_id = m.id.clone();
                 close_meridian(m);
-                id
+                channel_id
             } else {
                 let m = &mut meridians.extraordinary[idx];
-                let id = m.id;
+                let channel_id = m.id.clone();
                 close_meridian(m);
-                id
+                channel_id
             };
+            let id = channel_id.to_meridian_id().unwrap_or_else(|| {
+                panic!(
+                    "[bong][cultivation][tribulation] channel id {channel_id} has no legacy \
+                     MeridianId mapping — apply_tribulation_failure_penalty cannot represent \
+                     non-humanoid channels yet"
+                )
+            });
             severed_meridians.push(id);
         }
         cultivation.qi_max = 10.0 + meridians.sum_capacity();

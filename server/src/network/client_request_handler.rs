@@ -40,7 +40,9 @@ use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianId, MeridianSystem};
+use crate::cultivation::components::{
+    recover_current_qi, Cultivation, MeridianChannelId, MeridianId, MeridianSystem,
+};
 use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
@@ -465,8 +467,14 @@ const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
 const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
 const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
 
-fn meridian_label(id: MeridianId) -> &'static str {
-    match id {
+/// plan-race-system-v1 P1c — 参数改为 `MeridianChannelId`（wire 开放化后
+/// `SetMeridianTarget.meridian` 不再是闭合 `MeridianId` 枚举）；仅 humanoid 20 条
+/// channel id 有中文标签，非 humanoid 构型（P5 飞鲸等）落显式"未知经脉"占位，不伪造。
+fn meridian_label(id: &MeridianChannelId) -> &'static str {
+    let Some(legacy_id) = id.to_meridian_id() else {
+        return "未知经脉";
+    };
+    match legacy_id {
         MeridianId::Lung => "肺经",
         MeridianId::LargeIntestine => "大肠经",
         MeridianId::Stomach => "胃经",
@@ -666,11 +674,13 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     meridian
                 );
-                commands.entity(ev.client).insert(MeridianTarget(meridian));
+                commands
+                    .entity(ev.client)
+                    .insert(MeridianTarget(meridian.clone()));
                 if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
                     client.send_chat_message(format!(
                         "§a[修炼] 已收到经脉目标：{}。",
-                        meridian_label(meridian)
+                        meridian_label(&meridian)
                     ));
                 }
             }
@@ -4525,11 +4535,21 @@ mod tests {
 
         for (id, expected) in cases {
             assert_eq!(
-                meridian_label(id),
+                meridian_label(&id.channel_id()),
                 expected,
                 "expected stable chat label for {id:?}"
             );
         }
+    }
+
+    #[test]
+    fn meridian_label_falls_back_for_unknown_channel_id() {
+        // plan-race-system-v1 P1c — 非 humanoid channel id（如未来 whale 部位）没有中文
+        // 标签映射时，必须显式回落"未知经脉"，不得 panic 或伪造某个已知标签。
+        assert_eq!(
+            meridian_label(&MeridianChannelId::new("tail_fin_channel")),
+            "未知经脉"
+        );
     }
 
     #[test]
@@ -4630,7 +4650,7 @@ mod tests {
                 channel: ident!("bong:client_request").into(),
                 data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
                     v: 1,
-                    meridian: MeridianId::Du,
+                    meridian: MeridianId::Du.channel_id(),
                 })
                 .expect("set meridian target request should serialize")
                 .into_boxed_slice(),
@@ -4642,10 +4662,10 @@ mod tests {
         let actual_target = app
             .world()
             .get::<MeridianTarget>(entity)
-            .map(|target| target.0);
+            .map(|target| target.0.clone());
         assert_eq!(
             actual_target,
-            Some(MeridianId::Du),
+            Some(MeridianId::Du.channel_id()),
             "expected SetMeridianTarget to insert selected meridian target, actual={:?}",
             actual_target
         );
@@ -4655,6 +4675,78 @@ mod tests {
                 .iter()
                 .any(|message| message.contains("[修炼] 已收到经脉目标：督脉。")),
             "expected generic meridian target chat echo because request is not limited to Chong, actual messages={messages:?}"
+        );
+    }
+
+    /// plan-race-system-v1 P1 对抗审查 M4：`SetMeridianTarget` 消费边界收到未知
+    /// channel id（伪造串 / 旧 PascalCase `MeridianId::Lung` 字面量 "Lung"）时必须
+    /// 安全处理（回执标注"未知经脉"，`MeridianTarget` component 允许被设置但下游
+    /// `meridian_open_tick` 会安全跳过，见该 system 的 debug 分支）——绝不 panic，
+    /// 也不能把未知串误当合法经脉给出中文标签回执。
+    #[test]
+    fn set_meridian_target_with_unknown_channel_id_is_handled_safely_not_panicking() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: crate::cultivation::components::MeridianChannelId::new(
+                        "totally_made_up_channel",
+                    ),
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        // 必须不 panic —— 这是本用例的核心断言。
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("未知经脉")),
+            "unknown channel id 必须回执'未知经脉'占位而不是伪造某个真实经脉名，\
+             actual messages={messages:?}"
+        );
+    }
+
+    /// 旧 PascalCase 字面量 "Lung"（`MeridianId::Lung` 的 `Debug`/枚举名拼写，非合法
+    /// wire channel id）同样必须走"未知经脉"安全分支，不能被误认成合法的 lung 经脉。
+    #[test]
+    fn set_meridian_target_with_legacy_pascal_case_lung_string_is_rejected_as_unknown() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: crate::cultivation::components::MeridianChannelId::new("Lung"),
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("未知经脉")),
+            "旧 PascalCase 'Lung' 不是合法 snake_case wire channel id ('lung')，必须走\
+             未知经脉分支而非被误认作肺经，actual messages={messages:?}"
         );
     }
 

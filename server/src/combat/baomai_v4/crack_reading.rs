@@ -158,6 +158,19 @@ pub fn build_reading_result(
     let mut entries = Vec::with_capacity(20);
 
     for meridian in meridians.iter() {
+        // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本模块
+        // 与 `CircuitKind::involves` / `dead_armor::meridian_to_body_part` /
+        // `MeridianReadEntry.id`（client 渲染 payload）三处消费点仍是 legacy
+        // `MeridianId`（消费点改造留待后续 P1 子阶段）——humanoid 20 条经脉均可逆
+        // 映射回 `MeridianId`。
+        let legacy_id = meridian.id.to_meridian_id().unwrap_or_else(|| {
+            panic!(
+                "[bong][combat][baomai_v4] channel id {} has no legacy MeridianId mapping — \
+                 crack reading cannot represent non-humanoid channels yet",
+                meridian.id
+            )
+        });
+
         let bracket = if is_npc {
             npc_bracket_to_player(bracket_for_npc(meridian.integrity))
         } else {
@@ -165,14 +178,14 @@ pub fn build_reading_result(
         };
 
         let has_circuit = if is_deep && !is_npc {
-            circuits.is_some_and(|c| c.circuits.iter().any(|kind| kind.involves(meridian.id)))
+            circuits.is_some_and(|c| c.circuits.iter().any(|kind| kind.involves(legacy_id)))
         } else {
             false
         };
 
         let is_dead_armor = if is_deep && !is_npc {
             armor.is_some_and(|a| {
-                crate::combat::baomai_v4::dead_armor::meridian_to_body_part(meridian.id)
+                crate::combat::baomai_v4::dead_armor::meridian_to_body_part(legacy_id)
                     .is_some_and(|bp| a.is_immune(bp))
             })
         } else {
@@ -180,7 +193,7 @@ pub fn build_reading_result(
         };
 
         entries.push(MeridianReadEntry {
-            id: meridian.id,
+            id: legacy_id,
             integrity_bracket: bracket,
             has_circuit,
             is_dead_armor,

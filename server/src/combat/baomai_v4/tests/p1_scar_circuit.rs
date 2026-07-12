@@ -203,7 +203,9 @@ fn circuit_breaks_on_sever() {
 
     // Insert MeridianSeveredPermanent with LI severed.
     let mut severed = MeridianSeveredPermanent::default();
-    severed.severed_meridians.insert(MeridianId::LargeIntestine);
+    severed
+        .severed_meridians
+        .insert(MeridianId::LargeIntestine.channel_id());
     app.world_mut().entity_mut(entity).insert(severed);
 
     // Advance clock and update.
