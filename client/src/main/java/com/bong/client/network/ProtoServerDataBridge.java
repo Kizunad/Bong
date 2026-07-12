@@ -421,6 +421,17 @@ public final class ProtoServerDataBridge {
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.RECIPE_UNLOCKED) {
             return bridgeRecipeUnlocked(envelope.getRecipeUnlocked(), typeString);
         }
+        // ─── plan-bughunt-niche-guardian-proto-kind: guardian_kind 顶层枚举 ──────
+        // 灵龛守护 fatigue/broken 之前走 generic path，未剥 GUARDIAN_KIND_ 前缀，
+        // 玩家会在 HUD/事件流看到裸 "GUARDIAN_KIND_PUPPET" 而非 "puppet"。
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.NICHE_GUARDIAN_FATIGUE) {
+            return bridgeStripEnums(envelope.getNicheGuardianFatigue(), typeString,
+                    new String[] {"guardian_kind", "GUARDIAN_KIND_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.NICHE_GUARDIAN_BROKEN) {
+            return bridgeStripEnums(envelope.getNicheGuardianBroken(), typeString,
+                    new String[] {"guardian_kind", "GUARDIAN_KIND_"});
+        }
 
         // Extract the inner oneof message.
         MessageOrBuilder inner = extractInner(envelope, payloadCase);
