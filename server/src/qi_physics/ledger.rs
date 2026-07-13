@@ -499,8 +499,14 @@ pub fn transfer_external_qi_to_ledger(
     if amount == 0.0 {
         return Ok(None);
     }
-
+    // 先保留既有 invalid-amount 契约；只有通过数值校验的正额转移才进入同账户门禁。
     let transfer = QiTransfer::new(from.clone(), to, amount, reason)?;
+    if transfer.from == transfer.to {
+        return Err(QiPhysicsError::SameAccountTransfer {
+            account: from.to_string(),
+        });
+    }
+
     // `WorldQiAccount::transfer` 目前只校验 amount，不校验 destination + amount 是否溢出；
     // 外部源 helper 自己先做有限性门禁，保证成功返回时 sink 一定是可追踪的有限余额。
     finite_non_negative(
@@ -538,10 +544,33 @@ pub fn transfer_external_qi_to_ledger(
 /// 待分配池是全服单例（不按 zone 拆分），P1 heartbeat 回流 system 会按各 zone 的
 /// `qi_equilibrium` 配置从这一个账户滴灌进 `zone.spirit_qi`。
 pub const PENDING_INFLOW_ACCOUNT_ID: &str = "pending_inflow";
+/// 垂死大能给丹超过 150% cap 后的稳定聚合池。不得含 entity id，否则重启后无法枚举恢复。
+pub const DYING_ELDER_DAN_EXCESS_ACCOUNT_ID: &str = "dying_elder_dan_excess";
+/// 垂死大能死亡时 zone 无法接收部分的稳定聚合池。
+pub const DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID: &str = "dying_elder_release";
+
+/// 没有 ECS/zone 字段承载、必须经 `qi_runtime_accounts` 持久化的完整白名单。
+pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 3] = [
+    PENDING_INFLOW_ACCOUNT_ID,
+    DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
+    DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+];
 
 /// 独立待分配池账户（`QiAccountKind::Overflow` + 固定 id，见 [`PENDING_INFLOW_ACCOUNT_ID`]）。
 pub fn pending_inflow_account() -> QiAccountId {
     QiAccountId::overflow(PENDING_INFLOW_ACCOUNT_ID)
+}
+
+pub fn dying_elder_dan_excess_account() -> QiAccountId {
+    QiAccountId::overflow(DYING_ELDER_DAN_EXCESS_ACCOUNT_ID)
+}
+
+pub fn dying_elder_release_overflow_account() -> QiAccountId {
+    QiAccountId::overflow(DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID)
+}
+
+pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 3] {
+    PERSISTENT_RUNTIME_QI_ACCOUNT_IDS.map(|id| QiAccountId::overflow(id))
 }
 
 /// plan-zone-qi-economy-v1 P0 §8.1 决议 #1 — 消耗（开脉 / 突破）真元回充独立待分配池。
@@ -893,6 +922,73 @@ mod tests {
         assert!(result.is_none());
         assert!(!ledger.has_account(&from));
         assert!(!ledger.has_account(&to));
+        assert!(ledger.transfers().is_empty());
+    }
+
+    #[test]
+    fn external_qi_transfer_same_account_zero_preserves_noop_contract() {
+        let mut ledger = WorldQiAccount::default();
+        let account = QiAccountId::overflow("same-account-zero");
+        ledger
+            .set_balance(account.clone(), 9.0)
+            .expect("fixture balance should be valid");
+
+        let result = transfer_external_qi_to_ledger(
+            &mut ledger,
+            account.clone(),
+            account.clone(),
+            0.0,
+            QiTransferReason::ReleaseToZone,
+        )
+        .expect("zero amount remains a no-op even when source equals destination");
+
+        assert!(result.is_none());
+        assert_eq!(ledger.balance(&account), 9.0);
+        assert!(ledger.transfers().is_empty());
+    }
+
+    #[test]
+    fn external_qi_transfer_same_account_preserves_invalid_amount_errors() {
+        for amount in [-1.0, f64::NAN] {
+            let mut ledger = WorldQiAccount::default();
+            let account = QiAccountId::overflow("same-account-invalid");
+            let error = transfer_external_qi_to_ledger(
+                &mut ledger,
+                account.clone(),
+                account,
+                amount,
+                QiTransferReason::ReleaseToZone,
+            )
+            .expect_err("invalid amount validation must precede positive same-account rejection");
+            assert!(matches!(error, QiPhysicsError::InvalidAmount { .. }));
+            assert!(ledger.iter_balances().next().is_none());
+            assert!(ledger.transfers().is_empty());
+        }
+    }
+
+    #[test]
+    fn external_qi_transfer_rejects_same_account_before_shadow_mutation() {
+        let mut ledger = WorldQiAccount::default();
+        let account = QiAccountId::overflow("same-account");
+        ledger
+            .set_balance(account.clone(), 9.0)
+            .expect("fixture balance should be valid");
+
+        let error = transfer_external_qi_to_ledger(
+            &mut ledger,
+            account.clone(),
+            account.clone(),
+            3.0,
+            QiTransferReason::ReleaseToZone,
+        )
+        .expect_err("same-account external transfer must fail closed");
+
+        assert!(matches!(
+            error,
+            QiPhysicsError::SameAccountTransfer { account: ref id }
+                if id == "overflow:same-account"
+        ));
+        assert_eq!(ledger.balance(&account), 9.0);
         assert!(ledger.transfers().is_empty());
     }
 
