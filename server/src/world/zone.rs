@@ -1884,6 +1884,49 @@ mod zone_tests {
         );
     }
 
+    // ----- plan-bughunt-north-rift-scorch-overlap-v1 runtime pins -----
+
+    #[test]
+    fn north_rift_and_scorch_are_adjacent_but_mutually_exclusive() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let rift = registry
+            .find_zone_by_name("rift_mouth_north_002")
+            .expect("north rift zone must remain registered");
+        let scorch = registry
+            .find_zone_by_name("north_waste_east_scorch")
+            .expect("north scorch zone must remain registered");
+
+        assert!(
+            registry.zones_are_adjacent(&rift.name, &scorch.name, 500.0),
+            "north rift must remain a neighbour of the scorch zone after removing overlap"
+        );
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Overworld, DVec3::new(2000.0, 74.0, -7300.0))
+                .map(|zone| zone.name.as_str()),
+            Some("rift_mouth_north_002"),
+            "relocated portal anchor must resolve to the rift zone"
+        );
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Overworld, DVec3::new(2100.0, 80.0, -8000.0))
+                .map(|zone| zone.name.as_str()),
+            Some("north_waste_east_scorch"),
+            "ascension pit must retain scorch weather and tribulation semantics"
+        );
+        assert!(
+            !rift.contains(DVec3::new(2150.0, 74.0, -7500.0))
+                && scorch.contains(DVec3::new(2150.0, 74.0, -7500.0)),
+            "scorch north boundary must not be shadowed by the relocated rift"
+        );
+        assert!(
+            rift.contains(DVec3::new(1850.0, 50.0, -7450.0))
+                && rift.contains(DVec3::new(2150.0, 100.0, -7150.0)),
+            "rift AABB inclusive min/max boundaries must remain reachable"
+        );
+    }
+
     // ----- plan-tsy-zone-v1 §1.2 / §-1 helper unit tests -----
 
     fn make_zone(name: &str, dim: crate::world::dimension::DimensionKind) -> super::Zone {

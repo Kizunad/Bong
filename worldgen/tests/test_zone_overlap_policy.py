@@ -1,0 +1,58 @@
+"""Pin intentional zone nesting while rejecting accidental 3-D overlap."""
+
+import itertools
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+FILES = (ROOT / "server/zones.json", ROOT / "server/zones.worldview.example.json")
+ALLOWED_OVERLAPS = {
+    frozenset(("rift_mouth_blood_001", "blood_valley")),
+    frozenset(("rift_mouth_north_001", "jiuzong_beiling_ruin")),
+    frozenset(("baolongwang_cavern_deep", "zhanhun_plain")),
+    frozenset(("blood_valley", "zhanhun_plain")),
+    frozenset(("north_waste_east_scorch", "north_wastes")),
+    frozenset(("giant_sword_sea", "wuxing_abyss")),
+}
+
+
+def _zones(path: Path) -> list[dict]:
+    document = json.loads(path.read_text())
+    zones = document.get("zones")
+    assert isinstance(zones, list), f"{path} must contain a zones array"
+    return zones
+
+
+def _overlaps(a: dict, b: dict) -> bool:
+    return all(
+        a["aabb"]["min"][axis] <= b["aabb"]["max"][axis]
+        and b["aabb"]["min"][axis] <= a["aabb"]["max"][axis]
+        for axis in range(3)
+    )
+
+
+def test_only_reviewed_zone_pairs_overlap_in_three_dimensions() -> None:
+    for path in FILES:
+        zones = _zones(path)
+        actual = {
+            frozenset((a["name"], b["name"]))
+            for a, b in itertools.combinations(zones, 2)
+            if _overlaps(a, b)
+        }
+        unexpected = actual - ALLOWED_OVERLAPS
+        assert not unexpected, f"{path} has unreviewed 3-D zone overlaps: {unexpected}"
+
+
+def test_north_rift_geometry_matches_runtime_and_blueprint() -> None:
+    runtime, blueprint = (_zones(path) for path in FILES)
+    for zones in (runtime, blueprint):
+        by_name = {zone["name"]: zone for zone in zones}
+        assert not _overlaps(
+            by_name["rift_mouth_north_002"], by_name["north_waste_east_scorch"]
+        ), "north rift and scorch zones must be mutually exclusive"
+    runtime_rift = next(z for z in runtime if z["name"] == "rift_mouth_north_002")
+    blueprint_rift = next(z for z in blueprint if z["name"] == "rift_mouth_north_002")
+    assert runtime_rift["aabb"] == blueprint_rift["aabb"]
+    assert runtime_rift["patrol_anchors"] == blueprint_rift["patrol_anchors"]
+    assert blueprint_rift["worldgen"]["portal_anchor_xz"] == [2000.0, -7300.0]
+    assert blueprint_rift["pois"][0]["pos_xyz"] == [2000.0, 74.0, -7300.0]
