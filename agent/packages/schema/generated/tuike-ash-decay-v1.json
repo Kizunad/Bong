@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "owner_id",
+    "output_item_id",
+    "tier",
+    "tick"
+  ],
+  "properties": {
+    "owner_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "output_item_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "tier": {
+      "anyOf": [
+        {
+          "const": "fan",
+          "type": "string"
+        },
+        {
+          "const": "light",
+          "type": "string"
+        },
+        {
+          "const": "mid",
+          "type": "string"
+        },
+        {
+          "const": "heavy",
+          "type": "string"
+        },
+        {
+          "const": "ancient",
+          "type": "string"
+        }
+      ]
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

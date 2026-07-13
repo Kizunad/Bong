@@ -1,0 +1,69 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "zone_name",
+    "elder_entity_id",
+    "event_kind",
+    "betray_probability",
+    "dan_count",
+    "offered_skill_id",
+    "qi_fraction",
+    "server_tick"
+  ],
+  "properties": {
+    "zone_name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "elder_entity_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "event_kind": {
+      "anyOf": [
+        {
+          "const": "appeared",
+          "type": "string"
+        },
+        {
+          "const": "dan_received",
+          "type": "string"
+        },
+        {
+          "const": "betrayal",
+          "type": "string"
+        },
+        {
+          "const": "dead_natural",
+          "type": "string"
+        },
+        {
+          "const": "dead_player_kill",
+          "type": "string"
+        }
+      ]
+    },
+    "betray_probability": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "dan_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "offered_skill_id": {
+      "type": "string"
+    },
+    "qi_fraction": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "server_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}
