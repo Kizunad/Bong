@@ -1,7 +1,9 @@
 # plan-bughunt-agent-schema-generated-registry-gap-v1
 
-状态：Skeleton Plan
+状态：✅ 2026-07-13
 分区：BugHunt worker / agent-schema / 第 2 轮
+
+阶段总览：P0 契约清单 ✅ 2026-07-13；P1 registry/generated 接入 ✅ 2026-07-13；P2 freshness 饱和门禁 ✅ 2026-07-13；P3 对抗复核与全栈验证 ✅ 2026-07-13
 
 ## 1. 一句话结论
 
@@ -60,3 +62,12 @@
 修正/反驳：候选降级为中风险契约门禁 bug，只主张 runtime-consumed server -> agent Redis V1 public payload 必须纳入 generated coverage 或显式豁免；移除 `FactionCensusStore` 未实例化等消费链论点，不再声称 runtime 丢消息。
 
 反方最终裁决第二轮：PASS，medium risk。成立点是 `GENERATED_SCHEMA_FILES` 驱动 freshness gate，而多个已被 Tiandao runtime 消费的公开 payload 不在 expected set；风险表述必须限定为未来漂移/外部 JSON Schema/CI 审计盲点，而非即时主路径崩溃。
+
+
+## Finish Evidence
+
+- **落地清单**：P0 实地追踪 `agent/packages/tiandao/src/main.ts` 启动链与 `validate*Contract` imports，确认原 5 项并补发现 live 的 `CraftOutcomeV1`、`RecipeUnlockedV1`、`SkillLvUpPayloadV1`；排除未实例化的 `FactionCensusStore` / `FactionStateV1`。P1 在 `agent/packages/schema/src/schema-registry.ts` 注册 8 项契约并生成 `agent/packages/schema/generated/{meridian-severed-event,tuike-ash-decay,elder-encounter-event,faction-war-event,named-faction-state,craft-outcome,recipe-unlocked,skill-lv-up-payload}-v1.json`。P2 在 `agent/packages/schema/tests/generated-artifacts.test.ts` 固定 runtime contract→generated file 映射，并验证删除运行时契约文件会触发 freshness 失败。P3 对抗追踪所有实际启动 Tiandao validator 后 clean。
+- **关键 commit**：`4a1f7474`（2026-07-13）纳入首批 5 项天道运行时契约；`909edf4c`（2026-07-13）对抗复核后补齐 craft/recipe/skill-lv-up 三项相邻 live 契约。
+- **测试结果**：`cd agent/packages/schema && npm test`（29 files / 850 tests PASS）；`npm run generate:check`（405 generated schemas fresh）；`cd agent && npm run build -w @bong/schema` PASS；`cd agent/packages/tiandao && npm test` PASS；`cd agent && npm run build` PASS。合并最新 `origin/main` 后再次执行 schema 850 tests 与 schema build 均 PASS。
+- **跨仓库核验**：server 发布侧契约由现有 Redis V1 emitters 保持；agent runtime 消费侧命中 `meridian-severed-runtime.ts`、`tuike_ash_runtime.ts`、`elder-encounter-narration.ts`、`war-outcome-narration.ts`、`named-faction-narration.ts`、`craft-runtime.ts`、`skill-lv-up-runtime.ts`；schema 侧命中 `SCHEMA_REGISTRY` / `GENERATED_SCHEMA_FILES` 与 8 个 JSON artifacts。client 不消费这些 server→agent Redis 契约，故无 client 改动。
+- **遗留 / 后续**：`FactionStateV1` 对应 `FactionCensusStore` 当前未在 `main.ts` 实例化，不属于 runtime-consumed 范围；未来接线时必须同步纳入 generated coverage 或显式豁免。
