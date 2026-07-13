@@ -653,8 +653,15 @@ mod tests {
             "can_learn_technique 只探测，不应写入 known"
         );
 
-        let outcome_ok =
-            can_learn_technique(&known, &cultivation, &meridians, None, "woliu.vortex", true, None);
+        let outcome_ok = can_learn_technique(
+            &known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            true,
+            None,
+        );
         assert_eq!(outcome_ok, ScrollReadOutcome::Learned);
         assert!(known.entries.is_empty(), "探测不应留下副作用");
     }

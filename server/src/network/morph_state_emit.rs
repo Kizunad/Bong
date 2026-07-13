@@ -13,13 +13,17 @@
 //! 正确状态，只是不是"瞬间"）。
 
 use valence::entity::EntityId;
-use valence::prelude::{bevy_ecs, Client, Commands, Component, Entity, Query, Res, ResMut, Resource, With};
+use valence::prelude::{
+    bevy_ecs, Client, Commands, Component, Entity, Query, Res, ResMut, Resource, With,
+};
 
 use crate::body_plan::MorphState;
 use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::schema::server_data::{MorphStateEntryV1, MorphStateV1, ServerDataPayloadV1, ServerDataV1};
+use crate::schema::server_data::{
+    MorphStateEntryV1, MorphStateV1, ServerDataPayloadV1, ServerDataV1,
+};
 
 /// 周期性全量重发间隔（tick）——与 `cultivation_detail_emit::EMIT_INTERVAL_TICKS`
 /// 同数量级（~1s @ 20TPS）。
@@ -37,9 +41,7 @@ pub struct MorphStateEmitState {
 /// 从全部当前处于 `MorphState` 的实体构建一份 `mode="full"` 快照——`active` 恒为
 /// `true`（未易形实体压根不出现在表里，client 用"表里没有=未易形"的缺省语义，
 /// 与 `race_gate_meta` 的"表里没有=Any 放行"同一惯例）。
-pub fn build_morph_state_full(
-    morphed: impl Iterator<Item = (i32, MorphState)>,
-) -> MorphStateV1 {
+pub fn build_morph_state_full(morphed: impl Iterator<Item = (i32, MorphState)>) -> MorphStateV1 {
     let mut entries: Vec<MorphStateEntryV1> = morphed
         .map(|(entity_id, state)| MorphStateEntryV1 {
             entity_id,
@@ -130,8 +132,7 @@ mod tests {
             .into_iter()
             .filter_map(|frame| {
                 let packet = frame.decode::<CustomPayloadS2c>().ok()?;
-                let payload =
-                    serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
                 match payload.payload {
                     ServerDataPayloadV1::MorphState(state) => Some(state),
                     _ => None,
@@ -157,7 +158,10 @@ mod tests {
             .into_iter(),
         );
         assert_eq!(snapshot.entries.len(), 2);
-        assert_eq!(snapshot.entries[0].entity_id, 5, "必须按 entity_id 升序排列");
+        assert_eq!(
+            snapshot.entries[0].entity_id, 5,
+            "必须按 entity_id 升序排列"
+        );
         assert_eq!(snapshot.entries[0].form_race_id, "beetle");
         assert_eq!(snapshot.entries[0].model_kind, 1);
         assert!(snapshot.entries[0].active);

@@ -102,8 +102,7 @@ fn legacy_part_for_wound_with_morph(
     intrinsic_race: Option<&crate::body_plan::RaceId>,
     races: Option<&RaceRegistry>,
 ) -> Option<BodyPart> {
-    if let (Some(morph), Some(intrinsic_race), Some(races)) = (morph_state, intrinsic_race, races)
-    {
+    if let (Some(morph), Some(intrinsic_race), Some(races)) = (morph_state, intrinsic_race, races) {
         if let Some(pair) = races.resolve_morph_pair(intrinsic_race, &morph.form) {
             if let Some(form_part) = pair.form_part_for_intrinsic(intrinsic_part) {
                 if let Some(legacy) = crate::body_plan::id_to_legacy_body_part(form_part) {
@@ -190,7 +189,10 @@ type CombatTargetItem<'a> = (
     Option<&'a MeridianHardenActive>,
     // plan-race-system-v1 P4 —— 元组已达 15 元素（WorldQuery 元组上限附近，见其余处
     // 同款注释），新增 `MorphState` 查询嵌套进最后一个元素而非追加顶层第 16 项。
-    (Option<&'a BackfireAmplification>, Option<&'a crate::body_plan::MorphState>),
+    (
+        Option<&'a BackfireAmplification>,
+        Option<&'a crate::body_plan::MorphState>,
+    ),
 );
 type CombatAttackerItem<'a> = (
     &'a mut Cultivation,

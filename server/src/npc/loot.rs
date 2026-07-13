@@ -506,15 +506,11 @@ mod tests {
         );
 
         let mut allocator = InventoryInstanceIdAllocator::default();
-        let item = build_fauna_item_instance(
-            "yixing_scroll",
-            1,
-            0,
-            &registry,
-            None,
-            &mut allocator,
-        )
-        .expect("yixing_scroll must instantiate via the real daozhan death-loot factory chain");
+        let item =
+            build_fauna_item_instance("yixing_scroll", 1, 0, &registry, None, &mut allocator)
+                .expect(
+                    "yixing_scroll must instantiate via the real daozhan death-loot factory chain",
+                );
         assert_eq!(item.template_id, "yixing_scroll");
 
         let mut inventory = PlayerInventory {

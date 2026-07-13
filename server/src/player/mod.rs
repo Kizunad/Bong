@@ -366,9 +366,11 @@ pub(crate) fn despawn_disconnected_clients(
         // plan-race-system-v1 P4（决议 §6）—— 下线三条解除易形触发路径之一：断线即刻
         // 解除易形（移除 `MorphState` + 重扫装备门，见 `body_plan::morph::
         // release_morph_state`），防止玩家带着"易形态穿戴"的非法装备快照落盘。
-        commands.add(move |world: &mut valence::prelude::bevy_ecs::world::World| {
-            crate::body_plan::morph::release_morph_state(world, entity);
-        });
+        commands.add(
+            move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                crate::body_plan::morph::release_morph_state(world, entity);
+            },
+        );
         if let Ok((
             username,
             player_state,

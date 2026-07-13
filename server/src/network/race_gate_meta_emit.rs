@@ -157,7 +157,11 @@ mod tests {
             .filter(|d| matches!(d.required_race, RaceGate::Any))
             .map(|d| d.id)
             .collect();
-        assert_eq!(any_ids.len(), 21, "预期 21 条 Any 功法（含 P4 morph.yixing）");
+        assert_eq!(
+            any_ids.len(),
+            21,
+            "预期 21 条 Any 功法（含 P4 morph.yixing）"
+        );
 
         for any_id in &any_ids {
             assert!(

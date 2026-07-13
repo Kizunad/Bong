@@ -188,11 +188,9 @@ pub fn release_morph_state(world: &mut bevy_ecs::world::World, entity: Entity) -
     let body_plans = world.get_resource::<BodyPlanRegistry>();
     let races = world.get_resource::<RaceRegistry>();
     let intrinsic_is_humanoid = match (body_plans, races) {
-        (Some(body_plans), Some(races)) => {
-            resolve_race_to_plan(&intrinsic_race, body_plans, races)
-                .map(|plan| plan.is_humanoid)
-                .unwrap_or(true)
-        }
+        (Some(body_plans), Some(races)) => resolve_race_to_plan(&intrinsic_race, body_plans, races)
+            .map(|plan| plan.is_humanoid)
+            .unwrap_or(true),
         _ => true,
     };
 
@@ -216,7 +214,10 @@ pub fn release_morph_state(world: &mut bevy_ecs::world::World, entity: Entity) -
     let (stashed, dropped) = world.resource_scope(
         |world, item_registry: bevy_ecs::world::Mut<crate::inventory::ItemRegistry>| {
             world.resource_scope(
-                |world, mut dropped_registry: bevy_ecs::world::Mut<crate::inventory::DroppedLootRegistry>| {
+                |world,
+                 mut dropped_registry: bevy_ecs::world::Mut<
+                    crate::inventory::DroppedLootRegistry,
+                >| {
                     let Some(mut inventory) =
                         world.get_mut::<crate::inventory::PlayerInventory>(entity)
                     else {
@@ -275,10 +276,16 @@ fn drain_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, cost: f6
             if let Some(zone) = zones.find_zone_mut(&zone_name) {
                 let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
                 let to = QiAccountId::zone(zone.name.clone());
-                match qi_release_to_zone(cost, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY)
-                {
+                match qi_release_to_zone(
+                    cost,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
                     Ok(outcome) => {
-                        zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
                         if let Some(t) = outcome.transfer {
                             pending_transfers.push(t);
                         }
@@ -307,9 +314,12 @@ fn drain_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, cost: f6
                             "morph_yixing_overflow:{}",
                             caster.to_bits()
                         ));
-                        if let Ok(t) =
-                            QiTransfer::new(from.clone(), overflow_to, cost, QiTransferReason::ReleaseToZone)
-                        {
+                        if let Ok(t) = QiTransfer::new(
+                            from.clone(),
+                            overflow_to,
+                            cost,
+                            QiTransferReason::ReleaseToZone,
+                        ) {
                             pending_transfers.push(t);
                         }
                     }
@@ -317,27 +327,36 @@ fn drain_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, cost: f6
             } else {
                 let overflow_to =
                     QiAccountId::overflow(format!("morph_yixing_overflow:{}", caster.to_bits()));
-                if let Ok(t) =
-                    QiTransfer::new(from.clone(), overflow_to, cost, QiTransferReason::ReleaseToZone)
-                {
+                if let Ok(t) = QiTransfer::new(
+                    from.clone(),
+                    overflow_to,
+                    cost,
+                    QiTransferReason::ReleaseToZone,
+                ) {
                     pending_transfers.push(t);
                 }
             }
         } else {
             let overflow_to =
                 QiAccountId::overflow(format!("morph_yixing_overflow:{}", caster.to_bits()));
-            if let Ok(t) =
-                QiTransfer::new(from.clone(), overflow_to, cost, QiTransferReason::ReleaseToZone)
-            {
+            if let Ok(t) = QiTransfer::new(
+                from.clone(),
+                overflow_to,
+                cost,
+                QiTransferReason::ReleaseToZone,
+            ) {
                 pending_transfers.push(t);
             }
         }
     } else {
         let overflow_to =
             QiAccountId::overflow(format!("morph_yixing_overflow:{}", caster.to_bits()));
-        if let Ok(t) =
-            QiTransfer::new(from.clone(), overflow_to, cost, QiTransferReason::ReleaseToZone)
-        {
+        if let Ok(t) = QiTransfer::new(
+            from.clone(),
+            overflow_to,
+            cost,
+            QiTransferReason::ReleaseToZone,
+        ) {
             pending_transfers.push(t);
         }
     }

@@ -391,9 +391,11 @@ pub fn death_arbiter_tick(
         // World，且需要在同一 tick 内让后续掉落/复活链路看到"已恢复本体"的状态）。
         {
             let target = event.target;
-            commands.add(move |world: &mut valence::prelude::bevy_ecs::world::World| {
-                crate::body_plan::morph::release_morph_state(world, target);
-            });
+            commands.add(
+                move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                    crate::body_plan::morph::release_morph_state(world, target);
+                },
+            );
         }
 
         // Worldview §十二：死亡掉落应落在死亡点。

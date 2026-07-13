@@ -19453,7 +19453,10 @@ cols = 4
             }
         }
 
-        fn inventory_with_worn(item: ItemInstance, container_capacity: Option<(u8, u8)>) -> PlayerInventory {
+        fn inventory_with_worn(
+            item: ItemInstance,
+            container_capacity: Option<(u8, u8)>,
+        ) -> PlayerInventory {
             let mut equipped = HashMap::new();
             equipped.insert(
                 EQUIP_SLOT_CHEST.to_string(),
@@ -19541,7 +19544,11 @@ cols = 4
                 DimensionKind::Overworld,
             );
 
-            assert_eq!(stashed, vec![2], "human 本体不满足 Species([whale]) 门，必须被摘下");
+            assert_eq!(
+                stashed,
+                vec![2],
+                "human 本体不满足 Species([whale]) 门，必须被摘下"
+            );
             assert!(dropped_ids.is_empty(), "背包有空位时不应掉落");
             assert!(
                 inventory
@@ -19591,13 +19598,11 @@ cols = 4
                 dropped.entries.contains_key(&3),
                 "DroppedLootRegistry 必须登记该 instance_id，禁止静默丢件"
             );
-            assert!(
-                inventory
-                    .equipped
-                    .get(EQUIP_SLOT_CHEST)
-                    .map(|c| c.worn.is_empty())
-                    .unwrap_or(true)
-            );
+            assert!(inventory
+                .equipped
+                .get(EQUIP_SLOT_CHEST)
+                .map(|c| c.worn.is_empty())
+                .unwrap_or(true));
         }
 
         /// 无任何非法装备 —— 提前返回空结果，不触发任何容器重建副作用。

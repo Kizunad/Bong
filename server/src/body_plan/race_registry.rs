@@ -795,7 +795,10 @@ mod tests {
             pair.form_part_for_intrinsic(&BodyPartId::new("leg_l")),
             Some(&BodyPartId::new("tail_fin"))
         );
-        assert_eq!(pair.form_part_for_intrinsic(&BodyPartId::new("leg_r")), None);
+        assert_eq!(
+            pair.form_part_for_intrinsic(&BodyPartId::new("leg_r")),
+            None
+        );
     }
 
     /// `resolve_morph_pair` 是 `morph_pair` 的别名，行为必须完全一致。
@@ -835,7 +838,9 @@ mod tests {
         let body_plans = body_plans_with_humanoid_and("humanoid", &["head"]);
         let races = RaceRegistry::from_parts_for_test(vec![human_entry()], vec![], &body_plans)
             .expect("human-only races.json should load");
-        assert!(races.morph_targets_from(&RaceId::new(HUMAN_RACE_ID)).is_empty());
+        assert!(races
+            .morph_targets_from(&RaceId::new(HUMAN_RACE_ID))
+            .is_empty());
     }
 
     #[test]
