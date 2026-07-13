@@ -1099,6 +1099,7 @@ pub fn register(app: &mut App) {
     spider_disguise_emit::register(app);
 
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
+    app.init_resource::<morph_state_emit::MorphStateEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
     app.init_resource::<audio_trigger::AudioTriggerState>();
