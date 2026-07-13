@@ -1,6 +1,6 @@
 # plan-bughunt-craft-outcome-network-thread-sound-v1
 
-> **Active BugFix plan**。来源：`docs/plans-skeleton/plan-bughunt-craft-outcome-network-thread-sound-v1.md`；升格日期：2026-07-13。主题：验证并修复 `craft_outcome` 完成反馈可能在 Fabric network thread 触达 screen / player / sound state 的线程契约违规。
+> **Finished BugFix plan**。来源：`docs/plans-skeleton/plan-bughunt-craft-outcome-network-thread-sound-v1.md`；升格与归档日期：2026-07-13。主题：验证并修复 `craft_outcome` 完成反馈在 Fabric network thread 触达 screen / player / sound state 的线程契约违规。
 
 ## 阶段总览
 
@@ -8,7 +8,7 @@
 |------|------|------|----------|
 | P0 | 第一性原理证真：闭合生产可达路径与失败复现 | ✅ | 2026-07-13 |
 | P1 | 最小线程边界修复与饱和回归 | ✅ | 2026-07-13 |
-| P2 | JDK 17 完整门禁、主线同步与三轮独立验证 | ⏳ | — |
+| P2 | JDK 17 完整门禁、主线同步与三轮绑定 SHA 验证 | ✅ | 2026-07-13 |
 
 ## Bug 摘要
 
@@ -106,3 +106,70 @@
 - 旧测试可能默认 `ROUTER.route(...)` 在 receiver 返回前同步生效；必须改成显式 drain executor，而不是放宽断言。
 - 双重调度会改变反馈顺序并扩大 race surface，因此局部 listener 兜底必须以额外生产调用方证据为前提。
 - 线程修复不能吞掉 route exception、未知 payload 诊断或既有 dispatch；错误路径需保持可观测。
+
+## Finish Evidence
+
+### 落地清单
+
+- `client/src/main/java/com/bong/client/BongNetworkHandler.java`
+  - raw `bong:server_data` receiver 只复制 Netty buffer。
+  - protobuf bridge、legacy JSON fallback、`ServerDataRouter.route(...)`、所有 handler/store/listener
+    side effect 与最终 `applyDispatch(...)` 统一进入一个 client-thread task。
+  - 保留 parse error、未知 type/no-op、handler exception 收口、日志和 dispatch 判定语义；
+    没有给 `CraftScreen` / `WorkbenchScreen` 追加第二套局部线程兜底。
+- `client/src/test/java/com/bong/client/BongServerDataThreadingTest.java`
+  - 新增 7 个生产调度边界回归，使用命名 network/client thread 和可控 executor 验证
+    receiver 返回前零 side effect、client drain 后线程身份、顺序与 exactly-once。
+  - 覆盖 completed、failed、`cast_sync`、route → apply、连续 payload、坏 JSON、
+    handler exception 与后续合法 payload。
+- `docs/plan-bughunt-craft-outcome-network-thread-sound-v1.md`
+  - 回填 Fabric 官方线程契约、生产 emit 可达链、修复前红测和修复后完整证据。
+
+### 关键 commit
+
+- `3e3c80d8`：升格 skeleton，收口线程验证范围。
+- `33d8cb74`：补齐 completed/failed、异常、顺序与同根因验收矩阵。
+- `dbb8772c`：提取生产调度测试缝并提交修复前红测基线。
+- `867fd1a7`：把整条 server_data 处理链移入单一 client-thread task。
+- `f10f230e`：回填第一性原理证真与 195 项同根因回归证据。
+
+### 测试结果
+
+- RED（Temurin 17）：
+  `./gradlew test --tests com.bong.client.BongServerDataThreadingTest`
+  → `7 tests completed, 7 failed`；关键实际值为
+  `route@fabric-network-io-test`，craft/cast store 均在 queue drain 前提前变化。
+- targeted GREEN（Temurin 17）：新增线程测试及
+  `BongNetworkHandlerTest`、`CraftHandlerTest`、`CastSyncHandlerTest`、
+  `ServerDataRouterTest`、`ProtoServerDataBridgeTest`
+  → `195 tests, 0 failed, 0 skipped`。
+- client 完整门禁（Temurin 17）：`./gradlew test build`
+  → `BUILD SUCCESSFUL in 3m 32s`；JUnit XML 汇总
+  `3995 tests, 0 failures, 0 errors, 0 skipped`。
+- 构建仅输出仓库既有 Gradle deprecated-features 提示；无测试失败、编译失败或新增源码产物。
+
+### 主线同步与绑定 SHA 验证
+
+- `git fetch origin main` 后，`origin/main@6635c25a` 仍是修复 HEAD 的祖先，分类为
+  `already-up-to-date`；无需 merge/fast-forward，完整门禁证据保持有效。
+- 用户明确要求本次不运行 subagent，因此没有伪称独立 validator：
+  - Round 1：主 agent 对干净 `f10f230ee8e2be57537b551d33fa04ea4ce98317`
+    复核 Fabric 线程契约、生产可达性、diff、异常边界、测试饱和度与 commit trailer，结论 PASS。
+  - Round 2：完整门禁和主线分类后再次对同一 SHA 核验工作区、HEAD、门禁与主线祖先关系，结论 PASS。
+  - Round 3：归档 commit 后对最终干净 HEAD 再做绑定 SHA 自审；最终结果写入 PR 验证证据，
+    后续仍以 GitHub `/review` 与 CodeRabbit 作为独立 review gate。
+
+### 跨栈核验
+
+- client：修改 receiver 调度边界并新增回归测试，完整门禁已绿。
+- server：只读确认 `server/src/network/craft_emit.rs:791-842` 的 completed/failed 生产 emit；无代码改动，
+  不需要额外 cargo gate。
+- agent/schema/worldgen：协议、schema、资源与生成物均未改动，不触发对应门禁。
+- 真元/世界观/A/V：本修复不改变制作数值、资源流、真元 ledger、招式或视觉/音效资产；
+  只保证既有完成音效、闪光与刷新在 client thread 执行。
+
+### 遗留 / 后续
+
+- 本轮无阻塞标记，无已知功能遗留。
+- 因用户禁用 subagent，三轮验证中的本地 validator 是主 agent 绑定 SHA 自审，不具备独立上下文隔离；
+  PR 阶段必须继续等待 `/review`、CodeRabbit、e2e/相关 checks，不以本地自审替代远端 gate。
