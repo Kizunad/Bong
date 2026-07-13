@@ -1961,6 +1961,7 @@ mod tests {
                 }),
                 shelflife_profile: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )]));
         app.insert_resource(registry);

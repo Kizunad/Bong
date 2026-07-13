@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * plan-inventory-hint-panel-v1 P1 — {@link InventoryMoveRejectedHandler} 饱和测试。
  * <p>
- * 覆盖：① happy path（全部 24 个 wire tag 文案）② 边界（空 reason / 未知 reason / cap 缺省 /
+ * 覆盖：① happy path（全部 25 个 wire tag 文案）② 边界（空 reason / 未知 reason / cap 缺省 /
  * 空 required_realm）③ 错误分支（缺字段 → noOp）④ 状态转换（500ms 去重窗口：命中/边界/过期/跨
  * reason 不互相影响）。断言可观察契约（toast 文案 / color / duration），不绑渲染内部。
  */
@@ -65,12 +65,13 @@ class InventoryMoveRejectedHandlerTest {
         "armor_slot_unresolvable",
         "pack_equip_slot_mismatch",
         "worn_cap_full",
-        "realm_too_low"
+        "realm_too_low",
+        "race_mismatch"
     );
 
     @Test
-    void allTwentyFourWireTagsProduceDistinctPrefixedMessages() {
-        assertEquals(24, ALL_WIRE_TAGS.size(), "wire tag fixture list itself must stay in sync with server enum");
+    void allTwentyFiveWireTagsProduceDistinctPrefixedMessages() {
+        assertEquals(25, ALL_WIRE_TAGS.size(), "wire tag fixture list itself must stay in sync with server enum");
 
         List<String> messages = ALL_WIRE_TAGS.stream()
             .map(tag -> InventoryMoveRejectedHandler.messageFor(tag, "Condense", "chest", 3))
@@ -111,6 +112,22 @@ class InventoryMoveRejectedHandlerTest {
     void armorDurabilityZeroMessage() {
         assertEquals(PREFIX + "此甲损毁殆尽，无法穿戴",
             InventoryMoveRejectedHandler.messageFor("armor_durability_zero", null, null, null));
+    }
+
+    // ─── race_mismatch：装备门 race gate 拒绝（plan-race-system-v1 P3c）──────
+
+    @Test
+    void raceMismatchMessage() {
+        assertEquals(PREFIX + "当前形态无法穿戴此装备",
+            InventoryMoveRejectedHandler.messageFor("race_mismatch", null, null, null));
+    }
+
+    @Test
+    void raceMismatchMessageIgnoresIrrelevantFields() {
+        // server RaceMismatch 变体不携带 required_realm/slot/cap（那些是其他 reason 专属），
+        // 但文案不应因这些字段意外出现而崩溃或改变输出。
+        String message = InventoryMoveRejectedHandler.messageFor("race_mismatch", "Condense", "chest", 3);
+        assertEquals(PREFIX + "当前形态无法穿戴此装备", message);
     }
 
     // ─── realm_too_low：境界不足文案走 RealmLabel 转中文（plan §8.1 决议 #3） ──
@@ -297,6 +314,22 @@ class InventoryMoveRejectedHandlerTest {
         String toastText = BongToast.current(System.currentTimeMillis()).text().getString();
         assertTrue(toastText.contains("凝脉"), "expected Chinese realm name in toast: " + toastText);
         assertFalse(toastText.contains("Condense"), "must not leak English tag to player: " + toastText);
+    }
+
+    @Test
+    void routeHandlesRaceMismatchEndToEndWithToast() {
+        String json = "{"
+            + "\"v\":1,"
+            + "\"type\":\"inventory_move_rejected\","
+            + "\"reason\":\"race_mismatch\""
+            + "}";
+
+        ServerDataRouter.RouteResult result =
+            ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isHandled(), result.logMessage());
+        String toastText = BongToast.current(System.currentTimeMillis()).text().getString();
+        assertEquals(PREFIX + "当前形态无法穿戴此装备", toastText);
     }
 
     @Test

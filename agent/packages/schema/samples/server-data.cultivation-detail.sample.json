@@ -176,5 +176,10 @@
     { "color": "Violent", "weight": 20.0, "ratio": 0.2 }
   ],
   "target_meridian": "ren",
-  "body_plan_id": "humanoid"
+  "body_plan_id": "humanoid",
+  "race_id": "human",
+  "form_race_id": "human",
+  "form_body_plan_id": "humanoid",
+  "intrinsic_is_humanoid": true,
+  "form_is_humanoid": true
 }

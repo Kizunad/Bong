@@ -1,0 +1,171 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "named_factions",
+    "relation_matrix",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "named_faction_state",
+      "type": "string"
+    },
+    "named_factions": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "display_name",
+              "zone_anchor",
+              "current_npc_count",
+              "status",
+              "is_active"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "zone_anchor": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "current_npc_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "const": "active",
+                "type": "string"
+              },
+              "is_active": {
+                "const": true,
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "display_name",
+              "zone_anchor",
+              "current_npc_count",
+              "status",
+              "is_active"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "zone_anchor": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "current_npc_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "const": "headless",
+                "type": "string"
+              },
+              "is_active": {
+                "const": true,
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "display_name",
+              "zone_anchor",
+              "current_npc_count",
+              "status",
+              "is_active"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "zone_anchor": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "current_npc_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "const": "decayed",
+                "type": "string"
+              },
+              "is_active": {
+                "const": false,
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "relation_matrix": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "a",
+          "b",
+          "hostile"
+        ],
+        "properties": {
+          "a": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "b": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "hostile": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "number"
+    }
+  }
+}
