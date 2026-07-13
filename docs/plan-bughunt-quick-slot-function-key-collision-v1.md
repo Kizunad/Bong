@@ -1,4 +1,16 @@
-# plan-bughunt-quick-slot-function-key-collision-v1（Skeleton）
+# plan-bughunt-quick-slot-function-key-collision-v1
+
+> **Active Plan（2026-07-13 promotion）**。来源：
+> `docs/plans-skeleton/plan-bughunt-quick-slot-function-key-collision-v1.md`。
+> 一句话主题：保留 F1-F9 作为快捷使用槽的唯一默认入口，把 HUD 沉浸与 NPC 交互日志改为默认未绑定，并用客户端契约测试阻止功能键再次撞位。
+
+## 阶段总览
+
+| 阶段 | 目标 | 状态 |
+|---|---|---|
+| P0 | 第一性原理确认 F6/F7 默认键冲突及可达链路 | ⏳ |
+| P1 | 最小修改两个便利入口的默认键，并补快捷槽保留区契约测试 | ⬜ |
+| P2 | 完成 client 全量门禁、主线同步复验与归档证据 | ⬜ |
 
 ## Bug 摘要
 
@@ -9,6 +21,14 @@
 - `NpcInteractionLogControls` 把 NPC 交互日志默认绑到 `F7`。
 
 这不是视觉标签冲突，而是输入入口冲突：快捷槽命中后会走 `QuickUseSlotStore`、本地 cast 反馈，并发送 `use_quick_slot` C2S。MC/Fabric 同物理键绑定存在单值映射抢占或仓库历史记录的双消费风险，因此默认配置下至少一侧入口会变得不可预测或不可达。
+
+## 接入面
+
+- **进料**：`CombatKeybindings` 的 F1-F9 快捷槽注册、`HudImmersionControls` 与 `NpcInteractionLogControls` 的独立 tick 消费链。
+- **出料**：快捷槽继续派发 `use_quick_slot`；HUD 沉浸和 NPC 日志仍保留原翻译键与控制菜单入口，由玩家显式绑定后触发。
+- **共享类型 / event**：仅复用 Fabric `KeyBinding` / `KeyBindingHelper`，不新增协议、schema 或服务端事件。
+- **跨仓库契约**：纯 client 默认键修复，不修改 server / agent wire contract。
+- **worldview / qi_physics**：不涉及世界观命名、真元或灵气流动。
 
 ## 实际游玩体验影响
 
@@ -43,35 +63,43 @@ Round 1（ACCEPT，修正表述）：反方指出不能强断言“两个动作�
 
 Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot 是否只是显示标签、注册顺序是否天然安全、是否重复 #929/#1005。结论是 `F1-F9` 在 HUD 文档和代码里都是正式 quick-use 行，`F6/F7` 不是保留键；quick slot 会发 `use_quick_slot`；注册顺序最多决定谁抢赢，不构成安全；#929 只记录 `O/U`，#1005 是 `T` 与聊天入口，本 bug 是新的 `F6/F7` 具体碰撞实例。
 
-## Skeleton Fix Plan
+## 实施决议（2026-07-13）
 
-P0：止血默认键冲突。
+1. **F1-F9 归快捷槽独占**：`QuickSlotConfig.SLOT_COUNT == 9` 与 HUD 的 F1-F9 标注是正式玩家入口，本 plan 不改快捷槽数量、顺序或默认键。
+2. **便利入口默认未绑定**：把 `HudImmersionControls` 和 `NpcInteractionLogControls` 的默认键改为 `GLFW_KEY_UNKNOWN`。两个功能仍在原版控制菜单可发现、可配置；不另拍新默认键，避免把冲突平移到别处。
+3. **不强改既有玩家配置**：不重写 `options.txt`，也不覆盖玩家主动保存的绑定。修复锁定新安装/重置键位的默认契约；既有冲突配置可在控制菜单自行调整。
+4. **测试范围只守 F1-F9 保留区**：新增 `QuickSlotDefaultKeyConflictTest`，断言快捷槽仍注册 F1-F9、两个便利入口默认 UNKNOWN、除 `CombatKeybindings` 外没有其它生产 Java 文件直接默认绑定 F1-F9。
+5. **不跨题处理 O/U**：项目级 O/U 冲突由 `plan-bughunt-client-input-keybind-collision-v1` 独立收口；本 PR 不建立全键盘无重复规则，也不修改其它入口。
 
-- 给 `HudImmersionControls` 或 quick slot 第 6 槽改默认策略，避免 `F6` 双占用。
-- 给 `NpcInteractionLogControls` 或 quick slot 第 7 槽改默认策略，避免 `F7` 双占用。
-- 若某个功能不适合占用全局默认键，优先改成 `GLFW_KEY_UNKNOWN`，对齐截脉键从默认 `V` 改未绑定的处理方式。
+## 实施范围
 
-P1：建立默认键唯一性约束。
+### P0 — 证真与边界
 
-- 新增通用源码扫描测试，覆盖 `client/src/main/java/com/bong/client` 中所有 `GLFW.GLFW_KEY_*` 默认绑定。
-- 对确需复用的键必须显式白名单，并要求存在仲裁测试，证明不会抢入口或让一侧不可达。
-- 把 #929 的 `O/U` 与本 plan 的 `F6/F7` 一并纳入同一验收矩阵，避免只修局部。
+- 从 `BongClient` 注册链、三个 `KeyBinding` 消费点和快捷槽 C2S 派发链确认正常玩家路径可达。
+- 复核 F1-F9 没有显式仲裁层；注册顺序只能决定谁抢占，不能让两个动作同时保持可靠入口。
 
-P2：补用户体验回归。
+### P1 — 止血与契约测试
 
-- 验证 quick bar HUD 的 F1-F9 标注与真实可触发 keybinding 一致。
-- 验证 HUD 沉浸和 NPC 交互日志仍有可发现、可配置且不冲突的入口。
+- `client/src/main/java/com/bong/client/hud/HudImmersionControls.java`：F6 → `GLFW_KEY_UNKNOWN`。
+- `client/src/main/java/com/bong/client/npc/NpcInteractionLogControls.java`：F7 → `GLFW_KEY_UNKNOWN`。
+- `client/src/test/java/com/bong/client/input/QuickSlotDefaultKeyConflictTest.java`：锁定快捷槽保留区、两个默认未绑定入口及未来 F1-F9 直接占用回归。
+
+### P2 — 门禁与用户体验核验
+
+- 在 JDK 17 下运行 `cd client && ./gradlew test build`。
+- 静态核验翻译键未删除，HUD 沉浸与 NPC 日志仍会注册到控制菜单；快捷栏 F1-F9 注册与 HUD 标注保持一致。
+- 若具备图形客户端环境，补充 `./gradlew runClient` 人工检查控制菜单默认值；该检查不替代自动契约测试。
 
 ## 验收测试计划
 
-- client 单测：默认键唯一性扫描应在当前 `F6/F7` 状态下失败，修复后通过。
-- client 单测：`F1-F9` quick slot 默认键集合不得与其它全局 keybinding 默认键重复，除非对应复用项有明确仲裁白名单。
-- client 单测：HUD 沉浸 toggle 默认键不等于 quick slot 任一默认键。
-- client 单测：NPC 交互日志默认键不等于 quick slot 任一默认键。
-- 手动验证（JDK 17，`client/`）：`./gradlew test build` 后进世界，绑定第 6/7 quick slot，按对应键只触发目标 quick slot；HUD 沉浸和 NPC 日志各自的新入口可用且不抢 quick slot。
+- `QuickSlotDefaultKeyConflictTest.quickSlotsStillOwnFunctionKeyDefaults`：锁定 9 槽与 `GLFW_KEY_F1 + i`。
+- `QuickSlotDefaultKeyConflictTest.hudImmersionDefaultsUnbound`：锁定 HUD 沉浸仍注册且默认 UNKNOWN。
+- `QuickSlotDefaultKeyConflictTest.npcInteractionLogDefaultsUnbound`：锁定 NPC 日志仍注册且默认 UNKNOWN。
+- `QuickSlotDefaultKeyConflictTest.noOtherClientBindingClaimsF1ToF9ByDefault`：扫描生产 Java 源码，除 `CombatKeybindings` 外不得直接出现 F1-F9 默认常量。
+- client 全量：JDK 17 下 `./gradlew test build` 必须全绿。
 
 ## 风险
 
-- 改 quick slot 的 `F1-F9` 设计会影响既有 HUD 认知，风险较高；更保守的修法是改 HUD 沉浸/NPC 日志默认键或设为未绑定。
-- 改默认键会影响老玩家的本地 `options.txt`，需要确认 Minecraft/Fabric 对既有配置的迁移行为，避免“新默认键不生效”的误判。
-- 若把全局默认键唯一性测试做得过硬，可能会卡住有意复用的 hold/toggle 组合；需要白名单机制和仲裁测试一起落地。
+- 已保存 `options.txt` 的老玩家可能继续保留 F6/F7；本 plan 有意不覆盖用户配置，只修默认值并在 Finish Evidence 记录该限制。
+- 两个便利入口改为默认未绑定后，需要玩家从控制菜单主动分配；翻译键和注册入口不得删除。
+- 测试只保留 F1-F9，不会误伤 R 键等已有显式仲裁场景，也不会抢先处理 O/U 独立 skeleton。
