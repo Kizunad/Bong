@@ -2,22 +2,19 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { validateAgentCommandV1Contract } from "../src/agent-command.js";
-import { CraftOutcomeV1, RecipeUnlockedV1 } from "../src/craft.js";
-import { ElderEncounterEventV1 } from "../src/elder-encounter.js";
-import { MeridianSeveredEventV1 } from "../src/meridian-severed.js";
 import { validateNarrationV1Contract } from "../src/narration.js";
-import { FactionWarEventV1, NamedFactionStateV1 } from "../src/npc.js";
-import { SkillLvUpPayloadV1 } from "../src/skill.js";
-import { TuikeAshDecayV1 } from "../src/tuike-v2.js";
 import { validateWorldStateV1Contract } from "../src/world-state.js";
+import * as schemaExports from "../src/index.js";
 import {
   assertGeneratedSchemasFresh,
   GENERATED_DIR,
@@ -25,9 +22,105 @@ import {
   renderGeneratedSchemas,
   writeGeneratedSchemas,
 } from "../src/generated-artifacts.js";
-import { GENERATED_SCHEMA_FILES } from "../src/schema-registry.js";
+import { GENERATED_SCHEMA_FILES, SCHEMA_REGISTRY } from "../src/schema-registry.js";
 
 const tempDirs: string[] = [];
+const TIANDAO_SOURCE_DIR = join(import.meta.dirname, "../../tiandao/src");
+
+// These runtime validators are not server -> Tiandao public Redis consumers.
+const RUNTIME_VALIDATOR_EXEMPTIONS: Readonly<Record<string, string>> = {
+  validateAgentCommandV1Contract: "Tiandao produces commands for the server.",
+  validateNarrationV1Contract: "Tiandao produces narration for the server/client.",
+  validateCarrierImpactEventV1Contract: "Tiandao-local combat narration input, not a public server Redis wire.",
+  validateProjectileDespawnedEventV1Contract: "Tiandao-local combat narration input, not a public server Redis wire.",
+  validateMultiShotEventV1Contract: "Tiandao-local combat narration input, not a public server Redis wire.",
+  validateQiInjectionEventV1Contract: "Tiandao-local combat narration input, not a public server Redis wire.",
+  validateEchoFractalEventV1Contract: "Tiandao-local combat narration input, not a public server Redis wire.",
+  validateCarrierAbrasionEventV1Contract: "Tiandao-local combat narration input, not a public server Redis wire.",
+  validateContainerSwapEventV1Contract: "Tiandao-local combat narration input, not a public server Redis wire.",
+  validateAntidoteResultEventV1Contract: "Tiandao-local gameplay narration input, not a public server Redis wire.",
+  validateFactionStateV1Contract: "Tiandao internal state contract, not a public server Redis wire.",
+  validateHalfStepRechallengeTriggerPayloadV1Contract: "Tiandao internal trigger payload, not a public server Redis wire.",
+  validateAgentUiResponsePayloadV1Contract: "Tiandao UI response output, not a server Redis input.",
+  validateVortexBackfireEventV1Contract: "Tiandao-local narration input, not a public server Redis wire.",
+  validateProjectileQiDrainedEventV1Contract: "Tiandao-local narration input, not a public server Redis wire.",
+  validateWoliuSkillCastV1Contract: "Tiandao-local narration input, not a public server Redis wire.",
+  validateWoliuBackfireV1Contract: "Tiandao-local narration input, not a public server Redis wire.",
+  validateTurbulenceFieldV1Contract: "Tiandao-local narration input, not a public server Redis wire.",
+};
+
+function sourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") ? [path] : [];
+  });
+}
+
+function discoverCalledSchemaValidators(directory: string): Set<string> {
+  const found = new Set<string>();
+  for (const path of sourceFiles(directory)) {
+    const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
+    const imports = new Map<string, string>();
+    for (const statement of source.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) ||
+          statement.moduleSpecifier.text !== "@bong/schema" || !statement.importClause?.namedBindings ||
+          !ts.isNamedImports(statement.importClause.namedBindings)) continue;
+      for (const element of statement.importClause.namedBindings.elements) {
+        const imported = (element.propertyName ?? element.name).text;
+        if (/^validate[A-Za-z0-9]+V1Contract$/.test(imported)) imports.set(element.name.text, imported);
+      }
+    }
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const imported = imports.get(node.expression.text);
+        if (imported) found.add(imported);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  return found;
+}
+
+function exportName(validator: string): string {
+  return validator.replace(/^validate/, "").replace(/Contract$/, "");
+}
+function fileName(name: string): string {
+  return `${name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2").toLowerCase()}.json`;
+}
+function runtimeErrors(validators: ReadonlySet<string>, registry: Readonly<Record<string, unknown>>,
+  exports: Readonly<Record<string, unknown>>, exemptions: Readonly<Record<string, string>>): string[] {
+  const errors: string[] = [];
+  for (const validator of validators) {
+    if (validator in exemptions) {
+      if (!exemptions[validator]?.trim()) errors.push(`${validator}: exemption requires a reason`);
+      continue;
+    }
+    const name = exportName(validator), file = fileName(name), contract = exports[name];
+    if (contract === undefined) errors.push(`${validator}: missing schema export ${name}`);
+    else if (!(file in registry)) errors.push(`${validator}: missing ${file}`);
+    else if (registry[file] !== contract) errors.push(`${validator}: ${file} maps to wrong schema`);
+  }
+  for (const exemption of Object.keys(exemptions)) if (!validators.has(exemption)) errors.push(`${exemption}: stale exemption`);
+  return errors;
+}
+const GENERATED_IDENTITY_EXCEPTIONS: Readonly<Record<string, string>> = {
+  "anticheat-report-v1.json": "antiCheatReportV1",
+  "halfstep-rechallenge-trigger-payload-v1.json": "halfStepRechallengeTriggerPayloadV1",
+  "dugu-antidote-result-v1.json": "antidoteResultV1",
+  "dugu-antidote-result-event-v1.json": "antidoteResultEventV1",
+};
+function registryName(file: string): string {
+  const stem = file.replace(/\.json$/, "");
+  return stem.replace(/-([a-z0-9])/g, (_, letter: string) => letter.toUpperCase());
+}
+function identityErrors(registry: Readonly<Record<string, unknown>>, canonical: Readonly<Record<string, unknown>>): string[] {
+  return Object.entries(registry).flatMap(([file, contract]) => {
+    const name = GENERATED_IDENTITY_EXCEPTIONS[file] ?? registryName(file);
+    return canonical[name] === contract ? [] : [`${file}: wrong schema identity (${name})`];
+  });
+}
 
 function createTempDir(): string {
   const directory = mkdtempSync(join(tmpdir(), "bong-schema-"));
@@ -95,27 +188,37 @@ describe("generated schema freshness gate", () => {
     }
   });
 
-  it("registers every runtime-consumed server-to-agent Redis V1 contract", () => {
-    const runtimeContracts = {
-      "craft-outcome-v1.json": CraftOutcomeV1,
-      "elder-encounter-event-v1.json": ElderEncounterEventV1,
-      "faction-war-event-v1.json": FactionWarEventV1,
-      "meridian-severed-event-v1.json": MeridianSeveredEventV1,
-      "named-faction-state-v1.json": NamedFactionStateV1,
-      "recipe-unlocked-v1.json": RecipeUnlockedV1,
-      "skill-lv-up-payload-v1.json": SkillLvUpPayloadV1,
-      "tuike-ash-decay-v1.json": TuikeAshDecayV1,
-    } as const;
+  it("discovers called Tiandao runtime V1 validators and checks registry identity", () => {
+    const validators = discoverCalledSchemaValidators(TIANDAO_SOURCE_DIR);
+    expect(validators.size).toBeGreaterThan(0);
+    expect(runtimeErrors(validators, GENERATED_SCHEMA_FILES, schemaExports, RUNTIME_VALIDATOR_EXEMPTIONS)).toEqual([]);
+  });
 
-    for (const [fileName, contract] of Object.entries(runtimeContracts)) {
-      expect(
-        GENERATED_SCHEMA_FILES[fileName as keyof typeof GENERATED_SCHEMA_FILES],
-        `${fileName} is consumed by Tiandao runtime and must remain freshness-gated`,
-      ).toBe(contract);
-      expect(renderGeneratedSchemas()[fileName], `${fileName} must be rendered`).toBe(
-        `${JSON.stringify(contract, null, 2)}\n`,
-      );
-    }
+  it("reports missing and wrong runtime mappings", () => {
+    const validators = new Set(["validateCraftOutcomeV1Contract"]), contract = {};
+    expect(runtimeErrors(validators, {}, { CraftOutcomeV1: contract }, {})).toEqual([
+      "validateCraftOutcomeV1Contract: missing craft-outcome-v1.json",
+    ]);
+    expect(runtimeErrors(validators, { "craft-outcome-v1.json": {} }, { CraftOutcomeV1: contract }, {})).toEqual([
+      "validateCraftOutcomeV1Contract: craft-outcome-v1.json maps to wrong schema",
+    ]);
+  });
+
+  it("requires justified live exemptions and excludes test-only calls", () => {
+    const directory = createTempDir();
+    writeFileSync(join(directory, "runtime.ts"), 'import { validateFooV1Contract as check } from "@bong/schema"; check({});\n');
+    writeFileSync(join(directory, "ignored.test.ts"), 'import { validateBarV1Contract } from "@bong/schema"; validateBarV1Contract({});\n');
+    const validators = discoverCalledSchemaValidators(directory);
+    expect([...validators]).toEqual(["validateFooV1Contract"]);
+    expect(runtimeErrors(validators, {}, {}, { validateFooV1Contract: "not public wire" })).toEqual([]);
+    expect(runtimeErrors(validators, {}, {}, { validateFooV1Contract: "" })).toEqual(["validateFooV1Contract: exemption requires a reason"]);
+    expect(runtimeErrors(new Set(), {}, {}, { validateFooV1Contract: "reason" })).toEqual(["validateFooV1Contract: stale exemption"]);
+  });
+
+  it("verifies filename-to-schema identity for every generated file", () => {
+    expect(identityErrors(GENERATED_SCHEMA_FILES, SCHEMA_REGISTRY)).toEqual([]);
+    const contract = {};
+    expect(identityErrors({ "wrong-v1.json": contract }, { rightV1: {} })).toEqual(["wrong-v1.json: wrong schema identity (wrongV1)"]);
   });
 
   it("fails freshness when a runtime-consumed contract artifact is missing", () => {
