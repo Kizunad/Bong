@@ -38,7 +38,7 @@ impl KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 48] = [
+const TECHNIQUE_IDS: [&str; 49] = [
     "sword.cleave",
     "sword.thrust",
     "sword.parry",
@@ -87,6 +87,7 @@ const TECHNIQUE_IDS: [&str; 48] = [
     "npc.heal_basic",
     "npc.buff_speed",
     "npc.buff_defense",
+    "morph.yixing",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -136,7 +137,7 @@ const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
     },
 ];
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
     TechniqueDefinition {
         id: "sword.cleave",
         display_name: "劈",
@@ -985,6 +986,28 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         icon_texture: "bong:textures/gui/skill/npc_buff_defense.png",
         category: SkillCategory::Buff,
     },
+    // plan-race-system-v1 P4 —— 易形：手动 cast 幂等切换（已易形时再次施放=解除，见
+    // `body_plan::MorphState` 消费点 `network::client_request_handler` cast 结算）。
+    // `required_race: Any`——非人形种族也要能学易形回人形，否则自相矛盾（决议 §5）；
+    // `required_meridians` 留空——本技能真正的经脉前置走专属
+    // `body_plan::form_anchors_open` 门（本体 `MeridianProfile` 内全部 `FormAnchor`
+    // 经脉，见 `technique_requires_form_anchor`），而不是这张通用表。
+    TechniqueDefinition {
+        id: "morph.yixing",
+        display_name: "易形",
+        grade: "rare",
+        description: "重塑己身经络流转之形，暂借他相外壳，任督二脉需先行贯通方可施为。",
+        required_realm: "Solidify",
+        required_meridians: &[],
+        qi_cost: 40.0,
+        required_race: RaceGate::Any,
+        stamina_cost: 20.0,
+        cast_ticks: 60,
+        cooldown_ticks: 600,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/morph_yixing.png",
+        category: SkillCategory::Buff,
+    },
 ];
 
 const NPC_HEAL_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
@@ -1116,10 +1139,10 @@ mod tests {
     }
 
     #[test]
-    fn dev_default_has_all_47() {
+    fn dev_default_has_all_49() {
         // plan-shield-block-v1 P4: shield_block 加入后总数升至 48
         let dev = KnownTechniques::dev_default();
-        assert_eq!(dev.entries.len(), 48);
+        assert_eq!(dev.entries.len(), 49);
         assert!(dev
             .entries
             .iter()
@@ -1475,7 +1498,7 @@ mod tests {
         "sword_path.heaven_gate",
     ];
 
-    const ANY_GATED_SKILL_IDS: [&str; 20] = [
+    const ANY_GATED_SKILL_IDS: [&str; 21] = [
         "movement.dash",
         "zhenmai.parry",
         "zhenmai.neutralize",
@@ -1496,6 +1519,7 @@ mod tests {
         "npc.heal_basic",
         "npc.buff_speed",
         "npc.buff_defense",
+        "morph.yixing",
     ];
 
     #[test]
@@ -1514,7 +1538,7 @@ mod tests {
 
     #[test]
     fn any_gated_skill_ids_pin_20_entries_exhaustively() {
-        assert_eq!(ANY_GATED_SKILL_IDS.len(), 20);
+        assert_eq!(ANY_GATED_SKILL_IDS.len(), 21);
         for id in ANY_GATED_SKILL_IDS {
             let def = technique_definition(id)
                 .unwrap_or_else(|| panic!("expected a definition for {id}"));
@@ -1540,9 +1564,9 @@ mod tests {
         let union: std::collections::BTreeSet<&str> = humanoid.union(&any).copied().collect();
         assert_eq!(
             all_ids, union,
-            "两份清单合并必须恰好覆盖全部 48 条存量功法，无遗漏无多余"
+            "两份清单合并必须恰好覆盖全部 49 条存量功法，无遗漏无多余"
         );
-        assert_eq!(TECHNIQUE_DEFINITIONS.len(), 48);
+        assert_eq!(TECHNIQUE_DEFINITIONS.len(), 49);
     }
 
     /// plan-race-system-v1 P3a —— 交叉一致性：`required_race.allows(...)` 是习得门

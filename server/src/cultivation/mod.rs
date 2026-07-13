@@ -235,6 +235,9 @@ pub fn register(app: &mut App) {
     crate::dandao::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
     crate::cultivation::dugu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // plan-race-system-v1 P4：morph.yixing 无经脉前置表条目（专属 form_anchors_open
+    // 门在别处判定），显式声明空 deps 以满足审计完整性不变量。
+    crate::body_plan::morph::declare_meridian_dependencies(&mut skill_meridian_dependencies);
 
     // plan-race-system-v1 P1b：`MeridianTopology` 不再是全局单例 Resource——拓扑数据
     // 按实体解析出的 BodyPlan 现场派生（见 `body_plan::resolve_meridian_topology_for_target`）。

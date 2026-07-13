@@ -55,6 +55,9 @@ type CultivationDetailEmitQueryItem<'a> = (
     Option<&'a QiColor>,
     Option<&'a PracticeLog>,
     Option<&'a MeridianTarget>,
+    // plan-race-system-v1 P4 —— 当前易形形态，供 Form purpose 解析 + `form_race_id`
+    // 快照使用（见下方 `resolve_inputs`）。
+    Option<&'a crate::body_plan::MorphState>,
 );
 
 pub fn emit_cultivation_detail_payloads(
@@ -84,6 +87,7 @@ pub fn emit_cultivation_detail_payloads(
         qi_color,
         practice_log,
         meridian_target,
+        morph_state,
     ) in &mut clients
     {
         let channel_count = meridians.regular.len() + meridians.extraordinary.len();
@@ -116,6 +120,7 @@ pub fn emit_cultivation_detail_payloads(
         let resolve_inputs = BodyPlanResolveInputs {
             cultivation: Some(cultivation),
             beast_kind: None,
+            morph_state,
         };
         let intrinsic_plan = resolve_body_plan_for_target(
             entity,
@@ -128,10 +133,9 @@ pub fn emit_cultivation_detail_payloads(
         let intrinsic_is_humanoid = intrinsic_plan.is_humanoid;
 
         // plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：
-        // client gate 判定（装备置灰等）的权威真源。`Form` purpose 在 P4 `MorphState`
-        // 落地前与 `Intrinsic` 恒等（见 `body_plan::resolve` 模块文档），故当前
-        // form_* 三字段必然 = 对应本体字段；P4 落地 MorphState 后本处无需改动，
-        // resolve 入口会自动切换到真实易形态数据。
+        // client gate 判定（装备置灰等）的权威真源。`Form` purpose 未易形（无
+        // `MorphState`）时与 `Intrinsic` 恒等；P4 `MorphState` 落地后 `resolve_inputs`
+        // 携带真实组件，本处随之切到易形态数据，无需再改动。
         let form_plan = resolve_body_plan_for_target(
             entity,
             BodyPlanPurpose::Form,
@@ -142,9 +146,12 @@ pub fn emit_cultivation_detail_payloads(
         let form_body_plan_id = form_plan.id.as_str().to_string();
         let form_is_humanoid = form_plan.is_humanoid;
         let race_id = cultivation.race.as_str().to_string();
-        // 未易形时 form_race_id = race_id；`Cultivation.race` 是本体权威真源，
-        // Form purpose 尚未接入独立 race 追踪（P4 `MorphState` 落地时同步补齐）。
-        let form_race_id = race_id.clone();
+        // plan-race-system-v1 P4 —— 未易形（`morph_state = None`）时 form_race_id =
+        // race_id（本体权威真源）；已易形时权威真源改为 `MorphState.form`——修复此前
+        // "form_race_id 恒等于本体 race_id" 的假 Form 身份 bug。
+        let form_race_id = morph_state
+            .map(|m| m.form.as_str().to_string())
+            .unwrap_or_else(|| race_id.clone());
 
         let contamination_total = contamination
             .map(|c| c.entries.iter().map(|e| e.amount).sum::<f64>())
@@ -258,6 +265,7 @@ pub fn emit_body_plan_layout_payloads(
             BodyPlanResolveInputs {
                 cultivation,
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans.as_deref(),
             races.as_deref(),
@@ -748,6 +756,42 @@ mod cultivation_detail_identity_snapshot_tests {
         assert_eq!(
             form_race_id, "whale",
             "form_race_id 必须跟随本体 race_id（未易形态）"
+        );
+    }
+
+    /// plan-race-system-v1 P4（决议 §风险#1 修复锁定）—— 已易形（`MorphState` 在场）
+    /// 时，`form_race_id` 必须跟随 `MorphState.form`，**不再**恒等于本体 `race_id`。
+    /// 这条测试直接锁死此前"form_race_id 恒等于本体 Cultivation.race"的 bug 不回归。
+    #[test]
+    fn morph_state_present_overrides_form_race_id_away_from_intrinsic_race() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: EMIT_INTERVAL_TICKS,
+        });
+        app.init_resource::<CultivationDetailEmitState>();
+        app.add_systems(Update, emit_cultivation_detail_payloads);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn((
+            client_bundle,
+            MeridianSystem::default(),
+            Cultivation::default(),
+            crate::body_plan::MorphState::new(
+                crate::body_plan::types::RaceId::new("whale"),
+                0,
+                EMIT_INTERVAL_TICKS,
+            ),
+        ));
+
+        let payloads = run_once_and_collect_cultivation_detail(&mut app, &mut helper);
+        assert_eq!(payloads.len(), 1);
+        let (race_id, form_race_id, _, _, _) = &payloads[0];
+        assert_eq!(
+            race_id, "human",
+            "本体 race_id 不因易形改变（human 仍是 Cultivation.race 真源）"
+        );
+        assert_eq!(
+            form_race_id, "whale",
+            "已易形时 form_race_id 必须跟随 MorphState.form，而不是继续冒用本体 race_id"
         );
     }
 }

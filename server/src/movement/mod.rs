@@ -247,6 +247,7 @@ fn apply_movement_speed_system(
             crate::body_plan::BodyPlanResolveInputs {
                 cultivation,
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans.as_deref(),
             races.as_deref(),
@@ -379,6 +380,7 @@ fn handle_movement_action_intents(
             crate::body_plan::BodyPlanResolveInputs {
                 cultivation,
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans.as_deref(),
             races.as_deref(),

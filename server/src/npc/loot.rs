@@ -195,6 +195,8 @@ pub fn daozhan_loot_for_tier(tier: DaoZhangLootTier) -> Vec<NpcLootEntry> {
             // 破碎法宝（化虚/通灵修士遗存）
             NpcLootEntry::new("broken_artifact", 0.12),
             NpcLootEntry::new("broken_artifact_scroll", 0.06),
+            // plan-race-system-v1 P4 — 易形残卷（高境遗骸偶携异形传承）。
+            NpcLootEntry::new("yixing_scroll", 0.03),
             // 骨币
             NpcLootEntry::new("item.bone_coin", 0.5).with_stack(2, 10),
         ],
@@ -456,6 +458,96 @@ mod tests {
                 .iter()
                 .any(|e| e.template_id == "broken_artifact_scroll"),
             "High 档道伥应掉 broken_artifact_scroll"
+        );
+    }
+
+    /// plan-race-system-v1 P4（掉落入口 1）—— yixing_scroll 必须出现在 High 档道伥
+    /// 掉落表，且 chance 落在 (0,1) 合法区间（不是误配的 0/1 常量）。
+    #[test]
+    fn daozhan_loot_high_tier_has_yixing_scroll() {
+        let entries = daozhan_loot_for_tier(DaoZhangLootTier::High);
+        let entry = entries
+            .iter()
+            .find(|e| e.template_id == "yixing_scroll")
+            .expect("High 档道伥应掉 yixing_scroll（易形功法残卷）");
+        assert!(
+            entry.chance > 0.0 && entry.chance < 1.0,
+            "yixing_scroll chance 应为合理小概率，实际 {}",
+            entry.chance
+        );
+    }
+
+    /// plan-race-system-v1 P4 —— 真实产出集成测试：真实 `assets/items/*.toml`
+    /// ItemRegistry 加载 `yixing_scroll`（证明 TOML 数据落地且 technique_scroll_spec
+    /// 指向 morph.yixing）→ 走与 `daozhan_death_loot_system` 同一条
+    /// `build_fauna_item_instance` 工厂链路生成 `ItemInstance` → 经
+    /// `add_item_to_player_inventory` 装入玩家背包容器（"开容器→背包出现"）。
+    /// 全程走生产真实数据文件，不是手搓 fixture 掩盖。
+    #[test]
+    fn yixing_scroll_loot_produces_real_item_landing_in_player_inventory() {
+        use crate::fauna::drop::build_fauna_item_instance;
+        use crate::inventory::{
+            add_item_to_player_inventory, load_item_registry, ContainerState,
+            InventoryInstanceIdAllocator, InventoryRevision, PlayerInventory,
+        };
+        use std::collections::HashMap;
+
+        let registry = load_item_registry().expect("real assets/items/*.toml must load");
+        let template = registry
+            .get("yixing_scroll")
+            .expect("yixing_scroll must be registered from assets/items/morph_scrolls.toml");
+        assert_eq!(
+            template
+                .technique_scroll_spec
+                .as_ref()
+                .map(|spec| spec.skill_id.as_str()),
+            Some("morph.yixing"),
+            "yixing_scroll 必须教授 morph.yixing"
+        );
+
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let item =
+            build_fauna_item_instance("yixing_scroll", 1, 0, &registry, None, &mut allocator)
+                .expect(
+                    "yixing_scroll must instantiate via the real daozhan death-loot factory chain",
+                );
+        assert_eq!(item.template_id, "yixing_scroll");
+
+        let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                quick_access: false,
+                id: "main_pack".to_string(),
+                name: "主背包".to_string(),
+                rows: 4,
+                cols: 4,
+                items: Vec::new(),
+                owner_instance_id: None,
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        };
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "yixing_scroll",
+            1,
+            0,
+        )
+        .expect("granting yixing_scroll into an empty backpack must succeed");
+
+        let found = inventory
+            .containers
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .any(|placed| placed.instance.template_id == "yixing_scroll");
+        assert!(
+            found,
+            "开容器后背包必须出现 yixing_scroll——真实产出链路未落地"
         );
     }
 

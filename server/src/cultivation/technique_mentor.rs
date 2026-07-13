@@ -102,6 +102,7 @@ pub fn mentor_teaches_technique(
         ctx.technique_id,
         0.0,
         intrinsic_is_humanoid,
+        None,
     );
     if !matches!(outcome, ScrollReadOutcome::Learned) {
         return MentorOutcome::LearnBlocked(outcome);

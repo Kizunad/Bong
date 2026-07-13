@@ -637,6 +637,33 @@ export const ServerDataRaceGateMetaV1 = Type.Object(
 );
 export type ServerDataRaceGateMetaV1 = Static<typeof ServerDataRaceGateMetaV1>;
 
+// ─── plan-race-system-v1 P4：MorphState（易形状态快照） ──────────────
+// `mode`："full"（join 首帧全量替换 + 周期 sync）| "delta"（易形/解除瞬间半径广播，
+// `active=false` 的 entry 表示 client 应从本地缓存删除该 entity_id）。本 schema 只
+// 保证 server↔proto_min bot 契约对拍；client 渲染消费属 PR-5b 范围。
+export const MorphStateEntryV1 = Type.Object(
+  {
+    entity_id: Type.Integer(),
+    model_kind: Type.Integer({ minimum: 0 }),
+    form_race_id: Type.String(),
+    form_body_plan_id: Type.String(),
+    active: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type MorphStateEntryV1 = Static<typeof MorphStateEntryV1>;
+
+export const ServerDataMorphStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("morph_state"),
+    mode: Type.Union([Type.Literal("full"), Type.Literal("delta")]),
+    entries: Type.Array(MorphStateEntryV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataMorphStateV1 = Static<typeof ServerDataMorphStateV1>;
+
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -2010,6 +2037,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataRemainsSyncV1,
   ServerDataBodyPlanLayoutV1,
   ServerDataRaceGateMetaV1,
+  ServerDataMorphStateV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,

@@ -137,6 +137,58 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["rows"], 3)
         self.assertEqual(decoded["cols"], 4)
 
+    def test_proto_morph_state_full_payload_decodes(self):
+        # plan-race-system-v1 P4 — field 142，mode="full"，一条 active=true entry。
+        decoded = decode_server_data_payload(
+            _server_data_morph_state_bytes(
+                mode="full",
+                entity_id=42,
+                model_kind=1,
+                form_race_id="whale",
+                form_body_plan_id="whale",
+                active=True,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "morph_state")
+        self.assertEqual(decoded["mode"], "full")
+        self.assertEqual(len(decoded["entries"]), 1)
+        entry = decoded["entries"][0]
+        self.assertEqual(entry["entity_id"], 42)
+        self.assertEqual(entry["model_kind"], 1)
+        self.assertEqual(entry["form_race_id"], "whale")
+        self.assertEqual(entry["form_body_plan_id"], "whale")
+        self.assertTrue(entry["active"])
+
+    def test_proto_morph_state_delta_release_payload_decodes(self):
+        # mode="delta" + active=false —— 客户端应据此从本地缓存删除该 entity_id。
+        decoded = decode_server_data_payload(
+            _server_data_morph_state_bytes(
+                mode="delta",
+                entity_id=42,
+                model_kind=0,
+                form_race_id="",
+                form_body_plan_id="",
+                active=False,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "morph_state")
+        self.assertEqual(decoded["mode"], "delta")
+        entry = decoded["entries"][0]
+        self.assertEqual(entry["entity_id"], 42)
+        self.assertFalse(entry["active"])
+
+    def test_proto_morph_state_empty_entries_decodes(self):
+        # 未易形 / 无实体时的常态：entries 为空，不应报错或返回 None。
+        payload = _pb_message(
+            142,
+            _pb_varint(1, 1) + _pb_string(2, "full"),
+        )
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "morph_state")
+        self.assertEqual(decoded["entries"], [])
+
 
 class InventoryHelperTest(unittest.TestCase):
     def test_latest_inventory_snapshot_uses_newest_history(self):
@@ -327,6 +379,28 @@ def _server_data_loot_container_open_bytes() -> bytes:
         + _pb_varint(4, 4)
     )
     return _pb_message(119, open_payload)
+
+
+def _server_data_morph_state_bytes(
+    *,
+    mode: str,
+    entity_id: int,
+    model_kind: int,
+    form_race_id: str,
+    form_body_plan_id: str,
+    active: bool,
+) -> bytes:
+    """plan-race-system-v1 P4 — field 142 `morph_state`（见 proto/bong/common.proto
+    `MorphState`/`MorphStateEntry`）。"""
+    entry = (
+        _pb_varint(1, entity_id)
+        + _pb_varint(2, model_kind)
+        + _pb_string(3, form_race_id)
+        + _pb_string(4, form_body_plan_id)
+        + _pb_varint(5, 1 if active else 0)
+    )
+    state = _pb_varint(1, 1) + _pb_string(2, mode) + _pb_message(3, entry)
+    return _pb_message(142, state)
 
 
 def _pb_key(field: int, wire: int) -> bytes:

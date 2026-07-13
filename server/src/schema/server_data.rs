@@ -158,6 +158,7 @@ pub enum ServerDataType {
     RemainsSync,
     BodyPlanLayout,
     RaceGateMeta,
+    MorphState,
     BotanyHarvestProgress,
     BotanyPlantV2RenderProfiles,
     MiningProgress,
@@ -410,6 +411,8 @@ pub enum ServerDataPayloadV1 {
     /// required_race），join 首帧一次性下发，client 缓存后离线判置灰（见
     /// `RaceGateMetaV1` 文档）。
     RaceGateMeta(RaceGateMetaV1),
+    /// plan-race-system-v1 P4 —— 易形状态快照（见 `MorphStateV1` 文档）。
+    MorphState(MorphStateV1),
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -1657,6 +1660,10 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         meta: RaceGateMetaV1,
     },
+    MorphState {
+        #[serde(flatten)]
+        state: MorphStateV1,
+    },
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -2380,6 +2387,43 @@ pub struct RaceGateMetaV1 {
     pub technique_required_race: Vec<RaceGateMetaEntryV1>,
 }
 
+/// plan-race-system-v1 P4 —— 单个实体的易形状态快照（proto field 142 `morph_state`）。
+///
+/// `active = false` 专用于 `mode = "delta"` 广播——实体解除易形时下发一条
+/// `active=false` 的 entry，client 收到即从本地易形态缓存里删除该 entity_id（不携带
+/// 完整字段语义，`model_kind`/`form_race_id`/`form_body_plan_id` 在 `active=false`
+/// 时恒为空/0，仅 `entity_id`/`active` 有意义）。`mode = "full"`（join / 周期 sync）时
+/// 只包含当前处于 `MorphState` 的实体，`active` 恒为 `true`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MorphStateEntryV1 {
+    /// Valence entity id（client 通过 MC entity id 定位实体，与 `daozhan_disguise` 同惯例）。
+    pub entity_id: i32,
+    pub model_kind: u32,
+    pub form_race_id: String,
+    pub form_body_plan_id: String,
+    pub active: bool,
+}
+
+/// plan-race-system-v1 P4 —— `ServerDataPayloadV1::MorphState` 载荷。
+///
+/// `mode`："full"（join 首帧全量替换 + 周期 sync）| "delta"（易形解除瞬间半径广播，
+/// 只携带发生变化的 entity，`active=false` 表示删除）。本 PR 只保证 payload 能被
+/// `proto_min` bot 解码（PR-5b 负责 client 渲染消费）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MorphStateV1 {
+    // 注：本结构体刻意不携带独立 `v` 字段——`v` 由外层 `ServerDataV1.v`（信封版本号）
+    // 提供，`#[serde(flatten)]` 进 `ServerDataPayloadWireV1::MorphState` 时若本结构体
+    // 也声明 `v` 会与外层字段名撞车（`RaceGateMetaV1` 同一惯例，同理无 `v` 字段）。
+    // proto `bong::MorphState.v` 字段是 proto message 自身的 schema 版本号，由
+    // `proto_convert::server_data_to_proto_payload` 直接常量填 `1`，不经由本结构体。
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub entries: Vec<MorphStateEntryV1>,
+}
+
 /// plan-race-system-v1 P2a — `BodyPlanLayoutV1` 的坐标点，归一化到 `[0,1]`（原点 =
 /// 布局画布左上角）。同一类型既用作磁盘 `layouts/*.json` 的数据源，也直接是
 /// wire payload 的字段（无独立域模型/wire 模型两份拷贝，仿 `RemainsEntryV1` 先例）。
@@ -2855,6 +2899,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::RemainsSync { remains } => Ok(Self::RemainsSync(remains)),
             ServerDataPayloadWireV1::BodyPlanLayout { layout } => Ok(Self::BodyPlanLayout(layout)),
             ServerDataPayloadWireV1::RaceGateMeta { meta } => Ok(Self::RaceGateMeta(meta)),
+            ServerDataPayloadWireV1::MorphState { state } => Ok(Self::MorphState(state)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -3471,6 +3516,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 layout: layout.clone(),
             },
             ServerDataPayloadV1::RaceGateMeta(meta) => Self::RaceGateMeta { meta: meta.clone() },
+            ServerDataPayloadV1::MorphState(state) => Self::MorphState {
+                state: state.clone(),
+            },
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -4170,6 +4218,7 @@ impl ServerDataPayloadV1 {
             Self::RemainsSync(..) => ServerDataType::RemainsSync,
             Self::BodyPlanLayout(..) => ServerDataType::BodyPlanLayout,
             Self::RaceGateMeta(..) => ServerDataType::RaceGateMeta,
+            Self::MorphState(..) => ServerDataType::MorphState,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
@@ -4335,6 +4384,7 @@ impl ServerDataPayloadV1 {
             Self::RemainsSync(..) => false,
             Self::BodyPlanLayout(..) => false,
             Self::RaceGateMeta(..) => false,
+            Self::MorphState(..) => false,
             Self::BotanyHarvestProgress { .. } => false,
             Self::BotanyPlantV2RenderProfiles(..) => false,
             Self::MiningProgress { .. } => false,
