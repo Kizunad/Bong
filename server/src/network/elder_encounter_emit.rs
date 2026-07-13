@@ -30,14 +30,14 @@ use valence::client::ClientMarker;
 use valence::entity::EntityId;
 use valence::ident;
 use valence::prelude::{
-    App, Client, Entity, EventReader, IntoSystemConfigs, Position, Query, Res, Update, With,
-    Without,
+    bevy_ecs, App, Client, Commands, Component, Entity, EventReader, IntoSystemConfigs, Position,
+    Query, Res, Update, With, Without,
 };
 
 use crate::fauna::dying_elder::{
-    dying_elder_death_system, dying_elder_give_dan_system, DyingElderAppearedEvent,
-    DyingElderBlackboard, DyingElderDeathProcessed, DyingElderState, GiveDanToElderIntent,
-    DYING_ELDER_DAN_THRESHOLD,
+    dying_elder_betray_system, dying_elder_death_system, dying_elder_drain_system,
+    dying_elder_give_dan_system, DyingElderAppearedEvent, DyingElderBlackboard, DyingElderState,
+    GiveDanToElderIntent, DYING_ELDER_DAN_THRESHOLD,
 };
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
@@ -121,6 +121,13 @@ type DyingElderQuery<'w, 's> = Query<
     ),
     (With<NpcMarker>, Without<ClientMarker>),
 >;
+
+/// 已向在场客户端推送过垂死大能死亡事件。
+///
+/// 真元释放失败时 `DyingElderDeathProcessed` 会故意保持缺失以允许下一 tick 重试；
+/// 客户端通知必须使用独立 marker，避免同一死亡每 tick 重播。
+#[derive(Component, Debug, Clone, Copy)]
+pub(crate) struct DyingElderDeathS2cBroadcast;
 
 // ── S2C appeared 系统 ─────────────────────────────────────────────────────────
 
@@ -228,15 +235,16 @@ pub(crate) fn elder_encounter_s2c_dan_received_system(
 /// plan-dying-elder-v1 B1 — 大能死亡时向同 zone 玩家推送 `bong:elder_encounter` 死亡事件。
 ///
 /// 在 `dying_elder_death_system`（含 `DyingElderDeathProcessed` 标记）之前运行，
-/// 检测本 tick 刚进入 Dead 状态且尚未处理的大能。
+/// 检测本 tick 刚进入 Dead 状态且尚未推送死亡通知的大能。
 #[allow(clippy::type_complexity)]
 pub(crate) fn elder_encounter_s2c_death_system(
+    mut commands: Commands,
     elders: Query<
         (Entity, &EntityId, &DyingElderBlackboard, &DyingElderState),
         (
             With<NpcMarker>,
             Without<ClientMarker>,
-            Without<DyingElderDeathProcessed>,
+            Without<DyingElderDeathS2cBroadcast>,
         ),
     >,
     mut players: PlayerQuery<'_, '_>,
@@ -272,6 +280,7 @@ pub(crate) fn elder_encounter_s2c_death_system(
             continue;
         };
         send_to_players_in_zone(&mut players, &bb.home_zone, &zones, &bytes);
+        commands.entity(entity).insert(DyingElderDeathS2cBroadcast);
         tracing::info!(
             "[bong][elder_encounter_emit] S2C death → entity={:?} protocol_id={} zone='{}' kind={:?} tick={tick}",
             entity,
@@ -288,14 +297,17 @@ pub(crate) fn elder_encounter_s2c_death_system(
 ///
 /// - `elder_encounter_s2c_appear_system`：与 P3 appear event 同步运行
 /// - `elder_encounter_s2c_dan_received_system`：在 `give_dan_system` 之后运行
-/// - `elder_encounter_s2c_death_system`：在 `death_system` 之前运行
+/// - `elder_encounter_s2c_death_system`：状态生产者之后、`death_system` 之前运行
 pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
             elder_encounter_s2c_appear_system,
             elder_encounter_s2c_dan_received_system.after(dying_elder_give_dan_system),
-            elder_encounter_s2c_death_system.before(dying_elder_death_system),
+            elder_encounter_s2c_death_system
+                .after(dying_elder_drain_system)
+                .after(dying_elder_betray_system)
+                .before(dying_elder_death_system),
         ),
     );
 }
@@ -367,6 +379,77 @@ mod tests {
         assert!(
             json_n.contains("dead_natural"),
             "expected DeadNatural kind to serialize as 'dead_natural' for client routing, actual: {json_n}"
+        );
+    }
+
+    #[test]
+    fn death_s2c_broadcasts_once_while_settlement_remains_unprocessed() {
+        use valence::entity::EntityId;
+        use valence::prelude::{App, Client, DVec3, Position, Update};
+        use valence::protocol::packets::play::CustomPayloadS2c;
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_systems(Update, elder_encounter_s2c_death_system);
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].name = "tsy_deep".to_string();
+        app.insert_resource(zones);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut()
+            .spawn(client_bundle)
+            .insert(Position::new([0.0, 64.0, 0.0]))
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        let elder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityId::default(),
+                DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0),
+                DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                },
+            ))
+            .id();
+
+        app.update();
+        app.update();
+
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush");
+        }
+
+        let payloads = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != CH_ELDER_ENCOUNTER {
+                    return None;
+                }
+                Some(
+                    serde_json::from_slice::<ElderEncounterEventV1>(packet.data.0 .0)
+                        .expect("elder death payload should decode"),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(payloads.len(), 1, "未结算死亡跨 tick 也只能推送一次 S2C");
+        assert_eq!(
+            payloads[0].event_kind,
+            ElderEncounterEventKindV1::DeadNatural
+        );
+        let elder_ref = app.world().entity(elder);
+        assert!(elder_ref.contains::<DyingElderDeathS2cBroadcast>());
+        assert!(
+            !elder_ref.contains::<crate::fauna::dying_elder::DyingElderDeathProcessed>(),
+            "测试刻意不注册死亡结算系统，确保通知幂等不依赖结算 marker"
         );
     }
 

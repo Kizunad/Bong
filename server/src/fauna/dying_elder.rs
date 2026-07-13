@@ -797,6 +797,13 @@ pub fn betray_roll(betray_probability: f64, seed: u64) -> bool {
 #[derive(Debug, Clone, Copy, Component)]
 pub struct DyingElderDeathProcessed;
 
+/// 垂死大能死亡叙事已广播。
+///
+/// 叙事发送与真元/loot 结算是两个独立副作用：结算失败时允许下一 tick 重试，
+/// 但死亡叙事只应对外广播一次。
+#[derive(Debug, Clone, Copy, Component)]
+pub struct DyingElderDeathBroadcast;
+
 // ── P2：offered_skill_id → scroll template_id 映射 ────────────────────────────
 
 /// 将地阶功法 skill_id 映射到对应的功法残卷 template_id。
@@ -960,6 +967,14 @@ pub(crate) fn dying_elder_death_system(
         };
 
         // ── 守恒：qi_release_to_zone 全额释放大能真元 ────────────────────────
+        if !bb.qi_current.is_finite() {
+            tracing::warn!(
+                "[bong][dying_elder] death_system: invalid qi_current={} for elder {:?}; keep pending for retry",
+                bb.qi_current,
+                entity,
+            );
+            continue;
+        }
         let release_amount = bb.qi_current.max(0.0);
         let elder_account = QiAccountId::npc(format!("dying_elder:{}", entity.to_bits()));
         let zone_account = QiAccountId::zone(bb.home_zone.clone());
@@ -1280,8 +1295,7 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
 
 /// plan-dying-elder-v1 P3 — 检测新进入 Dead 态的大能，向 agent 广播死亡叙事事件。
 ///
-/// 在 P2 `dying_elder_death_system` 标记 `DyingElderDeathProcessed` 之前运行（ordering: before
-/// `dying_elder_death_system`），因此检测到的是"本 tick 刚死亡、尚未处理"的大能。
+/// 本系统用 `DyingElderDeathBroadcast` 独立保证叙事幂等，不依赖死亡结算是否成功。
 ///
 /// 广播的 `event_kind` 按死亡原因区分：
 /// - `dead_by_betrayal = false` → `DeadNatural`（自然力竭 / 守信自裁）
@@ -1291,12 +1305,13 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
 /// 目前无专属路径区分，暂时统一归为 `DeadNatural`；后续如引入外部击杀标记可分档。
 #[allow(clippy::type_complexity)]
 pub(crate) fn dying_elder_p3_emit_death_event_system(
+    mut commands: Commands,
     elders: Query<
         (Entity, &EntityId, &DyingElderBlackboard, &DyingElderState),
         (
             With<NpcMarker>,
             Without<ClientMarker>,
-            Without<DyingElderDeathProcessed>,
+            Without<DyingElderDeathBroadcast>,
         ),
     >,
     redis: Option<Res<RedisBridgeResource>>,
@@ -1327,15 +1342,26 @@ pub(crate) fn dying_elder_p3_emit_death_event_system(
             qi_fraction: 0.0, // 死亡时真元耗尽
             server_tick: tick,
         };
-        let _ = redis
+        match redis
             .tx_outbound
-            .send(RedisOutbound::ElderEncounterEvent(event));
-        tracing::info!(
-            "[bong][dying_elder] P3 emit death event: entity={:?} zone='{}' kind={:?} tick={tick}",
-            entity,
-            bb.home_zone,
-            event_kind,
-        );
+            .send(RedisOutbound::ElderEncounterEvent(event))
+        {
+            Ok(()) => {
+                commands.entity(entity).insert(DyingElderDeathBroadcast);
+                tracing::info!(
+                    "[bong][dying_elder] P3 emit death event: entity={:?} zone='{}' kind={:?} tick={tick}",
+                    entity,
+                    bb.home_zone,
+                    event_kind,
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][dying_elder] P3 death event send failed for entity {:?}; retry next tick: {error}",
+                    entity,
+                );
+            }
+        }
     }
 }
 
@@ -1407,8 +1433,11 @@ pub fn register_p3(app: &mut App) {
         Update,
         (
             dying_elder_p3_emit_appear_event_system,
-            // death broadcast 在 death_system 之前运行（标记前检测）
-            dying_elder_p3_emit_death_event_system.before(dying_elder_death_system),
+            // 状态生产者完成后立即广播；结算失败重试不应重复叙事。
+            dying_elder_p3_emit_death_event_system
+                .after(dying_elder_drain_system)
+                .after(dying_elder_betray_system)
+                .before(dying_elder_death_system),
             // dan_received broadcast 在 give_dan_system 之后（状态已更新后再广播）
             dying_elder_p3_emit_dan_received_event_system.after(dying_elder_give_dan_system),
         ),
@@ -2532,6 +2561,184 @@ mod tests {
         );
         assert!(emitted.is_empty(), "失败调用不得发 transfer");
         assert!(audited.is_empty(), "失败调用不得写 audit");
+    }
+
+    #[test]
+    fn death_system_non_finite_elder_qi_remains_retryable() {
+        let (_, qi_after, processed, emitted, audited) =
+            run_death_release(Some(-0.6), f64::NAN, true);
+        assert!(qi_after.is_nan(), "非法真元不得被 max(0) 静默改写");
+        assert!(!processed, "非法真元不得封死后续修复与重试");
+        assert!(emitted.is_empty(), "非法真元不得发 transfer");
+        assert!(audited.is_empty(), "非法真元不得写 audit");
+    }
+
+    #[test]
+    fn death_broadcasts_once_while_release_retries_until_single_success() {
+        use crate::network::redis_bridge::{RedisInbound, RedisOutbound};
+        use valence::prelude::App;
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].name = "tsy_deep".to_string();
+        zones.zones[0].spirit_qi = f64::NAN;
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded::<RedisInbound>();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_systems(
+            valence::prelude::Update,
+            (
+                dying_elder_p3_emit_death_event_system,
+                dying_elder_death_system,
+            )
+                .chain(),
+        );
+
+        let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
+        bb.qi_current = 500.0;
+        let elder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityId::default(),
+                bb,
+                DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                },
+            ))
+            .id();
+
+        app.update();
+        let first = app.world().entity(elder);
+        assert!(
+            first.contains::<DyingElderDeathBroadcast>(),
+            "首次失败 tick 也必须立即记录叙事已广播"
+        );
+        assert!(
+            !first.contains::<DyingElderDeathProcessed>(),
+            "首次释放失败后结算必须保持可重试"
+        );
+        assert!(
+            (first.get::<DyingElderBlackboard>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON
+        );
+
+        app.update();
+        let second = app.world().entity(elder);
+        assert!(second.contains::<DyingElderDeathBroadcast>());
+        assert!(
+            !second.contains::<DyingElderDeathProcessed>(),
+            "连续第二次失败仍不得封死结算重试"
+        );
+        assert!(
+            (second.get::<DyingElderBlackboard>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON
+        );
+
+        app.world_mut().resource_mut::<ZoneRegistry>().zones[0].spirit_qi = -0.6;
+        app.update();
+        let succeeded = app.world().entity(elder);
+        assert!(succeeded.contains::<DyingElderDeathBroadcast>());
+        assert!(
+            succeeded.contains::<DyingElderDeathProcessed>(),
+            "zone 恢复后结算应最终成功并记录独立 marker"
+        );
+        assert!(
+            succeeded
+                .get::<DyingElderBlackboard>()
+                .unwrap()
+                .qi_current
+                .abs()
+                <= QI_EPSILON
+        );
+
+        app.update();
+        let broadcasts = std::iter::from_fn(|| rx_outbound.try_recv().ok())
+            .filter(|outbound| matches!(outbound, RedisOutbound::ElderEncounterEvent(_)))
+            .count();
+        assert_eq!(
+            broadcasts, 1,
+            "连续失败、最终成功及成功后 tick 全程只能广播一次"
+        );
+        let transfers = app.world().resource::<WorldQiAccount>().transfers();
+        assert_eq!(
+            transfers.len(),
+            2,
+            "最终成功只能落一组 accepted + overflow 两腿"
+        );
+        assert!(
+            (transfers
+                .iter()
+                .map(|transfer| transfer.amount)
+                .sum::<f64>()
+                - 500.0)
+                .abs()
+                <= QI_EPSILON,
+            "最终成功的一组两腿必须完整结算 500 真元"
+        );
+    }
+
+    #[test]
+    fn death_broadcast_send_failure_retries_before_marking_success() {
+        use crate::network::redis_bridge::{RedisInbound, RedisOutbound};
+        use valence::prelude::App;
+
+        let mut app = App::new();
+        let (failed_tx, failed_rx) = crossbeam_channel::unbounded();
+        drop(failed_rx);
+        let (_failed_in_tx, failed_in_rx) = crossbeam_channel::unbounded::<RedisInbound>();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound: failed_tx,
+            rx_inbound: failed_in_rx,
+        });
+        app.add_systems(
+            valence::prelude::Update,
+            dying_elder_p3_emit_death_event_system,
+        );
+
+        let elder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityId::default(),
+                DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0),
+                DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                },
+            ))
+            .id();
+
+        app.update();
+        assert!(
+            !app.world()
+                .entity(elder)
+                .contains::<DyingElderDeathBroadcast>(),
+            "发送失败时不得误记已广播"
+        );
+
+        let (live_tx, live_rx) = crossbeam_channel::unbounded();
+        let (_live_in_tx, live_in_rx) = crossbeam_channel::unbounded::<RedisInbound>();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound: live_tx,
+            rx_inbound: live_in_rx,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .entity(elder)
+                .contains::<DyingElderDeathBroadcast>(),
+            "bridge 恢复后应成功广播并落 marker"
+        );
+        assert!(matches!(
+            live_rx.try_recv(),
+            Ok(RedisOutbound::ElderEncounterEvent(_))
+        ));
+        assert!(live_rx.try_recv().is_err(), "恢复 tick 只能广播一次");
     }
 
     #[test]
