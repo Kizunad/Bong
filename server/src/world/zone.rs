@@ -1898,7 +1898,7 @@ mod zone_tests {
             .expect("north scorch zone must remain registered");
 
         assert!(
-            registry.zones_are_adjacent(&rift.name, &scorch.name, 500.0),
+            registry.zones_are_adjacent(&rift.name, &scorch.name, 100.0),
             "north rift must remain a neighbour of the scorch zone after removing overlap"
         );
         assert_eq!(
@@ -1907,6 +1907,13 @@ mod zone_tests {
                 .map(|zone| zone.name.as_str()),
             Some("rift_mouth_north_002"),
             "relocated portal anchor must resolve to the rift zone"
+        );
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Overworld, DVec3::new(2000.0, 74.0, -7800.0))
+                .map(|zone| zone.name.as_str()),
+            Some("north_waste_east_scorch"),
+            "the former rift anchor must now resolve exclusively to scorch semantics"
         );
         assert_eq!(
             registry
