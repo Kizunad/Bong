@@ -972,6 +972,21 @@
         },
         "body_plan_id": {
           "type": "string"
+        },
+        "race_id": {
+          "type": "string"
+        },
+        "form_race_id": {
+          "type": "string"
+        },
+        "form_body_plan_id": {
+          "type": "string"
+        },
+        "intrinsic_is_humanoid": {
+          "type": "boolean"
+        },
+        "form_is_humanoid": {
+          "type": "boolean"
         }
       }
     },

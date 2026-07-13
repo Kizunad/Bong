@@ -426,6 +426,15 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     // plan-race-system-v1 P2a：实体本体 body_plan id（BodyPlanLayout 寻址键，client
     // 按此缓存对应布局）。Rust 侧 #[serde(default)]，故 TS 侧 Optional。
     body_plan_id: Type.Optional(Type.String()),
+    // plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：client
+    // gate 判定（装备置灰等）的权威真源，不靠猜 / 不靠 BodyPlanLayoutV1 的 is_humanoid
+    // 元数据（那只供渲染）。未易形（P4 MorphState 落地前恒定）时 form_* 三字段 =
+    // 对应本体字段。Rust 侧 #[serde(default)]，故 TS 侧全部 Optional。
+    race_id: Type.Optional(Type.String()),
+    form_race_id: Type.Optional(Type.String()),
+    form_body_plan_id: Type.Optional(Type.String()),
+    intrinsic_is_humanoid: Type.Optional(Type.Boolean()),
+    form_is_humanoid: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );

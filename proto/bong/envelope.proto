@@ -549,6 +549,14 @@ message CultivationDetail {
   // plan-race-system-v1 P2a：实体本体 body_plan id（`BodyPlanLayout.body_plan_id`
   // 寻址键，client 按此缓存对应布局）。
   string                         body_plan_id                      = 13;
+  // plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：client
+  // gate 判定（装备置灰等）权威真源，不靠猜/不靠 BodyPlanLayout 元数据。未易形（P4
+  // MorphState 落地前恒定）时 form_* 三字段 = 对应本体字段。
+  string                         race_id                           = 14; // 本体种族 id
+  string                         form_race_id                      = 15; // 当前形态种族 id（= race_id，未易形时）
+  string                         form_body_plan_id                 = 16; // 当前形态 body plan id（= body_plan_id，未易形时）
+  bool                           intrinsic_is_humanoid             = 17; // 本体是否人形
+  bool                           form_is_humanoid                  = 18; // 当前形态是否人形（= intrinsic_is_humanoid，未易形时）
 }
 
 // ─── 7. SkillXpGain ────────────────────────────────────────────
