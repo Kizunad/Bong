@@ -59,9 +59,10 @@ pub use knockback::{
 };
 pub use ledger::{
     assert_conservation, build_qi_ledger_hash_fields, credit_pending_inflow,
-    pending_inflow_account, snapshot_for_ipc, summarize_world_qi, AttritionOpKind, QiAccountId,
-    QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
-    WorldQiBudget, WorldQiSnapshot, PENDING_INFLOW_ACCOUNT_ID, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
+    pending_inflow_account, snapshot_for_ipc, summarize_world_qi, transfer_external_qi_to_ledger,
+    AttritionOpKind, QiAccountId, QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer,
+    QiTransferReason, WorldQiAccount, WorldQiBudget, WorldQiSnapshot, PENDING_INFLOW_ACCOUNT_ID,
+    QI_LEDGER_ACCOUNT_FIELD_PREFIX,
 };
 pub use projectile::{
     armor_penetrate, cone_dispersion, high_density_inject, ArmorPenetrationOutcome,
