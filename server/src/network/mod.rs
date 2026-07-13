@@ -60,6 +60,7 @@ pub mod qi_attrition_emit;
 pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
 // plan-race-system-v1 P3c — 种族门元数据表（RaceGateMeta）构建 + join 首帧下发。
+pub mod morph_state_emit;
 pub mod race_gate_meta_emit;
 pub mod rat_phase_bridge;
 pub mod redis_bridge;
@@ -695,6 +696,7 @@ pub fn register(app: &mut App) {
             cultivation_detail_emit::emit_cultivation_detail_payloads,
             cultivation_detail_emit::emit_body_plan_layout_payloads,
             race_gate_meta_emit::emit_race_gate_meta_payloads,
+            morph_state_emit::emit_morph_state_payloads,
             qi_color_observed_emit::emit_qi_color_observed_payloads
                 .after(client_request_handler::handle_client_request_payloads),
             audio_event_emit::handle_audio_debug_commands,

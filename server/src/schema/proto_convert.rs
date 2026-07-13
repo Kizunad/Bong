@@ -991,6 +991,21 @@ impl From<&ServerDataPayloadV1> for Payload {
                         .collect(),
                 })
             }
+            ServerDataPayloadV1::MorphState(state) => Payload::MorphState(bong::MorphState {
+                v: 1,
+                mode: state.mode.clone(),
+                entries: state
+                    .entries
+                    .iter()
+                    .map(|e| bong::MorphStateEntry {
+                        entity_id: e.entity_id,
+                        model_kind: e.model_kind,
+                        form_race_id: e.form_race_id.clone(),
+                        form_body_plan_id: e.form_body_plan_id.clone(),
+                        active: e.active,
+                    })
+                    .collect(),
+            }),
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -6402,6 +6417,31 @@ mod tests {
                     },],
                 }
             )),
+            // plan-race-system-v1 P4：易形状态快照（full 一条 + delta 一条 active=false）。
+            fix!(ServerDataPayloadV1::MorphState(
+                super::super::server_data::MorphStateV1 {
+                    mode: "full".to_string(),
+                    entries: vec![super::super::server_data::MorphStateEntryV1 {
+                        entity_id: 42,
+                        model_kind: 1,
+                        form_race_id: "whale".to_string(),
+                        form_body_plan_id: "whale".to_string(),
+                        active: true,
+                    }],
+                }
+            )),
+            fix!(ServerDataPayloadV1::MorphState(
+                super::super::server_data::MorphStateV1 {
+                    mode: "delta".to_string(),
+                    entries: vec![super::super::server_data::MorphStateEntryV1 {
+                        entity_id: 42,
+                        model_kind: 0,
+                        form_race_id: String::new(),
+                        form_body_plan_id: String::new(),
+                        active: false,
+                    }],
+                }
+            )),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id: "ses:1".to_string(),
                 target_id: "entity:1".to_string(),
@@ -7595,8 +7635,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 129,
-            "Expected 129 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 131,
+            "Expected 131 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(

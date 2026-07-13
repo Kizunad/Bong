@@ -96,6 +96,26 @@ message RaceGateMeta {
   repeated RaceGateMetaEntry technique_required_race = 2;
 }
 
+// ─── plan-race-system-v1 P4：易形状态（MorphState） ──────────────────
+
+// 单个实体的易形状态快照。`active = false` 专用于 delta 广播（易形解除时下发一条
+// active=false 的 entry，client 据此从本地易形态缓存里删除该 entity_id）；
+// `mode = "full"` 时恒 `active = true`。
+message MorphStateEntry {
+  int32 entity_id = 1;   // Valence entity id
+  uint32 model_kind = 2;
+  string form_race_id = 3;
+  string form_body_plan_id = 4;
+  bool active = 5;
+}
+
+// `mode`："full"（join 首帧全量替换 + 周期 sync）| "delta"（易形/解除瞬间半径广播）。
+message MorphState {
+  uint32 v = 1;
+  string mode = 2;
+  repeated MorphStateEntry entries = 3;
+}
+
 // ─── 物品槽 ─────────────────────────────────────────────────────
 
 message ItemSlot {
