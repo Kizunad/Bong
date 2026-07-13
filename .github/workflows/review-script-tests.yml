@@ -5,7 +5,10 @@ on:
     paths:
       - .github/scripts/review.mjs
       - .github/scripts/review.test.mjs
+      - .github/scripts/review-claude.mjs
+      - .github/scripts/review-claude.test.mjs
       - .github/workflows/review.yml
+      - .github/workflows/review-claude.yml
       - .github/workflows/review-script-tests.yml
   workflow_dispatch:
 
@@ -35,3 +38,5 @@ jobs:
         run: |
           node --check .github/scripts/review.mjs
           node --test .github/scripts/review.test.mjs
+          node --check .github/scripts/review-claude.mjs
+          node --test .github/scripts/review-claude.test.mjs

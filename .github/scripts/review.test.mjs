@@ -761,21 +761,22 @@ test("evaluateCircuit: 窗口外 1ms、未来事件、threshold=1 与后续失�
   assert.equal(extended.openUntil, "2026-07-10T01:30:00.000Z");
 });
 
-test("manual bypass: 熔断期间仅 issue_comment 的精确 /review 入口可旁路", () => {
-  assert.equal(isCircuitBypassTrigger("issue_comment", "/review"), true);
+test("manual bypass: 熔断期间仅 issue_comment 的精确 /review-codex 入口可旁路", () => {
+  assert.equal(isCircuitBypassTrigger("issue_comment", "/review-codex"), true);
   for (const [eventName, body] of [
-    ["pull_request", "/review"],
-    ["workflow_dispatch", "/review"],
+    ["pull_request", "/review-codex"],
+    ["workflow_dispatch", "/review-codex"],
     ["issue_comment", ""],
-    ["issue_comment", "/review now"],
-    ["issue_comment", " /review"],
-    ["issue_comment", "/review\n"],
+    ["issue_comment", "/review"], // 默认 /review 已让给 claude 引擎，绝不旁路 codex 熔断
+    ["issue_comment", "/review-codex now"],
+    ["issue_comment", " /review-codex"],
+    ["issue_comment", "/review-codex\n"],
   ]) {
     assert.equal(isCircuitBypassTrigger(eventName, body), false, `${eventName}:${JSON.stringify(body)} 不得旁路`);
   }
 });
 
-test("circuit-preflight 命令: 熔断中仅精确 /review 旁路，自动与兜底触发均暂停", () => {
+test("circuit-preflight 命令: 熔断中仅精确 /review-codex 旁路，自动与兜底触发均暂停", () => {
   const common = {
     REVIEW_NOW: "2026-07-10T00:20:00.000Z",
     REVIEW_INFRA_FAILURE_THRESHOLD: "3",
@@ -783,7 +784,7 @@ test("circuit-preflight 命令: 熔断中仅精确 /review 旁路，自动与兜
     REVIEW_CIRCUIT_MINUTES: "60",
   };
   const manual = runReviewCommand("circuit-preflight", {
-    env: { ...common, REVIEW_TRIGGER: "issue_comment", REVIEW_COMMENT_BODY: "/review" },
+    env: { ...common, REVIEW_TRIGGER: "issue_comment", REVIEW_COMMENT_BODY: "/review-codex" },
   });
   assert.equal(manual.status, 0, manual.stderr);
   assert.equal(manual.githubOutput, "should_run=true\n");
@@ -791,7 +792,7 @@ test("circuit-preflight 命令: 熔断中仅精确 /review 旁路，自动与兜
   for (const [trigger, body] of [
     ["pull_request", ""],
     ["workflow_dispatch", ""],
-    ["issue_comment", "/review now"],
+    ["issue_comment", "/review-codex now"],
   ]) {
     const paused = runReviewCommand("circuit-preflight", {
       env: { ...common, REVIEW_TRIGGER: trigger, REVIEW_COMMENT_BODY: body },
@@ -1240,12 +1241,14 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   const finalize = workflowJob(workflow, "finalize");
 
   // codex 引擎不再自动跑：PR 创建时的默认审核已让位给 review-claude.yml。
-  // 保留 issue_comment `/review` + workflow_dispatch，去掉 pull_request(_target) 自动触发。
+  // 保留 issue_comment `/review-codex` + workflow_dispatch，去掉 pull_request(_target) 自动触发。
   assert.doesNotMatch(workflow, /^  pull_request_target:\n/m);
   assert.doesNotMatch(workflow, /^  pull_request:\n/m);
   assert.match(workflow, /^  issue_comment:\n    types: \[created\]$/m);
   assert.match(workflow, /^permissions: \{\}$/m);
-  assert.match(workflow, /github\.event\.comment\.body == '\/review'/);
+  // 触发词从默认 `/review` 迁到 `/review-codex`，把 `/review` 让给 claude 引擎。
+  assert.match(workflow, /github\.event\.comment\.body == '\/review-codex'/);
+  assert.doesNotMatch(workflow, /github\.event\.comment\.body == '\/review'/);
   assert.doesNotMatch(workflow, /startsWith\(github\.event\.comment\.body, '\/review'\)/);
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.repository\.default_branch \}\}/);
   assert.doesNotMatch(workflow, /REVIEW_CIRCUIT_ISSUE_NUMBER/);
@@ -1305,7 +1308,10 @@ test("review script tests workflow: Node 24 自动 gate 仅获 contents:read", (
   for (const path of [
     ".github/scripts/review.mjs",
     ".github/scripts/review.test.mjs",
+    ".github/scripts/review-claude.mjs",
+    ".github/scripts/review-claude.test.mjs",
     ".github/workflows/review.yml",
+    ".github/workflows/review-claude.yml",
     ".github/workflows/review-script-tests.yml",
   ]) {
     assert.match(workflow, new RegExp(`- ${path.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}`));
@@ -1315,6 +1321,23 @@ test("review script tests workflow: Node 24 自动 gate 仅获 contents:read", (
   assert.match(workflow, /node-version: "24"/);
   assert.match(workflow, /node --check \.github\/scripts\/review\.mjs/);
   assert.match(workflow, /node --test \.github\/scripts\/review\.test\.mjs/);
+  // claude 引擎脚本同样纳入本 gate（此前从未在 CI 跑过）。
+  assert.match(workflow, /node --check \.github\/scripts\/review-claude\.mjs/);
+  assert.match(workflow, /node --test \.github\/scripts\/review-claude\.test\.mjs/);
+});
+
+test("workflow trigger 分工: /review→claude(默认引擎)，/review-codex→codex(按需复审)", () => {
+  const codex = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
+  const claude = readFileSync(new URL("../workflows/review-claude.yml", import.meta.url), "utf8");
+  // codex 引擎让出默认 `/review`，迁到 `/review-codex`
+  assert.match(codex, /github\.event\.comment\.body == '\/review-codex'/);
+  assert.doesNotMatch(codex, /github\.event\.comment\.body == '\/review'/);
+  // claude 引擎（默认）接管 `/review`；旧 `/review-claude` 不再是触发词
+  assert.match(claude, /github\.event\.comment\.body == '\/review'/);
+  assert.doesNotMatch(claude, /github\.event\.comment\.body == '\/review-claude'/);
+  // 只有 claude 引擎在 PR opened 自动跑；codex 引擎不自动跑（避免双跑）
+  assert.match(claude, /^  pull_request:\n    types: \[opened\]$/m);
+  assert.doesNotMatch(codex, /^  pull_request:\n/m);
 });
 
 test("workflow permissions: 写权限仅在可信 preflight/finalize，review job 只读", () => {

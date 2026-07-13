@@ -85,7 +85,7 @@ export function intEnv(name, fallback, min = Number.MIN_SAFE_INTEGER) {
 }
 
 export function isCircuitBypassTrigger(eventName, commentBody) {
-  return eventName === "issue_comment" && commentBody === "/review";
+  return eventName === "issue_comment" && commentBody === "/review-codex";
 }
 
 export function renderHiddenMarker(name, payload) {
@@ -406,7 +406,7 @@ export function normalizeResult(raw, reviewer, { executionFailure = false } = {}
           line: "0",
           title: `${reviewer.name} 输出无法解析`,
           evidence: truncate(String(raw || ""), 800),
-          recommendation: "重新触发 /review；若反复出现，检查 Codex 输出稳定性。",
+          recommendation: "重新触发 /review-codex；若反复出现，检查 Codex 输出稳定性。",
         },
       ],
     };
@@ -957,7 +957,7 @@ function codexExecutionFailureJson(label, failure) {
         line: "0",
         title: `Codex reviewer ${label} 执行失败`,
         evidence: failure,
-        recommendation: "检查 Codex CLI、模型端点和 API key 后重新触发 /review。",
+        recommendation: "检查 Codex CLI、模型端点和 API key 后重新触发 /review-codex。",
       },
     ],
   });
@@ -1070,7 +1070,7 @@ export function renderComment(context, firstRound, finalRound, gate) {
   const firstRoundDetails = JSON.stringify(firstRound.map(compactResultForPrompt), null, 2);
   const finalRoundDetails = JSON.stringify(finalRound.map(compactResultForPrompt), null, 2);
   const passLine = gate.passed ? "✅ **通过**" : "❌ **未通过**";
-  const tieNote = gate.status === "TIE" ? "\n\n> 4 人复投为 2/2 平票；按规则平票不能通过，需要修正或人工复核后重新 `/review`。" : "";
+  const tieNote = gate.status === "TIE" ? "\n\n> 4 人复投为 2/2 平票；按规则平票不能通过，需要修正或人工复核后重新 `/review-codex`。" : "";
 
   const body = `
 ## 🔭 Review · PR #${context.pr}
@@ -1078,7 +1078,7 @@ export function renderComment(context, firstRound, finalRound, gate) {
 ${passLine}：${gate.label}${tieNote}
 
 > 引擎：4 个 Codex reviewer，模型 \`${MODEL}\`，reasoning high，base_url 默认 \`https://api.hlool.top\`。
-> 触发：PR 首次创建自动跑；后续提交不自动跑，需要评论 \`/review\` 复审。
+> 触发：codex 引擎为按需复审（默认 \`/review\` 走 claude 引擎）；评论 \`/review-codex\` 触发本引擎。
 ${context.plan ? `> Plan：\`${context.plan.name}\`${context.plan.path ? ` (${context.plan.path})` : "（未找到文件）"}` : "> Plan：未检测到 plan"}
 ${context.diffTruncated ? `> Diff 已截断至 ${MAX_DIFF} 字符，reviewer 可继续用只读工具查仓库。` : ""}
 
@@ -1274,7 +1274,7 @@ async function recordInfrastructureFailure(phase, reason) {
 
 export function renderInfrastructureHandoffComment(event, state) {
   const circuitLine = state.open
-    ? `\n\n已达到基础设施失败阈值，自动触发将熔断至 **${state.openUntil}**；可信成员评论精确命令 \`/review\` 可手动旁路重试。`
+    ? `\n\n已达到基础设施失败阈值，自动触发将熔断至 **${state.openUntil}**；可信成员评论精确命令 \`/review-codex\` 可手动旁路重试。`
     : "";
   return `## ⚠️ Review Action 基础设施降级\n\n请忽略本次 Review Action 结果：这是基础设施失败，不是代码 finding。改走 agent 自有博弈式 review 流程并向用户反馈；本 workflow 已成功降级退出，不中断任务。\n\n失败阶段：\`${event.phase}\`。${circuitLine}\n\n${renderHiddenMarker(HANDOFF_MARKER, event)}`;
 }
@@ -1288,7 +1288,7 @@ export function renderCircuitSkipComment(state) {
     run_id: process.env.GITHUB_RUN_ID || "",
     open_until: state.openUntil,
   };
-  return `## ⚡ Review Action 自动熔断跳过\n\nreviewer 基础设施熔断中，请忽略本次 Review Action 基础设施 gate：这不是代码 finding。改走 agent 自有博弈式 review 流程并向用户反馈；本次自动触发已快速跳过并成功退出，不中断任务且不影响其他 CI。\n\n熔断截止：**${state.openUntil}**。可信成员评论精确命令 \`/review\` 可手动旁路重试。\n\n${renderHiddenMarker(HANDOFF_MARKER, marker)}`;
+  return `## ⚡ Review Action 自动熔断跳过\n\nreviewer 基础设施熔断中，请忽略本次 Review Action 基础设施 gate：这不是代码 finding。改走 agent 自有博弈式 review 流程并向用户反馈；本次自动触发已快速跳过并成功退出，不中断任务且不影响其他 CI。\n\n熔断截止：**${state.openUntil}**。可信成员评论精确命令 \`/review-codex\` 可手动旁路重试。\n\n${renderHiddenMarker(HANDOFF_MARKER, marker)}`;
 }
 
 function postIssueComment(issue, body, deadlineMs = Date.now() + GH_TIMEOUT_MS) {
