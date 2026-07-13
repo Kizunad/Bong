@@ -262,14 +262,22 @@ public class BongNetworkHandler {
     /**
      * {@code bong:server_data} 的可测试调度边界。
      *
-     * <p>生产 receiver 已把 Netty buffer 拷入独立 byte array；此方法保留后续 bridge、
-     * route、handler side effect 与最终 dispatch 的实际顺序，并允许测试注入可控的
-     * client executor。</p>
+     * <p>生产 receiver 只在 Netty thread 把 buffer 拷入独立 byte array；后续 bridge、
+     * route、handler side effect 与最终 dispatch 统一排入一个 client-thread task，
+     * 并允许测试注入可控 executor 验证线程身份与顺序。</p>
      */
     static void dispatchServerDataPayload(
         byte[] bytes,
         ServerDataRouter router,
         Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier
+    ) {
+        clientExecutor.accept(() -> processServerDataPayload(bytes, router, dispatchApplier));
+    }
+
+    private static void processServerDataPayload(
+        byte[] bytes,
+        ServerDataRouter router,
         BiConsumer<ServerDataDispatch, String> dispatchApplier
     ) {
         int readableBytes = bytes.length;
@@ -321,7 +329,7 @@ public class BongNetworkHandler {
             || dispatch.realmCollapseHudState().isPresent()
             || dispatch.uiOpenState().isPresent()
             || dispatch.identityPanelState().isPresent()) {
-            clientExecutor.accept(() -> dispatchApplier.accept(dispatch, result.envelope().type()));
+            dispatchApplier.accept(dispatch, result.envelope().type());
         }
     }
 
