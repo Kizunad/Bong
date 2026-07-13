@@ -4318,8 +4318,10 @@ mod tests {
             })
             .id();
 
-        let mut ext_registry = ExternalContainerRegistry::default();
-        ext_registry.next_session_id = SESSION_ID + 1;
+        let mut ext_registry = ExternalContainerRegistry {
+            next_session_id: SESSION_ID + 1,
+            ..Default::default()
+        };
         if session_registered {
             ext_registry.sessions.insert(SESSION_ID, coffin);
         }
