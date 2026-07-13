@@ -19465,16 +19465,32 @@ cols = 4
                     held: None,
                 },
             );
+            // 注：`rebuild_containers_from_equipment` 会在 body_pocket 缺席时自动补一个
+            // 满容量的 body_pocket 兜底槽——若测试想验证"背包满→掉落"，必须显式提供一个
+            // 与 main_pack 同容量的 body_pocket（否则摘下的装备会静默落进自动补出的宽敞
+            // 暗袋，掉落分支永不触发）。这里让两个容器同容量：非满时 main_pack 优先收纳
+            // （find_first_fit 先扫非 body_pocket），全满(0,0)时两者皆无位→掉落。
             let containers = match container_capacity {
-                Some((rows, cols)) => vec![ContainerState {
-                    id: MAIN_PACK_CONTAINER_ID.to_string(),
-                    name: "主背包".to_string(),
-                    rows,
-                    cols,
-                    items: Vec::new(),
-                    owner_instance_id: None,
-                    quick_access: false,
-                }],
+                Some((rows, cols)) => vec![
+                    ContainerState {
+                        id: MAIN_PACK_CONTAINER_ID.to_string(),
+                        name: "主背包".to_string(),
+                        rows,
+                        cols,
+                        items: Vec::new(),
+                        owner_instance_id: None,
+                        quick_access: false,
+                    },
+                    ContainerState {
+                        id: BODY_POCKET_CONTAINER_ID.to_string(),
+                        name: "暗袋".to_string(),
+                        rows,
+                        cols,
+                        items: Vec::new(),
+                        owner_instance_id: None,
+                        quick_access: false,
+                    },
+                ],
                 None => Vec::new(),
             };
             PlayerInventory {
