@@ -6,9 +6,9 @@
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 第一性原理证真：闭合生产可达路径与失败复现 | ⏳ | — |
-| P1 | 最小线程边界修复与饱和回归 | ⬜ | — |
-| P2 | JDK 17 完整门禁、主线同步与三轮独立验证 | ⬜ | — |
+| P0 | 第一性原理证真：闭合生产可达路径与失败复现 | ✅ | 2026-07-13 |
+| P1 | 最小线程边界修复与饱和回归 | ✅ | 2026-07-13 |
+| P2 | JDK 17 完整门禁、主线同步与三轮独立验证 | ⏳ | — |
 
 ## Bug 摘要
 
@@ -36,6 +36,29 @@
 - 先增加修复前可失败的线程契约测试：从模拟 network thread 触发 receiver/提取出的调度边界，证明 router/store/listener 不得在调用线程同步执行。
 - 若候选已被主线覆盖或生产不可达，则转 `NOT_BUG`：只写入反证、`file:line` 与测试结果，不造空修复。
 
+### P0 证真结果（2026-07-13）
+
+- Fabric API `fabric-networking-api-v1:1.3.12+13a40c6677` 的
+  `ClientPlayNetworking.registerGlobalReceiver(Identifier, PlayChannelHandler)` Javadoc 明确写明：
+  raw handler 运行在 network thread；读取 buffer 后，访问 game state 必须调用
+  `ThreadExecutor.execute(Runnable)` 切回 render thread。
+- 生产 emit 可达：`server/src/network/craft_emit.rs:791-842` 从
+  `CraftCompletedEvent` / `CraftFailedEvent` 构造 `CraftOutcomeV1` 并通过
+  `ServerDataPayloadV1::CraftOutcome` 发给 caster，不是死协议或测试孤岛。
+- 修复前 receiver 只把最终 `applyDispatch(...)` 包进 `client.execute(...)`，但
+  `ROUTER.route(...)` 同步进入 `CraftOutcomeHandler`；后者在
+  `client/src/main/java/com/bong/client/network/CraftOutcomeHandler.java:26-45`
+  同步调用 `CraftStore.recordOutcome(...)`。
+- `CraftStore.recordOutcome(...)` 在
+  `client/src/main/java/com/bong/client/craft/CraftStore.java:99-103` 同步遍历 listener；
+  `CraftScreen.java:47-52` 与 `WorkbenchScreen.java:51-56` 的 completed listener
+  会立即写 `flashTicks` 并调用 `player.playSound(...)`。因此正常玩家出炉路径确实让
+  screen/player/sound state 从 Fabric network thread 被访问。
+- 修复前复现提交 `dbb8772c`：Temurin 17 下运行
+  `./gradlew test --tests com.bong.client.BongServerDataThreadingTest`，7/7 失败；
+  关键失败值为 `route@fabric-network-io-test`，completed、failed、`cast_sync`、
+  连续 payload 与坏 payload 后的合法 payload 均在 client queue drain 前提前写 store。
+
 ## P1：最小修复与饱和回归
 
 - 将 raw receiver 的 handler side effect 统一排入 client executor，并保持单 payload 内 `route → applyDispatch` 顺序。
@@ -43,6 +66,19 @@
 - 覆盖 failed outcome、未知 payload、route 返回空 dispatch、handler 抛错/坏 JSON、连续 payload 顺序与断线/无 player 边界，防止调度后吞包、重复反馈或延迟异常。
 - 回归 `cast_sync` 同根因入口：handler side effect 只在 client executor 中发生；不改变其业务语义。
 - 测试断言外部可观察契约与线程身份，不绑定私有实现调用次数；失败信息必须带实际线程/队列/事件值。
+
+### P1 落地结果（2026-07-13）
+
+- 修复提交 `867fd1a7` 把 `bong:server_data` 的
+  `bridge → route → handler side effect → applyDispatch` 统一封装为一个
+  `client.execute(...)` task；raw receiver 只复制 Netty buffer，不给 craft listener
+  叠加局部线程兜底，也不改变协议、数值、声音资产或 UI 规格。
+- `BongServerDataThreadingTest` 覆盖 completed、failed、`cast_sync`、route/apply 顺序、
+  连续 payload、坏 JSON、handler exception 与后续合法 payload，修复后 7/7 通过；
+  store/listener 实际线程均为 `minecraft-client-render-test`，每条 payload 精确应用一次。
+- 同根因回归在 Temurin 17 下通过：`BongNetworkHandlerTest` 16、
+  `CraftHandlerTest` 11、`CastSyncHandlerTest` 10、`ServerDataRouterTest` 17、
+  `ProtoServerDataBridgeTest` 134，加新增 7 项共 195 tests，0 failed / 0 skipped。
 
 ## P2：闭环验证
 
