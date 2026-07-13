@@ -70,6 +70,23 @@ public final class PlayerRaceIdentityStore {
         return formIsHumanoid;
     }
 
+    /**
+     * plan-race-system-v1 P3c fail-closed 判据：本体身份是否已收到权威快照。
+     * server 生产恒发非空 {@code race_id}，空 = 尚未收到 cultivation_detail / 首帧乱序。
+     * 功法门（判本体）在此为 false 时对**有 gate 的**功法一律置灰（宁可错灰不可错放）。
+     */
+    public static boolean intrinsicIdentityKnown() {
+        return !raceId.isBlank();
+    }
+
+    /**
+     * plan-race-system-v1 P3c fail-closed 判据：当前形态身份是否已收到权威快照。
+     * 装备门（判当前形态）在此为 false 时对**有 gate 的**物品一律置灰。
+     */
+    public static boolean formIdentityKnown() {
+        return !formRaceId.isBlank();
+    }
+
     public static void resetForTests() {
         raceId = "";
         formRaceId = "";
