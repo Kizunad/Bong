@@ -59,6 +59,12 @@ pub enum ScrollReadOutcome {
     MeridianMissing {
         channel: MeridianId,
     },
+    /// plan-race-system-v1 P4 —— 易形类技能（`morph.yixing`，见
+    /// `body_plan::technique_requires_form_anchor`）专属前置门：本体
+    /// `MeridianProfile` 内全部 `ChannelRole::FormAnchor` 经脉未全部打通/未断绝。
+    /// `meridian_profile` 缺失（调用方未接入 body_plan registry）时同样判定本变体
+    /// （fail-closed，不因资源缺失而放行易形）。
+    FormAnchorClosed,
     InvalidScroll,
 }
 
@@ -69,6 +75,7 @@ pub fn read_combat_technique_scroll(
     severed: Option<&MeridianSeveredPermanent>,
     template: &ItemTemplate,
     intrinsic_is_humanoid: bool,
+    meridian_profile: Option<&crate::body_plan::MeridianProfile>,
 ) -> ScrollReadOutcome {
     let Some(spec) = template.technique_scroll_spec.as_ref() else {
         return ScrollReadOutcome::InvalidScroll;
@@ -84,6 +91,7 @@ pub fn read_combat_technique_scroll(
         spec.skill_id.as_str(),
         0.0,
         intrinsic_is_humanoid,
+        meridian_profile,
     )
 }
 
@@ -99,6 +107,10 @@ pub fn learn_technique_if_allowed(
     technique_id: &str,
     initial_proficiency: f32,
     intrinsic_is_humanoid: bool,
+    // plan-race-system-v1 P4 —— 本体 `MeridianProfile`（`resolve_body_plan(Intrinsic)`
+    // 的解析结果），供 `morph.yixing` 一类易形技能的 `form_anchors_open` 前置门使用；
+    // 其余技能不消费本字段，既有调用点可安全传 `None`。
+    meridian_profile: Option<&crate::body_plan::MeridianProfile>,
 ) -> ScrollReadOutcome {
     let Some(definition) = technique_definition(technique_id) else {
         return ScrollReadOutcome::InvalidScroll;
@@ -122,6 +134,14 @@ pub fn learn_technique_if_allowed(
     {
         return ScrollReadOutcome::RaceMismatch;
     }
+    if crate::body_plan::technique_requires_form_anchor(technique_id) {
+        let anchors_ok = meridian_profile
+            .map(|profile| crate::body_plan::form_anchors_open(profile, meridians, severed))
+            .unwrap_or(false);
+        if !anchors_ok {
+            return ScrollReadOutcome::FormAnchorClosed;
+        }
+    }
     if let Err(outcome) = check_required_meridians(definition, meridians, severed) {
         return outcome;
     }
@@ -141,6 +161,7 @@ pub fn can_learn_technique(
     severed: Option<&MeridianSeveredPermanent>,
     technique_id: &str,
     intrinsic_is_humanoid: bool,
+    meridian_profile: Option<&crate::body_plan::MeridianProfile>,
 ) -> ScrollReadOutcome {
     let mut probe = known.clone();
     learn_technique_if_allowed(
@@ -151,6 +172,7 @@ pub fn can_learn_technique(
         technique_id,
         0.0,
         intrinsic_is_humanoid,
+        meridian_profile,
     )
 }
 
@@ -292,6 +314,7 @@ mod tests {
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
             true,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::Learned);
@@ -315,6 +338,7 @@ mod tests {
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
             true,
+            None,
         );
 
         assert_eq!(
@@ -348,6 +372,7 @@ mod tests {
             Some(&severed),
             &template("scroll_woliu_vortex", "woliu.vortex"),
             true,
+            None,
         );
 
         assert_eq!(
@@ -374,6 +399,7 @@ mod tests {
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
             true,
+            None,
         );
 
         assert_eq!(
@@ -408,6 +434,7 @@ mod tests {
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
             true,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::AlreadyKnown);
@@ -428,6 +455,7 @@ mod tests {
             None,
             &invalid,
             true,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::InvalidScroll);
@@ -458,6 +486,7 @@ mod tests {
             "woliu.vortex",
             0.0,
             false,
+            None,
         );
 
         assert_eq!(
@@ -486,6 +515,7 @@ mod tests {
             "woliu.vortex",
             0.0,
             true,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::Learned);
@@ -506,6 +536,7 @@ mod tests {
             "movement.dash",
             0.0,
             false,
+            None,
         );
 
         assert_eq!(
@@ -531,6 +562,7 @@ mod tests {
             "woliu.vortex",
             0.0,
             false,
+            None,
         );
 
         assert_eq!(
@@ -556,6 +588,7 @@ mod tests {
             "woliu.vortex",
             0.0,
             false,
+            None,
         );
         assert_eq!(
             outcome2,
@@ -589,6 +622,7 @@ mod tests {
             "woliu.vortex",
             0.0,
             false,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::AlreadyKnown);
@@ -611,6 +645,7 @@ mod tests {
             None,
             "woliu.vortex",
             false,
+            None,
         );
         assert_eq!(outcome, ScrollReadOutcome::RaceMismatch);
         assert!(
@@ -619,7 +654,7 @@ mod tests {
         );
 
         let outcome_ok =
-            can_learn_technique(&known, &cultivation, &meridians, None, "woliu.vortex", true);
+            can_learn_technique(&known, &cultivation, &meridians, None, "woliu.vortex", true, None);
         assert_eq!(outcome_ok, ScrollReadOutcome::Learned);
         assert!(known.entries.is_empty(), "探测不应留下副作用");
     }
@@ -641,6 +676,7 @@ mod tests {
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
             false,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::RaceMismatch);
