@@ -316,6 +316,7 @@ mod tests {
     use crate::supply_coffin::authority::SUPPLY_COFFIN_OPEN_MAX_DISTANCE;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, DVec3, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
     const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
@@ -396,6 +397,32 @@ mod tests {
         app.update();
     }
 
+    fn collect_server_data_payload_types(
+        app: &mut App,
+        helper: &mut MockClientHelper,
+    ) -> Vec<String> {
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != "bong:server_data" {
+                    return None;
+                }
+                let value = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0).ok()?;
+                value.get("type")?.as_str().map(str::to_string)
+            })
+            .collect()
+    }
+
     #[test]
     fn open_rejects_cross_dimension_same_xyz_without_side_effects() {
         let (mut app, player, target, _helper) =
@@ -439,6 +466,45 @@ mod tests {
                 .is_empty(),
             "missing-dimension rejection must not allocate a session"
         );
+    }
+
+    #[test]
+    fn open_rejects_non_finite_player_coordinates_before_any_side_effect() {
+        for (label, x) in [
+            ("nan", f64::NAN),
+            ("positive_infinity", f64::INFINITY),
+            ("negative_infinity", f64::NEG_INFINITY),
+        ] {
+            let (mut app, player, target, mut helper) = setup_open_app(
+                Some(DimensionKind::Overworld),
+                DVec3::new(x, COFFIN_POS.y, COFFIN_POS.z),
+            );
+            let rng_before = app.world().resource::<SupplyCoffinRegistry>().rng_state;
+
+            send_open(&mut app, player, target);
+            let payload_types = collect_server_data_payload_types(&mut app, &mut helper);
+
+            assert!(
+                app.world().get::<ExternalContainer>(target).is_none(),
+                "{label} player coordinate must not create an external container"
+            );
+            assert!(
+                app.world()
+                    .resource::<ExternalContainerRegistry>()
+                    .sessions
+                    .is_empty(),
+                "{label} rejection must happen before allocating a session"
+            );
+            assert_eq!(
+                app.world().resource::<SupplyCoffinRegistry>().rng_state,
+                rng_before,
+                "{label} rejection must happen before rolling loot or advancing RNG"
+            );
+            assert!(
+                payload_types.iter().all(|ty| ty != "loot_container_open"),
+                "{label} rejection must not emit loot_container_open; payloads={payload_types:?}"
+            );
+        }
     }
 
     #[test]

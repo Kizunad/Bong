@@ -265,6 +265,7 @@ mod tests {
     use crate::supply_coffin::authority::SUPPLY_COFFIN_SESSION_MAX_DISTANCE;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, DVec3, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
     const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
@@ -382,6 +383,32 @@ mod tests {
         );
     }
 
+    fn collect_server_data_payload_types(
+        app: &mut App,
+        helper: &mut MockClientHelper,
+    ) -> Vec<String> {
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != "bong:server_data" {
+                    return None;
+                }
+                let value = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0).ok()?;
+                value.get("type")?.as_str().map(str::to_string)
+            })
+            .collect()
+    }
+
     #[test]
     fn lifecycle_manages_only_supply_coffins() {
         let supply = ext_with_kind(ExternalContainerKind::SupplyCoffin {
@@ -445,6 +472,34 @@ mod tests {
         app.update();
 
         assert_session_closed_without_despawn(&app, coffin, 91);
+    }
+
+    #[test]
+    fn lifecycle_closes_non_finite_coordinates_with_close_and_snapshot() {
+        for (label, x) in [
+            ("nan", f64::NAN),
+            ("positive_infinity", f64::INFINITY),
+            ("negative_infinity", f64::NEG_INFINITY),
+        ] {
+            let (mut app, _player, coffin, mut helper) = setup_lifecycle_app(
+                Some(DimensionKind::Overworld),
+                DVec3::new(x, COFFIN_POS.y, COFFIN_POS.z),
+                true,
+            );
+
+            app.update();
+            let payload_types = collect_server_data_payload_types(&mut app, &mut helper);
+
+            assert_session_closed_without_despawn(&app, coffin, 91);
+            assert!(
+                payload_types.iter().any(|ty| ty == "loot_container_close"),
+                "{label} lifecycle invalidation must close the client UI; payloads={payload_types:?}"
+            );
+            assert!(
+                payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+                "{label} lifecycle invalidation must push authoritative inventory state; payloads={payload_types:?}"
+            );
+        }
     }
 
     #[test]
