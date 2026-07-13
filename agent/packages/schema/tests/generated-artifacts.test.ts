@@ -10,7 +10,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { validateAgentCommandV1Contract } from "../src/agent-command.js";
+import { ElderEncounterEventV1 } from "../src/elder-encounter.js";
+import { MeridianSeveredEventV1 } from "../src/meridian-severed.js";
 import { validateNarrationV1Contract } from "../src/narration.js";
+import { FactionWarEventV1, NamedFactionStateV1 } from "../src/npc.js";
+import { TuikeAshDecayV1 } from "../src/tuike-v2.js";
 import { validateWorldStateV1Contract } from "../src/world-state.js";
 import {
   assertGeneratedSchemasFresh,
@@ -87,6 +91,39 @@ describe("generated schema freshness gate", () => {
     } finally {
       schema.type = originalType;
     }
+  });
+
+  it("registers every runtime-consumed server-to-agent Redis V1 contract", () => {
+    const runtimeContracts = {
+      "elder-encounter-event-v1.json": ElderEncounterEventV1,
+      "faction-war-event-v1.json": FactionWarEventV1,
+      "meridian-severed-event-v1.json": MeridianSeveredEventV1,
+      "named-faction-state-v1.json": NamedFactionStateV1,
+      "tuike-ash-decay-v1.json": TuikeAshDecayV1,
+    } as const;
+
+    for (const [fileName, contract] of Object.entries(runtimeContracts)) {
+      expect(
+        GENERATED_SCHEMA_FILES[fileName as keyof typeof GENERATED_SCHEMA_FILES],
+        `${fileName} is consumed by Tiandao runtime and must remain freshness-gated`,
+      ).toBe(contract);
+      expect(renderGeneratedSchemas()[fileName], `${fileName} must be rendered`).toBe(
+        `${JSON.stringify(contract, null, 2)}\n`,
+      );
+    }
+  });
+
+  it("fails freshness when a runtime-consumed contract artifact is missing", () => {
+    const outputDir = createTempDir();
+    writeGeneratedSchemas(outputDir);
+    rmSync(join(outputDir, "meridian-severed-event-v1.json"));
+
+    expect(getGeneratedSchemaDrift(outputDir).missing).toContain(
+      "meridian-severed-event-v1.json",
+    );
+    expect(() => assertGeneratedSchemasFresh(outputDir)).toThrowError(
+      /meridian-severed-event-v1\.json/,
+    );
   });
 
   it("runtime Redis V1 parity helpers do not introduce generated schema drift", () => {

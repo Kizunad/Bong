@@ -1,0 +1,79 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "entity_id",
+    "meridian_id",
+    "source",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "meridian_severed",
+      "type": "string"
+    },
+    "entity_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "meridian_id": {
+      "minLength": 1,
+      "description": "经脉 channel id（humanoid 沿用 20 条既有名字，非 humanoid 构型可为任意 id）",
+      "type": "string"
+    },
+    "source": {
+      "description": "SEVERED 来源 7 类（plan §4），Other 用于扩展未预见来源",
+      "anyOf": [
+        {
+          "const": "VoluntarySever",
+          "type": "string"
+        },
+        {
+          "const": "BackfireOverload",
+          "type": "string"
+        },
+        {
+          "const": "OverloadTear",
+          "type": "string"
+        },
+        {
+          "const": "CombatWound",
+          "type": "string"
+        },
+        {
+          "const": "TribulationFail",
+          "type": "string"
+        },
+        {
+          "const": "DuguDistortion",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "Other"
+          ],
+          "properties": {
+            "Other": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

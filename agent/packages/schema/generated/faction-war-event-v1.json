@@ -1,0 +1,100 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "war_id",
+    "zone",
+    "region_descriptor",
+    "phase",
+    "groups",
+    "enlist_count",
+    "mercenary_count",
+    "intercept_count",
+    "spectate_count",
+    "at_tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "kind": {
+      "const": "faction_war_event",
+      "type": "string"
+    },
+    "war_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "zone": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "region_descriptor": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "phase": {
+      "anyOf": [
+        {
+          "const": "emerging",
+          "type": "string"
+        },
+        {
+          "const": "skirmish",
+          "type": "string"
+        },
+        {
+          "const": "settling",
+          "type": "string"
+        },
+        {
+          "const": "aftermath",
+          "type": "string"
+        }
+      ]
+    },
+    "groups": {
+      "minItems": 0,
+      "type": "array",
+      "items": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "enlist_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "mercenary_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "intercept_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "spectate_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "winner_group": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "loser_group": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "total_casualties": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

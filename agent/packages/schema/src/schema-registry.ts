@@ -206,6 +206,8 @@ import {
   HeartDemonPregenRequestV1,
 } from "./heart-demon.js";
 import { NarrationV1 } from "./narration.js";
+import { MeridianSeveredEventV1 } from "./meridian-severed.js";
+import { ElderEncounterEventV1 } from "./elder-encounter.js";
 import {
   DuXuOutcomeV1,
   DuXuResultV1,
@@ -232,6 +234,8 @@ import {
   FactionEventKindV1,
   FactionEventV1,
   FactionIdV1,
+  FactionWarEventV1,
+  NamedFactionStateV1,
   NpcArchetypeV1,
   NpcDeathCauseV1,
   NpcDeathV1,
@@ -395,6 +399,7 @@ import {
   FalseSkinLayerStateV1,
   FalseSkinStackStateV1,
   FalseSkinTierV1,
+  TuikeAshDecayV1,
   TuikeV2SkillEventV1,
   TuikeV2SkillIdV1,
 } from "./tuike-v2.js";
@@ -779,6 +784,11 @@ export const SCHEMA_REGISTRY = {
   tuikeV2SkillIdV1: TuikeV2SkillIdV1,
   falseSkinTierV1: FalseSkinTierV1,
   tuikeV2SkillEventV1: TuikeV2SkillEventV1,
+  tuikeAshDecayV1: TuikeAshDecayV1,
+  meridianSeveredEventV1: MeridianSeveredEventV1,
+  elderEncounterEventV1: ElderEncounterEventV1,
+  factionWarEventV1: FactionWarEventV1,
+  namedFactionStateV1: NamedFactionStateV1,
   falseSkinLayerStateV1: FalseSkinLayerStateV1,
   falseSkinStackStateV1: FalseSkinStackStateV1,
   serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
@@ -1089,6 +1099,11 @@ export const GENERATED_SCHEMA_FILES = {
   "baomai-v4-resonance-lock-end-v1.json": SCHEMA_REGISTRY.baomaiV4ResonanceLockEndV1,
   "zhenfa-v2-event-v1.json": SCHEMA_REGISTRY.zhenfaV2EventV1,
   "tuike-v2-skill-event-v1.json": SCHEMA_REGISTRY.tuikeV2SkillEventV1,
+  "tuike-ash-decay-v1.json": SCHEMA_REGISTRY.tuikeAshDecayV1,
+  "meridian-severed-event-v1.json": SCHEMA_REGISTRY.meridianSeveredEventV1,
+  "elder-encounter-event-v1.json": SCHEMA_REGISTRY.elderEncounterEventV1,
+  "faction-war-event-v1.json": SCHEMA_REGISTRY.factionWarEventV1,
+  "named-faction-state-v1.json": SCHEMA_REGISTRY.namedFactionStateV1,
   "false-skin-stack-state-v1.json": SCHEMA_REGISTRY.falseSkinStackStateV1,
   "style-telemetry-color-snapshot-v1.json":
     SCHEMA_REGISTRY.styleTelemetryColorSnapshotV1,
