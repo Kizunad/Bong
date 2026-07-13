@@ -2,9 +2,13 @@
 
 import itertools
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+WORLDGEN_ROOT = ROOT / "worldgen"
+if str(WORLDGEN_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORLDGEN_ROOT))
 FILES = (ROOT / "server/zones.json", ROOT / "server/zones.worldview.example.json")
 DESIGNED_OVERLAPS = {
     frozenset(("rift_mouth_blood_001", "blood_valley")),
@@ -66,3 +70,23 @@ def test_north_rift_geometry_matches_runtime_and_blueprint() -> None:
     assert runtime_rift["patrol_anchors"] == blueprint_rift["patrol_anchors"]
     assert blueprint_rift["worldgen"]["portal_anchor_xz"] == [2000.0, -7300.0]
     assert blueprint_rift["pois"][0]["pos_xyz"] == [2000.0, 74.0, -7300.0]
+
+
+def test_relocated_north_rift_runtime_qi_matches_unified_field_bake() -> None:
+    from scripts.terrain_gen.blueprint import DEFAULT_BLUEPRINT_PATH, load_blueprint
+    from scripts.terrain_gen.zones_export import bake_zone_qi
+
+    blueprint = load_blueprint(DEFAULT_BLUEPRINT_PATH)
+    world_area = float(
+        (blueprint.bounds_xz.max_x - blueprint.bounds_xz.min_x)
+        * (blueprint.bounds_xz.max_z - blueprint.bounds_xz.min_z)
+    )
+    baked = bake_zone_qi(blueprint.zones, world_area=world_area)
+    runtime_rift = next(
+        zone
+        for zone in _zones(ROOT / "server/zones.json")
+        if zone["name"] == "rift_mouth_north_002"
+    )
+    assert runtime_rift["spirit_qi"] == round(
+        baked.derived_spirit_qi["rift_mouth_north_002"], 6
+    )
