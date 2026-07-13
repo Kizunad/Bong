@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Review v4 (Claude Code 引擎) —— 用 claude CLI 走 shuaiapi Anthropic 协议做博弈式 PR 审核。
+// Review v4 (Claude Code 引擎) —— 用 claude CLI 走 oai.sb Anthropic 协议做博弈式 PR 审核。
 //
 // 与 v3(codex, review.mjs) 的区别：
-// 1. 引擎从 codex CLI 换成 claude CLI（ANTHROPIC_BASE_URL=shuaiapi，Anthropic /v1/messages）。
+// 1. 引擎从 codex CLI 换成 claude CLI（ANTHROPIC_BASE_URL=oai.sb，Anthropic /v1/messages）。
 // 2. 模型分层：reviewer 全用性价比模型 gpt-5.6-terra；唯一的“决策”步用 gpt-5.6-sol + ultra thinking。
 // 3. 结构：4 个维度【串行】覆盖，每个维度内【控方 / 辩方并行博弈】(initial + debate 两轮)。
 // 4. 硬并发限制：所有 claude 调用统一过全局信号量，且并发上限被编译期常量 HARD_MAX_CONCURRENCY 钳死。
@@ -27,7 +27,7 @@ const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
 const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CLAUDE_TIMEOUT_MS = intEnv("REVIEW_CLAUDE_TIMEOUT_MS", 900_000, 120_000);
 const CONCURRENCY = clampConcurrency(intEnv("REVIEW_CONCURRENCY", 2, 1), HARD_MAX_CONCURRENCY);
-// 决策步的 ultra 思考预算（claude 的 extended thinking → 经 shuaiapi 映射为高 reasoning effort）。
+// 决策步的 ultra 思考预算（claude 的 extended thinking → 经 oai.sb 映射为高 reasoning effort）。
 // 留足输出空间：模型 max output ≈ 32k，思考预算封顶 24k，给最终 JSON 裁决留 ~8k。
 const DECISION_THINKING_TOKENS = intEnv("REVIEW_DECISION_THINKING_TOKENS", 24_000, 1_024);
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
@@ -733,7 +733,7 @@ function renderComment(context, dimResults, decision, gate) {
 
 ${passLine}：${gate.status} · ${escapeInline(gate.reason)}
 
-> 引擎：Claude Code(claude CLI)，reviewer 模型 \`${MODEL_REVIEWER}\`(性价比)，决策模型 \`${MODEL_DECISION}\`(ultra thinking)，base_url \`${process.env.ANTHROPIC_BASE_URL || "https://api.shuaiapi.com"}\`。
+> 引擎：Claude Code(claude CLI)，reviewer 模型 \`${MODEL_REVIEWER}\`(性价比)，决策模型 \`${MODEL_DECISION}\`(ultra thinking)，base_url \`${process.env.ANTHROPIC_BASE_URL || "https://oai.sb"}\`。
 > 结构：4 维度串行 × 控辩并行博弈(initial+debate)，硬并发上限 ${CONCURRENCY}(编译期顶 ${HARD_MAX_CONCURRENCY})。
 > 触发：PR 首次创建自动跑；后续提交不自动跑，需要评论 \`/review\` 复审。
 ${planLine}

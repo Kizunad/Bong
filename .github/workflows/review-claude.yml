@@ -5,7 +5,7 @@ name: Review (Claude)
 # - 后续提交不自动跑；需要在 PR 评论 `/review-claude` 才会再次触发本引擎。
 # - workflow_dispatch 只作人工兜底。
 #
-# 引擎：.github/scripts/review-claude.mjs，用 claude CLI 走 shuaiapi 的 Anthropic 协议编排。
+# 引擎：.github/scripts/review-claude.mjs，用 claude CLI 走 oai.sb 的 Anthropic 协议编排。
 # 结构：4 个维度【串行】覆盖，每维度内【控方/辩方并行博弈】(initial+debate 两轮)。
 # 模型：reviewer 用性价比 gpt-5.6-terra；唯一的“决策”步用 gpt-5.6-sol + ultra thinking。
 # 硬并发：所有 claude 调用过全局信号量，上限被编译期常量 HARD_MAX_CONCURRENCY=3 钳死。
@@ -72,7 +72,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
-          ANTHROPIC_BASE_URL: ${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.shuaiapi.com' }}
+          ANTHROPIC_BASE_URL: ${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://oai.sb' }}
           ANTHROPIC_API_KEY: ${{ secrets.REVIEW_CLAUDE_API_KEY || secrets.SHUAIAPI_API_KEY || secrets.HLOOL_API_KEY }}
           REVIEW_MODEL_REVIEWER: ${{ vars.REVIEW_MODEL_REVIEWER || 'gpt-5.6-terra' }}
           REVIEW_MODEL_DECISION: ${{ vars.REVIEW_MODEL_DECISION || 'gpt-5.6-sol' }}
