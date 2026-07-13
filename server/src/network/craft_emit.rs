@@ -1113,7 +1113,7 @@ mod tests {
     };
     use crate::persistence::bootstrap_sqlite;
     use crate::player::state::{load_player_slices, save_player_state, PlayerState};
-    use crate::qi_physics::ledger::pending_inflow_account;
+    use crate::qi_physics::ledger::{pending_inflow_account, QiAccountId, QiTransferReason};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use valence::prelude::{App, Events, Update};
@@ -1831,6 +1831,67 @@ mod tests {
             app.world().get::<CraftSession>(player).is_some(),
             "首个 start 成功后应保留唯一 CraftSession"
         );
+    }
+
+    #[test]
+    fn apply_craft_start_intents_without_spatial_context_credits_pending_never_spawn() {
+        let mut recipe = make_recipe("craft.tool.workbench", &[("fan_tie", 1)], vec![]);
+        recipe.qi_cost = 5.0;
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);
+        app.add_systems(Update, apply_craft_start_intents);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut cultivation = Cultivation::default();
+        cultivation.qi_current = 10.0;
+        cultivation.qi_max = cultivation.qi_max.max(10.0);
+        let mut player_entity = app.world_mut().spawn(client_bundle);
+        player_entity
+            .insert(inv_with(&[("fan_tie", 1)]))
+            .insert(cultivation)
+            .insert(QiColor::default())
+            .remove::<Position>();
+        let player = player_entity.id();
+        let player_account = QiAccountId::player(canonical_player_id("Azure"));
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(player_account.clone(), 10.0)
+            .expect("player qi fixture should be valid");
+        let total_before = app.world().resource::<WorldQiAccount>().total();
+
+        app.world_mut().send_event(CraftStartIntent {
+            caster: player,
+            recipe_id: RecipeId::new("craft.tool.workbench"),
+            quantity: 1,
+        });
+        app.update();
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&player_account), 5.0);
+        assert_eq!(ledger.balance(&pending_inflow_account()), 5.0);
+        assert_eq!(
+            ledger.balance(&QiAccountId::zone("spawn")),
+            0.0,
+            "制作消耗不得再落入陈旧的硬编码 spawn 账户"
+        );
+        assert_eq!(
+            ledger.total(),
+            total_before,
+            "player → pending_inflow 必须保持账本总量守恒"
+        );
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("正 qi_cost 制作必须留下审计 transfer");
+        assert_eq!(transfer.from, player_account);
+        assert_eq!(transfer.to, pending_inflow_account());
+        assert_eq!(transfer.reason, QiTransferReason::Crafting);
+        assert_eq!(transfer.amount, 5.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current,
+            5.0
+        );
+        assert!(app.world().get::<CraftSession>(player).is_some());
+        assert!(current_failed_events(&app).is_empty());
     }
 
     #[test]
