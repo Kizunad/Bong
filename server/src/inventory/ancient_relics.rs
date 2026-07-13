@@ -209,18 +209,6 @@ pub fn seed_ancient_relics() -> Vec<AncientRelicTemplate> {
             grid_h: 1,
             weight: 0.2,
         },
-        // plan-race-system-v1 P4 —— 易形功法遗珍（tsy 遗迹掉落入口）。
-        AncientRelicTemplate {
-            template_id: "ancient_relic_scroll_yixing".into(),
-            display_name: "《易形残卷》".into(),
-            kind: AncientRelicKind::Scroll,
-            source_class: AncientRelicSource::SectRuins,
-            strength_tier: 2,
-            description: "卷面绘着形貌交叠的异兽虚影，字迹已被虫蛀去大半。上古宗门借此暂借他相外壳的秘法，残存三分。".into(),
-            grid_w: 1,
-            grid_h: 1,
-            weight: 0.2,
-        },
         AncientRelicTemplate {
             template_id: "ancient_relic_weapon_zongmen_blade".into(),
             display_name: "宗门戒刀".into(),

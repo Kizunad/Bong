@@ -184,6 +184,107 @@ mod tests {
         );
     }
 
+    /// plan-race-system-v1 P4（掉落入口 2）—— opus verifier MEDIUM 修复：tsy 遗迹
+    /// loot 此前只会掉落纯装饰性 `ancient_relic_scroll_yixing`（无 `ItemTemplate`
+    /// 注册、无 `technique_scroll_spec`、学不会）。真实产出集成测试：走真实
+    /// `assets/items/*.toml` `ItemRegistry` 加载（证明 `yixing_scroll` 数据落地且
+    /// `technique_scroll_spec` 指向 `morph.yixing`）→ `tsy_loot_spawn_on_enter`
+    /// 首次入场（`tsy_lingxu_01` 的 `source_class_from_family_id` 恒为
+    /// `SectRuins`，与《易形残卷》"上古宗门"设定一致）→ `DroppedLootRegistry` 出现
+    /// 真实 `yixing_scroll` 条目 → 经 `add_item_to_player_inventory` 装入玩家背包
+    /// （"开容器→背包出现"），全程真实数据文件，不是手搓 fixture 掩盖。
+    #[test]
+    fn tsy_family_first_entry_drops_real_learnable_yixing_scroll() {
+        use crate::inventory::{add_item_to_player_inventory, load_item_registry};
+
+        assert_eq!(
+            crate::inventory::tsy_loot_spawn::source_class_from_family_id("tsy_lingxu_01"),
+            crate::inventory::ancient_relics::AncientRelicSource::SectRuins,
+            "前置条件：tsy_lingxu_01 的 source_class 必须恰好是 SectRuins（宗门遗迹），\
+             否则本测试没有练到 yixing_scroll 掉落分支"
+        );
+
+        let registry = load_item_registry().expect("real assets/items/*.toml must load");
+        let expected_rarity = {
+            let template = registry
+                .get("yixing_scroll")
+                .expect("yixing_scroll must be registered from assets/items/morph_scrolls.toml");
+            assert_eq!(
+                template
+                    .technique_scroll_spec
+                    .as_ref()
+                    .map(|spec| spec.skill_id.as_str()),
+                Some("morph.yixing"),
+                "yixing_scroll 必须教授 morph.yixing"
+            );
+            template.rarity
+        };
+
+        let mut app = make_app_with_loot_spawn();
+        app.insert_resource(registry);
+        let player = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(TsyEnterEmit {
+            player_entity: player,
+            family_id: "tsy_lingxu_01".into(),
+            return_to: DimensionAnchor {
+                dimension: DimensionKind::Overworld,
+                pos: DVec3::new(0.0, 64.0, 0.0),
+            },
+            filtered: Vec::new(),
+        });
+        app.update();
+
+        let drops = app.world().resource::<DroppedLootRegistry>();
+        let scroll_entry = drops
+            .entries
+            .values()
+            .find(|e| e.item.template_id == "yixing_scroll")
+            .expect(
+                "SectRuins family 首次入场应放下真实 yixing_scroll——这是 tsy 遗迹掉落\
+                 入口，不应再是纯装饰性 ancient_relic_scroll_yixing",
+            );
+        assert_eq!(scroll_entry.dimension, DimensionKind::Tsy);
+        assert_eq!(
+            scroll_entry.item.rarity, expected_rarity,
+            "掉落的 yixing_scroll 应走真实 ItemTemplate 的 rarity（非 ancient 装饰性硬编码）"
+        );
+
+        // "开容器 → 背包出现 yixing_scroll"：真实 add_item_to_player_inventory 落袋验证
+        // （与 npc::loot 道伥掉落表同一条真实产出验证方式）。
+        let registry = app.world().resource::<ItemRegistry>();
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                quick_access: false,
+                id: "main_pack".to_string(),
+                name: "主背包".to_string(),
+                rows: 4,
+                cols: 4,
+                items: Vec::new(),
+                owner_instance_id: None,
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        };
+        add_item_to_player_inventory(&mut inventory, registry, &mut allocator, "yixing_scroll", 1, 0)
+            .expect("granting yixing_scroll into an empty backpack must succeed");
+
+        let found = inventory
+            .containers
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .any(|placed| placed.instance.template_id == "yixing_scroll");
+        assert!(
+            found,
+            "开容器后背包必须出现 yixing_scroll——tsy 遗迹掉落入口的真实产出链路未落地"
+        );
+    }
+
     #[test]
     fn second_entry_does_not_spawn_more_relics() {
         let mut app = make_app_with_loot_spawn();

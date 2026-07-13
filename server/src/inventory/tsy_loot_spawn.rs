@@ -25,12 +25,19 @@ use valence::prelude::{bevy_ecs, Resource};
 #[cfg(test)]
 use super::ancient_relics::seed_ancient_relics;
 use super::ancient_relics::{AncientRelicPool, AncientRelicSource};
-use super::{DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator};
+use super::{DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator, ItemRegistry};
 use crate::combat::CombatClock;
+use crate::fauna::drop::build_fauna_item_instance;
 use crate::world::dimension::DimensionKind;
 use crate::world::tsy_lifecycle::{on_first_enter, TsyZoneActivated, TsyZoneStateRegistry};
 use crate::world::tsy_portal::TsyEnterEmit;
 use crate::world::zone::{TsyDepth, ZoneRegistry};
+
+/// plan-race-system-v1 P4（掉落入口 2）—— 易形功法残卷 `yixing_scroll` 的
+/// template id 真源，供 `tsy_loot_spawn_on_enter` 消费（与 `npc::loot` 道伥掉落表
+/// 共享同一个真实 `ItemRegistry` 注册的可学习 scroll，不是本模块 `AncientRelicPool`
+/// 里那批纯装饰性"看后即焚"残卷）。
+pub const YIXING_SCROLL_TEMPLATE_ID: &str = "yixing_scroll";
 
 /// 已 spawn 过遗物的 TSY family id 集合。系统重启即清空（与"干尸不持久化"一致），
 /// 重启后玩家重新进入 → 重新 spawn 一批；这是 MVP 的有意为之，后续 P2 lifecycle plan
@@ -126,6 +133,11 @@ pub fn tsy_loot_spawn_on_enter(
     mut lifecycle: ResMut<TsyZoneStateRegistry>,
     clock: Res<CombatClock>,
     mut activated_events: EventWriter<TsyZoneActivated>,
+    // plan-race-system-v1 P4（掉落入口 2）—— `Option`：既有大量单测未插入
+    // `ItemRegistry`（本系统本轮之前完全不依赖它），生产 `inventory::register()`
+    // 恒插入该资源；缺失时优雅跳过 `yixing_scroll` 真实产出（不影响既有
+    // `AncientRelicPool` 装饰性遗物 spawn 链路，不 panic）。
+    item_registry: Option<Res<ItemRegistry>>,
 ) {
     for ev in events.read() {
         // 任何"玩家踏进 family"都先把 family 注册到 lifecycle registry —— 即便
@@ -195,6 +207,61 @@ pub fn tsy_loot_spawn_on_enter(
         // plan-tsy-lifecycle-v1 §1.5 — spawn 完成后回写初始骨架；mark_initial_skeleton
         // 内部 idempotent（仅在 vec 为空时写入），所以重入不会污染状态。
         lifecycle.mark_initial_skeleton(&ev.family_id, placed_ids.clone());
+
+        // plan-race-system-v1 P4（掉落入口 2：tsy 遗迹 loot 注册）—— SectRuins（宗门
+        // 遗迹类）family 首次真正放下遗物后，额外掉落一份**真实可学**的
+        // `yixing_scroll`（走与 `npc::loot` 道伥掉落表同一条
+        // `build_fauna_item_instance` 真实 `ItemRegistry` 工厂链路），不是
+        // `AncientRelicPool` 那批装饰性残卷——玩家开出后能真正学会 `morph.yixing`。
+        // 只在 Deep 层落点（该层至少放下 1 件 relic 才会走到这里，保证有合法 zone
+        // 落点可用）。
+        if source == AncientRelicSource::SectRuins && placed_deep > 0 {
+            if let Some(registry) = item_registry.as_deref() {
+                let scroll_seed = seed.wrapping_mul(0x2545_F491_4F6C_DD1D);
+                match sample_position_in_layer(&zones, &ev.family_id, TsyDepth::Deep, scroll_seed)
+                {
+                    Some(pos) => {
+                        match build_fauna_item_instance(
+                            YIXING_SCROLL_TEMPLATE_ID,
+                            1,
+                            clock.tick,
+                            registry,
+                            None,
+                            &mut allocator,
+                        ) {
+                            Ok(instance) => {
+                                let entry = DroppedLootEntry {
+                                    instance_id: instance.instance_id,
+                                    source_container_id: format!("tsy_spawn:{}", ev.family_id),
+                                    source_row: 0,
+                                    source_col: 0,
+                                    world_pos: [pos.x, pos.y, pos.z],
+                                    dimension: DimensionKind::Tsy,
+                                    item: instance,
+                                };
+                                tracing::info!(
+                                    family = %ev.family_id,
+                                    instance_id = entry.instance_id,
+                                    "[bong][tsy-loot] spawned real yixing_scroll (SectRuins family)"
+                                );
+                                drops.entries.insert(entry.instance_id, entry);
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    "[bong][tsy-loot] failed to instantiate yixing_scroll: {err}"
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::debug!(
+                            family = %ev.family_id,
+                            "[bong][tsy-loot] no deep zone yet — skipping yixing_scroll drop"
+                        );
+                    }
+                }
+            }
+        }
 
         tracing::info!(
             family = %ev.family_id,
