@@ -1944,4 +1944,231 @@ mod tests {
             );
         }
     }
+
+    // ── F1（P3 opus verify 发现）：施放门行为测试 —— sword_path resolver 路径 ──────
+    //
+    // 修复前只有 known_techniques.rs 的 `.allows()` 真值表 pin，从不触达三个 resolver
+    // （`cast_sword_attack`/`cast_sword_parry`/`cast_sword_infuse`）里真实的
+    // `race_gate_allows(...)` 调用点——回归删掉那行 `if !race_gate_allows(...) {
+    // return rejected(RaceMismatch) }` 不会撞红。本节直接调用 resolver 函数本体
+    // （与本文件既有 `cleave_without_sword_rejects_with_no_weapon_not_invalid_target`
+    // 等测试同款手法：真实 resolver 入口 + 最小 World 构造）锁死该行为。
+
+    /// 构造 is_humanoid=false 的合成种族 `RaceRegistry`/`BodyPlanRegistry` fixture，
+    /// 插入 `app`。与 `combat::resolve::non_humanoid_consequence_integration_tests::
+    /// single_part_registries` 同款几何（`HeightBands` 单部位，只求 `resolve_body_plan`
+    /// 校验通过，不关心命中判定）。
+    fn insert_non_humanoid_race_fixture(app: &mut App, race_id: &str) {
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::{
+            BodyPartDef, BodyPlan, BodyPlanRegistry, HeightBand, HeightBandAssignment, HitGeometry,
+            PartConsequence, RaceId, RaceRegistry, StandingAabbSpec,
+        };
+        use std::collections::HashMap;
+
+        let plan = BodyPlan {
+            id: format!("test_{race_id}_plan").into(),
+            display_name: "测试非人形构型".to_string(),
+            is_humanoid: false,
+            parts: vec![BodyPartDef {
+                id: "core".into(),
+                damage_mul: 1.0,
+                contam_mul: 1.0,
+                bleed_mul: 1.0,
+                consequence: PartConsequence::Core,
+            }],
+            hit_geometry: HitGeometry::HeightBands {
+                aabb: StandingAabbSpec {
+                    half_width: 0.3,
+                    height: 1.8,
+                },
+                bands: vec![HeightBand {
+                    min_rel_y: -1.0,
+                    assignment: HeightBandAssignment::Single {
+                        part: "core".into(),
+                    },
+                }],
+                lateral_threshold: 0.19,
+            },
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: HashMap::new(),
+        };
+        let plan_id = plan.id.clone();
+        let body_plans = BodyPlanRegistry::from_plans(vec![plan]).expect("plan must validate");
+        // `RaceRegistry::from_file_contents` 要求表内必须有一条 id=HUMAN_RACE_ID 的
+        // 默认条目（否则 "races.json must contain a default human race entry" 校验失败）
+        // ——复用 `combat::resolve::non_humanoid_consequence_integration_tests::
+        // single_part_registries` 同款手法：让这条 "human" 条目指向本 fixture 的
+        // is_humanoid=false 构型，caster 的 `Cultivation.race` 同样设为 HUMAN_RACE_ID
+        // 即可解析出非人形本体（是否人形只看 body plan，不看 race id 字面意义）。
+        let races = RaceRegistry::from_parts_for_test(
+            vec![RaceEntry {
+                id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                display_name: format!("测试非人形种族({race_id})"),
+                body_plan_id: plan_id,
+                beast_kinds: vec![],
+            }],
+            vec![],
+            &body_plans,
+        )
+        .expect("races fixture must validate");
+        app.insert_resource(body_plans);
+        app.insert_resource(races);
+    }
+
+    fn test_sword_weapon() -> Weapon {
+        use crate::combat::weapon::EquipSlot;
+        Weapon {
+            slot: EquipSlot::MainHand,
+            instance_id: 1,
+            template_id: "test_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 10.0,
+            quality_tier: 0,
+            durability: 100.0,
+            durability_max: 100.0,
+        }
+    }
+
+    #[test]
+    fn cast_sword_cleave_rejects_race_mismatch_for_non_humanoid_caster_qi_untouched() {
+        // sword.cleave 全数据表标 RaceGate::Humanoid（§8.1 #6）。非人形本体
+        // （race="test_whale"）持剑、已激活技能，但必须在 `cast_sword_attack` 里的
+        // race gate（line 493）被拒绝，AttackIntent 从不发出、qi_current 分毫不动。
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        insert_non_humanoid_race_fixture(&mut app, "test_whale");
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_CLEAVE_SKILL_ID, 0.5),
+                test_sword_weapon(),
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    qi_current: 42.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let result = cast_sword_cleave(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RaceMismatch
+            },
+            "非人形本体施放 sword.cleave 必须拒绝 RaceMismatch，实际 {result:?}"
+        );
+        assert!(
+            app.world().resource::<Events<AttackIntent>>().is_empty(),
+            "race gate 拒绝必须发生在 AttackIntent 发出之前；期望零事件，实际存在"
+        );
+        let qi_current = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_current - 42.0).abs() < f64::EPSILON,
+            "race gate 拒绝不应扣真元（守恒律）；期望 42.0 不变，实际 {qi_current}"
+        );
+    }
+
+    #[test]
+    fn cast_sword_parry_rejects_race_mismatch_for_non_humanoid_caster() {
+        // sword.parry 同表 RaceGate::Humanoid。断言拒绝原因 + StatusEffects 未被写入
+        // SwordParrying（证明 resolver 在 race gate 就返回，未继续执行格挡逻辑）。
+        let mut app = App::new();
+        insert_non_humanoid_race_fixture(&mut app, "test_whale");
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_PARRY_SKILL_ID, 0.5),
+                test_sword_weapon(),
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let result = cast_sword_parry(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RaceMismatch
+            },
+            "非人形本体施放 sword.parry 必须拒绝 RaceMismatch，实际 {result:?}"
+        );
+        assert!(
+            app.world().get::<StatusEffects>(caster).is_none(),
+            "race gate 拒绝后不应插入 StatusEffects（说明格挡逻辑从未执行）"
+        );
+    }
+
+    #[test]
+    fn cast_sword_infuse_rejects_race_mismatch_for_non_humanoid_caster_qi_untouched() {
+        // sword.infuse 同表 RaceGate::Humanoid。realm 设为非 Awaken（避免被更早的
+        // RealmTooLow 门掩盖 RaceMismatch），qi_current 给足以证明 race gate 拒绝
+        // 不扣真元、也不插入 PendingSwordInfuse（灌注从未真正发生）。
+        let mut app = App::new();
+        insert_non_humanoid_race_fixture(&mut app, "test_whale");
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_INFUSE_SKILL_ID, 0.5),
+                test_sword_weapon(),
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    realm: Realm::Induce,
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let result = cast_sword_infuse(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RaceMismatch
+            },
+            "非人形本体施放 sword.infuse 必须拒绝 RaceMismatch（realm/weapon/proficiency \
+             均已满足，唯独 race gate 应该是拒因），实际 {result:?}"
+        );
+        assert!(
+            app.world().get::<PendingSwordInfuse>(caster).is_none(),
+            "race gate 拒绝后不应插入 PendingSwordInfuse（灌注从未真正发生）"
+        );
+        let qi_current = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_current - 50.0).abs() < f64::EPSILON,
+            "race gate 拒绝不应扣真元（守恒律）；期望 50.0 不变，实际 {qi_current}"
+        );
+    }
+
+    #[test]
+    fn cast_sword_cleave_allows_humanoid_caster_race_gate_passes() {
+        // 反向 happy：人形本体（未插入 RaceRegistry/BodyPlanRegistry → 退化到
+        // humanoid 单例，race 默认 "human"）施放 sword.cleave 不应被 race gate 拦下,
+        // 必须真正 Started 并发出 AttackIntent。与上面的非人形拒绝测试对照。
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        let caster = app
+            .world_mut()
+            .spawn((known(SWORD_CLEAVE_SKILL_ID, 0.5), test_sword_weapon()))
+            .id();
+
+        let result = cast_sword_cleave(app.world_mut(), caster, 0, None);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "人形本体施放 sword.cleave 不应被 race gate 拒绝，实际 {result:?}"
+        );
+        assert!(
+            !app.world().resource::<Events<AttackIntent>>().is_empty(),
+            "人形本体应真正走到 AttackIntent 发出（resolver 未被 race gate 误挡）"
+        );
+    }
 }
