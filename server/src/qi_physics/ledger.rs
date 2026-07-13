@@ -570,7 +570,7 @@ pub fn dying_elder_release_overflow_account() -> QiAccountId {
 }
 
 pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 3] {
-    PERSISTENT_RUNTIME_QI_ACCOUNT_IDS.map(|id| QiAccountId::overflow(id))
+    PERSISTENT_RUNTIME_QI_ACCOUNT_IDS.map(QiAccountId::overflow)
 }
 
 /// plan-zone-qi-economy-v1 P0 §8.1 决议 #1 — 消耗（开脉 / 突破）真元回充独立待分配池。

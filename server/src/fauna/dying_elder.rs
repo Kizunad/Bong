@@ -546,7 +546,7 @@ pub struct PendingSoulSeize {
 ///    - Recovering { n } → Recovering { n+1 }
 ///    - n+1 >= DYING_ELDER_DAN_THRESHOLD → 触发结局判定
 /// 7. 结局判定：`betray_roll` → Betrayal 或 Dead { dead_by_betrayal: false }
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn dying_elder_give_dan_system(
     mut commands: Commands,
     mut intents: EventReader<GiveDanToElderIntent>,
@@ -660,11 +660,17 @@ pub(crate) fn dying_elder_give_dan_system(
         };
         let qi_gain = *qi_gain;
         let fallback_qi_after = qi_before + qi_gain;
-        if !qi_gain.is_finite() || qi_gain <= 0.0 || !fallback_qi_after.is_finite() {
+        let fallback_qi_gain = fallback_qi_after - qi_before;
+        if !qi_gain.is_finite()
+            || qi_gain <= 0.0
+            || !fallback_qi_after.is_finite()
+            || (fallback_qi_gain - qi_gain).abs() > QI_EPSILON
+        {
             tracing::warn!(
-                "[bong][dying_elder] give_dan_system: invalid canonical pill qi={} or fallback sum={} elder={:?}; keep inventory/state unchanged",
+                "[bong][dying_elder] give_dan_system: invalid canonical pill qi={} or unrepresentable fallback sum={} actual_gain={} elder={:?}; keep inventory/state unchanged",
                 qi_gain,
                 fallback_qi_after,
+                fallback_qi_gain,
                 intent.elder,
             );
             continue;
@@ -831,6 +837,7 @@ pub(crate) fn dying_elder_give_dan_system(
 
 /// 每 tick 重发上一帧未完成的夺舍事务。只为仍处于 Betrayal 的大能发事件；成功路径
 /// 由 `dying_elder_betray_system` 移除 [`PendingSoulSeize`]，因此不会重复转移。
+#[allow(clippy::type_complexity)]
 pub(crate) fn dying_elder_retry_pending_soul_seize_system(
     pending: Query<
         (Entity, &PendingSoulSeize, &DyingElderState),
