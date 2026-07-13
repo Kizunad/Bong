@@ -207,6 +207,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("dropped_loot_sync"),
   Type.Literal("remains_sync"),
   Type.Literal("body_plan_layout"),
+  Type.Literal("race_gate_meta"),
   Type.Literal("botany_harvest_progress"),
   Type.Literal("gathering_session"),
   Type.Literal("botany_plant_v2_render_profiles"),
@@ -426,6 +427,15 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     // plan-race-system-v1 P2a：实体本体 body_plan id（BodyPlanLayout 寻址键，client
     // 按此缓存对应布局）。Rust 侧 #[serde(default)]，故 TS 侧 Optional。
     body_plan_id: Type.Optional(Type.String()),
+    // plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：client
+    // gate 判定（装备置灰等）的权威真源，不靠猜 / 不靠 BodyPlanLayoutV1 的 is_humanoid
+    // 元数据（那只供渲染）。未易形（P4 MorphState 落地前恒定）时 form_* 三字段 =
+    // 对应本体字段。Rust 侧 #[serde(default)]，故 TS 侧全部 Optional。
+    race_id: Type.Optional(Type.String()),
+    form_race_id: Type.Optional(Type.String()),
+    form_body_plan_id: Type.Optional(Type.String()),
+    intrinsic_is_humanoid: Type.Optional(Type.Boolean()),
+    form_is_humanoid: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -579,6 +589,53 @@ export const ServerDataBodyPlanLayoutV1 = Type.Object(
 export type ServerDataBodyPlanLayoutV1 = Static<
   typeof ServerDataBodyPlanLayoutV1
 >;
+
+// ─── plan-race-system-v1 P3a：RaceGate ─────────────────────────────
+// 装备 / 功法种族三档匹配门的 wire 形状（与 Rust body_plan::types::RaceGateOwned /
+// proto bong.RaceGate 精确对应）。`kind` 用 string tag（非 proto enum，避免枚举前缀
+// noOp，见 plan-wire-format-bridge-v1 教训）；`species` 仅 `kind="species"` 时非空。
+// 未知 kind 必须被拒绝（fail-closed，不静默兜底 any）——校验层用 `validate()` 走
+// `RaceGateV1` schema 即可拒绝，本类型尚未挂在任何 ServerData oneof payload 下
+// （P3 后续接入功法列表 / 装备 wire 时复用，见 plan §P3 身份快照 bullet）。
+export const RaceGateV1 = Type.Object(
+  {
+    kind: Type.Union([
+      Type.Literal("any"),
+      Type.Literal("humanoid"),
+      Type.Literal("species"),
+    ]),
+    species: Type.Array(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+export type RaceGateV1 = Static<typeof RaceGateV1>;
+
+// ─── plan-race-system-v1 P3c：RaceGateMeta（种族门元数据表） ──────────
+// 静态 per-template / per-technique 种族门表，join 首帧一次性下发（不随每次
+// inventory snapshot 重发）。两表都只装**非 any** 条目（any 是默认，client 缺省
+// 即恒放行，省流量）。装备门（item_wearer_race）判当前形态身份，功法门
+// （technique_required_race）判本体身份——两域不同轴（决议 §8.1 #5/#6）。
+export const RaceGateMetaEntryV1 = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    gate: RaceGateV1,
+  },
+  { additionalProperties: false },
+);
+export type RaceGateMetaEntryV1 = Static<typeof RaceGateMetaEntryV1>;
+
+export const ServerDataRaceGateMetaV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("race_gate_meta"),
+    // item template_id → wearer_race（装备门，判当前形态）。恒为数组（空 = 无门物品）。
+    item_wearer_race: Type.Array(RaceGateMetaEntryV1),
+    // technique skill_id → required_race（功法门，判本体）。恒为数组（空 = 无门功法）。
+    technique_required_race: Type.Array(RaceGateMetaEntryV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRaceGateMetaV1 = Static<typeof ServerDataRaceGateMetaV1>;
 
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
@@ -1952,6 +2009,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataDroppedLootSyncV1,
   ServerDataRemainsSyncV1,
   ServerDataBodyPlanLayoutV1,
+  ServerDataRaceGateMetaV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,

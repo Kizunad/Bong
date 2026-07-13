@@ -62,6 +62,7 @@ pub fn mentor_dialog_option_appears(
         && tags.is_some_and(|tags| tags.has(WOLIU_STYLE_TAG))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn mentor_teaches_technique(
     inventory: &mut PlayerInventory,
     known: &mut KnownTechniques,
@@ -69,6 +70,7 @@ pub fn mentor_teaches_technique(
     meridians: &MeridianSystem,
     severed: Option<&MeridianSeveredPermanent>,
     ctx: MentorTeachContext,
+    intrinsic_is_humanoid: bool,
 ) -> MentorOutcome {
     if !matches!(ctx.archetype, NpcArchetype::Rogue | NpcArchetype::Disciple) {
         return MentorOutcome::UnsupportedArchetype;
@@ -99,6 +101,7 @@ pub fn mentor_teaches_technique(
         severed,
         ctx.technique_id,
         0.0,
+        intrinsic_is_humanoid,
     );
     if !matches!(outcome, ScrollReadOutcome::Learned) {
         return MentorOutcome::LearnBlocked(outcome);
@@ -210,6 +213,7 @@ mod tests {
                 reputation_to_player: 60,
                 technique_id: "woliu.burst",
             },
+            true,
         );
 
         assert!(matches!(
@@ -245,6 +249,7 @@ mod tests {
                 reputation_to_player: 50,
                 technique_id: "woliu.vacuum_palm",
             },
+            true,
         );
 
         assert_eq!(inventory.bone_coins, 30);
@@ -281,6 +286,7 @@ mod tests {
                 reputation_to_player: 70,
                 technique_id: "woliu.heart",
             },
+            true,
         );
 
         assert_eq!(outcome, MentorOutcome::EarthGradeRefused);
@@ -312,11 +318,48 @@ mod tests {
                 reputation_to_player: 70,
                 technique_id: "woliu.burst",
             },
+            true,
         );
 
         assert!(matches!(
             outcome,
             MentorOutcome::LearnBlocked(ScrollReadOutcome::MeridianSevered { .. })
         ));
+    }
+
+    // plan-race-system-v1 P3a —— 拜师习得门也要走 race gate（woliu 家族全 Humanoid）。
+    #[test]
+    fn mentor_refuses_non_humanoid_intrinsic() {
+        let mut inventory = inventory(100);
+        let mut known = KnownTechniques::default();
+
+        let outcome = super::mentor_teaches_technique(
+            &mut inventory,
+            &mut known,
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &opened_lung_heart(),
+            None,
+            MentorTeachContext {
+                player: Entity::from_raw(1),
+                npc_entity: Entity::from_raw(2),
+                archetype: NpcArchetype::Rogue,
+                tags: &tags(),
+                reputation_to_player: 70,
+                technique_id: "woliu.burst",
+            },
+            false,
+        );
+
+        assert!(matches!(
+            outcome,
+            MentorOutcome::LearnBlocked(ScrollReadOutcome::RaceMismatch)
+        ));
+        assert_eq!(
+            inventory.bone_coins, 100,
+            "race gate 拒绝时不应扣骨币（LearnBlocked 分支在扣费之前 return）"
+        );
     }
 }

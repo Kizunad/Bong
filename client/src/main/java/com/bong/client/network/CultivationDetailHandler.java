@@ -6,6 +6,7 @@ import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
 import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.inventory.state.PlayerRaceIdentityStore;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillMilestoneSnapshot;
 import com.bong.client.skill.SkillMilestoneStore;
@@ -101,6 +102,18 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         // BodyPlanLayoutStore"当前"指针的唯一权威来源；body_plan_layout payload 本身
         // 只按 id 建缓存（见 BodyPlanLayoutHandler），两者到达顺序不定，store 内部处理竞态。
         BodyPlanLayoutStore.setCurrentPlanId(readString(payload, "body_plan_id"));
+
+        // plan-race-system-v1 P3c — 身份快照五字段解码收尾（P3b 只接到 server + TS，
+        // client 端一直未消费）。空字符串在 wire 上等价"缺省本体默认"（server 恒发非空
+        // race_id，字段缺失多见于测试 fixture），readString 缺失时落 null，
+        // PlayerRaceIdentityStore.replace 内部归一成 ""。
+        PlayerRaceIdentityStore.replace(
+            readString(payload, "race_id"),
+            readString(payload, "form_race_id"),
+            readString(payload, "form_body_plan_id"),
+            readBoolean(payload, "intrinsic_is_humanoid"),
+            readBoolean(payload, "form_is_humanoid")
+        );
 
         MeridianBody body = buildBody(
             channelOrder,

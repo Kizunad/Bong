@@ -59,6 +59,7 @@ fn container_template(id: &str, rows: u8, cols: u8, weight_capacity: f64) -> Ite
         shield_spec: None,
         shelflife_profile: None,
         shelflife_track: None,
+        wearer_race: bong_server::body_plan::types::RaceGateOwned::default(),
     }
 }
 

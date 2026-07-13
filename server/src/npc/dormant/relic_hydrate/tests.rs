@@ -57,6 +57,7 @@ fn test_template(template_id: &str, spirit_quality_initial: f64) -> ItemTemplate
         shelflife_profile: None,
         shield_spec: None,
         shelflife_track: None,
+        wearer_race: crate::body_plan::types::RaceGateOwned::default(),
     }
 }
 
