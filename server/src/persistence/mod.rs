@@ -22,6 +22,7 @@ use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
 use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::void::components::{VoidActionCooldowns, VoidActionKind};
+use crate::inventory::{DroppedLootEntry, JS_SAFE_INTEGER_MAX};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
@@ -51,7 +52,7 @@ pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
 /// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位。
-const CURRENT_USER_VERSION: i32 = 35;
+const CURRENT_USER_VERSION: i32 = 37;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -2276,6 +2277,42 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             params![i64::try_from(conservative_elapsed).unwrap_or(i64::MAX)],
         )?;
         transaction.execute_batch("PRAGMA user_version = 35;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 36 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_craft_sessions (
+                username          TEXT PRIMARY KEY,
+                session_json      TEXT NOT NULL,
+                schema_version    INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 36;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 37 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS dropped_loot (
+                instance_id       INTEGER PRIMARY KEY CHECK (instance_id >= 0),
+                entry_json        TEXT NOT NULL,
+                schema_version    INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 37;
+            ",
+        )?;
         transaction.commit()?;
     }
 
@@ -5362,7 +5399,7 @@ fn upsert_ascension_quota(
     Ok(())
 }
 
-fn upsert_zone_runtime(
+pub(crate) fn upsert_zone_runtime(
     transaction: &rusqlite::Transaction<'_>,
     record: &ZoneRuntimeRecord,
     wall_clock: i64,
@@ -5437,7 +5474,7 @@ fn validate_zone_runtime_record(record: &ZoneRuntimeRecord) -> io::Result<()> {
     Ok(())
 }
 
-fn upsert_pending_inflow_balance(
+pub(crate) fn upsert_pending_inflow_balance(
     transaction: &rusqlite::Transaction<'_>,
     qi_ledger: &WorldQiAccount,
     wall_clock: i64,
@@ -5472,6 +5509,208 @@ fn upsert_pending_inflow_balance(
         )
         .map_err(io::Error::other)?;
     Ok(())
+}
+
+pub(crate) fn upsert_player_cultivation_slice(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    cultivation: &Cultivation,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let existing: Option<String> = transaction
+        .query_row(
+            "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let mut bundle = existing
+        .map(|json| {
+            serde_json::from_str::<serde_json::Value>(&json)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        })
+        .transpose()?
+        .unwrap_or_else(|| serde_json::json!({ "v": 1 }));
+    let object = bundle.as_object_mut().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("player_cultivation for `{username}` must be a JSON object"),
+        )
+    })?;
+    object.insert(
+        "cultivation".to_string(),
+        serde_json::to_value(cultivation)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    );
+    let cultivation_json = serde_json::to_string(&bundle)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_cultivation (
+                username, cultivation_json, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                cultivation_json = excluded.cultivation_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                cultivation_json,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+pub(crate) fn upsert_dropped_loot_entries(
+    transaction: &rusqlite::Transaction<'_>,
+    entries: &[DroppedLootEntry],
+    wall_clock: i64,
+) -> io::Result<()> {
+    for entry in entries {
+        if entry.instance_id != entry.item.instance_id || entry.instance_id > JS_SAFE_INTEGER_MAX {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid durable dropped loot id={} item_id={} max={JS_SAFE_INTEGER_MAX}",
+                    entry.instance_id, entry.item.instance_id
+                ),
+            ));
+        }
+        let entry_json = serde_json::to_string(entry)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        transaction
+            .execute(
+                "
+                INSERT INTO dropped_loot (
+                    instance_id, entry_json, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    entry_json = excluded.entry_json,
+                    schema_version = excluded.schema_version,
+                    last_updated_wall = excluded.last_updated_wall
+                ",
+                params![
+                    i64::try_from(entry.instance_id).map_err(io::Error::other)?,
+                    entry_json,
+                    CURRENT_SCHEMA_VERSION,
+                    wall_clock
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn delete_dropped_loot_entry(
+    transaction: &rusqlite::Transaction<'_>,
+    instance_id: u64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "DELETE FROM dropped_loot WHERE instance_id = ?1",
+            params![i64::try_from(instance_id).map_err(io::Error::other)?],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+pub fn load_durable_dropped_loot(
+    settings: &PersistenceSettings,
+) -> io::Result<HashMap<u64, DroppedLootEntry>> {
+    let connection = open_persistence_connection(settings)?;
+    let mut statement = connection
+        .prepare("SELECT instance_id, entry_json FROM dropped_loot ORDER BY instance_id")
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(io::Error::other)?;
+    let mut entries = HashMap::new();
+    for row in rows {
+        let (stored_id, entry_json) = row.map_err(io::Error::other)?;
+        let stored_id = u64::try_from(stored_id).map_err(io::Error::other)?;
+        let entry: DroppedLootEntry = serde_json::from_str(&entry_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if stored_id != entry.instance_id
+            || entry.instance_id != entry.item.instance_id
+            || stored_id > JS_SAFE_INTEGER_MAX
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "durable dropped loot id mismatch row={stored_id} entry={} item={}",
+                    entry.instance_id, entry.item.instance_id
+                ),
+            ));
+        }
+        entries.insert(stored_id, entry);
+    }
+    Ok(entries)
+}
+
+pub fn persisted_inventory_instance_id_high_water(
+    settings: &PersistenceSettings,
+) -> io::Result<Option<u64>> {
+    fn visit(value: &serde_json::Value, high_water: &mut Option<u64>) -> io::Result<()> {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, value) in fields {
+                    if key == "instance_id" {
+                        let id = value.as_u64().ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("persisted `{key}` must be an unsigned integer"),
+                            )
+                        })?;
+                        if id > JS_SAFE_INTEGER_MAX {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "persisted inventory instance id {id} exceeds JS safe integer max {JS_SAFE_INTEGER_MAX}"
+                                ),
+                            ));
+                        }
+                        *high_water = Some(high_water.map_or(id, |current| current.max(id)));
+                    }
+                    visit(value, high_water)?;
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    visit(value, high_water)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    let connection = open_persistence_connection(settings)?;
+    let mut high_water = None;
+    let mut statement = connection
+        .prepare("SELECT inventory_json FROM inventories")
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(io::Error::other)?;
+    for row in rows {
+        let json = row.map_err(io::Error::other)?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        visit(&value, &mut high_water)?;
+    }
+    let durable = load_durable_dropped_loot(settings)?;
+    for id in durable.keys().copied() {
+        high_water = Some(high_water.map_or(id, |current| current.max(id)));
+    }
+    Ok(high_water)
 }
 
 fn replace_heartbeat_pseudo_vein_records(
@@ -6079,7 +6318,7 @@ fn load_zone_runtime_snapshot_from_connection(
     Ok(records)
 }
 
-fn load_pending_inflow_balance(settings: &PersistenceSettings) -> io::Result<f64> {
+pub(crate) fn load_pending_inflow_balance(settings: &PersistenceSettings) -> io::Result<f64> {
     let connection = open_persistence_connection(settings)?;
     let balance = connection
         .query_row(

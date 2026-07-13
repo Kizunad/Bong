@@ -37,6 +37,7 @@ use crate::cultivation::tribulation::{
 };
 use crate::inventory::{clear_player_inventory, ClearScope, OverloadedMarker, PlayerInventory};
 use crate::movement::{player_knockback::ActivePlayerKnockback, MovementState};
+use crate::network::craft_emit::{CraftSessionPersistenceDirty, CraftSessionStateDirty};
 use crate::player::state::PlayerState;
 use crate::skill::components::SkillSet;
 
@@ -358,6 +359,7 @@ fn remove_runtime_state(
             .remove::<HeartDemonResolution>()
             .remove::<ActivePlayerKnockback>()
             .remove::<CraftSession>()
+            .insert((CraftSessionStateDirty, CraftSessionPersistenceDirty))
             .remove::<OverloadedMarker>()
             .remove::<CarrierCharging>()
             .remove::<PendingDuguInfusion>()

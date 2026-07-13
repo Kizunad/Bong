@@ -693,12 +693,48 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["output_count"], 1, "output_count 是 field 5")
 
     def test_craft_outcome_failed_branch(self):
-        failed = _pb_len_field(3, b"r") + _pb_varint_field(4, 2)
+        failed = (
+            _pb_len_field(3, b"r")
+            + _pb_varint_field(4, 2)
+            + _pb_varint_field(5, 7)
+        )
         decoded = proto_min.decode_server_data_envelope(
             _pb_len_field(23, _pb_len_field(2, failed))
         )
         self.assertEqual(decoded["outcome"], "failed", "oneof field 2 = CraftOutcomeFailed")
         self.assertEqual(decoded["reason"], 2, "CraftOutcomeFailed.reason 是 field 4（enum）")
+        self.assertEqual(
+            decoded["material_returned"],
+            7,
+            "CraftOutcomeFailed.material_returned 是 field 5，Bot 必须核对真实退款数",
+        )
+
+    def test_dropped_loot_sync_tag81_decodes_pickup_identity(self):
+        item = _pb_varint(1, 77) + _pb_string(2, "fan_tie") + _pb_varint(9, 1)
+        entry = (
+            _pb_varint(1, 77)
+            + _pb_string(2, "overflow:fan_tie")
+            + _pb_varint(3, 0)
+            + _pb_varint(4, 0)
+            + _pb_fixed64(5, 8.0)
+            + _pb_fixed64(6, 65.0)
+            + _pb_fixed64(7, -2.0)
+            + _pb_message(8, item)
+        )
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(81, _pb_message(1, entry))
+        )
+        self.assertEqual(
+            decoded["type"],
+            "dropped_loot_sync",
+            "envelope tag 81 应分发到 dropped_loot_sync",
+        )
+        self.assertEqual(len(decoded["drops"]), 1, "sync field 1 应解出一条掉落")
+        drop = decoded["drops"][0]
+        self.assertEqual(drop["instance_id"], 77, "instance_id 用于 pickup intent")
+        self.assertEqual(drop["item"]["item_id"], "fan_tie")
+        self.assertEqual(drop["item"]["stack_count"], 1)
+        self.assertEqual(drop["world_pos"], [8.0, 65.0, -2.0])
 
     def test_craft_outcome_unknown_fallback(self):
         # 空 CraftOutcome（无 oneof 分支）→ 解码器兜底 unknown，不 crash
