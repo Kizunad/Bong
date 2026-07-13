@@ -6,6 +6,7 @@ import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
 import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.inventory.state.PlayerRaceIdentityStore;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillMilestoneStore;
 import com.bong.client.skill.SkillSetStore;
@@ -28,6 +29,7 @@ public class CultivationDetailHandlerTest {
     void setUp() {
         MeridianStateStore.resetForTests();
         BodyPlanLayoutStore.resetForTests();
+        PlayerRaceIdentityStore.resetForTests();
     }
 
     @AfterEach
@@ -36,6 +38,7 @@ public class CultivationDetailHandlerTest {
         SkillSetStore.resetForTests();
         SkillMilestoneStore.resetForTests();
         BodyPlanLayoutStore.resetForTests();
+        PlayerRaceIdentityStore.resetForTests();
     }
 
     private static ServerDataEnvelope envelope(JsonObject payload) {
@@ -108,6 +111,79 @@ public class CultivationDetailHandlerTest {
         handler.handle(envelope(payload2));
         assertEquals("whale", BodyPlanLayoutStore.currentPlanId(),
             "真实换 race（body_plan_id 变化）必须更新 store 当前指针");
+    }
+
+    // plan-race-system-v1 P3c — 身份快照五字段解码（P3b 只接到 server + TS，client 端
+    // 一直未消费；本段补上 wire→PlayerRaceIdentityStore 落点）。
+
+    @Test
+    void identityFiveFieldsDecodeIntoStoreOnFullPayload() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("race_id", "human");
+        payload.addProperty("form_race_id", "whale");
+        payload.addProperty("form_body_plan_id", "whale");
+        payload.addProperty("intrinsic_is_humanoid", true);
+        payload.addProperty("form_is_humanoid", false);
+
+        handler.handle(envelope(payload));
+
+        assertEquals("human", PlayerRaceIdentityStore.raceId());
+        assertEquals("whale", PlayerRaceIdentityStore.formRaceId());
+        assertEquals("whale", PlayerRaceIdentityStore.formBodyPlanId());
+        assertTrue(PlayerRaceIdentityStore.intrinsicIsHumanoid());
+        assertFalse(PlayerRaceIdentityStore.formIsHumanoid());
+    }
+
+    @Test
+    void identityFieldsDefaultToEmptyStringAndFalseWhenMissing() {
+        // 未易形 / 老 fixture 缺该五字段时，store 必须落到安全默认值而非 null / 崩溃。
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        handler.handle(envelope(payload));
+
+        assertEquals("", PlayerRaceIdentityStore.raceId());
+        assertEquals("", PlayerRaceIdentityStore.formRaceId());
+        assertEquals("", PlayerRaceIdentityStore.formBodyPlanId());
+        assertFalse(PlayerRaceIdentityStore.intrinsicIsHumanoid());
+        assertFalse(PlayerRaceIdentityStore.formIsHumanoid());
+    }
+
+    @Test
+    void unmorphedIdentityHasFormFieldsEqualToIntrinsicFields() {
+        // 未易形时 form_* 三字段 = 对应本体字段（决议 §8.1 #5/#6 契约）。
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("race_id", "human");
+        payload.addProperty("form_race_id", "human");
+        payload.addProperty("form_body_plan_id", "humanoid");
+        payload.addProperty("intrinsic_is_humanoid", true);
+        payload.addProperty("form_is_humanoid", true);
+
+        handler.handle(envelope(payload));
+
+        assertEquals(PlayerRaceIdentityStore.raceId(), PlayerRaceIdentityStore.formRaceId());
+        assertEquals(PlayerRaceIdentityStore.intrinsicIsHumanoid(), PlayerRaceIdentityStore.formIsHumanoid());
+    }
+
+    @Test
+    void identityFieldsUpdateAcrossSuccessiveSnapshotsOnRealMorphChange() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("race_id", "human");
+        payload.addProperty("form_race_id", "human");
+        payload.addProperty("intrinsic_is_humanoid", true);
+        payload.addProperty("form_is_humanoid", true);
+        handler.handle(envelope(payload));
+        assertTrue(PlayerRaceIdentityStore.formIsHumanoid());
+
+        var payload2 = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload2.addProperty("race_id", "human");
+        payload2.addProperty("form_race_id", "whale");
+        payload2.addProperty("intrinsic_is_humanoid", true);
+        payload2.addProperty("form_is_humanoid", false);
+        handler.handle(envelope(payload2));
+
+        assertEquals("human", PlayerRaceIdentityStore.raceId(), "本体身份不随易形改变");
+        assertEquals("whale", PlayerRaceIdentityStore.formRaceId(), "易形后 form_race_id 必须更新");
+        assertTrue(PlayerRaceIdentityStore.intrinsicIsHumanoid(), "本体人形性状不随易形改变");
+        assertFalse(PlayerRaceIdentityStore.formIsHumanoid(), "易形为非人形（whale）后 form_is_humanoid 必须翻转");
     }
 
     @Test
