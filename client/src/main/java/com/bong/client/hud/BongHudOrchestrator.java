@@ -414,6 +414,8 @@ public final class BongHudOrchestrator {
             ));
             // F5 fix — 灵龛守护状态（NicheGuardianStore）此前只进不出，从未被任何 HUD planner 消费。
             commands.addAll(NicheGuardianHudPlanner.buildCommands(screenWidth, screenHeight));
+            // plan-race-system-v1 PR-5b — 易形形态图标 + 施法期 vignette。
+            commands.addAll(MorphHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(NearDeathOverlayPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight
