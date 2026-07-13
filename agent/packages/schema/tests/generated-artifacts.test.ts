@@ -10,10 +10,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { validateAgentCommandV1Contract } from "../src/agent-command.js";
+import { CraftOutcomeV1, RecipeUnlockedV1 } from "../src/craft.js";
 import { ElderEncounterEventV1 } from "../src/elder-encounter.js";
 import { MeridianSeveredEventV1 } from "../src/meridian-severed.js";
 import { validateNarrationV1Contract } from "../src/narration.js";
 import { FactionWarEventV1, NamedFactionStateV1 } from "../src/npc.js";
+import { SkillLvUpPayloadV1 } from "../src/skill.js";
 import { TuikeAshDecayV1 } from "../src/tuike-v2.js";
 import { validateWorldStateV1Contract } from "../src/world-state.js";
 import {
@@ -95,10 +97,13 @@ describe("generated schema freshness gate", () => {
 
   it("registers every runtime-consumed server-to-agent Redis V1 contract", () => {
     const runtimeContracts = {
+      "craft-outcome-v1.json": CraftOutcomeV1,
       "elder-encounter-event-v1.json": ElderEncounterEventV1,
       "faction-war-event-v1.json": FactionWarEventV1,
       "meridian-severed-event-v1.json": MeridianSeveredEventV1,
       "named-faction-state-v1.json": NamedFactionStateV1,
+      "recipe-unlocked-v1.json": RecipeUnlockedV1,
+      "skill-lv-up-payload-v1.json": SkillLvUpPayloadV1,
       "tuike-ash-decay-v1.json": TuikeAshDecayV1,
     } as const;
 

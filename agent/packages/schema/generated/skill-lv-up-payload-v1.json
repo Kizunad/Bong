@@ -1,0 +1,53 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "char_id",
+    "skill",
+    "new_lv"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "char_id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skill": {
+      "anyOf": [
+        {
+          "const": "herbalism",
+          "type": "string"
+        },
+        {
+          "const": "alchemy",
+          "type": "string"
+        },
+        {
+          "const": "forging",
+          "type": "string"
+        },
+        {
+          "const": "combat",
+          "type": "string"
+        },
+        {
+          "const": "mineral",
+          "type": "string"
+        },
+        {
+          "const": "cultivation",
+          "type": "string"
+        }
+      ]
+    },
+    "new_lv": {
+      "minimum": 0,
+      "maximum": 10,
+      "type": "integer"
+    }
+  }
+}

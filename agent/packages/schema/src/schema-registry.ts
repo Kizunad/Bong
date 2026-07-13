@@ -117,6 +117,7 @@ import {
 } from "./combat-hud.js";
 import { SkillConfigSnapshotV1, SkillConfigV1 } from "./skill-config.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
+import { SkillLvUpPayloadV1 } from "./skill.js";
 import {
   AntidoteResultEventV1,
   AntidoteResultV1,
@@ -133,6 +134,7 @@ import {
   DuguV2SkillIdV1,
 } from "./dugu_v2.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
+import { CraftOutcomeV1, RecipeUnlockedV1 } from "./craft.js";
 import {
   DeathCinematicPhaseV1,
   DeathCinematicRollV1,
@@ -789,6 +791,9 @@ export const SCHEMA_REGISTRY = {
   elderEncounterEventV1: ElderEncounterEventV1,
   factionWarEventV1: FactionWarEventV1,
   namedFactionStateV1: NamedFactionStateV1,
+  craftOutcomeV1: CraftOutcomeV1,
+  recipeUnlockedV1: RecipeUnlockedV1,
+  skillLvUpPayloadV1: SkillLvUpPayloadV1,
   falseSkinLayerStateV1: FalseSkinLayerStateV1,
   falseSkinStackStateV1: FalseSkinStackStateV1,
   serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
@@ -1104,6 +1109,9 @@ export const GENERATED_SCHEMA_FILES = {
   "elder-encounter-event-v1.json": SCHEMA_REGISTRY.elderEncounterEventV1,
   "faction-war-event-v1.json": SCHEMA_REGISTRY.factionWarEventV1,
   "named-faction-state-v1.json": SCHEMA_REGISTRY.namedFactionStateV1,
+  "craft-outcome-v1.json": SCHEMA_REGISTRY.craftOutcomeV1,
+  "recipe-unlocked-v1.json": SCHEMA_REGISTRY.recipeUnlockedV1,
+  "skill-lv-up-payload-v1.json": SCHEMA_REGISTRY.skillLvUpPayloadV1,
   "false-skin-stack-state-v1.json": SCHEMA_REGISTRY.falseSkinStackStateV1,
   "style-telemetry-color-snapshot-v1.json":
     SCHEMA_REGISTRY.styleTelemetryColorSnapshotV1,
