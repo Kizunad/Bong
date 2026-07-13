@@ -1,13 +1,13 @@
-name: Review
+name: Review (Codex)
 
-# 按需触发:在 PR 上评论 `/review`(以此开头)才跑。
+# 触发规则（已让位给 Claude 引擎 review-claude.yml，此引擎保留但不再自动跑）：
+# - PR 创建【不再】自动触发（默认路径走 review-claude.yml）。
+# - 需要在 PR 评论 `/review-codex` 才会触发本 codex 引擎复审。
+# - workflow_dispatch 只作人工兜底。
 #
-# 引擎:.github/scripts/review.mjs —— @anthropic-ai/claude-agent-sdk 编排。
-# **opus(经 ANTHROPIC_DEFAULT_OPUS_MODEL 映射到 glm-5.2)当 orchestrator + 裁判,
-# 用 Task 自主 spawn 管理 sonnet(映射 deepseek-v4-flash) finder/voter 子代理 swarm**,全走 proxy.kizun4.uk。
-# 混合编排:脚本按 diff 分档定 finder 预算 + 提供玩法模板(多维对峙/怀疑裁决/fan-out/代码断链 wiring),
-# opus 在预算+模板约束内自主调度。已弃用 codex(responses 端点跑 gpt-5.5 持续不稳)。
-# 鉴权:复用 secrets.PI_CLIPROXY_KEY 作 ANTHROPIC_AUTH_TOKEN(claude harness + proxy),零新 secret。
+# 引擎：.github/scripts/review.mjs 自包含编排 4 个 Codex reviewer。
+# 每个 reviewer 都使用 gpt-5.6 + high reasoning，经 OpenAI-compatible Responses 端点。
+# 4 人首轮独立审查，随后读取同伴意见复投；只有 3/1 或 4/0 APPROVE 才算通过，2/2 视为未通过。
 on:
   issue_comment:
     types: [created]
@@ -18,74 +18,88 @@ on:
         required: true
 
 permissions:
-  contents: read # 只读 token:reviewer 天然无法 merge / push
+  contents: read
   pull-requests: write
   issues: write
 
 concurrency:
-  # group 只按 PR(不含 comment.id)+ 不取消进行中:同一 PR 的多次 /review 串行排队,避免并发跑多套 swarm 烧额度。
-  group: review-${{ github.event.issue.number || inputs.pr_number || github.run_id }}
+  group: review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   review:
-    # 仅当 PR 评论以 `/review` 开头、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行。
-    # startsWith(不是 contains):`/review`、`/review pi`(旧词平滑)都触发,正文中间提到 /review 的讨论不误触发。
-    # bot 评论 author_association 不在白名单 + 本脚本评论不以 /review 开头 → 不自触发。
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
-       startsWith(github.event.comment.body, '/review') &&
+       startsWith(github.event.comment.body, '/review-codex') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
-    # opus 编排 + spawn 多个 finder 子代理读真实代码,huge PR 较慢;45min 逃生阀。
-    timeout-minutes: 45
+    timeout-minutes: 90
 
     steps:
-      # issue_comment 触发只认 main 上的定义,先签出 main 拿最新 review.mjs。fetch-depth:0 让 gh pr checkout 能切 PR head。
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false # 不把 GITHUB_TOKEN 写进 .git/config;后续 gh 用 step 级 GH_TOKEN
+          persist-credentials: false
 
-      # 暂存 main 版脚本,再把 working tree 切到 PR head——脚本是 main 最新版,而 finder 子代理(cwd=repo)
-      # 用 Read/Grep 读到的是 PR 真实代码(wiring 玩法靠 Grep 搜调用方,必须读 PR head)。
-      # checkout 失败(PR 已合并/删分支/fork 受限)降级不阻断:finder 退化读 main 版,review 仍产出(#434 经验)。
-      - name: 暂存脚本 + 切到 PR head(给 finder 子代理读真实代码)
+      - name: 暂存脚本 + 切到 PR head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRNUM: ${{ github.event.issue.number || inputs.pr_number }} # 经 env 中转,不把 ${{}} 直插 run 文本(防模板注入)
+          PRNUM: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
         run: |
           mkdir -p /tmp/rev
           cp .github/scripts/review.mjs /tmp/rev/review.mjs
           gh pr checkout "$PRNUM" \
-            || echo "::warning::gh pr checkout 失败,finder 将基于 main + diff 审核"
+            || echo "::warning::gh pr checkout 失败，review 将基于当前 checkout + PR diff 审核"
 
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
 
-      # SDK 装 /tmp/rev(review.mjs 在那,ESM 裸 import 从脚本目录 node_modules 解析);
-      # claude code 装 -g 提供 SDK 底层 spawn 的 claude binary(in PATH)。
-      - name: 安装 claude-agent-sdk + claude code
+      - name: 安装 Codex CLI
         run: |
-          npm install -g @anthropic-ai/claude-code@2.1.168
-          (cd /tmp/rev && npm init -y >/dev/null 2>&1 && npm install @anthropic-ai/claude-agent-sdk@0.3.168)
-          claude --version
+          npm install -g @openai/codex@0.143.0
+          codex --version
 
-      - name: Review (opus 自主调度 flash finder swarm)
-        # cwd = repo 根(= PR head working tree),query 默认 cwd 即此,finder 子代理读 PR 真实代码。
+      - name: 配置 Codex hlool provider
+        env:
+          REVIEW_CODEX_API_KEY: ${{ secrets.REVIEW_CODEX_API_KEY || secrets.HLOOL_API_KEY || secrets.OPENAI_API_KEY || secrets.PI_CLIPROXY_KEY }}
+          REVIEW_CODEX_BASE_URL: ${{ vars.REVIEW_CODEX_BASE_URL || 'https://api.hlool.top' }}
+        run: |
+          if [ -z "$REVIEW_CODEX_API_KEY" ]; then
+            echo "::error::缺 REVIEW_CODEX_API_KEY / HLOOL_API_KEY / OPENAI_API_KEY secret"
+            exit 1
+          fi
+
+          BASE="${REVIEW_CODEX_BASE_URL%/}"
+          case "$BASE" in
+            */v1) API_BASE="$BASE" ;;
+            *) API_BASE="$BASE/v1" ;;
+          esac
+
+          mkdir -p ~/.codex
+          cat > ~/.codex/config.toml <<EOF
+          model_provider = "hlool"
+          model = "gpt-5.6"
+          model_reasoning_effort = "high"
+          disable_response_storage = true
+
+          [model_providers.hlool]
+          name = "hlool"
+          wire_api = "responses"
+          env_key = "REVIEW_CODEX_API_KEY"
+          base_url = "${API_BASE}"
+          EOF
+
+      - name: Review (4× Codex gpt-5.6 high)
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # 模型映射:opus→glm-5.2(orchestrator+裁判) / sonnet→deepseek-v4-flash(swarm),全走 proxy。
-          ANTHROPIC_BASE_URL: ${{ vars.REVIEW_PROXY_BASE || 'https://proxy.kizun4.uk' }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.PI_CLIPROXY_KEY }}
-          ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ vars.REVIEW_OPUS_MODEL || 'glm-5.2' }}
-          ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ vars.REVIEW_SONNET_MODEL || 'deepseek-v4-flash' }}
-          # 轮控/预算(env 可覆盖):
-          REVIEW_MAX_TURNS: ${{ vars.REVIEW_MAX_TURNS || '40' }}
-          REVIEW_FINDER_MAX_TURNS: ${{ vars.REVIEW_FINDER_MAX_TURNS || '10' }}
-          REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '100000' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+          REVIEW_CODEX_API_KEY: ${{ secrets.REVIEW_CODEX_API_KEY || secrets.HLOOL_API_KEY || secrets.OPENAI_API_KEY || secrets.PI_CLIPROXY_KEY }}
+          REVIEW_CODEX_MODEL: ${{ vars.REVIEW_CODEX_MODEL || 'gpt-5.6' }}
+          REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '40000' }}
+          REVIEW_MAX_PLAN: ${{ vars.REVIEW_MAX_PLAN || '20000' }}
+          REVIEW_CODEX_TIMEOUT_MS: ${{ vars.REVIEW_CODEX_TIMEOUT_MS || '900000' }}
+          REVIEW_CODEX_CONCURRENCY: ${{ vars.REVIEW_CODEX_CONCURRENCY || '2' }}
         run: node /tmp/rev/review.mjs
