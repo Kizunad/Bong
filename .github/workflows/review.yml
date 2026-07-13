@@ -139,8 +139,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
-          REVIEW_CODEX_API_KEY: ${{ secrets.REVIEW_CODEX_API_KEY || secrets.HLOOL_API_KEY || secrets.OPENAI_API_KEY || secrets.PI_CLIPROXY_KEY }}
-          REVIEW_CODEX_BASE_URL: ${{ vars.REVIEW_CODEX_BASE_URL || 'https://api.hlool.top' }}
+          REVIEW_CODEX_API_KEY: ${{ secrets.REVIEW_CODEX_API_KEY || secrets.REVIEW_CLAUDE_API_KEY || secrets.HLOOL_API_KEY || secrets.OPENAI_API_KEY || secrets.PI_CLIPROXY_KEY }}
+          REVIEW_CODEX_BASE_URL: ${{ vars.REVIEW_CODEX_BASE_URL || 'https://oai.sb' }}
           REVIEW_CODEX_MODEL: ${{ vars.REVIEW_CODEX_MODEL || 'gpt-5.6-sol' }}
           REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '40000' }}
           REVIEW_MAX_PLAN: ${{ vars.REVIEW_MAX_PLAN || '20000' }}
