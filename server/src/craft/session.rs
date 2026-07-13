@@ -12,11 +12,14 @@
 //!   * #4 = A：玩家死亡 → 走 cancel 路径，PlayerDied 作为 reason
 //!   * #6 = B：requirements 软 gate，但 `start_craft` 内做硬校验防作弊
 
+use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity};
 
 use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
 use crate::inventory::{bump_revision, ContainerState, ItemInstance, PlayerInventory};
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::ledger::{
+    pending_inflow_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::qi_physics::QiPhysicsError;
 
 use super::events::{CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftStartedEvent};
@@ -37,7 +40,7 @@ const QI_SYNC_EPSILON: f64 = 1e-9;
 /// 玩家进行中的手搓任务。
 /// 玩家只允许同时挂 1 个 CraftSession（单任务）。`remaining_ticks` 由
 /// `tick_session` 在玩家在线时推进；为 0 时调用 `finalize_craft`。
-#[derive(Debug, Clone, Component, PartialEq)]
+#[derive(Debug, Clone, Component, PartialEq, Serialize, Deserialize)]
 pub struct CraftSession {
     pub recipe_id: RecipeId,
     /// 起手 tick 时戳（统计 / UI 显示用）
@@ -119,7 +122,7 @@ pub struct StartCraftSuccess {
 pub struct CancelCraftOutcome {
     pub event: CraftFailedEvent,
     /// 70% 返还材料：(template_id, refund_count)。0 数量不写入。
-    /// 调用方需要 `inventory::add_item_to_player_inventory` 真实加回 inventory。
+    /// 调用方需要负责真实返还（入包或落地兜底）。
     pub refund_manifest: Vec<(String, u32)>,
 }
 
@@ -128,7 +131,7 @@ pub struct CancelCraftOutcome {
 pub struct FinalizeCraftOutcome {
     pub event: CraftCompletedEvent,
     /// 产出：(template_id, count)。
-    /// 调用方需要 `inventory::add_item_to_player_inventory` 真实加进 inventory。
+    /// 调用方需要负责真实写入 inventory。
     pub output_manifest: (String, u32),
 }
 
@@ -258,7 +261,7 @@ pub struct StartCraftDeps<'a> {
 /// 6. qi 足够（cultivation.qi_current ≥ qi_cost）
 ///
 /// 副作用阶段（成功必经）：
-/// 7. ledger transfer player → zone（reason = Crafting），同时
+/// 7. ledger transfer player → durable pending inflow（reason = Crafting），同时
 ///    `cultivation.qi_current -= qi_cost`（守恒律一致性）
 /// 8. 扣材料
 /// 9. 构造 CraftSession + CraftStartedEvent
@@ -349,7 +352,7 @@ pub fn start_craft(
 
     // ===== 副作用阶段 =====
     let from = QiAccountId::player(request.player_id);
-    let to = QiAccountId::zone(request.zone_id);
+    let to = pending_inflow_account();
     if total_qi_cost > 0.0 {
         // 守恒律：调用方必须先把 cultivation.qi_current **严格** sync 到
         // ledger.player(id)（待 qi_physics::sync_player_qi_to_ledger system
@@ -444,7 +447,7 @@ pub fn tick_session(session: &mut CraftSession, amount: u64) -> bool {
 }
 
 /// 计算取消时的返还清单（材料 70% 向下取整）。
-/// 不动 inventory / 不扣 qi；调用方按返还清单执行 `add_item_to_player_inventory`。
+/// 不动 inventory / 不扣 qi；调用方按返还清单执行真实返还。
 pub fn cancel_craft(
     session: &CraftSession,
     recipe: &CraftRecipe,
@@ -484,7 +487,7 @@ pub fn cancel_craft(
 }
 
 /// 完成手搓 — 计算产出 manifest + 完成事件。
-/// 不动 inventory；调用方按 output_manifest 执行 `add_item_to_player_inventory`。
+/// 不动 inventory；调用方按 output_manifest 执行真实产出写入。
 pub fn finalize_craft(
     session: &CraftSession,
     recipe: &CraftRecipe,
@@ -755,7 +758,7 @@ mod tests {
 
         // qi 守恒：cultivation 扣 5，ledger zone 余额 +5
         assert_eq!(cult.qi_current, 45.0);
-        let zone_balance = ledger.balance(&QiAccountId::zone("spawn"));
+        let zone_balance = ledger.balance(&pending_inflow_account());
         assert_eq!(zone_balance, 5.0);
 
         // 守恒律观察：qi_paid 与 ledger transfer 等同
@@ -786,7 +789,7 @@ mod tests {
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 2);
         assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 1);
         assert_eq!(cult.qi_current, 35.0);
-        assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 15.0);
+        assert_eq!(ledger.balance(&pending_inflow_account()), 15.0);
     }
 
     #[test]
@@ -1432,7 +1435,7 @@ mod tests {
         assert_eq!(last_transfer.amount, result.session.qi_paid);
         assert_eq!(last_transfer.reason, QiTransferReason::Crafting);
         assert_eq!(last_transfer.from, QiAccountId::player("offline:Alice"));
-        assert_eq!(last_transfer.to, QiAccountId::zone("spawn"));
+        assert_eq!(last_transfer.to, pending_inflow_account());
     }
 
     #[test]
@@ -1499,7 +1502,7 @@ mod tests {
         let (registry, unlock, mut cult, color, mut ledger) = make_world();
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
         let qi_before = cult.qi_current;
-        let zone_before = ledger.balance(&QiAccountId::zone("spawn"));
+        let zone_before = ledger.balance(&pending_inflow_account());
 
         start_craft(
             StartCraftRequest {
@@ -1522,7 +1525,7 @@ mod tests {
             player_after, cult.qi_current,
             "player ledger balance must mirror cultivation.qi_current after transfer"
         );
-        let zone_after = ledger.balance(&QiAccountId::zone("spawn"));
+        let zone_after = ledger.balance(&pending_inflow_account());
         assert_eq!(
             zone_after,
             zone_before + qi_paid,

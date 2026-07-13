@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Component, Despawned, Entity, EntityInteraction,
-    EntityLayerId, Hand, InteractEntityEvent, Position, Query, Resource, Update, Username, Without,
+    EntityLayerId, Hand, InteractEntityEvent, IntoSystemConfigs, Position, Query, Res, ResMut,
+    Resource, Startup, Update, Username, Without,
 };
 
 use crate::body_plan::race_registry::HUMAN_RACE_ID;
@@ -623,8 +624,18 @@ impl InventoryInstanceIdAllocator {
             ));
         }
 
-        self.next = self.next.saturating_add(1);
+        self.next += 1;
         Ok(id)
+    }
+
+    pub fn advance_past(&mut self, used_id: u64) -> Result<(), String> {
+        if used_id > JS_SAFE_INTEGER_MAX {
+            return Err(format!(
+                "persisted inventory instance id {used_id} exceeds JS safe integer max {JS_SAFE_INTEGER_MAX}"
+            ));
+        }
+        self.next = self.next.max(used_id + 1);
+        Ok(())
     }
 }
 
@@ -866,6 +877,10 @@ pub fn register(app: &mut App) {
     // plan-remains-suite P0 — 遗骸 G 键统一交互 intent（与右键 InteractEntityEvent 并行）。
     app.add_event::<RemainsLootIntent>();
     app.add_systems(
+        Startup,
+        hydrate_durable_inventory_state.after(crate::persistence::PersistenceBootstrapSet),
+    );
+    app.add_systems(
         Update,
         (
             apply_death_drop_on_revive,
@@ -879,6 +894,36 @@ pub fn register(app: &mut App) {
             tsy_loot_spawn::tsy_loot_spawn_on_enter,
         ),
     );
+}
+
+fn hydrate_durable_inventory_state(
+    settings: Option<Res<crate::persistence::PersistenceSettings>>,
+    mut allocator: ResMut<InventoryInstanceIdAllocator>,
+    mut dropped_loot: ResMut<DroppedLootRegistry>,
+) {
+    let Some(settings) = settings else {
+        return;
+    };
+    let entries =
+        crate::persistence::load_durable_dropped_loot(&settings).unwrap_or_else(|error| {
+            panic!(
+                "[bong][inventory] cannot safely hydrate durable dropped loot from {}: {error}",
+                settings.db_path().display()
+            )
+        });
+    let high_water = crate::persistence::persisted_inventory_instance_id_high_water(&settings)
+        .unwrap_or_else(|error| {
+            panic!(
+                "[bong][inventory] cannot safely seed instance allocator from {}: {error}",
+                settings.db_path().display()
+            )
+        });
+    if let Some(high_water) = high_water {
+        allocator.advance_past(high_water).unwrap_or_else(|error| {
+            panic!("[bong][inventory] invalid persisted instance allocator high-water: {error}")
+        });
+    }
+    dropped_loot.entries = entries;
 }
 
 fn last_termination_cause(life_record: Option<&LifeRecord>) -> Option<&str> {
@@ -1838,6 +1883,11 @@ pub fn add_item_to_player_inventory_or_ground(
                 dimension: ground_dimension,
                 item,
             };
+            if dropped_loot.entries.contains_key(&instance_id) {
+                return Err(format!(
+                    "dropped loot instance id collision: {instance_id} already exists"
+                ));
+            }
             dropped_loot.entries.insert(instance_id, entry.clone());
             Ok(GrantOrGroundOutcome::DroppedToGround(Box::new(entry)))
         }
@@ -3729,7 +3779,7 @@ pub struct FullInventoryTransferOutcome {
     pub to_revision: InventoryRevision,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DroppedLootEntry {
     pub instance_id: u64,
     pub source_container_id: String,
@@ -3740,7 +3790,7 @@ pub struct DroppedLootEntry {
     pub item: ItemInstance,
 }
 
-#[derive(Default, Resource, Debug)]
+#[derive(Default, Resource, Debug, Clone)]
 pub struct DroppedLootRegistry {
     /// World-visible drops keyed by `instance_id`.
     ///

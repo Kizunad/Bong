@@ -52,6 +52,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _combat_event_floater(value)
         if field == 80:
             return _inventory_event(value)
+        if field == 81:
+            return _dropped_loot_sync(value)
         if field == 90:
             return _container_state(value)
         if field == 119:
@@ -186,6 +188,28 @@ def _inventory_event(data: bytes) -> dict[str, Any] | None:
                 "durability": _double(durability, 3),
             }
     return None
+
+
+def _dropped_loot_sync(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    drops = []
+    for raw in _messages(fields, 1):
+        entry = _fields(raw)
+        drops.append(
+            {
+                "instance_id": _varint(entry, 1),
+                "source_container_id": _string(entry, 2),
+                "source_row": _varint(entry, 3),
+                "source_col": _varint(entry, 4),
+                "world_pos": [
+                    _double(entry, 5),
+                    _double(entry, 6),
+                    _double(entry, 7),
+                ],
+                "item": _item_view(_message(entry, 8)),
+            }
+        )
+    return {"v": 1, "type": "dropped_loot_sync", "drops": drops}
 
 
 def _loot_container_open(data: bytes) -> dict[str, Any]:
@@ -678,9 +702,12 @@ SERVER_DATA_PAYLOAD_NAMES = {
     18: "forge_session",
     19: "forge_outcome",
     20: "forge_blueprint_book",
+    22: "craft_session_state",
+    23: "craft_outcome",
     25: "botany_harvest_progress",
     30: "gathering_session",
     31: "lingtian_session",
+    81: "dropped_loot_sync",
     137: "inventory_move_rejected",
 }
 

@@ -5,74 +5,74 @@
     {
       "zone": "qingyun_peaks",
       "mineral_id": "fan_tie",
-      "position": [128, 72, 256],
+      "position": [-3000, 100, -2000],
       "radius": 32,
       "max_units": 240,
-      "note": "青云外门凡铁矿脉 — 入门玩家第一脉"
+      "note": "青云外门凡铁矿脉 — 入门玩家第一脉（plan-bughunt-mineral-anchor-position-drift-v1 修正：坐标随 server/zones.json qingyun_peaks AABB [-3600,-2400]x[-64,320]x[-2600,-1400] 迁回青云残峰，此前旧坐标落在 spawn）"
     },
     {
       "zone": "qingyun_peaks",
       "mineral_id": "za_gang",
-      "position": [192, 56, 320],
+      "position": [-2936, 84, -1936],
       "radius": 24,
       "max_units": 120,
-      "note": "青云杂钢矿 — 灵铁炉炉胎主料"
+      "note": "青云杂钢矿 — 灵铁炉炉胎主料（同上修正，相对 fan_tie 偏移保持不变）"
     },
     {
       "zone": "qingyun_peaks",
       "mineral_id": "ling_jing",
-      "position": [256, 64, 288],
+      "position": [-2872, 92, -1968],
       "radius": 18,
       "max_units": 80,
-      "note": "青云灵晶 — 法宝核 / 阵眼"
+      "note": "青云灵晶 — 法宝核 / 阵眼（同上修正，相对 fan_tie 偏移保持不变）"
     },
     {
       "zone": "blood_valley",
       "mineral_id": "ling_tie",
-      "position": [-256, 48, -128],
+      "position": [3000, 60, -2500],
       "radius": 28,
       "max_units": 160,
-      "note": "血谷灵铁矿 — 储灵兵胎主料；worldview §十 提示血谷地脉含戾气"
+      "note": "血谷灵铁矿 — 储灵兵胎主料；worldview §十 提示血谷地脉含戾气（plan-bughunt-mineral-anchor-position-drift-v1 修正：坐标随 server/zones.json blood_valley AABB [2600,3400]x[-64,320]x[-3250,-1750] 迁回血谷，此前旧坐标落在 spawn）"
     },
     {
       "zone": "blood_valley",
       "mineral_id": "wu_yao",
-      "position": [-320, 32, -192],
+      "position": [2936, 44, -2564],
       "radius": 16,
       "max_units": 60,
-      "note": "血谷深岩乌曜石 — 镇邪 / 欺天阵核"
+      "note": "血谷深岩乌曜石 — 镇邪 / 欺天阵核（同上修正，相对 ling_tie 偏移保持不变）"
     },
     {
       "zone": "blood_valley",
       "mineral_id": "zhu_sha",
-      "position": [-288, 40, -160],
+      "position": [2968, 52, -2532],
       "radius": 14,
       "max_units": 50,
-      "note": "血谷火山朱砂 — 高阶炼丹药引"
+      "note": "血谷火山朱砂 — 高阶炼丹药引（同上修正，相对 ling_tie 偏移保持不变）"
     },
     {
-      "zone": "rift_valley",
+      "zone": "blood_valley",
       "mineral_id": "cu_tie",
-      "position": [0, -32, -512],
+      "position": [3050, -40, -2450],
       "radius": 36,
       "max_units": 300,
-      "note": "裂谷深岩粗铁 — 劣质护甲料；worldview §四 距离衰减外圈"
+      "note": "裂谷深岩粗铁 — 劣质护甲料；worldview §四 距离衰减外圈（plan-bughunt-mineral-anchor-position-drift-v1 修正：旧 `rift_valley` zone id 在当前 runtime zone 表中不存在——血谷 zone 名已是 blood_valley，无独立 rift_valley zone——归并进 blood_valley 并放到 AABB 下半深岩层，体现「距离衰减外圈/深岩」定位）"
     },
     {
       "zone": "lingquan_marsh",
       "mineral_id": "yu_sui",
-      "position": [512, 60, 64],
+      "position": [-2500, 60, 2500],
       "radius": 14,
       "max_units": 40,
-      "note": "灵泉湿地玉髓 — 末法审美代表 / 炼丹炉容器内壁"
+      "note": "灵泉湿地玉髓 — 末法审美代表 / 炼丹炉容器内壁（plan-bughunt-mineral-anchor-position-drift-v1 修正：坐标随 server/zones.json lingquan_marsh AABB [-3000,-2000]x[-64,320]x[2000,3000] 迁回灵泉湿地，此前旧坐标落在 spawn）"
     },
     {
       "zone": "lingquan_marsh",
       "mineral_id": "dan_sha",
-      "position": [488, 58, 96],
+      "position": [-2524, 58, 2532],
       "radius": 16,
       "max_units": 90,
-      "note": "灵泉地表丹砂 — 炼丹师辛度 Mellow 主辅料"
+      "note": "灵泉地表丹砂 — 炼丹师辛度 Mellow 主辅料（同上修正，相对 yu_sui 偏移保持不变）"
     },
     {
       "zone": "spawn",
