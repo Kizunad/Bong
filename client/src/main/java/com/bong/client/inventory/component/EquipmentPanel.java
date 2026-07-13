@@ -4,6 +4,7 @@ import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.model.SlotContents;
+import com.bong.client.inventory.state.RaceGateEval;
 import io.wispforest.owo.ui.container.Containers;
 import io.wispforest.owo.ui.container.FlowLayout;
 import io.wispforest.owo.ui.core.Positioning;
@@ -100,10 +101,23 @@ public class EquipmentPanel {
         Map<EquipSlotType, SlotContents> slots = model.equippedSlots();
         for (var entry : slotComponents.entrySet()) {
             SlotContents contents = slots.get(entry.getKey());
-            entry.getValue().setContents(contents);
-            entry.getValue().setDisabledByTwoHand(false);
+            EquipSlotComponent slot = entry.getValue();
+            slot.setContents(contents);
+            slot.setDisabledByTwoHand(false);
+            // plan-race-system-v1 P3c — 槽内代表件的 wearer_race 与当前形态不符 → 置灰。
+            // 空槽不置灰（无物品可判）；有物品时用 RaceGateEval（装备域判当前形态身份 +
+            // fail-closed）。server validate_equip_to 权威，此处仅预览。
+            slot.setDisabledByRace(isSlotRaceBlocked(contents));
         }
         applyTwoHandLock(slots);
+    }
+
+    /** 槽内代表件（手槽 held / 身体槽 worn 栈顶）是否被种族门置灰。空槽恒 false。 */
+    private static boolean isSlotRaceBlocked(SlotContents contents) {
+        if (contents == null || contents.isEmpty()) return false;
+        InventoryItem rep = contents.representative();
+        if (rep == null || rep.itemId() == null) return false;
+        return RaceGateEval.isItemBlocked(rep.itemId());
     }
 
     /** 双手武器（spear/staff）在主手 held → 只锁副手（disable tint）。 */
