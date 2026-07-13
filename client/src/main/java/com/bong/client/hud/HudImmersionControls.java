@@ -29,7 +29,10 @@ public final class HudImmersionControls {
     private static KeyBinding keyBinding() {
         if (toggleKey == null) {
             toggleKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(TOGGLE_KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, CATEGORY)
+                // plan-bughunt-quick-slot-function-key-collision-v1:
+                // F1-F9 are reserved for the visible quick-use row. Keep this
+                // convenience toggle discoverable in Controls, but unbound by default.
+                new KeyBinding(TOGGLE_KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
             );
         }
         return toggleKey;

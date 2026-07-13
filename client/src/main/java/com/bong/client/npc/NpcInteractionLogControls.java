@@ -22,7 +22,10 @@ public final class NpcInteractionLogControls {
             return;
         }
         key = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F7, CATEGORY)
+            // plan-bughunt-quick-slot-function-key-collision-v1:
+            // F1-F9 belong to the visible quick-use row. The interaction log
+            // remains configurable in Controls, but does not claim F7 by default.
+            new KeyBinding(KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
         );
         ClientTickEvents.END_CLIENT_TICK.register(NpcInteractionLogControls::onEndClientTick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
