@@ -83,6 +83,25 @@ class RaceGateEvalTest {
     }
 
     @Test
+    void unknownKindBlockedSentinelAlwaysBlocksEvenWhenIdentityKnownAndHumanoid() {
+        // P3 opus verify LOW 项：RaceGateMetaHandler 对未知 gate.kind 存入
+        // RaceGate.blocked() 哨兵而非跳过。此处锁死 RaceGateEval 对该哨兵的判定——
+        // 哨兵不是 any（isAny()==false），身份已知时必须落 BLOCK_MISMATCH（不是 ALLOW），
+        // 无论传入的身份是人形还是非人形、raceId 是什么，都不该放行。
+        RaceGate blocked = com.bong.client.inventory.model.RaceGate.blocked();
+        assertFalse(blocked.isAny(), "blocked() 哨兵不应被判定为 any");
+        assertEquals(RaceGateEval.Decision.BLOCK_MISMATCH,
+            RaceGateEval.evaluate(blocked, true, "human", true),
+            "未知 kind 哨兵 + 人形身份已知：仍应置灰（不匹配），不能放行");
+        assertEquals(RaceGateEval.Decision.BLOCK_MISMATCH,
+            RaceGateEval.evaluate(blocked, true, "whale", false),
+            "未知 kind 哨兵 + 非人形身份已知：仍应置灰（不匹配），不能放行");
+        assertEquals(RaceGateEval.Decision.BLOCK_IDENTITY_UNKNOWN,
+            RaceGateEval.evaluate(blocked, false, "", false),
+            "未知 kind 哨兵 + 身份未知：fail-closed 置灰（与其它有 gate 条目一致）");
+    }
+
+    @Test
     void decisionBlockedHelperTrueForBothBlockKinds() {
         assertTrue(RaceGateEval.Decision.BLOCK_MISMATCH.blocked());
         assertTrue(RaceGateEval.Decision.BLOCK_IDENTITY_UNKNOWN.blocked());

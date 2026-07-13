@@ -19,11 +19,14 @@ import java.util.Map;
  * 每条 {@code {id, gate:{kind, species}}}。**只装非 any 条目**（server 侧只下发非 Any——
  * any 是默认）；本 handler 对显式 any 条目会解码但存入无害（{@code RaceGate.isAny} 恒放行）。
  *
- * <p>未知 {@code gate.kind}（{@link RaceGate#fromWire} 返回 {@code null}）时**跳过该条**
- * （fail-closed 于表：该条目查不到即回退 any 放行；但这只应在 server 发出未来新 kind
- * 而 client 未升级时发生，属向前兼容而非静默兜底 any 的正常路径）。缺 {@code id} 的
- * 条目同样跳过。整个 payload 缺两数组字段时按空表处理（{@code includingDefaultValueFields}
- * 下 proto 恒发空数组，缺失只可能来自畸形 JSON）。
+ * <p>未知 {@code gate.kind}（{@link RaceGate#fromWire} 返回 {@code null}）时**存入
+ * {@link RaceGate#blocked()} 哨兵而非跳过该条**——fail-closed：该条目在
+ * {@link RaceGateMetaStore} 里必须命中一个恒拒绝的 gate，不能因为跳过而退化成
+ * "查不到 = any = 恒放行"（P3 opus verify LOW 项：跳过等价 fail-open，未知 kind 的
+ * 装备/功法会被误判为无门槛放行）。这只应在 server 发出未来新 kind 而 client 未升级
+ * 时发生，client 升级前一律置灰，属向前兼容的保守选择。缺 {@code id} 的条目仍旧跳过
+ * （无 id 无法建立映射，跳过 vs 阻断皆无意义）。整个 payload 缺两数组字段时按空表处理
+ * （{@code includingDefaultValueFields} 下 proto 恒发空数组，缺失只可能来自畸形 JSON）。
  */
 public final class RaceGateMetaHandler implements ServerDataHandler {
 
@@ -41,7 +44,13 @@ public final class RaceGateMetaHandler implements ServerDataHandler {
         );
     }
 
-    /** 解析一张 entry 数组为 id→RaceGate map；跳过畸形 / 未知 kind / 缺 id 条目。 */
+    /**
+     * 解析一张 entry 数组为 id→RaceGate map。跳过畸形条目 / 缺 {@code id} / 缺
+     * {@code gate} 对象（无法建立映射）。未知 {@code gate.kind}
+     * ({@link RaceGate#fromWire} 返回 {@code null}) **不跳过**——存入
+     * {@link RaceGate#blocked()} 哨兵，fail-closed（跳过会让该 id 在
+     * {@link RaceGateMetaStore} 查表 miss，等价退化成 any 恒放行）。
+     */
     private static Map<String, RaceGate> parseTable(JsonArray array) {
         Map<String, RaceGate> out = new LinkedHashMap<>();
         if (array == null) return out;
@@ -53,8 +62,9 @@ public final class RaceGateMetaHandler implements ServerDataHandler {
             JsonObject gateObj = readObject(entry, "gate");
             if (gateObj == null) continue;
             RaceGate gate = RaceGate.fromWire(readString(gateObj, "kind"), readSpecies(gateObj));
-            if (gate == null) continue; // 未知 kind → 跳过（向前兼容，不塞进表）
-            out.put(id, gate);
+            // 未知 kind → fail-closed 哨兵（而非 continue 跳过）：该 id 必须在表里
+            // 命中一个恒拒绝的 gate，不能查不到退化成 any 放行。
+            out.put(id, gate == null ? RaceGate.blocked() : gate);
         }
         return out;
     }

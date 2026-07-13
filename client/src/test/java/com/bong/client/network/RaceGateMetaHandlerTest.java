@@ -19,7 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * plan-race-system-v1 P3c — {@link RaceGateMetaHandler} 解码 + 存入 {@link RaceGateMetaStore}。
  *
- * <p>覆盖：① happy path（两表 + 三档 gate）② 空表 ③ 未知 kind 跳过（向前兼容）
+ * <p>覆盖：① happy path（两表 + 三档 gate）② 空表 ③ 未知 kind → fail-closed 哨兵
+ * （P3 opus verify LOW 项：不再跳过，而是存入恒拒绝的 {@link RaceGate#blocked()}）
  * ④ 缺 id / 畸形条目跳过 ⑤ route() 端到端解码。
  */
 class RaceGateMetaHandlerTest {
@@ -95,7 +96,11 @@ class RaceGateMetaHandlerTest {
     }
 
     @Test
-    void unknownGateKindEntryIsSkippedForForwardCompat() {
+    void unknownGateKindEntryIsStoredAsBlockedSentinelNotSkipped() {
+        // P3 opus verify LOW 项：未知 kind 若被跳过，RaceGateMetaStore.gateForItem 会
+        // miss → RaceGateEval 把 miss 判读成 any（恒放行）→ 未来新 kind 的装备/功法在
+        // 未升级 client 上会被误判为"无门槛"，fail-open。修复后必须存入 blocked() 哨兵，
+        // 命中一个恒拒绝的 gate（isAny()==false 且 allows() 恒 false）。
         JsonArray items = new JsonArray();
         items.add(entry("future_item", "cyborg", List.of()));   // 未来新 kind
         items.add(entry("human_mask", "humanoid", List.of()));  // 合法条目
@@ -104,8 +109,13 @@ class RaceGateMetaHandlerTest {
         payload.add("technique_required_race", new JsonArray());
         handler.handle(envelope(payload));
 
-        assertNull(RaceGateMetaStore.gateForItem("future_item"),
-            "未知 kind 条目应被跳过（不塞进表）——查不到即回退 any（向前兼容）");
+        RaceGate blocked = RaceGateMetaStore.gateForItem("future_item");
+        assertTrue(blocked != null, "未知 kind 条目不应被跳过——必须在表内命中一个哨兵 gate，实际 miss（fail-open 回归）");
+        assertFalse(blocked.isAny(), "未知 kind 哨兵不是 any（不能被误判恒放行）");
+        assertFalse(blocked.allows("whatever_race", true),
+            "未知 kind 哨兵 allows() 必须恒 false（人形本体也不放行）");
+        assertFalse(blocked.allows("whatever_race", false),
+            "未知 kind 哨兵 allows() 必须恒 false（非人形本体也不放行）");
         assertEquals("humanoid", RaceGateMetaStore.gateForItem("human_mask").kind(),
             "同 payload 内的合法条目不受未知条目影响");
     }

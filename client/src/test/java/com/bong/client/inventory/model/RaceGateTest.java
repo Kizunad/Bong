@@ -70,4 +70,21 @@ class RaceGateTest {
         assertFalse(weird.allows("whale", true));
         assertFalse(weird.allows("human", true));
     }
+
+    @Test
+    void blockedSentinelIsNotAnyAndNeverAllows() {
+        // P3 opus verify LOW 项：RaceGateMetaHandler 对未知 gate.kind 存入 blocked()
+        // 而非跳过——本测试锁死该哨兵本身的行为契约：不是 any，allows() 恒 false。
+        RaceGate blocked = RaceGate.blocked();
+        assertFalse(blocked.isAny(), "blocked() 不是 any，不能被误判恒放行");
+        assertFalse(blocked.allows("human", true), "blocked() 对人形本体也拒绝");
+        assertFalse(blocked.allows("whale", false), "blocked() 对非人形本体也拒绝");
+        assertFalse(blocked.allows(null, false), "blocked() 对 null raceId 也拒绝，不崩");
+    }
+
+    @Test
+    void blockedSentinelIsStableAcrossCalls() {
+        assertEquals(RaceGate.blocked(), RaceGate.blocked(),
+            "blocked() 每次构造的哨兵值应相等（record equals），便于测试断言与去重");
+    }
 }

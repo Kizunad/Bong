@@ -18,13 +18,22 @@ import java.util.List;
  * 决议 §8.1 #5/#6），本类型只做纯匹配，不关心传入的是哪套身份。
  *
  * <p>未知 {@code kind} 解码为 {@code null}（见 {@link #fromWire}）——调用方 fail-closed
- * 拒绝，不静默兜底 any。
+ * 拒绝，不静默兜底 any：{@code RaceGateMetaHandler} 对该条目改存 {@link #blocked()}
+ * 哨兵（而非跳过该条），确保 {@code RaceGateMetaStore} 查表命中一个恒拒绝的 gate，
+ * 不会退化成"查不到 = any = 恒放行"的误判（plan-race-system-v1 P3 opus verify LOW 项）。
  */
 public record RaceGate(String kind, List<String> species) {
 
     public static final String KIND_ANY = "any";
     public static final String KIND_HUMANOID = "humanoid";
     public static final String KIND_SPECIES = "species";
+    /**
+     * 哨兵 kind：server 下发了当前 client 版本不认识的未来 {@code gate.kind}。
+     * 不属于三档合法 wire 值，命中 {@link #allows} 的 {@code default} 分支恒
+     * 返回 {@code false}——即"永远阻断"，而不是被 {@code RaceGateMetaHandler}
+     * 悄悄丢弃条目退化成 any 放行。
+     */
+    private static final String KIND_UNKNOWN_BLOCKED = "__unknown_blocked__";
 
     public RaceGate {
         kind = kind == null ? "" : kind;
@@ -62,5 +71,15 @@ public record RaceGate(String kind, List<String> species) {
                 new RaceGate(kind, species == null ? List.of() : species);
             default -> null;
         };
+    }
+
+    /**
+     * fail-closed 哨兵：未知 {@code gate.kind} 条目专用，{@link #allows} 恒
+     * {@code false}。{@code RaceGateMetaHandler.parseTable} 对 {@link #fromWire}
+     * 返回 {@code null} 的条目存入此哨兵而非跳过，保证该 id 在
+     * {@code RaceGateMetaStore} 查表命中一个永远拒绝的 gate（不退化成"查不到 = any"）。
+     */
+    public static RaceGate blocked() {
+        return new RaceGate(KIND_UNKNOWN_BLOCKED, List.of());
     }
 }

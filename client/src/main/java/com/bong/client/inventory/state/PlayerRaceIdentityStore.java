@@ -13,13 +13,17 @@ package com.bong.client.inventory.state;
  * {@code Humanoid} 用 {@link #formIsHumanoid()}；功法习得/施放门判**本体**用
  * {@link #raceId()} / {@link #intrinsicIsHumanoid()}——两者不同轴，别混用。
  *
- * <p>目前仅解码入 store，尚未接入装备槽主动置灰渲染——per-item {@code wearer_race}
- * 尚未下发到 client（{@code ItemTemplate.wearer_race} 是 server-only TOML 字段，接入
- * item wire 需给 {@code inventory_snapshot} 的 30+ 调用点串 {@code ItemRegistry}
- * 依赖，超出本次 P3c 范围；且当前 assets/items/*.toml 全部物品 wearer_race=Any，
- * 尚无真实种族门物品可验证）。装备被拒时仍有 {@code race_mismatch} toast 兜底
- * （见 {@link com.bong.client.network.InventoryMoveRejectedHandler}）。本 store
- * 是未来真正接入主动置灰时的现成数据源。
+ * <p>本 store 已接入装备槽 / 功法条目的主动置灰渲染：per-item {@code wearer_race}
+ * 不走 {@code inventory_snapshot}（避免给该 payload 的 30+ 调用点串
+ * {@code ItemRegistry} 依赖），而是由独立的 {@code race_gate_meta} payload
+ * （{@link com.bong.client.network.RaceGateMetaHandler} → {@link RaceGateMetaStore}）
+ * 下发 template_id/skill_id → {@code RaceGate} 映射表；{@link RaceGateEval} 联合本
+ * store 的身份快照对每个装备槽 / 功法条目做纯判定，{@link com.bong.client.inventory.
+ * component.EquipmentPanel}、{@link com.bong.client.inventory.InspectScreen}、
+ * {@link com.bong.client.combat.inspect.TechniquesTabPanel} 据此置灰。装备被绕过
+ * 提交时仍有 {@code race_mismatch} toast 兜底（见
+ * {@link com.bong.client.network.InventoryMoveRejectedHandler}）——client 置灰只是
+ * 预览，server 才是权威判定。
  */
 public final class PlayerRaceIdentityStore {
     private static volatile String raceId = "";
