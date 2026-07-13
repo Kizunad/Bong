@@ -667,14 +667,13 @@ mod cultivation_detail_identity_snapshot_tests {
                         intrinsic_is_humanoid,
                         form_is_humanoid,
                     ))
-                    .map(|tuple| {
+                    .inspect(|tuple| {
                         // body_plan_id 未在元组里返回，但一并断言其与 form_body_plan_id
                         // 恒等（本体/Form 未易形时 body_plan_id 也必须一致）。
                         assert_eq!(
                             tuple.2, body_plan_id,
                             "form_body_plan_id 必须等于 body_plan_id（未易形态）"
                         );
-                        tuple
                     }),
                     _ => None,
                 }
@@ -735,8 +734,10 @@ mod cultivation_detail_identity_snapshot_tests {
         app.init_resource::<CultivationDetailEmitState>();
         app.add_systems(Update, emit_cultivation_detail_payloads);
         let (client_bundle, mut helper) = create_mock_client("Azure");
-        let mut cultivation = Cultivation::default();
-        cultivation.race = crate::body_plan::types::RaceId::new("whale");
+        let cultivation = Cultivation {
+            race: crate::body_plan::types::RaceId::new("whale"),
+            ..Cultivation::default()
+        };
         app.world_mut()
             .spawn((client_bundle, MeridianSystem::default(), cultivation));
 

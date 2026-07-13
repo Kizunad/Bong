@@ -749,6 +749,28 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "CastOutcome=8 → meridian_gated（场景负分支断言依赖此命名）",
         )
 
+    def test_inventory_move_rejected_tag137_race_mismatch_reason_no_extra_fields(self):
+        # plan-race-system-v1 P3b —— field 137 此前未接入 decode_server_data_envelope
+        # 白名单，任何 bot 场景断言 inventory_move_rejected（含新增的 race_mismatch）
+        # 都会静默超时；本测试锁死该 payload_type 现已可解码。
+        msg = _pb_string(1, "race_mismatch")
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(137, msg))
+        self.assertEqual(
+            decoded["type"], "inventory_move_rejected", "envelope tag 137 应分发到 inventory_move_rejected"
+        )
+        self.assertEqual(decoded["reason"], "race_mismatch")
+        self.assertIsNone(decoded["required_realm"], "race_mismatch 不携带 required_realm")
+        self.assertIsNone(decoded["slot"], "race_mismatch 不携带 slot")
+        self.assertIsNone(decoded["cap"], "race_mismatch 不携带 cap")
+
+    def test_inventory_move_rejected_tag137_worn_cap_full_carries_slot_and_cap(self):
+        msg = _pb_string(1, "worn_cap_full") + _pb_string(3, "chest") + _pb_varint(4, 3)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(137, msg))
+        self.assertEqual(decoded["reason"], "worn_cap_full")
+        self.assertEqual(decoded["slot"], "chest")
+        self.assertEqual(decoded["cap"], 3)
+        self.assertIsNone(decoded["required_realm"])
+
     def test_combat_event_floater_tag51_amount_float32(self):
         entry = (
             _pb_len_field(1, b"damage")

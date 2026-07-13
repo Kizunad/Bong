@@ -46,6 +46,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _craft_outcome(value)
         if field == 34:
             return _cast_sync(value)
+        if field == 137:
+            return _inventory_move_rejected(value)
         if field == 51:
             return _combat_event_floater(value)
         if field == 80:
@@ -456,6 +458,25 @@ def _alchemy_outcome_resolved(data: bytes) -> dict[str, Any]:
     }
 
 
+def _inventory_move_rejected(data: bytes) -> dict[str, Any]:
+    """plan-race-system-v1 P3b —— `InventoryMoveRejected`（field 137）解码。此前该
+    payload_type 未接入本最小解码器（field 137 不在 dispatch 白名单里），任何 bot
+    场景想断言 `inventory_move_rejected`（含新增的 race_mismatch 拒绝原因）都收不到
+    解码结果，`expect_server_data("inventory_move_rejected", ...)` 会静默超时。
+    `reason` 恒有值（proto 非 optional）；`required_realm`/`slot`/`cap` 仅对应拒绝
+    原因才携带，缺省时保持 None（不伪造占位值）。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "inventory_move_rejected",
+        "reason": _string(fields, 1),
+        "required_realm": _string(fields, 2) if _has(fields, 2) else None,
+        "slot": _string(fields, 3) if _has(fields, 3) else None,
+        "cap": _optional_varint(fields, 4),
+    }
+
+
 def _cast_sync(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     return {
@@ -660,6 +681,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     25: "botany_harvest_progress",
     30: "gathering_session",
     31: "lingtian_session",
+    137: "inventory_move_rejected",
 }
 
 EQUIPPED_ITEM_FIELDS = {
