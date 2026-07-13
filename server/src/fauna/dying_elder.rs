@@ -971,6 +971,7 @@ pub(crate) fn dying_elder_death_system(
             .and_then(|zr| zr.zones.iter().find(|z| z.name == bb.home_zone))
             .map(|z| z.spirit_qi * QI_ZONE_UNIT_CAPACITY);
 
+        let mut release_succeeded = true;
         if release_amount > 0.0 {
             match qi_release_to_zone(
                 release_amount,
@@ -1020,12 +1021,18 @@ pub(crate) fn dying_elder_death_system(
                     bb.qi_current = 0.0;
                 }
                 Err(e) => {
+                    release_succeeded = false;
                     tracing::warn!(
                         "[bong][dying_elder] death_system: qi_release_to_zone error for elder {:?}: {e:?}",
                         entity
                     );
                 }
             }
+        }
+
+        // 释放失败时保留 Dead + qi_current，下一 tick 重试；不得先掉落或写幂等标记。
+        if !release_succeeded {
+            continue;
         }
 
         // ── loot 生成 ──────────────────────────────────────────────────────
@@ -2364,6 +2371,22 @@ mod tests {
         );
         assert!(emitted[0].to.kind == crate::qi_physics::ledger::QiAccountKind::Overflow);
         assert!((emitted[0].amount - 500.0).abs() <= QI_EPSILON);
+    }
+
+    #[test]
+    fn death_system_release_error_remains_retryable() {
+        let (_, qi_after, processed, emitted, audited) =
+            run_death_release(Some(f64::NAN), 500.0, true);
+        assert!(
+            (qi_after - 500.0).abs() <= QI_EPSILON,
+            "释放失败不得清零大能真元"
+        );
+        assert!(
+            !processed,
+            "释放失败不得插入 DyingElderDeathProcessed，必须允许重试"
+        );
+        assert!(emitted.is_empty(), "失败调用不得发 transfer");
+        assert!(audited.is_empty(), "失败调用不得写 audit");
     }
 
     #[test]
