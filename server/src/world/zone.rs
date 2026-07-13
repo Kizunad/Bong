@@ -870,7 +870,7 @@ mod zone_tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use super::{DimensionKind, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord, ZONE_OVERLAY_PAYLOAD_VERSION};
     use valence::prelude::DVec3;
 
