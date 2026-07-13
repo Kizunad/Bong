@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            269,
+            270,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -218,7 +218,10 @@ mod tests {
              entity.wither.hurt pitch 1.6 vol 0.4，无新音频文件) \
              plus 2 sword swing recipes (sword_cleave_swing / sword_thrust_swing — 基础剑技\
              挥动破空声，空挥可闻；命中冲击音另走 CombatEvent 层。attack.nodamage 音源\
-             劈低频/刺高频差异化，无新音频文件)"
+             劈低频/刺高频差异化，无新音频文件) \
+             plus 1 yixing_cast recipe (plan-race-system-v1 PR-5b 易形施法音效，\
+             evoker.prepare_wololo + illusioner.mirror_move + amethyst_block.chime 三层\
+             变形类音色，无新音频文件)"
         );
         assert!(
             registry.get("fauna_mundane_wither").is_some(),
