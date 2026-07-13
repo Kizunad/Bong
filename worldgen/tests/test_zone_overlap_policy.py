@@ -49,7 +49,13 @@ def test_only_reviewed_zone_pairs_overlap_in_three_dimensions() -> None:
             if _overlaps(a, b)
         }
         known_defects = KNOWN_DEFECT_OVERLAPS_BY_FILE[path.name]
+        missing_designed = DESIGNED_OVERLAPS - actual
         unexpected = actual - DESIGNED_OVERLAPS - known_defects
+        assert not missing_designed, (
+            f"{path} lost reviewed 3-D zone overlaps: {missing_designed}; "
+            "update the design allowlist only when the owning plan intentionally "
+            "changes that nesting"
+        )
         assert not unexpected, f"{path} has unreviewed 3-D zone overlaps: {unexpected}"
         assert known_defects <= actual, (
             f"{path} changed the known-defect baseline; remove the fixed pair from "
@@ -68,6 +74,19 @@ def test_north_rift_geometry_matches_runtime_and_blueprint() -> None:
     blueprint_rift = next(z for z in blueprint if z["name"] == "rift_mouth_north_002")
     assert runtime_rift["aabb"] == blueprint_rift["aabb"]
     assert runtime_rift["patrol_anchors"] == blueprint_rift["patrol_anchors"]
+    rift_min = blueprint_rift["aabb"]["min"]
+    rift_max = blueprint_rift["aabb"]["max"]
+    expected_center_xz = [
+        (rift_min[0] + rift_max[0]) / 2.0,
+        (rift_min[2] + rift_max[2]) / 2.0,
+    ]
+    expected_size_xz = [rift_max[0] - rift_min[0], rift_max[2] - rift_min[2]]
+    assert blueprint_rift["center_xz"] == expected_center_xz, (
+        "north rift center_xz must remain the exact XZ midpoint of its AABB"
+    )
+    assert blueprint_rift["size_xz"] == expected_size_xz, (
+        "north rift size_xz must remain the exact XZ span of its AABB"
+    )
     assert blueprint_rift["worldgen"]["portal_anchor_xz"] == [2000.0, -7300.0]
     assert blueprint_rift["pois"][0]["pos_xyz"] == [2000.0, 74.0, -7300.0]
 
