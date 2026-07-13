@@ -118,6 +118,63 @@ impl std::fmt::Display for RaceId {
     }
 }
 
+/// plan-race-system-v1 P3a —— 装备 / 功法种族三档匹配门（决议 §8.1 #5/#6）。
+///
+/// 三档语义：`Any` 全通用（不看种族）；`Humanoid` 人形通用（判据 = 判定域 BodyPlan 的
+/// `is_humanoid` 字段，不做种族名单硬编码）；`Species` 种族专属（精确 `RaceId` 白名单）。
+///
+/// `Species` 携带 `&'static [&'static str]`（而非 `&'static [RaceId]`）——`RaceId` 内部是
+/// `String`，无法出现在 `const` 数组字面量里（`String::from` 不是 const fn），而
+/// [`TechniqueDefinition`]（`known_techniques.rs`）的 48 条定义是 `Copy` + `const` 数组，
+/// 本类型必须能在同一 const 上下文构造。比对用 [`RaceGate::allows`]，内部按
+/// `RaceId::as_str()` 做字符串比较，语义与「`&'static [RaceId]`」完全等价。owned 场景
+/// （`ItemTemplate` TOML 运行时加载）用 [`RaceGateOwned`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RaceGate {
+    #[default]
+    Any,
+    Humanoid,
+    Species(&'static [&'static str]),
+}
+
+impl RaceGate {
+    /// 判定给定身份（`race_id` + 判定域 `is_humanoid`）是否通过本门。
+    pub fn allows(&self, race_id: &RaceId, is_humanoid: bool) -> bool {
+        match self {
+            RaceGate::Any => true,
+            RaceGate::Humanoid => is_humanoid,
+            RaceGate::Species(allowed) => allowed.iter().any(|id| *id == race_id.as_str()),
+        }
+    }
+}
+
+/// [`RaceGate`] 的 owned / serde 形态——`ItemTemplate.wearer_race`（TOML 运行时加载，
+/// P3b）等场景用。wire 形状为 tagged struct `{kind: "any"|"humanoid"|"species", species:
+/// [...]}`（`kind` 用 string tag 而非 proto enum，避免枚举前缀 noOp——见
+/// `plan-wire-format-bridge-v1` 教训；`species` 仅 `kind="species"` 时携带）；
+/// serde 内部标签枚举对未知 `kind` 天然拒绝反序列化（fail-closed，非静默兜底 `Any`），
+/// 与 `PartConsequence`（同文件）同一惯例。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RaceGateOwned {
+    #[default]
+    Any,
+    Humanoid,
+    Species {
+        species: Vec<RaceId>,
+    },
+}
+
+impl RaceGateOwned {
+    pub fn allows(&self, race_id: &RaceId, is_humanoid: bool) -> bool {
+        match self {
+            RaceGateOwned::Any => true,
+            RaceGateOwned::Humanoid => is_humanoid,
+            RaceGateOwned::Species { species } => species.contains(race_id),
+        }
+    }
+}
+
 /// 部位受击后果语义（决议 §P0）——枚举化现有「腿伤减速 / 头伤眩晕 / 臂伤六维」的隐性分类，
 /// 非人形部位挂同一枚举（如鲸尾鳍 = `Locomotion`）。
 ///
@@ -429,6 +486,215 @@ mod tests {
         assert_eq!(id.as_str(), "human");
         assert_eq!(id.to_string(), "human");
         assert_eq!(RaceId::from("human".to_string()), id);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // RaceGate（const/&'static 形态）：三档 allows() 矩阵。
+    // ─────────────────────────────────────────────────────────────────
+
+    const WHALE_SPECIES: &[&str] = &["whale"];
+
+    #[test]
+    fn race_gate_any_allows_every_identity() {
+        let gate = RaceGate::Any;
+        assert!(gate.allows(&RaceId::new("human"), true));
+        assert!(gate.allows(&RaceId::new("whale"), false));
+    }
+
+    #[test]
+    fn race_gate_humanoid_gates_on_is_humanoid_only() {
+        let gate = RaceGate::Humanoid;
+        assert!(
+            gate.allows(&RaceId::new("human"), true),
+            "is_humanoid=true 必须放行，不看具体 race_id"
+        );
+        assert!(
+            gate.allows(&RaceId::new("some_other_humanoid_race"), true),
+            "Humanoid 档判据只看 is_humanoid，任何人形构型种族均放行——非种族名单硬编码"
+        );
+        assert!(
+            !gate.allows(&RaceId::new("whale"), false),
+            "is_humanoid=false 必须拒绝，即便 race_id 未知"
+        );
+    }
+
+    #[test]
+    fn race_gate_species_matches_exact_allowlist_only() {
+        let gate = RaceGate::Species(WHALE_SPECIES);
+        assert!(gate.allows(&RaceId::new("whale"), false));
+        assert!(
+            !gate.allows(&RaceId::new("human"), true),
+            "Species 档不因 is_humanoid=true 放行——精确名单以外一律拒绝"
+        );
+        assert!(!gate.allows(&RaceId::new("beast_common"), false));
+    }
+
+    #[test]
+    fn race_gate_default_is_any() {
+        assert_eq!(RaceGate::default(), RaceGate::Any);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // RaceGateOwned（serde owned 形态）：三变体正反 sample + 未知 kind fail-closed +
+    // 空 / 重复 species pin。
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn race_gate_owned_serde_pin_any_variant() {
+        let value = RaceGateOwned::Any;
+        let json = serde_json::to_string(&value).expect("serialize");
+        assert_eq!(json, r#"{"kind":"any"}"#, "Any 变体序列化形状漂移");
+        let round_tripped: RaceGateOwned = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(round_tripped, value);
+    }
+
+    #[test]
+    fn race_gate_owned_serde_pin_humanoid_variant() {
+        let value = RaceGateOwned::Humanoid;
+        let json = serde_json::to_string(&value).expect("serialize");
+        assert_eq!(
+            json, r#"{"kind":"humanoid"}"#,
+            "Humanoid 变体序列化形状漂移"
+        );
+        let round_tripped: RaceGateOwned = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(round_tripped, value);
+    }
+
+    #[test]
+    fn race_gate_owned_serde_pin_species_variant() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale")],
+        };
+        let json = serde_json::to_string(&value).expect("serialize");
+        assert_eq!(
+            json, r#"{"kind":"species","species":["whale"]}"#,
+            "Species 变体序列化形状漂移"
+        );
+        let round_tripped: RaceGateOwned = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(round_tripped, value);
+    }
+
+    #[test]
+    fn race_gate_owned_species_empty_list_round_trips() {
+        let value = RaceGateOwned::Species { species: vec![] };
+        let json = serde_json::to_string(&value).expect("serialize");
+        assert_eq!(json, r#"{"kind":"species","species":[]}"#);
+        let round_tripped: RaceGateOwned = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            round_tripped, value,
+            "空 species 列表是合法状态（虽无实际效果，但不得反序列化失败/被吞掉）"
+        );
+    }
+
+    #[test]
+    fn race_gate_owned_species_duplicate_entries_preserved() {
+        let json = r#"{"kind":"species","species":["whale","whale"]}"#;
+        let value: RaceGateOwned = serde_json::from_str(json).expect("deserialize");
+        match &value {
+            RaceGateOwned::Species { species } => {
+                assert_eq!(
+                    species.len(),
+                    2,
+                    "重复 species 条目原样保留，不做去重（去重是校验层的事，不是 wire 层）"
+                );
+            }
+            other => panic!("expected Species, got {other:?}"),
+        }
+        let re_encoded = serde_json::to_string(&value).expect("serialize");
+        assert_eq!(re_encoded, json, "重复条目往返序列化不变形");
+    }
+
+    #[test]
+    fn race_gate_owned_rejects_unknown_kind() {
+        let err = serde_json::from_str::<RaceGateOwned>(r#"{"kind":"bogus"}"#)
+            .expect_err("unknown kind must fail closed, not silently default to Any");
+        assert!(
+            err.to_string().contains("bogus") || err.to_string().contains("kind"),
+            "错误信息应带上未知 kind 定位线索，实际: {err}"
+        );
+    }
+
+    #[test]
+    fn race_gate_owned_species_missing_species_field_rejected() {
+        // species 变体缺 species 字段——serde 内部标签枚举的必填字段校验。
+        let err = serde_json::from_str::<RaceGateOwned>(r#"{"kind":"species"}"#)
+            .expect_err("species kind 缺 species 字段应反序列化失败");
+        assert!(err.to_string().contains("species"));
+    }
+
+    #[test]
+    fn race_gate_owned_default_is_any() {
+        assert_eq!(RaceGateOwned::default(), RaceGateOwned::Any);
+    }
+
+    #[test]
+    fn race_gate_owned_allows_matches_race_gate_semantics() {
+        // 两种形态（const &'static vs owned）判定逻辑必须一致——防止一处改了 allows()
+        // 语义、另一处漏改的镜像漂移。
+        let whale = RaceId::new("whale");
+        let human = RaceId::new("human");
+
+        assert_eq!(
+            RaceGate::Any.allows(&whale, false),
+            RaceGateOwned::Any.allows(&whale, false)
+        );
+        assert_eq!(
+            RaceGate::Humanoid.allows(&human, true),
+            RaceGateOwned::Humanoid.allows(&human, true)
+        );
+        assert_eq!(
+            RaceGate::Humanoid.allows(&whale, false),
+            RaceGateOwned::Humanoid.allows(&whale, false)
+        );
+        let species_const = RaceGate::Species(WHALE_SPECIES);
+        let species_owned = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale")],
+        };
+        assert_eq!(
+            species_const.allows(&whale, false),
+            species_owned.allows(&whale, false)
+        );
+        assert_eq!(
+            species_const.allows(&human, true),
+            species_owned.allows(&human, true)
+        );
+    }
+
+    /// plan-race-system-v1 P3a（§P3 身份快照 bullet）—— 两个不同 `RaceId` 共享同一
+    /// `BodyPlan`（即 `is_humanoid` 判定结果相同）的反例：Humanoid 档只看 `is_humanoid`
+    /// 放行两者，Species 档必须精确匹配 `RaceId`，共享者中不在白名单里的那个照样拒绝——
+    /// 证明 Species 档不会因为"底层构型相同"而被 Humanoid 档的宽松语义污染。
+    #[test]
+    fn two_race_ids_sharing_same_body_plan_diverge_under_species_gate() {
+        // 模拟场景：human 与 human_variant 两个种族都挂在同一份 humanoid BodyPlan 下
+        // （resolve_body_plan 返回同一个 &BodyPlan，is_humanoid=true 对两者都成立）。
+        let human = RaceId::new("human");
+        let human_variant = RaceId::new("human_variant");
+        let shared_is_humanoid = true;
+
+        // Humanoid 档：只看 is_humanoid，两个共享同一 BodyPlan 的种族都放行。
+        let humanoid_gate = RaceGate::Humanoid;
+        assert!(humanoid_gate.allows(&human, shared_is_humanoid));
+        assert!(humanoid_gate.allows(&human_variant, shared_is_humanoid));
+
+        // Species 档：即便两者 is_humanoid 相同（共享同一 BodyPlan），精确名单只认
+        // "human"，human_variant 必须被拒绝——不因构型相同而放行。
+        let species_gate = RaceGate::Species(&["human"]);
+        assert!(species_gate.allows(&human, shared_is_humanoid));
+        assert!(
+            !species_gate.allows(&human_variant, shared_is_humanoid),
+            "human_variant 与 human 共享同一 BodyPlan（is_humanoid 相同）也不应被 Species(\"human\") 放行"
+        );
+
+        // owned 形态同一断言（防两形态语义漂移）。
+        let humanoid_owned = RaceGateOwned::Humanoid;
+        assert!(humanoid_owned.allows(&human, shared_is_humanoid));
+        assert!(humanoid_owned.allows(&human_variant, shared_is_humanoid));
+        let species_owned = RaceGateOwned::Species {
+            species: vec![RaceId::new("human")],
+        };
+        assert!(species_owned.allows(&human, shared_is_humanoid));
+        assert!(!species_owned.allows(&human_variant, shared_is_humanoid));
     }
 
     #[test]

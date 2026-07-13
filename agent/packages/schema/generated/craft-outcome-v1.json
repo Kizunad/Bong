@@ -1,0 +1,112 @@
+{
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "v",
+        "player_id",
+        "recipe_id",
+        "output_template",
+        "output_count",
+        "completed_at_tick",
+        "ts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "completed",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "recipe_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "output_template": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "output_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed_at_tick": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ts": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "v",
+        "player_id",
+        "recipe_id",
+        "reason",
+        "material_returned",
+        "qi_refunded",
+        "ts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "failed",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "player_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "recipe_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "player_cancelled",
+              "type": "string"
+            },
+            {
+              "const": "player_died",
+              "type": "string"
+            },
+            {
+              "const": "internal_error",
+              "type": "string"
+            }
+          ]
+        },
+        "material_returned": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "qi_refunded": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "ts": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    }
+  ]
+}

@@ -994,6 +994,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -2050,6 +2051,7 @@ mod tests {
             shield_spec: None,
             shelflife_profile: Some("crit_block_test_profile".to_string()),
             shelflife_track: Some(DecayTrack::Spoil),
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         };
         let mut templates = HashMap::new();
         templates.insert(FOOD_ID.to_string(), food_template);

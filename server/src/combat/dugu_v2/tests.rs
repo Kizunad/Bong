@@ -610,6 +610,84 @@ fn dugu_emit_anim_skips_without_unique_id() {
     );
 }
 
+// ── bughunt: 侵染 runtime A/V 必须与 visual_for(Penetrate) 一致 ─────────────
+
+/// 回归：`apply_penetrate` 曾经硬编码播放 `dugu_curse_cackle` / `bong:dugu_pointing_curse`
+/// （倒蚀语义），与 `PenetrateChainEvent.visual == visual_for(Penetrate)` 的针掷/针嘶
+/// metadata 错接。本测试钉住实际 S2C 播放 payload 必须与侵染自身 visual 一致。
+#[test]
+fn penetrate_runtime_av_matches_own_visual_not_reverse() {
+    use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
+    use crate::network::vfx_event_emit::VfxEventRequest;
+    use crate::schema::vfx_event::VfxEventPayloadV1;
+    use valence::prelude::UniqueId;
+
+    let mut app = setup_app();
+    app.add_event::<VfxEventRequest>();
+    app.add_event::<PlaySoundRecipeRequest>();
+
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(UniqueId::default());
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    app.world_mut().entity_mut(target).insert(TaintMark {
+        caster,
+        intensity: 10.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 9.9,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        1,
+        Some(target),
+        DuguSkillId::Penetrate,
+    );
+    assert!(matches!(result, CastResult::Started { .. }));
+
+    let sounds = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+    let sound_events: Vec<_> = sounds.iter_current_update_events().collect();
+    assert_eq!(
+        sound_events.len(),
+        1,
+        "penetrate should emit exactly one PlaySoundRecipeRequest"
+    );
+    assert_eq!(
+        sound_events[0].recipe_id, "dugu_needle_hiss",
+        "penetrate runtime audio must be its own needle_hiss, not reverse's curse_cackle"
+    );
+    assert!(
+        matches!(sound_events[0].recipient, AudioRecipient::Radius { .. }),
+        "expected radius-broadcast recipient for penetrate audio"
+    );
+
+    let vfx = app.world().resource::<Events<VfxEventRequest>>();
+    let anim_events: Vec<_> = vfx
+        .iter_current_update_events()
+        .filter(|event| matches!(event.payload, VfxEventPayloadV1::PlayAnim { .. }))
+        .collect();
+    assert_eq!(
+        anim_events.len(),
+        1,
+        "penetrate should emit exactly one PlayAnim event"
+    );
+    match &anim_events[0].payload {
+        VfxEventPayloadV1::PlayAnim { anim_id, .. } => {
+            assert_eq!(
+                anim_id, "bong:dugu_needle_throw",
+                "penetrate runtime animation must be its own needle_throw, not reverse's pointing_curse"
+            );
+        }
+        other => panic!("expected PlayAnim, got {other:?}"),
+    }
+}
+
 // ── minor②: dugu is_chaotic guard 专项 case ─────────────────────────────
 
 /// 杂色玩家施放 Eclipse 时，insidious_color_percent 加成必须强制清零（worldview §六.2）。

@@ -384,6 +384,9 @@ fn apply_penetrate(
         .map(|mark| mark.tier)
         .unwrap_or(mark.tier);
     let reveal_probability = emit_reveal_if_needed(world, caster, target, now_tick);
+    // bughunt: 侵染的 runtime A/V 必须与自身 visual_for(Penetrate) 一致（针掷/针嘶），
+    // 不能借用 Reverse 的倒蚀远指/cackle——事件 metadata 和实际播放曾各说各话。
+    let visual = visual_for(DuguSkillId::Penetrate);
     send_event_if_present(
         world,
         PenetrateChainEvent {
@@ -399,13 +402,13 @@ fn apply_penetrate(
             // penetrate_zone_credit_tick so the world-qi ledger stays conserved.
             returned_zone_qi: total_qi_drained as f32,
             tick: now_tick,
-            visual: visual_for(DuguSkillId::Penetrate),
+            visual,
         },
     );
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
         emit_vfx(world, pos, "bong:poison_mist", "#228B22", 1.0, 16, 60);
-        emit_audio(world, "dugu_curse_cackle", pos);
-        emit_anim(world, caster, "bong:dugu_pointing_curse");
+        emit_audio(world, visual.sound_recipe_id, pos);
+        emit_anim(world, caster, visual.animation_id);
     }
     Ok(())
 }

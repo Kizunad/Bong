@@ -972,6 +972,21 @@
         },
         "body_plan_id": {
           "type": "string"
+        },
+        "race_id": {
+          "type": "string"
+        },
+        "form_race_id": {
+          "type": "string"
+        },
+        "form_body_plan_id": {
+          "type": "string"
+        },
+        "intrinsic_is_humanoid": {
+          "type": "boolean"
+        },
+        "form_is_humanoid": {
+          "type": "boolean"
         }
       }
     },
@@ -13462,6 +13477,126 @@
                     "minimum": 0,
                     "maximum": 1,
                     "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "item_wearer_race",
+        "technique_required_race"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "race_gate_meta",
+          "type": "string"
+        },
+        "item_wearer_race": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "gate"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "gate": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "species"
+                ],
+                "properties": {
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "const": "any",
+                        "type": "string"
+                      },
+                      {
+                        "const": "humanoid",
+                        "type": "string"
+                      },
+                      {
+                        "const": "species",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "species": {
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "technique_required_race": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "gate"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "gate": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "species"
+                ],
+                "properties": {
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "const": "any",
+                        "type": "string"
+                      },
+                      {
+                        "const": "humanoid",
+                        "type": "string"
+                      },
+                      {
+                        "const": "species",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "species": {
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
                   }
                 }
               }

@@ -219,6 +219,36 @@ pub fn resolve_meridian_topology_for_target<'a>(
     }
 }
 
+/// plan-race-system-v1 P3a —— 施放门 race gate 消费点用（`sword_path::skill_register`
+/// / `combat::sword_basics` 的技能 resolver 均以 `world: &bevy_ecs::world::World` 原始
+/// World 访问操作，而非 Bevy `Query`/`Res` system param），封装
+/// `resolve_body_plan_for_target(..., BodyPlanPurpose::Intrinsic, ...)` 的原始 World
+/// 版本，避免每个 resolver 各自手搓一遍 `world.get::<Cultivation>` /
+/// `world.get_resource::<BodyPlanRegistry>` 拼装。
+pub fn intrinsic_is_humanoid_from_world(
+    world: &valence::prelude::bevy_ecs::world::World,
+    entity: Entity,
+) -> bool {
+    let cultivation = world.get::<Cultivation>(entity);
+    let body_plans = world.get_resource::<super::registry::BodyPlanRegistry>();
+    let races = world.get_resource::<RaceRegistry>();
+    resolve_body_plan_for_target(
+        entity,
+        BodyPlanPurpose::Intrinsic,
+        BodyPlanResolveInputs {
+            cultivation,
+            // `BeastKind` 不是 Bevy `Component`（既有 `combat::resolve` / `combat::carrier` /
+            // `cultivation::meridian_open` 消费点同款简化，见 `resolve_body_plan` 模块文档）——
+            // sword_path / sword_basics 施放门只对玩家实体生效（NPC 不走这两条 cast 路径），
+            // `None` 与"真的查了 BeastKind"结果 bit-for-bit 一致。
+            beast_kind: None,
+        },
+        body_plans,
+        races,
+    )
+    .is_humanoid
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

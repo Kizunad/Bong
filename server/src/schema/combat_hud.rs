@@ -88,6 +88,10 @@ pub enum CastOutcomeV1 {
     /// 招式未习得或未激活（KnownTechniques 缺失 / active=false）。
     /// 此前这类拒绝冒用 RejectInvalidTarget，玩家被"目标无效"文案误导。
     RejectTechniqueInactive,
+    /// plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— 种族门拒绝：本体 race_id /
+    /// is_humanoid 未通过该招式的 `RaceGate`（`RaceGate::Humanoid` 档最常见触发，
+    /// 如非人形种族尝试施放剑道/爆脉类肢体依赖招式）。
+    RejectRaceMismatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

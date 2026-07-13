@@ -116,6 +116,9 @@ import {
   ServerDataShieldBrokenV1,
   ShieldBlockHitV1,
   ServerDataShieldBlockHitV1,
+  RaceGateV1,
+  RaceGateMetaEntryV1,
+  ServerDataRaceGateMetaV1,
 } from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
@@ -4487,5 +4490,156 @@ describe("MutationEventV1 schema pin tests (plan-dandao-runtime-wiring-v1 P2)", 
     expect(SchemaPackage.NamedFactionStateV1).toBe(NamedFactionStateV1);
     expect(SchemaPackage.FactionStatusV1).toBe(FactionStatusV1);
     expect(typeof SchemaPackage.validateNamedFactionStateV1Contract).toBe("function");
+  });
+});
+
+// ─── plan-race-system-v1 P3a：RaceGate wire pin ─────────────────────────────
+describe("RaceGateV1 (plan-race-system-v1 P3a)", () => {
+  it("race-gate.any.sample.json 通过且 species 为空", () => {
+    const data = loadObjectSample("race-gate.any.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual([]);
+  });
+
+  it("race-gate.humanoid.sample.json 通过且 species 为空", () => {
+    const data = loadObjectSample("race-gate.humanoid.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual([]);
+  });
+
+  it("race-gate.species.sample.json 通过且携带精确种族名单", () => {
+    const data = loadObjectSample("race-gate.species.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual(["whale"]);
+  });
+
+  it("三变体正向 pin：any/humanoid/species 均通过", () => {
+    for (const kind of ["any", "humanoid", "species"] as const) {
+      const payload = { kind, species: kind === "species" ? ["whale"] : [] };
+      const result = validate(RaceGateV1, payload);
+      expect(result.ok, `${kind}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("未知 kind 必须 fail-closed 拒绝，不静默兜底 any", () => {
+    const bad = { kind: "bogus", species: [] };
+    const result = validate(RaceGateV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("species 为空数组是合法边界（即便 kind=species，无实际放行对象但结构合法）", () => {
+    const payload = { kind: "species", species: [] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("species 重复条目原样通过（去重是校验层的事，不是 wire schema 的事）", () => {
+    const payload = { kind: "species", species: ["whale", "whale"] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("species 元素空字符串应拒绝（minLength: 1）", () => {
+    const payload = { kind: "species", species: [""] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("顶层多余字段应拒绝（additionalProperties: false）", () => {
+    const payload = { kind: "any", species: [], unexpected: true };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("缺 species 字段应拒绝（恒为必填数组字段，未配置用空数组表达）", () => {
+    const payload = { kind: "any" };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("RaceGateMetaV1 (plan-race-system-v1 P3c)", () => {
+  it("server-data.race-gate-meta.sample.json 正样本通过 ServerDataV1", () => {
+    const data = loadSample("server-data.race-gate-meta.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("空表样本（两表皆空）合法——无种族门物品/功法时的常态", () => {
+    const data = loadSample("server-data.race-gate-meta.empty.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.item_wearer_race).toEqual([]);
+    expect(data.technique_required_race).toEqual([]);
+  });
+
+  it("三档 gate 各一条 entry 均通过（any/humanoid/species）", () => {
+    for (const gate of [
+      { kind: "any", species: [] },
+      { kind: "humanoid", species: [] },
+      { kind: "species", species: ["whale"] },
+    ] as const) {
+      const entry = { id: "x", gate };
+      const result = validate(RaceGateMetaEntryV1, entry);
+      expect(result.ok, `${gate.kind}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("entry 未知 gate.kind 必须 fail-closed 拒绝", () => {
+    const entry = { id: "x", gate: { kind: "bogus", species: [] } };
+    const result = validate(RaceGateMetaEntryV1, entry);
+    expect(result.ok).toBe(false);
+  });
+
+  it("entry 缺 id 拒绝（id 是查表主键，不可空）", () => {
+    const entry = { gate: { kind: "any", species: [] } };
+    const result = validate(RaceGateMetaEntryV1, entry);
+    expect(result.ok).toBe(false);
+  });
+
+  it("entry id 空字符串拒绝（minLength: 1）", () => {
+    const entry = { id: "", gate: { kind: "any", species: [] } };
+    const result = validate(RaceGateMetaEntryV1, entry);
+    expect(result.ok).toBe(false);
+  });
+
+  it("payload 缺 item_wearer_race 数组拒绝（恒为必填数组，空表用 []）", () => {
+    const payload = {
+      v: 1,
+      type: "race_gate_meta",
+      technique_required_race: [],
+    };
+    const result = validate(ServerDataRaceGateMetaV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("payload 多余顶层字段拒绝（additionalProperties: false）", () => {
+    const payload = {
+      v: 1,
+      type: "race_gate_meta",
+      item_wearer_race: [],
+      technique_required_race: [],
+      unexpected: true,
+    };
+    const result = validate(ServerDataRaceGateMetaV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("装备门 species 表 + 功法门 humanoid 表可共存于一 payload", () => {
+    const payload = {
+      v: 1,
+      type: "race_gate_meta",
+      item_wearer_race: [
+        { id: "armor_whale_plate", gate: { kind: "species", species: ["whale"] } },
+      ],
+      technique_required_race: [
+        { id: "sword.cleave", gate: { kind: "humanoid", species: [] } },
+      ],
+    };
+    const result = validate(ServerDataRaceGateMetaV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 });

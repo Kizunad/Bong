@@ -1,0 +1,104 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "player_id",
+    "recipe_id",
+    "source",
+    "unlocked_at_tick",
+    "ts"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "recipe_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "item_template"
+          ],
+          "properties": {
+            "kind": {
+              "const": "scroll",
+              "type": "string"
+            },
+            "item_template": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "npc_archetype"
+          ],
+          "properties": {
+            "kind": {
+              "const": "mentor",
+              "type": "string"
+            },
+            "npc_archetype": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "trigger"
+          ],
+          "properties": {
+            "kind": {
+              "const": "insight",
+              "type": "string"
+            },
+            "trigger": {
+              "anyOf": [
+                {
+                  "const": "breakthrough",
+                  "type": "string"
+                },
+                {
+                  "const": "near_death",
+                  "type": "string"
+                },
+                {
+                  "const": "defeat_stronger",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "unlocked_at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ts": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}
