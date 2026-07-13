@@ -157,6 +157,7 @@ pub enum ServerDataType {
     DroppedLootSync,
     RemainsSync,
     BodyPlanLayout,
+    RaceGateMeta,
     BotanyHarvestProgress,
     BotanyPlantV2RenderProfiles,
     MiningProgress,
@@ -405,6 +406,10 @@ pub enum ServerDataPayloadV1 {
     /// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据（见
     /// `BodyPlanLayoutV1` 文档）。
     BodyPlanLayout(BodyPlanLayoutV1),
+    /// plan-race-system-v1 P3c — 种族门元数据表（item wearer_race + technique
+    /// required_race），join 首帧一次性下发，client 缓存后离线判置灰（见
+    /// `RaceGateMetaV1` 文档）。
+    RaceGateMeta(RaceGateMetaV1),
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -1648,6 +1653,10 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         layout: BodyPlanLayoutV1,
     },
+    RaceGateMeta {
+        #[serde(flatten)]
+        meta: RaceGateMetaV1,
+    },
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -2340,6 +2349,37 @@ impl RaceGateWireV1 {
     }
 }
 
+/// plan-race-system-v1 P3c — 种族门元数据表的单条目：`id`（item template_id 或
+/// technique skill_id）→ `gate`（该条目的种族门）。恒只装非 `Any` 条目
+/// （`Any` 是默认，client 表里查不到即恒放行）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateMetaEntryV1 {
+    pub id: String,
+    pub gate: RaceGateWireV1,
+}
+
+/// plan-race-system-v1 P3c — 静态种族门元数据表（`ServerDataPayloadV1::RaceGateMeta`）。
+///
+/// 两张表都只装 **非 `Any`** 条目（`Any` 是默认，client 缺省即 `Any`，省流量）：
+/// - `item_wearer_race`：item template_id → `wearer_race`，**装备门**判定域用
+///   **当前形态身份**（`form_race_id` / `form_is_humanoid`）。
+/// - `technique_required_race`：technique skill_id → `required_race`，**功法门**
+///   （习得 / 施放）判定域用**本体身份**（`race_id` / `intrinsic_is_humanoid`）。
+///
+/// 两域不同轴（决议 §8.1 #5/#6）：装备看形态、功法看本体。join 首帧一次性下发
+/// （`network::cultivation_detail_emit::emit_race_gate_meta_payloads`，`LastSentRaceGateMeta`
+/// 防重发），内容静态（与玩家身份无关），client 换身份时不需重发——client 用
+/// `PlayerRaceIdentityStore` 的最新身份对同一张表重判即可。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateMetaV1 {
+    #[serde(default)]
+    pub item_wearer_race: Vec<RaceGateMetaEntryV1>,
+    #[serde(default)]
+    pub technique_required_race: Vec<RaceGateMetaEntryV1>,
+}
+
 /// plan-race-system-v1 P2a — `BodyPlanLayoutV1` 的坐标点，归一化到 `[0,1]`（原点 =
 /// 布局画布左上角）。同一类型既用作磁盘 `layouts/*.json` 的数据源，也直接是
 /// wire payload 的字段（无独立域模型/wire 模型两份拷贝，仿 `RemainsEntryV1` 先例）。
@@ -2814,6 +2854,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
             ServerDataPayloadWireV1::RemainsSync { remains } => Ok(Self::RemainsSync(remains)),
             ServerDataPayloadWireV1::BodyPlanLayout { layout } => Ok(Self::BodyPlanLayout(layout)),
+            ServerDataPayloadWireV1::RaceGateMeta { meta } => Ok(Self::RaceGateMeta(meta)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -3429,6 +3470,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::BodyPlanLayout(layout) => Self::BodyPlanLayout {
                 layout: layout.clone(),
             },
+            ServerDataPayloadV1::RaceGateMeta(meta) => Self::RaceGateMeta { meta: meta.clone() },
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -4127,6 +4169,7 @@ impl ServerDataPayloadV1 {
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::RemainsSync(..) => ServerDataType::RemainsSync,
             Self::BodyPlanLayout(..) => ServerDataType::BodyPlanLayout,
+            Self::RaceGateMeta(..) => ServerDataType::RaceGateMeta,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
@@ -4291,6 +4334,7 @@ impl ServerDataPayloadV1 {
             Self::DroppedLootSync(..) => false,
             Self::RemainsSync(..) => false,
             Self::BodyPlanLayout(..) => false,
+            Self::RaceGateMeta(..) => false,
             Self::BotanyHarvestProgress { .. } => false,
             Self::BotanyPlantV2RenderProfiles(..) => false,
             Self::MiningProgress { .. } => false,

@@ -74,6 +74,28 @@ message RaceGate {
   repeated string species = 2; // kind=species 专属，其余 kind 恒为空
 }
 
+// ─── plan-race-system-v1 P3c：种族门元数据表（RaceGateMeta） ─────────
+//
+// 静态的 per-template / per-technique 种族门数据，一次性下发（join 首帧），
+// 不随每次 inventory snapshot 重发（那既浪费又未归一化）。client 缓存两表后
+// 按当前身份（装备域=当前形态 / 功法域=本体）离线判定置灰。
+//
+// 只装载**非 Any** 条目：Any 是默认，client 表里查不到 = 恒放行（省流量）。
+// 用 repeated entry（而非 proto3 map）——JsonFormat map<string,message> 的
+// client 解码坑多，repeated 与 body_plan_layout 等既有 repeated-message 一致。
+
+message RaceGateMetaEntry {
+  string id = 1;      // item template_id 或 technique skill_id
+  RaceGate gate = 2;  // 该条目的种族门（恒非 Any——Any 不进表）
+}
+
+message RaceGateMeta {
+  // item template_id → wearer_race（装备门，判当前形态身份）。
+  repeated RaceGateMetaEntry item_wearer_race = 1;
+  // technique skill_id → required_race（功法门，判本体身份）。
+  repeated RaceGateMetaEntry technique_required_race = 2;
+}
+
 // ─── 物品槽 ─────────────────────────────────────────────────────
 
 message ItemSlot {

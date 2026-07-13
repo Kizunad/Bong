@@ -207,6 +207,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("dropped_loot_sync"),
   Type.Literal("remains_sync"),
   Type.Literal("body_plan_layout"),
+  Type.Literal("race_gate_meta"),
   Type.Literal("botany_harvest_progress"),
   Type.Literal("gathering_session"),
   Type.Literal("botany_plant_v2_render_profiles"),
@@ -608,6 +609,33 @@ export const RaceGateV1 = Type.Object(
   { additionalProperties: false },
 );
 export type RaceGateV1 = Static<typeof RaceGateV1>;
+
+// ─── plan-race-system-v1 P3c：RaceGateMeta（种族门元数据表） ──────────
+// 静态 per-template / per-technique 种族门表，join 首帧一次性下发（不随每次
+// inventory snapshot 重发）。两表都只装**非 any** 条目（any 是默认，client 缺省
+// 即恒放行，省流量）。装备门（item_wearer_race）判当前形态身份，功法门
+// （technique_required_race）判本体身份——两域不同轴（决议 §8.1 #5/#6）。
+export const RaceGateMetaEntryV1 = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    gate: RaceGateV1,
+  },
+  { additionalProperties: false },
+);
+export type RaceGateMetaEntryV1 = Static<typeof RaceGateMetaEntryV1>;
+
+export const ServerDataRaceGateMetaV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("race_gate_meta"),
+    // item template_id → wearer_race（装备门，判当前形态）。恒为数组（空 = 无门物品）。
+    item_wearer_race: Type.Array(RaceGateMetaEntryV1),
+    // technique skill_id → required_race（功法门，判本体）。恒为数组（空 = 无门功法）。
+    technique_required_race: Type.Array(RaceGateMetaEntryV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRaceGateMetaV1 = Static<typeof ServerDataRaceGateMetaV1>;
 
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
@@ -1981,6 +2009,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataDroppedLootSyncV1,
   ServerDataRemainsSyncV1,
   ServerDataBodyPlanLayoutV1,
+  ServerDataRaceGateMetaV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,

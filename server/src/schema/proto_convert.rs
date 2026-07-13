@@ -971,6 +971,26 @@ impl From<&ServerDataPayloadV1> for Payload {
                         .collect(),
                 })
             }
+            ServerDataPayloadV1::RaceGateMeta(meta) => {
+                // plan-race-system-v1 P3c：RaceGateWireV1（flat wire）→ proto RaceGate。
+                // 直接构造 bong::RaceGate（kind + species），避免多绕一层 owned 转换。
+                let entry_to_proto =
+                    |e: &crate::schema::server_data::RaceGateMetaEntryV1| bong::RaceGateMetaEntry {
+                        id: e.id.clone(),
+                        gate: Some(bong::RaceGate {
+                            kind: e.gate.kind.clone(),
+                            species: e.gate.species.clone(),
+                        }),
+                    };
+                Payload::RaceGateMeta(bong::RaceGateMeta {
+                    item_wearer_race: meta.item_wearer_race.iter().map(entry_to_proto).collect(),
+                    technique_required_race: meta
+                        .technique_required_race
+                        .iter()
+                        .map(entry_to_proto)
+                        .collect(),
+                })
+            }
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -6096,7 +6116,7 @@ mod tests {
 
     // ─── plan-test-coverage-guards-v1 P0：exhaustive proto encoding guard ────────
 
-    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (126 total).
+    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (127 total).
     ///
     /// **Why a list and not an exhaustive match?**
     /// The list itself cannot be made compile-time exhaustive — Rust cannot iterate enum variants.
@@ -6361,6 +6381,25 @@ mod tests {
                         part_id: "chest".to_string(),
                         point: super::super::server_data::BodyPlanPoint2V1 { x: 0.5, y: 0.19 },
                     }],
+                }
+            )),
+            // plan-race-system-v1 P3c：种族门元数据表（含三档 gate pin）。
+            fix!(ServerDataPayloadV1::RaceGateMeta(
+                super::super::server_data::RaceGateMetaV1 {
+                    item_wearer_race: vec![super::super::server_data::RaceGateMetaEntryV1 {
+                        id: "armor_whale_plate".to_string(),
+                        gate: super::super::server_data::RaceGateWireV1 {
+                            kind: "species".to_string(),
+                            species: vec!["whale".to_string()],
+                        },
+                    }],
+                    technique_required_race: vec![super::super::server_data::RaceGateMetaEntryV1 {
+                        id: "sword.cleave".to_string(),
+                        gate: super::super::server_data::RaceGateWireV1 {
+                            kind: "humanoid".to_string(),
+                            species: vec![],
+                        },
+                    },],
                 }
             )),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {
@@ -7294,7 +7333,7 @@ mod tests {
         ]
     }
 
-    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (126 total).
+    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (127 total).
     ///
     /// This cross-checks the fixture count against `ServerDataType` discriminant count derived
     /// from `payload_type()`. If a new variant is added and a fixture is not added to
@@ -7332,6 +7371,7 @@ mod tests {
             ServerDataType::DroppedLootSync,
             ServerDataType::RemainsSync,
             ServerDataType::BodyPlanLayout,
+            ServerDataType::RaceGateMeta,
             ServerDataType::BotanyHarvestProgress,
             ServerDataType::BotanyPlantV2RenderProfiles,
             ServerDataType::MiningProgress,
@@ -7555,8 +7595,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 128,
-            "Expected 128 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 129,
+            "Expected 129 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(

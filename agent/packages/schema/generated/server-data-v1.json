@@ -13491,6 +13491,126 @@
       "required": [
         "v",
         "type",
+        "item_wearer_race",
+        "technique_required_race"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "race_gate_meta",
+          "type": "string"
+        },
+        "item_wearer_race": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "gate"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "gate": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "species"
+                ],
+                "properties": {
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "const": "any",
+                        "type": "string"
+                      },
+                      {
+                        "const": "humanoid",
+                        "type": "string"
+                      },
+                      {
+                        "const": "species",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "species": {
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "technique_required_race": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "gate"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "gate": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "species"
+                ],
+                "properties": {
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "const": "any",
+                        "type": "string"
+                      },
+                      {
+                        "const": "humanoid",
+                        "type": "string"
+                      },
+                      {
+                        "const": "species",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "species": {
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "session_id",
         "target_id",
         "target_name",
