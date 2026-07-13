@@ -82,10 +82,22 @@
 
 ### P3 闭环验收
 
-- [x] ✅ 2026-07-13 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对 `origin/main...130d63d3` 完成逐入口对抗审查，无新增必修项。
+- [x] ✅ 2026-07-13 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对 `origin/main...47b479de` 完成逐入口对抗审查，无新增必修项。
 - [x] ✅ 2026-07-13 — `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿。
-- [x] ✅ 2026-07-13 — fetch `origin/main@bf0b2738` 后按 diverged 路径无冲突合并；对未提交合并结果完成 server 门禁，再以 `130d63d3` 显式提交。
+- [x] ✅ 2026-07-13 — 真实 C2S → server → S2C bot 场景必须通过：主世界开棺后进入 TSY，观察 close + snapshot，并拒绝旧 session move / open；不得以单元测试替代。
+- [x] ✅ 2026-07-13 — fetch `origin/main@f889073a` 后按 diverged 路径无冲突合并；对合并后 `47b479de` 完成 server 完整门禁、protocol 与干净服 bot E2E 复验。
 - [x] ✅ 2026-07-13 — 全阶段标记完成并填写唯一 `## Finish Evidence`；归档后由主 agent 复核最终干净 HEAD，独立 validator 例外继续如实披露。
+
+### 4.1 开放问题与决议
+
+**开放问题：无未决开放问题。** P0 提出的授权口径、会话续权、入口级验收和独立 validator 四项均已决议；后续 PR gate 只验证这些既定契约，不再扩写需求。
+
+| 项目 | 结论 | 实施方案 | 边界条件 | 双锚点 |
+|---|---|---|---|---|
+| open 授权口径 | 裸 XYZ 与客户端可见层都不是授权；必须由 server 同时确认 active source、逻辑位面、有限坐标和距离 | `authorize_supply_coffin_open` 在 roll loot、分配 session、发送 payload 前统一 fail closed | 精确 4.5 格放行；缺 source / dimension、跨维、超距、NaN、±Infinity 拒绝；不改变 wire schema | `server/src/supply_coffin/authority.rs:23`、`server/src/supply_coffin/interact.rs:101` + plan §0、§P1 |
+| 已开 session 续权 | `session_id + owner` 不是持续授权；move 与 lifecycle 每次都要回查 active source 和玩家权威状态 | move 在迁移物品前调用 session authority；lifecycle 失效以既有 `distance` reason close、回推 snapshot 并释放映射 / 锁 | 精确 6.5 格放行；普通 `StorageCrate` 不套用物资棺规则；拒绝不得改变物品或 revision | `server/src/network/client_request_handler.rs:16552`、`server/src/supply_coffin/lifecycle.rs:107` + plan §P1、§P2 |
+| 入口级与黑盒验收 | helper 单测不足以证明 wiring；非有限坐标和真实跨维状态转换都必须走入口 | Rust 覆盖真实 open payload、move、lifecycle；bot 覆盖 open → TSY respawn → close/snapshot → 旧 move/open 拒绝 | 干净 server 每次只跑一次场景；TSY 入场点必须在出口触发圈外；E2E 不能替代 server 完整门禁 | `server/src/network/client_request_handler.rs:4387`、`server/src/network/client_request_handler.rs:4617`、`server/src/supply_coffin/lifecycle.rs:478`、`scripts/bot/scenarios/inventory_supply_coffin_cross_dimension.py:15` + plan §5、§P3 |
+| 独立 validator 例外 | 用户明确禁用 subagent，本轮 validator 未运行；不得声称 PASS | 由主 agent 完成逐入口 diff 审查、完整门禁、协议回归、干净服 E2E，并在 plan / PR 透明披露 | 例外只覆盖独立 validator，不豁免测试、CodeRabbit、`/review` 或 e2e；不自动 merge | `docs/finished_plans/plan-bughunt-supply-coffin-cross-dimension-session-gate-v1.md:85` + plan §P3、§4.1、§Finish Evidence |
 
 ## 5. 可执行测试矩阵
 
@@ -101,7 +113,7 @@
 | lifecycle idempotency | 已关闭 session 再 tick | no-op 且状态一致 | 二次副作用或 panic |
 | regression | 普通物资棺开取与其它 external container | 原契约保持 | 将物资棺规则错误外溢 |
 
-黑盒 bot e2e 仅在现有 harness 能无协议扩写地覆盖且本地门禁不足以锁定 C2S consumer 时执行；不能用 smoke 代替 server 完整门禁。
+黑盒 bot e2e 是本 plan 的必需门禁：必须用现有 harness 走真实 C2S → server → S2C 跨维链路；不能用 helper 单测或 smoke 代替该场景，也不能用该场景代替 server 完整门禁。
 
 ## Finish Evidence
 
@@ -119,20 +131,25 @@
 - `377ea937`：修复测试初始化的 clippy 门禁。
 - `545e83c6`：按持久化快照与启动墙钟边界修正伪灵脉测试不稳定，生产逻辑未改。
 - `130d63d3`：合并 `origin/main@bf0b2738` 并复验。
+- `d2fd0f35`：补齐真实 open payload 与 NaN / ±Infinity 的 open、move、lifecycle 入口回归。
+- `26d2ba4b`：增加 bot payload 解码、跨维黑盒场景，并修正 `/tsy_spawn` 入场后自动回弹。
+- `47b479de`：合并 `origin/main@f889073a` 并完成最终复验。
 
 ### 测试与审查
 
 - 定向：`cargo test supply_coffin` 为 103/103；`cargo test external_move_` 为 7/7；非物资棺隔离用例 1/1。
-- server 完整门禁：format 与 clippy 通过；主测试集 11,494 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，另 5 项 ignored；命令退出码 0。
+- server 完整门禁（`47b479de`）：format 与 clippy 通过；主测试集 11,499 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，另 5 项 ignored；命令退出码 0。
 - client 同步复验：JDK 17.0.19 下 `./gradlew test build`，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`。
 - agent/schema 同步复验：`npm run build` 通过；`npm test -w @bong/schema` 为 29 files / 872 tests 全绿。
-- 主 agent 对 `origin/main...130d63d3` 完成第一性原理与对抗式 diff 审查，确认授权先于副作用、session 映射所有权正确且普通 external container 未被误伤。
+- bot protocol（`47b479de`）：`python3 scripts/bot/test_protocol.py` 为 55/55，退出码 0；测试结束仅报告既有未关闭 socket `ResourceWarning`。
+- 干净服 bot E2E（`47b479de`，run-tag `1199e`）：`inventory_supply_coffin_cross_dimension` 为 1/1 PASS（6.9s）；确认唯一跨维进入 TSY 后不回弹，收到 close + snapshot，旧 move 不迁移实例 / 不增加 revision，旧 open 不返回 payload。
+- 主 agent 对 `origin/main...47b479de` 完成第一性原理与对抗式 diff 审查，确认授权先于副作用、session 映射所有权正确且普通 external container 未被误伤。
 - 独立 validator：未运行。用户于 2026-07-13 明确要求“本次不跑 subagent，仅主agent实施”；本记录不声称 validator PASS，PR 继续透明披露该例外。
 
 ### 遗留与后续
 
 - 无 `[BLOCKED: ...]` 项，无 wire schema、worldview、依赖版本或真元守恒改动。
-- `/review`、CodeRabbit 与 e2e 属 PR gate，开 PR 后继续等待并处理；不自动 merge。
+- `/review`、CodeRabbit 与 GitHub e2e 属 PR gate，推送最终 HEAD 后继续等待并处理；不自动 merge。
 
 ## 6. Skeleton 对抗复核背景（不替代 P0 证据）
 
