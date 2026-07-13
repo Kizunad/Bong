@@ -4610,11 +4610,11 @@ mod tests {
     // 全链路。
     // ══════════════════════════════════════════════════════════════════════════
 
-    fn make_species_gated_chestplate_registry(allowed_race: &str) -> ItemRegistry {
+    fn make_armor_straw_chestplate_registry(allowed_race: &str) -> ItemRegistry {
         ItemRegistry::from_map(HashMap::from([(
-            "species_gated_chestplate".to_string(),
+            "armor_straw_chestplate".to_string(),
             ItemTemplate {
-                id: "species_gated_chestplate".to_string(),
+                id: "armor_straw_chestplate".to_string(),
                 display_name: "species-gated chestplate".to_string(),
                 category: ItemCategory::Armor,
                 placeable: None,
@@ -4646,7 +4646,7 @@ mod tests {
         )]))
     }
 
-    fn spawn_player_with_species_gated_chestplate_in_pack(
+    fn spawn_player_with_armor_straw_chestplate_in_pack(
         app: &mut App,
         username: &str,
         intrinsic_race: &str,
@@ -4654,7 +4654,7 @@ mod tests {
         let (client_bundle, _helper) = create_mock_client(username);
         let item = ItemInstance {
             instance_id: 1,
-            template_id: "species_gated_chestplate".to_string(),
+            template_id: "armor_straw_chestplate".to_string(),
             display_name: "species-gated chestplate".to_string(),
             grid_w: 1,
             grid_h: 1,
@@ -4745,12 +4745,11 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(EntityPlugin);
         register_request_app(&mut app);
-        app.insert_resource(make_species_gated_chestplate_registry(
+        app.insert_resource(make_armor_straw_chestplate_registry(
             crate::body_plan::HUMAN_RACE_ID,
         ));
 
-        let client =
-            spawn_player_with_species_gated_chestplate_in_pack(&mut app, "Morpher", "whale");
+        let client = spawn_player_with_armor_straw_chestplate_in_pack(&mut app, "Morpher", "whale");
         app.world_mut()
             .entity_mut(client)
             .insert(crate::body_plan::MorphState::new(
@@ -4783,12 +4782,11 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(EntityPlugin);
         register_request_app(&mut app);
-        app.insert_resource(make_species_gated_chestplate_registry(
+        app.insert_resource(make_armor_straw_chestplate_registry(
             crate::body_plan::HUMAN_RACE_ID,
         ));
 
-        let client =
-            spawn_player_with_species_gated_chestplate_in_pack(&mut app, "Morpher", "whale");
+        let client = spawn_player_with_armor_straw_chestplate_in_pack(&mut app, "Morpher", "whale");
 
         send_species_gated_equip_intent(&mut app, client);
 
