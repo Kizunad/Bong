@@ -175,6 +175,44 @@ pub struct ItemTemplate {
     pub wearer_race: RaceGateOwned,
 }
 
+impl ItemTemplate {
+    /// 测试装配用最小模板（`Misc` 类、1×1、`wearer_race = Any`），供跨模块单测
+    /// （如 `network::race_gate_meta_emit`）构造 `ItemRegistry` 而无需手抄全字段。
+    /// 仿 `ItemRegistry::from_map` 的 `#[doc(hidden)] pub`——非生产 API，生产走
+    /// `load_item_registry` 从 toml 加载。
+    #[doc(hidden)]
+    pub fn minimal_for_test(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            category: ItemCategory::Misc,
+            placeable: None,
+            max_stack_count: 1,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 1.0,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.0,
+            description: String::new(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            readable_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shield_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
+            wearer_race: RaceGateOwned::default(),
+        }
+    }
+}
+
 /// plan-shield-block-v1 P2 — 盾牌物理防御模板级别静态规格（不随 instance 变动）。
 /// 凡人级物理盾，不触真元（qi_physics），与 ArmorProfile 独立。
 /// - `block_ratio`：正面命中时削减伤害的比例（0.0..=0.7；worldview §五 凡人盾上限 0.7）。
