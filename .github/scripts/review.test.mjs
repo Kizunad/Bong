@@ -1239,8 +1239,11 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   const review = workflowJob(workflow, "review");
   const finalize = workflowJob(workflow, "finalize");
 
-  assert.match(workflow, /^  pull_request_target:\n    types: \[opened\]$/m);
+  // codex 引擎不再自动跑：PR 创建时的默认审核已让位给 review-claude.yml。
+  // 保留 issue_comment `/review` + workflow_dispatch，去掉 pull_request(_target) 自动触发。
+  assert.doesNotMatch(workflow, /^  pull_request_target:\n/m);
   assert.doesNotMatch(workflow, /^  pull_request:\n/m);
+  assert.match(workflow, /^  issue_comment:\n    types: \[created\]$/m);
   assert.match(workflow, /^permissions: \{\}$/m);
   assert.match(workflow, /github\.event\.comment\.body == '\/review'/);
   assert.doesNotMatch(workflow, /startsWith\(github\.event\.comment\.body, '\/review'\)/);
