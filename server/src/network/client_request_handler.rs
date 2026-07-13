@@ -372,6 +372,7 @@ pub struct ClientRequestDispatchParams<'w> {
     // ─── plan-supply-coffin-loot-ui P2：外部容器 + entity-based open ──────
     pub ext_container_registry:
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
+    pub supply_coffin_registry: Option<Res<'w, crate::supply_coffin::SupplyCoffinRegistry>>,
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
     pub container_open_tx:
@@ -2459,6 +2460,8 @@ pub fn handle_client_request_payloads(
                     &player_states,
                     &skill_scroll_params.cultivations,
                     &mut clients,
+                    &skill_scroll_params.positions,
+                    &skill_scroll_params.dimensions,
                     &mut commands,
                 );
             }
@@ -15959,6 +15962,8 @@ fn handle_external_container_move(
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
     clients: &mut Query<(&Username, &mut Client)>,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
     _commands: &mut Commands,
 ) {
     use crate::inventory::external_container::{
@@ -15968,14 +15973,29 @@ fn handle_external_container_move(
     use crate::schema::inventory::{InventoryLocationV1, PlacedInventoryItemV1};
     use crate::schema::server_data::{LootContainerUpdateV1, ServerDataPayloadV1, ServerDataV1};
 
+    let supply_coffin_registry = dispatch.supply_coffin_registry.as_deref();
     let Some(ext_reg) = dispatch.ext_container_registry.as_deref_mut() else {
         tracing::warn!("[bong][network] external_container_move: registry missing");
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
     };
 
     let Some(&coffin_entity) = ext_reg.sessions.get(&session_id) else {
         tracing::warn!(
             "[bong][network] external_container_move: unknown session {session_id} from {player_entity:?}"
+        );
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
         );
         return;
     };
@@ -15984,6 +16004,13 @@ fn handle_external_container_move(
         tracing::warn!(
             "[bong][network] external_container_move: ExternalContainer component missing on {coffin_entity:?}"
         );
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
     };
 
@@ -15991,7 +16018,59 @@ fn handle_external_container_move(
         tracing::warn!(
             "[bong][network] external_container_move: session {session_id} not owned by {player_entity:?}"
         );
+        // 非 owner 不得获得外部容器内容；只回推请求者自己的背包状态。
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
+    }
+
+    if matches!(
+        &ext.source_kind,
+        crate::inventory::external_container::ExternalContainerKind::SupplyCoffin { .. }
+    ) {
+        let Ok(player_pos) = positions.get(player_entity) else {
+            tracing::warn!(
+                "[bong][network] external_container_move: supply coffin session {session_id} player {player_entity:?} missing Position"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+        let active =
+            supply_coffin_registry.and_then(|registry| registry.active.get(&coffin_entity));
+        let authorization = crate::supply_coffin::authority::authorize_supply_coffin_session(
+            active,
+            player_pos.get(),
+            dimensions
+                .get(player_entity)
+                .ok()
+                .map(|dimension| dimension.0),
+        );
+        if let Err(reason) = authorization {
+            tracing::warn!(
+                "[bong][network] external_container_move: supply coffin session {session_id} authority rejected: {reason:?}"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        }
     }
 
     let ext_container_id =

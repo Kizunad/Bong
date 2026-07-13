@@ -31,11 +31,10 @@ use crate::schema::inventory::PlacedInventoryItemV1;
 use crate::schema::server_data::{
     LootContainerOpenV1, LootContainerSourceKindV1, ServerDataPayloadV1, ServerDataV1,
 };
+use crate::world::dimension::CurrentDimension;
 
+use super::authority::authorize_supply_coffin_open;
 use super::{current_wall_clock_secs, loot::roll_loot, SupplyCoffinGrade, SupplyCoffinRegistry};
-
-const OPEN_RANGE_BLOCKS: f64 = 4.0;
-const OPEN_RANGE_TOLERANCE: f64 = 0.5;
 
 /// C2S request emitted by `client_request_handler` when the client sends
 /// `supply_coffin_open`. The handler resolves the MC protocol entity_id to an
@@ -61,6 +60,7 @@ pub struct SupplyCoffinOpened {
 type PlayerQueryItem<'a> = (
     &'a mut PlayerInventory,
     &'a Position,
+    Option<&'a CurrentDimension>,
     &'a mut Client,
     &'a Username,
     &'a PlayerState,
@@ -85,18 +85,27 @@ pub fn handle_supply_coffin_interact(
             continue;
         };
 
-        let Ok((inventory, player_pos, mut client, username, player_state, cultivation)) =
-            players.get_mut(ev.client)
+        let Ok((
+            inventory,
+            player_pos,
+            player_dimension,
+            mut client,
+            username,
+            player_state,
+            cultivation,
+        )) = players.get_mut(ev.client)
         else {
             continue;
         };
 
-        let dist = active.pos.distance(player_pos.get());
-        if dist > OPEN_RANGE_BLOCKS + OPEN_RANGE_TOLERANCE {
+        if let Err(reason) = authorize_supply_coffin_open(
+            Some(&active),
+            player_pos.get(),
+            player_dimension.map(|dimension| dimension.0),
+        ) {
             tracing::debug!(
-                "[bong][supply_coffin] interact rejected (out of range): grade={:?} dist={:.2}",
+                "[bong][supply_coffin] interact rejected: grade={:?} reason={reason:?}",
                 active.grade,
-                dist
             );
             continue;
         }
@@ -110,6 +119,23 @@ pub fn handle_supply_coffin_interact(
                 client.send_chat_message("§c[物资棺] 有人正在翻找。");
                 continue;
             }
+            let restored_session = match ext_registry.sessions.get(&ext.session_id) {
+                Some(mapped) if *mapped != ev.target => {
+                    tracing::warn!(
+                        "[bong][supply_coffin] reopen rejected: session {} maps to {:?}, target={:?}",
+                        ext.session_id,
+                        mapped,
+                        ev.target,
+                    );
+                    client.send_chat_message("§c[物资棺] 容器会话已失效。");
+                    continue;
+                }
+                Some(_) => false,
+                None => {
+                    ext_registry.sessions.insert(ext.session_id, ev.target);
+                    true
+                }
+            };
             // Re-lock released coffin — send existing items, don't re-roll
             ext.opened_by = Some(ev.client);
             let placed_items: Vec<PlacedInventoryItemV1> = ext
@@ -141,6 +167,9 @@ pub fn handle_supply_coffin_interact(
                 Err(e) => {
                     log_payload_build_error(payload_type, &e);
                     ext.opened_by = None;
+                    if restored_session {
+                        ext_registry.remove_session(ext.session_id);
+                    }
                     continue;
                 }
             }
@@ -284,6 +313,7 @@ mod tests {
     use super::*;
     use crate::inventory::external_container::ExternalContainerRegistry;
     use crate::inventory::{InventoryRevision, PlacedItemState};
+    use crate::supply_coffin::authority::SUPPLY_COFFIN_OPEN_MAX_DISTANCE;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, DVec3, Update};
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -413,7 +443,7 @@ mod tests {
 
     #[test]
     fn open_range_accepts_exact_boundary_and_rejects_just_outside() {
-        let boundary = OPEN_RANGE_BLOCKS + OPEN_RANGE_TOLERANCE;
+        let boundary = SUPPLY_COFFIN_OPEN_MAX_DISTANCE;
         let (mut at_boundary, player, target, _helper) = setup_open_app(
             Some(DimensionKind::Overworld),
             COFFIN_POS + DVec3::new(boundary, 0.0, 0.0),
@@ -488,6 +518,56 @@ mod tests {
                 .get(&session_id),
             Some(&target),
             "reopen must restore session_id -> coffin mapping so subsequent moves remain routable"
+        );
+    }
+
+    #[test]
+    fn reopen_rejects_conflicting_session_mapping_without_stealing_it() {
+        let (mut app, player, target, _helper) =
+            setup_open_app(Some(DimensionKind::Overworld), COFFIN_POS);
+        let session_id = 78;
+        app.world_mut()
+            .entity_mut(target)
+            .insert(ExternalContainer {
+                session_id,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(session_id),
+                    name: "supply_coffin_common".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: None,
+                timeout_wall_secs: u64::MAX,
+                source_kind: ExternalContainerKind::SupplyCoffin {
+                    grade: SupplyCoffinGrade::Common,
+                },
+            });
+        let conflicting_target = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<ExternalContainerRegistry>()
+            .sessions
+            .insert(session_id, conflicting_target);
+
+        send_open(&mut app, player, target);
+
+        assert_eq!(
+            app.world()
+                .get::<ExternalContainer>(target)
+                .expect("target container remains attached")
+                .opened_by,
+            None,
+            "conflicting session mapping must reject reopen before acquiring the lock"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .get(&session_id),
+            Some(&conflicting_target),
+            "reopen must not overwrite another entity's session mapping"
         );
     }
 }

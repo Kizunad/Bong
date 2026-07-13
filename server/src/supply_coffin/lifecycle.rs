@@ -24,15 +24,15 @@ use crate::schema::server_data::{
     LootContainerCloseReasonV1, LootContainerCloseV1, ServerDataPayloadV1, ServerDataV1,
 };
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::world::dimension::CurrentDimension;
 
+use super::authority::authorize_supply_coffin_session;
 use super::{current_wall_clock_secs, SupplyCoffinGrade, SupplyCoffinRegistry};
-
-const CLOSE_DISTANCE_BLOCKS: f64 = 6.0;
-const CLOSE_DISTANCE_TOLERANCE: f64 = 0.5;
 
 type PlayerQueryItem<'a> = (
     Entity,
     &'a Position,
+    Option<&'a CurrentDimension>,
     &'a mut Client,
     &'a Username,
     &'a PlayerInventory,
@@ -83,24 +83,33 @@ pub fn external_container_lifecycle_tick(
             continue;
         };
 
-        let Ok((_, player_pos, _, _, _, _, _)) = players.get(player_entity) else {
-            // 玩家掉线——释放锁，不关闭 UI（玩家已不在）
+        let Ok((_, player_pos, player_dimension, _, _, _, _, _)) = players.get(player_entity)
+        else {
+            // 玩家掉线 / entity 已消失——清 session 并释放锁，不发 UI（玩家已不在）。
             tracing::info!(
-                "[bong][supply_coffin] session {session_id} player disconnected, releasing lock"
+                "[bong][supply_coffin] session {session_id} player disappeared, closing session"
             );
-            release_lock(&mut commands, coffin_entity, ext);
+            close_session(
+                &mut commands,
+                &mut ext_registry,
+                &mut coffin_registry,
+                coffin_entity,
+                ext,
+                LootContainerCloseReasonV1::Distance,
+                &mut players,
+                false,
+                &mut audio,
+                &mut vfx,
+            );
             continue;
         };
 
-        let Some(coffin_pos) = coffin_registry.active.get(&coffin_entity).map(|a| a.pos) else {
-            tracing::warn!(
-                "[bong][supply_coffin] session {session_id} coffin entity {coffin_entity:?} not in active registry, skipping distance check"
-            );
-            continue;
-        };
-
-        let dist = coffin_pos.distance(player_pos.get());
-        if dist > CLOSE_DISTANCE_BLOCKS + CLOSE_DISTANCE_TOLERANCE {
+        let authorization = authorize_supply_coffin_session(
+            coffin_registry.active.get(&coffin_entity),
+            player_pos.get(),
+            player_dimension.map(|dimension| dimension.0),
+        );
+        if let Err(reason) = authorization {
             close_session(
                 &mut commands,
                 &mut ext_registry,
@@ -114,7 +123,7 @@ pub fn external_container_lifecycle_tick(
                 &mut vfx,
             );
             tracing::info!(
-                "[bong][supply_coffin] session {session_id} closed (player too far: {dist:.1})"
+                "[bong][supply_coffin] session {session_id} closed (authority invalid: {reason:?})"
             );
         }
     }
@@ -142,7 +151,7 @@ fn close_session(
     if let Some(player_entity) = ext.opened_by {
         send_close_payload(session_id, &reason, players, player_entity);
 
-        if let Ok((_, _, mut client, username, inventory, player_state, cultivation)) =
+        if let Ok((_, _, _, mut client, username, inventory, player_state, cultivation)) =
             players.get_mut(player_entity)
         {
             send_inventory_snapshot_to_client(
@@ -157,7 +166,13 @@ fn close_session(
         }
     }
 
-    ext_registry.remove_session(session_id);
+    if ext_registry.sessions.get(&session_id).copied() == Some(coffin_entity) {
+        ext_registry.remove_session(session_id);
+    } else if ext_registry.sessions.contains_key(&session_id) {
+        tracing::warn!(
+            "[bong][supply_coffin] close preserved conflicting session {session_id} mapping while closing {coffin_entity:?}"
+        );
+    }
 
     if despawn {
         if let Some(active) = coffin_registry.remove_active(coffin_entity) {
@@ -238,7 +253,7 @@ fn send_close_payload(
         }
     };
 
-    if let Ok((_, _, mut client, _, _, _, _)) = players.get_mut(player_entity) {
+    if let Ok((_, _, _, mut client, _, _, _, _)) = players.get_mut(player_entity) {
         send_server_data_payload(&mut client, bytes.as_slice());
     }
 }
@@ -247,6 +262,7 @@ fn send_close_payload(
 mod tests {
     use super::*;
     use crate::inventory::{ContainerState, InventoryRevision};
+    use crate::supply_coffin::authority::SUPPLY_COFFIN_SESSION_MAX_DISTANCE;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, DVec3, Update};
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -432,6 +448,36 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_close_does_not_remove_another_entitys_conflicting_session_mapping() {
+        let (mut app, _player, coffin, _helper) =
+            setup_lifecycle_app(Some(DimensionKind::Tsy), COFFIN_POS, true);
+        let conflicting_target = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<ExternalContainerRegistry>()
+            .sessions
+            .insert(91, conflicting_target);
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<ExternalContainer>(coffin)
+                .expect("coffin remains alive")
+                .opened_by,
+            None,
+            "authority invalidation still releases this coffin's lock"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .get(&91),
+            Some(&conflicting_target),
+            "closing one stale coffin must not delete another entity's session mapping"
+        );
+    }
+
+    #[test]
     fn lifecycle_closes_and_clears_session_when_owner_entity_disappears() {
         let (mut app, player, coffin, _helper) =
             setup_lifecycle_app(Some(DimensionKind::Overworld), COFFIN_POS, true);
@@ -444,7 +490,7 @@ mod tests {
 
     #[test]
     fn lifecycle_distance_boundary_is_inclusive_and_just_outside_closes() {
-        let boundary = CLOSE_DISTANCE_BLOCKS + CLOSE_DISTANCE_TOLERANCE;
+        let boundary = SUPPLY_COFFIN_SESSION_MAX_DISTANCE;
         let (mut at_boundary, _player, coffin, _helper) = setup_lifecycle_app(
             Some(DimensionKind::Overworld),
             COFFIN_POS + DVec3::new(boundary, 0.0, 0.0),

@@ -318,7 +318,7 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::supply_coffin::SupplyCoffinRegistry;
-    use crate::world::dimension::{DimensionLayers, OverworldLayer};
+    use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
     use valence::prelude::{App, DVec3, Entity, Events};
 
     fn setup_app(with_layers: bool) -> App {
@@ -584,6 +584,11 @@ mod tests {
         assert_eq!(r.active.len(), 1, "spawn 必须插入一个 active");
         let (_, rec) = r.active.iter().next().unwrap();
         assert_eq!(rec.grade, SupplyCoffinGrade::Rare);
+        assert_eq!(
+            rec.dimension,
+            DimensionKind::Overworld,
+            "dev spawn targets layers.overworld and must record the same logical dimension"
+        );
         assert!((rec.pos.x - 42.0).abs() < 0.01);
         assert!((rec.pos.y - 65.0).abs() < 0.01);
         assert!((rec.pos.z - 99.0).abs() < 0.01);
