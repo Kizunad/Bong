@@ -16,8 +16,9 @@
 //!      每 tick 扫背包，持有任一原料即被动解锁空源配方 + 重推列表 + narration
 //!
 //! 守恒律：所有 qi 变更走 `start_craft`/`cancel_craft` 内部已封装的
-//! `WorldQiAccount::transfer(QiTransferReason::Crafting)` —— 本模块**禁止**
-//! 直接写 `cultivation.qi_current`，否则破坏全局守恒律。
+//! `WorldQiAccount::transfer(QiTransferReason::Crafting)`。制作消耗统一进入
+//! `pending_inflow_account()`，再由 heartbeat 按 zone 平衡规则回流；本模块**禁止**
+//! 直接写 zone 或 `cultivation.qi_current`，否则会绕过全局守恒律。
 
 use std::{
     collections::{HashMap, HashSet},
@@ -62,11 +63,6 @@ use crate::schema::craft::{
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
-
-/// inventory 内手搓默认绑定的 zone 账户（暂时统一用 "spawn"，与现有
-/// `cultivation` 守恒模型一致；后续 plan-zone-v2 可按 `Position → ZoneRegistry`
-/// 解析真实 zone）。
-const DEFAULT_CRAFT_ZONE_ID: &str = "spawn";
 
 const DEFAULT_REFUND_GROUND_POS: [f64; 3] = [0.0, 64.0, 0.0];
 
@@ -287,7 +283,6 @@ pub fn apply_craft_start_intents(
             player_id: &player_id,
             recipe_id: &intent.recipe_id,
             current_tick: clock.tick,
-            zone_id: DEFAULT_CRAFT_ZONE_ID,
             quantity: intent.quantity,
         };
         // §P2.4：检查玩家 Chebyshev 3 格内是否有 WorkbenchBlock entity。

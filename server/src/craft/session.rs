@@ -231,7 +231,6 @@ pub struct StartCraftRequest<'a> {
     pub player_id: &'a str,
     pub recipe_id: &'a RecipeId,
     pub current_tick: u64,
-    pub zone_id: &'a str,
     pub quantity: u32,
 }
 
@@ -739,7 +738,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 1000,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -756,10 +754,10 @@ mod tests {
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 3);
         assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 2);
 
-        // qi 守恒：cultivation 扣 5，ledger zone 余额 +5
+        // qi 守恒：cultivation 扣 5，ledger 待分配池余额 +5
         assert_eq!(cult.qi_current, 45.0);
-        let zone_balance = ledger.balance(&pending_inflow_account());
-        assert_eq!(zone_balance, 5.0);
+        let pending_balance = ledger.balance(&pending_inflow_account());
+        assert_eq!(pending_balance, 5.0);
 
         // 守恒律观察：qi_paid 与 ledger transfer 等同
         assert_eq!(result.session.qi_paid, 5.0);
@@ -776,7 +774,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 1000,
-                zone_id: "spawn",
                 quantity: 3,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -802,7 +799,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 1000,
-                zone_id: "spawn",
                 quantity: MAX_CRAFT_QUANTITY + 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -830,7 +826,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("missing"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -850,7 +845,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -892,7 +886,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("craft.tool.workbench"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             deps,
@@ -938,7 +931,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("workbench.tool.stone_pickaxe"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -974,7 +966,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             deps,
@@ -993,7 +984,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1033,7 +1023,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1075,7 +1064,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1115,7 +1103,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1152,7 +1139,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1420,7 +1406,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1482,7 +1467,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1502,7 +1486,7 @@ mod tests {
         let (registry, unlock, mut cult, color, mut ledger) = make_world();
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
         let qi_before = cult.qi_current;
-        let zone_before = ledger.balance(&pending_inflow_account());
+        let pending_before = ledger.balance(&pending_inflow_account());
 
         start_craft(
             StartCraftRequest {
@@ -1510,7 +1494,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1525,11 +1508,11 @@ mod tests {
             player_after, cult.qi_current,
             "player ledger balance must mirror cultivation.qi_current after transfer"
         );
-        let zone_after = ledger.balance(&pending_inflow_account());
+        let pending_after = ledger.balance(&pending_inflow_account());
         assert_eq!(
-            zone_after,
-            zone_before + qi_paid,
-            "zone account must gain exactly qi_cost"
+            pending_after,
+            pending_before + qi_paid,
+            "pending inflow account must gain exactly qi_cost"
         );
     }
 
@@ -1549,7 +1532,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1565,7 +1547,7 @@ mod tests {
     #[test]
     fn ledger_total_conservation_after_start_craft() {
         // 守恒律：ledger 内部总量在 start_craft 前后相等
-        // （player → zone 的 transfer 是账内移动，不增减总数）。
+        // （player → pending_inflow 的 transfer 是账内移动，不增减总数）。
         // cultivation.qi_current 是 ledger.player 的 view，不参与 ledger.total()。
         let (registry, unlock, mut cult, color, mut ledger) = make_world();
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
@@ -1577,7 +1559,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1615,7 +1596,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1662,7 +1642,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1712,7 +1691,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("default_unlocked"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1756,7 +1734,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("default_unlocked"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1795,7 +1772,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("handcraft"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             StartCraftDeps {
@@ -1844,7 +1820,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("wb_tool"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             StartCraftDeps {
@@ -1902,7 +1877,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("wb_tool2"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             StartCraftDeps {

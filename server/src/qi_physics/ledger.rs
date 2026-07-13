@@ -180,7 +180,8 @@ pub enum QiTransferReason {
     ///   - `summarize_world_qi` 口径：player_qi 减少，ledger_qi（rift 账户）增加，总量不变。
     NegPressureDrain,
     EraDecay,
-    /// plan-craft-v1 §0/§3 — 手搓 qi_cost 一次性投入 zone，区别于 ReleaseToZone（招式释放）
+    /// plan-craft-v1 + plan-zone-qi-economy-v1 — 手搓 qi_cost 一次性投入待分配池；
+    /// 后续 zone 回流由 heartbeat 以 ZoneInflow 单独审计，区别于 ReleaseToZone（招式释放）。
     Crafting,
     /// plan-void-actions-v1 — 化虚世界级 action 的真元投入，必须保留 ledger 轨迹。
     VoidAction,
