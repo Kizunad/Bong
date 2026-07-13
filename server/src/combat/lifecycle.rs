@@ -385,6 +385,17 @@ pub fn death_arbiter_tick(
             continue;
         };
 
+        // plan-race-system-v1 P4（决议 §6）—— 死亡三条解除易形触发路径之一：死亡即刻
+        // 解除易形（移除 `MorphState` + 重扫装备门，见 `body_plan::morph::
+        // release_morph_state`）。走 deferred command（本系统是 Query 而非原始
+        // World，且需要在同一 tick 内让后续掉落/复活链路看到"已恢复本体"的状态）。
+        {
+            let target = event.target;
+            commands.add(move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                crate::body_plan::morph::release_morph_state(world, target);
+            });
+        }
+
         // Worldview §十二：死亡掉落应落在死亡点。
         if let Some(position) = position {
             let p = position.get();
