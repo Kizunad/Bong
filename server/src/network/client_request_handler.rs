@@ -4598,6 +4598,212 @@ mod tests {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P4 opus verifier MINOR —— 装备门 `form_race_id` pin
+    // 测试。镜像已锁的 emit 路径测试
+    // （`cultivation_detail_emit::morph_state_present_overrides_form_race_id_away_from_intrinsic_race`）：
+    // `handle_inventory_move` 内 `form_race_id` 的推导（§13303 附近）此前只有 emit
+    // 侧的回归 pin，装备门（`InventoryMoveIntent` → `handle_inventory_move` →
+    // `apply_inventory_move_with_race`）这条真正决定"能不能穿"的路径完全没有端到端
+    // 测试锁住"用 Form 身份而不是本体 intrinsic 身份"这条契约。走真实
+    // `ClientRequestV1::InventoryMoveIntent` C2S 事件 → `handle_client_request_payloads`
+    // 全链路。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    fn make_species_gated_chestplate_registry(allowed_race: &str) -> ItemRegistry {
+        ItemRegistry::from_map(HashMap::from([(
+            "species_gated_chestplate".to_string(),
+            ItemTemplate {
+                id: "species_gated_chestplate".to_string(),
+                display_name: "species-gated chestplate".to_string(),
+                category: ItemCategory::Armor,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 0.0,
+                description: "test".to_string(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shield_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new(allowed_race)],
+                },
+            },
+        )]))
+    }
+
+    fn spawn_player_with_species_gated_chestplate_in_pack(
+        app: &mut App,
+        username: &str,
+        intrinsic_race: &str,
+    ) -> Entity {
+        let (client_bundle, _helper) = create_mock_client(username);
+        let item = ItemInstance {
+            instance_id: 1,
+            template_id: "species_gated_chestplate".to_string(),
+            display_name: "species-gated chestplate".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                quick_access: false,
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 4,
+                cols: 4,
+                items: vec![PlacedItemState { row: 0, col: 0, instance: item }],
+                owner_instance_id: None,
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        };
+        app.world_mut()
+            .spawn((
+                client_bundle,
+                inventory,
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(intrinsic_race),
+                    ..Cultivation::default()
+                },
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id()
+    }
+
+    fn send_species_gated_equip_intent(app: &mut App, client: Entity) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::InventoryMoveIntent {
+                    v: 1,
+                    instance_id: 1,
+                    from: InventoryLocationV1::Container {
+                        container_id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                        row: 0,
+                        col: 0,
+                    },
+                    to: InventoryLocationV1::Equip {
+                        slot: EquipSlotV1::Chest,
+                        state: EquipStateV1::Worn,
+                    },
+                    rotated: false,
+                })
+                .expect("InventoryMoveIntent must serialize")
+                .into_boxed_slice(),
+            });
+        app.update();
+    }
+
+    #[test]
+    fn morphed_player_equip_gate_uses_form_race_not_intrinsic_race() {
+        // 本体（intrinsic）种族是 whale，但已易形为 human——胸甲只认 human，装备门
+        // 判定必须用 MorphState.form="human"（放行），而不是冒用本体 Cultivation.race
+        // ="whale"（会误拒）。
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(make_species_gated_chestplate_registry(
+            crate::body_plan::HUMAN_RACE_ID,
+        ));
+
+        let client = spawn_player_with_species_gated_chestplate_in_pack(&mut app, "Morpher", "whale");
+        app.world_mut().entity_mut(client).insert(
+            crate::body_plan::MorphState::new(
+                crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                0,
+                0,
+            ),
+        );
+
+        send_species_gated_equip_intent(&mut app, client);
+
+        let inventory = app.world().entity(client).get::<PlayerInventory>().unwrap();
+        let equipped_chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .and_then(|contents| contents.worn.first());
+        assert_eq!(
+            equipped_chest.map(|item| item.instance_id),
+            Some(1),
+            "已易形为 human 的 whale 本体应能穿上 Species([human]) 门的胸甲——装备门必须\
+             用 MorphState.form 而不是继续冒用本体 intrinsic race，实测装备槽：{:?}",
+            inventory.equipped.get(crate::inventory::EQUIP_SLOT_CHEST)
+        );
+    }
+
+    #[test]
+    fn unmorphed_whale_intrinsic_is_rejected_by_same_species_gate() {
+        // 对照组：同一件甲、同一本体，缺 MorphState（未易形）时装备门应回落到本体
+        // intrinsic race="whale"，被 Species([human]) 门拒绝——证明上一条测试确实
+        // 是因为 MorphState 生效才放行，不是这件甲本来就对谁都放行。
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(make_species_gated_chestplate_registry(
+            crate::body_plan::HUMAN_RACE_ID,
+        ));
+
+        let client = spawn_player_with_species_gated_chestplate_in_pack(&mut app, "Morpher", "whale");
+
+        send_species_gated_equip_intent(&mut app, client);
+
+        let inventory = app.world().entity(client).get::<PlayerInventory>().unwrap();
+        let equipped_chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .and_then(|contents| contents.worn.first());
+        assert!(
+            equipped_chest.is_none(),
+            "未易形的 whale 本体应被 Species([human]) 门拒绝穿戴，实测装备槽：{:?}",
+            inventory.equipped.get(crate::inventory::EQUIP_SLOT_CHEST)
+        );
+        // 应仍留在原背包容器里，而不是被静默吞掉。
+        let still_in_pack = inventory.containers[0]
+            .items
+            .iter()
+            .any(|placed| placed.instance.instance_id == 1);
+        assert!(still_in_pack, "拒绝装备后物品应留在原容器，不能凭空消失");
+    }
+
     #[test]
     fn meridian_label_maps_regular_and_extraordinary_channels() {
         let cases = [

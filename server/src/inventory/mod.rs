@@ -19664,6 +19664,219 @@ cols = 4
             );
             assert_eq!(stashed, vec![5]);
         }
+
+        /// plan-race-system-v1 P4 opus verifier MINOR —— 此前 5 条 case 只测 worn 层，
+        /// held 槽（如主手武器）驱逐分支零覆盖。构造 `held` 位放一件本体不满足
+        /// Species 门的武器，验证 `contents.held.take()` 分支真被驱逐+摘出。
+        fn inventory_with_held(item: ItemInstance, container_capacity: Option<(u8, u8)>) -> PlayerInventory {
+            let mut equipped = HashMap::new();
+            equipped.insert(
+                EQUIP_SLOT_MAIN_HAND.to_string(),
+                SlotContents {
+                    worn: Vec::new(),
+                    held: Some(item),
+                },
+            );
+            let containers = match container_capacity {
+                Some((rows, cols)) => vec![
+                    ContainerState {
+                        id: MAIN_PACK_CONTAINER_ID.to_string(),
+                        name: "主背包".to_string(),
+                        rows,
+                        cols,
+                        items: Vec::new(),
+                        owner_instance_id: None,
+                        quick_access: false,
+                    },
+                    ContainerState {
+                        id: BODY_POCKET_CONTAINER_ID.to_string(),
+                        name: "暗袋".to_string(),
+                        rows,
+                        cols,
+                        items: Vec::new(),
+                        owner_instance_id: None,
+                        quick_access: false,
+                    },
+                ],
+                None => Vec::new(),
+            };
+            PlayerInventory {
+                triggered_treasures: Vec::new(),
+                revision: InventoryRevision(0),
+                containers,
+                equipped,
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 99.0,
+            }
+        }
+
+        #[test]
+        fn incompatible_held_weapon_is_evicted_and_stashed_into_backpack() {
+            let template = item_template(
+                "sword_whale_only_held",
+                RaceGateOwned::Species {
+                    species: vec![RaceId::new("whale")],
+                },
+            );
+            let registry = registry_with(vec![template.clone()]);
+            let item = worn_item_instance(6, &template);
+            let mut inventory = inventory_with_held(item, Some((4, 4)));
+            let mut dropped = DroppedLootRegistry::default();
+
+            let (stashed, dropped_ids) = enforce_intrinsic_gate_on_morph_release(
+                &mut inventory,
+                &registry,
+                &mut dropped,
+                &RaceId::new("human"),
+                true,
+                [0.0, 64.0, 0.0],
+                DimensionKind::Overworld,
+            );
+
+            assert_eq!(
+                stashed,
+                vec![6],
+                "human 本体不满足 Species([whale]) 门，held 槽的武器必须被摘下"
+            );
+            assert!(dropped_ids.is_empty(), "背包有空位时不应掉落");
+            assert!(
+                inventory
+                    .equipped
+                    .get(EQUIP_SLOT_MAIN_HAND)
+                    .map(|c| c.held.is_none())
+                    .unwrap_or(true),
+                "不满足档的武器必须从 held 位移除"
+            );
+            let found_in_container = inventory
+                .containers
+                .iter()
+                .flat_map(|c| c.items.iter())
+                .any(|placed| placed.instance.instance_id == 6);
+            assert!(found_in_container, "摘下的武器必须落进背包容器，不能凭空消失");
+            assert!(dropped.entries.is_empty());
+        }
+
+        #[test]
+        fn incompatible_held_weapon_drops_to_ground_when_backpack_full() {
+            let template = item_template(
+                "sword_whale_only_held_2",
+                RaceGateOwned::Species {
+                    species: vec![RaceId::new("whale")],
+                },
+            );
+            let registry = registry_with(vec![template.clone()]);
+            let item = worn_item_instance(7, &template);
+            // 容量 (0, 0) 的主背包 —— 任何格位都放不下。
+            let mut inventory = inventory_with_held(item, Some((0, 0)));
+            let mut dropped = DroppedLootRegistry::default();
+
+            let (stashed, dropped_ids) = enforce_intrinsic_gate_on_morph_release(
+                &mut inventory,
+                &registry,
+                &mut dropped,
+                &RaceId::new("human"),
+                true,
+                [10.0, 64.0, 10.0],
+                DimensionKind::Overworld,
+            );
+
+            assert!(stashed.is_empty(), "背包满时不应算作已收纳");
+            assert_eq!(
+                dropped_ids,
+                vec![7],
+                "背包满时 held 槽武器必须转地面掉落，不能凭空消失"
+            );
+            assert!(
+                dropped.entries.contains_key(&7),
+                "DroppedLootRegistry 必须登记该 instance_id，禁止静默丢件"
+            );
+            assert!(inventory
+                .equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .map(|c| c.held.is_none())
+                .unwrap_or(true));
+        }
+
+        /// held + worn 同槽同时各有一件不满足档——两者都必须被摘出（held 优先摘，
+        /// 再摘 worn 栈，与函数文档"held 优先摘，再摘 worn 栈"一致）。
+        #[test]
+        fn both_held_and_worn_incompatible_items_are_evicted_together() {
+            let held_template = item_template(
+                "sword_whale_only_held_3",
+                RaceGateOwned::Species {
+                    species: vec![RaceId::new("whale")],
+                },
+            );
+            let worn_template = item_template(
+                "chest_whale_only_3",
+                RaceGateOwned::Species {
+                    species: vec![RaceId::new("whale")],
+                },
+            );
+            let registry = registry_with(vec![held_template.clone(), worn_template.clone()]);
+            let held_item = worn_item_instance(8, &held_template);
+            let worn_item = worn_item_instance(9, &worn_template);
+
+            let mut equipped = HashMap::new();
+            equipped.insert(
+                EQUIP_SLOT_MAIN_HAND.to_string(),
+                SlotContents {
+                    worn: vec![worn_item],
+                    held: Some(held_item),
+                },
+            );
+            let mut inventory = PlayerInventory {
+                triggered_treasures: Vec::new(),
+                revision: InventoryRevision(0),
+                containers: vec![
+                    ContainerState {
+                        id: MAIN_PACK_CONTAINER_ID.to_string(),
+                        name: "主背包".to_string(),
+                        rows: 4,
+                        cols: 4,
+                        items: Vec::new(),
+                        owner_instance_id: None,
+                        quick_access: false,
+                    },
+                    ContainerState {
+                        id: BODY_POCKET_CONTAINER_ID.to_string(),
+                        name: "暗袋".to_string(),
+                        rows: 4,
+                        cols: 4,
+                        items: Vec::new(),
+                        owner_instance_id: None,
+                        quick_access: false,
+                    },
+                ],
+                equipped,
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 99.0,
+            };
+            let mut dropped = DroppedLootRegistry::default();
+
+            let (mut stashed, dropped_ids) = enforce_intrinsic_gate_on_morph_release(
+                &mut inventory,
+                &registry,
+                &mut dropped,
+                &RaceId::new("human"),
+                true,
+                [0.0, 64.0, 0.0],
+                DimensionKind::Overworld,
+            );
+            stashed.sort_unstable();
+
+            assert_eq!(
+                stashed,
+                vec![8, 9],
+                "held 位与 worn 栈里各一件不满足档的物品都必须被摘出，一个不落"
+            );
+            assert!(dropped_ids.is_empty());
+            let contents = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND).unwrap();
+            assert!(contents.held.is_none(), "held 应清空");
+            assert!(contents.worn.is_empty(), "worn 栈应清空");
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
