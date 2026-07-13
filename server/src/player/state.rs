@@ -801,7 +801,7 @@ pub fn save_player_craft_checkpoint(
         )?;
     }
     if let Some(qi_ledger) = qi_ledger {
-        crate::persistence::upsert_pending_inflow_balance(
+        crate::persistence::upsert_runtime_qi_account_balances(
             &transaction,
             qi_ledger,
             last_updated_wall,
