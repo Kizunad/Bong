@@ -172,6 +172,7 @@ jobs:
     needs: [preflight, review]
     if: >-
       always() &&
+      needs.preflight.result != 'skipped' &&
       (needs.preflight.result != 'success' ||
        needs.preflight.outputs.circuit_outcome != 'success' ||
        needs.preflight.outputs.should_run == 'true')

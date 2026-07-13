@@ -1287,6 +1287,10 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   assert.match(finalize, /REVIEW_INSTALL_OUTCOME: success/);
   assert.match(finalize, /REVIEW_CONFIGURE_OUTCOME: success/);
   assert.match(finalize, /node \.github\/scripts\/review\.mjs workflow-finalize/);
+  // finalize 只在 preflight 真跑过(成功/失败/熔断)时收尾；preflight 因非触发评论被 skip 时
+  // finalize 必须一并 skip——否则会去读不存在的 review artifact 崩溃(ENOENT)并误记 infra_failure。
+  // (CodeRabbit 等在每个 PR 的评论都会唤醒本 workflow → preflight skip；`/review` 现走 claude 引擎同理)
+  assert.match(finalize, /always\(\) &&\s*needs\.preflight\.result != 'skipped' &&/);
   assert.doesNotMatch(finalize, /REVIEW_CODEX_API_KEY|gh pr checkout/);
 
   for (const [name, block, reserve] of [
