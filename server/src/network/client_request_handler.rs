@@ -16154,7 +16154,7 @@ fn resync_inventory_only(
 /// 1. 校验玩家背包中 `pill_instance_id` 对应物品为 `huiyuan_pill`（pills.toml id，无下划线）；
 /// 2. 根据 `elder_entity_id` 找到大能 ECS entity；
 /// 3. 消耗丹（inventory 真删）；
-/// 4. 读取 ItemEffect::QiRecovery { amount } 作为 qi_gain（默认 24.0）；
+/// 4. 读取 ItemEffect::QiRecovery { amount } 作为 qi_gain（当前回元丹 canonical 值 60.0）；
 /// 5. emit `GiveDanToElderIntent` 供 `dying_elder_give_dan_system` 在下一 tick 处理
 ///    真元转移（解耦网络层与守恒系统）；
 ///
@@ -16210,7 +16210,7 @@ fn handle_give_dan_to_elder(
         return;
     }
 
-    // ── 获取丹携带的 qi_gain（从 ItemEffect::QiRecovery，默认 24.0）────────
+    // ── 获取丹携带的 qi_gain（从 ItemEffect::QiRecovery，canonical fallback 60.0）─
     let qi_gain = item_registry
         .get("huiyuan_pill")
         .and_then(|tmpl| {
@@ -16220,7 +16220,7 @@ fn handle_give_dan_to_elder(
                 None
             }
         })
-        .unwrap_or(24.0); // fallback to canonical value
+        .unwrap_or(60.0); // 与 assets/items/pills.toml 的 huiyuan_pill canonical 值一致
 
     // ── 解析大能 entity ────────────────────────────────────────────────────
     let Some(entity_manager) = entity_manager else {
