@@ -76,7 +76,11 @@ class BongServerDataThreadingTest {
             events,
             "route → applyDispatch 必须在同一个 client task 内按序执行；实际=" + events
         );
-        assertTrue(clientTasks.isEmpty(), "执行单 payload 后不得遗留嵌套或重复 client task");
+        assertTrue(
+            clientTasks.isEmpty(),
+            "期望单 payload 执行后 client task queue 为空，因为不得嵌套或重复调度；实际 queue="
+                + clientTasks
+        );
     }
 
     @ParameterizedTest
@@ -90,9 +94,14 @@ class BongServerDataThreadingTest {
 
         assertTrue(
             CraftStore.lastOutcome().isEmpty(),
-            kind + " outcome 不得在 Fabric network thread 提前写入 CraftStore"
+            "期望 " + kind + " outcome 在 client task 执行前为空，因为 Fabric network thread"
+                + " 不得写 CraftStore；实际 lastOutcome=" + CraftStore.lastOutcome()
         );
-        assertTrue(listenerThreads.isEmpty(), kind + " outcome listener 不得在 receiver 返回前触发");
+        assertTrue(
+            listenerThreads.isEmpty(),
+            "期望 " + kind + " outcome listener 在 receiver 返回前为空，因为副作用必须等待"
+                + " client task；实际 listenerThreads=" + listenerThreads
+        );
         assertEquals(1, clientTasks.size(), kind + " payload 应精确排入一个 client-thread task");
 
         runNextClientTask();
@@ -119,7 +128,11 @@ class BongServerDataThreadingTest {
 
         assertEquals(CastState.Phase.IDLE, CastStateStore.snapshot().phase(),
             "cast_sync handler 不得在 network thread 提前替换 HUD store");
-        assertTrue(listenerThreads.isEmpty(), "cast_sync listener 不得在 receiver 返回前触发");
+        assertTrue(
+            listenerThreads.isEmpty(),
+            "期望 cast_sync listener 在 receiver 返回前为空，因为 HUD store 只能在 client task"
+                + " 内通知；实际 listenerThreads=" + listenerThreads
+        );
         assertEquals(1, clientTasks.size(), "cast_sync 应排入一个 client-thread task");
 
         runNextClientTask();
@@ -161,11 +174,20 @@ class BongServerDataThreadingTest {
             dispatchDefault(craftOutcome("completed", "craft.threading.after_bad"));
         });
 
-        assertTrue(CraftStore.lastOutcome().isEmpty(), "坏 payload 后的合法 payload 也必须等待 client drain");
+        assertTrue(
+            CraftStore.lastOutcome().isEmpty(),
+            "期望坏 payload 后的合法 payload 在 client drain 前仍未写 store，因为两条任务必须"
+                + " 保持排队；实际 lastOutcome=" + CraftStore.lastOutcome()
+                + "，clientTasks=" + clientTasks
+        );
         assertEquals(2, clientTasks.size(), "坏 payload 与后续合法 payload 都应保留各自的有序 client task");
 
         runNextClientTask();
-        assertTrue(CraftStore.lastOutcome().isEmpty(), "坏 payload task 不得产生 craft side effect");
+        assertTrue(
+            CraftStore.lastOutcome().isEmpty(),
+            "期望只 drain 坏 payload task 后 craft outcome 仍为空，因为 parse error 必须 no-op；"
+                + "实际 lastOutcome=" + CraftStore.lastOutcome() + "，clientTasks=" + clientTasks
+        );
 
         runNextClientTask();
         assertEquals(
@@ -195,11 +217,19 @@ class BongServerDataThreadingTest {
             dispatch("{\"v\":1,\"type\":\"thread_probe\",\"mode\":\"ok\"}", router, (d, t) -> {});
         });
 
-        assertTrue(events.isEmpty(), "handler failure 与后续 handler 都不得在 network thread 执行");
+        assertTrue(
+            events.isEmpty(),
+            "期望 handler failure 与后续 handler 在 client drain 前都未执行，因为 network thread"
+                + " 只负责排队；实际 events=" + events + "，clientTasks=" + clientTasks
+        );
         assertEquals(2, clientTasks.size(), "handler failure 不得取消后续 payload 的 client task");
 
         runNextClientTask();
-        assertTrue(events.isEmpty(), "失败 handler 应被 router 安全收口为 no-op");
+        assertTrue(
+            events.isEmpty(),
+            "期望 drain 失败 handler 后事件仍为空，因为 router 应安全收口为 no-op；实际 events="
+                + events + "，clientTasks=" + clientTasks
+        );
         runNextClientTask();
         assertEquals(List.of("ok@" + CLIENT_THREAD), events,
             "失败后的合法 handler 必须仍在 client thread 正常执行一次");
@@ -235,7 +265,11 @@ class BongServerDataThreadingTest {
     }
 
     private void runNextClientTask() {
-        assertFalse(clientTasks.isEmpty(), "client task queue 为空，无法执行下一项");
+        assertFalse(
+            clientTasks.isEmpty(),
+            "期望执行下一项前 client task queue 非空，因为调用方已提交 payload；实际 queue="
+                + clientTasks
+        );
         Runnable task = clientTasks.remove(0);
         runNamedThread(CLIENT_THREAD, task);
     }
