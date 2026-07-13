@@ -8,9 +8,9 @@
 
 | 阶段 | 目标 | 状态 |
 |---|---|---|
-| P0 | 第一性原理确认 F6/F7 默认键冲突及可达链路 | ⏳ |
-| P1 | 最小修改两个便利入口的默认键，并补快捷槽保留区契约测试 | ⬜ |
-| P2 | 完成 client 全量门禁、主线同步复验与归档证据 | ⬜ |
+| P0 | 第一性原理确认 F6/F7 默认键冲突及可达链路 | ✅ 2026-07-13 |
+| P1 | 最小修改两个便利入口的默认键，并补快捷槽保留区契约测试 | ✅ 2026-07-13 |
+| P2 | 完成 client 全量门禁、主线同步复验与归档证据 | ✅ 2026-07-13 |
 
 ## Bug 摘要
 
@@ -75,16 +75,22 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 
 ### P0 — 证真与边界
 
+**状态：✅ 2026-07-13**
+
 - 从 `BongClient` 注册链、三个 `KeyBinding` 消费点和快捷槽 C2S 派发链确认正常玩家路径可达。
 - 复核 F1-F9 没有显式仲裁层；注册顺序只能决定谁抢占，不能让两个动作同时保持可靠入口。
 
 ### P1 — 止血与契约测试
+
+**状态：✅ 2026-07-13**
 
 - `client/src/main/java/com/bong/client/hud/HudImmersionControls.java`：F6 → `GLFW_KEY_UNKNOWN`。
 - `client/src/main/java/com/bong/client/npc/NpcInteractionLogControls.java`：F7 → `GLFW_KEY_UNKNOWN`。
 - `client/src/test/java/com/bong/client/input/QuickSlotDefaultKeyConflictTest.java`：锁定快捷槽保留区、两个默认未绑定入口及未来 F1-F9 直接占用回归。
 
 ### P2 — 门禁与用户体验核验
+
+**状态：✅ 2026-07-13**
 
 - 在 JDK 17 下运行 `cd client && ./gradlew test build`。
 - 静态核验翻译键未删除，HUD 沉浸与 NPC 日志仍会注册到控制菜单；快捷栏 F1-F9 注册与 HUD 标注保持一致。
@@ -103,3 +109,35 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 - 已保存 `options.txt` 的老玩家可能继续保留 F6/F7；本 plan 有意不覆盖用户配置，只修默认值并在 Finish Evidence 记录该限制。
 - 两个便利入口改为默认未绑定后，需要玩家从控制菜单主动分配；翻译键和注册入口不得删除。
 - 测试只保留 F1-F9，不会误伤 R 键等已有显式仲裁场景，也不会抢先处理 O/U 独立 skeleton。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 证真**：`BongClient` 同时注册 `NpcInteractionLogControls`、`HudImmersionControls` 与 `CombatHudBootstrap`；后者把 F1-F9 快捷槽接到 `CombatHudBootstrap.onQuickSlotPressed`，最终调用 `ClientRequestSender.sendUseQuickSlot(slot)`。修复前契约测试 4 项中 3 项稳定失败，分别钉住 F6、F7 与保留区冲突。
+- **P1 修复**：`HudImmersionControls` 与 `NpcInteractionLogControls` 均改为 `GLFW_KEY_UNKNOWN`，保留原翻译键和 Fabric 控制菜单注册；新增 `QuickSlotDefaultKeyConflictTest` 4 项契约测试，锁定九槽 F1-F9、两个入口默认未绑定及其它生产 keybinding 不占用 F1-F9。
+- **P2 门禁**：JDK 17 完成 client 全量 `test build`；fetch 后确认 `origin/main` 仍为当前修复 HEAD 的祖先，无需生成同步提交，随后对同一干净 HEAD 重新完成自审。
+
+### 关键 commit
+
+- `ea83d4cb`（2026-07-13）— 升格 plan 并收口为“F1-F9 归快捷槽、两个便利入口默认未绑定”的单 PR 范围。
+- `eb6cc2b5`（2026-07-13）— 修改 F6/F7 默认值并新增快捷槽默认键冲突回归测试。
+
+### 测试结果
+
+- 修复前复现：`JAVA_HOME=$HOME/.cache/codex-jdks/jdk-17 ./gradlew --no-daemon test --tests com.bong.client.input.QuickSlotDefaultKeyConflictTest` → 4 tests，3 failed（预期红：HUD F6、NPC F7、保留区扫描）。
+- 修复后定向：同命令 → 4 tests，0 failed，`BUILD SUCCESSFUL`。
+- client 全量：`JAVA_HOME=$HOME/.cache/codex-jdks/jdk-17 ./gradlew --no-daemon test build` → 3992 tests，0 failures，0 errors，0 skipped，`BUILD SUCCESSFUL`（4m08s）。
+- 干净 HEAD 自审：`eb6cc2b57511831f5ef7211e27920660ec330a72` 在完整门禁前与主线同步判定后均 PASS；工作区前后为空，`git diff --check origin/main...HEAD` 通过。
+- 用户明确要求本轮不启动 subagent，因此 FIX/REBASE validator 由主 agent 对绑定 SHA 的干净 diff 独立复核；未伪造外部 validator 身份。
+
+### 跨仓库核验
+
+- **client**：`CombatKeybindings` / `QuickSlotConfig` 继续提供 F1-F9 九槽；`HudImmersionControls` / `NpcInteractionLogControls` 改为 UNKNOWN；`QuickSlotDefaultKeyConflictTest` 锁住默认键契约。
+- **server / agent / schema**：本修复不改变 `use_quick_slot` 协议、服务端 handler 或 agent schema，无跨栈产物需要重建。
+
+### 遗留 / 后续
+
+- 不迁移或覆盖现有玩家 `options.txt`；已保存的 F6/F7 冲突绑定需玩家在控制菜单自行调整，避免本 PR 擅自覆盖用户选择。
+- O/U 默认键冲突继续由 `docs/plans-skeleton/plan-bughunt-client-input-keybind-collision-v1.md` 独立处理，本 PR 不跨题修改。
+- 本轮未启动交互式 `runClient`；默认值、入口保留和 F1-F9 排他性已由源码契约测试及 3992 项 client 全量测试闭环。
