@@ -59,6 +59,8 @@ import net.minecraft.util.Util;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 public class BongNetworkHandler {
     public static final int EXPECTED_VERSION = ServerDataEnvelope.EXPECTED_VERSION;
@@ -248,56 +250,79 @@ public class BongNetworkHandler {
             byte[] bytes = new byte[readableBytes];
             buf.readBytes(bytes);
 
-            markConnectionPayload();
-
-            // P3: wire format is now protobuf. Use ProtoServerDataBridge to decode proto
-            // and convert back to legacy JSON for existing handlers.
-            // Fallback to raw JSON for payloads not yet migrated to proto (e.g. status_snapshot).
-            String jsonPayload;
-            com.bong.client.network.ProtoServerDataBridge.BridgeResult bridgeResult =
-                    com.bong.client.network.ProtoServerDataBridge.bridge(bytes);
-            if (bridgeResult.isSuccess()) {
-                jsonPayload = bridgeResult.legacyJson();
-            } else {
-                // Proto bridge failed — log the reason, then try legacy JSON fallback
-                // (for payloads like status_snapshot that still send raw JSON).
-                BongClient.LOGGER.warn("[bong][network] proto bridge failed: {}", bridgeResult.errorMessage());
-                jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
-            }
-
-            ServerDataRouter.RouteResult result = ROUTER.route(jsonPayload, readableBytes);
-
-            if (result.isParseError()) {
-                BongClient.LOGGER.error("Failed to parse bong:server_data payload: {}", result.logMessage());
-                return;
-            }
-
-            ServerDataDispatch dispatch = result.dispatch();
-            if (dispatch == null) {
-                BongClient.LOGGER.warn("Ignoring bong:server_data payload without dispatch result");
-                return;
-            }
-
-            if (result.isNoOp()) {
-                logNoOp(result);
-                return;
-            }
-
-            BongClient.LOGGER.info("Processed bong:server_data payload: {}", result.logMessage());
-            if (!dispatch.chatMessages().isEmpty()
-                || dispatch.narrationState().isPresent()
-                || dispatch.toastNarrationState().isPresent()
-                || dispatch.legacyMessage().isPresent()
-                || dispatch.playerStateViewModel().isPresent()
-                || dispatch.zoneState().isPresent()
-                || dispatch.visualEffectState().isPresent()
-                || dispatch.alertToast().isPresent()
-                || dispatch.realmCollapseHudState().isPresent()
-                || dispatch.uiOpenState().isPresent()
-                || dispatch.identityPanelState().isPresent()) {
-                client.execute(() -> applyDispatch(client, dispatch, result.envelope().type()));
-            }
+            dispatchServerDataPayload(
+                bytes,
+                ROUTER,
+                client::execute,
+                (dispatch, envelopeType) -> applyDispatch(client, dispatch, envelopeType)
+            );
         });
+    }
+
+    /**
+     * {@code bong:server_data} 的可测试调度边界。
+     *
+     * <p>生产 receiver 已把 Netty buffer 拷入独立 byte array；此方法保留后续 bridge、
+     * route、handler side effect 与最终 dispatch 的实际顺序，并允许测试注入可控的
+     * client executor。</p>
+     */
+    static void dispatchServerDataPayload(
+        byte[] bytes,
+        ServerDataRouter router,
+        Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier
+    ) {
+        int readableBytes = bytes.length;
+
+        markConnectionPayload();
+
+        // P3: wire format is now protobuf. Use ProtoServerDataBridge to decode proto
+        // and convert back to legacy JSON for existing handlers.
+        // Fallback to raw JSON for payloads not yet migrated to proto (e.g. status_snapshot).
+        String jsonPayload;
+        com.bong.client.network.ProtoServerDataBridge.BridgeResult bridgeResult =
+                com.bong.client.network.ProtoServerDataBridge.bridge(bytes);
+        if (bridgeResult.isSuccess()) {
+            jsonPayload = bridgeResult.legacyJson();
+        } else {
+            // Proto bridge failed — log the reason, then try legacy JSON fallback
+            // (for payloads like status_snapshot that still send raw JSON).
+            BongClient.LOGGER.warn("[bong][network] proto bridge failed: {}", bridgeResult.errorMessage());
+            jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+        }
+
+        ServerDataRouter.RouteResult result = router.route(jsonPayload, readableBytes);
+
+        if (result.isParseError()) {
+            BongClient.LOGGER.error("Failed to parse bong:server_data payload: {}", result.logMessage());
+            return;
+        }
+
+        ServerDataDispatch dispatch = result.dispatch();
+        if (dispatch == null) {
+            BongClient.LOGGER.warn("Ignoring bong:server_data payload without dispatch result");
+            return;
+        }
+
+        if (result.isNoOp()) {
+            logNoOp(result);
+            return;
+        }
+
+        BongClient.LOGGER.info("Processed bong:server_data payload: {}", result.logMessage());
+        if (!dispatch.chatMessages().isEmpty()
+            || dispatch.narrationState().isPresent()
+            || dispatch.toastNarrationState().isPresent()
+            || dispatch.legacyMessage().isPresent()
+            || dispatch.playerStateViewModel().isPresent()
+            || dispatch.zoneState().isPresent()
+            || dispatch.visualEffectState().isPresent()
+            || dispatch.alertToast().isPresent()
+            || dispatch.realmCollapseHudState().isPresent()
+            || dispatch.uiOpenState().isPresent()
+            || dispatch.identityPanelState().isPresent()) {
+            clientExecutor.accept(() -> dispatchApplier.accept(dispatch, result.envelope().type()));
+        }
     }
 
     private static void registerLocustSwarmWarningChannel() {
