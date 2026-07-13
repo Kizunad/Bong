@@ -3870,7 +3870,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     ) {
         if (equipPanel == null || targetSlot == null) return false;
         var eq = equipPanel.slotFor(targetSlot);
-        if (eq == null || eq.isDisabledByTwoHand() || !isEquipSlotDropValid(dragged, targetSlot)) {
+        if (eq == null || eq.isInteractionBlocked() || !isEquipSlotDropValid(dragged, targetSlot)) {
+            return false;
+        }
+        // plan-race-system-v1 P3c — 被拖入物品的 wearer_race 与当前形态不符 → 拒绝落位
+        // （client 预览拦截）。server validate_equip_to 权威兜底：即便绕过此拦截，也会
+        // 回 race_mismatch 拒绝 + toast（InventoryMoveRejectedHandler）。
+        if (dragged != null && dragged.itemId() != null
+            && com.bong.client.inventory.state.RaceGateEval.isItemBlocked(dragged.itemId())) {
             return false;
         }
 

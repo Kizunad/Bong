@@ -7,6 +7,7 @@ import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.inventory.state.RaceGateEval;
 import com.bong.client.network.ClientRequestSender;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
@@ -300,6 +301,12 @@ public final class TechniquesTabPanel {
 
     private String lockReason(TechniquesListPanel.Technique technique) {
         if (technique == null) return "";
+        // plan-race-system-v1 P3c — 功法门（required_race）判**本体**身份（race_id /
+        // intrinsic_is_humanoid），与装备门（判当前形态）不同轴。fail-closed：有 gate 但
+        // 本体身份未到时也置灰。server 习得/施放门权威，此处仅预览灰。
+        if (RaceGateEval.isTechniqueBlocked(technique.id())) {
+            return "本体种族不符";
+        }
         String configReason = SkillConfigSchemaRegistry.missingRequiredReason(
             technique.id(),
             SkillConfigStore.configFor(technique.id())

@@ -1,14 +1,16 @@
 name: Review
 
-# 触发规则（PR 创建时的默认审核已让位给 Claude 引擎 review-claude.yml；此 codex 引擎保留为按需复审）：
-# - PR 创建【不再】自动触发（默认走 review-claude.yml）。
-# - 在 PR 评论 `/review` 触发本 codex 引擎（含熔断旁路语义，保持不变）。
+# 触发规则（codex 为 PR 创建时的默认审核引擎；claude 引擎 review-claude.yml 已休眠，仅 /review-claude 手动）：
+# - PR 第一次创建(opened)自动跑一次。
+# - 后续提交不自动跑；需要在 PR 评论 `/review` 才会再次触发（含熔断旁路语义）。
 # - workflow_dispatch 只作人工兜底。
 #
 # 引擎：.github/scripts/review.mjs 通过无 tools 的 Responses 请求编排 4 个 reviewer。
 # 每个 reviewer 都使用 gpt-5.6-sol + high reasoning；模型进程没有 shell 或 GitHub 写令牌。
 # 4 人首轮独立审查，随后读取同伴意见复投；只有 3/1 或 4/0 APPROVE 才算通过，2/2 视为未通过。
 on:
+  pull_request_target:
+    types: [opened]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -26,6 +28,7 @@ concurrency:
 jobs:
   preflight:
     if: >-
+      github.event_name == 'pull_request_target' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
        github.event.comment.body == '/review' &&
@@ -172,6 +175,7 @@ jobs:
     needs: [preflight, review]
     if: >-
       always() &&
+      needs.preflight.result != 'skipped' &&
       (needs.preflight.result != 'success' ||
        needs.preflight.outputs.circuit_outcome != 'success' ||
        needs.preflight.outputs.should_run == 'true')

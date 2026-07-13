@@ -56,6 +56,8 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.CULTIVATION_DETAIL, "cultivation_detail");
         // plan-race-system-v1 P2b
         m.put(Envelope.ServerDataEnvelope.PayloadCase.BODY_PLAN_LAYOUT, "body_plan_layout");
+        // plan-race-system-v1 P3c
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.RACE_GATE_META, "race_gate_meta");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.SKILL_XP_GAIN, "skill_xp_gain");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_SNAPSHOT, "inventory_snapshot");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.COMBAT_HUD_STATE, "combat_hud_state");
@@ -470,6 +472,7 @@ public final class ProtoServerDataBridge {
             case PLAYER_STATE: return envelope.getPlayerState();
             case CULTIVATION_DETAIL: return envelope.getCultivationDetail();
             case BODY_PLAN_LAYOUT: return envelope.getBodyPlanLayout();
+            case RACE_GATE_META: return envelope.getRaceGateMeta();
             case SKILL_XP_GAIN: return envelope.getSkillXpGain();
             case INVENTORY_SNAPSHOT: return envelope.getInventorySnapshot();
             case COMBAT_HUD_STATE: return envelope.getCombatHudState();

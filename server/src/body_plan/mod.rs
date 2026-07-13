@@ -55,14 +55,16 @@ pub use registry::{
     HUMANOID_BODY_PLAN_ID,
 };
 pub use resolve::{
-    body_part_for_mutation_slot, channel_body_part, dugu_injection_channel, resolve_body_plan,
-    resolve_body_plan_for_target, resolve_meridian_topology_for_target, BodyPlanPurpose,
-    BodyPlanResolveInputs, ResolveBodyPlanError,
+    body_part_for_mutation_slot, channel_body_part, dugu_injection_channel,
+    intrinsic_is_humanoid_from_world, resolve_body_plan, resolve_body_plan_for_target,
+    resolve_meridian_topology_for_target, BodyPlanPurpose, BodyPlanResolveInputs,
+    ResolveBodyPlanError,
 };
 pub use types::{
     BodyPartDef, BodyPartId, BodyPlan, BodyPlanId, ChannelDef, ChannelRole, DuguInjectionEntry,
     HeightBand, HeightBandAssignment, HitGeometry, IntrinsicRace, MeridianFamily, MeridianProfile,
-    PartBox, PartConsequence, RaceId, RealmMeridianReq, StandingAabbSpec, TopologyEdge,
+    PartBox, PartConsequence, RaceGate, RaceGateOwned, RaceId, RealmMeridianReq, StandingAabbSpec,
+    TopologyEdge,
 };
 
 use std::path::PathBuf;

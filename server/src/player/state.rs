@@ -4488,6 +4488,7 @@ mod player_state_tests {
             shield_spec: None,
             shelflife_profile: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         };
         let mut dust = pack_template.clone();
         dust.id = "e2e_dust".to_string();
@@ -4647,6 +4648,7 @@ mod player_state_tests {
             shield_spec: None,
             shelflife_profile: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         };
         let mut loot = pack_template.clone();
         loot.id = "tribulation_loot".to_string();

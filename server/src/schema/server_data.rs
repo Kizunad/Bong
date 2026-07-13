@@ -157,6 +157,7 @@ pub enum ServerDataType {
     DroppedLootSync,
     RemainsSync,
     BodyPlanLayout,
+    RaceGateMeta,
     BotanyHarvestProgress,
     BotanyPlantV2RenderProfiles,
     MiningProgress,
@@ -380,6 +381,20 @@ pub enum ServerDataPayloadV1 {
         /// plan-race-system-v1 P2a — 实体本体（`BodyPlanPurpose::Intrinsic`）的
         /// `body_plan_id`，供 client 按 id 寻址 `BodyPlanLayout` 缓存。
         body_plan_id: String,
+        /// plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：
+        /// client gate 判定（装备置灰等）的权威真源，不靠猜 / 不靠 `BodyPlanLayoutV1`
+        /// 的 `is_humanoid` 元数据（那只供渲染）。未易形（P4 `MorphState` 落地前恒定，
+        /// 见 `body_plan::resolve` 模块文档）时 `form_*` 三字段 = 对应本体字段。
+        /// 本体种族 id。
+        race_id: String,
+        /// 当前形态种族 id（未易形时 = `race_id`）。
+        form_race_id: String,
+        /// 当前形态 body plan id（未易形时 = `body_plan_id`）。
+        form_body_plan_id: String,
+        /// 本体是否人形。
+        intrinsic_is_humanoid: bool,
+        /// 当前形态是否人形（未易形时 = `intrinsic_is_humanoid`）。
+        form_is_humanoid: bool,
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
@@ -391,6 +406,10 @@ pub enum ServerDataPayloadV1 {
     /// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据（见
     /// `BodyPlanLayoutV1` 文档）。
     BodyPlanLayout(BodyPlanLayoutV1),
+    /// plan-race-system-v1 P3c — 种族门元数据表（item wearer_race + technique
+    /// required_race），join 首帧一次性下发，client 缓存后离线判置灰（见
+    /// `RaceGateMetaV1` 文档）。
+    RaceGateMeta(RaceGateMetaV1),
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -1599,6 +1618,18 @@ enum ServerDataPayloadWireV1 {
         target_meridian: Option<String>,
         #[serde(default)]
         body_plan_id: String,
+        // plan-race-system-v1 P3b — 身份快照五字段（见 `ServerDataPayloadV1::CultivationDetail`
+        // 同名字段文档）；`#[serde(default)]` 保证老 sample/客户端零改动继续过验。
+        #[serde(default)]
+        race_id: String,
+        #[serde(default)]
+        form_race_id: String,
+        #[serde(default)]
+        form_body_plan_id: String,
+        #[serde(default)]
+        intrinsic_is_humanoid: bool,
+        #[serde(default)]
+        form_is_humanoid: bool,
     },
     QiColorObserved {
         #[serde(flatten)]
@@ -1621,6 +1652,10 @@ enum ServerDataPayloadWireV1 {
     BodyPlanLayout {
         #[serde(flatten)]
         layout: BodyPlanLayoutV1,
+    },
+    RaceGateMeta {
+        #[serde(flatten)]
+        meta: RaceGateMetaV1,
     },
     BotanyHarvestProgress {
         session_id: String,
@@ -2241,6 +2276,110 @@ pub struct RemainsEntryV1 {
     pub bone_coins: u64,
 }
 
+/// plan-race-system-v1 P3a — `RaceGate` 的 wire 形状（与 proto `bong.RaceGate` /
+/// TS `RaceGateV1` 精确对应）：扁平结构，`kind` 恒为必填字符串标签，`species` 恒为
+/// 必填数组（`kind != "species"` 时恒为空，而非省略字段）。
+///
+/// 与 `body_plan::types::RaceGateOwned`（内部标签枚举，`Any`/`Humanoid` 变体序列化
+/// 时**不**携带 `species` 字段）刻意区分为两份形状——`RaceGateOwned` 服务
+/// `ItemTemplate` TOML 等 Rust 内部消费场景的人体工学；本类型服务需要与
+/// proto flat message 字段级 1:1 对应的 wire 场景（prost message 恒有全部字段，
+/// 无法表达"某变体缺某字段"）。两者互转见
+/// `proto_convert::{race_gate_owned_to_proto, race_gate_owned_from_proto}`
+/// （直接对接 prost `bong::RaceGate`，本类型只用于 JSON sample pin 测试 +
+/// 未来挂载 payload 字段时的手写镜像）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateWireV1 {
+    pub kind: String,
+    pub species: Vec<String>,
+}
+
+/// 未知 `kind` 解码错误——fail-closed，调用方必须拒绝而非兜底 `Any`（决议 §8.1 #5/#6）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaceGateWireUnknownKind(pub String);
+
+impl std::fmt::Display for RaceGateWireUnknownKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown RaceGate wire kind {:?} — refusing to decode",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for RaceGateWireUnknownKind {}
+
+impl RaceGateWireV1 {
+    pub fn from_owned(gate: &crate::body_plan::RaceGateOwned) -> Self {
+        use crate::body_plan::RaceGateOwned;
+        match gate {
+            RaceGateOwned::Any => RaceGateWireV1 {
+                kind: "any".to_string(),
+                species: Vec::new(),
+            },
+            RaceGateOwned::Humanoid => RaceGateWireV1 {
+                kind: "humanoid".to_string(),
+                species: Vec::new(),
+            },
+            RaceGateOwned::Species { species } => RaceGateWireV1 {
+                kind: "species".to_string(),
+                species: species.iter().map(|id| id.as_str().to_string()).collect(),
+            },
+        }
+    }
+
+    pub fn try_into_owned(
+        &self,
+    ) -> Result<crate::body_plan::RaceGateOwned, RaceGateWireUnknownKind> {
+        use crate::body_plan::{RaceGateOwned, RaceId};
+        match self.kind.as_str() {
+            "any" => Ok(RaceGateOwned::Any),
+            "humanoid" => Ok(RaceGateOwned::Humanoid),
+            "species" => Ok(RaceGateOwned::Species {
+                species: self
+                    .species
+                    .iter()
+                    .map(|s| RaceId::new(s.clone()))
+                    .collect(),
+            }),
+            other => Err(RaceGateWireUnknownKind(other.to_string())),
+        }
+    }
+}
+
+/// plan-race-system-v1 P3c — 种族门元数据表的单条目：`id`（item template_id 或
+/// technique skill_id）→ `gate`（该条目的种族门）。恒只装非 `Any` 条目
+/// （`Any` 是默认，client 表里查不到即恒放行）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateMetaEntryV1 {
+    pub id: String,
+    pub gate: RaceGateWireV1,
+}
+
+/// plan-race-system-v1 P3c — 静态种族门元数据表（`ServerDataPayloadV1::RaceGateMeta`）。
+///
+/// 两张表都只装 **非 `Any`** 条目（`Any` 是默认，client 缺省即 `Any`，省流量）：
+/// - `item_wearer_race`：item template_id → `wearer_race`，**装备门**判定域用
+///   **当前形态身份**（`form_race_id` / `form_is_humanoid`）。
+/// - `technique_required_race`：technique skill_id → `required_race`，**功法门**
+///   （习得 / 施放）判定域用**本体身份**（`race_id` / `intrinsic_is_humanoid`）。
+///
+/// 两域不同轴（决议 §8.1 #5/#6）：装备看形态、功法看本体。join 首帧一次性下发
+/// （`network::cultivation_detail_emit::emit_race_gate_meta_payloads`，`LastSentRaceGateMeta`
+/// 防重发），内容静态（与玩家身份无关），client 换身份时不需重发——client 用
+/// `PlayerRaceIdentityStore` 的最新身份对同一张表重判即可。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateMetaV1 {
+    #[serde(default)]
+    pub item_wearer_race: Vec<RaceGateMetaEntryV1>,
+    #[serde(default)]
+    pub technique_required_race: Vec<RaceGateMetaEntryV1>,
+}
+
 /// plan-race-system-v1 P2a — `BodyPlanLayoutV1` 的坐标点，归一化到 `[0,1]`（原点 =
 /// 布局画布左上角）。同一类型既用作磁盘 `layouts/*.json` 的数据源，也直接是
 /// wire payload 的字段（无独立域模型/wire 模型两份拷贝，仿 `RemainsEntryV1` 先例）。
@@ -2672,6 +2811,11 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => Ok(Self::CultivationDetail {
                 realm,
                 channel_ids,
@@ -2692,6 +2836,11 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             }),
             ServerDataPayloadWireV1::QiColorObserved { observed } => {
                 Ok(Self::QiColorObserved(observed))
@@ -2705,6 +2854,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
             ServerDataPayloadWireV1::RemainsSync { remains } => Ok(Self::RemainsSync(remains)),
             ServerDataPayloadWireV1::BodyPlanLayout { layout } => Ok(Self::BodyPlanLayout(layout)),
+            ServerDataPayloadWireV1::RaceGateMeta { meta } => Ok(Self::RaceGateMeta(meta)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -3271,6 +3421,11 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
                 channel_ids: channel_ids.clone(),
@@ -3291,6 +3446,11 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 practice_weights: practice_weights.clone(),
                 target_meridian: target_meridian.clone(),
                 body_plan_id: body_plan_id.clone(),
+                race_id: race_id.clone(),
+                form_race_id: form_race_id.clone(),
+                form_body_plan_id: form_body_plan_id.clone(),
+                intrinsic_is_humanoid: *intrinsic_is_humanoid,
+                form_is_humanoid: *form_is_humanoid,
             },
             ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
                 observed: observed.clone(),
@@ -3310,6 +3470,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::BodyPlanLayout(layout) => Self::BodyPlanLayout {
                 layout: layout.clone(),
             },
+            ServerDataPayloadV1::RaceGateMeta(meta) => Self::RaceGateMeta { meta: meta.clone() },
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -4008,6 +4169,7 @@ impl ServerDataPayloadV1 {
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::RemainsSync(..) => ServerDataType::RemainsSync,
             Self::BodyPlanLayout(..) => ServerDataType::BodyPlanLayout,
+            Self::RaceGateMeta(..) => ServerDataType::RaceGateMeta,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
@@ -4172,6 +4334,7 @@ impl ServerDataPayloadV1 {
             Self::DroppedLootSync(..) => false,
             Self::RemainsSync(..) => false,
             Self::BodyPlanLayout(..) => false,
+            Self::RaceGateMeta(..) => false,
             Self::BotanyHarvestProgress { .. } => false,
             Self::BotanyPlantV2RenderProfiles(..) => false,
             Self::MiningProgress { .. } => false,
@@ -5044,6 +5207,11 @@ mod tests {
             }],
             target_meridian: Some(channel_ids[4].clone()),
             body_plan_id: "humanoid".to_string(),
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -5122,6 +5290,11 @@ mod tests {
             practice_weights: Vec::new(),
             target_meridian: Some("tail_fin_channel".to_string()),
             body_plan_id: "whale".to_string(),
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -5283,6 +5456,136 @@ mod tests {
             }
             other => panic!("expected BodyPlanLayout, got {other:?}"),
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // plan-race-system-v1 P3a —— RaceGateWireV1 双端 sample 对拍 + fail-closed 解码。
+    // 三变体样本文件与 agent/packages/schema/samples/race-gate.*.sample.json 完全一致，
+    // 改 schema 必须连同 sample 一起改。
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn race_gate_any_sample_pins_wire_shape_and_round_trips_to_owned() {
+        let json = include_str!("../../../agent/packages/schema/samples/race-gate.any.sample.json");
+        let wire: RaceGateWireV1 =
+            serde_json::from_str(json).expect("any sample should deserialize");
+        assert_eq!(wire.kind, "any");
+        assert!(wire.species.is_empty());
+        assert_eq!(
+            wire.try_into_owned().expect("any must decode"),
+            crate::body_plan::RaceGateOwned::Any
+        );
+    }
+
+    #[test]
+    fn race_gate_humanoid_sample_pins_wire_shape_and_round_trips_to_owned() {
+        let json =
+            include_str!("../../../agent/packages/schema/samples/race-gate.humanoid.sample.json");
+        let wire: RaceGateWireV1 =
+            serde_json::from_str(json).expect("humanoid sample should deserialize");
+        assert_eq!(wire.kind, "humanoid");
+        assert!(wire.species.is_empty());
+        assert_eq!(
+            wire.try_into_owned().expect("humanoid must decode"),
+            crate::body_plan::RaceGateOwned::Humanoid
+        );
+    }
+
+    #[test]
+    fn race_gate_species_sample_pins_wire_shape_and_round_trips_to_owned() {
+        let json =
+            include_str!("../../../agent/packages/schema/samples/race-gate.species.sample.json");
+        let wire: RaceGateWireV1 =
+            serde_json::from_str(json).expect("species sample should deserialize");
+        assert_eq!(wire.kind, "species");
+        assert_eq!(wire.species, vec!["whale".to_string()]);
+        assert_eq!(
+            wire.try_into_owned().expect("species must decode"),
+            crate::body_plan::RaceGateOwned::Species {
+                species: vec![crate::body_plan::RaceId::new("whale")]
+            }
+        );
+    }
+
+    #[test]
+    fn race_gate_wire_from_owned_round_trips_every_variant() {
+        use crate::body_plan::{RaceGateOwned, RaceId};
+
+        let cases = [
+            (RaceGateOwned::Any, "any", Vec::<String>::new()),
+            (RaceGateOwned::Humanoid, "humanoid", Vec::new()),
+            (
+                RaceGateOwned::Species {
+                    species: vec![RaceId::new("whale")],
+                },
+                "species",
+                vec!["whale".to_string()],
+            ),
+        ];
+        for (owned, expected_kind, expected_species) in cases {
+            let wire = RaceGateWireV1::from_owned(&owned);
+            assert_eq!(wire.kind, expected_kind);
+            assert_eq!(wire.species, expected_species);
+            assert_eq!(
+                wire.try_into_owned().expect("round trip must decode"),
+                owned
+            );
+        }
+    }
+
+    #[test]
+    fn race_gate_wire_species_empty_and_duplicate_preserved() {
+        use crate::body_plan::RaceId;
+
+        let empty = RaceGateWireV1 {
+            kind: "species".to_string(),
+            species: Vec::new(),
+        };
+        assert_eq!(
+            empty.try_into_owned().expect("empty species list is valid"),
+            crate::body_plan::RaceGateOwned::Species { species: vec![] }
+        );
+
+        let duplicate = RaceGateWireV1 {
+            kind: "species".to_string(),
+            species: vec!["whale".to_string(), "whale".to_string()],
+        };
+        match duplicate
+            .try_into_owned()
+            .expect("duplicate species entries are structurally valid")
+        {
+            crate::body_plan::RaceGateOwned::Species { species } => {
+                assert_eq!(
+                    species,
+                    vec![RaceId::new("whale"), RaceId::new("whale")],
+                    "重复条目原样保留，不做去重"
+                );
+            }
+            other => panic!("expected Species, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn race_gate_wire_unknown_kind_decode_fails_closed() {
+        let wire = RaceGateWireV1 {
+            kind: "bogus".to_string(),
+            species: Vec::new(),
+        };
+        let err = wire
+            .try_into_owned()
+            .expect_err("unknown kind must fail closed, not silently default to Any");
+        assert_eq!(err.0, "bogus");
+    }
+
+    #[test]
+    fn race_gate_wire_unknown_kind_json_deserialize_succeeds_but_conversion_fails_closed() {
+        // RaceGateWireV1 本身是扁平结构（deny_unknown_fields 只管字段名，不管 kind 取值语义），
+        // 未知 kind 字符串本身能反序列化成 RaceGateWireV1；fail-closed 拒绝发生在
+        // try_into_owned() 转换语义层——两阶段分别验证，防止把"反序列化失败"和
+        // "语义拒绝"混为一谈。
+        let wire: RaceGateWireV1 =
+            serde_json::from_str(r#"{"kind":"bogus","species":[]}"#).expect("deserialize");
+        assert!(wire.try_into_owned().is_err());
     }
 
     /// wire 往返：BodyPlanLayout 序列化 → 反序列化必须无损（含空 anchors /

@@ -12,6 +12,158 @@ use super::proto_gen::bong;
 use super::server_data::ServerDataPayloadV1;
 
 // ═══════════════════════════════════════════════════════════════
+// plan-race-system-v1 P3a —— RaceGate <-> proto RaceGate。
+//
+// `RaceGateOwned`（`body_plan::types`）尚未挂在任何 `ServerDataPayloadV1` oneof 字段
+// 下（本段是 P3 后续接入功法列表 / 装备 wire 时的复用底座，见 plan §P3 身份快照
+// bullet），故不在本文件的 `From<&ServerDataPayloadV1>` 主转换路径里；转换函数独立
+// 导出供直接单测 + 未来接入点调用。decode 方向对未知 kind fail-closed（返回 Err，
+// 不静默兜底 Any）。
+// ═══════════════════════════════════════════════════════════════
+
+pub fn race_gate_owned_to_proto(gate: &crate::body_plan::RaceGateOwned) -> bong::RaceGate {
+    use crate::body_plan::RaceGateOwned;
+    match gate {
+        RaceGateOwned::Any => bong::RaceGate {
+            kind: "any".to_string(),
+            species: Vec::new(),
+        },
+        RaceGateOwned::Humanoid => bong::RaceGate {
+            kind: "humanoid".to_string(),
+            species: Vec::new(),
+        },
+        RaceGateOwned::Species { species } => bong::RaceGate {
+            kind: "species".to_string(),
+            species: species.iter().map(|id| id.as_str().to_string()).collect(),
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RaceGateDecodeError {
+    /// 未知 `kind`——fail-closed，调用方必须拒绝而非兜底 `Any`。
+    UnknownKind(String),
+}
+
+impl std::fmt::Display for RaceGateDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RaceGateDecodeError::UnknownKind(kind) => {
+                write!(
+                    f,
+                    "unknown RaceGate wire kind {kind:?} — refusing to decode"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RaceGateDecodeError {}
+
+pub fn race_gate_owned_from_proto(
+    wire: &bong::RaceGate,
+) -> Result<crate::body_plan::RaceGateOwned, RaceGateDecodeError> {
+    use crate::body_plan::{RaceGateOwned, RaceId};
+    match wire.kind.as_str() {
+        "any" => Ok(RaceGateOwned::Any),
+        "humanoid" => Ok(RaceGateOwned::Humanoid),
+        "species" => Ok(RaceGateOwned::Species {
+            species: wire
+                .species
+                .iter()
+                .map(|s| RaceId::new(s.clone()))
+                .collect(),
+        }),
+        other => Err(RaceGateDecodeError::UnknownKind(other.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod race_gate_wire_tests {
+    use super::*;
+    use crate::body_plan::{RaceGateOwned, RaceId};
+
+    #[test]
+    fn any_round_trips() {
+        let value = RaceGateOwned::Any;
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "any");
+        assert!(wire.species.is_empty());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn humanoid_round_trips() {
+        let value = RaceGateOwned::Humanoid;
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "humanoid");
+        assert!(wire.species.is_empty());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_round_trips() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale")],
+        };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "species");
+        assert_eq!(wire.species, vec!["whale".to_string()]);
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_empty_list_round_trips() {
+        let value = RaceGateOwned::Species { species: vec![] };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.species, Vec::<String>::new());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_duplicate_entries_preserved_through_wire() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale"), RaceId::new("whale")],
+        };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.species, vec!["whale".to_string(), "whale".to_string()]);
+        let decoded = race_gate_owned_from_proto(&wire).unwrap();
+        match decoded {
+            RaceGateOwned::Species { species } => assert_eq!(species.len(), 2),
+            other => panic!("expected Species, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_kind_decode_fails_closed() {
+        let wire = bong::RaceGate {
+            kind: "bogus".to_string(),
+            species: Vec::new(),
+        };
+        let err = race_gate_owned_from_proto(&wire)
+            .expect_err("unknown kind must fail closed, not silently default to Any");
+        assert_eq!(err, RaceGateDecodeError::UnknownKind("bogus".to_string()));
+    }
+
+    /// plan-race-system-v1 P3a —— 施放门 race gate 拒绝的 wire pin：
+    /// `CastOutcomeV1::RejectRaceMismatch` 必须映射到新增 proto 变体
+    /// `bong::CastOutcome::RejectRaceMismatch`（非默认 `Unspecified`/其余已存在变体）。
+    #[test]
+    fn cast_outcome_reject_race_mismatch_maps_to_dedicated_proto_variant() {
+        use super::super::combat_hud::CastOutcomeV1;
+        let proto_value = cast_outcome_to_proto(&CastOutcomeV1::RejectRaceMismatch);
+        assert_eq!(proto_value, bong::CastOutcome::RejectRaceMismatch as i32);
+        // 不与其余已存在的 reject 变体撞值（防止手滑复制粘贴出重复映射）。
+        assert_ne!(
+            proto_value,
+            bong::CastOutcome::RejectTechniqueInactive as i32
+        );
+        assert_ne!(proto_value, bong::CastOutcome::RejectNoWeapon as i32);
+        assert_ne!(proto_value, bong::CastOutcome::Unspecified as i32);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // helper: Rust enum → proto i32
 // ═══════════════════════════════════════════════════════════════
 
@@ -649,6 +801,11 @@ impl From<&ServerDataPayloadV1> for Payload {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => {
                 // SoA → AoS: 并行数组打包成 repeated MeridianState（plan-race-system-v1
                 // P1c：长度随 `channel_ids` 走，不再假设恰好 20 条）。
@@ -693,6 +850,11 @@ impl From<&ServerDataPayloadV1> for Payload {
                         })
                         .collect(),
                     body_plan_id: body_plan_id.clone(),
+                    race_id: race_id.clone(),
+                    form_race_id: form_race_id.clone(),
+                    form_body_plan_id: form_body_plan_id.clone(),
+                    intrinsic_is_humanoid: *intrinsic_is_humanoid,
+                    form_is_humanoid: *form_is_humanoid,
                 })
             }
             ServerDataPayloadV1::QiColorObserved(o) => {
@@ -806,6 +968,26 @@ impl From<&ServerDataPayloadV1> for Payload {
                                 y: a.point.y as f32,
                             }),
                         })
+                        .collect(),
+                })
+            }
+            ServerDataPayloadV1::RaceGateMeta(meta) => {
+                // plan-race-system-v1 P3c：RaceGateWireV1（flat wire）→ proto RaceGate。
+                // 直接构造 bong::RaceGate（kind + species），避免多绕一层 owned 转换。
+                let entry_to_proto =
+                    |e: &crate::schema::server_data::RaceGateMetaEntryV1| bong::RaceGateMetaEntry {
+                        id: e.id.clone(),
+                        gate: Some(bong::RaceGate {
+                            kind: e.gate.kind.clone(),
+                            species: e.gate.species.clone(),
+                        }),
+                    };
+                Payload::RaceGateMeta(bong::RaceGateMeta {
+                    item_wearer_race: meta.item_wearer_race.iter().map(entry_to_proto).collect(),
+                    technique_required_race: meta
+                        .technique_required_race
+                        .iter()
+                        .map(entry_to_proto)
                         .collect(),
                 })
             }
@@ -2031,6 +2213,7 @@ fn cast_outcome_to_proto(o: &super::combat_hud::CastOutcomeV1) -> i32 {
         CastOutcomeV1::RejectRealmTooLow => bong::CastOutcome::RejectRealmTooLow as i32,
         CastOutcomeV1::RejectNoWeapon => bong::CastOutcome::RejectNoWeapon as i32,
         CastOutcomeV1::RejectTechniqueInactive => bong::CastOutcome::RejectTechniqueInactive as i32,
+        CastOutcomeV1::RejectRaceMismatch => bong::CastOutcome::RejectRaceMismatch as i32,
     }
 }
 
@@ -5933,7 +6116,7 @@ mod tests {
 
     // ─── plan-test-coverage-guards-v1 P0：exhaustive proto encoding guard ────────
 
-    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (126 total).
+    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (127 total).
     ///
     /// **Why a list and not an exhaustive match?**
     /// The list itself cannot be made compile-time exhaustive — Rust cannot iterate enum variants.
@@ -6113,6 +6296,11 @@ mod tests {
                 practice_weights: vec![],
                 target_meridian: None,
                 body_plan_id: "humanoid".to_string(),
+                race_id: String::new(),
+                form_race_id: String::new(),
+                form_body_plan_id: String::new(),
+                intrinsic_is_humanoid: false,
+                form_is_humanoid: false,
             }),
             fix!(ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
                 observer: "offline:Kiz".to_string(),
@@ -6193,6 +6381,25 @@ mod tests {
                         part_id: "chest".to_string(),
                         point: super::super::server_data::BodyPlanPoint2V1 { x: 0.5, y: 0.19 },
                     }],
+                }
+            )),
+            // plan-race-system-v1 P3c：种族门元数据表（含三档 gate pin）。
+            fix!(ServerDataPayloadV1::RaceGateMeta(
+                super::super::server_data::RaceGateMetaV1 {
+                    item_wearer_race: vec![super::super::server_data::RaceGateMetaEntryV1 {
+                        id: "armor_whale_plate".to_string(),
+                        gate: super::super::server_data::RaceGateWireV1 {
+                            kind: "species".to_string(),
+                            species: vec!["whale".to_string()],
+                        },
+                    }],
+                    technique_required_race: vec![super::super::server_data::RaceGateMetaEntryV1 {
+                        id: "sword.cleave".to_string(),
+                        gate: super::super::server_data::RaceGateWireV1 {
+                            kind: "humanoid".to_string(),
+                            species: vec![],
+                        },
+                    },],
                 }
             )),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {
@@ -7126,7 +7333,7 @@ mod tests {
         ]
     }
 
-    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (126 total).
+    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (127 total).
     ///
     /// This cross-checks the fixture count against `ServerDataType` discriminant count derived
     /// from `payload_type()`. If a new variant is added and a fixture is not added to
@@ -7164,6 +7371,7 @@ mod tests {
             ServerDataType::DroppedLootSync,
             ServerDataType::RemainsSync,
             ServerDataType::BodyPlanLayout,
+            ServerDataType::RaceGateMeta,
             ServerDataType::BotanyHarvestProgress,
             ServerDataType::BotanyPlantV2RenderProfiles,
             ServerDataType::MiningProgress,
@@ -7387,8 +7595,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 128,
-            "Expected 128 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 129,
+            "Expected 129 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(
