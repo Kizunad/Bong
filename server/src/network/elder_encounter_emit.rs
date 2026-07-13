@@ -5,7 +5,8 @@
 //!
 //! ## 触发时机
 //! - 大能出现（appeared）：监听 `DyingElderSpawnRequest`
-//! - 收丹（dan_received）：监听 `GiveDanToElderIntent`（在 give_dan_system 之后）
+//! - 收丹（dan_received）：只监听 `DyingElderDanAcceptedEvent` 权威提交快照；原始
+//!   `GiveDanToElderIntent` 可能被库存/状态/真元门禁拒绝，不能驱动客户端反馈
 //! - 死亡（betrayal / dead_natural）：监听 Dead 状态变化（在 death_system 之前，
 //!   与 `dying_elder_p3_emit_death_event_system` 相同时序）
 //!
@@ -36,8 +37,8 @@ use valence::prelude::{
 
 use crate::fauna::dying_elder::{
     dying_elder_betray_system, dying_elder_death_system, dying_elder_drain_system,
-    dying_elder_give_dan_system, DyingElderAppearedEvent, DyingElderBlackboard, DyingElderState,
-    GiveDanToElderIntent, DYING_ELDER_DAN_THRESHOLD,
+    dying_elder_give_dan_system, DyingElderAppearedEvent, DyingElderBlackboard,
+    DyingElderDanAcceptedEvent, DyingElderState,
 };
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
@@ -182,10 +183,10 @@ pub(crate) fn elder_encounter_s2c_appear_system(
 
 /// plan-dying-elder-v1 B1 — 玩家给丹后向同 zone 玩家推送 `bong:elder_encounter` dan_received 事件。
 ///
-/// 在 `dying_elder_give_dan_system` 之后运行，读取更新后的 dan_count 和 qi_fraction。
+/// 在 `dying_elder_give_dan_system` 之后运行，只消费权威 accepted 快照。
 #[allow(clippy::type_complexity)]
 pub(crate) fn elder_encounter_s2c_dan_received_system(
-    mut intents: EventReader<GiveDanToElderIntent>,
+    mut accepted_events: EventReader<DyingElderDanAcceptedEvent>,
     elders: DyingElderQuery<'_, '_>,
     mut players: PlayerQuery<'_, '_>,
     zones: Option<Res<ZoneRegistry>>,
@@ -194,23 +195,9 @@ pub(crate) fn elder_encounter_s2c_dan_received_system(
     let Some(zones) = zones else { return };
     let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
 
-    for intent in intents.read() {
-        let Ok((_entity, entity_id, bb, state)) = elders.get(intent.elder) else {
+    for accepted in accepted_events.read() {
+        let Ok((_entity, entity_id, bb, _state)) = elders.get(accepted.elder) else {
             continue;
-        };
-
-        let dan_count = match *state {
-            DyingElderState::Recovering { dan_received } => dan_received,
-            DyingElderState::Betrayal => DYING_ELDER_DAN_THRESHOLD,
-            DyingElderState::Dead { .. } => DYING_ELDER_DAN_THRESHOLD,
-            DyingElderState::Plea => continue,
-        };
-
-        // M2 修复：使用真实 qi_current / qi_max_cache
-        let qi_fraction = if bb.qi_max_cache > 0.0 {
-            (bb.qi_current / bb.qi_max_cache).clamp(0.0, 1.0) as f32
-        } else {
-            0.0
         };
 
         let event = ElderEncounterEventV1 {
@@ -218,9 +205,9 @@ pub(crate) fn elder_encounter_s2c_dan_received_system(
             elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::DanReceived,
             betray_probability: 0.0,
-            dan_count,
+            dan_count: accepted.dan_count,
             offered_skill_id: bb.offered_skill_id.to_string(),
-            qi_fraction,
+            qi_fraction: accepted.qi_fraction,
             server_tick: tick,
         };
         let Some(bytes) = to_json_bytes(&event) else {
