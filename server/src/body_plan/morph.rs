@@ -473,4 +473,350 @@ mod tests {
             "SEVERED 优先于 opened 标志——断了就是断了"
         );
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P4 opus verifier MAJOR/MEDIUM — cast_morph_yixing /
+    // drain_qi_to_zone / release_morph_state 此前零测试，走真实 bevy_ecs::World
+    // 驱动（镜像 `dandao::skills::drain_dandao_qi` 既有测试模式）。
+    mod cast_and_conservation_tests {
+        use super::*;
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::registry::BodyPlanRegistry;
+        use crate::body_plan::types::{
+            BodyPartDef, HeightBand, HeightBandAssignment, HitGeometry, PartConsequence,
+            StandingAabbSpec,
+        };
+        use crate::body_plan::HUMAN_RACE_ID;
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::ZoneRegistry;
+        use std::collections::HashMap as StdHashMap;
+        use valence::prelude::Events;
+
+        fn trivial_plan(id: &str, part_id: &str) -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: id.into(),
+                display_name: id.to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: part_id.into(),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::HeightBands {
+                    aabb: StandingAabbSpec {
+                        half_width: 0.3,
+                        height: 1.8,
+                    },
+                    bands: vec![HeightBand {
+                        min_rel_y: -1.0,
+                        assignment: HeightBandAssignment::Single {
+                            part: part_id.into(),
+                        },
+                    }],
+                    lateral_threshold: 0.19,
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: StdHashMap::new(),
+            }
+        }
+
+        /// human(from) → whale(to) 正向 morph_pair 的 RaceRegistry——`cast_morph_yixing`
+        /// 的 `morph_targets_from(&intrinsic_race)` 消费点用它解析出 target_race。
+        fn human_to_whale_registry() -> RaceRegistry {
+            let body_plans = BodyPlanRegistry::from_plans(vec![
+                trivial_plan("test_human_plan", "chest"),
+                trivial_plan("test_whale_plan", "tail_fin"),
+            ])
+            .expect("test plans must validate");
+            RaceRegistry::from_parts_for_test(
+                vec![
+                    RaceEntry {
+                        id: RaceId::new(HUMAN_RACE_ID),
+                        display_name: "人族".to_string(),
+                        body_plan_id: "test_human_plan".into(),
+                        beast_kinds: vec![],
+                    },
+                    RaceEntry {
+                        id: RaceId::new("whale"),
+                        display_name: "飞鲸".to_string(),
+                        body_plan_id: "test_whale_plan".into(),
+                        beast_kinds: vec![],
+                    },
+                ],
+                vec![crate::body_plan::race_registry::MorphPairDef {
+                    from: RaceId::new(HUMAN_RACE_ID),
+                    to: RaceId::new("whale"),
+                    part_mapping: StdHashMap::new(),
+                }],
+                &body_plans,
+            )
+            .expect("human->whale morph pair fixture must validate")
+        }
+
+        /// 无 morph_pairs 的空 RaceRegistry——`morph_targets_from` 恒返回空。
+        fn no_morph_pairs_registry() -> RaceRegistry {
+            let body_plans = BodyPlanRegistry::from_plans(vec![trivial_plan(
+                "test_human_only_plan",
+                "chest",
+            )])
+            .expect("test plan must validate");
+            RaceRegistry::from_parts_for_test(
+                vec![RaceEntry {
+                    id: RaceId::new(HUMAN_RACE_ID),
+                    display_name: "人族".to_string(),
+                    body_plan_id: "test_human_only_plan".into(),
+                    beast_kinds: vec![],
+                }],
+                vec![],
+                &body_plans,
+            )
+            .expect("human-only fixture must validate")
+        }
+
+        /// 带 ZoneRegistry + Position（spawn zone 内，[14,66,14]）+ Cultivation 的
+        /// world——镜像 `dandao::skills::make_world_with_zone`。
+        fn make_world_with_caster_and_zone(
+            qi_current: f64,
+            qi_max: f64,
+            races: RaceRegistry,
+        ) -> (bevy_ecs::world::World, Entity) {
+            let mut world = bevy_ecs::world::World::new();
+            world.init_resource::<Events<QiTransfer>>();
+            world.insert_resource(ZoneRegistry::default());
+            world.insert_resource(CultivationClock { tick: 1234 });
+            world.insert_resource(races);
+            let entity = world
+                .spawn((
+                    Cultivation {
+                        qi_current,
+                        qi_max,
+                        ..Default::default()
+                    },
+                    Position::new([14.0, 66.0, 14.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            (world, entity)
+        }
+
+        const YIXING_QI_COST: f64 = 40.0; // 与 known_techniques::TECHNIQUE_DEFINITIONS["morph.yixing"].qi_cost 同步的镜像常量。
+
+        #[test]
+        fn cast_succeeds_inserts_morph_state_deducts_qi_and_credits_zone() {
+            let races = human_to_whale_registry();
+            let (mut world, caster) =
+                make_world_with_caster_and_zone(YIXING_QI_COST + 10.0, 100.0, races);
+            let initial_zone_spirit_qi = world
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .expect("spawn zone must exist")
+                .spirit_qi;
+
+            let result = cast_morph_yixing(&mut world, caster, 0, None);
+            assert!(
+                matches!(result, CastResult::Started { .. }),
+                "余额充足 + 有正向 morph_pair 时应 Started，实际 {result:?}"
+            );
+
+            let morph_state = world
+                .get::<MorphState>(caster)
+                .expect("cast 成功后应插入 MorphState");
+            assert_eq!(
+                morph_state.form,
+                RaceId::new("whale"),
+                "form 应为 morph_targets_from 解析出的 whale"
+            );
+
+            let cultivation = world.get::<Cultivation>(caster).unwrap();
+            assert!(
+                (cultivation.qi_current - 10.0).abs() < 1e-9,
+                "qi_current 应恰好扣去 qi_cost={YIXING_QI_COST}（10.0+40.0-40.0=10.0），实际 {}",
+                cultivation.qi_current
+            );
+
+            let final_zone_spirit_qi = world
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi;
+            assert!(
+                final_zone_spirit_qi > initial_zone_spirit_qi,
+                "扣除的 qi_cost 必须归还 zone（守恒方向），实测之前={initial_zone_spirit_qi} 之后={final_zone_spirit_qi}"
+            );
+
+            let events = world.resource::<Events<QiTransfer>>();
+            let mut reader = events.get_reader();
+            let transfers: Vec<_> = reader.read(events).collect();
+            assert!(!transfers.is_empty(), "应 emit QiTransfer 事件（守恒审计）");
+            let total_amount: f64 = transfers.iter().map(|t| t.amount).sum();
+            assert!(
+                (total_amount - YIXING_QI_COST).abs() < f64::EPSILON,
+                "QiTransfer 总金额应恰好等于 qi_cost={YIXING_QI_COST}（不多不少，守恒\
+                 金额一次性记账），实际 {total_amount}"
+            );
+        }
+
+        #[test]
+        fn cast_rejects_qi_insufficient_no_state_change() {
+            let races = human_to_whale_registry();
+            // qi_current < qi_cost=40.0。
+            let (mut world, caster) = make_world_with_caster_and_zone(10.0, 100.0, races);
+            let initial_zone_spirit_qi = world
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi;
+
+            let result = cast_morph_yixing(&mut world, caster, 0, None);
+            assert_eq!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                },
+                "余额不足应 Rejected(QiInsufficient)，实际 {result:?}"
+            );
+
+            assert!(
+                world.get::<MorphState>(caster).is_none(),
+                "余额不足不应插入 MorphState"
+            );
+            let cultivation = world.get::<Cultivation>(caster).unwrap();
+            assert!(
+                (cultivation.qi_current - 10.0).abs() < 1e-9,
+                "余额不足不应扣减 qi_current（不转账），实际 {}",
+                cultivation.qi_current
+            );
+            let final_zone_spirit_qi = world
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi;
+            assert_eq!(
+                final_zone_spirit_qi, initial_zone_spirit_qi,
+                "余额不足不应转账，zone.spirit_qi 应保持不变"
+            );
+        }
+
+        #[test]
+        fn cast_rejects_invalid_target_when_no_morph_pair_no_state_change() {
+            let races = no_morph_pairs_registry();
+            let (mut world, caster) =
+                make_world_with_caster_and_zone(YIXING_QI_COST + 10.0, 100.0, races);
+
+            let result = cast_morph_yixing(&mut world, caster, 0, None);
+            assert_eq!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::InvalidTarget
+                },
+                "无正向 morph_pair（生产 races.json 当前恒此分支）应 Rejected(InvalidTarget)，\
+                 实际 {result:?}"
+            );
+            assert!(
+                world.get::<MorphState>(caster).is_none(),
+                "InvalidTarget 不应插入 MorphState"
+            );
+            let cultivation = world.get::<Cultivation>(caster).unwrap();
+            assert!(
+                (cultivation.qi_current - (YIXING_QI_COST + 10.0)).abs() < 1e-9,
+                "InvalidTarget 不应扣减 qi_current（在 drain_qi_to_zone 之前就已提前返回），\
+                 实际 {}",
+                cultivation.qi_current
+            );
+        }
+
+        #[test]
+        fn cast_rejects_invalid_target_when_no_cultivation_component() {
+            let mut world = bevy_ecs::world::World::new();
+            world.insert_resource(human_to_whale_registry());
+            let caster = world.spawn_empty().id();
+
+            let result = cast_morph_yixing(&mut world, caster, 0, None);
+            assert_eq!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::InvalidTarget
+                },
+                "无 Cultivation 组件应 Rejected(InvalidTarget)，实际 {result:?}"
+            );
+            assert!(world.get::<MorphState>(caster).is_none());
+        }
+
+        #[test]
+        fn cast_toggle_is_idempotent_second_cast_releases() {
+            // 幂等切换（决议 §1）：已处于 MorphState 时再次施放 = 解除，不叠加/不 panic。
+            // 余额留够两次真实易形消耗（第三次 A→B→A→B 里的第二个 B 分支也要扣费），
+            // 只有"解除"分支不扣费。
+            let races = human_to_whale_registry();
+            let (mut world, caster) =
+                make_world_with_caster_and_zone(YIXING_QI_COST * 2.0 + 10.0, 100.0, races);
+
+            let first = cast_morph_yixing(&mut world, caster, 0, None);
+            assert!(matches!(first, CastResult::Started { .. }));
+            assert!(
+                world.get::<MorphState>(caster).is_some(),
+                "第一次 cast 后应处于易形态"
+            );
+
+            let second = cast_morph_yixing(&mut world, caster, 0, None);
+            assert!(
+                matches!(second, CastResult::Started { .. }),
+                "第二次 cast（解除分支）也应 Started（幂等切换，不是拒绝），实际 {second:?}"
+            );
+            assert!(
+                world.get::<MorphState>(caster).is_none(),
+                "第二次 cast 应移除 MorphState（解除），不叠加/不 panic"
+            );
+
+            // A→B（未易形→易形）→A（易形→未易形）之后再 A→B 应能重新易形，
+            // 证明幂等切换不会把状态锁死在某个分支。
+            let third = cast_morph_yixing(&mut world, caster, 0, None);
+            assert!(
+                matches!(third, CastResult::Started { .. }),
+                "解除后应能重新易形（状态机 A→B→A→B 全通），实际 {third:?}"
+            );
+            assert!(
+                world.get::<MorphState>(caster).is_some(),
+                "第三次 cast 应重新插入 MorphState"
+            );
+        }
+
+        #[test]
+        fn release_morph_state_is_noop_and_returns_false_when_not_morphed() {
+            // 状态转换 A→A（未易形态调用 release）：不 panic，返回 false，不产生副作用。
+            let mut world = bevy_ecs::world::World::new();
+            let caster = world.spawn(Cultivation::default()).id();
+
+            let released = release_morph_state(&mut world, caster);
+            assert!(
+                !released,
+                "未处于 MorphState 时 release_morph_state 应返回 false（无操作）"
+            );
+            assert!(world.get::<MorphState>(caster).is_none());
+        }
+
+        #[test]
+        fn release_morph_state_removes_component_and_returns_true_when_morphed() {
+            let mut world = bevy_ecs::world::World::new();
+            let caster = world
+                .spawn((
+                    Cultivation::default(),
+                    MorphState::new(RaceId::new("whale"), 0, 0),
+                ))
+                .id();
+
+            let released = release_morph_state(&mut world, caster);
+            assert!(
+                released,
+                "已处于 MorphState 时 release_morph_state 应返回 true"
+            );
+            assert!(
+                world.get::<MorphState>(caster).is_none(),
+                "release 后 MorphState 组件应被 remove"
+            );
+        }
+    }
 }
