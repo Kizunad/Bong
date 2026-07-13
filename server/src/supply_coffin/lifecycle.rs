@@ -246,7 +246,125 @@ fn send_close_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::ContainerState;
+    use crate::inventory::{ContainerState, InventoryRevision};
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use valence::prelude::{App, DVec3, Update};
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "main_pack".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+                owner_instance_id: None,
+                quick_access: false,
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+            triggered_treasures: Vec::new(),
+        }
+    }
+
+    fn setup_lifecycle_app(
+        player_dimension: Option<DimensionKind>,
+        player_pos: DVec3,
+        source_active: bool,
+    ) -> (App, Entity, Entity, MockClientHelper) {
+        let mut app = App::new();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, external_container_lifecycle_tick);
+
+        let (client_bundle, helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                empty_inventory(),
+                PlayerState::default(),
+                Cultivation::default(),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_pos));
+        if let Some(dimension) = player_dimension {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(CurrentDimension(dimension));
+        }
+
+        let session_id = 91;
+        let coffin = app
+            .world_mut()
+            .spawn(ExternalContainer {
+                session_id,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(session_id),
+                    name: "supply_coffin_common".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: Some(player),
+                timeout_wall_secs: u64::MAX,
+                source_kind: ExternalContainerKind::SupplyCoffin {
+                    grade: SupplyCoffinGrade::Common,
+                },
+            })
+            .id();
+
+        let mut ext_registry = ExternalContainerRegistry::default();
+        ext_registry.sessions.insert(session_id, coffin);
+        ext_registry.next_session_id = session_id + 1;
+        app.insert_resource(ext_registry);
+
+        let mut coffin_registry =
+            SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0x4321);
+        if source_active {
+            coffin_registry.insert_active(
+                coffin,
+                SupplyCoffinGrade::Common,
+                COFFIN_POS,
+                current_wall_clock_secs(),
+            );
+        }
+        app.insert_resource(coffin_registry);
+
+        (app, player, coffin, helper)
+    }
+
+    fn assert_session_closed_without_despawn(app: &App, coffin: Entity, session_id: u64) {
+        let ext = app
+            .world()
+            .get::<ExternalContainer>(coffin)
+            .expect("distance/authority invalidation must keep the coffin container alive");
+        assert_eq!(
+            ext.opened_by, None,
+            "invalid authority must release the supply-coffin occupancy lock"
+        );
+        assert!(
+            !app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .contains_key(&session_id),
+            "invalid authority must remove the stale session mapping"
+        );
+        assert!(
+            app.world().get::<Despawned>(coffin).is_none(),
+            "distance/dimension/source invalidation must not break or despawn the coffin"
+        );
+    }
 
     #[test]
     fn lifecycle_manages_only_supply_coffins() {
@@ -273,6 +391,91 @@ mod tests {
             !is_supply_coffin_lifecycle_managed(&dead_drop),
             "dead drop must not be timed out by supply_coffin lifecycle"
         );
+    }
+
+    #[test]
+    fn lifecycle_closes_cross_dimension_same_xyz_and_is_idempotent() {
+        let (mut app, _player, coffin, _helper) =
+            setup_lifecycle_app(Some(DimensionKind::Tsy), COFFIN_POS, true);
+
+        app.update();
+        assert_session_closed_without_despawn(&app, coffin, 91);
+        assert!(
+            app.world()
+                .resource::<SupplyCoffinRegistry>()
+                .active
+                .contains_key(&coffin),
+            "dimension invalidation closes only the session; the active coffin remains"
+        );
+
+        app.update();
+        assert_session_closed_without_despawn(&app, coffin, 91);
+    }
+
+    #[test]
+    fn lifecycle_closes_when_player_dimension_is_missing() {
+        let (mut app, _player, coffin, _helper) = setup_lifecycle_app(None, COFFIN_POS, true);
+
+        app.update();
+
+        assert_session_closed_without_despawn(&app, coffin, 91);
+    }
+
+    #[test]
+    fn lifecycle_closes_when_active_source_disappears() {
+        let (mut app, _player, coffin, _helper) =
+            setup_lifecycle_app(Some(DimensionKind::Overworld), COFFIN_POS, false);
+
+        app.update();
+
+        assert_session_closed_without_despawn(&app, coffin, 91);
+    }
+
+    #[test]
+    fn lifecycle_closes_and_clears_session_when_owner_entity_disappears() {
+        let (mut app, player, coffin, _helper) =
+            setup_lifecycle_app(Some(DimensionKind::Overworld), COFFIN_POS, true);
+        assert!(app.world_mut().despawn(player), "test owner should despawn");
+
+        app.update();
+
+        assert_session_closed_without_despawn(&app, coffin, 91);
+    }
+
+    #[test]
+    fn lifecycle_distance_boundary_is_inclusive_and_just_outside_closes() {
+        let boundary = CLOSE_DISTANCE_BLOCKS + CLOSE_DISTANCE_TOLERANCE;
+        let (mut at_boundary, _player, coffin, _helper) = setup_lifecycle_app(
+            Some(DimensionKind::Overworld),
+            COFFIN_POS + DVec3::new(boundary, 0.0, 0.0),
+            true,
+        );
+        at_boundary.update();
+        let ext = at_boundary
+            .world()
+            .get::<ExternalContainer>(coffin)
+            .expect("coffin remains alive at boundary");
+        assert!(
+            ext.opened_by.is_some(),
+            "distance exactly {boundary} must remain authorized"
+        );
+        assert_eq!(
+            at_boundary
+                .world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .get(&91),
+            Some(&coffin),
+            "boundary session must stay registered"
+        );
+
+        let (mut outside, _player, coffin, _helper) = setup_lifecycle_app(
+            Some(DimensionKind::Overworld),
+            COFFIN_POS + DVec3::new(boundary + 0.001, 0.0, 0.0),
+            true,
+        );
+        outside.update();
+        assert_session_closed_without_despawn(&outside, coffin, 91);
     }
 
     fn ext_with_kind(source_kind: ExternalContainerKind) -> ExternalContainer {

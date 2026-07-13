@@ -278,3 +278,216 @@ pub fn handle_supply_coffin_interact(
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inventory::external_container::ExternalContainerRegistry;
+    use crate::inventory::{InventoryRevision, PlacedItemState};
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use valence::prelude::{App, DVec3, Update};
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "main_pack".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::<PlacedItemState>::new(),
+                owner_instance_id: None,
+                quick_access: false,
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+            triggered_treasures: Vec::new(),
+        }
+    }
+
+    fn setup_open_app(
+        player_dimension: Option<DimensionKind>,
+        player_pos: DVec3,
+    ) -> (App, Entity, Entity, MockClientHelper) {
+        let mut app = App::new();
+        app.insert_resource(ExternalContainerRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_event::<SupplyCoffinOpenRequest>();
+        app.add_event::<SupplyCoffinOpened>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, handle_supply_coffin_interact);
+
+        let target = app.world_mut().spawn_empty().id();
+        let mut registry =
+            SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0x1234);
+        registry.insert_active(
+            target,
+            SupplyCoffinGrade::Common,
+            COFFIN_POS,
+            current_wall_clock_secs(),
+        );
+        app.insert_resource(registry);
+
+        let (client_bundle, helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                empty_inventory(),
+                PlayerState::default(),
+                Cultivation::default(),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_pos));
+        if let Some(dimension) = player_dimension {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(CurrentDimension(dimension));
+        }
+
+        (app, player, target, helper)
+    }
+
+    fn send_open(app: &mut App, player: Entity, target: Entity) {
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<SupplyCoffinOpenRequest>>()
+            .send(SupplyCoffinOpenRequest {
+                client: player,
+                target,
+            });
+        app.update();
+    }
+
+    #[test]
+    fn open_rejects_cross_dimension_same_xyz_without_side_effects() {
+        let (mut app, player, target, _helper) =
+            setup_open_app(Some(DimensionKind::Tsy), COFFIN_POS);
+        let rng_before = app.world().resource::<SupplyCoffinRegistry>().rng_state;
+
+        send_open(&mut app, player, target);
+
+        assert!(
+            app.world().get::<ExternalContainer>(target).is_none(),
+            "TSY player at the same numeric XYZ must not create an Overworld supply-coffin session"
+        );
+        assert!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .is_empty(),
+            "dimension rejection must happen before allocating a session"
+        );
+        assert_eq!(
+            app.world().resource::<SupplyCoffinRegistry>().rng_state,
+            rng_before,
+            "dimension rejection must happen before rolling loot or advancing RNG"
+        );
+    }
+
+    #[test]
+    fn open_rejects_player_missing_current_dimension() {
+        let (mut app, player, target, _helper) = setup_open_app(None, COFFIN_POS);
+
+        send_open(&mut app, player, target);
+
+        assert!(
+            app.world().get::<ExternalContainer>(target).is_none(),
+            "player without CurrentDimension must be rejected instead of implicitly treated as Overworld"
+        );
+        assert!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .is_empty(),
+            "missing-dimension rejection must not allocate a session"
+        );
+    }
+
+    #[test]
+    fn open_range_accepts_exact_boundary_and_rejects_just_outside() {
+        let boundary = OPEN_RANGE_BLOCKS + OPEN_RANGE_TOLERANCE;
+        let (mut at_boundary, player, target, _helper) = setup_open_app(
+            Some(DimensionKind::Overworld),
+            COFFIN_POS + DVec3::new(boundary, 0.0, 0.0),
+        );
+        send_open(&mut at_boundary, player, target);
+        assert!(
+            at_boundary
+                .world()
+                .get::<ExternalContainer>(target)
+                .is_some(),
+            "distance exactly {boundary} must remain inside the existing open contract"
+        );
+
+        let (mut outside, player, target, _helper) = setup_open_app(
+            Some(DimensionKind::Overworld),
+            COFFIN_POS + DVec3::new(boundary + 0.001, 0.0, 0.0),
+        );
+        send_open(&mut outside, player, target);
+        assert!(
+            outside.world().get::<ExternalContainer>(target).is_none(),
+            "distance just beyond {boundary} must be rejected"
+        );
+    }
+
+    #[test]
+    fn reopen_restores_session_registry_mapping_after_distance_close() {
+        let (mut app, player, target, _helper) =
+            setup_open_app(Some(DimensionKind::Overworld), COFFIN_POS);
+        let session_id = 77;
+        app.world_mut()
+            .entity_mut(target)
+            .insert(ExternalContainer {
+                session_id,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(session_id),
+                    name: "supply_coffin_common".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: None,
+                timeout_wall_secs: u64::MAX,
+                source_kind: ExternalContainerKind::SupplyCoffin {
+                    grade: SupplyCoffinGrade::Common,
+                },
+            });
+        assert!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .is_empty(),
+            "test precondition: distance close removed the session mapping"
+        );
+
+        send_open(&mut app, player, target);
+
+        let ext = app
+            .world()
+            .get::<ExternalContainer>(target)
+            .expect("reopen keeps the existing external container");
+        assert_eq!(
+            ext.opened_by,
+            Some(player),
+            "reopen must reacquire the lock"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .get(&session_id),
+            Some(&target),
+            "reopen must restore session_id -> coffin mapping so subsequent moves remain routable"
+        );
+    }
+}
