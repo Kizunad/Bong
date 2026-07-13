@@ -2288,6 +2288,151 @@ mod tests {
         (zone_after, qi_after, processed, emitted, audited)
     }
 
+    fn run_fifth_dan_chain(
+        betray_probability: f64,
+        player_qi: f64,
+    ) -> (DyingElderState, f64, f64, Vec<QiTransfer>) {
+        use crate::cultivation::components::Cultivation;
+        use valence::prelude::App;
+
+        let mut app = App::new();
+        app.add_event::<GiveDanToElderIntent>();
+        app.add_event::<SoulSeizeEvent>();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].name = "tsy_deep".to_string();
+        zones.zones[0].spirit_qi = -0.6;
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(
+            valence::prelude::Update,
+            (
+                dying_elder_give_dan_system,
+                dying_elder_betray_system.after(dying_elder_give_dan_system),
+                dying_elder_death_system.after(dying_elder_betray_system),
+            ),
+        );
+
+        let player = app
+            .world_mut()
+            .spawn((
+                ClientMarker,
+                Cultivation {
+                    qi_current: player_qi,
+                    qi_max: 300.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+        let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
+        bb.betray_probability = betray_probability;
+        bb.qi_current = 500.0;
+        let elder = app
+            .world_mut()
+            .spawn((NpcMarker, bb, DyingElderState::Plea))
+            .id();
+
+        for pill_instance_id in 1..=DYING_ELDER_DAN_THRESHOLD as u64 {
+            app.world_mut().send_event(GiveDanToElderIntent {
+                player,
+                elder,
+                pill_instance_id,
+                qi_gain: 24.0,
+            });
+            app.update();
+        }
+
+        let state = app
+            .world()
+            .entity(elder)
+            .get::<DyingElderState>()
+            .unwrap()
+            .clone();
+        let elder_qi = app
+            .world()
+            .entity(elder)
+            .get::<DyingElderBlackboard>()
+            .unwrap()
+            .qi_current;
+        let player_qi_after = app
+            .world()
+            .entity(player)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let transfers = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .to_vec();
+        (state, elder_qi, player_qi_after, transfers)
+    }
+
+    #[test]
+    fn honorable_fifth_dan_death_preserves_qi() {
+        let (state, elder_qi, player_qi, transfers) = run_fifth_dan_chain(0.0, 40.0);
+        assert_eq!(
+            state,
+            DyingElderState::Dead {
+                dead_by_betrayal: false
+            }
+        );
+        assert!(elder_qi.abs() <= QI_EPSILON);
+        assert!((player_qi - 40.0).abs() <= QI_EPSILON);
+        let traded = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::TradeDan)
+            .map(|t| t.amount)
+            .sum::<f64>();
+        let released = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .map(|t| t.amount)
+            .sum::<f64>();
+        assert!(
+            (traded - 120.0).abs() <= QI_EPSILON,
+            "五颗丹应实际加入 120 真元"
+        );
+        assert!(
+            (released - (500.0 + traded)).abs() <= QI_EPSILON,
+            "初始真元与五颗丹必须最终全量释放"
+        );
+    }
+
+    #[test]
+    fn betrayal_death_releases_player_soul_seize_qi() {
+        let player_before = 40.0;
+        let (state, elder_qi, player_after, transfers) = run_fifth_dan_chain(1.0, player_before);
+        assert_eq!(
+            state,
+            DyingElderState::Dead {
+                dead_by_betrayal: true
+            }
+        );
+        assert!(elder_qi.abs() <= QI_EPSILON);
+        assert!(player_after.abs() <= QI_EPSILON, "夺舍应抽空玩家当前真元");
+        let traded = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::TradeDan)
+            .map(|t| t.amount)
+            .sum::<f64>();
+        let seized = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::SoulSeize)
+            .map(|t| t.amount)
+            .sum::<f64>();
+        let released = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .map(|t| t.amount)
+            .sum::<f64>();
+        assert!((seized - player_before).abs() <= QI_EPSILON);
+        assert!(
+            (released - (500.0 + traded + seized)).abs() <= QI_EPSILON,
+            "丹与玩家被夺真元必须全部进入死亡释放两腿"
+        );
+    }
+
     #[test]
     fn death_system_release_uses_absolute_zone_capacity() {
         let (zone_after, qi_after, processed, emitted, audited) =
