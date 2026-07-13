@@ -561,9 +561,10 @@ mod tests {
 
         let entry_target = entry_target.expect("dev spawn must create an entry portal");
         let (exit_pos, exit_radius) = exit.expect("dev spawn must create an exit portal");
+        let actual_distance = entry_target.distance(exit_pos);
         assert!(
-            entry_target.distance(exit_pos) > exit_radius,
-            "dev TSY entry target must remain outside the exit trigger; target={entry_target:?} exit={exit_pos:?} radius={exit_radius}"
+            actual_distance > exit_radius,
+            "dev TSY entry target must remain outside the exit trigger; expected distance > {exit_radius}, actual distance={actual_distance}, target={entry_target:?} exit={exit_pos:?}"
         );
     }
 

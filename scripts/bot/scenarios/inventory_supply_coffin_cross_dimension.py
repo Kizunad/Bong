@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from bot.bot import BotAssertionError
 
-from ._inventory_helpers import wait_inventory_snapshot_after, wait_join_and_inventory
+from ._inventory_helpers import (
+    first_free_cell,
+    wait_inventory_snapshot_after,
+    wait_join_and_inventory,
+)
 
 DESCRIPTION = "物资棺 open 后跨维应 close；旧 session move/open 均拒绝并回推权威状态"
 MODULES = ["inventory", "supply_coffin", "dimension"]
@@ -18,7 +22,7 @@ def run(env) -> None:
 
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv PackAndHotbar revision=", timeout=10.0)
-        cleared = bot.wait_for(
+        bot.wait_for(
             lambda event: event.kind == "server_data"
             and event.data["payload_type"] == "inventory_snapshot"
             and event.data["payload"]["revision"] > initial_snapshot["revision"],
@@ -46,12 +50,66 @@ def run(env) -> None:
         open_payload = opened.data["payload"]
         session_id = open_payload["session_id"]
         placed_items = open_payload["placed_items"]
-        if not placed_items:
+        if len(placed_items) < 2:
             raise BotAssertionError(
                 "common 物资棺按 loot 契约应至少有 2 种物品，实际 loot_container_open 为空"
             )
-        source = placed_items[0]
+        moved_source = placed_items[0]
+        moved_instance_id = moved_source["item"]["instance_id"]
+        source = placed_items[1]
         instance_id = source["item"]["instance_id"]
+        open_snapshot = wait_inventory_snapshot_after(bot, open_sent_at, timeout=10.0)
+        destination_container_id, destination_row, destination_col = _first_free_destination(
+            open_snapshot,
+            moved_source["item"]["grid_width"],
+            moved_source["item"]["grid_height"],
+        )
+
+        move_sent_at = _event_watermark(bot)
+        bot.intent(
+            {
+                "type": "external_container_move",
+                "v": 1,
+                "session_id": session_id,
+                "instance_id": moved_instance_id,
+                "from": {
+                    "kind": "container",
+                    "container_id": f"ext_{session_id}",
+                    "row": moved_source["row"],
+                    "col": moved_source["col"],
+                },
+                "to": {
+                    "kind": "container",
+                    "container_id": destination_container_id,
+                    "row": destination_row,
+                    "col": destination_col,
+                },
+            }
+        )
+        moved_update = _server_data_after(
+            bot, "loot_container_update", move_sent_at, timeout=10.0
+        ).data["payload"]
+        if moved_update["session_id"] != session_id:
+            raise BotAssertionError(
+                "合法 move 必须回推当前物资棺 session；"
+                f"expected={session_id} actual={moved_update['session_id']}"
+            )
+        if any(
+            placed["item"]["instance_id"] == moved_instance_id
+            for placed in moved_update["placed_items"]
+        ):
+            raise BotAssertionError(
+                f"合法 move 后实例 {moved_instance_id} 不得残留在权威 container update"
+            )
+        moved_snapshot = wait_inventory_snapshot_after(bot, move_sent_at, timeout=10.0)
+        _assert_instance_present_in_inventory(moved_snapshot, moved_instance_id)
+        stale_destination_container_id, stale_destination_row, stale_destination_col = (
+            _first_free_destination(
+                moved_snapshot,
+                source["item"]["grid_width"],
+                source["item"]["grid_height"],
+            )
+        )
 
         bot.cmd(f"tsy_spawn {TSY_FAMILY}")
         bot.expect_chat(f"Queued /tsy_spawn {TSY_FAMILY}", timeout=10.0)
@@ -78,7 +136,7 @@ def run(env) -> None:
             context="TSY 入场落点必须位于出口触发圈外，旧实现会在下一 tick 自动回主世界",
         )
 
-        move_sent_at = _event_watermark(bot)
+        stale_move_sent_at = _event_watermark(bot)
         bot.intent(
             {
                 "type": "external_container_move",
@@ -93,18 +151,20 @@ def run(env) -> None:
                 },
                 "to": {
                     "kind": "container",
-                    "container_id": "main_pack",
-                    "row": 0,
-                    "col": 0,
+                    "container_id": stale_destination_container_id,
+                    "row": stale_destination_row,
+                    "col": stale_destination_col,
                 },
             }
         )
-        stale_snapshot = wait_inventory_snapshot_after(bot, move_sent_at, timeout=10.0)
+        stale_snapshot = wait_inventory_snapshot_after(
+            bot, stale_move_sent_at, timeout=10.0
+        )
         _assert_instance_absent_from_inventory(stale_snapshot, instance_id)
-        if stale_snapshot["revision"] != cleared["revision"]:
+        if stale_snapshot["revision"] != moved_snapshot["revision"]:
             raise BotAssertionError(
                 "旧 session move 被拒时 inventory revision 必须不变；"
-                f"cleared={cleared['revision']} actual={stale_snapshot['revision']}"
+                f"before={moved_snapshot['revision']} actual={stale_snapshot['revision']}"
             )
 
         reopen_sent_at = _event_watermark(bot)
@@ -121,6 +181,27 @@ def run(env) -> None:
 
 def _event_watermark(bot) -> float:
     return bot.events[-1].t if bot.events else 0.0
+
+
+def _first_free_destination(
+    snapshot: dict, item_width: int, item_height: int
+) -> tuple[str, int, int]:
+    containers = sorted(
+        snapshot.get("containers", []),
+        key=lambda container: not container.get("quick_access", False),
+    )
+    for container in containers:
+        try:
+            row, col = first_free_cell(
+                snapshot, container["id"], item_width, item_height
+            )
+        except BotAssertionError:
+            continue
+        return container["id"], row, col
+    raise BotAssertionError(
+        f"合法 move 需要至少一个 {item_width}x{item_height} 玩家容器空位，"
+        f"实际 containers={containers}"
+    )
 
 
 def _near_player(bot, data: dict) -> bool:
@@ -188,3 +269,11 @@ def _assert_instance_absent_from_inventory(snapshot: dict, instance_id: int) -> 
         raise BotAssertionError(
             f"跨维旧 session 不得把棺内实例 {instance_id} 搬入玩家背包，实际位置={locations}"
         )
+
+
+def _assert_instance_present_in_inventory(snapshot: dict, instance_id: int) -> None:
+    try:
+        _assert_instance_absent_from_inventory(snapshot, instance_id)
+    except BotAssertionError:
+        return
+    raise BotAssertionError(f"合法 move 后实例 {instance_id} 必须进入玩家背包")

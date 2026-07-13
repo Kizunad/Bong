@@ -140,17 +140,52 @@ class ServerDataDecodeTest(unittest.TestCase):
     def test_proto_loot_container_update_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_loot_container_update_bytes())
 
-        self.assertEqual(decoded["type"], "loot_container_update")
-        self.assertEqual(decoded["session_id"], 7)
-        self.assertEqual(decoded["placed_items"][0]["container_id"], "ext_7")
-        self.assertEqual(decoded["placed_items"][0]["item"]["instance_id"], 99)
+        self.assertEqual(
+            decoded["type"],
+            "loot_container_update",
+            "expected type=loot_container_update so the bot dispatches the authoritative "
+            f"update payload, actual={decoded['type']}",
+        )
+        self.assertEqual(
+            decoded["session_id"],
+            7,
+            "expected session_id=7 so the update remains bound to its opened session, "
+            f"actual={decoded['session_id']}",
+        )
+        self.assertEqual(
+            decoded["placed_items"][0]["container_id"],
+            "ext_7",
+            "expected container_id=ext_7 so the update targets the session container, "
+            f"actual={decoded['placed_items'][0]['container_id']}",
+        )
+        self.assertEqual(
+            decoded["placed_items"][0]["item"]["instance_id"],
+            99,
+            "expected instance_id=99 so the update preserves item identity, "
+            f"actual={decoded['placed_items'][0]['item']['instance_id']}",
+        )
 
     def test_proto_loot_container_close_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_loot_container_close_bytes())
 
-        self.assertEqual(decoded["type"], "loot_container_close")
-        self.assertEqual(decoded["session_id"], 7)
-        self.assertEqual(decoded["reason"], "distance")
+        self.assertEqual(
+            decoded["type"],
+            "loot_container_close",
+            "expected type=loot_container_close so the bot dispatches the close payload, "
+            f"actual={decoded['type']}",
+        )
+        self.assertEqual(
+            decoded["session_id"],
+            7,
+            "expected session_id=7 so close invalidates the opened session, "
+            f"actual={decoded['session_id']}",
+        )
+        self.assertEqual(
+            decoded["reason"],
+            "distance",
+            "expected reason=distance so the bot observes the server rejection cause, "
+            f"actual={decoded['reason']}",
+        )
 
 
 class InventoryHelperTest(unittest.TestCase):
