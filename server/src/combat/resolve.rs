@@ -3293,6 +3293,357 @@ mod tests {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P4 opus verifier MAJOR — armor coverage 折算真实伤害差
+    // 集成测试：`legacy_part_for_wound_with_morph`/`apply_armor_mitigation` 此前
+    // 只有纯函数逻辑却零测试断言真实伤害数值差。走真实 ECS 全链路
+    // （`attribute_aggregate_tick` → `sync_armor_to_derived_attrs` →
+    // `resolve_attack_intents`），合成 whale intrinsic（本体部位 `tail_fin`，无
+    // legacy 对应物）+ human form `MorphState`（`RaceRegistry.morph_pairs` 声明
+    // `chest`(human/to 部位) → `tail_fin`(whale/from 部位) 映射），穿人形胸甲：
+    // - 有 `MorphState` 时命中经 part_mapping 逆查折算回 `chest` legacy 部位，
+    //   armor 减免真实生效（伤势/contam 被压低）；
+    // - 对照组同一件甲、同一本体部位，缺 `MorphState` 时 `tail_fin` 没有 legacy
+    //   对应物，`apply_armor_mitigation` 提前 `None`，伤害不被减免（severity 更高）。
+    mod morph_armor_coverage_integration_tests {
+        use super::*;
+        use crate::body_plan::race_registry::{MorphPairDef, RaceEntry};
+        use crate::body_plan::types::{BodyPartDef, HitGeometry, PartBox, PartConsequence};
+        use crate::body_plan::{BodyPartId, BodyPlanId, MorphState, RaceId};
+        use crate::combat::armor::{ArmorProfile, ArmorProfileRegistry};
+        use std::collections::HashMap;
+
+        /// whale 本体构型——唯一部位 `tail_fin`，几何与
+        /// `non_humanoid_consequence_integration_tests::single_part_plan` 同款已核验
+        /// 命中盒（攻方 feet=[-2,64,0]、目标 feet=[0,64,0]、FIST_REACH 必命中）。
+        fn whale_intrinsic_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: BodyPlanId::new("test_whale_intrinsic_plan"),
+                display_name: "测试飞鲸本体构型".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: BodyPartId::new("tail_fin"),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::PartBoxes {
+                    boxes: vec![PartBox {
+                        part_id: BodyPartId::new("tail_fin"),
+                        offset: [-1.0, 1.2, 0.0],
+                        half_extents: [0.45, 0.45, 0.45],
+                        priority: 0,
+                    }],
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: HashMap::new(),
+            }
+        }
+
+        /// human form 构型——只需存在 `chest` 部位供 `part_mapping` 校验命中，几何
+        /// 本身不参与本测试（`BodyPlanPurpose::Intrinsic` 恒读 whale 本体几何，
+        /// `resolve_body_plan_for_target` 在本测试路径不会解析 form 构型）。
+        fn human_form_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: BodyPlanId::new("test_human_form_plan"),
+                display_name: "测试人形形态构型".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: BodyPartId::new("chest"),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::PartBoxes {
+                    boxes: vec![PartBox {
+                        part_id: BodyPartId::new("chest"),
+                        offset: [-1.0, 1.2, 0.0],
+                        half_extents: [0.45, 0.45, 0.45],
+                        priority: 0,
+                    }],
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: HashMap::new(),
+            }
+        }
+
+        /// whale↔human morph_pair 注册：`part_mapping` 方向 = form_part(to=human
+        /// 的 `chest`) → intrinsic_part(from=whale 的 `tail_fin`)。
+        fn whale_human_registries() -> (BodyPlanRegistry, RaceRegistry) {
+            let body_plans =
+                BodyPlanRegistry::from_plans(vec![whale_intrinsic_plan(), human_form_plan()])
+                    .expect("whale+human test plans must validate");
+            let mut part_mapping = HashMap::new();
+            part_mapping.insert(BodyPartId::new("chest"), BodyPartId::new("tail_fin"));
+            let races = RaceRegistry::from_parts_for_test(
+                vec![
+                    RaceEntry {
+                        id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                        display_name: "人族".to_string(),
+                        body_plan_id: BodyPlanId::new("test_human_form_plan"),
+                        beast_kinds: vec![],
+                    },
+                    RaceEntry {
+                        id: RaceId::new("whale"),
+                        display_name: "飞鲸".to_string(),
+                        body_plan_id: BodyPlanId::new("test_whale_intrinsic_plan"),
+                        beast_kinds: vec![],
+                    },
+                ],
+                vec![MorphPairDef {
+                    from: RaceId::new("whale"),
+                    to: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    part_mapping,
+                }],
+                &body_plans,
+            )
+            .expect("whale<->human morph pair fixture must validate");
+            (body_plans, races)
+        }
+
+        /// 组装最小 App：真实 `attribute_aggregate_tick` → `sync_armor_to_derived_attrs`
+        /// → `resolve_attack_intents` 链路 + whale/human registries + 人形胸甲
+        /// `ArmorProfileRegistry`。`with_morph=true` 时给 target 挂 `MorphState{form:
+        /// human}`；`false` 时不挂（对照组，`tail_fin` 无 legacy 对应物，armor 减免
+        /// 提前 `None`）。
+        fn setup_morph_armor_app(with_morph: bool) -> (App, Entity, Entity) {
+            let (body_plans, races) = whale_human_registries();
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 2000 });
+            app.insert_resource(body_plans);
+            app.insert_resource(races);
+            app.add_event::<AttackIntent>();
+            app.add_event::<ApplyStatusEffectIntent>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<DeathEvent>();
+            app.add_event::<SkillXpGain>();
+            app.add_event::<crate::combat::weapon::WeaponBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+            app.add_event::<InventoryDurabilityChangedEvent>();
+
+            app.insert_resource(crate::inventory::ItemRegistry::default());
+            app.insert_resource(ArmorProfileRegistry::from_map(std::collections::HashMap::from(
+                [(
+                    "test_whale_form_chestplate".to_string(),
+                    ArmorProfile {
+                        slot: EquipSlotV1::Chest,
+                        body_coverage: vec![BodyPart::Chest],
+                        kind_mitigation: std::collections::HashMap::from([(
+                            WoundKind::Blunt,
+                            0.5,
+                        )]),
+                        durability_max: 100,
+                        broken_multiplier: 0.3,
+                    },
+                )],
+            )));
+
+            app.add_systems(
+                Update,
+                (
+                    crate::combat::status::attribute_aggregate_tick,
+                    crate::combat::weapon::sync_weapon_component_from_equipped,
+                    crate::combat::armor_sync::sync_armor_to_derived_attrs,
+                    resolve_attack_intents,
+                ),
+            );
+
+            let attacker = spawn_player(
+                &mut app,
+                "MorphArmorAttacker",
+                [-2.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let target = spawn_player(
+                &mut app,
+                "MorphArmorTarget",
+                [0.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            // target 本体种族 = whale（intrinsic），覆盖 spawn_player 默认的 "human"。
+            app.world_mut().entity_mut(target).insert(Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 60.0,
+                qi_max: 100.0,
+                race: RaceId::new("whale"),
+                ..Cultivation::default()
+            });
+            if with_morph {
+                app.world_mut()
+                    .entity_mut(target)
+                    .insert(MorphState::new(RaceId::new(crate::body_plan::HUMAN_RACE_ID), 0, 0));
+            }
+            app.world_mut().entity_mut(target).insert(PlayerInventory {
+                triggered_treasures: Vec::new(),
+                revision: InventoryRevision(1),
+                containers: vec![ContainerState {
+                    quick_access: false,
+                    id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                    name: "主背包".to_string(),
+                    rows: 5,
+                    cols: 7,
+                    items: vec![],
+                    owner_instance_id: None,
+                }],
+                equipped: std::collections::HashMap::from([(
+                    crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+                    crate::inventory::SlotContents::worn_single(ItemInstance {
+                        instance_id: 9001,
+                        template_id: "test_whale_form_chestplate".to_string(),
+                        display_name: "测试人形形态胸甲".to_string(),
+                        grid_w: 2,
+                        grid_h: 2,
+                        weight: 5.0,
+                        rarity: crate::inventory::ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 1.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                        alchemy: None,
+                        lingering_owner_qi: None,
+                    }),
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 50.0,
+            });
+
+            app.update();
+            (app, attacker, target)
+        }
+
+        fn send_morph_armor_attack(app: &mut App, attacker: Entity, target: Entity) {
+            app.world_mut().send_event(AttackIntent {
+                attacker,
+                target: Some(target),
+                issued_at_tick: 1999,
+                reach: FIST_REACH,
+                qi_invest: 10.0,
+                wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
+                debug_command: None,
+            });
+            app.update();
+        }
+
+        #[test]
+        fn morphed_target_gets_real_armor_mitigation_via_part_mapping_fold_back() {
+            let (mut app, attacker, target) = setup_morph_armor_app(true);
+            send_morph_armor_attack(&mut app, attacker, target);
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+            assert_eq!(wounds.entries.len(), 1, "应恰好写入一条本体 tail_fin 伤口");
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPartId::new("tail_fin"),
+                "命中几何解析恒用 BodyPlanPurpose::Intrinsic（whale 本体），\
+                 MorphState 不改变命中落点，只影响护甲折算"
+            );
+
+            let combat_events = app.world().resource::<Events<CombatEvent>>();
+            let event = combat_events
+                .iter_current_update_events()
+                .next()
+                .expect("combat event should emit");
+            assert!(
+                event.contam_delta < f64::from(event.damage) * 0.25,
+                "有 MorphState 时 tail_fin 命中经 part_mapping 折算回 chest legacy \
+                 部位，应命中 defense_profile 条目，护甲把 contam 压到 \
+                 ARMOR_HIT_CONTAMINATION_MULTIPLIER(0.1) 量级（远低于无甲基线 \
+                 0.25），实测 contam_delta={} event.damage={}",
+                event.contam_delta,
+                event.damage
+            );
+
+            let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
+            assert!(
+                inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].worn[0].durability < 1.0,
+                "护甲真实生效时应扣减耐久——耐久掉落是护甲折算命中的外部可观察副作用"
+            );
+        }
+
+        #[test]
+        fn unmorphed_target_same_armor_same_intrinsic_part_gets_no_mitigation() {
+            let (mut app, attacker, target) = setup_morph_armor_app(false);
+            send_morph_armor_attack(&mut app, attacker, target);
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+            assert_eq!(wounds.entries.len(), 1);
+            assert_eq!(wounds.entries[0].location, BodyPartId::new("tail_fin"));
+
+            let combat_events = app.world().resource::<Events<CombatEvent>>();
+            let event = combat_events
+                .iter_current_update_events()
+                .next()
+                .expect("combat event should emit");
+            // 无 MorphState 时 legacy_part_for_wound_with_morph 直接
+            // id_to_legacy_body_part("tail_fin") = None（非人形 8 段字符串），
+            // apply_armor_mitigation 提前 `?` 返回 None——armor 完全不生效，
+            // contam_delta 应落在无甲基线 damage * 0.25 * 1.0 * 0.8（截脉系数）。
+            let expected_contam_no_mitigation = f64::from(event.damage) * 0.25 * 1.0 * 0.8;
+            assert!(
+                (event.contam_delta - expected_contam_no_mitigation).abs() < 1e-9,
+                "同一件甲、同一本体部位（tail_fin），缺 MorphState 时应完全不生效\
+                 （contam_delta 落在无甲基线），实测 contam_delta={} 期望={}",
+                event.contam_delta,
+                expected_contam_no_mitigation
+            );
+
+            let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
+            assert_eq!(
+                inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].worn[0].durability, 1.0,
+                "armor 未生效（未命中折算）不应扣减耐久"
+            );
+        }
+
+        #[test]
+        fn morphed_target_takes_less_severity_than_unmorphed_control() {
+            // 同一 qi_invest/wound_kind/攻防几何，唯一变量是 MorphState 在/不在——
+            // 直接断言两组的 wound.severity 数值差，锁住"armor 真的减免了伤害"这条
+            // 最终外部可观察后果（不只是 contam 侧信号）。
+            let (mut app_with_morph, attacker_a, target_a) = setup_morph_armor_app(true);
+            send_morph_armor_attack(&mut app_with_morph, attacker_a, target_a);
+            let severity_with_morph = app_with_morph
+                .world()
+                .entity(target_a)
+                .get::<Wounds>()
+                .unwrap()
+                .entries[0]
+                .severity;
+
+            let (mut app_without_morph, attacker_b, target_b) = setup_morph_armor_app(false);
+            send_morph_armor_attack(&mut app_without_morph, attacker_b, target_b);
+            let severity_without_morph = app_without_morph
+                .world()
+                .entity(target_b)
+                .get::<Wounds>()
+                .unwrap()
+                .entries[0]
+                .severity;
+
+            assert!(
+                severity_with_morph < severity_without_morph,
+                "有 MorphState（armor 折算生效）的伤势应严格低于无 MorphState 的对照组\
+                （armor 折算不生效），实测 with_morph={severity_with_morph} \
+                 without_morph={severity_without_morph}"
+            );
+        }
+    }
+
     fn spawn_npc(app: &mut App, position: [f64; 3], wounds: Wounds, stamina: Stamina) -> Entity {
         let entity = app
             .world_mut()
