@@ -284,7 +284,7 @@ pub(crate) fn elder_encounter_s2c_death_system(
 ///
 /// - `elder_encounter_s2c_appear_system`：与 P3 appear event 同步运行
 /// - `elder_encounter_s2c_dan_received_system`：在 `give_dan_system` 之后运行
-/// - `elder_encounter_s2c_death_system`：状态生产者之后、`death_system` 之前运行
+/// - `elder_encounter_s2c_death_system`：收丹反馈与状态生产者之后、`death_system` 之前运行
 pub fn register(app: &mut App) {
     app.add_systems(
         Update,
@@ -294,6 +294,7 @@ pub fn register(app: &mut App) {
             elder_encounter_s2c_death_system
                 .after(dying_elder_drain_system)
                 .after(dying_elder_betray_system)
+                .after(elder_encounter_s2c_dan_received_system)
                 .before(dying_elder_death_system),
         ),
     );
@@ -437,6 +438,82 @@ mod tests {
         assert!(
             !elder_ref.contains::<crate::fauna::dying_elder::DyingElderDeathProcessed>(),
             "测试刻意不注册死亡结算系统，确保通知幂等不依赖结算 marker"
+        );
+    }
+
+    #[test]
+    fn fifth_dan_s2c_feedback_orders_terminal_event_last() {
+        use valence::entity::EntityId;
+        use valence::prelude::{App, Client, DVec3, Position};
+        use valence::protocol::packets::play::CustomPayloadS2c;
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_event::<DyingElderAppearedEvent>();
+        app.add_event::<DyingElderDanAcceptedEvent>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].name = "tsy_deep".to_string();
+        app.insert_resource(zones);
+        register(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut()
+            .spawn(client_bundle)
+            .insert(Position::new([0.0, 64.0, 0.0]))
+            .insert(CurrentDimension(DimensionKind::Overworld));
+        let player = app.world_mut().spawn_empty().id();
+        let elder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityId::default(),
+                DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0),
+                DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                },
+            ))
+            .id();
+        app.world_mut().send_event(DyingElderDanAcceptedEvent {
+            player,
+            elder,
+            pill_instance_id: 5,
+            qi_gain: 60.0,
+            dan_count: crate::fauna::dying_elder::DYING_ELDER_DAN_THRESHOLD,
+            qi_fraction: 1.0,
+        });
+
+        app.update();
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush");
+        }
+
+        let kinds = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != CH_ELDER_ENCOUNTER {
+                    return None;
+                }
+                Some(
+                    serde_json::from_slice::<ElderEncounterEventV1>(packet.data.0 .0)
+                        .expect("elder feedback payload should decode")
+                        .event_kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                ElderEncounterEventKindV1::DanReceived,
+                ElderEncounterEventKindV1::DeadNatural,
+            ],
+            "第五颗丹同帧 S2C 必须先收丹、后终态，确保 HUD 最终保持关闭"
         );
     }
 

@@ -1735,10 +1735,12 @@ pub fn register_p3(app: &mut App) {
         Update,
         (
             dying_elder_p3_emit_appear_event_system,
-            // 状态生产者完成后立即广播；结算失败重试不应重复叙事。
+            // 第五颗丹同帧产生收丹与终态反馈：先广播收丹，终态必须最后到达，
+            // 避免 client/agent 被后到的 DanReceived 覆盖死亡状态。
             dying_elder_p3_emit_death_event_system
                 .after(dying_elder_drain_system)
                 .after(dying_elder_betray_system)
+                .after(dying_elder_p3_emit_dan_received_event_system)
                 .before(dying_elder_death_system),
             // dan_received broadcast 在 give_dan_system 之后（状态已更新后再广播）
             dying_elder_p3_emit_dan_received_event_system.after(dying_elder_give_dan_system),
@@ -4627,6 +4629,61 @@ mod tests {
             Ok(RedisOutbound::ElderEncounterEvent(_))
         ));
         assert!(live_rx.try_recv().is_err(), "恢复 tick 只能广播一次");
+    }
+
+    #[test]
+    fn fifth_dan_redis_feedback_orders_terminal_event_last() {
+        use crate::network::redis_bridge::{RedisInbound, RedisOutbound};
+        use valence::prelude::App;
+
+        let mut app = App::new();
+        app.add_event::<DyingElderAppearedEvent>();
+        app.add_event::<DyingElderDanAcceptedEvent>();
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded::<RedisInbound>();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        register_p3(&mut app);
+
+        let player = app.world_mut().spawn_empty().id();
+        let elder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityId::default(),
+                DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0),
+                DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                },
+            ))
+            .id();
+        app.world_mut().send_event(DyingElderDanAcceptedEvent {
+            player,
+            elder,
+            pill_instance_id: 5,
+            qi_gain: 60.0,
+            dan_count: DYING_ELDER_DAN_THRESHOLD,
+            qi_fraction: 1.0,
+        });
+
+        app.update();
+
+        let kinds = std::iter::from_fn(|| rx_outbound.try_recv().ok())
+            .filter_map(|outbound| match outbound {
+                RedisOutbound::ElderEncounterEvent(event) => Some(event.event_kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                ElderEncounterEventKindV1::DanReceived,
+                ElderEncounterEventKindV1::DeadNatural,
+            ],
+            "第五颗丹同帧反馈必须先收丹、后终态，确保 agent 最终叙事不回退"
+        );
     }
 
     #[test]
