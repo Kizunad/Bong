@@ -92,8 +92,14 @@ function discoverCalledSchemaValidators(directory: string): Set<string> {
         if (validator) bindings.set(declaration.name.text, validator);
       }
     const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node)) {
-        const validator = validatorFor(node.expression);
+      if (ts.isIdentifier(node)) {
+        const validator = bindings.get(node.text);
+        const isDeclaration =
+          ts.isImportSpecifier(node.parent) ||
+          (ts.isVariableDeclaration(node.parent) && node.parent.name === node);
+        if (validator && !isDeclaration) found.add(validator);
+      } else if (ts.isPropertyAccessExpression(node)) {
+        const validator = validatorFor(node);
         if (validator) found.add(validator);
       }
       ts.forEachChild(node, visit);
@@ -230,8 +236,8 @@ describe("generated schema freshness gate", () => {
 
   it("requires justified live exemptions and excludes test-only calls", () => {
     const directory = createTempDir();
-    writeFileSync(join(directory, "runtime.ts"), 'import { validateFooV1Contract as original } from "@bong/schema"; const check = original; check({});\n');
-    writeFileSync(join(directory, "namespace.tsx"), 'import * as schema from "@bong/schema"; schema.validateBazV1Contract({});\n');
+    writeFileSync(join(directory, "runtime.ts"), 'import { validateFooV1Contract as original } from "@bong/schema"; const check = original; const config = { validate: original }; consume(original); check({}); void config;\n');
+    writeFileSync(join(directory, "namespace.tsx"), 'import * as schema from "@bong/schema"; const config = { validate: schema.validateBazV1Contract }; void config;\n');
     for (const ignored of ["ignored.test.ts", "ignored.test.tsx", "ignored.spec.ts", "ignored.spec.tsx"]) writeFileSync(join(directory, ignored), 'import { validateBarV1Contract } from "@bong/schema"; validateBarV1Contract({});\n');
     const testsDir = join(directory, "__tests__"); mkdirSync(testsDir);
     writeFileSync(join(testsDir, "hidden.ts"), 'import { validateHiddenV1Contract } from "@bong/schema"; validateHiddenV1Contract({});\n');
