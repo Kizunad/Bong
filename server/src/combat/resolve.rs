@@ -84,16 +84,53 @@ use crate::world::zone::ZoneRegistry;
 const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
 const ARMOR_HIT_DURABILITY_COST_POINTS: f64 = 0.5;
 
+/// plan-race-system-v1 P4（决议 §风险#2 修复）—— 把命中落在的 intrinsic 部位折算成
+/// 供护甲 `body_coverage`/`defense_profile` 匹配用的 legacy `BodyPart`。
+///
+/// 未易形（`morph_state = None`）或无可用 `RaceRegistry` 时，行为与 P0-P3 完全一致：
+/// 直接 `id_to_legacy_body_part(intrinsic_part)`（非人形 intrinsic 部位无 legacy 对应物
+/// 时返回 `None`，护甲减免不生效——这条既有行为不变）。
+///
+/// 已易形时：`intrinsic_part` 往往是非人形部位（如飞鲸 `tail_fin`），直接转 legacy 会
+/// 提前 `None`，静默吞掉玩家实际穿着的"形态外观"护甲减免。本函数改为先经
+/// `MorphPairDef.part_mapping`（方向 form_part → intrinsic_part）**逆查**出对应的
+/// form 部位（如 human 形态的 "chest"），再对 **form 部位** 转 legacy——form 通常是
+/// 人形构型，转换能成功，从而让形态外观护甲的减免继续折算回本体伤害。
+fn legacy_part_for_wound_with_morph(
+    intrinsic_part: &crate::body_plan::BodyPartId,
+    morph_state: Option<&crate::body_plan::MorphState>,
+    intrinsic_race: Option<&crate::body_plan::RaceId>,
+    races: Option<&RaceRegistry>,
+) -> Option<BodyPart> {
+    if let (Some(morph), Some(intrinsic_race), Some(races)) = (morph_state, intrinsic_race, races)
+    {
+        if let Some(pair) = races.resolve_morph_pair(intrinsic_race, &morph.form) {
+            if let Some(form_part) = pair.form_part_for_intrinsic(intrinsic_part) {
+                if let Some(legacy) = crate::body_plan::id_to_legacy_body_part(form_part) {
+                    return Some(legacy);
+                }
+            }
+        }
+    }
+    crate::body_plan::id_to_legacy_body_part(intrinsic_part)
+}
+
 fn apply_armor_mitigation(
     wound: &mut Wound,
     derived: &DerivedAttrs,
     contam: &mut f64,
+    morph_state: Option<&crate::body_plan::MorphState>,
+    intrinsic_race: Option<&crate::body_plan::RaceId>,
+    races: Option<&RaceRegistry>,
 ) -> Option<f32> {
     // humanoid-only boundary（P0 决议，本轮不迁移）：`DerivedAttrs.defense_profile` 仍以
     // legacy `BodyPart` 为键（护甲/体修被动减伤矩阵本轮不迁移，P1 批次范围）；非人形
     // 部位 id 没有 legacy 对应物时，视为"该部位没有任何护甲/被动减伤条目"（`None`，
     // 与今天"这个 (part, kind) 组合没配置"的既有语义完全一致），显式 `?` 提前返回。
-    let legacy_part = crate::body_plan::id_to_legacy_body_part(&wound.location)?;
+    // plan-race-system-v1 P4：MorphState 在场时绕过这条静默吞减免的分支，经
+    // part_mapping 逆查折算回 form 部位再转 legacy（见 `legacy_part_for_wound_with_morph`）。
+    let legacy_part =
+        legacy_part_for_wound_with_morph(&wound.location, morph_state, intrinsic_race, races)?;
     let &m = derived.defense_profile.get(&(legacy_part, wound.kind))?;
     if m <= 0.0 {
         return None;
@@ -151,7 +188,9 @@ type CombatTargetItem<'a> = (
     Option<&'a mut PracticeLog>,
     Option<&'a mut MultiPointActive>,
     Option<&'a MeridianHardenActive>,
-    Option<&'a BackfireAmplification>,
+    // plan-race-system-v1 P4 —— 元组已达 15 元素（WorldQuery 元组上限附近，见其余处
+    // 同款注释），新增 `MorphState` 查询嵌套进最后一个元素而非追加顶层第 16 项。
+    (Option<&'a BackfireAmplification>, Option<&'a crate::body_plan::MorphState>),
 );
 type CombatAttackerItem<'a> = (
     &'a mut Cultivation,
@@ -510,6 +549,7 @@ pub fn resolve_attack_intents(
                 BodyPlanResolveInputs {
                     cultivation: defender_cultivation_for_plan.as_deref(),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 body_plan_registry.as_deref(),
                 race_registry.as_deref(),
@@ -585,6 +625,7 @@ pub fn resolve_attack_intents(
                 BodyPlanResolveInputs {
                     cultivation: Some(&*attacker_cultivation),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 body_plan_registry.as_deref(),
                 race_registry.as_deref(),
@@ -647,11 +688,17 @@ pub fn resolve_attack_intents(
             defender_practice_log,
             mut multipoint_active,
             harden_active,
-            backfire_amplification,
+            (backfire_amplification, defender_morph_state),
         )) = target_query.get_mut(target_entity)
         else {
             continue;
         };
+        // plan-race-system-v1 P4 —— 提前克隆一份本体 race 快照（`defender_cultivation`
+        // 在下方 `!is_physical_hit` 分支会被按值移动进临时 `if let` 元组，之后不再可借用）；
+        // 护甲折算（`apply_armor_mitigation` / 耐久扣减分支）需要在移动点之后仍能读取
+        // 本体 race，故这里先克隆一份 owned 快照，不依赖后续借用存活。
+        let defender_race_snapshot: Option<crate::body_plan::RaceId> =
+            defender_cultivation.as_deref().map(|c| c.race.clone());
         // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 防御方副手臂（持盾侧）伤势削减
         // 格挡/招架减伤效果：Laceration ×0.80(-20%)/Fracture·Severed ×0.60(-40%)。
         // 读取本次命中造成的伤口写入 wounds.entries 之前的既有伤势状态。
@@ -1393,8 +1440,14 @@ pub fn resolve_attack_intents(
         // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
         // 截脉当前只影响污染与额外 concussion，不直接改变本次伤口 severity。
         if let Some(attrs) = defender_attrs.as_deref() {
-            let armor_mitigation =
-                apply_armor_mitigation(&mut wound, attrs, &mut emitted_contam_delta);
+            let armor_mitigation = apply_armor_mitigation(
+                &mut wound,
+                attrs,
+                &mut emitted_contam_delta,
+                defender_morph_state,
+                defender_race_snapshot.as_ref(),
+                race_registry.as_deref(),
+            );
 
             // 护甲命中：扣减装备耐久（少量）。
             if let (Some(_m), Some(armor_profiles)) = (armor_mitigation, armor_profiles.as_deref())
@@ -1416,9 +1469,17 @@ pub fn resolve_attack_intents(
                         // body_coverage` 仍以 legacy `BodyPart` 8 段为键（护甲系统本轮不
                         // 迁移，P1 批次范围）；非人形部位 id 没有 legacy 对应物时，视为
                         // "这件护甲不可能覆盖该部位"（护甲系统本就假设人形躯体），显式
-                        // 提前返回而非静默吞掉。
-                        let legacy_part =
-                            crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id)?;
+                        // 提前返回而非静默吞掉。plan-race-system-v1 P4：MorphState 在场
+                        // 时经 part_mapping 逆查折算回 form 部位再转 legacy（同上
+                        // `apply_armor_mitigation` 调用点的同款折算，见
+                        // `legacy_part_for_wound_with_morph`），耐久扣减目标与实际吃到
+                        // 减免的护甲件保持一致。
+                        let legacy_part = legacy_part_for_wound_with_morph(
+                            &hit_probe.part_id,
+                            defender_morph_state,
+                            defender_race_snapshot.as_ref(),
+                            race_registry.as_deref(),
+                        )?;
                         if !ap.body_coverage.contains(&legacy_part) {
                             return None;
                         }
@@ -2223,6 +2284,7 @@ fn body_part_multipliers(
             BodyPlanResolveInputs {
                 cultivation: defender_cultivation,
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans,
             races,

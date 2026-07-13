@@ -427,6 +427,10 @@ pub struct SkillScrollRequestParams<'w, 's> {
     /// 文档化的退化行为）。
     pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
     pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
+    /// plan-race-system-v1 P4 —— 当前易形形态。习得门 `form_anchors_open` 消费点
+    /// （`learn_technique_if_allowed` 调用点判定本体经脉是否满足易形前置）与
+    /// `handle_inventory_move` Form 身份判定（装备门）共用本查询。
+    pub morph_states: Query<'w, 's, Option<&'static crate::body_plan::MorphState>>,
 }
 
 type NpcEngagementItem = (
@@ -1822,6 +1826,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.vfx_events.as_deref_mut(),
                     combat_params.body_plans.as_deref(),
                     combat_params.race_registry.as_deref(),
+                    &skill_scroll_params.morph_states,
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1869,6 +1874,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.vfx_events.as_deref_mut(),
                     combat_params.body_plans.as_deref(),
                     combat_params.race_registry.as_deref(),
+                    &skill_scroll_params.morph_states,
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -3136,24 +3142,25 @@ fn handle_learn_technique_scroll(
             .get(entity)
             .ok()
             .flatten();
-        let intrinsic_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+        let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
             entity,
             crate::body_plan::BodyPlanPurpose::Intrinsic,
             crate::body_plan::BodyPlanResolveInputs {
                 cultivation: Some(cultivation),
                 beast_kind: None,
+                morph_state: None,
             },
             skill_scroll_params.body_plans.as_deref(),
             skill_scroll_params.race_registry.as_deref(),
-        )
-        .is_humanoid;
+        );
         can_learn_technique(
             known,
             cultivation,
             &meridians,
             severed,
             technique_id.as_str(),
-            intrinsic_is_humanoid,
+            intrinsic_plan.is_humanoid,
+            intrinsic_plan.meridian_profile.as_ref(),
         )
     };
 
@@ -3182,17 +3189,17 @@ fn handle_learn_technique_scroll(
                 .get(entity)
                 .ok()
                 .flatten();
-            let intrinsic_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+            let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
                 entity,
                 crate::body_plan::BodyPlanPurpose::Intrinsic,
                 crate::body_plan::BodyPlanResolveInputs {
                     cultivation: Some(cultivation),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 skill_scroll_params.body_plans.as_deref(),
                 skill_scroll_params.race_registry.as_deref(),
-            )
-            .is_humanoid;
+            );
             matches!(
                 learn_technique_if_allowed(
                     &mut known,
@@ -3201,7 +3208,8 @@ fn handle_learn_technique_scroll(
                     severed,
                     technique_id.as_str(),
                     0.0,
-                    intrinsic_is_humanoid,
+                    intrinsic_plan.is_humanoid,
+                    intrinsic_plan.meridian_profile.as_ref(),
                 ),
                 ScrollReadOutcome::Learned
             )
@@ -3241,6 +3249,7 @@ fn handle_learn_technique_scroll(
             ScrollReadOutcome::RaceMismatch => "technique_scroll_race_mismatch",
             ScrollReadOutcome::MeridianSevered { .. } => "technique_scroll_meridian_severed",
             ScrollReadOutcome::MeridianMissing { .. } => "technique_scroll_meridian_missing",
+            ScrollReadOutcome::FormAnchorClosed => "technique_scroll_form_anchor_closed",
             ScrollReadOutcome::InvalidScroll => "technique_scroll_invalid",
         },
     );
@@ -12212,6 +12221,7 @@ fn handle_skill_bar_cast(
             crate::body_plan::BodyPlanResolveInputs {
                 cultivation: combat_params.cultivations.get(entity).ok(),
                 beast_kind: None,
+                morph_state: None,
             },
             combat_params.body_plans.as_deref(),
             combat_params.race_registry.as_deref(),
@@ -12234,6 +12244,52 @@ fn handle_skill_bar_cast(
                         duration_ms: 0,
                         started_at_ms: current_unix_millis(),
                         outcome: CastOutcomeV1::RejectRaceMismatch,
+                    },
+                    username.0.as_str(),
+                    entity,
+                );
+            }
+            return;
+        }
+    }
+
+    // plan-race-system-v1 P4 —— 易形类技能（`morph.yixing`）专属前置门：race gate 后、
+    // 通用经脉门前。判据是本体（Intrinsic）`MeridianProfile` 内全部 `FormAnchor` 经脉
+    // 已通且未断（见 `body_plan::form_anchors_open`），与 `learn_technique_if_allowed`
+    // 的习得门共用同一判据函数，保持"能学就能放、不能放就不该学"的一致性。
+    if crate::body_plan::technique_requires_form_anchor(&skill_id) {
+        let meridians_ok = combat_params.meridians.get(entity).ok();
+        let severed = combat_params.player_severed.get(entity).ok().flatten();
+        let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: combat_params.cultivations.get(entity).ok(),
+                beast_kind: None,
+                morph_state: None,
+            },
+            combat_params.body_plans.as_deref(),
+            combat_params.race_registry.as_deref(),
+        );
+        let anchors_ok = meridians_ok
+            .zip(intrinsic_plan.meridian_profile.as_ref())
+            .is_some_and(|(meridians, profile)| {
+                crate::body_plan::form_anchors_open(profile, meridians, severed)
+            });
+        if !anchors_ok {
+            tracing::warn!(
+                "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+                 rejected: form anchor gate closed (FormAnchor channels not fully open/unsevered)"
+            );
+            if let Ok((username, mut client)) = clients.get_mut(entity) {
+                push_cast_sync(
+                    &mut client,
+                    CastSyncV1 {
+                        phase: CastPhaseV1::Idle,
+                        slot,
+                        duration_ms: 0,
+                        started_at_ms: current_unix_millis(),
+                        outcome: CastOutcomeV1::MeridianGated,
                     },
                     username.0.as_str(),
                     entity,
@@ -13184,6 +13240,9 @@ fn handle_inventory_move(
     // 优雅退化到 humanoid（`resolve_body_plan_for_target` 文档化的退化行为）。
     body_plans: Option<&crate::body_plan::BodyPlanRegistry>,
     race_registry: Option<&crate::body_plan::RaceRegistry>,
+    // plan-race-system-v1 P4 —— 当前易形形态（`None` = 未易形），驱动 Form 身份判定的
+    // 权威真源（见下方 `form_race_id` 修复注释）。
+    morph_states: &Query<Option<&crate::body_plan::MorphState>>,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -13241,20 +13300,24 @@ fn handle_inventory_move(
         }
     }
 
-    // plan-race-system-v1 P3b（决议 §8.1 #5）—— 装备门判定用 Form 身份；未易形时
-    // `resolve_body_plan_for_target(Form)` 与 `Intrinsic` 恒等（P4 MorphState 落地前，
-    // 见 `body_plan::resolve` 模块文档），因此这里已经是易形接入后的正确调用点，
-    // 无需 P4 落地时改动本处。
-    let form_race_id = cultivations
-        .get(entity)
-        .map(|c| c.race.clone())
-        .unwrap_or_else(|_| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+    // plan-race-system-v1 P4（决议 §8.1 #5 修复）—— 装备门判定用 Form 身份：已易形
+    // （`MorphState` 在场）时权威真源是 `MorphState.form`，**不再**冒用本体
+    // `Cultivation.race`——此前这里恒等于本体 race，未易形态下二者恰好相等掩盖了
+    // 问题，易形后会让本体应当被拒绝穿戴的装备错误放行 / 应当放行的装备错误拒绝。
+    let morph_state = morph_states.get(entity).ok().flatten();
+    let form_race_id = morph_state.map(|m| m.form.clone()).unwrap_or_else(|| {
+        cultivations
+            .get(entity)
+            .map(|c| c.race.clone())
+            .unwrap_or_else(|_| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID))
+    });
     let form_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
         entity,
         crate::body_plan::BodyPlanPurpose::Form,
         crate::body_plan::BodyPlanResolveInputs {
             cultivation: cultivations.get(entity).ok(),
             beast_kind: None,
+            morph_state,
         },
         body_plans,
         race_registry,

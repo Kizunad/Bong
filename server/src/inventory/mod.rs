@@ -5047,6 +5047,105 @@ pub fn rebuild_and_drop_overflow(
     dropped_ids
 }
 
+/// plan-race-system-v1 P4（决议 §6）—— 易形解除（手动再 cast / 死亡 / 下线三种触发）
+/// 后的装备门重校验：本体（intrinsic）race/is_humanoid 恢复权威真源后，遍历全部身体槽
+/// worn 层 + 手槽 held 装备，凡 `ItemTemplate.wearer_race` 不再放行本体身份的物件——
+/// 移出装备槽，优先塞进玩家现有容器（复用 `find_first_fit_container_location` +
+/// `attach_at_location`，与 `rebuild_and_drop_overflow` 同一套 spill 机制），容器也放
+/// 不下时转 `DroppedLootRegistry` 地面掉落（禁止静默销毁——塔科夫式直觉）。
+///
+/// 返回 (背包收容的 instance_id 列表, 地面掉落的 instance_id 列表)，供调用方日志 /
+/// 测试断言"解除后无非法装备残留"。
+pub fn enforce_intrinsic_gate_on_morph_release(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    dropped_registry: &mut DroppedLootRegistry,
+    intrinsic_race: &RaceId,
+    intrinsic_is_humanoid: bool,
+    player_pos: [f64; 3],
+    player_dimension: DimensionKind,
+) -> (Vec<u64>, Vec<u64>) {
+    let template_allows = |template_id: &str| -> bool {
+        registry
+            .get(template_id)
+            .map(|template| {
+                template
+                    .wearer_race
+                    .allows(intrinsic_race, intrinsic_is_humanoid)
+            })
+            // 未知 template（数据损坏）保守放行——不该因为查不到模板就把玩家装备扒光。
+            .unwrap_or(true)
+    };
+
+    // 1. 从装备槽摘出全部本体身份不再允许的 instance（held 优先摘，再摘 worn 栈，
+    //    自顶向下——与既有卸下语义"先卸最外层"一致）。
+    let mut displaced: Vec<ItemInstance> = Vec::new();
+    for contents in inventory.equipped.values_mut() {
+        if let Some(held) = &contents.held {
+            if !template_allows(&held.template_id) {
+                if let Some(item) = contents.held.take() {
+                    displaced.push(item);
+                }
+            }
+        }
+        let mut kept_worn = Vec::with_capacity(contents.worn.len());
+        for item in std::mem::take(&mut contents.worn) {
+            if template_allows(&item.template_id) {
+                kept_worn.push(item);
+            } else {
+                displaced.push(item);
+            }
+        }
+        contents.worn = kept_worn;
+    }
+
+    if displaced.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    // 2. 装备槽结构变化（worn 背包件可能被摘下）—— 刷新容器列表，让摘下的背包件
+    //    自己的 pack_<id> 容器先归位/孤儿化，再尝试安放被摘下的物件。
+    let overflow_from_rebuild = rebuild_containers_from_equipment(inventory, registry);
+    inventory.max_weight = compute_max_weight(inventory, registry);
+
+    let mut stashed_ids = Vec::new();
+    let mut dropped_ids = Vec::new();
+    for item in displaced.into_iter().chain(overflow_from_rebuild) {
+        match find_first_fit_container_location(inventory, &item) {
+            Some(location) => {
+                let instance_id = item.instance_id;
+                match attach_at_location(inventory, item, &location) {
+                    Ok(()) => stashed_ids.push(instance_id),
+                    Err(_) => {
+                        // 罕见竞态（location 校验后容器状态变化）——不丢件，转掉落。
+                        dropped_ids.push(instance_id);
+                    }
+                }
+            }
+            None => {
+                let instance_id = item.instance_id;
+                let next_idx = dropped_registry.entries.len();
+                let dropped = DroppedLootEntry {
+                    instance_id,
+                    source_container_id: "morph_release_gate_overflow".to_string(),
+                    source_row: 0,
+                    source_col: 0,
+                    world_pos: [
+                        player_pos[0] + 0.35 + next_idx as f64 * 0.1,
+                        player_pos[1] + 0.5,
+                        player_pos[2] + 0.35,
+                    ],
+                    dimension: player_dimension,
+                    item,
+                };
+                dropped_registry.entries.insert(instance_id, dropped);
+                dropped_ids.push(instance_id);
+            }
+        }
+    }
+    (stashed_ids, dropped_ids)
+}
+
 // ─── plan-layered-equip-v1 P0.2 — 背包耐久扣减与破损溢出（决议 #17 重定向到 worn 背包件 instance） ───
 
 /// 背包破损事件，当背包耐久降至 ≤ε 时由 `apply_backpack_wear` 返回。
@@ -19304,6 +19403,246 @@ cols = 4
             registry.get("vanilla:air").is_none(),
             "真 ItemRegistry 不得含 vanilla:air"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // plan-race-system-v1 P4 — enforce_intrinsic_gate_on_morph_release 饱和测试。
+    // 决议 §6：解除易形后本体身份恢复权威，非法装备"卸包→满则掉落"绝不静默销毁。
+    // ─────────────────────────────────────────────────────────────────────────
+    mod morph_release_equip_gate {
+        use super::*;
+        use crate::body_plan::types::{RaceGateOwned, RaceId};
+        use crate::world::dimension::DimensionKind;
+
+        fn item_template(id: &str, wearer_race: RaceGateOwned) -> ItemTemplate {
+            let mut template = test_template(id, ItemCategory::Armor, 1, 1, 1);
+            template.wearer_race = wearer_race;
+            template
+        }
+
+        fn registry_with(templates: Vec<ItemTemplate>) -> ItemRegistry {
+            let mut map = HashMap::new();
+            for t in templates {
+                map.insert(t.id.clone(), t);
+            }
+            ItemRegistry::from_map(map)
+        }
+
+        fn worn_item_instance(instance_id: u64, template: &ItemTemplate) -> ItemInstance {
+            ItemInstance {
+                instance_id,
+                template_id: template.id.clone(),
+                display_name: template.display_name.clone(),
+                grid_w: template.grid_w,
+                grid_h: template.grid_h,
+                weight: template.base_weight,
+                rarity: template.rarity,
+                description: template.description.clone(),
+                stack_count: 1,
+                spirit_quality: 0.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            }
+        }
+
+        fn inventory_with_worn(item: ItemInstance, container_capacity: Option<(u8, u8)>) -> PlayerInventory {
+            let mut equipped = HashMap::new();
+            equipped.insert(
+                EQUIP_SLOT_CHEST.to_string(),
+                SlotContents {
+                    worn: vec![item],
+                    held: None,
+                },
+            );
+            let containers = match container_capacity {
+                Some((rows, cols)) => vec![ContainerState {
+                    id: MAIN_PACK_CONTAINER_ID.to_string(),
+                    name: "主背包".to_string(),
+                    rows,
+                    cols,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                    quick_access: false,
+                }],
+                None => Vec::new(),
+            };
+            PlayerInventory {
+                triggered_treasures: Vec::new(),
+                revision: InventoryRevision(0),
+                containers,
+                equipped,
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 99.0,
+            }
+        }
+
+        /// 满足档：本体身份放行该装备——原地不动，无 stash、无 drop。
+        #[test]
+        fn compatible_item_is_left_worn_untouched() {
+            let template = item_template("chest_any", RaceGateOwned::Any);
+            let registry = registry_with(vec![template.clone()]);
+            let item = worn_item_instance(1, &template);
+            let mut inventory = inventory_with_worn(item, Some((4, 4)));
+            let mut dropped = DroppedLootRegistry::default();
+
+            let (stashed, dropped_ids) = enforce_intrinsic_gate_on_morph_release(
+                &mut inventory,
+                &registry,
+                &mut dropped,
+                &RaceId::new("human"),
+                true,
+                [0.0, 64.0, 0.0],
+                DimensionKind::Overworld,
+            );
+
+            assert!(stashed.is_empty(), "满足档不应被移动进背包");
+            assert!(dropped_ids.is_empty(), "满足档不应被掉落");
+            assert_eq!(
+                inventory
+                    .equipped
+                    .get(EQUIP_SLOT_CHEST)
+                    .map(|c| c.worn.len()),
+                Some(1),
+                "满足档装备必须原样留在 worn 层"
+            );
+            assert!(dropped.entries.is_empty());
+        }
+
+        /// 不满足档 + 背包有空位——移出装备槽，塞进背包（不掉落）。
+        #[test]
+        fn incompatible_item_is_stashed_into_backpack_when_room_available() {
+            let template = item_template(
+                "chest_whale_only",
+                RaceGateOwned::Species {
+                    species: vec![RaceId::new("whale")],
+                },
+            );
+            let registry = registry_with(vec![template.clone()]);
+            let item = worn_item_instance(2, &template);
+            let mut inventory = inventory_with_worn(item, Some((4, 4)));
+            let mut dropped = DroppedLootRegistry::default();
+
+            let (stashed, dropped_ids) = enforce_intrinsic_gate_on_morph_release(
+                &mut inventory,
+                &registry,
+                &mut dropped,
+                &RaceId::new("human"),
+                true,
+                [0.0, 64.0, 0.0],
+                DimensionKind::Overworld,
+            );
+
+            assert_eq!(stashed, vec![2], "human 本体不满足 Species([whale]) 门，必须被摘下");
+            assert!(dropped_ids.is_empty(), "背包有空位时不应掉落");
+            assert!(
+                inventory
+                    .equipped
+                    .get(EQUIP_SLOT_CHEST)
+                    .map(|c| c.worn.is_empty())
+                    .unwrap_or(true),
+                "不满足档装备必须从 worn 层移除"
+            );
+            let found_in_container = inventory
+                .containers
+                .iter()
+                .flat_map(|c| c.items.iter())
+                .any(|placed| placed.instance.instance_id == 2);
+            assert!(found_in_container, "摘下的装备必须落进背包容器");
+            assert!(dropped.entries.is_empty());
+        }
+
+        /// 不满足档 + 背包已满（容量 0）——摘下后无处安放，必须转地面掉落，绝不静默销毁。
+        #[test]
+        fn incompatible_item_is_dropped_to_ground_when_backpack_full() {
+            let template = item_template(
+                "chest_whale_only_2",
+                RaceGateOwned::Species {
+                    species: vec![RaceId::new("whale")],
+                },
+            );
+            let registry = registry_with(vec![template.clone()]);
+            let item = worn_item_instance(3, &template);
+            // 容量 (0, 0) 的主背包 —— 任何格位都放不下。
+            let mut inventory = inventory_with_worn(item, Some((0, 0)));
+            let mut dropped = DroppedLootRegistry::default();
+
+            let (stashed, dropped_ids) = enforce_intrinsic_gate_on_morph_release(
+                &mut inventory,
+                &registry,
+                &mut dropped,
+                &RaceId::new("human"),
+                true,
+                [10.0, 64.0, 10.0],
+                DimensionKind::Overworld,
+            );
+
+            assert!(stashed.is_empty(), "背包满时不应算作已收纳");
+            assert_eq!(dropped_ids, vec![3], "背包满时必须转地面掉落，不能凭空消失");
+            assert!(
+                dropped.entries.contains_key(&3),
+                "DroppedLootRegistry 必须登记该 instance_id，禁止静默丢件"
+            );
+            assert!(
+                inventory
+                    .equipped
+                    .get(EQUIP_SLOT_CHEST)
+                    .map(|c| c.worn.is_empty())
+                    .unwrap_or(true)
+            );
+        }
+
+        /// 无任何非法装备 —— 提前返回空结果，不触发任何容器重建副作用。
+        #[test]
+        fn no_incompatible_items_returns_empty_without_touching_inventory() {
+            let template = item_template("chest_any_2", RaceGateOwned::Any);
+            let registry = registry_with(vec![template.clone()]);
+            let item = worn_item_instance(4, &template);
+            let mut inventory = inventory_with_worn(item, None);
+            let mut dropped = DroppedLootRegistry::default();
+
+            let (stashed, dropped_ids) = enforce_intrinsic_gate_on_morph_release(
+                &mut inventory,
+                &registry,
+                &mut dropped,
+                &RaceId::new("human"),
+                true,
+                [0.0, 0.0, 0.0],
+                DimensionKind::Overworld,
+            );
+            assert!(stashed.is_empty());
+            assert!(dropped_ids.is_empty());
+        }
+
+        /// Humanoid 档：本体 is_humanoid=false（如未来非人形玩家）必须驱逐 Humanoid-only
+        /// 装备——覆盖 RaceGateOwned::Humanoid 分支，不只测 Species/Any。
+        #[test]
+        fn humanoid_only_item_evicted_when_intrinsic_is_not_humanoid() {
+            let template = item_template("chest_humanoid_only", RaceGateOwned::Humanoid);
+            let registry = registry_with(vec![template.clone()]);
+            let item = worn_item_instance(5, &template);
+            let mut inventory = inventory_with_worn(item, Some((4, 4)));
+            let mut dropped = DroppedLootRegistry::default();
+
+            let (stashed, _dropped_ids) = enforce_intrinsic_gate_on_morph_release(
+                &mut inventory,
+                &registry,
+                &mut dropped,
+                &RaceId::new("whale"),
+                false,
+                [0.0, 64.0, 0.0],
+                DimensionKind::Overworld,
+            );
+            assert_eq!(stashed, vec![5]);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
