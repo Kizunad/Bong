@@ -177,6 +177,8 @@ message ServerDataEnvelope {
     // plan-race-system-v1 P3c：种族门元数据表（item wearer_race + technique
     // required_race），join 首帧一次性下发，client 缓存后离线判置灰。
     RaceGateMeta race_gate_meta = 141;
+    // plan-race-system-v1 P4：易形状态快照（join+周期全量 / 解除瞬间半径 delta）。
+    MorphState morph_state = 142;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }

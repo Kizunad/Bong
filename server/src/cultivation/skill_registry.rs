@@ -118,6 +118,7 @@ pub fn init_registry() -> SkillRegistry {
     crate::dandao::register_skills(&mut registry);
     crate::sword_path::skill_register::register_skills(&mut registry);
     crate::npc::npc_skill::register_npc_skills(&mut registry);
+    crate::body_plan::morph::register_skills(&mut registry);
     registry
 }
 
@@ -235,6 +236,9 @@ mod tests {
         crate::combat::woliu_v2::skills::declare_woliu_v2_deps_direct(&mut deps);
         // baomai_v3 は App Resource 経由 — production declare fn を直接呼ぶ。
         crate::combat::baomai_v3::skills::declare_meridian_dependencies(&mut deps);
+        // plan-race-system-v1 P4 — morph.yixing 无经脉前置表条目（专属 form_anchors_open
+        // 门在别处判定），显式声明空 deps 满足审计完整性不变量。
+        crate::body_plan::morph::declare_meridian_dependencies(&mut deps);
         deps
     }
 

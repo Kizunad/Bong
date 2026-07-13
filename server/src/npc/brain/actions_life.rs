@@ -823,6 +823,7 @@ pub(crate) fn cultivate_action_system(
                 // humanoid body plan，`None` 与"真的查了 BeastKind"结果 bit-for-bit
                 // 一致。
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans.as_deref(),
             races.as_deref(),

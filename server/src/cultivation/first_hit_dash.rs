@@ -83,6 +83,7 @@ pub fn first_hit_dash_insight(
             BodyPlanResolveInputs {
                 cultivation: Some(cultivation),
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans.as_deref(),
             races.as_deref(),
@@ -96,6 +97,7 @@ pub fn first_hit_dash_insight(
             DASH_SKILL_ID,
             0.0,
             intrinsic_is_humanoid,
+            None,
         );
 
         if outcome == ScrollReadOutcome::Learned {

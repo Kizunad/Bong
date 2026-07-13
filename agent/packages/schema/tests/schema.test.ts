@@ -119,6 +119,8 @@ import {
   RaceGateV1,
   RaceGateMetaEntryV1,
   ServerDataRaceGateMetaV1,
+  MorphStateEntryV1,
+  ServerDataMorphStateV1,
 } from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
@@ -4641,5 +4643,83 @@ describe("RaceGateMetaV1 (plan-race-system-v1 P3c)", () => {
     };
     const result = validate(ServerDataRaceGateMetaV1, payload);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
+
+describe("MorphStateV1 (plan-race-system-v1 P4)", () => {
+  it("server-data.morph-state.full.sample.json 正样本通过 ServerDataV1", () => {
+    const data = loadSample("server-data.morph-state.full.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.morph-state.delta.sample.json 正样本通过 ServerDataV1", () => {
+    const data = loadSample("server-data.morph-state.delta.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("mode 只接受 full/delta 两个字面量，其余字符串拒绝", () => {
+    const payload = {
+      v: 1,
+      type: "morph_state",
+      mode: "bogus",
+      entries: [],
+    };
+    const result = validate(ServerDataMorphStateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("entries 为空数组合法（未易形/无实体时的常态）", () => {
+    const payload = { v: 1, type: "morph_state", mode: "full", entries: [] };
+    const result = validate(ServerDataMorphStateV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("entry active=true 携带完整形态字段", () => {
+    const entry = {
+      entity_id: 7,
+      model_kind: 2,
+      form_race_id: "whale",
+      form_body_plan_id: "whale",
+      active: true,
+    };
+    const result = validate(MorphStateEntryV1, entry);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("entry active=false（delta 删除态）允许空字符串形态字段", () => {
+    const entry = {
+      entity_id: 7,
+      model_kind: 0,
+      form_race_id: "",
+      form_body_plan_id: "",
+      active: false,
+    };
+    const result = validate(MorphStateEntryV1, entry);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("entry 缺 entity_id 拒绝", () => {
+    const entry = {
+      model_kind: 0,
+      form_race_id: "whale",
+      form_body_plan_id: "whale",
+      active: true,
+    };
+    const result = validate(MorphStateEntryV1, entry);
+    expect(result.ok).toBe(false);
+  });
+
+  it("payload 多余顶层字段拒绝（additionalProperties: false）", () => {
+    const payload = {
+      v: 1,
+      type: "morph_state",
+      mode: "full",
+      entries: [],
+      unexpected: true,
+    };
+    const result = validate(ServerDataMorphStateV1, payload);
+    expect(result.ok).toBe(false);
   });
 });

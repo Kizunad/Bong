@@ -16,6 +16,7 @@ use crossbeam_channel::unbounded;
 use network::agent_bridge::{
     spawn_mock_bridge_daemon, AgentCommand, GameEvent, NetworkBridgeResource,
 };
+use network::morph_state_emit::MorphStateEmitState;
 use network::RedisBridgeResource;
 use persistence::{
     bootstrap_sqlite, export_zone_persistence, import_zone_persistence, PersistenceSettings,
@@ -157,6 +158,18 @@ fn assert_full_app_core_resources(app: &App) {
     assert!(
         world.contains_resource::<PersistenceSettings>(),
         "full server App must install PersistenceSettings"
+    );
+    // plan-race-system-v1 P4 CRITICAL fix guard —— `emit_morph_state_payloads`
+    // 取 `ResMut<MorphStateEmitState>`，Bevy 0.14 缺资源无条件 panic；此前生产
+    // `network::register()` 从未 `init_resource::<MorphStateEmitState>()`（只在
+    // 模块内单测里手动 init，掩盖了生产孤岛），会导致服务器第一个 Update tick
+    // 必崩。这里断言真实生产注册路径（`build_server_app()` → `network::register`）
+    // 装好了该资源，且下面的 `app.update()` 必须真的跑一个 tick 不 panic——
+    // 若又漏掉某个 `init_resource`，本测试会立刻撞红，而不是靠模块单测手塞掩盖。
+    assert!(
+        world.contains_resource::<MorphStateEmitState>(),
+        "full server App must install MorphStateEmitState (network::register()) — \
+         missing this causes emit_morph_state_payloads to panic on the first Update tick"
     );
     // bughunt minor④ —— body_plan::register() 资产加载全靠 panic 兜底数据完整性
     // （humanoid plan 缺失 / 磁盘文件读取失败等），本身没有"加载失败但静默继续"的
