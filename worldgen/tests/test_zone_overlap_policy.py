@@ -6,13 +6,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 FILES = (ROOT / "server/zones.json", ROOT / "server/zones.worldview.example.json")
-ALLOWED_OVERLAPS = {
+DESIGNED_OVERLAPS = {
     frozenset(("rift_mouth_blood_001", "blood_valley")),
     frozenset(("rift_mouth_north_001", "jiuzong_beiling_ruin")),
     frozenset(("baolongwang_cavern_deep", "zhanhun_plain")),
     frozenset(("blood_valley", "zhanhun_plain")),
     frozenset(("north_waste_east_scorch", "north_wastes")),
-    frozenset(("giant_sword_sea", "wuxing_abyss")),
+}
+# This separately planned defect is a regression baseline, not a design allowlist entry.
+# plan-bughunt-sword-sea-zone-overlap-v1 owns its removal.
+KNOWN_DEFECT_OVERLAPS_BY_FILE = {
+    "zones.json": {frozenset(("giant_sword_sea", "wuxing_abyss"))},
+    "zones.worldview.example.json": set(),
 }
 
 
@@ -39,8 +44,13 @@ def test_only_reviewed_zone_pairs_overlap_in_three_dimensions() -> None:
             for a, b in itertools.combinations(zones, 2)
             if _overlaps(a, b)
         }
-        unexpected = actual - ALLOWED_OVERLAPS
+        known_defects = KNOWN_DEFECT_OVERLAPS_BY_FILE[path.name]
+        unexpected = actual - DESIGNED_OVERLAPS - known_defects
         assert not unexpected, f"{path} has unreviewed 3-D zone overlaps: {unexpected}"
+        assert known_defects <= actual, (
+            f"{path} changed the known-defect baseline; remove the fixed pair from "
+            "KNOWN_DEFECT_OVERLAPS_BY_FILE in the owning plan"
+        )
 
 
 def test_north_rift_geometry_matches_runtime_and_blueprint() -> None:
