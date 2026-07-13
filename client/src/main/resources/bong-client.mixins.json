@@ -16,6 +16,7 @@
     "MixinKeyboardSkillKeys",
     "MixinInGameHud",
     "MixinMinecraftClient",
+    "MixinMorphedPlayerRenderer",
     "MixinMouse",
     "MixinPlayerEntityDrop",
     "MixinPlayerEntityArmor",
