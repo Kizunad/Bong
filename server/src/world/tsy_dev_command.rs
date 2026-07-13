@@ -39,6 +39,9 @@ use crate::world::tsy_container_spawn::{
 };
 use crate::world::zone::{TsyDepth, Zone, ZoneRegistry};
 
+const DEV_PORTAL_TRIGGER_RADIUS: f64 = 1.5;
+const DEV_ENTRY_ESCAPE_MARGIN: f64 = 1.0;
+
 /// chat_collector → tsy_dev_command 桥事件。
 #[derive(Event, Debug, Clone)]
 pub struct TsySpawnRequested {
@@ -251,6 +254,12 @@ pub fn apply_tsy_spawn_requests(
             });
             continue;
         };
+        let tsy_entry_pos = shallow_center
+            + DVec3::new(
+                DEV_PORTAL_TRIGGER_RADIUS + DEV_ENTRY_ESCAPE_MARGIN,
+                0.0,
+                0.0,
+            );
 
         // 标记本 tick 已为该 family 触发 spawn —— 任何后续同 family 请求会
         // 在循环顶端 `family_handled_this_tick` 分支拦掉，避免 deferred Commands
@@ -264,9 +273,9 @@ pub fn apply_tsy_spawn_requests(
                 req.family_id.clone(),
                 DimensionAnchor {
                     dimension: DimensionKind::Tsy,
-                    pos: shallow_center,
+                    pos: tsy_entry_pos,
                 },
-                1.5,
+                DEV_PORTAL_TRIGGER_RADIUS,
             ),
         ));
 
@@ -279,7 +288,7 @@ pub fn apply_tsy_spawn_requests(
                     dimension: DimensionKind::Overworld,
                     pos: req.player_pos + DVec3::Y,
                 },
-                1.5,
+                DEV_PORTAL_TRIGGER_RADIUS,
                 RiftKind::MainRift,
             ),
         ));
@@ -535,6 +544,27 @@ mod tests {
         let directions: Vec<PortalDirection> = portals.iter().map(|p| p.direction).collect();
         assert!(directions.contains(&PortalDirection::Entry));
         assert!(directions.contains(&PortalDirection::Exit));
+    }
+
+    #[test]
+    fn dev_entry_target_stays_outside_exit_trigger_radius() {
+        let mut app = run_with_world("tsy_lingxu_01");
+        let mut query = app.world_mut().query::<(&Position, &RiftPortal)>();
+        let mut entry_target = None;
+        let mut exit = None;
+        for (position, portal) in query.iter(app.world()) {
+            match portal.direction {
+                PortalDirection::Entry => entry_target = Some(portal.target.pos),
+                PortalDirection::Exit => exit = Some((position.get(), portal.trigger_radius)),
+            }
+        }
+
+        let entry_target = entry_target.expect("dev spawn must create an entry portal");
+        let (exit_pos, exit_radius) = exit.expect("dev spawn must create an exit portal");
+        assert!(
+            entry_target.distance(exit_pos) > exit_radius,
+            "dev TSY entry target must remain outside the exit trigger; target={entry_target:?} exit={exit_pos:?} radius={exit_radius}"
+        );
     }
 
     #[test]

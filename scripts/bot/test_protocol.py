@@ -137,6 +137,21 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["rows"], 3)
         self.assertEqual(decoded["cols"], 4)
 
+    def test_proto_loot_container_update_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_loot_container_update_bytes())
+
+        self.assertEqual(decoded["type"], "loot_container_update")
+        self.assertEqual(decoded["session_id"], 7)
+        self.assertEqual(decoded["placed_items"][0]["container_id"], "ext_7")
+        self.assertEqual(decoded["placed_items"][0]["item"]["instance_id"], 99)
+
+    def test_proto_loot_container_close_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_loot_container_close_bytes())
+
+        self.assertEqual(decoded["type"], "loot_container_close")
+        self.assertEqual(decoded["session_id"], 7)
+        self.assertEqual(decoded["reason"], "distance")
+
 
 class InventoryHelperTest(unittest.TestCase):
     def test_latest_inventory_snapshot_uses_newest_history(self):
@@ -327,6 +342,33 @@ def _server_data_loot_container_open_bytes() -> bytes:
         + _pb_varint(4, 4)
     )
     return _pb_message(119, open_payload)
+
+
+def _server_data_loot_container_update_bytes() -> bytes:
+    item = (
+        _pb_varint(1, 99)
+        + _pb_string(2, "refined_iron")
+        + _pb_string(3, "精铁")
+        + _pb_varint(4, 1)
+        + _pb_varint(5, 1)
+        + _pb_fixed64(6, 0.1)
+        + _pb_string(7, "common")
+        + _pb_string(8, "test")
+        + _pb_varint(9, 2)
+        + _pb_fixed64(10, 0.0)
+        + _pb_fixed64(11, 1.0)
+    )
+    placed = (
+        _pb_string(1, "ext_7")
+        + _pb_varint(2, 0)
+        + _pb_varint(3, 1)
+        + _pb_message(4, item)
+    )
+    return _pb_message(120, _pb_varint(1, 7) + _pb_message(2, placed))
+
+
+def _server_data_loot_container_close_bytes() -> bytes:
+    return _pb_message(121, _pb_varint(1, 7) + _pb_string(2, "distance"))
 
 
 def _pb_key(field: int, wire: int) -> bytes:
