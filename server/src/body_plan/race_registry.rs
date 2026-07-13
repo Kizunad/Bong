@@ -970,6 +970,30 @@ mod tests {
     }
 
     #[test]
+    fn real_races_json_asset_has_human_to_whale_morph_pair() {
+        // plan-race-system-v1 PR-5b —— 生产 races.json 必须声明 human→whale 正向
+        // morph_pair，否则 `morph.yixing` cast 永远 InvalidTarget（P4 遗留的已知缺口，
+        // 本 PR 补上真数据让 cast 端到端可用）。
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans_dir = manifest_dir.join(super::super::registry::DEFAULT_BODY_PLANS_DIR);
+        let races_path = manifest_dir.join(DEFAULT_RACES_PATH);
+
+        let body_plans = BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
+        let races =
+            RaceRegistry::load_file(&races_path, &body_plans).expect("real races.json should load");
+
+        assert!(
+            races.get(&RaceId::new("whale")).is_some(),
+            "races.json 必须声明独立的 whale 种族条目（易形目标）"
+        );
+        let targets = races.morph_targets_from(&RaceId::new(HUMAN_RACE_ID));
+        assert!(
+            targets.contains(&&RaceId::new("whale")),
+            "human 必须有正向 morph_pair 指向 whale，实际 targets={targets:?}"
+        );
+    }
+
+    #[test]
     fn real_races_json_asset_loads_and_covers_all_beast_kinds() {
         // 端到端锚点：真实 server/assets/body_plans/races.json 必须能在真实
         // BodyPlanRegistry（同样从磁盘加载 humanoid.json）之上通过全部校验，且
