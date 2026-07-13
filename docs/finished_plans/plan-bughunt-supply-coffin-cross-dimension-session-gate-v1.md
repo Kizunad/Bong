@@ -6,10 +6,10 @@
 
 | 阶段 | 状态 | 可核验交付物 |
 |---|---|---|
-| P0 第一性原理证真 / 证伪 | ⬜ | 可达调用链、已有防护盘点、修复前契约复现或非 bug 证据 |
-| P1 最小权限修复 | ⬜ | open、move、lifecycle 的服务端同维 / 距离授权与会话清理 |
-| P2 饱和回归 | ⬜ | server targeted tests 覆盖成功、边界、拒绝与状态转换 |
-| P3 闭环验收 | ⬜ | validator、server 完整门禁、最新主线复验、Finish Evidence 与归档 |
+| P0 第一性原理证真 / 证伪 | ✅ 2026-07-13 | 可达调用链、已有防护盘点、修复前契约复现或非 bug 证据 |
+| P1 最小权限修复 | ✅ 2026-07-13 | open、move、lifecycle 的服务端同维 / 距离授权与会话清理 |
+| P2 饱和回归 | ✅ 2026-07-13 | server targeted tests 覆盖成功、边界、拒绝与状态转换 |
+| P3 闭环验收 | ✅ 2026-07-13 | 主 agent 对抗审查、三栈完整门禁、最新主线复验、Finish Evidence 与归档 |
 
 ## 0. 来源、接入面与范围
 
@@ -63,29 +63,29 @@
 
 ### P0 第一性原理证真 / 证伪
 
-- [ ] 从 `bong:client_request` 到 open / move consumer 逐层确认正常玩家、bot、陈旧 UI 请求是否可达，检查 entity 可见层、`CurrentDimension`、owner、距离、session source 与 cleanup 的所有现有防护。
-- [ ] 真 bug 时先加入修复前可失败的最小契约测试，证明跨维同 XYZ 会造成可观察副作用；非 bug 时记录玩家路径、现有防护、`file:line` 与复现结果，不造空修复。
-- [ ] 只接受 server 权威状态作为授权依据；客户端可见性和 `EntityLayerId` 不能单独充当 gameplay 维度身份。
+- [x] ✅ 2026-07-13 — 从 `bong:client_request` 到 open / move consumer 逐层确认正常玩家、bot、陈旧 UI 请求是否可达，检查 entity 可见层、`CurrentDimension`、owner、距离、session source 与 cleanup 的所有现有防护。
+- [x] ✅ 2026-07-13 — 先以提交 `12f2a660` 加入修复前契约测试；94 项定向测试中 11 项按预期失败，证实跨维同 XYZ open / move / lifecycle 会产生真实副作用。
+- [x] ✅ 2026-07-13 — 授权只读取 server 的 active source、`CurrentDimension`、`Position` 与 session owner；客户端可见性和 `EntityLayerId` 不作为安全边界。
 
 ### P1 最小权限修复
 
-- [ ] 物资棺 active/runtime 状态必须暴露明确的 `DimensionKind`；当前生成路径若经验证始终位于主世界，则记录 `DimensionKind::Overworld`，仍不得由裸 XYZ 推断。
-- [ ] open 授权同时要求目标仍 active、玩家维度存在且与棺一致、距离不超过既有阈值；维度缺失 / mismatch 均保守拒绝，且拒绝前不得 roll loot、分配 session 或发送 open payload。
-- [ ] 物资棺 session 必须保存足够的 source 身份，使 move 与 lifecycle 能在不信任客户端的前提下重验 owner、source 仍 active、同维和距离；不得把规则无差别施加给未证明同契约的其它 external container。
-- [ ] move 授权失败时物品保持不变，并沿现有协议 resync 外部容器与玩家背包；lifecycle 授权失效时关闭 session、释放 `opened_by` / registry 映射且不碎棺。
-- [ ] 复用现有 close reason；只有现有协议无法准确表达且可在纯 server 内完成时才新增内部原因，不扩写 wire schema。
+- [x] ✅ 2026-07-13 — `ActiveSupplyCoffin` 明确记录 `DimensionKind::Overworld`，与 refresh / dev spawn 的实际 layer 对齐。
+- [x] ✅ 2026-07-13 — open 在 roll loot、分配 session 与发送 payload 前统一校验 active source、有限坐标、维度存在 / 一致及 4.5 格边界。
+- [x] ✅ 2026-07-13 — move 与 lifecycle 通过 session 映射回实体，再统一复核 owner、active source、维度与 6.5 格边界；普通 `StorageCrate` 契约保持不变。
+- [x] ✅ 2026-07-13 — move 拒绝保持物品与 revision 不变并按权限 resync；lifecycle 失效会清当前映射、释放锁且不碎棺，冲突映射不会被误删。
+- [x] ✅ 2026-07-13 — 复用既有 `Distance` close reason，未改变 C2S / S2C schema。
 
 ### P2 饱和回归
 
-- [ ] 覆盖 open、move、lifecycle 三个入口的 happy path、维度 mismatch、维度缺失、超距、owner mismatch、source 消失、重复 / 陈旧 session 与清理幂等状态转换。
-- [ ] 若抽取公共 helper，测试其正反边界并证明普通 world container / placed container 契约不变；否则保持修复局部，不做顺手重构。
+- [x] ✅ 2026-07-13 — 覆盖 open、move、lifecycle 的 happy path、维度 mismatch / 缺失、超距、owner mismatch、source 消失、重复 / 陈旧 session、映射冲突与幂等清理。
+- [x] ✅ 2026-07-13 — 公共 authority helper 覆盖精确边界、边界外、缺 source 与非有限坐标；隔离测试证明非物资棺 external container 不受新规则影响。
 
 ### P3 闭环验收
 
-- [ ] 当前干净 HEAD 经全新无上下文 validator PASS。
-- [ ] `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿。
-- [ ] fetch 最新 `origin/main`，按 merge-base 分类同步；任何 HEAD 变化重跑相应门禁和全新 validator。
-- [ ] 全阶段标记 `✅ 2026-07-13`，填写唯一 `## Finish Evidence`，受控归档后对最终 HEAD 再获 validator PASS。
+- [x] ✅ 2026-07-13 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对 `origin/main...130d63d3` 完成逐入口对抗审查，无新增必修项。
+- [x] ✅ 2026-07-13 — `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿。
+- [x] ✅ 2026-07-13 — fetch `origin/main@bf0b2738` 后按 diverged 路径无冲突合并；对未提交合并结果完成 server 门禁，再以 `130d63d3` 显式提交。
+- [x] ✅ 2026-07-13 — 全阶段标记完成并填写唯一 `## Finish Evidence`；归档后由主 agent 复核最终干净 HEAD，独立 validator 例外继续如实披露。
 
 ## 5. 可执行测试矩阵
 
@@ -102,6 +102,37 @@
 | regression | 普通物资棺开取与其它 external container | 原契约保持 | 将物资棺规则错误外溢 |
 
 黑盒 bot e2e 仅在现有 harness 能无协议扩写地覆盖且本地门禁不足以锁定 C2S consumer 时执行；不能用 smoke 代替 server 完整门禁。
+
+## Finish Evidence
+
+### 落地清单
+
+- `server/src/supply_coffin/authority.rs` 提供 open 4.5 格、session 6.5 格的统一服务端权威校验；缺 source、缺维度、跨维、超距与非有限坐标全部 fail closed。
+- open、external move、lifecycle 三条运行时链均接入 active source / `CurrentDimension` / `Position` 校验；拒绝发生在物品或 loot 状态变更前。
+- lifecycle 清理只删除仍指向当前棺实体的 session 映射，释放 `opened_by` 且不碎棺；reopen 可恢复缺失映射但拒绝覆盖冲突映射。
+- 非 owner / 陈旧 session 只回推请求者背包，避免泄露外部容器内容；普通 `StorageCrate` 的既有 move 契约保持不变。
+
+### 关键提交
+
+- `12f2a660`：加入修复前红测，94 项定向测试中 11 项目标契约失败。
+- `b5ae89a7`：接入物资棺跨维 session 权威修复。
+- `377ea937`：修复测试初始化的 clippy 门禁。
+- `545e83c6`：按持久化快照与启动墙钟边界修正伪灵脉测试不稳定，生产逻辑未改。
+- `130d63d3`：合并 `origin/main@bf0b2738` 并复验。
+
+### 测试与审查
+
+- 定向：`cargo test supply_coffin` 为 103/103；`cargo test external_move_` 为 7/7；非物资棺隔离用例 1/1。
+- server 完整门禁：format 与 clippy 通过；主测试集 11,494 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，另 5 项 ignored；命令退出码 0。
+- client 同步复验：JDK 17.0.19 下 `./gradlew test build`，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`。
+- agent/schema 同步复验：`npm run build` 通过；`npm test -w @bong/schema` 为 29 files / 872 tests 全绿。
+- 主 agent 对 `origin/main...130d63d3` 完成第一性原理与对抗式 diff 审查，确认授权先于副作用、session 映射所有权正确且普通 external container 未被误伤。
+- 独立 validator：未运行。用户于 2026-07-13 明确要求“本次不跑 subagent，仅主agent实施”；本记录不声称 validator PASS，PR 继续透明披露该例外。
+
+### 遗留与后续
+
+- 无 `[BLOCKED: ...]` 项，无 wire schema、worldview、依赖版本或真元守恒改动。
+- `/review`、CodeRabbit 与 e2e 属 PR gate，开 PR 后继续等待并处理；不自动 merge。
 
 ## 6. Skeleton 对抗复核背景（不替代 P0 证据）
 
@@ -128,6 +159,6 @@
 
 ## 7. 完成契约
 
-- 真 bug 与非 bug 两条分支都必须有独立 commit、绑定干净 HEAD 的 validator、完整 server 门禁、最新主线同步复验和最终归档 validator。
+- 真 bug 与非 bug 两条分支都必须有独立 commit、完整 server 门禁和最新主线同步复验。本次用户明确禁用 subagent，绑定 HEAD 的独立 validator 条款由用户指令覆盖；必须如实记录未运行，禁止伪造 PASS。
 - 任一测试失败不得称为 pre-existing；同一 TODO 连续三轮无法通过时按流程记录 `[BLOCKED: 原因 + 测试名 + 关键错误]`，继续可独立推进项，但存在 BLOCKED 时不得归档。
 - 归档前只允许更新本 active plan；不修改 `docs/worldview.md`、`docs/library/` 或其它 plan。
