@@ -1239,9 +1239,9 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   const review = workflowJob(workflow, "review");
   const finalize = workflowJob(workflow, "finalize");
 
-  // codex 引擎不再自动跑：PR 创建时的默认审核已让位给 review-claude.yml。
-  // 保留 issue_comment `/review` + workflow_dispatch，去掉 pull_request(_target) 自动触发。
-  assert.doesNotMatch(workflow, /^  pull_request_target:\n/m);
+  // codex 引擎恢复为 PR 创建时的默认审核：pull_request_target 自动触发 + /review 评论 + dispatch。
+  // （claude 引擎 review-claude.yml 已休眠，不自动跑；见 review-claude.yml 顶部说明。）
+  assert.match(workflow, /^  pull_request_target:\n    types: \[opened\]$/m);
   assert.doesNotMatch(workflow, /^  pull_request:\n/m);
   assert.match(workflow, /^  issue_comment:\n    types: \[created\]$/m);
   assert.match(workflow, /^permissions: \{\}$/m);
@@ -1284,6 +1284,10 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   assert.match(finalize, /REVIEW_INSTALL_OUTCOME: success/);
   assert.match(finalize, /REVIEW_CONFIGURE_OUTCOME: success/);
   assert.match(finalize, /node \.github\/scripts\/review\.mjs workflow-finalize/);
+  // finalize 只在 preflight 真跑过(成功/失败/熔断)时收尾；preflight 因非触发评论被 skip 时
+  // finalize 必须一并 skip——否则会去读不存在的 review artifact 崩溃(ENOENT)并误记 infra_failure。
+  // (CodeRabbit 等在每个 PR 的评论都会唤醒本 workflow → preflight skip)
+  assert.match(finalize, /always\(\) &&\s*needs\.preflight\.result != 'skipped' &&/);
   assert.doesNotMatch(finalize, /REVIEW_CODEX_API_KEY|gh pr checkout/);
 
   for (const [name, block, reserve] of [
