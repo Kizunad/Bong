@@ -1287,12 +1287,19 @@ mod tests {
             inventory_score: 0.0,
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
-        app.world_mut().entity_mut(entity).insert(
-            crate::body_plan::MorphState::new(crate::body_plan::RaceId::new("whale"), 0, 100),
-        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::body_plan::MorphState::new(
+                crate::body_plan::RaceId::new("whale"),
+                0,
+                100,
+            ));
 
         assert!(
-            app.world().entity(entity).get::<crate::body_plan::MorphState>().is_some(),
+            app.world()
+                .entity(entity)
+                .get::<crate::body_plan::MorphState>()
+                .is_some(),
             "前置条件：下线前应处于易形态"
         );
 
@@ -1300,7 +1307,10 @@ mod tests {
         app.update();
 
         assert!(
-            app.world().entity(entity).get::<crate::body_plan::MorphState>().is_none(),
+            app.world()
+                .entity(entity)
+                .get::<crate::body_plan::MorphState>()
+                .is_none(),
             "下线（RemovedComponents<Client>）应通过 release_morph_state 的 deferred \
              command 移除 MorphState，实测组件仍在场"
         );

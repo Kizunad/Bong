@@ -4683,7 +4683,11 @@ mod tests {
                 name: "主背包".to_string(),
                 rows: 4,
                 cols: 4,
-                items: vec![PlacedItemState { row: 0, col: 0, instance: item }],
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
                 owner_instance_id: None,
             }],
             equipped: HashMap::new(),
@@ -4745,14 +4749,15 @@ mod tests {
             crate::body_plan::HUMAN_RACE_ID,
         ));
 
-        let client = spawn_player_with_species_gated_chestplate_in_pack(&mut app, "Morpher", "whale");
-        app.world_mut().entity_mut(client).insert(
-            crate::body_plan::MorphState::new(
+        let client =
+            spawn_player_with_species_gated_chestplate_in_pack(&mut app, "Morpher", "whale");
+        app.world_mut()
+            .entity_mut(client)
+            .insert(crate::body_plan::MorphState::new(
                 crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
                 0,
                 0,
-            ),
-        );
+            ));
 
         send_species_gated_equip_intent(&mut app, client);
 
@@ -4782,7 +4787,8 @@ mod tests {
             crate::body_plan::HUMAN_RACE_ID,
         ));
 
-        let client = spawn_player_with_species_gated_chestplate_in_pack(&mut app, "Morpher", "whale");
+        let client =
+            spawn_player_with_species_gated_chestplate_in_pack(&mut app, "Morpher", "whale");
 
         send_species_gated_equip_intent(&mut app, client);
 

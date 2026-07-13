@@ -3089,11 +3089,7 @@ mod tests {
         let entity = app
             .world_mut()
             .spawn((
-                crate::body_plan::MorphState::new(
-                    crate::body_plan::RaceId::new("whale"),
-                    0,
-                    900,
-                ),
+                crate::body_plan::MorphState::new(crate::body_plan::RaceId::new("whale"), 0, 900),
                 Wounds {
                     health_current: 0.0,
                     health_max: 30.0,
@@ -3106,7 +3102,10 @@ mod tests {
             .id();
 
         assert!(
-            app.world().entity(entity).get::<crate::body_plan::MorphState>().is_some(),
+            app.world()
+                .entity(entity)
+                .get::<crate::body_plan::MorphState>()
+                .is_some(),
             "前置条件：死亡前应处于易形态"
         );
 
@@ -3120,7 +3119,10 @@ mod tests {
         app.update();
 
         assert!(
-            app.world().entity(entity).get::<crate::body_plan::MorphState>().is_none(),
+            app.world()
+                .entity(entity)
+                .get::<crate::body_plan::MorphState>()
+                .is_none(),
             "死亡应通过 release_morph_state 的 deferred command 移除 MorphState \
              （单次 app.update() 后 Commands 已 flush），实测组件仍在场"
         );

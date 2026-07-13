@@ -19668,7 +19668,10 @@ cols = 4
         /// plan-race-system-v1 P4 opus verifier MINOR —— 此前 5 条 case 只测 worn 层，
         /// held 槽（如主手武器）驱逐分支零覆盖。构造 `held` 位放一件本体不满足
         /// Species 门的武器，验证 `contents.held.take()` 分支真被驱逐+摘出。
-        fn inventory_with_held(item: ItemInstance, container_capacity: Option<(u8, u8)>) -> PlayerInventory {
+        fn inventory_with_held(
+            item: ItemInstance,
+            container_capacity: Option<(u8, u8)>,
+        ) -> PlayerInventory {
             let mut equipped = HashMap::new();
             equipped.insert(
                 EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -19753,7 +19756,10 @@ cols = 4
                 .iter()
                 .flat_map(|c| c.items.iter())
                 .any(|placed| placed.instance.instance_id == 6);
-            assert!(found_in_container, "摘下的武器必须落进背包容器，不能凭空消失");
+            assert!(
+                found_in_container,
+                "摘下的武器必须落进背包容器，不能凭空消失"
+            );
             assert!(dropped.entries.is_empty());
         }
 

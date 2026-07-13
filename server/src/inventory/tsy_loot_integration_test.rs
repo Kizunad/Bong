@@ -271,8 +271,15 @@ mod tests {
             bone_coins: 0,
             max_weight: 99.0,
         };
-        add_item_to_player_inventory(&mut inventory, registry, &mut allocator, "yixing_scroll", 1, 0)
-            .expect("granting yixing_scroll into an empty backpack must succeed");
+        add_item_to_player_inventory(
+            &mut inventory,
+            registry,
+            &mut allocator,
+            "yixing_scroll",
+            1,
+            0,
+        )
+        .expect("granting yixing_scroll into an empty backpack must succeed");
 
         let found = inventory
             .containers

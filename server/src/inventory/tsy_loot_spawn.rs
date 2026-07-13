@@ -218,8 +218,7 @@ pub fn tsy_loot_spawn_on_enter(
         if source == AncientRelicSource::SectRuins && placed_deep > 0 {
             if let Some(registry) = item_registry.as_deref() {
                 let scroll_seed = seed.wrapping_mul(0x2545_F491_4F6C_DD1D);
-                match sample_position_in_layer(&zones, &ev.family_id, TsyDepth::Deep, scroll_seed)
-                {
+                match sample_position_in_layer(&zones, &ev.family_id, TsyDepth::Deep, scroll_seed) {
                     Some(pos) => {
                         match build_fauna_item_instance(
                             YIXING_SCROLL_TEMPLATE_ID,

@@ -3427,21 +3427,18 @@ mod tests {
             app.add_event::<InventoryDurabilityChangedEvent>();
 
             app.insert_resource(crate::inventory::ItemRegistry::default());
-            app.insert_resource(ArmorProfileRegistry::from_map(std::collections::HashMap::from(
-                [(
+            app.insert_resource(ArmorProfileRegistry::from_map(
+                std::collections::HashMap::from([(
                     "test_whale_form_chestplate".to_string(),
                     ArmorProfile {
                         slot: EquipSlotV1::Chest,
                         body_coverage: vec![BodyPart::Chest],
-                        kind_mitigation: std::collections::HashMap::from([(
-                            WoundKind::Blunt,
-                            0.5,
-                        )]),
+                        kind_mitigation: std::collections::HashMap::from([(WoundKind::Blunt, 0.5)]),
                         durability_max: 100,
                         broken_multiplier: 0.3,
                     },
-                )],
-            )));
+                )]),
+            ));
 
             app.add_systems(
                 Update,
@@ -3476,9 +3473,11 @@ mod tests {
                 ..Cultivation::default()
             });
             if with_morph {
-                app.world_mut()
-                    .entity_mut(target)
-                    .insert(MorphState::new(RaceId::new(crate::body_plan::HUMAN_RACE_ID), 0, 0));
+                app.world_mut().entity_mut(target).insert(MorphState::new(
+                    RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    0,
+                    0,
+                ));
             }
             app.world_mut().entity_mut(target).insert(PlayerInventory {
                 triggered_treasures: Vec::new(),
@@ -3605,7 +3604,8 @@ mod tests {
 
             let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
             assert_eq!(
-                inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].worn[0].durability, 1.0,
+                inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].worn[0].durability,
+                1.0,
                 "armor 未生效（未命中折算）不应扣减耐久"
             );
         }

@@ -558,11 +558,9 @@ mod tests {
 
         /// 无 morph_pairs 的空 RaceRegistry——`morph_targets_from` 恒返回空。
         fn no_morph_pairs_registry() -> RaceRegistry {
-            let body_plans = BodyPlanRegistry::from_plans(vec![trivial_plan(
-                "test_human_only_plan",
-                "chest",
-            )])
-            .expect("test plan must validate");
+            let body_plans =
+                BodyPlanRegistry::from_plans(vec![trivial_plan("test_human_only_plan", "chest")])
+                    .expect("test plan must validate");
             RaceRegistry::from_parts_for_test(
                 vec![RaceEntry {
                     id: RaceId::new(HUMAN_RACE_ID),
