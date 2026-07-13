@@ -82,10 +82,10 @@
 
 ### P3 闭环验收
 
-- [x] ✅ 2026-07-13 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对 `origin/main...b9731b4f` 完成逐入口对抗审查，并落实 review 指出的协议夹具、断言诊断与黑盒假绿排除项。
+- [x] ✅ 2026-07-13 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对 `origin/main...fc66dddd` 完成逐入口对抗审查，并落实 review 指出的协议夹具、断言诊断与黑盒假绿排除项。
 - [x] ✅ 2026-07-13 — `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿。
 - [x] ✅ 2026-07-13 — 真实 C2S → server → S2C bot 场景必须通过：主世界开棺后进入 TSY，观察 close + snapshot，并拒绝旧 session move / open；不得以单元测试替代。
-- [x] ✅ 2026-07-13 — fetch `origin/main@f889073a` 后按 diverged 路径无冲突合并；review 返工后对 `b9731b4f` 完成 server 完整门禁、protocol 与干净服 bot E2E 复验。
+- [x] ✅ 2026-07-13 — fetch `origin/main@f889073a` 后按 diverged 路径无冲突合并；review 返工后对未变 Rust 代码树 `b9731b4f` 完成 server 完整门禁，并对 Python 诊断提交 `fc66dddd` 完成 protocol 与干净服 bot E2E 复验。
 - [x] ✅ 2026-07-13 — 全阶段标记完成并填写唯一 `## Finish Evidence`；归档后由主 agent 复核最终干净 HEAD，独立 validator 例外继续如实披露。
 
 ### 4.1 开放问题与决议
@@ -135,6 +135,7 @@
 - `26d2ba4b`：增加 bot payload 解码、跨维黑盒场景，并修正 `/tsy_spawn` 入场后自动回弹。
 - `47b479de`：合并 `origin/main@f889073a` 并完成最终复验。
 - `b9731b4f`：用真实 update / close 协议夹具、合法 move 与不同权威空位强化黑盒验收，并补齐 review 要求的断言诊断。
+- `fc66dddd`：让合法 move 残留与背包落位失败同时输出期望和权威实际位置。
 
 ### 测试与审查
 
@@ -142,9 +143,9 @@
 - server 完整门禁（`b9731b4f`）：format 与 clippy 通过；主测试集 11,499 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，doc tests 5 ignored；命令退出码 0。
 - client 同步复验：JDK 17.0.19 下 `./gradlew test build`，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`。
 - agent/schema 同步复验：`npm run build` 通过；`npm test -w @bong/schema` 为 29 files / 872 tests 全绿。
-- bot protocol（`b9731b4f`）：`python3 scripts/bot/test_protocol.py` 为 55/55，退出码 0；测试结束仅报告既有未关闭 socket `ResourceWarning`。
-- 干净服 bot E2E（`b9731b4f`，run-tag `1199k`）：`inventory_supply_coffin_cross_dimension` 为 1/1 PASS（7.4s）；真实 Rust encoder 的 119/open、120/update、121/close 均由 bot 解码并断言，合法 move 走权威动态空位，唯一跨维进入 TSY 后不回弹，旧 move 攻击另一空位仍不迁移实例 / 不增加 revision，旧 open 不返回 payload。
-- 主 agent 对 `origin/main...b9731b4f` 完成第一性原理与对抗式 diff 审查，确认授权先于副作用、session 映射所有权正确、普通 external container 未被误伤，且合法 / 陈旧 move 不会因同一目标格冲突产生假绿。
+- bot protocol（`fc66dddd`）：`python3 scripts/bot/test_protocol.py` 为 55/55，退出码 0；测试结束仅报告既有未关闭 socket `ResourceWarning`。
+- 干净服 bot E2E（`fc66dddd`，run-tag `1199m`）：`inventory_supply_coffin_cross_dimension` 为 1/1 PASS（10.4s）；真实 Rust encoder 的 119/open、120/update、121/close 均由 bot 解码并断言，合法 move 走权威动态空位，唯一跨维进入 TSY 后不回弹，旧 move 攻击另一空位仍不迁移实例 / 不增加 revision，旧 open 不返回 payload。
+- 主 agent 对 `origin/main...fc66dddd` 完成第一性原理与对抗式 diff 审查，确认授权先于副作用、session 映射所有权正确、普通 external container 未被误伤，且合法 / 陈旧 move 不会因同一目标格冲突产生假绿；`b9731b4f..fc66dddd` 未改 Rust 生产代码。
 - 独立 validator：未运行。用户于 2026-07-13 明确要求“本次不跑 subagent，仅主agent实施”；本记录不声称 validator PASS，PR 继续透明披露该例外。
 
 ### 遗留与后续
