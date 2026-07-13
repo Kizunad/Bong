@@ -801,6 +801,11 @@ impl From<&ServerDataPayloadV1> for Payload {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => {
                 // SoA → AoS: 并行数组打包成 repeated MeridianState（plan-race-system-v1
                 // P1c：长度随 `channel_ids` 走，不再假设恰好 20 条）。
@@ -845,6 +850,11 @@ impl From<&ServerDataPayloadV1> for Payload {
                         })
                         .collect(),
                     body_plan_id: body_plan_id.clone(),
+                    race_id: race_id.clone(),
+                    form_race_id: form_race_id.clone(),
+                    form_body_plan_id: form_body_plan_id.clone(),
+                    intrinsic_is_humanoid: *intrinsic_is_humanoid,
+                    form_is_humanoid: *form_is_humanoid,
                 })
             }
             ServerDataPayloadV1::QiColorObserved(o) => {
@@ -6266,6 +6276,11 @@ mod tests {
                 practice_weights: vec![],
                 target_meridian: None,
                 body_plan_id: "humanoid".to_string(),
+                race_id: String::new(),
+                form_race_id: String::new(),
+                form_body_plan_id: String::new(),
+                intrinsic_is_humanoid: false,
+                form_is_humanoid: false,
             }),
             fix!(ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
                 observer: "offline:Kiz".to_string(),

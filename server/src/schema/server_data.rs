@@ -380,6 +380,20 @@ pub enum ServerDataPayloadV1 {
         /// plan-race-system-v1 P2a — 实体本体（`BodyPlanPurpose::Intrinsic`）的
         /// `body_plan_id`，供 client 按 id 寻址 `BodyPlanLayout` 缓存。
         body_plan_id: String,
+        /// plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：
+        /// client gate 判定（装备置灰等）的权威真源，不靠猜 / 不靠 `BodyPlanLayoutV1`
+        /// 的 `is_humanoid` 元数据（那只供渲染）。未易形（P4 `MorphState` 落地前恒定，
+        /// 见 `body_plan::resolve` 模块文档）时 `form_*` 三字段 = 对应本体字段。
+        /// 本体种族 id。
+        race_id: String,
+        /// 当前形态种族 id（未易形时 = `race_id`）。
+        form_race_id: String,
+        /// 当前形态 body plan id（未易形时 = `body_plan_id`）。
+        form_body_plan_id: String,
+        /// 本体是否人形。
+        intrinsic_is_humanoid: bool,
+        /// 当前形态是否人形（未易形时 = `intrinsic_is_humanoid`）。
+        form_is_humanoid: bool,
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
@@ -1599,6 +1613,18 @@ enum ServerDataPayloadWireV1 {
         target_meridian: Option<String>,
         #[serde(default)]
         body_plan_id: String,
+        // plan-race-system-v1 P3b — 身份快照五字段（见 `ServerDataPayloadV1::CultivationDetail`
+        // 同名字段文档）；`#[serde(default)]` 保证老 sample/客户端零改动继续过验。
+        #[serde(default)]
+        race_id: String,
+        #[serde(default)]
+        form_race_id: String,
+        #[serde(default)]
+        form_body_plan_id: String,
+        #[serde(default)]
+        intrinsic_is_humanoid: bool,
+        #[serde(default)]
+        form_is_humanoid: bool,
     },
     QiColorObserved {
         #[serde(flatten)]
@@ -2745,6 +2771,11 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => Ok(Self::CultivationDetail {
                 realm,
                 channel_ids,
@@ -2765,6 +2796,11 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             }),
             ServerDataPayloadWireV1::QiColorObserved { observed } => {
                 Ok(Self::QiColorObserved(observed))
@@ -3344,6 +3380,11 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
                 channel_ids: channel_ids.clone(),
@@ -3364,6 +3405,11 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 practice_weights: practice_weights.clone(),
                 target_meridian: target_meridian.clone(),
                 body_plan_id: body_plan_id.clone(),
+                race_id: race_id.clone(),
+                form_race_id: form_race_id.clone(),
+                form_body_plan_id: form_body_plan_id.clone(),
+                intrinsic_is_humanoid: *intrinsic_is_humanoid,
+                form_is_humanoid: *form_is_humanoid,
             },
             ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
                 observed: observed.clone(),
@@ -5117,6 +5163,11 @@ mod tests {
             }],
             target_meridian: Some(channel_ids[4].clone()),
             body_plan_id: "humanoid".to_string(),
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -5195,6 +5246,11 @@ mod tests {
             practice_weights: Vec::new(),
             target_meridian: Some("tail_fin_channel".to_string()),
             body_plan_id: "whale".to_string(),
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         });
         let bytes = payload
             .to_json_bytes_checked()
