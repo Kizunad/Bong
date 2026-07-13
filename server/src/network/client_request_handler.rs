@@ -72,13 +72,14 @@ use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
 use crate::forge::steps::next_step_after;
 use crate::inventory::{
-    add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
-    apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
-    fully_repair_weapon_instance, inventory_instance_container_attrition_exempt,
-    inventory_item_by_instance_borrow, inventory_item_by_instance_mut,
-    inventory_location_attrition_exempt, pickup_dropped_loot_instance, DroppedLootRegistry,
-    InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
-    InventoryMoveRejectReason, ItemInstance, ItemTemplate, PlayerInventory,
+    add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy,
+    apply_inventory_move_with_race, apply_item_spiritual_wear, consume_item_instance_once,
+    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
+    inventory_instance_container_attrition_exempt, inventory_item_by_instance_borrow,
+    inventory_item_by_instance_mut, inventory_location_attrition_exempt,
+    pickup_dropped_loot_instance, DroppedLootRegistry, InventoryDurabilityChangedEvent,
+    InventoryInstanceIdAllocator, InventoryMoveOutcome, InventoryMoveRejectReason, ItemInstance,
+    ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
     AlchemyItemData, ItemCategory, ItemEffect, ItemRegistry,
@@ -1817,6 +1818,8 @@ pub fn handle_client_request_payloads(
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
                     alchemy_params.vfx_events.as_deref_mut(),
+                    combat_params.body_plans.as_deref(),
+                    combat_params.race_registry.as_deref(),
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1862,6 +1865,8 @@ pub fn handle_client_request_payloads(
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
                     alchemy_params.vfx_events.as_deref_mut(),
+                    combat_params.body_plans.as_deref(),
+                    combat_params.race_registry.as_deref(),
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -4133,6 +4138,7 @@ mod tests {
                     shelflife_profile: None,
                     shield_spec: None,
                     shelflife_track: None,
+                    wearer_race: crate::body_plan::types::RaceGateOwned::default(),
                 },
             ),
             (
@@ -4165,6 +4171,7 @@ mod tests {
                     shelflife_profile: None,
                     shield_spec: None,
                     shelflife_track: None,
+                    wearer_race: crate::body_plan::types::RaceGateOwned::default(),
                 },
             ),
         ]))
@@ -6782,6 +6789,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -7258,6 +7266,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
         let mut karma = KarmaWeightStore::default();
@@ -7361,6 +7370,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -7464,6 +7474,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -7564,6 +7575,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -11180,6 +11192,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -12956,6 +12969,11 @@ fn handle_inventory_move(
     // plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈（卸/装/拖入）。move 成功后按
     // `classify_pack_move` 判别分支 emit 差异化 VfxEventRequest，client 消费播差异化粒子+音效。
     vfx_events: Option<&mut Events<VfxEventRequest>>,
+    // plan-race-system-v1 P3b（决议 §8.1 #5）—— 装备门判定用 Form 身份（当前形态，
+    // 未易形时 = 本体）。`Option` 与其余 registry 同规则：既有单测未插入这两个资源时
+    // 优雅退化到 humanoid（`resolve_body_plan_for_target` 文档化的退化行为）。
+    body_plans: Option<&crate::body_plan::BodyPlanRegistry>,
+    race_registry: Option<&crate::body_plan::RaceRegistry>,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -13013,13 +13031,35 @@ fn handle_inventory_move(
         }
     }
 
-    match apply_inventory_move(
+    // plan-race-system-v1 P3b（决议 §8.1 #5）—— 装备门判定用 Form 身份；未易形时
+    // `resolve_body_plan_for_target(Form)` 与 `Intrinsic` 恒等（P4 MorphState 落地前，
+    // 见 `body_plan::resolve` 模块文档），因此这里已经是易形接入后的正确调用点，
+    // 无需 P4 落地时改动本处。
+    let form_race_id = cultivations
+        .get(entity)
+        .map(|c| c.race.clone())
+        .unwrap_or_else(|_| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+    let form_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+        entity,
+        crate::body_plan::BodyPlanPurpose::Form,
+        crate::body_plan::BodyPlanResolveInputs {
+            cultivation: cultivations.get(entity).ok(),
+            beast_kind: None,
+        },
+        body_plans,
+        race_registry,
+    )
+    .is_humanoid;
+
+    match apply_inventory_move_with_race(
         &mut inventory,
         item_registry,
         instance_id,
         &from,
         &to,
         rotated,
+        &form_race_id,
+        form_is_humanoid,
     ) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
             let wear_update = maybe_apply_targeted_item_wear(

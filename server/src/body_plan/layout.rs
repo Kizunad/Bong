@@ -762,7 +762,7 @@ mod tests {
             BodyPartDef, BodyPlan, HitGeometry, PartBox, PartConsequence,
         };
 
-        let parts = vec![
+        let parts = [
             "skull",
             "torso",
             "dorsal_fin",
