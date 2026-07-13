@@ -2346,8 +2346,8 @@ mod tests {
             .world()
             .entity(elder)
             .get::<DyingElderState>()
-            .unwrap()
-            .clone();
+            .copied()
+            .unwrap();
         let elder_qi = app
             .world()
             .entity(elder)
