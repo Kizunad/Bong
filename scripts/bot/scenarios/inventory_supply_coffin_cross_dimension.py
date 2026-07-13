@@ -94,12 +94,15 @@ def run(env) -> None:
                 "合法 move 必须回推当前物资棺 session；"
                 f"expected={session_id} actual={moved_update['session_id']}"
             )
-        if any(
-            placed["item"]["instance_id"] == moved_instance_id
+        remaining_locations = [
+            f"{placed['container_id']}@{placed['row']},{placed['col']}"
             for placed in moved_update["placed_items"]
-        ):
+            if placed["item"]["instance_id"] == moved_instance_id
+        ]
+        if remaining_locations:
             raise BotAssertionError(
-                f"合法 move 后实例 {moved_instance_id} 不得残留在权威 container update"
+                f"合法 move 后实例 {moved_instance_id} 不得残留在权威 container update；"
+                f"expected=[] actual={remaining_locations}"
             )
         moved_snapshot = wait_inventory_snapshot_after(bot, move_sent_at, timeout=10.0)
         _assert_instance_present_in_inventory(moved_snapshot, moved_instance_id)
@@ -252,6 +255,24 @@ def _assert_no_event_after(
 
 
 def _assert_instance_absent_from_inventory(snapshot: dict, instance_id: int) -> None:
+    locations = _inventory_locations(snapshot, instance_id)
+    if locations:
+        raise BotAssertionError(
+            f"跨维旧 session 不得把棺内实例 {instance_id} 搬入玩家背包；"
+            f"expected=[] actual={locations}"
+        )
+
+
+def _assert_instance_present_in_inventory(snapshot: dict, instance_id: int) -> None:
+    locations = _inventory_locations(snapshot, instance_id)
+    if not locations:
+        raise BotAssertionError(
+            f"合法 move 后实例 {instance_id} 必须进入玩家背包；"
+            "expected=至少一个权威背包位置 actual=[]"
+        )
+
+
+def _inventory_locations(snapshot: dict, instance_id: int) -> list[str]:
     locations: list[str] = []
     for placed in snapshot.get("placed_items", []):
         if placed["item"]["instance_id"] == instance_id:
@@ -265,15 +286,4 @@ def _assert_instance_absent_from_inventory(snapshot: dict, instance_id: int) -> 
         items = value if isinstance(value, list) else [value]
         if any(item and item["instance_id"] == instance_id for item in items):
             locations.append(f"equip@{slot}")
-    if locations:
-        raise BotAssertionError(
-            f"跨维旧 session 不得把棺内实例 {instance_id} 搬入玩家背包，实际位置={locations}"
-        )
-
-
-def _assert_instance_present_in_inventory(snapshot: dict, instance_id: int) -> None:
-    try:
-        _assert_instance_absent_from_inventory(snapshot, instance_id)
-    except BotAssertionError:
-        return
-    raise BotAssertionError(f"合法 move 后实例 {instance_id} 必须进入玩家背包")
+    return locations
