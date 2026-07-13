@@ -308,5 +308,7 @@ public final class VfxBootstrap {
         );
         // plan-scroll-reading-v1 P2 — 卷轴展开淡金色微光（server 在 ScrollOpen 同帧 emit）。
         registry.register(ScrollOpenGlowPlayer.EVENT_ID, new ScrollOpenGlowPlayer());
+        // plan-race-system-v1 PR-5b — 易形（morph.yixing）施法特效：淡青白螺旋 24 + 白雾 40。
+        registry.register(MorphVfxPlayer.EVENT_ID, new MorphVfxPlayer());
     }
 }
