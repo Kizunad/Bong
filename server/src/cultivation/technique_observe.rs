@@ -119,6 +119,7 @@ pub fn evaluate_observe_attempt(
         severed,
         ctx.technique_id,
         intrinsic_is_humanoid,
+        None,
     );
     if !matches!(learn, ScrollReadOutcome::Learned) {
         return ObserveOutcome::LearnBlocked(learn);

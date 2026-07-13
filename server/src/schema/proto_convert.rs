@@ -991,6 +991,21 @@ impl From<&ServerDataPayloadV1> for Payload {
                         .collect(),
                 })
             }
+            ServerDataPayloadV1::MorphState(state) => Payload::MorphState(bong::MorphState {
+                v: 1,
+                mode: state.mode.clone(),
+                entries: state
+                    .entries
+                    .iter()
+                    .map(|e| bong::MorphStateEntry {
+                        entity_id: e.entity_id,
+                        model_kind: e.model_kind,
+                        form_race_id: e.form_race_id.clone(),
+                        form_body_plan_id: e.form_body_plan_id.clone(),
+                        active: e.active,
+                    })
+                    .collect(),
+            }),
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -6402,6 +6417,21 @@ mod tests {
                     },],
                 }
             )),
+            // plan-race-system-v1 P4：易形状态快照（此 fixture 列表每变体恰一条，见
+            // s2c_fixture_count_matches_variant_count 的 1:1 约束；delta/active=false 的
+            // 专项 round-trip 见 morph_state_delta_release_proto_round_trips）。
+            fix!(ServerDataPayloadV1::MorphState(
+                super::super::server_data::MorphStateV1 {
+                    mode: "full".to_string(),
+                    entries: vec![super::super::server_data::MorphStateEntryV1 {
+                        entity_id: 42,
+                        model_kind: 1,
+                        form_race_id: "whale".to_string(),
+                        form_body_plan_id: "whale".to_string(),
+                        active: true,
+                    }],
+                }
+            )),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id: "ses:1".to_string(),
                 target_id: "entity:1".to_string(),
@@ -7341,6 +7371,40 @@ mod tests {
     ///
     /// NOTE: This test uses the `ServerDataType` enum variant count as the ground truth.
     /// That count is maintained by `payload_type()` which is also an exhaustive match.
+    /// plan-race-system-v1 P4 —— delta（`active=false`）易形解除快照的专项 proto 往返，
+    /// 补 `s2c_all_fixtures` 每变体 1:1 约束下无法放第二条 MorphState fixture 的覆盖。
+    #[test]
+    fn morph_state_delta_release_proto_round_trips() {
+        use super::super::server_data::{
+            MorphStateEntryV1, MorphStateV1, ServerDataPayloadV1, ServerDataV1,
+        };
+        use prost::Message;
+
+        let payload = ServerDataV1::new(ServerDataPayloadV1::MorphState(MorphStateV1 {
+            mode: "delta".to_string(),
+            entries: vec![MorphStateEntryV1 {
+                entity_id: 42,
+                model_kind: 0,
+                form_race_id: String::new(),
+                form_body_plan_id: String::new(),
+                active: false,
+            }],
+        }));
+        let bytes = payload.to_proto_bytes();
+        assert!(!bytes.is_empty());
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("delta morph_state envelope must decode");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::MorphState(state)) => {
+                assert_eq!(state.mode, "delta");
+                assert_eq!(state.entries.len(), 1);
+                assert_eq!(state.entries[0].entity_id, 42);
+                assert!(!state.entries[0].active, "解除态必须 active=false");
+            }
+            other => panic!("expected MorphState payload, got {other:?}"),
+        }
+    }
+
     #[test]
     fn s2c_fixture_count_matches_variant_count() {
         use super::super::server_data::ServerDataType;
@@ -7488,6 +7552,7 @@ mod tests {
             ServerDataType::TutorialCoffinPos,
             ServerDataType::InventoryMoveRejected,
             ServerDataType::ScrollOpen,
+            ServerDataType::MorphState,
         ];
 
         let total_variants = all_types.len();
@@ -7595,8 +7660,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 129,
-            "Expected 129 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 130,
+            "Expected 130 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(
