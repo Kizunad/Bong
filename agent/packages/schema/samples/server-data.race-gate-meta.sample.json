@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "race_gate_meta",
+  "item_wearer_race": [
+    { "id": "armor_whale_plate", "gate": { "kind": "species", "species": ["whale"] } },
+    { "id": "human_only_mask", "gate": { "kind": "humanoid", "species": [] } }
+  ],
+  "technique_required_race": [
+    { "id": "sword.cleave", "gate": { "kind": "humanoid", "species": [] } },
+    { "id": "fin.slap", "gate": { "kind": "species", "species": ["whale", "shark"] } }
+  ]
+}

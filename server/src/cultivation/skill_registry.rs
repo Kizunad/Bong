@@ -35,6 +35,11 @@ pub enum CastRejectReason {
     /// 与 NoWeapon 同理是纯反馈拆分：此前冒用 InvalidTarget，玩家贴脸锁定目标
     /// 仍看到"目标无效"，被文案误导（一剑开天门实证）。
     TechniqueInactive,
+    /// plan-race-system-v1 P3a（决议 §8.1 #5/#6）——施放门 race gate 拒绝：本体
+    /// race_id / `intrinsic_is_humanoid` 未通过 `TechniqueDefinition.required_race`。
+    /// 拥有门之后、经脉门（handle_skill_bar_cast）/ 境界门（sword_path resolver）
+    /// 之前判定。
+    RaceMismatch,
 }
 
 impl CastRejectReason {
@@ -58,6 +63,7 @@ impl CastRejectReason {
             CastRejectReason::InRecovery => CastOutcomeV1::RejectInRecovery,
             CastRejectReason::NoWeapon => CastOutcomeV1::RejectNoWeapon,
             CastRejectReason::TechniqueInactive => CastOutcomeV1::RejectTechniqueInactive,
+            CastRejectReason::RaceMismatch => CastOutcomeV1::RejectRaceMismatch,
         }
     }
 }

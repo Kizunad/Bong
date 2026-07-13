@@ -5,8 +5,12 @@
 //!
 //! 系统调度在 `CombatSystemSet::Emit`（读 CombatEvent resolve 结果之后）。
 
-use valence::prelude::{Client, Entity, EventReader, EventWriter, Query, ResMut, With};
+use valence::prelude::{Client, Entity, EventReader, EventWriter, Query, Res, ResMut, With};
 
+use crate::body_plan::{
+    resolve_body_plan_for_target, BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs,
+    RaceRegistry,
+};
 use crate::combat::events::CombatEvent;
 use crate::combat::rat_bite::RatBiteEvent;
 use crate::cultivation::components::{Cultivation, MeridianSystem};
@@ -39,6 +43,8 @@ pub fn first_hit_dash_insight(
     >,
     mut learned_events: EventWriter<TechniqueLearnedEvent>,
     mut narrations: Option<ResMut<PendingGameplayNarrations>>,
+    body_plans: Option<Res<BodyPlanRegistry>>,
+    races: Option<Res<RaceRegistry>>,
 ) {
     // Collect player entities that were damaged
     let mut damaged_players: Vec<Entity> = Vec::new();
@@ -71,6 +77,17 @@ pub fn first_hit_dash_insight(
             continue;
         }
 
+        let intrinsic_is_humanoid = resolve_body_plan_for_target(
+            entity,
+            BodyPlanPurpose::Intrinsic,
+            BodyPlanResolveInputs {
+                cultivation: Some(cultivation),
+                beast_kind: None,
+            },
+            body_plans.as_deref(),
+            races.as_deref(),
+        )
+        .is_humanoid;
         let outcome = learn_technique_if_allowed(
             &mut known,
             cultivation,
@@ -78,6 +95,7 @@ pub fn first_hit_dash_insight(
             severed,
             DASH_SKILL_ID,
             0.0,
+            intrinsic_is_humanoid,
         );
 
         if outcome == ScrollReadOutcome::Learned {
