@@ -42,6 +42,7 @@ use crate::network::RedisBridgeResource;
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::elder_encounter::{ElderEncounterEventKindV1, ElderEncounterEventV1};
@@ -787,13 +788,6 @@ pub fn betray_roll(betray_probability: f64, seed: u64) -> bool {
     roll < betray_probability
 }
 
-// ── P2：zone spirit_qi 上限常量 ───────────────────────────────────────────────
-
-/// TSY zone spirit_qi 上限（负灵域通常 -1.0 ~ 0，大能死亡释放后最多恢复到 0.0 上界）。
-/// 用于 qi_release_to_zone 的 zone_cap 参数；符合 zone.rs `MAX_ZONE_SPIRIT_QI = 1.0`
-/// 的最大值约束（运行时会用 zone.spirit_qi 真实值 + 允许上限判定）。
-pub const DYING_ELDER_ZONE_RELEASE_CAP: f64 = 1.0;
-
 // ── P2：死亡标记 Component ─────────────────────────────────────────────────────
 
 /// 垂死大能已处理死亡（避免 `DyingElderDeathSystem` 重复触发 qi release + loot）。
@@ -970,26 +964,26 @@ pub(crate) fn dying_elder_death_system(
         let elder_account = QiAccountId::npc(format!("dying_elder:{}", entity.to_bits()));
         let zone_account = QiAccountId::zone(bb.home_zone.clone());
 
-        // 查找 zone 当前 spirit_qi
+        // 只有真实存在的 zone 才能接收 accepted 腿；缺资源或 home_zone 漂移时，
+        // 全量进入 overflow，绝不根据虚构浓度制造无法写回世界状态的 accepted。
         let zone_current_qi = zones
             .as_ref()
             .and_then(|zr| zr.zones.iter().find(|z| z.name == bb.home_zone))
-            .map(|z| z.spirit_qi)
-            .unwrap_or(-0.5);
+            .map(|z| z.spirit_qi * QI_ZONE_UNIT_CAPACITY);
 
         if release_amount > 0.0 {
             match qi_release_to_zone(
                 release_amount,
-                elder_account,
+                elder_account.clone(),
                 zone_account,
-                zone_current_qi,
-                DYING_ELDER_ZONE_RELEASE_CAP,
+                zone_current_qi.unwrap_or(QI_ZONE_UNIT_CAPACITY),
+                QI_ZONE_UNIT_CAPACITY,
             ) {
                 Ok(outcome) => {
                     // ── 更新 ZoneRegistry spirit_qi ──────────────────────────
                     if let Some(ref mut zr) = zones {
                         if let Some(zone) = zr.zones.iter_mut().find(|z| z.name == bb.home_zone) {
-                            zone.spirit_qi = outcome.zone_after;
+                            zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
                         }
                     }
                     // ── audit transfer ────────────────────────────────────────
@@ -999,12 +993,28 @@ pub(crate) fn dying_elder_death_system(
                         }
                         qi_transfer_events.send(transfer);
                     }
+                    if outcome.overflow > QI_EPSILON {
+                        let overflow_transfer = QiTransfer {
+                            from: elder_account,
+                            to: QiAccountId::overflow(format!(
+                                "dying_elder_release:{}",
+                                entity.to_bits()
+                            )),
+                            amount: outcome.overflow,
+                            reason: QiTransferReason::ReleaseToZone,
+                        };
+                        if let Some(ref mut account) = qi_account {
+                            account.push_transfer_audit(overflow_transfer.clone());
+                        }
+                        qi_transfer_events.send(overflow_transfer);
+                    }
                     tracing::info!(
-                        "[bong][dying_elder] death_system: elder {:?} released qi={:.2} to zone '{}' zone_after={:.4} tick={tick}",
+                        "[bong][dying_elder] death_system: elder {:?} released qi={:.2} to zone '{}' overflow={:.2} zone_after={:.4} tick={tick}",
                         entity,
                         outcome.accepted,
                         bb.home_zone,
-                        outcome.zone_after,
+                        outcome.overflow,
+                        outcome.zone_after / QI_ZONE_UNIT_CAPACITY,
                     );
                     // 大能 qi_current 归零（已转出）
                     bb.qi_current = 0.0;
@@ -2213,70 +2223,158 @@ mod tests {
 
     // ── P2：DyingElderDeathSystem 守恒 + loot 分档测试 ────────────────────────
 
+    fn run_death_release(
+        zone_fraction: Option<f64>,
+        release_amount: f64,
+        with_account: bool,
+    ) -> (Option<f64>, f64, bool, Vec<QiTransfer>, Vec<QiTransfer>) {
+        use valence::prelude::App;
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        if let Some(zone_fraction) = zone_fraction {
+            let mut zones = ZoneRegistry::fallback();
+            zones.zones[0].name = "tsy_deep".to_string();
+            zones.zones[0].spirit_qi = zone_fraction;
+            app.insert_resource(zones);
+        }
+        if with_account {
+            app.insert_resource(WorldQiAccount::default());
+        }
+        app.add_systems(valence::prelude::Update, dying_elder_death_system);
+
+        let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
+        bb.qi_current = release_amount;
+        let elder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                bb,
+                DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .get_resource::<ZoneRegistry>()
+            .map(|zones| zones.zones[0].spirit_qi);
+        let elder_ref = app.world().entity(elder);
+        let qi_after = elder_ref
+            .get::<DyingElderBlackboard>()
+            .expect("死亡系统不应在本帧删除大能 blackboard")
+            .qi_current;
+        let processed = elder_ref.contains::<DyingElderDeathProcessed>();
+        let emitted = app
+            .world_mut()
+            .resource_mut::<bevy_ecs::event::Events<QiTransfer>>()
+            .drain()
+            .collect::<Vec<_>>();
+        let audited = app
+            .world()
+            .get_resource::<WorldQiAccount>()
+            .map(|account| account.transfers().to_vec())
+            .unwrap_or_default();
+        (zone_after, qi_after, processed, emitted, audited)
+    }
+
     #[test]
-    fn death_system_qi_release_conservation() {
-        // 期望：大能死亡时全额 qi_current 归 zone，守恒不变式：
-        //   old_elder_qi + old_zone_qi == 0 + new_zone_qi（忽略溢出 overflow）
-        use crate::qi_physics::ledger::QiAccountId;
-        use crate::qi_physics::release::qi_release_to_zone;
-
-        let elder_qi = 480.0_f64; // 化虚大能典型值
-        let zone_qi = -0.6_f64; // 坍缩渊深度负
-        let zone_cap = DYING_ELDER_ZONE_RELEASE_CAP; // 1.0
-
-        let elder_account = QiAccountId::npc("dying_elder:42");
-        let zone_account = QiAccountId::zone("tsy_deep");
-
-        let outcome = qi_release_to_zone(elder_qi, elder_account, zone_account, zone_qi, zone_cap)
-            .expect("qi_release_to_zone 不应失败（有效入参）");
-
-        // 守恒：accepted + overflow == elder_qi
+    fn death_system_release_uses_absolute_zone_capacity() {
+        let (zone_after, qi_after, processed, emitted, audited) =
+            run_death_release(Some(-0.6), 500.0, true);
+        let accepted = QI_ZONE_UNIT_CAPACITY - (-0.6 * QI_ZONE_UNIT_CAPACITY);
+        assert!((qi_after).abs() <= QI_EPSILON, "成功释放后大能真元应归零");
+        assert!(processed, "死亡结算后必须插入幂等处理标记");
         assert!(
-            (outcome.accepted + outcome.overflow - elder_qi).abs() < 1e-9,
-            "守恒：accepted({:.4}) + overflow({:.4}) 应等于 elder_qi({elder_qi:.4})",
-            outcome.accepted,
-            outcome.overflow
+            (zone_after.expect("fixture 安装了 zone") - 1.0).abs() <= QI_EPSILON,
+            "负灵域应按绝对容量回暖到比例上限 1.0"
         );
-
-        // zone 真元跃升：zone_after 应大于 zone_qi
+        assert_eq!(
+            emitted.len(),
+            2,
+            "500 真元应产生 accepted 与 overflow 两条事件"
+        );
         assert!(
-            outcome.zone_after > zone_qi,
-            "zone spirit_qi 应因死亡释放跃升；before={zone_qi:.4} after={:.4}",
-            outcome.zone_after
+            (emitted[0].amount - accepted).abs() <= QI_EPSILON,
+            "accepted 应由 QI_ZONE_UNIT_CAPACITY 推导为 {accepted}，实际={}",
+            emitted[0].amount
+        );
+        assert_eq!(
+            audited, emitted,
+            "WorldQiAccount 审计必须逐条镜像发出的 transfer"
         );
     }
 
     #[test]
-    fn death_system_zone_qi_spike_observable() {
-        // 期望：化虚大能死亡后 zone spirit_qi 可观测跃升（从深度负→更接近 0 或正）
-        use crate::qi_physics::ledger::QiAccountId;
-        use crate::qi_physics::release::qi_release_to_zone;
-
-        let elder_qi = DYING_ELDER_INITIAL_QI; // 500.0（化虚级，worldview §三）
-        let zone_qi = -0.6_f64;
-        let zone_cap = DYING_ELDER_ZONE_RELEASE_CAP;
-
-        let outcome = qi_release_to_zone(
-            elder_qi,
-            QiAccountId::npc("dying_elder:7"),
-            QiAccountId::zone("tsy_deep"),
-            zone_qi,
-            zone_cap,
-        )
-        .expect("should not fail");
-
-        // zone 跃升：-0.6 + accepted ≥ 0（大能 500 qi，zone cap=1.0，接受 min(500, room=1.6) = 1.6 → 截止 cap）
-        // 实际 room = zone_cap - zone_qi = 1.0 - (-0.6) = 1.6 → accepted = min(500, 1.6) = 1.6 → zone_after = -0.6+1.6=1.0
+    fn death_system_routes_overflow_to_overflow_account() {
+        let (_, _, _, emitted, _) = run_death_release(Some(0.9), 500.0, true);
+        let accepted = (1.0 - 0.9) * QI_ZONE_UNIT_CAPACITY;
+        let overflow = 500.0 - accepted;
         assert!(
-            outcome.zone_after > zone_qi,
-            "大能 qi={elder_qi:.0} 死亡后 zone 应从 {zone_qi:.2} 跃升至 {:.4}（zone_cap={zone_cap}）",
-            outcome.zone_after
+            (emitted.iter().map(|transfer| transfer.amount).sum::<f64>() - 500.0).abs()
+                <= QI_EPSILON,
+            "accepted + overflow 必须闭合全部 500 真元"
+        );
+        let overflow_transfer = emitted
+            .iter()
+            .find(|transfer| transfer.to.kind == crate::qi_physics::ledger::QiAccountKind::Overflow)
+            .expect("zone 接近满时必须路由 overflow account");
+        assert!(
+            (overflow_transfer.amount - overflow).abs() <= QI_EPSILON,
+            "overflow 应为 release-accepted={overflow}，实际={}",
+            overflow_transfer.amount
+        );
+        assert_eq!(overflow_transfer.reason, QiTransferReason::ReleaseToZone);
+    }
+
+    #[test]
+    fn death_system_without_world_qi_account_still_emits_both_legs() {
+        let (_, _, _, emitted, audited) = run_death_release(Some(-0.6), 500.0, false);
+        assert!(
+            audited.is_empty(),
+            "未安装 WorldQiAccount 时不应伪造本地审计资源"
+        );
+        assert_eq!(
+            emitted.len(),
+            2,
+            "无 WorldQiAccount 时两条事件仍必须完整发出"
         );
         assert!(
-            outcome.zone_after <= zone_cap,
-            "zone_after={:.4} 不应超过 zone_cap={zone_cap}",
-            outcome.zone_after
+            (emitted.iter().map(|transfer| transfer.amount).sum::<f64>() - 500.0).abs()
+                <= QI_EPSILON,
+            "降级路径的事件金额仍必须守恒"
         );
+    }
+
+    #[test]
+    fn death_system_missing_zone_routes_everything_to_overflow() {
+        let (zone_after, qi_after, _, emitted, _) = run_death_release(None, 500.0, true);
+        assert!(zone_after.is_none(), "fixture 不应安装 ZoneRegistry");
+        assert!(
+            qi_after.abs() <= QI_EPSILON,
+            "全量 overflow 后大能真元应归零"
+        );
+        assert_eq!(
+            emitted.len(),
+            1,
+            "缺 zone 时不得发无法落入世界状态的 accepted 腿"
+        );
+        assert!(emitted[0].to.kind == crate::qi_physics::ledger::QiAccountKind::Overflow);
+        assert!((emitted[0].amount - 500.0).abs() <= QI_EPSILON);
+    }
+
+    #[test]
+    fn natural_exhaustion_zero_qi_no_transfer() {
+        let (zone_after, qi_after, processed, emitted, audited) =
+            run_death_release(Some(-0.6), 0.0, true);
+        assert!((zone_after.expect("fixture 安装了 zone") + 0.6).abs() <= QI_EPSILON);
+        assert!(qi_after.abs() <= QI_EPSILON);
+        assert!(processed, "零真元死亡仍应完成幂等死亡结算");
+        assert!(emitted.is_empty(), "零真元死亡不得发假 transfer event");
+        assert!(audited.is_empty(), "零真元死亡不得写假 audit");
     }
 
     #[test]
@@ -2314,34 +2412,6 @@ mod tests {
         assert!(
             (new_qi_max - 270.0).abs() < f64::EPSILON,
             "qi_max_drain=30 时 qi_max 应从 300 减至 270；实际 = {new_qi_max}"
-        );
-    }
-
-    #[test]
-    fn death_system_qi_current_zero_after_release() {
-        // 期望：死亡系统执行后大能 qi_current 归零（全额转出）
-        // qi_release_to_zone 处理溢出，此处验证 elder 方
-        let elder_qi_before = 480.0_f64;
-        let elder_qi_after = 0.0_f64; // 死亡后清零
-
-        // 守恒：转移量 = before - after（= 480.0，全额）
-        let transferred = elder_qi_before - elder_qi_after;
-        assert!(
-            (transferred - elder_qi_before).abs() < f64::EPSILON,
-            "死亡后大能 qi_current 应全额转出；transferred={transferred:.2} 应等于 before={elder_qi_before:.2}"
-        );
-        assert!(
-            (elder_qi_after).abs() < f64::EPSILON,
-            "死亡后 elder.qi_current 应精确为 0.0，实际 = {elder_qi_after}"
-        );
-    }
-
-    #[test]
-    fn zone_release_cap_constant_pin() {
-        // 期望：DYING_ELDER_ZONE_RELEASE_CAP = 1.0（与 zone.rs MAX_ZONE_SPIRIT_QI 一致）
-        assert!(
-            (DYING_ELDER_ZONE_RELEASE_CAP - 1.0).abs() < f64::EPSILON,
-            "ZONE_RELEASE_CAP 应为 1.0（对齐 zone.rs MAX_ZONE_SPIRIT_QI）；实际 = {DYING_ELDER_ZONE_RELEASE_CAP}"
         );
     }
 
