@@ -51,6 +51,7 @@ bash scripts/smoke-test.sh
 |------|------|
 | `/meridian open <id>` / `/meridian open_all` / `/meridian list` | 强制打通经脉或查看经脉状态 |
 | `/realm set <id>` | 直写玩家境界 |
+| `/race set <id>` | 切换玩家种族（走真实 `RaceChange` 两阶段事务：装备门重扫/经脉迁移+休眠登记/qi_max 重算+守恒释放，唯一绕过的是自然修炼流程） |
 | `/qi set <value>` / `/qi max <value>` | 直写真元当前值或上限 |
 | `/technique list` / `/technique add <id>` / `/technique remove <id>` / `/technique proficiency <id> <value>` / `/technique active <id> <bool>` / `/technique reset_all` | 查看、增删、调熟练度或重置功法 |
 | `/give <template_id> [count]` | 给予物品 |
