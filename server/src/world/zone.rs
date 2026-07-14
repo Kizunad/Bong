@@ -1888,14 +1888,50 @@ mod zone_tests {
 
     #[test]
     fn north_rift_and_scorch_are_adjacent_but_mutually_exclusive() {
-        let registry =
-            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let registry = ZoneRegistry::load();
+        assert!(
+            registry
+                .find_zone_by_name("tsy_zongmen_01_shallow")
+                .is_some(),
+            "production load path must merge TSY blueprint zones before this pin runs"
+        );
+        assert_eq!(
+            registry
+                .zones
+                .iter()
+                .filter(|zone| zone.name == "rift_mouth_north_002")
+                .count(),
+            1,
+            "north rift must remain uniquely registered after production merge"
+        );
+        assert_eq!(
+            registry
+                .zones
+                .iter()
+                .filter(|zone| zone.name == "north_waste_east_scorch")
+                .count(),
+            1,
+            "north scorch must remain uniquely registered after production merge"
+        );
         let rift = registry
             .find_zone_by_name("rift_mouth_north_002")
             .expect("north rift zone must remain registered");
         let scorch = registry
             .find_zone_by_name("north_waste_east_scorch")
             .expect("north scorch zone must remain registered");
+        assert_eq!(rift.dimension, DimensionKind::Overworld);
+        assert_eq!(scorch.dimension, DimensionKind::Overworld);
+        assert!(
+            scorch
+                .active_events
+                .iter()
+                .any(|event| event == "tribulation_scorch")
+                && scorch
+                    .active_events
+                    .iter()
+                    .any(|event| event == "tianjie_ascension_pit"),
+            "scorch weather/tribulation semantics must remain attached to the production zone"
+        );
         let (rift_min, rift_max) = rift.bounds;
         let (scorch_min, scorch_max) = scorch.bounds;
 
