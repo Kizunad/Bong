@@ -24,6 +24,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
     for field, wire, value in fields:
         if wire != 2:
             continue
+        if field == 5:
+            return _player_state(value)
         if field == 8:
             return _inventory_snapshot(value)
         if field == 11:
@@ -61,6 +63,16 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
         if field == 142:
             return _morph_state(value)
     return None
+
+
+def _player_state(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "player_state",
+        "spirit_qi": _double(fields, 3),
+        "spirit_qi_max": _double(fields, 11),
+    }
 
 
 def _inventory_snapshot(data: bytes) -> dict[str, Any]:
