@@ -8,6 +8,23 @@
 # from the cargo build/restart steps below — it just reads the same rasters. The
 # vite + three.js viewer is started separately:
 #   cd worldgen/console && npm install && npm run dev
+detach_background_job() {
+    local pid="${1:-}"
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+        echo "FAIL: invalid background job pid: ${pid:-<empty>}" >&2
+        return 1
+    fi
+    if ! disown "$pid" 2>/dev/null; then
+        echo "FAIL: background job $pid exited before it could be detached" >&2
+        return 1
+    fi
+}
+
+# Tests source this file to exercise the exact production detach helper.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
+
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -106,7 +123,7 @@ if [ -f "$TSY_MANIFEST_ABS" ]; then
 fi
 (cd server && env "${ENV_ARGS[@]}" cargo run > /tmp/bong-server.log 2>&1) &
 SERVER_PID=$!
-disown "$SERVER_PID"
+detach_background_job "$SERVER_PID"
 sleep 2
 
 if grep -q "loaded.*terrain tiles" /tmp/bong-server.log 2>/dev/null; then
