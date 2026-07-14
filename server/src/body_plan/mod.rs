@@ -51,7 +51,7 @@ pub mod validate;
 pub use layout::{humanoid_layout_static, BodyPlanLayoutLoadError, BodyPlanLayoutRegistry};
 pub use legacy::{id_to_legacy_body_part, legacy_body_part_to_id, legacy_body_parts_matching};
 pub use morph::{form_anchors_open, technique_requires_form_anchor, MorphState};
-pub use race_registry::{RaceLoadError, RaceRegistry, HUMAN_RACE_ID};
+pub use race_registry::{MeridianMappingDef, RaceLoadError, RaceRegistry, HUMAN_RACE_ID};
 pub use registry::{
     humanoid_plan_static, humanoid_topology_static, BodyPlanLoadError, BodyPlanRegistry,
     HUMANOID_BODY_PLAN_ID,
