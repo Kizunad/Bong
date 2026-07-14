@@ -25,33 +25,42 @@ public class QuickSlotDefaultKeyConflictTest {
     private static final Path NPC_INTERACTION_LOG =
         CLIENT_SOURCES.resolve("npc/NpcInteractionLogControls.java");
     private static final Path BONG_CLIENT = CLIENT_SOURCES.resolve("BongClient.java");
-    private static final Pattern RESERVED_FUNCTION_KEY =
-        Pattern.compile("\\bGLFW\\.GLFW_KEY_F[1-9]\\b");
+    private static final Pattern FUNCTION_KEY_TOKEN =
+        Pattern.compile("\\b(?:GLFW\\.)?GLFW_KEY_F(\\d{1,2})\\b");
+    private static final Pattern FUNCTION_KEY_OFFSET = Pattern.compile(
+        "\\b(?:GLFW\\.)?GLFW_KEY_F(\\d{1,2})\\s*([+-])\\s*(\\d+)\\b"
+    );
+    private static final Pattern RAW_RESERVED_KEY_CODE =
+        Pattern.compile("\\b(?:290|291|292|293|294|295|296|297|298)\\b");
 
     @Test
-    void noOtherClientSourceClaimsF1ThroughF9() throws IOException {
-        List<Path> offenders = new ArrayList<>();
+    void onlyExpectedQuickSlotExpressionReferencesReservedFunctionKeys() throws IOException {
+        List<ReservedKeyUse> uses = new ArrayList<>();
         try (var files = Files.walk(CLIENT_SOURCES)) {
             files.filter(path -> path.toString().endsWith(".java"))
-                .filter(path -> !path.equals(COMBAT_KEYBINDINGS))
-                .filter(path -> RESERVED_FUNCTION_KEY.matcher(codeOnly(read(path))).find())
-                .map(CLIENT_SOURCES::relativize)
-                .forEach(offenders::add);
+                .forEach(path -> collectReservedKeyUses(path, uses));
         }
-        offenders.sort(Comparator.naturalOrder());
+        uses.sort(Comparator.comparing(use -> use.path().toString()));
 
-        assertEquals(List.of(), offenders,
-            "F1-F9 只能作为快捷槽默认键，其它 client 入口不得直接占用: " + offenders);
+        assertEquals(
+            List.of(new ReservedKeyUse(
+                Path.of("combat/CombatKeybindings.java"),
+                "GLFW.GLFW_KEY_F1"
+            )),
+            uses,
+            "全 client 只允许快捷槽起点表达式引用 F1-F9: " + uses
+        );
+        assertCodeContains(read(COMBAT_KEYBINDINGS), "GLFW.GLFW_KEY_F1+i");
     }
 
     @Test
-    void productionUsesFabricRegistrarsAndTopLevelBootstrap() {
+    void productionUsesFabricInstallersAndTopLevelBootstrap() {
         assertCodeContains(read(COMBAT_KEYBINDINGS),
-            "registerQuickSlotKeys(KeyBindingHelper::registerKeyBinding)");
+            "installBindings(KeyBindingHelper::registerKeyBinding)");
         assertCodeContains(read(HUD_IMMERSION),
-            "registerToggleKey(KeyBindingHelper::registerKeyBinding)");
+            "installToggleKey(KeyBindingHelper::registerKeyBinding)");
         assertCodeContains(read(NPC_INTERACTION_LOG),
-            "registerInteractionLogKey(KeyBindingHelper::registerKeyBinding)");
+            "installInteractionLogKey(KeyBindingHelper::registerKeyBinding)");
 
         String client = read(BONG_CLIENT);
         assertCodeContains(client, "NpcInteractionLogControls.register()");
@@ -60,12 +69,11 @@ public class QuickSlotDefaultKeyConflictTest {
     }
 
     @Test
-    void quickSlotAndReboundConsumersRemainConnected() {
+    void installedBindingsRemainConnectedToRealTickEntrypoints() {
         String combatKeys = read(COMBAT_KEYBINDINGS);
         assertCodeContains(combatKeys,
-            "ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick)");
-        assertCodeContains(combatKeys, "while(QUICK_SLOT_KEYS[i].wasPressed())");
-        assertCodeContains(combatKeys, "quickSlotHandler.accept(i)");
+            "private static void onTick(MinecraftClient client){"
+                + "if(client==null||client.player==null)return;consumeQuickSlotPresses()");
 
         String combatBootstrap = read(COMBAT_HUD_BOOTSTRAP);
         assertCodeContains(combatBootstrap,
@@ -73,11 +81,46 @@ public class QuickSlotDefaultKeyConflictTest {
 
         String hud = read(HUD_IMMERSION);
         assertCodeContains(hud,
-            "consumeTogglePresses(keyBinding()::wasPressed,System::currentTimeMillis)");
+            "private static void onEndClientTick(MinecraftClient client){"
+                + "consumeInstalledTogglePresses(System::currentTimeMillis)");
         String npc = read(NPC_INTERACTION_LOG);
         assertCodeContains(npc,
-            "consumeTogglePresses(client.player!=null,client.currentScreen!=null,"
-                + "()->key!=null&&key.wasPressed())");
+            "private static void onEndClientTick(MinecraftClient client){if(client==null){return;}"
+                + "consumeInstalledTogglePresses(client.player!=null,client.currentScreen!=null)");
+    }
+
+    private static void collectReservedKeyUses(Path path, List<ReservedKeyUse> uses) {
+        String source = codeOnly(read(path));
+        Path relative = CLIENT_SOURCES.relativize(path);
+
+        var tokenMatcher = FUNCTION_KEY_TOKEN.matcher(source);
+        while (tokenMatcher.find()) {
+            int functionNumber = Integer.parseInt(tokenMatcher.group(1));
+            if (isReservedFunctionNumber(functionNumber)) {
+                uses.add(new ReservedKeyUse(relative, tokenMatcher.group()));
+            }
+        }
+
+        var offsetMatcher = FUNCTION_KEY_OFFSET.matcher(source);
+        while (offsetMatcher.find()) {
+            int base = Integer.parseInt(offsetMatcher.group(1));
+            int offset = Integer.parseInt(offsetMatcher.group(3));
+            int result = offsetMatcher.group(2).equals("+") ? base + offset : base - offset;
+            if (!isReservedFunctionNumber(base) && isReservedFunctionNumber(result)) {
+                uses.add(new ReservedKeyUse(relative, offsetMatcher.group()));
+            }
+        }
+
+        if (source.contains("new KeyBinding") || source.contains("extends KeyBinding")) {
+            var numericMatcher = RAW_RESERVED_KEY_CODE.matcher(source);
+            while (numericMatcher.find()) {
+                uses.add(new ReservedKeyUse(relative, numericMatcher.group()));
+            }
+        }
+    }
+
+    private static boolean isReservedFunctionNumber(int functionNumber) {
+        return functionNumber >= 1 && functionNumber <= 9;
     }
 
     private static void assertCodeContains(String source, String expected) {
@@ -101,5 +144,8 @@ public class QuickSlotDefaultKeyConflictTest {
         } catch (IOException exception) {
             throw new IllegalStateException(exception);
         }
+    }
+
+    private record ReservedKeyUse(Path path, String expression) {
     }
 }
