@@ -1073,17 +1073,33 @@ mod tests {
 
     #[test]
     fn whale_to_beast_common_does_not_clear_cultivation_progress() {
-        // 对称覆盖：whale->beast_common 方向同样必须走 identity mapping。
+        // plan-race-system-v1 PR-6c 换轨：whale 换成真非人 whale.json（6 条自身经脉），
+        // whale<->beast_common 不再是 identity，而是 6 对真跨构型映射（whale 的
+        // spout_meridian 等 → beast_common 的 lung 等）。玩家以 whale 构型打通
+        // spout_meridian，换到 beast_common 后进度必须经映射迁到 lung，不被清空；
+        // whale 的 6 条经脉全部在映射里 → 无经脉进休眠登记。
         let (body_plans, races) = load_real_body_plans_and_races();
+
+        // 用真实 whale.json 的经脉 profile 构造 whale 玩家的 MeridianSystem（6 条自身
+        // 经脉），而非 humanoid 20 条 default——whale 本就没有 lung/kidney 这些人体经脉。
+        let whale_profile = body_plans
+            .get(&BodyPlanId::new("whale"))
+            .expect("real whale.json body plan must load")
+            .meridian_profile
+            .clone()
+            .expect("whale.json must declare a meridian_profile");
+        let mut meridians = MeridianSystem::for_profile(&whale_profile);
+        meridians
+            .get_mut(MeridianChannelId::new("spout_meridian"))
+            .opened = true;
+        meridians
+            .get_mut(MeridianChannelId::new("spout_meridian"))
+            .integrity = 0.9;
+
         let mut app = App::new();
         app.insert_resource(body_plans);
         app.add_event::<QiTransfer>();
 
-        let mut meridians = MeridianSystem::default();
-        meridians.get_mut(MeridianChannelId::new("kidney")).opened = true;
-        meridians
-            .get_mut(MeridianChannelId::new("kidney"))
-            .integrity = 0.9;
         let cultivation = Cultivation {
             qi_current: 5.0,
             qi_max: 20.0,
@@ -1098,15 +1114,26 @@ mod tests {
         let plan = precheck_race_change(app.world(), player, RaceId::new("beast_common"), &races)
             .expect("whale -> beast_common precheck must succeed via real races.json mapping");
 
+        // whale->beast_common 映射 spout_meridian -> lung：已打通的 spout_meridian 必须
+        // 把 opened + integrity 一起迁到 beast_common 的 lung 上。
         assert!(
             plan.new_meridian_system
-                .get(MeridianChannelId::new("kidney"))
+                .get(MeridianChannelId::new("lung"))
                 .opened,
-            "whale->beast_common 必须走 identity meridian_mapping，已打通的 kidney 不能被清空"
+            "whale->beast_common 跨构型映射 spout_meridian->lung，已打通的 spout_meridian \
+             必须迁移成已打通的 lung，不能被清空"
+        );
+        assert_eq!(
+            plan.new_meridian_system
+                .get(MeridianChannelId::new("lung"))
+                .integrity,
+            0.9,
+            "迁移必须带着原 integrity 一起走"
         );
         assert!(
             plan.newly_dormant.is_empty(),
-            "whale->beast_common 覆盖全部 20 条经脉，不应有任何经脉进休眠登记，实际：{:?}",
+            "whale 的 6 条经脉全部在 whale->beast_common 映射里（被消费），不应有任何经脉进\
+             休眠登记，实际：{:?}",
             plan.newly_dormant
         );
     }
