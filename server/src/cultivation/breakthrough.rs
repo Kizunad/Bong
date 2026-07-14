@@ -186,6 +186,11 @@ pub enum BreakthroughError {
     RolledFailure {
         severity: f64,
     }, // 骰子输了
+    /// review r2 major-2 收口：目标实体成功解析出一个真实（非 humanoid 兜底）
+    /// `BodyPlan`，但该 plan 未声明 `meridian_profile`——fail-closed 拒绝突破，
+    /// 不静默借用 humanoid 1/3/6/12/16/20 曲线（见
+    /// `body_plan::MeridianProfileMissingError` 文档）。
+    RaceProfileIncomplete,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -235,6 +240,9 @@ fn breakthrough_error_message(error: &BreakthroughError) -> String {
         BreakthroughError::LedgerUnavailable => "突破未成：真元账本未就绪，仪式暂缓。".to_string(),
         BreakthroughError::RolledFailure { severity } => {
             format!("突破失败：气机反噬，伤势强度 {severity:.2}。")
+        }
+        BreakthroughError::RaceProfileIncomplete => {
+            "突破未成：此身构型的经脉档案不完整，无法判定突破配额。".to_string()
         }
     }
 }
@@ -308,39 +316,15 @@ pub fn add_pending_material_bonus(cultivation: &mut Cultivation, magnitude: f64)
     cultivation.pending_material_bonus
 }
 
-/// plan-race-system-v1 P1a：regular/extraordinary 子配额阈值不再是本函数内的硬编码
-/// match（旧值 3/6/12/12/4），改查目标实体 body plan 的
-/// `MeridianProfile.realm_requirements`（`humanoid.json`，§8.1 #8 "公式即数据"决议）。
-/// 数值 bit-for-bit 不变——`humanoid.json` 的曲线就是把旧 Rust match 表原样迁移过去。
-///
-/// 当前全部已注册种族（`races.json`）均映射到 humanoid body plan，尚无"目标实体走
-/// 非 humanoid 曲线"的真实场景，故本包装函数直接读 `body_plan::humanoid_plan_static()`
-/// 而非经 `resolve_body_plan_for_target` 解析 `cultivation.race`——等 P5 引入非
-/// humanoid 战斗构型、真的需要按实体差异化取值时，再把这里换成真正的按实体解析
-/// （`cultivation.race` 字段已在 P0 就位，届时改造无需再动调用点）。
-///
-/// plan-race-system-v1 P1 对抗审查 M3：核心判定逻辑已抽成
-/// [`breakthrough_precondition_error_for_profile`]（接受任意 `MeridianProfile`），本
-/// 函数只是"调用方拿不到实体 / 目标 profile 时"的 humanoid 保底包装——供 P4/P5 引入
-/// 真正实体解析时直接换成带 profile 的版本，无需再拆一次函数。
-fn breakthrough_precondition_error(
-    cultivation: &Cultivation,
-    meridians: &MeridianSystem,
-) -> Option<BreakthroughError> {
-    let profile = crate::body_plan::humanoid_plan_static()
-        .meridian_profile
-        .as_ref()
-        .expect(
-            "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
-             onward — validate_body_plan should have rejected a humanoid plan missing it",
-        );
-    breakthrough_precondition_error_for_profile(cultivation, meridians, profile)
-}
-
 /// 按目标实体的 `MeridianProfile` 判定突破前置条件（配额 / 子配额 / qi 消耗）——
 /// plan-race-system-v1 P1 对抗审查 M2/M3：非 humanoid 构型（P1 合成样本 / P5 whale
-/// 等）走本函数即可拿到正确判定，不再假设 humanoid 曲线。`breakthrough_precondition_error`
-/// 是本函数的 humanoid 保底包装，行为 bit-for-bit 一致。
+/// 等）走本函数即可拿到正确判定，不再假设 humanoid 曲线。
+///
+/// P5 换轨：production 消费点（`breakthrough_system` / `try_breakthrough_with_profile`）
+/// 均已改走本函数——原先"调用方拿不到实体时"的零参 humanoid 保底包装
+/// `breakthrough_precondition_error` 因此不再有调用点，已随本轮换轨移除；
+/// `try_breakthrough_with_env_season_bonus`（既有测试/调用点用的 humanoid 便捷入口）
+/// 显式传入 humanoid profile 调用本函数，行为 bit-for-bit 不变。
 pub(crate) fn breakthrough_precondition_error_for_profile(
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
@@ -492,12 +476,47 @@ pub fn try_breakthrough_with_env_season_bonus<R: RollSource>(
     season: Option<Season>,
     roll: &mut R,
 ) -> Result<BreakthroughSuccess, BreakthroughError> {
+    let profile = crate::body_plan::humanoid_plan_static()
+        .meridian_profile
+        .as_ref()
+        .expect(
+            "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+             onward — validate_body_plan should have rejected a humanoid plan missing it",
+        );
+    try_breakthrough_with_profile(
+        cultivation,
+        meridians,
+        material_bonus,
+        env_bonus,
+        season,
+        profile,
+        roll,
+    )
+}
+
+/// plan-race-system-v1 P5 —— 按**目标实体**解析出的 `body_plan::MeridianProfile` 尝试
+/// 突破，供非 humanoid 战斗构型（whale 等易形/种族玩家）走通突破链路。调用方经
+/// [`crate::body_plan::meridian_profile_for_target`] 解析出 `profile` 后传入——不再
+/// 无条件绑死 humanoid 曲线。`try_breakthrough_with_env_season_bonus` 是本函数的
+/// humanoid 保底包装（换轨前后 bit-for-bit 一致，见其函数体），既有调用点无需改动。
+#[allow(clippy::too_many_arguments)]
+pub fn try_breakthrough_with_profile<R: RollSource>(
+    cultivation: &mut Cultivation,
+    meridians: &mut MeridianSystem,
+    material_bonus: f64,
+    env_bonus: f64,
+    season: Option<Season>,
+    profile: &crate::body_plan::MeridianProfile,
+    roll: &mut R,
+) -> Result<BreakthroughSuccess, BreakthroughError> {
     let from = cultivation.realm;
-    if let Some(error) = breakthrough_precondition_error(cultivation, meridians) {
+    if let Some(error) =
+        breakthrough_precondition_error_for_profile(cultivation, meridians, profile)
+    {
         return Err(error);
     }
     let next = next_realm(from).expect("precondition check rejects max realm");
-    let need = next.required_meridians();
+    let need = profile.realm_requirements[next.rank() as usize - 1].total as usize;
     let have = meridians.opened_count();
     let cost = breakthrough_qi_cost(next);
 
@@ -650,6 +669,12 @@ pub(crate) struct BreakthroughResources<'w> {
     spirit_eye_used_events: Option<ResMut<'w, Events<SpiritEyeUsedForBreakthroughEvent>>>,
     skill_xp_events: Option<ResMut<'w, Events<SkillXpGain>>>,
     qi_account: Option<ResMut<'w, WorldQiAccount>>,
+    /// plan-race-system-v1 P5 —— 突破配额换轨：按 `req.entity` 解析目标实体的
+    /// `body_plan::MeridianProfile`（`crate::body_plan::meridian_profile_for_target`），
+    /// 不再无条件绑死 humanoid 曲线。缺失时（大量既有单测未插入这两个资源）优雅退化
+    /// 到 humanoid，行为 bit-for-bit 不变。
+    body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    races: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one Query/EventWriter per concern.
@@ -696,6 +721,52 @@ pub fn breakthrough_system(
         }
         let character_id = life.character_id.clone();
         let username = usernames.get(req.entity).ok().map(|name| name.0.clone());
+
+        // plan-race-system-v1 P5 换轨：突破配额（need）按目标实体解析出的 body plan
+        // 派生，不再无条件绑死 humanoid 曲线——whale 等非人构型走此系统时用自己的
+        // `MeridianProfile.realm_requirements`。`BeastKind` 不查（本系统查询要求携带
+        // `Cultivation`/`MeridianSystem`/`LifeRecord`，携带这三者的 NPC 是"修士"身份，
+        // 不是纯兽类 fauna，与既有 `resolve_meridian_topology_for_target` 消费点同款
+        // 简化——见 `npc::brain::actions_life::cultivate_action_system`）。
+        //
+        // review r2 major-2 收口：resolve **成功**但 plan 缺 `meridian_profile` 时
+        // `meridian_profile_for_target` 返回 `Err`——fail-closed 直接拒绝本次突破，
+        // 不落入下面借 humanoid 曲线顶上的旧行为（resolve 本身失败/资源缺失仍在该函数
+        // 内部退化到 humanoid，不受影响，见其文档）。
+        let profile = match crate::body_plan::meridian_profile_for_target(
+            req.entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: Some(&cultivation),
+                beast_kind: None,
+                morph_state: None,
+            },
+            resources.body_plans.as_deref(),
+            resources.races.as_deref(),
+        ) {
+            Ok(profile) => profile,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][cultivation] breakthrough rejected entity={:?} fail-closed: {error}",
+                    req.entity
+                );
+                if let Some(narrations) = resources.pending_narrations.as_deref_mut() {
+                    if let Some(username) = username.as_deref() {
+                        narrations.push_player(
+                            username,
+                            breakthrough_error_message(&BreakthroughError::RaceProfileIncomplete),
+                            NarrationStyle::SystemWarning,
+                        );
+                    }
+                }
+                outcomes.send(BreakthroughOutcome {
+                    entity: req.entity,
+                    from,
+                    result: Err(BreakthroughError::RaceProfileIncomplete),
+                });
+                continue;
+            }
+        };
 
         // plan §3.1：material_bonus = req.material_bonus（手动传入，默认 0）
         //   ⊕ 服用突破辅助丹药挂在 StatusEffects 的 BreakthroughBoost buff 聚合值。
@@ -748,7 +819,8 @@ pub fn breakthrough_system(
         });
         let ledger_error = if zone_error.is_none()
             && (resources.qi_account.is_none() || zone_snapshot.is_none())
-            && breakthrough_precondition_error(&cultivation, &meridians).is_none()
+            && breakthrough_precondition_error_for_profile(&cultivation, &meridians, profile)
+                .is_none()
         {
             Some(BreakthroughError::LedgerUnavailable)
         } else {
@@ -756,7 +828,7 @@ pub fn breakthrough_system(
         };
 
         let res = zone_error
-            .or_else(|| breakthrough_precondition_error(&cultivation, &meridians))
+            .or_else(|| breakthrough_precondition_error_for_profile(&cultivation, &meridians, profile))
             .or(ledger_error)
             .map_or_else(
                 || {
@@ -778,12 +850,13 @@ pub fn breakthrough_system(
                     let cultivation_before = cultivation.clone();
                     let meridians_before = meridians.clone();
                     let before_qi = cultivation.qi_current.max(0.0);
-                    let result = try_breakthrough_with_env_season_bonus(
+                    let result = try_breakthrough_with_profile(
                         &mut cultivation,
                         &mut meridians,
                         material_bonus,
                         env_bonus,
                         Some(season),
+                        profile,
                         &mut roll,
                     );
                     let used_qi = (before_qi - cultivation.qi_current.max(0.0)).max(0.0);
@@ -1432,6 +1505,231 @@ mod tests {
             narrations[0].text.contains("突破未成"),
             "expected system warning to include breakthrough failure reason, actual text={}",
             narrations[0].text
+        );
+    }
+
+    /// plan-race-system-v1 P6b review major-5 收口：production 级集成测试——真实
+    /// `Entity` + `Cultivation.race` + `BodyPlanRegistry`/`RaceRegistry` 资源驱动
+    /// `breakthrough_system`（不是直接调用 `try_breakthrough_with_profile`，那只锁得住
+    /// "传对了 profile 就能工作"，锁不住 `breakthrough_system` 内部 `meridian_profile_for_target`
+    /// 接线是否真的把 `req.entity` 解析到了自己的 race 而不是 humanoid）。
+    ///
+    /// 合成非人构型 `test_breakthrough_synthetic_race` 的 Induce 门槛只需 1 条 channel
+    /// （humanoid 需要 3 条），只开 1 条 channel：若系统内部悄悄用了 humanoid 曲线，
+    /// 会因 `NotEnoughMeridians{need:3, have:1}` 拒绝；若真按自身构型解析，应该成功。
+    #[test]
+    fn breakthrough_system_uses_target_entity_own_race_profile_not_humanoid() {
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::types::{
+            BodyPartDef, ChannelDef, HeightBand, HeightBandAssignment, HitGeometry, MeridianFamily,
+            MeridianProfile, PartConsequence, RealmMeridianReq, StandingAabbSpec,
+        };
+        use crate::body_plan::{BodyPlanId, BodyPlanRegistry, RaceId, RaceRegistry, HUMAN_RACE_ID};
+
+        fn synthetic_race_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: BodyPlanId::new("test_breakthrough_synthetic_race_plan"),
+                display_name: "测试突破合成构型".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: "body".into(),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::HeightBands {
+                    aabb: StandingAabbSpec {
+                        half_width: 2.0,
+                        height: 3.0,
+                    },
+                    bands: vec![HeightBand {
+                        min_rel_y: -1.0,
+                        assignment: HeightBandAssignment::Single {
+                            part: "body".into(),
+                        },
+                    }],
+                    lateral_threshold: 0.5,
+                },
+                equip_slots: vec![],
+                meridian_profile: Some(MeridianProfile {
+                    channels: vec![
+                        ChannelDef {
+                            id: "chan_a".into(),
+                            family: MeridianFamily::Regular,
+                            body_part: None,
+                            roles: vec![],
+                        },
+                        ChannelDef {
+                            id: "chan_b".into(),
+                            family: MeridianFamily::Regular,
+                            body_part: None,
+                            roles: vec![],
+                        },
+                        ChannelDef {
+                            id: "chan_c".into(),
+                            family: MeridianFamily::Regular,
+                            body_part: None,
+                            roles: vec![],
+                        },
+                    ],
+                    topology_edges: vec![],
+                    // Induce（index 1）只需 1 条——humanoid 同一档需要 3 条
+                    // （`humanoid.json realm_requirements[1] = {total:3, regular_min:3}`）。
+                    realm_requirements: [
+                        RealmMeridianReq {
+                            total: 0,
+                            regular_min: 0,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 1,
+                            regular_min: 1,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 2,
+                            regular_min: 2,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 3,
+                            regular_min: 3,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 3,
+                            regular_min: 3,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 3,
+                            regular_min: 3,
+                            extraordinary_min: 0,
+                        },
+                    ],
+                    dugu_injection: vec![],
+                }),
+                mutation_slot_mapping: Default::default(),
+            }
+        }
+
+        fn human_placeholder_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: BodyPlanId::new("test_breakthrough_human_placeholder_plan"),
+                display_name: "测试人族占位构型".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: "body".into(),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::HeightBands {
+                    aabb: StandingAabbSpec {
+                        half_width: 2.0,
+                        height: 3.0,
+                    },
+                    bands: vec![HeightBand {
+                        min_rel_y: -1.0,
+                        assignment: HeightBandAssignment::Single {
+                            part: "body".into(),
+                        },
+                    }],
+                    lateral_threshold: 0.5,
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: Default::default(),
+            }
+        }
+
+        let body_plans =
+            BodyPlanRegistry::from_plans(vec![synthetic_race_plan(), human_placeholder_plan()])
+                .expect("synthetic race + human placeholder plans must validate");
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                RaceEntry {
+                    id: RaceId::new(HUMAN_RACE_ID),
+                    display_name: "人族".to_string(),
+                    body_plan_id: BodyPlanId::new("test_breakthrough_human_placeholder_plan"),
+                    beast_kinds: vec![],
+                },
+                RaceEntry {
+                    id: RaceId::new("test_breakthrough_synthetic_race"),
+                    display_name: "测试突破合成种族".to_string(),
+                    body_plan_id: BodyPlanId::new("test_breakthrough_synthetic_race_plan"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![],
+            &body_plans,
+        )
+        .expect("synthetic race registry fixture must validate");
+
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(body_plans);
+        app.insert_resource(races);
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let mut meridians =
+            MeridianSystem::for_profile(synthetic_race_plan().meridian_profile.as_ref().unwrap());
+        // 只打通 1 条 channel——humanoid 曲线（need=3）会拒绝，合成构型自己的曲线
+        // （need=1）应该放行。
+        meridians.regular[0].opened = true;
+        let cultivation = Cultivation {
+            realm: Realm::Awaken,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            composure: 1.0,
+            race: RaceId::new("test_breakthrough_synthetic_race"),
+            ..Default::default()
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::new("synthetic_race_char"),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        // Roll-independent assertion: `try_breakthrough_with_profile` debits qi cost
+        // "不论成败"(win or lose the roll) the moment the precondition check passes —
+        // so a qi debit here is decisive proof that `have=1 >= need` was evaluated
+        // against the *synthetic race's own* curve (need=1), not the humanoid curve
+        // (need=3, which this 1-channel-opened entity would fail and leave qi
+        // untouched). Asserting the exact realm outcome would flakily depend on the
+        // system's internal fixed-seed roll instead of the profile wiring itself.
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert_eq!(
+            cultivation.qi_current, 92.0,
+            "breakthrough_system must resolve the target entity's own race profile (need=1) \
+             through meridian_profile_for_target and attempt the breakthrough (debiting the 8.0 \
+             qi cost), not silently fall back to the humanoid curve (need=3) which would reject \
+             this 1-channel-opened entity outright and leave qi_current untouched at 100.0 — \
+             actual qi_current after the attempt: {}",
+            cultivation.qi_current
         );
     }
 
