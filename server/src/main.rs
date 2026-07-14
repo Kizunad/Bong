@@ -171,6 +171,13 @@ fn assert_full_app_core_resources(app: &App) {
         "full server App must install MorphStateEmitState (network::register()) — \
          missing this causes emit_morph_state_payloads to panic on the first Update tick"
     );
+    // plan-race-system-v1 PR-5b —— 同款 CRITICAL fix guard，`emit_morph_state_delta_payloads`
+    // 取 `ResMut<MorphStateEntityCache>`，缺资源同样无条件 panic。
+    assert!(
+        world.contains_resource::<network::morph_state_emit::MorphStateEntityCache>(),
+        "full server App must install MorphStateEntityCache (network::register()) — \
+         missing this causes emit_morph_state_delta_payloads to panic on the first Update tick"
+    );
     // bughunt minor④ —— body_plan::register() 资产加载全靠 panic 兜底数据完整性
     // （humanoid plan 缺失 / 磁盘文件读取失败等），本身没有"加载失败但静默继续"的
     // 退化路径；但 `run_full_app_startup_smoke` 此前只验证网络/持久化侧资源，从未
