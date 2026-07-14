@@ -25,7 +25,11 @@ public final class HudImmersionControls {
     }
 
     private static void onEndClientTick(MinecraftClient client) {
-        consumeTogglePresses(keyBinding()::wasPressed, System::currentTimeMillis);
+        consumeInstalledTogglePresses(System::currentTimeMillis);
+    }
+
+    static int consumeInstalledTogglePresses(LongSupplier nowMillis) {
+        return consumeTogglePresses(keyBinding()::wasPressed, nowMillis);
     }
 
     static int consumeTogglePresses(BooleanSupplier wasPressed, LongSupplier nowMillis) {
@@ -39,15 +43,20 @@ public final class HudImmersionControls {
 
     private static KeyBinding keyBinding() {
         if (toggleKey == null) {
-            toggleKey = registerToggleKey(KeyBindingHelper::registerKeyBinding);
+            installToggleKey(KeyBindingHelper::registerKeyBinding);
         }
         return toggleKey;
     }
 
-    static KeyBinding registerToggleKey(UnaryOperator<KeyBinding> registrar) {
+    static KeyBinding installToggleKey(UnaryOperator<KeyBinding> registrar) {
         // Leave unbound so F1-F9 remain reserved for quick slots.
-        return registrar.apply(
+        toggleKey = registrar.apply(
             new KeyBinding(TOGGLE_KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
         );
+        return toggleKey;
+    }
+
+    static void resetControlsForTests() {
+        toggleKey = null;
     }
 }

@@ -24,7 +24,7 @@ public final class NpcInteractionLogControls {
         if (registered) {
             return;
         }
-        key = registerInteractionLogKey(KeyBindingHelper::registerKeyBinding);
+        installInteractionLogKey(KeyBindingHelper::registerKeyBinding);
         ClientTickEvents.END_CLIENT_TICK.register(NpcInteractionLogControls::onEndClientTick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
             client.execute(NpcInteractionLogStore::clearOnDisconnect));
@@ -35,9 +35,16 @@ public final class NpcInteractionLogControls {
         if (client == null) {
             return;
         }
-        consumeTogglePresses(
+        consumeInstalledTogglePresses(
             client.player != null,
-            client.currentScreen != null,
+            client.currentScreen != null
+        );
+    }
+
+    static int consumeInstalledTogglePresses(boolean playerPresent, boolean screenOpen) {
+        return consumeTogglePresses(
+            playerPresent,
+            screenOpen,
             () -> key != null && key.wasPressed()
         );
     }
@@ -58,10 +65,16 @@ public final class NpcInteractionLogControls {
         return consumed;
     }
 
-    static KeyBinding registerInteractionLogKey(UnaryOperator<KeyBinding> registrar) {
+    static KeyBinding installInteractionLogKey(UnaryOperator<KeyBinding> registrar) {
         // Leave unbound so F1-F9 remain reserved for quick slots.
-        return registrar.apply(
+        key = registrar.apply(
             new KeyBinding(KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
         );
+        return key;
+    }
+
+    static void resetControlsForTests() {
+        key = null;
+        registered = false;
     }
 }
