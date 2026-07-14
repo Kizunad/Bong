@@ -1,0 +1,181 @@
+{
+  "body_plan_id": "whale",
+  "silhouette": [
+    {
+      "part_id": "skull",
+      "polygon": [
+        { "x": 0.4, "y": 0.05 },
+        { "x": 0.6, "y": 0.05 },
+        { "x": 0.62, "y": 0.24 },
+        { "x": 0.38, "y": 0.24 }
+      ]
+    },
+    {
+      "part_id": "torso",
+      "polygon": [
+        { "x": 0.32, "y": 0.24 },
+        { "x": 0.68, "y": 0.24 },
+        { "x": 0.68, "y": 0.55 },
+        { "x": 0.32, "y": 0.55 }
+      ]
+    },
+    {
+      "part_id": "back_fin",
+      "polygon": [
+        { "x": 0.46, "y": 0.28 },
+        { "x": 0.54, "y": 0.28 },
+        { "x": 0.5, "y": 0.4 }
+      ]
+    },
+    {
+      "part_id": "left_pectoral_fin",
+      "polygon": [
+        { "x": 0.05, "y": 0.28 },
+        { "x": 0.32, "y": 0.32 },
+        { "x": 0.28, "y": 0.46 },
+        { "x": 0.05, "y": 0.44 }
+      ]
+    },
+    {
+      "part_id": "right_pectoral_fin",
+      "polygon": [
+        { "x": 0.95, "y": 0.28 },
+        { "x": 0.68, "y": 0.32 },
+        { "x": 0.72, "y": 0.46 },
+        { "x": 0.95, "y": 0.44 }
+      ]
+    },
+    {
+      "part_id": "tail_fin",
+      "polygon": [
+        { "x": 0.35, "y": 0.55 },
+        { "x": 0.65, "y": 0.55 },
+        { "x": 0.7, "y": 0.85 },
+        { "x": 0.5, "y": 0.97 },
+        { "x": 0.3, "y": 0.85 }
+      ]
+    }
+  ],
+  "anchors": [
+    {
+      "part_id": "skull",
+      "point": { "x": 0.5, "y": 0.15 }
+    },
+    {
+      "part_id": "torso",
+      "point": { "x": 0.5, "y": 0.4 }
+    },
+    {
+      "part_id": "back_fin",
+      "point": { "x": 0.5, "y": 0.32 }
+    },
+    {
+      "part_id": "left_pectoral_fin",
+      "point": { "x": 0.18, "y": 0.37 }
+    },
+    {
+      "part_id": "right_pectoral_fin",
+      "point": { "x": 0.82, "y": 0.37 }
+    },
+    {
+      "part_id": "tail_fin",
+      "point": { "x": 0.5, "y": 0.75 }
+    }
+  ],
+  "meridian_paths": [
+    {
+      "channel_id": "spout_meridian",
+      "points": [
+        { "x": 0.5, "y": 0.08 },
+        { "x": 0.5, "y": 0.24 }
+      ]
+    },
+    {
+      "channel_id": "flipper_left_meridian",
+      "points": [
+        { "x": 0.4, "y": 0.35 },
+        { "x": 0.18, "y": 0.37 }
+      ]
+    },
+    {
+      "channel_id": "flipper_right_meridian",
+      "points": [
+        { "x": 0.6, "y": 0.35 },
+        { "x": 0.82, "y": 0.37 }
+      ]
+    },
+    {
+      "channel_id": "fluke_meridian",
+      "points": [
+        { "x": 0.5, "y": 0.55 },
+        { "x": 0.5, "y": 0.9 }
+      ]
+    },
+    {
+      "channel_id": "keel_meridian",
+      "points": [
+        { "x": 0.5, "y": 0.26 },
+        { "x": 0.5, "y": 0.5 }
+      ]
+    },
+    {
+      "channel_id": "spine_meridian",
+      "points": [
+        { "x": 0.5, "y": 0.24 },
+        { "x": 0.5, "y": 0.3 }
+      ]
+    }
+  ],
+  "part_display_map": [
+    {
+      "server_part_id": "skull",
+      "display_segment_id": "skull"
+    },
+    {
+      "server_part_id": "torso",
+      "display_segment_id": "torso"
+    },
+    {
+      "server_part_id": "back_fin",
+      "display_segment_id": "back_fin"
+    },
+    {
+      "server_part_id": "left_pectoral_fin",
+      "display_segment_id": "left_pectoral_fin"
+    },
+    {
+      "server_part_id": "right_pectoral_fin",
+      "display_segment_id": "right_pectoral_fin"
+    },
+    {
+      "server_part_id": "tail_fin",
+      "display_segment_id": "tail_fin"
+    }
+  ],
+  "hud_anchors": [
+    {
+      "part_id": "skull",
+      "point": { "x": 0.5, "y": 0.1 }
+    },
+    {
+      "part_id": "torso",
+      "point": { "x": 0.5, "y": 0.4 }
+    },
+    {
+      "part_id": "back_fin",
+      "point": { "x": 0.5, "y": 0.28 }
+    },
+    {
+      "part_id": "left_pectoral_fin",
+      "point": { "x": 0.15, "y": 0.37 }
+    },
+    {
+      "part_id": "right_pectoral_fin",
+      "point": { "x": 0.85, "y": 0.37 }
+    },
+    {
+      "part_id": "tail_fin",
+      "point": { "x": 0.5, "y": 0.78 }
+    }
+  ]
+}
