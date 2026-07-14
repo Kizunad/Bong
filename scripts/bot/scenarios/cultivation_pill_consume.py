@@ -28,17 +28,20 @@ MODULES = ["alchemy", "cultivation", "inventory"]
 PILL_ID = "huiyuan_pill"
 
 
-def _qi_current_after(bot, anchor: float, baseline: float, timeout: float = 10.0) -> float:
-    # 谓词嵌入"已生效"条件（qi ≠ 吃丹前基线）——避免心跳快照携带旧值造成假失败
+def _qi_current_after(
+    bot, anchor: float, baseline: float, minimum: float, timeout: float = 10.0
+) -> float:
+    # 自然回气也会让 qi_current 轻微偏离 baseline；必须等到丹药产生显著恢复，
+    # 不能把 95 → 95.00x 的心跳快照误判成 clamp 已完成。
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.t > anchor
-        and (lambda q: q is not None and abs(q - baseline) > 1e-6)(
+        and (lambda q: q is not None and q >= minimum)(
             _extract_qi(e.data["payload"])
         ),
         timeout=timeout,
         description=(
-            f"吃丹后应收到 qi_current ≠ 基线 {baseline} 的状态快照（效果已生效）"
+            f"吃丹后应收到 qi_current 从基线 {baseline} 恢复到至少 {minimum} 的状态快照"
         ),
     )
     return _extract_qi(event.data["payload"])
@@ -73,7 +76,7 @@ def run(env) -> None:
         # ── 入口①：alchemy_take_pill（template_id 路径）──────────
         anchor = last_event_time(bot)
         bot.intent({"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID})
-        qi_after_first = _qi_current_after(bot, anchor, baseline=5.0)
+        qi_after_first = _qi_current_after(bot, anchor, baseline=5.0, minimum=60.0)
         assert qi_after_first > 5.0, (
             f"回元丹（qi_recovery magnitude=60）吃下后 qi_current 应从 5 显著回升，"
             f"实际 {qi_after_first}——效果链断或快照未 resync"
@@ -93,7 +96,7 @@ def run(env) -> None:
                 "target": {"kind": "self"},
             }
         )
-        qi_after_second = _qi_current_after(bot, anchor, baseline=5.0)
+        qi_after_second = _qi_current_after(bot, anchor, baseline=5.0, minimum=60.0)
         assert qi_after_second > 5.0, (
             f"apply_pill(instance) 路径同样应回真元，实际 {qi_after_second}——"
             f"双入口只修一条是半截修复"
@@ -104,7 +107,7 @@ def run(env) -> None:
         time.sleep(0.5)
         anchor = last_event_time(bot)
         bot.intent({"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID})
-        qi_after_clamp = _qi_current_after(bot, anchor, baseline=95.0)
+        qi_after_clamp = _qi_current_after(bot, anchor, baseline=95.0, minimum=100.0)
         assert abs(qi_after_clamp - 100.0) < 1e-6, (
             f"qi=95 时吃回元丹（magnitude=60）应 clamp 到 qi_max=100，"
             f"实际 {qi_after_clamp}——溢出说明 recover_current_qi 边界回归"
