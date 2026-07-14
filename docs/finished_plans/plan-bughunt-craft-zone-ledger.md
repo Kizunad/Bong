@@ -55,9 +55,9 @@
 
 ## 6. 修复结果
 
-- [x] P0：移除 `StartCraftRequest.zone_id` 与 `DEFAULT_CRAFT_ZONE_ID`，制作成本统一执行 `player → pending_inflow_account()`。
-- [x] P0：不在制作入口自行解析或直写 zone；后续由 `world::heartbeat::zone_qi_inflow_tick` 按 equilibrium、速率、负灵域与坍缩事件规则执行 `pending → zone`。
-- [x] P1：新增缺少空间上下文的生产入口回归，锁定制作仍成功、待分配池等额增加、`zone:spawn` 恒为零、账本总量不变。
+- ✅ 2026-07-14 P0：移除 `StartCraftRequest.zone_id` 与 `DEFAULT_CRAFT_ZONE_ID`，制作成本统一执行 `player → pending_inflow_account()`。
+- ✅ 2026-07-14 P0：不在制作入口自行解析或直写 zone；后续由 `world::heartbeat::zone_qi_inflow_tick` 按 equilibrium、速率、负灵域与坍缩事件规则执行 `pending → zone`。
+- ✅ 2026-07-14 P1：新增缺少空间上下文的生产入口回归，锁定制作仍成功、待分配池等额增加、`zone:spawn` 恒为零、账本总量不变。
 
 原骨架的“按玩家脚下真实 zone 立即结算”方案已被后续归档的 `plan-zone-qi-economy-v1` 明确取代：待分配池是全服共享来源，zone 回流必须由 heartbeat 统一调度。若在制作入口立即灌入当前位置，会绕过流速/平衡点/负灵域/坍缩门禁并突破 zone 容量上限。
 
@@ -65,10 +65,10 @@
 
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
 - 至少新增/更新以下测试：
-  - `apply_craft_intents_uses_current_zone_for_crafting_qi`
-  - `apply_craft_intents_uses_current_dimension_for_tsy_zone`
-  - `apply_craft_intents_does_not_fallback_to_spawn_when_zone_missing`
-- 联调 gate：若改动触及 C2S craft intent，可补 bot e2e craft 场景，验证黑盒玩家在非 spawn 区域启动正 `qi_cost` 配方后不会把账记到 spawn。
+  - `apply_craft_start_intents_without_spatial_context_credits_pending_never_spawn`
+  - `crafting_pending_then_heartbeat_zone_inflow_preserves_total_and_skips_full_zone`
+  - `start_craft_conserves_external_player_qi_plus_ledger_total`
+- 联调 gate：Bot 覆盖制作取消满包退款与断线恢复；release e2e 同时验证 `Crafting(player → pending)`、heartbeat `ZoneInflow(pending → zone)` 和 `zone:spawn` 零入账契约。
 
 ## 8. 对抗复核结论
 
@@ -91,13 +91,18 @@
 - `739dcb7b`（2026-07-13）：移除制作起手的陈旧区域契约。
 - `4181b1e1`（2026-07-13）：锁定制作入口只向待分配池入账。
 - `edc44c93`（2026-07-14）：普通 merge 至最新 `origin/main`（含 dying-elder 与 race-system P4）。
+- `333ed7a2`（2026-07-14）：最终受测代码；补齐跨阶段回流回归并稳定制作 Bot 门禁。
+- `523cd364`（2026-07-14）：仅执行 `plan-finish.sh` 的纯归档移动，无代码或文档内容变化。
 
 ### 测试结果
 
-- `cargo test craft --lib`：287 passed，0 failed（恢复正确实现并合并 `origin/main` 后）。
-- `cargo fmt --check`：通过。
+- 最终受测实现 SHA：`333ed7a297fc33eaab4a3331840bd488cb1b5817`；归档 HEAD：`523cd364bb66c83f56cfd88a38ec460c4c74655c`。
+- E2E run `29339867487`：Java 17 client、schema、agent、server、Smoke 与 Bot 全部通过。
+- server：`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 通过；lib `11649 passed / 0 failed / 1 ignored`，main `11 passed`，`full_app_startup` `1 passed`，backpack e2e `4 passed`，doc-tests `5 ignored`。
+- Smoke Task 13：`8 passed / 0 failed`，最终输出 `ALL PASS`。
+- Bot：protocol `63/63`；scenarios `27 passed / 0 failed`，制作取消退款与断线恢复场景均通过。
 - `git diff --check`：通过。
-- 完整 `cargo clippy --all-targets -- -D warnings && cargo test`、e2e 与云端 review 结果在 PR 门禁补录。
+- 独立 read-only 审计针对受测代码 SHA `333ed7a2` 检查制作账本与 Bot 稳定性，结论为 `0 Blocker / 0 Major`；随后 `/review` 对归档 HEAD 确认 `player → pending → zone` 接线与守恒方向正确，仅要求本页补齐最终证据并把服丹改造拆出。服丹改造已独立为 PR #1208，本 plan 不再把它列为交付物。
 
 ### 跨仓库核验
 
