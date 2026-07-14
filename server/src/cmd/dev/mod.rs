@@ -30,6 +30,7 @@ pub mod supply_coffin;
 pub mod technique;
 pub mod time;
 pub mod top;
+pub mod tpdim;
 pub mod tppoi;
 pub mod tptree;
 pub mod tpzone;
@@ -71,6 +72,7 @@ pub fn register(app: &mut App) {
     technique::register(app);
     time::register(app);
     tptree::register(app);
+    tpdim::register(app);
     tppoi::register(app);
     tpzone::register(app);
     shrine::register(app);
