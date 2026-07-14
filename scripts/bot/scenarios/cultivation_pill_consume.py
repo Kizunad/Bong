@@ -65,6 +65,18 @@ def _extract_qi(node):
     return None
 
 
+def _set_qi_and_wait(bot, value: float) -> None:
+    anchor = last_event_time(bot)
+    bot.cmd(f"qi set {value}")
+    bot.wait_for(
+        lambda e: e.kind == "chat"
+        and e.t > anchor
+        and "[dev] qi set" in e.data["text"],
+        timeout=10.0,
+        description=f"t>{anchor:.3f}s 后收到 qi set {value} 的新确认",
+    )
+
+
 def run(env) -> None:
     with env.new_bot("Pill") as bot:
         wait_for_ready(bot)
@@ -75,8 +87,7 @@ def run(env) -> None:
         wait_inventory_contains(bot, PILL_ID)
 
         # ── 入口①：alchemy_take_pill（template_id 路径）──────────
-        bot.cmd("qi set 5")
-        bot.expect_chat("[dev] qi set", timeout=10.0)
+        _set_qi_and_wait(bot, 5.0)
         anchor = last_event_time(bot)
         bot.intent({"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID})
         qi_after_first = _qi_current_after(bot, anchor, baseline=5.0, minimum=65.0)
@@ -87,8 +98,7 @@ def run(env) -> None:
         )
 
         # ── 入口②：apply_pill（instance_id 路径）─────────────────
-        bot.cmd("qi set 5")
-        bot.expect_chat("[dev] qi set", timeout=10.0)
+        _set_qi_and_wait(bot, 5.0)
         snapshot = latest_inventory_snapshot(bot)
         pill = require_item(snapshot, PILL_ID)
         anchor = last_event_time(bot)
@@ -108,8 +118,7 @@ def run(env) -> None:
         )
 
         # ── 边界：qi 接近上限时吃丹 clamp 到 qi_max，不得溢出 ────
-        bot.cmd("qi set 95")
-        bot.expect_chat("[dev] qi set", timeout=10.0)
+        _set_qi_and_wait(bot, 95.0)
         anchor = last_event_time(bot)
         bot.intent({"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID})
         qi_after_clamp = _qi_current_after(bot, anchor, baseline=95.0, minimum=100.0)
