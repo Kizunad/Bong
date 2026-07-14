@@ -68,7 +68,7 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 1. **F1-F9 归快捷槽独占**：`QuickSlotConfig.SLOT_COUNT == 9` 与 HUD 的 F1-F9 标注是正式玩家入口，本 plan 不改快捷槽数量、顺序或默认键。
 2. **便利入口默认未绑定**：把 `HudImmersionControls` 和 `NpcInteractionLogControls` 的默认键改为 `GLFW_KEY_UNKNOWN`。两个功能仍在原版控制菜单可发现、可配置；不另拍新默认键，避免把冲突平移到别处。
 3. **不强改既有玩家配置**：不重写 `options.txt`，也不覆盖玩家主动保存的绑定。修复锁定新安装/重置键位的默认契约；既有冲突配置可在控制菜单自行调整。
-4. **测试范围只守 F1-F9 保留区**：`QuickSlotDefaultKeyConflictTest` 通过 JDK Compiler Tree API 解析实际 `new KeyBinding(...)` 与子类 `super(...)` 调用，断言快捷槽仍注册 F1-F9、两个便利入口第三参数为 UNKNOWN 且直接接入 `KeyBindingHelper.registerKeyBinding(...)`，并解析本地/跨文件常量、普通/静态 import 与常量运算；无法静态求值的默认键表达式 fail closed。
+4. **测试范围只守 F1-F9 保留区**：`QuickSlotDefaultKeyConflictTest` 通过 JDK Compiler Tree API 解析实际 `new KeyBinding(...)` 与子类 `super(...)` 调用，断言快捷槽仍注册 F1-F9、两个便利入口第三参数为 UNKNOWN 且直接接入 `KeyBindingHelper.registerKeyBinding(...)`，并解析本地/跨文件常量、普通/静态 import 与常量运算；无法静态求值的默认键表达式或 javac 语义分析错误均 fail closed。
 5. **不跨题处理 O/U**：项目级 O/U 冲突由 `plan-bughunt-client-input-keybind-collision-v1` 独立收口；本 PR 不建立全键盘无重复规则，也不修改其它入口。
 
 ## 实施范围
@@ -86,7 +86,7 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 
 - `client/src/main/java/com/bong/client/hud/HudImmersionControls.java`：F6 → `GLFW_KEY_UNKNOWN`。
 - `client/src/main/java/com/bong/client/npc/NpcInteractionLogControls.java`：F7 → `GLFW_KEY_UNKNOWN`。
-- `client/src/test/java/com/bong/client/input/QuickSlotDefaultKeyConflictTest.java`：从 Java AST 锁定实际构造器第三参数、快捷槽循环边界、Fabric 控制菜单注册链，以及直接、子类 `super(...)` 或经常量/import 间接传入的 F1-F9 默认键。
+- `client/src/test/java/com/bong/client/input/QuickSlotDefaultKeyConflictTest.java`：从 Java AST 锁定实际构造器第三参数、快捷槽循环边界、Fabric 控制菜单注册链，以及直接、子类 `super(...)` 或经常量/import 间接传入的 F1-F9 默认键；parse/analyze 任一阶段出现错误都阻止审计通过。
 
 ### P2 — 门禁与用户体验核验
 
@@ -105,6 +105,7 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 - `QuickSlotDefaultKeyConflictTest.scannerResolvesIndirectConstantsAndRejectsUnknownExpressions`：覆盖本地/跨文件常量、普通/静态 import、全限定构造器、常量运算、未使用 F9、合法 F10 与动态表达式拒绝。
 - `QuickSlotDefaultKeyConflictTest.registrationScannerRejectsUnwrappedBindings`：以正反夹具确认只有直接作为 Fabric `KeyBindingHelper.registerKeyBinding(...)` 实参的绑定才满足控制菜单注册契约。
 - `QuickSlotDefaultKeyConflictTest.scannerAuditsKeyBindingSubclassSuperConstructors`：覆盖 `KeyBinding` 子类 `super(...)` 的 F6 碰撞、F10 安全值与动态默认键 fail closed。
+- `QuickSlotDefaultKeyConflictTest.sourceIndexFailsClosedOnSemanticErrors`：制造无法解析的 `MissingKeyBinding`，断言 javac analyze 阶段错误直接使源码索引失败，不得静默漏扫。
 - client 全量：JDK 17 下 `./gradlew test build` 必须全绿。
 
 ## 风险
@@ -118,7 +119,7 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 ### 落地清单
 
 - **P0 证真**：`BongClient` 同时注册 `NpcInteractionLogControls`、`HudImmersionControls` 与 `CombatHudBootstrap`；后者把 F1-F9 快捷槽接到 `CombatHudBootstrap.onQuickSlotPressed`，最终调用 `ClientRequestSender.sendUseQuickSlot(slot)`。修复前契约测试 4 项中 3 项稳定失败，分别钉住 F6、F7 与保留区冲突。
-- **P1 修复**：`HudImmersionControls` 与 `NpcInteractionLogControls` 均改为 `GLFW_KEY_UNKNOWN`，保留原翻译键和 Fabric 控制菜单注册；`QuickSlotDefaultKeyConflictTest` 共 7 项，通过 javac 语义 AST 锁定九槽循环、三个实际默认键参数与 `KeyBindingHelper.registerKeyBinding(...)` 注册关系，并全仓解析直接构造、子类 `super(...)`、跨文件常量、静态 import 与常量运算，未知表达式 fail closed。
+- **P1 修复**：`HudImmersionControls` 与 `NpcInteractionLogControls` 均改为 `GLFW_KEY_UNKNOWN`，保留原翻译键和 Fabric 控制菜单注册；`QuickSlotDefaultKeyConflictTest` 共 8 项，通过 javac 语义 AST 锁定九槽循环、三个实际默认键参数与 `KeyBindingHelper.registerKeyBinding(...)` 注册关系，并全仓解析直接构造、子类 `super(...)`、跨文件常量、静态 import 与常量运算；测试内补齐 compile-only `@Nullable` 语义 stub 后，parse/analyze 错误与未知表达式均 fail closed。
 - **P2 门禁**：JDK 17 完成 client 全量 `test build`；2026-07-14 fetch 后确认分支与 `origin/main@390f22e5` 已分叉，以 `--no-commit --no-ff` 合并并在提交前完成客户端全量复验，形成显式合并提交 `a10d1a69`。
 
 ### 关键 commit
@@ -128,6 +129,7 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 - `71a1617c`（2026-07-14）— 按 `/review` 两项 major finding 改为 AST 级默认键参数审计，并覆盖间接常量路径。
 - `a10d1a69`（2026-07-14）— 合并 `origin/main@390f22e5`，在未提交合并结果上复验客户端完整门禁。
 - `80c4af1e`（2026-07-14）— 按复审 finding 锁定 Fabric 注册链，并覆盖 `KeyBinding` 子类 `super(...)` 默认键路径。
+- `df88fbe0`（2026-07-14）— 恢复 javac analyze 后错误门禁，并以缺失类型负向夹具阻止语义审计假绿。
 
 ### 测试结果
 
@@ -138,6 +140,8 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 - 主线同步复验：同一全量命令在未提交的 `origin/main@390f22e5` 合并结果上 → 4065 tests，0 failures，0 errors，0 skipped，`BUILD SUCCESSFUL`（1m30s）。
 - 复审二次返工定向：`JAVA_HOME=$HOME/.cache/codex-jdks/jdk-17 ./gradlew test --tests com.bong.client.input.QuickSlotDefaultKeyConflictTest` → 7 tests，0 failures；正反夹具证明移除 `registerKeyBinding` 包装会失败、子类 `super(F6)` 会命中碰撞、动态子类默认键会 fail closed。
 - 复审二次返工全量：`JAVA_HOME=$HOME/.cache/codex-jdks/jdk-17 ./gradlew test build` → 4067 tests，0 failures，0 errors，0 skipped，`BUILD SUCCESSFUL`（1m55s）。
+- 复审三次返工定向：同一定向命令 → 8 tests，0 failures；`sourceIndexFailsClosedOnSemanticErrors` 确认 analyze 阶段缺失类型会以“语义分析失败”终止索引。
+- 复审三次返工全量：同一全量命令 → 4068 tests，0 failures，0 errors，0 skipped，`BUILD SUCCESSFUL`（1m27s）。
 - `git diff --check` 在 review 修复、主线合并和 Finish Evidence 更新前均通过；每轮验证前后均核验工作区状态与目标 HEAD。
 - 用户明确要求本轮不启动 subagent，因此 FIX/REBASE validator 由主 agent 对绑定 SHA 的干净 diff 独立复核；未伪造外部 validator 身份。
 
@@ -150,4 +154,4 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 
 - 不迁移或覆盖现有玩家 `options.txt`；已保存的 F6/F7 冲突绑定需玩家在控制菜单自行调整，避免本 PR 擅自覆盖用户选择。
 - O/U 默认键冲突继续由 `docs/plans-skeleton/plan-bughunt-client-input-keybind-collision-v1.md` 独立处理，本 PR 不跨题修改。
-- 本轮未启动交互式 `runClient`；默认值、入口保留和 F1-F9 排他性已由语义 AST 契约测试及 4067 项 client 全量测试闭环。
+- 本轮未启动交互式 `runClient`；默认值、入口保留和 F1-F9 排他性已由 fail-closed 语义 AST 契约测试及 4068 项 client 全量测试闭环。
