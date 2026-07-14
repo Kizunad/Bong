@@ -1,11 +1,19 @@
-# plan-bughunt-north-rift-scorch-overlap-v1（骨架）
+# plan-bughunt-north-rift-scorch-overlap-v1（Active）
 
-> **Skeleton（待修复）**。一句话主题：`rift_mouth_north_002` 与 `north_waste_east_scorch` 的 AABB 在运行时权威 `server/zones.json` 和 worldgen blueprint 中同时重叠，违反归档 plan 对该点“化虚遗迹邻接区、zone 互斥不重叠”的约束；玩家站在北荒东陲裂缝附近会被 `find_zone` 解析成渊口 zone，遮蔽北荒焦土的环境、天气、移动和渡劫焦土语义。
+> **Active（P0/P1 已完成，P2 pin 已落地但 Rust 门禁待补）**。一句话主题：消除 `rift_mouth_north_002` 与 `north_waste_east_scorch` 的意外 3-D AABB 重叠，并用 worldgen 全局策略与 server 运行时 pin 防止回归；在 Rust 门禁补跑前保持 active，不归档。
+
+## 阶段总览
+
+| 阶段 | 状态 | 可核验结果 |
+|---|---|---|
+| P0 数据修正 | ✅ 2026-07-14 | 渊口最终中心改为 `[2000,-7300]`，运行时与 blueprint AABB/anchors/portal/POI 同步，统一场烘焙值同步为 `0.068602` |
+| P1 worldgen 守护 | ✅ 2026-07-14 | 非白名单 3-D overlap 守护、known-defect 基线、几何/统一场对拍均纳入 `unittest` 与 CI |
+| P2 runtime pin | ⏳ | server pin 已补齐严格分离、邻接、归属与边界断言；按本次硬约束未启动 Cargo，待补 Rust 门禁后转 ✅ |
 
 ## Bug 摘要
 
-- **核心 bug**：`rift_mouth_north_002` 当前 AABB 为 `[1850,50,-7950]..[2150,100,-7650]`，完整落入 `north_waste_east_scorch` 的 `[1500,60,-8500]..[2700,100,-7500]` 的 Y=60..100 切片。入口点 `[2000,74,-7800]` 同时命中两者。
-- **运行时结果**：`ZoneRegistry::find_zone` 对重叠命中取 AABB 体积最小的 zone，所以该点返回 `rift_mouth_north_002`，不是 `north_waste_east_scorch`。
+- **核心 bug（修复前）**：`rift_mouth_north_002` AABB 为 `[1850,50,-7950]..[2150,100,-7650]`，完整落入 `north_waste_east_scorch` 的 `[1500,60,-8500]..[2700,100,-7500]` 的 Y=60..100 切片。旧入口点 `[2000,74,-7800]` 同时命中两者。
+- **运行时结果（修复前）**：`ZoneRegistry::find_zone` 对重叠命中取 AABB 体积最小的 zone，所以旧入口点返回 `rift_mouth_north_002`，不是 `north_waste_east_scorch`。
 - **设计冲突**：归档 `plan-terrain-rift-mouth-v1` 明确写 `rift_mouth_north_002` 是化虚遗迹邻接区，并备注“zone 互斥不重叠”，不是合法嵌套。
 - **非重复项**：不是 #986（`giant_sword_sea` / `wuxing_abyss` 重叠），也不是 #998 TSY Y 分层、#1008 pipeline cwd、#971 mineral anchors 或 #992 start.sh 环境变量。
 
@@ -13,7 +21,7 @@
 
 玩家靠近北荒东陲塌缩裂缝时，画面位置仍在“北荒东陲焦土”大区内，但服务端把玩家归属成小的渊口 zone。结果是焦土区应有的雷暴 profile、焦土脚感、环境音和渡劫焦土记录在裂缝附近被遮蔽；玩家会看到一个世界观上应当“焦土与化虚遗迹邻接”的地点，实际却像从焦土 zone 中被挖掉一块，相关反馈和后续事件不连续。
 
-## 证据定位
+## 修复前证据定位
 
 - `server/zones.json:60`：`rift_mouth_north_002` AABB `[1850,50,-7950]..[2150,100,-7650]`，patrol/portal anchor `[2000,74,-7800]`。
 - `server/zones.json:567`：`north_waste_east_scorch` AABB `[1500,60,-8500]..[2700,100,-7500]`，active_events 含 `tribulation_scorch` / `tianjie_ascension_pit`。
@@ -25,7 +33,7 @@
 - `server/src/tribulation/scorch_record.rs:59`、`server/src/tribulation/scorch_record.rs:79`：渡劫焦土记录先 `find_zone`，再判断命中 zone 是否 scorch。
 - `server/src/world/weather_physics/vision.rs:67`、`server/src/world/weather_physics/vision.rs:79` 与 `server/weather_profiles.json:8`：天气视距/profile 也按命中 zone name 查询，`north_waste_east_scorch` 有专门雷暴 profile，渊口没有。
 
-## 触发路径
+## 修复前触发路径
 
 1. 启动默认 `ZoneRegistry::load()`，加载 `server/zones.json` 并合并 TSY blueprint。
 2. 玩家或 NPC 位于 `[2000,74,-7800]` 附近，即 `rift_mouth_north_002` 的入口/巡逻锚点。
@@ -45,19 +53,66 @@
 - **反方尝试**：即使几何重叠，也可能只是归属显示差异，实际体验影响不足。
 - **裁决**：未推翻。至少环境音、焦土移动、天气视距、渡劫焦土记录都直接消费 `find_zone` 的命中 zone；入口点会把焦土反馈切成渊口反馈，属于可达玩家体验 bug。
 
-## Skeleton Fix Plan
+## 实施状态
 
-1. **P0 数据修正**：同步调整 `server/zones.worldview.example.json` 与 `server/zones.json`，让 `rift_mouth_north_002` 与 `north_waste_east_scorch` 在 3D AABB 上互斥，同时保留两者邻接关系、入口点、`north_waste_east_scorch` 的化虚遗迹锚点与焦土面积。
-2. **P1 worldgen 守护**：在 worldgen/server zone coverage 测试中新增“非白名单 zone pair 不得 3D 重叠”检查；白名单只允许已设计确认的嵌套 pair，不把 `north_002` / `north_waste_east_scorch` 加入白名单。
-3. **P2 runtime pin**：补 server pin 测试：`[2000,74,-7800]` 修复后不再同时命中两个互斥 zone；`north_waste_east_scorch` 的焦土 POI/ascension pit 仍解析为 scorch zone。
-4. **避免误修**：不要改全局 `find_zone` 最小 AABB 语义；不要给 `rift_mouth_north_002` 硬塞 `tribulation_scorch` 或天气 profile；不要只修 `zones.json` 或只修 blueprint。
+### P0 数据修正 — ✅ 2026-07-14
 
-## 验收测试计划
+- 最终采用中心 `[2000,-7300]`，取代骨架中的旧中心/候选 `[2000,-7800]`；没有修改全局 `find_zone` 的最小 AABB 语义。
+- `server/zones.json` 与 `server/zones.worldview.example.json` 的 `rift_mouth_north_002` 均同步为 AABB `[1850,50,-7450]..[2150,100,-7150]`。`north_waste_east_scorch` 的北侧边界仍为 Z=`-7500`，两者沿 Z 轴保留 `50` 格间隙，保持邻接但不重叠。
+- runtime `patrol_anchors`、blueprint `center_xz` / `patrol_anchors` / `worldgen.portal_anchor_xz` / 首个 `rift_portal` POI 全部同步到 `[2000,74,-7300]`（XZ 字段为 `[2000,-7300]`）；焦土 ascension pit 仍保持 `[2100,80,-8000]`。
+- 迁移后重新对拍统一场导出，`server/zones.json` 的 `rift_mouth_north_002.spirit_qi` 为 `0.068602`；blueprint 仍保存输入权重 `0.05`，runtime 保存烘焙结果。
 
-- `server/`：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test world::zone`
-- `worldgen/`：新增/更新 zone overlap 守护后运行相关 `python3 -m pytest worldgen/tests/test_zones_export.py worldgen/tests/test_terrain_gen_zone_overlays.py`（若本地 pytest 入口不同，按仓库 worldgen 测试入口执行）。
-- 仓库根联调：`bash scripts/smoke-test-e2e.sh`，并确保 `BONG_SKIP_SKIN_PREFETCH=1`。
-- 手动/日志验收：站在北荒东陲焦土 POI 与裂缝入口附近，确认焦土区仍触发 `north_waste_east_scorch` 的天气/环境语义，裂缝入口仍能作为 `rift_mouth_north_002` 触发坍缩渊传送。
+### P1 worldgen 守护 — ✅ 2026-07-14
+
+- `worldgen/tests/test_zone_overlap_policy.py` 对 runtime/blueprint 同时扫描所有 zone pair，拒绝任何既不在设计白名单、也不在已知缺陷集合中的 3-D overlap。
+- `DESIGNED_OVERLAPS` 仅允许以下已审设计嵌套：
+  - `rift_mouth_blood_001` / `blood_valley`
+  - `rift_mouth_north_001` / `jiuzong_beiling_ruin`
+  - `baolongwang_cavern_deep` / `zhanhun_plain`
+  - `blood_valley` / `zhanhun_plain`
+  - `north_waste_east_scorch` / `north_wastes`
+- `KNOWN_DEFECT_OVERLAPS_BY_FILE` 仅在 `zones.json` 保留由 `plan-bughunt-sword-sea-zone-overlap-v1` 负责的 `giant_sword_sea` / `wuxing_abyss`；`zones.worldview.example.json` 的 known-defect 集合为空。`rift_mouth_north_002` / `north_waste_east_scorch` 不在任一集合中。
+- 三条守护已迁为 `unittest.TestCase`，并由 `.github/workflows/worldgen-preview.yml` 显式 discover：全局 overlap 策略、北荒渊口几何/anchor 对拍、统一场 Qi bake 对拍。
+
+### P2 runtime pin — ⏳ Rust 门禁待补
+
+- `server/src/world/zone.rs::north_rift_and_scorch_are_adjacent_but_mutually_exclusive` 已直接断言两块 AABB 至少沿一个轴严格分离，同时保留 `zones_are_adjacent(..., 100.0)`。
+- 运行时归属 pin 覆盖：新 portal anchor `[2000,74,-7300]` 命中渊口；旧点 `[2000,74,-7800]` 与 ascension pit `[2100,80,-8000]` 均只命中焦土；Z=`-7500` 焦土边界不再被渊口遮蔽；渊口 inclusive min/max 边界仍可达。
+- 本次任务明确禁止启动 Cargo/Rust，因此仅完成代码与静态 diff 核验；待后续运行 server 门禁后将本阶段转为 ✅。
+
+## 实际验收记录
+
+- ✅ `cd worldgen && python3 -m unittest discover -s tests -p 'test_zone_overlap_policy.py' -v`：`Ran 3 tests`，全部 `OK`（2026-07-14）。
+- ✅ `git diff --check`：通过（2026-07-14）。
+- ⏸ `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test world::zone`：本次按硬约束未运行，不宣称通过。
+- ⏸ `bash scripts/smoke-test-e2e.sh`：会启动 server，本次按硬约束未运行，不宣称通过。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 数据与统一场**：`server/zones.json`、`server/zones.worldview.example.json`。
+- **P1 overlap 策略与 CI**：`worldgen/tests/test_zone_overlap_policy.py`、`.github/workflows/worldgen-preview.yml`。
+- **P2 运行时归属 pin**：`server/src/world/zone.rs` 的 `north_rift_and_scorch_are_adjacent_but_mutually_exclusive`。
+
+### 关键 commit
+
+- `b6d6bdf1`（2026-07-14）— 最终同步北荒渊口 runtime/blueprint 几何与 anchor，中心落在 Z=`-7300`。
+- `d2b29f45`（2026-07-14）— 同步迁移后的统一场 Qi 烘焙结果 `0.068602`。
+- `f42824dd`、`67507e63`、`f0953275`（2026-07-14）— 建立 overlap 策略、known-defect 基线并封堵缺失设计 overlap 的假绿。
+- `bd968115`（2026-07-14）— 将三条 overlap 守护迁为 unittest 并纳入 worldgen preview CI。
+- `2ef556e3`、`f0b33148`（2026-07-14）— 收紧运行时点位/边界断言，并直接 pin 两块 AABB 严格分离。
+
+### 测试结果
+
+- Python overlap policy：3/3 通过；覆盖 runtime/blueprint 全量 pair、最终几何与 anchors、统一场 Qi bake。
+- Git whitespace：`git diff --check` 通过。
+- Rust/server 与 e2e：本次未运行，P2 因此保持 ⏳，plan 继续留在 active 路径且不归档。
+
+### 遗留 / 后续
+
+- 后续获准启动 Rust 时补跑 server 全门禁与 e2e；全部绿色后再将 P2 标为 ✅ 并决定是否归档。
+- `giant_sword_sea` / `wuxing_abyss` 仍是独立 plan 所有的已知缺陷，本 plan 不跨界修复或加入设计白名单。
 
 ## 风险
 
