@@ -11,6 +11,8 @@ import ast
 import json
 import os
 import pathlib
+import queue
+import re
 import socket
 import struct
 import sys
@@ -19,6 +21,7 @@ import time
 import tomllib
 import types
 import unittest
+from unittest import mock
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -497,7 +500,11 @@ class CultivationPillScenarioTest(unittest.TestCase):
         )
         self.assertTrue(
             _has_departed_baseline(65.0, 5.0, 65.0),
-            "真实恢复到 65 应越过基线变化屏障",
+            "真实恢复到 65 应离开旧基线",
+        )
+        self.assertTrue(
+            _has_departed_baseline(20.0, 5.0, 65.0),
+            "任何非基线权威值都必须进入校验，不能用中点过滤错误中间态",
         )
         self.assertFalse(
             _has_departed_baseline(65.0, 65.0, 5.0),
@@ -666,6 +673,25 @@ class CultivationPillScenarioTest(unittest.TestCase):
                     _player_state_event(1.2, 5.0),
                     _player_state_event(1.3, 65.0),
                     _player_state_event(1.4, 5.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
+
+    def test_wrong_authoritative_qi_before_target_fails_settle_window(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "错误中间态",
+            msg="5 -> 20 -> 65 中的 20 是消费后的错误权威态，不得被中点过滤",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.15, 5.0),
+                    _player_state_event(1.2, 20.0),
+                    _player_state_event(1.3, 65.0),
                 ],
                 before_revision=10,
                 before_count=3,
@@ -960,6 +986,29 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertEqual(json.loads(reader.rest()), {"v": 1, "type": "breakthrough"})
 
 
+_READER_STOP = object()
+
+
+class _ScriptedConnection:
+    def __init__(self):
+        self.frames = queue.Queue()
+
+    def push(self, body: bytes) -> None:
+        self.frames.put(body)
+
+    def read_frame(self) -> bytes:
+        try:
+            item = self.frames.get(timeout=0.02)
+        except queue.Empty as error:
+            raise TimeoutError from error
+        if item is _READER_STOP:
+            raise ConnectionError("scripted reader stopped")
+        return item
+
+    def close(self) -> None:
+        self.frames.put(_READER_STOP)
+
+
 def _bare_bot() -> Bot:
     """不开 socket 的 Bot——只测 _dispatch 解码与实体位置表状态机。"""
     import threading as _threading
@@ -970,6 +1019,12 @@ def _bare_bot() -> Bot:
     bot.entities = {}
     bot._lock = _threading.RLock()
     bot._new_event = _threading.Condition(bot._lock)
+    bot._send_lock = _threading.Lock()
+    bot._snapshot_lock = _threading.Lock()
+    bot._closing = False
+    bot._reader_epoch = 0
+    bot._reader_in_flight = False
+    bot._reader_barrier_requested = False
     bot.position = None
     bot.health = None
     bot.entity_id = None
@@ -978,50 +1033,142 @@ def _bare_bot() -> Bot:
     return bot
 
 
+def _scripted_reader_bot(dispatch) -> tuple[Bot, _ScriptedConnection]:
+    bot = _bare_bot()
+    bot.username = "Barrier"
+    bot.t0 = time.monotonic()
+    bot.conn = _ScriptedConnection()
+    bot._dispatch = types.MethodType(dispatch, bot)
+    bot._reader_thread = threading.Thread(target=bot._reader_loop, daemon=True)
+    bot._reader_thread.start()
+    return bot, bot.conn
+
+
+def _stop_scripted_reader(bot: Bot) -> None:
+    with bot._new_event:
+        bot._closing = True
+        bot._new_event.notify_all()
+    bot.conn.close()
+    bot._reader_thread.join(timeout=1.0)
+
+
 class BotEventStreamBarrierTest(unittest.TestCase):
     def test_delayed_event_after_half_second_is_in_atomic_snapshot(self):
-        bot = _bare_bot()
-        bot.username = "Barrier"
-        bot.t0 = time.monotonic()
-        bot._emit(
-            "server_data",
-            _pill_snapshot_event(0.0, 11, 2, 65.0).data,
-        )
-        bot._emit("server_data", _player_state_event(0.0, 65.0).data)
+        def dispatch(bot, body: bytes) -> None:
+            if body == b"initial":
+                bot._emit(
+                    "server_data",
+                    _pill_snapshot_event(0.0, 11, 2, 65.0).data,
+                )
+                bot._emit("server_data", _player_state_event(0.0, 65.0).data)
+            elif body == b"duplicate":
+                bot._emit(
+                    "server_data",
+                    _pill_snapshot_event(0.0, 12, 1, 65.0).data,
+                )
+            else:
+                raise AssertionError(f"unexpected scripted frame: {body!r}")
 
-        def emit_delayed_duplicate() -> None:
+        bot, conn = _scripted_reader_bot(dispatch)
+        conn.push(b"initial")
+        bot.wait_for(
+            lambda event: event.kind == "server_data"
+            and event.data.get("payload_type") == "inventory_snapshot",
+            timeout=1.0,
+            description="scripted initial inventory snapshot",
+        )
+
+        def queue_delayed_duplicate() -> None:
             time.sleep(0.55)
-            bot._emit(
-                "server_data",
-                _pill_snapshot_event(0.0, 12, 1, 65.0).data,
-            )
+            conn.push(b"duplicate")
 
-        producer = threading.Thread(target=emit_delayed_duplicate)
+        producer = threading.Thread(target=queue_delayed_duplicate)
         producer.start()
-        events = bot.snapshot_events_after_quiet_period(
-            min_wait=0.6,
-            quiet_period=0.05,
-            timeout=2.0,
-            description="延迟重复扣存测试屏障",
-        )
-        producer.join(timeout=1.0)
-
-        self.assertFalse(
-            producer.is_alive(),
-            "延迟事件生产线程应在屏障返回前完成，实际仍存活",
-        )
-        with self.assertRaisesRegex(
-            AssertionError,
-            "消费后每版 inventory revision 必须保持",
-            msg="超过旧 0.5s 窗口才入队的重复扣存也必须被原子快照捕获",
-        ):
-            _assert_settled_consumption(
-                events,
-                before_revision=10,
-                before_count=3,
-                baseline_qi=5.0,
-                expected_qi=65.0,
+        try:
+            events = bot.snapshot_events_after_quiet_period(
+                min_wait=0.6,
+                quiet_period=0.05,
+                timeout=2.0,
+                description="延迟重复扣存测试屏障",
             )
+            producer.join(timeout=1.0)
+
+            self.assertFalse(
+                producer.is_alive(),
+                "延迟帧生产线程应在屏障返回前完成，实际仍存活",
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "消费后每版 inventory revision 必须保持",
+                msg="超过旧 0.5s 窗口才到 reader 的重复扣存也必须被快照捕获",
+            ):
+                _assert_settled_consumption(
+                    events,
+                    before_revision=10,
+                    before_count=3,
+                    baseline_qi=5.0,
+                    expected_qi=65.0,
+                )
+        finally:
+            producer.join(timeout=1.0)
+            _stop_scripted_reader(bot)
+        self.assertFalse(bot._reader_thread.is_alive(), "scripted reader 必须可收口")
+
+    def test_checkpoint_waits_for_frame_already_in_decode(self):
+        decode_started = threading.Event()
+        allow_decode = threading.Event()
+
+        def dispatch(bot, body: bytes) -> None:
+            self.assertEqual(body, b"in-flight")
+            decode_started.set()
+            if not allow_decode.wait(timeout=1.0):
+                raise AssertionError("test did not release in-flight decode")
+            bot._emit("server_data", _player_state_event(0.0, 65.0).data)
+
+        bot, conn = _scripted_reader_bot(dispatch)
+        conn.push(b"in-flight")
+        self.assertTrue(
+            decode_started.wait(timeout=1.0),
+            "scripted frame 必须已被生产 reader 取出并进入 decode",
+        )
+        snapshots = []
+        errors = []
+
+        def take_snapshot() -> None:
+            try:
+                snapshots.append(
+                    bot.snapshot_events_after_quiet_period(
+                        min_wait=0.0,
+                        quiet_period=0.01,
+                        timeout=1.0,
+                        description="in-flight decode checkpoint",
+                    )
+                )
+            except BaseException as error:  # 测试线程必须把失败带回主线程
+                errors.append(error)
+
+        snapshot_thread = threading.Thread(target=take_snapshot)
+        snapshot_thread.start()
+        try:
+            time.sleep(0.05)
+            self.assertTrue(
+                snapshot_thread.is_alive(),
+                "reader 已取帧但尚未 emit 时，checkpoint 不得按 events 静默提前返回",
+            )
+            allow_decode.set()
+            snapshot_thread.join(timeout=1.0)
+            self.assertFalse(snapshot_thread.is_alive(), "decode 完成后 checkpoint 应及时返回")
+            self.assertEqual(errors, [], f"checkpoint 不应失败，实际 errors={errors}")
+            self.assertEqual(len(snapshots), 1, "checkpoint 应返回且只返回一份原子快照")
+            self.assertTrue(
+                any(event.data.get("payload_type") == "player_state" for event in snapshots[0]),
+                "原子快照必须包含进入 checkpoint 前已在 decode 的 player_state",
+            )
+        finally:
+            allow_decode.set()
+            snapshot_thread.join(timeout=1.0)
+            _stop_scripted_reader(bot)
+        self.assertFalse(bot._reader_thread.is_alive(), "scripted reader 必须可收口")
 
     def test_barrier_rejects_invalid_durations(self):
         bot = _bare_bot()
@@ -1038,20 +1185,21 @@ class BotEventStreamBarrierTest(unittest.TestCase):
                     description=f"invalid {field}",
                 )
 
-    def test_barrier_times_out_before_unreachable_minimum_window(self):
+    def test_deadline_wins_when_clock_passes_deadline_and_quiet_window(self):
         bot = _bare_bot()
         bot.username = "Barrier"
-        with self.assertRaisesRegex(
-            BotAssertionError,
-            "事件流未静默",
-            msg="timeout 小于 minimum window 时必须明确超时而非提前返回",
-        ):
-            bot.snapshot_events_after_quiet_period(
-                min_wait=0.05,
-                quiet_period=0.01,
-                timeout=0.01,
-                description="不可达最小窗口",
-            )
+        with mock.patch("bot.bot.time.monotonic", side_effect=[0.0, 2.0]):
+            with self.assertRaisesRegex(
+                BotAssertionError,
+                "事件流未静默",
+                msg="now 同时越过 deadline/quiet_until 时必须以 timeout 为准",
+            ):
+                bot.snapshot_events_after_quiet_period(
+                    min_wait=0.5,
+                    quiet_period=0.1,
+                    timeout=1.0,
+                    description="deadline priority",
+                )
 
 
 class EntityTrackingTest(unittest.TestCase):
@@ -1142,6 +1290,34 @@ def _pb_int32_field(number: int, value: int) -> bytes:
     return mc.write_varint(number << 3) + _pb_raw_varint(value & 0xFFFFFFFFFFFFFFFF)
 
 
+def _proto_message_body(source: str, message_name: str) -> str:
+    match = re.search(rf"\bmessage\s+{re.escape(message_name)}\s*\{{", source)
+    if match is None:
+        raise AssertionError(f"authoritative proto missing message {message_name}")
+    start = match.end() - 1
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start + 1 : index]
+    raise AssertionError(f"authoritative proto message {message_name} has no closing brace")
+
+
+def _proto_field_signature(message_body: str, field_name: str) -> tuple[str, int]:
+    match = re.search(
+        rf"^\s*(?:optional\s+|repeated\s+)?([A-Za-z_][\w.]*)\s+"
+        rf"{re.escape(field_name)}\s*=\s*(\d+)\s*;",
+        message_body,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"authoritative proto missing field {field_name}")
+    return match.group(1), int(match.group(2))
+
+
 class ProdConsumeDecodeTest(unittest.TestCase):
     """三产三用 payload 解码 pin：envelope oneof tag 与字段号对齐 proto/bong/envelope.proto.
 
@@ -1149,9 +1325,35 @@ class ProdConsumeDecodeTest(unittest.TestCase):
     tag 或字段号漂移会让场景从「锁契约」退化成「永远超时」。
     """
 
+    def test_player_state_decoder_constants_match_authoritative_proto(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        envelope = _proto_message_body(source, "ServerDataEnvelope")
+        player_state = _proto_message_body(source, "PlayerState")
+
+        self.assertEqual(
+            _proto_field_signature(envelope, "player_state"),
+            ("PlayerState", proto_min.SERVER_DATA_PLAYER_STATE_FIELD),
+            "Bot envelope 分发常量必须与权威 ServerDataEnvelope.player_state 对齐",
+        )
+        self.assertEqual(
+            _proto_field_signature(player_state, "spirit_qi"),
+            ("double", proto_min.PLAYER_STATE_SPIRIT_QI_FIELD),
+            "Bot spirit_qi 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
+        )
+        self.assertEqual(
+            _proto_field_signature(player_state, "spirit_qi_max"),
+            ("double", proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD),
+            "Bot spirit_qi_max 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
+        )
+
     def test_player_state_tag5_decodes_authoritative_qi(self):
-        msg = _pb_fixed64(3, 65.0) + _pb_fixed64(11, 100.0)
-        decoded = proto_min.decode_server_data_envelope(_pb_message(5, msg))
+        msg = _pb_fixed64(
+            proto_min.PLAYER_STATE_SPIRIT_QI_FIELD, 65.0
+        ) + _pb_fixed64(proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD, 100.0)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+        )
         self.assertIsNotNone(
             decoded,
             "envelope tag 5 必须解码为 player_state，实际返回 None",
@@ -1173,7 +1375,9 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
 
     def test_player_state_missing_qi_fields_use_protobuf_zero_defaults(self):
-        decoded = proto_min.decode_server_data_envelope(_pb_message(5, b""))
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, b"")
+        )
         self.assertIsNotNone(
             decoded,
             "空 player_state message 仍是合法 protobuf，实际返回 None",
@@ -1190,8 +1394,12 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
 
     def test_player_state_wrong_qi_wire_type_is_ignored(self):
-        msg = _pb_varint_field(3, 65) + _pb_varint_field(11, 100)
-        decoded = proto_min.decode_server_data_envelope(_pb_message(5, msg))
+        msg = _pb_varint_field(
+            proto_min.PLAYER_STATE_SPIRIT_QI_FIELD, 65
+        ) + _pb_varint_field(proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD, 100)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+        )
         self.assertIsNotNone(
             decoded,
             "wire type 错误的 player_state envelope 仍应被识别，实际返回 None",
@@ -1203,13 +1411,17 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
 
     def test_player_state_truncated_fixed64_is_rejected(self):
-        truncated = mc.write_varint((3 << 3) | 1) + b"\x00" * 7
+        truncated = mc.write_varint(
+            (proto_min.PLAYER_STATE_SPIRIT_QI_FIELD << 3) | 1
+        ) + b"\x00" * 7
         with self.assertRaisesRegex(
             proto_min.ProtoDecodeError,
             "truncated fixed64",
             msg="PlayerState fixed64 field 3 截断时必须报协议错误",
         ):
-            proto_min.decode_server_data_envelope(_pb_message(5, truncated))
+            proto_min.decode_server_data_envelope(
+                _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, truncated)
+            )
 
     def test_craft_session_state_tag22(self):
         msg = (
