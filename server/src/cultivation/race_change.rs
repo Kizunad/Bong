@@ -535,12 +535,12 @@ mod tests {
     }
 
     fn spawn_human_player(app: &mut App, qi_current: f64, qi_max: f64) -> Entity {
-        let mut cultivation = Cultivation {
+        let cultivation = Cultivation {
             qi_current,
             qi_max,
+            race: RaceId::new(HUMAN_RACE_ID),
             ..Default::default()
         };
-        cultivation.race = RaceId::new(HUMAN_RACE_ID);
         let mut meridians = MeridianSystem {
             regular: vec![
                 Meridian::new(MeridianChannelId::new("lung")),
@@ -705,8 +705,10 @@ mod tests {
         let (body_plans, races) = human_whale_registry_with_partial_mapping();
         let mut app = App::new();
         app.insert_resource(body_plans);
-        let mut cultivation = Cultivation::default();
-        cultivation.race = RaceId::new(HUMAN_RACE_ID);
+        let cultivation = Cultivation {
+            race: RaceId::new(HUMAN_RACE_ID),
+            ..Default::default()
+        };
         let player = app.world_mut().spawn(cultivation.clone()).id();
 
         let err = precheck_race_change(app.world(), player, RaceId::new("whale"), &races)
@@ -726,8 +728,10 @@ mod tests {
         let (body_plans, races) = human_whale_registry_with_partial_mapping();
         let mut app = App::new();
         app.insert_resource(body_plans);
-        let mut cultivation = Cultivation::default();
-        cultivation.race = RaceId::new(HUMAN_RACE_ID);
+        let cultivation = Cultivation {
+            race: RaceId::new(HUMAN_RACE_ID),
+            ..Default::default()
+        };
         let meridians = MeridianSystem {
             regular: vec![Meridian::new(MeridianChannelId::new("heart"))],
             extraordinary: vec![],
@@ -898,12 +902,12 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(body_plans);
         app.add_event::<QiTransfer>();
-        let mut cultivation = Cultivation {
+        let cultivation = Cultivation {
             qi_current: 5.0,
             qi_max: 100.0,
+            race: RaceId::new(HUMAN_RACE_ID),
             ..Default::default()
         };
-        cultivation.race = RaceId::new(HUMAN_RACE_ID);
         // lung 映射到 whale 的 fin；heart 无映射 → 期望进休眠登记（证明 commit 在
         // MeridianSeveredPermanent 缺失时会自己补插入并写入休眠记录）。
         let mut meridians = MeridianSystem {
