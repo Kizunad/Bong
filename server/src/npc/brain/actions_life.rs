@@ -9,6 +9,7 @@ use crate::body_plan::{
     resolve_meridian_topology_for_target, BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs,
     RaceRegistry,
 };
+use crate::fauna::components::FaunaTag;
 use crate::cultivation::breakthrough::{
     breakthrough_actor_account_id, breakthrough_qi_cost, credit_active_breakthrough_cost,
     try_breakthrough_with_profile, BreakthroughError, BreakthroughSuccess, RollSource,
@@ -772,6 +773,12 @@ type CultivateNpcQueryItem<'a> = (
     &'a mut CultivateState,
     Option<&'a MeridianTarget>,
     Option<&'a LifeRecord>,
+    // plan-race-system-v1 P6b review major-3 收口：读实体真实的 `FaunaTag.beast_kind`
+    // 传给 `body_plan` 解析入口，不再固定传 `None`——今天携带 Cultivation/MeridianSystem/
+    // CultivateState 三件套的 NPC（rogue/disciple 散修）恰好都不带 `FaunaTag`，`None` 结果
+    // bit-for-bit 不变；但未来任何非人构型 NPC 若接入本 action（如自然修炼的种族兽人），
+    // 会自动按自己的 `BeastKind → RaceId → BodyPlan` 解析，不再被硬编码假设吞掉。
+    Option<&'a FaunaTag>,
 );
 
 /// Persistent RNG state for CultivateAction's breakthrough rolls.
@@ -809,41 +816,53 @@ pub(crate) fn cultivate_action_system(
             mut cultivate,
             existing_target,
             life_record,
+            fauna_tag,
         )) = npcs.get_mut(*actor)
         else {
             *state = ActionState::Failure;
             continue;
         };
+        // plan-race-system-v1 P6b review major-3 收口：真实 `FaunaTag.beast_kind`
+        // （若组件在场）而非固定 `None`——见上方 `CultivateNpcQueryItem` 字段文档。
+        let beast_kind = fauna_tag.map(|tag| &tag.beast_kind);
+        let resolve_inputs = BodyPlanResolveInputs {
+            cultivation: Some(&*cultivation),
+            beast_kind,
+            morph_state: None,
+        };
         let topo = resolve_meridian_topology_for_target(
             *actor,
             BodyPlanPurpose::Intrinsic,
-            BodyPlanResolveInputs {
-                cultivation: Some(&*cultivation),
-                // `BeastKind` 不是 `Component`（既有 `combat::resolve`/`combat::carrier`
-                // 消费点同款简化）——races.json 现阶段全部 BeastKind 派生种族均落
-                // humanoid body plan，`None` 与"真的查了 BeastKind"结果 bit-for-bit
-                // 一致。
-                beast_kind: None,
-                morph_state: None,
-            },
+            resolve_inputs,
             body_plans.as_deref(),
             races.as_deref(),
         );
         // plan-race-system-v1 P5 换轨：突破配额（precheck + 实际判定）改按 *actor
         // 解析出的 body plan 派生，不再无条件绑死 `Realm::required_meridians()`
-        // 的 humanoid 曲线——同一份 `BodyPlanResolveInputs`（复用上方 `topo` 解析入参，
+        // 的 humanoid 曲线——同一份 `BodyPlanResolveInputs`（复用上方 `resolve_inputs`，
         // 该结构体 `Copy`）。
-        let meridian_profile = crate::body_plan::meridian_profile_for_target(
+        //
+        // review r2 major-2 收口：resolve 成功但 plan 缺 `meridian_profile` 时
+        // fail-closed——本 tick 不判定突破（既不成功也不失败，等同"数据不完整，
+        // 暂不可判定"），不借用 humanoid 曲线顶上。resolve 本身失败/资源缺失仍在
+        // `meridian_profile_for_target` 内部退化到 humanoid，不受影响。
+        let meridian_profile = match crate::body_plan::meridian_profile_for_target(
             *actor,
             BodyPlanPurpose::Intrinsic,
-            BodyPlanResolveInputs {
-                cultivation: Some(&*cultivation),
-                beast_kind: None,
-                morph_state: None,
-            },
+            resolve_inputs,
             body_plans.as_deref(),
             races.as_deref(),
-        );
+        ) {
+            Ok(profile) => Some(profile),
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][npc] cultivate action skipping breakthrough precheck actor={:?} \
+                     fail-closed: {error}",
+                    actor
+                );
+                None
+            }
+        };
 
         match *state {
             ActionState::Requested => {
@@ -885,7 +904,11 @@ pub(crate) fn cultivate_action_system(
                     }
                 }
 
-                if let Some(next) = next_realm(cultivation.realm) {
+                // fail-closed: `meridian_profile` 是 `None`（本 tick 解析出的 plan
+                // 缺 meridian_profile）时跳过整段突破判定——不借用任何默认曲线。
+                if let (Some(next), Some(meridian_profile)) =
+                    (next_realm(cultivation.realm), meridian_profile)
+                {
                     let have = meridians.opened_count();
                     let need = meridian_profile.realm_requirements[next.rank() as usize - 1].total
                         as usize;
@@ -1262,6 +1285,241 @@ mod tests {
         assert!(
             app.world().get::<Navigator>(actor).unwrap().is_idle(),
             "timed-out ReturnHome should stop the navigator"
+        );
+    }
+
+    /// plan-race-system-v1 P6b review major-5 收口：production 级集成测试——真实
+    /// `Entity`（携带 `FaunaTag`）+ `BodyPlanRegistry`/`RaceRegistry` 资源驱动
+    /// `cultivate_action_system`，锁死"该 NPC 的 `FaunaTag.beast_kind` 真的被读取并
+    /// 传给 `body_plan` 解析入口"这条接线，而不只是锁 `try_breakthrough_with_profile`
+    /// 本身。
+    ///
+    /// 合成非人构型 Induce 门槛只需 1 条 channel（humanoid 需要 3 条），NPC 只开
+    /// 1 条 channel：若系统内部仍固定传 `beast_kind: None` 并落到 humanoid 曲线，
+    /// `have=1 < need=3` 不会触发突破尝试，qi 分毫不动；若真按 `FaunaTag` 解析出的
+    /// 自身构型判定，`have=1 >= need=1` 应该触发尝试（qi 被扣，不论骰子胜负——
+    /// `try_breakthrough_with_profile` 扣费"不论成败"，断言用这条而非依赖 RNG）。
+    #[test]
+    fn cultivate_action_system_uses_fauna_tag_beast_kind_profile_not_humanoid() {
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::types::{
+            BodyPartDef, ChannelDef, HeightBand, HeightBandAssignment, HitGeometry, MeridianFamily,
+            MeridianProfile, PartConsequence, RealmMeridianReq, StandingAabbSpec,
+        };
+        use crate::body_plan::{BodyPlanId, HUMAN_RACE_ID};
+        use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
+        use crate::cultivation::life_record::LifeRecord;
+        use crate::fauna::components::BeastKind;
+        use crate::qi_physics::WorldQiAccount;
+        use crate::world::zone::{Zone, ZoneRegistry};
+        use crate::world::dimension::DimensionKind;
+        use valence::prelude::DVec3;
+
+        fn synthetic_beast_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: BodyPlanId::new("test_cultivate_synthetic_beast_plan"),
+                display_name: "测试养成合成兽形构型".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: "body".into(),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::HeightBands {
+                    aabb: StandingAabbSpec {
+                        half_width: 2.0,
+                        height: 3.0,
+                    },
+                    bands: vec![HeightBand {
+                        min_rel_y: -1.0,
+                        assignment: HeightBandAssignment::Single {
+                            part: "body".into(),
+                        },
+                    }],
+                    lateral_threshold: 0.5,
+                },
+                equip_slots: vec![],
+                meridian_profile: Some(MeridianProfile {
+                    channels: vec![
+                        ChannelDef {
+                            id: "chan_a".into(),
+                            family: MeridianFamily::Regular,
+                            body_part: None,
+                            roles: vec![],
+                        },
+                        ChannelDef {
+                            id: "chan_b".into(),
+                            family: MeridianFamily::Regular,
+                            body_part: None,
+                            roles: vec![],
+                        },
+                        ChannelDef {
+                            id: "chan_c".into(),
+                            family: MeridianFamily::Regular,
+                            body_part: None,
+                            roles: vec![],
+                        },
+                    ],
+                    topology_edges: vec![],
+                    realm_requirements: [
+                        RealmMeridianReq {
+                            total: 0,
+                            regular_min: 0,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 1,
+                            regular_min: 1,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 2,
+                            regular_min: 2,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 3,
+                            regular_min: 3,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 3,
+                            regular_min: 3,
+                            extraordinary_min: 0,
+                        },
+                        RealmMeridianReq {
+                            total: 3,
+                            regular_min: 3,
+                            extraordinary_min: 0,
+                        },
+                    ],
+                    dugu_injection: vec![],
+                }),
+                mutation_slot_mapping: Default::default(),
+            }
+        }
+
+        fn human_placeholder_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: BodyPlanId::new("test_cultivate_human_placeholder_plan"),
+                display_name: "测试人族占位构型".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: "body".into(),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::HeightBands {
+                    aabb: StandingAabbSpec {
+                        half_width: 2.0,
+                        height: 3.0,
+                    },
+                    bands: vec![HeightBand {
+                        min_rel_y: -1.0,
+                        assignment: HeightBandAssignment::Single {
+                            part: "body".into(),
+                        },
+                    }],
+                    lateral_threshold: 0.5,
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: Default::default(),
+            }
+        }
+
+        let body_plans = BodyPlanRegistry::from_plans(vec![
+            synthetic_beast_plan(),
+            human_placeholder_plan(),
+        ])
+        .expect("synthetic beast + human placeholder plans must validate");
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                RaceEntry {
+                    id: crate::body_plan::RaceId::new(HUMAN_RACE_ID),
+                    display_name: "人族".to_string(),
+                    body_plan_id: BodyPlanId::new("test_cultivate_human_placeholder_plan"),
+                    beast_kinds: vec![],
+                },
+                RaceEntry {
+                    id: crate::body_plan::RaceId::new("test_cultivate_synthetic_beast_race"),
+                    display_name: "测试养成合成兽形种族".to_string(),
+                    body_plan_id: BodyPlanId::new("test_cultivate_synthetic_beast_plan"),
+                    beast_kinds: vec![BeastKind::Whale.as_str().to_string()],
+                },
+            ],
+            vec![],
+            &body_plans,
+        )
+        .expect("synthetic race registry fixture must validate");
+
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "test_cultivate_zone".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(-50.0, 0.0, -50.0), DVec3::new(50.0, 128.0, 50.0)),
+                spirit_qi: 0.9,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+        });
+        app.insert_resource(body_plans);
+        app.insert_resource(races);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(Update, cultivate_action_system);
+
+        let mut meridians =
+            MeridianSystem::for_profile(synthetic_beast_plan().meridian_profile.as_ref().unwrap());
+        // 只打通 1 条 channel——humanoid 曲线（need=3）不会触发突破尝试，
+        // 合成构型自己的曲线（need=1）应该触发。
+        meridians.regular[0].opened = true;
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(0.0, 64.0, 0.0)),
+                Navigator::new(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    composure: 1.0,
+                    race: crate::body_plan::RaceId::new("test_cultivate_synthetic_beast_race"),
+                    ..Default::default()
+                },
+                meridians,
+                NpcPatrol::new("test_cultivate_zone", DVec3::ZERO),
+                CultivateState::default(),
+                LifeRecord::new("test_cultivate_synthetic_char"),
+                FaunaTag::new(BeastKind::Whale),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((CultivateAction, Actor(npc), ActionState::Executing))
+            .id();
+        let _ = action;
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(npc).unwrap();
+        assert_eq!(
+            cultivation.qi_current, 92.0,
+            "cultivate_action_system must resolve this NPC's FaunaTag.beast_kind → its own \
+             race body_plan (need=1) and attempt the breakthrough (debiting the 8.0 qi cost), \
+             not silently pass beast_kind=None and fall back to humanoid (need=3) which would \
+             reject this 1-channel-opened NPC outright and leave qi_current untouched at \
+             100.0 — actual qi_current after the tick: {}",
+            cultivation.qi_current
         );
     }
 

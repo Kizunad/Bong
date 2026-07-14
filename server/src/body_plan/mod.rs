@@ -60,7 +60,8 @@ pub use resolve::{
     body_part_for_mutation_slot, channel_body_part, dugu_injection_channel,
     form_identity_from_world, intrinsic_is_humanoid_from_world, meridian_profile_for_target,
     resolve_body_plan, resolve_body_plan_for_target, resolve_meridian_topology_for_target,
-    resolve_race_to_plan, BodyPlanPurpose, BodyPlanResolveInputs, ResolveBodyPlanError,
+    resolve_race_to_plan, BodyPlanPurpose, BodyPlanResolveInputs, MeridianProfileMissingError,
+    ResolveBodyPlanError,
 };
 pub use types::{
     BodyPartDef, BodyPartId, BodyPlan, BodyPlanId, ChannelDef, ChannelRole, DuguInjectionEntry,
