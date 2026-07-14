@@ -75,5 +75,7 @@ public enum HudRenderLayer {
     /** 盾格挡命中瞬态确认弧光（~350ms）。 */
     SHIELD_BLOCK,
     /** F5 fix — 灵龛守护状态面板（守护载体耐久/破损 + 最近龛侵警报，仅在有数据时渲染）。 */
-    NICHE_GUARDIAN
+    NICHE_GUARDIAN,
+    /** plan-race-system-v1 PR-5b — 易形（morph.yixing）左下形态图标 + 施法期白色 vignette。 */
+    MORPH
 }

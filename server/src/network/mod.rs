@@ -697,6 +697,7 @@ pub fn register(app: &mut App) {
             cultivation_detail_emit::emit_body_plan_layout_payloads,
             race_gate_meta_emit::emit_race_gate_meta_payloads,
             morph_state_emit::emit_morph_state_payloads,
+            morph_state_emit::emit_morph_state_delta_payloads,
             qi_color_observed_emit::emit_qi_color_observed_payloads
                 .after(client_request_handler::handle_client_request_payloads),
             audio_event_emit::handle_audio_debug_commands,
@@ -964,7 +965,8 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::yidao::complete_yidao_casts),
             techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
-                .after(inventory_event_emit::emit_durability_changed_inventory_events),
+                .after(inventory_event_emit::emit_durability_changed_inventory_events)
+                .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
@@ -1100,6 +1102,7 @@ pub fn register(app: &mut App) {
 
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<morph_state_emit::MorphStateEmitState>();
+    app.init_resource::<morph_state_emit::MorphStateEntityCache>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
     app.init_resource::<audio_trigger::AudioTriggerState>();
