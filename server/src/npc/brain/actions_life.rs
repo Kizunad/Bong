@@ -11,7 +11,8 @@ use crate::body_plan::{
 };
 use crate::cultivation::breakthrough::{
     breakthrough_actor_account_id, breakthrough_qi_cost, credit_active_breakthrough_cost,
-    try_breakthrough, BreakthroughError, BreakthroughSuccess, RollSource, XorshiftRoll,
+    try_breakthrough_with_profile, BreakthroughError, BreakthroughSuccess, RollSource,
+    XorshiftRoll,
 };
 use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::life_record::LifeRecord;
@@ -828,6 +829,21 @@ pub(crate) fn cultivate_action_system(
             body_plans.as_deref(),
             races.as_deref(),
         );
+        // plan-race-system-v1 P5 换轨：突破配额（precheck + 实际判定）改按 *actor
+        // 解析出的 body plan 派生，不再无条件绑死 `Realm::required_meridians()`
+        // 的 humanoid 曲线——同一份 `BodyPlanResolveInputs`（复用上方 `topo` 解析入参，
+        // 该结构体 `Copy`）。
+        let meridian_profile = crate::body_plan::meridian_profile_for_target(
+            *actor,
+            BodyPlanPurpose::Intrinsic,
+            BodyPlanResolveInputs {
+                cultivation: Some(&*cultivation),
+                beast_kind: None,
+                morph_state: None,
+            },
+            body_plans.as_deref(),
+            races.as_deref(),
+        );
 
         match *state {
             ActionState::Requested => {
@@ -871,7 +887,8 @@ pub(crate) fn cultivate_action_system(
 
                 if let Some(next) = next_realm(cultivation.realm) {
                     let have = meridians.opened_count();
-                    let need = next.required_meridians();
+                    let need = meridian_profile.realm_requirements[next.rank() as usize - 1].total
+                        as usize;
                     let qi_need = breakthrough_qi_cost(next);
                     if have >= need && cultivation.qi_current >= qi_need {
                         let Some(account) = qi_account.as_deref_mut() else {
@@ -892,10 +909,13 @@ pub(crate) fn cultivate_action_system(
                         let cultivation_before = cultivation.clone();
                         let meridians_before = meridians.clone();
                         let before_qi = cultivation.qi_current.max(0.0);
-                        let result = try_breakthrough(
+                        let result = try_breakthrough_with_profile(
                             &mut cultivation,
                             &mut meridians,
                             ROGUE_BREAKTHROUGH_MATERIAL_BONUS,
+                            0.0,
+                            None,
+                            meridian_profile,
                             &mut roll,
                         );
                         let used_qi = (before_qi - cultivation.qi_current.max(0.0)).max(0.0);

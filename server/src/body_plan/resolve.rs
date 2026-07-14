@@ -31,7 +31,7 @@ use crate::fauna::components::BeastKind;
 
 use super::race_registry::RaceRegistry;
 use super::registry::BodyPlanRegistry;
-use super::types::{BodyPartId, BodyPlan, RaceId};
+use super::types::{BodyPartId, BodyPlan, MeridianProfile, RaceId};
 
 /// `resolve_body_plan` 的语义参数——P0 无实际差异（见模块文档），签名先行锁定供 P4 使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +231,32 @@ pub fn resolve_meridian_topology_for_target<'a>(
         }
         _ => super::registry::humanoid_topology_static(),
     }
+}
+
+/// plan-race-system-v1 P5 —— `cultivation::breakthrough` 突破配额消费点用，语义与
+/// [`resolve_meridian_topology_for_target`] 完全对齐（同一套解析 + 退化规则）。目标
+/// plan 缺 `meridian_profile`（非人形构型尚未接入经脉，如 P0 遗留 fixture）时同样退化
+/// 到 humanoid 曲线——`breakthrough_precondition_error_for_profile` 等消费点始终需要
+/// "某种配额曲线"才能判定，不能对着 `None` 停摆。humanoid 目标本身经此函数解析出的
+/// 结果与旧的零参 `humanoid_plan_static().meridian_profile` 直读 bit-for-bit 相同
+/// （同一份 `humanoid.json`），换轨不改变现有人族突破行为。
+pub fn meridian_profile_for_target<'a>(
+    entity: Entity,
+    purpose: BodyPlanPurpose,
+    inputs: BodyPlanResolveInputs<'_>,
+    body_plans: Option<&'a BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
+) -> &'a MeridianProfile {
+    let plan = resolve_body_plan_for_target(entity, purpose, inputs, body_plans, races);
+    plan.meridian_profile.as_ref().unwrap_or_else(|| {
+        super::registry::humanoid_plan_static()
+            .meridian_profile
+            .as_ref()
+            .expect(
+                "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+                 onward — validate_body_plan should have rejected a humanoid plan missing it",
+            )
+    })
 }
 
 /// plan-race-system-v1 P3a —— 施放门 race gate 消费点用（`sword_path::skill_register`

@@ -1650,12 +1650,20 @@ pub fn resolve_attack_intents(
             contamination.entries.push(ContamSource {
                 amount: emitted_contam_delta,
                 color: ColorKind::Mellow,
-                // humanoid-only boundary（P0 决议，本轮不迁移）：`dugu::body_part_to_meridian`
-                // 仍按 legacy `BodyPart` 分派经脉污染路由（P1 批次范围）；非人形部位 id 时
-                // 不指定具体经脉（`None`，污染仍计入总量，只是不挂靠某条经脉——显式，
-                // 非静默吞掉）。
-                meridian_id: crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id)
-                    .map(crate::cultivation::dugu::body_part_to_meridian),
+                // plan-race-system-v1 P5 换轨：经脉污染路由改走通用
+                // `body_plan::dugu_injection_channel(target_body_plan, body_part)`
+                // （不再固定读 legacy `dugu::body_part_to_meridian` 私表），humanoid
+                // 命中经 `MeridianChannelId::to_meridian_id()` 转回 `ContamSource.meridian_id`
+                // 仍取用的 legacy `MeridianId`（该字段类型本轮不迁移，P1 批次范围），
+                // 数值 bit-for-bit 不变——humanoid.json `dugu_injection` 表就是私表原样
+                // 迁移。非 humanoid 目标（`target_body_plan` 未声明该部位映射，或声明的
+                // channel 不在 humanoid 20 经之列，如 P5 飞鲸）时不指定具体经脉
+                // （`None`，污染仍计入总量，只是不挂靠某条经脉——显式，非静默吞掉）。
+                meridian_id: crate::body_plan::dugu_injection_channel(
+                    target_body_plan,
+                    &hit_probe.part_id,
+                )
+                .and_then(|channel| channel.to_meridian_id()),
                 attacker_id: Some(attacker_id.clone()),
                 introduced_at: clock.tick,
             });
@@ -12509,6 +12517,152 @@ mod tests {
                  （damage_mul=0.2）命中的伤害，实测 left={severity_left} right={severity_right}\
                  —— 若两者相等说明命中部位没有真正驱动 body_part_multipliers 查询该\
                  合成 plan 的 BodyPartDef 数据"
+            );
+        }
+    }
+
+    // ───────── plan-race-system-v1 P5 换轨：ContamSource.meridian_id 经脉污染路由 ─────────
+    //
+    // `ContamSource.meridian_id` 构造已从 `id_to_legacy_body_part(...).map(dugu::body_part_to_meridian)`
+    // 换轨为 `dugu_injection_channel(target_body_plan, &hit_probe.part_id).and_then(|c|
+    // c.to_meridian_id())`（见本文件上方 `resolve_attack_intents` 内 `ContamSource` 构造处）。
+    // 本组测试直接锁死这条组合表达式本身的行为（不搭建完整 ECS/combat 判定链路），覆盖
+    // ①人形目标 8 部位 bit-for-bit 不变 ②非人形目标（无 dugu_injection 映射）显式 None。
+    mod dugu_contam_meridian_routing_tests {
+        use crate::body_plan::dugu_injection_channel;
+        use crate::body_plan::types::{
+            BodyPartDef, BodyPlan, BodyPlanId, ChannelDef, HeightBand, HeightBandAssignment,
+            HitGeometry, MeridianFamily, MeridianProfile, PartConsequence, RealmMeridianReq,
+            StandingAabbSpec,
+        };
+        use crate::cultivation::components::MeridianId;
+
+        /// 换轨后的组合表达式——与 `resolve_attack_intents` 内 `ContamSource.meridian_id`
+        /// 构造逐字符一致，测试直接复用而不是另起一套等价但可能悄悄漂移的逻辑。
+        fn routed_meridian_id(
+            plan: &BodyPlan,
+            part_id: &crate::body_plan::BodyPartId,
+        ) -> Option<MeridianId> {
+            dugu_injection_channel(plan, part_id).and_then(|channel| channel.to_meridian_id())
+        }
+
+        /// 非人形合成 fixture（单一 "body" 部位 + 单 channel meridian_profile，
+        /// `dugu_injection` 默认空 vec ——非人形构型未接入 dugu 玩法的合法状态）。
+        /// 与 `cultivation::non_humanoid_meridian_synthetic_chain_test` 的鲸 fixture
+        /// 同款风格，本模块独立持有一份以避免跨 `#[cfg(test)]` 私有模块可见性问题。
+        fn synthetic_whale_plan_for_dugu_routing_test() -> BodyPlan {
+            BodyPlan {
+                id: BodyPlanId::new("synthetic_test_whale_dugu_routing"),
+                display_name: "合成测试鲸（dugu 路由）".to_string(),
+                is_humanoid: false,
+                parts: vec![BodyPartDef {
+                    id: "body".into(),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                }],
+                hit_geometry: HitGeometry::HeightBands {
+                    aabb: StandingAabbSpec {
+                        half_width: 2.0,
+                        height: 3.0,
+                    },
+                    bands: vec![HeightBand {
+                        min_rel_y: -1.0,
+                        assignment: HeightBandAssignment::Single {
+                            part: "body".into(),
+                        },
+                    }],
+                    lateral_threshold: 0.5,
+                },
+                equip_slots: vec![],
+                meridian_profile: Some(MeridianProfile {
+                    channels: vec![ChannelDef {
+                        id: "tail_core".into(),
+                        family: MeridianFamily::Extraordinary,
+                        body_part: None,
+                        roles: vec![],
+                    }],
+                    topology_edges: vec![],
+                    realm_requirements: [RealmMeridianReq {
+                        total: 1,
+                        regular_min: 0,
+                        extraordinary_min: 0,
+                    }; 6],
+                    dugu_injection: vec![],
+                }),
+                mutation_slot_mapping: Default::default(),
+            }
+        }
+
+        #[test]
+        fn humanoid_target_all_eight_parts_route_to_bit_for_bit_unchanged_meridian_id() {
+            // 换轨前 `dugu::body_part_to_meridian` 对这 8 个 legacy BodyPart 的输出
+            // （见 `cultivation::dugu::tests` 同款断言）——humanoid 行为回归 pin：
+            // 任何一项漂移都说明新调用点破坏了既有真人玩家的 dugu 污染路由。
+            let plan = crate::body_plan::humanoid_plan_static();
+            let expected: [(&str, MeridianId); 8] = [
+                ("head", MeridianId::Du),
+                ("chest", MeridianId::Heart),
+                ("back", MeridianId::Du),
+                ("abdomen", MeridianId::Spleen),
+                ("arm_l", MeridianId::LargeIntestine),
+                ("arm_r", MeridianId::LargeIntestine),
+                ("leg_l", MeridianId::Bladder),
+                ("leg_r", MeridianId::Bladder),
+            ];
+            for (body_part, expected_id) in expected {
+                let part_id = crate::body_plan::BodyPartId::new(body_part);
+                assert_eq!(
+                    routed_meridian_id(plan, &part_id),
+                    Some(expected_id),
+                    "humanoid body_part={body_part} 换轨后必须仍解析出 {expected_id:?}\
+                     （与换轨前 dugu::body_part_to_meridian 逐项 bit-for-bit 一致）"
+                );
+            }
+        }
+
+        #[test]
+        fn non_humanoid_target_without_dugu_injection_mapping_routes_to_explicit_none() {
+            // 复用 P1 对抗审查合成鲸 fixture（`meridian_profile.dugu_injection` 为空
+            // vec——非人形构型未接入 dugu 玩法时的合法状态，见 `DuguInjectionEntry`
+            // 文档）。换轨前 `id_to_legacy_body_part` 对这类非 legacy 部位 id 恒返回
+            // `None`，短路到同样的 `None` 结果——本测试锁死换轨后仍是显式 `None`
+            // （污染量仍计入总量，只是不挂靠某条经脉），而不是 panic 或误挂到某条
+            // humanoid 经脉上。
+            let plan = synthetic_whale_plan_for_dugu_routing_test();
+            let part_id = crate::body_plan::BodyPartId::new("body");
+            assert_eq!(
+                routed_meridian_id(&plan, &part_id),
+                None,
+                "非人形 body plan（无 dugu_injection 映射）命中应显式路由到 None，\
+                 不能 panic 也不能误挂到某条 humanoid 经脉上"
+            );
+        }
+
+        #[test]
+        fn non_humanoid_target_with_declared_dugu_injection_mapping_routes_to_its_own_channel() {
+            // 若某非人形 plan **确实**声明了 dugu_injection 映射（哪怕映射目标 channel
+            // 不在 humanoid 20 经之列），换轨后的组合表达式必须先能拿到该 channel，
+            // 再由 `to_meridian_id()` 判定是否有 legacy 对应物——本用例覆盖"有映射但
+            // 目标 channel 非 humanoid 经脉"分支：`dugu_injection_channel` 返回
+            // `Some(channel)`，但 `to_meridian_id()` 找不到对应 legacy 枚举，最终仍是
+            // 显式 `None`（而不是 panic，区别于 `dugu::body_part_to_meridian` 对
+            // humanoid.json 数据缺失走 panic 的 data-integrity 分支——那是"数据本该
+            // 存在却缺失"，这里是"数据存在但根本没有 legacy 对应物"，合法状态）。
+            let mut plan =
+                synthetic_whale_plan_for_dugu_routing_test();
+            plan.meridian_profile.as_mut().unwrap().dugu_injection =
+                vec![crate::body_plan::types::DuguInjectionEntry {
+                    body_part: crate::body_plan::BodyPartId::new("body"),
+                    channel: crate::cultivation::components::MeridianChannelId::new("tail_core"),
+                }];
+            let part_id = crate::body_plan::BodyPartId::new("body");
+            assert_eq!(
+                routed_meridian_id(&plan, &part_id),
+                None,
+                "非人形专属 channel（tail_core）没有 legacy MeridianId 对应物，\
+                 换轨后应显式返回 None（不是 panic）"
             );
         }
     }

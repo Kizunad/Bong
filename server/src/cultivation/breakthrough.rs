@@ -308,39 +308,15 @@ pub fn add_pending_material_bonus(cultivation: &mut Cultivation, magnitude: f64)
     cultivation.pending_material_bonus
 }
 
-/// plan-race-system-v1 P1a：regular/extraordinary 子配额阈值不再是本函数内的硬编码
-/// match（旧值 3/6/12/12/4），改查目标实体 body plan 的
-/// `MeridianProfile.realm_requirements`（`humanoid.json`，§8.1 #8 "公式即数据"决议）。
-/// 数值 bit-for-bit 不变——`humanoid.json` 的曲线就是把旧 Rust match 表原样迁移过去。
-///
-/// 当前全部已注册种族（`races.json`）均映射到 humanoid body plan，尚无"目标实体走
-/// 非 humanoid 曲线"的真实场景，故本包装函数直接读 `body_plan::humanoid_plan_static()`
-/// 而非经 `resolve_body_plan_for_target` 解析 `cultivation.race`——等 P5 引入非
-/// humanoid 战斗构型、真的需要按实体差异化取值时，再把这里换成真正的按实体解析
-/// （`cultivation.race` 字段已在 P0 就位，届时改造无需再动调用点）。
-///
-/// plan-race-system-v1 P1 对抗审查 M3：核心判定逻辑已抽成
-/// [`breakthrough_precondition_error_for_profile`]（接受任意 `MeridianProfile`），本
-/// 函数只是"调用方拿不到实体 / 目标 profile 时"的 humanoid 保底包装——供 P4/P5 引入
-/// 真正实体解析时直接换成带 profile 的版本，无需再拆一次函数。
-fn breakthrough_precondition_error(
-    cultivation: &Cultivation,
-    meridians: &MeridianSystem,
-) -> Option<BreakthroughError> {
-    let profile = crate::body_plan::humanoid_plan_static()
-        .meridian_profile
-        .as_ref()
-        .expect(
-            "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
-             onward — validate_body_plan should have rejected a humanoid plan missing it",
-        );
-    breakthrough_precondition_error_for_profile(cultivation, meridians, profile)
-}
-
 /// 按目标实体的 `MeridianProfile` 判定突破前置条件（配额 / 子配额 / qi 消耗）——
 /// plan-race-system-v1 P1 对抗审查 M2/M3：非 humanoid 构型（P1 合成样本 / P5 whale
-/// 等）走本函数即可拿到正确判定，不再假设 humanoid 曲线。`breakthrough_precondition_error`
-/// 是本函数的 humanoid 保底包装，行为 bit-for-bit 一致。
+/// 等）走本函数即可拿到正确判定，不再假设 humanoid 曲线。
+///
+/// P5 换轨：production 消费点（`breakthrough_system` / `try_breakthrough_with_profile`）
+/// 均已改走本函数——原先"调用方拿不到实体时"的零参 humanoid 保底包装
+/// `breakthrough_precondition_error` 因此不再有调用点，已随本轮换轨移除；
+/// `try_breakthrough_with_env_season_bonus`（既有测试/调用点用的 humanoid 便捷入口）
+/// 显式传入 humanoid profile 调用本函数，行为 bit-for-bit 不变。
 pub(crate) fn breakthrough_precondition_error_for_profile(
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
@@ -492,12 +468,47 @@ pub fn try_breakthrough_with_env_season_bonus<R: RollSource>(
     season: Option<Season>,
     roll: &mut R,
 ) -> Result<BreakthroughSuccess, BreakthroughError> {
+    let profile = crate::body_plan::humanoid_plan_static()
+        .meridian_profile
+        .as_ref()
+        .expect(
+            "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+             onward — validate_body_plan should have rejected a humanoid plan missing it",
+        );
+    try_breakthrough_with_profile(
+        cultivation,
+        meridians,
+        material_bonus,
+        env_bonus,
+        season,
+        profile,
+        roll,
+    )
+}
+
+/// plan-race-system-v1 P5 —— 按**目标实体**解析出的 `body_plan::MeridianProfile` 尝试
+/// 突破，供非 humanoid 战斗构型（whale 等易形/种族玩家）走通突破链路。调用方经
+/// [`crate::body_plan::meridian_profile_for_target`] 解析出 `profile` 后传入——不再
+/// 无条件绑死 humanoid 曲线。`try_breakthrough_with_env_season_bonus` 是本函数的
+/// humanoid 保底包装（换轨前后 bit-for-bit 一致，见其函数体），既有调用点无需改动。
+#[allow(clippy::too_many_arguments)]
+pub fn try_breakthrough_with_profile<R: RollSource>(
+    cultivation: &mut Cultivation,
+    meridians: &mut MeridianSystem,
+    material_bonus: f64,
+    env_bonus: f64,
+    season: Option<Season>,
+    profile: &crate::body_plan::MeridianProfile,
+    roll: &mut R,
+) -> Result<BreakthroughSuccess, BreakthroughError> {
     let from = cultivation.realm;
-    if let Some(error) = breakthrough_precondition_error(cultivation, meridians) {
+    if let Some(error) =
+        breakthrough_precondition_error_for_profile(cultivation, meridians, profile)
+    {
         return Err(error);
     }
     let next = next_realm(from).expect("precondition check rejects max realm");
-    let need = next.required_meridians();
+    let need = profile.realm_requirements[next.rank() as usize - 1].total as usize;
     let have = meridians.opened_count();
     let cost = breakthrough_qi_cost(next);
 
@@ -650,6 +661,12 @@ pub(crate) struct BreakthroughResources<'w> {
     spirit_eye_used_events: Option<ResMut<'w, Events<SpiritEyeUsedForBreakthroughEvent>>>,
     skill_xp_events: Option<ResMut<'w, Events<SkillXpGain>>>,
     qi_account: Option<ResMut<'w, WorldQiAccount>>,
+    /// plan-race-system-v1 P5 —— 突破配额换轨：按 `req.entity` 解析目标实体的
+    /// `body_plan::MeridianProfile`（`crate::body_plan::meridian_profile_for_target`），
+    /// 不再无条件绑死 humanoid 曲线。缺失时（大量既有单测未插入这两个资源）优雅退化
+    /// 到 humanoid，行为 bit-for-bit 不变。
+    body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    races: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one Query/EventWriter per concern.
@@ -696,6 +713,24 @@ pub fn breakthrough_system(
         }
         let character_id = life.character_id.clone();
         let username = usernames.get(req.entity).ok().map(|name| name.0.clone());
+
+        // plan-race-system-v1 P5 换轨：突破配额（need）按目标实体解析出的 body plan
+        // 派生，不再无条件绑死 humanoid 曲线——whale 等非人构型走此系统时用自己的
+        // `MeridianProfile.realm_requirements`。`BeastKind` 不查（本系统查询要求携带
+        // `Cultivation`/`MeridianSystem`/`LifeRecord`，携带这三者的 NPC 是"修士"身份，
+        // 不是纯兽类 fauna，与既有 `resolve_meridian_topology_for_target` 消费点同款
+        // 简化——见 `npc::brain::actions_life::cultivate_action_system`）。
+        let profile = crate::body_plan::meridian_profile_for_target(
+            req.entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: Some(&cultivation),
+                beast_kind: None,
+                morph_state: None,
+            },
+            resources.body_plans.as_deref(),
+            resources.races.as_deref(),
+        );
 
         // plan §3.1：material_bonus = req.material_bonus（手动传入，默认 0）
         //   ⊕ 服用突破辅助丹药挂在 StatusEffects 的 BreakthroughBoost buff 聚合值。
@@ -748,7 +783,8 @@ pub fn breakthrough_system(
         });
         let ledger_error = if zone_error.is_none()
             && (resources.qi_account.is_none() || zone_snapshot.is_none())
-            && breakthrough_precondition_error(&cultivation, &meridians).is_none()
+            && breakthrough_precondition_error_for_profile(&cultivation, &meridians, profile)
+                .is_none()
         {
             Some(BreakthroughError::LedgerUnavailable)
         } else {
@@ -756,7 +792,7 @@ pub fn breakthrough_system(
         };
 
         let res = zone_error
-            .or_else(|| breakthrough_precondition_error(&cultivation, &meridians))
+            .or_else(|| breakthrough_precondition_error_for_profile(&cultivation, &meridians, profile))
             .or(ledger_error)
             .map_or_else(
                 || {
@@ -778,12 +814,13 @@ pub fn breakthrough_system(
                     let cultivation_before = cultivation.clone();
                     let meridians_before = meridians.clone();
                     let before_qi = cultivation.qi_current.max(0.0);
-                    let result = try_breakthrough_with_env_season_bonus(
+                    let result = try_breakthrough_with_profile(
                         &mut cultivation,
                         &mut meridians,
                         material_bonus,
                         env_bonus,
                         Some(season),
+                        profile,
                         &mut roll,
                     );
                     let used_qi = (before_qi - cultivation.qi_current.max(0.0)).max(0.0);
