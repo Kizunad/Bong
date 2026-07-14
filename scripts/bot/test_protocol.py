@@ -15,6 +15,8 @@ import socket
 import struct
 import sys
 import threading
+import time
+import tomllib
 import types
 import unittest
 import zlib
@@ -23,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import mc_protocol as mc  # noqa: E402
 from bot import proto_min  # noqa: E402
-from bot.bot import Bot, _signed_12, _signed_26  # noqa: E402
+from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     latest_inventory_snapshot,
@@ -32,6 +34,7 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_snapshot_after,
 )
 from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
+    NON_CLAMP_EXPECTED_QI,
     PILL_ID,
     _assert_settled_consumption,
     _has_departed_baseline,
@@ -400,6 +403,8 @@ class CultivationPillScenarioTest(unittest.TestCase):
         good = _FakeEvent(2.0, "chat", {"text": "[dev] qi set 95.0 -> 5.0"})
         wrong_target = _FakeEvent(2.0, "chat", {"text": "[dev] qi set 5.0 -> 95.0"})
         misleading = _FakeEvent(2.0, "chat", {"text": "prefix [dev] qi set 5.0 -> 5.0"})
+        at_anchor = _FakeEvent(1.0, "chat", {"text": "[dev] qi set 95.0 -> 5.0"})
+        non_chat = _FakeEvent(2.0, "server_data", {"text": "[dev] qi set 95.0 -> 5.0"})
 
         self.assertTrue(
             _is_qi_set_confirmation(good, 1.0, 5.0),
@@ -412,6 +417,14 @@ class CultivationPillScenarioTest(unittest.TestCase):
         self.assertFalse(
             _is_qi_set_confirmation(misleading, 1.0, 5.0),
             "仅在正文中包含 qi set 片段的聊天不得被误认成确认",
+        )
+        self.assertFalse(
+            _is_qi_set_confirmation(at_anchor, 1.0, 5.0),
+            "event.t == anchor 属于命令前水位，不得满足本次 qi set 确认",
+        )
+        self.assertFalse(
+            _is_qi_set_confirmation(non_chat, 1.0, 5.0),
+            "非 chat 事件即使正文相同也不得满足 qi set 确认",
         )
 
     def test_authoritative_qi_wait_uses_command_anchor_not_chat_order(self):
@@ -431,11 +444,51 @@ class CultivationPillScenarioTest(unittest.TestCase):
             authoritative,
             "player_state 可能与 chat 同 tick 乱序，权威 qi 等待必须锚定发命令前水位线",
         )
-        self.assertEqual(
-            bot.commands,
-            ["qi set 5.0"],
-            "场景必须只发一次精确目标的 qi set 命令",
+
+    def test_authoritative_qi_wait_rejects_stale_event_before_anchor(self):
+        bot = _CommandFakeBot(
+            [
+                _player_state_event(1.0, 5.0),
+                _FakeEvent(2.0, "chat", {"text": "历史水位"}),
+            ],
+            [_FakeEvent(2.1, "chat", {"text": "[dev] qi set 95.0 -> 5.0"})],
         )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "权威 player_state",
+            msg="anchor 前的目标 qi 快照不得满足命令后的权威状态等待",
+        ):
+            _set_qi_and_wait(bot, 5.0)
+
+    def test_qi_set_wait_rejects_wrong_confirmation_target(self):
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [_FakeEvent(1.1, "chat", {"text": "[dev] qi set 5.0 -> 95.0"})],
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "精确目标",
+            msg="错误目标的 chat 确认必须让 qi set 等待超时",
+        ):
+            _set_qi_and_wait(bot, 5.0)
+
+    def test_qi_set_wait_rejects_wrong_authoritative_value(self):
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [
+                _FakeEvent(1.1, "chat", {"text": "[dev] qi set 95.0 -> 5.0"}),
+                _player_state_event(1.2, 6.0),
+            ],
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "权威 player_state",
+            msg="确认 chat 正确但权威 qi 错误时必须超时",
+        ):
+            _set_qi_and_wait(bot, 5.0)
 
     def test_stale_same_tick_baseline_is_not_new_authoritative_value(self):
         self.assertFalse(
@@ -446,8 +499,21 @@ class CultivationPillScenarioTest(unittest.TestCase):
             _has_departed_baseline(65.0, 5.0, 65.0),
             "真实恢复到 65 应越过基线变化屏障",
         )
+        self.assertFalse(
+            _has_departed_baseline(65.0, 65.0, 5.0),
+            "下降目标下旧基线 65 不得被当作新值",
+        )
+        self.assertTrue(
+            _has_departed_baseline(5.0, 65.0, 5.0),
+            "下降目标真实到达 5 时应越过变化屏障",
+        )
+        self.assertFalse(
+            _has_departed_baseline(5.0, 5.0, 5.0),
+            "目标等于基线时没有可观察状态转换，不得伪称已离开基线",
+        )
         final = _assert_settled_consumption(
             [
+                _pill_snapshot_event(1.05, 10, 3, 5.0),
                 _player_state_event(1.1, 5.0),
                 _pill_snapshot_event(1.2, 11, 2, 65.0),
                 _player_state_event(1.3, 65.0),
@@ -463,8 +529,28 @@ class CultivationPillScenarioTest(unittest.TestCase):
             "正常一次消费应只把 inventory revision 从 10 推进到 11",
         )
 
+    def test_huiyuan_asset_pins_expected_qi_recovery(self):
+        asset = pathlib.Path(__file__).parents[2] / "server/assets/items/pills.toml"
+        items = tomllib.loads(asset.read_text(encoding="utf-8"))["item"]
+        huiyuan = next(item for item in items if item["id"] == PILL_ID)
+        self.assertEqual(
+            huiyuan["effect"]["kind"],
+            "qi_recovery",
+            f"{PILL_ID} 必须继续走 qi_recovery，实际 effect={huiyuan['effect']}",
+        )
+        self.assertEqual(
+            float(huiyuan["effect"]["magnitude"]),
+            NON_CLAMP_EXPECTED_QI - 5.0,
+            f"场景从 qi=5 推导期望 {NON_CLAMP_EXPECTED_QI}，"
+            f"实际 asset effect={huiyuan['effect']}",
+        )
+
     def test_repeated_qi_effect_fails_settle_window(self):
-        with self.assertRaises(AssertionError):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "权威 player_state 应持续稳定",
+            msg="第二次真元生效必须命中权威状态稳定性断言",
+        ):
             _assert_settled_consumption(
                 [
                     _pill_snapshot_event(1.1, 11, 2, 65.0),
@@ -478,7 +564,11 @@ class CultivationPillScenarioTest(unittest.TestCase):
             )
 
     def test_repeated_inventory_decrement_fails_settle_window(self):
-        with self.assertRaises(AssertionError):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版 inventory revision 必须保持",
+            msg="第二次扣存推进 revision 必须命中逐帧 revision 断言",
+        ):
             _assert_settled_consumption(
                 [
                     _pill_snapshot_event(1.1, 11, 2, 65.0),
@@ -491,9 +581,83 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 expected_qi=65.0,
             )
 
-    def test_authoritative_qi_regression_after_effect_fails_settle_window(self):
-        with self.assertRaises(
+    def test_repeated_decrement_then_surface_rollback_still_fails(self):
+        with self.assertRaisesRegex(
             AssertionError,
+            "消费后每版 inventory revision 必须保持",
+            msg="11/2 -> 12/1 -> 11/2 的表面正确终态仍必须失败",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 12, 1, 65.0),
+                    _pill_snapshot_event(1.4, 11, 2, 65.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
+
+    def test_consumed_snapshot_rollback_to_old_state_fails(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版 inventory revision 必须保持",
+            msg="消费后回滚到旧 revision/count 必须失败",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 10, 3, 5.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
+
+    def test_same_revision_count_change_fails(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版丹药数量必须保持",
+            msg="revision 未变但丹药再次减少也必须失败",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 11, 1, 65.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
+
+    def test_inventory_qi_regression_fails(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版 inventory qi 必须保持",
+            msg="库存快照 qi 回滚必须命中逐帧 qi 断言",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 11, 2, 5.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
+
+    def test_authoritative_qi_regression_after_effect_fails_settle_window(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "权威 player_state 应持续稳定",
             msg="权威真元先恢复到 65 又回落到旧基线时必须失败",
         ):
             _assert_settled_consumption(
@@ -814,6 +978,82 @@ def _bare_bot() -> Bot:
     return bot
 
 
+class BotEventStreamBarrierTest(unittest.TestCase):
+    def test_delayed_event_after_half_second_is_in_atomic_snapshot(self):
+        bot = _bare_bot()
+        bot.username = "Barrier"
+        bot.t0 = time.monotonic()
+        bot._emit(
+            "server_data",
+            _pill_snapshot_event(0.0, 11, 2, 65.0).data,
+        )
+        bot._emit("server_data", _player_state_event(0.0, 65.0).data)
+
+        def emit_delayed_duplicate() -> None:
+            time.sleep(0.55)
+            bot._emit(
+                "server_data",
+                _pill_snapshot_event(0.0, 12, 1, 65.0).data,
+            )
+
+        producer = threading.Thread(target=emit_delayed_duplicate)
+        producer.start()
+        events = bot.snapshot_events_after_quiet_period(
+            min_wait=0.6,
+            quiet_period=0.05,
+            timeout=2.0,
+            description="延迟重复扣存测试屏障",
+        )
+        producer.join(timeout=1.0)
+
+        self.assertFalse(
+            producer.is_alive(),
+            "延迟事件生产线程应在屏障返回前完成，实际仍存活",
+        )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版 inventory revision 必须保持",
+            msg="超过旧 0.5s 窗口才入队的重复扣存也必须被原子快照捕获",
+        ):
+            _assert_settled_consumption(
+                events,
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
+
+    def test_barrier_rejects_invalid_durations(self):
+        bot = _bare_bot()
+        bot.username = "Barrier"
+        cases = [
+            ({"min_wait": -0.1, "quiet_period": 0.1, "timeout": 1.0}, "min_wait"),
+            ({"min_wait": 0.0, "quiet_period": 0.0, "timeout": 1.0}, "quiet_period"),
+            ({"min_wait": 0.0, "quiet_period": 0.1, "timeout": 0.0}, "timeout"),
+        ]
+        for values, field in cases:
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
+                bot.snapshot_events_after_quiet_period(
+                    **values,
+                    description=f"invalid {field}",
+                )
+
+    def test_barrier_times_out_before_unreachable_minimum_window(self):
+        bot = _bare_bot()
+        bot.username = "Barrier"
+        with self.assertRaisesRegex(
+            BotAssertionError,
+            "事件流未静默",
+            msg="timeout 小于 minimum window 时必须明确超时而非提前返回",
+        ):
+            bot.snapshot_events_after_quiet_period(
+                min_wait=0.05,
+                quiet_period=0.01,
+                timeout=0.01,
+                description="不可达最小窗口",
+            )
+
+
 class EntityTrackingTest(unittest.TestCase):
     """实体位置表 pin：spawn 建 / rel-move 累积(Δ=i16/4096) / teleport 覆写 / destroy 删。
 
@@ -912,9 +1152,64 @@ class ProdConsumeDecodeTest(unittest.TestCase):
     def test_player_state_tag5_decodes_authoritative_qi(self):
         msg = _pb_fixed64(3, 65.0) + _pb_fixed64(11, 100.0)
         decoded = proto_min.decode_server_data_envelope(_pb_message(5, msg))
-        self.assertEqual(decoded["type"], "player_state")
-        self.assertEqual(decoded["spirit_qi"], 65.0)
-        self.assertEqual(decoded["spirit_qi_max"], 100.0)
+        self.assertIsNotNone(
+            decoded,
+            "envelope tag 5 必须解码为 player_state，实际返回 None",
+        )
+        self.assertEqual(
+            decoded["type"],
+            "player_state",
+            f"envelope tag 5 应分发到 player_state，实际 payload={decoded}",
+        )
+        self.assertEqual(
+            decoded["spirit_qi"],
+            65.0,
+            f"PlayerState.spirit_qi 必须读取 fixed64 field 3，实际 payload={decoded}",
+        )
+        self.assertEqual(
+            decoded["spirit_qi_max"],
+            100.0,
+            f"PlayerState.spirit_qi_max 必须读取 fixed64 field 11，实际 payload={decoded}",
+        )
+
+    def test_player_state_missing_qi_fields_use_protobuf_zero_defaults(self):
+        decoded = proto_min.decode_server_data_envelope(_pb_message(5, b""))
+        self.assertIsNotNone(
+            decoded,
+            "空 player_state message 仍是合法 protobuf，实际返回 None",
+        )
+        self.assertEqual(
+            decoded["spirit_qi"],
+            0.0,
+            f"缺失 fixed64 field 3 应使用 protobuf 默认 0，实际 payload={decoded}",
+        )
+        self.assertEqual(
+            decoded["spirit_qi_max"],
+            0.0,
+            f"缺失 fixed64 field 11 应使用 protobuf 默认 0，实际 payload={decoded}",
+        )
+
+    def test_player_state_wrong_qi_wire_type_is_ignored(self):
+        msg = _pb_varint_field(3, 65) + _pb_varint_field(11, 100)
+        decoded = proto_min.decode_server_data_envelope(_pb_message(5, msg))
+        self.assertIsNotNone(
+            decoded,
+            "wire type 错误的 player_state envelope 仍应被识别，实际返回 None",
+        )
+        self.assertEqual(
+            (decoded["spirit_qi"], decoded["spirit_qi_max"]),
+            (0.0, 0.0),
+            f"field 3/11 的 varint 不得冒充 fixed64，实际 payload={decoded}",
+        )
+
+    def test_player_state_truncated_fixed64_is_rejected(self):
+        truncated = mc.write_varint((3 << 3) | 1) + b"\x00" * 7
+        with self.assertRaisesRegex(
+            proto_min.ProtoDecodeError,
+            "truncated fixed64",
+            msg="PlayerState fixed64 field 3 截断时必须报协议错误",
+        ):
+            proto_min.decode_server_data_envelope(_pb_message(5, truncated))
 
     def test_craft_session_state_tag22(self):
         msg = (
