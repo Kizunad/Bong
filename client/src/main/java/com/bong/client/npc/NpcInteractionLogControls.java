@@ -9,6 +9,7 @@ import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.function.BooleanSupplier;
+import java.util.function.UnaryOperator;
 
 public final class NpcInteractionLogControls {
     private static final String CATEGORY = "category.bong-client.controls";
@@ -23,12 +24,7 @@ public final class NpcInteractionLogControls {
         if (registered) {
             return;
         }
-        key = KeyBindingHelper.registerKeyBinding(
-            // plan-bughunt-quick-slot-function-key-collision-v1:
-            // F1-F9 belong to the visible quick-use row. The interaction log
-            // remains configurable in Controls, but does not claim F7 by default.
-            new KeyBinding(KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
-        );
+        key = registerInteractionLogKey(KeyBindingHelper::registerKeyBinding);
         ClientTickEvents.END_CLIENT_TICK.register(NpcInteractionLogControls::onEndClientTick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
             client.execute(NpcInteractionLogStore::clearOnDisconnect));
@@ -60,5 +56,12 @@ public final class NpcInteractionLogControls {
             consumed++;
         }
         return consumed;
+    }
+
+    static KeyBinding registerInteractionLogKey(UnaryOperator<KeyBinding> registrar) {
+        // Leave unbound so F1-F9 remain reserved for quick slots.
+        return registrar.apply(
+            new KeyBinding(KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
+        );
     }
 }

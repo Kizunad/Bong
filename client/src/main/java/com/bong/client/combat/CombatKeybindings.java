@@ -10,6 +10,7 @@ import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.function.IntConsumer;
+import java.util.function.UnaryOperator;
 
 /**
  * Combat-HUD key bindings (§7). Registers F1-F9 quick-use keys, the Jiemai
@@ -46,14 +47,16 @@ public final class CombatKeybindings {
     }
 
     public static void register() {
-        for (int i = 0; i < QuickSlotConfig.SLOT_COUNT; i++) {
-            QUICK_SLOT_KEYS[i] = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.bong-client.quick_slot_" + (i + 1),
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_F1 + i,
-                CATEGORY
-            ));
-        }
+        KeyBinding[] registeredQuickSlotKeys = registerQuickSlotKeys(
+            KeyBindingHelper::registerKeyBinding
+        );
+        System.arraycopy(
+            registeredQuickSlotKeys,
+            0,
+            QUICK_SLOT_KEYS,
+            0,
+            registeredQuickSlotKeys.length
+        );
         // interaction-intent-cleanup-v1 P3 — 截脉反应键默认未绑定（UNKNOWN）。
         // 此前默认 V 与 MovementKeybindings 冲刺键（也默认 V）冲突：单次按 V 两个
         // KeyBinding.wasPressed() 都触发 → 冲刺的同时企图发截脉。截脉是有严格 server
@@ -87,6 +90,19 @@ public final class CombatKeybindings {
 
         ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
         BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, jiemai [unbound], R, event stream toggle, shield hold).");
+    }
+
+    static KeyBinding[] registerQuickSlotKeys(UnaryOperator<KeyBinding> registrar) {
+        KeyBinding[] registered = new KeyBinding[QuickSlotConfig.SLOT_COUNT];
+        for (int i = 0; i < QuickSlotConfig.SLOT_COUNT; i++) {
+            registered[i] = registrar.apply(new KeyBinding(
+                "key.bong-client.quick_slot_" + (i + 1),
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_F1 + i,
+                CATEGORY
+            ));
+        }
+        return registered;
     }
 
     public static void setQuickSlotHandler(IntConsumer handler) {

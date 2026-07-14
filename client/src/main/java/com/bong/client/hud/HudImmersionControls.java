@@ -9,6 +9,7 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
+import java.util.function.UnaryOperator;
 
 public final class HudImmersionControls {
     private static final String CATEGORY = "category.bong-client";
@@ -38,13 +39,15 @@ public final class HudImmersionControls {
 
     private static KeyBinding keyBinding() {
         if (toggleKey == null) {
-            toggleKey = KeyBindingHelper.registerKeyBinding(
-                // plan-bughunt-quick-slot-function-key-collision-v1:
-                // F1-F9 are reserved for the visible quick-use row. Keep this
-                // convenience toggle discoverable in Controls, but unbound by default.
-                new KeyBinding(TOGGLE_KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
-            );
+            toggleKey = registerToggleKey(KeyBindingHelper::registerKeyBinding);
         }
         return toggleKey;
+    }
+
+    static KeyBinding registerToggleKey(UnaryOperator<KeyBinding> registrar) {
+        // Leave unbound so F1-F9 remain reserved for quick slots.
+        return registrar.apply(
+            new KeyBinding(TOGGLE_KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
+        );
     }
 }
