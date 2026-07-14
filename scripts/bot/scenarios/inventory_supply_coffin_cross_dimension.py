@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import time
-from pathlib import Path
+import math
 
 from bot.bot import BotAssertionError
 
@@ -17,7 +15,6 @@ from ._inventory_helpers import (
 DESCRIPTION = "物资棺 open 后跨维应 close；旧 session move/open 均拒绝并回推权威状态"
 MODULES = ["inventory", "supply_coffin", "dimension"]
 
-TSY_FAMILY = "tsy_daneng_01"
 SETUP_ZONE = "spawn"
 
 
@@ -62,6 +59,27 @@ def run(env) -> None:
         coffin_spawn_signature = {
             key: coffin_spawn.data[key] for key in ("type", "x", "y", "z")
         }
+
+        # 第二具棺保持 active 但不创建 session，用于在跨维同裸坐标下独立验证
+        # forged open 会被 dimension gate 拒绝，而不是被“已有 opened_by”旁路拒绝。
+        open_probe_spawn_sent_at = _event_watermark(bot)
+        bot.cmd("supply_coffin spawn common")
+        bot.wait_for(
+            lambda event: event.kind == "chat"
+            and event.t > open_probe_spawn_sent_at
+            and "[dev] spawned common" in event.data["text"],
+            timeout=10.0,
+            description="第二具 common 物资棺 spawn 命令反馈",
+        )
+        open_probe_spawn = bot.wait_for(
+            lambda event: event.kind == "entity_spawn"
+            and event.t > open_probe_spawn_sent_at
+            and event.data["entity_id"] != coffin_entity_id
+            and _near_player(bot, event.data),
+            timeout=10.0,
+            description="供跨维 forged open 使用的第二具物资棺 Marker",
+        )
+        open_probe_entity_id = open_probe_spawn.data["entity_id"]
 
         open_sent_at = _event_watermark(bot)
         bot.intent({"type": "supply_coffin_open", "v": 1, "entity_id": coffin_entity_id})
@@ -151,12 +169,30 @@ def run(env) -> None:
                 "物资棺 session 在跨维命令前不得提前关闭；"
                 f"expected=[] actual={premature_closes}"
             )
-        bot.cmd(f"tsy_spawn {TSY_FAMILY}")
-        bot.expect_chat(f"Queued /tsy_spawn {TSY_FAMILY}", timeout=10.0)
-        entered = bot.wait_for(
-            lambda event: event.kind == "respawn" and event.t > transition_sent_at,
-            timeout=15.0,
-            description=f"通过 {TSY_FAMILY} 入口发生真实跨维 Respawn",
+        entered, _ = _transfer_dimension_same_xyz(
+            bot,
+            target="tsy",
+            after=transition_sent_at,
+            coffin_spawn=coffin_spawn_signature,
+            context="保持物资棺裸 XYZ 不变进入 TSY",
+        )
+
+        forged_open_sent_at = _event_watermark(bot)
+        bot.intent(
+            {
+                "type": "supply_coffin_open",
+                "v": 1,
+                "entity_id": open_probe_entity_id,
+            }
+        )
+        _assert_no_server_data_after(
+            bot,
+            "loot_container_open",
+            forged_open_sent_at,
+            timeout=2.0,
+            context=(
+                "TSY 玩家在 4.5 格内用未占用 Overworld 棺 entity_id 发起 forged open"
+            ),
         )
 
         closed = bot.wait_for(
@@ -166,7 +202,7 @@ def run(env) -> None:
             and event.t > transition_sent_at,
             timeout=10.0,
             description=(
-                f"/tsy_spawn watermark {transition_sent_at:.3f}s 后 session={session_id} "
+                f"/tpdim tsy watermark {transition_sent_at:.3f}s 后 session={session_id} "
                 "的 loot_container_close"
             ),
         )
@@ -183,9 +219,13 @@ def run(env) -> None:
             "respawn",
             entered.t,
             timeout=0.75,
-            context="TSY 入场落点必须位于出口触发圈外，旧实现会在下一 tick 自动回主世界",
+            context="同 XYZ dev transfer 后不得发生未请求的第二次跨维",
         )
 
+        # close 后请求只验证 session cleanup / unknown-session 拒绝。映射仍有效且
+        # opened_by 仍属于玩家时的跨维 move 续权，由真实 C2S 入口 Rust 测试
+        # `supply_coffin_external_move_real_c2s_rejects_cross_dimension_same_xyz_while_session_is_valid_and_resyncs`
+        # 锁定，避免依赖 lifecycle 与网络请求之间的非确定竞速。
         stale_move_sent_at = _event_watermark(bot)
         bot.intent(
             {
@@ -217,45 +257,29 @@ def run(env) -> None:
                 f"before={close_snapshot['revision']} actual={stale_snapshot['revision']}"
             )
 
-        reopen_sent_at = _event_watermark(bot)
-        bot.intent({"type": "supply_coffin_open", "v": 1, "entity_id": coffin_entity_id})
-        _assert_no_server_data_after(
+        return_sent_at = _event_watermark(bot)
+        returned, _ = _transfer_dimension_same_xyz(
             bot,
-            "loot_container_open",
-            reopen_sent_at,
-            timeout=2.0,
-            context="TSY 玩家用旧 Overworld entity_id 重发 supply_coffin_open",
-        )
-
-        exit_sent_at = _event_watermark(bot)
-        returned = _move_until_respawn(
-            bot,
-            _tsy_shallow_center(TSY_FAMILY),
-            after=exit_sent_at,
-            timeout=15.0,
-            context=f"踏入 {TSY_FAMILY} Exit 后返回 Overworld",
-        )
-        bot.wait_for(
-            lambda event: event.kind == "pos_look"
-            and event.t > exit_sent_at
-            and _within_distance(event.data, coffin_spawn_signature, 4.5),
-            timeout=5.0,
-            description="踏入 Exit 后原物资棺 4.5 格内的 Overworld 权威 PositionLook",
+            target="overworld",
+            after=return_sent_at,
+            coffin_spawn=coffin_spawn_signature,
+            context="保持物资棺裸 XYZ 不变返回 Overworld",
         )
         _assert_no_event_after(
             bot,
             "respawn",
             returned.t,
             timeout=0.75,
-            context="返回点必须位于 Entry 触发圈外，避免立刻重新进入 TSY",
+            context="返回 Overworld 后不得发生未请求的第二次跨维",
         )
         reloaded_coffin = bot.wait_for(
             lambda event: event.kind == "entity_spawn"
-            and event.t > exit_sent_at
+            and event.t > return_sent_at
+            and event.data["entity_id"] == coffin_entity_id
             and _same_spawn(event.data, coffin_spawn_signature),
             timeout=10.0,
             description=(
-                "返回 Overworld 后按原物资棺类型与坐标重新观察 Marker entity_spawn"
+                "返回 Overworld 后按原 entity_id、类型与坐标重新观察物资棺 Marker"
             ),
         )
         reloaded_coffin_entity_id = reloaded_coffin.data["entity_id"]
@@ -321,70 +345,48 @@ def _require_placed_item(
     )
 
 
-def _tsy_shallow_center(family_id: str) -> tuple[float, float, float]:
-    """读取权威 TSY blueprint，返回该 family 的 Exit portal 中心。"""
-    zones_path = Path(__file__).resolve().parents[3] / "server" / "zones.tsy.json"
-    try:
-        zones = json.loads(zones_path.read_text(encoding="utf-8"))["zones"]
-    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
-        raise BotAssertionError(
-            f"读取 TSY Exit 权威坐标失败；path={zones_path} error={error}"
-        ) from error
-
-    expected_name = f"{family_id}_shallow"
-    for zone in zones:
-        if zone.get("name") != expected_name:
-            continue
-        minimum = zone["aabb"]["min"]
-        maximum = zone["aabb"]["max"]
-        return tuple(
-            (float(low) + float(high)) / 2.0
-            for low, high in zip(minimum, maximum)
-        )
-    actual_names = [zone.get("name") for zone in zones]
-    raise BotAssertionError(
-        f"TSY family 必须存在 shallow zone；expected={expected_name} actual={actual_names}"
-    )
-
-
-def _move_until_respawn(
-    bot,
-    target: tuple[float, float, float],
-    after: float,
-    timeout: float,
-    context: str,
-    speed: float = 4.0,
-    tick_hz: float = 20.0,
+def _transfer_dimension_same_xyz(
+    bot, target: str, after: float, coffin_spawn: dict, context: str
 ):
-    """逐步走向传送点，并在 Respawn 到达时立即停止发送旧位面坐标。"""
-    if bot.position is None:
-        raise BotAssertionError(f"{context} 需要已知玩家坐标；actual=None")
+    """走正式 transfer consumer，并锁定跨维前后与棺材的裸 XYZ 仍在 4.5 格内。"""
+    bot.cmd(f"tpdim {target}")
+    bot.wait_for(
+        lambda event: event.kind == "chat"
+        and event.t > after
+        and f"Queued /tpdim {target} at current XYZ." in event.data["text"],
+        timeout=10.0,
+        description=f"/tpdim {target} server 权威 transfer 排队反馈",
+    )
+    respawn = bot.wait_for(
+        lambda event: event.kind == "respawn" and event.t > after,
+        timeout=10.0,
+        description=f"/tpdim {target} 触发真实跨维 Respawn",
+    )
+    position = bot.wait_for(
+        lambda event: event.kind == "pos_look" and event.t > after,
+        timeout=10.0,
+        description=f"/tpdim {target} 后 server 权威 PositionLook",
+    )
+    if position.data["flags"] != 0:
+        raise BotAssertionError(
+            f"{context} 必须返回绝对 PositionLook；"
+            f"expected_flags=0 actual_flags={position.data['flags']}"
+        )
 
-    deadline = time.monotonic() + timeout
-    step = speed / tick_hz
-    while time.monotonic() < deadline:
-        current = bot.position
-        if current is None:
-            raise BotAssertionError(f"{context} 移动中丢失玩家坐标；actual=None")
-        delta = tuple(destination - origin for origin, destination in zip(current, target))
-        distance = sum(component * component for component in delta) ** 0.5
-        if distance > 0.0:
-            scale = min(step, distance) / distance
-            bot.set_position(
-                *(origin + component * scale for origin, component in zip(current, delta))
-            )
-
-        remaining = deadline - time.monotonic()
-        try:
-            return bot.wait_for(
-                lambda event: event.kind == "respawn" and event.t > after,
-                timeout=min(1.0 / tick_hz, max(remaining, 0.001)),
-                description=context,
-            )
-        except BotAssertionError:
-            continue
-
-    raise BotAssertionError(f"{context}；expected=Respawn within {timeout}s actual=timeout")
+    actual_xyz = tuple(position.data[axis] for axis in ("x", "y", "z"))
+    coffin_xyz = tuple(coffin_spawn[axis] for axis in ("x", "y", "z"))
+    if not all(math.isfinite(value) for value in actual_xyz):
+        raise BotAssertionError(
+            f"{context} 的权威坐标必须有限；expected=finite actual={actual_xyz}"
+        )
+    actual_distance = math.dist(actual_xyz, coffin_xyz)
+    if actual_distance > 4.5:
+        raise BotAssertionError(
+            f"{context} 必须保留旧 XYZ-only open 阈值内前提；"
+            f"expected_distance<=4.5 actual_distance={actual_distance:.6f} "
+            f"player={actual_xyz} coffin={coffin_xyz}"
+        )
+    return respawn, position
 
 
 def _first_free_destination(
@@ -422,16 +424,6 @@ def _near_player(bot, data: dict) -> bool:
 def _same_spawn(actual: dict, expected: dict) -> bool:
     return actual["type"] == expected["type"] and all(
         abs(actual[axis] - expected[axis]) <= 1.0e-6 for axis in ("x", "y", "z")
-    )
-
-
-def _within_distance(actual: dict, expected: dict, maximum: float) -> bool:
-    return (
-        sum(
-            (actual[axis] - expected[axis]) ** 2
-            for axis in ("x", "y", "z")
-        )
-        <= maximum * maximum
     )
 
 

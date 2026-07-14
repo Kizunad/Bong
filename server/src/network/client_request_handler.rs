@@ -4582,7 +4582,8 @@ mod tests {
     }
 
     #[test]
-    fn supply_coffin_external_move_rejects_cross_dimension_same_xyz_and_resyncs() {
+    fn supply_coffin_external_move_real_c2s_rejects_cross_dimension_same_xyz_while_session_is_valid_and_resyncs(
+    ) {
         let (app, player, coffin, payload_types) = run_external_container_move_case(
             Some(DimensionKind::Tsy),
             DVec3::new(0.0, 64.0, 0.0),
@@ -4595,6 +4596,29 @@ mod tests {
         );
 
         assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert_eq!(
+            app.world()
+                .resource::<crate::inventory::external_container::ExternalContainerRegistry>()
+                .sessions
+                .get(&77),
+            Some(&coffin),
+            "real C2S move must reach dimension authority while session mapping is still valid"
+        );
+        assert_eq!(
+            app.world()
+                .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+                .expect("supply coffin session must remain attached")
+                .opened_by,
+            Some(player),
+            "real C2S move must be rejected while opened_by still proves requester ownership"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::supply_coffin::SupplyCoffinRegistry>()
+                .active
+                .contains_key(&coffin),
+            "real C2S move must be rejected while authoritative supply-coffin source is still active"
+        );
         assert!(
             payload_types.iter().any(|ty| ty == "loot_container_update"),
             "authorized owner rejected for stale spatial authority must receive external-container resync; payloads={payload_types:?}"
