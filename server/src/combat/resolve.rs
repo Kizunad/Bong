@@ -12650,8 +12650,7 @@ mod tests {
             // 显式 `None`（而不是 panic，区别于 `dugu::body_part_to_meridian` 对
             // humanoid.json 数据缺失走 panic 的 data-integrity 分支——那是"数据本该
             // 存在却缺失"，这里是"数据存在但根本没有 legacy 对应物"，合法状态）。
-            let mut plan =
-                synthetic_whale_plan_for_dugu_routing_test();
+            let mut plan = synthetic_whale_plan_for_dugu_routing_test();
             plan.meridian_profile.as_mut().unwrap().dugu_injection =
                 vec![crate::body_plan::types::DuguInjectionEntry {
                     body_part: crate::body_plan::BodyPartId::new("body"),
