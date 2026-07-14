@@ -32,9 +32,11 @@ import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
+import javax.tools.SimpleJavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -49,6 +51,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** plan-bughunt-quick-slot-function-key-collision-v1 — F1-F9 默认键保留区回归。 */
@@ -256,6 +259,25 @@ public class QuickSlotDefaultKeyConflictTest {
         assertTrue(audit.unresolved().get(0).endsWith("=key"));
     }
 
+    @Test
+    void sourceIndexFailsClosedOnSemanticErrors(@TempDir Path root) throws IOException {
+        Path packageRoot = Files.createDirectories(root.resolve("probe"));
+        Files.writeString(packageRoot.resolve("BrokenProbe.java"), """
+            package probe;
+            import net.minecraft.client.option.MissingKeyBinding;
+            final class BrokenProbe {
+                void register() {
+                    new MissingKeyBinding();
+                }
+            }
+            """);
+
+        AssertionError error = assertThrows(AssertionError.class, () -> SourceIndex.load(root));
+
+        assertTrue(error.getMessage().contains("语义分析失败"));
+        assertTrue(error.getMessage().contains("MissingKeyBinding"));
+    }
+
     private static void assertStringConstant(Path path, String name, String expected) {
         VariableDeclaration declaration = productionIndex.unit(path).singleDeclaration(name);
         assertEquals("String", declaration.tree().getType().toString());
@@ -371,12 +393,18 @@ public class QuickSlotDefaultKeyConflictTest {
                         "-classpath", System.getProperty("java.class.path")
                     ),
                     null,
-                    manager.getJavaFileObjectsFromPaths(paths)
+                    compilationSources(manager, paths)
                 );
                 List<CompilationUnitTree> trees = new ArrayList<>();
-                task.parse().forEach(tree -> trees.add((CompilationUnitTree) tree));
-                assertNoErrors(diagnostics);
+                task.parse().forEach(tree -> {
+                    CompilationUnitTree unit = (CompilationUnitTree) tree;
+                    if (unit.getSourceFile().toUri().getScheme().equals("file")) {
+                        trees.add(unit);
+                    }
+                });
+                assertNoErrors(diagnostics, "语法解析");
                 task.analyze();
+                assertNoErrors(diagnostics, "语义分析");
                 Trees treeApi = Trees.instance(task);
                 SourcePositions positions = treeApi.getSourcePositions();
                 List<SourceUnit> units = trees.stream()
@@ -386,12 +414,59 @@ public class QuickSlotDefaultKeyConflictTest {
             }
         }
 
-        private static void assertNoErrors(DiagnosticCollector<JavaFileObject> diagnostics) {
+        private static List<JavaFileObject> compilationSources(
+            StandardJavaFileManager manager,
+            List<Path> paths
+        ) {
+            List<JavaFileObject> sources = new ArrayList<>();
+            manager.getJavaFileObjectsFromPaths(paths).forEach(sources::add);
+            if (!runtimeClassAvailable("org.jetbrains.annotations.Nullable")) {
+                sources.add(new SourceStub(
+                    "org.jetbrains.annotations.Nullable",
+                    """
+                        package org.jetbrains.annotations;
+                        import java.lang.annotation.ElementType;
+                        import java.lang.annotation.Retention;
+                        import java.lang.annotation.RetentionPolicy;
+                        import java.lang.annotation.Target;
+                        @Target({
+                            ElementType.FIELD,
+                            ElementType.LOCAL_VARIABLE,
+                            ElementType.METHOD,
+                            ElementType.PARAMETER,
+                            ElementType.TYPE_USE
+                        })
+                        @Retention(RetentionPolicy.CLASS)
+                        public @interface Nullable {
+                        }
+                        """
+                ));
+            }
+            return sources;
+        }
+
+        private static boolean runtimeClassAvailable(String className) {
+            try {
+                Class.forName(
+                    className,
+                    false,
+                    QuickSlotDefaultKeyConflictTest.class.getClassLoader()
+                );
+                return true;
+            } catch (ClassNotFoundException ignored) {
+                return false;
+            }
+        }
+
+        private static void assertNoErrors(
+            DiagnosticCollector<JavaFileObject> diagnostics,
+            String stage
+        ) {
             List<String> errors = diagnostics.getDiagnostics().stream()
                 .filter(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR)
                 .map(Diagnostic::toString)
                 .toList();
-            assertEquals(List.of(), errors, "生产 Java 源码 AST 解析失败: " + errors);
+            assertEquals(List.of(), errors, "生产 Java 源码" + stage + "失败: " + errors);
         }
 
         private List<SourceUnit> units() {
@@ -549,6 +624,23 @@ public class QuickSlotDefaultKeyConflictTest {
                 && constructor.getKind() == ElementKind.CONSTRUCTOR
                 && constructor.getEnclosingElement() instanceof TypeElement owner
                 && owner.getQualifiedName().contentEquals(KEY_BINDING_TYPE);
+        }
+    }
+
+    private static final class SourceStub extends SimpleJavaFileObject {
+        private final String source;
+
+        private SourceStub(String qualifiedName, String source) {
+            super(
+                URI.create("string:///" + qualifiedName.replace('.', '/') + Kind.SOURCE.extension),
+                Kind.SOURCE
+            );
+            this.source = source;
+        }
+
+        @Override
+        public CharSequence getCharContent(boolean ignoreEncodingErrors) {
+            return source;
         }
     }
 }
