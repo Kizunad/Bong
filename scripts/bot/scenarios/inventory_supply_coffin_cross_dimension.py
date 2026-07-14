@@ -367,10 +367,14 @@ def _transfer_dimension_same_xyz(
         timeout=10.0,
         description=f"/tpdim {target} 后 server 权威 PositionLook",
     )
-    if position.data["flags"] != 0:
+    # PlayerPositionLook 的低三位分别控制 X/Y/Z 相对坐标；Valence 会合法地把
+    # yaw/pitch 标成相对（0x18）。这里只要求用于门限证明的 XYZ 均为绝对值。
+    relative_xyz_flags = position.data["flags"] & 0x07
+    if relative_xyz_flags != 0:
         raise BotAssertionError(
-            f"{context} 必须返回绝对 PositionLook；"
-            f"expected_flags=0 actual_flags={position.data['flags']}"
+            f"{context} 必须返回绝对 XYZ 的 PositionLook；"
+            f"expected_xyz_flags=0 actual_xyz_flags={relative_xyz_flags} "
+            f"raw_flags={position.data['flags']}"
         )
 
     actual_xyz = tuple(position.data[axis] for axis in ("x", "y", "z"))

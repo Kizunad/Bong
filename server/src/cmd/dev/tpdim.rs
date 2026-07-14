@@ -3,8 +3,9 @@
 //! 该入口专门用于验证“裸坐标相同也必须按逻辑位面授权”的服务端契约：命令只
 //! emit [`DimensionTransferRequest`]，实际 layer、`CurrentDimension`、`Position` 与
 //! Respawn 仍由正式 dimension-transfer consumer 一次性更新。目标 X 会按跨维方向
-//! 偏移 0.25 格，以强制客户端收到可核验的绝对 PositionLook；该距离仍远小于 open
-//! 的 4.5 格旧门限，不能让旧 XYZ-only 实现靠距离拒绝假绿。
+//! 偏移 0.25 格，以强制客户端收到可核验的 XYZ 绝对 PositionLook（视角位可保持
+//! 相对）；该距离仍远小于 open 的 4.5 格旧门限，不能让旧 XYZ-only 实现靠距离
+//! 拒绝假绿。
 
 use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
