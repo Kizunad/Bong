@@ -23,7 +23,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.lwjgl.glfw.GLFW;
 
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
+import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
@@ -44,6 +47,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -59,6 +63,9 @@ public class QuickSlotDefaultKeyConflictTest {
         CLIENT_PACKAGE.resolve("hud/HudImmersionControls.java");
     private static final Path NPC_INTERACTION_LOG =
         CLIENT_PACKAGE.resolve("npc/NpcInteractionLogControls.java");
+    private static final String KEY_BINDING_TYPE = "net.minecraft.client.option.KeyBinding";
+    private static final String KEY_BINDING_HELPER_TYPE =
+        "net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper";
     private static final int GLFW_KEY_F1 = GLFW.GLFW_KEY_F1;
     private static final int GLFW_KEY_F9 = GLFW.GLFW_KEY_F9;
 
@@ -86,6 +93,8 @@ public class QuickSlotDefaultKeyConflictTest {
             "快捷使用栏必须继续保留 9 个槽位，对应 F1-F9");
         assertEquals("GLFW.GLFW_KEY_F1+i", compact(quickSlot.arguments().get(2)),
             "快捷槽 KeyBinding 的第三个构造参数必须继续是 F1+i");
+        assertTrue(productionIndex.isRegisteredByKeyBindingHelper(quickSlot),
+            "快捷槽 KeyBinding 必须继续直接交给 KeyBindingHelper.registerKeyBinding 注册");
 
         ForLoopTree loop = enclosingForLoop(quickSlot.path());
         assertNotNull(loop, "快捷槽 KeyBinding 必须继续由注册循环创建");
@@ -102,6 +111,8 @@ public class QuickSlotDefaultKeyConflictTest {
 
         assertEquals("GLFW.GLFW_KEY_UNKNOWN", compact(binding.arguments().get(2)),
             "HUD 沉浸 KeyBinding 的第三个构造参数应默认未绑定");
+        assertTrue(productionIndex.isRegisteredByKeyBindingHelper(binding),
+            "HUD 沉浸 KeyBinding 必须继续注册到 Controls 配置链");
         assertStringConstant(HUD_IMMERSION, "TOGGLE_KEY", "key.bong-client.hud_immersive_toggle");
     }
 
@@ -114,6 +125,8 @@ public class QuickSlotDefaultKeyConflictTest {
 
         assertEquals("GLFW.GLFW_KEY_UNKNOWN", compact(binding.arguments().get(2)),
             "NPC 交互日志 KeyBinding 的第三个构造参数应默认未绑定");
+        assertTrue(productionIndex.isRegisteredByKeyBindingHelper(binding),
+            "NPC 交互日志 KeyBinding 必须继续注册到 Controls 配置链");
         assertStringConstant(
             NPC_INTERACTION_LOG,
             "KEY_TRANSLATION",
@@ -177,6 +190,70 @@ public class QuickSlotDefaultKeyConflictTest {
         assertEquals(1, audit.unresolved().size(),
             "无法解析的默认键表达式必须 fail closed，不能静默漏过");
         assertTrue(audit.unresolved().get(0).contains("chooseDefault()"));
+    }
+
+    @Test
+    void registrationScannerRejectsUnwrappedBindings(@TempDir Path root) throws IOException {
+        Path packageRoot = Files.createDirectories(root.resolve("probe"));
+        Path source = packageRoot.resolve("Probe.java");
+        Files.writeString(source, """
+            package probe;
+            import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+            import net.minecraft.client.option.KeyBinding;
+            import net.minecraft.client.util.InputUtil;
+            final class Probe {
+                void register() {
+                    KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                        "registered", InputUtil.Type.KEYSYM, -1, "probe"
+                    ));
+                    new KeyBinding("unregistered", InputUtil.Type.KEYSYM, -1, "probe");
+                }
+            }
+            """);
+
+        SourceIndex index = SourceIndex.load(root);
+
+        assertTrue(index.isRegisteredByKeyBindingHelper(
+            index.singleCall(source, "\"registered\"")));
+        assertFalse(index.isRegisteredByKeyBindingHelper(
+            index.singleCall(source, "\"unregistered\"")),
+            "移除 registerKeyBinding 包装后，注册链契约必须立即失败");
+    }
+
+    @Test
+    void scannerAuditsKeyBindingSubclassSuperConstructors(@TempDir Path root)
+        throws IOException {
+        Path packageRoot = Files.createDirectories(root.resolve("probe"));
+        Files.writeString(packageRoot.resolve("ProbeBindings.java"), """
+            package probe;
+            import net.minecraft.client.option.KeyBinding;
+            import net.minecraft.client.util.InputUtil;
+            import org.lwjgl.glfw.GLFW;
+            final class ReservedBinding extends KeyBinding {
+                ReservedBinding() {
+                    super("reserved", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, "probe");
+                }
+            }
+            final class SafeBinding extends KeyBinding {
+                SafeBinding() {
+                    super("safe", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F10, "probe");
+                }
+            }
+            final class DynamicBinding extends KeyBinding {
+                DynamicBinding(int key) {
+                    super("dynamic", InputUtil.Type.KEYSYM, key, "probe");
+                }
+            }
+            """);
+
+        BindingAudit audit = auditBindings(SourceIndex.load(root), root);
+
+        assertEquals(1, audit.collisions().size(),
+            "KeyBinding 子类通过 super(...) 占用 F1-F9 时必须被审计命中");
+        assertTrue(audit.collisions().get(0).endsWith("=GLFW_KEY_F6"));
+        assertEquals(1, audit.unresolved().size(),
+            "子类 super(...) 的动态默认键同样必须 fail closed");
+        assertTrue(audit.unresolved().get(0).endsWith("=key"));
     }
 
     private static void assertStringConstant(Path path, String name, String expected) {
@@ -303,7 +380,7 @@ public class QuickSlotDefaultKeyConflictTest {
                 Trees treeApi = Trees.instance(task);
                 SourcePositions positions = treeApi.getSourcePositions();
                 List<SourceUnit> units = trees.stream()
-                    .map(tree -> parseUnit(tree, positions))
+                    .map(tree -> parseUnit(tree, positions, treeApi))
                     .toList();
                 return new SourceIndex(treeApi, units);
             }
@@ -340,6 +417,21 @@ public class QuickSlotDefaultKeyConflictTest {
         private Object constantValue(TreePath path) {
             Element element = trees.getElement(path);
             return element instanceof VariableElement variable ? variable.getConstantValue() : null;
+        }
+
+        private boolean isRegisteredByKeyBindingHelper(KeyBindingCall call) {
+            TreePath parent = call.path().getParentPath();
+            if (parent == null || !(parent.getLeaf() instanceof MethodInvocationTree invocation)
+                || invocation.getArguments().size() != 1
+                || invocation.getArguments().get(0) != call.path().getLeaf()) {
+                return false;
+            }
+            Element element = trees.getElement(parent);
+            return element instanceof ExecutableElement method
+                && method.getKind() == ElementKind.METHOD
+                && method.getSimpleName().contentEquals("registerKeyBinding")
+                && method.getEnclosingElement() instanceof TypeElement owner
+                && owner.getQualifiedName().contentEquals(KEY_BINDING_HELPER_TYPE);
         }
 
         private Integer intValue(TreePath path, Set<Element> visiting) {
@@ -396,7 +488,8 @@ public class QuickSlotDefaultKeyConflictTest {
 
         private static SourceUnit parseUnit(
             CompilationUnitTree tree,
-            SourcePositions positions
+            SourcePositions positions,
+            Trees semanticTrees
         ) {
             Path path = Path.of(tree.getSourceFile().toUri()).toAbsolutePath().normalize();
             Map<String, List<VariableDeclaration>> declarations = new LinkedHashMap<>();
@@ -418,8 +511,7 @@ public class QuickSlotDefaultKeyConflictTest {
 
                 @Override
                 public Void visitNewClass(NewClassTree newClass, Void unused) {
-                    String identifier = newClass.getIdentifier().toString();
-                    if (identifier.equals("KeyBinding") || identifier.endsWith(".KeyBinding")) {
+                    if (isKeyBindingConstructor(semanticTrees.getElement(getCurrentPath()))) {
                         long start = positions.getStartPosition(tree, newClass);
                         calls.add(new KeyBindingCall(
                             path,
@@ -430,12 +522,33 @@ public class QuickSlotDefaultKeyConflictTest {
                     }
                     return super.visitNewClass(newClass, unused);
                 }
+
+                @Override
+                public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
+                    if (isKeyBindingConstructor(semanticTrees.getElement(getCurrentPath()))) {
+                        long start = positions.getStartPosition(tree, invocation);
+                        calls.add(new KeyBindingCall(
+                            path,
+                            tree.getLineMap().getLineNumber(start),
+                            List.copyOf(invocation.getArguments()),
+                            getCurrentPath()
+                        ));
+                    }
+                    return super.visitMethodInvocation(invocation, unused);
+                }
             }.scan(tree, null);
 
             Map<String, List<VariableDeclaration>> immutableDeclarations = new LinkedHashMap<>();
             declarations.forEach((name, values) ->
                 immutableDeclarations.put(name, List.copyOf(values)));
             return new SourceUnit(path, Map.copyOf(immutableDeclarations), List.copyOf(calls));
+        }
+
+        private static boolean isKeyBindingConstructor(Element element) {
+            return element instanceof ExecutableElement constructor
+                && constructor.getKind() == ElementKind.CONSTRUCTOR
+                && constructor.getEnclosingElement() instanceof TypeElement owner
+                && owner.getQualifiedName().contentEquals(KEY_BINDING_TYPE);
         }
     }
 }
