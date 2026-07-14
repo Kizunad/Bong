@@ -30,7 +30,7 @@ public final class CombatHudBootstrap {
         BongClient.LOGGER.info("Combat HUD bootstrap ready.");
     }
 
-    private static void onQuickSlotPressed(int slot) {
+    static void onQuickSlotPressed(int slot) {
         long now = System.currentTimeMillis();
         CastState current = CastStateStore.snapshot();
         if (current.isCasting()) {

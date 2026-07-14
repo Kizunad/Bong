@@ -6,6 +6,8 @@ import com.bong.client.network.ClientRequestSender;
 import com.bong.client.social.SparringInviteScreenBootstrap;
 import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.VisualEffectState;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,19 +28,54 @@ class CombatHudBootstrapTest {
     @BeforeEach
     void installCaptureBackend() {
         sentPayloads.clear();
+        CastStateStore.resetForTests();
         DefenseWindowStore.resetForTests();
+        QuickUseSlotStore.resetForTests();
         ClientRequestSender.setBackendForTests(
             (channel, payload) -> sentPayloads.add(new String(payload, StandardCharsets.UTF_8)));
     }
 
     @AfterEach
     void reset() {
+        CastStateStore.resetForTests();
         HudImmersionMode.resetForTests();
         DefenseWindowStore.resetForTests();
+        QuickUseSlotStore.resetForTests();
         SocialStateStore.resetForTests();
         SparringInviteScreenBootstrap.clearOnDisconnect();
         BongToast.resetForTests();
         ClientRequestSender.resetBackendForTests();
+    }
+
+    @Test
+    void boundQuickSlotSendsUseRequestWithSameSlot() {
+        int slot = QuickSlotConfig.SLOT_COUNT - 1;
+        QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(slot, new QuickSlotEntry(
+            "item:quick-slot-boundary",
+            "边界快捷物品",
+            750,
+            1_500,
+            "bong:textures/item/quick_slot_boundary.png"
+        )));
+
+        CombatHudBootstrap.onQuickSlotPressed(slot);
+
+        assertEquals(1, sentPayloads.size(),
+            "有绑定的快捷槽必须恰好发送一条 use_quick_slot C2S");
+        JsonObject payload = JsonParser.parseString(sentPayloads.get(0)).getAsJsonObject();
+        assertEquals("use_quick_slot", payload.get("type").getAsString());
+        assertEquals(slot, payload.get("slot").getAsInt(),
+            "C2S 槽位必须保持与 onQuickSlotPressed 入参一致");
+        assertEquals(CastState.Source.QUICK_SLOT, CastStateStore.snapshot().source());
+        assertEquals(slot, CastStateStore.snapshot().slot());
+    }
+
+    @Test
+    void emptyQuickSlotSendsNothingAndKeepsCastIdle() {
+        CombatHudBootstrap.onQuickSlotPressed(4);
+
+        assertTrue(sentPayloads.isEmpty(), "空快捷槽不得发送 use_quick_slot C2S");
+        assertTrue(CastStateStore.snapshot().isIdle(), "空快捷槽不得启动本地施放状态");
     }
 
     @Test
