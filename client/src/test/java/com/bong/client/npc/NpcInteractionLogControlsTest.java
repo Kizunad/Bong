@@ -1,14 +1,19 @@
 package com.bong.client.npc;
 
+import net.minecraft.client.option.KeyBinding;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NpcInteractionLogControlsTest {
@@ -20,6 +25,23 @@ class NpcInteractionLogControlsTest {
     @AfterEach
     void resetAfterTest() {
         NpcInteractionLogStore.resetForTests();
+    }
+
+    @Test
+    void registersUnboundInteractionLogThroughProvidedRegistrar() {
+        List<KeyBinding> captured = new ArrayList<>();
+
+        KeyBinding registered = NpcInteractionLogControls.registerInteractionLogKey(binding -> {
+            captured.add(binding);
+            return binding;
+        });
+
+        assertEquals(1, captured.size());
+        assertSame(captured.get(0), registered);
+        assertEquals("key.bong-client.npc_interaction_log", registered.getTranslationKey());
+        assertEquals("category.bong-client.controls", registered.getCategory());
+        assertEquals(GLFW.GLFW_KEY_UNKNOWN, registered.getDefaultKey().getCode());
+        assertTrue(registered.isUnbound(), "NPC 交互日志应默认未绑定");
     }
 
     @Test

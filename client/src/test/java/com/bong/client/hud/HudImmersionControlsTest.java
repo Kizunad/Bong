@@ -1,14 +1,19 @@
 package com.bong.client.hud;
 
+import net.minecraft.client.option.KeyBinding;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HudImmersionControlsTest {
@@ -20,6 +25,23 @@ class HudImmersionControlsTest {
     @AfterEach
     void resetAfterTest() {
         HudImmersionMode.resetForTests();
+    }
+
+    @Test
+    void registersUnboundToggleThroughProvidedRegistrar() {
+        List<KeyBinding> captured = new ArrayList<>();
+
+        KeyBinding registered = HudImmersionControls.registerToggleKey(binding -> {
+            captured.add(binding);
+            return binding;
+        });
+
+        assertEquals(1, captured.size());
+        assertSame(captured.get(0), registered);
+        assertEquals("key.bong-client.hud_immersive_toggle", registered.getTranslationKey());
+        assertEquals("category.bong-client", registered.getCategory());
+        assertEquals(GLFW.GLFW_KEY_UNKNOWN, registered.getDefaultKey().getCode());
+        assertTrue(registered.isUnbound(), "HUD 沉浸开关应默认未绑定");
     }
 
     @Test
