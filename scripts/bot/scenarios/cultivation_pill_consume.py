@@ -145,7 +145,7 @@ def _set_qi_and_wait(bot, value: float):
         timeout=10.0,
         description=f"t>{anchor:.3f}s 后收到本次 qi set 精确目标 -> {value:.1f} 的确认",
     )
-    return _wait_authoritative_qi(bot, confirmation.t, value)
+    return _wait_authoritative_qi(bot, anchor, value)
 
 
 def _consume_and_assert_once(bot, intent: dict, baseline_event, expected_qi: float) -> dict:

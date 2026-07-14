@@ -393,6 +393,29 @@ class CultivationPillScenarioTest(unittest.TestCase):
             "仅在正文中包含 qi set 片段的聊天不得被误认成确认",
         )
 
+    def test_authoritative_qi_wait_uses_command_anchor_not_chat_order(self):
+        source = pathlib.Path(
+            os.path.join(
+                os.path.dirname(__file__),
+                "scenarios",
+                "cultivation_pill_consume.py",
+            )
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_set_qi_and_wait"
+        )
+        final_return = next(
+            node for node in reversed(function.body) if isinstance(node, ast.Return)
+        )
+        self.assertEqual(
+            ast.unparse(final_return.value),
+            "_wait_authoritative_qi(bot, anchor, value)",
+            "player_state 可能与 chat 同 tick 乱序，权威 qi 等待必须锚定发命令前水位线",
+        )
+
     def test_stale_same_tick_baseline_is_not_new_authoritative_value(self):
         self.assertFalse(
             _has_departed_baseline(5.0, 5.0, 65.0),
