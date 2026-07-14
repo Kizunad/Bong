@@ -10,14 +10,48 @@
 #   cd worldgen/console && npm install && npm run dev
 detach_background_job() {
     local pid="${1:-}"
+    local running_pid
+    local is_running=false
+
     if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
         echo "FAIL: invalid background job pid: ${pid:-<empty>}" >&2
         return 1
     fi
-    if ! disown "$pid" 2>/dev/null; then
-        echo "FAIL: background job $pid exited before it could be detached" >&2
+
+    while IFS= read -r running_pid; do
+        if [ "$running_pid" = "$pid" ]; then
+            is_running=true
+            break
+        fi
+    done < <(jobs -pr)
+    if [ "$is_running" != true ]; then
+        echo "FAIL: background job $pid is not running in this shell" >&2
         return 1
     fi
+
+    if ! disown "$pid" 2>/dev/null; then
+        echo "FAIL: background job $pid could not be detached" >&2
+        return 1
+    fi
+}
+
+launch_detached_job() {
+    local pid
+
+    DETACHED_PID=""
+    if [ "$#" -eq 0 ]; then
+        echo "FAIL: no background command provided" >&2
+        return 1
+    fi
+
+    "$@" &
+    pid=$!
+    if ! detach_background_job "$pid"; then
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        return 1
+    fi
+    DETACHED_PID="$pid"
 }
 
 # Tests source this file to exercise the exact production detach helper.
@@ -121,9 +155,12 @@ ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
 if [ -f "$TSY_MANIFEST_ABS" ]; then
     ENV_ARGS+=("BONG_TSY_RASTER_PATH=$TSY_MANIFEST_ABS")
 fi
-(cd server && env "${ENV_ARGS[@]}" cargo run > /tmp/bong-server.log 2>&1) &
-SERVER_PID=$!
-detach_background_job "$SERVER_PID"
+run_bong_server() {
+    cd server
+    env "${ENV_ARGS[@]}" cargo run > /tmp/bong-server.log 2>&1
+}
+launch_detached_job run_bong_server
+SERVER_PID="$DETACHED_PID"
 sleep 2
 
 if grep -q "loaded.*terrain tiles" /tmp/bong-server.log 2>/dev/null; then
