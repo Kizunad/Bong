@@ -84,10 +84,7 @@ def _is_qi_set_confirmation(event, anchor: float, value: float) -> bool:
 def _has_departed_baseline(qi: float, baseline_qi: float, expected_qi: float) -> bool:
     if abs(expected_qi - baseline_qi) <= QI_SET_TOLERANCE:
         return False
-    midpoint = baseline_qi + (expected_qi - baseline_qi) / 2.0
-    if expected_qi >= baseline_qi:
-        return qi >= midpoint - QI_SET_TOLERANCE
-    return qi <= midpoint + QI_SET_TOLERANCE
+    return abs(qi - baseline_qi) > QI_SET_TOLERANCE
 
 
 def _assert_settled_consumption(
@@ -154,22 +151,20 @@ def _assert_settled_consumption(
         for event in events
         if (qi := _player_state_qi(event)) is not None
     ]
-    first_changed = next(
-        (
-            index
-            for index, qi in enumerate(authoritative_qi)
-            if _has_departed_baseline(qi, baseline_qi, expected_qi)
-        ),
-        None,
-    )
-    assert first_changed is not None, "服丹后必须收到显著离开旧基线的权威 player_state"
-    settled_qi = authoritative_qi[first_changed:]
-    assert all(
-        abs(qi - expected_qi) <= NON_CLAMP_QI_TOLERANCE for qi in settled_qi
-    ), (
-        f"服丹后权威 player_state 应持续稳定在 {expected_qi}±"
-        f"{NON_CLAMP_QI_TOLERANCE}，实际序列 {settled_qi}——可能重复生效或回滚"
-    )
+    departed = False
+    for index, qi in enumerate(authoritative_qi):
+        if not departed and not _has_departed_baseline(
+            qi, baseline_qi, expected_qi
+        ):
+            continue
+        departed = True
+        assert abs(qi - expected_qi) <= NON_CLAMP_QI_TOLERANCE, (
+            f"服丹后权威 player_state 应持续稳定：首个及后续每个非基线值都必须为 "
+            f"{expected_qi}±"
+            f"{NON_CLAMP_QI_TOLERANCE}，实际第 {index} 个为 {qi}，"
+            f"完整序列 {authoritative_qi}——不得忽略错误中间态、重复生效或回滚"
+        )
+    assert departed, "服丹后必须收到离开旧基线的权威 player_state"
     return final_snapshot
 
 
