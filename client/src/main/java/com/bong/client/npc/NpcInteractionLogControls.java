@@ -8,6 +8,8 @@ import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.function.BooleanSupplier;
+
 public final class NpcInteractionLogControls {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String KEY_TRANSLATION = "key.bong-client.npc_interaction_log";
@@ -34,11 +36,29 @@ public final class NpcInteractionLogControls {
     }
 
     private static void onEndClientTick(MinecraftClient client) {
-        if (client == null || client.player == null || client.currentScreen != null) {
+        if (client == null) {
             return;
         }
-        while (key != null && key.wasPressed()) {
-            NpcInteractionLogStore.toggleVisible();
+        consumeTogglePresses(
+            client.player != null,
+            client.currentScreen != null,
+            () -> key != null && key.wasPressed()
+        );
+    }
+
+    static int consumeTogglePresses(
+        boolean playerPresent,
+        boolean screenOpen,
+        BooleanSupplier wasPressed
+    ) {
+        if (!playerPresent || screenOpen) {
+            return 0;
         }
+        int consumed = 0;
+        while (wasPressed.getAsBoolean()) {
+            NpcInteractionLogStore.toggleVisible();
+            consumed++;
+        }
+        return consumed;
     }
 }
