@@ -1,6 +1,6 @@
 # Bong · plan-bughunt-supply-coffin-cross-dimension-session-gate-v1
 
-> **Finished BugFix Plan（2026-07-13 归档，2026-07-14 追加 PR 复验）**。来源：`docs/plans-skeleton/plan-bughunt-supply-coffin-cross-dimension-session-gate-v1.md`。已证真实例：物资棺 `supply_coffin` 的专属 open / lifecycle / external move 链路曾只信任全局 `entity_id/session_id` 与裸 XYZ 距离，伪造或陈旧 C2S 因而可能跨维开棺、搬运或持续占锁。
+> **Finished BugFix Plan（2026-07-13 归档，2026-07-14 追加 PR review 返工复验）**。来源：`docs/plans-skeleton/plan-bughunt-supply-coffin-cross-dimension-session-gate-v1.md`。已证真实例：物资棺 `supply_coffin` 的专属 open / lifecycle / external move 链路曾只信任全局 `entity_id/session_id` 与裸 XYZ 距离，伪造或陈旧 C2S 因而可能跨维开棺、搬运或持续占锁。
 
 ## 阶段总览
 
@@ -82,10 +82,11 @@
 
 ### P3 闭环验收
 
-- [x] ✅ 2026-07-14 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对 `origin/main...6b79d299` 完成逐入口对抗审查，并落实协议夹具、断言诊断、返回重开与地形扰动隔离等黑盒假绿排除项。
+- [x] ✅ 2026-07-14 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对最终代码候选树 `origin/main...65050c8d` 完成逐入口对抗审查，并落实协议夹具、断言诊断、返回重开、地形扰动隔离、独立 forged-open 目标与真实 C2S move 续权等假绿排除项。
 - [x] ✅ 2026-07-14 — `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 在最终 merge tree 全绿。
-- [x] ✅ 2026-07-14 — 真实 C2S → server → S2C bot 场景通过：主世界开棺后进入 TSY，观察 close + snapshot，并拒绝旧 session move / open；未以单元测试替代。
-- [x] ✅ 2026-07-14 — 先后同步 `origin/main@32a34f8e`、`390f22e5` 与 `c231666d`；最终 merge `6b79d299` 无冲突，随后对最终 Rust 树完成完整 server 门禁，并对 `51e97681` 的地形隔离场景完成 protocol 与干净服 bot E2E 复验。
+- [x] ✅ 2026-07-14 — 真实 C2S → server → S2C bot 场景通过：主世界第一具棺建立 session，第二具未占用棺专门验证 TSY 同裸 XYZ forged open 被维度门禁拒绝；lifecycle close 后的旧 move 验证 cleanup。有效 session 仍存在时的跨维 move 续权由真实 C2S Rust 入口测试锁定，不用 bot 的 lifecycle / network 竞速冒充覆盖。
+- [x] ✅ 2026-07-14 — `/review` 返工移除无关伪灵脉 persistence diff，并新增只 emit 正式 `DimensionTransferRequest` 的 `/tpdim`，在旧 4.5 格 XYZ 门限内完成可观测的真实 Respawn / PositionLook 跨维链路。
+- [x] ✅ 2026-07-14 — 先后同步 `origin/main@32a34f8e`、`390f22e5`、`c231666d` 与 `4ad0c170`；最终 merge `65050c8d` 无冲突，随后对最终 Rust 树完成完整 server 门禁，并完成 protocol 与干净服单场景 bot E2E 复验。
 - [x] ✅ 2026-07-13 — 全阶段标记完成并填写唯一 `## Finish Evidence`；归档后由主 agent 复核最终干净 HEAD，独立 validator 例外继续如实披露。
 
 ### 4.1 开放问题与决议
@@ -96,7 +97,7 @@
 |---|---|---|---|---|
 | open 授权口径 | 裸 XYZ 与客户端可见层都不是授权；必须由 server 同时确认 active source、逻辑位面、有限坐标和距离 | `authorize_supply_coffin_open` 在 roll loot、分配 session、发送 payload 前统一 fail closed | 精确 4.5 格放行；缺 source / dimension、跨维、超距、NaN、±Infinity 拒绝；不改变 wire schema | `server/src/supply_coffin/authority.rs:23`、`server/src/supply_coffin/interact.rs:101` + plan §0、§P1 |
 | 已开 session 续权 | `session_id + owner` 不是持续授权；move 与 lifecycle 每次都要回查 active source 和玩家权威状态 | move 在迁移物品前调用 session authority；lifecycle 失效以既有 `distance` reason close、回推 snapshot 并释放映射 / 锁 | 精确 6.5 格放行；普通 `StorageCrate` 不套用物资棺规则；拒绝不得改变物品或 revision | `server/src/network/client_request_handler.rs:16552`、`server/src/supply_coffin/lifecycle.rs:107` + plan §P1、§P2 |
-| 入口级与黑盒验收 | helper 单测不足以证明 wiring；非有限坐标和真实跨维状态转换都必须走入口 | Rust 覆盖真实 open payload、move、lifecycle；bot 覆盖 open → 合法 move/update → TSY respawn → close/snapshot → 旧 move/open 拒绝 | 合法与陈旧 move 均动态选择不同权威空位，排除布局冲突假阳性；干净 server 每次只跑一次场景；TSY 入场点必须在出口触发圈外；E2E 不能替代 server 完整门禁 | `server/src/schema/proto_convert.rs:1662`、`server/src/network/client_request_handler.rs:4387`、`server/src/network/client_request_handler.rs:4617`、`server/src/supply_coffin/lifecycle.rs:478`、`scripts/bot/scenarios/inventory_supply_coffin_cross_dimension.py:15` + plan §5、§P3 |
+| 入口级与黑盒验收 | helper 单测不足以证明 wiring；非有限坐标、有效 session move 和真实跨维状态转换都必须走入口 | Rust 覆盖真实 open payload、有效 session 的真实 C2S move 与 lifecycle；bot 通过 `/tpdim` 覆盖 open → 合法 move/update → 同 XYZ TSY Respawn → 第二具棺 forged open 拒绝 → close/snapshot → 旧 move cleanup 拒绝 → 返回重开 | 合法与陈旧 move 均动态选择不同权威空位；第二具棺排除 `opened_by` 假拒绝；XYZ 偏移仅 0.25 格并校验 PositionLook 低三位相对 flag 为 0；close 后 bot move 只证明 cleanup，有效 session move 由 Rust 入口测试证明；E2E 不能替代 server 完整门禁 | `server/src/schema/proto_convert.rs:1662`、`server/src/network/client_request_handler.rs:4585`、`server/src/supply_coffin/lifecycle.rs:478`、`server/src/cmd/dev/tpdim.rs:48`、`scripts/bot/scenarios/inventory_supply_coffin_cross_dimension.py:15` + plan §5、§P3 |
 | 独立 validator 例外 | 用户明确禁用 subagent，本轮 validator 未运行；不得声称 PASS | 由主 agent 完成逐入口 diff 审查、完整门禁、协议回归、干净服 E2E，并在 plan / PR 透明披露 | 例外只覆盖独立 validator，不豁免测试、CodeRabbit、`/review` 或 e2e；不自动 merge | `docs/finished_plans/plan-bughunt-supply-coffin-cross-dimension-session-gate-v1.md:85` + plan §P3、§4.1、§Finish Evidence |
 
 ## 5. 可执行测试矩阵
@@ -123,13 +124,13 @@
 - open、external move、lifecycle 三条运行时链均接入 active source / `CurrentDimension` / `Position` 校验；拒绝发生在物品或 loot 状态变更前。
 - lifecycle 清理只删除仍指向当前棺实体的 session 映射，释放 `opened_by` 且不碎棺；reopen 可恢复缺失映射但拒绝覆盖冲突映射。
 - 非 owner / 陈旧 session 只回推请求者背包，避免泄露外部容器内容；普通 `StorageCrate` 的既有 move 契约保持不变。
+- `/tpdim <overworld|tsy>` 只生成正式 `DimensionTransferRequest`，由既有 transfer consumer 权威更新 layer、`CurrentDimension`、`Position` 与 Respawn；目标 X 偏移 0.25 格以生成可核验的绝对 XYZ PositionLook，同时仍处于旧 4.5 格门限内。
 
 ### 关键提交
 
 - `12f2a660`：加入修复前红测，94 项定向测试中 11 项目标契约失败。
 - `b5ae89a7`：接入物资棺跨维 session 权威修复。
 - `377ea937`：修复测试初始化的 clippy 门禁。
-- `545e83c6`：按持久化快照与启动墙钟边界修正伪灵脉测试不稳定，生产逻辑未改。
 - `130d63d3`：合并 `origin/main@bf0b2738` 并复验。
 - `d2fd0f35`：补齐真实 open payload 与 NaN / ±Infinity 的 open、move、lifecycle 入口回归。
 - `26d2ba4b`：增加 bot payload 解码、跨维黑盒场景，并修正 `/tsy_spawn` 入场后自动回弹。
@@ -141,17 +142,23 @@
 - `230bef0a`：合并 `origin/main@390f22e5` 并复验跨维返回重开链路。
 - `51e97681`：在场景清包后通过 server-authoritative `/tpzone spawn` 固定 setup 区域，隔离邻列地形抬升与穿地恢复扰动，同时保留真实跨维 session 链路。
 - `6b79d299`：合并 `origin/main@c231666d`，在最终主线 Rust 树上完成完整门禁与黑盒复验。
+- `9b07a2a0`：移除 `545e83c6` 引入的无关伪灵脉 persistence 测试 diff；最终 `server/src/persistence/mod.rs` 与 `origin/main` 无差异，不把该变更算作本 plan 交付。
+- `0caafa20`：新增 `/tpdim` 权威跨维测试入口，只 emit 正式 `DimensionTransferRequest` 并保留旧 XYZ 授权邻域。
+- `3165cf2b`：用独立第二具未占用物资棺验证跨维同 XYZ forged open，并以真实 C2S Rust 测试锁定有效 session 的 move 续权门禁。
+- `fe20600a`：跨维目标 X 偏移 0.25 格，强制生成可观测 PositionLook，同时保持在旧 4.5 格门限内。
+- `17b38d18`：PositionLook 只校验 XYZ 相对 flags 低三位，允许 Valence 合法使用相对 yaw / pitch `0x18`。
+- `65050c8d`：合并 `origin/main@4ad0c170`，无冲突；在最终代码候选树上重跑完整 server 门禁与 bot E2E。
 
 ### 测试与审查
 
-- 定向：`cargo test supply_coffin` 为 103/103；`cargo test external_move_` 为 7/7；非物资棺隔离用例 1/1。
-- server 最终完整门禁（merge tree `6b79d299`）：`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 通过；主测试集 11,663 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，doc tests 5 ignored；`cargo test` 退出码 0。
-- client 同步复验：JDK 17.0.19 下 `./gradlew test build`，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`。
-- agent/schema 同步复验：`npm run build` 通过；`npm test -w @bong/schema` 为 29 files / 872 tests 全绿。
-- bot protocol（最终 HEAD `6b79d299`）：`python3 scripts/bot/test_protocol.py` 为 58/58，退出码 0；测试结束另报告未关闭 socket `ResourceWarning`，不影响结果。
-- 干净服 bot E2E（最终 HEAD `6b79d299`，run-tag `s19v5`）：`inventory_supply_coffin_cross_dimension` 为 1/1 PASS（10.6s）；最终 dev server 从指定 `BONG_TERRAIN_RASTER_PATH` 启动，真实走 open → 合法 move/update → TSY close/snapshot → 陈旧 move/open 拒绝 → 返回主世界重开同 session，setup 先由 `/tpzone spawn` 隔离邻列地形扰动。
-- 最终证据：`.sisyphus/evidence/bot-e2e-1199-final-s19v5/protocol.log`、`.sisyphus/evidence/bot-e2e-1199-final-s19v5/scenarios.log`、`.sisyphus/evidence/bot-e2e-1199-final-s19v5/server.log`。
-- 主 agent 对 `origin/main...6b79d299` 完成第一性原理与对抗式 diff 审查，确认授权先于副作用、session 映射所有权正确、普通 external container 未被误伤，且 setup 地形、合法 / 陈旧 move 目标格与历史 close 水印均不会制造假绿。
+- 定向（代码候选树 `65050c8d`）：`cargo test supply_coffin` 为 107/107；`cargo test external_move_` 为 8/8；非物资棺隔离用例 1/1。
+- server 最终完整门禁（代码候选树 `65050c8d`）：`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 通过；第二次完整 `cargo test` 主测试集 11,683 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，doc tests 5 ignored，退出码 0。首次完整运行唯一红项为伪灵脉墙钟断言 `expected age 800 / actual 820`，定向复跑 1/1 通过；未把无关 persistence 调整重新混入本 PR。
+- 早期跨栈同步复验：JDK 17.0.19 下 `./gradlew test build`，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`；`npm run build` 通过，`npm test -w @bong/schema` 为 29 files / 872 tests 全绿。review 返工未修改 client、agent 或 schema。
+- 真实 C2S Rust 回归：`supply_coffin_external_move_real_c2s_rejects_cross_dimension_same_xyz_while_session_is_valid_and_resyncs` 在 session mapping、`opened_by` 与 active source 均仍有效时，证明跨维同 XYZ move 被拒、物品 / revision 不变，并回推 container + inventory resync。
+- bot protocol（代码候选树 `65050c8d`）：`python3 scripts/bot/test_protocol.py` 为 58/58，退出码 0；测试结束另报告未关闭 socket `ResourceWarning`，不影响结果。
+- 干净服 bot E2E（代码候选树 `65050c8d`，run-tag `s19v10`）：`inventory_supply_coffin_cross_dimension` 为 1/1 PASS（16.1s）；dev server 从指定 `BONG_TERRAIN_RASTER_PATH` 启动，真实走第一具棺 open / 合法 move → `/tpdim tsy` → 第二具棺 forged open 拒绝 → lifecycle close/snapshot → 旧 move cleanup 拒绝 → `/tpdim overworld` → 返回重开同 session。
+- 最终 E2E 证据：`.sisyphus/evidence/bot-e2e-1199-review-s19v10/protocol.log`、`.sisyphus/evidence/bot-e2e-1199-review-s19v10/scenarios.log`、`.sisyphus/evidence/bot-e2e-1199-review-s19v10/server.log`。
+- 主 agent 对 `origin/main...65050c8d` 完成第一性原理与对抗式 diff 审查，确认授权先于副作用、session 映射所有权正确、普通 external container 未被误伤，且 setup 地形、第二具 forged-open 目标、0.25 格权威坐标偏移、PositionLook flags、合法 / 陈旧 move 目标格与历史 close 水印均不会制造假绿。
 - 独立 validator：未运行。用户明确要求“本次不跑 subagent，仅主agent实施”；本记录不声称 validator PASS，PR 继续透明披露该例外。
 
 ### 遗留与后续
