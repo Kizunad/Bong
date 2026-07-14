@@ -62,6 +62,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _loot_container_update(value)
         if field == 121:
             return _loot_container_close(value)
+        if field == 142:
+            return _morph_state(value)
     return None
 
 
@@ -247,6 +249,29 @@ def _loot_container_close(data: bytes) -> dict[str, Any]:
         "type": "loot_container_close",
         "session_id": _varint(fields, 1),
         "reason": _string(fields, 2),
+    }
+
+
+def _morph_state_entry(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "entity_id": _varint(fields, 1),
+        "model_kind": _varint(fields, 2),
+        "form_race_id": _string(fields, 3),
+        "form_body_plan_id": _string(fields, 4),
+        "active": bool(_varint(fields, 5)),
+    }
+
+
+def _morph_state(data: bytes) -> dict[str, Any]:
+    """plan-race-system-v1 P4 —— 易形状态快照（field 142）。`mode` "full" 或
+    "delta"；`entries[].active=false` 表示该 entity 应从本地缓存删除（解除易形）。
+    """
+    fields = _fields(data)
+    return {
+        "v": _varint(fields, 1, default=1),
+        "type": "morph_state",
+        "mode": _string(fields, 2),
+        "entries": [_morph_state_entry(_fields(raw)) for raw in _messages(fields, 3)],
     }
 
 

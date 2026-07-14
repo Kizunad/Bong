@@ -80,6 +80,26 @@ pub struct MorphPairDef {
     pub part_mapping: HashMap<BodyPartId, BodyPartId>,
 }
 
+impl MorphPairDef {
+    /// plan-race-system-v1 P4 —— `part_mapping` 单一封装查询：给定 form 部位（`to` 种族
+    /// 的部位 id），返回其折算回的 intrinsic 部位（`from` 种族的部位 id）。`None` = 该
+    /// form 部位未声明映射（part_mapping 允许部分单射，见类型文档）。
+    pub fn intrinsic_part_for(&self, form_part: &BodyPartId) -> Option<&BodyPartId> {
+        self.part_mapping.get(form_part)
+    }
+
+    /// plan-race-system-v1 P4 —— 逆查：给定 intrinsic 部位，返回映射到它的 form 部位
+    /// （`part_mapping` 值唯一——见加载期单射校验——故至多一个）。供护甲折算消费点
+    /// （`combat::resolve`）把命中在 intrinsic 部位上的伤害，反向折算回"形态外观"的
+    /// 护甲覆盖部位。
+    pub fn form_part_for_intrinsic(&self, intrinsic_part: &BodyPartId) -> Option<&BodyPartId> {
+        self.part_mapping
+            .iter()
+            .find(|(_, v)| *v == intrinsic_part)
+            .map(|(k, _)| k)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RaceFile {
@@ -144,8 +164,29 @@ impl RaceRegistry {
         self.morph_pairs.get(&(from.clone(), to.clone()))
     }
 
+    /// plan-race-system-v1 P4 —— `morph_pair` 别名（规格命名 `resolve_morph_pair`），
+    /// 供易形消费点按语义更贴切的名字调用；行为与 [`Self::morph_pair`] 完全一致。
+    pub fn resolve_morph_pair(&self, from: &RaceId, to: &RaceId) -> Option<&MorphPairDef> {
+        self.morph_pair(from, to)
+    }
+
     pub fn morph_pair_count(&self) -> usize {
         self.morph_pairs.len()
+    }
+
+    /// plan-race-system-v1 P4 —— 给定本体（intrinsic）种族，列出全部它可易形前往的
+    /// 目标种族 id（按声明的 `to` 字典序排序，保证结果确定性）。目前生产 `races.json`
+    /// `morph_pairs` 为空数组（P5 才引入 whale 真数据），调用方（`morph.yixing` cast
+    /// resolver）据此可预期在生产环境恒返回空——"机制已通，缺数据"是预期状态而非 bug。
+    pub fn morph_targets_from(&self, from: &RaceId) -> Vec<&RaceId> {
+        let mut targets: Vec<&RaceId> = self
+            .morph_pairs
+            .keys()
+            .filter(|(pair_from, _)| pair_from == from)
+            .map(|(_, to)| to)
+            .collect();
+        targets.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        targets
     }
 
     /// `BeastKind → RaceId` 派生查询——数据源是 races.json 各条目的 `beast_kinds`
@@ -260,6 +301,24 @@ impl RaceRegistry {
                         "morph pair {}->{} part_mapping value {} not found in from-race body plan {}",
                         pair.from, pair.to, intrinsic_part, from_entry.body_plan_id
                     )));
+                }
+            }
+
+            // plan-race-system-v1 P4（决议 #2）—— part_mapping 必须部分**单射**：两个不同
+            // form_part 不得映射到同一个 intrinsic_part（否则伤害折算/护甲逆查会撞出
+            // 一对多歧义，见 `MorphPairDef::form_part_for_intrinsic`）。允许部分缺项
+            // （不要求满射），只禁止值重复。
+            {
+                let mut seen_intrinsic_parts: std::collections::HashSet<&BodyPartId> =
+                    std::collections::HashSet::new();
+                for intrinsic_part in pair.part_mapping.values() {
+                    if !seen_intrinsic_parts.insert(intrinsic_part) {
+                        return Err(RaceLoadError::Invalid(format!(
+                            "morph pair {}->{} part_mapping is not injective: intrinsic part {} \
+                             is targeted by more than one form part",
+                            pair.from, pair.to, intrinsic_part
+                        )));
+                    }
                 }
             }
 
@@ -651,6 +710,188 @@ mod tests {
         .expect_err("dangling part_mapping value must fail");
         assert!(
             matches!(err, RaceLoadError::Invalid(reason) if reason.contains("part_mapping value"))
+        );
+    }
+
+    /// plan-race-system-v1 P4（决议 #2 单射校验）—— 两个不同 form_part 映射到同一
+    /// intrinsic_part 必须在加载期拒绝，而不是静默接受后在护甲折算/命中折算时产生
+    /// 一对多歧义。
+    #[test]
+    fn morph_pair_part_mapping_duplicate_intrinsic_value_rejected() {
+        let body_plans = body_plans_with_humanoid_and("whale", &["skull", "tail_fin", "fin_l"]);
+        let mut part_mapping = HashMap::new();
+        part_mapping.insert(BodyPartId::new("tail_fin"), BodyPartId::new("leg_l"));
+        part_mapping.insert(BodyPartId::new("fin_l"), BodyPartId::new("leg_l"));
+        let err = RaceRegistry::from_parts_for_test(
+            vec![
+                human_entry(),
+                RaceEntry {
+                    id: RaceId::new("whale"),
+                    display_name: "飞鲸".to_string(),
+                    body_plan_id: BodyPlanId::new("whale"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![MorphPairDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                part_mapping,
+            }],
+            &body_plans,
+        )
+        .expect_err("part_mapping 值重复（两个 form 部位映射到同一 intrinsic 部位）必须拒绝加载");
+        assert!(
+            matches!(&err, RaceLoadError::Invalid(reason) if reason.contains("not injective")),
+            "错误信息应指出非单射，实际: {err:?}"
+        );
+    }
+
+    /// part_mapping 部分单射（值不重复但有缺项）必须仍能正常加载——单射只禁止值重复，
+    /// 不要求满射（`to` 部位数可以多于/少于映射条目数）。
+    #[test]
+    fn morph_pair_part_mapping_partial_injective_map_accepted() {
+        let body_plans = body_plans_with_humanoid_and("whale", &["skull", "tail_fin", "fin_l"]);
+        let mut part_mapping = HashMap::new();
+        part_mapping.insert(BodyPartId::new("tail_fin"), BodyPartId::new("leg_l"));
+        part_mapping.insert(BodyPartId::new("fin_l"), BodyPartId::new("leg_r"));
+        // "skull" 故意不映射——单射校验不要求满射。
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                human_entry(),
+                RaceEntry {
+                    id: RaceId::new("whale"),
+                    display_name: "飞鲸".to_string(),
+                    body_plan_id: BodyPlanId::new("whale"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![MorphPairDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                part_mapping,
+            }],
+            &body_plans,
+        )
+        .expect("部分单射（有缺项但值不重复）应合法加载");
+        assert_eq!(races.morph_pair_count(), 1);
+    }
+
+    /// `MorphPairDef::intrinsic_part_for` / `form_part_for_intrinsic` 正反查询。
+    #[test]
+    fn morph_pair_def_intrinsic_part_for_and_reverse_lookup() {
+        let mut part_mapping = HashMap::new();
+        part_mapping.insert(BodyPartId::new("tail_fin"), BodyPartId::new("leg_l"));
+        let pair = MorphPairDef {
+            from: RaceId::new(HUMAN_RACE_ID),
+            to: RaceId::new("whale"),
+            part_mapping,
+        };
+        assert_eq!(
+            pair.intrinsic_part_for(&BodyPartId::new("tail_fin")),
+            Some(&BodyPartId::new("leg_l"))
+        );
+        assert_eq!(pair.intrinsic_part_for(&BodyPartId::new("skull")), None);
+        assert_eq!(
+            pair.form_part_for_intrinsic(&BodyPartId::new("leg_l")),
+            Some(&BodyPartId::new("tail_fin"))
+        );
+        assert_eq!(
+            pair.form_part_for_intrinsic(&BodyPartId::new("leg_r")),
+            None
+        );
+    }
+
+    /// `resolve_morph_pair` 是 `morph_pair` 的别名，行为必须完全一致。
+    #[test]
+    fn resolve_morph_pair_is_alias_of_morph_pair() {
+        let body_plans = body_plans_with_humanoid_and("whale", &["skull", "tail_fin"]);
+        let mut part_mapping = HashMap::new();
+        part_mapping.insert(BodyPartId::new("tail_fin"), BodyPartId::new("leg_l"));
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                human_entry(),
+                RaceEntry {
+                    id: RaceId::new("whale"),
+                    display_name: "飞鲸".to_string(),
+                    body_plan_id: BodyPlanId::new("whale"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![MorphPairDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                part_mapping,
+            }],
+            &body_plans,
+        )
+        .expect("valid morph pair should load");
+        assert_eq!(
+            races.resolve_morph_pair(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale")),
+            races.morph_pair(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale")),
+        );
+    }
+
+    /// `morph_targets_from`：空 registry 返回空；多目标按字典序确定性排序；查询
+    /// 无关种族（无正向 pair）返回空，不 panic。
+    #[test]
+    fn morph_targets_from_empty_when_no_pairs_declared() {
+        let body_plans = body_plans_with_humanoid_and("humanoid", &["head"]);
+        let races = RaceRegistry::from_parts_for_test(vec![human_entry()], vec![], &body_plans)
+            .expect("human-only races.json should load");
+        assert!(races
+            .morph_targets_from(&RaceId::new(HUMAN_RACE_ID))
+            .is_empty());
+    }
+
+    #[test]
+    fn morph_targets_from_returns_sorted_targets_for_matching_from_race() {
+        let body_plans = BodyPlanRegistry::from_plans(vec![
+            plan_with_parts("humanoid", &["head", "chest", "leg_l", "leg_r"]),
+            plan_with_parts("whale", &["skull"]),
+            plan_with_parts("beetle", &["carapace"]),
+        ])
+        .expect("fixture plans should validate");
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                human_entry(),
+                RaceEntry {
+                    id: RaceId::new("whale"),
+                    display_name: "飞鲸".to_string(),
+                    body_plan_id: BodyPlanId::new("whale"),
+                    beast_kinds: vec![],
+                },
+                RaceEntry {
+                    id: RaceId::new("beetle"),
+                    display_name: "甲虫".to_string(),
+                    body_plan_id: BodyPlanId::new("beetle"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![
+                MorphPairDef {
+                    from: RaceId::new(HUMAN_RACE_ID),
+                    to: RaceId::new("whale"),
+                    part_mapping: HashMap::new(),
+                },
+                MorphPairDef {
+                    from: RaceId::new(HUMAN_RACE_ID),
+                    to: RaceId::new("beetle"),
+                    part_mapping: HashMap::new(),
+                },
+            ],
+            &body_plans,
+        )
+        .expect("two morph pairs from human should load");
+
+        let targets = races.morph_targets_from(&RaceId::new(HUMAN_RACE_ID));
+        assert_eq!(
+            targets,
+            vec![&RaceId::new("beetle"), &RaceId::new("whale")],
+            "多目标必须按 to race id 字典序确定性排序"
+        );
+        assert!(
+            races.morph_targets_from(&RaceId::new("whale")).is_empty(),
+            "whale 未声明任何 from=whale 的 pair，必须返回空而非 panic"
         );
     }
 

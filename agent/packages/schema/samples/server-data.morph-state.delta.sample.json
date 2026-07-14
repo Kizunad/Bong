@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "morph_state",
+  "mode": "delta",
+  "entries": [
+    {
+      "entity_id": 42,
+      "model_kind": 0,
+      "form_race_id": "",
+      "form_body_plan_id": "",
+      "active": false
+    }
+  ]
+}
