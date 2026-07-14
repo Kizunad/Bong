@@ -881,7 +881,7 @@ mod tests {
         let stored = p
             .dormant(MeridianId::Lung)
             .expect("dormant record should exist");
-        assert_eq!(stored.opened, true);
+        assert!(stored.opened);
         assert_eq!(stored.integrity, 0.73);
         assert_eq!(stored.flow_rate, 5.0);
     }
