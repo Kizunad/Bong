@@ -122,7 +122,7 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 
 - **P0 证真**：`BongClient` 同时注册 `NpcInteractionLogControls`、`HudImmersionControls` 与 `CombatHudBootstrap`；后者把 F1-F9 快捷槽接到 `CombatHudBootstrap.onQuickSlotPressed`，最终调用 `ClientRequestSender.sendUseQuickSlot(slot)`。修复前契约测试 4 项中 3 项稳定失败，分别钉住 F6、F7 与保留区冲突。
 - **P1 修复**：`HudImmersionControls` 与 `NpcInteractionLogControls` 均改为 `GLFW_KEY_UNKNOWN`，保留原翻译键和 Fabric 控制菜单注册；两个 tick handler 委托给可直接行为测试的 `consumeTogglePresses`，仍由真实 `KeyBinding.wasPressed()` 驱动最终 HUD/NPC 可见状态转换。最终测试方案把“定义 → registrar 返回 → 安装字段 → consumer”收在三个薄 installer 中，用替身 `KeyBinding` 实际按下证明同对象接线；Combat 全 13 绑定运行时审计与全 client 窄型 token/偏移/原始码扫描共同锁定 F1-F9 排他性。通用 `JavaSourceIndex` 及其夹具保持删除。
-- **P2 门禁**：最新 `/review` run `29322432403` 将所有重复 finding 收敛为 Combat 整文件豁免、registrar 返回值断链假绿与历史证据定位失效三个根因。提交 `ed68994b`、`5144cf21`、`75cf15e8` 逐项修复；负向变异把非快捷键改为 F6 并同时丢弃三个 registrar 返回值后，7 项中 5 项稳定失败。恢复后 JDK 17 定向 24 项与 client 全量 4077 项均全绿。
+- **P2 门禁**：最新 `/review` run `29322432403` 将所有重复 finding 收敛为 Combat 整文件豁免、registrar 返回值断链假绿与历史证据定位失效三个根因。提交 `ed68994b`、`5144cf21`、`75cf15e8` 逐项修复；负向变异把非快捷键改为 F6 并同时丢弃三个 registrar 返回值后，7 项中 5 项稳定失败。恢复后 JDK 17 定向 24 项与 client 全量 4077 项均全绿。随后显式合并 `origin/main@4ad0c170`，在未提交合并结果上完成 server `fmt`、`clippy -D warnings` 与全量测试复验，合并提交为 `8f67296a`。
 
 ### 关键 commit
 
@@ -145,6 +145,8 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 - `ed68994b`（2026-07-14）— 把 Combat/HUD/NPC 的 registrar 返回值直接安装到真实消费字段，提取可直接驱动的 consumer。
 - `5144cf21`（2026-07-14）— 用 registrar 替身对象实际按键，证明三条消费链读取同一安装对象，并审计 Combat 全 13 个绑定。
 - `75cf15e8`（2026-07-14）— 取消 Combat 整文件豁免，扩展窄型保留区扫描至静态 import、数字偏移与原始 GLFW 码。
+- `c8f386fc`（2026-07-14）— 修正 finished plan 的历史基线与当前源码定位，避免把修复前 F6/F7 误指向当前 UNKNOWN 实现。
+- `8f67296a`（2026-07-14）— 合并 `origin/main@4ad0c170`，在未提交合并结果上完成 server 三联门禁复验。
 
 ### 测试结果
 
@@ -170,6 +172,7 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 - 复审六次负向变异：临时把 `jiemai_react` 改为 F6，并丢弃 Combat/HUD/NPC 三个 registrar 返回值；运行保留区、Combat installer、HUD installer、NPC installer 共 7 tests → 5 failed（Combat 非快捷键独占、Combat 同对象消费、HUD 同对象消费、NPC 同对象消费、全 client 保留区均精确变红）。恢复生产代码后重新全绿。
 - 复审六次返工定向：JDK 17 `--rerun-tasks` 运行 `QuickSlotDefaultKeyConflictTest`、`CombatKeybindingsTest`、`CombatHudBootstrapTest`、HUD/NPC 两个测试类 → 24 tests，0 failures，0 errors，0 skipped，`BUILD SUCCESSFUL`（2m31s）。
 - 复审六次返工全量：`JAVA_HOME=$HOME/.cache/codex-jdks/jdk-17 ./gradlew --no-daemon test build --rerun-tasks` → 4077 tests，0 failures，0 errors，0 skipped，13 个任务全部实际执行，`BUILD SUCCESSFUL`（5m37s）。
+- 复审六次主线同步：显式合并 `origin/main@4ad0c170` 后，在未提交合并结果上运行 `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 命令最终退出码 0；`fmt` 与 `clippy` 全绿，library target 11648 tests（11647 passed、1 ignored），main target 11 passed，integration targets 5 passed，doctest 5 ignored；合并提交 `8f67296a`。
 - `git diff --check` 在 review 修复、主线合并和 Finish Evidence 更新前均通过；每轮验证前后均核验工作区状态与目标 HEAD。
 - 用户明确要求本轮不启动 subagent，因此 FIX/REBASE validator 由主 agent 对绑定 SHA 的干净 diff 独立复核；未伪造外部 validator 身份。
 
