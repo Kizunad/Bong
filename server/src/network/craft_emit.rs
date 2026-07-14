@@ -2026,8 +2026,7 @@ mod tests {
         assert_eq!(ledger.balance(&pending_inflow_account()), 4.0);
         assert_eq!(ledger.balance(&full_account), 0.25 * QI_ZONE_UNIT_CAPACITY);
         assert!(
-            (ledger.balance(&sink_account) - expected_sink_qi * QI_ZONE_UNIT_CAPACITY).abs()
-                < 1e-9,
+            (ledger.balance(&sink_account) - expected_sink_qi * QI_ZONE_UNIT_CAPACITY).abs() < 1e-9,
             "heartbeat 后的 zone 账本镜像必须与 ZoneRegistry 浓度一致"
         );
         assert!(
