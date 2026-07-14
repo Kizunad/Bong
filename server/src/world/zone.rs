@@ -1898,6 +1898,15 @@ mod zone_tests {
             .expect("north scorch zone must remain registered");
 
         assert!(
+            rift.bounds.max.x < scorch.bounds.min.x
+                || scorch.bounds.max.x < rift.bounds.min.x
+                || rift.bounds.max.y < scorch.bounds.min.y
+                || scorch.bounds.max.y < rift.bounds.min.y
+                || rift.bounds.max.z < scorch.bounds.min.z
+                || scorch.bounds.max.z < rift.bounds.min.z,
+            "north rift and scorch AABBs must remain strictly separated on at least one axis"
+        );
+        assert!(
             registry.zones_are_adjacent(&rift.name, &scorch.name, 100.0),
             "north rift must remain a neighbour of the scorch zone after removing overlap"
         );
