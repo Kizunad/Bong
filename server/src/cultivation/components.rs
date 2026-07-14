@@ -293,7 +293,7 @@ impl MeridianId {
 /// `id` 类型是 plan-race-system-v1 P1a 的核心换轨点：从闭合枚举 [`MeridianId`] 改为
 /// string [`MeridianChannelId`]，使非 humanoid 构型（P5 飞鲸等）的经脉可以拥有 TCM
 /// 20 名之外的 id。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Meridian {
     pub id: MeridianChannelId,
     pub opened: bool,
@@ -310,7 +310,7 @@ pub struct Meridian {
 
 /// 经脉裂痕（plan §1.1）。严重度 0..=1。`healing_progress` 达到 severity
 /// 时移除。成因区分过载 / 被攻击 / 走火 / 淬炼失败。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MeridianCrack {
     pub severity: f64,
     pub healing_progress: f64,
@@ -450,7 +450,7 @@ pub struct Contamination {
 /// `Vec`——绝大多数既有消费点（`.iter()`/`.iter_mut()`/`[idx]` 索引）语法不变，
 /// 只是不再假设固定 12/8 条数。**查找按 `MeridianChannelId` 字符串键**（`get`/
 /// `get_mut` 均已改为 `impl Into<MeridianChannelId>` 参数，见下方实现）。
-#[derive(Debug, Clone, Component, Serialize, Deserialize)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
 pub struct MeridianSystem {
     pub regular: Vec<Meridian>,
     pub extraordinary: Vec<Meridian>,
@@ -625,7 +625,7 @@ impl QiColor {
 }
 
 /// 修为主组件。`qi_max_frozen` 用于 QiZeroDecay 窗口期（plan §2）。
-#[derive(Debug, Clone, Component, Serialize, Deserialize)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
 pub struct Cultivation {
     pub realm: Realm,
     pub qi_current: f64,
