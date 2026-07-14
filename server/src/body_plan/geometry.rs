@@ -1460,10 +1460,9 @@ mod tests {
         // plan-race-system-v1 P5/PR-6c 核心回归目标：whale（横长非人构型）的粗筛半径
         // 必须显著大于 humanoid,证明 carrier 不再对巨型构型使用与人形相同的固定半径。
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let whale_json = std::fs::read_to_string(
-            manifest_dir.join("assets/body_plans/plans/whale.json"),
-        )
-        .expect("real whale.json should exist");
+        let whale_json =
+            std::fs::read_to_string(manifest_dir.join("assets/body_plans/plans/whale.json"))
+                .expect("real whale.json should exist");
         let whale_plan: super::super::types::BodyPlan =
             serde_json::from_str(&whale_json).expect("real whale.json should parse");
         crate::body_plan::validate::validate_body_plan(&whale_plan)

@@ -1658,7 +1658,9 @@ mod tests {
         let intrinsic_race = app
             .world()
             .get::<crate::body_plan::IntrinsicRace>(entity)
-            .expect("joined client should receive IntrinsicRace on first join (no RaceChange needed)");
+            .expect(
+                "joined client should receive IntrinsicRace on first join (no RaceChange needed)",
+            );
 
         assert_eq!(
             intrinsic_race.0, cultivation.race,

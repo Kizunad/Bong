@@ -950,9 +950,8 @@ fn projectile_tick_system(
                 body_plan_registry.as_deref(),
                 race_registry.as_deref(),
             );
-            let target_radius = crate::body_plan::geometry::bounding_radius(
-                &target_body_plan.hit_geometry,
-            );
+            let target_radius =
+                crate::body_plan::geometry::bounding_radius(&target_body_plan.hit_geometry);
             let distance_to_segment =
                 segment_point_distance(current, next, target_pos.get() + DVec3::new(0.0, 1.0, 0.0));
             if distance_to_segment <= f64::from(flight.hitbox_inflation) + target_radius {
@@ -2071,10 +2070,8 @@ mod tests {
         /// 不是任意手搓的 PartBoxes 构型。
         fn real_registries() -> (BodyPlanRegistry, RaceRegistry) {
             let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-            let plans_dir =
-                manifest_dir.join(crate::body_plan::registry::DEFAULT_BODY_PLANS_DIR);
-            let races_path =
-                manifest_dir.join(crate::body_plan::race_registry::DEFAULT_RACES_PATH);
+            let plans_dir = manifest_dir.join(crate::body_plan::registry::DEFAULT_BODY_PLANS_DIR);
+            let races_path = manifest_dir.join(crate::body_plan::race_registry::DEFAULT_RACES_PATH);
             let body_plans =
                 BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
             let races = RaceRegistry::load_file(&races_path, &body_plans)
@@ -2183,10 +2180,8 @@ mod tests {
             // whale.json 粗筛半径 ≈5.74（tail_fin 局部 z=-3.74±half 2.0）远大于换轨前
             // 写死的 0.3——z 偏移 2.0 远超换轨前固定阈值 0.7（必定会被误判为未命中），
             // 换轨后 whale 目标必须能命中。
-            let (wounds, combat_events, despawns) = run_lateral_projectile_at_real_target(
-                crate::body_plan::RaceId::new("whale"),
-                2.0,
-            );
+            let (wounds, combat_events, despawns) =
+                run_lateral_projectile_at_real_target(crate::body_plan::RaceId::new("whale"), 2.0);
             assert_eq!(
                 despawns.first().map(|d| d.reason),
                 Some(ProjectileDespawnReason::HitTarget),
