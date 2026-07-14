@@ -126,8 +126,8 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 ### 落地清单
 
 - **P0 证真**：`BongClient` 同时注册 `NpcInteractionLogControls`、`HudImmersionControls` 与 `CombatHudBootstrap`；后者把 F1-F9 快捷槽接到 `CombatHudBootstrap.onQuickSlotPressed`，最终调用 `ClientRequestSender.sendUseQuickSlot(slot)`。修复前契约测试 4 项中 3 项稳定失败，分别钉住 F6、F7 与保留区冲突。
-- **P1 修复**：`HudImmersionControls` 与 `NpcInteractionLogControls` 均改为 `GLFW_KEY_UNKNOWN`，保留原翻译键和 Fabric 控制菜单注册；两个 tick handler 委托给可直接行为测试的 `consumeTogglePresses`，仍由真实 `KeyBinding.wasPressed()` 驱动最终 HUD/NPC 可见状态转换。`QuickSlotDefaultKeyConflictTest` 共 12 项，通过 javac 语义 AST 逐次求值九槽循环、三个实际默认键参数、`KeyBindingHelper.registerKeyBinding(...)` 与 `END_CLIENT_TICK` 消费接线，并全仓解析直接构造、子类 `super(...)`、跨文件常量、静态 import 与常量运算；`++slot` / 常量别名正向夹具、缺 tick 注册 / 缺 `wasPressed()` 负向夹具、compile-only `@Nullable` stub、parse/analyze 错误与未知表达式共同 fail closed。另有 HUD 3 项、NPC 5 项行为测试锁住显式重绑后的全部状态分支。
-- **P2 门禁**：JDK 17 完成 client 全量 `test build`；2026-07-14 早先 fetch 后确认分支与 `origin/main@390f22e5` 已分叉，以 `--no-commit --no-ff` 合并并在提交前完成客户端全量复验，形成显式合并提交 `a10d1a69`。本轮 review 返工在代码 HEAD `6a858d22` 上复验 4080 项 client 测试；随后再次 fetch，确认 `origin/main@390f22e5` 仍是当前分支祖先，无需改变 HEAD。
+- **P1 修复**：`HudImmersionControls` 与 `NpcInteractionLogControls` 均改为 `GLFW_KEY_UNKNOWN`，保留原翻译键和 Fabric 控制菜单注册；两个 tick handler 委托给可直接行为测试的 `consumeTogglePresses`，仍由真实 `KeyBinding.wasPressed()` 驱动最终 HUD/NPC 可见状态转换。`QuickSlotDefaultKeyConflictTest` 保留 7 项生产契约，精确锁定 supplier 返回值、NPC 两个 guard 的参数位置/极性、顶层 bootstrap、快捷槽循环槽位数据流、handler method reference 与 `sendUseQuickSlot(slot)` 出料参数；通用 javac 索引、循环求值器和匹配器拆到 `JavaSourceIndex`，其 7 项 `JavaSourceIndexTest` 正反夹具覆盖丢弃返回值、反转 guard、交换参数、缺 bootstrap、错误槽位、空 handler、常量 C2S 槽位、子类 `super(...)` 与语义错误 fail closed。`CombatHudBootstrapTest` 另以真实 transport capture 锁定已绑定 F9 边界槽发送同一 slot、空槽零发包；HUD 3 项、NPC 5 项行为测试继续锁住显式重绑后的全部状态分支。
+- **P2 门禁**：JDK 17 完成 client 全量 `test build`。本轮 review 返工代码提交为 `84ab2f19`、`e9509bf0`、`1abaf7ff`，在合并前复验 4084 项 client 测试；随后 fetch 到 `origin/main@c231666d`，确认与分支分叉但主线只触及 server/`CLAUDE.md`、未触及本 PR client 文件，以 `--no-commit --no-ff` 合并并在未提交合并结果上再次完成 client 全量复验，形成显式合并提交 `283c6f14`。
 
 ### 关键 commit
 
@@ -140,6 +140,10 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 - `b100756d`（2026-07-14）— 提取 HUD 沉浸按键消费边界，锁定显式重绑后的开关往返、队列排空与时钟语义。
 - `a90024f5`（2026-07-14）— 提取 NPC 日志按键消费边界，锁定玩家/界面 guard 与最终可见状态转换。
 - `6a858d22`（2026-07-14）— 把快捷槽循环改为 AST 逐次语义求值，并锁定 tick 注册与真实 `wasPressed()` 接线。
+- `84ab2f19`（2026-07-14）— 暴露包级快捷槽入口给行为测试，锁定已绑定槽位的真实 `use_quick_slot` C2S 与空槽零出料。
+- `e9509bf0`（2026-07-14）— 把 javac/AST 索引、求值器、匹配器与 7 项正反夹具拆到独立 test-support。
+- `1abaf7ff`（2026-07-14）— 精确锁定 HUD/NPC 实参数据流、顶层 bootstrap 与快捷槽 slot 端到端传递链。
+- `283c6f14`（2026-07-14）— 合并 `origin/main@c231666d`，在未提交合并结果上复验客户端完整门禁。
 
 ### 测试结果
 
@@ -157,16 +161,19 @@ Round 2（ACCEPT）：反方专门检查是否为有意保留键、quick slot �
 - 本轮语义与接线定向：JDK 17 下同时运行 `QuickSlotDefaultKeyConflictTest`、`HudImmersionControlsTest`、`NpcInteractionLogControlsTest` → 20 tests，0 failures；其中 AST 12 项、HUD 3 项、NPC 5 项。
 - 本轮 client 全量：代码 HEAD `6a858d22` 上 `JAVA_HOME=$HOME/.cache/codex-jdks/jdk-17 ./gradlew --no-daemon test build` → 4080 tests，0 failures，0 errors，0 skipped，`BUILD SUCCESSFUL`（3m54s）。
 - 本轮主线分类：`git fetch origin` 后 `origin/main@390f22e5` 是 `6a858d22` 的祖先，classification=`already-up-to-date`，未改变 HEAD，因此复用同一全量门禁证据。
+- 复审四次返工定向：JDK 17 下同时运行 `QuickSlotDefaultKeyConflictTest`、`JavaSourceIndexTest`、`CombatHudBootstrapTest` → 23 tests，0 failures；其中生产接线契约 7 项、AST 正反夹具 7 项、真实 bootstrap/C2S 行为 9 项。
+- 复审四次返工全量：`JAVA_HOME=$HOME/.cache/codex-jdks/jdk-17 ./gradlew --no-daemon test build` → 4084 tests，0 failures，0 errors，0 skipped，`BUILD SUCCESSFUL`（4m01s）。
+- 复审四次主线同步：`git fetch origin` 后 `origin/main@c231666d` 与代码 HEAD 分叉；主线未触及本 PR 五个 client 文件，以 `--no-commit --no-ff` 合并后再次运行 client 全量 `test build` → 4084 tests，0 failures，0 errors，0 skipped，`BUILD SUCCESSFUL`（33s，任务均 up-to-date），合并提交 `283c6f14`。
 - `git diff --check` 在 review 修复、主线合并和 Finish Evidence 更新前均通过；每轮验证前后均核验工作区状态与目标 HEAD。
 - 用户明确要求本轮不启动 subagent，因此 FIX/REBASE validator 由主 agent 对绑定 SHA 的干净 diff 独立复核；未伪造外部 validator 身份。
 
 ### 跨仓库核验
 
-- **client**：`CombatKeybindings` / `QuickSlotConfig` 继续提供 F1-F9 九槽；`HudImmersionControls` / `NpcInteractionLogControls` 改为 UNKNOWN，并由可测消费函数保留显式重绑后的 tick 状态转换；AST 与行为测试共同锁住默认键、注册、消费及 guard 契约。
+- **client**：`CombatKeybindings` / `QuickSlotConfig` 继续提供 F1-F9 九槽；`HudImmersionControls` / `NpcInteractionLogControls` 改为 UNKNOWN，并由可测消费函数保留显式重绑后的 tick 状态转换；`QuickSlotDefaultKeyConflictTest`、`JavaSourceIndexTest` 与 `CombatHudBootstrapTest` 共同锁住默认键、注册、guard、bootstrap、同槽位 handler/C2S 数据流及空槽零出料契约。
 - **server / agent / schema**：本修复不改变 `use_quick_slot` 协议、服务端 handler 或 agent schema，无跨栈产物需要重建。
 
 ### 遗留 / 后续
 
 - 不迁移或覆盖现有玩家 `options.txt`；已保存的 F6/F7 冲突绑定需玩家在控制菜单自行调整，避免本 PR 擅自覆盖用户选择。
 - O/U 默认键冲突继续由 `docs/plans-skeleton/plan-bughunt-client-input-keybind-collision-v1.md` 独立处理，本 PR 不跨题修改。
-- 本轮未启动交互式 `runClient`；默认值、入口保留、显式重绑后的状态转换和 F1-F9 排他性已由 fail-closed 语义 AST 契约测试、行为测试及 4080 项 client 全量测试闭环。
+- 本轮未启动交互式 `runClient`；默认值、入口保留、显式重绑后的状态转换、F1-F9 排他性与快捷槽真实出料链已由 fail-closed 语义 AST 契约测试、行为测试及 4084 项 client 全量测试闭环。
