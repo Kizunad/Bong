@@ -1128,7 +1128,7 @@ fn record_stir_contamination(
     let source = ContamSource {
         amount: contamination_gain,
         color: ColorKind::Intricate,
-        meridian_id: Some(MeridianId::Lung),
+        meridian_id: Some(MeridianId::Lung.channel_id()),
         attacker_id: None,
         introduced_at: now_tick,
     };
