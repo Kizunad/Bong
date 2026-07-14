@@ -70,6 +70,7 @@ pub mod possession;
 pub mod practice_session;
 pub mod qi_field;
 pub mod qi_zero_decay;
+pub mod race_change;
 pub mod realm_taint;
 pub mod realm_vision;
 pub mod skill_registry;
@@ -1196,6 +1197,9 @@ pub(crate) mod legacy_meridian_bundle {
                 .into_iter()
                 .map(MeridianId::channel_id)
                 .collect(),
+            // plan-race-system-v1 P5/PR-6a — 休眠登记是 RaceChange 换种族才产生的新
+            // 状态，legacy v1 存档（早于本机制）没有对应字段，恒空迁移。
+            dormant_meridians: HashMap::new(),
         })
     }
 

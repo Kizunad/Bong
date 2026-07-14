@@ -31,7 +31,7 @@ use crate::fauna::components::BeastKind;
 
 use super::race_registry::RaceRegistry;
 use super::registry::BodyPlanRegistry;
-use super::types::{BodyPartId, BodyPlan, RaceId};
+use super::types::{BodyPartId, BodyPlan, BodyPlanId, MeridianProfile, RaceId};
 
 /// `resolve_body_plan` 的语义参数——P0 无实际差异（见模块文档），签名先行锁定供 P4 使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +231,62 @@ pub fn resolve_meridian_topology_for_target<'a>(
         }
         _ => super::registry::humanoid_topology_static(),
     }
+}
+
+/// [`meridian_profile_for_target`] 的失败态——**只在实体已经成功解析出一个真实
+/// （非 humanoid 兜底）`BodyPlan`、但该 plan 本身没有声明 `meridian_profile` 时**触发。
+///
+/// review r2 major-2 收口：换轨前的实现对这种情形静默借用 humanoid 配额曲线
+/// （1/3/6/12/16/20），等价于"非人构型数据不完整 → 悄悄按人族标准判定突破"——违背
+/// plan「per-plan 配额 + 未知/非法身份 fail-closed」决议。**resolve 本身失败**（未知
+/// race / 资源缺失，见 [`resolve_body_plan_for_target`] 文档）仍然走 humanoid 兜底
+/// （那是环境退化，不是数据完整性问题）；本错误只覆盖"resolve 成功但 plan 数据不全"
+/// 这一支——两者必须严格区分，不能合并成同一个"没有 profile 就兜底"分支。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeridianProfileMissingError {
+    pub plan_id: BodyPlanId,
+}
+
+impl std::fmt::Display for MeridianProfileMissingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "body plan {} resolved successfully but declares no meridian_profile — refusing to \
+             silently borrow the humanoid quota curve (fail-closed)",
+            self.plan_id
+        )
+    }
+}
+
+impl std::error::Error for MeridianProfileMissingError {}
+
+/// plan-race-system-v1 P5 —— `cultivation::breakthrough` 突破配额消费点用，语义与
+/// [`resolve_meridian_topology_for_target`] 基本对齐，但**不对"plan 缺 meridian_profile"
+/// 这一支做同款退化**（见 [`MeridianProfileMissingError`] 文档——review r2 major-2）：
+///
+/// - resolve 本身失败（未知 race / `body_plans`/`races` 资源缺失）→ 仍退化到 humanoid
+///   （`resolve_body_plan_for_target` 内部已处理，humanoid 恒有 `meridian_profile`，本函数
+///   这一路径永远 `Ok`）——这是环境退化，不是本函数关心的失败态。
+/// - resolve **成功**解析出一个真实非 humanoid plan，但该 plan 没声明
+///   `meridian_profile` → `Err(MeridianProfileMissingError)`，调用方必须把这判定为
+///   突破失败，不能借用 humanoid 曲线顶上。
+///
+/// humanoid 目标本身经此函数解析出的结果与旧的零参
+/// `humanoid_plan_static().meridian_profile` 直读 bit-for-bit 相同（同一份
+/// `humanoid.json`），换轨不改变现有人族突破行为。
+pub fn meridian_profile_for_target<'a>(
+    entity: Entity,
+    purpose: BodyPlanPurpose,
+    inputs: BodyPlanResolveInputs<'_>,
+    body_plans: Option<&'a BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
+) -> Result<&'a MeridianProfile, MeridianProfileMissingError> {
+    let plan = resolve_body_plan_for_target(entity, purpose, inputs, body_plans, races);
+    plan.meridian_profile
+        .as_ref()
+        .ok_or_else(|| MeridianProfileMissingError {
+            plan_id: plan.id.clone(),
+        })
 }
 
 /// plan-race-system-v1 P3a —— 施放门 race gate 消费点用（`sword_path::skill_register`

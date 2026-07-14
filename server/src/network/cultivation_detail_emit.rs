@@ -43,6 +43,16 @@ pub struct CultivationDetailEmitState {
     last_emit_tick: u64,
 }
 
+impl CultivationDetailEmitState {
+    /// plan-race-system-v1 P5/PR-6a —— RaceChange 提交后强制下一次 `Update` tick
+    /// 立即全量重发（而不是等最多 [`EMIT_INTERVAL_TICKS`] 的既有周期节流）。`0` 保证
+    /// `clock.tick.saturating_sub(0) >= EMIT_INTERVAL_TICKS` 恒真（除非服务器刚启动
+    /// 不到一个 interval，那种情况下本来也会在很快的下一次周期发出，无害）。
+    pub fn force_resend_on_next_tick(&mut self) {
+        self.last_emit_tick = 0;
+    }
+}
+
 type CultivationDetailEmitQueryItem<'a> = (
     Entity,
     &'a mut Client,

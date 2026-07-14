@@ -26,9 +26,10 @@ use valence::prelude::{
     bevy_ecs, App, DVec3, Event, EventWriter, Res, ResMut, Resource, Startup, Update,
 };
 
+use crate::body_plan::{resolve_race_to_plan, BodyPlanRegistry, RaceRegistry};
 use crate::cultivation::breakthrough::{
-    breakthrough_qi_cost, next_realm, qi_max_for_realm, try_breakthrough, BreakthroughError,
-    BreakthroughSuccess, RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH,
+    breakthrough_qi_cost, next_realm, qi_max_for_realm, try_breakthrough_with_profile,
+    BreakthroughError, BreakthroughSuccess, RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH,
     MIN_ZONE_QI_TO_GUYUAN,
 };
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
@@ -779,6 +780,11 @@ fn dormant_global_tick_system(
     mut combat_outcomes: EventWriter<DormantCombatOutcome>,
     mut pending_relics: EventWriter<PendingDormantRelicCreated>,
     war_bonus: Option<Res<crate::npc::war::settle::ZoneSpiritBonusStore>>,
+    // plan-race-system-v1 P6b review major-4 收口：离屏突破配额换轨所需的两个解析
+    // 资源，语义与在线 `breakthrough_system`/`cultivate_action_system` 同款——缺失时
+    // （既有测试未插入）`advance_dormant_breakthrough` 内部优雅退化到 humanoid。
+    body_plans: Option<Res<BodyPlanRegistry>>,
+    races: Option<Res<RaceRegistry>>,
 ) {
     let tick = current_tick(game_tick.as_deref());
     if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
@@ -840,7 +846,14 @@ fn dormant_global_tick_system(
                 apply_dormant_regen_with_multiplier(snapshot, zones, ledger, war_multiplier);
             }
             if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-                let _ = advance_dormant_breakthrough(snapshot, zones, ledger, tick);
+                let _ = advance_dormant_breakthrough(
+                    snapshot,
+                    zones,
+                    ledger,
+                    tick,
+                    body_plans.as_deref(),
+                    races.as_deref(),
+                );
             }
         }
 
@@ -1848,14 +1861,63 @@ fn refresh_snapshot_zone_name(snapshot: &mut NpcDormantSnapshot, zones: &ZoneReg
     true
 }
 
+/// plan-race-system-v1 P6b review major-4 收口：离屏（dormant）突破必须与在线
+/// （`breakthrough_system` / `cultivate_action_system`）走同一套 body plan 派生配额——
+/// 否则同一实体切换在线/离屏观测窗会得到不同突破结果（在线用自身构型配额，离屏悄悄
+/// 退化成 humanoid），这是明确的换轨假完成红线。`body_plans`/`races` 均缺失时（大量
+/// 既有测试未插入这两个资源）优雅退化到 humanoid——生产环境 `body_plan::register()`
+/// 恒装载两资源，该分支不会在真实部署触发；`resolve_race_to_plan` 找不到
+/// `snapshot.cultivation.race` 对应条目（未知/迁移中的 race id）同样退化到 humanoid
+/// （这是"resolve 本身失败"的环境退化分支，语义对齐
+/// `body_plan::resolve_body_plan_for_target` 的既有约定——**不是** review major-2 那条
+/// "resolve 成功但 plan 缺 profile" fail-closed 分支，二者不混淆）。
 pub fn advance_dormant_breakthrough(
     snapshot: &mut NpcDormantSnapshot,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
     tick: u64,
+    body_plans: Option<&BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
 ) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
     let mut roll = XorshiftRoll(deterministic_hash(&snapshot.char_id, tick));
-    advance_dormant_breakthrough_with_roll(snapshot, zones, ledger, tick, &mut roll)
+    advance_dormant_breakthrough_with_roll(
+        snapshot, zones, ledger, tick, body_plans, races, &mut roll,
+    )
+}
+
+/// `Err(())` = review r2 major-2 同款 fail-closed 分支：`cultivation.race` 在
+/// `RaceRegistry` 中有登记、也确实解析出一个真实 `BodyPlan`，但该 plan 没有声明
+/// `meridian_profile`——数据不完整，调用方必须跳过本次突破判定，不能借用 humanoid
+/// 曲线顶上。`races.get(race)` 本身查无此 race（未知/迁移中 race id）或
+/// `body_plans`/`races` 资源缺失（既有测试未插入）是**环境退化**，走 humanoid 兜底，
+/// 语义对齐 `body_plan::resolve_body_plan_for_target` 的既有约定。
+fn dormant_meridian_profile<'a>(
+    snapshot: &NpcDormantSnapshot,
+    body_plans: Option<&'a BodyPlanRegistry>,
+    races: Option<&'a RaceRegistry>,
+) -> Result<&'a crate::body_plan::MeridianProfile, ()> {
+    let humanoid_profile = || {
+        crate::body_plan::humanoid_plan_static()
+            .meridian_profile
+            .as_ref()
+            .expect(
+                "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+                 onward — validate_body_plan should have rejected a humanoid plan missing it",
+            )
+    };
+    match (body_plans, races) {
+        (Some(body_plans), Some(races)) => {
+            match resolve_race_to_plan(&snapshot.cultivation.race, body_plans, races) {
+                Some(plan) => match plan.meridian_profile.as_ref() {
+                    Some(profile) => Ok(profile),
+                    None => Err(()),
+                },
+                // 未知/迁移中 race id —— resolve 本身失败，环境退化到 humanoid。
+                None => Ok(humanoid_profile()),
+            }
+        }
+        _ => Ok(humanoid_profile()),
+    }
 }
 
 fn advance_dormant_breakthrough_with_roll<R: RollSource>(
@@ -1863,6 +1925,8 @@ fn advance_dormant_breakthrough_with_roll<R: RollSource>(
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
     tick: u64,
+    body_plans: Option<&BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
     roll: &mut R,
 ) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
     let next = next_realm(snapshot.cultivation.realm)?;
@@ -1885,13 +1949,20 @@ fn advance_dormant_breakthrough_with_roll<R: RollSource>(
         return None;
     }
 
+    let Ok(profile) = dormant_meridian_profile(snapshot, body_plans, races) else {
+        // fail-closed：resolve 成功但 plan 缺 meridian_profile——本 tick 不判定突破。
+        return None;
+    };
     let before_qi = snapshot.cultivation.qi_current.max(0.0);
     let npc_account = QiAccountId::npc(snapshot.char_id.clone());
     let zone_account = QiAccountId::zone(zone_name);
-    let result = try_breakthrough(
+    let result = try_breakthrough_with_profile(
         &mut snapshot.cultivation,
         &mut snapshot.meridian_system,
         0.0,
+        0.0,
+        None,
+        profile,
         roll,
     );
     let used_qi = (before_qi - snapshot.cultivation.qi_current.max(0.0)).max(0.0);
@@ -2895,6 +2966,8 @@ mod tests {
             &mut zones,
             &mut ledger,
             1200,
+            None,
+            None,
             &mut roll,
         )
         .expect("eligible dormant NPC should attempt breakthrough")
