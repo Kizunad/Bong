@@ -18,6 +18,7 @@ DESCRIPTION = "物资棺 open 后跨维应 close；旧 session move/open 均拒�
 MODULES = ["inventory", "supply_coffin", "dimension"]
 
 TSY_FAMILY = "tsy_daneng_01"
+SETUP_ZONE = "spawn"
 
 
 def run(env) -> None:
@@ -33,6 +34,17 @@ def run(env) -> None:
             timeout=10.0,
             description="clearinv 后 revision 递增的 inventory_snapshot",
         ).data["payload"]
+
+        # 该回归只验证跨维 session 权威链路。用 server-side dev teleport 把
+        # 场景放到稳定空域，避免邻列地形的穿地恢复把返回点额外抬高。
+        setup_sent_at = _event_watermark(bot)
+        bot.cmd(f"tpzone {SETUP_ZONE}")
+        bot.expect_chat(f"Teleported to zone `{SETUP_ZONE}`.", timeout=10.0)
+        bot.wait_for(
+            lambda event: event.kind == "pos_look" and event.t > setup_sent_at,
+            timeout=10.0,
+            description=f"/tpzone {SETUP_ZONE} 后 server 权威 PositionLook",
+        )
 
         bot.cmd("supply_coffin reset")
         bot.expect_chat("[dev] reset cleared", timeout=10.0)
