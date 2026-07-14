@@ -95,6 +95,110 @@
         ["yin_wei", "yin_wei"],
         ["yang_wei", "yang_wei"]
       ]
+    },
+    {
+      "from": "human",
+      "to": "beast_common",
+      "entries": [
+        ["lung", "lung"],
+        ["large_intestine", "large_intestine"],
+        ["stomach", "stomach"],
+        ["spleen", "spleen"],
+        ["heart", "heart"],
+        ["small_intestine", "small_intestine"],
+        ["bladder", "bladder"],
+        ["kidney", "kidney"],
+        ["pericardium", "pericardium"],
+        ["triple_energizer", "triple_energizer"],
+        ["gallbladder", "gallbladder"],
+        ["liver", "liver"],
+        ["ren", "ren"],
+        ["du", "du"],
+        ["chong", "chong"],
+        ["dai", "dai"],
+        ["yin_qiao", "yin_qiao"],
+        ["yang_qiao", "yang_qiao"],
+        ["yin_wei", "yin_wei"],
+        ["yang_wei", "yang_wei"]
+      ]
+    },
+    {
+      "from": "beast_common",
+      "to": "human",
+      "entries": [
+        ["lung", "lung"],
+        ["large_intestine", "large_intestine"],
+        ["stomach", "stomach"],
+        ["spleen", "spleen"],
+        ["heart", "heart"],
+        ["small_intestine", "small_intestine"],
+        ["bladder", "bladder"],
+        ["kidney", "kidney"],
+        ["pericardium", "pericardium"],
+        ["triple_energizer", "triple_energizer"],
+        ["gallbladder", "gallbladder"],
+        ["liver", "liver"],
+        ["ren", "ren"],
+        ["du", "du"],
+        ["chong", "chong"],
+        ["dai", "dai"],
+        ["yin_qiao", "yin_qiao"],
+        ["yang_qiao", "yang_qiao"],
+        ["yin_wei", "yin_wei"],
+        ["yang_wei", "yang_wei"]
+      ]
+    },
+    {
+      "from": "whale",
+      "to": "beast_common",
+      "entries": [
+        ["lung", "lung"],
+        ["large_intestine", "large_intestine"],
+        ["stomach", "stomach"],
+        ["spleen", "spleen"],
+        ["heart", "heart"],
+        ["small_intestine", "small_intestine"],
+        ["bladder", "bladder"],
+        ["kidney", "kidney"],
+        ["pericardium", "pericardium"],
+        ["triple_energizer", "triple_energizer"],
+        ["gallbladder", "gallbladder"],
+        ["liver", "liver"],
+        ["ren", "ren"],
+        ["du", "du"],
+        ["chong", "chong"],
+        ["dai", "dai"],
+        ["yin_qiao", "yin_qiao"],
+        ["yang_qiao", "yang_qiao"],
+        ["yin_wei", "yin_wei"],
+        ["yang_wei", "yang_wei"]
+      ]
+    },
+    {
+      "from": "beast_common",
+      "to": "whale",
+      "entries": [
+        ["lung", "lung"],
+        ["large_intestine", "large_intestine"],
+        ["stomach", "stomach"],
+        ["spleen", "spleen"],
+        ["heart", "heart"],
+        ["small_intestine", "small_intestine"],
+        ["bladder", "bladder"],
+        ["kidney", "kidney"],
+        ["pericardium", "pericardium"],
+        ["triple_energizer", "triple_energizer"],
+        ["gallbladder", "gallbladder"],
+        ["liver", "liver"],
+        ["ren", "ren"],
+        ["du", "du"],
+        ["chong", "chong"],
+        ["dai", "dai"],
+        ["yin_qiao", "yin_qiao"],
+        ["yang_qiao", "yang_qiao"],
+        ["yin_wei", "yin_wei"],
+        ["yang_wei", "yang_wei"]
+      ]
     }
   ]
 }

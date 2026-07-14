@@ -1380,9 +1380,40 @@ mod tests {
         assert!(mapping.entries.is_empty());
     }
 
+    /// review A/B/C/D 共识 MAJOR —— 真实 races.json 的 `human<->whale` 双向经脉映射
+    /// per-key pin。当前 20 条都是恒等映射（human 20 条 TCM 经脉 id 逐一映射到 whale
+    /// 同名 channel），删字段 / 删单个方向 / 清空 entries 必须撞红此测试。
+    ///
+    /// **不锁全局 `meridian_mapping_count()` 总数**——PR-6c 引入真正跨构型映射（beast
+    /// 种族补 `human<->beast_common`/`whale<->beast_common`）时那两对 key 的存在不
+    /// 应影响本测试；本测试只按 `(from, to)` 具体 key 查询，与总数无关。
     #[test]
     fn real_races_json_asset_meridian_mappings_load_and_validate() {
-        // 端到端锚点：真实 races.json 的 meridian_mappings（若声明）必须能通过全部校验。
+        // 20 条 TCM 经脉 id——当前 races.json human<->whale 双向都声明为恒等映射
+        // （from==to）。PR-6c 换真跨构型映射时，连同这份常量一起改。
+        const EXPECTED_IDENTITY_CHANNELS: [&str; 20] = [
+            "lung",
+            "large_intestine",
+            "stomach",
+            "spleen",
+            "heart",
+            "small_intestine",
+            "bladder",
+            "kidney",
+            "pericardium",
+            "triple_energizer",
+            "gallbladder",
+            "liver",
+            "ren",
+            "du",
+            "chong",
+            "dai",
+            "yin_qiao",
+            "yang_qiao",
+            "yin_wei",
+            "yang_wei",
+        ];
+
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let plans_dir = manifest_dir.join(super::super::registry::DEFAULT_BODY_PLANS_DIR);
         let races_path = manifest_dir.join(DEFAULT_RACES_PATH);
@@ -1390,8 +1421,41 @@ mod tests {
         let body_plans = BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
         let races =
             RaceRegistry::load_file(&races_path, &body_plans).expect("real races.json should load");
-        // 不断言具体数量（数据可能随后续 plan 增长）——只断言"加载不崩、可查询"。
-        let _ = races.meridian_mapping_count();
+
+        let expected: HashSet<(MeridianChannelId, MeridianChannelId)> = EXPECTED_IDENTITY_CHANNELS
+            .iter()
+            .map(|id| (MeridianChannelId::new(*id), MeridianChannelId::new(*id)))
+            .collect();
+
+        let human_to_whale = races
+            .meridian_mapping(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale"))
+            .expect("races.json must declare human->whale meridian_mapping");
+        assert_eq!(
+            human_to_whale.entries.len(),
+            20,
+            "human->whale 必须精确声明 20 条经脉迁移条目"
+        );
+        let human_to_whale_set: HashSet<(MeridianChannelId, MeridianChannelId)> =
+            human_to_whale.entries.iter().cloned().collect();
+        assert_eq!(
+            human_to_whale_set, expected,
+            "human->whale 的 20 条 source/target identity 对必须与预期集合完全一致"
+        );
+
+        let whale_to_human = races
+            .meridian_mapping(&RaceId::new("whale"), &RaceId::new(HUMAN_RACE_ID))
+            .expect("races.json must declare whale->human meridian_mapping (reverse direction)");
+        assert_eq!(
+            whale_to_human.entries.len(),
+            20,
+            "whale->human 必须精确声明 20 条经脉迁移条目"
+        );
+        let whale_to_human_set: HashSet<(MeridianChannelId, MeridianChannelId)> =
+            whale_to_human.entries.iter().cloned().collect();
+        assert_eq!(
+            whale_to_human_set, expected,
+            "whale->human 的 20 条 source/target identity 对必须与预期集合完全一致"
+        );
     }
 
     #[test]
