@@ -76,9 +76,9 @@ def run(env) -> None:
         # ── 入口①：alchemy_take_pill（template_id 路径）──────────
         anchor = last_event_time(bot)
         bot.intent({"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID})
-        qi_after_first = _qi_current_after(bot, anchor, baseline=5.0, minimum=60.0)
-        assert qi_after_first > 5.0, (
-            f"回元丹（qi_recovery magnitude=60）吃下后 qi_current 应从 5 显著回升，"
+        qi_after_first = _qi_current_after(bot, anchor, baseline=5.0, minimum=65.0)
+        assert qi_after_first >= 65.0, (
+            f"回元丹（qi_recovery magnitude=60）吃下后 qi_current 应从 5 恢复到至少 65，"
             f"实际 {qi_after_first}——效果链断或快照未 resync"
         )
 
@@ -96,9 +96,9 @@ def run(env) -> None:
                 "target": {"kind": "self"},
             }
         )
-        qi_after_second = _qi_current_after(bot, anchor, baseline=5.0, minimum=60.0)
-        assert qi_after_second > 5.0, (
-            f"apply_pill(instance) 路径同样应回真元，实际 {qi_after_second}——"
+        qi_after_second = _qi_current_after(bot, anchor, baseline=5.0, minimum=65.0)
+        assert qi_after_second >= 65.0, (
+            f"apply_pill(instance) 路径同样应从 5 恢复到至少 65，实际 {qi_after_second}——"
             f"双入口只修一条是半截修复"
         )
 

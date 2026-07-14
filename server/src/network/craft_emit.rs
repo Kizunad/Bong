@@ -1873,8 +1873,16 @@ mod tests {
         app.update();
 
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(ledger.balance(&player_account), 5.0);
-        assert_eq!(ledger.balance(&pending_inflow_account()), 5.0);
+        assert_eq!(
+            ledger.balance(&player_account),
+            5.0,
+            "正 qi_cost 制作应从玩家账户扣除 5 点真元"
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            5.0,
+            "缺少空间组件时制作消耗仍应完整进入待分配池"
+        );
         assert_eq!(
             ledger.balance(&QiAccountId::zone("spawn")),
             0.0,
@@ -1889,16 +1897,34 @@ mod tests {
             .transfers()
             .last()
             .expect("正 qi_cost 制作必须留下审计 transfer");
-        assert_eq!(transfer.from, player_account);
-        assert_eq!(transfer.to, pending_inflow_account());
-        assert_eq!(transfer.reason, QiTransferReason::Crafting);
-        assert_eq!(transfer.amount, 5.0);
+        assert_eq!(
+            transfer.from, player_account,
+            "制作审计转账的来源必须是当前玩家账户"
+        );
+        assert_eq!(
+            transfer.to,
+            pending_inflow_account(),
+            "制作审计转账的目标必须是待分配池"
+        );
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::Crafting,
+            "制作审计转账必须标记为 Crafting"
+        );
+        assert_eq!(transfer.amount, 5.0, "制作审计金额必须等于配方 qi_cost");
         assert_eq!(
             app.world().get::<Cultivation>(player).unwrap().qi_current,
-            5.0
+            5.0,
+            "制作后 Cultivation 镜像必须与玩家账本余额一致"
         );
-        assert!(app.world().get::<CraftSession>(player).is_some());
-        assert!(current_failed_events(&app).is_empty());
+        assert!(
+            app.world().get::<CraftSession>(player).is_some(),
+            "成功预付真元后必须创建制作会话"
+        );
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "成功制作起手不得发出 CraftFailedEvent"
+        );
     }
 
     #[test]
@@ -1985,23 +2011,64 @@ mod tests {
 
         {
             let ledger = app.world().resource::<WorldQiAccount>();
-            assert_eq!(ledger.balance(&player_account), 5.0);
-            assert_eq!(ledger.balance(&pending_inflow_account()), 5.0);
-            assert_eq!(ledger.balance(&full_account), 0.25 * QI_ZONE_UNIT_CAPACITY);
+            assert_eq!(
+                ledger.balance(&player_account),
+                5.0,
+                "制作阶段应先从玩家账户扣除 5 点真元"
+            );
+            assert_eq!(
+                ledger.balance(&pending_inflow_account()),
+                5.0,
+                "heartbeat 前制作消耗应全部停留在待分配池"
+            );
+            assert_eq!(
+                ledger.balance(&full_account),
+                0.25 * QI_ZONE_UNIT_CAPACITY,
+                "制作阶段不得提前改写已满 zone 的账本镜像"
+            );
             assert_eq!(
                 ledger.balance(&sink_account),
-                initial_sink_qi * QI_ZONE_UNIT_CAPACITY
+                initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
+                "制作阶段不得绕过 heartbeat 直接写入目标 zone"
             );
-            assert_eq!(ledger.total(), total_before);
-            assert_eq!(ledger.transfers().len(), 1);
+            assert_eq!(
+                ledger.total(),
+                total_before,
+                "player → pending 制作阶段必须保持账本总量守恒"
+            );
+            assert_eq!(
+                ledger.transfers().len(),
+                1,
+                "heartbeat 前账本应只有一笔 Crafting 转账"
+            );
             let crafting = &ledger.transfers()[0];
-            assert_eq!(crafting.from, player_account);
-            assert_eq!(crafting.to, pending_inflow_account());
-            assert_eq!(crafting.reason, QiTransferReason::Crafting);
-            assert_eq!(crafting.amount, 5.0);
+            assert_eq!(
+                crafting.from, player_account,
+                "第一笔转账必须从制作玩家账户发出"
+            );
+            assert_eq!(
+                crafting.to,
+                pending_inflow_account(),
+                "第一笔转账必须写入待分配池"
+            );
+            assert_eq!(
+                crafting.reason,
+                QiTransferReason::Crafting,
+                "第一笔转账必须标记为 Crafting"
+            );
+            assert_eq!(
+                crafting.amount, 5.0,
+                "Crafting 转账金额必须等于配方 qi_cost"
+            );
         }
-        assert!(app.world().get::<CraftSession>(player).is_some());
-        assert!(current_failed_events(&app).is_empty());
+        assert!(
+            app.world().get::<CraftSession>(player).is_some(),
+            "制作阶段成功后必须保留 CraftSession"
+        );
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "完整回流链的制作阶段不得发出 CraftFailedEvent"
+        );
 
         app.world_mut().resource_mut::<CultivationClock>().tick = TICKS_PER_MINUTE;
         app.update();
@@ -2023,8 +2090,16 @@ mod tests {
         );
 
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(ledger.balance(&pending_inflow_account()), 4.0);
-        assert_eq!(ledger.balance(&full_account), 0.25 * QI_ZONE_UNIT_CAPACITY);
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            4.0,
+            "一分钟 heartbeat 应从待分配池消费恰好 1 点真元"
+        );
+        assert_eq!(
+            ledger.balance(&full_account),
+            0.25 * QI_ZONE_UNIT_CAPACITY,
+            "已达 equilibrium 的 zone 账本余额必须保持不变"
+        );
         assert!(
             (ledger.balance(&sink_account) - expected_sink_qi * QI_ZONE_UNIT_CAPACITY).abs() < 1e-9,
             "heartbeat 后的 zone 账本镜像必须与 ZoneRegistry 浓度一致"
@@ -2033,12 +2108,30 @@ mod tests {
             (ledger.total() - total_before).abs() < 1e-9,
             "Crafting → pending → ZoneInflow 全链路必须保持账本总量守恒"
         );
-        assert_eq!(ledger.transfers().len(), 2);
+        assert_eq!(
+            ledger.transfers().len(),
+            2,
+            "heartbeat 后账本应恰有 Crafting 与 ZoneInflow 两笔转账"
+        );
         let inflow = &ledger.transfers()[1];
-        assert_eq!(inflow.from, pending_inflow_account());
-        assert_eq!(inflow.to, sink_account);
-        assert_eq!(inflow.reason, QiTransferReason::ZoneInflow);
-        assert_eq!(inflow.amount, 1.0);
+        assert_eq!(
+            inflow.from,
+            pending_inflow_account(),
+            "ZoneInflow 必须从待分配池发出"
+        );
+        assert_eq!(
+            inflow.to, sink_account,
+            "ZoneInflow 必须写入未达 equilibrium 的目标 zone"
+        );
+        assert_eq!(
+            inflow.reason,
+            QiTransferReason::ZoneInflow,
+            "heartbeat 回流转账必须标记为 ZoneInflow"
+        );
+        assert_eq!(
+            inflow.amount, 1.0,
+            "一分钟 heartbeat 应按 qi_inflow_per_min 转入 1 点真元"
+        );
         assert!(
             ledger.transfers().iter().all(|transfer| {
                 transfer.reason != QiTransferReason::ZoneInflow || transfer.to != full_account

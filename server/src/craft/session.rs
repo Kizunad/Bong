@@ -755,9 +755,15 @@ mod tests {
         assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 2);
 
         // qi 守恒：cultivation 扣 5，ledger 待分配池余额 +5
-        assert_eq!(cult.qi_current, 45.0);
+        assert_eq!(
+            cult.qi_current, 45.0,
+            "制作预付 5 点真元后玩家应从 50 降至 45"
+        );
         let pending_balance = ledger.balance(&pending_inflow_account());
-        assert_eq!(pending_balance, 5.0);
+        assert_eq!(
+            pending_balance, 5.0,
+            "制作预付的 5 点真元应完整进入待分配池"
+        );
 
         // 守恒律观察：qi_paid 与 ledger transfer 等同
         assert_eq!(result.session.qi_paid, 5.0);
