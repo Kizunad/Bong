@@ -706,6 +706,26 @@ def _bare_bot() -> Bot:
     return bot
 
 
+class RespawnDecodeTest(unittest.TestCase):
+    def test_respawn_exposes_authoritative_dimension_names(self):
+        for dimension in ("minecraft:overworld", "bong:tsy"):
+            with self.subTest(dimension=dimension):
+                bot = _bare_bot()
+                body = (
+                    mc.write_varint(mc.S2C_RESPAWN)
+                    + mc.mc_string(dimension)
+                    + mc.mc_string(dimension)
+                )
+
+                bot._dispatch(body)
+
+                self.assertEqual(len(bot.events), 1)
+                event = bot.events[0]
+                self.assertEqual(event.kind, "respawn")
+                self.assertEqual(event.data["dimension_type_name"], dimension)
+                self.assertEqual(event.data["dimension_name"], dimension)
+
+
 class EntityTrackingTest(unittest.TestCase):
     """实体位置表 pin：spawn 建 / rel-move 累积(Δ=i16/4096) / teleport 覆写 / destroy 删。
 
