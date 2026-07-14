@@ -6,7 +6,8 @@
 //! - **掉线**：`opened_by` 指向的 entity 不存在 → 释放占用锁
 
 use valence::prelude::{
-    bevy_ecs, Client, Commands, Despawned, Entity, Position, Query, ResMut, Username, With,
+    bevy_ecs, Client, Commands, Component, Despawned, Entity, Position, Query, ResMut, Username,
+    With,
 };
 
 use crate::cultivation::components::Cultivation;
@@ -29,6 +30,12 @@ use crate::world::dimension::CurrentDimension;
 use super::authority::authorize_supply_coffin_session;
 use super::{current_wall_clock_secs, SupplyCoffinGrade, SupplyCoffinRegistry};
 
+/// Dev/E2E-only player marker: temporarily defer spatial authority cleanup so a protocol bot can
+/// submit an `ExternalContainerMove` while the session mapping and occupancy lock are still live.
+/// The move handler itself does not consult this marker and must still reject stale authority.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SupplyCoffinLifecyclePaused;
+
 type PlayerQueryItem<'a> = (
     Entity,
     &'a Position,
@@ -38,6 +45,7 @@ type PlayerQueryItem<'a> = (
     &'a PlayerInventory,
     &'a PlayerState,
     &'a Cultivation,
+    Option<&'a SupplyCoffinLifecyclePaused>,
 );
 
 #[allow(clippy::too_many_arguments)]
@@ -83,7 +91,8 @@ pub fn external_container_lifecycle_tick(
             continue;
         };
 
-        let Ok((_, player_pos, player_dimension, _, _, _, _, _)) = players.get(player_entity)
+        let Ok((_, player_pos, player_dimension, _, _, _, _, _, lifecycle_paused)) =
+            players.get(player_entity)
         else {
             // 玩家掉线 / entity 已消失——清 session 并释放锁，不发 UI（玩家已不在）。
             tracing::info!(
@@ -103,6 +112,13 @@ pub fn external_container_lifecycle_tick(
             );
             continue;
         };
+
+        // `/supply_coffin lifecycle pause` is a player-scoped E2E control point. It defers only
+        // lifecycle cleanup; open/move authority remains fully active and therefore testable while
+        // the session mapping, `opened_by`, and active source still exist.
+        if lifecycle_paused.is_some() {
+            continue;
+        }
 
         let authorization = authorize_supply_coffin_session(
             coffin_registry.active.get(&coffin_entity),
@@ -151,7 +167,7 @@ fn close_session(
     if let Some(player_entity) = ext.opened_by {
         send_close_payload(session_id, &reason, players, player_entity);
 
-        if let Ok((_, _, _, mut client, username, inventory, player_state, cultivation)) =
+        if let Ok((_, _, _, mut client, username, inventory, player_state, cultivation, _)) =
             players.get_mut(player_entity)
         {
             send_inventory_snapshot_to_client(
@@ -253,7 +269,7 @@ fn send_close_payload(
         }
     };
 
-    if let Ok((_, _, _, mut client, _, _, _, _)) = players.get_mut(player_entity) {
+    if let Ok((_, _, _, mut client, _, _, _, _, _)) = players.get_mut(player_entity) {
         send_server_data_payload(&mut client, bytes.as_slice());
     }
 }
@@ -452,6 +468,42 @@ mod tests {
         );
 
         app.update();
+        assert_session_closed_without_despawn(&app, coffin, 91);
+    }
+
+    #[test]
+    fn lifecycle_pause_keeps_cross_dimension_session_live_until_marker_is_removed() {
+        let (mut app, player, coffin, _helper) =
+            setup_lifecycle_app(Some(DimensionKind::Tsy), COFFIN_POS, true);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(SupplyCoffinLifecyclePaused);
+
+        app.update();
+
+        let ext = app
+            .world()
+            .get::<ExternalContainer>(coffin)
+            .expect("paused lifecycle must keep the external container attached");
+        assert_eq!(
+            ext.opened_by,
+            Some(player),
+            "paused lifecycle must preserve the live occupancy lock for the bot move probe"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .get(&91),
+            Some(&coffin),
+            "paused lifecycle must preserve the live session mapping"
+        );
+
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<SupplyCoffinLifecyclePaused>();
+        app.update();
+
         assert_session_closed_without_despawn(&app, coffin, 91);
     }
 
