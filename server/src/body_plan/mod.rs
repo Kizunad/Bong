@@ -51,16 +51,17 @@ pub mod validate;
 pub use layout::{humanoid_layout_static, BodyPlanLayoutLoadError, BodyPlanLayoutRegistry};
 pub use legacy::{id_to_legacy_body_part, legacy_body_part_to_id, legacy_body_parts_matching};
 pub use morph::{form_anchors_open, technique_requires_form_anchor, MorphState};
-pub use race_registry::{RaceLoadError, RaceRegistry, HUMAN_RACE_ID};
+pub use race_registry::{MeridianMappingDef, RaceLoadError, RaceRegistry, HUMAN_RACE_ID};
 pub use registry::{
     humanoid_plan_static, humanoid_topology_static, BodyPlanLoadError, BodyPlanRegistry,
     HUMANOID_BODY_PLAN_ID,
 };
 pub use resolve::{
     body_part_for_mutation_slot, channel_body_part, dugu_injection_channel,
-    form_identity_from_world, intrinsic_is_humanoid_from_world, resolve_body_plan,
-    resolve_body_plan_for_target, resolve_meridian_topology_for_target, resolve_race_to_plan,
-    BodyPlanPurpose, BodyPlanResolveInputs, ResolveBodyPlanError,
+    form_identity_from_world, intrinsic_is_humanoid_from_world, meridian_profile_for_target,
+    resolve_body_plan, resolve_body_plan_for_target, resolve_meridian_topology_for_target,
+    resolve_race_to_plan, BodyPlanPurpose, BodyPlanResolveInputs, MeridianProfileMissingError,
+    ResolveBodyPlanError,
 };
 pub use types::{
     BodyPartDef, BodyPartId, BodyPlan, BodyPlanId, ChannelDef, ChannelRole, DuguInjectionEntry,

@@ -15,6 +15,7 @@ pub mod meridian;
 pub mod npc_scenario;
 pub mod preview_tp;
 pub mod qi;
+pub mod race;
 pub mod rat;
 pub mod realm;
 pub mod reset;
@@ -61,6 +62,7 @@ pub fn register(app: &mut App) {
     kill::register(app);
     meridian::register(app);
     qi::register(app);
+    race::register(app);
     realm::register(app);
     reset::register(app);
     revive::register(app);
