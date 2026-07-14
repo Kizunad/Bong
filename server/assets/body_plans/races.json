@@ -28,7 +28,19 @@
         "bone_dragon",
         "whale"
       ]
+    },
+    {
+      "id": "whale",
+      "display_name": "飞鲸",
+      "body_plan_id": "humanoid",
+      "beast_kinds": []
     }
   ],
-  "morph_pairs": []
+  "morph_pairs": [
+    {
+      "from": "human",
+      "to": "whale",
+      "part_mapping": {}
+    }
+  ]
 }

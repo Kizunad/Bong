@@ -13611,6 +13611,70 @@
       "required": [
         "v",
         "type",
+        "mode",
+        "entries"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "morph_state",
+          "type": "string"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "const": "full",
+              "type": "string"
+            },
+            {
+              "const": "delta",
+              "type": "string"
+            }
+          ]
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "entity_id",
+              "model_kind",
+              "form_race_id",
+              "form_body_plan_id",
+              "active"
+            ],
+            "properties": {
+              "entity_id": {
+                "type": "integer"
+              },
+              "model_kind": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "form_race_id": {
+                "type": "string"
+              },
+              "form_body_plan_id": {
+                "type": "string"
+              },
+              "active": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "session_id",
         "target_id",
         "target_name",

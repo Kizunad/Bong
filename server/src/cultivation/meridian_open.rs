@@ -248,6 +248,7 @@ pub fn meridian_open_tick(
                 // 均落 humanoid body plan，`None` 与"真的查了 BeastKind"结果 bit-for-bit
                 // 一致，P5 引入差异化非人形 NPC 经脉时需要回来补上。
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans.as_deref(),
             races.as_deref(),
