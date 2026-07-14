@@ -3,6 +3,7 @@
 import itertools
 import json
 import sys
+import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,72 +41,96 @@ def _overlaps(a: dict, b: dict) -> bool:
     )
 
 
-def test_only_reviewed_zone_pairs_overlap_in_three_dimensions() -> None:
-    for path in FILES:
-        zones = _zones(path)
-        actual = {
-            frozenset((a["name"], b["name"]))
-            for a, b in itertools.combinations(zones, 2)
-            if _overlaps(a, b)
-        }
-        known_defects = KNOWN_DEFECT_OVERLAPS_BY_FILE[path.name]
-        missing_designed = DESIGNED_OVERLAPS - actual
-        unexpected = actual - DESIGNED_OVERLAPS - known_defects
-        assert not missing_designed, (
-            f"{path} lost reviewed 3-D zone overlaps: {missing_designed}; "
-            "update the design allowlist only when the owning plan intentionally "
-            "changes that nesting"
+class ZoneOverlapPolicyTest(unittest.TestCase):
+    def test_only_reviewed_zone_pairs_overlap_in_three_dimensions(self) -> None:
+        for path in FILES:
+            zones = _zones(path)
+            actual = {
+                frozenset((a["name"], b["name"]))
+                for a, b in itertools.combinations(zones, 2)
+                if _overlaps(a, b)
+            }
+            known_defects = KNOWN_DEFECT_OVERLAPS_BY_FILE[path.name]
+            missing_designed = DESIGNED_OVERLAPS - actual
+            unexpected = actual - DESIGNED_OVERLAPS - known_defects
+            self.assertFalse(
+                missing_designed,
+                f"{path} lost reviewed 3-D zone overlaps: {missing_designed}; "
+                "update the design allowlist only when the owning plan intentionally "
+                "changes that nesting",
+            )
+            self.assertFalse(
+                unexpected, f"{path} has unreviewed 3-D zone overlaps: {unexpected}"
+            )
+            self.assertLessEqual(
+                known_defects,
+                actual,
+                f"{path} changed the known-defect baseline; remove the fixed pair from "
+                "KNOWN_DEFECT_OVERLAPS_BY_FILE in the owning plan",
+            )
+
+    def test_north_rift_geometry_matches_runtime_and_blueprint(self) -> None:
+        runtime, blueprint = (_zones(path) for path in FILES)
+        for zones in (runtime, blueprint):
+            by_name = {zone["name"]: zone for zone in zones}
+            self.assertFalse(
+                _overlaps(
+                    by_name["rift_mouth_north_002"],
+                    by_name["north_waste_east_scorch"],
+                ),
+                "north rift and scorch zones must be mutually exclusive",
+            )
+        runtime_rift = next(z for z in runtime if z["name"] == "rift_mouth_north_002")
+        blueprint_rift = next(
+            z for z in blueprint if z["name"] == "rift_mouth_north_002"
         )
-        assert not unexpected, f"{path} has unreviewed 3-D zone overlaps: {unexpected}"
-        assert known_defects <= actual, (
-            f"{path} changed the known-defect baseline; remove the fixed pair from "
-            "KNOWN_DEFECT_OVERLAPS_BY_FILE in the owning plan"
+        self.assertEqual(runtime_rift["aabb"], blueprint_rift["aabb"])
+        self.assertEqual(
+            runtime_rift["patrol_anchors"], blueprint_rift["patrol_anchors"]
+        )
+        rift_min = blueprint_rift["aabb"]["min"]
+        rift_max = blueprint_rift["aabb"]["max"]
+        expected_center_xz = [
+            (rift_min[0] + rift_max[0]) / 2.0,
+            (rift_min[2] + rift_max[2]) / 2.0,
+        ]
+        expected_size_xz = [
+            rift_max[0] - rift_min[0],
+            rift_max[2] - rift_min[2],
+        ]
+        self.assertEqual(
+            blueprint_rift["center_xz"],
+            expected_center_xz,
+            "north rift center_xz must remain the exact XZ midpoint of its AABB",
+        )
+        self.assertEqual(
+            blueprint_rift["size_xz"],
+            expected_size_xz,
+            "north rift size_xz must remain the exact XZ span of its AABB",
+        )
+        self.assertEqual(
+            blueprint_rift["worldgen"]["portal_anchor_xz"], [2000.0, -7300.0]
+        )
+        self.assertEqual(
+            blueprint_rift["pois"][0]["pos_xyz"], [2000.0, 74.0, -7300.0]
         )
 
+    def test_relocated_north_rift_runtime_qi_matches_unified_field_bake(self) -> None:
+        from scripts.terrain_gen.blueprint import DEFAULT_BLUEPRINT_PATH, load_blueprint
+        from scripts.terrain_gen.zones_export import bake_zone_qi
 
-def test_north_rift_geometry_matches_runtime_and_blueprint() -> None:
-    runtime, blueprint = (_zones(path) for path in FILES)
-    for zones in (runtime, blueprint):
-        by_name = {zone["name"]: zone for zone in zones}
-        assert not _overlaps(
-            by_name["rift_mouth_north_002"], by_name["north_waste_east_scorch"]
-        ), "north rift and scorch zones must be mutually exclusive"
-    runtime_rift = next(z for z in runtime if z["name"] == "rift_mouth_north_002")
-    blueprint_rift = next(z for z in blueprint if z["name"] == "rift_mouth_north_002")
-    assert runtime_rift["aabb"] == blueprint_rift["aabb"]
-    assert runtime_rift["patrol_anchors"] == blueprint_rift["patrol_anchors"]
-    rift_min = blueprint_rift["aabb"]["min"]
-    rift_max = blueprint_rift["aabb"]["max"]
-    expected_center_xz = [
-        (rift_min[0] + rift_max[0]) / 2.0,
-        (rift_min[2] + rift_max[2]) / 2.0,
-    ]
-    expected_size_xz = [rift_max[0] - rift_min[0], rift_max[2] - rift_min[2]]
-    assert blueprint_rift["center_xz"] == expected_center_xz, (
-        "north rift center_xz must remain the exact XZ midpoint of its AABB"
-    )
-    assert blueprint_rift["size_xz"] == expected_size_xz, (
-        "north rift size_xz must remain the exact XZ span of its AABB"
-    )
-    assert blueprint_rift["worldgen"]["portal_anchor_xz"] == [2000.0, -7300.0]
-    assert blueprint_rift["pois"][0]["pos_xyz"] == [2000.0, 74.0, -7300.0]
-
-
-def test_relocated_north_rift_runtime_qi_matches_unified_field_bake() -> None:
-    from scripts.terrain_gen.blueprint import DEFAULT_BLUEPRINT_PATH, load_blueprint
-    from scripts.terrain_gen.zones_export import bake_zone_qi
-
-    blueprint = load_blueprint(DEFAULT_BLUEPRINT_PATH)
-    world_area = float(
-        (blueprint.bounds_xz.max_x - blueprint.bounds_xz.min_x)
-        * (blueprint.bounds_xz.max_z - blueprint.bounds_xz.min_z)
-    )
-    baked = bake_zone_qi(blueprint.zones, world_area=world_area)
-    runtime_rift = next(
-        zone
-        for zone in _zones(ROOT / "server/zones.json")
-        if zone["name"] == "rift_mouth_north_002"
-    )
-    assert runtime_rift["spirit_qi"] == round(
-        baked.derived_spirit_qi["rift_mouth_north_002"], 6
-    )
+        blueprint = load_blueprint(DEFAULT_BLUEPRINT_PATH)
+        world_area = float(
+            (blueprint.bounds_xz.max_x - blueprint.bounds_xz.min_x)
+            * (blueprint.bounds_xz.max_z - blueprint.bounds_xz.min_z)
+        )
+        baked = bake_zone_qi(blueprint.zones, world_area=world_area)
+        runtime_rift = next(
+            zone
+            for zone in _zones(ROOT / "server/zones.json")
+            if zone["name"] == "rift_mouth_north_002"
+        )
+        self.assertEqual(
+            runtime_rift["spirit_qi"],
+            round(baked.derived_spirit_qi["rift_mouth_north_002"], 6),
+        )
