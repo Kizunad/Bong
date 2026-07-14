@@ -29,8 +29,8 @@ use valence::prelude::{
 use crate::body_plan::{resolve_race_to_plan, BodyPlanRegistry, RaceRegistry};
 use crate::cultivation::breakthrough::{
     breakthrough_qi_cost, next_realm, qi_max_for_realm, try_breakthrough_with_profile,
-    BreakthroughError, BreakthroughSuccess, RollSource, XorshiftRoll,
-    MIN_ZONE_QI_TO_BREAKTHROUGH, MIN_ZONE_QI_TO_GUYUAN,
+    BreakthroughError, BreakthroughSuccess, RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH,
+    MIN_ZONE_QI_TO_GUYUAN,
 };
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
@@ -1880,7 +1880,9 @@ pub fn advance_dormant_breakthrough(
     races: Option<&RaceRegistry>,
 ) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
     let mut roll = XorshiftRoll(deterministic_hash(&snapshot.char_id, tick));
-    advance_dormant_breakthrough_with_roll(snapshot, zones, ledger, tick, body_plans, races, &mut roll)
+    advance_dormant_breakthrough_with_roll(
+        snapshot, zones, ledger, tick, body_plans, races, &mut roll,
+    )
 }
 
 /// `Err(())` = review r2 major-2 同款 fail-closed 分支：`cultivation.race` 在

@@ -1933,10 +1933,9 @@ mod tests {
             CastResult::Started { .. }
         ));
         let contam = app.world().get::<Contamination>(entity).unwrap();
-        assert!(contam
-            .entries
-            .iter()
-            .any(|entry| entry.meridian_id == Some(MeridianId::Heart.channel_id()) && entry.amount == 5.0));
+        assert!(contam.entries.iter().any(|entry| entry.meridian_id
+            == Some(MeridianId::Heart.channel_id())
+            && entry.amount == 5.0));
     }
 
     #[test]

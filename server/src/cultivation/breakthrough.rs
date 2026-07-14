@@ -1524,9 +1524,7 @@ mod tests {
             BodyPartDef, ChannelDef, HeightBand, HeightBandAssignment, HitGeometry, MeridianFamily,
             MeridianProfile, PartConsequence, RealmMeridianReq, StandingAabbSpec,
         };
-        use crate::body_plan::{
-            BodyPlanId, BodyPlanRegistry, RaceId, RaceRegistry, HUMAN_RACE_ID,
-        };
+        use crate::body_plan::{BodyPlanId, BodyPlanRegistry, RaceId, RaceRegistry, HUMAN_RACE_ID};
 
         fn synthetic_race_plan() -> crate::body_plan::BodyPlan {
             crate::body_plan::BodyPlan {
@@ -1687,9 +1685,8 @@ mod tests {
         app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
         app.add_systems(Update, breakthrough_system);
 
-        let mut meridians = MeridianSystem::for_profile(
-            synthetic_race_plan().meridian_profile.as_ref().unwrap(),
-        );
+        let mut meridians =
+            MeridianSystem::for_profile(synthetic_race_plan().meridian_profile.as_ref().unwrap());
         // 只打通 1 条 channel——humanoid 曲线（need=3）会拒绝，合成构型自己的曲线
         // （need=1）应该放行。
         meridians.regular[0].opened = true;

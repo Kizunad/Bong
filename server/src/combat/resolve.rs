@@ -12612,7 +12612,8 @@ mod tests {
 
         #[test]
         fn resolve_attack_intents_routes_contamination_to_non_humanoid_target_own_channel() {
-            let (body_plans, races) = dugu_prod_registries(synthetic_beast_plan_with_dugu_mapping());
+            let (body_plans, races) =
+                dugu_prod_registries(synthetic_beast_plan_with_dugu_mapping());
             let mut app = App::new();
             app.insert_resource(CombatClock { tick: 500 });
             app.insert_resource(body_plans);

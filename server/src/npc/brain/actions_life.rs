@@ -9,7 +9,6 @@ use crate::body_plan::{
     resolve_meridian_topology_for_target, BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs,
     RaceRegistry,
 };
-use crate::fauna::components::FaunaTag;
 use crate::cultivation::breakthrough::{
     breakthrough_actor_account_id, breakthrough_qi_cost, credit_active_breakthrough_cost,
     try_breakthrough_with_profile, BreakthroughError, BreakthroughSuccess, RollSource,
@@ -19,6 +18,7 @@ use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSy
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::tribulation::InitiateXuhuaTribulation;
+use crate::fauna::components::FaunaTag;
 use crate::npc::hunger::{Hunger, HungerConfig};
 use crate::npc::lifecycle::{NpcRetireRequest, PendingRetirement};
 use crate::npc::navigator::Navigator;
@@ -1311,8 +1311,8 @@ mod tests {
         use crate::cultivation::life_record::LifeRecord;
         use crate::fauna::components::BeastKind;
         use crate::qi_physics::WorldQiAccount;
-        use crate::world::zone::{Zone, ZoneRegistry};
         use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{Zone, ZoneRegistry};
         use valence::prelude::DVec3;
 
         fn synthetic_beast_plan() -> crate::body_plan::BodyPlan {
@@ -1432,11 +1432,9 @@ mod tests {
             }
         }
 
-        let body_plans = BodyPlanRegistry::from_plans(vec![
-            synthetic_beast_plan(),
-            human_placeholder_plan(),
-        ])
-        .expect("synthetic beast + human placeholder plans must validate");
+        let body_plans =
+            BodyPlanRegistry::from_plans(vec![synthetic_beast_plan(), human_placeholder_plan()])
+                .expect("synthetic beast + human placeholder plans must validate");
         let races = RaceRegistry::from_parts_for_test(
             vec![
                 RaceEntry {

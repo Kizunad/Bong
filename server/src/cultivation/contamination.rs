@@ -53,9 +53,7 @@ pub fn resolve_crack_target(
     meridians: &MeridianSystem,
 ) -> Option<super::components::MeridianChannelId> {
     match meridian_id {
-        Some(id) if meridians.contains(id.clone()) && meridians.get(id.clone()).opened => {
-            Some(id)
-        }
+        Some(id) if meridians.contains(id.clone()) && meridians.get(id.clone()).opened => Some(id),
         _ => meridians.iter().find(|m| m.opened).map(|m| m.id.clone()),
     }
 }
@@ -788,7 +786,9 @@ mod tests {
     fn crack_route_target_channel_not_in_profile_falls_back_without_panic() {
         let ms = meridian_system_with_opened(&[MeridianId::Lung]);
         let target = resolve_crack_target(
-            Some(crate::cultivation::components::MeridianChannelId::new("tail_core")),
+            Some(crate::cultivation::components::MeridianChannelId::new(
+                "tail_core",
+            )),
             &ms,
         );
         assert_eq!(
