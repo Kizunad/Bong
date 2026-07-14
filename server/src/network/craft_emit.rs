@@ -15,8 +15,8 @@
 //!   6. `apply_material_discovery_unlock` —（plan-craft-material-discovery）
 //!      每 tick 扫背包，持有任一原料即被动解锁空源配方 + 重推列表 + narration
 //!
-//! 守恒律：所有 qi 变更走 `start_craft`/`cancel_craft` 内部已封装的
-//! `WorldQiAccount::transfer(QiTransferReason::Crafting)`。制作消耗统一进入
+//! 守恒律：所有 qi 变更走 `start_craft` 内部封装的
+//! `transfer_external_qi_to_ledger(QiTransferReason::Crafting)`。制作消耗统一进入
 //! `pending_inflow_account()`，再由 heartbeat 按 zone 平衡规则回流；本模块**禁止**
 //! 直接写 zone 或 `cultivation.qi_current`，否则会绕过全局守恒律。
 
@@ -1859,11 +1859,8 @@ mod tests {
             .remove::<Position>();
         let player = player_entity.id();
         let player_account = QiAccountId::player(canonical_player_id("Azure"));
-        app.world_mut()
-            .resource_mut::<WorldQiAccount>()
-            .set_balance(player_account.clone(), 10.0)
-            .expect("player qi fixture should be valid");
-        let total_before = app.world().resource::<WorldQiAccount>().total();
+        let observed_before = app.world().get::<Cultivation>(player).unwrap().qi_current
+            + app.world().resource::<WorldQiAccount>().total();
 
         app.world_mut().send_event(CraftStartIntent {
             caster: player,
@@ -1873,10 +1870,9 @@ mod tests {
         app.update();
 
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(
-            ledger.balance(&player_account),
-            5.0,
-            "正 qi_cost 制作应从玩家账户扣除 5 点真元"
+        assert!(
+            !ledger.has_account(&player_account),
+            "在线玩家真元权威在 ECS，制作后不得留下长期 player ledger 镜像"
         );
         assert_eq!(
             ledger.balance(&pending_inflow_account()),
@@ -1888,10 +1884,10 @@ mod tests {
             0.0,
             "制作消耗不得再落入陈旧的硬编码 spawn 账户"
         );
-        assert_eq!(
-            ledger.total(),
-            total_before,
-            "player → pending_inflow 必须保持账本总量守恒"
+        let cultivation_after = app.world().get::<Cultivation>(player).unwrap();
+        assert!(
+            (cultivation_after.qi_current + ledger.total() - observed_before).abs() < 1e-9,
+            "ECS player qi + ledger 在制作前后必须守恒"
         );
         let transfer = ledger
             .transfers()
@@ -1913,9 +1909,8 @@ mod tests {
         );
         assert_eq!(transfer.amount, 5.0, "制作审计金额必须等于配方 qi_cost");
         assert_eq!(
-            app.world().get::<Cultivation>(player).unwrap().qi_current,
-            5.0,
-            "制作后 Cultivation 镜像必须与玩家账本余额一致"
+            cultivation_after.qi_current, 5.0,
+            "制作后应从 ECS 玩家真元扣除 5 点"
         );
         assert!(
             app.world().get::<CraftSession>(player).is_some(),
@@ -1988,9 +1983,6 @@ mod tests {
         {
             let mut ledger = app.world_mut().resource_mut::<WorldQiAccount>();
             ledger
-                .set_balance(player_account.clone(), 10.0)
-                .expect("player qi fixture should be valid");
-            ledger
                 .set_balance(full_account.clone(), 0.25 * QI_ZONE_UNIT_CAPACITY)
                 .expect("full-zone qi mirror fixture should be valid");
             ledger
@@ -2000,7 +1992,8 @@ mod tests {
                 )
                 .expect("sink-zone qi mirror fixture should be valid");
         }
-        let total_before = app.world().resource::<WorldQiAccount>().total();
+        let observed_before = app.world().get::<Cultivation>(player).unwrap().qi_current
+            + app.world().resource::<WorldQiAccount>().total();
 
         app.world_mut().send_event(CraftStartIntent {
             caster: player,
@@ -2011,10 +2004,9 @@ mod tests {
 
         {
             let ledger = app.world().resource::<WorldQiAccount>();
-            assert_eq!(
-                ledger.balance(&player_account),
-                5.0,
-                "制作阶段应先从玩家账户扣除 5 点真元"
+            assert!(
+                !ledger.has_account(&player_account),
+                "制作阶段不得留下在线玩家的长期 ledger 镜像"
             );
             assert_eq!(
                 ledger.balance(&pending_inflow_account()),
@@ -2031,10 +2023,10 @@ mod tests {
                 initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
                 "制作阶段不得绕过 heartbeat 直接写入目标 zone"
             );
-            assert_eq!(
-                ledger.total(),
-                total_before,
-                "player → pending 制作阶段必须保持账本总量守恒"
+            let cultivation_after = app.world().get::<Cultivation>(player).unwrap();
+            assert!(
+                (cultivation_after.qi_current + ledger.total() - observed_before).abs() < 1e-9,
+                "ECS player qi → pending 制作阶段必须保持观察总量守恒"
             );
             assert_eq!(
                 ledger.transfers().len(),
@@ -2105,7 +2097,10 @@ mod tests {
             "heartbeat 后的 zone 账本镜像必须与 ZoneRegistry 浓度一致"
         );
         assert!(
-            (ledger.total() - total_before).abs() < 1e-9,
+            (app.world().get::<Cultivation>(player).unwrap().qi_current + ledger.total()
+                - observed_before)
+                .abs()
+                < 1e-9,
             "Crafting → pending → ZoneInflow 全链路必须保持账本总量守恒"
         );
         assert_eq!(
@@ -2174,12 +2169,7 @@ mod tests {
             .insert(QiColor::default())
             .insert(Position::new([0.0, 64.0, 0.0]))
             .id();
-        let player_account =
-            crate::qi_physics::ledger::QiAccountId::player(canonical_player_id("Azure"));
-        app.world_mut()
-            .resource_mut::<WorldQiAccount>()
-            .set_balance(player_account.clone(), 10.0)
-            .expect("player qi fixture should be valid");
+        let player_account = QiAccountId::player(canonical_player_id("Azure"));
         app.world_mut().send_event(CraftStartIntent {
             caster: player,
             recipe_id: RecipeId::new("craft.tool.workbench"),
@@ -2204,8 +2194,15 @@ mod tests {
             "failed durable start must not create an in-memory session"
         );
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(ledger.balance(&player_account), 10.0);
-        assert_eq!(ledger.balance(&pending_inflow_account()), 0.0);
+        assert!(
+            !ledger.has_account(&player_account),
+            "持久化拒绝后不得发布临时 player ledger 影子账户"
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            0.0,
+            "持久化拒绝后不得发布 staged pending 入账"
+        );
         assert!(
             ledger.transfers().is_empty(),
             "failed durable start must not publish a transfer audit entry"
