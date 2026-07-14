@@ -1117,12 +1117,12 @@ mod tests {
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::ledger::{pending_inflow_account, QiAccountId, QiTransferReason};
     use crate::world::events::ActiveEventsResource;
-    use crate::world::heartbeat::{zone_qi_inflow_tick, ZoneQiInflowClock};
+    use crate::world::heartbeat;
     use crate::world::zone::{Zone, ZoneRegistry};
     use crate::worldgen::pseudo_vein::TICKS_PER_MINUTE;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use valence::prelude::{App, DVec3, Events, IntoSystemConfigs, Update};
+    use valence::prelude::{App, DVec3, Events, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
@@ -1907,8 +1907,13 @@ mod tests {
         recipe.qi_cost = 5.0;
         let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);
         app.insert_resource(CultivationClock { tick: 0 });
-        app.insert_resource(ZoneQiInflowClock::default());
         app.insert_resource(ActiveEventsResource::default());
+        app.add_event::<crate::cultivation::breakthrough::BreakthroughOutcome>();
+        app.add_event::<crate::world::events::ZoneCollapsedEvent>();
+        heartbeat::register(&mut app);
+        crate::network::register_craft_start_runtime_system(&mut app);
+        let initial_sink_qi = 0.10;
+        let expected_sink_qi = initial_sink_qi + 1.0 / QI_ZONE_UNIT_CAPACITY;
         app.insert_resource(ZoneRegistry {
             zones: vec![
                 Zone {
@@ -1930,7 +1935,7 @@ mod tests {
                         DVec3::new(100.0, 60.0, -50.0),
                         DVec3::new(200.0, 90.0, 50.0),
                     ),
-                    spirit_qi: 0.10,
+                    spirit_qi: initial_sink_qi,
                     danger_level: 0,
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
@@ -1940,11 +1945,6 @@ mod tests {
                 },
             ],
         });
-        app.add_systems(
-            Update,
-            (apply_craft_start_intents, zone_qi_inflow_tick).chain(),
-        );
-
         let (client_bundle, _helper) = create_mock_client("Azure");
         let mut cultivation = Cultivation::default();
         cultivation.qi_current = 10.0;
@@ -1968,7 +1968,10 @@ mod tests {
                 .set_balance(full_account.clone(), 0.25 * QI_ZONE_UNIT_CAPACITY)
                 .expect("full-zone qi mirror fixture should be valid");
             ledger
-                .set_balance(sink_account.clone(), 0.10 * QI_ZONE_UNIT_CAPACITY)
+                .set_balance(
+                    sink_account.clone(),
+                    initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
+                )
                 .expect("sink-zone qi mirror fixture should be valid");
         }
         let total_before = app.world().resource::<WorldQiAccount>().total();
@@ -1985,7 +1988,10 @@ mod tests {
             assert_eq!(ledger.balance(&player_account), 5.0);
             assert_eq!(ledger.balance(&pending_inflow_account()), 5.0);
             assert_eq!(ledger.balance(&full_account), 0.25 * QI_ZONE_UNIT_CAPACITY);
-            assert_eq!(ledger.balance(&sink_account), 0.10 * QI_ZONE_UNIT_CAPACITY);
+            assert_eq!(
+                ledger.balance(&sink_account),
+                initial_sink_qi * QI_ZONE_UNIT_CAPACITY
+            );
             assert_eq!(ledger.total(), total_before);
             assert_eq!(ledger.transfers().len(), 1);
             let crafting = &ledger.transfers()[0];
@@ -2012,17 +2018,20 @@ mod tests {
             "已达 equilibrium 的 zone 即使速率很高也不得消费 pending"
         );
         assert!(
-            (sink_zone.spirit_qi - 0.12).abs() < 1e-9,
+            (sink_zone.spirit_qi - expected_sink_qi).abs() < 1e-9,
             "1 分钟 heartbeat 应把 1.0 绝对真元从 pending 滴灌到 craft_sink"
         );
 
         let ledger = app.world().resource::<WorldQiAccount>();
         assert_eq!(ledger.balance(&pending_inflow_account()), 4.0);
         assert_eq!(ledger.balance(&full_account), 0.25 * QI_ZONE_UNIT_CAPACITY);
-        assert_eq!(ledger.balance(&sink_account), 0.12 * QI_ZONE_UNIT_CAPACITY);
-        assert_eq!(
-            ledger.total(),
-            total_before,
+        assert!(
+            (ledger.balance(&sink_account) - expected_sink_qi * QI_ZONE_UNIT_CAPACITY).abs()
+                < 1e-9,
+            "heartbeat 后的 zone 账本镜像必须与 ZoneRegistry 浓度一致"
+        );
+        assert!(
+            (ledger.total() - total_before).abs() < 1e-9,
             "Crafting → pending → ZoneInflow 全链路必须保持账本总量守恒"
         );
         assert_eq!(ledger.transfers().len(), 2);
