@@ -31,6 +31,12 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
+from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
+    PILL_ID,
+    _assert_settled_consumption,
+    _has_departed_baseline,
+    _is_qi_set_confirmation,
+)
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
 )
@@ -323,6 +329,164 @@ def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
             },
         },
     )
+
+
+def _pill_snapshot_event(t: float, revision: int, count: int, qi: float) -> _FakeEvent:
+    placed_items = []
+    if count > 0:
+        placed_items.append(
+            {
+                "container_id": "body_pocket",
+                "row": 0,
+                "col": 0,
+                "item": {
+                    "instance_id": 7,
+                    "item_id": PILL_ID,
+                    "stack_count": count,
+                },
+            }
+        )
+    return _FakeEvent(
+        t,
+        "server_data",
+        {
+            "payload_type": "inventory_snapshot",
+            "payload": {
+                "type": "inventory_snapshot",
+                "revision": revision,
+                "placed_items": placed_items,
+                "equipped": {},
+                "hotbar": [],
+                "qi_current": qi,
+            },
+        },
+    )
+
+
+def _player_state_event(t: float, qi: float) -> _FakeEvent:
+    return _FakeEvent(
+        t,
+        "server_data",
+        {
+            "payload_type": "player_state",
+            "payload": {"type": "player_state", "spirit_qi": qi},
+        },
+    )
+
+
+class CultivationPillScenarioTest(unittest.TestCase):
+    def test_qi_set_confirmation_is_anchored_to_exact_target(self):
+        good = _FakeEvent(2.0, "chat", {"text": "[dev] qi set 95.0 -> 5.0"})
+        wrong_target = _FakeEvent(2.0, "chat", {"text": "[dev] qi set 5.0 -> 95.0"})
+        misleading = _FakeEvent(2.0, "chat", {"text": "prefix [dev] qi set 5.0 -> 5.0"})
+
+        self.assertTrue(
+            _is_qi_set_confirmation(good, 1.0, 5.0),
+            "完整前后缀且目标为 5.0 的确认应被接受",
+        )
+        self.assertFalse(
+            _is_qi_set_confirmation(wrong_target, 1.0, 5.0),
+            "其他目标的历史确认不得满足本次 qi set 5",
+        )
+        self.assertFalse(
+            _is_qi_set_confirmation(misleading, 1.0, 5.0),
+            "仅在正文中包含 qi set 片段的聊天不得被误认成确认",
+        )
+
+    def test_authoritative_qi_wait_uses_command_anchor_not_chat_order(self):
+        source = pathlib.Path(
+            os.path.join(
+                os.path.dirname(__file__),
+                "scenarios",
+                "cultivation_pill_consume.py",
+            )
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_set_qi_and_wait"
+        )
+        final_return = next(
+            node for node in reversed(function.body) if isinstance(node, ast.Return)
+        )
+        self.assertEqual(
+            ast.unparse(final_return.value),
+            "_wait_authoritative_qi(bot, anchor, value)",
+            "player_state 可能与 chat 同 tick 乱序，权威 qi 等待必须锚定发命令前水位线",
+        )
+
+    def test_stale_same_tick_baseline_is_not_new_authoritative_value(self):
+        self.assertFalse(
+            _has_departed_baseline(5.0, 5.0, 65.0),
+            "同 tick 残留的旧基线不得被当作服丹结果",
+        )
+        self.assertTrue(
+            _has_departed_baseline(65.0, 5.0, 65.0),
+            "真实恢复到 65 应越过基线变化屏障",
+        )
+        final = _assert_settled_consumption(
+            [
+                _player_state_event(1.1, 5.0),
+                _pill_snapshot_event(1.2, 11, 2, 65.0),
+                _player_state_event(1.3, 65.0),
+                _player_state_event(1.4, 65.0),
+            ],
+            before_revision=10,
+            before_count=3,
+            baseline_qi=5.0,
+            expected_qi=65.0,
+        )
+        self.assertEqual(
+            final["revision"], 11,
+            "正常一次消费应只把 inventory revision 从 10 推进到 11",
+        )
+
+    def test_repeated_qi_effect_fails_settle_window(self):
+        with self.assertRaises(AssertionError):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _player_state_event(1.3, 100.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
+
+    def test_repeated_inventory_decrement_fails_settle_window(self):
+        with self.assertRaises(AssertionError):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 12, 1, 65.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
+
+    def test_authoritative_qi_regression_after_effect_fails_settle_window(self):
+        with self.assertRaises(
+            AssertionError,
+            msg="权威真元先恢复到 65 又回落到旧基线时必须失败",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 5.0),
+                    _player_state_event(1.3, 65.0),
+                    _player_state_event(1.4, 5.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+            )
 
 
 def _server_data_inventory_snapshot_bytes() -> bytes:
@@ -723,6 +887,13 @@ class ProdConsumeDecodeTest(unittest.TestCase):
     这些解码器是 production_*/combat_*/cultivation_pill 场景的观察面地基——
     tag 或字段号漂移会让场景从「锁契约」退化成「永远超时」。
     """
+
+    def test_player_state_tag5_decodes_authoritative_qi(self):
+        msg = _pb_fixed64(3, 65.0) + _pb_fixed64(11, 100.0)
+        decoded = proto_min.decode_server_data_envelope(_pb_message(5, msg))
+        self.assertEqual(decoded["type"], "player_state")
+        self.assertEqual(decoded["spirit_qi"], 65.0)
+        self.assertEqual(decoded["spirit_qi_max"], 100.0)
 
     def test_craft_session_state_tag22(self):
         msg = (
