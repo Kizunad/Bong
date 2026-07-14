@@ -115,7 +115,9 @@ class ZoneOverlapPolicyTest(unittest.TestCase):
             blueprint_rift["pois"][0]["pos_xyz"], [2000.0, 74.0, -7300.0]
         )
 
-    def test_relocated_north_rift_runtime_qi_matches_unified_field_bake(self) -> None:
+    def test_relocated_north_rift_neighbourhood_qi_matches_unified_field_bake(
+        self,
+    ) -> None:
         from scripts.terrain_gen.blueprint import DEFAULT_BLUEPRINT_PATH, load_blueprint
         from scripts.terrain_gen.zones_export import bake_zone_qi
 
@@ -125,12 +127,13 @@ class ZoneOverlapPolicyTest(unittest.TestCase):
             * (blueprint.bounds_xz.max_z - blueprint.bounds_xz.min_z)
         )
         baked = bake_zone_qi(blueprint.zones, world_area=world_area)
-        runtime_rift = next(
-            zone
-            for zone in _zones(ROOT / "server/zones.json")
-            if zone["name"] == "rift_mouth_north_002"
-        )
-        self.assertEqual(
-            runtime_rift["spirit_qi"],
-            round(baked.derived_spirit_qi["rift_mouth_north_002"], 6),
-        )
+        runtime_by_name = {
+            zone["name"]: zone for zone in _zones(ROOT / "server/zones.json")
+        }
+        for zone_name in ("rift_mouth_north_002", "north_waste_east_scorch"):
+            with self.subTest(zone_name=zone_name):
+                self.assertEqual(
+                    runtime_by_name[zone_name]["spirit_qi"],
+                    round(baked.derived_spirit_qi[zone_name], 6),
+                    f"{zone_name} runtime qi must match the relocated unified field bake",
+                )

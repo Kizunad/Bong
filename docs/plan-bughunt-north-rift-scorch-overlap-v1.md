@@ -6,7 +6,7 @@
 
 | 阶段 | 状态 | 可核验结果 |
 |---|---|---|
-| P0 数据修正 | ✅ 2026-07-14 | 渊口最终中心改为 `[2000,-7300]`，运行时与 blueprint AABB/anchors/portal/POI 同步，统一场烘焙值同步为 `0.068602` |
+| P0 数据修正 | ✅ 2026-07-14 | 渊口最终中心改为 `[2000,-7300]`，运行时与 blueprint AABB/anchors/portal/POI 同步，渊口/焦土统一场烘焙值同步为 `0.068602` / `0.290146` |
 | P1 worldgen 守护 | ✅ 2026-07-14 | 非白名单 3-D overlap 守护、known-defect 基线、几何/统一场对拍均纳入 `unittest` 与 CI |
 | P2 runtime pin | ⏳ | server pin 已补齐严格分离、邻接、归属与边界断言；按本次硬约束未启动 Cargo，待补 Rust 门禁后转 ✅ |
 
@@ -60,7 +60,7 @@
 - 最终采用中心 `[2000,-7300]`，取代骨架中的旧中心/候选 `[2000,-7800]`；没有修改全局 `find_zone` 的最小 AABB 语义。
 - `server/zones.json` 与 `server/zones.worldview.example.json` 的 `rift_mouth_north_002` 均同步为 AABB `[1850,50,-7450]..[2150,100,-7150]`。`north_waste_east_scorch` 的北侧边界仍为 Z=`-7500`，两者沿 Z 轴保留 `50` 格间隙，保持邻接但不重叠。
 - runtime `patrol_anchors`、blueprint `center_xz` / `patrol_anchors` / `worldgen.portal_anchor_xz` / 首个 `rift_portal` POI 全部同步到 `[2000,74,-7300]`（XZ 字段为 `[2000,-7300]`）；焦土 ascension pit 仍保持 `[2100,80,-8000]`。
-- 迁移后重新对拍统一场导出，`server/zones.json` 的 `rift_mouth_north_002.spirit_qi` 为 `0.068602`；blueprint 仍保存输入权重 `0.05`，runtime 保存烘焙结果。
+- 迁移后重新对拍统一场导出，`server/zones.json` 的 `rift_mouth_north_002.spirit_qi` 为 `0.068602`，相邻 `north_waste_east_scorch.spirit_qi` 为 `0.290146`；blueprint 仍保存输入权重 `0.05` / `0.28`，runtime 保存烘焙结果。
 
 ### P1 worldgen 守护 — ✅ 2026-07-14
 
@@ -72,7 +72,7 @@
   - `blood_valley` / `zhanhun_plain`
   - `north_waste_east_scorch` / `north_wastes`
 - `KNOWN_DEFECT_OVERLAPS_BY_FILE` 仅在 `zones.json` 保留由 `plan-bughunt-sword-sea-zone-overlap-v1` 负责的 `giant_sword_sea` / `wuxing_abyss`；`zones.worldview.example.json` 的 known-defect 集合为空。`rift_mouth_north_002` / `north_waste_east_scorch` 不在任一集合中。
-- 三条守护已迁为 `unittest.TestCase`，并由 `.github/workflows/worldgen-preview.yml` 显式 discover：全局 overlap 策略、北荒渊口几何/anchor 对拍、统一场 Qi bake 对拍。
+- 三条守护已迁为 `unittest.TestCase`，并由 `.github/workflows/worldgen-preview.yml` 显式 discover：全局 overlap 策略、北荒渊口几何/anchor 对拍、渊口与相邻焦土统一场 Qi bake 对拍。
 
 ### P2 runtime pin — ⏳ Rust 门禁待补
 
@@ -98,14 +98,15 @@
 ### 关键 commit
 
 - `b6d6bdf1`（2026-07-14）— 最终同步北荒渊口 runtime/blueprint 几何与 anchor，中心落在 Z=`-7300`。
-- `d2b29f45`（2026-07-14）— 同步迁移后的统一场 Qi 烘焙结果 `0.068602`。
+- `d2b29f45`（2026-07-14）— 同步迁移后的渊口统一场 Qi 烘焙结果 `0.068602`。
+- 待归档前收口提交（2026-07-14）— 补齐相邻焦土统一场 Qi 烘焙结果 `0.290146` 及双 zone 对拍。
 - `f42824dd`、`67507e63`、`f0953275`（2026-07-14）— 建立 overlap 策略、known-defect 基线并封堵缺失设计 overlap 的假绿。
 - `bd968115`（2026-07-14）— 将三条 overlap 守护迁为 unittest 并纳入 worldgen preview CI。
 - `2ef556e3`、`f0b33148`（2026-07-14）— 收紧运行时点位/边界断言，并直接 pin 两块 AABB 严格分离。
 
 ### 测试结果
 
-- Python overlap policy：3/3 通过；覆盖 runtime/blueprint 全量 pair、最终几何与 anchors、统一场 Qi bake。
+- Python overlap policy：3/3 通过；覆盖 runtime/blueprint 全量 pair、最终几何与 anchors、渊口与相邻焦土统一场 Qi bake。
 - Git whitespace：`git diff --check` 通过。
 - Rust/server 与 e2e：本次未运行，P2 因此保持 ⏳，plan 继续留在 active 路径且不归档。
 
