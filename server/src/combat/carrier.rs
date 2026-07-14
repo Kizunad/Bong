@@ -929,13 +929,32 @@ fn projectile_tick_system(
         }
 
         let mut hit: Option<(Entity, f32)> = None;
-        for (target_entity, target_pos, _, _, _, _, _) in &mut targets {
+        for (target_entity, target_pos, _, _, _, target_cultivation, _) in &mut targets {
             if projectile.owner == Some(target_entity) {
                 continue;
             }
+            // plan-race-system-v1 P5/PR-6c —— 粗筛半径按目标当前 body_plan 动态派生
+            // （`body_plan::geometry::bounding_radius`），替换写死的 humanoid 专属
+            // `0.3`（`STANDING_HALF_WIDTH`）：whale 等横长非人构型的真实体积远大于
+            // 人形，固定 0.3 会让弹道在肉眼可见的"打中了"情况下被判定为未命中。
+            // humanoid 目标：`bounding_radius` 对 `HeightBands` 原样吐出
+            // `aabb.half_width`（0.3），与换轨前 bit-for-bit 相同，不回归。
+            let target_body_plan = resolve_body_plan_for_target(
+                target_entity,
+                BodyPlanPurpose::Intrinsic,
+                BodyPlanResolveInputs {
+                    cultivation: target_cultivation,
+                    beast_kind: None,
+                    morph_state: None,
+                },
+                body_plan_registry.as_deref(),
+                race_registry.as_deref(),
+            );
+            let target_radius =
+                crate::body_plan::geometry::bounding_radius(&target_body_plan.hit_geometry);
             let distance_to_segment =
                 segment_point_distance(current, next, target_pos.get() + DVec3::new(0.0, 1.0, 0.0));
-            if distance_to_segment <= f64::from(0.3 + flight.hitbox_inflation) {
+            if distance_to_segment <= f64::from(flight.hitbox_inflation) + target_radius {
                 hit = Some((
                     target_entity,
                     target_pos.get().distance(flight.spawn_pos) as f32,
@@ -2038,6 +2057,147 @@ mod tests {
                 "空隙命中仍应作为 HitTarget 消耗投射物（despawn 恰好一次），实测 {despawns:?}"
             );
             assert_eq!(despawns[0].reason, ProjectileDespawnReason::HitTarget);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // plan-race-system-v1 P5/PR-6c —— 粗筛半径按目标 body_plan 动态派生，用真实
+        // whale.json 目标验证：换轨前写死的 `0.3+ANQI_HITBOX_INFLATION=0.7` 判定不到
+        // 的横向偏移，换轨后（whale 半径 ≈5.74）必须能命中；humanoid 目标半径不回归。
+        // ══════════════════════════════════════════════════════════════════════
+
+        /// 加载真实磁盘 `assets/body_plans/plans/*.json` + `races.json`（而非合成
+        /// fixture）——本组测试要断言的是真实落盘 whale.json 数据驱动出的粗筛半径，
+        /// 不是任意手搓的 PartBoxes 构型。
+        fn real_registries() -> (BodyPlanRegistry, RaceRegistry) {
+            let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            let plans_dir = manifest_dir.join(crate::body_plan::registry::DEFAULT_BODY_PLANS_DIR);
+            let races_path = manifest_dir.join(crate::body_plan::race_registry::DEFAULT_RACES_PATH);
+            let body_plans =
+                BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
+            let races = RaceRegistry::load_file(&races_path, &body_plans)
+                .expect("real races.json should load");
+            (body_plans, races)
+        }
+
+        /// 组装一发沿世界 +X 飞行、在 `lateral_z_offset` 处经过目标的投射，目标携带
+        /// 给定 `race` 的 `Cultivation`（走真实 registries 解析 body_plan）。
+        fn run_lateral_projectile_at_real_target(
+            race: crate::body_plan::RaceId,
+            lateral_z_offset: f64,
+        ) -> (Wounds, Vec<CombatEvent>, Vec<ProjectileDespawnedEvent>) {
+            let (body_plans, races) = real_registries();
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 900 });
+            app.insert_resource(body_plans);
+            app.insert_resource(races);
+            app.add_event::<CombatEvent>();
+            app.add_event::<CarrierImpactEvent>();
+            app.add_event::<ProjectileDespawnedEvent>();
+            app.add_systems(Update, projectile_tick_system);
+
+            let target_feet = DVec3::new(0.0, 64.0, 0.0);
+            // 粗筛 capsule 的固定参照点是 `target_pos + (0,1,0)`，横向偏移全部落在 z
+            // 轴（射线沿世界 +X 飞行，不与该参照点在 x 上重合，只在 z 上偏移）。
+            let spawn_pos = DVec3::new(-3.0, target_feet.y + 1.0, lateral_z_offset);
+            app.world_mut().spawn((
+                Position::new([spawn_pos.x, spawn_pos.y, spawn_pos.z]),
+                QiProjectile {
+                    owner: None,
+                    qi_payload: 20.0,
+                },
+                AnqiProjectileFlight {
+                    carrier_kind: CarrierKind::BoneChip,
+                    qi_color: ColorKind::Sharp,
+                    carrier_grade: CarrierKind::BoneChip.grade(),
+                    spawn_pos,
+                    prev_pos: spawn_pos,
+                    velocity: DVec3::new(100.0, 0.0, 0.0),
+                    max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
+                    hitbox_inflation: ANQI_HITBOX_INFLATION,
+                },
+            ));
+            let target = app
+                .world_mut()
+                .spawn((
+                    Position::new([target_feet.x, target_feet.y, target_feet.z]),
+                    Wounds::default(),
+                    Contamination::default(),
+                    Cultivation {
+                        race,
+                        ..Default::default()
+                    },
+                ))
+                .id();
+
+            app.update();
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap().clone();
+            let combat_events: Vec<CombatEvent> = app
+                .world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            let despawns: Vec<ProjectileDespawnedEvent> = app
+                .world()
+                .resource::<Events<ProjectileDespawnedEvent>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            (wounds, combat_events, despawns)
+        }
+
+        #[test]
+        fn humanoid_target_bounding_radius_does_not_regress_beyond_legacy_fixed_value() {
+            // 换轨前写死的判定半径是 0.3（STANDING_HALF_WIDTH 字面量）+
+            // ANQI_HITBOX_INFLATION(0.4) = 0.7。z 偏移 0.6 应命中（<0.7），0.8 应未命中
+            // （>0.7）——humanoid 目标必须与换轨前 bit-for-bit 一致的判定边界。
+            let (_, _, despawns_hit) = run_lateral_projectile_at_real_target(
+                crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                0.6,
+            );
+            assert_eq!(
+                despawns_hit.first().map(|d| d.reason),
+                Some(ProjectileDespawnReason::HitTarget),
+                "humanoid 目标 z 偏移 0.6（< 换轨前固定阈值 0.7）必须命中，实测 {despawns_hit:?}"
+            );
+
+            let (_, _, despawns_miss) = run_lateral_projectile_at_real_target(
+                crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                0.8,
+            );
+            assert!(
+                despawns_miss
+                    .iter()
+                    .all(|d| d.reason != ProjectileDespawnReason::HitTarget),
+                "humanoid 目标 z 偏移 0.8（> 换轨前固定阈值 0.7）单 tick 内不应产生 HitTarget \
+                 despawn，实测 {despawns_miss:?}"
+            );
+        }
+
+        #[test]
+        fn whale_target_bounding_radius_catches_offsets_that_would_miss_the_legacy_fixed_value() {
+            // whale.json 粗筛半径 ≈5.74（tail_fin 局部 z=-3.74±half 2.0）远大于换轨前
+            // 写死的 0.3——z 偏移 2.0 远超换轨前固定阈值 0.7（必定会被误判为未命中），
+            // 换轨后 whale 目标必须能命中。
+            let (wounds, combat_events, despawns) =
+                run_lateral_projectile_at_real_target(crate::body_plan::RaceId::new("whale"), 2.0);
+            assert_eq!(
+                despawns.first().map(|d| d.reason),
+                Some(ProjectileDespawnReason::HitTarget),
+                "whale 目标 z 偏移 2.0（换轨前固定阈值 0.7 判不到，换轨后动态半径应判到）必须命中，\
+                 实测 {despawns:?}"
+            );
+            assert_eq!(
+                combat_events.len(),
+                1,
+                "whale 目标命中仍应发出恰好一条 CombatEvent，实测 {combat_events:?}"
+            );
+            assert!(
+                wounds.health_current < Wounds::default().health_max,
+                "whale 目标命中应造成伤害（health_current 低于满血），实测 {}",
+                wounds.health_current
+            );
         }
     }
 
