@@ -22,11 +22,15 @@ use std::collections::HashSet;
 use valence::prelude::bevy_ecs::world::World;
 use valence::prelude::{Entity, Events, Position};
 
-use crate::body_plan::{BodyPlanId, BodyPlanRegistry, IntrinsicRace, MeridianProfile, RaceId, RaceRegistry};
+use crate::body_plan::{
+    BodyPlanId, BodyPlanRegistry, IntrinsicRace, MeridianProfile, RaceId, RaceRegistry,
+};
 use crate::cultivation::components::{Cultivation, Meridian, MeridianChannelId, MeridianSystem};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::{prepare_transfer, QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, TransferPlan};
+use crate::qi_physics::{
+    prepare_transfer, QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, TransferPlan,
+};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
@@ -141,7 +145,10 @@ pub fn precheck_race_change(
         realm_requirements: Default::default(),
         dugu_injection: Vec::new(),
     };
-    let new_profile = target_plan.meridian_profile.as_ref().unwrap_or(&empty_profile);
+    let new_profile = target_plan
+        .meridian_profile
+        .as_ref()
+        .unwrap_or(&empty_profile);
 
     let old_race = cultivation.race.clone();
     let mapping = registry.meridian_mapping(&old_race, &target);
@@ -290,8 +297,8 @@ pub fn commit_race_change(world: &mut World, player: Entity, plan: RaceChangeCom
     // 周期节流）——RaceChange 后 client 必须尽快拿到新 race/经脉/qi 快照，不能靠
     // 1s 内的自愈周期兜底（第四时机：真实 RaceChange，见 PR-6a 任务文档）。
     if let Some(mut state) = world
-        .get_resource_mut::<crate::network::cultivation_detail_emit::CultivationDetailEmitState>()
-    {
+        .get_resource_mut::<crate::network::cultivation_detail_emit::CultivationDetailEmitState>(
+    ) {
         state.force_resend_on_next_tick();
     }
 }
@@ -309,9 +316,9 @@ fn apply_qi_excess_release(world: &mut World, player: Entity, release: QiExcessR
             if let Some(zone) = zones.find_zone_mut(zone_name) {
                 let to = QiAccountId::zone(zone.name.clone());
                 let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-                zone.spirit_qi =
-                    ((zone_current + release.transfer.accepted) / QI_ZONE_UNIT_CAPACITY)
-                        .clamp(-1.0, 1.0);
+                zone.spirit_qi = ((zone_current + release.transfer.accepted)
+                    / QI_ZONE_UNIT_CAPACITY)
+                    .clamp(-1.0, 1.0);
                 if release.transfer.accepted > f64::EPSILON {
                     if let Ok(transfer) = QiTransfer::new(
                         from.clone(),
@@ -329,7 +336,8 @@ fn apply_qi_excess_release(world: &mut World, player: Entity, release: QiExcessR
     }
 
     if release.transfer.overflow > f64::EPSILON {
-        let overflow_to = QiAccountId::overflow(format!("race_change_overflow:{}", player.to_bits()));
+        let overflow_to =
+            QiAccountId::overflow(format!("race_change_overflow:{}", player.to_bits()));
         if let Ok(transfer) = QiTransfer::new(
             from,
             overflow_to,
@@ -363,31 +371,35 @@ fn relocate_equipment_for_race(
         .map(|d| d.0)
         .unwrap_or(DimensionKind::Overworld);
 
-    let (stashed, dropped) = world.resource_scope(
-        |world, item_registry: valence::prelude::bevy_ecs::world::Mut<crate::inventory::ItemRegistry>| {
-            world.resource_scope(
-                |world,
-                 mut dropped_registry: valence::prelude::bevy_ecs::world::Mut<
-                    crate::inventory::DroppedLootRegistry,
-                >| {
-                    let Some(mut inventory) =
-                        world.get_mut::<crate::inventory::PlayerInventory>(player)
-                    else {
-                        return (Vec::new(), Vec::new());
-                    };
-                    crate::inventory::enforce_intrinsic_gate_on_morph_release(
-                        &mut inventory,
-                        &item_registry,
-                        &mut dropped_registry,
-                        target_race,
-                        target_is_humanoid,
-                        [player_pos.x, player_pos.y, player_pos.z],
-                        player_dimension,
-                    )
-                },
-            )
-        },
-    );
+    let (stashed, dropped) =
+        world.resource_scope(
+            |world,
+             item_registry: valence::prelude::bevy_ecs::world::Mut<
+                crate::inventory::ItemRegistry,
+            >| {
+                world.resource_scope(
+                    |world,
+                     mut dropped_registry: valence::prelude::bevy_ecs::world::Mut<
+                        crate::inventory::DroppedLootRegistry,
+                    >| {
+                        let Some(mut inventory) =
+                            world.get_mut::<crate::inventory::PlayerInventory>(player)
+                        else {
+                            return (Vec::new(), Vec::new());
+                        };
+                        crate::inventory::enforce_intrinsic_gate_on_morph_release(
+                            &mut inventory,
+                            &item_registry,
+                            &mut dropped_registry,
+                            target_race,
+                            target_is_humanoid,
+                            [player_pos.x, player_pos.y, player_pos.z],
+                            player_dimension,
+                        )
+                    },
+                )
+            },
+        );
     if !stashed.is_empty() || !dropped.is_empty() {
         tracing::info!(
             "[bong][cultivation][race_change] relocate_equipment_for_race entity={player:?} \
@@ -511,7 +523,10 @@ mod tests {
             vec![MeridianMappingDef {
                 from: RaceId::new(HUMAN_RACE_ID),
                 to: RaceId::new("whale"),
-                entries: vec![(MeridianChannelId::new("lung"), MeridianChannelId::new("fin"))],
+                entries: vec![(
+                    MeridianChannelId::new("lung"),
+                    MeridianChannelId::new("fin"),
+                )],
             }],
             &body_plans,
         )
@@ -561,9 +576,7 @@ mod tests {
         assert!(fin.opened, "lung(opened) 映射到 fin，状态应原样迁移");
         assert_eq!(fin.integrity, 0.8);
 
-        let tail = plan
-            .new_meridian_system
-            .get(MeridianChannelId::new("tail"));
+        let tail = plan.new_meridian_system.get(MeridianChannelId::new("tail"));
         assert!(!tail.opened, "tail 无映射来源，应是全新默认（未打通）");
 
         assert_eq!(plan.newly_dormant.len(), 1);
@@ -591,9 +604,7 @@ mod tests {
         let plan = precheck_race_change(app.world(), player, RaceId::new("whale"), &races)
             .expect("precheck should succeed");
 
-        let restored_tail = plan
-            .new_meridian_system
-            .get(MeridianChannelId::new("tail"));
+        let restored_tail = plan.new_meridian_system.get(MeridianChannelId::new("tail"));
         assert_eq!(restored_tail, &dormant_tail);
         assert_eq!(
             plan.restored_from_dormant,
@@ -628,7 +639,10 @@ mod tests {
             .qi_excess_release
             .as_ref()
             .expect("qi_current far exceeds new qi_max, excess release plan expected");
-        assert_eq!(release.zone_name, None, "无 Position/Zone，应路由到 overflow");
+        assert_eq!(
+            release.zone_name, None,
+            "无 Position/Zone，应路由到 overflow"
+        );
         assert_eq!(release.transfer.overflow, 0.0, "overflow 账户容量无上限");
         assert!(plan.new_qi_current <= plan.new_qi_max + f64::EPSILON);
     }
@@ -661,8 +675,15 @@ mod tests {
 
         let err = precheck_race_change(app.world(), player, RaceId::new("no_such_race"), &races)
             .expect_err("unknown race must reject");
-        assert_eq!(err, RaceChangeRejection::UnknownRace(RaceId::new("no_such_race")));
-        assert_eq!(snapshot(&app, player), before, "world must be byte-for-byte unchanged");
+        assert_eq!(
+            err,
+            RaceChangeRejection::UnknownRace(RaceId::new("no_such_race"))
+        );
+        assert_eq!(
+            snapshot(&app, player),
+            before,
+            "world must be byte-for-byte unchanged"
+        );
     }
 
     #[test]
@@ -736,7 +757,10 @@ mod tests {
 
         let err = precheck_race_change(app.world(), player, RaceId::new("whale"), &races)
             .expect_err("NaN qi_current must fail prepare_transfer and reject overall");
-        assert!(matches!(err, RaceChangeRejection::QiTransferPrepareFailed(_)));
+        assert!(matches!(
+            err,
+            RaceChangeRejection::QiTransferPrepareFailed(_)
+        ));
         assert_eq!(snapshot(&app, player), before);
     }
 
@@ -910,8 +934,7 @@ mod tests {
             trivial_plan_with_channels("humanoid", &["lung", "heart"]),
             trivial_plan_without_meridian_profile("mindless"),
         ];
-        let body_plans =
-            BodyPlanRegistry::from_plans(std::mem::take(&mut body_plans_vec)).unwrap();
+        let body_plans = BodyPlanRegistry::from_plans(std::mem::take(&mut body_plans_vec)).unwrap();
         let races = RaceRegistry::from_parts_for_test_with_meridian_mappings(
             vec![
                 RaceEntry {

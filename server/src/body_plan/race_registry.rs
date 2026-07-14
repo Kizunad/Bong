@@ -1065,7 +1065,9 @@ mod tests {
     // ─────────────────────────────────────────────────────────────────────────
 
     fn plan_with_meridian_channels(id: &str, channel_ids: &[&str]) -> BodyPlan {
-        use crate::body_plan::types::{ChannelDef, MeridianFamily, MeridianProfile, RealmMeridianReq};
+        use crate::body_plan::types::{
+            ChannelDef, MeridianFamily, MeridianProfile, RealmMeridianReq,
+        };
 
         let mut plan = plan_with_parts(id, &["core"]);
         plan.meridian_profile = Some(MeridianProfile {
@@ -1118,7 +1120,10 @@ mod tests {
             vec![MeridianMappingDef {
                 from: RaceId::new(HUMAN_RACE_ID),
                 to: RaceId::new("whale"),
-                entries: vec![(MeridianChannelId::new("lung"), MeridianChannelId::new("fin"))],
+                entries: vec![(
+                    MeridianChannelId::new("lung"),
+                    MeridianChannelId::new("fin"),
+                )],
             }],
             &body_plans,
         )
@@ -1209,7 +1214,9 @@ mod tests {
             &body_plans,
         )
         .expect_err("dangling to-race must fail");
-        assert!(matches!(err, RaceLoadError::Invalid(reason) if reason.contains("unknown to-race")));
+        assert!(
+            matches!(err, RaceLoadError::Invalid(reason) if reason.contains("unknown to-race"))
+        );
     }
 
     #[test]
@@ -1259,8 +1266,7 @@ mod tests {
     #[test]
     fn meridian_mapping_one_to_many_from_channel_rejected() {
         // 同一个 from-channel 被两条 entry 同时映射 —— 一对多，禁止。
-        let body_plans =
-            human_and_whale_body_plans_with_channels(&["lung"], &["fin", "tail"]);
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin", "tail"]);
         let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
             human_whale_race_entries(),
             vec![],
@@ -1268,8 +1274,14 @@ mod tests {
                 from: RaceId::new(HUMAN_RACE_ID),
                 to: RaceId::new("whale"),
                 entries: vec![
-                    (MeridianChannelId::new("lung"), MeridianChannelId::new("fin")),
-                    (MeridianChannelId::new("lung"), MeridianChannelId::new("tail")),
+                    (
+                        MeridianChannelId::new("lung"),
+                        MeridianChannelId::new("fin"),
+                    ),
+                    (
+                        MeridianChannelId::new("lung"),
+                        MeridianChannelId::new("tail"),
+                    ),
                 ],
             }],
             &body_plans,
@@ -1284,8 +1296,7 @@ mod tests {
     #[test]
     fn meridian_mapping_many_to_one_to_channel_rejected() {
         // 两个不同 from-channel 映射到同一个 to-channel —— 多对一，禁止。
-        let body_plans =
-            human_and_whale_body_plans_with_channels(&["lung", "heart"], &["fin"]);
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung", "heart"], &["fin"]);
         let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
             human_whale_race_entries(),
             vec![],
@@ -1293,8 +1304,14 @@ mod tests {
                 from: RaceId::new(HUMAN_RACE_ID),
                 to: RaceId::new("whale"),
                 entries: vec![
-                    (MeridianChannelId::new("lung"), MeridianChannelId::new("fin")),
-                    (MeridianChannelId::new("heart"), MeridianChannelId::new("fin")),
+                    (
+                        MeridianChannelId::new("lung"),
+                        MeridianChannelId::new("fin"),
+                    ),
+                    (
+                        MeridianChannelId::new("heart"),
+                        MeridianChannelId::new("fin"),
+                    ),
                 ],
             }],
             &body_plans,

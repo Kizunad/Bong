@@ -878,7 +878,9 @@ mod tests {
         assert!(replaced.is_none(), "首次登记不应有被替换的旧值");
         assert!(p.is_dormant(MeridianId::Lung));
         assert_eq!(p.dormant_count(), 1);
-        let stored = p.dormant(MeridianId::Lung).expect("dormant record should exist");
+        let stored = p
+            .dormant(MeridianId::Lung)
+            .expect("dormant record should exist");
         assert_eq!(stored.opened, true);
         assert_eq!(stored.integrity, 0.73);
         assert_eq!(stored.flow_rate, 5.0);
@@ -951,12 +953,13 @@ mod tests {
         let mut m = Meridian::from_meridian_id(MeridianId::Kidney);
         m.opened = true;
         m.integrity = 0.42;
-        m.cracks.push(crate::cultivation::components::MeridianCrack {
-            severity: 0.3,
-            healing_progress: 0.1,
-            cause: CrackCause::Overload,
-            created_at: 77,
-        });
+        m.cracks
+            .push(crate::cultivation::components::MeridianCrack {
+                severity: 0.3,
+                healing_progress: 0.1,
+                cause: CrackCause::Overload,
+                created_at: 77,
+            });
         p.register_dormant(m.clone());
 
         let s = serde_json::to_string(&p).expect("serialize");

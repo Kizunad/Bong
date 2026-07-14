@@ -16,7 +16,9 @@ use valence::message::SendMessage;
 use valence::prelude::{App, Client, Events, Update};
 
 use crate::body_plan::{RaceId, RaceRegistry};
-use crate::cultivation::race_change::{commit_race_change, precheck_race_change, RaceChangeRejection};
+use crate::cultivation::race_change::{
+    commit_race_change, precheck_race_change, RaceChangeRejection,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RaceCmd {
@@ -60,7 +62,11 @@ pub fn handle_race_cmd(world: &mut valence::prelude::bevy_ecs::world::World) {
 
     let Some(registry) = world.get_resource::<RaceRegistry>().cloned() else {
         for event in pending {
-            reply(world, event.executor, "[dev] race set unavailable: RaceRegistry not loaded");
+            reply(
+                world,
+                event.executor,
+                "[dev] race set unavailable: RaceRegistry not loaded",
+            );
         }
         return;
     };
@@ -94,7 +100,10 @@ pub fn handle_race_cmd(world: &mut valence::prelude::bevy_ecs::world::World) {
                 reply(
                     world,
                     event.executor,
-                    format!("[dev] race set rejected: {}", describe_rejection(&rejection)),
+                    format!(
+                        "[dev] race set rejected: {}",
+                        describe_rejection(&rejection)
+                    ),
                 );
             }
         }
@@ -104,10 +113,14 @@ pub fn handle_race_cmd(world: &mut valence::prelude::bevy_ecs::world::World) {
 fn describe_rejection(rejection: &RaceChangeRejection) -> String {
     match rejection {
         RaceChangeRejection::UnknownRace(id) => format!("unknown race {id}"),
-        RaceChangeRejection::MissingBodyPlanRegistry => "body plan registry unavailable".to_string(),
+        RaceChangeRejection::MissingBodyPlanRegistry => {
+            "body plan registry unavailable".to_string()
+        }
         RaceChangeRejection::UnknownBodyPlan(id) => format!("unknown body plan {id}"),
         RaceChangeRejection::MissingCultivation => "missing Cultivation component".to_string(),
-        RaceChangeRejection::MissingMeridianSystem => "missing MeridianSystem component".to_string(),
+        RaceChangeRejection::MissingMeridianSystem => {
+            "missing MeridianSystem component".to_string()
+        }
         RaceChangeRejection::MeridianMappingSourceMissing(channel) => {
             format!("meridian mapping source channel {channel} missing from entity")
         }
@@ -265,7 +278,8 @@ mod tests {
         assert!(
             chats
                 .iter()
-                .any(|text| text.contains("bot_e2e_no_such_race") && text.contains("unknown race id")),
+                .any(|text| text.contains("bot_e2e_no_such_race")
+                    && text.contains("unknown race id")),
             "非法 race id 必须返回包含原输入的玩家 chat，实际：{chats:?}"
         );
         assert_eq!(
@@ -289,7 +303,9 @@ mod tests {
 
         let chats = flush_and_collect_chat(&mut app, &mut helper);
         assert!(
-            chats.iter().any(|text| text.contains("RaceRegistry not loaded")),
+            chats
+                .iter()
+                .any(|text| text.contains("RaceRegistry not loaded")),
             "缺 RaceRegistry 必须有明确反馈，实际：{chats:?}"
         );
     }
@@ -306,7 +322,9 @@ mod tests {
         let (bundle, mut helper) = create_mock_client("Alice");
         let player = app.world_mut().spawn(bundle).id();
         // 只插入 Cultivation，故意不插入 MeridianSystem。
-        app.world_mut().entity_mut(player).insert(Cultivation::default());
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Cultivation::default());
 
         execute_command(&mut app, &mut helper, "race set human");
 

@@ -118,7 +118,10 @@ mod tests {
     fn overflow_when_amount_exceeds_capacity() {
         let plan = prepare_transfer(50.0, 10.0, 30.0).expect("valid transfer");
         assert_eq!(plan.accepted, 10.0, "只能吃满目标剩余容量");
-        assert_eq!(plan.overflow, 20.0, "超出部分必须完整报告，供调用方路由到别处");
+        assert_eq!(
+            plan.overflow, 20.0,
+            "超出部分必须完整报告，供调用方路由到别处"
+        );
         assert_eq!(
             plan.accepted + plan.overflow,
             30.0,
