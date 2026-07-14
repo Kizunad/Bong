@@ -353,7 +353,7 @@ def _transfer_dimension_same_xyz(
     bot.wait_for(
         lambda event: event.kind == "chat"
         and event.t > after
-        and f"Queued /tpdim {target} at current XYZ." in event.data["text"],
+        and f"Queued /tpdim {target} within current XYZ gate." in event.data["text"],
         timeout=10.0,
         description=f"/tpdim {target} server 权威 transfer 排队反馈",
     )

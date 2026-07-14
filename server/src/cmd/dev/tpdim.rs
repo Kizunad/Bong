@@ -1,8 +1,10 @@
-//! `/tpdim <overworld|tsy>` — 保持裸 XYZ 不变的服务端权威跨维调试命令。
+//! `/tpdim <overworld|tsy>` — 保持在同一裸 XYZ 授权邻域内的权威跨维调试命令。
 //!
 //! 该入口专门用于验证“裸坐标相同也必须按逻辑位面授权”的服务端契约：命令只
 //! emit [`DimensionTransferRequest`]，实际 layer、`CurrentDimension`、`Position` 与
-//! Respawn 仍由正式 dimension-transfer consumer 一次性更新。
+//! Respawn 仍由正式 dimension-transfer consumer 一次性更新。目标 X 会按跨维方向
+//! 偏移 0.25 格，以强制客户端收到可核验的绝对 PositionLook；该距离仍远小于 open
+//! 的 4.5 格旧门限，不能让旧 XYZ-only 实现靠距离拒绝假绿。
 
 use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
@@ -13,6 +15,8 @@ use valence::prelude::{App, Client, EventReader, EventWriter, Position, Query, U
 
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::dimension_transfer::DimensionTransferRequest;
+
+const OBSERVABLE_X_OFFSET: f64 = 0.25;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TpdimCmd {
@@ -65,13 +69,18 @@ pub fn handle_tpdim(
             continue;
         }
 
+        let mut target_pos = position.get();
+        target_pos.x += match target {
+            DimensionKind::Tsy => OBSERVABLE_X_OFFSET,
+            DimensionKind::Overworld => -OBSERVABLE_X_OFFSET,
+        };
         transfers.send(DimensionTransferRequest {
             entity: event.executor,
             target,
-            target_pos: position.get(),
+            target_pos,
         });
         client.send_chat_message(format!(
-            "Queued /tpdim {} at current XYZ.",
+            "Queued /tpdim {} within current XYZ gate.",
             dimension_label(target)
         ));
     }
@@ -140,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn transfer_emits_same_xyz_authoritative_request() {
+    fn transfer_emits_authoritative_request_inside_old_xyz_gate() {
         let mut app = setup_app();
         let player = spawn_player(&mut app, DimensionKind::Overworld);
         send(&mut app, player, "tsy");
@@ -156,7 +165,7 @@ mod tests {
         assert_eq!(collected.len(), 1, "valid /tpdim must emit one transfer");
         assert_eq!(collected[0].entity, player);
         assert_eq!(collected[0].target, DimensionKind::Tsy);
-        assert_eq!(collected[0].target_pos, DVec3::new(8.0, 96.0, -3.0));
+        assert_eq!(collected[0].target_pos, DVec3::new(8.25, 96.0, -3.0));
     }
 
     #[test]
