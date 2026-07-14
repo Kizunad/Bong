@@ -26,6 +26,8 @@ DESCRIPTION = "回元丹双入口吃丹：qi_current 回升可观察 + 丹扣存
 MODULES = ["alchemy", "cultivation", "inventory"]
 
 PILL_ID = "huiyuan_pill"
+NON_CLAMP_EXPECTED_QI = 65.0
+NON_CLAMP_QI_TOLERANCE = 0.05
 
 
 def _qi_current_after(
@@ -69,22 +71,24 @@ def run(env) -> None:
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
         bot.cmd("qi max 100")
-        bot.cmd("qi set 5")
         bot.cmd(f"give {PILL_ID} 3")
         wait_inventory_contains(bot, PILL_ID)
 
         # ── 入口①：alchemy_take_pill（template_id 路径）──────────
+        bot.cmd("qi set 5")
+        bot.expect_chat("[dev] qi set", timeout=10.0)
         anchor = last_event_time(bot)
         bot.intent({"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID})
         qi_after_first = _qi_current_after(bot, anchor, baseline=5.0, minimum=65.0)
-        assert qi_after_first >= 65.0, (
-            f"回元丹（qi_recovery magnitude=60）吃下后 qi_current 应从 5 恢复到至少 65，"
-            f"实际 {qi_after_first}——效果链断或快照未 resync"
+        assert abs(qi_after_first - NON_CLAMP_EXPECTED_QI) <= NON_CLAMP_QI_TOLERANCE, (
+            "回元丹（qi_recovery magnitude=60）吃下后 qi_current 应从 5 恢复到 "
+            f"{NON_CLAMP_EXPECTED_QI}±{NON_CLAMP_QI_TOLERANCE}（容差仅覆盖指令确认后的微量自然回气），"
+            f"实际 {qi_after_first}——效果链断、重复生效或恢复量错误"
         )
 
         # ── 入口②：apply_pill（instance_id 路径）─────────────────
         bot.cmd("qi set 5")
-        time.sleep(0.5)
+        bot.expect_chat("[dev] qi set", timeout=10.0)
         snapshot = latest_inventory_snapshot(bot)
         pill = require_item(snapshot, PILL_ID)
         anchor = last_event_time(bot)
@@ -97,14 +101,15 @@ def run(env) -> None:
             }
         )
         qi_after_second = _qi_current_after(bot, anchor, baseline=5.0, minimum=65.0)
-        assert qi_after_second >= 65.0, (
-            f"apply_pill(instance) 路径同样应从 5 恢复到至少 65，实际 {qi_after_second}——"
-            f"双入口只修一条是半截修复"
+        assert abs(qi_after_second - NON_CLAMP_EXPECTED_QI) <= NON_CLAMP_QI_TOLERANCE, (
+            "apply_pill(instance) 路径同样应从 5 恢复到 "
+            f"{NON_CLAMP_EXPECTED_QI}±{NON_CLAMP_QI_TOLERANCE}，实际 {qi_after_second}——"
+            "双入口只修一条、重复生效或恢复量错误"
         )
 
         # ── 边界：qi 接近上限时吃丹 clamp 到 qi_max，不得溢出 ────
         bot.cmd("qi set 95")
-        time.sleep(0.5)
+        bot.expect_chat("[dev] qi set", timeout=10.0)
         anchor = last_event_time(bot)
         bot.intent({"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID})
         qi_after_clamp = _qi_current_after(bot, anchor, baseline=95.0, minimum=100.0)
