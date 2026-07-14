@@ -333,6 +333,30 @@ pub fn classify_part_boxes_point(
     best.map(|(_priority, index)| &boxes[index].part_id)
 }
 
+/// plan-race-system-v1 P5/PR-6c —— 给定目标 [`super::types::HitGeometry`]，算出一个
+/// 保守的标量"粗筛半径"（供 `combat::carrier` 投射物命中的广义相位距离检测替换写死的
+/// `ANQI_HITBOX_INFLATION` 常量——该常量原假设全体目标都是 humanoid 直立 1.8m/0.3
+/// half_width 的比例，对 whale 这类横长非人构型严重失配）。
+///
+/// - `HeightBands`：直接取 `aabb.half_width`——与 `combat::carrier` 换轨前的写死值
+///   `0.3` bit-for-bit 相同（humanoid 目标半径不回归）。
+/// - `PartBoxes`：`max(|offset[axis]| + half_extents[axis])`，逐盒逐轴取最大——用单轴
+///   上离局部原点最远的盒边界作为保守半径（未做真正的向量长度/球外接半径计算，因为
+///   `carrier` 消费点本身就是用一个标量阈值和"点到线段距离"比较,标量粗筛只需要"不会
+///   漏判命中"这个保守性质，不需要精确外接球）。空盒集合（理论上 `validate_body_plan`
+///   已禁止 `PartBoxes` 空 boxes，但函数本身仍防御性处理）返回 `0.0`。
+pub fn bounding_radius(hit_geometry: &super::types::HitGeometry) -> f64 {
+    match hit_geometry {
+        super::types::HitGeometry::HeightBands { aabb, .. } => aabb.half_width,
+        super::types::HitGeometry::PartBoxes { boxes } => boxes
+            .iter()
+            .flat_map(|part_box| {
+                (0..3).map(|axis| part_box.offset[axis].abs() + part_box.half_extents[axis])
+            })
+            .fold(0.0_f64, f64::max),
+    }
+}
+
 /// containment-only 场景下的裁决：所有候选距离恒为 0（都真正包含该点），只需比较
 /// `priority`（越大越优先），再等则声明顺序越靠前越优先——与 [`pick_better`] 的第二/
 /// 第三裁决层级完全一致，抽成独立的二元组版本，避免为了复用三元组裁决器而给不存在的
@@ -1354,5 +1378,248 @@ mod tests {
                 "yaw={yaw_degrees} 平移+旋转后应仍命中 front（局部系不变性）"
             );
         }
+    }
+
+    // ───────────────────────── bounding_radius ─────────────────────────
+
+    #[test]
+    fn bounding_radius_height_bands_returns_half_width_unchanged() {
+        // 换轨前 `combat::carrier::ANQI_HITBOX_INFLATION` 搭配的隐式 humanoid 半径
+        // 就是 `STANDING_HALF_WIDTH=0.3`——bounding_radius 对 HeightBands 必须原样
+        // 吐出 aabb.half_width，不做任何额外膨胀，humanoid 目标粗筛半径 bit-for-bit
+        // 不回归。
+        let geometry = super::super::types::HitGeometry::HeightBands {
+            aabb: super::super::types::StandingAabbSpec {
+                half_width: 0.3,
+                height: 1.8,
+            },
+            bands: vec![HeightBand {
+                min_rel_y: -1.0,
+                assignment: HeightBandAssignment::Single {
+                    part: "core".into(),
+                },
+            }],
+            lateral_threshold: 0.19,
+        };
+        assert_eq!(bounding_radius(&geometry), 0.3);
+    }
+
+    #[test]
+    fn bounding_radius_real_humanoid_plan_matches_legacy_hardcoded_half_width() {
+        // 真实 humanoid.json 对拍：与 carrier 换轨前写死的 0.3 一致。
+        let plan = crate::body_plan::registry::humanoid_plan_static();
+        assert_eq!(bounding_radius(&plan.hit_geometry), 0.3);
+    }
+
+    #[test]
+    fn bounding_radius_part_boxes_takes_max_of_offset_plus_half_extent_across_axes_and_boxes() {
+        let boxes = vec![
+            PartBox {
+                part_id: "small".into(),
+                offset: [0.0, 0.0, 1.0],
+                half_extents: [0.2, 0.2, 0.2],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "large".into(),
+                offset: [3.0, 0.0, 0.0],
+                half_extents: [1.0, 0.5, 0.5],
+                priority: 0,
+            },
+        ];
+        let geometry = super::super::types::HitGeometry::PartBoxes { boxes };
+        // 最大候选 = |3.0| + 1.0 = 4.0（"large" 盒 x 轴），必须压过其余更小候选。
+        assert_eq!(bounding_radius(&geometry), 4.0);
+    }
+
+    #[test]
+    fn bounding_radius_part_boxes_negative_offset_uses_absolute_value() {
+        let boxes = vec![PartBox {
+            part_id: "left".into(),
+            offset: [-2.5, 0.0, 0.0],
+            half_extents: [0.3, 0.3, 0.3],
+            priority: 0,
+        }];
+        let geometry = super::super::types::HitGeometry::PartBoxes { boxes };
+        assert_eq!(
+            bounding_radius(&geometry),
+            2.8,
+            "负 offset 必须取绝对值参与比较（|-2.5|+0.3=2.8）"
+        );
+    }
+
+    #[test]
+    fn bounding_radius_part_boxes_empty_defensively_returns_zero() {
+        // validate_body_plan 已禁止空 boxes 落盘,但函数本身不假设调用方已校验。
+        let geometry = super::super::types::HitGeometry::PartBoxes { boxes: vec![] };
+        assert_eq!(bounding_radius(&geometry), 0.0);
+    }
+
+    #[test]
+    fn bounding_radius_real_whale_plan_exceeds_real_humanoid_plan() {
+        // plan-race-system-v1 P5/PR-6c 核心回归目标：whale（横长非人构型）的粗筛半径
+        // 必须显著大于 humanoid,证明 carrier 不再对巨型构型使用与人形相同的固定半径。
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let whale_json = std::fs::read_to_string(
+            manifest_dir.join("assets/body_plans/plans/whale.json"),
+        )
+        .expect("real whale.json should exist");
+        let whale_plan: super::super::types::BodyPlan =
+            serde_json::from_str(&whale_json).expect("real whale.json should parse");
+        crate::body_plan::validate::validate_body_plan(&whale_plan)
+            .expect("real whale.json must pass validate_body_plan");
+
+        let humanoid_plan = crate::body_plan::registry::humanoid_plan_static();
+        let whale_radius = bounding_radius(&whale_plan.hit_geometry);
+        let humanoid_radius = bounding_radius(&humanoid_plan.hit_geometry);
+        assert!(
+            whale_radius > humanoid_radius,
+            "whale 粗筛半径 {whale_radius} 必须大于 humanoid {humanoid_radius}"
+        );
+    }
+
+    // ───────────────────── whale.json PartBoxes 锚测试（4 类） ─────────────────────
+    //
+    // plan-race-system-v1 P5/PR-6c —— 直接从磁盘加载真实 `plans/whale.json`,对
+    // `raycast_part_boxes` 做 4 类几何锚点验证（不复用抽象 fixture,锁的是本 PR 真实
+    // 落盘的部位几何数据本身）：
+    // ① 左右胸鳍同高度能区分 ② 头尾纵向命中 ③ 边界擦触 ④ 重叠区取最近交点/priority。
+
+    fn load_real_whale_boxes() -> Vec<PartBox> {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let whale_json =
+            std::fs::read_to_string(manifest_dir.join("assets/body_plans/plans/whale.json"))
+                .expect("real whale.json should exist");
+        let whale_plan: super::super::types::BodyPlan =
+            serde_json::from_str(&whale_json).expect("real whale.json should parse");
+        match whale_plan.hit_geometry {
+            super::super::types::HitGeometry::PartBoxes { boxes } => boxes,
+            other => panic!("whale.json must use PartBoxes hit_geometry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn whale_anchor_left_and_right_pectoral_fin_distinguished_at_same_height() {
+        let boxes = load_real_whale_boxes();
+        let entity_position = DVec3::new(10.0, 70.0, -20.0);
+        let yaw = 0.0;
+
+        // 射线从上方垂直下砸，落在 left_pectoral_fin 局部偏移 x=-1.42 附近（负 x）。
+        let left_ray_origin = entity_position + DVec3::new(-1.42, 20.0, -0.31);
+        let left_hit = raycast_part_boxes(
+            left_ray_origin,
+            DVec3::new(0.0, -1.0, 0.0),
+            30.0,
+            entity_position,
+            yaw,
+            &boxes,
+        )
+        .expect("must hit left_pectoral_fin from directly above");
+        assert_eq!(left_hit.part_id, BodyPartId::new("left_pectoral_fin"));
+
+        // 同一高度,镜像到正 x（right_pectoral_fin）。
+        let right_ray_origin = entity_position + DVec3::new(1.42, 20.0, -0.31);
+        let right_hit = raycast_part_boxes(
+            right_ray_origin,
+            DVec3::new(0.0, -1.0, 0.0),
+            30.0,
+            entity_position,
+            yaw,
+            &boxes,
+        )
+        .expect("must hit right_pectoral_fin from directly above");
+        assert_eq!(right_hit.part_id, BodyPartId::new("right_pectoral_fin"));
+        assert_ne!(
+            left_hit.part_id, right_hit.part_id,
+            "左右胸鳍必须在同一高度被区分为不同部位"
+        );
+    }
+
+    #[test]
+    fn whale_anchor_head_and_tail_longitudinal_hit() {
+        let boxes = load_real_whale_boxes();
+        let entity_position = DVec3::new(0.0, 80.0, 0.0);
+        let yaw = 0.0;
+
+        // 头部（skull，局部 z=+1.67）。
+        let skull_origin = entity_position + DVec3::new(0.0, 20.0, 1.67);
+        let skull_hit = raycast_part_boxes(
+            skull_origin,
+            DVec3::new(0.0, -1.0, 0.0),
+            30.0,
+            entity_position,
+            yaw,
+            &boxes,
+        )
+        .expect("must hit skull at the front");
+        assert_eq!(skull_hit.part_id, BodyPartId::new("skull"));
+
+        // 尾部（tail_fin，局部 z=-3.74）。
+        let tail_origin = entity_position + DVec3::new(0.0, 20.0, -3.74);
+        let tail_hit = raycast_part_boxes(
+            tail_origin,
+            DVec3::new(0.0, -1.0, 0.0),
+            30.0,
+            entity_position,
+            yaw,
+            &boxes,
+        )
+        .expect("must hit tail_fin at the back");
+        assert_eq!(tail_hit.part_id, BodyPartId::new("tail_fin"));
+    }
+
+    #[test]
+    fn whale_anchor_grazing_boundary_hit_registers() {
+        let boxes = load_real_whale_boxes();
+        let entity_position = DVec3::new(5.0, 64.0, -3.0);
+        let yaw = 0.0;
+
+        // skull 盒：offset=[0,0.72,1.67] half_extents=[0.5,0.53,1.13]。贴着 y 上边界
+        // （0.72+0.53=1.25）水平掠过局部 z=1.67（skull 中心线）。
+        let ray_origin = entity_position + DVec3::new(-5.0, 1.25, 1.67);
+        let hit = raycast_part_boxes(
+            ray_origin,
+            DVec3::new(1.0, 0.0, 0.0),
+            20.0,
+            entity_position,
+            yaw,
+            &boxes,
+        );
+        assert!(
+            hit.is_some(),
+            "贴着 skull 盒上边界的射线应仍判定命中（闭区间）,实测 {hit:?}"
+        );
+        assert_eq!(hit.unwrap().part_id, BodyPartId::new("skull"));
+    }
+
+    #[test]
+    fn whale_anchor_overlap_zone_prefers_nearest_intersection() {
+        let boxes = load_real_whale_boxes();
+        let entity_position = DVec3::new(0.0, 90.0, 0.0);
+        let yaw = 0.0;
+
+        // torso（offset=[0,0.63,-0.66] half=[0.56,0.69,1.22]，局部 y∈[-0.06,1.32]）与
+        // left_pectoral_fin（offset=[-1.42,0.14,-0.31] half=[1.26,0.67,0.74]，局部
+        // y∈[-0.53,0.81]）在 (x=-0.4, z=-0.4) 这一列 x/z 都真实重叠（两盒的 x/z 范围
+        // 在该点均覆盖，见 whale.json 设计注记），唯独 y 范围不同——left_pectoral_fin
+        // 的下边界（-0.53）比 torso 的下边界（-0.06）更低。从两盒下方垂直上射，必须
+        // 先命中 left_pectoral_fin（真实最近交点，非 priority 凑效——距离不等时
+        // priority 从不参与裁决，只有等距才轮到它，见 `pick_better`）。
+        let ray_origin = entity_position + DVec3::new(-0.4, -20.0, -0.4);
+        let hit = raycast_part_boxes(
+            ray_origin,
+            DVec3::new(0.0, 1.0, 0.0),
+            30.0,
+            entity_position,
+            yaw,
+            &boxes,
+        )
+        .expect("overlap column ray must hit something");
+        assert_eq!(
+            hit.part_id,
+            BodyPartId::new("left_pectoral_fin"),
+            "torso/left_pectoral_fin 重叠列必须按真实最近交点命中 left_pectoral_fin（其下边界 \
+             -0.53 比 torso 的 -0.06 更早被自下而上的射线触及）"
+        );
     }
 }
