@@ -86,7 +86,7 @@
 - ✅ `cd worldgen && python3 -m unittest discover -s tests -p 'test_zone_overlap_policy.py' -v`：`Ran 3 tests`，全部 `OK`（2026-07-14）。
 - ✅ `git diff --check`：通过（2026-07-14）。
 - ✅ `cd server && cargo test world::zone`：45 passed，0 failed，0 ignored（2026-07-14）。
-- ✅ `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：fmt 通过；clippy 0 warning；lib 11633 passed / 0 failed / 1 ignored，main 11 passed，`full_app_startup` 1 passed，`tarkov_backpack_p0_e2e` 4 passed，doc tests 0 failed / 5 ignored（2026-07-14）。
+- ✅ `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：fmt 通过；clippy 0 warning；lib 11648 passed / 0 failed / 1 ignored，main 11 passed，`full_app_startup` 1 passed，`tarkov_backpack_p0_e2e` 4 passed，doc tests 0 failed / 5 ignored（2026-07-14）。
 - ⏸ `bash scripts/smoke-test-e2e.sh`：按调度约束留给主 agent 在 PR 后串行执行，不作为本次 P2 本地归档前置门禁。
 
 ## Finish Evidence
@@ -106,14 +106,14 @@
 - `bd968115`（2026-07-14）— 将三条 overlap 守护迁为 unittest 并纳入 worldgen preview CI。
 - `2ef556e3`、`f0b33148`（2026-07-14）— 收紧运行时点位/边界断言，并直接 pin 两块 AABB 严格分离。
 - `239af8d5`（2026-07-14）— 修正运行时 pin 的 AABB 边界解构并保持断言可编译。
-- `940d4a06`（2026-07-14）— 无冲突合并最新 `origin/main`，在合并后 HEAD 上完成本次全量验收。
+- `6fb53819`（2026-07-14）— 无冲突合并 `origin/main@4ad0c170`，在最终合并后 HEAD 上完成本次全量验收。
 
 ### 测试结果
 
 - Python overlap policy：3/3 通过；覆盖 runtime/blueprint 全量 pair、最终几何与 anchors、渊口与相邻焦土统一场 Qi bake。
 - Git whitespace：`git diff --check` 通过。
 - Rust zone 窄测：45 passed，0 failed，0 ignored。
-- Rust 完整门禁：fmt 通过；clippy `--all-targets -- -D warnings` 通过；lib 11633 passed / 0 failed / 1 ignored，main 11 passed，`full_app_startup` 1 passed，`tarkov_backpack_p0_e2e` 4 passed，doc tests 0 failed / 5 ignored。
+- Rust 完整门禁：fmt 通过；clippy `--all-targets -- -D warnings` 通过；lib 11648 passed / 0 failed / 1 ignored，main 11 passed，`full_app_startup` 1 passed，`tarkov_backpack_p0_e2e` 4 passed，doc tests 0 failed / 5 ignored。
 
 ### 跨仓库核验
 
