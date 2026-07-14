@@ -1896,14 +1896,16 @@ mod zone_tests {
         let scorch = registry
             .find_zone_by_name("north_waste_east_scorch")
             .expect("north scorch zone must remain registered");
+        let (rift_min, rift_max) = rift.bounds;
+        let (scorch_min, scorch_max) = scorch.bounds;
 
         assert!(
-            rift.bounds.max.x < scorch.bounds.min.x
-                || scorch.bounds.max.x < rift.bounds.min.x
-                || rift.bounds.max.y < scorch.bounds.min.y
-                || scorch.bounds.max.y < rift.bounds.min.y
-                || rift.bounds.max.z < scorch.bounds.min.z
-                || scorch.bounds.max.z < rift.bounds.min.z,
+            rift_max.x < scorch_min.x
+                || scorch_max.x < rift_min.x
+                || rift_max.y < scorch_min.y
+                || scorch_max.y < rift_min.y
+                || rift_max.z < scorch_min.z
+                || scorch_max.z < rift_min.z,
             "north rift and scorch AABBs must remain strictly separated on at least one axis"
         );
         assert!(
