@@ -12655,12 +12655,15 @@ mod tests {
                 target: None,
                 issued_at_tick: 499,
                 reach: AttackReach::new(6.0, 0.6),
-                qi_invest: 0.0,
+                // 蛊毒污染只在**非物理**打击写入（resolve.rs `emitted_contam_delta =
+                // if is_physical_hit { 0.0 }`，is_physical_hit = qi_invest <= EPSILON）。
+                // 故这里必须走 qi 投入的非物理攻击，物理近战恒 0 污染、无法验证 channel 路由。
+                qi_invest: 5.0,
                 wound_kind: WoundKind::Cut,
                 source: AttackSource::Melee,
                 debug_command: Some(crate::player::gameplay::CombatAction {
                     target: "DuguProdTarget".to_string(),
-                    qi_invest: 0.0,
+                    qi_invest: 5.0,
                 }),
             });
             app.update();
@@ -12673,7 +12676,7 @@ mod tests {
             assert_eq!(
                 contamination.entries.len(),
                 1,
-                "a valid melee hit on the synthetic beast's declared body part should write \
+                "a valid qi (non-physical) hit on the synthetic beast's declared body part should write \
                  exactly one contamination entry"
             );
             assert_eq!(
