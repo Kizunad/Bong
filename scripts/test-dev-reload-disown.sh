@@ -8,6 +8,7 @@ mkdir -p "$TEST_TMP_PARENT"
 TEST_ROOT="$(mktemp -d "$TEST_TMP_PARENT/bong-dev-reload-disown.XXXXXX")"
 STUB_SCRIPT="$TEST_ROOT/server-stub.sh"
 LAUNCHER_SCRIPT="$TEST_ROOT/launcher.sh"
+LAUNCHER_STDIN="$TEST_ROOT/launcher.stdin"
 ACTIVE_CHILD_PID=""
 ACTIVE_LAUNCHER_PID=""
 
@@ -72,31 +73,24 @@ printf 'ready\n' > "$READY_FILE"
 exec sleep 30
 STUB
 chmod +x "$STUB_SCRIPT"
+: > "$LAUNCHER_STDIN"
 
 cat > "$LAUNCHER_SCRIPT" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
 source "$DEV_RELOAD"
 
-forward_hup_to_jobs() {
-    local job_pid
-
-    trap - HUP
-    printf 'handled\n' > "$HUP_MARKER_FILE"
-    while IFS= read -r job_pid; do
-        kill -HUP "$job_pid" 2>/dev/null || true
-    done < <(jobs -p)
-    exit 129
+run_stub_server() {
+    exec "$STUB_SCRIPT"
 }
-trap forward_hup_to_jobs HUP
 
 case "$TEST_MODE" in
     attached)
-        "$STUB_SCRIPT" &
+        "$STUB_SCRIPT" <&0 &
         child_pid=$!
         ;;
     detached)
-        launch_detached_job "$STUB_SCRIPT"
+        launch_detached_job run_stub_server
         child_pid="$DETACHED_PID"
         ;;
     *)
@@ -120,9 +114,12 @@ run_hup_case() {
     local child_pid_file="$case_root/child.pid"
     local launcher_pid_file="$case_root/launcher.pid"
     local ready_file="$case_root/ready"
-    local hup_marker_file="$case_root/hup-handled"
     local launcher_log="$case_root/launcher.log"
     local spawned_launcher_pid
+    local launcher_pgid
+    local child_pgid
+    local child_command
+    local child_stdin
 
     mkdir -p "$case_root"
     export DEV_RELOAD STUB_SCRIPT
@@ -130,9 +127,9 @@ run_hup_case() {
     export CHILD_PID_FILE="$child_pid_file"
     export LAUNCHER_PID_FILE="$launcher_pid_file"
     export READY_FILE="$ready_file"
-    export HUP_MARKER_FILE="$hup_marker_file"
 
-    bash "$LAUNCHER_SCRIPT" > "$launcher_log" 2>&1 &
+    setsid bash "$LAUNCHER_SCRIPT" < "$LAUNCHER_STDIN" \
+        > "$launcher_log" 2>&1 &
     ACTIVE_LAUNCHER_PID=$!
     spawned_launcher_pid="$ACTIVE_LAUNCHER_PID"
 
@@ -149,10 +146,28 @@ run_hup_case() {
     process_is_running "$ACTIVE_CHILD_PID" || fail "$mode child exited before SIGHUP"
     process_is_running "$ACTIVE_LAUNCHER_PID" || fail "$mode launcher exited before SIGHUP"
 
-    kill -HUP "$ACTIVE_LAUNCHER_PID"
+    launcher_pgid="$(ps -o pgid= -p "$ACTIVE_LAUNCHER_PID" | tr -d '[:space:]')"
+    child_pgid="$(ps -o pgid= -p "$ACTIVE_CHILD_PID" | tr -d '[:space:]')"
+    [[ "$launcher_pgid" =~ ^[0-9]+$ ]] || fail "$mode launcher has invalid pgid"
+    [ "$child_pgid" = "$launcher_pgid" ] \
+        || fail "$mode child must begin in the launcher's HUP-exposed process group"
+    child_command="$(ps -o comm= -p "$ACTIVE_CHILD_PID" | tr -d '[:space:]')"
+    [ "$child_command" = sleep ] \
+        || fail "$mode returned wrapper pid instead of final stub process: $child_command"
+    child_stdin="$(readlink "/proc/$ACTIVE_CHILD_PID/fd/0")"
+    if [ "$mode" = detached ]; then
+        [ "$child_stdin" = /dev/null ] \
+            || fail "detached child stdin must be /dev/null, actual $child_stdin"
+    else
+        [ "$child_stdin" = "$LAUNCHER_STDIN" ] \
+            || fail "attached control must inherit launcher stdin, actual $child_stdin"
+    fi
+
+    # Direct kernel delivery to the shared process group models a terminal
+    # foreground-group hangup. It does not consult Bash's job table.
+    kill -HUP -- "-$launcher_pgid"
     wait_for_process_exit "$ACTIVE_LAUNCHER_PID" \
         || fail "$mode launcher did not exit after SIGHUP"
-    wait_for_file "$hup_marker_file" "$mode SIGHUP handler"
 
     if [ "$expect_child_alive" = true ]; then
         process_is_running "$ACTIVE_CHILD_PID" \
@@ -168,8 +183,10 @@ run_hup_case() {
     ACTIVE_LAUNCHER_PID=""
 }
 
-# The negative control proves that the launcher's SIGHUP path reaches jobs which
-# remain in its job table. The production helper must remove its job first.
+command -v setsid >/dev/null 2>&1 || fail "util-linux setsid command is required"
+
+# Both children start in the launcher's process group. The negative control dies
+# on direct group HUP; the production path survives via its inherited HUP ignore.
 run_hup_case attached false
 run_hup_case detached true
 

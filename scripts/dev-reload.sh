@@ -44,7 +44,11 @@ launch_detached_job() {
         return 1
     fi
 
-    "$@" &
+    (
+        trap '' HUP
+        exec < /dev/null
+        "$@"
+    ) &
     pid=$!
     if ! detach_background_job "$pid"; then
         kill "$pid" 2>/dev/null || true
@@ -157,7 +161,8 @@ if [ -f "$TSY_MANIFEST_ABS" ]; then
 fi
 run_bong_server() {
     cd server
-    env "${ENV_ARGS[@]}" cargo run > /tmp/bong-server.log 2>&1
+    exec env "${ENV_ARGS[@]}" ./target/debug/bong-server \
+        > /tmp/bong-server.log 2>&1
 }
 launch_detached_job run_bong_server
 SERVER_PID="$DETACHED_PID"
