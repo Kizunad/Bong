@@ -177,6 +177,7 @@ mod tests {
                 "ping",
                 "preview_tp",
                 "qi",
+                "race",
                 "rat",
                 "realm",
                 "reset",

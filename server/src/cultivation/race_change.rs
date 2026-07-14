@@ -757,7 +757,6 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(body_plans);
         let player = spawn_human_player(&mut app, f64::NAN, 100.0);
-        let before = snapshot(&app, player);
 
         let err = precheck_race_change(app.world(), player, RaceId::new("whale"), &races)
             .expect_err("NaN qi_current must fail prepare_transfer and reject overall");
@@ -765,7 +764,20 @@ mod tests {
             err,
             RaceChangeRejection::QiTransferPrepareFailed(_)
         ));
-        assert_eq!(snapshot(&app, player), before);
+        // 不能用 snapshot 整体 PartialEq 对拍——qi_current 是 NaN，NaN != NaN 会让
+        // "零变更"断言恒假。改为逐字段断言：precheck 只读，race/qi_max/经脉必须原值，
+        // qi_current 仍是那颗 NaN（未被 commit 触碰）。
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(cultivation.race, RaceId::new(HUMAN_RACE_ID));
+        assert_eq!(cultivation.qi_max, 100.0);
+        assert!(cultivation.qi_current.is_nan(), "qi_current 应仍是未被触碰的 NaN");
+        assert!(app
+            .world()
+            .get::<MeridianSystem>(player)
+            .unwrap()
+            .contains(MeridianChannelId::new("lung")));
+        // precheck 不得写 IntrinsicRace（那是 commit 的职责）。
+        assert!(app.world().get::<IntrinsicRace>(player).is_none());
     }
 
     #[test]
