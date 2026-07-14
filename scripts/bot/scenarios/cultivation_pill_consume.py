@@ -190,7 +190,7 @@ def _consume_and_assert_once(bot, intent: dict, baseline_event, expected_qi: flo
         ),
     )
     authoritative_qi = _player_state_qi(authoritative)
-    assert authoritative_qi is not None
+    assert authoritative_qi is not None, "服丹后必须解析出权威 player_state.spirit_qi"
     assert abs(authoritative_qi - expected_qi) <= NON_CLAMP_QI_TOLERANCE, (
         f"服丹后首个新权威值应为 {expected_qi}±{NON_CLAMP_QI_TOLERANCE}，"
         f"实际 {authoritative_qi}"
@@ -227,7 +227,12 @@ def run(env) -> None:
             timeout=10.0,
             description="give 后 inventory_snapshot 中 huiyuan_pill stack_count=3",
         ).data["payload"]
-        assert int(require_item(initial_inventory, PILL_ID)["item"]["stack_count"]) == 3
+        initial_count = int(
+            require_item(initial_inventory, PILL_ID)["item"]["stack_count"]
+        )
+        assert initial_count == 3, (
+            f"give 后应持有 3 枚 {PILL_ID}，实际 {initial_count}"
+        )
 
         # ── 入口①：alchemy_take_pill（template_id 路径）──────────
         first_baseline = _set_qi_and_wait(bot, 5.0)

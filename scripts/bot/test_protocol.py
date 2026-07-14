@@ -36,6 +36,7 @@ from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     _assert_settled_consumption,
     _has_departed_baseline,
     _is_qi_set_confirmation,
+    _set_qi_and_wait,
 )
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
@@ -316,6 +317,26 @@ class _FakeBot:
         raise AssertionError(f"未找到 {description}; events={self.events}")
 
 
+class _CommandFakeBot(_FakeBot):
+    def __init__(self, events: list[_FakeEvent], pending: list[_FakeEvent]):
+        super().__init__(events)
+        self._lock = threading.Lock()
+        self.pending = list(pending)
+        self.commands: list[str] = []
+
+    def cmd(self, command: str) -> None:
+        self.commands.append(command)
+
+    def wait_for(self, predicate, timeout: float, description: str) -> _FakeEvent:
+        while True:
+            for event in self.events:
+                if predicate(event):
+                    return event
+            if not self.pending:
+                raise AssertionError(f"未找到 {description}; events={self.events}")
+            self.events.append(self.pending.pop(0))
+
+
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
     return _FakeEvent(
         t,
@@ -394,26 +415,26 @@ class CultivationPillScenarioTest(unittest.TestCase):
         )
 
     def test_authoritative_qi_wait_uses_command_anchor_not_chat_order(self):
-        source = pathlib.Path(
-            os.path.join(
-                os.path.dirname(__file__),
-                "scenarios",
-                "cultivation_pill_consume.py",
-            )
-        ).read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        function = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "_set_qi_and_wait"
+        authoritative = _player_state_event(1.1, 5.0)
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史事件"})],
+            [
+                authoritative,
+                _FakeEvent(1.2, "chat", {"text": "[dev] qi set 95.0 -> 5.0"}),
+            ],
         )
-        final_return = next(
-            node for node in reversed(function.body) if isinstance(node, ast.Return)
+
+        result = _set_qi_and_wait(bot, 5.0)
+
+        self.assertIs(
+            result,
+            authoritative,
+            "player_state 可能与 chat 同 tick 乱序，权威 qi 等待必须锚定发命令前水位线",
         )
         self.assertEqual(
-            ast.unparse(final_return.value),
-            "_wait_authoritative_qi(bot, anchor, value)",
-            "player_state 可能与 chat 同 tick 乱序，权威 qi 等待必须锚定发命令前水位线",
+            bot.commands,
+            ["qi set 5.0"],
+            "场景必须只发一次精确目标的 qi set 命令",
         )
 
     def test_stale_same_tick_baseline_is_not_new_authoritative_value(self):
