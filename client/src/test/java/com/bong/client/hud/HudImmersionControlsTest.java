@@ -13,35 +13,48 @@ import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HudImmersionControlsTest {
     @BeforeEach
     void resetBeforeTest() {
+        KeyBinding.unpressAll();
+        HudImmersionControls.resetControlsForTests();
         HudImmersionMode.resetForTests();
     }
 
     @AfterEach
     void resetAfterTest() {
+        KeyBinding.unpressAll();
+        HudImmersionControls.resetControlsForTests();
         HudImmersionMode.resetForTests();
     }
 
     @Test
-    void registersUnboundToggleThroughProvidedRegistrar() {
-        List<KeyBinding> captured = new ArrayList<>();
+    void installsRegistrarResultAndConsumesIt() {
+        List<KeyBinding> definitions = new ArrayList<>();
 
-        KeyBinding registered = HudImmersionControls.registerToggleKey(binding -> {
-            captured.add(binding);
-            return binding;
+        KeyBinding installed = HudImmersionControls.installToggleKey(definition -> {
+            definitions.add(definition);
+            return new KeyBinding(
+                "test.registered.hud_immersive_toggle",
+                definition.getDefaultKey().getCategory(),
+                GLFW.GLFW_KEY_F10,
+                definition.getCategory()
+            );
         });
 
-        assertEquals(1, captured.size());
-        assertSame(captured.get(0), registered);
-        assertEquals("key.bong-client.hud_immersive_toggle", registered.getTranslationKey());
-        assertEquals("category.bong-client", registered.getCategory());
-        assertEquals(GLFW.GLFW_KEY_UNKNOWN, registered.getDefaultKey().getCode());
-        assertTrue(registered.isUnbound(), "HUD 沉浸开关应默认未绑定");
+        assertEquals(1, definitions.size());
+        KeyBinding definition = definitions.get(0);
+        assertEquals("key.bong-client.hud_immersive_toggle", definition.getTranslationKey());
+        assertEquals("category.bong-client", definition.getCategory());
+        assertEquals(GLFW.GLFW_KEY_UNKNOWN, definition.getDefaultKey().getCode());
+        assertTrue(definition.isUnbound(), "HUD 沉浸开关应默认未绑定");
+
+        KeyBinding.onKeyPressed(installed.getDefaultKey());
+        assertEquals(1, HudImmersionControls.consumeInstalledTogglePresses(() -> 1_000L));
+        assertTrue(HudImmersionMode.manualImmersive(),
+            "生产消费链必须读取 registrar 返回并安装的同一绑定");
     }
 
     @Test
