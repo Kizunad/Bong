@@ -104,8 +104,9 @@ ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
 if [ -f "$TSY_MANIFEST_ABS" ]; then
     ENV_ARGS+=("BONG_TSY_RASTER_PATH=$TSY_MANIFEST_ABS")
 fi
-(cd server && env "${ENV_ARGS[@]}" cargo run > /tmp/bong-server.log 2>&1 &)
-disown
+(cd server && env "${ENV_ARGS[@]}" cargo run > /tmp/bong-server.log 2>&1) &
+SERVER_PID=$!
+disown "$SERVER_PID"
 sleep 2
 
 if grep -q "loaded.*terrain tiles" /tmp/bong-server.log 2>/dev/null; then
