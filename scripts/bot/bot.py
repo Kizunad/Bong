@@ -371,6 +371,46 @@ class Bot:
                     )
                 self._new_event.wait(timeout=min(remaining, 0.5))
 
+    def snapshot_events_after_quiet_period(
+        self,
+        min_wait: float,
+        quiet_period: float,
+        timeout: float,
+        description: str,
+    ) -> list[Event]:
+        """Return an atomic event snapshot after a minimum window and reader idle period."""
+        if min_wait < 0.0:
+            raise ValueError(f"min_wait must be >= 0, actual {min_wait}")
+        if quiet_period <= 0.0:
+            raise ValueError(f"quiet_period must be > 0, actual {quiet_period}")
+        if timeout <= 0.0:
+            raise ValueError(f"timeout must be > 0, actual {timeout}")
+
+        started = time.monotonic()
+        deadline = started + timeout
+        quiet_until = started + max(min_wait, quiet_period)
+        with self._new_event:
+            observed_count = len(self.events)
+            while True:
+                now = time.monotonic()
+                current_count = len(self.events)
+                if current_count != observed_count:
+                    observed_count = current_count
+                    quiet_until = max(quiet_until, now + quiet_period)
+                if now >= quiet_until:
+                    return list(self.events)
+
+                remaining = deadline - now
+                if remaining <= 0.0:
+                    raise BotAssertionError(
+                        f"[{self.username}] 期望 {timeout}s 内完成「{description}」，"
+                        f"实际事件流未静默；已收 {len(self.events)} 事件，"
+                        f"最近 5 条: {self.events[-5:]}"
+                    )
+                self._new_event.wait(
+                    timeout=min(quiet_until - now, remaining, 0.5)
+                )
+
     def expect_event(self, kind: str, timeout: float = 5.0) -> Event:
         return self.wait_for(lambda e: e.kind == kind, timeout, f"kind={kind} 事件")
 

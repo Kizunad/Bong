@@ -13,6 +13,7 @@
 
 import time
 
+from bot.bot import Event
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
@@ -27,17 +28,21 @@ PILL_ID = "huiyuan_pill"
 NON_CLAMP_EXPECTED_QI = 65.0
 NON_CLAMP_QI_TOLERANCE = 0.05
 QI_SET_TOLERANCE = 0.01
-SETTLE_WINDOW_SECONDS = 0.5
+# 服丹 intent 在 server 单次分派、无重试；额外观察 20 tick，
+# 并等读循环静默约 2 tick。
+SETTLE_WINDOW_SECONDS = 1.0
+SETTLE_QUIET_SECONDS = 0.1
+SETTLE_TIMEOUT_SECONDS = 3.0
 
 
-def _player_state_qi(event) -> float | None:
+def _player_state_qi(event: Event) -> float | None:
     if event.kind != "server_data" or event.data.get("payload_type") != "player_state":
         return None
     qi = event.data["payload"].get("spirit_qi")
     return float(qi) if isinstance(qi, (int, float)) else None
 
 
-def _extract_qi(node):
+def _extract_qi(node) -> float | None:
     if isinstance(node, dict):
         for key, value in node.items():
             if key == "qi_current" and isinstance(value, (int, float)):
@@ -53,7 +58,9 @@ def _extract_qi(node):
     return None
 
 
-def _wait_authoritative_qi(bot, anchor: float, expected: float, timeout: float = 12.0):
+def _wait_authoritative_qi(
+    bot, anchor: float, expected: float, timeout: float = 12.0
+) -> Event:
     return bot.wait_for(
         lambda event: event.t > anchor
         and (lambda qi: qi is not None and abs(qi - expected) <= QI_SET_TOLERANCE)(
@@ -75,6 +82,8 @@ def _is_qi_set_confirmation(event, anchor: float, value: float) -> bool:
 
 
 def _has_departed_baseline(qi: float, baseline_qi: float, expected_qi: float) -> bool:
+    if abs(expected_qi - baseline_qi) <= QI_SET_TOLERANCE:
+        return False
     midpoint = baseline_qi + (expected_qi - baseline_qi) / 2.0
     if expected_qi >= baseline_qi:
         return qi >= midpoint - QI_SET_TOLERANCE
@@ -95,23 +104,50 @@ def _assert_settled_consumption(
         and event.data.get("payload_type") == "inventory_snapshot"
     ]
     assert snapshots, "服丹稳定窗口内必须至少收到一条 inventory_snapshot"
-    final_snapshot = snapshots[-1]
-    final_revision = int(final_snapshot["revision"])
-    assert final_revision == before_revision + 1, (
-        f"一次服丹只能推进一版 inventory revision：期望 {before_revision + 1}，"
-        f"实际 {final_revision}——同一 intent 可能被重复处理"
-    )
+    expected_revision = before_revision + 1
+    expected_count = before_count - 1
+    consumed = False
+    for index, snapshot in enumerate(snapshots):
+        revision = int(snapshot["revision"])
+        pill = find_item(snapshot, PILL_ID)
+        count = 0 if pill is None else int(pill["item"]["stack_count"])
+        qi = _extract_qi(snapshot)
+        assert qi is not None, (
+            f"服丹稳定窗口第 {index} 版 inventory_snapshot 必须携带 qi_current，"
+            f"实际 snapshot={snapshot}"
+        )
 
-    final_pill = find_item(final_snapshot, PILL_ID)
-    final_count = 0 if final_pill is None else int(final_pill["item"]["stack_count"])
-    assert final_count == before_count - 1, (
-        f"一次服丹只能扣一枚：期望 {before_count - 1}，实际 {final_count}"
+        if not consumed and revision == before_revision:
+            assert count == before_count, (
+                f"消费前 inventory revision={before_revision} 时丹药数量必须保持 "
+                f"{before_count}，实际 {count}"
+            )
+            assert abs(qi - baseline_qi) <= NON_CLAMP_QI_TOLERANCE, (
+                f"消费前 inventory qi 必须保持旧基线 {baseline_qi}±"
+                f"{NON_CLAMP_QI_TOLERANCE}，实际 {qi}"
+            )
+            continue
+
+        consumed = True
+        assert revision == expected_revision, (
+            f"消费后每版 inventory revision 必须保持 {expected_revision}，"
+            f"实际第 {index} 版为 {revision}——不得重复推进或回滚"
+        )
+        assert count == expected_count, (
+            f"消费后每版丹药数量必须保持 {expected_count}，"
+            f"实际第 {index} 版为 {count}——一次服丹只能扣一枚"
+        )
+        assert abs(qi - expected_qi) <= NON_CLAMP_QI_TOLERANCE, (
+            f"消费后每版 inventory qi 必须保持 {expected_qi}±"
+            f"{NON_CLAMP_QI_TOLERANCE}，实际第 {index} 版为 {qi}"
+        )
+
+    assert consumed, (
+        f"稳定窗口必须观察到 inventory revision {before_revision} -> "
+        f"{expected_revision} 的消费转换，实际 revisions="
+        f"{[int(snapshot['revision']) for snapshot in snapshots]}"
     )
-    final_qi = _extract_qi(final_snapshot)
-    assert final_qi is not None, "服丹最终 inventory_snapshot 必须携带 qi_current"
-    assert abs(final_qi - expected_qi) <= NON_CLAMP_QI_TOLERANCE, (
-        f"服丹最终快照应稳定在 {expected_qi}±{NON_CLAMP_QI_TOLERANCE}，实际 {final_qi}"
-    )
+    final_snapshot = snapshots[-1]
 
     authoritative_qi = [
         qi
@@ -137,7 +173,7 @@ def _assert_settled_consumption(
     return final_snapshot
 
 
-def _set_qi_and_wait(bot, value: float):
+def _set_qi_and_wait(bot, value: float) -> Event:
     anchor = last_event_time(bot)
     bot.cmd(f"qi set {value}")
     bot.wait_for(
@@ -167,7 +203,7 @@ def _consume_and_assert_once(bot, intent: dict, baseline_event, expected_qi: flo
         lambda event: event.kind == "server_data"
         and event.t > anchor
         and event.data["payload_type"] == "inventory_snapshot"
-        and int(event.data["payload"]["revision"]) > int(before["revision"])
+        and int(event.data["payload"]["revision"]) == int(before["revision"]) + 1
         and decremented_once(event.data["payload"]),
         timeout=10.0,
         description=f"本次服丹只扣一枚：{before_count} -> {before_count - 1}",
@@ -196,12 +232,19 @@ def _consume_and_assert_once(bot, intent: dict, baseline_event, expected_qi: flo
         f"实际 {authoritative_qi}"
     )
 
-    time.sleep(SETTLE_WINDOW_SECONDS)
-    settle_end = last_event_time(bot)
+    event_snapshot = bot.snapshot_events_after_quiet_period(
+        min_wait=SETTLE_WINDOW_SECONDS,
+        quiet_period=SETTLE_QUIET_SECONDS,
+        timeout=SETTLE_TIMEOUT_SECONDS,
+        description=(
+            f"服丹后至少 {SETTLE_WINDOW_SECONDS}s 的稳定窗口及 "
+            f"{SETTLE_QUIET_SECONDS}s 事件消费屏障"
+        ),
+    )
     settled_events = [
         event
-        for event in bot.events_of("server_data")
-        if anchor < event.t <= settle_end
+        for event in event_snapshot
+        if event.kind == "server_data" and event.t > anchor
     ]
     return _assert_settled_consumption(
         settled_events,
