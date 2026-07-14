@@ -9,15 +9,22 @@
 //! `MorphState` 则移除（=解除），否则插入（=易形）——不新增 C2S 协议面。
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, Entity, Position};
+use valence::prelude::{bevy_ecs, Component, Entity, Events, Position};
 
 use crate::cultivation::components::{Cultivation, MeridianSystem};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tick::CultivationClock;
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+};
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::player::gameplay::PendingGameplayNarrations;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::qi_physics::release::qi_release_to_zone;
+use crate::schema::common::NarrationStyle;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
@@ -105,9 +112,10 @@ pub fn declare_meridian_dependencies(
 /// `morph.yixing` 的 `SkillFn` resolver——手动易形/解除的**唯一**落点（决议 §1
 /// 幂等切换：已处于 `MorphState` 时再次施放=解除，否则=易形）。
 ///
-/// 易形（插入）分支：本体 race 在 `races.json.morph_pairs` 里必须有正向配对（P4 生产
-/// `races.json` 为空数组，本分支恒 `CastRejectReason::InvalidTarget`——"机制已通、
-/// 缺数据"是预期状态，P5 补 whale 真数据后本函数无需任何改动即可工作）。
+/// 易形（插入）分支：本体 race 在 `races.json.morph_pairs` 里必须有正向配对（PR-5b 起
+/// 生产 `races.json` 已声明 `human→whale` 正向配对，`cultivation::components::Cultivation`
+/// 默认 race 为 `human` 的玩家实体可正常 cast 成功；无正向配对的其余种族仍恒
+/// `CastRejectReason::InvalidTarget`）。
 fn cast_morph_yixing(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
@@ -116,6 +124,7 @@ fn cast_morph_yixing(
 ) -> CastResult {
     if world.get::<MorphState>(caster).is_some() {
         release_morph_state(world, caster);
+        emit_yixing_av(world, caster, YixingAvDirection::Release);
         return CastResult::Started {
             cooldown_ticks: YIXING_COOLDOWN_TICKS,
             anim_duration_ticks: YIXING_CAST_TICKS,
@@ -140,7 +149,7 @@ fn cast_morph_yixing(
         .next()
         .cloned()
     else {
-        // 无正向 morph_pairs 配对——生产 races.json 当前恒此分支（P4 无真实易形目标）。
+        // 无正向 morph_pairs 配对——非 human 种族（或未来新增种族未声明配对）走此分支。
         return CastResult::Rejected {
             reason: CastRejectReason::InvalidTarget,
         };
@@ -164,10 +173,105 @@ fn cast_morph_yixing(
     world
         .entity_mut(caster)
         .insert(MorphState::new(target_race, 0, tick));
+    emit_yixing_av(world, caster, YixingAvDirection::Morph);
 
     CastResult::Started {
         cooldown_ticks: YIXING_COOLDOWN_TICKS,
         anim_duration_ticks: YIXING_CAST_TICKS,
+    }
+}
+
+/// `morph.yixing` 手动 cast 触发的方向——**只**在本文件的幂等切换分支使用，
+/// `release_morph_state` 被死亡 / 下线共用调用时不走这条视听表现（那两条路径
+/// 不是"施法"，不该有施法特效/音效/narration）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum YixingAvDirection {
+    /// 本体 → 易形态（cast 插入 `MorphState`）。
+    Morph,
+    /// 易形态 → 本体（cast 再次施放，幂等切换移除 `MorphState`）。
+    Release,
+}
+
+/// plan-race-system-v1 PR-5b —— `morph.yixing` 手动 cast 的视听三件套：粒子
+/// （`vfx_event = "bong:morph_yixing"`，client `MorphVfxPlayer` 消费）/ 音效
+/// （`yixing_cast` recipe）/ narration（scope=zone, style=perception，plan §P4
+/// 视听规格表锁定的两条文案，按方向二选一）。caster 无 `Position` 时静默跳过
+/// （无头测试 / 极端时序防御，同 `sword_basics::emit_attack_particle` 惯例）。
+fn emit_yixing_av(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    direction: YixingAvDirection,
+) {
+    let Some(origin) = world.get::<Position>(caster).map(|position| position.get()) else {
+        return;
+    };
+
+    let unique_id = world
+        .get::<valence::prelude::UniqueId>(caster)
+        .map(|id| id.0.to_string());
+
+    if let Some(mut events) = world.get_resource_mut::<Events<VfxEventRequest>>() {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: "bong:morph_yixing".to_string(),
+                origin: [origin.x, origin.y, origin.z],
+                direction: None,
+                color: Some("#E8DFC8".to_string()),
+                strength: Some(0.8),
+                count: Some(24),
+                duration_ticks: Some(30),
+            },
+        ));
+        if let Some(target_player) = unique_id.clone() {
+            // `morph_cast.animation.json`：蓄力鞠躬（torso+legs 同向 pitch 补偿），
+            // endTick=30，与上面的粒子 lifetime 对齐（plan §P4 视听规格表）。
+            events.send(VfxEventRequest::new(
+                origin,
+                VfxEventPayloadV1::PlayAnim {
+                    target_player,
+                    anim_id: "bong:morph_cast".to_string(),
+                    priority: 1300,
+                    fade_in_ticks: Some(2),
+                },
+            ));
+        }
+    }
+
+    if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
+        events.send(PlaySoundRecipeRequest {
+            recipe_id: "yixing_cast".to_string(),
+            instance_id: 0,
+            pos: None,
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::Radius {
+                origin,
+                radius: AUDIO_BROADCAST_RADIUS,
+            },
+        });
+    }
+
+    let dimension = world
+        .get::<CurrentDimension>(caster)
+        .map(|d| d.0)
+        .unwrap_or(DimensionKind::Overworld);
+    let zone_name = world
+        .get_resource::<ZoneRegistry>()
+        .and_then(|zones| zones.find_zone(dimension, origin))
+        .map(|zone| zone.name.clone());
+    if let (Some(zone_name), Some(mut narrations)) = (
+        zone_name,
+        world.get_resource_mut::<PendingGameplayNarrations>(),
+    ) {
+        let text = match direction {
+            YixingAvDirection::Morph => {
+                "灵光一敛，那道人影的轮廓塌了下去——再抬眼时，已是一头异兽伏在原地"
+            }
+            YixingAvDirection::Release => "你看见一头异兽的骨相在雾里折叠、拉长，最后立成了人形",
+        };
+        narrations.push_zone(zone_name.as_str(), text, NarrationStyle::Perception);
     }
 }
 
@@ -815,6 +919,226 @@ mod tests {
                 world.get::<MorphState>(caster).is_none(),
                 "release 后 MorphState 组件应被 remove"
             );
+        }
+        // ══════════════════════════════════════════════════════════════════════════
+        // plan-race-system-v1 PR-5b —— `emit_yixing_av` 视听三件套（粒子/音效/narration）
+        // 的 cast 集成测试。走真实 `cast_morph_yixing`（而非直接调用 `emit_yixing_av`），
+        // 锁住「cast 成功 → 三件套都发」「cast 失败/无 Position → 什么都不发」的契约。
+        // 嵌套在 `cast_and_conservation_tests` 内部（而非同级 sibling）——需要复用其
+        // 私有 helper（`make_world_with_caster_and_zone` / `human_to_whale_registry` /
+        // `no_morph_pairs_registry` / `YIXING_QI_COST`），Rust 私有可见性只对**后代**
+        // 模块开放，同级 sibling 看不到，故必须嵌套而非并列。
+        mod av_emission_tests {
+            use super::*;
+            use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+            use crate::network::vfx_event_emit::VfxEventRequest;
+            use crate::player::gameplay::PendingGameplayNarrations;
+            use crate::schema::vfx_event::VfxEventPayloadV1;
+            use crate::world::zone::ZoneRegistry;
+            use valence::prelude::Events;
+
+            fn world_with_av_resources(
+                qi_current: f64,
+                qi_max: f64,
+                races: RaceRegistry,
+            ) -> (bevy_ecs::world::World, Entity) {
+                let (mut world, caster) =
+                    make_world_with_caster_and_zone(qi_current, qi_max, races);
+                world.init_resource::<Events<VfxEventRequest>>();
+                world.init_resource::<Events<PlaySoundRecipeRequest>>();
+                world.init_resource::<PendingGameplayNarrations>();
+                (world, caster)
+            }
+
+            #[test]
+            fn successful_morph_cast_emits_vfx_audio_and_zone_narration() {
+                let races = human_to_whale_registry();
+                let (mut world, caster) =
+                    world_with_av_resources(YIXING_QI_COST + 10.0, 100.0, races);
+
+                let result = cast_morph_yixing(&mut world, caster, 0, None);
+                assert!(matches!(result, CastResult::Started { .. }));
+
+                let vfx_events = world.resource::<Events<VfxEventRequest>>();
+                let mut vfx_reader = vfx_events.get_reader();
+                let vfx: Vec<_> = vfx_reader.read(vfx_events).collect();
+                // caster 无 UniqueId 组件（本 fixture 未插入）→ PlayAnim 分支跳过，
+                // 恒只发一条 SpawnParticle；`play_anim_emitted_when_caster_has_unique_id`
+                // 覆盖 UniqueId 存在时确实追加发 PlayAnim 的分支。
+                assert_eq!(
+                    vfx.len(),
+                    1,
+                    "易形成功应恰好发一条粒子事件（无 UniqueId 时不发 PlayAnim）"
+                );
+                match &vfx[0].payload {
+                    VfxEventPayloadV1::SpawnParticle {
+                        event_id,
+                        color,
+                        count,
+                        duration_ticks,
+                        ..
+                    } => {
+                        assert_eq!(event_id, "bong:morph_yixing");
+                        assert_eq!(color.as_deref(), Some("#E8DFC8"));
+                        assert_eq!(*count, Some(24), "plan §P4 锁定螺旋粒子数=24");
+                        assert_eq!(*duration_ticks, Some(30), "plan §P4 锁定 lifetime=30t");
+                    }
+                    other => panic!("易形粒子事件应为 SpawnParticle 变体，实际 {other:?}"),
+                }
+
+                let audio_events = world.resource::<Events<PlaySoundRecipeRequest>>();
+                let mut audio_reader = audio_events.get_reader();
+                let audio: Vec<_> = audio_reader.read(audio_events).collect();
+                assert_eq!(audio.len(), 1, "易形成功应恰好发一条音效请求");
+                assert_eq!(audio[0].recipe_id, "yixing_cast");
+
+                let mut narrations = world.resource_mut::<PendingGameplayNarrations>();
+                let drained = narrations.drain();
+                assert_eq!(drained.len(), 1, "易形成功应恰好发一条 narration");
+                assert!(
+                    drained[0].text.contains("异兽伏在原地"),
+                    "易形（人→异兽）应下发 plan §P4 锁定的第一条文案，实际 {:?}",
+                    drained[0].text
+                );
+            }
+
+            #[test]
+            fn play_anim_emitted_when_caster_has_unique_id() {
+                // caster 携带 UniqueId 时，emit_yixing_av 应额外发一条 PlayAnim
+                // （anim_id="bong:morph_cast"，对应 player_animation/morph_cast.json）。
+                let races = human_to_whale_registry();
+                let (mut world, caster) =
+                    world_with_av_resources(YIXING_QI_COST + 10.0, 100.0, races);
+                let uuid = uuid::Uuid::from_u128(0x0102_0304_0506_0708_090a_0b0c_0d0e_0f10);
+                world
+                    .entity_mut(caster)
+                    .insert(valence::prelude::UniqueId(uuid));
+
+                let result = cast_morph_yixing(&mut world, caster, 0, None);
+                assert!(matches!(result, CastResult::Started { .. }));
+
+                let vfx_events = world.resource::<Events<VfxEventRequest>>();
+                let mut vfx_reader = vfx_events.get_reader();
+                let vfx: Vec<_> = vfx_reader.read(vfx_events).collect();
+                assert_eq!(
+                    vfx.len(),
+                    2,
+                    "有 UniqueId 时应发 SpawnParticle + PlayAnim 两条，实际 {vfx:?}"
+                );
+                let play_anim = vfx
+                    .iter()
+                    .find(|e| matches!(e.payload, VfxEventPayloadV1::PlayAnim { .. }))
+                    .expect("应有一条 PlayAnim 事件");
+                match &play_anim.payload {
+                    VfxEventPayloadV1::PlayAnim {
+                        target_player,
+                        anim_id,
+                        priority,
+                        fade_in_ticks,
+                    } => {
+                        assert_eq!(target_player, &uuid.to_string());
+                        assert_eq!(anim_id, "bong:morph_cast");
+                        assert_eq!(*priority, 1300);
+                        assert_eq!(*fade_in_ticks, Some(2));
+                    }
+                    other => panic!("预期 PlayAnim，实际 {other:?}"),
+                }
+            }
+
+            #[test]
+            fn toggle_off_release_cast_emits_reverse_narration() {
+                let races = human_to_whale_registry();
+                let (mut world, caster) =
+                    world_with_av_resources(YIXING_QI_COST + 10.0, 100.0, races);
+
+                // 第一次 cast：易形（消费第一条粒子/音效/narration，不污染下面的断言）。
+                let first = cast_morph_yixing(&mut world, caster, 0, None);
+                assert!(matches!(first, CastResult::Started { .. }));
+                world.resource_mut::<PendingGameplayNarrations>().drain();
+
+                // 第二次 cast：幂等切换解除，应发"异兽→人形"反向文案。
+                let second = cast_morph_yixing(&mut world, caster, 0, None);
+                assert!(matches!(second, CastResult::Started { .. }));
+
+                let mut narrations = world.resource_mut::<PendingGameplayNarrations>();
+                let drained = narrations.drain();
+                assert_eq!(drained.len(), 1, "解除易形应恰好发一条 narration");
+                assert!(
+                    drained[0].text.contains("立成了人形"),
+                    "解除（异兽→人）应下发 plan §P4 锁定的第二条文案，实际 {:?}",
+                    drained[0].text
+                );
+            }
+
+            #[test]
+            fn rejected_cast_emits_nothing() {
+                // InvalidTarget（无正向 morph_pair）不应触碰任何视听资源。
+                let races = no_morph_pairs_registry();
+                let (mut world, caster) =
+                    world_with_av_resources(YIXING_QI_COST + 10.0, 100.0, races);
+
+                let result = cast_morph_yixing(&mut world, caster, 0, None);
+                assert_eq!(
+                    result,
+                    CastResult::Rejected {
+                        reason: CastRejectReason::InvalidTarget
+                    }
+                );
+
+                let vfx_events = world.resource::<Events<VfxEventRequest>>();
+                assert!(
+                    vfx_events.get_reader().read(vfx_events).next().is_none(),
+                    "cast 被拒绝不应发粒子事件"
+                );
+                let audio_events = world.resource::<Events<PlaySoundRecipeRequest>>();
+                assert!(
+                    audio_events
+                        .get_reader()
+                        .read(audio_events)
+                        .next()
+                        .is_none(),
+                    "cast 被拒绝不应发音效请求"
+                );
+                assert!(
+                    world
+                        .resource_mut::<PendingGameplayNarrations>()
+                        .drain()
+                        .is_empty(),
+                    "cast 被拒绝不应发 narration"
+                );
+            }
+
+            #[test]
+            fn missing_position_skips_av_emission_without_panic() {
+                // caster 无 Position 组件（防御性场景）：emit_yixing_av 应静默跳过，不 panic。
+                let races = human_to_whale_registry();
+                let mut world = bevy_ecs::world::World::new();
+                world.init_resource::<Events<QiTransfer>>();
+                world.init_resource::<Events<VfxEventRequest>>();
+                world.init_resource::<Events<PlaySoundRecipeRequest>>();
+                world.init_resource::<PendingGameplayNarrations>();
+                world.insert_resource(ZoneRegistry::default());
+                world.insert_resource(CultivationClock { tick: 1 });
+                world.insert_resource(races);
+                let caster = world
+                    .spawn(Cultivation {
+                        qi_current: YIXING_QI_COST + 10.0,
+                        qi_max: 100.0,
+                        ..Default::default()
+                    })
+                    .id();
+
+                let result = cast_morph_yixing(&mut world, caster, 0, None);
+                assert!(
+                    matches!(result, CastResult::Started { .. }),
+                    "无 Position 不应阻断 cast 本身成功，实际 {result:?}"
+                );
+                let vfx_events = world.resource::<Events<VfxEventRequest>>();
+                assert!(
+                    vfx_events.get_reader().read(vfx_events).next().is_none(),
+                    "无 Position 时 emit_yixing_av 应静默跳过，不发粒子事件"
+                );
+            }
         }
     }
 }
