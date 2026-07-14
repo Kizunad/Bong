@@ -203,6 +203,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::CultivationDetail(detail)),
@@ -264,6 +269,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::CultivationDetail(detail)),
@@ -870,6 +880,11 @@ mod tests {
                 weight: 0.7,
                 ratio: 0.7,
             }],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -910,6 +925,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -967,6 +987,11 @@ mod tests {
             qi_color_chaotic: true,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -1017,6 +1042,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: weights,
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -1064,6 +1094,11 @@ mod tests {
                     qi_color_chaotic: false,
                     qi_color_hunyuan: false,
                     practice_weights: vec![],
+                    race_id: String::new(),
+                    form_race_id: String::new(),
+                    form_body_plan_id: String::new(),
+                    intrinsic_is_humanoid: false,
+                    form_is_humanoid: false,
                 },
             )),
         };
@@ -11066,6 +11101,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -11228,6 +11268,11 @@ mod tests {
                             ratio: 0.4,
                         },
                     ],
+                    race_id: String::new(),
+                    form_race_id: String::new(),
+                    form_body_plan_id: String::new(),
+                    intrinsic_is_humanoid: false,
+                    form_is_humanoid: false,
                 },
             )),
         };

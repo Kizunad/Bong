@@ -363,6 +363,9 @@ class ProtoServerDataBridgeTest {
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_NPC_SPAWNED,
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_SENTINEL_PHASE_CHANGED,
                     Envelope.ServerDataEnvelope.PayloadCase.FACTION_WAR_STATE
+                    // morph_state（易形状态，proto field 142）：PR-5a 只交付 server 机制 +
+                    // 协议/schema/bot 解码，client 消费留白；PR-5b 已补 MorphStateHandler
+                    // 映射（见 CASE_TO_TYPE），故从本排除清单移除。
             );
 
     @Test

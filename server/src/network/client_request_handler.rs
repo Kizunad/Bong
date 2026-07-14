@@ -72,13 +72,14 @@ use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
 use crate::forge::steps::next_step_after;
 use crate::inventory::{
-    add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
-    apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
-    fully_repair_weapon_instance, inventory_instance_container_attrition_exempt,
-    inventory_item_by_instance_borrow, inventory_item_by_instance_mut,
-    inventory_location_attrition_exempt, pickup_dropped_loot_instance, DroppedLootRegistry,
-    InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
-    InventoryMoveRejectReason, ItemInstance, ItemTemplate, PlayerInventory,
+    add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy,
+    apply_inventory_move_with_race, apply_item_spiritual_wear, consume_item_instance_once,
+    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
+    inventory_instance_container_attrition_exempt, inventory_item_by_instance_borrow,
+    inventory_item_by_instance_mut, inventory_location_attrition_exempt,
+    pickup_dropped_loot_instance, DroppedLootRegistry, InventoryDurabilityChangedEvent,
+    InventoryInstanceIdAllocator, InventoryMoveOutcome, InventoryMoveRejectReason, ItemInstance,
+    ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
     AlchemyItemData, ItemCategory, ItemEffect, ItemRegistry,
@@ -259,6 +260,11 @@ pub struct CombatRequestParams<'w, 's> {
     /// plan-scroll-reading-v1 P2：读卷中标记（真相源），供 `ScrollReadClosed` 分支查询以
     /// 决定是否需要发 `StopAnim` + 移除 marker。
     pub scroll_reading_q: Query<'w, 's, &'static crate::network::scroll_open_emit::ScrollReading>,
+    /// plan-race-system-v1 P3a —— 施放门 race gate（`handle_skill_bar_cast` 拥有门后、
+    /// 经脉门前判定，见该函数内插入点）。`Option` 与其余 registry 同规则。
+    pub cultivations: Query<'w, 's, &'static Cultivation>,
+    pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
 
 #[derive(SystemParam)]
@@ -415,6 +421,16 @@ pub struct SkillScrollRequestParams<'w, 's> {
     /// blueprint 的 display_name/tier_cap/step_count。`Option` 与 `forge_sessions` 同规则：
     /// 资源缺失时优雅跳过 S2C 回推而不 panic（`forge::register` 正常路径下恒 Some）。
     pub blueprint_registry: Option<Res<'w, BlueprintRegistry>>,
+    /// plan-race-system-v1 P3a —— 习得门 race gate 判定（`RaceGate::Humanoid` 档需要本体
+    /// `is_humanoid`，见 `learn_technique_if_allowed` 调用点）。`Option` 与其余 registry
+    /// 同规则：既有单测未插入这两个资源时优雅退化到 humanoid（`resolve_body_plan_for_target`
+    /// 文档化的退化行为）。
+    pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
+    /// plan-race-system-v1 P4 —— 当前易形形态。习得门 `form_anchors_open` 消费点
+    /// （`learn_technique_if_allowed` 调用点判定本体经脉是否满足易形前置）与
+    /// `handle_inventory_move` Form 身份判定（装备门）共用本查询。
+    pub morph_states: Query<'w, 's, Option<&'static crate::body_plan::MorphState>>,
 }
 
 type NpcEngagementItem = (
@@ -1808,6 +1824,9 @@ pub fn handle_client_request_payloads(
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
                     alchemy_params.vfx_events.as_deref_mut(),
+                    combat_params.body_plans.as_deref(),
+                    combat_params.race_registry.as_deref(),
+                    &skill_scroll_params.morph_states,
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1853,6 +1872,9 @@ pub fn handle_client_request_payloads(
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
                     alchemy_params.vfx_events.as_deref_mut(),
+                    combat_params.body_plans.as_deref(),
+                    combat_params.race_registry.as_deref(),
+                    &skill_scroll_params.morph_states,
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -2758,7 +2780,6 @@ pub fn handle_client_request_payloads(
                     pill_instance_id,
                     elder_entity_id,
                     &mut inventories,
-                    &combat_params.item_registry,
                     combat_params.entity_manager.as_deref(),
                     &mut clients,
                     dispatch.give_dan_to_elder_tx.as_deref_mut(),
@@ -3120,12 +3141,25 @@ fn handle_learn_technique_scroll(
             .get(entity)
             .ok()
             .flatten();
+        let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: Some(cultivation),
+                beast_kind: None,
+                morph_state: None,
+            },
+            skill_scroll_params.body_plans.as_deref(),
+            skill_scroll_params.race_registry.as_deref(),
+        );
         can_learn_technique(
             known,
             cultivation,
             &meridians,
             severed,
             technique_id.as_str(),
+            intrinsic_plan.is_humanoid,
+            intrinsic_plan.meridian_profile.as_ref(),
         )
     };
 
@@ -3154,6 +3188,17 @@ fn handle_learn_technique_scroll(
                 .get(entity)
                 .ok()
                 .flatten();
+            let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
+                entity,
+                crate::body_plan::BodyPlanPurpose::Intrinsic,
+                crate::body_plan::BodyPlanResolveInputs {
+                    cultivation: Some(cultivation),
+                    beast_kind: None,
+                    morph_state: None,
+                },
+                skill_scroll_params.body_plans.as_deref(),
+                skill_scroll_params.race_registry.as_deref(),
+            );
             matches!(
                 learn_technique_if_allowed(
                     &mut known,
@@ -3162,6 +3207,8 @@ fn handle_learn_technique_scroll(
                     severed,
                     technique_id.as_str(),
                     0.0,
+                    intrinsic_plan.is_humanoid,
+                    intrinsic_plan.meridian_profile.as_ref(),
                 ),
                 ScrollReadOutcome::Learned
             )
@@ -3198,8 +3245,10 @@ fn handle_learn_technique_scroll(
             ScrollReadOutcome::Learned => "technique_scroll_learned",
             ScrollReadOutcome::AlreadyKnown => "technique_scroll_already_known",
             ScrollReadOutcome::RealmTooLow { .. } => "technique_scroll_realm_too_low",
+            ScrollReadOutcome::RaceMismatch => "technique_scroll_race_mismatch",
             ScrollReadOutcome::MeridianSevered { .. } => "technique_scroll_meridian_severed",
             ScrollReadOutcome::MeridianMissing { .. } => "technique_scroll_meridian_missing",
+            ScrollReadOutcome::FormAnchorClosed => "technique_scroll_form_anchor_closed",
             ScrollReadOutcome::InvalidScroll => "technique_scroll_invalid",
         },
     );
@@ -4100,6 +4149,7 @@ mod tests {
                     shelflife_profile: None,
                     shield_spec: None,
                     shelflife_track: None,
+                    wearer_race: crate::body_plan::types::RaceGateOwned::default(),
                 },
             ),
             (
@@ -4132,6 +4182,7 @@ mod tests {
                     shelflife_profile: None,
                     shield_spec: None,
                     shelflife_track: None,
+                    wearer_race: crate::body_plan::types::RaceGateOwned::default(),
                 },
             ),
         ]))
@@ -4544,6 +4595,216 @@ mod tests {
             lineage: None,
             mission_queue: MissionQueue::default(),
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P4 opus verifier MINOR —— 装备门 `form_race_id` pin
+    // 测试。镜像已锁的 emit 路径测试
+    // （`cultivation_detail_emit::morph_state_present_overrides_form_race_id_away_from_intrinsic_race`）：
+    // `handle_inventory_move` 内 `form_race_id` 的推导（§13303 附近）此前只有 emit
+    // 侧的回归 pin，装备门（`InventoryMoveIntent` → `handle_inventory_move` →
+    // `apply_inventory_move_with_race`）这条真正决定"能不能穿"的路径完全没有端到端
+    // 测试锁住"用 Form 身份而不是本体 intrinsic 身份"这条契约。走真实
+    // `ClientRequestV1::InventoryMoveIntent` C2S 事件 → `handle_client_request_payloads`
+    // 全链路。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    fn make_armor_straw_chestplate_registry(allowed_race: &str) -> ItemRegistry {
+        ItemRegistry::from_map(HashMap::from([(
+            "armor_straw_chestplate".to_string(),
+            ItemTemplate {
+                id: "armor_straw_chestplate".to_string(),
+                display_name: "species-gated chestplate".to_string(),
+                category: ItemCategory::Armor,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 0.0,
+                description: "test".to_string(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shield_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new(allowed_race)],
+                },
+            },
+        )]))
+    }
+
+    fn spawn_player_with_armor_straw_chestplate_in_pack(
+        app: &mut App,
+        username: &str,
+        intrinsic_race: &str,
+    ) -> Entity {
+        let (client_bundle, _helper) = create_mock_client(username);
+        let item = ItemInstance {
+            instance_id: 1,
+            template_id: "armor_straw_chestplate".to_string(),
+            display_name: "species-gated chestplate".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                quick_access: false,
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 4,
+                cols: 4,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
+                owner_instance_id: None,
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        };
+        app.world_mut()
+            .spawn((
+                client_bundle,
+                inventory,
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(intrinsic_race),
+                    ..Cultivation::default()
+                },
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id()
+    }
+
+    fn send_species_gated_equip_intent(app: &mut App, client: Entity) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::InventoryMoveIntent {
+                    v: 1,
+                    instance_id: 1,
+                    from: InventoryLocationV1::Container {
+                        container_id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                        row: 0,
+                        col: 0,
+                    },
+                    to: InventoryLocationV1::Equip {
+                        slot: EquipSlotV1::Chest,
+                        state: EquipStateV1::Worn,
+                    },
+                    rotated: false,
+                })
+                .expect("InventoryMoveIntent must serialize")
+                .into_boxed_slice(),
+            });
+        app.update();
+    }
+
+    #[test]
+    fn morphed_player_equip_gate_uses_form_race_not_intrinsic_race() {
+        // 本体（intrinsic）种族是 whale，但已易形为 human——胸甲只认 human，装备门
+        // 判定必须用 MorphState.form="human"（放行），而不是冒用本体 Cultivation.race
+        // ="whale"（会误拒）。
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(make_armor_straw_chestplate_registry(
+            crate::body_plan::HUMAN_RACE_ID,
+        ));
+
+        let client = spawn_player_with_armor_straw_chestplate_in_pack(&mut app, "Morpher", "whale");
+        app.world_mut()
+            .entity_mut(client)
+            .insert(crate::body_plan::MorphState::new(
+                crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                0,
+                0,
+            ));
+
+        send_species_gated_equip_intent(&mut app, client);
+
+        let inventory = app.world().entity(client).get::<PlayerInventory>().unwrap();
+        let equipped_chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .and_then(|contents| contents.worn.first());
+        assert_eq!(
+            equipped_chest.map(|item| item.instance_id),
+            Some(1),
+            "已易形为 human 的 whale 本体应能穿上 Species([human]) 门的胸甲——装备门必须\
+             用 MorphState.form 而不是继续冒用本体 intrinsic race，实测装备槽：{:?}",
+            inventory.equipped.get(crate::inventory::EQUIP_SLOT_CHEST)
+        );
+    }
+
+    #[test]
+    fn unmorphed_whale_intrinsic_is_rejected_by_same_species_gate() {
+        // 对照组：同一件甲、同一本体，缺 MorphState（未易形）时装备门应回落到本体
+        // intrinsic race="whale"，被 Species([human]) 门拒绝——证明上一条测试确实
+        // 是因为 MorphState 生效才放行，不是这件甲本来就对谁都放行。
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(make_armor_straw_chestplate_registry(
+            crate::body_plan::HUMAN_RACE_ID,
+        ));
+
+        let client = spawn_player_with_armor_straw_chestplate_in_pack(&mut app, "Morpher", "whale");
+
+        send_species_gated_equip_intent(&mut app, client);
+
+        let inventory = app.world().entity(client).get::<PlayerInventory>().unwrap();
+        let equipped_chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .and_then(|contents| contents.worn.first());
+        assert!(
+            equipped_chest.is_none(),
+            "未易形的 whale 本体应被 Species([human]) 门拒绝穿戴，实测装备槽：{:?}",
+            inventory.equipped.get(crate::inventory::EQUIP_SLOT_CHEST)
+        );
+        // 应仍留在原背包容器里，而不是被静默吞掉。
+        let still_in_pack = inventory.containers[0]
+            .items
+            .iter()
+            .any(|placed| placed.instance.instance_id == 1);
+        assert!(still_in_pack, "拒绝装备后物品应留在原容器，不能凭空消失");
     }
 
     #[test]
@@ -6749,6 +7010,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -7225,6 +7487,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
         let mut karma = KarmaWeightStore::default();
@@ -7328,6 +7591,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -7431,6 +7695,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -7531,6 +7796,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -10612,6 +10878,213 @@ mod tests {
         );
     }
 
+    // ── 10c. F1（P3 opus verify 发现）：施放门行为测试 —— 通用 skill_bar 路径 ─────
+    //
+    // 修复前只有 known_techniques.rs 的 `required_race.allows(...)` 真值表 pin，从不
+    // 触达 `handle_skill_bar_cast` 里真实的 race gate 判定代码（line ~12013-12036）
+    // ——回归删掉那段 `if !definition.required_race.allows(...) { RejectRaceMismatch }`
+    // 整块不会撞红。本节直接驱动真实 cast 入口（`send_skill_bar_cast`）锁死该行为。
+
+    /// 构造一个 is_humanoid=false 的合成种族 `RaceRegistry`/`BodyPlanRegistry` fixture
+    /// （与 `combat::resolve` 的 `single_part_registries` 同款手法：单部位
+    /// `HeightBands` 几何，够 `resolve_body_plan` 校验通过即可，不关心命中判定）。
+    fn non_humanoid_race_fixture(
+        race_id: &str,
+    ) -> (
+        crate::body_plan::BodyPlanRegistry,
+        crate::body_plan::RaceRegistry,
+    ) {
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::{
+            BodyPartDef, BodyPlan, BodyPlanRegistry, HeightBand, HeightBandAssignment, HitGeometry,
+            PartConsequence, RaceId, RaceRegistry, StandingAabbSpec,
+        };
+        use std::collections::HashMap;
+
+        let plan = BodyPlan {
+            id: format!("test_{race_id}_plan").into(),
+            display_name: "测试非人形构型".to_string(),
+            is_humanoid: false,
+            parts: vec![BodyPartDef {
+                id: "core".into(),
+                damage_mul: 1.0,
+                contam_mul: 1.0,
+                bleed_mul: 1.0,
+                consequence: PartConsequence::Core,
+            }],
+            hit_geometry: HitGeometry::HeightBands {
+                aabb: StandingAabbSpec {
+                    half_width: 0.3,
+                    height: 1.8,
+                },
+                bands: vec![HeightBand {
+                    min_rel_y: -1.0,
+                    assignment: HeightBandAssignment::Single {
+                        part: "core".into(),
+                    },
+                }],
+                lateral_threshold: 0.19,
+            },
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: HashMap::new(),
+        };
+        let plan_id = plan.id.clone();
+        let body_plans = BodyPlanRegistry::from_plans(vec![plan]).expect("plan must validate");
+        // `RaceRegistry::from_file_contents` 要求表内必须有一条 id=HUMAN_RACE_ID 的
+        // 默认条目——复用 `combat::resolve` 同款手法：让这条 "human" 条目指向本
+        // fixture 的 is_humanoid=false 构型，caster 的 `Cultivation.race` 同样设为
+        // HUMAN_RACE_ID 即可解析出非人形本体（是否人形只看 body plan，不看 race id
+        // 字面意义）。
+        let races = RaceRegistry::from_parts_for_test(
+            vec![RaceEntry {
+                id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                display_name: format!("测试非人形种族({race_id})"),
+                body_plan_id: plan_id,
+                beast_kinds: vec![],
+            }],
+            vec![],
+            &body_plans,
+        )
+        .expect("races fixture must validate");
+        (body_plans, races)
+    }
+
+    /// 装配一个持剑、已习得 sword.cleave 的 caster；`race` 为 `None` 时不插入
+    /// `RaceRegistry`/`BodyPlanRegistry`（退化到 humanoid 单例，人形本体基线）；
+    /// 为 `Some(race_id)` 时插入 `non_humanoid_race_fixture` 并把 Cultivation.race
+    /// 设为该 id（非人形本体）。
+    fn setup_sword_cleave_caster(
+        app: &mut App,
+        username: &str,
+        race: Option<&str>,
+    ) -> (Entity, MockClientHelper) {
+        if let Some(race_id) = race {
+            let (body_plans, races) = non_humanoid_race_fixture(race_id);
+            app.insert_resource(body_plans);
+            app.insert_resource(races);
+        }
+        let (client_bundle, helper) = create_mock_client(username);
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        // race 恒为 HUMAN_RACE_ID：`non_humanoid_race_fixture` 复用该 id 指向
+        // is_humanoid=false 构型（`RaceRegistry` 校验要求默认 human 条目必须存在，
+        // 见该 fn 注释）；未插入 fixture 时同一 id 退化到 humanoid 单例。是否人形
+        // 完全由「是否插入非人形 fixture」决定，不看 race 字符串字面意义。
+        let cultivation = crate::cultivation::components::Cultivation {
+            realm: Realm::Induce,
+            qi_current: 42.0,
+            qi_max: 100.0,
+            race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            ..Default::default()
+        };
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            crate::combat::weapon::Weapon {
+                slot: crate::combat::weapon::EquipSlot::MainHand,
+                instance_id: 1,
+                template_id: "test_sword".to_string(),
+                weapon_kind: crate::combat::weapon::WeaponKind::Sword,
+                base_attack: 10.0,
+                quality_tier: 0,
+                durability: 100.0,
+                durability_max: 100.0,
+            },
+            cultivation,
+            known(&["sword.cleave"]),
+        ));
+        (entity, helper)
+    }
+
+    #[test]
+    fn skill_bar_cast_race_gate_rejects_non_humanoid_caster_before_resolver_qi_untouched() {
+        // sword.cleave 全数据表标 RaceGate::Humanoid（§8.1 #6）。非人形本体
+        // （race="test_whale" + BodyPlan.is_humanoid=false）施放必须在到达 resolver
+        // （cast_sword_cleave）之前被通用路径的 race gate 拒绝：① 推
+        // CastSyncV1{outcome=RejectRaceMismatch} ② resolver 从未运行——用零
+        // AttackIntent 事件锁死（resolver 只要跑起来必发一条 AttackIntent，见
+        // `combat::sword_basics::cast_sword_attack`）③ qi_current 分毫不动（守恒律：
+        // race gate 拒绝不该扣任何真元）。
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (entity, mut helper) = setup_sword_cleave_caster(&mut app, "Whale", Some("test_whale"));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "非人形本体施放人形专属剑技必须被 race gate 拒绝在 resolver 之前；\
+             期望无 Casting；实际 Casting 存在"
+        );
+        assert!(
+            syncs.iter().any(|s| s.outcome
+                == crate::schema::combat_hud::CastOutcomeV1::RejectRaceMismatch
+                && s.phase == CastPhaseV1::Idle),
+            "race gate 拒绝应推 CastSyncV1{{phase=Idle, outcome=RejectRaceMismatch}}；\
+             实际 syncs={syncs:?}"
+        );
+        let attack_intents = app
+            .world()
+            .resource::<valence::prelude::Events<crate::combat::events::AttackIntent>>();
+        assert!(
+            attack_intents.is_empty(),
+            "race gate 应在 resolver 之前拦截，resolver 从未运行；\
+             期望零 AttackIntent；实际存在事件（说明 resolver 被误放行了）"
+        );
+        let qi_current = app
+            .world()
+            .get::<crate::cultivation::components::Cultivation>(entity)
+            .expect("Cultivation must still exist")
+            .qi_current;
+        assert!(
+            (qi_current - 42.0).abs() < f64::EPSILON,
+            "race gate 拒绝不应扣真元（守恒律，见 CLAUDE.md 真元守恒律）；\
+             期望 qi_current=42.0 不变，实际 {qi_current}"
+        );
+    }
+
+    #[test]
+    fn skill_bar_cast_race_gate_passes_for_humanoid_caster_reaches_resolver() {
+        // 反向 happy：人形本体（race=human 默认，未插入 RaceRegistry/BodyPlanRegistry
+        // → `resolve_body_plan_for_target` 退化到 humanoid 单例）施放同一招
+        // sword.cleave 不应被 race gate 拦下——必须真正走到 resolver 并挥出
+        // （非零 AttackIntent，且不应出现 RejectRaceMismatch）。与上一测试对照，
+        // 证明 race gate 只挡非人形、不误伤人形本体。
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (entity, mut helper) = setup_sword_cleave_caster(&mut app, "Human", None);
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            !syncs
+                .iter()
+                .any(|s| s.outcome == crate::schema::combat_hud::CastOutcomeV1::RejectRaceMismatch),
+            "人形本体不应被 race gate 拒绝；实际 syncs={syncs:?}"
+        );
+        let attack_intents = app
+            .world()
+            .resource::<valence::prelude::Events<crate::combat::events::AttackIntent>>();
+        assert!(
+            !attack_intents.is_empty(),
+            "人形本体施放 sword.cleave 应真正走到 resolver 并挥出（发 AttackIntent）；\
+             期望非空事件，实际为空——说明 race gate 误挡了人形本体"
+        );
+    }
+
     // ── 11. helper 单元：check_player_skill_meridian_gate 直接单元测试 ───────────
 
     #[test]
@@ -11147,6 +11620,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -11940,6 +12414,100 @@ fn handle_skill_bar_cast(
         );
         return;
     }
+
+    // plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— race gate：拥有门后、经脉门前。
+    // 镜像 sword_path::skill_register::build_cast_context 的插入位置（该 resolver 路径
+    // 独立于本通用路径，各自需要一份）。
+    {
+        let cultivation_race = combat_params
+            .cultivations
+            .get(entity)
+            .map(|c| c.race.clone())
+            .unwrap_or_else(|_| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+        let intrinsic_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: combat_params.cultivations.get(entity).ok(),
+                beast_kind: None,
+                morph_state: None,
+            },
+            combat_params.body_plans.as_deref(),
+            combat_params.race_registry.as_deref(),
+        )
+        .is_humanoid;
+        if !definition
+            .required_race
+            .allows(&cultivation_race, intrinsic_is_humanoid)
+        {
+            tracing::warn!(
+                "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+                 rejected: race gate (RaceGate::allows returned false)"
+            );
+            if let Ok((username, mut client)) = clients.get_mut(entity) {
+                push_cast_sync(
+                    &mut client,
+                    CastSyncV1 {
+                        phase: CastPhaseV1::Idle,
+                        slot,
+                        duration_ms: 0,
+                        started_at_ms: current_unix_millis(),
+                        outcome: CastOutcomeV1::RejectRaceMismatch,
+                    },
+                    username.0.as_str(),
+                    entity,
+                );
+            }
+            return;
+        }
+    }
+
+    // plan-race-system-v1 P4 —— 易形类技能（`morph.yixing`）专属前置门：race gate 后、
+    // 通用经脉门前。判据是本体（Intrinsic）`MeridianProfile` 内全部 `FormAnchor` 经脉
+    // 已通且未断（见 `body_plan::form_anchors_open`），与 `learn_technique_if_allowed`
+    // 的习得门共用同一判据函数，保持"能学就能放、不能放就不该学"的一致性。
+    if crate::body_plan::technique_requires_form_anchor(&skill_id) {
+        let meridians_ok = combat_params.meridians.get(entity).ok();
+        let severed = combat_params.player_severed.get(entity).ok().flatten();
+        let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: combat_params.cultivations.get(entity).ok(),
+                beast_kind: None,
+                morph_state: None,
+            },
+            combat_params.body_plans.as_deref(),
+            combat_params.race_registry.as_deref(),
+        );
+        let anchors_ok = meridians_ok
+            .zip(intrinsic_plan.meridian_profile.as_ref())
+            .is_some_and(|(meridians, profile)| {
+                crate::body_plan::form_anchors_open(profile, meridians, severed)
+            });
+        if !anchors_ok {
+            tracing::warn!(
+                "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+                 rejected: form anchor gate closed (FormAnchor channels not fully open/unsevered)"
+            );
+            if let Ok((username, mut client)) = clients.get_mut(entity) {
+                push_cast_sync(
+                    &mut client,
+                    CastSyncV1 {
+                        phase: CastPhaseV1::Idle,
+                        slot,
+                        duration_ms: 0,
+                        started_at_ms: current_unix_millis(),
+                        outcome: CastOutcomeV1::MeridianGated,
+                    },
+                    username.0.as_str(),
+                    entity,
+                );
+            }
+            return;
+        }
+    }
+
     let skill_fn = combat_params
         .skill_registry
         .as_deref()
@@ -12876,6 +13444,14 @@ fn handle_inventory_move(
     // plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈（卸/装/拖入）。move 成功后按
     // `classify_pack_move` 判别分支 emit 差异化 VfxEventRequest，client 消费播差异化粒子+音效。
     vfx_events: Option<&mut Events<VfxEventRequest>>,
+    // plan-race-system-v1 P3b（决议 §8.1 #5）—— 装备门判定用 Form 身份（当前形态，
+    // 未易形时 = 本体）。`Option` 与其余 registry 同规则：既有单测未插入这两个资源时
+    // 优雅退化到 humanoid（`resolve_body_plan_for_target` 文档化的退化行为）。
+    body_plans: Option<&crate::body_plan::BodyPlanRegistry>,
+    race_registry: Option<&crate::body_plan::RaceRegistry>,
+    // plan-race-system-v1 P4 —— 当前易形形态（`None` = 未易形），驱动 Form 身份判定的
+    // 权威真源（见下方 `form_race_id` 修复注释）。
+    morph_states: &Query<Option<&crate::body_plan::MorphState>>,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -12933,13 +13509,39 @@ fn handle_inventory_move(
         }
     }
 
-    match apply_inventory_move(
+    // plan-race-system-v1 P4（决议 §8.1 #5 修复）—— 装备门判定用 Form 身份：已易形
+    // （`MorphState` 在场）时权威真源是 `MorphState.form`，**不再**冒用本体
+    // `Cultivation.race`——此前这里恒等于本体 race，未易形态下二者恰好相等掩盖了
+    // 问题，易形后会让本体应当被拒绝穿戴的装备错误放行 / 应当放行的装备错误拒绝。
+    let morph_state = morph_states.get(entity).ok().flatten();
+    let form_race_id = morph_state.map(|m| m.form.clone()).unwrap_or_else(|| {
+        cultivations
+            .get(entity)
+            .map(|c| c.race.clone())
+            .unwrap_or_else(|_| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID))
+    });
+    let form_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+        entity,
+        crate::body_plan::BodyPlanPurpose::Form,
+        crate::body_plan::BodyPlanResolveInputs {
+            cultivation: cultivations.get(entity).ok(),
+            beast_kind: None,
+            morph_state,
+        },
+        body_plans,
+        race_registry,
+    )
+    .is_humanoid;
+
+    match apply_inventory_move_with_race(
         &mut inventory,
         item_registry,
         instance_id,
         &from,
         &to,
         rotated,
+        &form_race_id,
+        form_is_humanoid,
     ) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
             let wear_update = maybe_apply_targeted_item_wear(
@@ -16153,10 +16755,9 @@ fn resync_inventory_only(
 /// ## 处理流程
 /// 1. 校验玩家背包中 `pill_instance_id` 对应物品为 `huiyuan_pill`（pills.toml id，无下划线）；
 /// 2. 根据 `elder_entity_id` 找到大能 ECS entity；
-/// 3. 消耗丹（inventory 真删）；
-/// 4. 读取 ItemEffect::QiRecovery { amount } 作为 qi_gain（默认 24.0）；
-/// 5. emit `GiveDanToElderIntent` 供 `dying_elder_give_dan_system` 在下一 tick 处理
-///    真元转移（解耦网络层与守恒系统）；
+/// 3. emit `GiveDanToElderIntent`；
+/// 4. `dying_elder_give_dan_system` 按 EventReader 顺序权威重验、消费、读取真实
+///    ItemRegistry effect 并提交真元事务。网络层绝不先删物品。
 ///
 /// ## 失败路径（静默 warn，不 crash）
 /// - pill_instance_id 不在玩家背包 → warn + reject
@@ -16169,13 +16770,11 @@ fn handle_give_dan_to_elder(
     pill_instance_id: u64,
     elder_entity_id: i32,
     inventories: &mut Query<&mut PlayerInventory>,
-    item_registry: &ItemRegistry,
     entity_manager: Option<&valence::prelude::EntityManager>,
     clients: &mut Query<(&Username, &mut Client)>,
     give_dan_tx: Option<&mut Events<crate::fauna::dying_elder::GiveDanToElderIntent>>,
 ) {
     use crate::fauna::dying_elder::GiveDanToElderIntent;
-    use crate::inventory::ItemEffect;
 
     // ── 校验玩家背包中是否有该 pill instance ──────────────────────────────
     let pill_template_id = {
@@ -16210,18 +16809,6 @@ fn handle_give_dan_to_elder(
         return;
     }
 
-    // ── 获取丹携带的 qi_gain（从 ItemEffect::QiRecovery，默认 24.0）────────
-    let qi_gain = item_registry
-        .get("huiyuan_pill")
-        .and_then(|tmpl| {
-            if let Some(ItemEffect::QiRecovery { amount }) = tmpl.effect {
-                Some(amount)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(24.0); // fallback to canonical value
-
     // ── 解析大能 entity ────────────────────────────────────────────────────
     let Some(entity_manager) = entity_manager else {
         tracing::warn!("[bong][dying_elder] give_dan: EntityManager resource missing");
@@ -16237,23 +16824,7 @@ fn handle_give_dan_to_elder(
         return;
     };
 
-    // ── 消耗丹（inventory 真删）───────────────────────────────────────────
-    {
-        let Ok(mut inventory) = inventories.get_mut(player_entity) else {
-            return;
-        };
-        match crate::inventory::consume_item_instance_once(&mut inventory, pill_instance_id) {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(
-                    "[bong][dying_elder] give_dan: consume_item_instance_once failed: {e}"
-                );
-                return;
-            }
-        }
-    }
-
-    // ── emit GiveDanToElderIntent 供 dying_elder_give_dan_system 处理 ────────
+    // ── 只 emit intent；权威消费在 give_dan_system 内按顺序执行 ─────────────
     let Some(tx) = give_dan_tx else {
         tracing::warn!(
             "[bong][dying_elder] give_dan: GiveDanToElderIntent event resource missing, dropping intent"
@@ -16264,11 +16835,10 @@ fn handle_give_dan_to_elder(
         player: player_entity,
         elder: elder_entity,
         pill_instance_id,
-        qi_gain,
     });
 
     tracing::info!(
-        "[bong][dying_elder] give_dan: player {player_entity:?} → elder {elder_entity:?} qi_gain={qi_gain} pill={pill_instance_id}"
+        "[bong][dying_elder] give_dan preflight accepted: player {player_entity:?} → elder {elder_entity:?} pill={pill_instance_id}"
     );
 }
 

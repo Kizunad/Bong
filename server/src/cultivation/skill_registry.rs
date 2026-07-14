@@ -35,6 +35,11 @@ pub enum CastRejectReason {
     /// 与 NoWeapon 同理是纯反馈拆分：此前冒用 InvalidTarget，玩家贴脸锁定目标
     /// 仍看到"目标无效"，被文案误导（一剑开天门实证）。
     TechniqueInactive,
+    /// plan-race-system-v1 P3a（决议 §8.1 #5/#6）——施放门 race gate 拒绝：本体
+    /// race_id / `intrinsic_is_humanoid` 未通过 `TechniqueDefinition.required_race`。
+    /// 拥有门之后、经脉门（handle_skill_bar_cast）/ 境界门（sword_path resolver）
+    /// 之前判定。
+    RaceMismatch,
 }
 
 impl CastRejectReason {
@@ -58,6 +63,7 @@ impl CastRejectReason {
             CastRejectReason::InRecovery => CastOutcomeV1::RejectInRecovery,
             CastRejectReason::NoWeapon => CastOutcomeV1::RejectNoWeapon,
             CastRejectReason::TechniqueInactive => CastOutcomeV1::RejectTechniqueInactive,
+            CastRejectReason::RaceMismatch => CastOutcomeV1::RejectRaceMismatch,
         }
     }
 }
@@ -112,6 +118,7 @@ pub fn init_registry() -> SkillRegistry {
     crate::dandao::register_skills(&mut registry);
     crate::sword_path::skill_register::register_skills(&mut registry);
     crate::npc::npc_skill::register_npc_skills(&mut registry);
+    crate::body_plan::morph::register_skills(&mut registry);
     registry
 }
 
@@ -229,6 +236,9 @@ mod tests {
         crate::combat::woliu_v2::skills::declare_woliu_v2_deps_direct(&mut deps);
         // baomai_v3 は App Resource 経由 — production declare fn を直接呼ぶ。
         crate::combat::baomai_v3::skills::declare_meridian_dependencies(&mut deps);
+        // plan-race-system-v1 P4 — morph.yixing 无经脉前置表条目（专属 form_anchors_open
+        // 门在别处判定），显式声明空 deps 满足审计完整性不变量。
+        crate::body_plan::morph::declare_meridian_dependencies(&mut deps);
         deps
     }
 

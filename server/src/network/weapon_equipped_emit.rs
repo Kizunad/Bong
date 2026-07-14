@@ -323,6 +323,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -379,6 +380,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -828,6 +830,7 @@ mod tests {
                 stamina_drain_per_s: 3.0,
             }),
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 

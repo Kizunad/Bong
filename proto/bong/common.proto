@@ -62,6 +62,60 @@ message Vec3 {
   double z = 3;
 }
 
+// ─── plan-race-system-v1 P3a：种族门（RaceGate） ────────────────────
+//
+// 装备 / 功法种族三档匹配门的 wire 形状，与 Rust body_plan::types::RaceGateOwned
+// 精确对应（决议 §8.1 #5/#6）。kind 用 string tag 而非 proto enum（避免枚举前缀
+// noOp，见 plan-wire-format-bridge-v1 教训）；species 仅 kind="species" 时非空。
+// 未知 kind 由消费方 fail-closed 拒绝解码（不静默兜底 "any"）。
+
+message RaceGate {
+  string kind = 1; // "any" | "humanoid" | "species"
+  repeated string species = 2; // kind=species 专属，其余 kind 恒为空
+}
+
+// ─── plan-race-system-v1 P3c：种族门元数据表（RaceGateMeta） ─────────
+//
+// 静态的 per-template / per-technique 种族门数据，一次性下发（join 首帧），
+// 不随每次 inventory snapshot 重发（那既浪费又未归一化）。client 缓存两表后
+// 按当前身份（装备域=当前形态 / 功法域=本体）离线判定置灰。
+//
+// 只装载**非 Any** 条目：Any 是默认，client 表里查不到 = 恒放行（省流量）。
+// 用 repeated entry（而非 proto3 map）——JsonFormat map<string,message> 的
+// client 解码坑多，repeated 与 body_plan_layout 等既有 repeated-message 一致。
+
+message RaceGateMetaEntry {
+  string id = 1;      // item template_id 或 technique skill_id
+  RaceGate gate = 2;  // 该条目的种族门（恒非 Any——Any 不进表）
+}
+
+message RaceGateMeta {
+  // item template_id → wearer_race（装备门，判当前形态身份）。
+  repeated RaceGateMetaEntry item_wearer_race = 1;
+  // technique skill_id → required_race（功法门，判本体身份）。
+  repeated RaceGateMetaEntry technique_required_race = 2;
+}
+
+// ─── plan-race-system-v1 P4：易形状态（MorphState） ──────────────────
+
+// 单个实体的易形状态快照。`active = false` 专用于 delta 广播（易形解除时下发一条
+// active=false 的 entry，client 据此从本地易形态缓存里删除该 entity_id）；
+// `mode = "full"` 时恒 `active = true`。
+message MorphStateEntry {
+  int32 entity_id = 1;   // Valence entity id
+  uint32 model_kind = 2;
+  string form_race_id = 3;
+  string form_body_plan_id = 4;
+  bool active = 5;
+}
+
+// `mode`："full"（join 首帧全量替换 + 周期 sync）| "delta"（易形/解除瞬间半径广播）。
+message MorphState {
+  uint32 v = 1;
+  string mode = 2;
+  repeated MorphStateEntry entries = 3;
+}
+
 // ─── 物品槽 ─────────────────────────────────────────────────────
 
 message ItemSlot {

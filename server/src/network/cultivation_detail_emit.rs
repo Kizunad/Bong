@@ -55,6 +55,9 @@ type CultivationDetailEmitQueryItem<'a> = (
     Option<&'a QiColor>,
     Option<&'a PracticeLog>,
     Option<&'a MeridianTarget>,
+    // plan-race-system-v1 P4 —— 当前易形形态，供 Form purpose 解析 + `form_race_id`
+    // 快照使用（见下方 `resolve_inputs`）。
+    Option<&'a crate::body_plan::MorphState>,
 );
 
 pub fn emit_cultivation_detail_payloads(
@@ -84,6 +87,7 @@ pub fn emit_cultivation_detail_payloads(
         qi_color,
         practice_log,
         meridian_target,
+        morph_state,
     ) in &mut clients
     {
         let channel_count = meridians.regular.len() + meridians.extraordinary.len();
@@ -113,19 +117,41 @@ pub fn emit_cultivation_detail_payloads(
         // 缓存；玩家客户端从不携带 `BeastKind`，`beast_kind: None` 恒落 resolve 的
         // Tier2（`Cultivation.race`）分支（未知 race 时 `resolve_body_plan_for_target`
         // 优雅退化到 humanoid，见其文档）。
-        let body_plan_id = resolve_body_plan_for_target(
+        let resolve_inputs = BodyPlanResolveInputs {
+            cultivation: Some(cultivation),
+            beast_kind: None,
+            morph_state,
+        };
+        let intrinsic_plan = resolve_body_plan_for_target(
             entity,
             BodyPlanPurpose::Intrinsic,
-            BodyPlanResolveInputs {
-                cultivation: Some(cultivation),
-                beast_kind: None,
-            },
+            resolve_inputs,
             body_plans.as_deref(),
             races.as_deref(),
-        )
-        .id
-        .as_str()
-        .to_string();
+        );
+        let body_plan_id = intrinsic_plan.id.as_str().to_string();
+        let intrinsic_is_humanoid = intrinsic_plan.is_humanoid;
+
+        // plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：
+        // client gate 判定（装备置灰等）的权威真源。`Form` purpose 未易形（无
+        // `MorphState`）时与 `Intrinsic` 恒等；P4 `MorphState` 落地后 `resolve_inputs`
+        // 携带真实组件，本处随之切到易形态数据，无需再改动。
+        let form_plan = resolve_body_plan_for_target(
+            entity,
+            BodyPlanPurpose::Form,
+            resolve_inputs,
+            body_plans.as_deref(),
+            races.as_deref(),
+        );
+        let form_body_plan_id = form_plan.id.as_str().to_string();
+        let form_is_humanoid = form_plan.is_humanoid;
+        let race_id = cultivation.race.as_str().to_string();
+        // plan-race-system-v1 P4 —— 未易形（`morph_state = None`）时 form_race_id =
+        // race_id（本体权威真源）；已易形时权威真源改为 `MorphState.form`——修复此前
+        // "form_race_id 恒等于本体 race_id" 的假 Form 身份 bug。
+        let form_race_id = morph_state
+            .map(|m| m.form.as_str().to_string())
+            .unwrap_or_else(|| race_id.clone());
 
         let contamination_total = contamination
             .map(|c| c.entries.iter().map(|e| e.amount).sum::<f64>())
@@ -179,6 +205,11 @@ pub fn emit_cultivation_detail_payloads(
             // 合法表达，不再依赖 `MeridianId::ALL` 数组下标。
             target_meridian: meridian_target.map(|t| t.0.as_str().to_string()),
             body_plan_id,
+            race_id,
+            form_race_id,
+            form_body_plan_id,
+            intrinsic_is_humanoid,
+            form_is_humanoid,
         });
         let label = payload_type_label(payload.payload_type());
         let bytes = match serialize_server_data_payload(&payload) {
@@ -234,6 +265,7 @@ pub fn emit_body_plan_layout_payloads(
             BodyPlanResolveInputs {
                 cultivation,
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans.as_deref(),
             races.as_deref(),
@@ -582,6 +614,184 @@ mod body_plan_layout_emit_tests {
         assert!(
             collect_body_plan_layout_payloads(&mut helper).is_empty(),
             "未登记对应 body_plan_id 的布局必须跳过而不是 panic"
+        );
+    }
+}
+
+/// plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— `cultivation_detail` 携带的
+/// 身份快照五字段（`race_id`/`form_race_id`/`form_body_plan_id`/`intrinsic_is_humanoid`/
+/// `form_is_humanoid`）饱和测试。核心不变量：P4 `MorphState` 落地前恒无易形，
+/// `resolve_body_plan_for_target(Form)` 与 `Intrinsic` 恒等，故 `form_*` 三字段必须
+/// 逐字段等于对应本体字段——任何回归（比如误接了独立的 form 追踪却忘记同步）都会
+/// 立刻撞红。
+#[cfg(test)]
+mod cultivation_detail_identity_snapshot_tests {
+    use super::*;
+    use valence::prelude::{App, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn flush_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush");
+        }
+    }
+
+    /// 驱动一次 `emit_cultivation_detail_payloads` 并解出唯一一条 CultivationDetail
+    /// payload（测试断言前提：每次调用恰好产出 0 或 1 条，多于 1 条即测试自身写错）。
+    fn run_once_and_collect_cultivation_detail(
+        app: &mut App,
+        helper: &mut MockClientHelper,
+    ) -> Vec<(String, String, String, bool, bool)> {
+        app.update();
+        flush_client_packets(app);
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::CultivationDetail {
+                        race_id,
+                        form_race_id,
+                        form_body_plan_id,
+                        intrinsic_is_humanoid,
+                        form_is_humanoid,
+                        body_plan_id,
+                        ..
+                    } => Some((
+                        race_id,
+                        form_race_id,
+                        form_body_plan_id,
+                        intrinsic_is_humanoid,
+                        form_is_humanoid,
+                    ))
+                    .inspect(|tuple| {
+                        // body_plan_id 未在元组里返回，但一并断言其与 form_body_plan_id
+                        // 恒等（本体/Form 未易形时 body_plan_id 也必须一致）。
+                        assert_eq!(
+                            tuple.2, body_plan_id,
+                            "form_body_plan_id 必须等于 body_plan_id（未易形态）"
+                        );
+                    }),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn no_registries_defaults_to_humanoid_human_identity_with_form_equal_intrinsic() {
+        // 既有大量单测未插入 BodyPlanRegistry/RaceRegistry 资源——退化路径必须仍
+        // 产出自洽的五字段快照（不 panic、不缺字段），且 form_* 恒等 intrinsic_*。
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: EMIT_INTERVAL_TICKS,
+        });
+        app.init_resource::<CultivationDetailEmitState>();
+        app.add_systems(Update, emit_cultivation_detail_payloads);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn((
+            client_bundle,
+            MeridianSystem::default(),
+            Cultivation::default(),
+        ));
+
+        let payloads = run_once_and_collect_cultivation_detail(&mut app, &mut helper);
+        assert_eq!(payloads.len(), 1, "首次 tick 必须发一条 cultivation_detail");
+        let (race_id, form_race_id, form_body_plan_id, intrinsic_is_humanoid, form_is_humanoid) =
+            &payloads[0];
+
+        assert_eq!(
+            race_id, "human",
+            "Cultivation::default().race 是 human，必须原样下发"
+        );
+        assert_eq!(
+            form_race_id, race_id,
+            "P4 MorphState 落地前未易形，form_race_id 必须等于 race_id"
+        );
+        assert_eq!(
+            form_body_plan_id, "humanoid",
+            "退化路径必须解析到 humanoid body_plan_id"
+        );
+        assert!(intrinsic_is_humanoid, "human race 的本体必须是人形");
+        assert_eq!(
+            *form_is_humanoid, *intrinsic_is_humanoid,
+            "P4 MorphState 落地前未易形，form_is_humanoid 必须等于 intrinsic_is_humanoid"
+        );
+    }
+
+    #[test]
+    fn custom_race_id_propagates_to_both_race_and_form_race_fields() {
+        // 换一个非默认 race_id（不依赖真实 RaceRegistry 里是否登记 humanoid 之外的
+        // 构型——本测试只锁"race_id 原样透传 + form_race_id 跟随"这条契约，不测
+        // Registry 解析本身，那部分由 body_plan::resolve 自己的单测覆盖）。
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: EMIT_INTERVAL_TICKS,
+        });
+        app.init_resource::<CultivationDetailEmitState>();
+        app.add_systems(Update, emit_cultivation_detail_payloads);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let cultivation = Cultivation {
+            race: crate::body_plan::types::RaceId::new("whale"),
+            ..Cultivation::default()
+        };
+        app.world_mut()
+            .spawn((client_bundle, MeridianSystem::default(), cultivation));
+
+        let payloads = run_once_and_collect_cultivation_detail(&mut app, &mut helper);
+        assert_eq!(payloads.len(), 1);
+        let (race_id, form_race_id, _, _, _) = &payloads[0];
+        assert_eq!(race_id, "whale");
+        assert_eq!(
+            form_race_id, "whale",
+            "form_race_id 必须跟随本体 race_id（未易形态）"
+        );
+    }
+
+    /// plan-race-system-v1 P4（决议 §风险#1 修复锁定）—— 已易形（`MorphState` 在场）
+    /// 时，`form_race_id` 必须跟随 `MorphState.form`，**不再**恒等于本体 `race_id`。
+    /// 这条测试直接锁死此前"form_race_id 恒等于本体 Cultivation.race"的 bug 不回归。
+    #[test]
+    fn morph_state_present_overrides_form_race_id_away_from_intrinsic_race() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: EMIT_INTERVAL_TICKS,
+        });
+        app.init_resource::<CultivationDetailEmitState>();
+        app.add_systems(Update, emit_cultivation_detail_payloads);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn((
+            client_bundle,
+            MeridianSystem::default(),
+            Cultivation::default(),
+            crate::body_plan::MorphState::new(
+                crate::body_plan::types::RaceId::new("whale"),
+                0,
+                EMIT_INTERVAL_TICKS,
+            ),
+        ));
+
+        let payloads = run_once_and_collect_cultivation_detail(&mut app, &mut helper);
+        assert_eq!(payloads.len(), 1);
+        let (race_id, form_race_id, _, _, _) = &payloads[0];
+        assert_eq!(
+            race_id, "human",
+            "本体 race_id 不因易形改变（human 仍是 Cultivation.race 真源）"
+        );
+        assert_eq!(
+            form_race_id, "whale",
+            "已易形时 form_race_id 必须跟随 MorphState.form，而不是继续冒用本体 race_id"
         );
     }
 }

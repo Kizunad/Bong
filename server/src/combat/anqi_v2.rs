@@ -577,6 +577,7 @@ fn multi_shot_cone_degrees(world: &bevy_ecs::world::World, caster: Entity) -> f6
         crate::body_plan::BodyPlanResolveInputs {
             cultivation: world.get::<Cultivation>(caster),
             beast_kind: None,
+            morph_state: None,
         },
         world.get_resource::<crate::body_plan::BodyPlanRegistry>(),
         world.get_resource::<crate::body_plan::RaceRegistry>(),

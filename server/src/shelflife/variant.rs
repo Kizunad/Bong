@@ -340,6 +340,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -381,6 +382,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         );
         // plan-food-v1 P1：food.spirit_wine.chen_cu 是 age_spoil_variant_mapping 的目标 ID。
@@ -412,6 +414,7 @@ mod tests {
                 shield_spec: None,
                 shelflife_profile: Some("chen_cu_v1".to_string()),
                 shelflife_track: Some(crate::shelflife::DecayTrack::Spoil),
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         );
         ItemRegistry::from_map(map)

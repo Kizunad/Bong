@@ -48,6 +48,10 @@ pub enum BodyPlanPurpose {
 pub struct BodyPlanResolveInputs<'a> {
     pub cultivation: Option<&'a Cultivation>,
     pub beast_kind: Option<&'a BeastKind>,
+    /// plan-race-system-v1 P4 —— 当前易形形态（`None` = 未易形）。**只在
+    /// `BodyPlanPurpose::Form` 分支被读取**——`Intrinsic` 分支恒等忽略本字段（未易形时
+    /// Form≡Intrinsic 的既有约定不受影响，既有调用点可安全传 `None`）。
+    pub morph_state: Option<&'a super::morph::MorphState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,11 +78,21 @@ impl std::error::Error for ResolveBodyPlanError {}
 
 pub fn resolve_body_plan<'a>(
     entity: Entity,
-    _purpose: BodyPlanPurpose,
+    purpose: BodyPlanPurpose,
     inputs: BodyPlanResolveInputs<'_>,
     body_plans: &'a BodyPlanRegistry,
     races: &RaceRegistry,
 ) -> Result<&'a BodyPlan, ResolveBodyPlanError> {
+    // plan-race-system-v1 P4 —— Form purpose + MorphState 在场：当前形态权威真源是
+    // `MorphState.form`，不再走 Tier1/2/3 本体判定。未易形（`morph_state = None`）时
+    // 无条件落进下方既有逻辑，保持"未易形 Form≡Intrinsic"这条 P0-P3 既有契约不变。
+    if matches!(purpose, BodyPlanPurpose::Form) {
+        if let Some(morph) = inputs.morph_state {
+            return resolve_race_to_plan(&morph.form, body_plans, races)
+                .ok_or_else(|| ResolveBodyPlanError::UnknownPlayerRace(morph.form.clone()));
+        }
+    }
+
     // Tier 1：BeastKind 组件在场即视为 NPC/fauna，优先于 Cultivation（防止「带着残留
     // Cultivation 组件的兽类」被误判为玩家身份）。
     if let Some(kind) = inputs.beast_kind {
@@ -219,6 +233,85 @@ pub fn resolve_meridian_topology_for_target<'a>(
     }
 }
 
+/// plan-race-system-v1 P3a —— 施放门 race gate 消费点用（`sword_path::skill_register`
+/// / `combat::sword_basics` 的技能 resolver 均以 `world: &bevy_ecs::world::World` 原始
+/// World 访问操作，而非 Bevy `Query`/`Res` system param），封装
+/// `resolve_body_plan_for_target(..., BodyPlanPurpose::Intrinsic, ...)` 的原始 World
+/// 版本，避免每个 resolver 各自手搓一遍 `world.get::<Cultivation>` /
+/// `world.get_resource::<BodyPlanRegistry>` 拼装。
+pub fn intrinsic_is_humanoid_from_world(
+    world: &valence::prelude::bevy_ecs::world::World,
+    entity: Entity,
+) -> bool {
+    let cultivation = world.get::<Cultivation>(entity);
+    let body_plans = world.get_resource::<super::registry::BodyPlanRegistry>();
+    let races = world.get_resource::<RaceRegistry>();
+    resolve_body_plan_for_target(
+        entity,
+        BodyPlanPurpose::Intrinsic,
+        BodyPlanResolveInputs {
+            cultivation,
+            // `BeastKind` 不是 Bevy `Component`（既有 `combat::resolve` / `combat::carrier` /
+            // `cultivation::meridian_open` 消费点同款简化，见 `resolve_body_plan` 模块文档）——
+            // sword_path / sword_basics 施放门只对玩家实体生效（NPC 不走这两条 cast 路径），
+            // `None` 与"真的查了 BeastKind"结果 bit-for-bit 一致。
+            beast_kind: None,
+            morph_state: None,
+        },
+        body_plans,
+        races,
+    )
+    .is_humanoid
+}
+
+/// plan-race-system-v1 P4 —— 给定种族 id，直接查表返回其 [`BodyPlan`]（`races.json`
+/// 的 `RaceEntry.body_plan_id` 一跳）。`resolve_body_plan` 的 Form 分支、
+/// `combat::resolve` 的护甲折算逆查等消费点复用本函数，避免各自手写
+/// `races.get(...).and_then(|e| body_plans.get(&e.body_plan_id))`。
+pub fn resolve_race_to_plan<'a>(
+    race: &RaceId,
+    body_plans: &'a BodyPlanRegistry,
+    races: &RaceRegistry,
+) -> Option<&'a BodyPlan> {
+    let entry = races.get(race)?;
+    body_plans.get(&entry.body_plan_id)
+}
+
+/// plan-race-system-v1 P4 —— Form 身份（当前形态 race_id + is_humanoid）的原始 World
+/// 版本，镜像 [`intrinsic_is_humanoid_from_world`] 的用法（无 Bevy `Query` 访问权限的
+/// resolver / 原始 `World` 消费点用）。修复此前"未易形时 Form≡Intrinsic 掩盖了
+/// `form_race_id` 恒等于本体 `Cultivation.race`"的问题——`MorphState` 落地后本函数
+/// 优先读取它，而不是无条件回落本体身份。
+pub fn form_identity_from_world(
+    world: &valence::prelude::bevy_ecs::world::World,
+    entity: Entity,
+) -> (RaceId, bool) {
+    let cultivation = world.get::<Cultivation>(entity);
+    let morph_state = world.get::<super::morph::MorphState>(entity);
+    let body_plans = world.get_resource::<super::registry::BodyPlanRegistry>();
+    let races = world.get_resource::<RaceRegistry>();
+
+    let intrinsic_race = cultivation
+        .map(|c| c.race.clone())
+        .unwrap_or_else(|| RaceId::new(super::race_registry::HUMAN_RACE_ID));
+    let form_race_id = morph_state
+        .map(|m| m.form.clone())
+        .unwrap_or(intrinsic_race);
+
+    let plan = resolve_body_plan_for_target(
+        entity,
+        BodyPlanPurpose::Form,
+        BodyPlanResolveInputs {
+            cultivation,
+            beast_kind: None,
+            morph_state,
+        },
+        body_plans,
+        races,
+    );
+    (form_race_id, plan.is_humanoid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +418,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: Some(&cultivation),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -347,6 +441,7 @@ mod tests {
             BodyPlanResolveInputs {
                 cultivation: Some(&cultivation),
                 beast_kind: None,
+                morph_state: None,
             },
             &body_plans,
             &races,
@@ -371,6 +466,7 @@ mod tests {
             BodyPlanResolveInputs {
                 cultivation: Some(&cultivation),
                 beast_kind: None,
+                morph_state: None,
             },
             &body_plans,
             &races,
@@ -402,6 +498,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: Some(&cultivation),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -425,6 +522,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: Some(&cultivation),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -453,6 +551,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: None,
                     beast_kind: Some(&BeastKind::Rat),
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -474,6 +573,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: None,
                     beast_kind: Some(&BeastKind::Whale),
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -500,6 +600,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: Some(&cultivation),
                     beast_kind: Some(&BeastKind::Spider),
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -520,6 +621,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: None,
                     beast_kind: None,
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,

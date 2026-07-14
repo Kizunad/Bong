@@ -983,6 +983,7 @@ fn projectile_tick_system(
                 BodyPlanResolveInputs {
                     cultivation,
                     beast_kind: None,
+                    morph_state: None,
                 },
                 body_plan_registry.as_deref(),
                 race_registry.as_deref(),
@@ -1408,6 +1409,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 

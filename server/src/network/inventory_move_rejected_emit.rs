@@ -154,6 +154,17 @@ mod tests {
     }
 
     #[test]
+    fn maps_race_mismatch_tag_no_extra_fields() {
+        // plan-race-system-v1 P3b — 装备门种族拒绝没有携带任何额外字段（不像
+        // ArmorSlotMismatch/WornCapFull 那样带 slot/cap）。
+        let v1 = inventory_move_rejected_v1_from_reason(&InventoryMoveRejectReason::RaceMismatch);
+        assert_eq!(v1.reason, "race_mismatch");
+        assert!(v1.slot.is_none());
+        assert!(v1.cap.is_none());
+        assert!(v1.required_realm.is_none());
+    }
+
+    #[test]
     fn maps_target_occupied_tag_no_extra_fields() {
         let v1 =
             inventory_move_rejected_v1_from_reason(&InventoryMoveRejectReason::TargetOccupied {
@@ -184,6 +195,7 @@ mod tests {
             TwoHandedLocksOther,
             ArmorDurabilityZero,
             ArmorSlotUnresolvable,
+            RaceMismatch,
         ];
         let mut tags: Vec<String> = unit_variants
             .iter()
