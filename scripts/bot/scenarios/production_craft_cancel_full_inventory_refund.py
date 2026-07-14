@@ -196,7 +196,7 @@ def run(env) -> None:
         for instance_id in sorted(refund_ids):
             world_pos = refund_drops[instance_id]["world_pos"]
             bot.move_to(*world_pos, speed=5.5)
-            time.sleep(0.2)
+            time.sleep(0.8)
             anchor = last_event_time(bot)
             bot.intent(
                 {
