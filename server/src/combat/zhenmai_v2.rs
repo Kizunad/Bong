@@ -1317,12 +1317,16 @@ fn contamination_for_meridian(
     caster: Entity,
     meridian_id: MeridianId,
 ) -> f64 {
+    // plan-race-system-v1 P6b review BLOCKER 收口：`ContamSource.meridian_id` 已换轨
+    // 为通用 `MeridianChannelId`——本 skill（震脉 v2 排毒，humanoid-only 玩法，配置走
+    // legacy `MeridianId`）比较前先把入参归一化到 channel id 再匹配。
+    let channel = meridian_id.channel_id();
     world
         .get::<Contamination>(caster)
         .map(|c| {
             c.entries
                 .iter()
-                .filter(|entry| entry.meridian_id == Some(meridian_id))
+                .filter(|entry| entry.meridian_id.as_ref() == Some(&channel))
                 .map(|entry| entry.amount.max(0.0))
                 .sum()
         })
@@ -1335,13 +1339,14 @@ fn reduce_contamination_for_meridian(
     meridian_id: MeridianId,
     amount: f64,
 ) -> f64 {
+    let channel = meridian_id.channel_id();
     let Some(mut contamination) = world.get_mut::<Contamination>(caster) else {
         return 0.0;
     };
     let mut remaining = amount.max(0.0);
     let mut removed = 0.0;
     for entry in &mut contamination.entries {
-        if entry.meridian_id != Some(meridian_id) {
+        if entry.meridian_id.as_ref() != Some(&channel) {
             continue;
         }
         if remaining <= f64::EPSILON {
@@ -1887,7 +1892,7 @@ mod tests {
             entries: vec![ContamSource {
                 amount: 10.0,
                 color: ColorKind::Insidious,
-                meridian_id: Some(MeridianId::Lung),
+                meridian_id: Some(MeridianId::Lung.channel_id()),
                 attacker_id: None,
                 introduced_at: 1,
             }],
@@ -1909,14 +1914,14 @@ mod tests {
                 ContamSource {
                     amount: 6.0,
                     color: ColorKind::Insidious,
-                    meridian_id: Some(MeridianId::Lung),
+                    meridian_id: Some(MeridianId::Lung.channel_id()),
                     attacker_id: None,
                     introduced_at: 1,
                 },
                 ContamSource {
                     amount: 5.0,
                     color: ColorKind::Turbid,
-                    meridian_id: Some(MeridianId::Heart),
+                    meridian_id: Some(MeridianId::Heart.channel_id()),
                     attacker_id: None,
                     introduced_at: 1,
                 },
@@ -1931,7 +1936,7 @@ mod tests {
         assert!(contam
             .entries
             .iter()
-            .any(|entry| entry.meridian_id == Some(MeridianId::Heart) && entry.amount == 5.0));
+            .any(|entry| entry.meridian_id == Some(MeridianId::Heart.channel_id()) && entry.amount == 5.0));
     }
 
     #[test]

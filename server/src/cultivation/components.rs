@@ -367,15 +367,74 @@ impl Meridian {
 }
 
 /// 异种真元污染源（plan §1.1）。由战斗 plan 写入，本 plan 负责排异演化。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `meridian_id` 类型是 plan-race-system-v1 P6b review BLOCKER 收口的核心换轨点：
+/// 从闭合枚举 `Option<MeridianId>` 改为 `Option<MeridianChannelId>`（string），使非
+/// humanoid 构型（如 P5 飞鲸的 `tail_core`）声明的 dugu 注入映射能真实挂靠到自己的
+/// channel 并被 `contamination_tick`/`resolve_crack_target` 消费——换轨前的实现在
+/// `combat::resolve` 构造处把已经拿到的通用 channel 又经 `to_meridian_id()` 压回
+/// legacy 枚举，非人形专属 channel 必然 `None`，专属 channel 实际不可消费（见
+/// `combat::resolve::dugu_contam_meridian_routing_tests` 换轨前后对比）。
+#[derive(Debug, Clone, Serialize)]
 pub struct ContamSource {
     pub amount: f64,
     pub color: ColorKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub meridian_id: Option<MeridianId>,
+    pub meridian_id: Option<MeridianChannelId>,
     #[serde(default)]
     pub attacker_id: Option<String>,
     pub introduced_at: u64,
+}
+
+impl<'de> Deserialize<'de> for ContamSource {
+    /// 手写 `Deserialize`（而非 derive）只为 `meridian_id` 一个字段做**存档兼容**：
+    /// P1a 之前写入的持久化 `contamination` bundle 里，`meridian_id` 是 `MeridianId`
+    /// 的 serde 派生表示——PascalCase 枚举变体名字符串（如 `"Lung"`）。字段类型换轨
+    /// 到 `MeridianChannelId`（transparent 任意字符串）后，若直接对旧 JSON 做透传式
+    /// 反序列化，`"Lung"` 会被原样存成 channel id `"Lung"`（大小写不匹配新
+    /// `humanoid.json` 声明的 snake_case `"lung"`），导致老存档的污染裂痕路由悄悄
+    /// 失效而不是报错——这是数据内容漂移，不是硬崩溃，比 `legacy_meridian_bundle`
+    /// 的显式版本号迁移更容易被漏测。这里改为：先尝试按 legacy `MeridianId`（严格
+    /// PascalCase 变体名）解码，成功则经 `channel_id()` 归一化到新 snake_case；失败
+    /// 再按当前形态（任意字符串，含非 humanoid channel 与已经是 snake_case 的新
+    /// 存档）解码。
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawContamSource {
+            amount: f64,
+            color: ColorKind,
+            #[serde(default)]
+            meridian_id: Option<serde_json::Value>,
+            #[serde(default)]
+            attacker_id: Option<String>,
+            introduced_at: u64,
+        }
+
+        let raw = RawContamSource::deserialize(deserializer)?;
+        let meridian_id = match raw.meridian_id {
+            None => None,
+            Some(value) => {
+                if let Ok(legacy) = serde_json::from_value::<MeridianId>(value.clone()) {
+                    Some(legacy.channel_id())
+                } else {
+                    Some(
+                        serde_json::from_value::<MeridianChannelId>(value)
+                            .map_err(serde::de::Error::custom)?,
+                    )
+                }
+            }
+        };
+        Ok(ContamSource {
+            amount: raw.amount,
+            color: raw.color,
+            meridian_id,
+            attacker_id: raw.attacker_id,
+            introduced_at: raw.introduced_at,
+        })
+    }
 }
 
 /// 污染 Component。`entries` 为空 = 纯净。
@@ -839,7 +898,7 @@ mod tests {
         let source = ContamSource {
             amount: 2.5,
             color: ColorKind::Violent,
-            meridian_id: Some(MeridianId::Lung),
+            meridian_id: Some(MeridianId::Lung.channel_id()),
             attacker_id: Some(canonical_player_id("Alice")),
             introduced_at: 77,
         };
@@ -849,7 +908,11 @@ mod tests {
             serde_json::from_str(&json).expect("contam source should deserialize");
 
         assert_eq!(decoded.attacker_id.as_deref(), Some("offline:Alice"));
-        assert_eq!(decoded.meridian_id, Some(MeridianId::Lung));
+        assert_eq!(
+            decoded.meridian_id,
+            Some(MeridianChannelId::new("lung")),
+            "current-form ContamSource must round-trip its channel id verbatim (snake_case)"
+        );
         assert_eq!(decoded.introduced_at, 77);
     }
 
@@ -866,6 +929,79 @@ mod tests {
 
         assert_eq!(decoded.attacker_id, None);
         assert_eq!(decoded.introduced_at, 9);
+    }
+
+    /// P6b review BLOCKER 收口专属 pin：老存档（P1a `MeridianChannelId` 换轨之前）里
+    /// `ContamSource.meridian_id` 是 legacy `MeridianId` 的 serde 派生表示——PascalCase
+    /// 枚举变体名字符串。反序列化必须把它归一化到当前的 snake_case channel id，而不是
+    /// 把 `"Lung"` 原样囫囵存成一个"看起来像新形态但其实大小写不对"的 channel id
+    /// （那会让老存档的裂痕路由与 `MeridianSystem`（存储 `"lung"`）永久对不上，静默
+    /// 失效而不报错）。
+    #[test]
+    fn contam_source_deserialize_migrates_legacy_pascal_case_meridian_id_to_channel_id() {
+        for (legacy_variant, expected_channel) in [
+            ("Lung", "lung"),
+            ("Heart", "heart"),
+            ("Ren", "ren"),
+            ("YangWei", "yang_wei"),
+        ] {
+            let legacy = serde_json::json!({
+                "amount": 3.0,
+                "color": "Mellow",
+                "meridian_id": legacy_variant,
+                "introduced_at": 5,
+            });
+
+            let decoded: ContamSource = serde_json::from_value(legacy).unwrap_or_else(|error| {
+                panic!(
+                    "legacy PascalCase meridian_id {legacy_variant:?} must still decode: {error}"
+                )
+            });
+
+            assert_eq!(
+                decoded.meridian_id,
+                Some(MeridianChannelId::new(expected_channel)),
+                "legacy PascalCase {legacy_variant:?} must migrate to snake_case channel id \
+                 {expected_channel:?}, not be stored verbatim as {legacy_variant:?}"
+            );
+        }
+    }
+
+    /// 非 humanoid channel（换轨后的新形态，如 P5 飞鲸的 `tail_core`）不是任何
+    /// legacy `MeridianId` 变体名，必须原样透传，不能被误判成 legacy 表示后丢弃/改写。
+    #[test]
+    fn contam_source_deserialize_passes_through_non_humanoid_channel_id_verbatim() {
+        let current = serde_json::json!({
+            "amount": 1.5,
+            "color": "Insidious",
+            "meridian_id": "tail_core",
+            "introduced_at": 3,
+        });
+
+        let decoded: ContamSource =
+            serde_json::from_value(current).expect("non-humanoid channel id should decode");
+
+        assert_eq!(
+            decoded.meridian_id,
+            Some(MeridianChannelId::new("tail_core")),
+            "non-humanoid channel ids have no legacy MeridianId mapping and must pass through \
+             verbatim, not be silently dropped or mutated"
+        );
+    }
+
+    #[test]
+    fn contam_source_deserialize_none_meridian_id_stays_none() {
+        let current = serde_json::json!({
+            "amount": 1.0,
+            "color": "Sharp",
+            "meridian_id": null,
+            "introduced_at": 1,
+        });
+
+        let decoded: ContamSource =
+            serde_json::from_value(current).expect("explicit null meridian_id should decode");
+
+        assert_eq!(decoded.meridian_id, None);
     }
 
     #[test]
