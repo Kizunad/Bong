@@ -7,6 +7,9 @@ import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.function.BooleanSupplier;
+import java.util.function.LongSupplier;
+
 public final class HudImmersionControls {
     private static final String CATEGORY = "category.bong-client";
     private static final String TOGGLE_KEY = "key.bong-client.hud_immersive_toggle";
@@ -21,9 +24,16 @@ public final class HudImmersionControls {
     }
 
     private static void onEndClientTick(MinecraftClient client) {
-        while (keyBinding().wasPressed()) {
-            HudImmersionMode.toggleManual(System.currentTimeMillis());
+        consumeTogglePresses(keyBinding()::wasPressed, System::currentTimeMillis);
+    }
+
+    static int consumeTogglePresses(BooleanSupplier wasPressed, LongSupplier nowMillis) {
+        int consumed = 0;
+        while (wasPressed.getAsBoolean()) {
+            HudImmersionMode.toggleManual(nowMillis.getAsLong());
+            consumed++;
         }
+        return consumed;
     }
 
     private static KeyBinding keyBinding() {
