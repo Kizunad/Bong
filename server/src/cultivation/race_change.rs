@@ -770,7 +770,10 @@ mod tests {
         let cultivation = app.world().get::<Cultivation>(player).unwrap();
         assert_eq!(cultivation.race, RaceId::new(HUMAN_RACE_ID));
         assert_eq!(cultivation.qi_max, 100.0);
-        assert!(cultivation.qi_current.is_nan(), "qi_current 应仍是未被触碰的 NaN");
+        assert!(
+            cultivation.qi_current.is_nan(),
+            "qi_current 应仍是未被触碰的 NaN"
+        );
         assert!(app
             .world()
             .get::<MeridianSystem>(player)
@@ -983,5 +986,215 @@ mod tests {
             0
         );
         assert_eq!(plan.newly_dormant.len(), 2, "两条经脉都应全部进休眠登记");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // opus A MEDIUM —— beast_common 换种回归锁：races.json 三种族（human/
+    // beast_common/whale）共用 humanoid body_plan，此前 beast_common 一条
+    // meridian_mapping 都没有，`/race set beast_common` 会对已修炼玩家把每条已打通
+    // 经脉都判 `MeridianMappingSourceMissing`……不对，实际后果是 mapping 查无 →
+    // `severed.dormant(new_id)` 也查无（首次换种没有休眠登记）→ 静默落回全新默认
+    // （未打通）——qi_max 塌到基线 10、已投入的修为全部作废、超额真元被当成
+    // "excess" 永久释放出去。用真实 races.json + 真实 humanoid body_plan 验证
+    // human->beast_common 现在确实声明了 identity meridian_mapping，换种不清经脉。
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn load_real_body_plans_and_races() -> (BodyPlanRegistry, RaceRegistry) {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans_dir = manifest_dir.join(crate::body_plan::registry::DEFAULT_BODY_PLANS_DIR);
+        let races_path = manifest_dir.join(crate::body_plan::race_registry::DEFAULT_RACES_PATH);
+        let body_plans = BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
+        let races =
+            RaceRegistry::load_file(&races_path, &body_plans).expect("real races.json should load");
+        (body_plans, races)
+    }
+
+    #[test]
+    fn human_to_beast_common_does_not_clear_cultivation_progress() {
+        let (body_plans, races) = load_real_body_plans_and_races();
+        let mut app = App::new();
+        app.insert_resource(body_plans);
+        app.add_event::<QiTransfer>();
+
+        // 真实 humanoid.json 的完整 20 channel 默认 profile（全未打通），手动打通两条
+        // 模拟"已投入修为"的玩家，另设 qi_current/qi_max 反映这份投入。
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianChannelId::new("lung")).opened = true;
+        meridians.get_mut(MeridianChannelId::new("lung")).integrity = 0.8;
+        meridians.get_mut(MeridianChannelId::new("heart")).opened = true;
+        meridians.get_mut(MeridianChannelId::new("heart")).integrity = 0.6;
+        let cultivation = Cultivation {
+            qi_current: 25.0,
+            qi_max: 30.0,
+            race: RaceId::new(HUMAN_RACE_ID),
+            ..Default::default()
+        };
+        let player = app
+            .world_mut()
+            .spawn((cultivation, meridians, MeridianSeveredPermanent::default()))
+            .id();
+
+        let plan = precheck_race_change(app.world(), player, RaceId::new("beast_common"), &races)
+            .expect("human -> beast_common precheck must succeed via real races.json mapping");
+
+        assert!(
+            plan.new_meridian_system
+                .get(MeridianChannelId::new("lung"))
+                .opened,
+            "human->beast_common 必须走 identity meridian_mapping，已打通的 lung 不能被清成未打通"
+        );
+        assert_eq!(
+            plan.new_meridian_system
+                .get(MeridianChannelId::new("lung"))
+                .integrity,
+            0.8,
+            "迁移必须带着原 integrity 一起走"
+        );
+        assert!(
+            plan.new_meridian_system
+                .get(MeridianChannelId::new("heart"))
+                .opened,
+            "已打通的 heart 同理不能被清成未打通"
+        );
+        assert!(
+            plan.newly_dormant.is_empty(),
+            "beast_common 现在拥有覆盖全部 20 条经脉的 meridian_mapping，换种不应有任何经脉被打入休眠登记，实际：{:?}",
+            plan.newly_dormant
+        );
+        assert!(
+            plan.qi_excess_release.is_none(),
+            "identity 映射下 qi_max 应保持不变（同一 humanoid body_plan），不应触发超额释放"
+        );
+        assert_eq!(
+            plan.new_qi_current, 25.0,
+            "qi_current 不应因换种到 beast_common 而被清空/削减"
+        );
+    }
+
+    #[test]
+    fn whale_to_beast_common_does_not_clear_cultivation_progress() {
+        // 对称覆盖：whale->beast_common 方向同样必须走 identity mapping。
+        let (body_plans, races) = load_real_body_plans_and_races();
+        let mut app = App::new();
+        app.insert_resource(body_plans);
+        app.add_event::<QiTransfer>();
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianChannelId::new("kidney")).opened = true;
+        meridians
+            .get_mut(MeridianChannelId::new("kidney"))
+            .integrity = 0.9;
+        let cultivation = Cultivation {
+            qi_current: 5.0,
+            qi_max: 20.0,
+            race: RaceId::new("whale"),
+            ..Default::default()
+        };
+        let player = app
+            .world_mut()
+            .spawn((cultivation, meridians, MeridianSeveredPermanent::default()))
+            .id();
+
+        let plan = precheck_race_change(app.world(), player, RaceId::new("beast_common"), &races)
+            .expect("whale -> beast_common precheck must succeed via real races.json mapping");
+
+        assert!(
+            plan.new_meridian_system
+                .get(MeridianChannelId::new("kidney"))
+                .opened,
+            "whale->beast_common 必须走 identity meridian_mapping，已打通的 kidney 不能被清空"
+        );
+        assert!(
+            plan.newly_dormant.is_empty(),
+            "whale->beast_common 覆盖全部 20 条经脉，不应有任何经脉进休眠登记，实际：{:?}",
+            plan.newly_dormant
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // opus A LOW —— 守恒测试补 zone 部分满分流 case：现有守恒测试只覆盖 zone 全吸
+    // （overflow==0）与无 zone（全走 overflow）两端，缺 zone 部分满时"accepted 部分
+    // 入 zone + overflow 部分入账户"的分流用例。
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn commit_partially_full_zone_splits_release_between_zone_and_overflow_conserved() {
+        let (body_plans, races) = human_whale_registry_with_partial_mapping();
+        let mut app = App::new();
+        app.insert_resource(body_plans);
+        app.add_event::<QiTransfer>();
+        let player = spawn_human_player(&mut app, 30.0, 1000.0);
+        app.world_mut().entity_mut(player).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        // `ZoneRegistry::default()` 单个 spawn zone，`QI_ZONE_UNIT_CAPACITY` 单位容量
+        // 换算下 zone 总容量固定——把 `spirit_qi` 设成"只剩一点空间"的部分满状态，
+        // 保证本次 excess 释放超过剩余空间，必然拆分出非零 overflow。
+        let mut zones = ZoneRegistry::default();
+        let zone_capacity_room = 3.0; // 只留 3.0 单位空间，excess 精确已知（见下方计算）
+        zones.zones[0].spirit_qi =
+            (QI_ZONE_UNIT_CAPACITY - zone_capacity_room) / QI_ZONE_UNIT_CAPACITY;
+        app.insert_resource(zones);
+
+        let plan = precheck_race_change(app.world(), player, RaceId::new("whale"), &races)
+            .expect("precheck should succeed");
+        let release = plan
+            .qi_excess_release
+            .clone()
+            .expect("qi_current(30) vastly exceeds new qi_max (only fin channel opened)");
+        let excess = release.amount;
+        assert!(
+            excess > zone_capacity_room,
+            "本用例必须构造 excess 超过 zone 剩余空间，才能触发分流分支；excess={excess} room={zone_capacity_room}"
+        );
+        assert!(
+            release.transfer.accepted > 0.0 && release.transfer.overflow > 0.0,
+            "zone 部分满场景下 accepted 和 overflow 都应为非零正值才是真正的分流，实际 accepted={} overflow={}",
+            release.transfer.accepted,
+            release.transfer.overflow
+        );
+
+        let qi_current_before = app.world().get::<Cultivation>(player).unwrap().qi_current;
+        let zone_qi_before = app
+            .world()
+            .get_resource::<ZoneRegistry>()
+            .unwrap()
+            .zones
+            .first()
+            .unwrap()
+            .spirit_qi;
+
+        commit_race_change(app.world_mut(), player, plan);
+
+        let qi_current_after = app.world().get::<Cultivation>(player).unwrap().qi_current;
+        let zone_qi_after = app
+            .world()
+            .get_resource::<ZoneRegistry>()
+            .unwrap()
+            .zones
+            .first()
+            .unwrap()
+            .spirit_qi;
+        let qi_current_delta = qi_current_before - qi_current_after;
+        let zone_qi_delta = (zone_qi_after - zone_qi_before) * QI_ZONE_UNIT_CAPACITY;
+
+        assert!(
+            (qi_current_delta - excess).abs() < 1e-9,
+            "qi_current 减少量必须等于 precheck 计算的 excess"
+        );
+        assert!(
+            (zone_qi_delta - release.transfer.accepted).abs() < 1e-6,
+            "zone 增加量必须精确等于分流计划里的 accepted 部分，实际 delta={zone_qi_delta} accepted={}",
+            release.transfer.accepted
+        );
+        assert!(
+            (qi_current_delta - (release.transfer.accepted + release.transfer.overflow)).abs()
+                < 1e-6,
+            "accepted + overflow 必须精确对拍 excess（守恒——扣除量不多不少全部有处可寻），\
+             实际 qi_current_delta={qi_current_delta} accepted={} overflow={}",
+            release.transfer.accepted,
+            release.transfer.overflow
+        );
     }
 }
