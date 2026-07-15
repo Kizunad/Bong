@@ -167,8 +167,14 @@ class AnqiHudStateStoreTest {
             "quiver", 80.0f, BASE_NOW, shortDuration, oldSessionTick);
         AnqiHudStateStore.updateMultiShot(8, BASE_NOW, shortDuration, oldSessionTick);
 
-        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(newSessionNow),
+        AnqiHudState expiredState = AnqiHudStateStore.snapshot(newSessionNow);
+        assertFalse(expiredState.active(newSessionNow),
             "TTL 过期只应隐藏旧反馈，不应伪装成仍活跃的 HUD");
+        assertEquals(0, expiredState.echoCount());
+        assertEquals(0.0f, expiredState.chargeProgress(), 0.001f);
+        assertFalse(expiredState.hasAbrasionContainer());
+        assertEquals(0.0f, expiredState.abrasionQiPayload(), 0.001f);
+        assertEquals(0, expiredState.multiShotCount());
 
         AnqiHudStateStore.updateEcho(2, newSessionNow, DUR, newSessionTick);
         AnqiHudStateStore.updateCharge(0.2f, newSessionNow, DUR, newSessionTick);
@@ -176,8 +182,14 @@ class AnqiHudStateStoreTest {
             "hand_slot", 20.0f, newSessionNow, DUR, newSessionTick);
         AnqiHudStateStore.updateMultiShot(2, newSessionNow, DUR, newSessionTick);
 
-        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(newSessionNow),
+        AnqiHudState blockedState = AnqiHudStateStore.snapshot(newSessionNow);
+        assertFalse(blockedState.active(newSessionNow),
             "同一 session 未 clear 时，过期 slot 的高 lastTick 仍必须拒绝低 tick 乱序包");
+        assertEquals(0, blockedState.echoCount());
+        assertEquals(0.0f, blockedState.chargeProgress(), 0.001f);
+        assertFalse(blockedState.hasAbrasionContainer());
+        assertEquals(0.0f, blockedState.abrasionQiPayload(), 0.001f);
+        assertEquals(0, blockedState.multiShotCount());
 
         AnqiHudStateStore.clear();
         AnqiHudStateStore.updateEcho(2, newSessionNow, DUR, newSessionTick);
