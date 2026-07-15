@@ -5,7 +5,10 @@ import com.bong.client.agentui.AgentUiScreen;
 import com.bong.client.agentui.AgentUiVfxPlanner;
 import com.bong.client.agentui.AgentUiVfxState;
 import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.hud.HudRenderLayer;
 import com.bong.client.hud.ScreenHudVisibility;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.text.Text;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,8 +19,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BongHudTest {
@@ -113,11 +117,98 @@ public class BongHudTest {
         );
 
         assertFalse(commands.isEmpty(), "AgentUiScreen 打开时 planner 应生成 fade-in 覆层命令");
-        assertNotEquals(
-            ScreenHudVisibility.HIDDEN,
+        assertEquals(
+            ScreenHudVisibility.AGENT_UI_ONLY,
             ScreenHudVisibility.forScreen(screen),
-            "AgentUiScreen 不得在覆层命令进入 BongHud 渲染前被 screen gate 提前隐藏"
+            "AgentUiScreen 必须进入专用覆层策略，不能提前隐藏或放开完整 HUD"
         );
+        assertEquals(
+            commands,
+            BongHud.filterCommandsForVisibility(commands, ScreenHudVisibility.forScreen(screen)),
+            "AgentUiScreen 的 planner 命令必须穿过专用 layer filter"
+        );
+    }
+
+    @Test
+    public void screenVisibilityKeepsNullFullAndUnknownHiddenContracts() {
+        assertEquals(ScreenHudVisibility.FULL, ScreenHudVisibility.forScreen(null));
+        assertEquals(
+            ScreenHudVisibility.HIDDEN,
+            ScreenHudVisibility.forScreen(new UnknownScreen()),
+            "未知普通 Screen 必须继续隐藏 HUD"
+        );
+    }
+
+    @Test
+    public void commandVisibilityFiltersEveryPolicyWithoutLayerLeakage() {
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.text(HudRenderLayer.BASELINE, "baseline", 0, 0, 0xFFFFFF),
+            HudRenderCommand.text(HudRenderLayer.QUICK_BAR, "quick", 0, 0, 0xFFFFFF),
+            HudRenderCommand.text(HudRenderLayer.CAST_BAR, "cast", 0, 0, 0xFFFFFF),
+            HudRenderCommand.text(HudRenderLayer.EVENT_STREAM, "event", 0, 0, 0xFFFFFF),
+            HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, "extract", 0, 0, 0xFFFFFF),
+            HudRenderCommand.text(HudRenderLayer.ZONE, "zone", 0, 0, 0xFFFFFF),
+            HudRenderCommand.screenTint(HudRenderLayer.AGENT_UI, 0xCC000000),
+            HudRenderCommand.edgeVignette(HudRenderLayer.AGENT_UI, 0x661A0D40),
+            HudRenderCommand.rect(HudRenderLayer.AGENT_UI, 0, 0, 320, 1, 0x22000000)
+        );
+
+        assertSame(
+            commands,
+            BongHud.filterCommandsForVisibility(commands, ScreenHudVisibility.FULL),
+            "FULL 必须保留原命令列表"
+        );
+        assertEquals(
+            List.of(HudRenderLayer.CAST_BAR),
+            layers(BongHud.filterCommandsForVisibility(commands, ScreenHudVisibility.CAST_BAR_ONLY))
+        );
+        assertEquals(
+            List.of(
+                HudRenderLayer.BASELINE,
+                HudRenderLayer.QUICK_BAR,
+                HudRenderLayer.CAST_BAR,
+                HudRenderLayer.EVENT_STREAM,
+                HudRenderLayer.TSY_EXTRACT
+            ),
+            layers(BongHud.filterCommandsForVisibility(commands, ScreenHudVisibility.INVENTORY_DIMMED))
+        );
+        assertEquals(
+            List.of(HudRenderLayer.AGENT_UI, HudRenderLayer.AGENT_UI, HudRenderLayer.AGENT_UI),
+            layers(BongHud.filterCommandsForVisibility(commands, ScreenHudVisibility.AGENT_UI_ONLY)),
+            "专用策略必须保留所有 Agent UI VFX kind，同时剔除其他 HUD layer"
+        );
+        assertTrue(
+            BongHud.filterCommandsForVisibility(commands, ScreenHudVisibility.HIDDEN).isEmpty(),
+            "HIDDEN 的纯过滤契约必须返回空命令"
+        );
+    }
+
+    @Test
+    public void commandVisibilityHandlesEmptyAndRejectsNullInputs() {
+        for (ScreenHudVisibility visibility : ScreenHudVisibility.values()) {
+            assertTrue(
+                BongHud.filterCommandsForVisibility(List.of(), visibility).isEmpty(),
+                "空命令列表在 " + visibility + " 策略下都应保持为空"
+            );
+        }
+        assertThrows(
+            NullPointerException.class,
+            () -> BongHud.filterCommandsForVisibility(null, ScreenHudVisibility.FULL)
+        );
+        assertThrows(
+            NullPointerException.class,
+            () -> BongHud.filterCommandsForVisibility(List.of(), null)
+        );
+    }
+
+    private static List<HudRenderLayer> layers(List<HudRenderCommand> commands) {
+        return commands.stream().map(HudRenderCommand::layer).toList();
+    }
+
+    private static final class UnknownScreen extends Screen {
+        private UnknownScreen() {
+            super(Text.literal("unknown"));
+        }
     }
 
     private static final class RecordingHudSurface implements BongHud.HudSurface {
