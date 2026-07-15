@@ -4,11 +4,15 @@ import com.bong.client.agentui.AgentUiScreen;
 import com.bong.client.agentui.AgentUiVfxState;
 import com.bong.client.agentui.AgentUiVfxStore;
 import com.bong.client.combat.baomai.v3.BaomaiV3HudStateStore;
+import com.bong.client.hud.BongHudStateSnapshot;
+import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRenderLayer;
 import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.hud.HudLayoutPreferenceStore;
+import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.ScreenHudVisibility;
+import net.minecraft.client.gui.screen.GameMenuScreen;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -128,7 +132,7 @@ public class BongHudTest {
             nowMillis,
             () -> {
                 frameBuildCount[0]++;
-                return BongHud.HudFrameInput.empty(320, 180);
+                return emptyHudFrameInput(320, 180);
             },
             (commands, visibility) -> {
                 renderedFrames.add(commands);
@@ -164,12 +168,31 @@ public class BongHudTest {
         BongHud.render(
             screen,
             1_000L,
-            () -> BongHud.HudFrameInput.empty(320, 180),
+            () -> emptyHudFrameInput(320, 180),
             (commands, visibility) -> renderedFrames.add(commands)
         );
 
         assertEquals(1, renderedFrames.size(), "AGENT_UI_ONLY 仍应执行最终 renderer，而非提前返回");
         assertTrue(renderedFrames.get(0).isEmpty(), "Store 为空时不得泄露 baseline 或其他 HUD layer");
+    }
+
+    @Test
+    public void hiddenScreenSkipsFrameCaptureAndRenderer() {
+        int[] frameBuildCount = {0};
+        int[] renderCount = {0};
+
+        BongHud.render(
+            new GameMenuScreen(false),
+            1_000L,
+            () -> {
+                frameBuildCount[0]++;
+                return emptyHudFrameInput(320, 180);
+            },
+            (commands, visibility) -> renderCount[0]++
+        );
+
+        assertEquals(0, frameBuildCount[0], "HIDDEN 屏幕不得采样 HUD frame");
+        assertEquals(0, renderCount[0], "HIDDEN 屏幕不得触发最终 renderer");
     }
 
     @Test
@@ -236,6 +259,21 @@ public class BongHudTest {
 
     private static List<HudRenderLayer> layers(List<HudRenderCommand> commands) {
         return commands.stream().map(HudRenderCommand::layer).toList();
+    }
+
+    private static BongHud.HudFrameInput emptyHudFrameInput(int screenWidth, int screenHeight) {
+        return new BongHud.HudFrameInput(
+            BongHudStateSnapshot.empty(),
+            CombatHudSnapshot.empty(),
+            text -> text == null ? 0 : text.length() * 6,
+            220,
+            screenWidth,
+            screenHeight,
+            null,
+            HudRuntimeContext.empty(),
+            List::of,
+            List::of
+        );
     }
 
     private static final class RecordingHudSurface implements BongHud.HudSurface {

@@ -113,13 +113,15 @@ public class BongHud {
             frame.botanyAnchor(),
             frame.runtimeContext()
         );
-        if (!frame.spiritualSenseIndicators().isEmpty()) {
+        List<EdgeIndicatorCmd> spiritualSenseIndicators = frame.spiritualSenseIndicators().get();
+        if (!spiritualSenseIndicators.isEmpty()) {
             commands = new ArrayList<>(commands);
-            PerceptionEdgeRenderer.append(commands, frame.spiritualSenseIndicators());
+            PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
         }
-        if (!frame.supplementalCommands().isEmpty()) {
+        List<HudRenderCommand> supplementalCommands = frame.supplementalCommands().get();
+        if (!supplementalCommands.isEmpty()) {
             commands = new ArrayList<>(commands);
-            commands.addAll(frame.supplementalCommands());
+            commands.addAll(supplementalCommands);
         }
 
         renderer.render(filterCommandsForVisibility(commands, visibility), visibility);
@@ -137,13 +139,13 @@ public class BongHud {
             screenHeight,
             computeBotanyAnchor(client),
             captureRuntimeContext(client),
-            computeSpiritualSenseIndicators(client),
-            TiandaoPresenceHudPlanner.buildCommands(
-                TiandaoPresenceStore.snapshot(),
-                nowMillis,
-                screenWidth,
-                screenHeight
-            )
+            () -> computeSpiritualSenseIndicators(client),
+            () -> TiandaoPresenceHudPlanner.buildCommands(
+                    TiandaoPresenceStore.snapshot(),
+                    nowMillis,
+                    screenWidth,
+                    screenHeight
+                )
         );
     }
 
@@ -264,8 +266,8 @@ public class BongHud {
         int screenHeight,
         BotanyProjection.Anchor botanyAnchor,
         HudRuntimeContext runtimeContext,
-        List<EdgeIndicatorCmd> spiritualSenseIndicators,
-        List<HudRenderCommand> supplementalCommands
+        Supplier<List<EdgeIndicatorCmd>> spiritualSenseIndicators,
+        Supplier<List<HudRenderCommand>> supplementalCommands
     ) {
         HudFrameInput {
             hudSnapshot = hudSnapshot == null
@@ -277,28 +279,19 @@ public class BongHud {
             screenWidth = Math.max(0, screenWidth);
             screenHeight = Math.max(0, screenHeight);
             runtimeContext = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
-            spiritualSenseIndicators = spiritualSenseIndicators == null
-                ? List.of()
-                : List.copyOf(spiritualSenseIndicators);
-            supplementalCommands = supplementalCommands == null
-                ? List.of()
-                : List.copyOf(supplementalCommands);
+            spiritualSenseIndicators = safeListSupplier(spiritualSenseIndicators);
+            supplementalCommands = safeListSupplier(supplementalCommands);
         }
+    }
 
-        static HudFrameInput empty(int screenWidth, int screenHeight) {
-            return new HudFrameInput(
-                com.bong.client.hud.BongHudStateSnapshot.empty(),
-                CombatHudSnapshot.empty(),
-                text -> text == null ? 0 : text.length() * 6,
-                HUD_TEXT_MAX_WIDTH,
-                screenWidth,
-                screenHeight,
-                null,
-                HudRuntimeContext.empty(),
-                List.of(),
-                List.of()
-            );
+    private static <T> Supplier<List<T>> safeListSupplier(Supplier<List<T>> supplier) {
+        if (supplier == null) {
+            return List::of;
         }
+        return () -> {
+            List<T> values = supplier.get();
+            return values == null ? List.of() : List.copyOf(values);
+        };
     }
 
     static void renderBaomaiV3HudForProduction(
