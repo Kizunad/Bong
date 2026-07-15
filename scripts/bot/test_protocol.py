@@ -143,6 +143,22 @@ class DiggingActionTest(unittest.TestCase):
                 bot.start_digging(0, 0, 0, face=face)
         with self.assertRaises(ValueError):
             bot.start_digging(0, 0, 0, sequence=-1)
+        with self.assertRaises(ValueError):
+            bot.start_digging(0, 0, 0, sequence=0x80000000)
+
+    def test_start_digging_accepts_maximum_non_negative_varint_sequence(self):
+        bot = _bare_bot()
+        sent = []
+        bot._send = lambda packet_id, body=b"": sent.append((packet_id, body))
+
+        bot.start_digging(0, 0, 0, sequence=0x7FFFFFFF)
+
+        reader = mc.Reader(sent[0][1])
+        self.assertEqual(reader.varint(), 0)
+        reader.pos += 8
+        self.assertEqual(reader.u8(), 1)
+        self.assertEqual(reader.varint(), 0x7FFFFFFF)
+        self.assertEqual(reader.rest(), b"")
 
     def test_player_action_response_decodes_sequence(self):
         bot = _bare_bot()

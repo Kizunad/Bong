@@ -346,8 +346,10 @@ class Bot:
         """Send vanilla Player Action / Start Destroy Block for a real `DiggingEvent`."""
         if not 0 <= face <= 5:
             raise ValueError(f"digging face must be in 0..=5, got {face}")
-        if sequence < 0:
-            raise ValueError(f"digging sequence must be non-negative, got {sequence}")
+        if not 0 <= sequence <= 0x7FFFFFFF:
+            raise ValueError(
+                f"digging sequence must be a non-negative 32-bit VarInt, got {sequence}"
+            )
         body = (
             write_varint(0)
             + mc.block_position(x, y, z)

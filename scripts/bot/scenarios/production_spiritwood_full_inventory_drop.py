@@ -256,7 +256,9 @@ def run(env) -> None:
             "frozen_accumulated",
             "frozen_since_tick",
         }
-        assert freshness["created_at_tick"] >= 0
+        assert freshness["created_at_tick"] > 0, (
+            "真实采伐至少经过 240 tick，created_at_tick=0 表示 protobuf tag 1 未过线"
+        )
         assert abs(freshness["initial_qi"] - 100.0) < 1e-6
         assert freshness["track"] == "Decay"
         assert freshness["profile"] == "ling_mu_gun_v1"
