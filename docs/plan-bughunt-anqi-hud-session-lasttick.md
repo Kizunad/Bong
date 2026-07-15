@@ -1,6 +1,10 @@
-# plan-bughunt-anqi-hud-session-lasttick（skeleton）
+# plan-bughunt-anqi-hud-session-lasttick
 
-> BugHunt C2 client-ui 第二轮结论：暗器 HUD 的 `AnqiHudStateStore` 在断线/切服时没有清理 per-dimension `lastTick`，导致同一客户端进程连接新 server / 新世界后，低 tick 的 `anqi_hud` payload 被当成旧包静默丢弃。该 plan 仅记录 skeleton，不消费、不归档。
+> **状态：active（2026-07-15 promotion）**。来源：
+> `docs/plans-skeleton/plan-bughunt-anqi-hud-session-lasttick.md`。
+> BugHunt C2 client-ui 第二轮结论：暗器 HUD 的 `AnqiHudStateStore` 在断线/切服时
+> 没有清理 per-dimension `lastTick`，导致同一客户端进程连接新 server / 新世界后，
+> 低 tick 的 `anqi_hud` payload 被当成旧包静默丢弃。
 
 ## Bug 摘要
 
@@ -83,6 +87,49 @@
 - [ ] TODO 4：覆盖四个已实现维度：echo、charge、abrasion、multishot。`aim` 当前 server 不发，不纳入本 bug 验收。
 - [ ] TODO 5：补 handler 级回归：模拟 `AnqiHudServerDataHandler` 接收新 session 低 tick payload，确认经过 reset 后能进入 `AnqiHudStateStore`。
 - [ ] TODO 6：检查 debug `/bonghud` 命令仍可手动 clear，不作为生产 reset 的唯一依据；必要时只更新测试说明，不改变命令语义。
+
+## 接入面与收口决议
+
+- 唯一生产修复点放在 `CombatHudBootstrap.resetOnDisconnect()`：该方法已由
+  `ClientPlayConnectionEvents.DISCONNECT` 注册，且集中清理 combat HUD stores；加入
+  `AnqiHudStateStore.clear()` 不再在 `BongNetworkHandler` 重复接线。
+- store 的过期语义保持不变：`snapshot(now)` 只隐藏 TTL 已过期的反馈，不在同一 session
+  内重置 `lastTick`，继续保护乱序包。只有明确 disconnect 才开启新的 tick epoch。
+- 修复前红灯直接驱动真实 `CombatHudBootstrap.resetOnDisconnect()`：先向 echo、charge、
+  abrasion、multishot 各写高 tick，再断线 reset，再写低 tick；当前代码应因四个低 tick
+  全被 stale gate 拒绝而失败。
+- store 机制测试另锁定“TTL 过期不等于 tick gate 清除”，避免未来为修此 bug 误删同 session
+  乱序保护。
+- handler 层用真实 `AnqiHudServerDataHandler` 证明 reset 后低 tick payload 能进入 store；
+  wire/schema/server emitter 不改。
+- `aim` 虽由 store 实现，但当前 server 不发该 kind，不纳入生产回归；`clear()` 仍自然清它。
+- debug `/bonghud` 的手动 clear 保持原样，它不是生产生命周期保护。
+- 本修复仅处理 client static HUD 生命周期，不改变暗器施放、真元 ledger、A/V 或技能资产。
+
+## 实施阶段
+
+- [ ] P0：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约。
+- [ ] P1：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
+- [ ] P2：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
+- [ ] P3：同步主线、主 agent 对抗自审、填写 Finish Evidence 并归档。
+
+## 验收矩阵
+
+| 场景 | 必须断言 |
+|---|---|
+| 同 session 高 tick → 低 tick | echo/charge/abrasion/multishot 的低 tick 均被拒绝 |
+| 高 tick TTL 过期 | snapshot 不显示旧反馈，但未 disconnect 时低 tick 仍被拒绝 |
+| disconnect reset | 所有维度快照清空，随后低 tick 四维均接受 |
+| handler after reset | 真实 `anqi_hud` 低 tick payload 被 handler 接受并写入 store |
+| 同 session 正常乱序保护 | 既有 stale/same-tick/跨维测试继续通过 |
+| debug clear | 原手动 clear 路径仍保留，不充当生产断线接线 |
+| 完整门禁 | JDK 17 下 `./gradlew test build` 全绿 |
+
+## 非目标
+
+- 不把 tick 改成 wall clock、session UUID 或服务端全局持久化 tick。
+- 不在 TTL 过期时自动重置 `lastTick`，避免接受同 session 迟到旧包。
+- 不修改暗器 HUD schema、server emitter、视觉样式或其它非 combat static store。
 
 ## 验收测试计划
 
