@@ -89,6 +89,9 @@ set -euo pipefail
 if [ -n "${STUB_PID_FILE:-}" ]; then
     printf '%s\n' "$$" > "$STUB_PID_FILE"
 fi
+if [ "${STUB_IGNORE_TERM:-false}" = true ]; then
+    trap '' TERM
+fi
 printf 'ready\n' > "$READY_FILE"
 exec sleep 30
 STUB
@@ -370,6 +373,7 @@ chmod +x "$FAIL_SLEEP_SCRIPT"
 
 READY_FILE="$RUNTIME_SLEEP_READY"
 export STUB_PID_FILE="$RUNTIME_SLEEP_PID_FILE"
+export STUB_IGNORE_TERM=true
 BONG_SERVER_WORKDIR="$TEST_ROOT"
 BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
 BONG_SERVER_LOG="$TEST_ROOT/runtime-sleep.log"
@@ -387,8 +391,12 @@ wait_for_file "$RUNTIME_SLEEP_PID_FILE" "runtime sleep failure server pid"
 read -r ACTIVE_CHILD_PID < "$RUNTIME_SLEEP_PID_FILE"
 wait_for_process_exit "$ACTIVE_CHILD_PID" \
     || fail "runtime startup grace failure leaked detached server pid $ACTIVE_CHILD_PID"
+if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+    fail "runtime startup grace cleanup did not reap pid $ACTIVE_CHILD_PID"
+fi
 [ -z "$SERVER_PID" ] || fail "runtime startup grace failure left SERVER_PID=$SERVER_PID"
 [ -z "$DETACHED_PID" ] || fail "runtime startup grace failure left DETACHED_PID=$DETACHED_PID"
 ACTIVE_CHILD_PID=""
+unset STUB_IGNORE_TERM
 
 echo "PASS: production launch survived SIGHUP and all initialization failures were cleaned up"
