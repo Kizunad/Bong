@@ -118,6 +118,7 @@ export async function processChatBatch(options: ProcessChatBatchOptions): Promis
   const signals: ChatSignal[] = [];
   for (const msg of messages) {
     const fallback: ChatSignal = {
+      ts: msg.ts,
       player: msg.player,
       raw: msg.raw,
       sentiment: DEFAULT_CHAT_SIGNAL.sentiment,
@@ -132,6 +133,7 @@ export async function processChatBatch(options: ProcessChatBatchOptions): Promis
     }
 
     const candidate: ChatSignal = {
+      ts: msg.ts,
       player: picked.player,
       raw: picked.raw,
       sentiment: picked.sentiment,
@@ -174,11 +176,7 @@ export function selectRecentSignals(signals: ChatSignal[], nowSeconds: number): 
 }
 
 export function isRecentSignal(signal: ChatSignal, nowSeconds: number): boolean {
-  const observedTs = extractSignalTimestamp(signal);
-  if (observedTs === null) {
-    return true;
-  }
-  return observedTs >= nowSeconds - CHAT_CONTEXT_WINDOW_SECONDS;
+  return signal.ts >= nowSeconds - CHAT_CONTEXT_WINDOW_SECONDS;
 }
 
 export function buildChatSignalsBlock(args: BuildChatSignalsBlockArgs): string {
@@ -243,22 +241,4 @@ function isChatSignalInput(input: unknown): input is ChatSignalInput {
 
 function chatKey(player: string, zone: string, raw: string): string {
   return `${player}|${zone}|${raw}`;
-}
-
-function extractSignalTimestamp(signal: ChatSignal): number | null {
-  if (typeof signal.mentions_mechanic !== "string") {
-    return null;
-  }
-
-  const matched = signal.mentions_mechanic.match(/(?:^|;)ts:(\d+)(?:;|$)/);
-  if (!matched) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(matched[1], 10);
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-
-  return parsed;
 }

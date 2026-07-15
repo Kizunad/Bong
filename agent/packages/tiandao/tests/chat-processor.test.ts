@@ -21,14 +21,14 @@ function createStructuredChatResult(content: string, model: string) {
 
 function createTimedSignal(ts: number, overrides: Partial<ChatSignal> = {}): ChatSignal {
   return {
+    ts,
     player: "offline:Steve",
     raw: "灵气太少了",
     sentiment: -0.7,
     intent: "complaint",
     influence_weight: 0.8,
     ...overrides,
-    ts,
-  } as ChatSignal;
+  };
 }
 
 describe("chat-processor", () => {
@@ -51,13 +51,20 @@ describe("chat-processor", () => {
           raw: "hello",
           zone: "spawn",
         }),
+        JSON.stringify({
+          v: 1,
+          ts: -1,
+          player: "offline:InvalidClock",
+          raw: "hello",
+          zone: "spawn",
+        }),
       ],
       { warn },
     );
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.player).toBe("offline:Steve");
-    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(3);
   });
 
   it("extracts chat signal rows from markdown code block", () => {
