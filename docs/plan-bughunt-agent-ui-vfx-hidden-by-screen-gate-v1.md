@@ -1,12 +1,25 @@
-# plan-bughunt-agent-ui-vfx-hidden-by-screen-gate-v1（骨架）
+# plan-bughunt-agent-ui-vfx-hidden-by-screen-gate-v1（active）
 
-> **骨架（草案）**。一句话主题：`AgentUiScreen` 的计划内 HUD 覆层已经接到 `BongHudOrchestrator`，但 `BongHud` 在 screen 门控阶段把它判成 `HIDDEN` 并直接 `return`，导致 `agent_ui` 三条生产入口（`tsy_discovery` / `elder_legacy` / `tiandao_revelation`）的 fade-in tint 全部永远不显示；这和已存在的 `#937 agent_ui 天道启示 VFX 语义位丢失` 不是同题，后者即使修掉，本题的屏幕门控仍会继续吞掉覆层。
+> **来源**：`docs/plans-skeleton/plan-bughunt-agent-ui-vfx-hidden-by-screen-gate-v1.md`，2026-07-15 升格。  
+> **一句话主题**：`AgentUiScreen` 的计划内 HUD 覆层已经接到 `BongHudOrchestrator`，但 `BongHud` 在 screen 门控阶段把它判成 `HIDDEN` 并直接 `return`，导致 `agent_ui` 三条生产入口（`tsy_discovery` / `elder_legacy` / `tiandao_revelation`）的 fade-in tint 全部永远不显示；这和已存在的 `#937 agent_ui 天道启示 VFX 语义位丢失` 不是同题，后者即使修掉，本题的屏幕门控仍会继续吞掉覆层。
+
+## 接入面与边界
+
+- **进料**：`AgentUiScreen.init()` 写入 `AgentUiVfxStore`，`BongHudOrchestrator.buildCommands(...)` 从 `AgentUiVfxPlanner` 取得 `HudRenderLayer.AGENT_UI` 命令。
+- **出料**：`BongHud.render(...)` 在 `AgentUiScreen` 打开时继续渲染 `SCREEN_TINT` / `EDGE_VIGNETTE` / shake `RECT`，但不显示其他 HUD layer。
+- **共享类型**：复用 `ScreenHudVisibility`、`HudRenderCommand`、`HudRenderLayer.AGENT_UI`；不新建第二套 VFX store、planner 或渲染入口。
+- **跨仓库契约**：本修复只改 Fabric client 的 screen→HUD layer 策略；server、agent、schema wire 契约不变。
+- **worldview 锚点**：沿用 `plan-agent-ui-data-v1` 的 `worldview.md §五` 境界感知与 `§八` 天道行为准则；本修复不新增正典。
+- **qi_physics 锚点**：纯 client 视觉路由，不产生或修改任何 `QiTransfer`。
+- **非目标**：不修 `#937` 的天道启示语义位，不改 VFX 数值/颜色/时长，不新增视觉资产，不放开完整 HUD，也不调整其他 Screen 的既有策略。
 
 ## 阶段总览
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `AgentUiScreen` 被 `ScreenHudVisibility` 误判 `HIDDEN`，导致全部 `AGENT_UI` 覆层不渲染 | fix_pr | ⬜ |
+| P0 | 第一性原理复现 screen gate + layer filter 双重断链 | fix_pr | ⬜ |
+| P1 | 新增 `AGENT_UI_ONLY` 策略并接入集中式命令过滤 | fix_pr | ⬜ |
+| P2 | 饱和回归、Java 17 client 门禁、主线同步与归档 | fix_pr | ⬜ |
 
 ## P0 — `AgentUiScreen` 被屏幕门控提前吞掉，计划内覆层永远不出
 
@@ -40,6 +53,15 @@
   - 新增一个专门给“自带 screen 但仍需渲染覆层”的可见性档位，例如仅保留 `AGENT_UI`（必要时带 `CAST_BAR`）而非全量 HUD。
   - 或把 `AgentUiVfxPlanner` 的输出挪到 `HIDDEN` 早退之前单独渲染，并显式约束只在 `AgentUiVfxStore` 非空时生效。
 - 无论选哪条，都应补一条集成测试，锁住“`currentScreen instanceof AgentUiScreen` 时 `AGENT_UI` 命令不会被 `ScreenHudVisibility`/过滤器吞掉”。
+
+### pre-P0 实施决议（2026-07-15）
+
+1. `ScreenHudVisibility` 新增 `AGENT_UI_ONLY`，并让 `AgentUiScreen` 精确映射到该策略；不复用 `CAST_BAR_ONLY`，因为它会继续过滤 `AGENT_UI`。
+2. `BongHud` 把 visibility→layer 的规则收口为 package-private 纯函数 `filterCommandsForVisibility(...)`；`AGENT_UI_ONLY` 只保留 `HudRenderLayer.AGENT_UI`，不附带 `CAST_BAR`、`QUICK_BAR`、`EVENT_STREAM` 或 `BASELINE`。
+3. `HIDDEN` 仍在命令构建前早退；其他策略继续构建后过滤。新增策略因此能走真实 `BongHudOrchestrator` 生产链，同时不改变 Death/Pause/未知 Screen 的隐藏语义。
+4. 测试直接构造真实 `AgentUiScreen.create(...)` 锁定分类，并用混合 layer 命令列表锁定过滤契约；现有 `AgentUiVfxPlannerTest` 继续证明 fade/vignette/shake 都产出在 `AGENT_UI` layer。
+
+**落点**：`client/src/main/java/com/bong/client/hud/ScreenHudVisibility.java`、`client/src/main/java/com/bong/client/BongHud.java`、`client/src/test/java/com/bong/client/BongHudTest.java`；对应 plan P0-P2。
 
 ### 验收抓手
 
@@ -75,4 +97,21 @@
 - 已联网核对近期远端同类 PR/issue 标题：
   - `#937 docs(skeleton): 记录 agent_ui 天道启示 VFX 语义位丢失` 是 **S2C 语义位丢失**，与本题的 **HUD screen gate 早退吞覆层** 不同。
   - `#939 agent-ui realm gate 广播泄漏`、`#932 tiandao agent-ui 点击上下文丢失`、`#924 TSY 发现面板错发 fallback` 也均非同题。
-- 本次为 **report-only**：未改源码，未跑构建；只新增本 skeleton 供后续 `fix_pr` 消费。
+- skeleton 阶段为 **report-only**；本 active plan 只授权上述 client HUD gate 修复与对应测试，不扩展到相邻 bug。
+
+## P1 — `AGENT_UI_ONLY` 可见性与命令过滤
+
+- `ScreenHudVisibility.forScreen(...)` 对真实 `AgentUiScreen` 返回 `AGENT_UI_ONLY`。
+- `BongHud.filterCommandsForVisibility(...)` 对 `FULL` 原样返回，对 `CAST_BAR_ONLY` / `INVENTORY_DIMMED` 保持既有白名单，对 `AGENT_UI_ONLY` 只保留 `AGENT_UI`。
+- `BongHud.render(...)` 使用统一过滤入口；`AgentUiScreen` 不再在 `HIDDEN` 分支提前返回。
+- 不改变 `AgentUiVfxPlanner` 的 500ms fade、天道 vignette、shake 或 `AgentUiVfxStore` 生命周期。
+
+## P2 — 测试矩阵与完成门禁
+
+- **分类 happy path**：真实 `AgentUiScreen` → `AGENT_UI_ONLY`。
+- **分类回归**：`null` → `FULL`；未知普通 Screen、Death/Pause → `HIDDEN`；现有自定义/handled screen 策略不变。
+- **过滤 happy path**：`AGENT_UI_ONLY` 保留 tint、vignette、shake 等所有 `AGENT_UI` kind。
+- **过滤负例**：`BASELINE`、`CAST_BAR`、`QUICK_BAR` 等非 `AGENT_UI` layer 全被剔除；空列表保持为空。
+- **其他状态**：`FULL` 不丢命令，`CAST_BAR_ONLY` 与 `INVENTORY_DIMMED` 的既有 layer 集合保持不变，`HIDDEN` 返回空列表作为纯函数契约。
+- **针对性测试**：`./gradlew test --tests com.bong.client.BongHudTest --tests com.bong.client.agentui.AgentUiVfxPlannerTest`（JDK 17）。
+- **完整门禁**：`./gradlew test build`（JDK 17）；随后 fetch 最新 `origin/main`，按 merge-base 分类同步并对当前干净 HEAD 复验。
