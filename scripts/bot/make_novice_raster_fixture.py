@@ -110,7 +110,13 @@ def generate(output_dir: Path) -> Path:
         "tile_size": TILE_SIZE,
         "world_bounds": {"min_x": 0, "max_x": 1535, "min_z": 0, "max_z": 1791},
         "surface_palette": ["grass_block", "stone"],
-        "biome_palette": ["plains"],
+        "biome_palette": [
+            "minecraft:plains",
+            "minecraft:stony_peaks",
+            "minecraft:swamp",
+            "minecraft:badlands",
+            "minecraft:meadow",
+        ],
         "tiles": [_tile_manifest(0, 0)]
         + [_tile_manifest(tile_x, tile_z) for tile_x, tile_z in spiritwood_tiles],
         "pois": pois,

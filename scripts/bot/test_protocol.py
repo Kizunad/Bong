@@ -170,6 +170,15 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 manifest["world_bounds"],
                 {"min_x": 0, "max_x": 1535, "min_z": 0, "max_z": 1791},
             )
+            palette = manifest["biome_palette"]
+            self.assertEqual(palette[4], "minecraft:meadow")
+            for tile in manifest["tiles"]:
+                biome_ids = (
+                    root / tile["dir"] / "biome_id.bin"
+                ).read_bytes()
+                self.assertEqual(len(biome_ids), make_novice_raster_fixture.TILE_SIZE**2)
+                self.assertLess(max(biome_ids), len(palette))
+
             self.assertEqual(set((root / "tile_0_0" / "biome_id.bin").read_bytes()), {0})
             for tile_x, tile_z in ((4, 5), (5, 5), (4, 6), (5, 6)):
                 self.assertEqual(
