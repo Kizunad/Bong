@@ -1,7 +1,11 @@
 package com.bong.client;
 
 import com.bong.client.combat.baomai.v3.BaomaiV3HudStateStore;
+import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.hud.HudRenderLayer;
 import com.bong.client.hud.ScreenHudVisibility;
+import com.bong.client.hud.SearchHudState;
+import com.bong.client.hud.SearchProgressHudPlanner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -89,6 +93,39 @@ public class BongHudTest {
 
         assertTrue(castOnlySurface.shadowTexts.isEmpty());
         assertTrue(castOnlySurface.drawTexts.isEmpty());
+    }
+
+    @Test
+    public void productionScreenFiltersNeverLeakSearchFlashIntoOtherInterfaces() {
+        List<HudRenderCommand> commands = new ArrayList<>(
+            SearchProgressHudPlanner.buildCommands(SearchHudState.completed("残棺"), 320, 180)
+        );
+        commands.add(HudRenderCommand.text(HudRenderLayer.BASELINE, "baseline", 0, 0, 0xFFFFFF));
+        commands.add(HudRenderCommand.text(HudRenderLayer.CAST_BAR, "cast", 0, 0, 0xFFFFFF));
+
+        List<HudRenderCommand> full = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.FULL
+        );
+        List<HudRenderCommand> inventory = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.INVENTORY_DIMMED
+        );
+        List<HudRenderCommand> castOnly = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.CAST_BAR_ONLY
+        );
+        List<HudRenderCommand> hidden = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.HIDDEN
+        );
+
+        assertTrue(full.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS));
+        assertTrue(inventory.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS));
+        assertTrue(castOnly.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS));
+        assertTrue(hidden.isEmpty());
+        assertTrue(inventory.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.BASELINE));
+        assertTrue(castOnly.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.CAST_BAR));
     }
 
     private static final class RecordingHudSurface implements BongHud.HudSurface {

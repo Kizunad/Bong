@@ -45,7 +45,9 @@ public class BongHudOrchestratorTest {
         NicheGuardianStore.resetForTests();
         com.bong.client.tsy.TsyBossHealthStore.resetForTests();
         com.bong.client.tsy.TsyDeathVfxStore.resetForTests();
+        SearchHudStateStore.resetForTests();
         HudImmersionMode.resetForTests();
+        HudLayoutPreferenceStore.resetForTests();
         ForgeProgressHudPlanner.resetForTests();
         HomeSequence.resetForTests();
     }
@@ -330,6 +332,63 @@ public class BongHudOrchestratorTest {
     }
 
     @Test
+    void completedSearchFlashLeavesFinalHudCommandFlowAfterTtl() {
+        SearchHudStateStore.markCompletedAtNanos("残棺", System.nanoTime());
+
+        List<HudRenderCommand> visible = buildCombatFrame(HudRuntimeContext.empty());
+
+        assertTrue(visible.stream().anyMatch(cmd ->
+            cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮完成：残棺".equals(cmd.text())
+        ));
+
+        SearchHudStateStore.markCompletedAtNanos(
+            "残棺",
+            System.nanoTime() - SearchHudStateStore.COMPLETED_FLASH_TTL_NANOS - 1L
+        );
+
+        List<HudRenderCommand> expired = buildCombatFrame(HudRuntimeContext.empty());
+
+        assertTrue(expired.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS));
+    }
+
+    @Test
+    void abortedSearchFlashExpiresAcrossCombatAndMovementContextChanges() {
+        SearchHudStateStore.markAbortedAtNanos("残柜", "combat", System.nanoTime());
+
+        List<HudRenderCommand> visible = buildCombatFrame(new HudRuntimeContext(
+            45.0,
+            12.0,
+            64.0,
+            -8.0,
+            false,
+            List.of()
+        ));
+
+        assertTrue(visible.stream().anyMatch(cmd ->
+            cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮中断：进入战斗".equals(cmd.text())
+        ));
+
+        SearchHudStateStore.markAbortedAtNanos(
+            "残柜",
+            "moved",
+            System.nanoTime() - SearchHudStateStore.ABORTED_FLASH_TTL_NANOS - 1L
+        );
+
+        List<HudRenderCommand> expiredAfterMovement = buildCombatFrame(new HudRuntimeContext(
+            225.0,
+            18.5,
+            64.0,
+            -2.5,
+            false,
+            List.of()
+        ));
+
+        assertTrue(expiredAfterMovement.stream().noneMatch(cmd ->
+            cmd.layer() == HudRenderLayer.SEARCH_PROGRESS
+        ));
+    }
+
+    @Test
     void productionHudDoesNotRenderQiRadarArrayDisk() {
         PlayerStateStore.replace(PlayerStateViewModel.create(
             "Condense",
@@ -355,5 +414,37 @@ public class BongHudOrchestratorTest {
         );
 
         assertTrue(commands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.QI_RADAR));
+    }
+
+    private static List<HudRenderCommand> buildCombatFrame(HudRuntimeContext runtimeContext) {
+        CombatHudSnapshot combat = CombatHudSnapshot.create(
+            com.bong.client.combat.CombatHudState.create(
+                0.8f,
+                0.7f,
+                0.4f,
+                com.bong.client.combat.DerivedAttrFlags.none()
+            ),
+            null,
+            com.bong.client.combat.QuickSlotConfig.empty(),
+            com.bong.client.combat.SkillBarConfig.empty(),
+            -1,
+            com.bong.client.combat.CastState.idle(),
+            com.bong.client.combat.UnifiedEventStream.empty(),
+            com.bong.client.combat.SpellVolumeState.idle(),
+            com.bong.client.combat.store.CarrierStateStore.State.NONE,
+            com.bong.client.combat.DefenseWindowState.idle(),
+            com.bong.client.combat.UnlockedStyles.none()
+        );
+        return BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            combat,
+            1_000L,
+            FIXED_WIDTH,
+            220,
+            320,
+            180,
+            null,
+            runtimeContext
+        );
     }
 }

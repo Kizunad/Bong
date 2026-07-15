@@ -114,11 +114,7 @@ public class BongHud {
             commands.addAll(tiandaoCommands);
         }
 
-        if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {
-            commands = filterCastBarOnly(commands);
-        } else if (visibility == ScreenHudVisibility.INVENTORY_DIMMED) {
-            commands = filterInventoryDimmed(commands);
-        }
+        commands = filterCommandsForVisibility(commands, visibility);
 
         for (HudRenderCommand command : commands) {
             if (command.isText()) {
@@ -331,6 +327,20 @@ public class BongHud {
         private static boolean isKeyPressed(long window, int key) {
             return window != 0L && GLFW.glfwGetKey(window, key) == GLFW.GLFW_PRESS;
         }
+    }
+
+    static List<HudRenderCommand> filterCommandsForVisibility(
+        List<HudRenderCommand> commands,
+        ScreenHudVisibility visibility
+    ) {
+        Objects.requireNonNull(commands, "commands");
+        Objects.requireNonNull(visibility, "visibility");
+        return switch (visibility) {
+            case FULL -> List.copyOf(commands);
+            case INVENTORY_DIMMED -> filterInventoryDimmed(commands);
+            case CAST_BAR_ONLY -> filterCastBarOnly(commands);
+            case HIDDEN -> List.of();
+        };
     }
 
     private static List<HudRenderCommand> filterCastBarOnly(List<HudRenderCommand> commands) {
