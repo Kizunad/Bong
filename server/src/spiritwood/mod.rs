@@ -256,45 +256,49 @@ fn complete_spiritwood_sessions(
         .collect::<Vec<_>>();
 
     for player in completed {
-        let Some(session) = store.remove(player) else {
+        let mut gathering_tool = None;
+        let mut gathering_quality = None;
+        let Some((session, grant_result)) =
+            grant_before_removing_session(&mut store, player, |session, _active_sessions| {
+                let drop_count = ling_mu_drop_count(session.log_pos, session.player, now_tick);
+                match inventories.get_mut(session.player) {
+                    Ok(mut inventory) => {
+                        gathering_tool = equipped_gathering_tool(&inventory)
+                            .filter(|tool| tool.matches_target(GatheringTargetKind::Wood));
+                        let realm = cultivations
+                            .get(session.player)
+                            .map(|cultivation| cultivation.realm)
+                            .unwrap_or(Realm::Awaken);
+                        let gathering_quality_seed = now_tick
+                            ^ session.player.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                            ^ session.ticks_total.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                        gathering_quality = Some(roll_quality(
+                            gathering_quality_seed,
+                            gathering_tool.map(|tool| tool.material),
+                            realm,
+                        ));
+                        grant_ling_mu_gun(
+                            &mut inventory,
+                            item_registry.as_ref(),
+                            profile_registry.as_deref(),
+                            &mut allocator,
+                            dropped_loot.as_deref_mut(),
+                            drop_count,
+                            now_tick,
+                            block_origin(session.log_pos),
+                            session.dimension,
+                        )
+                    }
+                    Err(error) => Err(format!(
+                        "player inventory unavailable for {:?}: {error}",
+                        session.player
+                    )),
+                }
+            })
+        else {
             continue;
         };
         let drop_count = ling_mu_drop_count(session.log_pos, session.player, now_tick);
-        let mut gathering_tool = None;
-        let mut gathering_quality = None;
-        let grant_result = match inventories.get_mut(session.player) {
-            Ok(mut inventory) => {
-                gathering_tool = equipped_gathering_tool(&inventory)
-                    .filter(|tool| tool.matches_target(GatheringTargetKind::Wood));
-                let realm = cultivations
-                    .get(session.player)
-                    .map(|cultivation| cultivation.realm)
-                    .unwrap_or(Realm::Awaken);
-                let gathering_quality_seed = now_tick
-                    ^ session.player.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                    ^ session.ticks_total.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-                gathering_quality = Some(roll_quality(
-                    gathering_quality_seed,
-                    gathering_tool.map(|tool| tool.material),
-                    realm,
-                ));
-                grant_ling_mu_gun(
-                    &mut inventory,
-                    item_registry.as_ref(),
-                    profile_registry.as_deref(),
-                    &mut allocator,
-                    dropped_loot.as_deref_mut(),
-                    drop_count,
-                    now_tick,
-                    block_origin(session.log_pos),
-                    session.dimension,
-                )
-            }
-            Err(error) => Err(format!(
-                "player inventory unavailable for {:?}: {error}",
-                session.player
-            )),
-        };
 
         let detail = match grant_result {
             Ok(GrantOrGroundOutcome::Granted(_)) => format!("采得灵木原木 ×{drop_count}"),
@@ -355,6 +359,18 @@ fn complete_spiritwood_sessions(
             tool_used: gathering_tool.map(|tool| tool.item_id.to_string()),
         });
     }
+}
+
+fn grant_before_removing_session<T>(
+    store: &mut WoodSessionStore,
+    player: Entity,
+    grant: impl FnOnce(&WoodSession, &WoodSessionStore) -> T,
+) -> Option<(WoodSession, T)> {
+    let session = store.session_for(player)?.clone();
+    let outcome = grant(&session, store);
+    let removed = store.remove(player)?;
+    debug_assert_eq!(removed, session);
+    Some((removed, outcome))
 }
 
 fn emit_active_lumber_progress(
@@ -1138,6 +1154,105 @@ mod tests {
             0,
             "completed session must not emit a second terminal"
         );
+    }
+
+    #[test]
+    fn ling_mu_grant_runs_before_session_removal() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let profiles = crate::shelflife::build_default_registry();
+        let player = Entity::from_raw(17);
+        let log_pos = BlockPos::new(8, 80, 8);
+        let mut session = WoodSession::new(
+            player,
+            "offline:ordering".to_string(),
+            DimensionKind::Overworld,
+            log_pos,
+            0,
+            block_origin(log_pos),
+            None,
+        );
+        session.ticks_total = 0;
+        let mut store = WoodSessionStore::default();
+        store.upsert(session.clone());
+        let mut inventory = empty_inventory();
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let (removed, outcome) = grant_before_removing_session(
+            &mut store,
+            player,
+            |completed_session, active_sessions| {
+                assert_eq!(
+                    active_sessions.session_for(player),
+                    Some(completed_session),
+                    "grant 执行时 completed session 必须仍在 store，成功或失败后才能移除"
+                );
+                grant_ling_mu_gun(
+                    &mut inventory,
+                    &registry,
+                    Some(&profiles),
+                    &mut allocator,
+                    Some(&mut dropped_loot),
+                    2,
+                    240,
+                    block_origin(completed_session.log_pos),
+                    completed_session.dimension,
+                )
+            },
+        )
+        .expect("completed session should be settled");
+
+        assert_eq!(removed, session);
+        assert!(matches!(outcome, Ok(GrantOrGroundOutcome::Granted(_))));
+        assert!(store.session_for(player).is_none());
+    }
+
+    #[test]
+    fn failed_ling_mu_grant_runs_before_session_removal() {
+        let profiles = crate::shelflife::build_default_registry();
+        let player = Entity::from_raw(18);
+        let log_pos = BlockPos::new(9, 80, 8);
+        let session = WoodSession::new(
+            player,
+            "offline:failed-ordering".to_string(),
+            DimensionKind::Overworld,
+            log_pos,
+            0,
+            block_origin(log_pos),
+            None,
+        );
+        let mut store = WoodSessionStore::default();
+        store.upsert(session.clone());
+        let mut inventory = empty_inventory();
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+
+        let (removed, outcome) = grant_before_removing_session(
+            &mut store,
+            player,
+            |completed_session, active_sessions| {
+                assert_eq!(
+                    active_sessions.session_for(player),
+                    Some(completed_session),
+                    "失败 grant 执行时 completed session 也必须仍在 store"
+                );
+                grant_ling_mu_gun(
+                    &mut inventory,
+                    &ItemRegistry::default(),
+                    Some(&profiles),
+                    &mut allocator,
+                    None,
+                    2,
+                    240,
+                    block_origin(completed_session.log_pos),
+                    completed_session.dimension,
+                )
+            },
+        )
+        .expect("failed completed session should still settle its terminal state");
+
+        assert_eq!(removed, session);
+        assert!(outcome.is_err());
+        assert!(store.session_for(player).is_none());
     }
 
     #[test]
