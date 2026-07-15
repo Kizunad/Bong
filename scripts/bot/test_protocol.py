@@ -1705,9 +1705,11 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
 
     def test_dropped_loot_sync_tag81_decodes_pickup_identity(self):
+        initial_qi_bits = 0x42C50001
+        initial_qi = struct.unpack("<f", struct.pack("<I", initial_qi_bits))[0]
         freshness = (
             _pb_varint(1, 123)
-            + _pb_fixed32(2, 98.5)
+            + _pb_fixed32(2, initial_qi)
             + _pb_string(3, "Decay")
             + _pb_string(4, "ling_mu_gun_v1")
             + _pb_varint(5, 17)
@@ -1747,13 +1749,18 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             drop["item"]["freshness"],
             {
                 "created_at_tick": 123,
-                "initial_qi": 98.5,
+                "initial_qi": initial_qi,
                 "track": "Decay",
                 "profile": "ling_mu_gun_v1",
                 "frozen_accumulated": 17,
                 "frozen_since_tick": 140,
             },
             "dropped_loot_sync 必须保留完整 freshness，拾取后才能对拍同一实例 NBT",
+        )
+        self.assertEqual(
+            struct.pack("<f", drop["item"]["freshness"]["initial_qi"]),
+            struct.pack("<I", initial_qi_bits),
+            "Bot 必须逐 bit 保留 Rust Freshness.initial_qi 的 f32 wire 值",
         )
 
     def test_inventory_item_without_freshness_decodes_none(self):

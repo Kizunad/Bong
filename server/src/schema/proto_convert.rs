@@ -4718,6 +4718,7 @@ mod tests {
     fn inventory_item_view_freshness_survives_proto_roundtrip_for_all_tracks() {
         use crate::shelflife::{DecayProfileId, DecayTrack, Freshness};
 
+        let initial_qi = f32::from_bits(0x42c5_0001);
         for (track, expected_track) in [
             (DecayTrack::Decay, "Decay"),
             (DecayTrack::Spoil, "Spoil"),
@@ -4726,7 +4727,7 @@ mod tests {
             let mut view = alchemy_view(None);
             view.freshness = Some(Freshness {
                 created_at_tick: 123,
-                initial_qi: 98.5,
+                initial_qi,
                 track,
                 profile: DecayProfileId::new(format!("{}_profile", expected_track.to_lowercase())),
                 frozen_accumulated: 17,
@@ -4736,7 +4737,11 @@ mod tests {
             let freshness = roundtrip_freshness(&view)
                 .expect("freshness 必须过 InventoryItemView protobuf wire 存活");
             assert_eq!(freshness.created_at_tick, 123);
-            assert!((freshness.initial_qi - 98.5).abs() < f32::EPSILON);
+            assert_eq!(
+                freshness.initial_qi.to_bits(),
+                initial_qi.to_bits(),
+                "Freshness.initial_qi 的权威类型是 f32，protobuf float 必须逐 bit 保真"
+            );
             assert_eq!(freshness.track, expected_track);
             assert_eq!(
                 freshness.profile,
