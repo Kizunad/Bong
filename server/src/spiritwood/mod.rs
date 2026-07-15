@@ -569,11 +569,14 @@ fn grant_ling_mu_gun(
     ground_pos: [f64; 3],
     ground_dimension: DimensionKind,
 ) -> Result<GrantOrGroundOutcome, String> {
-    let freshness = profile_registry
-        .and_then(|registry| registry.get(&DecayProfileId::new(LING_MU_GUN_PROFILE_ID)))
-        .map(|profile| Freshness::new(created_at_tick, LING_MU_INITIAL_QI, profile));
+    let profile_registry =
+        profile_registry.ok_or_else(|| "DecayProfileRegistry unavailable".to_string())?;
+    let profile = profile_registry
+        .get(&DecayProfileId::new(LING_MU_GUN_PROFILE_ID))
+        .ok_or_else(|| format!("unknown decay profile `{LING_MU_GUN_PROFILE_ID}`"))?;
+    let freshness = Freshness::new(created_at_tick, LING_MU_INITIAL_QI, profile);
     let customize_instance = |instance: &mut ItemInstance| {
-        instance.freshness = freshness.clone();
+        instance.freshness = Some(freshness.clone());
     };
     add_item_to_player_inventory_or_ground(
         inventory,
@@ -1219,6 +1222,70 @@ mod tests {
         assert!(!terminals[0].completed);
         assert!(terminals[0].interrupted);
         assert_eq!(terminals[0].detail, "灵木产物结算失败，原木未消耗");
+    }
+
+    #[test]
+    fn missing_decay_profile_registry_preserves_log_and_reports_incomplete() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let (mut app, player, layer, log_pos) =
+            install_completed_session(Some(full_inventory()), registry, true);
+        app.world_mut().remove_resource::<DecayProfileRegistry>();
+
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<DroppedLootRegistry>()
+            .entries
+            .is_empty());
+        assert!(!app
+            .world()
+            .resource::<SpiritWoodHarvestedLogs>()
+            .contains(DimensionKind::Overworld, log_pos));
+        assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
+        assert!(gathering_complete_events(&app).is_empty());
+        let terminals = terminal_events(&app);
+        assert_eq!(terminals.len(), 1);
+        assert!(!terminals[0].completed);
+        assert!(terminals[0].interrupted);
+        assert_eq!(terminals[0].detail, "灵木产物结算失败，原木未消耗");
+        assert!(app
+            .world()
+            .resource::<WoodSessionStore>()
+            .session_for(player)
+            .is_none());
+    }
+
+    #[test]
+    fn missing_ling_mu_decay_profile_preserves_log_and_reports_incomplete() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let (mut app, player, layer, log_pos) =
+            install_completed_session(Some(full_inventory()), registry, true);
+        app.insert_resource(DecayProfileRegistry::new());
+
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<DroppedLootRegistry>()
+            .entries
+            .is_empty());
+        assert!(!app
+            .world()
+            .resource::<SpiritWoodHarvestedLogs>()
+            .contains(DimensionKind::Overworld, log_pos));
+        assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
+        assert!(gathering_complete_events(&app).is_empty());
+        let terminals = terminal_events(&app);
+        assert_eq!(terminals.len(), 1);
+        assert!(!terminals[0].completed);
+        assert!(terminals[0].interrupted);
+        assert_eq!(terminals[0].detail, "灵木产物结算失败，原木未消耗");
+        assert!(app
+            .world()
+            .resource::<WoodSessionStore>()
+            .session_for(player)
+            .is_none());
     }
 
     #[test]
