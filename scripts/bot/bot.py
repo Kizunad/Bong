@@ -130,6 +130,8 @@ class Bot:
             ka_id = reader.i64()
             self._send(mc.C2S_KEEP_ALIVE, struct.pack(">q", ka_id))
             self._emit("keepalive", {"id": ka_id})
+        elif packet_id == mc.S2C_PLAYER_ACTION_RESPONSE:
+            self._emit("player_action_response", {"sequence": reader.varint()})
         elif packet_id == mc.S2C_POS_LOOK:
             x, y, z = reader.f64(), reader.f64(), reader.f64()
             yaw, pitch = reader.f32(), reader.f32()
@@ -328,6 +330,22 @@ class Bot:
 
     def use_item(self, hand: int = 0, sequence: int = 0) -> None:
         self._send(mc.C2S_INTERACT_ITEM, write_varint(hand) + write_varint(sequence))
+
+    def start_digging(
+        self, x: int, y: int, z: int, face: int = 1, sequence: int = 0
+    ) -> None:
+        """Send vanilla Player Action / Start Destroy Block for a real `DiggingEvent`."""
+        if not 0 <= face <= 5:
+            raise ValueError(f"digging face must be in 0..=5, got {face}")
+        if sequence < 0:
+            raise ValueError(f"digging sequence must be non-negative, got {sequence}")
+        body = (
+            write_varint(0)
+            + mc.block_position(x, y, z)
+            + bytes([face])
+            + write_varint(sequence)
+        )
+        self._send(mc.C2S_PLAYER_ACTION, body)
 
     def select_slot(self, slot: int) -> None:
         self._send(mc.C2S_SELECT_SLOT, struct.pack(">h", slot))

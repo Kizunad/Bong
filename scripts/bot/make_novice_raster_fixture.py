@@ -31,8 +31,8 @@ def _write_repeated(path: Path, value: bytes, count: int) -> None:
     path.write_bytes(value * count)
 
 
-def generate(output_dir: Path) -> Path:
-    tile_dir = output_dir / "tile_0_0"
+def _write_flat_tile(output_dir: Path, tile_x: int, tile_z: int, biome_id: int) -> None:
+    tile_dir = output_dir / f"tile_{tile_x}_{tile_z}"
     tile_dir.mkdir(parents=True, exist_ok=True)
     area = TILE_SIZE * TILE_SIZE
 
@@ -51,10 +51,39 @@ def generate(output_dir: Path) -> Path:
     _write_repeated(tile_dir / "spans.bin", span, area)
     _write_repeated(tile_dir / "surface_id.bin", b"\x00", area)
     _write_repeated(tile_dir / "subsurface_id.bin", b"\x01", area)
-    _write_repeated(tile_dir / "biome_id.bin", b"\x00", area)
+    _write_repeated(tile_dir / "biome_id.bin", bytes([biome_id]), area)
     _write_repeated(tile_dir / "water_level.bin", struct.pack("<f", -1.0), area)
     _write_repeated(tile_dir / "feature_mask.bin", struct.pack("<f", 0.0), area)
     _write_repeated(tile_dir / "boundary_weight.bin", struct.pack("<f", 0.0), area)
+
+
+def _tile_manifest(tile_x: int, tile_z: int) -> dict:
+    return {
+        "tile_x": tile_x,
+        "tile_z": tile_z,
+        "dir": f"tile_{tile_x}_{tile_z}",
+        "zones": ["spawn"],
+        "layers": [
+            "surface_id",
+            "subsurface_id",
+            "biome_id",
+            "water_level",
+            "feature_mask",
+            "boundary_weight",
+        ],
+        "spans": True,
+    }
+
+
+def generate(output_dir: Path) -> Path:
+    _write_flat_tile(output_dir, 0, 0, biome_id=0)
+    # SpiritWood seed cell (0,0) resolves to (1292, 1519). Its production crown/root
+    # bounds cross both the x=1280 and z=1536 tile edges, so the fixture must cover
+    # all four touched tiles with one flat spawn biome. Otherwise the real outer
+    # trunk can border fallback terrain tens of blocks higher than the tree base.
+    spiritwood_tiles = [(4, 5), (5, 5), (4, 6), (5, 6)]
+    for tile_x, tile_z in spiritwood_tiles:
+        _write_flat_tile(output_dir, tile_x, tile_z, biome_id=4)
 
     pois = []
     for index, (kind, name, pos_xyz, strategy) in enumerate(POIS, start=1):
@@ -79,26 +108,11 @@ def generate(output_dir: Path) -> Path:
     manifest = {
         "version": 2,
         "tile_size": TILE_SIZE,
-        "world_bounds": {"min_x": 0, "max_x": 255, "min_z": 0, "max_z": 255},
+        "world_bounds": {"min_x": 0, "max_x": 1535, "min_z": 0, "max_z": 1791},
         "surface_palette": ["grass_block", "stone"],
         "biome_palette": ["plains"],
-        "tiles": [
-            {
-                "tile_x": 0,
-                "tile_z": 0,
-                "dir": "tile_0_0",
-                "zones": ["spawn"],
-                "layers": [
-                    "surface_id",
-                    "subsurface_id",
-                    "biome_id",
-                    "water_level",
-                    "feature_mask",
-                    "boundary_weight",
-                ],
-                "spans": True,
-            }
-        ],
+        "tiles": [_tile_manifest(0, 0)]
+        + [_tile_manifest(tile_x, tile_z) for tile_x, tile_z in spiritwood_tiles],
         "pois": pois,
     }
     manifest_path = output_dir / "manifest.json"
