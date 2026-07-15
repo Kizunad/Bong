@@ -82,10 +82,11 @@
 
 ### P3 闭环验收
 
-- [x] ✅ 2026-07-15 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对最终代码候选树 `origin/main...00339c3e` 完成逐入口对抗审查，并落实协议夹具、断言诊断、返回重开、地形扰动隔离、独立 forged-open 目标、真实 C2S move 续权与 server-authoritative barrier 等假绿排除项。
+- [x] ✅ 2026-07-15 — 用户明确要求本次不跑 subagent，因此未运行、也未伪造独立 validator；主 agent 对最终业务候选树 `origin/main...d476cc2b` 完成逐入口对抗审查，并落实协议夹具、明确拒绝反馈、断言诊断、返回重开、地形扰动隔离、独立 forged-open 目标、真实 C2S move 续权与 server-authoritative barrier 等假绿排除项。
 - [x] ✅ 2026-07-15 — `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 在最终 server 业务树全绿；主线同步只改变 client/docs，合并前另以 JDK 17 完成 client 全门禁。
 - [x] ✅ 2026-07-15 — 真实 C2S → server → S2C bot 场景通过：主世界第一具棺建立 session 后暂停该玩家的 lifecycle cleanup，跨到 TSY 同裸 XYZ 时第二具未占用棺 forged open 被拒，原有效 session 的真实网络 move 也在 mapping / owner / source 全部仍有效时被拒并回推权威状态；恢复 lifecycle 后才发生唯一 close，再验证 cleanup、返回重开与 forged open 无隐藏副作用。
 - [x] ✅ 2026-07-15 — `/review` 返工中的 `/tpdim` 只 emit 正式 `DimensionTransferRequest`，并在 Respawn 后通过可逆坐标脉冲给出最终权威 PositionLook；`/supply_coffin barrier` 则提供 request/open/lifecycle 系统之后的确定性黑盒处理水位，两者都只服务 dev/E2E。
+- [x] ✅ 2026-07-15 — `/review` 指出的范围与可观察性问题已收口：`8be8d52d` 撤出无关伪灵脉 persistence 测试改动，`d476cc2b` 让 forged open 在无 loot/session 副作用之外还返回明确玩家反馈；bot 必须先收到该反馈，才允许越过处理 barrier。
 - [x] ✅ 2026-07-15 — 先后同步 `origin/main@32a34f8e`、`390f22e5`、`c231666d`、`4ad0c170` 与 `40df3dce`；最新 merge `00339c3e` 无冲突，且 server / bot 业务树未变化，主线带入的 client 树以 JDK 17 完整复验。
 - [x] ✅ 2026-07-13 — 全阶段标记完成并填写唯一 `## Finish Evidence`；归档后由主 agent 复核最终干净 HEAD，独立 validator 例外继续如实披露。
 
@@ -96,7 +97,7 @@
 | 项目 | 结论 | 实施方案 | 边界条件 | 双锚点 |
 |---|---|---|---|---|
 | open 授权口径 | 裸 XYZ 与客户端可见层都不是授权；必须由 server 同时确认 active source、逻辑位面、有限坐标和距离 | `authorize_supply_coffin_open` 在 roll loot、分配 session、发送 payload 前统一 fail closed | 精确 4.5 格放行；缺 source / dimension、跨维、超距、NaN、±Infinity 拒绝；不改变 wire schema | `server/src/supply_coffin/authority.rs:23`、`server/src/supply_coffin/interact.rs:101` + plan §0、§P1 |
-| 已开 session 续权 | `session_id + owner` 不是持续授权；move 与 lifecycle 每次都要回查 active source 和玩家权威状态 | move 在迁移物品前调用 session authority；lifecycle 失效以既有 `distance` reason close、回推 snapshot 并释放映射 / 锁 | 精确 6.5 格放行；普通 `StorageCrate` 不套用物资棺规则；拒绝不得改变物品或 revision | `server/src/network/client_request_handler.rs:16552`、`server/src/supply_coffin/lifecycle.rs:107` + plan §P1、§P2 |
+| 已开 session 续权 | `session_id + owner` 不是持续授权；move 与 lifecycle 每次都要回查 active source 和玩家权威状态 | move 在迁移物品前调用 session authority；lifecycle 失效以既有 `distance` reason close、回推 snapshot 并释放映射 / 锁 | 精确 6.5 格放行；普通 `StorageCrate` 不套用物资棺规则；拒绝不得改变物品或 revision | `server/src/network/client_request_handler.rs:16848`、`server/src/supply_coffin/lifecycle.rs:123` + plan §P1、§P2 |
 | 入口级与黑盒验收 | helper 单测不足以证明 wiring；非有限坐标、有效 session move 和真实跨维状态转换都必须走入口 | Rust 覆盖真实 open payload、有效 session 的真实 C2S move 与 lifecycle；bot 通过 `/tpdim`、玩家级 lifecycle pause/resume 与处理 barrier 覆盖 open → 合法 move/update → 同 XYZ TSY Respawn → 第二具棺 forged open 拒绝 → 原有效 session move 拒绝/resync → 恢复后 close/snapshot → 旧 move cleanup 拒绝 → 返回重开 | 合法与陈旧 move 均动态选择不同权威空位；第二具棺排除 `opened_by` 假拒绝并在返回后首次合法 open 取得紧邻 session；XYZ 偏移仅 0.25 格，Respawn 后坐标脉冲最终恢复精确目标且 XYZ flags 为绝对值；pause 只延迟 lifecycle，不豁免 move/open authority；E2E 不能替代 server 完整门禁 | `server/src/schema/proto_convert.rs:1662`、`server/src/network/client_request_handler.rs:4585`、`server/src/supply_coffin/lifecycle.rs:478`、`server/src/cmd/dev/supply_coffin.rs:63`、`server/src/cmd/dev/tpdim.rs:62`、`scripts/bot/scenarios/inventory_supply_coffin_cross_dimension.py:15` + plan §5、§P3 |
 | 独立 validator 例外 | 用户明确禁用 subagent，本轮 validator 未运行；不得声称 PASS | 由主 agent 完成逐入口 diff 审查、完整门禁、协议回归、干净服 E2E，并在 plan / PR 透明披露 | 例外只覆盖独立 validator，不豁免测试、CodeRabbit、`/review` 或 e2e；不自动 merge | `docs/finished_plans/plan-bughunt-supply-coffin-cross-dimension-session-gate-v1.md:85` + plan §P3、§4.1、§Finish Evidence |
 
@@ -122,6 +123,7 @@
 
 - `server/src/supply_coffin/authority.rs` 提供 open 4.5 格、session 6.5 格的统一服务端权威校验；缺 source、缺维度、跨维、超距与非有限坐标全部 fail closed。
 - open、external move、lifecycle 三条运行时链均接入 active source / `CurrentDimension` / `Position` 校验；拒绝发生在物品或 loot 状态变更前。
+- open 权威拒绝通过既有 chat 通道返回按原因区分的明确反馈；跨维固定为 `§c[物资棺] 目标不在当前位面。`，且反馈发生后仍由 barrier 证明没有迟到的 `loot_container_open`。
 - lifecycle 清理只删除仍指向当前棺实体的 session 映射，释放 `opened_by` 且不碎棺；reopen 可恢复缺失映射但拒绝覆盖冲突映射。
 - 非 owner / 陈旧 session 只回推请求者背包，避免泄露外部容器内容；普通 `StorageCrate` 的既有 move 契约保持不变。
 - `/tpdim <overworld|tsy>` 只生成正式 `DimensionTransferRequest`，由既有 transfer consumer 权威更新 layer、`CurrentDimension`、`Position` 与 Respawn；目标 X 偏移 0.25 格，Respawn 后再以 0.001 格可逆脉冲生成最终权威 PositionLook，最终坐标不漂移且仍处于旧 4.5 格门限内。
@@ -154,21 +156,23 @@
 - `252e7777`：在正式跨维 consumer 之后增加可逆坐标确认脉冲，确保 bot 在 Respawn 后读取最终权威 XYZ。
 - `cc583815`：把有效 session 的跨维真实网络 move 拒绝、forged open 无副作用和 resume 后唯一 close 接入单场景 bot E2E；protocol 增加 Respawn 维度字段 pin。
 - `b5d7cea9`：把 `supply_coffin barrier` 与 `lifecycle pause|resume` 补入调试命令树 pin，防止 E2E 控制面注册漂移。
-- `87a52f43`：仅稳定伪灵脉 Startup hydration 测试的跨秒断言；读取落盘 `snapshot_wall` 并按启动前后墙钟夹住合法年龄，production persistence 逻辑未改。
 - `00339c3e`：合并 `origin/main@40df3dce` 的快捷键修复，无冲突；server / bot 树不变，主线 client 增量以 JDK 17 完整复验。
+- `d6e4b843`：更新有效 session 黑盒复验与最终门禁证据。
+- `8be8d52d`：撤出范围外的伪灵脉测试稳定化；`server/src/persistence/mod.rs` 相对 `origin/main` 净 diff 恢复为零，不再把该测试改动算作本 plan 交付或门禁依据。
+- `d476cc2b`：为所有 open 权威拒绝原因接入明确 chat 反馈，并以 Rust 入口测试和 bot forged-open 场景锁定跨维文案与无副作用顺序。
 
 ### 测试与审查
 
-- 定向（最终 server 业务树 `87a52f43`；`00339c3e` 未改变 server）：`cargo test tpdim` 为 6/6，`cargo test supply_coffin` 为 110/110，`cargo test external_move_` 为 8/8，调试命令树 pin 1/1，非物资棺隔离用例 1/1。
-- server 最终完整门禁：`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 通过；最终默认并行 `cargo test` 主测试集 11,687 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，doc tests 5 ignored，退出码 0。由于 `/tmp` 20GB tmpfs 已满，门禁显式使用根盘 `TMPDIR`；一次未改写临时目录的运行产生 462 个 I/O 失败，不作为代码结果。
-- 伪灵脉墙钟测试在 `87a52f43` 前以默认并行全量连续两轮稳定得到 11,686 passed / 1 failed / 1 ignored，唯一失败均为同一秒边界跨越导致 `expected age 800 / actual 820`。修正后仍单独断言落盘年龄为 800、离线增量只能是 `TICKS_PER_SECOND` 整倍数，并按 bootstrap 前后真实墙钟计算合法区间；最终高负载全量通过，production hydration 逻辑未改。
+- 定向：既有业务树曾通过 `cargo test tpdim` 6/6、`cargo test supply_coffin` 110/110、`cargo test external_move_` 8/8、调试命令树 pin 1/1 与非物资棺隔离 1/1；明确反馈返工后的当前树另通过 `cargo test supply_coffin::interact::tests` 7/7，且随后完整 `cargo test` 覆盖全部当前测试。
+- server 最终完整门禁（业务树 `d476cc2b`，无 persistence 范围外改动）：`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 通过；默认并行 `cargo test` 主测试集 11,688 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，doc tests 5 ignored，退出码 0。由于 `/tmp` 20GB tmpfs 已满，门禁显式使用根盘 `TMPDIR`；一次未改写临时目录的运行产生 462 个 I/O 失败，不作为代码结果。
+- 范围审计：`8be8d52d` 已撤回 `87a52f43` 的伪灵脉测试改动；最终 `server/src/persistence/mod.rs` 相对 `origin/main` 无净 diff，完整门禁也在不依赖该稳定化的当前业务树上通过。
 - 早期跨栈同步复验：JDK 17.0.19 下 `./gradlew test build`，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`；`npm run build` 通过，`npm test -w @bong/schema` 为 29 files / 872 tests 全绿。review 业务返工未修改 agent 或 schema。
 - 最新主线 client 复验（未提交 merge tree → `00339c3e`）：JDK 17.0.19 下 `./gradlew test build --rerun-tasks` 为 4,077 tests / 0 failed，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`。首次尝试因已满 `/tmp` 使 8 个临时文件测试失败；给 Gradle、编译器和测试 JVM 显式设置根盘 `java.io.tmpdir` 后完整重跑全绿。
 - 真实 C2S Rust 回归：`supply_coffin_external_move_real_c2s_rejects_cross_dimension_same_xyz_while_session_is_valid_and_resyncs` 在 session mapping、`opened_by` 与 active source 均仍有效时，证明跨维同 XYZ move 被拒、物品 / revision 不变，并回推 container + inventory resync。
 - bot protocol（最终 bot 树）：`python3 scripts/bot/test_protocol.py` 为 59/59，退出码 0；测试结束另报告未关闭 socket `ResourceWarning`，不影响结果。
-- 干净服 bot E2E（最终 bot 树，run-tag `s20v3`）：`inventory_supply_coffin_cross_dimension` 为 1/1 PASS（9.0s）；真实走第一具棺 open / 合法 move → lifecycle pause → `/tpdim tsy` Respawn + 最终坐标确认 → 第二具棺 forged open 拒绝并越过 barrier → 原有效 session 跨维 move 拒绝/resync → lifecycle resume 后唯一 close/snapshot → 旧 move cleanup 拒绝 → `/tpdim overworld` → 第二具棺首次合法 open 取得紧邻 session → 第一具棺返回重开同 session。
-- 最终 E2E 证据：`.sisyphus/evidence/bot-e2e-1199-review-s20v3/protocol.log`、`.sisyphus/evidence/bot-e2e-1199-review-s20v3/scenarios.log`、`.sisyphus/evidence/bot-e2e-1199-review-s20v3/server.log`。
-- 主 agent 对 `origin/main...00339c3e` 完成第一性原理与对抗式 diff 审查，确认授权先于副作用、session 映射所有权正确、普通 external container 未被误伤，且 setup 地形、第二具 forged-open 目标、0.25 格权威坐标偏移、Respawn 后坐标确认脉冲、合法 / 陈旧 move 目标格、处理 barrier 与 close 水印均不会制造假绿。
+- 干净服 bot E2E（最终 bot 树，run-tag `s21v1`）：`inventory_supply_coffin_cross_dimension` 为 1/1 PASS（10.4s）；真实走第一具棺 open / 合法 move → lifecycle pause → `/tpdim tsy` Respawn + 最终坐标确认 → 第二具棺 forged open 收到明确“目标不在当前位面”反馈后越过 barrier，并断言无 open payload → 原有效 session 跨维 move 拒绝/resync → lifecycle resume 后唯一 close/snapshot → 旧 move cleanup 拒绝 → `/tpdim overworld` → 第二具棺首次合法 open 取得紧邻 session → 第一具棺返回重开同 session。
+- 最终 E2E 证据：`.sisyphus/evidence/bot-e2e-1199-review-s21v1/protocol.log`、`.sisyphus/evidence/bot-e2e-1199-review-s21v1/scenarios.log`、`.sisyphus/evidence/bot-e2e-1199-review-s21v1/server.log`。
+- 主 agent 对 `origin/main...d476cc2b` 完成第一性原理与对抗式 diff 审查：`authority.rs:12-66` 固定 4.5/6.5 格、维度与有限坐标；`interact.rs:101-112` 的授权早于 RNG `:195`、session `:212` 与 payload `:237`；external move `client_request_handler.rs:16828-16869` 的授权早于首次物品移除 `:16916`；lifecycle `lifecycle.rs:123-144` 先判权再 close，`:185-191` 只删仍指向当前棺的映射，`:239-247` 释放正确锁。普通 external container 未被误伤，setup 地形、第二具 forged-open 目标、0.25 格权威坐标偏移、Respawn 后坐标确认脉冲、合法 / 陈旧 move 目标格、处理 barrier 与 close 水印均不会制造假绿。
 - 独立 validator：未运行。用户明确要求“本次不跑 subagent，仅主agent实施”；本记录不声称 validator PASS，PR 继续透明披露该例外。
 
 ### 遗留与后续
