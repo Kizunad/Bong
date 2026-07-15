@@ -1,6 +1,6 @@
 # plan-bughunt-anqi-hud-session-lasttick
 
-> **状态：active（2026-07-15 promotion）**。来源：
+> **Finished BugFix Plan（2026-07-15 归档）**。历史来源（升格前）：
 > `docs/plans-skeleton/plan-bughunt-anqi-hud-session-lasttick.md`。
 > BugHunt C2 client-ui 第二轮结论：暗器 HUD 的 `AnqiHudStateStore` 在断线/切服时
 > 没有清理 per-dimension `lastTick`，导致同一客户端进程连接新 server / 新世界后，
@@ -138,8 +138,10 @@
   - 覆盖 echo / charge / abrasion / multishot 维度。
 - `cd client && ./gradlew test --tests com.bong.client.combat.CombatHudBootstrapTest`
   - 新增断线 reset pin：`resetOnDisconnectOpensNewTickEpochForAllProducedAnqiHudDimensions`。
+  - 新增四维真实 handler pin：`resetOnDisconnectLetsRealHandlerAcceptLowerTicksForAllProducedKinds`。
 - `cd client && ./gradlew test --tests com.bong.client.combat.handler.AnqiHudServerDataHandlerTest`
-  - 新增 handler 级低 tick after reset 回归。
+  - 运行既有 handler schema、kind 路由与乱序保护回归；disconnect 集成回归位于
+    `CombatHudBootstrapTest`，因为它需要直接驱动包级可见的生产 reset 方法。
 - 最终 client gate：`cd client && ./gradlew test build`，使用 JDK 17。
 
 ## 风险
@@ -165,6 +167,8 @@
 - `e1759121`：校准过期快照断言，区分“显示字段为空”和历史 expiresAt。
 - `9a3c839f`：在生产断线 reset 接入 `AnqiHudStateStore.clear()`。
 - `311e40de`：稳定 handler 回归的测试时钟读取，避免慢 CI 的 2 秒 TTL 抖动。
+- `463e278b`：按 `/review` 意见，让 echo、charge、abrasion、multishot 四种低 tick payload
+  均经过真实 envelope parser 与 handler，并分别断言 store 写入。
 
 ### 测试结果
 
@@ -172,9 +176,17 @@
 - 定向回归（JDK 17.0.19）：
   `./gradlew test --tests com.bong.client.hud.AnqiHudStateStoreTest --tests com.bong.client.combat.CombatHudBootstrapTest --tests com.bong.client.combat.handler.AnqiHudServerDataHandlerTest`，`BUILD SUCCESSFUL`。
 - 完整 client 门禁（JDK 17.0.19）：`./gradlew test build`，13 actionable tasks，`BUILD SUCCESSFUL`。
+- `/review` 返工代码树 `463e278b`：四维真实 handler 定向回归通过；随后
+  `./gradlew test build` 再次通过（58s，13 actionable tasks）。
+- PR #1214 首轮 GitHub e2e 在 `2c13f7a4` 上通过（client、schema、agent、server、smoke 与
+  bot e2e 全链）；仓库 `/review` 的有效返工为四维 handler 回归及归档元数据一致性。
 
 ### 主线与自审
 
 - `git fetch origin main` 后 `origin/main=6f1faea5`，为本分支祖先；无需合并，最终工作树干净。
-- 主 agent 对 `origin/main...311e40de` 做逐入口审查：断线 hook 已注册并执行 `resetOnDisconnect()`；四个生产维度均由同一 store clear 重置；TTL 过期不自动清 gate；debug clear 不是生产唯一依据。
+- 主 agent 对 `origin/main...463e278b` 做逐入口审查：断线 hook 已注册并执行 `resetOnDisconnect()`；四个生产维度均由同一 store clear 重置并各自通过真实 parser/handler；TTL 过期不自动清 gate；debug clear 不是生产唯一依据。
+- `/review` 提出的“断线后在途旧连接 payload”缺少 Fabric 客户端生命周期倒序的可达证据，
+  最终复投也判定不构成 major；引入 session UUID/generation 明确属于本 plan 非目标，未扩写。
+- `/review` 中 `.github/scripts/review.mjs` finding 来自审查模型端点 502/空响应，未指向本 PR
+  修改，也未改 review 基础设施；代码侧有效 finding 已在 `463e278b` 与本归档更新中处理。
 - 用户明确要求“本次不跑 subagent，仅主agent实施”，因此未运行独立 validator；不声称 validator PASS。无 `[BLOCKED: ...]` 项。
