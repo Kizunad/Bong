@@ -1,6 +1,6 @@
-# plan-bughunt-agent-ui-vfx-hidden-by-screen-gate-v1（active）
+# plan-bughunt-agent-ui-vfx-hidden-by-screen-gate-v1（finished）
 
-> **来源**：`docs/plans-skeleton/plan-bughunt-agent-ui-vfx-hidden-by-screen-gate-v1.md`，2026-07-15 升格。  
+> **来源**：`docs/plans-skeleton/plan-bughunt-agent-ui-vfx-hidden-by-screen-gate-v1.md`，2026-07-15 升格。
 > **一句话主题**：`AgentUiScreen` 的计划内 HUD 覆层已经接到 `BongHudOrchestrator`，但 `BongHud` 在 screen 门控阶段把它判成 `HIDDEN` 并直接 `return`，导致 `agent_ui` 三条生产入口（`tsy_discovery` / `elder_legacy` / `tiandao_revelation`）的 fade-in tint 全部永远不显示；这和已存在的 `#937 agent_ui 天道启示 VFX 语义位丢失` 不是同题，后者即使修掉，本题的屏幕门控仍会继续吞掉覆层。
 
 ## 接入面与边界
@@ -17,9 +17,9 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 第一性原理复现 screen gate + layer filter 双重断链 | fix_pr | ⬜ |
-| P1 | 新增 `AGENT_UI_ONLY` 策略并接入集中式命令过滤 | fix_pr | ⬜ |
-| P2 | 饱和回归、Java 17 client 门禁、主线同步与归档 | fix_pr | ⬜ |
+| P0 | 第一性原理复现 screen gate + layer filter 双重断链 | fix_pr | ✅ 2026-07-15 |
+| P1 | 新增 `AGENT_UI_ONLY` 策略并接入集中式命令过滤 | fix_pr | ✅ 2026-07-15 |
+| P2 | 饱和回归、Java 17 client 门禁、主线同步与归档 | fix_pr | ✅ 2026-07-15 |
 
 ## P0 — `AgentUiScreen` 被屏幕门控提前吞掉，计划内覆层永远不出
 
@@ -115,3 +115,38 @@
 - **其他状态**：`FULL` 不丢命令，`CAST_BAR_ONLY` 与 `INVENTORY_DIMMED` 的既有 layer 集合保持不变，`HIDDEN` 返回空列表作为纯函数契约。
 - **针对性测试**：`./gradlew test --tests com.bong.client.BongHudTest --tests com.bong.client.agentui.AgentUiVfxPlannerTest`（JDK 17）。
 - **完整门禁**：`./gradlew test build`（JDK 17）；随后 fetch 最新 `origin/main`，按 merge-base 分类同步并对当前干净 HEAD 复验。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 证真**：`client/src/test/java/com/bong/client/BongHudTest.java` 用真实 `AgentUiScreen.create(...)` 与 `AgentUiVfxPlanner.buildCommands(...)` 串起生产契约；修复前定向运行 4 项测试时仅新增 case 失败，实际 visibility 为 `HIDDEN`。
+- **P1 修复**：`client/src/main/java/com/bong/client/hud/ScreenHudVisibility.java` 新增 `AGENT_UI_ONLY`；`client/src/main/java/com/bong/client/BongHud.java` 用 `filterCommandsForVisibility(...)` 仅放行 `HudRenderLayer.AGENT_UI`。
+- **P2 回归**：`client/src/test/java/com/bong/client/BongHudTest.java` 覆盖真实 screen 分类、全部 visibility、三类 `AGENT_UI` command、非目标 layer 隔离、空列表与 null 错误分支。
+
+### 关键 commit
+
+- `0b6ce43374d780bb2a82952596ac1d372ea4a921`（2026-07-15）：升格 skeleton 并收口 client-only 修复范围。
+- `b0cb576d87e193d520c951aa67f28002657e5da7`（2026-07-15）：提交修复前可失败的 screen gate 契约回归。
+- `70f099990c8f278c212ad7c829ef5f962f5f6fb9`（2026-07-15）：接入 `AGENT_UI_ONLY` 与集中式 layer 过滤。
+- `e58a698a7cca9990f5efad06036cdd3d98d3ff12`（2026-07-15）：补齐全策略饱和测试；这是归档前实现验收基线，不表述为归档提交自身或最终 PR SHA。
+
+### 测试结果
+
+- 修复前：JDK 17 执行 `./gradlew test --tests com.bong.client.BongHudTest --no-daemon`，4 项中仅 `agentUiScreenDoesNotHideItsProducedVfxCommands` 失败，证真 `HIDDEN` 早退。
+- 修复后定向：JDK 17 执行 `./gradlew test --tests com.bong.client.BongHudTest --tests com.bong.client.agentui.AgentUiVfxPlannerTest --no-daemon`，通过。
+- 完整 client 门禁：JDK 17 执行 `./gradlew test build --no-daemon`，4081 tests、0 failures、0 errors、0 skipped，`remapJar` / `check` / `build` 全通过。
+- 格式与洁净度：`git diff --check` 仅发现并在本归档提交清除 promotion 文档的一处尾随空格；归档前工作区无其他 tracked/untracked 改动。
+
+### 跨仓库核验
+
+- **client 生产链**：`AgentUiScreen.init()` → `AgentUiVfxStore` → `AgentUiVfxPlanner` → `BongHudOrchestrator` → `ScreenHudVisibility.AGENT_UI_ONLY` → `BongHud.filterCommandsForVisibility(...)` → overlay renderer。
+- **server / agent / schema**：本修复不修改 wire contract；`agent_ui_request` 三类生产入口和既有 `HudRenderLayer.AGENT_UI` 语义保持不变。
+- **主线同步**：2026-07-15 fetch 后 `origin/main`（`6f1faea5855c0c765859c9081af8bbb0094161b2`）仍为实现验收基线祖先，判定 already-up-to-date，无合并提交或代码树变化。
+- **主 agent 对抗自审**：绑定干净实现验收基线 `PASS e58a698a7cca9990f5efad06036cdd3d98d3ff12`；核对真实 screen 可达性、早退顺序、layer 泄漏、全部 enum consumer 与 VFX store 生命周期，未发现阻塞项。
+
+### 遗留 / 后续
+
+- `#937 agent_ui 天道启示 VFX 语义位丢失` 仍是独立问题；本修复确保该语义位到位后不会再被 screen gate 吞掉，但不在本 plan 内修改其 S2C payload。
+- 未新增视觉资产、动画、音效或 VFX 数值；现有 500ms fade、暗蓝 vignette 与 shake 规格原样保留。
+- 最终 PR SHA、最终主 agent 复核与外部 `/review` / e2e / CodeRabbit 结果在 PR body 和外部 check 绑定，避免归档文件自引用其所在提交 SHA。
