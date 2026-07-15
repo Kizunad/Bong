@@ -153,11 +153,11 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::`：44 passed / 0 failed。
 - `d89af9da` 定向顺序契约：成功与失败 grant 两例 2 passed / 0 failed；`cargo test spiritwood::` 50 passed / 0 failed。
 - `d89af9da` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,708 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed。
-- 最后 Rust 代码 HEAD `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed；后续提交仅修改 Python fixture/Bot 测试与本文。
+- 历史 Rust 基线 `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed；最终 Rust 代码门禁以 `d89af9da` 的同 SHA 结果为准。
 - PR HEAD `e73ebc35` 的 GitHub e2e run `29413908258` 全绿（23m51s）：client、schema、agent、server 全测、Smoke/E2E、Bot e2e 与 artifact upload 均成功。
 - 最新协议代码 HEAD `6508e685`：Python protocol 96 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress`、digging packet 32 位边界与五 tile biome palette 边界均有 pin 测试。
 - `6508e685` 完整 Bot e2e：第二轮 29 passed / 0 failed；生产灵木专项 13.5s，并以 `created_at_tick > 0` 锁定 tag 1 真实过线。首轮专项同样通过，但无关 `combat_weapon_equip_damage` 单次命中观察失败；第二轮该场景 21.9s 通过。
-- 本 `Finish Evidence` 所在归档提交只更新本文，不改变 `6508e685` 的代码树；最终远端 SHA、同 SHA GitHub e2e 与 `/review` 结果在 PR gate 中对拍。
+- `d89af9da` 后的归档提交只更新本文，不改变已全门禁通过的 Rust 代码树；最终远端 SHA、同 SHA GitHub e2e 与 `/review` 结果在 PR gate 中对拍。
 - client 使用 Temurin JDK 17.0.19 执行 `./gradlew test build`：BUILD SUCCESSFUL，13 tasks。
 - 主线同步前后 `production_spiritwood_full_inventory_drop.py` 均通过；同步后首次完整 Bot e2e 的 `combat_skill_cast` 因 40 格观察时序抖动单次失败，定向连续两次通过（0.8s / 0.7s），随后完整 29/29 通过。
 - `6508e685` 执行 `git diff --check origin/main...HEAD` 通过；工作树干净，merge-base 为 `origin/main@6f1faea5`，因此主线是最新协议代码 HEAD 的祖先。
