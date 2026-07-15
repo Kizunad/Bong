@@ -22,6 +22,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ScreenHudVisibilityTest {
     @Test
@@ -76,6 +77,11 @@ class ScreenHudVisibilityTest {
             ScreenHudVisibility.INVENTORY_DIMMED,
             ScreenHudVisibility.forScreenClass(HandledScreen.class)
         );
+    }
+
+    @Test
+    void classClassifierRejectsNull() {
+        assertThrows(NullPointerException.class, () -> ScreenHudVisibility.forScreenClass(null));
     }
 
     private static InsightOfferViewModel insightOffer() {

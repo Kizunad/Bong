@@ -6,6 +6,8 @@ import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 
+import java.util.Objects;
+
 /**
  * Per-Screen HUD visibility policy (§8.2). Pure function → trivially testable.
  */
@@ -27,6 +29,7 @@ public enum ScreenHudVisibility {
     }
 
     static ScreenHudVisibility forScreenClass(Class<? extends Screen> screenClass) {
+        Objects.requireNonNull(screenClass, "screenClass");
         if (DeathScreen.class.isAssignableFrom(screenClass)) return HIDDEN;
         if (GameMenuScreen.class.isAssignableFrom(screenClass)) return HIDDEN;
         if (AgentUiScreen.class.isAssignableFrom(screenClass)) return AGENT_UI_ONLY;
