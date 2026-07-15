@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { ChatSignal } from "../src/chat-message.js";
+import { ChatMessageV1, ChatSignal } from "../src/chat-message.js";
 import { validate } from "../src/validate.js";
 
 const VALID_CHAT_SIGNAL = {
@@ -15,8 +15,8 @@ const VALID_CHAT_SIGNAL = {
 };
 
 describe("ChatSignal timestamp contract", () => {
-  it("accepts a non-negative integer observation timestamp", () => {
-    const result = validate(ChatSignal, VALID_CHAT_SIGNAL);
+  it.each([0, 1_711_111_111])("accepts non-negative integer observation timestamp %d", (ts) => {
+    const result = validate(ChatSignal, { ...VALID_CHAT_SIGNAL, ts });
 
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
@@ -47,5 +47,27 @@ describe("ChatSignal timestamp contract", () => {
 
     expect(generated.required).toContain("ts");
     expect(generated.properties?.ts).toMatchObject({ type: "integer", minimum: 0 });
+  });
+});
+
+describe("ChatMessageV1 timestamp contract", () => {
+  const validMessage = {
+    v: 1,
+    ts: 0,
+    player: "offline:Steve",
+    raw: "灵气太少了",
+    zone: "spawn",
+  };
+
+  it("accepts the zero boundary used by an epoch-starting source", () => {
+    const result = validate(ChatMessageV1, validMessage);
+
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it.each([-1, 1.5, "1711111111"])("rejects invalid source timestamp %s", (ts) => {
+    const result = validate(ChatMessageV1, { ...validMessage, ts });
+
+    expect(result.ok, `source ts=${String(ts)} must be rejected`).toBe(false);
   });
 });
