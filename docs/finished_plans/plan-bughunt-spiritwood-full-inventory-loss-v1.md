@@ -143,18 +143,21 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 - `5a874df9`（2026-07-15）：新增生产五 tile fixture、真实 digging Bot 场景及协议饱和测试。
 - `ce08d8e5`（2026-07-15）：普通 merge `origin/main@6f1faea5`，保留双方 Bot 能力并复验灵木生产链。
 - `fc546e2a`（2026-07-15）：修复五 tile fixture 的 biome palette 映射，并增加逐 tile 文件长度与索引边界测试。
+- `6508e685`（2026-07-15）：锁定真实采伐 `created_at_tick > 0`，并收紧 digging sequence 的 32 位 VarInt 边界。
 
 ### 测试结果
 
 - 修复前新增契约测试：18 pass / 7 fail；失败明确显示 `DroppedLootRegistry=0`，同时原木已 harvested。
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::tests`：25 passed / 0 failed。
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::`：44 passed / 0 failed。
-- 最终合并 HEAD `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed。
-- Python protocol：95 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress`、digging packet 与五 tile biome palette 边界均有 pin 测试。
-- 修正 palette 后完整 Bot e2e：第二轮 29 passed / 0 failed；生产灵木专项场景 13.6s。首轮专项同样通过，但无关 `production_craft_cancel_full_inventory_refund` 单次等待超时；第二轮该场景 4.5s 通过。
+- 最后 Rust 代码 HEAD `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed；后续提交仅修改 Python fixture/Bot 测试与本文。
+- PR HEAD `e73ebc35` 的 GitHub e2e run `29413908258` 全绿（23m51s）：client、schema、agent、server 全测、Smoke/E2E、Bot e2e 与 artifact upload 均成功。
+- 最新协议代码 HEAD `6508e685`：Python protocol 96 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress`、digging packet 32 位边界与五 tile biome palette 边界均有 pin 测试。
+- `6508e685` 完整 Bot e2e：第二轮 29 passed / 0 failed；生产灵木专项 13.5s，并以 `created_at_tick > 0` 锁定 tag 1 真实过线。首轮专项同样通过，但无关 `combat_weapon_equip_damage` 单次命中观察失败；第二轮该场景 21.9s 通过。
+- 本 `Finish Evidence` 所在归档提交只更新本文，不改变 `6508e685` 的代码树；最终远端 SHA、同 SHA GitHub e2e 与 `/review` 结果在 PR gate 中对拍。
 - client 使用 Temurin JDK 17.0.19 执行 `./gradlew test build`：BUILD SUCCESSFUL，13 tasks。
 - 主线同步前后 `production_spiritwood_full_inventory_drop.py` 均通过；同步后首次完整 Bot e2e 的 `combat_skill_cast` 因 40 格观察时序抖动单次失败，定向连续两次通过（0.8s / 0.7s），随后完整 29/29 通过。
-- `git diff --check origin/main...HEAD` 通过；工作树干净，`origin/main@6f1faea5` 是 `ce08d8e5` 的祖先。
+- `6508e685` 执行 `git diff --check origin/main...HEAD` 通过；工作树干净，merge-base 为 `origin/main@6f1faea5`，因此主线是最新协议代码 HEAD 的祖先。
 
 ### 跨仓库核验
 
