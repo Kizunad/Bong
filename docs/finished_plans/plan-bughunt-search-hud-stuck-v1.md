@@ -1,6 +1,6 @@
 # plan-bughunt-search-hud-stuck-v1
 
-> **Active plan（2026-07-15 升格）**。来源：`docs/plans-skeleton/plan-bughunt-search-hud-stuck-v1.md`。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
+> **Finished plan（2026-07-15 验收归档）**。来源：`docs/plans-skeleton/plan-bughunt-search-hud-stuck-v1.md`。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
 
 > 立项动机：本轮按「client runtime / store / session / consumer 漏 reset」角度复查 TSY 搜刮链路，避开既有 toast cross-session、identity panel stale session、zone_info 同区不刷新、灵龛 HUD 串局等已出题项后，确认这是一个**新的、同 session 即可稳定复现**的 HUD 状态机真 bug。
 
@@ -24,9 +24,9 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | TSY 搜刮 HUD 终态不自动回 `IDLE` | client | ⏳ |
+| P0 | TSY 搜刮 HUD 终态不自动回 `IDLE` | client | ✅ 2026-07-15 |
 
-## P0 — TSY 搜刮 HUD 终态不自动回 `IDLE`
+## P0 — TSY 搜刮 HUD 终态不自动回 `IDLE`（✅ 2026-07-15）
 
 - **类型**：client runtime / store / consumer 漏 reset
 - **优先级**：major
@@ -106,3 +106,45 @@
 ## 审计来源
 
 bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-20260705-cm`，角度：disconnect/reconnect、world 切换、增量状态不清、consumer 漏 reset。结论：TSY 搜刮 HUD 终态未自动收尾是高置信新真 bug；原 skeleton 当时仅立项，不含代码修复。
+
+## Finish Evidence
+
+### 落地清单
+
+- `client/src/main/java/com/bong/client/hud/SearchHudStateStore.java`
+  - `COMPLETED_FLASH` 使用 3 秒单调时间 TTL，`ABORTED_FLASH` 使用 1 秒 TTL；`snapshot()` 在精确边界惰性回收为 `IDLE`。
+  - `markStarted` / `markProgress` / 新终态覆盖旧计时；状态和 `System.nanoTime()` 取时受同一 class monitor 保护。
+  - `clearOnDisconnect()` 同时清理进行中与终态搜刮状态。
+- `client/src/main/java/com/bong/client/BongNetworkHandler.java`
+  - `clearClientStateOnDisconnect()` 已接入 `SearchHudStateStore.clearOnDisconnect()`，不再让旧 session HUD 串入重连。
+- `client/src/test/java/com/bong/client/hud/SearchHudStateStoreTest.java`
+  - 覆盖 3 秒/1 秒前一纳秒与精确边界、新搜索/进度覆盖、后到终态替换、负向时间差、`nanoTime` long 回绕及断线清理。
+- `client/src/test/java/com/bong/client/BongNetworkHandlerTest.java`
+  - 覆盖统一 Fabric disconnect 清理链真实调用搜刮 HUD store。
+
+### 关键 commit
+
+- `651d3cbc`（2026-07-15）：升格 plan 并收口单调时间、惰性过期与断线清理方案。
+- `182ebd41`（2026-07-15）：加入修复前红灯契约；32 个定向测试中 5 个按预期失败。
+- `b72a702f`（2026-07-15）：实现终态 TTL 与统一断线清理。
+- `330e2afe`（2026-07-15）：把生产取时纳入状态锁，消除锁竞争导致的 TTL 起点偏移。
+- `1694589f`（2026-07-15）：运行 `scripts/plan-finish.sh`，把 active plan 迁入 `docs/finished_plans/`。
+
+### 测试结果
+
+- 修复前证真：JDK 17 定向执行 `SearchHudStateStoreTest` + `BongNetworkHandlerTest`，`32 tests completed, 5 failed`；失败精确命中 completed/aborted TTL、后到终态 deadline、`nanoTime` 回绕和断线清理。
+- 修复后定向：同两组测试 `BUILD SUCCESSFUL`，上述失败全部转绿。
+- 客户端完整门禁（JDK 17）：`./gradlew --no-daemon test build` → `BUILD SUCCESSFUL in 3m 44s`；XML 汇总 `4086 tests, 0 skipped, 0 failures, 0 errors`。
+- 主线同步：`origin/main=6f1faea5` 是当前 HEAD 祖先，分类 `already-up-to-date`，无需生成 merge commit 或重复门禁。
+- 主 agent 对抗复审：首次复审发现“锁外取 `nanoTime`”竞态并以 `330e2afe` 修正；最终干净 HEAD `330e2afe39be77268cff1d0c4dae2cd59037ca83` 复审 PASS。按用户明确要求，本次未启动独立 validator subagent。
+
+### 跨仓库核验
+
+- **client**：`ContainerInteractionHandler` 四类 search payload → `SearchHudStateStore` → `BongHudOrchestrator` / `SearchProgressHudPlanner` 链路保持原协议并补齐生命周期收尾。
+- **server**：未改；`search_started` / `search_progress` / `search_completed` / `search_aborted` payload 契约不变。
+- **agent/schema**：未改；本修复不新增或变更跨仓库 schema。
+
+### 遗留 / 后续
+
+- 无 `[BLOCKED: ...]`，无协议迁移、真元守恒或视觉资产遗留。
+- 本次未启动 `runClient` 手工演示；状态生命周期、HUD 消失条件和 disconnect 接线均由确定性单测及 4086 项客户端全量测试覆盖，渲染 planner 本身未改。
