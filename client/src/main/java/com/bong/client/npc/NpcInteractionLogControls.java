@@ -8,6 +8,9 @@ import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.function.BooleanSupplier;
+import java.util.function.UnaryOperator;
+
 public final class NpcInteractionLogControls {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String KEY_TRANSLATION = "key.bong-client.npc_interaction_log";
@@ -21,9 +24,7 @@ public final class NpcInteractionLogControls {
         if (registered) {
             return;
         }
-        key = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F7, CATEGORY)
-        );
+        installInteractionLogKey(KeyBindingHelper::registerKeyBinding);
         ClientTickEvents.END_CLIENT_TICK.register(NpcInteractionLogControls::onEndClientTick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
             client.execute(NpcInteractionLogStore::clearOnDisconnect));
@@ -31,11 +32,49 @@ public final class NpcInteractionLogControls {
     }
 
     private static void onEndClientTick(MinecraftClient client) {
-        if (client == null || client.player == null || client.currentScreen != null) {
+        if (client == null) {
             return;
         }
-        while (key != null && key.wasPressed()) {
-            NpcInteractionLogStore.toggleVisible();
+        consumeInstalledTogglePresses(
+            client.player != null,
+            client.currentScreen != null
+        );
+    }
+
+    static int consumeInstalledTogglePresses(boolean playerPresent, boolean screenOpen) {
+        return consumeTogglePresses(
+            playerPresent,
+            screenOpen,
+            () -> key != null && key.wasPressed()
+        );
+    }
+
+    static int consumeTogglePresses(
+        boolean playerPresent,
+        boolean screenOpen,
+        BooleanSupplier wasPressed
+    ) {
+        if (!playerPresent || screenOpen) {
+            return 0;
         }
+        int consumed = 0;
+        while (wasPressed.getAsBoolean()) {
+            NpcInteractionLogStore.toggleVisible();
+            consumed++;
+        }
+        return consumed;
+    }
+
+    static KeyBinding installInteractionLogKey(UnaryOperator<KeyBinding> registrar) {
+        // Leave unbound so F1-F9 remain reserved for quick slots.
+        key = registrar.apply(
+            new KeyBinding(KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
+        );
+        return key;
+    }
+
+    static void resetControlsForTests() {
+        key = null;
+        registered = false;
     }
 }

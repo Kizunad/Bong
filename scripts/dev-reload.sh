@@ -8,6 +8,228 @@
 # from the cargo build/restart steps below — it just reads the same rasters. The
 # vite + three.js viewer is started separately:
 #   cd worldgen/console && npm install && npm run dev
+detach_background_job() {
+    local pid="${1:-}"
+    local running_pid
+    local is_running=false
+
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+        echo "FAIL: invalid background job pid: ${pid:-<empty>}" >&2
+        return 1
+    fi
+
+    while IFS= read -r running_pid; do
+        if [ "$running_pid" = "$pid" ]; then
+            is_running=true
+            break
+        fi
+    done < <(jobs -pr)
+    if [ "$is_running" != true ]; then
+        echo "FAIL: background job $pid is not running in this shell" >&2
+        return 1
+    fi
+
+    if ! disown "$pid" 2>/dev/null; then
+        echo "FAIL: background job $pid could not be detached" >&2
+        return 1
+    fi
+}
+
+background_process_is_running() {
+    local pid="${1:-}"
+    local state
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    state="$(ps -o stat= -p "$pid" 2>/dev/null)" || return 1
+    [[ "$state" != Z* ]]
+}
+
+resolve_executable_path() {
+    local workdir="${1:-}"
+    local executable="${2:-}"
+    local search_path="${3-$PATH}"
+    local candidate
+
+    [ -n "$workdir" ] && [ -n "$executable" ] || return 1
+    (
+        cd -- "$workdir" 2>/dev/null || exit 1
+        if [[ "$executable" == */* ]]; then
+            candidate="$executable"
+        else
+            candidate="$(PATH="$search_path" type -P -- "$executable")" || exit 1
+        fi
+        [ -x "$candidate" ] || exit 1
+        readlink -f -- "$candidate"
+    )
+}
+
+wait_for_process_executable() {
+    local pid="${1:-}"
+    local expected_executable="${2:-}"
+    local actual_executable
+    local attempt
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [ -n "$expected_executable" ] || return 1
+    # Bong's supported dev/CI hosts are Linux. `/proc/$pid/exe` is the exec
+    # acknowledgement: the wrapper PID cannot pass until it has become the
+    # requested server image. Test/wrapper callers may pass their final stable
+    # image to launch_bong_server; the production call uses the server binary.
+    for ((attempt = 0; attempt < 500; attempt++)); do
+        background_process_is_running "$pid" || return 1
+        actual_executable="$(readlink -f -- "/proc/$pid/exe" 2>/dev/null)" \
+            || actual_executable=""
+        if [ "$actual_executable" = "$expected_executable" ]; then
+            return 0
+        fi
+        sleep 0.01 || return 1
+    done
+    return 1
+}
+
+terminate_background_process() {
+    local pid="${1:-}"
+    local attempt
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+    if background_process_is_running "$pid"; then
+        kill "$pid" 2>/dev/null || true
+        for ((attempt = 0; attempt < 300; attempt++)); do
+            background_process_is_running "$pid" || break
+            sleep 0.01 || break
+        done
+    fi
+    if background_process_is_running "$pid"; then
+        kill -KILL "$pid" 2>/dev/null || true
+        for ((attempt = 0; attempt < 300; attempt++)); do
+            background_process_is_running "$pid" || break
+            sleep 0.01 || break
+        done
+    fi
+    wait "$pid" 2>/dev/null || true
+}
+
+launch_detached_job() {
+    local pid
+
+    DETACHED_PID=""
+    if [ "$#" -eq 0 ]; then
+        echo "FAIL: no background command provided" >&2
+        return 1
+    fi
+
+    (
+        trap '' HUP
+        exec < /dev/null
+        "$@"
+    ) &
+    pid=$!
+    if ! detach_background_job "$pid"; then
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        return 1
+    fi
+    if ! background_process_is_running "$pid"; then
+        echo "FAIL: detached background process $pid exited during launch" >&2
+        wait "$pid" 2>/dev/null || true
+        return 1
+    fi
+    DETACHED_PID="$pid"
+}
+
+run_bong_server() {
+    local workdir="${BONG_SERVER_WORKDIR:-server}"
+    local executable="${BONG_SERVER_EXECUTABLE:-./target/debug/bong-server}"
+    local log_path="${BONG_SERVER_LOG:-/tmp/bong-server.log}"
+    local -a env_args=()
+
+    if declare -p ENV_ARGS >/dev/null 2>&1; then
+        env_args=("${ENV_ARGS[@]}")
+    fi
+
+    if ! cd -- "$workdir"; then
+        echo "FAIL: could not enter bong server workdir: $workdir" >&2
+        return 1
+    fi
+    exec env "${env_args[@]}" "$executable" > "$log_path" 2>&1
+}
+
+launch_bong_server() {
+    local startup_grace="${BONG_SERVER_STARTUP_GRACE_SECONDS:-2}"
+    local workdir="${BONG_SERVER_WORKDIR:-server}"
+    local executable="${BONG_SERVER_EXECUTABLE:-./target/debug/bong-server}"
+    local expected_executable="${1:-}"
+    local resolved_executable
+    local resolved_expected_executable
+    local launched_pid
+    local effective_path="$PATH"
+    local env_arg
+
+    SERVER_PID=""
+    DETACHED_PID=""
+    if [[ ! "$startup_grace" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]; then
+        echo "FAIL: BONG_SERVER_STARTUP_GRACE_SECONDS must be a non-negative number: $startup_grace" >&2
+        return 1
+    fi
+    if ! (cd -- "$workdir") 2>/dev/null; then
+        echo "FAIL: could not enter bong server workdir: $workdir" >&2
+        return 1
+    fi
+    if declare -p ENV_ARGS >/dev/null 2>&1; then
+        for env_arg in "${ENV_ARGS[@]}"; do
+            if [[ "$env_arg" == PATH=* ]]; then
+                effective_path="${env_arg#PATH=}"
+            fi
+        done
+    fi
+    if ! resolved_executable="$(
+        resolve_executable_path "$workdir" "$executable" "$effective_path"
+    )"; then
+        echo "FAIL: bong server executable is not executable: $executable" >&2
+        return 1
+    fi
+    if [ -n "$expected_executable" ]; then
+        if ! resolved_expected_executable="$(
+            resolve_executable_path "$workdir" "$expected_executable" "$effective_path"
+        )"; then
+            echo "FAIL: expected bong server executable is not executable: $expected_executable" >&2
+            return 1
+        fi
+    else
+        resolved_expected_executable="$resolved_executable"
+    fi
+    launch_detached_job run_bong_server || return 1
+    launched_pid="$DETACHED_PID"
+    if ! wait_for_process_executable "$launched_pid" "$resolved_expected_executable"; then
+        echo "FAIL: bong server process $launched_pid did not exec expected executable $resolved_expected_executable" >&2
+        terminate_background_process "$launched_pid"
+        SERVER_PID=""
+        DETACHED_PID=""
+        return 1
+    fi
+    SERVER_PID="$launched_pid"
+    if ! sleep "$startup_grace"; then
+        echo "FAIL: bong server startup grace wait failed: $startup_grace" >&2
+        terminate_background_process "$SERVER_PID"
+        SERVER_PID=""
+        DETACHED_PID=""
+        return 1
+    fi
+    if ! background_process_is_running "$SERVER_PID"; then
+        echo "FAIL: bong server process $SERVER_PID exited during ${startup_grace}s startup grace; check ${BONG_SERVER_LOG:-/tmp/bong-server.log}" >&2
+        terminate_background_process "$SERVER_PID"
+        SERVER_PID=""
+        DETACHED_PID=""
+        return 1
+    fi
+}
+
+# Tests source this file to exercise the exact production detach helper.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
+
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -104,10 +326,7 @@ ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
 if [ -f "$TSY_MANIFEST_ABS" ]; then
     ENV_ARGS+=("BONG_TSY_RASTER_PATH=$TSY_MANIFEST_ABS")
 fi
-(cd server && env "${ENV_ARGS[@]}" cargo run > /tmp/bong-server.log 2>&1) &
-SERVER_PID=$!
-disown "$SERVER_PID"
-sleep 2
+launch_bong_server
 
 if grep -q "loaded.*terrain tiles" /tmp/bong-server.log 2>/dev/null; then
     TILES=$(grep -o 'loaded [0-9]* terrain' /tmp/bong-server.log | grep -o '[0-9]*')

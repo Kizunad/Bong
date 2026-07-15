@@ -128,6 +128,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "technique remove <id:string>",
     "technique reset_all",
     "time advance <ticks:integer>",
+    "time now",
     "top",
     "tppoi <zone:string> <poi:string>",
     "tppoi novice",
