@@ -35,6 +35,16 @@ detach_background_job() {
     fi
 }
 
+background_process_is_running() {
+    local pid="${1:-}"
+    local state
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    state="$(ps -o stat= -p "$pid" 2>/dev/null)" || return 1
+    [[ "$state" != Z* ]]
+}
+
 launch_detached_job() {
     local pid
 
@@ -55,7 +65,41 @@ launch_detached_job() {
         wait "$pid" 2>/dev/null || true
         return 1
     fi
+    if ! background_process_is_running "$pid"; then
+        echo "FAIL: detached background process $pid exited during launch" >&2
+        wait "$pid" 2>/dev/null || true
+        return 1
+    fi
     DETACHED_PID="$pid"
+}
+
+run_bong_server() {
+    local workdir="${BONG_SERVER_WORKDIR:-server}"
+    local executable="${BONG_SERVER_EXECUTABLE:-./target/debug/bong-server}"
+    local log_path="${BONG_SERVER_LOG:-/tmp/bong-server.log}"
+    local -a env_args=()
+
+    if declare -p ENV_ARGS >/dev/null 2>&1; then
+        env_args=("${ENV_ARGS[@]}")
+    fi
+
+    cd "$workdir"
+    exec env "${env_args[@]}" "$executable" > "$log_path" 2>&1
+}
+
+launch_bong_server() {
+    local startup_grace="${BONG_SERVER_STARTUP_GRACE_SECONDS:-2}"
+
+    SERVER_PID=""
+    launch_detached_job run_bong_server || return 1
+    SERVER_PID="$DETACHED_PID"
+    sleep "$startup_grace"
+    if ! background_process_is_running "$SERVER_PID"; then
+        echo "FAIL: bong server process $SERVER_PID exited during ${startup_grace}s startup grace; check ${BONG_SERVER_LOG:-/tmp/bong-server.log}" >&2
+        SERVER_PID=""
+        DETACHED_PID=""
+        return 1
+    fi
 }
 
 # Tests source this file to exercise the exact production detach helper.
@@ -159,14 +203,7 @@ ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
 if [ -f "$TSY_MANIFEST_ABS" ]; then
     ENV_ARGS+=("BONG_TSY_RASTER_PATH=$TSY_MANIFEST_ABS")
 fi
-run_bong_server() {
-    cd server
-    exec env "${ENV_ARGS[@]}" ./target/debug/bong-server \
-        > /tmp/bong-server.log 2>&1
-}
-launch_detached_job run_bong_server
-SERVER_PID="$DETACHED_PID"
-sleep 2
+launch_bong_server
 
 if grep -q "loaded.*terrain tiles" /tmp/bong-server.log 2>/dev/null; then
     TILES=$(grep -o 'loaded [0-9]* terrain' /tmp/bong-server.log | grep -o '[0-9]*')

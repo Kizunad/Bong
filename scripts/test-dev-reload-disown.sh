@@ -66,6 +66,23 @@ wait_for_process_exit() {
     return 1
 }
 
+wait_for_process_command() {
+    local pid="$1"
+    local expected="$2"
+    local command
+    local attempt
+
+    for ((attempt = 0; attempt < 300; attempt++)); do
+        command="$(ps -o comm= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+        if [ "$command" = "$expected" ]; then
+            return 0
+        fi
+        process_is_running "$pid" || return 1
+        sleep 0.01
+    done
+    return 1
+}
+
 cat > "$STUB_SCRIPT" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -80,8 +97,16 @@ cat > "$LAUNCHER_SCRIPT" <<'LAUNCHER'
 set -euo pipefail
 source "$DEV_RELOAD"
 
-run_stub_server() {
-    exec "$STUB_SCRIPT"
+job_table_contains() {
+    local expected_pid="$1"
+    local job_pid
+
+    while IFS= read -r job_pid; do
+        if [ "$job_pid" = "$expected_pid" ]; then
+            return 0
+        fi
+    done < <({ jobs -p; jobs -pr; } | sort -u)
+    return 1
 }
 
 case "$TEST_MODE" in
@@ -90,8 +115,19 @@ case "$TEST_MODE" in
         child_pid=$!
         ;;
     detached)
-        launch_detached_job run_stub_server
-        child_pid="$DETACHED_PID"
+        ENV_ARGS=()
+        launch_bong_server
+        child_pid="$SERVER_PID"
+        if [ "$SERVER_PID" = "$DETACHED_PID" ]; then
+            printf 'matched\n' > "$SERVER_PID_MATCH_FILE"
+        else
+            printf 'mismatch\n' > "$SERVER_PID_MATCH_FILE"
+        fi
+        if job_table_contains "$child_pid"; then
+            printf 'present\n' > "$JOB_TABLE_STATE_FILE"
+        else
+            printf 'detached\n' > "$JOB_TABLE_STATE_FILE"
+        fi
         ;;
     *)
         echo "FAIL: unknown launcher mode: $TEST_MODE" >&2
@@ -115,10 +151,12 @@ run_hup_case() {
     local launcher_pid_file="$case_root/launcher.pid"
     local ready_file="$case_root/ready"
     local launcher_log="$case_root/launcher.log"
+    local server_log="$case_root/server.log"
+    local server_pid_match_file="$case_root/server-pid-match"
+    local job_table_state_file="$case_root/job-table-state"
     local spawned_launcher_pid
     local launcher_pgid
     local child_pgid
-    local child_command
     local child_stdin
 
     mkdir -p "$case_root"
@@ -127,6 +165,12 @@ run_hup_case() {
     export CHILD_PID_FILE="$child_pid_file"
     export LAUNCHER_PID_FILE="$launcher_pid_file"
     export READY_FILE="$ready_file"
+    export SERVER_PID_MATCH_FILE="$server_pid_match_file"
+    export JOB_TABLE_STATE_FILE="$job_table_state_file"
+    export BONG_SERVER_WORKDIR="$TEST_ROOT"
+    export BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+    export BONG_SERVER_LOG="$server_log"
+    export BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
 
     setsid bash "$LAUNCHER_SCRIPT" < "$LAUNCHER_STDIN" \
         > "$launcher_log" 2>&1 &
@@ -136,6 +180,14 @@ run_hup_case() {
     wait_for_file "$child_pid_file" "$mode child pid"
     wait_for_file "$launcher_pid_file" "$mode launcher pid"
     wait_for_file "$ready_file" "$mode child readiness"
+    if [ "$mode" = detached ]; then
+        wait_for_file "$server_pid_match_file" "production SERVER_PID assignment"
+        wait_for_file "$job_table_state_file" "production job-table detach state"
+        grep -Fxq matched "$server_pid_match_file" \
+            || fail "production SERVER_PID must equal launch_detached_job DETACHED_PID"
+        grep -Fxq detached "$job_table_state_file" \
+            || fail "production launch must remove the live server pid from Bash's job table"
+    fi
     read -r ACTIVE_CHILD_PID < "$child_pid_file"
     read -r ACTIVE_LAUNCHER_PID < "$launcher_pid_file"
 
@@ -151,9 +203,8 @@ run_hup_case() {
     [[ "$launcher_pgid" =~ ^[0-9]+$ ]] || fail "$mode launcher has invalid pgid"
     [ "$child_pgid" = "$launcher_pgid" ] \
         || fail "$mode child must begin in the launcher's HUP-exposed process group"
-    child_command="$(ps -o comm= -p "$ACTIVE_CHILD_PID" | tr -d '[:space:]')"
-    [ "$child_command" = sleep ] \
-        || fail "$mode returned wrapper pid instead of final stub process: $child_command"
+    wait_for_process_command "$ACTIVE_CHILD_PID" sleep \
+        || fail "$mode did not exec the final sleep process behind its returned pid"
     child_stdin="$(readlink "/proc/$ACTIVE_CHILD_PID/fd/0")"
     if [ "$mode" = detached ]; then
         [ "$child_stdin" = /dev/null ] \
@@ -239,5 +290,19 @@ if detach_background_job "$completed_pid" 2> "$COMPLETED_JOB_LOG"; then
 fi
 grep -Fq "is not running in this shell" "$COMPLETED_JOB_LOG" \
     || fail "completed job rejection did not include its lifecycle diagnostic"
+
+MISSING_SERVER_LOG="$TEST_ROOT/missing-server.err"
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$TEST_ROOT/does-not-exist"
+BONG_SERVER_LOG="$TEST_ROOT/missing-server.log"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
+if launch_bong_server 2> "$MISSING_SERVER_LOG"; then
+    fail "production server launch accepted an exec failure"
+fi
+grep -Eq "is not running in this shell|exited during launch|exited during .* startup grace" "$MISSING_SERVER_LOG" \
+    || fail "exec failure did not include its lifecycle diagnostic"
+[ -z "$SERVER_PID" ] || fail "failed production launch left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "failed production launch left DETACHED_PID=$DETACHED_PID"
 
 echo "PASS: production launch path survived SIGHUP; invalid and completed jobs were rejected"
