@@ -1,5 +1,6 @@
 package com.bong.client.hud;
 
+import com.bong.client.agentui.AgentUiScreen;
 import net.minecraft.client.gui.screen.DeathScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
@@ -15,6 +16,8 @@ public enum ScreenHudVisibility {
     INVENTORY_DIMMED,
     /** InspectScreen / CultivationScreen / Dynamic XML — HUD hidden, cast-bar kept. */
     CAST_BAR_ONLY,
+    /** AgentUiScreen — only render the panel's dedicated VFX overlay. */
+    AGENT_UI_ONLY,
     /** DeathScreen, pause menu — hide everything. */
     HIDDEN;
 
@@ -22,6 +25,7 @@ public enum ScreenHudVisibility {
         if (screen == null) return FULL;
         if (screen instanceof DeathScreen) return HIDDEN;
         if (screen instanceof GameMenuScreen) return HIDDEN;
+        if (screen instanceof AgentUiScreen) return AGENT_UI_ONLY;
         String clsName = screen.getClass().getName();
         if (clsName.equals("com.bong.client.inventory.InspectScreen")
             || clsName.equals("com.bong.client.ui.CultivationScreen")

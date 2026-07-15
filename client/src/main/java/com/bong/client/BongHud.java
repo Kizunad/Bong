@@ -114,11 +114,7 @@ public class BongHud {
             commands.addAll(tiandaoCommands);
         }
 
-        if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {
-            commands = filterCastBarOnly(commands);
-        } else if (visibility == ScreenHudVisibility.INVENTORY_DIMMED) {
-            commands = filterInventoryDimmed(commands);
-        }
+        commands = filterCommandsForVisibility(commands, visibility);
 
         for (HudRenderCommand command : commands) {
             if (command.isText()) {
@@ -333,24 +329,32 @@ public class BongHud {
         }
     }
 
-    private static List<HudRenderCommand> filterCastBarOnly(List<HudRenderCommand> commands) {
-        return commands.stream()
-            .filter(cmd -> cmd.layer() == com.bong.client.hud.HudRenderLayer.CAST_BAR)
-            .toList();
-    }
-
-    private static List<HudRenderCommand> filterInventoryDimmed(List<HudRenderCommand> commands) {
-        return commands.stream()
-            .filter(cmd -> {
-                com.bong.client.hud.HudRenderLayer layer = cmd.layer();
-                // Keep quick-bar + event-stream + cast-bar; dim/hide everything else.
-                return layer == com.bong.client.hud.HudRenderLayer.QUICK_BAR
-                    || layer == com.bong.client.hud.HudRenderLayer.CAST_BAR
-                    || layer == com.bong.client.hud.HudRenderLayer.EVENT_STREAM
-                    || layer == com.bong.client.hud.HudRenderLayer.TSY_EXTRACT
-                    || layer == com.bong.client.hud.HudRenderLayer.BASELINE;
-            })
-            .toList();
+    static List<HudRenderCommand> filterCommandsForVisibility(
+        List<HudRenderCommand> commands,
+        ScreenHudVisibility visibility
+    ) {
+        Objects.requireNonNull(commands, "commands");
+        Objects.requireNonNull(visibility, "visibility");
+        return switch (visibility) {
+            case FULL -> commands;
+            case CAST_BAR_ONLY -> commands.stream()
+                .filter(cmd -> cmd.layer() == com.bong.client.hud.HudRenderLayer.CAST_BAR)
+                .toList();
+            case AGENT_UI_ONLY -> commands.stream()
+                .filter(cmd -> cmd.layer() == com.bong.client.hud.HudRenderLayer.AGENT_UI)
+                .toList();
+            case INVENTORY_DIMMED -> commands.stream()
+                .filter(cmd -> {
+                    com.bong.client.hud.HudRenderLayer layer = cmd.layer();
+                    return layer == com.bong.client.hud.HudRenderLayer.QUICK_BAR
+                        || layer == com.bong.client.hud.HudRenderLayer.CAST_BAR
+                        || layer == com.bong.client.hud.HudRenderLayer.EVENT_STREAM
+                        || layer == com.bong.client.hud.HudRenderLayer.TSY_EXTRACT
+                        || layer == com.bong.client.hud.HudRenderLayer.BASELINE;
+                })
+                .toList();
+            case HIDDEN -> List.of();
+        };
     }
 
     static HudSnapshot snapshot(long nowMs) {
