@@ -122,6 +122,8 @@ Round 2 排除了灵木 shutdown flush、botany/craft/alchemy 满包修复和跨
 
 Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真集成覆盖、raster schema 与 session 原子顺序：registry/profile 缺失改为结构失败并保留原木；生产五 tile fixture 补齐与正式 worldgen 一致的 `0..4` biome palette，并逐 tile 锁定 `biome_id.bin` 长度与 palette 边界；`grant_before_removing_session` 保证成功与失败 grant 执行期间 completed session 均仍在 store，grant 返回后才结束 session；真实 `C2S_PLAYER_ACTION` digging、掉落同步与拾回对拍均通过。
 
+Round 4 复核 `/review` 对 `freshness.initial_qi` 精度的质疑：权威 `Freshness.initial_qi` 在 `server/src/shelflife/types.rs` 中是 `f32`，protobuf `float` 与 Python `<f` 解码不会继续收窄。Rust 与 Python 协议测试改用非平凡 bit pattern `0x42C50001`，逐 bit 锁定 server protobuf roundtrip 和 Bot 掉落解码保真；不把 wire 无故扩成与领域类型不一致的 `double`。
+
 ## Finish Evidence
 
 ### 落地清单
@@ -152,6 +154,7 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::tests`：25 passed / 0 failed。
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::`：44 passed / 0 failed。
 - `d89af9da` 定向顺序契约：成功与失败 grant 两例 2 passed / 0 failed；`cargo test spiritwood::` 50 passed / 0 failed。
+- `freshness.initial_qi` 精度契约：Rust `inventory_item_view_freshness_survives_proto_roundtrip_for_all_tracks` 1 passed / 0 failed，并对拍 `f32::to_bits()`；Python protocol 全量 96 passed / 0 failed，并对拍相同 `0x42C50001` wire bits。
 - `d89af9da` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,708 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed。
 - 历史 Rust 基线 `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed；最终 Rust 代码门禁以 `d89af9da` 的同 SHA 结果为准。
 - PR HEAD `e73ebc35` 的 GitHub e2e run `29413908258` 全绿（23m51s）：client、schema、agent、server 全测、Smoke/E2E、Bot e2e 与 artifact upload 均成功。
@@ -165,8 +168,8 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 
 ### 跨仓库核验
 
-- server：`complete_spiritwood_sessions`、`grant_ling_mu_gun`、`GrantOrGroundOutcome`、`DroppedLootRegistry`、`inventory_item_view_to_proto` 与五 tile fixture 均命中；fixture 的原始 `biome_id=4` 对应 manifest `minecraft:meadow`，不存在 palette 越界或 fallback。
-- Bot / protocol：`Bot.start_digging` 发真实 `C2S_PLAYER_ACTION`；`proto_min.py` 解码 `lumber_progress`、掉落 snapshot 和 freshness 六字段；专项场景实际清包并拾回同一实例。
+- server：`complete_spiritwood_sessions`、`grant_ling_mu_gun`、`GrantOrGroundOutcome`、`DroppedLootRegistry`、`inventory_item_view_to_proto` 与五 tile fixture 均命中；`Freshness.initial_qi: f32` 与 protobuf `float` 逐 bit 对拍；fixture 的原始 `biome_id=4` 对应 manifest `minecraft:meadow`，不存在 palette 越界或 fallback。
+- Bot / protocol：`Bot.start_digging` 发真实 `C2S_PLAYER_ACTION`；`proto_min.py` 解码 `lumber_progress`、掉落 snapshot 和 freshness 六字段，并以 `<f` 对拍 server 的 f32 bit pattern；专项场景实际清包并拾回同一实例。
 - client：协议消费面未新增 UI 逻辑；JDK 17 完整 build 通过。agent/schema、Redis key 与正式 worldgen 资源格式不变。
 
 ### 遗留 / 后续
