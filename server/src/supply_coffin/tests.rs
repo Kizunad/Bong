@@ -6,6 +6,7 @@ use valence::prelude::{DVec3, Entity};
 
 use super::loot::{loot_table, roll_count_range, roll_loot};
 use super::{ActiveSupplyCoffin, CoffinCooldown, SupplyCoffinGrade, SupplyCoffinRegistry};
+use crate::world::dimension::DimensionKind;
 
 // =============================================================================
 // SupplyCoffinGrade enum
@@ -427,6 +428,14 @@ fn registry_insert_active_increments_grade_counter_only() {
     assert_eq!(r.active_count(SupplyCoffinGrade::Common), 1);
     assert_eq!(r.active_count(SupplyCoffinGrade::Rare), 0);
     assert_eq!(r.active_count(SupplyCoffinGrade::Precious), 0);
+    assert_eq!(
+        r.active
+            .get(&Entity::from_raw(1))
+            .expect("inserted Common coffin must remain addressable")
+            .dimension,
+        DimensionKind::Overworld,
+        "all current supply-coffin spawn paths target layers.overworld and must record it explicitly"
+    );
 
     r.insert_active(
         Entity::from_raw(2),
@@ -450,6 +459,7 @@ fn registry_remove_active_returns_inserted_record_and_decrements() {
         ActiveSupplyCoffin {
             grade: SupplyCoffinGrade::Rare,
             pos,
+            dimension: DimensionKind::Overworld,
             spawned_at_wall_secs: 999,
         }
     );

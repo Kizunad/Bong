@@ -14,6 +14,10 @@ import struct
 from dataclasses import dataclass
 from typing import Any
 
+SERVER_DATA_PLAYER_STATE_FIELD = 5
+PLAYER_STATE_SPIRIT_QI_FIELD = 3
+PLAYER_STATE_SPIRIT_QI_MAX_FIELD = 11
+
 
 class ProtoDecodeError(ValueError):
     pass
@@ -24,6 +28,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
     for field, wire, value in fields:
         if wire != 2:
             continue
+        if field == SERVER_DATA_PLAYER_STATE_FIELD:
+            return _player_state(value)
         if field == 8:
             return _inventory_snapshot(value)
         if field == 11:
@@ -60,9 +66,23 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _container_state(value)
         if field == 119:
             return _loot_container_open(value)
+        if field == 120:
+            return _loot_container_update(value)
+        if field == 121:
+            return _loot_container_close(value)
         if field == 142:
             return _morph_state(value)
     return None
+
+
+def _player_state(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "player_state",
+        "spirit_qi": _double(fields, PLAYER_STATE_SPIRIT_QI_FIELD),
+        "spirit_qi_max": _double(fields, PLAYER_STATE_SPIRIT_QI_MAX_FIELD),
+    }
 
 
 def _inventory_snapshot(data: bytes) -> dict[str, Any]:
@@ -227,6 +247,26 @@ def _loot_container_open(data: bytes) -> dict[str, Any]:
         "cols": _varint(fields, 4),
         "placed_items": [_placed_inventory_item(raw) for raw in _messages(fields, 5)],
         "timeout_wall_secs": _varint(fields, 6),
+    }
+
+
+def _loot_container_update(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "loot_container_update",
+        "session_id": _varint(fields, 1),
+        "placed_items": [_placed_inventory_item(raw) for raw in _messages(fields, 2)],
+    }
+
+
+def _loot_container_close(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "loot_container_close",
+        "session_id": _varint(fields, 1),
+        "reason": _string(fields, 2),
     }
 
 
@@ -762,6 +802,9 @@ SERVER_DATA_PAYLOAD_NAMES = {
     30: "gathering_session",
     31: "lingtian_session",
     81: "dropped_loot_sync",
+    119: "loot_container_open",
+    120: "loot_container_update",
+    121: "loot_container_close",
     137: "inventory_move_rejected",
 }
 

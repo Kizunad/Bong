@@ -15,9 +15,10 @@
 //!   6. `apply_material_discovery_unlock` —（plan-craft-material-discovery）
 //!      每 tick 扫背包，持有任一原料即被动解锁空源配方 + 重推列表 + narration
 //!
-//! 守恒律：所有 qi 变更走 `start_craft`/`cancel_craft` 内部已封装的
-//! `WorldQiAccount::transfer(QiTransferReason::Crafting)` —— 本模块**禁止**
-//! 直接写 `cultivation.qi_current`，否则破坏全局守恒律。
+//! 守恒律：所有 qi 变更走 `start_craft` 内部封装的
+//! `transfer_external_qi_to_ledger(QiTransferReason::Crafting)`。制作消耗统一进入
+//! `pending_inflow_account()`，再由 heartbeat 按 zone 平衡规则回流；本模块**禁止**
+//! 直接写 zone 或 `cultivation.qi_current`，否则会绕过全局守恒律。
 
 use std::{
     collections::{HashMap, HashSet},
@@ -62,11 +63,6 @@ use crate::schema::craft::{
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
-
-/// inventory 内手搓默认绑定的 zone 账户（暂时统一用 "spawn"，与现有
-/// `cultivation` 守恒模型一致；后续 plan-zone-v2 可按 `Position → ZoneRegistry`
-/// 解析真实 zone）。
-const DEFAULT_CRAFT_ZONE_ID: &str = "spawn";
 
 const DEFAULT_REFUND_GROUND_POS: [f64; 3] = [0.0, 64.0, 0.0];
 
@@ -287,7 +283,6 @@ pub fn apply_craft_start_intents(
             player_id: &player_id,
             recipe_id: &intent.recipe_id,
             current_tick: clock.tick,
-            zone_id: DEFAULT_CRAFT_ZONE_ID,
             quantity: intent.quantity,
         };
         // §P2.4：检查玩家 Chebyshev 3 格内是否有 WorkbenchBlock entity。
@@ -1111,6 +1106,7 @@ mod tests {
         register_basic_processing_recipes, register_examples, CraftCategory, CraftRecipe,
         CraftRequirements, CraftSession, RecipeId, RecipeUnlockState, UnlockSource,
     };
+    use crate::cultivation::tick::CultivationClock;
     use crate::inventory::{
         ContainerState, DroppedLootRegistry, InventoryInstanceIdAllocator, InventoryRevision,
         ItemCategory, ItemInstance, ItemRarity, ItemRegistry, ItemTemplate, PlacedItemState,
@@ -1118,10 +1114,15 @@ mod tests {
     };
     use crate::persistence::bootstrap_sqlite;
     use crate::player::state::{load_player_slices, save_player_state, PlayerState};
-    use crate::qi_physics::ledger::pending_inflow_account;
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::{pending_inflow_account, QiAccountId, QiTransferReason};
+    use crate::world::events::ActiveEventsResource;
+    use crate::world::heartbeat;
+    use crate::world::zone::{Zone, ZoneRegistry};
+    use crate::worldgen::pseudo_vein::TICKS_PER_MINUTE;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, DVec3, Events, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
@@ -1840,6 +1841,301 @@ mod tests {
     }
 
     #[test]
+    fn apply_craft_start_intents_without_spatial_context_credits_pending_never_spawn() {
+        let mut recipe = make_recipe("craft.tool.workbench", &[("fan_tie", 1)], vec![]);
+        recipe.qi_cost = 5.0;
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);
+        app.add_systems(Update, apply_craft_start_intents);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut cultivation = Cultivation::default();
+        cultivation.qi_current = 10.0;
+        cultivation.qi_max = cultivation.qi_max.max(10.0);
+        let mut player_entity = app.world_mut().spawn(client_bundle);
+        player_entity
+            .insert(inv_with(&[("fan_tie", 1)]))
+            .insert(cultivation)
+            .insert(QiColor::default())
+            .remove::<Position>();
+        let player = player_entity.id();
+        let player_account = QiAccountId::player(canonical_player_id("Azure"));
+        let observed_before = app.world().get::<Cultivation>(player).unwrap().qi_current
+            + app.world().resource::<WorldQiAccount>().total();
+
+        app.world_mut().send_event(CraftStartIntent {
+            caster: player,
+            recipe_id: RecipeId::new("craft.tool.workbench"),
+            quantity: 1,
+        });
+        app.update();
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert!(
+            !ledger.has_account(&player_account),
+            "在线玩家真元权威在 ECS，制作后不得留下长期 player ledger 镜像"
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            5.0,
+            "缺少空间组件时制作消耗仍应完整进入待分配池"
+        );
+        assert_eq!(
+            ledger.balance(&QiAccountId::zone("spawn")),
+            0.0,
+            "制作消耗不得再落入陈旧的硬编码 spawn 账户"
+        );
+        let cultivation_after = app.world().get::<Cultivation>(player).unwrap();
+        assert!(
+            (cultivation_after.qi_current + ledger.total() - observed_before).abs() < 1e-9,
+            "ECS player qi + ledger 在制作前后必须守恒"
+        );
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("正 qi_cost 制作必须留下审计 transfer");
+        assert_eq!(
+            transfer.from, player_account,
+            "制作审计转账的来源必须是当前玩家账户"
+        );
+        assert_eq!(
+            transfer.to,
+            pending_inflow_account(),
+            "制作审计转账的目标必须是待分配池"
+        );
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::Crafting,
+            "制作审计转账必须标记为 Crafting"
+        );
+        assert_eq!(transfer.amount, 5.0, "制作审计金额必须等于配方 qi_cost");
+        assert_eq!(
+            cultivation_after.qi_current, 5.0,
+            "制作后应从 ECS 玩家真元扣除 5 点"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_some(),
+            "成功预付真元后必须创建制作会话"
+        );
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "成功制作起手不得发出 CraftFailedEvent"
+        );
+    }
+
+    #[test]
+    fn crafting_pending_then_heartbeat_zone_inflow_preserves_total_and_skips_full_zone() {
+        let mut recipe = make_recipe("craft.tool.workbench", &[("fan_tie", 1)], vec![]);
+        recipe.qi_cost = 5.0;
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);
+        app.insert_resource(CultivationClock { tick: 0 });
+        app.insert_resource(ActiveEventsResource::default());
+        app.add_event::<crate::cultivation::breakthrough::BreakthroughOutcome>();
+        app.add_event::<crate::world::events::ZoneCollapsedEvent>();
+        heartbeat::register(&mut app);
+        crate::network::register_craft_start_runtime_system(&mut app);
+        let initial_sink_qi = 0.10;
+        let expected_sink_qi = initial_sink_qi + 1.0 / QI_ZONE_UNIT_CAPACITY;
+        app.insert_resource(ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "full_zone".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(-50.0, 60.0, -50.0), DVec3::new(50.0, 90.0, 50.0)),
+                    spirit_qi: 0.25,
+                    danger_level: 0,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.25,
+                    qi_inflow_per_min: 100.0,
+                },
+                Zone {
+                    name: "craft_sink".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (
+                        DVec3::new(100.0, 60.0, -50.0),
+                        DVec3::new(200.0, 90.0, 50.0),
+                    ),
+                    spirit_qi: initial_sink_qi,
+                    danger_level: 0,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.30,
+                    qi_inflow_per_min: 1.0,
+                },
+            ],
+        });
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut cultivation = Cultivation::default();
+        cultivation.qi_current = 10.0;
+        cultivation.qi_max = cultivation.qi_max.max(10.0);
+        let mut player_entity = app.world_mut().spawn(client_bundle);
+        player_entity
+            .insert(inv_with(&[("fan_tie", 1)]))
+            .insert(cultivation)
+            .insert(QiColor::default())
+            .remove::<Position>();
+        let player = player_entity.id();
+        let player_account = QiAccountId::player(canonical_player_id("Azure"));
+        let full_account = QiAccountId::zone("full_zone");
+        let sink_account = QiAccountId::zone("craft_sink");
+        {
+            let mut ledger = app.world_mut().resource_mut::<WorldQiAccount>();
+            ledger
+                .set_balance(full_account.clone(), 0.25 * QI_ZONE_UNIT_CAPACITY)
+                .expect("full-zone qi mirror fixture should be valid");
+            ledger
+                .set_balance(
+                    sink_account.clone(),
+                    initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
+                )
+                .expect("sink-zone qi mirror fixture should be valid");
+        }
+        let observed_before = app.world().get::<Cultivation>(player).unwrap().qi_current
+            + app.world().resource::<WorldQiAccount>().total();
+
+        app.world_mut().send_event(CraftStartIntent {
+            caster: player,
+            recipe_id: RecipeId::new("craft.tool.workbench"),
+            quantity: 1,
+        });
+        app.update();
+
+        {
+            let ledger = app.world().resource::<WorldQiAccount>();
+            assert!(
+                !ledger.has_account(&player_account),
+                "制作阶段不得留下在线玩家的长期 ledger 镜像"
+            );
+            assert_eq!(
+                ledger.balance(&pending_inflow_account()),
+                5.0,
+                "heartbeat 前制作消耗应全部停留在待分配池"
+            );
+            assert_eq!(
+                ledger.balance(&full_account),
+                0.25 * QI_ZONE_UNIT_CAPACITY,
+                "制作阶段不得提前改写已满 zone 的账本镜像"
+            );
+            assert_eq!(
+                ledger.balance(&sink_account),
+                initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
+                "制作阶段不得绕过 heartbeat 直接写入目标 zone"
+            );
+            let cultivation_after = app.world().get::<Cultivation>(player).unwrap();
+            assert!(
+                (cultivation_after.qi_current + ledger.total() - observed_before).abs() < 1e-9,
+                "ECS player qi → pending 制作阶段必须保持观察总量守恒"
+            );
+            assert_eq!(
+                ledger.transfers().len(),
+                1,
+                "heartbeat 前账本应只有一笔 Crafting 转账"
+            );
+            let crafting = &ledger.transfers()[0];
+            assert_eq!(
+                crafting.from, player_account,
+                "第一笔转账必须从制作玩家账户发出"
+            );
+            assert_eq!(
+                crafting.to,
+                pending_inflow_account(),
+                "第一笔转账必须写入待分配池"
+            );
+            assert_eq!(
+                crafting.reason,
+                QiTransferReason::Crafting,
+                "第一笔转账必须标记为 Crafting"
+            );
+            assert_eq!(
+                crafting.amount, 5.0,
+                "Crafting 转账金额必须等于配方 qi_cost"
+            );
+        }
+        assert!(
+            app.world().get::<CraftSession>(player).is_some(),
+            "制作阶段成功后必须保留 CraftSession"
+        );
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "完整回流链的制作阶段不得发出 CraftFailedEvent"
+        );
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = TICKS_PER_MINUTE;
+        app.update();
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        let full_zone = zones
+            .find_zone_by_name("full_zone")
+            .expect("full-zone fixture should remain registered");
+        let sink_zone = zones
+            .find_zone_by_name("craft_sink")
+            .expect("sink-zone fixture should remain registered");
+        assert_eq!(
+            full_zone.spirit_qi, 0.25,
+            "已达 equilibrium 的 zone 即使速率很高也不得消费 pending"
+        );
+        assert!(
+            (sink_zone.spirit_qi - expected_sink_qi).abs() < 1e-9,
+            "1 分钟 heartbeat 应把 1.0 绝对真元从 pending 滴灌到 craft_sink"
+        );
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            4.0,
+            "一分钟 heartbeat 应从待分配池消费恰好 1 点真元"
+        );
+        assert_eq!(
+            ledger.balance(&full_account),
+            0.25 * QI_ZONE_UNIT_CAPACITY,
+            "已达 equilibrium 的 zone 账本余额必须保持不变"
+        );
+        assert!(
+            (ledger.balance(&sink_account) - expected_sink_qi * QI_ZONE_UNIT_CAPACITY).abs() < 1e-9,
+            "heartbeat 后的 zone 账本镜像必须与 ZoneRegistry 浓度一致"
+        );
+        assert!(
+            (app.world().get::<Cultivation>(player).unwrap().qi_current + ledger.total()
+                - observed_before)
+                .abs()
+                < 1e-9,
+            "Crafting → pending → ZoneInflow 全链路必须保持账本总量守恒"
+        );
+        assert_eq!(
+            ledger.transfers().len(),
+            2,
+            "heartbeat 后账本应恰有 Crafting 与 ZoneInflow 两笔转账"
+        );
+        let inflow = &ledger.transfers()[1];
+        assert_eq!(
+            inflow.from,
+            pending_inflow_account(),
+            "ZoneInflow 必须从待分配池发出"
+        );
+        assert_eq!(
+            inflow.to, sink_account,
+            "ZoneInflow 必须写入未达 equilibrium 的目标 zone"
+        );
+        assert_eq!(
+            inflow.reason,
+            QiTransferReason::ZoneInflow,
+            "heartbeat 回流转账必须标记为 ZoneInflow"
+        );
+        assert_eq!(
+            inflow.amount, 1.0,
+            "一分钟 heartbeat 应按 qi_inflow_per_min 转入 1 点真元"
+        );
+        assert!(
+            ledger.transfers().iter().all(|transfer| {
+                transfer.reason != QiTransferReason::ZoneInflow || transfer.to != full_account
+            }),
+            "容量门禁不得给已达 equilibrium 的 full_zone 生成 ZoneInflow"
+        );
+    }
+
+    #[test]
     fn start_persistence_failure_keeps_inventory_qi_ledger_and_session_at_pre_state() {
         let mut recipe = make_recipe("craft.tool.workbench", &[("fan_tie", 2)], vec![]);
         recipe.qi_cost = 5.0;
@@ -1873,12 +2169,7 @@ mod tests {
             .insert(QiColor::default())
             .insert(Position::new([0.0, 64.0, 0.0]))
             .id();
-        let player_account =
-            crate::qi_physics::ledger::QiAccountId::player(canonical_player_id("Azure"));
-        app.world_mut()
-            .resource_mut::<WorldQiAccount>()
-            .set_balance(player_account.clone(), 10.0)
-            .expect("player qi fixture should be valid");
+        let player_account = QiAccountId::player(canonical_player_id("Azure"));
         app.world_mut().send_event(CraftStartIntent {
             caster: player,
             recipe_id: RecipeId::new("craft.tool.workbench"),
@@ -1903,8 +2194,15 @@ mod tests {
             "failed durable start must not create an in-memory session"
         );
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(ledger.balance(&player_account), 10.0);
-        assert_eq!(ledger.balance(&pending_inflow_account()), 0.0);
+        assert!(
+            !ledger.has_account(&player_account),
+            "持久化拒绝后不得发布临时 player ledger 影子账户"
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            0.0,
+            "持久化拒绝后不得发布 staged pending 入账"
+        );
         assert!(
             ledger.transfers().is_empty(),
             "failed durable start must not publish a transfer audit entry"

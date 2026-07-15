@@ -357,6 +357,14 @@ impl NarrationDedupeResource {
     }
 }
 
+pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
+    app.add_systems(
+        Update,
+        craft_emit::apply_craft_start_intents
+            .after(client_request_handler::handle_client_request_payloads),
+    );
+}
+
 pub fn register(app: &mut App) {
     // Legacy mock bridge systems
     app.add_systems(
@@ -889,11 +897,10 @@ pub fn register(app: &mut App) {
     );
     // ── plan-craft-v1 P2/P3：通用手搓 IPC（client_request → intent → session → outcome
     //    + 三渠道解锁 intent → unlock_via_* → RecipeUnlocked）──
+    register_craft_start_runtime_system(app);
     app.add_systems(
         Update,
         (
-            craft_emit::apply_craft_start_intents
-                .after(client_request_handler::handle_client_request_payloads),
             craft_emit::apply_craft_cancel_intents.after(craft_emit::apply_craft_start_intents),
             craft_emit::apply_unlock_intents
                 .after(client_request_handler::handle_client_request_payloads),

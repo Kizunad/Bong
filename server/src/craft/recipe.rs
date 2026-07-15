@@ -7,8 +7,9 @@
 //! 与 `alchemy::Recipe` 的区别：
 //!   * **无火候 / 阶段投料** — 单步投料即起手搓
 //!   * **无残缺匹配** — 材料必须严格满足，缺料 reject 而不是降级出炉
-//!   * **qi_cost 走 ledger** — `start_craft` 内 `WorldQiAccount::transfer`
-//!     与 `Crafting` reason，禁止 plan 内 `cultivation.qi_current -= cost`
+//!   * **qi_cost 走 ledger** — `start_craft` 以 ECS `Cultivation` 为玩家真元权威，
+//!     先用 `transfer_external_qi_to_ledger` 写入 `Crafting` 审计与 pending 余额，
+//!     成功后再等额扣减 `qi_current`；禁止绕过 ledger 直接扣减
 //!
 //! §5 决策门 #1 = A（保留 6 类）。plan-anqi-v2 追加 Container 类目，
 //! 用于箭袋 / 裤袋 / 封灵匣这类非载体但同属流派装备的配方。
@@ -175,7 +176,7 @@ pub struct CraftRecipe {
     /// 材料清单：`(template_id, count)`。`template_id` 与 `inventory::ItemInstance.template_id`
     /// 对齐；count >= 1。重复的 template 不建议（应聚合到一条 entry）。
     pub materials: Vec<(String, u32)>,
-    /// 自身真元投入（一次性，不维持）。**走 ledger Crafting reason**。
+    /// 自身真元投入（一次性，不维持）。**走 external → ledger Crafting reason**。
     pub qi_cost: f64,
     /// in-game tick 推进时间。1 秒 = 20 tick；3 min = 3600 tick。
     /// 玩家 inventory 关闭时不推进（§0 设计轴心，下线暂停）。

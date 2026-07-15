@@ -231,7 +231,16 @@ class Bot:
         elif packet_id == mc.S2C_DEATH_MESSAGE:
             self._emit("death_message", {"size": len(body)})
         elif packet_id == mc.S2C_RESPAWN:
-            self._emit("respawn", {"size": len(body)})
+            dimension_type_name = reader.string()
+            dimension_name = reader.string()
+            self._emit(
+                "respawn",
+                {
+                    "size": len(body),
+                    "dimension_type_name": dimension_type_name,
+                    "dimension_name": dimension_name,
+                },
+            )
         elif packet_id == mc.S2C_DISCONNECT:
             reason = reader.string()
             self.disconnect_reason = mc.chat_text_to_plain(reason)

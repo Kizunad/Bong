@@ -34,7 +34,7 @@ def _wait_session(bot, active: bool, timeout: float = 10.0) -> dict:
 
 
 def run(env) -> None:
-    with env.new_bot("CraftResume") as bot:
+    with env.new_bot("Resume") as bot:
         wait_join_and_inventory(bot)
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
@@ -84,7 +84,7 @@ def run(env) -> None:
         elapsed_before_disconnect = session["elapsed_ticks"]
         completed_before_disconnect = session["completed_count"]
 
-    with env.new_bot("CraftResume") as bot:
+    with env.new_bot("Resume") as bot:
         restored_inventory = wait_join_and_inventory(bot)
         restored = _wait_session(bot, True)
         assert restored.get("recipe_id") == RECIPE_ID, (
@@ -124,7 +124,7 @@ def run(env) -> None:
         wait_inventory_contains(bot, "stone_chunk")
         wait_inventory_contains(bot, "wood_handle")
 
-    with env.new_bot("CraftResume") as bot:
+    with env.new_bot("Resume") as bot:
         final_inventory = wait_join_and_inventory(bot)
         _wait_session(bot, False)
         assert find_item(final_inventory, "stone_chunk") is not None
