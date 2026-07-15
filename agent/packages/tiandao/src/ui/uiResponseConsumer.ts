@@ -15,7 +15,7 @@
  *   - error (其余 reason)               → 记录警告日志
  *
  * narration 格式（realm_gate_rejected）：
- *   scope="player"，target=player_uuid（若无则 scope="broadcast"，target="world"）
+ *   scope="player"，target=target_player（若无则 legacy scope="broadcast"，target="world"）
  *   style="system_warning"
  *   text 文本来自 REALM_GATE_NARRATION_TEXT
  */
@@ -271,11 +271,17 @@ export class UiResponseConsumer {
   private async emitRealmGateRejectedNarration(
     response: AgentUiResponsePayloadV1,
   ): Promise<void> {
-    // 由于 AgentUiResponsePayloadV1 不含 target_player 字段（server→agent Redis 同构），
-    // 只能从 params 推断（无标准 target_player 字段），因此使用 broadcast scope。
+    const targetPlayer = response.target_player?.trim();
+    if (!targetPlayer) {
+      this.logger.warn(
+        `[ui-response-consumer] realm_gate_rejected missing target_player; ` +
+          `falling back to broadcast request_id=${response.request_id}`,
+      );
+    }
+
     const narration: Narration = {
-      scope: "broadcast",
-      target: "world",
+      scope: targetPlayer ? "player" : "broadcast",
+      target: targetPlayer || "world",
       style: "system_warning",
       text: REALM_GATE_NARRATION_TEXT,
     };

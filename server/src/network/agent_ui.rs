@@ -379,6 +379,7 @@ fn process_agent_ui_cmd(
         let resp = AgentUiResponsePayloadV1 {
             request_id: cmd.request_id.clone(),
             action: AgentUiActionType::Error,
+            target_player: None,
             params: [("reason".to_string(), "player_offline".to_string())]
                 .into_iter()
                 .collect(),
@@ -398,6 +399,7 @@ fn process_agent_ui_cmd(
         let resp = AgentUiResponsePayloadV1 {
             request_id: cmd.request_id.clone(),
             action: AgentUiActionType::Error,
+            target_player: Some(cmd.target_player.clone()),
             params: [
                 ("reason".to_string(), "realm_gate_rejected".to_string()),
                 ("player_realm".to_string(), player_rank.to_string()),
@@ -418,6 +420,7 @@ fn process_agent_ui_cmd(
             let resp = AgentUiResponsePayloadV1 {
                 request_id: cmd.request_id.clone(),
                 action: AgentUiActionType::Error,
+                target_player: None,
                 params: [
                     ("reason".to_string(), "xml_sanitize_failed".to_string()),
                     ("detail".to_string(), e.to_string()),
@@ -448,6 +451,7 @@ fn process_agent_ui_cmd(
         let replaced_resp = AgentUiResponsePayloadV1 {
             request_id: old.request_id.clone(),
             action: AgentUiActionType::Replaced,
+            target_player: None,
             params: HashMap::new(),
         };
         let _ = redis
@@ -552,6 +556,7 @@ fn send_error_response(redis: &RedisBridgeResource, request_id: &str, reason: &s
     let resp = AgentUiResponsePayloadV1 {
         request_id: request_id.to_owned(),
         action: AgentUiActionType::Error,
+        target_player: None,
         params: [("reason".to_string(), reason.to_string())]
             .into_iter()
             .collect(),
@@ -596,6 +601,7 @@ pub fn agent_ui_tick_system(
             let resp = AgentUiResponsePayloadV1 {
                 request_id: session.request_id.clone(),
                 action: AgentUiActionType::Timeout,
+                target_player: None,
                 params: HashMap::new(),
             };
             let _ = redis.tx_outbound.send(RedisOutbound::AgentUiResponse(resp));
@@ -671,6 +677,7 @@ pub fn receive_agent_ui_response_system(
                 let resp = AgentUiResponsePayloadV1 {
                     request_id: ev.request_id.clone(),
                     action: AgentUiActionType::Error,
+                    target_player: None,
                     params: [("reason".to_string(), "invalid_button_id".to_string())]
                         .into_iter()
                         .collect(),
@@ -696,6 +703,7 @@ pub fn receive_agent_ui_response_system(
         let resp = AgentUiResponsePayloadV1 {
             request_id: ev.request_id.clone(),
             action: ev.action.clone(),
+            target_player: None,
             params: ev.params.clone(),
         };
         tracing::debug!(
@@ -725,6 +733,7 @@ pub fn receive_player_disconnect_system(
                 let resp = AgentUiResponsePayloadV1 {
                     request_id: session.request_id.clone(),
                     action: AgentUiActionType::Dismissed,
+                    target_player: None,
                     params: HashMap::new(),
                 };
                 let _ = redis.tx_outbound.send(RedisOutbound::AgentUiResponse(resp));
@@ -882,6 +891,11 @@ mod tests {
             Some("realm_gate_rejected"),
             "reason 应为 realm_gate_rejected，实为 {:?}",
             resp.params.get("reason")
+        );
+        assert_eq!(
+            resp.target_player.as_deref(),
+            Some("offline:TestPlayer"),
+            "realm_gate_rejected 必须回填 canonical target_player，供 agent 生成 player scope narration"
         );
         assert!(
             resp.params.contains_key("player_realm"),

@@ -70,10 +70,12 @@ function makeMockClient() {
 function makeResponsePayload(
   action: AgentUiResponsePayloadV1["action"],
   params: Record<string, string> = {},
+  targetPlayer?: string,
 ): AgentUiResponsePayloadV1 {
   return {
     request_id: "test-req-001",
     action,
+    ...(targetPlayer ? { target_player: targetPlayer } : {}),
     params,
   };
 }
@@ -711,13 +713,13 @@ describe("UiResponseConsumer", () => {
 
   // ── error: realm_gate_rejected ────────────────────────────────────────────
 
-  it("error+realm_gate_rejected → emits narration to AGENT_NARRATE", async () => {
+  it("error+realm_gate_rejected + target_player → emits player-scoped narration", async () => {
     await sendMessage(
       makeResponsePayload("error", {
         reason: "realm_gate_rejected",
         player_realm: "2",
         required_realm: "3",
-      }),
+      }, "offline:TestPlayer"),
     );
     expect(pub.publish).toHaveBeenCalledOnce();
     const [channel, raw] = pub.publish.mock.calls[0];
@@ -727,8 +729,47 @@ describe("UiResponseConsumer", () => {
     expect(narrationMsg.narrations).toHaveLength(1);
     expect(narrationMsg.narrations[0].text).toBe(REALM_GATE_NARRATION_TEXT);
     expect(narrationMsg.narrations[0].style).toBe("system_warning");
+    expect(narrationMsg.narrations[0].scope).toBe("player");
+    expect(narrationMsg.narrations[0].target).toBe("offline:TestPlayer");
     expect(consumer.stats.realmGateRejected).toBe(1);
     expect(consumer.stats.narrationPublished).toBe(1);
+  });
+
+  it("error+realm_gate_rejected without target_player → warns and keeps legacy broadcast fallback", async () => {
+    await sendMessage(
+      makeResponsePayload("error", {
+        reason: "realm_gate_rejected",
+        player_realm: "2",
+        required_realm: "3",
+      }),
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("realm_gate_rejected missing target_player"),
+    );
+    expect(pub.publish).toHaveBeenCalledOnce();
+    const [, raw] = pub.publish.mock.calls[0];
+    const narrationMsg = JSON.parse(raw as string);
+    expect(narrationMsg.narrations[0].scope).toBe("broadcast");
+    expect(narrationMsg.narrations[0].target).toBe("world");
+  });
+
+  it("error+realm_gate_rejected with whitespace target_player → warns and uses legacy fallback", async () => {
+    await sendMessage(
+      makeResponsePayload(
+        "error",
+        { reason: "realm_gate_rejected" },
+        "   ",
+      ),
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("realm_gate_rejected missing target_player"),
+    );
+    const [, raw] = pub.publish.mock.calls[0];
+    const narrationMsg = JSON.parse(raw as string);
+    expect(narrationMsg.narrations[0].scope).toBe("broadcast");
+    expect(narrationMsg.narrations[0].target).toBe("world");
   });
 
   // ── error: player_offline ─────────────────────────────────────────────────
@@ -866,7 +907,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   }
 
   const tsyPlayer = {
-    uuid: "player-uuid-e2e-001",
+    uuid: "offline:E2EPlayer",
     name: "E2EPlayer",
     realm: "Condense", // rank=3 == tsy_discovery realm_gate=3
     composite_power: 0.6,
@@ -986,6 +1027,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     sub.emitUiResponse({
       request_id: result.requestId,
       action: "error",
+      target_player: tsyPlayer.uuid,
       params: {
         reason: "realm_gate_rejected",
         player_realm: "1",
@@ -1007,6 +1049,8 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     expect(narMsg.narrations, "有 narrations 数组").toHaveLength(1);
     expect(narMsg.narrations[0].text, "叙事文本正确").toBe(REALM_GATE_NARRATION_TEXT);
     expect(narMsg.narrations[0].style, "style=system_warning").toBe("system_warning");
+    expect(narMsg.narrations[0].scope, "realm_gate_rejected 必须定向给目标玩家").toBe("player");
+    expect(narMsg.narrations[0].target, "target 必须保留 server 回填 canonical_player_id").toBe(tsyPlayer.uuid);
 
     // stats 正确
     expect(runtime.stats.realmGateRejected, "stats.realmGateRejected=1").toBe(1);
@@ -1040,6 +1084,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     sub.emitUiResponse({
       request_id: result.requestId,
       action: "error",
+      target_player: tsyPlayer.uuid,
       params: { reason: "realm_gate_rejected" },
     });
 
