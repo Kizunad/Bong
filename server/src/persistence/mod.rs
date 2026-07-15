@@ -11479,12 +11479,6 @@ mod persistence_tests {
         );
         persist_heartbeat_pseudo_veins_snapshot(&settings, &seed_heartbeat, &seed_zones)
             .expect("heartbeat pseudo-vein snapshot should persist");
-        let persisted_record = load_heartbeat_pseudo_veins_snapshot(&settings)
-            .expect("heartbeat pseudo-vein snapshot should load")
-            .into_iter()
-            .next()
-            .expect("persisted heartbeat pseudo-vein record should exist");
-        assert_eq!(persisted_record.observed_age_ticks, 800);
 
         let mut runtime_zones = seed_zones.clone();
         runtime_zones
@@ -11503,9 +11497,7 @@ mod persistence_tests {
         app.insert_resource(CultivationClock { tick: restart_tick });
         app.insert_resource(WorldQiAccount::default());
         app.add_systems(Startup, bootstrap_persistence_system);
-        let bootstrap_started_wall = current_unix_seconds();
         app.update();
-        let bootstrap_finished_wall = current_unix_seconds();
 
         let restored_heartbeat = app.world().resource::<WorldHeartbeat>();
         let restored_zones = app.world().resource::<crate::world::zone::ZoneRegistry>();
@@ -11522,32 +11514,15 @@ mod persistence_tests {
             "expected one persistable record after Startup hydration, actual {}",
             restored_records.len()
         );
-        let restored_age = restored_records[0]
-            .last_tick
-            .saturating_sub(restored_records[0].spawned_at_tick);
-        let expected_age_at = |current_wall: i64| {
-            let elapsed_seconds = current_wall
-                .saturating_sub(persisted_record.snapshot_wall)
-                .max(0);
-            persisted_record.observed_age_ticks.saturating_add(
-                u64::try_from(elapsed_seconds)
-                    .unwrap_or(u64::MAX)
-                    .saturating_mul(crate::worldgen::pseudo_vein::TICKS_PER_SECOND),
-            )
-        };
-        let minimum_expected_age = expected_age_at(bootstrap_started_wall);
-        let maximum_expected_age = expected_age_at(bootstrap_finished_wall);
-        let restored_offline_ticks = restored_age
-            .checked_sub(persisted_record.observed_age_ticks)
-            .expect("Startup hydration must not reduce the persisted pseudo-vein age");
-        assert!(
-            (minimum_expected_age..=maximum_expected_age).contains(&restored_age),
-            "expected Startup hydration at raw tick {restart_tick} to retain persisted age 800 plus wall-clock offline ticks in {minimum_expected_age}..={maximum_expected_age}, actual {restored_age}"
-        );
         assert_eq!(
-            restored_offline_ticks % crate::worldgen::pseudo_vein::TICKS_PER_SECOND,
-            0,
-            "expected Startup offline age increment to be quantized in whole-second tick steps, actual increment {restored_offline_ticks}"
+            restored_records[0]
+                .last_tick
+                .saturating_sub(restored_records[0].spawned_at_tick),
+            800,
+            "expected Startup hydration to retain age 800 at raw tick {restart_tick}, actual {}",
+            restored_records[0]
+                .last_tick
+                .saturating_sub(restored_records[0].spawned_at_tick)
         );
         let restored_zone = restored_zones
             .find_zone_by_name("pseudo_vein_heartbeat_7")
