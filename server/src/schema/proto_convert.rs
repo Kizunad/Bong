@@ -6016,6 +6016,7 @@ mod tests {
         let response = AgentUiResponsePayloadV1 {
             request_id: "pin-test-req".to_string(),
             action: AgentUiActionType::ButtonClick,
+            target_player: None,
             params: {
                 let mut m = HashMap::new();
                 m.insert("button_id".to_string(), "confirm".to_string());

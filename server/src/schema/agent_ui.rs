@@ -115,11 +115,14 @@ pub struct AgentUiRequestPayloadV1 {
 /// `params` 为 `HashMap<String,String>` 以保留可扩展性：
 ///   - `button_click` → `params["button_id"] = "<id>"`
 ///   - `error` → `params["reason"] = "realm_gate_rejected"` 等
+/// `target_player` 为 server→agent 权威拒绝类响应可选回填的 canonical_player_id。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiResponsePayloadV1 {
     pub request_id: String,
     pub action: AgentUiActionType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_player: Option<String>,
     pub params: HashMap<String, String>,
 }
 
@@ -451,6 +454,7 @@ mod tests {
         let json = r#"{
             "request_id": "test",
             "action": "error",
+            "target_player": "offline:TestPlayer",
             "params": {
                 "reason": "realm_gate_rejected",
                 "player_realm": "2",
@@ -468,6 +472,47 @@ mod tests {
             resp.params.get("player_realm"),
             Some(&"2".to_string()),
             "params.player_realm 应为 2"
+        );
+        assert_eq!(
+            resp.target_player.as_deref(),
+            Some("offline:TestPlayer"),
+            "realm_gate_rejected 应保留 target_player 供 agent 定向路由"
+        );
+    }
+
+    #[test]
+    fn agent_ui_response_target_player_optional_for_legacy_payload() {
+        let json = r#"{
+            "request_id": "legacy",
+            "action": "error",
+            "params": {
+                "reason": "realm_gate_rejected",
+                "player_realm": "2",
+                "required_realm": "3"
+            }
+        }"#;
+        let resp: AgentUiResponsePayloadV1 =
+            serde_json::from_str(json).expect("旧 realm_gate_rejected payload 应保持兼容");
+        assert!(
+            resp.target_player.is_none(),
+            "旧 payload 缺省 target_player 时应反序列化为 None，实为 {:?}",
+            resp.target_player
+        );
+    }
+
+    #[test]
+    fn agent_ui_response_target_player_none_is_omitted_on_serialize() {
+        let response = AgentUiResponsePayloadV1 {
+            request_id: "legacy-outbound".to_string(),
+            action: AgentUiActionType::Dismissed,
+            target_player: None,
+            params: HashMap::new(),
+        };
+        let value: serde_json::Value =
+            serde_json::to_value(response).expect("旧 C2S response 序列化不应失败");
+        assert!(
+            value.get("target_player").is_none(),
+            "target_player=None 不应改变旧 C2S wire payload：{value}"
         );
     }
 

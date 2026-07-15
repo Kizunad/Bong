@@ -3461,6 +3461,11 @@
             }
           ]
         },
+        "target_player": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
         "params": {
           "type": "object",
           "patternProperties": {

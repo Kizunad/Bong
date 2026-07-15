@@ -203,6 +203,20 @@ describe("AgentUiResponsePayloadV1", () => {
     const payload = {
       request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       action: "error",
+      target_player: "offline:TestPlayer",
+      params: {
+        reason: "realm_gate_rejected",
+        player_realm: "2",
+        required_realm: "3",
+      },
+    };
+    expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(true);
+  });
+
+  it("兼容旧 payload: target_player 缺省仍通过校验", () => {
+    const payload = {
+      request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      action: "error",
       params: {
         reason: "realm_gate_rejected",
         player_realm: "2",
@@ -258,6 +272,32 @@ describe("AgentUiResponsePayloadV1", () => {
       params: { button_id: 123 }, // number 不符合 Record<string, string>
     };
     expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(false);
+  });
+
+  it("负样本: target_player 为空字符串", () => {
+    const payload = {
+      request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      action: "error",
+      target_player: "",
+      params: { reason: "realm_gate_rejected" },
+    };
+    expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(false);
+  });
+
+  it("边界: target_player 128 字符通过，129 字符拒绝", () => {
+    const base = {
+      request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      action: "error",
+      params: { reason: "realm_gate_rejected" },
+    };
+    expect(Value.Check(AgentUiResponsePayloadV1, {
+      ...base,
+      target_player: "p".repeat(128),
+    })).toBe(true);
+    expect(Value.Check(AgentUiResponsePayloadV1, {
+      ...base,
+      target_player: "p".repeat(129),
+    })).toBe(false);
   });
 });
 

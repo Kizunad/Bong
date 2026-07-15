@@ -104,11 +104,13 @@ export type AgentUiErrorReasonV1 =
  *   button_click → params.button_id = "<id>"
  *   error        → params.reason: AgentUiErrorReasonV1（见上方联合类型）
  *                  realm_gate_rejected 还有 params.player_realm / params.required_realm
+ * target_player 可选：server 权威拒绝类响应回填 canonical_player_id，供 agent 精准路由玩家叙事。
  */
 export const AgentUiResponsePayloadV1 = Type.Object(
   {
     request_id: Type.String({ minLength: 1, maxLength: 128 }),
     action: AgentUiActionType,
+    target_player: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     params: Type.Record(Type.String(), Type.String()),
   },
   { additionalProperties: false },
