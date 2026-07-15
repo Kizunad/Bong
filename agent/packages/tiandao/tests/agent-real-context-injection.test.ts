@@ -51,7 +51,7 @@ function createTimedChatSignal(ts: number, raw: string): ChatSignal {
     sentiment: -0.7,
     intent: "complaint",
     influence_weight: 0.8,
-  } as ChatSignal;
+  };
 }
 
 describe("TiandaoAgent 真 impl 上下文注入守护", () => {
@@ -60,6 +60,7 @@ describe("TiandaoAgent 真 impl 上下文注入守护", () => {
     const agent = makeAgent();
     const signals: ChatSignal[] = [
       {
+        ts: 30,
         player: "offline:Kiz",
         raw: "灵气太少了，洞府外又抢不到药草",
         sentiment: -0.7,

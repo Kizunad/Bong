@@ -662,6 +662,7 @@ describe("runTick", () => {
       model: DEFAULT_MODEL,
       chatSignals: [
         {
+          ts: 1_712_345_678,
           player: "offline:Steve",
           raw: "灵气太少了",
           sentiment: -0.6,
@@ -822,6 +823,7 @@ describe("runTick", () => {
       publishNarrations: vi.fn(async () => {}),
       chatSignals: [
         {
+          ts: 1_712_345_678,
           player: "offline:Steve",
           raw: "灵气枯竭",
           sentiment: -0.8,
