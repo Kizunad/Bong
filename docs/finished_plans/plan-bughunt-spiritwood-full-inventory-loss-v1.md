@@ -24,7 +24,7 @@
 - **进料**：`WoodSessionStore` 的 completed session、玩家 `PlayerInventory`、`ItemRegistry`、`DecayProfileRegistry`、`InventoryInstanceIdAllocator`。
 - **出料**：优先写入玩家随身容器；仅在 `inventory full:` 时写入 `DroppedLootRegistry`，成功后才更新 `SpiritWoodHarvestedLogs`、`ChunkLayer` AIR 与采集终态事件。
 - **共享类型 / event**：复用 `GrantOrGroundOutcome`、`DroppedLootEntry`、`GatheringCompleteEvent`、`LumberTerminalEvent`，不新造第二套掉落或采集事件。
-- **跨仓库契约**：纯 server 修复；不修改 client payload、agent/schema、Redis key 或 worldgen 资源格式。既有 terminal detail 承担“入包成功/满包已落地/结构失败”反馈。
+- **跨仓库契约**：server 的 `InventoryItemView` protobuf 新增 optional freshness tag 22，Python Bot 镜像六个 freshness 字段与既有 `lumber_progress`；Bot 通过真实 `C2S_PLAYER_ACTION` 触发生产 `DiggingEvent`。client、agent/schema、Redis key 不变。
 - **worldview 锚点**：`worldview.md §四 L408-L412` 明确灵木是优良真元载体；`§十 L893` 明确灵木是器修/暗器流核心耗材。
 - **qi_physics 锚点**：本 plan 只改变同一个新产物实例的交付位置，不新增、衰减或销毁真元，不引入物理常数。掉落实例必须保留 `spirit_quality` 与 freshness，禁止通过重建缺字段实例吞掉载体属性。
 
@@ -52,7 +52,7 @@
 
 - 不重复灵木关服前强制 flush：后者防重启复刷，本题修在线完成时的不可逆产物丢失。
 - 不重复 botany/craft/alchemy 满包题：各自生产链不同，本题只修改 `server/src/spiritwood/` 与必要 inventory helper 使用点。
-- 不处理灵木跨维 session、worldgen、持久化格式、客户端 UI 或新的采集 VFX/SFX。
+- 不处理灵木跨维 session、客户端 UI 或新的采集 VFX/SFX；为黑盒回归只补生产五 tile 灵木 fixture 与 e2e 运行态持久化隔离，不改正式 worldgen 配置。
 - 不修改通用 `add_item_to_player_inventory_or_ground` 的既有结构错误口径，避免影响其它生产链。
 
 ## 实施决议（2026-07-15）
@@ -93,7 +93,9 @@
 **状态：✅ 2026-07-15**
 
 - 定向运行 `cargo test spiritwood::` 及新增契约测试。
+- 运行 `production_spiritwood_full_inventory_drop.py`：从生产五 tile fixture 的固定外缘主干发出真实 digging packet，验证满包落地、freshness wire 六字段与清包后同实例拾回。
 - 运行 server 完整门禁：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
+- 运行 Python protocol、完整 Bot e2e 与 JDK 17 client build，覆盖本次协议和真实玩家链路。
 - fetch 后分类同步最新 `origin/main`，带入变化则重跑受影响门禁；填写 `## Finish Evidence` 并归档。
 
 ## 验收测试矩阵
@@ -110,22 +112,25 @@
 - `DroppedLootRegistry` 的实例 ID 必须来自同一 allocator；碰撞错误不得提交 harvested。
 - 掉落实例必须沿用 customization，否则 freshness/载体属性会丢失。
 - 世界方块层暂不可用时，既有语义只记录 harvested；本 plan 不扩展为 chunk 写失败事务。
-- 不新增交互式 `runClient` 要求；最终真集成由 PR e2e 验证 server/smoke/bot 链路。
+- 不新增交互式 `runClient` 要求；生产 Bot 场景直接验证 server 启动、协议、采伐、落地同步与拾取消费链。
 
 ## 对抗审查记录
 
 Round 1 核查了满包是否可达、灵木是否总能堆叠、inventory helper 是否已有落地兜底、世界资源是否在 grant 前消耗。结论：满包明确返回错误；freshness 使旧堆不保证可合并；灵木路径未调用已有落地 helper；生产顺序确实先提交不可逆副作用。
 
-Round 2 排除了灵木 shutdown flush、botany/craft/alchemy 满包修复和跨维 session 等重复范围。最终证据仍成立，且可通过既有 `GrantOrGroundOutcome` 在单一 server 模块内闭环，不需新协议或新状态机。
+Round 2 排除了灵木 shutdown flush、botany/craft/alchemy 满包修复和跨维 session 等重复范围。局部原子结算可复用既有 `GrantOrGroundOutcome`，但生产黑盒回归揭示 `InventoryItemView` protobuf 未镜像 freshness，因此补齐既有协议类型而不新造状态机。
+
+Round 3 根据首轮 `/review` 的 major findings 复核 freshness 缺省语义与真集成覆盖：registry/profile 缺失改为结构失败并保留原木；新增生产五 tile fixture、真实 `C2S_PLAYER_ACTION` digging、掉落同步与拾回对拍，连续两轮专项场景均通过。
 
 ## Finish Evidence
 
 ### 落地清单
 
 - P0：在 `server/src/spiritwood/mod.rs` 增加生产链集成测试，修复前明确复现满包无地面掉落、原木却被错误标记 harvested 并置 AIR。
-- P1：`grant_ling_mu_gun` 复用 `add_item_to_player_inventory_or_ground`，同一 customization 闭包覆盖入包与落地，保留 `spirit_quality`、freshness、数量、原木中心位置和 session 维度。
+- P1：`grant_ling_mu_gun` 复用 `add_item_to_player_inventory_or_ground`；同一 customization 闭包覆盖入包与落地，保留 `spirit_quality`、freshness、数量、原木中心位置和 session 维度；freshness registry/profile 缺失 fail closed。
 - P2：`complete_spiritwood_sessions` 仅在 `Granted` / `DroppedToGround` 后提交 harvested、AIR 和完成事件；结构错误、缺掉落 registry、缺 inventory、instance id 冲突均保留原木并发送 `completed=false`。
-- P3：完成定向测试、两轮 server 完整门禁、最新主线同步及最终 HEAD 主 agent 对抗 review。
+- P3：`proto/bong/envelope.proto` 与 Rust/Python converter 镜像 freshness 六字段；Bot 支持真实 `C2S_PLAYER_ACTION` 和 `lumber_progress`；生产五 tile fixture 固定 seed `(1292, 73, 1519)`、外缘主干 `(1285, 73, 1509)`，专项场景验证满包落地与拾回。
+- P3 运行隔离：`scripts/bot-e2e.sh` 为自启 server 分配独立 `BONG_SPIRITWOOD_HARVESTED_PATH`，防止上一轮已采伐持久化污染重跑。
 
 ### 关键 commit
 
@@ -133,21 +138,30 @@ Round 2 排除了灵木 shutdown flush、botany/craft/alchemy 满包修复和跨
 - `2a3fa760`（2026-07-15）：加入修复前失败测试，证真满包吞产物与错误世界提交。
 - `edc5ed34`（2026-07-15）：接入 inventory-or-ground grant，重排成功提交顺序并补齐边界测试。
 - `ed6b2773`（2026-07-15）：合并最新 `origin/main`（PR #1210）并在合并结果上复验完整 server 门禁。
+- `db58e582`（2026-07-15）：补齐 `InventoryItemView` freshness protobuf 与 Rust wire 镜像。
+- `e8d65f99`（2026-07-15）：让 freshness registry/profile 缺失 fail closed，并锁定不消耗原木。
+- `5a874df9`（2026-07-15）：新增生产五 tile fixture、真实 digging Bot 场景及协议饱和测试。
+- `ce08d8e5`（2026-07-15）：普通 merge `origin/main@6f1faea5`，保留双方 Bot 能力并复验灵木生产链。
 
 ### 测试结果
 
 - 修复前新增契约测试：18 pass / 7 fail；失败明确显示 `DroppedLootRegistry=0`，同时原木已 harvested。
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::tests`：25 passed / 0 failed。
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::`：44 passed / 0 failed。
-- 修复 HEAD 与主线同步后 HEAD 均执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；最终结果为 lib 11,655 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed / 5 ignored。
-- `git diff --check origin/main...HEAD` 通过；最终工作树干净，`origin/main` 是 `ed6b2773` 的祖先。
+- 最终合并 HEAD `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed。
+- Python protocol：95 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress` 和 digging packet 均有 pin 测试。
+- 完整 Bot e2e：29 passed / 0 failed；生产灵木专项场景在隔离持久化下连续两轮通过，最终一轮 14.6s。
+- client 使用 Temurin JDK 17.0.19 执行 `./gradlew test build`：BUILD SUCCESSFUL，13 tasks。
+- 主线同步前后 `production_spiritwood_full_inventory_drop.py` 均通过；同步后首次完整 Bot e2e 的 `combat_skill_cast` 因 40 格观察时序抖动单次失败，定向连续两次通过（0.8s / 0.7s），随后完整 29/29 通过。
+- `git diff --check origin/main...HEAD` 通过；工作树干净，`origin/main@6f1faea5` 是 `ce08d8e5` 的祖先。
 
 ### 跨仓库核验
 
-- server：`complete_spiritwood_sessions`、`grant_ling_mu_gun`、`GrantOrGroundOutcome`、`DroppedLootRegistry` 的生产链和测试均已命中。
-- client / agent / schema / worldgen：本修复不修改协议、payload、schema、Redis key 或资源格式，无跨栈构建需求；地面掉落沿用既有同步与拾取链路。
+- server：`complete_spiritwood_sessions`、`grant_ling_mu_gun`、`GrantOrGroundOutcome`、`DroppedLootRegistry`、`inventory_item_view_to_proto` 与五 tile fixture 均命中。
+- Bot / protocol：`Bot.start_digging` 发真实 `C2S_PLAYER_ACTION`；`proto_min.py` 解码 `lumber_progress`、掉落 snapshot 和 freshness 六字段；专项场景实际清包并拾回同一实例。
+- client：协议消费面未新增 UI 逻辑；JDK 17 完整 build 通过。agent/schema、Redis key 与正式 worldgen 资源格式不变。
 
 ### 遗留 / 后续
 
 - `ChunkLayer` 暂不可写时仍沿用既有“记录 harvested、稍后由世界生成态收口”的语义，不在本 BugFix 扩成跨资源事务。
-- PR 合并前继续以 `/review`、CodeRabbit 和 e2e 为最终 gate；任何新 HEAD 都重新执行对应 review 与门禁。
+- 用户明确要求主 agent 直接实施且不启动 subagent，因此没有独立 subagent validator；本文不记录或伪造独立 validator PASS，最终 HEAD 由主 agent 只读复核。PR 合并前仍以最新 SHA 的 `/review`、CodeRabbit 和 e2e 为最终 gate。
