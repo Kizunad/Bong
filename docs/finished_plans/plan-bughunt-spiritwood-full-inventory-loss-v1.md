@@ -1,6 +1,6 @@
 # plan-bughunt-spiritwood-full-inventory-loss-v1
 
-> **Active Plan（2026-07-15 promotion）**。来源：
+> **Finished Plan（2026-07-15 archived；2026-07-15 promotion）**。来源：
 > `docs/plans-skeleton/plan-bughunt-spiritwood-full-inventory-loss-v1.md`。
 > 一句话主题：把灵木采伐完成改成“入包或原地掉落成功后才消耗世界资源”的原子结算，禁止满包时吞掉稀缺 `ling_mu_gun` 却仍回报完成。
 
@@ -120,7 +120,7 @@ Round 1 核查了满包是否可达、灵木是否总能堆叠、inventory helpe
 
 Round 2 排除了灵木 shutdown flush、botany/craft/alchemy 满包修复和跨维 session 等重复范围。局部原子结算可复用既有 `GrantOrGroundOutcome`，但生产黑盒回归揭示 `InventoryItemView` protobuf 未镜像 freshness，因此补齐既有协议类型而不新造状态机。
 
-Round 3 根据首轮 `/review` 的 major findings 复核 freshness 缺省语义与真集成覆盖：registry/profile 缺失改为结构失败并保留原木；新增生产五 tile fixture、真实 `C2S_PLAYER_ACTION` digging、掉落同步与拾回对拍，连续两轮专项场景均通过。
+Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真集成覆盖与 raster schema：registry/profile 缺失改为结构失败并保留原木；生产五 tile fixture 补齐与正式 worldgen 一致的 `0..4` biome palette，并逐 tile 锁定 `biome_id.bin` 长度与 palette 边界；真实 `C2S_PLAYER_ACTION` digging、掉落同步与拾回对拍均通过。
 
 ## Finish Evidence
 
@@ -129,7 +129,7 @@ Round 3 根据首轮 `/review` 的 major findings 复核 freshness 缺省语义�
 - P0：在 `server/src/spiritwood/mod.rs` 增加生产链集成测试，修复前明确复现满包无地面掉落、原木却被错误标记 harvested 并置 AIR。
 - P1：`grant_ling_mu_gun` 复用 `add_item_to_player_inventory_or_ground`；同一 customization 闭包覆盖入包与落地，保留 `spirit_quality`、freshness、数量、原木中心位置和 session 维度；freshness registry/profile 缺失 fail closed。
 - P2：`complete_spiritwood_sessions` 仅在 `Granted` / `DroppedToGround` 后提交 harvested、AIR 和完成事件；结构错误、缺掉落 registry、缺 inventory、instance id 冲突均保留原木并发送 `completed=false`。
-- P3：`proto/bong/envelope.proto` 与 Rust/Python converter 镜像 freshness 六字段；Bot 支持真实 `C2S_PLAYER_ACTION` 和 `lumber_progress`；生产五 tile fixture 固定 seed `(1292, 73, 1519)`、外缘主干 `(1285, 73, 1509)`，专项场景验证满包落地与拾回。
+- P3：`proto/bong/envelope.proto` 与 Rust/Python converter 镜像 freshness 六字段；Bot 支持真实 `C2S_PLAYER_ACTION` 和 `lumber_progress`；生产五 tile fixture 固定 seed `(1292, 73, 1519)`、外缘主干 `(1285, 73, 1509)`，并以正式 `0..4` biome palette 约束所有 tile；专项场景验证满包落地与拾回。
 - P3 运行隔离：`scripts/bot-e2e.sh` 为自启 server 分配独立 `BONG_SPIRITWOOD_HARVESTED_PATH`，防止上一轮已采伐持久化污染重跑。
 
 ### 关键 commit
@@ -142,6 +142,7 @@ Round 3 根据首轮 `/review` 的 major findings 复核 freshness 缺省语义�
 - `e8d65f99`（2026-07-15）：让 freshness registry/profile 缺失 fail closed，并锁定不消耗原木。
 - `5a874df9`（2026-07-15）：新增生产五 tile fixture、真实 digging Bot 场景及协议饱和测试。
 - `ce08d8e5`（2026-07-15）：普通 merge `origin/main@6f1faea5`，保留双方 Bot 能力并复验灵木生产链。
+- `fc546e2a`（2026-07-15）：修复五 tile fixture 的 biome palette 映射，并增加逐 tile 文件长度与索引边界测试。
 
 ### 测试结果
 
@@ -149,15 +150,15 @@ Round 3 根据首轮 `/review` 的 major findings 复核 freshness 缺省语义�
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::tests`：25 passed / 0 failed。
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::`：44 passed / 0 failed。
 - 最终合并 HEAD `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed。
-- Python protocol：95 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress` 和 digging packet 均有 pin 测试。
-- 完整 Bot e2e：29 passed / 0 failed；生产灵木专项场景在隔离持久化下连续两轮通过，最终一轮 14.6s。
+- Python protocol：95 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress`、digging packet 与五 tile biome palette 边界均有 pin 测试。
+- 修正 palette 后完整 Bot e2e：第二轮 29 passed / 0 failed；生产灵木专项场景 13.6s。首轮专项同样通过，但无关 `production_craft_cancel_full_inventory_refund` 单次等待超时；第二轮该场景 4.5s 通过。
 - client 使用 Temurin JDK 17.0.19 执行 `./gradlew test build`：BUILD SUCCESSFUL，13 tasks。
 - 主线同步前后 `production_spiritwood_full_inventory_drop.py` 均通过；同步后首次完整 Bot e2e 的 `combat_skill_cast` 因 40 格观察时序抖动单次失败，定向连续两次通过（0.8s / 0.7s），随后完整 29/29 通过。
 - `git diff --check origin/main...HEAD` 通过；工作树干净，`origin/main@6f1faea5` 是 `ce08d8e5` 的祖先。
 
 ### 跨仓库核验
 
-- server：`complete_spiritwood_sessions`、`grant_ling_mu_gun`、`GrantOrGroundOutcome`、`DroppedLootRegistry`、`inventory_item_view_to_proto` 与五 tile fixture 均命中。
+- server：`complete_spiritwood_sessions`、`grant_ling_mu_gun`、`GrantOrGroundOutcome`、`DroppedLootRegistry`、`inventory_item_view_to_proto` 与五 tile fixture 均命中；fixture 的原始 `biome_id=4` 对应 manifest `minecraft:meadow`，不存在 palette 越界或 fallback。
 - Bot / protocol：`Bot.start_digging` 发真实 `C2S_PLAYER_ACTION`；`proto_min.py` 解码 `lumber_progress`、掉落 snapshot 和 freshness 六字段；专项场景实际清包并拾回同一实例。
 - client：协议消费面未新增 UI 逻辑；JDK 17 完整 build 通过。agent/schema、Redis key 与正式 worldgen 资源格式不变。
 
