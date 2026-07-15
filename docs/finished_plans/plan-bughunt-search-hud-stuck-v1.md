@@ -146,5 +146,5 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 
 ### 遗留 / 后续
 
-- 无 `[BLOCKED: ...]`，无协议迁移、真元守恒或视觉资产遗留。
+- 无阻塞项，无协议迁移、真元守恒或视觉资产遗留。
 - 本次未启动 `runClient` 手工演示；状态生命周期、HUD 消失条件和 disconnect 接线均由确定性单测及 4086 项客户端全量测试覆盖，渲染 planner 本身未改。
