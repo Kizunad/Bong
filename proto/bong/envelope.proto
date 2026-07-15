@@ -624,6 +624,18 @@ message InventoryItemView {
   // plan-alchemy-v2 物品级丹药元数据，serde AlchemyItemData (inventory/mod.rs) 的 flat 镜像。
   // 缺省 = 非丹药物品；client readAlchemyLines 拿 null → 无 tooltip 行。
   optional AlchemyItemDataProto alchemy = 21;
+  // plan-shelflife-v1 物品级 freshness NBT。地面掉落与拾取后的 snapshot 必须保真，
+  // 否则生产 protobuf 路径会把采集时刻/profile 静默丢弃。
+  optional InventoryFreshness freshness = 22;
+}
+
+message InventoryFreshness {
+  uint64 created_at_tick       = 1;
+  float  initial_qi            = 2;
+  string track                 = 3; // Decay / Spoil / Age，与 Rust serde 形状一致
+  string profile               = 4;
+  uint64 frozen_accumulated    = 5;
+  optional uint64 frozen_since_tick = 6;
 }
 
 // serde AlchemyItemData (server/src/inventory/mod.rs `#[serde(tag="kind")]`) 的 flat 镜像。
