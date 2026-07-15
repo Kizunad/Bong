@@ -21,8 +21,9 @@ use crate::gathering::session::{
 };
 use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
 use crate::inventory::{
-    add_customized_item_to_player_inventory, InventoryInstanceIdAllocator, ItemInstance,
-    ItemRegistry, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
+    add_item_to_player_inventory_or_ground, DroppedLootRegistry, GrantOrGroundOutcome,
+    InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, PlayerInventory,
+    EQUIP_SLOT_MAIN_HAND,
 };
 use crate::network::send_server_data_payload;
 use crate::player::gameplay::GameplayTick;
@@ -241,6 +242,7 @@ fn complete_spiritwood_sessions(
     item_registry: Res<ItemRegistry>,
     profile_registry: Option<Res<DecayProfileRegistry>>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
+    mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
     mut inventories: Query<&mut PlayerInventory, With<Client>>,
     cultivations: Query<&Cultivation, With<Client>>,
     mut gathering_completions: EventWriter<GatheringCompleteEvent>,
@@ -257,44 +259,75 @@ fn complete_spiritwood_sessions(
         let Some(session) = store.remove(player) else {
             continue;
         };
+        let drop_count = ling_mu_drop_count(session.log_pos, session.player, now_tick);
+        let mut gathering_tool = None;
+        let mut gathering_quality = None;
+        let grant_result = match inventories.get_mut(session.player) {
+            Ok(mut inventory) => {
+                gathering_tool = equipped_gathering_tool(&inventory)
+                    .filter(|tool| tool.matches_target(GatheringTargetKind::Wood));
+                let realm = cultivations
+                    .get(session.player)
+                    .map(|cultivation| cultivation.realm)
+                    .unwrap_or(Realm::Awaken);
+                let gathering_quality_seed = now_tick
+                    ^ session.player.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    ^ session.ticks_total.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                gathering_quality = Some(roll_quality(
+                    gathering_quality_seed,
+                    gathering_tool.map(|tool| tool.material),
+                    realm,
+                ));
+                grant_ling_mu_gun(
+                    &mut inventory,
+                    item_registry.as_ref(),
+                    profile_registry.as_deref(),
+                    &mut allocator,
+                    dropped_loot.as_deref_mut(),
+                    drop_count,
+                    now_tick,
+                    block_origin(session.log_pos),
+                    session.dimension,
+                )
+            }
+            Err(error) => Err(format!(
+                "player inventory unavailable for {:?}: {error}",
+                session.player
+            )),
+        };
+
+        let detail = match grant_result {
+            Ok(GrantOrGroundOutcome::Granted(_)) => format!("采得灵木原木 ×{drop_count}"),
+            Ok(GrantOrGroundOutcome::DroppedToGround(_)) => {
+                format!("背包已满，灵木原木已落地 ×{drop_count}")
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "bong::spiritwood",
+                    "failed to settle ling_mu_gun drop for {:?}: {error}",
+                    session.player
+                );
+                terminal_events.send(LumberTerminalEvent {
+                    client_entity: session.player,
+                    session_id: session.player_id,
+                    log_pos: session.log_pos,
+                    progress: 1.0,
+                    interrupted: true,
+                    completed: false,
+                    detail: "灵木产物结算失败，原木未消耗".to_string(),
+                    duration_ticks: session.ticks_total,
+                    gathering_quality: None,
+                    tool_used: gathering_tool.map(|tool| tool.item_id.to_string()),
+                });
+                continue;
+            }
+        };
+
+        // 产物已经成功入包或写入地面掉落 registry，才提交不可逆世界状态。
         harvested_logs.mark_harvested(session.dimension, session.log_pos, now_tick);
         if let Some(dimension_layers) = dimension_layers.as_deref() {
             if let Ok(mut layer) = layers.get_mut(dimension_layers.entity_for(session.dimension)) {
                 layer.set_block(session.log_pos, BlockState::AIR);
-            }
-        }
-
-        let drop_count = ling_mu_drop_count(session.log_pos, session.player, now_tick);
-        let mut gathering_tool = None;
-        let mut gathering_quality = None;
-        if let Ok(mut inventory) = inventories.get_mut(session.player) {
-            gathering_tool = equipped_gathering_tool(&inventory)
-                .filter(|tool| tool.matches_target(GatheringTargetKind::Wood));
-            let realm = cultivations
-                .get(session.player)
-                .map(|cultivation| cultivation.realm)
-                .unwrap_or(Realm::Awaken);
-            let gathering_quality_seed = now_tick
-                ^ session.player.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                ^ session.ticks_total.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            gathering_quality = Some(roll_quality(
-                gathering_quality_seed,
-                gathering_tool.map(|tool| tool.material),
-                realm,
-            ));
-            if let Err(error) = grant_ling_mu_gun_to_inventory(
-                &mut inventory,
-                item_registry.as_ref(),
-                profile_registry.as_deref(),
-                &mut allocator,
-                drop_count,
-                now_tick,
-            ) {
-                tracing::warn!(
-                    target: "bong::spiritwood",
-                    "failed to grant ling_mu_gun drop to {:?}: {error}",
-                    session.player
-                );
             }
         }
         if let Some(quality) = gathering_quality {
@@ -316,7 +349,7 @@ fn complete_spiritwood_sessions(
             progress: 1.0,
             interrupted: false,
             completed: true,
-            detail: format!("采得灵木原木 ×{drop_count}"),
+            detail,
             duration_ticks: session.ticks_total,
             gathering_quality,
             tool_used: gathering_tool.map(|tool| tool.item_id.to_string()),
@@ -524,37 +557,36 @@ fn ling_mu_drop_count(pos: BlockPos, player: Entity, completed_at_tick: u64) -> 
     2 + (hash % 3) as u32
 }
 
-fn grant_ling_mu_gun_to_inventory(
+#[allow(clippy::too_many_arguments)]
+fn grant_ling_mu_gun(
     inventory: &mut PlayerInventory,
     item_registry: &ItemRegistry,
     profile_registry: Option<&DecayProfileRegistry>,
     allocator: &mut InventoryInstanceIdAllocator,
+    dropped_loot: Option<&mut DroppedLootRegistry>,
     stack_count: u32,
     created_at_tick: u64,
-) -> Result<u64, String> {
-    let template = item_registry
-        .get(LING_MU_GUN_ITEM_ID)
-        .ok_or_else(|| format!("unknown item template `{LING_MU_GUN_ITEM_ID}`"))?;
+    ground_pos: [f64; 3],
+    ground_dimension: DimensionKind,
+) -> Result<GrantOrGroundOutcome, String> {
     let freshness = profile_registry
         .and_then(|registry| registry.get(&DecayProfileId::new(LING_MU_GUN_PROFILE_ID)))
         .map(|profile| Freshness::new(created_at_tick, LING_MU_INITIAL_QI, profile));
-    let receipt = add_customized_item_to_player_inventory(
+    let customize_instance = |instance: &mut ItemInstance| {
+        instance.freshness = freshness.clone();
+    };
+    add_item_to_player_inventory_or_ground(
         inventory,
         item_registry,
         allocator,
-        &template.id,
+        dropped_loot,
+        LING_MU_GUN_ITEM_ID,
         stack_count,
         created_at_tick,
-        |instance| {
-            instance.freshness = freshness.clone();
-        },
-    )?;
-    Ok(receipt
-        .created_instance_ids
-        .first()
-        .copied()
-        .or_else(|| receipt.merged_instance_ids.first().copied())
-        .unwrap_or(receipt.instance_id))
+        ground_pos,
+        ground_dimension,
+        Some(&customize_instance),
+    )
 }
 
 pub fn ling_xia_container_behavior(
@@ -605,8 +637,8 @@ mod tests {
     use crate::inventory::{
         add_customized_item_to_player_inventory, instantiate_inventory_from_loadout,
         load_default_loadout, ContainerState, DroppedLootEntry, DroppedLootRegistry,
-        InventoryRevision, ItemRarity, PlacedItemState, SlotContents,
-        BODY_POCKET_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
+        InventoryRevision, ItemRarity, PlacedItemState, SlotContents, BODY_POCKET_CONTAINER_ID,
+        MAIN_PACK_CONTAINER_ID,
     };
     use std::collections::HashMap;
     use valence::prelude::{ChunkLayer, Events, UnloadedChunk};
@@ -787,19 +819,27 @@ mod tests {
         let profiles = crate::shelflife::build_default_registry();
         let mut inventory = empty_inventory();
         let mut allocator = InventoryInstanceIdAllocator::new(7);
+        let mut dropped_loot = DroppedLootRegistry::default();
 
-        let id = grant_ling_mu_gun_to_inventory(
+        let outcome = grant_ling_mu_gun(
             &mut inventory,
             &registry,
             Some(&profiles),
             &mut allocator,
+            Some(&mut dropped_loot),
             3,
             120,
+            [1.5, 80.5, 2.5],
+            DimensionKind::Overworld,
         )
         .expect("drop grant should succeed");
 
         let item = &inventory.containers[0].items[0].instance;
-        assert_eq!(id, 7);
+        let GrantOrGroundOutcome::Granted(receipt) = outcome else {
+            panic!("empty inventory should grant instead of dropping: {outcome:?}");
+        };
+        assert_eq!(receipt.created_instance_ids, vec![7]);
+        assert!(dropped_loot.entries.is_empty());
         assert_eq!(item.template_id, LING_MU_GUN_ITEM_ID);
         assert_eq!(item.stack_count, 3);
         let freshness = item
@@ -816,6 +856,7 @@ mod tests {
         let profiles = crate::shelflife::build_default_registry();
         let loadout = load_default_loadout(&registry).expect("default loadout should load");
         let mut allocator = InventoryInstanceIdAllocator::new(3_000);
+        let mut dropped_loot = DroppedLootRegistry::default();
         let mut inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry)
             .expect("default loadout should instantiate");
         let runtime_pack_id = inventory
@@ -837,15 +878,20 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
-        grant_ling_mu_gun_to_inventory(
+        let outcome = grant_ling_mu_gun(
             &mut inventory,
             &registry,
             Some(&profiles),
             &mut allocator,
+            Some(&mut dropped_loot),
             3,
             120,
+            [1.5, 80.5, 2.5],
+            DimensionKind::Overworld,
         )
         .expect("ling_mu_gun drop should be granted into the runtime carried container");
+        assert!(matches!(outcome, GrantOrGroundOutcome::Granted(_)));
+        assert!(dropped_loot.entries.is_empty());
 
         let granted = inventory
             .containers
@@ -923,6 +969,7 @@ mod tests {
         assert_eq!(entry.dimension, DimensionKind::Overworld);
         assert_eq!(entry.item.template_id, LING_MU_GUN_ITEM_ID);
         assert_eq!(entry.item.stack_count, expected_count);
+        assert!((entry.item.spirit_quality - 0.9).abs() < f64::EPSILON);
         let freshness = entry
             .item
             .freshness
@@ -930,11 +977,10 @@ mod tests {
             .expect("ground ling_mu_gun must preserve freshness");
         assert_eq!(freshness.profile.as_str(), LING_MU_GUN_PROFILE_ID);
         assert_eq!(freshness.created_at_tick, 0);
-        assert!(
-            app.world()
-                .resource::<SpiritWoodHarvestedLogs>()
-                .contains(DimensionKind::Overworld, log_pos)
-        );
+        assert!(app
+            .world()
+            .resource::<SpiritWoodHarvestedLogs>()
+            .contains(DimensionKind::Overworld, log_pos));
         assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::AIR));
     }
 
@@ -975,11 +1021,17 @@ mod tests {
         assert_eq!(old.instance_id, 500);
         assert_eq!(old.stack_count, 1, "不同 freshness 禁止误合并");
         assert_eq!(
-            old.freshness.as_ref().map(|freshness| freshness.created_at_tick),
+            old.freshness
+                .as_ref()
+                .map(|freshness| freshness.created_at_tick),
             Some(77)
         );
         let dropped = app.world().resource::<DroppedLootRegistry>();
-        let entry = dropped.entries.values().next().expect("new stack must drop");
+        let entry = dropped
+            .entries
+            .values()
+            .next()
+            .expect("new stack must drop");
         assert_eq!(entry.item.stack_count, expected_count);
         assert_eq!(
             entry
@@ -994,9 +1046,22 @@ mod tests {
     #[test]
     fn successful_grant_commits_world_state_once() {
         let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item("axe_iron", 42)),
+        );
+        let expected_tool = equipped_gathering_tool(&inventory)
+            .expect("axe_iron should be recognized as a wood gathering tool");
         let (mut app, player, layer, log_pos) =
-            install_completed_session(Some(empty_inventory()), registry, true);
+            install_completed_session(Some(inventory), registry, true);
         let expected_count = ling_mu_drop_count(log_pos, player, 0);
+        let expected_quality_seed = player.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let expected_quality = roll_quality(
+            expected_quality_seed,
+            Some(expected_tool.material),
+            Realm::Awaken,
+        );
         let mut gathering_reader = app
             .world()
             .resource::<Events<GatheringCompleteEvent>>()
@@ -1019,19 +1084,21 @@ mod tests {
             .find(|placed| placed.instance.template_id == LING_MU_GUN_ITEM_ID)
             .expect("ling_mu_gun should be granted into inventory");
         assert_eq!(granted.instance.stack_count, expected_count);
-        assert!(app.world().resource::<DroppedLootRegistry>().entries.is_empty());
-        assert!(
-            app.world()
-                .resource::<SpiritWoodHarvestedLogs>()
-                .contains(DimensionKind::Overworld, log_pos)
-        );
+        assert!(app
+            .world()
+            .resource::<DroppedLootRegistry>()
+            .entries
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<SpiritWoodHarvestedLogs>()
+            .contains(DimensionKind::Overworld, log_pos));
         assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::AIR));
-        assert!(
-            app.world()
-                .resource::<WoodSessionStore>()
-                .session_for(player)
-                .is_none()
-        );
+        assert!(app
+            .world()
+            .resource::<WoodSessionStore>()
+            .session_for(player)
+            .is_none());
         let completions = gathering_reader
             .read(app.world().resource::<Events<GatheringCompleteEvent>>())
             .cloned()
@@ -1041,10 +1108,17 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].quality, expected_quality);
+        assert_eq!(completions[0].tool_used.as_deref(), Some("axe_iron"));
         assert_eq!(terminals.len(), 1);
         assert!(terminals[0].completed);
         assert!(!terminals[0].interrupted);
-        assert_eq!(terminals[0].detail, format!("采得灵木原木 ×{expected_count}"));
+        assert_eq!(terminals[0].gathering_quality, Some(expected_quality));
+        assert_eq!(terminals[0].tool_used.as_deref(), Some("axe_iron"));
+        assert_eq!(
+            terminals[0].detail,
+            format!("采得灵木原木 ×{expected_count}")
+        );
 
         app.update();
         assert_eq!(
@@ -1069,17 +1143,52 @@ mod tests {
         let (mut app, player, _layer, log_pos) =
             install_completed_session(Some(full_inventory()), registry, true);
         let expected_count = ling_mu_drop_count(log_pos, player, 0);
+        let mut gathering_reader = app
+            .world()
+            .resource::<Events<GatheringCompleteEvent>>()
+            .get_reader();
+        let mut terminal_reader = app
+            .world()
+            .resource::<Events<LumberTerminalEvent>>()
+            .get_reader();
 
         app.update();
 
-        assert_eq!(gathering_complete_events(&app).len(), 1);
-        let terminals = terminal_events(&app);
+        let completions = gathering_reader
+            .read(app.world().resource::<Events<GatheringCompleteEvent>>())
+            .cloned()
+            .collect::<Vec<_>>();
+        let terminals = terminal_reader
+            .read(app.world().resource::<Events<LumberTerminalEvent>>())
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(completions.len(), 1);
         assert_eq!(terminals.len(), 1);
         assert!(terminals[0].completed);
         assert!(!terminals[0].interrupted);
         assert_eq!(
             terminals[0].detail,
             format!("背包已满，灵木原木已落地 ×{expected_count}")
+        );
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<DroppedLootRegistry>().entries.len(),
+            1
+        );
+        assert_eq!(
+            gathering_reader
+                .read(app.world().resource::<Events<GatheringCompleteEvent>>())
+                .count(),
+            0,
+            "completed dropped session must not emit a second completion"
+        );
+        assert_eq!(
+            terminal_reader
+                .read(app.world().resource::<Events<LumberTerminalEvent>>())
+                .count(),
+            0,
+            "completed dropped session must not emit a second terminal"
         );
     }
 
@@ -1098,8 +1207,7 @@ mod tests {
             "failed completed session must end instead of retrying every tick"
         );
         assert!(
-            !app
-                .world()
+            !app.world()
                 .resource::<SpiritWoodHarvestedLogs>()
                 .contains(DimensionKind::Overworld, log_pos),
             "unknown template must not consume the world log"
@@ -1121,12 +1229,10 @@ mod tests {
 
         app.update();
 
-        assert!(
-            !app
-                .world()
-                .resource::<SpiritWoodHarvestedLogs>()
-                .contains(DimensionKind::Overworld, log_pos)
-        );
+        assert!(!app
+            .world()
+            .resource::<SpiritWoodHarvestedLogs>()
+            .contains(DimensionKind::Overworld, log_pos));
         assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
         assert!(gathering_complete_events(&app).is_empty());
         let terminals = terminal_events(&app);
@@ -1138,23 +1244,19 @@ mod tests {
     #[test]
     fn missing_inventory_preserves_log_and_ends_session() {
         let registry = crate::inventory::load_item_registry().expect("item registry should load");
-        let (mut app, player, layer, log_pos) =
-            install_completed_session(None, registry, true);
+        let (mut app, player, layer, log_pos) = install_completed_session(None, registry, true);
 
         app.update();
 
-        assert!(
-            app.world()
-                .resource::<WoodSessionStore>()
-                .session_for(player)
-                .is_none()
-        );
-        assert!(
-            !app
-                .world()
-                .resource::<SpiritWoodHarvestedLogs>()
-                .contains(DimensionKind::Overworld, log_pos)
-        );
+        assert!(app
+            .world()
+            .resource::<WoodSessionStore>()
+            .session_for(player)
+            .is_none());
+        assert!(!app
+            .world()
+            .resource::<SpiritWoodHarvestedLogs>()
+            .contains(DimensionKind::Overworld, log_pos));
         assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
         assert!(gathering_complete_events(&app).is_empty());
         let terminals = terminal_events(&app);
@@ -1186,13 +1288,14 @@ mod tests {
 
         app.update();
 
-        assert_eq!(app.world().resource::<DroppedLootRegistry>().entries.len(), 1);
-        assert!(
-            !app
-                .world()
-                .resource::<SpiritWoodHarvestedLogs>()
-                .contains(DimensionKind::Overworld, log_pos)
+        assert_eq!(
+            app.world().resource::<DroppedLootRegistry>().entries.len(),
+            1
         );
+        assert!(!app
+            .world()
+            .resource::<SpiritWoodHarvestedLogs>()
+            .contains(DimensionKind::Overworld, log_pos));
         assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
         assert!(gathering_complete_events(&app).is_empty());
         let terminals = terminal_events(&app);
