@@ -9,10 +9,10 @@
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | 修复前契约测试与可达性证真 | ⬜ |
-| P1 | `ChatSignal.ts` 契约与 runtime 注入 | ⬜ |
-| P2 | schema / tiandao / workspace 完整门禁 | ⬜ |
-| P3 | 同步主线、自审、Finish Evidence 与归档 | ⬜ |
+| P0 | 修复前契约测试与可达性证真 | ✅ 2026-07-15 |
+| P1 | `ChatSignal.ts` 契约与 runtime 注入 | ✅ 2026-07-15 |
+| P2 | schema / tiandao / workspace 完整门禁 | ✅ 2026-07-15 |
+| P3 | 同步主线、自审、Finish Evidence 与归档 | ✅ 2026-07-15 |
 
 ## Bug 摘要
 
@@ -82,10 +82,10 @@
 
 ## 实施阶段
 
-- [ ] P0：先补修复前应失败的契约测试：schema 要求显式 `ts`；fallback 与有效 annotation 都保留原消息时间；LLM 伪造时间不能覆盖；301 秒旧信号从 merge 和 prompt 中消失。
-- [ ] P1：在 `ChatSignal` TypeBox schema 增加必填 `ts`，重生成 `generated/chat-signal.json`；在 `processChatBatch()` 的 fallback / candidate 从 `msg.ts` 注入，并让 `isRecentSignal()` 直接读取显式字段。
-- [ ] P2：补齐所有 `ChatSignal` fixture 的权威测试时间，运行 schema build/test/generate check、tiandao test 与 agent workspace build。
-- [ ] P3：fetch 后按 merge-base 同步最新 `origin/main`；若 HEAD 变化则重跑受影响门禁；主 agent 逐入口对抗自审，填写 Finish Evidence 后归档。
+- [x] P0（✅ 2026-07-15）：先补修复前应失败的契约测试：schema 要求显式 `ts`；fallback 与有效 annotation 都保留原消息时间；LLM 伪造时间不能覆盖；301 秒旧信号从 merge 和 prompt 中消失。
+- [x] P1（✅ 2026-07-15）：在 `ChatSignal` TypeBox schema 增加必填 `ts`，重生成 `generated/chat-signal.json`；在 `processChatBatch()` 的 fallback / candidate 从 `msg.ts` 注入，并让 `isRecentSignal()` 直接读取显式字段。
+- [x] P2（✅ 2026-07-15）：补齐所有 `ChatSignal` fixture 的权威测试时间，运行 schema build/test/generate check、tiandao test 与 agent workspace build。
+- [x] P3（✅ 2026-07-15）：fetch 后按 merge-base 同步最新 `origin/main`；HEAD `e7ad238e` 已包含 `origin/main` `6f1faea5`，无需合并；主 agent 逐入口对抗自审通过后填写 Finish Evidence 并归档。
 
 ## 验收矩阵
 
@@ -123,3 +123,38 @@
 - 如果直接复用 `mentions_mechanic` 存 `ts:`，会继续污染语义字段，后续 LLM 标注可能覆盖或拼接出错。
 - `ChatSignal.ts` 改为必填会使现有手工 fixture 编译失败；必须逐个补与测试 `nowSeconds` 一致的显式时间，不能用全局 optional 逃避契约。
 - 修复后低活跃服务器的天道响应会更“短记忆”，需要确认这符合“最近 5 分钟民意”的设计语义。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`agent/packages/schema/tests/chat-message.test.ts`、`agent/packages/tiandao/tests/chat-processor.test.ts` 与 `agent/packages/tiandao/tests/agent-real-context-injection.test.ts` 先锁定 schema、转换、窗口边界和真实 LLM prompt 的修复前失败契约。
+- P1：`agent/packages/schema/src/chat-message.ts` 为 `ChatMessageV1.ts` 与 `ChatSignal.ts` 固定非负整数契约；`agent/packages/tiandao/src/chat-processor.ts` 从原始消息注入权威时间，并移除 `mentions_mechanic` 隐式时间解析。
+- P2：`agent/packages/schema/generated/chat-message-v1.json` 与 `agent/packages/schema/generated/chat-signal.json` 已重生成；tiandao context/runtime fixtures 均补齐与测试时钟一致的显式时间。
+- P3：全仓扫描确认 `ChatSignal` 只在 schema/tiandao 内消费，server wire 已提供 `ChatMessageV1.ts`，client 不消费该内部信号；主线无需合并，主 agent 对抗自审结论为 `PASS e7ad238e1930df8a356a6e8f1ae1718b6f7cb796`。
+
+### 关键 commit
+
+- `8ff6eab4`（2026-07-15）：复现聊天信号五分钟窗口失效。
+- `d87323cd`（2026-07-15）：收紧聊天时间戳 schema 契约。
+- `bf4c795f`（2026-07-15）：修复聊天信号过期窗口。
+- `e7ad238e`（2026-07-15）：补齐聊天时效上下文回归。
+
+### 测试结果
+
+- `cd agent && npm test -w @bong/schema`：30 个测试文件、892 项测试全部通过。
+- `cd agent && npm run check -w @bong/schema`：TypeScript 检查通过，405 份 generated schema 均为最新。
+- `cd agent && npm test -w @bong/tiandao`：72 个测试文件、833 项测试全部通过。
+- `cd agent && npm run build`：`@bong/schema` 与 `@bong/tiandao` workspace build 全部通过。
+- 定向 red/green 覆盖：schema 缺失/负数/小数/字符串/额外字段，fallback/annotation 权威时间，LLM 伪造隔离，300/301 秒边界，先过滤后 20 条截断，以及真实 `TiandaoAgent` prompt 旧信号淘汰。
+
+### 跨仓库核验
+
+- server：`server/src/network/chat_collector.rs` 继续发布权威 `ChatMessageV1.ts`，wire 无需变更。
+- agent/schema：`ChatMessageV1`、`ChatSignal`、`processChatBatch`、`mergeChatSignals`、`buildChatSignalsBlock` 与 committed generated schema 已对齐。
+- client：不消费 `ChatSignal` 内部契约，本次无需客户端改动。
+
+### 遗留 / 后续
+
+- 无代码遗留或阻塞标记；未来时间戳校准与跨进程聊天持久化仍按本 plan 非目标保持独立。
+- 按用户“仅主 agent”要求，本轮未启动独立 validator；由同一 `gpt-5.1` 主 agent 对干净 HEAD 执行绑定 SHA 的三轮对抗自审，PR 后续仍接受 `/review`、CodeRabbit 与 e2e 独立门禁。
