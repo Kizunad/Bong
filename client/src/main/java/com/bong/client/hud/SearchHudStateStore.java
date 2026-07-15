@@ -10,7 +10,7 @@ public final class SearchHudStateStore {
     private SearchHudStateStore() {
     }
 
-    public static SearchHudState snapshot() {
+    public static synchronized SearchHudState snapshot() {
         return snapshotAtNanos(System.nanoTime());
     }
 
@@ -35,7 +35,7 @@ public final class SearchHudStateStore {
         );
     }
 
-    public static void markCompleted(String containerKindZh) {
+    public static synchronized void markCompleted(String containerKindZh) {
         markCompletedAtNanos(containerKindZh, System.nanoTime());
     }
 
@@ -44,7 +44,7 @@ public final class SearchHudStateStore {
         terminalPhaseStartedAtNanos = nowNanos;
     }
 
-    public static void markAborted(String containerKindZh, String reason) {
+    public static synchronized void markAborted(String containerKindZh, String reason) {
         markAbortedAtNanos(containerKindZh, reason, System.nanoTime());
     }
 
