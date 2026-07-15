@@ -135,24 +135,47 @@ class CombatHudBootstrapTest {
     }
 
     @Test
-    void resetOnDisconnectLetsRealHandlerAcceptLowerTickFromNewSession() {
+    void resetOnDisconnectLetsRealHandlerAcceptLowerTicksForAllProducedKinds() {
         long now = System.currentTimeMillis();
         AnqiHudStateStore.updateEcho(9, now, 2_000L, 72_000L);
+        AnqiHudStateStore.updateCharge(0.9f, now, 2_000L, 72_000L);
+        AnqiHudStateStore.updateAbrasion("quiver", 90.0f, now, 2_000L, 72_000L);
+        AnqiHudStateStore.updateMultiShot(9, now, 2_000L, 72_000L);
 
         CombatHudBootstrap.resetOnDisconnect();
 
-        String payload = "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\","
-            + "\"echo_count\":3,\"aim_progress\":0.0,\"charge_progress\":0.0,"
-            + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}";
-        ServerPayloadParseResult parsed = ServerDataEnvelope.parse(
-            payload, payload.getBytes(StandardCharsets.UTF_8).length);
-        assertTrue(parsed.isSuccess(), "测试 payload 必须先通过真实 envelope parser");
+        ServerDataDispatch echoDispatch = handleAnqiHudPayload(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\","
+                + "\"echo_count\":3,\"aim_progress\":0.0,\"charge_progress\":0.0,"
+                + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}");
+        ServerDataDispatch chargeDispatch = handleAnqiHudPayload(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"charge\","
+                + "\"echo_count\":0,\"aim_progress\":0.0,\"charge_progress\":0.4,"
+                + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}");
+        ServerDataDispatch abrasionDispatch = handleAnqiHudPayload(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"abrasion\","
+                + "\"echo_count\":0,\"aim_progress\":0.0,\"charge_progress\":0.0,"
+                + "\"abrasion_container\":\"hand_slot\",\"abrasion_qi_payload\":20.0,"
+                + "\"tick\":10}");
+        ServerDataDispatch multiShotDispatch = handleAnqiHudPayload(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"multishot\","
+                + "\"echo_count\":4,\"aim_progress\":0.0,\"charge_progress\":0.0,"
+                + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}");
 
-        ServerDataDispatch dispatch = new AnqiHudServerDataHandler().handle(parsed.envelope());
-
-        assertTrue(dispatch.handled(), "新 session 的低 tick anqi_hud 应被真实 handler 消费");
-        assertEquals(3, AnqiHudStateStore.snapshot(now).echoCount(),
-            "disconnect reset 后 handler 不得把新 session 低 tick 当成旧包静默丢弃");
+        assertTrue(echoDispatch.handled(), "新 session 的低 tick echo 应被真实 handler 消费");
+        assertTrue(chargeDispatch.handled(), "新 session 的低 tick charge 应被真实 handler 消费");
+        assertTrue(abrasionDispatch.handled(), "新 session 的低 tick abrasion 应被真实 handler 消费");
+        assertTrue(multiShotDispatch.handled(), "新 session 的低 tick multishot 应被真实 handler 消费");
+        AnqiHudState state = AnqiHudStateStore.snapshot(now);
+        assertEquals(3, state.echoCount(),
+            "disconnect reset 后 handler 不得把低 tick echo 当成旧包静默丢弃");
+        assertEquals(0.4f, state.chargeProgress(), 0.001f,
+            "disconnect reset 后 handler 不得把低 tick charge 当成旧包静默丢弃");
+        assertEquals("hand_slot", state.abrasionContainer(),
+            "disconnect reset 后 handler 不得把低 tick abrasion 当成旧包静默丢弃");
+        assertEquals(20.0f, state.abrasionQiPayload(), 0.001f);
+        assertEquals(4, state.multiShotCount(),
+            "disconnect reset 后 handler 不得把低 tick multishot 当成旧包静默丢弃");
     }
 
     @Test
@@ -267,6 +290,13 @@ class CombatHudBootstrapTest {
             "点到为止",
             expiresAtMs
         );
+    }
+
+    private static ServerDataDispatch handleAnqiHudPayload(String payload) {
+        ServerPayloadParseResult parsed = ServerDataEnvelope.parse(
+            payload, payload.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(parsed.isSuccess(), "测试 payload 必须先通过真实 envelope parser: " + payload);
+        return new AnqiHudServerDataHandler().handle(parsed.envelope());
     }
 
     private static void notifyBlockedSparringInvite(String inviteId) {
