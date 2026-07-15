@@ -205,9 +205,16 @@ def run(env) -> None:
                 "entity_id": open_probe_entity_id,
             }
         )
+        forged_rejected = bot.wait_for(
+            lambda event: event.kind == "chat"
+            and event.t > forged_open_sent_at
+            and "[物资棺] 目标不在当前位面。" in event.data["text"],
+            timeout=10.0,
+            description="TSY forged open 的明确维度拒绝反馈",
+        )
         forged_barrier = _supply_coffin_barrier(
             bot,
-            after=forged_open_sent_at,
+            after=forged_rejected.t,
             context="forged open 处理完成",
         )
         _assert_no_server_data_between(

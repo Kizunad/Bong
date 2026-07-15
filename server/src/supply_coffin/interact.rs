@@ -33,7 +33,7 @@ use crate::schema::server_data::{
 };
 use crate::world::dimension::CurrentDimension;
 
-use super::authority::authorize_supply_coffin_open;
+use super::authority::{authorize_supply_coffin_open, SupplyCoffinAuthorityFailure};
 use super::{current_wall_clock_secs, loot::roll_loot, SupplyCoffinGrade, SupplyCoffinRegistry};
 
 /// C2S request emitted by `client_request_handler` when the client sends
@@ -107,6 +107,7 @@ pub fn handle_supply_coffin_interact(
                 "[bong][supply_coffin] interact rejected: grade={:?} reason={reason:?}",
                 active.grade,
             );
+            client.send_chat_message(open_authority_rejection_message(reason));
             continue;
         }
 
@@ -308,6 +309,17 @@ pub fn handle_supply_coffin_interact(
     }
 }
 
+fn open_authority_rejection_message(reason: SupplyCoffinAuthorityFailure) -> &'static str {
+    match reason {
+        SupplyCoffinAuthorityFailure::MissingSource => "§c[物资棺] 目标已失效。",
+        SupplyCoffinAuthorityFailure::MissingPlayerDimension => {
+            "§c[物资棺] 当前位面状态异常，无法打开。"
+        }
+        SupplyCoffinAuthorityFailure::DimensionMismatch => "§c[物资棺] 目标不在当前位面。",
+        SupplyCoffinAuthorityFailure::OutOfRange => "§c[物资棺] 离得太远。",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,7 +328,7 @@ mod tests {
     use crate::supply_coffin::authority::SUPPLY_COFFIN_OPEN_MAX_DISTANCE;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, DVec3, Update};
-    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper};
 
     const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
@@ -423,13 +435,35 @@ mod tests {
             .collect()
     }
 
+    fn collect_chat_messages(app: &mut App, helper: &mut MockClientHelper) -> Vec<String> {
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
+
     #[test]
     fn open_rejects_cross_dimension_same_xyz_without_side_effects() {
-        let (mut app, player, target, _helper) =
+        let (mut app, player, target, mut helper) =
             setup_open_app(Some(DimensionKind::Tsy), COFFIN_POS);
         let rng_before = app.world().resource::<SupplyCoffinRegistry>().rng_state;
 
         send_open(&mut app, player, target);
+        let messages = collect_chat_messages(&mut app, &mut helper);
 
         assert!(
             app.world().get::<ExternalContainer>(target).is_none(),
@@ -446,6 +480,12 @@ mod tests {
             app.world().resource::<SupplyCoffinRegistry>().rng_state,
             rng_before,
             "dimension rejection must happen before rolling loot or advancing RNG"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("[物资棺] 目标不在当前位面。")),
+            "dimension rejection must emit explicit player feedback; actual messages={messages:?}"
         );
     }
 
@@ -531,6 +571,26 @@ mod tests {
         assert!(
             outside.world().get::<ExternalContainer>(target).is_none(),
             "distance just beyond {boundary} must be rejected"
+        );
+    }
+
+    #[test]
+    fn open_authority_rejection_feedback_covers_every_failure_reason() {
+        assert_eq!(
+            open_authority_rejection_message(SupplyCoffinAuthorityFailure::MissingSource),
+            "§c[物资棺] 目标已失效。"
+        );
+        assert_eq!(
+            open_authority_rejection_message(SupplyCoffinAuthorityFailure::MissingPlayerDimension),
+            "§c[物资棺] 当前位面状态异常，无法打开。"
+        );
+        assert_eq!(
+            open_authority_rejection_message(SupplyCoffinAuthorityFailure::DimensionMismatch),
+            "§c[物资棺] 目标不在当前位面。"
+        );
+        assert_eq!(
+            open_authority_rejection_message(SupplyCoffinAuthorityFailure::OutOfRange),
+            "§c[物资棺] 离得太远。"
         );
     }
 
