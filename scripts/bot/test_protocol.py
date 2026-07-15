@@ -11,19 +11,23 @@ import ast
 import json
 import os
 import pathlib
+import re
 import socket
 import struct
 import sys
 import threading
+import time
+import tomllib
 import types
 import unittest
 import zlib
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import mc_protocol as mc  # noqa: E402
 from bot import proto_min  # noqa: E402
-from bot.bot import Bot, _signed_12, _signed_26  # noqa: E402
+from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     latest_inventory_snapshot,
@@ -32,10 +36,20 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_snapshot_after,
 )
 from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
+    NON_CLAMP_EXPECTED_QI,
     PILL_ID,
+    PILL_QI_RECOVERY,
+    SERVER_TICK_OBSERVATION_TICKS,
     _assert_settled_consumption,
+    _expected_qi_after_pill,
     _has_departed_baseline,
+    _is_qi_max_confirmation,
     _is_qi_set_confirmation,
+    _player_state_values,
+    _server_tick_from_event,
+    _set_qi_and_wait,
+    _set_qi_max_and_wait,
+    _snapshot_after_server_tick_fence,
 )
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
@@ -316,6 +330,26 @@ class _FakeBot:
         raise AssertionError(f"未找到 {description}; events={self.events}")
 
 
+class _CommandFakeBot(_FakeBot):
+    def __init__(self, events: list[_FakeEvent], pending: list[_FakeEvent]):
+        super().__init__(events)
+        self._lock = threading.Lock()
+        self.pending = list(pending)
+        self.commands: list[str] = []
+
+    def cmd(self, command: str) -> None:
+        self.commands.append(command)
+
+    def wait_for(self, predicate, timeout: float, description: str) -> _FakeEvent:
+        while True:
+            for event in self.events:
+                if predicate(event):
+                    return event
+            if not self.pending:
+                raise AssertionError(f"未找到 {description}; events={self.events}")
+            self.events.append(self.pending.pop(0))
+
+
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
     return _FakeEvent(
         t,
@@ -363,13 +397,17 @@ def _pill_snapshot_event(t: float, revision: int, count: int, qi: float) -> _Fak
     )
 
 
-def _player_state_event(t: float, qi: float) -> _FakeEvent:
+def _player_state_event(t: float, qi: float, qi_max: float = 100.0) -> _FakeEvent:
     return _FakeEvent(
         t,
         "server_data",
         {
             "payload_type": "player_state",
-            "payload": {"type": "player_state", "spirit_qi": qi},
+            "payload": {
+                "type": "player_state",
+                "spirit_qi": qi,
+                "spirit_qi_max": qi_max,
+            },
         },
     )
 
@@ -379,6 +417,8 @@ class CultivationPillScenarioTest(unittest.TestCase):
         good = _FakeEvent(2.0, "chat", {"text": "[dev] qi set 95.0 -> 5.0"})
         wrong_target = _FakeEvent(2.0, "chat", {"text": "[dev] qi set 5.0 -> 95.0"})
         misleading = _FakeEvent(2.0, "chat", {"text": "prefix [dev] qi set 5.0 -> 5.0"})
+        at_anchor = _FakeEvent(1.0, "chat", {"text": "[dev] qi set 95.0 -> 5.0"})
+        non_chat = _FakeEvent(2.0, "server_data", {"text": "[dev] qi set 95.0 -> 5.0"})
 
         self.assertTrue(
             _is_qi_set_confirmation(good, 1.0, 5.0),
@@ -392,29 +432,270 @@ class CultivationPillScenarioTest(unittest.TestCase):
             _is_qi_set_confirmation(misleading, 1.0, 5.0),
             "仅在正文中包含 qi set 片段的聊天不得被误认成确认",
         )
+        self.assertFalse(
+            _is_qi_set_confirmation(at_anchor, 1.0, 5.0),
+            "event.t == anchor 属于命令前水位，不得满足本次 qi set 确认",
+        )
+        self.assertFalse(
+            _is_qi_set_confirmation(non_chat, 1.0, 5.0),
+            "非 chat 事件即使正文相同也不得满足 qi set 确认",
+        )
 
     def test_authoritative_qi_wait_uses_command_anchor_not_chat_order(self):
-        source = pathlib.Path(
-            os.path.join(
-                os.path.dirname(__file__),
-                "scenarios",
-                "cultivation_pill_consume.py",
-            )
-        ).read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        function = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "_set_qi_and_wait"
+        authoritative = _player_state_event(1.1, 5.0)
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史事件"})],
+            [
+                authoritative,
+                _FakeEvent(1.2, "chat", {"text": "[dev] qi set 95.0 -> 5.0"}),
+            ],
         )
-        final_return = next(
-            node for node in reversed(function.body) if isinstance(node, ast.Return)
-        )
-        self.assertEqual(
-            ast.unparse(final_return.value),
-            "_wait_authoritative_qi(bot, anchor, value)",
+
+        result = _set_qi_and_wait(bot, 5.0)
+
+        self.assertIs(
+            result,
+            authoritative,
             "player_state 可能与 chat 同 tick 乱序，权威 qi 等待必须锚定发命令前水位线",
         )
+
+    def test_authoritative_qi_wait_rejects_stale_event_before_anchor(self):
+        bot = _CommandFakeBot(
+            [
+                _player_state_event(1.0, 5.0),
+                _FakeEvent(2.0, "chat", {"text": "历史水位"}),
+            ],
+            [_FakeEvent(2.1, "chat", {"text": "[dev] qi set 95.0 -> 5.0"})],
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "权威 player_state",
+            msg="anchor 前的目标 qi 快照不得满足命令后的权威状态等待",
+        ):
+            _set_qi_and_wait(bot, 5.0)
+
+    def test_qi_set_wait_rejects_wrong_confirmation_target(self):
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [_FakeEvent(1.1, "chat", {"text": "[dev] qi set 5.0 -> 95.0"})],
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "精确目标",
+            msg="错误目标的 chat 确认必须让 qi set 等待超时",
+        ):
+            _set_qi_and_wait(bot, 5.0)
+
+    def test_qi_set_wait_rejects_wrong_authoritative_value(self):
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [
+                _FakeEvent(1.1, "chat", {"text": "[dev] qi set 95.0 -> 5.0"}),
+                _player_state_event(1.2, 6.0),
+            ],
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "权威 player_state",
+            msg="确认 chat 正确但权威 qi 错误时必须超时",
+        ):
+            _set_qi_and_wait(bot, 5.0)
+
+    def test_qi_max_wait_consumes_authoritative_player_state(self):
+        authoritative = _player_state_event(1.1, 5.0, 80.0)
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [
+                authoritative,
+                _FakeEvent(
+                    1.2,
+                    "chat",
+                    {"text": "[dev] qi max 100.0 -> 80.0; current=5.0"},
+                ),
+            ],
+        )
+
+        result = _set_qi_max_and_wait(bot, 80.0)
+
+        self.assertIs(result, authoritative)
+        self.assertEqual(bot.commands, ["qi max 80.0"])
+        self.assertEqual(_player_state_values(result), (5.0, 80.0))
+
+    def test_qi_max_confirmation_is_anchored_to_exact_target(self):
+        good = _FakeEvent(
+            2.0,
+            "chat",
+            {"text": "[dev] qi max 100.0 -> 80.0; current=5.0"},
+        )
+        wrong = _FakeEvent(
+            2.0,
+            "chat",
+            {"text": "[dev] qi max 100.0 -> 90.0; current=5.0"},
+        )
+        self.assertTrue(_is_qi_max_confirmation(good, 1.0, 80.0))
+        self.assertFalse(_is_qi_max_confirmation(wrong, 1.0, 80.0))
+        self.assertFalse(_is_qi_max_confirmation(good, 2.0, 80.0))
+
+    def test_clamp_target_comes_from_authoritative_non_default_qi_max(self):
+        self.assertEqual(_expected_qi_after_pill(5.0, 80.0), 65.0)
+        self.assertEqual(
+            _expected_qi_after_pill(70.0, 80.0),
+            80.0,
+            "clamp 目标必须由权威 qi_max=80 推导，不能硬编码 100",
+        )
+
+    def test_settled_consumption_carries_non_default_qi_max_through_state_machine(self):
+        final = _assert_settled_consumption(
+            [
+                _pill_snapshot_event(1.05, 10, 3, 70.0),
+                _player_state_event(1.1, 70.0, 80.0),
+                _pill_snapshot_event(1.2, 11, 2, 80.0),
+                _player_state_event(1.3, 80.0, 80.0),
+                _player_state_event(1.4, 80.0, 80.0),
+            ],
+            before_revision=10,
+            before_count=3,
+            baseline_qi=70.0,
+            expected_qi=_expected_qi_after_pill(70.0, 80.0),
+            expected_qi_max=80.0,
+        )
+
+        self.assertEqual(final["revision"], 11)
+
+    def test_non_finite_authoritative_qi_fails_before_later_target(self):
+        for invalid in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                AssertionError,
+                "spirit_qi 必须是有限数",
+                msg="5 -> 非有限值 -> 65 不得静默跳过非法中间态",
+            ):
+                _assert_settled_consumption(
+                    [
+                        _pill_snapshot_event(1.1, 11, 2, 65.0),
+                        _player_state_event(1.15, 5.0),
+                        _player_state_event(1.2, invalid),
+                        _player_state_event(1.3, 65.0),
+                    ],
+                    before_revision=10,
+                    before_count=3,
+                    baseline_qi=5.0,
+                    expected_qi=65.0,
+                    expected_qi_max=100.0,
+                )
+
+    def test_missing_or_non_finite_authoritative_qi_max_fails(self):
+        invalid_values = (None, 0.0, float("nan"), float("inf"), float("-inf"))
+        for invalid in invalid_values:
+            event = _player_state_event(1.0, 5.0)
+            if invalid is None:
+                event.data["payload"].pop("spirit_qi_max")
+                message = "必须是数值"
+            else:
+                event.data["payload"]["spirit_qi_max"] = invalid
+                message = "必须是有限正数"
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                AssertionError, message
+            ):
+                _player_state_values(event)
+
+    def test_server_tick_fence_crosses_requested_tick_target_before_snapshot(self):
+        self.assertEqual(
+            SERVER_TICK_OBSERVATION_TICKS,
+            20,
+            "生产服丹观察窗口必须继续覆盖至少 20 个权威 server tick",
+        )
+        duplicate = _pill_snapshot_event(1.55, 12, 1, 65.0)
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [
+                _FakeEvent(1.1, "chat", {"text": "[dev] time now: 100"}),
+                _FakeEvent(1.2, "chat", {"text": "[dev] time now: 101"}),
+                _FakeEvent(1.3, "chat", {"text": "[dev] time now: 102"}),
+                _FakeEvent(1.4, "chat", {"text": "[dev] time now: 103"}),
+                _FakeEvent(1.5, "chat", {"text": "[dev] time now: 103"}),
+                duplicate,
+                _FakeEvent(1.6, "chat", {"text": "[dev] time now: 104"}),
+            ],
+        )
+
+        snapshot = _snapshot_after_server_tick_fence(
+            bot, minimum_ticks=2, timeout=1.0
+        )
+
+        self.assertIn(
+            duplicate,
+            snapshot,
+            "首个 drain chat 后、第二个 drain marker 前的重复帧必须进入快照",
+        )
+        self.assertEqual(
+            bot.commands,
+            ["time now"] * 6,
+            "100 起点 +2 后先跨到 103，再做两次 round-trip 才覆盖 post-emit 帧",
+        )
+
+    def test_server_tick_fence_rejects_malformed_or_rollback_tick(self):
+        malformed = _FakeEvent(2.0, "chat", {"text": "[dev] time now: 12x"})
+        with self.assertRaisesRegex(AssertionError, "十进制 tick"):
+            _server_tick_from_event(malformed, 1.0)
+
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [
+                _FakeEvent(1.1, "chat", {"text": "[dev] time now: 100"}),
+                _FakeEvent(1.2, "chat", {"text": "[dev] time now: 99"}),
+            ],
+        )
+        with self.assertRaisesRegex(AssertionError, "不得回退"):
+            _snapshot_after_server_tick_fence(bot, minimum_ticks=1, timeout=1.0)
+
+    def test_server_tick_fence_rejects_invalid_bounds_and_deadlines(self):
+        bot = _CommandFakeBot([], [])
+        with self.assertRaisesRegex(ValueError, "minimum_ticks"):
+            _snapshot_after_server_tick_fence(bot, minimum_ticks=0, timeout=1.0)
+        with self.assertRaisesRegex(ValueError, "timeout"):
+            _snapshot_after_server_tick_fence(bot, minimum_ticks=1, timeout=0.0)
+
+        main_timeout_bot = _CommandFakeBot(
+            [],
+            [_FakeEvent(1.0, "chat", {"text": "[dev] time now: 100"})],
+        )
+        with mock.patch(
+            "bot.scenarios.cultivation_pill_consume.time.monotonic",
+            side_effect=[0.0, 2.0],
+        ), self.assertRaisesRegex(BotAssertionError, "推进至少"):
+            _snapshot_after_server_tick_fence(
+                main_timeout_bot, minimum_ticks=1, timeout=1.0
+            )
+
+        drain_timeout_bot = _CommandFakeBot(
+            [],
+            [
+                _FakeEvent(1.0, "chat", {"text": "[dev] time now: 100"}),
+                _FakeEvent(1.1, "chat", {"text": "[dev] time now: 102"}),
+            ],
+        )
+        with mock.patch(
+            "bot.scenarios.cultivation_pill_consume.time.monotonic",
+            side_effect=[0.0, 0.1, 2.0],
+        ), self.assertRaisesRegex(BotAssertionError, "post-emit drain"):
+            _snapshot_after_server_tick_fence(
+                drain_timeout_bot, minimum_ticks=1, timeout=1.0
+            )
+
+    def test_server_tick_fence_rejects_rollback_during_post_emit_drain(self):
+        bot = _CommandFakeBot(
+            [],
+            [
+                _FakeEvent(1.0, "chat", {"text": "[dev] time now: 100"}),
+                _FakeEvent(1.1, "chat", {"text": "[dev] time now: 102"}),
+                _FakeEvent(1.2, "chat", {"text": "[dev] time now: 101"}),
+            ],
+        )
+        with self.assertRaisesRegex(AssertionError, "不得回退"):
+            _snapshot_after_server_tick_fence(bot, minimum_ticks=1, timeout=1.0)
 
     def test_stale_same_tick_baseline_is_not_new_authoritative_value(self):
         self.assertFalse(
@@ -423,10 +704,27 @@ class CultivationPillScenarioTest(unittest.TestCase):
         )
         self.assertTrue(
             _has_departed_baseline(65.0, 5.0, 65.0),
-            "真实恢复到 65 应越过基线变化屏障",
+            "真实恢复到 65 应离开旧基线",
+        )
+        self.assertTrue(
+            _has_departed_baseline(20.0, 5.0, 65.0),
+            "任何非基线权威值都必须进入校验，不能用中点过滤错误中间态",
+        )
+        self.assertFalse(
+            _has_departed_baseline(65.0, 65.0, 5.0),
+            "下降目标下旧基线 65 不得被当作新值",
+        )
+        self.assertTrue(
+            _has_departed_baseline(5.0, 65.0, 5.0),
+            "下降目标真实到达 5 时应越过变化屏障",
+        )
+        self.assertFalse(
+            _has_departed_baseline(5.0, 5.0, 5.0),
+            "目标等于基线时没有可观察状态转换，不得伪称已离开基线",
         )
         final = _assert_settled_consumption(
             [
+                _pill_snapshot_event(1.05, 10, 3, 5.0),
                 _player_state_event(1.1, 5.0),
                 _pill_snapshot_event(1.2, 11, 2, 65.0),
                 _player_state_event(1.3, 65.0),
@@ -436,14 +734,39 @@ class CultivationPillScenarioTest(unittest.TestCase):
             before_count=3,
             baseline_qi=5.0,
             expected_qi=65.0,
+            expected_qi_max=100.0,
         )
         self.assertEqual(
             final["revision"], 11,
             "正常一次消费应只把 inventory revision 从 10 推进到 11",
         )
 
+    def test_huiyuan_asset_pins_expected_qi_recovery(self):
+        asset = pathlib.Path(__file__).parents[2] / "server/assets/items/pills.toml"
+        items = tomllib.loads(asset.read_text(encoding="utf-8"))["item"]
+        huiyuan = next(item for item in items if item["id"] == PILL_ID)
+        self.assertEqual(
+            huiyuan["effect"]["kind"],
+            "qi_recovery",
+            f"{PILL_ID} 必须继续走 qi_recovery，实际 effect={huiyuan['effect']}",
+        )
+        self.assertEqual(
+            float(huiyuan["effect"]["magnitude"]), PILL_QI_RECOVERY,
+            f"场景药效推导常量应为 {PILL_QI_RECOVERY}，"
+            f"实际 asset effect={huiyuan['effect']}",
+        )
+        self.assertEqual(
+            _expected_qi_after_pill(5.0, 100.0),
+            NON_CLAMP_EXPECTED_QI,
+            f"qi=5、权威 qi_max=100 时应推导 {NON_CLAMP_EXPECTED_QI}",
+        )
+
     def test_repeated_qi_effect_fails_settle_window(self):
-        with self.assertRaises(AssertionError):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "权威 player_state 应持续稳定",
+            msg="第二次真元生效必须命中权威状态稳定性断言",
+        ):
             _assert_settled_consumption(
                 [
                     _pill_snapshot_event(1.1, 11, 2, 65.0),
@@ -454,10 +777,15 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_repeated_inventory_decrement_fails_settle_window(self):
-        with self.assertRaises(AssertionError):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版 inventory revision 必须保持",
+            msg="第二次扣存推进 revision 必须命中逐帧 revision 断言",
+        ):
             _assert_settled_consumption(
                 [
                     _pill_snapshot_event(1.1, 11, 2, 65.0),
@@ -468,11 +796,90 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
+            )
+
+    def test_repeated_decrement_then_surface_rollback_still_fails(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版 inventory revision 必须保持",
+            msg="11/2 -> 12/1 -> 11/2 的表面正确终态仍必须失败",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 12, 1, 65.0),
+                    _pill_snapshot_event(1.4, 11, 2, 65.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+                expected_qi_max=100.0,
+            )
+
+    def test_consumed_snapshot_rollback_to_old_state_fails(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版 inventory revision 必须保持",
+            msg="消费后回滚到旧 revision/count 必须失败",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 10, 3, 5.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+                expected_qi_max=100.0,
+            )
+
+    def test_same_revision_count_change_fails(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版丹药数量必须保持",
+            msg="revision 未变但丹药再次减少也必须失败",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 11, 1, 65.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+                expected_qi_max=100.0,
+            )
+
+    def test_inventory_qi_regression_fails(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "消费后每版 inventory qi 必须保持",
+            msg="库存快照 qi 回滚必须命中逐帧 qi 断言",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.2, 65.0),
+                    _pill_snapshot_event(1.3, 11, 2, 5.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_authoritative_qi_regression_after_effect_fails_settle_window(self):
-        with self.assertRaises(
+        with self.assertRaisesRegex(
             AssertionError,
+            "权威 player_state 应持续稳定",
             msg="权威真元先恢复到 65 又回落到旧基线时必须失败",
         ):
             _assert_settled_consumption(
@@ -486,6 +893,27 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
+            )
+
+    def test_wrong_authoritative_qi_before_target_fails_settle_window(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "错误中间态",
+            msg="5 -> 20 -> 65 中的 20 是消费后的错误权威态，不得被中点过滤",
+        ):
+            _assert_settled_consumption(
+                [
+                    _pill_snapshot_event(1.1, 11, 2, 65.0),
+                    _player_state_event(1.15, 5.0),
+                    _player_state_event(1.2, 20.0),
+                    _player_state_event(1.3, 65.0),
+                ],
+                before_revision=10,
+                before_count=3,
+                baseline_qi=5.0,
+                expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
 
@@ -785,6 +1213,8 @@ def _bare_bot() -> Bot:
     bot.entities = {}
     bot._lock = _threading.RLock()
     bot._new_event = _threading.Condition(bot._lock)
+    bot._send_lock = _threading.Lock()
+    bot._closing = False
     bot.position = None
     bot.health = None
     bot.entity_id = None
@@ -881,6 +1311,34 @@ def _pb_int32_field(number: int, value: int) -> bytes:
     return mc.write_varint(number << 3) + _pb_raw_varint(value & 0xFFFFFFFFFFFFFFFF)
 
 
+def _proto_message_body(source: str, message_name: str) -> str:
+    match = re.search(rf"\bmessage\s+{re.escape(message_name)}\s*\{{", source)
+    if match is None:
+        raise AssertionError(f"authoritative proto missing message {message_name}")
+    start = match.end() - 1
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start + 1 : index]
+    raise AssertionError(f"authoritative proto message {message_name} has no closing brace")
+
+
+def _proto_field_signature(message_body: str, field_name: str) -> tuple[str, int]:
+    match = re.search(
+        rf"^\s*(?:optional\s+|repeated\s+)?([A-Za-z_][\w.]*)\s+"
+        rf"{re.escape(field_name)}\s*=\s*(\d+)\s*;",
+        message_body,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"authoritative proto missing field {field_name}")
+    return match.group(1), int(match.group(2))
+
+
 class ProdConsumeDecodeTest(unittest.TestCase):
     """三产三用 payload 解码 pin：envelope oneof tag 与字段号对齐 proto/bong/envelope.proto.
 
@@ -888,12 +1346,103 @@ class ProdConsumeDecodeTest(unittest.TestCase):
     tag 或字段号漂移会让场景从「锁契约」退化成「永远超时」。
     """
 
+    def test_player_state_decoder_constants_match_authoritative_proto(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        envelope = _proto_message_body(source, "ServerDataEnvelope")
+        player_state = _proto_message_body(source, "PlayerState")
+
+        self.assertEqual(
+            _proto_field_signature(envelope, "player_state"),
+            ("PlayerState", proto_min.SERVER_DATA_PLAYER_STATE_FIELD),
+            "Bot envelope 分发常量必须与权威 ServerDataEnvelope.player_state 对齐",
+        )
+        self.assertEqual(
+            _proto_field_signature(player_state, "spirit_qi"),
+            ("double", proto_min.PLAYER_STATE_SPIRIT_QI_FIELD),
+            "Bot spirit_qi 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
+        )
+        self.assertEqual(
+            _proto_field_signature(player_state, "spirit_qi_max"),
+            ("double", proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD),
+            "Bot spirit_qi_max 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
+        )
+
     def test_player_state_tag5_decodes_authoritative_qi(self):
-        msg = _pb_fixed64(3, 65.0) + _pb_fixed64(11, 100.0)
-        decoded = proto_min.decode_server_data_envelope(_pb_message(5, msg))
-        self.assertEqual(decoded["type"], "player_state")
-        self.assertEqual(decoded["spirit_qi"], 65.0)
-        self.assertEqual(decoded["spirit_qi_max"], 100.0)
+        msg = _pb_fixed64(
+            proto_min.PLAYER_STATE_SPIRIT_QI_FIELD, 65.0
+        ) + _pb_fixed64(proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD, 100.0)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+        )
+        self.assertIsNotNone(
+            decoded,
+            "envelope tag 5 必须解码为 player_state，实际返回 None",
+        )
+        self.assertEqual(
+            decoded["type"],
+            "player_state",
+            f"envelope tag 5 应分发到 player_state，实际 payload={decoded}",
+        )
+        self.assertEqual(
+            decoded["spirit_qi"],
+            65.0,
+            f"PlayerState.spirit_qi 必须读取 fixed64 field 3，实际 payload={decoded}",
+        )
+        self.assertEqual(
+            decoded["spirit_qi_max"],
+            100.0,
+            f"PlayerState.spirit_qi_max 必须读取 fixed64 field 11，实际 payload={decoded}",
+        )
+
+    def test_player_state_missing_qi_fields_use_protobuf_zero_defaults(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, b"")
+        )
+        self.assertIsNotNone(
+            decoded,
+            "空 player_state message 仍是合法 protobuf，实际返回 None",
+        )
+        self.assertEqual(
+            decoded["spirit_qi"],
+            0.0,
+            f"缺失 fixed64 field 3 应使用 protobuf 默认 0，实际 payload={decoded}",
+        )
+        self.assertEqual(
+            decoded["spirit_qi_max"],
+            0.0,
+            f"缺失 fixed64 field 11 应使用 protobuf 默认 0，实际 payload={decoded}",
+        )
+
+    def test_player_state_wrong_qi_wire_type_is_ignored(self):
+        msg = _pb_varint_field(
+            proto_min.PLAYER_STATE_SPIRIT_QI_FIELD, 65
+        ) + _pb_varint_field(proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD, 100)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+        )
+        self.assertIsNotNone(
+            decoded,
+            "wire type 错误的 player_state envelope 仍应被识别，实际返回 None",
+        )
+        self.assertEqual(
+            (decoded["spirit_qi"], decoded["spirit_qi_max"]),
+            (0.0, 0.0),
+            f"field 3/11 的 varint 不得冒充 fixed64，实际 payload={decoded}",
+        )
+
+    def test_player_state_truncated_fixed64_is_rejected(self):
+        truncated = mc.write_varint(
+            (proto_min.PLAYER_STATE_SPIRIT_QI_FIELD << 3) | 1
+        ) + b"\x00" * 7
+        with self.assertRaisesRegex(
+            proto_min.ProtoDecodeError,
+            "truncated fixed64",
+            msg="PlayerState fixed64 field 3 截断时必须报协议错误",
+        ):
+            proto_min.decode_server_data_envelope(
+                _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, truncated)
+            )
 
     def test_craft_session_state_tag22(self):
         msg = (

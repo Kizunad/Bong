@@ -14,6 +14,10 @@ import struct
 from dataclasses import dataclass
 from typing import Any
 
+SERVER_DATA_PLAYER_STATE_FIELD = 5
+PLAYER_STATE_SPIRIT_QI_FIELD = 3
+PLAYER_STATE_SPIRIT_QI_MAX_FIELD = 11
+
 
 class ProtoDecodeError(ValueError):
     pass
@@ -24,7 +28,7 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
     for field, wire, value in fields:
         if wire != 2:
             continue
-        if field == 5:
+        if field == SERVER_DATA_PLAYER_STATE_FIELD:
             return _player_state(value)
         if field == 8:
             return _inventory_snapshot(value)
@@ -70,8 +74,8 @@ def _player_state(data: bytes) -> dict[str, Any]:
     return {
         "v": 1,
         "type": "player_state",
-        "spirit_qi": _double(fields, 3),
-        "spirit_qi_max": _double(fields, 11),
+        "spirit_qi": _double(fields, PLAYER_STATE_SPIRIT_QI_FIELD),
+        "spirit_qi_max": _double(fields, PLAYER_STATE_SPIRIT_QI_MAX_FIELD),
     }
 
 

@@ -82,14 +82,23 @@ echo "run_dir: $RUN_DIR"
 echo "log_file: $LOG_FILE"
 
 echo ""
+CURRENT_STAGE="dev-reload-detach"
+echo "=== [$TASK_ID][$SCRIPT_TAG][0/6] Dev reload detach regression ==="
+if bash "$ROOT/scripts/test-dev-reload-disown.sh"; then
+  pass "dev-reload detached process lifecycle"
+else
+  finalize_failure "dev-reload-detach" "dev-reload detach regression failed"
+fi
+
+echo ""
 CURRENT_STAGE="pre-cleanup"
-echo "=== [$TASK_ID][$SCRIPT_TAG][0/5] Pre-cleanup ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][1/6] Pre-cleanup ==="
 bash "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
 pass "pre-cleanup complete"
 
 echo ""
 CURRENT_STAGE="schema"
-echo "=== [$TASK_ID][$SCRIPT_TAG][1/5] Schema staged smoke ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][2/6] Schema staged smoke ==="
 if (
   cd "$ROOT/agent/packages/schema" && \
     PATH="$NODE_BIN:$PATH" npm run check && \
@@ -105,7 +114,7 @@ fi
 
 echo ""
 CURRENT_STAGE="agent"
-echo "=== [$TASK_ID][$SCRIPT_TAG][2/5] Agent staged smoke ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][3/6] Agent staged smoke ==="
 if (
   cd "$ROOT/agent/packages/tiandao" && \
     PATH="$NODE_BIN:$PATH" npm run check && \
@@ -119,7 +128,7 @@ fi
 
 echo ""
 CURRENT_STAGE="server"
-echo "=== [$TASK_ID][$SCRIPT_TAG][3/5] Server staged smoke ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][4/6] Server staged smoke ==="
 if (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
@@ -133,7 +142,7 @@ fi
 
 echo ""
 CURRENT_STAGE="e2e"
-echo "=== [$TASK_ID][$SCRIPT_TAG][4/5] Redis e2e closure ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][5/6] Redis e2e closure ==="
 if bash "$ROOT/scripts/e2e-redis.sh" >"$E2E_LOG" 2>&1; then
   pass "e2e redis harness"
 else
