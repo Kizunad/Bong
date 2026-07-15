@@ -23,17 +23,21 @@ public enum ScreenHudVisibility {
 
     public static ScreenHudVisibility forScreen(Screen screen) {
         if (screen == null) return FULL;
-        if (screen instanceof DeathScreen) return HIDDEN;
-        if (screen instanceof GameMenuScreen) return HIDDEN;
-        if (screen instanceof AgentUiScreen) return AGENT_UI_ONLY;
-        String clsName = screen.getClass().getName();
+        return forScreenClass(screen.getClass());
+    }
+
+    static ScreenHudVisibility forScreenClass(Class<? extends Screen> screenClass) {
+        if (DeathScreen.class.isAssignableFrom(screenClass)) return HIDDEN;
+        if (GameMenuScreen.class.isAssignableFrom(screenClass)) return HIDDEN;
+        if (AgentUiScreen.class.isAssignableFrom(screenClass)) return AGENT_UI_ONLY;
+        String clsName = screenClass.getName();
         if (clsName.equals("com.bong.client.inventory.InspectScreen")
             || clsName.equals("com.bong.client.ui.CultivationScreen")
             || clsName.equals("com.bong.client.ui.DynamicXmlScreen")
             || clsName.equals("com.bong.client.insight.InsightOfferScreen")) {
             return CAST_BAR_ONLY;
         }
-        if (screen instanceof HandledScreen<?>) {
+        if (HandledScreen.class.isAssignableFrom(screenClass)) {
             return INVENTORY_DIMMED;
         }
         return HIDDEN;
