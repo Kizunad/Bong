@@ -154,6 +154,46 @@ class AnqiHudStateStoreTest {
             "所有维度过期后 chargeProgress 应为 0；实际=" + state.chargeProgress());
     }
 
+    @Test
+    void expiredHighTicksStillRejectLowerTicksUntilExplicitSessionClear() {
+        long shortDuration = 10L;
+        long oldSessionTick = 72_000L;
+        long newSessionTick = 10L;
+        long newSessionNow = BASE_NOW + shortDuration + 1L;
+
+        AnqiHudStateStore.updateEcho(8, BASE_NOW, shortDuration, oldSessionTick);
+        AnqiHudStateStore.updateCharge(0.8f, BASE_NOW, shortDuration, oldSessionTick);
+        AnqiHudStateStore.updateAbrasion(
+            "quiver", 80.0f, BASE_NOW, shortDuration, oldSessionTick);
+        AnqiHudStateStore.updateMultiShot(8, BASE_NOW, shortDuration, oldSessionTick);
+
+        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(newSessionNow),
+            "TTL 过期只应隐藏旧反馈，不应伪装成仍活跃的 HUD");
+
+        AnqiHudStateStore.updateEcho(2, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateCharge(0.2f, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateAbrasion(
+            "hand_slot", 20.0f, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateMultiShot(2, newSessionNow, DUR, newSessionTick);
+
+        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(newSessionNow),
+            "同一 session 未 clear 时，过期 slot 的高 lastTick 仍必须拒绝低 tick 乱序包");
+
+        AnqiHudStateStore.clear();
+        AnqiHudStateStore.updateEcho(2, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateCharge(0.2f, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateAbrasion(
+            "hand_slot", 20.0f, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateMultiShot(2, newSessionNow, DUR, newSessionTick);
+
+        AnqiHudState newSessionState = AnqiHudStateStore.snapshot(newSessionNow);
+        assertEquals(2, newSessionState.echoCount());
+        assertEquals(0.2f, newSessionState.chargeProgress(), 0.001f);
+        assertEquals("hand_slot", newSessionState.abrasionContainer());
+        assertEquals(20.0f, newSessionState.abrasionQiPayload(), 0.001f);
+        assertEquals(2, newSessionState.multiShotCount());
+    }
+
     // ─── clear 重置 ───────────────────────────────────────────────────
 
     @Test

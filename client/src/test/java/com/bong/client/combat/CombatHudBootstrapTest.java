@@ -2,7 +2,13 @@ package com.bong.client.combat;
 
 import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.AnqiHudState;
+import com.bong.client.hud.AnqiHudStateStore;
+import com.bong.client.combat.handler.AnqiHudServerDataHandler;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.network.ServerDataDispatch;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
 import com.bong.client.social.SparringInviteScreenBootstrap;
 import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.VisualEffectState;
@@ -31,6 +37,7 @@ class CombatHudBootstrapTest {
         CastStateStore.resetForTests();
         DefenseWindowStore.resetForTests();
         QuickUseSlotStore.resetForTests();
+        AnqiHudStateStore.clear();
         ClientRequestSender.setBackendForTests(
             (channel, payload) -> sentPayloads.add(new String(payload, StandardCharsets.UTF_8)));
     }
@@ -41,6 +48,7 @@ class CombatHudBootstrapTest {
         HudImmersionMode.resetForTests();
         DefenseWindowStore.resetForTests();
         QuickUseSlotStore.resetForTests();
+        AnqiHudStateStore.clear();
         SocialStateStore.resetForTests();
         SparringInviteScreenBootstrap.clearOnDisconnect();
         BongToast.resetForTests();
@@ -92,6 +100,59 @@ class CombatHudBootstrapTest {
             HudImmersionMode.Mode.PEACE,
             HudImmersionMode.resolve(CombatHudState.empty(), VisualEffectState.none(), 1_500L)
         );
+    }
+
+    @Test
+    void resetOnDisconnectOpensNewTickEpochForAllProducedAnqiHudDimensions() {
+        long now = System.currentTimeMillis();
+        long oldSessionTick = 72_000L;
+        long newSessionTick = 10L;
+
+        AnqiHudStateStore.updateEcho(8, now, 2_000L, oldSessionTick);
+        AnqiHudStateStore.updateCharge(0.8f, now, 2_000L, oldSessionTick);
+        AnqiHudStateStore.updateAbrasion("quiver", 80.0f, now, 2_000L, oldSessionTick);
+        AnqiHudStateStore.updateMultiShot(8, now, 2_000L, oldSessionTick);
+
+        CombatHudBootstrap.resetOnDisconnect();
+
+        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(now),
+            "生产断线 reset 必须先清空旧 session 的暗器 HUD 快照");
+
+        AnqiHudStateStore.updateEcho(2, now, 2_000L, newSessionTick);
+        AnqiHudStateStore.updateCharge(0.2f, now, 2_000L, newSessionTick);
+        AnqiHudStateStore.updateAbrasion("hand_slot", 20.0f, now, 2_000L, newSessionTick);
+        AnqiHudStateStore.updateMultiShot(2, now, 2_000L, newSessionTick);
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(now);
+        assertEquals(2, state.echoCount(), "新 session 的低 tick echo 必须被接受");
+        assertEquals(0.2f, state.chargeProgress(), 0.001f,
+            "新 session 的低 tick charge 必须被接受");
+        assertEquals("hand_slot", state.abrasionContainer(),
+            "新 session 的低 tick abrasion 必须被接受");
+        assertEquals(20.0f, state.abrasionQiPayload(), 0.001f);
+        assertEquals(2, state.multiShotCount(),
+            "新 session 的低 tick multishot 必须被接受");
+    }
+
+    @Test
+    void resetOnDisconnectLetsRealHandlerAcceptLowerTickFromNewSession() {
+        long now = System.currentTimeMillis();
+        AnqiHudStateStore.updateEcho(9, now, 2_000L, 72_000L);
+
+        CombatHudBootstrap.resetOnDisconnect();
+
+        String payload = "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\","
+            + "\"echo_count\":3,\"aim_progress\":0.0,\"charge_progress\":0.0,"
+            + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}";
+        ServerPayloadParseResult parsed = ServerDataEnvelope.parse(
+            payload, payload.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(parsed.isSuccess(), "测试 payload 必须先通过真实 envelope parser");
+
+        ServerDataDispatch dispatch = new AnqiHudServerDataHandler().handle(parsed.envelope());
+
+        assertTrue(dispatch.handled(), "新 session 的低 tick anqi_hud 应被真实 handler 消费");
+        assertEquals(3, AnqiHudStateStore.snapshot().echoCount(),
+            "disconnect reset 后 handler 不得把新 session 低 tick 当成旧包静默丢弃");
     }
 
     @Test
