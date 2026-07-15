@@ -85,7 +85,7 @@
 - [x] P0（✅ 2026-07-15）：先补修复前应失败的契约测试：schema 要求显式 `ts`；fallback 与有效 annotation 都保留原消息时间；LLM 伪造时间不能覆盖；301 秒旧信号从 merge 和 prompt 中消失。
 - [x] P1（✅ 2026-07-15）：在 `ChatSignal` TypeBox schema 增加必填 `ts`，重生成 `generated/chat-signal.json`；在 `processChatBatch()` 的 fallback / candidate 从 `msg.ts` 注入，并让 `isRecentSignal()` 直接读取显式字段。
 - [x] P2（✅ 2026-07-15）：补齐所有 `ChatSignal` fixture 的权威测试时间，运行 schema build/test/generate check、tiandao test 与 agent workspace build。
-- [x] P3（✅ 2026-07-15）：fetch 后按 merge-base 同步最新 `origin/main`；HEAD `e7ad238e` 已包含 `origin/main` `6f1faea5`，无需合并；主 agent 逐入口对抗自审通过后填写 Finish Evidence 并归档。
+- [x] P3（✅ 2026-07-15）：fetch 后按 merge-base 同步最新 `origin/main`；归档前实现验收基线 `e7ad238e` 已包含 `origin/main` `6f1faea5`，无需合并，并通过完整门禁与主 agent 逐入口对抗自审。其后的提交仅回填或移动本 plan 文档，不触及业务代码、schema、生成物或测试；归档后的最终 PR HEAD 由 PR body 与 GitHub checks 外部绑定，避免提交内容自引用自身 SHA。
 
 ## 验收矩阵
 
@@ -131,7 +131,7 @@
 - P0：`agent/packages/schema/tests/chat-message.test.ts`、`agent/packages/tiandao/tests/chat-processor.test.ts` 与 `agent/packages/tiandao/tests/agent-real-context-injection.test.ts` 先锁定 schema、转换、窗口边界和真实 LLM prompt 的修复前失败契约。
 - P1：`agent/packages/schema/src/chat-message.ts` 为 `ChatMessageV1.ts` 与 `ChatSignal.ts` 固定非负整数契约；`agent/packages/tiandao/src/chat-processor.ts` 从原始消息注入权威时间，并移除 `mentions_mechanic` 隐式时间解析。
 - P2：`agent/packages/schema/generated/chat-message-v1.json` 与 `agent/packages/schema/generated/chat-signal.json` 已重生成；tiandao context/runtime fixtures 均补齐与测试时钟一致的显式时间。
-- P3：全仓扫描确认 `ChatSignal` 只在 schema/tiandao 内消费，server wire 已提供 `ChatMessageV1.ts`，client 不消费该内部信号；主线无需合并，主 agent 对抗自审结论为 `PASS e7ad238e1930df8a356a6e8f1ae1718b6f7cb796`。
+- P3：全仓扫描确认 `ChatSignal` 只在 schema/tiandao 内消费，server wire 已提供 `ChatMessageV1.ts`，client 不消费该内部信号；主线无需合并。归档前实现验收基线的主 agent 对抗自审结论为 `PASS e7ad238e1930df8a356a6e8f1ae1718b6f7cb796`；`e7ad238e..ea9849ba` 仅包含 Finish Evidence 回填和 plan 归档移动，未改变受测实现。归档后最终 PR HEAD 的绑定结论记录在 PR body、`/review` 与 e2e check，不在提交自身内容中伪造可变 SHA。
 
 ### 关键 commit
 
@@ -139,6 +139,8 @@
 - `d87323cd`（2026-07-15）：收紧聊天时间戳 schema 契约。
 - `bf4c795f`（2026-07-15）：修复聊天信号过期窗口。
 - `e7ad238e`（2026-07-15）：补齐聊天时效上下文回归。
+- `345e68e8`（2026-07-15）：回填完整门禁与实现基线 Finish Evidence。
+- `ea9849ba`（2026-07-15）：将已完成 plan 移入 `docs/finished_plans/`。
 
 ### 测试结果
 
@@ -157,4 +159,4 @@
 ### 遗留 / 后续
 
 - 无代码遗留或阻塞标记；未来时间戳校准与跨进程聊天持久化仍按本 plan 非目标保持独立。
-- 按用户“仅主 agent”要求，本轮未启动独立 validator；由同一 `gpt-5.1` 主 agent 对干净 HEAD 执行绑定 SHA 的三轮对抗自审，PR 后续仍接受 `/review`、CodeRabbit 与 e2e 独立门禁。
+- 按用户“仅主 agent”要求，本轮未启动独立 validator；由同一 `gpt-5.1` 主 agent 对干净的归档前实现验收基线 `e7ad238e` 执行绑定 SHA 的三轮对抗自审。归档与审计文案提交后的最终 PR HEAD 无法稳定写入其自身内容，统一由 PR body、`/review`、CodeRabbit 与 e2e 独立门禁绑定。
