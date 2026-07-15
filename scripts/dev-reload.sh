@@ -45,6 +45,28 @@ background_process_is_running() {
     [[ "$state" != Z* ]]
 }
 
+terminate_background_process() {
+    local pid="${1:-}"
+    local attempt
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+    if background_process_is_running "$pid"; then
+        kill "$pid" 2>/dev/null || true
+        for ((attempt = 0; attempt < 300; attempt++)); do
+            background_process_is_running "$pid" || break
+            sleep 0.01 || break
+        done
+    fi
+    if background_process_is_running "$pid"; then
+        kill -KILL "$pid" 2>/dev/null || true
+        for ((attempt = 0; attempt < 300; attempt++)); do
+            background_process_is_running "$pid" || break
+            sleep 0.01 || break
+        done
+    fi
+    wait "$pid" 2>/dev/null || true
+}
+
 launch_detached_job() {
     local pid
 
@@ -83,7 +105,10 @@ run_bong_server() {
         env_args=("${ENV_ARGS[@]}")
     fi
 
-    cd "$workdir"
+    if ! cd -- "$workdir"; then
+        echo "FAIL: could not enter bong server workdir: $workdir" >&2
+        return 1
+    fi
     exec env "${env_args[@]}" "$executable" > "$log_path" 2>&1
 }
 
@@ -91,11 +116,23 @@ launch_bong_server() {
     local startup_grace="${BONG_SERVER_STARTUP_GRACE_SECONDS:-2}"
 
     SERVER_PID=""
+    DETACHED_PID=""
+    if [[ ! "$startup_grace" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]; then
+        echo "FAIL: BONG_SERVER_STARTUP_GRACE_SECONDS must be a non-negative number: $startup_grace" >&2
+        return 1
+    fi
     launch_detached_job run_bong_server || return 1
     SERVER_PID="$DETACHED_PID"
-    sleep "$startup_grace"
+    if ! sleep "$startup_grace"; then
+        echo "FAIL: bong server startup grace wait failed: $startup_grace" >&2
+        terminate_background_process "$SERVER_PID"
+        SERVER_PID=""
+        DETACHED_PID=""
+        return 1
+    fi
     if ! background_process_is_running "$SERVER_PID"; then
         echo "FAIL: bong server process $SERVER_PID exited during ${startup_grace}s startup grace; check ${BONG_SERVER_LOG:-/tmp/bong-server.log}" >&2
+        terminate_background_process "$SERVER_PID"
         SERVER_PID=""
         DETACHED_PID=""
         return 1

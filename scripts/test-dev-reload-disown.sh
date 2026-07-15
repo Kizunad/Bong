@@ -86,6 +86,9 @@ wait_for_process_command() {
 cat > "$STUB_SCRIPT" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ -n "${STUB_PID_FILE:-}" ]; then
+    printf '%s\n' "$$" > "$STUB_PID_FILE"
+fi
 printf 'ready\n' > "$READY_FILE"
 exec sleep 30
 STUB
@@ -305,4 +308,87 @@ grep -Eq "is not running in this shell|exited during launch|exited during .* sta
 [ -z "$SERVER_PID" ] || fail "failed production launch left SERVER_PID=$SERVER_PID"
 [ -z "$DETACHED_PID" ] || fail "failed production launch left DETACHED_PID=$DETACHED_PID"
 
-echo "PASS: production launch path survived SIGHUP; invalid and completed jobs were rejected"
+BAD_WORKDIR_LOG="$TEST_ROOT/bad-workdir.err"
+BAD_WORKDIR_READY="$TEST_ROOT/bad-workdir.ready"
+READY_FILE="$BAD_WORKDIR_READY"
+STUB_PID_FILE=""
+BONG_SERVER_WORKDIR="$TEST_ROOT/does-not-exist"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+BONG_SERVER_LOG="$TEST_ROOT/bad-workdir.log"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
+if launch_bong_server 2> "$BAD_WORKDIR_LOG"; then
+    fail "production server launch accepted a missing workdir"
+fi
+grep -Fq "could not enter bong server workdir" "$BAD_WORKDIR_LOG" \
+    || fail "missing workdir rejection did not include its diagnostic"
+[ ! -e "$BAD_WORKDIR_READY" ] \
+    || fail "missing workdir still executed the absolute server stub"
+[ -z "$SERVER_PID" ] || fail "missing workdir left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "missing workdir left DETACHED_PID=$DETACHED_PID"
+
+invalid_grace_case=0
+for invalid_grace in not-a-duration -1; do
+    ((invalid_grace_case += 1))
+    INVALID_GRACE_LOG="$TEST_ROOT/invalid-grace-$invalid_grace_case.err"
+    INVALID_GRACE_READY="$TEST_ROOT/invalid-grace-$invalid_grace_case.ready"
+    READY_FILE="$INVALID_GRACE_READY"
+    BONG_SERVER_WORKDIR="$TEST_ROOT"
+    BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+    BONG_SERVER_LOG="$TEST_ROOT/invalid-grace-$invalid_grace_case.log"
+    BONG_SERVER_STARTUP_GRACE_SECONDS="$invalid_grace"
+    if launch_bong_server 2> "$INVALID_GRACE_LOG"; then
+        fail "production server launch accepted invalid startup grace $invalid_grace"
+    fi
+    grep -Fq "BONG_SERVER_STARTUP_GRACE_SECONDS must be a non-negative number" "$INVALID_GRACE_LOG" \
+        || fail "invalid startup grace $invalid_grace rejection lacked its diagnostic"
+    [ ! -e "$INVALID_GRACE_READY" ] \
+        || fail "invalid startup grace $invalid_grace started the server before validation"
+    [ -z "$SERVER_PID" ] \
+        || fail "invalid startup grace $invalid_grace left SERVER_PID=$SERVER_PID"
+    [ -z "$DETACHED_PID" ] \
+        || fail "invalid startup grace $invalid_grace left DETACHED_PID=$DETACHED_PID"
+done
+
+FAIL_SLEEP_DIR="$TEST_ROOT/fail-sleep-bin"
+FAIL_SLEEP_SCRIPT="$FAIL_SLEEP_DIR/sleep"
+RUNTIME_SLEEP_LOG="$TEST_ROOT/runtime-sleep.err"
+RUNTIME_SLEEP_READY="$TEST_ROOT/runtime-sleep.ready"
+RUNTIME_SLEEP_PID_FILE="$TEST_ROOT/runtime-sleep.pid"
+mkdir -p "$FAIL_SLEEP_DIR"
+cat > "$FAIL_SLEEP_SCRIPT" <<'SLEEP_STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "0.05" ]; then
+    for _ in $(seq 1 100); do
+        [ -s "${READY_FILE:-}" ] && exit 1
+        /bin/sleep 0.01
+    done
+    exit 1
+fi
+exec /bin/sleep "$@"
+SLEEP_STUB
+chmod +x "$FAIL_SLEEP_SCRIPT"
+
+READY_FILE="$RUNTIME_SLEEP_READY"
+export STUB_PID_FILE="$RUNTIME_SLEEP_PID_FILE"
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+BONG_SERVER_LOG="$TEST_ROOT/runtime-sleep.log"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
+ORIGINAL_PATH="$PATH"
+PATH="$FAIL_SLEEP_DIR:$PATH"
+if launch_bong_server 2> "$RUNTIME_SLEEP_LOG"; then
+    PATH="$ORIGINAL_PATH"
+    fail "production server launch accepted a runtime startup grace failure"
+fi
+PATH="$ORIGINAL_PATH"
+grep -Fq "startup grace wait failed" "$RUNTIME_SLEEP_LOG" \
+    || fail "runtime startup grace failure did not include its diagnostic"
+wait_for_file "$RUNTIME_SLEEP_PID_FILE" "runtime sleep failure server pid"
+read -r ACTIVE_CHILD_PID < "$RUNTIME_SLEEP_PID_FILE"
+wait_for_process_exit "$ACTIVE_CHILD_PID" \
+    || fail "runtime startup grace failure leaked detached server pid $ACTIVE_CHILD_PID"
+[ -z "$SERVER_PID" ] || fail "runtime startup grace failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "runtime startup grace failure left DETACHED_PID=$DETACHED_PID"
+ACTIVE_CHILD_PID=""
+
+echo "PASS: production launch survived SIGHUP and all initialization failures were cleaned up"
