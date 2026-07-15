@@ -603,11 +603,14 @@ pub const ICE_CELLAR_ITEM_ID: &str = "food.container.ice_cellar";
 mod tests {
     use super::*;
     use crate::inventory::{
-        instantiate_inventory_from_loadout, load_default_loadout, ContainerState,
-        InventoryRevision, ItemRarity, SlotContents, BODY_POCKET_CONTAINER_ID,
-        MAIN_PACK_CONTAINER_ID,
+        add_customized_item_to_player_inventory, instantiate_inventory_from_loadout,
+        load_default_loadout, ContainerState, DroppedLootEntry, DroppedLootRegistry,
+        InventoryRevision, ItemRarity, PlacedItemState, SlotContents,
+        BODY_POCKET_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
     };
     use std::collections::HashMap;
+    use valence::prelude::{ChunkLayer, Events, UnloadedChunk};
+    use valence::testing::ScenarioSingleClient;
 
     fn item(template_id: &str, instance_id: u64) -> ItemInstance {
         ItemInstance {
@@ -652,6 +655,91 @@ mod tests {
             bone_coins: 0,
             max_weight: 10.0,
         }
+    }
+
+    fn full_inventory() -> PlayerInventory {
+        let mut inventory = empty_inventory();
+        inventory.max_weight = 1_000.0;
+        inventory.containers[0].rows = 1;
+        inventory.containers[0].cols = 1;
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: item("filler", 900),
+        });
+        inventory
+    }
+
+    fn install_completed_session(
+        inventory: Option<PlayerInventory>,
+        item_registry: ItemRegistry,
+        with_dropped_loot: bool,
+    ) -> (App, Entity, Entity, BlockPos) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let player = scenario.client;
+        let layer = scenario.layer;
+        let log_pos = BlockPos::new(8, 80, 8);
+
+        app.insert_resource(WoodSessionStore::default());
+        app.insert_resource(SpiritWoodHarvestedLogs::default());
+        app.insert_resource(item_registry);
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(InventoryInstanceIdAllocator::new(1));
+        if with_dropped_loot {
+            app.insert_resource(DroppedLootRegistry::default());
+        }
+        app.insert_resource(DimensionLayers {
+            overworld: layer,
+            tsy: layer,
+        });
+        app.add_event::<GatheringCompleteEvent>();
+        app.add_event::<LumberTerminalEvent>();
+        app.add_systems(Update, complete_spiritwood_sessions);
+
+        if let Some(inventory) = inventory {
+            app.world_mut()
+                .entity_mut(player)
+                .insert((inventory, Cultivation::default()));
+        }
+        let mut session = WoodSession::new(
+            player,
+            "offline:test".to_string(),
+            DimensionKind::Overworld,
+            log_pos,
+            0,
+            block_origin(log_pos),
+            None,
+        );
+        session.ticks_total = 0;
+        app.world_mut()
+            .resource_mut::<WoodSessionStore>()
+            .upsert(session);
+
+        let mut chunk_layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(layer)
+            .expect("scenario layer should carry ChunkLayer");
+        chunk_layer.insert_chunk([0, 0], UnloadedChunk::new());
+        chunk_layer.set_block(log_pos, BlockState::OAK_LOG);
+
+        (app, player, layer, log_pos)
+    }
+
+    fn block_state(app: &App, layer: Entity, pos: BlockPos) -> Option<BlockState> {
+        app.world()
+            .get::<ChunkLayer>(layer)
+            .and_then(|chunk_layer| chunk_layer.block(pos).map(|block| block.state))
+    }
+
+    fn terminal_events(app: &App) -> Vec<LumberTerminalEvent> {
+        let events = app.world().resource::<Events<LumberTerminalEvent>>();
+        events.get_reader().read(events).cloned().collect()
+    }
+
+    fn gathering_complete_events(app: &App) -> Vec<GatheringCompleteEvent> {
+        let events = app.world().resource::<Events<GatheringCompleteEvent>>();
+        events.get_reader().read(events).cloned().collect()
     }
 
     #[test]
@@ -817,6 +905,300 @@ mod tests {
                 .map(|placed| (&placed.instance.template_id, placed.row, placed.col))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn full_inventory_drops_fresh_ling_mu_at_log_position() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let (mut app, player, layer, log_pos) =
+            install_completed_session(Some(full_inventory()), registry, true);
+        let expected_count = ling_mu_drop_count(log_pos, player, 0);
+
+        app.update();
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(dropped.entries.len(), 1, "满包产物必须落地，禁止静默丢失");
+        let entry = dropped.entries.values().next().expect("drop should exist");
+        assert_eq!(entry.world_pos, block_origin(log_pos));
+        assert_eq!(entry.dimension, DimensionKind::Overworld);
+        assert_eq!(entry.item.template_id, LING_MU_GUN_ITEM_ID);
+        assert_eq!(entry.item.stack_count, expected_count);
+        let freshness = entry
+            .item
+            .freshness
+            .as_ref()
+            .expect("ground ling_mu_gun must preserve freshness");
+        assert_eq!(freshness.profile.as_str(), LING_MU_GUN_PROFILE_ID);
+        assert_eq!(freshness.created_at_tick, 0);
+        assert!(
+            app.world()
+                .resource::<SpiritWoodHarvestedLogs>()
+                .contains(DimensionKind::Overworld, log_pos)
+        );
+        assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::AIR));
+    }
+
+    #[test]
+    fn freshness_mismatch_does_not_merge_and_still_drops() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let profiles = crate::shelflife::build_default_registry();
+        let profile = profiles
+            .get(&DecayProfileId::new(LING_MU_GUN_PROFILE_ID))
+            .expect("ling_mu_gun freshness profile should exist");
+        let old_freshness = Freshness::new(77, LING_MU_INITIAL_QI, profile);
+        let mut inventory = empty_inventory();
+        inventory.max_weight = 1_000.0;
+        inventory.containers[0].rows = 2;
+        inventory.containers[0].cols = 1;
+        let mut setup_allocator = InventoryInstanceIdAllocator::new(500);
+        add_customized_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut setup_allocator,
+            LING_MU_GUN_ITEM_ID,
+            1,
+            77,
+            |instance| instance.freshness = Some(old_freshness.clone()),
+        )
+        .expect("old ling_mu_gun should fill the only footprint");
+
+        let (mut app, player, _layer, log_pos) =
+            install_completed_session(Some(inventory), registry, true);
+        let expected_count = ling_mu_drop_count(log_pos, player, 0);
+        app.update();
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("player inventory should remain");
+        let old = &inventory.containers[0].items[0].instance;
+        assert_eq!(old.instance_id, 500);
+        assert_eq!(old.stack_count, 1, "不同 freshness 禁止误合并");
+        assert_eq!(
+            old.freshness.as_ref().map(|freshness| freshness.created_at_tick),
+            Some(77)
+        );
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        let entry = dropped.entries.values().next().expect("new stack must drop");
+        assert_eq!(entry.item.stack_count, expected_count);
+        assert_eq!(
+            entry
+                .item
+                .freshness
+                .as_ref()
+                .map(|freshness| freshness.created_at_tick),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn successful_grant_commits_world_state_once() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let (mut app, player, layer, log_pos) =
+            install_completed_session(Some(empty_inventory()), registry, true);
+        let expected_count = ling_mu_drop_count(log_pos, player, 0);
+        let mut gathering_reader = app
+            .world()
+            .resource::<Events<GatheringCompleteEvent>>()
+            .get_reader();
+        let mut terminal_reader = app
+            .world()
+            .resource::<Events<LumberTerminalEvent>>()
+            .get_reader();
+
+        app.update();
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("player inventory should remain");
+        let granted = inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .find(|placed| placed.instance.template_id == LING_MU_GUN_ITEM_ID)
+            .expect("ling_mu_gun should be granted into inventory");
+        assert_eq!(granted.instance.stack_count, expected_count);
+        assert!(app.world().resource::<DroppedLootRegistry>().entries.is_empty());
+        assert!(
+            app.world()
+                .resource::<SpiritWoodHarvestedLogs>()
+                .contains(DimensionKind::Overworld, log_pos)
+        );
+        assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::AIR));
+        assert!(
+            app.world()
+                .resource::<WoodSessionStore>()
+                .session_for(player)
+                .is_none()
+        );
+        let completions = gathering_reader
+            .read(app.world().resource::<Events<GatheringCompleteEvent>>())
+            .cloned()
+            .collect::<Vec<_>>();
+        let terminals = terminal_reader
+            .read(app.world().resource::<Events<LumberTerminalEvent>>())
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(terminals.len(), 1);
+        assert!(terminals[0].completed);
+        assert!(!terminals[0].interrupted);
+        assert_eq!(terminals[0].detail, format!("采得灵木原木 ×{expected_count}"));
+
+        app.update();
+        assert_eq!(
+            gathering_reader
+                .read(app.world().resource::<Events<GatheringCompleteEvent>>())
+                .count(),
+            0,
+            "completed session must not emit a second gathering completion"
+        );
+        assert_eq!(
+            terminal_reader
+                .read(app.world().resource::<Events<LumberTerminalEvent>>())
+                .count(),
+            0,
+            "completed session must not emit a second terminal"
+        );
+    }
+
+    #[test]
+    fn dropped_grant_commits_world_state_once_with_honest_terminal() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let (mut app, player, _layer, log_pos) =
+            install_completed_session(Some(full_inventory()), registry, true);
+        let expected_count = ling_mu_drop_count(log_pos, player, 0);
+
+        app.update();
+
+        assert_eq!(gathering_complete_events(&app).len(), 1);
+        let terminals = terminal_events(&app);
+        assert_eq!(terminals.len(), 1);
+        assert!(terminals[0].completed);
+        assert!(!terminals[0].interrupted);
+        assert_eq!(
+            terminals[0].detail,
+            format!("背包已满，灵木原木已落地 ×{expected_count}")
+        );
+    }
+
+    #[test]
+    fn structural_grant_error_preserves_log_and_reports_incomplete() {
+        let (mut app, player, layer, log_pos) =
+            install_completed_session(Some(empty_inventory()), ItemRegistry::default(), true);
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<WoodSessionStore>()
+                .session_for(player)
+                .is_none(),
+            "failed completed session must end instead of retrying every tick"
+        );
+        assert!(
+            !app
+                .world()
+                .resource::<SpiritWoodHarvestedLogs>()
+                .contains(DimensionKind::Overworld, log_pos),
+            "unknown template must not consume the world log"
+        );
+        assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
+        assert!(gathering_complete_events(&app).is_empty());
+        let terminals = terminal_events(&app);
+        assert_eq!(terminals.len(), 1);
+        assert!(!terminals[0].completed);
+        assert!(terminals[0].interrupted);
+        assert_eq!(terminals[0].detail, "灵木产物结算失败，原木未消耗");
+    }
+
+    #[test]
+    fn full_inventory_without_drop_registry_preserves_log() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let (mut app, _player, layer, log_pos) =
+            install_completed_session(Some(full_inventory()), registry, false);
+
+        app.update();
+
+        assert!(
+            !app
+                .world()
+                .resource::<SpiritWoodHarvestedLogs>()
+                .contains(DimensionKind::Overworld, log_pos)
+        );
+        assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
+        assert!(gathering_complete_events(&app).is_empty());
+        let terminals = terminal_events(&app);
+        assert_eq!(terminals.len(), 1);
+        assert!(!terminals[0].completed);
+        assert!(terminals[0].interrupted);
+    }
+
+    #[test]
+    fn missing_inventory_preserves_log_and_ends_session() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let (mut app, player, layer, log_pos) =
+            install_completed_session(None, registry, true);
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<WoodSessionStore>()
+                .session_for(player)
+                .is_none()
+        );
+        assert!(
+            !app
+                .world()
+                .resource::<SpiritWoodHarvestedLogs>()
+                .contains(DimensionKind::Overworld, log_pos)
+        );
+        assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
+        assert!(gathering_complete_events(&app).is_empty());
+        let terminals = terminal_events(&app);
+        assert_eq!(terminals.len(), 1);
+        assert!(!terminals[0].completed);
+        assert!(terminals[0].interrupted);
+    }
+
+    #[test]
+    fn dropped_loot_id_collision_preserves_log() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let (mut app, _player, layer, log_pos) =
+            install_completed_session(Some(full_inventory()), registry, true);
+        app.world_mut()
+            .resource_mut::<DroppedLootRegistry>()
+            .entries
+            .insert(
+                1,
+                DroppedLootEntry {
+                    instance_id: 1,
+                    source_container_id: "existing".to_string(),
+                    source_row: 0,
+                    source_col: 0,
+                    world_pos: [0.0, 0.0, 0.0],
+                    dimension: DimensionKind::Overworld,
+                    item: item("existing", 1),
+                },
+            );
+
+        app.update();
+
+        assert_eq!(app.world().resource::<DroppedLootRegistry>().entries.len(), 1);
+        assert!(
+            !app
+                .world()
+                .resource::<SpiritWoodHarvestedLogs>()
+                .contains(DimensionKind::Overworld, log_pos)
+        );
+        assert_eq!(block_state(&app, layer, log_pos), Some(BlockState::OAK_LOG));
+        assert!(gathering_complete_events(&app).is_empty());
+        let terminals = terminal_events(&app);
+        assert_eq!(terminals.len(), 1);
+        assert!(!terminals[0].completed);
+        assert!(terminals[0].interrupted);
     }
 
     #[test]
