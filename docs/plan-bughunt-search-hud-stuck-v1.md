@@ -1,6 +1,6 @@
 # plan-bughunt-search-hud-stuck-v1
 
-> **Finished plan（2026-07-15 验收归档）**。来源：`docs/plans-skeleton/plan-bughunt-search-hud-stuck-v1.md`。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
+> **Active plan（2026-07-15 review 返工）**。来源：`docs/plans-skeleton/plan-bughunt-search-hud-stuck-v1.md`。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
 
 > 立项动机：本轮按「client runtime / store / session / consumer 漏 reset」角度复查 TSY 搜刮链路，避开既有 toast cross-session、identity panel stale session、zone_info 同区不刷新、灵龛 HUD 串局等已出题项后，确认这是一个**新的、同 session 即可稳定复现**的 HUD 状态机真 bug。
 
@@ -24,9 +24,9 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | TSY 搜刮 HUD 终态不自动回 `IDLE` | client | ✅ 2026-07-15 |
+| P0 | TSY 搜刮 HUD 终态不自动回 `IDLE` | client | ⏳ 运行时验收返工 |
 
-## P0 — TSY 搜刮 HUD 终态不自动回 `IDLE`（✅ 2026-07-15）
+## P0 — TSY 搜刮 HUD 终态不自动回 `IDLE`（⏳ 运行时验收返工）
 
 - **类型**：client runtime / store / consumer 漏 reset
 - **优先级**：major
@@ -107,7 +107,7 @@
 
 bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-20260705-cm`，角度：disconnect/reconnect、world 切换、增量状态不清、consumer 漏 reset。结论：TSY 搜刮 HUD 终态未自动收尾是高置信新真 bug；原 skeleton 当时仅立项，不含代码修复。
 
-## Finish Evidence
+## 验收证据（运行时返工中）
 
 ### 落地清单
 
@@ -146,5 +146,5 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 
 ### 遗留 / 后续
 
-- 无阻塞项，无协议迁移、真元守恒或视觉资产遗留。
-- 本次未启动 `runClient` 手工演示；状态生命周期、HUD 消失条件和 disconnect 接线均由确定性单测及 4086 项客户端全量测试覆盖，渲染 planner 本身未改。
+- review 代码结论无 blocker；当前唯一待办是按“验收抓手”执行 3 项 `runClient` 玩家可见验证并记录环境、步骤与观察结果。
+- 协议迁移、真元守恒和视觉资产均无遗留。
