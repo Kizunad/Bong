@@ -120,9 +120,10 @@
 
 ### 落地清单
 
-- **P0 证真**：`client/src/test/java/com/bong/client/BongHudTest.java` 用真实 `AgentUiScreen.create(...)` 与 `AgentUiVfxPlanner.buildCommands(...)` 串起生产契约；修复前定向运行 4 项测试时仅新增 case 失败，实际 visibility 为 `HIDDEN`。
-- **P1 修复**：`client/src/main/java/com/bong/client/hud/ScreenHudVisibility.java` 新增 `AGENT_UI_ONLY`；`client/src/main/java/com/bong/client/BongHud.java` 用 `filterCommandsForVisibility(...)` 仅放行 `HudRenderLayer.AGENT_UI`。
-- **P2 回归**：`client/src/test/java/com/bong/client/BongHudTest.java` 覆盖真实 screen 分类、全部 visibility、三类 `AGENT_UI` command、非目标 layer 隔离、空列表与 null 错误分支。
+- **P0 证真**：`client/src/test/java/com/bong/client/BongHudTest.java` 从真实 `AgentUiVfxStore` 经过 `BongHudOrchestrator`、`BongHud.render(...)` 一直锁到最终 renderer；修复前定向运行 4 项测试时仅新增 case 失败，实际 visibility 为 `HIDDEN`。
+- **P1 修复**：`client/src/main/java/com/bong/client/hud/ScreenHudVisibility.java` 新增 `AGENT_UI_ONLY`，`client/src/main/java/com/bong/client/BongHud.java` 用集中式过滤仅放行 `HudRenderLayer.AGENT_UI`；review 返工进一步在 `client/src/main/java/com/bong/client/hud/HudImmersionMode.java` 保留该层，修掉 screen gate 之前的第二处生产过滤断点。
+- **P2 回归**：`BongHudTest` 覆盖真实 Store→renderer、空 Store 隔离、全部 visibility、三类 `AGENT_UI` command、非目标 layer 隔离、空/null 与 `HIDDEN` 不采样 frame；`ScreenHudVisibilityTest` 锁定 Death/Pause、Inspect、Cultivation、Dynamic XML、InsightOffer、HandledScreen、未知 Screen 与 null 的完整分类矩阵；`HudImmersionModeTest` 锁定所有沉浸模式均保留且不淡化 `AGENT_UI`。
+- **采样边界**：spiritual-sense 与天道补充命令改为延迟 supplier；只有通过 screen gate 才采样，同时保持原有“orchestrator → spiritual-sense → 天道补充命令”的生产顺序。
 
 ### 关键 commit
 
@@ -130,20 +131,32 @@
 - `b0cb576d87e193d520c951aa67f28002657e5da7`（2026-07-15）：提交修复前可失败的 screen gate 契约回归。
 - `70f099990c8f278c212ad7c829ef5f962f5f6fb9`（2026-07-15）：接入 `AGENT_UI_ONLY` 与集中式 layer 过滤。
 - `e58a698a7cca9990f5efad06036cdd3d98d3ff12`（2026-07-15）：补齐全策略饱和测试；这是归档前实现验收基线，不表述为归档提交自身或最终 PR SHA。
+- `2269b7f767369df2a9b879ce23582e3a0319093c`（2026-07-15）：按首轮 review 修复 `HudImmersionMode` 提前过滤 `AGENT_UI` 的第二断点。
+- `e6b5b58e4ac7d085673b248b4f31879cc99e649a`（2026-07-15）：用真实 Store→orchestrator→HUD→renderer 链替换绕过生产入口的测试。
+- `8d8989791ccbe69ba2a8835f2069132810337676`（2026-07-15）：补齐所有具体 Screen 的分类矩阵。
+- `cb4c1c2ad38f60fc28f783fb5c3ca21372250140`（2026-07-15）：延迟采样 HUD 补充命令并锁定 `HIDDEN` 短路。
+- `48e10a900cf33b17db1645c580c6b8d2af830542`（2026-07-15）：锁定 class classifier 的 null 错误契约；这是本轮证据更新前的干净实现验收基线。
 
 ### 测试结果
 
 - 修复前：JDK 17 执行 `./gradlew test --tests com.bong.client.BongHudTest --no-daemon`，4 项中仅 `agentUiScreenDoesNotHideItsProducedVfxCommands` 失败，证真 `HIDDEN` 早退。
 - 修复后定向：JDK 17 执行 `./gradlew test --tests com.bong.client.BongHudTest --tests com.bong.client.agentui.AgentUiVfxPlannerTest --no-daemon`，通过。
-- 完整 client 门禁：JDK 17 执行 `./gradlew test build --no-daemon`，4081 tests、0 failures、0 errors、0 skipped，`remapJar` / `check` / `build` 全通过。
+- review 返工定向：JDK 17 执行 `./gradlew test --tests com.bong.client.BongHudTest --tests com.bong.client.agentui.AgentUiVfxPlannerTest --tests com.bong.client.hud.HudImmersionModeTest --tests com.bong.client.hud.ScreenHudVisibilityTest --no-daemon`，51 tests、0 failures、0 errors、0 skipped。
+- review 返工完整 client 门禁：JDK 17 执行 `./gradlew test build --no-daemon`，4087 tests、0 failures、0 errors、0 skipped，`remapJar` / `check` / `build` 全通过。
 - 格式与洁净度：`git diff --check` 仅发现并在本归档提交清除 promotion 文档的一处尾随空格；归档前工作区无其他 tracked/untracked 改动。
+
+### Review 返工证据
+
+- 首轮 `/review` run `29417653686` 由 `gpt-5.6-sol` 裁决，PR 评论 `4980968596` 给出 0/4；15 条 finding 收敛为“测试绕过真实生产链”与“屏幕/沉浸策略矩阵不足”两类必修项。
+- 真实链回归首先复现并修复 `HudImmersionMode` 对 `AGENT_UI` 的提前过滤，再证明 `AgentUiVfxStore` 中的 tint、vignette 与两条 shake `RECT` 最终抵达 renderer；测试不再直接调用 planner 冒充集成覆盖。
+- Death/Pause 保持 `HIDDEN`，Inspect/Cultivation/Dynamic XML/InsightOffer 保持 `CAST_BAR_ONLY`，HandledScreen 保持 `INVENTORY_DIMMED`，未知 Screen 保持 `HIDDEN`，`null` screen 保持 `FULL`；没有以放开全量 HUD 换取修复。
 
 ### 跨仓库核验
 
-- **client 生产链**：`AgentUiScreen.init()` → `AgentUiVfxStore` → `AgentUiVfxPlanner` → `BongHudOrchestrator` → `ScreenHudVisibility.AGENT_UI_ONLY` → `BongHud.filterCommandsForVisibility(...)` → overlay renderer。
+- **client 生产链**：`AgentUiScreen.init()` → `AgentUiVfxStore` → `AgentUiVfxPlanner` → `BongHudOrchestrator` → `HudImmersionMode` 保留 `AGENT_UI` → `ScreenHudVisibility.AGENT_UI_ONLY` → `BongHud.filterCommandsForVisibility(...)` → overlay renderer。
 - **server / agent / schema**：本修复不修改 wire contract；`agent_ui_request` 三类生产入口和既有 `HudRenderLayer.AGENT_UI` 语义保持不变。
 - **主线同步**：2026-07-15 fetch 后 `origin/main`（`6f1faea5855c0c765859c9081af8bbb0094161b2`）仍为实现验收基线祖先，判定 already-up-to-date，无合并提交或代码树变化。
-- **主 agent 对抗自审**：绑定干净实现验收基线 `PASS e58a698a7cca9990f5efad06036cdd3d98d3ff12`；核对真实 screen 可达性、早退顺序、layer 泄漏、全部 enum consumer 与 VFX store 生命周期，未发现阻塞项。
+- **主 agent 对抗自审**：首轮归档前的 `PASS e58a698a7cca9990f5efad06036cdd3d98d3ff12` 已因 review 返工失效；返工后的最终 SHA 自审 verdict 与外部门禁绑定在 PR body/checks，避免归档文件自引用其所在提交。
 
 ### 遗留 / 后续
 
