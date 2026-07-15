@@ -120,7 +120,7 @@ Round 1 核查了满包是否可达、灵木是否总能堆叠、inventory helpe
 
 Round 2 排除了灵木 shutdown flush、botany/craft/alchemy 满包修复和跨维 session 等重复范围。局部原子结算可复用既有 `GrantOrGroundOutcome`，但生产黑盒回归揭示 `InventoryItemView` protobuf 未镜像 freshness，因此补齐既有协议类型而不新造状态机。
 
-Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真集成覆盖与 raster schema：registry/profile 缺失改为结构失败并保留原木；生产五 tile fixture 补齐与正式 worldgen 一致的 `0..4` biome palette，并逐 tile 锁定 `biome_id.bin` 长度与 palette 边界；真实 `C2S_PLAYER_ACTION` digging、掉落同步与拾回对拍均通过。
+Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真集成覆盖、raster schema 与 session 原子顺序：registry/profile 缺失改为结构失败并保留原木；生产五 tile fixture 补齐与正式 worldgen 一致的 `0..4` biome palette，并逐 tile 锁定 `biome_id.bin` 长度与 palette 边界；`grant_before_removing_session` 保证成功与失败 grant 执行期间 completed session 均仍在 store，grant 返回后才结束 session；真实 `C2S_PLAYER_ACTION` digging、掉落同步与拾回对拍均通过。
 
 ## Finish Evidence
 
@@ -128,7 +128,7 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 
 - P0：在 `server/src/spiritwood/mod.rs` 增加生产链集成测试，修复前明确复现满包无地面掉落、原木却被错误标记 harvested 并置 AIR。
 - P1：`grant_ling_mu_gun` 复用 `add_item_to_player_inventory_or_ground`；同一 customization 闭包覆盖入包与落地，保留 `spirit_quality`、freshness、数量、原木中心位置和 session 维度；freshness registry/profile 缺失 fail closed。
-- P2：`complete_spiritwood_sessions` 仅在 `Granted` / `DroppedToGround` 后提交 harvested、AIR 和完成事件；结构错误、缺掉落 registry、缺 inventory、instance id 冲突均保留原木并发送 `completed=false`。
+- P2：`complete_spiritwood_sessions` 通过 `grant_before_removing_session` 保证 grant 返回后才移除 completed session；仅在 `Granted` / `DroppedToGround` 后提交 harvested、AIR 和完成事件；结构错误、缺掉落 registry、缺 inventory、instance id 冲突均保留原木并发送 `completed=false`。
 - P3：`proto/bong/envelope.proto` 与 Rust/Python converter 镜像 freshness 六字段；Bot 支持真实 `C2S_PLAYER_ACTION` 和 `lumber_progress`；生产五 tile fixture 固定 seed `(1292, 73, 1519)`、外缘主干 `(1285, 73, 1509)`，并以正式 `0..4` biome palette 约束所有 tile；专项场景验证满包落地与拾回。
 - P3 运行隔离：`scripts/bot-e2e.sh` 为自启 server 分配独立 `BONG_SPIRITWOOD_HARVESTED_PATH`，防止上一轮已采伐持久化污染重跑。
 
@@ -144,12 +144,15 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 - `ce08d8e5`（2026-07-15）：普通 merge `origin/main@6f1faea5`，保留双方 Bot 能力并复验灵木生产链。
 - `fc546e2a`（2026-07-15）：修复五 tile fixture 的 biome palette 映射，并增加逐 tile 文件长度与索引边界测试。
 - `6508e685`（2026-07-15）：锁定真实采伐 `created_at_tick > 0`，并收紧 digging sequence 的 32 位 VarInt 边界。
+- `d89af9da`（2026-07-15）：修复 grant 前提前移除 completed session 的原子顺序，并锁定成功与失败 grant 时 session 仍在 store。
 
 ### 测试结果
 
 - 修复前新增契约测试：18 pass / 7 fail；失败明确显示 `DroppedLootRegistry=0`，同时原木已 harvested。
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::tests`：25 passed / 0 failed。
 - `TMPDIR="$PWD/target/tmp" cargo test spiritwood::`：44 passed / 0 failed。
+- `d89af9da` 定向顺序契约：成功与失败 grant 两例 2 passed / 0 failed；`cargo test spiritwood::` 50 passed / 0 failed。
+- `d89af9da` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,708 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed。
 - 最后 Rust 代码 HEAD `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed；后续提交仅修改 Python fixture/Bot 测试与本文。
 - PR HEAD `e73ebc35` 的 GitHub e2e run `29413908258` 全绿（23m51s）：client、schema、agent、server 全测、Smoke/E2E、Bot e2e 与 artifact upload 均成功。
 - 最新协议代码 HEAD `6508e685`：Python protocol 96 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress`、digging packet 32 位边界与五 tile biome palette 边界均有 pin 测试。
