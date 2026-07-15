@@ -21,6 +21,7 @@ import com.bong.client.hud.BotanyProjection;
 import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRuntimeContext;
+import com.bong.client.hud.HudTextHelper;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.tiandao.TiandaoPresenceHudPlanner;
@@ -50,6 +51,7 @@ import org.lwjgl.glfw.GLFW;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 public class BongHud {
     private static final int HUD_TEXT_MAX_WIDTH = 220;
@@ -77,44 +79,81 @@ public class BongHud {
         if (currentScreen == null) {
             ScreenTransitionOverlay.render(context, client, ScreenTransition.nowMillis());
         }
+        render(
+            currentScreen,
+            nowMillis,
+            () -> captureHudFrameInput(client, nowMillis),
+            (commands, visibility) -> renderCommands(context, client, commands, visibility, nowMillis)
+        );
+    }
+
+    static void render(
+        Screen currentScreen,
+        long nowMillis,
+        Supplier<HudFrameInput> frameInputSupplier,
+        HudCommandRenderer renderer
+    ) {
+        Objects.requireNonNull(frameInputSupplier, "frameInputSupplier");
+        Objects.requireNonNull(renderer, "renderer");
+
         ScreenHudVisibility visibility = ScreenHudVisibility.forScreen(currentScreen);
         if (visibility == ScreenHudVisibility.HIDDEN) {
             return;
         }
 
-        CombatHudSnapshot combatSnapshot = captureCombatSnapshot(client);
-
-        BotanyProjection.Anchor botanyAnchor = computeBotanyAnchor(client);
-        HudRuntimeContext runtimeContext = captureRuntimeContext(client);
-
+        HudFrameInput frame = Objects.requireNonNull(frameInputSupplier.get(), "frameInputSupplier.get()");
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
-            BongHudStateStore.snapshot(),
-            combatSnapshot,
+            frame.hudSnapshot(),
+            frame.combatSnapshot(),
             nowMillis,
+            frame.widthMeasurer(),
+            frame.maxTextWidth(),
+            frame.screenWidth(),
+            frame.screenHeight(),
+            frame.botanyAnchor(),
+            frame.runtimeContext()
+        );
+        if (!frame.spiritualSenseIndicators().isEmpty()) {
+            commands = new ArrayList<>(commands);
+            PerceptionEdgeRenderer.append(commands, frame.spiritualSenseIndicators());
+        }
+        if (!frame.supplementalCommands().isEmpty()) {
+            commands = new ArrayList<>(commands);
+            commands.addAll(frame.supplementalCommands());
+        }
+
+        renderer.render(filterCommandsForVisibility(commands, visibility), visibility);
+    }
+
+    private static HudFrameInput captureHudFrameInput(MinecraftClient client, long nowMillis) {
+        int screenWidth = client.getWindow().getScaledWidth();
+        int screenHeight = client.getWindow().getScaledHeight();
+        return new HudFrameInput(
+            BongHudStateStore.snapshot(),
+            captureCombatSnapshot(client),
             client.textRenderer::getWidth,
             HUD_TEXT_MAX_WIDTH,
-            client.getWindow().getScaledWidth(),
-            client.getWindow().getScaledHeight(),
-            botanyAnchor,
-            runtimeContext
+            screenWidth,
+            screenHeight,
+            computeBotanyAnchor(client),
+            captureRuntimeContext(client),
+            computeSpiritualSenseIndicators(client),
+            TiandaoPresenceHudPlanner.buildCommands(
+                TiandaoPresenceStore.snapshot(),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            )
         );
-        List<EdgeIndicatorCmd> spiritualSenseIndicators = computeSpiritualSenseIndicators(client);
-        if (!spiritualSenseIndicators.isEmpty()) {
-            commands = new ArrayList<>(commands);
-            PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
-        }
-        List<HudRenderCommand> tiandaoCommands = TiandaoPresenceHudPlanner.buildCommands(
-            TiandaoPresenceStore.snapshot(),
-            nowMillis,
-            client.getWindow().getScaledWidth(),
-            client.getWindow().getScaledHeight()
-        );
-        if (!tiandaoCommands.isEmpty()) {
-            commands = new ArrayList<>(commands);
-            commands.addAll(tiandaoCommands);
-        }
+    }
 
-        commands = filterCommandsForVisibility(commands, visibility);
+    private static void renderCommands(
+        DrawContext context,
+        MinecraftClient client,
+        List<HudRenderCommand> commands,
+        ScreenHudVisibility visibility,
+        long nowMillis
+    ) {
 
         for (HudRenderCommand command : commands) {
             if (command.isText()) {
@@ -208,6 +247,57 @@ public class BongHud {
             } else if (command.isEdgeInkWash()) {
                 InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
+        }
+    }
+
+    @FunctionalInterface
+    interface HudCommandRenderer {
+        void render(List<HudRenderCommand> commands, ScreenHudVisibility visibility);
+    }
+
+    record HudFrameInput(
+        com.bong.client.hud.BongHudStateSnapshot hudSnapshot,
+        CombatHudSnapshot combatSnapshot,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor,
+        HudRuntimeContext runtimeContext,
+        List<EdgeIndicatorCmd> spiritualSenseIndicators,
+        List<HudRenderCommand> supplementalCommands
+    ) {
+        HudFrameInput {
+            hudSnapshot = hudSnapshot == null
+                ? com.bong.client.hud.BongHudStateSnapshot.empty()
+                : hudSnapshot;
+            combatSnapshot = combatSnapshot == null ? CombatHudSnapshot.empty() : combatSnapshot;
+            widthMeasurer = widthMeasurer == null ? ignored -> 0 : widthMeasurer;
+            maxTextWidth = Math.max(0, maxTextWidth);
+            screenWidth = Math.max(0, screenWidth);
+            screenHeight = Math.max(0, screenHeight);
+            runtimeContext = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
+            spiritualSenseIndicators = spiritualSenseIndicators == null
+                ? List.of()
+                : List.copyOf(spiritualSenseIndicators);
+            supplementalCommands = supplementalCommands == null
+                ? List.of()
+                : List.copyOf(supplementalCommands);
+        }
+
+        static HudFrameInput empty(int screenWidth, int screenHeight) {
+            return new HudFrameInput(
+                com.bong.client.hud.BongHudStateSnapshot.empty(),
+                CombatHudSnapshot.empty(),
+                text -> text == null ? 0 : text.length() * 6,
+                HUD_TEXT_MAX_WIDTH,
+                screenWidth,
+                screenHeight,
+                null,
+                HudRuntimeContext.empty(),
+                List.of(),
+                List.of()
+            );
         }
     }
 

@@ -1,14 +1,14 @@
 package com.bong.client;
 
-import com.bong.client.combat.baomai.v3.BaomaiV3HudStateStore;
 import com.bong.client.agentui.AgentUiScreen;
-import com.bong.client.agentui.AgentUiVfxPlanner;
 import com.bong.client.agentui.AgentUiVfxState;
+import com.bong.client.agentui.AgentUiVfxStore;
+import com.bong.client.combat.baomai.v3.BaomaiV3HudStateStore;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRenderLayer;
+import com.bong.client.hud.HudImmersionMode;
+import com.bong.client.hud.HudLayoutPreferenceStore;
 import com.bong.client.hud.ScreenHudVisibility;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.text.Text;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +31,9 @@ public class BongHudTest {
         ZoneState.clear();
         EventAlertState.clear();
         BaomaiV3HudStateStore.clear();
+        AgentUiVfxStore.clear();
+        HudImmersionMode.resetForTests();
+        HudLayoutPreferenceStore.resetForTests();
     }
 
     @AfterEach
@@ -39,6 +42,9 @@ public class BongHudTest {
         ZoneState.clear();
         EventAlertState.clear();
         BaomaiV3HudStateStore.clear();
+        AgentUiVfxStore.clear();
+        HudImmersionMode.resetForTests();
+        HudLayoutPreferenceStore.resetForTests();
     }
 
     @Test
@@ -102,41 +108,68 @@ public class BongHudTest {
     }
 
     @Test
-    public void agentUiScreenDoesNotHideItsProducedVfxCommands() {
+    public void agentUiScreenRunsStoreThroughProductionRenderChain() {
+        long openedAtMs = 1_000L;
+        long nowMillis = openedAtMs + 250L;
         AgentUiScreen screen = AgentUiScreen.create(
             "req-screen-gate",
             "<owo-ui><components><flow-layout><label>天意</label></flow-layout></components></owo-ui>",
             200,
-            1_000L
-        );
-        List<HudRenderCommand> commands = AgentUiVfxPlanner.buildCommands(
-            new AgentUiVfxState(1_000L, false),
             1_000L,
-            320,
-            180
+            true
+        );
+        AgentUiVfxStore.setActive(new AgentUiVfxState(openedAtMs, true));
+        List<List<HudRenderCommand>> renderedFrames = new ArrayList<>();
+        List<ScreenHudVisibility> renderedVisibilities = new ArrayList<>();
+        int[] frameBuildCount = {0};
+
+        BongHud.render(
+            screen,
+            nowMillis,
+            () -> {
+                frameBuildCount[0]++;
+                return BongHud.HudFrameInput.empty(320, 180);
+            },
+            (commands, visibility) -> {
+                renderedFrames.add(commands);
+                renderedVisibilities.add(visibility);
+            }
         );
 
-        assertFalse(commands.isEmpty(), "AgentUiScreen 打开时 planner 应生成 fade-in 覆层命令");
+        assertEquals(1, frameBuildCount[0], "AgentUiScreen 不得在 orchestrator 构建前提前返回");
+        assertEquals(List.of(ScreenHudVisibility.AGENT_UI_ONLY), renderedVisibilities);
+        assertEquals(1, renderedFrames.size());
+        List<HudRenderCommand> commands = renderedFrames.get(0);
+        assertFalse(commands.isEmpty(), "真实 Store→Orchestrator 链应把 Agent UI VFX 送入 renderer");
+        assertTrue(commands.stream().allMatch(command -> command.layer() == HudRenderLayer.AGENT_UI));
+        assertTrue(commands.stream().anyMatch(command -> command.kind() == HudRenderCommand.Kind.SCREEN_TINT));
+        assertTrue(commands.stream().anyMatch(command -> command.kind() == HudRenderCommand.Kind.EDGE_VIGNETTE));
         assertEquals(
-            ScreenHudVisibility.AGENT_UI_ONLY,
-            ScreenHudVisibility.forScreen(screen),
-            "AgentUiScreen 必须进入专用覆层策略，不能提前隐藏或放开完整 HUD"
-        );
-        assertEquals(
-            commands,
-            BongHud.filterCommandsForVisibility(commands, ScreenHudVisibility.forScreen(screen)),
-            "AgentUiScreen 的 planner 命令必须穿过专用 layer filter"
+            2L,
+            commands.stream().filter(command -> command.kind() == HudRenderCommand.Kind.RECT).count(),
+            "天道 shake 的上下两条 RECT 必须抵达最终 renderer"
         );
     }
 
     @Test
-    public void screenVisibilityKeepsNullFullAndUnknownHiddenContracts() {
-        assertEquals(ScreenHudVisibility.FULL, ScreenHudVisibility.forScreen(null));
-        assertEquals(
-            ScreenHudVisibility.HIDDEN,
-            ScreenHudVisibility.forScreen(new UnknownScreen()),
-            "未知普通 Screen 必须继续隐藏 HUD"
+    public void agentUiScreenWithEmptyStoreStillRendersNoForeignHudLayers() {
+        AgentUiScreen screen = AgentUiScreen.create(
+            "req-empty-store",
+            "<owo-ui><components><flow-layout/></components></owo-ui>",
+            200,
+            1_000L
         );
+        List<List<HudRenderCommand>> renderedFrames = new ArrayList<>();
+
+        BongHud.render(
+            screen,
+            1_000L,
+            () -> BongHud.HudFrameInput.empty(320, 180),
+            (commands, visibility) -> renderedFrames.add(commands)
+        );
+
+        assertEquals(1, renderedFrames.size(), "AGENT_UI_ONLY 仍应执行最终 renderer，而非提前返回");
+        assertTrue(renderedFrames.get(0).isEmpty(), "Store 为空时不得泄露 baseline 或其他 HUD layer");
     }
 
     @Test
@@ -203,12 +236,6 @@ public class BongHudTest {
 
     private static List<HudRenderLayer> layers(List<HudRenderCommand> commands) {
         return commands.stream().map(HudRenderCommand::layer).toList();
-    }
-
-    private static final class UnknownScreen extends Screen {
-        private UnknownScreen() {
-            super(Text.literal("unknown"));
-        }
     }
 
     private static final class RecordingHudSurface implements BongHud.HudSurface {
