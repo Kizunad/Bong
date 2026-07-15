@@ -151,7 +151,7 @@ class CombatHudBootstrapTest {
         ServerDataDispatch dispatch = new AnqiHudServerDataHandler().handle(parsed.envelope());
 
         assertTrue(dispatch.handled(), "新 session 的低 tick anqi_hud 应被真实 handler 消费");
-        assertEquals(3, AnqiHudStateStore.snapshot().echoCount(),
+        assertEquals(3, AnqiHudStateStore.snapshot(now).echoCount(),
             "disconnect reset 后 handler 不得把新 session 低 tick 当成旧包静默丢弃");
     }
 
