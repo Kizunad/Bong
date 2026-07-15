@@ -157,6 +157,56 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["rows"], 3)
         self.assertEqual(decoded["cols"], 4)
 
+    def test_proto_loot_container_update_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_loot_container_update_bytes())
+
+        self.assertEqual(
+            decoded["type"],
+            "loot_container_update",
+            "expected type=loot_container_update so the bot dispatches the authoritative "
+            f"update payload, actual={decoded['type']}",
+        )
+        self.assertEqual(
+            decoded["session_id"],
+            7,
+            "expected session_id=7 so the update remains bound to its opened session, "
+            f"actual={decoded['session_id']}",
+        )
+        self.assertEqual(
+            decoded["placed_items"][0]["container_id"],
+            "ext_7",
+            "expected container_id=ext_7 so the update targets the session container, "
+            f"actual={decoded['placed_items'][0]['container_id']}",
+        )
+        self.assertEqual(
+            decoded["placed_items"][0]["item"]["instance_id"],
+            99,
+            "expected instance_id=99 so the update preserves item identity, "
+            f"actual={decoded['placed_items'][0]['item']['instance_id']}",
+        )
+
+    def test_proto_loot_container_close_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_loot_container_close_bytes())
+
+        self.assertEqual(
+            decoded["type"],
+            "loot_container_close",
+            "expected type=loot_container_close so the bot dispatches the close payload, "
+            f"actual={decoded['type']}",
+        )
+        self.assertEqual(
+            decoded["session_id"],
+            7,
+            "expected session_id=7 so close invalidates the opened session, "
+            f"actual={decoded['session_id']}",
+        )
+        self.assertEqual(
+            decoded["reason"],
+            "distance",
+            "expected reason=distance so the bot observes the server rejection cause, "
+            f"actual={decoded['reason']}",
+        )
+
     def test_proto_morph_state_full_payload_decodes(self):
         # plan-race-system-v1 P4 — field 142，mode="full"，一条 active=true entry。
         decoded = decode_server_data_payload(
@@ -973,6 +1023,33 @@ def _server_data_loot_container_open_bytes() -> bytes:
     return _pb_message(119, open_payload)
 
 
+def _server_data_loot_container_update_bytes() -> bytes:
+    item = (
+        _pb_varint(1, 99)
+        + _pb_string(2, "refined_iron")
+        + _pb_string(3, "精铁")
+        + _pb_varint(4, 1)
+        + _pb_varint(5, 1)
+        + _pb_fixed64(6, 0.1)
+        + _pb_string(7, "common")
+        + _pb_string(8, "test")
+        + _pb_varint(9, 2)
+        + _pb_fixed64(10, 0.0)
+        + _pb_fixed64(11, 1.0)
+    )
+    placed = (
+        _pb_string(1, "ext_7")
+        + _pb_varint(2, 0)
+        + _pb_varint(3, 1)
+        + _pb_message(4, item)
+    )
+    return _pb_message(120, _pb_varint(1, 7) + _pb_message(2, placed))
+
+
+def _server_data_loot_container_close_bytes() -> bytes:
+    return _pb_message(121, _pb_varint(1, 7) + _pb_string(2, "distance"))
+
+
 def _server_data_morph_state_bytes(
     *,
     mode: str,
@@ -1221,6 +1298,26 @@ def _bare_bot() -> Bot:
     bot.disconnect_reason = None
     bot.chunk_count = 0
     return bot
+
+
+class RespawnDecodeTest(unittest.TestCase):
+    def test_respawn_exposes_authoritative_dimension_names(self):
+        for dimension in ("minecraft:overworld", "bong:tsy"):
+            with self.subTest(dimension=dimension):
+                bot = _bare_bot()
+                body = (
+                    mc.write_varint(mc.S2C_RESPAWN)
+                    + mc.mc_string(dimension)
+                    + mc.mc_string(dimension)
+                )
+
+                bot._dispatch(body)
+
+                self.assertEqual(len(bot.events), 1)
+                event = bot.events[0]
+                self.assertEqual(event.kind, "respawn")
+                self.assertEqual(event.data["dimension_type_name"], dimension)
+                self.assertEqual(event.data["dimension_name"], dimension)
 
 
 class EntityTrackingTest(unittest.TestCase):
