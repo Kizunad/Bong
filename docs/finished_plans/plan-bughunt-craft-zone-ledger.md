@@ -91,18 +91,18 @@
 - `739dcb7b`（2026-07-13）：移除制作起手的陈旧区域契约。
 - `4181b1e1`（2026-07-13）：锁定制作入口只向待分配池入账。
 - `edc44c93`（2026-07-14）：普通 merge 至最新 `origin/main`（含 dying-elder 与 race-system P4）。
-- `333ed7a2`（2026-07-14）：最终受测代码；补齐跨阶段回流回归并稳定制作 Bot 门禁。
+- `333ed7a2`（2026-07-14）：同步前受测代码；补齐跨阶段回流回归并稳定制作 Bot 门禁。
 - `523cd364`（2026-07-14）：仅执行 `plan-finish.sh` 的纯归档移动，无代码或文档内容变化。
+- `91831935`（2026-07-15）：普通 merge `origin/main@a0b2aea1`（含 PR #1208/#1209），并在最终七项 Craft diff 上完成本地复验。
 
 ### 测试结果
 
-- 最终受测实现 SHA：`333ed7a297fc33eaab4a3331840bd488cb1b5817`；归档 HEAD：`523cd364bb66c83f56cfd88a38ec460c4c74655c`。
-- E2E run `29339867487`：Java 17 client、schema、agent、server、Smoke 与 Bot 全部通过。
-- server：`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 通过；lib `11649 passed / 0 failed / 1 ignored`，main `11 passed`，`full_app_startup` `1 passed`，backpack e2e `4 passed`，doc-tests `5 ignored`。
-- Smoke Task 13：`8 passed / 0 failed`，最终输出 `ALL PASS`。
-- Bot：protocol `63/63`；scenarios `27 passed / 0 failed`，制作取消退款与断线恢复场景均通过。
-- `git diff --check`：通过。
-- 独立 read-only 审计针对受测代码 SHA `333ed7a2` 检查制作账本与 Bot 稳定性，结论为 `0 Blocker / 0 Major`；随后 `/review` 对归档 HEAD 确认 `player → pending → zone` 接线与守恒方向正确，仅要求本页补齐最终证据并把服丹改造拆出。服丹改造已独立为 PR #1208，本 plan 不再把它列为交付物。
+- 最终同步/受测 SHA：`9183193546cb2931aee16bfd77eb265b4912fe3b`；主线：`origin/main@a0b2aea1be8caa12f169128816858d181d511fb0`。
+- server `fmt`、`clippy -D warnings` 全绿；`cargo test`：lib `11650 passed / 1 ignored`，main `11 passed`，integration `1 + 4 passed`，doc-tests `5 ignored`。
+- JDK 17 client `./gradlew test build`：`4077 tests / 0 failures / 0 ignored`，`BUILD SUCCESSFUL`，13 个任务全部执行。
+- Bot/Python：protocol `86/86`，制作退款/断线恢复均通过 `py_compile`；`git diff --check` 通过，最终 diff 七项。PR #1208 合入后，服丹与退款稳定化已退出本 PR diff。
+- E2E run `29339867487` 的 Smoke `8/8`、Bot scenarios `27/27` 是同步前历史证据；最终 SHA 的 CI 与 `/review` 以 PR checks 为准，不预填 run id 或裁决。
+- 同步前 SHA `333ed7a2` 的独立审计为 `0 Blocker / 0 Major`，历史 `/review` 确认 `player → pending → zone` 守恒链；服丹已由 PR #1208 合入主线。
 
 ### 跨仓库核验
 
