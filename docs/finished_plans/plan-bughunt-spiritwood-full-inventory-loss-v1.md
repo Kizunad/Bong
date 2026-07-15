@@ -129,7 +129,7 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 - P0：在 `server/src/spiritwood/mod.rs` 增加生产链集成测试，修复前明确复现满包无地面掉落、原木却被错误标记 harvested 并置 AIR。
 - P1：`grant_ling_mu_gun` 复用 `add_item_to_player_inventory_or_ground`；同一 customization 闭包覆盖入包与落地，保留 `spirit_quality`、freshness、数量、原木中心位置和 session 维度；freshness registry/profile 缺失 fail closed。
 - P2：`complete_spiritwood_sessions` 通过 `grant_before_removing_session` 保证 grant 返回后才移除 completed session；仅在 `Granted` / `DroppedToGround` 后提交 harvested、AIR 和完成事件；结构错误、缺掉落 registry、缺 inventory、instance id 冲突均保留原木并发送 `completed=false`。
-- P3：`proto/bong/envelope.proto` 与 Rust/Python converter 镜像 freshness 六字段；Bot 支持真实 `C2S_PLAYER_ACTION` 和 `lumber_progress`；生产五 tile fixture 固定 seed `(1292, 73, 1519)`、外缘主干 `(1285, 73, 1509)`，并以正式 `0..4` biome palette 约束所有 tile；专项场景验证满包落地与拾回。
+- P3：`proto/bong/envelope.proto` 与 Rust/Python converter 镜像 freshness 六字段；Bot 支持真实 `C2S_PLAYER_ACTION` 和 `lumber_progress`；生产五 tile fixture 固定 seed `(1292, 73, 1519)`、外缘主干 `(1285, 73, 1509)`，并以正式 `0..4` biome palette 约束所有 tile；专项场景验证满包落地与拾回。最终 PR gate run `29422011676` 在 SHA `2f34908764d22b571a2b892d9b5aaef7b29f6d88` 全绿。
 - P3 运行隔离：`scripts/bot-e2e.sh` 为自启 server 分配独立 `BONG_SPIRITWOOD_HARVESTED_PATH`，防止上一轮已采伐持久化污染重跑。
 
 ### 关键 commit
@@ -155,9 +155,10 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 - `d89af9da` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,708 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed。
 - 历史 Rust 基线 `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed；最终 Rust 代码门禁以 `d89af9da` 的同 SHA 结果为准。
 - PR HEAD `e73ebc35` 的 GitHub e2e run `29413908258` 全绿（23m51s）：client、schema、agent、server 全测、Smoke/E2E、Bot e2e 与 artifact upload 均成功。
+- 最终 PR HEAD `2f34908764d22b571a2b892d9b5aaef7b29f6d88` 的 GitHub e2e run `29422011676` 全绿：`e2e` job success，最终 SHA 与 PR head 对拍一致。
 - 最新协议代码 HEAD `6508e685`：Python protocol 96 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress`、digging packet 32 位边界与五 tile biome palette 边界均有 pin 测试。
 - `6508e685` 完整 Bot e2e：第二轮 29 passed / 0 failed；生产灵木专项 13.5s，并以 `created_at_tick > 0` 锁定 tag 1 真实过线。首轮专项同样通过，但无关 `combat_weapon_equip_damage` 单次命中观察失败；第二轮该场景 21.9s 通过。
-- `d89af9da` 后的归档提交只更新本文，不改变已全门禁通过的 Rust 代码树；最终远端 SHA、同 SHA GitHub e2e 与 `/review` 结果在 PR gate 中对拍。
+- `d89af9da` 后的归档提交只更新本文，不改变已全门禁通过的 Rust 代码树；最终远端 SHA、同 SHA GitHub e2e run `29422011676` 与 `/review` 结果在 PR gate 中对拍。
 - client 使用 Temurin JDK 17.0.19 执行 `./gradlew test build`：BUILD SUCCESSFUL，13 tasks。
 - 主线同步前后 `production_spiritwood_full_inventory_drop.py` 均通过；同步后首次完整 Bot e2e 的 `combat_skill_cast` 因 40 格观察时序抖动单次失败，定向连续两次通过（0.8s / 0.7s），随后完整 29/29 通过。
 - `6508e685` 执行 `git diff --check origin/main...HEAD` 通过；工作树干净，merge-base 为 `origin/main@6f1faea5`，因此主线是最新协议代码 HEAD 的祖先。
