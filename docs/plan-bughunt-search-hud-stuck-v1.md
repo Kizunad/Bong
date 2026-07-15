@@ -64,17 +64,19 @@
 
 ### 验收抓手
 
-- **单测**：
-  - `SearchHudStateStore`/对应新 tick 逻辑：`markCompleted()` 后 2999ms 仍显示，3000ms 后自动 `IDLE`
-  - `markAborted()` 后 999ms 仍显示，1000ms 后自动 `IDLE`
-  - 新一轮 `search_started` 到来时可正常覆盖旧 flash，不受过期回收干扰
-- **现有缺口补测**：
-  - `client/src/test/java/com/bong/client/network/ContainerInteractionHandlerTest.java` 目前只断言能进入 `ABORTED_FLASH`，没断言它会回 `IDLE`
-  - `client/src/test/java/com/bong/client/hud/SearchProgressHudPlannerTest.java` 只测渲染形状，没测生命周期收尾
-- **手动**：
-  1. 完成一次搜刮，停在原地 4 秒，HUD 应自动消失
-  2. 触发一次取消/受击中断，停在原地 2 秒，HUD 应自动消失
-  3. 完成/中断后立刻切战斗、开其它界面、原地移动，旧搜刮提示不应继续常驻
+- **store 状态机契约**：
+  - `markCompleted()` 后 2999ms 仍显示，3000ms 精确边界自动 `IDLE`。
+  - `markAborted()` 后 999ms 仍显示，1000ms 精确边界自动 `IDLE`。
+  - 新一轮 `search_started` / `search_progress`、后到终态、断线、负向时间差与 `nanoTime` 回绕均有确定性测试。
+- **生产 HUD 帧消费集成门禁**：
+  - `BongHudOrchestratorTest` 必须从真实 `SearchHudStateStore.snapshot()` 入口构建最终命令流；completed/aborted 在 TTL 内能产出 `HudRenderLayer.SEARCH_PROGRESS`，TTL 后不再产出。
+  - 必须以 active combat snapshot 与变化后的 `HudRuntimeContext` 坐标/朝向复验，证明进入战斗和移动后，过期终态不会重新进入最终命令流。
+- **界面切换集成门禁**：
+  - `BongHudTest` 必须走生产 `ScreenHudVisibility` 过滤策略；`FULL` 保留尚未过期的搜刮 flash，`INVENTORY_DIMMED`、`CAST_BAR_ONLY`、`HIDDEN` 均不得泄漏 `SEARCH_PROGRESS`。
+  - 从其它界面返回 `FULL` 后，再由上一条生产帧消费测试证明过期 flash 不会复现。
+- **当前环境的验收约定**：
+  - 当前 SSH 环境无 `DISPLAY`、Wayland socket 或 Xvfb，不能诚实执行玩家可见 `./gradlew runClient`，也不得把未执行的手工观察写成证据。
+  - 本 plan 将上述“store 契约 + 生产 orchestrator 最终命令流 + 生产 screen visibility 过滤”确定性自动化测试定义为归档门禁；本地 WSLg 的 `runClient` 仅作为可选视觉 smoke，不再是本次 headless 流水线的阻塞条件。
 
 ## 反方裁决（退化处理）
 
