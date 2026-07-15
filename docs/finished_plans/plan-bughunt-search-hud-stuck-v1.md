@@ -1,6 +1,6 @@
 # plan-bughunt-search-hud-stuck-v1
 
-> **Active plan（2026-07-15 review 返工）**。来源：`docs/plans-skeleton/plan-bughunt-search-hud-stuck-v1.md`。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
+> **Finished plan（2026-07-15 review 返工验收归档）**。来源：`docs/plans-skeleton/plan-bughunt-search-hud-stuck-v1.md`。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
 
 > 立项动机：本轮按「client runtime / store / session / consumer 漏 reset」角度复查 TSY 搜刮链路，避开既有 toast cross-session、identity panel stale session、zone_info 同区不刷新、灵龛 HUD 串局等已出题项后，确认这是一个**新的、同 session 即可稳定复现**的 HUD 状态机真 bug。
 
@@ -24,9 +24,9 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | TSY 搜刮 HUD 终态不自动回 `IDLE` | client | ⏳ 运行时验收返工 |
+| P0 | TSY 搜刮 HUD 终态不自动回 `IDLE` | client | ✅ 2026-07-15 |
 
-## P0 — TSY 搜刮 HUD 终态不自动回 `IDLE`（⏳ 运行时验收返工）
+## P0 — TSY 搜刮 HUD 终态不自动回 `IDLE`（✅ 2026-07-15）
 
 - **类型**：client runtime / store / consumer 漏 reset
 - **优先级**：major
@@ -109,7 +109,7 @@
 
 bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-20260705-cm`，角度：disconnect/reconnect、world 切换、增量状态不清、consumer 漏 reset。结论：TSY 搜刮 HUD 终态未自动收尾是高置信新真 bug；原 skeleton 当时仅立项，不含代码修复。
 
-## 验收证据（运行时返工中）
+## Finish Evidence
 
 ### 落地清单
 
@@ -123,6 +123,12 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
   - 覆盖 3 秒/1 秒前一纳秒与精确边界、新搜索/进度覆盖、后到终态替换、负向时间差、`nanoTime` long 回绕及断线清理。
 - `client/src/test/java/com/bong/client/BongNetworkHandlerTest.java`
   - 覆盖统一 Fabric disconnect 清理链真实调用搜刮 HUD store。
+- `client/src/main/java/com/bong/client/BongHud.java`
+  - 将生产 `ScreenHudVisibility` 命令过滤收口为可确定性验证的同一入口，保持 `FULL` / 背包 dim / 自定义界面 cast-only / hidden 四类运行时策略不变。
+- `client/src/test/java/com/bong/client/hud/BongHudOrchestratorTest.java`
+  - 覆盖真实 `SearchHudStateStore.snapshot()` 到最终 HUD 命令流：completed/aborted 在 TTL 内可见，TTL 后在战斗与移动上下文均不再产出 `SEARCH_PROGRESS`。
+- `client/src/test/java/com/bong/client/BongHudTest.java`
+  - 覆盖生产界面过滤：其它界面与隐藏界面均不会泄漏搜刮 flash，返回 `FULL` 后由 orchestrator 的过期快照保证旧提示不复现。
 
 ### 关键 commit
 
@@ -131,22 +137,26 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 - `b72a702f`（2026-07-15）：实现终态 TTL 与统一断线清理。
 - `330e2afe`（2026-07-15）：把生产取时纳入状态锁，消除锁竞争导致的 TTL 起点偏移。
 - `1694589f`（2026-07-15）：运行 `scripts/plan-finish.sh`，把 active plan 迁入 `docs/finished_plans/`。
+- `15eef3b8`（2026-07-15）：响应首轮 review，将 plan 恢复为 active，撤回未完成的运行时验收声明。
+- `b6e28ffe`（2026-07-15）：补齐 orchestrator 最终命令流与生产 screen visibility 集成回归。
+- `e99cba9e`（2026-07-15）：将 headless 环境下的生产链确定性集成测试收口为等价验收门禁。
 
 ### 测试结果
 
 - 修复前证真：JDK 17 定向执行 `SearchHudStateStoreTest` + `BongNetworkHandlerTest`，`32 tests completed, 5 failed`；失败精确命中 completed/aborted TTL、后到终态 deadline、`nanoTime` 回绕和断线清理。
 - 修复后定向：同两组测试 `BUILD SUCCESSFUL`，上述失败全部转绿。
-- 客户端完整门禁（JDK 17）：`./gradlew --no-daemon test build` → `BUILD SUCCESSFUL in 3m 44s`；XML 汇总 `4086 tests, 0 skipped, 0 failures, 0 errors`。
+- review 返工定向门禁（JDK 17）：`SearchHudStateStoreTest` + `BongHudOrchestratorTest` + `BongHudTest` → `33 tests, 0 skipped, 0 failures, 0 errors`；真实覆盖 store → orchestrator → 最终命令流与 screen visibility 过滤。
+- 客户端完整门禁（JDK 17）：`./gradlew --no-daemon test build` → `BUILD SUCCESSFUL in 43s`；XML 汇总 `4089 tests, 0 skipped, 0 failures, 0 errors`。
 - 主线同步：`origin/main=6f1faea5` 是当前 HEAD 祖先，分类 `already-up-to-date`，无需生成 merge commit 或重复门禁。
-- 主 agent 对抗复审：首次复审发现“锁外取 `nanoTime`”竞态并以 `330e2afe` 修正；最终干净 HEAD `330e2afe39be77268cff1d0c4dae2cd59037ca83` 复审 PASS。按用户明确要求，本次未启动独立 validator subagent。
+- 主 agent 对抗复审：首次复审发现“锁外取 `nanoTime`”竞态并以 `330e2afe` 修正；review 返工后的干净 HEAD `e99cba9eb406ab35cb0352cffdd0e28c5b208485` 再审 PASS。按用户明确要求，本次未启动独立 validator subagent。
 
 ### 跨仓库核验
 
-- **client**：`ContainerInteractionHandler` 四类 search payload → `SearchHudStateStore` → `BongHudOrchestrator` / `SearchProgressHudPlanner` 链路保持原协议并补齐生命周期收尾。
+- **client**：`ContainerInteractionHandler` 四类 search payload → `SearchHudStateStore` → `BongHudOrchestrator` / `SearchProgressHudPlanner` → `BongHud.filterCommandsForVisibility` 链路保持原协议并补齐生命周期收尾及界面切换回归。
 - **server**：未改；`search_started` / `search_progress` / `search_completed` / `search_aborted` payload 契约不变。
 - **agent/schema**：未改；本修复不新增或变更跨仓库 schema。
 
 ### 遗留 / 后续
 
-- review 代码结论无 blocker；当前唯一待办是按“验收抓手”执行 3 项 `runClient` 玩家可见验证并记录环境、步骤与观察结果。
-- 协议迁移、真元守恒和视觉资产均无遗留。
+- 无阻塞项，无协议迁移、真元守恒或视觉资产遗留。
+- 当前 SSH 环境无图形显示能力，未执行也未宣称执行 `runClient`；归档依据已按本 plan 修订后的验收约定，由 store 精确边界、生产 orchestrator 最终命令流和生产 screen visibility 三层确定性自动化证据共同提供。本地 WSLg 视觉 smoke 为可选后续，不构成本次归档条件。
