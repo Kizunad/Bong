@@ -11,7 +11,6 @@ import ast
 import json
 import os
 import pathlib
-import queue
 import re
 import socket
 import struct
@@ -21,8 +20,8 @@ import time
 import tomllib
 import types
 import unittest
-from unittest import mock
 import zlib
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -39,10 +38,18 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
 from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     NON_CLAMP_EXPECTED_QI,
     PILL_ID,
+    PILL_QI_RECOVERY,
+    SERVER_TICK_OBSERVATION_TICKS,
     _assert_settled_consumption,
+    _expected_qi_after_pill,
     _has_departed_baseline,
+    _is_qi_max_confirmation,
     _is_qi_set_confirmation,
+    _player_state_values,
+    _server_tick_from_event,
     _set_qi_and_wait,
+    _set_qi_max_and_wait,
+    _snapshot_after_server_tick_fence,
 )
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
@@ -390,13 +397,17 @@ def _pill_snapshot_event(t: float, revision: int, count: int, qi: float) -> _Fak
     )
 
 
-def _player_state_event(t: float, qi: float) -> _FakeEvent:
+def _player_state_event(t: float, qi: float, qi_max: float = 100.0) -> _FakeEvent:
     return _FakeEvent(
         t,
         "server_data",
         {
             "payload_type": "player_state",
-            "payload": {"type": "player_state", "spirit_qi": qi},
+            "payload": {
+                "type": "player_state",
+                "spirit_qi": qi,
+                "spirit_qi_max": qi_max,
+            },
         },
     )
 
@@ -493,6 +504,199 @@ class CultivationPillScenarioTest(unittest.TestCase):
         ):
             _set_qi_and_wait(bot, 5.0)
 
+    def test_qi_max_wait_consumes_authoritative_player_state(self):
+        authoritative = _player_state_event(1.1, 5.0, 80.0)
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [
+                authoritative,
+                _FakeEvent(
+                    1.2,
+                    "chat",
+                    {"text": "[dev] qi max 100.0 -> 80.0; current=5.0"},
+                ),
+            ],
+        )
+
+        result = _set_qi_max_and_wait(bot, 80.0)
+
+        self.assertIs(result, authoritative)
+        self.assertEqual(bot.commands, ["qi max 80.0"])
+        self.assertEqual(_player_state_values(result), (5.0, 80.0))
+
+    def test_qi_max_confirmation_is_anchored_to_exact_target(self):
+        good = _FakeEvent(
+            2.0,
+            "chat",
+            {"text": "[dev] qi max 100.0 -> 80.0; current=5.0"},
+        )
+        wrong = _FakeEvent(
+            2.0,
+            "chat",
+            {"text": "[dev] qi max 100.0 -> 90.0; current=5.0"},
+        )
+        self.assertTrue(_is_qi_max_confirmation(good, 1.0, 80.0))
+        self.assertFalse(_is_qi_max_confirmation(wrong, 1.0, 80.0))
+        self.assertFalse(_is_qi_max_confirmation(good, 2.0, 80.0))
+
+    def test_clamp_target_comes_from_authoritative_non_default_qi_max(self):
+        self.assertEqual(_expected_qi_after_pill(5.0, 80.0), 65.0)
+        self.assertEqual(
+            _expected_qi_after_pill(70.0, 80.0),
+            80.0,
+            "clamp 目标必须由权威 qi_max=80 推导，不能硬编码 100",
+        )
+
+    def test_settled_consumption_carries_non_default_qi_max_through_state_machine(self):
+        final = _assert_settled_consumption(
+            [
+                _pill_snapshot_event(1.05, 10, 3, 70.0),
+                _player_state_event(1.1, 70.0, 80.0),
+                _pill_snapshot_event(1.2, 11, 2, 80.0),
+                _player_state_event(1.3, 80.0, 80.0),
+                _player_state_event(1.4, 80.0, 80.0),
+            ],
+            before_revision=10,
+            before_count=3,
+            baseline_qi=70.0,
+            expected_qi=_expected_qi_after_pill(70.0, 80.0),
+            expected_qi_max=80.0,
+        )
+
+        self.assertEqual(final["revision"], 11)
+
+    def test_non_finite_authoritative_qi_fails_before_later_target(self):
+        for invalid in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                AssertionError,
+                "spirit_qi 必须是有限数",
+                msg="5 -> 非有限值 -> 65 不得静默跳过非法中间态",
+            ):
+                _assert_settled_consumption(
+                    [
+                        _pill_snapshot_event(1.1, 11, 2, 65.0),
+                        _player_state_event(1.15, 5.0),
+                        _player_state_event(1.2, invalid),
+                        _player_state_event(1.3, 65.0),
+                    ],
+                    before_revision=10,
+                    before_count=3,
+                    baseline_qi=5.0,
+                    expected_qi=65.0,
+                    expected_qi_max=100.0,
+                )
+
+    def test_missing_or_non_finite_authoritative_qi_max_fails(self):
+        invalid_values = (None, 0.0, float("nan"), float("inf"), float("-inf"))
+        for invalid in invalid_values:
+            event = _player_state_event(1.0, 5.0)
+            if invalid is None:
+                event.data["payload"].pop("spirit_qi_max")
+                message = "必须是数值"
+            else:
+                event.data["payload"]["spirit_qi_max"] = invalid
+                message = "必须是有限正数"
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                AssertionError, message
+            ):
+                _player_state_values(event)
+
+    def test_server_tick_fence_crosses_requested_tick_target_before_snapshot(self):
+        self.assertEqual(
+            SERVER_TICK_OBSERVATION_TICKS,
+            20,
+            "生产服丹观察窗口必须继续覆盖至少 20 个权威 server tick",
+        )
+        duplicate = _pill_snapshot_event(1.55, 12, 1, 65.0)
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [
+                _FakeEvent(1.1, "chat", {"text": "[dev] time now: 100"}),
+                _FakeEvent(1.2, "chat", {"text": "[dev] time now: 101"}),
+                _FakeEvent(1.3, "chat", {"text": "[dev] time now: 102"}),
+                _FakeEvent(1.4, "chat", {"text": "[dev] time now: 103"}),
+                _FakeEvent(1.5, "chat", {"text": "[dev] time now: 103"}),
+                duplicate,
+                _FakeEvent(1.6, "chat", {"text": "[dev] time now: 104"}),
+            ],
+        )
+
+        snapshot = _snapshot_after_server_tick_fence(
+            bot, minimum_ticks=2, timeout=1.0
+        )
+
+        self.assertIn(
+            duplicate,
+            snapshot,
+            "首个 drain chat 后、第二个 drain marker 前的重复帧必须进入快照",
+        )
+        self.assertEqual(
+            bot.commands,
+            ["time now"] * 6,
+            "100 起点 +2 后先跨到 103，再做两次 round-trip 才覆盖 post-emit 帧",
+        )
+
+    def test_server_tick_fence_rejects_malformed_or_rollback_tick(self):
+        malformed = _FakeEvent(2.0, "chat", {"text": "[dev] time now: 12x"})
+        with self.assertRaisesRegex(AssertionError, "十进制 tick"):
+            _server_tick_from_event(malformed, 1.0)
+
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "历史水位"})],
+            [
+                _FakeEvent(1.1, "chat", {"text": "[dev] time now: 100"}),
+                _FakeEvent(1.2, "chat", {"text": "[dev] time now: 99"}),
+            ],
+        )
+        with self.assertRaisesRegex(AssertionError, "不得回退"):
+            _snapshot_after_server_tick_fence(bot, minimum_ticks=1, timeout=1.0)
+
+    def test_server_tick_fence_rejects_invalid_bounds_and_deadlines(self):
+        bot = _CommandFakeBot([], [])
+        with self.assertRaisesRegex(ValueError, "minimum_ticks"):
+            _snapshot_after_server_tick_fence(bot, minimum_ticks=0, timeout=1.0)
+        with self.assertRaisesRegex(ValueError, "timeout"):
+            _snapshot_after_server_tick_fence(bot, minimum_ticks=1, timeout=0.0)
+
+        main_timeout_bot = _CommandFakeBot(
+            [],
+            [_FakeEvent(1.0, "chat", {"text": "[dev] time now: 100"})],
+        )
+        with mock.patch(
+            "bot.scenarios.cultivation_pill_consume.time.monotonic",
+            side_effect=[0.0, 2.0],
+        ), self.assertRaisesRegex(BotAssertionError, "推进至少"):
+            _snapshot_after_server_tick_fence(
+                main_timeout_bot, minimum_ticks=1, timeout=1.0
+            )
+
+        drain_timeout_bot = _CommandFakeBot(
+            [],
+            [
+                _FakeEvent(1.0, "chat", {"text": "[dev] time now: 100"}),
+                _FakeEvent(1.1, "chat", {"text": "[dev] time now: 102"}),
+            ],
+        )
+        with mock.patch(
+            "bot.scenarios.cultivation_pill_consume.time.monotonic",
+            side_effect=[0.0, 0.1, 2.0],
+        ), self.assertRaisesRegex(BotAssertionError, "post-emit drain"):
+            _snapshot_after_server_tick_fence(
+                drain_timeout_bot, minimum_ticks=1, timeout=1.0
+            )
+
+    def test_server_tick_fence_rejects_rollback_during_post_emit_drain(self):
+        bot = _CommandFakeBot(
+            [],
+            [
+                _FakeEvent(1.0, "chat", {"text": "[dev] time now: 100"}),
+                _FakeEvent(1.1, "chat", {"text": "[dev] time now: 102"}),
+                _FakeEvent(1.2, "chat", {"text": "[dev] time now: 101"}),
+            ],
+        )
+        with self.assertRaisesRegex(AssertionError, "不得回退"):
+            _snapshot_after_server_tick_fence(bot, minimum_ticks=1, timeout=1.0)
+
     def test_stale_same_tick_baseline_is_not_new_authoritative_value(self):
         self.assertFalse(
             _has_departed_baseline(5.0, 5.0, 65.0),
@@ -530,6 +734,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
             before_count=3,
             baseline_qi=5.0,
             expected_qi=65.0,
+            expected_qi_max=100.0,
         )
         self.assertEqual(
             final["revision"], 11,
@@ -546,10 +751,14 @@ class CultivationPillScenarioTest(unittest.TestCase):
             f"{PILL_ID} 必须继续走 qi_recovery，实际 effect={huiyuan['effect']}",
         )
         self.assertEqual(
-            float(huiyuan["effect"]["magnitude"]),
-            NON_CLAMP_EXPECTED_QI - 5.0,
-            f"场景从 qi=5 推导期望 {NON_CLAMP_EXPECTED_QI}，"
+            float(huiyuan["effect"]["magnitude"]), PILL_QI_RECOVERY,
+            f"场景药效推导常量应为 {PILL_QI_RECOVERY}，"
             f"实际 asset effect={huiyuan['effect']}",
+        )
+        self.assertEqual(
+            _expected_qi_after_pill(5.0, 100.0),
+            NON_CLAMP_EXPECTED_QI,
+            f"qi=5、权威 qi_max=100 时应推导 {NON_CLAMP_EXPECTED_QI}",
         )
 
     def test_repeated_qi_effect_fails_settle_window(self):
@@ -568,6 +777,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_repeated_inventory_decrement_fails_settle_window(self):
@@ -586,6 +796,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_repeated_decrement_then_surface_rollback_still_fails(self):
@@ -605,6 +816,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_consumed_snapshot_rollback_to_old_state_fails(self):
@@ -623,6 +835,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_same_revision_count_change_fails(self):
@@ -641,6 +854,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_inventory_qi_regression_fails(self):
@@ -659,6 +873,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_authoritative_qi_regression_after_effect_fails_settle_window(self):
@@ -678,6 +893,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
     def test_wrong_authoritative_qi_before_target_fails_settle_window(self):
@@ -697,6 +913,7 @@ class CultivationPillScenarioTest(unittest.TestCase):
                 before_count=3,
                 baseline_qi=5.0,
                 expected_qi=65.0,
+                expected_qi_max=100.0,
             )
 
 
@@ -986,29 +1203,6 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertEqual(json.loads(reader.rest()), {"v": 1, "type": "breakthrough"})
 
 
-_READER_STOP = object()
-
-
-class _ScriptedConnection:
-    def __init__(self):
-        self.frames = queue.Queue()
-
-    def push(self, body: bytes) -> None:
-        self.frames.put(body)
-
-    def read_frame(self) -> bytes:
-        try:
-            item = self.frames.get(timeout=0.02)
-        except queue.Empty as error:
-            raise TimeoutError from error
-        if item is _READER_STOP:
-            raise ConnectionError("scripted reader stopped")
-        return item
-
-    def close(self) -> None:
-        self.frames.put(_READER_STOP)
-
-
 def _bare_bot() -> Bot:
     """不开 socket 的 Bot——只测 _dispatch 解码与实体位置表状态机。"""
     import threading as _threading
@@ -1020,186 +1214,13 @@ def _bare_bot() -> Bot:
     bot._lock = _threading.RLock()
     bot._new_event = _threading.Condition(bot._lock)
     bot._send_lock = _threading.Lock()
-    bot._snapshot_lock = _threading.Lock()
     bot._closing = False
-    bot._reader_epoch = 0
-    bot._reader_in_flight = False
-    bot._reader_barrier_requested = False
     bot.position = None
     bot.health = None
     bot.entity_id = None
     bot.disconnect_reason = None
     bot.chunk_count = 0
     return bot
-
-
-def _scripted_reader_bot(dispatch) -> tuple[Bot, _ScriptedConnection]:
-    bot = _bare_bot()
-    bot.username = "Barrier"
-    bot.t0 = time.monotonic()
-    bot.conn = _ScriptedConnection()
-    bot._dispatch = types.MethodType(dispatch, bot)
-    bot._reader_thread = threading.Thread(target=bot._reader_loop, daemon=True)
-    bot._reader_thread.start()
-    return bot, bot.conn
-
-
-def _stop_scripted_reader(bot: Bot) -> None:
-    with bot._new_event:
-        bot._closing = True
-        bot._new_event.notify_all()
-    bot.conn.close()
-    bot._reader_thread.join(timeout=1.0)
-
-
-class BotEventStreamBarrierTest(unittest.TestCase):
-    def test_delayed_event_after_half_second_is_in_atomic_snapshot(self):
-        def dispatch(bot, body: bytes) -> None:
-            if body == b"initial":
-                bot._emit(
-                    "server_data",
-                    _pill_snapshot_event(0.0, 11, 2, 65.0).data,
-                )
-                bot._emit("server_data", _player_state_event(0.0, 65.0).data)
-            elif body == b"duplicate":
-                bot._emit(
-                    "server_data",
-                    _pill_snapshot_event(0.0, 12, 1, 65.0).data,
-                )
-            else:
-                raise AssertionError(f"unexpected scripted frame: {body!r}")
-
-        bot, conn = _scripted_reader_bot(dispatch)
-        conn.push(b"initial")
-        bot.wait_for(
-            lambda event: event.kind == "server_data"
-            and event.data.get("payload_type") == "inventory_snapshot",
-            timeout=1.0,
-            description="scripted initial inventory snapshot",
-        )
-
-        def queue_delayed_duplicate() -> None:
-            time.sleep(0.55)
-            conn.push(b"duplicate")
-
-        producer = threading.Thread(target=queue_delayed_duplicate)
-        producer.start()
-        try:
-            events = bot.snapshot_events_after_quiet_period(
-                min_wait=0.6,
-                quiet_period=0.05,
-                timeout=2.0,
-                description="延迟重复扣存测试屏障",
-            )
-            producer.join(timeout=1.0)
-
-            self.assertFalse(
-                producer.is_alive(),
-                "延迟帧生产线程应在屏障返回前完成，实际仍存活",
-            )
-            with self.assertRaisesRegex(
-                AssertionError,
-                "消费后每版 inventory revision 必须保持",
-                msg="超过旧 0.5s 窗口才到 reader 的重复扣存也必须被快照捕获",
-            ):
-                _assert_settled_consumption(
-                    events,
-                    before_revision=10,
-                    before_count=3,
-                    baseline_qi=5.0,
-                    expected_qi=65.0,
-                )
-        finally:
-            producer.join(timeout=1.0)
-            _stop_scripted_reader(bot)
-        self.assertFalse(bot._reader_thread.is_alive(), "scripted reader 必须可收口")
-
-    def test_checkpoint_waits_for_frame_already_in_decode(self):
-        decode_started = threading.Event()
-        allow_decode = threading.Event()
-
-        def dispatch(bot, body: bytes) -> None:
-            self.assertEqual(body, b"in-flight")
-            decode_started.set()
-            if not allow_decode.wait(timeout=1.0):
-                raise AssertionError("test did not release in-flight decode")
-            bot._emit("server_data", _player_state_event(0.0, 65.0).data)
-
-        bot, conn = _scripted_reader_bot(dispatch)
-        conn.push(b"in-flight")
-        self.assertTrue(
-            decode_started.wait(timeout=1.0),
-            "scripted frame 必须已被生产 reader 取出并进入 decode",
-        )
-        snapshots = []
-        errors = []
-
-        def take_snapshot() -> None:
-            try:
-                snapshots.append(
-                    bot.snapshot_events_after_quiet_period(
-                        min_wait=0.0,
-                        quiet_period=0.01,
-                        timeout=1.0,
-                        description="in-flight decode checkpoint",
-                    )
-                )
-            except BaseException as error:  # 测试线程必须把失败带回主线程
-                errors.append(error)
-
-        snapshot_thread = threading.Thread(target=take_snapshot)
-        snapshot_thread.start()
-        try:
-            time.sleep(0.05)
-            self.assertTrue(
-                snapshot_thread.is_alive(),
-                "reader 已取帧但尚未 emit 时，checkpoint 不得按 events 静默提前返回",
-            )
-            allow_decode.set()
-            snapshot_thread.join(timeout=1.0)
-            self.assertFalse(snapshot_thread.is_alive(), "decode 完成后 checkpoint 应及时返回")
-            self.assertEqual(errors, [], f"checkpoint 不应失败，实际 errors={errors}")
-            self.assertEqual(len(snapshots), 1, "checkpoint 应返回且只返回一份原子快照")
-            self.assertTrue(
-                any(event.data.get("payload_type") == "player_state" for event in snapshots[0]),
-                "原子快照必须包含进入 checkpoint 前已在 decode 的 player_state",
-            )
-        finally:
-            allow_decode.set()
-            snapshot_thread.join(timeout=1.0)
-            _stop_scripted_reader(bot)
-        self.assertFalse(bot._reader_thread.is_alive(), "scripted reader 必须可收口")
-
-    def test_barrier_rejects_invalid_durations(self):
-        bot = _bare_bot()
-        bot.username = "Barrier"
-        cases = [
-            ({"min_wait": -0.1, "quiet_period": 0.1, "timeout": 1.0}, "min_wait"),
-            ({"min_wait": 0.0, "quiet_period": 0.0, "timeout": 1.0}, "quiet_period"),
-            ({"min_wait": 0.0, "quiet_period": 0.1, "timeout": 0.0}, "timeout"),
-        ]
-        for values, field in cases:
-            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
-                bot.snapshot_events_after_quiet_period(
-                    **values,
-                    description=f"invalid {field}",
-                )
-
-    def test_deadline_wins_when_clock_passes_deadline_and_quiet_window(self):
-        bot = _bare_bot()
-        bot.username = "Barrier"
-        with mock.patch("bot.bot.time.monotonic", side_effect=[0.0, 2.0]):
-            with self.assertRaisesRegex(
-                BotAssertionError,
-                "事件流未静默",
-                msg="now 同时越过 deadline/quiet_until 时必须以 timeout 为准",
-            ):
-                bot.snapshot_events_after_quiet_period(
-                    min_wait=0.5,
-                    quiet_period=0.1,
-                    timeout=1.0,
-                    description="deadline priority",
-                )
 
 
 class EntityTrackingTest(unittest.TestCase):
