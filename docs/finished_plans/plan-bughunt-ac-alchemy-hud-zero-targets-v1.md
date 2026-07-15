@@ -123,4 +123,4 @@
 
 - 本次只改变 server payload 的既有字段取值，schema 与 client consumer 未改；通过源码对拍确认
   `AlchemyProgressHudPlanner` 和 `AlchemyScreen` 直接消费这些字段，因此无需 client 构建。
-- 无 `[BLOCKED: ...]`，无真元流动/配方数值/A/V 资产变化，无已知遗留。
+- 无阻塞项，无真元流动/配方数值/A/V 资产变化，无已知遗留。
