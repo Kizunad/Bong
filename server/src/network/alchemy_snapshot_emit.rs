@@ -11,6 +11,7 @@
 
 use valence::prelude::{Added, Client, Entity, Query, Username, With};
 
+use crate::alchemy::RecipeRegistry;
 use crate::cultivation::components::ColorKind;
 use crate::inventory::PlayerInventory;
 use crate::network::agent_bridge::{
@@ -220,7 +221,17 @@ pub fn send_session_from_furnace(
     client: &mut Client,
     player_id: &str,
     furnace: &crate::alchemy::AlchemyFurnace,
+    registry: &RecipeRegistry,
 ) {
+    let data = build_session_data(furnace, registry);
+    let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemySession(Box::new(data)));
+    send_payload(client, &payload, player_id);
+}
+
+fn build_session_data(
+    furnace: &crate::alchemy::AlchemyFurnace,
+    _registry: &RecipeRegistry,
+) -> AlchemySessionDataV1 {
     let data = match &furnace.session {
         Some(s) => AlchemySessionDataV1 {
             recipe_id: Some(s.recipe.clone()),
@@ -258,8 +269,7 @@ pub fn send_session_from_furnace(
             interventions_recent: vec![],
         },
     };
-    let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemySession(Box::new(data)));
-    send_payload(client, &payload, player_id);
+    data
 }
 
 fn send_payload(client: &mut Client, payload: &ServerDataV1, player_id: &str) {
@@ -333,7 +343,84 @@ fn mock_outcome_resolved() -> AlchemyOutcomeResolvedDataV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::alchemy_join_mocks_enabled_value;
+    use super::{alchemy_join_mocks_enabled_value, build_session_data};
+    use crate::alchemy::recipe::{
+        FireProfile, IngredientSpec, Outcomes, Recipe, RecipeStage, ToleranceSpec,
+    };
+    use crate::alchemy::{AlchemyFurnace, AlchemySession, Intervention, RecipeRegistry};
+    use crate::schema::alchemy::AlchemyStageHintV1;
+
+    const RECIPE_ID: &str = "hud_contract_recipe";
+
+    fn test_registry() -> RecipeRegistry {
+        let mut registry = RecipeRegistry::new();
+        registry
+            .insert(Recipe {
+                id: RECIPE_ID.into(),
+                name: "HUD 契约丹方".into(),
+                furnace_tier_min: 1,
+                stages: vec![
+                    RecipeStage {
+                        at_tick: 0,
+                        required: vec![
+                            IngredientSpec {
+                                material: "ci_she_hao".into(),
+                                count: 2,
+                                mineral_id: None,
+                            },
+                            IngredientSpec {
+                                material: "ling_shui".into(),
+                                count: 1,
+                                mineral_id: None,
+                            },
+                        ],
+                        window: 0,
+                    },
+                    RecipeStage {
+                        at_tick: 40,
+                        required: vec![IngredientSpec {
+                            material: "dan_sha".into(),
+                            count: 3,
+                            mineral_id: None,
+                        }],
+                        window: 6,
+                    },
+                ],
+                fire_profile: FireProfile {
+                    target_temp: 0.62,
+                    target_duration_ticks: 180,
+                    qi_cost: 12.5,
+                    tolerance: ToleranceSpec {
+                        temp_band: 0.08,
+                        duration_band: 20,
+                    },
+                },
+                outcomes: Outcomes {
+                    perfect: None,
+                    good: None,
+                    flawed: None,
+                    waste: None,
+                    explode: None,
+                },
+                flawed_fallback: None,
+            })
+            .unwrap();
+        registry
+    }
+
+    fn active_furnace() -> AlchemyFurnace {
+        let mut session = AlchemySession::new(RECIPE_ID.into(), "alice".into());
+        session.elapsed_ticks = 44;
+        session.temp_current = 0.58;
+        session.qi_injected = 7.25;
+        session.staged.completed_stages = vec![0];
+        session.staged.missed_stages = vec![1];
+        session.interventions.push(Intervention::AdjustTemp(0.58));
+        AlchemyFurnace {
+            session: Some(session),
+            ..AlchemyFurnace::default()
+        }
+    }
 
     #[test]
     fn join_alchemy_mocks_require_explicit_truthy_env() {
@@ -343,5 +430,83 @@ mod tests {
         assert!(!alchemy_join_mocks_enabled_value(""));
         assert!(!alchemy_join_mocks_enabled_value("0"));
         assert!(!alchemy_join_mocks_enabled_value("false"));
+    }
+
+    #[test]
+    fn active_session_snapshot_uses_recipe_targets_and_stage_state() {
+        let data = build_session_data(&active_furnace(), &test_registry());
+
+        assert!(data.active);
+        assert_eq!(data.recipe_id.as_deref(), Some(RECIPE_ID));
+        assert_eq!(data.elapsed_ticks, 44);
+        assert_eq!(data.target_ticks, 180);
+        assert_eq!(data.temp_current, 0.58);
+        assert_eq!(data.temp_target, 0.62);
+        assert_eq!(data.temp_band, 0.08);
+        assert_eq!(data.qi_injected, 7.25);
+        assert_eq!(data.qi_target, 12.5);
+        assert_eq!(
+            data.stages,
+            vec![
+                AlchemyStageHintV1 {
+                    at_tick: 0,
+                    window: 0,
+                    summary: "ci_she_hao×2 + ling_shui×1".into(),
+                    completed: true,
+                    missed: false,
+                },
+                AlchemyStageHintV1 {
+                    at_tick: 40,
+                    window: 6,
+                    summary: "dan_sha×3".into(),
+                    completed: false,
+                    missed: true,
+                },
+            ]
+        );
+        assert_eq!(data.interventions_recent.len(), 1);
+    }
+
+    #[test]
+    fn empty_furnace_snapshot_clears_active_hud() {
+        let data = build_session_data(&AlchemyFurnace::default(), &test_registry());
+
+        assert!(!data.active);
+        assert_eq!(data.recipe_id, None);
+        assert_eq!(data.status_label, "未起炉");
+        assert!(data.stages.is_empty());
+    }
+
+    #[test]
+    fn unknown_recipe_snapshot_fails_closed_instead_of_emitting_active_zero_targets() {
+        let mut furnace = active_furnace();
+        furnace.session.as_mut().unwrap().recipe = "missing_recipe".into();
+
+        let data = build_session_data(&furnace, &RecipeRegistry::new());
+
+        assert!(!data.active);
+        assert_eq!(data.recipe_id.as_deref(), Some("missing_recipe"));
+        assert_eq!(data.status_label, "丹方数据缺失");
+        assert_eq!(data.target_ticks, 0);
+        assert_eq!(data.temp_target, 0.0);
+        assert_eq!(data.temp_band, 0.0);
+        assert_eq!(data.qi_target, 0.0);
+        assert!(data.stages.is_empty());
+    }
+
+    #[test]
+    fn finished_known_session_is_inactive_but_retains_recipe_guidance() {
+        let mut furnace = active_furnace();
+        furnace.session.as_mut().unwrap().finished = true;
+
+        let data = build_session_data(&furnace, &test_registry());
+
+        assert!(!data.active);
+        assert_eq!(data.status_label, "已结束");
+        assert_eq!(data.target_ticks, 180);
+        assert_eq!(data.temp_target, 0.62);
+        assert_eq!(data.temp_band, 0.08);
+        assert_eq!(data.qi_target, 12.5);
+        assert_eq!(data.stages.len(), 2);
     }
 }

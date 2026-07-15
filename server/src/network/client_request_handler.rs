@@ -906,6 +906,7 @@ pub fn handle_client_request_payloads(
                     intervention.into(),
                     &mut clients,
                     &mut alchemy_params.furnaces,
+                    &alchemy_params.recipe_registry,
                     alchemy_params.zones.as_deref(),
                     alchemy_params.redis.as_deref(),
                     alchemy_params.vfx_events.as_deref_mut(),
@@ -918,6 +919,7 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &mut alchemy_params.furnaces,
                     &mut alchemy_params.learned,
+                    &alchemy_params.recipe_registry,
                 );
             }
             ClientRequestV1::AlchemyTakePill { pill_item_id, .. } => {
@@ -14938,6 +14940,7 @@ fn handle_alchemy_open_furnace(
     clients: &mut Query<(&Username, &mut Client)>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     learned_q: &mut Query<&mut LearnedRecipes>,
+    registry: &RecipeRegistry,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -14945,7 +14948,12 @@ fn handle_alchemy_open_furnace(
     let player_id = canonical_player_id(username.0.as_str());
     match with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
         alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
-        alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+        alchemy_snapshot_emit::send_session_from_furnace(
+            &mut client,
+            &player_id,
+            furnace,
+            registry,
+        );
     }) {
         Ok(()) => {
             if let Ok(learned) = learned_q.get(entity) {
@@ -14982,6 +14990,7 @@ fn handle_alchemy_intervention(
     intervention: Intervention,
     clients: &mut Query<(&Username, &mut Client)>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    registry: &RecipeRegistry,
     zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
@@ -15041,7 +15050,12 @@ fn handle_alchemy_intervention(
             session.temp_current,
             session.qi_injected,
         );
-        alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+        alchemy_snapshot_emit::send_session_from_furnace(
+            &mut client,
+            &player_id,
+            furnace,
+            registry,
+        );
     });
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "intervention");
 }
@@ -15113,7 +15127,12 @@ fn handle_alchemy_ignite(
             player_id.as_str(),
         );
         alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
-        alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+        alchemy_snapshot_emit::send_session_from_furnace(
+            &mut client,
+            &player_id,
+            furnace,
+            registry,
+        );
     });
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "ignite");
 }
@@ -15299,7 +15318,12 @@ fn handle_alchemy_feed_slot(
         tracing::info!(
             "[bong][network][alchemy] `{player_id}` feed pos={furnace_pos:?} slot={slot_idx} {material}×{count}"
         );
-        alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+        alchemy_snapshot_emit::send_session_from_furnace(
+            &mut client,
+            &player_id,
+            furnace,
+            registry,
+        );
         if let (Ok(player_state), Ok(cultivation)) =
             (player_states.get(entity), cultivations.get(entity))
         {
@@ -15489,7 +15513,12 @@ fn handle_alchemy_take_back(
                 "[bong][network][alchemy] `{player_id}` take_back pos={furnace_pos:?} slot={slot_idx} resolved bucket={bucket:?}"
             );
             alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
-            alchemy_snapshot_emit::send_session_from_furnace(&mut client, &player_id, furnace);
+            alchemy_snapshot_emit::send_session_from_furnace(
+                &mut client,
+                &player_id,
+                furnace,
+                registry,
+            );
         },
     );
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "take_back");
