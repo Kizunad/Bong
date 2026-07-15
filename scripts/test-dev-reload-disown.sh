@@ -326,20 +326,66 @@ grep -Fq "bong server executable is not executable" "$NON_EXECUTABLE_LOG" \
 [ -z "$SERVER_PID" ] || fail "non-executable launch left SERVER_PID=$SERVER_PID"
 [ -z "$DETACHED_PID" ] || fail "non-executable launch left DETACHED_PID=$DETACHED_PID"
 
-EMPTY_PATH_LOG="$TEST_ROOT/empty-path.err"
+EMPTY_PATH_SERVER="$TEST_ROOT/empty-path-server"
+EMPTY_PATH_LOG="$TEST_ROOT/empty-path.log"
 EMPTY_PATH_READY="$TEST_ROOT/empty-path.ready"
+cat > "$EMPTY_PATH_SERVER" <<'EMPTY_PATH_SERVER'
+#!/bin/bash
+set -euo pipefail
+printf 'ready\n' > "$READY_FILE"
+exec /bin/sleep 30
+EMPTY_PATH_SERVER
+chmod +x "$EMPTY_PATH_SERVER"
 READY_FILE="$EMPTY_PATH_READY"
 ENV_ARGS=("PATH=")
-BONG_SERVER_EXECUTABLE="server-stub.sh"
-if launch_bong_server 2> "$EMPTY_PATH_LOG"; then
-    fail "production server launch ignored an explicitly empty ENV_ARGS PATH"
+BONG_SERVER_EXECUTABLE="empty-path-server"
+BONG_SERVER_LOG="$EMPTY_PATH_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+launch_bong_server "$SLEEP_EXECUTABLE" \
+    || fail "production server launch rejected current-directory lookup with an empty ENV_ARGS PATH"
+ACTIVE_CHILD_PID="$SERVER_PID"
+wait_for_file "$EMPTY_PATH_READY" "empty PATH server readiness"
+wait_for_process_command "$SERVER_PID" sleep \
+    || fail "empty ENV_ARGS PATH launch did not reach its final executable"
+terminate_background_process "$ACTIVE_CHILD_PID"
+if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+    fail "empty ENV_ARGS PATH cleanup did not reap pid $ACTIVE_CHILD_PID"
 fi
-grep -Fq "bong server executable is not executable" "$EMPTY_PATH_LOG" \
-    || fail "empty ENV_ARGS PATH rejection did not include its diagnostic"
-[ ! -e "$EMPTY_PATH_READY" ] \
-    || fail "empty ENV_ARGS PATH unexpectedly launched the server"
-[ -z "$SERVER_PID" ] || fail "empty ENV_ARGS PATH left SERVER_PID=$SERVER_PID"
-[ -z "$DETACHED_PID" ] || fail "empty ENV_ARGS PATH left DETACHED_PID=$DETACHED_PID"
+SERVER_PID=""
+DETACHED_PID=""
+ACTIVE_CHILD_PID=""
+ENV_ARGS=()
+
+ISOLATED_PATH_BIN_DIR="$TEST_ROOT/isolated-path-bin"
+ISOLATED_PATH_SERVER="$ISOLATED_PATH_BIN_DIR/bong-isolated-path-server"
+ISOLATED_PATH_LOG="$TEST_ROOT/isolated-path.log"
+ISOLATED_PATH_READY="$TEST_ROOT/isolated-path.ready"
+mkdir -p "$ISOLATED_PATH_BIN_DIR"
+cat > "$ISOLATED_PATH_SERVER" <<'ISOLATED_PATH_SERVER'
+#!/bin/bash
+set -euo pipefail
+printf 'ready\n' > "$READY_FILE"
+exec /bin/sleep 30
+ISOLATED_PATH_SERVER
+chmod +x "$ISOLATED_PATH_SERVER"
+READY_FILE="$ISOLATED_PATH_READY"
+ENV_ARGS=("PATH=$ISOLATED_PATH_BIN_DIR")
+BONG_SERVER_EXECUTABLE="bong-isolated-path-server"
+BONG_SERVER_LOG="$ISOLATED_PATH_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+launch_bong_server "$SLEEP_EXECUTABLE" \
+    || fail "production server launch leaked its isolated ENV_ARGS PATH into launcher utilities"
+ACTIVE_CHILD_PID="$SERVER_PID"
+wait_for_file "$ISOLATED_PATH_READY" "isolated PATH server readiness"
+wait_for_process_command "$SERVER_PID" sleep \
+    || fail "isolated ENV_ARGS PATH launch did not reach its final executable"
+terminate_background_process "$ACTIVE_CHILD_PID"
+if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+    fail "isolated ENV_ARGS PATH cleanup did not reap pid $ACTIVE_CHILD_PID"
+fi
+SERVER_PID=""
+DETACHED_PID=""
+ACTIVE_CHILD_PID=""
 ENV_ARGS=()
 
 INVALID_INTERPRETER_SERVER="$TEST_ROOT/invalid-interpreter-server"

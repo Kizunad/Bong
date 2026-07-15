@@ -57,8 +57,7 @@ resolve_executable_path() {
         if [[ "$executable" == */* ]]; then
             candidate="$executable"
         else
-            PATH="$search_path"
-            candidate="$(type -P -- "$executable")" || exit 1
+            candidate="$(PATH="$search_path" type -P -- "$executable")" || exit 1
         fi
         [ -x "$candidate" ] || exit 1
         readlink -f -- "$candidate"
