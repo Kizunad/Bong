@@ -11,6 +11,7 @@ LAUNCHER_SCRIPT="$TEST_ROOT/launcher.sh"
 LAUNCHER_STDIN="$TEST_ROOT/launcher.stdin"
 ACTIVE_CHILD_PID=""
 ACTIVE_LAUNCHER_PID=""
+SLEEP_EXECUTABLE="$(readlink -f -- "$(command -v sleep)")"
 
 cleanup() {
     for pid in "$ACTIVE_CHILD_PID" "$ACTIVE_LAUNCHER_PID"; do
@@ -122,7 +123,7 @@ case "$TEST_MODE" in
         ;;
     detached)
         ENV_ARGS=()
-        launch_bong_server
+        launch_bong_server "$EXPECTED_SERVER_EXECUTABLE"
         child_pid="$SERVER_PID"
         if [ "$SERVER_PID" = "$DETACHED_PID" ]; then
             printf 'matched\n' > "$SERVER_PID_MATCH_FILE"
@@ -175,6 +176,7 @@ run_hup_case() {
     export JOB_TABLE_STATE_FILE="$job_table_state_file"
     export BONG_SERVER_WORKDIR="$TEST_ROOT"
     export BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+    export EXPECTED_SERVER_EXECUTABLE="$SLEEP_EXECUTABLE"
     export BONG_SERVER_LOG="$server_log"
     export BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
 
@@ -302,14 +304,78 @@ ENV_ARGS=()
 BONG_SERVER_WORKDIR="$TEST_ROOT"
 BONG_SERVER_EXECUTABLE="$TEST_ROOT/does-not-exist"
 BONG_SERVER_LOG="$TEST_ROOT/missing-server.log"
-BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
 if launch_bong_server 2> "$MISSING_SERVER_LOG"; then
     fail "production server launch accepted an exec failure"
 fi
-grep -Eq "is not running in this shell|exited during launch|exited during .* startup grace" "$MISSING_SERVER_LOG" \
+grep -Fq "bong server executable is not executable" "$MISSING_SERVER_LOG" \
     || fail "exec failure did not include its lifecycle diagnostic"
 [ -z "$SERVER_PID" ] || fail "failed production launch left SERVER_PID=$SERVER_PID"
 [ -z "$DETACHED_PID" ] || fail "failed production launch left DETACHED_PID=$DETACHED_PID"
+
+NON_EXECUTABLE_SERVER="$TEST_ROOT/non-executable-server"
+NON_EXECUTABLE_LOG="$TEST_ROOT/non-executable-server.err"
+: > "$NON_EXECUTABLE_SERVER"
+chmod 0644 "$NON_EXECUTABLE_SERVER"
+BONG_SERVER_EXECUTABLE="$NON_EXECUTABLE_SERVER"
+if launch_bong_server 2> "$NON_EXECUTABLE_LOG"; then
+    fail "production server launch accepted a non-executable file"
+fi
+grep -Fq "bong server executable is not executable" "$NON_EXECUTABLE_LOG" \
+    || fail "non-executable rejection did not include its diagnostic"
+[ -z "$SERVER_PID" ] || fail "non-executable launch left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "non-executable launch left DETACHED_PID=$DETACHED_PID"
+
+EMPTY_PATH_LOG="$TEST_ROOT/empty-path.err"
+EMPTY_PATH_READY="$TEST_ROOT/empty-path.ready"
+READY_FILE="$EMPTY_PATH_READY"
+ENV_ARGS=("PATH=")
+BONG_SERVER_EXECUTABLE="server-stub.sh"
+if launch_bong_server 2> "$EMPTY_PATH_LOG"; then
+    fail "production server launch ignored an explicitly empty ENV_ARGS PATH"
+fi
+grep -Fq "bong server executable is not executable" "$EMPTY_PATH_LOG" \
+    || fail "empty ENV_ARGS PATH rejection did not include its diagnostic"
+[ ! -e "$EMPTY_PATH_READY" ] \
+    || fail "empty ENV_ARGS PATH unexpectedly launched the server"
+[ -z "$SERVER_PID" ] || fail "empty ENV_ARGS PATH left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "empty ENV_ARGS PATH left DETACHED_PID=$DETACHED_PID"
+ENV_ARGS=()
+
+INVALID_INTERPRETER_SERVER="$TEST_ROOT/invalid-interpreter-server"
+INVALID_INTERPRETER_LOG="$TEST_ROOT/invalid-interpreter-server.err"
+cat > "$INVALID_INTERPRETER_SERVER" <<'INVALID_INTERPRETER'
+#!/definitely/missing/bong-test-interpreter
+INVALID_INTERPRETER
+chmod +x "$INVALID_INTERPRETER_SERVER"
+: > "$INVALID_INTERPRETER_LOG"
+BONG_SERVER_EXECUTABLE="$INVALID_INTERPRETER_SERVER"
+for _ in $(seq 1 10); do
+    if launch_bong_server 2>> "$INVALID_INTERPRETER_LOG"; then
+        fail "zero-grace launch accepted an executable with a missing interpreter"
+    fi
+    [ -z "$SERVER_PID" ] \
+        || fail "missing interpreter launch left SERVER_PID=$SERVER_PID"
+    [ -z "$DETACHED_PID" ] \
+        || fail "missing interpreter launch left DETACHED_PID=$DETACHED_PID"
+done
+grep -Eq "is not running in this shell|exited during launch|did not exec expected executable" \
+    "$INVALID_INTERPRETER_LOG" \
+    || fail "missing interpreter rejection did not include its lifecycle diagnostic"
+
+BAD_EXPECTED_LOG="$TEST_ROOT/bad-expected-executable.err"
+BAD_EXPECTED_READY="$TEST_ROOT/bad-expected-executable.ready"
+READY_FILE="$BAD_EXPECTED_READY"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+if launch_bong_server "$TEST_ROOT/does-not-exist-expected" 2> "$BAD_EXPECTED_LOG"; then
+    fail "production server launch accepted a missing expected executable"
+fi
+grep -Fq "expected bong server executable is not executable" "$BAD_EXPECTED_LOG" \
+    || fail "missing expected executable rejection lacked its diagnostic"
+[ ! -e "$BAD_EXPECTED_READY" ] \
+    || fail "missing expected executable started the server before validation"
+[ -z "$SERVER_PID" ] || fail "missing expected executable left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "missing expected executable left DETACHED_PID=$DETACHED_PID"
 
 BAD_WORKDIR_LOG="$TEST_ROOT/bad-workdir.err"
 BAD_WORKDIR_READY="$TEST_ROOT/bad-workdir.ready"
@@ -352,6 +418,62 @@ for invalid_grace in not-a-duration -1; do
         || fail "invalid startup grace $invalid_grace left DETACHED_PID=$DETACHED_PID"
 done
 
+ZERO_GRACE_LOG="$TEST_ROOT/zero-grace.log"
+ZERO_GRACE_READY="$TEST_ROOT/zero-grace.ready"
+ZERO_GRACE_PID_FILE="$TEST_ROOT/zero-grace.pid"
+ZERO_GRACE_BIN_DIR="$TEST_ROOT/zero-grace-bin"
+mkdir -p "$ZERO_GRACE_BIN_DIR"
+ln -s "$STUB_SCRIPT" "$ZERO_GRACE_BIN_DIR/bong-zero-grace-server"
+READY_FILE="$ZERO_GRACE_READY"
+export STUB_PID_FILE="$ZERO_GRACE_PID_FILE"
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+ENV_ARGS=("PATH=$ZERO_GRACE_BIN_DIR:$PATH")
+BONG_SERVER_EXECUTABLE="bong-zero-grace-server"
+BONG_SERVER_LOG="$ZERO_GRACE_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+launch_bong_server sleep \
+    || fail "zero startup grace rejected a server which completed its final exec"
+ACTIVE_CHILD_PID="$SERVER_PID"
+wait_for_file "$ZERO_GRACE_READY" "zero-grace server readiness"
+wait_for_file "$ZERO_GRACE_PID_FILE" "zero-grace server pid"
+grep -Fxq "$SERVER_PID" "$ZERO_GRACE_PID_FILE" \
+    || fail "zero-grace launch returned a pid different from the final server pid"
+wait_for_process_command "$SERVER_PID" sleep \
+    || fail "zero-grace launch returned before the final sleep exec"
+terminate_background_process "$ACTIVE_CHILD_PID"
+if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+    fail "zero-grace success cleanup did not reap pid $ACTIVE_CHILD_PID"
+fi
+SERVER_PID=""
+DETACHED_PID=""
+ACTIVE_CHILD_PID=""
+unset STUB_PID_FILE
+ENV_ARGS=()
+
+DELAYED_EXEC_FAILURE_SCRIPT="$TEST_ROOT/delayed-exec-failure.sh"
+DELAYED_EXEC_FAILURE_LOG="$TEST_ROOT/delayed-exec-failure.err"
+DELAYED_EXEC_SERVER_LOG="$TEST_ROOT/delayed-exec-failure-server.log"
+cat > "$DELAYED_EXEC_FAILURE_SCRIPT" <<'DELAYED_EXEC_FAILURE'
+#!/usr/bin/env bash
+set -euo pipefail
+/bin/sleep 0.1
+exec "$DELAYED_MISSING_EXECUTABLE"
+DELAYED_EXEC_FAILURE
+chmod +x "$DELAYED_EXEC_FAILURE_SCRIPT"
+export DELAYED_MISSING_EXECUTABLE="$TEST_ROOT/does-not-exist-after-delay"
+ENV_ARGS=()
+BONG_SERVER_EXECUTABLE="$DELAYED_EXEC_FAILURE_SCRIPT"
+BONG_SERVER_LOG="$DELAYED_EXEC_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$DELAYED_EXEC_FAILURE_LOG"; then
+    fail "zero-grace launch returned success before a delayed final exec failure"
+fi
+grep -Fq "did not exec expected executable" "$DELAYED_EXEC_FAILURE_LOG" \
+    || fail "delayed exec failure did not include its executable identity diagnostic"
+[ -z "$SERVER_PID" ] || fail "delayed exec failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "delayed exec failure left DETACHED_PID=$DETACHED_PID"
+unset DELAYED_MISSING_EXECUTABLE
+
 FAIL_SLEEP_DIR="$TEST_ROOT/fail-sleep-bin"
 FAIL_SLEEP_SCRIPT="$FAIL_SLEEP_DIR/sleep"
 RUNTIME_SLEEP_LOG="$TEST_ROOT/runtime-sleep.err"
@@ -374,13 +496,14 @@ chmod +x "$FAIL_SLEEP_SCRIPT"
 READY_FILE="$RUNTIME_SLEEP_READY"
 export STUB_PID_FILE="$RUNTIME_SLEEP_PID_FILE"
 export STUB_IGNORE_TERM=true
+ENV_ARGS=()
 BONG_SERVER_WORKDIR="$TEST_ROOT"
 BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
 BONG_SERVER_LOG="$TEST_ROOT/runtime-sleep.log"
 BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
 ORIGINAL_PATH="$PATH"
 PATH="$FAIL_SLEEP_DIR:$PATH"
-if launch_bong_server 2> "$RUNTIME_SLEEP_LOG"; then
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$RUNTIME_SLEEP_LOG"; then
     PATH="$ORIGINAL_PATH"
     fail "production server launch accepted a runtime startup grace failure"
 fi
@@ -399,4 +522,4 @@ fi
 ACTIVE_CHILD_PID=""
 unset STUB_IGNORE_TERM
 
-echo "PASS: production launch survived SIGHUP and all initialization failures were cleaned up"
+echo "PASS: production launch survived SIGHUP, confirmed final exec, and cleaned all initialization failures"
