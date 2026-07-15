@@ -14,16 +14,19 @@ public final class SearchHudStateStore {
         return snapshotAtNanos(System.nanoTime());
     }
 
-    static SearchHudState snapshotAtNanos(long nowNanos) {
+    static synchronized SearchHudState snapshotAtNanos(long nowNanos) {
+        if (terminalFlashExpired(snapshot.phase(), terminalPhaseStartedAtNanos, nowNanos)) {
+            clear();
+        }
         return snapshot;
     }
 
-    public static void markStarted(String containerKindZh, int requiredTicks) {
+    public static synchronized void markStarted(String containerKindZh, int requiredTicks) {
         terminalPhaseStartedAtNanos = 0L;
         snapshot = SearchHudState.searching(safeKind(containerKindZh), Math.max(1, requiredTicks), 0);
     }
 
-    public static void markProgress(String containerKindZh, int elapsedTicks, int requiredTicks) {
+    public static synchronized void markProgress(String containerKindZh, int elapsedTicks, int requiredTicks) {
         terminalPhaseStartedAtNanos = 0L;
         snapshot = SearchHudState.searching(
             safeKind(containerKindZh),
@@ -36,7 +39,7 @@ public final class SearchHudStateStore {
         markCompletedAtNanos(containerKindZh, System.nanoTime());
     }
 
-    static void markCompletedAtNanos(String containerKindZh, long nowNanos) {
+    static synchronized void markCompletedAtNanos(String containerKindZh, long nowNanos) {
         snapshot = SearchHudState.completed(safeKind(containerKindZh));
         terminalPhaseStartedAtNanos = nowNanos;
     }
@@ -45,22 +48,41 @@ public final class SearchHudStateStore {
         markAbortedAtNanos(containerKindZh, reason, System.nanoTime());
     }
 
-    static void markAbortedAtNanos(String containerKindZh, String reason, long nowNanos) {
+    static synchronized void markAbortedAtNanos(String containerKindZh, String reason, long nowNanos) {
         snapshot = SearchHudState.aborted(safeKind(containerKindZh), abortReason(reason));
         terminalPhaseStartedAtNanos = nowNanos;
     }
 
-    public static void clearOnDisconnect() {
+    public static synchronized void clearOnDisconnect() {
         clear();
     }
 
-    public static void resetForTests() {
+    public static synchronized void resetForTests() {
         clear();
     }
 
     private static void clear() {
         snapshot = SearchHudState.idle();
         terminalPhaseStartedAtNanos = 0L;
+    }
+
+    private static boolean terminalFlashExpired(
+        SearchHudState.Phase phase,
+        long startedAtNanos,
+        long nowNanos
+    ) {
+        long ttlNanos = switch (phase) {
+            case COMPLETED_FLASH -> COMPLETED_FLASH_TTL_NANOS;
+            case ABORTED_FLASH -> ABORTED_FLASH_TTL_NANOS;
+            case IDLE, SEARCHING -> 0L;
+        };
+        if (ttlNanos == 0L) {
+            return false;
+        }
+
+        // System.nanoTime() 只承诺差值语义。long 减法在回绕时仍能正确表示远小于
+        // 2^63ns 的短间隔；人为/测试时钟回拨则产生负差值，不会被误判为过期。
+        return nowNanos - startedAtNanos >= ttlNanos;
     }
 
     private static String safeKind(String containerKindZh) {
