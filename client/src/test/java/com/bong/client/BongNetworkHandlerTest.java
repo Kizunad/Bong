@@ -9,6 +9,8 @@ import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.hud.DuguV2HudStateStore;
+import com.bong.client.hud.SearchHudState;
+import com.bong.client.hud.SearchHudStateStore;
 import com.bong.client.identity.IdentityPanelEntry;
 import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
@@ -39,6 +41,7 @@ public class BongNetworkHandlerTest {
         IdentityPanelStateStore.resetForTest();
         FalseSkinHudStateStore.resetForTests();
         DuguV2HudStateStore.resetForTests();
+        SearchHudStateStore.resetForTests();
     }
 
     @Test
@@ -131,6 +134,24 @@ public class BongNetworkHandlerTest {
         BongToast toast = BongToast.current(101L);
         assertFalse(toast.isEmpty(), "断线清场后 reconnect 收到的新 toast 必须能正常显示，不能被清场逻辑永久锁死");
         assertEquals("时代法旨：新服提示", toast.text().getString());
+    }
+
+    @Test
+    void disconnectClearsSearchHudStateToPreventCrossSessionLeak() {
+        SearchHudStateStore.markStarted("旧服石匣", 100);
+        assertEquals(
+            SearchHudState.Phase.SEARCHING,
+            SearchHudStateStore.snapshot().phase(),
+            "测试前必须模拟旧 session 仍在搜刮，否则无法锁住 reconnect 残留回归"
+        );
+
+        BongNetworkHandler.clearClientStateOnDisconnect();
+
+        assertEquals(
+            SearchHudState.Phase.IDLE,
+            SearchHudStateStore.snapshot().phase(),
+            "统一断线清理必须调用 SearchHudStateStore.clearOnDisconnect()；否则新 session 首帧会继续显示旧搜刮 HUD"
+        );
     }
 
     // ──────────────────────────────────────────────────────────────────────
