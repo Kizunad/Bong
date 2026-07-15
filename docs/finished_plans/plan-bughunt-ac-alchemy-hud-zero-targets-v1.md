@@ -42,10 +42,10 @@
 
 ## 实施阶段
 
-- [ ] P0：加入修复前失败的 snapshot builder 契约测试，锁定真实目标值与阶段提示。
-- [ ] P1：接通 `RecipeRegistry`，实现已知配方 snapshot 与未知配方 fail-closed。
-- [ ] P2：更新五个真实调用点，完成定向测试与 server 完整门禁。
-- [ ] P3：同步最新主线、对抗自审、填写 Finish Evidence 并归档。
+- [x] P0：加入修复前失败的 snapshot builder 契约测试，锁定真实目标值与阶段提示。✅ 2026-07-15
+- [x] P1：接通 `RecipeRegistry`，实现已知配方 snapshot 与未知配方 fail-closed。✅ 2026-07-15
+- [x] P2：更新五个真实调用点，完成定向测试与 server 完整门禁。✅ 2026-07-15
+- [x] P3：同步最新主线、对抗自审、填写 Finish Evidence 并归档。✅ 2026-07-15
 
 ## 验收与测试矩阵
 
@@ -82,3 +82,45 @@
 
 - 主题去重：未重复 dandao mutation、voidaction target lock、processing deadpath、movement dash reject。
 - 置信度：高。证据链覆盖 schema 定义、真实 emit、活跃调用点、client 消费点、原 plan 设计目标，且两轮反证均未推翻 player-facing 结论。
+
+## Finish Evidence
+
+### 落地清单
+
+- `server/src/network/alchemy_snapshot_emit.rs` 从真实 `RecipeRegistry` 构造 session
+  snapshot：恢复时长、温度目标/容差、注气目标、逐阶段材料摘要与 completed/missed 状态。
+- open furnace、ignite、intervention、feed slot、take back 五条生产重推路径均传入同一权威
+  registry；未改 wire schema 或 client fallback。
+- 空炉继续清除 HUD；finished session 变为 inactive 但保留配方引导；未知 recipe 记录 warning
+  并发送“丹方数据缺失”的 inactive 快照，禁止 active 零目标。
+
+### 关键提交
+
+- `30ad7653`：升格炼丹 HUD 零目标 BugFix 计划。
+- `55dc5553`：加入修复前失败的 snapshot 契约；红灯为 5 项中 3 项失败，分别锁定
+  目标字段为 0、未知 recipe 仍 active、finished 状态缺失。
+- `210349e2`：从权威配方恢复目标/阶段提示并完成 fail-closed。
+
+### 测试结果
+
+- 定向：`cargo test network::alchemy_snapshot_emit::tests -- --nocapture` → 5 passed，
+  0 failed（active、stage summary、completed/missed、空炉、未知 recipe、finished 边界）。
+- 完整 server 门禁（`BONG_SKIP_SKIN_PREFETCH=1`）：
+  `cargo fmt --check` 通过；`cargo clippy --all-targets -- -D warnings` 通过；
+  `cargo test` 通过（lib 11695 passed / 1 ignored，main 11 passed，startup 1 passed，
+  backpack e2e 4 passed，doc-tests 0 failed / 5 ignored）。
+
+### 主线与对抗核验
+
+- 2026-07-15 fetch 后 `origin/main=6f1faea5`，是修复 HEAD `210349e2` 的祖先，判定
+  already-up-to-date；无需合并，完整门禁证据仍绑定当前 HEAD。
+- 主 agent 绑定干净 HEAD `210349e22324b5b08cfb19368928a7f05f9619dd` 做对抗自审：
+  五条生产调用全接线；client handler 会替换 store，`active=false` 经 `isActive()` 清除
+  HUD/阶段闪烁；所有新增 commit 均含 `Model: gpt-5`。结论：
+  `PASS 210349e22324b5b08cfb19368928a7f05f9619dd`。
+
+### 跨栈核验与遗留
+
+- 本次只改变 server payload 的既有字段取值，schema 与 client consumer 未改；通过源码对拍确认
+  `AlchemyProgressHudPlanner` 和 `AlchemyScreen` 直接消费这些字段，因此无需 client 构建。
+- 无 `[BLOCKED: ...]`，无真元流动/配方数值/A/V 资产变化，无已知遗留。
