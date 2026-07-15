@@ -87,7 +87,7 @@
 - [x] ✅ 2026-07-15 — 真实 C2S → server → S2C bot 场景通过：主世界第一具棺建立 session 后暂停该玩家的 lifecycle cleanup，跨到 TSY 同裸 XYZ 时第二具未占用棺 forged open 被拒，原有效 session 的真实网络 move 也在 mapping / owner / source 全部仍有效时被拒并回推权威状态；恢复 lifecycle 后才发生唯一 close，再验证 cleanup、返回重开与 forged open 无隐藏副作用。
 - [x] ✅ 2026-07-15 — `/review` 返工中的 `/tpdim` 只 emit 正式 `DimensionTransferRequest`，并在 Respawn 后通过可逆坐标脉冲给出最终权威 PositionLook；`/supply_coffin barrier` 则提供 request/open/lifecycle 系统之后的确定性黑盒处理水位，两者都只服务 dev/E2E。
 - [x] ✅ 2026-07-15 — `/review` 指出的范围与可观察性问题已收口：`8be8d52d` 撤出无关伪灵脉 persistence 测试改动，`d476cc2b` 让 forged open 在无 loot/session 副作用之外还返回明确玩家反馈；bot 必须先收到该反馈，才允许越过处理 barrier。
-- [x] ✅ 2026-07-15 — 先后同步 `origin/main@32a34f8e`、`390f22e5`、`c231666d`、`4ad0c170` 与 `40df3dce`；最新 merge `00339c3e` 无冲突，且 server / bot 业务树未变化，主线带入的 client 树以 JDK 17 完整复验。
+- [x] ✅ 2026-07-15 — 先后同步 `origin/main@32a34f8e`、`390f22e5`、`c231666d`、`4ad0c170`、`40df3dce` 与 `48cd2c81`；最新 merge `e6d5eaf9` 无冲突。最后一轮主线仅带入独立 PR #1210 的 persistence test 修正，runtime / bot / client 树未变，server 全门禁已在 merge 后重跑。
 - [x] ✅ 2026-07-13 — 全阶段标记完成并填写唯一 `## Finish Evidence`；归档后由主 agent 复核最终干净 HEAD，独立 validator 例外继续如实披露。
 
 ### 4.1 开放问题与决议
@@ -160,18 +160,20 @@
 - `d6e4b843`：更新有效 session 黑盒复验与最终门禁证据。
 - `8be8d52d`：撤出范围外的伪灵脉测试稳定化；`server/src/persistence/mod.rs` 相对 `origin/main` 净 diff 恢复为零，不再把该测试改动算作本 plan 交付或门禁依据。
 - `d476cc2b`：为所有 open 权威拒绝原因接入明确 chat 反馈，并以 Rust 入口测试和 bot forged-open 场景锁定跨维文案与无副作用顺序。
+- `e6d5eaf9`：无冲突合并 `origin/main@48cd2c81`；主线独立带入伪灵脉墙钟测试修正，本 PR 对 `persistence/mod.rs` 仍无净 diff，并在 merge 后完整复验 server。
 
 ### 测试与审查
 
 - 定向：既有业务树曾通过 `cargo test tpdim` 6/6、`cargo test supply_coffin` 110/110、`cargo test external_move_` 8/8、调试命令树 pin 1/1 与非物资棺隔离 1/1；明确反馈返工后的当前树另通过 `cargo test supply_coffin::interact::tests` 7/7，且随后完整 `cargo test` 覆盖全部当前测试。
-- server 最终完整门禁（业务树 `d476cc2b`，无 persistence 范围外改动）：`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 通过；默认并行 `cargo test` 主测试集 11,688 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，doc tests 5 ignored，退出码 0。由于 `/tmp` 20GB tmpfs 已满，门禁显式使用根盘 `TMPDIR`；一次未改写临时目录的运行产生 462 个 I/O 失败，不作为代码结果。
-- 范围审计：`8be8d52d` 已撤回 `87a52f43` 的伪灵脉测试改动；最终 `server/src/persistence/mod.rs` 相对 `origin/main` 无净 diff，完整门禁也在不依赖该稳定化的当前业务树上通过。
+- server 最终完整门禁（merge `e6d5eaf9`，server tree `a7bc6e63ef3bccb1abdd340d3a85a2efcdb5c03d`）：`cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 通过；默认并行 `cargo test` 主测试集 11,688 passed / 0 failed / 1 ignored，附加测试集 11/11、1/1、4/4 通过，doc tests 5 ignored，退出码 0。由于 `/tmp` 20GB tmpfs 已满，门禁显式使用根盘 `TMPDIR`；一次未改写临时目录的运行产生 462 个 I/O 失败，不作为代码结果。
+- 范围审计：`8be8d52d` 已撤回本分支中的 `87a52f43` 伪灵脉测试改动；随后 `origin/main@48cd2c81` 通过独立 PR #1210 合入同类修正，`e6d5eaf9` 仅同步该主线结果。最终 `server/src/persistence/mod.rs` 相对 `origin/main` 仍无净 diff，不把它算作本 plan 交付。
 - 早期跨栈同步复验：JDK 17.0.19 下 `./gradlew test build`，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`；`npm run build` 通过，`npm test -w @bong/schema` 为 29 files / 872 tests 全绿。review 业务返工未修改 agent 或 schema。
 - 最新主线 client 复验（未提交 merge tree → `00339c3e`）：JDK 17.0.19 下 `./gradlew test build --rerun-tasks` 为 4,077 tests / 0 failed，13 actionable tasks 全部执行，`BUILD SUCCESSFUL`。首次尝试因已满 `/tmp` 使 8 个临时文件测试失败；给 Gradle、编译器和测试 JVM 显式设置根盘 `java.io.tmpdir` 后完整重跑全绿。
 - 真实 C2S Rust 回归：`supply_coffin_external_move_real_c2s_rejects_cross_dimension_same_xyz_while_session_is_valid_and_resyncs` 在 session mapping、`opened_by` 与 active source 均仍有效时，证明跨维同 XYZ move 被拒、物品 / revision 不变，并回推 container + inventory resync。
 - bot protocol（最终 bot 树）：`python3 scripts/bot/test_protocol.py` 为 59/59，退出码 0；测试结束另报告未关闭 socket `ResourceWarning`，不影响结果。
 - 干净服 bot E2E（最终 bot 树，run-tag `s21v1`）：`inventory_supply_coffin_cross_dimension` 为 1/1 PASS（10.4s）；真实走第一具棺 open / 合法 move → lifecycle pause → `/tpdim tsy` Respawn + 最终坐标确认 → 第二具棺 forged open 收到明确“目标不在当前位面”反馈后越过 barrier，并断言无 open payload → 原有效 session 跨维 move 拒绝/resync → lifecycle resume 后唯一 close/snapshot → 旧 move cleanup 拒绝 → `/tpdim overworld` → 第二具棺首次合法 open 取得紧邻 session → 第一具棺返回重开同 session。
 - 最终 E2E 证据：`.sisyphus/evidence/bot-e2e-1199-review-s21v1/protocol.log`、`.sisyphus/evidence/bot-e2e-1199-review-s21v1/scenarios.log`、`.sisyphus/evidence/bot-e2e-1199-review-s21v1/server.log`。
+- `e6d5eaf9` 相对 `d476cc2b` 只改变已由 `origin/main` 合入的 `#[cfg(test)]` persistence 用例与 plan 文档，runtime / bot 树未变化；因此不重复黑盒场景，以 merge 后完整 server 门禁覆盖受影响栈。
 - 主 agent 对 `origin/main...d476cc2b` 完成第一性原理与对抗式 diff 审查：`authority.rs:12-66` 固定 4.5/6.5 格、维度与有限坐标；`interact.rs:101-112` 的授权早于 RNG `:195`、session `:212` 与 payload `:237`；external move `client_request_handler.rs:16828-16869` 的授权早于首次物品移除 `:16916`；lifecycle `lifecycle.rs:123-144` 先判权再 close，`:185-191` 只删仍指向当前棺的映射，`:239-247` 释放正确锁。普通 external container 未被误伤，setup 地形、第二具 forged-open 目标、0.25 格权威坐标偏移、Respawn 后坐标确认脉冲、合法 / 陈旧 move 目标格、处理 barrier 与 close 水印均不会制造假绿。
 - 独立 validator：未运行。用户明确要求“本次不跑 subagent，仅主agent实施”；本记录不声称 validator PASS，PR 继续透明披露该例外。
 
