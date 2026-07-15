@@ -230,30 +230,76 @@ pub fn send_session_from_furnace(
 
 fn build_session_data(
     furnace: &crate::alchemy::AlchemyFurnace,
-    _registry: &RecipeRegistry,
+    registry: &RecipeRegistry,
 ) -> AlchemySessionDataV1 {
-    let data = match &furnace.session {
-        Some(s) => AlchemySessionDataV1 {
-            recipe_id: Some(s.recipe.clone()),
-            active: !s.finished,
-            elapsed_ticks: s.elapsed_ticks,
-            target_ticks: 0,
-            temp_current: s.temp_current,
-            temp_target: 0.0,
-            temp_band: 0.0,
-            qi_injected: s.qi_injected,
-            qi_target: 0.0,
-            status_label: "ECS-driven".into(),
-            stages: vec![],
-            interventions_recent: s
+    match &furnace.session {
+        Some(session) => {
+            let interventions_recent = session
                 .interventions
                 .iter()
                 .rev()
                 .take(3)
                 .rev()
-                .map(|i| format!("§7{i:?}"))
-                .collect(),
-        },
+                .map(|intervention| format!("§7{intervention:?}"))
+                .collect();
+            let Some(recipe) = registry.get(&session.recipe) else {
+                tracing::warn!(
+                    "[bong][network][alchemy] session references unknown recipe `{}`; sending inactive snapshot",
+                    session.recipe
+                );
+                return AlchemySessionDataV1 {
+                    recipe_id: Some(session.recipe.clone()),
+                    active: false,
+                    elapsed_ticks: session.elapsed_ticks,
+                    target_ticks: 0,
+                    temp_current: session.temp_current,
+                    temp_target: 0.0,
+                    temp_band: 0.0,
+                    qi_injected: session.qi_injected,
+                    qi_target: 0.0,
+                    status_label: "丹方数据缺失".into(),
+                    stages: vec![],
+                    interventions_recent,
+                };
+            };
+
+            AlchemySessionDataV1 {
+                recipe_id: Some(session.recipe.clone()),
+                active: !session.finished,
+                elapsed_ticks: session.elapsed_ticks,
+                target_ticks: recipe.fire_profile.target_duration_ticks,
+                temp_current: session.temp_current,
+                temp_target: recipe.fire_profile.target_temp,
+                temp_band: recipe.fire_profile.tolerance.temp_band,
+                qi_injected: session.qi_injected,
+                qi_target: recipe.fire_profile.qi_cost,
+                status_label: if session.finished {
+                    "已结束".into()
+                } else {
+                    "炼制中".into()
+                },
+                stages: recipe
+                    .stages
+                    .iter()
+                    .enumerate()
+                    .map(|(stage_index, stage)| AlchemyStageHintV1 {
+                        at_tick: stage.at_tick,
+                        window: stage.window,
+                        summary: stage
+                            .required
+                            .iter()
+                            .map(|ingredient| {
+                                format!("{}×{}", ingredient.material, ingredient.count)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" + "),
+                        completed: session.staged.completed_stages.contains(&stage_index),
+                        missed: session.staged.missed_stages.contains(&stage_index),
+                    })
+                    .collect(),
+                interventions_recent,
+            }
+        }
         None => AlchemySessionDataV1 {
             recipe_id: None,
             active: false,
@@ -268,8 +314,7 @@ fn build_session_data(
             stages: vec![],
             interventions_recent: vec![],
         },
-    };
-    data
+    }
 }
 
 fn send_payload(client: &mut Client, payload: &ServerDataV1, player_id: &str) {
