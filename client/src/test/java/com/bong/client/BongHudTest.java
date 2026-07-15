@@ -1,6 +1,10 @@
 package com.bong.client;
 
 import com.bong.client.combat.baomai.v3.BaomaiV3HudStateStore;
+import com.bong.client.agentui.AgentUiScreen;
+import com.bong.client.agentui.AgentUiVfxPlanner;
+import com.bong.client.agentui.AgentUiVfxState;
+import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.ScreenHudVisibility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,6 +15,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -89,6 +95,29 @@ public class BongHudTest {
 
         assertTrue(castOnlySurface.shadowTexts.isEmpty());
         assertTrue(castOnlySurface.drawTexts.isEmpty());
+    }
+
+    @Test
+    public void agentUiScreenDoesNotHideItsProducedVfxCommands() {
+        AgentUiScreen screen = AgentUiScreen.create(
+            "req-screen-gate",
+            "<owo-ui><components><flow-layout><label>天意</label></flow-layout></components></owo-ui>",
+            200,
+            1_000L
+        );
+        List<HudRenderCommand> commands = AgentUiVfxPlanner.buildCommands(
+            new AgentUiVfxState(1_000L, false),
+            1_000L,
+            320,
+            180
+        );
+
+        assertFalse(commands.isEmpty(), "AgentUiScreen 打开时 planner 应生成 fade-in 覆层命令");
+        assertNotEquals(
+            ScreenHudVisibility.HIDDEN,
+            ScreenHudVisibility.forScreen(screen),
+            "AgentUiScreen 不得在覆层命令进入 BongHud 渲染前被 screen gate 提前隐藏"
+        );
     }
 
     private static final class RecordingHudSurface implements BongHud.HudSurface {
