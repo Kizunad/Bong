@@ -11,9 +11,10 @@
 - 负分支：吃不存在的丹（背包无此 template）不得踢线/panic（宽容红线）。
 """
 
+import math
 import time
 
-from bot.bot import Event
+from bot.bot import BotAssertionError, Event
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
@@ -25,21 +26,41 @@ DESCRIPTION = "回元丹双入口吃丹：qi_current 回升可观察 + 丹扣存
 MODULES = ["alchemy", "cultivation", "inventory"]
 
 PILL_ID = "huiyuan_pill"
+PILL_QI_RECOVERY = 60.0
 NON_CLAMP_EXPECTED_QI = 65.0
 NON_CLAMP_QI_TOLERANCE = 0.05
 QI_SET_TOLERANCE = 0.01
-# 服丹 intent 在 server 单次分派、无重试；额外观察 20 tick，
-# 并等读循环静默约 2 tick。
-SETTLE_WINDOW_SECONDS = 1.0
-SETTLE_QUIET_SECONDS = 0.1
-SETTLE_TIMEOUT_SECONDS = 3.0
+SERVER_TICK_OBSERVATION_TICKS = 20
+SERVER_TICK_FENCE_TIMEOUT_SECONDS = 15.0
+
+
+def _player_state_values(event: Event) -> tuple[float, float] | None:
+    if event.kind != "server_data" or event.data.get("payload_type") != "player_state":
+        return None
+    payload = event.data["payload"]
+    qi = payload.get("spirit_qi")
+    qi_max = payload.get("spirit_qi_max")
+    assert isinstance(qi, (int, float)) and not isinstance(qi, bool), (
+        f"权威 player_state.spirit_qi 必须是数值，实际 {qi!r}"
+    )
+    assert isinstance(qi_max, (int, float)) and not isinstance(qi_max, bool), (
+        f"权威 player_state.spirit_qi_max 必须是数值，实际 {qi_max!r}"
+    )
+    qi_value = float(qi)
+    qi_max_value = float(qi_max)
+    assert math.isfinite(qi_value), (
+        f"权威 player_state.spirit_qi 必须是有限数，实际 {qi_value!r}"
+    )
+    assert math.isfinite(qi_max_value) and qi_max_value > 0.0, (
+        "权威 player_state.spirit_qi_max 必须是有限正数，"
+        f"实际 {qi_max_value!r}"
+    )
+    return qi_value, qi_max_value
 
 
 def _player_state_qi(event: Event) -> float | None:
-    if event.kind != "server_data" or event.data.get("payload_type") != "player_state":
-        return None
-    qi = event.data["payload"].get("spirit_qi")
-    return float(qi) if isinstance(qi, (int, float)) else None
+    state = _player_state_values(event)
+    return None if state is None else state[0]
 
 
 def _extract_qi(node) -> float | None:
@@ -74,11 +95,112 @@ def _wait_authoritative_qi(
     )
 
 
+def _wait_authoritative_qi_max(
+    bot, anchor: float, expected: float, timeout: float = 12.0
+) -> Event:
+    return bot.wait_for(
+        lambda event: event.t > anchor
+        and (
+            lambda state: state is not None
+            and abs(state[1] - expected) <= QI_SET_TOLERANCE
+        )(_player_state_values(event)),
+        timeout=timeout,
+        description=(
+            f"t>{anchor:.3f}s 后权威 player_state.spirit_qi_max="
+            f"{expected}±{QI_SET_TOLERANCE}"
+        ),
+    )
+
+
 def _is_qi_set_confirmation(event, anchor: float, value: float) -> bool:
     if event.kind != "chat" or event.t <= anchor:
         return False
     text = event.data.get("text", "")
     return text.startswith("[dev] qi set ") and text.endswith(f" -> {value:.1f}")
+
+
+def _is_qi_max_confirmation(event, anchor: float, value: float) -> bool:
+    if event.kind != "chat" or event.t <= anchor:
+        return False
+    text = event.data.get("text", "")
+    return text.startswith("[dev] qi max ") and f" -> {value:.1f}; current=" in text
+
+
+def _server_tick_from_event(event, anchor: float) -> int | None:
+    if event.kind != "chat" or event.t <= anchor:
+        return None
+    prefix = "[dev] time now: "
+    text = event.data.get("text", "")
+    if not text.startswith(prefix):
+        return None
+    raw_tick = text[len(prefix) :]
+    assert raw_tick.isascii() and raw_tick.isdigit(), (
+        f"权威 time now 回执必须携带十进制 tick，实际 {text!r}"
+    )
+    return int(raw_tick)
+
+
+def _query_server_tick(bot, timeout: float) -> int:
+    anchor = last_event_time(bot)
+    bot.cmd("time now")
+    event = bot.wait_for(
+        lambda candidate: _server_tick_from_event(candidate, anchor) is not None,
+        timeout=timeout,
+        description=f"t>{anchor:.3f}s 后收到权威 [dev] time now tick 回执",
+    )
+    tick = _server_tick_from_event(event, anchor)
+    assert tick is not None
+    return tick
+
+
+def _snapshot_after_server_tick_fence(
+    bot,
+    minimum_ticks: int = SERVER_TICK_OBSERVATION_TICKS,
+    timeout: float = SERVER_TICK_FENCE_TIMEOUT_SECONDS,
+) -> list[Event]:
+    if minimum_ticks <= 0:
+        raise ValueError(f"minimum_ticks must be > 0, actual {minimum_ticks}")
+    if timeout <= 0.0:
+        raise ValueError(f"timeout must be > 0, actual {timeout}")
+
+    deadline = time.monotonic() + timeout
+    start_tick = _query_server_tick(bot, timeout)
+    target_tick = start_tick + minimum_ticks
+    current_tick = start_tick
+
+    # 严格跨过 target_tick 后，再做两次顺序 round-trip。`handle_time` 与状态 emitter
+    # 都在 Update，但没有互相排序：目标 tick 的组件若在 emitter 之后变化，payload
+    # 会延到下一帧；该帧的第一条 marker 又可能排在 emitter 前。第二次 drain marker
+    # 最早落在再下一帧，其 TCP 水位才必然覆盖前一帧 post-emit 的 payload。
+    while current_tick <= target_tick:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise BotAssertionError(
+                f"[{bot.username}] 期望 {timeout}s 内从权威 server tick {start_tick} "
+                f"推进至少 {minimum_ticks} tick 并越过 fence {target_tick}，"
+                f"实际停在 {current_tick}"
+            )
+        next_tick = _query_server_tick(bot, remaining)
+        assert next_tick >= current_tick, (
+            f"权威 server tick 不得回退：{current_tick} -> {next_tick}"
+        )
+        current_tick = next_tick
+
+    crossed_tick = current_tick
+    for drain_round in range(1, 3):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise BotAssertionError(
+                f"[{bot.username}] 已跨过 fence {target_tick} 到 {crossed_tick}，"
+                f"但未在 {timeout}s 内完成第 {drain_round}/2 次 post-emit drain"
+            )
+        next_tick = _query_server_tick(bot, remaining)
+        assert next_tick >= current_tick, (
+            f"权威 server tick 不得回退：{current_tick} -> {next_tick}"
+        )
+        current_tick = next_tick
+
+    return bot.events_of("server_data")
 
 
 def _has_departed_baseline(qi: float, baseline_qi: float, expected_qi: float) -> bool:
@@ -87,12 +209,17 @@ def _has_departed_baseline(qi: float, baseline_qi: float, expected_qi: float) ->
     return abs(qi - baseline_qi) > QI_SET_TOLERANCE
 
 
+def _expected_qi_after_pill(baseline_qi: float, authoritative_qi_max: float) -> float:
+    return min(baseline_qi + PILL_QI_RECOVERY, authoritative_qi_max)
+
+
 def _assert_settled_consumption(
     events,
     before_revision: int,
     before_count: int,
     baseline_qi: float,
     expected_qi: float,
+    expected_qi_max: float,
 ) -> dict:
     snapshots = [
         event.data["payload"]
@@ -146,13 +273,17 @@ def _assert_settled_consumption(
     )
     final_snapshot = snapshots[-1]
 
-    authoritative_qi = [
-        qi
+    authoritative_states = [
+        state
         for event in events
-        if (qi := _player_state_qi(event)) is not None
+        if (state := _player_state_values(event)) is not None
     ]
     departed = False
-    for index, qi in enumerate(authoritative_qi):
+    for index, (qi, qi_max) in enumerate(authoritative_states):
+        assert abs(qi_max - expected_qi_max) <= QI_SET_TOLERANCE, (
+            f"服丹观察窗内权威 spirit_qi_max 应保持 {expected_qi_max}±"
+            f"{QI_SET_TOLERANCE}，实际第 {index} 个为 {qi_max}"
+        )
         if not departed and not _has_departed_baseline(
             qi, baseline_qi, expected_qi
         ):
@@ -162,7 +293,7 @@ def _assert_settled_consumption(
             f"服丹后权威 player_state 应持续稳定：首个及后续每个非基线值都必须为 "
             f"{expected_qi}±"
             f"{NON_CLAMP_QI_TOLERANCE}，实际第 {index} 个为 {qi}，"
-            f"完整序列 {authoritative_qi}——不得忽略错误中间态、重复生效或回滚"
+            f"完整序列 {authoritative_states}——不得忽略错误中间态、重复生效或回滚"
         )
     assert departed, "服丹后必须收到离开旧基线的权威 player_state"
     return final_snapshot
@@ -179,12 +310,25 @@ def _set_qi_and_wait(bot, value: float) -> Event:
     return _wait_authoritative_qi(bot, anchor, value)
 
 
-def _consume_and_assert_once(bot, intent: dict, baseline_event, expected_qi: float) -> dict:
+def _set_qi_max_and_wait(bot, value: float) -> Event:
+    anchor = last_event_time(bot)
+    bot.cmd(f"qi max {value}")
+    bot.wait_for(
+        lambda event: _is_qi_max_confirmation(event, anchor, value),
+        timeout=10.0,
+        description=f"t>{anchor:.3f}s 后收到本次 qi max 精确目标 -> {value:.1f} 的确认",
+    )
+    return _wait_authoritative_qi_max(bot, anchor, value)
+
+
+def _consume_and_assert_once(bot, intent: dict, baseline_event) -> dict:
     before = latest_inventory_snapshot(bot)
     before_pill = require_item(before, PILL_ID)
     before_count = int(before_pill["item"]["stack_count"])
-    baseline_qi = _player_state_qi(baseline_event)
-    assert baseline_qi is not None, "服丹前基线必须来自权威 player_state"
+    baseline_state = _player_state_values(baseline_event)
+    assert baseline_state is not None, "服丹前基线必须来自权威 player_state"
+    baseline_qi, authoritative_qi_max = baseline_state
+    expected_qi = _expected_qi_after_pill(baseline_qi, authoritative_qi_max)
     anchor = max(last_event_time(bot), baseline_event.t)
     bot.intent(intent)
 
@@ -227,15 +371,7 @@ def _consume_and_assert_once(bot, intent: dict, baseline_event, expected_qi: flo
         f"实际 {authoritative_qi}"
     )
 
-    event_snapshot = bot.snapshot_events_after_quiet_period(
-        min_wait=SETTLE_WINDOW_SECONDS,
-        quiet_period=SETTLE_QUIET_SECONDS,
-        timeout=SETTLE_TIMEOUT_SECONDS,
-        description=(
-            f"服丹后至少 {SETTLE_WINDOW_SECONDS}s 的稳定窗口及 "
-            f"{SETTLE_QUIET_SECONDS}s 事件消费屏障"
-        ),
-    )
+    event_snapshot = _snapshot_after_server_tick_fence(bot)
     settled_events = [
         event
         for event in event_snapshot
@@ -247,6 +383,7 @@ def _consume_and_assert_once(bot, intent: dict, baseline_event, expected_qi: flo
         before_count,
         baseline_qi,
         expected_qi,
+        authoritative_qi_max,
     )
 
 
@@ -255,7 +392,7 @@ def run(env) -> None:
         wait_for_ready(bot)
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
-        bot.cmd("qi max 100")
+        _set_qi_max_and_wait(bot, 100.0)
         bot.cmd(f"give {PILL_ID} 3")
         initial_inventory = bot.wait_for(
             lambda e: e.kind == "server_data"
@@ -278,7 +415,6 @@ def run(env) -> None:
             bot,
             {"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID},
             first_baseline,
-            NON_CLAMP_EXPECTED_QI,
         )
 
         # ── 入口②：apply_pill（instance_id 路径）─────────────────
@@ -294,7 +430,6 @@ def run(env) -> None:
                 "target": {"kind": "self"},
             },
             second_baseline,
-            NON_CLAMP_EXPECTED_QI,
         )
 
         # ── 边界：qi 接近上限时吃丹 clamp 到 qi_max，不得溢出 ────
@@ -303,9 +438,7 @@ def run(env) -> None:
             bot,
             {"type": "alchemy_take_pill", "v": 1, "pill_item_id": PILL_ID},
             clamp_baseline,
-            100.0,
         )
-
         # 三丹吃完：inventory 不应再有 huiyuan_pill
         assert find_item(final_inventory, PILL_ID) is None, (
             "三枚回元丹逐次各扣一枚后 inventory 应为 0——不扣存 = 无限白嫖丹药"

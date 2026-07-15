@@ -67,11 +67,7 @@ class Bot:
         self._lock = threading.RLock()
         self._new_event = threading.Condition(self._lock)
         self._send_lock = threading.Lock()
-        self._snapshot_lock = threading.Lock()
         self._closing = False
-        self._reader_epoch = 0
-        self._reader_in_flight = False
-        self._reader_barrier_requested = False
 
         # 便捷状态镜像（都能从 events 重建，仅为场景少写样板）
         self.position: tuple[float, float, float] | None = None
@@ -94,9 +90,7 @@ class Bot:
         self.close()
 
     def close(self) -> None:
-        with self._new_event:
-            self._closing = True
-            self._new_event.notify_all()
+        self._closing = True
         self.conn.close()
         self._reader_thread.join(timeout=2.0)
 
@@ -115,33 +109,18 @@ class Bot:
 
     def _reader_loop(self) -> None:
         while not self._closing:
-            with self._new_event:
-                if self._closing:
-                    return
-                self._reader_in_flight = True
-            should_stop = False
             try:
                 body = self.conn.read_frame()
             except TimeoutError:
-                pass
+                continue
             except (ConnectionError, OSError):
                 if not self._closing:
                     self._emit("connection_lost", {})
-                should_stop = True
-            else:
-                try:
-                    self._dispatch(body)
-                except Exception as error:  # 解码坏一个包不拖垮整个观察流
-                    self._emit("decode_error", {"error": repr(error), "size": len(body)})
-            finally:
-                with self._new_event:
-                    self._reader_in_flight = False
-                    self._reader_epoch += 1
-                    self._new_event.notify_all()
-                    while self._reader_barrier_requested and not self._closing:
-                        self._new_event.wait()
-            if should_stop:
                 return
+            try:
+                self._dispatch(body)
+            except Exception as error:  # 解码坏一个包不拖垮整个观察流
+                self._emit("decode_error", {"error": repr(error), "size": len(body)})
 
     def _dispatch(self, body: bytes) -> None:
         reader = Reader(body)
@@ -391,67 +370,6 @@ class Bot:
                         f"最近 5 条: {self.events[-5:]}"
                     )
                 self._new_event.wait(timeout=min(remaining, 0.5))
-
-    def snapshot_events_after_quiet_period(
-        self,
-        min_wait: float,
-        quiet_period: float,
-        timeout: float,
-        description: str,
-    ) -> list[Event]:
-        """Return an atomic snapshot after the time window and a reader checkpoint."""
-        if min_wait < 0.0:
-            raise ValueError(f"min_wait must be >= 0, actual {min_wait}")
-        if quiet_period <= 0.0:
-            raise ValueError(f"quiet_period must be > 0, actual {quiet_period}")
-        if timeout <= 0.0:
-            raise ValueError(f"timeout must be > 0, actual {timeout}")
-
-        started = time.monotonic()
-        deadline = started + timeout
-        quiet_until = started + max(min_wait, quiet_period)
-        checkpoint_epoch: int | None = None
-        with self._snapshot_lock, self._new_event:
-            observed_count = len(self.events)
-            try:
-                while True:
-                    now = time.monotonic()
-                    remaining = deadline - now
-                    if remaining <= 0.0:
-                        raise BotAssertionError(
-                            f"[{self.username}] 期望 {timeout}s 内完成「{description}」，"
-                            f"实际事件流未静默或 reader 未完成 checkpoint；"
-                            f"已收 {len(self.events)} 事件，最近 5 条: {self.events[-5:]}"
-                        )
-
-                    current_count = len(self.events)
-                    if current_count != observed_count:
-                        observed_count = current_count
-                        quiet_until = max(quiet_until, now + quiet_period)
-                        if checkpoint_epoch is not None:
-                            checkpoint_epoch = None
-                            self._reader_barrier_requested = False
-                            self._new_event.notify_all()
-
-                    if now >= quiet_until:
-                        if checkpoint_epoch is None:
-                            checkpoint_epoch = self._reader_epoch + 1
-                            self._reader_barrier_requested = True
-                            self._new_event.notify_all()
-                        if (
-                            self._reader_epoch >= checkpoint_epoch
-                            and not self._reader_in_flight
-                        ):
-                            return list(self.events)
-
-                    wait_for = remaining
-                    if checkpoint_epoch is None:
-                        wait_for = min(wait_for, max(quiet_until - now, 0.0))
-                    self._new_event.wait(timeout=min(wait_for, 0.5))
-            finally:
-                if checkpoint_epoch is not None:
-                    self._reader_barrier_requested = False
-                    self._new_event.notify_all()
 
     def expect_event(self, kind: str, timeout: float = 5.0) -> Event:
         return self.wait_for(lambda e: e.kind == kind, timeout, f"kind={kind} 事件")
