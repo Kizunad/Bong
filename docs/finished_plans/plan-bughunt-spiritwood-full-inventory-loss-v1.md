@@ -8,10 +8,10 @@
 
 | 阶段 | 目标 | 状态 |
 |---|---|---|
-| P0 | 第一性原理复现满包吞产物，并锁定失败前不可提交世界状态 | ⏳ |
-| P1 | 复用 inventory-or-ground grant，保留 freshness、位置与维度 | ⬜ |
-| P2 | 原子提交 harvested/AIR/session/反馈并覆盖所有分支 | ⬜ |
-| P3 | 完成 server 全量门禁、主线同步、归档与 PR gates | ⬜ |
+| P0 | 第一性原理复现满包吞产物，并锁定失败前不可提交世界状态 | ✅ 2026-07-15 |
+| P1 | 复用 inventory-or-ground grant，保留 freshness、位置与维度 | ✅ 2026-07-15 |
+| P2 | 原子提交 harvested/AIR/session/反馈并覆盖所有分支 | ✅ 2026-07-15 |
+| P3 | 完成 server 全量门禁、主线同步、归档与 PR gates | ✅ 2026-07-15 |
 
 ## Bug 摘要
 
@@ -67,14 +67,14 @@
 
 ### P0 - 证真与失败测试
 
-**状态：⏳**
+**状态：✅ 2026-07-15**
 
 - 增加满包、freshness mismatch 和结构性错误测试，在生产修复前证明满包不会产生地面掉落且世界状态会被错误提交。
 - 测试锁玩家可观察契约，不以私有调用次数或源码字符串替代行为。
 
 ### P1 - 入包或落地
 
-**状态：⬜**
+**状态：✅ 2026-07-15**
 
 - 让灵木 grant 复用 `add_item_to_player_inventory_or_ground`。
 - 断言 Granted 与 DroppedToGround 均保留 template、stack count、freshness profile、created tick、位置和维度。
@@ -82,7 +82,7 @@
 
 ### P2 - 原子世界提交与诚实反馈
 
-**状态：⬜**
+**状态：✅ 2026-07-15**
 
 - 重排 `complete_spiritwood_sessions`：grant outcome 成功后才提交 session/harvested/AIR/完成事件。
 - 覆盖成功入包、满包落地、freshness mismatch、结构失败、无 inventory/player 等边界。
@@ -90,7 +90,7 @@
 
 ### P3 - 门禁与归档
 
-**状态：⬜**
+**状态：✅ 2026-07-15**
 
 - 定向运行 `cargo test spiritwood::` 及新增契约测试。
 - 运行 server 完整门禁：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
@@ -117,3 +117,37 @@
 Round 1 核查了满包是否可达、灵木是否总能堆叠、inventory helper 是否已有落地兜底、世界资源是否在 grant 前消耗。结论：满包明确返回错误；freshness 使旧堆不保证可合并；灵木路径未调用已有落地 helper；生产顺序确实先提交不可逆副作用。
 
 Round 2 排除了灵木 shutdown flush、botany/craft/alchemy 满包修复和跨维 session 等重复范围。最终证据仍成立，且可通过既有 `GrantOrGroundOutcome` 在单一 server 模块内闭环，不需新协议或新状态机。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：在 `server/src/spiritwood/mod.rs` 增加生产链集成测试，修复前明确复现满包无地面掉落、原木却被错误标记 harvested 并置 AIR。
+- P1：`grant_ling_mu_gun` 复用 `add_item_to_player_inventory_or_ground`，同一 customization 闭包覆盖入包与落地，保留 `spirit_quality`、freshness、数量、原木中心位置和 session 维度。
+- P2：`complete_spiritwood_sessions` 仅在 `Granted` / `DroppedToGround` 后提交 harvested、AIR 和完成事件；结构错误、缺掉落 registry、缺 inventory、instance id 冲突均保留原木并发送 `completed=false`。
+- P3：完成定向测试、两轮 server 完整门禁、最新主线同步及最终 HEAD 主 agent 对抗 review。
+
+### 关键 commit
+
+- `41a45224`（2026-07-15）：升格 active plan，收口灵木满包原子结算范围。
+- `2a3fa760`（2026-07-15）：加入修复前失败测试，证真满包吞产物与错误世界提交。
+- `edc5ed34`（2026-07-15）：接入 inventory-or-ground grant，重排成功提交顺序并补齐边界测试。
+- `ed6b2773`（2026-07-15）：合并最新 `origin/main`（PR #1210）并在合并结果上复验完整 server 门禁。
+
+### 测试结果
+
+- 修复前新增契约测试：18 pass / 7 fail；失败明确显示 `DroppedLootRegistry=0`，同时原木已 harvested。
+- `TMPDIR="$PWD/target/tmp" cargo test spiritwood::tests`：25 passed / 0 failed。
+- `TMPDIR="$PWD/target/tmp" cargo test spiritwood::`：44 passed / 0 failed。
+- 修复 HEAD 与主线同步后 HEAD 均执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；最终结果为 lib 11,655 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed / 5 ignored。
+- `git diff --check origin/main...HEAD` 通过；最终工作树干净，`origin/main` 是 `ed6b2773` 的祖先。
+
+### 跨仓库核验
+
+- server：`complete_spiritwood_sessions`、`grant_ling_mu_gun`、`GrantOrGroundOutcome`、`DroppedLootRegistry` 的生产链和测试均已命中。
+- client / agent / schema / worldgen：本修复不修改协议、payload、schema、Redis key 或资源格式，无跨栈构建需求；地面掉落沿用既有同步与拾取链路。
+
+### 遗留 / 后续
+
+- `ChunkLayer` 暂不可写时仍沿用既有“记录 harvested、稍后由世界生成态收口”的语义，不在本 BugFix 扩成跨资源事务。
+- PR 合并前继续以 `/review`、CodeRabbit 和 e2e 为最终 gate；任何新 HEAD 都重新执行对应 review 与门禁。
