@@ -81,12 +81,12 @@
 
 ## Skeleton Fix Plan
 
-- [ ] TODO 1：在生产断线 reset 路径补 `AnqiHudStateStore.clear()`。优先放入 `CombatHudBootstrap.resetOnDisconnect()`，因为该 store 属于 combat HUD 状态；如选择 `BongNetworkHandler` 的总清理清单，需说明归属理由，避免两边重复。
-- [ ] TODO 2：补 store 级 pin 测试：高 tick 写入短 TTL，过期后 snapshot 为空；未 clear 时低 tick 新 payload 仍被挡，证明旧 bug 机制。
-- [ ] TODO 3：补生产断线 reset 回归：高 tick 污染后执行实际 disconnect reset 路径，再喂低 tick `anqi_hud`，应能显示新 HUD。
-- [ ] TODO 4：覆盖四个已实现维度：echo、charge、abrasion、multishot。`aim` 当前 server 不发，不纳入本 bug 验收。
-- [ ] TODO 5：补 handler 级回归：模拟 `AnqiHudServerDataHandler` 接收新 session 低 tick payload，确认经过 reset 后能进入 `AnqiHudStateStore`。
-- [ ] TODO 6：检查 debug `/bonghud` 命令仍可手动 clear，不作为生产 reset 的唯一依据；必要时只更新测试说明，不改变命令语义。
+- [x] TODO 1：在生产断线 reset 路径补 `AnqiHudStateStore.clear()`。已接入 `CombatHudBootstrap.resetOnDisconnect()`；该 store 属于 combat HUD 状态，未在 `BongNetworkHandler` 重复接线。
+- [x] TODO 2：补 store 级 pin 测试：高 tick 写入短 TTL，过期后 snapshot 为空；未 clear 时低 tick 新 payload 仍被挡，证明旧 bug 机制。
+- [x] TODO 3：补生产断线 reset 回归：高 tick 污染后执行实际 disconnect reset 路径，再喂低 tick `anqi_hud`，确认新 HUD 可显示。
+- [x] TODO 4：覆盖四个已实现维度：echo、charge、abrasion、multishot。`aim` 当前 server 不发，未纳入本 bug 验收。
+- [x] TODO 5：补 handler 级回归：真实 `AnqiHudServerDataHandler` 接收新 session 低 tick payload，确认经过 reset 后进入 `AnqiHudStateStore`。
+- [x] TODO 6：检查 debug `/bonghud` 命令仍可手动 clear；命令语义未改，也未将其作为生产 reset 的唯一依据。
 
 ## 接入面与收口决议
 
@@ -108,10 +108,10 @@
 
 ## 实施阶段
 
-- [ ] P0：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约。
-- [ ] P1：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
-- [ ] P2：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
-- [ ] P3：同步主线、主 agent 对抗自审、填写 Finish Evidence 并归档。
+- [x] P0：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约；修复前定向运行确认 3 项红灯。
+- [x] P1：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
+- [x] P2：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
+- [x] P3：同步主线、主 agent 对抗自审、填写 Finish Evidence 并归档。
 
 ## 验收矩阵
 
@@ -134,10 +134,10 @@
 ## 验收测试计划
 
 - `cd client && ./gradlew test --tests com.bong.client.hud.AnqiHudStateStoreTest`
-  - 新增 red/green：`expiredHighTickStillBlocksLowerTickUntilClear`。
+  - 新增 red/green：`expiredHighTicksStillRejectLowerTicksUntilExplicitSessionClear`。
   - 覆盖 echo / charge / abrasion / multishot 维度。
 - `cd client && ./gradlew test --tests com.bong.client.combat.CombatHudBootstrapTest`
-  - 新增断线 reset pin：`resetOnDisconnectClearsAnqiHudLastTickGate`。
+  - 新增断线 reset pin：`resetOnDisconnectOpensNewTickEpochForAllProducedAnqiHudDimensions`。
 - `cd client && ./gradlew test --tests com.bong.client.combat.handler.AnqiHudServerDataHandlerTest`
   - 新增 handler 级低 tick after reset 回归。
 - 最终 client gate：`cd client && ./gradlew test build`，使用 JDK 17。
@@ -148,3 +148,33 @@
 - 如果只测 `AnqiHudStateStore.clear()`，无法保证真实 disconnect reset 调到它；必须测生产 reset 路径。
 - 如果未来 server 改成持久化全局 tick，本 bug 的跨服低 tick 条件会变窄，但 static HUD store 跨 session 未清仍是不一致状态。
 - 只清 client HUD store，不应影响暗器实际施放、真元守恒、server 事件发射。
+
+## Finish Evidence
+
+### 落地清单
+
+- `CombatHudBootstrap.resetOnDisconnect()` 现在调用 `AnqiHudStateStore.clear()`，在同一 Minecraft 客户端 JVM 断线、切服或回标题后清除五个维度的 `lastTick`，开启新的 tick epoch。
+- `AnqiHudStateStore` 的 TTL 语义和同 session 乱序保护保持不变：过期只隐藏显示值，未断线的低 tick 仍被拒绝；只有显式 disconnect reset 才清 gate。
+- store pin 覆盖 echo、charge、abrasion、multishot；bootstrap pin 走真实 reset；handler pin 走真实 `ServerDataEnvelope`/`AnqiHudServerDataHandler` 低 tick payload。aim 仍因 server 无生产事件而不纳入验收。
+- debug `/bonghud` 的手动 clear 路径保持不变；未改 schema、server emitter、A/V、真元逻辑或其它 static store。
+
+### 关键提交
+
+- `25e2fc6c`：升格并补全本 BugFix plan。
+- `cbcea83c`：加入修复前失败契约与 store/bootstrap/handler 回归测试。
+- `e1759121`：校准过期快照断言，区分“显示字段为空”和历史 expiresAt。
+- `9a3c839f`：在生产断线 reset 接入 `AnqiHudStateStore.clear()`。
+- `311e40de`：稳定 handler 回归的测试时钟读取，避免慢 CI 的 2 秒 TTL 抖动。
+
+### 测试结果
+
+- 修复前定向测试：3 项按预期失败，分别锁定过期 stale tick gate 与真实 disconnect reset/handler 路径。
+- 定向回归（JDK 17.0.19）：
+  `./gradlew test --tests com.bong.client.hud.AnqiHudStateStoreTest --tests com.bong.client.combat.CombatHudBootstrapTest --tests com.bong.client.combat.handler.AnqiHudServerDataHandlerTest`，`BUILD SUCCESSFUL`。
+- 完整 client 门禁（JDK 17.0.19）：`./gradlew test build`，13 actionable tasks，`BUILD SUCCESSFUL`。
+
+### 主线与自审
+
+- `git fetch origin main` 后 `origin/main=6f1faea5`，为本分支祖先；无需合并，最终工作树干净。
+- 主 agent 对 `origin/main...311e40de` 做逐入口审查：断线 hook 已注册并执行 `resetOnDisconnect()`；四个生产维度均由同一 store clear 重置；TTL 过期不自动清 gate；debug clear 不是生产唯一依据。
+- 用户明确要求“本次不跑 subagent，仅主agent实施”，因此未运行独立 validator；不声称 validator PASS。无 `[BLOCKED: ...]` 项。
