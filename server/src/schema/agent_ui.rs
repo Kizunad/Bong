@@ -115,6 +115,7 @@ pub struct AgentUiRequestPayloadV1 {
 /// `params` 为 `HashMap<String,String>` 以保留可扩展性：
 ///   - `button_click` → `params["button_id"] = "<id>"`
 ///   - `error` → `params["reason"] = "realm_gate_rejected"` 等
+///
 /// `target_player` 为 server→agent 权威拒绝类响应可选回填的 canonical_player_id。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
