@@ -1,14 +1,30 @@
-# plan-bughunt-search-hud-stuck-v1（骨架）
+# plan-bughunt-search-hud-stuck-v1
 
-> **骨架（草案）**。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
+> **Active plan（2026-07-15 升格）**。来源：`docs/plans-skeleton/plan-bughunt-search-hud-stuck-v1.md`。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
 
 > 立项动机：本轮按「client runtime / store / session / consumer 漏 reset」角度复查 TSY 搜刮链路，避开既有 toast cross-session、identity panel stale session、zone_info 同区不刷新、灵龛 HUD 串局等已出题项后，确认这是一个**新的、同 session 即可稳定复现**的 HUD 状态机真 bug。
+
+## 接入面
+
+- **进料**：复用 `ContainerInteractionHandler` 已接收的 `search_started` / `search_progress` / `search_completed` / `search_aborted` payload，不新增协议。
+- **出料**：`SearchHudStateStore.snapshot()` 继续供 `BongHudOrchestrator` 与 `SearchCancelInteractionBootstrap` 读取；过期后统一返回 `SearchHudState.idle()`，由既有 `SearchProgressHudPlanner` 自然停止渲染。
+- **共享类型 / event**：只扩展既有 `SearchHudStateStore` 生命周期，不复制 `SearchHudState`、不新增 parallel store。
+- **跨仓库契约**：纯 client 生命周期修复；server payload 名称和 agent/schema 均不变。
+- **worldview / qi_physics**：纯 HUD 状态收尾，不涉及世界观、真元或灵气流动。
+
+## 实施决议（2026-07-15）
+
+1. 计时所有权留在 `SearchHudStateStore`，不让纯渲染器 `SearchProgressHudPlanner` 推进状态。
+2. 生产时间基使用 `System.nanoTime()`；store 记录终态进入时刻，`snapshot()` 读取时惰性回收。这样每帧 HUD 读取自然驱动收尾，无需新增全局 tick bootstrap，也不受系统墙钟回拨影响。
+3. `COMPLETED_FLASH` TTL 固定为 3 秒，`ABORTED_FLASH` TTL 固定为 1 秒；精确边界采用“到期时刻即 `IDLE`”。新 `markStarted` / `markProgress` / 新终态会覆盖旧终态计时。
+4. 增加生产态 `clearOnDisconnect()`，并接入 `BongNetworkHandler.clearClientStateOnDisconnect()`，避免终态或进行中搜刮状态跨 session 残留。
+5. 测试通过 package-private 显式纳秒时间入口驱动，不 sleep、不依赖真实墙钟；覆盖 TTL 前一纳秒、精确边界、时钟回拨、新搜索覆盖、终态替换、断线清理及既有 reason/safe-kind 分支。
 
 ## 阶段总览
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | TSY 搜刮 HUD 终态不自动回 `IDLE` | fix_pr | ⬜ |
+| P0 | TSY 搜刮 HUD 终态不自动回 `IDLE` | client | ⏳ |
 
 ## P0 — TSY 搜刮 HUD 终态不自动回 `IDLE`
 
@@ -38,13 +54,13 @@
 - **链路语义错误**：server 已把搜刮流程结束了，client 却把终态 flash 错当成持久态，属于典型 consumer 漏收尾。
 - **跨场景扩散**：哪怕玩家离开容器、转去战斗或撤离，只要没有下一次搜刮消息覆盖，旧 flash 仍继续显示。
 
-### 修复建议
+### 实施范围
 
-- 给 `SearchHudStateStore` 增加终态时间基（如 `phaseSinceMs` / `expiresAtMs`），并在 client tick 或 HUD 构建前做超时回收：
+- 给 `SearchHudStateStore` 增加基于单调纳秒时钟的终态时间基，并在 `snapshot()` 读取前做超时回收：
   - `COMPLETED_FLASH` 超过 3000ms 自动回 `IDLE`
   - `ABORTED_FLASH` 超过 1000ms 自动回 `IDLE`
-- 或把 flash 改成和 `ExtractStateStore` 同类的带时间戳 snapshot，由 store/tick 层统一收口；不要让 `SearchProgressHudPlanner` 承担状态推进。
-- 顺手补一个 disconnect clear 兜底，避免 terminal flash 在断线前最后一帧继续悬挂到下个连接周期。
+- `SearchProgressHudPlanner` 保持纯函数，不承担状态推进。
+- `BongNetworkHandler.clearClientStateOnDisconnect()` 调用 `SearchHudStateStore.clearOnDisconnect()`，进行中与终态状态都立即清空。
 
 ### 验收抓手
 
@@ -89,4 +105,4 @@
 
 ## 审计来源
 
-bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-20260705-cm`，角度：disconnect/reconnect、world 切换、增量状态不清、consumer 漏 reset。结论：TSY 搜刮 HUD 终态未自动收尾是高置信新真 bug；本 skeleton 仅立项，不含代码修复。
+bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-20260705-cm`，角度：disconnect/reconnect、world 切换、增量状态不清、consumer 漏 reset。结论：TSY 搜刮 HUD 终态未自动收尾是高置信新真 bug；原 skeleton 当时仅立项，不含代码修复。
