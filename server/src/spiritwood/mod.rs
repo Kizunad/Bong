@@ -366,9 +366,9 @@ fn grant_before_removing_session<T>(
     player: Entity,
     grant: impl FnOnce(&WoodSession, &WoodSessionStore) -> T,
 ) -> Option<(WoodSession, T)> {
-    let session = store.session_for(player)?.clone();
+    let session = store.claim_for_settlement(player)?;
     let outcome = grant(&session, store);
-    let removed = store.remove(player)?;
+    let removed = store.finish_settlement(&session)?;
     debug_assert_eq!(removed, session);
     Some((removed, outcome))
 }
@@ -1187,6 +1187,7 @@ mod tests {
                     Some(completed_session),
                     "grant 执行时 completed session 必须仍在 store，成功或失败后才能移除"
                 );
+                assert!(active_sessions.is_settling(player));
                 grant_ling_mu_gun(
                     &mut inventory,
                     &registry,
@@ -1235,6 +1236,7 @@ mod tests {
                     Some(completed_session),
                     "失败 grant 执行时 completed session 也必须仍在 store"
                 );
+                assert!(active_sessions.is_settling(player));
                 grant_ling_mu_gun(
                     &mut inventory,
                     &ItemRegistry::default(),
