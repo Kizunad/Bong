@@ -4581,8 +4581,10 @@ mod tests {
         use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
         use valence::testing::MockClientHelper;
 
-        fn setup_narration_app(zone_registry: Option<ZoneRegistry>) -> (App, Sender<RedisInbound>) {
-            let (tx_outbound, _rx_outbound) = unbounded();
+        fn setup_narration_app_with_agent_ui(
+            zone_registry: Option<ZoneRegistry>,
+        ) -> (App, Sender<RedisInbound>, Receiver<RedisOutbound>) {
+            let (tx_outbound, rx_outbound) = unbounded();
             let (tx_inbound, rx_inbound) = unbounded();
             let mut app = App::new();
 
@@ -4592,16 +4594,24 @@ mod tests {
             });
             app.insert_resource(CommandExecutorResource::default());
             app.insert_resource(NarrationDedupeResource::default());
+            app.init_resource::<agent_ui::AgentUiSessionStore>();
 
             if let Some(zone_registry) = zone_registry {
                 app.insert_resource(zone_registry);
             }
 
             app.add_event::<crate::cultivation::insight::InsightOffer>();
-            // plan-agent-ui-data-v1 P0 — process_redis_inbound 需要 AgentUiCmdEvent。
             app.add_event::<agent_ui::AgentUiCmdEvent>();
-            app.add_systems(Update, process_redis_inbound);
+            app.add_systems(
+                Update,
+                (process_redis_inbound, agent_ui::receive_agent_ui_cmd_system),
+            );
 
+            (app, tx_inbound, rx_outbound)
+        }
+
+        fn setup_narration_app(zone_registry: Option<ZoneRegistry>) -> (App, Sender<RedisInbound>) {
+            let (app, tx_inbound, _rx_outbound) = setup_narration_app_with_agent_ui(zone_registry);
             (app, tx_inbound)
         }
 
@@ -4864,69 +4874,201 @@ mod tests {
             );
         }
 
+        fn consume_agent_ui_response_through_tiandao(
+            response: &crate::schema::agent_ui::AgentUiResponsePayloadV1,
+        ) -> NarrationV1 {
+            use std::io::Write as _;
+            use std::process::{Command, Stdio};
+
+            let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("server crate should live directly below the repository root");
+            let tsx = repo_root.join("agent/node_modules/.bin/tsx");
+            let runner =
+                repo_root.join("agent/packages/tiandao/tests/ui-response-consumer-runner.ts");
+            assert!(
+                tsx.is_file(),
+                "cross-stack test requires npm dependencies at {}; run npm ci in agent first",
+                tsx.display()
+            );
+            assert!(
+                runner.is_file(),
+                "Tiandao test runner is missing at {}",
+                runner.display()
+            );
+
+            let (response_channel, producer_json) =
+                redis_bridge::encode_agent_ui_response_wire_for_test(response)
+                    .expect("server producer response should pass the production Redis encoder");
+            assert_eq!(
+                response_channel,
+                crate::schema::channels::CH_AGENT_UI_RESPONSE,
+                "AgentUiResponse must use the production response channel"
+            );
+            let mut child = Command::new(&tsx)
+                .arg(&runner)
+                .current_dir(repo_root.join("agent/packages/tiandao"))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "failed to start production UiResponseConsumer through {}: {error}",
+                        tsx.display()
+                    )
+                });
+            child
+                .stdin
+                .take()
+                .expect("Tiandao runner stdin should be piped")
+                .write_all(producer_json.as_bytes())
+                .expect("production Redis response wire should reach the Tiandao runner");
+
+            let output = child
+                .wait_with_output()
+                .expect("Tiandao runner should exit after one consumer dispatch");
+            assert!(
+                output.status.success(),
+                "production UiResponseConsumer runner failed: status={} stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.stderr.is_empty(),
+                "successful Tiandao runner must not emit stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let consumer_wire = std::str::from_utf8(&output.stdout).unwrap_or_else(|error| {
+                panic!(
+                    "UiResponseConsumer stdout must be UTF-8 Redis wire JSON: {error}; stdout={:?}",
+                    output.stdout
+                )
+            });
+            redis_bridge::parse_agent_narration_wire_for_test(consumer_wire).unwrap_or_else(
+                |error| {
+                    panic!(
+                        "UiResponseConsumer stdout must pass the production narration decoder: {error}; stdout={consumer_wire}"
+                    )
+                },
+            )
+        }
+
         #[test]
-        fn realm_gate_shared_chain_routes_only_target_player() {
-            let fixture: serde_json::Value = serde_json::from_str(include_str!(
-                "../../../agent/packages/schema/samples/agent-ui-realm-gate-routing.chain.sample.json"
-            ))
-            .expect("realm gate routing 共享 fixture 应是合法 JSON");
-            let target_username = fixture["players"]["target_username"]
-                .as_str()
-                .expect("fixture target_username 应为字符串");
-            let non_target_username = fixture["players"]["non_target_username"]
-                .as_str()
-                .expect("fixture non_target_username 应为字符串");
-            let narration_envelope: NarrationV1 =
-                serde_json::from_value(fixture["agent_narration"].clone())
-                    .expect("agent consumer 输出 fixture 应通过 server narration serde");
+        fn realm_gate_producer_consumer_selector_routes_only_target_player() {
+            const TARGET_USERNAME: &str = "E2EPlayer";
+            const BYSTANDER_USERNAME: &str = "Bystander";
+            const EXPECTED_TEXT: &str =
+                "天道的注意力掠过，境界未至，缘分尚浅——此时感知到的，只是一片模糊的余韵。";
+
+            let (mut app, tx_inbound, rx_outbound) = setup_narration_app_with_agent_ui(None);
+            let (target, mut target_helper) =
+                spawn_test_client_with_helper(&mut app, TARGET_USERNAME, [8.0, 66.0, 8.0]);
+            let (bystander, mut bystander_helper) =
+                spawn_test_client_with_helper(&mut app, BYSTANDER_USERNAME, [18.0, 66.0, 18.0]);
+            app.world_mut().entity_mut(target).insert(Cultivation {
+                realm: Realm::Induce,
+                ..Cultivation::default()
+            });
+            app.world_mut().entity_mut(bystander).insert(Cultivation {
+                realm: Realm::Void,
+                ..Cultivation::default()
+            });
+
+            let target_player = canonical_player_id(TARGET_USERNAME);
+            app.world_mut()
+                .send_event(agent_ui::AgentUiCmdEvent(
+                    crate::schema::agent_ui::AgentUiRequestCommandV1 {
+                        request_id: "req-realm-gate-real-chain".to_string(),
+                        target_player: target_player.clone(),
+                        xml: r#"<owo-ui><components><flow-layout><button id="btn_a">确认</button></flow-layout></components></owo-ui>"#.to_string(),
+                        timeout_ticks: 600,
+                        realm_gate: Realm::Condense.rank(),
+                        allowed_button_ids: vec!["btn_a".to_string()],
+                    },
+                ));
+
+            // Stage 1: execute the production server gate and take its real Redis response.
+            app.update();
+            let response = match rx_outbound
+                .try_recv()
+                .expect("realm gate producer should emit one Redis response")
+            {
+                RedisOutbound::AgentUiResponse(response) => response,
+                other => panic!("expected AgentUiResponse from producer, got {other:?}"),
+            };
+            assert_eq!(response.request_id, "req-realm-gate-real-chain");
+            assert!(matches!(
+                response.action,
+                crate::schema::agent_ui::AgentUiActionType::Error
+            ));
+            assert_eq!(
+                response.target_player.as_deref(),
+                Some(target_player.as_str())
+            );
+            assert_eq!(
+                response.params.get("reason").map(String::as_str),
+                Some("realm_gate_rejected")
+            );
+            assert_eq!(
+                response.params.get("player_realm").map(String::as_str),
+                Some("2")
+            );
+            assert_eq!(
+                response.params.get("required_realm").map(String::as_str),
+                Some("3")
+            );
+            assert!(
+                rx_outbound.try_recv().is_err(),
+                "realm gate producer must emit exactly one response"
+            );
+
+            // Stage 2: execute the production TypeScript UiResponseConsumer in a real process.
+            let narration_envelope = consume_agent_ui_response_through_tiandao(&response);
             assert_eq!(
                 narration_envelope.narrations.len(),
                 1,
-                "共享链路 fixture 应只有一条私人拒绝提示"
+                "UiResponseConsumer should publish exactly one private narration"
             );
-            let expected_text = narration_envelope.narrations[0].text.clone();
-
-            let (mut app, tx_inbound) = setup_narration_app(None);
-            let (_target, mut target_helper) =
-                spawn_test_client_with_helper(&mut app, target_username, [8.0, 66.0, 8.0]);
-            let (_bystander, mut bystander_helper) =
-                spawn_test_client_with_helper(&mut app, non_target_username, [18.0, 66.0, 18.0]);
-
-            enqueue_single_narration(
-                &tx_inbound,
-                narration_envelope
-                    .narrations
-                    .into_iter()
-                    .next()
-                    .expect("共享链路 fixture narration 不应为空"),
+            assert_eq!(
+                narration_envelope.narrations[0].target.as_deref(),
+                Some(target_player.as_str()),
+                "consumer must preserve the producer's canonical target_player"
             );
+            assert_eq!(narration_envelope.narrations[0].text, EXPECTED_TEXT);
+
+            // Stage 3: feed that actual consumer output through the production recipient selector.
+            tx_inbound
+                .send(RedisInbound::AgentNarration(narration_envelope))
+                .expect("consumer narration should enqueue into the server Redis inbound channel");
             app.update();
             flush_all_client_packets(&mut app);
 
             let target_payloads = collect_typed_narration_payloads(&mut target_helper);
             let bystander_payloads = collect_typed_narration_payloads(&mut bystander_helper);
-            assert_single_narration_payload(target_payloads.as_slice(), expected_text.as_str());
+            assert_single_narration_payload(target_payloads.as_slice(), EXPECTED_TEXT);
             match &target_payloads[0].payload {
                 ServerDataPayloadV1::Narration { narrations } => assert_eq!(
                     narrations[0].style,
                     NarrationStyle::SystemWarning,
-                    "目标玩家收到的必须是 realm_gate_rejected system_warning"
+                    "target player must receive a realm-gate system_warning"
                 ),
-                other => panic!("共享链路应产出 narration payload，实为 {other:?}"),
+                other => panic!("real chain should produce narration payload, got {other:?}"),
             }
             assert!(
                 bystander_payloads.is_empty(),
-                "非目标玩家 {non_target_username} 不得收到 {target_username} 的境界门拒绝提示"
+                "bystander {BYSTANDER_USERNAME} must not receive {TARGET_USERNAME}'s rejection"
             );
             assert_eq!(
                 collect_game_message_packets(&mut target_helper),
                 0,
-                "目标玩家不应收到额外 chat mirror"
+                "target player should not receive a mirrored chat packet"
             );
             assert_eq!(
                 collect_game_message_packets(&mut bystander_helper),
                 0,
-                "非目标玩家不应收到任何 chat mirror"
+                "bystander should not receive any mirrored chat packet"
             );
         }
 

@@ -862,22 +862,19 @@ mod tests {
         }
     }
 
-    /// 共享链路第一段：真实 realm gate producer 必须逐字段产出 fixture 中的 server response。
+    /// 真实 realm gate producer 必须生成只指向目标玩家的拒绝 response。
     #[test]
-    fn system_realm_gate_rejected_matches_shared_routing_fixture() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../agent/packages/schema/samples/agent-ui-realm-gate-routing.chain.sample.json"
-        ))
-        .expect("realm gate routing 共享 fixture 应是合法 JSON");
+    fn system_realm_gate_rejected_emits_private_response() {
         let (mut app, rx) = build_agent_ui_app();
-        let target_username = fixture["players"]["target_username"]
-            .as_str()
-            .expect("fixture target_username 应为字符串");
-        // 引气 rank=2，fixture realm_gate=3 → 拒绝。
+        let target_username = "E2EPlayer";
+        // 引气 rank=2，凝脉 gate=3 → 拒绝。
         spawn_test_player(&mut app, target_username, Realm::Induce);
-        let cmd: AgentUiRequestCommandV1 =
-            serde_json::from_value(fixture["agent_ui_command"].clone())
-                .expect("fixture agent_ui_command 应通过 Rust serde 镜像");
+        let cmd = make_cmd(
+            "req-realm-gate-private-response",
+            target_username,
+            Realm::Condense.rank(),
+        );
+        let expected_target = cmd.target_player.clone();
         app.world_mut().send_event(AgentUiCmdEvent(cmd));
         app.update();
 
@@ -885,11 +882,32 @@ mod tests {
             RedisOutbound::AgentUiResponse(r) => r,
             other => panic!("期望 AgentUiResponse，实为 {other:?}"),
         };
-        let actual =
-            serde_json::to_value(resp).expect("真实 realm gate response 必须能按 wire 契约序列化");
+        assert!(matches!(resp.action, AgentUiActionType::Error));
+        assert_eq!(resp.request_id, "req-realm-gate-private-response");
         assert_eq!(
-            actual, fixture["server_response"],
-            "server producer 必须逐字段匹配交给 agent consumer 的同一份共享 fixture"
+            resp.target_player.as_deref(),
+            Some(expected_target.as_str())
+        );
+        assert_eq!(
+            resp.params.get("reason").map(String::as_str),
+            Some("realm_gate_rejected")
+        );
+        assert_eq!(
+            resp.params.get("player_realm").map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            resp.params.get("required_realm").map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(
+            resp.params.len(),
+            3,
+            "realm gate producer 不得夹带未约定字段"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "一次 realm gate 拒绝必须只生成一条 response"
         );
     }
 
