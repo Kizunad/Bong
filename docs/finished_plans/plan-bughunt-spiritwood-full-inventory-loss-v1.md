@@ -124,7 +124,15 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 
 Round 4 复核 `/review` 对 `freshness.initial_qi` 精度的质疑：权威 `Freshness.initial_qi` 在 `server/src/shelflife/types.rs` 中是 `f32`，protobuf `float` 与 Python `<f` 解码不会继续收窄。Rust 与 Python 协议测试改用非平凡 bit pattern `0x42C50001`，逐 bit 锁定 server protobuf roundtrip 和 Bot 掉落解码保真；不把 wire 无故扩成与领域类型不一致的 `double`。
 
-## 当前审查证据包（代码基线 `2cb2cfd078af744b40af4c4690499f0bee99c7e1`）
+## 最新增量审查证据（代码基线 `88e0c5c37d2d2d30451c3796810a4d78548ae3d8`）
+
+最终 review 发现并已修复一个并发边界：结算消费者不能只按 player identity 删除 session。`WoodSessionStore` 现在为每个 player 保存 `settling` claim；`claim_for_settlement` 只允许一个消费者认领同一完整 session，grant 执行期间 session 仍可见，`finish_settlement` 仅在完整 identity（session id、log position、dimension、started/last tick 等）相同的情况下删除。替换 session 不会被旧结算流程误删，普通 `remove` 会清除 claim；新增测试覆盖重复 claim、grant 期间可见、replacement identity 和 mismatch 保留。
+
+本次审查还核验了两个容易被截断误判的范围事实：`server/src/spiritwood/persistence.rs` 只增加 `BONG_SPIRITWOOD_HARVESTED_PATH` 的 e2e 路径 override；未设置或空值仍使用生产默认 `data/spiritwood/harvested.json`，并有正反测试。`server/src/world/terrain/mega_tree.rs` 只抽取既有 seed 计算并增加真实树定位 helper，供 dev `tptree` 与生产树 fixture 使用；正式 profile、seed 与 placement 配置均未改变。
+
+当前基线本地门禁：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、完整 `cargo test` 全部通过（lib `11710 passed / 0 failed / 1 ignored`，CLI `11 passed`，full-app startup `1 passed`，背包 e2e `4 passed`，doc-tests `0 failed`）。同 SHA GitHub e2e run `29462708855` 正在执行，完成后以该 run 的最终结论作为本基线的跨栈门禁记录。
+
+## 当前审查证据包（前一代码基线 `2cb2cfd078af744b40af4c4690499f0bee99c7e1`）
 
 Review 面板的 initial prompt 无工具且 diff 上限为 40,000 字符，核心 Rust 文件会被前置文件截断；以下是可逐项对拍的生产控制流和联合终态：
 
