@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use valence::prelude::{BlockPos, Entity, Resource};
 
@@ -58,6 +58,7 @@ impl WoodSession {
 #[derive(Debug, Default)]
 pub struct WoodSessionStore {
     sessions: HashMap<Entity, WoodSession>,
+    settling: HashSet<Entity>,
 }
 
 impl Resource for WoodSessionStore {}
@@ -78,7 +79,26 @@ impl WoodSessionStore {
     }
 
     pub fn remove(&mut self, player: Entity) -> Option<WoodSession> {
+        self.settling.remove(&player);
         self.sessions.remove(&player)
+    }
+
+    pub fn claim_for_settlement(&mut self, player: Entity) -> Option<WoodSession> {
+        let session = self.sessions.get(&player)?.clone();
+        self.settling.insert(player).then_some(session)
+    }
+
+    pub fn finish_settlement(&mut self, expected: &WoodSession) -> Option<WoodSession> {
+        if !self.settling.remove(&expected.player)
+            || self.sessions.get(&expected.player) != Some(expected)
+        {
+            return None;
+        }
+        self.sessions.remove(&expected.player)
+    }
+
+    pub fn is_settling(&self, player: Entity) -> bool {
+        self.settling.contains(&player)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &WoodSession> {
@@ -125,5 +145,60 @@ mod tests {
         assert!(store.has_session_at(DimensionKind::Overworld, log_pos));
         assert!(!store.has_session_at(DimensionKind::Overworld, BlockPos::new(2, 80, 2)));
         assert!(!store.has_session_at(DimensionKind::Tsy, log_pos));
+    }
+
+    #[test]
+    fn settlement_claim_is_single_consumer_and_keeps_session_visible() {
+        let player = Entity::from_raw(8);
+        let session = WoodSession::new(
+            player,
+            "offline:settling".to_string(),
+            DimensionKind::Overworld,
+            BlockPos::new(2, 80, 2),
+            100,
+            [2.0, 80.0, 2.0],
+            Some(10),
+        );
+        let mut store = WoodSessionStore::default();
+        store.upsert(session.clone());
+
+        assert_eq!(store.claim_for_settlement(player), Some(session.clone()));
+        assert_eq!(store.session_for(player), Some(&session));
+        assert!(store.is_settling(player));
+        assert_eq!(store.claim_for_settlement(player), None);
+        assert_eq!(store.finish_settlement(&session), Some(session));
+        assert!(store.session_for(player).is_none());
+        assert!(!store.is_settling(player));
+    }
+
+    #[test]
+    fn finishing_old_claim_does_not_remove_replacement_session() {
+        let player = Entity::from_raw(9);
+        let old = WoodSession::new(
+            player,
+            "offline:old".to_string(),
+            DimensionKind::Overworld,
+            BlockPos::new(3, 80, 3),
+            100,
+            [3.0, 80.0, 3.0],
+            Some(11),
+        );
+        let replacement = WoodSession::new(
+            player,
+            "offline:replacement".to_string(),
+            DimensionKind::Overworld,
+            BlockPos::new(4, 80, 4),
+            200,
+            [4.0, 80.0, 4.0],
+            Some(12),
+        );
+        let mut store = WoodSessionStore::default();
+        store.upsert(old.clone());
+        assert_eq!(store.claim_for_settlement(player), Some(old.clone()));
+
+        store.upsert(replacement.clone());
+        assert_eq!(store.finish_settlement(&old), None);
+        assert_eq!(store.session_for(player), Some(&replacement));
+        assert!(!store.is_settling(player));
     }
 }
