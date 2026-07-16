@@ -779,7 +779,10 @@ pub fn spawn_tsy_daoxiang_at(
     ));
     // P1: NPC 功法（Daoxiang 默认 Induce 境界）
     let daoxiang_realm = Realm::Induce;
-    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(daoxiang_realm);
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(
+        daoxiang_realm,
+        crate::body_plan::humanoid_plan_static(),
+    );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = crate::npc::technique::assign_npc_techniques(
         NpcArchetype::Daoxiang,
@@ -925,7 +928,10 @@ pub fn spawn_tsy_zhinian_at(
     ));
     // P1: NPC 功法（Zhinian 默认 Condense 境界）
     let zhinian_realm = Realm::Condense;
-    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(zhinian_realm);
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(
+        zhinian_realm,
+        crate::body_plan::humanoid_plan_static(),
+    );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = crate::npc::technique::assign_npc_techniques(
         NpcArchetype::Zhinian,
@@ -2204,6 +2210,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 

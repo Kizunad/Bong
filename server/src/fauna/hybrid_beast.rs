@@ -720,7 +720,7 @@ pub fn hybrid_beast_rage_system(
     let tick = clock.map(|c| c.tick).unwrap_or(0);
 
     // 每 RAGE_TICK_INTERVAL tick 运行一次（2Hz @ 20TPS）
-    if tick % RAGE_TICK_INTERVAL != 0 {
+    if !tick.is_multiple_of(RAGE_TICK_INTERVAL) {
         return;
     }
 

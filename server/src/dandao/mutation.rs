@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Commands, Component, Entity, Event, EventWriter, Query};
 
+use crate::body_plan::{body_part_for_mutation_slot, id_to_legacy_body_part, BodyPlan};
+use crate::combat::components::BodyPart;
 use crate::cultivation::components::Realm;
 use crate::cultivation::insight::InsightRequest;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
@@ -211,6 +213,63 @@ pub enum MutationEffect {
     },
 }
 
+/// plan-race-system-v1 P0 review 修复（BLOCKING-2）—— humanoid.json 的
+/// `mutation_slot_mapping`（`BodySlot → BodyPartId`）此前只在 [`body_part_for_mutation_slot`]
+/// 内部有一条 API，全仓无任何运行时消费者（client `MutationFeatureRenderer` 尚未接线，
+/// 依赖 P2 的 `body_plan_layout` payload 才能过 wire——本 plan 范围外）。本函数是**第一个
+/// 真实 server 侧消费点**：给定目标实体已解析出的 Intrinsic [`BodyPlan`] + 其
+/// [`MutationState`]，把每条 [`ActiveMutation::slot`] 经 [`body_part_for_mutation_slot`]
+/// 解析成 `BodyPartId`，再经 [`id_to_legacy_body_part`] 转回 legacy [`BodyPart`]（战斗
+/// wire / `Wounds.location` 现状仍是 legacy enum，见 `body_plan::legacy` 桥文档）——命中
+/// 同一部位且该条 mutation 的 [`MutationKind::effect`] 是 `DamageReduction` 时叠乘减伤
+/// 系数（`reduction_pct`），供 `combat::resolve::resolve_attack_intents` 与既有的
+/// `combat::status::body_part_damage_multiplier`（丹药/状态效果驱动的同类型 per-part
+/// 倍率）同一处叠加消费。
+///
+/// **消费点选择依据**：dandao 现状确实没有任何"按 `BodySlot` 定位身体部位并施加效果"
+/// 的既有运行时逻辑——`MutationState.slots` 在生产代码里从未被写入过（变异获取/顿悟
+/// 选择尚未接线到 `ActiveMutation` 落地这一步，是本 plan 范围外的既有缺口），
+/// `network::mutation_visual_emit` / `dandao::visual_sync` 唯二引用 `BodySlot` 的地方
+/// 只是把枚举变体名原样序列化成字符串发给 client 渲染，不查询 `mutation_slot_mapping`。
+/// 因此本函数落在"最贴近的真实语义处"：`MutationEffect::DamageReduction` 早已声明
+/// `body_part: &'static str` 字段却零消费（另一个既有孤岛），本函数用
+/// `body_part_for_mutation_slot` 把它接上真实战斗结算，一次性补齐两处孤岛的交汇点。
+/// `MutationEffect::NaturalArmor`（伤势分级降档，语义与"倍率"不同）不在本函数消费
+/// 范围内——刻意保持零消费，非本次改动引入的新缺口，避免借题发挥造出未经设计评审的
+/// 降档机制。
+///
+/// **悬空/缺失映射静默跳过**（不 panic）：`body_part_for_mutation_slot` 对未在
+/// `mutation_slot_mapping` 里配置该 slot 的 plan 返回 `None` 是合法状态（见其文档——
+/// 非 humanoid plan 留空合法）；`id_to_legacy_body_part` 对非 8 段 humanoid legacy
+/// 字符串（如未来 whale 部位 id）同样返回 `None` 且合法。两种情况下该条 mutation
+/// 对本次伤害结算无影响，不阻断其余 mutation 继续参与折算。
+pub fn mutation_damage_multiplier_for_part(
+    state: Option<&MutationState>,
+    plan: &BodyPlan,
+    part: BodyPart,
+) -> f32 {
+    let Some(state) = state else {
+        return 1.0;
+    };
+    state.slots.iter().fold(1.0_f32, |acc, active| {
+        let Some(mapped_id) = body_part_for_mutation_slot(plan, active.slot) else {
+            return acc; // 悬空/缺失映射：静默跳过，不 panic。
+        };
+        let Some(mapped_part) = id_to_legacy_body_part(mapped_id) else {
+            return acc; // 非人形 plan 部位无 legacy 对应物：静默跳过。
+        };
+        if mapped_part != part {
+            return acc;
+        }
+        match active.kind.effect() {
+            MutationEffect::DamageReduction { reduction_pct, .. } => {
+                acc * (1.0 - reduction_pct.clamp(0.0, 1.0) as f32)
+            }
+            _ => acc,
+        }
+    })
+}
+
 /// §8.1 #2: 多臂武器切换共享 GCD（1s = 20 ticks）。
 pub const WEAPON_SWAP_COOLDOWN_TICKS: u64 = 20;
 
@@ -251,7 +310,7 @@ pub fn mutation_advance_system(
     let current_tick = clock.map(|c| c.tick).unwrap_or(0);
 
     // 600-tick 节流：非整数倍 tick 直接跳过。
-    if current_tick % MUTATION_ADVANCE_INTERVAL_TICKS != 0 {
+    if !current_tick.is_multiple_of(MUTATION_ADVANCE_INTERVAL_TICKS) {
         return;
     }
 
@@ -770,6 +829,251 @@ mod mutation_tests {
         assert_eq!(
             MUTATION_ADVANCE_INTERVAL_TICKS, 600,
             "mutation_advance_system 应每 600 tick (30s) 检测一次"
+        );
+    }
+
+    // ── plan-race-system-v1 P0 review 修复（BLOCKING-2）：
+    // `mutation_damage_multiplier_for_part` 是 `mutation_slot_mapping` 的第一个真实
+    // 消费点——每个 BodySlot 变体一条真实消费链测试 + 缺失/悬空映射分支测试 ──────
+
+    fn active_mutation_at(kind: MutationKind, slot: BodySlot) -> ActiveMutation {
+        ActiveMutation {
+            kind,
+            slot,
+            level: 1,
+            acquired_tick: 0,
+        }
+    }
+
+    fn state_with(mutations: Vec<ActiveMutation>) -> MutationState {
+        MutationState {
+            stage: MutationStage::Heavy,
+            slots: mutations,
+            meridian_penalty: 0.0,
+        }
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_none_state_is_neutral() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        assert_eq!(
+            mutation_damage_multiplier_for_part(None, plan, BodyPart::Back),
+            1.0,
+            "无 MutationState（entity 从未变异）不应影响任何部位的伤害倍率"
+        );
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_empty_slots_is_neutral() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        let state = MutationState::default();
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::Back),
+            1.0
+        );
+    }
+
+    // ── 每个 BodySlot 变体一条真实消费链测试：SpineSpurs 的 DamageReduction(20%) 挂在
+    // 该变体上时，命中同一 legacy 部位应打八折；命中其他部位不受影响。刻意使用
+    // `ActiveMutation.slot` 显式指定（不依赖 `kind.body_slot()` 的天然映射），单独验证
+    // "按 slot 查表" 这条链路本身，覆盖 humanoid.json 的全部 5 个 BodySlot 变体。────
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_head_slot_reduces_matching_legacy_part() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        let state = state_with(vec![active_mutation_at(
+            MutationKind::SpineSpurs,
+            BodySlot::Head,
+        )]);
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::Head),
+            0.80,
+            "BodySlot::Head 在 humanoid.json 映射到 legacy Head，DamageReduction(20%) 应打八折"
+        );
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::Chest),
+            1.0,
+            "同一条 mutation 不应影响非命中部位（Head slot 不管 Chest）"
+        );
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_forearm_slot_reduces_matching_legacy_part() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        let state = state_with(vec![active_mutation_at(
+            MutationKind::SpineSpurs,
+            BodySlot::Forearm,
+        )]);
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::ArmR),
+            0.80,
+            "BodySlot::Forearm 在 humanoid.json 映射到 legacy ArmR"
+        );
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::ArmL),
+            1.0,
+            "Forearm 只映射 ArmR（见 registry.rs 全变体 pin），不应误伤 ArmL"
+        );
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_back_slot_reduces_matching_legacy_part() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        let state = state_with(vec![active_mutation_at(
+            MutationKind::SpineSpurs,
+            BodySlot::Back,
+        )]);
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::Back),
+            0.80,
+            "BodySlot::Back 在 humanoid.json 映射到 legacy Back（SpineSpurs 的天然槽位）"
+        );
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_torso_slot_reduces_matching_legacy_part() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        let state = state_with(vec![active_mutation_at(
+            MutationKind::SpineSpurs,
+            BodySlot::Torso,
+        )]);
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::Chest),
+            0.80,
+            "BodySlot::Torso 在 humanoid.json 映射到 legacy Chest"
+        );
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_lower_slot_reduces_matching_legacy_part() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        let state = state_with(vec![active_mutation_at(
+            MutationKind::SpineSpurs,
+            BodySlot::Lower,
+        )]);
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::Abdomen),
+            0.80,
+            "BodySlot::Lower 在 humanoid.json 映射到 legacy Abdomen"
+        );
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_ignores_non_damage_reduction_effects() {
+        // BackCarapace 的 effect() 是 NaturalArmor（伤势分级降档），不是 DamageReduction
+        // ——本函数刻意不消费 NaturalArmor（见函数文档"消费点选择依据"），倍率必须保持中性。
+        let plan = crate::body_plan::humanoid_plan_static();
+        let state = state_with(vec![active_mutation_at(
+            MutationKind::BackCarapace,
+            BodySlot::Back,
+        )]);
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::Back),
+            1.0,
+            "NaturalArmor 效果不在本函数消费范围内，不应产生倍率变化"
+        );
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_stacks_multiple_active_mutations_multiplicatively() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        // 两条 mutation 都挂在 Back 且都是 DamageReduction(20%)：0.8 * 0.8 = 0.64。
+        let state = state_with(vec![
+            active_mutation_at(MutationKind::SpineSpurs, BodySlot::Back),
+            active_mutation_at(MutationKind::SpineSpurs, BodySlot::Back),
+        ]);
+        let multiplier = mutation_damage_multiplier_for_part(Some(&state), plan, BodyPart::Back);
+        assert!(
+            (multiplier - 0.64).abs() < 1e-6,
+            "两条命中同一部位的 DamageReduction(20%) 应叠乘为 0.64，实际 {multiplier}"
+        );
+    }
+
+    // ── 缺失/悬空映射分支 ────────────────────────────────────────────────────
+
+    fn plan_without_mutation_mapping() -> BodyPlan {
+        use crate::body_plan::{BodyPartDef, BodyPlanId, PartConsequence};
+
+        let humanoid = crate::body_plan::humanoid_plan_static();
+        BodyPlan {
+            id: BodyPlanId::new("test_no_mutation_mapping"),
+            display_name: "测试用无变异映射构型".to_string(),
+            is_humanoid: true,
+            parts: vec![BodyPartDef {
+                id: crate::body_plan::legacy_body_part_to_id(BodyPart::Back),
+                damage_mul: 1.0,
+                contam_mul: 1.0,
+                bleed_mul: 1.0,
+                consequence: PartConsequence::Core,
+            }],
+            hit_geometry: humanoid.hit_geometry.clone(),
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_missing_slot_mapping_is_silently_skipped() {
+        // 缺失映射分支：plan 的 mutation_slot_mapping 为空（非 humanoid 构型可以合法
+        // 不声明变异挂载点）——body_part_for_mutation_slot 返回 None，函数不应 panic，
+        // 该条 mutation 对结算无影响。
+        let plan = plan_without_mutation_mapping();
+        let state = state_with(vec![active_mutation_at(
+            MutationKind::SpineSpurs,
+            BodySlot::Back,
+        )]);
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), &plan, BodyPart::Back),
+            1.0,
+            "mutation_slot_mapping 为空时该 slot 无法解析，必须静默跳过而非 panic"
+        );
+    }
+
+    fn plan_with_dangling_mutation_mapping() -> BodyPlan {
+        use crate::body_plan::{BodyPartDef, BodyPlanId, PartConsequence};
+
+        let humanoid = crate::body_plan::humanoid_plan_static();
+        let mut mapping = std::collections::HashMap::new();
+        // 悬空映射：BodySlot::Back 指向一个不在 8 段 legacy 字符串集合里的 id
+        // （模拟未来非人形 plan 的部位 id，如飞鲸尾鳍）——id_to_legacy_body_part 必须
+        // 对此返回 None，而不是 panic 或误判成某个 legacy 部位。
+        mapping.insert(
+            BodySlot::Back,
+            crate::body_plan::BodyPartId::new("tail_fin"),
+        );
+        BodyPlan {
+            id: BodyPlanId::new("test_dangling_mutation_mapping"),
+            display_name: "测试用悬空变异映射构型".to_string(),
+            is_humanoid: false,
+            parts: vec![BodyPartDef {
+                id: crate::body_plan::legacy_body_part_to_id(BodyPart::Back),
+                damage_mul: 1.0,
+                contam_mul: 1.0,
+                bleed_mul: 1.0,
+                consequence: PartConsequence::Core,
+            }],
+            hit_geometry: humanoid.hit_geometry.clone(),
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: mapping,
+        }
+    }
+
+    #[test]
+    fn mutation_damage_multiplier_for_part_dangling_mapping_target_is_silently_skipped() {
+        // 悬空映射分支：mutation_slot_mapping 里有该 slot 的条目，但它指向的
+        // BodyPartId 没有 legacy BodyPart 对应物——id_to_legacy_body_part 返回 None，
+        // 函数必须静默跳过（不 panic、不误判成 Back）。
+        let plan = plan_with_dangling_mutation_mapping();
+        let state = state_with(vec![active_mutation_at(
+            MutationKind::SpineSpurs,
+            BodySlot::Back,
+        )]);
+        assert_eq!(
+            mutation_damage_multiplier_for_part(Some(&state), &plan, BodyPart::Back),
+            1.0,
+            "悬空映射（部位 id 无 legacy 对应物）必须静默跳过，不应误判命中 Back"
         );
     }
 }

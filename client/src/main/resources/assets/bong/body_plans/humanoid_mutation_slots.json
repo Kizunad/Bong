@@ -1,0 +1,26 @@
+{
+  "_comment": "plan-race-system-v1 P0 review r3 (major x3) -- shared BodySlot -> BodyPartId mapping contract. This file must stay item-for-item identical to server/assets/body_plans/plans/humanoid.json's `mutation_slot_mapping` field (server-side pin: body_plan::registry::humanoid_plan_static_mutation_slot_mapping_matches_client_shared_resource). `anchor` is client-only rendering data (MutationFeatureRenderer positions/scales the mutation overlay quad per body part) with no server-side equivalent -- it is NOT part of the cross-repo pin, only the slots -> part_id mapping is pinned.",
+  "body_plan_id": "humanoid",
+  "slots": {
+    "Head": {
+      "part_id": "head",
+      "anchor": { "offset": [0.0, 1.65, 0.0], "scale": 1.031 }
+    },
+    "Forearm": {
+      "part_id": "arm_r",
+      "anchor": { "offset": [0.32, 1.2, 0.0], "scale": 1.032 }
+    },
+    "Back": {
+      "part_id": "back",
+      "anchor": { "offset": [0.0, 1.2, -0.15], "scale": 1.033 }
+    },
+    "Torso": {
+      "part_id": "chest",
+      "anchor": { "offset": [0.0, 1.2, 0.1], "scale": 1.034 }
+    },
+    "Lower": {
+      "part_id": "abdomen",
+      "anchor": { "offset": [0.0, 0.95, -0.05], "scale": 1.035 }
+    }
+  }
+}

@@ -47,45 +47,9 @@ mod tests {
         assert_eq!(expected.len(), 7, "Realm 应有 7 个变体（含 UNSPECIFIED）");
     }
 
-    #[test]
-    fn meridian_id_enum_has_20_meridians_plus_unspecified() {
-        // 12 正经 + 8 奇经 + 1 unspecified = 21
-        let all = [
-            MeridianId::Unspecified,
-            MeridianId::Lung,
-            MeridianId::LargeIntestine,
-            MeridianId::Stomach,
-            MeridianId::Spleen,
-            MeridianId::Heart,
-            MeridianId::SmallIntestine,
-            MeridianId::Bladder,
-            MeridianId::Kidney,
-            MeridianId::Pericardium,
-            MeridianId::TripleEnergizer,
-            MeridianId::Gallbladder,
-            MeridianId::Liver,
-            MeridianId::Ren,
-            MeridianId::Du,
-            MeridianId::Chong,
-            MeridianId::Dai,
-            MeridianId::YinQiao,
-            MeridianId::YangQiao,
-            MeridianId::YinWei,
-            MeridianId::YangWei,
-        ];
-        assert_eq!(
-            all.len(),
-            21,
-            "MeridianId 应有 21 个变体（20 经脉 + UNSPECIFIED）"
-        );
-        // Wire values 应连续 0..=20。
-        for (i, m) in all.iter().enumerate() {
-            assert_eq!(
-                *m as i32, i as i32,
-                "MeridianId 变体 {i} 的 wire value 应为 {i}"
-            );
-        }
-    }
+    // plan-race-system-v1 P1c：`MeridianId` 闭合 proto enum 已退役（→ string channel
+    // id，见 envelope.proto `MeridianState.id` 等字段注释），本 pin 测试随之移除；
+    // 新形状的 pin 覆盖见下方 `meridian_state_uses_string_channel_id` 等测试。
 
     #[test]
     fn skill_id_enum_has_6_skills_plus_unspecified() {
@@ -204,11 +168,13 @@ mod tests {
 
     #[test]
     fn server_data_envelope_cultivation_detail_roundtrip() {
+        // plan-race-system-v1 P1c：`MeridianState.id` / `CultivationDetail.target_meridian`
+        // 现为 string channel id（snake_case），不再是闭合 `MeridianId` proto enum。
         let detail = CultivationDetail {
             realm: Realm::Condense as i32,
             meridians: vec![
                 MeridianState {
-                    id: MeridianId::Lung as i32,
+                    id: "lung".to_string(),
                     opened: true,
                     flow_rate: 0.5,
                     flow_capacity: 1.0,
@@ -217,7 +183,7 @@ mod tests {
                     cracks_count: 0,
                 },
                 MeridianState {
-                    id: MeridianId::Heart as i32,
+                    id: "heart".to_string(),
                     opened: false,
                     flow_rate: 0.0,
                     flow_capacity: 0.0,
@@ -226,7 +192,8 @@ mod tests {
                     cracks_count: 2,
                 },
             ],
-            target_meridian: Some(MeridianId::Heart as i32),
+            body_plan_id: "humanoid".to_string(),
+            target_meridian: Some("heart".to_string()),
             contamination_total: 0.0,
             lifespan: None,
             recent_skill_milestones_summary: String::new(),
@@ -236,6 +203,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::CultivationDetail(detail)),
@@ -247,20 +219,73 @@ mod tests {
             Some(server_data_envelope::Payload::CultivationDetail(d)) => {
                 assert_eq!(d.realm, Realm::Condense as i32, "realm 不匹配");
                 assert_eq!(d.meridians.len(), 2, "经脉数量不匹配");
-                assert_eq!(
-                    d.meridians[0].id,
-                    MeridianId::Lung as i32,
-                    "第一条经脉应为 Lung"
-                );
+                assert_eq!(d.meridians[0].id, "lung", "第一条经脉应为 lung");
                 assert!(d.meridians[0].opened, "Lung 应已打通");
                 assert!(!d.meridians[1].opened, "Heart 应未打通");
                 assert_eq!(
                     d.target_meridian,
-                    Some(MeridianId::Heart as i32),
-                    "target_meridian 应为 Heart ({})，实际是 {:?}",
-                    MeridianId::Heart as i32,
+                    Some("heart".to_string()),
+                    "target_meridian 应为 heart，实际是 {:?}",
                     d.target_meridian
                 );
+            }
+            other => panic!("期望 CultivationDetail payload，实际是 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn server_data_envelope_cultivation_detail_supports_non_humanoid_channel_count() {
+        // P5 飞鲸草案的 6 脉合成样本——proto wire 开放化后不应再假设恰好 20 条。
+        let channel_ids = [
+            "skull_channel",
+            "spine_channel",
+            "dorsal_fin_channel",
+            "pect_fin_l_channel",
+            "pect_fin_r_channel",
+            "tail_fin_channel",
+        ];
+        let detail = CultivationDetail {
+            realm: Realm::Awaken as i32,
+            meridians: channel_ids
+                .iter()
+                .map(|id| MeridianState {
+                    id: id.to_string(),
+                    opened: false,
+                    flow_rate: 1.0,
+                    flow_capacity: 10.0,
+                    integrity: 1.0,
+                    open_progress: 0.0,
+                    cracks_count: 0,
+                })
+                .collect(),
+            body_plan_id: "humanoid".to_string(),
+            target_meridian: Some("tail_fin_channel".to_string()),
+            contamination_total: 0.0,
+            lifespan: None,
+            recent_skill_milestones_summary: String::new(),
+            skill_milestones: vec![],
+            qi_color_main: ColorKind::Mellow as i32,
+            qi_color_secondary: None,
+            qi_color_chaotic: false,
+            qi_color_hunyuan: false,
+            practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::CultivationDetail(detail)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("non-humanoid CultivationDetail envelope decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::CultivationDetail(d)) => {
+                assert_eq!(d.meridians.len(), 6, "非 humanoid 构型应保留 6 条经脉");
+                assert_eq!(d.meridians[5].id, "tail_fin_channel");
+                assert_eq!(d.target_meridian, Some("tail_fin_channel".to_string()));
             }
             other => panic!("期望 CultivationDetail payload，实际是 {other:?}"),
         }
@@ -271,7 +296,7 @@ mod tests {
         let envelope = ClientRequestEnvelope {
             payload: Some(client_request_envelope::Payload::SetMeridianTarget(
                 SetMeridianTarget {
-                    meridian: MeridianId::Pericardium as i32,
+                    meridian: "pericardium".to_string(),
                 },
             )),
         };
@@ -281,13 +306,51 @@ mod tests {
         match decoded.payload {
             Some(client_request_envelope::Payload::SetMeridianTarget(t)) => {
                 assert_eq!(
-                    t.meridian,
-                    MeridianId::Pericardium as i32,
-                    "SetMeridianTarget 经脉应为 Pericardium"
+                    t.meridian, "pericardium",
+                    "SetMeridianTarget 经脉应为 pericardium"
                 );
             }
             other => panic!("期望 SetMeridianTarget payload，实际是 {other:?}"),
         }
+    }
+
+    #[test]
+    fn client_request_envelope_set_meridian_target_accepts_non_humanoid_channel() {
+        // wire 开放化后任意 snake_case channel id 都应合法编解码。
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SetMeridianTarget(
+                SetMeridianTarget {
+                    meridian: "tail_fin_channel".to_string(),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("ClientRequestEnvelope decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SetMeridianTarget(t)) => {
+                assert_eq!(t.meridian, "tail_fin_channel");
+            }
+            other => panic!("期望 SetMeridianTarget payload，实际是 {other:?}"),
+        }
+    }
+
+    /// plan-race-system-v1 P1c — §8.1 #4 决议：wire 直改新形状不留兼容层，decoder
+    /// 对旧 int enum 形状必须直接拒绝。手工构造旧形态字节（field 1 = varint，对应
+    /// 曾经的 `MeridianId::Heart as i32` = 5）——`SetMeridianTarget.meridian` 现在是
+    /// `string`（wire type = length-delimited），旧 varint 编码的 wire type 不匹配，
+    /// decode 必须报错而不是静默兼容解析成某个 channel。
+    #[test]
+    fn set_meridian_target_rejects_legacy_int_enum_wire_shape() {
+        // tag byte: (field_number=1 << 3) | wire_type=0（varint）= 0x08；
+        // value byte: 5（旧 MeridianId::Heart 的判别式）。
+        let legacy_varint_bytes: &[u8] = &[0x08, 0x05];
+        let result = SetMeridianTarget::decode(legacy_varint_bytes);
+        assert!(
+            result.is_err(),
+            "legacy MeridianId int-enum wire shape must be rejected by the new string \
+             field decoder, got {result:?}"
+        );
     }
 
     #[test]
@@ -781,7 +844,7 @@ mod tests {
         let detail = CultivationDetail {
             realm: Realm::Solidify as i32,
             meridians: vec![MeridianState {
-                id: MeridianId::Lung as i32,
+                id: "lung".to_string(),
                 opened: true,
                 flow_rate: 0.8,
                 flow_capacity: 1.0,
@@ -789,7 +852,8 @@ mod tests {
                 open_progress: 1.0,
                 cracks_count: 0,
             }],
-            target_meridian: Some(MeridianId::Heart as i32),
+            body_plan_id: "humanoid".to_string(),
+            target_meridian: Some("heart".to_string()),
             contamination_total: 12.5,
             lifespan: Some(LifespanPreview {
                 years_lived: 35.0,
@@ -816,6 +880,11 @@ mod tests {
                 weight: 0.7,
                 ratio: 0.7,
             }],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -845,6 +914,7 @@ mod tests {
         let detail = CultivationDetail {
             realm: Realm::Awaken as i32,
             meridians: vec![],
+            body_plan_id: "humanoid".to_string(),
             target_meridian: None,
             contamination_total: 0.0,
             lifespan: None,
@@ -855,6 +925,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -878,21 +953,31 @@ mod tests {
 
     #[test]
     fn cultivation_detail_all_20_meridians() {
-        let all_meridians: Vec<MeridianState> = (1..=20)
-            .map(|i| MeridianState {
-                id: i,
-                opened: i <= 12,
-                flow_rate: i as f64 * 0.05,
-                flow_capacity: 1.0,
-                integrity: 1.0 - (i as f64 * 0.01),
-                open_progress: if i <= 12 { 1.0 } else { i as f64 * 0.05 },
-                cracks_count: if i > 15 { i as u32 - 15 } else { 0 },
+        let channel_ids: Vec<String> = crate::cultivation::components::MeridianId::ALL
+            .iter()
+            .map(|m| m.channel_id().to_string())
+            .collect();
+        let all_meridians: Vec<MeridianState> = channel_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, id)| {
+                let i = (idx + 1) as u32;
+                MeridianState {
+                    id: id.clone(),
+                    opened: i <= 12,
+                    flow_rate: i as f64 * 0.05,
+                    flow_capacity: 1.0,
+                    integrity: 1.0 - (i as f64 * 0.01),
+                    open_progress: if i <= 12 { 1.0 } else { i as f64 * 0.05 },
+                    cracks_count: i.saturating_sub(15),
+                }
             })
             .collect();
         let detail = CultivationDetail {
             realm: Realm::Void as i32,
             meridians: all_meridians,
-            target_meridian: Some(MeridianId::YangWei as i32),
+            body_plan_id: "humanoid".to_string(),
+            target_meridian: Some("yang_wei".to_string()),
             contamination_total: 0.0,
             lifespan: None,
             recent_skill_milestones_summary: String::new(),
@@ -902,6 +987,11 @@ mod tests {
             qi_color_chaotic: true,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -912,7 +1002,7 @@ mod tests {
             "应有 20 条经脉，实际 {}",
             decoded.meridians.len()
         );
-        assert_eq!(decoded.target_meridian, Some(MeridianId::YangWei as i32));
+        assert_eq!(decoded.target_meridian, Some("yang_wei".to_string()));
         assert!(decoded.qi_color_chaotic);
     }
 
@@ -941,6 +1031,7 @@ mod tests {
         let detail = CultivationDetail {
             realm: Realm::Condense as i32,
             meridians: vec![],
+            body_plan_id: "humanoid".to_string(),
             target_meridian: None,
             contamination_total: 0.0,
             lifespan: None,
@@ -951,6 +1042,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: weights,
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -972,7 +1068,7 @@ mod tests {
                 CultivationDetail {
                     realm: Realm::Solidify as i32,
                     meridians: vec![MeridianState {
-                        id: MeridianId::Lung as i32,
+                        id: "lung".to_string(),
                         opened: true,
                         flow_rate: 0.5,
                         flow_capacity: 1.0,
@@ -980,6 +1076,7 @@ mod tests {
                         open_progress: 1.0,
                         cracks_count: 0,
                     }],
+                    body_plan_id: "humanoid".to_string(),
                     target_meridian: None,
                     contamination_total: 1.5,
                     lifespan: Some(LifespanPreview {
@@ -997,6 +1094,11 @@ mod tests {
                     qi_color_chaotic: false,
                     qi_color_hunyuan: false,
                     practice_weights: vec![],
+                    race_id: String::new(),
+                    form_race_id: String::new(),
+                    form_body_plan_id: String::new(),
+                    intrinsic_is_humanoid: false,
+                    form_is_humanoid: false,
                 },
             )),
         };
@@ -1190,6 +1292,7 @@ mod tests {
             forge_side_effects: vec!["brittle_edge".to_string()],
             forge_achieved_tier: Some(2),
             alchemy: None,
+            freshness: None,
         };
         let bytes = item.encode_to_vec();
         let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -1235,6 +1338,7 @@ mod tests {
             forge_side_effects: vec![],
             forge_achieved_tier: None,
             alchemy: None,
+            freshness: None,
         };
         let bytes = item.encode_to_vec();
         let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -1307,6 +1411,7 @@ mod tests {
             forge_side_effects: vec![],
             forge_achieved_tier: None,
             alchemy: None,
+            freshness: None,
         };
 
         let snapshot = InventorySnapshot {
@@ -1437,6 +1542,7 @@ mod tests {
                 forge_side_effects: vec![],
                 forge_achieved_tier: None,
                 alchemy: None,
+                freshness: None,
             };
             let bytes = item.encode_to_vec();
             let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -4248,6 +4354,8 @@ mod tests {
                 OptionalQuickSlotEntry { entry: None },
             ],
             cooldown_until_ms: vec![1_700_000_001_500, 0, 0],
+            ack_request_id: Some("bind-1".to_string()),
+            bind_accepted: Some(true),
         };
         let bytes = msg.encode_to_vec();
         let decoded =
@@ -5193,6 +5301,7 @@ mod tests {
                 QuickSlotBind {
                     slot: 1,
                     item_id: Some("kai_mai_pill".to_string()),
+                    request_id: "bind-1".to_string(),
                 },
             )),
         };
@@ -5203,6 +5312,7 @@ mod tests {
             Some(client_request_envelope::Payload::QuickSlotBind(b)) => {
                 assert_eq!(b.slot, 1);
                 assert_eq!(b.item_id.as_deref(), Some("kai_mai_pill"));
+                assert_eq!(b.request_id, "bind-1");
             }
             other => panic!("期望 QuickSlotBind payload，实际 {other:?}"),
         }
@@ -5215,6 +5325,7 @@ mod tests {
                 QuickSlotBind {
                     slot: 5,
                     item_id: None,
+                    request_id: "clear-1".to_string(),
                 },
             )),
         };
@@ -5225,6 +5336,7 @@ mod tests {
             Some(client_request_envelope::Payload::QuickSlotBind(b)) => {
                 assert_eq!(b.slot, 5);
                 assert!(b.item_id.is_none(), "清空槽位 item_id 应为 None");
+                assert_eq!(b.request_id, "clear-1");
             }
             other => panic!("期望 QuickSlotBind payload，实际 {other:?}"),
         }
@@ -5470,6 +5582,8 @@ mod tests {
                 server_data_envelope::Payload::QuickSlotConfig(QuickSlotConfig {
                     slots: vec![],
                     cooldown_until_ms: vec![],
+                    ack_request_id: None,
+                    bind_accepted: None,
                 }),
                 "QuickSlotConfig",
             ),
@@ -5733,6 +5847,7 @@ mod tests {
                 client_request_envelope::Payload::QuickSlotBind(QuickSlotBind {
                     slot: 0,
                     item_id: None,
+                    request_id: "pin-bind".to_string(),
                 }),
                 "QuickSlotBind",
             ),
@@ -9705,7 +9820,7 @@ mod tests {
         let envelope = ClientRequestEnvelope {
             payload: Some(client_request_envelope::Payload::ForgeRequest(
                 ForgeRequestC2s {
-                    meridian: MeridianId::Lung.into(),
+                    meridian: "lung".to_string(),
                     axis: ForgeAxis::Rate.into(),
                 },
             )),
@@ -9715,7 +9830,7 @@ mod tests {
             ClientRequestEnvelope::decode(bytes.as_slice()).expect("ForgeRequest decode 失败");
         match decoded.payload {
             Some(client_request_envelope::Payload::ForgeRequest(f)) => {
-                assert_eq!(f.meridian, MeridianId::Lung as i32);
+                assert_eq!(f.meridian, "lung");
                 assert_eq!(f.axis, ForgeAxis::Rate as i32);
             }
             other => panic!("expected ForgeRequest, got {other:?}"),
@@ -10010,7 +10125,7 @@ mod tests {
             payload: Some(client_request_envelope::Payload::ApplyPill(ApplyPill {
                 instance_id: 42,
                 target_kind: ApplyPillTargetKind::Meridian.into(),
-                meridian_id: Some(MeridianId::Heart.into()),
+                meridian_id: Some("heart".to_string()),
             })),
         };
         let bytes = envelope.encode_to_vec();
@@ -10019,7 +10134,7 @@ mod tests {
         match decoded.payload {
             Some(client_request_envelope::Payload::ApplyPill(a)) => {
                 assert_eq!(a.target_kind, ApplyPillTargetKind::Meridian as i32);
-                assert_eq!(a.meridian_id, Some(MeridianId::Heart as i32));
+                assert_eq!(a.meridian_id, Some("heart".to_string()));
             }
             other => panic!("expected ApplyPill, got {other:?}"),
         }
@@ -10649,7 +10764,7 @@ mod tests {
             ),
             (
                 client_request_envelope::Payload::ForgeRequest(ForgeRequestC2s {
-                    meridian: 1,
+                    meridian: "lung".to_string(),
                     axis: 1,
                 }),
                 "ForgeRequest",
@@ -10979,6 +11094,7 @@ mod tests {
         let detail = CultivationDetail {
             realm: 999, // 不存在的 Realm 值
             meridians: vec![],
+            body_plan_id: "humanoid".to_string(),
             target_meridian: None,
             contamination_total: 0.0,
             lifespan: None,
@@ -10989,6 +11105,11 @@ mod tests {
             qi_color_chaotic: false,
             qi_color_hunyuan: false,
             practice_weights: vec![],
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         };
         let bytes = detail.encode_to_vec();
         let decoded = CultivationDetail::decode(bytes.as_slice())
@@ -11091,18 +11212,24 @@ mod tests {
             payload: Some(server_data_envelope::Payload::CultivationDetail(
                 CultivationDetail {
                     realm: Realm::Solidify as i32,
-                    meridians: (1..=20)
-                        .map(|i| MeridianState {
-                            id: i,
-                            opened: i <= 12,
-                            flow_rate: if i <= 12 { 0.8 } else { 0.0 },
-                            flow_capacity: if i <= 12 { 1.0 } else { 0.5 },
-                            integrity: 0.95 - (i as f64 * 0.01),
-                            open_progress: if i <= 12 { 1.0 } else { 0.3 + i as f64 * 0.02 },
-                            cracks_count: if i > 15 { 1 } else { 0 },
+                    meridians: crate::cultivation::components::MeridianId::ALL
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, m)| {
+                            let i = (idx + 1) as u32;
+                            MeridianState {
+                                id: m.channel_id().to_string(),
+                                opened: i <= 12,
+                                flow_rate: if i <= 12 { 0.8 } else { 0.0 },
+                                flow_capacity: if i <= 12 { 1.0 } else { 0.5 },
+                                integrity: 0.95 - (i as f64 * 0.01),
+                                open_progress: if i <= 12 { 1.0 } else { 0.3 + i as f64 * 0.02 },
+                                cracks_count: if i > 15 { 1 } else { 0 },
+                            }
                         })
                         .collect(),
-                    target_meridian: Some(MeridianId::Ren as i32),
+                    body_plan_id: "humanoid".to_string(),
+                    target_meridian: Some("ren".to_string()),
                     contamination_total: 12.5,
                     lifespan: Some(LifespanPreview {
                         years_lived: 45.3,
@@ -11145,6 +11272,11 @@ mod tests {
                             ratio: 0.4,
                         },
                     ],
+                    race_id: String::new(),
+                    form_race_id: String::new(),
+                    form_body_plan_id: String::new(),
+                    intrinsic_is_humanoid: false,
+                    form_is_humanoid: false,
                 },
             )),
         };
@@ -11198,6 +11330,7 @@ mod tests {
                                 forge_side_effects: vec![],
                                 forge_achieved_tier: None,
                                 alchemy: None,
+                                freshness: None,
                             }),
                         })
                         .collect(),
@@ -11224,6 +11357,7 @@ mod tests {
                             forge_side_effects: vec!["锋锐".to_string()],
                             forge_achieved_tier: Some(2),
                             alchemy: None,
+                            freshness: None,
                         }),
                         ..Default::default()
                     }),
@@ -11252,6 +11386,7 @@ mod tests {
                                     forge_side_effects: vec![],
                                     forge_achieved_tier: None,
                                     alchemy: None,
+                                    freshness: None,
                                 })
                             } else {
                                 None
@@ -11618,11 +11753,11 @@ mod tests {
     fn anqi_hud_proto_roundtrip_echo() {
         use crate::schema::proto_convert::server_data_to_proto_payload;
         use crate::schema::proto_gen::bong::ServerDataEnvelope;
-        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
         use prost::Message;
 
         let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "echo".to_string(),
+            kind: AnqiHudKindV1::Echo,
             echo_count: 5,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -11671,14 +11806,55 @@ mod tests {
     }
 
     #[test]
-    fn anqi_hud_proto_roundtrip_abrasion() {
+    fn anqi_hud_proto_roundtrip_aim_preserves_nonzero_progress() {
         use crate::schema::proto_convert::server_data_to_proto_payload;
         use crate::schema::proto_gen::bong::ServerDataEnvelope;
-        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
         use prost::Message;
 
         let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Aim,
+            echo_count: 0,
+            aim_progress: 0.625,
+            charge_progress: 0.0,
+            abrasion_container: String::new(),
+            abrasion_qi_payload: 0.0,
+            tick: 77,
+        });
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_to_proto_payload(&payload)),
+        };
+        let decoded = ServerDataEnvelope::decode(envelope.encode_to_vec().as_slice())
+            .expect("AnqiHud aim proto roundtrip should decode");
+        let Some(super::bong::server_data_envelope::Payload::AnqiHud(inner)) = decoded.payload
+        else {
+            panic!("decoded payload should remain on the AnqiHud oneof arm");
+        };
+
+        assert_eq!(
+            inner.kind, "aim",
+            "AnqiHud kind must survive Rust -> protobuf conversion as aim"
+        );
+        assert!(
+            (inner.aim_progress - 0.625).abs() < f64::EPSILON,
+            "aim_progress must survive Rust -> protobuf conversion; actual={}",
+            inner.aim_progress
+        );
+        assert_eq!(
+            inner.tick, 77,
+            "AnqiHud tick must survive Rust -> protobuf conversion unchanged"
+        );
+    }
+
+    #[test]
+    fn anqi_hud_proto_roundtrip_abrasion() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -11730,11 +11906,11 @@ mod tests {
         // 此测试锁住 charge_progress 字段在 proto 链中不丢。
         use crate::schema::proto_convert::server_data_to_proto_payload;
         use crate::schema::proto_gen::bong::ServerDataEnvelope;
-        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
         use prost::Message;
 
         let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "charge".to_string(),
+            kind: AnqiHudKindV1::Charge,
             echo_count: 0,
             aim_progress: 0.0,
             charge_progress: 0.85,
@@ -11778,6 +11954,42 @@ mod tests {
             "charge payload aim_progress 应为 0.0（server 不发 aim）；实际={}",
             inner.aim_progress
         );
+    }
+
+    #[test]
+    fn anqi_hud_proto_roundtrip_covers_every_kind_wire_tag() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        for kind in AnqiHudKindV1::ALL {
+            let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+                kind,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            });
+            let envelope = ServerDataEnvelope {
+                payload: Some(server_data_to_proto_payload(&payload)),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .expect("every anqi_hud kind must survive protobuf decoding");
+            let Some(super::bong::server_data_envelope::Payload::AnqiHud(inner)) = decoded.payload
+            else {
+                panic!("every anqi_hud kind must stay on the AnqiHud oneof arm");
+            };
+
+            assert_eq!(
+                inner.kind,
+                kind.as_str(),
+                "protobuf kind tag drifted for {kind:?}"
+            );
+        }
     }
 
     // ─── plan-combat-skill-feedback-bridges-v1 P5：DuguV2 proto pin ─

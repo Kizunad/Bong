@@ -273,12 +273,12 @@ pub fn tick_casts_or_interrupt(
                 duration_ticks,
             }) = effect_to_apply.as_ref()
             {
-                let freshness_pair = cast_item_freshness.as_ref().and_then(|f| {
+                let freshness_profile = cast_item_freshness.as_ref().and_then(|freshness| {
                     decay_profiles
                         .as_deref()
-                        .and_then(|reg| reg.get(&f.profile))
-                        .map(|profile| (f, profile))
+                        .and_then(|registry| registry.get(&freshness.profile))
                 });
+                let freshness_pair = cast_item_freshness.as_ref().zip(freshness_profile);
                 let pre_check = consume_food(
                     freshness_pair,
                     *bonus_factor,
@@ -685,12 +685,12 @@ fn apply_cast_item_effect(
             // 2) CriticalBlock → 拒绝消费，不写 status effect。
             // 3) SpoiledWarn → 降效消费（按折算 magnitude）。
             // 4) FoodApplied / Noop → 正常写入 CultivationAcceleration。
-            let freshness_pair = context.item_freshness.as_ref().and_then(|f| {
+            let freshness_profile = context.item_freshness.as_ref().and_then(|freshness| {
                 context
                     .decay_profiles
-                    .and_then(|reg| reg.get(&f.profile))
-                    .map(|profile| (f, profile))
+                    .and_then(|registry| registry.get(&freshness.profile))
             });
+            let freshness_pair = context.item_freshness.as_ref().zip(freshness_profile);
             let food_result = consume_food(
                 freshness_pair,
                 *bonus_factor,
@@ -994,6 +994,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -1229,7 +1230,7 @@ mod tests {
     fn wound_heal_targets_all_wounds_when_target_missing() {
         let mut wounds = Wounds::default();
         wounds.entries.push(Wound {
-            location: BodyPart::ArmL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             kind: WoundKind::Cut,
             severity: 0.20,
             bleeding_per_sec: 1.0,
@@ -1237,7 +1238,7 @@ mod tests {
             inflicted_by: None,
         });
         wounds.entries.push(Wound {
-            location: BodyPart::LegR,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::LegR),
             kind: WoundKind::Blunt,
             severity: 0.75,
             bleeding_per_sec: 1.0,
@@ -1266,7 +1267,7 @@ mod tests {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::LegR,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::LegR),
             "expected remaining wound to be LegR because ArmL cut was healed below removal threshold, actual {:?}",
             wounds.entries[0].location
         );
@@ -1281,7 +1282,7 @@ mod tests {
     fn wound_heal_slash_target_filters_body_part_group() {
         let mut wounds = Wounds::default();
         wounds.entries.push(Wound {
-            location: BodyPart::ArmL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             kind: WoundKind::Blunt,
             severity: 0.40,
             bleeding_per_sec: 1.0,
@@ -1289,7 +1290,7 @@ mod tests {
             inflicted_by: None,
         });
         wounds.entries.push(Wound {
-            location: BodyPart::LegL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::LegL),
             kind: WoundKind::Blunt,
             severity: 0.70,
             bleeding_per_sec: 1.0,
@@ -1318,7 +1319,7 @@ mod tests {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::LegL,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::LegL),
             "expected remaining wound to be LegL because target was arm_l/arm_r, actual {:?}",
             wounds.entries[0].location
         );
@@ -1333,7 +1334,7 @@ mod tests {
     fn wound_heal_slash_target_shares_grade_budget_across_group() {
         let mut wounds = Wounds::default();
         wounds.entries.push(Wound {
-            location: BodyPart::ArmL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             kind: WoundKind::Blunt,
             severity: 0.75,
             bleeding_per_sec: 1.0,
@@ -1341,7 +1342,7 @@ mod tests {
             inflicted_by: None,
         });
         wounds.entries.push(Wound {
-            location: BodyPart::ArmR,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR),
             kind: WoundKind::Blunt,
             severity: 0.75,
             bleeding_per_sec: 1.0,
@@ -1365,12 +1366,16 @@ mod tests {
         let arm_l = wounds
             .entries
             .iter()
-            .find(|wound| wound.location == BodyPart::ArmL)
+            .find(|wound| {
+                wound.location == crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL)
+            })
             .expect("ArmL wound should remain after shared-budget heal");
         let arm_r = wounds
             .entries
             .iter()
-            .find(|wound| wound.location == BodyPart::ArmR)
+            .find(|wound| {
+                wound.location == crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR)
+            })
             .expect("ArmR wound should remain after shared-budget heal");
         assert!(
             (arm_l.severity - 0.25).abs() < f32::EPSILON,
@@ -1460,7 +1465,7 @@ mod tests {
                 .get_mut::<Wounds>()
                 .expect("Wounds should be present on player");
             wounds.entries.push(Wound {
-                location: BodyPart::LegL,
+                location: crate::body_plan::legacy_body_part_to_id(BodyPart::LegL),
                 kind: WoundKind::Blunt,
                 severity: 0.40,
                 bleeding_per_sec: 1.0,
@@ -1468,7 +1473,7 @@ mod tests {
                 inflicted_by: None,
             });
             wounds.entries.push(Wound {
-                location: BodyPart::ArmL,
+                location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
                 kind: WoundKind::Blunt,
                 severity: 0.40,
                 bleeding_per_sec: 1.0,
@@ -1497,7 +1502,7 @@ mod tests {
         );
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::ArmL,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             "expected ArmL wound to remain because leg_splint targets only legs, actual {:?}",
             wounds.entries[0].location
         );
@@ -2046,6 +2051,7 @@ mod tests {
             shield_spec: None,
             shelflife_profile: Some("crit_block_test_profile".to_string()),
             shelflife_track: Some(DecayTrack::Spoil),
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         };
         let mut templates = HashMap::new();
         templates.insert(FOOD_ID.to_string(), food_template);

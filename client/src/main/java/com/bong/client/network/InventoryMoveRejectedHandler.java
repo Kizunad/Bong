@@ -94,13 +94,16 @@ public final class InventoryMoveRejectedHandler implements ServerDataHandler {
     }
 
     /**
-     * 全部 24 个 {@code InventoryMoveRejectReason} wire tag 的文案表（package-private 供测试直接断言）。
+     * 全部 25 个 {@code InventoryMoveRejectReason} wire tag 的文案表（package-private 供测试直接断言）。
      * 未知 reason 兜底显示通用拒绝文案（不静默丢弃 —— 拒绝已真实发生，玩家仍需被告知）。
      */
     static String messageFor(String reason, String requiredRealm, String slot, Integer cap) {
         String body = switch (reason) {
             case "realm_too_low" -> "境界不足，需达「"
                 + RealmLabel.displayName(requiredRealm == null ? "" : requiredRealm) + "」方可装备此物";
+            // plan-race-system-v1 P3c — 装备门 race gate 拒绝（ItemTemplate.wearer_race
+            // 判当前形态身份未通过，见 server InventoryMoveRejectReason::RaceMismatch）。
+            case "race_mismatch" -> "当前形态无法穿戴此装备";
             case "worn_cap_full" -> capFullMessage(slot, cap);
             case "hand_occupied" -> "该手已持械，请先卸下再更换";
             case "two_handed_locks_other" -> "双手兵器占用双手，另一侧已被锁定";

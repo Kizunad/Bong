@@ -27,6 +27,11 @@ public class ServerDataRouterTest {
             "player_state",
             "ui_open",
             "cultivation_detail",
+            "body_plan_layout",
+            // plan-race-system-v1 P3c — 种族门元数据表（装备格/功法条目置灰）。
+            "race_gate_meta",
+            // plan-race-system-v1 PR-5b — 易形状态表（渲染 mixin 消费）。
+            "morph_state",
             "qi_color_observed",
             "inventory_snapshot",
             "inventory_event",

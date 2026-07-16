@@ -102,17 +102,13 @@ pub enum ZhenfaSystemSet {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ZhenfaCarrierKind {
+    #[default]
     CommonStone,
     LingqiBlock,
     NightWitheredVine,
     BeastCoreInlaid,
-}
-
-impl Default for ZhenfaCarrierKind {
-    fn default() -> Self {
-        Self::CommonStone
-    }
 }
 
 impl ZhenfaCarrierKind {
@@ -3023,7 +3019,7 @@ fn tick_zhenfa_registry(
                 }
             }
             ZhenfaKind::DecoyStake => {
-                if now % 10 == 0 {
+                if now.is_multiple_of(10) {
                     emit_zhenfa_vfx(
                         vfx_events.as_deref_mut(),
                         gameplay_vfx::DECOY_TAUNT,
@@ -3519,7 +3515,9 @@ fn apply_shrine_ward_pressure(
         let damage = shrine_ward_damage_per_tick(instance.realm_at_cast, instance.mastery_at_cast);
         wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
         wounds.entries.push(Wound {
-            location: BodyPart::Chest,
+            // humanoid-only boundary（P0 决议，本轮不迁移）：结界灼烧是无差别持续伤害，
+            // 固定命中 Chest 代表部位；玩家恒为人形。
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
             kind: WoundKind::Concussion,
             severity: 0.12,
             bleeding_per_sec: 0.0,
@@ -3708,7 +3706,10 @@ fn apply_trigger_snapshots(
             };
             for part in hit_parts {
                 wounds.entries.push(Wound {
-                    location: *part,
+                    // humanoid-only boundary（P0 决议，本轮不迁移）：阵法陷阱固定命中表
+                    // （BlastTrap→Chest / 其余→双腿）本就以 legacy BodyPart 枚举声明，
+                    // 全双射转换，行为不变。
+                    location: crate::body_plan::legacy_body_part_to_id(*part),
                     kind: wound_kind,
                     severity: damage_profile.severity,
                     bleeding_per_sec: damage_profile.bleeding_per_sec,
@@ -3824,7 +3825,8 @@ fn apply_beast_trap_snap(
     wounds.health_current =
         (wounds.health_current - BEAST_TRAP_SNAP_DAMAGE).clamp(0.0, wounds.health_max);
     wounds.entries.push(Wound {
-        location: BodyPart::LegL,
+        // humanoid-only boundary（P0 决议，本轮不迁移）：兽夹陷阱固定命中 LegL 代表部位。
+        location: crate::body_plan::legacy_body_part_to_id(BodyPart::LegL),
         kind: WoundKind::Pierce,
         severity: BEAST_TRAP_SNAP_DAMAGE,
         bleeding_per_sec: 0.0,
@@ -4147,7 +4149,9 @@ fn apply_backlash(
     contam_delta: f64,
 ) {
     wounds.entries.push(Wound {
-        location: BodyPart::ArmR,
+        // humanoid-only boundary（P0 决议，本轮不迁移）：布阵反噬固定命中 ArmR（持阵手）
+        // 代表部位。
+        location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR),
         kind: WoundKind::Concussion,
         severity: 0.25,
         bleeding_per_sec: 0.0,
@@ -5888,6 +5892,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         };
         ItemRegistry::from_map(HashMap::from([(
             ZHENFA_PEARL_ITEM_ID.to_string(),
@@ -7462,10 +7467,9 @@ mod tests {
             .is_none());
         let wounds = app.world().get::<Wounds>(intruder).unwrap();
         assert!((wounds.health_current - 82.0).abs() < f32::EPSILON);
-        assert!(wounds
-            .entries
-            .iter()
-            .any(|wound| wound.location == BodyPart::Chest && wound.kind == WoundKind::Cut));
+        assert!(wounds.entries.iter().any(|wound| wound.location
+            == crate::body_plan::legacy_body_part_to_id(BodyPart::Chest)
+            && wound.kind == WoundKind::Cut));
         let transfers = app.world().resource::<Events<QiTransfer>>();
         let released = transfers.iter_current_update_events().find(|transfer| {
             transfer.to == QiAccountId::zone(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
@@ -7727,7 +7731,10 @@ mod tests {
             wounds
                 .entries
                 .iter()
-                .filter(|w| w.location == BodyPart::LegL || w.location == BodyPart::LegR)
+                .filter(|w| {
+                    w.location == crate::body_plan::legacy_body_part_to_id(BodyPart::LegL)
+                        || w.location == crate::body_plan::legacy_body_part_to_id(BodyPart::LegR)
+                })
                 .count(),
             2
         );

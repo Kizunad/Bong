@@ -4,6 +4,10 @@ use valence::prelude::{
     Res, ResMut,
 };
 
+use crate::body_plan::{
+    resolve_body_plan_for_target, BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs,
+    RaceRegistry,
+};
 use crate::combat::arm_wound;
 use crate::combat::components::{Lifecycle, LifecycleState, Stamina, WoundKind, Wounds};
 use crate::combat::events::{AttackIntent, AttackReach, AttackSource};
@@ -83,9 +87,16 @@ pub struct QiNeedleChargedEvent {
     pub tick: u64,
 }
 
+// plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 新增 `body_plans`/`races` 两个
+// system param 把参数数从 7 推到 9，触发 clippy::too_many_arguments；系统函数签名是
+// Bevy 惯例（每个 system param 对应一个函数参数），拆结构体收拢会改变既有调用点/测试
+// 的构造方式，收益不足以抵消改动面。
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_shoot_needle_intents(
     mut commands: Commands,
     clock: Res<CombatClock>,
+    body_plans: Option<Res<BodyPlanRegistry>>,
+    races: Option<Res<RaceRegistry>>,
     mut intents: EventReader<ShootNeedleIntent>,
     mut actors: Query<NeedleActorQueryItem<'_>>,
     mut attacks: EventWriter<AttackIntent>,
@@ -102,12 +113,33 @@ pub fn resolve_shoot_needle_intents(
             continue;
         }
 
+        // plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 发射者臂伤散布惩罚改为
+        // 按发射者实体解析出的 BodyPlan 分发（`BodyPlanPurpose::Intrinsic`），不再固定
+        // 读 `humanoid_plan_static()`；资源缺失时 `resolve_body_plan_for_target` 自身
+        // 已内建退化到 humanoid，行为 bit-for-bit 不变。`beast_kind: None`——`BeastKind`
+        // 不是 ECS `Component`（只是 `fauna::components` 里另一个组件的数据字段），
+        // 生产环境唯一持有 qi 针技能的施放者是玩家（走 `Cultivation.race` Tier2 分支），
+        // 与 `combat::resolve` 现有消费点（`body_part_multipliers`/`target_body_plan`）
+        // 同款简化。
+        let shooter_body_plan = resolve_body_plan_for_target(
+            intent.shooter,
+            BodyPlanPurpose::Intrinsic,
+            BodyPlanResolveInputs {
+                cultivation: Some(&*cultivation),
+                beast_kind: None,
+                morph_state: None,
+            },
+            body_plans.as_deref(),
+            races.as_deref(),
+        );
+
         cultivation.qi_current =
             (cultivation.qi_current - QI_NEEDLE_QI_COST).clamp(0.0, cultivation.qi_max);
         stamina.current = (stamina.current - QI_NEEDLE_STAMINA_COST).clamp(0.0, stamina.max);
 
         // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 主手臂伤势放大发射方向散布抖动。
-        let spread_multiplier = arm_wound::combined_factor_from_optional(wounds).spread_multiplier;
+        let spread_multiplier =
+            arm_wound::combined_factor_from_optional(wounds, shooter_body_plan).spread_multiplier;
         let jitter_seed = intent.shooter.to_bits() ^ clock.tick;
         let dir = jitter_direction(
             normalized_dir(intent.dir_unit),
@@ -758,7 +790,7 @@ mod tests {
         use crate::combat::components::{Wound, WoundKind};
         Wounds {
             entries: vec![Wound {
-                location: MAIN_ARM,
+                location: crate::body_plan::legacy_body_part_to_id(MAIN_ARM),
                 kind: WoundKind::Cut,
                 severity: 80.0, // Severed grade → spread_multiplier 1.5
                 bleeding_per_sec: 0.0,

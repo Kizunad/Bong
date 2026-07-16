@@ -21,19 +21,34 @@ use valence::prelude::{
     bevy_ecs, Component, Entity, Event, EventReader, EventWriter, Query, Res, Resource,
 };
 
-use crate::cultivation::components::{CrackCause, Meridian, MeridianId, MeridianSystem};
+use crate::cultivation::components::{
+    CrackCause, Meridian, MeridianChannelId, MeridianId, MeridianSystem,
+};
 use crate::cultivation::tick::CultivationClock;
 
 /// 永久断脉登记：玩家 SEVERED 经脉集合 + 断脉时戳与来源。
 ///
 /// 跨 server restart 由 serde 序列化保留；跨周目（新角色）由 `on_player_terminated`
 /// 移除 component 实现重置。死脉（接经术失败升级）记录在 `dead_meridians` 子集。
-#[derive(Debug, Clone, Default, Component, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// plan-race-system-v1 P1a：key 类型从闭合枚举 [`MeridianId`] 换轨为 string
+/// [`MeridianChannelId`]（旧存档迁移见 `persistence`/`cultivation::mod` 的
+/// bundle 迁移函数）。全部公共方法接受 `impl Into<MeridianChannelId>`，既有传
+/// `MeridianId::X` 字面量的调用点（各流派 `check_meridian_dependencies` 等）无需改写。
+#[derive(Debug, Clone, Default, Component, Serialize, Deserialize, PartialEq)]
 pub struct MeridianSeveredPermanent {
-    pub severed_meridians: HashSet<MeridianId>,
-    pub severed_at: HashMap<MeridianId, SeveredRecord>,
+    pub severed_meridians: HashSet<MeridianChannelId>,
+    pub severed_at: HashMap<MeridianChannelId, SeveredRecord>,
     /// 接经术失败后升级的死脉 — 永远在 severed_meridians 中且无法再尝试 repair。
-    pub dead_meridians: HashSet<MeridianId>,
+    pub dead_meridians: HashSet<MeridianChannelId>,
+    /// plan-race-system-v1 P5/PR-6a —— RaceChange 换种族时，目标种族
+    /// `meridian_profile` 不含的经脉**不会被摧毁**（不是 SEVERED 永久断绝）：完整
+    /// `Meridian` 状态原样封存于此，key = 迁出时该经脉的 channel id。换回一个
+    /// profile 里恰好含有该 channel id 的种族时（见 `race_change::precheck_race_change`
+    /// 消费点），按 id 精确恢复——不新建平行类型，复用本 component 承载"永久性经脉
+    /// 状态旁路"的既有语义（决议 #5：本 component 只负责经脉的长期记忆持久化）。
+    #[serde(default)]
+    pub dormant_meridians: HashMap<MeridianChannelId, Meridian>,
 }
 
 /// 单条 SEVERED 经脉的"出事时戳 + 来源"快照。
@@ -72,25 +87,31 @@ pub struct MeridianSeveredEvent {
 }
 
 impl MeridianSeveredPermanent {
-    pub fn is_severed(&self, id: MeridianId) -> bool {
-        self.severed_meridians.contains(&id)
+    pub fn is_severed(&self, id: impl Into<MeridianChannelId>) -> bool {
+        self.severed_meridians.contains(&id.into())
     }
 
-    pub fn is_dead(&self, id: MeridianId) -> bool {
-        self.dead_meridians.contains(&id)
+    pub fn is_dead(&self, id: impl Into<MeridianChannelId>) -> bool {
+        self.dead_meridians.contains(&id.into())
     }
 
-    pub fn record_for(&self, id: MeridianId) -> Option<&SeveredRecord> {
-        self.severed_at.get(&id)
+    pub fn record_for(&self, id: impl Into<MeridianChannelId>) -> Option<&SeveredRecord> {
+        self.severed_at.get(&id.into())
     }
 
     /// 写入 SEVERED。若已 SEVERED：保留首次记录（首次时戳 + 来源不被覆盖），
     /// 返回 false。新写入返回 true。
-    pub fn insert(&mut self, id: MeridianId, source: SeveredSource, at_tick: u64) -> bool {
+    pub fn insert(
+        &mut self,
+        id: impl Into<MeridianChannelId>,
+        source: SeveredSource,
+        at_tick: u64,
+    ) -> bool {
+        let id = id.into();
         if self.severed_meridians.contains(&id) {
             return false;
         }
-        self.severed_meridians.insert(id);
+        self.severed_meridians.insert(id.clone());
         self.severed_at
             .insert(id, SeveredRecord { at_tick, source });
         true
@@ -102,10 +123,39 @@ impl MeridianSeveredPermanent {
         self.severed_meridians.clear();
         self.severed_at.clear();
         self.dead_meridians.clear();
+        self.dormant_meridians.clear();
     }
 
     pub fn severed_count(&self) -> usize {
         self.severed_meridians.len()
+    }
+
+    // ─── plan-race-system-v1 P5/PR-6a —— 休眠登记（RaceChange 经脉迁移旁路） ───
+
+    /// 登记一条休眠经脉——`RaceChange` 迁出、目标种族 `meridian_profile` 不含该
+    /// channel id 时调用。若该 id 已有休眠记录（理论不可达：同一 channel 不会在
+    /// 未恢复前重复迁出），覆盖为最新状态并返回被替换的旧值。
+    pub fn register_dormant(&mut self, meridian: Meridian) -> Option<Meridian> {
+        self.dormant_meridians.insert(meridian.id.clone(), meridian)
+    }
+
+    pub fn is_dormant(&self, id: impl Into<MeridianChannelId>) -> bool {
+        self.dormant_meridians.contains_key(&id.into())
+    }
+
+    pub fn dormant(&self, id: impl Into<MeridianChannelId>) -> Option<&Meridian> {
+        self.dormant_meridians.get(&id.into())
+    }
+
+    /// 取出并移除休眠登记——`RaceChange` 迁回一个 `meridian_profile` 恰好含有该
+    /// channel id 的种族时调用，原样恢复迁出前的完整状态（`opened`/`flow_rate`/
+    /// `integrity`/`cracks` 等全部字段）。
+    pub fn take_dormant(&mut self, id: impl Into<MeridianChannelId>) -> Option<Meridian> {
+        self.dormant_meridians.remove(&id.into())
+    }
+
+    pub fn dormant_count(&self) -> usize {
+        self.dormant_meridians.len()
     }
 }
 
@@ -241,20 +291,21 @@ pub fn try_acupoint_repair(
     success_roll: f64,
     success_threshold: f64,
 ) -> AcupointRepairOutcome {
-    if severed.is_dead(id) {
+    let channel_id = id.channel_id();
+    if severed.is_dead(channel_id.clone()) {
         return AcupointRepairOutcome::AlreadyDead;
     }
-    if !severed.is_severed(id) {
+    if !severed.is_severed(channel_id.clone()) {
         return AcupointRepairOutcome::NotSevered;
     }
     if success_roll < success_threshold {
         // 成功 —— 移除 SEVERED 标记 + 时戳。Meridian.integrity 由调用方在外重置。
-        severed.severed_meridians.remove(&id);
-        severed.severed_at.remove(&id);
+        severed.severed_meridians.remove(&channel_id);
+        severed.severed_at.remove(&channel_id);
         AcupointRepairOutcome::Restored
     } else {
         // 失败 —— 升级为死脉。SEVERED 集合保留（worldview §四:286 已废 + 死脉永久不可逆）。
-        severed.dead_meridians.insert(id);
+        severed.dead_meridians.insert(channel_id);
         AcupointRepairOutcome::Failed
     }
 }
@@ -292,7 +343,7 @@ pub fn meridian_severed_detection_tick(
             if m.integrity > f64::EPSILON {
                 continue;
             }
-            if permanent.is_severed(m.id) {
+            if permanent.is_severed(m.id.clone()) {
                 continue;
             }
             let Some(latest_crack) = m.cracks.iter().max_by_key(|c| c.created_at) else {
@@ -300,9 +351,25 @@ pub fn meridian_severed_detection_tick(
                 // 或被显式 close_meridian 调用过；那种情况由调用方决定是否 emit）
                 continue;
             };
+            // `MeridianSeveredEvent.meridian_id` 仍是 `MeridianId`（该 event 走 network
+            // 广播，wire 开放化留待后续 P1 子阶段）——humanoid 20 条经脉的 channel id
+            // 均可逆映射回 `MeridianId`。plan-race-system-v1 P1 对抗审查 M3/M4：非
+            // humanoid channel（P1 起 `npc_meridian_system_for_realm` 已可对非 humanoid
+            // `BodyPlan` 生成真实非 20-条经脉的 `MeridianSystem`）没有对应 `MeridianId`
+            // 是合法运行时状态，不是数据完整性 bug——安全跳过（debug 日志）而非 panic，
+            // 等该 event 换轨承载 `MeridianChannelId` 后再补发。
+            let Some(meridian_id) = m.id.to_meridian_id() else {
+                tracing::debug!(
+                    "[bong][cultivation][severed] skipping MeridianSeveredEvent for \
+                     non-humanoid channel {} (entity {entity:?}) — event wire not yet \
+                     channel-id-aware",
+                    m.id
+                );
+                continue;
+            };
             severed_events.send(MeridianSeveredEvent {
                 entity,
-                meridian_id: m.id,
+                meridian_id,
                 source: severed_source_from_crack(latest_crack.cause),
                 at_tick: now,
             });
@@ -425,7 +492,7 @@ mod tests {
         let mut p = MeridianSeveredPermanent::default();
         p.insert(MeridianId::Lung, SeveredSource::CombatWound, 100);
         p.insert(MeridianId::Du, SeveredSource::TribulationFail, 200);
-        p.dead_meridians.insert(MeridianId::Heart);
+        p.dead_meridians.insert(MeridianId::Heart.channel_id());
         let s = to_string(&p).expect("serialize");
         let back: MeridianSeveredPermanent = from_str(&s).expect("deserialize");
         assert_eq!(back, p);
@@ -440,7 +507,7 @@ mod tests {
         let mut p = MeridianSeveredPermanent::default();
         p.insert(MeridianId::Lung, SeveredSource::CombatWound, 100);
         p.insert(MeridianId::Heart, SeveredSource::TribulationFail, 200);
-        p.dead_meridians.insert(MeridianId::Heart);
+        p.dead_meridians.insert(MeridianId::Heart.channel_id());
         p.reset();
         assert_eq!(p.severed_count(), 0);
         assert!(p.dead_meridians.is_empty());
@@ -469,7 +536,7 @@ mod tests {
         let mut p = MeridianSeveredPermanent::default();
         p.insert(MeridianId::Liver, SeveredSource::DuguDistortion, 500);
         assert!(!p.is_dead(MeridianId::Liver), "SEVERED ≠ dead 默认");
-        p.dead_meridians.insert(MeridianId::Liver);
+        p.dead_meridians.insert(MeridianId::Liver.channel_id());
         assert!(p.is_dead(MeridianId::Liver));
     }
 
@@ -763,7 +830,7 @@ mod tests {
     fn serde_preserves_dead_meridians_subset() {
         let mut p = MeridianSeveredPermanent::default();
         p.insert(MeridianId::Lung, SeveredSource::CombatWound, 1);
-        p.dead_meridians.insert(MeridianId::Lung);
+        p.dead_meridians.insert(MeridianId::Lung.channel_id());
         let back: MeridianSeveredPermanent = from_str(&to_string(&p).unwrap()).unwrap();
         assert!(back.is_dead(MeridianId::Lung));
         assert!(back.is_severed(MeridianId::Lung));
@@ -781,11 +848,146 @@ mod tests {
         // 模拟跨周目：终结时 reset，下一角色 component default 空
         let mut p = MeridianSeveredPermanent::default();
         p.insert(MeridianId::Lung, SeveredSource::TribulationFail, 100);
-        p.dead_meridians.insert(MeridianId::Lung);
+        p.dead_meridians.insert(MeridianId::Lung.channel_id());
         p.reset();
         assert!(!p.is_severed(MeridianId::Lung));
         let new_char = MeridianSeveredPermanent::default();
         assert_eq!(new_char.severed_count(), 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // plan-race-system-v1 P5/PR-6a —— 休眠登记（RaceChange 迁移旁路）。
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn dormant_default_is_empty() {
+        let p = MeridianSeveredPermanent::default();
+        assert_eq!(p.dormant_count(), 0);
+        assert!(!p.is_dormant(MeridianId::Lung));
+        assert!(p.dormant(MeridianId::Lung).is_none());
+    }
+
+    #[test]
+    fn dormant_register_then_query() {
+        let mut p = MeridianSeveredPermanent::default();
+        let mut m = Meridian::from_meridian_id(MeridianId::Lung);
+        m.opened = true;
+        m.integrity = 0.73;
+        m.flow_rate = 5.0;
+        let replaced = p.register_dormant(m.clone());
+        assert!(replaced.is_none(), "首次登记不应有被替换的旧值");
+        assert!(p.is_dormant(MeridianId::Lung));
+        assert_eq!(p.dormant_count(), 1);
+        let stored = p
+            .dormant(MeridianId::Lung)
+            .expect("dormant record should exist");
+        assert!(stored.opened);
+        assert_eq!(stored.integrity, 0.73);
+        assert_eq!(stored.flow_rate, 5.0);
+    }
+
+    #[test]
+    fn dormant_register_duplicate_id_overwrites_and_returns_old() {
+        let mut p = MeridianSeveredPermanent::default();
+        let mut first = Meridian::from_meridian_id(MeridianId::Lung);
+        first.integrity = 0.1;
+        p.register_dormant(first.clone());
+
+        let mut second = Meridian::from_meridian_id(MeridianId::Lung);
+        second.integrity = 0.9;
+        let replaced = p.register_dormant(second.clone());
+
+        assert_eq!(replaced, Some(first), "覆盖登记应返回被替换的旧值");
+        assert_eq!(p.dormant(MeridianId::Lung).unwrap().integrity, 0.9);
+        assert_eq!(p.dormant_count(), 1, "覆盖同 id 不应产生第二条记录");
+    }
+
+    #[test]
+    fn dormant_take_removes_and_returns_full_state() {
+        let mut p = MeridianSeveredPermanent::default();
+        let mut m = Meridian::from_meridian_id(MeridianId::Heart);
+        m.opened = true;
+        m.rate_tier = 4;
+        m.capacity_tier = 2;
+        p.register_dormant(m.clone());
+
+        let taken = p.take_dormant(MeridianId::Heart);
+        assert_eq!(taken, Some(m), "take_dormant 必须原样返回完整状态");
+        assert!(!p.is_dormant(MeridianId::Heart), "取出后应从休眠表移除");
+        assert_eq!(p.dormant_count(), 0);
+    }
+
+    #[test]
+    fn dormant_take_missing_id_returns_none_without_panic() {
+        let mut p = MeridianSeveredPermanent::default();
+        assert_eq!(p.take_dormant(MeridianId::Lung), None);
+    }
+
+    #[test]
+    fn dormant_multiple_independent_entries_accumulate() {
+        let mut p = MeridianSeveredPermanent::default();
+        p.register_dormant(Meridian::from_meridian_id(MeridianId::Lung));
+        p.register_dormant(Meridian::from_meridian_id(MeridianId::Heart));
+        p.register_dormant(Meridian::from_meridian_id(MeridianId::Du));
+        assert_eq!(p.dormant_count(), 3);
+        assert!(p.is_dormant(MeridianId::Lung));
+        assert!(p.is_dormant(MeridianId::Heart));
+        assert!(p.is_dormant(MeridianId::Du));
+    }
+
+    #[test]
+    fn dormant_is_orthogonal_to_severed_and_dead() {
+        // 休眠 ≠ SEVERED ≠ dead —— 三者互不干扰，同一 channel id 理论上可能同时
+        // 出现在不同集合里（如已 SEVERED 的经脉恰好也是当前形态不含的经脉）。
+        let mut p = MeridianSeveredPermanent::default();
+        p.insert(MeridianId::Lung, SeveredSource::CombatWound, 10);
+        p.register_dormant(Meridian::from_meridian_id(MeridianId::Lung));
+        assert!(p.is_severed(MeridianId::Lung));
+        assert!(p.is_dormant(MeridianId::Lung));
+        assert!(!p.is_dead(MeridianId::Lung));
+    }
+
+    #[test]
+    fn dormant_serde_round_trip_preserves_full_meridian_state() {
+        let mut p = MeridianSeveredPermanent::default();
+        let mut m = Meridian::from_meridian_id(MeridianId::Kidney);
+        m.opened = true;
+        m.integrity = 0.42;
+        m.cracks
+            .push(crate::cultivation::components::MeridianCrack {
+                severity: 0.3,
+                healing_progress: 0.1,
+                cause: CrackCause::Overload,
+                created_at: 77,
+            });
+        p.register_dormant(m.clone());
+
+        let s = serde_json::to_string(&p).expect("serialize");
+        let back: MeridianSeveredPermanent = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(back, p);
+        assert_eq!(back.dormant(MeridianId::Kidney), Some(&m));
+    }
+
+    #[test]
+    fn dormant_reset_clears_dormant_registry_for_cross_lifecycle() {
+        let mut p = MeridianSeveredPermanent::default();
+        p.register_dormant(Meridian::from_meridian_id(MeridianId::Lung));
+        p.reset();
+        assert_eq!(
+            p.dormant_count(),
+            0,
+            "跨周目重置必须清空休眠登记——新角色不应继承旧角色的休眠经脉状态"
+        );
+    }
+
+    #[test]
+    fn dormant_default_round_trip_via_missing_field_migration() {
+        // 旧存档（无 dormant_meridians 字段）反序列化必须落空 HashMap，不报错
+        // （`#[serde(default)]` 迁移契约）。
+        let json = r#"{"severed_meridians":[],"severed_at":{},"dead_meridians":[]}"#;
+        let back: MeridianSeveredPermanent =
+            serde_json::from_str(json).expect("legacy save without dormant_meridians must parse");
+        assert_eq!(back.dormant_count(), 0);
     }
 
     #[test]
@@ -847,7 +1049,7 @@ mod tests {
     fn repair_already_dead_rejects() {
         let mut p = MeridianSeveredPermanent::default();
         p.insert(MeridianId::Lung, SeveredSource::CombatWound, 100);
-        p.dead_meridians.insert(MeridianId::Lung);
+        p.dead_meridians.insert(MeridianId::Lung.channel_id());
         let outcome = try_acupoint_repair(&mut p, MeridianId::Lung, 0.0, 1.0);
         assert_eq!(outcome, AcupointRepairOutcome::AlreadyDead);
     }

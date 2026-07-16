@@ -8,6 +8,7 @@ import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.PhysicalBody;
 import com.bong.client.inventory.model.WoundLevel;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.state.SeasonState;
 import com.bong.client.visual.season.SeasonVisuals;
 import org.junit.jupiter.api.AfterEach;
@@ -24,6 +25,7 @@ class MiniBodyHudPlannerTest {
     @AfterEach
     void tearDown() {
         StatusEffectStore.resetForTests();
+        BodyPlanLayoutStore.resetForTests();
     }
 
     @Test

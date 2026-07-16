@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn aggregate_counts_kinds_and_variants_per_zone() {
         let zones = vec![make_zone("spawn", 0.5), make_zone("blood_valley", -0.2)];
-        let plants = vec![
+        let plants = [
             make_plant(BotanyPlantId::CiSheHao, "spawn", PlantVariant::None),
             make_plant(BotanyPlantId::CiSheHao, "spawn", PlantVariant::None),
             make_plant(BotanyPlantId::CiSheHao, "spawn", PlantVariant::Thunder),

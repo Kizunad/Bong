@@ -31,11 +31,10 @@ use crate::schema::inventory::PlacedInventoryItemV1;
 use crate::schema::server_data::{
     LootContainerOpenV1, LootContainerSourceKindV1, ServerDataPayloadV1, ServerDataV1,
 };
+use crate::world::dimension::CurrentDimension;
 
+use super::authority::{authorize_supply_coffin_open, SupplyCoffinAuthorityFailure};
 use super::{current_wall_clock_secs, loot::roll_loot, SupplyCoffinGrade, SupplyCoffinRegistry};
-
-const OPEN_RANGE_BLOCKS: f64 = 4.0;
-const OPEN_RANGE_TOLERANCE: f64 = 0.5;
 
 /// C2S request emitted by `client_request_handler` when the client sends
 /// `supply_coffin_open`. The handler resolves the MC protocol entity_id to an
@@ -61,6 +60,7 @@ pub struct SupplyCoffinOpened {
 type PlayerQueryItem<'a> = (
     &'a mut PlayerInventory,
     &'a Position,
+    Option<&'a CurrentDimension>,
     &'a mut Client,
     &'a Username,
     &'a PlayerState,
@@ -85,19 +85,29 @@ pub fn handle_supply_coffin_interact(
             continue;
         };
 
-        let Ok((inventory, player_pos, mut client, username, player_state, cultivation)) =
-            players.get_mut(ev.client)
+        let Ok((
+            inventory,
+            player_pos,
+            player_dimension,
+            mut client,
+            username,
+            player_state,
+            cultivation,
+        )) = players.get_mut(ev.client)
         else {
             continue;
         };
 
-        let dist = active.pos.distance(player_pos.get());
-        if dist > OPEN_RANGE_BLOCKS + OPEN_RANGE_TOLERANCE {
+        if let Err(reason) = authorize_supply_coffin_open(
+            Some(&active),
+            player_pos.get(),
+            player_dimension.map(|dimension| dimension.0),
+        ) {
             tracing::debug!(
-                "[bong][supply_coffin] interact rejected (out of range): grade={:?} dist={:.2}",
+                "[bong][supply_coffin] interact rejected: grade={:?} reason={reason:?}",
                 active.grade,
-                dist
             );
+            client.send_chat_message(open_authority_rejection_message(reason));
             continue;
         }
 
@@ -110,6 +120,23 @@ pub fn handle_supply_coffin_interact(
                 client.send_chat_message("§c[物资棺] 有人正在翻找。");
                 continue;
             }
+            let restored_session = match ext_registry.sessions.get(&ext.session_id) {
+                Some(mapped) if *mapped != ev.target => {
+                    tracing::warn!(
+                        "[bong][supply_coffin] reopen rejected: session {} maps to {:?}, target={:?}",
+                        ext.session_id,
+                        mapped,
+                        ev.target,
+                    );
+                    client.send_chat_message("§c[物资棺] 容器会话已失效。");
+                    continue;
+                }
+                Some(_) => false,
+                None => {
+                    ext_registry.sessions.insert(ext.session_id, ev.target);
+                    true
+                }
+            };
             // Re-lock released coffin — send existing items, don't re-roll
             ext.opened_by = Some(ev.client);
             let placed_items: Vec<PlacedInventoryItemV1> = ext
@@ -141,6 +168,9 @@ pub fn handle_supply_coffin_interact(
                 Err(e) => {
                     log_payload_build_error(payload_type, &e);
                     ext.opened_by = None;
+                    if restored_session {
+                        ext_registry.remove_session(ext.session_id);
+                    }
                     continue;
                 }
             }
@@ -275,6 +305,395 @@ pub fn handle_supply_coffin_interact(
             active.pos.y,
             active.pos.z,
             ev.client
+        );
+    }
+}
+
+fn open_authority_rejection_message(reason: SupplyCoffinAuthorityFailure) -> &'static str {
+    match reason {
+        SupplyCoffinAuthorityFailure::MissingSource => "§c[物资棺] 目标已失效。",
+        SupplyCoffinAuthorityFailure::MissingPlayerDimension => {
+            "§c[物资棺] 当前位面状态异常，无法打开。"
+        }
+        SupplyCoffinAuthorityFailure::DimensionMismatch => "§c[物资棺] 目标不在当前位面。",
+        SupplyCoffinAuthorityFailure::OutOfRange => "§c[物资棺] 离得太远。",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inventory::external_container::ExternalContainerRegistry;
+    use crate::inventory::{InventoryRevision, PlacedItemState};
+    use crate::supply_coffin::authority::SUPPLY_COFFIN_OPEN_MAX_DISTANCE;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use valence::prelude::{App, DVec3, Update};
+    use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "main_pack".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::<PlacedItemState>::new(),
+                owner_instance_id: None,
+                quick_access: false,
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+            triggered_treasures: Vec::new(),
+        }
+    }
+
+    fn setup_open_app(
+        player_dimension: Option<DimensionKind>,
+        player_pos: DVec3,
+    ) -> (App, Entity, Entity, MockClientHelper) {
+        let mut app = App::new();
+        app.insert_resource(ExternalContainerRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_event::<SupplyCoffinOpenRequest>();
+        app.add_event::<SupplyCoffinOpened>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, handle_supply_coffin_interact);
+
+        let target = app.world_mut().spawn_empty().id();
+        let mut registry =
+            SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0x1234);
+        registry.insert_active(
+            target,
+            SupplyCoffinGrade::Common,
+            COFFIN_POS,
+            current_wall_clock_secs(),
+        );
+        app.insert_resource(registry);
+
+        let (client_bundle, helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                empty_inventory(),
+                PlayerState::default(),
+                Cultivation::default(),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_pos));
+        if let Some(dimension) = player_dimension {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(CurrentDimension(dimension));
+        }
+
+        (app, player, target, helper)
+    }
+
+    fn send_open(app: &mut App, player: Entity, target: Entity) {
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<SupplyCoffinOpenRequest>>()
+            .send(SupplyCoffinOpenRequest {
+                client: player,
+                target,
+            });
+        app.update();
+    }
+
+    fn collect_server_data_payload_types(
+        app: &mut App,
+        helper: &mut MockClientHelper,
+    ) -> Vec<String> {
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != "bong:server_data" {
+                    return None;
+                }
+                let value = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0).ok()?;
+                value.get("type")?.as_str().map(str::to_string)
+            })
+            .collect()
+    }
+
+    fn collect_chat_messages(app: &mut App, helper: &mut MockClientHelper) -> Vec<String> {
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn open_rejects_cross_dimension_same_xyz_without_side_effects() {
+        let (mut app, player, target, mut helper) =
+            setup_open_app(Some(DimensionKind::Tsy), COFFIN_POS);
+        let rng_before = app.world().resource::<SupplyCoffinRegistry>().rng_state;
+
+        send_open(&mut app, player, target);
+        let messages = collect_chat_messages(&mut app, &mut helper);
+
+        assert!(
+            app.world().get::<ExternalContainer>(target).is_none(),
+            "TSY player at the same numeric XYZ must not create an Overworld supply-coffin session"
+        );
+        assert!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .is_empty(),
+            "dimension rejection must happen before allocating a session"
+        );
+        assert_eq!(
+            app.world().resource::<SupplyCoffinRegistry>().rng_state,
+            rng_before,
+            "dimension rejection must happen before rolling loot or advancing RNG"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("[物资棺] 目标不在当前位面。")),
+            "dimension rejection must emit explicit player feedback; actual messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn open_rejects_player_missing_current_dimension() {
+        let (mut app, player, target, _helper) = setup_open_app(None, COFFIN_POS);
+
+        send_open(&mut app, player, target);
+
+        assert!(
+            app.world().get::<ExternalContainer>(target).is_none(),
+            "player without CurrentDimension must be rejected instead of implicitly treated as Overworld"
+        );
+        assert!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .is_empty(),
+            "missing-dimension rejection must not allocate a session"
+        );
+    }
+
+    #[test]
+    fn open_rejects_non_finite_player_coordinates_before_any_side_effect() {
+        for (label, x) in [
+            ("nan", f64::NAN),
+            ("positive_infinity", f64::INFINITY),
+            ("negative_infinity", f64::NEG_INFINITY),
+        ] {
+            let (mut app, player, target, mut helper) = setup_open_app(
+                Some(DimensionKind::Overworld),
+                DVec3::new(x, COFFIN_POS.y, COFFIN_POS.z),
+            );
+            let rng_before = app.world().resource::<SupplyCoffinRegistry>().rng_state;
+
+            send_open(&mut app, player, target);
+            let payload_types = collect_server_data_payload_types(&mut app, &mut helper);
+
+            assert!(
+                app.world().get::<ExternalContainer>(target).is_none(),
+                "{label} player coordinate must not create an external container"
+            );
+            assert!(
+                app.world()
+                    .resource::<ExternalContainerRegistry>()
+                    .sessions
+                    .is_empty(),
+                "{label} rejection must happen before allocating a session"
+            );
+            assert_eq!(
+                app.world().resource::<SupplyCoffinRegistry>().rng_state,
+                rng_before,
+                "{label} rejection must happen before rolling loot or advancing RNG"
+            );
+            assert!(
+                payload_types.iter().all(|ty| ty != "loot_container_open"),
+                "{label} rejection must not emit loot_container_open; payloads={payload_types:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_range_accepts_exact_boundary_and_rejects_just_outside() {
+        let boundary = SUPPLY_COFFIN_OPEN_MAX_DISTANCE;
+        let (mut at_boundary, player, target, _helper) = setup_open_app(
+            Some(DimensionKind::Overworld),
+            COFFIN_POS + DVec3::new(boundary, 0.0, 0.0),
+        );
+        send_open(&mut at_boundary, player, target);
+        assert!(
+            at_boundary
+                .world()
+                .get::<ExternalContainer>(target)
+                .is_some(),
+            "distance exactly {boundary} must remain inside the existing open contract"
+        );
+
+        let (mut outside, player, target, _helper) = setup_open_app(
+            Some(DimensionKind::Overworld),
+            COFFIN_POS + DVec3::new(boundary + 0.001, 0.0, 0.0),
+        );
+        send_open(&mut outside, player, target);
+        assert!(
+            outside.world().get::<ExternalContainer>(target).is_none(),
+            "distance just beyond {boundary} must be rejected"
+        );
+    }
+
+    #[test]
+    fn open_authority_rejection_feedback_covers_every_failure_reason() {
+        assert_eq!(
+            open_authority_rejection_message(SupplyCoffinAuthorityFailure::MissingSource),
+            "§c[物资棺] 目标已失效。"
+        );
+        assert_eq!(
+            open_authority_rejection_message(SupplyCoffinAuthorityFailure::MissingPlayerDimension),
+            "§c[物资棺] 当前位面状态异常，无法打开。"
+        );
+        assert_eq!(
+            open_authority_rejection_message(SupplyCoffinAuthorityFailure::DimensionMismatch),
+            "§c[物资棺] 目标不在当前位面。"
+        );
+        assert_eq!(
+            open_authority_rejection_message(SupplyCoffinAuthorityFailure::OutOfRange),
+            "§c[物资棺] 离得太远。"
+        );
+    }
+
+    #[test]
+    fn reopen_restores_session_registry_mapping_after_distance_close() {
+        let (mut app, player, target, _helper) =
+            setup_open_app(Some(DimensionKind::Overworld), COFFIN_POS);
+        let session_id = 77;
+        app.world_mut()
+            .entity_mut(target)
+            .insert(ExternalContainer {
+                session_id,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(session_id),
+                    name: "supply_coffin_common".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: None,
+                timeout_wall_secs: u64::MAX,
+                source_kind: ExternalContainerKind::SupplyCoffin {
+                    grade: SupplyCoffinGrade::Common,
+                },
+            });
+        assert!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .is_empty(),
+            "test precondition: distance close removed the session mapping"
+        );
+
+        send_open(&mut app, player, target);
+
+        let ext = app
+            .world()
+            .get::<ExternalContainer>(target)
+            .expect("reopen keeps the existing external container");
+        assert_eq!(
+            ext.opened_by,
+            Some(player),
+            "reopen must reacquire the lock"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .get(&session_id),
+            Some(&target),
+            "reopen must restore session_id -> coffin mapping so subsequent moves remain routable"
+        );
+    }
+
+    #[test]
+    fn reopen_rejects_conflicting_session_mapping_without_stealing_it() {
+        let (mut app, player, target, _helper) =
+            setup_open_app(Some(DimensionKind::Overworld), COFFIN_POS);
+        let session_id = 78;
+        app.world_mut()
+            .entity_mut(target)
+            .insert(ExternalContainer {
+                session_id,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(session_id),
+                    name: "supply_coffin_common".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: None,
+                timeout_wall_secs: u64::MAX,
+                source_kind: ExternalContainerKind::SupplyCoffin {
+                    grade: SupplyCoffinGrade::Common,
+                },
+            });
+        let conflicting_target = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<ExternalContainerRegistry>()
+            .sessions
+            .insert(session_id, conflicting_target);
+
+        send_open(&mut app, player, target);
+
+        assert_eq!(
+            app.world()
+                .get::<ExternalContainer>(target)
+                .expect("target container remains attached")
+                .opened_by,
+            None,
+            "conflicting session mapping must reject reopen before acquiring the lock"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .get(&session_id),
+            Some(&conflicting_target),
+            "reopen must not overwrite another entity's session mapping"
         );
     }
 }

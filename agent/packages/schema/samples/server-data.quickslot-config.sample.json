@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "type": "quickslot_config",
+  "slots": [
+    {
+      "item_id": "kai_mai_pill",
+      "display_name": "开脉丹",
+      "cast_duration_ms": 1500,
+      "cooldown_ms": 1500,
+      "icon_texture": ""
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "cooldown_until_ms": [1700000001500, 0, 0, 0, 0, 0, 0, 0, 0],
+  "ack_request_id": "bind-42",
+  "bind_accepted": true
+}

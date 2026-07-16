@@ -363,6 +363,9 @@ class ProtoServerDataBridgeTest {
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_NPC_SPAWNED,
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_SENTINEL_PHASE_CHANGED,
                     Envelope.ServerDataEnvelope.PayloadCase.FACTION_WAR_STATE
+                    // morph_state（易形状态，proto field 142）：PR-5a 只交付 server 机制 +
+                    // 协议/schema/bot 解码，client 消费留白；PR-5b 已补 MorphStateHandler
+                    // 映射（见 CASE_TO_TYPE），故从本排除清单移除。
             );
 
     @Test
@@ -586,6 +589,9 @@ class ProtoServerDataBridgeTest {
             case BOOLEAN:
                 return true;
             case STRING:
+                if ("bong.WeaponEquipped.slot".equals(field.getFullName())) {
+                    return "main_hand";
+                }
                 return "rt_probe_" + field.getName();
             case BYTE_STRING:
                 return com.google.protobuf.ByteString.copyFromUtf8("rt_probe");
@@ -1110,12 +1116,16 @@ class ProtoServerDataBridgeTest {
         for (int i = 0; i < 9; i++) {
             qsc.addCooldownUntilMs(0);
         }
+        qsc.setAckRequestId("bind-1");
+        qsc.setBindAccepted(true);
 
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setQuickSlotConfig(qsc).build();
 
         JsonObject json = bridgeAndParse(envelope);
         assertEquals("quickslot_config", json.get("type").getAsString());
+        assertEquals("bind-1", json.get("ack_request_id").getAsString());
+        assertTrue(json.get("bind_accepted").getAsBoolean());
 
         JsonArray slots = json.getAsJsonArray("slots");
         assertEquals(9, slots.size(), "should have 9 slots");
@@ -2120,6 +2130,183 @@ class ProtoServerDataBridgeTest {
         assertEquals("Condense", json.get("realm").getAsString(),
                 "realm 必须从 REALM_CONDENSE 剥成 'Condense'（normalizeRealmField 产出格式，"
                 + "HudRealmGate.tier() 小写后比对），否则所有境界门控 HUD 恒判醒灵");
+    }
+
+    // ─── plan-bughunt-niche-guardian-proto-kind: guardian_kind 顶层枚举 ─────
+    // niche_guardian_fatigue/broken 之前走 generic path，未剥 GUARDIAN_KIND_
+    // 前缀，玩家会在灵龛守护 HUD/事件流看到裸 "GUARDIAN_KIND_PUPPET"。
+
+    @Test
+    void bridgeNicheGuardianFatigueStripsGuardianKindPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_PUPPET)
+                        .setChargesRemaining(4))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("niche_guardian_fatigue", json.get("type").getAsString());
+        assertEquals("puppet", json.get("guardian_kind").getAsString(),
+                "guardian_kind 必须从 GUARDIAN_KIND_PUPPET 剥成 'puppet'（SocialServerDataHandler."
+                + "handleNicheGuardianFatigue 只认 legacy snake_case），否则 HUD/事件流显示裸"
+                + "proto 常量");
+    }
+
+    @Test
+    void bridgeNicheGuardianBrokenStripsMultiSegmentGuardianKind() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setIntruderId("char:raider"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("niche_guardian_broken", json.get("type").getAsString());
+        assertEquals("zhenfa_trap", json.get("guardian_kind").getAsString(),
+                "多段 GUARDIAN_KIND_ZHENFA_TRAP 必须整体剥成 'zhenfa_trap'（保留下划线分段），"
+                + "只测 PUPPET 会漏掉多段 case");
+    }
+
+    @Test
+    void bridgeNicheGuardianRouteUpdatesGuardianStoreWithoutRawEnum() {
+        NicheGuardianStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_BONDED_DAOXIANG)
+                        .setChargesRemaining(2))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for niche_guardian_fatigue: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), route.logMessage());
+
+        assertTrue(NicheGuardianStore.guardianStatuses().containsKey("bonded_daoxiang"),
+                "真实 proto bytes 经 bridge+router 后 NicheGuardianStore 只应出现 'bonded_daoxiang' "
+                + "key，不应出现 'GUARDIAN_KIND_BONDED_DAOXIANG'（否则灵龛守护 HUD 泄漏 proto 常量）");
+        assertFalse(NicheGuardianStore.guardianStatuses().keySet().stream()
+                .anyMatch(key -> key.startsWith("GUARDIAN_KIND_")),
+                "NicheGuardianStore 不应出现任何裸 GUARDIAN_KIND_ 前缀 key");
+    }
+
+    // ─── plan-bughunt-season-state-proto-enum: player_state.season_state.season 嵌套枚举 ───
+    // bridgePlayerState 之前只 normalizeRealmField("realm")，season_state.season 全名
+    // "SEASON_WINTER" 未剥前缀，导致 SeasonState.Phase.fromWire 解析失败，
+    // SeasonStateStore 永远停在默认夏季（或旧值）。
+
+    @Test
+    void bridgePlayerStateNormalizesSeasonStateWinter() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeason(Envelope.Season.SEASON_WINTER)
+                                .setTickIntoPhase(100)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(1)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("winter",
+                json.getAsJsonObject("season_state").get("season").getAsString(),
+                "season_state.season 必须从 SEASON_WINTER 剥成 'winter'（SeasonState.Phase."
+                + "fromWire 只认小写无前缀），否则 SeasonStateStore 永远停在默认夏季");
+    }
+
+    @Test
+    void bridgePlayerStateNormalizesSeasonStateSummerToWinter() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeason(Envelope.Season.SEASON_SUMMER_TO_WINTER)
+                                .setTickIntoPhase(1)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("summer_to_winter",
+                json.getAsJsonObject("season_state").get("season").getAsString(),
+                "多段 SEASON_SUMMER_TO_WINTER 必须整体剥成 'summer_to_winter'（保留下划线分段），"
+                + "只测 WINTER 会漏掉多段 case");
+    }
+
+    @Test
+    void bridgePlayerStateNormalizesSeasonStateWinterToSummer() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeason(Envelope.Season.SEASON_WINTER_TO_SUMMER)
+                                .setTickIntoPhase(1)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("winter_to_summer",
+                json.getAsJsonObject("season_state").get("season").getAsString());
+    }
+
+    @Test
+    void bridgePlayerStateUnspecifiedSeasonStaysUnparseable() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeason(Envelope.Season.SEASON_UNSPECIFIED)
+                                .setTickIntoPhase(0)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        String season = json.getAsJsonObject("season_state").get("season").getAsString();
+        assertEquals("unspecified", season,
+                "SEASON_UNSPECIFIED 剥前缀后应为 'unspecified'（非法 wire 值），"
+                + "不得被误映射为 'summer' 掩盖坏包");
+        assertTrue(com.bong.client.state.SeasonState.Phase.fromWire(season).isEmpty(),
+                "'unspecified' 必须让 SeasonState.Phase.fromWire 返回空，SeasonStateStore 不应"
+                + "被伪造出的夏季覆盖");
+    }
+
+    @Test
+    void bridgePlayerStateRouteUpdatesSeasonStateStoreDispatch() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setPlayer("offline:Steve")
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setSpiritQi(50.0)
+                        .setSpiritQiMax(100.0)
+                        .setZone("zone-1")
+                        .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                                .setCombat(0.2).setWealth(0.4).setSocial(0.65)
+                                .setKarma(0.2).setTerritory(0.1))
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeason(Envelope.Season.SEASON_WINTER)
+                                .setTickIntoPhase(42)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(2)))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for player_state: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), route.logMessage());
+        assertTrue(route.dispatch().seasonState().isPresent(),
+                "真实 proto bytes 经 bridge+router 后 dispatch.seasonState() 必须非空，"
+                + "否则 BongNetworkHandler.applyDispatch 不写 SeasonStateStore，季节视觉停在默认夏季");
+        assertEquals(com.bong.client.state.SeasonState.Phase.WINTER,
+                route.dispatch().seasonState().get().phase());
     }
 
     @Test

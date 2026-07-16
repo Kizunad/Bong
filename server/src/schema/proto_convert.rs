@@ -12,6 +12,158 @@ use super::proto_gen::bong;
 use super::server_data::ServerDataPayloadV1;
 
 // ═══════════════════════════════════════════════════════════════
+// plan-race-system-v1 P3a —— RaceGate <-> proto RaceGate。
+//
+// `RaceGateOwned`（`body_plan::types`）尚未挂在任何 `ServerDataPayloadV1` oneof 字段
+// 下（本段是 P3 后续接入功法列表 / 装备 wire 时的复用底座，见 plan §P3 身份快照
+// bullet），故不在本文件的 `From<&ServerDataPayloadV1>` 主转换路径里；转换函数独立
+// 导出供直接单测 + 未来接入点调用。decode 方向对未知 kind fail-closed（返回 Err，
+// 不静默兜底 Any）。
+// ═══════════════════════════════════════════════════════════════
+
+pub fn race_gate_owned_to_proto(gate: &crate::body_plan::RaceGateOwned) -> bong::RaceGate {
+    use crate::body_plan::RaceGateOwned;
+    match gate {
+        RaceGateOwned::Any => bong::RaceGate {
+            kind: "any".to_string(),
+            species: Vec::new(),
+        },
+        RaceGateOwned::Humanoid => bong::RaceGate {
+            kind: "humanoid".to_string(),
+            species: Vec::new(),
+        },
+        RaceGateOwned::Species { species } => bong::RaceGate {
+            kind: "species".to_string(),
+            species: species.iter().map(|id| id.as_str().to_string()).collect(),
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RaceGateDecodeError {
+    /// 未知 `kind`——fail-closed，调用方必须拒绝而非兜底 `Any`。
+    UnknownKind(String),
+}
+
+impl std::fmt::Display for RaceGateDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RaceGateDecodeError::UnknownKind(kind) => {
+                write!(
+                    f,
+                    "unknown RaceGate wire kind {kind:?} — refusing to decode"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RaceGateDecodeError {}
+
+pub fn race_gate_owned_from_proto(
+    wire: &bong::RaceGate,
+) -> Result<crate::body_plan::RaceGateOwned, RaceGateDecodeError> {
+    use crate::body_plan::{RaceGateOwned, RaceId};
+    match wire.kind.as_str() {
+        "any" => Ok(RaceGateOwned::Any),
+        "humanoid" => Ok(RaceGateOwned::Humanoid),
+        "species" => Ok(RaceGateOwned::Species {
+            species: wire
+                .species
+                .iter()
+                .map(|s| RaceId::new(s.clone()))
+                .collect(),
+        }),
+        other => Err(RaceGateDecodeError::UnknownKind(other.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod race_gate_wire_tests {
+    use super::*;
+    use crate::body_plan::{RaceGateOwned, RaceId};
+
+    #[test]
+    fn any_round_trips() {
+        let value = RaceGateOwned::Any;
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "any");
+        assert!(wire.species.is_empty());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn humanoid_round_trips() {
+        let value = RaceGateOwned::Humanoid;
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "humanoid");
+        assert!(wire.species.is_empty());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_round_trips() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale")],
+        };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "species");
+        assert_eq!(wire.species, vec!["whale".to_string()]);
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_empty_list_round_trips() {
+        let value = RaceGateOwned::Species { species: vec![] };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.species, Vec::<String>::new());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_duplicate_entries_preserved_through_wire() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale"), RaceId::new("whale")],
+        };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.species, vec!["whale".to_string(), "whale".to_string()]);
+        let decoded = race_gate_owned_from_proto(&wire).unwrap();
+        match decoded {
+            RaceGateOwned::Species { species } => assert_eq!(species.len(), 2),
+            other => panic!("expected Species, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_kind_decode_fails_closed() {
+        let wire = bong::RaceGate {
+            kind: "bogus".to_string(),
+            species: Vec::new(),
+        };
+        let err = race_gate_owned_from_proto(&wire)
+            .expect_err("unknown kind must fail closed, not silently default to Any");
+        assert_eq!(err, RaceGateDecodeError::UnknownKind("bogus".to_string()));
+    }
+
+    /// plan-race-system-v1 P3a —— 施放门 race gate 拒绝的 wire pin：
+    /// `CastOutcomeV1::RejectRaceMismatch` 必须映射到新增 proto 变体
+    /// `bong::CastOutcome::RejectRaceMismatch`（非默认 `Unspecified`/其余已存在变体）。
+    #[test]
+    fn cast_outcome_reject_race_mismatch_maps_to_dedicated_proto_variant() {
+        use super::super::combat_hud::CastOutcomeV1;
+        let proto_value = cast_outcome_to_proto(&CastOutcomeV1::RejectRaceMismatch);
+        assert_eq!(proto_value, bong::CastOutcome::RejectRaceMismatch as i32);
+        // 不与其余已存在的 reject 变体撞值（防止手滑复制粘贴出重复映射）。
+        assert_ne!(
+            proto_value,
+            bong::CastOutcome::RejectTechniqueInactive as i32
+        );
+        assert_ne!(proto_value, bong::CastOutcome::RejectNoWeapon as i32);
+        assert_ne!(proto_value, bong::CastOutcome::Unspecified as i32);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // helper: Rust enum → proto i32
 // ═══════════════════════════════════════════════════════════════
 
@@ -113,11 +265,6 @@ fn relationship_kind_to_proto(k: &super::social::RelationshipKindV1) -> i32 {
         RelationshipKindV1::Pact => bong::RelationshipKind::Pact as i32,
         RelationshipKindV1::Feud => bong::RelationshipKind::Feud as i32,
     }
-}
-
-fn meridian_idx_to_proto(idx: u8) -> i32 {
-    // idx 0..19 直接映射到 MeridianId 1..20（+1 偏移因 0 = UNSPECIFIED）
-    (idx as i32) + 1
 }
 
 fn skill_id_to_proto(s: &super::skill::SkillIdV1) -> i32 {
@@ -373,6 +520,25 @@ fn inventory_item_view_to_proto(
         // None → proto 不设 → JsonFormat 省键 → client readAlchemyLines 拿 null → 无 tooltip。
         // 修复 InventoryItemView.alchemy proto 漂移（生产走 protobuf 时此前被静默丢弃）。
         alchemy: v.alchemy.as_ref().map(alchemy_item_data_to_proto),
+        freshness: v.freshness.as_ref().map(inventory_freshness_to_proto),
+    }
+}
+
+fn inventory_freshness_to_proto(
+    freshness: &crate::shelflife::Freshness,
+) -> bong::InventoryFreshness {
+    let track = match freshness.track {
+        crate::shelflife::DecayTrack::Decay => "Decay",
+        crate::shelflife::DecayTrack::Spoil => "Spoil",
+        crate::shelflife::DecayTrack::Age => "Age",
+    };
+    bong::InventoryFreshness {
+        created_at_tick: freshness.created_at_tick,
+        initial_qi: freshness.initial_qi,
+        track: track.to_string(),
+        profile: freshness.profile.as_str().to_string(),
+        frozen_accumulated: freshness.frozen_accumulated,
+        frozen_since_tick: freshness.frozen_since_tick,
     }
 }
 
@@ -636,6 +802,7 @@ impl From<&ServerDataPayloadV1> for Payload {
             }),
             ServerDataPayloadV1::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -652,11 +819,18 @@ impl From<&ServerDataPayloadV1> for Payload {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => {
-                // SoA → AoS: 并行数组打包成 repeated MeridianState
-                let meridians: Vec<bong::MeridianState> = (0..20)
+                // SoA → AoS: 并行数组打包成 repeated MeridianState（plan-race-system-v1
+                // P1c：长度随 `channel_ids` 走，不再假设恰好 20 条）。
+                let meridians: Vec<bong::MeridianState> = (0..channel_ids.len())
                     .map(|i| bong::MeridianState {
-                        id: meridian_idx_to_proto(i as u8),
+                        id: channel_ids[i].clone(),
                         opened: opened.get(i).copied().unwrap_or(false),
                         flow_rate: flow_rate.get(i).copied().unwrap_or(0.0),
                         flow_capacity: flow_capacity.get(i).copied().unwrap_or(0.0),
@@ -668,7 +842,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                 Payload::CultivationDetail(bong::CultivationDetail {
                     realm: realm_str_to_proto(realm),
                     meridians,
-                    target_meridian: target_meridian.map(meridian_idx_to_proto),
+                    target_meridian: target_meridian.clone(),
                     contamination_total: *contamination_total,
                     lifespan: lifespan.as_ref().map(lifespan_to_proto),
                     recent_skill_milestones_summary: recent_skill_milestones_summary.clone(),
@@ -694,6 +868,12 @@ impl From<&ServerDataPayloadV1> for Payload {
                             ratio: pw.ratio,
                         })
                         .collect(),
+                    body_plan_id: body_plan_id.clone(),
+                    race_id: race_id.clone(),
+                    form_race_id: form_race_id.clone(),
+                    form_body_plan_id: form_body_plan_id.clone(),
+                    intrinsic_is_humanoid: *intrinsic_is_humanoid,
+                    form_is_humanoid: *form_is_humanoid,
                 })
             }
             ServerDataPayloadV1::QiColorObserved(o) => {
@@ -742,6 +922,106 @@ impl From<&ServerDataPayloadV1> for Payload {
                         display_name: r.display_name.clone(),
                         item_count: r.item_count,
                         bone_coins: r.bone_coins,
+                    })
+                    .collect(),
+            }),
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                Payload::BodyPlanLayout(bong::BodyPlanLayout {
+                    body_plan_id: layout.body_plan_id.clone(),
+                    silhouette: layout
+                        .silhouette
+                        .iter()
+                        .map(|part| bong::BodyPlanSilhouettePart {
+                            part_id: part.part_id.clone(),
+                            polygon: part
+                                .polygon
+                                .iter()
+                                .map(|p| bong::BodyPlanPoint2 {
+                                    x: p.x as f32,
+                                    y: p.y as f32,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                    anchors: layout
+                        .anchors
+                        .iter()
+                        .map(|a| bong::BodyPlanPartAnchor {
+                            part_id: a.part_id.clone(),
+                            point: Some(bong::BodyPlanPoint2 {
+                                x: a.point.x as f32,
+                                y: a.point.y as f32,
+                            }),
+                        })
+                        .collect(),
+                    meridian_paths: layout
+                        .meridian_paths
+                        .iter()
+                        .map(|mp| bong::BodyPlanMeridianPath {
+                            channel_id: mp.channel_id.clone(),
+                            points: mp
+                                .points
+                                .iter()
+                                .map(|p| bong::BodyPlanPoint2 {
+                                    x: p.x as f32,
+                                    y: p.y as f32,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                    part_display_map: layout
+                        .part_display_map
+                        .iter()
+                        .map(|m| bong::BodyPlanPartDisplayMapping {
+                            server_part_id: m.server_part_id.clone(),
+                            display_segment_id: m.display_segment_id.clone(),
+                        })
+                        .collect(),
+                    hud_anchors: layout
+                        .hud_anchors
+                        .iter()
+                        .map(|a| bong::BodyPlanPartAnchor {
+                            part_id: a.part_id.clone(),
+                            point: Some(bong::BodyPlanPoint2 {
+                                x: a.point.x as f32,
+                                y: a.point.y as f32,
+                            }),
+                        })
+                        .collect(),
+                })
+            }
+            ServerDataPayloadV1::RaceGateMeta(meta) => {
+                // plan-race-system-v1 P3c：RaceGateWireV1（flat wire）→ proto RaceGate。
+                // 直接构造 bong::RaceGate（kind + species），避免多绕一层 owned 转换。
+                let entry_to_proto =
+                    |e: &crate::schema::server_data::RaceGateMetaEntryV1| bong::RaceGateMetaEntry {
+                        id: e.id.clone(),
+                        gate: Some(bong::RaceGate {
+                            kind: e.gate.kind.clone(),
+                            species: e.gate.species.clone(),
+                        }),
+                    };
+                Payload::RaceGateMeta(bong::RaceGateMeta {
+                    item_wearer_race: meta.item_wearer_race.iter().map(entry_to_proto).collect(),
+                    technique_required_race: meta
+                        .technique_required_race
+                        .iter()
+                        .map(entry_to_proto)
+                        .collect(),
+                })
+            }
+            ServerDataPayloadV1::MorphState(state) => Payload::MorphState(bong::MorphState {
+                v: 1,
+                mode: state.mode.clone(),
+                entries: state
+                    .entries
+                    .iter()
+                    .map(|e| bong::MorphStateEntry {
+                        entity_id: e.entity_id,
+                        model_kind: e.model_kind,
+                        form_race_id: e.form_race_id.clone(),
+                        form_body_plan_id: e.form_body_plan_id.clone(),
+                        active: e.active,
                     })
                     .collect(),
             }),
@@ -1443,7 +1723,7 @@ impl From<&ServerDataPayloadV1> for Payload {
             }
             // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD（守恒红线：只读事件字段）
             ServerDataPayloadV1::AnqiHud(s) => Payload::AnqiHud(bong::AnqiHud {
-                kind: s.kind.clone(),
+                kind: s.kind.as_str().to_string(),
                 echo_count: s.echo_count,
                 aim_progress: s.aim_progress,
                 charge_progress: s.charge_progress,
@@ -1967,6 +2247,7 @@ fn cast_outcome_to_proto(o: &super::combat_hud::CastOutcomeV1) -> i32 {
         CastOutcomeV1::RejectRealmTooLow => bong::CastOutcome::RejectRealmTooLow as i32,
         CastOutcomeV1::RejectNoWeapon => bong::CastOutcome::RejectNoWeapon as i32,
         CastOutcomeV1::RejectTechniqueInactive => bong::CastOutcome::RejectTechniqueInactive as i32,
+        CastOutcomeV1::RejectRaceMismatch => bong::CastOutcome::RejectRaceMismatch as i32,
     }
 }
 
@@ -1996,6 +2277,8 @@ fn quick_slot_config_to_proto(c: &super::combat_hud::QuickSlotConfigV1) -> bong:
             })
             .collect(),
         cooldown_until_ms: c.cooldown_until_ms.to_vec(),
+        ack_request_id: c.ack_request_id.clone(),
+        bind_accepted: c.bind_accepted,
     }
 }
 
@@ -3123,30 +3406,12 @@ fn recipe_unlocked_to_proto(r: &super::craft::RecipeUnlockedV1) -> bong::RecipeU
 // C2S: ClientRequestV1 → bong::client_request_envelope::Payload
 // ═══════════════════════════════════════════════════════════════
 
-fn meridian_id_to_proto(m: &crate::cultivation::components::MeridianId) -> i32 {
-    use crate::cultivation::components::MeridianId;
-    match m {
-        MeridianId::Lung => bong::MeridianId::Lung as i32,
-        MeridianId::LargeIntestine => bong::MeridianId::LargeIntestine as i32,
-        MeridianId::Stomach => bong::MeridianId::Stomach as i32,
-        MeridianId::Spleen => bong::MeridianId::Spleen as i32,
-        MeridianId::Heart => bong::MeridianId::Heart as i32,
-        MeridianId::SmallIntestine => bong::MeridianId::SmallIntestine as i32,
-        MeridianId::Bladder => bong::MeridianId::Bladder as i32,
-        MeridianId::Kidney => bong::MeridianId::Kidney as i32,
-        MeridianId::Pericardium => bong::MeridianId::Pericardium as i32,
-        MeridianId::TripleEnergizer => bong::MeridianId::TripleEnergizer as i32,
-        MeridianId::Gallbladder => bong::MeridianId::Gallbladder as i32,
-        MeridianId::Liver => bong::MeridianId::Liver as i32,
-        MeridianId::Ren => bong::MeridianId::Ren as i32,
-        MeridianId::Du => bong::MeridianId::Du as i32,
-        MeridianId::Chong => bong::MeridianId::Chong as i32,
-        MeridianId::Dai => bong::MeridianId::Dai as i32,
-        MeridianId::YinQiao => bong::MeridianId::YinQiao as i32,
-        MeridianId::YangQiao => bong::MeridianId::YangQiao as i32,
-        MeridianId::YinWei => bong::MeridianId::YinWei as i32,
-        MeridianId::YangWei => bong::MeridianId::YangWei as i32,
-    }
+/// plan-race-system-v1 P1c — `MeridianId` 闭合 enum → proto string channel id。
+/// C2S 三处 wire 字段（`SetMeridianTarget.meridian` / `ForgeRequestC2s.meridian` /
+/// `ApplyPill.meridian_id`）现直接携带 `MeridianChannelId`（本身就是 string），故
+/// 只需取其 `as_str()`——不再需要枚举 → proto i32 判别式映射。
+fn meridian_channel_to_proto(m: &crate::cultivation::components::MeridianChannelId) -> String {
+    m.as_str().to_string()
 }
 
 fn forge_axis_to_proto(a: &crate::cultivation::forging::ForgeAxis) -> i32 {
@@ -3299,13 +3564,15 @@ fn alchemy_intervention_to_proto(
     }
 }
 
-fn apply_pill_target_to_proto(t: &super::client_request::ApplyPillTargetV1) -> (i32, Option<i32>) {
+fn apply_pill_target_to_proto(
+    t: &super::client_request::ApplyPillTargetV1,
+) -> (i32, Option<String>) {
     use super::client_request::ApplyPillTargetV1;
     match t {
         ApplyPillTargetV1::SelfTarget => (bong::ApplyPillTargetKind::Self_ as i32, None),
         ApplyPillTargetV1::Meridian { meridian_id } => (
             bong::ApplyPillTargetKind::Meridian as i32,
-            Some(meridian_id_to_proto(meridian_id)),
+            Some(meridian_channel_to_proto(meridian_id)),
         ),
     }
 }
@@ -3340,7 +3607,7 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
         match req {
             ClientRequestV1::SetMeridianTarget { meridian, .. } => {
                 Payload::SetMeridianTarget(bong::SetMeridianTarget {
-                    meridian: meridian_id_to_proto(meridian),
+                    meridian: meridian_channel_to_proto(meridian),
                 })
             }
             ClientRequestV1::BreakthroughRequest { .. } => {
@@ -3368,7 +3635,7 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             }
             ClientRequestV1::ForgeRequest { meridian, axis, .. } => {
                 Payload::ForgeRequest(bong::ForgeRequestC2s {
-                    meridian: meridian_id_to_proto(meridian),
+                    meridian: meridian_channel_to_proto(meridian),
                     axis: forge_axis_to_proto(axis),
                 })
             }
@@ -3828,12 +4095,16 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             ClientRequestV1::UseQuickSlot { slot, .. } => {
                 Payload::UseQuickSlot(bong::UseQuickSlot { slot: *slot as u32 })
             }
-            ClientRequestV1::QuickSlotBind { slot, item_id, .. } => {
-                Payload::QuickSlotBind(bong::QuickSlotBind {
-                    slot: *slot as u32,
-                    item_id: item_id.clone(),
-                })
-            }
+            ClientRequestV1::QuickSlotBind {
+                slot,
+                item_id,
+                request_id,
+                ..
+            } => Payload::QuickSlotBind(bong::QuickSlotBind {
+                slot: *slot as u32,
+                item_id: item_id.clone(),
+                request_id: request_id.clone(),
+            }),
             ClientRequestV1::SkillBarCast { slot, target, .. } => {
                 Payload::SkillBarCast(bong::SkillBarCast {
                     slot: *slot as u32,
@@ -4099,6 +4370,7 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::server_data::AnqiHudKindV1;
     use prost::Message;
 
     /// S2C: encode -> decode roundtrip preserves payload variant.
@@ -4430,6 +4702,59 @@ mod tests {
         let decoded = bong::InventoryItemView::decode(bytes.as_slice())
             .expect("InventoryItemView proto decode 应成功");
         decoded.alchemy
+    }
+
+    fn roundtrip_freshness(
+        view: &super::super::inventory::InventoryItemViewV1,
+    ) -> Option<bong::InventoryFreshness> {
+        let proto = inventory_item_view_to_proto(view);
+        let bytes = proto.encode_to_vec();
+        let decoded = bong::InventoryItemView::decode(bytes.as_slice())
+            .expect("InventoryItemView proto decode 应成功");
+        decoded.freshness
+    }
+
+    #[test]
+    fn inventory_item_view_freshness_survives_proto_roundtrip_for_all_tracks() {
+        use crate::shelflife::{DecayProfileId, DecayTrack, Freshness};
+
+        let initial_qi = f32::from_bits(0x42c5_0001);
+        for (track, expected_track) in [
+            (DecayTrack::Decay, "Decay"),
+            (DecayTrack::Spoil, "Spoil"),
+            (DecayTrack::Age, "Age"),
+        ] {
+            let mut view = alchemy_view(None);
+            view.freshness = Some(Freshness {
+                created_at_tick: 123,
+                initial_qi,
+                track,
+                profile: DecayProfileId::new(format!("{}_profile", expected_track.to_lowercase())),
+                frozen_accumulated: 17,
+                frozen_since_tick: Some(140),
+            });
+
+            let freshness = roundtrip_freshness(&view)
+                .expect("freshness 必须过 InventoryItemView protobuf wire 存活");
+            assert_eq!(freshness.created_at_tick, 123);
+            assert_eq!(
+                freshness.initial_qi.to_bits(),
+                initial_qi.to_bits(),
+                "Freshness.initial_qi 的权威类型是 f32，protobuf float 必须逐 bit 保真"
+            );
+            assert_eq!(freshness.track, expected_track);
+            assert_eq!(
+                freshness.profile,
+                format!("{}_profile", expected_track.to_lowercase())
+            );
+            assert_eq!(freshness.frozen_accumulated, 17);
+            assert_eq!(freshness.frozen_since_tick, Some(140));
+        }
+    }
+
+    #[test]
+    fn inventory_item_view_without_freshness_keeps_proto_field_absent() {
+        assert!(roundtrip_freshness(&alchemy_view(None)).is_none());
     }
 
     #[test]
@@ -5112,7 +5437,7 @@ mod tests {
         c2s_encode_decode_roundtrip(
             super::super::client_request::ClientRequestV1::SetMeridianTarget {
                 v: 1,
-                meridian: crate::cultivation::components::MeridianId::Lung,
+                meridian: crate::cultivation::components::MeridianId::Lung.channel_id(),
             },
         );
     }
@@ -5266,7 +5591,7 @@ mod tests {
             v: 1,
             instance_id: 42,
             target: super::super::client_request::ApplyPillTargetV1::Meridian {
-                meridian_id: crate::cultivation::components::MeridianId::Heart,
+                meridian_id: crate::cultivation::components::MeridianId::Heart.channel_id(),
             },
         });
     }
@@ -5878,7 +6203,7 @@ mod tests {
 
     // ─── plan-test-coverage-guards-v1 P0：exhaustive proto encoding guard ────────
 
-    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (126 total).
+    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (127 total).
     ///
     /// **Why a list and not an exhaustive match?**
     /// The list itself cannot be made compile-time exhaustive — Rust cannot iterate enum variants.
@@ -6040,6 +6365,7 @@ mod tests {
             }),
             fix!(ServerDataPayloadV1::CultivationDetail {
                 realm: "Induce".to_string(),
+                channel_ids: vec!["lung".to_string(); 20],
                 opened: vec![false; 20],
                 flow_rate: vec![0.0; 20],
                 flow_capacity: vec![10.0; 20],
@@ -6056,6 +6382,12 @@ mod tests {
                 qi_color_hunyuan: false,
                 practice_weights: vec![],
                 target_meridian: None,
+                body_plan_id: "humanoid".to_string(),
+                race_id: String::new(),
+                form_race_id: String::new(),
+                form_body_plan_id: String::new(),
+                intrinsic_is_humanoid: false,
+                form_is_humanoid: false,
             }),
             fix!(ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
                 observer: "offline:Kiz".to_string(),
@@ -6102,6 +6434,76 @@ mod tests {
                     bone_coins: 12,
                 }
             ])),
+            // plan-race-system-v1 P2a：动态部位 / 经脉面板布局元数据。
+            fix!(ServerDataPayloadV1::BodyPlanLayout(
+                super::super::server_data::BodyPlanLayoutV1 {
+                    body_plan_id: "humanoid".to_string(),
+                    silhouette: vec![super::super::server_data::BodyPlanSilhouettePartV1 {
+                        part_id: "chest".to_string(),
+                        polygon: vec![
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.37, y: 0.14 },
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.63, y: 0.14 },
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.63, y: 0.28 },
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.37, y: 0.28 },
+                        ],
+                    }],
+                    anchors: vec![super::super::server_data::BodyPlanPartAnchorV1 {
+                        part_id: "chest".to_string(),
+                        point: super::super::server_data::BodyPlanPoint2V1 { x: 0.5, y: 0.2 },
+                    }],
+                    meridian_paths: vec![super::super::server_data::BodyPlanMeridianPathV1 {
+                        channel_id: "ren".to_string(),
+                        points: vec![
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.49, y: 0.42 },
+                            super::super::server_data::BodyPlanPoint2V1 { x: 0.49, y: 0.13 },
+                        ],
+                    }],
+                    part_display_map: vec![
+                        super::super::server_data::BodyPlanPartDisplayMappingV1 {
+                            server_part_id: "head".to_string(),
+                            display_segment_id: "head".to_string(),
+                        }
+                    ],
+                    hud_anchors: vec![super::super::server_data::BodyPlanPartAnchorV1 {
+                        part_id: "chest".to_string(),
+                        point: super::super::server_data::BodyPlanPoint2V1 { x: 0.5, y: 0.19 },
+                    }],
+                }
+            )),
+            // plan-race-system-v1 P3c：种族门元数据表（含三档 gate pin）。
+            fix!(ServerDataPayloadV1::RaceGateMeta(
+                super::super::server_data::RaceGateMetaV1 {
+                    item_wearer_race: vec![super::super::server_data::RaceGateMetaEntryV1 {
+                        id: "armor_whale_plate".to_string(),
+                        gate: super::super::server_data::RaceGateWireV1 {
+                            kind: "species".to_string(),
+                            species: vec!["whale".to_string()],
+                        },
+                    }],
+                    technique_required_race: vec![super::super::server_data::RaceGateMetaEntryV1 {
+                        id: "sword.cleave".to_string(),
+                        gate: super::super::server_data::RaceGateWireV1 {
+                            kind: "humanoid".to_string(),
+                            species: vec![],
+                        },
+                    },],
+                }
+            )),
+            // plan-race-system-v1 P4：易形状态快照（此 fixture 列表每变体恰一条，见
+            // s2c_fixture_count_matches_variant_count 的 1:1 约束；delta/active=false 的
+            // 专项 round-trip 见 morph_state_delta_release_proto_round_trips）。
+            fix!(ServerDataPayloadV1::MorphState(
+                super::super::server_data::MorphStateV1 {
+                    mode: "full".to_string(),
+                    entries: vec![super::super::server_data::MorphStateEntryV1 {
+                        entity_id: 42,
+                        model_kind: 1,
+                        form_race_id: "whale".to_string(),
+                        form_body_plan_id: "whale".to_string(),
+                        active: true,
+                    }],
+                }
+            )),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id: "ses:1".to_string(),
                 target_id: "entity:1".to_string(),
@@ -6241,6 +6643,8 @@ mod tests {
             fix!(ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
                 slots: vec![None; 9],
                 cooldown_until_ms: vec![0; 9],
+                ack_request_id: None,
+                bind_accepted: None,
             })),
             fix!(ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
                 slots: vec![None; 9],
@@ -6906,11 +7310,11 @@ mod tests {
                 loser_group: None,
             })),
             fix!(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-                kind: "echo".to_string(),
+                kind: AnqiHudKindV1::Echo,
                 echo_count: 0,
                 aim_progress: 0.0,
                 charge_progress: 0.0,
-                abrasion_container: "none".to_string(),
+                abrasion_container: String::new(),
                 abrasion_qi_payload: 0.0,
                 tick: 1,
             })),
@@ -7031,7 +7435,7 @@ mod tests {
         ]
     }
 
-    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (126 total).
+    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (127 total).
     ///
     /// This cross-checks the fixture count against `ServerDataType` discriminant count derived
     /// from `payload_type()`. If a new variant is added and a fixture is not added to
@@ -7039,6 +7443,40 @@ mod tests {
     ///
     /// NOTE: This test uses the `ServerDataType` enum variant count as the ground truth.
     /// That count is maintained by `payload_type()` which is also an exhaustive match.
+    /// plan-race-system-v1 P4 —— delta（`active=false`）易形解除快照的专项 proto 往返，
+    /// 补 `s2c_all_fixtures` 每变体 1:1 约束下无法放第二条 MorphState fixture 的覆盖。
+    #[test]
+    fn morph_state_delta_release_proto_round_trips() {
+        use super::super::server_data::{
+            MorphStateEntryV1, MorphStateV1, ServerDataPayloadV1, ServerDataV1,
+        };
+        use prost::Message;
+
+        let payload = ServerDataV1::new(ServerDataPayloadV1::MorphState(MorphStateV1 {
+            mode: "delta".to_string(),
+            entries: vec![MorphStateEntryV1 {
+                entity_id: 42,
+                model_kind: 0,
+                form_race_id: String::new(),
+                form_body_plan_id: String::new(),
+                active: false,
+            }],
+        }));
+        let bytes = payload.to_proto_bytes();
+        assert!(!bytes.is_empty());
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("delta morph_state envelope must decode");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::MorphState(state)) => {
+                assert_eq!(state.mode, "delta");
+                assert_eq!(state.entries.len(), 1);
+                assert_eq!(state.entries[0].entity_id, 42);
+                assert!(!state.entries[0].active, "解除态必须 active=false");
+            }
+            other => panic!("expected MorphState payload, got {other:?}"),
+        }
+    }
+
     #[test]
     fn s2c_fixture_count_matches_variant_count() {
         use super::super::server_data::ServerDataType;
@@ -7068,6 +7506,8 @@ mod tests {
             ServerDataType::InventoryEvent,
             ServerDataType::DroppedLootSync,
             ServerDataType::RemainsSync,
+            ServerDataType::BodyPlanLayout,
+            ServerDataType::RaceGateMeta,
             ServerDataType::BotanyHarvestProgress,
             ServerDataType::BotanyPlantV2RenderProfiles,
             ServerDataType::MiningProgress,
@@ -7184,6 +7624,7 @@ mod tests {
             ServerDataType::TutorialCoffinPos,
             ServerDataType::InventoryMoveRejected,
             ServerDataType::ScrollOpen,
+            ServerDataType::MorphState,
         ];
 
         let total_variants = all_types.len();
@@ -7223,9 +7664,9 @@ mod tests {
         );
     }
 
-    /// Exhaustive proto encoding guard for all 127 `ServerDataPayloadV1` variants.
+    /// Exhaustive proto encoding guard for all 128 `ServerDataPayloadV1` variants.
     ///
-    /// For each of the 124 proto-encodable variants (is_json_bypass=false):
+    /// For each of the 125 proto-encodable variants (is_json_bypass=false):
     ///   - Calls `ServerDataV1::new(variant).to_proto_bytes()`.
     ///   - Asserts the bytes are non-empty (proto envelope was built).
     ///   - Decodes and asserts the envelope contains a payload (proto arm exists in From impl).
@@ -7291,8 +7732,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 127,
-            "Expected 127 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 130,
+            "Expected 130 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(
@@ -7344,7 +7785,7 @@ mod tests {
         vec![
             build(ClientRequestV1::SetMeridianTarget {
                 v: 1,
-                meridian: MeridianId::Lung,
+                meridian: MeridianId::Lung.channel_id(),
             }),
             build(ClientRequestV1::BreakthroughRequest { v: 1 }),
             build(ClientRequestV1::StartDuXu { v: 1 }),
@@ -7370,7 +7811,7 @@ mod tests {
             }),
             build(ClientRequestV1::ForgeRequest {
                 v: 1,
-                meridian: MeridianId::Lung,
+                meridian: MeridianId::Lung.channel_id(),
                 axis: ForgeAxis::Rate,
             }),
             build(ClientRequestV1::InsightDecision {
@@ -7682,6 +8123,7 @@ mod tests {
                 v: 1,
                 slot: 0,
                 item_id: Some("herb_a".to_string()),
+                request_id: "quick-bind-1".to_string(),
             }),
             build(ClientRequestV1::SkillBarCast {
                 v: 1,

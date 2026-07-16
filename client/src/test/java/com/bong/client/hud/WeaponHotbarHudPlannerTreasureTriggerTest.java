@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.EquippedTreasure;
+import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.TreasureEquippedStore;
 import com.bong.client.combat.TreasurePanelSync;
 import com.bong.client.combat.WeaponEquippedStore;
@@ -89,5 +90,100 @@ class WeaponHotbarHudPlannerTreasureTriggerTest {
     void triggerSlotKeyFormatMatchesServerConvention() {
         assertEquals("trigger_0", TreasurePanelSync.triggerSlotKey(0));
         assertEquals("trigger_3", TreasurePanelSync.triggerSlotKey(3));
+    }
+
+    @Test
+    void mainHandToolDoesNotRenderCombatWeaponSlot() {
+        WeaponEquippedStore.putOrClear(
+            "main_hand",
+            new EquippedWeapon("main_hand", 11L, "tool_mining_pickaxe", "tool", 80.0f, 100.0f, 0)
+        );
+
+        List<HudRenderCommand> commands = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
+
+        assertTrue(commands.isEmpty(),
+            "凡器只服务手持模型；主手只有 tool 时战斗 HUD 不应生成紫框、? glyph 或耐久条");
+    }
+
+    @Test
+    void offHandToolDoesNotHideTriggerTreasure() {
+        WeaponEquippedStore.putOrClear(
+            "off_hand",
+            new EquippedWeapon("off_hand", 12L, "tool_hoe", "tool", 60.0f, 100.0f, 0)
+        );
+        TreasureEquippedStore.putOrClear(
+            TreasurePanelSync.triggerSlotKey(0),
+            new EquippedTreasure(TreasurePanelSync.triggerSlotKey(0), 7L, "spirit_treasure_jizhaojing", "寂照镜")
+        );
+
+        List<HudRenderCommand> commands = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
+
+        assertTrue(commands.stream().anyMatch(command -> command.isText() && "宝".equals(command.text())),
+            "副手 tool 不应占用战斗 HUD 槽，trigger 法宝必须继续显示");
+        assertFalse(commands.stream().anyMatch(command -> command.isText() && "?".equals(command.text())),
+            "副手 tool 不应被当成未知战斗武器渲染为 ? glyph");
+    }
+
+    @Test
+    void everyCombatWeaponKindStillRendersItsGlyph() {
+        String[][] kindsAndGlyphs = {
+            {"sword", "剑"}, {"saber", "刀"}, {"staff", "杖"}, {"fist", "拳"},
+            {"spear", "枪"}, {"dagger", "匕"}, {"bow", "弓"}
+        };
+
+        for (String[] kindAndGlyph : kindsAndGlyphs) {
+            WeaponEquippedStore.resetForTests();
+            WeaponEquippedStore.putOrClear(
+                "main_hand",
+                new EquippedWeapon("main_hand", 21L, "weapon_" + kindAndGlyph[0], kindAndGlyph[0], 100.0f, 100.0f, 0)
+            );
+
+            List<HudRenderCommand> commands = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
+
+            assertTrue(commands.stream().anyMatch(command -> command.isText() && kindAndGlyph[1].equals(command.text())),
+                "战斗 weapon_kind=" + kindAndGlyph[0] + " 必须继续渲染 glyph=" + kindAndGlyph[1]);
+        }
+    }
+
+    @Test
+    void representativeToolTemplatesStayHiddenInBothHands() {
+        String[] toolTemplates = {"tool_mining_pickaxe", "tool_woodcutting_axe", "tool_shovel", "tool_hoe"};
+
+        for (String templateId : toolTemplates) {
+            for (String slot : List.of("main_hand", "off_hand")) {
+                WeaponEquippedStore.resetForTests();
+                WeaponEquippedStore.putOrClear(
+                    slot,
+                    new EquippedWeapon(slot, 31L, templateId, "tool", 50.0f, 100.0f, 0)
+                );
+
+                List<HudRenderCommand> commands = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
+
+                assertTrue(commands.isEmpty(),
+                    templateId + " 装入 " + slot + " 时只应保留手持模型，不得生成战斗 HUD 命令");
+            }
+        }
+    }
+
+    @Test
+    void weaponToToolToUnequippedTransitionClearsCombatHudImmediately() {
+        WeaponEquippedStore.putOrClear(
+            "main_hand",
+            new EquippedWeapon("main_hand", 41L, "iron_sword", "sword", 100.0f, 100.0f, 0)
+        );
+        assertTrue(WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H).stream()
+                .anyMatch(command -> command.isText() && "剑".equals(command.text())),
+            "前置战斗武器必须可见，测试才覆盖真实切换状态");
+
+        WeaponEquippedStore.putOrClear(
+            "main_hand",
+            new EquippedWeapon("main_hand", 42L, "tool_mining_pickaxe", "tool", 100.0f, 100.0f, 0)
+        );
+        assertTrue(WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H).isEmpty(),
+            "切换到 tool 的首帧就必须移除旧武器 glyph、边框和耐久条");
+
+        WeaponEquippedStore.putOrClear("main_hand", null);
+        assertTrue(WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H).isEmpty(),
+            "卸下 tool 后必须保持战斗 HUD 为空，不得复活更早的武器快照");
     }
 }

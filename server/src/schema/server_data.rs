@@ -1,4 +1,4 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::agent_ui::{AgentUiClosePayloadV1, AgentUiRequestPayloadV1};
@@ -48,6 +48,9 @@ use crate::skill::config::SkillConfigSnapshot;
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
+pub(crate) const ANQI_HUD_ECHO_COUNT_MAX: u32 = i32::MAX as u32;
+pub(crate) const ANQI_HUD_QI_PAYLOAD_MAX: f64 = 3.4028234e38;
+pub(crate) const ANQI_HUD_TICK_MAX: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -153,6 +156,9 @@ pub enum ServerDataType {
     InventoryEvent,
     DroppedLootSync,
     RemainsSync,
+    BodyPlanLayout,
+    RaceGateMeta,
+    MorphState,
     BotanyHarvestProgress,
     BotanyPlantV2RenderProfiles,
     MiningProgress,
@@ -341,11 +347,15 @@ pub enum ServerDataPayloadV1 {
         ui: Option<String>,
         xml: String,
     },
-    /// 经脉详细快照。20 条经脉以 SoA(parallel arrays) 布局，顺序与 `MeridianId` 判别式一致
-    /// (Lung=0..Liver=11, Ren=12..YangWei=19)。保持 ≤ MAX_PAYLOAD_BYTES 预算。
+    /// 经脉详细快照。经脉以 SoA(parallel arrays) 布局，长度随实体 `MeridianProfile`
+    /// 变化（plan-race-system-v1 P1c——不再假设恰好 20 条 TCM 经脉）；`channel_ids[i]`
+    /// 是第 i 条经脉的 snake_case channel id，与 `opened`/`flow_rate`/... 等数组下标
+    /// 一一对应。保持 ≤ MAX_PAYLOAD_BYTES 预算。
     CultivationDetail {
         /// 境界字面量（Awaken/Induce/Condense/Solidify/Spirit/Void，与 `Realm` 判别式对齐）。
         realm: String,
+        /// 每条经脉的 channel id（snake_case），与其余并行数组同序、同长。
+        channel_ids: Vec<String>,
         opened: Vec<bool>,
         flow_rate: Vec<f64>,
         flow_capacity: Vec<f64>,
@@ -366,9 +376,26 @@ pub enum ServerDataPayloadV1 {
         qi_color_chaotic: bool,
         qi_color_hunyuan: bool,
         practice_weights: Vec<PracticeWeightV1>,
-        /// 当前冲脉目标的数组下标（0..19，与 opened/open_progress 等并行数组一致）。
+        /// 当前冲脉目标的 channel id（snake_case，与 `channel_ids` 同形态）。
         /// None 表示未设定目标。
-        target_meridian: Option<u8>,
+        target_meridian: Option<String>,
+        /// plan-race-system-v1 P2a — 实体本体（`BodyPlanPurpose::Intrinsic`）的
+        /// `body_plan_id`，供 client 按 id 寻址 `BodyPlanLayout` 缓存。
+        body_plan_id: String,
+        /// plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：
+        /// client gate 判定（装备置灰等）的权威真源，不靠猜 / 不靠 `BodyPlanLayoutV1`
+        /// 的 `is_humanoid` 元数据（那只供渲染）。未易形（P4 `MorphState` 落地前恒定，
+        /// 见 `body_plan::resolve` 模块文档）时 `form_*` 三字段 = 对应本体字段。
+        /// 本体种族 id。
+        race_id: String,
+        /// 当前形态种族 id（未易形时 = `race_id`）。
+        form_race_id: String,
+        /// 当前形态 body plan id（未易形时 = `body_plan_id`）。
+        form_body_plan_id: String,
+        /// 本体是否人形。
+        intrinsic_is_humanoid: bool,
+        /// 当前形态是否人形（未易形时 = `intrinsic_is_humanoid`）。
+        form_is_humanoid: bool,
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
@@ -377,6 +404,15 @@ pub enum ServerDataPayloadV1 {
     /// plan-remains-suite P0 — 世界内遗骸容器快照（join 时 + 内容变化时广播，照
     /// `DroppedLootSync` 的内容 diff 节流套路，见 `network::remains_sync_emit`）。
     RemainsSync(Vec<RemainsEntryV1>),
+    /// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据（见
+    /// `BodyPlanLayoutV1` 文档）。
+    BodyPlanLayout(BodyPlanLayoutV1),
+    /// plan-race-system-v1 P3c — 种族门元数据表（item wearer_race + technique
+    /// required_race），join 首帧一次性下发，client 缓存后离线判置灰（见
+    /// `RaceGateMetaV1` 文档）。
+    RaceGateMeta(RaceGateMetaV1),
+    /// plan-race-system-v1 P4 —— 易形状态快照（见 `MorphStateV1` 文档）。
+    MorphState(MorphStateV1),
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -769,19 +805,318 @@ pub struct FactionWarStateV1 {
     pub loser_group: Option<u16>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnqiHudKindV1 {
+    Echo,
+    Aim,
+    Charge,
+    Abrasion,
+    Multishot,
+}
+
+impl AnqiHudKindV1 {
+    pub const ALL: [Self; 5] = [
+        Self::Echo,
+        Self::Aim,
+        Self::Charge,
+        Self::Abrasion,
+        Self::Multishot,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Echo => "echo",
+            Self::Aim => "aim",
+            Self::Charge => "charge",
+            Self::Abrasion => "abrasion",
+            Self::Multishot => "multishot",
+        }
+    }
+
+    fn from_wire_str(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    }
+}
+
+impl Serialize for AnqiHudKindV1 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AnqiHudKindV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_wire_str(&value)
+            .ok_or_else(|| D::Error::custom(format!("unknown anqi_hud kind `{value}`")))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AnqiHudBoundedIntegerVisitor {
+    field: &'static str,
+    maximum: u64,
+}
+
+impl AnqiHudBoundedIntegerVisitor {
+    fn validate<E>(self, value: u64) -> Result<u64, E>
+    where
+        E: serde::de::Error,
+    {
+        if value <= self.maximum {
+            Ok(value)
+        } else {
+            Err(E::custom(format!(
+                "anqi_hud {} must be <= {}, got {value}",
+                self.field, self.maximum
+            )))
+        }
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for AnqiHudBoundedIntegerVisitor {
+    type Value = u64;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "a non-negative integer no greater than {} for anqi_hud {}",
+            self.maximum, self.field
+        )
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.validate(value)
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let value = u64::try_from(value).map_err(|_| {
+            E::custom(format!(
+                "anqi_hud {} must be non-negative, got {value}",
+                self.field
+            ))
+        })?;
+        self.validate(value)
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > self.maximum as f64
+        {
+            return Err(E::custom(format!(
+                "anqi_hud {} must be an integral number in 0..={}, got {value}",
+                self.field, self.maximum
+            )));
+        }
+        Ok(value as u64)
+    }
+}
+
+fn deserialize_anqi_hud_bounded_integer<'de, D>(
+    deserializer: D,
+    field: &'static str,
+    maximum: u64,
+) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_any(AnqiHudBoundedIntegerVisitor { field, maximum })
+}
+
+fn validate_anqi_hud_echo_count(value: u32) -> Result<(), String> {
+    if value <= ANQI_HUD_ECHO_COUNT_MAX {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud echo_count must be <= {ANQI_HUD_ECHO_COUNT_MAX}, got {value}"
+        ))
+    }
+}
+
+fn serialize_anqi_hud_echo_count<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_echo_count(*value).map_err(S::Error::custom)?;
+    serializer.serialize_u32(*value)
+}
+
+fn deserialize_anqi_hud_echo_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_anqi_hud_bounded_integer(
+        deserializer,
+        "echo_count",
+        u64::from(ANQI_HUD_ECHO_COUNT_MAX),
+    )?;
+    u32::try_from(value).map_err(D::Error::custom)
+}
+
+fn validate_anqi_hud_unit_interval(value: f64) -> Result<(), String> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud progress must be finite in 0..=1, got {value}"
+        ))
+    }
+}
+
+fn validate_anqi_hud_container(value: &str) -> Result<(), String> {
+    let is_known = value.is_empty()
+        || [
+            crate::qi_physics::AnqiContainerKind::HandSlot,
+            crate::qi_physics::AnqiContainerKind::Quiver,
+            crate::qi_physics::AnqiContainerKind::PocketPouch,
+            crate::qi_physics::AnqiContainerKind::Fenglinghe,
+        ]
+        .into_iter()
+        .any(|container| container.as_wire_str() == value);
+    if is_known {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud abrasion_container must be empty or a canonical container wire tag, got `{value}`"
+        ))
+    }
+}
+
+fn validate_anqi_hud_qi_payload(value: f64) -> Result<(), String> {
+    if value.is_finite() && (0.0..=ANQI_HUD_QI_PAYLOAD_MAX).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud abrasion_qi_payload must be finite in 0..={ANQI_HUD_QI_PAYLOAD_MAX}, got {value}"
+        ))
+    }
+}
+
+fn validate_anqi_hud_tick(value: u64) -> Result<(), String> {
+    if value <= ANQI_HUD_TICK_MAX {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud tick must be <= {ANQI_HUD_TICK_MAX}, got {value}"
+        ))
+    }
+}
+
+fn serialize_anqi_hud_unit_interval<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_unit_interval(*value).map_err(S::Error::custom)?;
+    serializer.serialize_f64(*value)
+}
+
+fn deserialize_anqi_hud_unit_interval<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    validate_anqi_hud_unit_interval(value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_container<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_container(value).map_err(S::Error::custom)?;
+    serializer.serialize_str(value)
+}
+
+fn deserialize_anqi_hud_container<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    validate_anqi_hud_container(&value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_qi_payload<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_qi_payload(*value).map_err(S::Error::custom)?;
+    serializer.serialize_f64(*value)
+}
+
+fn deserialize_anqi_hud_qi_payload<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    validate_anqi_hud_qi_payload(value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_tick<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_tick(*value).map_err(S::Error::custom)?;
+    serializer.serialize_u64(*value)
+}
+
+fn deserialize_anqi_hud_tick<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_anqi_hud_bounded_integer(deserializer, "tick", ANQI_HUD_TICK_MAX)
+}
+
 /// plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD 状态推送（server → client）。
-///
-/// `kind` 取值："echo" | "aim" | "charge" | "abrasion"
 /// 守恒红线：全部字段只读自 ECS Event，不重算真元，不扣 qi。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnqiHudV1 {
-    pub kind: String,
+    pub kind: AnqiHudKindV1,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_echo_count",
+        deserialize_with = "deserialize_anqi_hud_echo_count"
+    )]
     pub echo_count: u32,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_unit_interval",
+        deserialize_with = "deserialize_anqi_hud_unit_interval"
+    )]
     pub aim_progress: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_unit_interval",
+        deserialize_with = "deserialize_anqi_hud_unit_interval"
+    )]
     pub charge_progress: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_container",
+        deserialize_with = "deserialize_anqi_hud_container"
+    )]
     pub abrasion_container: String,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_qi_payload",
+        deserialize_with = "deserialize_anqi_hud_qi_payload"
+    )]
     pub abrasion_qi_payload: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_tick",
+        deserialize_with = "deserialize_anqi_hud_tick"
+    )]
     pub tick: u64,
 }
 
@@ -1257,6 +1592,8 @@ enum ServerDataPayloadWireV1 {
     },
     CultivationDetail {
         realm: String,
+        #[serde(default)]
+        channel_ids: Vec<String>,
         opened: Vec<bool>,
         flow_rate: Vec<f64>,
         flow_capacity: Vec<f64>,
@@ -1281,7 +1618,21 @@ enum ServerDataPayloadWireV1 {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         practice_weights: Vec<PracticeWeightV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        target_meridian: Option<u8>,
+        target_meridian: Option<String>,
+        #[serde(default)]
+        body_plan_id: String,
+        // plan-race-system-v1 P3b — 身份快照五字段（见 `ServerDataPayloadV1::CultivationDetail`
+        // 同名字段文档）；`#[serde(default)]` 保证老 sample/客户端零改动继续过验。
+        #[serde(default)]
+        race_id: String,
+        #[serde(default)]
+        form_race_id: String,
+        #[serde(default)]
+        form_body_plan_id: String,
+        #[serde(default)]
+        intrinsic_is_humanoid: bool,
+        #[serde(default)]
+        form_is_humanoid: bool,
     },
     QiColorObserved {
         #[serde(flatten)]
@@ -1300,6 +1651,18 @@ enum ServerDataPayloadWireV1 {
     },
     RemainsSync {
         remains: Vec<RemainsEntryV1>,
+    },
+    BodyPlanLayout {
+        #[serde(flatten)]
+        layout: BodyPlanLayoutV1,
+    },
+    RaceGateMeta {
+        #[serde(flatten)]
+        meta: RaceGateMetaV1,
+    },
+    MorphState {
+        #[serde(flatten)]
+        state: MorphStateV1,
     },
     BotanyHarvestProgress {
         session_id: String,
@@ -1920,6 +2283,214 @@ pub struct RemainsEntryV1 {
     pub bone_coins: u64,
 }
 
+/// plan-race-system-v1 P3a — `RaceGate` 的 wire 形状（与 proto `bong.RaceGate` /
+/// TS `RaceGateV1` 精确对应）：扁平结构，`kind` 恒为必填字符串标签，`species` 恒为
+/// 必填数组（`kind != "species"` 时恒为空，而非省略字段）。
+///
+/// 与 `body_plan::types::RaceGateOwned`（内部标签枚举，`Any`/`Humanoid` 变体序列化
+/// 时**不**携带 `species` 字段）刻意区分为两份形状——`RaceGateOwned` 服务
+/// `ItemTemplate` TOML 等 Rust 内部消费场景的人体工学；本类型服务需要与
+/// proto flat message 字段级 1:1 对应的 wire 场景（prost message 恒有全部字段，
+/// 无法表达"某变体缺某字段"）。两者互转见
+/// `proto_convert::{race_gate_owned_to_proto, race_gate_owned_from_proto}`
+/// （直接对接 prost `bong::RaceGate`，本类型只用于 JSON sample pin 测试 +
+/// 未来挂载 payload 字段时的手写镜像）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateWireV1 {
+    pub kind: String,
+    pub species: Vec<String>,
+}
+
+/// 未知 `kind` 解码错误——fail-closed，调用方必须拒绝而非兜底 `Any`（决议 §8.1 #5/#6）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaceGateWireUnknownKind(pub String);
+
+impl std::fmt::Display for RaceGateWireUnknownKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown RaceGate wire kind {:?} — refusing to decode",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for RaceGateWireUnknownKind {}
+
+impl RaceGateWireV1 {
+    pub fn from_owned(gate: &crate::body_plan::RaceGateOwned) -> Self {
+        use crate::body_plan::RaceGateOwned;
+        match gate {
+            RaceGateOwned::Any => RaceGateWireV1 {
+                kind: "any".to_string(),
+                species: Vec::new(),
+            },
+            RaceGateOwned::Humanoid => RaceGateWireV1 {
+                kind: "humanoid".to_string(),
+                species: Vec::new(),
+            },
+            RaceGateOwned::Species { species } => RaceGateWireV1 {
+                kind: "species".to_string(),
+                species: species.iter().map(|id| id.as_str().to_string()).collect(),
+            },
+        }
+    }
+
+    pub fn try_into_owned(
+        &self,
+    ) -> Result<crate::body_plan::RaceGateOwned, RaceGateWireUnknownKind> {
+        use crate::body_plan::{RaceGateOwned, RaceId};
+        match self.kind.as_str() {
+            "any" => Ok(RaceGateOwned::Any),
+            "humanoid" => Ok(RaceGateOwned::Humanoid),
+            "species" => Ok(RaceGateOwned::Species {
+                species: self
+                    .species
+                    .iter()
+                    .map(|s| RaceId::new(s.clone()))
+                    .collect(),
+            }),
+            other => Err(RaceGateWireUnknownKind(other.to_string())),
+        }
+    }
+}
+
+/// plan-race-system-v1 P3c — 种族门元数据表的单条目：`id`（item template_id 或
+/// technique skill_id）→ `gate`（该条目的种族门）。恒只装非 `Any` 条目
+/// （`Any` 是默认，client 表里查不到即恒放行）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateMetaEntryV1 {
+    pub id: String,
+    pub gate: RaceGateWireV1,
+}
+
+/// plan-race-system-v1 P3c — 静态种族门元数据表（`ServerDataPayloadV1::RaceGateMeta`）。
+///
+/// 两张表都只装 **非 `Any`** 条目（`Any` 是默认，client 缺省即 `Any`，省流量）：
+/// - `item_wearer_race`：item template_id → `wearer_race`，**装备门**判定域用
+///   **当前形态身份**（`form_race_id` / `form_is_humanoid`）。
+/// - `technique_required_race`：technique skill_id → `required_race`，**功法门**
+///   （习得 / 施放）判定域用**本体身份**（`race_id` / `intrinsic_is_humanoid`）。
+///
+/// 两域不同轴（决议 §8.1 #5/#6）：装备看形态、功法看本体。join 首帧一次性下发
+/// （`network::cultivation_detail_emit::emit_race_gate_meta_payloads`，`LastSentRaceGateMeta`
+/// 防重发），内容静态（与玩家身份无关），client 换身份时不需重发——client 用
+/// `PlayerRaceIdentityStore` 的最新身份对同一张表重判即可。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateMetaV1 {
+    #[serde(default)]
+    pub item_wearer_race: Vec<RaceGateMetaEntryV1>,
+    #[serde(default)]
+    pub technique_required_race: Vec<RaceGateMetaEntryV1>,
+}
+
+/// plan-race-system-v1 P4 —— 单个实体的易形状态快照（proto field 142 `morph_state`）。
+///
+/// `active = false` 专用于 `mode = "delta"` 广播——实体解除易形时下发一条
+/// `active=false` 的 entry，client 收到即从本地易形态缓存里删除该 entity_id（不携带
+/// 完整字段语义，`model_kind`/`form_race_id`/`form_body_plan_id` 在 `active=false`
+/// 时恒为空/0，仅 `entity_id`/`active` 有意义）。`mode = "full"`（join / 周期 sync）时
+/// 只包含当前处于 `MorphState` 的实体，`active` 恒为 `true`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MorphStateEntryV1 {
+    /// Valence entity id（client 通过 MC entity id 定位实体，与 `daozhan_disguise` 同惯例）。
+    pub entity_id: i32,
+    pub model_kind: u32,
+    pub form_race_id: String,
+    pub form_body_plan_id: String,
+    pub active: bool,
+}
+
+/// plan-race-system-v1 P4 —— `ServerDataPayloadV1::MorphState` 载荷。
+///
+/// `mode`："full"（join 首帧全量替换 + 周期 sync）| "delta"（易形解除瞬间半径广播，
+/// 只携带发生变化的 entity，`active=false` 表示删除）。本 PR 只保证 payload 能被
+/// `proto_min` bot 解码（PR-5b 负责 client 渲染消费）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MorphStateV1 {
+    // 注：本结构体刻意不携带独立 `v` 字段——`v` 由外层 `ServerDataV1.v`（信封版本号）
+    // 提供，`#[serde(flatten)]` 进 `ServerDataPayloadWireV1::MorphState` 时若本结构体
+    // 也声明 `v` 会与外层字段名撞车（`RaceGateMetaV1` 同一惯例，同理无 `v` 字段）。
+    // proto `bong::MorphState.v` 字段是 proto message 自身的 schema 版本号，由
+    // `proto_convert::server_data_to_proto_payload` 直接常量填 `1`，不经由本结构体。
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub entries: Vec<MorphStateEntryV1>,
+}
+
+/// plan-race-system-v1 P2a — `BodyPlanLayoutV1` 的坐标点，归一化到 `[0,1]`（原点 =
+/// 布局画布左上角）。同一类型既用作磁盘 `layouts/*.json` 的数据源，也直接是
+/// wire payload 的字段（无独立域模型/wire 模型两份拷贝，仿 `RemainsEntryV1` 先例）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPoint2V1 {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// 单个部位的剪影多边形（顶点归一化坐标，按声明顺序首尾相连）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanSilhouettePartV1 {
+    pub part_id: String,
+    pub polygon: Vec<BodyPlanPoint2V1>,
+}
+
+/// 部位锚点（伤口红点位 / 状态图标定位点）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPartAnchorV1 {
+    pub part_id: String,
+    pub point: BodyPlanPoint2V1,
+}
+
+/// 单条经脉的多段折线路径（替代 client `BodyInspectComponent.MERIDIAN_PATHS` 硬编码）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanMeridianPathV1 {
+    pub channel_id: String,
+    pub points: Vec<BodyPlanPoint2V1>,
+}
+
+/// server 部位 id → client 展示段 id 映射（替代
+/// `network::wounds_snapshot_emit::body_part_wire` 的硬编码 match）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPartDisplayMappingV1 {
+    pub server_part_id: String,
+    pub display_segment_id: String,
+}
+
+/// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据。以 `body_plan_id` 为
+/// 主键，随 `cultivation_detail` 首帧下发；实体 body_plan 变化（真实换 race）时重发，
+/// 易形不触发（P4 语义）。
+///
+/// `hud_anchors`（P2 major 修复）—— **可选的第二套锚点组**，专供 mini HUD
+/// （`MiniBodyHudPlanner`，30×75 粗网格，宽高比 0.40）使用，与 `anchors`
+/// （`BodyInspectComponent`，168×236 精细画布，宽高比 0.71）分离：两个消费者画布
+/// 比例不同，均匀缩放同一套 `anchors` 会在 mini HUD 上产生 4-6px 像素漂移，违反 plan
+/// 「首版渲染与现状像素级一致」红线。humanoid.json 把 `hud_anchors` 原样抽取自
+/// `MiniBodyHudPlanner` 改造前的硬编码表（逐值相等，见 `layout.rs` 底部 pin 测试）；
+/// 未来非人 plan 可不配（留空 `Vec::new()`），此时 client 回退到用 `anchors` 缩放推导
+/// （`locatePart` 换轨逻辑，非人形没有另一份权威像素表可抽取，缩放推导是唯一选择）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanLayoutV1 {
+    pub body_plan_id: String,
+    pub silhouette: Vec<BodyPlanSilhouettePartV1>,
+    pub anchors: Vec<BodyPlanPartAnchorV1>,
+    pub meridian_paths: Vec<BodyPlanMeridianPathV1>,
+    pub part_display_map: Vec<BodyPlanPartDisplayMappingV1>,
+    #[serde(default)]
+    pub hud_anchors: Vec<BodyPlanPartAnchorV1>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RiftPortalKindV1 {
@@ -2266,6 +2837,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2282,8 +2854,15 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => Ok(Self::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2300,6 +2879,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             }),
             ServerDataPayloadWireV1::QiColorObserved { observed } => {
                 Ok(Self::QiColorObserved(observed))
@@ -2312,6 +2897,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
             ServerDataPayloadWireV1::RemainsSync { remains } => Ok(Self::RemainsSync(remains)),
+            ServerDataPayloadWireV1::BodyPlanLayout { layout } => Ok(Self::BodyPlanLayout(layout)),
+            ServerDataPayloadWireV1::RaceGateMeta { meta } => Ok(Self::RaceGateMeta(meta)),
+            ServerDataPayloadWireV1::MorphState { state } => Ok(Self::MorphState(state)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -2860,6 +3448,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2876,8 +3465,15 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
+                channel_ids: channel_ids.clone(),
                 opened: opened.clone(),
                 flow_rate: flow_rate.clone(),
                 flow_capacity: flow_capacity.clone(),
@@ -2893,7 +3489,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_chaotic: *qi_color_chaotic,
                 qi_color_hunyuan: *qi_color_hunyuan,
                 practice_weights: practice_weights.clone(),
-                target_meridian: *target_meridian,
+                target_meridian: target_meridian.clone(),
+                body_plan_id: body_plan_id.clone(),
+                race_id: race_id.clone(),
+                form_race_id: form_race_id.clone(),
+                form_body_plan_id: form_body_plan_id.clone(),
+                intrinsic_is_humanoid: *intrinsic_is_humanoid,
+                form_is_humanoid: *form_is_humanoid,
             },
             ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
                 observed: observed.clone(),
@@ -2909,6 +3511,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::RemainsSync(remains) => Self::RemainsSync {
                 remains: remains.clone(),
+            },
+            ServerDataPayloadV1::BodyPlanLayout(layout) => Self::BodyPlanLayout {
+                layout: layout.clone(),
+            },
+            ServerDataPayloadV1::RaceGateMeta(meta) => Self::RaceGateMeta { meta: meta.clone() },
+            ServerDataPayloadV1::MorphState(state) => Self::MorphState {
+                state: state.clone(),
             },
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
@@ -3607,6 +4216,9 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::RemainsSync(..) => ServerDataType::RemainsSync,
+            Self::BodyPlanLayout(..) => ServerDataType::BodyPlanLayout,
+            Self::RaceGateMeta(..) => ServerDataType::RaceGateMeta,
+            Self::MorphState(..) => ServerDataType::MorphState,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
@@ -3770,6 +4382,9 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => false,
             Self::DroppedLootSync(..) => false,
             Self::RemainsSync(..) => false,
+            Self::BodyPlanLayout(..) => false,
+            Self::RaceGateMeta(..) => false,
+            Self::MorphState(..) => false,
             Self::BotanyHarvestProgress { .. } => false,
             Self::BotanyPlantV2RenderProfiles(..) => false,
             Self::MiningProgress { .. } => false,
@@ -3929,6 +4544,8 @@ mod tests {
             ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
                 slots: vec![None; 9],
                 cooldown_until_ms: vec![0; 9],
+                ack_request_id: None,
+                bind_accepted: None,
             }),
             ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
                 slots: vec![None; 9],
@@ -4599,8 +5216,13 @@ mod tests {
 
     #[test]
     fn cultivation_detail_roundtrip_and_size_budget() {
+        let channel_ids: Vec<String> = crate::cultivation::components::MeridianId::ALL
+            .iter()
+            .map(|m| m.channel_id().to_string())
+            .collect();
         let payload = ServerDataV1::new(ServerDataPayloadV1::CultivationDetail {
             realm: "Induce".to_string(),
+            channel_ids: channel_ids.clone(),
             opened: vec![true; 20],
             flow_rate: vec![1.5; 20],
             flow_capacity: vec![10.25; 20],
@@ -4633,7 +5255,13 @@ mod tests {
                 weight: 42.0,
                 ratio: 0.7,
             }],
-            target_meridian: Some(4),
+            target_meridian: Some(channel_ids[4].clone()),
+            body_plan_id: "humanoid".to_string(),
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
         });
         let bytes = payload
             .to_json_bytes_checked()
@@ -4646,6 +5274,7 @@ mod tests {
         let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
         match back.payload {
             ServerDataPayloadV1::CultivationDetail {
+                channel_ids: back_channel_ids,
                 opened,
                 flow_rate,
                 lifespan,
@@ -4657,6 +5286,7 @@ mod tests {
                 target_meridian,
                 ..
             } => {
+                assert_eq!(back_channel_ids, channel_ids);
                 assert_eq!(opened.len(), 20);
                 assert_eq!(flow_rate.len(), 20);
                 assert_eq!(flow_rate[0], 1.5);
@@ -4671,10 +5301,97 @@ mod tests {
                 assert_eq!(qi_color_secondary, Some(ColorKind::Heavy));
                 assert_eq!(practice_weights[0].color, ColorKind::Intricate);
                 assert_eq!(practice_weights[0].weight, 42.0);
-                assert_eq!(target_meridian, Some(4));
+                assert_eq!(target_meridian, Some(channel_ids[4].clone()));
             }
             other => panic!("expected CultivationDetail, got {other:?}"),
         }
+    }
+
+    /// plan-race-system-v1 P1c — `channel_ids`/其余并行数组不再假设恰好 20 条；一个
+    /// 合成的 6 脉非 humanoid 构型（如 P5 飞鲸草案）必须同样 round-trip 成功。
+    #[test]
+    fn cultivation_detail_non_humanoid_channel_count_roundtrips() {
+        let channel_ids = vec![
+            "skull_channel".to_string(),
+            "spine_channel".to_string(),
+            "dorsal_fin_channel".to_string(),
+            "pect_fin_l_channel".to_string(),
+            "pect_fin_r_channel".to_string(),
+            "tail_fin_channel".to_string(),
+        ];
+        let n = channel_ids.len();
+        let payload = ServerDataV1::new(ServerDataPayloadV1::CultivationDetail {
+            realm: "Awaken".to_string(),
+            channel_ids: channel_ids.clone(),
+            opened: vec![false; n],
+            flow_rate: vec![1.0; n],
+            flow_capacity: vec![10.0; n],
+            integrity: vec![1.0; n],
+            open_progress: vec![0.0; n],
+            cracks_count: vec![0; n],
+            contamination_total: 0.0,
+            lifespan: None,
+            recent_skill_milestones_summary: String::new(),
+            skill_milestones: Vec::new(),
+            qi_color_main: ColorKind::Mellow,
+            qi_color_secondary: None,
+            qi_color_chaotic: false,
+            qi_color_hunyuan: false,
+            practice_weights: Vec::new(),
+            target_meridian: Some("tail_fin_channel".to_string()),
+            body_plan_id: "whale".to_string(),
+            race_id: String::new(),
+            form_race_id: String::new(),
+            form_body_plan_id: String::new(),
+            intrinsic_is_humanoid: false,
+            form_is_humanoid: false,
+        });
+        let bytes = payload
+            .to_json_bytes_checked()
+            .expect("6-channel cultivation_detail must fit MAX_PAYLOAD_BYTES");
+        let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
+        match back.payload {
+            ServerDataPayloadV1::CultivationDetail {
+                channel_ids: back_channel_ids,
+                opened,
+                target_meridian,
+                ..
+            } => {
+                assert_eq!(
+                    back_channel_ids.len(),
+                    6,
+                    "non-humanoid channel array length must not be forced to 20"
+                );
+                assert_eq!(back_channel_ids, channel_ids);
+                assert_eq!(opened.len(), 6);
+                assert_eq!(target_meridian, Some("tail_fin_channel".to_string()));
+            }
+            other => panic!("expected CultivationDetail, got {other:?}"),
+        }
+    }
+
+    /// plan-race-system-v1 P1c — wire 直改新形状不留兼容层：`target_meridian` 旧形态
+    /// 是数组下标（`u8`），新形态必须是 channel id 字符串；旧数字形状必须被拒绝，
+    /// 不允许静默兼容解析成某个 channel。
+    #[test]
+    fn cultivation_detail_rejects_legacy_numeric_target_meridian() {
+        let legacy_json = r#"{
+            "v": 1,
+            "type": "cultivation_detail",
+            "realm": "Induce",
+            "opened": [true],
+            "flow_rate": [1.5],
+            "flow_capacity": [10.25],
+            "integrity": [0.87],
+            "contamination_total": 0.0,
+            "target_meridian": 4
+        }"#;
+        let result: Result<ServerDataV1, _> = serde_json::from_str(legacy_json);
+        assert!(
+            result.is_err(),
+            "legacy numeric target_meridian (index-based) must be rejected after wire \
+             open-up to channel id string, got {result:?}"
+        );
     }
 
     /// plan-remains-suite P0 — remains_sync 双端 sample 对拍：字段值必须与
@@ -4744,6 +5461,328 @@ mod tests {
         );
     }
 
+    /// plan-race-system-v1 P2a — body_plan_layout 双端 sample 对拍：字段值必须与
+    /// agent/packages/schema/samples/server-data.body-plan-layout.sample.json 完全一致，
+    /// 改 schema 必须连同 sample 一起改。
+    #[test]
+    fn body_plan_layout_sample_pins_wire_shape() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/server-data.body-plan-layout.sample.json"
+        );
+        let payload: ServerDataV1 =
+            serde_json::from_str(json).expect("body-plan-layout sample should deserialize");
+        match payload.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert_eq!(layout.body_plan_id, "humanoid");
+                assert_eq!(
+                    layout.silhouette.len(),
+                    2,
+                    "sample 固定 head+chest 两段剪影"
+                );
+                assert_eq!(layout.silhouette[0].part_id, "head");
+                assert_eq!(layout.silhouette[0].polygon.len(), 4);
+                assert_eq!(
+                    layout.silhouette[0].polygon[0],
+                    BodyPlanPoint2V1 {
+                        x: 0.434524,
+                        y: 0.025424
+                    }
+                );
+                assert_eq!(layout.anchors.len(), 2);
+                assert_eq!(layout.anchors[0].part_id, "head");
+                assert_eq!(
+                    layout.anchors[0].point,
+                    BodyPlanPoint2V1 {
+                        x: 0.5,
+                        y: 0.042373
+                    }
+                );
+                assert_eq!(layout.meridian_paths.len(), 1);
+                assert_eq!(layout.meridian_paths[0].channel_id, "ren");
+                assert_eq!(layout.meridian_paths[0].points.len(), 2);
+                assert_eq!(layout.part_display_map.len(), 2);
+                assert_eq!(layout.part_display_map[0].server_part_id, "head");
+                assert_eq!(layout.part_display_map[0].display_segment_id, "head");
+            }
+            other => panic!("expected BodyPlanLayout, got {other:?}"),
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // plan-race-system-v1 P3a —— RaceGateWireV1 双端 sample 对拍 + fail-closed 解码。
+    // 三变体样本文件与 agent/packages/schema/samples/race-gate.*.sample.json 完全一致，
+    // 改 schema 必须连同 sample 一起改。
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn race_gate_any_sample_pins_wire_shape_and_round_trips_to_owned() {
+        let json = include_str!("../../../agent/packages/schema/samples/race-gate.any.sample.json");
+        let wire: RaceGateWireV1 =
+            serde_json::from_str(json).expect("any sample should deserialize");
+        assert_eq!(wire.kind, "any");
+        assert!(wire.species.is_empty());
+        assert_eq!(
+            wire.try_into_owned().expect("any must decode"),
+            crate::body_plan::RaceGateOwned::Any
+        );
+    }
+
+    #[test]
+    fn race_gate_humanoid_sample_pins_wire_shape_and_round_trips_to_owned() {
+        let json =
+            include_str!("../../../agent/packages/schema/samples/race-gate.humanoid.sample.json");
+        let wire: RaceGateWireV1 =
+            serde_json::from_str(json).expect("humanoid sample should deserialize");
+        assert_eq!(wire.kind, "humanoid");
+        assert!(wire.species.is_empty());
+        assert_eq!(
+            wire.try_into_owned().expect("humanoid must decode"),
+            crate::body_plan::RaceGateOwned::Humanoid
+        );
+    }
+
+    #[test]
+    fn race_gate_species_sample_pins_wire_shape_and_round_trips_to_owned() {
+        let json =
+            include_str!("../../../agent/packages/schema/samples/race-gate.species.sample.json");
+        let wire: RaceGateWireV1 =
+            serde_json::from_str(json).expect("species sample should deserialize");
+        assert_eq!(wire.kind, "species");
+        assert_eq!(wire.species, vec!["whale".to_string()]);
+        assert_eq!(
+            wire.try_into_owned().expect("species must decode"),
+            crate::body_plan::RaceGateOwned::Species {
+                species: vec![crate::body_plan::RaceId::new("whale")]
+            }
+        );
+    }
+
+    #[test]
+    fn race_gate_wire_from_owned_round_trips_every_variant() {
+        use crate::body_plan::{RaceGateOwned, RaceId};
+
+        let cases = [
+            (RaceGateOwned::Any, "any", Vec::<String>::new()),
+            (RaceGateOwned::Humanoid, "humanoid", Vec::new()),
+            (
+                RaceGateOwned::Species {
+                    species: vec![RaceId::new("whale")],
+                },
+                "species",
+                vec!["whale".to_string()],
+            ),
+        ];
+        for (owned, expected_kind, expected_species) in cases {
+            let wire = RaceGateWireV1::from_owned(&owned);
+            assert_eq!(wire.kind, expected_kind);
+            assert_eq!(wire.species, expected_species);
+            assert_eq!(
+                wire.try_into_owned().expect("round trip must decode"),
+                owned
+            );
+        }
+    }
+
+    #[test]
+    fn race_gate_wire_species_empty_and_duplicate_preserved() {
+        use crate::body_plan::RaceId;
+
+        let empty = RaceGateWireV1 {
+            kind: "species".to_string(),
+            species: Vec::new(),
+        };
+        assert_eq!(
+            empty.try_into_owned().expect("empty species list is valid"),
+            crate::body_plan::RaceGateOwned::Species { species: vec![] }
+        );
+
+        let duplicate = RaceGateWireV1 {
+            kind: "species".to_string(),
+            species: vec!["whale".to_string(), "whale".to_string()],
+        };
+        match duplicate
+            .try_into_owned()
+            .expect("duplicate species entries are structurally valid")
+        {
+            crate::body_plan::RaceGateOwned::Species { species } => {
+                assert_eq!(
+                    species,
+                    vec![RaceId::new("whale"), RaceId::new("whale")],
+                    "重复条目原样保留，不做去重"
+                );
+            }
+            other => panic!("expected Species, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn race_gate_wire_unknown_kind_decode_fails_closed() {
+        let wire = RaceGateWireV1 {
+            kind: "bogus".to_string(),
+            species: Vec::new(),
+        };
+        let err = wire
+            .try_into_owned()
+            .expect_err("unknown kind must fail closed, not silently default to Any");
+        assert_eq!(err.0, "bogus");
+    }
+
+    #[test]
+    fn race_gate_wire_unknown_kind_json_deserialize_succeeds_but_conversion_fails_closed() {
+        // RaceGateWireV1 本身是扁平结构（deny_unknown_fields 只管字段名，不管 kind 取值语义），
+        // 未知 kind 字符串本身能反序列化成 RaceGateWireV1；fail-closed 拒绝发生在
+        // try_into_owned() 转换语义层——两阶段分别验证，防止把"反序列化失败"和
+        // "语义拒绝"混为一谈。
+        let wire: RaceGateWireV1 =
+            serde_json::from_str(r#"{"kind":"bogus","species":[]}"#).expect("deserialize");
+        assert!(wire.try_into_owned().is_err());
+    }
+
+    /// wire 往返：BodyPlanLayout 序列化 → 反序列化必须无损（含空 anchors /
+    /// meridian_paths 边界）。
+    #[test]
+    fn body_plan_layout_roundtrips_including_empty_optional_sections() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::BodyPlanLayout(BodyPlanLayoutV1 {
+            body_plan_id: "whale".to_string(),
+            silhouette: vec![BodyPlanSilhouettePartV1 {
+                part_id: "tail_fin".to_string(),
+                polygon: vec![
+                    BodyPlanPoint2V1 { x: 0.1, y: 0.9 },
+                    BodyPlanPoint2V1 { x: 0.5, y: 0.8 },
+                    BodyPlanPoint2V1 { x: 0.9, y: 0.9 },
+                ],
+            }],
+            anchors: Vec::new(),
+            meridian_paths: Vec::new(),
+            part_display_map: Vec::new(),
+            hud_anchors: Vec::new(),
+        }));
+        let bytes = payload
+            .to_json_bytes_checked()
+            .expect("body_plan_layout must serialize");
+        let back: ServerDataV1 =
+            serde_json::from_slice(&bytes).expect("body_plan_layout must deserialize back");
+        match back.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert_eq!(layout.body_plan_id, "whale");
+                assert_eq!(layout.silhouette.len(), 1);
+                assert_eq!(layout.silhouette[0].part_id, "tail_fin");
+                assert!(layout.anchors.is_empty());
+                assert!(layout.meridian_paths.is_empty());
+                assert!(layout.part_display_map.is_empty());
+                assert!(
+                    layout.hud_anchors.is_empty(),
+                    "hud_anchors 是可选第二锚点组，非人形/未配置构型必须留空往返"
+                );
+            }
+            other => panic!("expected BodyPlanLayout after roundtrip, got {other:?}"),
+        }
+    }
+
+    /// plan-race-system-v1 P2 major 修复 —— `hud_anchors` 非空往返必须逐值保留，
+    /// 且缺省 JSON（旧数据 / 未配置该字段的 plan）反序列化必须默认落空 `Vec`（不是
+    /// 反序列化失败），两条转换分支各有专属 pin。
+    #[test]
+    fn body_plan_layout_hud_anchors_roundtrip_and_missing_field_defaults_to_empty() {
+        let payload = ServerDataV1::new(ServerDataPayloadV1::BodyPlanLayout(BodyPlanLayoutV1 {
+            body_plan_id: "humanoid".to_string(),
+            silhouette: vec![BodyPlanSilhouettePartV1 {
+                part_id: "head".to_string(),
+                polygon: vec![
+                    BodyPlanPoint2V1 { x: 0.4, y: 0.0 },
+                    BodyPlanPoint2V1 { x: 0.6, y: 0.0 },
+                    BodyPlanPoint2V1 { x: 0.5, y: 0.1 },
+                ],
+            }],
+            anchors: Vec::new(),
+            meridian_paths: Vec::new(),
+            part_display_map: Vec::new(),
+            hud_anchors: vec![BodyPlanPartAnchorV1 {
+                part_id: "head".to_string(),
+                point: BodyPlanPoint2V1 { x: 0.5, y: 0.04 },
+            }],
+        }));
+        let bytes = payload
+            .to_json_bytes_checked()
+            .expect("body_plan_layout with hud_anchors must serialize");
+        let back: ServerDataV1 = serde_json::from_slice(&bytes)
+            .expect("body_plan_layout with hud_anchors must deserialize back");
+        match back.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert_eq!(layout.hud_anchors.len(), 1);
+                assert_eq!(layout.hud_anchors[0].part_id, "head");
+                assert_eq!(layout.hud_anchors[0].point.x, 0.5);
+                assert_eq!(layout.hud_anchors[0].point.y, 0.04);
+            }
+            other => panic!("expected BodyPlanLayout after roundtrip, got {other:?}"),
+        }
+
+        // 缺省字段（旧数据 / 未来非人 plan 不配置）反序列化必须默认空 Vec，不是 error。
+        let legacy_json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "body_plan_layout",
+            "body_plan_id": "whale",
+            "silhouette": [{
+                "part_id": "tail_fin",
+                "polygon": [{"x": 0.1, "y": 0.9}, {"x": 0.5, "y": 0.8}, {"x": 0.9, "y": 0.9}],
+            }],
+            "anchors": [],
+            "meridian_paths": [],
+            "part_display_map": [],
+        });
+        let decoded: ServerDataV1 = serde_json::from_value(legacy_json)
+            .expect("body_plan_layout missing hud_anchors field must default to empty, not fail");
+        match decoded.payload {
+            ServerDataPayloadV1::BodyPlanLayout(layout) => {
+                assert!(
+                    layout.hud_anchors.is_empty(),
+                    "missing hud_anchors field must default to an empty Vec"
+                );
+            }
+            other => panic!("expected BodyPlanLayout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn body_plan_layout_rejects_unknown_field_in_point() {
+        let json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "body_plan_layout",
+            "body_plan_id": "humanoid",
+            "silhouette": [{
+                "part_id": "chest",
+                "polygon": [
+                    {"x": 0.3, "y": 0.1, "z": 0.0},
+                    {"x": 0.7, "y": 0.1},
+                    {"x": 0.7, "y": 0.3}
+                ]
+            }],
+            "anchors": [],
+            "meridian_paths": [],
+            "part_display_map": []
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(json).is_err(),
+            "BodyPlanPoint2V1 额外字段（z）应被 deny_unknown_fields 拒绝——布局是 2D 归一化坐标"
+        );
+    }
+
+    #[test]
+    fn body_plan_layout_rejects_missing_body_plan_id() {
+        let json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "body_plan_layout",
+            "silhouette": [],
+            "anchors": [],
+            "meridian_paths": [],
+            "part_display_map": []
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(json).is_err(),
+            "BodyPlanLayoutV1 缺 body_plan_id 应反序列化失败——它是 client 寻址缓存的主键"
+        );
+    }
+
     #[test]
     fn deserialize_server_data_samples() {
         let samples = [
@@ -4775,6 +5814,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.remains-sync.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.body-plan-layout.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"
@@ -5774,10 +6816,147 @@ mod tests {
 
     // ─── plan-combat-skill-feedback-bridges-v1 P4：AnqiHud schema pin ─
 
+    #[derive(Debug, serde::Deserialize)]
+    struct AnqiHudWireCorpus {
+        base: serde_json::Value,
+        cases: Vec<AnqiHudWireCorpusCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct AnqiHudWireCorpusCase {
+        name: String,
+        accepted: bool,
+        set: Option<serde_json::Map<String, serde_json::Value>>,
+        remove: Option<String>,
+    }
+
+    fn materialize_anqi_hud_wire_case(
+        base: &serde_json::Value,
+        test_case: &AnqiHudWireCorpusCase,
+    ) -> serde_json::Value {
+        let mut payload = base
+            .as_object()
+            .expect("anqi_hud wire corpus base must be an object")
+            .clone();
+        let mutation_count = test_case.set.as_ref().map_or(0, serde_json::Map::len)
+            + usize::from(test_case.remove.is_some());
+        assert!(
+            mutation_count <= 1,
+            "corpus case '{}' must isolate at most one field constraint",
+            test_case.name
+        );
+
+        if let Some(fields) = &test_case.set {
+            for (field, value) in fields {
+                payload.insert(field.clone(), value.clone());
+            }
+        }
+        if let Some(field) = &test_case.remove {
+            payload.remove(field);
+        }
+        serde_json::Value::Object(payload)
+    }
+
+    #[test]
+    fn anqi_hud_shared_wire_corpus_matches_rust_serde() {
+        let corpus: AnqiHudWireCorpus = serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/server-data.anqi-hud.wire-corpus.json"
+        ))
+        .expect("shared anqi_hud wire corpus must be valid JSON");
+        let mut names = std::collections::HashSet::new();
+
+        for test_case in &corpus.cases {
+            assert!(
+                names.insert(test_case.name.as_str()),
+                "duplicate corpus case '{}'",
+                test_case.name
+            );
+            let payload = materialize_anqi_hud_wire_case(&corpus.base, test_case);
+            let result = serde_json::from_value::<ServerDataV1>(payload.clone());
+            assert_eq!(
+                result.is_ok(),
+                test_case.accepted,
+                "Rust serde verdict drifted for case '{}'; payload={payload}; result={result:?}",
+                test_case.name
+            );
+
+            if let Ok(wrapper) = result {
+                assert_eq!(
+                    wrapper.payload_type(),
+                    ServerDataType::AnqiHud,
+                    "accepted corpus case '{}' must retain the anqi_hud payload type",
+                    test_case.name
+                );
+                assert!(
+                    matches!(&wrapper.payload, ServerDataPayloadV1::AnqiHud(_)),
+                    "accepted corpus case '{}' must deserialize to the AnqiHud variant; actual={:?}",
+                    test_case.name,
+                    wrapper.payload
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn anqi_hud_shared_samples_match_rust_serde_verdicts() {
+        let valid_samples = [
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.echo.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.aim.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.charge.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.abrasion.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.multishot.sample.json"
+            ),
+        ];
+        for sample in valid_samples {
+            let wrapper: ServerDataV1 = serde_json::from_str(sample)
+                .expect("valid shared anqi_hud sample must deserialize");
+            assert_eq!(
+                wrapper.payload_type(),
+                ServerDataType::AnqiHud,
+                "valid shared sample must retain the anqi_hud payload type; sample={sample}"
+            );
+            assert!(
+                matches!(&wrapper.payload, ServerDataPayloadV1::AnqiHud(_)),
+                "valid shared sample must deserialize to the AnqiHud variant; actual={:?}; sample={sample}",
+                wrapper.payload
+            );
+        }
+
+        let invalid_samples = [
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.invalid-missing-field.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.invalid-extra-field.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.invalid-kind.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.anqi-hud.invalid-tick-overflow.sample.json"
+            ),
+        ];
+        for sample in invalid_samples {
+            assert!(
+                serde_json::from_str::<ServerDataV1>(sample).is_err(),
+                "invalid shared anqi_hud sample must be rejected: {sample}"
+            );
+        }
+    }
+
     #[test]
     fn anqi_hud_v1_roundtrip() {
         let original = crate::schema::server_data::AnqiHudV1 {
-            kind: "abrasion".to_string(),
+            kind: AnqiHudKindV1::Abrasion,
             echo_count: 3,
             aim_progress: 0.5,
             charge_progress: 0.25,
@@ -5804,9 +6983,9 @@ mod tests {
     }
 
     #[test]
-    fn anqi_hud_wire_type_serializes_correctly() {
+    fn anqi_hud_variant_type_and_complete_wire_shape_serialize_together() {
         let inner = crate::schema::server_data::AnqiHudV1 {
-            kind: "echo".to_string(),
+            kind: AnqiHudKindV1::Echo,
             echo_count: 5,
             aim_progress: 0.0,
             charge_progress: 0.0,
@@ -5815,31 +6994,127 @@ mod tests {
             tick: 42,
         };
         let wrapper = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(inner));
-        let json = serde_json::to_string(&wrapper).expect("serialize AnqiHud wrapper");
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            v["type"],
-            serde_json::json!("anqi_hud"),
-            "期望 wire type = 'anqi_hud'（client 路由键），实际 {}",
-            v["type"]
+            wrapper.payload_type(),
+            ServerDataType::AnqiHud,
+            "AnqiHud wrapper must report the payload type used by client routing"
+        );
+        let value = serde_json::to_value(&wrapper).expect("serialize AnqiHud wrapper");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "v": SERVER_DATA_VERSION,
+                "type": "anqi_hud",
+                "kind": "echo",
+                "echo_count": 5,
+                "aim_progress": 0.0,
+                "charge_progress": 0.0,
+                "abrasion_container": "",
+                "abrasion_qi_payload": 0.0,
+                "tick": 42
+            }),
+            "AnqiHud wrapper must serialize every canonical v1 wire field together"
         );
         assert_eq!(
-            v["kind"],
-            serde_json::json!("echo"),
-            "期望 kind = 'echo'，实际 {}",
-            v["kind"]
+            payload_type_label(wrapper.payload_type()),
+            value["type"].as_str().expect("wire type must be a string"),
+            "payload_type_label must match the serialized wire type used by client routing"
+        );
+        let decoded: ServerDataV1 =
+            serde_json::from_value(value).expect("serialized wrapper must deserialize");
+        let ServerDataPayloadV1::AnqiHud(decoded_hud) = decoded.payload else {
+            panic!("wire type anqi_hud must deserialize to the AnqiHud payload variant");
+        };
+        assert_eq!(
+            decoded_hud.kind,
+            AnqiHudKindV1::Echo,
+            "complete wire shape must preserve the echo kind after deserialization"
         );
         assert_eq!(
-            v["echo_count"],
-            serde_json::json!(5u32),
-            "期望 echo_count = 5，实际 {}",
-            v["echo_count"]
+            decoded_hud.echo_count, 5,
+            "complete wire shape must preserve echo_count=5 after deserialization"
         );
-        // 守恒红线：echo payload 不含 qi 字段（只读）
-        assert!(
-            !json.contains("\"qi_") || json.contains("abrasion_qi_payload"),
-            "echo payload 不应包含真元计算字段"
+        assert_eq!(
+            decoded_hud.tick, 42,
+            "complete wire shape must preserve tick=42 after deserialization"
         );
+    }
+
+    #[test]
+    fn anqi_hud_invalid_outbound_values_fail_serialization() {
+        let invalid_payloads = [
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Aim,
+                echo_count: 0,
+                aim_progress: f64::NAN,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Charge,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: f64::INFINITY,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: -1.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Multishot,
+                echo_count: ANQI_HUD_ECHO_COUNT_MAX + 1,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "unknown".to_string(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "quiver".to_string(),
+                abrasion_qi_payload: ANQI_HUD_QI_PAYLOAD_MAX * 2.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Echo,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: ANQI_HUD_TICK_MAX + 1,
+            },
+        ];
+
+        for payload in invalid_payloads {
+            let wrapper = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(payload));
+            assert!(
+                serde_json::to_value(wrapper).is_err(),
+                "invalid outbound anqi_hud payload must fail serialization"
+            );
+        }
     }
 
     // ─── 震脉 v2 HUD S2C：schema pin（字段须与 client ZhenmaiHudServerDataHandler 逐一对齐） ─

@@ -385,6 +385,22 @@ pub fn death_arbiter_tick(
             continue;
         };
 
+        // plan-race-system-v1 P4（决议 §6）—— 死亡三条解除易形触发路径之一：死亡即刻
+        // 解除易形（移除 `MorphState` + 重扫装备门，见 `body_plan::morph::
+        // release_morph_state`）。本系统是 `Query` 而非原始 `World`，无法直接调用
+        // 需要 `&mut World` 的 `release_morph_state`，故走 `commands.add` 排入
+        // deferred command——**不是**立即生效，而是在本次 `Update` 调度末尾
+        // `apply_deferred` 时才真正执行；下游掉落/复活链路只要排在这次调度的
+        // command flush 之后（同一 tick 内），就能看到"已恢复本体"的状态。
+        {
+            let target = event.target;
+            commands.add(
+                move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                    crate::body_plan::morph::release_morph_state(world, target);
+                },
+            );
+        }
+
         // Worldview §十二：死亡掉落应落在死亡点。
         if let Some(position) = position {
             let p = position.get();
@@ -2282,7 +2298,7 @@ mod tests {
                 health_current: 2.0,
                 health_max: 30.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.3,
                     bleeding_per_sec: 3.0,
@@ -2319,7 +2335,7 @@ mod tests {
                 health_current: 12.0,
                 health_max: 30.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.3,
                     bleeding_per_sec: 3.0,
@@ -2356,7 +2372,7 @@ mod tests {
                 health_current: 12.0,
                 health_max: 30.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.3,
                     bleeding_per_sec: 3.0,
@@ -2477,7 +2493,7 @@ mod tests {
                 health_current: 12.0,
                 health_max: 30.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Cut,
                     severity: 0.3,
                     bleeding_per_sec: 0.1,
@@ -3047,6 +3063,68 @@ mod tests {
             biography_len_before,
             "期望 biography 不新增 NearDeath 条目因为守卫应在 push 之前 continue；实际长度 {}",
             life_record.biography.len()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_arbiter_tick_auto_releases_morph_state_on_death() {
+        // plan-race-system-v1 P4 opus verifier MAJOR — 死亡三条易形自动解除触发路径
+        // 之一（见 death_arbiter_tick 内 release_morph_state deferred command）此前
+        // 零测试断言真被 remove。走真实事件 → 真实 system → 真实 Commands flush
+        // （单次 app.update() 后 Bevy 自动 apply_deferred，见 `combat::lifecycle`
+        // 模块内其余测试同款依赖 —— DeathDropAnchor 断言同一 tick 内可见的既有惯例）。
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("morph-auto-release-death");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 950 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                crate::body_plan::MorphState::new(crate::body_plan::RaceId::new("whale"), 0, 900),
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle::default(),
+            ))
+            .id();
+
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::body_plan::MorphState>()
+                .is_some(),
+            "前置条件：死亡前应处于易形态"
+        );
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "test_death".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 950,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::body_plan::MorphState>()
+                .is_none(),
+            "死亡应通过 release_morph_state 的 deferred command 移除 MorphState \
+             （单次 app.update() 后 Commands 已 flush），实测组件仍在场"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -4566,7 +4644,7 @@ mod tests {
                     health_current: 0.0,
                     health_max: 30.0,
                     entries: vec![Wound {
-                        location: BodyPart::Chest,
+                        location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                         kind: WoundKind::Cut,
                         severity: 0.9,
                         bleeding_per_sec: 2.0,

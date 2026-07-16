@@ -4,20 +4,23 @@
 //!   * **单任务**：玩家同时只允许一个 CraftSession 存在，新 start 必须先 cancel
 //!   * **in-game 时间推进**：只有 `tick_session` 显式推进时才走，玩家下线
 //!     （inventory 关闭）时调用方不调用 tick，自动暂停
-//!   * **守恒律**：qi_cost 一次性走 `qi_physics::ledger::QiTransfer`
-//!     （Crafting reason），**禁止** `cultivation.qi_current -= cost` 直接扣
+//!   * **守恒律**：qi_cost 一次性走 `qi_physics::ledger::transfer_external_qi_to_ledger`
+//!     （Crafting reason），把 ECS 真元权威转入持久待分配池
 //!
 //! §5 决策门：
 //!   * #3 = B：取消任务返还材料 70%（向下取整），qi 不退
 //!   * #4 = A：玩家死亡 → 走 cancel 路径，PlayerDied 作为 reason
 //!   * #6 = B：requirements 软 gate，但 `start_craft` 内做硬校验防作弊
 
+use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity};
 
 use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
 use crate::inventory::{bump_revision, ContainerState, ItemInstance, PlayerInventory};
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
-use crate::qi_physics::QiPhysicsError;
+use crate::qi_physics::ledger::{
+    pending_inflow_account, transfer_external_qi_to_ledger, QiAccountId, QiTransferReason,
+    WorldQiAccount,
+};
 
 use super::events::{CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftStartedEvent};
 use super::recipe::{CraftRecipe, RecipeId};
@@ -30,14 +33,10 @@ pub const CANCEL_REFUND_RATIO: f64 = 0.7;
 /// 单次手搓批量上限。client UI 与 schema 同步使用同一个语义上限。
 pub const MAX_CRAFT_QUANTITY: u32 = 64;
 
-/// `start_craft` 的"ledger 与 cultivation 视图失同步"严格判定阈值。
-/// 浮点容差 — 1e-9 远大于 transfer 路径任何累积误差，但小到能捕获语义性 desync。
-const QI_SYNC_EPSILON: f64 = 1e-9;
-
 /// 玩家进行中的手搓任务。
 /// 玩家只允许同时挂 1 个 CraftSession（单任务）。`remaining_ticks` 由
 /// `tick_session` 在玩家在线时推进；为 0 时调用 `finalize_craft`。
-#[derive(Debug, Clone, Component, PartialEq)]
+#[derive(Debug, Clone, Component, PartialEq, Serialize, Deserialize)]
 pub struct CraftSession {
     pub recipe_id: RecipeId,
     /// 起手 tick 时戳（统计 / UI 显示用）
@@ -76,15 +75,6 @@ pub enum StartCraftError {
         required: ColorKind,
         current: ColorKind,
     },
-    /// **ledger 与 cultivation state view 失同步** — 调用方应先调用
-    /// `qi_physics` 的 sync system 把 player 账户镜像到 cultivation.qi_current
-    /// 后再 retry。当前 craft 模块不主动 set_balance（避免 inflate ledger
-    /// 总数），改由调用方负责状态同步以保守恒律。
-    LedgerOutOfSync {
-        player_balance: f64,
-        cultivation_qi_current: f64,
-        required: f64,
-    },
     /// ledger 内部错误（transfer 失败等）
     LedgerError(String),
     /// 批量数量必须 >= 1。
@@ -119,7 +109,7 @@ pub struct StartCraftSuccess {
 pub struct CancelCraftOutcome {
     pub event: CraftFailedEvent,
     /// 70% 返还材料：(template_id, refund_count)。0 数量不写入。
-    /// 调用方需要 `inventory::add_item_to_player_inventory` 真实加回 inventory。
+    /// 调用方需要负责真实返还（入包或落地兜底）。
     pub refund_manifest: Vec<(String, u32)>,
 }
 
@@ -128,7 +118,7 @@ pub struct CancelCraftOutcome {
 pub struct FinalizeCraftOutcome {
     pub event: CraftCompletedEvent,
     /// 产出：(template_id, count)。
-    /// 调用方需要 `inventory::add_item_to_player_inventory` 真实加进 inventory。
+    /// 调用方需要负责真实写入 inventory。
     pub output_manifest: (String, u32),
 }
 
@@ -228,7 +218,6 @@ pub struct StartCraftRequest<'a> {
     pub player_id: &'a str,
     pub recipe_id: &'a RecipeId,
     pub current_tick: u64,
-    pub zone_id: &'a str,
     pub quantity: u32,
 }
 
@@ -258,8 +247,8 @@ pub struct StartCraftDeps<'a> {
 /// 6. qi 足够（cultivation.qi_current ≥ qi_cost）
 ///
 /// 副作用阶段（成功必经）：
-/// 7. ledger transfer player → zone（reason = Crafting），同时
-///    `cultivation.qi_current -= qi_cost`（守恒律一致性）
+/// 7. 把 ECS 玩家真元原子转入 durable pending inflow（reason = Crafting），再提交
+///    `cultivation.qi_current -= qi_cost`；player ledger 账户不做长期镜像
 /// 8. 扣材料
 /// 9. 构造 CraftSession + CraftStartedEvent
 pub fn start_craft(
@@ -349,45 +338,16 @@ pub fn start_craft(
 
     // ===== 副作用阶段 =====
     let from = QiAccountId::player(request.player_id);
-    let to = QiAccountId::zone(request.zone_id);
+    let to = pending_inflow_account();
     if total_qi_cost > 0.0 {
-        // 守恒律：调用方必须先把 cultivation.qi_current **严格** sync 到
-        // ledger.player(id)（待 qi_physics::sync_player_qi_to_ledger system
-        // 接入后由 ECS hook 自动同步）。本函数**不**主动 set_balance，避免
-        // ad-hoc 注入导致 sum(ledger) inflate 破坏全局守恒律。
-        //
-        // 如果 ledger.balance(player) ≠ cultivation.qi_current，说明视图失同步：
-        // - balance < cult：出过 cultivation 增量没镜像到 ledger（如 regen）
-        // - balance > cult：ledger 收到了 cultivation 没扣的 outflow
-        // 两种情况都属 desync，调用方需要先 sync 再 retry。
-        let player_balance = deps.ledger.balance(&from);
-        if (player_balance - deps.cultivation.qi_current).abs() > QI_SYNC_EPSILON {
-            return Err(StartCraftError::LedgerOutOfSync {
-                player_balance,
-                cultivation_qi_current: deps.cultivation.qi_current,
-                required: total_qi_cost,
-            });
-        }
-        // 视图严格一致后，验证余额够付（外层 cultivation_qi_current >= qi_cost
-        // 已校验，sync 一致后 player_balance 也保证 >= qi_cost；fail-safe）
-        if player_balance < total_qi_cost {
-            return Err(StartCraftError::LedgerOutOfSync {
-                player_balance,
-                cultivation_qi_current: deps.cultivation.qi_current,
-                required: total_qi_cost,
-            });
-        }
-
-        let transfer = QiTransfer::new(
-            from.clone(),
-            to.clone(),
+        transfer_external_qi_to_ledger(
+            deps.ledger,
+            from,
+            to,
             total_qi_cost,
             QiTransferReason::Crafting,
         )
-        .map_err(|e: QiPhysicsError| StartCraftError::LedgerError(e.to_string()))?;
-        deps.ledger
-            .transfer(transfer)
-            .map_err(|e: QiPhysicsError| StartCraftError::LedgerError(e.to_string()))?;
+        .map_err(|error| StartCraftError::LedgerError(error.to_string()))?;
 
         deps.cultivation.qi_current -= total_qi_cost;
         if deps.cultivation.qi_current < 0.0 {
@@ -444,7 +404,7 @@ pub fn tick_session(session: &mut CraftSession, amount: u64) -> bool {
 }
 
 /// 计算取消时的返还清单（材料 70% 向下取整）。
-/// 不动 inventory / 不扣 qi；调用方按返还清单执行 `add_item_to_player_inventory`。
+/// 不动 inventory / 不扣 qi；调用方按返还清单执行真实返还。
 pub fn cancel_craft(
     session: &CraftSession,
     recipe: &CraftRecipe,
@@ -484,7 +444,7 @@ pub fn cancel_craft(
 }
 
 /// 完成手搓 — 计算产出 manifest + 完成事件。
-/// 不动 inventory；调用方按 output_manifest 执行 `add_item_to_player_inventory`。
+/// 不动 inventory；调用方按 output_manifest 执行真实产出写入。
 pub fn finalize_craft(
     session: &CraftSession,
     recipe: &CraftRecipe,
@@ -626,12 +586,7 @@ mod tests {
             ..Default::default()
         };
         let color = QiColor::default();
-        // 模拟未来 qi_physics::sync_player_qi_to_ledger system —— 把
-        // cultivation.qi_current 镜像到 ledger.player 账户后才能 start_craft
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), cultivation.qi_current)
-            .unwrap();
+        let ledger = WorldQiAccount::default();
         (registry, unlock, cultivation, color, ledger)
     }
 
@@ -736,7 +691,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 1000,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -753,10 +707,16 @@ mod tests {
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 3);
         assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 2);
 
-        // qi 守恒：cultivation 扣 5，ledger zone 余额 +5
-        assert_eq!(cult.qi_current, 45.0);
-        let zone_balance = ledger.balance(&QiAccountId::zone("spawn"));
-        assert_eq!(zone_balance, 5.0);
+        // qi 守恒：cultivation 扣 5，ledger 待分配池余额 +5
+        assert_eq!(
+            cult.qi_current, 45.0,
+            "制作预付 5 点真元后玩家应从 50 降至 45"
+        );
+        let pending_balance = ledger.balance(&pending_inflow_account());
+        assert_eq!(
+            pending_balance, 5.0,
+            "制作预付的 5 点真元应完整进入待分配池"
+        );
 
         // 守恒律观察：qi_paid 与 ledger transfer 等同
         assert_eq!(result.session.qi_paid, 5.0);
@@ -773,7 +733,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 1000,
-                zone_id: "spawn",
                 quantity: 3,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -786,7 +745,7 @@ mod tests {
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 2);
         assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 1);
         assert_eq!(cult.qi_current, 35.0);
-        assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 15.0);
+        assert_eq!(ledger.balance(&pending_inflow_account()), 15.0);
     }
 
     #[test]
@@ -799,7 +758,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 1000,
-                zone_id: "spawn",
                 quantity: MAX_CRAFT_QUANTITY + 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -827,7 +785,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("missing"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -847,7 +804,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -873,9 +829,6 @@ mod tests {
         };
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), cult.qi_current)
-            .unwrap();
 
         let mut deps =
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger);
@@ -889,7 +842,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("craft.tool.workbench"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             deps,
@@ -925,9 +877,6 @@ mod tests {
         };
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), cult.qi_current)
-            .unwrap();
 
         let err = start_craft(
             StartCraftRequest {
@@ -935,7 +884,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("workbench.tool.stone_pickaxe"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -971,7 +919,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             deps,
@@ -990,7 +937,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1030,7 +976,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1072,7 +1017,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1112,7 +1056,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1149,7 +1092,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1417,7 +1359,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1432,7 +1373,7 @@ mod tests {
         assert_eq!(last_transfer.amount, result.session.qi_paid);
         assert_eq!(last_transfer.reason, QiTransferReason::Crafting);
         assert_eq!(last_transfer.from, QiAccountId::player("offline:Alice"));
-        assert_eq!(last_transfer.to, QiAccountId::zone("spawn"));
+        assert_eq!(last_transfer.to, pending_inflow_account());
     }
 
     #[test]
@@ -1468,10 +1409,6 @@ mod tests {
         };
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
-        // sync ledger to cultivation（模拟 sync system 行为）
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), cult.qi_current)
-            .unwrap();
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
         let success = start_craft(
             StartCraftRequest {
@@ -1479,7 +1416,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1488,18 +1424,17 @@ mod tests {
         assert_eq!(success.session.qi_paid, 5.0);
     }
 
-    // ============= 守恒 / ledger sync 不变量 =============
+    // ============= 守恒 / ECS 外部真元源不变量 =============
 
     #[test]
-    fn ledger_player_balance_aligned_with_cultivation_after_start() {
-        // 不变量：start_craft 完成后，player 账户的 ledger 余额 ==
-        // cultivation.qi_current_post（即扣完后的 state view）。
-        // 前提：调用方已 sync 过 ledger.player(id) = cultivation.qi_current
-        // （make_world helper 已在 setup 阶段执行）。
+    fn start_craft_moves_external_player_qi_without_leaving_player_mirror() {
         let (registry, unlock, mut cult, color, mut ledger) = make_world();
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
         let qi_before = cult.qi_current;
-        let zone_before = ledger.balance(&QiAccountId::zone("spawn"));
+        let ledger_before = ledger.total();
+        let pending_before = ledger.balance(&pending_inflow_account());
+        let player_account = QiAccountId::player("offline:Alice");
+        assert!(!ledger.has_account(&player_account));
 
         start_craft(
             StartCraftRequest {
@@ -1507,7 +1442,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1516,82 +1450,56 @@ mod tests {
 
         // recipe.qi_cost = 5.0（make_world / simple_recipe）
         let qi_paid = 5.0_f64;
-        assert_eq!(cult.qi_current, qi_before - qi_paid);
-        let player_after = ledger.balance(&QiAccountId::player("offline:Alice"));
         assert_eq!(
-            player_after, cult.qi_current,
-            "player ledger balance must mirror cultivation.qi_current after transfer"
+            cult.qi_current,
+            qi_before - qi_paid,
+            "制作应从 ECS 玩家真元中精确扣除 qi_paid"
         );
-        let zone_after = ledger.balance(&QiAccountId::zone("spawn"));
-        assert_eq!(
-            zone_after,
-            zone_before + qi_paid,
-            "zone account must gain exactly qi_cost"
-        );
-    }
-
-    #[test]
-    fn start_craft_with_synced_ledger_does_not_inflate_player_balance() {
-        // 不变量：当调用方先把 ledger.player(id) 同步到 cultivation.qi_current 后，
-        // start_craft **不会**额外注入余额到 player 账户（防 set_balance leak）。
-        // post 状态：player_balance == cult.qi_current_post == pre - qi_cost。
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let player_pre = ledger.balance(&QiAccountId::player("offline:Alice"));
-        assert_eq!(player_pre, 50.0, "make_world should sync ledger to 50.0");
-
-        start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-
-        let player_post = ledger.balance(&QiAccountId::player("offline:Alice"));
-        // post == pre - qi_cost（5.0）
-        assert!((player_pre - player_post - 5.0).abs() < 1e-9);
-        assert_eq!(player_post, cult.qi_current);
-    }
-
-    #[test]
-    fn ledger_total_conservation_after_start_craft() {
-        // 守恒律：ledger 内部总量在 start_craft 前后相等
-        // （player → zone 的 transfer 是账内移动，不增减总数）。
-        // cultivation.qi_current 是 ledger.player 的 view，不参与 ledger.total()。
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let ledger_total_before = ledger.total();
-
-        start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-
-        let ledger_total_after = ledger.total();
         assert!(
-            (ledger_total_before - ledger_total_after).abs() < 1e-9,
-            "ledger.total() before {ledger_total_before} must equal after {ledger_total_after}"
+            !ledger.has_account(&player_account),
+            "玩家真元权威在 ECS，制作转账后不得留下长期 player ledger 镜像"
+        );
+        let pending_after = ledger.balance(&pending_inflow_account());
+        assert_eq!(
+            pending_after,
+            pending_before + qi_paid,
+            "pending inflow account must gain exactly qi_cost"
+        );
+        let observed_before = qi_before + ledger_before;
+        let observed_after = cult.qi_current + ledger.total();
+        assert!(
+            (observed_before - observed_after).abs() < 1e-9,
+            "ECS player qi + ledger before {observed_before} must equal after {observed_after}"
         );
     }
 
     #[test]
-    fn start_craft_rejects_when_ledger_out_of_sync() {
-        // 守恒律强制：调用方未 sync ledger.player 到 cultivation.qi_current 时，
-        // start_craft 必须 fail-fast（避免 ad-hoc set_balance 注入）。
+    fn start_craft_conserves_external_player_qi_plus_ledger_total() {
+        let (registry, unlock, mut cult, color, mut ledger) = make_world();
+        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let observed_before = cult.qi_current + ledger.total();
+
+        start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("a"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+        )
+        .unwrap();
+
+        let observed_after = cult.qi_current + ledger.total();
+        assert!(
+            (observed_before - observed_after).abs() < 1e-9,
+            "ECS player qi + ledger before {observed_before} must equal after {observed_after}"
+        );
+    }
+
+    #[test]
+    fn start_craft_works_without_player_ledger_sync() {
         let mut registry = CraftRegistry::new();
         registry.register(simple_recipe("a")).unwrap();
         let mut unlock = RecipeUnlockState::new();
@@ -1602,54 +1510,89 @@ mod tests {
             ..Default::default()
         };
         let color = QiColor::default();
-        // 故意**不** sync ledger — player 账户余额 0
         let mut ledger = WorldQiAccount::default();
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
 
-        let err = start_craft(
+        start_craft(
             StartCraftRequest {
                 caster: caster_entity(),
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            StartCraftError::LedgerOutOfSync {
-                player_balance: 0.0,
-                cultivation_qi_current: 50.0,
-                required: 5.0,
-            }
-        ));
-        // 失败时无副作用：cultivation 不动 / 材料不动
-        assert_eq!(cult.qi_current, 50.0);
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+        .expect("生产态没有 player ledger 镜像时也必须能制作");
+        assert_eq!(
+            cult.qi_current, 45.0,
+            "无 player ledger 镜像的生产态制作仍应从 ECS 扣除 5 点真元"
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            5.0,
+            "无 player ledger 镜像时制作真元仍应完整进入 pending"
+        );
+        assert!(!ledger.has_account(&QiAccountId::player("offline:Alice")));
     }
 
     #[test]
-    fn start_craft_rejects_ledger_overshoot_relative_to_cultivation() {
-        // 严格 sync 校验：即使 ledger.balance(player) > qi_cost 但 ≠
-        // cultivation.qi_current，也属于 desync 必须 reject。
-        // 防止"ledger 凭空多 200 但 cultivation 只 50"误算守恒。
+    fn start_craft_preserves_preexisting_player_ledger_balance() {
+        let (registry, unlock, mut cult, color, mut ledger) = make_world();
+        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let player_account = QiAccountId::player("offline:Alice");
+        ledger.set_balance(player_account.clone(), 7.0).unwrap();
+        let observed_before = cult.qi_current + ledger.total();
+
+        start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("a"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+        )
+        .unwrap();
+
+        assert_eq!(
+            ledger.balance(&player_account),
+            7.0,
+            "临时 source 影子转账后必须精确恢复既有 player ledger 余额"
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            5.0,
+            "制作真元应等额进入 pending"
+        );
+        assert_eq!(
+            cult.qi_current, 45.0,
+            "制作应从 ECS 玩家真元中精确扣除 5 点"
+        );
+        assert!(
+            (cult.qi_current + ledger.total() - observed_before).abs() < 1e-9,
+            "存在既有 player ledger 余额时 ECS 真元与 ledger 总量仍必须守恒"
+        );
+    }
+
+    #[test]
+    fn start_craft_ledger_failure_keeps_external_qi_and_materials_unchanged() {
         let mut registry = CraftRegistry::new();
-        registry.register(simple_recipe("a")).unwrap();
+        let mut recipe = simple_recipe("a");
+        recipe.qi_cost = f64::MAX;
+        registry.register(recipe).unwrap();
         let mut unlock = RecipeUnlockState::new();
         unlock.unlock("offline:Alice", RecipeId::new("a"));
         let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
+            qi_current: f64::MAX,
+            qi_max: f64::MAX,
             ..Default::default()
         };
         let color = QiColor::default();
-        // ledger 余额 200 > cultivation 50：明显 desync（不应当通过）
         let mut ledger = WorldQiAccount::default();
         ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 200.0)
+            .set_balance(pending_inflow_account(), f64::MAX)
             .unwrap();
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
 
@@ -1659,24 +1602,26 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("a"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         )
         .unwrap_err();
-        assert!(matches!(
-            err,
-            StartCraftError::LedgerOutOfSync {
-                player_balance: 200.0,
-                cultivation_qi_current: 50.0,
-                required: 5.0,
-            }
-        ));
-        // 失败时无副作用：余额 / 材料 / cultivation 不动
-        assert_eq!(cult.qi_current, 50.0);
-        assert_eq!(ledger.balance(&QiAccountId::player("offline:Alice")), 200.0);
+        assert!(matches!(err, StartCraftError::LedgerError(_)));
+        assert_eq!(
+            cult.qi_current,
+            f64::MAX,
+            "pending 溢出拒绝后不得扣除 ECS 玩家真元"
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            f64::MAX,
+            "pending 溢出拒绝后目标余额必须保持原值"
+        );
+        assert!(!ledger.has_account(&QiAccountId::player("offline:Alice")));
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+        assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 5);
+        assert!(ledger.transfers().is_empty());
     }
 
     #[test]
@@ -1699,9 +1644,6 @@ mod tests {
         };
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
 
         let err = start_craft(
             StartCraftRequest {
@@ -1709,7 +1651,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("default_unlocked"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1743,9 +1684,6 @@ mod tests {
         };
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
 
         let result = start_craft(
             StartCraftRequest {
@@ -1753,7 +1691,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("default_unlocked"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
@@ -1782,9 +1719,6 @@ mod tests {
         };
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
 
         let result = start_craft(
             StartCraftRequest {
@@ -1792,7 +1726,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("handcraft"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             StartCraftDeps {
@@ -1831,9 +1764,6 @@ mod tests {
         };
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
 
         let err = start_craft(
             StartCraftRequest {
@@ -1841,7 +1771,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("wb_tool"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             StartCraftDeps {
@@ -1889,9 +1818,6 @@ mod tests {
         };
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
 
         let result = start_craft(
             StartCraftRequest {
@@ -1899,7 +1825,6 @@ mod tests {
                 player_id: "offline:Alice",
                 recipe_id: &RecipeId::new("wb_tool2"),
                 current_tick: 0,
-                zone_id: "spawn",
                 quantity: 1,
             },
             StartCraftDeps {

@@ -4,7 +4,9 @@ import com.bong.client.cultivation.ColorKind;
 import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.inventory.state.PlayerRaceIdentityStore;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillMilestoneSnapshot;
 import com.bong.client.skill.SkillMilestoneStore;
@@ -22,18 +24,22 @@ import java.util.List;
  * 解析服务端 {@code cultivation_detail} CustomPayload，翻译为 {@link MeridianBody}
  * 并推入 {@link MeridianStateStore}。
  *
- * <p>Payload 使用 SoA (parallel arrays) 布局，数组下标 0..11 对应 12 正经
- * （{@code LU, LI, ST, SP, HT, SI, BL, KI, PC, TE, GB, LR}），12..19 对应 8 奇经
- * （{@code REN, DU, CHONG, DAI, YIN_QIAO, YANG_QIAO, YIN_WEI, YANG_WEI}）；
- * 顺序与 Rust {@code MeridianId} 判别式一致（详见 server/src/cultivation/components.rs）。
- *
- * <p>与现有 PlayerStateHandler 等不同，本 handler 采用「副作用 + 返回 handled(no op payload)」
- * 模式：直接调用 {@link MeridianStateStore#replace}，避免在 {@link ServerDataDispatch}
- * 上新增 13-th 字段。Meridian snapshot 不参与 dispatch 合成与 UI 事件路由。
+ * <p>Payload 使用 SoA (parallel arrays) 布局。plan-race-system-v1 P1c 起，数组下标不再
+ * 隐式对应固定的 20 条 TCM 经脉顺序——server 随数组附带 {@code channel_ids}（snake_case
+ * channel id 字符串，与 opened/flow_rate/... 等数组同序同长），本 handler 按
+ * {@code channel_ids[i]} keyed 查找对应 {@link MeridianChannel}（{@link
+ * MeridianChannel#fromChannelId}），而非假设固定位置数组。本段只保证 humanoid 20 条
+ * channel id 渲染不回归；非 humanoid channel（P5 飞鲸等）目前没有 UI 展示位，
+ * {@code fromChannelId} 返回 {@code null} 时静默跳过该下标（不 crash，不伪造）——
+ * 布局数据驱动留给 P2。
  */
 public final class CultivationDetailHandler implements ServerDataHandler {
 
-    /** payload 数组下标 → UI 侧 {@link MeridianChannel}（顺序与服务端 MeridianId 判别式一致）。 */
+    /**
+     * 历史遗留：payload 缺失 {@code channel_ids}（理论上不该发生，server 侧
+     * {@code cultivation_detail_emit.rs} 恒发）时的 fallback 顺序，仅用于诊断日志，
+     * 不再作为解码路径的权威真源。
+     */
     static final MeridianChannel[] CHANNEL_ORDER = new MeridianChannel[] {
         // 12 正经: Lung, LargeIntestine, Stomach, Spleen, Heart, SmallIntestine,
         //          Bladder, Kidney, Pericardium, TripleEnergizer, Gallbladder, Liver
@@ -60,14 +66,18 @@ public final class CultivationDetailHandler implements ServerDataHandler {
                 "Ignoring cultivation_detail payload: missing required array field(s)"
             );
         }
-        int expected = CHANNEL_ORDER.length;
-        if (opened.size() != expected || flowRate.size() != expected
-            || flowCapacity.size() != expected || integrity.size() != expected) {
+        int expected = opened.size();
+        if (flowRate.size() != expected || flowCapacity.size() != expected || integrity.size() != expected) {
             return ServerDataDispatch.noOp(
                 envelope.type(),
-                "Ignoring cultivation_detail payload: array length mismatch (expected " + expected + ")"
+                "Ignoring cultivation_detail payload: array length mismatch (opened=" + expected + ")"
             );
         }
+
+        // plan-race-system-v1 P1c：channel_ids 是 keyed 解码的权威真源，与
+        // opened/flow_rate/... 同序同长；缺失或长度不符时退回 legacy 固定位置顺序
+        // （仅诊断兜底，humanoid 20 条恰好长度相符时才生效，见类头文档）。
+        MeridianChannel[] channelOrder = resolveChannelOrder(readArray(payload, "channel_ids"), expected);
 
         // 可选扩展字段：realm / open_progress / cracks_count / contamination_total。
         // 数组长度不合法时忽略；不报错，保持向前兼容。
@@ -83,19 +93,30 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         boolean qiColorChaotic = readBoolean(payload, "qi_color_chaotic");
         boolean qiColorHunyuan = readBoolean(payload, "qi_color_hunyuan");
         EnumMap<ColorKind, Double> practiceWeights = parsePracticeWeights(readArray(payload, "practice_weights"));
-        MeridianChannel targetMeridian = null;
-        JsonElement targetEl = payload.get("target_meridian");
-        if (targetEl != null && targetEl.isJsonPrimitive() && targetEl.getAsJsonPrimitive().isNumber()) {
-            double raw = targetEl.getAsDouble();
-            if (Double.isFinite(raw) && raw == Math.rint(raw)) {
-                int idx = (int) Math.rint(raw);
-                if (idx >= 0 && idx < CHANNEL_ORDER.length) {
-                    targetMeridian = CHANNEL_ORDER[idx];
-                }
-            }
-        }
+        // plan-race-system-v1 P1c：target_meridian 现为 channel id 字符串（不再是数组
+        // 下标），直接经 MeridianChannel.fromChannelId 查找；非 humanoid channel（无
+        // 对应 UI 枚举）合法地解析为 null，不 crash。
+        MeridianChannel targetMeridian = MeridianChannel.fromChannelId(readString(payload, "target_meridian"));
+
+        // plan-race-system-v1 P2b — cultivation_detail 附带的本体 body_plan_id 是
+        // BodyPlanLayoutStore"当前"指针的唯一权威来源；body_plan_layout payload 本身
+        // 只按 id 建缓存（见 BodyPlanLayoutHandler），两者到达顺序不定，store 内部处理竞态。
+        BodyPlanLayoutStore.setCurrentPlanId(readString(payload, "body_plan_id"));
+
+        // plan-race-system-v1 P3c — 身份快照五字段解码收尾（P3b 只接到 server + TS，
+        // client 端一直未消费）。空字符串在 wire 上等价"缺省本体默认"（server 恒发非空
+        // race_id，字段缺失多见于测试 fixture），readString 缺失时落 null，
+        // PlayerRaceIdentityStore.replace 内部归一成 ""。
+        PlayerRaceIdentityStore.replace(
+            readString(payload, "race_id"),
+            readString(payload, "form_race_id"),
+            readString(payload, "form_body_plan_id"),
+            readBoolean(payload, "intrinsic_is_humanoid"),
+            readBoolean(payload, "form_is_humanoid")
+        );
 
         MeridianBody body = buildBody(
+            channelOrder,
             opened,
             flowRate,
             flowCapacity,
@@ -120,33 +141,65 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         );
         return ServerDataDispatch.handled(
             envelope.type(),
-            "Applied cultivation_detail snapshot (20 channels) to MeridianStateStore"
+            "Applied cultivation_detail snapshot (" + expected + " channels, keyed by channel_ids) to MeridianStateStore"
         );
     }
 
-    static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity) {
-        return buildBody(opened, flowRate, flowCapacity, integrity, null, null, null, 0.0, null);
+    /**
+     * 按 {@code channel_ids[i]} keyed 查找 {@link MeridianChannel}；查不到的下标（非
+     * humanoid channel）落 {@code null}，调用方需静默跳过而非 crash。{@code channel_ids}
+     * 缺失或长度不符 {@code expected} 时，仅当 {@code expected == CHANNEL_ORDER.length}
+     * （humanoid 20 条）才退回 legacy 固定顺序兜底，否则整段落 null（未知构型不渲染）。
+     */
+    static MeridianChannel[] resolveChannelOrder(JsonArray channelIds, int expected) {
+        MeridianChannel[] resolved = new MeridianChannel[expected];
+        if (channelIds != null && channelIds.size() == expected) {
+            for (int i = 0; i < expected; i++) {
+                JsonElement el = channelIds.get(i);
+                String id = (el != null && el.isJsonPrimitive() && el.getAsJsonPrimitive().isString())
+                    ? el.getAsString() : null;
+                resolved[i] = MeridianChannel.fromChannelId(id);
+            }
+            return resolved;
+        }
+        if (expected == CHANNEL_ORDER.length) {
+            System.arraycopy(CHANNEL_ORDER, 0, resolved, 0, expected);
+        }
+        return resolved;
     }
 
-    static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
+    static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity) {
+        return buildBody(CHANNEL_ORDER, opened, flowRate, flowCapacity, integrity, null, null, null, 0.0, null);
+    }
+
+    static MeridianBody buildBody(MeridianChannel[] channelOrder,
+                                   JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
                                    JsonArray openProgress, JsonArray cracksCount, String realm,
                                    double contaminationTotal, JsonObject lifespan) {
-        return buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm,
+        return buildBody(channelOrder, opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm,
             contaminationTotal, lifespan, null, null, false, false, new EnumMap<>(ColorKind.class));
     }
 
-    static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
+    static MeridianBody buildBody(MeridianChannel[] channelOrder,
+                                   JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
                                    JsonArray openProgress, JsonArray cracksCount, String realm,
                                    double contaminationTotal, JsonObject lifespan,
                                    ColorKind qiColorMain, ColorKind qiColorSecondary,
                                    boolean qiColorChaotic, boolean qiColorHunyuan,
                                    EnumMap<ColorKind, Double> practiceWeights) {
-        return buildBody(opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm,
+        return buildBody(channelOrder, opened, flowRate, flowCapacity, integrity, openProgress, cracksCount, realm,
             contaminationTotal, lifespan, qiColorMain, qiColorSecondary, qiColorChaotic, qiColorHunyuan,
             practiceWeights, null);
     }
 
-    static MeridianBody buildBody(JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
+    /**
+     * plan-race-system-v1 P1c — {@code channelOrder[i]} 是 {@code opened}/{@code
+     * flowRate}/... 等并行数组第 i 项对应的 {@link MeridianChannel}（由调用方按
+     * {@code channel_ids} keyed 解析出，见 {@link #resolveChannelOrder}）；{@code null}
+     * 项（未知 / 非 humanoid channel）静默跳过，不参与 {@link MeridianBody} 渲染。
+     */
+    static MeridianBody buildBody(MeridianChannel[] channelOrder,
+                                   JsonArray opened, JsonArray flowRate, JsonArray flowCapacity, JsonArray integrity,
                                    JsonArray openProgress, JsonArray cracksCount, String realm,
                                    double contaminationTotal, JsonObject lifespan,
                                    ColorKind qiColorMain, ColorKind qiColorSecondary,
@@ -154,8 +207,9 @@ public final class CultivationDetailHandler implements ServerDataHandler {
                                    EnumMap<ColorKind, Double> practiceWeights,
                                    MeridianChannel targetMeridian) {
         EnumMap<MeridianChannel, ChannelState> channels = new EnumMap<>(MeridianChannel.class);
-        for (int i = 0; i < CHANNEL_ORDER.length; i++) {
-            MeridianChannel ch = CHANNEL_ORDER[i];
+        for (int i = 0; i < channelOrder.length; i++) {
+            MeridianChannel ch = channelOrder[i];
+            if (ch == null) continue;
             boolean isOpened = asBool(opened.get(i));
             double capacity = asDouble(flowCapacity.get(i));
             double rate = asDouble(flowRate.get(i));
@@ -182,9 +236,11 @@ public final class CultivationDetailHandler implements ServerDataHandler {
         }
         if (cracksCount != null) {
             java.util.EnumMap<MeridianChannel, Integer> map = new java.util.EnumMap<>(MeridianChannel.class);
-            for (int i = 0; i < CHANNEL_ORDER.length; i++) {
+            for (int i = 0; i < channelOrder.length; i++) {
+                MeridianChannel ch = channelOrder[i];
+                if (ch == null) continue;
                 int n = (int) Math.max(0, asDouble(cracksCount.get(i)));
-                if (n > 0) map.put(CHANNEL_ORDER[i], n);
+                if (n > 0) map.put(ch, n);
             }
             builder.cracksCount(map);
         }

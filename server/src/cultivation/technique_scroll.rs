@@ -45,9 +45,26 @@ pub enum LearnSource {
 pub enum ScrollReadOutcome {
     Learned,
     AlreadyKnown,
-    RealmTooLow { required: Realm, current: Realm },
-    MeridianSevered { channel: MeridianId },
-    MeridianMissing { channel: MeridianId },
+    RealmTooLow {
+        required: Realm,
+        current: Realm,
+    },
+    /// plan-race-system-v1 P3a（决议 §8.1 #5/#6）——功法域 race gate 拒绝：本体 race_id /
+    /// `intrinsic_is_humanoid` 未通过 `TechniqueDefinition.required_race`。境界门之后、
+    /// 经脉门之前判定（见 `learn_technique_if_allowed`）。
+    RaceMismatch,
+    MeridianSevered {
+        channel: MeridianId,
+    },
+    MeridianMissing {
+        channel: MeridianId,
+    },
+    /// plan-race-system-v1 P4 —— 易形类技能（`morph.yixing`，见
+    /// `body_plan::technique_requires_form_anchor`）专属前置门：本体
+    /// `MeridianProfile` 内全部 `ChannelRole::FormAnchor` 经脉未全部打通/未断绝。
+    /// `meridian_profile` 缺失（调用方未接入 body_plan registry）时同样判定本变体
+    /// （fail-closed，不因资源缺失而放行易形）。
+    FormAnchorClosed,
     InvalidScroll,
 }
 
@@ -57,6 +74,8 @@ pub fn read_combat_technique_scroll(
     meridians: &MeridianSystem,
     severed: Option<&MeridianSeveredPermanent>,
     template: &ItemTemplate,
+    intrinsic_is_humanoid: bool,
+    meridian_profile: Option<&crate::body_plan::MeridianProfile>,
 ) -> ScrollReadOutcome {
     let Some(spec) = template.technique_scroll_spec.as_ref() else {
         return ScrollReadOutcome::InvalidScroll;
@@ -71,9 +90,15 @@ pub fn read_combat_technique_scroll(
         severed,
         spec.skill_id.as_str(),
         0.0,
+        intrinsic_is_humanoid,
+        meridian_profile,
     )
 }
 
+/// `intrinsic_is_humanoid`：调用方按 `BodyPlanPurpose::Intrinsic` 解析本体 BodyPlan 得到的
+/// `is_humanoid`（见 `body_plan::resolve_body_plan_for_target` 文档）——本函数保持纯函数
+/// 签名，不依赖 Bevy `Query`/`Res`，方便单测直接构造。
+#[allow(clippy::too_many_arguments)]
 pub fn learn_technique_if_allowed(
     known: &mut KnownTechniques,
     cultivation: &Cultivation,
@@ -81,6 +106,11 @@ pub fn learn_technique_if_allowed(
     severed: Option<&MeridianSeveredPermanent>,
     technique_id: &str,
     initial_proficiency: f32,
+    intrinsic_is_humanoid: bool,
+    // plan-race-system-v1 P4 —— 本体 `MeridianProfile`（`resolve_body_plan(Intrinsic)`
+    // 的解析结果），供 `morph.yixing` 一类易形技能的 `form_anchors_open` 前置门使用；
+    // 其余技能不消费本字段，既有调用点可安全传 `None`。
+    meridian_profile: Option<&crate::body_plan::MeridianProfile>,
 ) -> ScrollReadOutcome {
     let Some(definition) = technique_definition(technique_id) else {
         return ScrollReadOutcome::InvalidScroll;
@@ -97,6 +127,20 @@ pub fn learn_technique_if_allowed(
         }
     } else {
         return ScrollReadOutcome::InvalidScroll;
+    }
+    if !definition
+        .required_race
+        .allows(&cultivation.race, intrinsic_is_humanoid)
+    {
+        return ScrollReadOutcome::RaceMismatch;
+    }
+    if crate::body_plan::technique_requires_form_anchor(technique_id) {
+        let anchors_ok = meridian_profile
+            .map(|profile| crate::body_plan::form_anchors_open(profile, meridians, severed))
+            .unwrap_or(false);
+        if !anchors_ok {
+            return ScrollReadOutcome::FormAnchorClosed;
+        }
     }
     if let Err(outcome) = check_required_meridians(definition, meridians, severed) {
         return outcome;
@@ -116,6 +160,8 @@ pub fn can_learn_technique(
     meridians: &MeridianSystem,
     severed: Option<&MeridianSeveredPermanent>,
     technique_id: &str,
+    intrinsic_is_humanoid: bool,
+    meridian_profile: Option<&crate::body_plan::MeridianProfile>,
 ) -> ScrollReadOutcome {
     let mut probe = known.clone();
     learn_technique_if_allowed(
@@ -125,6 +171,8 @@ pub fn can_learn_technique(
         severed,
         technique_id,
         0.0,
+        intrinsic_is_humanoid,
+        meridian_profile,
     )
 }
 
@@ -235,6 +283,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -264,6 +313,8 @@ mod tests {
             &meridians,
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
+            true,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::Learned);
@@ -286,6 +337,8 @@ mod tests {
             &meridians,
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
+            true,
+            None,
         );
 
         assert_eq!(
@@ -308,7 +361,9 @@ mod tests {
         let mut meridians = MeridianSystem::default();
         open_required_meridians(&mut meridians, "woliu.vortex");
         let mut severed = MeridianSeveredPermanent::default();
-        severed.severed_meridians.insert(MeridianId::Lung);
+        severed
+            .severed_meridians
+            .insert(MeridianId::Lung.channel_id());
 
         let outcome = read_combat_technique_scroll(
             &mut known,
@@ -316,6 +371,8 @@ mod tests {
             &meridians,
             Some(&severed),
             &template("scroll_woliu_vortex", "woliu.vortex"),
+            true,
+            None,
         );
 
         assert_eq!(
@@ -341,6 +398,8 @@ mod tests {
             &MeridianSystem::default(),
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
+            true,
+            None,
         );
 
         assert_eq!(
@@ -374,6 +433,8 @@ mod tests {
             &meridians,
             None,
             &template("scroll_woliu_vortex", "woliu.vortex"),
+            true,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::AlreadyKnown);
@@ -393,9 +454,239 @@ mod tests {
             &MeridianSystem::default(),
             None,
             &invalid,
+            true,
+            None,
         );
 
         assert_eq!(outcome, ScrollReadOutcome::InvalidScroll);
+        assert!(known.entries.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // plan-race-system-v1 P3a —— 习得门 race gate（境界门后、经脉门前）。
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn learn_humanoid_gated_technique_rejects_non_humanoid_intrinsic() {
+        // woliu.vortex 是 RaceGate::Humanoid；is_humanoid=false 必须拒绝，即便境界/经脉
+        // 全部满足。
+        let mut known = KnownTechniques::default();
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let mut meridians = MeridianSystem::default();
+        open_required_meridians(&mut meridians, "woliu.vortex");
+
+        let outcome = learn_technique_if_allowed(
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            0.0,
+            false,
+            None,
+        );
+
+        assert_eq!(
+            outcome,
+            ScrollReadOutcome::RaceMismatch,
+            "is_humanoid=false 必须被 Humanoid 档拒绝"
+        );
+        assert!(known.entries.is_empty());
+    }
+
+    #[test]
+    fn learn_humanoid_gated_technique_allows_humanoid_intrinsic() {
+        let mut known = KnownTechniques::default();
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let mut meridians = MeridianSystem::default();
+        open_required_meridians(&mut meridians, "woliu.vortex");
+
+        let outcome = learn_technique_if_allowed(
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            0.0,
+            true,
+            None,
+        );
+
+        assert_eq!(outcome, ScrollReadOutcome::Learned);
+    }
+
+    #[test]
+    fn learn_any_gated_technique_ignores_is_humanoid() {
+        // movement.dash 是 RaceGate::Any——is_humanoid=false（如飞鲸种族）也必须放行。
+        let mut known = KnownTechniques::default();
+        let cultivation = Cultivation::default();
+        let meridians = MeridianSystem::default();
+
+        let outcome = learn_technique_if_allowed(
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            "movement.dash",
+            0.0,
+            false,
+            None,
+        );
+
+        assert_eq!(
+            outcome,
+            ScrollReadOutcome::Learned,
+            "Any 档不应因 is_humanoid=false 被拒绝"
+        );
+    }
+
+    #[test]
+    fn race_gate_checked_after_realm_gate_before_meridian_gate() {
+        // 境界不足时优先报 RealmTooLow，即便种族也不合格——验证门的顺序（境界门先于
+        // race gate）。
+        let mut known = KnownTechniques::default();
+        let cultivation = Cultivation::default(); // Realm::Awaken < Condense
+        let meridians = MeridianSystem::default();
+
+        let outcome = learn_technique_if_allowed(
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            0.0,
+            false,
+            None,
+        );
+
+        assert_eq!(
+            outcome,
+            ScrollReadOutcome::RealmTooLow {
+                required: Realm::Condense,
+                current: Realm::Awaken,
+            },
+            "境界门必须先于 race gate 判定"
+        );
+
+        // 境界满足后，race gate 必须先于经脉门判定——meridians 全未开，若 race gate 未
+        // 生效会误报 MeridianMissing 而非 RaceMismatch。
+        let cultivation_ok_realm = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let outcome2 = learn_technique_if_allowed(
+            &mut known,
+            &cultivation_ok_realm,
+            &meridians,
+            None,
+            "woliu.vortex",
+            0.0,
+            false,
+            None,
+        );
+        assert_eq!(
+            outcome2,
+            ScrollReadOutcome::RaceMismatch,
+            "race gate 必须先于经脉门判定，未开经脉不应掩盖 RaceMismatch"
+        );
+    }
+
+    #[test]
+    fn already_known_short_circuits_before_race_gate() {
+        // AlreadyKnown 判定在 race gate 之前——已学会的功法不该因为易形/换种族后
+        // is_humanoid 变化而报错误的 RaceMismatch（幂等：已知即返回 AlreadyKnown）。
+        let mut known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "woliu.vortex".to_string(),
+                proficiency: 0.2,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let meridians = MeridianSystem::default();
+
+        let outcome = learn_technique_if_allowed(
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            0.0,
+            false,
+            None,
+        );
+
+        assert_eq!(outcome, ScrollReadOutcome::AlreadyKnown);
+    }
+
+    #[test]
+    fn can_learn_technique_respects_race_gate_without_mutating_known() {
+        let known = KnownTechniques::default();
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let mut meridians = MeridianSystem::default();
+        open_required_meridians(&mut meridians, "woliu.vortex");
+
+        let outcome = can_learn_technique(
+            &known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            false,
+            None,
+        );
+        assert_eq!(outcome, ScrollReadOutcome::RaceMismatch);
+        assert!(
+            known.entries.is_empty(),
+            "can_learn_technique 只探测，不应写入 known"
+        );
+
+        let outcome_ok = can_learn_technique(
+            &known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            true,
+            None,
+        );
+        assert_eq!(outcome_ok, ScrollReadOutcome::Learned);
+        assert!(known.entries.is_empty(), "探测不应留下副作用");
+    }
+
+    #[test]
+    fn read_combat_technique_scroll_propagates_race_mismatch() {
+        let mut known = KnownTechniques::default();
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let mut meridians = MeridianSystem::default();
+        open_required_meridians(&mut meridians, "woliu.vortex");
+
+        let outcome = read_combat_technique_scroll(
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            &template("scroll_woliu_vortex", "woliu.vortex"),
+            false,
+            None,
+        );
+
+        assert_eq!(outcome, ScrollReadOutcome::RaceMismatch);
         assert!(known.entries.is_empty());
     }
 }

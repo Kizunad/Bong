@@ -59,6 +59,9 @@ pub mod poison_trait_emit;
 pub mod qi_attrition_emit;
 pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
+// plan-race-system-v1 P3c — 种族门元数据表（RaceGateMeta）构建 + join 首帧下发。
+pub mod morph_state_emit;
+pub mod race_gate_meta_emit;
 pub mod rat_phase_bridge;
 pub mod redis_bridge;
 pub mod remains_sync_emit;
@@ -352,6 +355,14 @@ impl NarrationDedupeResource {
             self.recent_payload_keys.pop_front();
         }
     }
+}
+
+pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
+    app.add_systems(
+        Update,
+        craft_emit::apply_craft_start_intents
+            .after(client_request_handler::handle_client_request_payloads),
+    );
 }
 
 pub fn register(app: &mut App) {
@@ -691,6 +702,10 @@ pub fn register(app: &mut App) {
         Update,
         (
             cultivation_detail_emit::emit_cultivation_detail_payloads,
+            cultivation_detail_emit::emit_body_plan_layout_payloads,
+            race_gate_meta_emit::emit_race_gate_meta_payloads,
+            morph_state_emit::emit_morph_state_payloads,
+            morph_state_emit::emit_morph_state_delta_payloads,
             qi_color_observed_emit::emit_qi_color_observed_payloads
                 .after(client_request_handler::handle_client_request_payloads),
             audio_event_emit::handle_audio_debug_commands,
@@ -882,16 +897,21 @@ pub fn register(app: &mut App) {
     );
     // ── plan-craft-v1 P2/P3：通用手搓 IPC（client_request → intent → session → outcome
     //    + 三渠道解锁 intent → unlock_via_* → RecipeUnlocked）──
+    register_craft_start_runtime_system(app);
     app.add_systems(
         Update,
         (
-            craft_emit::apply_craft_intents
-                .after(client_request_handler::handle_client_request_payloads),
+            craft_emit::apply_craft_cancel_intents.after(craft_emit::apply_craft_start_intents),
             craft_emit::apply_unlock_intents
                 .after(client_request_handler::handle_client_request_payloads),
-            craft_emit::tick_craft_sessions.after(craft_emit::apply_craft_intents),
-            craft_emit::emit_craft_session_state.after(craft_emit::tick_craft_sessions),
-            craft_emit::emit_craft_outcome_payloads.after(craft_emit::tick_craft_sessions),
+            craft_emit::tick_craft_sessions.after(craft_emit::apply_craft_cancel_intents),
+            craft_emit::persist_dirty_craft_sessions
+                .after(craft_emit::apply_craft_start_intents)
+                .after(craft_emit::apply_craft_cancel_intents)
+                .after(craft_emit::tick_craft_sessions)
+                .before(crate::player::despawn_disconnected_clients),
+            craft_emit::emit_craft_session_state.after(craft_emit::persist_dirty_craft_sessions),
+            craft_emit::emit_craft_outcome_payloads.after(craft_emit::persist_dirty_craft_sessions),
             craft_emit::emit_recipe_unlocked_payloads.after(craft_emit::apply_unlock_intents),
             craft_emit::emit_recipe_list_on_join
                 .after(crate::inventory::attach_inventory_to_joined_clients),
@@ -900,9 +920,10 @@ pub fn register(app: &mut App) {
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             // P3 server → agent Redis bridge
             craft_event_bridge::publish_craft_completed_to_redis
-                .after(craft_emit::tick_craft_sessions),
+                .after(craft_emit::persist_dirty_craft_sessions),
             craft_event_bridge::publish_craft_failed_to_redis
-                .after(craft_emit::apply_craft_intents),
+                .after(craft_emit::apply_craft_cancel_intents)
+                .after(craft_emit::persist_dirty_craft_sessions),
             craft_event_bridge::publish_recipe_unlocked_to_redis
                 .after(craft_emit::apply_unlock_intents),
         ),
@@ -951,7 +972,8 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::yidao::complete_yidao_casts),
             techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
-                .after(inventory_event_emit::emit_durability_changed_inventory_events),
+                .after(inventory_event_emit::emit_durability_changed_inventory_events)
+                .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
@@ -1086,6 +1108,8 @@ pub fn register(app: &mut App) {
     spider_disguise_emit::register(app);
 
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
+    app.init_resource::<morph_state_emit::MorphStateEmitState>();
+    app.init_resource::<morph_state_emit::MorphStateEntityCache>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();
     app.init_resource::<audio_trigger::AudioTriggerState>();

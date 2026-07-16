@@ -645,17 +645,20 @@
         "realm": {
           "type": "string"
         },
+        "channel_ids": {
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
         "opened": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "type": "boolean"
           }
         },
         "flow_rate": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -663,8 +666,6 @@
           }
         },
         "flow_capacity": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -672,8 +673,6 @@
           }
         },
         "integrity": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -682,8 +681,6 @@
           }
         },
         "open_progress": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -692,8 +689,6 @@
           }
         },
         "cracks_count": {
-          "minItems": 20,
-          "maxItems": 20,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -971,6 +966,27 @@
               }
             }
           }
+        },
+        "target_meridian": {
+          "type": "string"
+        },
+        "body_plan_id": {
+          "type": "string"
+        },
+        "race_id": {
+          "type": "string"
+        },
+        "form_race_id": {
+          "type": "string"
+        },
+        "form_body_plan_id": {
+          "type": "string"
+        },
+        "intrinsic_is_humanoid": {
+          "type": "boolean"
+        },
+        "form_is_humanoid": {
+          "type": "boolean"
         }
       }
     },
@@ -13269,6 +13285,396 @@
       "required": [
         "v",
         "type",
+        "body_plan_id",
+        "silhouette",
+        "anchors",
+        "meridian_paths",
+        "part_display_map",
+        "hud_anchors"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "body_plan_layout",
+          "type": "string"
+        },
+        "body_plan_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "silhouette": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "part_id",
+              "polygon"
+            ],
+            "properties": {
+              "part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "polygon": {
+                "minItems": 3,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "properties": {
+                    "x": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "y": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "anchors": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "part_id",
+              "point"
+            ],
+            "properties": {
+              "part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "point": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "properties": {
+                  "x": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "y": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "meridian_paths": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "channel_id",
+              "points"
+            ],
+            "properties": {
+              "channel_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "points": {
+                "minItems": 2,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "properties": {
+                    "x": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "y": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "part_display_map": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "server_part_id",
+              "display_segment_id"
+            ],
+            "properties": {
+              "server_part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "display_segment_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "hud_anchors": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "part_id",
+              "point"
+            ],
+            "properties": {
+              "part_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "point": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "properties": {
+                  "x": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "y": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "item_wearer_race",
+        "technique_required_race"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "race_gate_meta",
+          "type": "string"
+        },
+        "item_wearer_race": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "gate"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "gate": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "species"
+                ],
+                "properties": {
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "const": "any",
+                        "type": "string"
+                      },
+                      {
+                        "const": "humanoid",
+                        "type": "string"
+                      },
+                      {
+                        "const": "species",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "species": {
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "technique_required_race": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "gate"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "gate": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "species"
+                ],
+                "properties": {
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "const": "any",
+                        "type": "string"
+                      },
+                      {
+                        "const": "humanoid",
+                        "type": "string"
+                      },
+                      {
+                        "const": "species",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "species": {
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "mode",
+        "entries"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "morph_state",
+          "type": "string"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "const": "full",
+              "type": "string"
+            },
+            {
+              "const": "delta",
+              "type": "string"
+            }
+          ]
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "entity_id",
+              "model_kind",
+              "form_race_id",
+              "form_body_plan_id",
+              "active"
+            ],
+            "properties": {
+              "entity_id": {
+                "type": "integer"
+              },
+              "model_kind": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "form_race_id": {
+                "type": "string"
+              },
+              "form_body_plan_id": {
+                "type": "string"
+              },
+              "active": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "session_id",
         "target_id",
         "target_name",
@@ -15507,6 +15913,89 @@
           "type": "number"
         },
         "type": {
+          "const": "quickslot_config",
+          "type": "string"
+        },
+        "slots": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "item_id",
+                  "display_name",
+                  "cast_duration_ms",
+                  "cooldown_ms",
+                  "icon_texture"
+                ],
+                "properties": {
+                  "item_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "cast_duration_ms": {
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "type": "integer"
+                  },
+                  "cooldown_ms": {
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "type": "integer"
+                  },
+                  "icon_texture": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "cooldown_until_ms": {
+          "minItems": 9,
+          "maxItems": 9,
+          "type": "array",
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "ack_request_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "bind_accepted": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "slots",
+        "cooldown_until_ms"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
           "const": "skillbar_config",
           "type": "string"
         },
@@ -15860,6 +16349,104 @@
         },
         "turbulence_until_ms": {
           "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "kind",
+        "echo_count",
+        "aim_progress",
+        "charge_progress",
+        "abrasion_container",
+        "abrasion_qi_payload",
+        "tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "anqi_hud",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "echo",
+              "type": "string"
+            },
+            {
+              "const": "aim",
+              "type": "string"
+            },
+            {
+              "const": "charge",
+              "type": "string"
+            },
+            {
+              "const": "abrasion",
+              "type": "string"
+            },
+            {
+              "const": "multishot",
+              "type": "string"
+            }
+          ]
+        },
+        "echo_count": {
+          "minimum": 0,
+          "maximum": 2147483647,
+          "type": "integer"
+        },
+        "aim_progress": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "charge_progress": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "abrasion_container": {
+          "anyOf": [
+            {
+              "const": "",
+              "type": "string"
+            },
+            {
+              "const": "hand_slot",
+              "type": "string"
+            },
+            {
+              "const": "quiver",
+              "type": "string"
+            },
+            {
+              "const": "pocket_pouch",
+              "type": "string"
+            },
+            {
+              "const": "fenglinghe",
+              "type": "string"
+            }
+          ]
+        },
+        "abrasion_qi_payload": {
+          "minimum": 0,
+          "maximum": 3.4028234e+38,
+          "type": "number"
+        },
+        "tick": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
           "type": "integer"
         }
       }

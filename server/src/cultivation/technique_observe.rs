@@ -86,6 +86,7 @@ pub fn observe_learn_chance(
     (base * color_bonus * practice_bonus * insight_bonus).min(0.15)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_observe_attempt(
     known: &KnownTechniques,
     cultivation: &Cultivation,
@@ -93,6 +94,7 @@ pub fn evaluate_observe_attempt(
     severed: Option<&MeridianSeveredPermanent>,
     learner: ObserveLearnerContext,
     ctx: ObserveAttemptContext,
+    intrinsic_is_humanoid: bool,
 ) -> ObserveOutcome {
     if ctx.distance_blocks > OBSERVE_RANGE_BLOCKS {
         return ObserveOutcome::OutOfRange;
@@ -110,7 +112,15 @@ pub fn evaluate_observe_attempt(
     if grade == TechniqueGrade::Earth {
         return ObserveOutcome::EarthGradeBlocked;
     }
-    let learn = can_learn_technique(known, cultivation, meridians, severed, ctx.technique_id);
+    let learn = can_learn_technique(
+        known,
+        cultivation,
+        meridians,
+        severed,
+        ctx.technique_id,
+        intrinsic_is_humanoid,
+        None,
+    );
     if !matches!(learn, ScrollReadOutcome::Learned) {
         return ObserveOutcome::LearnBlocked(learn);
     }
@@ -256,6 +266,7 @@ mod tests {
                 has_line_of_sight: false,
                 cooldown_ready: true,
             },
+            true,
         );
         assert_eq!(outcome, ObserveOutcome::NoLineOfSight);
     }
@@ -285,11 +296,47 @@ mod tests {
                 has_line_of_sight: true,
                 cooldown_ready: true,
             },
+            true,
         );
 
         assert!(matches!(
             outcome,
             ObserveOutcome::LearnBlocked(ScrollReadOutcome::RealmTooLow { .. })
+        ));
+    }
+
+    // plan-race-system-v1 P3a —— 偷师习得门也要走 race gate。
+    #[test]
+    fn observe_refuses_non_humanoid_intrinsic() {
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        meridians.get_mut(MeridianId::Lung).integrity = 1.0;
+
+        let outcome = evaluate_observe_attempt(
+            &KnownTechniques::default(),
+            &Cultivation {
+                realm: Realm::Condense,
+                ..Default::default()
+            },
+            &meridians,
+            None,
+            ObserveLearnerContext {
+                observer_color: &QiColor::default(),
+                practice_log: None,
+                insight_modifiers: &InsightModifiers::new(),
+            },
+            ObserveAttemptContext {
+                technique_id: "woliu.vortex",
+                distance_blocks: 4.0,
+                has_line_of_sight: true,
+                cooldown_ready: true,
+            },
+            false,
+        );
+
+        assert!(matches!(
+            outcome,
+            ObserveOutcome::LearnBlocked(ScrollReadOutcome::RaceMismatch)
         ));
     }
 }

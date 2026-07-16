@@ -11,6 +11,7 @@ import com.google.gson.JsonPrimitive;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -197,7 +198,13 @@ public final class SocialServerDataHandler implements ServerDataHandler {
             readString(p, "terms"),
             expiresAtMs
         );
-        SocialStateStore.replaceSparringInvite(invite);
+        SocialStateStore.SparringInviteUpdate update = SocialStateStore.enqueueSparringInvite(invite);
+        if (update != SocialStateStore.SparringInviteUpdate.ACCEPTED) {
+            return ServerDataDispatch.noOp(
+                envelope.type(),
+                "Ignoring sparring_invite " + inviteId + ": " + update.name().toLowerCase(Locale.ROOT)
+            );
+        }
         publishSocialEvent(
             UnifiedEvent.Priority.P1_IMPORTANT,
             "sparring_invite:" + inviteId,

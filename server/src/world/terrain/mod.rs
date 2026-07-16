@@ -1206,8 +1206,7 @@ mod tests {
         const COLUMN_COUNT: u32 = 16 * 16;
 
         let entries_per_long = i64::BITS / VALENCE_HEIGHTMAP_BITS_PER_ENTRY;
-        let expected_longs =
-            COLUMN_COUNT / entries_per_long + (COLUMN_COUNT % entries_per_long != 0) as u32;
+        let expected_longs = COLUMN_COUNT.div_ceil(entries_per_long);
 
         assert_eq!(WORLD_HEIGHT % 16, 0);
         assert!(heightmap_bits_for_dimension(WORLD_HEIGHT) <= VALENCE_HEIGHTMAP_BITS_PER_ENTRY);

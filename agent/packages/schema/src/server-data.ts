@@ -9,6 +9,7 @@ import {
 } from "./alchemy.js";
 import { BotanyHarvestModeV1 } from "./botany.js";
 import {
+  QuickSlotConfigV1,
   SkillBarConfigV1,
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
@@ -104,42 +105,33 @@ import {
 import { TribulationKindV1 } from "./tribulation.js";
 
 export const SERVER_DATA_MAX_PAYLOAD_BYTES = 32_768;
+// Java HUD store consumes these fields as int/float after protobuf bridging.
+const ANQI_HUD_ECHO_COUNT_MAX = 2_147_483_647;
+const ANQI_HUD_QI_PAYLOAD_MAX = 3.4028234e38;
+const ANQI_HUD_TICK_MAX = Number.MAX_SAFE_INTEGER;
 
-const MERIDIAN_CHANNEL_COUNT = 20;
+// plan-race-system-v1 P1c：经脉 SoA 数组不再假设恰好 20 条（`MERIDIAN_CHANNEL_COUNT`
+// 固定长度约束已放开）——非 humanoid 构型（P5 飞鲸等）的经脉数随 `MeridianProfile`
+// 变化。数组间长度一致性（`channel_ids.length === opened.length === ...`）由 server
+// 侧发送时保证，schema 层只做元素类型/范围校验。
 
-const CultivationOpenedArrayV1 = Type.Array(Type.Boolean(), {
-  minItems: MERIDIAN_CHANNEL_COUNT,
-  maxItems: MERIDIAN_CHANNEL_COUNT,
-});
+const CultivationOpenedArrayV1 = Type.Array(Type.Boolean());
 
-const CultivationFlowArrayV1 = Type.Array(Type.Number({ minimum: 0 }), {
-  minItems: MERIDIAN_CHANNEL_COUNT,
-  maxItems: MERIDIAN_CHANNEL_COUNT,
-});
+const CultivationFlowArrayV1 = Type.Array(Type.Number({ minimum: 0 }));
 
 const CultivationIntegrityArrayV1 = Type.Array(
   Type.Number({ minimum: 0, maximum: 1 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
 
 const CultivationProgressArrayV1 = Type.Array(
   Type.Number({ minimum: 0, maximum: 1 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
 
 const CultivationCracksArrayV1 = Type.Array(
   Type.Integer({ minimum: 0, maximum: 255 }),
-  {
-    minItems: MERIDIAN_CHANNEL_COUNT,
-    maxItems: MERIDIAN_CHANNEL_COUNT,
-  },
 );
+
+const CultivationChannelIdArrayV1 = Type.Array(Type.String({ minLength: 1 }));
 
 const LifespanPreviewV1 = Type.Object(
   {
@@ -164,6 +156,42 @@ const DeathScreenZoneKindV1 = Type.Union([
   Type.Literal("negative"),
 ]);
 
+export const AnqiHudKindV1 = Type.Union([
+  Type.Literal("echo"),
+  Type.Literal("aim"),
+  Type.Literal("charge"),
+  Type.Literal("abrasion"),
+  Type.Literal("multishot"),
+]);
+export type AnqiHudKindV1 = Static<typeof AnqiHudKindV1>;
+
+export const AnqiHudContainerV1 = Type.Union([
+  Type.Literal(""),
+  Type.Literal("hand_slot"),
+  Type.Literal("quiver"),
+  Type.Literal("pocket_pouch"),
+  Type.Literal("fenglinghe"),
+]);
+export type AnqiHudContainerV1 = Static<typeof AnqiHudContainerV1>;
+
+/** Rust `AnqiHudV1` 的 TypeBox wire 镜像（不含 server_data wrapper）。 */
+export const AnqiHudV1 = Type.Object(
+  {
+    kind: AnqiHudKindV1,
+    echo_count: Type.Integer({ minimum: 0, maximum: ANQI_HUD_ECHO_COUNT_MAX }),
+    aim_progress: Type.Number({ minimum: 0, maximum: 1 }),
+    charge_progress: Type.Number({ minimum: 0, maximum: 1 }),
+    abrasion_container: AnqiHudContainerV1,
+    abrasion_qi_payload: Type.Number({
+      minimum: 0,
+      maximum: ANQI_HUD_QI_PAYLOAD_MAX,
+    }),
+    tick: Type.Integer({ minimum: 0, maximum: ANQI_HUD_TICK_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type AnqiHudV1 = Static<typeof AnqiHudV1>;
+
 export const ServerDataType = Type.Union([
   Type.Literal("welcome"),
   Type.Literal("heartbeat"),
@@ -178,6 +206,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("inventory_snapshot"),
   Type.Literal("dropped_loot_sync"),
   Type.Literal("remains_sync"),
+  Type.Literal("body_plan_layout"),
+  Type.Literal("race_gate_meta"),
   Type.Literal("botany_harvest_progress"),
   Type.Literal("gathering_session"),
   Type.Literal("botany_plant_v2_render_profiles"),
@@ -203,6 +233,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("full_power_charging_state"),
   Type.Literal("full_power_release"),
   Type.Literal("full_power_exhausted_state"),
+  Type.Literal("quickslot_config"),
   Type.Literal("skillbar_config"),
   Type.Literal("techniques_snapshot"),
   Type.Literal("skill_config_snapshot"),
@@ -253,6 +284,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("healer_npc_ai_state"),
   Type.Literal("yidao_hud_state"),
   Type.Literal("movement_state"),
+  Type.Literal("anqi_hud"),
   Type.Literal("spirit_treasure_state"),
   Type.Literal("spirit_treasure_dialogue"),
   Type.Literal("knockback_sync"),
@@ -371,6 +403,9 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("cultivation_detail"),
     realm: Type.String(),
+    // plan-race-system-v1 P1c：每条经脉的 snake_case channel id，与 opened/flow_rate/...
+    // 等并行数组同序同长；不再假设恰好 20 条。
+    channel_ids: Type.Optional(CultivationChannelIdArrayV1),
     opened: CultivationOpenedArrayV1,
     flow_rate: CultivationFlowArrayV1,
     flow_capacity: CultivationFlowArrayV1,
@@ -386,6 +421,21 @@ export const ServerDataCultivationDetailV1 = Type.Object(
     qi_color_chaotic: Type.Optional(Type.Boolean()),
     qi_color_hunyuan: Type.Optional(Type.Boolean()),
     practice_weights: Type.Optional(Type.Array(QiColorPracticeWeightV1, { maxItems: 10 })),
+    // plan-race-system-v1 P1c：当前冲脉目标的 channel id 字符串（此前 schema 漂移，
+    // Rust 侧早已下发该字段但 TS 侧未声明——本轮随 wire 开放化一并补齐）。
+    target_meridian: Type.Optional(Type.String()),
+    // plan-race-system-v1 P2a：实体本体 body_plan id（BodyPlanLayout 寻址键，client
+    // 按此缓存对应布局）。Rust 侧 #[serde(default)]，故 TS 侧 Optional。
+    body_plan_id: Type.Optional(Type.String()),
+    // plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：client
+    // gate 判定（装备置灰等）的权威真源，不靠猜 / 不靠 BodyPlanLayoutV1 的 is_humanoid
+    // 元数据（那只供渲染）。未易形（P4 MorphState 落地前恒定）时 form_* 三字段 =
+    // 对应本体字段。Rust 侧 #[serde(default)]，故 TS 侧全部 Optional。
+    race_id: Type.Optional(Type.String()),
+    form_race_id: Type.Optional(Type.String()),
+    form_body_plan_id: Type.Optional(Type.String()),
+    intrinsic_is_humanoid: Type.Optional(Type.Boolean()),
+    form_is_humanoid: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -468,6 +518,151 @@ export const ServerDataRemainsSyncV1 = Type.Object(
   { additionalProperties: false },
 );
 export type ServerDataRemainsSyncV1 = Static<typeof ServerDataRemainsSyncV1>;
+
+// ─── plan-race-system-v1 P2a：BodyPlanLayout ──────────────────────
+// 动态部位 / 经脉面板布局元数据（与 Rust BodyPlanLayoutV1 精确对应）。
+// 坐标均为归一化 [0,1]（原点 = 布局画布左上角）。
+
+export const BodyPlanPoint2V1 = Type.Object(
+  {
+    x: Type.Number({ minimum: 0, maximum: 1 }),
+    y: Type.Number({ minimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanPoint2V1 = Static<typeof BodyPlanPoint2V1>;
+
+export const BodyPlanSilhouettePartV1 = Type.Object(
+  {
+    part_id: Type.String({ minLength: 1 }),
+    polygon: Type.Array(BodyPlanPoint2V1, { minItems: 3 }),
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanSilhouettePartV1 = Static<typeof BodyPlanSilhouettePartV1>;
+
+export const BodyPlanPartAnchorV1 = Type.Object(
+  {
+    part_id: Type.String({ minLength: 1 }),
+    point: BodyPlanPoint2V1,
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanPartAnchorV1 = Static<typeof BodyPlanPartAnchorV1>;
+
+export const BodyPlanMeridianPathV1 = Type.Object(
+  {
+    channel_id: Type.String({ minLength: 1 }),
+    points: Type.Array(BodyPlanPoint2V1, { minItems: 2 }),
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanMeridianPathV1 = Static<typeof BodyPlanMeridianPathV1>;
+
+export const BodyPlanPartDisplayMappingV1 = Type.Object(
+  {
+    server_part_id: Type.String({ minLength: 1 }),
+    display_segment_id: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type BodyPlanPartDisplayMappingV1 = Static<
+  typeof BodyPlanPartDisplayMappingV1
+>;
+
+export const ServerDataBodyPlanLayoutV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("body_plan_layout"),
+    body_plan_id: Type.String({ minLength: 1 }),
+    silhouette: Type.Array(BodyPlanSilhouettePartV1, { minItems: 1 }),
+    anchors: Type.Array(BodyPlanPartAnchorV1),
+    meridian_paths: Type.Array(BodyPlanMeridianPathV1),
+    part_display_map: Type.Array(BodyPlanPartDisplayMappingV1),
+    // P2 major 修复：mini HUD（30×75 粗网格，比例与 anchors 的 168×236 精细画布不同）
+    // 专用第二锚点组，可选（未配置时 client 回退到 anchors 缩放推导）。恒为数组字段
+    // （空数组 = 未配置），与 Rust `#[serde(default)]` 对齐。
+    hud_anchors: Type.Array(BodyPlanPartAnchorV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataBodyPlanLayoutV1 = Static<
+  typeof ServerDataBodyPlanLayoutV1
+>;
+
+// ─── plan-race-system-v1 P3a：RaceGate ─────────────────────────────
+// 装备 / 功法种族三档匹配门的 wire 形状（与 Rust body_plan::types::RaceGateOwned /
+// proto bong.RaceGate 精确对应）。`kind` 用 string tag（非 proto enum，避免枚举前缀
+// noOp，见 plan-wire-format-bridge-v1 教训）；`species` 仅 `kind="species"` 时非空。
+// 未知 kind 必须被拒绝（fail-closed，不静默兜底 any）——校验层用 `validate()` 走
+// `RaceGateV1` schema 即可拒绝，本类型尚未挂在任何 ServerData oneof payload 下
+// （P3 后续接入功法列表 / 装备 wire 时复用，见 plan §P3 身份快照 bullet）。
+export const RaceGateV1 = Type.Object(
+  {
+    kind: Type.Union([
+      Type.Literal("any"),
+      Type.Literal("humanoid"),
+      Type.Literal("species"),
+    ]),
+    species: Type.Array(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+export type RaceGateV1 = Static<typeof RaceGateV1>;
+
+// ─── plan-race-system-v1 P3c：RaceGateMeta（种族门元数据表） ──────────
+// 静态 per-template / per-technique 种族门表，join 首帧一次性下发（不随每次
+// inventory snapshot 重发）。两表都只装**非 any** 条目（any 是默认，client 缺省
+// 即恒放行，省流量）。装备门（item_wearer_race）判当前形态身份，功法门
+// （technique_required_race）判本体身份——两域不同轴（决议 §8.1 #5/#6）。
+export const RaceGateMetaEntryV1 = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    gate: RaceGateV1,
+  },
+  { additionalProperties: false },
+);
+export type RaceGateMetaEntryV1 = Static<typeof RaceGateMetaEntryV1>;
+
+export const ServerDataRaceGateMetaV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("race_gate_meta"),
+    // item template_id → wearer_race（装备门，判当前形态）。恒为数组（空 = 无门物品）。
+    item_wearer_race: Type.Array(RaceGateMetaEntryV1),
+    // technique skill_id → required_race（功法门，判本体）。恒为数组（空 = 无门功法）。
+    technique_required_race: Type.Array(RaceGateMetaEntryV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRaceGateMetaV1 = Static<typeof ServerDataRaceGateMetaV1>;
+
+// ─── plan-race-system-v1 P4：MorphState（易形状态快照） ──────────────
+// `mode`："full"（join 首帧全量替换 + 周期 sync）| "delta"（易形/解除瞬间半径广播，
+// `active=false` 的 entry 表示 client 应从本地缓存删除该 entity_id）。本 schema 只
+// 保证 server↔proto_min bot 契约对拍；client 渲染消费属 PR-5b 范围。
+export const MorphStateEntryV1 = Type.Object(
+  {
+    entity_id: Type.Integer(),
+    model_kind: Type.Integer({ minimum: 0 }),
+    form_race_id: Type.String(),
+    form_body_plan_id: Type.String(),
+    active: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type MorphStateEntryV1 = Static<typeof MorphStateEntryV1>;
+
+export const ServerDataMorphStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("morph_state"),
+    mode: Type.Union([Type.Literal("full"), Type.Literal("delta")]),
+    entries: Type.Array(MorphStateEntryV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataMorphStateV1 = Static<typeof ServerDataMorphStateV1>;
 
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
@@ -1018,6 +1213,18 @@ export type ServerDataFullPowerExhaustedStateV1 = Static<
   typeof ServerDataFullPowerExhaustedStateV1
 >;
 
+export const ServerDataQuickSlotConfigV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("quickslot_config"),
+    ...QuickSlotConfigV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataQuickSlotConfigV1 = Static<
+  typeof ServerDataQuickSlotConfigV1
+>;
+
 export const ServerDataSkillBarConfigV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1057,6 +1264,16 @@ export const ServerDataVortexStateV1 = Type.Object(
   { additionalProperties: false },
 );
 export type ServerDataVortexStateV1 = Static<typeof ServerDataVortexStateV1>;
+
+export const ServerDataAnqiHudV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("anqi_hud"),
+    ...AnqiHudV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAnqiHudV1 = Static<typeof ServerDataAnqiHudV1>;
 
 export const ServerDataDuguPoisonStateV1 = Type.Object(
   {
@@ -1818,6 +2035,9 @@ export const ServerDataV1 = Type.Union([
   ServerDataInventoryEventV1,
   ServerDataDroppedLootSyncV1,
   ServerDataRemainsSyncV1,
+  ServerDataBodyPlanLayoutV1,
+  ServerDataRaceGateMetaV1,
+  ServerDataMorphStateV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,
@@ -1844,10 +2064,12 @@ export const ServerDataV1 = Type.Union([
   ServerDataFullPowerChargingStateV1,
   ServerDataFullPowerReleaseV1,
   ServerDataFullPowerExhaustedStateV1,
+  ServerDataQuickSlotConfigV1,
   ServerDataSkillBarConfigV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataSkillConfigSnapshotV1,
   ServerDataVortexStateV1,
+  ServerDataAnqiHudV1,
   ServerDataDuguPoisonStateV1,
   ServerDataPoisonDoseEventV1,
   ServerDataPoisonOverdoseEventV1,

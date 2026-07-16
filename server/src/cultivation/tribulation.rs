@@ -23,7 +23,7 @@ use crate::combat::CombatClock;
 use crate::cultivation::death_hooks::CultivationDeathTrigger;
 use crate::cultivation::life_record::{BiographyEntry, HeartDemonOutcome, LifeRecord};
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
-use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
+use crate::inventory::{transfer_all_inventory_contents, ItemRegistry, PlayerInventory};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE;
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -1454,7 +1454,9 @@ pub fn tribulation_aoe_system(
             wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
             for _ in 0..profile.strikes {
                 wounds.entries.push(Wound {
-                    location: BodyPart::Chest,
+                    // humanoid-only boundary（P0 决议，本轮不迁移）：渡劫雷击是无差别范围
+                    // 伤害，固定命中 Chest 代表部位；玩家恒为人形。
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Burn,
                     severity: strike_damage * damage_multiplier,
                     bleeding_per_sec: 0.0,
@@ -1692,7 +1694,9 @@ fn apply_juebi_phase_damage(
     let was_alive = wounds.health_current > 0.0;
     wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
     wounds.entries.push(Wound {
-        location: BodyPart::Chest,
+        // humanoid-only boundary（P0 决议，本轮不迁移）：绝壁天劫波是无差别范围伤害，
+        // 固定命中 Chest 代表部位；玩家恒为人形。
+        location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
         kind: WoundKind::Concussion,
         severity: damage,
         bleeding_per_sec: 0.0,
@@ -3665,11 +3669,12 @@ fn settle_fled_tribulation(
     )>();
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn tribulation_intercept_death_system(
     mut deaths: EventReader<DeathEvent>,
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
+    item_registry: Res<ItemRegistry>,
     mut q: Query<(&TribulationState, &Lifecycle)>,
     mut inventories: Query<&mut PlayerInventory>,
     mut life_records: Query<&mut LifeRecord>,
@@ -3700,7 +3705,11 @@ pub fn tribulation_intercept_death_system(
                 .get_many_mut([death.target, killer_entity])
                 .ok()
                 .map(|[mut victim_inventory, mut killer_inventory]| {
-                    transfer_all_inventory_contents(&mut victim_inventory, &mut killer_inventory)
+                    transfer_all_inventory_contents(
+                        &mut victim_inventory,
+                        &mut killer_inventory,
+                        &item_registry,
+                    )
                 });
             if let Some(outcome) = loot_outcome {
                 tracing::info!(
@@ -4048,17 +4057,27 @@ fn apply_tribulation_failure_penalty(
         let keep = Realm::Spirit.required_meridians();
         let closures = pick_closures(&meridians, keep);
         for (is_regular, idx) in closures {
-            let id = if is_regular {
+            // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，
+            // 本函数返回值仍是 legacy `Vec<MeridianId>`（wire 开放化留待后续 P1 子阶段）
+            // ——humanoid 20 条经脉均可逆映射回 `MeridianId`。
+            let channel_id = if is_regular {
                 let m = &mut meridians.regular[idx];
-                let id = m.id;
+                let channel_id = m.id.clone();
                 close_meridian(m);
-                id
+                channel_id
             } else {
                 let m = &mut meridians.extraordinary[idx];
-                let id = m.id;
+                let channel_id = m.id.clone();
                 close_meridian(m);
-                id
+                channel_id
             };
+            let id = channel_id.to_meridian_id().unwrap_or_else(|| {
+                panic!(
+                    "[bong][cultivation][tribulation] channel id {channel_id} has no legacy \
+                     MeridianId mapping — apply_tribulation_failure_penalty cannot represent \
+                     non-humanoid channels yet"
+                )
+            });
             severed_meridians.push(id);
         }
         cultivation.qi_max = 10.0 + meridians.sum_capacity();
@@ -7732,6 +7751,7 @@ mod tests {
         let mut app = App::new();
         let (settings, root) = persistence_settings("intercept-loot-transfer");
         app.insert_resource(settings.clone());
+        app.insert_resource(ItemRegistry::default());
         app.add_event::<DeathEvent>();
         app.add_event::<TribulationSettled>();
         app.add_systems(Update, tribulation_intercept_death_system);
@@ -7828,6 +7848,7 @@ mod tests {
         let mut app = App::new();
         let (settings, root) = persistence_settings("intercept-killer-must-be-participant");
         app.insert_resource(settings);
+        app.insert_resource(ItemRegistry::default());
         app.add_event::<DeathEvent>();
         app.add_event::<TribulationSettled>();
         app.add_systems(Update, tribulation_intercept_death_system);

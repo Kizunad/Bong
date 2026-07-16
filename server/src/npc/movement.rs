@@ -933,7 +933,10 @@ fn apply_collision_wound(
     }
     wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
     wounds.entries.push(Wound {
-        location,
+        // humanoid-only boundary（P0 决议，本轮不迁移）：撞击/击退碰撞判定
+        // （classify_collision_body_part，按碰撞相对方位分 legacy BodyPart）与本 plan 的
+        // BodyPlan.hit_geometry 攻击命中体系无关——两套独立几何，本轮不合并。
+        location: crate::body_plan::legacy_body_part_to_id(location),
         kind: WoundKind::Blunt,
         severity: damage,
         bleeding_per_sec: damage * 0.02,
@@ -1245,7 +1248,10 @@ mod tests {
         assert_eq!(wounds.health_current, before - 12.0);
         assert_eq!(wounds.entries.len(), 1);
         assert_eq!(wounds.entries[0].kind, WoundKind::Blunt);
-        assert_eq!(wounds.entries[0].location, BodyPart::Chest);
+        assert_eq!(
+            wounds.entries[0].location,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Chest)
+        );
     }
 
     #[test]
@@ -1258,7 +1264,7 @@ mod tests {
 
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::LegR,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::LegR),
             "调用方传入 BodyPart::LegR，Wound.location 必须是 LegR 而非硬编 Chest"
         );
     }
@@ -1314,7 +1320,7 @@ mod tests {
         let wounds = app.world().entity(target).get::<Wounds>().unwrap();
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::ArmL,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             "queue_collision_wound 应把调用方传入的 ArmL 原样带到 Wound.location"
         );
     }

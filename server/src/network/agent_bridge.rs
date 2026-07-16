@@ -63,6 +63,8 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
     //   2. The corresponding `From<&…>` proto arm in proto_convert.rs (if `false`).
     //   3. The exhaustive-guard fixture list in `s2c_all_proto_variants_encode_without_panic` /
     //      `c2s_all_proto_variants_encode_without_panic`.
+    //   4. A corresponding serde preflight arm in `to_proto_bytes_checked` whenever the variant
+    //      contains constrained numeric fields.
     // Failure to do so causes either a compile error (missing is_json_bypass arm) or a test
     // panic (missing fixture in guard / missing proto arm).
     #[cfg(test)]
@@ -71,11 +73,21 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
     }
     #[cfg(not(test))]
     {
-        to_proto_bytes_checked(payload)
+        serialize_server_data_payload_proto(payload)
     }
 }
 
+/// 始终走生产 protobuf 编码；供必须验证真实 wire 的定向集成测试复用。
+pub fn serialize_server_data_payload_proto(
+    payload: &ServerDataV1,
+) -> Result<Vec<u8>, PayloadBuildError> {
+    to_proto_bytes_checked(payload)
+}
+
 fn to_proto_bytes_checked(payload: &ServerDataV1) -> Result<Vec<u8>, PayloadBuildError> {
+    if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = &payload.payload {
+        serde_json::to_value(hud).map_err(PayloadBuildError::Json)?;
+    }
     enforce_payload_size(payload.to_proto_bytes())
 }
 
@@ -106,6 +118,9 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::InventoryEvent => "inventory_event",
         ServerDataType::DroppedLootSync => "dropped_loot_sync",
         ServerDataType::RemainsSync => "remains_sync",
+        ServerDataType::BodyPlanLayout => "body_plan_layout",
+        ServerDataType::RaceGateMeta => "race_gate_meta",
+        ServerDataType::MorphState => "morph_state",
         ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
         ServerDataType::BotanyPlantV2RenderProfiles => "botany_plant_v2_render_profiles",
         ServerDataType::MiningProgress => "mining_progress",
@@ -391,7 +406,9 @@ mod server_data_tests {
     };
     use crate::schema::narration::Narration;
     use crate::schema::server_data::{
-        ServerDataPayloadV1, HEARTBEAT_MESSAGE, SERVER_DATA_VERSION, WELCOME_MESSAGE,
+        AnqiHudKindV1, AnqiHudV1, ServerDataPayloadV1, ANQI_HUD_ECHO_COUNT_MAX,
+        ANQI_HUD_QI_PAYLOAD_MAX, ANQI_HUD_TICK_MAX, HEARTBEAT_MESSAGE, SERVER_DATA_VERSION,
+        WELCOME_MESSAGE,
     };
     use crate::schema::world_state::{PlayerPowerBreakdown, ZoneStatusV1};
     use serde_json::json;
@@ -779,6 +796,76 @@ mod server_data_tests {
             PayloadBuildError::Json(err) => {
                 panic!("proto size check should not route through JSON serialization: {err}");
             }
+        }
+    }
+
+    #[test]
+    fn proto_path_rejects_invalid_anqi_hud_before_encoding() {
+        let invalid_payloads = [
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Aim,
+                echo_count: 0,
+                aim_progress: 1.01,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: -0.5,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Multishot,
+                echo_count: ANQI_HUD_ECHO_COUNT_MAX + 1,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "unknown".to_string(),
+                abrasion_qi_payload: 0.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Abrasion,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "quiver".to_string(),
+                abrasion_qi_payload: ANQI_HUD_QI_PAYLOAD_MAX * 2.0,
+                tick: 0,
+            },
+            AnqiHudV1 {
+                kind: AnqiHudKindV1::Echo,
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: String::new(),
+                abrasion_qi_payload: 0.0,
+                tick: ANQI_HUD_TICK_MAX + 1,
+            },
+        ];
+
+        for hud in invalid_payloads {
+            let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(hud));
+            let error = to_proto_bytes_checked(&payload)
+                .expect_err("invalid anqi_hud must be rejected before protobuf encoding");
+            assert!(
+                matches!(error, PayloadBuildError::Json(_)),
+                "invalid anqi_hud should fail serde preflight, got {error:?}"
+            );
         }
     }
 

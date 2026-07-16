@@ -958,7 +958,9 @@ mod tests {
         let mut w = Wounds::default();
         assert!(!damaged_this_tick(&w, 50));
         w.entries.push(Wound {
-            location: crate::combat::components::BodyPart::Chest,
+            location: crate::body_plan::legacy_body_part_to_id(
+                crate::combat::components::BodyPart::Chest,
+            ),
             kind: WoundKind::Blunt,
             severity: 0.1,
             bleeding_per_sec: 0.0,

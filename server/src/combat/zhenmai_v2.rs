@@ -15,7 +15,8 @@ use crate::combat::status::has_active_status;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
-    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
+    ColorKind, Contamination, Cultivation, MeridianChannelId, MeridianId, MeridianSystem, QiColor,
+    Realm,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, enforce_severed_state, MeridianSeveredEvent,
@@ -962,7 +963,7 @@ fn multipoint_duration_tick(
             continue;
         }
         if clock.tick > active.started_at_tick
-            && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
+            && (clock.tick - active.started_at_tick).is_multiple_of(TICKS_PER_SECOND)
         {
             if let Some(mut cultivation) = cultivation {
                 let before = cultivation.qi_current;
@@ -1008,7 +1009,7 @@ fn harden_duration_tick(
             continue;
         }
         if clock.tick > active.started_at_tick
-            && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
+            && (clock.tick - active.started_at_tick).is_multiple_of(TICKS_PER_SECOND)
         {
             if let Some(mut cultivation) = cultivation {
                 let before = cultivation.qi_current;
@@ -1316,12 +1317,16 @@ fn contamination_for_meridian(
     caster: Entity,
     meridian_id: MeridianId,
 ) -> f64 {
+    // plan-race-system-v1 P6b review BLOCKER 收口：`ContamSource.meridian_id` 已换轨
+    // 为通用 `MeridianChannelId`——本 skill（震脉 v2 排毒，humanoid-only 玩法，配置走
+    // legacy `MeridianId`）比较前先把入参归一化到 channel id 再匹配。
+    let channel = meridian_id.channel_id();
     world
         .get::<Contamination>(caster)
         .map(|c| {
             c.entries
                 .iter()
-                .filter(|entry| entry.meridian_id == Some(meridian_id))
+                .filter(|entry| entry.meridian_id.as_ref() == Some(&channel))
                 .map(|entry| entry.amount.max(0.0))
                 .sum()
         })
@@ -1334,13 +1339,14 @@ fn reduce_contamination_for_meridian(
     meridian_id: MeridianId,
     amount: f64,
 ) -> f64 {
+    let channel = meridian_id.channel_id();
     let Some(mut contamination) = world.get_mut::<Contamination>(caster) else {
         return 0.0;
     };
     let mut remaining = amount.max(0.0);
     let mut removed = 0.0;
     for entry in &mut contamination.entries {
-        if entry.meridian_id != Some(meridian_id) {
+        if entry.meridian_id.as_ref() != Some(&channel) {
             continue;
         }
         if remaining <= f64::EPSILON {
@@ -1367,12 +1373,24 @@ fn is_meridian_severed(
         .is_some_and(|severed| severed.is_severed(meridian_id))
 }
 
+/// plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本函数返回值
+/// 仍是 legacy `MeridianId`（zhenmai_v2 内部依赖表尚未迁移）——humanoid 20 条经脉均可
+/// 逆映射回 `MeridianId`。
+fn meridian_channel_id_to_legacy(channel_id: &MeridianChannelId) -> MeridianId {
+    channel_id.to_meridian_id().unwrap_or_else(|| {
+        panic!(
+            "[bong][combat][zhenmai_v2] channel id {channel_id} has no legacy MeridianId \
+             mapping — zhenmai_v2 cannot represent non-humanoid channels yet"
+        )
+    })
+}
+
 fn first_open_meridian(world: &bevy_ecs::world::World, caster: Entity) -> Option<MeridianId> {
     world.get::<MeridianSystem>(caster).and_then(|meridians| {
         meridians
             .iter()
             .find(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
-            .map(|meridian| meridian.id)
+            .map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
     })
 }
 
@@ -1383,7 +1401,7 @@ fn open_meridians(world: &bevy_ecs::world::World, caster: Entity) -> Vec<Meridia
             meridians
                 .iter()
                 .filter(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
-                .map(|meridian| meridian.id)
+                .map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
                 .collect()
         })
         .unwrap_or_default()
@@ -1874,7 +1892,7 @@ mod tests {
             entries: vec![ContamSource {
                 amount: 10.0,
                 color: ColorKind::Insidious,
-                meridian_id: Some(MeridianId::Lung),
+                meridian_id: Some(MeridianId::Lung.channel_id()),
                 attacker_id: None,
                 introduced_at: 1,
             }],
@@ -1896,14 +1914,14 @@ mod tests {
                 ContamSource {
                     amount: 6.0,
                     color: ColorKind::Insidious,
-                    meridian_id: Some(MeridianId::Lung),
+                    meridian_id: Some(MeridianId::Lung.channel_id()),
                     attacker_id: None,
                     introduced_at: 1,
                 },
                 ContamSource {
                     amount: 5.0,
                     color: ColorKind::Turbid,
-                    meridian_id: Some(MeridianId::Heart),
+                    meridian_id: Some(MeridianId::Heart.channel_id()),
                     attacker_id: None,
                     introduced_at: 1,
                 },
@@ -1915,10 +1933,9 @@ mod tests {
             CastResult::Started { .. }
         ));
         let contam = app.world().get::<Contamination>(entity).unwrap();
-        assert!(contam
-            .entries
-            .iter()
-            .any(|entry| entry.meridian_id == Some(MeridianId::Heart) && entry.amount == 5.0));
+        assert!(contam.entries.iter().any(|entry| entry.meridian_id
+            == Some(MeridianId::Heart.channel_id())
+            && entry.amount == 5.0));
     }
 
     #[test]

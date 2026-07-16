@@ -153,6 +153,16 @@ public final class BongToast {
         return !isEmpty() && Math.max(0L, nowMillis) < expiresAtMillis;
     }
 
+    /**
+     * 生产态断线清场入口：把当前 toast 复位为 empty，防止上一 server 未过期的
+     * toast（warning/era/event/inventory 提示）在 disconnect/切服/reconnect 后
+     * 继续渲染，串成跨 session 泄漏。由 {@code BongNetworkHandler.clearClientStateOnDisconnect()}
+     * 调用；不复用 {@link #resetForTests()}，两者语义分离（一个是生产断线契约，一个是测试隔离）。
+     */
+    public static void clearOnDisconnect() {
+        activeToast = empty();
+    }
+
     public static void resetForTests() {
         activeToast = empty();
     }

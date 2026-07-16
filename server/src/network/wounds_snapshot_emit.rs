@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{Changed, Client, Entity, Or, Query, Username, With};
 
-use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
+use crate::combat::components::{Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -68,7 +68,7 @@ fn wounds_to_wire(
 
 fn wound_to_wire(wound: &Wound, now_ms: u64) -> WoundEntryV1 {
     WoundEntryV1 {
-        part: body_part_wire(wound.location).to_string(),
+        part: body_part_wire(&wound.location),
         kind: wound_kind_wire(wound.kind).to_string(),
         severity: wound.severity,
         state: if wound.bleeding_per_sec > 0.0 {
@@ -83,18 +83,28 @@ fn wound_to_wire(wound: &Wound, now_ms: u64) -> WoundEntryV1 {
     }
 }
 
-fn body_part_wire(part: BodyPart) -> &'static str {
-    // 粗 7 段映射到 client 细 16 段中的代表位（plan-combat-v1 阶段性）。
-    match part {
-        BodyPart::Head => "head",
-        BodyPart::Chest => "chest",
-        BodyPart::Back => "back",
-        BodyPart::Abdomen => "abdomen",
-        BodyPart::ArmL => "left_upper_arm",
-        BodyPart::ArmR => "right_upper_arm",
-        BodyPart::LegL => "left_thigh",
-        BodyPart::LegR => "right_thigh",
-    }
+/// plan-race-system-v1 P0 review r2（BLOCKING-2 收口，wire 边界 ②）—— `Wound.location`
+/// 现在是通用 `BodyPartId`（string），wire 的 `part` 字段本就是 `String`（proto
+/// `WoundEntry.part` / `WoundEntryV1.part` 双端均为 `string`，见 schema），不破坏 wire
+/// 形状。
+///
+/// plan-race-system-v1 P2a —— 此前"粗 8 段硬编码 match 到 client 细 16 段代表位"的表
+/// 已迁移为读取 [`crate::body_plan::layout::humanoid_layout_static`]
+/// `part_display_map` 数据（`server/assets/body_plans/layouts/humanoid.json`），不再
+/// 是 Rust 常量——数据与 [`crate::body_plan::registry::humanoid_plan_static`] 的
+/// `humanoid.json` 同源（无 ECS 访问权限的纯函数消费点，仿 `combat::raycast` P0b 的
+/// `humanoid_plan_static()` 先例，见该文档）。非人形部位 id（如 P5 whale 的
+/// `tail_fin`，`part_display_map` 表中没有条目）**原样透传**（不 panic、不猜一个人形
+/// 代表位）——这是显式选择的 fallback 而非遗漏，见
+/// `body_part_wire_passes_through_unmapped_non_humanoid_part_id` pin 测试。
+fn body_part_wire(part_id: &crate::body_plan::BodyPartId) -> String {
+    let layout = crate::body_plan::layout::humanoid_layout_static();
+    layout
+        .part_display_map
+        .iter()
+        .find(|mapping| mapping.server_part_id == part_id.as_str())
+        .map(|mapping| mapping.display_segment_id.clone())
+        .unwrap_or_else(|| part_id.as_str().to_string())
 }
 
 fn wound_kind_wire(kind: WoundKind) -> &'static str {
@@ -117,6 +127,7 @@ fn current_unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::BodyPart;
     use valence::prelude::{App, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -126,7 +137,7 @@ mod tests {
             health_current: 5.0,
             health_max: 100.0,
             entries: vec![Wound {
-                location: BodyPart::Chest,
+                location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                 kind: WoundKind::Blunt,
                 severity: 3.0,
                 bleeding_per_sec: 0.0,
@@ -188,6 +199,41 @@ mod tests {
 
         assert_eq!(wire.len(), 1);
         assert_eq!(wire[0].part, "chest");
+    }
+
+    #[test]
+    fn body_part_wire_maps_all_eight_legacy_parts_to_sixteen_segment_representatives() {
+        let cases: [(BodyPart, &str); 8] = [
+            (BodyPart::Head, "head"),
+            (BodyPart::Chest, "chest"),
+            (BodyPart::Back, "back"),
+            (BodyPart::Abdomen, "abdomen"),
+            (BodyPart::ArmL, "left_upper_arm"),
+            (BodyPart::ArmR, "right_upper_arm"),
+            (BodyPart::LegL, "left_thigh"),
+            (BodyPart::LegR, "right_thigh"),
+        ];
+        for (legacy, expected) in cases {
+            let id = crate::body_plan::legacy_body_part_to_id(legacy);
+            assert_eq!(
+                body_part_wire(&id),
+                expected,
+                "legacy part {legacy:?} (id={id}) must map to the 16-segment representative {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn body_part_wire_passes_through_unmapped_non_humanoid_part_id() {
+        // plan-race-system-v1 P0 review r2 wire 边界 ②：非人形部位 id（无 legacy 8 段
+        // 对应物，如未来 whale 的 tail_fin）必须原样透传字符串，而不是 panic 或猜一个
+        // 人形代表位——client 16 段模型目前没有 tail_fin，但至少不丢数据/不崩服。
+        let id = crate::body_plan::BodyPartId::new("tail_fin");
+        assert_eq!(
+            body_part_wire(&id),
+            "tail_fin",
+            "非人形部位 id 必须原样透传，不落回任何人形代表位字符串"
+        );
     }
 
     #[test]

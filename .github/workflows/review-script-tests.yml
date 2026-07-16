@@ -1,0 +1,37 @@
+name: Review Script Tests
+
+on:
+  pull_request:
+    paths:
+      - .github/scripts/review.mjs
+      - .github/scripts/review.test.mjs
+      - .github/workflows/review.yml
+      - .github/workflows/review-script-tests.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-script-tests-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        timeout-minutes: 2
+        with:
+          node-version: "24"
+
+      - name: 校验 Review 脚本
+        run: |
+          node --check .github/scripts/review.mjs
+          node --test .github/scripts/review.test.mjs

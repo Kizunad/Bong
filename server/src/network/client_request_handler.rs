@@ -40,7 +40,9 @@ use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianId, MeridianSystem};
+use crate::cultivation::components::{
+    recover_current_qi, Cultivation, MeridianChannelId, MeridianId, MeridianSystem,
+};
 use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
@@ -68,17 +70,19 @@ use crate::forge::events::{
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
+use crate::forge::steps::next_step_after;
 use crate::inventory::{
-    add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
-    apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
-    fully_repair_weapon_instance, inventory_instance_container_attrition_exempt,
-    inventory_item_by_instance_borrow, inventory_item_by_instance_mut,
-    inventory_location_attrition_exempt, pickup_dropped_loot_instance, DroppedLootRegistry,
-    InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
-    InventoryMoveRejectReason, ItemInstance, ItemTemplate, PlayerInventory,
+    add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy,
+    apply_inventory_move_with_race, apply_item_spiritual_wear, consume_item_instance_once,
+    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
+    inventory_instance_container_attrition_exempt, inventory_item_by_instance_borrow,
+    inventory_item_by_instance_mut, inventory_location_attrition_exempt,
+    pickup_dropped_loot_instance, DroppedLootRegistry, InventoryDurabilityChangedEvent,
+    InventoryInstanceIdAllocator, InventoryMoveOutcome, InventoryMoveRejectReason, ItemInstance,
+    ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
-    AlchemyItemData, ItemEffect, ItemRegistry,
+    AlchemyItemData, ItemCategory, ItemEffect, ItemRegistry,
     DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
@@ -117,6 +121,9 @@ use crate::network::qi_attrition_emit::{
     emit_attrition_applied_if_lost, item_abs_qi_for_attrition, AttritionAppliedEvent,
 };
 use crate::network::qi_color_observed_emit::QiColorInspectRequest;
+use crate::network::quickslot_config_emit::{
+    build_quickslot_config, current_unix_millis_for_quickslot, send_quickslot_config_to_client,
+};
 use crate::network::send_server_data_payload;
 use crate::network::skill_config_emit::send_skill_config_snapshot_to_client;
 use crate::network::skill_snapshot_emit::send_skill_snapshot_to_client;
@@ -130,10 +137,12 @@ use crate::npc::interaction_memory::{
 };
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
-use crate::npc::trade::NpcPlayerReputation;
+use crate::npc::trade::{NpcPlayerReputation, NpcTradeInventory};
+use crate::persistence::ZoneRuntimeRecord;
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
-    canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
+    canonical_player_id, save_player_inventory_and_delete_dropped_loot, update_player_ui_prefs,
+    PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
@@ -251,6 +260,11 @@ pub struct CombatRequestParams<'w, 's> {
     /// plan-scroll-reading-v1 P2：读卷中标记（真相源），供 `ScrollReadClosed` 分支查询以
     /// 决定是否需要发 `StopAnim` + 移除 marker。
     pub scroll_reading_q: Query<'w, 's, &'static crate::network::scroll_open_emit::ScrollReading>,
+    /// plan-race-system-v1 P3a —— 施放门 race gate（`handle_skill_bar_cast` 拥有门后、
+    /// 经脉门前判定，见该函数内插入点）。`Option` 与其余 registry 同规则。
+    pub cultivations: Query<'w, 's, &'static Cultivation>,
+    pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
 
 #[derive(SystemParam)]
@@ -364,6 +378,7 @@ pub struct ClientRequestDispatchParams<'w> {
     // ─── plan-supply-coffin-loot-ui P2：外部容器 + entity-based open ──────
     pub ext_container_registry:
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
+    pub supply_coffin_registry: Option<Res<'w, crate::supply_coffin::SupplyCoffinRegistry>>,
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
     pub container_open_tx:
@@ -407,6 +422,16 @@ pub struct SkillScrollRequestParams<'w, 's> {
     /// blueprint 的 display_name/tier_cap/step_count。`Option` 与 `forge_sessions` 同规则：
     /// 资源缺失时优雅跳过 S2C 回推而不 panic（`forge::register` 正常路径下恒 Some）。
     pub blueprint_registry: Option<Res<'w, BlueprintRegistry>>,
+    /// plan-race-system-v1 P3a —— 习得门 race gate 判定（`RaceGate::Humanoid` 档需要本体
+    /// `is_humanoid`，见 `learn_technique_if_allowed` 调用点）。`Option` 与其余 registry
+    /// 同规则：既有单测未插入这两个资源时优雅退化到 humanoid（`resolve_body_plan_for_target`
+    /// 文档化的退化行为）。
+    pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
+    /// plan-race-system-v1 P4 —— 当前易形形态。习得门 `form_anchors_open` 消费点
+    /// （`learn_technique_if_allowed` 调用点判定本体经脉是否满足易形前置）与
+    /// `handle_inventory_move` Form 身份判定（装备门）共用本查询。
+    pub morph_states: Query<'w, 's, Option<&'static crate::body_plan::MorphState>>,
 }
 
 type NpcEngagementItem = (
@@ -423,6 +448,7 @@ type NpcEngagementItem = (
 #[derive(SystemParam)]
 pub struct NpcEngagementRequestParams<'w, 's> {
     pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
+    pub trade_inventories: Query<'w, 's, &'static NpcTradeInventory, With<NpcMarker>>,
     pub lifecycles: Query<'w, 's, &'static Lifecycle>,
     pub memories: Query<
         'w,
@@ -461,8 +487,14 @@ const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
 const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
 const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
 
-fn meridian_label(id: MeridianId) -> &'static str {
-    match id {
+/// plan-race-system-v1 P1c — 参数改为 `MeridianChannelId`（wire 开放化后
+/// `SetMeridianTarget.meridian` 不再是闭合 `MeridianId` 枚举）；仅 humanoid 20 条
+/// channel id 有中文标签，非 humanoid 构型（P5 飞鲸等）落显式"未知经脉"占位，不伪造。
+fn meridian_label(id: &MeridianChannelId) -> &'static str {
+    let Some(legacy_id) = id.to_meridian_id() else {
+        return "未知经脉";
+    };
+    match legacy_id {
         MeridianId::Lung => "肺经",
         MeridianId::LargeIntestine => "大肠经",
         MeridianId::Stomach => "胃经",
@@ -505,6 +537,7 @@ pub fn handle_client_request_payloads(
     mut skill_scroll_params: SkillScrollRequestParams,
     mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
+    let mut pending_forge_steps: HashMap<(u64, ForgeSessionId), ForgeStep> = HashMap::new();
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
             continue;
@@ -525,16 +558,18 @@ pub fn handle_client_request_payloads(
             Ok(r) => r,
             Err(err) => {
                 tracing::warn!(
-                    "[bong][network] client_request deserialize failed from {:?}: {err}; body={payload}",
-                    ev.client
+                    "[bong][network] client_request deserialize failed from {:?}: {err}; payload_bytes={}",
+                    ev.client,
+                    ev.data.len()
                 );
                 continue;
             }
         };
-        // 调试：每条 intent 都 log 一行，帮助诊断 client 到 server 通路。
+        // 只记录长度，避免聊天、目标与请求参数进入 server 日志或支持包。
         tracing::info!(
-            "[bong][network] client_request received entity={:?} body={payload}",
-            ev.client
+            "[bong][network] client_request received entity={:?} payload_bytes={}",
+            ev.client,
+            ev.data.len()
         );
 
         let v = match &request {
@@ -645,8 +680,9 @@ pub fn handle_client_request_payloads(
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
-                "[bong][network] client_request unsupported version v={v} from {:?}; body={payload}",
-                ev.client
+                "[bong][network] client_request unsupported version v={v} from {:?}; payload_bytes={}",
+                ev.client,
+                ev.data.len()
             );
             continue;
         }
@@ -658,11 +694,13 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     meridian
                 );
-                commands.entity(ev.client).insert(MeridianTarget(meridian));
+                commands
+                    .entity(ev.client)
+                    .insert(MeridianTarget(meridian.clone()));
                 if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
                     client.send_chat_message(format!(
                         "§a[修炼] 已收到经脉目标：{}。",
-                        meridian_label(meridian)
+                        meridian_label(&meridian)
                     ));
                 }
             }
@@ -1365,7 +1403,7 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
-                let Some((template_id, base_price)) =
+                let Some((template_id, _catalogue_price)) =
                     npc_trade_catalog_entry(target.archetype, &requested_item_id)
                 else {
                     emit_npc_refuse_audio(
@@ -1393,6 +1431,40 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
+                let Ok(trade_inventory) =
+                    npc_engagement_params.trade_inventories.get(target.entity)
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 当前没有可成交的货物。", target.display_name),
+                    );
+                    continue;
+                };
+                let Some(offer) = trade_inventory
+                    .offers
+                    .iter()
+                    .find(|offer| offer.template_id == template_id)
+                    .cloned()
+                else {
+                    emit_npc_refuse_audio(
+                        &mut npc_engagement_params.audio_events,
+                        ev.client,
+                        target.position,
+                    );
+                    send_npc_interaction_feedback(
+                        ev.client,
+                        &mut clients,
+                        format!("§c[NPC] {} 当前没有这件货。", target.display_name),
+                    );
+                    continue;
+                };
+                let base_price = u64::from(offer.price_bone_coins);
                 // P3: 将旧 i32 信誉转为 0.0-1.0 范围用于新定价系统。
                 // plan-territory-v1 P1: 叠加 NpcPlayerReputation（霸主驻守 rep 加成写入此组件）。
                 // 叠加策略：先取 FactionMembership baseline (i32 → [0,1])，
@@ -1509,7 +1581,7 @@ pub fn handle_client_request_payloads(
                     &alchemy_params.item_registry,
                     instance_allocator,
                     template_id,
-                    1,
+                    offer.count,
                     combat_clock.tick,
                 ) {
                     send_npc_interaction_feedback(
@@ -1525,8 +1597,8 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 client.send_chat_message(format!(
-                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {}。",
-                    target.display_name, template_id
+                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {} x{}。",
+                    target.display_name, offer.display_name, offer.count
                 ));
                 record_player_npc_interaction(
                     &mut npc_engagement_params.memories,
@@ -1753,6 +1825,9 @@ pub fn handle_client_request_payloads(
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
                     alchemy_params.vfx_events.as_deref_mut(),
+                    combat_params.body_plans.as_deref(),
+                    combat_params.race_registry.as_deref(),
+                    &skill_scroll_params.morph_states,
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1798,6 +1873,9 @@ pub fn handle_client_request_payloads(
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
                     alchemy_params.vfx_events.as_deref_mut(),
+                    combat_params.body_plans.as_deref(),
+                    combat_params.race_registry.as_deref(),
+                    &skill_scroll_params.morph_states,
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -1894,6 +1972,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
+                    persistence.as_deref(),
                 );
             }
             ClientRequestV1::RemainsLoot { remains_id, .. } => {
@@ -2124,15 +2203,27 @@ pub fn handle_client_request_payloads(
                     &inventories,
                 );
             }
-            ClientRequestV1::QuickSlotBind { slot, item_id, .. } => {
-                handle_quick_slot_bind(
-                    ev.client,
-                    slot,
-                    item_id,
+            ClientRequestV1::QuickSlotBind {
+                slot,
+                item_id,
+                request_id,
+                ..
+            } => {
+                let (quick_bindings, skillbar_bindings) = (
                     &mut combat_params.bindings_q,
+                    &mut combat_params.skillbar_bindings_q,
+                );
+                handle_quick_slot_bind(
+                    (ev.client, slot, item_id, request_id),
+                    quick_bindings,
+                    skillbar_bindings,
                     &inventories,
-                    &clients,
-                    persistence.as_deref(),
+                    &mut clients,
+                    (
+                        &combat_params.item_registry,
+                        persistence.as_deref(),
+                        &combat_clock,
+                    ),
                 );
             }
             ClientRequestV1::SkillBarCast { slot, target, .. } => {
@@ -2391,6 +2482,8 @@ pub fn handle_client_request_payloads(
                     &player_states,
                     &skill_scroll_params.cultivations,
                     &mut clients,
+                    &skill_scroll_params.positions,
+                    &skill_scroll_params.dimensions,
                     &mut commands,
                 );
             }
@@ -2545,6 +2638,10 @@ pub fn handle_client_request_payloads(
                 inscription_id,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_inscription_scroll(
                     ev.client,
                     session_id,
@@ -2556,6 +2653,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &mut skill_scroll_params.inscription_scroll_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeTemperingHit {
@@ -2564,6 +2662,10 @@ pub fn handle_client_request_payloads(
                 ticks_remaining,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_tempering_hit(
                     ev.client,
                     session_id,
@@ -2571,6 +2673,7 @@ pub fn handle_client_request_payloads(
                     ticks_remaining,
                     &mut dispatch.tempering_hit_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeConsecrationInject {
@@ -2578,21 +2681,29 @@ pub fn handle_client_request_payloads(
                 qi_amount,
                 ..
             } => {
+                let session = ForgeSessionId(session_id);
+                let pending_step = pending_forge_steps
+                    .get(&(ev.client.to_bits(), session))
+                    .copied();
                 handle_forge_consecration_inject(
                     ev.client,
                     session_id,
                     qi_amount,
                     &mut dispatch.consecration_inject_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
+                    pending_step,
                 );
             }
             ClientRequestV1::ForgeStepAdvance { session_id, .. } => {
-                handle_forge_step_advance(
+                if let Some((session, next_step)) = handle_forge_step_advance(
                     ev.client,
                     session_id,
                     &mut dispatch.step_advance_tx,
                     skill_scroll_params.forge_sessions.as_deref(),
-                );
+                    skill_scroll_params.blueprint_registry.as_deref(),
+                ) {
+                    pending_forge_steps.insert((ev.client.to_bits(), session), next_step);
+                }
             }
             ClientRequestV1::ForgeLearnBlueprint { blueprint_id, .. } => {
                 handle_forge_learn_blueprint(
@@ -2672,7 +2783,6 @@ pub fn handle_client_request_payloads(
                     pill_instance_id,
                     elder_entity_id,
                     &mut inventories,
-                    &combat_params.item_registry,
                     combat_params.entity_manager.as_deref(),
                     &mut clients,
                     dispatch.give_dan_to_elder_tx.as_deref_mut(),
@@ -3034,12 +3144,25 @@ fn handle_learn_technique_scroll(
             .get(entity)
             .ok()
             .flatten();
+        let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: Some(cultivation),
+                beast_kind: None,
+                morph_state: None,
+            },
+            skill_scroll_params.body_plans.as_deref(),
+            skill_scroll_params.race_registry.as_deref(),
+        );
         can_learn_technique(
             known,
             cultivation,
             &meridians,
             severed,
             technique_id.as_str(),
+            intrinsic_plan.is_humanoid,
+            intrinsic_plan.meridian_profile.as_ref(),
         )
     };
 
@@ -3068,6 +3191,17 @@ fn handle_learn_technique_scroll(
                 .get(entity)
                 .ok()
                 .flatten();
+            let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
+                entity,
+                crate::body_plan::BodyPlanPurpose::Intrinsic,
+                crate::body_plan::BodyPlanResolveInputs {
+                    cultivation: Some(cultivation),
+                    beast_kind: None,
+                    morph_state: None,
+                },
+                skill_scroll_params.body_plans.as_deref(),
+                skill_scroll_params.race_registry.as_deref(),
+            );
             matches!(
                 learn_technique_if_allowed(
                     &mut known,
@@ -3076,6 +3210,8 @@ fn handle_learn_technique_scroll(
                     severed,
                     technique_id.as_str(),
                     0.0,
+                    intrinsic_plan.is_humanoid,
+                    intrinsic_plan.meridian_profile.as_ref(),
                 ),
                 ScrollReadOutcome::Learned
             )
@@ -3112,8 +3248,10 @@ fn handle_learn_technique_scroll(
             ScrollReadOutcome::Learned => "technique_scroll_learned",
             ScrollReadOutcome::AlreadyKnown => "technique_scroll_already_known",
             ScrollReadOutcome::RealmTooLow { .. } => "technique_scroll_realm_too_low",
+            ScrollReadOutcome::RaceMismatch => "technique_scroll_race_mismatch",
             ScrollReadOutcome::MeridianSevered { .. } => "technique_scroll_meridian_severed",
             ScrollReadOutcome::MeridianMissing { .. } => "technique_scroll_meridian_missing",
+            ScrollReadOutcome::FormAnchorClosed => "technique_scroll_form_anchor_closed",
             ScrollReadOutcome::InvalidScroll => "technique_scroll_invalid",
         },
     );
@@ -3381,6 +3519,7 @@ fn require_owned_active_step(
     session: ForgeSessionId,
     entity: Entity,
     expected: ForgeStep,
+    pending_step: Option<ForgeStep>,
     request_label: &str,
 ) -> bool {
     let Some(forge_sessions) = forge_sessions else {
@@ -3396,19 +3535,19 @@ fn require_owned_active_step(
         );
         return false;
     };
-    if session_state.current_step != expected {
-        tracing::warn!(
-            "[bong][network][forge] {request_label} rejected: session_id={} step={:?}, expected={expected:?}",
-            session.0,
-            session_state.current_step
-        );
-        return false;
-    }
     if session_state.caster != entity {
         tracing::warn!(
             "[bong][network][forge] {request_label} rejected: session_id={} caster mismatch entity={entity:?} session_caster={:?}",
             session.0,
             session_state.caster
+        );
+        return false;
+    }
+    if session_state.current_step != expected && pending_step != Some(expected) {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: session_id={} step={:?}, pending={pending_step:?}, expected={expected:?}",
+            session.0,
+            session_state.current_step
         );
         return false;
     }
@@ -3427,6 +3566,7 @@ fn handle_forge_inscription_scroll(
     cultivations: &Query<&Cultivation>,
     inscription_scroll_tx: &mut Option<ResMut<Events<InscriptionScrollSubmit>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     let inscription_id = inscription_id.trim();
     if inscription_id.is_empty() {
@@ -3438,6 +3578,7 @@ fn handle_forge_inscription_scroll(
         session,
         entity,
         ForgeStep::Inscription,
+        pending_step,
         "inscription_scroll",
     ) {
         return;
@@ -3468,26 +3609,12 @@ fn handle_forge_inscription_scroll(
         return;
     };
 
-    let Ok(mut inventory) = inventories.get_mut(entity) else {
-        return;
-    };
-    if let Err(err) = consume_item_instance_once(&mut inventory, instance_id) {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll consume failed for instance_id={instance_id}: {err}"
-        );
-        return;
-    }
-    resync_snapshot(
-        entity,
-        &inventory,
-        clients,
-        player_states,
-        cultivations,
-        "forge_inscription_scroll_consumed",
-    );
-
+    // 只把精确实例交给 forge 权威系统。实际消费必须等前一步结算完成并确认
+    // session 真实进入 Inscription，避免同帧 Tempering Waste 时先扣残卷再丢事件。
     inscription_scroll_tx.send(InscriptionScrollSubmit {
         session,
+        caster: entity,
+        item_instance_id: instance_id,
         inscription_id: inscription_id.to_string(),
     });
 }
@@ -3499,6 +3626,7 @@ fn handle_forge_tempering_hit(
     ticks_remaining: u32,
     tempering_hit_tx: &mut Option<ResMut<Events<TemperingHit>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     let Some(beat) = parse_temper_beat(beat) else {
         tracing::warn!("[bong][network][forge] tempering_hit rejected: unknown beat `{beat}`");
@@ -3510,6 +3638,7 @@ fn handle_forge_tempering_hit(
         session,
         entity,
         ForgeStep::Tempering,
+        pending_step,
         "tempering_hit",
     ) {
         return;
@@ -3533,6 +3662,7 @@ fn handle_forge_consecration_inject(
     qi_amount: f64,
     consecration_inject_tx: &mut Option<ResMut<Events<ConsecrationInject>>>,
     forge_sessions: Option<&ForgeSessions>,
+    pending_step: Option<ForgeStep>,
 ) {
     if !qi_amount.is_finite() || qi_amount < 0.0 {
         tracing::warn!(
@@ -3546,6 +3676,7 @@ fn handle_forge_consecration_inject(
         session,
         entity,
         ForgeStep::Consecration,
+        pending_step,
         "consecration_inject",
     ) {
         return;
@@ -3564,38 +3695,45 @@ fn handle_forge_step_advance(
     session_id: u64,
     step_advance_tx: &mut Option<ResMut<Events<StepAdvance>>>,
     forge_sessions: Option<&ForgeSessions>,
-) {
+    blueprint_registry: Option<&BlueprintRegistry>,
+) -> Option<(ForgeSessionId, ForgeStep)> {
     let session = ForgeSessionId(session_id);
     let Some(forge_sessions) = forge_sessions else {
         tracing::warn!("[bong][network][forge] step_advance rejected: ForgeSessions unavailable");
-        return;
+        return None;
     };
     let Some(session_state) = forge_sessions.get(session) else {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: missing session_id={session_id}"
         );
-        return;
+        return None;
     };
     if session_state.caster != entity {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",
             session_state.caster
         );
-        return;
+        return None;
     }
     if matches!(session_state.current_step, ForgeStep::Done) {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: session_id={session_id} already done"
         );
-        return;
+        return None;
     }
     let Some(step_advance_tx) = step_advance_tx.as_deref_mut() else {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: ForgePlugin events unavailable"
         );
-        return;
+        return None;
     };
-    step_advance_tx.send(StepAdvance { session });
+    let from_step = session_state.current_step;
+    step_advance_tx.send(StepAdvance { session, from_step });
+    let next_step = blueprint_registry
+        .and_then(|registry| registry.get(session_state.blueprint.as_str()))
+        .map(|blueprint| next_step_after(blueprint, session_state.step_index))
+        .unwrap_or(ForgeStep::Done);
+    Some((session, next_step))
 }
 
 fn parse_temper_beat(raw: &str) -> Option<TemperBeat> {
@@ -4014,6 +4152,7 @@ mod tests {
                     shelflife_profile: None,
                     shield_spec: None,
                     shelflife_track: None,
+                    wearer_race: crate::body_plan::types::RaceGateOwned::default(),
                 },
             ),
             (
@@ -4046,6 +4185,7 @@ mod tests {
                     shelflife_profile: None,
                     shield_spec: None,
                     shelflife_track: None,
+                    wearer_race: crate::body_plan::types::RaceGateOwned::default(),
                 },
             ),
         ]))
@@ -4147,6 +4287,537 @@ mod tests {
         }
     }
 
+    fn collect_server_data_payload_types(helper: &mut MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let value = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0).ok()?;
+                value.get("type")?.as_str().map(str::to_string)
+            })
+            .collect()
+    }
+
+    fn run_supply_coffin_open_payload_case(player_pos: DVec3) -> (App, Entity, u64, Vec<String>) {
+        use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+        use crate::supply_coffin::interact::{
+            handle_supply_coffin_interact, SupplyCoffinOpenRequest, SupplyCoffinOpened,
+        };
+        use crate::supply_coffin::{SupplyCoffinGrade, SupplyCoffinRegistry};
+
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.add_event::<SupplyCoffinOpenRequest>();
+        app.add_event::<SupplyCoffinOpened>();
+        app.insert_resource(ExternalContainerRegistry::default());
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry"));
+        app.add_systems(
+            Update,
+            handle_supply_coffin_interact.after(handle_client_request_payloads),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((
+                crate::world::entity_model::COFFIN_COMMON_ENTITY_KIND,
+                EntityId::default(),
+                Position::new(DVec3::new(0.0, 64.0, 0.0)),
+                OldPosition::new(DVec3::new(0.0, 64.0, 0.0)),
+            ))
+            .id();
+        let mut registry =
+            SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0x2468);
+        registry.insert_active(
+            target,
+            SupplyCoffinGrade::Common,
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::supply_coffin::current_wall_clock_secs(),
+        );
+        let rng_before = registry.rng_state;
+        app.insert_resource(registry);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                empty_inventory(),
+                Cultivation::default(),
+                PlayerState::default(),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_pos));
+
+        app.update();
+        let entity_id = app
+            .world()
+            .get::<EntityId>(target)
+            .expect("EntityPlugin must assign the supply-coffin protocol id")
+            .get();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SupplyCoffinOpen { v: 1, entity_id })
+                    .expect("supply_coffin_open request should serialize")
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let payload_types = collect_server_data_payload_types(&mut helper);
+        let opened = app.world().get::<ExternalContainer>(target).is_some();
+        if opened {
+            assert!(
+                app.world()
+                    .resource::<ExternalContainerRegistry>()
+                    .sessions
+                    .values()
+                    .any(|entity| *entity == target),
+                "successful C2S open must register the target session"
+            );
+        }
+        (app, target, rng_before, payload_types)
+    }
+
+    #[test]
+    fn supply_coffin_open_payload_wiring_accepts_finite_and_rejects_non_finite_coordinates() {
+        let (finite, target, _rng_before, payload_types) =
+            run_supply_coffin_open_payload_case(DVec3::new(0.0, 64.0, 0.0));
+        assert!(
+            finite
+                .world()
+                .get::<crate::inventory::external_container::ExternalContainer>(target)
+                .is_some(),
+            "real supply_coffin_open C2S payload must reach the interact consumer"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "loot_container_open"),
+            "successful C2S open must emit loot_container_open S2C; payloads={payload_types:?}"
+        );
+
+        for (label, x) in [
+            ("nan", f64::NAN),
+            ("positive_infinity", f64::INFINITY),
+            ("negative_infinity", f64::NEG_INFINITY),
+        ] {
+            let (app, target, rng_before, payload_types) =
+                run_supply_coffin_open_payload_case(DVec3::new(x, 64.0, 0.0));
+            assert!(
+                app.world()
+                    .get::<crate::inventory::external_container::ExternalContainer>(target)
+                    .is_none(),
+                "{label} C2S open must not create a session container"
+            );
+            assert!(
+                app.world()
+                    .resource::<crate::inventory::external_container::ExternalContainerRegistry>()
+                    .sessions
+                    .is_empty(),
+                "{label} C2S open must not allocate a session"
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<crate::supply_coffin::SupplyCoffinRegistry>()
+                    .rng_state,
+                rng_before,
+                "{label} C2S open must reject before RNG advances"
+            );
+            assert!(
+                payload_types.iter().all(|ty| ty != "loot_container_open"),
+                "{label} C2S open must not emit loot_container_open; payloads={payload_types:?}"
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_external_container_move_case(
+        player_dimension: Option<DimensionKind>,
+        player_pos: DVec3,
+        source_kind: crate::inventory::external_container::ExternalContainerKind,
+        source_active: bool,
+        session_registered: bool,
+        owner_is_player: bool,
+    ) -> (App, Entity, Entity, Vec<String>) {
+        use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+        use crate::supply_coffin::{SupplyCoffinGrade, SupplyCoffinRegistry};
+
+        const SESSION_ID: u64 = 77;
+        const INSTANCE_ID: u64 = 7001;
+        const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
+
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                empty_inventory(),
+                Cultivation::default(),
+                PlayerState::default(),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_pos));
+        if let Some(dimension) = player_dimension {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(CurrentDimension(dimension));
+        }
+
+        let owner = if owner_is_player {
+            player
+        } else {
+            app.world_mut().spawn_empty().id()
+        };
+        let coffin = app
+            .world_mut()
+            .spawn(ExternalContainer {
+                session_id: SESSION_ID,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(SESSION_ID),
+                    name: "external_test".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: vec![PlacedItemState {
+                        row: 0,
+                        col: 0,
+                        instance: inventory_test_item(INSTANCE_ID, "spiritual_ore", 1),
+                    }],
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: Some(owner),
+                timeout_wall_secs: u64::MAX,
+                source_kind,
+            })
+            .id();
+
+        let mut ext_registry = ExternalContainerRegistry {
+            next_session_id: SESSION_ID + 1,
+            ..Default::default()
+        };
+        if session_registered {
+            ext_registry.sessions.insert(SESSION_ID, coffin);
+        }
+        app.insert_resource(ext_registry);
+
+        let mut coffin_registry =
+            SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0x9876);
+        if source_active {
+            coffin_registry.insert_active(
+                coffin,
+                SupplyCoffinGrade::Common,
+                COFFIN_POS,
+                crate::supply_coffin::current_wall_clock_secs(),
+            );
+        }
+        app.insert_resource(coffin_registry);
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: format!(
+                    r#"{{"type":"external_container_move","v":1,"session_id":{SESSION_ID},"instance_id":{INSTANCE_ID},"from":{{"kind":"container","container_id":"ext_{SESSION_ID}","row":0,"col":0}},"to":{{"kind":"container","container_id":"main_pack","row":0,"col":0}}}}"#
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let payload_types = collect_server_data_payload_types(&mut helper);
+        (app, player, coffin, payload_types)
+    }
+
+    fn assert_external_move_rejected_without_mutation(app: &App, player: Entity, coffin: Entity) {
+        let ext = app
+            .world()
+            .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+            .expect("external container must remain attached after rejection");
+        assert!(
+            ext.container
+                .items
+                .iter()
+                .any(|item| item.instance.instance_id == 7001),
+            "rejected move must keep instance 7001 in the external container; actual items={:?}",
+            ext.container
+                .items
+                .iter()
+                .map(|item| item.instance.instance_id)
+                .collect::<Vec<_>>()
+        );
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("test player keeps inventory component");
+        assert!(
+            inventory.containers.iter().all(|container| container
+                .items
+                .iter()
+                .all(|item| item.instance.instance_id != 7001)),
+            "rejected move must not copy instance 7001 into player inventory"
+        );
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(0),
+            "rejected move must not advance inventory revision"
+        );
+    }
+
+    #[test]
+    fn supply_coffin_external_move_real_c2s_rejects_cross_dimension_same_xyz_while_session_is_valid_and_resyncs(
+    ) {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Tsy),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert_eq!(
+            app.world()
+                .resource::<crate::inventory::external_container::ExternalContainerRegistry>()
+                .sessions
+                .get(&77),
+            Some(&coffin),
+            "real C2S move must reach dimension authority while session mapping is still valid"
+        );
+        assert_eq!(
+            app.world()
+                .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+                .expect("supply coffin session must remain attached")
+                .opened_by,
+            Some(player),
+            "real C2S move must be rejected while opened_by still proves requester ownership"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::supply_coffin::SupplyCoffinRegistry>()
+                .active
+                .contains_key(&coffin),
+            "real C2S move must be rejected while authoritative supply-coffin source is still active"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "loot_container_update"),
+            "authorized owner rejected for stale spatial authority must receive external-container resync; payloads={payload_types:?}"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "authorized owner rejected for stale spatial authority must receive inventory resync; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn supply_coffin_external_move_rejects_missing_dimension() {
+        let (app, player, coffin, _payload_types) = run_external_container_move_case(
+            None,
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+    }
+
+    #[test]
+    fn supply_coffin_external_move_rejects_non_finite_coordinates_and_resyncs() {
+        for (label, x) in [
+            ("nan", f64::NAN),
+            ("positive_infinity", f64::INFINITY),
+            ("negative_infinity", f64::NEG_INFINITY),
+        ] {
+            let (app, player, coffin, payload_types) = run_external_container_move_case(
+                Some(DimensionKind::Overworld),
+                DVec3::new(x, 64.0, 0.0),
+                crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                    grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+                },
+                true,
+                true,
+                true,
+            );
+
+            assert_external_move_rejected_without_mutation(&app, player, coffin);
+            assert!(
+                payload_types.iter().any(|ty| ty == "loot_container_update"),
+                "{label} owner rejection must push authoritative external-container state; payloads={payload_types:?}"
+            );
+            assert!(
+                payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+                "{label} owner rejection must push authoritative inventory state; payloads={payload_types:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn supply_coffin_external_move_rejects_out_of_lifecycle_range() {
+        let (app, player, coffin, _payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(6.501, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+    }
+
+    #[test]
+    fn supply_coffin_external_move_rejects_when_active_source_disappears() {
+        let (app, player, coffin, _payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            false,
+            true,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+    }
+
+    #[test]
+    fn external_move_owner_mismatch_keeps_items_and_resyncs_requester_inventory() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            false,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "non-owner rejection must resync only requester-owned inventory state; payloads={payload_types:?}"
+        );
+        assert!(
+            payload_types.iter().all(|ty| ty != "loot_container_update"),
+            "non-owner rejection must not disclose external-container contents; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn external_move_stale_session_resyncs_inventory_without_mutation() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            false,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "unknown/stale session must resync requester inventory; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn supply_coffin_external_move_accepts_exact_lifecycle_boundary() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(6.5, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            true,
+        );
+
+        let ext = app
+            .world()
+            .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+            .expect("coffin remains after successful move");
+        assert!(
+            ext.container.items.is_empty(),
+            "authorized boundary move must remove the item from the external container"
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert!(
+            inventory.containers.iter().any(|container| container
+                .items
+                .iter()
+                .any(|item| item.instance.instance_id == 7001)),
+            "authorized boundary move must place instance 7001 into player inventory"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "loot_container_update")
+                && payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "successful move must keep existing update + inventory snapshot contract; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn non_supply_external_container_move_keeps_existing_contract_across_dimensions() {
+        let (app, player, coffin, _payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Tsy),
+            DVec3::new(999.0, 64.0, 999.0),
+            crate::inventory::external_container::ExternalContainerKind::StorageCrate {
+                is_herb: false,
+            },
+            false,
+            true,
+            true,
+        );
+
+        let ext = app
+            .world()
+            .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+            .expect("storage crate remains after move");
+        assert!(
+            ext.container.items.is_empty(),
+            "supply-coffin authority rules must not spill into storage-crate move handling"
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert!(
+            inventory.containers.iter().any(|container| container
+                .items
+                .iter()
+                .any(|item| item.instance.instance_id == 7001)),
+            "storage-crate move contract must remain unchanged"
+        );
+    }
+
     fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
             triggered_treasures: Vec::new(),
@@ -4219,6 +4890,50 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    fn collect_quickslot_configs(
+        helper: &mut MockClientHelper,
+    ) -> Vec<crate::schema::combat_hud::QuickSlotConfigV1> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::QuickSlotConfig(config) => Some(config),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    fn send_quick_slot_bind_request(
+        app: &mut App,
+        entity: Entity,
+        slot: u8,
+        item_id: Option<&str>,
+        request_id: &str,
+    ) {
+        let body = serde_json::json!({
+            "type": "quick_slot_bind",
+            "v": 1,
+            "slot": slot,
+            "item_id": item_id,
+            "request_id": request_id,
+        });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: body.to_string().into_bytes().into_boxed_slice(),
+            });
     }
 
     fn collect_game_messages(helper: &mut MockClientHelper) -> Vec<String> {
@@ -4416,6 +5131,216 @@ mod tests {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P4 opus verifier MINOR —— 装备门 `form_race_id` pin
+    // 测试。镜像已锁的 emit 路径测试
+    // （`cultivation_detail_emit::morph_state_present_overrides_form_race_id_away_from_intrinsic_race`）：
+    // `handle_inventory_move` 内 `form_race_id` 的推导（§13303 附近）此前只有 emit
+    // 侧的回归 pin，装备门（`InventoryMoveIntent` → `handle_inventory_move` →
+    // `apply_inventory_move_with_race`）这条真正决定"能不能穿"的路径完全没有端到端
+    // 测试锁住"用 Form 身份而不是本体 intrinsic 身份"这条契约。走真实
+    // `ClientRequestV1::InventoryMoveIntent` C2S 事件 → `handle_client_request_payloads`
+    // 全链路。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    fn make_armor_straw_chestplate_registry(allowed_race: &str) -> ItemRegistry {
+        ItemRegistry::from_map(HashMap::from([(
+            "armor_straw_chestplate".to_string(),
+            ItemTemplate {
+                id: "armor_straw_chestplate".to_string(),
+                display_name: "species-gated chestplate".to_string(),
+                category: ItemCategory::Armor,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 0.0,
+                description: "test".to_string(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shield_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new(allowed_race)],
+                },
+            },
+        )]))
+    }
+
+    fn spawn_player_with_armor_straw_chestplate_in_pack(
+        app: &mut App,
+        username: &str,
+        intrinsic_race: &str,
+    ) -> Entity {
+        let (client_bundle, _helper) = create_mock_client(username);
+        let item = ItemInstance {
+            instance_id: 1,
+            template_id: "armor_straw_chestplate".to_string(),
+            display_name: "species-gated chestplate".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                quick_access: false,
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 4,
+                cols: 4,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
+                owner_instance_id: None,
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        };
+        app.world_mut()
+            .spawn((
+                client_bundle,
+                inventory,
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(intrinsic_race),
+                    ..Cultivation::default()
+                },
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+            ))
+            .id()
+    }
+
+    fn send_species_gated_equip_intent(app: &mut App, client: Entity) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::InventoryMoveIntent {
+                    v: 1,
+                    instance_id: 1,
+                    from: InventoryLocationV1::Container {
+                        container_id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                        row: 0,
+                        col: 0,
+                    },
+                    to: InventoryLocationV1::Equip {
+                        slot: EquipSlotV1::Chest,
+                        state: EquipStateV1::Worn,
+                    },
+                    rotated: false,
+                })
+                .expect("InventoryMoveIntent must serialize")
+                .into_boxed_slice(),
+            });
+        app.update();
+    }
+
+    #[test]
+    fn morphed_player_equip_gate_uses_form_race_not_intrinsic_race() {
+        // 本体（intrinsic）种族是 whale，但已易形为 human——胸甲只认 human，装备门
+        // 判定必须用 MorphState.form="human"（放行），而不是冒用本体 Cultivation.race
+        // ="whale"（会误拒）。
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(make_armor_straw_chestplate_registry(
+            crate::body_plan::HUMAN_RACE_ID,
+        ));
+
+        let client = spawn_player_with_armor_straw_chestplate_in_pack(&mut app, "Morpher", "whale");
+        app.world_mut()
+            .entity_mut(client)
+            .insert(crate::body_plan::MorphState::new(
+                crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                0,
+                0,
+            ));
+
+        send_species_gated_equip_intent(&mut app, client);
+
+        let inventory = app.world().entity(client).get::<PlayerInventory>().unwrap();
+        let equipped_chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .and_then(|contents| contents.worn.first());
+        assert_eq!(
+            equipped_chest.map(|item| item.instance_id),
+            Some(1),
+            "已易形为 human 的 whale 本体应能穿上 Species([human]) 门的胸甲——装备门必须\
+             用 MorphState.form 而不是继续冒用本体 intrinsic race，实测装备槽：{:?}",
+            inventory.equipped.get(crate::inventory::EQUIP_SLOT_CHEST)
+        );
+    }
+
+    #[test]
+    fn unmorphed_whale_intrinsic_is_rejected_by_same_species_gate() {
+        // 对照组：同一件甲、同一本体，缺 MorphState（未易形）时装备门应回落到本体
+        // intrinsic race="whale"，被 Species([human]) 门拒绝——证明上一条测试确实
+        // 是因为 MorphState 生效才放行，不是这件甲本来就对谁都放行。
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(make_armor_straw_chestplate_registry(
+            crate::body_plan::HUMAN_RACE_ID,
+        ));
+
+        let client = spawn_player_with_armor_straw_chestplate_in_pack(&mut app, "Morpher", "whale");
+
+        send_species_gated_equip_intent(&mut app, client);
+
+        let inventory = app.world().entity(client).get::<PlayerInventory>().unwrap();
+        let equipped_chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .and_then(|contents| contents.worn.first());
+        assert!(
+            equipped_chest.is_none(),
+            "未易形的 whale 本体应被 Species([human]) 门拒绝穿戴，实测装备槽：{:?}",
+            inventory.equipped.get(crate::inventory::EQUIP_SLOT_CHEST)
+        );
+        // 应仍留在原背包容器里，而不是被静默吞掉。
+        let still_in_pack = inventory.containers[0]
+            .items
+            .iter()
+            .any(|placed| placed.instance.instance_id == 1);
+        assert!(still_in_pack, "拒绝装备后物品应留在原容器，不能凭空消失");
+    }
+
     #[test]
     fn meridian_label_maps_regular_and_extraordinary_channels() {
         let cases = [
@@ -4443,11 +5368,21 @@ mod tests {
 
         for (id, expected) in cases {
             assert_eq!(
-                meridian_label(id),
+                meridian_label(&id.channel_id()),
                 expected,
                 "expected stable chat label for {id:?}"
             );
         }
+    }
+
+    #[test]
+    fn meridian_label_falls_back_for_unknown_channel_id() {
+        // plan-race-system-v1 P1c — 非 humanoid channel id（如未来 whale 部位）没有中文
+        // 标签映射时，必须显式回落"未知经脉"，不得 panic 或伪造某个已知标签。
+        assert_eq!(
+            meridian_label(&MeridianChannelId::new("tail_fin_channel")),
+            "未知经脉"
+        );
     }
 
     #[test]
@@ -4534,6 +5469,468 @@ mod tests {
         );
     }
 
+    fn run_npc_trade_request(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+    ) -> (App, Entity, MockClientHelper) {
+        run_npc_trade_request_with_reputation(
+            player_inventory,
+            trade_inventory,
+            requested_item_id,
+            None,
+        )
+    }
+
+    fn run_npc_trade_request_with_reputation(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+        npc_player_reputation: Option<NpcPlayerReputation>,
+    ) -> (App, Entity, MockClientHelper) {
+        run_npc_trade_request_with_context(
+            player_inventory,
+            trade_inventory,
+            requested_item_id,
+            npc_player_reputation,
+            None,
+            DVec3::new(0.0, 64.0, 0.0),
+            None,
+        )
+    }
+
+    fn run_npc_trade_request_with_context(
+        player_inventory: PlayerInventory,
+        trade_inventory: Option<crate::npc::trade::NpcTradeInventory>,
+        requested_item_id: &str,
+        npc_player_reputation: Option<NpcPlayerReputation>,
+        player_faction_reputation: Option<FactionReputation>,
+        position: DVec3,
+        npc_membership: Option<FactionMembership>,
+    ) -> (App, Entity, MockClientHelper) {
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().unwrap());
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+        if player_faction_reputation.is_some() {
+            app.insert_resource(ZoneRegistry::load_from_path(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"),
+            ));
+        }
+
+        let (client_bundle, helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((client_bundle, player_inventory))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(position));
+        if let Some(player_faction_reputation) = player_faction_reputation {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(player_faction_reputation);
+        }
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityKind::VILLAGER,
+                EntityId::default(),
+                Position::new(position + DVec3::new(1.0, 0.0, 0.0)),
+                OldPosition::new(position + DVec3::new(1.0, 0.0, 0.0)),
+                NpcArchetype::Commoner,
+            ))
+            .id();
+        if let Some(trade_inventory) = trade_inventory {
+            app.world_mut().entity_mut(npc).insert(trade_inventory);
+        }
+        if let Some(npc_player_reputation) = npc_player_reputation {
+            app.world_mut()
+                .entity_mut(npc)
+                .insert(npc_player_reputation);
+        }
+        if let Some(npc_membership) = npc_membership {
+            app.world_mut().entity_mut(npc).insert(npc_membership);
+        }
+
+        app.update();
+        let npc_entity_id = app
+            .world()
+            .get::<EntityId>(npc)
+            .expect("EntityPlugin must assign protocol id to NPC")
+            .get();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::NpcTradeRequest {
+                    v: 1,
+                    npc_entity_id,
+                    offered_items: Vec::new(),
+                    requested_item_id: requested_item_id.to_string(),
+                })
+                .expect("npc trade request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        (app, player, helper)
+    }
+
+    fn live_trade_offer(
+        template_id: &str,
+        display_name: &str,
+        count: u32,
+        price_bone_coins: u32,
+    ) -> crate::npc::trade::TradeOffer {
+        crate::npc::trade::TradeOffer {
+            template_id: template_id.to_string(),
+            display_name: display_name.to_string(),
+            count,
+            price_bone_coins,
+        }
+    }
+
+    fn inventory_item_count(inventory: &PlayerInventory, template_id: &str) -> u32 {
+        inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .filter(|placed| placed.instance.template_id == template_id)
+            .map(|placed| placed.instance.stack_count)
+            .sum()
+    }
+
+    #[test]
+    fn npc_trade_request_grants_full_bundle_count() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("trade should keep player inventory attached");
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            3,
+            "one accepted bundle offer must grant its full live count"
+        );
+        assert_eq!(
+            inventory.bone_coins, 88,
+            "one accepted bundle offer must deduct its live total price exactly once"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_single_count_offer_still_grants_one() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 1, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 1);
+        assert_eq!(inventory.bone_coins, 88);
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_offer_not_present_in_live_inventory() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let original_revision = inventory.revision;
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer(
+                    "ling_xi_wan_flawed",
+                    "灵息丸（次品）",
+                    2,
+                    8,
+                )],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, original_revision);
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有这件货")),
+            "live subset rejection must be visible to the player, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "live subset rejection must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_empty_live_inventory_without_side_effects() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(8);
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory { offers: vec![] }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(8));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有这件货")),
+            "empty live inventory must use the visible missing-offer rejection, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "empty live inventory must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_uses_live_offer_count_not_catalogue_default() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 5, 10)],
+            }),
+            "lingcao",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 5);
+        assert_eq!(inventory.bone_coins, 90);
+    }
+
+    #[test]
+    fn npc_trade_request_success_message_includes_bundle_count() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (_app, _player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("灵草 x3")),
+            "success feedback must expose the granted bundle count, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_uses_live_offer_total_price() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 17)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 83,
+            "live offer price is the bundle total and must override catalogue price"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_applies_non_neutral_reputation_to_live_bundle_total() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 18;
+        let mut reputation = NpcPlayerReputation::default();
+        reputation.adjust("offline:Azure", 0.3);
+        let (app, player, _helper) = run_npc_trade_request_with_reputation(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 20)],
+            }),
+            "spirit_grass",
+            Some(reputation),
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 0,
+            "high reputation discount must apply to live total 20 (current ceil result 18), not catalogue 10"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_applies_faction_reputation_to_live_bundle_total() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 18;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 51);
+        let (app, player, _helper) = run_npc_trade_request_with_context(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 20)],
+            }),
+            "spirit_grass",
+            None,
+            Some(faction_reputation),
+            DVec3::new(-3000.0, 120.0, -2000.0),
+            Some(neutral_faction_membership()),
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 3);
+        assert_eq!(
+            inventory.bone_coins, 0,
+            "Qingyun high faction reputation must discount live total 20, not catalogue 10"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_when_only_catalogue_price_is_affordable() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 11;
+        inventory.revision = InventoryRevision(13);
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            0,
+            "affording the catalogue price must not grant any part of a dearer live bundle"
+        );
+        assert_eq!(inventory.bone_coins, 11);
+        assert_eq!(inventory.revision, InventoryRevision(13));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("骨币不足，需要 12 枚")),
+            "rejection must expose the live bundle total, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "an unaffordable live bundle must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_rejects_missing_trade_inventory_without_side_effects() {
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(7);
+        let (app, player, mut helper) = run_npc_trade_request(inventory, None, "spirit_grass");
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory_item_count(inventory, "spirit_grass"), 0);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(7));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("当前没有可成交的货物")),
+            "missing trade component rejection must be visible, messages={messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("买下")),
+            "missing trade component must not emit success feedback, messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn npc_trade_request_inventory_failure_keeps_coins_and_revision() {
+        let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(11),
+            containers: Vec::new(),
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 100,
+            max_weight: 50.0,
+        };
+        let (app, player, _helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 3, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(11));
+    }
+
+    #[test]
+    fn npc_trade_request_partial_bundle_capacity_fails_atomically() {
+        let registry = crate::inventory::load_item_registry().unwrap();
+        let mut allocator = crate::inventory::InventoryInstanceIdAllocator::default();
+        let mut inventory = empty_inventory();
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "spirit_grass",
+            63,
+            0,
+        )
+        .expect("test precondition: one compatible spirit grass stack must fit");
+        inventory.containers[0].rows = 1;
+        inventory.containers[0].cols = 1;
+        inventory.bone_coins = 100;
+        inventory.revision = InventoryRevision(17);
+
+        let (app, player, mut helper) = run_npc_trade_request(
+            inventory,
+            Some(crate::npc::trade::NpcTradeInventory {
+                offers: vec![live_trade_offer("spirit_grass", "灵草", 2, 12)],
+            }),
+            "spirit_grass",
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory_item_count(inventory, "spirit_grass"),
+            63,
+            "a bundle that can merge only one of two items must not partially mutate the stack"
+        );
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.bone_coins, 100);
+        assert_eq!(inventory.revision, InventoryRevision(17));
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("交易失败")),
+            "partial-capacity rejection must remain player-visible, messages={messages:?}"
+        );
+        assert!(messages.iter().all(|message| !message.contains("买下")));
+    }
+
     #[test]
     fn set_meridian_target_sends_generic_meridian_chat_echo() {
         let mut app = App::new();
@@ -4548,7 +5945,7 @@ mod tests {
                 channel: ident!("bong:client_request").into(),
                 data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
                     v: 1,
-                    meridian: MeridianId::Du,
+                    meridian: MeridianId::Du.channel_id(),
                 })
                 .expect("set meridian target request should serialize")
                 .into_boxed_slice(),
@@ -4560,10 +5957,10 @@ mod tests {
         let actual_target = app
             .world()
             .get::<MeridianTarget>(entity)
-            .map(|target| target.0);
+            .map(|target| target.0.clone());
         assert_eq!(
             actual_target,
-            Some(MeridianId::Du),
+            Some(MeridianId::Du.channel_id()),
             "expected SetMeridianTarget to insert selected meridian target, actual={:?}",
             actual_target
         );
@@ -4573,6 +5970,78 @@ mod tests {
                 .iter()
                 .any(|message| message.contains("[修炼] 已收到经脉目标：督脉。")),
             "expected generic meridian target chat echo because request is not limited to Chong, actual messages={messages:?}"
+        );
+    }
+
+    /// plan-race-system-v1 P1 对抗审查 M4：`SetMeridianTarget` 消费边界收到未知
+    /// channel id（伪造串 / 旧 PascalCase `MeridianId::Lung` 字面量 "Lung"）时必须
+    /// 安全处理（回执标注"未知经脉"，`MeridianTarget` component 允许被设置但下游
+    /// `meridian_open_tick` 会安全跳过，见该 system 的 debug 分支）——绝不 panic，
+    /// 也不能把未知串误当合法经脉给出中文标签回执。
+    #[test]
+    fn set_meridian_target_with_unknown_channel_id_is_handled_safely_not_panicking() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: crate::cultivation::components::MeridianChannelId::new(
+                        "totally_made_up_channel",
+                    ),
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        // 必须不 panic —— 这是本用例的核心断言。
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("未知经脉")),
+            "unknown channel id 必须回执'未知经脉'占位而不是伪造某个真实经脉名，\
+             actual messages={messages:?}"
+        );
+    }
+
+    /// 旧 PascalCase 字面量 "Lung"（`MeridianId::Lung` 的 `Debug`/枚举名拼写，非合法
+    /// wire channel id）同样必须走"未知经脉"安全分支，不能被误认成合法的 lung 经脉。
+    #[test]
+    fn set_meridian_target_with_legacy_pascal_case_lung_string_is_rejected_as_unknown() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: crate::cultivation::components::MeridianChannelId::new("Lung"),
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("未知经脉")),
+            "旧 PascalCase 'Lung' 不是合法 snake_case wire channel id ('lung')，必须走\
+             未知经脉分支而非被误认作肺经，actual messages={messages:?}"
         );
     }
 
@@ -6075,6 +7544,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -6117,24 +7587,30 @@ mod tests {
     fn quick_slot_bind_resolves_equipped_template_instance() {
         let mut app = App::new();
         register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
 
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
-            crate::inventory::SlotContents::held_single(inventory_test_item(77, "bone_whistle", 1)),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "earth_crumb", 1)),
         );
 
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app
             .world_mut()
-            .spawn((client_bundle, QuickSlotBindings::default(), inventory))
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
             .id();
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"quick_slot_bind","v":1,"slot":0,"item_id":"bone_whistle"}"#
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":0,"item_id":"earth_crumb","request_id":"bind-equipped"}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -6150,6 +7626,299 @@ mod tests {
             Some(77),
             "quick_slot_bind must resolve template ids from equipped held/worn items"
         );
+    }
+
+    #[test]
+    fn quick_slot_bind_atomically_mirrors_block_item_into_skill_bar() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":3,"item_id":"earth_crumb","request_id":"bind-block"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let quick = app
+            .world()
+            .get::<QuickSlotBindings>(entity)
+            .expect("player should keep quick slot bindings");
+        assert_eq!(
+            quick.get(3),
+            Some(88),
+            "expected block quick-slot intent to bind instance 88, actual {:?}",
+            quick.get(3)
+        );
+        let skillbar = app
+            .world()
+            .get::<SkillBarBindings>(entity)
+            .expect("player should keep skill bar bindings");
+        assert_eq!(
+            skillbar.get(3),
+            Some(&SkillSlot::Item { instance_id: 88 }),
+            "expected the same server intent to atomically mirror the block into skill bar"
+        );
+    }
+
+    #[test]
+    fn quick_slot_bind_rejects_unheld_item_without_mutating_or_persisting() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        let mut quick = QuickSlotBindings::default();
+        let _ = quick.set(3, Some(77));
+        let mut skillbar = SkillBarBindings::default();
+        let _ = skillbar.set(3, SkillSlot::Item { instance_id: 77 });
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick, skillbar, empty_inventory()))
+            .id();
+
+        send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), "reject-unheld");
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            Some(77)
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Item { instance_id: 77 })
+        );
+        let configs = collect_quickslot_configs(&mut helper);
+        assert!(configs.iter().any(|config| {
+            config.ack_request_id.as_deref() == Some("reject-unheld")
+                && config.bind_accepted == Some(false)
+        }));
+    }
+
+    #[test]
+    fn quick_slot_bind_missing_skillbar_rejects_before_quick_slot_mutation() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, QuickSlotBindings::default(), inventory))
+            .id();
+
+        send_quick_slot_bind_request(
+            &mut app,
+            entity,
+            3,
+            Some("earth_crumb"),
+            "reject-missing-skillbar",
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            None
+        );
+        let configs = collect_quickslot_configs(&mut helper);
+        assert!(configs.iter().any(|config| {
+            config.ack_request_id.as_deref() == Some("reject-missing-skillbar")
+                && config.bind_accepted == Some(false)
+        }));
+    }
+
+    #[test]
+    fn quick_slot_bind_clears_only_the_old_auto_mirrored_item() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        let mut inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        inventory.hotbar[0] = Some(inventory_test_item(89, "guyuan_pill", 1));
+        let mut quick = QuickSlotBindings::default();
+        let _ = quick.set(3, Some(88));
+        let mut skillbar = SkillBarBindings::default();
+        let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick, skillbar, inventory))
+            .id();
+
+        send_quick_slot_bind_request(&mut app, entity, 3, Some("guyuan_pill"), "block-to-pill");
+        app.update();
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            Some(89)
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Empty),
+            "expected block→non-block to clear only the stale automatic item mirror"
+        );
+
+        {
+            let mut quick = app
+                .world_mut()
+                .get_mut::<QuickSlotBindings>(entity)
+                .unwrap();
+            let _ = quick.set(3, Some(88));
+        }
+        {
+            let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
+            let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
+        }
+        send_quick_slot_bind_request(&mut app, entity, 3, None, "block-to-clear");
+        app.update();
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            None
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Empty),
+            "expected block→clear to remove the matching automatic item mirror"
+        );
+
+        {
+            let mut quick = app
+                .world_mut()
+                .get_mut::<QuickSlotBindings>(entity)
+                .unwrap();
+            let _ = quick.set(3, Some(88));
+        }
+        {
+            let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
+            let _ = skillbar.set(
+                3,
+                SkillSlot::Skill {
+                    skill_id: "sword.cleave".to_string(),
+                },
+            );
+        }
+        send_quick_slot_bind_request(&mut app, entity, 3, None, "protect-independent-skill");
+        app.update();
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            None
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string()
+            }),
+            "expected clearing quick slot not to overwrite a later independent skill binding"
+        );
+    }
+
+    #[test]
+    fn quick_slot_bind_persistence_failure_leaves_both_components_unchanged() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        let invalid_db_path = std::env::temp_dir();
+        app.insert_resource(PlayerStatePersistence::with_db_path(
+            std::env::temp_dir(),
+            invalid_db_path,
+        ));
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+
+        send_quick_slot_bind_request(
+            &mut app,
+            entity,
+            3,
+            Some("earth_crumb"),
+            "reject-persistence",
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            None
+        );
+        assert_eq!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+            Some(&SkillSlot::Empty)
+        );
+        assert!(collect_quickslot_configs(&mut helper).iter().any(|config| {
+            config.ack_request_id.as_deref() == Some("reject-persistence")
+                && config.bind_accepted == Some(false)
+        }));
+    }
+
+    #[test]
+    fn quick_slot_bind_persists_atomic_block_mirror_for_reload() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bong-quick-bind-{unique}"));
+        let db_path = root.join("bong.db");
+        crate::persistence::bootstrap_sqlite(&db_path, "quick-bind-test")
+            .expect("test sqlite should bootstrap");
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(PlayerStatePersistence::with_db_path(&root, &db_path));
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+
+        send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), "persist-block");
+        app.update();
+
+        let connection = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
+        let prefs_json: String = connection
+            .query_row(
+                "SELECT prefs_json FROM player_ui_prefs WHERE username = 'Azure'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("accepted bind should persist UI prefs");
+        let prefs: serde_json::Value =
+            serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
+        assert_eq!(prefs["quick_slots"][3], "earth_crumb");
+        assert_eq!(prefs["skill_bar"][3]["kind"], "item");
+        assert_eq!(prefs["skill_bar"][3]["template_id"], "earth_crumb");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -6252,6 +8021,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
         let mut karma = KarmaWeightStore::default();
@@ -6355,6 +8125,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -6458,6 +8229,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -6558,6 +8330,7 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )])));
 
@@ -7920,7 +9693,7 @@ mod tests {
     }
 
     #[test]
-    fn forge_inscription_scroll_consumes_item_and_emits_event() {
+    fn forge_inscription_scroll_defers_consumption_and_emits_exact_item_event() {
         let mut app = App::new();
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
@@ -7986,10 +9759,16 @@ mod tests {
         app.update();
 
         let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
-        assert!(inventory.containers[0].items.is_empty());
+        assert_eq!(
+            inventory.containers[0].items.len(),
+            1,
+            "C2S 网关只能预检残卷，实际消费必须留给确认进入 Inscription 的 forge 系统"
+        );
         let captured = app.world().resource::<CapturedInscriptionScrolls>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(9));
+        assert_eq!(captured.0[0].caster, entity);
+        assert_eq!(captured.0[0].item_instance_id, 43);
         assert_eq!(captured.0[0].inscription_id, "sharp_v0");
     }
 
@@ -8368,6 +10147,7 @@ mod tests {
         let captured = app.world().resource::<CapturedStepAdvances>();
         assert_eq!(captured.0.len(), 1);
         assert_eq!(captured.0[0].session, ForgeSessionId(12));
+        assert_eq!(captured.0[0].from_step, ForgeStep::Tempering);
     }
 
     #[test]
@@ -9632,6 +11412,213 @@ mod tests {
         );
     }
 
+    // ── 10c. F1（P3 opus verify 发现）：施放门行为测试 —— 通用 skill_bar 路径 ─────
+    //
+    // 修复前只有 known_techniques.rs 的 `required_race.allows(...)` 真值表 pin，从不
+    // 触达 `handle_skill_bar_cast` 里真实的 race gate 判定代码（line ~12013-12036）
+    // ——回归删掉那段 `if !definition.required_race.allows(...) { RejectRaceMismatch }`
+    // 整块不会撞红。本节直接驱动真实 cast 入口（`send_skill_bar_cast`）锁死该行为。
+
+    /// 构造一个 is_humanoid=false 的合成种族 `RaceRegistry`/`BodyPlanRegistry` fixture
+    /// （与 `combat::resolve` 的 `single_part_registries` 同款手法：单部位
+    /// `HeightBands` 几何，够 `resolve_body_plan` 校验通过即可，不关心命中判定）。
+    fn non_humanoid_race_fixture(
+        race_id: &str,
+    ) -> (
+        crate::body_plan::BodyPlanRegistry,
+        crate::body_plan::RaceRegistry,
+    ) {
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::{
+            BodyPartDef, BodyPlan, BodyPlanRegistry, HeightBand, HeightBandAssignment, HitGeometry,
+            PartConsequence, RaceId, RaceRegistry, StandingAabbSpec,
+        };
+        use std::collections::HashMap;
+
+        let plan = BodyPlan {
+            id: format!("test_{race_id}_plan").into(),
+            display_name: "测试非人形构型".to_string(),
+            is_humanoid: false,
+            parts: vec![BodyPartDef {
+                id: "core".into(),
+                damage_mul: 1.0,
+                contam_mul: 1.0,
+                bleed_mul: 1.0,
+                consequence: PartConsequence::Core,
+            }],
+            hit_geometry: HitGeometry::HeightBands {
+                aabb: StandingAabbSpec {
+                    half_width: 0.3,
+                    height: 1.8,
+                },
+                bands: vec![HeightBand {
+                    min_rel_y: -1.0,
+                    assignment: HeightBandAssignment::Single {
+                        part: "core".into(),
+                    },
+                }],
+                lateral_threshold: 0.19,
+            },
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: HashMap::new(),
+        };
+        let plan_id = plan.id.clone();
+        let body_plans = BodyPlanRegistry::from_plans(vec![plan]).expect("plan must validate");
+        // `RaceRegistry::from_file_contents` 要求表内必须有一条 id=HUMAN_RACE_ID 的
+        // 默认条目——复用 `combat::resolve` 同款手法：让这条 "human" 条目指向本
+        // fixture 的 is_humanoid=false 构型，caster 的 `Cultivation.race` 同样设为
+        // HUMAN_RACE_ID 即可解析出非人形本体（是否人形只看 body plan，不看 race id
+        // 字面意义）。
+        let races = RaceRegistry::from_parts_for_test(
+            vec![RaceEntry {
+                id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                display_name: format!("测试非人形种族({race_id})"),
+                body_plan_id: plan_id,
+                beast_kinds: vec![],
+            }],
+            vec![],
+            &body_plans,
+        )
+        .expect("races fixture must validate");
+        (body_plans, races)
+    }
+
+    /// 装配一个持剑、已习得 sword.cleave 的 caster；`race` 为 `None` 时不插入
+    /// `RaceRegistry`/`BodyPlanRegistry`（退化到 humanoid 单例，人形本体基线）；
+    /// 为 `Some(race_id)` 时插入 `non_humanoid_race_fixture` 并把 Cultivation.race
+    /// 设为该 id（非人形本体）。
+    fn setup_sword_cleave_caster(
+        app: &mut App,
+        username: &str,
+        race: Option<&str>,
+    ) -> (Entity, MockClientHelper) {
+        if let Some(race_id) = race {
+            let (body_plans, races) = non_humanoid_race_fixture(race_id);
+            app.insert_resource(body_plans);
+            app.insert_resource(races);
+        }
+        let (client_bundle, helper) = create_mock_client(username);
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        // race 恒为 HUMAN_RACE_ID：`non_humanoid_race_fixture` 复用该 id 指向
+        // is_humanoid=false 构型（`RaceRegistry` 校验要求默认 human 条目必须存在，
+        // 见该 fn 注释）；未插入 fixture 时同一 id 退化到 humanoid 单例。是否人形
+        // 完全由「是否插入非人形 fixture」决定，不看 race 字符串字面意义。
+        let cultivation = crate::cultivation::components::Cultivation {
+            realm: Realm::Induce,
+            qi_current: 42.0,
+            qi_max: 100.0,
+            race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            ..Default::default()
+        };
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            crate::combat::weapon::Weapon {
+                slot: crate::combat::weapon::EquipSlot::MainHand,
+                instance_id: 1,
+                template_id: "test_sword".to_string(),
+                weapon_kind: crate::combat::weapon::WeaponKind::Sword,
+                base_attack: 10.0,
+                quality_tier: 0,
+                durability: 100.0,
+                durability_max: 100.0,
+            },
+            cultivation,
+            known(&["sword.cleave"]),
+        ));
+        (entity, helper)
+    }
+
+    #[test]
+    fn skill_bar_cast_race_gate_rejects_non_humanoid_caster_before_resolver_qi_untouched() {
+        // sword.cleave 全数据表标 RaceGate::Humanoid（§8.1 #6）。非人形本体
+        // （race="test_whale" + BodyPlan.is_humanoid=false）施放必须在到达 resolver
+        // （cast_sword_cleave）之前被通用路径的 race gate 拒绝：① 推
+        // CastSyncV1{outcome=RejectRaceMismatch} ② resolver 从未运行——用零
+        // AttackIntent 事件锁死（resolver 只要跑起来必发一条 AttackIntent，见
+        // `combat::sword_basics::cast_sword_attack`）③ qi_current 分毫不动（守恒律：
+        // race gate 拒绝不该扣任何真元）。
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (entity, mut helper) = setup_sword_cleave_caster(&mut app, "Whale", Some("test_whale"));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "非人形本体施放人形专属剑技必须被 race gate 拒绝在 resolver 之前；\
+             期望无 Casting；实际 Casting 存在"
+        );
+        assert!(
+            syncs.iter().any(|s| s.outcome
+                == crate::schema::combat_hud::CastOutcomeV1::RejectRaceMismatch
+                && s.phase == CastPhaseV1::Idle),
+            "race gate 拒绝应推 CastSyncV1{{phase=Idle, outcome=RejectRaceMismatch}}；\
+             实际 syncs={syncs:?}"
+        );
+        let attack_intents = app
+            .world()
+            .resource::<valence::prelude::Events<crate::combat::events::AttackIntent>>();
+        assert!(
+            attack_intents.is_empty(),
+            "race gate 应在 resolver 之前拦截，resolver 从未运行；\
+             期望零 AttackIntent；实际存在事件（说明 resolver 被误放行了）"
+        );
+        let qi_current = app
+            .world()
+            .get::<crate::cultivation::components::Cultivation>(entity)
+            .expect("Cultivation must still exist")
+            .qi_current;
+        assert!(
+            (qi_current - 42.0).abs() < f64::EPSILON,
+            "race gate 拒绝不应扣真元（守恒律，见 CLAUDE.md 真元守恒律）；\
+             期望 qi_current=42.0 不变，实际 {qi_current}"
+        );
+    }
+
+    #[test]
+    fn skill_bar_cast_race_gate_passes_for_humanoid_caster_reaches_resolver() {
+        // 反向 happy：人形本体（race=human 默认，未插入 RaceRegistry/BodyPlanRegistry
+        // → `resolve_body_plan_for_target` 退化到 humanoid 单例）施放同一招
+        // sword.cleave 不应被 race gate 拦下——必须真正走到 resolver 并挥出
+        // （非零 AttackIntent，且不应出现 RejectRaceMismatch）。与上一测试对照，
+        // 证明 race gate 只挡非人形、不误伤人形本体。
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (entity, mut helper) = setup_sword_cleave_caster(&mut app, "Human", None);
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            !syncs
+                .iter()
+                .any(|s| s.outcome == crate::schema::combat_hud::CastOutcomeV1::RejectRaceMismatch),
+            "人形本体不应被 race gate 拒绝；实际 syncs={syncs:?}"
+        );
+        let attack_intents = app
+            .world()
+            .resource::<valence::prelude::Events<crate::combat::events::AttackIntent>>();
+        assert!(
+            !attack_intents.is_empty(),
+            "人形本体施放 sword.cleave 应真正走到 resolver 并挥出（发 AttackIntent）；\
+             期望非空事件，实际为空——说明 race gate 误挡了人形本体"
+        );
+    }
+
     // ── 11. helper 单元：check_player_skill_meridian_gate 直接单元测试 ───────────
 
     #[test]
@@ -10167,6 +12154,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -10683,56 +12671,231 @@ fn inventory_instance_id_by_template(inv: &PlayerInventory, template: &str) -> O
 }
 
 fn handle_quick_slot_bind(
-    entity: valence::prelude::Entity,
-    slot: u8,
-    item_id: Option<String>,
+    request: (valence::prelude::Entity, u8, Option<String>, String),
     bindings_q: &mut Query<&mut QuickSlotBindings>,
+    skillbar_bindings_q: &mut Query<&mut SkillBarBindings>,
     inventories: &Query<&mut PlayerInventory>,
-    clients: &Query<(&Username, &mut Client)>,
-    persistence: Option<&PlayerStatePersistence>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    runtime: (&ItemRegistry, Option<&PlayerStatePersistence>, &CombatClock),
 ) {
-    let mut bindings = match bindings_q.get_mut(entity) {
-        Ok(b) => b,
+    let (entity, slot, item_id, request_id) = request;
+    let (item_registry, persistence, combat_clock) = runtime;
+    if request_id.is_empty() || request_id.len() > 128 {
+        tracing::warn!(
+            "[bong][network] quick_slot_bind entity={entity:?} rejected invalid request_id length={}",
+            request_id.len()
+        );
+        return;
+    }
+    if slot >= QuickSlotBindings::SLOT_COUNT as u8 {
+        tracing::warn!(
+            "[bong][network] quick_slot_bind entity={entity:?} slot={slot} out of range"
+        );
+        send_quick_slot_bind_response(
+            entity,
+            request_id,
+            false,
+            bindings_q,
+            inventories,
+            item_registry,
+            combat_clock,
+            clients,
+        );
+        return;
+    }
+    let username = match clients.get_mut(entity) {
+        Ok((username, _)) => username.0.clone(),
         Err(_) => {
             tracing::warn!(
-                "[bong][network] quick_slot_bind entity={entity:?} has no QuickSlotBindings"
+                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing client"
             );
             return;
         }
     };
-    // 把 item_id (template) 解析成实际持有的第一个 instance_id。
-    // None / "" → 清空。Plan §10.4 wire 是 ItemId（template id），server 自己
-    // 在 player inventory 里查匹配的 instance。
-    let persisted_item_id = item_id.as_deref().filter(|item_id| !item_id.is_empty());
-    let instance_id = match persisted_item_id {
+    let requested_template = item_id.as_deref().filter(|item_id| !item_id.is_empty());
+    let instance_id = match requested_template {
         None => None,
-        Some(template) => inventories
-            .get(entity)
-            .ok()
-            .and_then(|inv| inventory_instance_id_by_template(inv, template)),
+        Some(template) => {
+            let instance_id = inventories
+                .get(entity)
+                .ok()
+                .and_then(|inventory| inventory_instance_id_by_template(inventory, template));
+            let Some(instance_id) = instance_id else {
+                tracing::warn!(
+                    "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: item template `{template}` not in inventory"
+                );
+                send_quick_slot_bind_response(
+                    entity,
+                    request_id,
+                    false,
+                    bindings_q,
+                    inventories,
+                    item_registry,
+                    combat_clock,
+                    clients,
+                );
+                return;
+            };
+            if item_registry.get(template).is_none() {
+                tracing::warn!(
+                    "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: unknown item template `{template}`"
+                );
+                send_quick_slot_bind_response(
+                    entity,
+                    request_id,
+                    false,
+                    bindings_q,
+                    inventories,
+                    item_registry,
+                    combat_clock,
+                    clients,
+                );
+                return;
+            }
+            Some(instance_id)
+        }
     };
-    if !bindings.set(slot, instance_id) {
-        tracing::warn!(
-            "[bong][network] quick_slot_bind entity={entity:?} slot={slot} out of range"
-        );
-        return;
-    }
-    let persisted_item_id = persisted_item_id.map(str::to_string);
-    if let (Some(persistence), Ok((username, _))) = (persistence, clients.get(entity)) {
-        if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
-            prefs.quick_slots[slot as usize] = persisted_item_id.clone()
+    let mirror_block_to_skillbar = instance_id.is_some()
+        && requested_template
+            .and_then(|template| item_registry.get(template))
+            .is_some_and(|template| template.category == ItemCategory::Block);
+    let old_instance_id = match bindings_q.get_mut(entity) {
+        Ok(bindings) => bindings.get(slot),
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing QuickSlotBindings"
+            );
+            send_quick_slot_bind_response(
+                entity,
+                request_id,
+                false,
+                bindings_q,
+                inventories,
+                item_registry,
+                combat_clock,
+                clients,
+            );
+            return;
+        }
+    };
+    let current_skill_slot = match skillbar_bindings_q.get_mut(entity) {
+        Ok(bindings) => bindings.get(slot).cloned().unwrap_or_default(),
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing SkillBarBindings"
+            );
+            send_quick_slot_bind_response(
+                entity,
+                request_id,
+                false,
+                bindings_q,
+                inventories,
+                item_registry,
+                combat_clock,
+                clients,
+            );
+            return;
+        }
+    };
+    let clears_old_auto_mirror = old_instance_id.is_some_and(|old_instance_id| {
+        current_skill_slot
+            == SkillSlot::Item {
+                instance_id: old_instance_id,
+            }
+            && (!mirror_block_to_skillbar || instance_id != Some(old_instance_id))
+    });
+    let desired_skill_slot = if mirror_block_to_skillbar {
+        instance_id.map(|instance_id| SkillSlot::Item { instance_id })
+    } else if clears_old_auto_mirror {
+        Some(SkillSlot::Empty)
+    } else {
+        None
+    };
+    let persisted_item_id = requested_template.map(str::to_string);
+    if let Some(persistence) = persistence {
+        if let Err(error) = update_player_ui_prefs(persistence, username.as_str(), |prefs| {
+            prefs.quick_slots[slot as usize] = persisted_item_id.clone();
+            if mirror_block_to_skillbar {
+                prefs.skill_bar[slot as usize] = crate::player::state::SkillSlotPersist::Item {
+                    template_id: persisted_item_id.clone().unwrap_or_default(),
+                };
+            } else if clears_old_auto_mirror {
+                prefs.skill_bar[slot as usize] = crate::player::state::SkillSlotPersist::Empty;
+            }
         }) {
             tracing::warn!(
                 "[bong][network] failed to persist quick_slot_bind for `{}` slot={slot}: {error}",
-                username.0
+                username
             );
+            send_quick_slot_bind_response(
+                entity,
+                request_id,
+                false,
+                bindings_q,
+                inventories,
+                item_registry,
+                combat_clock,
+                clients,
+            );
+            return;
         }
     }
+    let mut bindings = bindings_q
+        .get_mut(entity)
+        .expect("quick-slot component was preflighted in the same system");
+    let _ = bindings.set(slot, instance_id);
+    if let Some(desired_skill_slot) = desired_skill_slot {
+        let mut skillbar = skillbar_bindings_q
+            .get_mut(entity)
+            .expect("skill-bar component was preflighted in the same system");
+        let _ = skillbar.set(slot, desired_skill_slot);
+    }
+    send_quick_slot_bind_response(
+        entity,
+        request_id.clone(),
+        true,
+        bindings_q,
+        inventories,
+        item_registry,
+        combat_clock,
+        clients,
+    );
     tracing::info!(
-        "[bong][network] quick_slot_bind entity={entity:?} slot={slot} item_id={:?} → instance={:?}",
+        "[bong][network] quick_slot_bind entity={entity:?} slot={slot} request_id={} item_id={:?} → instance={:?} mirror_skillbar={mirror_block_to_skillbar} cleared_old_mirror={clears_old_auto_mirror}",
+        request_id,
         item_id,
         instance_id
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_quick_slot_bind_response(
+    entity: valence::prelude::Entity,
+    request_id: String,
+    accepted: bool,
+    bindings_q: &mut Query<&mut QuickSlotBindings>,
+    inventories: &Query<&mut PlayerInventory>,
+    item_registry: &ItemRegistry,
+    combat_clock: &CombatClock,
+    clients: &mut Query<(&Username, &mut Client)>,
+) {
+    let config = {
+        let bindings = bindings_q.get_mut(entity).ok();
+        let inventory = inventories.get(entity).ok();
+        build_quickslot_config(
+            bindings.as_deref(),
+            inventory,
+            item_registry,
+            combat_clock.tick,
+            current_unix_millis_for_quickslot(),
+            Some(request_id),
+            Some(accepted),
+        )
+    };
+    if let Ok((username, mut client)) = clients.get_mut(entity) {
+        let username = username.0.clone();
+        send_quickslot_config_to_client(&mut client, config, entity, username.as_str());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -10785,6 +12948,100 @@ fn handle_skill_bar_cast(
         );
         return;
     }
+
+    // plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— race gate：拥有门后、经脉门前。
+    // 镜像 sword_path::skill_register::build_cast_context 的插入位置（该 resolver 路径
+    // 独立于本通用路径，各自需要一份）。
+    {
+        let cultivation_race = combat_params
+            .cultivations
+            .get(entity)
+            .map(|c| c.race.clone())
+            .unwrap_or_else(|_| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+        let intrinsic_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: combat_params.cultivations.get(entity).ok(),
+                beast_kind: None,
+                morph_state: None,
+            },
+            combat_params.body_plans.as_deref(),
+            combat_params.race_registry.as_deref(),
+        )
+        .is_humanoid;
+        if !definition
+            .required_race
+            .allows(&cultivation_race, intrinsic_is_humanoid)
+        {
+            tracing::warn!(
+                "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+                 rejected: race gate (RaceGate::allows returned false)"
+            );
+            if let Ok((username, mut client)) = clients.get_mut(entity) {
+                push_cast_sync(
+                    &mut client,
+                    CastSyncV1 {
+                        phase: CastPhaseV1::Idle,
+                        slot,
+                        duration_ms: 0,
+                        started_at_ms: current_unix_millis(),
+                        outcome: CastOutcomeV1::RejectRaceMismatch,
+                    },
+                    username.0.as_str(),
+                    entity,
+                );
+            }
+            return;
+        }
+    }
+
+    // plan-race-system-v1 P4 —— 易形类技能（`morph.yixing`）专属前置门：race gate 后、
+    // 通用经脉门前。判据是本体（Intrinsic）`MeridianProfile` 内全部 `FormAnchor` 经脉
+    // 已通且未断（见 `body_plan::form_anchors_open`），与 `learn_technique_if_allowed`
+    // 的习得门共用同一判据函数，保持"能学就能放、不能放就不该学"的一致性。
+    if crate::body_plan::technique_requires_form_anchor(&skill_id) {
+        let meridians_ok = combat_params.meridians.get(entity).ok();
+        let severed = combat_params.player_severed.get(entity).ok().flatten();
+        let intrinsic_plan = crate::body_plan::resolve_body_plan_for_target(
+            entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: combat_params.cultivations.get(entity).ok(),
+                beast_kind: None,
+                morph_state: None,
+            },
+            combat_params.body_plans.as_deref(),
+            combat_params.race_registry.as_deref(),
+        );
+        let anchors_ok = meridians_ok
+            .zip(intrinsic_plan.meridian_profile.as_ref())
+            .is_some_and(|(meridians, profile)| {
+                crate::body_plan::form_anchors_open(profile, meridians, severed)
+            });
+        if !anchors_ok {
+            tracing::warn!(
+                "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+                 rejected: form anchor gate closed (FormAnchor channels not fully open/unsevered)"
+            );
+            if let Ok((username, mut client)) = clients.get_mut(entity) {
+                push_cast_sync(
+                    &mut client,
+                    CastSyncV1 {
+                        phase: CastPhaseV1::Idle,
+                        slot,
+                        duration_ms: 0,
+                        started_at_ms: current_unix_millis(),
+                        outcome: CastOutcomeV1::MeridianGated,
+                    },
+                    username.0.as_str(),
+                    entity,
+                );
+            }
+            return;
+        }
+    }
+
     let skill_fn = combat_params
         .skill_registry
         .as_deref()
@@ -11721,6 +13978,14 @@ fn handle_inventory_move(
     // plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈（卸/装/拖入）。move 成功后按
     // `classify_pack_move` 判别分支 emit 差异化 VfxEventRequest，client 消费播差异化粒子+音效。
     vfx_events: Option<&mut Events<VfxEventRequest>>,
+    // plan-race-system-v1 P3b（决议 §8.1 #5）—— 装备门判定用 Form 身份（当前形态，
+    // 未易形时 = 本体）。`Option` 与其余 registry 同规则：既有单测未插入这两个资源时
+    // 优雅退化到 humanoid（`resolve_body_plan_for_target` 文档化的退化行为）。
+    body_plans: Option<&crate::body_plan::BodyPlanRegistry>,
+    race_registry: Option<&crate::body_plan::RaceRegistry>,
+    // plan-race-system-v1 P4 —— 当前易形形态（`None` = 未易形），驱动 Form 身份判定的
+    // 权威真源（见下方 `form_race_id` 修复注释）。
+    morph_states: &Query<Option<&crate::body_plan::MorphState>>,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -11778,13 +14043,39 @@ fn handle_inventory_move(
         }
     }
 
-    match apply_inventory_move(
+    // plan-race-system-v1 P4（决议 §8.1 #5 修复）—— 装备门判定用 Form 身份：已易形
+    // （`MorphState` 在场）时权威真源是 `MorphState.form`，**不再**冒用本体
+    // `Cultivation.race`——此前这里恒等于本体 race，未易形态下二者恰好相等掩盖了
+    // 问题，易形后会让本体应当被拒绝穿戴的装备错误放行 / 应当放行的装备错误拒绝。
+    let morph_state = morph_states.get(entity).ok().flatten();
+    let form_race_id = morph_state.map(|m| m.form.clone()).unwrap_or_else(|| {
+        cultivations
+            .get(entity)
+            .map(|c| c.race.clone())
+            .unwrap_or_else(|_| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID))
+    });
+    let form_is_humanoid = crate::body_plan::resolve_body_plan_for_target(
+        entity,
+        crate::body_plan::BodyPlanPurpose::Form,
+        crate::body_plan::BodyPlanResolveInputs {
+            cultivation: cultivations.get(entity).ok(),
+            beast_kind: None,
+            morph_state,
+        },
+        body_plans,
+        race_registry,
+    )
+    .is_humanoid;
+
+    match apply_inventory_move_with_race(
         &mut inventory,
         item_registry,
         instance_id,
         &from,
         &to,
         rotated,
+        &form_race_id,
+        form_is_humanoid,
     ) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
             let wear_update = maybe_apply_targeted_item_wear(
@@ -12318,6 +14609,7 @@ fn handle_pickup_dropped_item(
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
     attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
+    persistence: Option<&PlayerStatePersistence>,
 ) {
     let player_pos = client_position(positions, entity);
     let mut inventory = match inventories.get_mut(entity) {
@@ -12330,37 +14622,37 @@ fn handle_pickup_dropped_item(
         }
     };
 
+    let mut staged_inventory = inventory.clone();
+    let mut staged_dropped_loot = dropped_loot_registry.clone();
+    let mut staged_zones = zones.as_deref().cloned();
+    let mut staged_qi_transfers = Events::default();
+    let mut staged_attrition_events = Events::default();
     match pickup_dropped_loot_instance(
-        &mut inventory,
-        dropped_loot_registry,
+        &mut staged_inventory,
+        &mut staged_dropped_loot,
         player_pos,
         instance_id,
     ) {
         Ok(revision) => {
-            tracing::info!(
-                "[bong][network][inventory] picked up dropped instance={instance_id} revision={}",
-                revision.0
-            );
-
-            // plan-qi-handling-attrition-v1 P0: Pickup 磨损，逸散守恒归还 zone
-            if let Some(zones) = zones {
-                let dim = dimensions
-                    .get(entity)
-                    .map(|d| d.0)
-                    .unwrap_or(DimensionKind::Overworld);
-                let pos = valence::prelude::DVec3::new(player_pos[0], player_pos[1], player_pos[2]);
-                // find_zone 借不可变引用获取 zone_name，再 find_zone_mut 借可变引用
-                let zone_name = zones.find_zone(dim, pos).map(|z| z.name.clone());
+            let dim = dimensions
+                .get(entity)
+                .map(|d| d.0)
+                .unwrap_or(DimensionKind::Overworld);
+            let pos = valence::prelude::DVec3::new(player_pos[0], player_pos[1], player_pos[2]);
+            let mut zone_runtime = None;
+            if let Some(staged_zones) = staged_zones.as_mut() {
+                let zone_name = staged_zones
+                    .find_zone(dim, pos)
+                    .map(|zone| zone.name.clone());
                 if let Some(zone_name) = zone_name {
-                    if let Some(zone) = zones.find_zone_mut(&zone_name) {
-                        // 在 inventory 里按 instance_id 找到拾起的 item 并应用磨损
+                    if let Some(zone) = staged_zones.find_zone_mut(&zone_name) {
                         let target_container_exempt = inventory_instance_container_attrition_exempt(
-                            &inventory,
+                            &staged_inventory,
                             item_registry,
                             instance_id,
                         );
                         if let Some(item) =
-                            inventory_item_by_instance_mut(&mut inventory, instance_id)
+                            inventory_item_by_instance_mut(&mut staged_inventory, instance_id)
                         {
                             if !target_container_exempt && !is_attrition_exempt(item) {
                                 let before_abs_qi = item_abs_qi_for_attrition(item);
@@ -12368,11 +14660,11 @@ fn handle_pickup_dropped_item(
                                     item,
                                     AttritionOpKind::Pickup,
                                     Some(zone),
-                                    qi_transfers,
+                                    Some(&mut staged_qi_transfers),
                                     tsy_lifecycle,
                                 );
                                 emit_attrition_applied_if_lost(
-                                    attrition_events,
+                                    Some(&mut staged_attrition_events),
                                     entity,
                                     item,
                                     before_abs_qi,
@@ -12380,9 +14672,52 @@ fn handle_pickup_dropped_item(
                                 );
                             }
                         }
+                        zone_runtime = Some(ZoneRuntimeRecord {
+                            zone_id: zone.name.clone(),
+                            spirit_qi: zone.spirit_qi,
+                            danger_level: zone.danger_level,
+                        });
                     }
                 }
             }
+            if let Some(persistence) = persistence {
+                let username = match clients.get_mut(entity) {
+                    Ok((username, _)) => username.0.clone(),
+                    Err(_) => {
+                        tracing::error!(
+                            "[bong][network][inventory] refusing durable pickup for {entity:?} without Username"
+                        );
+                        return;
+                    }
+                };
+                if let Err(error) = save_player_inventory_and_delete_dropped_loot(
+                    persistence,
+                    username.as_str(),
+                    &staged_inventory,
+                    instance_id,
+                    zone_runtime.as_ref(),
+                ) {
+                    tracing::error!(
+                        "[bong][network][inventory] durable pickup persistence failed player={username} instance={instance_id}: {error}"
+                    );
+                    return;
+                }
+            }
+            *inventory = staged_inventory;
+            *dropped_loot_registry = staged_dropped_loot;
+            if let (Some(zones), Some(staged_zones)) = (zones, staged_zones) {
+                *zones = staged_zones;
+            }
+            if let Some(qi_transfers) = qi_transfers {
+                qi_transfers.extend(staged_qi_transfers.drain());
+            }
+            if let Some(attrition_events) = attrition_events {
+                attrition_events.extend(staged_attrition_events.drain());
+            }
+            tracing::info!(
+                "[bong][network][inventory] picked up dropped instance={instance_id} revision={}",
+                revision.0
+            );
 
             resync_snapshot(
                 entity,
@@ -14423,6 +16758,8 @@ fn handle_external_container_move(
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
     clients: &mut Query<(&Username, &mut Client)>,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
     _commands: &mut Commands,
 ) {
     use crate::inventory::external_container::{
@@ -14432,14 +16769,29 @@ fn handle_external_container_move(
     use crate::schema::inventory::{InventoryLocationV1, PlacedInventoryItemV1};
     use crate::schema::server_data::{LootContainerUpdateV1, ServerDataPayloadV1, ServerDataV1};
 
+    let supply_coffin_registry = dispatch.supply_coffin_registry.as_deref();
     let Some(ext_reg) = dispatch.ext_container_registry.as_deref_mut() else {
         tracing::warn!("[bong][network] external_container_move: registry missing");
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
     };
 
     let Some(&coffin_entity) = ext_reg.sessions.get(&session_id) else {
         tracing::warn!(
             "[bong][network] external_container_move: unknown session {session_id} from {player_entity:?}"
+        );
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
         );
         return;
     };
@@ -14448,6 +16800,13 @@ fn handle_external_container_move(
         tracing::warn!(
             "[bong][network] external_container_move: ExternalContainer component missing on {coffin_entity:?}"
         );
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
     };
 
@@ -14455,7 +16814,59 @@ fn handle_external_container_move(
         tracing::warn!(
             "[bong][network] external_container_move: session {session_id} not owned by {player_entity:?}"
         );
+        // 非 owner 不得获得外部容器内容；只回推请求者自己的背包状态。
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
+    }
+
+    if matches!(
+        &ext.source_kind,
+        crate::inventory::external_container::ExternalContainerKind::SupplyCoffin { .. }
+    ) {
+        let Ok(player_pos) = positions.get(player_entity) else {
+            tracing::warn!(
+                "[bong][network] external_container_move: supply coffin session {session_id} player {player_entity:?} missing Position"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+        let active =
+            supply_coffin_registry.and_then(|registry| registry.active.get(&coffin_entity));
+        let authorization = crate::supply_coffin::authority::authorize_supply_coffin_session(
+            active,
+            player_pos.get(),
+            dimensions
+                .get(player_entity)
+                .ok()
+                .map(|dimension| dimension.0),
+        );
+        if let Err(reason) = authorization {
+            tracing::warn!(
+                "[bong][network] external_container_move: supply coffin session {session_id} authority rejected: {reason:?}"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        }
     }
 
     let ext_container_id =
@@ -14954,10 +17365,9 @@ fn resync_inventory_only(
 /// ## 处理流程
 /// 1. 校验玩家背包中 `pill_instance_id` 对应物品为 `huiyuan_pill`（pills.toml id，无下划线）；
 /// 2. 根据 `elder_entity_id` 找到大能 ECS entity；
-/// 3. 消耗丹（inventory 真删）；
-/// 4. 读取 ItemEffect::QiRecovery { amount } 作为 qi_gain（默认 24.0）；
-/// 5. emit `GiveDanToElderIntent` 供 `dying_elder_give_dan_system` 在下一 tick 处理
-///    真元转移（解耦网络层与守恒系统）；
+/// 3. emit `GiveDanToElderIntent`；
+/// 4. `dying_elder_give_dan_system` 按 EventReader 顺序权威重验、消费、读取真实
+///    ItemRegistry effect 并提交真元事务。网络层绝不先删物品。
 ///
 /// ## 失败路径（静默 warn，不 crash）
 /// - pill_instance_id 不在玩家背包 → warn + reject
@@ -14970,13 +17380,11 @@ fn handle_give_dan_to_elder(
     pill_instance_id: u64,
     elder_entity_id: i32,
     inventories: &mut Query<&mut PlayerInventory>,
-    item_registry: &ItemRegistry,
     entity_manager: Option<&valence::prelude::EntityManager>,
     clients: &mut Query<(&Username, &mut Client)>,
     give_dan_tx: Option<&mut Events<crate::fauna::dying_elder::GiveDanToElderIntent>>,
 ) {
     use crate::fauna::dying_elder::GiveDanToElderIntent;
-    use crate::inventory::ItemEffect;
 
     // ── 校验玩家背包中是否有该 pill instance ──────────────────────────────
     let pill_template_id = {
@@ -15011,18 +17419,6 @@ fn handle_give_dan_to_elder(
         return;
     }
 
-    // ── 获取丹携带的 qi_gain（从 ItemEffect::QiRecovery，默认 24.0）────────
-    let qi_gain = item_registry
-        .get("huiyuan_pill")
-        .and_then(|tmpl| {
-            if let Some(ItemEffect::QiRecovery { amount }) = tmpl.effect {
-                Some(amount)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(24.0); // fallback to canonical value
-
     // ── 解析大能 entity ────────────────────────────────────────────────────
     let Some(entity_manager) = entity_manager else {
         tracing::warn!("[bong][dying_elder] give_dan: EntityManager resource missing");
@@ -15038,23 +17434,7 @@ fn handle_give_dan_to_elder(
         return;
     };
 
-    // ── 消耗丹（inventory 真删）───────────────────────────────────────────
-    {
-        let Ok(mut inventory) = inventories.get_mut(player_entity) else {
-            return;
-        };
-        match crate::inventory::consume_item_instance_once(&mut inventory, pill_instance_id) {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(
-                    "[bong][dying_elder] give_dan: consume_item_instance_once failed: {e}"
-                );
-                return;
-            }
-        }
-    }
-
-    // ── emit GiveDanToElderIntent 供 dying_elder_give_dan_system 处理 ────────
+    // ── 只 emit intent；权威消费在 give_dan_system 内按顺序执行 ─────────────
     let Some(tx) = give_dan_tx else {
         tracing::warn!(
             "[bong][dying_elder] give_dan: GiveDanToElderIntent event resource missing, dropping intent"
@@ -15065,11 +17445,10 @@ fn handle_give_dan_to_elder(
         player: player_entity,
         elder: elder_entity,
         pill_instance_id,
-        qi_gain,
     });
 
     tracing::info!(
-        "[bong][dying_elder] give_dan: player {player_entity:?} → elder {elder_entity:?} qi_gain={qi_gain} pill={pill_instance_id}"
+        "[bong][dying_elder] give_dan preflight accepted: player {player_entity:?} → elder {elder_entity:?} pill={pill_instance_id}"
     );
 }
 

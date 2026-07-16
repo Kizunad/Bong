@@ -53,7 +53,10 @@ pub fn apply_debug_combat_commands(
                 };
                 let sev = severity.clamp(0.0, 1.0);
                 wounds.entries.push(Wound {
-                    location,
+                    // humanoid-only boundary（P0 决议，本轮不迁移）：`/wound add` dev 命令
+                    // 的 `BodyPartArg` 聊天解析器（`cmd/dev/wound.rs`）本就只认 7 个
+                    // legacy snake_case 字符串（`Back` 无字面量），全双射转换。
+                    location: crate::body_plan::legacy_body_part_to_id(location),
                     kind,
                     severity: sev,
                     bleeding_per_sec: sev * DEBUG_WOUND_BLEEDING_COEF,
@@ -151,7 +154,10 @@ mod tests {
         let wounds = app.world().entity(target).get::<Wounds>().unwrap();
         assert_eq!(wounds.entries.len(), 1);
         let w = &wounds.entries[0];
-        assert_eq!(w.location, BodyPart::Head);
+        assert_eq!(
+            w.location,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Head)
+        );
         assert_eq!(w.kind, WoundKind::Cut);
         assert!((w.severity - 0.5).abs() < 1e-6);
         assert!((w.bleeding_per_sec - 0.25).abs() < 1e-6);

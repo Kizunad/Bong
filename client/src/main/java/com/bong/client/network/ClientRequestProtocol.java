@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 客户端 → 服务端 {@code bong:client_request} 通道的协议常量与 JSON 编码。
@@ -23,13 +24,51 @@ public final class ClientRequestProtocol {
     public static final int VERSION = 1;
     public static final int MAX_CRAFT_QUANTITY = 64;
 
-    /** 服务端 {@code MeridianId} 的 PascalCase 字面量（serde 默认序列化）。 */
+    /**
+     * 服务端 {@code MeridianId} 的 PascalCase 字面量（serde 默认序列化）。
+     *
+     * <p>plan-race-system-v1 P1c：这个 PascalCase 名字本身<b>不再是</b>
+     * {@code set_meridian_target}/{@code forge_request}/{@code apply_pill} 三处
+     * wire 字段的编码形态——server 侧已把这三个字段从闭合 {@code MeridianId} 枚举
+     * 换轨为任意 snake_case {@code MeridianChannelId} 字符串（非 humanoid 构型的
+     * 经脉不在这 20 个 TCM 名字之列）。本枚举仍保留作 UI 内部值域（如
+     * {@link com.bong.client.combat.inspect.SkillConfigSchemaRegistry} 的
+     * {@code skill_config_intent} 配置面板，那是另一条独立 wire，未随本轮开放化），
+     * 但发往上述三个字段时必须经 {@link #wireId()} 取 snake_case channel id，
+     * 不能再用 {@link #name()}。</p>
+     */
     public enum MeridianId {
         // 12 正经
         Lung, LargeIntestine, Stomach, Spleen, Heart, SmallIntestine,
         Bladder, Kidney, Pericardium, TripleEnergizer, Gallbladder, Liver,
         // 8 奇经
-        Ren, Du, Chong, Dai, YinQiao, YangQiao, YinWei, YangWei
+        Ren, Du, Chong, Dai, YinQiao, YangQiao, YinWei, YangWei;
+
+        /** {@code MeridianChannelId} snake_case channel id（server {@code channel_id()} 同源）。 */
+        public String wireId() {
+            return switch (this) {
+                case Lung -> "lung";
+                case LargeIntestine -> "large_intestine";
+                case Stomach -> "stomach";
+                case Spleen -> "spleen";
+                case Heart -> "heart";
+                case SmallIntestine -> "small_intestine";
+                case Bladder -> "bladder";
+                case Kidney -> "kidney";
+                case Pericardium -> "pericardium";
+                case TripleEnergizer -> "triple_energizer";
+                case Gallbladder -> "gallbladder";
+                case Liver -> "liver";
+                case Ren -> "ren";
+                case Du -> "du";
+                case Chong -> "chong";
+                case Dai -> "dai";
+                case YinQiao -> "yin_qiao";
+                case YangQiao -> "yang_qiao";
+                case YinWei -> "yin_wei";
+                case YangWei -> "yang_wei";
+            };
+        }
     }
 
     /** 服务端 {@code ForgeAxis}（serde 默认 PascalCase）。 */
@@ -197,7 +236,7 @@ public final class ClientRequestProtocol {
 
     public static String encodeSetMeridianTarget(MeridianId meridian) {
         JsonObject obj = envelope("set_meridian_target");
-        obj.addProperty("meridian", meridian.name());
+        obj.addProperty("meridian", meridian.wireId());
         return obj.toString();
     }
 
@@ -300,7 +339,7 @@ public final class ClientRequestProtocol {
 
     public static String encodeForgeRequest(MeridianId meridian, ForgeAxis axis) {
         JsonObject obj = envelope("forge_request");
-        obj.addProperty("meridian", meridian.name());
+        obj.addProperty("meridian", meridian.wireId());
         obj.addProperty("axis", axis.name());
         return obj.toString();
     }
@@ -511,7 +550,7 @@ public final class ClientRequestProtocol {
         public JsonObject toJson() {
             JsonObject o = new JsonObject();
             o.addProperty("kind", "meridian");
-            o.addProperty("meridian_id", meridianId.name());
+            o.addProperty("meridian_id", meridianId.wireId());
             return o;
         }
     }
@@ -1102,6 +1141,11 @@ public final class ClientRequestProtocol {
 
     /** itemId == null → 清空槽位。 */
     public static String encodeQuickSlotBind(int slot, String itemId) {
+        return encodeQuickSlotBind(slot, itemId, "untracked");
+    }
+
+    /** itemId == null → 清空槽位；requestId 用于匹配服务端权威接受/拒绝。 */
+    public static String encodeQuickSlotBind(int slot, String itemId, String requestId) {
         JsonObject obj = envelope("quick_slot_bind");
         obj.addProperty("slot", slot);
         if (itemId == null || itemId.isEmpty()) {
@@ -1109,6 +1153,7 @@ public final class ClientRequestProtocol {
         } else {
             obj.addProperty("item_id", itemId);
         }
+        obj.addProperty("request_id", Objects.requireNonNull(requestId, "requestId"));
         return obj.toString();
     }
 

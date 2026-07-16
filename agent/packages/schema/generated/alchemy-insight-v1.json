@@ -6,7 +6,8 @@
     "player_id",
     "source_pill",
     "accuracy",
-    "ingredients"
+    "ingredients",
+    "ts"
   ],
   "properties": {
     "v": {
@@ -48,6 +49,11 @@
         "maxLength": 128,
         "type": "string"
       }
+    },
+    "ts": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
     }
   }
 }

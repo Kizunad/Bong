@@ -12,6 +12,7 @@ use self::state::{
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
 use crate::combat::woliu_v2::erosion::VoidErosion;
+use crate::craft::CraftSession;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
@@ -32,9 +33,9 @@ use valence::entity::entity::Flags;
 use valence::message::SendMessage;
 use valence::prelude::Despawned;
 use valence::prelude::{
-    Added, App, AppExit, Changed, Client, Commands, Entity, EntityLayerId, EventReader, GameMode,
-    IntoSystemConfigs, Last, Position, Query, RemovedComponents, Res, ResMut, Update, Username,
-    VisibleChunkLayer, VisibleEntityLayers, With, Without,
+    bevy_ecs, Added, App, AppExit, Changed, Client, Commands, Component, Entity, EntityLayerId,
+    EventReader, GameMode, IntoSystemConfigs, Last, Or, Position, Query, RemovedComponents, Res,
+    ResMut, Update, Username, VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
 const WELCOME_MESSAGE: &str =
@@ -64,8 +65,15 @@ type JoinedClientsWithoutStateQueryItem<'a> = (
     Option<&'a mut Flags>,
 );
 type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
-type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
-type ChangedInventoryClientsQueryFilter = (With<Client>, Changed<PlayerInventory>);
+#[derive(Component, Default)]
+struct InventoryPersistenceDirty;
+
+type ChangedInventoryClientsQueryItem<'a> = (Entity, &'a Username, &'a PlayerInventory);
+type ChangedInventoryClientsQueryFilter = (
+    With<Client>,
+    Without<crate::network::craft_emit::CraftSessionPersistenceDirty>,
+    Or<(Changed<PlayerInventory>, With<InventoryPersistenceDirty>)>,
+);
 type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
 type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
 type ChangedKnownTechniquesClientsQueryItem<'a> = (&'a Username, &'a KnownTechniques);
@@ -109,7 +117,8 @@ pub fn register(app: &mut App) {
             flush_changed_player_known_techniques.after(flush_changed_player_skills),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
-                .after(flush_changed_player_known_techniques),
+                .after(flush_changed_player_known_techniques)
+                .after(crate::network::craft_emit::persist_dirty_craft_sessions),
             despawn_disconnected_clients.after(flush_changed_player_inventories),
         ),
     );
@@ -252,6 +261,9 @@ pub(crate) fn attach_player_state_to_joined_clients(
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
         }
+        if let Some(craft_session) = persisted.craft_session {
+            entity_commands.insert(craft_session);
+        }
         if let Some(lifespan) = persisted.lifespan {
             entity_commands.insert(lifespan);
         }
@@ -331,6 +343,7 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&SkillSet>,
         Option<&KnownTechniques>,
         Option<&CoffinComponent>,
+        Option<&CraftSession>,
     )>,
     cultivation_bundle: Query<(
         &Cultivation,
@@ -350,6 +363,14 @@ pub(crate) fn despawn_disconnected_clients(
     )>,
 ) {
     for entity in disconnected_clients.read() {
+        // plan-race-system-v1 P4（决议 §6）—— 下线三条解除易形触发路径之一：断线即刻
+        // 解除易形（移除 `MorphState` + 重扫装备门，见 `body_plan::morph::
+        // release_morph_state`），防止玩家带着"易形态穿戴"的非法装备快照落盘。
+        commands.add(
+            move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                crate::body_plan::morph::release_morph_state(world, entity);
+            },
+        );
         if let Ok((
             username,
             player_state,
@@ -360,6 +381,7 @@ pub(crate) fn despawn_disconnected_clients(
             skill_set,
             known_techniques,
             coffin,
+            craft_session,
         )) = core_players.get(entity)
         {
             let last_dimension = current_dimension
@@ -418,6 +440,7 @@ pub(crate) fn despawn_disconnected_clients(
                 lifespan,
                 skill_set.unwrap_or(&SkillSet::default()),
                 coffin.map(|c| c.grade),
+                craft_session,
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -474,6 +497,7 @@ fn flush_connected_players_on_shutdown(
             Option<&SkillSet>,
             Option<&KnownTechniques>,
             Option<&CoffinComponent>,
+            Option<&CraftSession>,
         ),
         With<Client>,
     >,
@@ -509,6 +533,7 @@ fn flush_connected_players_on_shutdown(
         skill_set,
         known_techniques,
         coffin,
+        craft_session,
     ) in &players
     {
         let last_dimension = current_dimension
@@ -567,6 +592,7 @@ fn flush_connected_players_on_shutdown(
             lifespan,
             skill_set.unwrap_or(&SkillSet::default()),
             coffin.map(|c| c.grade),
+            craft_session,
         ) {
             Ok(path) => tracing::info!(
                 "[bong][player] saved player slices for shutdown flush `{}` to {}",
@@ -752,17 +778,25 @@ fn autosave_player_lifespan_slices(
 }
 
 fn flush_changed_player_inventories(
+    mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
     players: Query<ChangedInventoryClientsQueryItem<'_>, ChangedInventoryClientsQueryFilter>,
 ) {
-    for (username, player_inventory) in &players {
-        if let Err(error) =
-            save_player_inventory_slice(&persistence, username.0.as_str(), Some(player_inventory))
+    for (entity, username, player_inventory) in &players {
+        match save_player_inventory_slice(&persistence, username.0.as_str(), Some(player_inventory))
         {
-            tracing::warn!(
-                "[bong][player] immediate inventory flush failed for `{}`: {error}",
-                username.0,
-            );
+            Ok(_) => {
+                commands
+                    .entity(entity)
+                    .remove::<InventoryPersistenceDirty>();
+            }
+            Err(error) => {
+                commands.entity(entity).insert(InventoryPersistenceDirty);
+                tracing::warn!(
+                    "[bong][player] immediate inventory flush failed for `{}`: {error}",
+                    username.0,
+                );
+            }
         }
     }
 }
@@ -1220,6 +1254,65 @@ mod tests {
         assert!(
             app.world().get::<Despawned>(entity).is_some(),
             "disconnect cleanup should mark entity as despawned"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn disconnect_auto_releases_morph_state_before_persist_snapshot() {
+        // plan-race-system-v1 P4 opus verifier MAJOR — 下线三条易形自动解除触发路径
+        // 之一（见 despawn_disconnected_clients 内 release_morph_state deferred
+        // command）此前零测试断言真被 remove。镜像
+        // `disconnect_flush_persists_latest_player_slices_before_cleanup` 同款
+        // RemovedComponents<Client> 触发模式（先 remove::<Client>() 再 app.update()）。
+        let (persistence, data_dir, db_path) = sqlite_persistence("morph-auto-release-disconnect");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-morph-auto-release-disconnect",
+        ));
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([1.0, 70.0, 1.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            karma: 0.0,
+            inventory_score: 0.0,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::body_plan::MorphState::new(
+                crate::body_plan::RaceId::new("whale"),
+                0,
+                100,
+            ));
+
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::body_plan::MorphState>()
+                .is_some(),
+            "前置条件：下线前应处于易形态"
+        );
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::body_plan::MorphState>()
+                .is_none(),
+            "下线（RemovedComponents<Client>）应通过 release_morph_state 的 deferred \
+             command 移除 MorphState，实测组件仍在场"
         );
 
         let _ = fs::remove_dir_all(&data_dir);

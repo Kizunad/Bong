@@ -1,8 +1,19 @@
 package com.bong.client.combat;
 
 import com.bong.client.hud.HudImmersionMode;
+import com.bong.client.hud.BongToast;
+import com.bong.client.hud.AnqiHudState;
+import com.bong.client.hud.AnqiHudStateStore;
+import com.bong.client.combat.handler.AnqiHudServerDataHandler;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.network.ServerDataDispatch;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
+import com.bong.client.social.SparringInviteScreenBootstrap;
+import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.VisualEffectState;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +24,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CombatHudBootstrapTest {
@@ -22,16 +34,56 @@ class CombatHudBootstrapTest {
     @BeforeEach
     void installCaptureBackend() {
         sentPayloads.clear();
+        CastStateStore.resetForTests();
         DefenseWindowStore.resetForTests();
+        QuickUseSlotStore.resetForTests();
+        AnqiHudStateStore.clear();
         ClientRequestSender.setBackendForTests(
             (channel, payload) -> sentPayloads.add(new String(payload, StandardCharsets.UTF_8)));
     }
 
     @AfterEach
     void reset() {
+        CastStateStore.resetForTests();
         HudImmersionMode.resetForTests();
         DefenseWindowStore.resetForTests();
+        QuickUseSlotStore.resetForTests();
+        AnqiHudStateStore.clear();
+        SocialStateStore.resetForTests();
+        SparringInviteScreenBootstrap.clearOnDisconnect();
+        BongToast.resetForTests();
         ClientRequestSender.resetBackendForTests();
+    }
+
+    @Test
+    void boundQuickSlotSendsUseRequestWithSameSlot() {
+        int slot = QuickSlotConfig.SLOT_COUNT - 1;
+        QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(slot, new QuickSlotEntry(
+            "item:quick-slot-boundary",
+            "边界快捷物品",
+            750,
+            1_500,
+            "bong:textures/item/quick_slot_boundary.png"
+        )));
+
+        CombatHudBootstrap.onQuickSlotPressed(slot);
+
+        assertEquals(1, sentPayloads.size(),
+            "有绑定的快捷槽必须恰好发送一条 use_quick_slot C2S");
+        JsonObject payload = JsonParser.parseString(sentPayloads.get(0)).getAsJsonObject();
+        assertEquals("use_quick_slot", payload.get("type").getAsString());
+        assertEquals(slot, payload.get("slot").getAsInt(),
+            "C2S 槽位必须保持与 onQuickSlotPressed 入参一致");
+        assertEquals(CastState.Source.QUICK_SLOT, CastStateStore.snapshot().source());
+        assertEquals(slot, CastStateStore.snapshot().slot());
+    }
+
+    @Test
+    void emptyQuickSlotSendsNothingAndKeepsCastIdle() {
+        CombatHudBootstrap.onQuickSlotPressed(4);
+
+        assertTrue(sentPayloads.isEmpty(), "空快捷槽不得发送 use_quick_slot C2S");
+        assertTrue(CastStateStore.snapshot().isIdle(), "空快捷槽不得启动本地施放状态");
     }
 
     @Test
@@ -47,6 +99,135 @@ class CombatHudBootstrapTest {
         assertEquals(
             HudImmersionMode.Mode.PEACE,
             HudImmersionMode.resolve(CombatHudState.empty(), VisualEffectState.none(), 1_500L)
+        );
+    }
+
+    @Test
+    void resetOnDisconnectOpensNewTickEpochForAllProducedAnqiHudDimensions() {
+        long now = System.currentTimeMillis();
+        long oldSessionTick = 72_000L;
+        long newSessionTick = 10L;
+
+        AnqiHudStateStore.updateEcho(8, now, 2_000L, oldSessionTick);
+        AnqiHudStateStore.updateCharge(0.8f, now, 2_000L, oldSessionTick);
+        AnqiHudStateStore.updateAbrasion("quiver", 80.0f, now, 2_000L, oldSessionTick);
+        AnqiHudStateStore.updateMultiShot(8, now, 2_000L, oldSessionTick);
+
+        CombatHudBootstrap.resetOnDisconnect();
+
+        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(now),
+            "生产断线 reset 必须先清空旧 session 的暗器 HUD 快照");
+
+        AnqiHudStateStore.updateEcho(2, now, 2_000L, newSessionTick);
+        AnqiHudStateStore.updateCharge(0.2f, now, 2_000L, newSessionTick);
+        AnqiHudStateStore.updateAbrasion("hand_slot", 20.0f, now, 2_000L, newSessionTick);
+        AnqiHudStateStore.updateMultiShot(2, now, 2_000L, newSessionTick);
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(now);
+        assertEquals(2, state.echoCount(), "新 session 的低 tick echo 必须被接受");
+        assertEquals(0.2f, state.chargeProgress(), 0.001f,
+            "新 session 的低 tick charge 必须被接受");
+        assertEquals("hand_slot", state.abrasionContainer(),
+            "新 session 的低 tick abrasion 必须被接受");
+        assertEquals(20.0f, state.abrasionQiPayload(), 0.001f);
+        assertEquals(2, state.multiShotCount(),
+            "新 session 的低 tick multishot 必须被接受");
+    }
+
+    @Test
+    void resetOnDisconnectLetsRealHandlerAcceptLowerTicksForAllProducedKinds() {
+        long now = System.currentTimeMillis();
+        AnqiHudStateStore.updateEcho(9, now, 2_000L, 72_000L);
+        AnqiHudStateStore.updateCharge(0.9f, now, 2_000L, 72_000L);
+        AnqiHudStateStore.updateAbrasion("quiver", 90.0f, now, 2_000L, 72_000L);
+        AnqiHudStateStore.updateMultiShot(9, now, 2_000L, 72_000L);
+
+        CombatHudBootstrap.resetOnDisconnect();
+
+        ServerDataDispatch echoDispatch = handleAnqiHudPayload(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"echo\","
+                + "\"echo_count\":3,\"aim_progress\":0.0,\"charge_progress\":0.0,"
+                + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}");
+        ServerDataDispatch chargeDispatch = handleAnqiHudPayload(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"charge\","
+                + "\"echo_count\":0,\"aim_progress\":0.0,\"charge_progress\":0.4,"
+                + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}");
+        ServerDataDispatch abrasionDispatch = handleAnqiHudPayload(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"abrasion\","
+                + "\"echo_count\":0,\"aim_progress\":0.0,\"charge_progress\":0.0,"
+                + "\"abrasion_container\":\"hand_slot\",\"abrasion_qi_payload\":20.0,"
+                + "\"tick\":10}");
+        ServerDataDispatch multiShotDispatch = handleAnqiHudPayload(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"multishot\","
+                + "\"echo_count\":4,\"aim_progress\":0.0,\"charge_progress\":0.0,"
+                + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}");
+
+        assertTrue(echoDispatch.handled(),
+            "期望 echoDispatch.handled()=true，因为新 session 应接纳低 tick echo；实际 dispatch={routeType="
+                + echoDispatch.routeType() + ", handled=" + echoDispatch.handled()
+                + ", logMessage=" + echoDispatch.logMessage() + "}");
+        assertTrue(chargeDispatch.handled(),
+            "期望 chargeDispatch.handled()=true，因为新 session 应接纳低 tick charge；实际 dispatch={routeType="
+                + chargeDispatch.routeType() + ", handled=" + chargeDispatch.handled()
+                + ", logMessage=" + chargeDispatch.logMessage() + "}");
+        assertTrue(abrasionDispatch.handled(),
+            "期望 abrasionDispatch.handled()=true，因为新 session 应接纳低 tick abrasion；实际 dispatch={routeType="
+                + abrasionDispatch.routeType() + ", handled=" + abrasionDispatch.handled()
+                + ", logMessage=" + abrasionDispatch.logMessage() + "}");
+        assertTrue(multiShotDispatch.handled(),
+            "期望 multiShotDispatch.handled()=true，因为新 session 应接纳低 tick multishot；实际 dispatch={routeType="
+                + multiShotDispatch.routeType() + ", handled=" + multiShotDispatch.handled()
+                + ", logMessage=" + multiShotDispatch.logMessage() + "}");
+        AnqiHudState state = AnqiHudStateStore.snapshot(now);
+        assertEquals(3, state.echoCount(),
+            "disconnect reset 后 handler 不得把低 tick echo 当成旧包静默丢弃");
+        assertEquals(0.4f, state.chargeProgress(), 0.001f,
+            "disconnect reset 后 handler 不得把低 tick charge 当成旧包静默丢弃");
+        assertEquals("hand_slot", state.abrasionContainer(),
+            "disconnect reset 后 handler 不得把低 tick abrasion 当成旧包静默丢弃");
+        assertEquals(20.0f, state.abrasionQiPayload(), 0.001f);
+        assertEquals(4, state.multiShotCount(),
+            "disconnect reset 后 handler 不得把低 tick multishot 当成旧包静默丢弃");
+    }
+
+    @Test
+    void resetOnDisconnectClearsEntireSparringInviteLifecycle() {
+        SocialStateStore.SparringInvite previous = invite("sparring:0002", 6_000L);
+        assertEquals(SocialStateStore.SparringInviteUpdate.ACCEPTED, SocialStateStore.enqueueSparringInvite(previous));
+        SocialStateStore.clearSparringInvite(previous.inviteId());
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.SETTLED,
+            SocialStateStore.enqueueSparringInvite(previous),
+            "测试前置：旧 session 应已留下 settled tombstone"
+        );
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.ACCEPTED,
+            SocialStateStore.enqueueSparringInvite(invite("sparring:0003", 7_000L))
+        );
+
+        CombatHudBootstrap.resetOnDisconnect();
+
+        assertNull(SocialStateStore.sparringInvite(), "生产断线入口必须清空旧 session 的 pending 邀请");
+        assertEquals(
+            SocialStateStore.SparringInviteUpdate.ACCEPTED,
+            SocialStateStore.enqueueSparringInvite(previous),
+            "新 session 必须同时复位 tombstone 与版本高水位，不能拒绝合法复用 identity"
+        );
+    }
+
+    @Test
+    void resetOnDisconnectClearsBlockedSparringToastDeduplication() {
+        String inviteId = "sparring:disconnect-toast";
+        notifyBlockedSparringInvite(inviteId);
+        assertFalse(BongToast.current(System.currentTimeMillis()).isEmpty(), "旧 session 应先显示邀请提示");
+
+        BongToast.resetForTests();
+        CombatHudBootstrap.resetOnDisconnect();
+        notifyBlockedSparringInvite(inviteId);
+
+        assertFalse(
+            BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "生产断线入口必须复位 blocked-toast 去重状态，使新 session 的同 ID 邀请重新提示"
         );
     }
 
@@ -109,5 +290,36 @@ class CombatHudBootstrapTest {
 
         assertTrue(sentPayloads.isEmpty(),
             "期望窗口未开时连按截脉键依旧零发包（无累积洪流），实际发了：" + sentPayloads);
+    }
+
+    private static SocialStateStore.SparringInvite invite(String inviteId, long expiresAtMs) {
+        return new SocialStateStore.SparringInvite(
+            inviteId,
+            "char:a",
+            "char:b",
+            "凝脉",
+            "气息相试",
+            "点到为止",
+            expiresAtMs
+        );
+    }
+
+    private static ServerDataDispatch handleAnqiHudPayload(String payload) {
+        ServerPayloadParseResult parsed = ServerDataEnvelope.parse(
+            payload, payload.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(parsed.isSuccess(),
+            "期望 envelope parse 成功，因为测试 payload 格式合法；实际 parseSuccess="
+                + parsed.isSuccess() + ", parseError=" + parsed.errorMessage() + ", payload=" + payload);
+        return new AnqiHudServerDataHandler().handle(parsed.envelope());
+    }
+
+    private static void notifyBlockedSparringInvite(String inviteId) {
+        try {
+            var method = SparringInviteScreenBootstrap.class.getDeclaredMethod("notifyBlocked", String.class);
+            method.setAccessible(true);
+            method.invoke(null, inviteId);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法驱动切磋邀请 blocked-toast 生产入口", exception);
+        }
     }
 }

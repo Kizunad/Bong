@@ -1601,7 +1601,7 @@ pub fn compute_zone_pressure_system(
 
     let mut zones: Vec<String> = plots
         .iter()
-        .map(|plot| plot_zone_key(&plot).to_string())
+        .map(|plot| plot_zone_key(plot).to_string())
         .collect();
     zones.extend(tracker.zones().cloned());
     if zones.is_empty() {
@@ -1621,7 +1621,7 @@ pub fn compute_zone_pressure_system(
         // 借用拆分：读出 pressure 先丢作用域，再改 state
         let pressure = {
             let plots_iter = plots.iter().filter_map(|m| {
-                let plot: &LingtianPlot = &m;
+                let plot: &LingtianPlot = m;
                 (plot_zone_key(plot) == zone).then_some(plot)
             });
             compute_zone_pressure(
@@ -2706,6 +2706,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -2736,6 +2737,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 

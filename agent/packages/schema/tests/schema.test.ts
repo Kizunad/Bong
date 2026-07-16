@@ -17,6 +17,7 @@ import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { validateQiInjectionEventV1Contract } from "../src/combat-carrier.js";
 import { CombatBodyPartV1, CombatDefenseKindV1, CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
+import { MeridianId } from "../src/cultivation.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import {
   HeartDemonOfferDraftV1,
@@ -115,6 +116,11 @@ import {
   ServerDataShieldBrokenV1,
   ShieldBlockHitV1,
   ServerDataShieldBlockHitV1,
+  RaceGateV1,
+  RaceGateMetaEntryV1,
+  ServerDataRaceGateMetaV1,
+  MorphStateEntryV1,
+  ServerDataMorphStateV1,
 } from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
@@ -1583,6 +1589,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.quickslot-config.sample.json", () => {
+    const data = loadSample("server-data.quickslot-config.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.techniques-snapshot.sample.json", () => {
     const data = loadSample("server-data.techniques-snapshot.sample.json");
     const result = validate(ServerDataV1, data);
@@ -2057,6 +2069,181 @@ describe("sample files pass schema validation", () => {
   it("remains_sync 空列表也是合法快照（遗骸全被搬空后广播空快照清屏）", () => {
     const empty = { v: 1, type: "remains_sync", remains: [] };
     const result = validate(ServerDataV1, empty);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-race-system-v1 P2a — 动态部位 / 经脉面板布局 S2C schema pin
+  it("server-data.body-plan-layout.sample.json 正样本通过", () => {
+    const data = loadSample("server-data.body-plan-layout.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  const validBodyPlanLayout = () => ({
+    v: 1,
+    type: "body_plan_layout",
+    body_plan_id: "humanoid",
+    silhouette: [
+      {
+        part_id: "chest",
+        polygon: [
+          { x: 0.3, y: 0.1 },
+          { x: 0.7, y: 0.1 },
+          { x: 0.7, y: 0.3 },
+        ],
+      },
+    ],
+    anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.2 } }],
+    meridian_paths: [
+      { channel_id: "ren", points: [{ x: 0.5, y: 0.4 }, { x: 0.5, y: 0.1 }] },
+    ],
+    part_display_map: [
+      { server_part_id: "chest", display_segment_id: "chest" },
+    ],
+    // P2 major 修复：mini HUD 专用第二锚点组，恒为数组字段（空 = 未配置）。
+    hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.19 } }],
+  });
+
+  it("body_plan_layout 正样本（最小合法形状）通过", () => {
+    const result = validate(ServerDataV1, validBodyPlanLayout());
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it.each([
+    ["body_plan_id 缺失", (() => {
+      const d = validBodyPlanLayout() as Record<string, unknown>;
+      delete d.body_plan_id;
+      return d;
+    })()],
+    ["body_plan_id 空字符串", { ...validBodyPlanLayout(), body_plan_id: "" }],
+    ["silhouette 空数组", { ...validBodyPlanLayout(), silhouette: [] }],
+    ["silhouette 多边形只有 2 个顶点", {
+      ...validBodyPlanLayout(),
+      silhouette: [
+        { part_id: "chest", polygon: [{ x: 0.3, y: 0.1 }, { x: 0.7, y: 0.1 }] },
+      ],
+    }],
+    ["坐标越界 x>1", {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: 1.5, y: 0.2 } }],
+    }],
+    ["坐标为负", {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: -0.1, y: 0.2 } }],
+    }],
+    ["hud_anchors 缺失（非 Optional，恒为数组字段）", (() => {
+      const d = validBodyPlanLayout() as Record<string, unknown>;
+      delete d.hud_anchors;
+      return d;
+    })()],
+    ["hud_anchors 坐标越界 x>1", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ part_id: "chest", point: { x: 1.2, y: 0.2 } }],
+    }],
+    ["hud_anchors 坐标为负", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: -0.1 } }],
+    }],
+    ["hud_anchors 条目缺 part_id", {
+      ...validBodyPlanLayout(),
+      hud_anchors: [{ point: { x: 0.5, y: 0.2 } }],
+    }],
+    ["meridian path 只有 1 个点", {
+      ...validBodyPlanLayout(),
+      meridian_paths: [{ channel_id: "ren", points: [{ x: 0.5, y: 0.4 }] }],
+    }],
+    ["part_display_map 缺 display_segment_id", {
+      ...validBodyPlanLayout(),
+      part_display_map: [{ server_part_id: "chest" }],
+    }],
+    ["顶层多余字段", { ...validBodyPlanLayout(), unexpected: true }],
+  ])("body_plan_layout 负样本：%s 应拒绝", (_name, payload) => {
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("cultivation_detail 附带 body_plan_id 字符串通过、数字形状拒绝", () => {
+    const base = loadSample("server-data.cultivation-detail.sample.json") as Record<
+      string,
+      unknown
+    >;
+    expect(base.body_plan_id, "sample 必须携带 body_plan_id 与 Rust wire 对齐").toBe(
+      "humanoid",
+    );
+    const ok = validate(ServerDataV1, base);
+    expect(ok.ok, ok.errors.join("; ")).toBe(true);
+    const bad = { ...base, body_plan_id: 42 };
+    expect(validate(ServerDataV1, bad).ok).toBe(false);
+  });
+
+  it("cultivation_detail 缺失 body_plan_id 仍通过（Optional 字段，join 首帧竞态前尚未取得 plan id 的旧存档兼容）", () => {
+    const base = loadSample("server-data.cultivation-detail.sample.json") as Record<
+      string,
+      unknown
+    >;
+    const withoutPlanId = { ...base };
+    delete withoutPlanId.body_plan_id;
+    const result = validate(ServerDataV1, withoutPlanId);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-race-system-v1 P2c —— BodyPlanLayoutV1 四个 section 的边界补测：
+  // anchors/meridian_paths/part_display_map 三个字段 Rust 侧
+  // （validate_body_plan_layout）与 TS 侧 schema 均**没有** minItems 约束
+  // （只有 silhouette 要求非空），空数组是合法状态（Rust body_plan/layout.rs
+  // 的 fixture_layout() 也用 meridian_paths: vec![] 佐证），不是"没写全"的疏漏。
+  it("anchors 空数组是合法边界（非人形构型渲染阶段可以暂无红点锚点）", () => {
+    const payload = { ...validBodyPlanLayout(), anchors: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("meridian_paths 空数组是合法边界（非人形构型可以没有经脉折线，如 P0 fixture 无 meridian_profile）", () => {
+    const payload = { ...validBodyPlanLayout(), meridian_paths: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("part_display_map 空数组是合法边界（渲染层可暂不提供 server 部位 → 展示段映射）", () => {
+    const payload = { ...validBodyPlanLayout(), part_display_map: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-race-system-v1 P2 major 修复 —— hud_anchors 是可选的第二锚点组（mini HUD
+  // 专用，画布比例与 anchors 的精细画布不同），空数组合法（未来非人 plan 常态：
+  // 只给主 anchors，client 回退到缩放推导，见 MiniBodyHudPlanner.locatePart）。
+  it("hud_anchors 空数组是合法边界（未配置时 client 回退到 anchors 缩放推导）", () => {
+    const payload = { ...validBodyPlanLayout(), hud_anchors: [] };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("hud_anchors 非空且与 anchors 数值不同也合法（两套锚点独立声明，互不联动）", () => {
+    const payload = {
+      ...validBodyPlanLayout(),
+      anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.2 } }],
+      hud_anchors: [{ part_id: "chest", point: { x: 0.5, y: 0.226667 } }],
+    };
+    const result = validate(ServerDataV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("silhouette 多边形恰好 3 个顶点是合法边界（minItems: 3 的下边界，非人形三角剪影段的最小合法形状）", () => {
+    const payload = {
+      ...validBodyPlanLayout(),
+      silhouette: [
+        {
+          part_id: "chest",
+          polygon: [
+            { x: 0.3, y: 0.1 },
+            { x: 0.7, y: 0.1 },
+            { x: 0.5, y: 0.3 },
+          ],
+        },
+      ],
+    };
+    const result = validate(ServerDataV1, payload);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
@@ -2643,12 +2830,15 @@ describe("sample files pass schema validation", () => {
       ).toBe(true);
     }
   });
-  it("CombatBodyPartV1 rejects unknown body part", () => {
-    const result = validate(CombatBodyPartV1, "shoulder");
+  // plan-race-system-v1 P1c — wire 开放化：CombatBodyPartV1 从闭合 8 段人形 union
+  // 改为任意 string part id，非 humanoid 构型（P5 飞鲸等）的部位不在这 8 段之列，
+  // 必须能合法通过校验（旧断言"拒绝未声明变体"随开放化推翻，改锁"开放接受"）。
+  it("CombatBodyPartV1 accepts non-humanoid part id (wire opened up)", () => {
+    const result = validate(CombatBodyPartV1, "tail_fin");
     expect(
       result.ok,
-      `Expected CombatBodyPartV1 to reject "shoulder" (not a declared variant), but it was accepted`,
-    ).toBe(false);
+      `Expected CombatBodyPartV1 to accept "tail_fin" after wire open-up, errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
   });
   it("CombatBodyPartV1 rejects empty string", () => {
     const result = validate(CombatBodyPartV1, "");
@@ -2657,6 +2847,34 @@ describe("sample files pass schema validation", () => {
       `Expected CombatBodyPartV1 to reject empty string, but it was accepted`,
     ).toBe(false);
   });
+  // plan-race-system-v1 P1 对抗审查 MINOR ②：`MeridianId`（cultivation.ts）与
+  // `CombatBodyPartV1` 同批 wire 开放化（P1c），但此前从未有专属 pin 测试锁住其
+  // 开放 string 语义——对齐 `CombatBodyPartV1` 的 3 条基线（合法样本 / 非 humanoid
+  // 开放接受 / 空串拒绝）补齐。
+  it("MeridianId accepts humanoid channel id samples (regular + extraordinary)", () => {
+    for (const channel of ["lung", "heart", "ren", "yin_qiao"]) {
+      const result = validate(MeridianId, channel);
+      expect(
+        result.ok,
+        `MeridianId must accept "${channel}" — humanoid.json declares it as a channel id: ${result.errors.join("; ")}`,
+      ).toBe(true);
+    }
+  });
+  it("MeridianId accepts non-humanoid channel id (wire opened up)", () => {
+    const result = validate(MeridianId, "blowhole");
+    expect(
+      result.ok,
+      `Expected MeridianId to accept "blowhole" after wire open-up (non-humanoid channel), errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+  it("MeridianId rejects empty string", () => {
+    const result = validate(MeridianId, "");
+    expect(
+      result.ok,
+      `Expected MeridianId to reject empty string, but it was accepted`,
+    ).toBe(false);
+  });
+
   it("combat-event.realtime.back.sample.json validates: back body_part is a parseable IPC value", () => {
     const data = loadSample("combat-event.realtime.back.sample.json");
     const result = validate(CombatRealtimeEventV1, data);
@@ -3194,6 +3412,21 @@ describe("negative sample files fail schema validation", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects malformed quickslot_config slot entry", () => {
+    const data = loadObjectSample("server-data.quickslot-config.sample.json");
+    const slots = data.slots as Array<Record<string, unknown> | null>;
+    slots[0] = { item_id: "kai_mai_pill", display_name: "开脉丹" };
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects quickslot_config arrays that are not exactly nine slots", () => {
+    const data = loadObjectSample("server-data.quickslot-config.sample.json");
+    (data.cooldown_until_ms as unknown[]).pop();
+    const result = validate(ServerDataV1, data);
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects non-object skill config intent payload", () => {
     const data = loadObjectSample("client-request.skill-config-intent.sample.json");
     data.config = null;
@@ -3245,6 +3478,68 @@ describe("alchemy bridge payload samples pass schema validation", () => {
     const data = loadSample("alchemy-insight.sample.json");
     const result = validate(AlchemyInsightV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
+
+describe("alchemy insight server wire parity", () => {
+  function serverShapedAlchemyInsight(ts: unknown = 84_120): Record<string, unknown> {
+    return {
+      v: 1,
+      player_id: "offline:Azure",
+      source_pill: "hui_yuan_pill",
+      recipe_id: "hui_yuan_pill_v0",
+      accuracy: 0.86,
+      ingredients: ["ling_grass", "qingxin_leaf"],
+      ts,
+    };
+  }
+
+  it.each([0, Number.MAX_SAFE_INTEGER])(
+    "accepts the server timestamp boundary %s",
+    (ts) => {
+      const result = validate(AlchemyInsightV1, serverShapedAlchemyInsight(ts));
+      expect(
+        result.ok,
+        `expected AlchemyInsightV1 to accept server-shaped ts=${ts}, errors=${result.errors.join("; ")}`,
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    ["missing", undefined],
+    ["negative", -1],
+    ["fractional", 1.5],
+    ["above safe integer", Number.MAX_SAFE_INTEGER + 1],
+  ])("rejects %s server timestamp", (_label, ts) => {
+    const payload = serverShapedAlchemyInsight(ts);
+    if (ts === undefined) {
+      delete payload.ts;
+    }
+    const result = validate(AlchemyInsightV1, payload);
+    expect(
+      result.ok,
+      `expected invalid ts=${String(ts)} to be rejected, actual ok=${result.ok}, errors=${result.errors.join("; ")}`,
+    ).toBe(false);
+  });
+
+  it("keeps rejecting unknown fields after timestamp alignment", () => {
+    const payload = serverShapedAlchemyInsight();
+    payload.unexpected = true;
+    const result = validate(AlchemyInsightV1, payload);
+    expect(
+      result.ok,
+      `expected additionalProperties=false to reject unknown fields, actual ok=${result.ok}, errors=${result.errors.join("; ")}`,
+    ).toBe(false);
+  });
+
+  it.each([-0.01, 1.01])("keeps rejecting out-of-range accuracy %s", (accuracy) => {
+    const payload = serverShapedAlchemyInsight();
+    payload.accuracy = accuracy;
+    const result = validate(AlchemyInsightV1, payload);
+    expect(
+      result.ok,
+      `expected accuracy=${accuracy} to remain outside [0, 1], actual ok=${result.ok}, errors=${result.errors.join("; ")}`,
+    ).toBe(false);
   });
 });
 
@@ -4197,5 +4492,234 @@ describe("MutationEventV1 schema pin tests (plan-dandao-runtime-wiring-v1 P2)", 
     expect(SchemaPackage.NamedFactionStateV1).toBe(NamedFactionStateV1);
     expect(SchemaPackage.FactionStatusV1).toBe(FactionStatusV1);
     expect(typeof SchemaPackage.validateNamedFactionStateV1Contract).toBe("function");
+  });
+});
+
+// ─── plan-race-system-v1 P3a：RaceGate wire pin ─────────────────────────────
+describe("RaceGateV1 (plan-race-system-v1 P3a)", () => {
+  it("race-gate.any.sample.json 通过且 species 为空", () => {
+    const data = loadObjectSample("race-gate.any.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual([]);
+  });
+
+  it("race-gate.humanoid.sample.json 通过且 species 为空", () => {
+    const data = loadObjectSample("race-gate.humanoid.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual([]);
+  });
+
+  it("race-gate.species.sample.json 通过且携带精确种族名单", () => {
+    const data = loadObjectSample("race-gate.species.sample.json");
+    const result = validate(RaceGateV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.species).toEqual(["whale"]);
+  });
+
+  it("三变体正向 pin：any/humanoid/species 均通过", () => {
+    for (const kind of ["any", "humanoid", "species"] as const) {
+      const payload = { kind, species: kind === "species" ? ["whale"] : [] };
+      const result = validate(RaceGateV1, payload);
+      expect(result.ok, `${kind}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("未知 kind 必须 fail-closed 拒绝，不静默兜底 any", () => {
+    const bad = { kind: "bogus", species: [] };
+    const result = validate(RaceGateV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("species 为空数组是合法边界（即便 kind=species，无实际放行对象但结构合法）", () => {
+    const payload = { kind: "species", species: [] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("species 重复条目原样通过（去重是校验层的事，不是 wire schema 的事）", () => {
+    const payload = { kind: "species", species: ["whale", "whale"] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("species 元素空字符串应拒绝（minLength: 1）", () => {
+    const payload = { kind: "species", species: [""] };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("顶层多余字段应拒绝（additionalProperties: false）", () => {
+    const payload = { kind: "any", species: [], unexpected: true };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("缺 species 字段应拒绝（恒为必填数组字段，未配置用空数组表达）", () => {
+    const payload = { kind: "any" };
+    const result = validate(RaceGateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("RaceGateMetaV1 (plan-race-system-v1 P3c)", () => {
+  it("server-data.race-gate-meta.sample.json 正样本通过 ServerDataV1", () => {
+    const data = loadSample("server-data.race-gate-meta.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("空表样本（两表皆空）合法——无种族门物品/功法时的常态", () => {
+    const data = loadSample("server-data.race-gate-meta.empty.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.item_wearer_race).toEqual([]);
+    expect(data.technique_required_race).toEqual([]);
+  });
+
+  it("三档 gate 各一条 entry 均通过（any/humanoid/species）", () => {
+    for (const gate of [
+      { kind: "any", species: [] },
+      { kind: "humanoid", species: [] },
+      { kind: "species", species: ["whale"] },
+    ] as const) {
+      const entry = { id: "x", gate };
+      const result = validate(RaceGateMetaEntryV1, entry);
+      expect(result.ok, `${gate.kind}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("entry 未知 gate.kind 必须 fail-closed 拒绝", () => {
+    const entry = { id: "x", gate: { kind: "bogus", species: [] } };
+    const result = validate(RaceGateMetaEntryV1, entry);
+    expect(result.ok).toBe(false);
+  });
+
+  it("entry 缺 id 拒绝（id 是查表主键，不可空）", () => {
+    const entry = { gate: { kind: "any", species: [] } };
+    const result = validate(RaceGateMetaEntryV1, entry);
+    expect(result.ok).toBe(false);
+  });
+
+  it("entry id 空字符串拒绝（minLength: 1）", () => {
+    const entry = { id: "", gate: { kind: "any", species: [] } };
+    const result = validate(RaceGateMetaEntryV1, entry);
+    expect(result.ok).toBe(false);
+  });
+
+  it("payload 缺 item_wearer_race 数组拒绝（恒为必填数组，空表用 []）", () => {
+    const payload = {
+      v: 1,
+      type: "race_gate_meta",
+      technique_required_race: [],
+    };
+    const result = validate(ServerDataRaceGateMetaV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("payload 多余顶层字段拒绝（additionalProperties: false）", () => {
+    const payload = {
+      v: 1,
+      type: "race_gate_meta",
+      item_wearer_race: [],
+      technique_required_race: [],
+      unexpected: true,
+    };
+    const result = validate(ServerDataRaceGateMetaV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("装备门 species 表 + 功法门 humanoid 表可共存于一 payload", () => {
+    const payload = {
+      v: 1,
+      type: "race_gate_meta",
+      item_wearer_race: [
+        { id: "armor_whale_plate", gate: { kind: "species", species: ["whale"] } },
+      ],
+      technique_required_race: [
+        { id: "sword.cleave", gate: { kind: "humanoid", species: [] } },
+      ],
+    };
+    const result = validate(ServerDataRaceGateMetaV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+});
+
+describe("MorphStateV1 (plan-race-system-v1 P4)", () => {
+  it("server-data.morph-state.full.sample.json 正样本通过 ServerDataV1", () => {
+    const data = loadSample("server-data.morph-state.full.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.morph-state.delta.sample.json 正样本通过 ServerDataV1", () => {
+    const data = loadSample("server-data.morph-state.delta.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("mode 只接受 full/delta 两个字面量，其余字符串拒绝", () => {
+    const payload = {
+      v: 1,
+      type: "morph_state",
+      mode: "bogus",
+      entries: [],
+    };
+    const result = validate(ServerDataMorphStateV1, payload);
+    expect(result.ok).toBe(false);
+  });
+
+  it("entries 为空数组合法（未易形/无实体时的常态）", () => {
+    const payload = { v: 1, type: "morph_state", mode: "full", entries: [] };
+    const result = validate(ServerDataMorphStateV1, payload);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("entry active=true 携带完整形态字段", () => {
+    const entry = {
+      entity_id: 7,
+      model_kind: 2,
+      form_race_id: "whale",
+      form_body_plan_id: "whale",
+      active: true,
+    };
+    const result = validate(MorphStateEntryV1, entry);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("entry active=false（delta 删除态）允许空字符串形态字段", () => {
+    const entry = {
+      entity_id: 7,
+      model_kind: 0,
+      form_race_id: "",
+      form_body_plan_id: "",
+      active: false,
+    };
+    const result = validate(MorphStateEntryV1, entry);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("entry 缺 entity_id 拒绝", () => {
+    const entry = {
+      model_kind: 0,
+      form_race_id: "whale",
+      form_body_plan_id: "whale",
+      active: true,
+    };
+    const result = validate(MorphStateEntryV1, entry);
+    expect(result.ok).toBe(false);
+  });
+
+  it("payload 多余顶层字段拒绝（additionalProperties: false）", () => {
+    const payload = {
+      v: 1,
+      type: "morph_state",
+      mode: "full",
+      entries: [],
+      unexpected: true,
+    };
+    const result = validate(ServerDataMorphStateV1, payload);
+    expect(result.ok).toBe(false);
   });
 });

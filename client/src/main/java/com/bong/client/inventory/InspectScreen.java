@@ -4,6 +4,7 @@ import com.bong.client.combat.QuickSlotConfig;
 import com.bong.client.combat.QuickSlotEntry;
 import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.inspect.TechniqueDragDecision;
 import com.bong.client.block.BlockVanillaIconMap;
@@ -147,6 +148,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[HOTBAR_SLOTS];
     private final InventoryItem[] quickUseItems = new InventoryItem[HOTBAR_SLOTS];
     private FlowLayout quickUseStrip;
+    private Consumer<QuickUseSlotStore.Update> quickUseStoreListener;
+    private Consumer<SkillBarConfig> skillBarStoreListener;
+    private long lastQuickUseUpdateSequence = -1L;
+    private PendingQuickUseIntent pendingQuickUseIntent;
+
+    private record PendingQuickUseIntent(
+        String requestId,
+        int slot,
+        String expectedItemId,
+        Runnable onAccepted,
+        Runnable onRejected
+    ) {}
 
     // Discard
     private FlowLayout discardStrip;
@@ -241,6 +254,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             com.bong.client.skill.SkillSetStore.removeListener(skillListener);
             skillListener = null;
         }
+        unregisterAuthoritativeBarListeners();
         if (techniquesTabPanel != null) {
             techniquesTabPanel.close();
             techniquesTabPanel = null;
@@ -281,7 +295,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         outerRow.child(hotbarStrip);
         quickUseStrip = buildQuickUseStrip();
         outerRow.child(quickUseStrip);
-        hydrateQuickUseFromStore();
+        registerAuthoritativeBarListeners(task -> MinecraftClient.getInstance().execute(task));
 
         // === CENTER: Main panel ===
         FlowLayout mainPanel = Containers.verticalFlow(Sizing.content(), Sizing.content());
@@ -821,7 +835,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void hydrateQuickUseFromStore() {
-        QuickSlotConfig config = QuickUseSlotStore.snapshot();
+        hydrateQuickUseFromConfig(QuickUseSlotStore.snapshot());
+    }
+
+    private void hydrateQuickUseFromConfig(QuickSlotConfig config) {
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             QuickSlotEntry entry = config.slot(i);
             if (entry == null) {
@@ -832,6 +849,59 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             InventoryItem matched = findItemInModel(entry.itemId());
             quickUseItems[i] = matched;
             setQuickUseSlotVisual(i, matched);
+        }
+    }
+
+    private void registerAuthoritativeBarListeners(Consumer<Runnable> executor) {
+        unregisterAuthoritativeBarListeners();
+        quickUseStoreListener = update -> executor.accept(() -> applyQuickUseUpdate(update));
+        skillBarStoreListener = ignored -> executor.accept(this::hydrateSkillBarFromStore);
+        QuickUseSlotStore.Update initial = QuickUseSlotStore.subscribeAndGet(quickUseStoreListener);
+        SkillBarStore.addListener(skillBarStoreListener);
+        executor.accept(() -> applyQuickUseUpdate(initial));
+        executor.accept(this::hydrateSkillBarFromStore);
+    }
+
+    private void unregisterAuthoritativeBarListeners() {
+        if (quickUseStoreListener != null) {
+            QuickUseSlotStore.removeListener(quickUseStoreListener);
+            quickUseStoreListener = null;
+        }
+        if (skillBarStoreListener != null) {
+            SkillBarStore.removeListener(skillBarStoreListener);
+            skillBarStoreListener = null;
+        }
+        lastQuickUseUpdateSequence = -1L;
+        pendingQuickUseIntent = null;
+    }
+
+    private void applyQuickUseUpdate(QuickUseSlotStore.Update update) {
+        if (update == null || update.sequence() <= lastQuickUseUpdateSequence) {
+            return;
+        }
+        lastQuickUseUpdateSequence = update.sequence();
+        hydrateQuickUseFromConfig(update.config());
+
+        PendingQuickUseIntent pending = pendingQuickUseIntent;
+        if (pending == null
+                || update.source() != QuickUseSlotStore.Source.SERVER
+                || update.ackRequestId() == null
+                || !update.ackRequestId().equals(pending.requestId())
+                || update.bindAccepted() == null) {
+            return;
+        }
+
+        pendingQuickUseIntent = null;
+        QuickSlotEntry confirmed = update.config() == null
+            ? null
+            : update.config().slot(pending.slot());
+        boolean expectedState = pending.expectedItemId() == null
+            ? confirmed == null
+            : confirmed != null && pending.expectedItemId().equals(confirmed.itemId());
+        if (update.bindAccepted() && expectedState) {
+            pending.onAccepted().run();
+        } else {
+            pending.onRejected().run();
         }
     }
 
@@ -909,39 +979,42 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return null;
     }
 
-    private void publishQuickUseSlot(int index, InventoryItem item) {
-        QuickSlotConfig current = QuickUseSlotStore.snapshot();
-        QuickSlotEntry entry = item == null ? null : new QuickSlotEntry(
-            item.itemId(),
-            item.displayName(),
-            QUICK_USE_DEFAULT_CAST_MS,
-            QUICK_USE_DEFAULT_COOLDOWN_MS,
-            ""
+    private boolean requestQuickUseSlot(
+        int index,
+        InventoryItem item,
+        Runnable onAccepted,
+        Runnable onRejected
+    ) {
+        if (pendingQuickUseIntent != null) {
+            return false;
+        }
+        String itemId = item == null ? null : item.itemId();
+        String requestId = com.bong.client.network.ClientRequestSender.sendQuickSlotBindTracked(
+            index, itemId);
+        if (requestId == null) {
+            return false;
+        }
+        pendingQuickUseIntent = new PendingQuickUseIntent(
+            requestId,
+            index,
+            itemId,
+            onAccepted,
+            onRejected
         );
-        QuickUseSlotStore.replace(current.withSlot(index, entry));
-        quickUseItems[index] = item;
-        setQuickUseSlotVisual(index, item);
-        com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
-            index, item == null ? null : item.itemId());
+        return true;
     }
 
     /**
      * 拖放落到快捷使用栏（F1-F9）槽位时的绑定收口。
      *
-     * <p>按 plan-block-placement-ux-v1 §N.1 决议：quick_slot 栏（F 键 cast/use）与 SkillBarStore
-     * 栏（1-9 选中放置）是两套独立的 server 语义（{@code QuickSlotBindings} vs {@code SkillBarBindings}），
-     * 不合并成单条 C2S。对所有物品照常发 {@code quick_slot_bind}（{@link #publishQuickUseSlot}）；
-     * 仅当落进的是可放置方块（{@link #isBlockQuickBarBindable}）时，<b>额外</b>同时写 SkillBarStore +
-     * 发 {@code skill_bar_bind}（{@link #bindBlockItemToSkillBar}），使「拖放方块到快捷栏」与右键菜单
-     * 「绑定到 N」同效，让选中该槽（1-9）后右键放置可读到该方块实例。
+     * <p>按 plan-block-placement-ux-v1 §N.1 决议：quick slot 与 SkillBar 是两套 server 组件，
+     * 但方块拖放只发送一条 {@code quick_slot_bind}；server 识别 Block 类模板后在同一 handler
+     * 原子写入两份组件并分别回推权威 config，避免两条 C2S 之间失败形成半提交。
      *
      * <p>非方块物品只走 quick_slot 一条路径，行为不变。
      */
-    void commitQuickUseDrop(int index, InventoryItem item) {
-        publishQuickUseSlot(index, item);
-        if (isBlockQuickBarBindable(item)) {
-            bindBlockItemToSkillBar(index, item);
-        }
+    boolean commitQuickUseDrop(int index, InventoryItem item) {
+        return requestQuickUseSlot(index, item, () -> {}, () -> {});
     }
 
     /**
@@ -1787,6 +1860,83 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         this.bodyInspect = bodyInspect;
     }
 
+    /** Headless 交互测试 seam：注入生产 quick-equip / equip-drop 共用的 grid 与装备面板。 */
+    void configureEquipInteractionForTests(BackpackGridPanel grid, EquipmentPanel panel) {
+        this.containerGrids = grid == null ? new BackpackGridPanel[0] : new BackpackGridPanel[] {grid};
+        this.activeContainer = grid == null ? -1 : 0;
+        this.equipPanel = panel;
+        this.activeTab = TAB_EQUIP;
+    }
+
+    /** 调用 mouseClicked 的 Shift 分支所用的同一生产方法。 */
+    void quickEquipFromGridForTests(InventoryItem item) {
+        quickEquipFromGrid(item);
+    }
+
+    boolean beginGridEquipDragForTests(BackpackGridPanel grid, InventoryItem item) {
+        return beginGridDrag(grid, item);
+    }
+
+    BackpackGridPanel openPackGridForTests(String containerId) {
+        return packWindows.open(containerId, model, 0, 0).grid();
+    }
+
+    boolean beginPackGridEquipDragForTests(String containerId, InventoryItem item) {
+        BackpackGridPanel grid = openPackGridForTests(containerId);
+        return beginGridDrag(grid, item);
+    }
+
+    InventoryItem packGridItemForTests(String containerId, int row, int col) {
+        var win = packWindows.get(containerId);
+        return win == null || win.isClosed() || win.grid() == null
+            ? null
+            : win.grid().itemAt(row, col);
+    }
+
+    /** Headless 回归复用真实 QUICK_USE 拾起语义（解绑 → dragState 记录来源）。 */
+    boolean beginQuickUseEquipDragForTests(InventoryItem item, int index) {
+        quickUseItems[index] = item;
+        return beginQuickUseDrag(index);
+    }
+
+    boolean bindQuickUseForTests(InventoryItem item, int index) {
+        return requestQuickUseSlot(index, item, () -> {}, () -> {});
+    }
+
+    boolean beginQuickUseDragForTests(int index) {
+        return beginQuickUseDrag(index);
+    }
+
+    boolean isDraggingForTests() {
+        return dragState.isDragging();
+    }
+
+    void registerAuthoritativeBarListenersForTests() {
+        registerAuthoritativeBarListeners(Runnable::run);
+    }
+
+    void unregisterAuthoritativeBarListenersForTests() {
+        unregisterAuthoritativeBarListeners();
+    }
+
+    void returnCurrentDragToSourceForTests() {
+        returnDragToSource();
+    }
+
+    /** Headless 回归复用 attemptDrop 的装备提交/失败回源编排。 */
+    boolean commitCurrentDragToEquipForTests(EquipSlotType targetSlot) {
+        InventoryItem dragged = dragState.draggedItem();
+        return dragged != null && commitEquipDropOrReturnToSource(
+            dragged,
+            snapshotSourceLocation(),
+            targetSlot
+        );
+    }
+
+    InventoryItem quickUseItemForTests(int index) {
+        return quickUseItems[index];
+    }
+
     boolean dispatchSetMeridianTarget() {
         MeridianChannel selected = bodyInspect == null ? null : bodyInspect.selectedChannel();
         MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
@@ -2240,13 +2390,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                             return true;
                         }
                         if (shift) quickEquipFromGrid(item);
-                        else {
-                            var anchor = grid.anchorOf(item);
-                            if (anchor != null) {
-                                grid.remove(item);
-                                dragState.pickup(item, grid.containerId(), anchor.row(), anchor.col());
-                            }
-                        }
+                        else beginGridDrag(grid, item);
                         return true;
                     }
                 }
@@ -2387,14 +2531,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             // Quick-use bar (F1-F9)
             int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
             if (qIdx >= 0 && quickUseItems[qIdx] != null) {
-                InventoryItem item = quickUseItems[qIdx];
                 if (shift) quickMoveQuickUseToGrid(qIdx);
-                else {
-                    quickUseItems[qIdx] = null;
-                    setQuickUseSlotVisual(qIdx, null);
-                    publishQuickUseSlot(qIdx, null);
-                    dragState.pickupFromQuickUse(item, qIdx);
-                }
+                else beginQuickUseDrag(qIdx);
                 return true;
             }
 
@@ -2626,6 +2764,38 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // ==================== Drag ====================
 
+    /** 普通容器页与浮动 pack 共用的真实拾取边界：记录精确来源后再移除本地格子。 */
+    private boolean beginGridDrag(BackpackGridPanel grid, InventoryItem item) {
+        if (grid == null || item == null || dragState.phase() != DragState.Phase.IDLE) {
+            return false;
+        }
+        var anchor = grid.anchorOf(item);
+        if (anchor == null) {
+            return false;
+        }
+        dragState.pickup(item, grid.containerId(), anchor.row(), anchor.col());
+        grid.remove(item);
+        return true;
+    }
+
+    /** QUICK_USE 只有在解绑请求被本地传输接受后才清视觉并进入拖拽态。 */
+    private boolean beginQuickUseDrag(int index) {
+        if (index < 0 || index >= HOTBAR_SLOTS) {
+            return false;
+        }
+        InventoryItem item = quickUseItems[index];
+        if (item == null) {
+            return false;
+        }
+        return requestQuickUseSlot(
+            index,
+            null,
+            () -> dragState.pickupFromQuickUse(item, index),
+            () -> com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] quick-use unbind rejected slot={}", index)
+        );
+    }
+
     private void attemptDrop(double mouseX, double mouseY) {
         InventoryItem dragged = dragState.draggedItem();
         if (dragged == null) { dragState.cancel(); clearAllHighlights(); return; }
@@ -2731,12 +2901,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 clearAllHighlights();
                 return;
             }
+            var toLoc = new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                wg.containerId(), pos.row(), pos.col());
+            if (!dispatchMoveIntent(dragged, fromLoc, toLoc, dropRotated)) {
+                returnDragToSource();
+                clearAllHighlights();
+                return;
+            }
             wg.place(dragged, pos.row(), pos.col());
             dragState.drop();
-            dispatchMoveIntent(dragged, fromLoc,
-                new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                    wg.containerId(), pos.row(), pos.col()),
-                dropRotated);
             clearAllHighlights();
             return;
         }
@@ -2757,12 +2930,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     clearAllHighlights();
                     return;
                 }
+                var toLoc = new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                    grid.containerId(), pos.row(), pos.col());
+                if (!dispatchMoveIntent(dragged, fromLoc, toLoc, dropRotated)) {
+                    returnDragToSource();
+                    clearAllHighlights();
+                    return;
+                }
                 grid.place(dragged, pos.row(), pos.col());
                 dragState.drop();
-                dispatchMoveIntent(dragged, fromLoc,
-                    new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                        grid.containerId(), pos.row(), pos.col()),
-                    dropRotated);
                 clearAllHighlights();
                 return;
             }
@@ -2774,28 +2950,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
-                if (eq.isDisabledByTwoHand() || !isEquipSlotDropValid(dragged, eq.slotType())) {
-                    returnDragToSource();
+                if (!commitEquipDropOrReturnToSource(dragged, fromLoc, eq.slotType())) {
                     clearAllHighlights();
                     return;
                 }
-                // 乐观本地落位：手槽 → held 单件；身体槽 → push worn 栈顶。
-                EquipSlotType slot = eq.slotType();
-                if (slot.isHand()) {
-                    eq.setContents(com.bong.client.inventory.model.SlotContents.ofHeld(dragged));
-                } else {
-                    java.util.List<InventoryItem> stack =
-                        new java.util.ArrayList<>(eq.contents().worn());
-                    stack.add(dragged); // push 到栈顶（尾）
-                    eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, eq.held()));
-                }
-                dragState.drop();
-                // plan-rotate-v1 — 装备槽是非网格落位：旋转标志不适用，恒发 false
-                //（server 侧对 Equip 目标同样忽略 rotated，保持原朝向）。
-                dispatchMoveIntent(dragged, fromLoc,
-                    new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                        slot.name().toLowerCase(java.util.Locale.ROOT), slot.wireState()),
-                    false);
                 clearAllHighlights();
                 return;
             }
@@ -2830,6 +2988,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // Hotbar
         int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
         if (hIdx >= 0 && InventoryEquipRules.canPlaceIntoHotbar(dragged)) {
+            if (!dispatchMoveIntent(
+                dragged,
+                fromLoc,
+                new com.bong.client.network.ClientRequestProtocol.HotbarLoc(hIdx),
+                false
+            )) {
+                returnDragToSource();
+                clearAllHighlights();
+                return;
+            }
             if (hotbarItems[hIdx] == null) {
                 hotbarItems[hIdx] = dragged;
                 hotbarSlots[hIdx].setItem(dragged, true);
@@ -2841,10 +3009,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 dragState.drop();
                 placeItemAnywhere(old);
             }
-            // plan-rotate-v1 — hotbar 仅收 1x1（不可旋转形状），非网格落位恒发 false。
-            dispatchMoveIntent(dragged, fromLoc,
-                new com.bong.client.network.ClientRequestProtocol.HotbarLoc(hIdx),
-                false);
             clearAllHighlights();
             return;
         }
@@ -2861,11 +3025,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return;
             }
             InventoryItem old = quickUseItems[qIdx];
-            quickUseItems[qIdx] = dragged;
-            setQuickUseSlotVisual(qIdx, dragged);
-            commitQuickUseDrop(qIdx, dragged);
-            dragState.drop();
-            if (old != null) placeItemAnywhere(old);
+            if (!requestQuickUseSlot(
+                    qIdx,
+                    dragged,
+                    () -> {
+                        dragState.drop();
+                        if (old != null) placeItemAnywhere(old);
+                        clearAllHighlights();
+                    },
+                    () -> com.bong.client.BongClient.LOGGER.warn(
+                        "[bong][inspect] authoritative quick-use bind rejected slot={}", qIdx)
+                )) {
+                returnDragToSource();
+                clearAllHighlights();
+                return;
+            }
             clearAllHighlights();
             return;
         }
@@ -3230,7 +3404,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return true;
     }
 
-    void dispatchMoveIntent(
+    boolean dispatchMoveIntent(
         InventoryItem item,
         com.bong.client.network.ClientRequestProtocol.InvLocation from,
         com.bong.client.network.ClientRequestProtocol.InvLocation to,
@@ -3239,26 +3413,32 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item == null) {
             com.bong.client.BongClient.LOGGER.warn(
                 "[bong][inspect] dispatchMoveIntent skipped: item is null");
-            return;
+            return false;
         }
         if (from == null || to == null) {
             com.bong.client.BongClient.LOGGER.warn(
                 "[bong][inspect] dispatchMoveIntent skipped: from={} to={} item={}",
                 from, to, item.itemId());
-            return;
+            return false;
         }
         if (item.instanceId() == 0L) {
             com.bong.client.BongClient.LOGGER.warn(
                 "[bong][inspect] dispatchMoveIntent skipped: item {} has instanceId=0 "
                     + "(likely Mock data — server snapshot didn't load)",
                 item.itemId());
-            return;
+            return false;
         }
         com.bong.client.BongClient.LOGGER.info(
             "[bong][inspect] dispatchMoveIntent instance={} from={} to={} rotated={} item={}",
             item.instanceId(), from, to, rotated, item.itemId());
-        com.bong.client.network.ClientRequestSender.sendInventoryMove(
+        boolean accepted = com.bong.client.network.ClientRequestSender.sendInventoryMove(
             item.instanceId(), from, to, rotated);
+        if (!accepted) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchMoveIntent rejected by local transport instance={} from={} to={}",
+                item.instanceId(), from, to);
+        }
+        return accepted;
     }
 
     boolean dispatchDiscardIntent(
@@ -3290,6 +3470,33 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void returnDragToSource() {
+        // QUICK_USE 已在拾取时把解绑请求发给 server。回绑若被本地传输拒绝，不能先 cancel
+        // 再丢失 item/source；保留拖拽态供下一次取消/落位重试，直到回绑真正被接受。
+        if (dragState.sourceKind() == DragState.SourceKind.QUICK_USE) {
+            int index = dragState.sourceQuickUseIndex();
+            InventoryItem item = dragState.originalDraggedItem() != null
+                ? dragState.originalDraggedItem()
+                : dragState.draggedItem();
+            if (index >= 0 && index < HOTBAR_SLOTS && item != null) {
+                if (!requestQuickUseSlot(
+                        index,
+                        item,
+                        dragState::drop,
+                        () -> com.bong.client.BongClient.LOGGER.warn(
+                            "[bong][inspect] authoritative quick-use rebind rejected slot={}", index)
+                    )) {
+                    com.bong.client.BongClient.LOGGER.warn(
+                        "[bong][inspect] quick-use rebind rejected; retaining drag for retry slot={}",
+                        index);
+                }
+                return;
+            }
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] invalid quick-use drag source; retaining drag index={} item={}",
+                index,
+                item == null ? null : item.itemId());
+            return;
+        }
         DragState.CancelResult r = dragState.cancel();
         if (!r.hasItem()) return;
         InventoryItem item = r.item();
@@ -3300,22 +3507,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (lootPanel != null && !lootPanel.isClosed()
                         && lootPanel.extContainerId().equals(r.sourceContainerId())) {
                     BackpackGridPanel lg = lootPanel.lootGrid();
-                    if (lg.canPlace(item, r.sourceRow(), r.sourceCol())) {
-                        lg.place(item, r.sourceRow(), r.sourceCol());
-                    } else {
-                        // loot grid position taken — find free space
-                        var freePos = lg.findFreeSpace(item);
-                        if (freePos != null) lg.place(item, freePos.row(), freePos.col());
-                        else placeItemAnywhere(item);
-                    }
+                    if (!restoreItemToGrid(lg, item, r.sourceRow(), r.sourceCol()))
+                        placeItemAnywhere(item);
                 } else {
-                    // 先切回来源容器页（用户可能已手动/drag-hover 切走），再放回原位 —— 否则会落到
-                    // 当前隐藏的网格，物品视觉上凭空消失（数据不丢、下次 snapshot 重同步，但体验差）。
-                    switchToGridContainer(r.sourceContainerId());
-                    BackpackGridPanel grid = activeGrid();
-                    if (grid != null && grid.canPlace(item, r.sourceRow(), r.sourceCol()))
-                        grid.place(item, r.sourceRow(), r.sourceCol());
-                    else placeItemAnywhere(item);
+                    var sourceWindow = packWindows.get(r.sourceContainerId());
+                    BackpackGridPanel sourcePackGrid = sourceWindow == null || sourceWindow.isClosed()
+                        ? null
+                        : sourceWindow.grid();
+                    if (sourcePackGrid != null) {
+                        // 浮动 pack 不属于 containerGrids[] 页签；必须按原 window/containerId
+                        // 直接回原 grid，不能误落当前普通容器。
+                        if (!restoreItemToGrid(
+                                sourcePackGrid, item, r.sourceRow(), r.sourceCol())) {
+                            placeItemAnywhere(item);
+                        }
+                    } else {
+                        // 先切回来源容器页（用户可能已手动/drag-hover 切走），再放回原位。
+                        switchToGridContainer(r.sourceContainerId());
+                        BackpackGridPanel grid = activeGrid();
+                        if (!restoreItemToGrid(grid, item, r.sourceRow(), r.sourceCol()))
+                            placeItemAnywhere(item);
+                    }
                 }
             }
             case EQUIP -> {
@@ -3333,12 +3545,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
             case QUICK_USE -> {
-                int idx = r.sourceQuickUseIndex();
-                if (idx >= 0 && idx < HOTBAR_SLOTS) {
-                    quickUseItems[idx] = item;
-                    setQuickUseSlotVisual(idx, item);
-                    publishQuickUseSlot(idx, item);
-                }
+                // 已在 cancel() 之前单独处理；仅为 exhaustiveness 保留。
             }
             case MERIDIAN -> {
                 MeridianChannel ch = r.sourceMeridianChannel();
@@ -3349,6 +3556,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (bp != null && bodyInspect != null) bodyInspect.applyPhysicalItem(bp, item);
             }
         }
+    }
+
+    /** 优先原锚点、其次同一来源 grid 空位；返回 false 才允许跨容器兜底。 */
+    private static boolean restoreItemToGrid(
+        BackpackGridPanel grid,
+        InventoryItem item,
+        int sourceRow,
+        int sourceCol
+    ) {
+        if (grid == null || item == null) {
+            return false;
+        }
+        if (grid.canPlace(item, sourceRow, sourceCol)) {
+            grid.place(item, sourceRow, sourceCol);
+            return true;
+        }
+        var freePos = grid.findFreeSpace(item);
+        if (freePos == null) {
+            return false;
+        }
+        grid.place(item, freePos.row(), freePos.col());
+        return true;
     }
 
     private void placeItemAnywhere(InventoryItem item) {
@@ -3630,6 +3859,60 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     /**
+     * 拖拽命中装备槽后的最薄编排边界：校验目标，确认权威 move intent 可发送后再乐观落位。
+     * 生产 {@link #attemptDrop(double, double)} 与 headless 交互回归共用此路径，避免测试只锁
+     * {@link InventoryEquipRules} 而漏掉 {@code EquipLoc} 构造或 C2S dispatch。
+     */
+    boolean commitEquipDrop(
+        InventoryItem dragged,
+        com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc,
+        EquipSlotType targetSlot
+    ) {
+        if (equipPanel == null || targetSlot == null) return false;
+        var eq = equipPanel.slotFor(targetSlot);
+        if (eq == null || eq.isInteractionBlocked() || !isEquipSlotDropValid(dragged, targetSlot)) {
+            return false;
+        }
+        // plan-race-system-v1 P3c — 被拖入物品的 wearer_race 与当前形态不符 → 拒绝落位
+        // （client 预览拦截）。server validate_equip_to 权威兜底：即便绕过此拦截，也会
+        // 回 race_mismatch 拒绝 + toast（InventoryMoveRejectedHandler）。
+        if (dragged != null && dragged.itemId() != null
+            && com.bong.client.inventory.state.RaceGateEval.isItemBlocked(dragged.itemId())) {
+            return false;
+        }
+
+        var toLoc = new com.bong.client.network.ClientRequestProtocol.EquipLoc(
+            targetSlot.name().toLowerCase(java.util.Locale.ROOT), targetSlot.wireState());
+        if (!dispatchMoveIntent(dragged, fromLoc, toLoc, false)) {
+            return false;
+        }
+
+        if (targetSlot.isHand()) {
+            eq.setContents(com.bong.client.inventory.model.SlotContents.ofHeld(dragged));
+        } else {
+            java.util.List<InventoryItem> stack =
+                new java.util.ArrayList<>(eq.contents().worn());
+            stack.add(dragged);
+            eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, eq.held()));
+        }
+        dragState.drop();
+        return true;
+    }
+
+    /** attemptDrop 与 headless 回归共用：提交失败时把拖拽物完整恢复到原来源。 */
+    boolean commitEquipDropOrReturnToSource(
+        InventoryItem dragged,
+        com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc,
+        EquipSlotType targetSlot
+    ) {
+        if (commitEquipDrop(dragged, fromLoc, targetSlot)) {
+            return true;
+        }
+        returnDragToSource();
+        return false;
+    }
+
+    /**
      * plan-layered-equip-v1 P4：从当前面板各槽收集分层装备态（SlotContents）供 canEquip 校验。
      * 拖拽来源槽若来自装备槽，把 dragged 件计回该槽（同槽重排放宽，与 canEquip sourceSlot 约定一致）。
      */
@@ -3670,11 +3953,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         );
         if (targetSlot == null) return;
 
-        grid.remove(item);
-        // 手槽 quick-equip → held 单件。
-        equipPanel.slotFor(targetSlot).setContents(
-            com.bong.client.inventory.model.SlotContents.ofHeld(item));
-        dispatchMoveIntent(
+        if (!dispatchMoveIntent(
             item,
             new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
                 grid.containerId(),
@@ -3686,7 +3965,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             ),
             // plan-rotate-v1 — shift 快捷穿戴不经拖拽，无旋转语义。
             false
-        );
+        )) {
+            return;
+        }
+        grid.remove(item);
+        // 手槽 quick-equip → held 单件。
+        equipPanel.slotFor(targetSlot).setContents(
+            com.bong.client.inventory.model.SlotContents.ofHeld(item));
     }
 
     private void quickUnequipToGrid(EquipSlotType slotType, InventoryItem item) {
@@ -3694,10 +3979,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null) return;
         var pos = grid.findFreeSpace(item);
         if (pos != null) {
-            // 决议 #12：卸下仅弹出栈顶/held（被压住下层不动）。
-            popSlotTop(equipPanel.slotFor(slotType));
-            grid.place(item, pos.row(), pos.col());
-            dispatchMoveIntent(
+            if (!dispatchMoveIntent(
                 item,
                 new com.bong.client.network.ClientRequestProtocol.EquipLoc(
                     slotType.name().toLowerCase(java.util.Locale.ROOT), slotType.wireState()
@@ -3707,9 +3989,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     pos.row(),
                     pos.col()
                 ),
-                // plan-rotate-v1 — 快捷卸下不经拖拽，无旋转语义。
                 false
-            );
+            )) {
+                return;
+            }
+            // 决议 #12：卸下仅弹出栈顶/held（被压住下层不动）。
+            popSlotTop(equipPanel.slotFor(slotType));
+            grid.place(item, pos.row(), pos.col());
         }
     }
 
@@ -3720,10 +4006,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null) return;
         var pos = grid.findFreeSpace(item);
         if (pos != null) {
-            hotbarItems[index] = null;
-            hotbarSlots[index].clearItem();
-            grid.place(item, pos.row(), pos.col());
-            dispatchMoveIntent(
+            if (!dispatchMoveIntent(
                 item,
                 new com.bong.client.network.ClientRequestProtocol.HotbarLoc(index),
                 new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
@@ -3731,9 +4014,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     pos.row(),
                     pos.col()
                 ),
-                // plan-rotate-v1 — hotbar 快捷收纳不经拖拽，无旋转语义。
                 false
-            );
+            )) {
+                return;
+            }
+            hotbarItems[index] = null;
+            hotbarSlots[index].clearItem();
+            grid.place(item, pos.row(), pos.col());
         }
     }
 
@@ -3744,10 +4031,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null) return;
         var pos = grid.findFreeSpace(item);
         if (pos != null) {
-            quickUseItems[index] = null;
-            setQuickUseSlotVisual(index, null);
-            publishQuickUseSlot(index, null);
-            grid.place(item, pos.row(), pos.col());
+            requestQuickUseSlot(
+                index,
+                null,
+                () -> {
+                    if (grid.canPlace(item, pos.row(), pos.col())) {
+                        grid.place(item, pos.row(), pos.col());
+                    } else {
+                        placeItemAnywhere(item);
+                    }
+                },
+                () -> com.bong.client.BongClient.LOGGER.warn(
+                    "[bong][inspect] authoritative quick-use clear rejected slot={}", index)
+            );
         }
     }
 
@@ -4292,12 +4588,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     if (pos != null) {
                         InventoryItem item = wg.itemAt(pos.row(), pos.col());
                         if (item != null && dragState.phase() == DragState.Phase.IDLE) {
-                            var anchor = wg.anchorOf(item);
-                            if (anchor != null) {
-                                dragState.pickup(item, wg.containerId(),
-                                    anchor.row(), anchor.col());
-                                wg.remove(item);
-                            }
+                            beginGridDrag(wg, item);
                         }
                     }
                     packWindows.raise(win);

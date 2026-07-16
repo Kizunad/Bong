@@ -85,11 +85,12 @@ pub enum TiandaoResponseLevel {
     Annihilate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TiandaoActivity {
     Meditating,
     Combat,
     Moving,
+    #[default]
     Standing,
     InNiche,
 }
@@ -205,12 +206,6 @@ struct TiandaoActivityRuntimeInput<'a> {
     practice_accumulator: Option<&'a CultivationSessionPracticeAccumulator>,
     spirit_niches: Option<&'a SpiritNicheRegistry>,
     now_tick: u64,
-}
-
-impl Default for TiandaoActivity {
-    fn default() -> Self {
-        Self::Standing
-    }
 }
 
 impl TiandaoActivity {

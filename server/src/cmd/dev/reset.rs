@@ -37,6 +37,7 @@ use crate::cultivation::tribulation::{
 };
 use crate::inventory::{clear_player_inventory, ClearScope, OverloadedMarker, PlayerInventory};
 use crate::movement::{player_knockback::ActivePlayerKnockback, MovementState};
+use crate::network::craft_emit::{CraftSessionPersistenceDirty, CraftSessionStateDirty};
 use crate::player::state::PlayerState;
 use crate::skill::components::SkillSet;
 
@@ -358,6 +359,7 @@ fn remove_runtime_state(
             .remove::<HeartDemonResolution>()
             .remove::<ActivePlayerKnockback>()
             .remove::<CraftSession>()
+            .insert((CraftSessionStateDirty, CraftSessionPersistenceDirty))
             .remove::<OverloadedMarker>()
             .remove::<CarrierCharging>()
             .remove::<PendingDuguInfusion>()
@@ -403,6 +405,7 @@ fn reset_lifecycle(lifecycle: &mut Lifecycle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::body_plan::RaceId;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::combat::components::{LifecycleState, SkillSlot, StaminaState};
     use crate::craft::recipe::RecipeId;
@@ -528,6 +531,7 @@ mod tests {
                 pending_material_bonus: 5.0,
                 composure: 0.2,
                 composure_recover_rate: 0.4,
+                race: RaceId::new("human"),
             },
             meridians,
             QiColor {
@@ -543,7 +547,7 @@ mod tests {
                 entries: vec![ContamSource {
                     amount: 3.0,
                     color: ColorKind::Turbid,
-                    meridian_id: Some(MeridianId::Lung),
+                    meridian_id: Some(MeridianId::Lung.channel_id()),
                     attacker_id: Some("npc:bad".to_string()),
                     introduced_at: 5,
                 }],
@@ -722,7 +726,7 @@ mod tests {
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
         app.world_mut().entity_mut(player).insert((
             InsightModifiers::default(),
-            MeridianTarget(MeridianId::Chong),
+            MeridianTarget(MeridianId::Chong.channel_id()),
             ActivePlayerKnockback {
                 velocity: DVec3::new(1.0, 0.0, 0.0),
                 remaining_ticks: 3,

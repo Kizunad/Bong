@@ -1,6 +1,7 @@
 package com.bong.client.inventory;
 
 import com.bong.client.BongClient;
+import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.TreasureEquippedStore;
 import com.bong.client.combat.WeaponEquippedStore;
 import com.bong.client.cultivation.QiColorObservedStore;
@@ -59,6 +60,7 @@ public final class InspectScreenBootstrap {
     static void clearInventorySnapshot() {
         InventoryStateStore.clearOnDisconnect();
         WeaponEquippedStore.clearOnDisconnect();
+        EquippedShieldStore.clear();
         TreasureEquippedStore.clearOnDisconnect();
         QiColorObservedStore.clear();
     }

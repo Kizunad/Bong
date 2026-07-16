@@ -172,8 +172,55 @@ message ServerDataEnvelope {
     ScrollOpen scroll_open = 138;
     // plan-remains-suite P0 — 遗骸容器世界同步（G 键统一交互链路，对齐 dropped_loot_sync 形状）。
     RemainsSync remains_sync = 139;
+    // ─── plan-race-system-v1 P2a：动态部位 / 经脉面板布局元数据 ────
+    BodyPlanLayout body_plan_layout = 140;
+    // plan-race-system-v1 P3c：种族门元数据表（item wearer_race + technique
+    // required_race），join 首帧一次性下发，client 缓存后离线判置灰。
+    RaceGateMeta race_gate_meta = 141;
+    // plan-race-system-v1 P4：易形状态快照（join+周期全量 / 解除瞬间半径 delta）。
+    MorphState morph_state = 142;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
+}
+
+// ─── plan-race-system-v1 P2a：BodyPlanLayout ──────────────────────
+// 与 Rust BodyPlanLayoutV1 精确对应。join 首帧随 cultivation_detail 下发，
+// 实体 body_plan 变化（真实换 race）时重发；坐标均为归一化 [0,1]。
+
+message BodyPlanPoint2 {
+  float x = 1;
+  float y = 2;
+}
+
+message BodyPlanSilhouettePart {
+  string part_id = 1;
+  repeated BodyPlanPoint2 polygon = 2;
+}
+
+message BodyPlanPartAnchor {
+  string part_id = 1;
+  BodyPlanPoint2 point = 2;
+}
+
+message BodyPlanMeridianPath {
+  string channel_id = 1;
+  repeated BodyPlanPoint2 points = 2;
+}
+
+message BodyPlanPartDisplayMapping {
+  string server_part_id = 1;
+  string display_segment_id = 2;
+}
+
+message BodyPlanLayout {
+  string body_plan_id = 1;
+  repeated BodyPlanSilhouettePart silhouette = 2;
+  repeated BodyPlanPartAnchor anchors = 3;
+  repeated BodyPlanMeridianPath meridian_paths = 4;
+  repeated BodyPlanPartDisplayMapping part_display_map = 5;
+  // P2 major 修复：mini HUD（30×75 粗网格，比例与 anchors 的 168×236 精细画布不同）
+  // 专用第二锚点组，可选（未配置时 client 回退到 anchors 缩放推导）。
+  repeated BodyPlanPartAnchor hud_anchors = 6;
 }
 
 message WorkbenchOpen {
@@ -454,7 +501,10 @@ message PlayerState {
 // 额外字段与 Rust CultivationDetail variant 精确对应。
 
 message MeridianState {
-  MeridianId id            = 1;
+  // plan-race-system-v1 P1c：`MeridianId` 闭合 enum → string channel id（snake_case，
+  // 如 "lung"/"ren"），不再假设恰好 20 条 TCM 经脉——非 humanoid 构型（P5 飞鲸等）的
+  // 经脉不在这 20 个名字之列。直改新形状，不留 int enum 兼容层。
+  string id                = 1;
   bool       opened        = 2;
   double     flow_rate     = 3;
   double     flow_capacity = 4;
@@ -489,7 +539,9 @@ message PracticeWeight {
 message CultivationDetail {
   Realm                          realm                             = 1;
   repeated MeridianState         meridians                         = 2;
-  optional MeridianId            target_meridian                   = 3;
+  // plan-race-system-v1 P1c：channel id 字符串（见 MeridianState.id），非 humanoid
+  // channel 也可合法出现。
+  optional string                 target_meridian                   = 3;
   double                         contamination_total               = 4;
   optional LifespanPreview       lifespan                          = 5;
   string                         recent_skill_milestones_summary   = 6;
@@ -499,6 +551,17 @@ message CultivationDetail {
   bool                           qi_color_chaotic                  = 10;
   bool                           qi_color_hunyuan                  = 11;
   repeated PracticeWeight        practice_weights                  = 12;
+  // plan-race-system-v1 P2a：实体本体 body_plan id（`BodyPlanLayout.body_plan_id`
+  // 寻址键，client 按此缓存对应布局）。
+  string                         body_plan_id                      = 13;
+  // plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：client
+  // gate 判定（装备置灰等）权威真源，不靠猜/不靠 BodyPlanLayout 元数据。未易形（P4
+  // MorphState 落地前恒定）时 form_* 三字段 = 对应本体字段。
+  string                         race_id                           = 14; // 本体种族 id
+  string                         form_race_id                      = 15; // 当前形态种族 id（= race_id，未易形时）
+  string                         form_body_plan_id                 = 16; // 当前形态 body plan id（= body_plan_id，未易形时）
+  bool                           intrinsic_is_humanoid             = 17; // 本体是否人形
+  bool                           form_is_humanoid                  = 18; // 当前形态是否人形（= intrinsic_is_humanoid，未易形时）
 }
 
 // ─── 7. SkillXpGain ────────────────────────────────────────────
@@ -561,6 +624,18 @@ message InventoryItemView {
   // plan-alchemy-v2 物品级丹药元数据，serde AlchemyItemData (inventory/mod.rs) 的 flat 镜像。
   // 缺省 = 非丹药物品；client readAlchemyLines 拿 null → 无 tooltip 行。
   optional AlchemyItemDataProto alchemy = 21;
+  // plan-shelflife-v1 物品级 freshness NBT。地面掉落与拾取后的 snapshot 必须保真，
+  // 否则生产 protobuf 路径会把采集时刻/profile 静默丢弃。
+  optional InventoryFreshness freshness = 22;
+}
+
+message InventoryFreshness {
+  uint64 created_at_tick       = 1;
+  float  initial_qi            = 2;
+  string track                 = 3; // Decay / Spoil / Age，与 Rust serde 形状一致
+  string profile               = 4;
+  uint64 frozen_accumulated    = 5;
+  optional uint64 frozen_since_tick = 6;
 }
 
 // serde AlchemyItemData (server/src/inventory/mod.rs `#[serde(tag="kind")]`) 的 flat 镜像。
@@ -705,7 +780,8 @@ message KnockbackSync {
 // ─── C2S payloads ──────────────────────────────────────────────
 
 message SetMeridianTarget {
-  MeridianId meridian = 1;
+  // plan-race-system-v1 P1c：string channel id（snake_case），MeridianId 闭合 enum 退役。
+  string meridian = 1;
 }
 
 message BreakthroughRequest {
@@ -1516,6 +1592,8 @@ enum CastOutcome {
   CAST_OUTCOME_REJECT_NO_WEAPON       = 14;
   // 招式未习得或未激活（KnownTechniques 缺失 / active=false）——此前冒用 INVALID_TARGET。
   CAST_OUTCOME_REJECT_TECHNIQUE_INACTIVE = 15;
+  // plan-race-system-v1 P3a：种族门拒绝（本体 race_id / is_humanoid 未通过 RaceGate）。
+  CAST_OUTCOME_REJECT_RACE_MISMATCH = 16;
 }
 
 // 与 Rust CastSyncV1 精确对应。
@@ -1550,6 +1628,8 @@ message OptionalQuickSlotEntry {
 message QuickSlotConfig {
   repeated OptionalQuickSlotEntry slots = 1; // 固定 9 槽
   repeated uint64 cooldown_until_ms     = 2; // 固定 9 个 cooldown 截止时间
+  optional string ack_request_id        = 3;
+  optional bool bind_accepted           = 4;
 }
 
 // 与 Rust SkillBarEntryV1 精确对应 — tagged union (Item / Skill)。
@@ -1969,6 +2049,7 @@ message UseQuickSlot {
 message QuickSlotBind {
   uint32          slot    = 1; // Rust u8 (0..=8)
   optional string item_id = 2;
+  string request_id       = 3;
 }
 
 // 与 Rust ClientRequestV1::SkillBarCast 精确对应。
@@ -3572,7 +3653,8 @@ enum ForgeAxis {
 }
 
 message ForgeRequestC2s {
-  MeridianId meridian = 1;
+  // plan-race-system-v1 P1c：string channel id（snake_case），MeridianId 闭合 enum 退役。
+  string    meridian = 1;
   ForgeAxis  axis     = 2;
 }
 
@@ -3798,7 +3880,9 @@ enum ApplyPillTargetKind {
 message ApplyPill {
   uint64                instance_id = 1;
   ApplyPillTargetKind   target_kind = 2;
-  optional MeridianId   meridian_id = 3; // 仅 target_kind == MERIDIAN 时有值
+  // plan-race-system-v1 P1c：string channel id（snake_case），仅 target_kind == MERIDIAN
+  // 时有值；MeridianId 闭合 enum 退役。
+  optional string       meridian_id = 3;
 }
 
 // 与 Rust ClientRequestV1::SelfAntidote 精确对应。
@@ -3875,7 +3959,7 @@ message FactionWarState {
 }
 
 // plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD 推送（server → client）。
-// kind: "echo" | "aim" | "charge" | "abrasion"
+// kind: "echo" | "aim" | "charge" | "abrasion" | "multishot"
 message AnqiHud {
   string kind                 = 1;
   uint32 echo_count           = 2;
