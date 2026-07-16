@@ -50,6 +50,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _craft_session_state(value)
         if field == 23:
             return _craft_outcome(value)
+        if field == 29:
+            return _lumber_progress(value)
         if field == 34:
             return _cast_sync(value)
         if field == 137:
@@ -314,6 +316,18 @@ def _item_view(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
         "stack_count": _varint(fields, 9),
         "spirit_quality": _double(fields, 10),
         "durability": _double(fields, 11),
+        "freshness": _inventory_freshness(_message(fields, 22)) if _has(fields, 22) else None,
+    }
+
+
+def _inventory_freshness(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "created_at_tick": _varint(fields, 1),
+        "initial_qi": _float32(fields, 2),
+        "track": _string(fields, 3),
+        "profile": _string(fields, 4),
+        "frozen_accumulated": _varint(fields, 5),
+        "frozen_since_tick": _optional_varint(fields, 6),
     }
 
 
@@ -445,6 +459,20 @@ def _float32(fields: list[tuple[int, int, Any]], field: int, default: float = 0.
 
 
 # ── 生产 / 消费玩法 payload（envelope.proto oneof tag 见 proto/bong/envelope.proto）──
+
+
+def _lumber_progress(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "lumber_progress",
+        "session_id": _string(fields, 1),
+        "log_pos": [_int32(fields, 2), _int32(fields, 3), _int32(fields, 4)],
+        "progress": _double(fields, 5),
+        "interrupted": bool(_varint(fields, 6)),
+        "completed": bool(_varint(fields, 7)),
+        "detail": _string(fields, 8),
+    }
 
 CAST_OUTCOME_NAMES = {
     0: "unspecified",
@@ -770,6 +798,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     22: "craft_session_state",
     23: "craft_outcome",
     25: "botany_harvest_progress",
+    29: "lumber_progress",
     30: "gathering_session",
     31: "lingtian_session",
     81: "dropped_loot_sync",
