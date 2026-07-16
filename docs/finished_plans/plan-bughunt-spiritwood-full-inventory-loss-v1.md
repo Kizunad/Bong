@@ -124,6 +124,18 @@ Round 3 根据 `/review` 的 major findings 复核 freshness 缺省语义、真�
 
 Round 4 复核 `/review` 对 `freshness.initial_qi` 精度的质疑：权威 `Freshness.initial_qi` 在 `server/src/shelflife/types.rs` 中是 `f32`，protobuf `float` 与 Python `<f` 解码不会继续收窄。Rust 与 Python 协议测试改用非平凡 bit pattern `0x42C50001`，逐 bit 锁定 server protobuf roundtrip 和 Bot 掉落解码保真；不把 wire 无故扩成与领域类型不一致的 `double`。
 
+## 当前审查证据包（代码基线 `2cb2cfd078af744b40af4c4690499f0bee99c7e1`）
+
+Review 面板的 initial prompt 无工具且 diff 上限为 40,000 字符，核心 Rust 文件会被前置文件截断；以下是可逐项对拍的生产控制流和联合终态：
+
+- `complete_spiritwood_sessions` 调用 `grant_before_removing_session`；闭包内先调用 `grant_ling_mu_gun`，只有 `Ok(Granted|DroppedToGround)` 才执行 `mark_harvested`、`BlockState::AIR` 和 `GatheringCompleteEvent`，随后发送 `LumberTerminalEvent(completed=true)`。
+- `Err` 分支只发送 `LumberTerminalEvent(completed=false, "灵木产物结算失败，原木未消耗")`，不调用 harvested、AIR、完成事件，也不新增库存或地面掉落。
+- `grant_before_removing_session` 先 clone `store.session_for(player)`，执行 grant 后才 `store.remove(player)`；成功和失败 grant 的测试都在闭包内断言 session 仍可见。
+- `grant_ling_mu_gun` 先取得 `DecayProfileRegistry` 与 `ling_mu_gun_v1` profile，再构造 `Freshness`，最后统一调用 `add_item_to_player_inventory_or_ground`；缺 registry/profile、缺 inventory、缺 dropped-loot registry 或实例 ID 冲突均返回错误并保留原木。
+- Rust 状态转换测试覆盖 `Granted`、满包 `DroppedToGround`、结构错误、缺资源和 ID 冲突；每个失败断言联合终态为：原木未 harvested、方块非 AIR、库存/地面掉落无新增、无 `GatheringCompleteEvent`、terminal `completed=false`。
+
+当前代码基线的本地 gate 与同 SHA GitHub gate：server `fmt + clippy + cargo test` 全绿（11,708/0/1）；Python protocol 96/96；Rust freshness bit pin 1/1；GitHub e2e run `29457375033`（job `87497219493`）全绿。归档文档若由后续 doc-only commit 更新，不可能在自身内容内自指其最终 commit；因此以此代码基线作为受验代码，并在 PR Body 同步当前 head、run 和 `git diff --check`/祖先关系。
+
 ## Finish Evidence
 
 ### 落地清单
@@ -131,7 +143,7 @@ Round 4 复核 `/review` 对 `freshness.initial_qi` 精度的质疑：权威 `Fr
 - P0：在 `server/src/spiritwood/mod.rs` 增加生产链集成测试，修复前明确复现满包无地面掉落、原木却被错误标记 harvested 并置 AIR。
 - P1：`grant_ling_mu_gun` 复用 `add_item_to_player_inventory_or_ground`；同一 customization 闭包覆盖入包与落地，保留 `spirit_quality`、freshness、数量、原木中心位置和 session 维度；freshness registry/profile 缺失 fail closed。
 - P2：`complete_spiritwood_sessions` 通过 `grant_before_removing_session` 保证 grant 返回后才移除 completed session；仅在 `Granted` / `DroppedToGround` 后提交 harvested、AIR 和完成事件；结构错误、缺掉落 registry、缺 inventory、instance id 冲突均保留原木并发送 `completed=false`。
-- P3：`proto/bong/envelope.proto` 与 Rust/Python converter 镜像 freshness 六字段；Bot 支持真实 `C2S_PLAYER_ACTION` 和 `lumber_progress`；生产五 tile fixture 固定 seed `(1292, 73, 1519)`、外缘主干 `(1285, 73, 1509)`，并以正式 `0..4` biome palette 约束所有 tile；专项场景验证满包落地与拾回。最终 PR gate run `29422011676` 在 SHA `2f34908764d22b571a2b892d9b5aaef7b29f6d88` 全绿。
+- P3：`proto/bong/envelope.proto` 与 Rust/Python converter 镜像 freshness 六字段；Bot 支持真实 `C2S_PLAYER_ACTION` 和 `lumber_progress`；生产五 tile fixture 固定 seed `(1292, 73, 1519)`、外缘主干 `(1285, 73, 1509)`，并以正式 `0..4` biome palette 约束所有 tile；专项场景验证满包落地与拾回。代码基线 `2cb2cfd078af744b40af4c4690499f0bee99c7e1` 的同 SHA PR gate run `29457375033`（job `87497219493`）全绿；旧 run `29422011676` 仅作历史证据。
 - P3 运行隔离：`scripts/bot-e2e.sh` 为自启 server 分配独立 `BONG_SPIRITWOOD_HARVESTED_PATH`，防止上一轮已采伐持久化污染重跑。
 
 ### 关键 commit
@@ -157,11 +169,11 @@ Round 4 复核 `/review` 对 `freshness.initial_qi` 精度的质疑：权威 `Fr
 - `freshness.initial_qi` 精度契约：Rust `inventory_item_view_freshness_survives_proto_roundtrip_for_all_tracks` 1 passed / 0 failed，并对拍 `f32::to_bits()`；Python protocol 全量 96 passed / 0 failed，并对拍相同 `0x42C50001` wire bits。
 - `d89af9da` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,708 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed。
 - 历史 Rust 基线 `ce08d8e5` 执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：lib 11,706 passed / 0 failed / 1 ignored，CLI 11 passed，full-app startup 1 passed，背包 e2e 4 passed，doc tests 0 failed；最终 Rust 代码门禁以 `d89af9da` 的同 SHA 结果为准。
-- PR HEAD `e73ebc35` 的 GitHub e2e run `29413908258` 全绿（23m51s）：client、schema、agent、server 全测、Smoke/E2E、Bot e2e 与 artifact upload 均成功。
-- 最终 PR HEAD `2f34908764d22b571a2b892d9b5aaef7b29f6d88` 的 GitHub e2e run `29422011676` 全绿：`e2e` job success，最终 SHA 与 PR head 对拍一致。
+- PR HEAD `e73ebc35` 的 GitHub e2e run `29413908258` 全绿（23m51s）：client、schema、agent、server 全测、Smoke/E2E、Bot e2e 与 artifact upload 均成功（历史证据）。
+- 代码基线 `2cb2cfd078af744b40af4c4690499f0bee99c7e1` 的 GitHub e2e run `29457375033` 全绿：`e2e` job success，head SHA 与 PR head 对拍一致；job `87497219493` 的 client、schema、agent、server、Smoke/E2E、Bot e2e 和 artifact upload 均成功。
 - 最新协议代码 HEAD `6508e685`：Python protocol 96 passed / 0 failed；`InventoryItemView` freshness 覆盖存在/缺省、六字段保真与三种 track，`lumber_progress`、digging packet 32 位边界与五 tile biome palette 边界均有 pin 测试。
 - `6508e685` 完整 Bot e2e：第二轮 29 passed / 0 failed；生产灵木专项 13.5s，并以 `created_at_tick > 0` 锁定 tag 1 真实过线。首轮专项同样通过，但无关 `combat_weapon_equip_damage` 单次命中观察失败；第二轮该场景 21.9s 通过。
-- `d89af9da` 后的归档提交只更新本文，不改变已全门禁通过的 Rust 代码树；最终远端 SHA、同 SHA GitHub e2e run `29422011676` 与 `/review` 结果在 PR gate 中对拍。
+- 协议代码基线 `85360d2f` 之后的 `2cb2cfd0` 仅更新本归档证据文档，不改变已全门禁通过的 Rust/协议代码树；代码基线 `2cb2cfd0` 与同 SHA GitHub e2e run `29457375033` 的 head 对拍记录见上文，旧 run 仅作历史证据。
 - client 使用 Temurin JDK 17.0.19 执行 `./gradlew test build`：BUILD SUCCESSFUL，13 tasks。
 - 主线同步前后 `production_spiritwood_full_inventory_drop.py` 均通过；同步后首次完整 Bot e2e 的 `combat_skill_cast` 因 40 格观察时序抖动单次失败，定向连续两次通过（0.8s / 0.7s），随后完整 29/29 通过。
 - `6508e685` 执行 `git diff --check origin/main...HEAD` 通过；工作树干净，merge-base 为 `origin/main@6f1faea5`，因此主线是最新协议代码 HEAD 的祖先。
