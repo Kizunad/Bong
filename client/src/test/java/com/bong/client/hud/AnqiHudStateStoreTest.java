@@ -154,6 +154,64 @@ class AnqiHudStateStoreTest {
             "所有维度过期后 chargeProgress 应为 0；实际=" + state.chargeProgress());
     }
 
+    @Test
+    void expiredHighTicksStillRejectLowerTicksUntilExplicitSessionClear() {
+        long shortDuration = 10L;
+        long oldSessionTick = 72_000L;
+        long newSessionTick = 10L;
+        long newSessionNow = BASE_NOW + shortDuration + 1L;
+
+        AnqiHudStateStore.updateEcho(8, BASE_NOW, shortDuration, oldSessionTick);
+        AnqiHudStateStore.updateCharge(0.8f, BASE_NOW, shortDuration, oldSessionTick);
+        AnqiHudStateStore.updateAbrasion(
+            "quiver", 80.0f, BASE_NOW, shortDuration, oldSessionTick);
+        AnqiHudStateStore.updateMultiShot(8, BASE_NOW, shortDuration, oldSessionTick);
+
+        AnqiHudState expiredState = AnqiHudStateStore.snapshot(newSessionNow);
+        assertFalse(expiredState.active(newSessionNow),
+            "期望 expiredState.active(newSessionNow)=false，因为 TTL 过期只应隐藏旧反馈；实际="
+                + expiredState.active(newSessionNow));
+        assertEquals(0, expiredState.echoCount());
+        assertEquals(0.0f, expiredState.chargeProgress(), 0.001f);
+        assertFalse(expiredState.hasAbrasionContainer(),
+            "期望 expiredState.hasAbrasionContainer()=false，因为 TTL 过期应隐藏旧磨损容器；实际="
+                + expiredState.hasAbrasionContainer());
+        assertEquals(0.0f, expiredState.abrasionQiPayload(), 0.001f);
+        assertEquals(0, expiredState.multiShotCount());
+
+        AnqiHudStateStore.updateEcho(2, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateCharge(0.2f, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateAbrasion(
+            "hand_slot", 20.0f, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateMultiShot(2, newSessionNow, DUR, newSessionTick);
+
+        AnqiHudState blockedState = AnqiHudStateStore.snapshot(newSessionNow);
+        assertFalse(blockedState.active(newSessionNow),
+            "期望 blockedState.active(newSessionNow)=false，因为未 clear 的高 lastTick 应拒绝低 tick 乱序包；实际="
+                + blockedState.active(newSessionNow));
+        assertEquals(0, blockedState.echoCount());
+        assertEquals(0.0f, blockedState.chargeProgress(), 0.001f);
+        assertFalse(blockedState.hasAbrasionContainer(),
+            "期望 blockedState.hasAbrasionContainer()=false，因为未 clear 的高 lastTick 应拒绝低 tick 磨损包；实际="
+                + blockedState.hasAbrasionContainer());
+        assertEquals(0.0f, blockedState.abrasionQiPayload(), 0.001f);
+        assertEquals(0, blockedState.multiShotCount());
+
+        AnqiHudStateStore.clear();
+        AnqiHudStateStore.updateEcho(2, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateCharge(0.2f, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateAbrasion(
+            "hand_slot", 20.0f, newSessionNow, DUR, newSessionTick);
+        AnqiHudStateStore.updateMultiShot(2, newSessionNow, DUR, newSessionTick);
+
+        AnqiHudState newSessionState = AnqiHudStateStore.snapshot(newSessionNow);
+        assertEquals(2, newSessionState.echoCount());
+        assertEquals(0.2f, newSessionState.chargeProgress(), 0.001f);
+        assertEquals("hand_slot", newSessionState.abrasionContainer());
+        assertEquals(20.0f, newSessionState.abrasionQiPayload(), 0.001f);
+        assertEquals(2, newSessionState.multiShotCount());
+    }
+
     // ─── clear 重置 ───────────────────────────────────────────────────
 
     @Test
