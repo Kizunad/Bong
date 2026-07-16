@@ -114,14 +114,15 @@ public class BongHud {
             frame.runtimeContext()
         );
         List<EdgeIndicatorCmd> spiritualSenseIndicators = frame.spiritualSenseIndicators().get();
-        if (!spiritualSenseIndicators.isEmpty()) {
-            commands = new ArrayList<>(commands);
-            PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
-        }
         List<HudRenderCommand> supplementalCommands = frame.supplementalCommands().get();
-        if (!supplementalCommands.isEmpty()) {
+        if (!spiritualSenseIndicators.isEmpty() || !supplementalCommands.isEmpty()) {
             commands = new ArrayList<>(commands);
-            commands.addAll(supplementalCommands);
+            if (!spiritualSenseIndicators.isEmpty()) {
+                PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
+            }
+            if (!supplementalCommands.isEmpty()) {
+                commands.addAll(supplementalCommands);
+            }
         }
 
         renderer.render(filterCommandsForVisibility(commands, visibility), visibility);

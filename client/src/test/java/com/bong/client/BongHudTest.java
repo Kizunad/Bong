@@ -145,9 +145,18 @@ public class BongHudTest {
         assertEquals(1, renderedFrames.size());
         List<HudRenderCommand> commands = renderedFrames.get(0);
         assertFalse(commands.isEmpty(), "真实 Store→Orchestrator 链应把 Agent UI VFX 送入 renderer");
-        assertTrue(commands.stream().allMatch(command -> command.layer() == HudRenderLayer.AGENT_UI));
-        assertTrue(commands.stream().anyMatch(command -> command.kind() == HudRenderCommand.Kind.SCREEN_TINT));
-        assertTrue(commands.stream().anyMatch(command -> command.kind() == HudRenderCommand.Kind.EDGE_VIGNETTE));
+        assertTrue(
+            commands.stream().allMatch(command -> command.layer() == HudRenderLayer.AGENT_UI),
+            "expected only AGENT_UI commands because AgentUiScreen isolates its VFX, actual commands=" + commands
+        );
+        assertTrue(
+            commands.stream().anyMatch(command -> command.kind() == HudRenderCommand.Kind.SCREEN_TINT),
+            "expected SCREEN_TINT because Agent UI fade-in must reach the renderer, actual commands=" + commands
+        );
+        assertTrue(
+            commands.stream().anyMatch(command -> command.kind() == HudRenderCommand.Kind.EDGE_VIGNETTE),
+            "expected EDGE_VIGNETTE because Agent UI revelation must reach the renderer, actual commands=" + commands
+        );
         assertEquals(
             2L,
             commands.stream().filter(command -> command.kind() == HudRenderCommand.Kind.RECT).count(),
