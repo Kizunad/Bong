@@ -130,7 +130,7 @@ Round 4 复核 `/review` 对 `freshness.initial_qi` 精度的质疑：权威 `Fr
 
 本次审查还核验了两个容易被截断误判的范围事实：`server/src/spiritwood/persistence.rs` 只增加 `BONG_SPIRITWOOD_HARVESTED_PATH` 的 e2e 路径 override；未设置或空值仍使用生产默认 `data/spiritwood/harvested.json`，并有正反测试。`server/src/world/terrain/mega_tree.rs` 只抽取既有 seed 计算并增加真实树定位 helper，供 dev `tptree` 与生产树 fixture 使用；正式 profile、seed 与 placement 配置均未改变。
 
-当前基线本地门禁：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、完整 `cargo test` 全部通过（lib `11710 passed / 0 failed / 1 ignored`，CLI `11 passed`，full-app startup `1 passed`，背包 e2e `4 passed`，doc-tests `0 failed`）。同 SHA GitHub e2e run `29462708855` 正在执行，完成后以该 run 的最终结论作为本基线的跨栈门禁记录。
+当前基线本地门禁：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、完整 `cargo test` 全部通过（lib `11710 passed / 0 failed / 1 ignored`，CLI `11 passed`，full-app startup `1 passed`，背包 e2e `4 passed`，doc-tests `0 failed`）。代码基线 `88e0c5c3` 的同 SHA GitHub e2e run `29462708855` 已成功；补齐审查证据的 doc-only HEAD `33c12282` 对应 run `29463076031` 也已成功（job `87510463791`，22m46s），两次跨栈门禁均覆盖 client、schema、agent、server、Smoke/E2E、Bot e2e 与证据上传。
 
 ## 当前审查证据包（前一代码基线 `2cb2cfd078af744b40af4c4690499f0bee99c7e1`）
 
