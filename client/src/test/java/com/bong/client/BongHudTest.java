@@ -16,6 +16,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BongHudTest {
@@ -120,6 +121,11 @@ public class BongHudTest {
             ScreenHudVisibility.HIDDEN
         );
 
+        assertSame(
+            commands,
+            full,
+            "FULL 可见模式必须直接复用原命令列表，避免每帧无条件复制"
+        );
         assertTrue(full.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS));
         assertTrue(inventory.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS));
         assertTrue(castOnly.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS));

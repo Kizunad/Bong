@@ -332,60 +332,73 @@ public class BongHudOrchestratorTest {
     }
 
     @Test
-    void completedSearchFlashLeavesFinalHudCommandFlowAfterTtl() {
-        SearchHudStateStore.markCompletedAtNanos("残棺", System.nanoTime());
+    void completedSearchFlashUsesExactTtlInFinalHudCommandFlow() {
+        long startedAtNanos = 10_000L;
+        SearchHudStateStore.markCompletedAtNanos("残棺", startedAtNanos);
 
-        List<HudRenderCommand> visible = buildCombatFrame(HudRuntimeContext.empty());
-
-        assertTrue(visible.stream().anyMatch(cmd ->
-            cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮完成：残棺".equals(cmd.text())
-        ));
-
-        SearchHudStateStore.markCompletedAtNanos(
-            "残棺",
-            System.nanoTime() - SearchHudStateStore.COMPLETED_FLASH_TTL_NANOS - 1L
+        List<HudRenderCommand> beforeBoundary = buildCombatFrame(
+            HudRuntimeContext.empty(),
+            startedAtNanos + SearchHudStateStore.COMPLETED_FLASH_TTL_NANOS - 1L
+        );
+        assertTrue(
+            beforeBoundary.stream().anyMatch(cmd ->
+                cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮完成：残棺".equals(cmd.text())
+            ),
+            "completed flash 在 TTL-1ns 必须仍进入最终 SEARCH_PROGRESS 命令流"
         );
 
-        List<HudRenderCommand> expired = buildCombatFrame(HudRuntimeContext.empty());
+        List<HudRenderCommand> atBoundary = buildCombatFrame(
+            HudRuntimeContext.empty(),
+            startedAtNanos + SearchHudStateStore.COMPLETED_FLASH_TTL_NANOS
+        );
+        assertTrue(
+            atBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "completed flash 在 TTL 精确边界必须从最终命令流消失"
+        );
 
-        assertTrue(expired.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS));
+        List<HudRenderCommand> afterBoundary = buildCombatFrame(
+            HudRuntimeContext.empty(),
+            startedAtNanos + SearchHudStateStore.COMPLETED_FLASH_TTL_NANOS + 1L
+        );
+        assertTrue(
+            afterBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "completed flash 在 TTL+1ns 必须保持消失，不能重新进入最终命令流"
+        );
     }
 
     @Test
-    void abortedSearchFlashExpiresAcrossCombatAndMovementContextChanges() {
-        SearchHudStateStore.markAbortedAtNanos("残柜", "combat", System.nanoTime());
+    void abortedSearchFlashUsesExactTtlAcrossCombatAndMovementContexts() {
+        long startedAtNanos = 20_000L;
+        SearchHudStateStore.markAbortedAtNanos("残柜", "combat", startedAtNanos);
 
-        List<HudRenderCommand> visible = buildCombatFrame(new HudRuntimeContext(
-            45.0,
-            12.0,
-            64.0,
-            -8.0,
-            false,
-            List.of()
-        ));
-
-        assertTrue(visible.stream().anyMatch(cmd ->
-            cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮中断：进入战斗".equals(cmd.text())
-        ));
-
-        SearchHudStateStore.markAbortedAtNanos(
-            "残柜",
-            "moved",
-            System.nanoTime() - SearchHudStateStore.ABORTED_FLASH_TTL_NANOS - 1L
+        List<HudRenderCommand> beforeBoundary = buildCombatFrame(
+            new HudRuntimeContext(45.0, 12.0, 64.0, -8.0, false, List.of()),
+            startedAtNanos + SearchHudStateStore.ABORTED_FLASH_TTL_NANOS - 1L
+        );
+        assertTrue(
+            beforeBoundary.stream().anyMatch(cmd ->
+                cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮中断：进入战斗".equals(cmd.text())
+            ),
+            "aborted flash 在 TTL-1ns 必须仍进入最终 SEARCH_PROGRESS 命令流"
         );
 
-        List<HudRenderCommand> expiredAfterMovement = buildCombatFrame(new HudRuntimeContext(
-            225.0,
-            18.5,
-            64.0,
-            -2.5,
-            false,
-            List.of()
-        ));
+        List<HudRenderCommand> atBoundary = buildCombatFrame(
+            new HudRuntimeContext(225.0, 18.5, 64.0, -2.5, false, List.of()),
+            startedAtNanos + SearchHudStateStore.ABORTED_FLASH_TTL_NANOS
+        );
+        assertTrue(
+            atBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "aborted flash 在移动与战斗上下文变化后的 TTL 精确边界必须消失"
+        );
 
-        assertTrue(expiredAfterMovement.stream().noneMatch(cmd ->
-            cmd.layer() == HudRenderLayer.SEARCH_PROGRESS
-        ));
+        List<HudRenderCommand> afterBoundary = buildCombatFrame(
+            new HudRuntimeContext(270.0, 21.0, 64.0, 1.0, false, List.of()),
+            startedAtNanos + SearchHudStateStore.ABORTED_FLASH_TTL_NANOS + 1L
+        );
+        assertTrue(
+            afterBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "aborted flash 在 TTL+1ns 必须保持消失，不能因上下文变化重新出现"
+        );
     }
 
     @Test
@@ -416,7 +429,10 @@ public class BongHudOrchestratorTest {
         assertTrue(commands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.QI_RADAR));
     }
 
-    private static List<HudRenderCommand> buildCombatFrame(HudRuntimeContext runtimeContext) {
+    private static List<HudRenderCommand> buildCombatFrame(
+        HudRuntimeContext runtimeContext,
+        long nowNanos
+    ) {
         CombatHudSnapshot combat = CombatHudSnapshot.create(
             com.bong.client.combat.CombatHudState.create(
                 0.8f,
@@ -444,7 +460,8 @@ public class BongHudOrchestratorTest {
             320,
             180,
             null,
-            runtimeContext
+            runtimeContext,
+            nowNanos
         );
     }
 }

@@ -336,7 +336,7 @@ public class BongHud {
         Objects.requireNonNull(commands, "commands");
         Objects.requireNonNull(visibility, "visibility");
         return switch (visibility) {
-            case FULL -> List.copyOf(commands);
+            case FULL -> commands;
             case INVENTORY_DIMMED -> filterInventoryDimmed(commands);
             case CAST_BAR_ONLY -> filterCastBarOnly(commands);
             case HIDDEN -> List.of();

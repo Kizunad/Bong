@@ -1,7 +1,7 @@
 # plan-bughunt-search-hud-stuck-v1
 
 > **Finished plan（2026-07-15 review 返工验收归档）**。来源：`docs/plans-skeleton/plan-bughunt-search-hud-stuck-v1.md`。一句话主题：TSY 容器搜刮 HUD 的终态 flash（`COMPLETED_FLASH` / `ABORTED_FLASH`）承诺会自动回 `IDLE`，但 client runtime/store 里没有任何计时字段、tick 消费者或 disconnect 外的 reset 路径，导致提示会在**同一 session 内永久卡住**，直到下一次搜刮消息覆盖。
-
+>
 > 立项动机：本轮按「client runtime / store / session / consumer 漏 reset」角度复查 TSY 搜刮链路，避开既有 toast cross-session、identity panel stale session、zone_info 同区不刷新、灵龛 HUD 串局等已出题项后，确认这是一个**新的、同 session 即可稳定复现**的 HUD 状态机真 bug。
 
 ## 接入面
@@ -10,15 +10,26 @@
 - **出料**：`SearchHudStateStore.snapshot()` 继续供 `BongHudOrchestrator` 与 `SearchCancelInteractionBootstrap` 读取；过期后统一返回 `SearchHudState.idle()`，由既有 `SearchProgressHudPlanner` 自然停止渲染。
 - **共享类型 / event**：只扩展既有 `SearchHudStateStore` 生命周期，不复制 `SearchHudState`、不新增 parallel store。
 - **跨仓库契约**：纯 client 生命周期修复；server payload 名称和 agent/schema 均不变。
-- **worldview / qi_physics**：纯 HUD 状态收尾，不涉及世界观、真元或灵气流动。
+- **worldview 锚点**：**不适用**。审计对照 `worldview.md §二 L30-L56` 的灵压环境规则；本 plan 只收尾既有搜刮 HUD 快照，不改变灵压、境界、经济、叙事或任何正典玩法语义。
+- **qi_physics 锚点**：**不适用**。审计对照 `docs/finished_plans/plan-qi-physics-v1.md §接入面 Checklist L28-L35` 与 `server/src/qi_physics/ledger.rs`；本 plan 不读取或写入真元/灵气数值，不产生 `QiTransfer`，也不新增物理公式或常数。
 
-## 实施决议（2026-07-15）
+## §1 开放问题（P0 决策门前需收口）
+
+- **开放问题：无。**
+- 本 bugfix 的实现选择已全部在 §1.1 收口；实施与返工均以 §1.1 决议为准。
+
+## §1.1 决议（pre-P0 收口，2026-07-15）
 
 1. 计时所有权留在 `SearchHudStateStore`，不让纯渲染器 `SearchProgressHudPlanner` 推进状态。
-2. 生产时间基使用 `System.nanoTime()`；store 记录终态进入时刻，`snapshot()` 读取时惰性回收。这样每帧 HUD 读取自然驱动收尾，无需新增全局 tick bootstrap，也不受系统墙钟回拨影响。
+   - **双锚**：`client/src/main/java/com/bong/client/hud/SearchHudStateStore.java:13-21`、`client/src/main/java/com/bong/client/hud/SearchProgressHudPlanner.java:17-18`；plan P0「实施范围」。
+2. 生产时间基使用 `System.nanoTime()`；store 记录终态进入时刻，`snapshot()` 读取时惰性回收。生产 orchestrator 只采样一次纳秒时间，package-private `nowNanos` seam 仅供确定性契约测试注入。
+   - **双锚**：`client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:99-135,494-498`、`client/src/main/java/com/bong/client/hud/SearchHudStateStore.java:13-21`；plan P0「实施范围」与「验收抓手」。
 3. `COMPLETED_FLASH` TTL 固定为 3 秒，`ABORTED_FLASH` TTL 固定为 1 秒；精确边界采用“到期时刻即 `IDLE`”。新 `markStarted` / `markProgress` / 新终态会覆盖旧终态计时。
+   - **双锚**：`client/src/main/java/com/bong/client/hud/SearchHudStateStore.java:4-5,24-54,69-85`；plan P0「实施范围」与「验收抓手」。
 4. 增加生产态 `clearOnDisconnect()`，并接入 `BongNetworkHandler.clearClientStateOnDisconnect()`，避免终态或进行中搜刮状态跨 session 残留。
-5. 测试通过 package-private 显式纳秒时间入口驱动，不 sleep、不依赖真实墙钟；覆盖 TTL 前一纳秒、精确边界、时钟回拨、新搜索覆盖、终态替换、断线清理及既有 reason/safe-kind 分支。
+   - **双锚**：`client/src/main/java/com/bong/client/hud/SearchHudStateStore.java:56-67`、`client/src/main/java/com/bong/client/BongNetworkHandler.java:859-895`；plan P0「实施范围」。
+5. 测试通过 package-private 显式纳秒时间入口驱动，不 sleep、不依赖真实墙钟；覆盖最终 `SEARCH_PROGRESS` 命令流的 TTL-1ns、精确边界与 TTL+1ns，以及时钟回拨、新搜索覆盖、终态替换、断线清理和既有 reason/safe-kind 分支。
+   - **双锚**：`client/src/test/java/com/bong/client/hud/BongHudOrchestratorTest.java:334-402`、`client/src/test/java/com/bong/client/hud/SearchHudStateStoreTest.java:31-266`；plan P0「验收抓手」。
 
 ## 阶段总览
 
@@ -61,6 +72,15 @@
   - `ABORTED_FLASH` 超过 1000ms 自动回 `IDLE`
 - `SearchProgressHudPlanner` 保持纯函数，不承担状态推进。
 - `BongNetworkHandler.clearClientStateOnDisconnect()` 调用 `SearchHudStateStore.clearOnDisconnect()`，进行中与终态状态都立即清空。
+
+#### 玩家可感知行为规格（本阶段内联）
+
+- **粒子**：不适用；既有搜刮 HUD 不发 `bong:vfx_event`，本修复不新增、替换或延长任何粒子。
+- **音效**：不适用；既有终态 flash 没有 audio recipe，本修复不新增 SFX，也不改变服务端 payload 的声音语义。
+- **HUD**：保持既有 `SearchProgressHudPlanner` 外观与位置；`COMPLETED_FLASH` 继续使用底部中央 140×4 满格条、`0xFFFFD060` 文字/填充并显示 3 秒，`ABORTED_FLASH` 继续使用 `0xFFE05030` 中断文字并显示 1 秒。仅修正到期收尾；`FULL` 保留未过期命令，其它可见模式继续按既有 layer 策略过滤。
+- **环境**：不适用；不改变天空色温、雾、方块、terrain profile 或任何世界状态。
+- **动画**：不适用；不触发或修改 PlayerAnimator 动画，容器与玩家姿态保持既有行为。
+- **旁白**：不适用；不新增 narration 模板、scope 或 style，现有 `search_*` payload 与中文 HUD 标签保持不变。
 
 ### 验收抓手
 
