@@ -157,8 +157,18 @@ class MovementStateHandlerTest {
             """);
         MovementStateHandler handler = new MovementStateHandler();
 
-        assertTrue(handler.handle(rejected, 3_000L).handled(), "first dash reject should be handled");
-        assertTrue(handler.handle(cleared, 3_200L).handled(), "clear followup should be handled");
+        boolean firstRejectHandled = handler.handle(rejected, 3_000L).handled();
+        assertTrue(
+            firstRejectHandled,
+            () -> "expected handled=true because the first valid dash reject must be consumed; actual handled="
+                + firstRejectHandled
+        );
+        boolean clearFollowupHandled = handler.handle(cleared, 3_200L).handled();
+        assertTrue(
+            clearFollowupHandled,
+            () -> "expected handled=true because the valid followup must clear the prior reject; actual handled="
+                + clearFollowupHandled
+        );
         assertEquals("", MovementStateStore.snapshot().rejectedAction());
         assertEquals(
             3_000L,
@@ -166,7 +176,12 @@ class MovementStateHandlerTest {
             "clear followup should preserve the historical reject timestamp without refreshing it"
         );
 
-        assertTrue(handler.handle(rejected, 3_700L).handled(), "later same dash reject should be handled");
+        boolean laterRejectHandled = handler.handle(rejected, 3_700L).handled();
+        assertTrue(
+            laterRejectHandled,
+            () -> "expected handled=true because the same dash reject after a clear is a new event; actual handled="
+                + laterRejectHandled
+        );
         MovementState refreshed = MovementStateStore.snapshot();
         assertEquals("dash", refreshed.rejectedAction());
         assertEquals(

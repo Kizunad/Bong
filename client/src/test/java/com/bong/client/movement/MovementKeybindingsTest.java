@@ -40,7 +40,11 @@ class MovementKeybindingsTest {
         MovementKeybindings.resetOnDisconnect();
 
         MovementState reset = MovementStateStore.snapshot();
-        assertTrue(reset.isEmpty(), "production disconnect reset must clear the prior session snapshot");
+        assertTrue(
+            reset.isEmpty(),
+            () -> "expected an empty snapshot because production disconnect must clear the prior session; actual snapshot="
+                + reset
+        );
         assertEquals(0L, reset.rejectedAtMs(), "disconnect must clear prior reject timing");
         assertEquals(0L, reset.hudActivityAtMs(), "disconnect must clear prior HUD activity timing");
 
