@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `realm_gate_rejected` 私人提示误广播全服 | fix_pr | ⬜ |
+| P0 | `realm_gate_rejected` 私人提示误广播全服 | fix_pr | ✅ 2026-07-16 |
 
 ## P0 — `realm_gate_rejected` 私人提示误广播全服
 
@@ -63,3 +63,38 @@
 ## 审计来源
 
 升格来源为 bug-hunt 定点轮（范围：`agent-ui` / panel surface / follow-up side path；排除 tiandao revelation vfx flag loss、button_click context loss、TSY discovery target fallback）。原始轮次只读搜索 `schema → server agent_ui → tiandao ui consumer → server narration route → 既有 finished plan` 证据链并形成 report-only 骨架；2026-07-16 升格后按本 active plan 的实施决议落地。
+
+## Finish Evidence
+
+### 落地清单
+
+- `agent/packages/schema/src/payloads/agent-ui.ts`、`agent/packages/schema/generated/client-request-v1.json`：`AgentUiResponsePayloadV1.target_player` 可选字段（1..=128），保留旧 payload 兼容性。
+- `agent/packages/schema/tests/agent-ui.test.ts`、`server/src/schema/agent_ui.rs`、`server/src/schema/proto_convert.rs`：正反样本、边界、serde 兼容与旧 wire 序列化 pin。
+- `server/src/network/agent_ui.rs`：仅 `realm_gate_rejected` 权威拒绝响应回填 `cmd.target_player`，其余响应显式 `None`。
+- `agent/packages/tiandao/src/ui/uiResponseConsumer.ts`、`agent/packages/tiandao/src/ui/agent-ui.test.ts`：正常 payload 生成 `scope="player"`，缺失/空白目标记录 warn 并按兼容约定退化为 `broadcast/world`。
+- `server/src/network/mod.rs` 既有 `RecipientSelector::player` 双玩家隔离链作为最终路由门，未新增第二套路由实现。
+
+### 关键提交
+
+- `e68ae6ea`（2026-07-16）：升格并收口 active plan。
+- `2ec1ea3a`（2026-07-16）：定义双端目标玩家兼容契约。
+- `e5622e0d`（2026-07-16）：修复境界门拒绝提示全服泄漏。
+- `dea94b05`（2026-07-16）：修正 clippy 文档格式并复跑 server 门禁。
+
+### 测试结果
+
+- 定向隔离：`cargo test player_scope_matches_username_and_offline_id --lib -j 1`（1 passed）。
+- Agent：`npm run build`；schema 全套 29 files / 883 tests passed；tiandao 全套 72 files / 830 tests passed。
+- Server：`cargo fmt --check`；`cargo clippy --all-targets -- -D warnings`；`cargo test -j 1`（lib 11693 passed / 0 failed / 1 ignored，main 11 passed，full-app 1 passed，backpack e2e 4 passed，doc-tests 0 passed / 5 ignored）。
+- 主线同步：`origin/main` 已是当前 HEAD 祖先，未引入待复验冲突；同步后再次完成 agent build 与两套全测。
+
+### 跨仓库核验与最终自审
+
+- server → agent：`AgentUiResponsePayloadV1.target_player` serde/TypeBox 镜像一致，gate reject producer 回填 canonical `offline:<name>`。
+- agent → server：`UiResponseConsumer` 发布 `bong:agent_narrate` 的 `scope/target` 与 server `RecipientSelector::player` 对拍；既有双玩家测试证明非目标玩家无 payload。
+- 主 agent 在最终 HEAD `dea94b05` 对照 `origin/main` 完成 diff、构造点、schema freshness、工作树与提交 trailer 自审。按用户“仅主 agent 实施”约束，本轮不启动额外 subagent/validator。
+
+### 遗留 / 后续
+
+- 缺失或空白 `target_player` 的历史 payload 仍按兼容协议广播并记录 warn；待所有生产者升级后可另立 plan 收紧为丢弃或安全降级。
+- TSY `target_player` fallback 与本 plan 明确排除的 revelation/button-click 问题不在本次范围。
