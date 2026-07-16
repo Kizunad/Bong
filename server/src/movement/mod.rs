@@ -472,33 +472,58 @@ fn tick_movement_actions(
     }
 }
 
+#[derive(Debug, Clone, Copy, Component)]
+struct MovementStateEmitPending;
+
+type MovementStateEmitItem<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a mut MovementState,
+    Option<&'a Stamina>,
+);
+
 type MovementStateEmitFilter = (
     With<Client>,
     Or<(
         Added<MovementState>,
         Changed<MovementState>,
         Changed<Stamina>,
+        With<MovementStateEmitPending>,
     )>,
 );
 
 fn emit_movement_state_payloads(
+    commands: Commands,
     clock: Res<CombatClock>,
-    mut players: Query<
-        (&mut Client, &mut MovementState, Option<&Stamina>),
-        MovementStateEmitFilter,
-    >,
+    players: Query<MovementStateEmitItem<'_>, MovementStateEmitFilter>,
 ) {
-    for (mut client, mut movement, stamina) in &mut players {
+    emit_movement_state_payloads_with(
+        commands,
+        clock.tick,
+        players,
+        serialize_server_data_payload,
+    );
+}
+
+fn emit_movement_state_payloads_with(
+    mut commands: Commands,
+    now_tick: u64,
+    mut players: Query<MovementStateEmitItem<'_>, MovementStateEmitFilter>,
+    mut serialize: impl FnMut(&ServerDataV1) -> Result<Vec<u8>, PayloadBuildError>,
+) {
+    for (entity, mut client, mut movement, stamina) in &mut players {
         if let Err(error) = send_movement_state_payload(
             &mut client,
             &mut movement,
             stamina,
-            clock.tick,
-            serialize_server_data_payload,
+            now_tick,
+            &mut serialize,
         ) {
+            commands.entity(entity).insert(MovementStateEmitPending);
             log_payload_build_error("movement_state", &error);
             continue;
         }
+        commands.entity(entity).remove::<MovementStateEmitPending>();
         tracing::debug!(
             "[bong][movement] sent {} {} payload action={:?} speed={:.3}",
             SERVER_DATA_CHANNEL,
@@ -962,8 +987,30 @@ fn is_residue_ash_block(block: BlockState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valence::prelude::{ResMut, Resource};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
+
+    #[derive(Resource)]
+    struct MovementStateSerializerFailures {
+        oversize_remaining: usize,
+    }
+
+    fn emit_movement_state_payloads_with_test_serializer(
+        commands: Commands,
+        clock: Res<CombatClock>,
+        players: Query<MovementStateEmitItem<'_>, MovementStateEmitFilter>,
+        mut failures: ResMut<MovementStateSerializerFailures>,
+    ) {
+        emit_movement_state_payloads_with(commands, clock.tick, players, |payload| {
+            if failures.oversize_remaining > 0 {
+                failures.oversize_remaining -= 1;
+                Err(PayloadBuildError::Oversize { size: 2, max: 1 })
+            } else {
+                serialize_server_data_payload(payload)
+            }
+        });
+    }
 
     fn flush_client_packets(app: &mut App) {
         let world = app.world_mut();
@@ -1320,28 +1367,21 @@ mod tests {
     }
 
     #[test]
-    fn serialization_failure_keeps_reject_for_next_successful_send() {
+    fn serialization_failure_automatically_retries_on_next_update() {
         let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(MovementStateSerializerFailures {
+            oversize_remaining: 1,
+        });
+        app.add_systems(Update, emit_movement_state_payloads_with_test_serializer);
         let (entity, mut helper) =
             spawn_movement_emit_client(&mut app, Some(MovementActionRequestV1::Dash));
 
-        {
-            let world = app.world_mut();
-            let mut query = world.query::<(&mut Client, &mut MovementState, &Stamina)>();
-            let (mut client, mut movement, stamina) = query.get_mut(world, entity).unwrap();
-            let result =
-                send_movement_state_payload(&mut client, &mut movement, Some(stamina), 100, |_| {
-                    Err(PayloadBuildError::Oversize { size: 2, max: 1 })
-                });
-            assert!(
-                matches!(result, Err(PayloadBuildError::Oversize { .. })),
-                "序列化失败应返回 Oversize 以保留 reject，实际 {result:?}"
-            );
-        }
+        app.update();
         flush_client_packets(&mut app);
         assert!(
             collect_movement_payloads(&mut helper).is_empty(),
-            "序列化失败时不得向 client 交付半成品 payload"
+            "首拍注入 Oversize 时不得向 client 交付半成品 payload"
         );
         assert_eq!(
             app.world()
@@ -1349,34 +1389,26 @@ mod tests {
                 .unwrap()
                 .rejected_action,
             Some(MovementActionRequestV1::Dash),
-            "序列化失败发生在 ack 前，reject 必须保留等待重试"
+            "首拍序列化失败发生在 ack 前，reject 必须保留等待自动重试"
+        );
+        assert!(
+            app.world().get::<MovementStateEmitPending>(entity).is_some(),
+            "首拍失败后 deferred Commands 必须落下实体级 pending 标记供下一拍选中"
         );
 
-        {
-            let world = app.world_mut();
-            let mut query = world.query::<(&mut Client, &mut MovementState, &Stamina)>();
-            let (mut client, mut movement, stamina) = query.get_mut(world, entity).unwrap();
-            send_movement_state_payload(
-                &mut client,
-                &mut movement,
-                Some(stamina),
-                101,
-                serialize_server_data_payload,
-            )
-            .expect("下一次真实序列化应成功并交付");
-        }
+        app.update();
         flush_client_packets(&mut app);
         let retried = collect_movement_payloads(&mut helper);
         assert_eq!(
             retried.len(),
             1,
-            "重试成功应交付一份 movement_state，实际 {} 份",
+            "没有外部 MovementState/Stamina 变化时，pending 应在次拍自动重试且仅发送一份，实际 {} 份",
             retried.len()
         );
         assert_eq!(
             retried[0].rejected_action,
             Some(MovementActionRequestV1::Dash),
-            "重试成功时必须仍携带此前未吞掉的 reject"
+            "自动重试成功时必须仍携带此前未吞掉的 dash reject"
         );
         assert_eq!(
             app.world()
@@ -1384,7 +1416,18 @@ mod tests {
                 .unwrap()
                 .rejected_action,
             None,
-            "只有成功交付后才消费 reject"
+            "只有自动重试成功交付后才消费 reject"
+        );
+        assert!(
+            app.world().get::<MovementStateEmitPending>(entity).is_none(),
+            "自动重试成功后 deferred Commands 必须清除 pending 标记"
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+        assert!(
+            collect_movement_payloads(&mut helper).is_empty(),
+            "pending 清除后的第三拍不得自触发额外 movement_state"
         );
     }
 
@@ -1395,8 +1438,16 @@ mod tests {
         state.acknowledge_payload_sent();
         state.acknowledge_payload_sent();
 
-        assert_eq!(state.to_payload(0, None).rejected_action, None);
-        assert_eq!(state.to_payload(u64::MAX, None).rejected_action, None);
+        assert_eq!(
+            state.to_payload(0, None).rejected_action,
+            None,
+            "无 reject 的重复 ack 在 tick=0 后仍应保持空值"
+        );
+        assert_eq!(
+            state.to_payload(u64::MAX, None).rejected_action,
+            None,
+            "无 reject 的重复 ack 在最大 tick 下仍应保持空值"
+        );
     }
 
     #[test]

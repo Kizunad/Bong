@@ -1,5 +1,6 @@
 package com.bong.client.network;
 
+import bong.Envelope;
 import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
 import org.junit.jupiter.api.AfterEach;
@@ -47,6 +48,55 @@ class MovementStateHandlerTest {
     }
 
     @Test
+    void prefixedProtoEnumsReachStoreThroughProductionBridge() {
+        Envelope.ServerDataEnvelope protoEnvelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setMovementState(Envelope.MovementStateProto.newBuilder()
+                .setCurrentSpeedMultiplier(0.75F)
+                .setStaminaCostActive(true)
+                .setMovementAction(Envelope.MovementAction.MOVEMENT_ACTION_DASHING)
+                .setZoneKind(Envelope.MovementZoneKind.MOVEMENT_ZONE_KIND_NORMAL)
+                .setDashCooldownRemainingTicks(35L)
+                .setHitboxHeightBlocks(1.8F)
+                .setStaminaCurrent(4.0F)
+                .setStaminaMax(100.0F)
+                .setLowStamina(true)
+                .setLastActionTick(120L)
+                .setRejectedAction(Envelope.MovementActionRequestKind.MOVEMENT_ACTION_REQUEST_KIND_DASH))
+            .build();
+
+        ProtoServerDataBridge.BridgeResult bridged = ProtoServerDataBridge.bridge(protoEnvelope.toByteArray());
+        assertTrue(
+            bridged.isSuccess(),
+            "expected prefixed movement proto enums to bridge through the production decoder, actual error: "
+                + bridged.errorMessage()
+        );
+        ServerDataDispatch dispatch = new MovementStateHandler().handle(parse(bridged.legacyJson()), 3_000L);
+
+        assertTrue(
+            dispatch.handled(),
+            "expected bridged movement_state to reach MovementStateHandler, actual dispatch: " + dispatch
+        );
+        MovementState state = MovementStateStore.snapshot();
+        assertEquals(
+            MovementState.Action.DASHING,
+            state.action(),
+            "MOVEMENT_ACTION_DASHING must survive protobuf → bridge → handler → store"
+        );
+        assertEquals(
+            MovementState.ZoneKind.NORMAL,
+            state.zoneKind(),
+            "MOVEMENT_ZONE_KIND_NORMAL must survive protobuf → bridge → handler → store"
+        );
+        assertEquals(
+            "dash",
+            state.rejectedAction(),
+            "MOVEMENT_ACTION_REQUEST_KIND_DASH must normalize to the client wire value"
+        );
+        assertEquals(3_000L, state.rejectedAtMs(), "the bridged dash reject must start its flash at receipt time");
+        assertEquals(3_000L, state.hudActivityAtMs(), "the bridged dash reject must activate the movement HUD");
+    }
+
+    @Test
     void rejectedActionRecordsFlashTime() {
         ServerDataEnvelope envelope = parse("""
             {
@@ -70,6 +120,65 @@ class MovementStateHandlerTest {
         assertTrue(dispatch.handled());
         assertEquals("dash", MovementStateStore.snapshot().rejectedAction());
         assertEquals(3_000L, MovementStateStore.snapshot().rejectedAtMs());
+    }
+
+    @Test
+    void sameDashRejectRefreshesTimingAfterClearFollowup() {
+        ServerDataEnvelope rejected = parse("""
+            {
+              "v": 1,
+              "type": "movement_state",
+              "current_speed_multiplier": 0.75,
+              "stamina_cost_active": false,
+              "movement_action": "none",
+              "zone_kind": "normal",
+              "dash_cooldown_remaining_ticks": 0,
+              "hitbox_height_blocks": 1.8,
+              "stamina_current": 4,
+              "stamina_max": 100,
+              "low_stamina": true,
+              "rejected_action": "dash"
+            }
+            """);
+        ServerDataEnvelope cleared = parse("""
+            {
+              "v": 1,
+              "type": "movement_state",
+              "current_speed_multiplier": 0.75,
+              "stamina_cost_active": false,
+              "movement_action": "none",
+              "zone_kind": "normal",
+              "dash_cooldown_remaining_ticks": 0,
+              "hitbox_height_blocks": 1.8,
+              "stamina_current": 5,
+              "stamina_max": 100,
+              "low_stamina": true
+            }
+            """);
+        MovementStateHandler handler = new MovementStateHandler();
+
+        assertTrue(handler.handle(rejected, 3_000L).handled(), "first dash reject should be handled");
+        assertTrue(handler.handle(cleared, 3_200L).handled(), "clear followup should be handled");
+        assertEquals("", MovementStateStore.snapshot().rejectedAction());
+        assertEquals(
+            3_000L,
+            MovementStateStore.snapshot().rejectedAtMs(),
+            "clear followup should preserve the historical reject timestamp without refreshing it"
+        );
+
+        assertTrue(handler.handle(rejected, 3_700L).handled(), "later same dash reject should be handled");
+        MovementState refreshed = MovementStateStore.snapshot();
+        assertEquals("dash", refreshed.rejectedAction());
+        assertEquals(
+            3_700L,
+            refreshed.rejectedAtMs(),
+            "a later identical dash reject is a new event and must refresh rejectedAtMs"
+        );
+        assertEquals(
+            3_700L,
+            refreshed.hudActivityAtMs(),
+            "a later identical dash reject must also reactivate the movement HUD"
+        );
     }
 
     @Test

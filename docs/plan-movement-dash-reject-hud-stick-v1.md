@@ -15,8 +15,46 @@
 - **进料**：`server/src/movement/mod.rs::handle_movement_action_intents` 接收正常玩家 `MovementActionIntent::Dashing`；`combat::lifecycle::stamina_tick` 改变 `Stamina` 后触发 movement state 再发送。
 - **出料**：`emit_movement_state_payloads` 经 `bong:server_data` 发送 `MovementStateV1`；client `MovementStateStore.replace` 记录拒绝发生时刻，`MovementHudPlanner` 渲染 300ms 红色 flash 与 3s visible + 500ms fade。
 - **共享类型 / event**：复用 `MovementState`、`Stamina`、`MovementActionRequestV1::Dash`、`MovementStateV1` 与 `ServerDataPayloadV1::MovementState`，不另建拒绝事件或序列字段。
-- **跨仓库契约**：server `MovementState::to_payload` / `emit_movement_state_payloads` → schema `MovementStateV1.rejected_action` → client `MovementStateHandler` / `MovementStateStore` / `MovementHudPlanner`。
-- **worldview / qi_physics**：纯 movement HUD 生命周期修复，不涉及世界观命名、真元/灵气流动或守恒 ledger。
+- **跨仓库契约**：server `MovementState::to_payload` / `emit_movement_state_payloads` → 既有 schema/protobuf `MovementStateV1.rejected_action` → client `ProtoServerDataBridge` / `MovementStateHandler` / `MovementStateStore` / `MovementHudPlanner`。**agent 不参与**：该状态经 `bong:server_data` 由 server 直达 Fabric client，不经过 Redis 天道 IPC，也不改变 agent 可见世界状态。
+- **worldview 锚点**：`docs/worldview.md §四 L334-L342` 将贴身缩距定为末法战斗轴心；本 plan 只修复既有 dash 拒绝反馈的 one-shot 生命周期，**无需修改 worldview 正典**。
+- **qi_physics 锚点**：**不适用**。本 plan 不改变 dash 位移、体力消耗或任何真元/灵气流动，不新增物理常数，也不触碰 `qi_physics::ledger`。
+
+## §P0 开放问题（P0 决策门前需收口）
+
+1. 一次 dash reject 应在 payload 构造、序列化还是实际交付后的哪个边界消费；序列化失败后如何在没有外部状态变化时可靠重试？
+2. 两次独立但枚举值相同的 `Dash` reject 应在 server 还是 client 区分；是否需要扩 schema sequence？
+3. 此修复是否需要 agent、worldview、qi_physics 或新动画/VFX/SFX 接入？
+
+以上问题全部已在 §P0.1 收口。原列表保留以备追溯，实施与验收以 §P0.1 决议为准。
+
+## §P0.1 决议（pre-P0 收口，2026-07-16）
+
+### #1 消费边界与失败重试
+
+**决议**：
+1. 仅在 movement payload 成功序列化并交给 `Client` 后消费 `rejected_action`；失败发生在 ack 前，必须保留原 reject。
+2. 序列化失败时给该玩家实体写入 `MovementStateEmitPending`；下一拍由 emit filter 自动选中并重试，成功后移除 pending，第三拍不得重复发送。
+3. 不依赖后续 `Changed<Stamina>` 或其他外部变化救活失败消息，也不在失败时发送半成品 payload。
+
+**落点**：`server/src/movement/mod.rs:475-552`（pending filter、发送与成功 ack）/ `server/src/movement/mod.rs:1370-1431`（失败、无外部变化重试、第三拍不重复）/ plan §P0「可核验交付物」与 §P0.1 #1。
+
+### #2 相同 Dash reject 的事件语义
+
+**决议**：
+1. reject 的 edge-triggered one-shot 由 server 发送边界保证；client 不按枚举值去重。
+2. 既有 protobuf 前缀枚举必须走 `ProtoServerDataBridge` 归一化，再由 `MovementStateHandler` 写入 store；清理包之后再次收到 `Dash` 仍是新的合法反馈。
+3. 不新增 sequence 或修改 `MovementStateV1` wire shape，避免为单点生命周期修复扩大 schema 范围。
+
+**落点**：`client/src/main/java/com/bong/client/network/ProtoServerDataBridge.java:811-819`（三个 movement enum 前缀归一化）/ `client/src/main/java/com/bong/client/network/MovementStateHandler.java:19-35` 与 `client/src/main/java/com/bong/client/movement/MovementStateStore.java:15-34`（handler→store 时序）/ plan §P0「实施摘要」与 §P0.1 #2。
+
+### #3 跨层与正典范围
+
+**决议**：
+1. agent 不参与：movement state 是 server→Fabric client 的直接 CustomPayload，不进入天道 Redis IPC。
+2. `docs/worldview.md §四 L334-L342` 只作为 dash 贴身缩距的既有正典锚点；本修复不改变玩法语义，因此不回写 worldview。
+3. qi_physics 不适用，且复用既有 HUD/动画/VFX/SFX；边界严格限制为 reject 下发、protobuf 解码、store 计时和 HUD 时序，不改 dash 数值或资源。
+
+**落点**：`server/src/movement/mod.rs:309-370`（正常玩家 dash 拒绝入口）/ `client/src/main/java/com/bong/client/hud/MovementHudPlanner.java:10-12,65-78,126-137`（既有 300ms/3s+500ms 契约）/ plan §接入面、§P0「验收标准」与 §P0.1 #3。
 
 ## P0 — dash reject one-shot 生命周期
 
@@ -27,17 +65,17 @@
 3. 确认当前 `MovementState::to_payload` 每次原样复制持久的 `rejected_action`；client `MovementStateStore.replace` 对每个非空 reject 都刷新 `rejectedAtMs` 与 `hudActivityAtMs`。
 4. 以失败测试证明：第一次 payload 带 `Dash` 后，仅由后续状态发送生成的 payload 仍带 `Dash`，违反 `docs/finished_plans/plan-movement-v1.md` P1 的 0.3s one-shot HUD 契约。
 
-### 修复决议
+### 实施摘要（以 §P0.1 决议为准）
 
-- 在 `server/src/movement/mod.rs` 增加发送边界上的 one-shot 消费：构造本次 payload 时读取当前 `rejected_action`；payload 成功序列化并交给 client 后清空 server 状态。序列化失败时保留标记，允许下一次发送重试。
+- 在 `server/src/movement/mod.rs` 增加发送边界上的 one-shot 消费：构造本次 payload 时读取当前 `rejected_action`；payload 成功序列化并交给 client 后清空 server 状态。序列化失败时保留 reject 并写入实体级 pending，下一拍无需外部 change 即自动重试。
 - 不在 client 通过“相同枚举值”去重：协议没有 reject sequence，同一玩家连续两次真实 dash reject 也都是 `Dash`，客户端值去重会吞掉合法反馈。
 - 不改 `MovementStateV1` schema；既有 animation、VFX、SFX、HUD 样式与 dash 数值全部保持不变。
 
 ### 可核验交付物
 
 - `server/src/movement/mod.rs`：`MovementState::take_payload`（或等价发送后消费函数）与 `emit_movement_state_payloads` one-shot 接线。
-- server pin：`movement_emit_system_consumes_reject_and_stamina_followups_stay_clear` 使用 `MockClient` 真实执行 `emit_movement_state_payloads`，锁定 Added 首包 `Dash`、ack 不自激、`Changed<Stamina>` 后续包 `None`、第二次新 reject 可再发；`serialization_failure_keeps_reject_for_next_successful_send` 用可测 seam 注入 `Oversize` 序列化失败，锁定零发送、保留 reject 与下次真实序列化重试。
-- `client/src/test/java/com/bong/client/hud/MovementHudPlannerTest.java` / `client/src/test/java/com/bong/client/network/MovementStateHandlerTest.java`：单次 reject 在 300ms 边界后不再闪红，HUD 在 3000ms visible + 500ms fade 后 auto-hide；新的独立 reject 仍可重新触发。
+- server pin：`movement_emit_system_consumes_reject_and_stamina_followups_stay_clear` 使用 `MockClient` 真实执行 `emit_movement_state_payloads`，锁定 Added 首包 `Dash`、ack 不自激、`Changed<Stamina>` 后续包 `None`、第二次新 reject 可再发；`serialization_failure_automatically_retries_on_next_update` 用可测 seam 注入 `Oversize` 序列化失败，锁定首拍保留 reject+pending、次拍无外部 change 自动重试成功并消费、第三拍不重复。
+- `client/src/test/java/com/bong/client/hud/MovementHudPlannerTest.java` / `client/src/test/java/com/bong/client/network/MovementStateHandlerTest.java`：锁定 1300/1301ms reject flash 与 4000/4001/4499/4500ms HUD fade 边界；`prefixedProtoEnumsReachStoreThroughProductionBridge` 以真实 protobuf 的 Dashing/Normal/Dash 前缀枚举穿过 `ProtoServerDataBridge`→handler→store；新的独立 reject 仍可重新触发。
 - 门禁：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；`cd client && JAVA_HOME=<JDK17> PATH=<JDK17>/bin:$PATH ./gradlew test build`。
 
 ### 验收标准

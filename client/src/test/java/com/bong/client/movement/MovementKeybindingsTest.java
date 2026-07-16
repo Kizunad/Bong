@@ -1,12 +1,63 @@
 package com.bong.client.movement;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MovementKeybindingsTest {
 
     private static final double EPS = 1e-9;
+
+    @AfterEach
+    void tearDown() {
+        MovementStateStore.resetForTests();
+    }
+
+    @Test
+    void disconnectResetClearsRejectTimingAndSameDashRefreshesInNewSession() {
+        MovementState rejectedDash = new MovementState(
+            0.75,
+            false,
+            MovementState.Action.NONE,
+            MovementState.ZoneKind.NORMAL,
+            0L,
+            1.8,
+            4.0,
+            100.0,
+            true,
+            null,
+            "dash",
+            0L,
+            0L,
+            0L
+        );
+        MovementStateStore.replace(rejectedDash, 3_000L);
+        assertEquals(3_000L, MovementStateStore.snapshot().rejectedAtMs());
+        assertEquals(3_000L, MovementStateStore.snapshot().hudActivityAtMs());
+
+        MovementKeybindings.resetOnDisconnect();
+
+        MovementState reset = MovementStateStore.snapshot();
+        assertTrue(reset.isEmpty(), "production disconnect reset must clear the prior session snapshot");
+        assertEquals(0L, reset.rejectedAtMs(), "disconnect must clear prior reject timing");
+        assertEquals(0L, reset.hudActivityAtMs(), "disconnect must clear prior HUD activity timing");
+
+        MovementStateStore.replace(rejectedDash, 4_000L);
+        MovementState nextSession = MovementStateStore.snapshot();
+        assertEquals("dash", nextSession.rejectedAction());
+        assertEquals(
+            4_000L,
+            nextSession.rejectedAtMs(),
+            "the same dash reject in a new session must refresh rejectedAtMs"
+        );
+        assertEquals(
+            4_000L,
+            nextSession.hudActivityAtMs(),
+            "the same dash reject in a new session must reactivate the HUD"
+        );
+    }
 
     // ---- 参考帧：玩家体朝向 yaw（无 WASD 输入时即朝正前 dash）----
 
