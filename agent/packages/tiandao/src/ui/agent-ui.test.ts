@@ -20,7 +20,6 @@
  *    session_end(dismissed/timeout)→drainPendingSessionEnds
  */
 
-import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CHANNELS } from "@bong/schema";
 import type { AgentUiResponsePayloadV1 } from "@bong/schema";
@@ -39,32 +38,6 @@ import { UiResponseConsumer, REALM_GATE_NARRATION_TEXT } from "./uiResponseConsu
 import { AgentUiRuntime } from "./agentUiRuntime.js";
 
 const { AGENT_UI_RESPONSE, AGENT_NARRATE, AGENT_UI_CMD } = CHANNELS;
-
-const realmGateRoutingFixture = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../../schema/samples/agent-ui-realm-gate-routing.chain.sample.json",
-      import.meta.url,
-    ),
-    "utf-8",
-  ),
-) as {
-  players: {
-    target_username: string;
-    target_canonical_id: string;
-    non_target_username: string;
-  };
-  server_response: AgentUiResponsePayloadV1;
-  agent_narration: {
-    v: number;
-    narrations: Array<{
-      scope: string;
-      target: string;
-      style: string;
-      text: string;
-    }>;
-  };
-};
 
 // ─── mock helpers ─────────────────────────────────────────────────────────────
 
@@ -762,7 +735,7 @@ describe("UiResponseConsumer", () => {
     expect(consumer.stats.narrationPublished).toBe(1);
   });
 
-  it("error+realm_gate_rejected without target_player → warns and drops private narration", async () => {
+  it("error+realm_gate_rejected without target_player → warns and keeps legacy broadcast fallback", async () => {
     await sendMessage(
       makeResponsePayload("error", {
         reason: "realm_gate_rejected",
@@ -774,12 +747,23 @@ describe("UiResponseConsumer", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("realm_gate_rejected missing target_player"),
     );
-    expect(pub.publish).not.toHaveBeenCalled();
+    expect(pub.publish).toHaveBeenCalledOnce();
+    const [channel, raw] = pub.publish.mock.calls[0];
+    expect(channel).toBe(AGENT_NARRATE);
+    const narrationMsg = JSON.parse(raw as string);
+    expect(narrationMsg.narrations).toEqual([
+      {
+        scope: "broadcast",
+        target: "world",
+        style: "system_warning",
+        text: REALM_GATE_NARRATION_TEXT,
+      },
+    ]);
     expect(consumer.stats.realmGateRejected).toBe(1);
-    expect(consumer.stats.narrationPublished).toBe(0);
+    expect(consumer.stats.narrationPublished).toBe(1);
   });
 
-  it("error+realm_gate_rejected with whitespace target_player → warns and drops private narration", async () => {
+  it("error+realm_gate_rejected with whitespace target_player → warns and uses legacy broadcast fallback", async () => {
     await sendMessage(
       makeResponsePayload(
         "error",
@@ -791,9 +775,20 @@ describe("UiResponseConsumer", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("realm_gate_rejected missing target_player"),
     );
-    expect(pub.publish).not.toHaveBeenCalled();
+    expect(pub.publish).toHaveBeenCalledOnce();
+    const [channel, raw] = pub.publish.mock.calls[0];
+    expect(channel).toBe(AGENT_NARRATE);
+    const narrationMsg = JSON.parse(raw as string);
+    expect(narrationMsg.narrations).toEqual([
+      {
+        scope: "broadcast",
+        target: "world",
+        style: "system_warning",
+        text: REALM_GATE_NARRATION_TEXT,
+      },
+    ]);
     expect(consumer.stats.realmGateRejected).toBe(1);
-    expect(consumer.stats.narrationPublished).toBe(0);
+    expect(consumer.stats.narrationPublished).toBe(1);
   });
 
   // ── error: player_offline ─────────────────────────────────────────────────
@@ -1028,15 +1023,24 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     await runtime.disconnect();
   });
 
-  it("shared chain: server realm_gate_rejected fixture → agent narration fixture（无 narPub 回退到 sub）", async () => {
+  it("e2e: realm_gate_rejected → 未传 narPub 时 narration 回退到 sub", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
     // 不传 narPub → 内部回退到 sub（sub 有 publish + disconnect，类型安全）
     const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
-    // 同一 fixture 的前一段由 Rust producer test 真实生成并逐字段对拍。
-    sub.emitUiResponse(realmGateRoutingFixture.server_response);
+    sub.emitUiResponse(
+      makeResponsePayload(
+        "error",
+        {
+          reason: "realm_gate_rejected",
+          player_realm: "2",
+          required_realm: "3",
+        },
+        "offline:E2EPlayer",
+      ),
+    );
 
     await Promise.resolve();
     await Promise.resolve();
@@ -1046,19 +1050,18 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     expect(pub.publish, "pub.publish 不应被 narration 调用（narPub 回退到 sub）").not.toHaveBeenCalled();
     const [narChannel, narRaw] = sub.publish.mock.calls[0];
     expect(narChannel, "应发布到 AGENT_NARRATE").toBe(AGENT_NARRATE);
+    expect(JSON.parse(narRaw as string)).toEqual({
+      v: 1,
+      narrations: [
+        {
+          scope: "player",
+          target: "offline:E2EPlayer",
+          style: "system_warning",
+          text: REALM_GATE_NARRATION_TEXT,
+        },
+      ],
+    });
 
-    const narMsg = JSON.parse(narRaw as string);
-    expect(narMsg, "consumer 输出必须逐字段匹配共享链路 fixture").toEqual(
-      realmGateRoutingFixture.agent_narration,
-    );
-    expect(narMsg.narrations[0].target).toBe(
-      realmGateRoutingFixture.players.target_canonical_id,
-    );
-    expect(realmGateRoutingFixture.players.non_target_username).not.toBe(
-      realmGateRoutingFixture.players.target_username,
-    );
-
-    // stats 正确
     expect(runtime.stats.realmGateRejected, "stats.realmGateRejected=1").toBe(1);
     expect(runtime.stats.narrationPublished, "stats.narrationPublished=1").toBe(1);
 
