@@ -8,6 +8,7 @@ bot-e2e.sh 在起 server 之前先跑本文件——编解码坏了没必要浪�
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import pathlib
@@ -21,12 +22,14 @@ import tomllib
 import types
 import unittest
 import zlib
+from contextlib import redirect_stdout
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import mc_protocol as mc  # noqa: E402
 from bot import proto_min  # noqa: E402
+from bot import run_scenarios as scenario_runner  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
@@ -53,6 +56,11 @@ from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
 )
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
+)
+from bot.scenarios.terrain_north_rift_scorch_zone_identity import (  # noqa: E402
+    PROBES as NORTH_RIFT_PROBES,
+    REQUIRED_ENV as NORTH_RIFT_REQUIRED_ENV,
+    _position_matches as north_rift_position_matches,
 )
 from bot.run_scenarios import (  # noqa: E402
     ScenarioEnv,
@@ -129,6 +137,24 @@ class ServerDataDecodeTest(unittest.TestCase):
 
     def test_malformed_server_data_returns_none(self):
         self.assertIsNone(decode_server_data_payload(b"\xff\x00not protobuf"))
+
+    def test_proto_zone_info_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_zone_info_bytes())
+
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "zone_info",
+                "zone": "rift_mouth_north_002",
+                "spirit_qi": 0.068602,
+                "danger_level": 5,
+                "status": "Normal",
+                "active_events": ["rift_mouth_entry", "wind_warning"],
+                "perception_text": "灵气骤薄",
+            },
+            "production protobuf zone_info 应完整解出标量、repeated 与 optional 字段",
+        )
 
     def test_proto_inventory_snapshot_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_inventory_snapshot_bytes())
@@ -295,6 +321,137 @@ class NovicePoiScenarioParsingTest(unittest.TestCase):
     def test_selection_strategy_rejects_missing_or_empty_value(self):
         self.assertIsNone(_selection_strategy("[dev] novice_poi mutant_nest pos=1,2,3"))
         self.assertIsNone(_selection_strategy("[dev] novice_poi mutant_nest selection="))
+
+
+class NorthRiftScenarioContractTest(unittest.TestCase):
+    def test_probes_pin_three_production_z_coordinates_and_zone_identity(self):
+        actual = {probe.pos[2]: probe.zone for probe in NORTH_RIFT_PROBES}
+        self.assertEqual(
+            actual,
+            {
+                -7303.0: "rift_mouth_north_002",
+                -7800.0: "north_waste_east_scorch",
+                -7500.0: "north_waste_east_scorch",
+            },
+            "真实场景必须覆盖 portal 半径外的迁移后渊口、旧入口焦土点与 inclusive 边界",
+        )
+        rift_probe = next(
+            probe for probe in NORTH_RIFT_PROBES if probe.zone == "rift_mouth_north_002"
+        )
+        self.assertGreater(
+            abs(rift_probe.pos[2] - (-7300.0)),
+            2.0,
+            "真实 bot 的 rift identity 点必须避开 z=-7300 portal anchor 的 2 格传送半径",
+        )
+
+    def test_probe_order_forces_a_zone_transition_before_every_assertion(self):
+        zones = [probe.zone for probe in NORTH_RIFT_PROBES]
+        self.assertTrue(
+            all(left != right for left, right in zip(zones, zones[1:])),
+            f"相邻 probe 必须跨 zone 才会产生 after-watermark zone_info，实际 {zones}",
+        )
+
+    def test_probe_perception_text_matches_production_qi_transition_ratios(self):
+        self.assertEqual(
+            [probe.perception_text for probe in NORTH_RIFT_PROBES],
+            [
+                "灵气稀薄，引气如吸沙",
+                "灵气几近断绝，此地有不祥预感",
+                "此地灵气骤然浓郁，呼吸间元气盈满",
+            ],
+            "spawn→scorch→rift→scorch 的 production qi 比值必须钉住真实感知文本",
+        )
+
+    def test_authoritative_position_match_rejects_stale_and_wrong_packets(self):
+        probe = NORTH_RIFT_PROBES[0]
+        exact = types.SimpleNamespace(
+            kind="pos_look",
+            t=2.0,
+            data={
+                "x": probe.pos[0],
+                "y": probe.pos[1],
+                "z": probe.pos[2],
+                "yaw": probe.yaw,
+                "pitch": probe.pitch,
+            },
+        )
+        self.assertTrue(north_rift_position_matches(exact, probe, watermark=1.0))
+        self.assertFalse(
+            north_rift_position_matches(exact, probe, watermark=2.0),
+            "watermark 之前/同刻的历史 pos_look 不得冒充本次 authoritative 回包",
+        )
+        wrong = types.SimpleNamespace(
+            kind="pos_look",
+            t=3.0,
+            data={**exact.data, "z": probe.pos[2] + 1.0},
+        )
+        self.assertFalse(
+            north_rift_position_matches(wrong, probe, watermark=1.0),
+            "坐标仅差一格也不得通过 production point 对拍",
+        )
+
+
+class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (
+            pathlib.Path(__file__).parents[2] / "scripts/e2e-redis.sh"
+        ).read_text(encoding="utf-8")
+
+    def test_manifest_tracks_dedicated_server_and_bot_evidence(self):
+        start = self.source.index("write_manifest() {")
+        end = self.source.index("\n}\n\nfinalize_failure()", start)
+        manifest_body = self.source[start:end]
+
+        for evidence_var in ("NORTH_RIFT_SERVER_LOG", "NORTH_RIFT_BOT_LOG"):
+            with self.subTest(evidence=evidence_var):
+                self.assertIn(
+                    f'"${evidence_var}"',
+                    manifest_body,
+                    f"Finish evidence manifest 必须收录 {evidence_var}",
+                )
+
+    def test_preview_env_is_scoped_after_tps_gate_and_around_one_scenario(self):
+        phase_start = self.source.index('CURRENT_STAGE="north-rift-preview"')
+        phase_end = self.source.index('CURRENT_STAGE="summary"', phase_start)
+        phase = self.source[phase_start:phase_end]
+
+        self.assertEqual(
+            self.source.count("export BONG_PREVIEW_MODE=1"),
+            1,
+            "preview env 只能出现在 dedicated north-rift server phase",
+        )
+        first_stop = phase.index("if ! stop_server;")
+        preview_env = phase.index("export BONG_PREVIEW_MODE=1")
+        scenario = phase.index("--scenario terrain_north_rift_scorch_zone_identity")
+        second_stop = phase.index("if ! stop_server;", first_stop + 1)
+        self.assertLess(first_stop, preview_env, "必须先停普通 100 NPC server 再开 preview")
+        self.assertLess(preview_env, scenario, "专用 server 激活 preview 后才能运行真实 bot")
+        self.assertLess(scenario, second_stop, "唯一场景结束后必须立即 stop_server")
+        self.assertIn("BOT_E2E_NORTH_RIFT_PREVIEW=1", phase)
+        self.assertIn("export BONG_ROGUE_SEED_COUNT=0", phase)
+
+    def test_stop_server_kills_tree_waits_and_verifies_port_release(self):
+        start = self.source.index("stop_server() {")
+        end = self.source.index("\n}\n\ncleanup()", start)
+        stop_body = self.source[start:end]
+        for required in (
+            'kill_tree "$SERVER_PID"',
+            'wait "$SERVER_PID"',
+            'SERVER_PID=""',
+            "port_open 25565",
+            "return 1",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, stop_body)
+
+        cleanup_start = self.source.index("cleanup() {")
+        cleanup_end = self.source.index("\n}\n\ntrap cleanup EXIT", cleanup_start)
+        self.assertIn(
+            "stop_server || true",
+            self.source[cleanup_start:cleanup_end],
+            "PASS/FAIL/异常退出都必须经 trap 回收当前 server tree",
+        )
 
 
 class _FakeEvent:
@@ -917,6 +1074,19 @@ class CultivationPillScenarioTest(unittest.TestCase):
             )
 
 
+def _server_data_zone_info_bytes() -> bytes:
+    zone_info = (
+        _pb_string(proto_min.ZONE_INFO_ZONE_FIELD, "rift_mouth_north_002")
+        + _pb_fixed64(proto_min.ZONE_INFO_SPIRIT_QI_FIELD, 0.068602)
+        + _pb_varint(proto_min.ZONE_INFO_DANGER_LEVEL_FIELD, 5)
+        + _pb_string(proto_min.ZONE_INFO_STATUS_FIELD, "Normal")
+        + _pb_string(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, "rift_mouth_entry")
+        + _pb_string(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, "wind_warning")
+        + _pb_string(proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD, "灵气骤薄")
+    )
+    return _pb_message(proto_min.SERVER_DATA_ZONE_INFO_FIELD, zone_info)
+
+
 def _server_data_inventory_snapshot_bytes() -> bytes:
     item = (
         _pb_varint(1, 9)
@@ -1150,11 +1320,51 @@ class RunnerLogicTest(unittest.TestCase):
             "network_client_request_tolerance",
             "network_session_tolerance",
             "terrain_join_chunk_delivery",
+            "terrain_north_rift_scorch_zone_identity",
         }
         self.assertTrue(
             expected <= names,
             f"已提交场景应全部被发现（模块更新必配场景的 CI 抓手），实际 {names}",
         )
+
+    def test_north_rift_scenario_is_explicitly_dedicated(self):
+        scenario = discover_scenarios()["terrain_north_rift_scorch_zone_identity"]
+        self.assertFalse(
+            scenario.DEFAULT_ENABLED,
+            "north-rift preview 场景不得进入常规 --all server，避免 ViewDistance(32) 扩散",
+        )
+        self.assertEqual(
+            scenario.REQUIRED_ENV,
+            NORTH_RIFT_REQUIRED_ENV,
+            "runner SKIP 提示与场景执行门必须引用同一个显式环境变量",
+        )
+
+    def test_all_explicitly_skips_dedicated_scenario_without_calling_run(self):
+        run = mock.Mock()
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="dedicated",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=NORTH_RIFT_REQUIRED_ENV,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"terrain_north_rift_scorch_zone_identity": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        run.assert_not_called()
+        self.assertIn("SKIP", output.getvalue())
+        self.assertIn("skip=1", output.getvalue())
 
     def test_scenarios_do_not_reuse_literal_bot_tags(self):
         owners: dict[str, str] = {}
@@ -1337,6 +1547,244 @@ def _proto_field_signature(message_body: str, field_name: str) -> tuple[str, int
     if match is None:
         raise AssertionError(f"authoritative proto missing field {field_name}")
     return match.group(1), int(match.group(2))
+
+
+class ZoneInfoProtoDecodeTest(unittest.TestCase):
+    """zone_info field 4 的 wire 契约饱和 pin。"""
+
+    def _decode(self, message: bytes) -> dict:
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_ZONE_INFO_FIELD, message)
+        )
+        self.assertIsNotNone(decoded, "envelope field 4 必须分发到 zone_info decoder")
+        return decoded
+
+    def test_decoder_constants_match_authoritative_proto(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        envelope = _proto_message_body(source, "ServerDataEnvelope")
+        zone_info = _proto_message_body(source, "ZoneInfo")
+
+        self.assertEqual(
+            _proto_field_signature(envelope, "zone_info"),
+            ("ZoneInfo", proto_min.SERVER_DATA_ZONE_INFO_FIELD),
+            "Bot envelope field 4 常量必须与权威 ServerDataEnvelope.zone_info 对齐",
+        )
+        expected_fields = {
+            "zone": ("string", proto_min.ZONE_INFO_ZONE_FIELD),
+            "spirit_qi": ("double", proto_min.ZONE_INFO_SPIRIT_QI_FIELD),
+            "danger_level": ("uint32", proto_min.ZONE_INFO_DANGER_LEVEL_FIELD),
+            "status": ("string", proto_min.ZONE_INFO_STATUS_FIELD),
+            "active_events": ("string", proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD),
+            "perception_text": ("string", proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD),
+        }
+        for field_name, expected in expected_fields.items():
+            with self.subTest(field=field_name):
+                self.assertEqual(
+                    _proto_field_signature(zone_info, field_name),
+                    expected,
+                    f"Bot ZoneInfo.{field_name} 常量必须与权威 proto 对齐",
+                )
+
+    def test_happy_path_decodes_negative_qi_repeated_events_and_perception(self):
+        message = (
+            _pb_string(proto_min.ZONE_INFO_ZONE_FIELD, "blood_valley")
+            + _pb_fixed64(proto_min.ZONE_INFO_SPIRIT_QI_FIELD, -0.42)
+            + _pb_varint(proto_min.ZONE_INFO_DANGER_LEVEL_FIELD, 3)
+            + _pb_string(proto_min.ZONE_INFO_STATUS_FIELD, "Collapsed")
+            + _pb_string(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, "beast_tide")
+            + _pb_string(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, "realm_collapse")
+            + _pb_string(proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD, "灵气几近断绝")
+        )
+
+        self.assertEqual(
+            self._decode(message),
+            {
+                "v": 1,
+                "type": "zone_info",
+                "zone": "blood_valley",
+                "spirit_qi": -0.42,
+                "danger_level": 3,
+                "status": "Collapsed",
+                "active_events": ["beast_tide", "realm_collapse"],
+                "perception_text": "灵气几近断绝",
+            },
+        )
+
+    def test_empty_message_uses_protobuf_defaults(self):
+        self.assertEqual(
+            self._decode(b""),
+            {
+                "v": 1,
+                "type": "zone_info",
+                "zone": "",
+                "spirit_qi": 0.0,
+                "danger_level": 0,
+                "status": "",
+                "active_events": [],
+                "perception_text": None,
+            },
+            "空 ZoneInfo 是合法 protobuf；repeated 应为空表，optional 应保留 absent=None",
+        )
+
+    def test_optional_perception_distinguishes_absent_from_present_empty(self):
+        absent = self._decode(_pb_string(proto_min.ZONE_INFO_ZONE_FIELD, "spawn"))
+        present_empty = self._decode(
+            _pb_string(proto_min.ZONE_INFO_ZONE_FIELD, "spawn")
+            + _pb_string(proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD, "")
+        )
+
+        self.assertIsNone(absent["perception_text"])
+        self.assertEqual(
+            present_empty["perception_text"],
+            "",
+            "proto3 optional string 的 present-empty 不得退化成 absent=None",
+        )
+
+    def test_duplicate_scalars_use_last_value_and_repeated_keeps_wire_order(self):
+        message = (
+            _pb_string(proto_min.ZONE_INFO_ZONE_FIELD, "old_zone")
+            + _pb_string(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, "first")
+            + _pb_fixed64(proto_min.ZONE_INFO_SPIRIT_QI_FIELD, 0.1)
+            + _pb_varint(proto_min.ZONE_INFO_DANGER_LEVEL_FIELD, 1)
+            + _pb_string(proto_min.ZONE_INFO_STATUS_FIELD, "Normal")
+            + _pb_string(proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD, "old")
+            + _pb_string(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, "")
+            + _pb_string(proto_min.ZONE_INFO_ZONE_FIELD, "new_zone")
+            + _pb_fixed64(proto_min.ZONE_INFO_SPIRIT_QI_FIELD, 0.9)
+            + _pb_varint(proto_min.ZONE_INFO_DANGER_LEVEL_FIELD, 7)
+            + _pb_string(proto_min.ZONE_INFO_STATUS_FIELD, "FutureStatus")
+            + _pb_string(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, "first")
+            + _pb_string(proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD, "new")
+        )
+        decoded = self._decode(message)
+
+        self.assertEqual(decoded["zone"], "new_zone")
+        self.assertEqual(decoded["spirit_qi"], 0.9)
+        self.assertEqual(decoded["danger_level"], 7)
+        self.assertEqual(decoded["status"], "FutureStatus")
+        self.assertEqual(decoded["active_events"], ["first", "", "first"])
+        self.assertEqual(decoded["perception_text"], "new")
+
+    def test_danger_uint32_boundaries_decode_without_signed_wrap(self):
+        for value in (0, 7, 2**32 - 1):
+            with self.subTest(value=value):
+                decoded = self._decode(
+                    _pb_varint(proto_min.ZONE_INFO_DANGER_LEVEL_FIELD, value)
+                )
+                self.assertEqual(
+                    decoded["danger_level"],
+                    value,
+                    f"uint32 danger_level={value} 不得发生有符号回绕",
+                )
+
+    def test_wrong_wire_types_are_ignored_instead_of_impersonating_fields(self):
+        message = (
+            _pb_fixed64(proto_min.ZONE_INFO_ZONE_FIELD, 1.0)
+            + _pb_varint(proto_min.ZONE_INFO_SPIRIT_QI_FIELD, 1)
+            + _pb_string(proto_min.ZONE_INFO_DANGER_LEVEL_FIELD, "7")
+            + _pb_varint(proto_min.ZONE_INFO_STATUS_FIELD, 1)
+            + _pb_fixed64(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, 1.0)
+            + _pb_varint(proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD, 1)
+        )
+
+        self.assertEqual(
+            self._decode(message),
+            {
+                "v": 1,
+                "type": "zone_info",
+                "zone": "",
+                "spirit_qi": 0.0,
+                "danger_level": 0,
+                "status": "",
+                "active_events": [],
+                "perception_text": None,
+            },
+            "错误 wire type 必须按 protobuf unknown-field 语义忽略",
+        )
+
+    def test_unknown_fields_of_every_supported_wire_type_are_ignored(self):
+        message = (
+            _pb_varint(200, 99)
+            + _pb_fixed64(201, 12.5)
+            + _pb_string(proto_min.ZONE_INFO_ZONE_FIELD, "rift_mouth_north_002")
+            + _pb_string(202, "future")
+            + _pb_float32_field(203, 0.75)
+            + _pb_varint(proto_min.ZONE_INFO_DANGER_LEVEL_FIELD, 5)
+        )
+        decoded = self._decode(message)
+
+        self.assertEqual(decoded["zone"], "rift_mouth_north_002")
+        self.assertEqual(decoded["danger_level"], 5)
+        self.assertEqual(decoded["active_events"], [])
+
+    def test_unknown_envelope_fields_do_not_hide_later_zone_info(self):
+        envelope = (
+            _pb_varint(199, 1)
+            + _pb_bytes(200, b"\xff\x00future")
+            + _pb_message(
+                proto_min.SERVER_DATA_ZONE_INFO_FIELD,
+                _pb_string(proto_min.ZONE_INFO_ZONE_FIELD, "north_waste_east_scorch"),
+            )
+            + _pb_float32_field(201, 0.5)
+        )
+        decoded = proto_min.decode_server_data_envelope(envelope)
+
+        self.assertIsNotNone(decoded)
+        self.assertEqual(decoded["type"], "zone_info")
+        self.assertEqual(decoded["zone"], "north_waste_east_scorch")
+
+    def test_zone_info_envelope_with_wrong_wire_type_is_not_dispatched(self):
+        self.assertIsNone(
+            proto_min.decode_server_data_envelope(
+                _pb_varint(proto_min.SERVER_DATA_ZONE_INFO_FIELD, 1)
+            ),
+            "oneof message field 4 的 varint 不得冒充 zone_info",
+        )
+
+    def test_truncated_nested_fixed64_is_rejected(self):
+        truncated = (
+            _pb_key(proto_min.ZONE_INFO_SPIRIT_QI_FIELD, 1) + b"\x00" * 7
+        )
+        with self.assertRaisesRegex(
+            proto_min.ProtoDecodeError,
+            "truncated fixed64",
+            msg="ZoneInfo.spirit_qi fixed64 少一字节必须报协议错误",
+        ):
+            self._decode(truncated)
+
+    def test_truncated_nested_string_is_rejected(self):
+        truncated = (
+            _pb_key(proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD, 2)
+            + _pb_raw_varint(3)
+            + b"ab"
+        )
+        with self.assertRaisesRegex(
+            proto_min.ProtoDecodeError,
+            "truncated length-delimited field",
+            msg="active_events 声明 3 字节却只给 2 字节必须报协议错误",
+        ):
+            self._decode(truncated)
+
+    def test_unsupported_nested_wire_type_is_rejected(self):
+        malformed = _pb_key(7, 3)
+        with self.assertRaisesRegex(
+            proto_min.ProtoDecodeError,
+            "unsupported wire type 3",
+            msg="group wire type 不在 minimal decoder 支持集内，必须显式报错",
+        ):
+            self._decode(malformed)
+
+    def test_public_payload_decoder_turns_malformed_zone_info_into_none(self):
+        malformed = (
+            _pb_key(proto_min.SERVER_DATA_ZONE_INFO_FIELD, 2)
+            + _pb_raw_varint(5)
+            + b"ab"
+        )
+        self.assertIsNone(
+            decode_server_data_payload(malformed),
+            "Bot 公共观察面遇到截断 zone_info 应返回 None，而不是拖垮 reader thread",
+        )
 
 
 class ProdConsumeDecodeTest(unittest.TestCase):

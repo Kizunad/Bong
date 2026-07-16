@@ -3,9 +3,9 @@
 这里刻意不做生成式 protobuf binding。Bot 场景用它做三类检查：
 - 识别 `bong:server_data` payload 的 oneof 类型。
 - 从 inventory_snapshot 里取 item instance_id，用来驱动真实 client_request intent。
-- 解码 bot inventory/container 场景需要的 production `bong:server_data` payload。
+- 解码 bot 场景需要的 production `bong:server_data` payload（含 zone_info 与玩法状态）。
 
-数值级、全 schema 的深断言留给后续 P6，在 Python binding/codegen 策略定下来后再做。
+这里仍不追求全 schema binding；只把真实场景使用的观察面按权威 proto 精确 pin 住。
 """
 
 from __future__ import annotations
@@ -13,6 +13,14 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 from typing import Any
+
+SERVER_DATA_ZONE_INFO_FIELD = 4
+ZONE_INFO_ZONE_FIELD = 1
+ZONE_INFO_SPIRIT_QI_FIELD = 2
+ZONE_INFO_DANGER_LEVEL_FIELD = 3
+ZONE_INFO_STATUS_FIELD = 4
+ZONE_INFO_ACTIVE_EVENTS_FIELD = 5
+ZONE_INFO_PERCEPTION_TEXT_FIELD = 6
 
 SERVER_DATA_PLAYER_STATE_FIELD = 5
 PLAYER_STATE_SPIRIT_QI_FIELD = 3
@@ -28,6 +36,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
     for field, wire, value in fields:
         if wire != 2:
             continue
+        if field == SERVER_DATA_ZONE_INFO_FIELD:
+            return _zone_info(value)
         if field == SERVER_DATA_PLAYER_STATE_FIELD:
             return _player_state(value)
         if field == 8:
@@ -67,6 +77,20 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
         if field == 142:
             return _morph_state(value)
     return None
+
+
+def _zone_info(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "zone_info",
+        "zone": _string(fields, ZONE_INFO_ZONE_FIELD),
+        "spirit_qi": _double(fields, ZONE_INFO_SPIRIT_QI_FIELD),
+        "danger_level": _varint(fields, ZONE_INFO_DANGER_LEVEL_FIELD),
+        "status": _string(fields, ZONE_INFO_STATUS_FIELD),
+        "active_events": _strings(fields, ZONE_INFO_ACTIVE_EVENTS_FIELD),
+        "perception_text": _optional_string(fields, ZONE_INFO_PERCEPTION_TEXT_FIELD),
+    }
 
 
 def _player_state(data: bytes) -> dict[str, Any]:
@@ -393,6 +417,21 @@ def _string(fields: list[tuple[int, int, Any]], field: int, default: str = "") -
         if existing == field and wire == 2:
             return value.decode("utf-8", errors="replace")
     return default
+
+
+def _optional_string(fields: list[tuple[int, int, Any]], field: int) -> str | None:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 2:
+            return value.decode("utf-8", errors="replace")
+    return None
+
+
+def _strings(fields: list[tuple[int, int, Any]], field: int) -> list[str]:
+    return [
+        value.decode("utf-8", errors="replace")
+        for existing, wire, value in fields
+        if existing == field and wire == 2
+    ]
 
 
 def _double(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0) -> float:

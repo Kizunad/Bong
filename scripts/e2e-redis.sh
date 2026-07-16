@@ -22,6 +22,8 @@ REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
 REDIS_SUB_LOG="$RUN_DIR/redis-sub.log"
 TIANDAO_LOG="$RUN_DIR/tiandao.log"
+NORTH_RIFT_SERVER_LOG="$RUN_DIR/north-rift-preview-server.log"
+NORTH_RIFT_BOT_LOG="$RUN_DIR/north-rift-preview-bot.log"
 
 PASS=0
 FAIL=0
@@ -47,7 +49,7 @@ write_manifest() {
   local status="$1"
   local stage_name="$2"
   local message="$3"
-  printf "task=%s\nscript=%s\nrun_id=%s\nrun_label=%s\nstatus=%s\nstage=%s\nmessage=%s\ntimestamp=%s\nfiles:\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n" \
+  printf "task=%s\nscript=%s\nrun_id=%s\nrun_label=%s\nstatus=%s\nstage=%s\nmessage=%s\ntimestamp=%s\nfiles:\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n" \
     "$TASK_ID" \
     "$SCRIPT_TAG" \
     "$RUN_ID" \
@@ -63,7 +65,9 @@ write_manifest() {
     "$REDIS_LOG" \
     "$SERVER_LOG" \
     "$REDIS_SUB_LOG" \
-    "$TIANDAO_LOG" >"$MANIFEST_FILE"
+    "$TIANDAO_LOG" \
+    "$NORTH_RIFT_SERVER_LOG" \
+    "$NORTH_RIFT_BOT_LOG" >"$MANIFEST_FILE"
 }
 
 finalize_failure() {
@@ -846,16 +850,41 @@ kill_tree() {
   kill -9 "$pid" 2>/dev/null || true
 }
 
+port_open() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+
+try:
+    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1.0).close()
+except OSError:
+    sys.exit(1)
+PY
+}
+
+stop_server() {
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill_tree "$SERVER_PID"
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  SERVER_PID=""
+
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ! port_open 25565; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
 cleanup() {
   if [ -n "$REDIS_SUB_PID" ] && kill -0 "$REDIS_SUB_PID" 2>/dev/null; then
     kill_tree "$REDIS_SUB_PID"
     wait "$REDIS_SUB_PID" 2>/dev/null || true
   fi
 
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill_tree "$SERVER_PID"
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
+  stop_server || true
 
   if [ -n "$REDIS_PID" ] && kill -0 "$REDIS_PID" 2>/dev/null; then
     kill_tree "$REDIS_PID"
@@ -877,20 +906,20 @@ echo "log_file: $LOG_FILE"
 
 echo ""
 CURRENT_STAGE="pre-cleanup"
-echo "=== [$TASK_ID][$SCRIPT_TAG][0/7] Pre-cleanup ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][0/8] Pre-cleanup ==="
 bash "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
 pass "pre-cleanup complete"
 
 echo ""
 CURRENT_STAGE="redis"
-echo "=== [$TASK_ID][$SCRIPT_TAG][1/7] Redis provider ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][1/8] Redis provider ==="
 ensure_redis
 echo "[redis] provider: $REDIS_PROVIDER"
 pass "redis ready"
 
 echo ""
 CURRENT_STAGE="schema"
-echo "=== [$TASK_ID][$SCRIPT_TAG][2/7] Schema build ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][2/8] Schema build ==="
 if (cd "$ROOT/agent/packages/schema" && PATH="$NODE_BIN:$PATH" npm run build) >>"$REDIS_LOG" 2>&1; then
   pass "schema build"
 else
@@ -899,7 +928,7 @@ fi
 
 echo ""
 CURRENT_STAGE="server"
-echo "=== [$TASK_ID][$SCRIPT_TAG][3/7] Server startup ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][3/8] Server startup ==="
 (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
@@ -927,7 +956,7 @@ fi
 
 echo ""
 CURRENT_STAGE="proof"
-echo "=== [$TASK_ID][$SCRIPT_TAG][4/7] Redis channel proof subscriber ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][4/8] Redis channel proof subscriber ==="
 start_redis_subscriber
 if wait_for_pattern "$REDIS_SUB_LOG" "\\[task-13\\]\\[redis-sub\\] subscribed" 30; then
   pass "redis subscriber ready"
@@ -937,7 +966,7 @@ fi
 
 echo ""
 CURRENT_STAGE="tiandao"
-echo "=== [$TASK_ID][$SCRIPT_TAG][5/7] Non-mock Tiandao one-tick closure ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][5/8] Non-mock Tiandao one-tick closure ==="
 (
   cd "$RUN_DIR"
   PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" npx tsx "$ROOT/agent/packages/tiandao/src/task-13-one-tick.ts"
@@ -963,7 +992,7 @@ fi
 
 echo ""
 CURRENT_STAGE="anchors"
-echo "=== [$TASK_ID][$SCRIPT_TAG][6/7] Cross-process anchors ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][6/8] Cross-process anchors ==="
 if wait_for_pattern "$REDIS_SUB_LOG" "channel=bong:world_state" 45; then
   pass "world_state proof"
 else
@@ -1002,6 +1031,79 @@ else
   finalize_failure "anchors" "missing typed narration anchor in $TIANDAO_LOG"
 fi
 
+echo ""
+CURRENT_STAGE="north-rift-preview"
+echo "=== [$TASK_ID][$SCRIPT_TAG][7/8] North-rift dedicated preview bot ==="
+# `/preview_tp` 的 consumer 只在 BONG_PREVIEW_MODE=1 注册，同时会把已加入
+# client 的 ViewDistance 提到 32。绝不能把该 env 塞进常规 bot --all server：
+# 先在上面的普通 release server 完成 100 NPC TPS gate，再完整停服；这里只另起
+# 一个无 rogue seed 的专用 release server，运行唯一 north-rift bot 后立即清理。
+if ! stop_server; then
+  finalize_failure "north-rift-preview" "ordinary server stopped but port 25565 stayed occupied"
+fi
+
+(
+  export PATH="$RUST_PATH"
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export BONG_ROGUE_SEED_COUNT=0
+  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
+  export BONG_PREVIEW_MODE=1
+  cd "$ROOT/server"
+  cargo run --release
+) >"$NORTH_RIFT_SERVER_LOG" 2>&1 &
+SERVER_PID="$!"
+
+if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
+  finalize_failure \
+    "north-rift-preview" \
+    "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
+fi
+if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+  finalize_failure \
+    "north-rift-preview" \
+    "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
+fi
+NORTH_RIFT_PORT_READY=0
+for _ in $(seq 1 50); do
+  if port_open 25565; then
+    NORTH_RIFT_PORT_READY=1
+    break
+  fi
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    break
+  fi
+  sleep 0.2
+done
+if [ "$NORTH_RIFT_PORT_READY" -ne 1 ]; then
+  finalize_failure \
+    "north-rift-preview" \
+    "dedicated preview server did not own port 25565; see $NORTH_RIFT_SERVER_LOG"
+fi
+
+NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
+  python3 "$ROOT/scripts/bot/run_scenarios.py" \
+    --host 127.0.0.1 \
+    --port 25565 \
+    --run-tag "$NORTH_RIFT_RUN_TAG" \
+    --scenario terrain_north_rift_scorch_zone_identity \
+    >"$NORTH_RIFT_BOT_LOG" 2>&1; then
+  pass "north-rift preview_tp zone_info + ambient_zone bot"
+else
+  tail -n 80 "$NORTH_RIFT_BOT_LOG" || true
+  tail -n 80 "$NORTH_RIFT_SERVER_LOG" || true
+  finalize_failure \
+    "north-rift-preview" \
+    "dedicated north-rift protocol bot failed; see $NORTH_RIFT_BOT_LOG"
+fi
+
+if ! stop_server; then
+  finalize_failure \
+    "north-rift-preview" \
+    "dedicated preview bot passed but server did not release port 25565"
+fi
+pass "north-rift dedicated preview server cleanup"
+
 CURRENT_STAGE="summary"
 echo ""
 echo "=== [$TASK_ID][$SCRIPT_TAG] Evidence paths ==="
@@ -1013,6 +1115,8 @@ echo "  redis: $REDIS_LOG"
 echo "  server: $SERVER_LOG"
 echo "  redis-sub: $REDIS_SUB_LOG"
 echo "  tiandao: $TIANDAO_LOG"
+echo "  north-rift preview server: $NORTH_RIFT_SERVER_LOG"
+echo "  north-rift preview bot: $NORTH_RIFT_BOT_LOG"
 
 echo ""
 echo "=== [$TASK_ID][$SCRIPT_TAG] Result ==="
