@@ -378,6 +378,7 @@ pub struct ClientRequestDispatchParams<'w> {
     // ─── plan-supply-coffin-loot-ui P2：外部容器 + entity-based open ──────
     pub ext_container_registry:
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
+    pub supply_coffin_registry: Option<Res<'w, crate::supply_coffin::SupplyCoffinRegistry>>,
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
     pub container_open_tx:
@@ -2481,6 +2482,8 @@ pub fn handle_client_request_payloads(
                     &player_states,
                     &skill_scroll_params.cultivations,
                     &mut clients,
+                    &skill_scroll_params.positions,
+                    &skill_scroll_params.dimensions,
                     &mut commands,
                 );
             }
@@ -4282,6 +4285,537 @@ mod tests {
             bone_coins: 0,
             max_weight: 50.0,
         }
+    }
+
+    fn collect_server_data_payload_types(helper: &mut MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let value = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0).ok()?;
+                value.get("type")?.as_str().map(str::to_string)
+            })
+            .collect()
+    }
+
+    fn run_supply_coffin_open_payload_case(player_pos: DVec3) -> (App, Entity, u64, Vec<String>) {
+        use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+        use crate::supply_coffin::interact::{
+            handle_supply_coffin_interact, SupplyCoffinOpenRequest, SupplyCoffinOpened,
+        };
+        use crate::supply_coffin::{SupplyCoffinGrade, SupplyCoffinRegistry};
+
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.add_event::<SupplyCoffinOpenRequest>();
+        app.add_event::<SupplyCoffinOpened>();
+        app.insert_resource(ExternalContainerRegistry::default());
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry"));
+        app.add_systems(
+            Update,
+            handle_supply_coffin_interact.after(handle_client_request_payloads),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((
+                crate::world::entity_model::COFFIN_COMMON_ENTITY_KIND,
+                EntityId::default(),
+                Position::new(DVec3::new(0.0, 64.0, 0.0)),
+                OldPosition::new(DVec3::new(0.0, 64.0, 0.0)),
+            ))
+            .id();
+        let mut registry =
+            SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0x2468);
+        registry.insert_active(
+            target,
+            SupplyCoffinGrade::Common,
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::supply_coffin::current_wall_clock_secs(),
+        );
+        let rng_before = registry.rng_state;
+        app.insert_resource(registry);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                empty_inventory(),
+                Cultivation::default(),
+                PlayerState::default(),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_pos));
+
+        app.update();
+        let entity_id = app
+            .world()
+            .get::<EntityId>(target)
+            .expect("EntityPlugin must assign the supply-coffin protocol id")
+            .get();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SupplyCoffinOpen { v: 1, entity_id })
+                    .expect("supply_coffin_open request should serialize")
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let payload_types = collect_server_data_payload_types(&mut helper);
+        let opened = app.world().get::<ExternalContainer>(target).is_some();
+        if opened {
+            assert!(
+                app.world()
+                    .resource::<ExternalContainerRegistry>()
+                    .sessions
+                    .values()
+                    .any(|entity| *entity == target),
+                "successful C2S open must register the target session"
+            );
+        }
+        (app, target, rng_before, payload_types)
+    }
+
+    #[test]
+    fn supply_coffin_open_payload_wiring_accepts_finite_and_rejects_non_finite_coordinates() {
+        let (finite, target, _rng_before, payload_types) =
+            run_supply_coffin_open_payload_case(DVec3::new(0.0, 64.0, 0.0));
+        assert!(
+            finite
+                .world()
+                .get::<crate::inventory::external_container::ExternalContainer>(target)
+                .is_some(),
+            "real supply_coffin_open C2S payload must reach the interact consumer"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "loot_container_open"),
+            "successful C2S open must emit loot_container_open S2C; payloads={payload_types:?}"
+        );
+
+        for (label, x) in [
+            ("nan", f64::NAN),
+            ("positive_infinity", f64::INFINITY),
+            ("negative_infinity", f64::NEG_INFINITY),
+        ] {
+            let (app, target, rng_before, payload_types) =
+                run_supply_coffin_open_payload_case(DVec3::new(x, 64.0, 0.0));
+            assert!(
+                app.world()
+                    .get::<crate::inventory::external_container::ExternalContainer>(target)
+                    .is_none(),
+                "{label} C2S open must not create a session container"
+            );
+            assert!(
+                app.world()
+                    .resource::<crate::inventory::external_container::ExternalContainerRegistry>()
+                    .sessions
+                    .is_empty(),
+                "{label} C2S open must not allocate a session"
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<crate::supply_coffin::SupplyCoffinRegistry>()
+                    .rng_state,
+                rng_before,
+                "{label} C2S open must reject before RNG advances"
+            );
+            assert!(
+                payload_types.iter().all(|ty| ty != "loot_container_open"),
+                "{label} C2S open must not emit loot_container_open; payloads={payload_types:?}"
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_external_container_move_case(
+        player_dimension: Option<DimensionKind>,
+        player_pos: DVec3,
+        source_kind: crate::inventory::external_container::ExternalContainerKind,
+        source_active: bool,
+        session_registered: bool,
+        owner_is_player: bool,
+    ) -> (App, Entity, Entity, Vec<String>) {
+        use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+        use crate::supply_coffin::{SupplyCoffinGrade, SupplyCoffinRegistry};
+
+        const SESSION_ID: u64 = 77;
+        const INSTANCE_ID: u64 = 7001;
+        const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
+
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                empty_inventory(),
+                Cultivation::default(),
+                PlayerState::default(),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_pos));
+        if let Some(dimension) = player_dimension {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(CurrentDimension(dimension));
+        }
+
+        let owner = if owner_is_player {
+            player
+        } else {
+            app.world_mut().spawn_empty().id()
+        };
+        let coffin = app
+            .world_mut()
+            .spawn(ExternalContainer {
+                session_id: SESSION_ID,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(SESSION_ID),
+                    name: "external_test".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: vec![PlacedItemState {
+                        row: 0,
+                        col: 0,
+                        instance: inventory_test_item(INSTANCE_ID, "spiritual_ore", 1),
+                    }],
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: Some(owner),
+                timeout_wall_secs: u64::MAX,
+                source_kind,
+            })
+            .id();
+
+        let mut ext_registry = ExternalContainerRegistry {
+            next_session_id: SESSION_ID + 1,
+            ..Default::default()
+        };
+        if session_registered {
+            ext_registry.sessions.insert(SESSION_ID, coffin);
+        }
+        app.insert_resource(ext_registry);
+
+        let mut coffin_registry =
+            SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0x9876);
+        if source_active {
+            coffin_registry.insert_active(
+                coffin,
+                SupplyCoffinGrade::Common,
+                COFFIN_POS,
+                crate::supply_coffin::current_wall_clock_secs(),
+            );
+        }
+        app.insert_resource(coffin_registry);
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: format!(
+                    r#"{{"type":"external_container_move","v":1,"session_id":{SESSION_ID},"instance_id":{INSTANCE_ID},"from":{{"kind":"container","container_id":"ext_{SESSION_ID}","row":0,"col":0}},"to":{{"kind":"container","container_id":"main_pack","row":0,"col":0}}}}"#
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let payload_types = collect_server_data_payload_types(&mut helper);
+        (app, player, coffin, payload_types)
+    }
+
+    fn assert_external_move_rejected_without_mutation(app: &App, player: Entity, coffin: Entity) {
+        let ext = app
+            .world()
+            .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+            .expect("external container must remain attached after rejection");
+        assert!(
+            ext.container
+                .items
+                .iter()
+                .any(|item| item.instance.instance_id == 7001),
+            "rejected move must keep instance 7001 in the external container; actual items={:?}",
+            ext.container
+                .items
+                .iter()
+                .map(|item| item.instance.instance_id)
+                .collect::<Vec<_>>()
+        );
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("test player keeps inventory component");
+        assert!(
+            inventory.containers.iter().all(|container| container
+                .items
+                .iter()
+                .all(|item| item.instance.instance_id != 7001)),
+            "rejected move must not copy instance 7001 into player inventory"
+        );
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(0),
+            "rejected move must not advance inventory revision"
+        );
+    }
+
+    #[test]
+    fn supply_coffin_external_move_real_c2s_rejects_cross_dimension_same_xyz_while_session_is_valid_and_resyncs(
+    ) {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Tsy),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert_eq!(
+            app.world()
+                .resource::<crate::inventory::external_container::ExternalContainerRegistry>()
+                .sessions
+                .get(&77),
+            Some(&coffin),
+            "real C2S move must reach dimension authority while session mapping is still valid"
+        );
+        assert_eq!(
+            app.world()
+                .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+                .expect("supply coffin session must remain attached")
+                .opened_by,
+            Some(player),
+            "real C2S move must be rejected while opened_by still proves requester ownership"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::supply_coffin::SupplyCoffinRegistry>()
+                .active
+                .contains_key(&coffin),
+            "real C2S move must be rejected while authoritative supply-coffin source is still active"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "loot_container_update"),
+            "authorized owner rejected for stale spatial authority must receive external-container resync; payloads={payload_types:?}"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "authorized owner rejected for stale spatial authority must receive inventory resync; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn supply_coffin_external_move_rejects_missing_dimension() {
+        let (app, player, coffin, _payload_types) = run_external_container_move_case(
+            None,
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+    }
+
+    #[test]
+    fn supply_coffin_external_move_rejects_non_finite_coordinates_and_resyncs() {
+        for (label, x) in [
+            ("nan", f64::NAN),
+            ("positive_infinity", f64::INFINITY),
+            ("negative_infinity", f64::NEG_INFINITY),
+        ] {
+            let (app, player, coffin, payload_types) = run_external_container_move_case(
+                Some(DimensionKind::Overworld),
+                DVec3::new(x, 64.0, 0.0),
+                crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                    grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+                },
+                true,
+                true,
+                true,
+            );
+
+            assert_external_move_rejected_without_mutation(&app, player, coffin);
+            assert!(
+                payload_types.iter().any(|ty| ty == "loot_container_update"),
+                "{label} owner rejection must push authoritative external-container state; payloads={payload_types:?}"
+            );
+            assert!(
+                payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+                "{label} owner rejection must push authoritative inventory state; payloads={payload_types:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn supply_coffin_external_move_rejects_out_of_lifecycle_range() {
+        let (app, player, coffin, _payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(6.501, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+    }
+
+    #[test]
+    fn supply_coffin_external_move_rejects_when_active_source_disappears() {
+        let (app, player, coffin, _payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            false,
+            true,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+    }
+
+    #[test]
+    fn external_move_owner_mismatch_keeps_items_and_resyncs_requester_inventory() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            false,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "non-owner rejection must resync only requester-owned inventory state; payloads={payload_types:?}"
+        );
+        assert!(
+            payload_types.iter().all(|ty| ty != "loot_container_update"),
+            "non-owner rejection must not disclose external-container contents; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn external_move_stale_session_resyncs_inventory_without_mutation() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            false,
+            true,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "unknown/stale session must resync requester inventory; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn supply_coffin_external_move_accepts_exact_lifecycle_boundary() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Overworld),
+            DVec3::new(6.5, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            true,
+        );
+
+        let ext = app
+            .world()
+            .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+            .expect("coffin remains after successful move");
+        assert!(
+            ext.container.items.is_empty(),
+            "authorized boundary move must remove the item from the external container"
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert!(
+            inventory.containers.iter().any(|container| container
+                .items
+                .iter()
+                .any(|item| item.instance.instance_id == 7001)),
+            "authorized boundary move must place instance 7001 into player inventory"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "loot_container_update")
+                && payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "successful move must keep existing update + inventory snapshot contract; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn non_supply_external_container_move_keeps_existing_contract_across_dimensions() {
+        let (app, player, coffin, _payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Tsy),
+            DVec3::new(999.0, 64.0, 999.0),
+            crate::inventory::external_container::ExternalContainerKind::StorageCrate {
+                is_herb: false,
+            },
+            false,
+            true,
+            true,
+        );
+
+        let ext = app
+            .world()
+            .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+            .expect("storage crate remains after move");
+        assert!(
+            ext.container.items.is_empty(),
+            "supply-coffin authority rules must not spill into storage-crate move handling"
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert!(
+            inventory.containers.iter().any(|container| container
+                .items
+                .iter()
+                .any(|item| item.instance.instance_id == 7001)),
+            "storage-crate move contract must remain unchanged"
+        );
     }
 
     fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
@@ -16224,6 +16758,8 @@ fn handle_external_container_move(
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
     clients: &mut Query<(&Username, &mut Client)>,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
     _commands: &mut Commands,
 ) {
     use crate::inventory::external_container::{
@@ -16233,14 +16769,29 @@ fn handle_external_container_move(
     use crate::schema::inventory::{InventoryLocationV1, PlacedInventoryItemV1};
     use crate::schema::server_data::{LootContainerUpdateV1, ServerDataPayloadV1, ServerDataV1};
 
+    let supply_coffin_registry = dispatch.supply_coffin_registry.as_deref();
     let Some(ext_reg) = dispatch.ext_container_registry.as_deref_mut() else {
         tracing::warn!("[bong][network] external_container_move: registry missing");
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
     };
 
     let Some(&coffin_entity) = ext_reg.sessions.get(&session_id) else {
         tracing::warn!(
             "[bong][network] external_container_move: unknown session {session_id} from {player_entity:?}"
+        );
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
         );
         return;
     };
@@ -16249,6 +16800,13 @@ fn handle_external_container_move(
         tracing::warn!(
             "[bong][network] external_container_move: ExternalContainer component missing on {coffin_entity:?}"
         );
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
     };
 
@@ -16256,7 +16814,59 @@ fn handle_external_container_move(
         tracing::warn!(
             "[bong][network] external_container_move: session {session_id} not owned by {player_entity:?}"
         );
+        // 非 owner 不得获得外部容器内容；只回推请求者自己的背包状态。
+        resync_inventory_only(
+            player_entity,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
+    }
+
+    if matches!(
+        &ext.source_kind,
+        crate::inventory::external_container::ExternalContainerKind::SupplyCoffin { .. }
+    ) {
+        let Ok(player_pos) = positions.get(player_entity) else {
+            tracing::warn!(
+                "[bong][network] external_container_move: supply coffin session {session_id} player {player_entity:?} missing Position"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+        let active =
+            supply_coffin_registry.and_then(|registry| registry.active.get(&coffin_entity));
+        let authorization = crate::supply_coffin::authority::authorize_supply_coffin_session(
+            active,
+            player_pos.get(),
+            dimensions
+                .get(player_entity)
+                .ok()
+                .map(|dimension| dimension.0),
+        );
+        if let Err(reason) = authorization {
+            tracing::warn!(
+                "[bong][network] external_container_move: supply coffin session {session_id} authority rejected: {reason:?}"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        }
     }
 
     let ext_container_id =

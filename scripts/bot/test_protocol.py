@@ -16,6 +16,7 @@ import re
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import time
 import tomllib
@@ -28,6 +29,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import mc_protocol as mc  # noqa: E402
+from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
@@ -114,6 +116,104 @@ class BlockPositionTest(unittest.TestCase):
             self.assertEqual(got, (x, y, z), f"Position 编码往返 {x, y, z} 变成 {got}")
 
 
+class DiggingActionTest(unittest.TestCase):
+    def test_start_digging_encodes_vanilla_player_action(self):
+        bot = _bare_bot()
+        sent = []
+        bot._send = lambda packet_id, body=b"": sent.append((packet_id, body))
+
+        bot.start_digging(1292, 73, 1519, face=1, sequence=7)
+
+        self.assertEqual(len(sent), 1)
+        packet_id, body = sent[0]
+        self.assertEqual(packet_id, mc.C2S_PLAYER_ACTION)
+        reader = mc.Reader(body)
+        self.assertEqual(reader.varint(), 0, "action=0 才是 Start Destroy Block")
+        packed = struct.unpack(">Q", reader.data[reader.pos : reader.pos + 8])[0]
+        reader.pos += 8
+        self.assertEqual(
+            (
+                _signed_26(packed >> 38),
+                _signed_12(packed & 0xFFF),
+                _signed_26((packed >> 12) & 0x3FFFFFF),
+            ),
+            (1292, 73, 1519),
+        )
+        self.assertEqual(reader.u8(), 1)
+        self.assertEqual(reader.varint(), 7)
+        self.assertEqual(reader.rest(), b"")
+
+    def test_start_digging_rejects_invalid_face_and_sequence(self):
+        bot = _bare_bot()
+        bot._send = lambda *_args: self.fail("invalid digging request must not be sent")
+        for face in (-1, 6):
+            with self.assertRaises(ValueError):
+                bot.start_digging(0, 0, 0, face=face)
+        with self.assertRaises(ValueError):
+            bot.start_digging(0, 0, 0, sequence=-1)
+        with self.assertRaises(ValueError):
+            bot.start_digging(0, 0, 0, sequence=0x80000000)
+
+    def test_start_digging_accepts_maximum_non_negative_varint_sequence(self):
+        bot = _bare_bot()
+        sent = []
+        bot._send = lambda packet_id, body=b"": sent.append((packet_id, body))
+
+        bot.start_digging(0, 0, 0, sequence=0x7FFFFFFF)
+
+        reader = mc.Reader(sent[0][1])
+        self.assertEqual(reader.varint(), 0)
+        reader.pos += 8
+        self.assertEqual(reader.u8(), 1)
+        self.assertEqual(reader.varint(), 0x7FFFFFFF)
+        self.assertEqual(reader.rest(), b"")
+
+    def test_player_action_response_decodes_sequence(self):
+        bot = _bare_bot()
+        bot._dispatch(
+            mc.write_varint(mc.S2C_PLAYER_ACTION_RESPONSE) + mc.write_varint(17)
+        )
+
+        event = bot.events[-1]
+        self.assertEqual(event.kind, "player_action_response")
+        self.assertEqual(event.data, {"sequence": 17})
+
+
+class NoviceRasterFixtureTest(unittest.TestCase):
+    def test_fixture_exposes_deterministic_spiritwood_seed_without_changing_poi_tile(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            manifest_path = make_novice_raster_fixture.generate(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                {(tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]},
+                {(0, 0), (4, 5), (5, 5), (4, 6), (5, 6)},
+            )
+            self.assertEqual(
+                manifest["world_bounds"],
+                {"min_x": 0, "max_x": 1535, "min_z": 0, "max_z": 1791},
+            )
+            palette = manifest["biome_palette"]
+            self.assertEqual(palette[4], "minecraft:meadow")
+            for tile in manifest["tiles"]:
+                biome_ids = (
+                    root / tile["dir"] / "biome_id.bin"
+                ).read_bytes()
+                self.assertEqual(len(biome_ids), make_novice_raster_fixture.TILE_SIZE**2)
+                self.assertLess(max(biome_ids), len(palette))
+
+            self.assertEqual(set((root / "tile_0_0" / "biome_id.bin").read_bytes()), {0})
+            for tile_x, tile_z in ((4, 5), (5, 5), (4, 6), (5, 6)):
+                self.assertEqual(
+                    set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
+                    {4},
+                )
+            spirit_biomes = (root / "tile_5_5" / "biome_id.bin").read_bytes()
+            seed_index = (1519 - 5 * 256) * 256 + (1292 - 5 * 256)
+            self.assertEqual(spirit_biomes[seed_index], 4)
+
+
 class ChatTextTest(unittest.TestCase):
     def test_variants(self):
         cases = [
@@ -182,6 +282,56 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["session_id"], 7)
         self.assertEqual(decoded["rows"], 3)
         self.assertEqual(decoded["cols"], 4)
+
+    def test_proto_loot_container_update_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_loot_container_update_bytes())
+
+        self.assertEqual(
+            decoded["type"],
+            "loot_container_update",
+            "expected type=loot_container_update so the bot dispatches the authoritative "
+            f"update payload, actual={decoded['type']}",
+        )
+        self.assertEqual(
+            decoded["session_id"],
+            7,
+            "expected session_id=7 so the update remains bound to its opened session, "
+            f"actual={decoded['session_id']}",
+        )
+        self.assertEqual(
+            decoded["placed_items"][0]["container_id"],
+            "ext_7",
+            "expected container_id=ext_7 so the update targets the session container, "
+            f"actual={decoded['placed_items'][0]['container_id']}",
+        )
+        self.assertEqual(
+            decoded["placed_items"][0]["item"]["instance_id"],
+            99,
+            "expected instance_id=99 so the update preserves item identity, "
+            f"actual={decoded['placed_items'][0]['item']['instance_id']}",
+        )
+
+    def test_proto_loot_container_close_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_loot_container_close_bytes())
+
+        self.assertEqual(
+            decoded["type"],
+            "loot_container_close",
+            "expected type=loot_container_close so the bot dispatches the close payload, "
+            f"actual={decoded['type']}",
+        )
+        self.assertEqual(
+            decoded["session_id"],
+            7,
+            "expected session_id=7 so close invalidates the opened session, "
+            f"actual={decoded['session_id']}",
+        )
+        self.assertEqual(
+            decoded["reason"],
+            "distance",
+            "expected reason=distance so the bot observes the server rejection cause, "
+            f"actual={decoded['reason']}",
+        )
 
     def test_proto_morph_state_full_payload_decodes(self):
         # plan-race-system-v1 P4 — field 142，mode="full"，一条 active=true entry。
@@ -1143,6 +1293,33 @@ def _server_data_loot_container_open_bytes() -> bytes:
     return _pb_message(119, open_payload)
 
 
+def _server_data_loot_container_update_bytes() -> bytes:
+    item = (
+        _pb_varint(1, 99)
+        + _pb_string(2, "refined_iron")
+        + _pb_string(3, "精铁")
+        + _pb_varint(4, 1)
+        + _pb_varint(5, 1)
+        + _pb_fixed64(6, 0.1)
+        + _pb_string(7, "common")
+        + _pb_string(8, "test")
+        + _pb_varint(9, 2)
+        + _pb_fixed64(10, 0.0)
+        + _pb_fixed64(11, 1.0)
+    )
+    placed = (
+        _pb_string(1, "ext_7")
+        + _pb_varint(2, 0)
+        + _pb_varint(3, 1)
+        + _pb_message(4, item)
+    )
+    return _pb_message(120, _pb_varint(1, 7) + _pb_message(2, placed))
+
+
+def _server_data_loot_container_close_bytes() -> bytes:
+    return _pb_message(121, _pb_varint(1, 7) + _pb_string(2, "distance"))
+
+
 def _server_data_morph_state_bytes(
     *,
     mode: str,
@@ -1187,6 +1364,10 @@ def _pb_varint(field: int, value: int) -> bytes:
 
 def _pb_fixed64(field: int, value: float) -> bytes:
     return _pb_key(field, 1) + struct.pack("<d", value)
+
+
+def _pb_fixed32(field: int, value: float) -> bytes:
+    return _pb_key(field, 5) + struct.pack("<f", value)
 
 
 def _pb_bytes(field: int, value: bytes) -> bytes:
@@ -1431,6 +1612,26 @@ def _bare_bot() -> Bot:
     bot.disconnect_reason = None
     bot.chunk_count = 0
     return bot
+
+
+class RespawnDecodeTest(unittest.TestCase):
+    def test_respawn_exposes_authoritative_dimension_names(self):
+        for dimension in ("minecraft:overworld", "bong:tsy"):
+            with self.subTest(dimension=dimension):
+                bot = _bare_bot()
+                body = (
+                    mc.write_varint(mc.S2C_RESPAWN)
+                    + mc.mc_string(dimension)
+                    + mc.mc_string(dimension)
+                )
+
+                bot._dispatch(body)
+
+                self.assertEqual(len(bot.events), 1)
+                event = bot.events[0]
+                self.assertEqual(event.kind, "respawn")
+                self.assertEqual(event.data["dimension_type_name"], dimension)
+                self.assertEqual(event.data["dimension_name"], dimension)
 
 
 class EntityTrackingTest(unittest.TestCase):
@@ -1952,7 +2153,22 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
 
     def test_dropped_loot_sync_tag81_decodes_pickup_identity(self):
-        item = _pb_varint(1, 77) + _pb_string(2, "fan_tie") + _pb_varint(9, 1)
+        initial_qi_bits = 0x42C50001
+        initial_qi = struct.unpack("<f", struct.pack("<I", initial_qi_bits))[0]
+        freshness = (
+            _pb_varint(1, 123)
+            + _pb_fixed32(2, initial_qi)
+            + _pb_string(3, "Decay")
+            + _pb_string(4, "ling_mu_gun_v1")
+            + _pb_varint(5, 17)
+            + _pb_varint(6, 140)
+        )
+        item = (
+            _pb_varint(1, 77)
+            + _pb_string(2, "fan_tie")
+            + _pb_varint(9, 1)
+            + _pb_message(22, freshness)
+        )
         entry = (
             _pb_varint(1, 77)
             + _pb_string(2, "overflow:fan_tie")
@@ -1977,6 +2193,51 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(drop["item"]["item_id"], "fan_tie")
         self.assertEqual(drop["item"]["stack_count"], 1)
         self.assertEqual(drop["world_pos"], [8.0, 65.0, -2.0])
+        self.assertEqual(
+            drop["item"]["freshness"],
+            {
+                "created_at_tick": 123,
+                "initial_qi": initial_qi,
+                "track": "Decay",
+                "profile": "ling_mu_gun_v1",
+                "frozen_accumulated": 17,
+                "frozen_since_tick": 140,
+            },
+            "dropped_loot_sync 必须保留完整 freshness，拾取后才能对拍同一实例 NBT",
+        )
+        self.assertEqual(
+            struct.pack("<f", drop["item"]["freshness"]["initial_qi"]),
+            struct.pack("<I", initial_qi_bits),
+            "Bot 必须逐 bit 保留 Rust Freshness.initial_qi 的 f32 wire 值",
+        )
+
+    def test_inventory_item_without_freshness_decodes_none(self):
+        item = _pb_varint(1, 77) + _pb_string(2, "fan_tie") + _pb_varint(9, 1)
+        entry = _pb_varint(1, 77) + _pb_message(8, item)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(81, _pb_message(1, entry))
+        )
+        self.assertIsNone(decoded["drops"][0]["item"]["freshness"])
+
+    def test_lumber_progress_tag29_decodes_terminal_contract(self):
+        progress = (
+            _pb_string(1, "offline:wood")
+            + _pb_varint(2, (1 << 64) - 1292)
+            + _pb_varint(3, 73)
+            + _pb_varint(4, 1519)
+            + _pb_fixed64(5, 1.0)
+            + _pb_varint(6, 0)
+            + _pb_varint(7, 1)
+            + _pb_string(8, "背包已满，灵木原木已落地 ×3")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(29, progress))
+        self.assertEqual(decoded["type"], "lumber_progress")
+        self.assertEqual(decoded["session_id"], "offline:wood")
+        self.assertEqual(decoded["log_pos"], [-1292, 73, 1519])
+        self.assertEqual(decoded["progress"], 1.0)
+        self.assertFalse(decoded["interrupted"])
+        self.assertTrue(decoded["completed"])
+        self.assertIn("背包已满", decoded["detail"])
 
     def test_craft_outcome_unknown_fallback(self):
         # 空 CraftOutcome（无 oneof 分支）→ 解码器兜底 unknown，不 crash

@@ -520,6 +520,25 @@ fn inventory_item_view_to_proto(
         // None → proto 不设 → JsonFormat 省键 → client readAlchemyLines 拿 null → 无 tooltip。
         // 修复 InventoryItemView.alchemy proto 漂移（生产走 protobuf 时此前被静默丢弃）。
         alchemy: v.alchemy.as_ref().map(alchemy_item_data_to_proto),
+        freshness: v.freshness.as_ref().map(inventory_freshness_to_proto),
+    }
+}
+
+fn inventory_freshness_to_proto(
+    freshness: &crate::shelflife::Freshness,
+) -> bong::InventoryFreshness {
+    let track = match freshness.track {
+        crate::shelflife::DecayTrack::Decay => "Decay",
+        crate::shelflife::DecayTrack::Spoil => "Spoil",
+        crate::shelflife::DecayTrack::Age => "Age",
+    };
+    bong::InventoryFreshness {
+        created_at_tick: freshness.created_at_tick,
+        initial_qi: freshness.initial_qi,
+        track: track.to_string(),
+        profile: freshness.profile.as_str().to_string(),
+        frozen_accumulated: freshness.frozen_accumulated,
+        frozen_since_tick: freshness.frozen_since_tick,
     }
 }
 
@@ -4683,6 +4702,59 @@ mod tests {
         let decoded = bong::InventoryItemView::decode(bytes.as_slice())
             .expect("InventoryItemView proto decode 应成功");
         decoded.alchemy
+    }
+
+    fn roundtrip_freshness(
+        view: &super::super::inventory::InventoryItemViewV1,
+    ) -> Option<bong::InventoryFreshness> {
+        let proto = inventory_item_view_to_proto(view);
+        let bytes = proto.encode_to_vec();
+        let decoded = bong::InventoryItemView::decode(bytes.as_slice())
+            .expect("InventoryItemView proto decode 应成功");
+        decoded.freshness
+    }
+
+    #[test]
+    fn inventory_item_view_freshness_survives_proto_roundtrip_for_all_tracks() {
+        use crate::shelflife::{DecayProfileId, DecayTrack, Freshness};
+
+        let initial_qi = f32::from_bits(0x42c5_0001);
+        for (track, expected_track) in [
+            (DecayTrack::Decay, "Decay"),
+            (DecayTrack::Spoil, "Spoil"),
+            (DecayTrack::Age, "Age"),
+        ] {
+            let mut view = alchemy_view(None);
+            view.freshness = Some(Freshness {
+                created_at_tick: 123,
+                initial_qi,
+                track,
+                profile: DecayProfileId::new(format!("{}_profile", expected_track.to_lowercase())),
+                frozen_accumulated: 17,
+                frozen_since_tick: Some(140),
+            });
+
+            let freshness = roundtrip_freshness(&view)
+                .expect("freshness 必须过 InventoryItemView protobuf wire 存活");
+            assert_eq!(freshness.created_at_tick, 123);
+            assert_eq!(
+                freshness.initial_qi.to_bits(),
+                initial_qi.to_bits(),
+                "Freshness.initial_qi 的权威类型是 f32，protobuf float 必须逐 bit 保真"
+            );
+            assert_eq!(freshness.track, expected_track);
+            assert_eq!(
+                freshness.profile,
+                format!("{}_profile", expected_track.to_lowercase())
+            );
+            assert_eq!(freshness.frozen_accumulated, 17);
+            assert_eq!(freshness.frozen_since_tick, Some(140));
+        }
+    }
+
+    #[test]
+    fn inventory_item_view_without_freshness_keeps_proto_field_absent() {
+        assert!(roundtrip_freshness(&alchemy_view(None)).is_none());
     }
 
     #[test]
