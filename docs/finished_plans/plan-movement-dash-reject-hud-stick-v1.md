@@ -95,7 +95,7 @@
 - P0 Rust schema / proto converter：复用 `server/src/schema/movement.rs::{MovementActionRequestV1, MovementStateV1}` 与 `server/src/schema/proto_convert.rs::movement_state_to_proto`，wire shape 未变。
 - P0 client：`ProtoServerDataBridge` 归一化 movement protobuf 枚举，`MovementStateHandler` 写入 `MovementStateStore`，`MovementHudPlanner` 执行 reject flash 与 HUD fade；`MovementKeybindings.resetOnDisconnect` 清除跨 session 时序。
 - P0 tests：server 三条 exact 测试锁定成功消费、失败重试与空 ack 幂等；client 五条定向测试锁定生产 bridge、同值重触发、stamina-only followup、全部 HUD 边界与断线 reset。
-- 最终 post-merge HEAD：`afc588fe3fac3351b2cebb0b5564914b2f31b12d`。
+- 最终代码 HEAD（CodeRabbit 返工后，已同步 `origin/main`）：`852b6949873138c9c4e25397eef0185bfada02cd`。
 
 ### 关键 commit
 
@@ -107,14 +107,15 @@
 - `9afe3dd6` · 2026-07-16 · 完善拒绝重试、HUD 全边界、生产 protobuf bridge 与断线 reset 测试。
 - `9eee77c9` · 2026-07-16 · 格式化 movement 拒绝重试实现。
 - `afc588fe` · 2026-07-17 · 合并最新 main，并同步最终基线修复。
+- `852b6949` · 2026-07-17 · 按 CodeRabbit review 完善四处 movement 回归断言的期望、原因与实际值诊断。
 
 ### 测试结果
 
 - `cd server && cargo fmt --check`：PASS。
 - `cd server && cargo clippy --all-targets -- -D warnings`：PASS，耗时 9m03s。
 - `cd server && cargo test`：lib `11713 passed / 0 failed / 1 ignored`，main `11 passed`，full_app `1 passed`，tarkov `4 passed`，doc `0 passed / 5 ignored`；总计 `11729 passed / 0 failed / 6 ignored`。
-- `cd client && JAVA_HOME=<Temurin 17.0.19> PATH=<Temurin 17.0.19>/bin:$PATH ./gradlew test build`：`BUILD SUCCESSFUL`，耗时 4m44s；JUnit XML 汇总 `4095 tests / 0 failures / 0 errors / 0 skipped`。
-- fresh read-only validator（`gpt-5`）对 `afc588fe3fac3351b2cebb0b5564914b2f31b12d`：PASS；server exact `3/3`、Java 17 定向 `39/39`，`0 blocking / 0 major`。
+- `cd client && JAVA_HOME=<Temurin 17.0.19> PATH=<Temurin 17.0.19>/bin:$PATH ./gradlew test build`：CodeRabbit 返工后串行复验 `BUILD SUCCESSFUL in 50s`；JUnit XML 汇总 `4095 tests / 0 failures / 0 errors / 0 skipped`。
+- fresh read-only validator（`gpt-5`）对 `852b6949873138c9c4e25397eef0185bfada02cd`：PASS；Java 17 定向 `27/27`，确认四处目标断言均携带期望、原因及实际布尔值/完整 snapshot，`0 blocking / 0 major`。
 - 旧 clippy 与 POI blocker 已由合入 main 解决，最终完整门禁已证实全绿，本 plan 状态不再阻塞。
 
 ### 跨仓库核验
