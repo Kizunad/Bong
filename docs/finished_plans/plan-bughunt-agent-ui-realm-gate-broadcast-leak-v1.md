@@ -68,33 +68,43 @@
 
 ### 落地清单
 
-- `agent/packages/schema/src/payloads/agent-ui.ts`、`agent/packages/schema/generated/client-request-v1.json`：`AgentUiResponsePayloadV1.target_player` 可选字段（1..=128），保留旧 payload 兼容性。
-- `agent/packages/schema/tests/agent-ui.test.ts`、`server/src/schema/agent_ui.rs`、`server/src/schema/proto_convert.rs`：正反样本、边界、serde 兼容与旧 wire 序列化 pin。
-- `server/src/network/agent_ui.rs`：仅 `realm_gate_rejected` 权威拒绝响应回填 `cmd.target_player`，其余响应显式 `None`。
-- `agent/packages/tiandao/src/ui/uiResponseConsumer.ts`、`agent/packages/tiandao/src/ui/agent-ui.test.ts`：正常 payload 生成 `scope="player"`，缺失/空白目标记录 warn 并按兼容约定退化为 `broadcast/world`。
-- `server/src/network/mod.rs` 既有 `RecipientSelector::player` 双玩家隔离链作为最终路由门，未新增第二套路由实现。
+- `agent/packages/schema/src/payloads/agent-ui.ts`、`agent/packages/schema/tests/agent-ui.test.ts`：`AgentUiResponsePayloadV1.target_player` 保持可选字符串（1..=128），并用 TypeBox `Value.Check` 实测 JavaScript `String.length` 的 UTF-16 code unit 语义；覆盖 legacy 缺字段、显式 `null`、空串、64/65 个 emoji、BMP/astral 混合边界与 128/129 个 BMP。
+- `server/src/schema/agent_ui.rs`：serde 入站与出站统一使用 `encode_utf16().count()` 镜像 TypeBox 接受集合；缺字段兼容为 `None`，显式 `null`、空串和超过 128 UTF-16 units 的目标均拒绝。
+- `server/src/network/agent_ui.rs`：真实 `realm_gate_rejected` producer 回填 canonical `target_player`，并逐字段锁定 action、request id、境界参数与单次响应。
+- `agent/packages/tiandao/src/ui/uiResponseConsumer.ts`、`agent/packages/tiandao/src/ui/agent-ui.test.ts`：非空目标发布 `scope="player"`；缺失或 trim 后空白目标保留 warning，并按既定 legacy 契约发布 `scope="broadcast"`、`target="world"`。
+- `agent/packages/tiandao/tests/ui-response-consumer-runner.ts`、`server/src/network/redis_bridge.rs`、`server/src/network/mod.rs`：test-only 窄适配器串起生产 server producer、生产 Redis response encoder、真实 TypeScript `UiResponseConsumer`、生产 narration decoder 与真实 recipient selector；两名 mock 玩家中仅目标收到 typed `system_warning`，双方均无 chat mirror。
+- 删除 `agent/packages/schema/samples/agent-ui-realm-gate-routing.chain.sample.json`：不再用预制 `agent_narration` 冒充 consumer 输出，避免 producer、consumer 与 fixture 同步改错时产生假绿。
 
 ### 关键提交
 
 - `e68ae6ea`（2026-07-16）：升格并收口 active plan。
 - `2ec1ea3a`（2026-07-16）：定义双端目标玩家兼容契约。
 - `e5622e0d`（2026-07-16）：修复境界门拒绝提示全服泄漏。
-- `dea94b05`（2026-07-16）：修正 clippy 文档格式并复跑 server 门禁。
+- `b0b8a166a91d7ed4157cac94c5db0675754a21a9`（2026-07-16）：收紧境界门私人提示路由契约。
+- `17407bf19d242eb5ffb68539c1e32feb5f334044`（2026-07-16）：合并最新主线 `0972f7c9d5c2dba1f06d884480e62fceedcde711` 并建立最终返工基线。
+- `26485f2632b3c4f79fda3214a76fc1dbbffaabc0`（2026-07-16）：按 UTF-16 code units 对齐 Rust serde 与 TypeBox runtime 长度契约。
+- `2e8a8d3855f62d9c94bdf5590a2bc438fe538636`（2026-07-16）：恢复缺失/空白目标的 warning + legacy broadcast fallback。
+- `8ddb72ebcb9967471bb539da5a3126f13020679a`（2026-07-16）：移除预制 narration fixture，贯通真实 producer→consumer→selector 私有路由回归。
+- `1cb25a7929849aaef01a2e839a67cb8ae7b33721`（2026-07-16）：补齐 TypeBox 显式 `null` 与 legacy 缺字段分流反例。
 
 ### 测试结果
 
-- 定向隔离：`cargo test player_scope_matches_username_and_offline_id --lib -j 1`（1 passed）。
-- Agent：`npm run build`；schema 全套 29 files / 883 tests passed；tiandao 全套 72 files / 830 tests passed。
-- Server：`cargo fmt --check`；`cargo clippy --all-targets -- -D warnings`；`cargo test -j 1`（lib 11693 passed / 0 failed / 1 ignored，main 11 passed，full-app 1 passed，backpack e2e 4 passed，doc-tests 0 passed / 5 ignored）。
-- 主线同步：`origin/main` 已是当前 HEAD 祖先，未引入待复验冲突；同步后再次完成 agent build 与两套全测。
+- Schema：`npm --prefix agent/packages/schema run build` 退出 0；`npm --prefix agent/packages/schema test` 退出 0，29 files / 884 tests passed，其中 `agent-ui.test.ts` 49/49 passed。
+- Tiandao：`npm --prefix agent/packages/tiandao test` 退出 0，72 files / 830 tests passed；测试生成的两个本地 snapshot 已按精确路径清除，未提交 snapshot。
+- Server：在 `/tmp/bong-compile-slot-2.lock` 非阻塞独占锁内执行 `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`，均退出 0；完整 `cargo test` 重跑退出 0，5 个结果块合计 11,731 passed / 0 failed / 6 ignored。
+- 真实跨栈回归：完整 server test 中 `network::tests::narration_tests::realm_gate_producer_consumer_selector_routes_only_target_player` 明确执行为 `ok`；该用例实际运行生产 Redis encoder/decoder 与 TypeScript 生产 consumer，而非注入预制 narration。
+- Client：以 Java `17.0.19` 在 `/tmp/bong-compile-slot-2.lock` 内执行 `./gradlew test build`，退出 0、`BUILD SUCCESSFUL`、13 actionable tasks executed；469 份 JUnit XML 汇总 4,090 tests / 0 failures / 0 errors / 0 skipped。
+- 主线同步：`origin/main=0972f7c9d5c2dba1f06d884480e62fceedcde711` 是代码 HEAD `1cb25a7929849aaef01a2e839a67cb8ae7b33721` 的第二父祖先；合并后的 schema、Tiandao、server 与 client 受影响栈均完成上述完整门禁。
 
-### 跨仓库核验与最终自审
+### 跨仓库核验
 
-- server → agent：`AgentUiResponsePayloadV1.target_player` serde/TypeBox 镜像一致，gate reject producer 回填 canonical `offline:<name>`。
-- agent → server：`UiResponseConsumer` 发布 `bong:agent_narrate` 的 `scope/target` 与 server `RecipientSelector::player` 对拍；既有双玩家测试证明非目标玩家无 payload。
-- 主 agent 在最终 HEAD `dea94b05` 对照 `origin/main` 完成 diff、构造点、schema freshness、工作树与提交 trailer 自审。按用户“仅主 agent 实施”约束，本轮不启动额外 subagent/validator。
+- schema ↔ server：TypeBox `minLength/maxLength` 与 Rust `encode_utf16().count()` 对 64/65 emoji、BMP/astral 混合、空串、显式 `null` 与 legacy 缺字段的 wire 接受集合一致。
+- server → agent：`receive_agent_ui_cmd_system` 的真实 gate reject response 经生产 Redis encoder 把 canonical `target_player` 交给 `UiResponseConsumer`。
+- agent → server：生产 consumer 输出经生产 `bong:agent_narrate` parser 进入 `process_redis_inbound`，`NarrationScope::Player` 最终选择唯一目标玩家；legacy 缺失/空白目标仍按归档决议 warning 后广播。
+- server → client：目标玩家恰好收到一条 typed `bong:server_data` narration，旁观者无 typed payload；两名玩家都没有 `GameMessageS2c` chat mirror。
+- 提交元数据：最终返工代码链的 6 枚 commit 均由 `git interpret-trailers --parse` 识别 `Model: gpt-5.6-sol-max` 与 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。
 
 ### 遗留 / 后续
 
-- 缺失或空白 `target_player` 的历史 payload 仍按兼容协议广播并记录 warn；待所有生产者升级后可另立 plan 收紧为丢弃或安全降级。
+- 缺失或 trim 后空白 `target_player` 的历史 payload 仍按归档 plan 的兼容决议广播并记录 warning；待所有生产者升级后可另立 plan 评估是否收紧。
 - TSY `target_player` fallback 与本 plan 明确排除的 revelation/button-click 问题不在本次范围。
