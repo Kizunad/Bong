@@ -162,10 +162,22 @@ class CombatHudBootstrapTest {
                 + "\"echo_count\":4,\"aim_progress\":0.0,\"charge_progress\":0.0,"
                 + "\"abrasion_container\":\"\",\"abrasion_qi_payload\":0.0,\"tick\":10}");
 
-        assertTrue(echoDispatch.handled(), "新 session 的低 tick echo 应被真实 handler 消费");
-        assertTrue(chargeDispatch.handled(), "新 session 的低 tick charge 应被真实 handler 消费");
-        assertTrue(abrasionDispatch.handled(), "新 session 的低 tick abrasion 应被真实 handler 消费");
-        assertTrue(multiShotDispatch.handled(), "新 session 的低 tick multishot 应被真实 handler 消费");
+        assertTrue(echoDispatch.handled(),
+            "期望 echoDispatch.handled()=true，因为新 session 应接纳低 tick echo；实际 dispatch={routeType="
+                + echoDispatch.routeType() + ", handled=" + echoDispatch.handled()
+                + ", logMessage=" + echoDispatch.logMessage() + "}");
+        assertTrue(chargeDispatch.handled(),
+            "期望 chargeDispatch.handled()=true，因为新 session 应接纳低 tick charge；实际 dispatch={routeType="
+                + chargeDispatch.routeType() + ", handled=" + chargeDispatch.handled()
+                + ", logMessage=" + chargeDispatch.logMessage() + "}");
+        assertTrue(abrasionDispatch.handled(),
+            "期望 abrasionDispatch.handled()=true，因为新 session 应接纳低 tick abrasion；实际 dispatch={routeType="
+                + abrasionDispatch.routeType() + ", handled=" + abrasionDispatch.handled()
+                + ", logMessage=" + abrasionDispatch.logMessage() + "}");
+        assertTrue(multiShotDispatch.handled(),
+            "期望 multiShotDispatch.handled()=true，因为新 session 应接纳低 tick multishot；实际 dispatch={routeType="
+                + multiShotDispatch.routeType() + ", handled=" + multiShotDispatch.handled()
+                + ", logMessage=" + multiShotDispatch.logMessage() + "}");
         AnqiHudState state = AnqiHudStateStore.snapshot(now);
         assertEquals(3, state.echoCount(),
             "disconnect reset 后 handler 不得把低 tick echo 当成旧包静默丢弃");
@@ -295,7 +307,9 @@ class CombatHudBootstrapTest {
     private static ServerDataDispatch handleAnqiHudPayload(String payload) {
         ServerPayloadParseResult parsed = ServerDataEnvelope.parse(
             payload, payload.getBytes(StandardCharsets.UTF_8).length);
-        assertTrue(parsed.isSuccess(), "测试 payload 必须先通过真实 envelope parser: " + payload);
+        assertTrue(parsed.isSuccess(),
+            "期望 envelope parse 成功，因为测试 payload 格式合法；实际 parseSuccess="
+                + parsed.isSuccess() + ", parseError=" + parsed.errorMessage() + ", payload=" + payload);
         return new AnqiHudServerDataHandler().handle(parsed.envelope());
     }
 

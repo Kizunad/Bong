@@ -169,10 +169,13 @@ class AnqiHudStateStoreTest {
 
         AnqiHudState expiredState = AnqiHudStateStore.snapshot(newSessionNow);
         assertFalse(expiredState.active(newSessionNow),
-            "TTL 过期只应隐藏旧反馈，不应伪装成仍活跃的 HUD");
+            "期望 expiredState.active(newSessionNow)=false，因为 TTL 过期只应隐藏旧反馈；实际="
+                + expiredState.active(newSessionNow));
         assertEquals(0, expiredState.echoCount());
         assertEquals(0.0f, expiredState.chargeProgress(), 0.001f);
-        assertFalse(expiredState.hasAbrasionContainer());
+        assertFalse(expiredState.hasAbrasionContainer(),
+            "期望 expiredState.hasAbrasionContainer()=false，因为 TTL 过期应隐藏旧磨损容器；实际="
+                + expiredState.hasAbrasionContainer());
         assertEquals(0.0f, expiredState.abrasionQiPayload(), 0.001f);
         assertEquals(0, expiredState.multiShotCount());
 
@@ -184,10 +187,13 @@ class AnqiHudStateStoreTest {
 
         AnqiHudState blockedState = AnqiHudStateStore.snapshot(newSessionNow);
         assertFalse(blockedState.active(newSessionNow),
-            "同一 session 未 clear 时，过期 slot 的高 lastTick 仍必须拒绝低 tick 乱序包");
+            "期望 blockedState.active(newSessionNow)=false，因为未 clear 的高 lastTick 应拒绝低 tick 乱序包；实际="
+                + blockedState.active(newSessionNow));
         assertEquals(0, blockedState.echoCount());
         assertEquals(0.0f, blockedState.chargeProgress(), 0.001f);
-        assertFalse(blockedState.hasAbrasionContainer());
+        assertFalse(blockedState.hasAbrasionContainer(),
+            "期望 blockedState.hasAbrasionContainer()=false，因为未 clear 的高 lastTick 应拒绝低 tick 磨损包；实际="
+                + blockedState.hasAbrasionContainer());
         assertEquals(0.0f, blockedState.abrasionQiPayload(), 0.001f);
         assertEquals(0, blockedState.multiShotCount());
 
