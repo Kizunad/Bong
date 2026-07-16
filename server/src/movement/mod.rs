@@ -497,12 +497,7 @@ fn emit_movement_state_payloads(
     clock: Res<CombatClock>,
     players: Query<MovementStateEmitItem<'_>, MovementStateEmitFilter>,
 ) {
-    emit_movement_state_payloads_with(
-        commands,
-        clock.tick,
-        players,
-        serialize_server_data_payload,
-    );
+    emit_movement_state_payloads_with(commands, clock.tick, players, serialize_server_data_payload);
 }
 
 fn emit_movement_state_payloads_with(
@@ -1392,7 +1387,9 @@ mod tests {
             "首拍序列化失败发生在 ack 前，reject 必须保留等待自动重试"
         );
         assert!(
-            app.world().get::<MovementStateEmitPending>(entity).is_some(),
+            app.world()
+                .get::<MovementStateEmitPending>(entity)
+                .is_some(),
             "首拍失败后 deferred Commands 必须落下实体级 pending 标记供下一拍选中"
         );
 
@@ -1419,7 +1416,9 @@ mod tests {
             "只有自动重试成功交付后才消费 reject"
         );
         assert!(
-            app.world().get::<MovementStateEmitPending>(entity).is_none(),
+            app.world()
+                .get::<MovementStateEmitPending>(entity)
+                .is_none(),
             "自动重试成功后 deferred Commands 必须清除 pending 标记"
         );
 
