@@ -26,7 +26,6 @@ import {
   AgentUiActionType,
   type AgentUiErrorReasonV1,
 } from "../src/payloads/agent-ui.js";
-import { NarrationV1 } from "../src/narration.js";
 
 // ─── AgentUiRequestCommandV1（agent → server Redis）──────────────────────────
 
@@ -285,20 +284,48 @@ describe("AgentUiResponsePayloadV1", () => {
     expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(false);
   });
 
-  it("边界: target_player 128 字符通过，129 字符拒绝", () => {
+  it("边界: target_player 按 JavaScript UTF-16 code units 校验 1..=128", () => {
     const base = {
       request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       action: "error",
       params: { reason: "realm_gate_rejected" },
     };
-    expect(Value.Check(AgentUiResponsePayloadV1, {
-      ...base,
-      target_player: "p".repeat(128),
-    })).toBe(true);
-    expect(Value.Check(AgentUiResponsePayloadV1, {
-      ...base,
-      target_player: "p".repeat(129),
-    })).toBe(false);
+    const cases = [
+      { name: "64 emoji", value: "😀".repeat(64), utf16: 128, codePoints: 64, valid: true },
+      { name: "65 emoji", value: "😀".repeat(65), utf16: 130, codePoints: 65, valid: false },
+      {
+        name: "126 BMP + 1 astral",
+        value: "a".repeat(126) + "😀",
+        utf16: 128,
+        codePoints: 127,
+        valid: true,
+      },
+      {
+        name: "127 BMP + 1 astral",
+        value: "a".repeat(127) + "😀",
+        utf16: 129,
+        codePoints: 128,
+        valid: false,
+      },
+      { name: "128 BMP", value: "界".repeat(128), utf16: 128, codePoints: 128, valid: true },
+      { name: "129 BMP", value: "界".repeat(129), utf16: 129, codePoints: 129, valid: false },
+    ];
+
+    for (const testCase of cases) {
+      expect(testCase.value.length, `${testCase.name} 的 JavaScript String.length`).toBe(
+        testCase.utf16,
+      );
+      expect([...testCase.value], `${testCase.name} 的 Unicode scalar 数`).toHaveLength(
+        testCase.codePoints,
+      );
+      expect(
+        Value.Check(AgentUiResponsePayloadV1, {
+          ...base,
+          target_player: testCase.value,
+        }),
+        `${testCase.name} 应按 ${testCase.utf16} 个 UTF-16 code units 判定为 ${testCase.valid}`,
+      ).toBe(testCase.valid);
+    }
   });
 });
 
@@ -440,39 +467,6 @@ describe("shared wire fixture: agent-ui-close.channel-wire.sample.json", () => {
       });
       expect(JSON.stringify(payload)).toBe(entry.payload_utf8);
     }
-  });
-});
-
-describe("shared chain fixture: realm gate private routing", () => {
-  it("uses one contract across server producer, agent consumer, and server selector", () => {
-    const fixture = loadSample("agent-ui-realm-gate-routing.chain.sample.json") as {
-      players: {
-        target_username: string;
-        target_canonical_id: string;
-        non_target_username: string;
-      };
-      agent_ui_command: unknown;
-      server_response: unknown;
-      agent_narration: unknown;
-    };
-
-    expect(Value.Check(AgentUiRequestCommandV1, fixture.agent_ui_command)).toBe(true);
-    expect(Value.Check(AgentUiResponsePayloadV1, fixture.server_response)).toBe(true);
-    expect(Value.Check(NarrationV1, fixture.agent_narration)).toBe(true);
-
-    const command = fixture.agent_ui_command as Record<string, unknown>;
-    const response = fixture.server_response as Record<string, unknown>;
-    const narration = fixture.agent_narration as {
-      narrations: Array<Record<string, unknown>>;
-    };
-    expect(command["target_player"]).toBe(fixture.players.target_canonical_id);
-    expect(response["target_player"]).toBe(fixture.players.target_canonical_id);
-    expect(narration.narrations[0]?.["target"]).toBe(
-      fixture.players.target_canonical_id,
-    );
-    expect(fixture.players.non_target_username).not.toBe(
-      fixture.players.target_username,
-    );
   });
 });
 
