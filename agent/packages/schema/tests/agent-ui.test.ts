@@ -226,6 +226,16 @@ describe("AgentUiResponsePayloadV1", () => {
     expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(true);
   });
 
+  it("负样本: target_player 显式 null 不得冒充 legacy 缺字段", () => {
+    const payload = {
+      request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      action: "error",
+      target_player: null,
+      params: { reason: "realm_gate_rejected" },
+    };
+    expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(false);
+  });
+
   it("AgentUiErrorReasonV1 覆盖 server 实发 error reason", () => {
     const reasons: AgentUiErrorReasonV1[] = [
       "realm_gate_rejected",
