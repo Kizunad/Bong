@@ -4865,6 +4865,72 @@ mod tests {
         }
 
         #[test]
+        fn realm_gate_shared_chain_routes_only_target_player() {
+            let fixture: serde_json::Value = serde_json::from_str(include_str!(
+                "../../../agent/packages/schema/samples/agent-ui-realm-gate-routing.chain.sample.json"
+            ))
+            .expect("realm gate routing 共享 fixture 应是合法 JSON");
+            let target_username = fixture["players"]["target_username"]
+                .as_str()
+                .expect("fixture target_username 应为字符串");
+            let non_target_username = fixture["players"]["non_target_username"]
+                .as_str()
+                .expect("fixture non_target_username 应为字符串");
+            let narration_envelope: NarrationV1 =
+                serde_json::from_value(fixture["agent_narration"].clone())
+                    .expect("agent consumer 输出 fixture 应通过 server narration serde");
+            assert_eq!(
+                narration_envelope.narrations.len(),
+                1,
+                "共享链路 fixture 应只有一条私人拒绝提示"
+            );
+            let expected_text = narration_envelope.narrations[0].text.clone();
+
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (_target, mut target_helper) =
+                spawn_test_client_with_helper(&mut app, target_username, [8.0, 66.0, 8.0]);
+            let (_bystander, mut bystander_helper) =
+                spawn_test_client_with_helper(&mut app, non_target_username, [18.0, 66.0, 18.0]);
+
+            enqueue_single_narration(
+                &tx_inbound,
+                narration_envelope
+                    .narrations
+                    .into_iter()
+                    .next()
+                    .expect("共享链路 fixture narration 不应为空"),
+            );
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let target_payloads = collect_typed_narration_payloads(&mut target_helper);
+            let bystander_payloads = collect_typed_narration_payloads(&mut bystander_helper);
+            assert_single_narration_payload(target_payloads.as_slice(), expected_text.as_str());
+            match &target_payloads[0].payload {
+                ServerDataPayloadV1::Narration { narrations } => assert_eq!(
+                    narrations[0].style,
+                    NarrationStyle::SystemWarning,
+                    "目标玩家收到的必须是 realm_gate_rejected system_warning"
+                ),
+                other => panic!("共享链路应产出 narration payload，实为 {other:?}"),
+            }
+            assert!(
+                bystander_payloads.is_empty(),
+                "非目标玩家 {non_target_username} 不得收到 {target_username} 的境界门拒绝提示"
+            );
+            assert_eq!(
+                collect_game_message_packets(&mut target_helper),
+                0,
+                "目标玩家不应收到额外 chat mirror"
+            );
+            assert_eq!(
+                collect_game_message_packets(&mut bystander_helper),
+                0,
+                "非目标玩家不应收到任何 chat mirror"
+            );
+        }
+
+        #[test]
         fn player_scope_matches_char_id_alias() {
             let (mut app, tx_inbound) = setup_narration_app(None);
             let (azure, mut azure_helper) =

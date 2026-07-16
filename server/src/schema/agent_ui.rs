@@ -122,9 +122,41 @@ pub struct AgentUiRequestPayloadV1 {
 pub struct AgentUiResponsePayloadV1 {
     pub request_id: String,
     pub action: AgentUiActionType,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_agent_ui_id",
+        serialize_with = "serialize_optional_agent_ui_id"
+    )]
     pub target_player: Option<String>,
     pub params: HashMap<String, String>,
+}
+
+fn deserialize_optional_agent_ui_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // `default` handles an omitted field. If the field is present it must be a
+    // string, so JSON null cannot silently collapse into the legacy None case.
+    let value = String::deserialize(deserializer)?;
+    validate_agent_ui_id("target_player", &value).map_err(serde::de::Error::custom)?;
+    Ok(Some(value))
+}
+
+fn serialize_optional_agent_ui_id<S>(
+    value: &Option<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(value) => {
+            validate_agent_ui_id("target_player", value).map_err(serde::ser::Error::custom)?;
+            serializer.serialize_some(value)
+        }
+        None => serializer.serialize_none(),
+    }
 }
 
 // ─── Schema 4：Server → Client close 信号（bong:server_data 变体 agent_ui_close）──
@@ -499,6 +531,55 @@ mod tests {
             "旧 payload 缺省 target_player 时应反序列化为 None，实为 {:?}",
             resp.target_player
         );
+    }
+
+    #[test]
+    fn agent_ui_response_target_player_deserialize_enforces_wire_boundaries() {
+        for (len, should_pass) in [(0, false), (1, true), (128, true), (129, false)] {
+            let json = serde_json::json!({
+                "request_id": "target-boundary",
+                "action": "error",
+                "target_player": "界".repeat(len),
+                "params": { "reason": "realm_gate_rejected" },
+            });
+            let result = serde_json::from_value::<AgentUiResponsePayloadV1>(json);
+            assert_eq!(
+                result.is_ok(),
+                should_pass,
+                "target_player 长度 {len} 的反序列化结果与 1..=128 契约不符：{result:?}"
+            );
+        }
+
+        let null_target = serde_json::json!({
+            "request_id": "target-null",
+            "action": "error",
+            "target_player": null,
+            "params": { "reason": "realm_gate_rejected" },
+        });
+        assert!(
+            serde_json::from_value::<AgentUiResponsePayloadV1>(null_target).is_err(),
+            "TypeBox optional string 不接受 null，Rust wire 镜像也必须拒绝"
+        );
+    }
+
+    #[test]
+    fn agent_ui_response_target_player_serialize_enforces_wire_boundaries() {
+        for (len, should_pass) in [(0, false), (1, true), (128, true), (129, false)] {
+            let response = AgentUiResponsePayloadV1 {
+                request_id: "target-outbound-boundary".to_string(),
+                action: AgentUiActionType::Error,
+                target_player: Some("界".repeat(len)),
+                params: [("reason".to_string(), "realm_gate_rejected".to_string())]
+                    .into_iter()
+                    .collect(),
+            };
+            let result = serde_json::to_value(response);
+            assert_eq!(
+                result.is_ok(),
+                should_pass,
+                "target_player 长度 {len} 的序列化结果与 1..=128 契约不符：{result:?}"
+            );
+        }
     }
 
     #[test]

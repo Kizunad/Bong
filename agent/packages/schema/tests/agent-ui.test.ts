@@ -26,6 +26,7 @@ import {
   AgentUiActionType,
   type AgentUiErrorReasonV1,
 } from "../src/payloads/agent-ui.js";
+import { NarrationV1 } from "../src/narration.js";
 
 // ─── AgentUiRequestCommandV1（agent → server Redis）──────────────────────────
 
@@ -439,6 +440,39 @@ describe("shared wire fixture: agent-ui-close.channel-wire.sample.json", () => {
       });
       expect(JSON.stringify(payload)).toBe(entry.payload_utf8);
     }
+  });
+});
+
+describe("shared chain fixture: realm gate private routing", () => {
+  it("uses one contract across server producer, agent consumer, and server selector", () => {
+    const fixture = loadSample("agent-ui-realm-gate-routing.chain.sample.json") as {
+      players: {
+        target_username: string;
+        target_canonical_id: string;
+        non_target_username: string;
+      };
+      agent_ui_command: unknown;
+      server_response: unknown;
+      agent_narration: unknown;
+    };
+
+    expect(Value.Check(AgentUiRequestCommandV1, fixture.agent_ui_command)).toBe(true);
+    expect(Value.Check(AgentUiResponsePayloadV1, fixture.server_response)).toBe(true);
+    expect(Value.Check(NarrationV1, fixture.agent_narration)).toBe(true);
+
+    const command = fixture.agent_ui_command as Record<string, unknown>;
+    const response = fixture.server_response as Record<string, unknown>;
+    const narration = fixture.agent_narration as {
+      narrations: Array<Record<string, unknown>>;
+    };
+    expect(command["target_player"]).toBe(fixture.players.target_canonical_id);
+    expect(response["target_player"]).toBe(fixture.players.target_canonical_id);
+    expect(narration.narrations[0]?.["target"]).toBe(
+      fixture.players.target_canonical_id,
+    );
+    expect(fixture.players.non_target_username).not.toBe(
+      fixture.players.target_username,
+    );
   });
 });
 

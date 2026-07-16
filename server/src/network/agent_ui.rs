@@ -862,13 +862,22 @@ mod tests {
         }
     }
 
-    /// realm_gate 拒绝低境界 → Redis emit AgentUiResponse{action:error, reason:realm_gate_rejected}
+    /// 共享链路第一段：真实 realm gate producer 必须逐字段产出 fixture 中的 server response。
     #[test]
-    fn system_realm_gate_rejected_emits_error_response() {
+    fn system_realm_gate_rejected_matches_shared_routing_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/agent-ui-realm-gate-routing.chain.sample.json"
+        ))
+        .expect("realm gate routing 共享 fixture 应是合法 JSON");
         let (mut app, rx) = build_agent_ui_app();
-        // 引气 rank=2，realm_gate=3 → 拒绝
-        spawn_test_player(&mut app, "TestPlayer", Realm::Induce);
-        let cmd = make_cmd("req-realm-gate", "TestPlayer", 3);
+        let target_username = fixture["players"]["target_username"]
+            .as_str()
+            .expect("fixture target_username 应为字符串");
+        // 引气 rank=2，fixture realm_gate=3 → 拒绝。
+        spawn_test_player(&mut app, target_username, Realm::Induce);
+        let cmd: AgentUiRequestCommandV1 =
+            serde_json::from_value(fixture["agent_ui_command"].clone())
+                .expect("fixture agent_ui_command 应通过 Rust serde 镜像");
         app.world_mut().send_event(AgentUiCmdEvent(cmd));
         app.update();
 
@@ -876,36 +885,11 @@ mod tests {
             RedisOutbound::AgentUiResponse(r) => r,
             other => panic!("期望 AgentUiResponse，实为 {other:?}"),
         };
+        let actual =
+            serde_json::to_value(resp).expect("真实 realm gate response 必须能按 wire 契约序列化");
         assert_eq!(
-            resp.request_id, "req-realm-gate",
-            "request_id 应对齐，实为 {}",
-            resp.request_id
-        );
-        assert!(
-            matches!(resp.action, AgentUiActionType::Error),
-            "action 应为 Error（realm_gate_rejected），实为 {:?}",
-            resp.action
-        );
-        assert_eq!(
-            resp.params.get("reason").map(|s| s.as_str()),
-            Some("realm_gate_rejected"),
-            "reason 应为 realm_gate_rejected，实为 {:?}",
-            resp.params.get("reason")
-        );
-        assert_eq!(
-            resp.target_player.as_deref(),
-            Some("offline:TestPlayer"),
-            "realm_gate_rejected 必须回填 canonical target_player，供 agent 生成 player scope narration"
-        );
-        assert!(
-            resp.params.contains_key("player_realm"),
-            "params 应含 player_realm 字段，实为 {:?}",
-            resp.params
-        );
-        assert!(
-            resp.params.contains_key("required_realm"),
-            "params 应含 required_realm 字段，实为 {:?}",
-            resp.params
+            actual, fixture["server_response"],
+            "server producer 必须逐字段匹配交给 agent consumer 的同一份共享 fixture"
         );
     }
 

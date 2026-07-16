@@ -15,7 +15,7 @@
  *   - error (其余 reason)               → 记录警告日志
  *
  * narration 格式（realm_gate_rejected）：
- *   scope="player"，target=target_player（若无则 legacy scope="broadcast"，target="world"）
+ *   scope="player"，target=target_player（缺失目标时告警并丢弃，禁止私人提示广播）
  *   style="system_warning"
  *   text 文本来自 REALM_GATE_NARRATION_TEXT
  */
@@ -275,13 +275,14 @@ export class UiResponseConsumer {
     if (!targetPlayer) {
       this.logger.warn(
         `[ui-response-consumer] realm_gate_rejected missing target_player; ` +
-          `falling back to broadcast request_id=${response.request_id}`,
+          `dropping private narration request_id=${response.request_id}`,
       );
+      return;
     }
 
     const narration: Narration = {
-      scope: targetPlayer ? "player" : "broadcast",
-      target: targetPlayer || "world",
+      scope: "player",
+      target: targetPlayer,
       style: "system_warning",
       text: REALM_GATE_NARRATION_TEXT,
     };
