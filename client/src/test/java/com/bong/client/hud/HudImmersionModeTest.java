@@ -70,6 +70,35 @@ class HudImmersionModeTest {
     }
 
     @Test
+    void agentUiLayerSurvivesPeaceAndCultivationFilters() {
+        HudRenderCommand command = HudRenderCommand.screenTint(HudRenderLayer.AGENT_UI, 0xCC000000);
+
+        for (HudImmersionMode.Mode mode : HudImmersionMode.Mode.values()) {
+            assertEquals(
+                List.of(command),
+                HudImmersionMode.filter(List.of(command), mode),
+                "Agent UI 覆层在 " + mode + " 模式下都必须进入后续 screen gate"
+            );
+        }
+    }
+
+    @Test
+    void agentUiLayerRemainsOpaqueDuringImmersiveFade() {
+        HudImmersionMode.setManualImmersive(true, 1_000L);
+        HudRenderCommand command = HudRenderCommand.screenTint(HudRenderLayer.AGENT_UI, 0xCC000000);
+
+        List<HudRenderCommand> commands = HudImmersionMode.applyImmersiveAlpha(
+            List.of(command),
+            HudImmersionMode.Mode.PEACE,
+            VisualEffectState.none(),
+            HudRuntimeContext.empty(),
+            1_500L
+        );
+
+        assertEquals(0xCC000000, commands.get(0).color());
+    }
+
+    @Test
     void immersiveFadeDuration() {
         HudImmersionMode.setManualImmersive(true, 1_000L);
 
