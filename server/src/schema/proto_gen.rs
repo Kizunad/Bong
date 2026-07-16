@@ -1292,6 +1292,7 @@ mod tests {
             forge_side_effects: vec!["brittle_edge".to_string()],
             forge_achieved_tier: Some(2),
             alchemy: None,
+            freshness: None,
         };
         let bytes = item.encode_to_vec();
         let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -1337,6 +1338,7 @@ mod tests {
             forge_side_effects: vec![],
             forge_achieved_tier: None,
             alchemy: None,
+            freshness: None,
         };
         let bytes = item.encode_to_vec();
         let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -1409,6 +1411,7 @@ mod tests {
             forge_side_effects: vec![],
             forge_achieved_tier: None,
             alchemy: None,
+            freshness: None,
         };
 
         let snapshot = InventorySnapshot {
@@ -1539,6 +1542,7 @@ mod tests {
                 forge_side_effects: vec![],
                 forge_achieved_tier: None,
                 alchemy: None,
+                freshness: None,
             };
             let bytes = item.encode_to_vec();
             let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -11326,6 +11330,7 @@ mod tests {
                                 forge_side_effects: vec![],
                                 forge_achieved_tier: None,
                                 alchemy: None,
+                                freshness: None,
                             }),
                         })
                         .collect(),
@@ -11352,6 +11357,7 @@ mod tests {
                             forge_side_effects: vec!["锋锐".to_string()],
                             forge_achieved_tier: Some(2),
                             alchemy: None,
+                            freshness: None,
                         }),
                         ..Default::default()
                     }),
@@ -11380,6 +11386,7 @@ mod tests {
                                     forge_side_effects: vec![],
                                     forge_achieved_tier: None,
                                     alchemy: None,
+                                    freshness: None,
                                 })
                             } else {
                                 None
