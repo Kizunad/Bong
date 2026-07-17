@@ -70,4 +70,16 @@ describe("ChatMessageV1 timestamp contract", () => {
 
     expect(result.ok, `source ts=${String(ts)} must be rejected`).toBe(false);
   });
+
+  it("pins ts as a server-observed Unix second in the committed generated schema", () => {
+    const generated = JSON.parse(
+      readFileSync(new URL("../generated/chat-message-v1.json", import.meta.url), "utf8"),
+    ) as { properties?: Record<string, unknown> };
+
+    expect(generated.properties?.ts).toMatchObject({
+      type: "integer",
+      minimum: 0,
+      description: "Server-observed Unix timestamp (seconds)",
+    });
+  });
 });

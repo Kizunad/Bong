@@ -15,6 +15,12 @@ PROFILE="${CHAT_WINDOW_E2E_PROFILE:-debug}"
 HOST="127.0.0.1"
 MC_PORT=25565
 MARKER="chat-window-$RUN_ID"
+FORGED_FUTURE_TIMESTAMP_MILLIS="$(python3 - <<'PY'
+import time
+
+print(time.time_ns() // 1_000_000 + 86_400_000)
+PY
+)"
 
 mkdir -p "$EVIDENCE_DIR"
 
@@ -182,24 +188,32 @@ if ! grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" \
   exit 1
 fi
 
-PYTHONPATH="$ROOT/scripts" python3 - "$HOST" "$MC_PORT" "$MARKER" >"$BOT_LOG" 2>&1 <<'PY'
+PYTHONPATH="$ROOT/scripts" python3 - \
+  "$HOST" "$MC_PORT" "$MARKER" "$FORGED_FUTURE_TIMESTAMP_MILLIS" \
+  >"$BOT_LOG" 2>&1 <<'PY'
 import sys
 
 from bot.bot import Bot
 
 host, port, marker = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+forged_future_timestamp_millis = int(sys.argv[4])
 with Bot("ChatWindowBot", host=host, port=port) as bot:
     bot.expect_event("game_join", timeout=15.0)
     bot.expect_event("pos_look", timeout=15.0)
-    bot.chat(marker)
+    bot.chat(marker, timestamp_millis=forged_future_timestamp_millis)
     echo = bot.expect_chat(marker, timeout=10.0)
     print(f"[chat-window-e2e] bot echo={echo.data['text']!r}")
+    print(
+        "[chat-window-e2e] forged_client_timestamp_millis="
+        f"{forged_future_timestamp_millis}"
+    )
     bot.assert_alive("聊天写入 Redis 后")
 PY
 
 (
   cd "$ROOT"
   export REDIS_URL CHAT_WINDOW_E2E_MARKER="$MARKER"
+  export CHAT_WINDOW_E2E_CLIENT_TIMESTAMP_MILLIS="$FORGED_FUTURE_TIMESTAMP_MILLIS"
   "$ROOT/agent/node_modules/.bin/tsx" "$ROOT/scripts/e2e/chat-signal-window.mts"
 ) >"$TIANDAO_LOG" 2>&1
 

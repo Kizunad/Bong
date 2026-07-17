@@ -1738,6 +1738,29 @@ class BotChatPacketTest(unittest.TestCase):
                     "acknowledged 必须保留协议 763 的 20-bit 固定 BitSet",
                 )
 
+    def test_chat_packet_can_model_a_forged_future_client_timestamp(self):
+        forged_future_millis = 1_712_432_100_999
+        bot = _bare_bot()
+        sent: list[tuple[int, bytes]] = []
+        bot._send = lambda packet_id, body: sent.append((packet_id, body))
+
+        with mock.patch(
+            "bot.bot.time.time_ns",
+            side_effect=AssertionError("explicit protocol timestamps must not read the local clock"),
+        ):
+            bot.chat("未来时间验真", timestamp_millis=forged_future_millis)
+
+        self.assertEqual(len(sent), 1)
+        packet_id, body = sent[0]
+        self.assertEqual(packet_id, mc.C2S_CHAT_MESSAGE)
+        reader = mc.Reader(body)
+        self.assertEqual(reader.string(), "未来时间验真")
+        self.assertEqual(
+            reader.i64(),
+            forged_future_millis,
+            "测试 Bot 必须能按原版 C2S 字节精确模拟客户端未来时间，而不是在 harness 内预先钳制",
+        )
+
 
 class RespawnDecodeTest(unittest.TestCase):
     def test_respawn_exposes_authoritative_dimension_names(self):

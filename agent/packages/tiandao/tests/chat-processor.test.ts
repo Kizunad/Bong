@@ -215,6 +215,31 @@ describe("chat-processor", () => {
     expect(mergeChatSignals([expired, boundary], [], nowSeconds)).toEqual([boundary]);
   });
 
+  it("rejects future signals and expires a server-observed signal across later merge rounds", () => {
+    const observedAt = 10_000;
+    const observed = createTimedSignal(observedAt, { raw: "可信观察时间" });
+    const oneSecondFuture = createTimedSignal(observedAt + 1, { raw: "未来一秒" });
+    const farFuture = createTimedSignal(observedAt + 86_400, { raw: "未来一天" });
+
+    expect(isRecentSignal(oneSecondFuture, observedAt)).toBe(false);
+    expect(isRecentSignal(farFuture, observedAt)).toBe(false);
+
+    const firstRound = mergeChatSignals([], [oneSecondFuture, farFuture, observed], observedAt);
+    expect(firstRound).toEqual([observed]);
+
+    const boundaryRound = mergeChatSignals(firstRound, [], observedAt + 300);
+    expect(boundaryRound).toEqual([observed]);
+    expect(
+      buildChatSignalsBlock({ signals: boundaryRound, nowSeconds: observedAt + 300 }),
+    ).toContain(observed.raw);
+
+    const expiredRound = mergeChatSignals(boundaryRound, [], observedAt + 301);
+    expect(expiredRound).toEqual([]);
+    expect(
+      buildChatSignalsBlock({ signals: boundaryRound, nowSeconds: observedAt + 301 }),
+    ).toBe("");
+  });
+
   it("uses explicit ts instead of timestamp-like mechanic annotations", () => {
     const nowSeconds = 10_000;
     const recent = createTimedSignal(nowSeconds, { mentions_mechanic: "spirit_qi;ts:1" });
