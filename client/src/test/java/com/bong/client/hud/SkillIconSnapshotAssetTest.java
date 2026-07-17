@@ -108,7 +108,12 @@ class SkillIconSnapshotAssetTest {
      */
     private static Path mainResourcesRoot() {
         Path cwd = Path.of(System.getProperty("user.dir"));
+        // 优先 processResources 的 main 输出（真实进 jar 的运行时资源），其次 main 源码
+        // 目录（同一 main source set，仅在处理输出未生成时兜底）——两者都不含 test
+        // resources，假资产无从混入。
         for (Path candidate : List.of(
+                cwd.resolve("build/resources/main"),
+                cwd.resolve("client/build/resources/main"),
                 cwd.resolve("src/main/resources"),
                 cwd.resolve("client/src/main/resources"))) {
             if (Files.isDirectory(candidate)) {
