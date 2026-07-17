@@ -135,7 +135,8 @@ for i in "${!paths[@]}"; do
     continue
   fi
 
-  size=$(du -sh "$path" 2>/dev/null | cut -f1 || true)
+  # size 仅用于报告展示，du 失败显示 "?" 而非静默空值；失败不中断巡检
+  size=$(du -sh "$path" 2>/dev/null | cut -f1) || size="?"
 
   # dirty 判定 fail-closed：git status 本身失败（index.lock 被占/元数据损坏）
   # 与「确认干净」必须区分，查不出来就当脏交人工，绝不 fail-open 放行删除。
