@@ -1,0 +1,1 @@
+PR-1 反向探针占位文件：仅存在于 test resources，用于证明生产资产存在性检查不吃聚合 classpath 假资产。非真实 PNG。
