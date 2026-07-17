@@ -133,11 +133,17 @@ for i in "${!paths[@]}"; do
         verdict="可回收（PR 已 $pr_state）"
         if [[ $APPLY -eq 1 ]]; then
           [[ $locked -eq 1 ]] && git worktree unlock "$path" 2>/dev/null || true
-          git worktree remove "$path"
-          [[ -n "$branch" ]] && git branch -D "$branch" >/dev/null 2>&1 || true
-          verdict="已回收（PR $pr_state，本地分支已删）"
-          reclaimed=$((reclaimed + 1))
-          freed_hint="$freed_hint $size"
+          # --force：上面的 dirty 门已确认无源码改动/未跟踪文件，此处只剩 ignored
+          # 构建缓存（target/build），部分 git 版本会因此拒绝 remove。
+          # remove 失败降级为交人工，绝不让单棵树崩掉整轮巡检（set -e）。
+          if git worktree remove --force "$path" 2>/dev/null; then
+            [[ -n "$branch" ]] && git branch -D "$branch" >/dev/null 2>&1 || true
+            verdict="已回收（PR $pr_state，本地分支已删）"
+            reclaimed=$((reclaimed + 1))
+            freed_hint="$freed_hint $size"
+          else
+            verdict="回收失败（worktree remove 报错）→ 交人工"
+          fi
         fi
       fi
       ;;
