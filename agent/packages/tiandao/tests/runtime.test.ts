@@ -44,9 +44,11 @@ class StructuredFakeLlmClient implements LlmClient {
 
 class ChatAwareFakeAgent extends FakeAgent {
   public receivedChatSignalsCount = 0;
+  public receivedChatSignalPlayers: string[] = [];
 
   setChatSignals(signals: { player: string }[]): void {
     this.receivedChatSignalsCount = signals.length;
+    this.receivedChatSignalPlayers = signals.map((signal) => signal.player);
   }
 }
 
@@ -1068,6 +1070,62 @@ describe("runRuntime", () => {
 
     expect(createRedis).not.toHaveBeenCalled();
     expect(logger.log).toHaveBeenCalled();
+  });
+
+  it("refreshes the chat window clock after async drain before merging signals", async () => {
+    const loopStartedAtSeconds = 10_000;
+    const serverObservedAtSeconds = loopStartedAtSeconds + 1;
+    const redis = new SequenceRuntimeRedis([createTestWorldState()]);
+    redis.drainPlayerChat.mockResolvedValue([
+      {
+        v: 1,
+        ts: serverObservedAtSeconds,
+        player: "offline:Observed",
+        raw: "跨秒到达的合法消息",
+        zone: "spawn",
+      },
+      {
+        v: 1,
+        ts: serverObservedAtSeconds + 86_400,
+        player: "offline:ForgedFuture",
+        raw: "伪造未来消息",
+        zone: "spawn",
+      },
+    ]);
+    const chatAwareAgent = new ChatAwareFakeAgent("calamity", {
+      commands: [],
+      narrations: [],
+      reasoning: "chat-window-clock",
+    });
+    const now = vi
+      .fn(() => serverObservedAtSeconds * 1_000)
+      .mockReturnValueOnce(loopStartedAtSeconds * 1_000)
+      .mockReturnValue(serverObservedAtSeconds * 1_000);
+
+    await withIsolatedCwd(async () => {
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          agents: [chatAwareAgent],
+          createRedis: () => redis,
+          createClient: () => ({
+            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
+          }),
+          sleep: vi.fn(async () => {}),
+          logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
+          maxLoopIterations: 1,
+          now,
+        },
+      );
+    });
+
+    expect(chatAwareAgent.receivedChatSignalPlayers).toEqual(["offline:Observed"]);
   });
 
   it("returns after single mock tick without sleep", async () => {
