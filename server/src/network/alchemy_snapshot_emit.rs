@@ -412,7 +412,11 @@ mod tests {
         FireProfile, IngredientSpec, Outcomes, Recipe, RecipeStage, ToleranceSpec,
     };
     use crate::alchemy::{AlchemyFurnace, AlchemySession, Intervention, RecipeRegistry};
+    use crate::network::agent_bridge::serialize_server_data_payload_proto;
     use crate::schema::alchemy::{AlchemySessionDataV1, AlchemyStageHintV1};
+    use crate::schema::proto_gen::bong::{self, server_data_envelope};
+    use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use prost::Message;
 
     const RECIPE_ID: &str = "hud_contract_recipe";
 
@@ -550,6 +554,42 @@ mod tests {
             expected_active_data(true, "炼制中"),
             "active snapshot must preserve every runtime field, authoritative recipe target, ordered stage hint, empty-required summary, and intervention"
         );
+    }
+
+    #[test]
+    fn active_session_snapshot_survives_production_proto_encoding() {
+        let furnace = active_furnace();
+        let data = build_session_data(furnace.session.as_ref(), &test_registry());
+        let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemySession(Box::new(data)));
+
+        let bytes = serialize_server_data_payload_proto(&payload)
+            .expect("active alchemy session must serialize through the production proto path");
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("production alchemy session proto must decode");
+        let session = match decoded.payload {
+            Some(server_data_envelope::Payload::AlchemySession(session)) => session,
+            other => panic!("expected alchemy_session proto payload, got {other:?}"),
+        };
+
+        assert_eq!(session.recipe_id.as_deref(), Some(RECIPE_ID));
+        assert!(session.active);
+        assert_eq!(session.elapsed_ticks, 44);
+        assert_eq!(session.target_ticks, 180);
+        assert_eq!(session.temp_current, 0.58);
+        assert_eq!(session.temp_target, 0.62);
+        assert_eq!(session.temp_band, 0.08);
+        assert_eq!(session.qi_injected, 7.25);
+        assert_eq!(session.qi_target, 12.5);
+        assert_eq!(session.status_label, "炼制中");
+        assert_eq!(session.stages.len(), 3);
+        assert_eq!(session.stages[0].summary, "ci_she_hao×2 + ling_shui×1");
+        assert!(session.stages[0].completed);
+        assert!(!session.stages[0].missed);
+        assert_eq!(session.stages[1].summary, "dan_sha×3");
+        assert!(!session.stages[1].completed);
+        assert!(session.stages[1].missed);
+        assert_eq!(session.stages[2].summary, "");
+        assert_eq!(session.interventions_recent, vec!["§7AdjustTemp(0.58)"]);
     }
 
     #[test]

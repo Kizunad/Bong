@@ -4947,10 +4947,8 @@ mod tests {
     }
 
     fn alchemy_snapshot_active_session(player_id: &str) -> AlchemySession {
-        let mut session = AlchemySession::new(
-            ALCHEMY_SNAPSHOT_RECIPE_ID.into(),
-            player_id.to_string(),
-        );
+        let mut session =
+            AlchemySession::new(ALCHEMY_SNAPSHOT_RECIPE_ID.into(), player_id.to_string());
         session.temp_current = 0.61;
         session.qi_injected = 4.25;
         session
@@ -5068,7 +5066,10 @@ mod tests {
         );
 
         assert_eq!(snapshots.len(), 1, "open must emit one session snapshot");
-        assert!(snapshots[0].active, "open must expose the active furnace session");
+        assert!(
+            snapshots[0].active,
+            "open must expose the active furnace session"
+        );
         assert_authoritative_alchemy_guidance(&snapshots[0], [(false, false), (false, false)]);
     }
 
@@ -5094,7 +5095,10 @@ mod tests {
         );
 
         assert_eq!(snapshots.len(), 1, "ignite must emit one session snapshot");
-        assert!(snapshots[0].active, "ignite must expose its newly active session");
+        assert!(
+            snapshots[0].active,
+            "ignite must expose its newly active session"
+        );
         assert_eq!(snapshots[0].elapsed_ticks, 0);
         assert_authoritative_alchemy_guidance(&snapshots[0], [(false, false), (false, false)]);
     }
@@ -5170,7 +5174,11 @@ mod tests {
             }),
         );
 
-        assert_eq!(snapshots.len(), 1, "successful feed must emit one session snapshot");
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "successful feed must emit one session snapshot"
+        );
         assert_authoritative_alchemy_guidance(&snapshots[0], [(true, false), (false, false)]);
     }
 
@@ -5199,11 +5207,8 @@ mod tests {
             .staged
             .materials
             .insert(ALCHEMY_SNAPSHOT_MATERIAL.into(), 2);
-        let furnace = spawn_owned_alchemy_snapshot_furnace(
-            &mut app,
-            "offline:Azure",
-            Some(session),
-        );
+        let furnace =
+            spawn_owned_alchemy_snapshot_furnace(&mut app, "offline:Azure", Some(session));
 
         let snapshots = run_alchemy_snapshot_request(
             &mut app,
