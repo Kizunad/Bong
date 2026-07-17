@@ -131,7 +131,8 @@
 - P0：`agent/packages/schema/tests/chat-message.test.ts`、`agent/packages/tiandao/tests/chat-processor.test.ts` 与 `agent/packages/tiandao/tests/agent-real-context-injection.test.ts` 先锁定 schema、转换、窗口边界和真实 LLM prompt 的修复前失败契约。
 - P1：`agent/packages/schema/src/chat-message.ts` 为 `ChatMessageV1.ts` 与 `ChatSignal.ts` 固定非负整数契约；`agent/packages/tiandao/src/chat-processor.ts` 从原始消息注入权威时间，并移除 `mentions_mechanic` 隐式时间解析。
 - P2：`agent/packages/schema/generated/chat-message-v1.json` 与 `agent/packages/schema/generated/chat-signal.json` 已重生成；tiandao context/runtime fixtures 均补齐与测试时钟一致的显式时间。
-- P3：全仓扫描确认 `ChatSignal` 只在 schema/tiandao 内消费，server wire 已提供 `ChatMessageV1.ts`，client 不消费该内部信号；主线无需合并。归档前实现验收基线的主 agent 对抗自审结论为 `PASS e7ad238e1930df8a356a6e8f1ae1718b6f7cb796`；`e7ad238e..ea9849ba` 仅包含 Finish Evidence 回填和 plan 归档移动，未改变受测实现。归档后最终 PR HEAD 的绑定结论记录在 PR body、`/review` 与 e2e check，不在提交自身内容中伪造可变 SHA。
+- P3：初次归档时全仓扫描确认 `ChatSignal` 只在 schema/tiandao 内消费，但当时错误地把 Valence 原样透传的 Minecraft 1.20.1 C2S Unix 毫秒时间戳视为已满足 `ChatMessageV1.ts` 的 Unix 秒契约；原有 agent/schema 门禁因此没有覆盖 server→agent 单位错配。归档前实现验收基线的主 agent 对抗自审结论为 `PASS e7ad238e1930df8a356a6e8f1ae1718b6f7cb796`；`e7ad238e..ea9849ba` 仅包含当时的 Finish Evidence 回填和 plan 归档移动，未改变受测实现。
+- 2026-07-16 收口纠错：原 plan 错把协议毫秒当 wire 秒；本轮仅在 `server/src/network/chat_collector.rs` 构造 server→agent `ChatMessageV1.ts` 时执行整数 `/ 1_000`，而 `PlayerChatCollected.timestamp` 继续保留原始协议毫秒，避免改变 server 内部既有消费者。真实 13 位 Unix 毫秒及 `0/1000/1999` 截断边界均由回归测试锁定。
 
 ### 关键 commit
 

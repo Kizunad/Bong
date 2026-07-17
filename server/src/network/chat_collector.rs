@@ -301,7 +301,9 @@ fn classify_player_message(
     Some(ClassifiedChat::PlayerChat {
         outbound: RedisOutbound::PlayerChat(ChatMessageV1 {
             v: 1,
-            ts: context.timestamp,
+            // Minecraft 1.20.1 ChatMessageC2s carries Unix milliseconds;
+            // ChatMessageV1's server→agent contract carries Unix seconds.
+            ts: context.timestamp / 1_000,
             player: canonical_player,
             raw: context.message.to_string(),
             zone: zone.clone(),
@@ -554,10 +556,11 @@ mod chat_collector_tests {
     }
 
     #[test]
-    fn captures_plain_chat() {
+    fn captures_plain_chat_with_unix_seconds_wire_timestamp() {
         let (mut app, rx_outbound) = setup_chat_collector_app(true);
         let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
-        send_chat_event(&mut app, alice, "这里灵气真足", 1_712_345_700);
+        // Minecraft 1.20.1 ChatMessageC2s carries Unix milliseconds.
+        send_chat_event(&mut app, alice, "这里灵气真足", 1_712_345_700_999);
 
         app.update();
 
@@ -568,12 +571,62 @@ mod chat_collector_tests {
         match outbound {
             RedisOutbound::PlayerChat(chat) => {
                 assert_eq!(chat.v, 1);
-                assert_eq!(chat.ts, 1_712_345_700);
+                assert_eq!(
+                    chat.ts, 1_712_345_700,
+                    "ChatMessageV1.ts must use Unix seconds even though the protocol timestamp uses milliseconds"
+                );
                 assert_eq!(chat.player, "offline:Alice");
                 assert_eq!(chat.raw, "这里灵气真足");
             }
             other => panic!("expected player chat outbound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn normalizes_protocol_timestamp_boundaries_without_changing_internal_event() {
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        let cases = [
+            (0, 0, "zero"),
+            (1_000, 1, "exact-second"),
+            (1_999, 1, "trailing-999"),
+        ];
+
+        for (protocol_millis, _, message) in cases {
+            send_chat_event(&mut app, alice, message, protocol_millis);
+        }
+        app.update();
+
+        let outbound_timestamps = (0..cases.len())
+            .map(|_| {
+                let outbound = rx_outbound
+                    .try_recv()
+                    .expect("each accepted chat should be forwarded to Redis");
+                match outbound {
+                    RedisOutbound::PlayerChat(chat) => chat.ts,
+                    other => panic!("expected player chat outbound, got {other:?}"),
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outbound_timestamps,
+            cases.map(|(_, expected_seconds, _)| expected_seconds),
+            "ChatMessageV1.ts must truncate protocol milliseconds to Unix seconds at zero, exact-second, and trailing-999 boundaries"
+        );
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<PlayerChatCollected>>();
+        let mut reader = events.get_reader();
+        let collected_timestamps = reader
+            .read(events)
+            .map(|event| event.timestamp)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            collected_timestamps,
+            cases.map(|(protocol_millis, _, _)| protocol_millis),
+            "PlayerChatCollected.timestamp must retain the original protocol milliseconds for existing server-internal consumers"
+        );
     }
 
     #[test]
