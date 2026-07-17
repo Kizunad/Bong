@@ -3809,6 +3809,9 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alchemy::recipe::{
+        FireProfile, IngredientSpec, Outcomes, Recipe, RecipeStage, ToleranceSpec,
+    };
     use crate::botany::components::{
         BotanyHarvestMode, BotanyPhase, HarvestSession, HarvestSessionStore,
     };
@@ -4871,6 +4874,363 @@ mod tests {
             }
         }
         false
+    }
+
+    fn collect_alchemy_session_snapshots(
+        helper: &mut MockClientHelper,
+    ) -> Vec<crate::schema::alchemy::AlchemySessionDataV1> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::AlchemySession(snapshot) => Some(*snapshot),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    const ALCHEMY_SNAPSHOT_RECIPE_ID: &str = "handler_snapshot_contract";
+    const ALCHEMY_SNAPSHOT_FURNACE_POS: (i32, i32, i32) = (2, 64, 3);
+    const ALCHEMY_SNAPSHOT_MATERIAL: &str = "handler_snapshot_herb";
+
+    fn alchemy_snapshot_recipe_registry() -> RecipeRegistry {
+        let mut registry = RecipeRegistry::new();
+        registry
+            .insert(Recipe {
+                id: ALCHEMY_SNAPSHOT_RECIPE_ID.into(),
+                name: "handler snapshot contract".into(),
+                furnace_tier_min: 1,
+                stages: vec![
+                    RecipeStage {
+                        at_tick: 0,
+                        required: vec![IngredientSpec {
+                            material: ALCHEMY_SNAPSHOT_MATERIAL.into(),
+                            count: 2,
+                            mineral_id: None,
+                        }],
+                        window: 0,
+                    },
+                    RecipeStage {
+                        at_tick: 12,
+                        required: vec![],
+                        window: 3,
+                    },
+                ],
+                fire_profile: FireProfile {
+                    target_temp: 0.67,
+                    target_duration_ticks: 48,
+                    qi_cost: 9.75,
+                    tolerance: ToleranceSpec {
+                        temp_band: 0.07,
+                        duration_band: 5,
+                    },
+                },
+                outcomes: Outcomes {
+                    perfect: None,
+                    good: None,
+                    flawed: None,
+                    waste: None,
+                    explode: None,
+                },
+                flawed_fallback: None,
+            })
+            .expect("handler snapshot recipe fixture must have a unique id");
+        registry
+    }
+
+    fn alchemy_snapshot_active_session(player_id: &str) -> AlchemySession {
+        let mut session = AlchemySession::new(
+            ALCHEMY_SNAPSHOT_RECIPE_ID.into(),
+            player_id.to_string(),
+        );
+        session.temp_current = 0.61;
+        session.qi_injected = 4.25;
+        session
+    }
+
+    fn spawn_owned_alchemy_snapshot_furnace(
+        app: &mut App,
+        player_id: &str,
+        session: Option<AlchemySession>,
+    ) -> Entity {
+        let mut furnace = AlchemyFurnace::placed(
+            valence::prelude::BlockPos::new(
+                ALCHEMY_SNAPSHOT_FURNACE_POS.0,
+                ALCHEMY_SNAPSHOT_FURNACE_POS.1,
+                ALCHEMY_SNAPSHOT_FURNACE_POS.2,
+            ),
+            1,
+        );
+        furnace.owner = Some(player_id.to_string());
+        furnace.session = session;
+        app.world_mut().spawn(furnace).id()
+    }
+
+    fn send_alchemy_snapshot_request(app: &mut App, client: Entity, body: serde_json::Value) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: body.to_string().into_bytes().into_boxed_slice(),
+            });
+    }
+
+    fn run_alchemy_snapshot_request(
+        app: &mut App,
+        client: Entity,
+        helper: &mut MockClientHelper,
+        body: serde_json::Value,
+    ) -> Vec<crate::schema::alchemy::AlchemySessionDataV1> {
+        send_alchemy_snapshot_request(app, client, body);
+        app.update();
+        flush_all_client_packets(app);
+        collect_alchemy_session_snapshots(helper)
+    }
+
+    fn assert_authoritative_alchemy_guidance(
+        snapshot: &crate::schema::alchemy::AlchemySessionDataV1,
+        stage_states: [(bool, bool); 2],
+    ) {
+        assert_eq!(
+            snapshot.recipe_id.as_deref(),
+            Some(ALCHEMY_SNAPSHOT_RECIPE_ID),
+            "handler payload must identify the same recipe fixture that supplies its targets"
+        );
+        assert_eq!(
+            snapshot.target_ticks, 48,
+            "target duration must come from the authoritative RecipeRegistry fixture"
+        );
+        assert_eq!(
+            snapshot.temp_target, 0.67,
+            "target temperature must come from the authoritative RecipeRegistry fixture"
+        );
+        assert_eq!(
+            snapshot.temp_band, 0.07,
+            "temperature band must come from the authoritative RecipeRegistry fixture"
+        );
+        assert_eq!(
+            snapshot.qi_target, 9.75,
+            "qi target must come from the authoritative RecipeRegistry fixture"
+        );
+        assert_eq!(
+            snapshot.stages,
+            vec![
+                crate::schema::alchemy::AlchemyStageHintV1 {
+                    at_tick: 0,
+                    window: 0,
+                    summary: format!("{ALCHEMY_SNAPSHOT_MATERIAL}×2"),
+                    completed: stage_states[0].0,
+                    missed: stage_states[0].1,
+                },
+                crate::schema::alchemy::AlchemyStageHintV1 {
+                    at_tick: 12,
+                    window: 3,
+                    summary: String::new(),
+                    completed: stage_states[1].0,
+                    missed: stage_states[1].1,
+                },
+            ],
+            "handler payload must preserve declared stage order and an exact empty summary for required=[]"
+        );
+    }
+
+    #[test]
+    fn alchemy_open_furnace_repushes_authoritative_recipe_snapshot_over_wire() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(alchemy_snapshot_recipe_registry());
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let client = app.world_mut().spawn(client_bundle).id();
+        spawn_owned_alchemy_snapshot_furnace(
+            &mut app,
+            "offline:Azure",
+            Some(alchemy_snapshot_active_session("offline:Azure")),
+        );
+
+        let snapshots = run_alchemy_snapshot_request(
+            &mut app,
+            client,
+            &mut helper,
+            serde_json::json!({
+                "type": "alchemy_open_furnace",
+                "v": 1,
+                "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+            }),
+        );
+
+        assert_eq!(snapshots.len(), 1, "open must emit one session snapshot");
+        assert!(snapshots[0].active, "open must expose the active furnace session");
+        assert_authoritative_alchemy_guidance(&snapshots[0], [(false, false), (false, false)]);
+    }
+
+    #[test]
+    fn alchemy_ignite_repushes_authoritative_recipe_snapshot_over_wire() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(alchemy_snapshot_recipe_registry());
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let client = app.world_mut().spawn(client_bundle).id();
+        spawn_owned_alchemy_snapshot_furnace(&mut app, "offline:Azure", None);
+
+        let snapshots = run_alchemy_snapshot_request(
+            &mut app,
+            client,
+            &mut helper,
+            serde_json::json!({
+                "type": "alchemy_ignite",
+                "v": 1,
+                "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+                "recipe_id": ALCHEMY_SNAPSHOT_RECIPE_ID,
+            }),
+        );
+
+        assert_eq!(snapshots.len(), 1, "ignite must emit one session snapshot");
+        assert!(snapshots[0].active, "ignite must expose its newly active session");
+        assert_eq!(snapshots[0].elapsed_ticks, 0);
+        assert_authoritative_alchemy_guidance(&snapshots[0], [(false, false), (false, false)]);
+    }
+
+    #[test]
+    fn alchemy_intervention_repushes_authoritative_recipe_snapshot_over_wire() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(alchemy_snapshot_recipe_registry());
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let client = app.world_mut().spawn(client_bundle).id();
+        spawn_owned_alchemy_snapshot_furnace(
+            &mut app,
+            "offline:Azure",
+            Some(alchemy_snapshot_active_session("offline:Azure")),
+        );
+
+        let snapshots = run_alchemy_snapshot_request(
+            &mut app,
+            client,
+            &mut helper,
+            serde_json::json!({
+                "type": "alchemy_intervention",
+                "v": 1,
+                "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+                "intervention": {"kind": "adjust_temp", "temp": 0.73},
+            }),
+        );
+
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "intervention must emit one session snapshot"
+        );
+        assert_eq!(snapshots[0].temp_current, 0.73);
+        assert_eq!(
+            snapshots[0].interventions_recent,
+            vec!["§7AdjustTemp(0.73)"],
+            "wire snapshot must expose the intervention applied by the production handler"
+        );
+        assert_authoritative_alchemy_guidance(&snapshots[0], [(false, false), (false, false)]);
+    }
+
+    #[test]
+    fn alchemy_feed_repushes_completed_stage_with_authoritative_recipe_snapshot_over_wire() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(alchemy_snapshot_recipe_registry());
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(client).insert((
+            Cultivation::default(),
+            PlayerState::default(),
+            inventory_with_stack(ALCHEMY_SNAPSHOT_MATERIAL, 2),
+        ));
+        spawn_owned_alchemy_snapshot_furnace(
+            &mut app,
+            "offline:Azure",
+            Some(alchemy_snapshot_active_session("offline:Azure")),
+        );
+
+        let snapshots = run_alchemy_snapshot_request(
+            &mut app,
+            client,
+            &mut helper,
+            serde_json::json!({
+                "type": "alchemy_feed_slot",
+                "v": 1,
+                "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+                "slot_idx": 0,
+                "material": ALCHEMY_SNAPSHOT_MATERIAL,
+                "count": 2,
+            }),
+        );
+
+        assert_eq!(snapshots.len(), 1, "successful feed must emit one session snapshot");
+        assert_authoritative_alchemy_guidance(&snapshots[0], [(true, false), (false, false)]);
+    }
+
+    #[test]
+    fn alchemy_take_back_repushes_finished_guidance_after_furnace_session_is_removed() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(alchemy_snapshot_recipe_registry());
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID.into(),
+            ItemTemplate::minimal_for_test(
+                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID,
+            ),
+        )])));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(client).insert((
+            Cultivation::default(),
+            PlayerState::default(),
+            empty_inventory(),
+        ));
+        let mut session = alchemy_snapshot_active_session("offline:Azure");
+        session.staged.completed_stages = vec![0, 1];
+        session
+            .staged
+            .materials
+            .insert(ALCHEMY_SNAPSHOT_MATERIAL.into(), 2);
+        let furnace = spawn_owned_alchemy_snapshot_furnace(
+            &mut app,
+            "offline:Azure",
+            Some(session),
+        );
+
+        let snapshots = run_alchemy_snapshot_request(
+            &mut app,
+            client,
+            &mut helper,
+            serde_json::json!({
+                "type": "alchemy_take_back",
+                "v": 1,
+                "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+                "slot_idx": 0,
+            }),
+        );
+
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "successful take-back must emit one finished session snapshot rather than an empty-furnace snapshot"
+        );
+        assert!(!snapshots[0].active, "finished snapshot must be inactive");
+        assert_eq!(snapshots[0].status_label, "已结束");
+        assert_authoritative_alchemy_guidance(&snapshots[0], [(true, false), (true, false)]);
+        assert!(
+            app.world()
+                .get::<AlchemyFurnace>(furnace)
+                .is_some_and(|furnace| furnace.session.is_none()),
+            "take-back must keep the furnace empty after sending guidance from the completed session"
+        );
     }
 
     fn collect_skill_config_snapshots(
@@ -15513,10 +15873,10 @@ fn handle_alchemy_take_back(
                 "[bong][network][alchemy] `{player_id}` take_back pos={furnace_pos:?} slot={slot_idx} resolved bucket={bucket:?}"
             );
             alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
-            alchemy_snapshot_emit::send_session_from_furnace(
+            alchemy_snapshot_emit::send_session_from_completed_session(
                 &mut client,
                 &player_id,
-                furnace,
+                &ended,
                 registry,
             );
         },
