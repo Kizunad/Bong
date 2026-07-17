@@ -67,16 +67,27 @@
 
 ## P2 — 真缺图标补齐
 
-- r9 追加的 dugu runtime 5 张（`dugu_{eclipse,penetrate,reverse,self_cure,shroud}.png`）走 `/gen-image item` 批量生成（`scripts/images/gen.py`），生成后程序化全量扫透明度揪假透明（--transparent ~10% 白底失败率）。
-- P0 映射逐条核对后若仍有缺口（如 `morph_yixing` 磁盘完全无文件），一并入本批生成。
+- r9 追加的 dugu runtime 5 张走 `/gen-image item` 批量生成（`scripts/images/gen.py`），**命名遵循 P0 单一真相源约定**：生成为 `bong-client:textures/gui/items/skill_scroll_dugu_{eclipse,penetrate,reverse,self_cure,shroud}.png`，并同步把 `dugu_v2` runtime visual payload 中的旧引用路径（`bong:textures/gui/skill/dugu_*.png`）重链到新命名——不给旧命名空间留新增量。生成后程序化全量扫透明度揪假透明（--transparent ~10% 白底失败率）。
+- P0 映射逐条核对后若仍有缺口（如 `morph_yixing` 磁盘完全无文件），一并入本批生成，同样按 `skill_scroll_*` 约定命名。
 - 图标资产变更同步 `resourcepack.rs` + committed manifest 的 sha1/size（否则 Build resource pack CI 红）。
 
 ## P3 — 防回归测试
 
-- **资产存在性扫描测试**（client 侧）：遍历一份从 `TECHNIQUE_DEFINITIONS` 单向导出的 icon 路径快照，断言每条在 classpath 资源里真实存在——任何后续新增招式漏配图标立刻撞红；快照缺失/重复条目本身也判红（防快照与定义漂移）。
-- **映射约束测试**：icon_texture 与磁盘文件一一对应——空串/坏命名空间（非 `bong:`/`bong-client:` 前缀）判红（quickslot 接真值后 `String::new()` 不再合法）；两招指向同一文件视为重复映射判红，显式声明共用的白名单除外（woliu 借用图标在 P0 后应清零）。
+**图标链（server 发射 → 快照 → client 资源，三级都锁）**：
+
+- **发射契约测试**（server 侧）：遍历全部 technique，断言 `skillbar_config_emit` 与 `quickslot_config_emit` 发出的 `icon_texture` **严格等于** `technique_definition(id).icon_texture` 且非空；覆盖未知 technique id、非技能槽位（Item 型槽）的错误/兜底分支——quickslot 接真值后 `String::new()` 不再合法。
+- **快照同步测试**（server 侧）：icon 路径快照由 `TECHNIQUE_DEFINITIONS` **单向生成**（checked-in 快照 + server 测试断言快照与定义的 `skill_id → icon_texture` 集合完全一致、无多无少，或构建期直接导出——机制与 `plan-skill-anim-fidelity-v1` §8 #4 的 cast_ticks 快照拍同一方案），快照不可手改，不形成第二真相源。
+- **资产存在性扫描测试**（client 侧）：消费同一份快照，断言每条 icon 路径在 classpath 资源里真实存在——新增招式漏配图标立刻撞红。
+- **映射约束测试**：空串/坏命名空间（非 `bong:`/`bong-client:` 前缀）判红；两招指向同一文件视为重复映射判红，显式声明共用的白名单除外（woliu 借用图标在 P0 后应清零）。
+
+**动画链（server 发射 → client 加载 → 路由消费，由同一份清单驱动双端）**：
+
+- **共享 anim_id 清单**：P1 全部接线的 anim_id 落成一份清单（与接线表同源），server / client 测试都从它驱动，防两端各自漏项。
 - **接线 pin 测试**（server 侧）：P1 每条新 emit 各配单测，饱和覆盖：事件触发发出携正确 `anim_id` 的 `PlayAnim`（happy path）、事件前置不满足时不发（错误分支）、同一事件重复触发的幂等语义、实体死亡/离线等状态转换下不发。
-- **兜底行为保留**：r9 已加的 `QuickBarHudPlannerTest` 文字兜底测试不动（icon 全配齐后兜底仍是合法防线）。
+- **client 消费闭环测试**：清单逐项断言 `BongAnimationRegistry.contains(anim_id)`（参数化资源 pin）；至少一条端到端路由契约测试——构造 `PlayAnim` payload 经真实 `VfxEventRouter` 入口走到 `ClientAnimationBridge`，断言可解析到 `AnimationLayerManager`（非 bridge miss）；未知 anim_id 的失败分支（bridge miss 记录、不崩溃）。
+- **连击交替序列测试**（`fist_punch_left` 接线专属）：连续空手攻击产生 right→left→right 交替；连击超时/中断后从规定初始侧复位；持武器分支不参与交替；玩家间状态隔离。
+
+**兜底行为保留**：r9 已加的 `QuickBarHudPlannerTest` 文字兜底测试不动（icon 全配齐后兜底仍是合法防线）。
 
 ## §8 开放问题（P0 决策门前需收口）
 
@@ -86,8 +97,8 @@
 
 ## 测试声明
 
-- server：P1 各接线 emit 单测（cargo test，饱和覆盖 happy path / 前置不满足 / 重复触发幂等 / 实体状态转换）；
-- client：图标存在性 + 映射约束（空路径/重复映射/快照漂移）扫描测试 + 既有 `QuickBarHudPlannerTest` 回归（gradlew test）；
+- server：图标发射契约（skillbar+quickslot，含未知 id/非技能槽分支）+ 快照单向同步 + P1 各接线 emit 单测（happy path / 前置不满足 / 重复触发幂等 / 实体状态转换）+ 连击交替序列（cargo test）；
+- client：快照消费的资产存在性 + 映射约束（空路径/坏命名空间/重复映射）扫描 + anim_id 参数化 registry pin + `PlayAnim` 经 `VfxEventRouter`→`ClientAnimationBridge` 路由契约（含未知 id 失败分支）+ 既有 `QuickBarHudPlannerTest` 回归（gradlew test）；
 - e2e：`bash scripts/smoke-test-e2e.sh` 绿；图标资产变更后 Build resource pack CI 绿（sha1 同步）。
 
 ## §10 实施工作流

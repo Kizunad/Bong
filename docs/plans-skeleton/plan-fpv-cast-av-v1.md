@@ -78,15 +78,20 @@
 | 其余招式 | 无（默认零） | — | 沉浸式极简：juice 只给重型招 |
 
 - 复用 `CameraShakeController` 既有 mixin，不新建相机通道；FOV 走独立控制器（新建 `CastFovController`，与 shake 同帧调度）。
-- 可及性：juice 强度全局倍率进 client 配置（0 = 关闭），默认 1.0。
-- 测试（饱和覆盖状态机）：profile 注册表单测（每招参数 pin）+ release 触发时序单测——正常 release 触发、server 拒绝不触发、晚到打断作废 pending juice、回执乱序（打断先于 started 到达）、同 cast identity 重复 release 幂等、倍率 0 完全关闭。
+- **`CastFovController` 生命周期契约（交付物，不许只交一个孤立类）**：
+  - 状态机：`idle → pulse → decay → idle`，所有路径终点必须回到进入施法前的**单一基准 FOV**，复位幂等（重复复位无副作用）；
+  - 驱动路径唯一：由 `CastSyncHandler` 的 cast 状态转换回调驱动（started/accepted/release/reject/cancel），client tick 循环负责 decay 推进；bootstrap 注册位置写死在 `CombatHudBootstrap`（与 `CombatJuiceSystem` 同处初始化，先例 `CombatHudBootstrap.java:48`）；
+  - 与其他 FOV 修改源（原版疾跑/药水、shader）的合成规则显式声明（加法偏移量，不直写绝对 FOV）；
+  - teardown：断线、切世界、玩家死亡时立即复位基准并清 pending 状态。
+- 可及性：juice 强度全局倍率进 client 配置（0 = 关闭），默认 1.0；**进行中把倍率调 0 立即复位**，不是只影响后续脉冲。
+- 测试（饱和覆盖状态机，**从真实 `CastSyncHandler` 入口驱动，不直接调 controller 方法**）：profile 注册表单测（每招参数 pin）+ 状态转换全路径——正常 release 完整脉冲后自然回基准、server 拒绝不触发、晚到打断作废 pending juice、回执乱序（打断先于 started 到达）、同 cast identity 重复 release 幂等、连续施法（前一脉冲 decay 中开新 cast）、重叠触发合成、倍率 0 进行中立即复位、死亡/切世界/断线复位——每条路径末尾断言 FOV == 基准值。
 
 ## P4 — 签名音效资产化
 
 - 范围（音源渠道 §8 #2 拍板后执行）：每流派 signature 招 1-2 条，首批 8 条——`sword_path.heaven_gate`（charge 尾程 + release）、`woliu.void_core` 或 `heart`、`zhenmai.sever_chain`、`baomai.full_power_release`、`dugu.infuse_poison`、`tuike.shed`、`morph.yixing`、`anqi.echo_fractal`。音色基调：末法衰败（骨裂声/锈金属/闷雷/砂砾摩擦），禁华丽仙侠音。
 - 管线建立（一次性基建，后续扩曲目录复用）：音源 → `.ogg`（mono, 44.1kHz，短样本 ≤3s）→ `client/.../assets/bong/sounds.json`（新建，注册 `bong:skill.<school>.<move>` 事件）→ 对应 `server/assets/audio/recipes/*.json` 把主层 sound id 从 `minecraft:` 换成 `bong:` 事件（recipe 其余混音层保留做空间感铺底）。
 - **资产变更硬约束**：同步 `resourcepack.rs` + committed manifest 的 sha1/size（否则 Build resource pack CI 红）。
-- 测试：sounds.json 注册与 .ogg 文件一一对应扫描测试；recipe 引用的 `bong:` 事件全部可解析（防 recipe 指向不存在事件静默无声）。
+- **跨端音效契约测试（同一测试联结三级 ID，不许 server/client 各自维护互不校验的清单）**：提取全部 server audio recipe 引用的 `bong:` sound ID 集合，断言 ⊆ client `sounds.json` 事件键集合；`sounds.json` 每个事件引用的 `.ogg` 文件真实存在且已进 committed manifest（双向：注册无文件、文件无注册均判红）；错误分支覆盖重复键、非法命名空间前缀、缺文件。首批 8 条 signature 招逐项 pin：各自 recipe **真实引用**了为它新建的 `bong:` 事件（防资产只注册不消费）。
 
 ## P5 — 回归收口
 
@@ -104,8 +109,9 @@
 
 ## 测试声明
 
-- client：FPV 查找链/回落/远端隔离单测、juice 状态机饱和单测（正常/拒绝/晚到打断/乱序/重复 release 幂等/倍率 0）、sounds.json↔ogg 双向对应扫描（注册无文件、文件无注册均判红）（gradlew test）；
+- client：FPV 查找链/回落/远端隔离单测、juice 状态机饱和单测（从真实 CastSyncHandler 入口驱动：正常/拒绝/晚到打断/乱序/重复 release 幂等/连续/重叠/倍率 0 立即复位/死亡切世界断线复位，全路径终点断言基准 FOV）、sounds.json↔ogg 双向对应扫描（gradlew test）；
 - server：recipe 引用 `bong:` 事件解析测试（cargo test，指向不存在事件判红）；
+- 跨端：recipe ID 集合 ⊆ sounds.json 键集合 + signature 招 recipe 真实引用自有事件的逐项 pin；
 - e2e：`bash scripts/smoke-test-e2e.sh` + bot cast 场景绿；资源包 CI（sha1 同步）绿。
 
 ## §10 实施工作流

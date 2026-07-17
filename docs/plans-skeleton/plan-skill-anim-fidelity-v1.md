@@ -70,13 +70,13 @@
 5. **库坑红线**（违反即打回）：循环动画每个用到的轴在 endTick 补同值关键帧（防单帧衰减）；`leg.pitch ≤ 40°`，大幅度腿部动作由 `bend` 承担；整体位移/旋转用 `body.*`，上半身独立扭转用 `torso.yaw`。
 6. **工具流**：动画一律脚本生成（`client/tools/gen_<anim>.py`，参照 `gen_fist_punch_right.py` 先例）便于参数化迭代；每批走 `render_animation.py` 三视图 headless 预览；按视觉资产纪律 3 轮打磨 + 终轮 `<PROMISE>` 担保。
 
-**范例 spec（P1 首个交付物 sword.cleave 重制，展示本 plan 要求的书写精度）**：
+**范例 spec（P1 首个交付物 sword.cleave 重制，展示本 plan 要求的书写精度；发力顶点 = cast_ticks=16，与标准 #2 一致）**：
 
 - 总长：cast 16 + recovery 8 = endTick 24，stopTick 27，非循环。
-- anticipation 0→6：右臂 pitch 0→-150°（举过头顶）、torso.yaw 0→-20°（拧腰）、torso.pitch 0→-5°、左臂 pitch 0→-30°（平衡），easeOutQuad。
-- strike 6→11：右臂 pitch -150°→+55°（过身下劈）、torso.yaw -20°→+15°、torso.pitch -5°→+18°（前压）、body.z +0.3（前送）、前腿 pitch 30° + bend 12°（弓步），easeInCubic。
-- hold 11→14：全轴保持（打击定格）。
-- recovery 14→24：全轴回 defaultValue，easeInOutSine。
+- anticipation 0→10：右臂 pitch 0→-150°（举过头顶）、torso.yaw 0→-20°（拧腰）、torso.pitch 0→-5°、左臂 pitch 0→-30°（平衡），easeOutQuad，段内帧点 0/5/10。
+- strike 10→16：右臂 pitch -150°→+55°（过身下劈）、torso.yaw -20°→+15°、torso.pitch -5°→+18°（前压）、body.z +0.3（前送）、前腿 pitch 30° + bend 12°（弓步），easeInCubic，顶点帧 = tick 16（cast 完成瞬间）。
+- hold 16→19：全轴保持（打击定格）。
+- recovery 19→24：全轴回 defaultValue，easeInOutSine。
 
 ## 阶段总览
 
@@ -93,7 +93,12 @@
 ## P0 — 审计矩阵 + 标准定稿 + 对拍测试
 
 - 49 招全量矩阵表落档到本 plan 附录：`skill_id / cast_ticks / anim_id / endTick / 帧点数 / 轴关键帧数 / 是否模板产物 / 是否借用 / 差距分级（A 达标 / B 精修 / C 重制 / D 缺失）`。
-- **时长对齐自动对拍测试**（client 侧）：读 `player_animation/*.json` 元数据 + 一份 `cast_ticks` 快照表，断言每招「非循环 → endTick ∈ [cast, cast+10]；长引导 → 蓄力段 isLoop 且每个用到的轴在 endTick 有补帧（库坑 #1 边界）」。**快照单一真源**：快照由 server `TECHNIQUE_DEFINITIONS` 单向生成（server 侧同步测试保证快照=定义，快照缺失/重复/漂移条目直接判红），client 测试只消费不维护——杜绝「错误时长靠同步改快照混过关」。现状不达标项进 allowlist，逐批清空——allowlist 清零 = P1-P4 完成的机械判据；**allowlist 只允许缩小**，任何新增条目必须在 PR body 显式说明理由。
+- **时长对齐自动对拍测试**（client 侧）：读 `player_animation/*.json` 元数据 + 一份 `cast_ticks` 快照表，按招式类型分三套断言（与精度标准 #2 严格同一时序模型，不用宽区间混过）：
+  - 普通非循环招（2 < cast < 40）：`endTick ∈ [cast+4, cast+8]`（recovery 红线直接入断言）；
+  - 瞬发招（cast ≤ 2）：总长 ∈ [6, 12]；
+  - 长引导招（cast ≥ 40）：蓄力段动画 isLoop 且每个用到的轴在 endTick 有同值补帧（库坑 #1 边界）、release 段动画独立存在且两段 id 均被 server 映射表发射。
+- **精度红线机械化断言**（同一测试套件）：每份动画随批提交一份结构化 spec manifest（anticipation/strike/recovery 的 tick 边界 + 每段帧点数），测试逐项断言：三段各 ≥2 帧点、主要运动轴相邻帧点间隔 ≤4 tick、所有关键帧 easing 显式且主打击轴非 linear、`leg.pitch ≤ 40°`、循环动画每轴 endTick 同值补帧。无法机械判定的重心转移/全身协调，列为逐招人工验收证据：批次 PR 附 `render_animation.py` 三视图 PNG + 对照 checklist。
+- **快照单一真源**：快照由 server `TECHNIQUE_DEFINITIONS` 单向生成（server 侧同步测试保证快照=定义，快照缺失/重复/漂移条目直接判红），client 测试只消费不维护——杜绝「错误时长靠同步改快照混过关」。现状不达标项进 allowlist，逐批清空——allowlist 清零 = P1-P4 完成的机械判据；**allowlist 只允许缩小**，任何新增条目必须在 PR body 显式说明理由。
 - 精度标准（上节）随 P0 一并进 `docs/player-animation-conventions.md`（该文档为动画约定正典，本 plan 允许追加不允许改写既有段落）。
 
 ## P1-P4 — 分批重制（每批同构）
@@ -112,6 +117,7 @@
 - zhenmai：弃借 `SwordQiSlashPlayer`，新建 `ZhenmaiPulsePlayer`（`BongLineParticle` 短脉冲 + `BongSpriteParticle` 穴位点，色系 #D4AF6A 金脉），5 招各自 event_id（`bong:zhenmai_{parry_flash,neutralize_dust,multipoint_ring,harden_shell,sever_snap}`），贴图复用既有 `qi_aura`/`lingqi_ripple` 不新增。
 - burst_meridian：`tie_shan_kao` 撞击冲击环（GroundDecal）、`xue_beng_bu` 步法残影（Ribbon 短尾）、`ni_mai_hu_ti` 体表逆流纹（Sprite 环绕），共用色系 #C58B3F 但形态分化。
 - npc 3 招：脱离借用，各给独立 event_id（形态可简，但 id 与颜色必须独立，保证旁观读招）。
+- **双端闭环接线矩阵（P5 交付物）**：每个新 event_id 一行——`招式 id / server 发射点（resolver 或 emit system 文件）/ SpawnParticle event_id / client VfxPlayer 类名 / VfxBootstrap 注册行`。矩阵同源生成一份共享 event_id 清单驱动双端测试：server 侧逐项断言对应招式事件发出正确 `SpawnParticle`（旧借用 id 不再发出的负向断言一并锁）；client 侧逐项断言 `VfxRegistry` 已注册同一 id 并返回预期 player；再加集合一致性断言（发射集合 == 注册集合，防两端字符串各自漂移）+ 未注册 id 走 bridgeMiss 不崩溃的错误分支。
 
 ## P6 — 回归收口
 
@@ -129,9 +135,9 @@
 
 ## 测试声明
 
-- client：动画 JSON 元数据对拍测试（时长边界 off-by-one / 循环每轴 endTick 补帧 / easing 显式 / 快照缺失/重复/漂移条目判红）+ 资源 pin 测试（gradlew test）；
-- server：`vfx_animation_trigger` 映射 arm 单测（含借用改专属后旧 id 不再发出的负向断言）+ cast_ticks 快照单向同步测试（cargo test）；
-- 实机：每批 `render_animation.py` 三视图存档 + P6 双视角读招验收；
+- client：动画 JSON 元数据对拍测试（分类型时长断言 / 三段 manifest 帧点下限 / 主轴帧间隔 ≤4 / easing 显式且打击轴禁 linear / leg.pitch 上限 / 循环每轴 endTick 补帧 / 快照缺失/重复/漂移判红）+ 资源 pin + 粒子 registry 集合一致性（gradlew test）；
+- server：`vfx_animation_trigger` 映射 arm 单测（含借用改专属后旧 id 不再发出的负向断言）+ P5 粒子发射 pin + cast_ticks 快照单向同步测试（cargo test）；
+- 实机：每批 `render_animation.py` 三视图存档 + 人工验收 checklist（重心/协调等非机械项）+ P6 双视角读招验收；
 - e2e：`bash scripts/smoke-test-e2e.sh` 绿。
 
 ## §10 实施工作流
