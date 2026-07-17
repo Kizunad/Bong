@@ -95,10 +95,10 @@
 
 - **P0 数据与统一场**：`server/zones.json`、`server/zones.worldview.example.json`。
 - **P1 overlap 策略与 CI**：`worldgen/tests/test_zone_overlap_policy.py`、`.github/workflows/worldgen-preview.yml`。
-- **P2 运行时归属 pin**：`server/src/world/zone.rs` 的 `north_rift_and_scorch_are_adjacent_but_mutually_exclusive`，以及 `server/src/audio/ambient.rs`、`server/src/lingtian/weather_profile.rs`、`server/src/movement/mod.rs`、`server/src/tribulation/scorch_record.rs`、`server/src/world/tsy_integration_test.rs` 对生产坐标消费链的专属回归。
-- **真实协议 bot**：`scripts/bot/proto_min.py` 解码权威 `ZoneInfo`，`scripts/bot/scenarios/terrain_north_rift_scorch_zone_identity.py` 通过真实 MC `/preview_tp`、`PlayerPositionLook`、`bong:server_data zone_info` 与 `bong:audio/ambient_zone` 对拍焦土旧点、迁移后渊口和焦土边界；`scripts/bot/run_scenarios.py` 将其隔离为 dedicated scenario。
+- **P2 运行时归属 pin**：`server/src/world/zone.rs` 的 `north_rift_and_scorch_are_adjacent_but_mutually_exclusive`，以及 `server/src/audio/ambient.rs`、`server/src/lingtian/weather_profile.rs`、`server/src/movement/mod.rs`、`server/src/tribulation/scorch_record.rs` 对生产坐标消费链的专属回归；`server/src/world/tsy_integration_test.rs::e_relocated_north_rift_manifest_spawns_and_transfers_to_target` 从真实 `server/zones.tsy.json` 构造 TSY `TerrainProvider`，同时挂载 entry、exit 与 transfer systems，区分 `Entry` / `Exit` portal 并连续执行两 tick，断言玩家停留于 TSY `[253,100,250]`、`TsyPresence` 保留且无 `TsyExitEmit`。
+- **真实协议 bot**：`scripts/bot/proto_min.py` 解码权威 `ZoneInfo`，`scripts/bot/scenarios/terrain_north_rift_scorch_zone_identity.py` 通过真实 MC `/preview_tp`、`PlayerPositionLook`、`bong:server_data zone_info` 与 `bong:audio/ambient_zone` 对拍焦土旧点、迁移后渊口和焦土边界；`scripts/bot/run_scenarios.py` 将其隔离为 dedicated scenario；`scripts/bot/test_protocol.py::NorthRiftScenarioContractTest` 分别使用生产 `combat_music`、`ambient_tsy`、`tribulation_atmosphere` recipe 钉住 `COMBAT`、`TSY`、`TRIBULATION` 拒绝态。
 - **完整 e2e 接线**：`scripts/e2e-redis.sh` 在普通 100 NPC/Tiandao 闭环之后停服，另起 `BONG_PREVIEW_MODE=1` 的无 rogue seed release server 跑唯一北荒场景，并把 preview server / bot 日志写入 manifest。
-- **本地验真证据**：`.tmp/pr1207-gates-c86305882d33/` 保留 Rust、worldgen/dev-reload、Python bot、全部 e2e 成败轮与最终 PASS；`fabric-d198a7e56cfb/` 保留真实 Fabric client/server 全日志、双点 HUD/F3 截图和 SHA-256 摘录。失败轮与缓存修复轮均未删除。
+- **本地验真证据**：`.tmp/pr1207-gates-c86305882d33/` 保留 `worldgen-overlap-policy-f168c4bb.log`、`dev-reload-f168c4bb.log`、`server-full-gate-f168c4bb.log`、`python-bot-north-rift-contract-f168c4bb.log`、`python-bot-protocol-f168c4bb.log`、全部 e2e 成败轮与最终 PASS；`.sisyphus/evidence/task-13-e2e-redis-run-20260717-132207-2594041-pr1207-f168c4bb-final-warm/` 保留最终 run dir；`fabric-d198a7e56cfb/` 保留真实 Fabric client/server 全日志、双点 HUD/F3 截图和 SHA-256 摘录。失败轮、冷缓存超时轮与缓存修复轮均未删除。
 
 ### 关键 commit
 
@@ -117,30 +117,35 @@
 - `9b631a93`（2026-07-17）— 接通 `ZoneInfo` minimal protobuf decoder、dedicated 真实 bot 场景与 e2e preview phase。
 - `c8630588`（2026-07-17）— 合并 `origin/main@062cf636`，兼容最新 movement 拒绝测试后复验。
 - `d198a7e5`（2026-07-17）— 把 bot 音景断言收紧为 state-aware 契约：`AMBIENT→ambient_wilderness`、`CULTIVATION→cultivation_meditate`，并拒绝 crossed pair、`COMBAT`、`TSY`、`TRIBULATION`、unknown 与缺失状态。
+- `6f65c553`（2026-07-17）— 将北荒入口的 TSY 目标由 `[250,100,250]` 移至 `[253,100,250]`，并以真实 TSY provider、entry/exit marker 和连续两 tick 集成测试锁住入场后不即时回弹。
+- `8008c6f0`（2026-07-17）— 用 `combat_music`、`ambient_tsy`、`tribulation_atmosphere` 等生产 recipe 钉住北荒 bot 的 `COMBAT` / `TSY` / `TRIBULATION` 拒绝态。
+- `f168c4bb`（2026-07-17）— 按真实提交日期更正 `b6d6bdf1`、`d2b29f45`、`f42824dd`、`67507e63`、`f0953275`、`2ef556e3`，并将 `f0b33148` 的 2026-07-14 记录独立列出。
 
 ### 测试结果
 
-- Python overlap policy：3/3 通过；覆盖 runtime/blueprint 全量 pair、最终几何与 anchors、渊口与相邻焦土统一场 Qi bake。
+- Python overlap policy（`f168c4bb`，2026-07-17）：8/8 PASS；覆盖全量 overlap/dimension 策略、边界与 known-defect 分类、unknown dimension fail-closed、北荒 runtime/blueprint 几何、生产 manifest portal 导出及统一场 Qi bake。日志：`.tmp/pr1207-gates-c86305882d33/worldgen-overlap-policy-f168c4bb.log`。
 - Git whitespace：`git diff --check` 通过。
-- Worldgen/dev reload：`bash scripts/dev-reload.sh` 完整执行四阶段；overworld 306 tiles 与 TSY 9 tiles 均通过 raster 后验，server dev build 与 restart 成功。真实 preview runtime 随后从同一 manifest 加载 306 terrain tiles / 84 POIs / 112 decorations / 138969 placements，另加载 TSY 9 terrain tiles / 56 POIs。
+- Worldgen/dev reload（`f168c4bb`，2026-07-17）：`bash scripts/dev-reload.sh` 四阶段完整通过；overworld 306/306、TSY 9/9 raster 后验通过，server dev build 与 restart 成功。真实 preview runtime 随后从同一 manifest 加载 306 terrain tiles / 84 POIs / 112 decorations / 138969 placements，另加载 TSY 9 terrain tiles / 56 POIs。日志：`.tmp/pr1207-gates-c86305882d33/dev-reload-f168c4bb.log`。
 - Rust zone 窄测：45 passed，0 failed，0 ignored（初始归档门禁）。
-- Rust 最终完整门禁（`d198a7e56cfb`，2026-07-17）：`cargo fmt --check` 通过；`cargo clippy --all-targets -- -D warnings` 通过；lib 11719 passed / 0 failed / 1 ignored，main 11 passed，`full_app_startup` 1 passed，`tarkov_backpack_p0_e2e` 4 passed，doc tests 0 failed / 5 ignored。日志：`.tmp/pr1207-gates-c86305882d33/server-full-gate-d198a7e56cfb.log`。
-- Python bot protocol：`python3 -m unittest scripts.bot.test_protocol -v` 为 124/124 PASS；其中 `NorthRiftScenarioContractTest` 定向 8/8 PASS，覆盖三点顺序、权威坐标、zone/perception、两种合法音乐状态与全部拒绝分支。
-- 真实 Redis/server/Tiandao/protocol-bot e2e（`d198a7e56cfb`）：run id `20260717-093000-1902656-pr1207-d198a7e56cfb-final-hot`，manifest `status=PASS` / `stage=complete`，17 passed / 0 failed；100 NPC TPS=20.0；dedicated north-rift `preview_tp + zone_info + ambient_zone` bot PASS 且专用 server 完整清理。最终 manifest：`.tmp/pr1207-gates-c86305882d33/task-13-e2e-redis-manifest-d198-final-hot-pass.txt`。
+- Rust 最终完整门禁（`f168c4bb`，2026-07-17）：`cargo fmt --check` 通过；`cargo clippy --all-targets -- -D warnings` 通过；lib 11719 passed / 0 failed / 1 ignored，main 11 passed，`full_app_startup` 1 passed，`tarkov_backpack_p0_e2e` 4 passed，doc tests 0 failed / 5 ignored。日志：`.tmp/pr1207-gates-c86305882d33/server-full-gate-f168c4bb.log`。
+- Python bot protocol（`f168c4bb`，2026-07-17）：`NorthRiftScenarioContractTest` 8/8 PASS，完整 `scripts.bot.test_protocol` 124/124 PASS；覆盖三点顺序、权威坐标、zone/perception、两种合法音乐状态、crossed pair，以及以各自生产 recipe 验证的 `COMBAT` / `TSY` / `TRIBULATION` 等全部拒绝分支。日志：`.tmp/pr1207-gates-c86305882d33/python-bot-north-rift-contract-f168c4bb.log`、`.tmp/pr1207-gates-c86305882d33/python-bot-protocol-f168c4bb.log`。
+- 真实 Redis/server/Tiandao/protocol-bot e2e（`f168c4bb`，2026-07-17）：run id `20260717-132207-2594041-pr1207-f168c4bb-final-warm`，manifest `status=PASS` / `stage=complete`，17 passed / 0 failed；100 NPC TPS=19.9；dedicated north-rift `preview_tp + zone_info + ambient_zone` bot PASS 且专用 server 完整清理。manifest：`.tmp/pr1207-gates-c86305882d33/task-13-e2e-redis-manifest-f168-final-warm-pass.txt`；run dir：`.sisyphus/evidence/task-13-e2e-redis-run-20260717-132207-2594041-pr1207-f168c4bb-final-warm/`；driver log：`.tmp/pr1207-gates-c86305882d33/e2e-redis-driver-f168c4bb-final-warm.log`。
 - 真实 Fabric renderer/runtime（`d198a7e56cfb`）：Java 17.0.19、Fabric 1.20.1、Mesa llvmpipe，在 `DISPLAY=:99` 真实连接预览服；client 收到 `north_waste_east_scorch` 与 `rift_mouth_north_002` 的 `zone_info`，并分别处理 `CULTIVATION/cultivation_meditate` 的 `ambient_zone`。server 权威日志记录 `/preview_tp 2000 74 -7800 0 0` 与 `/preview_tp 2000 74 -7303 0 0`；四张 1280×720 HUD/F3 截图已人工查看，F3 命中 X=2000、Z=-7800/-7303，且两处真实 raster 地貌可辨。证据：`.tmp/pr1207-gates-c86305882d33/fabric-d198a7e56cfb/fabric-runtime-evidence.txt`。取证完成后显式终止长期运行的 `runClient`，因此 Gradle 末尾 exit 143 仅表示人工停进程，不计作 build PASS。
 
 ### 跨仓库核验
 
 - **server**：`ZoneRegistry::find_zone`、`ZoneRegistry::zones_are_adjacent` 与 `north_rift_and_scorch_are_adjacent_but_mutually_exclusive` 在合并后 HEAD 上共同通过。
-- **worldgen / CI**：`ZoneOverlapPolicyTest` 的全局 overlap 策略、几何/anchor 对拍、统一场 Qi bake 对拍 3/3 通过，且 `.github/workflows/worldgen-preview.yml` 已显式纳入该测试。
-- **server 生产消费者**：环境音、天气 profile、移动焦土语义、渡劫焦土记录、TSY/Overworld 合并与 preview teleport 都以真实 `ZoneRegistry` 和生产坐标通过专属 pin；没有以 mock zone 替代归属证明。
-- **Python bot / MC protocol**：minimal decoder 的 oneof/字段号与 `proto/bong/envelope.proto::ServerDataEnvelope.zone_info`、`ZoneInfo` 对拍；真实 bot 同时要求 `PlayerPositionLook`、`zone_info` 与 `ambient_zone` 在同一 watermark 后一致，拒绝 stale/wrong packet 和错误音乐状态。
+- **worldgen / CI**：`ZoneOverlapPolicyTest` 8/8 通过全局 overlap/dimension 策略、几何/anchor、生产 manifest 的 `[253,100,250]` target pin 与统一场 Qi bake，且 `.github/workflows/worldgen-preview.yml` 已显式纳入该测试。
+- **server 生产消费者**：环境音、天气 profile、移动焦土语义、渡劫焦土记录、TSY/Overworld 合并与 preview teleport 都以真实 `ZoneRegistry` 和生产坐标通过专属 pin；真实 TSY provider 的 `Entry` / `Exit` portal 在同一 App 中连续执行两 tick，玩家落点 `[253,100,250]` 位于 `tsy_zongmen_01_shallow`、处于 `[250,100,250]` exit 的默认 1.5 格半径之外，且不产生即时 `TsyExitEmit`；没有以 mock zone 替代归属证明。
+- **Python bot / MC protocol**：minimal decoder 的 oneof/字段号与 `proto/bong/envelope.proto::ServerDataEnvelope.zone_info`、`ZoneInfo` 对拍；真实 bot 同时要求 `PlayerPositionLook`、`zone_info` 与 `ambient_zone` 在同一 watermark 后一致，拒绝 stale/wrong packet 和错误音乐状态；`COMBAT`、`TSY`、`TRIBULATION` 拒绝态均使用各自生产 recipe 验证。
 - **agent / Redis / e2e**：非 mock Tiandao one-tick、`bong:world_state`、`bong:agent_command`、`bong:agent_narrate`、server command anchor 与 100 NPC TPS 门禁均在同一 17/17 run 中通过；北荒 dedicated bot 是其后独立 preview phase，不污染普通 TPS server。
 - **client / Fabric**：本 plan 未改 client source 或 schema，但已用真实 Java 17 Fabric runtime 消费 server payload、切换两处 zone/audio 状态并实际渲染同一 raster 世界；截图、client log、server log 三方互证，不以 headless mock 代替 renderer 证据。
 
 ### 遗留 / 后续
 
 - 功能与本地跨栈验收无遗留；本次证据 commit 后仍须对新的最终 HEAD 重新执行无上下文 validator、push、独立 `/review` 评论与 GitHub e2e，再按 review gate 合并 #1207。该流程不会删除现有 worktree、分支、缓存或历史失败轮证据。
+- `server/zones.worldview.example.json` 中另两个 `family_id:zongmen_01` 入口仍以 `[250,100,250]` 为目标：`rift_mouth_west_001` 的“塌缩裂缝·西南遗宗”及 `north_wastes` 的“塌缩裂缝·宗门遗迹”。它们不属于本 north-rift overlap PR 的修复范围，应由后续独立审计确认是否存在同类即时回弹。
+- 本次测试只证明 `[253,100,250]` 位于 `tsy_zongmen_01_shallow`、避开 exit trigger radius，并在下一 tick 保持 TSY 归属；测试未查询实际 terrain column、方块碰撞或落脚面，因此不声称 Y=`100` 可站立。
 - `giant_sword_sea` / `wuxing_abyss` 仍是独立 plan 所有的已知缺陷，本 plan 不跨界修复或加入设计白名单。
 
 ## 风险
