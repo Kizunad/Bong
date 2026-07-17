@@ -15,12 +15,6 @@ PROFILE="${CHAT_WINDOW_E2E_PROFILE:-debug}"
 HOST="127.0.0.1"
 MC_PORT=25565
 MARKER="chat-window-$RUN_ID"
-FORGED_FUTURE_TIMESTAMP_MILLIS="$(python3 - <<'PY'
-import time
-
-print(time.time_ns() // 1_000_000 + 86_400_000)
-PY
-)"
 
 mkdir -p "$EVIDENCE_DIR"
 
@@ -187,6 +181,13 @@ if ! grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" \
   tail -n 80 "$SERVER_LOG" >&2
   exit 1
 fi
+
+FORGED_FUTURE_TIMESTAMP_MILLIS="$(python3 - <<'PY'
+import time
+
+print(time.time_ns() // 1_000_000 + 86_400_000)
+PY
+)"
 
 PYTHONPATH="$ROOT/scripts" python3 - \
   "$HOST" "$MC_PORT" "$MARKER" "$FORGED_FUTURE_TIMESTAMP_MILLIS" \
