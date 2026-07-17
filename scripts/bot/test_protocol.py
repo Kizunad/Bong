@@ -521,11 +521,19 @@ class NorthRiftScenarioContractTest(unittest.TestCase):
         bot = types.SimpleNamespace(username="Fake")
         expected_pos = [int(value) for value in probe.pos]
 
-        for music_state in ("COMBAT", "TSY", "TRIBULATION", "UNKNOWN", None):
-            with self.subTest(music_state=music_state):
+        for music_state, production_recipe in (
+            ("COMBAT", "combat_music"),
+            ("TSY", "ambient_tsy"),
+            ("TRIBULATION", "tribulation_atmosphere"),
+            ("UNKNOWN", "ambient_wilderness"),
+            (None, "ambient_wilderness"),
+        ):
+            with self.subTest(
+                music_state=music_state, production_recipe=production_recipe
+            ):
                 payload = {
                     "pos": expected_pos,
-                    "ambient_recipe_id": "ambient_wilderness",
+                    "ambient_recipe_id": production_recipe,
                 }
                 if music_state is not None:
                     payload["music_state"] = music_state
