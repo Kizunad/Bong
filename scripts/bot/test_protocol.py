@@ -1300,6 +1300,50 @@ def _bare_bot() -> Bot:
     return bot
 
 
+class BotChatPacketTest(unittest.TestCase):
+    def test_chat_packet_uses_unix_milliseconds_at_protocol_boundaries(self):
+        cases = [
+            (0, 0),
+            (1_000_000_000, 1_000),
+            (1_999_000_000, 1_999),
+            (1_712_345_700_999_000_000, 1_712_345_700_999),
+        ]
+
+        for time_ns, expected_millis in cases:
+            with self.subTest(expected_millis=expected_millis):
+                bot = _bare_bot()
+                sent: list[tuple[int, bytes]] = []
+                bot._send = lambda packet_id, body: sent.append((packet_id, body))
+
+                with mock.patch("bot.bot.time.time_ns", return_value=time_ns):
+                    bot.chat("窗口验真")
+
+                self.assertEqual(
+                    len(sent),
+                    1,
+                    f"一次 Bot.chat 必须只发一帧 C2S chat，实际 sent={sent!r}",
+                )
+                packet_id, body = sent[0]
+                self.assertEqual(packet_id, mc.C2S_CHAT_MESSAGE)
+
+                reader = mc.Reader(body)
+                self.assertEqual(reader.string(), "窗口验真")
+                self.assertEqual(
+                    reader.i64(),
+                    expected_millis,
+                    "Minecraft 1.20.1 ChatMessageC2s timestamp 必须是 Unix 毫秒；"
+                    "0/1000/1999 与真实 13 位值均不得误写成 Unix 秒",
+                )
+                self.assertEqual(reader.i64(), 0, "offline bot 的 salt 保持 0")
+                self.assertFalse(reader.boolean(), "offline bot 不携带聊天签名")
+                self.assertEqual(reader.varint(), 0, "message_count 保持 0")
+                self.assertEqual(
+                    reader.rest(),
+                    b"\x00\x00\x00",
+                    "acknowledged 必须保留协议 763 的 20-bit 固定 BitSet",
+                )
+
+
 class RespawnDecodeTest(unittest.TestCase):
     def test_respawn_exposes_authoritative_dimension_names(self):
         for dimension in ("minecraft:overworld", "bong:tsy"):

@@ -268,9 +268,15 @@ class Bot:
         self._send(mc.C2S_COMMAND_EXECUTION, body)
 
     def chat(self, message: str) -> None:
+        # Vanilla 1.20.1 writes Instant.now() through PacketByteBuf.writeInstant(),
+        # whose wire representation is signed Unix epoch milliseconds.  A zero
+        # timestamp makes a live bot message look like a 1970 event after the
+        # server normalizes ChatMessageV1.ts to Unix seconds, so the Tiandao
+        # five-minute window would correctly (but misleadingly) discard it.
+        timestamp_millis = time.time_ns() // 1_000_000
         body = (
             mc_string(message)
-            + struct.pack(">qq", 0, 0)
+            + struct.pack(">qq", timestamp_millis, 0)
             + b"\x00"  # has_signature=false
             + write_varint(0)  # message_count
             + b"\x00\x00\x00"  # acknowledged BitSet

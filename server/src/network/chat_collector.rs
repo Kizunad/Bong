@@ -27,6 +27,7 @@ use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 const MAX_CHAT_MESSAGES_PER_PLAYER_PER_TICK: usize = 3;
+const UNIX_MILLIS_PER_SECOND: u64 = 1_000;
 const LEGACY_BANG_COMMANDS: &[&str] = &[
     "!shrine",
     "!spawn",
@@ -303,7 +304,7 @@ fn classify_player_message(
             v: 1,
             // Minecraft 1.20.1 ChatMessageC2s carries Unix milliseconds;
             // ChatMessageV1's server→agent contract carries Unix seconds.
-            ts: context.timestamp / 1_000,
+            ts: context.timestamp / UNIX_MILLIS_PER_SECOND,
             player: canonical_player,
             raw: context.message.to_string(),
             zone: zone.clone(),
@@ -577,6 +578,16 @@ mod chat_collector_tests {
                 );
                 assert_eq!(chat.player, "offline:Alice");
                 assert_eq!(chat.raw, "这里灵气真足");
+
+                let wire_payload = serde_json::to_string(&chat)
+                    .expect("ChatMessageV1 should serialize for the Redis list wire");
+                let wire_payload: serde_json::Value = serde_json::from_str(&wire_payload)
+                    .expect("serialized ChatMessageV1 should remain valid JSON");
+                assert_eq!(
+                    wire_payload["ts"],
+                    serde_json::json!(1_712_345_700_u64),
+                    "the actual Redis JSON payload must carry Unix seconds, not the 13-digit protocol milliseconds"
+                );
             }
             other => panic!("expected player chat outbound, got {other:?}"),
         }
@@ -603,7 +614,13 @@ mod chat_collector_tests {
                     .try_recv()
                     .expect("each accepted chat should be forwarded to Redis");
                 match outbound {
-                    RedisOutbound::PlayerChat(chat) => chat.ts,
+                    RedisOutbound::PlayerChat(chat) => {
+                        let wire_payload = serde_json::to_value(chat)
+                            .expect("ChatMessageV1 should serialize for the Redis list wire");
+                        wire_payload["ts"]
+                            .as_u64()
+                            .expect("ChatMessageV1.ts should serialize as a non-negative integer")
+                    }
                     other => panic!("expected player chat outbound, got {other:?}"),
                 }
             })
