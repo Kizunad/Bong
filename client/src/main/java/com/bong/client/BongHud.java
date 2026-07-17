@@ -21,6 +21,7 @@ import com.bong.client.hud.BotanyProjection;
 import com.bong.client.hud.CombatHudSnapshot;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRuntimeContext;
+import com.bong.client.hud.HudTextHelper;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.tiandao.TiandaoPresenceHudPlanner;
@@ -50,6 +51,7 @@ import org.lwjgl.glfw.GLFW;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 public class BongHud {
     private static final int HUD_TEXT_MAX_WIDTH = 220;
@@ -77,48 +79,84 @@ public class BongHud {
         if (currentScreen == null) {
             ScreenTransitionOverlay.render(context, client, ScreenTransition.nowMillis());
         }
+        render(
+            currentScreen,
+            nowMillis,
+            () -> captureHudFrameInput(client, nowMillis),
+            (commands, visibility) -> renderCommands(context, client, commands, visibility, nowMillis)
+        );
+    }
+
+    static void render(
+        Screen currentScreen,
+        long nowMillis,
+        Supplier<HudFrameInput> frameInputSupplier,
+        HudCommandRenderer renderer
+    ) {
+        Objects.requireNonNull(frameInputSupplier, "frameInputSupplier");
+        Objects.requireNonNull(renderer, "renderer");
+
         ScreenHudVisibility visibility = ScreenHudVisibility.forScreen(currentScreen);
         if (visibility == ScreenHudVisibility.HIDDEN) {
             return;
         }
 
-        CombatHudSnapshot combatSnapshot = captureCombatSnapshot(client);
-
-        BotanyProjection.Anchor botanyAnchor = computeBotanyAnchor(client);
-        HudRuntimeContext runtimeContext = captureRuntimeContext(client);
-
+        HudFrameInput frame = Objects.requireNonNull(frameInputSupplier.get(), "frameInputSupplier.get()");
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
-            BongHudStateStore.snapshot(),
-            combatSnapshot,
+            frame.hudSnapshot(),
+            frame.combatSnapshot(),
             nowMillis,
+            frame.widthMeasurer(),
+            frame.maxTextWidth(),
+            frame.screenWidth(),
+            frame.screenHeight(),
+            frame.botanyAnchor(),
+            frame.runtimeContext()
+        );
+        List<EdgeIndicatorCmd> spiritualSenseIndicators = frame.spiritualSenseIndicators().get();
+        List<HudRenderCommand> supplementalCommands = frame.supplementalCommands().get();
+        if (!spiritualSenseIndicators.isEmpty() || !supplementalCommands.isEmpty()) {
+            commands = new ArrayList<>(commands);
+            if (!spiritualSenseIndicators.isEmpty()) {
+                PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
+            }
+            if (!supplementalCommands.isEmpty()) {
+                commands.addAll(supplementalCommands);
+            }
+        }
+
+        renderer.render(filterCommandsForVisibility(commands, visibility), visibility);
+    }
+
+    private static HudFrameInput captureHudFrameInput(MinecraftClient client, long nowMillis) {
+        int screenWidth = client.getWindow().getScaledWidth();
+        int screenHeight = client.getWindow().getScaledHeight();
+        return new HudFrameInput(
+            BongHudStateStore.snapshot(),
+            captureCombatSnapshot(client),
             client.textRenderer::getWidth,
             HUD_TEXT_MAX_WIDTH,
-            client.getWindow().getScaledWidth(),
-            client.getWindow().getScaledHeight(),
-            botanyAnchor,
-            runtimeContext
+            screenWidth,
+            screenHeight,
+            computeBotanyAnchor(client),
+            captureRuntimeContext(client),
+            () -> computeSpiritualSenseIndicators(client),
+            () -> TiandaoPresenceHudPlanner.buildCommands(
+                    TiandaoPresenceStore.snapshot(),
+                    nowMillis,
+                    screenWidth,
+                    screenHeight
+                )
         );
-        List<EdgeIndicatorCmd> spiritualSenseIndicators = computeSpiritualSenseIndicators(client);
-        if (!spiritualSenseIndicators.isEmpty()) {
-            commands = new ArrayList<>(commands);
-            PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
-        }
-        List<HudRenderCommand> tiandaoCommands = TiandaoPresenceHudPlanner.buildCommands(
-            TiandaoPresenceStore.snapshot(),
-            nowMillis,
-            client.getWindow().getScaledWidth(),
-            client.getWindow().getScaledHeight()
-        );
-        if (!tiandaoCommands.isEmpty()) {
-            commands = new ArrayList<>(commands);
-            commands.addAll(tiandaoCommands);
-        }
+    }
 
-        if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {
-            commands = filterCastBarOnly(commands);
-        } else if (visibility == ScreenHudVisibility.INVENTORY_DIMMED) {
-            commands = filterInventoryDimmed(commands);
-        }
+    private static void renderCommands(
+        DrawContext context,
+        MinecraftClient client,
+        List<HudRenderCommand> commands,
+        ScreenHudVisibility visibility,
+        long nowMillis
+    ) {
 
         for (HudRenderCommand command : commands) {
             if (command.isText()) {
@@ -213,6 +251,48 @@ public class BongHud {
                 InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
         }
+    }
+
+    @FunctionalInterface
+    interface HudCommandRenderer {
+        void render(List<HudRenderCommand> commands, ScreenHudVisibility visibility);
+    }
+
+    record HudFrameInput(
+        com.bong.client.hud.BongHudStateSnapshot hudSnapshot,
+        CombatHudSnapshot combatSnapshot,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor,
+        HudRuntimeContext runtimeContext,
+        Supplier<List<EdgeIndicatorCmd>> spiritualSenseIndicators,
+        Supplier<List<HudRenderCommand>> supplementalCommands
+    ) {
+        HudFrameInput {
+            hudSnapshot = hudSnapshot == null
+                ? com.bong.client.hud.BongHudStateSnapshot.empty()
+                : hudSnapshot;
+            combatSnapshot = combatSnapshot == null ? CombatHudSnapshot.empty() : combatSnapshot;
+            widthMeasurer = widthMeasurer == null ? ignored -> 0 : widthMeasurer;
+            maxTextWidth = Math.max(0, maxTextWidth);
+            screenWidth = Math.max(0, screenWidth);
+            screenHeight = Math.max(0, screenHeight);
+            runtimeContext = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
+            spiritualSenseIndicators = safeListSupplier(spiritualSenseIndicators);
+            supplementalCommands = safeListSupplier(supplementalCommands);
+        }
+    }
+
+    private static <T> Supplier<List<T>> safeListSupplier(Supplier<List<T>> supplier) {
+        if (supplier == null) {
+            return List::of;
+        }
+        return () -> {
+            List<T> values = supplier.get();
+            return values == null ? List.of() : List.copyOf(values);
+        };
     }
 
     static void renderBaomaiV3HudForProduction(
@@ -333,24 +413,32 @@ public class BongHud {
         }
     }
 
-    private static List<HudRenderCommand> filterCastBarOnly(List<HudRenderCommand> commands) {
-        return commands.stream()
-            .filter(cmd -> cmd.layer() == com.bong.client.hud.HudRenderLayer.CAST_BAR)
-            .toList();
-    }
-
-    private static List<HudRenderCommand> filterInventoryDimmed(List<HudRenderCommand> commands) {
-        return commands.stream()
-            .filter(cmd -> {
-                com.bong.client.hud.HudRenderLayer layer = cmd.layer();
-                // Keep quick-bar + event-stream + cast-bar; dim/hide everything else.
-                return layer == com.bong.client.hud.HudRenderLayer.QUICK_BAR
-                    || layer == com.bong.client.hud.HudRenderLayer.CAST_BAR
-                    || layer == com.bong.client.hud.HudRenderLayer.EVENT_STREAM
-                    || layer == com.bong.client.hud.HudRenderLayer.TSY_EXTRACT
-                    || layer == com.bong.client.hud.HudRenderLayer.BASELINE;
-            })
-            .toList();
+    static List<HudRenderCommand> filterCommandsForVisibility(
+        List<HudRenderCommand> commands,
+        ScreenHudVisibility visibility
+    ) {
+        Objects.requireNonNull(commands, "commands");
+        Objects.requireNonNull(visibility, "visibility");
+        return switch (visibility) {
+            case FULL -> commands;
+            case CAST_BAR_ONLY -> commands.stream()
+                .filter(cmd -> cmd.layer() == com.bong.client.hud.HudRenderLayer.CAST_BAR)
+                .toList();
+            case AGENT_UI_ONLY -> commands.stream()
+                .filter(cmd -> cmd.layer() == com.bong.client.hud.HudRenderLayer.AGENT_UI)
+                .toList();
+            case INVENTORY_DIMMED -> commands.stream()
+                .filter(cmd -> {
+                    com.bong.client.hud.HudRenderLayer layer = cmd.layer();
+                    return layer == com.bong.client.hud.HudRenderLayer.QUICK_BAR
+                        || layer == com.bong.client.hud.HudRenderLayer.CAST_BAR
+                        || layer == com.bong.client.hud.HudRenderLayer.EVENT_STREAM
+                        || layer == com.bong.client.hud.HudRenderLayer.TSY_EXTRACT
+                        || layer == com.bong.client.hud.HudRenderLayer.BASELINE;
+                })
+                .toList();
+            case HIDDEN -> List.of();
+        };
     }
 
     static HudSnapshot snapshot(long nowMs) {

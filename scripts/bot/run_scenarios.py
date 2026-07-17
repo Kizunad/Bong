@@ -96,7 +96,11 @@ def main() -> int:
 
     if args.list:
         for name, module in scenarios.items():
-            print(f"{name:44} modules={','.join(module.MODULES):20} {module.DESCRIPTION}")
+            default = "default" if getattr(module, "DEFAULT_ENABLED", True) else "dedicated"
+            print(
+                f"{name:44} modules={','.join(module.MODULES):20} "
+                f"mode={default:9} {module.DESCRIPTION}"
+            )
         return 0
 
     selected = args.scenario or list(scenarios)
@@ -118,6 +122,12 @@ def main() -> int:
     for name in selected:
         module = scenarios[name]
         print(f"\n=== scenario: {name} ===\n    {module.DESCRIPTION}")
+        if args.scenario is None and not getattr(module, "DEFAULT_ENABLED", True):
+            required_env = getattr(module, "REQUIRED_ENV", "dedicated runner invocation")
+            reason = f"专用场景；常规 --all 不执行（显式 --scenario + {required_env}=1）"
+            results.append((name, "SKIP", reason))
+            print(f"    SKIP: {reason}")
+            continue
         started = time.monotonic()
         try:
             module.run(env)
@@ -135,8 +145,12 @@ def main() -> int:
     print("\n===== bot e2e summary =====")
     for name, status, _ in results:
         print(f"  {status:5}  {name}")
-    failed = [r for r in results if r[1] != "PASS"]
-    print(f"  total={len(results)} pass={len(results) - len(failed)} fail={len(failed)}")
+    failed = [result for result in results if result[1] in {"FAIL", "ERROR"}]
+    passed = [result for result in results if result[1] == "PASS"]
+    skipped = [result for result in results if result[1] == "SKIP"]
+    print(
+        f"  total={len(results)} pass={len(passed)} skip={len(skipped)} fail={len(failed)}"
+    )
     return 1 if failed else 0
 
 

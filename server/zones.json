@@ -62,15 +62,15 @@
         "min": [
           1850.0,
           50.0,
-          -7950.0
+          -7450.0
         ],
         "max": [
           2150.0,
           100.0,
-          -7650.0
+          -7150.0
         ]
       },
-      "spirit_qi": 0.092892,
+      "spirit_qi": 0.068602,
       "danger_level": 5,
       "active_events": [
         "rift_mouth_entry"
@@ -79,7 +79,7 @@
         [
           2000.0,
           74.0,
-          -7800.0
+          -7300.0
         ]
       ],
       "blocked_tiles": []
@@ -577,7 +577,7 @@
           -7500.0
         ]
       },
-      "spirit_qi": 0.273375,
+      "spirit_qi": 0.290146,
       "danger_level": 7,
       "active_events": [
         "tribulation_scorch",

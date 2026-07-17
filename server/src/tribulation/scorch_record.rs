@@ -206,6 +206,89 @@ mod tests {
     }
 
     #[test]
+    fn production_north_scorch_coordinates_record_only_scorch_zone_settlements() {
+        let mut app = App::new();
+        app.add_event::<TribulationSettled>();
+        app.insert_resource(ZoneRegistry::load());
+        app.insert_resource(CombatClock { tick: 77 });
+        app.insert_resource(TribulationScorchRecords::default());
+        app.add_systems(Update, record_tribulation_scorch_system);
+
+        let cases = [
+            (
+                "ascension pit",
+                [2100.0, 80.0, -8000.0],
+                "north_waste_east_scorch",
+                true,
+            ),
+            (
+                "inclusive scorch north boundary",
+                [2000.0, 74.0, -7500.0],
+                "north_waste_east_scorch",
+                true,
+            ),
+            (
+                "relocated rift entrance",
+                [2000.0, 74.0, -7300.0],
+                "rift_mouth_north_002",
+                false,
+            ),
+        ];
+
+        for (label, pos_xyz, expected_zone, _) in cases {
+            let position = DVec3::from_array(pos_xyz);
+            let zone = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone(DimensionKind::Overworld, position)
+                .unwrap_or_else(|| panic!("{label} must resolve through the production registry"));
+            assert_eq!(
+                zone.name, expected_zone,
+                "{label} must retain its production zone identity before scorch recording consumes it"
+            );
+
+            let entity = app
+                .world_mut()
+                .spawn((
+                    Position::new(position),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(settled_event(entity));
+        }
+        app.update();
+
+        let records = app.world().resource::<TribulationScorchRecords>();
+        assert_eq!(
+            records.records().len(),
+            2,
+            "only the ascension pit and inclusive scorch boundary should produce records"
+        );
+        for (label, pos_xyz, _, should_record) in cases {
+            let matching = records
+                .records()
+                .iter()
+                .find(|record| record.pos_xyz == pos_xyz);
+            if should_record {
+                let record = matching.unwrap_or_else(|| {
+                    panic!("{label} must produce a scorch record at {pos_xyz:?}")
+                });
+                assert_eq!(record.zone_id, "north_waste_east_scorch");
+                assert_eq!(record.marker_id, GLASS_FULGURITE_MARKER_ID);
+                assert_eq!(record.source_event, TRIBULATION_SCORCH_EVENT);
+                assert_eq!(record.created_at_tick, 77);
+            } else {
+                assert!(
+                    matching.is_none(),
+                    "{label} must not inherit scorch recording across the strict zone gap"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn settled_tribulation_outside_scorch_zone_does_not_record_runtime_marker() {
         let mut app = App::new();
         app.add_event::<TribulationSettled>();

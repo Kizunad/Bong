@@ -188,6 +188,72 @@ class MovementHudPlannerTest {
         );
     }
 
+    @Test
+    void rejectedFlashAndHudFadeHonorEveryContractBoundary() {
+        MovementState state = state(MovementState.Action.NONE, MovementState.ZoneKind.NORMAL, false, 1_000L, 1_000L)
+            .withTiming(1_000L, 1_000L, 1_000L);
+
+        List<HudRenderCommand> atFlashBoundary = MovementHudPlanner.buildCommands(state, 800, 600, 1_300L);
+        List<HudRenderCommand> afterFlashBoundary = MovementHudPlanner.buildCommands(state, 800, 600, 1_301L);
+        List<HudRenderCommand> atVisibleBoundary = MovementHudPlanner.buildCommands(state, 800, 600, 4_000L);
+        List<HudRenderCommand> afterVisibleBoundary = MovementHudPlanner.buildCommands(state, 800, 600, 4_001L);
+        List<HudRenderCommand> atFadeLastMs = MovementHudPlanner.buildCommands(state, 800, 600, 4_499L);
+        List<HudRenderCommand> atFadeEnd = MovementHudPlanner.buildCommands(state, 800, 600, 4_500L);
+
+        assertTrue(
+            atFlashBoundary.stream().anyMatch(c -> isMovementRect(c) && c.color() == 0xC0FF3030),
+            "at now=1300ms (reject elapsed=300ms), expected the inclusive red reject flash, commands: "
+                + atFlashBoundary
+        );
+        assertTrue(
+            afterFlashBoundary.stream().noneMatch(c -> isMovementRect(c) && c.color() == 0xC0FF3030),
+            "at now=1301ms (reject elapsed=301ms), expected the red reject flash to be expired, commands: "
+                + afterFlashBoundary
+        );
+        assertEquals(
+            1.0,
+            MovementHudPlanner.hudAlpha(state, 4_000L),
+            0.0,
+            "at now=4000ms (HUD elapsed=3000ms), expected alpha=1 at the inclusive visible boundary"
+        );
+        assertFalse(
+            atVisibleBoundary.isEmpty(),
+            "at now=4000ms (HUD elapsed=3000ms), expected non-empty commands while alpha=1"
+        );
+
+        double alphaAt4001 = MovementHudPlanner.hudAlpha(state, 4_001L);
+        assertTrue(
+            alphaAt4001 > 0.0 && alphaAt4001 < 1.0,
+            "at now=4001ms (HUD elapsed=3001ms), expected 0<alpha<1 in fade, actual alpha=" + alphaAt4001
+        );
+        assertFalse(
+            afterVisibleBoundary.isEmpty(),
+            "at now=4001ms (HUD elapsed=3001ms), expected non-empty commands during fade"
+        );
+
+        double alphaAt4499 = MovementHudPlanner.hudAlpha(state, 4_499L);
+        assertTrue(
+            alphaAt4499 > 0.0,
+            "at now=4499ms (HUD elapsed=3499ms), expected alpha>0 on the final visible fade millisecond, actual alpha="
+                + alphaAt4499
+        );
+        assertFalse(
+            atFadeLastMs.isEmpty(),
+            "at now=4499ms (HUD elapsed=3499ms), expected non-empty commands on the final fade millisecond"
+        );
+        assertEquals(
+            0.0,
+            MovementHudPlanner.hudAlpha(state, 4_500L),
+            0.0,
+            "at now=4500ms (HUD elapsed=3500ms), expected alpha=0 at the fade end boundary"
+        );
+        assertTrue(
+            atFadeEnd.isEmpty(),
+            "at now=4500ms (HUD elapsed=3500ms), expected no commands once alpha reaches 0, commands: "
+                + atFadeEnd
+        );
+    }
+
     private static boolean isMovementRect(HudRenderCommand command) {
         return command.layer() == HudRenderLayer.MOVEMENT_HUD && command.isRect();
     }

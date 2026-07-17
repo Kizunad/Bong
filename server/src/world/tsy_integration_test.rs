@@ -10,17 +10,29 @@
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use valence::prelude::{App, DVec3, Events, IntoSystemConfigs, Position, Update};
+    use valence::prelude::{
+        App, Biome, BiomeRegistry, DVec3, EntityLayerId, Events, Ident, IntoSystemConfigs,
+        Position, Startup, Update, VisibleChunkLayer, VisibleEntityLayers,
+    };
 
     use crate::combat::events::DeathEvent;
     use crate::combat::CombatClock;
     use crate::cultivation::components::Cultivation;
     use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
-    use crate::world::dimension::{CurrentDimension, DimensionKind};
-    use crate::world::dimension_transfer::DimensionTransferRequest;
-    use crate::world::tsy::{DimensionAnchor, RiftPortal, TsyPresence};
+    use crate::world::dimension::{
+        CurrentDimension, DimensionKind, DimensionLayers, OverworldLayer, TsyLayer,
+    };
+    use crate::world::dimension_transfer::{
+        apply_dimension_transfers, DimensionTransferRequest, DimensionTransferSet,
+    };
+    use crate::world::terrain::{TerrainProvider, TerrainProviders};
+    use crate::world::tsy::{DimensionAnchor, PortalDirection, RiftKind, RiftPortal, TsyPresence};
     use crate::world::tsy_drain::tsy_drain_tick;
+    use crate::world::tsy_poi_consumer::spawn_rift_portals;
     use crate::world::tsy_portal::{
         tsy_entry_portal_tick, tsy_exit_portal_tick, TsyEnterEmit, TsyExitEmit,
     };
@@ -107,6 +119,178 @@ mod tests {
             hotbar: hb,
             bone_coins: 0,
             max_weight: 100.0,
+        }
+    }
+
+    fn empty_player_inventory() -> PlayerInventory {
+        PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(1),
+            containers: Vec::new(),
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 100.0,
+        }
+    }
+
+    struct NorthRiftManifestFixture {
+        root: PathBuf,
+    }
+
+    impl NorthRiftManifestFixture {
+        fn from_default_blueprint() -> Self {
+            let blueprint_path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.worldview.example.json");
+            let blueprint: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(&blueprint_path).expect("default blueprint should be readable"),
+            )
+            .expect("default blueprint should be valid JSON");
+            let zones = blueprint["zones"]
+                .as_array()
+                .expect("default blueprint must contain zones array");
+            let north_rift = zones
+                .iter()
+                .find(|zone| zone["name"] == "rift_mouth_north_002")
+                .expect("default blueprint must contain north rift");
+            let all_pois = north_rift["pois"]
+                .as_array()
+                .expect("north rift must contain POIs");
+            let portals = all_pois
+                .iter()
+                .filter(|poi| poi["kind"] == "rift_portal" && poi["name"] == "塌缩裂缝·北荒东陲")
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(
+                portals.len(),
+                1,
+                "default blueprint must expose exactly one north rift portal by kind/name"
+            );
+            assert_eq!(
+                portals[0]["pos_xyz"],
+                serde_json::json!([2000.0, 74.0, -7300.0])
+            );
+            assert_ne!(
+                portals[0]["pos_xyz"],
+                serde_json::json!([2000.0, 74.0, -7800.0])
+            );
+            let manifest_pois = all_pois
+                .iter()
+                .cloned()
+                .map(|mut poi| {
+                    poi.as_object_mut()
+                        .expect("blueprint POI must be a JSON object")
+                        .insert(
+                            "zone".to_string(),
+                            serde_json::Value::String("rift_mouth_north_002".to_string()),
+                        );
+                    poi
+                })
+                .collect::<Vec<_>>();
+
+            let tsy_blueprint_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.tsy.json");
+            let tsy_blueprint: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(&tsy_blueprint_path)
+                    .expect("default TSY blueprint should be readable"),
+            )
+            .expect("default TSY blueprint should be valid JSON");
+            let tsy_manifest_pois =
+                tsy_blueprint["zones"]
+                    .as_array()
+                    .expect("default TSY blueprint must contain zones array")
+                    .iter()
+                    .flat_map(|zone| {
+                        let zone_name = zone["name"]
+                            .as_str()
+                            .expect("TSY blueprint zone must have a name")
+                            .to_string();
+                        zone["pois"].as_array().into_iter().flatten().cloned().map(
+                            move |mut poi| {
+                                let object = poi
+                                    .as_object_mut()
+                                    .expect("TSY blueprint POI must be a JSON object");
+                                object.insert(
+                                    "zone".to_string(),
+                                    serde_json::Value::String(zone_name.clone()),
+                                );
+                                for (key, default) in [
+                                    ("name", serde_json::Value::String(String::new())),
+                                    ("tags", serde_json::Value::Array(Vec::new())),
+                                    ("unlock", serde_json::Value::String(String::new())),
+                                    ("qi_affinity", serde_json::json!(0.0)),
+                                    ("danger_bias", serde_json::json!(0)),
+                                ] {
+                                    object.entry(key.to_string()).or_insert(default);
+                                }
+                                poi
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock after epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "bong-north-rift-portal-loader-{}-{unique}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&root).expect("create north rift manifest fixture dir");
+            let manifest = serde_json::json!({
+                "version": 2,
+                "tile_size": 1,
+                "world_bounds": {
+                    "min_x": 1850,
+                    "max_x": 2150,
+                    "min_z": -7450,
+                    "max_z": -7150
+                },
+                "surface_palette": ["stone"],
+                "biome_palette": ["plains"],
+                "tiles": [],
+                "pois": manifest_pois
+            });
+            fs::write(
+                root.join("manifest.json"),
+                serde_json::to_vec_pretty(&manifest).expect("manifest fixture should serialize"),
+            )
+            .expect("write north rift manifest fixture");
+            let tsy_manifest = serde_json::json!({
+                "version": 2,
+                "tile_size": 1,
+                "world_bounds": {
+                    "min_x": -2000,
+                    "max_x": 2000,
+                    "min_z": -2000,
+                    "max_z": 2000
+                },
+                "surface_palette": ["stone"],
+                "biome_palette": ["plains"],
+                "tiles": [],
+                "pois": tsy_manifest_pois
+            });
+            fs::write(
+                root.join("manifest.tsy.json"),
+                serde_json::to_vec_pretty(&tsy_manifest)
+                    .expect("TSY manifest fixture should serialize"),
+            )
+            .expect("write TSY manifest fixture");
+            Self { root }
+        }
+
+        fn manifest_path(&self) -> PathBuf {
+            self.root.join("manifest.json")
+        }
+
+        fn tsy_manifest_path(&self) -> PathBuf {
+            self.root.join("manifest.tsy.json")
+        }
+    }
+
+    impl Drop for NorthRiftManifestFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
         }
     }
 
@@ -351,6 +535,243 @@ mod tests {
         assert!(
             app.world().entity(player).get::<TsyPresence>().is_none(),
             "TsyPresence should be removed after exit"
+        );
+    }
+
+    #[test]
+    fn e_relocated_north_rift_manifest_spawns_and_transfers_to_target() {
+        let fixture = NorthRiftManifestFixture::from_default_blueprint();
+        let mut biomes = BiomeRegistry::default();
+        biomes.insert(
+            Ident::new("plains").expect("valid plains biome ident"),
+            Biome::default(),
+        );
+        let provider = TerrainProvider::load(&fixture.manifest_path(), &fixture.root, &biomes)
+            .expect("production TerrainProvider should load north rift manifest fixture");
+        let loaded_portals = provider
+            .pois()
+            .iter()
+            .filter(|poi| {
+                poi.zone == "rift_mouth_north_002"
+                    && poi.kind == "rift_portal"
+                    && poi.name == "塌缩裂缝·北荒东陲"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(loaded_portals.len(), 1);
+        assert_eq!(loaded_portals[0].pos_xyz, [2000.0, 74.0, -7300.0]);
+        assert!(provider
+            .pois()
+            .iter()
+            .filter(|poi| poi.kind == "rift_portal")
+            .all(|poi| poi.pos_xyz != [2000.0, 74.0, -7800.0]));
+        let tsy_provider =
+            TerrainProvider::load(&fixture.tsy_manifest_path(), &fixture.root, &biomes)
+                .expect("production TerrainProvider should load zones.tsy.json fixture");
+        let loaded_exit_portals = tsy_provider
+            .pois()
+            .iter()
+            .filter(|poi| {
+                poi.zone == "tsy_zongmen_01_shallow"
+                    && poi.kind == "rift_portal"
+                    && poi.tags.iter().any(|tag| tag == "family_id:zongmen_01")
+                    && poi.tags.iter().any(|tag| tag == "direction:exit")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            loaded_exit_portals.len(),
+            1,
+            "zones.tsy.json must expose exactly one zongmen_01 exit portal"
+        );
+        assert_eq!(loaded_exit_portals[0].pos_xyz, [250.0, 100.0, 250.0]);
+
+        let mut app = App::new();
+        let overworld = app.world_mut().spawn(OverworldLayer).id();
+        let tsy = app.world_mut().spawn(TsyLayer).id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(TerrainProviders {
+            overworld: provider,
+            tsy: Some(tsy_provider),
+        });
+        app.insert_resource(CombatClock::default());
+        app.add_event::<DimensionTransferRequest>();
+        app.add_event::<TsyEnterEmit>();
+        app.add_event::<TsyExitEmit>();
+        app.add_systems(Startup, spawn_rift_portals);
+        app.add_systems(
+            Update,
+            (
+                (tsy_entry_portal_tick, tsy_exit_portal_tick).before(DimensionTransferSet),
+                apply_dimension_transfers.in_set(DimensionTransferSet),
+            ),
+        );
+
+        let mut new_visible = VisibleEntityLayers::default();
+        new_visible.0.insert(overworld);
+        let new_anchor_player = app
+            .world_mut()
+            .spawn((
+                EntityLayerId(overworld),
+                VisibleChunkLayer(overworld),
+                new_visible,
+                Position::new([2000.0, 74.0, -7300.0]),
+                empty_player_inventory(),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        let mut old_visible = VisibleEntityLayers::default();
+        old_visible.0.insert(overworld);
+        let old_anchor_player = app
+            .world_mut()
+            .spawn((
+                EntityLayerId(overworld),
+                VisibleChunkLayer(overworld),
+                old_visible,
+                Position::new([2000.0, 74.0, -7800.0]),
+                empty_player_inventory(),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.update();
+
+        let mut portal_query = app
+            .world_mut()
+            .query::<(&RiftPortal, &Position, &EntityLayerId)>();
+        let portals = portal_query
+            .iter(app.world())
+            .filter(|(portal, _, _)| portal.family_id == "zongmen_01")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            portals.len(),
+            2,
+            "production providers should spawn one entry and one exit marker for zongmen_01"
+        );
+        let (portal, portal_pos, portal_layer) = portals
+            .iter()
+            .copied()
+            .find(|(portal, _, _)| portal.direction == PortalDirection::Entry)
+            .expect("zongmen_01 entry portal must spawn from overworld provider");
+        assert_eq!(portal_pos.get(), DVec3::new(2000.0, 74.0, -7300.0));
+        assert_eq!(portal_layer.0, overworld);
+        assert_eq!(portal.direction, PortalDirection::Entry);
+        assert_eq!(portal.kind, RiftKind::MainRift);
+        assert_eq!(portal.trigger_radius, 2.0);
+        assert_eq!(portal.target.dimension, DimensionKind::Tsy);
+        assert_eq!(portal.target.pos, DVec3::new(253.0, 100.0, 250.0));
+        let (exit_portal, exit_pos, exit_layer) = portals
+            .iter()
+            .copied()
+            .find(|(portal, _, _)| portal.direction == PortalDirection::Exit)
+            .expect("zongmen_01 exit portal must spawn from TSY provider");
+        assert_eq!(exit_portal.kind, RiftKind::MainRift);
+        assert_eq!(exit_portal.trigger_radius, 1.5);
+        assert_eq!(exit_pos.get(), DVec3::new(250.0, 100.0, 250.0));
+        assert_eq!(exit_layer.0, tsy);
+        assert!(
+            portal.target.pos.distance(exit_pos.get()) > exit_portal.trigger_radius,
+            "the production entry target must lie outside the matching exit radius"
+        );
+
+        let new_player = app.world().entity(new_anchor_player);
+        assert_eq!(
+            new_player.get::<CurrentDimension>().copied(),
+            Some(CurrentDimension(DimensionKind::Tsy))
+        );
+        assert_eq!(
+            new_player.get::<EntityLayerId>().map(|layer| layer.0),
+            Some(tsy)
+        );
+        assert_eq!(
+            new_player.get::<VisibleChunkLayer>().map(|layer| layer.0),
+            Some(tsy)
+        );
+        assert_eq!(
+            new_player.get::<Position>().map(|position| position.get()),
+            Some(DVec3::new(253.0, 100.0, 250.0))
+        );
+        let new_visible = new_player
+            .get::<VisibleEntityLayers>()
+            .expect("transferred player must keep visible entity layers");
+        assert!(new_visible.0.contains(&tsy));
+        assert!(!new_visible.0.contains(&overworld));
+        let presence = new_player
+            .get::<TsyPresence>()
+            .expect("entry portal must attach TSY presence");
+        assert_eq!(presence.family_id, "zongmen_01");
+        assert_eq!(presence.return_to.dimension, DimensionKind::Overworld);
+        assert_eq!(
+            presence.return_to.pos,
+            DVec3::new(2003.0, 75.0, -7300.0),
+            "return anchor must derive from the relocated portal and lie outside radius"
+        );
+
+        let old_player = app.world().entity(old_anchor_player);
+        assert_eq!(
+            old_player.get::<CurrentDimension>().copied(),
+            Some(CurrentDimension(DimensionKind::Overworld))
+        );
+        assert_eq!(
+            old_player.get::<Position>().map(|position| position.get()),
+            Some(DVec3::new(2000.0, 74.0, -7800.0))
+        );
+        assert_eq!(
+            old_player.get::<EntityLayerId>().map(|layer| layer.0),
+            Some(overworld)
+        );
+        assert_eq!(
+            old_player.get::<VisibleChunkLayer>().map(|layer| layer.0),
+            Some(overworld)
+        );
+        let old_visible = old_player
+            .get::<VisibleEntityLayers>()
+            .expect("non-triggered player must keep visible entity layers");
+        assert!(old_visible.0.contains(&overworld));
+        assert!(!old_visible.0.contains(&tsy));
+        assert!(old_player.get::<TsyPresence>().is_none());
+
+        let enter_events = app.world().resource::<Events<TsyEnterEmit>>();
+        let entered = enter_events
+            .get_reader()
+            .read(enter_events)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(entered.len(), 1);
+        assert_eq!(entered[0].player_entity, new_anchor_player);
+        assert_eq!(entered[0].family_id, "zongmen_01");
+        assert_eq!(entered[0].return_to, presence.return_to);
+        assert!(entered[0].filtered.is_empty());
+
+        app.update();
+
+        let new_player = app.world().entity(new_anchor_player);
+        assert_eq!(
+            new_player.get::<CurrentDimension>().copied(),
+            Some(CurrentDimension(DimensionKind::Tsy)),
+            "the production exit portal must not bounce the player back on the next tick"
+        );
+        assert_eq!(
+            new_player.get::<Position>().map(|position| position.get()),
+            Some(DVec3::new(253.0, 100.0, 250.0)),
+            "the next production tick must keep the player at the exit-radius-safe TSY target"
+        );
+        assert!(
+            new_player.get::<TsyPresence>().is_some(),
+            "TsyPresence must survive the tick after entry when the target is outside exit radius"
+        );
+        let exit_events = app.world().resource::<Events<TsyExitEmit>>();
+        assert_eq!(
+            exit_events.get_reader().read(exit_events).count(),
+            0,
+            "no TsyExitEmit may fire on the tick after production entry"
+        );
+
+        let registry = ZoneRegistry::load();
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Tsy, DVec3::new(253.0, 100.0, 250.0))
+                .map(|zone| zone.name.as_str()),
+            Some("tsy_zongmen_01_shallow"),
+            "portal target must remain inside the production-merged TSY entry zone"
         );
     }
 }
