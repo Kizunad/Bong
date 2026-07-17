@@ -1,6 +1,7 @@
 package com.bong.client.combat;
 
 import com.bong.client.BongClient;
+import com.bong.client.hud.AnqiHudStateStore;
 import com.bong.client.hud.HudImmersionMode;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 
@@ -96,6 +97,8 @@ public final class CombatHudBootstrap {
     static void resetOnDisconnect() {
         // §8.3 hydration expects a fresh first-frame payload post-reconnect.
         CombatHudStateStore.resetForTests();
+        // 暗器 HUD 的 per-dimension lastTick 属于本地 session，断线后必须开启新的 tick epoch。
+        AnqiHudStateStore.clear();
         CastStateStore.resetForTests();
         DefenseWindowStore.resetForTests();
         QuickUseSlotStore.resetForTests();

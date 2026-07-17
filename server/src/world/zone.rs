@@ -870,7 +870,7 @@ mod zone_tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use super::{DimensionKind, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord, ZONE_OVERLAY_PAYLOAD_VERSION};
     use valence::prelude::DVec3;
 
@@ -1881,6 +1881,103 @@ mod zone_tests {
                 .map(|z| z.name.as_str()),
             Some("big"),
             "a point only inside the larger zone must resolve to it"
+        );
+    }
+
+    // ----- plan-bughunt-north-rift-scorch-overlap-v1 runtime pins -----
+
+    #[test]
+    fn north_rift_and_scorch_are_adjacent_but_mutually_exclusive() {
+        let registry = ZoneRegistry::load();
+        assert!(
+            registry
+                .find_zone_by_name("tsy_zongmen_01_shallow")
+                .is_some(),
+            "production load path must merge TSY blueprint zones before this pin runs"
+        );
+        assert_eq!(
+            registry
+                .zones
+                .iter()
+                .filter(|zone| zone.name == "rift_mouth_north_002")
+                .count(),
+            1,
+            "north rift must remain uniquely registered after production merge"
+        );
+        assert_eq!(
+            registry
+                .zones
+                .iter()
+                .filter(|zone| zone.name == "north_waste_east_scorch")
+                .count(),
+            1,
+            "north scorch must remain uniquely registered after production merge"
+        );
+        let rift = registry
+            .find_zone_by_name("rift_mouth_north_002")
+            .expect("north rift zone must remain registered");
+        let scorch = registry
+            .find_zone_by_name("north_waste_east_scorch")
+            .expect("north scorch zone must remain registered");
+        assert_eq!(rift.dimension, DimensionKind::Overworld);
+        assert_eq!(scorch.dimension, DimensionKind::Overworld);
+        assert!(
+            scorch
+                .active_events
+                .iter()
+                .any(|event| event == "tribulation_scorch")
+                && scorch
+                    .active_events
+                    .iter()
+                    .any(|event| event == "tianjie_ascension_pit"),
+            "scorch weather/tribulation semantics must remain attached to the production zone"
+        );
+        let (rift_min, rift_max) = rift.bounds;
+        let (scorch_min, scorch_max) = scorch.bounds;
+
+        assert!(
+            rift_max.x < scorch_min.x
+                || scorch_max.x < rift_min.x
+                || rift_max.y < scorch_min.y
+                || scorch_max.y < rift_min.y
+                || rift_max.z < scorch_min.z
+                || scorch_max.z < rift_min.z,
+            "north rift and scorch AABBs must remain strictly separated on at least one axis"
+        );
+        assert!(
+            registry.zones_are_adjacent(&rift.name, &scorch.name, 100.0),
+            "north rift must remain a neighbour of the scorch zone after removing overlap"
+        );
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Overworld, DVec3::new(2000.0, 74.0, -7300.0))
+                .map(|zone| zone.name.as_str()),
+            Some("rift_mouth_north_002"),
+            "relocated portal anchor must resolve to the rift zone"
+        );
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Overworld, DVec3::new(2000.0, 74.0, -7800.0))
+                .map(|zone| zone.name.as_str()),
+            Some("north_waste_east_scorch"),
+            "the former rift anchor must now resolve exclusively to scorch semantics"
+        );
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Overworld, DVec3::new(2100.0, 80.0, -8000.0))
+                .map(|zone| zone.name.as_str()),
+            Some("north_waste_east_scorch"),
+            "ascension pit must retain scorch weather and tribulation semantics"
+        );
+        assert!(
+            !rift.contains(DVec3::new(2150.0, 74.0, -7500.0))
+                && scorch.contains(DVec3::new(2150.0, 74.0, -7500.0)),
+            "scorch north boundary must not be shadowed by the relocated rift"
+        );
+        assert!(
+            rift.contains(DVec3::new(1850.0, 50.0, -7450.0))
+                && rift.contains(DVec3::new(2150.0, 100.0, -7150.0)),
+            "rift AABB inclusive min/max boundaries must remain reachable"
         );
     }
 

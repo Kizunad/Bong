@@ -20,7 +20,7 @@ use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
 use crate::network::agent_bridge::{
-    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+    serialize_server_data_payload, PayloadBuildError, SERVER_DATA_CHANNEL,
 };
 use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
@@ -510,40 +510,79 @@ fn tick_movement_actions(
     }
 }
 
+#[derive(Debug, Clone, Copy, Component)]
+struct MovementStateEmitPending;
+
+type MovementStateEmitItem<'a> = (
+    Entity,
+    &'a mut Client,
+    &'a mut MovementState,
+    Option<&'a Stamina>,
+);
+
 type MovementStateEmitFilter = (
     With<Client>,
     Or<(
         Added<MovementState>,
         Changed<MovementState>,
         Changed<Stamina>,
+        With<MovementStateEmitPending>,
     )>,
 );
 
 fn emit_movement_state_payloads(
+    commands: Commands,
     clock: Res<CombatClock>,
-    mut players: Query<(&mut Client, &MovementState, Option<&Stamina>), MovementStateEmitFilter>,
+    players: Query<MovementStateEmitItem<'_>, MovementStateEmitFilter>,
 ) {
-    for (mut client, movement, stamina) in &mut players {
-        let payload = ServerDataV1::new(ServerDataPayloadV1::MovementState(
-            movement.to_payload(clock.tick, stamina),
-        ));
-        let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                log_payload_build_error(payload_type, &error);
-                continue;
-            }
-        };
-        send_server_data_payload(&mut client, payload_bytes.as_slice());
+    emit_movement_state_payloads_with(commands, clock.tick, players, serialize_server_data_payload);
+}
+
+fn emit_movement_state_payloads_with(
+    mut commands: Commands,
+    now_tick: u64,
+    mut players: Query<MovementStateEmitItem<'_>, MovementStateEmitFilter>,
+    mut serialize: impl FnMut(&ServerDataV1) -> Result<Vec<u8>, PayloadBuildError>,
+) {
+    for (entity, mut client, mut movement, stamina) in &mut players {
+        if let Err(error) = send_movement_state_payload(
+            &mut client,
+            &mut movement,
+            stamina,
+            now_tick,
+            &mut serialize,
+        ) {
+            commands.entity(entity).insert(MovementStateEmitPending);
+            log_payload_build_error("movement_state", &error);
+            continue;
+        }
+        commands.entity(entity).remove::<MovementStateEmitPending>();
         tracing::debug!(
             "[bong][movement] sent {} {} payload action={:?} speed={:.3}",
             SERVER_DATA_CHANNEL,
-            payload_type,
+            "movement_state",
             movement.action,
             movement.current_speed_multiplier
         );
     }
+}
+
+fn send_movement_state_payload(
+    client: &mut Client,
+    movement: &mut MovementState,
+    stamina: Option<&Stamina>,
+    now_tick: u64,
+    serialize: impl FnOnce(&ServerDataV1) -> Result<Vec<u8>, PayloadBuildError>,
+) -> Result<(), PayloadBuildError> {
+    let movement_payload = movement.to_payload(now_tick, stamina);
+    let rejection_sent = movement_payload.rejected_action.is_some();
+    let payload = ServerDataV1::new(ServerDataPayloadV1::MovementState(movement_payload));
+    let payload_bytes = serialize(&payload)?;
+    send_server_data_payload(client, payload_bytes.as_slice());
+    if rejection_sent {
+        movement.acknowledge_payload_sent();
+    }
+    Ok(())
 }
 
 impl MovementState {
@@ -564,6 +603,10 @@ impl MovementState {
             last_action_tick: self.last_action_tick,
             rejected_action: self.rejected_action,
         }
+    }
+
+    fn acknowledge_payload_sent(&mut self) {
+        self.rejected_action = None;
     }
 }
 
@@ -977,6 +1020,78 @@ fn is_residue_ash_block(block: BlockState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valence::prelude::{ResMut, Resource, UnloadedChunk};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
+
+    #[derive(Resource)]
+    struct MovementStateSerializerFailures {
+        oversize_remaining: usize,
+    }
+
+    fn emit_movement_state_payloads_with_test_serializer(
+        commands: Commands,
+        clock: Res<CombatClock>,
+        players: Query<MovementStateEmitItem<'_>, MovementStateEmitFilter>,
+        mut failures: ResMut<MovementStateSerializerFailures>,
+    ) {
+        emit_movement_state_payloads_with(commands, clock.tick, players, |payload| {
+            if failures.oversize_remaining > 0 {
+                failures.oversize_remaining -= 1;
+                Err(PayloadBuildError::Oversize { size: 2, max: 1 })
+            } else {
+                serialize_server_data_payload(payload)
+            }
+        });
+    }
+
+    fn flush_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock movement client packets should flush");
+        }
+    }
+
+    fn collect_movement_payloads(helper: &mut MockClientHelper) -> Vec<MovementStateV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(payload) = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0) else {
+                continue;
+            };
+            if let ServerDataPayloadV1::MovementState(state) = payload.payload {
+                payloads.push(state);
+            }
+        }
+        payloads
+    }
+
+    fn spawn_movement_emit_client(
+        app: &mut App,
+        rejected_action: Option<MovementActionRequestV1>,
+    ) -> (Entity, MockClientHelper) {
+        let (client_bundle, helper) = create_mock_client("MovementEmit");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                MovementState {
+                    rejected_action,
+                    ..Default::default()
+                },
+                Stamina::default(),
+            ))
+            .id();
+        (entity, helper)
+    }
 
     fn assert_close(actual: f32, expected: f32) {
         assert!(
@@ -1211,6 +1326,168 @@ mod tests {
     }
 
     #[test]
+    fn movement_emit_system_consumes_reject_and_stamina_followups_stay_clear() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_systems(Update, emit_movement_state_payloads);
+        let (entity, mut helper) =
+            spawn_movement_emit_client(&mut app, Some(MovementActionRequestV1::Dash));
+
+        app.update();
+        flush_client_packets(&mut app);
+        let first = collect_movement_payloads(&mut helper);
+        assert_eq!(
+            first.len(),
+            1,
+            "首次 Added<MovementState> 应实际发送一份 payload"
+        );
+        assert_eq!(
+            first[0].rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "首次实际发送必须携带刚发生的 dash reject"
+        );
+        assert_eq!(
+            app.world()
+                .get::<MovementState>(entity)
+                .unwrap()
+                .rejected_action,
+            None,
+            "成功序列化并交付后 server 状态必须消费 reject"
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+        let clear_after_ack = collect_movement_payloads(&mut helper);
+        assert!(
+            clear_after_ack.is_empty(),
+            "emit 内 ack 不应在下一 tick 自激发送，否则会形成清理包循环"
+        );
+
+        app.world_mut().get_mut::<Stamina>(entity).unwrap().current -= 1.0;
+        app.world_mut().resource_mut::<CombatClock>().tick = 101;
+        app.update();
+        flush_client_packets(&mut app);
+        let stamina_followup = collect_movement_payloads(&mut helper);
+        assert_eq!(
+            stamina_followup.len(),
+            1,
+            "仅 Changed<Stamina> 也必须真实触发 movement_state 发送"
+        );
+        assert_eq!(
+            stamina_followup[0].rejected_action, None,
+            "体力恢复/变化包不得再次携带已经消费的 dash reject"
+        );
+
+        app.world_mut()
+            .get_mut::<MovementState>(entity)
+            .unwrap()
+            .rejected_action = Some(MovementActionRequestV1::Dash);
+        app.world_mut().resource_mut::<CombatClock>().tick = 102;
+        app.update();
+        flush_client_packets(&mut app);
+        let second_reject = collect_movement_payloads(&mut helper);
+        assert_eq!(
+            second_reject.len(),
+            1,
+            "新的玩家输入应重新触发一份 movement_state，实际 {} 份",
+            second_reject.len()
+        );
+        assert_eq!(
+            second_reject[0].rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "新的独立玩家输入必须能通过真实 emit 链重新触发 dash reject"
+        );
+    }
+
+    #[test]
+    fn serialization_failure_automatically_retries_on_next_update() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(MovementStateSerializerFailures {
+            oversize_remaining: 1,
+        });
+        app.add_systems(Update, emit_movement_state_payloads_with_test_serializer);
+        let (entity, mut helper) =
+            spawn_movement_emit_client(&mut app, Some(MovementActionRequestV1::Dash));
+
+        app.update();
+        flush_client_packets(&mut app);
+        assert!(
+            collect_movement_payloads(&mut helper).is_empty(),
+            "首拍注入 Oversize 时不得向 client 交付半成品 payload"
+        );
+        assert_eq!(
+            app.world()
+                .get::<MovementState>(entity)
+                .unwrap()
+                .rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "首拍序列化失败发生在 ack 前，reject 必须保留等待自动重试"
+        );
+        assert!(
+            app.world()
+                .get::<MovementStateEmitPending>(entity)
+                .is_some(),
+            "首拍失败后 deferred Commands 必须落下实体级 pending 标记供下一拍选中"
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+        let retried = collect_movement_payloads(&mut helper);
+        assert_eq!(
+            retried.len(),
+            1,
+            "没有外部 MovementState/Stamina 变化时，pending 应在次拍自动重试且仅发送一份，实际 {} 份",
+            retried.len()
+        );
+        assert_eq!(
+            retried[0].rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "自动重试成功时必须仍携带此前未吞掉的 dash reject"
+        );
+        assert_eq!(
+            app.world()
+                .get::<MovementState>(entity)
+                .unwrap()
+                .rejected_action,
+            None,
+            "只有自动重试成功交付后才消费 reject"
+        );
+        assert!(
+            app.world()
+                .get::<MovementStateEmitPending>(entity)
+                .is_none(),
+            "自动重试成功后 deferred Commands 必须清除 pending 标记"
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+        assert!(
+            collect_movement_payloads(&mut helper).is_empty(),
+            "pending 清除后的第三拍不得自触发额外 movement_state"
+        );
+    }
+
+    #[test]
+    fn acknowledging_payload_without_rejection_is_idempotent() {
+        let mut state = MovementState::default();
+
+        state.acknowledge_payload_sent();
+        state.acknowledge_payload_sent();
+
+        assert_eq!(
+            state.to_payload(0, None).rejected_action,
+            None,
+            "无 reject 的重复 ack 在 tick=0 后仍应保持空值"
+        );
+        assert_eq!(
+            state.to_payload(u64::MAX, None).rejected_action,
+            None,
+            "无 reject 的重复 ack 在最大 tick 下仍应保持空值"
+        );
+    }
+
+    #[test]
     fn residue_ash_speed_modifier_requires_zone_gate_and_surface_block() {
         let mut ash_zone = Zone {
             name: "south_ash_dead_zone".to_string(),
@@ -1241,6 +1518,91 @@ mod tests {
             movement_zone_kind(Some(&ash_zone), false),
             MovementZoneKind::Normal
         );
+    }
+
+    #[test]
+    fn production_north_rift_coordinates_keep_residue_ash_movement_in_scorch_zone() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+
+        let registry = ZoneRegistry::load();
+        let cases = [
+            (
+                "relocated rift entrance",
+                DVec3::new(2000.0, 74.0, -7300.0),
+                "rift_mouth_north_002",
+                MovementZoneKind::Dead,
+            ),
+            (
+                "legacy rift entrance",
+                DVec3::new(2000.0, 74.0, -7800.0),
+                "north_waste_east_scorch",
+                MovementZoneKind::ResidueAsh,
+            ),
+            (
+                "inclusive scorch north boundary",
+                DVec3::new(2000.0, 74.0, -7500.0),
+                "north_waste_east_scorch",
+                MovementZoneKind::ResidueAsh,
+            ),
+        ];
+
+        for (label, position, expected_zone, _) in cases {
+            let zone = registry
+                .find_zone(DimensionKind::Overworld, position)
+                .unwrap_or_else(|| panic!("{label} must resolve through the production registry"));
+            assert_eq!(
+                zone.name, expected_zone,
+                "{label} must retain its production zone identity before movement consumes it"
+            );
+
+            let chunk_pos = [
+                position.x.floor() as i32 >> 4,
+                position.z.floor() as i32 >> 4,
+            ];
+            let mut layer = app
+                .world_mut()
+                .get_mut::<ChunkLayer>(scenario.layer)
+                .expect("test layer should carry ChunkLayer");
+            layer.insert_chunk(chunk_pos, UnloadedChunk::new());
+            layer.set_block(
+                BlockPos::new(
+                    position.x.floor() as i32,
+                    (position.y - 1.0).floor() as i32,
+                    position.z.floor() as i32,
+                ),
+                BlockState::COARSE_DIRT,
+            );
+        }
+
+        app.insert_resource(registry);
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(DimensionLayers {
+            overworld: scenario.layer,
+            tsy: scenario.layer,
+        });
+        app.add_systems(Update, apply_movement_speed_system);
+        app.world_mut().entity_mut(scenario.client).insert((
+            MovementState::default(),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        for (label, position, _, expected_kind) in cases {
+            app.world_mut()
+                .entity_mut(scenario.client)
+                .insert(Position::new(position));
+            app.update();
+
+            let movement = app
+                .world()
+                .get::<MovementState>(scenario.client)
+                .expect("movement consumer should preserve MovementState");
+            assert_eq!(
+                movement.zone_kind, expected_kind,
+                "{label} on the same residue block must derive movement semantics from its production zone"
+            );
+        }
     }
 
     #[test]

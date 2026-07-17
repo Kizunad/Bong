@@ -47,6 +47,15 @@ fi
 
 SERVER_PID=""
 STARTED_REDIS=0
+SPIRITWOOD_STATE_DIR=""
+
+# 真实灵木场景会按生产契约持久化已采伐位置。自起 server 时给每轮 e2e 独立状态，
+# 否则第二次运行会正确 hydrate 上一轮的树干并把可重复测试误判成不可采。
+# REUSE 模式无法改变既有 server 环境，仍由调用方负责其世界状态。
+if [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then
+  SPIRITWOOD_STATE_DIR="$(mktemp -d "$EVIDENCE_DIR/spiritwood-state.XXXXXX")"
+  export BONG_SPIRITWOOD_HARVESTED_PATH="$SPIRITWOOD_STATE_DIR/harvested.json"
+fi
 
 port_open() {
   python3 - "$1" "$2" <<'EOF'
@@ -113,6 +122,10 @@ cleanup() {
   fi
   if [ "$STARTED_REDIS" = "1" ]; then
     docker compose -f "$ROOT/docker-compose.test.yml" down -v --remove-orphans >/dev/null 2>&1 || true
+  fi
+  if [ -n "$SPIRITWOOD_STATE_DIR" ]; then
+    rm -f "$SPIRITWOOD_STATE_DIR/harvested.json" "$SPIRITWOOD_STATE_DIR/harvested.tmp"
+    rmdir "$SPIRITWOOD_STATE_DIR" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT

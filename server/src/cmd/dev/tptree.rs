@@ -109,6 +109,24 @@ pub fn handle_tptree(
             continue;
         };
         let center = zone.center();
+        if tree == TreeTarget::Spirit {
+            if let Some(provider) = providers.as_deref().map(|providers| &providers.overworld) {
+                let Some((log_pos, stand_position)) =
+                    crate::world::terrain::mega_tree::nearest_spiritwood_harvest_target(
+                        center, provider,
+                    )
+                else {
+                    client.send_chat_message("Spirit tree log not found in nearby seed cells.");
+                    continue;
+                };
+                position.set([stand_position.x, stand_position.y, stand_position.z]);
+                client.send_chat_message(format!(
+                    "Teleported to spirit tree log at ({}, {}, {}).",
+                    log_pos.x, log_pos.y, log_pos.z
+                ));
+                continue;
+            }
+        }
         let target_y = target_y_for_tree(center, providers.as_deref().map(|p| &p.overworld));
         position.set([center.x, target_y, center.z]);
         client.send_chat_message(format!(
