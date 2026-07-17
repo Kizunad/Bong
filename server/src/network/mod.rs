@@ -59,6 +59,9 @@ pub mod poison_trait_emit;
 pub mod qi_attrition_emit;
 pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
+// plan-skill-av-relink-v1 P3 —— quickslot 发射契约测试（Item 槽 icon_texture 恒空串）。
+#[cfg(test)]
+mod quickslot_config_emit_test;
 // plan-race-system-v1 P3c — 种族门元数据表（RaceGateMeta）构建 + join 首帧下发。
 pub mod morph_state_emit;
 pub mod race_gate_meta_emit;
