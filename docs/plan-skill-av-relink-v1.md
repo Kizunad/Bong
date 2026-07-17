@@ -46,7 +46,7 @@
    - `movement.dash` → `skill_scroll_movement_dash.png`；`shield_block` → `skill_scroll_shield_block.png`
 2. woliu 进阶 5 招（`vacuum_palm`/`vortex_shield`/`vacuum_lock`/`vortex_resonance`/`turbulence_burst`）当前借用基础 5 招图标，重链到各自的 `skill_scroll_woliu_*.png`（磁盘已有）。
 3. 命名约定写进 `known_techniques.rs` 模块注释：技能栏图标单一真相源 = `bong-client:textures/gui/items/skill_scroll_<safe_id>.png`（`safe_id` = 技能 id 的 `.`→`_`，与 `SkillIconIds.java` 既有约定一致）；`bong:textures/gui/skill/` 目录保留给非 technique 的 HUD 特化图（woliu 虚蚀、guangbo）。
-4. `server/src/network/quickslot_config_emit.rs:92` 的 `icon_texture: String::new()` 占位一并接真值（从 `technique_definition(id)` 取）。
+4. **修订 2026-07-17：原文前提经实施核实不成立**——本条原文为「`server/src/network/quickslot_config_emit.rs:92` 的 `icon_texture: String::new()` 占位一并接真值（从 `technique_definition(id)` 取）」。实施核实：quickslot 是**纯 Item 槽**（`QuickSlotBindings` 为 `[Option<u64>; 9]`，只绑 instance_id→template_id，**无 Skill 变体**），`technique_definition(template_id)` 恒 `None`，「接真值」不可实施；且 client 对 Item 槽空串按 itemId 走 `ItemIconRegistry` 富解析（tools/ 子目录映射、armor tint、存在性探测、broken_artifact 兜底），server 回填非空 naive 模板路径会使 client 落入裸 `texture()` 分支绕过富解析，造成工具/护甲类图标回归。修正后契约：**Item 型槽（quickslot 全部槽位 + skillbar Item 槽）`icon_texture` 恒空串 = 显式契约**，空串即「由 client 按 itemId 走 `ItemIconRegistry` 富解析」的信号。依据锚点：`server/src/network/quickslot_config_emit.rs` 模块注释；client `QuickBarHudPlanner`（Item 槽空串 → `itemTexture(itemId)` 富解析分支，非空 → 裸 `texture()` 分支）。
 
 ## P1 — 孤儿动画接线
 
@@ -75,7 +75,7 @@
 
 **图标链（server 发射 → 快照 → client 资源，三级都锁）**：
 
-- **发射契约测试**（server 侧）：遍历全部 technique，断言 `skillbar_config_emit` 与 `quickslot_config_emit` 发出的 `icon_texture` **严格等于** `technique_definition(id).icon_texture` 且非空；覆盖未知 technique id、非技能槽位（Item 型槽）的错误/兜底分支——quickslot 接真值后 `String::new()` 不再合法。
+- **发射契约测试**（server 侧）：遍历全部 technique，断言 `skillbar_config_emit` 发出的 Skill 槽 `icon_texture` **严格等于** `technique_definition(id).icon_texture` 且非空；Item 型槽（skillbar Item 槽 + quickslot 全部槽位）`icon_texture` **恒空串 pin**（P0 #4 修订后的显式契约：空串 = client 按 itemId 走 `ItemIconRegistry` 富解析，server 回填路径判红）；覆盖未知 technique id、解析不到的 Item instance、无 bindings/inventory 等错误/兜底分支。
 - **快照同步测试**（server 侧）：icon 路径快照由 `TECHNIQUE_DEFINITIONS` **单向生成**（checked-in 快照 + server 测试断言快照与定义的 `skill_id → icon_texture` 集合完全一致、无多无少，或构建期直接导出——机制与 `plan-skill-anim-fidelity-v1` §8 #4 的 cast_ticks 快照拍同一方案），快照不可手改，不形成第二真相源。
 - **资产存在性扫描测试**（client 侧）：消费同一份快照，断言每条 icon 路径在 classpath 资源里真实存在——新增招式漏配图标立刻撞红。**缺资产 allowlist 棘轮**（与 `plan-skill-anim-fidelity-v1` P0 对拍测试同款机制）：PR-1 合入时已知缺失、被推迟到 P2 生成的条目进 allowlist（当前全量核查后仅 `morph.yixing` 一条——它是 `TECHNIQUE_DEFINITIONS` 条目但全仓无图标资产），PR-3 生成后清零；allowlist 只允许缩小，新增条目必须在 PR body 显式说明理由。
 - **映射约束测试**：空串/坏命名空间（非 `bong:`/`bong-client:` 前缀）判红；两招指向同一文件视为重复映射判红，显式声明共用的白名单除外（woliu 借用图标在 P0 后应清零）。
@@ -94,6 +94,27 @@
 1. **图标真相源方向**：推荐「全部统一到 `bong-client:.../items/skill_scroll_*`」（39 张现成、`SkillIconIds` 已按此约定、零资产搬运）；备选是反向把 39 张复制/重命名到 `bong:textures/gui/skill/`（r9 声明路径）。二选一后写死约定。
 2. **`stance_*` 触发源核实**：「流派架势切换」的 server 事件是否真实存在（`stance_switch` audio recipe 的发射点在哪）；若只有音效 recipe 而无 gameplay 事件，则改接「`/technique active` 激活功法」时刻，或降级 report-only。
 3. **`dodge_back`/`dodge_roll` 场景边界**：与 `movement.dash` 现有 `dash_forward` 的分工（后撤 vs 翻滚 vs 冲刺），需读 movement/combat 代码定边界，防止一个事件双动画打架。
+
+> §8 原表保留作决策背景；#1 已在 §8.1 收口、实施以 §8.1 为准，#2/#3 归 PR-2（P1 实施）设计收口时决议。
+
+### §8.1 决议（2026-07-17）
+
+#### #1 图标真相源方向 —— 已收口：统一 `bong-client:textures/gui/items/skill_scroll_<safe_id>.png`
+
+**决议**：
+1. 采用推荐路线：technique 图标单一真相源 = `bong-client:textures/gui/items/skill_scroll_<safe_id>.png`（`safe_id` = 技能 id 的 `.`/`:`/`/` → `_`），39 张现成资产零搬运；client 对 `bong-client:` 前缀**原生支持、零改动**——`Identifier.tryParse` 接受任意合法命名空间，资源查找对 `bong-client` 与 `bong` 一视同仁。
+2. 例外清单（既有专属图不重链，逐条锁进 P3 例外映射表）：woliu 基础六式 + `body.guangbo_ticao` 留 `bong:textures/gui/skill/`；zhenmai 五式留 `bong-client:textures/gui/skill/`；`morph.yixing` 全仓无资产、现值悬空，归 P2 `/gen-image` 生成后按约定收编（client 侧 allowlist 棘轮同步记录）。
+3. 拒绝备选路线（把 39 张复制/重命名到 `bong:textures/gui/skill/`）：徒增资产搬运与双份文件漂移风险，且与 `SkillIconIds` 既有 client 端解析约定相逆。
+
+**落点**：`server/src/cultivation/known_techniques.rs` 模块注释（约定 + 例外清单正文）；client `HudTextureProbe.java`（`Identifier.tryParse` 对 `bong-client:` 原生解析）、`LoadoutIconLayer.java` `resolveExistingSkillTexture`（服务端下发路径优先 + `skill_scroll_<safe_id>` 候选兜底）、`SkillIconIds.java`（`scrollTexturePath` 同一约定的 client 端拼法）。
+
+#### #2 `stance_*` 触发源核实 —— PR-2（P1 实施）设计收口时决议，本 PR 不预判
+
+**决议**：显式记录为 PR-2 前置收口项。「流派架势切换」server 事件是否真实存在（`stance_switch` audio recipe 的发射点）须在 P1 实施前按 §8 原文列出的选项核实定案（真实事件 / 改接 `/technique active` 时刻 / 降级 report-only），PR-1（P0+P3 图标链）不预判、不接线。
+
+#### #3 `dodge_back`/`dodge_roll` 场景边界 —— PR-2（P1 实施）设计收口时决议，本 PR 不预判
+
+**决议**：同 #2，显式记录为 PR-2 前置收口项。与 `movement.dash` 现有 `dash_forward` 的分工（后撤 vs 翻滚 vs 冲刺）须在 P1 实施前读 movement/combat 代码定边界后定案，PR-1 不预判。
 
 ## 测试声明
 
