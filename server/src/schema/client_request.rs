@@ -721,9 +721,12 @@ pub enum ClientRequestV1 {
     /// server 校验 request_id / allowed_button_ids 后转 `bong:agent_ui_response`。
     AgentUiResponse {
         v: u8,
+        #[serde(
+            deserialize_with = "super::agent_ui::deserialize_agent_ui_request_id",
+            serialize_with = "super::agent_ui::serialize_agent_ui_request_id"
+        )]
         request_id: String,
         action: AgentUiActionType,
-        #[serde(default)]
         params: std::collections::HashMap<String, String>,
     },
 }
@@ -1169,14 +1172,13 @@ mod tests {
     }
 
     #[test]
-    fn agent_ui_response_defaults_missing_params_to_empty_map() {
+    fn agent_ui_response_requires_params_like_the_fabric_producer_and_typebox_schema() {
         let json =
             r#"{"type":"agent_ui_response","v":1,"request_id":"req_2","action":"dismissed"}"#;
-        let req: ClientRequestV1 =
-            serde_json::from_str(json).expect("agent_ui_response 缺 params 应默认空 map");
+        let result = serde_json::from_str::<ClientRequestV1>(json);
         assert!(
-            matches!(req, ClientRequestV1::AgentUiResponse { ref params, .. } if params.is_empty()),
-            "缺 params 应反序列化为空 map，实为 {req:?}"
+            result.is_err(),
+            "真实 Fabric producer 始终发送 params 空对象，TypeBox 也将其列为 required；Rust 不得额外接受缺字段 payload：{result:?}"
         );
     }
 
@@ -1194,6 +1196,72 @@ mod tests {
         assert!(
             extra_result.is_err(),
             "agent_ui_response 额外字段 surprise 应被 deny_unknown_fields 拒绝，实为 {extra_result:?}"
+        );
+
+        let spoofed_target = r#"{"type":"agent_ui_response","v":1,"request_id":"req_5","action":"dismissed","target_player":"offline:Bystander","params":{}}"#;
+        let spoofed_target_result: Result<ClientRequestV1, _> =
+            serde_json::from_str(spoofed_target);
+        assert!(
+            spoofed_target_result.is_err(),
+            "target_player 只能由 server 依已认证连接实体权威确定，C2S 伪造字段必须被拒绝：{spoofed_target_result:?}"
+        );
+    }
+
+    #[test]
+    fn agent_ui_response_request_id_matches_typebox_utf16_boundaries() {
+        let make_json = |request_id: &str| {
+            serde_json::json!({
+                "type": "agent_ui_response",
+                "v": 1,
+                "request_id": request_id,
+                "action": "dismissed",
+                "params": {},
+            })
+        };
+
+        for (name, request_id, should_pass) in [
+            ("empty", String::new(), false),
+            ("64 emoji", "😀".repeat(64), true),
+            ("65 emoji", "😀".repeat(65), false),
+            ("128 BMP", "界".repeat(128), true),
+            ("129 BMP", "界".repeat(129), false),
+        ] {
+            let inbound = serde_json::from_value::<ClientRequestV1>(make_json(&request_id));
+            assert_eq!(
+                inbound.is_ok(),
+                should_pass,
+                "C2S request_id {name} 应按 UTF-16 1..=128 判定为 {should_pass}，实为：{inbound:?}"
+            );
+
+            let outbound = serde_json::to_value(ClientRequestV1::AgentUiResponse {
+                v: 1,
+                request_id,
+                action: AgentUiActionType::Dismissed,
+                params: std::collections::HashMap::new(),
+            });
+            assert_eq!(
+                outbound.is_ok(),
+                should_pass,
+                "C2S request_id {name} 出站应按同一契约判定为 {should_pass}，实为：{outbound:?}"
+            );
+        }
+
+        let lone_surrogate = r#"{"type":"agent_ui_response","v":1,"request_id":"\ud800","action":"dismissed","params":{}}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(lone_surrogate).is_err(),
+            "C2S raw JSON lone surrogate 必须与 TypeBox well-formed UTF-16 pattern 一致拒绝"
+        );
+
+        let valid_pair = r#"{"type":"agent_ui_response","v":1,"request_id":"\ud83d\ude00","action":"dismissed","params":{}}"#;
+        let parsed = serde_json::from_str::<ClientRequestV1>(valid_pair)
+            .expect("合法 surrogate pair 应在 C2S Rust wire 入口通过");
+        assert!(
+            matches!(
+                parsed,
+                ClientRequestV1::AgentUiResponse { ref request_id, .. }
+                    if request_id == "😀"
+            ),
+            "合法 surrogate pair 应解码为单个 emoji，实为 {parsed:?}"
         );
     }
 

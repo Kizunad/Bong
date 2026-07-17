@@ -1,10 +1,11 @@
 /**
- * plan-agent-ui-data-v1 P0 — 天道 UI-as-Data 三个独立 schema。
+ * plan-agent-ui-data-v1 P0 — 天道 UI-as-Data 四个独立 schema。
  *
- * 三个 schema 独立，字段不得混用：
+ * 四个 schema 独立，字段不得混用：
  *   AgentUiRequestCommandV1  — agent → server（Redis bong:agent_ui_cmd）
  *   AgentUiRequestPayloadV1  — server → client（CustomPayload via server_data）
- *   AgentUiResponsePayloadV1 — client → server（CustomPayload）+ server → agent（Redis）
+ *   AgentUiClientResponsePayloadV1 — client → server（CustomPayload）
+ *   AgentUiResponsePayloadV1 — server → agent（Redis bong:agent_ui_response）
  */
 
 import { Type, type Static } from "@sinclair/typebox";
@@ -27,6 +28,20 @@ export const AgentUiActionType = Type.Union([
 ]);
 export type AgentUiActionType = Static<typeof AgentUiActionType>;
 
+// TypeBox 的 minLength/maxLength 在 JavaScript runtime 中按 UTF-16 code unit 计数。
+// Rust String 只能表示 well-formed Unicode scalar sequence，所以还需要显式拒绝
+// JavaScript 可表示、但 Rust serde_json 无法接收的 lone surrogate。
+const WELL_FORMED_UTF16_PATTERN =
+  "^(?:[\\u0000-\\uD7FF\\uE000-\\uFFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$";
+
+function agentUiIdV1() {
+  return Type.String({
+    minLength: 1,
+    maxLength: 128,
+    pattern: WELL_FORMED_UTF16_PATTERN,
+  });
+}
+
 // ─── Schema 1：Agent → Server（Redis bong:agent_ui_cmd）──────────────────────
 
 /**
@@ -37,8 +52,8 @@ export type AgentUiActionType = Static<typeof AgentUiActionType>;
  */
 export const AgentUiRequestCommandV1 = Type.Object(
   {
-    request_id: Type.String({ minLength: 1, maxLength: 128 }),
-    target_player: Type.String({ minLength: 1, maxLength: 128 }),
+    request_id: agentUiIdV1(),
+    target_player: agentUiIdV1(),
     xml: Type.String({ maxLength: 8192 }),
     timeout_ticks: Type.Integer({ minimum: 20, maximum: 2400, default: 600 }),
     /**
@@ -67,8 +82,8 @@ export type AgentUiRequestCommandV1 = Static<typeof AgentUiRequestCommandV1>;
  */
 export const AgentUiRequestPayloadV1 = Type.Object(
   {
-    request_id: Type.String({ minLength: 1, maxLength: 128 }),
-    target_player: Type.String({ minLength: 1, maxLength: 128 }),
+    request_id: agentUiIdV1(),
+    target_player: agentUiIdV1(),
     xml: Type.String({ maxLength: 8192 }),
     timeout_ticks: Type.Integer({ minimum: 20, maximum: 2400 }),
   },
@@ -98,20 +113,35 @@ export type AgentUiErrorReasonV1 =
   | "xml_sanitize_failed";
 
 /**
- * 玩家面板交互响应，双向使用（C2S CustomPayload + server→agent Redis）。
+ * 玩家面板交互响应（client→server CustomPayload）。
  *
  * params 为 Record<string, string> 以保留可扩展性：
  *   button_click → params.button_id = "<id>"
  *   error        → params.reason: AgentUiErrorReasonV1（见上方联合类型）
  *                  realm_gate_rejected 还有 params.player_realm / params.required_realm
- * target_player 可选：server 权威拒绝类响应回填 canonical_player_id，供 agent 精准路由玩家叙事。
+ */
+export const AgentUiClientResponsePayloadV1 = Type.Object(
+  {
+    request_id: agentUiIdV1(),
+    action: AgentUiActionType,
+    params: Type.Record(Type.String(), Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type AgentUiClientResponsePayloadV1 = Static<
+  typeof AgentUiClientResponsePayloadV1
+>;
+
+/**
+ * server 转发给 agent 的面板响应（Redis bong:agent_ui_response）。
+ *
+ * 只有这条权威 server→agent 边界可回填 target_player；真实 Fabric C2S
+ * 从不发送该字段，server 依已认证的连接实体确定玩家。
  */
 export const AgentUiResponsePayloadV1 = Type.Object(
   {
-    request_id: Type.String({ minLength: 1, maxLength: 128 }),
-    action: AgentUiActionType,
-    target_player: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-    params: Type.Record(Type.String(), Type.String()),
+    ...AgentUiClientResponsePayloadV1.properties,
+    target_player: Type.Optional(agentUiIdV1()),
   },
   { additionalProperties: false },
 );
@@ -133,7 +163,7 @@ export type AgentUiCloseReasonV1 = Static<typeof AgentUiCloseReasonV1>;
  */
 export const AgentUiClosePayloadV1 = Type.Object(
   {
-    request_id: Type.String({ minLength: 1, maxLength: 128 }),
+    request_id: agentUiIdV1(),
     reason: Type.Optional(AgentUiCloseReasonV1),
   },
   { additionalProperties: false },

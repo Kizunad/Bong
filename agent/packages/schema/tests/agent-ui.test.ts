@@ -21,11 +21,16 @@ function loadSample(name: string): unknown {
 import {
   AgentUiRequestCommandV1,
   AgentUiRequestPayloadV1,
+  AgentUiClientResponsePayloadV1,
   AgentUiResponsePayloadV1,
   AgentUiClosePayloadV1,
   AgentUiActionType,
   type AgentUiErrorReasonV1,
 } from "../src/payloads/agent-ui.js";
+import {
+  AgentUiResponseRequestV1,
+  ClientRequestV1,
+} from "../src/client-request.js";
 
 // ─── AgentUiRequestCommandV1（agent → server Redis）──────────────────────────
 
@@ -160,7 +165,7 @@ describe("AgentUiRequestPayloadV1", () => {
   });
 });
 
-// ─── AgentUiResponsePayloadV1（C2S CustomPayload + server→agent Redis）───────
+// ─── AgentUiResponsePayloadV1（server→agent Redis）────────────────────────────
 
 describe("AgentUiResponsePayloadV1", () => {
   it("happy path: button_click 正样本", () => {
@@ -337,6 +342,71 @@ describe("AgentUiResponsePayloadV1", () => {
       ).toBe(testCase.valid);
     }
   });
+
+  it("wire 边界: raw JSON lone surrogate 拒绝，合法 surrogate pair 通过", () => {
+    const parseTarget = (escapedTarget: string) =>
+      JSON.parse(
+        `{"request_id":"target-surrogate","action":"error","target_player":"${escapedTarget}","params":{"reason":"realm_gate_rejected"}}`,
+      ) as { target_player: string };
+
+    for (const [name, escapedTarget] of [
+      ["lone high surrogate", "\\ud800"],
+      ["lone low surrogate", "\\udc00"],
+    ] as const) {
+      const payload = parseTarget(escapedTarget);
+      expect(payload.target_player.length, `${name} 在 JavaScript 中是 1 UTF-16 unit`).toBe(1);
+      expect(
+        Value.Check(AgentUiResponsePayloadV1, payload),
+        `${name} 不得通过 server→agent wire schema`,
+      ).toBe(false);
+    }
+
+    const validPair = parseTarget("\\ud83d\\ude00");
+    expect(validPair.target_player).toBe("😀");
+    expect(validPair.target_player.length).toBe(2);
+    expect(Value.Check(AgentUiResponsePayloadV1, validPair)).toBe(true);
+
+    const loneSurrogateRequestId = JSON.parse(
+      '{"request_id":"\\ud800","action":"dismissed","params":{}}',
+    );
+    expect(
+      Value.Check(AgentUiResponsePayloadV1, loneSurrogateRequestId),
+      "request_id 与 target_player 必须共用同一 well-formed UTF-16 ID 契约",
+    ).toBe(false);
+  });
+});
+
+describe("AgentUiClientResponsePayloadV1 / AgentUiResponseRequestV1", () => {
+  const clientPayload = {
+    request_id: "req-c2s-real-producer",
+    action: "button_click" as const,
+    params: { button_id: "enter_realm" },
+  };
+  const clientRequest = {
+    v: 1 as const,
+    type: "agent_ui_response" as const,
+    ...clientPayload,
+  };
+
+  it("接受真实 Fabric producer 的 request_id/action/params 形状", () => {
+    expect(Value.Check(AgentUiClientResponsePayloadV1, clientPayload)).toBe(true);
+    expect(Value.Check(AgentUiResponseRequestV1, clientRequest)).toBe(true);
+    expect(Value.Check(ClientRequestV1, clientRequest)).toBe(true);
+  });
+
+  it("拒绝 C2S 伪造 target_player，该字段只属于 server→agent 权威响应", () => {
+    const spoofedPayload = {
+      ...clientPayload,
+      target_player: "offline:Bystander",
+    };
+    const spoofedRequest = {
+      ...clientRequest,
+      target_player: "offline:Bystander",
+    };
+    expect(Value.Check(AgentUiClientResponsePayloadV1, spoofedPayload)).toBe(false);
+    expect(Value.Check(AgentUiResponseRequestV1, spoofedRequest)).toBe(false);
+    expect(Value.Check(ClientRequestV1, spoofedRequest)).toBe(false);
+  });
 });
 
 // ─── AgentUiActionType 字面联合 ──────────────────────────────────────────────
@@ -415,19 +485,24 @@ describe("sample roundtrip: agent_ui_request_command.sample.json", () => {
 });
 
 describe("sample roundtrip: client-request.agent-ui-response.sample.json", () => {
-  it("符合 AgentUiResponsePayloadV1 schema（button_click action）", () => {
+  it("符合真实 C2S AgentUiResponseRequestV1 schema（button_click action）", () => {
     const sample = loadSample("client-request.agent-ui-response.sample.json");
-    // sample 含 v/type 额外字段（C2S CustomPayload 格式），提取 agent-facing 字段做校验
+    expect(
+      Value.Check(AgentUiResponseRequestV1, sample),
+      `client-request.agent-ui-response.sample.json 应通过不含 target_player 的 C2S schema`,
+    ).toBe(true);
+
+    // 去掉 v/type 后与真实 Fabric producer payload 完全一致。
     const asRecord = sample as Record<string, unknown>;
-    const agentPayload = {
+    const clientPayload = {
       request_id: asRecord["request_id"],
       action: asRecord["action"],
       params: asRecord["params"],
     };
-    const result = Value.Check(AgentUiResponsePayloadV1, agentPayload);
+    const result = Value.Check(AgentUiClientResponsePayloadV1, clientPayload);
     expect(
       result,
-      `client-request.agent-ui-response.sample.json 的 agent-facing 字段应通过 AgentUiResponsePayloadV1 校验`,
+      `client-request.agent-ui-response.sample.json 的业务字段应通过 AgentUiClientResponsePayloadV1 校验`,
     ).toBe(true);
   });
 });

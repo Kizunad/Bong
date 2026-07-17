@@ -20271,11 +20271,13 @@
         "request_id": {
           "minLength": 1,
           "maxLength": 128,
+          "pattern": "^(?:[\\u0000-\\uD7FF\\uE000-\\uFFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$",
           "type": "string"
         },
         "target_player": {
           "minLength": 1,
           "maxLength": 128,
+          "pattern": "^(?:[\\u0000-\\uD7FF\\uE000-\\uFFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$",
           "type": "string"
         },
         "xml": {
@@ -20309,6 +20311,7 @@
         "request_id": {
           "minLength": 1,
           "maxLength": 128,
+          "pattern": "^(?:[\\u0000-\\uD7FF\\uE000-\\uFFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$",
           "type": "string"
         },
         "reason": {

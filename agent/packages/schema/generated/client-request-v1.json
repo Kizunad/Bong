@@ -3431,6 +3431,7 @@
         "request_id": {
           "minLength": 1,
           "maxLength": 128,
+          "pattern": "^(?:[\\u0000-\\uD7FF\\uE000-\\uFFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$",
           "type": "string"
         },
         "action": {
@@ -3460,11 +3461,6 @@
               "type": "string"
             }
           ]
-        },
-        "target_player": {
-          "minLength": 1,
-          "maxLength": 128,
-          "type": "string"
         },
         "params": {
           "type": "object",
