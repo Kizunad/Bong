@@ -2,6 +2,9 @@ pub mod agent_bridge;
 pub mod agent_ui;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
+// plan-skill-av-relink-v1 P3 —— P1 接线 anim_id 共享清单单向同步测试。
+#[cfg(test)]
+mod anim_wiring_manifest_test;
 pub mod animation_trigger;
 pub mod anqi_event_bridge;
 pub mod anqi_hud_emit;

@@ -169,6 +169,32 @@ pub(crate) const ANIM_ALCHEMY_STIR: &str = "bong:alchemy_stir";
 /// 分支内联 emit——校验前发会在 stale/无效/被拒抉择上误播）。
 pub(crate) const ANIM_ENLIGHTENMENT_POSE: &str = "bong:enlightenment_pose";
 
+/// plan-skill-av-relink-v1 P3 — P1 全部 11 条新接线的 anim id 清单（**唯一真相源**，
+/// 与 plan P1 表逐行同源）。共享清单
+/// `client/src/test/resources/bong/anim_wiring_manifest.json` 由本表单向生成
+/// （重生成入口见 `anim_wiring_manifest_test`，禁手改），双端消费：
+/// - server：`network::anim_wiring_manifest_test` 断言清单与本表完全一致（无多无少
+///   无漂移无字节级手改）；
+/// - client：`AnimWiringManifestTest` 经 classloader 读同一份 JSON，逐项断言
+///   `BongAnimationRegistry` 可注册解析 + `player_animation/<id>.json` 资产真实存在。
+///
+/// 新增/删除 P1 接线时必须同步改本表并重生成清单，否则双端测试各自撞红。
+/// `#[cfg(test)]`：本表专供双端一致性测试消费，生产 emit 点直接用上方各常量。
+#[cfg(test)]
+pub(crate) const P1_WIRED_ANIM_IDS: [&str; 11] = [
+    ANIM_STANCE_WOLIU,
+    ANIM_STANCE_DUGU,
+    ANIM_STANCE_DUGU_POISON,
+    ANIM_STANCE_BAOMAI,
+    ANIM_STANCE_ZHENMAI,
+    ANIM_STANCE_TUIKE,
+    ANIM_FORGE_HAMMER,
+    ANIM_RUNE_DRAW,
+    ANIM_ALCHEMY_STIR,
+    ANIM_ENLIGHTENMENT_POSE,
+    ANIM_FIST_PUNCH_LEFT,
+];
+
 // pub(crate)：rune_draw（zhenfa）/ alchemy_stir（client_request_handler）/
 // enlightenment_pose（insight_flow）内联 emit 点复用同一优先级常量，防各自取值漂移。
 pub(crate) const COMBAT_PRIORITY: u16 = 1000;
