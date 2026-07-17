@@ -77,6 +77,9 @@ pub mod skill_registry;
 pub mod special_talent;
 pub mod spiritual_sense;
 pub mod style_modifier;
+// plan-skill-av-relink-v1 P3 —— technique 图标快照单向同步 + 映射约束测试。
+#[cfg(test)]
+mod technique_icon_snapshot_test;
 pub mod technique_mentor;
 pub mod technique_observe;
 pub mod technique_proficiency;
