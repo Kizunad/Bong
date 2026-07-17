@@ -60,6 +60,9 @@ pub fn emit_skillbar_config_payloads(
                         display_name,
                         cast_duration_ms,
                         cooldown_ms,
+                        // 契约（plan-skill-av-relink-v1 P0）：Item 槽 icon_texture
+                        // 恒空串，client 按 template_id 走 ItemIconRegistry 富解析
+                        // （tools/ 映射、armor tint、兜底），填路径会绕过它。
                         icon_texture: String::new(),
                     })
                 }),
