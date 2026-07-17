@@ -28,6 +28,60 @@ const ALLOWED_NAMESPACES: [&str; 2] = ["bong", "bong-client"];
 /// 持有同一份空集白名单。
 const DUPLICATE_TEXTURE_ALLOWLIST: [&str; 0] = [];
 
+/// P0 例外映射表（plan §8.1 #1）：既有专属图不重链，逐条写死期望文件名——例外集
+/// 只许缩小，新增例外必须在此登记并说明理由（与 `known_techniques.rs` 模块注释
+/// 的例外清单保持同步）。
+const ICON_TEXTURE_EXCEPTIONS: [(&str, &str); 13] = [
+    // woliu 基础六式 —— 既有 HUD 特化图保留在 bong:textures/gui/skill/（P0 #3 约定）。
+    ("woliu.vortex", "bong:textures/gui/skill/woliu_vortex.png"),
+    ("woliu.hold", "bong:textures/gui/skill/woliu_hold.png"),
+    ("woliu.burst", "bong:textures/gui/skill/woliu_burst.png"),
+    ("woliu.mouth", "bong:textures/gui/skill/woliu_mouth.png"),
+    ("woliu.pull", "bong:textures/gui/skill/woliu_pull.png"),
+    ("woliu.heart", "bong:textures/gui/skill/woliu_heart.png"),
+    // body.guangbo_ticao —— 同上保留 bong: HUD 特化目录。
+    (
+        "body.guangbo_ticao",
+        "bong:textures/gui/skill/body_guangbo_ticao.png",
+    ),
+    // zhenmai 五式 —— 既有专属图保留在 bong-client:textures/gui/skill/。
+    (
+        "zhenmai.parry",
+        "bong-client:textures/gui/skill/zhenmai_parry.png",
+    ),
+    (
+        "zhenmai.neutralize",
+        "bong-client:textures/gui/skill/zhenmai_neutralize.png",
+    ),
+    (
+        "zhenmai.multipoint",
+        "bong-client:textures/gui/skill/zhenmai_multipoint.png",
+    ),
+    (
+        "zhenmai.harden",
+        "bong-client:textures/gui/skill/zhenmai_harden.png",
+    ),
+    (
+        "zhenmai.sever_chain",
+        "bong-client:textures/gui/skill/zhenmai_sever_chain.png",
+    ),
+    // morph.yixing —— 全仓尚无任何图标资产，现值悬空，待 P2 /gen-image 生成后按
+    // 规范路径收编（client 侧 MISSING_ICON_ALLOWLIST 同步记录）。
+    ("morph.yixing", "bong:textures/gui/skill/morph_yixing.png"),
+];
+
+/// 非例外 technique 的规范图标路径（plan §8.1 #1 单一真相源约定）：
+/// `bong-client:textures/gui/items/skill_scroll_<safe_id>.png`，`safe_id` =
+/// 技能 id 的 `.`/`:`/`/` → `_`（与 client `SkillIconIds.safeSkillIconId` 镜像，
+/// 两端改动必须同步）。
+fn canonical_icon_texture(skill_id: &str) -> String {
+    let safe_id: String = skill_id
+        .chars()
+        .map(|c| if matches!(c, '.' | ':' | '/') { '_' } else { c })
+        .collect();
+    format!("bong-client:textures/gui/items/skill_scroll_{safe_id}.png")
+}
+
 fn snapshot_path() -> PathBuf {
     PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -173,6 +227,32 @@ fn every_technique_icon_texture_uses_allowed_namespace_and_png_path() {
             "technique `{}` 的图标路径 `{path}` 含 MC Identifier 非法字符\
              （Identifier.tryParse 会在 client 端静默失败）",
             def.id
+        );
+        // 语义映射校验（plan §8.1 #1）：非例外条目必须严格等于 skill_scroll 规范
+        // 路径（safe_id 派生），例外条目必须严格等于映射表写死的期望文件名——防
+        // "命名空间/格式全合法但指错文件"的静默漂移。
+        let expected_icon = ICON_TEXTURE_EXCEPTIONS
+            .iter()
+            .find(|(id, _)| *id == def.id)
+            .map(|(_, texture)| (*texture).to_string())
+            .unwrap_or_else(|| canonical_icon_texture(def.id));
+        assert_eq!(
+            def.icon_texture, expected_icon,
+            "technique `{}` 的 icon_texture 偏离 P0 命名约定：期望 `{expected_icon}`\
+             （例外条目以 ICON_TEXTURE_EXCEPTIONS 写死值为准，其余一律\
+             skill_scroll_<safe_id> 规范路径），实际 `{}`——重链到规范资产，或\
+             （确属新例外时）登记 ICON_TEXTURE_EXCEPTIONS 并说明理由",
+            def.id, def.icon_texture
+        );
+    }
+
+    // 例外映射表防僵尸：每条例外 id 必须仍存在于 TECHNIQUE_DEFINITIONS（技能改名/
+    // 删除后条目不得残留，例外集只许缩小）。
+    for (id, _) in &ICON_TEXTURE_EXCEPTIONS {
+        assert!(
+            TECHNIQUE_DEFINITIONS.iter().any(|def| def.id == *id),
+            "ICON_TEXTURE_EXCEPTIONS 僵尸条目 `{id}`：TECHNIQUE_DEFINITIONS 里已无\
+             此 technique，删掉该例外条目"
         );
     }
 }
