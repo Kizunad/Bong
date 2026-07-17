@@ -417,8 +417,13 @@ mod tests {
     use crate::schema::proto_gen::bong::{self, server_data_envelope};
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use prost::Message;
+    use std::fs;
+    use std::path::PathBuf;
 
     const RECIPE_ID: &str = "hud_contract_recipe";
+    const ACTIVE_PROTO_FIXTURE: &str = "alchemy_session_active_v1.pb";
+    const FINISHED_PROTO_FIXTURE: &str = "alchemy_session_finished_v1.pb";
+    const REGENERATE_FIXTURES_COMMAND: &str = "cargo test network::alchemy_snapshot_emit::tests::regenerate_alchemy_session_production_proto_fixtures -- --ignored --exact --nocapture";
 
     fn test_registry() -> RecipeRegistry {
         let mut registry = RecipeRegistry::new();
@@ -534,6 +539,80 @@ mod tests {
         }
     }
 
+    fn production_fixture_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../proto/fixtures")
+    }
+
+    fn production_fixture_bytes(finished: bool) -> Vec<u8> {
+        let mut furnace = active_furnace();
+        furnace
+            .session
+            .as_mut()
+            .expect("fixture furnace must contain an alchemy session")
+            .finished = finished;
+        let data = build_session_data(furnace.session.as_ref(), &test_registry());
+        let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemySession(Box::new(data)));
+
+        serialize_server_data_payload_proto(&payload)
+            .expect("alchemy fixture must serialize through the production envelope path")
+    }
+
+    fn assert_shared_fixture_is_current(file_name: &str, finished: bool) -> Vec<u8> {
+        let generated = production_fixture_bytes(finished);
+        let fixture_path = production_fixture_dir().join(file_name);
+        let checked_in = fs::read(&fixture_path).unwrap_or_else(|err| {
+            panic!(
+                "shared Rust production fixture `{}` is missing: {err}; regenerate explicitly with `{REGENERATE_FIXTURES_COMMAND}`",
+                fixture_path.display()
+            )
+        });
+
+        assert_eq!(
+            checked_in.as_slice(),
+            generated.as_slice(),
+            "shared Rust production fixture `{}` is stale; regenerate explicitly with `{REGENERATE_FIXTURES_COMMAND}`",
+            fixture_path.display()
+        );
+        generated
+    }
+
+    fn assert_production_fixture_semantics(bytes: &[u8], active: bool, status_label: &str) {
+        let decoded = bong::ServerDataEnvelope::decode(bytes)
+            .expect("Rust production alchemy fixture must decode as ServerDataEnvelope");
+        let session = match decoded.payload {
+            Some(server_data_envelope::Payload::AlchemySession(session)) => session,
+            other => panic!("expected alchemy_session proto payload, got {other:?}"),
+        };
+
+        assert_eq!(session.recipe_id.as_deref(), Some(RECIPE_ID));
+        assert_eq!(session.active, active);
+        assert_eq!(session.elapsed_ticks, 44);
+        assert_eq!(session.target_ticks, 180);
+        assert_eq!(session.temp_current, 0.58);
+        assert_eq!(session.temp_target, 0.62);
+        assert_eq!(session.temp_band, 0.08);
+        assert_eq!(session.qi_injected, 7.25);
+        assert_eq!(session.qi_target, 12.5);
+        assert_eq!(session.status_label, status_label);
+        assert_eq!(session.stages.len(), 3);
+        assert_eq!(session.stages[0].at_tick, 0);
+        assert_eq!(session.stages[0].window, 0);
+        assert_eq!(session.stages[0].summary, "ci_she_hao×2 + ling_shui×1");
+        assert!(session.stages[0].completed);
+        assert!(!session.stages[0].missed);
+        assert_eq!(session.stages[1].at_tick, 40);
+        assert_eq!(session.stages[1].window, 6);
+        assert_eq!(session.stages[1].summary, "dan_sha×3");
+        assert!(!session.stages[1].completed);
+        assert!(session.stages[1].missed);
+        assert_eq!(session.stages[2].at_tick, 120);
+        assert_eq!(session.stages[2].window, 4);
+        assert_eq!(session.stages[2].summary, "");
+        assert!(!session.stages[2].completed);
+        assert!(!session.stages[2].missed);
+        assert_eq!(session.interventions_recent, vec!["§7AdjustTemp(0.58)"]);
+    }
+
     #[test]
     fn join_alchemy_mocks_require_explicit_truthy_env() {
         assert!(alchemy_join_mocks_enabled_value("1"));
@@ -557,39 +636,43 @@ mod tests {
     }
 
     #[test]
-    fn active_session_snapshot_survives_production_proto_encoding() {
-        let furnace = active_furnace();
-        let data = build_session_data(furnace.session.as_ref(), &test_registry());
-        let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemySession(Box::new(data)));
+    fn active_session_production_proto_fixture_matches_real_builder_and_encoding() {
+        let bytes = assert_shared_fixture_is_current(ACTIVE_PROTO_FIXTURE, false);
 
-        let bytes = serialize_server_data_payload_proto(&payload)
-            .expect("active alchemy session must serialize through the production proto path");
-        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
-            .expect("production alchemy session proto must decode");
-        let session = match decoded.payload {
-            Some(server_data_envelope::Payload::AlchemySession(session)) => session,
-            other => panic!("expected alchemy_session proto payload, got {other:?}"),
-        };
+        assert_production_fixture_semantics(bytes.as_slice(), true, "炼制中");
+    }
 
-        assert_eq!(session.recipe_id.as_deref(), Some(RECIPE_ID));
-        assert!(session.active);
-        assert_eq!(session.elapsed_ticks, 44);
-        assert_eq!(session.target_ticks, 180);
-        assert_eq!(session.temp_current, 0.58);
-        assert_eq!(session.temp_target, 0.62);
-        assert_eq!(session.temp_band, 0.08);
-        assert_eq!(session.qi_injected, 7.25);
-        assert_eq!(session.qi_target, 12.5);
-        assert_eq!(session.status_label, "炼制中");
-        assert_eq!(session.stages.len(), 3);
-        assert_eq!(session.stages[0].summary, "ci_she_hao×2 + ling_shui×1");
-        assert!(session.stages[0].completed);
-        assert!(!session.stages[0].missed);
-        assert_eq!(session.stages[1].summary, "dan_sha×3");
-        assert!(!session.stages[1].completed);
-        assert!(session.stages[1].missed);
-        assert_eq!(session.stages[2].summary, "");
-        assert_eq!(session.interventions_recent, vec!["§7AdjustTemp(0.58)"]);
+    #[test]
+    fn finished_session_production_proto_fixture_matches_real_builder_and_encoding() {
+        let bytes = assert_shared_fixture_is_current(FINISHED_PROTO_FIXTURE, true);
+
+        assert_production_fixture_semantics(bytes.as_slice(), false, "已结束");
+    }
+
+    #[test]
+    #[ignore = "maintenance-only fixture writer; ordinary tests must never modify checked-in bytes"]
+    fn regenerate_alchemy_session_production_proto_fixtures() {
+        let fixture_dir = production_fixture_dir();
+        fs::create_dir_all(&fixture_dir).unwrap_or_else(|err| {
+            panic!(
+                "failed to create shared proto fixture directory `{}`: {err}",
+                fixture_dir.display()
+            )
+        });
+
+        for (file_name, finished) in [
+            (ACTIVE_PROTO_FIXTURE, false),
+            (FINISHED_PROTO_FIXTURE, true),
+        ] {
+            let fixture_path = fixture_dir.join(file_name);
+            fs::write(&fixture_path, production_fixture_bytes(finished)).unwrap_or_else(|err| {
+                panic!(
+                    "failed to write shared Rust production fixture `{}`: {err}",
+                    fixture_path.display()
+                )
+            });
+            println!("wrote {}", fixture_path.display());
+        }
     }
 
     #[test]

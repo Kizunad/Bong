@@ -16,7 +16,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,14 +27,18 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * plan-bughunt-ac-alchemy-hud-zero-targets-v1 — 生产 protobuf 到 Fabric HUD 的炼丹快照回归。
+ * plan-bughunt-ac-alchemy-hud-zero-targets-v1 — Rust 生产 protobuf 到 Fabric HUD 的炼丹快照回归。
  *
- * <p>本测试沿用历史本地成果 {@code 1d20935f} 的真实 proto bridge，并把断言继续推进到
- * {@link AlchemyProgressHudPlanner}。链路为：生成的 protobuf 消息 →
- * {@link ProtoServerDataBridge} → legacy envelope parser → 炼丹 handler/store → HUD planner。
- * server 若重新发出零目标或空 stages，Rust 侧生产 proto pin 与此处 Fabric 消费 pin 会共同撞红。</p>
+ * <p>active/finished 用例直接读取 Rust 测试通过真实 {@code build_session_data} 与生产 envelope
+ * 编码路径生成的共享字节。链路为：Rust fixture → {@link ProtoServerDataBridge} → legacy
+ * envelope parser → 炼丹 handler/store → {@link AlchemyProgressHudPlanner}。Rust 普通测试还会
+ * 逐字节校验 fixture 未陈旧，因此两端不会各自硬编码同一消息自证。其余 Java builder 用例只测试
+ * 客户端对旧/缺省 wire 的兼容降级，不声称覆盖 Rust producer。</p>
  */
 class AlchemySessionHandlerProtoWireTest {
+    private static final Path RUST_PROTO_FIXTURE_DIR = Path.of("..", "proto", "fixtures");
+    private static final String ACTIVE_SESSION_FIXTURE = "alchemy_session_active_v1.pb";
+    private static final String FINISHED_SESSION_FIXTURE = "alchemy_session_finished_v1.pb";
 
     @BeforeEach
     void setUp() {
@@ -44,7 +51,7 @@ class AlchemySessionHandlerProtoWireTest {
     }
 
     @Test
-    void activeSessionTargetsAndStagesSurviveProtoWireAndDriveHudPlanner() {
+    void rustProducedActiveSessionTargetsAndStagesDriveFabricHudPlanner() {
         ServerDataDispatch furnaceDispatch = dispatchFurnaceThroughWire(
                 Envelope.AlchemyFurnace.newBuilder()
                         .setPosX(2)
@@ -61,13 +68,10 @@ class AlchemySessionHandlerProtoWireTest {
                 "active furnace proto 必须进入 AlchemyFurnaceStore，实际 log="
                         + furnaceDispatch.logMessage());
 
-        Envelope.AlchemySession session = baseSession()
-                .setActive(true)
-                .setStatusLabel("炼制中")
-                .build();
-        ServerDataDispatch sessionDispatch = dispatchSessionThroughWire(session);
+        ServerDataDispatch sessionDispatch = dispatchRustProductionSessionFixture(
+                ACTIVE_SESSION_FIXTURE);
         assertTrue(sessionDispatch.handled(),
-                "alchemy_session proto 必须被 handler 接受，实际 log="
+                "Rust 生产的 active alchemy_session proto 必须被 handler 接受，实际 log="
                         + sessionDispatch.logMessage());
 
         AlchemySessionStore.Snapshot snapshot = AlchemySessionStore.snapshot();
@@ -82,14 +86,27 @@ class AlchemySessionHandlerProtoWireTest {
         assertEquals(7.25, snapshot.qiInjected(), 0.0001);
         assertEquals(12.5, snapshot.qiTarget(), 0.0001,
                 "qi_target 经生产 proto bridge 后不得归零");
+        assertEquals("炼制中", snapshot.statusLabel());
+        assertEquals(List.of("§7AdjustTemp(0.58)"), snapshot.interventionLog(),
+                "Rust builder 生成的 guidance/intervention 必须原样进入 Fabric store");
         assertEquals(3, snapshot.stages().size(),
                 "全部有料/空料 stage 必须按声明顺序进入 Fabric store");
+        assertEquals(0, snapshot.stages().get(0).atTick());
+        assertEquals(0, snapshot.stages().get(0).window());
         assertEquals("ci_she_hao×2 + ling_shui×1", snapshot.stages().get(0).summary());
         assertTrue(snapshot.stages().get(0).completed());
+        assertFalse(snapshot.stages().get(0).missed());
+        assertEquals(40, snapshot.stages().get(1).atTick());
+        assertEquals(6, snapshot.stages().get(1).window());
         assertEquals("dan_sha×3", snapshot.stages().get(1).summary());
+        assertFalse(snapshot.stages().get(1).completed());
         assertTrue(snapshot.stages().get(1).missed());
+        assertEquals(120, snapshot.stages().get(2).atTick());
+        assertEquals(4, snapshot.stages().get(2).window());
         assertEquals("", snapshot.stages().get(2).summary(),
                 "required=[] 的 stage 必须保持精确空 summary，不得伪造材料提示");
+        assertFalse(snapshot.stages().get(2).completed());
+        assertFalse(snapshot.stages().get(2).missed());
 
         List<HudRenderCommand> commands =
                 AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L);
@@ -103,7 +120,7 @@ class AlchemySessionHandlerProtoWireTest {
     }
 
     @Test
-    void finishedSessionRetainsGuidanceInStoreButLeavesActiveHudFlow() {
+    void rustProducedFinishedSessionRetainsGuidanceButLeavesActiveHudFlow() {
         ServerDataDispatch furnaceDispatch = dispatchFurnaceThroughWire(
                 Envelope.AlchemyFurnace.newBuilder()
                         .setTier(1)
@@ -115,20 +132,40 @@ class AlchemySessionHandlerProtoWireTest {
         );
         assertTrue(furnaceDispatch.handled());
 
-        ServerDataDispatch sessionDispatch = dispatchSessionThroughWire(
-                baseSession().setActive(false).setStatusLabel("已结束").build()
+        ServerDataDispatch sessionDispatch = dispatchRustProductionSessionFixture(
+                FINISHED_SESSION_FIXTURE
         );
-        assertTrue(sessionDispatch.handled());
+        assertTrue(sessionDispatch.handled(),
+                "Rust 生产的 finished alchemy_session proto 必须被 handler 接受，实际 log="
+                        + sessionDispatch.logMessage());
 
         AlchemySessionStore.Snapshot snapshot = AlchemySessionStore.snapshot();
         assertFalse(snapshot.isActive(), "finished snapshot 必须离开活跃 HUD 状态");
+        assertEquals("hud_contract_recipe", snapshot.recipeId());
+        assertEquals(44, snapshot.elapsedTicks());
         assertEquals(180, snapshot.targetTicks(),
                 "finished snapshot 仍须保留权威目标供炉内结束态消费");
+        assertEquals(0.58f, snapshot.tempCurrent(), 0.0001f);
+        assertEquals(0.62f, snapshot.tempTarget(), 0.0001f);
+        assertEquals(0.08f, snapshot.tempBand(), 0.0001f);
+        assertEquals(7.25, snapshot.qiInjected(), 0.0001);
         assertEquals(12.5, snapshot.qiTarget(), 0.0001);
+        assertEquals("已结束", snapshot.statusLabel());
+        assertEquals(List.of("§7AdjustTemp(0.58)"), snapshot.interventionLog());
         assertEquals(3, snapshot.stages().size());
+        assertEquals(0, snapshot.stages().get(0).atTick());
+        assertEquals(0, snapshot.stages().get(0).window());
         assertTrue(snapshot.stages().get(0).completed());
+        assertFalse(snapshot.stages().get(0).missed());
+        assertEquals(40, snapshot.stages().get(1).atTick());
+        assertEquals(6, snapshot.stages().get(1).window());
+        assertFalse(snapshot.stages().get(1).completed());
         assertTrue(snapshot.stages().get(1).missed());
+        assertEquals(120, snapshot.stages().get(2).atTick());
+        assertEquals(4, snapshot.stages().get(2).window());
         assertEquals("", snapshot.stages().get(2).summary());
+        assertFalse(snapshot.stages().get(2).completed());
+        assertFalse(snapshot.stages().get(2).missed());
 
         List<HudRenderCommand> commands =
                 AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L);
@@ -149,7 +186,7 @@ class AlchemySessionHandlerProtoWireTest {
                         .build()
         ).handled());
 
-        ServerDataDispatch dispatch = dispatchSessionThroughWire(
+        ServerDataDispatch dispatch = dispatchJavaConstructedSessionThroughWire(
                 Envelope.AlchemySession.newBuilder()
                         .setRecipeId("legacy_recipe")
                         .setActive(true)
@@ -186,7 +223,7 @@ class AlchemySessionHandlerProtoWireTest {
                         .build()
         ).handled());
 
-        ServerDataDispatch dispatch = dispatchSessionThroughWire(
+        ServerDataDispatch dispatch = dispatchJavaConstructedSessionThroughWire(
                 baseSession()
                         .setActive(true)
                         .setTargetTicks(0)
@@ -222,7 +259,7 @@ class AlchemySessionHandlerProtoWireTest {
                         .build()
         ).handled());
 
-        ServerDataDispatch dispatch = dispatchSessionThroughWire(
+        ServerDataDispatch dispatch = dispatchJavaConstructedSessionThroughWire(
                 baseSession()
                         .clearRecipeId()
                         .setActive(true)
@@ -279,25 +316,43 @@ class AlchemySessionHandlerProtoWireTest {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setAlchemyFurnace(furnace)
                 .build();
-        ServerDataEnvelope parsed = decodeThroughProductionBridge(envelope);
+        ServerDataEnvelope parsed = decodeThroughProductionBridge(envelope.toByteArray());
         return new AlchemyFurnaceHandler().handle(parsed);
     }
 
-    private static ServerDataDispatch dispatchSessionThroughWire(
+    private static ServerDataDispatch dispatchRustProductionSessionFixture(String fileName) {
+        ServerDataEnvelope parsed = decodeThroughProductionBridge(
+                readRustProductionFixture(fileName));
+        assertEquals("alchemy_session", parsed.type(),
+                "共享 Rust fixture 必须是完整 ServerDataEnvelope.alchemy_session");
+        return new AlchemySessionHandler().handle(parsed);
+    }
+
+    private static ServerDataDispatch dispatchJavaConstructedSessionThroughWire(
             Envelope.AlchemySession session
     ) {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setAlchemySession(session)
                 .build();
-        ServerDataEnvelope parsed = decodeThroughProductionBridge(envelope);
+        ServerDataEnvelope parsed = decodeThroughProductionBridge(envelope.toByteArray());
         return new AlchemySessionHandler().handle(parsed);
     }
 
-    private static ServerDataEnvelope decodeThroughProductionBridge(
-            Envelope.ServerDataEnvelope envelope
-    ) {
+    private static byte[] readRustProductionFixture(String fileName) {
+        Path fixturePath = RUST_PROTO_FIXTURE_DIR.resolve(fileName);
+        assertTrue(Files.isRegularFile(fixturePath),
+                "Rust 生产 protobuf fixture 必须存在：" + fixturePath.toAbsolutePath());
+        try {
+            return Files.readAllBytes(fixturePath);
+        } catch (IOException error) {
+            throw new AssertionError(
+                    "读取 Rust 生产 protobuf fixture 失败：" + fixturePath.toAbsolutePath(), error);
+        }
+    }
+
+    private static ServerDataEnvelope decodeThroughProductionBridge(byte[] envelopeBytes) {
         ProtoServerDataBridge.BridgeResult bridged =
-                ProtoServerDataBridge.bridge(envelope.toByteArray());
+                ProtoServerDataBridge.bridge(envelopeBytes);
         assertTrue(bridged.isSuccess(),
                 "proto→legacyJson 桥接应成功，实际 error=" + bridged.errorMessage());
 
