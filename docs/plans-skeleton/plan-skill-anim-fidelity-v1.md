@@ -93,7 +93,7 @@
 ## P0 — 审计矩阵 + 标准定稿 + 对拍测试
 
 - 49 招全量矩阵表落档到本 plan 附录：`skill_id / cast_ticks / anim_id / endTick / 帧点数 / 轴关键帧数 / 是否模板产物 / 是否借用 / 差距分级（A 达标 / B 精修 / C 重制 / D 缺失）`。
-- **时长对齐自动对拍测试**（client 侧）：读 `player_animation/*.json` 元数据 + 一份 `cast_ticks` 快照表，断言每招「非循环 → endTick ∈ [cast, cast+10]；长引导 → 蓄力段 isLoop」；现状不达标项进 allowlist，逐批清空——allowlist 清零 = P1-P4 完成的机械判据。
+- **时长对齐自动对拍测试**（client 侧）：读 `player_animation/*.json` 元数据 + 一份 `cast_ticks` 快照表，断言每招「非循环 → endTick ∈ [cast, cast+10]；长引导 → 蓄力段 isLoop 且每个用到的轴在 endTick 有补帧（库坑 #1 边界）」。**快照单一真源**：快照由 server `TECHNIQUE_DEFINITIONS` 单向生成（server 侧同步测试保证快照=定义，快照缺失/重复/漂移条目直接判红），client 测试只消费不维护——杜绝「错误时长靠同步改快照混过关」。现状不达标项进 allowlist，逐批清空——allowlist 清零 = P1-P4 完成的机械判据；**allowlist 只允许缩小**，任何新增条目必须在 PR body 显式说明理由。
 - 精度标准（上节）随 P0 一并进 `docs/player-animation-conventions.md`（该文档为动画约定正典，本 plan 允许追加不允许改写既有段落）。
 
 ## P1-P4 — 分批重制（每批同构）
@@ -125,12 +125,12 @@
 1. **gameplay 数值是否连动**：推荐 cast_ticks/冷却一律不动（本 plan 纯表现层），瞬发招用「爆发帧+收势」表达而不是拉长 cast——若用户想借机调战斗节奏（如 sword.parry cast=4 太短），另立 combat 数值 plan，不混入本 plan。
 2. **批次范围裁剪**：49 招中 npc 3 招是 mob 实体（PlayerAnimator 不适用，动画列 N/A 只做粒子分化）；确认最终重制清单 = 46 玩家招中 C/D 级全量还是先 P1-P2 主力 20 招验证标准再扩。
 3. **`echo_fractal` 等「循环引导段」的移动打断表现**：引导中移动/受击打断时动画 fade_out 参数（当前 PlayAnim 只有 fade_in_ticks），是否需要 server 发 `StopAnim` 补齐打断链路——需读 cast 打断处理代码后收口。
-4. **对拍测试的 cast_ticks 快照来源**：client 测试无法直接读 server Rust 源——用 checked-in JSON 快照（server 侧测试保证快照与 `TECHNIQUE_DEFINITIONS` 同步）还是构建期导出，二选一。
+4. **对拍测试的 cast_ticks 快照机制**：client 测试无法直接读 server Rust 源——用 checked-in JSON 快照（server 侧测试保证快照与 `TECHNIQUE_DEFINITIONS` 同步）还是构建期导出，二选一；无论选哪种，方向必须是 `TECHNIQUE_DEFINITIONS` → 快照的单向生成（见 P0），快照不可手改。
 
 ## 测试声明
 
-- client：动画 JSON 元数据对拍测试（时长/循环补帧/easing 显式）+ 资源 pin 测试（gradlew test）；
-- server：`vfx_animation_trigger` 映射 arm 单测 + cast_ticks 快照同步测试（cargo test）；
+- client：动画 JSON 元数据对拍测试（时长边界 off-by-one / 循环每轴 endTick 补帧 / easing 显式 / 快照缺失/重复/漂移条目判红）+ 资源 pin 测试（gradlew test）；
+- server：`vfx_animation_trigger` 映射 arm 单测（含借用改专属后旧 id 不再发出的负向断言）+ cast_ticks 快照单向同步测试（cargo test）；
 - 实机：每批 `render_animation.py` 三视图存档 + P6 双视角读招验收；
 - e2e：`bash scripts/smoke-test-e2e.sh` 绿。
 
@@ -139,4 +139,4 @@
 - 单 plan 多 PR 序列化：PR-1 = P0（审计+标准+对拍测试）；PR-2/3/4 = P1/P2/P3 批次；PR-5 = P4 yidao；PR-6 = P5 粒子；PR-7 = P6 收口。前一 PR merge 后开下一个。
 - 每 PR 独立实施 subagent（context 隔离），动画批次 PR 强制 3 轮打磨 commit `(round N/3)` + 终轮 `<PROMISE>`。
 - CodeRabbit / `/review` 等待走 ScheduleWakeup 1200s 协议，修完意见重等 re-review。
-- 用户提交 `/consume-plan` 后全自动到 merge；动画属视觉资产，终轮三视图 PNG 附 PR body 供人工抽查。
+- **单次 consume-plan 全自动到 merge**：用户提交 `/consume-plan` 后全自动走完实施→review→merge→归档至 `docs/finished_plans/`，无需人工值守；动画属视觉资产，每批终轮三视图 PNG 附 PR body 供人工抽查。

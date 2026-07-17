@@ -65,6 +65,7 @@
 ## P3 — 施法瞬间 juice
 
 - 触发：client 本地 `CastStateStore` 已知 cast 起止（`push_skill_cast_started_sync` 下发 duration），release 时刻本地推断（§8 #3 拍板数据源）。
+- **门控硬约束**（无论 §8 #3 选哪条数据源）：release juice 必须绑定**已确认 accepted 的 cast identity**——`CastStateStore` 中该次施法处于 accepted 且未被拒绝/打断才触发；server 拒绝（`reject_*` 回执）、打断、取消回执到达时作废对应 pending juice（取消令牌语义）。本地计时器到点但确认缺失/已作废 → 不触发。同一 cast identity 的 release juice 幂等（重复回执/乱序不二次触发）。
 - 参数表（新建 `CastJuiceProfile`，按招注册，表格化写进实施 PR）：
 
 | 招式 | shake 幅度/时长 | FOV 脉冲 | 备注 |
@@ -78,7 +79,7 @@
 
 - 复用 `CameraShakeController` 既有 mixin，不新建相机通道；FOV 走独立控制器（新建 `CastFovController`，与 shake 同帧调度）。
 - 可及性：juice 强度全局倍率进 client 配置（0 = 关闭），默认 1.0。
-- 测试：profile 注册表单测（每招参数 pin）+ release 触发时序单测（cast 打断不触发）。
+- 测试（饱和覆盖状态机）：profile 注册表单测（每招参数 pin）+ release 触发时序单测——正常 release 触发、server 拒绝不触发、晚到打断作废 pending juice、回执乱序（打断先于 started 到达）、同 cast identity 重复 release 幂等、倍率 0 完全关闭。
 
 ## P4 — 签名音效资产化
 
@@ -98,13 +99,13 @@
 
 1. **FPV 技术路线三选一**：P0 POC 用实测对比拍板（持物遮挡是决定性判据）；预判推荐路线 A（库原生，改动集中），但 playerAnim 1.20.1 分支的 FPV 成熟度必须实测。
 2. **签名音效音源渠道**：AI 音效生成（类比 `/gen-image` 建 `/gen-audio` 管线）/ CC0 素材库（freesound 等，须核许可证）/ 用户自供——**需用户拍板**，涉及外部资源与授权，agent 不自决。
-3. **施法 juice 触发数据源**：纯 client（`CastStateStore` 本地推断 release，零 wire 变更，但 server 拒绝/打断的边缘一致性靠 cast_sync 已有回执）vs server 显式 juice hint（精确但加 payload 字段）。推荐纯 client 起步，误差可接受再不加字段。
+3. **施法 juice 触发数据源**：纯 client（`CastStateStore` 本地推断 release，零 wire 变更，但 server 拒绝/打断的边缘一致性靠 cast_sync 已有回执）vs server 显式 juice hint（精确但加 payload 字段）。推荐纯 client 起步，误差可接受再不加字段。**两条路线都必须满足 P3 门控硬约束**（accepted 确认 + 取消令牌 + 幂等），纯 client 路线的收口前提是核实 cast_sync 回执在拒绝/打断路径的到达保证。
 4. **FPV 变体的维护成本边界**：每招两份动画（TPV+FPV）长期同步维护——是否约定「FPV 变体只在 TPV 定稿后产出、TPV 改动必须连带复核 FPV」写入 `docs/player-animation-conventions.md`。
 
 ## 测试声明
 
-- client：FPV 查找链/回落/远端隔离单测、juice profile pin 测试、sounds.json↔ogg 对应扫描（gradlew test）；
-- server：recipe 引用 `bong:` 事件解析测试（cargo test）；
+- client：FPV 查找链/回落/远端隔离单测、juice 状态机饱和单测（正常/拒绝/晚到打断/乱序/重复 release 幂等/倍率 0）、sounds.json↔ogg 双向对应扫描（注册无文件、文件无注册均判红）（gradlew test）；
+- server：recipe 引用 `bong:` 事件解析测试（cargo test，指向不存在事件判红）；
 - e2e：`bash scripts/smoke-test-e2e.sh` + bot cast 场景绿；资源包 CI（sha1 同步）绿。
 
 ## §10 实施工作流
@@ -112,3 +113,4 @@
 - 单 plan 多 PR 序列化：PR-1 = P0 POC + 工具（含拍板记录回写 §8.1）；PR-2 = P1 基础设施；PR-3/4 = P2 分批 FPV 动画；PR-5 = P3 juice；PR-6 = P4 音效管线 + 首批；PR-7 = P5 收口。
 - P2 批次依赖梯队二（`plan-skill-anim-fidelity-v1`）对应批次先 merge（FPV 以重制稿为底）；P3/P4 与 P2 无依赖可并行排期。
 - 每 PR 独立实施 subagent；视觉/听觉资产 PR 走 3 轮 + `<PROMISE>`；CodeRabbit / `/review` 等待走 ScheduleWakeup 1200s 协议。
+- **单次 consume-plan 全自动到 merge**：用户提交 `/consume-plan` 后全自动走完实施→review→merge→归档至 `docs/finished_plans/`，无需人工值守（例外：§8 #2 音源渠道属用户拍板项，须在 pre-P0 收口时定案，不阻塞其余 PR）。

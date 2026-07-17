@@ -73,8 +73,9 @@
 
 ## P3 — 防回归测试
 
-- **资产存在性扫描测试**（client 侧）：遍历一份从 `TECHNIQUE_DEFINITIONS` 导出的 icon 路径快照，断言每条在 classpath 资源里真实存在——任何后续新增招式漏配图标立刻撞红。
-- **接线 pin 测试**（server 侧）：P1 每条新 emit 各配单测，断言对应事件触发时发出携正确 `anim_id` 的 `PlayAnim`（happy path + 事件不满足前置时不发）。
+- **资产存在性扫描测试**（client 侧）：遍历一份从 `TECHNIQUE_DEFINITIONS` 单向导出的 icon 路径快照，断言每条在 classpath 资源里真实存在——任何后续新增招式漏配图标立刻撞红；快照缺失/重复条目本身也判红（防快照与定义漂移）。
+- **映射约束测试**：icon_texture 与磁盘文件一一对应——空串/坏命名空间（非 `bong:`/`bong-client:` 前缀）判红（quickslot 接真值后 `String::new()` 不再合法）；两招指向同一文件视为重复映射判红，显式声明共用的白名单除外（woliu 借用图标在 P0 后应清零）。
+- **接线 pin 测试**（server 侧）：P1 每条新 emit 各配单测，饱和覆盖：事件触发发出携正确 `anim_id` 的 `PlayAnim`（happy path）、事件前置不满足时不发（错误分支）、同一事件重复触发的幂等语义、实体死亡/离线等状态转换下不发。
 - **兜底行为保留**：r9 已加的 `QuickBarHudPlannerTest` 文字兜底测试不动（icon 全配齐后兜底仍是合法防线）。
 
 ## §8 开放问题（P0 决策门前需收口）
@@ -85,6 +86,12 @@
 
 ## 测试声明
 
-- server：P1 各接线 emit 单测（cargo test，饱和覆盖事件前置分支）；
-- client：图标存在性扫描测试 + 既有 `QuickBarHudPlannerTest` 回归（gradlew test）；
-- e2e：`bash scripts/smoke-test-e2e.sh` 绿。
+- server：P1 各接线 emit 单测（cargo test，饱和覆盖 happy path / 前置不满足 / 重复触发幂等 / 实体状态转换）；
+- client：图标存在性 + 映射约束（空路径/重复映射/快照漂移）扫描测试 + 既有 `QuickBarHudPlannerTest` 回归（gradlew test）；
+- e2e：`bash scripts/smoke-test-e2e.sh` 绿；图标资产变更后 Build resource pack CI 绿（sha1 同步）。
+
+## §10 实施工作流
+
+- 单 plan 多 PR 序列化：PR-1 = P0 图标重链 + P3 全部防回归测试（测试与重链同 PR 落地，锁住重链结果）；PR-2 = P1 孤儿动画接线（§8 #2/#3 收口后）；PR-3 = P2 `/gen-image` 图标补齐 + resourcepack sha1 同步。
+- 每 PR 独立实施 subagent（context 隔离）；CodeRabbit / `/review` 等待走 ScheduleWakeup 1200s 协议，修完意见重等 re-review。
+- **单次 consume-plan 全自动到 merge**：用户提交 `/consume-plan` 后全自动走完实施→review→merge→归档至 `docs/finished_plans/`，无需人工值守；P2 生成的图标 PNG 附 PR body 供人工抽查。
