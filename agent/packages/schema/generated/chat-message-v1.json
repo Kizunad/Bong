@@ -15,7 +15,7 @@
     },
     "ts": {
       "minimum": 0,
-      "description": "Unix timestamp (seconds)",
+      "description": "Server-observed Unix timestamp (seconds)",
       "type": "integer"
     },
     "player": {

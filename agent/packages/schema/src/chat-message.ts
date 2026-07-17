@@ -6,7 +6,10 @@ import { ChatIntent } from "./common.js";
 export const ChatMessageV1 = Type.Object(
   {
     v: Type.Literal(1),
-    ts: Type.Integer({ minimum: 0, description: "Unix timestamp (seconds)" }),
+    ts: Type.Integer({
+      minimum: 0,
+      description: "Server-observed Unix timestamp (seconds)",
+    }),
     player: Type.String(),
     raw: Type.String({ maxLength: 256 }),
     zone: Type.String(),

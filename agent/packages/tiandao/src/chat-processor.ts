@@ -176,7 +176,7 @@ export function selectRecentSignals(signals: ChatSignal[], nowSeconds: number): 
 }
 
 export function isRecentSignal(signal: ChatSignal, nowSeconds: number): boolean {
-  return signal.ts >= nowSeconds - CHAT_CONTEXT_WINDOW_SECONDS;
+  return signal.ts <= nowSeconds && signal.ts >= nowSeconds - CHAT_CONTEXT_WINDOW_SECONDS;
 }
 
 export function buildChatSignalsBlock(args: BuildChatSignalsBlockArgs): string {

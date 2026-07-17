@@ -9,7 +9,7 @@ use valence::prelude::{
 };
 
 use super::redis_bridge::RedisOutbound;
-use super::RedisBridgeResource;
+use super::{current_unix_timestamp_secs, RedisBridgeResource};
 use crate::combat::components::Lifecycle;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
@@ -27,7 +27,6 @@ use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 const MAX_CHAT_MESSAGES_PER_PLAYER_PER_TICK: usize = 3;
-const UNIX_MILLIS_PER_SECOND: u64 = 1_000;
 const LEGACY_BANG_COMMANDS: &[&str] = &[
     "!shrine",
     "!spawn",
@@ -52,10 +51,52 @@ pub struct ChatCollectorRateLimit {
 
 impl Resource for ChatCollectorRateLimit {}
 
+#[derive(Debug, Clone, Copy)]
+enum ChatObservationClockSource {
+    System,
+    #[cfg(test)]
+    Fixed(u64),
+}
+
+/// Trusted clock used only for the server→agent chat observation timestamp.
+///
+/// The C2S protocol timestamp remains available separately on
+/// [`PlayerChatCollected`] for existing server-internal consumers.
+#[derive(Debug, Clone, Copy, Resource)]
+pub(super) struct ChatObservationClock {
+    source: ChatObservationClockSource,
+}
+
+impl Default for ChatObservationClock {
+    fn default() -> Self {
+        Self {
+            source: ChatObservationClockSource::System,
+        }
+    }
+}
+
+impl ChatObservationClock {
+    fn now_unix_seconds(&self) -> u64 {
+        match self.source {
+            ChatObservationClockSource::System => current_unix_timestamp_secs(),
+            #[cfg(test)]
+            ChatObservationClockSource::Fixed(timestamp) => timestamp,
+        }
+    }
+
+    #[cfg(test)]
+    fn fixed(timestamp: u64) -> Self {
+        Self {
+            source: ChatObservationClockSource::Fixed(timestamp),
+        }
+    }
+}
+
 #[derive(SystemParam)]
 pub struct ChatCollectorResources<'w> {
     zone_registry: Option<Res<'w, ZoneRegistry>>,
     clock: Option<Res<'w, CombatClock>>,
+    observation_clock: Res<'w, ChatObservationClock>,
     spirit_treasure_registry: Option<ResMut<'w, SpiritTreasureRegistry>>,
     rate_limit: ResMut<'w, ChatCollectorRateLimit>,
 }
@@ -131,6 +172,7 @@ pub fn collect_player_chat(
             player_entity: *client,
             message,
             timestamp: *timestamp,
+            observed_at_seconds: resources.observation_clock.now_unix_seconds(),
             now_tick,
         };
         let Some(classified) = classify_player_message(
@@ -203,7 +245,10 @@ fn broadcast_to_zone(
 struct ChatMessageContext<'a> {
     player_entity: Entity,
     message: &'a str,
+    /// Client-provided Minecraft protocol timestamp in milliseconds.
     timestamp: u64,
+    /// Server-observed timestamp for the Redis/agent freshness contract.
+    observed_at_seconds: u64,
     now_tick: u64,
 }
 
@@ -302,9 +347,7 @@ fn classify_player_message(
     Some(ClassifiedChat::PlayerChat {
         outbound: RedisOutbound::PlayerChat(ChatMessageV1 {
             v: 1,
-            // Minecraft 1.20.1 ChatMessageC2s carries Unix milliseconds;
-            // ChatMessageV1's server→agent contract carries Unix seconds.
-            ts: context.timestamp / UNIX_MILLIS_PER_SECOND,
+            ts: context.observed_at_seconds,
             player: canonical_player,
             raw: context.message.to_string(),
             zone: zone.clone(),
@@ -471,6 +514,7 @@ mod chat_collector_tests {
     use valence::testing::{create_mock_client, MockClientHelper};
 
     const SERVER_OBSERVED_SECONDS: u64 = 1_712_345_700;
+    const UNIX_MILLIS_PER_SECOND: u64 = 1_000;
 
     fn setup_chat_collector_app(
         with_zone_registry: bool,

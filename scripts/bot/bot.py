@@ -269,13 +269,13 @@ class Bot:
         )
         self._send(mc.C2S_COMMAND_EXECUTION, body)
 
-    def chat(self, message: str) -> None:
+    def chat(self, message: str, *, timestamp_millis: int | None = None) -> None:
         # Vanilla 1.20.1 writes Instant.now() through PacketByteBuf.writeInstant(),
-        # whose wire representation is signed Unix epoch milliseconds.  A zero
-        # timestamp makes a live bot message look like a 1970 event after the
-        # server normalizes ChatMessageV1.ts to Unix seconds, so the Tiandao
-        # five-minute window would correctly (but misleadingly) discard it.
-        timestamp_millis = time.time_ns() // 1_000_000
+        # whose wire representation is signed Unix epoch milliseconds. Tests may
+        # override this value to model skewed or malicious clients; the server
+        # must still derive ChatMessageV1.ts from its own observation clock.
+        if timestamp_millis is None:
+            timestamp_millis = time.time_ns() // 1_000_000
         body = (
             mc_string(message)
             + struct.pack(">qq", timestamp_millis, 0)

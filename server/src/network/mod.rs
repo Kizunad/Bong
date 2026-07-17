@@ -124,7 +124,7 @@ use agent_bridge::{
     SERVER_DATA_CHANNEL,
 };
 use big_brain::prelude::{ActionState, Actor};
-use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
+use chat_collector::{collect_player_chat, ChatCollectorRateLimit, ChatObservationClock};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::bevy_ecs::system::SystemParam;
@@ -397,6 +397,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(QiLedgerTimer::default());
     app.insert_resource(ZoneTransitionTracker::default());
     app.insert_resource(ChatCollectorRateLimit::default());
+    app.insert_resource(ChatObservationClock::default());
     app.insert_resource(CommandExecutorResource::default());
     app.insert_resource(NarrationDedupeResource::default());
     app.insert_resource(WorldModelMirrorReconcileState::default());
