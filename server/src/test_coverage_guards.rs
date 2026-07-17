@@ -114,12 +114,9 @@ const INTENTIONAL_UNCONSUMED_EVENTS: &[UnconsumedEventTriage] = &[
         reason: "剑道结契事件当前由组件状态完成 gameplay；HUD/narration reader 尚未接线。",
         follow_up: "sword-path feedback follow-up",
     },
-    UnconsumedEventTriage {
-        event: "TechniqueLearnedEvent",
-        status: UnconsumedEventStatus::DeferredFollowUp,
-        reason: "功法学会事件由技能集合状态落地；当前没有成就/叙事 reader。",
-        follow_up: "cultivation technique feedback follow-up",
-    },
+    // TechniqueLearnedEvent：plan-skill-av-relink-v1 P1 已接
+    // `vfx_animation_trigger::emit_technique_learned_stance_triggers`（流派架势动画），
+    // 不再是 unconsumed，从 triage 清单移除。
     UnconsumedEventTriage {
         event: "TechniqueMasteredEvent",
         status: UnconsumedEventStatus::DeferredFollowUp,

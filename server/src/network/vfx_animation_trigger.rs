@@ -24,13 +24,17 @@ use crate::combat::dugu_v2::events::{
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
 use crate::combat::needle::QiNeedleChargedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
+use crate::combat::weapon::Weapon;
 use crate::combat::woliu::{VortexBackfireEvent, VortexField};
 use crate::combat::woliu_v2::state::VortexV2State;
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::dugu::DuguObfuscationDisruptedEvent;
+use crate::cultivation::technique_scroll::TechniqueLearnedEvent;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed, TribulationSettled};
+use crate::forge::events::TemperingHit;
+use crate::forge::session::{ForgeSessions, ForgeStep};
 use crate::lingtian::events::{
     DrainQiCompleted, HarvestCompleted, PlantingCompleted, ReplenishCompleted, TillCompleted,
 };
@@ -44,6 +48,9 @@ const ANIM_SWORD_STAB: &str = "bong:sword_stab";
 const ANIM_SWORD_CLEAVE: &str = "bong:sword_cleave";
 const ANIM_SWORD_THRUST: &str = "bong:sword_thrust";
 const ANIM_FIST_PUNCH_RIGHT: &str = "bong:fist_punch_right";
+/// plan-skill-av-relink-v1 P1 — 空手连击左拳（与 fist_punch_right 交替，见
+/// `next_fist_punch_anim`；持械分支不参与交替恒右拳）。
+const ANIM_FIST_PUNCH_LEFT: &str = "bong:fist_punch_left";
 const ANIM_PALM_STRIKE: &str = "bong:palm_strike";
 const ANIM_PARRY_BLOCK: &str = "bong:parry_block";
 const ANIM_GUARD_RAISE: &str = "bong:guard_raise";
@@ -136,9 +143,49 @@ const WOLIU_V1_AMBIENT_PERIOD_TICKS: u64 = 20;
 /// 蛊道两招动画优先级——与基础战斗动画同档（蛊道两招是醒灵 / 引气期入门远程招）。
 const DUGU_PRIORITY: u16 = 1100;
 
-const COMBAT_PRIORITY: u16 = 1000;
+// ── plan-skill-av-relink-v1 P1 — 孤儿动画接线 ─────────────────────────────────
+// 以下 anim id 与 client `BongAnimations.java` 常量 / `player_animation/*.json`
+// 资产逐字对齐（P3 由共享清单 pin 双端一致性）。stance_* 事件源 =
+// `TechniqueLearnedEvent`（习得即激活，见 `technique_scroll::learn_technique_if_allowed`
+// 写 `active:true`）；stance_zhenfa 无 KnownTechniques 条目驱动，维持 report-only
+// （见 plan P1 表）。rune_draw / alchemy_stir / enlightenment_pose 为业务模块内联
+// emit（无独立事件或事件覆盖不全，见各调用点注释），常数在此集中声明防漂移。
+const ANIM_STANCE_WOLIU: &str = "bong:stance_woliu";
+const ANIM_STANCE_DUGU: &str = "bong:stance_dugu";
+const ANIM_STANCE_DUGU_POISON: &str = "bong:stance_dugu_poison";
+const ANIM_STANCE_BAOMAI: &str = "bong:stance_baomai";
+const ANIM_STANCE_ZHENMAI: &str = "bong:stance_zhenmai";
+const ANIM_STANCE_TUIKE: &str = "bong:stance_tuike";
+/// 淬炼抡锤动画——与 `forge::handle_tempering_hits` 的 FORGE_HAMMER_STRIKE 粒子同源
+/// （TemperingHit 事件），由 `emit_forge_tempering_animation_triggers` 发射。
+const ANIM_FORGE_HAMMER: &str = "bong:forge_hammer";
+/// zhenfa 落阵成功 → 画符动画（`zhenfa::handle_zhenfa_place_requests` 内联 emit——
+/// deploy 事件仅覆盖 4 kind + 组网成型，普通陷阱无事件，走 adapter 会漏）。
+pub(crate) const ANIM_RUNE_DRAW: &str = "bong:rune_draw";
+/// 炼丹干预 → 搅拌动画（`client_request_handler::handle_alchemy_intervention` 内联
+/// emit，与 ALCHEMY_BREW_VAPOR 粒子同点——干预无 bevy 事件可订阅）。
+pub(crate) const ANIM_ALCHEMY_STIR: &str = "bong:alchemy_stir";
+/// 顿悟抉择被接受并生效 → 顿悟姿态（`insight_flow::apply_insight_chosen` 校验通过
+/// 分支内联 emit——校验前发会在 stale/无效/被拒抉择上误播）。
+pub(crate) const ANIM_ENLIGHTENMENT_POSE: &str = "bong:enlightenment_pose";
+
+// pub(crate)：rune_draw（zhenfa）/ alchemy_stir（client_request_handler）/
+// enlightenment_pose（insight_flow）内联 emit 点复用同一优先级常量，防各自取值漂移。
+pub(crate) const COMBAT_PRIORITY: u16 = 1000;
 const HIT_RECOIL_PRIORITY: u16 = 2000;
-const STORY_PRIORITY: u16 = 3000;
+pub(crate) const STORY_PRIORITY: u16 = 3000;
+
+/// plan-skill-av-relink-v1 P1 — 空手连击超时（tick）：两次空手攻击间隔超过该值后
+/// 交替态复位、右拳起手（~2s @20tps）。测试锁"超时复位"行为语义而非字面值。
+const FIST_COMBO_RESET_TICKS: u64 = 40;
+
+/// 每实体空手连击交替态（`Local<HashMap<Entity, _>>` 按 Entity 键天然玩家隔离）。
+/// pub(crate)：作为 `emit_attack_animation_triggers` 系统参数类型需对注册点可见。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FistComboState {
+    next_is_left: bool,
+    last_punch_tick: u64,
+}
 
 type PlayerAnimTargetItem<'a> = (&'a Position, &'a UniqueId);
 type PlayerAnimTargetFilter = ();
@@ -153,21 +200,129 @@ type WoliuVisualStateItem<'a> = (Entity, &'a Position, &'a UniqueId, &'a VortexV
 /// `emit_sword_path_visual_triggers` 读 `SwordPathSkillCastEvent` 独立 emit（含化形 /
 /// 天门专属动画），否则会与本系统的基础剑斩动画双重触发（化形尤甚——基础 wound-kind
 /// 动画会盖掉 manifest_cast 专属动画）。
+/// plan-skill-av-relink-v1 P1：空手（attacker 无 `Weapon` component）且解析落拳击
+/// 动画时，右/左拳按连击交替（right 起手，超时复位，见 `next_fist_punch_anim`）；
+/// 持械（含 Staff/Fist 类武器）不参与交替，恒 `fist_punch_right`。
 pub fn emit_attack_animation_triggers(
     mut intents: EventReader<AttackIntent>,
     players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    weapons: Query<&Weapon>,
+    clock: Res<CombatClock>,
+    mut fist_combo: Local<HashMap<Entity, FistComboState>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for intent in intents.read() {
         if intent.source == AttackSource::BurstMeridian || is_sword_path_source(intent.source) {
             continue;
         }
-        let anim_id = attack_anim_for_source(intent.source, intent.wound_kind);
+        let mut anim_id = attack_anim_for_source(intent.source, intent.wound_kind);
+        if anim_id == ANIM_FIST_PUNCH_RIGHT && weapons.get(intent.attacker).is_err() {
+            anim_id = next_fist_punch_anim(&mut fist_combo, intent.attacker, clock.tick);
+        }
         emit_play_for_entity(
             intent.attacker,
             anim_id,
             COMBAT_PRIORITY,
             Some(2),
+            &players,
+            &mut vfx_events,
+        );
+    }
+}
+
+/// 空手连击交替态机：right → left → right ...；两拳间隔超过
+/// `FIST_COMBO_RESET_TICKS` 视为连击中断，复位为 right 起手。
+fn next_fist_punch_anim(
+    combo: &mut HashMap<Entity, FistComboState>,
+    attacker: Entity,
+    now_tick: u64,
+) -> &'static str {
+    let state = combo.entry(attacker).or_insert(FistComboState {
+        next_is_left: false,
+        last_punch_tick: now_tick,
+    });
+    if now_tick.saturating_sub(state.last_punch_tick) > FIST_COMBO_RESET_TICKS {
+        state.next_is_left = false;
+    }
+    state.last_punch_tick = now_tick;
+    let anim_id = if state.next_is_left {
+        ANIM_FIST_PUNCH_LEFT
+    } else {
+        ANIM_FIST_PUNCH_RIGHT
+    };
+    state.next_is_left = !state.next_is_left;
+    anim_id
+}
+
+/// plan-skill-av-relink-v1 P1 — 「激活功法」时刻 → 流派架势动画。
+///
+/// 事件源 = `TechniqueLearnedEvent`（`learn_technique_if_allowed` 习得即写
+/// `active:true` = 激活；生产发射点 = 卷轴习得 / 导师传授 / 首击领悟三路）。
+/// 全仓不存在「流派架势切换」gameplay 事件（`stance_switch` audio recipe 的唯一
+/// 发射点是 SkillXpGain 经验反馈、与架势无关），按 plan §8 #2 决议改接本时刻。
+/// 无映射前缀（sword / anqi / burst_meridian / movement / morph / body / npc /
+/// shield_block / sword_path）不发；dev `/technique active` 直改组件不发事件，
+/// 不接线（dev-only 旁路）。
+pub fn emit_technique_learned_stance_triggers(
+    mut learned: EventReader<TechniqueLearnedEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in learned.read() {
+        let Some(anim_id) = stance_anim_for_technique(event.technique_id.as_str()) else {
+            continue;
+        };
+        emit_play_for_entity(
+            event.player,
+            anim_id,
+            STORY_PRIORITY,
+            Some(3),
+            &players,
+            &mut vfx_events,
+        );
+    }
+}
+
+/// technique_id → 流派架势动画映射（plan-skill-av-relink-v1 P1 设计收口清单）。
+/// dugu 两条按完整 id 区分（毒蛊有独立 stance_dugu_poison）；其余按前缀。
+fn stance_anim_for_technique(technique_id: &str) -> Option<&'static str> {
+    match technique_id {
+        "dugu.shoot_needle" => return Some(ANIM_STANCE_DUGU),
+        "dugu.infuse_poison" => return Some(ANIM_STANCE_DUGU_POISON),
+        _ => {}
+    }
+    match technique_id.split('.').next()? {
+        "woliu" => Some(ANIM_STANCE_WOLIU),
+        "baomai" => Some(ANIM_STANCE_BAOMAI),
+        "zhenmai" => Some(ANIM_STANCE_ZHENMAI),
+        "tuike" => Some(ANIM_STANCE_TUIKE),
+        _ => None,
+    }
+}
+
+/// plan-skill-av-relink-v1 P1 — 淬炼按键命中 → `forge_hammer` 抡锤动画。
+///
+/// 与 `forge::handle_tempering_hits` 的 FORGE_HAMMER_STRIKE 粒子同源
+/// （`TemperingHit`，玩家 J/K/L 淬炼按键）；镜像其 `ForgeStep::Tempering` 步骤门：
+/// 非淬炼步的 stale 按键不发动画。session 缺失（已结算/弃疗）同样不发。
+pub fn emit_forge_tempering_animation_triggers(
+    mut hits: EventReader<TemperingHit>,
+    sessions: Res<ForgeSessions>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for hit in hits.read() {
+        let Some(session) = sessions.get(hit.session) else {
+            continue;
+        };
+        if session.current_step != ForgeStep::Tempering {
+            continue;
+        }
+        emit_play_for_entity(
+            session.caster,
+            ANIM_FORGE_HAMMER,
+            COMBAT_PRIORITY,
+            Some(1),
             &players,
             &mut vfx_events,
         );
@@ -1583,6 +1738,7 @@ mod tests {
     #[test]
     fn melee_cut_attack_emits_sword_swing_for_attacker() {
         let mut app = App::new();
+        app.insert_resource(CombatClock::default());
         app.add_event::<AttackIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_attack_animation_triggers);
@@ -1609,6 +1765,7 @@ mod tests {
     #[test]
     fn sword_cleave_attack_source_emits_sword_cleave_animation() {
         let mut app = App::new();
+        app.insert_resource(CombatClock::default());
         app.add_event::<AttackIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_attack_animation_triggers);
@@ -1635,6 +1792,7 @@ mod tests {
     #[test]
     fn burst_meridian_attack_intent_does_not_duplicate_beng_quan_animation() {
         let mut app = App::new();
+        app.insert_resource(CombatClock::default());
         app.add_event::<AttackIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_attack_animation_triggers);
@@ -1659,6 +1817,7 @@ mod tests {
     #[test]
     fn skinned_npc_with_unique_id_can_receive_action_animation() {
         let mut app = App::new();
+        app.insert_resource(CombatClock::default());
         app.add_event::<AttackIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_attack_animation_triggers);
@@ -2478,6 +2637,7 @@ mod tests {
     #[test]
     fn attack_animation_skips_sword_path_sources() {
         let mut app = App::new();
+        app.insert_resource(CombatClock::default());
         app.add_event::<AttackIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_attack_animation_triggers);
@@ -2514,6 +2674,7 @@ mod tests {
     #[test]
     fn attack_animation_still_fires_for_basic_sword_cleave() {
         let mut app = App::new();
+        app.insert_resource(CombatClock::default());
         app.add_event::<AttackIntent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, emit_attack_animation_triggers);

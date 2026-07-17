@@ -6,7 +6,7 @@
 //! 触发点与 Apply 子系统可完全复用。
 
 use valence::prelude::{
-    bevy_ecs, Commands, Component, Entity, EventReader, EventWriter, Position, Query, Res,
+    bevy_ecs, Commands, Component, Entity, EventReader, EventWriter, Position, Query, Res, UniqueId,
 };
 
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -242,12 +242,19 @@ pub fn process_insight_request(
 }
 
 /// 消费 `InsightChosen` → 查 `PendingInsightOffer` → Arbiter 校验 → `apply_choice` + 记 Quota 累积。
+///
+/// plan-skill-av-relink-v1 P1：三重校验（pending 对齐 / choice 合法 / arbiter 配额）
+/// 全部通过、`apply_choice` 生效后，向抉择者发 `enlightenment_pose` 顿悟姿态动画
+/// （`anim_targets` 缺 Position/UniqueId 时静默 skip——离线/测试实体不发）。
+/// emit 必须在校验通过分支：提前发会在 stale/无效/被拒抉择上误播。
 #[allow(clippy::type_complexity)]
 pub fn apply_insight_chosen(
     clock: Res<CultivationClock>,
     mut commands: Commands,
     mut events: EventReader<InsightChosen>,
     mut lifespan_extension_tx: EventWriter<LifespanExtensionIntent>,
+    anim_targets: Query<(&Position, &UniqueId)>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
     mut players: Query<(
         &PendingInsightOffer,
         &mut Cultivation,
@@ -341,6 +348,20 @@ pub fn apply_insight_chosen(
                 requested_years: 0,
                 source: "enlightenment_extension".to_string(),
             });
+        }
+        // plan-skill-av-relink-v1 P1 — 顿悟抉择被接受并生效 → enlightenment_pose。
+        if let Ok((position, unique_id)) = anim_targets.get(ev.entity) {
+            let origin = position.get();
+            vfx_events.send(VfxEventRequest::new(
+                origin,
+                VfxEventPayloadV1::PlayAnim {
+                    target_player: unique_id.0.to_string(),
+                    anim_id: crate::network::vfx_animation_trigger::ANIM_ENLIGHTENMENT_POSE
+                        .to_string(),
+                    priority: crate::network::vfx_animation_trigger::STORY_PRIORITY,
+                    fade_in_ticks: Some(3),
+                },
+            ));
         }
         quota.apply_accumulation(choice);
 

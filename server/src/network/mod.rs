@@ -798,6 +798,23 @@ pub fn register(app: &mut App) {
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
+    // plan-skill-av-relink-v1 P1 — 孤儿动画接线 adapter 组（上一组 tuple 已满 20 上限，
+    // 独立注册；同样约束在 emit_vfx_event_payloads 之前跑）。
+    app.add_systems(
+        Update,
+        (
+            // 激活功法（TechniqueLearnedEvent）→ 流派架势动画（stance_*）。卷轴习得
+            // 路走 client_request_handler，after 保证同 tick 播出；导师传授 / 首击
+            // 领悟路事件跨 tick 仍被消费（events 双缓冲）。
+            vfx_animation_trigger::emit_technique_learned_stance_triggers
+                .after(client_request_handler::handle_client_request_payloads),
+            // 淬炼按键（TemperingHit）→ forge_hammer 抡锤动画（与 forge 模块
+            // FORGE_HAMMER_STRIKE 粒子同源同 tick）。
+            vfx_animation_trigger::emit_forge_tempering_animation_triggers
+                .after(client_request_handler::handle_client_request_payloads),
+        )
+            .before(vfx_event_emit::emit_vfx_event_payloads),
+    );
     app.add_systems(Update, audio_trigger::tick_audio_dedup_clock);
     app.add_systems(
         Update,

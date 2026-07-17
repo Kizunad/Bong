@@ -905,6 +905,7 @@ pub fn handle_client_request_payloads(
                     furnace_pos,
                     intervention.into(),
                     &mut clients,
+                    &combat_params.unique_ids,
                     &mut alchemy_params.furnaces,
                     alchemy_params.zones.as_deref(),
                     alchemy_params.redis.as_deref(),
@@ -14981,6 +14982,8 @@ fn handle_alchemy_intervention(
     furnace_pos: (i32, i32, i32),
     intervention: Intervention,
     clients: &mut Query<(&Username, &mut Client)>,
+    // plan-skill-av-relink-v1 P1 — alchemy_stir 搅拌动画的 target_player uuid。
+    unique_ids: &Query<&UniqueId>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
@@ -15027,6 +15030,21 @@ fn handle_alchemy_intervention(
                     30,
                 ),
             );
+            // plan-skill-av-relink-v1 P1 — 干预生效 → alchemy_stir 搅拌动画（与上方
+            // 熬煮粒子同点内联：干预直接在 request handler 处理、无 bevy 事件可订阅）。
+            // 未起炉/非炉主等拒绝分支在前面已 return，不会走到这里。
+            if let Ok(unique_id) = unique_ids.get(entity) {
+                events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                    alchemy_furnace_origin(furnace_pos),
+                    crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                        target_player: unique_id.0.to_string(),
+                        anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
+                            .to_string(),
+                        priority: crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
+                        fade_in_ticks: Some(2),
+                    },
+                ));
+            }
         }
         tracing::info!(
             "[bong][network][alchemy] `{player_id}` intervention {intervention:?} pos={furnace_pos:?} → temp={:.2} qi={:.2}",

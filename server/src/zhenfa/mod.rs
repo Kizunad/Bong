@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, bevy_ecs::system::SystemParam, App, BlockPos, BlockState, ChunkLayer, Client,
     Commands, Component, DVec3, Entity, Event, EventReader, EventWriter, Events, IntoSystemConfigs,
-    Mut, Position, PropName, PropValue, Query, Res, ResMut, Resource, SystemSet, Update, Username,
-    With, Without,
+    Mut, Position, PropName, PropValue, Query, Res, ResMut, Resource, SystemSet, UniqueId, Update,
+    Username, With, Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -1595,8 +1595,16 @@ fn handle_zhenfa_place_requests(
             continue;
         }
 
-        let Ok((username, mut cultivation, qi_color, modifiers, mut inventory, severed, mastery)) =
-            players.get_mut(req.player)
+        let Ok((
+            username,
+            unique_id,
+            mut cultivation,
+            qi_color,
+            modifiers,
+            mut inventory,
+            severed,
+            mastery,
+        )) = players.get_mut(req.player)
         else {
             tracing::warn!(
                 "[bong][zhenfa] place rejected: player {:?} missing cultivation bundle",
@@ -1877,6 +1885,21 @@ fn handle_zhenfa_place_requests(
                 }
                 if let Some(mut mastery) = mastery {
                     mastery.add_cast(req.kind);
+                }
+                // plan-skill-av-relink-v1 P1 — 落阵成功 → rune_draw 画符动画。内联于
+                // 成功分支（覆盖全部 ZhenfaKind——deploy 事件仅覆盖 4 kind + 组网成型，
+                // 普通陷阱无事件，走 adapter 会漏）；失败/回滚路径不发。
+                if let Some(events) = vfx_events.as_deref_mut() {
+                    events.send(VfxEventRequest::new(
+                        gameplay_vfx::block_center(req.pos),
+                        crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                            target_player: unique_id.0.to_string(),
+                            anim_id: crate::network::vfx_animation_trigger::ANIM_RUNE_DRAW
+                                .to_string(),
+                            priority: crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
+                            fade_in_ticks: Some(2),
+                        },
+                    ));
                 }
                 emit_deploy_event(
                     req.kind,
@@ -2754,6 +2777,8 @@ type ZhenfaDamageTarget<'a> = (
 
 type ZhenfaPlacePlayer<'a> = (
     &'a Username,
+    // plan-skill-av-relink-v1 P1 — 落阵成功 rune_draw 动画的 target_player uuid。
+    &'a UniqueId,
     &'a mut Cultivation,
     &'a QiColor,
     Option<&'a InsightModifiers>,
@@ -4660,6 +4685,7 @@ mod tests {
         app.world_mut()
             .spawn((
                 Username(name.to_string()),
+                UniqueId::default(),
                 Position::new(pos),
                 Cultivation {
                     realm: Realm::Induce,
@@ -5220,13 +5246,30 @@ mod tests {
                 .is_some(),
             "expected Ward place to succeed because this test must exercise a real non-Lingju place path"
         );
+        let vfx: Vec<&VfxEventRequest> = app
+            .world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .collect();
         assert!(
-            app.world()
-                .resource::<Events<VfxEventRequest>>()
-                .iter_current_update_events()
-                .next()
-                .is_none(),
-            "expected no VfxEventRequest because non-Lingju place must not run Lingju feedback"
+            !vfx.iter().any(|request| matches!(
+                &request.payload,
+                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                    if event_id == gameplay_vfx::LINGJU_ACTIVATE
+            )),
+            "expected no LINGJU_ACTIVATE particle because non-Lingju place must not run \
+             Lingju feedback, got {vfx:?}"
+        );
+        // plan-skill-av-relink-v1 P1 — 落阵成功（不分 kind）发 rune_draw 画符动画；
+        // 它与 Lingju 专属反馈无关，本测试只锁"非 Lingju 不发 Lingju 反馈"契约。
+        assert!(
+            vfx.iter().any(|request| matches!(
+                &request.payload,
+                crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim { anim_id, .. }
+                    if anim_id == crate::network::vfx_animation_trigger::ANIM_RUNE_DRAW
+            )),
+            "expected rune_draw PlayAnim on successful non-Lingju place \
+             (plan-skill-av-relink-v1 P1), got {vfx:?}"
         );
         let narrations = app
             .world_mut()
