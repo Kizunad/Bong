@@ -38,6 +38,10 @@ TELEPORT_TIMEOUT = 20.0
 ZONE_INFO_TIMEOUT = 15.0
 AMBIENT_TIMEOUT = 15.0
 AMBIENT_CHANNEL = "bong:audio/ambient_zone"
+EXPECTED_RECIPES_BY_MUSIC_STATE = {
+    "AMBIENT": "ambient_wilderness",
+    "CULTIVATION": "cultivation_meditate",
+}
 
 
 @dataclass(frozen=True)
@@ -176,15 +180,23 @@ def _assert_ambient(bot, probe: ZoneProbe, payload: dict[str, Any]) -> None:
     mismatches = {}
     if payload.get("pos") != expected_pos:
         mismatches["pos"] = {"expected": expected_pos, "actual": payload.get("pos")}
-    if payload.get("ambient_recipe_id") != "ambient_wilderness":
+
+    music_state = payload.get("music_state")
+    expected_recipe = EXPECTED_RECIPES_BY_MUSIC_STATE.get(music_state)
+    if expected_recipe is None:
+        mismatches["music_state"] = {
+            "expected": sorted(EXPECTED_RECIPES_BY_MUSIC_STATE),
+            "actual": music_state,
+        }
+    elif payload.get("ambient_recipe_id") != expected_recipe:
         mismatches["ambient_recipe_id"] = {
-            "expected": "ambient_wilderness",
+            "expected": expected_recipe,
             "actual": payload.get("ambient_recipe_id"),
         }
     if mismatches:
         raise BotAssertionError(
             f"[{bot.username}] {probe.label}: ambient_zone 应与 authoritative "
-            "坐标/zone 同步，"
+            "坐标/zone 及 music_state 契约同步，"
             f"字段不符={mismatches!r}, payload={payload!r}"
         )
 

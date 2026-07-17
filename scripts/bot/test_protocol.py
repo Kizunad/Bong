@@ -62,6 +62,7 @@ from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
 from bot.scenarios.terrain_north_rift_scorch_zone_identity import (  # noqa: E402
     PROBES as NORTH_RIFT_PROBES,
     REQUIRED_ENV as NORTH_RIFT_REQUIRED_ENV,
+    _assert_ambient as north_rift_assert_ambient,
     _position_matches as north_rift_position_matches,
 )
 from bot.run_scenarios import (  # noqa: E402
@@ -474,6 +475,78 @@ class NovicePoiScenarioParsingTest(unittest.TestCase):
 
 
 class NorthRiftScenarioContractTest(unittest.TestCase):
+    def test_ambient_contract_accepts_only_state_matched_wilderness_recipes(self):
+        probe = NORTH_RIFT_PROBES[0]
+        bot = types.SimpleNamespace(username="Fake")
+        expected_pos = [int(value) for value in probe.pos]
+
+        for music_state, ambient_recipe_id in (
+            ("AMBIENT", "ambient_wilderness"),
+            ("CULTIVATION", "cultivation_meditate"),
+        ):
+            with self.subTest(music_state=music_state):
+                north_rift_assert_ambient(
+                    bot,
+                    probe,
+                    {
+                        "pos": expected_pos,
+                        "music_state": music_state,
+                        "ambient_recipe_id": ambient_recipe_id,
+                    },
+                )
+
+    def test_ambient_contract_rejects_crossed_state_recipe_pairs(self):
+        probe = NORTH_RIFT_PROBES[0]
+        bot = types.SimpleNamespace(username="Fake")
+        expected_pos = [int(value) for value in probe.pos]
+
+        for music_state, wrong_recipe in (
+            ("AMBIENT", "cultivation_meditate"),
+            ("CULTIVATION", "ambient_wilderness"),
+        ):
+            with self.subTest(music_state=music_state, wrong_recipe=wrong_recipe):
+                with self.assertRaisesRegex(BotAssertionError, "ambient_recipe_id"):
+                    north_rift_assert_ambient(
+                        bot,
+                        probe,
+                        {
+                            "pos": expected_pos,
+                            "music_state": music_state,
+                            "ambient_recipe_id": wrong_recipe,
+                        },
+                    )
+
+    def test_ambient_contract_rejects_unexpected_or_missing_music_state(self):
+        probe = NORTH_RIFT_PROBES[0]
+        bot = types.SimpleNamespace(username="Fake")
+        expected_pos = [int(value) for value in probe.pos]
+
+        for music_state in ("COMBAT", "TSY", "TRIBULATION", "UNKNOWN", None):
+            with self.subTest(music_state=music_state):
+                payload = {
+                    "pos": expected_pos,
+                    "ambient_recipe_id": "ambient_wilderness",
+                }
+                if music_state is not None:
+                    payload["music_state"] = music_state
+                with self.assertRaisesRegex(BotAssertionError, "music_state"):
+                    north_rift_assert_ambient(bot, probe, payload)
+
+    def test_ambient_contract_still_rejects_wrong_authoritative_position(self):
+        probe = NORTH_RIFT_PROBES[0]
+        bot = types.SimpleNamespace(username="Fake")
+
+        with self.assertRaisesRegex(BotAssertionError, "pos"):
+            north_rift_assert_ambient(
+                bot,
+                probe,
+                {
+                    "pos": [int(probe.pos[0]), int(probe.pos[1]), int(probe.pos[2]) + 1],
+                    "music_state": "CULTIVATION",
+                    "ambient_recipe_id": "cultivation_meditate",
+                },
+            )
+
     def test_probes_pin_three_production_z_coordinates_and_zone_identity(self):
         actual = {probe.pos[2]: probe.zone for probe in NORTH_RIFT_PROBES}
         self.assertEqual(
