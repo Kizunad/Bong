@@ -283,7 +283,12 @@ fn next_fist_punch_anim(
 /// plan-skill-av-relink-v1 P1 — 「激活功法」时刻 → 流派架势动画。
 ///
 /// 事件源 = `TechniqueLearnedEvent`（`learn_technique_if_allowed` 习得即写
-/// `active:true` = 激活；生产发射点 = 卷轴习得 / 导师传授 / 首击领悟三路）。
+/// `active:true` = 激活）。生产发射路仅两条：卷轴习得（`client_request_handler`）
+/// 与首击领悟（`first_hit_dash`，仅授 `movement.dash`、无架势映射）；
+/// `technique_mentor::mentor_teaches_technique` 为无生产调用方的休眠 helper。
+/// 现有内容卷轴仅授 `woliu.*` + `zhenmai.parry` → 今日即活 = woliu / zhenmai
+/// 两族架势；dugu / dugu_poison / baomai / tuike 为接口先锁定的潜伏接线，
+/// 等对应流派习得内容落地即激活。
 /// 全仓不存在「流派架势切换」gameplay 事件（`stance_switch` audio recipe 的唯一
 /// 发射点是 SkillXpGain 经验反馈、与架势无关），按 plan §8 #2 决议改接本时刻。
 /// 无映射前缀（sword / anqi / burst_meridian / movement / morph / body / npc /
@@ -4260,6 +4265,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 状态转换：持械攻击既不推进也不复位空手连击链——右拳后持械打两下、
+    /// 超时窗口内卸下再空手，链条视同延续出左拳（armed 分支不触碰交替态）。
+    #[test]
+    fn armed_attacks_do_not_touch_unarmed_combo_state() {
+        use crate::combat::weapon::{EquipSlot, WeaponKind};
+        let mut app = setup_fist_combo_app();
+        let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        assert_eq!(
+            punch_anim_at_tick(&mut app, attacker, 10, WoundKind::Blunt),
+            ANIM_FIST_PUNCH_RIGHT,
+            "空手首击右拳起手"
+        );
+
+        app.world_mut().entity_mut(attacker).insert(Weapon {
+            slot: EquipSlot::MainHand,
+            instance_id: 1,
+            template_id: "test_blunt_weapon".to_string(),
+            weapon_kind: WeaponKind::Staff,
+            base_attack: 1.0,
+            quality_tier: 0,
+            durability: 10.0,
+            durability_max: 10.0,
+        });
+        for tick in [12, 14] {
+            assert_eq!(
+                punch_anim_at_tick(&mut app, attacker, tick, WoundKind::Blunt),
+                ANIM_FIST_PUNCH_RIGHT,
+                "持械攻击恒右拳（tick {tick}）"
+            );
+        }
+
+        app.world_mut().entity_mut(attacker).remove::<Weapon>();
+        assert_eq!(
+            punch_anim_at_tick(&mut app, attacker, 16, WoundKind::Blunt),
+            ANIM_FIST_PUNCH_LEFT,
+            "超时窗口内卸下武器再空手：持械期间不触碰交替态，链条延续应出左拳"
+        );
     }
 
     /// 玩家隔离：两名玩家交错互不干扰，各自独立 right → left 交替。

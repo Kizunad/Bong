@@ -6906,6 +6906,29 @@ mod tests {
         );
     }
 
+    /// enum 变体饱和：AutoProfile 是保留 no-op（`apply_intervention` 不改任何
+    /// 状态、无真实搅拌动作），不发 alchemy_stir 动画。
+    #[test]
+    fn auto_profile_intervention_emits_no_stir_animation() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(
+            &mut app,
+            entity,
+            r#"{"kind":"auto_profile","profile_id":"gentle"}"#,
+        );
+        app.update();
+
+        assert!(
+            drain_alchemy_stir_anims(&mut app).is_empty(),
+            "AutoProfile 是保留 no-op 干预（不改炉温/真元），不应发 alchemy_stir 搅拌动画"
+        );
+    }
+
     /// 错误分支：尚未起炉（furnace 无 session）→ 干预被拒不发搅拌动画。
     #[test]
     fn alchemy_intervention_without_session_does_not_emit_stir() {
@@ -15196,17 +15219,21 @@ fn handle_alchemy_intervention(
             // plan-skill-av-relink-v1 P1 — 干预生效 → alchemy_stir 搅拌动画（与上方
             // 熬煮粒子同点内联：干预直接在 request handler 处理、无 bevy 事件可订阅）。
             // 未起炉/非炉主等拒绝分支在前面已 return，不会走到这里。
-            if let Ok(unique_id) = unique_ids.get(entity) {
-                events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
-                    alchemy_furnace_origin(furnace_pos),
-                    crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
-                        target_player: unique_id.0.to_string(),
-                        anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
-                            .to_string(),
-                        priority: crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
-                        fade_in_ticks: Some(2),
-                    },
-                ));
+            // AutoProfile 是保留 no-op（session.rs apply_intervention 不改任何状态），
+            // 无真实搅拌动作，不发动画——只有生效干预（AdjustTemp/InjectQi）才发。
+            if !matches!(intervention, Intervention::AutoProfile(_)) {
+                if let Ok(unique_id) = unique_ids.get(entity) {
+                    events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                        alchemy_furnace_origin(furnace_pos),
+                        crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                            target_player: unique_id.0.to_string(),
+                            anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
+                                .to_string(),
+                            priority: crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
+                            fade_in_ticks: Some(2),
+                        },
+                    ));
+                }
             }
         }
         tracing::info!(
