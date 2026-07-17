@@ -137,6 +137,111 @@ class AlchemySessionHandlerProtoWireTest {
                 "finished/inactive snapshot 虽保留 guidance，也不得继续渲染活跃炼丹 HUD");
     }
 
+    @Test
+    void legacyActiveSessionWithoutGuidanceDowngradesBeforeStoreAndDoesNotRenderHud() {
+        assertTrue(dispatchFurnaceThroughWire(
+                Envelope.AlchemyFurnace.newBuilder()
+                        .setTier(1)
+                        .setIntegrity(1.0)
+                        .setIntegrityMax(1.0)
+                        .setOwnerName("Azure")
+                        .setHasSession(true)
+                        .build()
+        ).handled());
+
+        ServerDataDispatch dispatch = dispatchSessionThroughWire(
+                Envelope.AlchemySession.newBuilder()
+                        .setRecipeId("legacy_recipe")
+                        .setActive(true)
+                        .setStatusLabel("炼制中")
+                        .build()
+        );
+        assertTrue(dispatch.handled());
+        assertTrue(dispatch.logMessage().contains("downgraded incomplete active guidance"),
+                "旧 wire 请求 active 却缺 target_ticks 时必须留下兼容降级诊断，实际 log="
+                        + dispatch.logMessage());
+
+        AlchemySessionStore.Snapshot snapshot = AlchemySessionStore.snapshot();
+        assertEquals("legacy_recipe", snapshot.recipeId(),
+                "兼容降级不得丢掉 recipe id 诊断线索");
+        assertFalse(snapshot.active(),
+                "缺省 guidance 的旧 active wire 必须在 handler 边界归一为 inactive");
+        assertFalse(snapshot.isActive(),
+                "旧 wire 不得继续进入炉内 UI 或中央 HUD 的 active 分支");
+        assertEquals(0, snapshot.targetTicks());
+        assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
+                        .noneMatch(command -> command.layer() == HudRenderLayer.PROCESSING_HUD),
+                "缺省 guidance 不得再渲染“炼制 0%”面板");
+    }
+
+    @Test
+    void zeroDurationActiveSessionWithOtherGuidanceStillDowngradesWithoutInventingTargets() {
+        assertTrue(dispatchFurnaceThroughWire(
+                Envelope.AlchemyFurnace.newBuilder()
+                        .setTier(1)
+                        .setIntegrity(1.0)
+                        .setIntegrityMax(1.0)
+                        .setOwnerName("Azure")
+                        .setHasSession(true)
+                        .build()
+        ).handled());
+
+        ServerDataDispatch dispatch = dispatchSessionThroughWire(
+                baseSession()
+                        .setActive(true)
+                        .setTargetTicks(0)
+                        .setStatusLabel("炼制中")
+                        .build()
+        );
+        assertTrue(dispatch.handled());
+
+        AlchemySessionStore.Snapshot snapshot = AlchemySessionStore.snapshot();
+        assertFalse(snapshot.active(),
+                "即使其它字段齐全，零 target_ticks 也不能成为可渲染 active session");
+        assertFalse(snapshot.isActive());
+        assertEquals(0, snapshot.targetTicks(),
+                "兼容层必须 fail closed，不得伪造 duration sentinel");
+        assertEquals(0.62f, snapshot.tempTarget(), 0.0001f,
+                "降级应保留实际收到的诊断 guidance，而不是清空整份快照");
+        assertEquals(12.5, snapshot.qiTarget(), 0.0001);
+        assertEquals(3, snapshot.stages().size());
+        assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
+                        .noneMatch(command -> command.layer() == HudRenderLayer.PROCESSING_HUD),
+                "零时长 active payload 不得渲染 0% HUD");
+    }
+
+    @Test
+    void activeSessionWithoutRecipeDowngradesEvenWhenTargetsArePositive() {
+        assertTrue(dispatchFurnaceThroughWire(
+                Envelope.AlchemyFurnace.newBuilder()
+                        .setTier(1)
+                        .setIntegrity(1.0)
+                        .setIntegrityMax(1.0)
+                        .setOwnerName("Azure")
+                        .setHasSession(true)
+                        .build()
+        ).handled());
+
+        ServerDataDispatch dispatch = dispatchSessionThroughWire(
+                baseSession()
+                        .clearRecipeId()
+                        .setActive(true)
+                        .setStatusLabel("炼制中")
+                        .build()
+        );
+        assertTrue(dispatch.handled());
+
+        AlchemySessionStore.Snapshot snapshot = AlchemySessionStore.snapshot();
+        assertEquals("", snapshot.recipeId());
+        assertFalse(snapshot.active(),
+                "缺 recipe id 的 active payload 必须在 handler 边界 fail closed");
+        assertFalse(snapshot.isActive());
+        assertEquals(180, snapshot.targetTicks(),
+                "缺 recipe 的降级不得破坏其余 wire 字段，便于诊断版本错配");
+        assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
+                        .noneMatch(command -> command.layer() == HudRenderLayer.PROCESSING_HUD));
+    }
+
     private static Envelope.AlchemySession.Builder baseSession() {
         return Envelope.AlchemySession.newBuilder()
                 .setRecipeId("hud_contract_recipe")

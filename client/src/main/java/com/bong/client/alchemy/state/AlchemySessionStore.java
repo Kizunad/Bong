@@ -30,7 +30,10 @@ public final class AlchemySessionStore {
         }
 
         public boolean isActive() {
-            return active && recipeId != null && !recipeId.isEmpty();
+            return active
+                && recipeId != null
+                && !recipeId.isBlank()
+                && targetTicks > 0;
         }
     }
 
