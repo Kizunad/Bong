@@ -67,7 +67,7 @@
 
 ## P2 — 真缺图标补齐
 
-- r9 追加的 dugu runtime 5 张走 `/gen-image item` 批量生成（`scripts/images/gen.py`），**命名遵循 P0 单一真相源约定**：生成为 `bong-client:textures/gui/items/skill_scroll_dugu_{eclipse,penetrate,reverse,self_cure,shroud}.png`，并同步把 `dugu_v2` runtime visual payload 中的旧引用路径（`bong:textures/gui/skill/dugu_*.png`）重链到新命名——不给旧命名空间留新增量。生成后程序化全量扫透明度揪假透明（--transparent ~10% 白底失败率）。
+- r9 追加的 dugu runtime 5 张走 `/gen-image item` 批量生成（`scripts/images/gen.py`）。**消费方澄清**：这 5 张**不是** `TECHNIQUE_DEFINITIONS` 条目，消费链是 `dugu_v2` runtime visual payload（server 下发招式提示图标路径 → client `HudTextureProbe::exists` 探测后由事件 UI 加载），因此不落入 P3 的 technique 快照覆盖。处置：命名仍按 P0 约定收编——生成为 `bong-client:textures/gui/items/skill_scroll_dugu_{eclipse,penetrate,reverse,self_cure,shroud}.png`，同步把 `dugu_v2` payload 中旧引用路径（`bong:textures/gui/skill/dugu_*.png`）重链到新命名（不给旧命名空间留新增量）；并在本批为这 5 条 runtime 引用路径**单独加存在性 pin 测试**（server 侧断言 payload 引用路径 == 磁盘真实资产），保证生成后有真实加载路径、不再漂移。生成后程序化全量扫透明度揪假透明（--transparent ~10% 白底失败率）。
 - P0 映射逐条核对后若仍有缺口（如 `morph_yixing` 磁盘完全无文件），一并入本批生成，同样按 `skill_scroll_*` 约定命名。
 - 图标资产变更同步 `resourcepack.rs` + committed manifest 的 sha1/size（否则 Build resource pack CI 红）。
 
@@ -103,6 +103,6 @@
 
 ## §10 实施工作流
 
-- 单 plan 多 PR 序列化：PR-1 = P0 图标重链 + P3 全部防回归测试（测试与重链同 PR 落地，锁住重链结果）；PR-2 = P1 孤儿动画接线（§8 #2/#3 收口后）；PR-3 = P2 `/gen-image` 图标补齐 + resourcepack sha1 同步。
+- 单 plan 多 PR 序列化（**测试随对应实现同批交付，不预置无实现对象的测试**）：PR-1 = P0 图标重链 + P3 图标链测试（发射契约/快照同步/存在性/映射约束）；PR-2 = P1 孤儿动画接线（§8 #2/#3 收口后）+ P3 动画链测试（emit pin/registry pin/路由契约/连击序列）；PR-3 = P2 `/gen-image` 图标补齐 + runtime 引用 pin + resourcepack sha1 同步。
 - 每 PR 独立实施 subagent（context 隔离）；CodeRabbit / `/review` 等待走 ScheduleWakeup 1200s 协议，修完意见重等 re-review。
 - **单次 consume-plan 全自动到 merge**：用户提交 `/consume-plan` 后全自动走完实施→review→merge→归档至 `docs/finished_plans/`，无需人工值守；P2 生成的图标 PNG 附 PR body 供人工抽查。
