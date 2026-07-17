@@ -403,16 +403,16 @@
       "name": "rift_mouth_north_002",
       "display_name": "渊口荒丘·北荒东陲",
       "aabb": {
-        "min": [1850.0, 50.0, -7950.0],
-        "max": [2150.0, 100.0, -7650.0]
+        "min": [1850.0, 50.0, -7450.0],
+        "max": [2150.0, 100.0, -7150.0]
       },
-      "center_xz": [2000.0, -7800.0],
+      "center_xz": [2000.0, -7300.0],
       "size_xz": [300.0, 300.0],
       "spirit_qi": 0.05,
       "danger_level": 5,
       "active_events": ["rift_mouth_entry"],
       "patrol_anchors": [
-        [2000.0, 74.0, -7800.0]
+        [2000.0, 74.0, -7300.0]
       ],
       "blocked_tiles": [],
       "worldgen": {
@@ -423,7 +423,7 @@
         "surface_palette": ["blackstone", "obsidian", "tuff", "coarse_dirt", "packed_ice"],
         "biome_mix": ["mofa:fu_ling_abyss", "mofa:si_yu"],
         "landmarks": ["fresh_collapse_rubble", "cracked_floor_seam"],
-        "portal_anchor_xz": [2000.0, -7800.0],
+        "portal_anchor_xz": [2000.0, -7300.0],
         "tsy_zone_link": "tsy_zongmen_01_shallow",
         "core_radius": 30,
         "outer_radius": 150,
@@ -434,12 +434,12 @@
         {
           "kind": "rift_portal",
           "name": "塌缩裂缝·北荒东陲",
-          "pos_xyz": [2000.0, 74.0, -7800.0],
+          "pos_xyz": [2000.0, 74.0, -7300.0],
           "tags": [
             "direction:entry",
             "kind:main",
             "family_id:zongmen_01",
-            "target_family_pos_xyz:250,100,250",
+            "target_family_pos_xyz:253,100,250",
             "trigger_radius:2.0",
             "orientation:vertical",
             "facing:east"
