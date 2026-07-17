@@ -159,7 +159,7 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
 5. 进驻主干分派的 slot（**detached HEAD 即空闲**是 slot 的所有权语义：占用中的 slot 必然检出着任务分支，空闲 slot 恒为 detach 态；主干是 slot 分派的唯一持有者、串行分派）：
    - slot 尚不存在时，由主干在控制面用单条 `git worktree add --lock --detach .agent-worktrees/slot-<k> origin/main` 创建（常驻、永久 locked，之后不再重建）。
    - **双门核验**：① `git -C <slot绝对路径> symbolic-ref -q HEAD` 无输出（detached；检出着任何分支 = 已被占用）② `git -C <slot绝对路径> status --porcelain=v1 --untracked-files=all` 输出为空。任一不满足即拒绝进驻、回报主干处置，**禁止自行 clean/reset/切分支动他人数据**。
-   - 执行 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`。
+   - 执行 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`。（`-B` 仅用于全新 claim 进驻；BLOCKED 恢复进驻必须直接检出既有本地分支，见「远端 claim 释放与孤儿巡检」节——-B 会把本地分支重置到远端、丢失未推送现场。）
 6. 对拍 `git -C <slot绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，并检查 slot 确实处于 locked 状态。
 7. create-ref 成功后的失败回滚分两种：
    - **双门核验失败**（`checkout -B` 尚未执行）：不得在 slot 内执行任何写操作，直接回报主干处置/换 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在。
@@ -285,7 +285,7 @@ PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 - PR merge：核验远端 claim 是否已删；未删时由主干删除并再次核验。
 - PR close 且确认放弃：先确认无开放 PR、无存活 subagent、远端提交无需保留，再删除 claim ref，让 skeleton 重新开放。
 - claim 成功但 PR 未创建便异常退出/失联：主干确认无开放 PR、无存活 subagent、远端无须保留提交后删除孤儿 claim。每轮补位都巡检一次。
-- 其它失败：保留有恢复价值的现场/ref，派恢复 subagent；不要盲删 BLOCKED 任务。**BLOCKED 不占死 slot**：现场以 commit 形式留在任务分支上（工作区干净）后，主干在 slot 内 `git checkout --detach origin/main`、**保留本地分支**（未推送的提交仍在分支上）、释放 slot；后续恢复从该分支重新进驻。工作区不干净的 BLOCKED 现场冻结该 slot 交人工——这是唯一允许 slot 被长期占用的情形，主干在状态表持续告警。
+- 其它失败：保留有恢复价值的现场/ref，派恢复 subagent；不要盲删 BLOCKED 任务。**BLOCKED 不占死 slot**：现场以 commit 形式留在任务分支上（工作区干净）后，主干在 slot 内 `git checkout --detach origin/main`、**保留本地分支**（未推送的提交仍在分支上）、释放 slot。工作区不干净的 BLOCKED 现场冻结该 slot 交人工——这是唯一允许 slot 被长期占用的情形，主干在状态表持续告警。**BLOCKED 恢复进驻走既有本地分支**：在空闲 slot 内 `git checkout bugfix/plan-X`（直接检出保留的本地分支），检出后与状态表记录的 checkpoint SHA 对拍；**禁止 `checkout -B ... origin/...`**——-B 会把本地分支重置到远端位置，远端不含 BLOCKED 的本地提交时现场即刻丢失。step 5 的 `checkout -B` 仅用于全新 claim 进驻。
 
 ### review/e2e 返工责任链
 

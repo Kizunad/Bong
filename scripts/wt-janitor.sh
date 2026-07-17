@@ -7,7 +7,7 @@
 # 用法：
 #   bash scripts/wt-janitor.sh                             # report-only：列出全部 worktree + PR 状态 + 判定
 #   bash scripts/wt-janitor.sh --apply                     # 回收「PR 已 MERGED/CLOSED 且工作区干净」的 worktree
-#   bash scripts/wt-janitor.sh --apply --clean-artifacts   # 额外删除「无 PR/OPEN 且 ≥7 天无提交」worktree 的构建产物
+#   bash scripts/wt-janitor.sh --apply --clean-artifacts   # 额外删除「工作区干净、无 PR/OPEN、≥7 天无提交」worktree 的构建产物
 #   bash scripts/wt-janitor.sh --apply --clean-artifacts=3 # 同上，闲置阈值改为 3 天
 #
 # 一切破坏动作都锁在 --apply 之后；--clean-artifacts 不带 --apply 时只报告「待清」。
@@ -17,7 +17,11 @@
 #   - 常驻编译 slot（.agent-worktrees/slot-*，BugFix 工作流的保温缓存所在）
 #   - 有进程正引用其路径（cmdline 含路径，或 cwd 在树内）的 worktree
 #   - 工作区不干净、或 git status 查不出来（fail-closed 当脏处理）的 worktree
+#   - 本地分支存在远端不可达提交的 worktree（工作区干净 ≠ 已推送；squash-merge 后
+#     本地追加的提交 branch -D 即永久丢失，可达性查不出来同样 fail-closed 交人工）
 #   - remove 被 git 拒绝的树（残留非缓存 ignored 文件时不用 --force 硬删，转交人工）
+#
+# 契约测试：bash scripts/tests/wt_janitor_test.sh（隔离沙箱仓库，锁死全部破坏性判定）
 set -euo pipefail
 
 APPLY=0
@@ -158,11 +162,23 @@ for i in "${!paths[@]}"; do
     fi
   fi
 
+  # 未推送提交守卫：工作区干净 ≠ 提交已推送。squash-merge 后本地追加的
+  # 提交不会是任何远端 ref 的祖先，branch -D 会把它们无声删掉。
+  # 远端不可达提交数 > 0 或查询失败 → 一律交人工（fail-closed）
+  unpushed="0"
+  if [[ -n "$branch" ]]; then
+    unpushed=$(git rev-list --count "refs/heads/$branch" --not --remotes 2>/dev/null) || unpushed="ERR"
+  fi
+
   verdict=""
   case "$pr_state" in
     MERGED|CLOSED)
       if [[ -n "$dirty" ]]; then
         verdict="PR 已 $pr_state 但工作区不干净 → 交人工"
+      elif [[ "$unpushed" == "ERR" ]]; then
+        verdict="提交可达性查询失败 → 交人工"
+      elif [[ "$unpushed" != "0" ]]; then
+        verdict="PR 已 $pr_state 但本地分支有 $unpushed 个远端不可达提交 → 交人工"
       else
         verdict="可回收（PR 已 $pr_state）"
         if [[ $APPLY -eq 1 ]]; then
@@ -192,9 +208,10 @@ for i in "${!paths[@]}"; do
       ;;
   esac
 
-  # 构建产物回收：无 PR 或 OPEN 但长期闲置的树，target/build 可再生。
-  # 与所有破坏动作一样锁在 --apply 之后；单棵失败不中断巡检
-  if [[ $CLEAN_ARTIFACTS -eq 1 && "$verdict" != 已回收* && $idle_days -ge $IDLE_DAYS ]]; then
+  # 构建产物回收：只作用于「工作区干净」且「无 PR 或 OPEN」的长期闲置树
+  # （MERGED/CLOSED 干净树走上面的整树回收；脏树/UNKNOWN/NO_BRANCH 一律不碰，
+  # 与头部「永不触碰脏树」契约一致）。与所有破坏动作一样锁在 --apply 之后
+  if [[ $CLEAN_ARTIFACTS -eq 1 && -z "$dirty" && ( "$pr_state" == "OPEN" || "$pr_state" == "NO_PR" ) && $idle_days -ge $IDLE_DAYS ]]; then
     if [[ -d "$path/server/target" || -d "$path/client/build" ]]; then
       if [[ $APPLY -eq 1 ]]; then
         artifacts_ok=1
