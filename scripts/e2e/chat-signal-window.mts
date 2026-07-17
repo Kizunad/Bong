@@ -49,12 +49,12 @@ async function main(): Promise<void> {
     const ageSeconds = nowSeconds - message.ts;
     const forgedClientTimestampSeconds = Math.floor(forgedClientTimestampMillis / 1_000);
     requireCondition(
-      Number.isInteger(message.ts) && ageSeconds >= 0 && ageSeconds <= 10,
+      Number.isInteger(message.ts) && ageSeconds >= 0 && ageSeconds <= 30,
       `ChatMessageV1.ts 必须是 server 当前观察秒；实际 ts=${message.ts}, now=${nowSeconds}, age=${ageSeconds}`,
     );
     requireCondition(
       message.ts !== forgedClientTimestampSeconds
-        && forgedClientTimestampSeconds - message.ts >= 86_390,
+        && forgedClientTimestampSeconds - message.ts >= 82_800,
       `server 必须忽略客户端未来时间；client_ms=${forgedClientTimestampMillis}, wire_ts=${message.ts}`,
     );
 

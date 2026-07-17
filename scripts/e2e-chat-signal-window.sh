@@ -11,6 +11,7 @@ REDIS_LOG="$EVIDENCE_DIR/redis.log"
 SERVER_LOG="$EVIDENCE_DIR/server.log"
 BOT_LOG="$EVIDENCE_DIR/bot.log"
 TIANDAO_LOG="$EVIDENCE_DIR/tiandao.log"
+CLIENT_TIMESTAMP_FILE="$EVIDENCE_DIR/client-timestamp-millis.txt"
 PROFILE="${CHAT_WINDOW_E2E_PROFILE:-debug}"
 HOST="127.0.0.1"
 MC_PORT=25565
@@ -182,25 +183,22 @@ if ! grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" \
   exit 1
 fi
 
-FORGED_FUTURE_TIMESTAMP_MILLIS="$(python3 - <<'PY'
-import time
-
-print(time.time_ns() // 1_000_000 + 86_400_000)
-PY
-)"
-
 PYTHONPATH="$ROOT/scripts" python3 - \
-  "$HOST" "$MC_PORT" "$MARKER" "$FORGED_FUTURE_TIMESTAMP_MILLIS" \
+  "$HOST" "$MC_PORT" "$MARKER" "$CLIENT_TIMESTAMP_FILE" \
   >"$BOT_LOG" 2>&1 <<'PY'
 import sys
+import time
+from pathlib import Path
 
 from bot.bot import Bot
 
 host, port, marker = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-forged_future_timestamp_millis = int(sys.argv[4])
+client_timestamp_file = Path(sys.argv[4])
 with Bot("ChatWindowBot", host=host, port=port) as bot:
     bot.expect_event("game_join", timeout=15.0)
     bot.expect_event("pos_look", timeout=15.0)
+    forged_future_timestamp_millis = time.time_ns() // 1_000_000 + 86_400_000
+    client_timestamp_file.write_text(str(forged_future_timestamp_millis), encoding="utf-8")
     bot.chat(marker, timestamp_millis=forged_future_timestamp_millis)
     echo = bot.expect_chat(marker, timeout=10.0)
     print(f"[chat-window-e2e] bot echo={echo.data['text']!r}")
@@ -210,6 +208,12 @@ with Bot("ChatWindowBot", host=host, port=port) as bot:
     )
     bot.assert_alive("聊天写入 Redis 后")
 PY
+
+FORGED_FUTURE_TIMESTAMP_MILLIS="$(<"$CLIENT_TIMESTAMP_FILE")"
+if ! [[ "$FORGED_FUTURE_TIMESTAMP_MILLIS" =~ ^[0-9]+$ ]]; then
+  echo "[chat-window-e2e] Bot 未写出合法伪造时间：$FORGED_FUTURE_TIMESTAMP_MILLIS" >&2
+  exit 1
+fi
 
 (
   cd "$ROOT"
