@@ -1,5 +1,13 @@
 package com.bong.client.hud;
 
+import com.bong.client.combat.QuickSlotConfig;
+import com.bong.client.combat.SkillBarConfig;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
+import com.bong.client.network.ServerDataDispatch;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
+import com.bong.client.network.SkillBarConfigHandler;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.util.Identifier;
@@ -16,7 +24,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Predicate;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -119,6 +129,79 @@ class SkillIconSnapshotAssetTest {
             "以下 technique 图标在 client classpath（main resources）上不存在，HUD 将无图可渲染："
                 + missing + "——补齐 PNG 资产，或（仅限确认资产尚未生成时）登记 "
                 + "MISSING_ICON_ALLOWLIST 并在 plan 中挂 [BLOCKED: 需 /gen-image] 记录");
+    }
+
+    /**
+     * 图标链端到端（P3）：SkillBarConfigV1 payload 经真实客户端消费入口——
+     * {@link ServerDataEnvelope#parse} → {@link SkillBarConfigHandler} → {@link SkillBarStore}
+     * 槽位模型 → {@link LoadoutIconLayer}{@code .resolveExistingSkillTexture} /
+     * {@link QuickBarHudPlanner}——全程复用生产代码路径，不另写替代解析逻辑。
+     *
+     * <p>存在性谓词以 classpath 资源查找顶替需 MC 运行时的 {@code HudTextureProbe::exists}
+     * （{@code LoadoutIconLayer} 文档声明的注入缝；两者查的是同一份 main resources 资产）。
+     * Skill 条目断言最终命中服务端下发的真实纹理路径；Item 条目断言空串（server 发射
+     * 契约，plan P0 #4 修订）走 {@code itemTexture(itemId)} 富解析分支、绝不落入裸
+     * {@code texture()} 分支。</p>
+     */
+    @Test
+    void skillBarConfigPayloadDrivesProductionIconResolutionChain() throws IOException {
+        Map<String, String> snapshot = loadSnapshot();
+        String skillId = "sword.cleave";
+        String skillIcon = snapshot.get(skillId);
+        assertNotNull(skillIcon, "快照缺少 " + skillId + " —— " + REGEN_HINT);
+        assertNotNull(classpathResource(skillIcon),
+            "前置条件破坏：" + skillId + " 的图标资产 " + skillIcon
+                + " 应真实存在于 main resources（见存在性扫描用例）");
+
+        String itemTemplateId = "kai_mai_pill_v0";
+        String json = """
+            {"v":1,"type":"skillbar_config","slots":[
+              {"kind":"skill","skill_id":"%s","display_name":"劈斩","cast_duration_ms":400,"cooldown_ms":3000,"icon_texture":"%s"},
+              {"kind":"item","template_id":"%s","display_name":"开脉丹","cast_duration_ms":1500,"cooldown_ms":500,"icon_texture":""},
+              null,null,null,null,null,null,null
+            ],"cooldown_until_ms":[0,0,0,0,0,0,0,0,0]}"""
+            .formatted(skillId, skillIcon, itemTemplateId);
+
+        SkillBarStore.resetForTests();
+        try {
+            ServerPayloadParseResult parsed = ServerDataEnvelope.parse(
+                json, json.getBytes(StandardCharsets.UTF_8).length);
+            assertTrue(parsed.isSuccess(), "skillbar_config payload 应可解析：" + parsed.errorMessage());
+            ServerDataDispatch dispatch = new SkillBarConfigHandler().handle(parsed.envelope());
+            assertTrue(dispatch.handled(),
+                "skillbar_config 应被真实 handler 消费而非 noOp：" + dispatch.logMessage());
+
+            SkillBarConfig config = SkillBarStore.snapshot();
+            assertEquals(SkillBarEntry.Kind.SKILL, config.slot(0).kind(), "槽 0 应落成 Skill 条目");
+            assertEquals(SkillBarEntry.Kind.ITEM, config.slot(1).kind(), "槽 1 应落成 Item 条目");
+            assertEquals("", config.slot(1).iconTexture(),
+                "Item 槽 icon_texture 恒空串是 server 发射契约（plan P0 #4 修订），槽位模型不得篡改");
+
+            Predicate<String> classpathExists = path -> classpathResource(path) != null;
+
+            // Skill 条目：生产纹理解析器命中服务端下发的真实资产路径。
+            String resolved = LoadoutIconLayer.resolveExistingSkillTexture(config.slot(0), classpathExists);
+            assertEquals(skillIcon, resolved,
+                "Skill 槽应经 resolveExistingSkillTexture 命中服务端下发的真实纹理 " + skillIcon
+                    + "，实际 " + resolved);
+
+            // 全量 planner 链：Skill 槽产出该纹理的贴图命令；Item 槽空串走 itemTexture
+            // 富解析分支。
+            List<HudRenderCommand> commands = QuickBarHudPlanner.buildCommands(
+                QuickSlotConfig.empty(), config, 0, null, List.of(), 0L, 480, 270, classpathExists);
+            assertTrue(commands.stream().anyMatch(cmd ->
+                    cmd.isTexturedRect() && skillIcon.equals(cmd.texturePath())),
+                "planner 输出应包含 Skill 槽真实纹理 " + skillIcon + " 的贴图命令");
+            assertTrue(commands.stream().anyMatch(cmd ->
+                    cmd.isItemTexture() && itemTemplateId.equals(cmd.text())),
+                "Item 槽空串应走 itemTexture(" + itemTemplateId + ") 富解析分支（ItemIconRegistry 链）");
+            assertTrue(commands.stream().filter(HudRenderCommand::isTexturedRect)
+                    .allMatch(cmd -> skillIcon.equals(cmd.texturePath())),
+                "planner 输出中唯一的裸 texture 命令应只来自 Skill 槽——Item 槽空串若被回填"
+                    + "路径落入裸 texture() 分支会在此撞红");
+        } finally {
+            SkillBarStore.resetForTests();
+        }
     }
 
     /** 棘轮反向断言：allowlist 条目的资产必须仍然缺失——资产落地即强制删条目，只缩不涨。 */
