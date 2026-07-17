@@ -292,7 +292,7 @@ class ZoneOverlapPolicyTest(unittest.TestCase):
         self.assertEqual(tags["direction"], "entry")
         self.assertEqual(tags["kind"], "main")
         self.assertEqual(tags["family_id"], "zongmen_01")
-        self.assertEqual(tags["target_family_pos_xyz"], "250,100,250")
+        self.assertEqual(tags["target_family_pos_xyz"], "253,100,250")
         self.assertEqual(tags["trigger_radius"], "2.0")
 
     def test_relocated_north_rift_neighbourhood_qi_matches_unified_field_bake(

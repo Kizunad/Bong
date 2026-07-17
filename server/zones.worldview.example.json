@@ -439,7 +439,7 @@
             "direction:entry",
             "kind:main",
             "family_id:zongmen_01",
-            "target_family_pos_xyz:250,100,250",
+            "target_family_pos_xyz:253,100,250",
             "trigger_radius:2.0",
             "orientation:vertical",
             "facing:east"
