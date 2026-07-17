@@ -156,12 +156,15 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
    - `422`：先检查响应原因，再用 `git ls-remote --heads origin refs/heads/bugfix/plan-X` 确认同名 ref。只有 ref 确实存在才判“已占用”并回报主干换任务；ref 不存在或原因不是重复 ref 时，标记流程错误并带完整诊断，禁止伪装成占用。
    - 其它状态：认领失败，保留完整响应并停止本任务。
 4. 成功后执行 `git fetch origin refs/heads/bugfix/plan-X:refs/remotes/origin/bugfix/plan-X`，核验远端跟踪 ref SHA 等于 `claim_sha`。
-5. 进驻主干分派的 slot：
+5. 进驻主干分派的 slot（**detached HEAD 即空闲**是 slot 的所有权语义：占用中的 slot 必然检出着任务分支，空闲 slot 恒为 detach 态；主干是 slot 分派的唯一持有者、串行分派）：
    - slot 尚不存在时，由主干在控制面用单条 `git worktree add --lock --detach .agent-worktrees/slot-<k> origin/main` 创建（常驻、永久 locked，之后不再重建）。
-   - 核验 `git -C <slot绝对路径> status --porcelain=v1 --untracked-files=all` 输出为空；不为空说明上一任务未收口或有外部残留，回报主干处置，**禁止自行 clean/reset 他人数据**。
+   - **双门核验**：① `git -C <slot绝对路径> symbolic-ref -q HEAD` 无输出（detached；检出着任何分支 = 已被占用）② `git -C <slot绝对路径> status --porcelain=v1 --untracked-files=all` 输出为空。任一不满足即拒绝进驻、回报主干处置，**禁止自行 clean/reset/切分支动他人数据**。
    - 执行 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`。
 6. 对拍 `git -C <slot绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，并检查 slot 确实处于 locked 状态。
-7. create-ref 成功后，若 fetch、进驻、跟踪或 SHA 对拍任一步失败：在 slot 内 `git checkout --detach origin/main` 脱离并删除刚创建的本地分支，回报主干释放 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在；不得留下孤儿锁，**不得 remove slot**。
+7. create-ref 成功后的失败回滚分两种：
+   - **双门核验失败**（`checkout -B` 尚未执行）：不得在 slot 内执行任何写操作，直接回报主干处置/换 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在。
+   - **`checkout -B` 之后的步骤失败**（跟踪、SHA 对拍等）：在 slot 内 `git checkout --detach origin/main` 脱离并删除刚创建的本地分支，回报主干释放 slot，再删除刚创建的远端 claim ref 并核验不存在。
+   两种路径都不得留下孤儿锁，**不得 remove slot**。
 
 进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在 slot 绝对路径内执行；编译必须落在 slot 自身的 in-tree target（若环境设有全局 `CARGO_TARGET_DIR`，门禁命令前显式 `unset CARGO_TARGET_DIR`），保证保温缓存留在 slot 内。禁止进驻他人正占用的 slot，禁止修改主 checkout。
 
@@ -282,11 +285,11 @@ PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 - PR merge：核验远端 claim 是否已删；未删时由主干删除并再次核验。
 - PR close 且确认放弃：先确认无开放 PR、无存活 subagent、远端提交无需保留，再删除 claim ref，让 skeleton 重新开放。
 - claim 成功但 PR 未创建便异常退出/失联：主干确认无开放 PR、无存活 subagent、远端无须保留提交后删除孤儿 claim。每轮补位都巡检一次。
-- 其它失败：保留有恢复价值的 worktree/ref，派恢复 subagent；不要盲删 BLOCKED 任务。
+- 其它失败：保留有恢复价值的现场/ref，派恢复 subagent；不要盲删 BLOCKED 任务。**BLOCKED 不占死 slot**：现场以 commit 形式留在任务分支上（工作区干净）后，主干在 slot 内 `git checkout --detach origin/main`、**保留本地分支**（未推送的提交仍在分支上）、释放 slot；后续恢复从该分支重新进驻。工作区不干净的 BLOCKED 现场冻结该 slot 交人工——这是唯一允许 slot 被长期占用的情形，主干在状态表持续告警。
 
 ### review/e2e 返工责任链
 
-review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，从同一远端 PR branch 进驻空闲 slot；不要让主干修，也不要假设原任务的进驻状态仍在。
+review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，从同一远端 PR branch 进驻空闲 slot；不要让主干修，也不要假设原任务的进驻状态仍在。返工与新实施**共用同一 slot 池**：无空闲 slot 时返工任务排队并**优先于新 skeleton 派发**获得下一个释放的 slot；不得为返工中断在跑任务或强占其 slot。
 
 返工进驻不调用 create-ref。执行以下幂等链：
 
