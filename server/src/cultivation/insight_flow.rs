@@ -566,4 +566,249 @@ mod tests {
             "杂色 diverge 槽应根据 PracticeLog 选出最高权重主线 Violent，实际 choices={choices:?}"
         );
     }
+
+    // ── plan-skill-av-relink-v1 P3 —— enlightenment_pose 内联 emit pin ───────────
+
+    use valence::prelude::{App, Events, Update};
+
+    const TEST_TRIGGER_ID: &str = "first_breakthrough_to_Induce";
+
+    fn setup_apply_chosen_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.add_event::<InsightChosen>();
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, apply_insight_chosen);
+        app
+    }
+
+    /// 挂着有效 PendingInsightOffer 的抉择者；`with_anim_target=false` 模拟离线/
+    /// 已清理实体（缺 Position/UniqueId）。
+    fn spawn_choosing_player(app: &mut App, with_anim_target: bool, quota: InsightQuota) -> Entity {
+        let choices = fallback_for(TEST_TRIGGER_ID);
+        assert!(
+            !choices.is_empty(),
+            "前置条件破坏：fallback offer 必须非空（本测试要走真实抉择路径）"
+        );
+        let mut entity = app.world_mut().spawn((
+            PendingInsightOffer {
+                trigger_id: TEST_TRIGGER_ID.to_string(),
+                choices,
+            },
+            Cultivation {
+                realm: Realm::Induce,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            QiColor::default(),
+            PracticeLog::default(),
+            UnlockedPerceptions::default(),
+            InsightModifiers::default(),
+            LifeRecord::default(),
+            quota,
+        ));
+        if with_anim_target {
+            entity.insert((Position::new([0.0, 64.0, 0.0]), UniqueId::default()));
+        }
+        entity.id()
+    }
+
+    fn drain_enlightenment_anims(app: &mut App) -> Vec<(String, u16)> {
+        app.world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .filter_map(|request| match request.payload {
+                VfxEventPayloadV1::PlayAnim {
+                    target_player,
+                    anim_id,
+                    priority,
+                    ..
+                } if anim_id == crate::network::vfx_animation_trigger::ANIM_ENLIGHTENMENT_POSE => {
+                    Some((target_player, priority))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn send_chosen(app: &mut App, entity: Entity, trigger_id: &str, choice_idx: Option<usize>) {
+        app.world_mut().send_event(InsightChosen {
+            entity,
+            trigger_id: trigger_id.to_string(),
+            choice_idx,
+        });
+    }
+
+    /// happy path：三重校验通过、抉择生效 → 恰发一条 enlightenment_pose 顿悟姿态，
+    /// target = 抉择者本人 uuid、优先级叙事档；offer 消费移除、quota 记账。
+    #[test]
+    fn accepted_insight_choice_emits_enlightenment_pose() {
+        let mut app = setup_apply_chosen_app();
+        let player = spawn_choosing_player(&mut app, true, InsightQuota::default());
+        let player_uuid = app.world().get::<UniqueId>(player).unwrap().0.to_string();
+
+        send_chosen(&mut app, player, TEST_TRIGGER_ID, Some(0));
+        app.update();
+
+        let anims = drain_enlightenment_anims(&mut app);
+        assert_eq!(
+            anims.len(),
+            1,
+            "顿悟抉择生效应恰发一条 enlightenment_pose，实际 {anims:?}"
+        );
+        assert_eq!(
+            anims[0].0, player_uuid,
+            "enlightenment_pose 应发给抉择者本人（target_player = 抉择者 uuid）"
+        );
+        assert_eq!(
+            anims[0].1,
+            crate::network::vfx_animation_trigger::STORY_PRIORITY,
+            "enlightenment_pose 优先级应为叙事档"
+        );
+        assert!(
+            app.world().get::<PendingInsightOffer>(player).is_none(),
+            "生效后 PendingInsightOffer 应被消费移除"
+        );
+        assert_eq!(
+            app.world()
+                .get::<InsightQuota>(player)
+                .unwrap()
+                .used_this_realm,
+            1,
+            "生效后 quota 应记账一次（证明动画确实发在 apply 生效路径上）"
+        );
+    }
+
+    /// 错误分支：stale trigger_id（offer 已被置换）→ 抉择被丢弃不发姿态。
+    #[test]
+    fn stale_trigger_id_mismatch_does_not_emit_pose() {
+        let mut app = setup_apply_chosen_app();
+        let player = spawn_choosing_player(&mut app, true, InsightQuota::default());
+
+        send_chosen(&mut app, player, "some_replaced_trigger", Some(0));
+        app.update();
+
+        assert!(
+            drain_enlightenment_anims(&mut app).is_empty(),
+            "stale trigger_id 的抉择被丢弃时不应发 enlightenment_pose"
+        );
+        assert!(
+            app.world().get::<PendingInsightOffer>(player).is_some(),
+            "mismatch 分支不应消费当前 offer"
+        );
+    }
+
+    /// 错误分支：玩家拒绝 offer（choice_idx=None）→ 无顿悟不发姿态。
+    #[test]
+    fn rejected_offer_does_not_emit_pose() {
+        let mut app = setup_apply_chosen_app();
+        let player = spawn_choosing_player(&mut app, true, InsightQuota::default());
+
+        send_chosen(&mut app, player, TEST_TRIGGER_ID, None);
+        app.update();
+
+        assert!(
+            drain_enlightenment_anims(&mut app).is_empty(),
+            "拒绝 offer 时不应发 enlightenment_pose"
+        );
+        assert!(
+            app.world().get::<PendingInsightOffer>(player).is_none(),
+            "拒绝后 offer 应被移除"
+        );
+    }
+
+    /// 错误分支：非法 choice_idx（越界）→ 抉择无效不发姿态。
+    #[test]
+    fn invalid_choice_idx_does_not_emit_pose() {
+        let mut app = setup_apply_chosen_app();
+        let player = spawn_choosing_player(&mut app, true, InsightQuota::default());
+
+        send_chosen(&mut app, player, TEST_TRIGGER_ID, Some(99));
+        app.update();
+
+        assert!(
+            drain_enlightenment_anims(&mut app).is_empty(),
+            "越界 choice_idx 的抉择无效时不应发 enlightenment_pose"
+        );
+    }
+
+    /// 错误分支：arbiter 配额耗尽（validate_offer 拒绝）→ 抉择被拒不发姿态。
+    #[test]
+    fn arbiter_rejected_choice_does_not_emit_pose() {
+        use crate::cultivation::insight::realm_quota;
+        let mut app = setup_apply_chosen_app();
+        let exhausted = InsightQuota {
+            used_this_realm: realm_quota(Realm::Induce),
+            ..Default::default()
+        };
+        let player = spawn_choosing_player(&mut app, true, exhausted);
+
+        send_chosen(&mut app, player, TEST_TRIGGER_ID, Some(0));
+        app.update();
+
+        assert!(
+            drain_enlightenment_anims(&mut app).is_empty(),
+            "arbiter 配额耗尽拒绝抉择时不应发 enlightenment_pose"
+        );
+    }
+
+    /// 状态转换分支：抉择者缺 Position/UniqueId（离线/测试实体）→ 效果照常生效、
+    /// 动画静默 skip（不因缺渲染目标阻断顿悟本体）。
+    #[test]
+    fn accepted_choice_without_anim_target_applies_but_does_not_emit() {
+        let mut app = setup_apply_chosen_app();
+        let player = spawn_choosing_player(&mut app, false, InsightQuota::default());
+
+        send_chosen(&mut app, player, TEST_TRIGGER_ID, Some(0));
+        app.update();
+
+        assert!(
+            drain_enlightenment_anims(&mut app).is_empty(),
+            "缺 Position/UniqueId 的抉择者不应发 enlightenment_pose"
+        );
+        assert_eq!(
+            app.world()
+                .get::<InsightQuota>(player)
+                .unwrap()
+                .used_this_realm,
+            1,
+            "动画 skip 不得阻断顿悟本体：quota 仍应记账"
+        );
+        assert!(
+            app.world().get::<PendingInsightOffer>(player).is_none(),
+            "动画 skip 不得阻断顿悟本体：offer 仍应被消费移除"
+        );
+    }
+
+    /// 重复触发幂等：生效后 offer 已移除，客户端重放同一抉择不再生效、不再发姿态。
+    #[test]
+    fn replayed_decision_after_success_does_not_emit_again() {
+        let mut app = setup_apply_chosen_app();
+        let player = spawn_choosing_player(&mut app, true, InsightQuota::default());
+
+        send_chosen(&mut app, player, TEST_TRIGGER_ID, Some(0));
+        app.update();
+        assert_eq!(
+            drain_enlightenment_anims(&mut app).len(),
+            1,
+            "前置条件破坏：首次抉择应生效并发姿态"
+        );
+
+        send_chosen(&mut app, player, TEST_TRIGGER_ID, Some(0));
+        app.update();
+
+        assert!(
+            drain_enlightenment_anims(&mut app).is_empty(),
+            "offer 已消费后的重放抉择不应再发 enlightenment_pose"
+        );
+        assert_eq!(
+            app.world()
+                .get::<InsightQuota>(player)
+                .unwrap()
+                .used_this_realm,
+            1,
+            "重放不得二次记账（幂等）"
+        );
+    }
 }

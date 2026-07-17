@@ -5990,6 +5990,167 @@ mod tests {
         assert_eq!(registry.len(), 1);
     }
 
+    // ── plan-skill-av-relink-v1 P3 —— rune_draw 内联 emit pin ────────────────────
+
+    fn drain_rune_draw_anims(app: &mut App) -> Vec<(String, u16)> {
+        app.world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .filter_map(|request| match request.payload {
+                crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                    target_player,
+                    anim_id,
+                    priority,
+                    ..
+                } if anim_id == crate::network::vfx_animation_trigger::ANIM_RUNE_DRAW => {
+                    Some((target_player, priority))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// happy path：普通陷阱（无 deploy 事件覆盖的 kind——内联点存在的理由）落阵成功
+    /// 恰发一条 rune_draw 画符动画，target = 落阵者本人 uuid。
+    #[test]
+    fn trap_place_success_emits_rune_draw_animation_for_owner() {
+        let mut app = app_with_loaded_zhenfa();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let owner_uuid = app.world().get::<UniqueId>(owner).unwrap().0.to_string();
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::Trap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.80,
+            trigger: Some("proximity".to_string()),
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ZhenfaRegistry>().len(),
+            1,
+            "前置条件破坏：Trap 落阵应成功（本测试要走真实成功路径）"
+        );
+        let anims = drain_rune_draw_anims(&mut app);
+        assert_eq!(
+            anims.len(),
+            1,
+            "落阵成功应恰发一条 rune_draw 画符动画，实际 {anims:?}"
+        );
+        assert_eq!(
+            anims[0].0, owner_uuid,
+            "rune_draw 应发给落阵者本人（target_player = owner uuid）"
+        );
+        assert_eq!(
+            anims[0].1,
+            crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
+            "rune_draw 优先级应为战斗动作档"
+        );
+    }
+
+    /// 重复触发语义：每次成功落阵各配一次画符动画（两阵两动画，1:1 无去重）。
+    #[test]
+    fn each_successful_place_emits_its_own_rune_draw() {
+        let mut app = app_with_loaded_zhenfa();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        for (tick, pos) in [(10_u64, [1, 64, 1]), (20, [3, 64, 3])] {
+            app.world_mut().send_event(ZhenfaPlaceRequest {
+                player: owner,
+                pos,
+                kind: ZhenfaKind::Trap,
+                carrier: ZhenfaCarrierKind::CommonStone,
+                qi_invest_ratio: 0.20,
+                trigger: Some("proximity".to_string()),
+                item_instance_id: None,
+                target_face: None,
+                requested_at_tick: tick,
+            });
+        }
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ZhenfaRegistry>().len(),
+            2,
+            "前置条件破坏：两次不同位置的落阵都应成功"
+        );
+        assert_eq!(
+            drain_rune_draw_anims(&mut app).len(),
+            2,
+            "每次成功落阵各配一次 rune_draw（1:1）"
+        );
+    }
+
+    /// 错误分支：材料门拒绝（DeceiveHeaven 缺料）→ 落阵失败不发 rune_draw。
+    #[test]
+    fn rejected_place_does_not_emit_rune_draw() {
+        let mut app = app_with_loaded_zhenfa();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().get_mut::<Cultivation>(owner).unwrap().realm = Realm::Solidify;
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.80,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ZhenfaRegistry>().len(),
+            0,
+            "前置条件破坏：缺料的 DeceiveHeaven 落阵必须被拒绝"
+        );
+        assert!(
+            drain_rune_draw_anims(&mut app).is_empty(),
+            "落阵被拒绝时不应发 rune_draw 画符动画"
+        );
+    }
+
+    /// 错误分支：目标 chunk 未加载 → 自定义方块写入失败、落阵回滚，不发 rune_draw。
+    #[test]
+    fn place_on_unloaded_chunk_does_not_emit_rune_draw() {
+        let (mut app, _layer) = app_with_zhenfa_unloaded_layer();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::Trap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.80,
+            trigger: Some("proximity".to_string()),
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ZhenfaRegistry>().len(),
+            0,
+            "前置条件破坏：未加载 chunk 上的落阵必须失败回滚"
+        );
+        assert!(
+            drain_rune_draw_anims(&mut app).is_empty(),
+            "落阵失败回滚时不应发 rune_draw 画符动画"
+        );
+    }
+
     #[test]
     fn deceive_heaven_rejects_when_material_cost_is_missing() {
         let mut app = app_with_loaded_zhenfa();
