@@ -80,7 +80,7 @@
 - 复用 `CameraShakeController` 既有 mixin，不新建相机通道；FOV 走独立控制器（新建 `CastFovController`，与 shake 同帧调度）。
 - **`CastFovController` 生命周期契约（交付物，不许只交一个孤立类）**：
   - 状态机：`idle → pulse → decay → idle`，所有路径终点必须回到进入施法前的**单一基准 FOV**，复位幂等（重复复位无副作用）；
-  - 驱动路径唯一：由 `CastSyncHandler` 的 cast 状态转换回调驱动（started/accepted/release/reject/cancel），client tick 循环负责 decay 推进；bootstrap 注册位置写死在 `CombatHudBootstrap`（与 `CombatJuiceSystem` 同处初始化，先例 `CombatHudBootstrap.java:48`）；
+  - 驱动路径唯一：由 `CastSyncHandler` 的 cast 状态转换回调驱动（started/accepted/release/reject/cancel），client tick 循环负责 decay 推进；bootstrap 注册位置跟随 `CombatJuiceSystem.bootstrap()` 先例（`BongClient.java:127`），cast 时序数据源为 `CastStateStore`（施法预测先例 `CombatHudBootstrap.java:48-49`）；
   - 与其他 FOV 修改源（原版疾跑/药水、shader）的合成规则显式声明（加法偏移量，不直写绝对 FOV）；
   - teardown：断线、切世界、玩家死亡时立即复位基准并清 pending 状态。
 - 可及性：juice 强度全局倍率进 client 配置（0 = 关闭），默认 1.0；**进行中把倍率调 0 立即复位**，不是只影响后续脉冲。

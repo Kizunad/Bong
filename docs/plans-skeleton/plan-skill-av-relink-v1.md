@@ -77,7 +77,7 @@
 
 - **发射契约测试**（server 侧）：遍历全部 technique，断言 `skillbar_config_emit` 与 `quickslot_config_emit` 发出的 `icon_texture` **严格等于** `technique_definition(id).icon_texture` 且非空；覆盖未知 technique id、非技能槽位（Item 型槽）的错误/兜底分支——quickslot 接真值后 `String::new()` 不再合法。
 - **快照同步测试**（server 侧）：icon 路径快照由 `TECHNIQUE_DEFINITIONS` **单向生成**（checked-in 快照 + server 测试断言快照与定义的 `skill_id → icon_texture` 集合完全一致、无多无少，或构建期直接导出——机制与 `plan-skill-anim-fidelity-v1` §8 #4 的 cast_ticks 快照拍同一方案），快照不可手改，不形成第二真相源。
-- **资产存在性扫描测试**（client 侧）：消费同一份快照，断言每条 icon 路径在 classpath 资源里真实存在——新增招式漏配图标立刻撞红。
+- **资产存在性扫描测试**（client 侧）：消费同一份快照，断言每条 icon 路径在 classpath 资源里真实存在——新增招式漏配图标立刻撞红。**缺资产 allowlist 棘轮**（与 `plan-skill-anim-fidelity-v1` P0 对拍测试同款机制）：PR-1 合入时已知缺失、被推迟到 P2 生成的条目进 allowlist（当前全量核查后仅 `morph.yixing` 一条——它是 `TECHNIQUE_DEFINITIONS` 条目但全仓无图标资产），PR-3 生成后清零；allowlist 只允许缩小，新增条目必须在 PR body 显式说明理由。
 - **映射约束测试**：空串/坏命名空间（非 `bong:`/`bong-client:` 前缀）判红；两招指向同一文件视为重复映射判红，显式声明共用的白名单除外（woliu 借用图标在 P0 后应清零）。
 
 **动画链（server 发射 → client 加载 → 路由消费，由同一份清单驱动双端）**：
@@ -103,6 +103,6 @@
 
 ## §10 实施工作流
 
-- 单 plan 多 PR 序列化（**测试随对应实现同批交付，不预置无实现对象的测试**）：PR-1 = P0 图标重链 + P3 图标链测试（发射契约/快照同步/存在性/映射约束）；PR-2 = P1 孤儿动画接线（§8 #2/#3 收口后）+ P3 动画链测试（emit pin/registry pin/路由契约/连击序列）；PR-3 = P2 `/gen-image` 图标补齐 + runtime 引用 pin + resourcepack sha1 同步。
+- 单 plan 多 PR 序列化（**测试随对应实现同批交付，不预置无实现对象的测试**）：PR-1 = P0 图标重链 + P3 图标链测试（发射契约/快照同步/存在性/映射约束）；PR-2 = P1 孤儿动画接线（§8 #2/#3 收口后）+ P3 动画链测试（emit pin/registry pin/路由契约/连击序列）；PR-3 = P2 `/gen-image` 图标补齐 + runtime 引用 pin + resourcepack sha1 同步 + 存在性 allowlist 清零。
 - 每 PR 独立实施 subagent（context 隔离）；CodeRabbit / `/review` 等待走 ScheduleWakeup 1200s 协议，修完意见重等 re-review。
 - **单次 consume-plan 全自动到 merge**：用户提交 `/consume-plan` 后全自动走完实施→review→merge→归档至 `docs/finished_plans/`，无需人工值守；P2 生成的图标 PNG 附 PR body 供人工抽查。

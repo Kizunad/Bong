@@ -130,7 +130,7 @@
 ## §8 开放问题（P0 决策门前需收口）
 
 1. **gameplay 数值是否连动**：推荐 cast_ticks/冷却一律不动（本 plan 纯表现层），瞬发招用「爆发帧+收势」表达而不是拉长 cast——若用户想借机调战斗节奏（如 sword.parry cast=4 太短），另立 combat 数值 plan，不混入本 plan。
-2. **批次范围裁剪**：49 招中 npc 3 招是 mob 实体（PlayerAnimator 不适用，动画列 N/A 只做粒子分化）；确认最终重制清单 = 46 玩家招中 C/D 级全量还是先 P1-P2 主力 20 招验证标准再扩。
+2. **批次范围裁剪**：49 招中 npc 3 招是 mob 实体（PlayerAnimator 不适用，动画列 N/A 只做粒子分化）；确认最终重制清单 = 46 玩家招中 C/D 级全量还是先 P1-P2 主力 20 招验证标准再扩。`morph_cast`（§现状证据 ② 的错配例证，cast 60↔动画 30）与梯队一接线后的 `stance_*` 循环站桩是否纳入重制批次，也在此一并拍板归属。
 3. **`echo_fractal` 等「循环引导段」的移动打断表现**：引导中移动/受击打断时动画 fade_out 参数（当前 PlayAnim 只有 fade_in_ticks），是否需要 server 发 `StopAnim` 补齐打断链路——需读 cast 打断处理代码后收口。
 4. **对拍测试的 cast_ticks 快照机制**：client 测试无法直接读 server Rust 源——用 checked-in JSON 快照（server 侧测试保证快照与 `TECHNIQUE_DEFINITIONS` 同步）还是构建期导出，二选一；无论选哪种，方向必须是 `TECHNIQUE_DEFINITIONS` → 快照的单向生成（见 P0），快照不可手改。
 
