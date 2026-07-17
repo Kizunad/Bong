@@ -151,7 +151,7 @@ where
 }
 
 pub(crate) fn serialize_agent_ui_request_id<S>(
-    value: &String,
+    value: &str,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
