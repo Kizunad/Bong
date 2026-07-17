@@ -14,7 +14,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 1. 维护任务表与用户指定的实施槽位。
 2. 启动、等待、唤醒和关闭实施或返工 subagent。
 3. 盯 PR review/e2e，维护 claim ref 生命周期，巡检孤儿锁。
-4. 完整清理已闭环任务的本地 worktree、分支和私有生成物，再立即补位。
+4. 收口已闭环任务：释放常驻 slot（detach + 删本地分支 + 清任务私有生成物，**保留 slot 保温缓存**），巡检遗留一次性 worktree，再立即补位。
 
 禁止主干直接修改业务代码、plan、测试或 PR diff，禁止在主 checkout 提交，禁止 stash/reset 用户工作，禁止替 subagent 创建 claim、push 提交、开 PR 或 merge。删除远端 claim ref 是锁运维，是“不 push”禁令的唯一例外。
 
@@ -27,8 +27,8 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 - validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。每个已 GRANTED/ACKED/RECOVERING、但尚未出现在 live snapshot 的 validator token 都先预占 1 个平台槽；只有状态查询确认对应 validator 已出现后才转为 snapshot-accounted，避免重复授权或双扣。容量不可查时 validator 一次只授权 1 个。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
-- 所有运行者执行 `df -h /`。磁盘超过 90% 时，只删除本轮已闭环 worktree 的私有可再生生成物。
-- **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR`**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 也只用于该前提下的故障恢复。
+- 所有运行者执行 `df -h /`。磁盘超过 90% 时，主干运行 `bash scripts/wt-janitor.sh`（report-only）并按报告回收遗留：PR 已 merge/close 的干净树用 `--apply` 自动收，无 PR 的交人工。常驻 slot 的 `server/target`/`client/build` 保温缓存**不属于**「私有可再生生成物」，不参与任何任务级清理。
+- **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR` 与 slot 保温缓存**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 只用于该前提下的故障恢复（slot 路径恒定后，删 worktree 烙坏 valence_generated 绝对路径的故障不应再出现）。
 
 ### harness 能力探测与适配
 
@@ -134,14 +134,14 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 
 ## 实施 subagent 强制状态机
 
-### 1. 原子 claim 与锁定 worktree
+### 1. 原子 claim 与进驻常驻 slot worktree
 
-subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan-basename>`，worktree 固定为仓库下绝对路径 `.agent-worktrees/bugfix-<plan-basename>`。
+subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan-basename>`。worktree 不再按任务新建，改为进驻主干分派的**常驻编译 slot**：`.agent-worktrees/slot-<k>`（k=1..N，主干按需一次性创建、永久 locked）。slot 跨任务保温 `server/target`/`client/build` 增量缓存——这是磁盘占用上限固定（不随任务数增长）与热编译的核心，**任何阶段都严禁 remove slot 或删除其构建缓存**。
 
 严格区分作用域：
 
-- **控制面**：以下 claim、fetch、`git worktree add`、失败回滚、最终 remove/prune 命令必须在已经存在的主仓库绝对路径或专用调度目录执行，目标 worktree 尚未创建时不得把 cwd 指向它。
-- **任务面**：只有 worktree 已创建、locked、upstream 与三方 SHA 对拍完成后，才允许在目标绝对 worktree 中读取任务代码、编辑、测试、commit、push 和操作 PR。
+- **控制面**：以下 claim、fetch、slot 创建、失败回滚命令必须在已经存在的主仓库绝对路径或专用调度目录执行。
+- **任务面**：只有 slot 进驻完成、locked、upstream 与三方 SHA 对拍完成后，才允许在 slot 绝对路径中读取任务代码、编辑、测试、commit、push 和操作 PR。
 
 1. 执行 `git fetch origin main`，记录 `claim_sha=$(git rev-parse origin/main)`。
 2. 调用 GitHub create-ref API，保留完整 HTTP 状态、响应头和响应体：
@@ -156,11 +156,14 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
    - `422`：先检查响应原因，再用 `git ls-remote --heads origin refs/heads/bugfix/plan-X` 确认同名 ref。只有 ref 确实存在才判“已占用”并回报主干换任务；ref 不存在或原因不是重复 ref 时，标记流程错误并带完整诊断，禁止伪装成占用。
    - 其它状态：认领失败，保留完整响应并停止本任务。
 4. 成功后执行 `git fetch origin refs/heads/bugfix/plan-X:refs/remotes/origin/bugfix/plan-X`，核验远端跟踪 ref SHA 等于 `claim_sha`。
-5. 用单条 `git worktree add --lock -b bugfix/plan-X <绝对路径> origin/bugfix/plan-X` 创建并锁定 worktree，再在 worktree 内显式设置 upstream 为 `origin/bugfix/plan-X`。
-6. 对拍 `git -C <绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，并检查 worktree 确实处于 locked 状态。
-7. create-ref 成功后，若 fetch、建树、锁定、跟踪或 SHA 对拍任一步失败，在控制面安全移除本轮半成品 worktree/local branch，再由该 subagent 删除刚创建的远端 claim ref并核验不存在；不得留下孤儿锁。
+5. 进驻主干分派的 slot：
+   - slot 尚不存在时，由主干在控制面用单条 `git worktree add --lock --detach .agent-worktrees/slot-<k> origin/main` 创建（常驻、永久 locked，之后不再重建）。
+   - 核验 `git -C <slot绝对路径> status --porcelain=v1 --untracked-files=all` 输出为空；不为空说明上一任务未收口或有外部残留，回报主干处置，**禁止自行 clean/reset 他人数据**。
+   - 执行 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`。
+6. 对拍 `git -C <slot绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，并检查 slot 确实处于 locked 状态。
+7. create-ref 成功后，若 fetch、进驻、跟踪或 SHA 对拍任一步失败：在 slot 内 `git checkout --detach origin/main` 脱离并删除刚创建的本地分支，回报主干释放 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在；不得留下孤儿锁，**不得 remove slot**。
 
-进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在绝对 worktree 内执行。禁止复用别人的 worktree，禁止修改主 checkout。
+进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在 slot 绝对路径内执行；编译必须落在 slot 自身的 in-tree target（若环境设有全局 `CARGO_TARGET_DIR`，门禁命令前显式 `unset CARGO_TARGET_DIR`），保证保温缓存留在 slot 内。禁止进驻他人正占用的 slot，禁止修改主 checkout。
 
 ### 2. Promotion 单独提交
 
@@ -268,11 +271,11 @@ Validator-Model: <实际 validator 模型精确 id>
 PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 
 1. 记录 PR URL、最终 SHA、结论、测试、validator 和 gate 状态，关闭实施 subagent。
-2. 在 worktree 仍存在时执行 `git status --porcelain=v1 --untracked-files=all`，确认没有源码、用户 WIP 或未提交改动，也没有本流程产生的孤儿 stash；不干净则停止清理并派恢复。
-3. 识别并删除**明确属于该 worktree、独占、ignored、可再生**的生成目录，再次确认没有源码/WIP。显式排除共享 `CARGO_TARGET_DIR`，绝不任务级清理它。
-4. 在控制面执行 `git worktree unlock <path>`，再 `git worktree remove <path>`。
-5. 删除对应本地 branch；不得先删仍被 worktree 检出的 branch。
-6. 执行 `git worktree prune`，释放槽位并补下一个 skeleton。远端 claim 分支保留给 review 返工/merge。
+2. 在 slot 内执行 `git status --porcelain=v1 --untracked-files=all`，确认没有源码、用户 WIP 或未提交改动，也没有本流程产生的孤儿 stash；不干净则停止清理并派恢复。
+3. 识别并删除**明确属于该任务、独占、ignored、可再生**的非缓存生成物（`.tmp` 日志、临时导出等），再次确认没有源码/WIP。**保留 slot 的 `server/target`/`client/build` 保温缓存**，显式排除共享 `CARGO_TARGET_DIR`，绝不任务级清理它们。
+4. 在 slot 内执行 `git checkout --detach origin/main` 脱离任务分支；slot 保持 locked，**不 remove、不 prune**。
+5. 删除对应本地 branch；不得先删仍被 slot 检出的 branch（顺序：先 detach 后删）。
+6. 标记 slot 空闲并补下一个 skeleton。远端 claim 分支保留给 review 返工/merge。旧流程或异常残留的一次性 worktree 由主干用 `bash scripts/wt-janitor.sh` 巡检回收，不逐个手工追。
 
 ### 远端 claim 释放与孤儿巡检
 
@@ -283,15 +286,15 @@ PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 
 ### review/e2e 返工责任链
 
-review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，从同一远端 PR branch 重建并锁定 worktree；不要让主干修，也不要假设旧 worktree 仍在。
+review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，从同一远端 PR branch 进驻空闲 slot；不要让主干修，也不要假设原任务的进驻状态仍在。
 
-返工建树不调用 create-ref。在控制面执行以下幂等链：
+返工进驻不调用 create-ref。执行以下幂等链：
 
 1. 确认 PR 仍 open，读取 `pr_head_sha` 与远端 branch 名。
 2. `git fetch origin refs/heads/<remote-branch>:refs/remotes/origin/<remote-branch>`，对拍远端跟踪 ref SHA 等于 `pr_head_sha`。
-3. 确认目标 worktree 路径和专用本地返工 branch 未被其它任务使用；执行 `git branch --track <专用本地返工branch> origin/<remote-branch>` 创建唯一专用跟踪分支。若同名本地分支已存在，只能在确认未被 worktree 使用且没有需保留的本地提交后删除并重建；不得盲目 reset。
-4. `git worktree add --lock <绝对路径> <专用本地返工branch>`，再对拍 worktree HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
-5. 任一步失败时只 unlock/remove 半成品 worktree、删除本轮专用本地 branch并 prune；**开放 PR 的远端 claim ref 不得删除**。
+3. 主干分派一个空闲 slot；核验 slot `git status --porcelain=v1 --untracked-files=all` 为空，并确认专用本地返工 branch 未被其它任务使用。若同名本地分支已存在，只能在确认未被任何 slot 检出且没有需保留的本地提交后删除并重建；不得盲目 reset。
+4. `git -C <slot绝对路径> checkout -B <专用本地返工branch> origin/<remote-branch>` 并显式设置 upstream，再对拍 slot HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
+5. 任一步失败时只在 slot 内 detach、删除本轮专用本地 branch，回报主干释放 slot；**开放 PR 的远端 claim ref 不得删除，slot 不得 remove**。
 
 完成四方 SHA 对拍后才进入任务面。
 
