@@ -1,5 +1,9 @@
 package com.bong.client.network;
 
+import com.bong.client.animation.AnimWiringManifestTest;
+import com.bong.client.animation.AnimationLayerManager;
+import com.bong.client.animation.ClientAnimationBridge;
+import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
@@ -193,8 +197,121 @@ public class VfxEventRouterTest {
         assertTrue(result.logMessage().contains("IllegalStateException"), result.logMessage());
     }
 
+    // ---- plan-skill-av-relink-v1 P3：P1 接线清单 → 路由契约（动画链客户端闭环） ----
+
+    /**
+     * 清单驱动的路由契约：server P1 每条新接线发射的 anim_id（共享清单
+     * {@code bong/anim_wiring_manifest.json}，与 server {@code P1_WIRED_ANIM_IDS} 单向同步）
+     * 构成 play_anim payload 后，经真实 {@link VfxEventRouter#route} 全部可达
+     * {@link VfxEventAnimationBridge}，且 animId / priority / fade_in_ticks 三字段原样透传。
+     * priority / fade 按条目错开取值，防"恰好等于默认值"的假透传。
+     */
+    @Test
+    void dispatchesEveryManifestWiredPlayAnimToBridge() throws IOException {
+        List<String> manifest = AnimWiringManifestTest.loadManifest();
+        for (int i = 0; i < manifest.size(); i++) {
+            String animId = manifest.get(i);
+            int priority = 1000 + i;
+            int fadeIn = 1 + (i % 5);
+            RecordingBridge bridge = new RecordingBridge(true);
+            VfxEventRouter router = new VfxEventRouter(bridge);
+            String json = playAnimJson(animId, priority, fadeIn);
+
+            VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+            assertTrue(result.isHandled(),
+                "接线 anim `" + animId + "` 的 play_anim payload 应被路由处理，实际："
+                    + result.logMessage());
+            assertEquals(1, bridge.playCalls.size(),
+                "接线 anim `" + animId + "` 应恰好触发一次 bridge.playAnim");
+            RecordingBridge.PlayCall call = bridge.playCalls.get(0);
+            assertEquals(FIXTURE_UUID, call.target, animId + " 目标玩家透传");
+            assertEquals(Identifier.tryParse(animId), call.animId, animId + " anim id 透传");
+            assertEquals(priority, call.priority, animId + " priority 透传");
+            assertEquals(OptionalInt.of(fadeIn), call.fadeInTicks, animId + " fade_in_ticks 透传");
+        }
+    }
+
+    /**
+     * 真实生产 bridge 链：play_anim 经 route() 进 {@link ClientAnimationBridge}。
+     * headless 单测环境无 MinecraftClient/world，目标玩家不可解析 → bridge 返回 false →
+     * 路由降级 bridgeMiss——锁住"生产 bridge 在无运行时环境下安全降级、不撕裂网络层"。
+     */
+    @Test
+    void playAnimThroughRealClientAnimationBridgeDegradesToBridgeMissHeadless() throws IOException {
+        List<String> manifest = AnimWiringManifestTest.loadManifest();
+        VfxEventRouter router = new VfxEventRouter(new ClientAnimationBridge());
+        String json = playAnimJson(manifest.get(0), 1000, 3);
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isBridgeMiss(),
+            "headless 环境下真实 ClientAnimationBridge 应降级 bridgeMiss（目标玩家不可解析），"
+                + "实际：" + result.logMessage());
+        assertFalse(result.isHandled());
+    }
+
+    /**
+     * 未知 anim_id 失败分支：bridge 委托真实 {@link AnimationLayerManager#playOnStack}
+     * （生产 {@link ClientAnimationBridge#playAnim} 在解析到玩家后走的同一注册表查询路径），
+     * 注册表查不到的 anim id → play 返回 false → 路由记 bridgeMiss，不抛异常不崩溃。
+     */
+    @Test
+    void unknownAnimIdBecomesBridgeMissNotCrashThroughLayerManagerLookup() throws IOException {
+        LayerManagerLookupBridge bridge = new LayerManagerLookupBridge();
+        VfxEventRouter router = new VfxEventRouter(bridge);
+        String json = playAnimJson("bong:__vfx_router_unknown_anim__", 1000, 3);
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertEquals(1, bridge.invocations, "bridge 应被真实调用到（未知 id 在注册表层才失败）");
+        assertTrue(result.isBridgeMiss(),
+            "未知 anim id 应走注册表 miss → bridgeMiss 降级，实际：" + result.logMessage());
+        assertFalse(result.isHandled(),
+            "未知 anim id 绝不能被标记为已处理（否则缺资产静默上线）");
+    }
+
+    private static String playAnimJson(String animId, int priority, int fadeInTicks) {
+        return """
+            {"v":1,"type":"play_anim","target_player":"%s","anim_id":"%s",\
+            "priority":%d,"fade_in_ticks":%d}"""
+            .formatted(FIXTURE_UUID, animId, priority, fadeInTicks);
+    }
+
     private static int jsonLen(String json) {
         return json.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    /** 复刻生产 playAnim 的注册表查询语义（跳过需 MC 运行时的玩家实体解析）。 */
+    private static final class LayerManagerLookupBridge implements VfxEventAnimationBridge {
+        int invocations;
+
+        @Override
+        public boolean playAnim(UUID target, Identifier animId, int priority, OptionalInt fadeInTicks) {
+            invocations++;
+            return AnimationLayerManager.playOnStack(
+                new AnimationStack(),
+                target,
+                AnimationLayerManager.channelForPriority(priority),
+                animId
+            );
+        }
+
+        @Override
+        public boolean playAnimInline(
+            UUID target,
+            Identifier animId,
+            String animJson,
+            int priority,
+            OptionalInt fadeInTicks
+        ) {
+            return false;
+        }
+
+        @Override
+        public boolean stopAnim(UUID target, Identifier animId, OptionalInt fadeOutTicks) {
+            return false;
+        }
     }
 
     private static final class RecordingBridge implements VfxEventAnimationBridge {
