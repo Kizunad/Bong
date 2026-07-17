@@ -200,7 +200,7 @@ PY
 (
   cd "$ROOT"
   export REDIS_URL CHAT_WINDOW_E2E_MARKER="$MARKER"
-  "$ROOT/agent/node_modules/.bin/tsx" "$ROOT/scripts/e2e/chat-signal-window.ts"
+  "$ROOT/agent/node_modules/.bin/tsx" "$ROOT/scripts/e2e/chat-signal-window.mts"
 ) >"$TIANDAO_LOG" 2>&1
 
 grep -Fq "[chat-window-e2e] PASS" "$TIANDAO_LOG"
