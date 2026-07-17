@@ -6072,23 +6072,25 @@ mod tests {
 
     // ─── plan-agent-ui-data-v1 P0：AgentUi JSON-bypass 协议契约 pin 测试 ───────
 
-    /// AgentUiResponse 协议契约：JSON CustomPayload 路径有效，proto 路径不可达。
+    /// AgentUiResponse C2S 协议契约：JSON CustomPayload 路径有效，proto 路径不可达。
     ///
     /// 此测试锁死两条重要约束：
-    /// 1. AgentUiResponsePayloadV1 JSON 正样本 roundtrip 正确（JSON 路径真实可用）。
+    /// 1. ClientRequestV1::AgentUiResponse JSON 正样本 roundtrip 正确，且不含
+    ///    server→agent 专属的 target_player。
     /// 2. C2S proto 转换函数中 AgentUiResponse 分支标记为 unreachable（检查代码注释+结构）。
     ///
     /// 保护目的：防止将来切换 proto 编码时无意触发此分支（footgun 消除 pin）。
     #[test]
     fn agent_ui_response_json_bypass_contract_pin() {
-        use crate::schema::agent_ui::{AgentUiActionType, AgentUiResponsePayloadV1};
+        use crate::schema::agent_ui::AgentUiActionType;
+        use crate::schema::client_request::ClientRequestV1;
         use std::collections::HashMap;
 
-        // JSON 路径正样本 roundtrip（验证 JSON bypass 路径真实可用）
-        let response = AgentUiResponsePayloadV1 {
+        // 真实 Fabric C2S JSON 路径正样本 roundtrip。
+        let response = ClientRequestV1::AgentUiResponse {
+            v: 1,
             request_id: "pin-test-req".to_string(),
             action: AgentUiActionType::ButtonClick,
-            target_player: None,
             params: {
                 let mut m = HashMap::new();
                 m.insert("button_id".to_string(), "confirm".to_string());
@@ -6096,25 +6098,28 @@ mod tests {
             },
         };
         let json =
-            serde_json::to_string(&response).expect("AgentUiResponsePayloadV1 JSON 序列化不应失败");
-        let decoded: AgentUiResponsePayloadV1 =
-            serde_json::from_str(&json).expect("AgentUiResponsePayloadV1 JSON 反序列化不应失败");
+            serde_json::to_string(&response).expect("C2S AgentUiResponse JSON 序列化不应失败");
+        assert!(
+            !json.contains("target_player"),
+            "真实 Fabric C2S JSON 不得携带 server→agent 权威字段 target_player：{json}"
+        );
+        let decoded: ClientRequestV1 =
+            serde_json::from_str(&json).expect("C2S AgentUiResponse JSON 反序列化不应失败");
 
-        assert_eq!(
-            decoded.request_id, "pin-test-req",
-            "AgentUiResponsePayloadV1 request_id 应在 JSON roundtrip 后保持，期望 pin-test-req，实为 {}",
-            decoded.request_id
-        );
-        assert_eq!(
-            decoded.action,
-            AgentUiActionType::ButtonClick,
-            "AgentUiResponsePayloadV1 action 应在 JSON roundtrip 后保持 ButtonClick"
-        );
-        assert_eq!(
-            decoded.params.get("button_id").map(String::as_str),
-            Some("confirm"),
-            "AgentUiResponsePayloadV1 params.button_id 应在 JSON roundtrip 后保持 confirm"
-        );
+        match decoded {
+            ClientRequestV1::AgentUiResponse {
+                v,
+                request_id,
+                action,
+                params,
+            } => {
+                assert_eq!(v, 1, "C2S AgentUiResponse wire version 应保持为 1");
+                assert_eq!(request_id, "pin-test-req");
+                assert_eq!(action, AgentUiActionType::ButtonClick);
+                assert_eq!(params.get("button_id").map(String::as_str), Some("confirm"));
+            }
+            other => panic!("expected C2S AgentUiResponse after JSON roundtrip, got {other:?}"),
+        }
 
         // S2C AgentUiRequest/Close 同样走 JSON bypass，不走 proto。
         // 以下验证 JSON bypass 路径对 AgentUiRequestPayloadV1 也正确。

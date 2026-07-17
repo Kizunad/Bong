@@ -734,7 +734,7 @@ mod tests {
             serde_json::to_value(response).expect("旧 C2S response 序列化不应失败");
         assert!(
             value.get("target_player").is_none(),
-            "target_player=None 不应改变旧 C2S wire payload：{value}"
+            "target_player=None 应保持 legacy server→agent payload 不带该字段：{value}"
         );
     }
 

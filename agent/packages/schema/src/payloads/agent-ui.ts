@@ -15,7 +15,7 @@ import { validate, type ValidationResult } from "../validate.js";
 
 /**
  * 天道 UI 面板交互动作枚举。
- * client → server CustomPayload + server → agent Redis 共用同一 schema。
+ * client → server 与 server → agent 两条独立 payload schema 共用同一组字面量。
  */
 export const AgentUiActionType = Type.Union([
   Type.Literal("button_click"),

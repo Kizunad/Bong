@@ -28,6 +28,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
     for field, wire, value in fields:
         if wire != 2:
             continue
+        if field == 3:
+            return _narration_batch(value)
         if field == SERVER_DATA_PLAYER_STATE_FIELD:
             return _player_state(value)
         if field == 8:
@@ -73,6 +75,31 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
         if field == 142:
             return _morph_state(value)
     return None
+
+
+def _narration_batch(data: bytes) -> dict[str, Any]:
+    """Decode production ``NarrationBatch`` (server_data oneof field 3).
+
+    The realm-gate privacy e2e must assert the actual user-visible narration on
+    two protocol clients. Merely identifying oneof field 3 as ``narration`` is
+    insufficient because it cannot distinguish the target warning from an
+    unrelated narration emitted during the same server run.
+    """
+    fields = _fields(data)
+    narrations = []
+    for raw in _messages(fields, 1):
+        entry = _fields(raw)
+        narration = {
+            "text": _string(entry, 1),
+            "scope": _string(entry, 2),
+            "style": _string(entry, 3),
+        }
+        if _has(entry, 4):
+            narration["target"] = _string(entry, 4)
+        if _has(entry, 5):
+            narration["kind"] = _string(entry, 5)
+        narrations.append(narration)
+    return {"v": 1, "type": "narration", "narrations": narrations}
 
 
 def _player_state(data: bytes) -> dict[str, Any]:
