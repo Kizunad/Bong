@@ -61,7 +61,7 @@
 | 调用接线 | open / ignite / intervention / feed / take-back 均传入同一权威 registry |
 | 旧/缺省 active wire | recipe 缺失/blank 或 `target_ticks <= 0` 时 fail closed；保留诊断字段，不渲染 `炼制 0%` |
 | direct-store 绕过 | `Snapshot(active=true)` 仍须服从非空 recipe + 正 target 不变量，HUD 不得绕过 handler 防线 |
-| 跨层协议 | Rust 生产 proto → Fabric handler/store → HUD planner；Python bot decoder 正反样本 |
+| 跨层协议 | Rust 生产 proto → Fabric handler/store → HUD planner；Python bot decoder 完整正向样本 |
 | 完整门禁 | server fmt/clippy/test、Java 17 client test/build、Python protocol、真实炼丹 bot 场景 |
 
 ## 非目标
@@ -99,7 +99,7 @@
   slot、take back 五条生产重推路径均对拍权威 registry；take-back 在炉 session 移除后仍先发
   `active=false` 的 finished guidance，而不是退化为空炉零目标。
 - `proto/bong/envelope.proto` 的既有 `AlchemySession` wire 未改 tag；Rust 生产编码测试证明目标与
-  stages 真实进入 protobuf，Python `decode_alchemy_session` 与 Fabric
+  stages 真实进入 protobuf，Python `decode_server_data_envelope` → `_alchemy_session` 与 Fabric
   `ProtoServerDataBridge` 均按同一生产消息对拍。
 - `client/src/main/java/com/bong/client/network/alchemy/AlchemySessionHandler.java` 对旧/缺省
   active wire fail closed：recipe 缺失/blank 或 `target_ticks <= 0` 时归一为 inactive，保留原
@@ -129,8 +129,9 @@
   6 passed / 0 failed；覆盖 active、生产 proto、空炉、未知 recipe、finished guidance。
 - 五条生产 handler：open / ignite / intervention / feed 的 authoritative wire 用例 4/4，
   take-back finished guidance 用例 1/1。
-- Python bot protocol：`python3 scripts/bot/test_protocol.py` → 124 passed / 0 failed；覆盖
-  `AlchemySession` 正反 protobuf 解码、字段默认值与真实场景辅助契约。
+- Python bot protocol：`python3 scripts/bot/test_protocol.py` → 124 passed / 0 failed；炼丹专属正向
+  用例 `test_alchemy_furnace_tag11_and_session_tag12` 验证 tag 12、完整目标字段、stages 与
+  interventions。
 - Fabric 定向（Java 17）：
   `./gradlew test --tests com.bong.client.network.alchemy.AlchemySessionHandlerProtoWireTest
   --tests com.bong.client.hud.ProcessingHudPlannerTest` → 12 passed / 0 failed；覆盖完整 active、
@@ -167,7 +168,7 @@
 - proto：`AlchemySession` / `AlchemyStageHint` 既有 tag 的生产序列化对拍。
 - client：`AlchemySessionHandler` / `AlchemySessionStore.Snapshot.isActive` /
   `AlchemyProgressHudPlanner` / `AlchemyScreen.refreshSessionText`。
-- bot：`decode_alchemy_session` / `production_alchemy_brew_pill`。
+- bot：`decode_server_data_envelope` → `_alchemy_session` / `production_alchemy_brew_pill`。
 - earlier 标准全量在高 churn 场景曾触发 Valence `viewer count underflow`；同一 panic 已在锁定的
   clean `origin/main=28cc3af4` baseline worktree 独立复现，证据保存在
   `pr1213-origin-main-prefix16/server-run3.log`。它属于主线 chunk viewer 生命周期问题，禁止在
