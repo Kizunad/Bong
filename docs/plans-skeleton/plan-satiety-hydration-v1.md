@@ -24,10 +24,11 @@
   - 体力：给 `stamina_tick`（`combat/lifecycle.rs:272`）/ `sync_stamina_regen_from_realm`（`movement/mod.rs:179`）注入恢复乘数
   - 移速：`speed_multiplier_with_factors`（`movement/mod.rs:827`，已有低体力减速分支）加饥渴惩罚因子
   - 掉血：仿 `wound_bleed_tick`（`combat/lifecycle.rs:171`）范式改 `Wounds.health_current` 并 emit `DeathEvent { cause: "starvation" / "dehydration" }`——**不直写绕过死亡链**
-  - 状态效果：emit `ApplyStatusEffectIntent`（`combat/events.rs:190`）挂新 `StatusEffectKind::Nausea`（呕吐后短减速）
+  - 状态效果：emit `ApplyStatusEffectIntent`（`combat/events.rs:190`）复用既有 `StatusEffectKind::Slowed`（呕吐后短减速，见 §3）
   - client：扩 `CombatHudStateV1` 推双轴值 → `StatusBarsPanel` 双条 + planner 屏幕效果 + `event_stream_emit.rs:123` 事件流提示
-- **共享类型 / event**：复用 `Wounds`/`DeathEvent`/`StatusEffects`/`ApplyStatusEffectIntent`/`CombatHudStateV1`/`EventStreamPushV1`；新增 `Nourishment` 组件 + `NourishBand` 枚举 + `NourishProfile` 物品字段。**近义重名声明**：`npc/hunger.rs::Hunger` 是 NPC AI need（`With<NpcMarker>` 门控），`fauna::ZoneBeastHungerTracker` 是 zone 级野兽融合计数——两者与玩家生理轴语义不同，**不复用不合并**，命名取 `Nourishment` 避混淆。
+- **共享类型 / event**：复用 `Wounds`/`DeathEvent`/`StatusEffects`/`ApplyStatusEffectIntent`/`StatusEffectKind::Slowed`/`CombatHudStateV1`/`EventStreamPushV1`；新增 `Nourishment` 组件 + `NourishBand` 枚举 + `NourishProfile` 物品字段。**近义重名声明**：`npc/hunger.rs::Hunger` 是 NPC AI need（`With<NpcMarker>` 门控），`fauna::ZoneBeastHungerTracker` 是 zone 级野兽融合计数——两者与玩家生理轴语义不同，**不复用不合并**，命名取 `Nourishment` 避混淆。
 - **跨仓库契约**：server `schema/combat_hud.rs::CombatHudStateV1` 加 `satiety`/`hydration` 字段 → proto 同步 → `agent/packages/schema/samples/*.json` 双端 sample 对拍 → client `ProtoServerDataBridge`/`CombatHudStateHandler` 解析。agent 侧只透传不消费（世界状态摘要可后续接天道，非本 plan scope）。
+- **上游 plan 血缘**：本 plan 叠加于 `plan-food-v1`（灵食与陈化，finished）之上——存量 5 食、`ItemEffect::FoodRegen`、`consume_food` freshness 链路均是其交付物，本 plan 只在旁边加食水数值结算，不改其行为；与 `plan-survival-gate-v1`（砍原版 HUD）不冲突——vanilla 饥饿条早已被 `MixinInGameHud` cancel，本 plan 双条在自研 Inventory Tab 面板内。
 - **worldview 锚点**：`worldview.md §十 资源与匮乏`——末法凡躯离不开食水，匮乏是基调；本世界**无辟谷设定**（全文无命中），化虚也要吃饭，正合「末法去上古」。若需正典补一句「凡躯饮食」措辞，走人工单独 PR（见 §8 #6），本 plan 不动 worldview.md。
 - **qi_physics 锚点**：**零真元流动**。饱食/水分是生理量不是灵气量，衰减常数是生理常数不是真元物理常数——统一 `NOURISH_*` 前缀命名（刻意避开 `*_DECAY*`/`*_DRAIN*` 红旗 grep 面），集中在 `server/src/nourishment/mod.rs` 顶部。现有 `FoodRegen → CultivationAcceleration`（守恒安全，只改 regen 乘数）链路**原样保留**，本 plan 只在其旁边加食水数值结算，不碰任何 `qi_current`/`zone.spirit_qi`。
 
@@ -52,7 +53,7 @@ pub fn band_of(value: f32) -> NourishBand   // 阈值见下表，边界闭开约
 | 舒适 Comfort | (60, 100] | ×1.0 | 80 为最舒适锚点 = 出生/复活默认值 |
 | 虚弱 Weak | (40, 60] | ×0.6 | 入带事件流提示 |
 | 重虚 Sapped | (20, 40] | ×0.3 | 移速 ×0.92 + 屏幕去色（§6） |
-| 濒竭 Critical | [0, 20] | ×0.15 | 持续掉血（§2），入带强提示 + 暗色 vignette |
+| 濒竭 Critical | [0, 20] | ×0.15 | 移速 ×0.85 + 持续掉血（§2），入带强提示 + 暗色 vignette |
 
 **双轴合成规则**：体力恢复乘数 = 两轴乘数之积 clamp `[0.10, 1.5]`；移速惩罚取两轴较小值；掉血两轴叠加（又饿又渴死得更快）。
 
@@ -64,15 +65,15 @@ pub fn band_of(value: f32) -> NourishBand   // 阈值见下表，边界闭开约
 
 ## §2 饥渴掉血（P1）
 
-仿 `wound_bleed_tick`（`combat/lifecycle.rs:171`）新写 `nourishment_starve_tick`（每 20 tick）：任一轴处于 Critical 带时 `NOURISH_STARVE_HP_PER_SEC = 0.04`（饿）+ `NOURISH_PARCH_HP_PER_SEC = 0.08`（渴）叠加扣 `Wounds.health_current`，跨死亡线时 `deaths.send(DeathEvent { cause: "starvation" | "dehydration", attacker: None })` 进 `death_arbiter_tick` → NearDeath 正常链路。**禁止**绕过 `DeathEvent` 直接判死。掉血速率相对 `health_max` 的实际标定（预期：纯饿死 Critical 满血起 ≥8 分钟、纯渴死 ≥4 分钟）在 P1 落地时按真实 `health_max` 换算并 pin 测试。
+仿 `wound_bleed_tick`（`combat/lifecycle.rs:171`）新写 `nourishment_starve_tick`（每 20 tick），**每轴独立结算**：饱食轴处于 Critical 扣 `NOURISH_STARVE_HP_PER_SEC = 0.04`，水分轴处于 Critical 扣 `NOURISH_PARCH_HP_PER_SEC = 0.08`，仅当**两轴同时 Critical** 才叠加为 0.12/s（对应 §1「掉血两轴叠加」——单轴时只扣该轴自己的速率），扣 `Wounds.health_current`，跨死亡线时 `deaths.send(DeathEvent { cause: "starvation" | "dehydration", attacker: None })` 进 `death_arbiter_tick` → NearDeath 正常链路。**禁止**绕过 `DeathEvent` 直接判死。掉血速率相对 `health_max` 的实际标定（预期：纯饿死 Critical 满血起 ≥8 分钟、纯渴死 ≥4 分钟）在 P1 落地时按真实 `health_max` 换算并 pin 测试。
 
 ## §3 过饱呕吐（P1，机制 + A/V 同交付物）
 
 `vomit.rs`：任一轴 Overfull 时，每 tick 比较 `Position` vs `OldPosition` 水平位移 > 0.05 格判「在移动」，反胃值 `nausea` +1.2（Dashing +3.0）；静止时 nausea 每 tick −0.5 回落。`nausea ≥ 100` → 呕吐结算：
 
 - `satiety −15`、`hydration −10`（吐了白吃），nausea 清零，`NOURISH_VOMIT_COOLDOWN_TICKS = 200` 冷却
-- 挂 `StatusEffectKind::Nausea`（新变体，magnitude 0.5 = 移速减半，duration 60 tick）走 `ApplyStatusEffectIntent` 标准链
-- 事件流：「胃里翻江倒海，你把刚吃下的东西吐了个干净。」（player scope，World 频道，Normal 优先级）
+- 挂 `StatusEffectKind::Slowed`（**复用既有通用减速变体**，magnitude 0.5 = 移速减半，duration 60 tick）走 `ApplyStatusEffectIntent` 标准链——不新增 `Nausea` 变体：`Slowed` 已是 magnitude 参数化通用 debuff（sword_path/alchemy/npc/zhenfa 等 15+ 处复用），另造近义变体是命名红旗；若后续呕吐需要独立 HUD 图标语义再评估拆分
+- 事件流：「胃里翻江倒海，你把刚吃下的东西吐了个干净。」（player scope，World 频道，Normal 优先级，perception）
 
 **呕吐 A/V 规格**（视听与机制同阶段交付，不后置）：
 
@@ -110,13 +111,13 @@ hydration = 15.0
 | 陈酒 | +3 | +18 | 保留 |
 | 陈醋 | +2 | +10 | 保留 |
 
-**水囊实装**：`water_skin`（现为 `workbench_materials.toml:260` 材料）加「满水囊」`water_skin_filled` 真实物品（`ItemCategory::Liquid`——测试 `inventory/mod.rs:15134` 已引用此 id，落地即接活）：`hydration +55`，用后退回空 `water_skin`。灌装交互（对水方块右键 C2S）见 §8 #2。新物品 icon 走 `/gen-image item`（跑不了则 `[BLOCKED: 需 /gen-image 生成 water_skin_filled.png]` + 占位接线）。
+**水囊实装**：`water_skin`（现为 `workbench_materials.toml:260` 材料）加「满水囊」`water_skin_filled` 真实物品（`ItemCategory::Liquid`）：`hydration +55`，用后退回空 `water_skin`。注意：该 id 目前**仅**出现在过滤器单测的内存 fixture（`inventory/mod.rs:15134` `test_template(...)`，非生产注册）——P2 需**从零接线**（TOML 注册 + 消费链 + icon），不存在"落地即接活"的捷径，命名沿用该 id 只为与测试语汇一致。灌装交互（对水方块右键 C2S）见 §8 #2。新物品 icon 走 `/gen-image item`（跑不了则 `[BLOCKED: 需 /gen-image 生成 water_skin_filled.png]` + 占位接线）。
 
 **测试**：nourish 字段解析正反 sample、负值扣减、120 截断、空/满水囊转换、5 存量食物逐项 pin、无 nourish 字段物品行为不变（向后兼容）。
 
 ## §6 P3 — schema + client（塔科夫双条进 Inventory Tab）
 
-- **payload**：`CombatHudStateV1`（`schema/combat_hud.rs`）加 `satiety: f32` / `hydration: f32`（raw 0–120，band 由 client 从值推导）；emit 侧 `combat_hud_state_emit.rs:41` filter 加 `Changed<Nourishment>`；proto + `agent/packages/schema/samples/*.json` 同 PR 改（wire 契约三件套不拆分）
+- **payload**：`CombatHudStateV1`（`schema/combat_hud.rs`）加 `satiety_percent: f32` / `hydration_percent: f32`（**沿用该 struct 既有 `_percent` 归一惯例**（`hp_percent`/`qi_percent`/`stamina_percent` ∈ [0,1]），= 值/120；client ×120 还原显示 `82/120`，band 阈值对应 100/120≈0.833、60/120=0.5、40/120≈0.333、20/120≈0.167，band 由 client 从值推导）；emit 侧 `combat_hud_state_emit.rs:41` filter 加 `Changed<Nourishment>`；proto + `agent/packages/schema/samples/*.json` 同 PR 改（wire 契约三件套不拆分）
 - **client 桥接**：复用 `combat_hud_state` payloadCase（无新 case），`CombatHudStateHandler` 解析新字段进 `CombatHudStateStore`
 - **Inventory Tab 双条**（塔科夫 Energy/Hydration 式）：`StatusBarsPanel.java`（`InspectScreen` 内既有境界/真元/体魄条面板）复用 `drawBar()` 加两行——食条 `#C9822E`（>100 段渐亮 `#E0B040` 警示）、水条 `#2E86C9`（>100 段 `#7FD0E8`），条旁数值 `82/120`，条头 16×16 icon（食=粗陶碗、水=水滴，`/gen-image` 产出）
 - **条件化 HUD 警示**（对齐「HUD 沉浸式极简 + Conditional Display」）：常驻 HUD **不加**新条；仅当任一轴 ≤40 才在左下状态小控件旁浮现对应警示小图标，≤20 图标闪烁（20 tick 周期）。恢复 >40 即消失
@@ -143,12 +144,12 @@ hydration = 15.0
 5. **数值校准归属**：§1 消耗速率、§2 掉血速率、§5 物品数值全部标定为初值，P4 playtest 后统一校准；校准只改常数不改结构。
 6. **worldview 是否补锚**：§十 资源表无「食物」条目。**建议**：补一句「凡躯饮食」入 §十（人工单独 PR，本 plan 不动 worldview.md）；不补也不阻塞——匮乏基调已覆盖。
 7. **NPC 是否共用**：`npc/hunger.rs` 是否迁移到 `Nourishment`？**建议**：不迁，NPC AI need 与玩家生理轴目标不同（NPC 要的是 utility scorer 输入），另立 plan 再议。
-8. **呕吐动画与现有动作互斥**：呕吐动画播放期间 cast/格挡是否打断？**建议**：呕吐不打断硬动作，只叠加 Nausea 减速——保持简单，§8.1 时核 `PlayerAnimator` 通道占用现状再定。
+8. **呕吐动画与现有动作互斥**：呕吐动画播放期间 cast/格挡是否打断？**建议**：呕吐不打断硬动作，只叠加 `Slowed` 减速——保持简单，§8.1 时核 `PlayerAnimator` 通道占用现状再定。
 
 ## §10 实施工作流（scope = 5 PR，按 docs/CLAUDE.md §六）
 
 - **PR 拆分**（依赖序，前一 merge 后开下一）：PR-1 = P0 底盘；PR-2 = P1 生理效果 + 呕吐（含 server 侧 A/V emit）；PR-3 = P2 物品迁移；PR-4 = P3 schema+client（wire 三件套同 PR）；PR-5 = P4 回归 + bot 场景 + 校准 + 归档
-- **每 PR 独立 subagent 实施**（`subagent_type: "claude"`，主线只调度不亲跑；context 隔离按 §6.4）
+- **每 PR 独立 subagent 实施**（context 隔离按 §6.4，强制配置显式落定）：`Agent(subagent_type: "claude", model: "opus", prompt: "...本 PR 范围 + 测试要求...\n\nultrathink")`——主线只调度不亲跑，subagent 只实施 + 提 PR 不等 review
 - **CR 等待协议**：按 §6.5 `ScheduleWakeup` 节奏，修完意见重等 re-review
 - **纯逻辑 commit 常规 atomic；无 NBT/layout 资产**，`<PROMISE>` 三轮打磨条款不适用（icon 走 `/gen-image` 批量豁免）
 - 用户 `/consume-plan` 后全自动到 merge；醒来看 `finished_plans/` 是否有本 plan
