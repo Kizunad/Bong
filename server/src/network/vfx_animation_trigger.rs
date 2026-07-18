@@ -249,6 +249,16 @@ pub fn emit_attack_animation_triggers(
             &mut vfx_events,
         );
     }
+    prune_stale_fist_combo(&mut fist_combo, clock.tick);
+}
+
+/// 剪除超出连击窗口的陈旧连击态：陈旧条目下次被使用时本就复位为右拳起手，
+/// 剪除后行为完全等价——仅把表规模界定在最近活跃的攻击者内（Entity 键从不
+/// 主动驱逐会随刷怪/despawn 复用索引缓慢泄漏，长跑服务端可观测）。
+fn prune_stale_fist_combo(combo: &mut HashMap<Entity, FistComboState>, now_tick: u64) {
+    combo.retain(|_, state| {
+        now_tick.saturating_sub(state.last_punch_tick) <= FIST_COMBO_RESET_TICKS
+    });
 }
 
 /// 空手连击交替态机：right → left → right ...；两拳间隔超过
@@ -4326,6 +4336,44 @@ mod tests {
             punch_anim_at_tick(&mut app, bob, 13, WoundKind::Blunt),
             ANIM_FIST_PUNCH_LEFT,
             "Bob 第二拳按自己的链交替左拳"
+        );
+    }
+
+    /// 陈旧连击态剪枝（`Local` map 无法从 App 外观测，函数级锁语义）：超出连击
+    /// 窗口的条目被驱逐、窗口内条目保留，map 不随历史攻击者无界增长；被剪条目
+    /// 再出拳右拳起手——与未剪时的超时复位行为完全等价。
+    #[test]
+    fn stale_fist_combo_entries_are_pruned_and_pruning_preserves_reset_semantics() {
+        let mut combo: HashMap<Entity, FistComboState> = HashMap::new();
+        let stale = Entity::from_raw(1);
+        let boundary = Entity::from_raw(2);
+        let active = Entity::from_raw(3);
+        let start = 100_u64;
+        let now = start + FIST_COMBO_RESET_TICKS + 1;
+        next_fist_punch_anim(&mut combo, stale, start);
+        next_fist_punch_anim(&mut combo, boundary, start + 1);
+        next_fist_punch_anim(&mut combo, active, now);
+
+        prune_stale_fist_combo(&mut combo, now);
+
+        assert!(
+            !combo.contains_key(&stale),
+            "间隔超过 FIST_COMBO_RESET_TICKS 的陈旧条目应被剪除\
+             （否则 map 随历史攻击者无界增长慢泄漏）"
+        );
+        assert!(
+            combo.contains_key(&boundary),
+            "间隔恰为 FIST_COMBO_RESET_TICKS 的条目仍在连击窗口内\
+             （剪枝 <= 保留须与超时判定 > 对齐），不得误剪活链"
+        );
+        assert!(combo.contains_key(&active), "刚出拳的活跃条目必须保留");
+        assert_eq!(combo.len(), 2, "剪枝后 map 只含窗口内攻击者");
+
+        // 行为等价：被剪条目再次出拳与"未剪但超时复位"一致——右拳起手。
+        assert_eq!(
+            next_fist_punch_anim(&mut combo, stale, now + 1),
+            ANIM_FIST_PUNCH_RIGHT,
+            "被剪条目重建后应右拳起手，与超时复位语义一致（剪枝不得改变可观察行为）"
         );
     }
 
