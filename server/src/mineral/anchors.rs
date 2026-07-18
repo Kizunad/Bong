@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use valence::prelude::{bevy_ecs, BlockPos, Commands, Res, ResMut, Resource};
+use valence::prelude::{bevy_ecs, BlockPos, Commands, DVec3, Res, ResMut, Resource};
 
 use super::components::{MineralOreIndex, MineralOreNode};
 use super::persistence::ExhaustedMineralsLog;
@@ -15,6 +15,7 @@ use crate::gathering::session::Gatherable;
 use crate::gathering::tools::{base_time_ticks, GatheringTargetKind};
 use crate::world::dimension::DimensionKind;
 use crate::world::terrain::{FossilBbox, TerrainProvider, TerrainProviders};
+use crate::world::zone::ZoneRegistry;
 
 const DEFAULT_ANCHORS_PATH: &str = "../worldgen/blueprint/mineral_anchors.json";
 const MIN_WORLD_Y: i32 = -64;
@@ -68,6 +69,7 @@ pub fn spawn_mineral_anchor_nodes(
     mut commands: Commands,
     config: Res<MineralAnchorConfig>,
     registry: Res<MineralRegistry>,
+    zones: Res<ZoneRegistry>,
     exhausted: Res<ExhaustedMineralsLog>,
     mut index: ResMut<MineralOreIndex>,
     providers: Option<Res<TerrainProviders>>,
@@ -80,7 +82,7 @@ pub fn spawn_mineral_anchor_nodes(
         return;
     };
 
-    let anchors = match load_mineral_anchors(&config.path, &registry) {
+    let anchors = match load_mineral_anchors(&config.path, &registry, &zones) {
         Ok(anchors) => anchors,
         Err(error) => {
             tracing::warn!(
@@ -249,6 +251,7 @@ fn stable_fossil_hash(fossil: &FossilBbox, x: i32, z: i32) -> u64 {
 pub fn load_mineral_anchors(
     path: impl AsRef<Path>,
     registry: &MineralRegistry,
+    zones: &ZoneRegistry,
 ) -> Result<Vec<MineralAnchor>, String> {
     let path = path.as_ref();
     let raw = fs::read_to_string(path)
@@ -262,11 +265,70 @@ pub fn load_mineral_anchors(
         ));
     }
 
-    file.anchors
+    let anchors = file
+        .anchors
         .into_iter()
         .enumerate()
         .map(|(index, raw)| parse_anchor(index, raw, registry))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_anchor_zones(&anchors, zones)?;
+    Ok(anchors)
+}
+
+fn validate_anchor_zones(anchors: &[MineralAnchor], zones: &ZoneRegistry) -> Result<(), String> {
+    for (index, anchor) in anchors.iter().enumerate() {
+        let declared_zone = zones.find_zone_by_name(&anchor.zone).ok_or_else(|| {
+            format!(
+                "anchors[{index}] mineral `{}` declares unknown runtime zone `{}`",
+                anchor.mineral_id.as_str(),
+                anchor.zone
+            )
+        })?;
+        if declared_zone.dimension != DimensionKind::Overworld {
+            return Err(format!(
+                "anchors[{index}] mineral `{}` declares zone `{}` in dimension {:?}, but fixed mineral anchors materialize in Overworld",
+                anchor.mineral_id.as_str(),
+                anchor.zone,
+                declared_zone.dimension
+            ));
+        }
+
+        let center = DVec3::new(
+            f64::from(anchor.center.x),
+            f64::from(anchor.center.y),
+            f64::from(anchor.center.z),
+        );
+        if !declared_zone.contains(center) {
+            return Err(format!(
+                "anchors[{index}] mineral `{}` center {:?} lies outside declared zone `{}` AABB {:?}",
+                anchor.mineral_id.as_str(),
+                anchor.center,
+                anchor.zone,
+                declared_zone.bounds
+            ));
+        }
+
+        let actual_zone = zones
+            .find_zone(DimensionKind::Overworld, center)
+            .ok_or_else(|| {
+                format!(
+                    "anchors[{index}] mineral `{}` center {:?} does not resolve to any Overworld runtime zone",
+                    anchor.mineral_id.as_str(),
+                    anchor.center
+                )
+            })?;
+        if actual_zone.name != anchor.zone {
+            return Err(format!(
+                "anchors[{index}] mineral `{}` center {:?} resolves to runtime zone `{}`, not declared `{}`; a more specific or overlapping zone would capture this anchor",
+                anchor.mineral_id.as_str(),
+                anchor.center,
+                actual_zone.name,
+                anchor.zone
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_anchor(
@@ -367,8 +429,9 @@ mod tests {
     use super::super::persistence::ExhaustedEntry;
     use super::super::registry::build_default_registry;
     use super::*;
+    use crate::world::zone::Zone;
     use std::env;
-    use valence::prelude::{App, Startup};
+    use valence::prelude::{App, DVec3, Startup};
 
     fn unique_tmp_path(name: &str) -> PathBuf {
         let stamp = std::time::SystemTime::now()
@@ -376,6 +439,34 @@ mod tests {
             .unwrap()
             .as_nanos();
         env::temp_dir().join(format!("bong-mineral-anchor-{stamp}-{name}.json"))
+    }
+
+    fn write_single_anchor_manifest(name: &str, zone: &str, position: [i32; 3]) -> PathBuf {
+        let path = unique_tmp_path(name);
+        fs::write(
+            &path,
+            format!(
+                r#"{{"version":1,"anchors":[{{"zone":"{zone}","mineral_id":"fan_tie","position":[{},{},{}],"radius":3,"max_units":5}}]}}"#,
+                position[0], position[1], position[2]
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    fn test_zone(name: &str, dimension: DimensionKind, bounds: (DVec3, DVec3)) -> Zone {
+        Zone {
+            name: name.to_string(),
+            dimension,
+            bounds,
+            spirit_qi: 0.0,
+            danger_level: 1,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+        }
     }
 
     #[test]
@@ -387,12 +478,87 @@ mod tests {
         )
         .unwrap();
 
-        let anchors = load_mineral_anchors(&path, &build_default_registry()).unwrap();
+        let anchors =
+            load_mineral_anchors(&path, &build_default_registry(), &ZoneRegistry::fallback())
+                .unwrap();
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[0].mineral_id, MineralId::FanTie);
         assert_eq!(anchors[0].center, BlockPos::new(1, 64, 2));
         assert_eq!(anchors[0].max_units, 5);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_manifest_rejects_unknown_runtime_zone() {
+        let path = write_single_anchor_manifest("unknown-zone", "missing_zone", [0, 64, 0]);
+        let error =
+            load_mineral_anchors(&path, &build_default_registry(), &ZoneRegistry::fallback())
+                .unwrap_err();
+        let _ = fs::remove_file(path);
+
+        assert!(
+            error.contains("declares unknown runtime zone `missing_zone`"),
+            "unknown zone error must name the rejected zone so startup logs contain a repair clue; actual: {error}"
+        );
+    }
+
+    #[test]
+    fn load_manifest_rejects_center_outside_declared_zone_aabb() {
+        let path = write_single_anchor_manifest("outside-zone", "spawn", [1000, 64, 1000]);
+        let error =
+            load_mineral_anchors(&path, &build_default_registry(), &ZoneRegistry::fallback())
+                .unwrap_err();
+        let _ = fs::remove_file(path);
+
+        assert!(
+            error.contains("lies outside declared zone `spawn` AABB"),
+            "AABB rejection must name the declared zone and boundary failure; actual: {error}"
+        );
+    }
+
+    #[test]
+    fn load_manifest_rejects_more_specific_runtime_zone_capture() {
+        let path = write_single_anchor_manifest("nested-zone", "outer", [50, 50, 50]);
+        let zones = ZoneRegistry {
+            zones: vec![
+                test_zone(
+                    "outer",
+                    DimensionKind::Overworld,
+                    (DVec3::ZERO, DVec3::splat(100.0)),
+                ),
+                test_zone(
+                    "inner",
+                    DimensionKind::Overworld,
+                    (DVec3::splat(40.0), DVec3::splat(60.0)),
+                ),
+            ],
+        };
+        let error = load_mineral_anchors(&path, &build_default_registry(), &zones).unwrap_err();
+        let _ = fs::remove_file(path);
+
+        assert!(
+            error.contains("resolves to runtime zone `inner`, not declared `outer`"),
+            "runtime resolution must pin ZoneRegistry::find_zone smallest-AABB semantics; actual: {error}"
+        );
+    }
+
+    #[test]
+    fn load_manifest_rejects_non_overworld_declared_zone() {
+        let path = write_single_anchor_manifest("tsy-zone", "tsy_test", [0, 64, 0]);
+        let zones = ZoneRegistry {
+            zones: vec![test_zone(
+                "tsy_test",
+                DimensionKind::Tsy,
+                (DVec3::new(-10.0, 0.0, -10.0), DVec3::new(10.0, 100.0, 10.0)),
+            )],
+        };
+        let error = load_mineral_anchors(&path, &build_default_registry(), &zones).unwrap_err();
+        let _ = fs::remove_file(path);
+
+        assert!(
+            error.contains("dimension Tsy") && error.contains("materialize in Overworld"),
+            "fixed anchors must fail before an Overworld materializer consumes a TSY zone; actual: {error}"
+        );
     }
 
     #[test]
@@ -546,6 +712,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(MineralAnchorConfig::with_path(&path));
         app.insert_resource(build_default_registry());
+        app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(exhausted);
         app.insert_resource(MineralOreIndex::default());
         app.insert_resource(TerrainProviders {
@@ -589,6 +756,37 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    #[test]
+    fn startup_fails_closed_before_materializing_invalid_anchor() {
+        let path = write_single_anchor_manifest("startup-invalid", "spawn", [1000, 64, 1000]);
+        let mut app = App::new();
+        app.insert_resource(MineralAnchorConfig::with_path(&path));
+        app.insert_resource(build_default_registry());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(ExhaustedMineralsLog::default());
+        app.insert_resource(MineralOreIndex::default());
+        app.insert_resource(TerrainProviders {
+            overworld: TerrainProvider::empty_for_tests(),
+            tsy: None,
+        });
+        app.add_systems(Startup, spawn_mineral_anchor_nodes);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MineralOreIndex>().len(),
+            0,
+            "invalid anchor manifest must fail closed before any ore index entry is materialized"
+        );
+        let mut query = app.world_mut().query::<&MineralOreNode>();
+        assert_eq!(
+            query.iter(app.world()).count(),
+            0,
+            "invalid anchor manifest must not leave spawned ore entities outside the index"
+        );
+        let _ = fs::remove_file(path);
+    }
+
     // ─── plan-bughunt-mineral-anchor-position-drift-v1 ──────────────
     // 回归契约：`worldgen/blueprint/mineral_anchors.json` 的每条固定矿脉
     // anchor 必须（1）声明一个当前 runtime zone 表里真实存在的 zone，
@@ -600,8 +798,9 @@ mod tests {
     #[test]
     fn manifest_anchors_declare_zones_that_exist_in_runtime_registry() {
         let registry = build_default_registry();
-        let anchors = load_mineral_anchors(MineralAnchorConfig::default().path, &registry).unwrap();
-        let zones = crate::world::zone::ZoneRegistry::load();
+        let zones = ZoneRegistry::load();
+        let anchors =
+            load_mineral_anchors(MineralAnchorConfig::default().path, &registry, &zones).unwrap();
 
         assert!(
             !anchors.is_empty(),
@@ -630,13 +829,23 @@ mod tests {
                 anchor.zone,
                 zone.bounds
             );
+            let actual_zone = zones
+                .find_zone(DimensionKind::Overworld, pos)
+                .expect("declared Overworld zone contains the anchor center");
+            assert_eq!(
+                actual_zone.name, anchor.zone,
+                "mineral anchor `{}`({:?}) center is captured by more-specific runtime zone `{}` instead of declared `{}`",
+                anchor.mineral_id, anchor.center, actual_zone.name, anchor.zone
+            );
         }
     }
 
     #[test]
     fn manifest_only_spawn_anchor_is_the_teaching_fan_tie_vein() {
         let registry = build_default_registry();
-        let anchors = load_mineral_anchors(MineralAnchorConfig::default().path, &registry).unwrap();
+        let zones = ZoneRegistry::load();
+        let anchors =
+            load_mineral_anchors(MineralAnchorConfig::default().path, &registry, &zones).unwrap();
 
         let spawn_anchors: Vec<_> = anchors.iter().filter(|a| a.zone == "spawn").collect();
         assert_eq!(
@@ -654,7 +863,9 @@ mod tests {
     #[test]
     fn manifest_no_longer_references_nonexistent_rift_valley_zone() {
         let registry = build_default_registry();
-        let anchors = load_mineral_anchors(MineralAnchorConfig::default().path, &registry).unwrap();
+        let zones = ZoneRegistry::load();
+        let anchors =
+            load_mineral_anchors(MineralAnchorConfig::default().path, &registry, &zones).unwrap();
 
         assert!(
             anchors.iter().all(|a| a.zone != "rift_valley"),
