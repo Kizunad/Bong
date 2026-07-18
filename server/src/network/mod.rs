@@ -4600,6 +4600,7 @@ mod tests {
         use crate::skill::components::SkillId;
         use crate::world::zone::Zone;
         use crossbeam_channel::Sender;
+        use valence::message::SendMessage;
         use valence::prelude::DVec3;
         use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
         use valence::testing::MockClientHelper;
@@ -4670,10 +4671,17 @@ mod tests {
             }
         }
 
-        fn collect_typed_narration_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataV1> {
+        fn collect_narration_and_chat_packets(
+            helper: &mut MockClientHelper,
+        ) -> (Vec<ServerDataV1>, usize) {
             let mut payloads = Vec::new();
+            let mut game_message_packets = 0;
 
             for frame in helper.collect_received().0 {
+                if frame.decode::<GameMessageS2c>().is_ok() {
+                    game_message_packets += 1;
+                }
+
                 let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                     continue;
                 };
@@ -4690,16 +4698,7 @@ mod tests {
                 }
             }
 
-            payloads
-        }
-
-        fn collect_game_message_packets(helper: &mut MockClientHelper) -> usize {
-            helper
-                .collect_received()
-                .0
-                .into_iter()
-                .filter(|frame| frame.decode::<GameMessageS2c>().is_ok())
-                .count()
+            (payloads, game_message_packets)
         }
 
         fn assert_single_narration_payload(payloads: &[ServerDataV1], expected_text: &str) {
@@ -4738,13 +4737,45 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
-            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
+            let (alice_payloads, alice_chat_packets) =
+                collect_narration_and_chat_packets(&mut alice_helper);
 
             assert_single_narration_payload(alice_payloads.as_slice(), "天地震荡，灵气翻涌。");
             assert_eq!(
                 alice_chat_packets, 0,
                 "narration path should not emit mirrored GameMessageS2c chat packets"
+            );
+        }
+
+        #[test]
+        fn packet_collection_classifies_narration_and_chat_from_the_same_batch() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (alice, mut alice_helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            enqueue_single_narration(
+                &tx_inbound,
+                Narration {
+                    scope: NarrationScope::Broadcast,
+                    target: None,
+                    text: "同批分类测试。".to_string(),
+                    style: NarrationStyle::Narration,
+                    kind: None,
+                },
+            );
+
+            app.update();
+            app.world_mut()
+                .get_mut::<Client>(alice)
+                .expect("test client should remain connected")
+                .send_chat_message("同批聊天探针。");
+            flush_all_client_packets(&mut app);
+
+            let (payloads, chat_packets) = collect_narration_and_chat_packets(&mut alice_helper);
+            assert_single_narration_payload(payloads.as_slice(), "同批分类测试。");
+            assert_eq!(
+                chat_packets, 1,
+                "single receive batch should retain and classify the injected GameMessageS2c probe"
             );
         }
 
@@ -4802,10 +4833,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
-            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
-            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
-            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
+            let (alice_payloads, alice_chat_packets) =
+                collect_narration_and_chat_packets(&mut alice_helper);
+            let (bob_payloads, bob_chat_packets) =
+                collect_narration_and_chat_packets(&mut bob_helper);
 
             assert!(
                 alice_payloads.is_empty(),
@@ -4844,10 +4875,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let steve_plain = collect_typed_narration_payloads(&mut steve_helper);
-            let alex_plain = collect_typed_narration_payloads(&mut alex_helper);
-            let steve_chat_packets = collect_game_message_packets(&mut steve_helper);
-            let alex_chat_packets = collect_game_message_packets(&mut alex_helper);
+            let (steve_plain, steve_chat_packets) =
+                collect_narration_and_chat_packets(&mut steve_helper);
+            let (alex_plain, alex_chat_packets) =
+                collect_narration_and_chat_packets(&mut alex_helper);
 
             assert_single_narration_payload(steve_plain.as_slice(), "第一段单人叙事。");
             assert!(
@@ -4877,10 +4908,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let steve_alias = collect_typed_narration_payloads(&mut steve_helper);
-            let alex_alias = collect_typed_narration_payloads(&mut alex_helper);
-            let steve_alias_chat_packets = collect_game_message_packets(&mut steve_helper);
-            let alex_alias_chat_packets = collect_game_message_packets(&mut alex_helper);
+            let (steve_alias, steve_alias_chat_packets) =
+                collect_narration_and_chat_packets(&mut steve_helper);
+            let (alex_alias, alex_alias_chat_packets) =
+                collect_narration_and_chat_packets(&mut alex_helper);
 
             assert_single_narration_payload(steve_alias.as_slice(), "第二段单人叙事。");
             assert!(
@@ -5068,8 +5099,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let target_payloads = collect_typed_narration_payloads(&mut target_helper);
-            let bystander_payloads = collect_typed_narration_payloads(&mut bystander_helper);
+            let (target_payloads, target_chat_packets) =
+                collect_narration_and_chat_packets(&mut target_helper);
+            let (bystander_payloads, bystander_chat_packets) =
+                collect_narration_and_chat_packets(&mut bystander_helper);
             assert_single_narration_payload(target_payloads.as_slice(), EXPECTED_TEXT);
             match &target_payloads[0].payload {
                 ServerDataPayloadV1::Narration { narrations } => assert_eq!(
@@ -5084,13 +5117,11 @@ mod tests {
                 "bystander {BYSTANDER_USERNAME} must not receive {TARGET_USERNAME}'s rejection"
             );
             assert_eq!(
-                collect_game_message_packets(&mut target_helper),
-                0,
+                target_chat_packets, 0,
                 "target player should not receive a mirrored chat packet"
             );
             assert_eq!(
-                collect_game_message_packets(&mut bystander_helper),
-                0,
+                bystander_chat_packets, 0,
                 "bystander should not receive any mirrored chat packet"
             );
         }
@@ -5117,10 +5148,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let azure_payloads = collect_typed_narration_payloads(&mut azure_helper);
-            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
-            let azure_chat_packets = collect_game_message_packets(&mut azure_helper);
-            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
+            let (azure_payloads, azure_chat_packets) =
+                collect_narration_and_chat_packets(&mut azure_helper);
+            let (bob_payloads, bob_chat_packets) =
+                collect_narration_and_chat_packets(&mut bob_helper);
 
             assert_single_narration_payload(azure_payloads.as_slice(), "第三段单人叙事。");
             assert!(
@@ -5206,10 +5237,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
-            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
-            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
-            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
+            let (alice_payloads, alice_chat_packets) =
+                collect_narration_and_chat_packets(&mut alice_helper);
+            let (bob_payloads, bob_chat_packets) =
+                collect_narration_and_chat_packets(&mut bob_helper);
 
             assert!(
                 alice_payloads.is_empty(),
@@ -5249,7 +5280,7 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let payloads = collect_typed_narration_payloads(&mut alice_helper);
+            let (payloads, _) = collect_narration_and_chat_packets(&mut alice_helper);
             assert_eq!(
                 payloads.len(),
                 1,
@@ -5277,7 +5308,7 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let payloads = collect_typed_narration_payloads(&mut alice_helper);
+            let (payloads, _) = collect_narration_and_chat_packets(&mut alice_helper);
             assert_eq!(
                 payloads.len(),
                 1,
