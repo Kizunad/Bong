@@ -1,5 +1,7 @@
 package com.bong.client;
 
+import bong.Common;
+import bong.Envelope;
 import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.craft.CraftCategory;
 import com.bong.client.craft.CraftRecipe;
@@ -14,12 +16,17 @@ import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.DroppedItemStore;
+import com.bong.client.network.ProtoServerDataBridge;
+import com.bong.client.network.ServerDataRouter;
 import com.bong.client.state.NarrationState;
+import com.bong.client.state.SeasonState;
+import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,6 +46,50 @@ public class BongNetworkHandlerTest {
         IdentityPanelStateStore.resetForTest();
         FalseSkinHudStateStore.resetForTests();
         DuguV2HudStateStore.resetForTests();
+        SeasonStateStore.resetForTests();
+    }
+
+    @Test
+    void realPlayerStateProtoDispatchUpdatesSeasonStateStoreThroughNetworkApply() {
+        SeasonStateStore.replace(new SeasonState(SeasonState.Phase.SUMMER, 7L, 1000L, 0L));
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setPlayerState(Envelope.PlayerState.newBuilder()
+                .setPlayer("offline:SeasonAudit")
+                .setRealm(Common.Realm.REALM_CONDENSE)
+                .setSpiritQi(50.0)
+                .setSpiritQiMax(100.0)
+                .setKarma(0.2)
+                .setCompositePower(0.35)
+                .setZone("zone-1")
+                .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                    .setCombat(0.2)
+                    .setWealth(0.4)
+                    .setSocial(0.65)
+                    .setKarma(0.2)
+                    .setTerritory(0.1))
+                .setSeasonState(Envelope.SeasonState.newBuilder()
+                    .setSeason(Envelope.Season.SEASON_WINTER)
+                    .setTickIntoPhase(42)
+                    .setPhaseTotalTicks(1000)
+                    .setYearIndex(2)))
+            .build();
+
+        ProtoServerDataBridge.BridgeResult bridge = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridge.isSuccess(), "真实 player_state proto bytes 应 bridge 成功：" + bridge.errorMessage());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(
+            bridge.legacyJson(), bridge.legacyJson().getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(route.isHandled(), "真实 player_state 应进入 router handled 分支：" + route.logMessage());
+
+        BongNetworkHandler.applyDispatch(null, route.dispatch(), "player_state");
+
+        SeasonState stored = SeasonStateStore.snapshot();
+        assertEquals(SeasonState.Phase.WINTER, stored.phase(),
+            "BongNetworkHandler.applyDispatch 必须把 router 产出的 WINTER 写进 SeasonStateStore；"
+                + "否则 HUD/atmosphere/particle 仍会读取旧 SUMMER");
+        assertEquals(42L, stored.tickIntoPhase());
+        assertEquals(1000L, stored.phaseTotalTicks());
+        assertEquals(2L, stored.yearIndex());
     }
 
     @Test
