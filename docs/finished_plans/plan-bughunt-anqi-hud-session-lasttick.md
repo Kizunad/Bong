@@ -181,6 +181,11 @@ P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归
 - `5ca2906a`（2026-07-16）：把当时最新 `origin/main` 合并进 PR 分支。
 - `4f02b240`（2026-07-16）：对合并主线后的最终代码树复验暗器 HUD 断言与门禁。
 - `0972f7c9`（2026-07-16）：PR #1214 合入 `main` 的最终 merge commit。
+- `5a4d4287`（2026-07-18）：校正 handler 必须显式携带 `tick` 的严格契约，并补齐
+  P0–P3 已完成状态与验收日期。
+- `c1c7218d`（2026-07-18）：显式合并主线 `62f90990`，在审计分支上复验归档证据。
+- `885a0d5f`（2026-07-18）：继续同步主线 `9a9d48a7`；该提交仅新增饱食饮水系统
+  skeleton，未改变本 plan 的 client/server 代码树。
 
 ### 测试结果
 
@@ -196,12 +201,19 @@ P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归
   `5a67caf0` 上再次通过。
 - 最终 PR HEAD `4f02b240` 的 e2e run `29496244134` 成功；Client stage（Java 17）、
   schema、agent、server、smoke/E2E 与 bot e2e 各阶段均为 `success`。
+- 2026-07-18 归档核对完整 client 门禁（JDK 17）：`./gradlew test build`，4118 tests，
+  0 failures / 0 errors / 0 skipped，13 actionable tasks；合并 `62f90990` 后再次完整通过。
+- 2026-07-18 归档核对完整 server 门禁：
+  `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，lib 11775、
+  main 11、integration 5，合计 11791 passed、0 failed、6 ignored。
 
 ### 主线、review 与独立复核
 
 - PR 分支并非“无需合并主线”：`5ca2906a` 明确把当时最新主线提交 `14b34a62`
   合入分支，随后 `4f02b240` 对合并后的相同代码树完成复验；PR 最终以 `0972f7c9`
   合入 `main`。
+- 归档核对分支随后又以 `c1c7218d` 合并 `62f90990`，并以 `885a0d5f` 同步
+  `9a9d48a7`；后者只新增一份 skeleton，未触碰本 plan 相关栈。
 - 最终 `/review` 评论
   `https://github.com/Kizunad/Bong/pull/1214#issuecomment-4991561202` 在 `4f02b240`
   上给出 `4/0` APPROVE、无 blocker/major；模型记录为 `gpt-5.6-sol`。
@@ -214,9 +226,13 @@ P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归
 - `/review` 中 `.github/scripts/review.mjs` finding 来自审查模型端点 502/空响应，未指向本 PR
   修改，也未改 review 基础设施；代码侧有效 finding 已在 `463e278b`、`31a1dbe4` 与
   `4f02b240` 中处理。
-- 2026-07-18 归档核对时，fresh read-only validator 在 `c5e45f52` 上未发现代码、接线或
-  测试 blocker；其 FAIL 唯一理由是旧 Finish Evidence 错写“无需合并主线”并漏记最终
-  review/e2e，本次提交即原地修正该事实缺口，不伪造尚未发生的最终 PASS。
+- 2026-07-18 归档核对时，早期 fresh read-only validator 未发现代码、接线或测试 blocker；
+  其 FAIL 指向旧 Finish Evidence 的主线/review/e2e 事实缺口，以及 handler `tick` 契约与
+  finished 状态格式。`5a4d4287` 完成后 generation 4 在该 HEAD 给出 PASS。
+- 主线两次同步后，generation 6 fresh read-only validator（`gpt-5.6-sol`）在
+  `885a0d5f239c91a6634cbcf6cb9172854d433826` 给出固定结论：生产接线、五槽清理、
+  stale tick、schema/守恒及历史测试、主线、e2e/review 证据均闭环；HEAD 对拍一致、
+  worktree clean，且最新 `origin/main` 为该 HEAD 祖先。
 
 ### 跨仓库核验
 
