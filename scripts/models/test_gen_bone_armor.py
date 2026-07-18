@@ -24,11 +24,21 @@ class BoneArmorGeneratorTest(unittest.TestCase):
             ["bone_helmet", "bone_chestplate", "bone_leggings", "bone_boots"],
             [part.key for part in parts],
         )
-        self.assertEqual([16, 25, 14, 16], [len(part.cubes) for part in parts])
+        self.assertEqual([19, 33, 28, 26], [len(part.cubes) for part in parts])
         for part in parts:
             validate_part(part)
         self.assertTrue(any("rib" in cube.name for cube in bone.part_chestplate().cubes))
         self.assertTrue(any("horn" in cube.name for cube in bone.part_helmet().cubes))
+
+    def test_rope_loops_are_hollow_strips_not_solid_platforms(self) -> None:
+        rope_cubes = [cube for part in bone.parts() for cube in part.cubes if "rope" in cube.name]
+        self.assertGreaterEqual(len(rope_cubes), 25)
+        for cube in rope_cubes:
+            sx, _, sz = cube.size
+            self.assertFalse(
+                sx > 1.0 and sz > 1.0,
+                f"{cube.name} 同时横跨 x/z，会把绑绳烘焙成实心平台",
+            )
 
     def test_texture_is_deterministic_mottled_and_bone_colored(self) -> None:
         first = bone.make_texture()

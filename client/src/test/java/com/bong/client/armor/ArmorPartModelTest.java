@@ -55,14 +55,14 @@ class ArmorPartModelTest {
             ArmorPartModel.Mount.RIGHT_LEG, -2.3f, 3.4f);
         assertPinnedTable("iron_boots", 14, ArmorPartModel.Mount.LEFT_FOOT, -2.1f, 2.0f,
             ArmorPartModel.Mount.RIGHT_FOOT, -2.35f, -0.25f);
-        assertPinnedTable("bone_helmet", 16, ArmorPartModel.Mount.HEAD, -3.6f, 28.8f,
-            ArmorPartModel.Mount.HEAD, -0.5f, 30.2f);
-        assertPinnedTable("bone_chestplate", 25, ArmorPartModel.Mount.BODY, -0.65f, 13.0f,
-            ArmorPartModel.Mount.BODY, 5.2f, 22.0f);
-        assertPinnedTable("bone_leggings", 14, ArmorPartModel.Mount.LEFT_LEG, -0.55f, 5.0f,
-            ArmorPartModel.Mount.RIGHT_LEG, -2.3f, 4.2f);
-        assertPinnedTable("bone_boots", 16, ArmorPartModel.Mount.LEFT_FOOT, -0.6f, 1.8f,
-            ArmorPartModel.Mount.RIGHT_FOOT, -2.1f, 2.7f);
+        assertPinnedTable("bone_helmet", 19, ArmorPartModel.Mount.HEAD, -3.7f, 28.7f,
+            ArmorPartModel.Mount.HEAD, -4.75f, 27.0f);
+        assertPinnedTable("bone_chestplate", 33, ArmorPartModel.Mount.BODY, -0.7f, 19.0f,
+            ArmorPartModel.Mount.BODY, 3.3f, 13.95f);
+        assertPinnedTable("bone_leggings", 28, ArmorPartModel.Mount.LEFT_LEG, -0.5f, 5.1f,
+            ArmorPartModel.Mount.RIGHT_LEG, 1.75f, 5.85f);
+        assertPinnedTable("bone_boots", 26, ArmorPartModel.Mount.LEFT_FOOT, -0.55f, 1.8f,
+            ArmorPartModel.Mount.RIGHT_FOOT, 1.75f, 2.75f);
     }
 
     private static void assertPinnedTable(
