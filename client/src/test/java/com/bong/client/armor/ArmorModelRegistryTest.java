@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ArmorModelRegistryTest {
@@ -55,17 +56,21 @@ class ArmorModelRegistryTest {
     }
 
     @Test
-    void objPlaceholderResourcesAreGone() throws Exception {
+    void objPlaceholderResourcesAndArmorSmlScopeAreGone() throws Exception {
         Path armorModels = RESOURCES.resolve("assets/bong/models/armor");
-        if (!Files.exists(armorModels)) {
-            return;
+        if (Files.exists(armorModels)) {
+            try (var paths = Files.walk(armorModels)) {
+                assertFalse(paths.anyMatch(path -> {
+                    String name = path.getFileName().toString();
+                    return name.endsWith(".obj") || name.endsWith(".mtl");
+                }), "ModelPart 路线不应残留 OBJ/MTL 方盒占位");
+            }
         }
-        try (var paths = Files.walk(armorModels)) {
-            assertFalse(paths.anyMatch(path -> {
-                String name = path.getFileName().toString();
-                return name.endsWith(".obj") || name.endsWith(".mtl");
-            }), "ModelPart 路线不应残留 OBJ/MTL 方盒占位");
-        }
+
+        Path bootstrap = Path.of("src/main/java/com/bong/client/armor/ArmorRenderBootstrap.java");
+        String bootstrapSource = Files.readString(bootstrap);
+        assertFalse(bootstrapSource.contains("SpecialModelLoaderEvents"), "护甲 bootstrap 不得再注册 SML scope");
+        assertFalse(bootstrapSource.contains("models/armor/"), "已删除的 OBJ 目录不得残留 scope 字符串");
     }
 
     @Test
@@ -81,6 +86,31 @@ class ArmorModelRegistryTest {
             assertNotNull(tint, modelSpec.templateId() + " 应保留 leather fallback 数据");
             assertEquals(vanillaSlot(modelSpec.slot()), tint.slot(), modelSpec.templateId() + " fallback 槽错位");
         }
+    }
+
+    @Test
+    void ironBoneAndDyedLeatherFallbackUseThreeDistinctVisualRoutes() throws Exception {
+        for (String piece : new String[]{"helmet", "chestplate", "leggings", "boots"}) {
+            ArmorModelRegistry.ArmorModelSpec iron =
+                ArmorModelRegistry.get("armor_iron_" + piece).orElseThrow();
+            ArmorModelRegistry.ArmorModelSpec bone =
+                ArmorModelRegistry.get("armor_bone_" + piece).orElseThrow();
+
+            assertNotEquals(ArmorPartModel.cubes(iron.modelKey()), ArmorPartModel.cubes(bone.modelKey()),
+                piece + " 的铁/骨 cube 轮廓必须不同");
+            assertTrue(Files.mismatch(texturePath(iron), texturePath(bone)) >= 0,
+                piece + " 的铁/骨贴图不得字节相同");
+
+            String copperId = "armor_copper_" + piece;
+            assertTrue(ArmorModelRegistry.get(copperId).isEmpty(), copperId + " 应继续走染色皮甲兜底");
+            assertNotNull(ArmorTintRegistry.item(copperId), copperId + " 缺 leather fallback 规格");
+        }
+
+        assertEquals(3, Set.of(
+            ArmorTintRegistry.tintForItemId("armor_iron_chestplate"),
+            ArmorTintRegistry.tintForItemId("armor_bone_chestplate"),
+            ArmorTintRegistry.tintForItemId("armor_copper_chestplate")
+        ).size(), "铁、骨、染色皮甲兜底必须保留三种不同色相");
     }
 
     private static void assertSpec(String material, String piece, EquipSlotType expectedSlot) {
@@ -99,5 +129,9 @@ class ArmorModelRegistryTest {
             case FEET -> EquipmentSlot.FEET;
             default -> throw new IllegalArgumentException("not an armor slot: " + slot);
         };
+    }
+
+    private static Path texturePath(ArmorModelRegistry.ArmorModelSpec spec) {
+        return RESOURCES.resolve("assets").resolve(spec.texturePath().replace(':', '/'));
     }
 }

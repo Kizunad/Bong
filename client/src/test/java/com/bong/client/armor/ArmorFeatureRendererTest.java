@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ArmorFeatureRendererTest {
@@ -21,13 +20,13 @@ class ArmorFeatureRendererTest {
     }
 
     @Test
-    void p0FormalSwitchIsOffButDevPropertyCanExercisePipeline() {
-        assertFalse(ArmorFeatureRenderer.OBJ_RENDER_READY, "P3 前正式开关必须保持关闭");
-        assertFalse(ArmorFeatureRenderer.isModelRenderEnabled());
+    void p3FormalSwitchIsOnAndDevPropertyCannotDisableIt() {
+        assertTrue(ArmorFeatureRenderer.MODEL_RENDER_READY, "P3 后正式 ModelPart 开关必须开启");
+        assertTrue(ArmorFeatureRenderer.isModelRenderEnabled());
         System.setProperty(ArmorFeatureRenderer.DEV_RENDER_PROPERTY, "true");
-        assertTrue(ArmorFeatureRenderer.isModelRenderEnabled(), "dev property 应允许 P1/P2 增量真机核验");
+        assertTrue(ArmorFeatureRenderer.isModelRenderEnabled());
         System.setProperty(ArmorFeatureRenderer.DEV_RENDER_PROPERTY, "false");
-        assertFalse(ArmorFeatureRenderer.isModelRenderEnabled());
+        assertTrue(ArmorFeatureRenderer.isModelRenderEnabled(), "dev property=false 不得成为正式渲染 kill switch");
     }
 
     @Test
@@ -72,6 +71,35 @@ class ArmorFeatureRendererTest {
             assertEquals(4, result.size(), material + " 四部位都应进入渲染表");
             assertEquals(ArmorFeatureRenderer.ARMOR_SLOTS, result.stream().map(
                 ArmorFeatureRenderer.RenderableArmor::slot).toList());
+        }
+    }
+
+    @Test
+    void collectRenderableCoversTwoMaterialsFourSlotsAndWearRemoveBrokenStates() {
+        EnumMap<EquipSlotType, String> pieces = new EnumMap<>(EquipSlotType.class);
+        pieces.put(EquipSlotType.HEAD, "helmet");
+        pieces.put(EquipSlotType.CHEST, "chestplate");
+        pieces.put(EquipSlotType.LEGS, "leggings");
+        pieces.put(EquipSlotType.FEET, "boots");
+
+        for (String material : new String[]{"iron", "bone"}) {
+            for (Map.Entry<EquipSlotType, String> entry : pieces.entrySet()) {
+                String templateId = "armor_" + material + "_" + entry.getValue();
+                EnumMap<EquipSlotType, SlotContents> worn = new EnumMap<>(EquipSlotType.class);
+                worn.put(entry.getKey(), SlotContents.ofWorn(item(templateId, 1.0)));
+                assertEquals(1, ArmorFeatureRenderer.collectRenderable(worn).size(),
+                    templateId + " 穿戴态应渲染 1 件");
+
+                EnumMap<EquipSlotType, SlotContents> removed = new EnumMap<>(EquipSlotType.class);
+                removed.put(entry.getKey(), SlotContents.empty());
+                assertTrue(ArmorFeatureRenderer.collectRenderable(removed).isEmpty(),
+                    templateId + " 脱下态不得渲染");
+
+                EnumMap<EquipSlotType, SlotContents> broken = new EnumMap<>(EquipSlotType.class);
+                broken.put(entry.getKey(), SlotContents.ofWorn(item(templateId, 0.0)));
+                assertTrue(ArmorFeatureRenderer.collectRenderable(broken).isEmpty(),
+                    templateId + " 耐久归零态不得渲染");
+            }
         }
     }
 

@@ -28,14 +28,14 @@ import java.util.Map;
  * template_id is registered in {@link ArmorModelRegistry}, renders the corresponding cube table from
  * {@link ArmorPartModel}. Items not in the registry fall through to the vanilla leather dye path.
  *
- * <p>P0-P2 期间正式开关保持关闭，开发环境可用 {@code -Dbong.armor_model_render=true} 强制走完整
- * ModelPart 链路，逐件 F5 校准。P3 定稿后翻开正式开关并由 mixin 抑制已注册甲的皮甲染色兜底。
+ * <p>P3 已翻开正式 ModelPart 链路；开发属性仍保留为早期资产校准入口，但不能关闭正式渲染。
+ * mixin 与本 renderer 共用 {@link #isModelRenderEnabled()}，确保专属模型与皮甲染色兜底不会双层重叠。
  */
 public final class ArmorFeatureRenderer
     extends FeatureRenderer<AbstractClientPlayerEntity, PlayerEntityModel<AbstractClientPlayerEntity>> {
 
-    /** P3 前保持 false；名称在 P3 与 mixin 一并收敛。 */
-    public static final boolean OBJ_RENDER_READY = false;
+    /** 铁甲/骨甲四槽资产及挂载链路均已定稿，可正式替代 leather-dye 兜底。 */
+    public static final boolean MODEL_RENDER_READY = true;
     static final String DEV_RENDER_PROPERTY = "bong.armor_model_render";
 
     static final List<EquipSlotType> ARMOR_SLOTS = List.of(
@@ -98,7 +98,7 @@ public final class ArmorFeatureRenderer
     }
 
     public static boolean isModelRenderEnabled() {
-        return OBJ_RENDER_READY || Boolean.getBoolean(DEV_RENDER_PROPERTY);
+        return MODEL_RENDER_READY || Boolean.getBoolean(DEV_RENDER_PROPERTY);
     }
 
     static List<RenderableArmor> collectRenderable(Map<EquipSlotType, SlotContents> equippedSlots) {
