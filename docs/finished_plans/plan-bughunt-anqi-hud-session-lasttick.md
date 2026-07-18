@@ -108,7 +108,9 @@
 
 ## 实施阶段
 
-- [x] P0：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约；修复前定向运行确认 3 项红灯。
+- [x] P0：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约；`cbcea83c` 初始运行出现
+  3 项失败，其中 1 项是错误比较历史 `expiresAt` 的测试 oracle；`e1759121` 校正后、
+  `9a3c839f` 生产修复前实际保留 2 项目标红灯。
 - [x] P1：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
 - [x] P2：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
 - [x] P3：同步主线、主 agent 对抗自审、填写 Finish Evidence 并归档。
@@ -178,7 +180,9 @@
 
 ### 测试结果
 
-- 修复前定向测试：3 项按预期失败，分别锁定过期 stale tick gate 与真实 disconnect reset/handler 路径。
+- 修复前定向测试：`cbcea83c` 初始有 3 项失败；其中 1 项是错误的 `expiresAt` 快照 oracle，
+  `e1759121` 校正后、`9a3c839f` 生产修复前实际有 2 项目标红灯，锁定真实 disconnect
+  reset 与 handler 路径。
 - 定向回归（JDK 17.0.19）：
   `./gradlew test --tests com.bong.client.hud.AnqiHudStateStoreTest --tests com.bong.client.combat.CombatHudBootstrapTest --tests com.bong.client.combat.handler.AnqiHudServerDataHandlerTest`，`BUILD SUCCESSFUL`。
 - 完整 client 门禁（JDK 17.0.19）：`./gradlew test build`，13 actionable tasks，`BUILD SUCCESSFUL`。
