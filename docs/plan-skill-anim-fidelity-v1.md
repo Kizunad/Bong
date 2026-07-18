@@ -229,7 +229,7 @@
 | `woliu.vacuum_palm` | 6 | `woliu_vacuum_palm` | 8 | — | 6 | 18 | — | **C** | P3 | 8t/18KF 快闪 |
 | `woliu.vortex_shield` | 10 | `woliu_vortex_shield` | 18 | ✓ | 9 | 33 | — | **B** | P3 | 18t loop/33KF；停止路径待核 |
 | `woliu.vacuum_lock` | 8 | `woliu_vacuum_lock` | 10 | — | 8 | 32 | — | **C** | P3 | 10t/32KF 快闪 |
-| `woliu.vortex_resonance` | 80 | `woliu_vortex_resonance` | 80 | ✓ | 9 | 25 | — | **A** | — | 80t loop 对齐 cast=80 ✓（正例） |
+| `woliu.vortex_resonance` | 80 | `woliu_vortex_resonance` | 80 | ✓ | 9 | 25 | — | **A** | — | 80t loop 对齐 cast=80 ✓（时长正例）；对拍实测 10 手臂轴 endTick 无补帧（库坑 #1）——存量 bug 归 `plan-bughunt-woliu-resonance-loop-arm-decay-v1`（防重排除），修复前暂驻 allowlist |
 | `woliu.turbulence_burst` | 40 | `woliu_turbulence_burst` | 40 | — | 11 | 35 | — | **B** | P3 | 40t/35KF；cast≥40 应两段式 |
 | `dugu.shoot_needle` | 1 | `dugu_needle_throw` | 8 | — | 13 | 35 | — | **C** | P3 | 8t/35KF 快闪 |
 | `dugu.infuse_poison` | 1 | `dugu_needle_throw` | 8 | — | 13 | 35 | ✓ | **D** | P3 | 与凝针共用一条动画 |
