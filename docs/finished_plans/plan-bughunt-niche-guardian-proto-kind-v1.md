@@ -1,12 +1,12 @@
-# plan-bughunt-niche-guardian-proto-kind
+# plan-bughunt-niche-guardian-proto-kind-v1
 
-> **Active（2026-07-18 历史归档修复升格）**。本文件从 `c301899575c0f918748556a57e6daf4166a942d7^:docs/plans-skeleton/plan-bughunt-niche-guardian-proto-kind.md` 恢复；原 PR #1186 合并时直接删除 skeleton，未完成正规 promotion / 归档。本次先恢复并升格，状态以当前主线第一性原理核验结果为准，不追认当年已正确 promotion。
+> **Finished（2026-07-18）**。本文件从 `c301899575c0f918748556a57e6daf4166a942d7^:docs/plans-skeleton/plan-bughunt-niche-guardian-proto-kind.md` 恢复；原 PR #1186 合并时直接删除 skeleton，未完成正规 promotion / 归档。本次经正规升格、第一性原理复核、边界返工与对抗验证后归档，不追认当年已正确 promotion。
 
 ## 阶段总览
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 修复灵龛守护 `guardian_kind` proto enum 归一并锁定真实 proto 链路 | ⏳ | 待核验 |
+| P0 | 修复灵龛守护 `guardian_kind` proto enum 归一并锁定真实 proto 链路 | ✅ 2026-07-18 | 2026-07-18 |
 
 ## Bug 摘要
 
@@ -56,7 +56,7 @@
 - **反方质疑**：修复应落在 bridge 还是 handler/store？Redis/agent handoff 是否同样要纳入？protobuf JSON 是否可能自动输出 lower/snake 而不是 `GUARDIAN_KIND_*`？
 - **审查结论**：通过。最小修复应在 `ProtoServerDataBridge`，因为问题源头是 proto -> legacy JSON 桥接；把 protobuf常量知识塞进 `SocialServerDataHandler` / `NicheGuardianStore` 会污染 legacy schema 消费端。Redis outbound 对该事件走 Rust serde JSON（`server/src/network/redis_bridge.rs:1221-1229`），不是 Java proto bridge，非本 bug 主线。`JsonFormat.printer()` 未启用 enum-as-int，字段名 lower/case 配置不改变 enum value 名；同类 bridge tests 已按前缀剥离建模。
 
-## P0 - 修复灵龛守护 guardian_kind proto enum 归一
+## P0 - 修复灵龛守护 guardian_kind proto enum 归一 — ✅ 2026-07-18
 
 - 在 `client/src/main/java/com/bong/client/network/ProtoServerDataBridge.java` 的 enum fixup 区加入两个 simple-field special case：
   - `NICHE_GUARDIAN_FATIGUE`：`guardian_kind` 从 `GUARDIAN_KIND_PUPPET` 剥成 `puppet`，从 `GUARDIAN_KIND_ZHENFA_TRAP` 剥成 `zhenfa_trap`。
@@ -80,6 +80,48 @@
 ## 风险
 
 - **大小写风险**：不能用 `stripEnumPrefixCapitalized`，否则会得到 `Puppet` / `Zhenfa_trap`，与 legacy schema 的 snake_case 不符；应使用现有小写剥离 helper。
-- **未知枚举风险**：`GUARDIAN_KIND_UNSPECIFIED` 理论上会剥成 `unspecified`。如果生产不应出现 unspecified，测试可只 pin 合法三值；不要在本修复里扩大语义。
+- **未知枚举风险**：legacy `GuardianKindV1` 不包含 `unspecified`；本次明确移除 proto3 默认 sentinel，并让未知 numeric enum 由 legacy string gate 安全 no-op，避免伪造玩家可见守护类型。
 - **修复边界风险**：不要顺手解决 #945 的 store 跨 session 清理，也不要把 #1010 的 season_state 修复混进同一 PR；本 skeleton 只处理 niche guardian proto enum 前缀。
 - **覆盖风险**：只测 `PUPPET` 会漏掉 `ZHENFA_TRAP` / `BONDED_DAOXIANG` 的 snake_case 转换，因此至少要覆盖一个带下划线的 guardian kind。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 / 生产桥接**：`client/src/main/java/com/bong/client/network/ProtoServerDataBridge.java`
+  - `NICHE_GUARDIAN_FATIGUE` / `NICHE_GUARDIAN_BROKEN` 均走 `bridgeStripEnumsOmittingUnspecified`。
+  - 合法 `GUARDIAN_KIND_*` 继续复用 `stripEnumPrefix` 产出 legacy snake_case。
+  - `removeUnspecifiedEnum` 仅在这两个 guardian payload 上移除 proto3 默认 sentinel；missing 与显式 `GUARDIAN_KIND_UNSPECIFIED` 在 wire 上等价，均由既有 required-field gate 安全 no-op。
+  - 未知 enum number 保持 JSON number，由 `SocialServerDataHandler.readString` 拒绝，不污染 store / HUD / event。
+- **P0 / 饱和回归**：`client/src/test/java/com/bong/client/network/ProtoServerDataBridgeTest.java`
+  - 合法三值：`PUPPET`、`ZHENFA_TRAP`、`BONDED_DAOXIANG`。
+  - 完整状态转换：真实 proto bytes → `ProtoServerDataBridge.bridge` → `ServerDataRouter.route` → `NicheGuardianStore`。
+  - 玩家可观察结果：`NicheGuardianPanel.buildLines()` 与 `UnifiedEventStore` 的 channel / priority / sourceTag / text。
+  - 错误与边界：missing guardian kind、显式 `GUARDIAN_KIND_UNSPECIFIED`、未知 enum number，均锁定 no-op 且 store / alert / event / HUD 无污染。
+
+### 关键 commit
+
+- `913759222abf577d16d17e9983d711204de46e0d` — 2026-07-13：历史 PR #1186 首次补上两个 guardian payload 的 enum 前缀归一。
+- `c301899575c0f918748556a57e6daf4166a942d7` — 2026-07-13：PR #1186 合入主线；原 skeleton 同批被直接删除，未正规 promotion / 归档。
+- `a8f161f5eaad74d498930c043aff84a7ab5e1d1d` — 2026-07-18：从历史恢复 skeleton 并正规升格为 active plan。
+- `31583b3ab43e1ebe16879dbfbbfc3b8e95f83941` — 2026-07-18：补齐 broken / missing / UNSPECIFIED 的 proto→bridge→router 边界测试；随后由对抗 validator 发现默认字段语义仍会污染 `unspecified`。
+- `656cd4cf869163de59836bf54bdb8d89abc1269e` — 2026-07-18：修正默认枚举边界，并补齐合法、缺失、UNSPECIFIED、未知数值的 store / HUD / 统一事件断言。
+
+### 测试结果
+
+- **历史可执行证据（PR #1186）**：`cd client && ./gradlew test build` 由 PR body 记录为 `BUILD SUCCESSFUL`；GitHub checks `respond`、`e2e`、`CodeRabbit` 均为 `SUCCESS`。该证据只覆盖当时的三条 guardian 测试，不冒充当前 HEAD 的执行结果。
+- **当前 HEAD 本地执行**：JDK 17 下三轮受控 Gradle 尝试均在 test discovery 前被 sandbox 基础设施阻断：前两轮为 single-use daemon `java.net.SocketException: Operation not permitted`，最终已消除 daemon fork，但 Gradle 初始化仍报 `Could not determine a usable wildcard IP for this machine`。**当前 HEAD 实际执行测试数为 0，结果不是 PASS。**
+- **静态/对抗门**：`git diff --check` 通过；fresh read-only validator 对 `656cd4cf869163de59836bf54bdb8d89abc1269e` 给出 `PASS`，核验合法枚举、missing / UNSPECIFIED、unknown numeric、store / HUD / event 断言与 Java API。
+- **主线同步**：2026-07-18 执行 `git fetch origin` 紧邻 `git merge origin/main`，结果 `Already up to date.`；HEAD 未变化，validator SHA 仍有效。
+- **最终可执行 gate**：本修复分支的 PR CI（client / e2e）为当前 HEAD 的权威执行门；开 PR 后必须等待 CI 绿色，若红则返工并对新 HEAD 重验，不得用历史结果或本地 infra-block 代替。
+
+### 跨仓库核验
+
+- **server**：`server/src/schema/social.rs::GuardianKindV1` 仅含 `Puppet / ZhenfaTrap / BondedDaoxiang`；`server/src/schema/proto_convert.rs` 的 `ServerDataPayloadV1::NicheGuardianFatigue` / `NicheGuardianBroken` 经 `guardian_kind_to_proto` 生成真实 protobuf enum。
+- **agent/schema**：`agent/packages/schema/src/social.ts::NicheGuardianFatigueV1` / `NicheGuardianBrokenV1` 的 `guardian_kind` 复用 `GuardianKindV1`，legacy 契约不包含 `unspecified`。
+- **client**：`ProtoServerDataBridge.bridgeStripEnumsOmittingUnspecified` → `SocialServerDataHandler.handleNicheGuardianFatigue/handleNicheGuardianBroken` → `NicheGuardianStore` / `NicheGuardianPanel` / `UnifiedEventStore` 全链命中；合法值不再泄漏 `GUARDIAN_KIND_`，默认/未知值不产生玩家可见污染。
+
+### 遗留 / 后续
+
+- 本地 sandbox 无法提供 Gradle 所需的本机 socket / wildcard-IP 能力；这是明确记录的基础设施阻塞，不是测试通过。当前 HEAD 的可执行验收必须由 PR CI 完成。
+- 本 plan 不改 Rust / TypeBox / protobuf 定义、不改 Redis channel，也不处理 #945 跨 session 清理或 #1010 season enum；这些边界仍按各自 plan 管理。
