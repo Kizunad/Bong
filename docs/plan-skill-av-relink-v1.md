@@ -104,7 +104,7 @@
 2. **`stance_*` 触发源核实**：「流派架势切换」的 server 事件是否真实存在（`stance_switch` audio recipe 的发射点在哪）；若只有音效 recipe 而无 gameplay 事件，则改接「`/technique active` 激活功法」时刻，或降级 report-only。
 3. **`dodge_back`/`dodge_roll` 场景边界**：与 `movement.dash` 现有 `dash_forward` 的分工（后撤 vs 翻滚 vs 冲刺），需读 movement/combat 代码定边界，防止一个事件双动画打架。
 
-> §8 原表保留作决策背景；#1 已在 §8.1 收口、实施以 §8.1 为准，#2/#3 归 PR-2（P1 实施）设计收口时决议。
+> §8 原表保留作决策背景；#1 已在 §8.1 收口（PR-1），#2/#3 已在 §8.2 收口（PR-2 实施 + r2 review 返工定案）。实施以 §8.1 / §8.2 为准。
 
 ### §8.1 决议（2026-07-17）
 
@@ -124,6 +124,27 @@
 #### #3 `dodge_back`/`dodge_roll` 场景边界 —— PR-2（P1 实施）设计收口时决议，本 PR 不预判
 
 **决议**：同 #2，显式记录为 PR-2 前置收口项。与 `movement.dash` 现有 `dash_forward` 的分工（后撤 vs 翻滚 vs 冲刺）须在 P1 实施前读 movement/combat 代码定边界后定案，PR-1 不预判。
+
+### §8.2 决议（PR-2 实施收口，2026-07-18）
+
+> §8.1 #2/#3 在 PR-1 时点显式挂起至 PR-2；以下为 PR-2 实施核实 + r2 review 返工后的正式收口。
+
+#### #2 `stance_*` 触发源核实 —— 已收口：接 `TechniqueLearnedEvent`，仅 woliu / zhenmai 两族生产可达
+
+**决议**：
+1. 「流派架势切换」gameplay 事件全仓不存在——`stance_switch` audio recipe 的唯一发射点是 `SkillXpGain` 经验反馈（`server/src/network/audio_trigger.rs`），与架势无关；按 §8 原文备选路线改接「激活功法」时刻 = `TechniqueLearnedEvent`（`technique_scroll::learn_technique_if_allowed` 习得即写 `active:true`；dev `/technique active` 直改组件不发事件，dev-only 旁路不接线）。
+2. 生产可达性边界（r2 review 返工定案）：该事件生产发射路仅「卷轴习得」+「首击领悟（仅授 `movement.dash`、无架势映射）」两条，`technique_mentor::mentor_teaches_technique` 为无生产调用方的休眠 helper；现有卷轴内容只授 `woliu.*`/`zhenmai.parry` → 映射仅收录 woliu / zhenmai 两族。dugu / dugu_poison / baomai / tuike 无生产可达习得路径，降级 report-only，映射分支 / `P1_WIRED_ANIM_IDS` / 共享清单均不预置。
+3. 拒绝「接口先锁定的潜伏接线」路线：直接构造 `TechniqueLearnedEvent` 的 emit pin 只能证明映射函数可执行，不能证明生产接线可达，违反 P1「有真实事件源的批次」验收边界（首轮 review 4 位 reviewer 一致判定，见 P1 表 stance ×4 行降级记录）。
+
+**落点**：`server/src/network/vfx_animation_trigger.rs` `emit_technique_learned_stance_triggers` + `stance_anim_for_technique`（仅 woliu/zhenmai 前缀映射）+ `P1_WIRED_ANIM_IDS`（7 条）；`client/src/test/resources/bong/anim_wiring_manifest.json`（7 条共享清单）；plan §P1 表 `stance_{woliu,zhenmai}` ×2 / `stance_{dugu,dugu_poison,baomai,tuike}` ×4 两行。
+
+#### #3 `dodge_back`/`dodge_roll` 场景边界 —— 已收口：report-only，无独立闪避事件源
+
+**决议**：
+1. 实施核实：`MovementAction`（`server/src/movement/mod.rs:56`）仅 `None|Dashing` 两变体、请求映射仅 Dash、dash 方向恒取面朝向（无后撤变体）；`combat/` 无任何 dodge/evade 机制；dash iframe 语义属已接线动画 `dash_forward` 的同一动作——两条孤儿动画均无独立事件源，接 dash 事件必与 `dash_forward` 同点双动画打架。
+2. 按「不硬造事件」断链原则维持 report-only，等后撤/翻滚 gameplay 落地时再定与 `dash_forward` 的分工边界（后撤 vs 翻滚 vs 冲刺三分）。
+
+**落点**：plan §P1 表 `dodge_back`/`dodge_roll` 行（证据记录）；`server/src/movement/mod.rs:56`（`MovementAction` 变体现状依据）。
 
 ## 测试声明
 
