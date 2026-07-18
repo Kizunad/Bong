@@ -1,8 +1,9 @@
 package com.bong.client.network;
 
 import com.bong.client.animation.AnimWiringManifestTest;
-import com.bong.client.animation.AnimationLayerManager;
+import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.ClientAnimationBridge;
+import com.bong.client.animation.ProductionAnimationResources;
 import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
@@ -252,66 +253,87 @@ public class VfxEventRouterTest {
     }
 
     /**
-     * 未知 anim_id 失败分支：bridge 委托真实 {@link AnimationLayerManager#playOnStack}
-     * （生产 {@link ClientAnimationBridge#playAnim} 在解析到玩家后走的同一注册表查询路径），
-     * 注册表查不到的 anim id → play 返回 false → 路由记 bridgeMiss，不抛异常不崩溃。
+     * P3 正向消费闭环（plan 明文验收项）：清单每条已知 anim id 的 play_anim payload
+     * 经<b>真实</b> {@link VfxEventRouter} → <b>真实</b> {@link ClientAnimationBridge}
+     * →（{@code AnimationLayerManager} → {@code BongAnimationPlayer}）成功消费——
+     * 动画资产经生产 resource reload 入口装载（非手工灌注），bridge 仅注入目标解析
+     * 接缝（headless 无 MinecraftClient，解析后的派发路径与生产完全同一条），断言
+     * RouteResult 为 handled、非 bridgeMiss，且动画层真的装进了注入的
+     * {@link AnimationStack}（activeAnimations 命中 + 按 priority 可从该 stack 摘除）。
      */
     @Test
-    void unknownAnimIdBecomesBridgeMissNotCrashThroughLayerManagerLookup() throws IOException {
-        LayerManagerLookupBridge bridge = new LayerManagerLookupBridge();
+    void everyManifestWiredAnimPlaysThroughRealClientAnimationBridgeNonMiss() throws IOException {
+        ProductionAnimationResources.loadViaProductionReloadCallback();
+        List<String> manifest = AnimWiringManifestTest.loadManifest();
+        for (int i = 0; i < manifest.size(); i++) {
+            String animIdRaw = manifest.get(i);
+            Identifier animId = Identifier.tryParse(animIdRaw);
+            int priority = 1000 + i;
+            UUID target = UUID.randomUUID();
+            AnimationStack stack = new AnimationStack();
+            ClientAnimationBridge bridge = new ClientAnimationBridge(
+                uuid -> target.equals(uuid)
+                    ? new ClientAnimationBridge.AnimationTarget(stack, uuid)
+                    : null);
+            VfxEventRouter router = new VfxEventRouter(bridge);
+            String json = playAnimJsonFor(target, animIdRaw, priority, 1 + (i % 5));
+
+            VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+            assertTrue(result.isHandled(),
+                "已知接线 anim `" + animIdRaw + "` 经真实 ClientAnimationBridge 应为 handled"
+                    + "（生产 reload 已装载资产、目标可解析），实际：" + result.logMessage());
+            assertFalse(result.isBridgeMiss(),
+                "已知接线 anim `" + animIdRaw + "` 不得降级 bridgeMiss——"
+                    + "真实 bridge 正向闭环断了（注册表查询或层安装失败）");
+            assertTrue(BongAnimationPlayer.activeAnimations(target).contains(animId),
+                "已知接线 anim `" + animIdRaw + "` 应出现在目标玩家的活跃动画集——"
+                    + "AnimationLayerManager/BongAnimationPlayer 未真正安装动画层");
+            assertTrue(stack.removeLayer(priority),
+                "按 priority " + priority + " 应能从注入的 AnimationStack 摘到动画层——"
+                    + "层没装进被注入的 stack，说明 bridge 播放走了别的目标（非注入解析结果）");
+        }
+    }
+
+    /**
+     * 未知 anim_id 失败分支走<b>真实</b> {@link ClientAnimationBridge}（注入目标解析
+     * 接缝，被测对象仍是生产 bridge 本身）：注册表查不到的 anim id →
+     * {@code AnimationLayerManager} 播放返回 false → 路由记 bridgeMiss，不抛异常不崩溃。
+     */
+    @Test
+    void unknownAnimIdBecomesBridgeMissNotCrashThroughRealBridge() throws IOException {
+        UUID target = UUID.randomUUID();
+        AnimationStack stack = new AnimationStack();
+        ClientAnimationBridge bridge = new ClientAnimationBridge(
+            uuid -> target.equals(uuid)
+                ? new ClientAnimationBridge.AnimationTarget(stack, uuid)
+                : null);
         VfxEventRouter router = new VfxEventRouter(bridge);
-        String json = playAnimJson("bong:__vfx_router_unknown_anim__", 1000, 3);
+        String json = playAnimJsonFor(target, "bong:__vfx_router_unknown_anim__", 1000, 3);
 
         VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
 
-        assertEquals(1, bridge.invocations, "bridge 应被真实调用到（未知 id 在注册表层才失败）");
         assertTrue(result.isBridgeMiss(),
             "未知 anim id 应走注册表 miss → bridgeMiss 降级，实际：" + result.logMessage());
         assertFalse(result.isHandled(),
             "未知 anim id 绝不能被标记为已处理（否则缺资产静默上线）");
+        assertTrue(BongAnimationPlayer.activeAnimations(target).isEmpty(),
+            "未知 anim id 不得在目标玩家上装出任何动画层");
     }
 
     private static String playAnimJson(String animId, int priority, int fadeInTicks) {
+        return playAnimJsonFor(FIXTURE_UUID, animId, priority, fadeInTicks);
+    }
+
+    private static String playAnimJsonFor(UUID target, String animId, int priority, int fadeInTicks) {
         return """
             {"v":1,"type":"play_anim","target_player":"%s","anim_id":"%s",\
             "priority":%d,"fade_in_ticks":%d}"""
-            .formatted(FIXTURE_UUID, animId, priority, fadeInTicks);
+            .formatted(target, animId, priority, fadeInTicks);
     }
 
     private static int jsonLen(String json) {
         return json.getBytes(StandardCharsets.UTF_8).length;
-    }
-
-    /** 复刻生产 playAnim 的注册表查询语义（跳过需 MC 运行时的玩家实体解析）。 */
-    private static final class LayerManagerLookupBridge implements VfxEventAnimationBridge {
-        int invocations;
-
-        @Override
-        public boolean playAnim(UUID target, Identifier animId, int priority, OptionalInt fadeInTicks) {
-            invocations++;
-            return AnimationLayerManager.playOnStack(
-                new AnimationStack(),
-                target,
-                AnimationLayerManager.channelForPriority(priority),
-                animId
-            );
-        }
-
-        @Override
-        public boolean playAnimInline(
-            UUID target,
-            Identifier animId,
-            String animJson,
-            int priority,
-            OptionalInt fadeInTicks
-        ) {
-            return false;
-        }
-
-        @Override
-        public boolean stopAnim(UUID target, Identifier animId, OptionalInt fadeOutTicks) {
-            return false;
-        }
     }
 
     private static final class RecordingBridge implements VfxEventAnimationBridge {

@@ -176,13 +176,38 @@ public class AnimWiringManifestTest {
     }
 
     /**
-     * 参数化 contains pin：每条接线动画的资产内容经生产反序列化路径
-     * （{@code AnimationSerializing}，与资源 reload listener 同一实现）注册后，
-     * {@link BongAnimationRegistry#contains} / {@link BongAnimationRegistry#get} 逐条命中。
-     *
-     * <p>单测 classloader 里 PlayerAnimator 的资源 reload 不会跑（JSON 源恒空），
-     * 故经 {@code registerInlineJson} 喂入<b>同一份生产资产字节</b>——注册成功与否
-     * 本身就锁住了"资产能被生产解析器读成可播放动画"这一契约。
+     * 生产 reload 闭环：经 {@link ProductionAnimationResources}（同一个
+     * {@code PlayerAnimationRegistry.resourceLoaderCallback} 生产入口 + 真实
+     * main-resources 文件）装载后，每条接线 anim id 在
+     * {@link BongAnimationRegistry} 逐条命中且来源为 <b>JSON 源</b>——锁住
+     * "生产 resource reload 语义（含按 JSON {@code name} 字段注册）真的能把
+     * shipped 资产送进运行时注册表"，防 loader 目录/命名/reload 接线回归。
+     */
+    @Test
+    void everyWiredAnimLoadsThroughProductionResourceReloadCallback() throws IOException {
+        ProductionAnimationResources.loadViaProductionReloadCallback();
+        for (String raw : loadManifest()) {
+            Identifier id = Identifier.tryParse(raw);
+            assertNotNull(id, "清单条目 `" + raw + "` 应可解析（见形态用例）");
+            assertTrue(BongAnimationRegistry.contains(id),
+                "生产 reload 入口装载后 BongAnimationRegistry.contains(" + raw
+                    + ") 应为 true——resource reload 链路（目录扫描/name 键注册）断了，"
+                    + "真机上该 anim id 永远解析不到");
+            assertNotNull(BongAnimationRegistry.get(id),
+                "生产 reload 装载后 BongAnimationRegistry.get(" + raw + ") 不应为 null");
+            assertEquals(BongAnimationRegistry.Source.JSON, BongAnimationRegistry.sourceOf(id),
+                raw + " 应命中 JSON 源（PlayerAnimator 资源注册表）——若落到其他源，"
+                    + "说明生产 reload 没装进该资产、命中是测试污染的假阳性");
+        }
+    }
+
+    /**
+     * 参数化反序列化 pin：每条接线动画的资产内容经生产反序列化器
+     * （{@code AnimationSerializing}，与资源 reload listener 同一实现）可读成
+     * 可播放动画，{@link BongAnimationRegistry#contains} / {@link BongAnimationRegistry#get}
+     * 命中 inline 源。生产 reload 全链路（目录扫描 → name 键注册）由上方
+     * {@code everyWiredAnimLoadsThroughProductionResourceReloadCallback} 单独锁住，
+     * 本用例只锁资产字节可解析性。
      */
     @Test
     void everyWiredAnimResolvesThroughBongAnimationRegistry() throws IOException {
