@@ -16,7 +16,21 @@
         "tick": 0,
         "easing": "INOUTSINE",
         "body": {
+          "x": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
           "y": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
+          "z": 0.0
         }
       },
       {
@@ -1353,7 +1367,21 @@
         "tick": 12,
         "easing": "INOUTSINE",
         "body": {
+          "x": 0.0
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "body": {
           "y": 0.0
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "body": {
+          "z": 0.0
         }
       },
       {

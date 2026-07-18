@@ -204,22 +204,22 @@
 | skill_id | cast | anim_id | endTick | loop | 帧点 | 轴KF | 借用 | 分级 | 批次 | 备注 |
 |---|--:|---|--:|---|--:|--:|---|---|---|---|
 | `sword.cleave` | 16 | `sword_cleave` | 20 | — | 8 | 168 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：举剑过头竖劈+弓步前压三段式；endTick=20 为与借用方 condense_edge（cast=12）区间交集 |
-| `sword.thrust` | 10 | `sword_thrust` | 16 | — | 8 | 170 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：收剑腰侧直刺+侧身送肩 |
+| `sword.thrust` | 10 | `sword_thrust` | 16 | — | 8 | 172 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：收剑腰侧直刺+侧身送肩 |
 | `sword.parry` | 4 | `sword_parry` | 10 | — | 6 | 126 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：斜举格挡弹开，密度补齐 |
 | `sword.infuse` | 40 | `sword_infuse` | 40 | — | 29 | 29 | — | **B** | P2 | 专属；无 recovery、密度低；cast=40 属长引导域，按标准 #2 须两段式，移 P2 与 anqi 长引导批次同做（含 server 通道接线） |
 | `movement.dash` | 0 | `dash_forward` | 4 | — | 13 | 21 | — | **C** | P3 | 瞬发 4t 快闪；密度低 |
 | `shield_block` | 0 | `shield_raise` | 6 | ✓ | 35 | 35 | — | **B** | P3 | 循环举盾+StopAnim 闭环已有；密度低 |
-| `burst_meridian.beng_quan` | 8 | `beng_quan` | 14 | — | 9 | 192 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：沉马蓄劲→拳炸出→震颤收；endTick=14 为三借用方 cast 区间交集 |
-| `burst_meridian.tie_shan_kao` | 10 | `beng_quan` | 14 | — | 9 | 192 | ✓ | **D** | P3 | 借 beng_quan（靠撞≠出拳）；时长随重制达标已出 allowlist，专属化仍归 P3 |
-| `burst_meridian.xue_beng_bu` | 6 | `beng_quan` | 14 | — | 9 | 192 | ✓ | **D** | P3 | 借 beng_quan（步法≠出拳）；时长随重制达标已出 allowlist，专属化仍归 P3 |
+| `burst_meridian.beng_quan` | 8 | `beng_quan` | 14 | — | 9 | 194 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：沉马蓄劲→拳炸出→震颤收；endTick=14 为三借用方 cast 区间交集 |
+| `burst_meridian.tie_shan_kao` | 10 | `beng_quan` | 14 | — | 9 | 194 | ✓ | **D** | P3 | 借 beng_quan（靠撞≠出拳）；时长随重制达标已出 allowlist，专属化仍归 P3 |
+| `burst_meridian.xue_beng_bu` | 6 | `beng_quan` | 14 | — | 9 | 194 | ✓ | **D** | P3 | 借 beng_quan（步法≠出拳）；时长随重制达标已出 allowlist，专属化仍归 P3 |
 | `burst_meridian.ni_mai_hu_ti` | 12 | —— | — | — | — | — | — | **D** | P3 | anim_id: None（burst_meridian.rs:637） |
 | `baomai.full_power_charge` | 1 | `windup_charge` | 16 | ✓ | 81 | 81 | ✓ | **D** | P3 | 借通用蓄力（loop+StopAnim 闭环在） |
 | `baomai.full_power_release` | 1 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P3 | 借通用爆发（4t 模板） |
-| `zhenmai.parry` | 1 | `zhenmai_parry` | 8 | — | 6 | 126 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：瞬发单手拍挡爆发帧+收势 |
-| `zhenmai.neutralize` | 4 | `zhenmai_neutralize` | 10 | — | 7 | 144 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：双掌下按化劲+沉桩 |
-| `zhenmai.multipoint` | 6 | `zhenmai_multipoint` | 12 | — | 10 | 211 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：连环三点指（右高/左中/右深） |
-| `zhenmai.harden` | 5 | `zhenmai_harden` | 11 | — | 8 | 163 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：抱臂沉桩硬化+紧咬 clench |
-| `zhenmai.sever_chain` | 8 | `zhenmai_sever_chain` | 14 | — | 9 | 194 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：手刀横斩断链+overshoot |
+| `zhenmai.parry` | 1 | `zhenmai_parry` | 8 | — | 6 | 130 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：瞬发单手拍挡爆发帧+收势 |
+| `zhenmai.neutralize` | 4 | `zhenmai_neutralize` | 10 | — | 7 | 146 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：双掌下按化劲+沉桩 |
+| `zhenmai.multipoint` | 6 | `zhenmai_multipoint` | 12 | — | 10 | 215 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：连环三点指（右高/左中/右深） |
+| `zhenmai.harden` | 5 | `zhenmai_harden` | 11 | — | 8 | 165 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：抱臂沉桩硬化+紧咬 clench |
+| `zhenmai.sever_chain` | 8 | `zhenmai_sever_chain` | 14 | — | 9 | 198 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：手刀横斩断链+overshoot |
 | `woliu.vortex` | 1 | —— | — | — | — | — | — | **D** | P3 | v1 涡流术无动画发射（combat/woliu.rs 零 PlayAnim） |
 | `woliu.hold` | 1 | `vortex_palm_open` | 12 | — | 14 | 40 | — | **B** | P3 | 12t/40KF；瞬发标准内但密度可精修 |
 | `woliu.burst` | 1 | `palm_strike` | 6 | — | 81 | 81 | ✓ | **D** | P3 | 借通用 palm_strike（6t 模板 81KF） |

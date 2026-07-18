@@ -23,6 +23,13 @@
         "tick": 0,
         "easing": "INOUTSINE",
         "body": {
+          "y": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
           "z": 0.0
         }
       },
@@ -1060,6 +1067,13 @@
         "easing": "INOUTSINE",
         "body": {
           "x": 0.02
+        }
+      },
+      {
+        "tick": 16,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
         }
       },
       {

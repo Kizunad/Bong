@@ -19,7 +19,8 @@ from anim_common import emit_json, inherit
 
 GUARD = dict(
     easing="INOUTSINE",
-    body=dict(y=0.0),
+    # round 3：body.z 首尾显式归位（防非循环残值偏移）。
+    body=dict(y=0.0, z=0.0),
     head=dict(pitch=-2),
     torso=dict(pitch=+3, yaw=0),
     rightArm=dict(pitch=-45, yaw=-8, roll=+6, bend=60, axis=180),

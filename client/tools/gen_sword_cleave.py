@@ -4,11 +4,12 @@
 cast_ticks=16。借用方约束：sword_path.condense_edge（cast=12，不在 allowlist）
 要求 endTick ∈ [16,20]，sword.cleave 要求 [20,24]，交集 = 20 —— endTick 固定 20。
 
-时序（精度标准 #1/#2/#3）：
+时序（精度标准 #1/#2/#3；round 3 定稿：endTick=20 硬约束下放弃 hold——
+2 tick 内从定格拉回 guard 需 123°/2t 视觉瞬移，改为 4 tick 完整收势）：
   anticipation 0→10  双手举剑过头 + 拧腰后坐（easeOut 族 OUTSINE）
-  strike       10→18 过身下劈 + torso 前压 + body.z 前送 + 前腿弓步（easeIn 族
-                     INQUAD），发力顶点 = tick 16（cast 完成瞬间），hold 16→18 定格
-  recovery     18→20 回中立 guard（INOUTSINE）
+  strike       10→16 过身下劈 + torso 前压 + body.z 前送 + 前腿弓步（easeIn 族
+                     INQUAD），发力顶点 = tick 16（cast 完成瞬间）
+  recovery     16→20 刃提回中立 guard（INOUTSINE，t18 收势中段帧）
 endTick=20，stopTick=22，非循环。主打击轴：rightArm.pitch / torso.pitch / body.z。
 """
 
@@ -30,7 +31,7 @@ GUARD = dict(
     rightLeg=dict(pitch=+8, bend=10, z=+0.04),
 )
 
-# 打击定格（t16 impact 的微沉降版本，避免"到位即冻结"）。
+# 发力顶点（tick 16 = cast 完成瞬间）。
 IMPACT = dict(
     easing="INQUAD",
     body=dict(y=+0.06, z=+0.30),
@@ -92,14 +93,17 @@ POSE = {
     ),
     # 发力顶点 = cast 完成（tick 16）：剑劈到身前下方，弓步前压。
     16: IMPACT,
-    # 打击定格（strike 段内 hold，2 tick）：刃口微沉。
-    18: inherit(
-        IMPACT,
+    # round 3：收势中段帧（原 hold 定格改）——刃从下位提回一半、躯干直起，
+    # 让 16→20 收势有完整 4 tick 弧线而非 2 tick 瞬移。
+    18: dict(
         easing="INOUTSINE",
-        body=dict(y=+0.06, z=+0.29),
-        head=dict(pitch=+13),
-        rightArm=dict(pitch=+55, bend=10),
-        leftArm=dict(pitch=+44, bend=16),
+        body=dict(y=+0.02, z=+0.14),
+        head=dict(pitch=+4),
+        torso=dict(pitch=+10, yaw=+4),
+        rightArm=dict(pitch=-10, yaw=+2, roll=+12, bend=40, axis=180),
+        leftArm=dict(pitch=-8, yaw=-6, roll=-12, bend=46, axis=180),
+        leftLeg=dict(pitch=-22, bend=22, z=-0.10),
+        rightLeg=dict(pitch=+18, bend=24, z=+0.07),
     ),
     # 收势回 guard。
     20: inherit(GUARD),
@@ -114,7 +118,7 @@ def main() -> int:
             "P1 重制竖劈：anticipation 0→10 双手举剑过头（rightArm.pitch -68→-152）"
             "+拧腰后坐（torso.yaw -6→-20 / body.z -0.08），strike 10→16 过身下劈"
             "（pitch -152→+52）+前压（torso.pitch -8→+18）+前冲（body.z +0.30）"
-            "+弓步（前腿 pitch -34 bend 30），hold 16→18 定格，recovery 18→20 回 guard。"
+            "+弓步（前腿 pitch -34 bend 30），recovery 16→20 经 t18 中段帧回 guard。"
         ),
         end_tick=20,
         stop_tick=22,
