@@ -778,7 +778,7 @@ public class BongNetworkHandler {
 
     private static void applyDispatch(net.minecraft.client.MinecraftClient client, ServerDataDispatch dispatch, String envelopeType) {
         dispatch.playerStateViewModel().ifPresent(PlayerStateStore::replace);
-        applySeasonStateStore(dispatch);
+        dispatch.seasonState().ifPresent(SeasonStateStore::replace);
         dispatch.narrationState().ifPresent(BongNetworkHandler::replaceNarrationState);
         dispatch.toastNarrationState().ifPresent(toastNarrationState -> BongToast.show(toastNarrationState, System.currentTimeMillis()));
         dispatch.zoneState().ifPresent(BongNetworkHandler::replaceZoneState);
@@ -806,10 +806,6 @@ public class BongNetworkHandler {
         dispatch.legacyMessage().ifPresent(message ->
             client.player.sendMessage(Text.literal("[Bong] " + envelopeType + ": " + message), false)
         );
-    }
-
-    static void applySeasonStateStore(ServerDataDispatch dispatch) {
-        dispatch.seasonState().ifPresent(SeasonStateStore::replace);
     }
 
     private static void applyUiOpen(net.minecraft.client.MinecraftClient client, UiOpenState uiOpenState, String envelopeType) {

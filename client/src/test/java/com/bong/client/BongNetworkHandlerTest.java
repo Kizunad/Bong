@@ -17,15 +17,23 @@ import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.network.ProtoServerDataBridge;
+import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataRouter;
 import com.bong.client.state.NarrationState;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.state.SeasonState;
 import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
+import net.minecraft.client.MinecraftClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -46,11 +54,12 @@ public class BongNetworkHandlerTest {
         IdentityPanelStateStore.resetForTest();
         FalseSkinHudStateStore.resetForTests();
         DuguV2HudStateStore.resetForTests();
+        PlayerStateStore.resetForTests();
         SeasonStateStore.resetForTests();
     }
 
     @Test
-    void realPlayerStateProtoDispatchUpdatesSeasonStateStoreThroughProductionStoreApply() {
+    void realPlayerStateProtoDispatchUpdatesStoresThroughPrivateProductionApplyDispatch() {
         SeasonStateStore.replace(new SeasonState(SeasonState.Phase.SUMMER, 7L, 1000L, 0L));
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
             .setPlayerState(completeSeasonPlayerState()
@@ -63,11 +72,12 @@ public class BongNetworkHandlerTest {
 
         ServerDataRouter.RouteResult route = routeRealPlayerState(envelope, "有效 WINTER");
 
-        BongNetworkHandler.applySeasonStateStore(route.dispatch());
+        invokePrivateProductionApplyDispatch(route.dispatch(), "有效 WINTER");
 
+        assertCompletePlayerState(PlayerStateStore.snapshot(), "有效 WINTER 最终 PlayerStateStore");
         SeasonState stored = SeasonStateStore.snapshot();
         assertEquals(SeasonState.Phase.WINTER, stored.phase(),
-            "生产 applyDispatch 共用的 season-store helper 必须把 router 产出的 WINTER 写进 store；"
+            "private applyDispatch 必须把 router 产出的 WINTER 写进 store；"
                 + "否则 HUD/atmosphere/particle 仍会读取旧 SUMMER");
         assertEquals(42L, stored.tickIntoPhase(), "有效 season 的 tick_into_phase 必须完整落库");
         assertEquals(1000L, stored.phaseTotalTicks(), "有效 season 的 phase_total_ticks 必须完整落库");
@@ -583,6 +593,12 @@ public class BongNetworkHandlerTest {
             route.isHandled(),
             scenario + " 不应吞掉其余合法 player_state 字段：" + route.logMessage()
         );
+        PlayerStateViewModel playerState = route.dispatch()
+            .playerStateViewModel()
+            .orElseThrow(() -> new AssertionError(
+                scenario + " 必须保留合法 player_state dispatch，不能因 season 无效而整包丢弃"
+            ));
+        assertCompletePlayerState(playerState, scenario + " dispatch");
         return route;
     }
 
@@ -598,8 +614,9 @@ public class BongNetworkHandlerTest {
             scenario + " 必须只让 season 分支安全 no-op，不能产生默认季节"
         );
 
-        BongNetworkHandler.applySeasonStateStore(route.dispatch());
+        invokePrivateProductionApplyDispatch(route.dispatch(), scenario);
 
+        assertCompletePlayerState(PlayerStateStore.snapshot(), scenario + " 最终 PlayerStateStore");
         SeasonState stored = SeasonStateStore.snapshot();
         assertEquals(sentinel.phase(), stored.phase(), scenario + " 不得覆盖既有 phase");
         assertEquals(
@@ -613,6 +630,64 @@ public class BongNetworkHandlerTest {
             scenario + " 不得覆盖既有 phaseTotalTicks"
         );
         assertEquals(sentinel.yearIndex(), stored.yearIndex(), scenario + " 不得覆盖既有 yearIndex");
+    }
+
+    private static void assertCompletePlayerState(
+        PlayerStateViewModel playerState,
+        String scenario
+    ) {
+        assertEquals("offline:SeasonAudit", playerState.playerId(), scenario + " 必须保留 player id");
+        assertEquals("Condense", playerState.realm(), scenario + " 必须保留 realm");
+        assertEquals(50.0, playerState.spiritQiCurrent(), 0.0001, scenario + " 必须保留 spirit qi");
+        assertEquals(100.0, playerState.spiritQiMax(), 0.0001, scenario + " 必须保留 spirit qi max");
+        assertEquals(0.2, playerState.karma(), 0.0001, scenario + " 必须保留 karma");
+        assertEquals(0.35, playerState.compositePower(), 0.0001, scenario + " 必须保留 composite power");
+        assertEquals("zone-1", playerState.zoneId(), scenario + " 必须保留 zone");
+        assertEquals(0.2, playerState.breakdown().combat(), 0.0001, scenario + " 必须保留 combat breakdown");
+        assertEquals(0.4, playerState.breakdown().wealth(), 0.0001, scenario + " 必须保留 wealth breakdown");
+        assertEquals(0.65, playerState.breakdown().social(), 0.0001, scenario + " 必须保留 social breakdown");
+        assertEquals(0.1, playerState.breakdown().territory(), 0.0001, scenario + " 必须保留 territory breakdown");
+    }
+
+    private static void invokePrivateProductionApplyDispatch(ServerDataDispatch dispatch, String scenario) {
+        try {
+            Method applyDispatch = BongNetworkHandler.class.getDeclaredMethod(
+                "applyDispatch",
+                MinecraftClient.class,
+                ServerDataDispatch.class,
+                String.class
+            );
+            assertTrue(
+                Modifier.isPrivate(applyDispatch.getModifiers()),
+                "applyDispatch 必须保持 private 生产边界，测试只通过反射进入"
+            );
+            applyDispatch.setAccessible(true);
+            applyDispatch.invoke(null, allocateHeadlessClientWithoutPlayer(), dispatch, "player_state");
+        } catch (InvocationTargetException exception) {
+            throw new AssertionError(
+                scenario + " 调用 private applyDispatch 时不应在 player == null 的合法 headless 边界抛错",
+                exception.getCause()
+            );
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError(scenario + " 无法反射调用 private applyDispatch", exception);
+        }
+    }
+
+    private static MinecraftClient allocateHeadlessClientWithoutPlayer() {
+        try {
+            Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+            Field singleton = unsafeClass.getDeclaredField("theUnsafe");
+            singleton.setAccessible(true);
+            Object unsafe = singleton.get(null);
+            Method allocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
+            MinecraftClient client = (MinecraftClient) allocateInstance.invoke(unsafe, MinecraftClient.class);
+            assertNull(client.player, "无构造 headless client 必须没有 player，才能只执行纯状态 dispatch 分支");
+            return client;
+        } catch (InvocationTargetException exception) {
+            throw new AssertionError("无法分配 non-null headless MinecraftClient", exception.getCause());
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法分配 non-null headless MinecraftClient", exception);
+        }
     }
 
     private static CraftRecipe sampleCraftRecipe(String id, boolean unlocked) {
