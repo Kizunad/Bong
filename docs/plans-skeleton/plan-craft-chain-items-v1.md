@@ -15,8 +15,8 @@
 
 ## 背景与调研结论（2026-07-18 实证）
 
-- **spear 是整系空档**：`WeaponKind` 七系（`inventory/mod.rs:2348` sword/saber/staff/fist/spear/dagger/bow）中 spear 无任何落地物品（`assets/items/` 全 grep 零命中）；而双手占用判定已就绪（`mod.rs:759-763` `is_two_handed` 含 Spear，plan-layered-equip-v1 决议 #7）、TOML 解析已就绪（`mod.rs:2947` `"spear" => WeaponKind::Spear`）——矛族是"数据到位即玩"的现成缺口。bow 涉远程弹道无现成链路，本 plan 不做（§8 #4）。
-- **消耗品医疗线已密，必须错位**：bandage（wound_heal 1.0 全身）/ 夹板（2.0 定向）/ meridian_salve / anti_gu_powder / qingzhuo_powder（contamination_cleanse 0.4）/ calming_tea（composure_restore 0.35）/ qi_guide_talisman（food_regen 0.30）——`workbench_materials.toml:360-470`。新消耗品只做**链条升级档**（吃现有产物作材料），不开新效果轴。
+- **spear 是整系空档**：`WeaponKind` 七系（`inventory/mod.rs:2348` sword/saber/staff/fist/spear/dagger/bow）中 spear 无任何落地物品（`assets/items/` 全 grep 零命中）；而双手占用判定已就绪（`mod.rs:759-763` `weapon_two_handed` 含 Spear，plan-layered-equip-v1 决议 #7）、TOML 解析已就绪（`mod.rs:2947` `"spear" => WeaponKind::Spear`）——矛族是"数据到位即玩"的现成缺口。bow 涉远程弹道无现成链路，本 plan 不做（§8 #4）。
+- **消耗品医疗线已密，必须错位**：bandage（wound_heal 1.0 全身）/ 夹板（2.0 定向）/ meridian_salve / anti_gu_powder / qingzhuo_powder（contamination_cleanse 0.4）/ calming_tea（composure_restore 0.35）/ qi_guide_talisman（food_regen 0.30）——`workbench_materials.toml:347-470`。新消耗品只做**链条升级档**（吃现有产物作材料），不开新效果轴。
 - **链条地基全是现有可合成物**：wood_handle（`workbench_recipes.rs:222`，产 4）、grass_rope（`:247`）、stone_knife（`HANDCRAFT_STONE_TOOLS` 手搓，`:21`）、spider_silk_cord / salt_crystal / rat_tail_oil / herb_bundle（workbench 加工产物）、bone_spike / iron_ingot（`materials.toml`）。
 - **效果 = 纯数据**：TOML `effect = { kind = "wound_heal", ... }` 直映射 `ItemEffect`（`inventory/mod.rs:397`），消耗链路现成；WeaponSpec 同为 TOML 字段。本 plan 的"效果到位"= 复用现集合真接线，**发现必须新增 ItemEffect 变体即停下按 §8 裁决**（红线目标：零新变体）。
 - **模型链路已有范本**：手持物 = `scripts/models/gen_*.py` 分部件 bbmodel（范本 `gen_wooden_shield.py`：part 函数拆件 + preview 渲染 + `local_models/*.bbmodel` Blockbench 手调源）→ 导出 OBJ → `client/assets/bong/models/item/<id>/<id>.obj` + `BongWeaponModelRegistry` 条目（`weapon/BongWeaponModelRegistry.java:21` Entry 四元组）；图标 = `/gen-image item` → `gui/items/<id>.png`（`ItemIconRegistry` 按 id 约定自动解析，零 Java 注册）。
