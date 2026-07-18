@@ -32,6 +32,104 @@ import {
   ClientRequestV1,
 } from "../src/client-request.js";
 
+describe("Agent UI ID Unicode code-point contract", () => {
+  const schemaFields = [
+    {
+      name: "AgentUiRequestCommandV1.request_id",
+      schema: AgentUiRequestCommandV1,
+      payload: (value: string) => ({
+        request_id: value,
+        target_player: "offline:Target",
+        xml: "<flow-layout />",
+        timeout_ticks: 600,
+        realm_gate: 0,
+        allowed_button_ids: [],
+      }),
+    },
+    {
+      name: "AgentUiRequestCommandV1.target_player",
+      schema: AgentUiRequestCommandV1,
+      payload: (value: string) => ({
+        request_id: "request-command",
+        target_player: value,
+        xml: "<flow-layout />",
+        timeout_ticks: 600,
+        realm_gate: 0,
+        allowed_button_ids: [],
+      }),
+    },
+    {
+      name: "AgentUiRequestPayloadV1.request_id",
+      schema: AgentUiRequestPayloadV1,
+      payload: (value: string) => ({
+        request_id: value,
+        target_player: "offline:Target",
+        xml: "<flow-layout />",
+        timeout_ticks: 600,
+      }),
+    },
+    {
+      name: "AgentUiRequestPayloadV1.target_player",
+      schema: AgentUiRequestPayloadV1,
+      payload: (value: string) => ({
+        request_id: "request-payload",
+        target_player: value,
+        xml: "<flow-layout />",
+        timeout_ticks: 600,
+      }),
+    },
+    {
+      name: "AgentUiClientResponsePayloadV1.request_id",
+      schema: AgentUiClientResponsePayloadV1,
+      payload: (value: string) => ({ request_id: value, action: "dismissed", params: {} }),
+    },
+    {
+      name: "AgentUiResponsePayloadV1.request_id",
+      schema: AgentUiResponsePayloadV1,
+      payload: (value: string) => ({ request_id: value, action: "dismissed", params: {} }),
+    },
+    {
+      name: "AgentUiResponsePayloadV1.target_player",
+      schema: AgentUiResponsePayloadV1,
+      payload: (value: string) => ({
+        request_id: "response-payload",
+        action: "error",
+        target_player: value,
+        params: { reason: "realm_gate_rejected" },
+      }),
+    },
+    {
+      name: "AgentUiClosePayloadV1.request_id",
+      schema: AgentUiClosePayloadV1,
+      payload: (value: string) => ({ request_id: value }),
+    },
+  ] as const;
+  const boundaryCases = [
+    { name: "empty", value: "", valid: false },
+    { name: "65 emoji", value: "😀".repeat(65), valid: true },
+    { name: "128 emoji", value: "😀".repeat(128), valid: true },
+    { name: "129 emoji", value: "😀".repeat(129), valid: false },
+    { name: "127 BMP + 1 astral", value: `${"a".repeat(127)}😀`, valid: true },
+    { name: "128 BMP + 1 astral", value: `${"a".repeat(128)}😀`, valid: false },
+    { name: "128 BMP", value: "界".repeat(128), valid: true },
+    { name: "129 BMP", value: "界".repeat(129), valid: false },
+    { name: "lone high surrogate", value: "\ud800", valid: false },
+    { name: "lone low surrogate", value: "\udc00", valid: false },
+    { name: "embedded lone surrogate", value: "a\ud800b", valid: false },
+  ];
+
+  it("pins all five TypeBox schemas and every Agent UI ID field", () => {
+    for (const field of schemaFields) {
+      for (const testCase of boundaryCases) {
+        expect(
+          Value.Check(field.schema, field.payload(testCase.value)),
+          `${field.name} 对 ${testCase.name} 应按 1..=128 Unicode code points 判定为 ${testCase.valid}`,
+        ).toBe(testCase.valid);
+      }
+    }
+  });
+});
+
 // ─── AgentUiRequestCommandV1（agent → server Redis）──────────────────────────
 
 describe("AgentUiRequestCommandV1", () => {

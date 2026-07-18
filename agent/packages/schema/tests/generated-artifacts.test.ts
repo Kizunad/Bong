@@ -32,6 +32,11 @@ const AGENT_UI_GENERATED_FILES = [
   "client-request-v1.json",
   "server-data-v1.json",
 ] as const;
+const AGENT_UI_ID_SCHEMA_COUNTS: Readonly<Record<(typeof AGENT_UI_GENERATED_FILES)[number], number>> = {
+  "agent-ui-response-payload-v1.json": 2,
+  "client-request-v1.json": 1,
+  "server-data-v1.json": 3,
+};
 
 type LocatedStringSchema = Readonly<{
   path: string;
@@ -62,18 +67,14 @@ function findAgentUiIdStringSchemas(value: unknown, path = "$"): LocatedStringSc
   ];
 }
 
-function checkDraft202012StringKeywords(
+function checkUnicodeAwareEcma262StringPattern(
   schema: Record<string, unknown>,
   value: string,
 ): boolean {
   if (schema.type !== "string") return false;
-  const codePoints = [...value].length;
-  if (typeof schema.minLength === "number" && codePoints < schema.minLength) return false;
-  if (typeof schema.maxLength === "number" && codePoints > schema.maxLength) return false;
-  if (typeof schema.pattern === "string" && !new RegExp(schema.pattern, "u").test(value)) {
-    return false;
-  }
-  return true;
+  return (
+    typeof schema.pattern === "string" && new RegExp(schema.pattern, "u").test(value)
+  );
 }
 
 // These runtime validators are not server -> Tiandao public Redis consumers.
@@ -303,19 +304,26 @@ describe("generated schema freshness gate", () => {
     for (const file of AGENT_UI_GENERATED_FILES) {
       const artifact = JSON.parse(readFileSync(join(GENERATED_DIR, file), "utf8"));
       const idSchemas = findAgentUiIdStringSchemas(artifact);
-      expect(idSchemas.length, `${file} 应包含至少一个 Agent UI ID schema`).toBeGreaterThan(0);
+      expect(
+        idSchemas.length,
+        `${file} 应精确覆盖所有 Agent UI ID 字段，避免某个字段丢失 pattern 后仍假绿`,
+      ).toBe(AGENT_UI_ID_SCHEMA_COUNTS[file]);
 
       for (const { path, schema } of idSchemas) {
         expect(
           schema.maxLength,
           `${file}:${path} 不得恢复与 TypeBox UTF-16 runtime 分叉的 maxLength`,
         ).toBeUndefined();
+        expect(
+          schema.minLength,
+          `${file}:${path} 的 1..=128 code-point 边界应完全由同一个 pattern 表达`,
+        ).toBeUndefined();
 
         const legacyEcma262 = new RegExp(schema.pattern as string);
         for (const testCase of cases) {
           expect(
-            checkDraft202012StringKeywords(schema, testCase.value),
-            `${file}:${path} 的标准 JSON Schema 字符串语义对 ${testCase.name} 应为 ${testCase.valid}`,
+            checkUnicodeAwareEcma262StringPattern(schema, testCase.value),
+            `${file}:${path} 的 Unicode-aware ECMA-262 pattern 对 ${testCase.name} 应为 ${testCase.valid}`,
           ).toBe(testCase.valid);
           expect(
             legacyEcma262.test(testCase.value),

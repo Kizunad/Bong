@@ -1,8 +1,8 @@
 //! plan-agent-ui-data-v1 P0 — 天道 UI-as-Data Rust serde 镜像。
 //!
 //! 与 TypeScript `agent/packages/schema/src/payloads/agent-ui.ts` 1:1 对应。
-//! 字段不混用：三个 schema 各自独立（AgentUiRequestCommandV1 / AgentUiRequestPayloadV1 /
-//! AgentUiResponsePayloadV1）。
+//! 字段不混用：四个 schema 各自独立（AgentUiRequestCommandV1 / AgentUiRequestPayloadV1 /
+//! AgentUiResponsePayloadV1 / AgentUiClosePayloadV1）。
 
 use std::collections::HashMap;
 
@@ -39,7 +39,15 @@ pub enum AgentUiActionType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiRequestCommandV1 {
+    #[serde(
+        deserialize_with = "deserialize_agent_ui_request_id",
+        serialize_with = "serialize_agent_ui_request_id"
+    )]
     pub request_id: String,
+    #[serde(
+        deserialize_with = "deserialize_agent_ui_target_player",
+        serialize_with = "serialize_agent_ui_target_player"
+    )]
     pub target_player: String,
     pub xml: String,
     /// 超时时间（ticks），范围 20..=2400，默认 600。
@@ -51,7 +59,7 @@ pub struct AgentUiRequestCommandV1 {
 }
 
 impl AgentUiRequestCommandV1 {
-    /// 校验：request_id / target_player 为 1..=128 字符，realm_gate ∈ [0,6]，
+    /// 校验：request_id / target_player 为 1..=128 Unicode code points，realm_gate ∈ [0,6]，
     /// allowed_button_ids.len() ≤ 16，timeout_ticks ∈ [20,2400]。
     ///
     /// realm_gate 范围：0=不门控，1=醒灵+，2=引气+，3=凝脉+，4=固元+，5=通灵+，6=化虚+（最高境界）。
@@ -104,7 +112,15 @@ fn validate_agent_ui_id(field: &str, value: &str) -> Result<(), String> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiRequestPayloadV1 {
+    #[serde(
+        deserialize_with = "deserialize_agent_ui_request_id",
+        serialize_with = "serialize_agent_ui_request_id"
+    )]
     pub request_id: String,
+    #[serde(
+        deserialize_with = "deserialize_agent_ui_target_player",
+        serialize_with = "serialize_agent_ui_target_player"
+    )]
     pub target_player: String,
     pub xml: String,
     /// 超时时间（ticks），范围 20..=2400。
@@ -161,6 +177,23 @@ where
     serializer.serialize_str(value)
 }
 
+fn deserialize_agent_ui_target_player<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    validate_agent_ui_id("target_player", &value).map_err(serde::de::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_agent_ui_target_player<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    validate_agent_ui_id("target_player", value).map_err(serde::ser::Error::custom)?;
+    serializer.serialize_str(value)
+}
+
 fn deserialize_optional_agent_ui_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -197,6 +230,10 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiClosePayloadV1 {
+    #[serde(
+        deserialize_with = "deserialize_agent_ui_request_id",
+        serialize_with = "serialize_agent_ui_request_id"
+    )]
     pub request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -586,6 +623,145 @@ mod tests {
             ("128 BMP", "界".repeat(128), 128, 128, true),
             ("129 BMP", "界".repeat(129), 129, 129, false),
         ]
+    }
+
+    #[test]
+    fn agent_ui_command_and_server_data_ids_enforce_code_point_wire_boundaries() {
+        for (name, value, expected_utf16, expected_scalars, should_pass) in
+            agent_ui_id_code_point_boundary_cases()
+        {
+            let command_with_request_id = AgentUiRequestCommandV1 {
+                request_id: value.clone(),
+                target_player: "offline:Target".to_string(),
+                xml: "<flow-layout />".to_string(),
+                timeout_ticks: 600,
+                realm_gate: 0,
+                allowed_button_ids: vec![],
+            };
+            assert_eq!(
+                command_with_request_id.validate().is_ok(),
+                should_pass,
+                "AgentUiRequestCommandV1.request_id {name}（{expected_scalars} code points，{expected_utf16} UTF-16 units）validate 结果应为 {should_pass}"
+            );
+            assert_eq!(
+                serde_json::to_value(&command_with_request_id).is_ok(),
+                should_pass,
+                "AgentUiRequestCommandV1.request_id {name} 出站结果应为 {should_pass}"
+            );
+            let command_request_inbound =
+                serde_json::from_value::<AgentUiRequestCommandV1>(serde_json::json!({
+                    "request_id": value.clone(),
+                    "target_player": "offline:Target",
+                    "xml": "<flow-layout />",
+                    "timeout_ticks": 600,
+                    "realm_gate": 0,
+                    "allowed_button_ids": [],
+                }));
+            assert_eq!(
+                command_request_inbound.is_ok(),
+                should_pass,
+                "AgentUiRequestCommandV1.request_id {name} 入站结果应为 {should_pass}，实为：{command_request_inbound:?}"
+            );
+
+            let command_with_target = AgentUiRequestCommandV1 {
+                request_id: "command-target-boundary".to_string(),
+                target_player: value.clone(),
+                xml: "<flow-layout />".to_string(),
+                timeout_ticks: 600,
+                realm_gate: 0,
+                allowed_button_ids: vec![],
+            };
+            assert_eq!(
+                command_with_target.validate().is_ok(),
+                should_pass,
+                "AgentUiRequestCommandV1.target_player {name} validate 结果应为 {should_pass}"
+            );
+            assert_eq!(
+                serde_json::to_value(&command_with_target).is_ok(),
+                should_pass,
+                "AgentUiRequestCommandV1.target_player {name} 出站结果应为 {should_pass}"
+            );
+            let command_target_inbound =
+                serde_json::from_value::<AgentUiRequestCommandV1>(serde_json::json!({
+                    "request_id": "command-target-boundary",
+                    "target_player": value.clone(),
+                    "xml": "<flow-layout />",
+                    "timeout_ticks": 600,
+                    "realm_gate": 0,
+                    "allowed_button_ids": [],
+                }));
+            assert_eq!(
+                command_target_inbound.is_ok(),
+                should_pass,
+                "AgentUiRequestCommandV1.target_player {name} 入站结果应为 {should_pass}，实为：{command_target_inbound:?}"
+            );
+
+            let request_payload_with_request_id = AgentUiRequestPayloadV1 {
+                request_id: value.clone(),
+                target_player: "offline:Target".to_string(),
+                xml: "<flow-layout />".to_string(),
+                timeout_ticks: 600,
+            };
+            assert_eq!(
+                serde_json::to_value(&request_payload_with_request_id).is_ok(),
+                should_pass,
+                "AgentUiRequestPayloadV1.request_id {name} 出站结果应为 {should_pass}"
+            );
+            let request_payload_request_inbound =
+                serde_json::from_value::<AgentUiRequestPayloadV1>(serde_json::json!({
+                    "request_id": value.clone(),
+                    "target_player": "offline:Target",
+                    "xml": "<flow-layout />",
+                    "timeout_ticks": 600,
+                }));
+            assert_eq!(
+                request_payload_request_inbound.is_ok(),
+                should_pass,
+                "AgentUiRequestPayloadV1.request_id {name} 入站结果应为 {should_pass}，实为：{request_payload_request_inbound:?}"
+            );
+
+            let request_payload_with_target = AgentUiRequestPayloadV1 {
+                request_id: "server-data-target-boundary".to_string(),
+                target_player: value.clone(),
+                xml: "<flow-layout />".to_string(),
+                timeout_ticks: 600,
+            };
+            assert_eq!(
+                serde_json::to_value(&request_payload_with_target).is_ok(),
+                should_pass,
+                "AgentUiRequestPayloadV1.target_player {name} 出站结果应为 {should_pass}"
+            );
+            let request_payload_target_inbound =
+                serde_json::from_value::<AgentUiRequestPayloadV1>(serde_json::json!({
+                    "request_id": "server-data-target-boundary",
+                    "target_player": value.clone(),
+                    "xml": "<flow-layout />",
+                    "timeout_ticks": 600,
+                }));
+            assert_eq!(
+                request_payload_target_inbound.is_ok(),
+                should_pass,
+                "AgentUiRequestPayloadV1.target_player {name} 入站结果应为 {should_pass}，实为：{request_payload_target_inbound:?}"
+            );
+
+            let close = AgentUiClosePayloadV1 {
+                request_id: value.clone(),
+                reason: None,
+            };
+            assert_eq!(
+                serde_json::to_value(close).is_ok(),
+                should_pass,
+                "AgentUiClosePayloadV1.request_id {name} 出站结果应为 {should_pass}"
+            );
+            let close_inbound = serde_json::from_value::<AgentUiClosePayloadV1>(
+                serde_json::json!({ "request_id": value.clone() }),
+            );
+            assert_eq!(
+                close_inbound.is_ok(),
+                should_pass,
+                "AgentUiClosePayloadV1.request_id {name} 入站结果应为 {should_pass}，实为：{close_inbound:?}"
+            );
+        }
     }
 
     #[test]

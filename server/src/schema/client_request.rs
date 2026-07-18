@@ -1225,11 +1225,7 @@ mod tests {
             ("65 emoji", "😀".repeat(65), true),
             ("128 emoji", "😀".repeat(128), true),
             ("129 emoji", "😀".repeat(129), false),
-            (
-                "127 BMP + 1 astral",
-                format!("{}😀", "a".repeat(127)),
-                true,
-            ),
+            ("127 BMP + 1 astral", format!("{}😀", "a".repeat(127)), true),
             (
                 "128 BMP + 1 astral",
                 format!("{}😀", "a".repeat(128)),
