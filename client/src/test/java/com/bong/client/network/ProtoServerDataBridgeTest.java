@@ -2199,12 +2199,14 @@ class ProtoServerDataBridgeTest {
 
     @Test
     void bridgePlayerStateNormalizesSeasonStateSummer() {
+        assertEquals(1, Envelope.Season.SEASON_SUMMER.getNumber(),
+                "SEASON_SUMMER 的 protobuf wire numeric 必须固定为 1，重编号应立即撞红");
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setPlayerState(Envelope.PlayerState.newBuilder()
                         .setRealm(Common.Realm.REALM_CONDENSE)
                         .setZone("zone-1")
                         .setSeasonState(Envelope.SeasonState.newBuilder()
-                                .setSeason(Envelope.Season.SEASON_SUMMER)
+                                .setSeasonValue(1)
                                 .setTickIntoPhase(100)
                                 .setPhaseTotalTicks(1000)
                                 .setYearIndex(1)))
@@ -2219,12 +2221,14 @@ class ProtoServerDataBridgeTest {
 
     @Test
     void bridgePlayerStateNormalizesSeasonStateWinter() {
+        assertEquals(3, Envelope.Season.SEASON_WINTER.getNumber(),
+                "SEASON_WINTER 的 protobuf wire numeric 必须固定为 3，重编号应立即撞红");
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setPlayerState(Envelope.PlayerState.newBuilder()
                         .setRealm(Common.Realm.REALM_CONDENSE)
                         .setZone("zone-1")
                         .setSeasonState(Envelope.SeasonState.newBuilder()
-                                .setSeason(Envelope.Season.SEASON_WINTER)
+                                .setSeasonValue(3)
                                 .setTickIntoPhase(100)
                                 .setPhaseTotalTicks(1000)
                                 .setYearIndex(1)))
@@ -2239,12 +2243,14 @@ class ProtoServerDataBridgeTest {
 
     @Test
     void bridgePlayerStateNormalizesSeasonStateSummerToWinter() {
+        assertEquals(2, Envelope.Season.SEASON_SUMMER_TO_WINTER.getNumber(),
+                "SEASON_SUMMER_TO_WINTER 的 protobuf wire numeric 必须固定为 2，重编号应立即撞红");
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setPlayerState(Envelope.PlayerState.newBuilder()
                         .setRealm(Common.Realm.REALM_CONDENSE)
                         .setZone("zone-1")
                         .setSeasonState(Envelope.SeasonState.newBuilder()
-                                .setSeason(Envelope.Season.SEASON_SUMMER_TO_WINTER)
+                                .setSeasonValue(2)
                                 .setTickIntoPhase(1)
                                 .setPhaseTotalTicks(1000)
                                 .setYearIndex(0)))
@@ -2259,12 +2265,14 @@ class ProtoServerDataBridgeTest {
 
     @Test
     void bridgePlayerStateNormalizesSeasonStateWinterToSummer() {
+        assertEquals(4, Envelope.Season.SEASON_WINTER_TO_SUMMER.getNumber(),
+                "SEASON_WINTER_TO_SUMMER 的 protobuf wire numeric 必须固定为 4，重编号应立即撞红");
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setPlayerState(Envelope.PlayerState.newBuilder()
                         .setRealm(Common.Realm.REALM_CONDENSE)
                         .setZone("zone-1")
                         .setSeasonState(Envelope.SeasonState.newBuilder()
-                                .setSeason(Envelope.Season.SEASON_WINTER_TO_SUMMER)
+                                .setSeasonValue(4)
                                 .setTickIntoPhase(1)
                                 .setPhaseTotalTicks(1000)
                                 .setYearIndex(0)))
