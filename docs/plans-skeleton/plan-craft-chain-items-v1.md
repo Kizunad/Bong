@@ -104,4 +104,4 @@
 
 ## §10（升 active 时补）
 
-scope **固定 3 PR**（依赖序列化）：PR-1 = P0+P1（数据+链路+bot，纯逻辑）→ PR-2 = P2 资产（bbmodel 3 轮 + PROMISE + 资源包 sha1；`/gen-image` 不可用时图标以 `[BLOCKED]` 占位随同本 PR，不另拆）→ PR-3 = P3 平衡。升 active 时按 docs/CLAUDE.md §六 模板补全 §10 全文（含"单次 consume-plan 全自动到 merge"章节）后方可消费；升 active 前 §8 全收口（尤其 #1 清单终审 + #2/#3 两处实证）。
+scope **固定 3 PR**（依赖序列化）：PR-1 = P0+P1（数据+链路+bot，纯逻辑）→ PR-2 = P2 资产（bbmodel 3 轮 + PROMISE + 资源包 sha1；`/gen-image` 不可用时图标以 `[BLOCKED]` 占位随同本 PR，不另拆）→ PR-3 = P3 平衡。升 active 时按 docs/CLAUDE.md §六 模板补全 §10 全文（含"单次 consume-plan 全自动到 merge"章节）后方可消费；升 active 前 §8 全收口（尤其 #1 清单终审 + #2/#3 两处实证）。**单 plan 边界与交接规则**：每个实施 PR 仅消费并修改本 plan（对齐「一个 PR 只动一个 plan」），不得在同一 PR 内交叉改动 plan-registry-datafication-v1 及其迁移产物；配方落点只取决于实施当刻 origin/main 现状——datafication P0 已 merge → 直接写 TOML，未 merge → 写 Rust 表行、后续迁移由对方 plan 自己的 PR 完成，本 plan 绝不代跑。
