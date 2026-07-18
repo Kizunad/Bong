@@ -231,9 +231,12 @@ P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归
   其 FAIL 指向旧 Finish Evidence 的主线/review/e2e 事实缺口，以及 handler `tick` 契约与
   finished 状态格式。`5a4d4287` 完成后 generation 4 在该 HEAD 给出 PASS。
 - 主线两次同步后，generation 6 fresh read-only validator（`gpt-5.6-sol`）在
-  `885a0d5f239c91a6634cbcf6cb9172854d433826` 给出固定结论：生产接线、五槽清理、
-  stale tick、schema/守恒及历史测试、主线、e2e/review 证据均闭环；HEAD 对拍一致、
-  worktree clean，且最新 `origin/main` 为该 HEAD 祖先。
+  `885a0d5f239c91a6634cbcf6cb9172854d433826` 给出 PASS；这是最终证据纠偏前的中间历史验证，
+  不作为当前归档文档 HEAD 的最终 validator 结论。
+- 当前归档文档 exact HEAD 的 fresh read-only validator 结论使用稳定外部证据载体记录：
+  `https://github.com/Kizunad/Bong/pull/1230#issuecomment-5011798124`。该固定 URL 原地记录
+  目标 commit SHA、validator 模型、固定 PASS/FAIL、验证范围与时间，避免在 Git 树内写入自身 SHA
+  形成不可满足的自引用；归档核验以该评论中与本文件所在 HEAD 精确一致的记录为准。
 
 ### 跨仓库核验
 
