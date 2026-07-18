@@ -5,6 +5,7 @@ import net.minecraft.client.model.ModelPart;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -65,6 +66,27 @@ class ArmorPartModelTest {
             ArmorPartModel.Mount.RIGHT_FOOT, 1.75f, 2.75f);
     }
 
+    @Test
+    void everyCubeFieldIsPinnedByStableDigest() {
+        Map<String, String> expected = Map.of(
+            "iron_helmet", "3760e3b372a70fda",
+            "iron_chestplate", "4393068e1f6bcc11",
+            "iron_leggings", "4262b62a438d1088",
+            "iron_boots", "0983cc85e5167381",
+            "bone_helmet", "2f9d83e49d2b8dbb",
+            "bone_chestplate", "a6d39dc53ace5bf3",
+            "bone_leggings", "be2b47132fae568a",
+            "bone_boots", "77b698ba4541e7fd"
+        );
+
+        assertEquals(expected.keySet(), ArmorPartModel.modelKeys(), "digest 表必须覆盖全部运行时模型");
+        expected.forEach((modelKey, digest) -> assertEquals(
+            digest,
+            cubeDigest(modelKey),
+            modelKey + " 任一 mount/坐标/尺寸/UV 漂移都必须撞红"
+        ));
+    }
+
     private static void assertPinnedTable(
         String modelKey,
         int expectedCount,
@@ -89,6 +111,31 @@ class ArmorPartModelTest {
         for (ArmorPartModel.Mount mount : cubes.stream().map(ArmorPartModel.ArmorCube::mount).distinct().toList()) {
             assertNotNull(root.getChild(mount.childName()), modelKey + " 缺烘焙 child " + mount);
         }
+    }
+
+    private static String cubeDigest(String modelKey) {
+        long hash = 0xcbf29ce484222325L;
+        for (ArmorPartModel.ArmorCube cube : ArmorPartModel.cubes(modelKey)) {
+            hash = fnv1a(hash, cube.mount().ordinal());
+            hash = fnv1a(hash, Float.floatToIntBits(cube.ox()));
+            hash = fnv1a(hash, Float.floatToIntBits(cube.oy()));
+            hash = fnv1a(hash, Float.floatToIntBits(cube.oz()));
+            hash = fnv1a(hash, Float.floatToIntBits(cube.sx()));
+            hash = fnv1a(hash, Float.floatToIntBits(cube.sy()));
+            hash = fnv1a(hash, Float.floatToIntBits(cube.sz()));
+            hash = fnv1a(hash, cube.u());
+            hash = fnv1a(hash, cube.v());
+        }
+        return String.format("%016x", hash);
+    }
+
+    private static long fnv1a(long hash, int value) {
+        for (int byteIndex = 0; byteIndex < Integer.BYTES; byteIndex++) {
+            hash ^= value & 0xffL;
+            hash *= 0x100000001b3L;
+            value >>>= Byte.SIZE;
+        }
+        return hash;
     }
 
     @Test
