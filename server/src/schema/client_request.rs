@@ -1233,6 +1233,32 @@ mod tests {
             ),
             ("128 BMP", "界".repeat(128), true),
             ("129 BMP", "界".repeat(129), false),
+            ("127 BMP + LF", format!("{}\n", "a".repeat(127)), true),
+            ("128 BMP + LF", format!("{}\n", "a".repeat(128)), false),
+            ("127 BMP + CR", format!("{}\r", "a".repeat(127)), true),
+            ("128 BMP + CR", format!("{}\r", "a".repeat(128)), false),
+            ("126 BMP + CRLF", format!("{}\r\n", "a".repeat(126)), true),
+            ("127 BMP + CRLF", format!("{}\r\n", "a".repeat(127)), false),
+            (
+                "127 BMP + U+2028",
+                format!("{}\u{2028}", "a".repeat(127)),
+                true,
+            ),
+            (
+                "128 BMP + U+2028",
+                format!("{}\u{2028}", "a".repeat(128)),
+                false,
+            ),
+            (
+                "127 BMP + U+2029",
+                format!("{}\u{2029}", "a".repeat(127)),
+                true,
+            ),
+            (
+                "128 BMP + U+2029",
+                format!("{}\u{2029}", "a".repeat(128)),
+                false,
+            ),
         ] {
             let inbound = serde_json::from_value::<ClientRequestV1>(make_json(&request_id));
             assert_eq!(

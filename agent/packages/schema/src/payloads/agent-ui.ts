@@ -33,9 +33,10 @@ export type AgentUiActionType = Static<typeof AgentUiActionType>;
 // 分叉，长度与 well-formed Unicode 约束统一放进同一个 ECMA-262 pattern：无 flag
 // 解释把 surrogate pair 作为第二分支的一次重复，Unicode-aware `u` 解释把 astral
 // 字符作为第一分支的一次重复；两者都精确计数 1..=128 个 Unicode code points，
-// 并拒绝 JavaScript 可表示、但 Rust serde_json 无法接收的 lone surrogate。
+// 并拒绝 JavaScript 可表示、但 Rust serde_json 无法接收的 lone surrogate。尾部
+// `(?![\s\S])` 显式要求不存在任何剩余 code unit，避免依赖 `$` 的宿主尾锚解释。
 const AGENT_UI_ID_PATTERN =
-  "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}$";
+  "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}(?![\\s\\S])";
 
 function agentUiIdV1() {
   return Type.String({

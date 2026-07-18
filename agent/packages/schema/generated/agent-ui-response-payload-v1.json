@@ -8,7 +8,7 @@
   ],
   "properties": {
     "request_id": {
-      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}$",
+      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}(?![\\s\\S])",
       "type": "string"
     },
     "action": {
@@ -48,7 +48,7 @@
       }
     },
     "target_player": {
-      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}$",
+      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}(?![\\s\\S])",
       "type": "string"
     }
   }
