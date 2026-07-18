@@ -112,6 +112,9 @@
 - `f1121724992a020db4472f75c39eea4e88ddc2f8` — 2026-07-18：用 `foldCount` / `displayText` 锁定两种事件各发布一次，关闭 UnifiedEventStream folding 假绿。
 - `970d136a1bbc014161eb07975b4cf6ae50a35e1b` — 2026-07-18：合并最新 `origin/main` 后复验；合并仅带入无关 skeleton / reminder 文档，client 生产与测试 blob 保持不变。
 - `4dceecb8c71f8d3f800dc968f07b16f99c9bd540` — 2026-07-18：原地校正唯一 Finish Evidence；相较 `970d136a` 仅修改本归档文档，`ProtoServerDataBridge.java` 与 `ProtoServerDataBridgeTest.java` 的 blob 保持不变。
+- `e3391a6d190368a2613bbdb657e9e0bc1a21aff9` — 2026-07-18：校正最终验收绑定，把旧 SHA / CI 明确降为历史快照，并保留最终待合入 HEAD 的动态对拍规则。
+- `b66fa4a73189c38e12d46ccd3369bb5dafecb56c` — 2026-07-18：第一次紧邻 fetch 合并最新主线 `62f90990e7b23d19b56e847dcb47c761550bd7f4`；合入技能图标与独孤 / 蜗流相关跨栈变更后完成 client、server 全门禁复验。
+- `e4a4cce4d8865481e3cf523a086e9da43bdee8c5` — 2026-07-18：第二次紧邻 fetch 合并最新主线 `9a9d48a759b548be756efbd81e07d265de28937c`；新增内容仅为 `docs/plans-skeleton/plan-satiety-hydration-v1.md`，随后对该 SHA 完成 fresh REBASE validator。
 
 ### 测试结果
 
@@ -120,6 +123,8 @@
 - **静态/对抗门**：`git diff --check` 通过；fresh read-only validator 对 `f1121724992a020db4472f75c39eea4e88ddc2f8` 给出 `PASS`，核验连续迁移、唯一 key / HUD、事件顺序、防 folding 断言与 protobuf Java API。合并主线后，独立 `codex exec --ephemeral --sandbox read-only` validator（`gpt-5.6-sol`）又对 `970d136a1bbc014161eb07975b4cf6ae50a35e1b` 给出 `PASS`；两轮均只做静态对抗核验，不冒充可执行测试。
 - **主线同步**：2026-07-18 执行 `git fetch origin` 紧邻合并 `origin/main`，生成 `970d136a1bbc014161eb07975b4cf6ae50a35e1b`；无冲突，仅带入 10 个无关 `docs/plans-skeleton/*` / `reminder.md` 变更，`ProtoServerDataBridge.java` 与 `ProtoServerDataBridgeTest.java` 的 blob 和合并前一致。
 - **已完成的 PR 可执行 gate 快照**：[GitHub Actions run 29635120100](https://github.com/Kizunad/Bong/actions/runs/29635120100)（`E2E Redis Smoke`，job `88055990976`）精确绑定 `4dceecb8c71f8d3f800dc968f07b16f99c9bd540`，于 2026-07-18 `SUCCESS`：`Setup Java 17`、`Client stage (gradlew test)`、schema build/check/test/generate、agent check/test、server release build、`Server stage (cargo test)`、smoke/e2e 与 bot e2e 全部成功。
+- **跨栈本地门禁快照**：第一次后续主线同步生成 `b66fa4a73189c38e12d46ccd3369bb5dafecb56c` 后，Java / Javac 均为 `17.0.19`；`cd client && ./gradlew test build` 报告 `4123 tests / 0 failures / 0 errors / 0 skipped`；`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全部通过，其中 Rust 测试为 `11791 passed / 0 failed / 6 ignored`。这些结果覆盖该次主线带入的 client / server 变更。
+- **第二次主线同步与 REBASE 对抗门**：再次执行 `git fetch origin` 紧邻合并 `origin/main`，生成 `e4a4cce4d8865481e3cf523a086e9da43bdee8c5`；相较 `b66fa4a7` 仅新增一份饱食 / 饮水 skeleton，不改功能代码。fresh read-only validator（`gpt-5.6-sol`）对该 SHA 固定给出 `PASS`：工作树洁净、`origin/main` 为祖先，旧 HEAD / CI 元数据矛盾已消除，两次同步无修复路径冲突，唯一归档与 Evidence 无功能断链。
 - **最终 PR HEAD 绑定规则**：静态归档不再把任何先前 SHA 称为“当前 / 最终 HEAD”，因为修正证据的 commit 本身会生成新 SHA。待合入 `headRefOid`、fresh validator SHA 与最终 client/e2e 成功 run 必须在 PR Body 和平台 Checks 中精确对拍；任一项不一致即不得 merge。该动态平台记录只补充最终绑定，不改写上述已完成历史快照。
 
 ### 跨仓库核验
