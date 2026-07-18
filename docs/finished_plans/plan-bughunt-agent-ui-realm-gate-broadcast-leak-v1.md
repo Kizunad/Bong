@@ -101,25 +101,27 @@
 - `3a8dd33d`（2026-07-18）：把生成物字段数量 pin 收紧为六个精确 JSON path，消除字段等量替换的假绿窗口。
 - `ad463518899413bff035f5f1292fcfe8bef849ee`（2026-07-18）：用显式绝对结束断言消除尾锚歧义，并补齐五类行终止符的跨端 code-point 边界矩阵。
 - `49eee364dd3801bcd96883bc141d136143a95fa4`（2026-07-18）：合并 `origin/main=001bbe7d82104f5dbdd16680dd9a122cab6eae40` 的技能 A/V 与 combat 变更，并在合并树复跑完整 server/client 门禁。
+- `1ac6b96f410f8d62e4f6a21b71e74933b6e3da20`（2026-07-18）：修复 narration 测试先 drain typed payload、再从空缓冲检查 chat mirror 的假绿；六组测试改为单次收包同批分类，并加入 narration + `GameMessageS2c` 正向 canary。
+- `bf0d65823ab6b13c739e13722f033003f6bb83f9`（2026-07-18）：紧邻 fetch 后合并 `origin/main=62f90990e7b23d19b56e847dcb47c761550bd7f4`；主线只带入两份无关 skeleton，未改变受验代码树。
 
 ### 测试结果
 
 - Python 协议：最终代码树执行 `python3 -m unittest scripts.bot.test_protocol`，126/126 passed；冲突决议同时保留 protobuf narration field 3 与 `zone_info` field 4 解码及各自测试。
 - Schema：最终受影响树 `ad463518` 执行 `cd agent && npm run build -w @bong/schema`，随后 `cd agent/packages/schema && npm run check && npm test`，均退出 0；406 份 generated artifact freshness 通过，29 files / 892 tests passed，其中 `agent-ui.test.ts` 54/54、`generated-artifacts.test.ts` 12/12。宿主 Ajv 8.12.0 对三份生成物六个字段执行 78/78 断言；全新 validator 同 SHA 结论为 `PASS ad463518899413bff035f5f1292fcfe8bef849ee`，0 blocker / 0 major / 0 minor。
 - Tiandao：最终受影响树 `ad463518` 执行 `cd agent/packages/tiandao && npm test` 退出 0，72 files / 831 tests passed。测试生成的 `tiandao-snapshot-200.json` / `300.json` 未删除，已保全于 `.sisyphus/evidence/pr1217-tiandao-generated/final-ad463518/`；哈希继续为 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`、`eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。
-- Server：最终合并树 `49eee364` 在 `/tmp/bong-compile-slot-1.lock` 独占锁内执行 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与完整 `cargo test`，均退出 0；lib 11,784、binary 11、启动集成 1、背包 e2e 4，合计 11,800 passed / 0 failed / 6 ignored。
+- Server：测试修复树 `1ac6b96f` 在 `/tmp/bong-compile-slot-1.lock` 独占锁内执行 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与完整 `cargo test`，均退出 0；lib 11,785、binary 11、启动集成 1、背包 e2e 4，合计 11,801 passed / 0 failed / 6 ignored。`network::tests::narration_tests` 10/10 passed，其中正向 canary 证明一次 `collect_received()` 能从同批帧同时观察 typed narration 与一个人工 `GameMessageS2c`，零 chat mirror 断言不再可能因二次 drain 假绿。
 - Worldgen：合并 `9d2e29d0` 后 `bash scripts/dev-reload.sh` 退出 0，overworld 306 tiles 与 TSY 9 tiles 后验全绿、server 启动读入 306 tiles；`test_zone_overlap_policy.py` 8/8 passed。额外全量 pytest 为 911 passed / 1 failed，唯一失败 `CompoundFlattenTests::test_flatten_preserves_outside_radius` 在整个 `worldgen/` 与 `origin/main` 字节一致时可复现，记录为 main 同环境基线而非本 PR 门禁绿灯。
 - Client：最终合并树 `49eee364` 以 Java `17.0.19` 执行 `./gradlew --no-daemon test build`，退出 0、`BUILD SUCCESSFUL`；471 份 JUnit XML 汇总 4,118 tests / 0 failures / 0 errors / 0 skipped。
 - 真实双 Bot/专用 Redis：最终 `4cc9e293` 的 `agent_ui_realm_gate_private_narration` 场景 2.9s PASS，`total=1 pass=1 skip=0 fail=0`。Redis 链依次记录 `bong:agent_ui_cmd`（`target=offline:Bp4cRGA`、`realm_gate=5`）、`bong:agent_ui_response`（同 target、`player_realm=1`、`required_realm=5`）与 `bong:agent_narrate`（`scope=player`、`style=system_warning`）；server 最终只投递 1 recipient，旁观 Bot 无泄漏，双方无 chat mirror。证据位于 `.sisyphus/evidence/pr1217-final-gates-4cc9e293/09-bot-e2e-dedicated-20260718T123407/`。
 - Fabric renderer runtime：云端无 WSLg socket，故以用户态解包的 Xvfb + Mesa 软件渲染实际执行 Java 17 `runClient`；日志命中 MC `1.20.1` 窗口、LWJGL `3.3.1`、`Bong Client bootstrap ready`、实体模型注册以及 Armor/WornPack/Mutation `FeatureRenderer registered`，fatal scan 为空。证据位于 `.sisyphus/evidence/pr1217-final-gates-4cc9e293/10-fabric-renderer-runtime-20260718T124321/`。
-- 主线同步：`ad463518` 的 Schema/Tiandao/server 门禁通过后，紧邻执行 `git fetch origin && git merge origin/main`，合并 commit 为 `49eee364`，`origin/main=001bbe7d82104f5dbdd16680dd9a122cab6eae40` 是 HEAD 祖先。该 merge 带入 server Dugu/Woliu combat 代码、client 技能图标/快照与图片生成脚本，未触及 Agent UI/schema/Tiandao 路径；因此按触栈完整复跑 server 与 Java 17 client，分别以 11,800/4,118 tests 全绿收口，Schema 892 与 Tiandao 831 的 `ad463518` 证据继续有效。
+- 主线同步：`ad463518` 的 Schema/Tiandao/server 门禁通过后，`49eee364` 合入 `origin/main=001bbe7d`，并按触栈以 server 11,800 / client 4,118 tests 全绿收口。CodeRabbit 发现测试观察器会二次 drain 后，`1ac6b96f` 修正全部六组同类调用并重跑 server 完整门禁；随后紧邻 `git fetch origin && git merge origin/main` 生成 `bf0d6582`。最新 `origin/main=62f90990` 仅新增两份 `docs/plans-skeleton/` 文档，未触及 server/client/agent/schema 或本 plan，因此 `1ac6b96f` 的 11,801 tests 与既有受影响栈证据继续适用于该合并树。
 
 ### 跨仓库核验
 
 - schema ↔ server：TypeBox 与三份 generated artifact 通过 `{1,128}` well-formed Unicode pattern 按 code points 计数，并以 `(?![\s\S])` 表达绝对结束；Rust 以 `chars().count()` 镜像。65/128 emoji、129 overflow、BMP/astral 混合、LF/CR/CRLF/U+2028/U+2029、空串、显式 `null` 与 lone surrogate 的接受集合一致。独立 `agent-ui-response-payload-v1.json` 继续固化 optional `target_player`，client-request/server-data 两份聚合生成物的六个相关字段也有精确 JSON path pin。
 - server → agent：`receive_agent_ui_cmd_system` 的真实 gate reject response 经生产 Redis encoder 把 canonical `target_player` 交给 `UiResponseConsumer`。
 - agent → server：生产 consumer 输出经生产 `bong:agent_narrate` parser 进入 `process_redis_inbound`，`NarrationScope::Player` 最终选择唯一目标玩家；legacy 缺失或空白目标只记录 warning/丢弃计数，不发布 narration，因而不存在 broadcast 旁路。
-- server → client：目标玩家恰好收到一条 typed `bong:server_data` narration，旁观者无 typed payload；两名玩家都没有 `GameMessageS2c` chat mirror。
+- server → client：目标玩家恰好收到一条 typed `bong:server_data` narration，旁观者无 typed payload；每个 mock client 只执行一次 `collect_received()`，并从同一批帧同时分类 typed narration 与 `GameMessageS2c`，因此“两名玩家都没有 chat mirror”是有效负断言而非空缓冲假绿。
 - client runtime：实际 Fabric renderer 线程完成 Bong 网络/HUD/动画/实体与 FeatureRenderer bootstrap，并创建 `Minecraft* 1.20.1` 窗口；不是只靠 JUnit classpath 或静态资源测试推断。
 - 提交元数据：逐枚执行 `git interpret-trailers --parse` 审计 `origin/main..HEAD`，所有本 PR commit 均存在精确 `Model:` trailer；早期提交为 `gpt-5.1`，返工提交为 `gpt-5.6-sol-max`，后续协议/e2e/主线复验与证据更新为 `gpt-5`。
 
