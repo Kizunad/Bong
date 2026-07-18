@@ -561,3 +561,18 @@ Bong 当前"正架 cross punch"基线。所有数值都经过 §11 渲染工具�
 - 想让 **左手护得更紧**：`leftArm.bend` guard 从 100 → 110（forearm 更折贴脸），impact 时再加一波 load-snap 到 115
 
 ---
+
+---
+
+## §13 技能动画精度标准（plan-skill-anim-fidelity-v1 P0 定稿，2026-07-18；后续所有新招动画沿用）
+
+> 本节由 plan-skill-anim-fidelity-v1 P0 明文授权追加（该 plan §动画精度标准 + §8.1 决议的正典化入档）；只追加不改写本文档既有段落。
+
+1. **三段式结构**：anticipation（蓄势）→ strike/active（发力）→ recovery（收势），每段至少 2 个帧点；打击定格（hold 2-4 tick）算 strike 段内。
+2. **时长对齐**：非循环招 `endTick = cast_ticks + recovery(4-8 tick)`——cast 完成瞬间是发力顶点，之后收势；`cast_ticks ≥ 40` 的长引导招必须拆「循环蓄力段（isLoop）+ release 段」两段动画（`sword_heaven_gate_charge/_release` 先例）；`cast_ticks ≤ 2` 的瞬发招做 6-12 tick「爆发帧 + 收势」，不因 cast 短而砍收势。
+3. **关键帧密度**：主要运动轴每 ≤4 tick 一个帧点；easing 必须显式声明，主打击轴禁用 linear（蓄势用 easeOut 族、发力用 easeIn 族、收势 easeInOutSine）。
+4. **重心与全身协调**：发力招必须有 torso 拧转 + body 位移（不许只挥手臂）；弯腰姿态走 torso+legs 同向 pitch + body.z 补偿（torso/legs 不共祖，见 §上文库坑）。
+5. **库坑红线**（违反即打回）：循环动画每个用到的轴在 endTick 补同值关键帧（防单帧衰减）；`leg.pitch ≤ 40°`，大幅度腿部动作由 `bend` 承担；整体位移/旋转用 `body.*`，上半身独立扭转用 `torso.yaw`。
+6. **循环动画停止路径红线**（plan §8.1 #3）：任何 `isLoop:true` 引导段动画，落地时必须同批交付停止路径——正常完成时刻由 release 段 PlayAnim 同优先级覆盖或显式 `StopAnim`；打断时刻必须显式 `StopAnim`（既有先例：`full_power_emit.rs` ChargeInterrupted → StopAnim(windup_charge)）。无停止路径的循环动画不予合入。
+7. **工具流**：动画一律脚本生成（`client/tools/gen_<anim>.py`，参照 `gen_fist_punch_right.py` 先例）便于参数化迭代；每批走 `render_animation.py` 三视图 headless 预览；按视觉资产纪律 3 轮打磨 + 终轮 `<PROMISE>` 担保。
+8. **机械化对拍**：cast_ticks ↔ 动画时长契约由 client 侧对拍测试锁定（快照 `technique_cast_ticks_snapshot.json` 由 server `TECHNIQUE_DEFINITIONS` 单向生成）；现状不达标项走只缩不涨 allowlist，清零 = plan-skill-anim-fidelity-v1 P1-P4 完成的机械判据。
