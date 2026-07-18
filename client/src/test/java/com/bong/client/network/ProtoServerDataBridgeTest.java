@@ -15,6 +15,7 @@ import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.hud.PillBuffHudPlanner;
 import com.bong.client.hud.PoisonTraitHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.social.NicheGuardianPanel;
 import com.bong.client.social.NicheGuardianStore;
 import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.PlayerStateViewModel;
@@ -2170,6 +2171,7 @@ class ProtoServerDataBridgeTest {
     @Test
     void bridgeNicheGuardianRouteUpdatesGuardianStoreWithoutRawEnum() {
         NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
                         .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_BONDED_DAOXIANG)
@@ -2189,10 +2191,29 @@ class ProtoServerDataBridgeTest {
         assertFalse(NicheGuardianStore.guardianStatuses().keySet().stream()
                 .anyMatch(key -> key.startsWith("GUARDIAN_KIND_")),
                 "NicheGuardianStore 不应出现任何裸 GUARDIAN_KIND_ 前缀 key");
+
+        NicheGuardianStore.GuardianStatus status =
+                NicheGuardianStore.guardianStatuses().get("bonded_daoxiang");
+        assertNotNull(status, "fatigue route 必须写入规范化后的守护状态");
+        assertEquals(2, status.chargesRemaining(), "fatigue route 必须保留剩余触发次数");
+        assertFalse(status.broken(), "fatigue 不得误把守护状态标成 broken");
+        assertEquals(List.of("bonded_daoxiang x2"), NicheGuardianPanel.buildLines(),
+                "常驻守护 HUD 必须显示 legacy snake_case，不能泄漏 proto 枚举");
+
+        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
+        assertEquals(1, events.size(), "fatigue route 必须生成且只生成一条玩家可见事件");
+        UnifiedEvent event = events.get(0);
+        assertEquals(UnifiedEvent.Channel.SOCIAL, event.channel());
+        assertEquals(UnifiedEvent.Priority.P2_NORMAL, event.priority());
+        assertEquals("niche_guardian_fatigue:bonded_daoxiang", event.sourceTag());
+        assertEquals("守家载体损耗：bonded_daoxiang 剩余 2 次", event.text(),
+                "事件流文本必须使用规范化 guardian_kind");
     }
 
     @Test
     void bridgeNicheGuardianBrokenRouteRecordsNormalizedBrokenStateAndIntruder() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
                         .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
@@ -2222,10 +2243,24 @@ class ProtoServerDataBridgeTest {
         assertFalse(NicheGuardianStore.guardianStatuses().keySet().stream()
                 .anyMatch(key -> key.startsWith("GUARDIAN_KIND_")),
                 "broken route 完成后 store 中不得出现裸 GUARDIAN_KIND_ key");
+        assertEquals(List.of("zhenfa_trap x0 broken", "龛侵 char:raider 物品 0"),
+                NicheGuardianPanel.buildLines(),
+                "常驻守护 HUD 必须同时显示规范化 broken 状态与入侵者");
+
+        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
+        assertEquals(1, events.size(), "broken route 必须生成且只生成一条玩家可见事件");
+        UnifiedEvent event = events.get(0);
+        assertEquals(UnifiedEvent.Channel.SOCIAL, event.channel());
+        assertEquals(UnifiedEvent.Priority.P1_IMPORTANT, event.priority());
+        assertEquals("niche_guardian_broken:zhenfa_trap", event.sourceTag());
+        assertEquals("守家载体破损：zhenfa_trap", event.text(),
+                "broken 事件流文本必须使用规范化 guardian_kind");
     }
 
     @Test
     void bridgeNicheGuardianFatigueWithoutGuardianKindRoutesNoOpWithoutStatePollution() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
                         .setChargesRemaining(4))
@@ -2245,10 +2280,16 @@ class ProtoServerDataBridgeTest {
                 "缺 guardian_kind 的 payload 不得污染守护状态 store");
         assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
                 "缺 guardian_kind 的 payload 不得产生入侵/HUD 事件");
+        assertEquals(0, UnifiedEventStore.stream().size(),
+                "缺 guardian_kind 的 payload 不得写入统一事件流");
+        assertEquals(List.of("无守家载体"), NicheGuardianPanel.buildLines(),
+                "缺 guardian_kind 时 HUD 必须保持空态，不能显示 unspecified");
     }
 
     @Test
     void bridgeNicheGuardianBrokenUnspecifiedKindRoutesNoOpWithoutStatePollution() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
                         .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_UNSPECIFIED)
@@ -2270,6 +2311,40 @@ class ProtoServerDataBridgeTest {
                 "UNSPECIFIED 不得创建名为 'unspecified' 或带 proto 前缀的守护状态");
         assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
                 "UNSPECIFIED broken payload 不得仅凭 intruder_id 产生入侵/HUD 事件");
+        assertEquals(0, UnifiedEventStore.stream().size(),
+                "UNSPECIFIED 不得生成名为 unspecified 的统一事件");
+        assertEquals(List.of("无守家载体"), NicheGuardianPanel.buildLines(),
+                "UNSPECIFIED 必须保留 HUD 空态，不能显示 unspecified");
+    }
+
+    @Test
+    void bridgeNicheGuardianUnknownKindNumberRoutesNoOpWithoutStatePollution() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKindValue(999)
+                        .setChargesRemaining(1))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should preserve protobuf unknown-enum forward compatibility");
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertTrue(json.get("guardian_kind").getAsJsonPrimitive().isNumber(),
+                "未知 enum number 应保持数值，不能伪装成 legacy guardian_kind 字符串");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isNoOp(),
+                "未知 guardian enum number 必须由 legacy string gate 安全 no-op，实际：" + route.logMessage());
+        assertTrue(NicheGuardianStore.guardianStatuses().isEmpty(),
+                "未知 enum number 不得污染守护状态 store");
+        assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
+                "未知 enum number 不得产生入侵告警");
+        assertEquals(0, UnifiedEventStore.stream().size(),
+                "未知 enum number 不得写入统一事件流");
+        assertEquals(List.of("无守家载体"), NicheGuardianPanel.buildLines(),
+                "未知 enum number 必须保留 HUD 空态");
     }
 
     // ─── plan-bughunt-season-state-proto-enum: player_state.season_state.season 嵌套枚举 ───
