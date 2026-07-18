@@ -2301,6 +2301,10 @@ class ProtoServerDataBridgeTest {
         assertEquals(UnifiedEvent.Priority.P2_NORMAL, fatigueEvent.priority());
         assertEquals("niche_guardian_fatigue:zhenfa_trap", fatigueEvent.sourceTag());
         assertEquals("守家载体损耗：zhenfa_trap 剩余 3 次", fatigueEvent.text());
+        assertEquals(1, fatigueEvent.foldCount(),
+                "fatigue route 不得重复发布后被 UnifiedEventStream 折叠成假单条");
+        assertEquals(fatigueEvent.text(), fatigueEvent.displayText(),
+                "fatigue 玩家文本不得出现 ×N 折叠后缀");
 
         Envelope.ServerDataEnvelope brokenEnvelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
@@ -2351,10 +2355,18 @@ class ProtoServerDataBridgeTest {
         assertEquals(UnifiedEvent.Priority.P2_NORMAL, events.get(0).priority());
         assertEquals("niche_guardian_fatigue:zhenfa_trap", events.get(0).sourceTag());
         assertEquals("守家载体损耗：zhenfa_trap 剩余 3 次", events.get(0).text());
+        assertEquals(1, events.get(0).foldCount(),
+                "最终事件流中的 fatigue 事件不得折叠重复发布");
+        assertEquals(events.get(0).text(), events.get(0).displayText(),
+                "最终 fatigue displayText 不得带 ×N 后缀");
         assertEquals(UnifiedEvent.Channel.SOCIAL, events.get(1).channel());
         assertEquals(UnifiedEvent.Priority.P1_IMPORTANT, events.get(1).priority());
         assertEquals("niche_guardian_broken:zhenfa_trap", events.get(1).sourceTag());
         assertEquals("守家载体破损：zhenfa_trap", events.get(1).text());
+        assertEquals(1, events.get(1).foldCount(),
+                "最终事件流中的 broken 事件不得折叠重复发布");
+        assertEquals(events.get(1).text(), events.get(1).displayText(),
+                "最终 broken displayText 不得带 ×N 后缀");
         assertFalse(events.stream().anyMatch(event -> event.sourceTag().contains("GUARDIAN_KIND_")
                 || event.text().contains("GUARDIAN_KIND_")),
                 "连续链统一事件不得泄漏 proto enum 前缀");
