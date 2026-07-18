@@ -194,3 +194,63 @@
 - 每 PR 独立实施 subagent（context 隔离），动画批次 PR 强制 3 轮打磨 commit `(round N/3)` + 终轮 `<PROMISE>`。
 - CodeRabbit / `/review` 等待走 ScheduleWakeup 1200s 协议，修完意见重等 re-review。
 - **单次 consume-plan 全自动到 merge**：用户提交 `/consume-plan` 后全自动走完实施→review→merge→归档至 `docs/finished_plans/`，无需人工值守；动画属视觉资产，每批终轮三视图 PNG 附 PR body 供人工抽查。
+
+## 附录 A —— 49 招全量审计矩阵（P0 落档，2026-07-18）
+
+> 元数据由 `player_animation/*.json` 全量解析 + `TECHNIQUE_DEFINITIONS` cast_ticks + 各发射映射逐条核对产出。
+> 分级：A 达标 / B 精修 / C 重制（有专属但快闪/模板/错配）/ D 缺失（无专属动画：借用别家或 None）/ N/A（NPC mob 无 PlayAnim 通道）。
+> 分级由 P0 机械规则 + 调研初判；各批实施时逐招按精度标准复核，可调级但只许更严不许放宽。「模板产物」判据 = 81 轴 KF（27 轴 × 首/中/尾 3 帧）特征。
+
+| skill_id | cast | anim_id | endTick | loop | 帧点 | 轴KF | 借用 | 分级 | 批次 | 备注 |
+|---|--:|---|--:|---|--:|--:|---|---|---|---|
+| `sword.cleave` | 16 | `sword_cleave` | 16 | — | 19 | 19 | — | **B** | P1 | 专属；endTick=cast 但无 recovery、密度低 |
+| `sword.thrust` | 10 | `sword_thrust` | 10 | — | 20 | 20 | — | **C** | P1 | 专属；快闪+密度低 |
+| `sword.parry` | 4 | `sword_parry` | 12 | — | 21 | 21 | — | **B** | P1 | 专属；密度低 |
+| `sword.infuse` | 40 | `sword_infuse` | 40 | — | 29 | 29 | — | **B** | P1 | 专属；无 recovery、密度低 |
+| `movement.dash` | 0 | `dash_forward` | 4 | — | 13 | 21 | — | **C** | P3 | 瞬发 4t 快闪；密度低 |
+| `shield_block` | 0 | `shield_raise` | 6 | ✓ | 35 | 35 | — | **B** | P3 | 循环举盾+StopAnim 闭环已有；密度低 |
+| `burst_meridian.beng_quan` | 8 | `beng_quan` | 8 | — | 36 | 36 | — | **C** | P1 | 专属；8t 快闪 |
+| `burst_meridian.tie_shan_kao` | 10 | `beng_quan` | 8 | — | 36 | 36 | ✓ | **D** | P3 | 借 beng_quan（靠撞≠出拳） |
+| `burst_meridian.xue_beng_bu` | 6 | `beng_quan` | 8 | — | 36 | 36 | ✓ | **D** | P3 | 借 beng_quan（步法≠出拳） |
+| `burst_meridian.ni_mai_hu_ti` | 12 | —— | — | — | — | — | — | **D** | P3 | anim_id: None（burst_meridian.rs:637） |
+| `baomai.full_power_charge` | 1 | `windup_charge` | 16 | ✓ | 81 | 81 | ✓ | **D** | P3 | 借通用蓄力（loop+StopAnim 闭环在） |
+| `baomai.full_power_release` | 1 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P3 | 借通用爆发（4t 模板） |
+| `zhenmai.parry` | 1 | `zhenmai_parry` | 4 | — | 9 | 13 | — | **C** | P1 | 4t/13KF 快闪 |
+| `zhenmai.neutralize` | 4 | `zhenmai_neutralize` | 6 | — | 7 | 12 | — | **C** | P1 | 6t/12KF 快闪 |
+| `zhenmai.multipoint` | 6 | `zhenmai_multipoint` | 8 | — | 9 | 19 | — | **C** | P1 | 8t/19KF 快闪 |
+| `zhenmai.harden` | 5 | `zhenmai_harden` | 7 | — | 7 | 11 | — | **C** | P1 | 7t/11KF 快闪 |
+| `zhenmai.sever_chain` | 8 | `zhenmai_sever_chain` | 10 | — | 11 | 19 | — | **C** | P1 | 10t/19KF 快闪 |
+| `woliu.vortex` | 1 | —— | — | — | — | — | — | **D** | P3 | v1 涡流术无动画发射（combat/woliu.rs 零 PlayAnim） |
+| `woliu.hold` | 1 | `vortex_palm_open` | 12 | — | 14 | 40 | — | **B** | P3 | 12t/40KF；瞬发标准内但密度可精修 |
+| `woliu.burst` | 1 | `palm_strike` | 6 | — | 81 | 81 | ✓ | **D** | P3 | 借通用 palm_strike（6t 模板 81KF） |
+| `woliu.mouth` | 6 | `palm_thrust` | 12 | — | 105 | 105 | ✓ | **D** | P3 | 借通用 palm_thrust |
+| `woliu.pull` | 5 | `woliu_vacuum_lock` | 10 | — | 8 | 32 | ✓ | **D** | P3 | 与进阶 vacuum_lock 共用 |
+| `woliu.heart` | 10 | `vortex_spiral_stance` | 20 | — | 15 | 53 | — | **B** | P3 | 20t/53KF；可精修 |
+| `woliu.vacuum_palm` | 6 | `woliu_vacuum_palm` | 8 | — | 6 | 18 | — | **C** | P3 | 8t/18KF 快闪 |
+| `woliu.vortex_shield` | 10 | `woliu_vortex_shield` | 18 | ✓ | 9 | 33 | — | **B** | P3 | 18t loop/33KF；停止路径待核 |
+| `woliu.vacuum_lock` | 8 | `woliu_vacuum_lock` | 10 | — | 8 | 32 | — | **C** | P3 | 10t/32KF 快闪 |
+| `woliu.vortex_resonance` | 80 | `woliu_vortex_resonance` | 80 | ✓ | 9 | 25 | — | **A** | — | 80t loop 对齐 cast=80 ✓（正例） |
+| `woliu.turbulence_burst` | 40 | `woliu_turbulence_burst` | 40 | — | 11 | 35 | — | **B** | P3 | 40t/35KF；cast≥40 应两段式 |
+| `dugu.shoot_needle` | 1 | `dugu_needle_throw` | 8 | — | 13 | 35 | — | **C** | P3 | 8t/35KF 快闪 |
+| `dugu.infuse_poison` | 1 | `dugu_needle_throw` | 8 | — | 13 | 35 | ✓ | **D** | P3 | 与凝针共用一条动画 |
+| `tuike.don` | 12 | `tuike_don_skin` | 16 | — | 16 | 48 | — | **B** | P3 | 16t/48KF；补 recovery 即达标 |
+| `tuike.shed` | 8 | `tuike_shed_burst` | 12 | — | 20 | 56 | — | **B** | P3 | 12t/56KF；可精修 |
+| `tuike.transfer_taint` | 10 | `tuike_taint_transfer` | 14 | — | 19 | 55 | — | **B** | P3 | 14t/55KF；可精修 |
+| `anqi.charge_carrier` | 400 | `windup_charge` | 16 | ✓ | 81 | 81 | ✓ | **D** | P2 | 借通用蓄力；cast=400 需专属循环结印段+release |
+| `anqi.single_snipe` | 6 | `sword_stab` | 8 | — | 124 | 124 | ✓ | **D** | P2 | 借剑刺（暗器≠剑） |
+| `anqi.multi_shot` | 30 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P2 | 借通用爆发；4t vs cast=30 错配 26t 静止 |
+| `anqi.soul_inject` | 20 | `cast_invoke` | 15 | — | 75 | 75 | ✓ | **D** | P2 | 借通用施法 |
+| `anqi.armor_pierce` | 40 | `cast_invoke` | 15 | — | 75 | 75 | ✓ | **D** | P2 | 借通用施法；15t vs cast=40 错配 |
+| `anqi.echo_fractal` | 60 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P2 | 借通用爆发；4t vs cast=60 错配 56t 静止 |
+| `body.guangbo_ticao` | 60 | `guangbo_ticao` | 150 | — | 288 | 288 | — | **A** | — | 150t/288KF 高完成度 |
+| `sword_path.condense_edge` | 12 | `sword_cleave` | 16 | — | 19 | 19 | ✓ | **D** | P2 | 借基础横劈 |
+| `sword_path.qi_slash` | 20 | `sword_thrust` | 10 | — | 20 | 20 | ✓ | **D** | P2 | 借基础刺击 |
+| `sword_path.resonance` | 30 | `sword_cleave` | 16 | — | 19 | 19 | ✓ | **D** | P2 | 借基础横劈；16t vs cast=30 错配 |
+| `sword_path.manifest` | 40 | `sword_manifest_cast` | 40 | — | 32 | 32 | — | **B** | P2 | 40t/32KF 对齐 cast；补 recovery+密度 |
+| `sword_path.heaven_gate` | 80 | `sword_heaven_gate_charge(+release)` | 60+20 | — | 32+24 | 32+24 | — | **B** | P2 | 两段式先例；charge 60t 非循环 hold 末帧，精修密度 |
+| `npc.heal_basic` | 20 | —— | — | — | — | — | — | **N/A** | P5 粒子 | NPC mob 无 PlayAnim 通道（§8.1 #2） |
+| `npc.buff_speed` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
+| `npc.buff_defense` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
+| `morph.yixing` | 60 | `morph_cast` | 30 | — | 42 | 42 | — | **C** | P3 | 30t vs cast=60 错配 30t 静止（§8.1 #2） |
+
+**分级统计**：A×2 / B×13 / C×12 / D×19 / N-A×3（46 玩家招中 B+C+D = 44 条入 P1-P4 重制/精修清单，与 §8.1 #2 决议一致）。
