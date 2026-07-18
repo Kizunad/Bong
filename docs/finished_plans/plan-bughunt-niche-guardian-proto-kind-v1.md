@@ -111,14 +111,16 @@
 - `c5aa2228a3f3e778f00b16162cec565598708bb3` — 2026-07-18：新增同一 guardian、同一 router、无 reset 的 fatigue → broken 连续 proto 路由与最终 HUD / 事件顺序回归。
 - `f1121724992a020db4472f75c39eea4e88ddc2f8` — 2026-07-18：用 `foldCount` / `displayText` 锁定两种事件各发布一次，关闭 UnifiedEventStream folding 假绿。
 - `970d136a1bbc014161eb07975b4cf6ae50a35e1b` — 2026-07-18：合并最新 `origin/main` 后复验；合并仅带入无关 skeleton / reminder 文档，client 生产与测试 blob 保持不变。
+- `4dceecb8c71f8d3f800dc968f07b16f99c9bd540` — 2026-07-18：原地校正唯一 Finish Evidence；相较 `970d136a` 仅修改本归档文档，`ProtoServerDataBridge.java` 与 `ProtoServerDataBridgeTest.java` 的 blob 保持不变。
 
 ### 测试结果
 
-- **历史可执行证据（PR #1186）**：`cd client && ./gradlew test build` 由 PR body 记录为 `BUILD SUCCESSFUL`；GitHub checks `respond`、`e2e`、`CodeRabbit` 均为 `SUCCESS`。该证据只覆盖当时的三条 guardian 测试，不冒充当前 HEAD 的执行结果。
-- **当前 HEAD 本地执行**：JDK 17 下三轮受控 Gradle 尝试均在 test discovery 前被 sandbox 基础设施阻断：前两轮为 single-use daemon `java.net.SocketException: Operation not permitted`，最终已消除 daemon fork，但 Gradle 初始化仍报 `Could not determine a usable wildcard IP for this machine`。**当前 HEAD 实际执行测试数为 0，结果不是 PASS。**
+- **历史可执行证据（PR #1186）**：`cd client && ./gradlew test build` 由 PR body 记录为 `BUILD SUCCESSFUL`；GitHub checks `respond`、`e2e`、`CodeRabbit` 均为 `SUCCESS`。该证据只覆盖当时的三条 guardian 测试，不冒充本 PR 后续快照的执行结果。
+- **本地执行历史**：JDK 17 下三轮受控 Gradle 尝试均在 test discovery 前被 sandbox 基础设施阻断：前两轮为 single-use daemon `java.net.SocketException: Operation not permitted`，最终已消除 daemon fork，但 Gradle 初始化仍报 `Could not determine a usable wildcard IP for this machine`。三轮实际执行测试数均为 0，结果不是 PASS，也不作为本 PR 的可执行验收依据。
 - **静态/对抗门**：`git diff --check` 通过；fresh read-only validator 对 `f1121724992a020db4472f75c39eea4e88ddc2f8` 给出 `PASS`，核验连续迁移、唯一 key / HUD、事件顺序、防 folding 断言与 protobuf Java API。合并主线后，独立 `codex exec --ephemeral --sandbox read-only` validator（`gpt-5.6-sol`）又对 `970d136a1bbc014161eb07975b4cf6ae50a35e1b` 给出 `PASS`；两轮均只做静态对抗核验，不冒充可执行测试。
 - **主线同步**：2026-07-18 执行 `git fetch origin` 紧邻合并 `origin/main`，生成 `970d136a1bbc014161eb07975b4cf6ae50a35e1b`；无冲突，仅带入 10 个无关 `docs/plans-skeleton/*` / `reminder.md` 变更，`ProtoServerDataBridge.java` 与 `ProtoServerDataBridgeTest.java` 的 blob 和合并前一致。
-- **当前代码 HEAD 的权威可执行 gate**：[GitHub Actions run 29634002985](https://github.com/Kizunad/Bong/actions/runs/29634002985)（`E2E Redis Smoke`，job `88052916590`）对 `970d136a1bbc014161eb07975b4cf6ae50a35e1b` 于 2026-07-18 `SUCCESS`：`Setup Java 17`、`Client stage (gradlew test)`、schema build/check/test/generate、agent check/test、server release build、`Server stage (cargo test)`、smoke/e2e 与 bot e2e 全部成功。该证据精确绑定代码 HEAD，不用历史结果或本地 infra-block 代替。
+- **已完成的 PR 可执行 gate 快照**：[GitHub Actions run 29635120100](https://github.com/Kizunad/Bong/actions/runs/29635120100)（`E2E Redis Smoke`，job `88055990976`）精确绑定 `4dceecb8c71f8d3f800dc968f07b16f99c9bd540`，于 2026-07-18 `SUCCESS`：`Setup Java 17`、`Client stage (gradlew test)`、schema build/check/test/generate、agent check/test、server release build、`Server stage (cargo test)`、smoke/e2e 与 bot e2e 全部成功。
+- **最终 PR HEAD 绑定规则**：静态归档不再把任何先前 SHA 称为“当前 / 最终 HEAD”，因为修正证据的 commit 本身会生成新 SHA。待合入 `headRefOid`、fresh validator SHA 与最终 client/e2e 成功 run 必须在 PR Body 和平台 Checks 中精确对拍；任一项不一致即不得 merge。该动态平台记录只补充最终绑定，不改写上述已完成历史快照。
 
 ### 跨仓库核验
 
@@ -128,5 +130,5 @@
 
 ### 遗留 / 后续
 
-- 本地 sandbox 仍无法提供 Gradle 所需的本机 socket / wildcard-IP 能力；这是明确保留的基础设施历史，三轮本地执行均为 0 tests、不是 PASS。当前代码 HEAD 的可执行验收已由上述 PR CI run 29634002985 完成。
+- 本地 sandbox 仍无法提供 Gradle 所需的本机 socket / wildcard-IP 能力；这是明确保留的基础设施历史，三轮本地执行均为 0 tests、不是 PASS。已完成快照的可执行验收由上述 PR CI run 29635120100 提供，最终待合入 HEAD 则按 PR Body / Checks 的动态绑定规则验收。
 - 本 plan 不改 Rust / TypeBox / protobuf 定义、不改 Redis channel，也不处理 #945 跨 session 清理或 #1010 season enum；这些边界仍按各自 plan 管理。
