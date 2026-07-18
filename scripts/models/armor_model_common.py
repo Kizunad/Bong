@@ -81,7 +81,7 @@ def _box_uv_faces(cube: Cube) -> dict[str, dict[str, object]]:
         "east": {"uv": [u + sz + sx, v + sz, u + 2 * sz + sx, v + sz + sy], "texture": 0},
         "south": {"uv": [u + 2 * sz + sx, v + sz, u + 2 * (sz + sx), v + sz + sy], "texture": 0},
         "up": {"uv": [u + sz, v, u + sz + sx, v + sz], "texture": 0},
-        "down": {"uv": [u + sz + sx, v, u + 2 * sz + sx, v + sz], "texture": 0},
+        "down": {"uv": [u + sz + sx, v, u + sz + 2 * sx, v + sz], "texture": 0},
     }
 
 

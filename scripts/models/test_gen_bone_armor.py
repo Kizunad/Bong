@@ -75,7 +75,7 @@ class BoneArmorGeneratorTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must have key and cubes"):
             validate_part(invalid)
 
-    def test_writer_emits_four_models_and_runtime_textures(self) -> None:
+    def test_writer_emits_four_models_four_runtime_textures_and_five_previews(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             outputs = write_material_assets(
@@ -85,15 +85,25 @@ class BoneArmorGeneratorTest(unittest.TestCase):
                 root / "models",
                 root / "textures",
                 root / "previews",
-                render_previews=False,
+                render_previews=True,
             )
-            self.assertEqual(8, len(outputs))
+            self.assertEqual(13, len(outputs), "4 model + 4 texture + 4 three-view + 1 combined 应全部产出")
             self.assertEqual(4, len(list((root / "models/armor/bone").glob("*.bbmodel"))))
             textures = list((root / "textures").glob("bone_*/0.png"))
             self.assertEqual(4, len(textures))
             for path in textures:
                 with Image.open(path) as texture:
                     self.assertEqual((64, 64), texture.size)
+
+            previews = [outputs[f"preview:{part.key}"] for part in bone.parts()]
+            previews.append(outputs["preview:all"])
+            self.assertEqual(5, len(previews), "骨甲必须有四件三视图与一张总览图")
+            for path in previews:
+                self.assertTrue(path.is_file(), f"骨甲预览输出缺失: {path}")
+                with Image.open(path) as preview:
+                    preview.load()
+                    self.assertGreater(preview.width, 0, f"骨甲预览宽度不得为 0: {path}")
+                    self.assertGreater(preview.height, 0, f"骨甲预览高度不得为 0: {path}")
 
     def test_writer_rejects_duplicate_part_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

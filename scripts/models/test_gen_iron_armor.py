@@ -15,6 +15,7 @@ sys.path.insert(0, str(MODEL_DIR))
 
 import gen_iron_armor as iron
 from armor_model_common import ArmorPart, Cube, build_bbmodel, validate_part, write_material_assets
+from render_bbmodel import render_mode_summary
 
 
 class IronArmorGeneratorTest(unittest.TestCase):
@@ -42,6 +43,30 @@ class IronArmorGeneratorTest(unittest.TestCase):
         self.assertEqual({"left_leg", "right_leg"}, {group["name"] for group in model["outliner"]})
         self.assertTrue(str(model["textures"][0]["source"]).startswith("data:image/png;base64,"))
 
+    def test_bottom_uv_uses_cube_x_width_and_z_depth(self) -> None:
+        cube = Cube("HEAD", "non_cubic", (0.0, 24.0, 0.0), (5.0, 2.0, 1.0), (3, 4))
+        model = build_bbmodel(
+            "iron",
+            ArmorPart("uv_probe", "UV PROBE", (cube,)),
+            iron.make_texture(),
+        )
+        u1, v1, u2, v2 = model["elements"][0]["faces"]["down"]["uv"]
+        self.assertEqual(5.0, u2 - u1, "down 面 UV 宽度必须使用 cube sx，否则非立方体会横向压缩")
+        self.assertEqual(1.0, v2 - v1, "down 面 UV 纵向范围必须保持 cube sz")
+
+    def test_render_mode_summary_matches_the_angles_actually_rendered(self) -> None:
+        self.assertEqual(
+            "yaw=-35.0 pitch=22.0",
+            render_mode_summary(False, -35.0, 22.0),
+            "单视图日志必须保留 CLI yaw/pitch",
+        )
+        self.assertEqual(
+            "three-view [FRONT yaw=180.0 pitch=0.0; SIDE yaw=90.0 pitch=0.0; "
+            "3/4 yaw=145.0 pitch=15.0]",
+            render_mode_summary(True, -35.0, 22.0),
+            "三视图日志必须报告固定实际角度，不得误报未使用的 CLI 参数",
+        )
+
     def test_invalid_duplicate_and_nonpositive_cubes_fail_loud(self) -> None:
         valid = iron.part_helmet()
         duplicate = replace(valid, cubes=valid.cubes + (valid.cubes[0],))
@@ -53,7 +78,7 @@ class IronArmorGeneratorTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "size must be positive"):
             validate_part(invalid)
 
-    def test_writer_emits_four_models_and_four_runtime_textures(self) -> None:
+    def test_writer_emits_four_models_four_runtime_textures_and_five_previews(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             outputs = write_material_assets(
@@ -63,15 +88,25 @@ class IronArmorGeneratorTest(unittest.TestCase):
                 root / "models",
                 root / "textures",
                 root / "previews",
-                render_previews=False,
+                render_previews=True,
             )
-            self.assertEqual(8, len(outputs))
+            self.assertEqual(13, len(outputs), "4 model + 4 texture + 4 three-view + 1 combined 应全部产出")
             self.assertEqual(4, len(list((root / "models/armor/iron").glob("*.bbmodel"))))
             textures = list((root / "textures").glob("iron_*/0.png"))
             self.assertEqual(4, len(textures))
             for path in textures:
                 with Image.open(path) as texture:
                     self.assertEqual((64, 64), texture.size)
+
+            previews = [outputs[f"preview:{part.key}"] for part in iron.parts()]
+            previews.append(outputs["preview:all"])
+            self.assertEqual(5, len(previews), "铁甲必须有四件三视图与一张总览图")
+            for path in previews:
+                self.assertTrue(path.is_file(), f"铁甲预览输出缺失: {path}")
+                with Image.open(path) as preview:
+                    preview.load()
+                    self.assertGreater(preview.width, 0, f"铁甲预览宽度不得为 0: {path}")
+                    self.assertGreater(preview.height, 0, f"铁甲预览高度不得为 0: {path}")
 
     def test_writer_rejects_duplicate_part_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

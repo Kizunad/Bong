@@ -26,6 +26,11 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[2]
 MODELS = REPO / "local_models"
 OUTDIR = REPO / "scripts" / "models"
+THREE_VIEW_ANGLES = (
+    ("FRONT", 180.0, 0.0),
+    ("SIDE", 90.0, 0.0),
+    ("3/4", 145.0, 15.0),
+)
 
 # 每面：4 角(取 min=f/max=t 的分量) + 法线。角序 = uv 的 TL,TR,BR,BL。
 FACES = {
@@ -162,14 +167,9 @@ def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35,
 
 def render_three_view(path, size=360, bg=(22, 23, 26)):
     """真实纹理三视图：正面、侧面、前侧 3/4；供模型资产每轮自评。"""
-    views = [
-        ("FRONT", 180.0, 0.0),
-        ("SIDE", 90.0, 0.0),
-        ("3/4", 145.0, 15.0),
-    ]
     tiles = []
     name = Path(path).stem
-    for label, yaw, pitch in views:
+    for label, yaw, pitch in THREE_VIEW_ANGLES:
         rendered, name = render(path, yaw=yaw, pitch=pitch, size=size, bg=bg)
         tiles.append((label, rendered))
 
@@ -189,6 +189,17 @@ def render_three_view(path, size=360, bg=(22, 23, 26)):
         canvas.paste(rendered, (x, gap + label_height))
         x += size + gap
     return canvas, name
+
+
+def render_mode_summary(three_view: bool, yaw: float, pitch: float) -> str:
+    """返回与实际渲染分支一致的验收角度摘要。"""
+    if not three_view:
+        return f"yaw={yaw} pitch={pitch}"
+    angles = "; ".join(
+        f"{label} yaw={view_yaw} pitch={view_pitch}"
+        for label, view_yaw, view_pitch in THREE_VIEW_ANGLES
+    )
+    return f"three-view [{angles}]"
 
 
 def main():
@@ -234,7 +245,7 @@ def main():
         im, name = render(fp, args.yaw, args.pitch, size=args.size)
         out = OUTDIR / f"render_{Path(fp).stem}.png"
     im.save(out)
-    print(f"→ {out.relative_to(REPO)}  ({name}, yaw={args.yaw} pitch={args.pitch})")
+    print(f"→ {out.relative_to(REPO)}  ({name}, {render_mode_summary(args.three_view, args.yaw, args.pitch)})")
 
 
 if __name__ == "__main__":
