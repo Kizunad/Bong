@@ -168,7 +168,8 @@ public final class ArmorPartModel {
 
     private static List<ArmorCube> ironHelmet() {
         return List.of(
-            new ArmorCube(Mount.HEAD, -4.4f, 31.4f, -4.4f, 8.8f, 1.0f, 8.8f, 0, 0),
+            new ArmorCube(Mount.HEAD, -4.4f, 31.4f, -4.4f, 4.1f, 1.0f, 8.8f, 0, 0),
+            new ArmorCube(Mount.HEAD, 0.2f, 31.4f, -4.4f, 4.2f, 1.0f, 7.8f, 0, 0),
             new ArmorCube(Mount.HEAD, -4.4f, 29.1f, -4.7f, 8.8f, 2.3f, 0.9f, 0, 0),
             new ArmorCube(Mount.HEAD, -4.4f, 24.4f, 3.8f, 8.8f, 7.0f, 0.9f, 0, 0),
             new ArmorCube(Mount.HEAD, -4.7f, 25.0f, -3.7f, 0.9f, 6.4f, 7.5f, 0, 0),
@@ -187,7 +188,8 @@ public final class ArmorPartModel {
 
     private static List<ArmorCube> ironChestplate() {
         return List.of(
-            new ArmorCube(Mount.BODY, -4.25f, 18.0f, -2.75f, 8.5f, 6.0f, 0.8f, 0, 0),
+            new ArmorCube(Mount.BODY, -4.25f, 18.0f, -2.75f, 4.0f, 6.0f, 0.8f, 0, 0),
+            new ArmorCube(Mount.BODY, 0.2f, 18.4f, -2.75f, 4.05f, 5.6f, 0.8f, 0, 0),
             new ArmorCube(Mount.BODY, -3.55f, 13.0f, -2.65f, 7.1f, 5.2f, 0.75f, 0, 0),
             new ArmorCube(Mount.BODY, -4.1f, 18.0f, 1.95f, 8.2f, 6.0f, 0.8f, 0, 0),
             new ArmorCube(Mount.BODY, -3.5f, 13.0f, 1.95f, 7.0f, 5.1f, 0.75f, 0, 0),
@@ -207,7 +209,8 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.BODY, 2.85f, 21.0f, -3.15f, 0.65f, 0.65f, 0.35f, 48, 0),
             new ArmorCube(Mount.BODY, -2.8f, 14.0f, -3.0f, 0.65f, 0.65f, 0.35f, 48, 0),
             new ArmorCube(Mount.BODY, 2.15f, 14.0f, -3.0f, 0.65f, 0.65f, 0.35f, 48, 0),
-            new ArmorCube(Mount.BODY, -0.55f, 18.2f, -3.3f, 1.1f, 1.1f, 0.5f, 48, 0)
+            new ArmorCube(Mount.BODY, -0.55f, 18.2f, -3.3f, 1.1f, 1.1f, 0.5f, 48, 0),
+            new ArmorCube(Mount.BODY, 2.2f, 15.2f, -2.95f, 1.0f, 2.2f, 0.35f, 32, 0)
         );
     }
 
@@ -221,6 +224,7 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.LEFT_LEG, -2.05f, 6.2f, 2.0f, 4.1f, 0.65f, 0.45f, 32, 0),
             new ArmorCube(Mount.LEFT_LEG, -0.35f, 3.7f, -3.2f, 0.7f, 0.7f, 0.35f, 48, 0),
             new ArmorCube(Mount.LEFT_LEG, -0.3f, 11.15f, -3.05f, 0.6f, 0.6f, 0.3f, 48, 0),
+            new ArmorCube(Mount.LEFT_LEG, 1.65f, 3.4f, -2.7f, 0.75f, 1.5f, 2.0f, 32, 0),
             new ArmorCube(Mount.RIGHT_LEG, -2.05f, 7.0f, -2.65f, 4.1f, 5.2f, 0.75f, 0, 0),
             new ArmorCube(Mount.RIGHT_LEG, -1.85f, 5.1f, -2.6f, 3.7f, 2.1f, 0.7f, 0, 0),
             new ArmorCube(Mount.RIGHT_LEG, -2.35f, 10.8f, -2.85f, 4.7f, 1.4f, 0.85f, 0, 0),
@@ -228,7 +232,8 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.RIGHT_LEG, -2.3f, 4.9f, -2.0f, 0.65f, 6.6f, 1.2f, 32, 0),
             new ArmorCube(Mount.RIGHT_LEG, -2.05f, 6.2f, 2.0f, 4.1f, 0.65f, 0.45f, 32, 0),
             new ArmorCube(Mount.RIGHT_LEG, -0.35f, 3.7f, -3.2f, 0.7f, 0.7f, 0.35f, 48, 0),
-            new ArmorCube(Mount.RIGHT_LEG, -0.3f, 11.15f, -3.05f, 0.6f, 0.6f, 0.3f, 48, 0)
+            new ArmorCube(Mount.RIGHT_LEG, -0.3f, 11.15f, -3.05f, 0.6f, 0.6f, 0.3f, 48, 0),
+            new ArmorCube(Mount.RIGHT_LEG, -2.3f, 3.4f, -2.7f, 0.75f, 1.5f, 2.0f, 32, 0)
         );
     }
 
@@ -240,12 +245,14 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.LEFT_FOOT, -2.15f, 4.0f, -2.75f, 4.3f, 0.75f, 5.5f, 32, 0),
             new ArmorCube(Mount.LEFT_FOOT, -0.35f, 0.7f, -3.35f, 0.7f, 0.7f, 0.35f, 48, 0),
             new ArmorCube(Mount.LEFT_FOOT, -2.1f, 0.4f, 2.0f, 4.2f, 2.3f, 0.75f, 0, 0),
+            new ArmorCube(Mount.LEFT_FOOT, -2.35f, -0.25f, -3.2f, 4.7f, 0.5f, 5.5f, 32, 0),
             new ArmorCube(Mount.RIGHT_FOOT, -2.1f, 2.0f, -2.7f, 4.2f, 3.8f, 0.75f, 0, 0),
             new ArmorCube(Mount.RIGHT_FOOT, -2.3f, 0.0f, -3.1f, 4.6f, 1.8f, 1.2f, 0, 0),
             new ArmorCube(Mount.RIGHT_FOOT, -2.3f, 0.7f, -1.9f, 0.65f, 4.3f, 1.2f, 32, 0),
             new ArmorCube(Mount.RIGHT_FOOT, -2.15f, 4.0f, -2.75f, 4.3f, 0.75f, 5.5f, 32, 0),
             new ArmorCube(Mount.RIGHT_FOOT, -0.35f, 0.7f, -3.35f, 0.7f, 0.7f, 0.35f, 48, 0),
-            new ArmorCube(Mount.RIGHT_FOOT, -2.1f, 0.4f, 2.0f, 4.2f, 2.3f, 0.75f, 0, 0)
+            new ArmorCube(Mount.RIGHT_FOOT, -2.1f, 0.4f, 2.0f, 4.2f, 2.3f, 0.75f, 0, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.35f, -0.25f, -3.2f, 4.7f, 0.5f, 5.5f, 32, 0)
         );
     }
 

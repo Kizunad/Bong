@@ -24,7 +24,7 @@ class IronArmorGeneratorTest(unittest.TestCase):
             ["iron_helmet", "iron_chestplate", "iron_leggings", "iron_boots"],
             [part.key for part in parts],
         )
-        self.assertEqual([14, 21, 16, 12], [len(part.cubes) for part in parts])
+        self.assertEqual([15, 23, 18, 14], [len(part.cubes) for part in parts])
         for part in parts:
             validate_part(part)
 

@@ -26,7 +26,8 @@ def part_helmet() -> ArmorPart:
         "iron_helmet",
         "IRON HELMET",
         (
-            c("HEAD", "crown_top", (-4.4, 31.4, -4.4), (8.8, 1.0, 8.8)),
+            c("HEAD", "crown_left", (-4.4, 31.4, -4.4), (4.1, 1.0, 8.8)),
+            c("HEAD", "crown_right", (0.2, 31.4, -4.4), (4.2, 1.0, 7.8)),
             c("HEAD", "brow_plate", (-4.4, 29.1, -4.7), (8.8, 2.3, 0.9)),
             c("HEAD", "back_plate", (-4.4, 24.4, 3.8), (8.8, 7.0, 0.9)),
             c("HEAD", "left_temple", (-4.7, 25.0, -3.7), (0.9, 6.4, 7.5)),
@@ -49,7 +50,8 @@ def part_chestplate() -> ArmorPart:
         "iron_chestplate",
         "IRON CHESTPLATE",
         (
-            c("BODY", "upper_front_plate", (-4.25, 18.0, -2.75), (8.5, 6.0, 0.8)),
+            c("BODY", "upper_front_left", (-4.25, 18.0, -2.75), (4.0, 6.0, 0.8)),
+            c("BODY", "upper_front_right", (0.2, 18.4, -2.75), (4.05, 5.6, 0.8)),
             c("BODY", "lower_front_plate", (-3.55, 13.0, -2.65), (7.1, 5.2, 0.75)),
             c("BODY", "upper_back_plate", (-4.1, 18.0, 1.95), (8.2, 6.0, 0.8)),
             c("BODY", "lower_back_plate", (-3.5, 13.0, 1.95), (7.0, 5.1, 0.75)),
@@ -70,6 +72,7 @@ def part_chestplate() -> ArmorPart:
             c("BODY", "lower_left_rivet", (-2.8, 14.0, -3.0), (0.65, 0.65, 0.35), (48, 0)),
             c("BODY", "lower_right_rivet", (2.15, 14.0, -3.0), (0.65, 0.65, 0.35), (48, 0)),
             c("BODY", "center_boss", (-0.55, 18.2, -3.3), (1.1, 1.1, 0.5), (48, 0)),
+            c("BODY", "right_repair_patch", (2.2, 15.2, -2.95), (1.0, 2.2, 0.35), (32, 0)),
         ),
     )
 
@@ -85,6 +88,7 @@ def _leg_cubes(mount: str, outer_x: float) -> tuple[Cube, ...]:
         c(mount, f"{prefix}_rear_strap", (-2.05, 6.2, 2.0), (4.1, 0.65, 0.45), (32, 0)),
         c(mount, f"{prefix}_knee_rivet", (-0.35, 3.7, -3.2), (0.7, 0.7, 0.35), (48, 0)),
         c(mount, f"{prefix}_hip_rivet", (-0.3, 11.15, -3.05), (0.6, 0.6, 0.3), (48, 0)),
+        c(mount, f"{prefix}_knee_flange", (outer_x, 3.4, -2.7), (0.75, 1.5, 2.0), (32, 0)),
     )
 
 
@@ -105,6 +109,7 @@ def _boot_cubes(mount: str, outer_x: float) -> tuple[Cube, ...]:
         c(mount, f"{prefix}_ankle_band", (-2.15, 4.0, -2.75), (4.3, 0.75, 5.5), (32, 0)),
         c(mount, f"{prefix}_toe_rivet", (-0.35, 0.7, -3.35), (0.7, 0.7, 0.35), (48, 0)),
         c(mount, f"{prefix}_heel_plate", (-2.1, 0.4, 2.0), (4.2, 2.3, 0.75)),
+        c(mount, f"{prefix}_sole_edge", (-2.35, -0.25, -3.2), (4.7, 0.5, 5.5), (32, 0)),
     )
 
 
@@ -127,7 +132,7 @@ def make_texture() -> Image.Image:
     for y in range(TEXTURE_SIZE):
         for x in range(TEXTURE_SIZE):
             if x < 32 and y < 32:
-                base = (82, 82, 78)
+                base = (85, 85, 85)
             elif x < 48 and y < 32:
                 base = (82, 59, 48)
             elif y < 32:
@@ -144,6 +149,10 @@ def make_texture() -> Image.Image:
         draw.line((x, y, x + length, y + 1), fill=(45, 46, 44), width=1)
     for x, y in ((34, 3), (41, 8), (37, 15), (44, 24), (33, 28)):
         draw.rectangle((x, y, x + 2, y + 1), fill=(125, 69, 43))
+    for x, y in ((3, 3), (12, 7), (24, 4), (5, 19), (20, 22), (29, 14)):
+        draw.point((x, y), fill=(132, 75, 46))
+        if x + 1 < 32:
+            draw.point((x + 1, y), fill=(101, 61, 43))
     for x, y in ((51, 5), (58, 12), (52, 22), (60, 27)):
         draw.rectangle((x, y, x + 2, y + 2), fill=(205, 198, 168))
         draw.point((x, y), fill=(236, 230, 202))
