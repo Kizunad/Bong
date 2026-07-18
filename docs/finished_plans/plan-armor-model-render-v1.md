@@ -72,3 +72,63 @@
 2. **腿甲双 part 与步行动画**：`leftLeg`/`rightLeg` 独立摆动下腿甲件的挂载细节（是否拆左右两半 cube 表）需 P0 实测定案。
 3. **head 槽与发型/头部装饰的 z-fighting**：头盔 cube 外扩比例（armor-visual 占位用 1.1x）需真机校准后定稿。
 4. **未来灵器级护甲**：`plan-forge-v1` 的锻造甲走何种视觉升级（发光描边/附着物挂点）不在本 plan 范围，仅要求 `ArmorPartModel` 结构不堵死扩展。
+
+## Finish Evidence
+
+### 阶段验收
+
+- **P0 ✅ 2026-07-19**：新增 `client/src/main/java/com/bong/client/armor/ArmorPartModel.java`，以版本控制 cube 表作为运行时唯一事实来源；`ArmorFeatureRenderer` 完成 HEAD/CHEST/LEGS/FEET 四槽骨骼局部系挂载，`ArmorModelRegistry.ArmorModelSpec` 收敛为 `templateId + slot + modelKey + texturePath`，8 组 OBJ/MTL/JSON 方盒占位已删除。
+- **P1 ✅ 2026-07-19**：`scripts/models/gen_iron_armor.py`、`local_models/armor/iron/*.bbmodel`、三视图预览与 64×64 粗铁贴图落地；4 件铁甲完成 3 轮打磨及终轮 `<PROMISE>`。
+- **P2 ✅ 2026-07-19**：`scripts/models/gen_bone_armor.py`、`local_models/armor/bone/*.bbmodel`、三视图预览与 64×64 兽骨贴图落地；4 件骨甲完成 3 轮打磨及终轮 `<PROMISE>`，肋笼/骨节轮廓与铁甲平板轮廓可远距区分。
+- **P3 ✅ 2026-07-19**：`ArmorFeatureRenderer.MODEL_RENDER_READY=true`，`MixinPlayerEntityArmor` 与专属模型开关共用 `isModelRenderEnabled()`，注册甲抑制染色皮甲双层渲染；`ArmorRenderBootstrap` 的 SML OBJ scope 死接线已移除。F5 真机核验覆盖铁/骨四槽前后视、步行、潜行与穿脱，胸腿接缝及头盔 pivot 无明显断连；铜甲仍正确走染色兜底。
+- **P4 ✅ 2026-07-19**：2 材质 × 4 部位 × 穿/脱/破碎矩阵、槽位/注册表/modelKey/cube digest pin 测试齐全；资源包 manifest 与 server 默认常量同步为 sha1 `5a5381b723f80eca03fac8db125143541cf3a61b`、size `72_322_787`、entity-model `file_count=290`。
+
+### 落地清单
+
+- 运行时：`ArmorPartModel`、`ArmorFeatureRenderer`、`ArmorModelRegistry`、`ArmorRenderBootstrap`、`MixinPlayerEntityArmor`。
+- 作者资产与生成器：`scripts/models/armor_model_common.py`、`gen_iron_armor.py`、`gen_bone_armor.py`、`render_bbmodel.py`、`local_models/armor/{iron,bone}/*.bbmodel`、铁/骨各件三视图及总览图。
+- 正式贴图：`client/src/main/resources/assets/bong/textures/armor/{iron,bone}_{helmet,chestplate,leggings,boots}/0.png`。
+- 饱和测试：`ArmorPartModelTest`、`ArmorFeatureRendererTest`、`ArmorModelRegistryTest`、`test_gen_iron_armor.py`、`test_gen_bone_armor.py`。
+- 资源包契约：`client/resourcepack/manifest.json` ↔ `server/src/network/resourcepack.rs::DEFAULT_RESOURCE_PACK_MANIFEST`。
+
+Cube digest pin：
+
+| modelKey | digest |
+|---|---|
+| `iron_helmet` | `3760e3b372a70fda` |
+| `iron_chestplate` | `4393068e1f6bcc11` |
+| `iron_leggings` | `4262b62a438d1088` |
+| `iron_boots` | `0983cc85e5167381` |
+| `bone_helmet` | `2f9d83e49d2b8dbb` |
+| `bone_chestplate` | `a6d39dc53ace5bf3` |
+| `bone_leggings` | `be2b47132fae568a` |
+| `bone_boots` | `77b698ba4541e7fd` |
+
+### 关键 commit
+
+- `8e4f0ec4`（2026-07-18）：提升 skeleton 为 active plan。
+- `40840a37`（2026-07-18）：实现 ModelPart 烘焙底盘、四槽挂载并移除 OBJ 占位链路。
+- `d9b9aff3` / `b4af8739` / `e1584958`（2026-07-18）：粗铁甲 round 1/3 → 3/3。
+- `6f5cd78f` / `7be950fa` / `06bd1a70`（2026-07-18）：兽骨甲 round 1/3 → 3/3。
+- `cb62e7ad`（2026-07-18）：正式启用 ModelPart 渲染、移除 SML scope、补齐穿脱破碎矩阵。
+- `2195c041`（2026-07-18）：锁定 8 套 cube 全字段 digest，并同步资源包 manifest/server 常量。
+
+### 测试结果
+
+- Client（Java 17）：`cd client && ./gradlew test build` — **4,120 tests，0 failure/error/skipped**。
+- Server：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 均 PASS；`cargo test` — **11,791 passed，6 ignored，0 failed**。
+- Python：`python -m unittest scripts.models.test_gen_iron_armor scripts.models.test_gen_bone_armor` — **13 tests PASS**。
+- 全链路：隔离运行时数据后执行 `bash scripts/smoke-test-e2e.sh` — **9 passed，0 failed，ALL PASS**；其中 Redis e2e **17 passed，0 failed**，100 NPC TPS gate `20.0 >= 15`，北境裂隙 dedicated preview bot PASS。
+- 真机：WSLg F5 覆盖铁甲/骨甲四槽前后视、步行、潜行、穿脱；铜甲染色皮甲兜底回归 PASS，第一人称手臂不渲染护甲保持 vanilla 正确行为。
+
+### 跨仓库核验
+
+- **Client**：`ArmorModelRegistry.get(template_id)` → `ArmorPartModel.buildModelPart(modelKey)` → `ArmorFeatureRenderer` 四槽挂载；`MixinPlayerEntityArmor` 对同一 `isModelRenderEnabled()` 与注册表命中做染色兜底抑制。
+- **Server**：`DEFAULT_RESOURCE_PACK_MANIFEST` 的 sha1/size 与 committed client manifest 完全一致，登录时 `bong:server_data` resource-pack prompt 日志命中新 hash。
+- **Agent / Schema**：本 plan 按设计零新增协议 symbol、零 schema 变更；最终 smoke 中 schema check/test/generate、Tiandao check 及 **828 tests** 全绿，既有装备同步契约未漂移。
+
+### 遗留 / 后续
+
+- 铜甲、兽皮甲、灵布甲、残卷缠甲继续使用 `plan-armor-visual-v1` 的染色皮甲兜底；为其补专属 ModelPart 属后续纯资产增量。
+- 灵器级护甲的发光描边、附着物挂点与锻造视觉升级不在本 plan 范围。
+- 当前无已知阻塞缺陷。
