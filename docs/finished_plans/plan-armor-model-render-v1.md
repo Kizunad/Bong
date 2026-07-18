@@ -73,6 +73,13 @@
 3. **head 槽与发型/头部装饰的 z-fighting**：头盔 cube 外扩比例（armor-visual 占位用 1.1x）需真机校准后定稿。
 4. **未来灵器级护甲**：`plan-forge-v1` 的锻造甲走何种视觉升级（发光描边/附着物挂点）不在本 plan 范围，仅要求 `ArmorPartModel` 结构不堵死扩展。
 
+## §8.1 决议
+
+1. **其余 4 材质不扩入本 plan**：本版只注册铁甲/骨甲 8 件专属 `ModelPart`；铜甲、兽皮甲、灵布甲、残卷缠甲继续走染色皮甲兜底。边界是“只有 `ArmorModelRegistry` 命中才抑制兜底”，后续材质必须另立资产 plan，不得在本链路里暗加兼容判定。双锚点：`client/src/main/java/com/bong/client/armor/ArmorModelRegistry.java:31-40`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityArmor.java:47-58`；plan `P4` / `§8.1-1`。
+2. **腿甲与靴子按左右骨骼拆件**：`LEGS` 固定映射 `LEFT_LEG + RIGHT_LEG`，`FEET` 固定映射 `LEFT_FOOT + RIGHT_FOOT`；渲染时每个 child 分别进入玩家左/右腿局部坐标系，因此步行、潜行时独立摆动，不存在横跨双腿的单一 cube child。边界是胸甲仍只挂 `BODY`，不用 `body` 代替腿骨骼驱动下装。双锚点：`client/src/main/java/com/bong/client/armor/ArmorPartModel.java:88-98`、`client/src/main/java/com/bong/client/armor/ArmorFeatureRenderer.java:82-95,127-133`；plan `P0` / `§8.1-2`。
+3. **头盔改为逐 cube 标定，不使用统一 1.1x scale**：真机定稿后，铁盔水平边界为 X `[-4.90, 4.90]` / Z `[-4.95, 5.30]`，骨盔为 X `[-4.75, 4.55]` / Z `[-4.90, 4.45]`；骨角只沿 Y 抬高到 `35.40`，不再水平放大头围。边界是后续任何改动不得超出上述已验边界而不重跑三视图 + F5 发型/z-fighting 校准。双锚点：`scripts/models/gen_iron_armor.py:24-45`、`scripts/models/gen_bone_armor.py:24-51`、`client/src/main/java/com/bong/client/armor/ArmorPartModel.java:165-181,255-278`；plan `P1` / `P2` / `P3` / `§8.1-3`。
+4. **灵器级发光/附着物不做预留兼容层**：本 plan 的运行时规格刻意只保留 `templateId + slot + modelKey + texturePath`，当前统一走 `getEntityCutoutNoCull`。边界是未来发光层、挂点或材质 shader 必须在锻造/灵器 plan 中新增明确类型与差异化测试，不在本注册表塞 nullable 预留字段。双锚点：`client/src/main/java/com/bong/client/armor/ArmorModelRegistry.java:18-25`、`client/src/main/java/com/bong/client/armor/ArmorFeatureRenderer.java:75-95`；plan `§0` / `§8.1-4`。
+
 ## Finish Evidence
 
 ### 阶段验收
@@ -81,7 +88,7 @@
 - **P1 ✅ 2026-07-19**：`scripts/models/gen_iron_armor.py`、`local_models/armor/iron/*.bbmodel`、三视图预览与 64×64 粗铁贴图落地；4 件铁甲完成 3 轮打磨及终轮 `<PROMISE>`。
 - **P2 ✅ 2026-07-19**：`scripts/models/gen_bone_armor.py`、`local_models/armor/bone/*.bbmodel`、三视图预览与 64×64 兽骨贴图落地；4 件骨甲完成 3 轮打磨及终轮 `<PROMISE>`，肋笼/骨节轮廓与铁甲平板轮廓可远距区分。
 - **P3 ✅ 2026-07-19**：`ArmorFeatureRenderer.MODEL_RENDER_READY=true`，`MixinPlayerEntityArmor` 与专属模型开关共用 `isModelRenderEnabled()`，注册甲抑制染色皮甲双层渲染；`ArmorRenderBootstrap` 的 SML OBJ scope 死接线已移除。F5 真机核验覆盖铁/骨四槽前后视、步行、潜行与穿脱，胸腿接缝及头盔 pivot 无明显断连；铜甲仍正确走染色兜底。
-- **P4 ✅ 2026-07-19**：2 材质 × 4 部位 × 穿/脱/破碎矩阵、槽位/注册表/modelKey/cube digest pin 测试齐全；资源包 manifest 与 server 默认常量同步为 Ubuntu 24.04 / Info-ZIP 3.0 构建的 sha1 `261619bd64bd65cb65db043e36a77e9e995e9375`、size `72_322_787`、entity-model `file_count=290`。
+- **P4 ✅ 2026-07-19**：2 材质 × 4 部位 × 穿/脱/破碎矩阵、槽位/注册表/modelKey/cube digest pin 测试齐全；`ArmorModelRegistry.all()` 返回不可修改快照，运行时规格→cube 烘焙契约取代源码字符串检查；8 个 bbmodel 底面 UV 与实际 `sx/sz` 对齐并由 5 份/材质预览产出测试锁住。资源包 manifest 与 server 默认常量同步为 Ubuntu 24.04 / Info-ZIP 3.0 构建的 sha1 `261619bd64bd65cb65db043e36a77e9e995e9375`、size `72_322_787`、entity-model `file_count=290`。
 
 ### 落地清单
 
@@ -112,13 +119,16 @@ Cube digest pin：
 - `6f5cd78f` / `7be950fa` / `06bd1a70`（2026-07-18）：兽骨甲 round 1/3 → 3/3。
 - `cb62e7ad`（2026-07-18）：正式启用 ModelPart 渲染、移除 SML scope、补齐穿脱破碎矩阵。
 - `2195c041`（2026-07-18）：锁定 8 套 cube 全字段 digest，并同步资源包 manifest/server 常量。
+- `7a43109d`（2026-07-19）：按 Ubuntu 24.04 CI 产物修正资源包 SHA1，并补齐归档 plan 阶段状态。
+- `dafc13ba`（2026-07-19）：收紧注册表不可变快照与运行时 ModelPart 烘焙契约测试。
+- `7ce39fc4`（2026-07-19）：修正 bbmodel 底面 UV，补三视图实际角度日志与完整预览生成链路测试。
 
 ### 测试结果
 
-- Client（Java 17）：`cd client && ./gradlew test build` — **4,127 tests，0 failure/error/skipped**（合并 `origin/main` 后复验）。
+- Client（Java 17）：`cd client && ./gradlew test build` — **4,128 tests，0 failure/error/skipped**（CodeRabbit 返工后、与最新 `origin/main` 对拍后复验）。
 - Server：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 均 PASS；`cargo test` — **11,792 passed，6 ignored，0 failed**（合并 `origin/main` 后复验）。
 - 资源包：`python3 -m unittest scripts/test_build_resourcepack.py` — **4 tests PASS**；Ubuntu 24.04 / Info-ZIP 3.0 同 CI 环境重建与 committed manifest/server 常量对拍 PASS，sha1 `261619bd64bd65cb65db043e36a77e9e995e9375`、size `72_322_787`；`cargo test network::resourcepack` — **16 passed，0 failed**。
-- Python：`python -m unittest scripts.models.test_gen_iron_armor scripts.models.test_gen_bone_armor` — **13 tests PASS**。
+- Python：`python -m unittest scripts.models.test_gen_iron_armor scripts.models.test_gen_bone_armor` — **15 tests PASS**；覆盖 down 面 UV `sx/sz`、单视图/三视图日志分支、铁/骨各 4 张三视图 + 1 张总览图的完整产出链路。
 - 全链路：隔离运行时数据后执行 `bash scripts/smoke-test-e2e.sh` — **9 passed，0 failed，ALL PASS**；其中 Redis e2e **17 passed，0 failed**，100 NPC TPS gate `20.0 >= 15`，北境裂隙 dedicated preview bot PASS。
 - 真机：WSLg F5 覆盖铁甲/骨甲四槽前后视、步行、潜行、穿脱；铜甲染色皮甲兜底回归 PASS，第一人称手臂不渲染护甲保持 vanilla 正确行为。
 
