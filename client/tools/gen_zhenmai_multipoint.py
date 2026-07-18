@@ -129,7 +129,7 @@ def main() -> int:
         name="zhenmai_multipoint",
         description=(
             "P1 重制连环三点指：anticipation 0→2 内收蓄劲，strike 2→6 三连戳"
-            "（右高 t3 → 左中 t5 → 右深 t6=cast 顶点，pitch -96 / bend 3 / "
+            "（右高 t3 → 左中 t5 → 右深 t6=cast 顶点，pitch -86 / bend 3 / "
             "torso.yaw +16→-18）+6→9 指劲余震，recovery 9→12 回 guard。"
         ),
         end_tick=12,
