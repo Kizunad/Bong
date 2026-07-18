@@ -4,6 +4,7 @@ import com.bong.client.animation.AnimWiringManifestTest;
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.animation.ProductionAnimationResources;
+import com.google.gson.JsonObject;
 import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
@@ -321,6 +322,132 @@ public class VfxEventRouterTest {
             "未知 anim id 不得在目标玩家上装出任何动画层");
     }
 
+    /** wire 契约限 anim_json ≤4096 字节——inline 闭环用与 fixture 同构的最小合法 v3 JSON。 */
+    private static final String INLINE_PROBE_ANIM_JSON = """
+        {"version":3,"name":"__inline_closure_probe__","emote":{"beginTick":0,\
+        "endTick":4,"isLoop":false,"moves":[{"tick":0,"rightArm":{"pitch":-0.6},\
+        "easing":"LINEAR"},{"tick":4,"rightArm":{"pitch":0.4},"easing":"INOUTSINE"}]}}""";
+
+    /**
+     * inline 播放经<b>真实</b> {@link ClientAnimationBridge}：合法 Emotecraft v3
+     * 字节的 play_anim_inline 经 route() 在注入 stack 上安装 inline 动画层（handled、
+     * 非 bridgeMiss、activeAnimations 命中、层按 priority 可摘除）——锁住 inline
+     * 路径迁移到目标解析接缝后的 stack/UUID 派发正确性。
+     */
+    @Test
+    void playAnimInlineThroughRealClientAnimationBridgeInstallsLayerOnInjectedStack()
+        throws IOException {
+        UUID target = UUID.randomUUID();
+        AnimationStack stack = new AnimationStack();
+        ClientAnimationBridge bridge = new ClientAnimationBridge(
+            uuid -> target.equals(uuid)
+                ? new ClientAnimationBridge.AnimationTarget(stack, uuid)
+                : null);
+        VfxEventRouter router = new VfxEventRouter(bridge);
+        Identifier inlineId = new Identifier("bong", "__inline_closure_probe__");
+        String json = playAnimInlineJsonFor(
+            target, inlineId.toString(), INLINE_PROBE_ANIM_JSON, 3000, 2);
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isHandled(),
+            "真实资产字节的 inline 播放经真实 bridge 应为 handled，实际：" + result.logMessage());
+        assertFalse(result.isBridgeMiss(), "inline 正向闭环不得降级 bridgeMiss");
+        assertTrue(BongAnimationPlayer.activeAnimations(target).contains(inlineId),
+            "inline 动画应出现在目标玩家活跃动画集——inline 注册或层安装断了");
+        assertTrue(stack.removeLayer(3000),
+            "inline 层应装进注入的 AnimationStack（按 priority 3000 可摘除）——"
+                + "层落到了别的 stack，说明 bridge 派发目标错误");
+    }
+
+    /**
+     * inline 失败分支经真实 bridge：坏 anim_json（生产反序列化拒绝）与目标不可
+     * 解析都降级 bridgeMiss、不装层、不崩溃。
+     */
+    @Test
+    void playAnimInlineFailureBranchesDegradeToBridgeMissThroughRealBridge() throws IOException {
+        UUID target = UUID.randomUUID();
+        AnimationStack stack = new AnimationStack();
+        ClientAnimationBridge bridge = new ClientAnimationBridge(
+            uuid -> target.equals(uuid)
+                ? new ClientAnimationBridge.AnimationTarget(stack, uuid)
+                : null);
+        VfxEventRouter router = new VfxEventRouter(bridge);
+
+        String badJson = playAnimInlineJsonFor(
+            target, "bong:__inline_bad_json_probe__", "not-a-valid-animation", 3000, 2);
+        VfxEventRouter.RouteResult badResult = router.route(badJson, jsonLen(badJson));
+        assertTrue(badResult.isBridgeMiss(),
+            "坏 anim_json 应被生产反序列化拒绝并降级 bridgeMiss，实际：" + badResult.logMessage());
+        assertTrue(BongAnimationPlayer.activeAnimations(target).isEmpty(),
+            "坏 anim_json 不得在目标玩家上装出动画层");
+
+        UUID unresolvable = UUID.randomUUID();
+        String missJson = playAnimInlineJsonFor(
+            unresolvable, "bong:__inline_no_target_probe__", "{}", 3000, 2);
+        VfxEventRouter.RouteResult missResult = router.route(missJson, jsonLen(missJson));
+        assertTrue(missResult.isBridgeMiss(),
+            "目标不可解析的 inline 播放应降级 bridgeMiss，实际：" + missResult.logMessage());
+    }
+
+    /**
+     * stop_anim 经<b>真实</b> {@link ClientAnimationBridge}：先经真实 bridge 播一条
+     * 清单动画，再以 fade_out_ticks=0 停止——handled、活跃动画集移除、层已立即从
+     * 注入 stack 摘除；未在播的 id / 目标不可解析降级 bridgeMiss。
+     */
+    @Test
+    void stopAnimThroughRealClientAnimationBridgeRemovesInstalledLayer() throws IOException {
+        ProductionAnimationResources.loadViaProductionReloadCallback();
+        String animIdRaw = AnimWiringManifestTest.loadManifest().get(0);
+        Identifier animId = Identifier.tryParse(animIdRaw);
+        UUID target = UUID.randomUUID();
+        AnimationStack stack = new AnimationStack();
+        ClientAnimationBridge bridge = new ClientAnimationBridge(
+            uuid -> target.equals(uuid)
+                ? new ClientAnimationBridge.AnimationTarget(stack, uuid)
+                : null);
+        VfxEventRouter router = new VfxEventRouter(bridge);
+        String playJson = playAnimJsonFor(target, animIdRaw, 1000, 3);
+        assertTrue(router.route(playJson, jsonLen(playJson)).isHandled(),
+            "前置：清单动画应先经真实 bridge 播放成功");
+        assertTrue(BongAnimationPlayer.activeAnimations(target).contains(animId),
+            "前置：播放后动画应在活跃集内");
+
+        String stopJson = stopAnimJsonFor(target, animIdRaw, 0);
+        VfxEventRouter.RouteResult result = router.route(stopJson, jsonLen(stopJson));
+
+        assertTrue(result.isHandled(),
+            "在播动画的 stop_anim 经真实 bridge 应为 handled，实际：" + result.logMessage());
+        assertFalse(BongAnimationPlayer.activeAnimations(target).contains(animId),
+            "stop 后动画不得留在目标玩家活跃动画集");
+        assertFalse(stack.removeLayer(1000),
+            "fade_out_ticks=0 应已立即把层从注入 stack 摘除——仍能按 priority 摘到"
+                + "说明 stop 没作用到注入的 stack");
+    }
+
+    /** stop_anim 失败分支经真实 bridge：未在播的 id 与目标不可解析都降级 bridgeMiss。 */
+    @Test
+    void stopAnimFailureBranchesDegradeToBridgeMissThroughRealBridge() throws IOException {
+        UUID target = UUID.randomUUID();
+        AnimationStack stack = new AnimationStack();
+        ClientAnimationBridge bridge = new ClientAnimationBridge(
+            uuid -> target.equals(uuid)
+                ? new ClientAnimationBridge.AnimationTarget(stack, uuid)
+                : null);
+        VfxEventRouter router = new VfxEventRouter(bridge);
+
+        String notPlaying = stopAnimJsonFor(target, "bong:__stop_not_playing_probe__", 0);
+        VfxEventRouter.RouteResult notPlayingResult = router.route(notPlaying, jsonLen(notPlaying));
+        assertTrue(notPlayingResult.isBridgeMiss(),
+            "未在播动画的 stop 应降级 bridgeMiss，实际：" + notPlayingResult.logMessage());
+
+        UUID unresolvable = UUID.randomUUID();
+        String missTarget = stopAnimJsonFor(unresolvable, "bong:__stop_no_target_probe__", 0);
+        VfxEventRouter.RouteResult missResult = router.route(missTarget, jsonLen(missTarget));
+        assertTrue(missResult.isBridgeMiss(),
+            "目标不可解析的 stop 应降级 bridgeMiss，实际：" + missResult.logMessage());
+    }
+
     private static String playAnimJson(String animId, int priority, int fadeInTicks) {
         return playAnimJsonFor(FIXTURE_UUID, animId, priority, fadeInTicks);
     }
@@ -330,6 +457,27 @@ public class VfxEventRouterTest {
             {"v":1,"type":"play_anim","target_player":"%s","anim_id":"%s",\
             "priority":%d,"fade_in_ticks":%d}"""
             .formatted(target, animId, priority, fadeInTicks);
+    }
+
+    /** anim_json 经 Gson 序列化转义（真实资产字节含引号/换行，手拼必坏）。 */
+    private static String playAnimInlineJsonFor(
+        UUID target, String animId, String animJson, int priority, int fadeInTicks) {
+        JsonObject payload = new JsonObject();
+        payload.addProperty("v", 1);
+        payload.addProperty("type", "play_anim_inline");
+        payload.addProperty("target_player", target.toString());
+        payload.addProperty("anim_id", animId);
+        payload.addProperty("anim_json", animJson);
+        payload.addProperty("priority", priority);
+        payload.addProperty("fade_in_ticks", fadeInTicks);
+        return payload.toString();
+    }
+
+    private static String stopAnimJsonFor(UUID target, String animId, int fadeOutTicks) {
+        return """
+            {"v":1,"type":"stop_anim","target_player":"%s","anim_id":"%s",\
+            "fade_out_ticks":%d}"""
+            .formatted(target, animId, fadeOutTicks);
     }
 
     private static int jsonLen(String json) {
