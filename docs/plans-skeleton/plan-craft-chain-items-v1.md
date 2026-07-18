@@ -67,12 +67,12 @@
 
 - `assets/items/weapons.toml` 加矛族 3 条（weapon spec / durability / rarity / grid 尺寸——长兵 grid_h 建议 4~5 对齐 Tarkov 格惯例）；消耗品 2 条归属文件 §8 #5。
 - 配方落点按 §8 #6 与 plan-registry-datafication-v1 协调：datafication P0 先 merge → 直接写 `assets/craft/recipes/` TOML；否则 → `workbench_recipes.rs` 表行（3 件手搓进 station None 语义、锈铁矛 Workbench）+ 该 plan 迁移时一并搬。
-- 饱和测试：模板加载 pin（数量/字段）；`weapon.kind` 解析命中 Spear + 双手判定；每 effect kind 反序列化正反 sample；配方材料引用存在性（含 ⭐链条物 id 全核验）；产出入包 grid 尺寸边界。
+- 饱和测试（**以玩家可观察契约为主**）：① 5 件物品 craft/`/give` 后确实入包且 grid 占格正确；② 矛装备后攻击伤害吃 spear 倍率、双手契约生效（单一契约见 P1）；③ 消耗品使用后效果真实生效（wound 值变化 / buff 挂载）+ 错误分支行为固定（满血使用 / buff 叠加语义）；④ 材料不足 / 背包满的失败行为。辅助覆盖（非主要验收项）：模板加载 pin（数量/字段）、`weapon.kind` 解析命中 Spear、每 effect kind 反序列化正反 sample、配方材料引用存在性（含 ⭐链条物 id 全核验）。
 
 ## P1 效果/战斗链路 e2e + bot 场景 ⬜
 
-- bot 场景（`scripts/bot/scenarios/`，CI bot e2e 硬约定）：① 手搓粗石矛 → 装备 → 攻击靶 NPC → 伤害断言吃武器倍率 + 双手占用断言（副手被清/拒装）；② 合成药浸绷带（链条：先合 bandage 再升级）→ 受伤 → 使用 → wound 恢复断言；③ salted_jerky → food_regen buff 挂载断言（`CultivationAcceleration`）。
-- server 集成测试：craft session 全链（材料原子扣减 / 背包满回退 / 产出入包）；三矛挥动 emit 的 audio/vfx 事件断言（防 AV 孤岛）。
+- bot 场景（`scripts/bot/scenarios/`，CI bot e2e 硬约定）：① 手搓粗石矛 → 装备 → 攻击靶 NPC → 伤害断言吃武器倍率 + 双手**单一契约**两条分别断言：副手占用时装备**拒装并携带具体 reject reason**、成功装备后副手保持为空（语义实施前以现有 `weapon_two_handed_per_kind` 单测为准固定，不得写成模糊的"被清或拒装"）；② 合成药浸绷带（链条：先合 bandage 再升级）→ 受伤 → 使用 → wound 恢复断言；③ salted_jerky → food_regen buff 挂载断言（`CultivationAcceleration`）。
+- server 集成测试：craft session 成功/失败分支**分别断言**——材料原子扣减（失败路径零扣减）、背包满回滚（材料完整退回）、成功产出入包（数量/位置）三条独立用例；三矛挥动 emit 的 audio/vfx 事件断言（防 AV 孤岛）。
 
 ## P2 资产（3 轮打磨 + PROMISE 纪律）⬜
 
@@ -104,4 +104,4 @@
 
 ## §10（升 active 时补）
 
-scope 预估 3-4 PR：PR-1 = P0+P1（数据+链路+bot，纯逻辑）；PR-2 = P2 资产（bbmodel 3 轮 + PROMISE + 资源包 sha1）；PR-3 = P3 平衡。P2 视 `/gen-image` 可用性可拆图标/模型两 PR。升 active 前 §8 全收口（尤其 #1 清单终审 + #2/#3 两处实证）。
+scope **固定 3 PR**（依赖序列化）：PR-1 = P0+P1（数据+链路+bot，纯逻辑）→ PR-2 = P2 资产（bbmodel 3 轮 + PROMISE + 资源包 sha1；`/gen-image` 不可用时图标以 `[BLOCKED]` 占位随同本 PR，不另拆）→ PR-3 = P3 平衡。升 active 时按 docs/CLAUDE.md §六 模板补全 §10 全文（含"单次 consume-plan 全自动到 merge"章节）后方可消费；升 active 前 §8 全收口（尤其 #1 清单终审 + #2/#3 两处实证）。
