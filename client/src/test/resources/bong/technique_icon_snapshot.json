@@ -14,7 +14,7 @@
   "burst_meridian.xue_beng_bu": "bong-client:textures/gui/items/skill_scroll_burst_meridian_xue_beng_bu.png",
   "dugu.infuse_poison": "bong-client:textures/gui/items/skill_scroll_dugu_infuse_poison.png",
   "dugu.shoot_needle": "bong-client:textures/gui/items/skill_scroll_dugu_shoot_needle.png",
-  "morph.yixing": "bong:textures/gui/skill/morph_yixing.png",
+  "morph.yixing": "bong-client:textures/gui/items/skill_scroll_morph_yixing.png",
   "movement.dash": "bong-client:textures/gui/items/skill_scroll_movement_dash.png",
   "npc.buff_defense": "bong-client:textures/gui/items/skill_scroll_npc_buff_defense.png",
   "npc.buff_speed": "bong-client:textures/gui/items/skill_scroll_npc_buff_speed.png",

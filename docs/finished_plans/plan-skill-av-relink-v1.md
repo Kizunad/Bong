@@ -24,10 +24,10 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | 技能栏图标重链（28 张映射到既有 skill_scroll 资产）+ 命名约定统一 | ⬜ |
-| P1 | 孤儿动画接线（有真实事件源的批次） | ⬜ |
-| P2 | 真缺图标 `/gen-image` 补齐（dugu runtime 5 + 复核后仍缺者） | ⬜ |
-| P3 | 防回归：资产存在性扫描测试 + 接线 pin 测试 | ⬜ |
+| P0 | 技能栏图标重链（28 张映射到既有 skill_scroll 资产）+ 命名约定统一 | ✅ 2026-07-17（技能栏链，PR-1）；#2 的 runtime 消费链面 2026-07-18 PR-3 补齐（序列偏差记录见 Finish Evidence P0 段） |
+| P1 | 孤儿动画接线（有真实事件源的批次） | ✅ 2026-07-18 |
+| P2 | 真缺图标 `/gen-image` 补齐（dugu runtime 5 + 复核后仍缺者） | ✅ 2026-07-18 |
+| P3 | 防回归：资产存在性扫描测试 + 接线 pin 测试 | ✅ 2026-07-18 |
 
 ## P0 — 技能栏图标重链
 
@@ -157,3 +157,39 @@
 - 单 plan 多 PR 序列化（**测试随对应实现同批交付，不预置无实现对象的测试**）：PR-1 = P0 图标重链 + P3 图标链测试（发射契约/快照同步/存在性/映射约束）；PR-2 = P1 孤儿动画接线（§8 #2/#3 收口后）+ P3 动画链测试（emit pin/registry pin/路由契约/连击序列）；PR-3 = P2 `/gen-image` 图标补齐 + runtime 引用 pin + resourcepack sha1 同步 + 存在性 allowlist 清零。
 - 每 PR 独立实施 subagent（context 隔离）；CodeRabbit / `/review` 等待走 ScheduleWakeup 1200s 协议，修完意见重等 re-review。
 - **单次 consume-plan 全自动到 merge**：用户提交 `/consume-plan` 后全自动走完实施→review→merge→归档至 `docs/finished_plans/`，无需人工值守；P2 生成的图标 PNG 附 PR body 供人工抽查。
+
+## Finish Evidence
+
+**落地清单**（单 plan 三 PR 序列化，按 §10）：
+
+- **P0 图标重链**（PR-1 = #1220）：`server/src/cultivation/known_techniques.rs`（33 条 `icon_texture` 重链到 `bong-client:textures/gui/items/skill_scroll_<safe_id>.png` 单一真相源 + 模块注释约定/例外清单）；P0 #4 修订——quickslot 为纯 Item 槽（`QuickSlotBindings` 无 Skill 变体），Item 型槽 `icon_texture` 恒空串 = 显式契约（client 按 itemId 走 `ItemIconRegistry` 富解析）。**P0 #2 补交记录（PR-3，2026-07-18）**：woliu 进阶五招在**技能栏消费链**（`TECHNIQUE_DEFINITIONS.icon_texture`）已由 PR-1 重链到专属 `skill_scroll_woliu_*.png`；`woliu_v2::skills::visual_for` 的 **runtime payload 消费链**上同名借用分叉（vacuum_palm→mouth 等）为 PR-2 对抗审查发现的遗留、于 PR-3 补齐重链——属 P0 #2 同一交付物在第二条消费链上的补交（对既定 PR 序列的偏差，如实记录），配套专属映射契约 pin 见 P3 段。
+- **P1 孤儿动画接线**（PR-2 = #1221）：`server/src/network/vfx_animation_trigger.rs`——`emit_technique_learned_stance_triggers`（stance_woliu/stance_zhenmai，仅生产可达两族；dugu/dugu_poison/baomai/tuike 4 族 r2 review 降级 report-only 不预置映射）、`emit_forge_tempering_animation_triggers`（TemperingHit）、`emit_attack_animation_triggers` 空手连击 right→left 交替（`next_fist_punch_anim` + `prune_stale_fist_combo` 窗口剪枝）；内联 emit：`zhenfa::handle_zhenfa_place_requests`（rune_draw）、`client_request_handler::handle_alchemy_intervention`（alchemy_stir，AutoProfile 变体不发）、`insight_flow::apply_insight_chosen`（enlightenment_pose）。report-only ×12 逐条证据见 P1 表。
+- **P2 真缺图标补齐**（PR-3 = 本 PR）：`scripts/images/gen_technique_icons.py` 扩 6 条 prompt + `--quality` 透传；新增资产 `client/src/main/resources/assets/bong-client/textures/gui/items/skill_scroll_{dugu_{eclipse,self_cure,penetrate,shroud,reverse},morph_yixing}.png`（128×128 RGBA 全不透明黑底，程序化拍平 + 逐张目视核验）；`dugu_v2::skills::visual_for` 5 条重链、`known_techniques.rs` morph.yixing 收编规范路径（woliu_v2 runtime 进阶五招重链**不属 P2 范围**——系 P0 #2 遗漏补交，见上方 P0 段补交记录）；快照例外表 13→12、client `MISSING_ICON_ALLOWLIST` 清零（冻结基线不动）。
+- **P3 防回归测试**（跨三 PR 交付）：图标链（PR-1）——`technique_icon_snapshot_test.rs`（快照单向同步/命名空间/重复映射约束）+ checked-in `client/src/test/resources/bong/technique_icon_snapshot.json` + client `SkillIconSnapshotAssetTest`（main-resources 存在性扫描/allowlist 棘轮/反向探针/生产链端到端）+ `skillbar_config_emit` 发射契约测试；动画链（PR-2）——`P1_WIRED_ANIM_IDS`（7 条唯一真相源）→ `anim_wiring_manifest.json` 单向导出 + 双端同步测试 + emit pin 饱和覆盖 + client 真实 `VfxEventRouter`→真实 `ClientAnimationBridge`（`AnimationTargetResolver` 注入接缝）→`AnimationLayerManager` 非 miss 正向闭环 + `ProductionAnimationResources` 生产 resource reload 入口测试；runtime 图标链（PR-3）——dugu_v2 5 变体 + woliu_v2 15 变体 `visual_for` 图标存在性 pin，另有 woliu 进阶五招专属映射契约 pin（表驱动 assert_eq! 精确路径 + 两两互异 + 与基础招图标集合不相交，review 返工补齐：存在性扫描挡不住回退借用——基础图标仍在磁盘）；dugu_v2 精确映射由 tests.rs 既有逐条 assert_eq! 锁定。
+
+**关键 commit**：
+
+- PR-1 #1220（squash `9d2e29d0`，2026-07-17）：P0 33 条重链 + 图标链三级防回归测试（4 轮 review 返工：main-resources 绑定/冻结基线/src-authority 不动点）。
+- PR-2 #1221（squash `7ad2be2d`，2026-07-18）：P1 接线 7 条 + 动画链防回归（r2 返工：stance 4 族降级 report-only、真实 bridge 非 miss 闭环、生产 reload 测试、fist_combo 剪枝；r3：inline/stop 真实 bridge 闭环、plan §8.2 决议节）。
+- PR-3（本 PR）：`835313b6` 图标生成、`5e7e583a` 重链收编 + 存在性 pin、`6928adf8` allowlist 清零。
+
+**测试结果**：
+
+- server：`cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test` → 11774 passed / 0 failed（PR-3 收尾复跑，含新增 2 条 runtime 图标存在性 pin）。
+- client：`./gradlew test build` → BUILD SUCCESSFUL（PR-3 收尾复跑；`SkillIconSnapshotAssetTest` 0 失败——allowlist 清零后 morph.yixing 资产存在性转为强制断言）。
+- e2e：PR-1 #1220 / PR-2 #1221 各自 merge 前 `e2e` CI 绿；PR-3 分支实测两连绿（同一 gate，`scripts/smoke-test-e2e.sh` 的 CI 化 `e2e` job）——HEAD `849e76d9` run [29629498681](https://github.com/Kizunad/Bong/actions/runs/29629498681)（2026-07-18，20m38s pass）、返工 HEAD `176ec885` run [29632090986](https://github.com/Kizunad/Bong/actions/runs/29632090986)（21m3s pass）；本条为 docs-only 修订，merge 前以 PR checks 面板最终 HEAD 的 e2e 绿为准（自动 merge 协议门槛）。
+
+**跨仓库核验**：
+
+- server：`known_techniques::TECHNIQUE_DEFINITIONS.icon_texture` / `technique_icon_snapshot_test::canonical_icon_texture` / `vfx_animation_trigger::P1_WIRED_ANIM_IDS` / `dugu_v2::skills::visual_for` / `woliu_v2::skills::visual_for`。
+- client：`SkillIconIds.safeSkillIconId`（同一 safe_id 约定镜像）/ `SkillIconSnapshotAssetTest`（消费同一份快照 JSON）/ `AnimWiringManifestTest` + `VfxEventRouterTest`（消费同一份 anim 清单）/ `ClientAnimationBridge.AnimationTargetResolver`。
+- 共享 fixture：`client/src/test/resources/bong/technique_icon_snapshot.json`（49 条）与 `bong/anim_wiring_manifest.json`（7 条）均由 server 常量表单向生成、双端消费。
+- agent：不涉及（纯 server↔client 表现层，schema samples 无图标路径引用，grep 证实）。
+
+**遗留 / 后续**：
+
+- stance_{dugu,dugu_poison,baomai,tuike} 待对应流派习得内容（卷轴/导师传功生产化）落地时重新接线（连映射 + `P1_WIRED_ANIM_IDS` + 清单 + 测试一起，见 §8.2 #2）。
+- stance_zhenfa / dodge_back / dodge_roll / sword_ride / levitate / bow_salute / stealth_crouch / cultivate_stand 等 report-only 孤儿动画待各自 gameplay 事件源落地（P1 表逐条记录证据）。
+- fist combo 断线实体条目在剪枝窗口内仍短暂驻留（≤2s，行为无碍）；如需即时清理可挂实体 despawn 钩子（非本 plan 范围）。
+- 资源包 sha1/size 未动：本批 6 张新图标全部落 client mod jar（`bong-client` 命名空间 gui/items，不进 `bong-full-v1.zip` server 资源包），`resourcepack.rs` manifest 无需同步——P2 交付物中「图标资产变更同步 resourcepack.rs sha1」条目经核实不适用于本批路径。
+- 透明度扫描：本批为黑底不透明 item 风格（与既有 39 张一致），不涉 `--transparent` 假透明问题；实际问题相反——生成端返回大面积半透明，已程序化拍平 alpha=255 并复验。

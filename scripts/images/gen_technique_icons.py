@@ -96,6 +96,25 @@ TECHNIQUES: list[tuple[str, str, str]] = [
     ("dugu.infuse_poison", "灌毒蛊",
      "a thin flying needle coated in dissonant corrupted qi, sickly green-black poison residue "
      "crawling along its tip, solid black background"),
+    # —— 蛊道 v2 五招（dugu_v2 runtime visual 图标，非 TECHNIQUE_DEFINITIONS 条目；
+    #    消费链 = dugu_v2::skills::visual_for payload → client HudTextureProbe，
+    #    命名仍按 skill_scroll_<safe_id> 约定收编，plan-skill-av-relink-v1 P2。
+    #    prompt 刻意精简：当前 hlool 网关 60s 硬超时，长 prompt 生成必 504）——
+    ("dugu.eclipse", "蚀针",
+     "a corroded thin needle hovering point-down, concentric sickly green taint rings "
+     "radiating around its tip, solid black background"),
+    ("dugu.self_cure", "自蕴",
+     "a gourd vial pouring dark-green healing mist over a closing wound, faint poison-fed "
+     "glow, solid black background"),
+    ("dugu.penetrate", "侵染",
+     "a thin needle trailing chained green-black energy arcs linking three glowing nodes in "
+     "a row, solid black background"),
+    ("dugu.shroud", "神识遮蔽",
+     "a head silhouette veiled in coiling dark-green mist hiding the eyes, solid black "
+     "background"),
+    ("dugu.reverse", "倒蚀",
+     "a pointing hand gesture releasing a bright toxic-green energy burst detonating "
+     "outward in reverse spirals, solid black background"),
     # —— 蜕壳 ——
     ("tuike.don", "着壳",
      "a translucent false-skin shell molded over a figure like a shedding husk, faint outline of a "
@@ -107,6 +126,10 @@ TECHNIQUES: list[tuple[str, str, str]] = [
      "violet-black corruption draining out of a glowing core into a surrounding translucent hollow "
      "husk shell, dark taint migrating into a discardable cicada-like outer shell, "
      "solid black background"),
+    # —— 易形 ——
+    ("morph.yixing", "易形",
+     "a human silhouette mid-shapeshift, pale meridian light re-routing into a translucent "
+     "beast outline overlapping the body, solid black background"),
     # —— 暗器封骨 ——
     ("anqi.charge_carrier", "封骨",
      "a pale mutated beast bone being sealed with stored spiritual qi, faint glowing runic charge "
@@ -154,6 +177,12 @@ def main() -> int:
     ap.add_argument("--only", nargs="*", help="只生成这些 technique id")
     ap.add_argument("--force", action="store_true", help="重出已存在的图标")
     ap.add_argument("--backend", default="cliproxy")
+    ap.add_argument(
+        "--quality",
+        default="auto",
+        choices=["auto", "low", "medium", "high"],
+        help="透传 gen.py --quality（图标最终缩 128×128，网关限时紧时用 low）",
+    )
     args = ap.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -174,6 +203,7 @@ def main() -> int:
         cmd = [
             sys.executable, str(SCRIPT_DIR / "gen.py"), prompt,
             "--name", raw_name, "--style", "item", "--backend", args.backend,
+            "--quality", args.quality,
         ]
         r = subprocess.run(cmd, capture_output=True, text=True)
         raw = RAW_DIR / f"{raw_name}.png"
