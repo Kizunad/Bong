@@ -24,7 +24,7 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | 技能栏图标重链（28 张映射到既有 skill_scroll 资产）+ 命名约定统一 | ✅ 2026-07-17 |
+| P0 | 技能栏图标重链（28 张映射到既有 skill_scroll 资产）+ 命名约定统一 | ✅ 2026-07-17（技能栏链，PR-1）；#2 的 runtime 消费链面 2026-07-18 PR-3 补齐（序列偏差记录见 Finish Evidence P0 段） |
 | P1 | 孤儿动画接线（有真实事件源的批次） | ✅ 2026-07-18 |
 | P2 | 真缺图标 `/gen-image` 补齐（dugu runtime 5 + 复核后仍缺者） | ✅ 2026-07-18 |
 | P3 | 防回归：资产存在性扫描测试 + 接线 pin 测试 | ✅ 2026-07-18 |
@@ -162,9 +162,9 @@
 
 **落地清单**（单 plan 三 PR 序列化，按 §10）：
 
-- **P0 图标重链**（PR-1 = #1220）：`server/src/cultivation/known_techniques.rs`（33 条 `icon_texture` 重链到 `bong-client:textures/gui/items/skill_scroll_<safe_id>.png` 单一真相源 + 模块注释约定/例外清单）；P0 #4 修订——quickslot 为纯 Item 槽（`QuickSlotBindings` 无 Skill 变体），Item 型槽 `icon_texture` 恒空串 = 显式契约（client 按 itemId 走 `ItemIconRegistry` 富解析）。
+- **P0 图标重链**（PR-1 = #1220）：`server/src/cultivation/known_techniques.rs`（33 条 `icon_texture` 重链到 `bong-client:textures/gui/items/skill_scroll_<safe_id>.png` 单一真相源 + 模块注释约定/例外清单）；P0 #4 修订——quickslot 为纯 Item 槽（`QuickSlotBindings` 无 Skill 变体），Item 型槽 `icon_texture` 恒空串 = 显式契约（client 按 itemId 走 `ItemIconRegistry` 富解析）。**P0 #2 补交记录（PR-3，2026-07-18）**：woliu 进阶五招在**技能栏消费链**（`TECHNIQUE_DEFINITIONS.icon_texture`）已由 PR-1 重链到专属 `skill_scroll_woliu_*.png`；`woliu_v2::skills::visual_for` 的 **runtime payload 消费链**上同名借用分叉（vacuum_palm→mouth 等）为 PR-2 对抗审查发现的遗留、于 PR-3 补齐重链——属 P0 #2 同一交付物在第二条消费链上的补交（对既定 PR 序列的偏差，如实记录），配套专属映射契约 pin 见 P3 段。
 - **P1 孤儿动画接线**（PR-2 = #1221）：`server/src/network/vfx_animation_trigger.rs`——`emit_technique_learned_stance_triggers`（stance_woliu/stance_zhenmai，仅生产可达两族；dugu/dugu_poison/baomai/tuike 4 族 r2 review 降级 report-only 不预置映射）、`emit_forge_tempering_animation_triggers`（TemperingHit）、`emit_attack_animation_triggers` 空手连击 right→left 交替（`next_fist_punch_anim` + `prune_stale_fist_combo` 窗口剪枝）；内联 emit：`zhenfa::handle_zhenfa_place_requests`（rune_draw）、`client_request_handler::handle_alchemy_intervention`（alchemy_stir，AutoProfile 变体不发）、`insight_flow::apply_insight_chosen`（enlightenment_pose）。report-only ×12 逐条证据见 P1 表。
-- **P2 真缺图标补齐**（PR-3 = 本 PR）：`scripts/images/gen_technique_icons.py` 扩 6 条 prompt + `--quality` 透传；新增资产 `client/src/main/resources/assets/bong-client/textures/gui/items/skill_scroll_{dugu_{eclipse,self_cure,penetrate,shroud,reverse},morph_yixing}.png`（128×128 RGBA 全不透明黑底，程序化拍平 + 逐张目视核验）；`dugu_v2::skills::visual_for` 5 条 + `woliu_v2::skills::visual_for` 进阶 5 条重链、`known_techniques.rs` morph.yixing 收编规范路径；快照例外表 13→12、client `MISSING_ICON_ALLOWLIST` 清零（冻结基线不动）。
+- **P2 真缺图标补齐**（PR-3 = 本 PR）：`scripts/images/gen_technique_icons.py` 扩 6 条 prompt + `--quality` 透传；新增资产 `client/src/main/resources/assets/bong-client/textures/gui/items/skill_scroll_{dugu_{eclipse,self_cure,penetrate,shroud,reverse},morph_yixing}.png`（128×128 RGBA 全不透明黑底，程序化拍平 + 逐张目视核验）；`dugu_v2::skills::visual_for` 5 条重链、`known_techniques.rs` morph.yixing 收编规范路径（woliu_v2 runtime 进阶五招重链**不属 P2 范围**——系 P0 #2 遗漏补交，见上方 P0 段补交记录）；快照例外表 13→12、client `MISSING_ICON_ALLOWLIST` 清零（冻结基线不动）。
 - **P3 防回归测试**（跨三 PR 交付）：图标链（PR-1）——`technique_icon_snapshot_test.rs`（快照单向同步/命名空间/重复映射约束）+ checked-in `client/src/test/resources/bong/technique_icon_snapshot.json` + client `SkillIconSnapshotAssetTest`（main-resources 存在性扫描/allowlist 棘轮/反向探针/生产链端到端）+ `skillbar_config_emit` 发射契约测试；动画链（PR-2）——`P1_WIRED_ANIM_IDS`（7 条唯一真相源）→ `anim_wiring_manifest.json` 单向导出 + 双端同步测试 + emit pin 饱和覆盖 + client 真实 `VfxEventRouter`→真实 `ClientAnimationBridge`（`AnimationTargetResolver` 注入接缝）→`AnimationLayerManager` 非 miss 正向闭环 + `ProductionAnimationResources` 生产 resource reload 入口测试；runtime 图标链（PR-3）——dugu_v2 5 变体 + woliu_v2 15 变体 `visual_for` 图标存在性 pin，另有 woliu 进阶五招专属映射契约 pin（表驱动 assert_eq! 精确路径 + 两两互异 + 与基础招图标集合不相交，review 返工补齐：存在性扫描挡不住回退借用——基础图标仍在磁盘）；dugu_v2 精确映射由 tests.rs 既有逐条 assert_eq! 锁定。
 
 **关键 commit**：
