@@ -29,8 +29,10 @@ def part_helmet() -> ArmorPart:
             c("HEAD", "left_brow_bridge", (-3.7, 28.7, -4.75), (3.2, 1.0, 0.75)),
             c("HEAD", "right_brow_bridge", (0.4, 28.9, -4.75), (3.0, 0.9, 0.75), (32, 0)),
             c("HEAD", "forehead_keel", (-1.05, 29.6, -4.7), (2.1, 2.5, 0.65)),
-            c("HEAD", "left_crown_rail", (-4.45, 27.1, -3.5), (0.85, 4.9, 6.9)),
-            c("HEAD", "right_crown_rail", (3.6, 27.6, -3.6), (0.85, 4.3, 7.0), (32, 0)),
+            c("HEAD", "left_temple_rail", (-4.45, 27.1, -3.5), (0.85, 4.9, 2.65)),
+            c("HEAD", "left_rear_rail", (-4.4, 30.45, -0.8), (0.8, 0.8, 4.7), (32, 0)),
+            c("HEAD", "right_temple_rail", (3.6, 27.6, -3.6), (0.85, 4.3, 2.55), (32, 0)),
+            c("HEAD", "right_rear_rail", (3.65, 30.7, -0.95), (0.75, 0.75, 4.85)),
             c("HEAD", "rear_crossbar", (-3.6, 30.4, 3.5), (7.1, 0.85, 0.75)),
             c("HEAD", "left_cheek", (-4.55, 24.9, -4.25), (1.0, 3.8, 1.3), (32, 0)),
             c("HEAD", "right_cheek", (3.55, 24.5, -4.25), (1.0, 4.2, 1.3), (32, 0)),
@@ -83,8 +85,12 @@ def part_chestplate() -> ArmorPart:
             c("BODY", "waist_rope_back", (-4.0, 12.55, 2.5), (8.0, 0.55, 0.45), (0, 32)),
             c("BODY", "waist_rope_left", (-4.1, 12.55, -2.5), (0.45, 0.55, 5.0), (0, 32)),
             c("BODY", "waist_rope_right", (3.65, 12.55, -2.5), (0.45, 0.55, 5.0), (0, 32)),
-            c("BODY", "broken_right_rib_tip", (3.25, 14.15, -3.0), (0.9, 0.5, 0.65), (32, 0)),
-            c("BODY", "broken_rib_binding", (3.3, 13.95, -3.15), (0.35, 1.25, 0.3), (0, 32)),
+            c("BODY", "broken_right_rib_tip", (2.5, 14.15, -3.0), (1.35, 0.5, 0.65), (32, 0)),
+            c("BODY", "broken_rib_binding", (2.55, 13.95, -3.15), (0.35, 1.25, 0.3), (0, 32)),
+            c("BODY", "upper_spine_knob", (-0.75, 21.0, 2.65), (1.5, 1.0, 0.45), (32, 0)),
+            c("BODY", "middle_spine_knob", (-0.65, 17.4, 2.65), (1.3, 0.9, 0.45)),
+            c("BODY", "lower_spine_knob", (-0.55, 14.1, 2.65), (1.1, 0.8, 0.45), (32, 0)),
+            c("BODY", "waist_rope_knot", (3.65, 12.25, -3.15), (0.85, 1.0, 0.55), (0, 32)),
         )
     )
     return ArmorPart("bone_chestplate", "BONE CHESTPLATE", tuple(cubes))
@@ -116,7 +122,10 @@ def part_leggings() -> ArmorPart:
     return ArmorPart(
         "bone_leggings",
         "BONE LEGGINGS",
-        _leg_cubes("LEFT_LEG", 1.2, 6.1) + _leg_cubes("RIGHT_LEG", -2.1, 5.5),
+        _leg_cubes("LEFT_LEG", 1.2, 6.1)
+        + (c("LEFT_LEG", "left_leg_knee_hook", (1.0, 3.55, -3.1), (0.7, 1.0, 0.6), (32, 0)),)
+        + _leg_cubes("RIGHT_LEG", -2.1, 5.5)
+        + (c("RIGHT_LEG", "right_leg_knee_chip", (-1.7, 3.5, -3.05), (0.55, 0.85, 0.55)),),
     )
 
 
@@ -132,6 +141,7 @@ def _boot_cubes(mount: str, outer_x: float, inner_x: float) -> tuple[Cube, ...]:
         c(mount, f"{prefix}_outer_claw", (outer_x, 0.0, -3.4), (0.7, 1.25, 1.45), (32, 0)),
         c(mount, f"{prefix}_inner_claw", (inner_x, 0.15, -3.3), (0.6, 1.05, 1.3)),
         c(mount, f"{prefix}_heel_bone", (-1.7, 0.25, 2.0), (3.4, 1.8, 0.65), (32, 0)),
+        c(mount, f"{prefix}_ankle_knot", (outer_x, 2.55, -3.15), (0.75, 0.8, 0.45), (0, 32)),
     )
     return bones + _rope_loop(mount, prefix, 2.75, "ankle")
 
@@ -172,10 +182,24 @@ def make_texture() -> Image.Image:
             )
 
     draw = ImageDraw.Draw(image)
-    for points in (((3, 4), (9, 9), (7, 16)), ((18, 3), (15, 11), (22, 18)), ((35, 5), (42, 11), (38, 23))):
+    for points in (
+        ((3, 4), (9, 9), (7, 16)),
+        ((18, 3), (15, 11), (22, 18)),
+        ((26, 5), (23, 13), (29, 20)),
+        ((35, 5), (42, 11), (38, 23)),
+    ):
         draw.line(points, fill=(105, 96, 82), width=1)
+    for branch in (((9, 9), (13, 12)), ((15, 11), (12, 15)), ((42, 11), (45, 14))):
+        draw.line(branch, fill=(91, 81, 68), width=1)
+    for x, y in ((5, 22), (11, 3), (16, 25), (21, 7), (27, 27), (34, 18), (39, 4), (44, 26)):
+        draw.point((x, y), fill=(126, 113, 94))
+        if x + 1 < 48:
+            draw.point((x + 1, y), fill=(226, 218, 199))
     for y in (36, 43, 50, 57):
         draw.line((0, y, 31, y), fill=(55, 38, 28), width=1)
+        draw.line((0, y + 1, 31, y + 1), fill=(118, 79, 50), width=1)
+    for x, y in ((4, 34), (13, 41), (23, 48), (8, 55), (27, 60)):
+        draw.rectangle((x, y, x + 2, y + 1), fill=(149, 101, 61))
     return image
 
 

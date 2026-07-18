@@ -257,8 +257,10 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.HEAD, -3.7f, 28.7f, -4.75f, 3.2f, 1.0f, 0.75f, 0, 0),
             new ArmorCube(Mount.HEAD, 0.4f, 28.9f, -4.75f, 3.0f, 0.9f, 0.75f, 32, 0),
             new ArmorCube(Mount.HEAD, -1.05f, 29.6f, -4.7f, 2.1f, 2.5f, 0.65f, 0, 0),
-            new ArmorCube(Mount.HEAD, -4.45f, 27.1f, -3.5f, 0.85f, 4.9f, 6.9f, 0, 0),
-            new ArmorCube(Mount.HEAD, 3.6f, 27.6f, -3.6f, 0.85f, 4.3f, 7.0f, 32, 0),
+            new ArmorCube(Mount.HEAD, -4.45f, 27.1f, -3.5f, 0.85f, 4.9f, 2.65f, 0, 0),
+            new ArmorCube(Mount.HEAD, -4.4f, 30.45f, -0.8f, 0.8f, 0.8f, 4.7f, 32, 0),
+            new ArmorCube(Mount.HEAD, 3.6f, 27.6f, -3.6f, 0.85f, 4.3f, 2.55f, 32, 0),
+            new ArmorCube(Mount.HEAD, 3.65f, 30.7f, -0.95f, 0.75f, 0.75f, 4.85f, 0, 0),
             new ArmorCube(Mount.HEAD, -3.6f, 30.4f, 3.5f, 7.1f, 0.85f, 0.75f, 0, 0),
             new ArmorCube(Mount.HEAD, -4.55f, 24.9f, -4.25f, 1.0f, 3.8f, 1.3f, 32, 0),
             new ArmorCube(Mount.HEAD, 3.55f, 24.5f, -4.25f, 1.0f, 4.2f, 1.3f, 32, 0),
@@ -309,8 +311,12 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.BODY, -4.0f, 12.55f, 2.5f, 8.0f, 0.55f, 0.45f, 0, 32),
             new ArmorCube(Mount.BODY, -4.1f, 12.55f, -2.5f, 0.45f, 0.55f, 5.0f, 0, 32),
             new ArmorCube(Mount.BODY, 3.65f, 12.55f, -2.5f, 0.45f, 0.55f, 5.0f, 0, 32),
-            new ArmorCube(Mount.BODY, 3.25f, 14.15f, -3.0f, 0.9f, 0.5f, 0.65f, 32, 0),
-            new ArmorCube(Mount.BODY, 3.3f, 13.95f, -3.15f, 0.35f, 1.25f, 0.3f, 0, 32)
+            new ArmorCube(Mount.BODY, 2.5f, 14.15f, -3.0f, 1.35f, 0.5f, 0.65f, 32, 0),
+            new ArmorCube(Mount.BODY, 2.55f, 13.95f, -3.15f, 0.35f, 1.25f, 0.3f, 0, 32),
+            new ArmorCube(Mount.BODY, -0.75f, 21.0f, 2.65f, 1.5f, 1.0f, 0.45f, 32, 0),
+            new ArmorCube(Mount.BODY, -0.65f, 17.4f, 2.65f, 1.3f, 0.9f, 0.45f, 0, 0),
+            new ArmorCube(Mount.BODY, -0.55f, 14.1f, 2.65f, 1.1f, 0.8f, 0.45f, 32, 0),
+            new ArmorCube(Mount.BODY, 3.65f, 12.25f, -3.15f, 0.85f, 1.0f, 0.55f, 0, 32)
         );
     }
 
@@ -330,6 +336,7 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.LEFT_LEG, -2.05f, 5.85f, 2.65f, 4.1f, 0.45f, 0.35f, 0, 32),
             new ArmorCube(Mount.LEFT_LEG, -2.1f, 5.85f, -2.65f, 0.35f, 0.45f, 5.3f, 0, 32),
             new ArmorCube(Mount.LEFT_LEG, 1.75f, 5.85f, -2.65f, 0.35f, 0.45f, 5.3f, 0, 32),
+            new ArmorCube(Mount.LEFT_LEG, 1.0f, 3.55f, -3.1f, 0.7f, 1.0f, 0.6f, 32, 0),
             new ArmorCube(Mount.RIGHT_LEG, -0.5f, 5.1f, -2.8f, 1.0f, 6.8f, 0.75f, 0, 0),
             new ArmorCube(Mount.RIGHT_LEG, -2.1f, 5.5f, -2.55f, 0.9f, 5.5f, 0.9f, 32, 0),
             new ArmorCube(Mount.RIGHT_LEG, -2.15f, 10.75f, -2.9f, 1.65f, 1.25f, 0.8f, 0, 0),
@@ -343,7 +350,8 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.RIGHT_LEG, -2.05f, 5.85f, -3.0f, 4.1f, 0.45f, 0.35f, 0, 32),
             new ArmorCube(Mount.RIGHT_LEG, -2.05f, 5.85f, 2.65f, 4.1f, 0.45f, 0.35f, 0, 32),
             new ArmorCube(Mount.RIGHT_LEG, -2.1f, 5.85f, -2.65f, 0.35f, 0.45f, 5.3f, 0, 32),
-            new ArmorCube(Mount.RIGHT_LEG, 1.75f, 5.85f, -2.65f, 0.35f, 0.45f, 5.3f, 0, 32)
+            new ArmorCube(Mount.RIGHT_LEG, 1.75f, 5.85f, -2.65f, 0.35f, 0.45f, 5.3f, 0, 32),
+            new ArmorCube(Mount.RIGHT_LEG, -1.7f, 3.5f, -3.05f, 0.55f, 0.85f, 0.55f, 0, 0)
         );
     }
 
@@ -358,6 +366,7 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.LEFT_FOOT, 1.1f, 0.0f, -3.4f, 0.7f, 1.25f, 1.45f, 32, 0),
             new ArmorCube(Mount.LEFT_FOOT, -1.9f, 0.15f, -3.3f, 0.6f, 1.05f, 1.3f, 0, 0),
             new ArmorCube(Mount.LEFT_FOOT, -1.7f, 0.25f, 2.0f, 3.4f, 1.8f, 0.65f, 32, 0),
+            new ArmorCube(Mount.LEFT_FOOT, 1.1f, 2.55f, -3.15f, 0.75f, 0.8f, 0.45f, 0, 32),
             new ArmorCube(Mount.LEFT_FOOT, -2.05f, 2.75f, -3.0f, 4.1f, 0.45f, 0.35f, 0, 32),
             new ArmorCube(Mount.LEFT_FOOT, -2.05f, 2.75f, 2.65f, 4.1f, 0.45f, 0.35f, 0, 32),
             new ArmorCube(Mount.LEFT_FOOT, -2.1f, 2.75f, -2.65f, 0.35f, 0.45f, 5.3f, 0, 32),
@@ -371,6 +380,7 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.RIGHT_FOOT, -1.9f, 0.0f, -3.4f, 0.7f, 1.25f, 1.45f, 32, 0),
             new ArmorCube(Mount.RIGHT_FOOT, 1.1f, 0.15f, -3.3f, 0.6f, 1.05f, 1.3f, 0, 0),
             new ArmorCube(Mount.RIGHT_FOOT, -1.7f, 0.25f, 2.0f, 3.4f, 1.8f, 0.65f, 32, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -1.9f, 2.55f, -3.15f, 0.75f, 0.8f, 0.45f, 0, 32),
             new ArmorCube(Mount.RIGHT_FOOT, -2.05f, 2.75f, -3.0f, 4.1f, 0.45f, 0.35f, 0, 32),
             new ArmorCube(Mount.RIGHT_FOOT, -2.05f, 2.75f, 2.65f, 4.1f, 0.45f, 0.35f, 0, 32),
             new ArmorCube(Mount.RIGHT_FOOT, -2.1f, 2.75f, -2.65f, 0.35f, 0.45f, 5.3f, 0, 32),

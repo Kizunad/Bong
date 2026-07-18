@@ -24,11 +24,19 @@ class BoneArmorGeneratorTest(unittest.TestCase):
             ["bone_helmet", "bone_chestplate", "bone_leggings", "bone_boots"],
             [part.key for part in parts],
         )
-        self.assertEqual([19, 33, 28, 26], [len(part.cubes) for part in parts])
+        self.assertEqual([21, 37, 30, 28], [len(part.cubes) for part in parts])
         for part in parts:
             validate_part(part)
         self.assertTrue(any("rib" in cube.name for cube in bone.part_chestplate().cubes))
         self.assertTrue(any("horn" in cube.name for cube in bone.part_helmet().cubes))
+        helmet_names = {cube.name for cube in bone.part_helmet().cubes}
+        self.assertNotIn("left_crown_rail", helmet_names)
+        self.assertEqual(3, len([name for name in helmet_names if name.startswith("left_horn_")]))
+        self.assertEqual(2, len([name for name in helmet_names if name.startswith("right_horn_")]))
+        self.assertEqual(
+            3,
+            len([cube for cube in bone.part_chestplate().cubes if "spine_knob" in cube.name]),
+        )
 
     def test_rope_loops_are_hollow_strips_not_solid_platforms(self) -> None:
         rope_cubes = [cube for part in bone.parts() for cube in part.cubes if "rope" in cube.name]
@@ -49,6 +57,7 @@ class BoneArmorGeneratorTest(unittest.TestCase):
         r, g, b = first.getpixel((4, 4))
         self.assertGreater(r, b, "骨色应偏暖灰白而非冷铁灰")
         self.assertGreater(g, b)
+        self.assertEqual((118, 79, 50), first.getpixel((0, 37)), "绑绳亮纤维色应被固定")
 
     def test_bbmodel_preserves_left_right_foot_mounts(self) -> None:
         part = bone.part_boots()
