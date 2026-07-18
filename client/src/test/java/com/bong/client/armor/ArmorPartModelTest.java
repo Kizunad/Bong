@@ -55,10 +55,14 @@ class ArmorPartModelTest {
             ArmorPartModel.Mount.RIGHT_LEG, -2.3f, 3.4f);
         assertPinnedTable("iron_boots", 14, ArmorPartModel.Mount.LEFT_FOOT, -2.1f, 2.0f,
             ArmorPartModel.Mount.RIGHT_FOOT, -2.35f, -0.25f);
-        assertPinnedSingle("bone_helmet", ArmorPartModel.Mount.HEAD, -4.5f, 23.7f, 9.0f, 8.8f);
-        assertPinnedSingle("bone_chestplate", ArmorPartModel.Mount.BODY, -4.5f, 11.7f, 9.0f, 12.6f);
-        assertPinnedPair("bone_leggings", ArmorPartModel.Mount.LEFT_LEG, ArmorPartModel.Mount.RIGHT_LEG, 12.4f);
-        assertPinnedPair("bone_boots", ArmorPartModel.Mount.LEFT_FOOT, ArmorPartModel.Mount.RIGHT_FOOT, 4.4f);
+        assertPinnedTable("bone_helmet", 16, ArmorPartModel.Mount.HEAD, -3.6f, 28.8f,
+            ArmorPartModel.Mount.HEAD, -0.5f, 30.2f);
+        assertPinnedTable("bone_chestplate", 25, ArmorPartModel.Mount.BODY, -0.65f, 13.0f,
+            ArmorPartModel.Mount.BODY, 5.2f, 22.0f);
+        assertPinnedTable("bone_leggings", 14, ArmorPartModel.Mount.LEFT_LEG, -0.55f, 5.0f,
+            ArmorPartModel.Mount.RIGHT_LEG, -2.3f, 4.2f);
+        assertPinnedTable("bone_boots", 16, ArmorPartModel.Mount.LEFT_FOOT, -0.6f, 1.8f,
+            ArmorPartModel.Mount.RIGHT_FOOT, -2.1f, 2.7f);
     }
 
     private static void assertPinnedTable(
@@ -94,39 +98,4 @@ class ArmorPartModelTest {
         assertThrows(IllegalArgumentException.class, () -> ArmorPartModel.buildModelPart("missing"));
     }
 
-    private static void assertPinnedSingle(
-        String modelKey,
-        ArmorPartModel.Mount mount,
-        float ox,
-        float oy,
-        float sx,
-        float sy
-    ) {
-        List<ArmorPartModel.ArmorCube> cubes = ArmorPartModel.cubes(modelKey);
-        assertEquals(1, cubes.size(), modelKey + " P0 占位表应恰有一个 cube");
-        ArmorPartModel.ArmorCube cube = cubes.get(0);
-        assertEquals(mount, cube.mount());
-        assertEquals(ox, cube.ox(), 1e-4f);
-        assertEquals(oy, cube.oy(), 1e-4f);
-        assertEquals(sx, cube.sx(), 1e-4f);
-        assertEquals(sy, cube.sy(), 1e-4f);
-        ModelPart root = ArmorPartModel.buildModelPart(modelKey);
-        assertNotNull(root.getChild(mount.childName()));
-    }
-
-    private static void assertPinnedPair(
-        String modelKey,
-        ArmorPartModel.Mount left,
-        ArmorPartModel.Mount right,
-        float expectedHeight
-    ) {
-        List<ArmorPartModel.ArmorCube> cubes = ArmorPartModel.cubes(modelKey);
-        assertEquals(2, cubes.size(), modelKey + " 应拆为左右两个独立骨骼 cube");
-        assertEquals(left, cubes.get(0).mount());
-        assertEquals(right, cubes.get(1).mount());
-        assertEquals(expectedHeight, cubes.get(0).sy(), 1e-4f);
-        ModelPart root = ArmorPartModel.buildModelPart(modelKey);
-        assertNotNull(root.getChild(left.childName()));
-        assertNotNull(root.getChild(right.childName()));
-    }
 }
