@@ -13,8 +13,8 @@
 //!   （该目录保留给非 technique 的 HUD 特化图）；
 //! - zhenmai 五式 → `bong-client:textures/gui/skill/`。
 //!
-//! 已知缺失：`morph.yixing` 全仓尚无任何图标资产，保持现值悬空，
-//! 待本 plan P2 生成资产后按上述约定重链（P3 快照测试 allowlist 记录）。
+//! 已知缺失：无——`morph.yixing` 已于 P2（2026-07-18）经 `/gen-image` 生成
+//! `skill_scroll_morph_yixing.png` 并按规范路径收编，缺资产 allowlist 清零。
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
@@ -1023,7 +1023,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 60,
         cooldown_ticks: 600,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/morph_yixing.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_morph_yixing.png",
         category: SkillCategory::Buff,
     },
 ];
