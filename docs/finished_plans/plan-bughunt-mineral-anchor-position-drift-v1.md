@@ -27,7 +27,7 @@
 
 - `spawn_mineral_anchor_nodes` 在进入任何 `positions_for_anchor` / `MineralOreIndex` 物化循环前完整加载并校验 manifest；任一条失败即整批 fail-closed。
 - `startup_fails_closed_before_materializing_invalid_anchor` 同时断言错误 manifest 下索引条目与 `MineralOreNode` 实体均为 0；`startup_spawns_index_entries_and_skips_exhausted_positions` 锁定有效启动、耗尽过滤和 `Gatherable` 挂载。
-- 默认 manifest 继续由生产 `MineralAnchorConfig` 消费，测试不是旁路 fixture。
+- 默认数据契约测试直接使用生产 `MineralAnchorConfig::default().path` 与 runtime `ZoneRegistry::load()`，没有复制一份旁路 manifest fixture。
 
 ## P3 — 主线验真与归档
 
@@ -37,7 +37,7 @@
 
 ## Bug 摘要
 
-`worldgen/blueprint/mineral_anchors.json` 里的固定矿脉锚点仍使用旧世界坐标/旧 zone id。当前 runtime 启动期会直接按 `position` 物化 `MineralOreNode`，但加载器没有校验 `zone` 是否存在，也没有校验 `position` 是否落在该 zone 的 AABB 内。
+修复前，`worldgen/blueprint/mineral_anchors.json` 里的固定矿脉锚点仍使用旧世界坐标/旧 zone id。当时 runtime 启动期会直接按 `position` 物化 `MineralOreNode`，但加载器没有校验 `zone` 是否存在，也没有校验 `position` 是否落在该 zone 的 AABB 内。
 
 结果是：除 spawn 教学凡铁矿外，青云残峰、血谷、灵泉湿地、旧 `rift_valley` 的矿点全部实际落在 `spawn` AABB 内。
 
@@ -75,13 +75,13 @@ lingquan_marsh dan_sha   [488, 58, 96]     actual_runtime_zone=spawn
 spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 ```
 
-## 触发路径
+## 修复前触发路径
 
 1. 开发/CI 通过 worldgen pipeline 生成 raster，并以 `BONG_TERRAIN_RASTER_PATH` 启动 server。
 2. `world::setup_world` 加载 raster manifest，插入 `TerrainProviders`。
 3. `mineral::register` 注册的 Startup system 在 `setup_world` 后执行 `spawn_mineral_anchor_nodes`。
 4. `spawn_mineral_anchor_nodes` 读取 `worldgen/blueprint/mineral_anchors.json`。
-5. 由于没有 zone/AABB 契约校验，旧坐标 anchor 被直接传入 `positions_for_anchor`。
+5. 由于当时没有 zone/AABB 契约校验，旧坐标 anchor 被直接传入 `positions_for_anchor`。
 6. `positions_for_anchor` 围绕旧 `position` 生成矿点，并用 terrain surface snap 修正 Y。
 7. `MineralOreNode` 与 `MineralOreIndex` 写入出生区附近，玩家后续探矿/采矿会命中这些错位矿脉。
 
@@ -89,7 +89,7 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 
 ### 第一轮质疑
 
-反方指出：`MineralAnchor.zone` 当前只是元数据，runtime 生成矿脉不按 zone 查 AABB，也不把 zone 写进 `MineralOreNode`。因此不能把 bug 表述为“zone 字段驱动错区”。真正问题是 `position` 本身旧化，且 runtime 直接按该位置物化。
+反方当时指出：`MineralAnchor.zone` 在原实现中只是元数据，runtime 生成矿脉不按 zone 查 AABB，也不把 zone 写进 `MineralOreNode`。因此不能把 bug 表述为“zone 字段驱动错区”。真正问题是 `position` 本身旧化，且 runtime 直接按该位置物化。
 
 反方还指出：“fresh spawn 立刻拿全远端材料”表述过强。探矿有境界/距离/工具门槛，不是无条件立刻全拿。
 
@@ -120,7 +120,7 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 - [x] worldgen 生成链路由原 PR #1187 的 `Worldgen Preview Snapshot / snapshot` 与 `E2E Redis Smoke / e2e` 成功检查覆盖；本次未修改 anchor JSON 或 terrain 生成代码。
 - [x] `manifest_anchors_declare_zones_that_exist_in_runtime_registry` 直接对拍默认 JSON 与 runtime `ZoneRegistry`：所有非 spawn anchor 的 actual runtime zone 等于声明 zone。
 - [x] `manifest_no_longer_references_nonexistent_rift_valley_zone` 锁定 `rift_valley` 不再出现；精确集合断言锁定 `blood_valley/cu_tie` 的归并结果。
-- [x] `manifest_only_spawn_anchor_is_the_teaching_fan_tie_vein` 锁定 spawn 仅有教学 `fan_tie`；有效 startup 集成测试锁定远端 anchor 可物化并进入索引。
+- [x] `manifest_only_spawn_anchor_is_the_teaching_fan_tie_vein` 锁定默认数据中 spawn 仅有教学 `fan_tie`；`startup_spawns_index_entries_and_skips_exhausted_positions` 使用一条显式配置的 spawn fixture，锁定有效 anchor 的物化、耗尽过滤、索引写入与 `Gatherable` 挂载。
 
 ## 2026-07-18 当前主线验真
 
@@ -157,7 +157,8 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 - `e6ccf84c`（2026-07-18）：补齐生产 loader 的 runtime zone 契约、Startup 排序与 fail-closed 测试。
 - `5275263b`（2026-07-18）：锁定默认 manifest 恰好 10 条及精确 zone/mineral 组合。
 - `13d03af6`（2026-07-18）：合并最新 `origin/main`；带入内容仅为无关 docs。
-- `d25bcf7b`（2026-07-18）：将完成态 plan 迁入 `docs/finished_plans/`。
+- `d25bcf7b`（2026-07-18）：仅执行 active → finished 路径迁移；该 commit 中的文档 blob 仍是 Active、P0-P3 为 ⬜ 且尚无 Finish Evidence，因此它本身不构成合规完成态。
+- `4da7a914`（2026-07-18）：在已迁移文件中补齐 P0-P3 完成状态、唯一 `## Finish Evidence` 与验收叙述，形成当前实际完成态；此两提交拆分如实记录归档时的暂态偏差，不把 `d25bcf7b` 虚报为完整归档。
 
 ### 测试结果
 
