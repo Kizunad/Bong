@@ -1,13 +1,13 @@
 # plan-bughunt-anqi-hud-session-lasttick
 
-> **Finished BugFix Plan（2026-07-15 归档）**。历史来源（升格前）：
+> **Finished BugFix Plan（2026-07-15 初版归档；2026-07-18 最终验收）**。历史来源（升格前）：
 > `docs/plans-skeleton/plan-bughunt-anqi-hud-session-lasttick.md`。
 > BugHunt C2 client-ui 第二轮结论：暗器 HUD 的 `AnqiHudStateStore` 在断线/切服时
 > 没有清理 per-dimension `lastTick`，导致同一客户端进程连接新 server / 新世界后，
 > 低 tick 的 `anqi_hud` payload 被当成旧包静默丢弃。
 
 阶段总览：P0 修复前失败契约 ✅ 2026-07-15；P1 生产断线 reset ✅ 2026-07-15；
-P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归档 ✅ 2026-07-15。
+P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归档 ✅ 2026-07-18。
 
 ## Bug 摘要
 
@@ -117,7 +117,8 @@ P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归
   `9a3c839f` 生产修复前实际保留 2 项目标红灯。
 - P1 ✅ 2026-07-15：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
 - P2 ✅ 2026-07-15：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
-- P3 ✅ 2026-07-15：同步主线、主 agent 对抗自审、填写 Finish Evidence 并归档。
+- P3 ✅ 2026-07-18：同步主线、主 agent 对抗自审、填写 Finish Evidence 并完成最终验收；
+  2026-07-15 的归档提交保留为初版归档历史。
 
 ## 验收矩阵
 
