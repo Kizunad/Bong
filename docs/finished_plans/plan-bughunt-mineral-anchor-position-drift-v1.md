@@ -1,15 +1,39 @@
 # BugHunt: 矿脉固定锚点旧坐标漂移到 spawn
 
-> 状态：Active（2026-07-18 历史归档修复）。本文件恢复自 `353225a4` 的父提交 `c3018995`；PR #1187 合并时删除了 skeleton，却没有留下 active / finished plan。本次先恢复并升格，再独立核对当前主线，不预设当年实现仍然正确。
+> 状态：Finished（✅ 2026-07-18）。本文件恢复自 `353225a4` 的父提交 `c3018995`；PR #1187 合并时删除了 skeleton，却没有留下 active / finished plan。本次恢复并升格后重新验真，补齐 runtime fail-closed 与默认 manifest 精确契约，再完成归档。
 
 ## 阶段总览
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 建立 anchor zone / AABB 契约校验 | ⬜ |
-| P1 | 修正四组旧坐标与 `rift_valley` 旧 id | ⬜ |
-| P2 | 锁定 runtime manifest 契约与锚点物化边界 | ⬜ |
-| P3 | 当前主线验真、测试证据与归档收口 | ⬜ |
+| P0 | 建立 anchor zone / AABB 契约校验 | ✅ 2026-07-18 |
+| P1 | 修正四组旧坐标与 `rift_valley` 旧 id | ✅ 2026-07-18 |
+| P2 | 锁定 runtime manifest 契约与锚点物化边界 | ✅ 2026-07-18 |
+| P3 | 当前主线验真、测试证据与归档收口 | ✅ 2026-07-18 |
+
+## P0 — anchor zone / AABB 契约校验
+
+- `server/src/mineral/anchors.rs` 的 `load_mineral_anchors` 接收 `ZoneRegistry`，由 `validate_anchor_zones` 拒绝未知 zone、非 Overworld zone、中心点越出声明 AABB，以及被 `ZoneRegistry::find_zone` 判给更具体/重叠 zone 的 anchor。
+- `server/src/mineral/mod.rs` 将 `spawn_mineral_anchor_nodes` 排在 `world::setup_world` 与 `ZoneRegistryStartupSet` 后，保证生产启动路径使用真实 runtime zone 表。
+- `load_manifest_rejects_unknown_runtime_zone`、`load_manifest_rejects_non_overworld_declared_zone`、`load_manifest_rejects_center_outside_declared_zone_aabb`、`load_manifest_rejects_more_specific_runtime_zone_capture` 饱和锁定四类错误分支。
+
+## P1 — 坐标与旧 zone id 修复
+
+- `worldgen/blueprint/mineral_anchors.json` 固定为 10 条 anchor：`qingyun_peaks` 3 条、`blood_valley` 4 条、`lingquan_marsh` 2 条、`spawn` 教学凡铁 1 条。
+- 原 `rift_valley/cu_tie` 已归并为合法的 `blood_valley/cu_tie`；9 条非 spawn 坐标均落在声明 zone 当前 AABB，且按最小 AABB 优先语义实际仍解析到声明 zone。
+- `manifest_anchors_declare_zones_that_exist_in_runtime_registry` 同时断言恰好 10 条与精确 zone/mineral 集；`manifest_only_spawn_anchor_is_the_teaching_fan_tie_vein`、`manifest_no_longer_references_nonexistent_rift_valley_zone` 锁定教学矿与旧 id 消失。
+
+## P2 — runtime manifest 与物化边界
+
+- `spawn_mineral_anchor_nodes` 在进入任何 `positions_for_anchor` / `MineralOreIndex` 物化循环前完整加载并校验 manifest；任一条失败即整批 fail-closed。
+- `startup_fails_closed_before_materializing_invalid_anchor` 同时断言错误 manifest 下索引条目与 `MineralOreNode` 实体均为 0；`startup_spawns_index_entries_and_skips_exhausted_positions` 锁定有效启动、耗尽过滤和 `Gatherable` 挂载。
+- 默认 manifest 继续由生产 `MineralAnchorConfig` 消费，测试不是旁路 fixture。
+
+## P3 — 主线验真与归档
+
+- 原修复 commit `b40fcdaf` 与 merge commit `353225a4` 的数据修复仍在主线；PR #1187 的 e2e、preflight、snapshot、review、finalize、CodeRabbit 六项检查均为 SUCCESS。
+- 2026-07-18 当前分支补齐生产校验与饱和回归后，通过 server 全量门禁 `11793 passed / 0 failed / 6 ignored`。
+- 无上下文 validator 对合并主线后的 `13d03af6f54e83e7e25d06cec32c8bb496f69b29` 给出 PASS，确认实现、测试、提交署名和主线合并边界均闭环。
 
 ## Bug 摘要
 
@@ -81,32 +105,32 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 
 ## 实施计划
 
-- [ ] 建立 anchor-zone 校验源：在 worldgen 或 server 测试中读取 `worldgen/blueprint/mineral_anchors.json` 与当前 runtime zone 表，构造 zone name -> AABB 索引。
-- [ ] 为 `mineral_anchors.json` 加契约测试：每条 anchor 的 `zone` 必须存在；`position` 必须在该 zone AABB 内；`radius` 球体至少核心点不得落入其他更具体 zone。
-- [ ] 修正 `qingyun_peaks` 三个矿点坐标，使其落在当前 `qingyun_peaks` AABB 内，并保留矿物种类/数量节奏。
-- [ ] 修正 `blood_valley` 三个矿点坐标，使其落在当前 `blood_valley` AABB 内。
-- [ ] 修正 `lingquan_marsh` 两个矿点坐标，使其落在当前 `lingquan_marsh` AABB 内。
-- [ ] 处理 `rift_valley` 旧 id：决定归并到 `blood_valley`、某个合法渊口 zone，或删除/重命名为当前合法 zone；不得保留未知 zone id。
-- [ ] 在 mineral startup/load 路径或 worldgen harness 中输出清晰错误，避免未来 zone 坐标迁移时静默漂移。
-- [ ] 更新相关测试 fixture/文档引用，只允许 spawn 教学凡铁矿仍位于 `spawn`。
+- [x] 建立 anchor-zone 校验源：生产 loader 直接消费当前 `ZoneRegistry`，测试读取默认 manifest 与 runtime zone 表。
+- [x] 为 `mineral_anchors.json` 加契约测试：每条 anchor 的 `zone` 必须存在；`position` 必须在该 zone AABB 内；核心点不得落入其他更具体 zone。
+- [x] 修正 `qingyun_peaks` 三个矿点坐标，使其落在当前 `qingyun_peaks` AABB 内，并保留矿物种类/数量节奏。
+- [x] 修正 `blood_valley` 三个既有矿点坐标，使其落在当前 `blood_valley` AABB 内。
+- [x] 修正 `lingquan_marsh` 两个矿点坐标，使其落在当前 `lingquan_marsh` AABB 内。
+- [x] 将 `rift_valley/cu_tie` 归并到合法的 `blood_valley/cu_tie`，不再保留未知 runtime zone id。
+- [x] 在 mineral startup/load 生产路径输出含 anchor 下标、矿物、zone 与边界原因的清晰错误，并整批 fail-closed。
+- [x] 更新契约测试，只允许 spawn 教学 `fan_tie` 固定矿脉仍位于 `spawn`。
 
 ## 验收测试计划
 
-- [ ] `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
-- [ ] `cd worldgen && python3 -m unittest discover -s tests -p 'test_*mineral*' -v`；如果新增测试不以 mineral 命名，改跑对应 test 文件。
-- [ ] `cd worldgen && python3 -m scripts.terrain_gen --backend raster --zone-filter spawn,qingyun_peaks,blood_valley,lingquan_marsh`，再用 `worldgen/scripts/terrain_gen/harness/raster_check.py` 校验生成产物。
-- [ ] 增加一个只读对拍脚本/测试输出：所有非 spawn anchor 的 actual runtime zone 等于声明 zone；`rift_valley` 不再出现于 anchor manifest。
-- [ ] 手动或 smoke 验证：spawn 区只剩教学 `fan_tie` 固定矿脉；青云残峰/血谷/灵泉湿地各自能在本区找到对应固定矿脉。
+- [x] `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：2026-07-18 全部通过，`11793 passed / 0 failed / 6 ignored`。
+- [x] worldgen 生成链路由原 PR #1187 的 `Worldgen Preview Snapshot / snapshot` 与 `E2E Redis Smoke / e2e` 成功检查覆盖；本次未修改 anchor JSON 或 terrain 生成代码。
+- [x] `manifest_anchors_declare_zones_that_exist_in_runtime_registry` 直接对拍默认 JSON 与 runtime `ZoneRegistry`：所有非 spawn anchor 的 actual runtime zone 等于声明 zone。
+- [x] `manifest_no_longer_references_nonexistent_rift_valley_zone` 锁定 `rift_valley` 不再出现；精确集合断言锁定 `blood_valley/cu_tie` 的归并结果。
+- [x] `manifest_only_spawn_anchor_is_the_teaching_fan_tie_vein` 锁定 spawn 仅有教学 `fan_tie`；有效 startup 集成测试锁定远端 anchor 可物化并进入索引。
 
 ## 2026-07-18 当前主线验真
 
-结论：原 bug 在 PR #1187 中确实修复，当前 `origin/main` 仍保持闭环；本次只需修复 plan 三态历史，不需要改代码或重新编译。
+结论：原数据漂移 bug 在 PR #1187 中确实修复，当前 `origin/main` 仍保持正确坐标；但本轮核对发现当年 zone/AABB 契约主要停留在回归测试，生产 loader 仍可能在未来配置漂移时静默物化。本次因此除修复 plan 三态历史外，还补齐 runtime fail-closed、Startup zone 初始化顺序与精确 10 条组合断言，并重新执行 server 全量门禁。
 
-- **P0 契约源真实存在**：`server/src/mineral/anchors.rs:600-664` 的三条测试直接读取默认 `mineral_anchors.json` 与 `ZoneRegistry::load()`，分别锁住 zone 存在、中心点在声明 AABB、spawn 唯一教学凡铁以及旧 `rift_valley` id 消失。断言检查实际 manifest / zone 数据，不是只检查函数名。
+- **P0 契约源真实存在**：`server/src/mineral/anchors.rs` 的 `manifest_anchors_declare_zones_that_exist_in_runtime_registry` 等三条默认数据测试直接读取 `mineral_anchors.json` 与 `ZoneRegistry::load()`，分别锁住 zone 存在、中心点在声明 AABB、spawn 唯一教学凡铁以及旧 `rift_valley` id 消失。断言检查实际 manifest / zone 数据，不是只检查函数名。
 - **P1 数据仍正确**：`worldgen/blueprint/mineral_anchors.json:5-84` 保留 10 条 anchor；青云残峰 3 条、血谷 4 条（含由旧 `rift_valley` 归并的 `cu_tie`）、灵泉湿地 2 条均在各自当前 AABB 内，spawn 仅 1 条 `fan_tie`。只读对拍还按 `ZoneRegistry::find_zone` 的“最小 AABB 优先”语义计算实际 runtime zone，10/10 均与声明 zone 相同，没有落入嵌套小 zone。
 - **P2 生产路径可达**：`spawn_mineral_anchor_nodes` 仍从默认 manifest 调 `load_mineral_anchors`，再以 `positions_for_anchor` 生成并写入 `MineralOreIndex`；因此测试锁住的是生产会消费的数据。各 anchor 的 X/Z 半径均留在声明 zone 内；深层 `cu_tie` 的 Y 候选由 `MIN_WORLD_Y` 截断，不越出 Overworld 下界。
-- **P3 历史与漂移检查**：实现提交 `b40fcdaf` 于 2026-07-12 合入 merge commit `353225a4`（2026-07-13）；PR #1187 的 `cargo fmt --check`、全量 `cargo test`、e2e、snapshot、review、CodeRabbit 均成功。`353225a4..origin/main` 未再修改 `server/src/mineral/anchors.rs` 或 `worldgen/blueprint/mineral_anchors.json`；后续只改过无关的北荒 zone 坐标。
-- **文档根因**：`353225a4` 在合入代码时纯删除 skeleton，却没有 promotion、Finish Evidence 或 finished plan；本 PR 只补回这份历史归档，不伪称当年三态流转正确。
+- **P3 历史与漂移检查**：实现提交 `b40fcdaf` 与 merge commit `353225a4` 的仓库日期均为 2026-07-13；PR #1187 的 e2e、preflight、snapshot、review、finalize、CodeRabbit 均成功。`353225a4..origin/main` 未再修改 `worldgen/blueprint/mineral_anchors.json`；本次在当前主线之上加固 `server/src/mineral/anchors.rs` 与 Startup 排序。
+- **文档根因**：`353225a4` 在合入代码时纯删除 skeleton，却没有 promotion、Finish Evidence 或 finished plan；本修复分支补回历史归档，并把核对中发现的生产 fail-closed 缺口一并闭环，不伪称当年三态流转正确。
 
 ## 风险
 
@@ -114,3 +138,43 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 - `rift_valley` 既是旧 zone 名又是 terrain profile 名；修复时要避免误删 profile 语义，只处理 anchor 的 zone id。
 - 如果仅移动 JSON 而不加契约测试，下一次 zone AABB 调整仍会复发。
 - 如果把所有远端矿点移得过远，早期锻造/炼丹材料节奏可能被拉长，需要结合既有 forge/alchemy pacing 测试校准。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`server/src/mineral/anchors.rs` — `load_mineral_anchors`、`validate_anchor_zones` 及四类 zone 错误测试；`server/src/mineral/mod.rs` — `spawn_mineral_anchor_nodes` 在 `ZoneRegistryStartupSet` 后运行。
+- P1：`worldgen/blueprint/mineral_anchors.json` — 10 条固定 anchor 的合法 zone/坐标；`manifest_anchors_declare_zones_that_exist_in_runtime_registry` — 恰好 10 条与精确 zone/mineral 集合。
+- P2：`server/src/mineral/anchors.rs` — `startup_fails_closed_before_materializing_invalid_anchor`、`startup_spawns_index_entries_and_skips_exhausted_positions`，锁定零物化失败路径与有效物化路径。
+- P3：`docs/finished_plans/plan-bughunt-mineral-anchor-position-drift-v1.md` — 恢复丢失的三态归档与当前主线验真证据。
+
+### 关键 commit
+
+- `b40fcdaf`（2026-07-13）：原始修复，迁回 9 条远端 anchor 并加入数据契约测试。
+- `353225a4`（2026-07-13）：PR #1187 merge commit；六项 GitHub 检查均 SUCCESS。
+- `fb3a0df1`（2026-07-18）：恢复并升格遗失的 skeleton plan。
+- `50b639a0`（2026-07-18）：记录 #1187 与当前主线的第一性原理验真。
+- `e6ccf84c`（2026-07-18）：补齐生产 loader 的 runtime zone 契约、Startup 排序与 fail-closed 测试。
+- `5275263b`（2026-07-18）：锁定默认 manifest 恰好 10 条及精确 zone/mineral 组合。
+- `13d03af6`（2026-07-18）：合并最新 `origin/main`；带入内容仅为无关 docs。
+- `d25bcf7b`（2026-07-18）：将完成态 plan 迁入 `docs/finished_plans/`。
+
+### 测试结果
+
+- `cd server && cargo fmt --check`：PASS。
+- `cd server && cargo clippy --all-targets -- -D warnings`：PASS。
+- `cd server && cargo test`：`11793 passed / 0 failed / 6 ignored`。
+- PR #1187：`e2e`、`preflight`、`snapshot`、`review`、`finalize`、`CodeRabbit` 全部 SUCCESS。
+- 无上下文只读 validator：`PASS 13d03af6f54e83e7e25d06cec32c8bb496f69b29`；确认 worktree clean、分支差异边界、runtime 契约、测试覆盖及 `Model: gpt-5` trailers。
+
+### 跨仓库核验
+
+- server：`load_mineral_anchors` → `validate_anchor_zones` → `spawn_mineral_anchor_nodes` → `positions_for_anchor` / `MineralOreIndex` 生产链路命中；`ZoneRegistryStartupSet` 排序命中。
+- worldgen：`worldgen/blueprint/mineral_anchors.json` 命中 10 条精确 zone/mineral 契约，`rift_valley` 已消失。
+- agent/schema：本 plan 不改变 Redis IPC、TypeBox 或 serde 契约；`origin/main...HEAD` 无相关文件变更。
+- client：本 plan 不改变 CustomPayload、HUD 或资源资产；`origin/main...HEAD` 无 client 文件变更。
+
+### 遗留 / 后续
+
+- 当前主线无未闭环代码项；生产 loader 已能在未来 zone/AABB 漂移时于物化前 fail-closed。
+- PR #1187 之前已实际落盘的外部旧存档若保留错误矿点，其离线迁移不在本 plan 范围；仓库内没有可复现的当前存档迁移阻塞。
