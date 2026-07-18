@@ -68,7 +68,8 @@
 
 ### 落地清单
 
-- `agent/packages/schema/src/payloads/agent-ui.ts`、`agent/packages/schema/tests/agent-ui.test.ts`：`AgentUiResponsePayloadV1.target_player` 保持可选字符串（1..=128），并用 TypeBox `Value.Check` 实测 JavaScript `String.length` 的 UTF-16 code unit 语义；覆盖 legacy 缺字段、显式 `null`、空串、64/65 个 emoji、BMP/astral 混合边界与 128/129 个 BMP。
+- `agent/packages/schema/src/payloads/agent-ui.ts`、`agent/packages/schema/tests/agent-ui.test.ts`：`AgentUiResponsePayloadV1.target_player` 保持可选字符串（1..=128），并用 TypeBox `Value.Check` 实测 JavaScript `String.length` 的 UTF-16 code unit 语义；覆盖 legacy 缺字段、显式 `null`、空串、64/65 个 emoji、BMP/astral 混合边界与 128/129 个 BMP。well-formed UTF-16 pattern 另以无 flag 与 Unicode-aware `u` 两种 ECMA-262 解释对拍，合法 emoji/BMP/混合串均通过，lone high/low surrogate 及嵌入式坏串均拒绝。
+- `agent/packages/schema/src/schema-registry.ts`、`agent/packages/schema/generated/agent-ui-response-payload-v1.json`、`agent/packages/schema/tests/generated-artifacts.test.ts`：把真实 server→Tiandao Redis consumer 使用的 `AgentUiResponsePayloadV1` 从豁免表移出，注册为独立 generated artifact；freshness、filename→schema identity、optional `target_player` 与缺文件失败路径均有专属 pin。
 - `server/src/schema/agent_ui.rs`：serde 入站与出站统一使用 `encode_utf16().count()` 镜像 TypeBox 接受集合；缺字段兼容为 `None`，显式 `null`、空串和超过 128 UTF-16 units 的目标均拒绝。
 - `server/src/network/agent_ui.rs`：真实 `realm_gate_rejected` producer 回填 canonical `target_player`，并逐字段锁定 action、request id、境界参数与单次响应。
 - `agent/packages/tiandao/src/ui/uiResponseConsumer.ts`、`agent/packages/tiandao/src/ui/agent-ui.test.ts`：非空目标发布 `scope="player"`；缺失或 trim 后空白目标保留 warning，并按既定 legacy 契约发布 `scope="broadcast"`、`target="world"`。
@@ -92,22 +93,24 @@
 - `470886d632fb8b9e6346ba745f8d0b21af80e92f`（2026-07-18）：修正 Agent UI 请求标识序列化签名，建立最终修复代码基线。
 - `1a2885d073f4fbbf4c43be03c3b65674d8374972`（2026-07-18）：合并 `origin/main=9d2e29d0871b004684eb4d29c11a798fc1c71d05`，解决 Bot protobuf narration/zone_info 并存冲突并完成 worldgen/server 复验。
 - `4cc9e2939c461ad6d12193f96d3e86cc4383d964`（2026-07-18）：继续合并最新 `origin/main=7ad2be2dbb0260bd738b9dc3514af7296a862a01` 的技能动画接线，并在最终代码树重跑 server/client/agent/Python/双 Bot/Fabric runtime 门禁。
+- `31db8f9860ebd44697b9b253bac96ecf8635e03a`（2026-07-18）：补齐 server→Tiandao Agent UI response 独立生成物，并修正 Unicode-aware ECMA-262 surrogate pattern。
+- `8b319420952644aa0ec18314678da889022cb0a5`（2026-07-18）：纠正归档决议中 C2S `target_player` 的旧表述，明确该字段仅在 server→agent response 可选。
 
 ### 测试结果
 
 - Python 协议：最终代码树执行 `python3 -m unittest scripts.bot.test_protocol`，126/126 passed；冲突决议同时保留 protobuf narration field 3 与 `zone_info` field 4 解码及各自测试。
-- Schema：`cd agent && npm run build -w @bong/schema` 退出 0；`cd agent/packages/schema && npm test` 退出 0，29 files / 887 tests passed，其中 `agent-ui.test.ts` 52/52 passed。
-- Tiandao：`cd agent/packages/tiandao && npm test` 退出 0，72 files / 830 tests passed。测试生成的 `tiandao-snapshot-200.json` / `300.json` 未删除，分别保全于 `.sisyphus/evidence/pr1217-tiandao-generated/`、`rerun-470886d6/` 与 `final-4cc9e293/`；最终哈希为 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`、`eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。
+- Schema：最终受影响树 `8b319420` 执行 `cd agent && npm run build -w @bong/schema` 退出 0；`cd agent/packages/schema && npm test` 退出 0，29 files / 890 tests passed，其中 `agent-ui.test.ts` 53/53、`generated-artifacts.test.ts` 11/11 passed。日志位于 `.sisyphus/evidence/pr1217-validator-fixes-8b319420/01-schema-build.log` 与 `02-schema-test.log`。
+- Tiandao：最终受影响树 `8b319420` 执行 `cd agent/packages/tiandao && npm test` 退出 0，72 files / 830 tests passed。测试生成的 `tiandao-snapshot-200.json` / `300.json` 未删除，新增保全于 `.sisyphus/evidence/pr1217-tiandao-generated/final-8b319420/`；哈希继续为 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`、`eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。完整日志位于 `.sisyphus/evidence/pr1217-validator-fixes-8b319420/03-tiandao-test.log`。
 - Server：最终 `4cc9e293` 在 `/tmp/bong-compile-slot-1.lock` 独占锁内执行 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与完整 `cargo test`，均退出 0；5 个结果块合计 11,796 passed / 0 failed / 6 ignored。
 - Worldgen：合并 `9d2e29d0` 后 `bash scripts/dev-reload.sh` 退出 0，overworld 306 tiles 与 TSY 9 tiles 后验全绿、server 启动读入 306 tiles；`test_zone_overlap_policy.py` 8/8 passed。额外全量 pytest 为 911 passed / 1 failed，唯一失败 `CompoundFlattenTests::test_flatten_preserves_outside_radius` 在整个 `worldgen/` 与 `origin/main` 字节一致时可复现，记录为 main 同环境基线而非本 PR 门禁绿灯。
 - Client：以 Java `17.0.19` 执行 `./gradlew --no-daemon test build`，退出 0、`BUILD SUCCESSFUL`；471 份 JUnit XML 汇总 4,118 tests / 0 failures / 0 errors / 0 skipped。
 - 真实双 Bot/专用 Redis：最终 `4cc9e293` 的 `agent_ui_realm_gate_private_narration` 场景 2.9s PASS，`total=1 pass=1 skip=0 fail=0`。Redis 链依次记录 `bong:agent_ui_cmd`（`target=offline:Bp4cRGA`、`realm_gate=5`）、`bong:agent_ui_response`（同 target、`player_realm=1`、`required_realm=5`）与 `bong:agent_narrate`（`scope=player`、`style=system_warning`）；server 最终只投递 1 recipient，旁观 Bot 无泄漏，双方无 chat mirror。证据位于 `.sisyphus/evidence/pr1217-final-gates-4cc9e293/09-bot-e2e-dedicated-20260718T123407/`。
 - Fabric renderer runtime：云端无 WSLg socket，故以用户态解包的 Xvfb + Mesa 软件渲染实际执行 Java 17 `runClient`；日志命中 MC `1.20.1` 窗口、LWJGL `3.3.1`、`Bong Client bootstrap ready`、实体模型注册以及 Armor/WornPack/Mutation `FeatureRenderer registered`，fatal scan 为空。证据位于 `.sisyphus/evidence/pr1217-final-gates-4cc9e293/10-fabric-renderer-runtime-20260718T124321/`。
-- 主线同步：最终 fetch 确认 `origin/main=7ad2be2dbb0260bd738b9dc3514af7296a862a01` 是代码 HEAD `4cc9e2939c461ad6d12193f96d3e86cc4383d964` 的第二父祖先；该次 main 合入触及 server/client，二者均在最终树重跑完整门禁，agent/schema/Python 亦按本 PR 跨栈契约重跑。
+- 主线同步：在 `8b319420` 门禁后紧邻执行 `git fetch origin && git merge origin/main`，结果为 `Already up to date`；`origin/main=7ad2be2dbb0260bd738b9dc3514af7296a862a01` 是 HEAD 祖先。`4cc9e293` 后仅新增 schema/generated/tests 与 docs 变更，故按触栈完整复跑 schema/Tiandao；既有 server/client/worldgen/Python/双 Bot/Fabric runtime 证据未被代码路径触及且继续保留。
 
 ### 跨仓库核验
 
-- schema ↔ server：TypeBox `minLength/maxLength` 与 Rust `encode_utf16().count()` 对 64/65 emoji、BMP/astral 混合、空串、显式 `null` 与 legacy 缺字段的 wire 接受集合一致。
+- schema ↔ server：TypeBox `minLength/maxLength` 与 Rust `encode_utf16().count()` 对 64/65 emoji、BMP/astral 混合、空串、显式 `null` 与 legacy 缺字段的 runtime wire 接受集合一致；独立 `agent-ui-response-payload-v1.json` 固化 optional `target_player`，其 surrogate pattern 在无 flag 与 Unicode-aware ECMA-262 下都接受合法 emoji 并拒绝 lone surrogate。
 - server → agent：`receive_agent_ui_cmd_system` 的真实 gate reject response 经生产 Redis encoder 把 canonical `target_player` 交给 `UiResponseConsumer`。
 - agent → server：生产 consumer 输出经生产 `bong:agent_narrate` parser 进入 `process_redis_inbound`，`NarrationScope::Player` 最终选择唯一目标玩家；legacy 缺失/空白目标仍按归档决议 warning 后广播。
 - server → client：目标玩家恰好收到一条 typed `bong:server_data` narration，旁观者无 typed payload；两名玩家都没有 `GameMessageS2c` chat mirror。
