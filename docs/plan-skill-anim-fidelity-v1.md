@@ -84,7 +84,7 @@
 |------|------|------|
 | P0 | 全量审计矩阵落档 + 精度标准定稿 + 时长对齐自动对拍测试 | ⬜ |
 | P1 | 批次一重制：sword 基础 3（infuse 移 P2，见附录 A）+ beng_quan + zhenmai 5（高频主力短招） | ✅ 2026-07-19 |
-| P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段） | ⬜ |
+| P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段）。拆前半（本 PR，2026-07-19：去复用 6 招专属化——sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject，含 server 映射改指 + allowlist 删 5 条）+ 后半（下 PR：长引导两段式 charge_carrier/echo_fractal/armor_pierce/sword.infuse + manifest_cast 处置 + StopAnim 通道接线 §8.1 #3） | ⬜ |
 | P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ⬜ |
 | P4 | yidao 5 招动画补齐（plan-yidao-v1 §5 欠账） | ⬜ |
 | P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ⬜ |
@@ -237,15 +237,15 @@
 | `tuike.shed` | 8 | `tuike_shed_burst` | 12 | — | 20 | 56 | — | **B** | P3 | 12t/56KF；可精修 |
 | `tuike.transfer_taint` | 10 | `tuike_taint_transfer` | 14 | — | 19 | 55 | — | **B** | P3 | 14t/55KF；可精修 |
 | `anqi.charge_carrier` | 400 | `windup_charge` | 16 | ✓ | 81 | 81 | ✓ | **D** | P2 | 借通用蓄力；cast=400 需专属循环结印段+release |
-| `anqi.single_snipe` | 6 | `sword_stab` | 8 | — | 124 | 124 | ✓ | **D** | P2 | 借剑刺（暗器≠剑） |
-| `anqi.multi_shot` | 30 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P2 | 借通用爆发；4t vs cast=30 错配 26t 静止 |
-| `anqi.soul_inject` | 20 | `cast_invoke` | 15 | — | 75 | 75 | ✓ | **D** | P2 | 借通用施法 |
+| `anqi.single_snipe` | 6 | `anqi_single_snipe` | 12 | — | 7 | 161 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：侧身瞄准线→骨镖弹射出手→随镖目送 |
+| `anqi.multi_shot` | 30 | `anqi_multi_shot` | 36 | — | 11 | 231 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：胸前拢镖蓄势（load-snap 呼吸）→双臂开扇撒出 |
+| `anqi.soul_inject` | 20 | `anqi_soul_inject` | 26 | — | 9 | 189 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：单手举镖凝神灌注→刺送注入 |
 | `anqi.armor_pierce` | 40 | `cast_invoke` | 15 | — | 75 | 75 | ✓ | **D** | P2 | 借通用施法；15t vs cast=40 错配 |
 | `anqi.echo_fractal` | 60 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P2 | 借通用爆发；4t vs cast=60 错配 56t 静止 |
 | `body.guangbo_ticao` | 60 | `guangbo_ticao` | 150 | — | 288 | 288 | — | **A** | — | 150t/288KF 高完成度 |
-| `sword_path.condense_edge` | 12 | `sword_cleave` | 16 | — | 19 | 19 | ✓ | **D** | P2 | 借基础横劈 |
-| `sword_path.qi_slash` | 20 | `sword_thrust` | 10 | — | 20 | 20 | ✓ | **D** | P2 | 借基础刺击 |
-| `sword_path.resonance` | 30 | `sword_cleave` | 16 | — | 19 | 19 | ✓ | **D** | P2 | 借基础横劈；16t vs cast=30 错配 |
+| `sword_path.condense_edge` | 12 | `sword_path_condense_edge` | 18 | — | 7 | 147 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：收剑入鞘式蓄意→拔剑亮刃定势；endTick=18 ∈ [16,20]（去借用后仍达标，未入过 allowlist） |
+| `sword_path.qi_slash` | 20 | `sword_path_qi_slash` | 26 | — | 9 | 198 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：高位回环蓄势→大斩挥出剑随气送远 |
+| `sword_path.resonance` | 30 | `sword_path_resonance` | 36 | — | 13 | 273 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：双手持剑颤鸣蓄振（往复微颤帧）→振荡外放 |
 | `sword_path.manifest` | 40 | `sword_manifest_cast` | 40 | — | 32 | 32 | — | **B** | P2 | 40t/32KF 对齐 cast；补 recovery+密度 |
 | `sword_path.heaven_gate` | 80 | `sword_heaven_gate_charge(+release)` | 60+20 | — | 32+24 | 32+24 | — | **B** | P2 | 两段式先例；charge 60t 非循环 hold 末帧，精修密度 |
 | `npc.heal_basic` | 20 | —— | — | — | — | — | — | **N/A** | P5 粒子 | NPC mob 无 PlayAnim 通道（§8.1 #2） |
@@ -256,3 +256,5 @@
 **分级统计**（P0 初判）：A×2 / B×13 / C×12 / D×19 / N-A×3（46 玩家招中 B+C+D = 44 条入 P1-P4 重制/精修清单，与 §8.1 #2 决议一致）。
 
 **P1 批次一后（2026-07-19）**：A×11 / B×11 / C×5 / D×19 / N-A×3——9 条重制达标转 A（sword 基础 3 + beng_quan + zhenmai 5），sword.infuse 移 P2 长引导批次；剩余 B+C+D = 35 条随 P2-P4 清空。
+
+**P2 前半后（2026-07-19）**：A×17 / B×11 / C×5 / D×13 / N-A×3——6 条去复用重制达标转 A（sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject），allowlist 删 5 条（condense_edge 原不在表）；剩余 B+C+D = 29 条随 P2 后半-P4 清空。

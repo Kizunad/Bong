@@ -97,6 +97,11 @@ const SWORD_PATH_PRIORITY: u16 = 1500;
 const ANIM_SWORD_MANIFEST_CAST: &str = "bong:sword_manifest_cast";
 const ANIM_SWORD_HEAVEN_GATE_CHARGE: &str = "bong:sword_heaven_gate_charge";
 const ANIM_SWORD_HEAVEN_GATE_RELEASE: &str = "bong:sword_heaven_gate_release";
+// plan-skill-anim-fidelity-v1 P2 前半 —— 凝锋 / 剑气斩 / 共鸣去复用：三招各获
+// 专属动画（原分别借基础 sword_cleave / sword_thrust / sword_cleave）。
+const ANIM_SWORD_PATH_CONDENSE_EDGE: &str = "bong:sword_path_condense_edge";
+const ANIM_SWORD_PATH_QI_SLASH: &str = "bong:sword_path_qi_slash";
+const ANIM_SWORD_PATH_RESONANCE: &str = "bong:sword_path_resonance";
 const VFX_SWORD_CONDENSE_EDGE: &str = "bong:sword_condense_edge";
 const VFX_SWORD_QI_SLASH_PATH: &str = "bong:sword_qi_slash_path";
 const VFX_SWORD_RESONANCE: &str = "bong:sword_resonance";
@@ -108,13 +113,18 @@ const VFX_HEAVEN_GATE_FLASH: &str = "bong:heaven_gate_flash";
 /// 暗器六招动画优先级——与剑道 / baomai 同档（暗器是高阶器修流派）。
 const ANQI_PRIORITY: u16 = 1500;
 
-// 暗器六招专属 AV 资产 id（client 侧 AnqiVfxPlayer / BongAnimations 已注册）。
-// 动画全部复用现有 player_animation/*.json（windup_charge / cast_invoke /
-// release_burst / sword_stab）；粒子复用现有 BongParticles sprite（无新贴图）。
+// 暗器六招 AV 资产 id（client 侧 AnqiVfxPlayer / BongAnimations 已注册）。
+// plan-skill-anim-fidelity-v1 P2 前半：single_snipe / multi_shot / soul_inject
+// 三招去复用换专属动画（player_animation/anqi_*.json）；charge_carrier（cast=400
+// 两段式）与 armor_pierce / echo_fractal（长引导域）仍借通用资产，归 P2 后半
+// 批次重制。粒子复用现有 BongParticles sprite（无新贴图）。
 const ANIM_ANQI_CHARGE: &str = "bong:windup_charge";
-const ANIM_ANQI_SNIPE: &str = "bong:sword_stab";
-const ANIM_ANQI_VOLLEY: &str = "bong:release_burst";
-const ANIM_ANQI_INJECT: &str = "bong:cast_invoke";
+const ANIM_ANQI_SNIPE: &str = "bong:anqi_single_snipe";
+const ANIM_ANQI_VOLLEY: &str = "bong:anqi_multi_shot";
+const ANIM_ANQI_INJECT: &str = "bong:anqi_soul_inject";
+/// 破甲注射仍借通用施法——原与凝魂注射共用 `ANIM_ANQI_INJECT`，凝魂专属化后
+/// 拆出独立常量以保持本批不动其行为（P2 后半重制时再换专属）。
+const ANIM_ANQI_ARMOR_PIERCE: &str = "bong:cast_invoke";
 const ANIM_ANQI_ECHO: &str = "bong:release_burst";
 const VFX_ANQI_CHARGE_SEAL: &str = "bong:anqi_charge_seal";
 const VFX_ANQI_SNIPE_BOLT: &str = "bong:anqi_snipe_bolt";
@@ -785,7 +795,7 @@ pub fn emit_tuike_v2_visual_triggers(
 /// plan-sword-path-v2 P4 — 剑道五招 cast → 专属动画 + 专属粒子。
 ///
 /// 读 `SwordPathSkillCastEvent`，按招式发：
-/// 1. `PlayAnim`（攻击招式复用基础剑斩 / 化形 / 天门专属动画，引用 `BongAnimations`）。
+/// 1. `PlayAnim`（P2 前半起五招全部专属动画，引用 `BongAnimations`）。
 /// 2. `SpawnParticle`（各招专属 event_id，引用 `SwordPathVfxPlayer.EVENT_IDS`）。
 ///
 /// **纯 cosmetic**：只发 `VfxEventRequest`，不读 / 改任何战斗 / 真元状态。caster
@@ -797,7 +807,7 @@ pub fn emit_sword_path_visual_triggers(
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in casts.read() {
-        // 1. 动画——攻击招式复用基础剑斩；化形 / 天门用专属动画。
+        // 1. 动画——五招各自专属动画（P2 前半起攻击三招不再借基础剑技）。
         let anim_id = sword_path_anim_for_skill(event.skill);
         emit_play_for_entity(
             event.caster,
@@ -844,17 +854,17 @@ pub fn emit_sword_path_visual_triggers(
     }
 }
 
-/// 暗器六招 cast → 动画 + 粒子（纯 cosmetic，复用现有 anim/sprite 资产）。
+/// 暗器六招 cast → 动画 + 粒子（纯 cosmetic）。
 ///
 /// 与剑道五招的 `emit_sword_path_visual_triggers` 同模式：读 anqi_v2 已 emit 的
 /// 结果型 events，对 caster 发 `PlayAnim` + `SpawnParticle`，引用 client 已注册的
 /// `AnqiVfxPlayer` 粒子 event_id 与 `BongAnimations` 动画 id。
 ///
-/// 招式 → 事件源映射：
+/// 招式 → 事件源映射（P2 前半：单射 / 齐射 / 凝魂三招专属动画）：
 /// - 封骨（充能）`CarrierChargedEvent` → windup_charge 动画 + 封骨密封粒子
-/// - 单射狙击 `QiInjectionEvent{SingleSnipe}` → sword_stab 动画 + 狙击弹道（caster→target 方向）
-/// - 多发齐射 `MultiShotEvent` → release_burst 动画 + 扇形齐射粒子
-/// - 凝魂注射 `QiInjectionEvent{SoulInject}` → cast_invoke 动画 + 魂注紫雾
+/// - 单射狙击 `QiInjectionEvent{SingleSnipe}` → anqi_single_snipe 专属动画 + 狙击弹道（caster→target 方向）
+/// - 多发齐射 `MultiShotEvent` → anqi_multi_shot 专属动画 + 扇形齐射粒子
+/// - 凝魂注射 `QiInjectionEvent{SoulInject}` → anqi_soul_inject 专属动画 + 魂注紫雾
 /// - 破甲注射 `ArmorPierceEvent` → cast_invoke 动画 + 破甲金属火花（caster→target 方向）
 /// - 诱饵分形 `EchoFractalEvent` → release_burst 动画 + 分形回响涟漪
 ///
@@ -895,8 +905,8 @@ pub fn emit_anqi_visual_triggers(
         );
     }
 
-    // 单射狙击 / 凝魂注射：QiInjectionEvent 区分招式。狙击走 sword_stab + 弹道粒子，
-    // 凝魂走 cast_invoke + 魂注紫雾。
+    // 单射狙击 / 凝魂注射：QiInjectionEvent 区分招式。狙击走 anqi_single_snipe
+    // 专属动画 + 弹道粒子，凝魂走 anqi_soul_inject 专属动画 + 魂注紫雾。
     for event in injections.read() {
         let origin = positions
             .get(event.caster)
@@ -949,7 +959,7 @@ pub fn emit_anqi_visual_triggers(
         }
     }
 
-    // 多发齐射：release_burst 动画 + 扇形齐射粒子（散射弹幕）。
+    // 多发齐射：anqi_multi_shot 专属动画 + 扇形齐射粒子（散射弹幕）。
     for event in multi_shots.read() {
         let origin = positions
             .get(event.caster)
@@ -986,7 +996,7 @@ pub fn emit_anqi_visual_triggers(
         let direction = caster_target_direction(&positions, event.caster, event.target);
         emit_play_for_entity(
             event.caster,
-            ANIM_ANQI_INJECT,
+            ANIM_ANQI_ARMOR_PIERCE,
             ANQI_PRIORITY,
             Some(1),
             &players,
@@ -1348,10 +1358,11 @@ pub fn emit_woliu_v1_vortex_visual_triggers(
 
 fn sword_path_anim_for_skill(skill: SwordPathSkillId) -> &'static str {
     match skill {
-        // 凝锋 / 共鸣 是横向 / 范围剑势 → 基础横劈动画。
-        SwordPathSkillId::CondenseEdge | SwordPathSkillId::Resonance => ANIM_SWORD_CLEAVE,
-        // 剑气斩是远程突刺势 → 基础刺击动画。
-        SwordPathSkillId::QiSlash => ANIM_SWORD_THRUST,
+        // P2 前半去复用：凝锋（收剑入鞘式蓄意→拔剑亮刃）/ 剑气斩（回环蓄势→
+        // 大斩送远）/ 共鸣（颤鸣蓄振→振荡外放）各自专属动画。
+        SwordPathSkillId::CondenseEdge => ANIM_SWORD_PATH_CONDENSE_EDGE,
+        SwordPathSkillId::QiSlash => ANIM_SWORD_PATH_QI_SLASH,
+        SwordPathSkillId::Resonance => ANIM_SWORD_PATH_RESONANCE,
         // 化形 / 天门有专属动画。
         SwordPathSkillId::Manifest => ANIM_SWORD_MANIFEST_CAST,
         SwordPathSkillId::HeavenGateCharge => ANIM_SWORD_HEAVEN_GATE_CHARGE,
@@ -2404,6 +2415,14 @@ mod tests {
         assert_spawn_particle_color(&emitted[3], "#9EC7FF");
     }
 
+    /// 取 PlayAnim 的 anim_id（负向断言「不再借旧动画」回归锁用）。
+    fn play_anim_id(request: &VfxEventRequest) -> String {
+        match &request.payload {
+            VfxEventPayloadV1::PlayAnim { anim_id, .. } => anim_id.clone(),
+            other => panic!("expected PlayAnim, got {other:?}"),
+        }
+    }
+
     fn assert_play_anim(request: &VfxEventRequest, expected_anim: &str, expected_priority: u16) {
         match &request.payload {
             VfxEventPayloadV1::PlayAnim {
@@ -2506,9 +2525,9 @@ mod tests {
         app
     }
 
-    /// 凝锋 → 基础横劈动画（SWORD_PATH_PRIORITY）+ 专属粒子。
+    /// 凝锋 → 专属动画（P2 前半去复用）+ 专属粒子。
     #[test]
-    fn condense_edge_emits_cleave_anim_and_dedicated_particle() {
+    fn condense_edge_emits_dedicated_anim_and_particle() {
         let mut app = setup_sword_path_visual_app();
         let caster = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
         app.world_mut().send_event(sword_path_cast(
@@ -2526,13 +2545,18 @@ mod tests {
             "凝锋应发 1 动画 + 1 粒子，实际 {}",
             emitted.len()
         );
-        assert_play_anim(&emitted[0], ANIM_SWORD_CLEAVE, SWORD_PATH_PRIORITY);
+        assert_play_anim(&emitted[0], ANIM_SWORD_PATH_CONDENSE_EDGE, SWORD_PATH_PRIORITY);
+        assert_ne!(
+            play_anim_id(&emitted[0]),
+            ANIM_SWORD_CLEAVE,
+            "去复用回归锁：凝锋不得再借基础横劈 bong:sword_cleave"
+        );
         assert_spawn_particle(&emitted[1], VFX_SWORD_CONDENSE_EDGE, Some(10));
     }
 
-    /// 剑气斩 → 基础刺击动画 + 朝向 line trail 粒子（direction 透传）。
+    /// 剑气斩 → 专属动画（P2 前半去复用）+ 朝向 line trail 粒子（direction 透传）。
     #[test]
-    fn qi_slash_emits_thrust_anim_and_directional_particle() {
+    fn qi_slash_emits_dedicated_anim_and_directional_particle() {
         let mut app = setup_sword_path_visual_app();
         let caster = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
         let dir = valence::prelude::DVec3::new(0.0, 0.0, 1.0);
@@ -2546,7 +2570,12 @@ mod tests {
 
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2);
-        assert_play_anim(&emitted[0], ANIM_SWORD_THRUST, SWORD_PATH_PRIORITY);
+        assert_play_anim(&emitted[0], ANIM_SWORD_PATH_QI_SLASH, SWORD_PATH_PRIORITY);
+        assert_ne!(
+            play_anim_id(&emitted[0]),
+            ANIM_SWORD_THRUST,
+            "去复用回归锁：剑气斩不得再借基础刺击 bong:sword_thrust"
+        );
         match &emitted[1].payload {
             VfxEventPayloadV1::SpawnParticle {
                 event_id,
@@ -2638,6 +2667,35 @@ mod tests {
         );
         assert_spawn_particle(&emitted[1], VFX_HEAVEN_GATE_RELEASE, Some(24));
         assert_spawn_particle(&emitted[2], VFX_HEAVEN_GATE_FLASH, Some(24));
+    }
+
+    /// 共鸣 → 专属动画（P2 前半去复用）+ 专属粒子。
+    #[test]
+    fn resonance_emits_dedicated_anim_and_particle() {
+        let mut app = setup_sword_path_visual_app();
+        let caster = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::Resonance,
+            caster,
+            valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            None,
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "共鸣应发 1 动画 + 1 粒子，实际 {}",
+            emitted.len()
+        );
+        assert_play_anim(&emitted[0], ANIM_SWORD_PATH_RESONANCE, SWORD_PATH_PRIORITY);
+        assert_ne!(
+            play_anim_id(&emitted[0]),
+            ANIM_SWORD_CLEAVE,
+            "去复用回归锁：共鸣不得再借基础横劈 bong:sword_cleave"
+        );
+        assert_spawn_particle(&emitted[1], VFX_SWORD_RESONANCE, Some(16));
     }
 
     /// caster 无 UniqueId（非 skinned）→ 动画静默 skip，但粒子仍按 center 发出。
@@ -3056,7 +3114,8 @@ mod tests {
         assert_spawn_particle(&emitted[1], VFX_ANQI_CHARGE_SEAL, Some(12));
     }
 
-    /// 单射狙击：sword_stab 动画 + 弹道粒子（caster→target 方向 +Z）。
+    /// 单射狙击：anqi_single_snipe 专属动画（P2 前半去复用）+ 弹道粒子
+    /// （caster→target 方向 +Z）。
     #[test]
     fn anqi_snipe_emits_directional_bolt() {
         use crate::combat::anqi_v2::AnqiSkillId;
@@ -3077,6 +3136,11 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2, "单射应 emit 1 动画 + 1 粒子");
         assert_play_anim(&emitted[0], ANIM_ANQI_SNIPE, ANQI_PRIORITY);
+        assert_ne!(
+            play_anim_id(&emitted[0]),
+            "bong:sword_stab",
+            "去复用回归锁：单射狙击不得再借剑刺 bong:sword_stab"
+        );
         match &emitted[1].payload {
             VfxEventPayloadV1::SpawnParticle {
                 event_id,
@@ -3094,9 +3158,9 @@ mod tests {
         }
     }
 
-    /// 凝魂注射：cast_invoke 动画 + 魂注紫雾（无方向）。
+    /// 凝魂注射：anqi_soul_inject 专属动画（P2 前半去复用）+ 魂注紫雾（无方向）。
     #[test]
-    fn anqi_soul_inject_emits_cast_invoke_and_mist() {
+    fn anqi_soul_inject_emits_dedicated_anim_and_mist() {
         use crate::combat::anqi_v2::AnqiSkillId;
         use crate::combat::carrier::CarrierKind;
         let mut app = setup_anqi_visual_app();
@@ -3114,10 +3178,16 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2);
         assert_play_anim(&emitted[0], ANIM_ANQI_INJECT, ANQI_PRIORITY);
+        assert_ne!(
+            play_anim_id(&emitted[0]),
+            "bong:cast_invoke",
+            "去复用回归锁：凝魂注射不得再借通用施法 bong:cast_invoke"
+        );
         assert_spawn_particle(&emitted[1], VFX_ANQI_SOUL_INJECT, Some(16));
     }
 
-    /// 多发齐射：release_burst 动画 + 扇形齐射粒子（粒子数随弹数缩放）。
+    /// 多发齐射：anqi_multi_shot 专属动画（P2 前半去复用）+ 扇形齐射粒子
+    /// （粒子数随弹数缩放）。
     #[test]
     fn anqi_multi_shot_scales_particle_count_with_projectiles() {
         use crate::combat::carrier::CarrierKind;
@@ -3135,6 +3205,11 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2);
         assert_play_anim(&emitted[0], ANIM_ANQI_VOLLEY, ANQI_PRIORITY);
+        assert_ne!(
+            play_anim_id(&emitted[0]),
+            "bong:release_burst",
+            "去复用回归锁：多发齐射不得再借通用爆发 bong:release_burst"
+        );
         // 5 发 × 4 = 20 颗（在 clamp [8,40] 内）。
         assert_spawn_particle(&emitted[1], VFX_ANQI_MULTI_VOLLEY, Some(20));
     }
@@ -3162,7 +3237,12 @@ mod tests {
 
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2);
-        assert_play_anim(&emitted[0], ANIM_ANQI_INJECT, ANQI_PRIORITY);
+        assert_play_anim(&emitted[0], ANIM_ANQI_ARMOR_PIERCE, ANQI_PRIORITY);
+        assert_eq!(
+            play_anim_id(&emitted[0]),
+            "bong:cast_invoke",
+            "破甲注射本批不动：仍借通用施法（P2 后半重制，与凝魂注射拆分后行为不变）"
+        );
         match &emitted[1].payload {
             VfxEventPayloadV1::SpawnParticle {
                 event_id,
@@ -3202,6 +3282,11 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2);
         assert_play_anim(&emitted[0], ANIM_ANQI_ECHO, ANQI_PRIORITY);
+        assert_eq!(
+            play_anim_id(&emitted[0]),
+            "bong:release_burst",
+            "诱饵分形本批不动：仍借通用爆发（P2 后半重制）"
+        );
         // 4 分身 × 5 = 20 颗（在 clamp [10,40] 内）。
         assert_spawn_particle(&emitted[1], VFX_ANQI_ECHO_DECOY, Some(20));
     }
