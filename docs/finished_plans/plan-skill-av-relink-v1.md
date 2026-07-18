@@ -177,7 +177,7 @@
 
 - server：`cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test` → 11774 passed / 0 failed（PR-3 收尾复跑，含新增 2 条 runtime 图标存在性 pin）。
 - client：`./gradlew test build` → BUILD SUCCESSFUL（PR-3 收尾复跑；`SkillIconSnapshotAssetTest` 0 失败——allowlist 清零后 morph.yixing 资产存在性转为强制断言）。
-- e2e：PR-1/PR-2 各自 merge 前 `e2e` CI 绿；PR-3 走同一 gate。
+- e2e：PR-1 #1220 / PR-2 #1221 各自 merge 前 `e2e` CI 绿；PR-3 分支实测两连绿（同一 gate，`scripts/smoke-test-e2e.sh` 的 CI 化 `e2e` job）——HEAD `849e76d9` run [29629498681](https://github.com/Kizunad/Bong/actions/runs/29629498681)（2026-07-18，20m38s pass）、返工 HEAD `176ec885` run [29632090986](https://github.com/Kizunad/Bong/actions/runs/29632090986)（21m3s pass）；本条为 docs-only 修订，merge 前以 PR checks 面板最终 HEAD 的 e2e 绿为准（自动 merge 协议门槛）。
 
 **跨仓库核验**：
 
