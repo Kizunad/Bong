@@ -158,13 +158,21 @@ class AnimCastTicksAlignmentTest {
      * 子集——删除条目（动画达标）自然通过，新增任何条目立刻判红。本基线**永不
      * 追加**：新招不达标的唯一出路是按精度标准做动画，不得经由扩大 allowlist 放行。
      */
-    private static final Set<String> P0_BASELINE = union(CAST_ALIGNMENT_ALLOWLIST, MISSING_ANIM_ALLOWLIST);
-
-    private static Set<String> union(Set<String> a, Set<String> b) {
-        Set<String> u = new HashSet<>(a);
-        u.addAll(b);
-        return Set.copyOf(u);
-    }
+    private static final Set<String> P0_BASELINE = Set.of(
+        // P0 时刻（2026-07-18）字面量冻结——**不得由 allowlist 动态计算**（自引用
+        // 会让「只缩不涨」断言恒真失效，CodeRabbit r1 修正），也永不追加。
+        "sword.cleave", "sword.thrust", "sword.infuse", "movement.dash",
+        "burst_meridian.beng_quan", "burst_meridian.tie_shan_kao", "burst_meridian.xue_beng_bu",
+        "burst_meridian.ni_mai_hu_ti",
+        "baomai.full_power_charge", "baomai.full_power_release",
+        "zhenmai.parry", "zhenmai.neutralize", "zhenmai.multipoint", "zhenmai.harden",
+        "zhenmai.sever_chain",
+        "woliu.vortex", "woliu.heart", "woliu.vacuum_palm", "woliu.vortex_shield",
+        "woliu.vacuum_lock", "woliu.vortex_resonance", "woliu.turbulence_burst",
+        "anqi.single_snipe", "anqi.multi_shot", "anqi.soul_inject", "anqi.armor_pierce",
+        "anqi.echo_fractal",
+        "sword_path.qi_slash", "sword_path.resonance", "sword_path.manifest",
+        "sword_path.heaven_gate", "morph.yixing");
 
     // ---- 快照 / 动画元数据读取 ----
 
@@ -242,6 +250,56 @@ class AnimCastTicksAlignmentTest {
         }
     }
 
+    /**
+     * 轴 → (tick → 值) 全量解析（循环补帧**同值**断言用——只查轴存在挡不住
+     * endTick 写默认值/错值造成的循环接缝，CodeRabbit r1 修正）。
+     */
+    private static Map<String, Map<Integer, Double>> collectAxisValues(AnimMeta meta) {
+        Map<String, Map<Integer, Double>> values = new HashMap<>();
+        for (JsonElement moveElement : meta.moves()) {
+            JsonObject move = moveElement.getAsJsonObject();
+            int tick = move.get("tick").getAsInt();
+            for (String part : move.keySet()) {
+                if (part.equals("tick") || part.equals("easing") || part.equals("comment")) {
+                    continue;
+                }
+                JsonElement axes = move.get(part);
+                if (!axes.isJsonObject()) {
+                    continue;
+                }
+                for (String axis : axes.getAsJsonObject().keySet()) {
+                    if (axis.equals("comment")) {
+                        continue;
+                    }
+                    values.computeIfAbsent(part + "." + axis, k -> new HashMap<>())
+                        .put(tick, axes.getAsJsonObject().get(axis).getAsDouble());
+                }
+            }
+        }
+        return values;
+    }
+
+    /**
+     * 循环动画补帧同值检查：每个用到的轴在 endTick 必须有帧，且值 == 循环起点
+     * （最小 tick）帧值——库坑 #1 的完整语义（同值 keyframe，非仅存在）。
+     * 返回违规轴描述列表（空=通过）。
+     */
+    private static List<String> loopSeamViolations(AnimMeta meta) {
+        List<String> violations = new ArrayList<>();
+        for (Map.Entry<String, Map<Integer, Double>> axisEntry : collectAxisValues(meta).entrySet()) {
+            Map<Integer, Double> byTick = axisEntry.getValue();
+            int firstTick = byTick.keySet().stream().min(Integer::compare).orElseThrow();
+            Double endValue = byTick.get(meta.endTick());
+            if (endValue == null) {
+                violations.add(axisEntry.getKey() + "（endTick 无关键帧）");
+            } else if (!endValue.equals(byTick.get(firstTick))) {
+                violations.add(axisEntry.getKey() + "（endTick=" + endValue + " ≠ 起点帧="
+                    + byTick.get(firstTick) + "，循环回绕跳变）");
+            }
+        }
+        return violations;
+    }
+
     /** 精度标准 #2 三套断言；返回 null=达标，非 null=不达标原因（供 allowlist 双向棘轮复用）。 */
     private static String alignmentFailure(int cast, AnimMeta meta) {
         if (cast <= 2) {
@@ -257,13 +315,9 @@ class AnimCastTicksAlignmentTest {
             if (!meta.isLoop()) {
                 return "长引导招蓄力段应为循环（isLoop=false）——须拆循环蓄力段+release 段两段";
             }
-            Set<String> all = new HashSet<>();
-            Set<String> atEnd = new HashSet<>();
-            collectAxes(meta, all, atEnd);
-            Set<String> missing = new HashSet<>(all);
-            missing.removeAll(atEnd);
-            if (!missing.isEmpty()) {
-                return "循环蓄力段有 " + missing.size() + " 个轴在 endTick 无关键帧（库坑 #1 单帧衰减）：" + missing;
+            List<String> seams = loopSeamViolations(meta);
+            if (!seams.isEmpty()) {
+                return "循环蓄力段 " + seams.size() + " 个轴违反 endTick 同值补帧（库坑 #1）：" + seams;
             }
             return null;
         }
@@ -356,7 +410,12 @@ class AnimCastTicksAlignmentTest {
                 .filter(id -> !SKILL_ANIM.containsKey(id)).toList());
     }
 
-    /** 持续维持型例外（shield_block）：循环结构 + 每轴 endTick 有帧不退化。 */
+    /**
+     * 持续维持型例外（shield_block）：循环结构 + 每轴 endTick 有帧不退化。
+     * 注意此处刻意只查**帧存在**不查同值——shield_raise 是「举起后保持」语义，
+     * 首尾帧值不同是既有资产的刻意设计（0→6 举起后循环维持末段姿态），与
+     * 蓄力循环段的同值补帧红线（{@link #loopSeamViolations}）分属两种循环形态。
+     */
     @Test
     void sustainedLoopExceptionKeepsLoopStructure() throws IOException {
         for (String skillId : SUSTAINED_LOOP_EXCEPTIONS) {
@@ -428,6 +487,27 @@ class AnimCastTicksAlignmentTest {
             JsonArray range = manifest.getAsJsonArray(phase);
             phases.put(phase, new int[] {range.get(0).getAsInt(), range.get(1).getAsInt()});
         }
+        // 三段区间结构校验：各段 from<to、有序不重叠（相邻可共享边界 tick=hold 衔接）、
+        // 首段从 0 起、末段收在 endTick——防「三段都填 [0,endTick]」的空声明混过
+        // （CodeRabbit r1 修正）。
+        int[] ant = phases.get("anticipation");
+        int[] strike = phases.get("strike");
+        int[] recovery = phases.get("recovery");
+        for (Map.Entry<String, int[]> phase : phases.entrySet()) {
+            assertTrue(phase.getValue()[0] < phase.getValue()[1],
+                animName + " " + phase.getKey() + " 段 [" + phase.getValue()[0] + ","
+                    + phase.getValue()[1] + "] 必须 from < to");
+        }
+        assertEquals(0, ant[0], animName + " anticipation 必须从 tick 0 起");
+        assertTrue(ant[1] <= strike[0],
+            animName + " anticipation(" + ant[1] + ") 与 strike(" + strike[0]
+                + ") 必须有序不重叠（≤，可共享边界 tick）");
+        assertTrue(strike[1] <= recovery[0],
+            animName + " strike(" + strike[1] + ") 与 recovery(" + recovery[0]
+                + ") 必须有序不重叠");
+        assertEquals(meta.endTick(), recovery[1],
+            animName + " recovery 必须收在 endTick=" + meta.endTick() + "（收势到尾，"
+                + "精度标准 #1/#2——声明短于动画会漏检尾段密度）");
         // 主打击轴清单（strike 段密度 + 禁 linear 的检查对象）。
         List<String> strikeAxes = new ArrayList<>();
         for (JsonElement axis : manifest.getAsJsonArray("strike_axes")) {
@@ -492,13 +572,11 @@ class AnimCastTicksAlignmentTest {
             assertFalse(easings.stream().anyMatch(e -> e.equalsIgnoreCase("linear")),
                 animName + " 主打击轴 `" + axis + "` 使用 linear easing（精度标准 #3 禁用）");
         }
-        // 循环动画每轴 endTick 补帧（库坑 #1）。
+        // 循环动画每轴 endTick 同值补帧（库坑 #1 完整语义：值相同，非仅存在）。
         if (meta.isLoop()) {
-            Set<String> all = new HashSet<>();
-            Set<String> atEnd = new HashSet<>();
-            collectAxes(meta, all, atEnd);
-            assertEquals(all, atEnd,
-                animName + " 循环动画每个用到的轴必须在 endTick 有关键帧（库坑 #1）");
+            List<String> seams = loopSeamViolations(meta);
+            assertTrue(seams.isEmpty(),
+                animName + " 循环动画违反 endTick 同值补帧（库坑 #1，循环回绕跳变）：" + seams);
         }
     }
 }

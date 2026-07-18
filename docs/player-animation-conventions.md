@@ -569,7 +569,7 @@ Bong 当前"正架 cross punch"基线。所有数值都经过 §11 渲染工具�
 > 本节由 plan-skill-anim-fidelity-v1 P0 明文授权追加（该 plan §动画精度标准 + §8.1 决议的正典化入档）；只追加不改写本文档既有段落。
 
 1. **三段式结构**：anticipation（蓄势）→ strike/active（发力）→ recovery（收势），每段至少 2 个帧点；打击定格（hold 2-4 tick）算 strike 段内。
-2. **时长对齐**：非循环招 `endTick = cast_ticks + recovery(4-8 tick)`——cast 完成瞬间是发力顶点，之后收势；`cast_ticks ≥ 40` 的长引导招必须拆「循环蓄力段（isLoop）+ release 段」两段动画（`sword_heaven_gate_charge/_release` 先例）；`cast_ticks ≤ 2` 的瞬发招做 6-12 tick「爆发帧 + 收势」，不因 cast 短而砍收势。
+2. **时长对齐**：非循环招 `endTick = cast_ticks + recovery(4-8 tick)`——cast 完成瞬间是发力顶点，之后收势；`cast_ticks ≥ 40` 的长引导招必须拆「循环蓄力段（isLoop）+ release 段」两段动画（`sword_heaven_gate_charge/_release` 先例）；`cast_ticks ≤ 2` 的瞬发招做 6-12 tick「爆发帧 + 收势」，不因 cast 短而砍收势。**仅有的两类登记例外**（均须在对拍测试 `AnimCastTicksAlignmentTest` 的例外集合显式登记并配专属结构 pin，不得默认适用）：① **持续维持型**（如 `shield_block`）——按住持续的循环动画 + `StopAnim` 停止路径是正当形态，不套三套时长断言；② **长演出型**（如 `body.guangbo_ticao`）——一次性完整长演出（`endTick ≥ 100` 且 ≥ `cast_ticks`、非循环），刻意超出 cast 长度，不拆两段式。
 3. **关键帧密度**：主要运动轴每 ≤4 tick 一个帧点；easing 必须显式声明，主打击轴禁用 linear（蓄势用 easeOut 族、发力用 easeIn 族、收势 easeInOutSine）。
 4. **重心与全身协调**：发力招必须有 torso 拧转 + body 位移（不许只挥手臂）；弯腰姿态走 torso+legs 同向 pitch + body.z 补偿（torso/legs 不共祖，见 §上文库坑）。
 5. **库坑红线**（违反即打回）：循环动画每个用到的轴在 endTick 补同值关键帧（防单帧衰减）；`leg.pitch ≤ 40°`，大幅度腿部动作由 `bend` 承担；整体位移/旋转用 `body.*`，上半身独立扭转用 `torso.yaw`。
