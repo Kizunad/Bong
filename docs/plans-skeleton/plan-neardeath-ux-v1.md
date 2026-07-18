@@ -102,5 +102,6 @@
 ## §9 实施备注
 
 - scope 预估 4 PR（P0 / P1+P2 / P3 / P4+P5），转 active 时按 docs/CLAUDE.md §六 补 §10 实施工作流章节
-- 每 PR 必配 bot 场景（AGENTS.md §15 硬约定）；P0 的 observability 场景是后续所有 PR 的回归底座
+- 每 PR 必配 bot 场景（AGENTS.md §15 硬约定）；P0 的 observability 场景是后续所有 PR 的回归底座；P5 双 bot 救援场景与 [[plan-bot-e2e-coverage-v1]] P5 多 bot 族共享框架先例
 - 全程不改 `docs/worldview.md`（濒死生还语义已有正典锚点，纯落地）
+- **2026-07-18 诊断补充**：早期玩法诊断把本 plan 列为「反馈层黑箱」三件之首（另两件：[[plan-combat-event-juice-runtime-bridge-gap-v1]] 命中手感断桥、`plan-beast-horde-v1`（active）P2/P3 兽潮玩家侧 VFX/叙事）——服务端状态机完整而玩家零感知的形态高度一致，实施排期建议三件同批收口，"世界在动但看不见"的空洞感才能整体消除
