@@ -18,7 +18,7 @@
 
 - **进料**：`InventoryStateStore.snapshot().equipped()`（装备槽状态，已接）；`ArmorModelRegistry`（template_id → 模型规格，已接）；`plan-armor-visual-v1` 的 24 件凡物甲物品与穿戴同步链路（已 finished）。
 - **出料**：玩家 TPV/F5 可见的专属护甲模型渲染；`MixinPlayerEntityArmor` 对已注册甲抑制皮甲染色兜底（未注册材质继续走染色，兜底路径保留不删）。
-- **共享类型 / event**：零新增 server event、零 schema 改动——装备状态同步链路已存在，本 plan 纯 client 渲染层。复用 `WornPackModel` 的 Bedrock geo → vanilla `ModelPart` 坐标转换公式（`vanilla_y = 24 - bedrock_y`）与 `WornPackFeatureRenderer` 的骨骼局部系挂载模式（`getContextModel().body.rotate(matrices)`）。
+- **共享类型 / event**：零新增 server event、零 schema 改动——装备状态同步链路已存在，本 plan 纯 client 渲染层。复用 `WornPackModel` 的 Bedrock geo → vanilla `ModelPart` 坐标转换公式（`vanilla_y = 24 - bedrock_y`）与 `WornPackFeatureRenderer` 的骨骼局部系挂载模式（`getContextModel().body.rotate(matrices)`）。**运行时唯一事实来源 = 版本控制的 cube 表**（见 §0 单一真相源），bbmodel/geo 仅为离线作者资产，不进运行时。
 - **跨仓库契约**：无（server/agent 不动）。
 - **worldview 锚点**：`worldview.md §四`（近身肉搏——护甲是物理防护，材质外观差异是战斗信息）、`§十`（资源匮乏——铁甲/骨甲的粗粝质感对应末法基调，命名用 残/碎/锈/粗 系意象）。
 - **qi_physics 锚点**：无真元流动，纯视觉。
@@ -29,16 +29,17 @@
 
 - `WornPackModel`（`plan-tarkov-backpack-v1` P4 spike 结论）已实证：player `FeatureRenderer` 里驱动 GeckoLib `GeoModel` 结构性不可行（`GeoArmorRenderer` 依赖真实 vanilla equipped ItemStack、`PlayerEntityRenderer` 非 `GeoRenderer`、`GeckoLibCache` headless 为空）；纯 vanilla `ModelPart` 路线无 GL 依赖、headless 可单测、已在破草包上身渲染跑通。
 - SML（SpecialModelLoader）走 `parent=sml:builtin/obj` **拦截 item model 管线**，不覆盖 entity FeatureRenderer 上身渲染——`ArmorFeatureRenderer.java:85` 的 TODO 注释所设想的 "SML baked model lookup" 路线实际不通，这是本 plan 必须重锚的原因。
-- 既有 OBJ 资产全是占位 box，无保留价值；按「不写兼容层」惯例直接改新形状：`ArmorModelRegistry.ArmorModelSpec` 重锚为 geo/bbmodel 来源 + 烘焙 cube 表，OBJ 文件与 `modelPath` 字段删除，不做 OBJ/geo 双形态兼容。
-- 备选路线（自写 OBJ mesh 解析 + 渲染）仅当 pre-P0 收口发现 cube 造型无法满足护甲外观需求时再评估——凡物甲的粗粝箱体感恰好符合末法基调，预期用不上。
+- 既有 OBJ 资产全是占位 box，无保留价值；按「不写兼容层」惯例直接改新形状，OBJ 文件与 `modelPath` 字段删除，不做 OBJ/geo 双形态兼容。
+- **单一真相源收口（运行时不携带任何模型来源标识）**：沿 `WornPackModel` 已验证的惯例——bbmodel/geo.json 是**离线作者资产**（`scripts/models/gen_*.py` 生成、`render_bbmodel.py` 预览、真机校准后回改），运行时唯一事实来源是**手工转写并受版本控制的 `ArmorPartModel` cube 表**，转写数值由 pin 测试锁死（`WornPackModel` 类注释「改 geo 时同步本表 + `WornPackModelTest` pin」即此防漂移契约）。`ArmorModelSpec` **不新增 geo 来源字段**、删除 `modelPath`，收敛为 `templateId → (slot, modelKey, texturePath)`；`modelKey → cube 表` 是 `ArmorPartModel` 内的静态映射。完整调用链：`InventoryStateStore.equipped()` → `ArmorModelRegistry.get(template_id)` → `ArmorModelSpec{slot, modelKey, texturePath}` → `ArmorPartModel.buildModelPart(modelKey)`（懒加载缓存）→ `ArmorFeatureRenderer` 按 slot 进对应骨骼局部系渲染——每一段都有 pin/单测锁（P0 测试清单）。
+- 备选路线（构建期 bbmodel→cube 表代码生成器 + CI 漂移校验）在资产件数上到十位数时再评估；当前 2 套 × 4 件体量下，手工转写 + pin 的 WornPack 惯例成本最低且已验证。自写 OBJ mesh 解析渲染路线否决——凡物甲的粗粝箱体感恰好符合末法基调，cube 表足够。
 
 ## P0 — 渲染路线收口 + ModelPart 烘焙底盘 ⬜
 
-- `ArmorPartModel`（新，参 `WornPackModel` 结构）：per-slot cube 表 + `bedrockToVanillaCuboidY` 同款坐标转换 + `buildModelPart(slot)` 烘焙器，纯数据构造 headless 可测。
+- `ArmorPartModel`（新，参 `WornPackModel` 结构）：`modelKey → cube 表` 静态映射 + `bedrockToVanillaCuboidY` 同款坐标转换 + `buildModelPart(modelKey)` 烘焙器，纯数据构造 headless 可测；cube 表即运行时唯一事实来源（§0）。
 - 四槽挂载骨骼映射：HEAD → `head.rotate(matrices)`（随头部转动）、CHEST → `body`、LEGS → `leftLeg`/`rightLeg` 双件、FEET → 腿骨末端偏移——腿/靴需要左右对称双 part（`WornPackFeatureRenderer` 只有 body 单挂载先例，这是本 plan 的新增量）。
-- `ArmorModelRegistry` 重锚：`ArmorModelSpec` 从 `modelPath`(obj) 改为 geo 来源标识 + 贴图路径；删占位 OBJ。
+- `ArmorModelRegistry` 重锚：`ArmorModelSpec` 收敛为 `templateId → (slot, modelKey, texturePath)`（删 `modelPath`，不新增任何模型来源字段）；删占位 OBJ 文件。
 - `ArmorFeatureRenderer.render()` 实装真实绘制循环（`RenderLayer.getEntityCutoutNoCull` + 骨骼局部系），本阶段先用占位 cube 表跑通管线，开关仍为 false。
-- 测试：坐标转换 pin、四槽骨骼映射、`collectRenderable` 式纯逻辑过滤谓词（护甲槽 × 注册表命中）。
+- 测试：坐标转换 pin、cube 表数值 pin（每 modelKey 一条，防手工转写漂移）、`modelKey` 全覆盖断言（Registry 中每个 spec 的 modelKey 都能在 `ArmorPartModel` 命中，杜绝注册表→模型断链）、四槽骨骼映射、`collectRenderable` 式纯逻辑过滤谓词（护甲槽 × 注册表命中 × 破损排除）。
 
 ## P1 — 铁甲 4 件真模型资产 ⬜
 
