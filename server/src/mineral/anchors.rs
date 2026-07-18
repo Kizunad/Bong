@@ -802,9 +802,30 @@ mod tests {
         let anchors =
             load_mineral_anchors(MineralAnchorConfig::default().path, &registry, &zones).unwrap();
 
-        assert!(
-            !anchors.is_empty(),
-            "sanity: manifest 应至少含一条 anchor，否则本测试没有覆盖到任何数据"
+        assert_eq!(
+            anchors.len(),
+            10,
+            "默认 manifest 必须保留 10 条固定矿脉 anchor；删除任一远端矿点或重复一条配置都应撞红"
+        );
+        let expected_zone_minerals = HashSet::from([
+            ("qingyun_peaks", "fan_tie"),
+            ("qingyun_peaks", "za_gang"),
+            ("qingyun_peaks", "ling_jing"),
+            ("blood_valley", "ling_tie"),
+            ("blood_valley", "wu_yao"),
+            ("blood_valley", "zhu_sha"),
+            ("blood_valley", "cu_tie"),
+            ("lingquan_marsh", "yu_sui"),
+            ("lingquan_marsh", "dan_sha"),
+            ("spawn", "fan_tie"),
+        ]);
+        let actual_zone_minerals = anchors
+            .iter()
+            .map(|anchor| (anchor.zone.as_str(), anchor.mineral_id.as_str()))
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            actual_zone_minerals, expected_zone_minerals,
+            "默认 manifest 的 zone/mineral 组合必须精确保持；跨区替换不能只靠总数 10 蒙混过关"
         );
 
         for anchor in &anchors {
