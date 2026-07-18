@@ -64,7 +64,9 @@ fn technique_cast_ticks_snapshot_matches_definitions_exactly() {
         )
     });
     let actual: BTreeMap<String, u32> = serde_json::from_str(&content).unwrap_or_else(|error| {
-        panic!("cast_ticks 快照不是合法的 {{skill_id: cast_ticks}} JSON 对象（{error}）——{REGEN_HINT}")
+        panic!(
+            "cast_ticks 快照不是合法的 {{skill_id: cast_ticks}} JSON 对象（{error}）——{REGEN_HINT}"
+        )
     });
 
     // 三类差异分别点名条目，撞红时不需要肉眼 diff 大 JSON。
