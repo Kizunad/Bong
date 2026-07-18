@@ -2191,6 +2191,87 @@ class ProtoServerDataBridgeTest {
                 "NicheGuardianStore 不应出现任何裸 GUARDIAN_KIND_ 前缀 key");
     }
 
+    @Test
+    void bridgeNicheGuardianBrokenRouteRecordsNormalizedBrokenStateAndIntruder() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setIntruderId("char:raider"))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for niche_guardian_broken: " + result.errorMessage());
+        assertFalse(result.legacyJson().contains("GUARDIAN_KIND_"),
+                "proto bytes 经 bridge 后不得向 router/HUD 泄漏 GUARDIAN_KIND_ 原始枚举");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "niche_guardian_broken 应完成 bridge→router 路由：" + route.logMessage());
+
+        NicheGuardianStore.GuardianStatus status = NicheGuardianStore.guardianStatuses().get("zhenfa_trap");
+        assertNotNull(status,
+                "broken 路由必须用规范化后的 'zhenfa_trap' key 更新 NicheGuardianStore");
+        assertEquals("zhenfa_trap", status.guardianKind(),
+                "HUD 消费的 GuardianStatus.guardianKind 不得保留 proto 枚举前缀");
+        assertEquals(0, status.chargesRemaining(), "broken 守护状态的剩余次数必须归零");
+        assertTrue(status.broken(), "niche_guardian_broken 必须把守护状态转换为 broken=true");
+        assertEquals(1, NicheGuardianStore.intrusionAlerts().size(),
+                "broken 路由必须同时登记一条入侵告警供 HUD 展示");
+        assertEquals("char:raider", NicheGuardianStore.intrusionAlerts().get(0).intruderId(),
+                "入侵告警必须保留 proto payload 中的 intruder_id");
+        assertFalse(NicheGuardianStore.guardianStatuses().keySet().stream()
+                .anyMatch(key -> key.startsWith("GUARDIAN_KIND_")),
+                "broken route 完成后 store 中不得出现裸 GUARDIAN_KIND_ key");
+    }
+
+    @Test
+    void bridgeNicheGuardianFatigueWithoutGuardianKindRoutesNoOpWithoutStatePollution() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setChargesRemaining(4))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should safely accept fatigue payload without guardian_kind");
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertFalse(json.has("guardian_kind"),
+                "未设置 guardian_kind 时 proto3 JSON 应省略该字段，不能伪造有效 wire 值");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isNoOp(),
+                "缺 guardian_kind 的 fatigue payload 必须安全 no-op，实际：" + route.logMessage());
+        assertTrue(NicheGuardianStore.guardianStatuses().isEmpty(),
+                "缺 guardian_kind 的 payload 不得污染守护状态 store");
+        assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
+                "缺 guardian_kind 的 payload 不得产生入侵/HUD 事件");
+    }
+
+    @Test
+    void bridgeNicheGuardianBrokenUnspecifiedKindRoutesNoOpWithoutStatePollution() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_UNSPECIFIED)
+                        .setIntruderId("char:raider"))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should safely accept explicit GUARDIAN_KIND_UNSPECIFIED");
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertFalse(json.has("guardian_kind"),
+                "proto3 默认枚举 UNSPECIFIED 即使由 builder 显式设置也应在 bytes→JSON 时省略，"
+                + "不能被 normalize 成可路由的 'unspecified'");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isNoOp(),
+                "GUARDIAN_KIND_UNSPECIFIED 的 broken payload 必须安全 no-op，实际：" + route.logMessage());
+        assertTrue(NicheGuardianStore.guardianStatuses().isEmpty(),
+                "UNSPECIFIED 不得创建名为 'unspecified' 或带 proto 前缀的守护状态");
+        assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
+                "UNSPECIFIED broken payload 不得仅凭 intruder_id 产生入侵/HUD 事件");
+    }
+
     // ─── plan-bughunt-season-state-proto-enum: player_state.season_state.season 嵌套枚举 ───
     // bridgePlayerState 之前只 normalizeRealmField("realm")，season_state.season 全名
     // "SEASON_WINTER" 未剥前缀，导致 SeasonState.Phase.fromWire 解析失败，
