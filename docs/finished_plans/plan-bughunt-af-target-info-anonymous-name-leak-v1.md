@@ -1,6 +1,6 @@
 # plan-bughunt-af-target-info-anonymous-name-leak-v1
 
-> **Active plan**。一句话主题：`inspect / social / hud / state` 主路径发现 1 个高置信真 bug：**匿名玩家头顶名牌虽已隐藏，但 `TargetInfo` 顶部 HUD 仍会在一次右键/攻击后泄漏其真实名字 5 秒**。这条链路直接绕过 `plan-social-v1` 的匿名设计，对 PvP/尾随/试探交互都有明确玩法后果。
+> **Finished plan**。一句话主题：`inspect / social / hud / state` 主路径发现 1 个高置信真 bug：**匿名玩家头顶名牌虽已隐藏，但 `TargetInfo` 顶部 HUD 仍会在一次右键/攻击后泄漏其真实名字 5 秒**。这条链路直接绕过 `plan-social-v1` 的匿名设计，对 PvP/尾随/试探交互都有明确玩法后果。
 
 > 立项动机：本轮限定扫描 `inspect/preview/social-hud/state` 主路径，并排除已立项题（trade bundle 少发货 / sparring invite hijack / trade gate / season stale client / tide_sky 漏接等）。本题落点集中、证据链短、玩家体感强，适合 skeleton-only 立项。
 
@@ -8,9 +8,9 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 匿名玩家被 `TargetInfo` HUD 反查真名 | fix_pr | ⬜ |
+| P0 | 匿名玩家被 `TargetInfo` HUD 反查真名 | fix_pr | ✅ 2026-07-18 |
 
-## P0 — 匿名玩家被 `TargetInfo` HUD 反查真名
+## P0 — 匿名玩家被 `TargetInfo` HUD 反查真名（✅ 2026-07-18）
 
 - **#1 major（fix_pr）**：匿名系统只挡住了**头顶名牌**，没有挡住**顶部 TargetInfo HUD**。
   - `client/src/main/java/com/bong/client/mixin/MixinEntityRenderer.java:17-35` 明确把远端玩家名牌显示门控到 `SocialStateStore.shouldShowRemoteNameTag(player.getUuidAsString(), playerName)`；`docs/finished_plans/plan-social-v1.md:292-296` 也把“client 端 name tag 默认隐藏 / server 下发 AnonymityPayload 决定显示”写成正式交付。
@@ -49,3 +49,35 @@
 ## 审计来源
 
 bug-hunt 线程 AF（限定 worktree：`bughunt-loop-20260705-af`，范围：`inspect / preview / social-hud / state` 主路径）。候选链路先后排除了已修 bridge 枚举问题与已立项主题后，最终锁定 `TargetInfoStateStore -> TargetInfoState -> TargetInfoHudPlanner` 对匿名系统的旁路泄漏。结论：**real-on-main，player-facing，局部明确，可 fix_pr。**
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 — 匿名玩家 TargetInfo 脱敏**：
+  - `client/src/main/java/com/bong/client/hud/TargetInfoState.java`：`fromEntity(Entity, long)` 的 `PlayerEntity` 分支统一进入 `fromPlayerTargetInfo(...)`；`playerDisplayNameForTargetInfo(...)` 复用 `SocialStateStore.shouldShowRemoteNameTag(...)`，匿名或未知远端显示 `ANONYMOUS_PLAYER_DISPLAY_NAME`（“某修士”），已暴露远端保留允许显示的名称，玩家目标的 realm / HP / 真元仍不额外泄漏。
+  - `client/src/main/java/com/bong/client/hud/TargetInfoStateStore.java` 与 `client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java`：攻击及主手交互继续走 `observeEntity(...) -> TargetInfoState.fromEntity(...)` 的真实生产入口。
+  - `client/src/main/java/com/bong/client/hud/TargetInfoHudPlanner.java`：顶部 HUD 只渲染已经过上述门控的 `TargetInfoState.displayName()`，且 `Kind.PLAYER` 不渲染 HP / 真元条。
+  - `client/src/test/java/com/bong/client/hud/TargetInfoHudPlannerTest.java`：覆盖 anonymous / exposed / unknown remote、装饰显示名、遗骸伪玩家例外，以及 `fromPlayerTargetInfo(...)` 玩家快照分支；断言匿名 HUD 不含真实名字、暴露 HUD 保留可见名。
+
+### 关键 commit
+
+- `bb43988db477851157ea107dc3dfda378b59ce40` — 2026-07-06 — PR #892 首次让 `TargetInfoState` 复用 `SocialStateStore` 匿名判定，并加入 anonymous / exposed HUD 回归。
+- `b65fc1ca9d2419e582807582996720cb04480b9b` — 2026-07-08 — PR #1131 合并：将玩家真实入口收束到 `fromPlayerTargetInfo(...)`，修正遗骸伪玩家误匿名，并补足玩家分支与未知/装饰名回归测试。
+
+### 测试结果
+
+- 2026-07-18，Java 17：`client/gradlew --project-dir client test --tests com.bong.client.hud.TargetInfoHudPlannerTest --rerun-tasks` — **PASS**；JUnit 报告为 **9 tests / 0 skipped / 0 failures / 0 errors**。
+- PR #1131：GitHub `e2e` check **PASS**（2026-07-07，20m55s）。该 PR 的 `review` 失败来自 4 个 Codex reviewer 执行失败，CodeRabbit 失败来自 review limit / prepaid credits exhausted；两者均未产生代码级 finding。
+- 2026-07-18 静态链核验：`attackEntity` / `interactEntity` -> `TargetInfoStateStore.observeEntity(...)` -> `TargetInfoState.fromEntity(...)` -> `fromPlayerTargetInfo(...)` -> `SocialStateStore.shouldShowRemoteNameTag(...)`，当前 `origin/main` 未发现后续回退提交。
+
+### 跨仓库核验
+
+- **server**：`server/src/social/mod.rs::emit_anonymity_payloads_for_joined_clients` / `serialize_social_anonymity_payload_for_viewer` 生成权威 `ServerDataPayloadV1::SocialAnonymity` 快照。
+- **agent / schema**：`agent/packages/schema/src/social.ts::SocialAnonymityPayloadV1`、`agent/packages/schema/src/server-data.ts::ServerDataSocialAnonymityV1` 与 `agent/packages/schema/samples/server-data.social-anonymity.sample.json` 固定现有 wire 契约；本修复无需新增天道运行时协议。
+- **client**：`ProtoServerDataBridge` / `ServerDataRouter` / `SocialServerDataHandler` 将 `social_anonymity` 写入 `SocialStateStore`；`MixinEntityRenderer` 与 `TargetInfoState` 共同复用 `shouldShowRemoteNameTag(...)`，头顶名牌和顶部 TargetInfo HUD 不再出现匿名判定分叉。
+
+### 遗留 / 后续
+
+- 本 plan 范围内无遗留 blocker。`TargetInfoStateStore.observeEntity(...)` 是到 `TargetInfoState.fromEntity(...)` 的薄委托；JUnit 直接锁定其唯一 `PlayerEntity` 生产分支 `fromPlayerTargetInfo(...)`，并结合静态调用链排除了只测 `TargetInfoState.create(...)` 的假阳性。
+- 遗骸伪玩家例外仅在 zero UUID + `Remains_` profile + “遗骸” fallback 三条件同时满足时生效；其他未知玩家继续 fail-closed 为“某修士”。
