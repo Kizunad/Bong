@@ -56,7 +56,7 @@
 
 ## 实施决议（2026-07-16）
 
-1. **协议字段落点**：采纳问题 1 的顶层方案。在 `AgentUiResponsePayloadV1` 增加可选 `target_player`（1..=128 字符），同时更新 TypeBox 生成物与 Rust serde 镜像。该字段对 client→server C2S 保持可选，旧 payload 缺字段仍可反序列化；server 只在 `realm_gate_rejected` 权威拒绝响应中回填 `cmd.target_player`，其它终态显式保持 `None`。
+1. **协议字段落点**：采纳问题 1 的顶层方案。在 server→agent `AgentUiResponsePayloadV1` 增加可选 `target_player`（1..=128 字符），同时更新 TypeBox 生成物与 Rust serde 镜像。真实 client→server C2S schema 明确禁止该字段；仅旧的 server→agent response payload 缺字段时仍可兼容反序列化。server 只在 `realm_gate_rejected` 权威拒绝响应中回填 `cmd.target_player`，其它终态显式保持 `None`。
 2. **路由与兼容**：采纳问题 2 的“不跨题扩展”结论，不改 `plan-agent-ui-data-v1` 或 TSY fallback。`UiResponseConsumer` 对非空、去空白后的 `target_player` 生成 `scope="player"`；缺失或空白字段保留旧 `broadcast/world` 退化并写 warn，确保历史 agent payload 可消费。server 现有 `RecipientSelector::player` 的 `offline:<name>` 匹配作为最终双玩家隔离门。
 3. **验收矩阵**：schema 覆盖带目标、旧 payload、空值反例；consumer 覆盖 player scope、legacy broadcast+warn、空白目标与 publish 失败；server 覆盖 gate reject 回填 canonical id、旧 JSON 兼容和 `AgentUiResponsePayloadV1` 全部生产构造点的 `None` 默认。既有 `network::narration` 双玩家 player-scope 测试作为链路隔离证据，不新增第二套路由实现。
 
