@@ -115,8 +115,8 @@ Cube digest pin：
 
 ### 测试结果
 
-- Client（Java 17）：`cd client && ./gradlew test build` — **4,120 tests，0 failure/error/skipped**。
-- Server：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 均 PASS；`cargo test` — **11,791 passed，6 ignored，0 failed**。
+- Client（Java 17）：`cd client && ./gradlew test build` — **4,127 tests，0 failure/error/skipped**（合并 `origin/main` 后复验）。
+- Server：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 均 PASS；`cargo test` — **11,792 passed，6 ignored，0 failed**（合并 `origin/main` 后复验）。
 - Python：`python -m unittest scripts.models.test_gen_iron_armor scripts.models.test_gen_bone_armor` — **13 tests PASS**。
 - 全链路：隔离运行时数据后执行 `bash scripts/smoke-test-e2e.sh` — **9 passed，0 failed，ALL PASS**；其中 Redis e2e **17 passed，0 failed**，100 NPC TPS gate `20.0 >= 15`，北境裂隙 dedicated preview bot PASS。
 - 真机：WSLg F5 覆盖铁甲/骨甲四槽前后视、步行、潜行、穿脱；铜甲染色皮甲兜底回归 PASS，第一人称手臂不渲染护甲保持 vanilla 正确行为。
