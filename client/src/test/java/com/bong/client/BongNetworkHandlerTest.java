@@ -26,6 +26,8 @@ import com.bong.client.state.SeasonState;
 import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.minecraft.client.MinecraftClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -62,7 +64,7 @@ public class BongNetworkHandlerTest {
     void realPlayerStateProtoDispatchUpdatesStoresThroughPrivateProductionApplyDispatch() {
         SeasonStateStore.replace(new SeasonState(SeasonState.Phase.SUMMER, 7L, 1000L, 0L));
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-            .setPlayerState(completeSeasonPlayerState()
+            .setPlayerState(seasonAuditPlayerState()
                 .setSeasonState(Envelope.SeasonState.newBuilder()
                     .setSeason(Envelope.Season.SEASON_WINTER)
                     .setTickIntoPhase(42)
@@ -74,7 +76,10 @@ public class BongNetworkHandlerTest {
 
         invokePrivateProductionApplyDispatch(route.dispatch(), "有效 WINTER");
 
-        assertCompletePlayerState(PlayerStateStore.snapshot(), "有效 WINTER 最终 PlayerStateStore");
+        assertCurrentClientPlayerStateProjection(
+            PlayerStateStore.snapshot(),
+            "有效 WINTER 最终 PlayerStateStore"
+        );
         SeasonState stored = SeasonStateStore.snapshot();
         assertEquals(SeasonState.Phase.WINTER, stored.phase(),
             "private applyDispatch 必须把 router 产出的 WINTER 写进 store；"
@@ -88,7 +93,7 @@ public class BongNetworkHandlerTest {
     void missingSeasonStatePreservesEveryExistingSeasonStoreField() {
         SeasonState sentinel = new SeasonState(SeasonState.Phase.WINTER, 31L, 777L, 5L);
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-            .setPlayerState(completeSeasonPlayerState())
+            .setPlayerState(seasonAuditPlayerState())
             .build();
 
         assertInvalidSeasonPreservesStore(envelope, sentinel, "missing season_state");
@@ -98,7 +103,7 @@ public class BongNetworkHandlerTest {
     void unspecifiedSeasonPreservesEveryExistingSeasonStoreField() {
         SeasonState sentinel = new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 42L, 888L, 6L);
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-            .setPlayerState(completeSeasonPlayerState()
+            .setPlayerState(seasonAuditPlayerState()
                 .setSeasonState(Envelope.SeasonState.newBuilder()
                     .setSeasonValue(0)
                     .setTickIntoPhase(10)
@@ -113,7 +118,7 @@ public class BongNetworkHandlerTest {
     void unknownNumericSeasonPreservesEveryExistingSeasonStoreField() {
         SeasonState sentinel = new SeasonState(SeasonState.Phase.WINTER_TO_SUMMER, 53L, 999L, 7L);
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-            .setPlayerState(completeSeasonPlayerState()
+            .setPlayerState(seasonAuditPlayerState()
                 .setSeasonState(Envelope.SeasonState.newBuilder()
                     .setSeasonValue(99)
                     .setTickIntoPhase(10)
@@ -559,21 +564,21 @@ public class BongNetworkHandlerTest {
         );
     }
 
-    private static Envelope.PlayerState.Builder completeSeasonPlayerState() {
+    private static Envelope.PlayerState.Builder seasonAuditPlayerState() {
         return Envelope.PlayerState.newBuilder()
             .setPlayer("offline:SeasonAudit")
             .setRealm(Common.Realm.REALM_CONDENSE)
             .setSpiritQi(50.0)
             .setSpiritQiMax(100.0)
-            .setKarma(0.2)
+            .setKarma(-0.37)
             .setCompositePower(0.35)
             .setZone("zone-1")
             .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
-                .setCombat(0.2)
-                .setWealth(0.4)
-                .setSocial(0.65)
-                .setKarma(0.2)
-                .setTerritory(0.1));
+                .setCombat(0.21)
+                .setWealth(0.42)
+                .setSocial(0.63)
+                .setKarma(0.74)
+                .setTerritory(0.84));
     }
 
     private static ServerDataRouter.RouteResult routeRealPlayerState(
@@ -585,6 +590,20 @@ public class BongNetworkHandlerTest {
             bridge.isSuccess(),
             scenario + " 的真实 player_state proto bytes 应 bridge 成功：" + bridge.errorMessage()
         );
+        JsonObject bridgeJson = JsonParser.parseString(bridge.legacyJson()).getAsJsonObject();
+        assertEquals(
+            -0.37,
+            bridgeJson.get("karma").getAsDouble(),
+            0.0001,
+            scenario + " bridge 必须保留带符号的顶层 karma"
+        );
+        assertEquals(
+            0.74,
+            bridgeJson.getAsJsonObject("breakdown").get("karma").getAsDouble(),
+            0.0001,
+            scenario + " bridge 必须独立保留 wire breakdown.karma，不能与顶层 karma 混接"
+        );
+
         ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(
             bridge.legacyJson(),
             bridge.legacyJson().getBytes(StandardCharsets.UTF_8).length
@@ -598,7 +617,10 @@ public class BongNetworkHandlerTest {
             .orElseThrow(() -> new AssertionError(
                 scenario + " 必须保留合法 player_state dispatch，不能因 season 无效而整包丢弃"
             ));
-        assertCompletePlayerState(playerState, scenario + " dispatch");
+        assertCurrentClientPlayerStateProjection(
+            playerState,
+            scenario + " dispatch"
+        );
         return route;
     }
 
@@ -616,7 +638,10 @@ public class BongNetworkHandlerTest {
 
         invokePrivateProductionApplyDispatch(route.dispatch(), scenario);
 
-        assertCompletePlayerState(PlayerStateStore.snapshot(), scenario + " 最终 PlayerStateStore");
+        assertCurrentClientPlayerStateProjection(
+            PlayerStateStore.snapshot(),
+            scenario + " 最终 PlayerStateStore"
+        );
         SeasonState stored = SeasonStateStore.snapshot();
         assertEquals(sentinel.phase(), stored.phase(), scenario + " 不得覆盖既有 phase");
         assertEquals(
@@ -632,7 +657,7 @@ public class BongNetworkHandlerTest {
         assertEquals(sentinel.yearIndex(), stored.yearIndex(), scenario + " 不得覆盖既有 yearIndex");
     }
 
-    private static void assertCompletePlayerState(
+    private static void assertCurrentClientPlayerStateProjection(
         PlayerStateViewModel playerState,
         String scenario
     ) {
@@ -640,13 +665,13 @@ public class BongNetworkHandlerTest {
         assertEquals("Condense", playerState.realm(), scenario + " 必须保留 realm");
         assertEquals(50.0, playerState.spiritQiCurrent(), 0.0001, scenario + " 必须保留 spirit qi");
         assertEquals(100.0, playerState.spiritQiMax(), 0.0001, scenario + " 必须保留 spirit qi max");
-        assertEquals(0.2, playerState.karma(), 0.0001, scenario + " 必须保留 karma");
+        assertEquals(-0.37, playerState.karma(), 0.0001, scenario + " 必须保留带符号的顶层 karma");
         assertEquals(0.35, playerState.compositePower(), 0.0001, scenario + " 必须保留 composite power");
         assertEquals("zone-1", playerState.zoneId(), scenario + " 必须保留 zone");
-        assertEquals(0.2, playerState.breakdown().combat(), 0.0001, scenario + " 必须保留 combat breakdown");
-        assertEquals(0.4, playerState.breakdown().wealth(), 0.0001, scenario + " 必须保留 wealth breakdown");
-        assertEquals(0.65, playerState.breakdown().social(), 0.0001, scenario + " 必须保留 social breakdown");
-        assertEquals(0.1, playerState.breakdown().territory(), 0.0001, scenario + " 必须保留 territory breakdown");
+        assertEquals(0.21, playerState.breakdown().combat(), 0.0001, scenario + " 必须保留 combat breakdown");
+        assertEquals(0.42, playerState.breakdown().wealth(), 0.0001, scenario + " 必须保留 wealth breakdown");
+        assertEquals(0.63, playerState.breakdown().social(), 0.0001, scenario + " 必须保留 social breakdown");
+        assertEquals(0.84, playerState.breakdown().territory(), 0.0001, scenario + " 必须保留 territory breakdown");
     }
 
     private static void invokePrivateProductionApplyDispatch(ServerDataDispatch dispatch, String scenario) {
