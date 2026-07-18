@@ -95,8 +95,9 @@
   - 未知 enum number 保持 JSON number，由 `SocialServerDataHandler.readString` 拒绝，不污染 store / HUD / event。
 - **P0 / 饱和回归**：`client/src/test/java/com/bong/client/network/ProtoServerDataBridgeTest.java`
   - 合法三值：`PUPPET`、`ZHENFA_TRAP`、`BONDED_DAOXIANG`。
-  - 完整状态转换：真实 proto bytes → `ProtoServerDataBridge.bridge` → `ServerDataRouter.route` → `NicheGuardianStore`。
-  - 玩家可观察结果：`NicheGuardianPanel.buildLines()` 与 `UnifiedEventStore` 的 channel / priority / sourceTag / text。
+  - 完整状态转换：真实 proto bytes → `ProtoServerDataBridge.bridge` → 同一 `ServerDataRouter`、同一 `zhenfa_trap` key、无 reset 的 fatigue → broken 连续迁移 → `NicheGuardianStore` 最终破损态。
+  - 玩家可观察结果：`NicheGuardianPanel.buildLines()` 的最终唯一 guardian 行与单条告警，以及 `UnifiedEventStore` 的顺序、channel / priority / sourceTag / text。
+  - 防重复发布：fatigue / broken 两条事件分别断言 `foldCount() == 1` 且 `displayText() == text()`，避免重复事件被 folding 后仍以两条表象假绿。
   - 错误与边界：missing guardian kind、显式 `GUARDIAN_KIND_UNSPECIFIED`、未知 enum number，均锁定 no-op 且 store / alert / event / HUD 无污染。
 
 ### 关键 commit
@@ -106,22 +107,26 @@
 - `a8f161f5eaad74d498930c043aff84a7ab5e1d1d` — 2026-07-18：从历史恢复 skeleton 并正规升格为 active plan。
 - `31583b3ab43e1ebe16879dbfbbfc3b8e95f83941` — 2026-07-18：补齐 broken / missing / UNSPECIFIED 的 proto→bridge→router 边界测试；随后由对抗 validator 发现默认字段语义仍会污染 `unspecified`。
 - `656cd4cf869163de59836bf54bdb8d89abc1269e` — 2026-07-18：修正默认枚举边界，并补齐合法、缺失、UNSPECIFIED、未知数值的 store / HUD / 统一事件断言。
+- `ba9676849df9a59e914ba0374923678ee3e07fee` — 2026-07-18：补齐枚举边界证据并把 active plan 正规归档到 `docs/finished_plans/`。
+- `c5aa2228a3f3e778f00b16162cec565598708bb3` — 2026-07-18：新增同一 guardian、同一 router、无 reset 的 fatigue → broken 连续 proto 路由与最终 HUD / 事件顺序回归。
+- `f1121724992a020db4472f75c39eea4e88ddc2f8` — 2026-07-18：用 `foldCount` / `displayText` 锁定两种事件各发布一次，关闭 UnifiedEventStream folding 假绿。
+- `970d136a1bbc014161eb07975b4cf6ae50a35e1b` — 2026-07-18：合并最新 `origin/main` 后复验；合并仅带入无关 skeleton / reminder 文档，client 生产与测试 blob 保持不变。
 
 ### 测试结果
 
 - **历史可执行证据（PR #1186）**：`cd client && ./gradlew test build` 由 PR body 记录为 `BUILD SUCCESSFUL`；GitHub checks `respond`、`e2e`、`CodeRabbit` 均为 `SUCCESS`。该证据只覆盖当时的三条 guardian 测试，不冒充当前 HEAD 的执行结果。
 - **当前 HEAD 本地执行**：JDK 17 下三轮受控 Gradle 尝试均在 test discovery 前被 sandbox 基础设施阻断：前两轮为 single-use daemon `java.net.SocketException: Operation not permitted`，最终已消除 daemon fork，但 Gradle 初始化仍报 `Could not determine a usable wildcard IP for this machine`。**当前 HEAD 实际执行测试数为 0，结果不是 PASS。**
-- **静态/对抗门**：`git diff --check` 通过；fresh read-only validator 对 `656cd4cf869163de59836bf54bdb8d89abc1269e` 给出 `PASS`，核验合法枚举、missing / UNSPECIFIED、unknown numeric、store / HUD / event 断言与 Java API。
-- **主线同步**：2026-07-18 执行 `git fetch origin` 紧邻 `git merge origin/main`，结果 `Already up to date.`；HEAD 未变化，validator SHA 仍有效。
-- **最终可执行 gate**：本修复分支的 PR CI（client / e2e）为当前 HEAD 的权威执行门；开 PR 后必须等待 CI 绿色，若红则返工并对新 HEAD 重验，不得用历史结果或本地 infra-block 代替。
+- **静态/对抗门**：`git diff --check` 通过；fresh read-only validator 对 `f1121724992a020db4472f75c39eea4e88ddc2f8` 给出 `PASS`，核验连续迁移、唯一 key / HUD、事件顺序、防 folding 断言与 protobuf Java API。合并主线后，独立 `codex exec --ephemeral --sandbox read-only` validator（`gpt-5.6-sol`）又对 `970d136a1bbc014161eb07975b4cf6ae50a35e1b` 给出 `PASS`；两轮均只做静态对抗核验，不冒充可执行测试。
+- **主线同步**：2026-07-18 执行 `git fetch origin` 紧邻合并 `origin/main`，生成 `970d136a1bbc014161eb07975b4cf6ae50a35e1b`；无冲突，仅带入 10 个无关 `docs/plans-skeleton/*` / `reminder.md` 变更，`ProtoServerDataBridge.java` 与 `ProtoServerDataBridgeTest.java` 的 blob 和合并前一致。
+- **当前代码 HEAD 的权威可执行 gate**：[GitHub Actions run 29634002985](https://github.com/Kizunad/Bong/actions/runs/29634002985)（`E2E Redis Smoke`，job `88052916590`）对 `970d136a1bbc014161eb07975b4cf6ae50a35e1b` 于 2026-07-18 `SUCCESS`：`Setup Java 17`、`Client stage (gradlew test)`、schema build/check/test/generate、agent check/test、server release build、`Server stage (cargo test)`、smoke/e2e 与 bot e2e 全部成功。该证据精确绑定代码 HEAD，不用历史结果或本地 infra-block 代替。
 
 ### 跨仓库核验
 
 - **server**：`server/src/schema/social.rs::GuardianKindV1` 仅含 `Puppet / ZhenfaTrap / BondedDaoxiang`；`server/src/schema/proto_convert.rs` 的 `ServerDataPayloadV1::NicheGuardianFatigue` / `NicheGuardianBroken` 经 `guardian_kind_to_proto` 生成真实 protobuf enum。
 - **agent/schema**：`agent/packages/schema/src/social.ts::NicheGuardianFatigueV1` / `NicheGuardianBrokenV1` 的 `guardian_kind` 复用 `GuardianKindV1`，legacy 契约不包含 `unspecified`。
-- **client**：`ProtoServerDataBridge.bridgeStripEnumsOmittingUnspecified` → `SocialServerDataHandler.handleNicheGuardianFatigue/handleNicheGuardianBroken` → `NicheGuardianStore` / `NicheGuardianPanel` / `UnifiedEventStore` 全链命中；合法值不再泄漏 `GUARDIAN_KIND_`，默认/未知值不产生玩家可见污染。
+- **client**：`ProtoServerDataBridge.bridgeStripEnumsOmittingUnspecified` → `SocialServerDataHandler.handleNicheGuardianFatigue/handleNicheGuardianBroken` → `NicheGuardianStore` / `NicheGuardianPanel` / `UnifiedEventStore` 全链命中；合法值不再泄漏 `GUARDIAN_KIND_`，默认/未知值不产生玩家可见污染，同一 guardian 的 fatigue → broken 连续迁移及两种事件各发布一次均有契约测试锁定。
 
 ### 遗留 / 后续
 
-- 本地 sandbox 无法提供 Gradle 所需的本机 socket / wildcard-IP 能力；这是明确记录的基础设施阻塞，不是测试通过。当前 HEAD 的可执行验收必须由 PR CI 完成。
+- 本地 sandbox 仍无法提供 Gradle 所需的本机 socket / wildcard-IP 能力；这是明确保留的基础设施历史，三轮本地执行均为 0 tests、不是 PASS。当前代码 HEAD 的可执行验收已由上述 PR CI run 29634002985 完成。
 - 本 plan 不改 Rust / TypeBox / protobuf 定义、不改 Redis channel，也不处理 #945 跨 session 清理或 #1010 season enum；这些边界仍按各自 plan 管理。
