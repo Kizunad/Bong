@@ -31,7 +31,7 @@ const DUPLICATE_TEXTURE_ALLOWLIST: [&str; 0] = [];
 /// P0 例外映射表（plan §8.1 #1）：既有专属图不重链，逐条写死期望文件名——例外集
 /// 只许缩小，新增例外必须在此登记并说明理由（与 `known_techniques.rs` 模块注释
 /// 的例外清单保持同步）。
-const ICON_TEXTURE_EXCEPTIONS: [(&str, &str); 13] = [
+const ICON_TEXTURE_EXCEPTIONS: [(&str, &str); 12] = [
     // woliu 基础六式 —— 既有 HUD 特化图保留在 bong:textures/gui/skill/（P0 #3 约定）。
     ("woliu.vortex", "bong:textures/gui/skill/woliu_vortex.png"),
     ("woliu.hold", "bong:textures/gui/skill/woliu_hold.png"),
@@ -65,9 +65,8 @@ const ICON_TEXTURE_EXCEPTIONS: [(&str, &str); 13] = [
         "zhenmai.sever_chain",
         "bong-client:textures/gui/skill/zhenmai_sever_chain.png",
     ),
-    // morph.yixing —— 全仓尚无任何图标资产，现值悬空，待 P2 /gen-image 生成后按
-    // 规范路径收编（client 侧 MISSING_ICON_ALLOWLIST 同步记录）。
-    ("morph.yixing", "bong:textures/gui/skill/morph_yixing.png"),
+    // morph.yixing 已于 P2（2026-07-18）生成 skill_scroll_morph_yixing.png 并
+    // 收编规范路径，例外条目移除、client 侧 MISSING_ICON_ALLOWLIST 同步清零。
 ];
 
 /// 非例外 technique 的规范图标路径（plan §8.1 #1 单一真相源约定）：
