@@ -776,9 +776,9 @@ public class BongNetworkHandler {
         ClientConnectionStatusStore.markPayloadReceived(Util.getMeasuringTimeMs());
     }
 
-    static void applyDispatch(net.minecraft.client.MinecraftClient client, ServerDataDispatch dispatch, String envelopeType) {
+    private static void applyDispatch(net.minecraft.client.MinecraftClient client, ServerDataDispatch dispatch, String envelopeType) {
         dispatch.playerStateViewModel().ifPresent(PlayerStateStore::replace);
-        dispatch.seasonState().ifPresent(SeasonStateStore::replace);
+        applySeasonStateStore(dispatch);
         dispatch.narrationState().ifPresent(BongNetworkHandler::replaceNarrationState);
         dispatch.toastNarrationState().ifPresent(toastNarrationState -> BongToast.show(toastNarrationState, System.currentTimeMillis()));
         dispatch.zoneState().ifPresent(BongNetworkHandler::replaceZoneState);
@@ -795,9 +795,7 @@ public class BongNetworkHandler {
         dispatch.uiOpenState().ifPresent(uiOpenState -> applyUiOpen(client, uiOpenState, envelopeType));
         dispatch.identityPanelState().ifPresent(IdentityPanelStateStore::replace);
 
-        // Production always passes the live MinecraftClient. Allow a null client only for
-        // headless contract tests that verify state-store wiring before player-only effects.
-        if (client == null || client.player == null) {
+        if (client.player == null) {
             return;
         }
 
@@ -808,6 +806,10 @@ public class BongNetworkHandler {
         dispatch.legacyMessage().ifPresent(message ->
             client.player.sendMessage(Text.literal("[Bong] " + envelopeType + ": " + message), false)
         );
+    }
+
+    static void applySeasonStateStore(ServerDataDispatch dispatch) {
+        dispatch.seasonState().ifPresent(SeasonStateStore::replace);
     }
 
     private static void applyUiOpen(net.minecraft.client.MinecraftClient client, UiOpenState uiOpenState, String envelopeType) {

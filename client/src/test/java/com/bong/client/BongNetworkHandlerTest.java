@@ -50,23 +50,10 @@ public class BongNetworkHandlerTest {
     }
 
     @Test
-    void realPlayerStateProtoDispatchUpdatesSeasonStateStoreThroughNetworkApply() {
+    void realPlayerStateProtoDispatchUpdatesSeasonStateStoreThroughProductionStoreApply() {
         SeasonStateStore.replace(new SeasonState(SeasonState.Phase.SUMMER, 7L, 1000L, 0L));
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-            .setPlayerState(Envelope.PlayerState.newBuilder()
-                .setPlayer("offline:SeasonAudit")
-                .setRealm(Common.Realm.REALM_CONDENSE)
-                .setSpiritQi(50.0)
-                .setSpiritQiMax(100.0)
-                .setKarma(0.2)
-                .setCompositePower(0.35)
-                .setZone("zone-1")
-                .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
-                    .setCombat(0.2)
-                    .setWealth(0.4)
-                    .setSocial(0.65)
-                    .setKarma(0.2)
-                    .setTerritory(0.1))
+            .setPlayerState(completeSeasonPlayerState()
                 .setSeasonState(Envelope.SeasonState.newBuilder()
                     .setSeason(Envelope.Season.SEASON_WINTER)
                     .setTickIntoPhase(42)
@@ -74,22 +61,57 @@ public class BongNetworkHandlerTest {
                     .setYearIndex(2)))
             .build();
 
-        ProtoServerDataBridge.BridgeResult bridge = ProtoServerDataBridge.bridge(envelope.toByteArray());
-        assertTrue(bridge.isSuccess(), "真实 player_state proto bytes 应 bridge 成功：" + bridge.errorMessage());
-        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(
-            bridge.legacyJson(), bridge.legacyJson().getBytes(StandardCharsets.UTF_8).length
-        );
-        assertTrue(route.isHandled(), "真实 player_state 应进入 router handled 分支：" + route.logMessage());
+        ServerDataRouter.RouteResult route = routeRealPlayerState(envelope, "有效 WINTER");
 
-        BongNetworkHandler.applyDispatch(null, route.dispatch(), "player_state");
+        BongNetworkHandler.applySeasonStateStore(route.dispatch());
 
         SeasonState stored = SeasonStateStore.snapshot();
         assertEquals(SeasonState.Phase.WINTER, stored.phase(),
-            "BongNetworkHandler.applyDispatch 必须把 router 产出的 WINTER 写进 SeasonStateStore；"
+            "生产 applyDispatch 共用的 season-store helper 必须把 router 产出的 WINTER 写进 store；"
                 + "否则 HUD/atmosphere/particle 仍会读取旧 SUMMER");
-        assertEquals(42L, stored.tickIntoPhase());
-        assertEquals(1000L, stored.phaseTotalTicks());
-        assertEquals(2L, stored.yearIndex());
+        assertEquals(42L, stored.tickIntoPhase(), "有效 season 的 tick_into_phase 必须完整落库");
+        assertEquals(1000L, stored.phaseTotalTicks(), "有效 season 的 phase_total_ticks 必须完整落库");
+        assertEquals(2L, stored.yearIndex(), "有效 season 的 year_index 必须完整落库");
+    }
+
+    @Test
+    void missingSeasonStatePreservesEveryExistingSeasonStoreField() {
+        SeasonState sentinel = new SeasonState(SeasonState.Phase.WINTER, 31L, 777L, 5L);
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setPlayerState(completeSeasonPlayerState())
+            .build();
+
+        assertInvalidSeasonPreservesStore(envelope, sentinel, "missing season_state");
+    }
+
+    @Test
+    void unspecifiedSeasonPreservesEveryExistingSeasonStoreField() {
+        SeasonState sentinel = new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 42L, 888L, 6L);
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setPlayerState(completeSeasonPlayerState()
+                .setSeasonState(Envelope.SeasonState.newBuilder()
+                    .setSeasonValue(0)
+                    .setTickIntoPhase(10)
+                    .setPhaseTotalTicks(1000)
+                    .setYearIndex(3)))
+            .build();
+
+        assertInvalidSeasonPreservesStore(envelope, sentinel, "SEASON_UNSPECIFIED numeric 0");
+    }
+
+    @Test
+    void unknownNumericSeasonPreservesEveryExistingSeasonStoreField() {
+        SeasonState sentinel = new SeasonState(SeasonState.Phase.WINTER_TO_SUMMER, 53L, 999L, 7L);
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setPlayerState(completeSeasonPlayerState()
+                .setSeasonState(Envelope.SeasonState.newBuilder()
+                    .setSeasonValue(99)
+                    .setTickIntoPhase(10)
+                    .setPhaseTotalTicks(1000)
+                    .setYearIndex(3)))
+            .build();
+
+        assertInvalidSeasonPreservesStore(envelope, sentinel, "unknown season numeric 99");
     }
 
     @Test
@@ -525,6 +547,72 @@ public class BongNetworkHandlerTest {
                 + " 是 sticky merge，漏掉这条调用会让上一局毒蛊 v2 HUD 跨 session 无限残留"
                 + "（plan-bughunt-dugu-v2-hud-disconnect-bleed-v1）；实际：清理 helper 内未找到该调用"
         );
+    }
+
+    private static Envelope.PlayerState.Builder completeSeasonPlayerState() {
+        return Envelope.PlayerState.newBuilder()
+            .setPlayer("offline:SeasonAudit")
+            .setRealm(Common.Realm.REALM_CONDENSE)
+            .setSpiritQi(50.0)
+            .setSpiritQiMax(100.0)
+            .setKarma(0.2)
+            .setCompositePower(0.35)
+            .setZone("zone-1")
+            .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                .setCombat(0.2)
+                .setWealth(0.4)
+                .setSocial(0.65)
+                .setKarma(0.2)
+                .setTerritory(0.1));
+    }
+
+    private static ServerDataRouter.RouteResult routeRealPlayerState(
+        Envelope.ServerDataEnvelope envelope,
+        String scenario
+    ) {
+        ProtoServerDataBridge.BridgeResult bridge = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(
+            bridge.isSuccess(),
+            scenario + " 的真实 player_state proto bytes 应 bridge 成功：" + bridge.errorMessage()
+        );
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(
+            bridge.legacyJson(),
+            bridge.legacyJson().getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(
+            route.isHandled(),
+            scenario + " 不应吞掉其余合法 player_state 字段：" + route.logMessage()
+        );
+        return route;
+    }
+
+    private static void assertInvalidSeasonPreservesStore(
+        Envelope.ServerDataEnvelope envelope,
+        SeasonState sentinel,
+        String scenario
+    ) {
+        SeasonStateStore.replace(sentinel);
+        ServerDataRouter.RouteResult route = routeRealPlayerState(envelope, scenario);
+        assertTrue(
+            route.dispatch().seasonState().isEmpty(),
+            scenario + " 必须只让 season 分支安全 no-op，不能产生默认季节"
+        );
+
+        BongNetworkHandler.applySeasonStateStore(route.dispatch());
+
+        SeasonState stored = SeasonStateStore.snapshot();
+        assertEquals(sentinel.phase(), stored.phase(), scenario + " 不得覆盖既有 phase");
+        assertEquals(
+            sentinel.tickIntoPhase(),
+            stored.tickIntoPhase(),
+            scenario + " 不得覆盖既有 tickIntoPhase"
+        );
+        assertEquals(
+            sentinel.phaseTotalTicks(),
+            stored.phaseTotalTicks(),
+            scenario + " 不得覆盖既有 phaseTotalTicks"
+        );
+        assertEquals(sentinel.yearIndex(), stored.yearIndex(), scenario + " 不得覆盖既有 yearIndex");
     }
 
     private static CraftRecipe sampleCraftRecipe(String id, boolean unlocked) {
