@@ -8,7 +8,7 @@
 |------|------|------|
 | P0 | 建立 anchor zone / AABB 契约校验 | ⬜ |
 | P1 | 修正四组旧坐标与 `rift_valley` 旧 id | ⬜ |
-| P2 | 锁定 runtime 加载失败与锚点物化边界 | ⬜ |
+| P2 | 锁定 runtime manifest 契约与锚点物化边界 | ⬜ |
 | P3 | 当前主线验真、测试证据与归档收口 | ⬜ |
 
 ## Bug 摘要
@@ -97,6 +97,16 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 - [ ] `cd worldgen && python3 -m scripts.terrain_gen --backend raster --zone-filter spawn,qingyun_peaks,blood_valley,lingquan_marsh`，再用 `worldgen/scripts/terrain_gen/harness/raster_check.py` 校验生成产物。
 - [ ] 增加一个只读对拍脚本/测试输出：所有非 spawn anchor 的 actual runtime zone 等于声明 zone；`rift_valley` 不再出现于 anchor manifest。
 - [ ] 手动或 smoke 验证：spawn 区只剩教学 `fan_tie` 固定矿脉；青云残峰/血谷/灵泉湿地各自能在本区找到对应固定矿脉。
+
+## 2026-07-18 当前主线验真
+
+结论：原 bug 在 PR #1187 中确实修复，当前 `origin/main` 仍保持闭环；本次只需修复 plan 三态历史，不需要改代码或重新编译。
+
+- **P0 契约源真实存在**：`server/src/mineral/anchors.rs:600-664` 的三条测试直接读取默认 `mineral_anchors.json` 与 `ZoneRegistry::load()`，分别锁住 zone 存在、中心点在声明 AABB、spawn 唯一教学凡铁以及旧 `rift_valley` id 消失。断言检查实际 manifest / zone 数据，不是只检查函数名。
+- **P1 数据仍正确**：`worldgen/blueprint/mineral_anchors.json:5-84` 保留 10 条 anchor；青云残峰 3 条、血谷 4 条（含由旧 `rift_valley` 归并的 `cu_tie`）、灵泉湿地 2 条均在各自当前 AABB 内，spawn 仅 1 条 `fan_tie`。只读对拍还按 `ZoneRegistry::find_zone` 的“最小 AABB 优先”语义计算实际 runtime zone，10/10 均与声明 zone 相同，没有落入嵌套小 zone。
+- **P2 生产路径可达**：`spawn_mineral_anchor_nodes` 仍从默认 manifest 调 `load_mineral_anchors`，再以 `positions_for_anchor` 生成并写入 `MineralOreIndex`；因此测试锁住的是生产会消费的数据。各 anchor 的 X/Z 半径均留在声明 zone 内；深层 `cu_tie` 的 Y 候选由 `MIN_WORLD_Y` 截断，不越出 Overworld 下界。
+- **P3 历史与漂移检查**：实现提交 `b40fcdaf` 于 2026-07-12 合入 merge commit `353225a4`（2026-07-13）；PR #1187 的 `cargo fmt --check`、全量 `cargo test`、e2e、snapshot、review、CodeRabbit 均成功。`353225a4..origin/main` 未再修改 `server/src/mineral/anchors.rs` 或 `worldgen/blueprint/mineral_anchors.json`；后续只改过无关的北荒 zone 坐标。
+- **文档根因**：`353225a4` 在合入代码时纯删除 skeleton，却没有 promotion、Finish Evidence 或 finished plan；本 PR 只补回这份历史归档，不伪称当年三态流转正确。
 
 ## 风险
 
