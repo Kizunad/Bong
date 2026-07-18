@@ -25,9 +25,9 @@
 
 ## P2 — runtime manifest 与物化边界
 
-- `spawn_mineral_anchor_nodes` 在进入任何 `positions_for_anchor` / `MineralOreIndex` 物化循环前完整加载并校验 manifest；任一条失败即整批 fail-closed。
-- `startup_fails_closed_before_materializing_invalid_anchor` 同时断言错误 manifest 下索引条目与 `MineralOreNode` 实体均为 0；`startup_spawns_index_entries_and_skips_exhausted_positions` 锁定有效启动、耗尽过滤和 `Gatherable` 挂载。
-- 默认数据契约测试直接使用生产 `MineralAnchorConfig::default().path` 与 runtime `ZoneRegistry::load()`，没有复制一份旁路 manifest fixture。
+- `spawn_mineral_anchor_nodes` 在进入任何 `Commands::spawn` / `MineralOreIndex::insert` / `spawn_fossil_mineral_nodes` 之前完整加载并校验 manifest；随后 `prepare_mineral_anchor_positions` 对**全部** anchor 先跑完 `positions_for_anchor`（稳定 hash 排序 → surface snap → dedup → `max_units` 截断），再经 `validate_final_anchor_positions` 对**最终候选**复验声明 AABB（`Zone::contains`）与 runtime owner（`ZoneRegistry::find_zone` 最小 AABB 语义）；任一条失败即整批 fail-closed，不写半批 Commands。
+- `startup_fails_closed_before_materializing_invalid_anchor` 锁定中心点级错误 manifest 下索引与 `MineralOreNode` 均为 0；`startup_keeps_multi_anchor_batch_atomic_when_later_final_candidate_is_invalid` 锁定“前序合法 anchor + 后序最终候选被嵌套 zone 抢夺”时仍零物化；`startup_spawns_index_entries_and_skips_exhausted_positions` 锁定有效启动、耗尽过滤和 `Gatherable` 挂载。
+- 默认数据契约测试直接使用生产 `MineralAnchorConfig::default().path` 与 runtime `ZoneRegistry::load()`；`manifest_anchors_declare_zones_that_exist_in_runtime_registry` 额外对默认 10 条跑生产 preflight，并断言最终候选非空且 runtime owner 与声明 zone 一致。
 
 ## P3 — 主线验真与归档
 
@@ -121,6 +121,7 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 - [x] `manifest_anchors_declare_zones_that_exist_in_runtime_registry` 直接对拍默认 JSON 与 runtime `ZoneRegistry`：所有非 spawn anchor 的 actual runtime zone 等于声明 zone。
 - [x] `manifest_no_longer_references_nonexistent_rift_valley_zone` 锁定 `rift_valley` 不再出现；精确集合断言锁定 `blood_valley/cu_tie` 的归并结果。
 - [x] `manifest_only_spawn_anchor_is_the_teaching_fan_tie_vein` 锁定默认数据中 spawn 仅有教学 `fan_tie`；`startup_spawns_index_entries_and_skips_exhausted_positions` 使用一条显式配置的 spawn fixture，锁定有效 anchor 的物化、耗尽过滤、索引写入与 `Gatherable` 挂载。
+- [x] 最终候选 preflight：`final_candidates_accept_radius_exactly_on_declared_aabb_boundary`、`final_candidates_reject_radius_one_block_outside_declared_aabb`、`final_candidates_reject_surface_snap_below_declared_aabb`、`final_candidates_reject_more_specific_zone_capture_at_radius_edge`、`startup_keeps_multi_anchor_batch_atomic_when_later_final_candidate_is_invalid`；targeted `mineral::anchors::tests` 20/20 PASS。
 
 ## 2026-07-18 当前主线验真
 
@@ -145,8 +146,8 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 
 - P0：`server/src/mineral/anchors.rs` — `load_mineral_anchors`、`validate_anchor_zones` 及四类 zone 错误测试；`server/src/mineral/mod.rs` — `spawn_mineral_anchor_nodes` 在 `ZoneRegistryStartupSet` 后运行。
 - P1：`worldgen/blueprint/mineral_anchors.json` — 10 条固定 anchor 的合法 zone/坐标；`manifest_anchors_declare_zones_that_exist_in_runtime_registry` — 恰好 10 条与精确 zone/mineral 集合。
-- P2：`server/src/mineral/anchors.rs` — `startup_fails_closed_before_materializing_invalid_anchor`、`startup_spawns_index_entries_and_skips_exhausted_positions`，锁定零物化失败路径与有效物化路径。
-- P3：`docs/finished_plans/plan-bughunt-mineral-anchor-position-drift-v1.md` — 恢复丢失的三态归档与当前主线验真证据。
+- P2：`server/src/mineral/anchors.rs` — `prepare_mineral_anchor_positions` / `validate_final_anchor_positions` 在任何 `Commands::spawn`、`MineralOreIndex` 写入、化石物化之前整批校验最终候选；`startup_fails_closed_before_materializing_invalid_anchor`、`startup_keeps_multi_anchor_batch_atomic_when_later_final_candidate_is_invalid`、`startup_spawns_index_entries_and_skips_exhausted_positions` 及 4 条 final-candidate 边界/嵌套-zone 测试。
+- P3：`docs/finished_plans/plan-bughunt-mineral-anchor-position-drift-v1.md` — 恢复丢失的三态归档与当前主线验真证据；本轮补齐最终候选 preflight 验收叙述。
 
 ### 关键 commit
 
@@ -159,23 +160,25 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 - `13d03af6`（2026-07-18）：合并最新 `origin/main`；带入内容仅为无关 docs。
 - `d25bcf7b`（2026-07-18）：仅执行 active → finished 路径迁移；该 commit 中的文档 blob 仍是 Active、P0-P3 为 ⬜ 且尚无 Finish Evidence，因此它本身不构成合规完成态。
 - `4da7a914`（2026-07-18）：在已迁移文件中补齐 P0-P3 完成状态、唯一 `## Finish Evidence` 与验收叙述，形成当前实际完成态；此两提交拆分如实记录归档时的暂态偏差，不把 `d25bcf7b` 虚报为完整归档。
+- （本轮 rework / PR #1228）：在中心点契约之上补齐最终候选整批 preflight（surface snap / dedup / max_units 后 AABB + runtime owner）与原子 fail-closed；详见本提交。
 
 ### 测试结果
 
-- `cd server && cargo fmt --check`：PASS。
-- `cd server && cargo clippy --all-targets -- -D warnings`：PASS。
-- `cd server && cargo test`：`11793 passed / 0 failed / 6 ignored`。
+- `cd server && cargo fmt --check`：PASS（历史归档轮）。
+- `cd server && cargo clippy --all-targets -- -D warnings`：PASS（历史归档轮）。
+- `cd server && cargo test`：`11793 passed / 0 failed / 6 ignored`（历史归档轮）。
+- 本轮 targeted（HEAD `9c0df4606d354426f3d02e54ac0cae1019f94122` 工作区含 uncommitted final-candidate 实现）：`CARGO_TARGET_DIR=/home/serverkizuna/Code/Bong/server/target cargo test --lib mineral::anchors::tests -- --nocapture` → **`20 passed; 0 failed`，`EXIT:0`**（含 `final_candidates_*` 四边界、`startup_keeps_multi_anchor_batch_atomic_when_later_final_candidate_is_invalid`、扩展后的默认 manifest preflight）。
 - PR #1187：`e2e`、`preflight`、`snapshot`、`review`、`finalize`、`CodeRabbit` 全部 SUCCESS。
-- 无上下文只读 validator：`PASS 13d03af6f54e83e7e25d06cec32c8bb496f69b29`；确认 worktree clean、分支差异边界、runtime 契约、测试覆盖及 `Model: gpt-5` trailers。
+- 无上下文只读 validator：`PASS 13d03af6f54e83e7e25d06cec32c8bb496f69b29`（归档轮）；本轮 rework 在 full gate / merge main 后再对 exact HEAD 重验。
 
 ### 跨仓库核验
 
-- server：`load_mineral_anchors` → `validate_anchor_zones` → `spawn_mineral_anchor_nodes` → `positions_for_anchor` / `MineralOreIndex` 生产链路命中；`ZoneRegistryStartupSet` 排序命中。
+- server：`load_mineral_anchors` → `validate_anchor_zones` → `prepare_mineral_anchor_positions` / `validate_final_anchor_positions` → `spawn_mineral_anchor_nodes`（`anchors.iter().zip(prepared_positions)` 保序）→ `MineralOreIndex` / fossil 物化；失败路径在任何 Commands 写入前 return；`ZoneRegistryStartupSet` 排序命中。
 - worldgen：`worldgen/blueprint/mineral_anchors.json` 命中 10 条精确 zone/mineral 契约，`rift_valley` 已消失。
-- agent/schema：本 plan 不改变 Redis IPC、TypeBox 或 serde 契约；`origin/main...HEAD` 无相关文件变更。
-- client：本 plan 不改变 CustomPayload、HUD 或资源资产；`origin/main...HEAD` 无 client 文件变更。
+- agent/schema：本 plan 不改变 Redis IPC、TypeBox 或 serde 契约。
+- client：本 plan 不改变 CustomPayload、HUD 或资源资产。
 
 ### 遗留 / 后续
 
-- 当前主线无未闭环代码项；生产 loader 已能在未来 zone/AABB 漂移时于物化前 fail-closed。
+- 当前主线无未闭环代码项；生产 loader 已能在中心点与最终候选两层于物化前 fail-closed。
 - PR #1187 之前已实际落盘的外部旧存档若保留错误矿点，其离线迁移不在本 plan 范围；仓库内没有可复现的当前存档迁移阻塞。

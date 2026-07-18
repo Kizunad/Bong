@@ -94,6 +94,19 @@ pub fn spawn_mineral_anchor_nodes(
         }
     };
 
+    let prepared_positions =
+        match prepare_mineral_anchor_positions(&anchors, &providers.overworld, zones.as_ref()) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                tracing::warn!(
+                    target: "bong::mineral",
+                    "failed to preflight mineral anchors from {}: {error}",
+                    config.path.display()
+                );
+                return;
+            }
+        };
+
     let exhausted_positions = exhausted
         .entries()
         .iter()
@@ -104,8 +117,8 @@ pub fn spawn_mineral_anchor_nodes(
         .collect::<HashSet<_>>();
 
     let mut spawned = 0usize;
-    for anchor in &anchors {
-        for pos in positions_for_anchor(anchor, &providers.overworld) {
+    for (anchor, positions) in anchors.iter().zip(prepared_positions) {
+        for pos in positions {
             if exhausted_positions.contains(&(anchor.mineral_id, pos))
                 || index.lookup(DimensionKind::Overworld, pos).is_some()
             {
@@ -404,6 +417,75 @@ fn positions_for_anchor(anchor: &MineralAnchor, terrain: &TerrainProvider) -> Ve
         .collect()
 }
 
+fn prepare_mineral_anchor_positions(
+    anchors: &[MineralAnchor],
+    terrain: &TerrainProvider,
+    zones: &ZoneRegistry,
+) -> Result<Vec<Vec<BlockPos>>, String> {
+    // Generate every anchor's stable, surface-snapped, deduplicated and truncated
+    // candidate set before validating any of them. The caller does not mutate
+    // Commands or MineralOreIndex until this whole batch returns Ok.
+    let prepared = anchors
+        .iter()
+        .map(|anchor| positions_for_anchor(anchor, terrain))
+        .collect::<Vec<_>>();
+
+    validate_final_anchor_positions(anchors, &prepared, zones)?;
+    Ok(prepared)
+}
+
+fn validate_final_anchor_positions(
+    anchors: &[MineralAnchor],
+    prepared: &[Vec<BlockPos>],
+    zones: &ZoneRegistry,
+) -> Result<(), String> {
+    debug_assert_eq!(anchors.len(), prepared.len());
+
+    for (anchor_index, (anchor, positions)) in anchors.iter().zip(prepared).enumerate() {
+        let declared_zone = zones.find_zone_by_name(&anchor.zone).ok_or_else(|| {
+            format!(
+                "anchors[{anchor_index}] mineral `{}` declares unknown runtime zone `{}` during final-candidate preflight",
+                anchor.mineral_id.as_str(),
+                anchor.zone
+            )
+        })?;
+
+        for (candidate_index, pos) in positions.iter().copied().enumerate() {
+            let point = DVec3::new(f64::from(pos.x), f64::from(pos.y), f64::from(pos.z));
+            if !declared_zone.contains(point) {
+                return Err(format!(
+                    "anchors[{anchor_index}] mineral `{}` final candidate[{candidate_index}] {:?} after surface snap/dedup/max_units lies outside declared zone `{}` AABB {:?}",
+                    anchor.mineral_id.as_str(),
+                    pos,
+                    anchor.zone,
+                    declared_zone.bounds
+                ));
+            }
+
+            let actual_zone = zones
+                .find_zone(DimensionKind::Overworld, point)
+                .ok_or_else(|| {
+                    format!(
+                        "anchors[{anchor_index}] mineral `{}` final candidate[{candidate_index}] {:?} after surface snap/dedup/max_units does not resolve to any Overworld runtime zone",
+                        anchor.mineral_id.as_str(),
+                        pos
+                    )
+                })?;
+            if actual_zone.name != anchor.zone {
+                return Err(format!(
+                    "anchors[{anchor_index}] mineral `{}` final candidate[{candidate_index}] {:?} after surface snap/dedup/max_units resolves to runtime zone `{}`, not declared `{}`; a more specific or overlapping zone would capture this ore node",
+                    anchor.mineral_id.as_str(),
+                    pos,
+                    actual_zone.name,
+                    anchor.zone
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn stable_pos_hash(pos: BlockPos, mineral_id: MineralId) -> u64 {
     let mut value = mineral_id
         .as_str()
@@ -442,16 +524,37 @@ mod tests {
     }
 
     fn write_single_anchor_manifest(name: &str, zone: &str, position: [i32; 3]) -> PathBuf {
+        write_anchor_manifest(name, &[(zone, "fan_tie", position, 3, 5)])
+    }
+
+    fn write_anchor_manifest(name: &str, anchors: &[(&str, &str, [i32; 3], i32, u32)]) -> PathBuf {
         let path = unique_tmp_path(name);
+        let anchors_json = anchors
+            .iter()
+            .map(|(zone, mineral_id, position, radius, max_units)| {
+                format!(
+                    r#"{{"zone":"{zone}","mineral_id":"{mineral_id}","position":[{},{},{}],"radius":{radius},"max_units":{max_units}}}"#,
+                    position[0], position[1], position[2]
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         fs::write(
             &path,
-            format!(
-                r#"{{"version":1,"anchors":[{{"zone":"{zone}","mineral_id":"fan_tie","position":[{},{},{}],"radius":3,"max_units":5}}]}}"#,
-                position[0], position[1], position[2]
-            ),
+            format!(r#"{{"version":1,"anchors":[{anchors_json}]}}"#),
         )
         .unwrap();
         path
+    }
+
+    fn test_anchor(zone: &str, center: BlockPos, radius: i32, max_units: u32) -> MineralAnchor {
+        MineralAnchor {
+            zone: zone.into(),
+            mineral_id: MineralId::FanTie,
+            center,
+            radius,
+            max_units,
+        }
     }
 
     fn test_zone(name: &str, dimension: DimensionKind, bounds: (DVec3, DVec3)) -> Zone {
@@ -558,6 +661,134 @@ mod tests {
         assert!(
             error.contains("dimension Tsy") && error.contains("materialize in Overworld"),
             "fixed anchors must fail before an Overworld materializer consumes a TSY zone; actual: {error}"
+        );
+    }
+
+    #[test]
+    fn final_candidates_accept_radius_exactly_on_declared_aabb_boundary() {
+        let anchor = test_anchor("boundary", BlockPos::new(1, 64, 1), 1, 7);
+        let zones = ZoneRegistry {
+            zones: vec![test_zone(
+                "boundary",
+                DimensionKind::Overworld,
+                (DVec3::new(0.0, 0.0, 0.0), DVec3::new(2.0, 320.0, 2.0)),
+            )],
+        };
+
+        let prepared = prepare_mineral_anchor_positions(
+            std::slice::from_ref(&anchor),
+            &TerrainProvider::empty_for_tests(),
+            &zones,
+        )
+        .expect("inclusive AABB boundary must accept the radius-one sphere");
+
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(
+            prepared[0].len(),
+            7,
+            "radius-one anchor with max_units=7 must retain every discrete sphere point"
+        );
+        assert!(
+            prepared[0]
+                .iter()
+                .any(|pos| pos.x == 0 || pos.x == 2 || pos.z == 0 || pos.z == 2),
+            "fixture must exercise at least one candidate exactly on an inclusive AABB face"
+        );
+    }
+
+    #[test]
+    fn final_candidates_reject_radius_one_block_outside_declared_aabb() {
+        let anchor = test_anchor("boundary", BlockPos::new(1, 64, 1), 1, 7);
+        let zones = ZoneRegistry {
+            zones: vec![test_zone(
+                "boundary",
+                DimensionKind::Overworld,
+                (DVec3::new(1.0, 0.0, 0.0), DVec3::new(2.0, 320.0, 2.0)),
+            )],
+        };
+
+        let error = prepare_mineral_anchor_positions(
+            std::slice::from_ref(&anchor),
+            &TerrainProvider::empty_for_tests(),
+            &zones,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.contains("final candidate")
+                && error.contains("lies outside declared zone `boundary` AABB"),
+            "center remains legal, so the one-block radius overflow must be rejected only after final candidate generation; actual: {error}"
+        );
+    }
+
+    #[test]
+    fn final_candidates_reject_surface_snap_below_declared_aabb() {
+        let terrain = TerrainProvider::empty_for_tests();
+        let surface_y = terrain.sample(0, 0).surface_y();
+        let anchor_y = surface_y + 10;
+        let anchor = test_anchor("high_zone", BlockPos::new(0, anchor_y, 0), 1, 7);
+        let zones = ZoneRegistry {
+            zones: vec![test_zone(
+                "high_zone",
+                DimensionKind::Overworld,
+                (
+                    DVec3::new(-2.0, f64::from(anchor_y - 1), -2.0),
+                    DVec3::new(2.0, f64::from(anchor_y + 1), 2.0),
+                ),
+            )],
+        };
+
+        let error =
+            prepare_mineral_anchor_positions(std::slice::from_ref(&anchor), &terrain, &zones)
+                .unwrap_err();
+
+        assert!(
+            error.contains("final candidate")
+                && error.contains("after surface snap/dedup/max_units")
+                && error.contains("lies outside declared zone `high_zone` AABB"),
+            "raw sphere and center are inside the zone, but surface snap to y={surface_y} must be revalidated; actual: {error}"
+        );
+    }
+
+    #[test]
+    fn final_candidates_reject_more_specific_zone_capture_at_radius_edge() {
+        let anchor = test_anchor("outer", BlockPos::new(5, 64, 5), 1, 7);
+        let zones = ZoneRegistry {
+            zones: vec![
+                test_zone(
+                    "outer",
+                    DimensionKind::Overworld,
+                    (DVec3::new(0.0, 0.0, 0.0), DVec3::new(10.0, 320.0, 10.0)),
+                ),
+                test_zone(
+                    "inner",
+                    DimensionKind::Overworld,
+                    (DVec3::new(5.5, 0.0, 4.0), DVec3::new(6.5, 320.0, 6.0)),
+                ),
+            ],
+        };
+
+        let center = DVec3::new(5.0, 64.0, 5.0);
+        assert_eq!(
+            zones
+                .find_zone(DimensionKind::Overworld, center)
+                .expect("outer zone contains center")
+                .name,
+            "outer",
+            "fixture center must remain owned by outer so only a final radius-edge point fails"
+        );
+
+        let error = prepare_mineral_anchor_positions(
+            std::slice::from_ref(&anchor),
+            &TerrainProvider::empty_for_tests(),
+            &zones,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.contains("final candidate")
+                && error.contains("resolves to runtime zone `inner`, not declared `outer`"),
+            "a nested zone that captures only a radius-edge candidate must fail the whole anchor; actual: {error}"
         );
     }
 
@@ -686,14 +917,14 @@ mod tests {
         let path = unique_tmp_path("startup");
         fs::write(
             &path,
-            r#"{"version":1,"anchors":[{"zone":"spawn","mineral_id":"fan_tie","position":[0,64,0],"radius":1,"max_units":7}]}"#,
+            r#"{"version":1,"anchors":[{"zone":"spawn","mineral_id":"fan_tie","position":[0,65,0],"radius":1,"max_units":7}]}"#,
         )
         .unwrap();
 
         let anchor = MineralAnchor {
             zone: "spawn".into(),
             mineral_id: MineralId::FanTie,
-            center: BlockPos::new(0, 64, 0),
+            center: BlockPos::new(0, 65, 0),
             radius: 1,
             max_units: 7,
         };
@@ -787,6 +1018,57 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    #[test]
+    fn startup_keeps_multi_anchor_batch_atomic_when_later_final_candidate_is_invalid() {
+        let path = write_anchor_manifest(
+            "startup-atomic-final-candidate",
+            &[
+                ("outer", "fan_tie", [0, 64, 0], 1, 7),
+                ("outer", "za_gang", [5, 64, 5], 1, 7),
+            ],
+        );
+        let zones = ZoneRegistry {
+            zones: vec![
+                test_zone(
+                    "outer",
+                    DimensionKind::Overworld,
+                    (DVec3::new(-10.0, 0.0, -10.0), DVec3::new(10.0, 320.0, 10.0)),
+                ),
+                test_zone(
+                    "inner",
+                    DimensionKind::Overworld,
+                    (DVec3::new(5.5, 0.0, 4.0), DVec3::new(6.5, 320.0, 6.0)),
+                ),
+            ],
+        };
+        let mut app = App::new();
+        app.insert_resource(MineralAnchorConfig::with_path(&path));
+        app.insert_resource(build_default_registry());
+        app.insert_resource(zones);
+        app.insert_resource(ExhaustedMineralsLog::default());
+        app.insert_resource(MineralOreIndex::default());
+        app.insert_resource(TerrainProviders {
+            overworld: TerrainProvider::empty_for_tests(),
+            tsy: None,
+        });
+        app.add_systems(Startup, spawn_mineral_anchor_nodes);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MineralOreIndex>().len(),
+            0,
+            "a valid first anchor must not enter the index when a later anchor fails final-candidate preflight"
+        );
+        let mut query = app.world_mut().query::<&MineralOreNode>();
+        assert_eq!(
+            query.iter(app.world()).count(),
+            0,
+            "Commands::spawn must remain untouched until every anchor's final candidates pass"
+        );
+        let _ = fs::remove_file(path);
+    }
+
     // ─── plan-bughunt-mineral-anchor-position-drift-v1 ──────────────
     // 回归契约：`worldgen/blueprint/mineral_anchors.json` 的每条固定矿脉
     // anchor 必须（1）声明一个当前 runtime zone 表里真实存在的 zone，
@@ -827,6 +1109,37 @@ mod tests {
             actual_zone_minerals, expected_zone_minerals,
             "默认 manifest 的 zone/mineral 组合必须精确保持；跨区替换不能只靠总数 10 蒙混过关"
         );
+
+        let prepared =
+            prepare_mineral_anchor_positions(&anchors, &TerrainProvider::empty_for_tests(), &zones)
+                .expect("默认十条 anchor 的 surface-snap 最终候选必须全部通过生产 preflight");
+        assert_eq!(
+            prepared.len(),
+            10,
+            "生产 preflight 必须为默认十条 anchor 各返回一组最终候选"
+        );
+        for (anchor, positions) in anchors.iter().zip(&prepared) {
+            assert!(
+                !positions.is_empty(),
+                "默认 anchor `{}`/`{}` 不应在 snap/dedup/max_units 后退化为空",
+                anchor.zone,
+                anchor.mineral_id.as_str()
+            );
+            for pos in positions {
+                let point = DVec3::new(f64::from(pos.x), f64::from(pos.y), f64::from(pos.z));
+                let actual_zone = zones
+                    .find_zone(DimensionKind::Overworld, point)
+                    .expect("preflight-passed final candidate must resolve to a runtime zone");
+                assert_eq!(
+                    actual_zone.name,
+                    anchor.zone,
+                    "默认 anchor `{}`/`{}` 最终候选 {:?} 必须仍由声明 zone 拥有",
+                    anchor.zone,
+                    anchor.mineral_id.as_str(),
+                    pos
+                );
+            }
+        }
 
         for anchor in &anchors {
             let zone = zones.find_zone_by_name(&anchor.zone).unwrap_or_else(|| {
