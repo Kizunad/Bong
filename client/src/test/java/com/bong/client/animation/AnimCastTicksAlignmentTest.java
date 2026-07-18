@@ -131,12 +131,12 @@ class AnimCastTicksAlignmentTest {
      * 现状时长对拍不达标 allowlist（P0 落档，2026-07-18 离线全量核算产出）——
      * **只许缩小不许增长**：修好一招必须删对应条目；清零 = P1-P4 完成的机械判据。
      */
+    // P1 批次一（2026-07-19）删 10 条：sword.cleave/thrust + burst_meridian 三招
+    // （beng_quan 重制 endTick=14 = 三借用方 cast 区间交集，tie_shan_kao/xue_beng_bu
+    // 随之达标，棘轮强制同批删除）+ zhenmai 5 招。
     private static final Set<String> CAST_ALIGNMENT_ALLOWLIST = Set.of(
-        "sword.cleave", "sword.thrust", "sword.infuse", "movement.dash",
-        "burst_meridian.beng_quan", "burst_meridian.tie_shan_kao", "burst_meridian.xue_beng_bu",
+        "sword.infuse", "movement.dash",
         "baomai.full_power_charge", "baomai.full_power_release",
-        "zhenmai.parry", "zhenmai.neutralize", "zhenmai.multipoint", "zhenmai.harden",
-        "zhenmai.sever_chain",
         "woliu.heart", "woliu.vacuum_palm", "woliu.vortex_shield", "woliu.vacuum_lock",
         "woliu.turbulence_burst",
         // vortex_resonance 时长模型达标（80t loop 对齐 cast=80），但 10 个手臂轴

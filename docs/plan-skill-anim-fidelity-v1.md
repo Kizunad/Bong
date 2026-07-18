@@ -83,8 +83,8 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | P0 | 全量审计矩阵落档 + 精度标准定稿 + 时长对齐自动对拍测试 | ⬜ |
-| P1 | 批次一重制：sword 基础 4 + beng_quan + zhenmai 5（高频主力短招） | ⬜ |
-| P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化（去复用 + 长引导循环段） | ⬜ |
+| P1 | 批次一重制：sword 基础 3（infuse 移 P2，见附录 A）+ beng_quan + zhenmai 5（高频主力短招） | ✅ 2026-07-19 |
+| P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段） | ⬜ |
 | P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ⬜ |
 | P4 | yidao 5 招动画补齐（plan-yidao-v1 §5 欠账） | ⬜ |
 | P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ⬜ |
@@ -105,8 +105,8 @@
 
 每批交付物：`gen_<anim>.py` 生成脚本 + 重制 JSON + `render_animation.py` 三视图对照（round 1/2/3 commit）+ 终轮 `<PROMISE>` 块 + allowlist 对应条目删除。批内每招须给出 P1 范例 spec 同精度的骨骼数值表（写在各批 PR body，plan 只锁标准与清单）。
 
-- **P1**（高频短招，玩家看得最多）：`sword_{cleave,thrust,parry,infuse}`、`beng_quan`、`zhenmai_{parry,neutralize,multipoint,harden,sever_chain}`。瞬发招按标准 #2 做爆发帧+收势。
-- **P2**（去复用 + 长引导）：sword_path 5 招各自专属动画（`condense_edge` 凝锋收剑入鞘式 / `qi_slash` 远程挥斩 / `resonance` 双手持剑共鸣颤 / `manifest` 已有 / `heaven_gate` 已有两段式，精修）；anqi 6 招专属（`charge_carrier` cast=400 → 循环封骨结印段 + 完成收势；`echo_fractal` cast=60 → 循环撒饵段 + 4 tick 爆发保留为 release）。
+- **P1**（高频短招，玩家看得最多）：`sword_{cleave,thrust,parry}`、`beng_quan`、`zhenmai_{parry,neutralize,multipoint,harden,sever_chain}`。瞬发招按标准 #2 做爆发帧+收势。（`sword_infuse` cast=40 属长引导域，移 P2，见附录 A。）
+- **P2**（去复用 + 长引导）：sword_path 5 招各自专属动画（`condense_edge` 凝锋收剑入鞘式 / `qi_slash` 远程挥斩 / `resonance` 双手持剑共鸣颤 / `manifest` 已有 / `heaven_gate` 已有两段式，精修）；anqi 6 招专属（`charge_carrier` cast=400 → 循环封骨结印段 + 完成收势；`echo_fractal` cast=60 → 循环撒饵段 + 4 tick 爆发保留为 release）；`sword_infuse` cast=40 拆「循环蓄力段 + release 段」两段式（含 server 通道接线）。
 - **P3**：`tie_shan_kao`（靠身撞击，与崩拳出拳区分）、`xue_beng_bu`（步法位移）、`ni_mai_hu_ti`（护体结印，当前 anim_id: None 补新）、dugu 2 / tuike 3 / woliu **基础与进阶**短招（`vacuum_palm`/`woliu.burst` 等 8-10 tick 快闪项）按标准精修。**明确排除涡流虚蚀 5 招**（`ambient_vortex`/`void_vortex`/`swallowing_vortex`/`vortex_echo`/`void_core`——其动画从无到有的补齐归 active `plan-bughunt-woliu-voidpath-missing-animations-v1`）；若将来需对其产物做二次精修，作为该 plan merge 后的后置依赖另列批次，且只改既有 JSON 精度、不新增动画、不动发射链。
 - **P4**：yidao 5 招按 plan-yidao-v1 §5 表格逐条落地（针灸双手持针 30 穴位序 / 灸火对掌 / CPR 按压 / 续命喂丹+接天引 / 环阵持法器），server 侧 yidao emit 补 `PlayAnim`（当前 yidao 无动画常量）。
 
@@ -203,23 +203,23 @@
 
 | skill_id | cast | anim_id | endTick | loop | 帧点 | 轴KF | 借用 | 分级 | 批次 | 备注 |
 |---|--:|---|--:|---|--:|--:|---|---|---|---|
-| `sword.cleave` | 16 | `sword_cleave` | 16 | — | 19 | 19 | — | **B** | P1 | 专属；endTick=cast 但无 recovery、密度低 |
-| `sword.thrust` | 10 | `sword_thrust` | 10 | — | 20 | 20 | — | **C** | P1 | 专属；快闪+密度低 |
-| `sword.parry` | 4 | `sword_parry` | 12 | — | 21 | 21 | — | **B** | P1 | 专属；密度低 |
-| `sword.infuse` | 40 | `sword_infuse` | 40 | — | 29 | 29 | — | **B** | P1 | 专属；无 recovery、密度低 |
+| `sword.cleave` | 16 | `sword_cleave` | 20 | — | 8 | 168 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：举剑过头竖劈+弓步前压三段式；endTick=20 为与借用方 condense_edge（cast=12）区间交集 |
+| `sword.thrust` | 10 | `sword_thrust` | 16 | — | 8 | 172 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：收剑腰侧直刺+侧身送肩 |
+| `sword.parry` | 4 | `sword_parry` | 10 | — | 6 | 126 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：斜举格挡弹开，密度补齐 |
+| `sword.infuse` | 40 | `sword_infuse` | 40 | — | 29 | 29 | — | **B** | P2 | 专属；无 recovery、密度低；cast=40 属长引导域，按标准 #2 须两段式，移 P2 与 anqi 长引导批次同做（含 server 通道接线） |
 | `movement.dash` | 0 | `dash_forward` | 4 | — | 13 | 21 | — | **C** | P3 | 瞬发 4t 快闪；密度低 |
 | `shield_block` | 0 | `shield_raise` | 6 | ✓ | 35 | 35 | — | **B** | P3 | 循环举盾+StopAnim 闭环已有；密度低 |
-| `burst_meridian.beng_quan` | 8 | `beng_quan` | 8 | — | 36 | 36 | — | **C** | P1 | 专属；8t 快闪 |
-| `burst_meridian.tie_shan_kao` | 10 | `beng_quan` | 8 | — | 36 | 36 | ✓ | **D** | P3 | 借 beng_quan（靠撞≠出拳） |
-| `burst_meridian.xue_beng_bu` | 6 | `beng_quan` | 8 | — | 36 | 36 | ✓ | **D** | P3 | 借 beng_quan（步法≠出拳） |
+| `burst_meridian.beng_quan` | 8 | `beng_quan` | 14 | — | 9 | 194 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：沉马蓄劲→拳炸出→震颤收；endTick=14 为三借用方 cast 区间交集 |
+| `burst_meridian.tie_shan_kao` | 10 | `beng_quan` | 14 | — | 9 | 194 | ✓ | **D** | P3 | 借 beng_quan（靠撞≠出拳）；时长随重制达标已出 allowlist，专属化仍归 P3 |
+| `burst_meridian.xue_beng_bu` | 6 | `beng_quan` | 14 | — | 9 | 194 | ✓ | **D** | P3 | 借 beng_quan（步法≠出拳）；时长随重制达标已出 allowlist，专属化仍归 P3 |
 | `burst_meridian.ni_mai_hu_ti` | 12 | —— | — | — | — | — | — | **D** | P3 | anim_id: None（burst_meridian.rs:637） |
 | `baomai.full_power_charge` | 1 | `windup_charge` | 16 | ✓ | 81 | 81 | ✓ | **D** | P3 | 借通用蓄力（loop+StopAnim 闭环在） |
 | `baomai.full_power_release` | 1 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P3 | 借通用爆发（4t 模板） |
-| `zhenmai.parry` | 1 | `zhenmai_parry` | 4 | — | 9 | 13 | — | **C** | P1 | 4t/13KF 快闪 |
-| `zhenmai.neutralize` | 4 | `zhenmai_neutralize` | 6 | — | 7 | 12 | — | **C** | P1 | 6t/12KF 快闪 |
-| `zhenmai.multipoint` | 6 | `zhenmai_multipoint` | 8 | — | 9 | 19 | — | **C** | P1 | 8t/19KF 快闪 |
-| `zhenmai.harden` | 5 | `zhenmai_harden` | 7 | — | 7 | 11 | — | **C** | P1 | 7t/11KF 快闪 |
-| `zhenmai.sever_chain` | 8 | `zhenmai_sever_chain` | 10 | — | 11 | 19 | — | **C** | P1 | 10t/19KF 快闪 |
+| `zhenmai.parry` | 1 | `zhenmai_parry` | 8 | — | 6 | 130 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：瞬发单手拍挡爆发帧+收势 |
+| `zhenmai.neutralize` | 4 | `zhenmai_neutralize` | 10 | — | 7 | 146 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：双掌下按化劲+沉桩 |
+| `zhenmai.multipoint` | 6 | `zhenmai_multipoint` | 12 | — | 10 | 215 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：连环三点指（右高/左中/右深） |
+| `zhenmai.harden` | 5 | `zhenmai_harden` | 11 | — | 8 | 165 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：抱臂沉桩硬化+紧咬 clench |
+| `zhenmai.sever_chain` | 8 | `zhenmai_sever_chain` | 14 | — | 9 | 198 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：手刀横斩断链+overshoot |
 | `woliu.vortex` | 1 | —— | — | — | — | — | — | **D** | P3 | v1 涡流术无动画发射（combat/woliu.rs 零 PlayAnim） |
 | `woliu.hold` | 1 | `vortex_palm_open` | 12 | — | 14 | 40 | — | **B** | P3 | 12t/40KF；瞬发标准内但密度可精修 |
 | `woliu.burst` | 1 | `palm_strike` | 6 | — | 81 | 81 | ✓ | **D** | P3 | 借通用 palm_strike（6t 模板 81KF） |
@@ -253,4 +253,6 @@
 | `npc.buff_defense` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
 | `morph.yixing` | 60 | `morph_cast` | 30 | — | 42 | 42 | — | **C** | P3 | 30t vs cast=60 错配 30t 静止（§8.1 #2） |
 
-**分级统计**：A×2 / B×13 / C×12 / D×19 / N-A×3（46 玩家招中 B+C+D = 44 条入 P1-P4 重制/精修清单，与 §8.1 #2 决议一致）。
+**分级统计**（P0 初判）：A×2 / B×13 / C×12 / D×19 / N-A×3（46 玩家招中 B+C+D = 44 条入 P1-P4 重制/精修清单，与 §8.1 #2 决议一致）。
+
+**P1 批次一后（2026-07-19）**：A×11 / B×11 / C×5 / D×19 / N-A×3——9 条重制达标转 A（sword 基础 3 + beng_quan + zhenmai 5），sword.infuse 移 P2 长引导批次；剩余 B+C+D = 35 条随 P2-P4 清空。
