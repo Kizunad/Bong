@@ -34,6 +34,12 @@
 - `NpcDormantSnapshot`（`dormant/mod.rs:274-329`）无装备字段——接上线不做 P4，睡一觉装备就丢
 - `compute_combat_power` 形参收 `Option<&NpcEquipment>` 但实参恒 None
 
+### 2026-07-18 复核补充（早期玩法诊断）
+
+- 孤儿现状未变：`assign_npc_equipment` 生产调用者仍为 0，全部断线维持 2026-07-03 结论。
+- **新证据——活体人形 NPC 掉落断链同源**：`npc/loot.rs` 头注释自认「referenced by design documents but not yet wired into the live death/drop pipeline」——`default_loot_for_archetype` 的宗门残卷等条目目前只经尸体水合/道伥/daozhan 路径掉落，**玩家当面击杀活体人形 NPC 走不到该表**。B 路线 P4「尸体整包搜刮」天然覆盖此断链，P4 验收抓手须显式加一条：**在线（非 dormant）击杀人形 NPC → 尸体容器暴露真实 inventory**，不得只测离屏水合路径。
+- 诊断定位：本 plan 是搜打撤循环里「打」环节收益动机的主抓手——当前打 NPC 无装备掉落、无搜尸收益，玩家理性选择就是绕开战斗只搜箱（2026-07-18 三路 Explore 实证的核心体感根因之一）。
+
 ## P0 B 路线 spike（可行性门） ⬜
 
 - 审计全部假设"持 `PlayerInventory` 的实体是玩家/Client"的系统（snapshot emit、move handler、freshness、forge、alchemy、material-discovery、重量、hotbar…），产出解耦清单：每系统标注 对NPC应生效（armor/weapon 同步）/ 应跳过（UI emit 类，query 加 `With<Client>` 收口）/ 需改造
