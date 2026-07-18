@@ -22,17 +22,21 @@ class ArmorFeatureRendererTest {
     @Test
     void p3FormalSwitchIsOnAndDevPropertyCannotDisableIt() {
         assertTrue(ArmorFeatureRenderer.MODEL_RENDER_READY, "P3 后正式 ModelPart 开关必须开启");
-        assertTrue(ArmorFeatureRenderer.isModelRenderEnabled());
+        assertTrue(ArmorFeatureRenderer.isModelRenderEnabled(),
+            "正式开关为 true 时无需 dev property 也必须启用护甲模型渲染");
         System.setProperty(ArmorFeatureRenderer.DEV_RENDER_PROPERTY, "true");
-        assertTrue(ArmorFeatureRenderer.isModelRenderEnabled());
+        assertTrue(ArmorFeatureRenderer.isModelRenderEnabled(),
+            "dev property=true 必须保持护甲模型渲染开启");
         System.setProperty(ArmorFeatureRenderer.DEV_RENDER_PROPERTY, "false");
         assertTrue(ArmorFeatureRenderer.isModelRenderEnabled(), "dev property=false 不得成为正式渲染 kill switch");
     }
 
     @Test
     void collectRenderableRejectsNullEmptyUnknownWrongSlotAndBrokenItems() {
-        assertTrue(ArmorFeatureRenderer.collectRenderable(null).isEmpty());
-        assertTrue(ArmorFeatureRenderer.collectRenderable(Map.of()).isEmpty());
+        assertTrue(ArmorFeatureRenderer.collectRenderable(null).isEmpty(),
+            "null 装备快照必须安全生成空渲染表");
+        assertTrue(ArmorFeatureRenderer.collectRenderable(Map.of()).isEmpty(),
+            "空装备快照必须生成空渲染表");
 
         EnumMap<EquipSlotType, SlotContents> slots = new EnumMap<>(EquipSlotType.class);
         slots.put(EquipSlotType.HEAD, new SlotContents(List.of(

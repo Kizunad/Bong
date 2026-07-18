@@ -42,8 +42,10 @@ class ArmorPartModelTest {
             ArmorPartModel.mountsForSlot(EquipSlotType.LEGS));
         assertEquals(List.of(ArmorPartModel.Mount.LEFT_FOOT, ArmorPartModel.Mount.RIGHT_FOOT),
             ArmorPartModel.mountsForSlot(EquipSlotType.FEET));
-        assertTrue(ArmorPartModel.mountsForSlot(EquipSlotType.MAIN_HAND).isEmpty());
-        assertTrue(ArmorPartModel.mountsForSlot(null).isEmpty());
+        assertTrue(ArmorPartModel.mountsForSlot(EquipSlotType.MAIN_HAND).isEmpty(),
+            "非护甲槽 MAIN_HAND 不得生成任何玩家骨骼 mount");
+        assertTrue(ArmorPartModel.mountsForSlot(null).isEmpty(),
+            "null 槽位必须安全返回空 mount 列表");
     }
 
     @Test
@@ -140,8 +142,8 @@ class ArmorPartModelTest {
 
     @Test
     void supportAndBuildRejectUnknownKeys() {
-        assertFalse(ArmorPartModel.supports(null));
-        assertFalse(ArmorPartModel.supports("missing"));
+        assertFalse(ArmorPartModel.supports(null), "null modelKey 不得被 cube 表支持");
+        assertFalse(ArmorPartModel.supports("missing"), "未知 modelKey 不得被 cube 表支持");
         assertThrows(IllegalArgumentException.class, () -> ArmorPartModel.buildModelPart("missing"));
     }
 

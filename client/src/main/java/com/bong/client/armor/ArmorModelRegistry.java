@@ -3,8 +3,8 @@ package com.bong.client.armor;
 import com.bong.client.inventory.model.EquipSlotType;
 import net.minecraft.util.Identifier;
 
-import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -54,8 +54,8 @@ public final class ArmorModelRegistry {
         return Optional.ofNullable(REGISTRY.get(templateId.trim()));
     }
 
-    public static Collection<ArmorModelSpec> all() {
-        return REGISTRY.values();
+    public static List<ArmorModelSpec> all() {
+        return List.copyOf(REGISTRY.values());
     }
 
     public static int size() {

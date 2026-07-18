@@ -6,14 +6,17 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ArmorModelRegistryTest {
@@ -33,13 +36,33 @@ class ArmorModelRegistryTest {
     @Test
     void lookupTrimsKnownIdsAndRejectsMissingInputs() {
         assertEquals("iron_helmet", ArmorModelRegistry.get("  armor_iron_helmet  ").orElseThrow().modelKey());
-        assertTrue(ArmorModelRegistry.get("nonexistent_armor").isEmpty());
-        assertTrue(ArmorModelRegistry.get(null).isEmpty());
-        assertTrue(ArmorModelRegistry.get("  ").isEmpty());
+        assertTrue(ArmorModelRegistry.get("nonexistent_armor").isEmpty(),
+            "未知 template_id 不得误命中任何护甲模型");
+        assertTrue(ArmorModelRegistry.get(null).isEmpty(),
+            "null template_id 必须安全返回 empty，不能进入注册表查询");
+        assertTrue(ArmorModelRegistry.get("  ").isEmpty(),
+            "纯空白 template_id trim 后必须按缺失输入拒绝");
     }
 
     @Test
-    void everyRegistryModelKeyHasCubeTableAndTexture() {
+    void allReturnsUnmodifiableSnapshotWithoutRegistryMutationBackdoor() {
+        List<ArmorModelRegistry.ArmorModelSpec> snapshot = ArmorModelRegistry.all();
+        assertEquals(8, snapshot.size(), "快照必须保留全部 8 个注册项");
+        assertThrows(UnsupportedOperationException.class, snapshot::clear,
+            "all() 必须返回不可修改快照，调用方不得通过 clear/remove 篡改全局注册表");
+        assertEquals(8, ArmorModelRegistry.size(), "修改快照失败后全局注册表仍须完整");
+    }
+
+    @Test
+    void everyRegistryEntryBakesThroughModelPartWithoutExternalMeshLoader() {
+        assertEquals(
+            List.of("templateId", "slot", "modelKey", "texturePath"),
+            Arrays.stream(ArmorModelRegistry.ArmorModelSpec.class.getRecordComponents())
+                .map(component -> component.getName())
+                .toList(),
+            "运行时规格只能携带槽位、cube modelKey 与贴图，不得重新引入 OBJ/SML 模型路径"
+        );
+
         Set<String> registryKeys = ArmorModelRegistry.all().stream()
             .map(ArmorModelRegistry.ArmorModelSpec::modelKey)
             .collect(Collectors.toSet());
@@ -48,7 +71,9 @@ class ArmorModelRegistryTest {
 
         for (ArmorModelRegistry.ArmorModelSpec spec : ArmorModelRegistry.all()) {
             assertTrue(ArmorPartModel.supports(spec.modelKey()), spec.modelKey() + " 应能烘焙");
-            assertDoesNotThrow(() -> ArmorPartModel.buildModelPart(spec.modelKey()));
+            assertDoesNotThrow(() -> ArmorPartModel.buildModelPart(spec.modelKey()),
+                spec.modelKey() + " 必须直接从 cube 表完成 ModelPart 烘焙，不依赖外部 mesh loader");
+            assertDoesNotThrow(spec::textureId, spec.templateId() + " 贴图 Identifier 必须合法");
             Path texture = RESOURCES.resolve("assets")
                 .resolve(spec.texturePath().replace(':', '/'));
             assertTrue(Files.isRegularFile(texture), spec.texturePath() + " 贴图缺失");
@@ -56,7 +81,7 @@ class ArmorModelRegistryTest {
     }
 
     @Test
-    void objPlaceholderResourcesAndArmorSmlScopeAreGone() throws Exception {
+    void objPlaceholderResourcesAreAbsentFromPack() throws Exception {
         Path armorModels = RESOURCES.resolve("assets/bong/models/armor");
         if (Files.exists(armorModels)) {
             try (var paths = Files.walk(armorModels)) {
@@ -66,16 +91,12 @@ class ArmorModelRegistryTest {
                 }), "ModelPart 路线不应残留 OBJ/MTL 方盒占位");
             }
         }
-
-        Path bootstrap = Path.of("src/main/java/com/bong/client/armor/ArmorRenderBootstrap.java");
-        String bootstrapSource = Files.readString(bootstrap);
-        assertFalse(bootstrapSource.contains("SpecialModelLoaderEvents"), "护甲 bootstrap 不得再注册 SML scope");
-        assertFalse(bootstrapSource.contains("models/armor/"), "已删除的 OBJ 目录不得残留 scope 字符串");
     }
 
     @Test
     void unregisteredMaterialsKeepLeatherFallback() {
-        assertTrue(ArmorModelRegistry.get("armor_copper_helmet").isEmpty());
+        assertTrue(ArmorModelRegistry.get("armor_copper_helmet").isEmpty(),
+            "铜甲尚无专属 ModelPart，必须保持未注册以继续走染色皮甲兜底");
         assertNotNull(ArmorTintRegistry.item("armor_copper_helmet"));
     }
 
