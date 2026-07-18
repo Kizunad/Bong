@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "sword_path_resonance",
-  "description": "P2 共鸣专属：anticipation 0→14 举剑入中线+初级微颤（roll ±3° 往复），strike 14→30 颤鸣渐强（±5°~±8° 交替帧）→ t28 极限压缩（bend 96/100）→ t30 振荡外放（双臂推剑 bend→22 / torso +10 / body.z +0.16），recovery 30→36 经 t33 中段帧回 guard。",
+  "description": "P2 共鸣专属：anticipation 0→14 举剑入中线+初级微颤（roll ±5° 往复），strike 14→30 颤鸣渐强（roll ±8°~±11° 交替帧）→ t28 极限压缩（bend 96/100）→ t30 振荡外放（双臂推剑 bend→22 / torso +10 / body.z +0.16），recovery 30→36 经 t33 中段帧回 guard。",
   "emote": {
     "beginTick": 0,
     "endTick": 36,
@@ -485,7 +485,7 @@
         "tick": 11,
         "easing": "OUTSINE",
         "torso": {
-          "yaw": 0.0261799
+          "yaw": 0.0349066
         }
       },
       {
@@ -499,14 +499,14 @@
         "tick": 11,
         "easing": "OUTSINE",
         "rightArm": {
-          "yaw": 0.1047198
+          "yaw": 0.122173
         }
       },
       {
         "tick": 11,
         "easing": "OUTSINE",
         "rightArm": {
-          "roll": 0.5759587
+          "roll": 0.6108652
         }
       },
       {
@@ -534,14 +534,14 @@
         "tick": 11,
         "easing": "OUTSINE",
         "leftArm": {
-          "yaw": -0.1047198
+          "yaw": -0.122173
         }
       },
       {
         "tick": 11,
         "easing": "OUTSINE",
         "leftArm": {
-          "roll": -0.4712389
+          "roll": -0.4363323
         }
       },
       {
@@ -632,7 +632,7 @@
         "tick": 14,
         "easing": "OUTSINE",
         "torso": {
-          "yaw": -0.0261799
+          "yaw": -0.0349066
         }
       },
       {
@@ -646,14 +646,14 @@
         "tick": 14,
         "easing": "OUTSINE",
         "rightArm": {
-          "yaw": 0.0349066
+          "yaw": 0.0174533
         }
       },
       {
         "tick": 14,
         "easing": "OUTSINE",
         "rightArm": {
-          "roll": 0.4712389
+          "roll": 0.4363323
         }
       },
       {
@@ -681,14 +681,14 @@
         "tick": 14,
         "easing": "OUTSINE",
         "leftArm": {
-          "yaw": -0.0349066
+          "yaw": -0.0174533
         }
       },
       {
         "tick": 14,
         "easing": "OUTSINE",
         "leftArm": {
-          "roll": -0.5759587
+          "roll": -0.6108652
         }
       },
       {
@@ -779,7 +779,7 @@
         "tick": 17,
         "easing": "INSINE",
         "torso": {
-          "yaw": 0.0436332
+          "yaw": 0.0610865
         }
       },
       {
@@ -793,14 +793,14 @@
         "tick": 17,
         "easing": "INSINE",
         "rightArm": {
-          "yaw": 0.1396263
+          "yaw": 0.1570796
         }
       },
       {
         "tick": 17,
         "easing": "INSINE",
         "rightArm": {
-          "roll": 0.6283185
+          "roll": 0.6632251
         }
       },
       {
@@ -828,14 +828,14 @@
         "tick": 17,
         "easing": "INSINE",
         "leftArm": {
-          "yaw": -0.1396263
+          "yaw": -0.1570796
         }
       },
       {
         "tick": 17,
         "easing": "INSINE",
         "leftArm": {
-          "roll": -0.418879
+          "roll": -0.3839724
         }
       },
       {
@@ -926,7 +926,7 @@
         "tick": 20,
         "easing": "INSINE",
         "torso": {
-          "yaw": -0.0436332
+          "yaw": -0.0610865
         }
       },
       {
@@ -940,14 +940,14 @@
         "tick": 20,
         "easing": "INSINE",
         "rightArm": {
-          "yaw": 0.0
+          "yaw": -0.0174533
         }
       },
       {
         "tick": 20,
         "easing": "INSINE",
         "rightArm": {
-          "roll": 0.418879
+          "roll": 0.3839724
         }
       },
       {
@@ -975,14 +975,14 @@
         "tick": 20,
         "easing": "INSINE",
         "leftArm": {
-          "yaw": 0.0
+          "yaw": 0.0174533
         }
       },
       {
         "tick": 20,
         "easing": "INSINE",
         "leftArm": {
-          "roll": -0.6283185
+          "roll": -0.6632251
         }
       },
       {
@@ -1073,7 +1073,7 @@
         "tick": 23,
         "easing": "INSINE",
         "torso": {
-          "yaw": 0.0610865
+          "yaw": 0.0785398
         }
       },
       {
@@ -1087,14 +1087,14 @@
         "tick": 23,
         "easing": "INSINE",
         "rightArm": {
-          "yaw": 0.1570796
+          "yaw": 0.1745329
         }
       },
       {
         "tick": 23,
         "easing": "INSINE",
         "rightArm": {
-          "roll": 0.6632251
+          "roll": 0.715585
         }
       },
       {
@@ -1122,14 +1122,14 @@
         "tick": 23,
         "easing": "INSINE",
         "leftArm": {
-          "yaw": -0.1570796
+          "yaw": -0.1745329
         }
       },
       {
         "tick": 23,
         "easing": "INSINE",
         "leftArm": {
-          "roll": -0.3839724
+          "roll": -0.3316126
         }
       },
       {
@@ -1220,7 +1220,7 @@
         "tick": 26,
         "easing": "INSINE",
         "torso": {
-          "yaw": -0.0610865
+          "yaw": -0.0785398
         }
       },
       {
@@ -1234,14 +1234,14 @@
         "tick": 26,
         "easing": "INSINE",
         "rightArm": {
-          "yaw": -0.0174533
+          "yaw": -0.0349066
         }
       },
       {
         "tick": 26,
         "easing": "INSINE",
         "rightArm": {
-          "roll": 0.3839724
+          "roll": 0.3316126
         }
       },
       {
@@ -1269,14 +1269,14 @@
         "tick": 26,
         "easing": "INSINE",
         "leftArm": {
-          "yaw": 0.0174533
+          "yaw": 0.0349066
         }
       },
       {
         "tick": 26,
         "easing": "INSINE",
         "leftArm": {
-          "roll": -0.6632251
+          "roll": -0.715585
         }
       },
       {

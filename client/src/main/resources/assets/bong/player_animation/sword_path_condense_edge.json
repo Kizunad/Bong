@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "sword_path_condense_edge",
-  "description": "P2 凝锋专属：anticipation 0→7 收剑入鞘式蓄意（rightArm 划至左腰 yaw +38 / torso.yaw -20 / 俯首 +10），strike 7→12 快拔亮刃定势（pitch -8→-85 / torso 开至 +10 / body.z +0.10），recovery 12→18 经 t15 中段帧回 guard。",
+  "description": "P2 凝锋专属：anticipation 0→7 收剑入鞘式蓄意（rightArm roll -35 横扫至左腰 / torso.yaw -20 / 俯首 +10），strike 7→12 快拔亮刃定势（pitch -12→-85 / torso 开至 +10 / body.z +0.10），recovery 12→18 经 t15 中段帧回 guard。",
   "emote": {
     "beginTick": 0,
     "endTick": 18,
@@ -198,28 +198,28 @@
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "pitch": -0.4363323
+          "pitch": -0.3490659
         }
       },
       {
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "yaw": 0.4363323
+          "yaw": 0.1745329
         }
       },
       {
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "roll": 0.5235988
+          "roll": -0.3141593
         }
       },
       {
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "bend": 0.9599311
+          "bend": 0.8726646
         }
       },
       {
@@ -240,14 +240,14 @@
         "tick": 3,
         "easing": "OUTSINE",
         "leftArm": {
-          "yaw": 0.5235988
+          "yaw": 0.3839724
         }
       },
       {
         "tick": 3,
         "easing": "OUTSINE",
         "leftArm": {
-          "roll": -0.1396263
+          "roll": 0.1047198
         }
       },
       {
@@ -345,28 +345,28 @@
         "tick": 7,
         "easing": "OUTSINE",
         "rightArm": {
-          "pitch": -0.1396263
+          "pitch": -0.2094395
         }
       },
       {
         "tick": 7,
         "easing": "OUTSINE",
         "rightArm": {
-          "yaw": 0.6632251
+          "yaw": 0.1396263
         }
       },
       {
         "tick": 7,
         "easing": "OUTSINE",
         "rightArm": {
-          "roll": 0.6981317
+          "roll": -0.6108652
         }
       },
       {
         "tick": 7,
         "easing": "OUTSINE",
         "rightArm": {
-          "bend": 1.1868239
+          "bend": 1.0821041
         }
       },
       {
@@ -387,21 +387,21 @@
         "tick": 7,
         "easing": "OUTSINE",
         "leftArm": {
-          "yaw": 0.5934119
+          "yaw": 0.4537856
         }
       },
       {
         "tick": 7,
         "easing": "OUTSINE",
         "leftArm": {
-          "roll": -0.1047198
+          "roll": 0.2443461
         }
       },
       {
         "tick": 7,
         "easing": "OUTSINE",
         "leftArm": {
-          "bend": 1.1519173
+          "bend": 1.1170107
         }
       },
       {

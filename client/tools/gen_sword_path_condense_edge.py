@@ -46,25 +46,27 @@ APEX = dict(
 
 POSE = {
     0: GUARD,
-    # 收剑中段：右手剑向左腰划入，躯干开始左拧、俯首。
+    # 收剑中段：右手剑向左腰划入（下垂臂负 roll = 横扫过身），躯干开始左拧、俯首。
+    # round 2：初版 roll +30/+40 把右手甩向外侧（渲染证实），改负 roll 入鞘。
     3: dict(
         easing="OUTSINE",
         body=dict(y=-0.03, z=-0.05),
         head=dict(pitch=+6),
         torso=dict(pitch=+6, yaw=-14),
-        rightArm=dict(pitch=-25, yaw=+25, roll=+30, bend=55, axis=180),
-        leftArm=dict(pitch=-35, yaw=+30, roll=-8, bend=60, axis=180),
+        rightArm=dict(pitch=-20, yaw=+10, roll=-18, bend=50, axis=180),
+        leftArm=dict(pitch=-35, yaw=+22, roll=+6, bend=60, axis=180),
         leftLeg=dict(pitch=-12, bend=18, z=-0.06),
         rightLeg=dict(pitch=+10, bend=16, z=+0.05),
     ),
-    # 入鞘位蓄意顶点：剑贴左腰，拧腰 -20°、俯首视刃、重心后坐最深。
+    # 入鞘位蓄意顶点：剑贴左腰（roll -35 横过身体），左手迎至右腕（正 roll 内收），
+    # 拧腰 -20°、俯首视刃、重心后坐最深。
     7: dict(
         easing="OUTSINE",
         body=dict(y=-0.06, z=-0.08),
         head=dict(pitch=+10),
         torso=dict(pitch=+9, yaw=-20),
-        rightArm=dict(pitch=-8, yaw=+38, roll=+40, bend=68, axis=180),
-        leftArm=dict(pitch=-30, yaw=+34, roll=-6, bend=66, axis=180),
+        rightArm=dict(pitch=-12, yaw=+8, roll=-35, bend=62, axis=180),
+        leftArm=dict(pitch=-30, yaw=+26, roll=+14, bend=64, axis=180),
         leftLeg=dict(pitch=-14, bend=22, z=-0.07),
         rightLeg=dict(pitch=+12, bend=20, z=+0.06),
     ),
@@ -102,9 +104,9 @@ def main() -> int:
         POSE,
         name="sword_path_condense_edge",
         description=(
-            "P2 凝锋专属：anticipation 0→7 收剑入鞘式蓄意（rightArm 划至左腰 "
-            "yaw +38 / torso.yaw -20 / 俯首 +10），strike 7→12 快拔亮刃定势"
-            "（pitch -8→-85 / torso 开至 +10 / body.z +0.10），recovery 12→18 "
+            "P2 凝锋专属：anticipation 0→7 收剑入鞘式蓄意（rightArm roll -35 "
+            "横扫至左腰 / torso.yaw -20 / 俯首 +10），strike 7→12 快拔亮刃定势"
+            "（pitch -12→-85 / torso 开至 +10 / body.z +0.10），recovery 12→18 "
             "经 t15 中段帧回 guard。"
         ),
         end_tick=18,

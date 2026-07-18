@@ -60,23 +60,24 @@ POSE = {
         rightLeg=dict(pitch=+9, bend=12, z=+0.04),
     ),
     # 举镖高位：镖至面前、俯首注视开始灌注。
+    # round 2：初版 bend 92/98 把手折到头顶后方，降 bend 让镖悬在面前视线上。
     8: dict(
         easing="OUTSINE",
         body=dict(y=-0.04, z=-0.05),
         head=dict(pitch=-13),
         torso=dict(pitch=-1, yaw=-11),
-        rightArm=dict(pitch=-105, yaw=+10, roll=+24, bend=92, axis=180),
+        rightArm=dict(pitch=-100, yaw=+10, roll=+24, bend=78, axis=180),
         leftArm=dict(pitch=-55, yaw=+26, roll=-15, bend=82, axis=180),
         leftLeg=dict(pitch=-11, bend=16, z=-0.06),
         rightLeg=dict(pitch=+9, bend=14, z=+0.05),
     ),
-    # 灌注顶点：举镖最高、凝神最深、左手结印贴胸。
+    # 灌注顶点：举镖面前最高位、凝神最深、左手结印贴胸。
     12: dict(
         easing="OUTSINE",
         body=dict(y=-0.055, z=-0.065),
         head=dict(pitch=-16),
         torso=dict(pitch=-2, yaw=-13),
-        rightArm=dict(pitch=-112, yaw=+12, roll=+28, bend=98, axis=180),
+        rightArm=dict(pitch=-108, yaw=+12, roll=+28, bend=84, axis=180),
         leftArm=dict(pitch=-58, yaw=+28, roll=-16, bend=86, axis=180),
         leftLeg=dict(pitch=-12, bend=18, z=-0.06),
         rightLeg=dict(pitch=+10, bend=16, z=+0.05),

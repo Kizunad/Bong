@@ -345,7 +345,7 @@
         "tick": 8,
         "easing": "OUTSINE",
         "rightArm": {
-          "pitch": -1.8325957
+          "pitch": -1.7453293
         }
       },
       {
@@ -366,7 +366,7 @@
         "tick": 8,
         "easing": "OUTSINE",
         "rightArm": {
-          "bend": 1.6057029
+          "bend": 1.3613568
         }
       },
       {
@@ -492,7 +492,7 @@
         "tick": 12,
         "easing": "OUTSINE",
         "rightArm": {
-          "pitch": -1.9547688
+          "pitch": -1.8849556
         }
       },
       {
@@ -513,7 +513,7 @@
         "tick": 12,
         "easing": "OUTSINE",
         "rightArm": {
-          "bend": 1.7104227
+          "bend": 1.4660766
         }
       },
       {
