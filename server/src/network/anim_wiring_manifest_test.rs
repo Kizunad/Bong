@@ -1,7 +1,7 @@
 //! plan-skill-av-relink-v1 P3 —— P1 接线 anim_id 共享清单单向同步测试（动画链）。
 //!
 //! 清单文件 `client/src/test/resources/bong/anim_wiring_manifest.json` 是
-//! `vfx_animation_trigger::P1_WIRED_ANIM_IDS`（P1 全部 11 条新接线的唯一真相源）
+//! `vfx_animation_trigger::P1_WIRED_ANIM_IDS`（P1 全部 7 条新接线的唯一真相源）
 //! 的单向导出（BTreeSet 排序 + pretty-print + 尾随换行，稳定 diff），双端消费：
 //! - server（本文件）：经 `CARGO_MANIFEST_DIR/../client` 路径读盘，断言清单与常量表
 //!   完全一致——无缺失、无多余、无字节级格式手改；

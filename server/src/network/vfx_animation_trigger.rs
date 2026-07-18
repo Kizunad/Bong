@@ -147,15 +147,14 @@ const DUGU_PRIORITY: u16 = 1100;
 // 以下 anim id 与 client `BongAnimations.java` 常量 / `player_animation/*.json`
 // 资产逐字对齐（P3 由共享清单 pin 双端一致性）。stance_* 事件源 =
 // `TechniqueLearnedEvent`（习得即激活，见 `technique_scroll::learn_technique_if_allowed`
-// 写 `active:true`）；stance_zhenfa 无 KnownTechniques 条目驱动，维持 report-only
-// （见 plan P1 表）。rune_draw / alchemy_stir / enlightenment_pose 为业务模块内联
+// 写 `active:true`）；仅接生产可达的 woliu / zhenmai 两族——现有内容卷轴仅授
+// `woliu.*` + `zhenmai.parry`，dugu / dugu_poison / baomai / tuike 四族无生产可达
+// 习得路径（mentor helper 无生产调用方），与 stance_zhenfa 同为 report-only（见
+// plan P1 表），待习得内容落地时连映射 + 共享清单 + 测试一起接入，不作接口预置。
+// rune_draw / alchemy_stir / enlightenment_pose 为业务模块内联
 // emit（无独立事件或事件覆盖不全，见各调用点注释），常数在此集中声明防漂移。
 const ANIM_STANCE_WOLIU: &str = "bong:stance_woliu";
-const ANIM_STANCE_DUGU: &str = "bong:stance_dugu";
-const ANIM_STANCE_DUGU_POISON: &str = "bong:stance_dugu_poison";
-const ANIM_STANCE_BAOMAI: &str = "bong:stance_baomai";
 const ANIM_STANCE_ZHENMAI: &str = "bong:stance_zhenmai";
-const ANIM_STANCE_TUIKE: &str = "bong:stance_tuike";
 /// 淬炼抡锤动画——与 `forge::handle_tempering_hits` 的 FORGE_HAMMER_STRIKE 粒子同源
 /// （TemperingHit 事件），由 `emit_forge_tempering_animation_triggers` 发射。
 const ANIM_FORGE_HAMMER: &str = "bong:forge_hammer";
@@ -169,7 +168,7 @@ pub(crate) const ANIM_ALCHEMY_STIR: &str = "bong:alchemy_stir";
 /// 分支内联 emit——校验前发会在 stale/无效/被拒抉择上误播）。
 pub(crate) const ANIM_ENLIGHTENMENT_POSE: &str = "bong:enlightenment_pose";
 
-/// plan-skill-av-relink-v1 P3 — P1 全部 11 条新接线的 anim id 清单（**唯一真相源**，
+/// plan-skill-av-relink-v1 P3 — P1 全部 7 条新接线的 anim id 清单（**唯一真相源**，
 /// 与 plan P1 表逐行同源）。共享清单
 /// `client/src/test/resources/bong/anim_wiring_manifest.json` 由本表单向生成
 /// （重生成入口见 `anim_wiring_manifest_test`，禁手改），双端消费：
@@ -181,13 +180,9 @@ pub(crate) const ANIM_ENLIGHTENMENT_POSE: &str = "bong:enlightenment_pose";
 /// 新增/删除 P1 接线时必须同步改本表并重生成清单，否则双端测试各自撞红。
 /// `#[cfg(test)]`：本表专供双端一致性测试消费，生产 emit 点直接用上方各常量。
 #[cfg(test)]
-pub(crate) const P1_WIRED_ANIM_IDS: [&str; 11] = [
+pub(crate) const P1_WIRED_ANIM_IDS: [&str; 7] = [
     ANIM_STANCE_WOLIU,
-    ANIM_STANCE_DUGU,
-    ANIM_STANCE_DUGU_POISON,
-    ANIM_STANCE_BAOMAI,
     ANIM_STANCE_ZHENMAI,
-    ANIM_STANCE_TUIKE,
     ANIM_FORGE_HAMMER,
     ANIM_RUNE_DRAW,
     ANIM_ALCHEMY_STIR,
@@ -286,14 +281,15 @@ fn next_fist_punch_anim(
 /// `active:true` = 激活）。生产发射路仅两条：卷轴习得（`client_request_handler`）
 /// 与首击领悟（`first_hit_dash`，仅授 `movement.dash`、无架势映射）；
 /// `technique_mentor::mentor_teaches_technique` 为无生产调用方的休眠 helper。
-/// 现有内容卷轴仅授 `woliu.*` + `zhenmai.parry` → 今日即活 = woliu / zhenmai
-/// 两族架势；dugu / dugu_poison / baomai / tuike 为接口先锁定的潜伏接线，
-/// 等对应流派习得内容落地即激活。
+/// 现有内容卷轴仅授 `woliu.*` + `zhenmai.parry` → 映射仅收录生产可达的
+/// woliu / zhenmai 两族；dugu / dugu_poison / baomai / tuike 无生产可达习得
+/// 路径，按断链原则不预置映射、降为 report-only（plan P1 表），待对应流派
+/// 习得内容落地时连映射 + 清单 + 测试一起接入。
 /// 全仓不存在「流派架势切换」gameplay 事件（`stance_switch` audio recipe 的唯一
 /// 发射点是 SkillXpGain 经验反馈、与架势无关），按 plan §8 #2 决议改接本时刻。
 /// 无映射前缀（sword / anqi / burst_meridian / movement / morph / body / npc /
-/// shield_block / sword_path）不发；dev `/technique active` 直改组件不发事件，
-/// 不接线（dev-only 旁路）。
+/// shield_block / sword_path / dugu / baomai / tuike / zhenfa）不发；dev
+/// `/technique active` 直改组件不发事件，不接线（dev-only 旁路）。
 pub fn emit_technique_learned_stance_triggers(
     mut learned: EventReader<TechniqueLearnedEvent>,
     players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
@@ -315,18 +311,13 @@ pub fn emit_technique_learned_stance_triggers(
 }
 
 /// technique_id → 流派架势动画映射（plan-skill-av-relink-v1 P1 设计收口清单）。
-/// dugu 两条按完整 id 区分（毒蛊有独立 stance_dugu_poison）；其余按前缀。
+/// 仅收录生产可达的 woliu / zhenmai 两族（按前缀）；dugu / dugu_poison /
+/// baomai / tuike 见 plan P1 表 report-only 行——无生产可达习得路径不预置
+/// 映射，习得内容落地时在此补条目（同步扩 `P1_WIRED_ANIM_IDS` + 重生成清单）。
 fn stance_anim_for_technique(technique_id: &str) -> Option<&'static str> {
-    match technique_id {
-        "dugu.shoot_needle" => return Some(ANIM_STANCE_DUGU),
-        "dugu.infuse_poison" => return Some(ANIM_STANCE_DUGU_POISON),
-        _ => {}
-    }
     match technique_id.split('.').next()? {
         "woliu" => Some(ANIM_STANCE_WOLIU),
-        "baomai" => Some(ANIM_STANCE_BAOMAI),
         "zhenmai" => Some(ANIM_STANCE_ZHENMAI),
-        "tuike" => Some(ANIM_STANCE_TUIKE),
         _ => None,
     }
 }
@@ -3878,17 +3869,14 @@ mod tests {
         });
     }
 
-    /// happy path：六条 stance 接线逐条 pin——每个映射前缀/完整 id 习得时恰发一条
-    /// 携正确 anim_id 的 PlayAnim（technique_id 全部取 TECHNIQUE_DEFINITIONS 真实条目）。
+    /// happy path：两条生产可达的 stance 接线逐条 pin——每个映射前缀习得时恰发
+    /// 一条携正确 anim_id 的 PlayAnim（technique_id 全部取 TECHNIQUE_DEFINITIONS
+    /// 真实条目，且均有真实卷轴内容可授予）。
     #[test]
     fn technique_learned_emits_mapped_stance_animation_for_each_wired_family() {
         let cases = [
             ("woliu.vortex", ANIM_STANCE_WOLIU),
-            ("dugu.shoot_needle", ANIM_STANCE_DUGU),
-            ("dugu.infuse_poison", ANIM_STANCE_DUGU_POISON),
-            ("baomai.full_power_charge", ANIM_STANCE_BAOMAI),
             ("zhenmai.parry", ANIM_STANCE_ZHENMAI),
-            ("tuike.don", ANIM_STANCE_TUIKE),
         ];
         for (technique_id, expected_anim) in cases {
             let mut app = setup_stance_app();
@@ -3931,14 +3919,19 @@ mod tests {
         }
     }
 
-    /// 错误分支：无映射前缀不发——sword/movement 等非架势流派、dugu 前缀但非两条
-    /// 映射完整 id、zhenfa（stance_zhenfa 维持 report-only，见 plan P1 表）全部静默。
+    /// 错误分支：无映射前缀不发——sword/movement 等非架势流派、zhenfa
+    /// （stance_zhenfa 维持 report-only）、以及对抗审查后降级 report-only 的
+    /// dugu / dugu_poison / baomai / tuike 四族（无生产可达习得路径不预置映射，
+    /// 见 plan P1 表）全部静默。习得内容落地重新接线时本清单同步移出对应条目。
     #[test]
     fn technique_learned_with_unmapped_family_does_not_emit_stance() {
         for technique_id in [
             "sword.cleave",
             "movement.dash",
-            "dugu.some_future_variant",
+            "dugu.shoot_needle",
+            "dugu.infuse_poison",
+            "baomai.full_power_charge",
+            "tuike.don",
             "zhenfa.ward",
             "",
         ] {
