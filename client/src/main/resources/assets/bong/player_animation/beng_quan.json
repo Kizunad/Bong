@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "beng_quan",
-  "description": "P1 重制崩拳：anticipation 0→5 沉马蓄劲（body.y +0.09 / 双腿 bend 30+ / 拳贴腰 bend 132 / torso.yaw +26），strike 5→8 拳炸出（bend 132→4 / torso.yaw -22 / body.z +0.20）+8→11 震颤 overshoot 回颤，recovery 11→14 回 guard。endTick=14 为三借用方 cast 区间交集。",
+  "description": "P1 重制崩拳：anticipation 0→5 沉马蓄劲（body.y +0.09 / 双腿 bend 30+ / 拳收髋际 pitch +18 / torso.yaw +26），strike 5→8 拳炸出（pitch +18→-86 / torso.yaw -22 / body.z +0.20）+8→11 震颤 overshoot 回颤，recovery 11→14 回 guard。endTick=14 为三借用方 cast 区间交集。",
   "emote": {
     "beginTick": 0,
     "endTick": 14,
@@ -72,7 +72,7 @@
         "tick": 0,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 1.6580628
+          "bend": 1.7453293
         }
       },
       {
@@ -198,28 +198,28 @@
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "pitch": -0.2443461
+          "pitch": 0.0698132
         }
       },
       {
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "yaw": -0.2443461
+          "yaw": -0.2617994
         }
       },
       {
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "roll": 0.2792527
+          "roll": 0.296706
         }
       },
       {
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "bend": 2.0943951
+          "bend": 1.5358897
         }
       },
       {
@@ -345,7 +345,7 @@
         "tick": 5,
         "easing": "OUTSINE",
         "rightArm": {
-          "pitch": -0.1745329
+          "pitch": 0.3141593
         }
       },
       {
@@ -366,7 +366,7 @@
         "tick": 5,
         "easing": "OUTSINE",
         "rightArm": {
-          "bend": 2.3038346
+          "bend": 1.3089969
         }
       },
       {
@@ -513,7 +513,7 @@
         "tick": 7,
         "easing": "INQUAD",
         "rightArm": {
-          "bend": 1.0471976
+          "bend": 0.9599311
         }
       },
       {
@@ -527,28 +527,28 @@
         "tick": 7,
         "easing": "INQUAD",
         "leftArm": {
-          "pitch": -0.6981317
+          "pitch": -0.5235988
         }
       },
       {
         "tick": 7,
         "easing": "INQUAD",
         "leftArm": {
-          "yaw": 0.2268928
+          "yaw": 0.3141593
         }
       },
       {
         "tick": 7,
         "easing": "INQUAD",
         "leftArm": {
-          "roll": -0.2443461
+          "roll": -0.2617994
         }
       },
       {
         "tick": 7,
         "easing": "INQUAD",
         "leftArm": {
-          "bend": 1.6580628
+          "bend": 1.134464
         }
       },
       {
@@ -681,28 +681,28 @@
         "tick": 8,
         "easing": "INQUAD",
         "leftArm": {
-          "pitch": -1.012291
+          "pitch": 0.0
         }
       },
       {
         "tick": 8,
         "easing": "INQUAD",
         "leftArm": {
-          "yaw": 0.2443461
+          "yaw": 0.4537856
         }
       },
       {
         "tick": 8,
         "easing": "INQUAD",
         "leftArm": {
-          "roll": -0.3141593
+          "roll": -0.2443461
         }
       },
       {
         "tick": 8,
         "easing": "INQUAD",
         "leftArm": {
-          "bend": 1.8325957
+          "bend": 0.8726646
         }
       },
       {
@@ -835,28 +835,28 @@
         "tick": 10,
         "easing": "OUTQUAD",
         "leftArm": {
-          "pitch": -1.0471976
+          "pitch": 0.0349066
         }
       },
       {
         "tick": 10,
         "easing": "OUTQUAD",
         "leftArm": {
-          "yaw": 0.2443461
+          "yaw": 0.4712389
         }
       },
       {
         "tick": 10,
         "easing": "OUTQUAD",
         "leftArm": {
-          "roll": -0.3141593
+          "roll": -0.2443461
         }
       },
       {
         "tick": 10,
         "easing": "OUTQUAD",
         "leftArm": {
-          "bend": 1.8849556
+          "bend": 0.837758
         }
       },
       {
@@ -989,28 +989,28 @@
         "tick": 11,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -0.9948377
+          "pitch": -0.0698132
         }
       },
       {
         "tick": 11,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": 0.2443461
+          "yaw": 0.418879
         }
       },
       {
         "tick": 11,
         "easing": "INOUTSINE",
         "leftArm": {
-          "roll": -0.296706
+          "roll": -0.2443461
         }
       },
       {
         "tick": 11,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 1.7802358
+          "bend": 0.9773844
         }
       },
       {
@@ -1136,28 +1136,28 @@
         "tick": 12,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -0.8726646
+          "pitch": -0.4886922
         }
       },
       {
         "tick": 12,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": 0.2268928
+          "yaw": 0.3141593
         }
       },
       {
         "tick": 12,
         "easing": "INOUTSINE",
         "leftArm": {
-          "roll": -0.2792527
+          "roll": -0.2617994
         }
       },
       {
         "tick": 12,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 1.5358897
+          "bend": 1.1519173
         }
       },
       {
@@ -1269,7 +1269,7 @@
         "tick": 14,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 1.6580628
+          "bend": 1.7453293
         }
       },
       {

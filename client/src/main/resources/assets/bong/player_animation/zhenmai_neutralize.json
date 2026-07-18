@@ -310,7 +310,7 @@
         "tick": 4,
         "easing": "INQUAD",
         "head": {
-          "pitch": 0.1396263
+          "pitch": 0.1745329
         }
       },
       {
@@ -338,7 +338,7 @@
         "tick": 4,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": -0.2094395
+          "yaw": -0.2617994
         }
       },
       {
@@ -373,7 +373,7 @@
         "tick": 4,
         "easing": "INQUAD",
         "leftArm": {
-          "yaw": 0.2094395
+          "yaw": 0.2617994
         }
       },
       {
@@ -485,7 +485,7 @@
         "tick": 6,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": -0.2792527
+          "yaw": -0.3141593
         }
       },
       {
@@ -520,7 +520,7 @@
         "tick": 6,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": 0.2792527
+          "yaw": 0.3141593
         }
       },
       {

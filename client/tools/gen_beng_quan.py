@@ -23,7 +23,7 @@ GUARD = dict(
     body=dict(y=0.0, z=0.0),
     head=dict(yaw=-4),
     torso=dict(pitch=+3, yaw=+8),
-    rightArm=dict(pitch=-30, yaw=-10, roll=+12, bend=95, axis=180),
+    rightArm=dict(pitch=-30, yaw=-10, roll=+12, bend=100, axis=180),
     leftArm=dict(pitch=-45, yaw=+12, roll=-15, bend=75, axis=180),
     leftLeg=dict(pitch=-10, bend=14, z=-0.08),
     rightLeg=dict(pitch=+8, bend=12, z=+0.05),
@@ -37,7 +37,7 @@ POSE = {
         body=dict(y=+0.06, z=-0.05),
         head=dict(yaw=-10),
         torso=dict(pitch=+6, yaw=+20),
-        rightArm=dict(pitch=-14, yaw=-14, roll=+16, bend=120, axis=180),
+        rightArm=dict(pitch=+4, yaw=-15, roll=+17, bend=88, axis=180),
         leftArm=dict(pitch=-52, yaw=+14, roll=-16, bend=82, axis=180),
         leftLeg=dict(pitch=-14, bend=24, z=-0.09),
         rightLeg=dict(pitch=+12, bend=26, z=+0.06),
@@ -49,7 +49,9 @@ POSE = {
         body=dict(y=+0.09, z=-0.08),
         head=dict(yaw=-14),
         torso=dict(pitch=+8, yaw=+26),
-        rightArm=dict(pitch=-10, yaw=-16, roll=+18, bend=132, axis=180),
+        # round 2：真收拳到髋际（pitch +18 肘拉身后、拳落髋 y+8.8 / z-4.0），
+        # 旧值 bend 132 拳停在胸前（y+1.4）不像腰际蓄劲。
+        rightArm=dict(pitch=+18, yaw=-16, roll=+18, bend=75, axis=180),
         leftArm=dict(pitch=-56, yaw=+15, roll=-17, bend=86, axis=180),
         leftLeg=dict(pitch=-16, bend=30, z=-0.10),
         rightLeg=dict(pitch=+14, bend=32, z=+0.07),
@@ -60,8 +62,8 @@ POSE = {
         body=dict(y=+0.05, z=+0.06),
         head=dict(yaw=0),
         torso=dict(pitch=+5, yaw=+4),
-        rightArm=dict(pitch=-55, yaw=-14, roll=+10, bend=60, axis=180),
-        leftArm=dict(pitch=-40, yaw=+13, roll=-14, bend=95, axis=180),
+        rightArm=dict(pitch=-55, yaw=-14, roll=+10, bend=55, axis=180),
+        leftArm=dict(pitch=-30, yaw=+18, roll=-15, bend=65, axis=180),
         leftLeg=dict(pitch=-20, bend=26, z=-0.11),
         rightLeg=dict(pitch=+16, bend=28, z=+0.07),
     ),
@@ -73,7 +75,8 @@ POSE = {
         head=dict(yaw=+8),
         torso=dict(pitch=+6, yaw=-22),
         rightArm=dict(pitch=-86, yaw=-18, roll=+4, bend=4, axis=180),
-        leftArm=dict(pitch=-58, yaw=+14, roll=-18, bend=105, axis=180),
+        # round 2：后手 hikite 拉回髋侧（形意反拉，y+9.5 髋高），与出拳反相。
+        leftArm=dict(pitch=0, yaw=+26, roll=-14, bend=50, axis=180),
         leftLeg=dict(pitch=-24, bend=22, z=-0.12),
         rightLeg=dict(pitch=+18, bend=26, z=+0.08),
     ),
@@ -84,7 +87,7 @@ POSE = {
         head=dict(yaw=+9),
         torso=dict(pitch=+7, yaw=-25),
         rightArm=dict(pitch=-90, yaw=-19, roll=+3, bend=2, axis=180),
-        leftArm=dict(pitch=-60, yaw=+14, roll=-18, bend=108, axis=180),
+        leftArm=dict(pitch=+2, yaw=+27, roll=-14, bend=48, axis=180),
         leftLeg=dict(pitch=-25, bend=23, z=-0.12),
         rightLeg=dict(pitch=+18, bend=27, z=+0.08),
     ),
@@ -95,7 +98,7 @@ POSE = {
         head=dict(yaw=+7),
         torso=dict(pitch=+6, yaw=-21),
         rightArm=dict(pitch=-84, yaw=-17, roll=+5, bend=10, axis=180),
-        leftArm=dict(pitch=-57, yaw=+14, roll=-17, bend=102, axis=180),
+        leftArm=dict(pitch=-4, yaw=+24, roll=-14, bend=56, axis=180),
         leftLeg=dict(pitch=-23, bend=22, z=-0.11),
         rightLeg=dict(pitch=+17, bend=25, z=+0.08),
     ),
@@ -106,7 +109,7 @@ POSE = {
         head=dict(yaw=+2),
         torso=dict(pitch=+4, yaw=-8),
         rightArm=dict(pitch=-60, yaw=-13, roll=+9, bend=55, axis=180),
-        leftArm=dict(pitch=-50, yaw=+13, roll=-16, bend=88, axis=180),
+        leftArm=dict(pitch=-28, yaw=+18, roll=-15, bend=66, axis=180),
         leftLeg=dict(pitch=-16, bend=18, z=-0.09),
         rightLeg=dict(pitch=+12, bend=18, z=+0.06),
     ),
@@ -120,7 +123,7 @@ def main() -> int:
         name="beng_quan",
         description=(
             "P1 重制崩拳：anticipation 0→5 沉马蓄劲（body.y +0.09 / 双腿 bend 30+ / "
-            "拳贴腰 bend 132 / torso.yaw +26），strike 5→8 拳炸出（bend 132→4 / "
+            "拳收髋际 pitch +18 / torso.yaw +26），strike 5→8 拳炸出（pitch +18→-86 / "
             "torso.yaw -22 / body.z +0.20）+8→11 震颤 overshoot 回颤，"
             "recovery 11→14 回 guard。endTick=14 为三借用方 cast 区间交集。"
         ),

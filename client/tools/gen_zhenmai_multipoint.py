@@ -45,7 +45,8 @@ POSE = {
         body=dict(y=+0.01, z=+0.05),
         head=dict(yaw=0),
         torso=dict(pitch=+3, yaw=-2),
-        rightArm=dict(pitch=-92, yaw=-14, roll=+2, bend=12, axis=180),
+        # round 2：第一指抬到高位线（pitch -102，y -1.2 面高）与第三指分层。
+        rightArm=dict(pitch=-102, yaw=-14, roll=+2, bend=12, axis=180),
         leftArm=dict(pitch=-50, yaw=+12, roll=-10, bend=75, axis=180),
         leftLeg=dict(pitch=-12, bend=13, z=-0.06),
         rightLeg=dict(pitch=+9, bend=13, z=+0.05),
@@ -78,7 +79,8 @@ POSE = {
         body=dict(x=-0.03, y=+0.03, z=+0.14),
         head=dict(yaw=+6),
         torso=dict(pitch=+5, yaw=-18),
-        rightArm=dict(pitch=-96, yaw=-18, roll=0, bend=3, axis=180),
+        # round 2：第三指压到中低位线（pitch -86），三戳高/中/低分层且最深。
+        rightArm=dict(pitch=-86, yaw=-18, roll=0, bend=3, axis=180),
         leftArm=dict(pitch=-38, yaw=+12, roll=-10, bend=85, axis=180),
         leftLeg=dict(pitch=-18, bend=16, z=-0.09),
         rightLeg=dict(pitch=+13, bend=18, z=+0.06),
@@ -89,7 +91,7 @@ POSE = {
         body=dict(x=-0.02, y=+0.03, z=+0.12),
         head=dict(yaw=+5),
         torso=dict(pitch=+4, yaw=-15),
-        rightArm=dict(pitch=-90, yaw=-16, roll=+2, bend=14, axis=180),
+        rightArm=dict(pitch=-82, yaw=-16, roll=+2, bend=14, axis=180),
         leftArm=dict(pitch=-40, yaw=+12, roll=-10, bend=80, axis=180),
         leftLeg=dict(pitch=-16, bend=15, z=-0.08),
         rightLeg=dict(pitch=+12, bend=16, z=+0.06),

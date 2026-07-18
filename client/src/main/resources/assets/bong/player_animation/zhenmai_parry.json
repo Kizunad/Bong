@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "zhenmai_parry",
-  "description": "P1 重制真脉拍挡（瞬发）：anticipation 0→1 掌收上提（bend 70→85），strike 1→2 掌刀横拍过中线（yaw -6→+26 / torso.yaw +12→-10）+2→4 顺势推送（yaw +30），recovery 4→8 回 guard。爆发帧+收势。",
+  "description": "P1 重制真脉拍挡（瞬发）：anticipation 0→1 掌收上提（bend 70→85），strike 1→2 掌刀横拍到面前中线（yaw -6→-26 过中 / torso.yaw +12→-10）+2→4 顺势推送（yaw -32），recovery 4→8 回 guard。爆发帧+收势。",
   "emote": {
     "beginTick": 0,
     "endTick": 8,
@@ -198,14 +198,14 @@
         "tick": 1,
         "easing": "OUTQUAD",
         "rightArm": {
-          "yaw": 0.0349066
+          "yaw": -0.1745329
         }
       },
       {
         "tick": 1,
         "easing": "OUTQUAD",
         "rightArm": {
-          "roll": 0.1745329
+          "roll": 0.2094395
         }
       },
       {
@@ -352,14 +352,14 @@
         "tick": 2,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": 0.4537856
+          "yaw": -0.4537856
         }
       },
       {
         "tick": 2,
         "easing": "INQUAD",
         "rightArm": {
-          "roll": -0.1047198
+          "roll": 0.3141593
         }
       },
       {
@@ -506,14 +506,14 @@
         "tick": 4,
         "easing": "OUTQUAD",
         "rightArm": {
-          "yaw": 0.5235988
+          "yaw": -0.5585054
         }
       },
       {
         "tick": 4,
         "easing": "OUTQUAD",
         "rightArm": {
-          "roll": -0.1396263
+          "roll": 0.3490659
         }
       },
       {
@@ -653,14 +653,14 @@
         "tick": 6,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": 0.1396263
+          "yaw": -0.1745329
         }
       },
       {
         "tick": 6,
         "easing": "INOUTSINE",
         "rightArm": {
-          "roll": 0.0349066
+          "roll": 0.1396263
         }
       },
       {

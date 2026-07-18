@@ -338,7 +338,7 @@
         "tick": 3,
         "easing": "INQUAD",
         "rightArm": {
-          "pitch": -1.6057029
+          "pitch": -1.7802358
         }
       },
       {
@@ -793,7 +793,7 @@
         "tick": 6,
         "easing": "INQUAD",
         "rightArm": {
-          "pitch": -1.6755161
+          "pitch": -1.5009832
         }
       },
       {
@@ -947,7 +947,7 @@
         "tick": 8,
         "easing": "OUTQUAD",
         "rightArm": {
-          "pitch": -1.5707963
+          "pitch": -1.43117
         }
       },
       {

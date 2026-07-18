@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "zhenmai_harden",
-  "description": "P1 重制抱臂硬化：anticipation 0→3 双臂外张开劲（yaw ±38 / bend 20），strike 3→5 猛收交叉抱胸（bend 118/122 / yaw 内扣 ±18）+沉桩（body.y +0.09 / 双腿 bend 30）+5→8 紧咬 clench 深化，recovery 8→11 松劲回 guard。",
+  "description": "P1 重制抱臂硬化：anticipation 0→3 双臂外张开劲（yaw ±34 / bend 20），strike 3→5 猛收交叉抱胸（bend 112/116 / yaw 内扣 ∓30）+沉桩（body.y +0.09 / 双腿 bend 30）+5→8 紧咬 clench 深化，recovery 8→11 松劲回 guard。",
   "emote": {
     "beginTick": 0,
     "endTick": 11,
@@ -191,7 +191,7 @@
         "tick": 2,
         "easing": "OUTSINE",
         "rightArm": {
-          "yaw": -0.5585054
+          "yaw": 0.4886922
         }
       },
       {
@@ -226,7 +226,7 @@
         "tick": 2,
         "easing": "OUTSINE",
         "leftArm": {
-          "yaw": 0.5585054
+          "yaw": -0.4886922
         }
       },
       {
@@ -331,7 +331,7 @@
         "tick": 3,
         "easing": "OUTSINE",
         "rightArm": {
-          "yaw": -0.6632251
+          "yaw": 0.5934119
         }
       },
       {
@@ -366,7 +366,7 @@
         "tick": 3,
         "easing": "OUTSINE",
         "leftArm": {
-          "yaw": 0.6632251
+          "yaw": -0.5934119
         }
       },
       {
@@ -478,21 +478,21 @@
         "tick": 5,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": 0.3141593
+          "yaw": -0.5235988
         }
       },
       {
         "tick": 5,
         "easing": "INQUAD",
         "rightArm": {
-          "roll": -0.1745329
+          "roll": 0.3490659
         }
       },
       {
         "tick": 5,
         "easing": "INQUAD",
         "rightArm": {
-          "bend": 2.0594885
+          "bend": 1.9547688
         }
       },
       {
@@ -513,21 +513,21 @@
         "tick": 5,
         "easing": "INQUAD",
         "leftArm": {
-          "yaw": -0.3141593
+          "yaw": 0.5235988
         }
       },
       {
         "tick": 5,
         "easing": "INQUAD",
         "leftArm": {
-          "roll": 0.1745329
+          "roll": -0.3490659
         }
       },
       {
         "tick": 5,
         "easing": "INQUAD",
         "leftArm": {
-          "bend": 2.1293017
+          "bend": 2.0245819
         }
       },
       {
@@ -625,21 +625,21 @@
         "tick": 7,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": 0.3490659
+          "yaw": -0.5585054
         }
       },
       {
         "tick": 7,
         "easing": "INOUTSINE",
         "rightArm": {
-          "roll": -0.1919862
+          "roll": 0.3665191
         }
       },
       {
         "tick": 7,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 2.1642083
+          "bend": 2.0245819
         }
       },
       {
@@ -660,21 +660,21 @@
         "tick": 7,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": -0.3490659
+          "yaw": 0.5585054
         }
       },
       {
         "tick": 7,
         "easing": "INOUTSINE",
         "leftArm": {
-          "roll": 0.1919862
+          "roll": -0.3665191
         }
       },
       {
         "tick": 7,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 2.2340214
+          "bend": 2.0943951
         }
       },
       {
@@ -772,21 +772,21 @@
         "tick": 8,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": 0.3316126
+          "yaw": -0.5235988
         }
       },
       {
         "tick": 8,
         "easing": "INOUTSINE",
         "rightArm": {
-          "roll": -0.1745329
+          "roll": 0.3490659
         }
       },
       {
         "tick": 8,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 2.1293017
+          "bend": 1.9896753
         }
       },
       {
@@ -807,21 +807,21 @@
         "tick": 8,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": -0.3316126
+          "yaw": 0.5235988
         }
       },
       {
         "tick": 8,
         "easing": "INOUTSINE",
         "leftArm": {
-          "roll": 0.1745329
+          "roll": -0.3490659
         }
       },
       {
         "tick": 8,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 2.1991149
+          "bend": 2.0594885
         }
       },
       {
@@ -912,14 +912,14 @@
         "tick": 9,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": 0.0872665
+          "yaw": -0.1396263
         }
       },
       {
         "tick": 9,
         "easing": "INOUTSINE",
         "rightArm": {
-          "roll": -0.0349066
+          "roll": 0.1047198
         }
       },
       {
@@ -947,14 +947,14 @@
         "tick": 9,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": -0.0872665
+          "yaw": 0.1396263
         }
       },
       {
         "tick": 9,
         "easing": "INOUTSINE",
         "leftArm": {
-          "roll": 0.0349066
+          "roll": -0.1047198
         }
       },
       {

@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "sword_parry",
-  "description": "P1 重制格挡：anticipation 0→2 沉重心横剑（body.y +0.03），strike 2→4 斜举定架（pitch -112 / yaw +24 / roll -18）+4→6 弹开外推（yaw +34 / torso.yaw -14），recovery 6→10 回 guard。短促脆。",
+  "description": "P1 重制格挡：anticipation 0→2 沉重心横剑（body.y +0.03），strike 2→4 斜举定架于面前中线（pitch -112 / yaw -14 / roll +20）+4→6 弹开外荡（yaw +6 外推至体侧 / torso.yaw -14），recovery 6→10 回 guard。短促脆。",
   "emote": {
     "beginTick": 0,
     "endTick": 10,
@@ -205,14 +205,14 @@
         "tick": 2,
         "easing": "OUTQUAD",
         "rightArm": {
-          "yaw": 0.1396263
+          "yaw": -0.1396263
         }
       },
       {
         "tick": 2,
         "easing": "OUTQUAD",
         "rightArm": {
-          "roll": -0.0872665
+          "roll": 0.2094395
         }
       },
       {
@@ -352,14 +352,14 @@
         "tick": 4,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": 0.418879
+          "yaw": -0.2443461
         }
       },
       {
         "tick": 4,
         "easing": "INQUAD",
         "rightArm": {
-          "roll": -0.3141593
+          "roll": 0.3490659
         }
       },
       {
@@ -499,14 +499,14 @@
         "tick": 6,
         "easing": "OUTQUAD",
         "rightArm": {
-          "yaw": 0.5934119
+          "yaw": 0.1047198
         }
       },
       {
         "tick": 6,
         "easing": "OUTQUAD",
         "rightArm": {
-          "roll": -0.3839724
+          "roll": -0.2443461
         }
       },
       {
@@ -646,14 +646,14 @@
         "tick": 8,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": 0.1396263
+          "yaw": -0.0349066
         }
       },
       {
         "tick": 8,
         "easing": "INOUTSINE",
         "rightArm": {
-          "roll": 0.0
+          "roll": 0.1047198
         }
       },
       {

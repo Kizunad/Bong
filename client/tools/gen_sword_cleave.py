@@ -22,8 +22,10 @@ GUARD = dict(
     body=dict(y=0.0, z=0.0),
     head=dict(pitch=-4),
     torso=dict(pitch=+4, yaw=-6),
-    rightArm=dict(pitch=-62, yaw=-10, roll=+8, bend=30, axis=180),
-    leftArm=dict(pitch=-55, yaw=+16, roll=-10, bend=38, axis=180),
+    # round 2：guard 收肘（bend 72/78），手回落到 z≈-7.6 胸前——旧值 bend 30 手臂
+    # 近乎伸直（z -9.6 僵尸手）。
+    rightArm=dict(pitch=-68, yaw=-10, roll=+22, bend=72, axis=180),
+    leftArm=dict(pitch=-64, yaw=+14, roll=-22, bend=78, axis=180),
     leftLeg=dict(pitch=-10, bend=12, z=-0.06),
     rightLeg=dict(pitch=+8, bend=10, z=+0.04),
 )
@@ -34,8 +36,10 @@ IMPACT = dict(
     body=dict(y=+0.06, z=+0.30),
     head=dict(pitch=+14),
     torso=dict(pitch=+18, yaw=+14),
-    rightArm=dict(pitch=+52, yaw=-6, roll=+2, bend=8, axis=180),
-    leftArm=dict(pitch=+42, yaw=+12, roll=-4, bend=14, axis=180),
+    # round 2：impact 双手向中线并拢（背向 pitch 下 yaw 符号反转：rArm yaw +14 /
+    # lArm yaw -28 = 内收），双手间距 16.6 → 10.8。
+    rightArm=dict(pitch=+52, yaw=+14, roll=+4, bend=8, axis=180),
+    leftArm=dict(pitch=+42, yaw=-28, roll=-6, bend=14, axis=180),
     leftLeg=dict(pitch=-34, bend=30, z=-0.14),
     rightLeg=dict(pitch=+26, bend=34, z=+0.10),
 )
@@ -48,8 +52,8 @@ POSE = {
         body=dict(y=-0.02, z=-0.03),
         head=dict(pitch=-4),
         torso=dict(pitch=-2, yaw=-13),
-        rightArm=dict(pitch=-105, yaw=-8, roll=+6, bend=42, axis=180),
-        leftArm=dict(pitch=-95, yaw=+14, roll=-8, bend=48, axis=180),
+        rightArm=dict(pitch=-108, yaw=-8, roll=+14, bend=64, axis=180),
+        leftArm=dict(pitch=-100, yaw=+13, roll=-14, bend=70, axis=180),
         leftLeg=dict(pitch=-8, bend=14, z=-0.06),
         rightLeg=dict(pitch=+11, bend=16, z=+0.05),
     ),
@@ -59,8 +63,8 @@ POSE = {
         body=dict(y=-0.04, z=-0.06),
         head=dict(pitch=-8),
         torso=dict(pitch=-7, yaw=-18),
-        rightArm=dict(pitch=-142, yaw=-6, roll=+4, bend=52, axis=180),
-        leftArm=dict(pitch=-132, yaw=+12, roll=-6, bend=58, axis=180),
+        rightArm=dict(pitch=-142, yaw=-6, roll=+6, bend=56, axis=180),
+        leftArm=dict(pitch=-132, yaw=+12, roll=-8, bend=62, axis=180),
         leftLeg=dict(pitch=-6, bend=16, z=-0.05),
         rightLeg=dict(pitch=+13, bend=20, z=+0.06),
     ),
@@ -81,8 +85,8 @@ POSE = {
         body=dict(y=0.0, z=+0.10),
         head=dict(pitch=+2),
         torso=dict(pitch=+6, yaw=-4),
-        rightArm=dict(pitch=-55, yaw=-8, roll=+4, bend=25, axis=180),
-        leftArm=dict(pitch=-45, yaw=+12, roll=-6, bend=30, axis=180),
+        rightArm=dict(pitch=-55, yaw=+4, roll=+4, bend=25, axis=180),
+        leftArm=dict(pitch=-45, yaw=-8, roll=-6, bend=30, axis=180),
         leftLeg=dict(pitch=-18, bend=18, z=-0.10),
         rightLeg=dict(pitch=+18, bend=24, z=+0.06),
     ),
@@ -107,7 +111,7 @@ def main() -> int:
         POSE,
         name="sword_cleave",
         description=(
-            "P1 重制竖劈：anticipation 0→10 双手举剑过头（rightArm.pitch -62→-152）"
+            "P1 重制竖劈：anticipation 0→10 双手举剑过头（rightArm.pitch -68→-152）"
             "+拧腰后坐（torso.yaw -6→-20 / body.z -0.08），strike 10→16 过身下劈"
             "（pitch -152→+52）+前压（torso.pitch -8→+18）+前冲（body.z +0.30）"
             "+弓步（前腿 pitch -34 bend 30），hold 16→18 定格，recovery 18→20 回 guard。"

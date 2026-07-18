@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "zhenmai_sever_chain",
-  "description": "P1 重制手刀斩脉：anticipation 0→5 手刀引左肩（yaw +32 / torso.yaw +28），strike 5→8 横斩过身全伸（yaw -34 / bend 4 / torso.yaw -24）+8→11 顺势 overshoot 定劲，recovery 11→14 回 guard。",
+  "description": "P1 重制手刀斩脉：anticipation 0→5 手刀引右耳侧（yaw +32 / torso.yaw +28 右肩后蓄），strike 5→8 横斩过中线向左全伸（yaw -50 / bend 4 / torso.yaw -24 右肩送出）+8→11 顺势 overshoot 定劲，recovery 11→14 回 guard。",
   "emote": {
     "beginTick": 0,
     "endTick": 14,
@@ -513,7 +513,7 @@
         "tick": 7,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": 0.0
+          "yaw": -0.2617994
         }
       },
       {
@@ -667,7 +667,7 @@
         "tick": 8,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": -0.5934119
+          "yaw": -0.8726646
         }
       },
       {
@@ -821,7 +821,7 @@
         "tick": 10,
         "easing": "OUTQUAD",
         "rightArm": {
-          "yaw": -0.6981317
+          "yaw": -0.9773844
         }
       },
       {
@@ -975,7 +975,7 @@
         "tick": 11,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": -0.6283185
+          "yaw": -0.8726646
         }
       },
       {
@@ -1129,7 +1129,7 @@
         "tick": 12,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": -0.3490659
+          "yaw": -0.5235988
         }
       },
       {

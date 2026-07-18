@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "sword_cleave",
-  "description": "P1 重制竖劈：anticipation 0→10 双手举剑过头（rightArm.pitch -62→-152）+拧腰后坐（torso.yaw -6→-20 / body.z -0.08），strike 10→16 过身下劈（pitch -152→+52）+前压（torso.pitch -8→+18）+前冲（body.z +0.30）+弓步（前腿 pitch -34 bend 30），hold 16→18 定格，recovery 18→20 回 guard。",
+  "description": "P1 重制竖劈：anticipation 0→10 双手举剑过头（rightArm.pitch -68→-152）+拧腰后坐（torso.yaw -6→-20 / body.z -0.08），strike 10→16 过身下劈（pitch -152→+52）+前压（torso.pitch -8→+18）+前冲（body.z +0.30）+弓步（前腿 pitch -34 bend 30），hold 16→18 定格，recovery 18→20 回 guard。",
   "emote": {
     "beginTick": 0,
     "endTick": 20,
@@ -51,7 +51,7 @@
         "tick": 0,
         "easing": "INOUTSINE",
         "rightArm": {
-          "pitch": -1.0821041
+          "pitch": -1.1868239
         }
       },
       {
@@ -65,14 +65,14 @@
         "tick": 0,
         "easing": "INOUTSINE",
         "rightArm": {
-          "roll": 0.1396263
+          "roll": 0.3839724
         }
       },
       {
         "tick": 0,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 0.5235988
+          "bend": 1.2566371
         }
       },
       {
@@ -86,28 +86,28 @@
         "tick": 0,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -0.9599311
+          "pitch": -1.1170107
         }
       },
       {
         "tick": 0,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": 0.2792527
+          "yaw": 0.2443461
         }
       },
       {
         "tick": 0,
         "easing": "INOUTSINE",
         "leftArm": {
-          "roll": -0.1745329
+          "roll": -0.3839724
         }
       },
       {
         "tick": 0,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 0.6632251
+          "bend": 1.3613568
         }
       },
       {
@@ -198,7 +198,7 @@
         "tick": 4,
         "easing": "OUTSINE",
         "rightArm": {
-          "pitch": -1.8325957
+          "pitch": -1.8849556
         }
       },
       {
@@ -212,14 +212,14 @@
         "tick": 4,
         "easing": "OUTSINE",
         "rightArm": {
-          "roll": 0.1047198
+          "roll": 0.2443461
         }
       },
       {
         "tick": 4,
         "easing": "OUTSINE",
         "rightArm": {
-          "bend": 0.7330383
+          "bend": 1.1170107
         }
       },
       {
@@ -233,28 +233,28 @@
         "tick": 4,
         "easing": "OUTSINE",
         "leftArm": {
-          "pitch": -1.6580628
+          "pitch": -1.7453293
         }
       },
       {
         "tick": 4,
         "easing": "OUTSINE",
         "leftArm": {
-          "yaw": 0.2443461
+          "yaw": 0.2268928
         }
       },
       {
         "tick": 4,
         "easing": "OUTSINE",
         "leftArm": {
-          "roll": -0.1396263
+          "roll": -0.2443461
         }
       },
       {
         "tick": 4,
         "easing": "OUTSINE",
         "leftArm": {
-          "bend": 0.837758
+          "bend": 1.2217305
         }
       },
       {
@@ -359,14 +359,14 @@
         "tick": 8,
         "easing": "OUTSINE",
         "rightArm": {
-          "roll": 0.0698132
+          "roll": 0.1047198
         }
       },
       {
         "tick": 8,
         "easing": "OUTSINE",
         "rightArm": {
-          "bend": 0.9075712
+          "bend": 0.9773844
         }
       },
       {
@@ -394,14 +394,14 @@
         "tick": 8,
         "easing": "OUTSINE",
         "leftArm": {
-          "roll": -0.1047198
+          "roll": -0.1396263
         }
       },
       {
         "tick": 8,
         "easing": "OUTSINE",
         "leftArm": {
-          "bend": 1.012291
+          "bend": 1.0821041
         }
       },
       {
@@ -646,7 +646,7 @@
         "tick": 13,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": -0.1396263
+          "yaw": 0.0698132
         }
       },
       {
@@ -681,7 +681,7 @@
         "tick": 13,
         "easing": "INQUAD",
         "leftArm": {
-          "yaw": 0.2094395
+          "yaw": -0.1396263
         }
       },
       {
@@ -793,14 +793,14 @@
         "tick": 16,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": -0.1047198
+          "yaw": 0.2443461
         }
       },
       {
         "tick": 16,
         "easing": "INQUAD",
         "rightArm": {
-          "roll": 0.0349066
+          "roll": 0.0698132
         }
       },
       {
@@ -828,14 +828,14 @@
         "tick": 16,
         "easing": "INQUAD",
         "leftArm": {
-          "yaw": 0.2094395
+          "yaw": -0.4886922
         }
       },
       {
         "tick": 16,
         "easing": "INQUAD",
         "leftArm": {
-          "roll": -0.0698132
+          "roll": -0.1047198
         }
       },
       {
@@ -940,14 +940,14 @@
         "tick": 18,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": -0.1047198
+          "yaw": 0.2443461
         }
       },
       {
         "tick": 18,
         "easing": "INOUTSINE",
         "rightArm": {
-          "roll": 0.0349066
+          "roll": 0.0698132
         }
       },
       {
@@ -975,14 +975,14 @@
         "tick": 18,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": 0.2094395
+          "yaw": -0.4886922
         }
       },
       {
         "tick": 18,
         "easing": "INOUTSINE",
         "leftArm": {
-          "roll": -0.0698132
+          "roll": -0.1047198
         }
       },
       {
@@ -1080,7 +1080,7 @@
         "tick": 20,
         "easing": "INOUTSINE",
         "rightArm": {
-          "pitch": -1.0821041
+          "pitch": -1.1868239
         }
       },
       {
@@ -1094,14 +1094,14 @@
         "tick": 20,
         "easing": "INOUTSINE",
         "rightArm": {
-          "roll": 0.1396263
+          "roll": 0.3839724
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 0.5235988
+          "bend": 1.2566371
         }
       },
       {
@@ -1115,28 +1115,28 @@
         "tick": 20,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -0.9599311
+          "pitch": -1.1170107
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": 0.2792527
+          "yaw": 0.2443461
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "leftArm": {
-          "roll": -0.1745329
+          "roll": -0.3839724
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 0.6632251
+          "bend": 1.3613568
         }
       },
       {

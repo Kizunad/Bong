@@ -35,7 +35,7 @@ POSE = {
         body=dict(y=+0.03, z=-0.04),
         head=dict(pitch=-2),
         torso=dict(pitch=-2, yaw=-2),
-        rightArm=dict(pitch=-85, yaw=+8, roll=-5, bend=42, axis=180),
+        rightArm=dict(pitch=-85, yaw=-8, roll=+12, bend=42, axis=180),
         leftArm=dict(pitch=-48, yaw=+16, roll=-10, bend=45, axis=180),
         leftLeg=dict(pitch=-12, bend=16, z=-0.07),
         rightLeg=dict(pitch=+9, bend=16, z=+0.05),
@@ -46,7 +46,9 @@ POSE = {
         body=dict(y=+0.05, z=-0.08),
         head=dict(pitch=-4),
         torso=dict(pitch=-4, yaw=-10),
-        rightArm=dict(pitch=-112, yaw=+24, roll=-18, bend=48, axis=180),
+        # round 2：yaw/roll 符号修正——前举 pitch 下 yaw+ = 甩向体侧外；改
+        # yaw -14 / roll +20 把定架收到面前中线（x -2.2, y -4.5 脸高）。
+        rightArm=dict(pitch=-112, yaw=-14, roll=+20, bend=48, axis=180),
         leftArm=dict(pitch=-55, yaw=+18, roll=-12, bend=58, axis=180),
         leftLeg=dict(pitch=-14, bend=20, z=-0.08),
         rightLeg=dict(pitch=+10, bend=20, z=+0.06),
@@ -57,7 +59,8 @@ POSE = {
         body=dict(y=+0.03, z=-0.05),
         head=dict(pitch=-2),
         torso=dict(pitch=-2, yaw=-14),
-        rightArm=dict(pitch=-118, yaw=+34, roll=-22, bend=38, axis=180),
+        # round 2：弹开 = 从中线向外侧荡出（x -2.2 → -9.3），yaw +6 / roll -2。
+        rightArm=dict(pitch=-118, yaw=+6, roll=-14, bend=38, axis=180),
         leftArm=dict(pitch=-50, yaw=+16, roll=-10, bend=48, axis=180),
         leftLeg=dict(pitch=-12, bend=17, z=-0.07),
         rightLeg=dict(pitch=+9, bend=17, z=+0.05),
@@ -68,7 +71,7 @@ POSE = {
         body=dict(y=+0.01, z=-0.02),
         head=dict(pitch=-2),
         torso=dict(pitch=+1, yaw=0),
-        rightArm=dict(pitch=-80, yaw=+8, roll=0, bend=36, axis=180),
+        rightArm=dict(pitch=-80, yaw=-2, roll=+6, bend=36, axis=180),
         leftArm=dict(pitch=-45, yaw=+15, roll=-9, bend=35, axis=180),
         leftLeg=dict(pitch=-10, bend=14, z=-0.06),
         rightLeg=dict(pitch=+8, bend=13, z=+0.05),
@@ -83,8 +86,8 @@ def main() -> int:
         name="sword_parry",
         description=(
             "P1 重制格挡：anticipation 0→2 沉重心横剑（body.y +0.03），strike 2→4 "
-            "斜举定架（pitch -112 / yaw +24 / roll -18）+4→6 弹开外推"
-            "（yaw +34 / torso.yaw -14），recovery 6→10 回 guard。短促脆。"
+            "斜举定架于面前中线（pitch -112 / yaw -14 / roll +20）+4→6 弹开外荡"
+            "（yaw +6 外推至体侧 / torso.yaw -14），recovery 6→10 回 guard。短促脆。"
         ),
         end_tick=10,
         stop_tick=12,
