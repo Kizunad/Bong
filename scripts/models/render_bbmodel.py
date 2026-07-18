@@ -160,6 +160,37 @@ def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35,
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)), name
 
 
+def render_three_view(path, size=360, bg=(22, 23, 26)):
+    """真实纹理三视图：正面、侧面、前侧 3/4；供模型资产每轮自评。"""
+    views = [
+        ("FRONT", 180.0, 0.0),
+        ("SIDE", 90.0, 0.0),
+        ("3/4", 145.0, 15.0),
+    ]
+    tiles = []
+    name = Path(path).stem
+    for label, yaw, pitch in views:
+        rendered, name = render(path, yaw=yaw, pitch=pitch, size=size, bg=bg)
+        tiles.append((label, rendered))
+
+    gap = 12
+    label_height = 18
+    canvas = Image.new(
+        "RGB",
+        (size * len(tiles) + gap * (len(tiles) + 1), size + label_height + gap * 2),
+        (14, 15, 17),
+    )
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(canvas)
+    x = gap
+    for label, rendered in tiles:
+        draw.text((x + 4, 5), label, fill=(220, 220, 212))
+        canvas.paste(rendered, (x, gap + label_height))
+        x += size + gap
+    return canvas, name
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file", nargs="?")
@@ -167,6 +198,7 @@ def main():
     ap.add_argument("--yaw", type=float, default=-35.0)
     ap.add_argument("--pitch", type=float, default=22.0)
     ap.add_argument("--size", type=int, default=600)
+    ap.add_argument("--three-view", action="store_true")
     args = ap.parse_args()
 
     if args.all:
@@ -195,8 +227,12 @@ def main():
         return
 
     fp = Path(args.file) if args.file else MODELS / "BronzeCoffin.bbmodel"
-    im, name = render(fp, args.yaw, args.pitch, size=args.size)
-    out = OUTDIR / f"render_{Path(fp).stem}.png"
+    if args.three_view:
+        im, name = render_three_view(fp, size=args.size)
+        out = OUTDIR / f"render_{Path(fp).stem}_three_view.png"
+    else:
+        im, name = render(fp, args.yaw, args.pitch, size=args.size)
+        out = OUTDIR / f"render_{Path(fp).stem}.png"
     im.save(out)
     print(f"→ {out.relative_to(REPO)}  ({name}, yaw={args.yaw} pitch={args.pitch})")
 

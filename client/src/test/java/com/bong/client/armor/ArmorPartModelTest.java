@@ -46,15 +46,45 @@ class ArmorPartModelTest {
     }
 
     @Test
-    void everyPlaceholderCubeTableIsPinnedAndBakesExpectedChildren() {
-        assertPinnedSingle("iron_helmet", ArmorPartModel.Mount.HEAD, -4.4f, 23.8f, 8.8f, 8.6f);
-        assertPinnedSingle("iron_chestplate", ArmorPartModel.Mount.BODY, -4.4f, 11.8f, 8.8f, 12.4f);
-        assertPinnedPair("iron_leggings", ArmorPartModel.Mount.LEFT_LEG, ArmorPartModel.Mount.RIGHT_LEG, 12.4f);
-        assertPinnedPair("iron_boots", ArmorPartModel.Mount.LEFT_FOOT, ArmorPartModel.Mount.RIGHT_FOOT, 4.4f);
+    void everyCubeTableIsPinnedAndBakesExpectedChildren() {
+        assertPinnedTable("iron_helmet", 13, ArmorPartModel.Mount.HEAD, -4.4f, 31.4f,
+            ArmorPartModel.Mount.HEAD, 4.55f, 29.3f);
+        assertPinnedTable("iron_chestplate", 18, ArmorPartModel.Mount.BODY, -4.5f, 17.8f,
+            ArmorPartModel.Mount.BODY, -0.55f, 18.2f);
+        assertPinnedTable("iron_leggings", 12, ArmorPartModel.Mount.LEFT_LEG, -2.3f, 5.0f,
+            ArmorPartModel.Mount.RIGHT_LEG, -0.35f, 3.7f);
+        assertPinnedTable("iron_boots", 10, ArmorPartModel.Mount.LEFT_FOOT, -2.4f, 1.8f,
+            ArmorPartModel.Mount.RIGHT_FOOT, -0.35f, 0.8f);
         assertPinnedSingle("bone_helmet", ArmorPartModel.Mount.HEAD, -4.5f, 23.7f, 9.0f, 8.8f);
         assertPinnedSingle("bone_chestplate", ArmorPartModel.Mount.BODY, -4.5f, 11.7f, 9.0f, 12.6f);
         assertPinnedPair("bone_leggings", ArmorPartModel.Mount.LEFT_LEG, ArmorPartModel.Mount.RIGHT_LEG, 12.4f);
         assertPinnedPair("bone_boots", ArmorPartModel.Mount.LEFT_FOOT, ArmorPartModel.Mount.RIGHT_FOOT, 4.4f);
+    }
+
+    private static void assertPinnedTable(
+        String modelKey,
+        int expectedCount,
+        ArmorPartModel.Mount firstMount,
+        float firstOx,
+        float firstOy,
+        ArmorPartModel.Mount lastMount,
+        float lastOx,
+        float lastOy
+    ) {
+        List<ArmorPartModel.ArmorCube> cubes = ArmorPartModel.cubes(modelKey);
+        assertEquals(expectedCount, cubes.size(), modelKey + " cube 数量漂移");
+        ArmorPartModel.ArmorCube first = cubes.get(0);
+        ArmorPartModel.ArmorCube last = cubes.get(cubes.size() - 1);
+        assertEquals(firstMount, first.mount());
+        assertEquals(firstOx, first.ox(), 1e-4f);
+        assertEquals(firstOy, first.oy(), 1e-4f);
+        assertEquals(lastMount, last.mount());
+        assertEquals(lastOx, last.ox(), 1e-4f);
+        assertEquals(lastOy, last.oy(), 1e-4f);
+        ModelPart root = ArmorPartModel.buildModelPart(modelKey);
+        for (ArmorPartModel.Mount mount : cubes.stream().map(ArmorPartModel.ArmorCube::mount).distinct().toList()) {
+            assertNotNull(root.getChild(mount.childName()), modelKey + " 缺烘焙 child " + mount);
+        }
     }
 
     @Test
