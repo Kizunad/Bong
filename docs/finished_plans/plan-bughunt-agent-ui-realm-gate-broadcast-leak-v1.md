@@ -86,15 +86,24 @@
 - `2e8a8d3855f62d9c94bdf5590a2bc438fe538636`（2026-07-16）：恢复缺失/空白目标的 warning + legacy broadcast fallback。
 - `8ddb72ebcb9967471bb539da5a3126f13020679a`（2026-07-16）：移除预制 narration fixture，贯通真实 producer→consumer→selector 私有路由回归。
 - `1cb25a7929849aaef01a2e839a67cb8ae7b33721`（2026-07-16）：补齐 TypeBox 显式 `null` 与 legacy 缺字段分流反例。
+- `97231cc8eb62d0299f7e41250b10169743b2a101`（2026-07-16）：更新境界门私有路由返工证据。
+- `5a8f84d2fa67122b11e7555b956ef121f0042f62`（2026-07-18）：拆分真实 Fabric C2S 请求与 server→agent 响应 schema，并统一 UTF-16 wire 接受集合。
+- `a93c3dc797cc97ef67c08d09c87d2fca94ef73c1`（2026-07-18）：补齐 production `AgentUiRuntime` 驱动的专用 Redis 双 Bot 黑盒场景与真实 Fabric producer pin。
+- `470886d632fb8b9e6346ba745f8d0b21af80e92f`（2026-07-18）：修正 Agent UI 请求标识序列化签名，建立最终修复代码基线。
+- `1a2885d073f4fbbf4c43be03c3b65674d8374972`（2026-07-18）：合并 `origin/main=9d2e29d0871b004684eb4d29c11a798fc1c71d05`，解决 Bot protobuf narration/zone_info 并存冲突并完成 worldgen/server 复验。
+- `4cc9e2939c461ad6d12193f96d3e86cc4383d964`（2026-07-18）：继续合并最新 `origin/main=7ad2be2dbb0260bd738b9dc3514af7296a862a01` 的技能动画接线，并在最终代码树重跑 server/client/agent/Python/双 Bot/Fabric runtime 门禁。
 
 ### 测试结果
 
-- Schema：`npm --prefix agent/packages/schema run build` 退出 0；`npm --prefix agent/packages/schema test` 退出 0，29 files / 884 tests passed，其中 `agent-ui.test.ts` 49/49 passed。
-- Tiandao：`npm --prefix agent/packages/tiandao test` 退出 0，72 files / 830 tests passed；测试生成的两个本地 snapshot 已按精确路径清除，未提交 snapshot。
-- Server：在 `/tmp/bong-compile-slot-2.lock` 非阻塞独占锁内执行 `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`，均退出 0；完整 `cargo test` 重跑退出 0，5 个结果块合计 11,731 passed / 0 failed / 6 ignored。
-- 真实跨栈回归：完整 server test 中 `network::tests::narration_tests::realm_gate_producer_consumer_selector_routes_only_target_player` 明确执行为 `ok`；该用例实际运行生产 Redis encoder/decoder 与 TypeScript 生产 consumer，而非注入预制 narration。
-- Client：以 Java `17.0.19` 在 `/tmp/bong-compile-slot-2.lock` 内执行 `./gradlew test build`，退出 0、`BUILD SUCCESSFUL`、13 actionable tasks executed；469 份 JUnit XML 汇总 4,090 tests / 0 failures / 0 errors / 0 skipped。
-- 主线同步：`origin/main=0972f7c9d5c2dba1f06d884480e62fceedcde711` 是代码 HEAD `1cb25a7929849aaef01a2e839a67cb8ae7b33721` 的第二父祖先；合并后的 schema、Tiandao、server 与 client 受影响栈均完成上述完整门禁。
+- Python 协议：最终代码树执行 `python3 -m unittest scripts.bot.test_protocol`，126/126 passed；冲突决议同时保留 protobuf narration field 3 与 `zone_info` field 4 解码及各自测试。
+- Schema：`cd agent && npm run build -w @bong/schema` 退出 0；`cd agent/packages/schema && npm test` 退出 0，29 files / 887 tests passed，其中 `agent-ui.test.ts` 52/52 passed。
+- Tiandao：`cd agent/packages/tiandao && npm test` 退出 0，72 files / 830 tests passed。测试生成的 `tiandao-snapshot-200.json` / `300.json` 未删除，分别保全于 `.sisyphus/evidence/pr1217-tiandao-generated/`、`rerun-470886d6/` 与 `final-4cc9e293/`；最终哈希为 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`、`eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。
+- Server：最终 `4cc9e293` 在 `/tmp/bong-compile-slot-1.lock` 独占锁内执行 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与完整 `cargo test`，均退出 0；5 个结果块合计 11,796 passed / 0 failed / 6 ignored。
+- Worldgen：合并 `9d2e29d0` 后 `bash scripts/dev-reload.sh` 退出 0，overworld 306 tiles 与 TSY 9 tiles 后验全绿、server 启动读入 306 tiles；`test_zone_overlap_policy.py` 8/8 passed。额外全量 pytest 为 911 passed / 1 failed，唯一失败 `CompoundFlattenTests::test_flatten_preserves_outside_radius` 在整个 `worldgen/` 与 `origin/main` 字节一致时可复现，记录为 main 同环境基线而非本 PR 门禁绿灯。
+- Client：以 Java `17.0.19` 执行 `./gradlew --no-daemon test build`，退出 0、`BUILD SUCCESSFUL`；471 份 JUnit XML 汇总 4,118 tests / 0 failures / 0 errors / 0 skipped。
+- 真实双 Bot/专用 Redis：最终 `4cc9e293` 的 `agent_ui_realm_gate_private_narration` 场景 2.9s PASS，`total=1 pass=1 skip=0 fail=0`。Redis 链依次记录 `bong:agent_ui_cmd`（`target=offline:Bp4cRGA`、`realm_gate=5`）、`bong:agent_ui_response`（同 target、`player_realm=1`、`required_realm=5`）与 `bong:agent_narrate`（`scope=player`、`style=system_warning`）；server 最终只投递 1 recipient，旁观 Bot 无泄漏，双方无 chat mirror。证据位于 `.sisyphus/evidence/pr1217-final-gates-4cc9e293/09-bot-e2e-dedicated-20260718T123407/`。
+- Fabric renderer runtime：云端无 WSLg socket，故以用户态解包的 Xvfb + Mesa 软件渲染实际执行 Java 17 `runClient`；日志命中 MC `1.20.1` 窗口、LWJGL `3.3.1`、`Bong Client bootstrap ready`、实体模型注册以及 Armor/WornPack/Mutation `FeatureRenderer registered`，fatal scan 为空。证据位于 `.sisyphus/evidence/pr1217-final-gates-4cc9e293/10-fabric-renderer-runtime-20260718T124321/`。
+- 主线同步：最终 fetch 确认 `origin/main=7ad2be2dbb0260bd738b9dc3514af7296a862a01` 是代码 HEAD `4cc9e2939c461ad6d12193f96d3e86cc4383d964` 的第二父祖先；该次 main 合入触及 server/client，二者均在最终树重跑完整门禁，agent/schema/Python 亦按本 PR 跨栈契约重跑。
 
 ### 跨仓库核验
 
@@ -102,7 +111,8 @@
 - server → agent：`receive_agent_ui_cmd_system` 的真实 gate reject response 经生产 Redis encoder 把 canonical `target_player` 交给 `UiResponseConsumer`。
 - agent → server：生产 consumer 输出经生产 `bong:agent_narrate` parser 进入 `process_redis_inbound`，`NarrationScope::Player` 最终选择唯一目标玩家；legacy 缺失/空白目标仍按归档决议 warning 后广播。
 - server → client：目标玩家恰好收到一条 typed `bong:server_data` narration，旁观者无 typed payload；两名玩家都没有 `GameMessageS2c` chat mirror。
-- 提交元数据：最终返工代码链的 6 枚 commit 均由 `git interpret-trailers --parse` 识别 `Model: gpt-5.6-sol-max` 与 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。
+- client runtime：实际 Fabric renderer 线程完成 Bong 网络/HUD/动画/实体与 FeatureRenderer bootstrap，并创建 `Minecraft* 1.20.1` 窗口；不是只靠 JUnit classpath 或静态资源测试推断。
+- 提交元数据：逐枚执行 `git interpret-trailers --parse` 审计 `origin/main..HEAD`，所有本 PR commit 均存在精确 `Model:` trailer；早期提交为 `gpt-5.1`，返工提交为 `gpt-5.6-sol-max`，后续协议/e2e/主线复验与证据更新为 `gpt-5`。
 
 ### 遗留 / 后续
 
