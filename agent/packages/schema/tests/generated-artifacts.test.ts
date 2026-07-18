@@ -32,10 +32,19 @@ const AGENT_UI_GENERATED_FILES = [
   "client-request-v1.json",
   "server-data-v1.json",
 ] as const;
-const AGENT_UI_ID_SCHEMA_COUNTS: Readonly<Record<(typeof AGENT_UI_GENERATED_FILES)[number], number>> = {
-  "agent-ui-response-payload-v1.json": 2,
-  "client-request-v1.json": 1,
-  "server-data-v1.json": 3,
+const AGENT_UI_ID_SCHEMA_PATHS: Readonly<
+  Record<(typeof AGENT_UI_GENERATED_FILES)[number], readonly string[]>
+> = {
+  "agent-ui-response-payload-v1.json": [
+    "$.properties.request_id",
+    "$.properties.target_player",
+  ],
+  "client-request-v1.json": ["$.anyOf[85].properties.request_id"],
+  "server-data-v1.json": [
+    "$.anyOf[103].properties.request_id",
+    "$.anyOf[103].properties.target_player",
+    "$.anyOf[104].properties.request_id",
+  ],
 };
 
 type LocatedStringSchema = Readonly<{
@@ -305,9 +314,9 @@ describe("generated schema freshness gate", () => {
       const artifact = JSON.parse(readFileSync(join(GENERATED_DIR, file), "utf8"));
       const idSchemas = findAgentUiIdStringSchemas(artifact);
       expect(
-        idSchemas.length,
-        `${file} 应精确覆盖所有 Agent UI ID 字段，避免某个字段丢失 pattern 后仍假绿`,
-      ).toBe(AGENT_UI_ID_SCHEMA_COUNTS[file]);
+        idSchemas.map(({ path }) => path).sort(),
+        `${file} 应精确覆盖每个 Agent UI ID JSON path，避免字段等量替换后仍假绿`,
+      ).toEqual([...AGENT_UI_ID_SCHEMA_PATHS[file]].sort());
 
       for (const { path, schema } of idSchemas) {
         expect(
