@@ -374,6 +374,37 @@ describe("AgentUiResponsePayloadV1", () => {
       "request_id 与 target_player 必须共用同一 well-formed UTF-16 ID 契约",
     ).toBe(false);
   });
+
+  it("wire pattern 同时兼容无 flag 与 Unicode-aware ECMA-262 解释", () => {
+    const targetSchema = AgentUiResponsePayloadV1.properties.target_player as {
+      pattern: string;
+    };
+    const legacyPattern = new RegExp(targetSchema.pattern);
+    const unicodePattern = new RegExp(targetSchema.pattern, "u");
+    const cases = [
+      { name: "BMP", value: "界", valid: true },
+      { name: "astral emoji", value: "😀", valid: true },
+      { name: "mixed BMP and astral", value: "残😀界", valid: true },
+      { name: "64 emoji boundary", value: "😀".repeat(64), valid: true },
+      { name: "126 BMP + 1 astral boundary", value: "a".repeat(126) + "😀", valid: true },
+      { name: "empty", value: "", valid: false },
+      { name: "lone high surrogate", value: "\ud800", valid: false },
+      { name: "lone low surrogate", value: "\udc00", valid: false },
+      { name: "embedded lone high surrogate", value: "a\ud800b", valid: false },
+      { name: "embedded lone low surrogate", value: "a\udc00b", valid: false },
+    ];
+
+    for (const testCase of cases) {
+      expect(
+        legacyPattern.test(testCase.value),
+        `${testCase.name} 的无 flag ECMA-262 结果应为 ${testCase.valid}`,
+      ).toBe(testCase.valid);
+      expect(
+        unicodePattern.test(testCase.value),
+        `${testCase.name} 的 Unicode-aware ECMA-262 结果应为 ${testCase.valid}`,
+      ).toBe(testCase.valid);
+    }
+  });
 });
 
 describe("AgentUiClientResponsePayloadV1 / AgentUiResponseRequestV1", () => {

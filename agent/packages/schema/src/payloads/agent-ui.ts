@@ -30,9 +30,12 @@ export type AgentUiActionType = Static<typeof AgentUiActionType>;
 
 // TypeBox 的 minLength/maxLength 在 JavaScript runtime 中按 UTF-16 code unit 计数。
 // Rust String 只能表示 well-formed Unicode scalar sequence，所以还需要显式拒绝
-// JavaScript 可表示、但 Rust serde_json 无法接收的 lone surrogate。
+// JavaScript 可表示、但 Rust serde_json 无法接收的 lone surrogate。负向前瞻写法
+// 同时兼容 TypeBox 使用的无 flag RegExp 与 JSON Schema 常见的 Unicode-aware
+// ECMA-262 解释：前者把 astral 字符交给 surrogate-pair 分支，后者把它作为
+// 一个非 surrogate code point 交给首分支。
 const WELL_FORMED_UTF16_PATTERN =
-  "^(?:[\\u0000-\\uD7FF\\uE000-\\uFFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$";
+  "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$";
 
 function agentUiIdV1() {
   return Type.String({

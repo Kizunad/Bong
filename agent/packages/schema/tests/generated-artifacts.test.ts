@@ -45,7 +45,6 @@ const RUNTIME_VALIDATOR_EXEMPTIONS: Readonly<Record<string, ValidatorExemption>>
   validateAntidoteResultEventV1Contract: exemption("Tiandao-local gameplay narration input, not a public server Redis wire."),
   validateFactionStateV1Contract: exemption("Tiandao internal state contract, not a public server Redis wire."),
   validateHalfStepRechallengeTriggerPayloadV1Contract: exemption("Tiandao internal trigger payload, not a public server Redis wire."),
-  validateAgentUiResponsePayloadV1Contract: exemption("Tiandao UI response output, not a server Redis input."),
   validateVortexBackfireEventV1Contract: exemption("Tiandao-local narration input, not a public server Redis wire."),
   validateProjectileQiDrainedEventV1Contract: exemption("Tiandao-local narration input, not a public server Redis wire."),
   validateWoliuSkillCastV1Contract: exemption("Tiandao-local narration input, not a public server Redis wire."),
@@ -224,6 +223,19 @@ describe("generated schema freshness gate", () => {
     expect(runtimeErrors(validators, GENERATED_SCHEMA_FILES, schemaExports, RUNTIME_VALIDATOR_EXEMPTIONS)).toEqual([]);
   });
 
+  it("exports the server-to-Tiandao Agent UI response as its own generated artifact", () => {
+    const file = "agent-ui-response-payload-v1.json";
+    const schema = GENERATED_SCHEMA_FILES[file] as {
+      required?: string[];
+      properties?: Record<string, unknown>;
+    };
+
+    expect(schema).toBe(schemaExports.AgentUiResponsePayloadV1);
+    expect(schema.required).toEqual(["request_id", "action", "params"]);
+    expect(schema.required).not.toContain("target_player");
+    expect(schema.properties).toHaveProperty("target_player");
+  });
+
   it("reports missing and wrong runtime mappings", () => {
     const validators = new Set(["validateCraftOutcomeV1Contract"]), contract = {};
     expect(runtimeErrors(validators, {}, { CraftOutcomeV1: contract }, {})).toEqual([
@@ -269,6 +281,19 @@ describe("generated schema freshness gate", () => {
     );
     expect(() => assertGeneratedSchemasFresh(outputDir)).toThrowError(
       /meridian-severed-event-v1\.json/,
+    );
+  });
+
+  it("fails freshness when the Agent UI response artifact is missing", () => {
+    const outputDir = createTempDir();
+    writeGeneratedSchemas(outputDir);
+    rmSync(join(outputDir, "agent-ui-response-payload-v1.json"));
+
+    expect(getGeneratedSchemaDrift(outputDir).missing).toContain(
+      "agent-ui-response-payload-v1.json",
+    );
+    expect(() => assertGeneratedSchemasFresh(outputDir)).toThrowError(
+      /agent-ui-response-payload-v1\.json/,
     );
   });
 

@@ -46,6 +46,7 @@ import {
   WelcomePayloadV1,
   ZoneInfoPayloadV1,
 } from "./client-payload.js";
+import { AgentUiResponsePayloadV1 } from "./payloads/agent-ui.js";
 import {
   AlchemyFeedSlotRequestV1,
   AlchemyIgniteRequestV1,
@@ -575,6 +576,7 @@ export const SCHEMA_REGISTRY = {
   boneCoinTickV1: BoneCoinTickV1,
   priceSampleV1: PriceSampleV1,
   priceIndexV1: PriceIndexV1,
+  agentUiResponsePayloadV1: AgentUiResponsePayloadV1,
   serverDataV1: ServerDataV1,
   clientPayloadV1: ClientPayloadV1,
   clientPayloadWelcomeV1: WelcomePayloadV1,
@@ -1040,6 +1042,8 @@ export const GENERATED_SCHEMA_FILES = {
   "price-index-v1.json": SCHEMA_REGISTRY.priceIndexV1,
   "inventory-snapshot-v1.json": SCHEMA_REGISTRY.inventorySnapshotV1,
   "inventory-event-v1.json": SCHEMA_REGISTRY.inventoryEventV1,
+  "agent-ui-response-payload-v1.json":
+    SCHEMA_REGISTRY.agentUiResponsePayloadV1,
   "server-data-v1.json": SCHEMA_REGISTRY.serverDataV1,
   "client-payload-v1.json": SCHEMA_REGISTRY.clientPayloadV1,
   "client-payload-welcome-v1.json": SCHEMA_REGISTRY.clientPayloadWelcomeV1,
