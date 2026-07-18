@@ -15,7 +15,8 @@
  *   - error (其余 reason)               → 记录警告日志
  *
  * narration 格式（realm_gate_rejected）：
- *   scope="player"，target=target_player（若无则告警并 legacy scope="broadcast"，target="world"）
+ *   scope="player"，target=target_player
+ *   缺失或空白 target_player 时告警并 fail-closed，不发布私人提示
  *   style="system_warning"
  *   text 文本来自 REALM_GATE_NARRATION_TEXT
  */
@@ -99,6 +100,7 @@ export interface UiResponseConsumerStats {
   otherError: number;
   rejectedContract: number;
   narrationPublished: number;
+  narrationDroppedMissingTarget: number;
 }
 
 // ─── realm_gate_rejected narration 文本 ──────────────────────────────────────
@@ -128,6 +130,7 @@ export class UiResponseConsumer {
     otherError: 0,
     rejectedContract: 0,
     narrationPublished: 0,
+    narrationDroppedMissingTarget: 0,
   };
 
   private readonly onMessage = (channel: string, message: string): void => {
@@ -273,15 +276,17 @@ export class UiResponseConsumer {
   ): Promise<void> {
     const targetPlayer = response.target_player?.trim();
     if (!targetPlayer) {
+      this.stats.narrationDroppedMissingTarget += 1;
       this.logger.warn(
         `[ui-response-consumer] realm_gate_rejected missing target_player; ` +
-          `falling back to broadcast request_id=${response.request_id}`,
+          `dropping private narration request_id=${response.request_id}`,
       );
+      return;
     }
 
     const narration: Narration = {
-      scope: targetPlayer ? "player" : "broadcast",
-      target: targetPlayer || "world",
+      scope: "player",
+      target: targetPlayer,
       style: "system_warning",
       text: REALM_GATE_NARRATION_TEXT,
     };

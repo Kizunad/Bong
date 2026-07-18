@@ -651,6 +651,7 @@ describe("UiResponseConsumer", () => {
       otherError: 0,
       rejectedContract: 0,
       narrationPublished: 0,
+      narrationDroppedMissingTarget: 0,
     });
   });
 
@@ -735,7 +736,7 @@ describe("UiResponseConsumer", () => {
     expect(consumer.stats.narrationPublished).toBe(1);
   });
 
-  it("error+realm_gate_rejected without target_player → warns and keeps legacy broadcast fallback", async () => {
+  it("error+realm_gate_rejected without target_player → warns and drops private narration", async () => {
     await sendMessage(
       makeResponsePayload("error", {
         reason: "realm_gate_rejected",
@@ -747,23 +748,16 @@ describe("UiResponseConsumer", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("realm_gate_rejected missing target_player"),
     );
-    expect(pub.publish).toHaveBeenCalledOnce();
-    const [channel, raw] = pub.publish.mock.calls[0];
-    expect(channel).toBe(AGENT_NARRATE);
-    const narrationMsg = JSON.parse(raw as string);
-    expect(narrationMsg.narrations).toEqual([
-      {
-        scope: "broadcast",
-        target: "world",
-        style: "system_warning",
-        text: REALM_GATE_NARRATION_TEXT,
-      },
-    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("dropping private narration"),
+    );
+    expect(pub.publish).not.toHaveBeenCalled();
     expect(consumer.stats.realmGateRejected).toBe(1);
-    expect(consumer.stats.narrationPublished).toBe(1);
+    expect(consumer.stats.narrationPublished).toBe(0);
+    expect(consumer.stats.narrationDroppedMissingTarget).toBe(1);
   });
 
-  it("error+realm_gate_rejected with whitespace target_player → warns and uses legacy broadcast fallback", async () => {
+  it("error+realm_gate_rejected with whitespace target_player → warns and drops private narration", async () => {
     await sendMessage(
       makeResponsePayload(
         "error",
@@ -775,20 +769,32 @@ describe("UiResponseConsumer", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("realm_gate_rejected missing target_player"),
     );
-    expect(pub.publish).toHaveBeenCalledOnce();
-    const [channel, raw] = pub.publish.mock.calls[0];
-    expect(channel).toBe(AGENT_NARRATE);
-    const narrationMsg = JSON.parse(raw as string);
-    expect(narrationMsg.narrations).toEqual([
-      {
-        scope: "broadcast",
-        target: "world",
-        style: "system_warning",
-        text: REALM_GATE_NARRATION_TEXT,
-      },
-    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("dropping private narration"),
+    );
+    expect(pub.publish).not.toHaveBeenCalled();
     expect(consumer.stats.realmGateRejected).toBe(1);
-    expect(consumer.stats.narrationPublished).toBe(1);
+    expect(consumer.stats.narrationPublished).toBe(0);
+    expect(consumer.stats.narrationDroppedMissingTarget).toBe(1);
+  });
+
+  it("error+realm_gate_rejected with null target_player → rejects contract without narration", async () => {
+    await sendMessage({
+      request_id: "null-target-player",
+      action: "error",
+      target_player: null,
+      params: { reason: "realm_gate_rejected" },
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("invalid AgentUiResponsePayloadV1"),
+      expect.any(String),
+    );
+    expect(pub.publish).not.toHaveBeenCalled();
+    expect(consumer.stats.received).toBe(0);
+    expect(consumer.stats.rejectedContract).toBe(1);
+    expect(consumer.stats.realmGateRejected).toBe(0);
+    expect(consumer.stats.narrationDroppedMissingTarget).toBe(0);
   });
 
   // ── error: player_offline ─────────────────────────────────────────────────

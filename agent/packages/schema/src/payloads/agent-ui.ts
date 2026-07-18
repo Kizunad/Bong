@@ -28,20 +28,18 @@ export const AgentUiActionType = Type.Union([
 ]);
 export type AgentUiActionType = Static<typeof AgentUiActionType>;
 
-// TypeBox 的 minLength/maxLength 在 JavaScript runtime 中按 UTF-16 code unit 计数。
-// Rust String 只能表示 well-formed Unicode scalar sequence，所以还需要显式拒绝
-// JavaScript 可表示、但 Rust serde_json 无法接收的 lone surrogate。负向前瞻写法
-// 同时兼容 TypeBox 使用的无 flag RegExp 与 JSON Schema 常见的 Unicode-aware
-// ECMA-262 解释：前者把 astral 字符交给 surrogate-pair 分支，后者把它作为
-// 一个非 surrogate code point 交给首分支。
-const WELL_FORMED_UTF16_PATTERN =
-  "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$";
+// 标准 JSON Schema 的 maxLength 按 Unicode code point 计数，但 TypeBox Value.Check
+// 在 JavaScript runtime 中按 UTF-16 code unit 计数。为避免 astral 字符造成接受集合
+// 分叉，长度与 well-formed Unicode 约束统一放进同一个 ECMA-262 pattern：无 flag
+// 解释把 surrogate pair 作为第二分支的一次重复，Unicode-aware `u` 解释把 astral
+// 字符作为第一分支的一次重复；两者都精确计数 1..=128 个 Unicode code points，
+// 并拒绝 JavaScript 可表示、但 Rust serde_json 无法接收的 lone surrogate。
+const AGENT_UI_ID_PATTERN =
+  "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}$";
 
 function agentUiIdV1() {
   return Type.String({
-    minLength: 1,
-    maxLength: 128,
-    pattern: WELL_FORMED_UTF16_PATTERN,
+    pattern: AGENT_UI_ID_PATTERN,
   });
 }
 

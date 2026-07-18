@@ -299,7 +299,7 @@ describe("AgentUiResponsePayloadV1", () => {
     expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(false);
   });
 
-  it("边界: target_player 按 JavaScript UTF-16 code units 校验 1..=128", () => {
+  it("边界: target_player 按 Unicode code points 校验 1..=128", () => {
     const base = {
       request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       action: "error",
@@ -307,19 +307,21 @@ describe("AgentUiResponsePayloadV1", () => {
     };
     const cases = [
       { name: "64 emoji", value: "😀".repeat(64), utf16: 128, codePoints: 64, valid: true },
-      { name: "65 emoji", value: "😀".repeat(65), utf16: 130, codePoints: 65, valid: false },
-      {
-        name: "126 BMP + 1 astral",
-        value: "a".repeat(126) + "😀",
-        utf16: 128,
-        codePoints: 127,
-        valid: true,
-      },
+      { name: "65 emoji", value: "😀".repeat(65), utf16: 130, codePoints: 65, valid: true },
+      { name: "128 emoji", value: "😀".repeat(128), utf16: 256, codePoints: 128, valid: true },
+      { name: "129 emoji", value: "😀".repeat(129), utf16: 258, codePoints: 129, valid: false },
       {
         name: "127 BMP + 1 astral",
         value: "a".repeat(127) + "😀",
         utf16: 129,
         codePoints: 128,
+        valid: true,
+      },
+      {
+        name: "128 BMP + 1 astral",
+        value: "a".repeat(128) + "😀",
+        utf16: 130,
+        codePoints: 129,
         valid: false,
       },
       { name: "128 BMP", value: "界".repeat(128), utf16: 128, codePoints: 128, valid: true },
@@ -338,7 +340,7 @@ describe("AgentUiResponsePayloadV1", () => {
           ...base,
           target_player: testCase.value,
         }),
-        `${testCase.name} 应按 ${testCase.utf16} 个 UTF-16 code units 判定为 ${testCase.valid}`,
+        `${testCase.name} 应按 ${testCase.codePoints} 个 Unicode code points 判定为 ${testCase.valid}`,
       ).toBe(testCase.valid);
     }
   });
@@ -385,8 +387,13 @@ describe("AgentUiResponsePayloadV1", () => {
       { name: "BMP", value: "界", valid: true },
       { name: "astral emoji", value: "😀", valid: true },
       { name: "mixed BMP and astral", value: "残😀界", valid: true },
-      { name: "64 emoji boundary", value: "😀".repeat(64), valid: true },
-      { name: "126 BMP + 1 astral boundary", value: "a".repeat(126) + "😀", valid: true },
+      { name: "65 emoji", value: "😀".repeat(65), valid: true },
+      { name: "128 emoji boundary", value: "😀".repeat(128), valid: true },
+      { name: "129 emoji overflow", value: "😀".repeat(129), valid: false },
+      { name: "127 BMP + 1 astral boundary", value: "a".repeat(127) + "😀", valid: true },
+      { name: "128 BMP + 1 astral overflow", value: "a".repeat(128) + "😀", valid: false },
+      { name: "128 BMP boundary", value: "界".repeat(128), valid: true },
+      { name: "129 BMP overflow", value: "界".repeat(129), valid: false },
       { name: "empty", value: "", valid: false },
       { name: "lone high surrogate", value: "\ud800", valid: false },
       { name: "lone low surrogate", value: "\udc00", valid: false },

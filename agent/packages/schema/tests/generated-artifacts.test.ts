@@ -27,6 +27,54 @@ import { GENERATED_SCHEMA_FILES, SCHEMA_REGISTRY } from "../src/schema-registry.
 
 const tempDirs: string[] = [];
 const TIANDAO_SOURCE_DIR = join(import.meta.dirname, "../../tiandao/src");
+const AGENT_UI_GENERATED_FILES = [
+  "agent-ui-response-payload-v1.json",
+  "client-request-v1.json",
+  "server-data-v1.json",
+] as const;
+
+type LocatedStringSchema = Readonly<{
+  path: string;
+  schema: Record<string, unknown>;
+}>;
+
+function findAgentUiIdStringSchemas(value: unknown, path = "$"): LocatedStringSchema[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) =>
+      findAgentUiIdStringSchemas(entry, `${path}[${index}]`),
+    );
+  }
+  if (typeof value !== "object" || value === null) return [];
+
+  const schema = value as Record<string, unknown>;
+  const here =
+    schema.type === "string" &&
+    typeof schema.pattern === "string" &&
+    schema.pattern.includes("\\uD800-\\uDFFF")
+      ? [{ path, schema }]
+      : [];
+
+  return [
+    ...here,
+    ...Object.entries(schema).flatMap(([key, child]) =>
+      findAgentUiIdStringSchemas(child, `${path}.${key}`),
+    ),
+  ];
+}
+
+function checkDraft202012StringKeywords(
+  schema: Record<string, unknown>,
+  value: string,
+): boolean {
+  if (schema.type !== "string") return false;
+  const codePoints = [...value].length;
+  if (typeof schema.minLength === "number" && codePoints < schema.minLength) return false;
+  if (typeof schema.maxLength === "number" && codePoints > schema.maxLength) return false;
+  if (typeof schema.pattern === "string" && !new RegExp(schema.pattern, "u").test(value)) {
+    return false;
+  }
+  return true;
+}
 
 // These runtime validators are not server -> Tiandao public Redis consumers.
 type ValidatorExemption = Readonly<{ reason: string; expiresOn: string }>;
@@ -234,6 +282,48 @@ describe("generated schema freshness gate", () => {
     expect(schema.required).toEqual(["request_id", "action", "params"]);
     expect(schema.required).not.toContain("target_player");
     expect(schema.properties).toHaveProperty("target_player");
+  });
+
+  it("keeps every generated Agent UI ID on one Unicode code-point acceptance set", () => {
+    const cases = [
+      { name: "empty", value: "", valid: false },
+      { name: "64 emoji", value: "😀".repeat(64), valid: true },
+      { name: "65 emoji", value: "😀".repeat(65), valid: true },
+      { name: "128 emoji", value: "😀".repeat(128), valid: true },
+      { name: "129 emoji", value: "😀".repeat(129), valid: false },
+      { name: "127 BMP + 1 astral", value: `${"a".repeat(127)}😀`, valid: true },
+      { name: "128 BMP + 1 astral", value: `${"a".repeat(128)}😀`, valid: false },
+      { name: "128 BMP", value: "界".repeat(128), valid: true },
+      { name: "129 BMP", value: "界".repeat(129), valid: false },
+      { name: "lone high surrogate", value: "\ud800", valid: false },
+      { name: "lone low surrogate", value: "\udc00", valid: false },
+      { name: "embedded lone surrogate", value: "a\ud800b", valid: false },
+    ];
+
+    for (const file of AGENT_UI_GENERATED_FILES) {
+      const artifact = JSON.parse(readFileSync(join(GENERATED_DIR, file), "utf8"));
+      const idSchemas = findAgentUiIdStringSchemas(artifact);
+      expect(idSchemas.length, `${file} 应包含至少一个 Agent UI ID schema`).toBeGreaterThan(0);
+
+      for (const { path, schema } of idSchemas) {
+        expect(
+          schema.maxLength,
+          `${file}:${path} 不得恢复与 TypeBox UTF-16 runtime 分叉的 maxLength`,
+        ).toBeUndefined();
+
+        const legacyEcma262 = new RegExp(schema.pattern as string);
+        for (const testCase of cases) {
+          expect(
+            checkDraft202012StringKeywords(schema, testCase.value),
+            `${file}:${path} 的标准 JSON Schema 字符串语义对 ${testCase.name} 应为 ${testCase.valid}`,
+          ).toBe(testCase.valid);
+          expect(
+            legacyEcma262.test(testCase.value),
+            `${file}:${path} 的无 flag ECMA-262 兼容语义对 ${testCase.name} 应为 ${testCase.valid}`,
+          ).toBe(testCase.valid);
+        }
+      }
+    }
   });
 
   it("reports missing and wrong runtime mappings", () => {

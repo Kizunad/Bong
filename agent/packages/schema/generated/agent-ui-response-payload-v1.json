@@ -8,9 +8,7 @@
   ],
   "properties": {
     "request_id": {
-      "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$",
+      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}$",
       "type": "string"
     },
     "action": {
@@ -50,9 +48,7 @@
       }
     },
     "target_player": {
-      "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])+$",
+      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}$",
       "type": "string"
     }
   }

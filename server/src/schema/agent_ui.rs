@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-const AGENT_UI_ID_MAX_UTF16_UNITS: usize = 128;
+const AGENT_UI_ID_MAX_CODE_POINTS: usize = 128;
 
 // ─── Action 字面联合 ─────────────────────────────────────────────────────────
 
@@ -81,16 +81,16 @@ impl AgentUiRequestCommandV1 {
 }
 
 fn validate_agent_ui_id(field: &str, value: &str) -> Result<(), String> {
-    // TypeBox `minLength` / `maxLength` delegates to JavaScript `String.length`,
-    // whose unit is UTF-16 code units rather than Unicode scalar values or UTF-8 bytes.
-    // Mirror that exact wire acceptance set on both serde ingress and egress.
-    let utf16_len = value.encode_utf16().count();
-    if utf16_len == 0 {
+    // TypeBox 与生成的标准 JSON Schema 都通过同一 ECMA-262 pattern 约束
+    // 1..=128 个 Unicode code points；Rust String 已保证序列 well-formed。
+    // serde ingress / egress 因此按 `chars()` 镜像同一 wire 接受集合。
+    let code_point_len = value.chars().count();
+    if code_point_len == 0 {
         return Err(format!("{field} 不能为空"));
     }
-    if utf16_len > AGENT_UI_ID_MAX_UTF16_UNITS {
+    if code_point_len > AGENT_UI_ID_MAX_CODE_POINTS {
         return Err(format!(
-            "{field} UTF-16 长度 {utf16_len} 超出上限 {AGENT_UI_ID_MAX_UTF16_UNITS}"
+            "{field} Unicode code point 长度 {code_point_len} 超出上限 {AGENT_UI_ID_MAX_CODE_POINTS}"
         ));
     }
     Ok(())
@@ -359,8 +359,8 @@ mod tests {
     #[test]
     fn agent_ui_request_command_accepts_id_fields_at_128_chars() {
         let cmd = AgentUiRequestCommandV1 {
-            request_id: "r".repeat(AGENT_UI_ID_MAX_UTF16_UNITS),
-            target_player: "p".repeat(AGENT_UI_ID_MAX_UTF16_UNITS),
+            request_id: "r".repeat(AGENT_UI_ID_MAX_CODE_POINTS),
+            target_player: "p".repeat(AGENT_UI_ID_MAX_CODE_POINTS),
             xml: "x".into(),
             timeout_ticks: 600,
             realm_gate: 0,
@@ -562,23 +562,25 @@ mod tests {
         );
     }
 
-    fn target_player_utf16_boundary_cases() -> Vec<(&'static str, String, usize, usize, bool)> {
+    fn agent_ui_id_code_point_boundary_cases() -> Vec<(&'static str, String, usize, usize, bool)> {
         vec![
             ("empty", String::new(), 0, 0, false),
             ("64 emoji", "\u{1F600}".repeat(64), 128, 64, true),
-            ("65 emoji", "\u{1F600}".repeat(65), 130, 65, false),
-            (
-                "126 BMP + 1 astral",
-                format!("{}\u{1F600}", "a".repeat(126)),
-                128,
-                127,
-                true,
-            ),
+            ("65 emoji", "\u{1F600}".repeat(65), 130, 65, true),
+            ("128 emoji", "\u{1F600}".repeat(128), 256, 128, true),
+            ("129 emoji", "\u{1F600}".repeat(129), 258, 129, false),
             (
                 "127 BMP + 1 astral",
                 format!("{}\u{1F600}", "a".repeat(127)),
                 129,
                 128,
+                true,
+            ),
+            (
+                "128 BMP + 1 astral",
+                format!("{}\u{1F600}", "a".repeat(128)),
+                130,
+                129,
                 false,
             ),
             ("128 BMP", "界".repeat(128), 128, 128, true),
@@ -587,14 +589,14 @@ mod tests {
     }
 
     #[test]
-    fn agent_ui_response_target_player_deserialize_enforces_utf16_wire_boundaries() {
+    fn agent_ui_response_target_player_deserialize_enforces_code_point_wire_boundaries() {
         for (name, target_player, expected_utf16, expected_scalars, should_pass) in
-            target_player_utf16_boundary_cases()
+            agent_ui_id_code_point_boundary_cases()
         {
             assert_eq!(
                 target_player.encode_utf16().count(),
                 expected_utf16,
-                "{name} 的 UTF-16 code unit 计数应与 TypeBox runtime 一致"
+                "{name} 的 UTF-16 code unit 计数用于锁住历史分叉边界"
             );
             assert_eq!(
                 target_player.chars().count(),
@@ -611,7 +613,7 @@ mod tests {
             assert_eq!(
                 result.is_ok(),
                 should_pass,
-                "{name}（{expected_utf16} UTF-16 units）入站接受结果应为 {should_pass}，实为：{result:?}"
+                "{name}（{expected_scalars} Unicode code points，{expected_utf16} UTF-16 units）入站接受结果应为 {should_pass}，实为：{result:?}"
             );
         }
 
@@ -655,14 +657,14 @@ mod tests {
         let lone_request_id = r#"{"request_id":"\ud800","action":"dismissed","params":{}}"#;
         assert!(
             serde_json::from_str::<AgentUiResponsePayloadV1>(lone_request_id).is_err(),
-            "request_id 与 target_player 必须共用同一 well-formed UTF-16 wire 契约"
+            "request_id 与 target_player 必须共用同一 well-formed Unicode wire 契约"
         );
     }
 
     #[test]
-    fn agent_ui_response_request_id_enforces_utf16_wire_boundaries() {
-        for (name, request_id, expected_utf16, _expected_scalars, should_pass) in
-            target_player_utf16_boundary_cases()
+    fn agent_ui_response_request_id_enforces_code_point_wire_boundaries() {
+        for (name, request_id, expected_utf16, expected_scalars, should_pass) in
+            agent_ui_id_code_point_boundary_cases()
         {
             let json = serde_json::json!({
                 "request_id": request_id,
@@ -673,7 +675,7 @@ mod tests {
             assert_eq!(
                 inbound.is_ok(),
                 should_pass,
-                "request_id {name}（{expected_utf16} UTF-16 units）入站接受结果应为 {should_pass}，实为：{inbound:?}"
+                "request_id {name}（{expected_scalars} Unicode code points，{expected_utf16} UTF-16 units）入站接受结果应为 {should_pass}，实为：{inbound:?}"
             );
 
             let outbound = serde_json::to_value(AgentUiResponsePayloadV1 {
@@ -685,20 +687,20 @@ mod tests {
             assert_eq!(
                 outbound.is_ok(),
                 should_pass,
-                "request_id {name}（{expected_utf16} UTF-16 units）出站接受结果应为 {should_pass}，实为：{outbound:?}"
+                "request_id {name}（{expected_scalars} Unicode code points，{expected_utf16} UTF-16 units）出站接受结果应为 {should_pass}，实为：{outbound:?}"
             );
         }
     }
 
     #[test]
-    fn agent_ui_response_target_player_serialize_enforces_utf16_wire_boundaries() {
+    fn agent_ui_response_target_player_serialize_enforces_code_point_wire_boundaries() {
         for (name, target_player, expected_utf16, expected_scalars, should_pass) in
-            target_player_utf16_boundary_cases()
+            agent_ui_id_code_point_boundary_cases()
         {
             assert_eq!(
                 target_player.encode_utf16().count(),
                 expected_utf16,
-                "{name} 的 UTF-16 code unit 计数应与 TypeBox runtime 一致"
+                "{name} 的 UTF-16 code unit 计数用于锁住历史分叉边界"
             );
             assert_eq!(
                 target_player.chars().count(),
@@ -717,7 +719,7 @@ mod tests {
             assert_eq!(
                 result.is_ok(),
                 should_pass,
-                "{name}（{expected_utf16} UTF-16 units）出站接受结果应为 {should_pass}，实为：{result:?}"
+                "{name}（{expected_scalars} Unicode code points，{expected_utf16} UTF-16 units）出站接受结果应为 {should_pass}，实为：{result:?}"
             );
         }
     }

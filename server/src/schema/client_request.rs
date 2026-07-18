@@ -1208,7 +1208,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_ui_response_request_id_matches_typebox_utf16_boundaries() {
+    fn agent_ui_response_request_id_matches_json_schema_code_point_boundaries() {
         let make_json = |request_id: &str| {
             serde_json::json!({
                 "type": "agent_ui_response",
@@ -1222,7 +1222,19 @@ mod tests {
         for (name, request_id, should_pass) in [
             ("empty", String::new(), false),
             ("64 emoji", "😀".repeat(64), true),
-            ("65 emoji", "😀".repeat(65), false),
+            ("65 emoji", "😀".repeat(65), true),
+            ("128 emoji", "😀".repeat(128), true),
+            ("129 emoji", "😀".repeat(129), false),
+            (
+                "127 BMP + 1 astral",
+                format!("{}😀", "a".repeat(127)),
+                true,
+            ),
+            (
+                "128 BMP + 1 astral",
+                format!("{}😀", "a".repeat(128)),
+                false,
+            ),
             ("128 BMP", "界".repeat(128), true),
             ("129 BMP", "界".repeat(129), false),
         ] {
@@ -1230,7 +1242,7 @@ mod tests {
             assert_eq!(
                 inbound.is_ok(),
                 should_pass,
-                "C2S request_id {name} 应按 UTF-16 1..=128 判定为 {should_pass}，实为：{inbound:?}"
+                "C2S request_id {name} 应按 Unicode code points 1..=128 判定为 {should_pass}，实为：{inbound:?}"
             );
 
             let outbound = serde_json::to_value(ClientRequestV1::AgentUiResponse {
@@ -1249,7 +1261,7 @@ mod tests {
         let lone_surrogate = r#"{"type":"agent_ui_response","v":1,"request_id":"\ud800","action":"dismissed","params":{}}"#;
         assert!(
             serde_json::from_str::<ClientRequestV1>(lone_surrogate).is_err(),
-            "C2S raw JSON lone surrogate 必须与 TypeBox well-formed UTF-16 pattern 一致拒绝"
+            "C2S raw JSON lone surrogate 必须与 TypeBox well-formed Unicode pattern 一致拒绝"
         );
 
         let valid_pair = r#"{"type":"agent_ui_response","v":1,"request_id":"\ud83d\ude00","action":"dismissed","params":{}}"#;
