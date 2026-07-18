@@ -14,7 +14,7 @@
 
 ## 为什么不并入现有骨架 / active plan（docs/CLAUDE.md §四红旗自查）
 
-- **不并入 active `plan-gameplay-journey-v1`**：它是 100h 总线 plan，§H 的 6 段 E2E 通关脚本是其最终交付物；本 plan 只吃前 30 分钟一段，作为其 P0 段验收的先遣侦察。**本 plan 不修改 journey plan 文件**（一 PR 一 plan）；核验矩阵结论写在本 plan，journey §L 的状态回标留给人工或 journey 自己的 PR。
+- **不并入 active `plan-gameplay-journey-v1`**：它是 100h 总线 plan，§H 的 6 段 E2E 通关脚本是其最终交付物；本 plan 只吃前 30 分钟一段，作为其 P0 段验收的先遣侦察。**本 plan 及其实施 PR 均不修改 journey plan 文件**——「一个 PR 只动一个 plan」约束的是 `/consume-plan`・bugfix 的**实施与归档 PR**（见根 CLAUDE.md「流转规则」），不约束 docs-only 的骨架批量立项 PR（先例：#1218 一 PR 三 skeleton）；本骨架随 2026-07-18 诊断批 PR 进库。核验矩阵结论写在本 plan §9，journey §L 的状态回标留给人工或 journey 自己的 PR。
 - **不并入 `plan-bot-e2e-coverage-v1`**：那是"逐模块场景覆盖"基建 plan（P1 修炼/P2 战斗/P3 库存…按模块切）；本 plan 是**跨模块整链体验验收 + 修复**，交付物含机制修复不只场景。P0 产出的 bot 场景挂进 `scripts/bot/scenarios/` 场景族，与 bot-e2e-coverage 共享框架（`scripts/bot/bot.py`），互为犄角不重复。
 
 ## 接入面（docs/CLAUDE.md §二 checklist）
@@ -34,15 +34,16 @@
 |---:|---|---|
 | 0:00 | 石棺旁醒来 | join 后扫描出生点半径内 coffin POI marker payload / 方块存在 |
 | 0:00 | 天道第一句 narration（新角色 vs 重生分支） | narration payload 到达 + 文案分支断言（§L 标注「需补分支」，预期 ❌ → P1） |
-| 5:00 | 移动 200 格灵气条变色 | 移动后 qi 感知 payload 数值变化 |
+| 5:00 | 移动 200 格灵气条变色 | 起终坐标位移 ≥200 格 + qi 感知 payload **跨越颜色档位阈值**（非任意数值抖动，阈值取 client 映射表 const）；client「qi 数值→颜色档位」映射另立 pin 测试（见下断言分层约定） |
 | 10:00 | 打坐真元缓涨 | **现状为纯被动**（`cultivation/tick.rs:7` 自注 P1 简化）——本 leg 只弱断言被动涨 qi 存在，主动打坐归 [[plan-dazuo-v1]]，此处标 SKIP+依赖 |
 | 15:00 | 第一条经脉 + 经脉图 | `SetMeridianTarget` intent → meridian 进度 payload → 打通事件 |
-| 20:00 | 噬元鼠偷真元（不掉血掉真元） | 走近灵泉触发 `dynamic_rat_swarm_spawner` → qi_current 下降且 HP 不降 |
-| 25:00 | 0.5+ 灵气小区域存在 | 读 spawn zone raster/POI 注入坐标，断言 ≥1 处 qi ≥ 0.5（`tutorial_lingquan` 是否达标） |
-| 27:00 | 3 分钟突破窗口（脆弱期可打断） | `BreakthroughRequest` → 窗口事件 payload；打断分支单独 leg |
+| 20:00 | 噬元鼠偷真元（不掉血掉真元） | 断言 `dynamic_rat_swarm_spawner` 生成事件/鼠实体 entity_spawn 出现 → qi_current 下降且**归因窗口内隔离其他 qi 消耗源**（不施放、不移动出 zone）→ HP 不变；负例 leg：触发范围外驻留同窗口不扣 qi |
+| 25:00 | 0.5+ 灵气小区域**运行时可达** | bot 从出生点**实际导航**至注入点（断言坐标落在正典北侧 200-500 格范围，worldview §十三），抵达后以运行时 qi 感知 payload 断言 ≥ 0.5；静态 raster/POI 配置读取只作辅助 pin，**不得单独判 PASS**；负例：未抵达/范围外时该 leg 不得通过 |
+| 27:00 | 3 分钟突破窗口（脆弱期可打断） | `BreakthroughRequest` → 窗口事件 payload + **窗口时长字段/tick 边界 pin**；状态转换全覆盖各自独立 leg：窗口内受击→失败且境界不变 / 窗口外打断→无效 / 未打断→成功晋境 |
 | 30:00 | 醒灵→引气世界变色 | 突破成功 + realm_vision 族 payload 到达 |
 
-- 交付：场景文件 + 本 plan §9 核验矩阵（每钩子 ✅/❌/⚠️ + 证据 payload 摘录）。
+- **断言分层约定**（2026-07-18 review 意见采纳）：协议级 bot 只能观察 server payload——每个"玩家可见"钩子拆两半：① server payload 验收（bot leg）② client 渲染契约 pin 测试（Java 侧，数值→视觉映射）。**两半都绿才在 §9 判 PASS，只有 ① 绿记 PARTIAL**，不得把 server 侧通过混称"钩子完整兑现"。
+- 交付：场景文件 + 本 plan §9 核验矩阵（判定语义见 §9）。
 - 测试：场景自身即测试；leg 级失败信息带修复线索（期望 X 因为 §L 第 N 行，实际 Z）。
 
 ## P1 — 断点修复 ⬜
@@ -66,3 +67,15 @@
 2. **时序压缩比**：bot 不真等 30 分钟——`/time advance` 快进 vs 直接触发各钩子前置条件；快进会不会跳过 `dynamic_rat_swarm_spawner` 的距离触发逻辑，需实地核对。
 3. **重生角色分支的测试路径**：bot 如何进入"重生"态（`/kill self` + `/revive self` dev 链 vs 真死亡重生链）——影响 0:00 分支断言的可信度。
 4. **矩阵回流 journey plan 的机制**：本 plan 归档时 journey §L 各行状态由谁回标（人工 / journey 自己的下个 PR），须留交接记录避免两份文档漂移。
+
+## §9 核验矩阵（P0 交付物落盘处，实测后逐行填写）
+
+> 模板字段固定如下，P0 执行后填写；任何 leg 的证据必须是**真实运行产物**（payload 摘录 / 坐标 / tick 值 / bot 日志路径），不接受"应该会过"式填写。
+
+| 钩子（§L 时刻） | 前置条件 | 执行动作 | 预期契约 | 实际结果（payload/坐标/tick 摘录） | 判定 | SKIP 依赖 / FAIL 归属 plan | 修复 commit | 复测结果 |
+|---|---|---|---|---|---|---|---|---|
+| （P0 实测后填写，每钩子一行；负例 leg 单独成行） | | | | | | | | |
+
+- **判定语义**：`PASS` = server bot leg + client 渲染契约 pin 双绿；`PARTIAL` = 仅 server leg 绿（client pin 缺/红，须列缺口）；`FAIL` = 断言失败（附失败输出与初步归因）；`SKIP` = 依赖 plan 未落地（必须写依赖 plan 名，如 [[plan-dazuo-v1]]）。
+- **FAIL 行闭环**：归属本 plan P1 的修复填「修复 commit + 复测结果」两列后才可改判；归属其他 plan 的在「归属 plan」列登记并保持 FAIL，不改判不掩盖。
+- **§9.1 真人 30 分钟实测记录（P2 落盘处）**：逐钩子体感描述 + 与 bot 矩阵的差异说明（bot 绿但体感差的项单独标注——那是断言强度缺口，回流 §8/P0 补 leg），结论供 journey §H「100h 实测」复用。
