@@ -2258,6 +2258,109 @@ class ProtoServerDataBridgeTest {
     }
 
     @Test
+    void bridgeNicheGuardianSameKindTransitionsFromFatigueToBrokenWithoutDuplicateState() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
+        ServerDataRouter router = ServerDataRouter.createDefault();
+
+        Envelope.ServerDataEnvelope fatigueEnvelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setChargesRemaining(3))
+                .build();
+        ProtoServerDataBridge.BridgeResult fatigueResult =
+                ProtoServerDataBridge.bridge(fatigueEnvelope.toByteArray());
+        assertTrue(fatigueResult.isSuccess(),
+                "fatigue proto bytes 必须成功进入 bridge：" + fatigueResult.errorMessage());
+        assertFalse(fatigueResult.legacyJson().contains("GUARDIAN_KIND_"),
+                "fatigue bridge 输出不得泄漏 proto enum 前缀");
+        ServerDataRouter.RouteResult fatigueRoute = router.route(
+                fatigueResult.legacyJson(),
+                fatigueResult.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(fatigueRoute.isHandled(),
+                "fatigue proto→bridge→router 必须被处理：" + fatigueRoute.logMessage());
+
+        assertEquals(Set.of("zhenfa_trap"), NicheGuardianStore.guardianStatuses().keySet(),
+                "fatigue 后 store 必须且只能保留一个规范化 guardian key");
+        NicheGuardianStore.GuardianStatus fatigueStatus =
+                NicheGuardianStore.guardianStatuses().get("zhenfa_trap");
+        assertNotNull(fatigueStatus, "fatigue 后必须存在 zhenfa_trap 状态");
+        assertEquals(3, fatigueStatus.chargesRemaining(),
+                "连续转换前 fatigue 状态必须保留正数 chargesRemaining");
+        assertFalse(fatigueStatus.broken(),
+                "连续转换前 fatigue 状态必须是 broken=false");
+        assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
+                "仅 fatigue 时不得提前生成 broken intrusion alert");
+        assertEquals(List.of("zhenfa_trap x3"), NicheGuardianPanel.buildLines(),
+                "fatigue HUD 必须只显示当前正数 charges，不得有重复或 broken 旧态");
+
+        List<UnifiedEvent> fatigueEvents = UnifiedEventStore.stream().snapshot();
+        assertEquals(1, fatigueEvents.size(), "fatigue 阶段必须且只能产生第一条统一事件");
+        UnifiedEvent fatigueEvent = fatigueEvents.get(0);
+        assertEquals(UnifiedEvent.Channel.SOCIAL, fatigueEvent.channel());
+        assertEquals(UnifiedEvent.Priority.P2_NORMAL, fatigueEvent.priority());
+        assertEquals("niche_guardian_fatigue:zhenfa_trap", fatigueEvent.sourceTag());
+        assertEquals("守家载体损耗：zhenfa_trap 剩余 3 次", fatigueEvent.text());
+
+        Envelope.ServerDataEnvelope brokenEnvelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setIntruderId("char:raider"))
+                .build();
+        ProtoServerDataBridge.BridgeResult brokenResult =
+                ProtoServerDataBridge.bridge(brokenEnvelope.toByteArray());
+        assertTrue(brokenResult.isSuccess(),
+                "broken proto bytes 必须成功进入 bridge：" + brokenResult.errorMessage());
+        assertFalse(brokenResult.legacyJson().contains("GUARDIAN_KIND_"),
+                "broken bridge 输出不得泄漏 proto enum 前缀");
+        ServerDataRouter.RouteResult brokenRoute = router.route(
+                brokenResult.legacyJson(),
+                brokenResult.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(brokenRoute.isHandled(),
+                "broken proto→bridge→router 必须被处理：" + brokenRoute.logMessage());
+
+        assertEquals(Set.of("zhenfa_trap"), NicheGuardianStore.guardianStatuses().keySet(),
+                "broken 必须原位替换同一规范化 key，不得保留旧 key 或产生重复状态");
+        NicheGuardianStore.GuardianStatus brokenStatus =
+                NicheGuardianStore.guardianStatuses().get("zhenfa_trap");
+        assertNotNull(brokenStatus, "broken 后同一 zhenfa_trap 状态必须仍存在");
+        assertEquals(0, brokenStatus.chargesRemaining(),
+                "broken 必须把同一 guardian 的旧正数 charges 归零");
+        assertTrue(brokenStatus.broken(),
+                "broken 必须把同一 guardian 从 broken=false 转成 true");
+
+        List<NicheGuardianStore.NicheIntrusionAlert> alerts = NicheGuardianStore.intrusionAlerts();
+        assertEquals(1, alerts.size(), "fatigue→broken 连续链最终必须且只能产生一条入侵告警");
+        assertEquals("char:raider", alerts.get(0).intruderId(),
+                "连续链的 broken 告警必须保留 intruder_id");
+        assertEquals(List.of(), alerts.get(0).itemsTaken(),
+                "guardian broken 告警不应伪造被取走物品");
+        assertEquals(0.0, alerts.get(0).taintDelta(),
+                "guardian broken 告警不应伪造污染增量");
+
+        List<String> finalHud = NicheGuardianPanel.buildLines();
+        assertEquals(List.of("zhenfa_trap x0 broken", "龛侵 char:raider 物品 0"), finalHud,
+                "broken 后 HUD 必须只显示最终状态与单条告警，不得残留 x3 或重复 guardian 行");
+        assertFalse(finalHud.stream().anyMatch(line -> line.contains("x3") || line.contains("GUARDIAN_KIND_")),
+                "最终 HUD 不得残留 fatigue charges 或 proto enum 前缀");
+
+        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
+        assertEquals(2, events.size(),
+                "连续 fatigue→broken 必须按发生顺序保留恰好两条统一事件");
+        assertEquals(UnifiedEvent.Channel.SOCIAL, events.get(0).channel());
+        assertEquals(UnifiedEvent.Priority.P2_NORMAL, events.get(0).priority());
+        assertEquals("niche_guardian_fatigue:zhenfa_trap", events.get(0).sourceTag());
+        assertEquals("守家载体损耗：zhenfa_trap 剩余 3 次", events.get(0).text());
+        assertEquals(UnifiedEvent.Channel.SOCIAL, events.get(1).channel());
+        assertEquals(UnifiedEvent.Priority.P1_IMPORTANT, events.get(1).priority());
+        assertEquals("niche_guardian_broken:zhenfa_trap", events.get(1).sourceTag());
+        assertEquals("守家载体破损：zhenfa_trap", events.get(1).text());
+        assertFalse(events.stream().anyMatch(event -> event.sourceTag().contains("GUARDIAN_KIND_")
+                || event.text().contains("GUARDIAN_KIND_")),
+                "连续链统一事件不得泄漏 proto enum 前缀");
+    }
+
+    @Test
     void bridgeNicheGuardianFatigueWithoutGuardianKindRoutesNoOpWithoutStatePollution() {
         NicheGuardianStore.resetForTests();
         UnifiedEventStore.resetForTests();
