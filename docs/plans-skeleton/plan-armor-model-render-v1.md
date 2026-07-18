@@ -1,6 +1,6 @@
 # plan-armor-model-render-v1 — 护甲上身专属模型渲染落地
 
-> 主题：把 `OBJ_RENDER_READY=false` 的护甲占位链路变成真实穿甲外观。现状三件事实：① `plan-armor-visual-v1`（finished）用 vanilla 皮甲染色兜底交付了 6 材质凡物甲，遗留段明写"真实 BlockBench 模型留给后续 plan"；② `plan-depth-loop-v1` P1 建好了 client 三件接线（`ArmorFeatureRenderer` + `ArmorModelRegistry` + `MixinPlayerEntityArmor`），但 `render()` 在 `OBJ_RENDER_READY=false` 处 early-return（`client/src/main/java/com/bong/client/armor/ArmorFeatureRenderer.java:73`），实际绘制从未实装；③ 注册表指向的 8 个 OBJ 资产（铁/骨 × 头胸腿靴）**全是 8 顶点 box 占位**（`assets/bong/models/armor/bone_helmet/bone_helmet.obj` 文件头自注 "plan-depth-loop-v1 P4 placeholder"）。玩家穿铁甲/骨甲至今只能看到染色皮甲，两套材质在身上无法区分轮廓。
+> 主题：把 `OBJ_RENDER_READY=false` 的护甲占位链路变成真实穿甲外观。现状三件事实：① `plan-armor-visual-v1`（finished）用 vanilla 皮甲染色兜底交付了 6 材质凡物甲，遗留段明写"真实 BlockBench 模型留给后续 plan"；② `plan-depth-loop-v1` P1 建好了 client 三件接线（`ArmorFeatureRenderer` + `ArmorModelRegistry` + `MixinPlayerEntityArmor`），但 `render()` 在 `OBJ_RENDER_READY=false` 处 early-return（`client/src/main/java/com/bong/client/armor/ArmorFeatureRenderer.java:73`），实际绘制从未实装；③ 注册表指向的 8 个 OBJ 资产（铁/骨 × 头胸腿靴）**全是占位 box**（盔/胸甲为单 box 8 顶点，腿/靴为左右双 box 16 顶点；`assets/bong/models/armor/bone_helmet/bone_helmet.obj` 文件头自注 "plan-depth-loop-v1 P4 placeholder"）。玩家穿铁甲/骨甲至今只能看到染色皮甲，两套材质在身上无法区分轮廓。
 >
 > 与 `plans-skeleton/plan-module-wiring-gaps-v2.md` 的关系：本 plan 是其 **T13「client/armor › ArmorFeatureRenderer」切片的可实施承接**——v2 是 report-only 决策菜单，其 §决策指引明确"推进某主题 = 开独立 plan 实施"，故不并入 v2 而单独立骨架。同时收口模型链路审计 B 组（护甲隐形）遗留。
 
@@ -18,7 +18,7 @@
 
 - **进料**：`InventoryStateStore.snapshot().equipped()`（装备槽状态，已接）；`ArmorModelRegistry`（template_id → 模型规格，已接）；`plan-armor-visual-v1` 的 24 件凡物甲物品与穿戴同步链路（已 finished）。
 - **出料**：玩家 TPV/F5 可见的专属护甲模型渲染；`MixinPlayerEntityArmor` 对已注册甲抑制皮甲染色兜底（未注册材质继续走染色，兜底路径保留不删）。
-- **共享类型 / event**：零新增 server event、零 schema 改动——装备状态同步链路已存在，本 plan 纯 client 渲染层。复用 `WornPackModel` 的 Bedrock geo → vanilla `ModelPart` 坐标转换公式（`vanilla_y = 24 - bedrock_y`）与 `WornPackFeatureRenderer` 的骨骼局部系挂载模式（`getContextModel().body.rotate(matrices)`）。**运行时唯一事实来源 = 版本控制的 cube 表**（见 §0 单一真相源），bbmodel/geo 仅为离线作者资产，不进运行时。
+- **共享类型 / event**：零新增 server event、零 schema 改动——装备状态同步链路已存在，本 plan 纯 client 渲染层。复用 `WornPackModel` 的 Bedrock geo → vanilla `ModelPart` 烘焙思路与 `WornPackFeatureRenderer` 的骨骼局部系挂载模式（`getContextModel().body.rotate(matrices)`）；**坐标转换基准按槽独立标定**——`vanilla_y = 24 - bedrock_y`（`BEDROCK_BODY_TOP=24`）是 body 骨骼专用，仅 CHEST 可沿用，HEAD/LEGS/FEET 各按其骨骼局部系原点另定基准（见 P0）。**运行时唯一事实来源 = 版本控制的 cube 表**（见 §0 单一真相源），bbmodel/geo 仅为离线作者资产，不进运行时。
 - **跨仓库契约**：无（server/agent 不动）。
 - **worldview 锚点**：`worldview.md §四`（近身肉搏——护甲是物理防护，材质外观差异是战斗信息）、`§十`（资源匮乏——铁甲/骨甲的粗粝质感对应末法基调，命名用 残/碎/锈/粗 系意象）。
 - **qi_physics 锚点**：无真元流动，纯视觉。
@@ -35,11 +35,11 @@
 
 ## P0 — 渲染路线收口 + ModelPart 烘焙底盘 ⬜
 
-- `ArmorPartModel`（新，参 `WornPackModel` 结构）：`modelKey → cube 表` 静态映射 + `bedrockToVanillaCuboidY` 同款坐标转换 + `buildModelPart(modelKey)` 烘焙器，纯数据构造 headless 可测；cube 表即运行时唯一事实来源（§0）。
+- `ArmorPartModel`（新，参 `WornPackModel` 结构）：`modelKey → cube 表` 静态映射 + **按槽独立的坐标转换基准**（CHEST 沿用 `BEDROCK_BODY_TOP=24`；HEAD/LEGS/FEET 各定基准常数——WornPack 的 `24 - y` 公式是 body 骨骼专用，四槽共用必错位）+ `buildModelPart(modelKey)` 烘焙器，纯数据构造 headless 可测；cube 表即运行时唯一事实来源（§0）。
 - 四槽挂载骨骼映射：HEAD → `head.rotate(matrices)`（随头部转动）、CHEST → `body`、LEGS → `leftLeg`/`rightLeg` 双件、FEET → 腿骨末端偏移——腿/靴需要左右对称双 part（`WornPackFeatureRenderer` 只有 body 单挂载先例，这是本 plan 的新增量）。
 - `ArmorModelRegistry` 重锚：`ArmorModelSpec` 收敛为 `templateId → (slot, modelKey, texturePath)`（删 `modelPath`，不新增任何模型来源字段）；删占位 OBJ 文件。
-- `ArmorFeatureRenderer.render()` 实装真实绘制循环（`RenderLayer.getEntityCutoutNoCull` + 骨骼局部系），本阶段先用占位 cube 表跑通管线，开关仍为 false。
-- 测试：坐标转换 pin、cube 表数值 pin（每 modelKey 一条，防手工转写漂移）、`modelKey` 全覆盖断言（Registry 中每个 spec 的 modelKey 都能在 `ArmorPartModel` 命中，杜绝注册表→模型断链）、四槽骨骼映射、`collectRenderable` 式纯逻辑过滤谓词（护甲槽 × 注册表命中 × 破损排除）。
+- `ArmorFeatureRenderer.render()` 实装真实绘制循环（`RenderLayer.getEntityCutoutNoCull` + 骨骼局部系），本阶段先用占位 cube 表跑通管线，正式开关仍为 false；另加 **dev-only 强制开关**（系统属性 `bong.armor_model_render`）绕过正式开关，供 P1/P2 资产落地时真机增量核验，不必等到 P3 才第一次端到端跑通。
+- 测试（`ArmorPartModelTest` / `ArmorFeatureRendererTest`）：每槽一条坐标转换基准 pin、cube 表数值 pin（每 modelKey 一条，防手工转写漂移）、`modelKey` 全覆盖断言（Registry 中每个 spec 的 modelKey 都能在 `ArmorPartModel` 命中，杜绝注册表→模型断链）、四槽骨骼映射、`collectRenderable` 式纯逻辑过滤谓词（护甲槽 × 注册表命中 × 破损排除——判据 `InventoryItem.durability()==0`；server 侧 `ArmorDurabilityZero` 规则已拒装 0 耐久甲，本分支覆盖「穿戴中破碎」路径）。
 
 ## P1 — 铁甲 4 件真模型资产 ⬜
 
@@ -54,7 +54,8 @@
 
 ## P3 — 翻开渲染开关 + 真机校准 ⬜
 
-- `OBJ_RENDER_READY` 更名 `MODEL_RENDER_READY` 并翻 `true`；`MixinPlayerEntityArmor` 联动逻辑复核（已注册甲抑制染色兜底、未注册材质染色路径回归测试锁住）。
+- `OBJ_RENDER_READY` 更名 `MODEL_RENDER_READY` 并翻 `true`；`MixinPlayerEntityArmor` 联动逻辑复核（该 mixin 引用此常量做抑制判定，更名必须同步；已注册甲抑制染色兜底、未注册材质染色路径回归测试锁住）。
+- 清理 SML 残留：删 `ArmorRenderBootstrap` 中 `SpecialModelLoaderEvents.LOAD_SCOPE`（`models/armor/`）注册与相关 import——OBJ 资产删除后这段是死码。
 - F5 真机目测校准 pivot/scale/offset（`WornPackFeatureRenderer.OFFSET_*` 同款微调常量），WSLg `runClient` 截图记录；PlayerAnimator 姿态兼容验证（弯腰/游泳/潜行时甲随骨骼局部系摆动，torso/legs 不共祖的鞠躬补偿场景重点看胸甲-腿甲接缝）。
 - 一/三人称双入口核对：FPV 手臂不渲染护甲属 vanilla 正确行为，明确记录不算缺陷。
 
