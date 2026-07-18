@@ -1947,35 +1947,35 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
             particle_id: "bong:woliu_vacuum_palm_spiral",
             sound_recipe_id: "woliu_vacuum_palm",
             hud_hint: "vacuum_palm",
-            icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_palm.png",
         },
         WoliuSkillId::VortexShield => WoliuSkillVisual {
             animation_id: "bong:woliu_vortex_shield",
             particle_id: "bong:woliu_vortex_shield_sphere",
             sound_recipe_id: "woliu_vortex_shield",
             hud_hint: "vortex_shield",
-            icon_texture: "bong:textures/gui/skill/woliu_hold.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vortex_shield.png",
         },
         WoliuSkillId::VacuumLock => WoliuSkillVisual {
             animation_id: "bong:woliu_vacuum_lock",
             particle_id: "bong:woliu_vacuum_lock_cage",
             sound_recipe_id: "woliu_vacuum_lock",
             hud_hint: "vacuum_lock",
-            icon_texture: "bong:textures/gui/skill/woliu_pull.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_lock.png",
         },
         WoliuSkillId::VortexResonance => WoliuSkillVisual {
             animation_id: "bong:woliu_vortex_resonance",
             particle_id: "bong:woliu_vortex_resonance_field",
             sound_recipe_id: "woliu_vortex_resonance",
             hud_hint: "vortex_resonance",
-            icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vortex_resonance.png",
         },
         WoliuSkillId::TurbulenceBurst => WoliuSkillVisual {
             animation_id: "bong:woliu_turbulence_burst",
             particle_id: "bong:woliu_turbulence_burst_wave",
             sound_recipe_id: "woliu_turbulence_burst",
             hud_hint: "turbulence_burst",
-            icon_texture: "bong:textures/gui/skill/woliu_burst.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_turbulence_burst.png",
         },
         // plan-woliu-path-v1：虚蚀路径 5 招式视觉
         WoliuSkillId::AmbientVortex => WoliuSkillVisual {
@@ -2060,6 +2060,30 @@ mod tests {
         VoidErosion, BASE_SKILL_EROSION, ECHO_EROSION, SWALLOWING_RELEASE_EROSION,
         VOID_CORE_DURATION_TICKS, VOID_CORE_EROSION_PER_SEC, VOID_VORTEX_EROSION,
     };
+
+    /// plan-skill-av-relink-v1 P2 —— runtime visual 图标存在性 pin：15 变体
+    /// `visual_for` 的 `icon_texture` 逐条对应 client main resources 磁盘真实
+    /// 资产，防下发悬空引用（进阶五招 2026-07-18 已从借用基础招图标重链到
+    /// 各自专属 `skill_scroll_woliu_*.png`，本 pin 同时锁住重链不回退）。
+    #[test]
+    fn every_woliu_v2_visual_icon_texture_points_at_real_client_asset() {
+        for skill in WoliuSkillId::ALL {
+            let icon = visual_for(skill).icon_texture;
+            let (namespace, path) = icon.split_once(':').unwrap_or_else(|| {
+                panic!("woliu_v2 visual icon `{icon}` 缺少 `namespace:path` 冒号分隔")
+            });
+            let disk = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../client/src/main/resources/assets")
+                .join(namespace)
+                .join(path);
+            assert!(
+                disk.is_file(),
+                "woliu_v2 {skill:?} 的 runtime 图标 `{icon}` 在磁盘无对应资产 {}——\
+                 server payload 会下发悬空引用，client HudTextureProbe 探测必失败",
+                disk.display()
+            );
+        }
+    }
 
     #[test]
     fn proficiency_scales_vortex_combat_knobs() {
