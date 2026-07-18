@@ -54,16 +54,25 @@
 
 **交付物**（每条 = server 侧一个 emit 接线 + client 侧无需改动）：
 
-| 孤儿动画 | 事件源（实施前逐条核实存在性，见 §8 #2/#3） | 接线点 |
+| 孤儿动画 | 事件源（2026-07-17 实施逐条核实后的定案） | 接线点（实施落地） |
 |---|---|---|
-| `stance_{woliu,dugu,dugu_poison,baomai,zhenfa,zhenmai,tuike}` ×7 | 流派架势切换（`stance_switch` audio recipe 已存在，找到其触发事件同点发 PlayAnim） | `server/src/network/vfx_animation_trigger.rs` |
-| `rune_draw` | zhenfa 施放（已有粒子 `ZhenfaActionVfxPlayer` + 音效，独缺动画） | zhenfa cast 事件的 emit system |
-| `forge_hammer` | 锻造敲击（`ForgeHammerStrikePlayer` 粒子已接的同一事件） | forge 敲击 emit |
-| `alchemy_stir` | 炼丹熬煮（`AlchemyBrewVaporPlayer` 同源事件） | alchemy 熬煮 emit |
-| `dodge_back` / `dodge_roll` | 受击位移/闪避事件（与 `movement.dash` 的 `dash_forward` 区分场景） | movement/combat emit |
-| `fist_punch_left` | 空手连击左右交替（现只用 `fist_punch_right`） | 攻击动画选择逻辑 |
+| `stance_{woliu,zhenmai}` ×2 | ✅ 已接：`TechniqueLearnedEvent`（激活功法时刻——`learn_technique_if_allowed` 习得即写 `active:true`）。核实结论：全仓无「流派架势切换」gameplay 事件，`stance_switch` audio recipe 唯一发射点是 `SkillXpGain` 经验反馈（`audio_trigger.rs`）、与架势无关，按 §8 #2 决议改接激活功法时刻。**liveness 澄清（2026-07-18 对抗审查修正）**：该事件的生产发射路仅两条——卷轴习得（`client_request_handler`）与首击领悟（`first_hit_dash`，仅授 `movement.dash` 无架势映射）；`technique_mentor::mentor_teaches_technique` 是**无生产调用方的休眠 helper**（仅测试调用，`social` 模块只写 technique_hint 关系元数据不传功），「导师传授」不是活路。现有内容卷轴仅授 `woliu.*`×11 + `zhenmai.parry`，故生产可达 = woliu / zhenmai 两族 | `vfx_animation_trigger::emit_technique_learned_stance_triggers`（technique_id 前缀映射，无映射前缀不发） |
+| `stance_{dugu,dugu_poison,baomai,tuike}` ×4 | ⛔ report-only（**2026-07-18 review 返工降级**：首版曾作「接口先锁定的潜伏接线」计入 P1 交付，4 位 reviewer 一致判定违反 P1「有真实事件源的批次」验收边界——直接构造 `TechniqueLearnedEvent` 的 emit pin 只能证明映射函数可执行，不能证明生产接线可达）：现有内容无任何生产路径能产生这 4 族的 `TechniqueLearnedEvent`（卷轴只授 `woliu.*`/`zhenmai.parry`，mentor 无生产调用方），按「不硬造事件」断链原则降级，映射分支/`P1_WIRED_ANIM_IDS`/共享清单均不预置。等对应流派习得内容（卷轴/导师传功生产化）落地时连映射 + 清单 + 测试一起接入 | —— |
+| `stance_zhenfa` | ⛔ report-only：事件源缺失——`TECHNIQUE_DEFINITIONS` 无 `zhenfa.*` 条目，`TechniqueLearnedEvent` 驱动不到；流派入门实为 `ArrayMastery.add_cast`（落阵时刻），但该时刻已归 `rune_draw`，同点双动画打架。等 zhenfa 功法条目或独立架势事件落地 | —— |
+| `rune_draw` | ✅ 已接：zhenfa 落阵成功（`handle_zhenfa_place_requests` registry.insert Ok 分支，覆盖全部 ZhenfaKind——deploy 事件仅覆盖 4 kind + 组网成型，普通陷阱无事件，走 adapter 会漏，故内联） | `server/src/zhenfa/mod.rs` 落阵成功分支内联 emit |
+| `forge_hammer` | ✅ 已接：`TemperingHit`（J/K/L 淬炼按键，与 `handle_tempering_hits` 的 FORGE_HAMMER_STRIKE 粒子同源；镜像 `ForgeStep::Tempering` 步骤门） | `vfx_animation_trigger::emit_forge_tempering_animation_triggers` |
+| `alchemy_stir` | ✅ 已接：炼丹干预请求（`handle_alchemy_intervention`，与 ALCHEMY_BREW_VAPOR/OVERHEAT 粒子同点；干预无 bevy 事件可订阅，故内联） | `server/src/network/client_request_handler.rs` 干预生效分支内联 emit |
+| `enlightenment_pose` | ✅ 已接（超出原 report-only 预期——逐个证实发现真实事件源）：`InsightChosen` 经 `apply_insight_chosen` 三重校验（pending 对齐/choice 合法/arbiter 配额）通过后 `apply_choice` 生效时刻；校验前 emit 会在 stale/无效/被拒抉择上误播，故置于校验通过分支 | `server/src/cultivation/insight_flow.rs` `apply_insight_chosen` 内联 emit |
+| `dodge_back` / `dodge_roll` | ⛔ report-only：事件源缺失——`MovementAction` 仅 `None\|Dashing` 两变体、请求映射仅 Dash、dash 方向恒取面朝向（无后撤变体）；`combat/` 无任何 dodge/evade 机制；dash iframe 语义也属 `dash_forward` 已接线的同一动作。等后撤/翻滚 gameplay 落地 | —— |
+| `fist_punch_left` | ✅ 已接：空手连击左右交替（`AttackIntent` 空手恒 Blunt→fist 分支；right 起手、right→left 交替、超时复位 right、持械不参与交替恒 right、按 Entity 键玩家隔离） | `vfx_animation_trigger::emit_attack_animation_triggers` 交替态改造 |
 
-**处置原则**：找不到真实事件源的孤儿（`sword_ride`/`levitate`/`bow_salute`/`stealth_crouch`/`enlightenment_pose`/`cultivate_stand`）**不硬造事件**——为接而接等于制造反向孤岛。逐个在 plan 内记录「事件源缺失，等对应 gameplay 落地」的 report-only 结论。
+**处置原则**：找不到真实事件源的孤儿**不硬造事件**——为接而接等于制造反向孤岛。2026-07-17 逐个核实结论（`enlightenment_pose` 原列此清单，证实有真实事件源 `InsightChosen`，已升级接线、见上表）：
+
+- `sword_ride`：⛔ report-only——server 无御剑飞行系统（`levitat|sword_flight|riding` 全仓零命中），movement 仅 dash 一种主动位移。事件源缺失，等御剑 gameplay 落地。
+- `levitate`：⛔ report-only——无悬浮状态机（同上检索零命中，cultivation/movement 均无悬浮/滞空状态）。事件源缺失，等对应 gameplay 落地。
+- `bow_salute`：⛔ report-only——`social/` 无行礼/greet 交互事件（`salute|bow|greet` 于 social/ 零命中）。事件源缺失，等社交礼仪交互落地。
+- `stealth_crouch`：⛔ report-only——server 无玩家潜行状态（无 sneak C2S、无潜行状态机组件）；vanilla 潜行姿态 client 本地已渲染，server 强推同名动画反与本地姿态叠加冲突。事件源缺失，等潜行 gameplay 落地。
+- `cultivate_stand`：⛔ report-only——无站桩修炼状态机（修炼是被动 tick 累积，`is_recently_practicing` 是回看式记账非状态进入事件；`CultivationSessionPracticeEvent` 按分钟记账且语义为打坐，接它会每分钟重播且与 `meditate_sit` 语义冲突）。事件源缺失，等站桩/打坐区分的修炼状态机落地。
 
 ## P2 — 真缺图标补齐
 
@@ -95,7 +104,7 @@
 2. **`stance_*` 触发源核实**：「流派架势切换」的 server 事件是否真实存在（`stance_switch` audio recipe 的发射点在哪）；若只有音效 recipe 而无 gameplay 事件，则改接「`/technique active` 激活功法」时刻，或降级 report-only。
 3. **`dodge_back`/`dodge_roll` 场景边界**：与 `movement.dash` 现有 `dash_forward` 的分工（后撤 vs 翻滚 vs 冲刺），需读 movement/combat 代码定边界，防止一个事件双动画打架。
 
-> §8 原表保留作决策背景；#1 已在 §8.1 收口、实施以 §8.1 为准，#2/#3 归 PR-2（P1 实施）设计收口时决议。
+> §8 原表保留作决策背景；#1 已在 §8.1 收口（PR-1），#2/#3 已在 §8.2 收口（PR-2 实施 + r2 review 返工定案）。实施以 §8.1 / §8.2 为准。
 
 ### §8.1 决议（2026-07-17）
 
@@ -115,6 +124,27 @@
 #### #3 `dodge_back`/`dodge_roll` 场景边界 —— PR-2（P1 实施）设计收口时决议，本 PR 不预判
 
 **决议**：同 #2，显式记录为 PR-2 前置收口项。与 `movement.dash` 现有 `dash_forward` 的分工（后撤 vs 翻滚 vs 冲刺）须在 P1 实施前读 movement/combat 代码定边界后定案，PR-1 不预判。
+
+### §8.2 决议（PR-2 实施收口，2026-07-18）
+
+> §8.1 #2/#3 在 PR-1 时点显式挂起至 PR-2；以下为 PR-2 实施核实 + r2 review 返工后的正式收口。
+
+#### #2 `stance_*` 触发源核实 —— 已收口：接 `TechniqueLearnedEvent`，仅 woliu / zhenmai 两族生产可达
+
+**决议**：
+1. 「流派架势切换」gameplay 事件全仓不存在——`stance_switch` audio recipe 的唯一发射点是 `SkillXpGain` 经验反馈（`server/src/network/audio_trigger.rs`），与架势无关；按 §8 原文备选路线改接「激活功法」时刻 = `TechniqueLearnedEvent`（`technique_scroll::learn_technique_if_allowed` 习得即写 `active:true`；dev `/technique active` 直改组件不发事件，dev-only 旁路不接线）。
+2. 生产可达性边界（r2 review 返工定案）：该事件生产发射路仅「卷轴习得」+「首击领悟（仅授 `movement.dash`、无架势映射）」两条，`technique_mentor::mentor_teaches_technique` 为无生产调用方的休眠 helper；现有卷轴内容只授 `woliu.*`/`zhenmai.parry` → 映射仅收录 woliu / zhenmai 两族。dugu / dugu_poison / baomai / tuike 无生产可达习得路径，降级 report-only，映射分支 / `P1_WIRED_ANIM_IDS` / 共享清单均不预置。
+3. 拒绝「接口先锁定的潜伏接线」路线：直接构造 `TechniqueLearnedEvent` 的 emit pin 只能证明映射函数可执行，不能证明生产接线可达，违反 P1「有真实事件源的批次」验收边界（首轮 review 4 位 reviewer 一致判定，见 P1 表 stance ×4 行降级记录）。
+
+**落点**：`server/src/network/vfx_animation_trigger.rs` `emit_technique_learned_stance_triggers` + `stance_anim_for_technique`（仅 woliu/zhenmai 前缀映射）+ `P1_WIRED_ANIM_IDS`（7 条）；`client/src/test/resources/bong/anim_wiring_manifest.json`（7 条共享清单）；plan §P1 表 `stance_{woliu,zhenmai}` ×2 / `stance_{dugu,dugu_poison,baomai,tuike}` ×4 两行。
+
+#### #3 `dodge_back`/`dodge_roll` 场景边界 —— 已收口：report-only，无独立闪避事件源
+
+**决议**：
+1. 实施核实：`MovementAction`（`server/src/movement/mod.rs:56`）仅 `None|Dashing` 两变体、请求映射仅 Dash、dash 方向恒取面朝向（无后撤变体）；`combat/` 无任何 dodge/evade 机制；dash iframe 语义属已接线动画 `dash_forward` 的同一动作——两条孤儿动画均无独立事件源，接 dash 事件必与 `dash_forward` 同点双动画打架。
+2. 按「不硬造事件」断链原则维持 report-only，等后撤/翻滚 gameplay 落地时再定与 `dash_forward` 的分工边界（后撤 vs 翻滚 vs 冲刺三分）。
+
+**落点**：plan §P1 表 `dodge_back`/`dodge_roll` 行（证据记录）；`server/src/movement/mod.rs:56`（`MovementAction` 变体现状依据）。
 
 ## 测试声明
 
