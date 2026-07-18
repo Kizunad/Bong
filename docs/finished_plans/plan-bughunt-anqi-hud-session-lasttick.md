@@ -6,6 +6,9 @@
 > 没有清理 per-dimension `lastTick`，导致同一客户端进程连接新 server / 新世界后，
 > 低 tick 的 `anqi_hud` payload 被当成旧包静默丢弃。
 
+阶段总览：P0 修复前失败契约 ✅ 2026-07-15；P1 生产断线 reset ✅ 2026-07-15；
+P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归档 ✅ 2026-07-15。
+
 ## Bug 摘要
 
 `AnqiHudStateStore` 用 `DimSlot.lastTick` 对 echo / charge / abrasion / multishot 四个暗器 HUD 维度做乱序保护。`snapshot()` 只在渲染时把过期维度贡献成空值，不会把 slot 写回 empty；断线清理路径也没有调用 `AnqiHudStateStore.clear()`。因此旧 session 的高 `lastTick` 会跨 session 留在 static store 里，新 server 从较低 `CombatClock.tick` 开始发送暗器 HUD 时，`updateSlotCas()` 直接 return，HUD 反馈不再更新，直到新 tick 追上旧 tick。
@@ -32,7 +35,8 @@
   - `clear()` 能清所有维度，但生产断线路径未调用（约 L151-L157）。
   - `updateSlotCas()` 在 `newTick < current.lastTick()` 时静默 return（约 L187-L194）。
 - `client/src/main/java/com/bong/client/combat/handler/AnqiHudServerDataHandler.java`
-  - `handle()` 读取 payload `tick`，缺省为 0，然后传入 `AnqiHudStateStore.update*`（约 L45-L68）。
+  - `handle()` 要求 payload 精确包含 `tick`，并在字段缺失、类型错误或越界时拒绝该 payload；
+    合法 tick 才会传入 `AnqiHudStateStore.update*`（约 L49-L86）。
 - `client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java`
   - 每帧用 `AnqiHudStateStore.snapshot()` 构建暗器 HUD（约 L312-L317）。
 - `client/src/main/java/com/bong/client/combat/CombatHudBootstrap.java`
@@ -108,12 +112,12 @@
 
 ## 实施阶段
 
-- [x] P0：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约；`cbcea83c` 初始运行出现
+- P0 ✅ 2026-07-15：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约；`cbcea83c` 初始运行出现
   3 项失败，其中 1 项是错误比较历史 `expiresAt` 的测试 oracle；`e1759121` 校正后、
   `9a3c839f` 生产修复前实际保留 2 项目标红灯。
-- [x] P1：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
-- [x] P2：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
-- [x] P3：同步主线、主 agent 对抗自审、填写 Finish Evidence 并归档。
+- P1 ✅ 2026-07-15：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
+- P2 ✅ 2026-07-15：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
+- P3 ✅ 2026-07-15：同步主线、主 agent 对抗自审、填写 Finish Evidence 并归档。
 
 ## 验收矩阵
 
