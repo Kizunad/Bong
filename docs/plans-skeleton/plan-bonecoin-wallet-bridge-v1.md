@@ -15,7 +15,7 @@
 
 ## 现状证据（2026-07-18 Explore 实证）
 
-- **双轨并行**：`economy/mod.rs:80` 世界骨币供给统计里 `.saturating_add(inventory.bone_coins)`——两套账被显式合并计数，但**玩法层零转换通道**。
+- **双轨并行**：`economy/mod.rs:80` 世界骨币供给统计里 `.saturating_add(inventory.bone_coins)`——legacy 标量与物理币派生值在同一 supply struct 并列入账，但**玩法层零转换通道**。
 - **支付全走标量**：NPC 交易 `client_request_handler.rs:1557`（`inventory.bone_coins < price` 拒付）/ `:1594`（扣减）；报价字段 `offer.price_bone_coins: u32` 按枚计价（`:1467`）；灵田补灵 `lingtian/systems.rs:546,1301-1302` 按枚扣 1。
 - **标量进账死水**：初始 loadout 7 枚（`assets/inventory/loadouts/default.toml:11`）、遗骸拾取转移（`inventory/mod.rs:1148`，死亡时 `:1000-1062` 灌入遗骸）、dev 命令——**loot/掉落/制作全部产出物理币 item**（`loot_pools.json`、`fauna/drop.rs`、`fauna/bone_coin.rs` 制作），进不了钱包。
 - **物理币现有唯一 sink**：手搓当材料（`craft/mod.rs` axe_bone 吃 3 枚 `bone_coin_5`）。

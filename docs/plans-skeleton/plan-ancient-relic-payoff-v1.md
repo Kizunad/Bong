@@ -15,7 +15,7 @@
 
 ## 现状证据（2026-07-18 Explore 实证）
 
-- `inventory/ancient_relics.rs:1-16` 头注释：strength tier → charges（1/3/5 次），「归零时由消费系统从 inventory 移除」「每次使用由对应系统 `-= 1`」——**消费系统不存在**：全库 grep `charges -= 1` / `charges.saturating_sub` 生产代码零命中（唯一引用 `inventory/mod.rs:2235` 是相等比较）。
+- `inventory/ancient_relics.rs` 双承诺：头注释（:14）「归零时由消费系统从 inventory 移除」+ `to_item_instance` charges 字段 doc（:69）「每次使用由对应系统 `-= 1`」，strength tier → charges（1/3/5 次）——**消费系统不存在**：全库 grep `charges -= 1` / `charges.saturating_sub` 生产代码零命中（唯一引用 `inventory/mod.rs:2235` 是相等比较）。
 - `ancient_relics.rs:71-100` `to_item_instance` 直接手搓 `ItemInstance` 绕过 `assets/items/*.toml` 注册管线——遗物剑无 `weapon_spec`（combat 不识别、装备无收益）、遗物残卷无 `technique_scroll_spec`/配方 spec（学习链不识别）。
 - 例外即范本：SectRuins 家族的 `yixing_scroll`（`inventory/tsy_loot_spawn.rs:218`）走真注册、真可学——证明接线模式现成。
 - `AncientRelicKind::SpiritTreasure` 已由 `plan-spirit-treasure-v1` 接了激活链（T 键 `TreasureActivate`）——**本 plan 范围排除**，只处理 Weapon/Scroll/BeastCore/Pendant 四类。
