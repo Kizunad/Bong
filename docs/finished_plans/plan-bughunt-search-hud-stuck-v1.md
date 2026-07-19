@@ -172,8 +172,8 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 - 修复前证真：JDK 17 定向执行 `SearchHudStateStoreTest` + `BongNetworkHandlerTest`，`32 tests completed, 5 failed`；失败精确命中 completed/aborted TTL、后到终态 deadline、`nanoTime` 回绕和断线清理。
 - 修复后定向：同两组测试 `BUILD SUCCESSFUL`，上述失败全部转绿。
 - review 返工定向门禁（JDK 17）：`SearchHudStateStoreTest` + `BongHudOrchestratorTest` + `BongHudTest` → `33 tests, 0 skipped, 0 failures, 0 errors`；覆盖 store → orchestrator 固定 `nowNanos` 最终命令流与 screen visibility 过滤。
-- 主线 merge 后客户端完整门禁（JDK 17）：`cd client && ./gradlew test build`；以本次 merge commit 门禁结果为准（不宣称真实墙钟或 runClient 观察）。
-- 主 agent 对抗复审：首次复审发现“锁外取 `nanoTime`”竞态并以 `330e2afe` 修正；`112c753c` 将最终命令流 TTL 边界改为固定纳秒注入。按用户明确要求，本次未启动独立 validator subagent。
+- main `b150900e` 同步后的客户端完整门禁（JDK 17，验证 HEAD `4c6ee91ee87b086530d2a5a6b5c572beb61f9cd3`）：`cd client && ./gradlew test build` → `BUILD SUCCESSFUL`；JUnit XML 汇总 `4153 tests, 0 failures, 0 errors, 0 skipped`，并有 `3 GAME TESTS COMPLETE`。随后仅合入 #1233 的 docs-only main `946ad6c2`，client tree 未变化；`c4aa35d7` 的 GitHub Java 17 e2e run `29688015516` 全阶段通过。
+- 实现/e2e 快照对抗验证：fresh、无上下文、read-only Grok validator 对拍实现快照 `c4aa35d7bbe46e441769d0b50a10923fabf00612`（非最终 ship exact HEAD），结论 `PASS`，未发现 blocker/major。最终 evidence/assertion-only commit 的 exact-HEAD validator 由主流程在该 commit 落盘后再跑，并记入 PR body/comment。
 
 ### 跨仓库核验
 
@@ -183,5 +183,5 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 
 ### 遗留 / 后续
 
-- 无阻塞项，无协议迁移、真元守恒或视觉资产遗留。
-- 当前 SSH 环境无图形显示能力，未执行也未宣称执行 `runClient`；归档依据由 store 精确边界、固定 `nowNanos` 的生产 orchestrator 最终命令流、以及 production screen visibility（含 `AGENT_UI_ONLY`）三层确定性自动化证据共同提供。本地 WSLg 视觉 smoke 为可选后续，不构成本次归档条件。
+- 无阻塞项，无协议迁移、真元守恒或视觉资产遗留；实现快照 `c4aa35d7bbe46e441769d0b50a10923fabf00612` 的 fresh validator 已 `PASS`（该 SHA 是 e2e/实现快照，不是最终 ship exact HEAD）。assertion/evidence-only commit 的 exact-HEAD validator 由主流程在 commit 后另跑并记录到 PR。
+- 当前 SSH 环境无图形显示能力，未执行也未宣称执行 `runClient`；归档依据由 store 精确边界、固定 `nowNanos` 的生产 orchestrator 最终命令流、production screen visibility（含 `AGENT_UI_ONLY`）、JDK 17 完整门禁与 `c4aa35d7` e2e 共同提供。本地 WSLg 视觉 smoke 为可选后续，不构成本次归档条件。

@@ -344,7 +344,7 @@ public class BongHudOrchestratorTest {
             beforeBoundary.stream().anyMatch(cmd ->
                 cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮完成：残棺".equals(cmd.text())
             ),
-            "completed flash 在 TTL-1ns 必须仍进入最终 SEARCH_PROGRESS 命令流"
+            "completed flash 在 TTL-1ns 必须仍进入最终 SEARCH_PROGRESS 命令流，实际命令=" + beforeBoundary
         );
 
         List<HudRenderCommand> atBoundary = buildCombatFrame(
@@ -353,7 +353,7 @@ public class BongHudOrchestratorTest {
         );
         assertTrue(
             atBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
-            "completed flash 在 TTL 精确边界必须从最终命令流消失"
+            "completed flash 在 TTL 精确边界必须从最终命令流消失，实际命令=" + atBoundary
         );
 
         List<HudRenderCommand> afterBoundary = buildCombatFrame(
@@ -362,7 +362,7 @@ public class BongHudOrchestratorTest {
         );
         assertTrue(
             afterBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
-            "completed flash 在 TTL+1ns 必须保持消失，不能重新进入最终命令流"
+            "completed flash 在 TTL+1ns 必须保持消失，不能重新进入最终命令流，实际命令=" + afterBoundary
         );
     }
 
@@ -379,7 +379,7 @@ public class BongHudOrchestratorTest {
             beforeBoundary.stream().anyMatch(cmd ->
                 cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮中断：进入战斗".equals(cmd.text())
             ),
-            "aborted flash 在 TTL-1ns 必须仍进入最终 SEARCH_PROGRESS 命令流"
+            "aborted flash 在 TTL-1ns 必须仍进入最终 SEARCH_PROGRESS 命令流，实际命令=" + beforeBoundary
         );
 
         List<HudRenderCommand> atBoundary = buildCombatFrame(
@@ -388,7 +388,7 @@ public class BongHudOrchestratorTest {
         );
         assertTrue(
             atBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
-            "aborted flash 在移动与战斗上下文变化后的 TTL 精确边界必须消失"
+            "aborted flash 在移动与战斗上下文变化后的 TTL 精确边界必须消失，实际命令=" + atBoundary
         );
 
         List<HudRenderCommand> afterBoundary = buildCombatFrame(
@@ -397,7 +397,7 @@ public class BongHudOrchestratorTest {
         );
         assertTrue(
             afterBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
-            "aborted flash 在 TTL+1ns 必须保持消失，不能因上下文变化重新出现"
+            "aborted flash 在 TTL+1ns 必须保持消失，不能因上下文变化重新出现，实际命令=" + afterBoundary
         );
     }
 

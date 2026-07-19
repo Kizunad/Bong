@@ -102,8 +102,6 @@ public class BongHud {
         }
 
         HudFrameInput frame = Objects.requireNonNull(frameInputSupplier.get(), "frameInputSupplier.get()");
-        // Production path: public orchestrator overload samples System.nanoTime() exactly once
-        // per frame and forwards it into the package-private nowNanos seam used by SearchHud.
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             frame.hudSnapshot(),
             frame.combatSnapshot(),
