@@ -103,6 +103,11 @@
 - `49eee364dd3801bcd96883bc141d136143a95fa4`（2026-07-18）：合并 `origin/main=001bbe7d82104f5dbdd16680dd9a122cab6eae40` 的技能 A/V 与 combat 变更，并在合并树复跑完整 server/client 门禁。
 - `1ac6b96f410f8d62e4f6a21b71e74933b6e3da20`（2026-07-18）：修复 narration 测试先 drain typed payload、再从空缓冲检查 chat mirror 的假绿；六组测试改为单次收包同批分类，并加入 narration + `GameMessageS2c` 正向 canary。
 - `bf0d65823ab6b13c739e13722f033003f6bb83f9`（2026-07-18）：紧邻 fetch 后合并 `origin/main=62f90990e7b23d19b56e847dcb47c761550bd7f4`；主线只带入两份无关 skeleton，未改变受验代码树。
+- `a9df92719`（2026-07-18）：更新 PR1217 收包返工证据。
+- `e70d52419`（2026-07-19）：合并最新主线并建立 PR1217 最终复验基线。
+- `efcd273fe`（2026-07-19）：合并 `origin/main` 同步 #1233 文档归档。
+- `e960ba5fc54795bbb572b015b93ea530578bd1cc`（2026-07-19）：合并 `origin/main=5d9bdd8f`（#1241 技能动画 PR-5）；在该树上完成 schema 892 / tiandao 831 / python 126 / client 4141 / server fmt+clippy+test 全绿（lib 11807 + bin 11 + 启动集成 1 + 背包 e2e 4 = 约 11823 passed / 0 failed / 6 ignored）。
+- `56b6e33dc577453d2e29f4206564e84b15fcb3fd`（2026-07-20）：紧邻 `git fetch origin && git merge origin/main` 合入 `2f9c70ad3`（#1212 搜刮 HUD 终态收尾）；delta 仅 client network/HUD + 归档文档，无 server/agent 源码增量。
 
 ### 测试结果
 
@@ -114,7 +119,7 @@
 - Client：最终合并树 `49eee364` 以 Java `17.0.19` 执行 `./gradlew --no-daemon test build`，退出 0、`BUILD SUCCESSFUL`；471 份 JUnit XML 汇总 4,118 tests / 0 failures / 0 errors / 0 skipped。
 - 真实双 Bot/专用 Redis：最终 `4cc9e293` 的 `agent_ui_realm_gate_private_narration` 场景 2.9s PASS，`total=1 pass=1 skip=0 fail=0`。Redis 链依次记录 `bong:agent_ui_cmd`（`target=offline:Bp4cRGA`、`realm_gate=5`）、`bong:agent_ui_response`（同 target、`player_realm=1`、`required_realm=5`）与 `bong:agent_narrate`（`scope=player`、`style=system_warning`）；server 最终只投递 1 recipient，旁观 Bot 无泄漏，双方无 chat mirror。证据位于 `.sisyphus/evidence/pr1217-final-gates-4cc9e293/09-bot-e2e-dedicated-20260718T123407/`。
 - Fabric renderer runtime：云端无 WSLg socket，故以用户态解包的 Xvfb + Mesa 软件渲染实际执行 Java 17 `runClient`；日志命中 MC `1.20.1` 窗口、LWJGL `3.3.1`、`Bong Client bootstrap ready`、实体模型注册以及 Armor/WornPack/Mutation `FeatureRenderer registered`，fatal scan 为空。证据位于 `.sisyphus/evidence/pr1217-final-gates-4cc9e293/10-fabric-renderer-runtime-20260718T124321/`。
-- 主线同步：`ad463518` 的 Schema/Tiandao/server 门禁通过后，`49eee364` 合入 `origin/main=001bbe7d`，并按触栈以 server 11,800 / client 4,118 tests 全绿收口。CodeRabbit 发现测试观察器会二次 drain 后，`1ac6b96f` 修正全部六组同类调用并重跑 server 完整门禁；随后紧邻 `git fetch origin && git merge origin/main` 生成 `bf0d6582`。最新 `origin/main=62f90990` 仅新增两份 `docs/plans-skeleton/` 文档，未触及 server/client/agent/schema 或本 plan，因此 `1ac6b96f` 的 11,801 tests 与既有受影响栈证据继续适用于该合并树。
+- 主线同步：`ad463518` 的 Schema/Tiandao/server 门禁通过后，`49eee364` 合入 `origin/main=001bbe7d`，并按触栈以 server 11,800 / client 4,118 tests 全绿收口。CodeRabbit 发现测试观察器会二次 drain 后，`1ac6b96f` 修正全部六组同类调用并重跑 server 完整门禁；随后紧邻 `git fetch origin && git merge origin/main` 生成 `bf0d6582`。`e960ba5f` 合入 `origin/main=5d9bdd8f`（#1241）后，完整 server 门禁（`/tmp/pr1217-gates-server.log`）`FMT_EXIT:0` / `CLIPPY_EXIT:0` / `TEST_EXIT:0`，`test result` 汇总 lib 11807 + bin 11 + 启动集成 1 + 背包 e2e 4（另 5 ignored bench）≈11823 passed / 0 failed / 6 ignored；同树 client JUnit 4141 / schema 892 / tiandao 831 / python 126 亦全绿。最终 `56b6e33d` 合入 `origin/main=2f9c70ad`（#1212，仅 client network/HUD），按触栈以 Java 17 `./gradlew --no-daemon test build` 复跑 client：`CLIENT_EXIT:0`、`BUILD SUCCESSFUL`、JUnit suites=474 tests=4153 failures=0 errors=0 skipped=0（`/tmp/pr1217-postmerge-client.log`）；server 无源码增量复用 `e960ba5f` 门禁。真实双 Bot/专用 Redis 在 `56b6e33d` 重跑 `agent_ui_realm_gate_private_narration`：15.5s PASS，`total=1 pass=1 skip=0 fail=0`；Redis 链依次 `bong:agent_ui_cmd`→`bong:agent_ui_response`→`bong:agent_narrate(scope=player)`，server 最终 `sent ... narration payload to 1 recipient(s)`，旁观无泄漏。证据：`.sisyphus/evidence/pr1217-postmerge-gates-56b6e33d/09-bot-e2e-dedicated-20260720T000254/`。
 
 ### 跨仓库核验
 
