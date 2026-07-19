@@ -16287,7 +16287,7 @@ fn handle_alchemy_take_back(
                     ));
                 }
                 _ => {
-                    let granted = match instance_allocator.as_deref_mut() {
+                    let granted = match instance_allocator {
                         Some(instance_allocator) => grant_alchemy_outcome_item(
                             entity,
                             &mut client,
