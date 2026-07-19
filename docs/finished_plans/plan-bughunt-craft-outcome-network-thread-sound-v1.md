@@ -132,6 +132,10 @@
 - `dbb8772c`：提取生产调度测试缝并提交修复前红测基线。
 - `867fd1a7`：把整条 server_data 处理链移入单一 client-thread task。
 - `f10f230e`：回填第一性原理证真与 195 项同根因回归证据。
+- `de5ccfc0`：归档 finished plan。
+- `e65fffdb`：回应 CodeRabbit，补足线程断言诊断与归档格式。
+- `3ccf908b`：普通 merge `origin/main@2f9c70ad`（含 #1212 SearchHud disconnect 清理等主线），
+  parents=`e65fffdb` + `2f9c70ad`；保留本 PR craft_outcome 单任务线程契约与 #1212 语义并存。
 
 ### 测试结果
 
@@ -143,33 +147,44 @@
   `BongNetworkHandlerTest`、`CraftHandlerTest`、`CastSyncHandlerTest`、
   `ServerDataRouterTest`、`ProtoServerDataBridgeTest`
   → `195 tests, 0 failed, 0 skipped`。
-- client 完整门禁（Temurin 17）：`./gradlew test build`
+- client 完整门禁（归档时 Temurin 17）：`./gradlew test build`
   → `BUILD SUCCESSFUL in 3m 32s`；JUnit XML 汇总
   `3995 tests, 0 failures, 0 errors, 0 skipped`。
+- **post-merge 完整门禁（Temurin 17 @ `3ccf908b`，2026-07-19）**：
+  `export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; cd client && ./gradlew test build`
+  → exit `0`，`BUILD SUCCESSFUL in 4m 32s`；
+  JUnit XML 汇总 `4160 tests, 0 failures, 0 errors, 0 skipped`（475 suites）；
+  `BongServerDataThreadingTest` 7/7 全绿（completed/failed/`cast_sync`/route→apply/
+  连续 payload/坏 JSON/handler exception 后续合法 payload）；
+  GAME TESTS：`All 3 required tests passed`。
 - 构建仅输出仓库既有 Gradle deprecated-features 提示；无测试失败、编译失败或新增源码产物。
 
 ### 主线同步与绑定 SHA 验证
 
-- `git fetch origin main` 后，`origin/main@6635c25a` 仍是修复 HEAD 的祖先，分类为
-  `already-up-to-date`；无需 merge/fast-forward，完整门禁证据保持有效。
-- 用户明确要求本次不运行 subagent，因此没有伪称独立 validator：
-  - Round 1：主 agent 对干净 `f10f230ee8e2be57537b551d33fa04ea4ce98317`
-    复核 Fabric 线程契约、生产可达性、diff、异常边界、测试饱和度与 commit trailer，结论 PASS。
-  - Round 2：完整门禁和主线分类后再次对同一 SHA 核验工作区、HEAD、门禁与主线祖先关系，结论 PASS。
-  - Round 3：归档 commit 后对最终干净 HEAD 再做绑定 SHA 自审；最终结果写入 PR 验证证据，
-    后续仍以 GitHub `/review` 与 CodeRabbit 作为独立 review gate。
+- 2026-07-19：`git fetch origin` 后 `origin/main@2f9c70ad` 不再是修复 tip 祖先；
+  对 PR 分支执行普通 `git merge origin/main`（禁止 rebase/force/reset/amend），
+  得到 merge commit `3ccf908b`（parents `e65fffdb` + `2f9c70ad`），工作区 clean。
+- 语义合并核验：`BongNetworkHandler` 无冲突标记；保留
+  `SearchHudStateStore.clearOnDisconnect()`（#1212）与
+  `dispatchServerDataPayload`/`processServerDataPayload` 的 raw-buffer-copy →
+  单一 `client.execute` task（bridge/fallback/route/handler/store/listener/applyDispatch）
+  线程契约；Agent UI / Season 主线逻辑未丢。
+- post-merge 必须重跑 client 完整门禁（见上）；门禁绿后对最终 HEAD 启动 fresh
+  无上下文 read-only Grok validator，结论绑定 exact SHA。
 
 ### 跨栈核验
 
-- client：修改 receiver 调度边界并新增回归测试，完整门禁已绿。
-- server：只读确认 `server/src/network/craft_emit.rs:791-842` 的 completed/failed 生产 emit；无代码改动，
-  不需要额外 cargo gate。
-- agent/schema/worldgen：协议、schema、资源与生成物均未改动，不触发对应门禁。
+- client：修改 receiver 调度边界并新增回归测试；merge main 后完整门禁已绿
+  （`3ccf908b`，4160/0/0/0 + GAME TESTS 3/3）。
+- server：只读确认 `server/src/network/craft_emit.rs` 的 completed/failed 生产 emit；
+  本 PR 无 server 代码改动，不需要额外 cargo gate。
+- agent/schema/worldgen：本 PR 修复范围未改协议/schema/资源/生成物；merge 带入主线变更
+  但不属于本 plan 修复面，不另开对应门禁。
 - 真元/世界观/A/V：本修复不改变制作数值、资源流、真元 ledger、招式或视觉/音效资产；
   只保证既有完成音效、闪光与刷新在 client thread 执行。
 
 ### 遗留 / 后续
 
 - 本轮无阻塞标记，无已知功能遗留。
-- 因用户禁用 subagent，三轮验证中的本地 validator 是主 agent 绑定 SHA 自审，不具备独立上下文隔离；
-  PR 阶段必须继续等待 `/review`、CodeRabbit、e2e/相关 checks，不以本地自审替代远端 gate。
+- 本地不 push / 不开改合 PR；远端 gate 仍由 `/review`、CodeRabbit、e2e 等负责。
+- 明确排除 #1228：本会话不触碰、不停止任何来源不明进程。
