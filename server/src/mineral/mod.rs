@@ -86,7 +86,9 @@ pub fn register(app: &mut App) {
 
     app.add_systems(
         Startup,
-        spawn_mineral_anchor_nodes.after(crate::world::setup_world),
+        spawn_mineral_anchor_nodes
+            .after(crate::world::setup_world)
+            .after(crate::world::zone::ZoneRegistryStartupSet),
     );
 
     app.add_systems(
