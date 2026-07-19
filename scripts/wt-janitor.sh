@@ -7,7 +7,7 @@
 # 用法：
 #   bash scripts/wt-janitor.sh                             # report-only：列出全部 worktree + PR 状态 + 判定
 #   bash scripts/wt-janitor.sh --apply                     # 回收「可安全回收」的 worktree（见下方契约）
-#   bash scripts/wt-janitor.sh --apply --clean-artifacts   # 额外删除「工作区干净、OPEN/NO_PR、≥7 天无提交」worktree 的构建产物
+#   bash scripts/wt-janitor.sh --apply --clean-artifacts   # 额外删除「工作区干净、OPEN/NO_PR、无非缓存 ignored、≥7 天无提交」worktree 的构建产物
 #   bash scripts/wt-janitor.sh --apply --clean-artifacts=3 # 同上，闲置阈值改为 3 天
 #
 # 一切破坏动作都锁在 --apply 之后；--clean-artifacts 不带 --apply 时只报告「待清」。
@@ -23,6 +23,8 @@
 #     普通 `git status --porcelain` 看不见 ignored；Git 2.47 下不带 --force 的
 #     `git worktree remove` 仍会成功并静默删掉这些文件——因此脚本在回收前主动枚举
 #     ignored，只允许 CACHE_DIRS 白名单，绝不依赖 remove 拒绝。
+#     同一安全门也约束 --clean-artifacts：OPEN/NO_PR 闲置树若含非缓存 ignored，
+#     不删 cache、不触碰树/密钥（fail-closed，避免“只清缓存”半破坏路径）。
 #   - gh / PR 状态查询失败 → UNKNOWN（与「成功但 0 条 PR → NO_PR」严格区分）；
 #     UNKNOWN 既不整树回收，也不 clean-artifacts
 #   - CLOSED（未 merge）一律交人工（即使远端 tip 仍在、工作区干净）
@@ -351,11 +353,17 @@ for i in "${!paths[@]}"; do
     fi
   fi
 
-  # 构建产物回收：只作用于「工作区干净」且「OPEN 或 NO_PR」的长期闲置树
+  # 构建产物回收：只作用于「工作区干净」且「OPEN 或 NO_PR」的长期闲置树，
+  # 且 ignored/untracked 安全门通过（unsafe_rc==0）。
+  # 存在 .env 等非白名单 ignored 时 fail-closed：树/密钥/缓存一律不碰。
   # （MERGED 干净树走上面的整树回收；脏树/UNKNOWN/CLOSED/NO_BRANCH 一律不碰）。
   # 与所有破坏动作一样锁在 --apply 之后。默认 IDLE_DAYS=7。
   if [[ $CLEAN_ARTIFACTS -eq 1 && -z "$dirty" && ( "$pr_state" == "OPEN" || "$pr_state" == "NO_PR" ) && $idle_days -ge $IDLE_DAYS ]]; then
-    if [[ -d "$path/server/target" || -d "$path/client/build" || -d "$path/client/.gradle" ]]; then
+    if [[ $unsafe_rc -eq 2 ]]; then
+      verdict="$verdict + ignored 查询失败 → 不 clean（交人工）"
+    elif [[ $unsafe_rc -ne 0 ]]; then
+      verdict="$verdict + 存在非缓存 ignored/untracked（$unsafe_reason）→ 不 clean（交人工）"
+    elif [[ -d "$path/server/target" || -d "$path/client/build" || -d "$path/client/.gradle" ]]; then
       if [[ $APPLY -eq 1 ]]; then
         artifacts_ok=1
         for d in "${CACHE_DIRS[@]}"; do

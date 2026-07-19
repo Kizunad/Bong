@@ -341,6 +341,48 @@ out=$(bash "$JANITOR")
 check "slot 报告"                      grep -q "SLOT（常驻保温，跳过" <<<"$out"
 check "CLOSED 报告"                    grep -q "CLOSED" <<<"$out"
 
+# ========== 13. OPEN/NO_PR + 非缓存 ignored：clean-artifacts 不得触碰 ==========
+echo "== 13. OPEN/NO_PR ignored-only secrets：clean 不删 cache/密钥/树"
+# OPEN：.env + cache + idle（stamp 7d）
+new_wt wt-open-env open-env
+echo SECRET_OPEN=1 > ".agent-worktrees/wt-open-env/.env"
+mkdir -p ".agent-worktrees/wt-open-env/server/target"
+echo blob > ".agent-worktrees/wt-open-env/server/target/blob"
+stamp_commit wt-open-env 7 "open-env idle 7d"
+# NO_PR：私有日志 + cache + idle
+new_wt wt-nopr-log nopr-log
+echo private-log > ".agent-worktrees/wt-nopr-log/agent.secret.log"
+mkdir -p ".agent-worktrees/wt-nopr-log/client/build"
+echo blob > ".agent-worktrees/wt-nopr-log/client/build/blob"
+stamp_commit wt-nopr-log 7 "nopr-log idle 7d"
+
+out=$(bash "$JANITOR" --apply --clean-artifacts)
+check "OPEN+.env：树仍在"              test -d ".agent-worktrees/wt-open-env"
+check "OPEN+.env：密钥仍在"            test -f ".agent-worktrees/wt-open-env/.env"
+check "OPEN+.env：cache 未清"          test -f ".agent-worktrees/wt-open-env/server/target/blob"
+check "OPEN+.env：分支仍在"            git show-ref -q "refs/heads/open-env"
+check "OPEN+.env：报告不 clean"        grep -q "不 clean（交人工）" <<<"$out"
+check "NO_PR+log：树仍在"              test -d ".agent-worktrees/wt-nopr-log"
+check "NO_PR+log：日志仍在"            test -f ".agent-worktrees/wt-nopr-log/agent.secret.log"
+check "NO_PR+log：cache 未清"          test -f ".agent-worktrees/wt-nopr-log/client/build/blob"
+check "NO_PR+log：分支仍在"            git show-ref -q "refs/heads/nopr-log"
+check "NO_PR+log：报告非缓存 ignored"  grep -q "非缓存 ignored/untracked" <<<"$out"
+
+# 对照：OPEN 仅白名单 cache 仍可 clean（无 .env）
+new_wt wt-open-cache-only open-cache-only
+mkdir -p ".agent-worktrees/wt-open-cache-only/server/target"
+echo blob > ".agent-worktrees/wt-open-cache-only/server/target/blob"
+stamp_commit wt-open-cache-only 7 "open-cache-only idle 7d"
+out=$(bash "$JANITOR" --apply --clean-artifacts)
+check "OPEN 仅 cache：产物已清"        test ! -e ".agent-worktrees/wt-open-cache-only/server/target"
+check "OPEN 仅 cache：树仍在"          test -d ".agent-worktrees/wt-open-cache-only"
+check "OPEN 仅 cache：报告已清"        grep -q "构建产物已清" <<<"$out"
+# 含密钥的树在对照 clean 后仍不得被波及
+check "对照后 OPEN+.env 密钥仍在"      test -f ".agent-worktrees/wt-open-env/.env"
+check "对照后 OPEN+.env cache 仍在"    test -f ".agent-worktrees/wt-open-env/server/target/blob"
+check "对照后 NO_PR+log 日志仍在"      test -f ".agent-worktrees/wt-nopr-log/agent.secret.log"
+check "对照后 NO_PR+log cache 仍在"    test -f ".agent-worktrees/wt-nopr-log/client/build/blob"
+
 echo "---"
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]] || exit 1
