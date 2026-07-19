@@ -1,6 +1,6 @@
 ---
 name: bugfix
-description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施 subagent，在独立 worktree/branch 中完成原子 claim、promotion、第一性原理证真或证伪、最小修复、绑定干净 HEAD 的无上下文对抗验证、完整门禁、合并主线复验、归档、PR、review 与 e2e。用户未指定时默认 2 路实施、gpt-5.6-sol-xhigh 实施与 validator。主 agent 只调度、等待、锁运维和清理，不直接修代码。用于 /bugfix、$bugfix、“跑 BugFix”“持续修 bug”“把 bug skeleton 闭环”等请求。
+description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施 subagent，在常驻 slot/branch 中完成原子 claim、进驻、promotion、第一性原理证真或证伪、最小修复、绑定干净 HEAD 的无上下文对抗验证、完整门禁、合并主线复验、归档、PR、review 与 e2e。用户未指定时默认 2 路实施、gpt-5.6-sol-xhigh 实施与 validator。主 agent 只调度、等待、锁运维和清理，不直接修代码。用于 /bugfix、$bugfix、“跑 BugFix”“持续修 bug”“把 bug skeleton 闭环”等请求。
 ---
 
 # Bong BugFix 主干调度
@@ -21,7 +21,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 ## 启动参数、并发与资源
 
 - 启动时读取并保持三个独立参数：实施数量 `N`、实施模型、validator 模型。用户未指定时才默认 `N=2`、实施模型 `gpt-5.6-sol-xhigh`、validator 模型 `gpt-5.6-sol-xhigh`；不得用默认值覆盖用户输入。
-- 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 worktree 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
+- 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 slot/task 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
 - 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
 - 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，每次补位按实时快照计算 `min(max(0, N - 当前实施 agent 数), max(0, platform_total - live_agents - 未入 snapshot reservation - validator_reserve - 未计入 live 的主干占位))`；容量不可查时只按 `max(0, N - 当前实施 agent 数)` 补位，编译并发仍由独立 token 限制为 2。平台满载、已有无关 agent 或 outstanding reservation 都会减少可启动数；超额任务进 FIFO，不 spawn。
 - validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。每个已 GRANTED/ACKED/RECOVERING、但尚未出现在 live snapshot 的 validator token 都先预占 1 个平台槽；只有状态查询确认对应 validator 已出现后才转为 snapshot-accounted，避免重复授权或双扣。容量不可查时 validator 一次只授权 1 个。
