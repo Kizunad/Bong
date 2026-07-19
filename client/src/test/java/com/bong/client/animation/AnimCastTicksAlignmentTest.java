@@ -96,15 +96,16 @@ class AnimCastTicksAlignmentTest {
         m.put("tuike.shed", "tuike_shed_burst");
         m.put("tuike.transfer_taint", "tuike_taint_transfer");
         m.put("anqi.charge_carrier", "windup_charge");
-        m.put("anqi.single_snipe", "sword_stab");
-        m.put("anqi.multi_shot", "release_burst");
-        m.put("anqi.soul_inject", "cast_invoke");
+        // P2 批次二前半（2026-07-19）：anqi 3 招 + sword_path 3 招去复用换专属动画。
+        m.put("anqi.single_snipe", "anqi_single_snipe");
+        m.put("anqi.multi_shot", "anqi_multi_shot");
+        m.put("anqi.soul_inject", "anqi_soul_inject");
         m.put("anqi.armor_pierce", "cast_invoke");
         m.put("anqi.echo_fractal", "release_burst");
         m.put("body.guangbo_ticao", "guangbo_ticao");
-        m.put("sword_path.condense_edge", "sword_cleave");
-        m.put("sword_path.qi_slash", "sword_thrust");
-        m.put("sword_path.resonance", "sword_cleave");
+        m.put("sword_path.condense_edge", "sword_path_condense_edge");
+        m.put("sword_path.qi_slash", "sword_path_qi_slash");
+        m.put("sword_path.resonance", "sword_path_resonance");
         m.put("sword_path.manifest", "sword_manifest_cast");
         m.put("sword_path.heaven_gate", "sword_heaven_gate_charge");
         m.put("morph.yixing", "morph_cast");
@@ -134,6 +135,9 @@ class AnimCastTicksAlignmentTest {
     // P1 批次一（2026-07-19）删 10 条：sword.cleave/thrust + burst_meridian 三招
     // （beng_quan 重制 endTick=14 = 三借用方 cast 区间交集，tie_shan_kao/xue_beng_bu
     // 随之达标，棘轮强制同批删除）+ zhenmai 5 招。
+    // P2 批次二前半（2026-07-19）删 5 条：anqi single_snipe/multi_shot/soul_inject
+    // + sword_path qi_slash/resonance（6 招去复用专属化；condense_edge 原借 cleave
+    // 时已达标故不在本表，专属化后 endTick=18 ∈ [16,20] 继续达标）。
     private static final Set<String> CAST_ALIGNMENT_ALLOWLIST = Set.of(
         "sword.infuse", "movement.dash",
         "baomai.full_power_charge", "baomai.full_power_release",
@@ -144,10 +148,8 @@ class AnimCastTicksAlignmentTest {
         // plan-bughunt-woliu-resonance-loop-arm-decay-v1**（本 plan 防重声明明确
         // 排除，标准只防再犯），该 bugfix merge 后删本条目。
         "woliu.vortex_resonance",
-        "anqi.single_snipe", "anqi.multi_shot", "anqi.soul_inject", "anqi.armor_pierce",
-        "anqi.echo_fractal",
-        "sword_path.qi_slash", "sword_path.resonance", "sword_path.manifest",
-        "sword_path.heaven_gate", "morph.yixing");
+        "anqi.armor_pierce", "anqi.echo_fractal",
+        "sword_path.manifest", "sword_path.heaven_gate", "morph.yixing");
 
     /** 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。 */
     private static final Set<String> MISSING_ANIM_ALLOWLIST =
