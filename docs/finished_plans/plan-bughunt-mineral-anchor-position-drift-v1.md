@@ -49,16 +49,18 @@
 
 ## 证据定位
 
-- `worldgen/blueprint/mineral_anchors.json:3` 注释声明该 manifest 是 zone x mineral 的固定富集点；`worldgen/blueprint/mineral_anchors.json:5` 到 `worldgen/blueprint/mineral_anchors.json:84` 列出 10 个 anchor。
+Historical pre-fix claims in this section are pinned to blob `c301899575c0f918748556a57e6daf4166a942d7`; verify them with `git show c3018995:<path>` rather than reading the changed HEAD path/lines.
+
+- `c3018995:worldgen/blueprint/mineral_anchors.json:3` 注释声明该 manifest 是 zone x mineral 的固定富集点；`c3018995:worldgen/blueprint/mineral_anchors.json:5` 到 `c3018995:worldgen/blueprint/mineral_anchors.json:84` 列出 10 个 anchor。
 - 其中 `qingyun_peaks` 三个锚点位于 `[128,72,256]`、`[192,56,320]`、`[256,64,288]`，但当前 `server/zones.json:601` 的 `qingyun_peaks` AABB 是负 X/负 Z 区域。
 - `blood_valley` 三个锚点位于 `[-256,48,-128]` 等 spawn 周边坐标，但当前 `server/zones.json:530` 的 `blood_valley` AABB 是 `x=2600..3400, z=-3250..-1750`。
 - `lingquan_marsh` 两个锚点位于 `[512,60,64]` 和 `[488,58,96]`，但当前 `server/zones.json:428` 的 `lingquan_marsh` AABB 是 `x=-3000..-2000, z=2000..3000`。
 - `rift_valley` anchor 使用旧 zone id；当前 runtime zone 表没有 `rift_valley` zone（血谷 zone 名为 `blood_valley`，见 `server/zones.json:530`）。
 - `server/src/main.rs:108` 注册 `mineral::register(&mut app)`；`server/src/mineral/mod.rs:67` 到 `server/src/mineral/mod.rs:90` 注册默认 anchor 配置，并在 Startup 中运行 `spawn_mineral_anchor_nodes.after(crate::world::setup_world)`。
 - `server/src/world/terrain/mod.rs:550` 到 `server/src/world/terrain/mod.rs:576` 在 raster bootstrap 中加载 `TerrainProvider` 并插入 `TerrainProviders`；因此正常 raster runtime 会触发矿脉物化。
-- `server/src/mineral/anchors.rs:83` 调 `load_mineral_anchors` 读 manifest；`server/src/mineral/anchors.rs:104` 到 `server/src/mineral/anchors.rs:119` 对每个 anchor 生成位置并写 `MineralOreIndex`。
-- `server/src/mineral/anchors.rs:249` 到 `server/src/mineral/anchors.rs:297` 只校验 manifest version、`mineral_id`、`radius`、`max_units`，没有 zone 存在性或 position-in-AABB 校验。
-- `server/src/mineral/anchors.rs:300` 到 `server/src/mineral/anchors.rs:322` 以 `anchor.center` 为球心生成候选点，说明实际行为以 `position` 为准。
+- `c3018995:server/src/mineral/anchors.rs:83` 调 `load_mineral_anchors` 读 manifest；`c3018995:server/src/mineral/anchors.rs:104` 到 `c3018995:server/src/mineral/anchors.rs:119` 对每个 anchor 生成位置并写 `MineralOreIndex`。
+- `c3018995:server/src/mineral/anchors.rs:249` 到 `c3018995:server/src/mineral/anchors.rs:297` 只校验 manifest version、`mineral_id`、`radius`、`max_units`，没有 zone 存在性或 position-in-AABB 校验。
+- `c3018995:server/src/mineral/anchors.rs:300` 到 `c3018995:server/src/mineral/anchors.rs:322` 以 `anchor.center` 为球心生成候选点，说明实际行为以 `position` 为准。
 
 本地只读对拍结果：
 
@@ -160,7 +162,7 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 - `13d03af6`（2026-07-18）：合并最新 `origin/main`；带入内容仅为无关 docs。
 - `d25bcf7b`（2026-07-18）：仅执行 active → finished 路径迁移；该 commit 中的文档 blob 仍是 Active、P0-P3 为 ⬜ 且尚无 Finish Evidence，因此它本身不构成合规完成态。
 - `4da7a914`（2026-07-18）：在已迁移文件中补齐 P0-P3 完成状态、唯一 `## Finish Evidence` 与验收叙述，形成当前实际完成态；此两提交拆分如实记录归档时的暂态偏差，不把 `d25bcf7b` 虚报为完整归档。
-- （本轮 rework / PR #1228）：在中心点契约之上补齐最终候选整批 preflight（surface snap / dedup / max_units 后 AABB + runtime owner）与原子 fail-closed；详见本提交。
+- `77e6e61a` (2026-07-19, PR #1228 rework)：在中心点契约之上补齐最终候选整批 preflight（surface snap / dedup / max_units 后 AABB + runtime owner）与原子 fail-closed；详见本提交。
 
 ### 测试结果
 
