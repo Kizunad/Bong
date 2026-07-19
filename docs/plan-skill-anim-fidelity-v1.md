@@ -85,7 +85,7 @@
 | P0 | 全量审计矩阵落档 + 精度标准定稿 + 时长对齐自动对拍测试 | ⬜ |
 | P1 | 批次一重制：sword 基础 3（infuse 移 P2，见附录 A）+ beng_quan + zhenmai 5（高频主力短招） | ✅ 2026-07-19 |
 | P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段）。拆前半（2026-07-19：去复用 6 招专属化——sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject，含 server 映射改指 + allowlist 删 5 条）+ 后半（2026-07-19：charge_carrier / sword.infuse 真两段式 + StopAnim 三类通道接线 §8.1 #3 + echo_fractal / armor_pierce / manifest 瞬发结算型分类契约（review r2 定形——strike 顶点=tick 0 与结算同帧，INSTANT_RESOLVER_SKILLS + instant manifest 机械锁，出 allowlist）+ heaven_gate 双段密度精修 + allowlist 净删 4 条） | ✅ 2026-07-19 |
-| P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ⬜ |
+| P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ✅ 2026-07-19 |
 | P4 | yidao 5 招动画补齐（plan-yidao-v1 §5 欠账） | ⬜ |
 | P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ⬜ |
 | P6 | 回归收口：资源 pin 测试 + FPV/TPV 实机验收 | ⬜ |
@@ -207,35 +207,35 @@
 | `sword.thrust` | 10 | `sword_thrust` | 16 | — | 8 | 172 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：收剑腰侧直刺+侧身送肩 |
 | `sword.parry` | 4 | `sword_parry` | 10 | — | 6 | 126 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：斜举格挡弹开，密度补齐 |
 | `sword.infuse` | 40 | `sword_infuse`(loop)+`sword_infuse_release` | 28 loop+14 | ✓ | 9+7 | 207+154 | — | **A** | P2 | P2 后半两段式（2026-07-19）：真实引导窗（`cast_sword_infuse` 插 `Casting`+`PendingSwordInfuse`，sword_basics.rs:723-746）→ 蓄力段重制 isLoop 28t 横剑抚刃（id 沿用 v1 资产清单 pin）+ release 14t 剑身一振；打断 = cast_emit 三分支表驱动 StopAnim，完成 = completion_tick StopAnim+release（失败分支亦 StopAnim） |
-| `movement.dash` | 0 | `dash_forward` | 4 | — | 13 | 21 | — | **C** | P3 | 瞬发 4t 快闪；密度低 |
-| `shield_block` | 0 | `shield_raise` | 6 | ✓ | 35 | 35 | — | **B** | P3 | 循环举盾+StopAnim 闭环已有；密度低 |
+| `movement.dash` | 0 | `dash_forward` | 8 | — | 6 | 126 | — | **A** | P3 | P3 重制（2026-07-19）：压身摆臂→蹬地前窜→刹步，8t 瞬发域；出 allowlist |
+| `shield_block` | 0 | `shield_raise` | 18 | ✓ | 7 | 161 | — | **A** | P3 | P3 重制（2026-07-19）：raise 0→6 + hold 呼吸微晃 6→18（returnTick=6，t18≡t6 闭合）；三路 StopAnim 既有，持续维持型例外保持 |
 | `burst_meridian.beng_quan` | 8 | `beng_quan` | 14 | — | 9 | 194 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：沉马蓄劲→拳炸出→震颤收；endTick=14 为三借用方 cast 区间交集 |
-| `burst_meridian.tie_shan_kao` | 10 | `beng_quan` | 14 | — | 9 | 194 | ✓ | **D** | P3 | 借 beng_quan（靠撞≠出拳）；时长随重制达标已出 allowlist，专属化仍归 P3 |
-| `burst_meridian.xue_beng_bu` | 6 | `beng_quan` | 14 | — | 9 | 194 | ✓ | **D** | P3 | 借 beng_quan（步法≠出拳）；时长随重制达标已出 allowlist，专属化仍归 P3 |
-| `burst_meridian.ni_mai_hu_ti` | 12 | —— | — | — | — | — | — | **D** | P3 | anim_id: None（burst_meridian.rs:637） |
-| `baomai.full_power_charge` | 1 | `windup_charge` | 16 | ✓ | 81 | 81 | ✓ | **D** | P3 | 借通用蓄力（loop+StopAnim 闭环在） |
-| `baomai.full_power_release` | 1 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P3 | 借通用爆发（4t 模板） |
+| `burst_meridian.tie_shan_kao` | 10 | `tie_shan_kao` | 16 | — | 7 | 161 | — | **A** | P3 | P3 专属化（2026-07-19）：拧腰蓄靠→肩胯撞出（手臂折叠贴身，顶点=t10）；混合通道（resolver+真实 Casting）三段式，解除 beng_quan 借用+负向 pin |
+| `burst_meridian.xue_beng_bu` | 6 | `xue_beng_bu` | 12 | — | 8 | 168 | — | **A** | P3 | P3 专属化（2026-07-19）：起跑压桩→双臂拖尾疾步窜出（顶点=t6 位移落定）；解除 beng_quan 借用+负向 pin |
+| `burst_meridian.ni_mai_hu_ti` | 12 | `ni_mai_hu_ti` | 16 | — | 8 | 176 | — | **A** | P3 | P3 缺失补齐（2026-07-19）：交臂引气→沉桩压封护体结印（anim_id None→Some 专属常量，事件路径 pin）；删 MISSING 条目 |
+| `baomai.full_power_charge` | 1 | `baomai_full_power_charge` | 24 | ✓ | 9 | 216 | — | **A** | P3 | P3 专属化（2026-07-19）：抱脉沉桩呼吸循环 24t 闭环（ChargingState 持续维持型，入 SUSTAINED_LOOP_EXCEPTIONS）；释放/打断双路 StopAnim 与 PlayAnim 共享 full_power_strike 常量+负向 pin |
+| `baomai.full_power_release` | 1 | `baomai_full_power_release` | 12 | — | 7 | 168 | — | **A** | P3 | P3 专属化（2026-07-19）：蓄力位无缝接力→双拳崩出→泄力虚脱意，12t 瞬发域；解除 release_burst 借用 |
 | `zhenmai.parry` | 1 | `zhenmai_parry` | 8 | — | 6 | 130 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：瞬发单手拍挡爆发帧+收势 |
 | `zhenmai.neutralize` | 4 | `zhenmai_neutralize` | 10 | — | 7 | 146 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：双掌下按化劲+沉桩 |
 | `zhenmai.multipoint` | 6 | `zhenmai_multipoint` | 12 | — | 10 | 215 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：连环三点指（右高/左中/右深） |
 | `zhenmai.harden` | 5 | `zhenmai_harden` | 11 | — | 8 | 165 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：抱臂沉桩硬化+紧咬 clench |
 | `zhenmai.sever_chain` | 8 | `zhenmai_sever_chain` | 14 | — | 9 | 198 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：手刀横斩断链+overshoot |
-| `woliu.vortex` | 1 | —— | — | — | — | — | — | **D** | P3 | v1 涡流术无动画发射（combat/woliu.rs 零 PlayAnim） |
-| `woliu.hold` | 1 | `vortex_palm_open` | 12 | — | 14 | 40 | — | **B** | P3 | 12t/40KF；瞬发标准内但密度可精修 |
-| `woliu.burst` | 1 | `palm_strike` | 6 | — | 81 | 81 | ✓ | **D** | P3 | 借通用 palm_strike（6t 模板 81KF） |
-| `woliu.mouth` | 6 | `palm_thrust` | 12 | — | 105 | 105 | ✓ | **D** | P3 | 借通用 palm_thrust |
-| `woliu.pull` | 5 | `woliu_vacuum_lock` | 10 | — | 8 | 32 | ✓ | **D** | P3 | 与进阶 vacuum_lock 共用 |
-| `woliu.heart` | 10 | `vortex_spiral_stance` | 20 | — | 15 | 53 | — | **B** | P3 | 20t/53KF；可精修 |
-| `woliu.vacuum_palm` | 6 | `woliu_vacuum_palm` | 8 | — | 6 | 18 | — | **C** | P3 | 8t/18KF 快闪 |
-| `woliu.vortex_shield` | 10 | `woliu_vortex_shield` | 18 | ✓ | 9 | 33 | — | **B** | P3 | 18t loop/33KF；停止路径待核 |
-| `woliu.vacuum_lock` | 8 | `woliu_vacuum_lock` | 10 | — | 8 | 32 | — | **C** | P3 | 10t/32KF 快闪 |
+| `woliu.vortex` | 1 | `woliu_vortex_cast` | 10 | — | 6 | 126 | — | **A** | P3 | P3 缺口修正（2026-07-19）：核验证实并非零发射——field lifecycle 借播 v2 站桩 vortex_spiral_stance（vfx `emit_woliu_v1_vortex_visual_triggers`）；改指专属双臂开涡 10t 瞬发+拼写/负向 pin；删 MISSING 条目 |
+| `woliu.hold` | 1 | `vortex_palm_open` | 10 | — | 6 | 132 | — | **A** | P3 | P3 重制（2026-07-19）：绕臂托举→头顶撑伞开掌+微颤，10t 瞬发域 |
+| `woliu.burst` | 1 | `woliu_burst` | 8 | — | 6 | 126 | — | **A** | P3 | P3 专属化（2026-07-19）：交臂紧压→双掌对称外弹+退步卸力；解除 palm_strike 借用，基础 5 招动画跨招唯一断言 |
+| `woliu.mouth` | 6 | `woliu_mouth` | 12 | — | 7 | 154 | — | **A** | P3 | P3 专属化（2026-07-19）：拧身列位→探爪开口+左手撕回对拉（顶点=t6 定格微颤）；解除 palm_thrust 借用 |
+| `woliu.pull` | 5 | `woliu_pull` | 11 | — | 8 | 176 | — | **A** | P3 | P3 去共用（2026-07-19）：前探扣抓→撕拽回身后坐拧腰；与 vacuum_lock 解除共用+互异断言 |
+| `woliu.heart` | 10 | `woliu_heart` | 16 | — | 8 | 184 | — | **A** | P3 | P3 去共用（2026-07-19）：举天聚涡→千钧压落深沉马步（顶点=t10）；与 v1 站桩解除共用；出 allowlist |
+| `woliu.vacuum_palm` | 6 | `woliu_vacuum_palm` | 12 | — | 8 | 176 | — | **A** | P3 | P3 重制（2026-07-19）：拧腰收掌→平刺→抽真空回拖收爪；出 allowlist |
+| `woliu.vortex_shield` | 10 | `woliu_vortex_shield` | 20 | ✓ | 6 | 144 | — | **A** | P3 | P3 重制（2026-07-19）：环抱屏障公转 20t 全轴闭环；停止路径已核验（唯一退出=VortexV2State 窗到期 StopAnim，无提前破盾/取消机制），入 SUSTAINED_LOOP_EXCEPTIONS；出 allowlist |
+| `woliu.vacuum_lock` | 8 | `woliu_vacuum_lock` | 13 | — | 7 | 154 | — | **A** | P3 | P3 重制（2026-07-19）：开臂张笼→合拢下压锁困（顶点=t8）；pull 拿到专属后本动画为 vacuum_lock 独占；出 allowlist |
 | `woliu.vortex_resonance` | 80 | `woliu_vortex_resonance` | 80 | ✓ | 9 | 25 | — | **A** | — | 80t loop 对齐 cast=80 ✓（时长正例）；对拍实测 10 手臂轴 endTick 无补帧（库坑 #1）——存量 bug 归 `plan-bughunt-woliu-resonance-loop-arm-decay-v1`（防重排除），修复前暂驻 allowlist |
-| `woliu.turbulence_burst` | 40 | `woliu_turbulence_burst` | 40 | — | 11 | 35 | — | **B** | P3 | 40t/35KF；cast≥40 应两段式 |
-| `dugu.shoot_needle` | 1 | `dugu_needle_throw` | 8 | — | 13 | 35 | — | **C** | P3 | 8t/35KF 快闪 |
-| `dugu.infuse_poison` | 1 | `dugu_needle_throw` | 8 | — | 13 | 35 | ✓ | **D** | P3 | 与凝针共用一条动画 |
-| `tuike.don` | 12 | `tuike_don_skin` | 16 | — | 16 | 48 | — | **B** | P3 | 16t/48KF；补 recovery 即达标 |
-| `tuike.shed` | 8 | `tuike_shed_burst` | 12 | — | 20 | 56 | — | **B** | P3 | 12t/56KF；可精修 |
-| `tuike.transfer_taint` | 10 | `tuike_taint_transfer` | 14 | — | 19 | 55 | — | **B** | P3 | 14t/55KF；可精修 |
+| `woliu.turbulence_burst` | 40 | `woliu_turbulence_burst` | 20 | — | 8 | 192 | — | **A** | P3 | P3（2026-07-19）：通道核验=resolver 同步一次性结算零 Casting（cast=40 纯透传，无窗可挂循环段）→ **瞬发结算型分类契约**（顶点=t0 爆开与结算同帧，入 INSTANT_RESOLVER_SKILLS + instant manifest）；出 allowlist |
+| `dugu.shoot_needle` | 1 | `dugu_needle_throw` | 10 | — | 7 | 154 | — | **A** | P3 | P3 重制（2026-07-19）：耳侧引针→鞭甩掷出→随针目送；infuse_poison 拿到专属后本动画为凝针独占 |
+| `dugu.infuse_poison` | 1 | `dugu_infuse_poison` | 10 | — | 7 | 154 | — | **A** | P3 | P3 去共用（2026-07-19）：举针凝视→覆手淬毒→腕封（无掷出）；vfx 灌毒分支改指专属常量+负向 pin |
+| `tuike.don` | 12 | `tuike_don_skin` | 18 | — | 9 | 207 | — | **A** | P3 | P3 重制（2026-07-19）：俯身探底（bow 补偿）→沿身披壳上提→抖身定壳（顶点=t12）；同 id 双源不动（归 bugfix plan） |
+| `tuike.shed` | 8 | `tuike_shed_burst` | 13 | — | 8 | 184 | — | **A** | P3 | P3 重制（2026-07-19）：裹身紧缩→炸开甩壳+挺胸微跳→左右抖落（顶点=t8 壳离体） |
+| `tuike.transfer_taint` | 10 | `tuike_taint_transfer` | 15 | — | 8 | 176 | — | **A** | P3 | P3 重制（2026-07-19）：按胸引秽→抽出带颤→前推按入壳层→下抚（顶点=t10） |
 | `anqi.charge_carrier` | 400 | `anqi_charge_carrier_loop`(+`_release`) | 32 loop+14 | ✓ | 9+7 | 207+154 | — | **A** | P2 | P2 后半两段式（2026-07-19）：真实 400t 通道（`CHARGE_DURATION_TICKS` carrier.rs:47）→ 专属封骨结印循环 32t + release 14t；`CarrierChargeBegan/Ended` 事件接线（begin 起播 / finish_charge 全退出路径 StopAnim / full_charge 才播 release，早退分支覆盖有专属 pin） |
 | `anqi.single_snipe` | 6 | `anqi_single_snipe` | 12 | — | 7 | 161 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：侧身瞄准线→骨镖弹射出手→随镖目送 |
 | `anqi.multi_shot` | 30 | `anqi_multi_shot` | 36 | — | 11 | 231 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：胸前拢镖蓄势（load-snap 呼吸）→双臂开扇撒出 |
@@ -251,7 +251,7 @@
 | `npc.heal_basic` | 20 | —— | — | — | — | — | — | **N/A** | P5 粒子 | NPC mob 无 PlayAnim 通道（§8.1 #2） |
 | `npc.buff_speed` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
 | `npc.buff_defense` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
-| `morph.yixing` | 60 | `morph_cast` | 30 | — | 42 | 42 | — | **C** | P3 | 30t vs cast=60 错配 30t 静止（§8.1 #2） |
+| `morph.yixing` | 60 | `morph_cast` | 20 | — | 8 | 192 | — | **A** | P3 | P3（2026-07-19）：通道核验=cast_morph_yixing 双分支立即变形零 Casting（YIXING_CAST_TICKS 纯元数据）→ **瞬发结算型分类契约**（顶点=t0 塌形与结算同帧，入 INSTANT_RESOLVER_SKILLS）；粒子 lifetime 30→20 随动画对齐（§8.1 #1）；出 allowlist |
 
 **分级统计**（P0 初判）：A×2 / B×13 / C×12 / D×19 / N-A×3（46 玩家招中 B+C+D = 44 条入 P1-P4 重制/精修清单，与 §8.1 #2 决议一致）。
 
@@ -262,3 +262,7 @@
 **P2 后半后（2026-07-19，review r2 定形）**：A×23 / B×8 / C×5 / D×10 / N-A×3——6 条转 A（sword.infuse / charge_carrier 真两段式落地 + armor_pierce / echo_fractal / manifest 瞬发结算型分类契约交付 + heaven_gate 双段密度精修）。allowlist 净删 4 条（sword.infuse 两段式达标 + 三招瞬发分类出表；charge_carrier 原本不在表）。**瞬发结算型分类契约**（review r2 裁定，conventions §13 #2 例外 ③）：三招 resolver 在 cast 起始 tick 立即结算、cast_ticks 为元数据，动画 **strike 顶点=tick 0**（开帧即命中姿态，余韵/收势后置），由 `INSTANT_RESOLVER_SKILLS` 分类 pin + instant spec manifest（strike_peak_tick=0、主打击轴 tick 0 落帧）机械锁定——分类契约取代 allowlist 豁免；通道日后真实化（引入 Casting 引导窗，gameplay 变更需独立决议）则退类改两段式。**遗留登记**：仅 heaven_gate 一条驻 allowlist（动画对齐 60t 充能相位而非 cast=80 总窗）+ hold-末帧与 isLoop 正典统一注记，归 P6 裁决。剩余 B+C+D = 23 条随 P3-P4 清空。
 
 **P2 后半打磨记录（2026-07-19，两批各 3 轮）**：首批 7 资产（2 loop + 2 release + 3 单段）——(round 1/3) gen 脚本参数化 first cut → (round 2/3) `render_animation.py` 三视图 grid 目检（loop 首尾同帧 / release 与 loop 稳定帧衔接 / 轨迹互异）+ 机械四查（循环每轴 endTick 同值 / leg.pitch≤40° / 打击轴无 linear / 主轴密度 ≤4t）→ (round 3/3) 决定性再生成 7/7 字节一致 + 双栈门禁绿、终轮 commit 附 `<PROMISE>` 担保。**review 返工批**（PR #1240 blocker：三招瞬发结算与 40/60t 发力顶点脱节 + heaven_gate 欠账）5 资产——(round 1/3) strike 对齐重做 armor_pierce 18t / echo_fractal 24t / manifest_cast 20t + heaven_gate charge 16 帧 / release 8 帧精修 first cut → (round 2/3) 三视图 grid 目检 + 机械查全过 + segment manifest（loop / charge_hold 两型）扩展入对拍测试、7 份 manifest 锁密度 → (round 3/3) 动画测试组全绿 + client 门禁复验、终轮 commit 附 `<PROMISE>` 担保。**review r2 定形批**（r2 裁定 2t anticipation 仍违反「顶点贴 tick 0」契约）3 资产——(round 1/3) 顶点前置到开帧重做：armor_pierce 12t / echo_fractal 20t / manifest_cast 14t（t0 即命中姿态，余韵/收势后置）→ (round 2/3) instant 分类契约机械化：`INSTANT_RESOLVER_SKILLS` 分类 pin + instant spec manifest（strike_peak_tick=0、strike 从 0 起、主打击轴 tick 0 落帧）、三招出 CAST_ALIGNMENT_ALLOWLIST、conventions §13 #2 增例外 ③ → (round 3/3) 三视图 grid 目检（t0 开帧即全伸命中）+ 动画测试组全绿 + client 门禁复验、终轮 commit 附 `<PROMISE>` 担保。
+
+**P3 批次三后（2026-07-19）**：A×46 / B×0 / C×0 / D×0 / N-A×3——矩阵内 46 玩家招全部达标转 A（本批 23 条：借用/共用解除专属化 10 + 缺失补齐 2 + 精修重制 11）。**allowlist 净删 9 条**（movement.dash / baomai.full_power_charge / baomai.full_power_release / woliu.heart / woliu.vacuum_palm / woliu.vortex_shield / woliu.vacuum_lock / woliu.turbulence_burst / morph.yixing），余 2 条：woliu.vortex_resonance（bughunt plan 防重排除项）+ sword_path.heaven_gate（P6 注记项）；**MISSING_ANIM_ALLOWLIST 清零**（ni_mai_hu_ti 补齐 + woliu.vortex 缺口修正）。分类登记：SUSTAINED_LOOP_EXCEPTIONS += baomai.full_power_charge / woliu.vortex_shield（两者停止路径均核验完整：前者释放/打断双路 StopAnim 共享常量，后者唯一退出=VortexV2State 窗到期 StopAnim）；INSTANT_RESOLVER_SKILLS += woliu.turbulence_burst / morph.yixing（均核验为 resolver 立即结算零 Casting 无窗，conventions §13 #2 例外 ③）。**事实修正**：woliu.vortex 原判「combat/woliu.rs 零 PlayAnim」仅对文件成立——系统级动画走 field lifecycle 借播 v2 站桩（`emit_woliu_v1_vortex_visual_triggers`），本批以改指专属完成缺口闭合（矩阵行备注已更正）。矩阵外欠账：P4 yidao 5 招（plan-yidao-v1 §5）。**遗留登记**：§8.1 #2 第 4 条的 stance_woliu / stance_zhenmai「一次性亮相」精修未随本批交付（本批范围锁定附录 A P3 矩阵行 + P3 段清单，两 stance 均非矩阵行），移交 P6 收口或独立小批次。
+
+**P3 批次三打磨记录（2026-07-19，3 轮）**：23 资产（11 新增 + 12 原地重制）——(round 1/3) 逐招第一性原理通道核验（结论以文件:行号写入各 gen 脚本 docstring）后参数化 first cut：三段式 18 / segment loop 2（闭环 BASE-inherit 机械保证）/ instant 2（顶点 t0）/ raise+hold 循环 1（shield_raise returnTick=6、t18≡t6 闭合，绕过全程闭合断言的显式 build 路径 + 脚本内 hold 段闭合自断言）；本地机械预检（时长窗三套 / 循环缝合同值 / leg.pitch≤40° / 主轴密度≤4t / 打击轴无 linear / instant t0 落帧 / 三段各≥2 帧点）在 commit 前抓出 woliu_vortex_shield 5t 帧距违反密度红线 → 改 4t 步进后 ALL CLEAN → (round 2/3) `render_animation.py` 23/23 三视图 grid 逐个目检：借用解除组姿态语言互异可辨（靠撞折臂 vs 疾步拖尾 vs 出拳；淬毒覆手 vs 鞭甩掷针；双掌外弹 / 探爪对拉 / 扣抓撕拽 / 举天压落 / 撑伞 / 开涡横撒各不相同），instant 组 t0 开帧即命中/塌形顶点，loop 组首尾同帧——零缺陷无资产增量改动 → (round 3/3) 决定性再生成 23/23 字节一致；门禁抓出两笔并修正：cargo fmt 格式化 3 处 + shield_raise.json 需内嵌 `<PROMISE>` 块（shield_block.rs 既有 §10.1 pin，补块后重生成）；终验双栈全绿（server CLIPPY:0 + TEST:0，11797 passed 0 failed；client gradle test build SUCCESSFUL 于最终资产之后复跑）。

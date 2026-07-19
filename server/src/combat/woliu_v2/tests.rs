@@ -1558,6 +1558,9 @@ fn resolve_v3_area_skills_emit_distinct_visual_contracts() {
 /// 因为审计确认过去 5 招共用 `bong:vortex_spiral` + 仅 2 个 recipe，体验无法区分。
 #[test]
 fn base_skills_emit_distinct_particle_and_sound_contracts() {
+    // plan-skill-anim-fidelity-v1 P3：burst/mouth/pull/heart 借用解除换专属动画
+    // （原分别借 palm_strike / palm_thrust / 共用 woliu_vacuum_lock /
+    // 共用 vortex_spiral_stance），基础 5 招动画自此跨招唯一。
     let cases = [
         (
             WoliuSkillId::Hold,
@@ -1567,30 +1570,31 @@ fn base_skills_emit_distinct_particle_and_sound_contracts() {
         ),
         (
             WoliuSkillId::Burst,
-            "bong:palm_strike",
+            "bong:woliu_burst",
             "bong:woliu_burst_pop",
             "woliu_burst_pop",
         ),
         (
             WoliuSkillId::Mouth,
-            "bong:palm_thrust",
+            "bong:woliu_mouth",
             "bong:woliu_mouth_funnel",
             "woliu_mouth_funnel",
         ),
         (
             WoliuSkillId::Pull,
-            "bong:woliu_vacuum_lock",
+            "bong:woliu_pull",
             "bong:woliu_pull_drag",
             "woliu_pull_drag",
         ),
         (
             WoliuSkillId::Heart,
-            "bong:vortex_spiral_stance",
+            "bong:woliu_heart",
             "bong:woliu_heart_field",
             "woliu_heart_field",
         ),
     ];
 
+    let mut seen_animations = std::collections::HashSet::new();
     let mut seen_particles = std::collections::HashSet::new();
     let mut seen_sounds = std::collections::HashSet::new();
 
@@ -1612,6 +1616,11 @@ fn base_skills_emit_distinct_particle_and_sound_contracts() {
             visual.sound_recipe_id
         );
         assert!(
+            seen_animations.insert(visual.animation_id),
+            "{skill:?} animation_id {} 与其他基础招重复——P3 去复用后基础 5 招动画必须跨招唯一",
+            visual.animation_id
+        );
+        assert!(
             seen_particles.insert(visual.particle_id),
             "{skill:?} particle_id {} 与其他基础招重复——基础 5 招 particle 必须跨招唯一",
             visual.particle_id
@@ -1626,10 +1635,28 @@ fn base_skills_emit_distinct_particle_and_sound_contracts() {
             visual.particle_id, "bong:vortex_spiral",
             "{skill:?} 不得回退到共用 bong:vortex_spiral particle"
         );
+        // P3 去复用回归锁：基础招动画不得回退到旧借用/共用 id。
+        for stale in [
+            "bong:palm_strike",
+            "bong:palm_thrust",
+            "bong:vortex_spiral_stance",
+        ] {
+            assert_ne!(
+                visual.animation_id, stale,
+                "{skill:?} 不得回退到旧借用动画 {stale}（P3 已专属化）"
+            );
+        }
     }
 
+    assert_eq!(seen_animations.len(), 5, "5 招应有 5 个互异 animation_id");
     assert_eq!(seen_particles.len(), 5, "5 招应有 5 个互异 particle_id");
     assert_eq!(seen_sounds.len(), 5, "5 招应有 5 个互异 sound_recipe_id");
+    // pull 专属化后不得再与进阶 vacuum_lock 共用动画。
+    assert_ne!(
+        visual_for(WoliuSkillId::Pull).animation_id,
+        visual_for(WoliuSkillId::VacuumLock).animation_id,
+        "涡引与真空锁不得共用动画（P3 去共用回归锁）"
+    );
 }
 
 #[test]
