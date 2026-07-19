@@ -67,18 +67,26 @@
 - 回归 `cast_sync` 同根因入口：handler side effect 只在 client executor 中发生；不改变其业务语义。
 - 测试断言外部可观察契约与线程身份，不绑定私有实现调用次数；失败信息必须带实际线程/队列/事件值。
 
-### P1 落地结果（2026-07-13）
+### P1 落地结果（2026-07-13 初版 + 2026-07-20 复审补齐）
 
-- 修复提交 `867fd1a7` 把 `bong:server_data` 的
+- 初版修复提交 `867fd1a7` 把 `bong:server_data` 的
   `bridge → route → handler side effect → applyDispatch` 统一封装为一个
   `client.execute(...)` task；raw receiver 只复制 Netty buffer，不给 craft listener
   叠加局部线程兜底，也不改变协议、数值、声音资产或 UI 规格。
-- `BongServerDataThreadingTest` 覆盖 completed、failed、`cast_sync`、route/apply 顺序、
-  连续 payload、坏 JSON、handler exception 与后续合法 payload，修复后 7/7 通过；
-  store/listener 实际线程均为 `minecraft-client-render-test`，每条 payload 精确应用一次。
-- 同根因回归在 Temurin 17 下通过：`BongNetworkHandlerTest` 16、
-  `CraftHandlerTest` 11、`CastSyncHandlerTest` 10、`ServerDataRouterTest` 17、
-  `ProtoServerDataBridgeTest` 134，加新增 7 项共 195 tests，0 failed / 0 skipped。
+- **复审补齐（2026-07-20）**：初版把 `markConnectionPayload` 一并推迟到 client task
+  执行时刻，导致 freshness 变成 processing time，且 disconnect-before-drain 的 stale
+  task 可把 `ClientConnectionStatusStore` 复活为 connected。现已恢复收包时刻语义：
+  receiver 捕获 `receivedAtMs` + `connectionGeneration`，task 开头用 generation guard
+  回写；stale generation 整段 no-op。CraftScreen / WorkbenchScreen 共用
+  `CraftOutcomeFeedback`（completed: flashTicks=6 → 一声完成音 → refresh；failed: 仅 refresh）。
+- `BongServerDataThreadingTest` 现覆盖：
+  completed/failed store 线程、`cast_sync`、route/apply 顺序、连续 payload、坏 JSON、
+  handler exception、receipt-timestamp freshness、disconnect-before-drain 不复活、
+  reconnect 后旧 task 不污染新 generation、unknown/null-dispatch no-op seam、
+  真实 CraftScreen+WorkbenchScreen flash/sound/refresh 顺序、disconnect 清理 CraftStore
+  且丢弃 queued side effect。
+- `CraftOutcomeFeedbackTest` 锁定两屏共享反馈契约与 listener 注销生命周期。
+- 同根因回归在 Temurin 17 下通过（见 Finish Evidence 最新计数）。
 
 ## P2：闭环验证
 
@@ -112,18 +120,27 @@
 ### 落地清单
 
 - `client/src/main/java/com/bong/client/BongNetworkHandler.java`
-  - raw `bong:server_data` receiver 只复制 Netty buffer。
+  - raw `bong:server_data` receiver 只复制 Netty buffer，并捕获收包 `receivedAtMs` +
+    `ClientConnectionStatusStore.currentGeneration()`。
   - protobuf bridge、legacy JSON fallback、`ServerDataRouter.route(...)`、所有 handler/store/listener
     side effect 与最终 `applyDispatch(...)` 统一进入一个 client-thread task。
+  - task 开头用 generation guard + 收包时刻回写 freshness；stale generation 整段 no-op。
   - 保留 parse error、未知 type/no-op、handler exception 收口、日志和 dispatch 判定语义；
     没有给 `CraftScreen` / `WorkbenchScreen` 追加第二套局部线程兜底。
+- `client/src/main/java/com/bong/client/ui/ClientConnectionStatusStore.java`
+  - 增加 `connectionGeneration`；`markConnected`/`markDisconnected` 递增代次；
+    `markPayloadReceived(now, generation)` 代次不一致时 no-op。
+- `client/src/main/java/com/bong/client/craft/CraftOutcomeFeedback.java`
+  - CraftScreen / WorkbenchScreen 共用 completed/failed 反馈契约（可测 seam）。
+- `client/src/main/java/com/bong/client/craft/CraftScreen.java` /
+  `WorkbenchScreen.java`
+  - outcome listener 改走共享反馈；提供 attach/detach/flashTicks 测试观察缝。
 - `client/src/test/java/com/bong/client/BongServerDataThreadingTest.java`
-  - 新增 7 个生产调度边界回归，使用命名 network/client thread 和可控 executor 验证
-    receiver 返回前零 side effect、client drain 后线程身份、顺序与 exactly-once。
-  - 覆盖 completed、failed、`cast_sync`、route → apply、连续 payload、坏 JSON、
-    handler exception 与后续合法 payload。
-- `docs/plan-bughunt-craft-outcome-network-thread-sound-v1.md`
-  - 回填 Fabric 官方线程契约、生产 emit 可达链、修复前红测和修复后完整证据。
+  - 线程边界 + 连接状态机 + 真实 screen 反馈 + no-op/lifecycle 饱和回归。
+- `client/src/test/java/com/bong/client/craft/CraftOutcomeFeedbackTest.java`
+  - flash/sound/refresh 顺序、failed 无完成音、screen 关闭后不消费。
+- `docs/finished_plans/plan-bughunt-craft-outcome-network-thread-sound-v1.md`
+  - 原地纠正 Finish Evidence overclaim，不重复归档。
 
 ### 关键 commit
 
@@ -136,6 +153,8 @@
 - `e65fffdb`：回应 CodeRabbit，补足线程断言诊断与归档格式。
 - `3ccf908b`：普通 merge `origin/main@2f9c70ad`（含 #1212 SearchHud disconnect 清理等主线），
   parents=`e65fffdb` + `2f9c70ad`；保留本 PR craft_outcome 单任务线程契约与 #1212 语义并存。
+- `689ffb94`：docs-only 更新 post-merge 门禁证据（后续被 2026-07-20 复审返工取代为最新 HEAD）。
+- （本轮）generation/receivedAt 连接状态机修复 + CraftOutcomeFeedback + 饱和测试 + Finish Evidence 纠正。
 
 ### 测试结果
 
@@ -169,8 +188,8 @@
   `dispatchServerDataPayload`/`processServerDataPayload` 的 raw-buffer-copy →
   单一 `client.execute` task（bridge/fallback/route/handler/store/listener/applyDispatch）
   线程契约；Agent UI / Season 主线逻辑未丢。
-- post-merge 必须重跑 client 完整门禁（见上）；门禁绿后对最终 HEAD 启动 fresh
-  无上下文 read-only Grok validator，结论绑定 exact SHA。
+- post-merge 必须重跑 client 完整门禁；2026-07-20 复审返工后以新 HEAD 的 Java 17
+  完整门禁与本文件最新落地清单为准（初版 7 项线程测试不足以覆盖 screen/lifecycle）。
 
 ### 跨栈核验
 
@@ -183,8 +202,35 @@
 - 真元/世界观/A/V：本修复不改变制作数值、资源流、真元 ledger、招式或视觉/音效资产；
   只保证既有完成音效、闪光与刷新在 client thread 执行。
 
+### 测试结果（2026-07-20 复审返工后）
+
+- client 完整门禁（Temurin 17）：
+  `export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; cd client && ./gradlew test build`
+  → exit `0`，`BUILD SUCCESSFUL`；
+  JUnit XML 汇总 **`4171 tests, 0 failures, 0 errors, 0 skipped`**（476 suites）；
+  GAME TESTS：`All 3 required tests passed`。
+- 关键回归：
+  - `BongServerDataThreadingTest` **13/13**（含 receipt timestamp / disconnect-before-drain /
+    reconnect generation / unknown+null no-op / 真实 CraftScreen+WorkbenchScreen 反馈 /
+    disconnect CraftStore lifecycle）；
+  - `CraftOutcomeFeedbackTest` **5/5**；
+  - `BongNetworkHandlerTest` **21/21**；
+  - `ConnectionStatusIndicatorTest` **8/8**。
+
+### 2026-07-20 复审返工证据（原地纠正，不重复归档）
+
+- 触发：PR #1196 `/review` REQUEST_CHANGES（17 findings 主题收敛为 3 类）：
+  1) `markConnectionPayload` 从收包时刻推迟到 processing time / 可复活 connected；
+  2) 缺少 CraftScreen/WorkbenchScreen 真实反馈与 failed 无完成音回归；
+  3) 缺少 unknown/null-dispatch、disconnect/screen-close lifecycle 矩阵。
+- 代码修复：generation + receivedAt guard；共享 `CraftOutcomeFeedback`；饱和测试补齐。
+- 文档：本 Finish Evidence 原地纠正 overclaim（初版仅 7 项 store/listener 线程测试不足以
+  覆盖 plan 验收矩阵），**不**再次 `git mv` 归档。
+- 门禁与精确计数以本轮 Java 17 `./gradlew test build` 为准（见下方最新测试结果段）。
+
 ### 遗留 / 后续
 
-- 本轮无阻塞标记，无已知功能遗留。
+- 其他 channel（vfx/audio/agent_ui 等）仍在 network thread 直接 `markPayloadReceived()`，
+  其 freshness 语义保持历史行为，不在本 plan 扩项范围内。
 - 本地不 push / 不开改合 PR；远端 gate 仍由 `/review`、CodeRabbit、e2e 等负责。
 - 明确排除 #1228：本会话不触碰、不停止任何来源不明进程。
