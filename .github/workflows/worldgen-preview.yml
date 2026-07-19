@@ -72,7 +72,7 @@ jobs:
           python3 -m unittest test_anvil_spans -v
           python3 -m unittest test_anvil_world_spans -v
 
-      - name: Unit tests — worldgen-v4 spans (codec / fold / blend / export / check)
+      - name: Unit tests — worldgen-v4 spans + zone overlap policy
         # plan-worldgen-v4 P0: span 表示地基的 Python 侧饱和单测。worldgen/tests/
         # 目录历史不在 CI；P0 显式纳入 span 相关用例防回归。
         working-directory: worldgen
@@ -85,6 +85,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_raster_check_spans.py' -v
           python3 -m unittest discover -s tests -p 'test_v3_behavior_baseline.py' -v
           python3 -m unittest discover -s tests -p 'test_layer_registry_fixture.py' -v
+          python3 -m unittest discover -s tests -p 'test_zone_overlap_policy.py' -v
 
       - name: Unit tests — validate_snapshots
         # plan-worldgen-snapshot-v1 §4.3：validator 自身有饱和单测（31 个），

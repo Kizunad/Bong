@@ -5,8 +5,13 @@
 //! 触发时把完整 `QuickSlotConfigV1`（含 instance→template 反查 +
 //! cooldown_until_ms 折算）推给该 client。
 //!
-//! 当前 v1 限制：cast_duration_ms / cooldown_ms / icon_texture 是占位常量
-//! （后续扩展 ItemTemplate 让 schema 真实匹配 plan §10.4）；只发给本人，不广播。
+//! icon_texture 恒为空串是显式契约（plan-skill-av-relink-v1 P0 决议，修正 plan
+//! 原文"从 technique_definition 取值"的前提错误）：quickslot 是纯 Item 槽
+//! （`QuickSlotBindings` 只绑 instance_id→template，无 Skill 变体，
+//! `technique_definition(template_id)` 恒 None），client 对空串按 item_id 走
+//! ItemIconRegistry 富解析（tools/ 子目录映射、armor tint、存在性探测、
+//! broken_artifact 兜底）；server 若回填 naive 模板路径，client 会走裸
+//! texture() 分支绕过富解析，造成工具/护甲类图标回归。只发给本人，不广播。
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -89,6 +94,8 @@ pub(crate) fn build_quickslot_config(
                         .map(|template| template.cooldown_ms)
                         .unwrap_or(TEMPLATE_DEFAULT_COOLDOWN_MS),
                     item_id: template_id,
+                    // 契约：Item 槽 icon_texture 恒空串，client 按 item_id 走
+                    // ItemIconRegistry 富解析；填路径会绕过它（见模块注释）。
                     icon_texture: String::new(),
                 })
             })

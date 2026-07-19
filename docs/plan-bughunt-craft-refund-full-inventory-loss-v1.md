@@ -1,115 +1,120 @@
 # plan-bughunt-craft-refund-full-inventory-loss-v1
 
-> **active bughunt skeleton plan**。一句话主题：`craft` 显式取消或产物入包失败后的材料退款只走裸 `add_item_to_player_inventory`；当 session 期间背包空间被重新填满时，退款失败只打日志、不落地、不保留 session，导致本应返还的材料直接丢失。
+> **active bughunt plan（归档审计发现 P4 验收缺口）**。一句话主题：修复 `craft` 显式取消或产物入包失败后的材料退款在背包已满时只记录日志、却不入包、不落地且删除 `CraftSession`，导致应返材料永久丢失的问题。
+
+## 当前状态
+
+| 阶段 | 主题 | 当前交付物 / 可核验锚点 | 状态 |
+|------|------|-------------------------|------|
+| P0 | 钉死退款事务语义 | `server/src/network/craft_emit.rs::grant_refund_manifest_to_inventory_or_ground`；clone staging 后整批发布，结构错误整批回滚 | ✅ 2026-07-12 |
+| P1 | 接入满包地面兜底 | `DroppedLootRegistry`、`InventoryInstanceIdAllocator`、`refund_ground_context`、`add_item_to_player_inventory_or_ground`；玩家位置与 `CurrentDimension` 原样进入落地点 | ✅ 2026-07-12 |
+| P2 | 按实际结果回报退款数 | `apply_craft_cancel_intents` 将 `CraftFailedEvent.material_returned` 改写为实际入包数 + 实际落地数；成功持久化后才发布事件并删除 session | ✅ 2026-07-12 |
+| P3 | 闭环 finalize、持久化与重连 | `tick_craft_sessions`、`persist_dirty_craft_sessions`、`save_player_craft_checkpoint`、`hydrate_durable_inventory_state`、玩家 join/disconnect/shutdown 恢复与保存 | ✅ 2026-07-12 |
+| P4 | 饱和回归与生产 Bot 验收 | 满包、mixed、缺 registry、unknown template、allocator、持久化、重连及 Bot 链路已有覆盖；仍缺原 plan 点名的 `no containers` 结构错误定向回归 | ⏳ |
+
+> **归档门未满足**：运行时代码中，`server/src/inventory/mod.rs::add_item_to_player_inventory_or_ground` 仅对 `inventory full:` fallback，`add_item_to_player_inventory_inner` 在 `carried_container_candidate_indices(...).is_empty()` 时返回 `player inventory has no containers`；因此 `no containers` 保持为结构错误。craft 退款 helper / cancel / finalize 的 clone staging 与 error 分支从代码上会回滚并保留 `CraftSession`。但原 plan 明确要求以定向测试锁死 `no containers` 不会被当作满包掉落成功；截至 PR #1142 final head 及当前 `origin/main`，没有命中该输入的专属回归。因此 P4 不能标记完成，本 plan 不能迁入 `finished_plans/`。
 
 ## Bug 摘要
 
-- **类型**：真实 gameplay bug，`fix_pr`
-- **范围**：`server/src/craft/session.rs`、`server/src/network/craft_emit.rs`、`server/src/inventory/mod.rs`
-- **一句话根因**：`cancel_craft()` 只计算退款清单，真正发放在 `craft_emit.rs` 里用裸入包函数；满包失败分支没有使用已有 `add_item_to_player_inventory_or_ground`，也没有 pending refund / rollback，随后移除 `CraftSession`
-- **非重复性**：这不是 `plan-craft-close-pause-loss-v1` 的“关闭 UI 被误当显式取消，损失 30%”；本题是“已经进入退款语义后，剩余 70% 退款因满包入包失败而被吞掉”
+- **类型**：真实 gameplay bug，`fix_pr`。
+- **原始范围**：`server/src/craft/session.rs`、`server/src/network/craft_emit.rs`、`server/src/inventory/mod.rs`。
+- **一句话根因**：`cancel_craft()` 只计算退款清单；原发放路径使用裸 `add_item_to_player_inventory`，满包失败后仍发送预计算结果并移除 `CraftSession`，没有 `DroppedLootRegistry` fallback、pending retry 或原子 rollback。
+- **非重复性**：这不是 `plan-craft-close-pause-loss-v1` 的“关闭 UI 被误当显式取消，产生设计内 30% 损耗”；本题是“已经进入退款语义后，设计应返还的 70% 又因背包已满而被吞掉”。
 
-## 实际游玩体验影响
+## 接入面与契约锚点
 
-- 玩家开始一个耗时或批量 craft 后，材料会先从背包扣走。只要中途通过拾取、交易、整理背包、异步奖励等正常玩法把腾出的格子再次占满，后续显式取消时，服务端会尝试返还 70% 材料，但满包失败的退款项不会出现在背包，也不会掉到地上。
-- 显式取消分支还会把预先计算的 `material_returned` 下发给客户端；玩家可能看到“已返还 N 个材料”的反馈，但实际背包没有收到，地面也没有掉落。
-- finalize 产物入包失败时，系统会取消剩余批次并尝试退款；若退款同样满包失败，失败项真实消失。对稀缺材料、长时间配方、批量制作尤其伤，因为玩家已经承担取消税，剩余退款还会二次丢失。
+- **进料**：`CraftStartIntent` 预扣配方材料并建立 `CraftSession`；`CraftCancelIntent` 或 `tick_craft_sessions` 的产物 grant 失败生成 `refund_manifest`；`PlayerInventory`、`ItemRegistry`、`Position`、`CurrentDimension` 提供退款上下文。
+- **出料**：退款优先写回 `PlayerInventory`；背包已满时写入 durable `DroppedLootRegistry`；`CraftFailedEvent.material_returned` 与 `CraftOutcomeV1::Failed.material_returned` 只统计真实入包或落地成功数；成功检查点提交后才终结 session。
+- **共享类型 / event**：复用 `CraftSession`、`CraftFailedEvent`、`PlayerInventory`、`DroppedLootEntry`、`DroppedLootRegistry`、`InventoryInstanceIdAllocator`、`CraftSessionPersistenceDirty`，没有新增近义退款事件或第二套掉落 registry。
+- **持久化契约**：SQLite migration v36 `player_craft_sessions`、v37 `dropped_loot`；`save_player_craft_checkpoint` 原子提交 inventory/session/可选 cultivation/qi ledger/durable drops；拾取走 `save_player_inventory_and_delete_dropped_loot` 原子提交 inventory 与 durable row 删除。
+- **跨仓库 / wire 契约**：沿用 `proto/bong/envelope.proto` 的 `craft_session_state`（tag 22）、`dropped_loot_sync`（tag 81）及 `CraftOutcomeFailed.material_returned`（field 5）；server 由 `CraftSessionStateV1` / `CraftOutcomeV1` 发包，Bot 由 `scripts/bot/proto_min.py` 解码并在 production scenarios 断言。PR #1142 未修改 client、agent 或 proto/schema 定义。
+- **worldview / qi_physics**：本题只修既有物品退款与持久化，不新增世界观机制或真元流动；worldview 锚点 N/A，qi_physics 锚点 N/A。
+- **玩家可感知行为**：本题是纯 server 正确性修复，客户端协议和既有 UI/A/V 不变。成功入包继续由 inventory snapshot 表现，满包 fallback 继续由既有 `dropped_loot_sync` 表现，失败数量继续使用既有 craft outcome；不新增 HUD、粒子、音效、动画、环境或 narration。
 
-## 证据定位
+## 原始可达性与影响
 
-1. `start_craft()` 在 session 创建前预扣材料，只移除/衰减栈，不预留退款容量：
-   - `server/src/craft/session.rs:155-160`：`consume_materials_from_inventory()` 直接扣减材料
-   - `server/src/craft/session.rs:399-405`：起 craft 后按配方材料逐项扣除
-2. `cancel_craft()` 只计算退款清单和预期返回数量，不接触 inventory：
-   - `server/src/craft/session.rs:446-482`：`refund_manifest` 与 `event.material_returned` 在实际入包前已算好
-3. 显式取消分支裸入包，失败只 `warn`，仍发送预计算 event 并移除 session：
-   - `server/src/network/craft_emit.rs:284-307`：逐项 `add_item_to_player_inventory(...)`，失败只记录 warning
-   - `server/src/network/craft_emit.rs:308-318`：发送 `event`，移除 `CraftSession`
-   - `server/src/network/craft_emit.rs:498-504`：client outcome 使用 `event.material_returned`
-4. finalize 产物入包失败分支会取消剩余批次，但退款失败只 `error` 后丢弃：
-   - `server/src/network/craft_emit.rs:389-420`：产物 grant 失败后计算退款并裸入包；失败项没有落地兜底
-   - `server/src/network/craft_emit.rs:423-426`：随后移除 `CraftSession`
-5. 裸入包函数在满包时返回错误，且调用方已有更合适的兜底 API：
-   - `server/src/inventory/mod.rs:1679-1697`：`add_item_to_player_inventory(...)`
-   - `server/src/inventory/mod.rs:1857-1898`：先用 staged 容器探测，找不到完整空间则返回 `inventory full: ...`
-   - `server/src/inventory/mod.rs:1730-1790`：已有 `add_item_to_player_inventory_or_ground(...)`，满包时可写入 `DroppedLootRegistry`
-   - `server/src/inventory/mod.rs:8328-8355`：已有满包落地测试证明该语义已被仓库接受
+1. `start_craft()` 在创建 session 前预扣材料，但不锁格、不预留退款容量。
+2. session active 期间，拾取、交易、库存整理或异步奖励可重新填满腾出的空间。
+3. 玩家显式取消，或产物 grant 因满包失败而进入剩余批次退款。
+4. 修复前裸入包返回 `inventory full: <template>`；调用方只记录日志，却仍删除 `CraftSession`。
+5. 玩家可能看到预计算的“已返还 N 个”，但背包与地面均没有材料；稀缺材料、长配方和批量制作会在取消税之外二次受损。
 
-## 触发路径
+两轮原始反方审查均未能推翻：server 没有 craft 期间的统一库存冻结；原路径没有 dropped-loot 资源；PR #1030 是 craft outcome 网络反馈，PR #1034 是炼丹取丹满包，均不覆盖本题。
 
-1. 玩家启动一个会消耗材料的 craft 配方，服务端预扣材料并创建 `CraftSession`。
-2. session active 期间，玩家通过库存移动、拾取掉落、NPC 交易、异步采集完成奖励等路径重新填满背包空间；这些路径当前没有统一 `CraftSession` 容量锁。
-3. 玩家显式取消 craft，或产物发放时因背包满导致 finalize 失败并进入自动取消剩余批次。
-4. `craft_emit.rs` 尝试把 `refund_manifest` 裸加回背包。
-5. `add_item_to_player_inventory` 返回 `inventory full: <template>`。
-6. craft 系统只记录日志，不生成 `DroppedLootRegistry` 掉落，不保留 pending refund，最后移除 `CraftSession`；退款项从玩家视角消失。
+## 开放问题（历史回填）
 
-## 反方审查记录
+原 active plan 未在实施前按现行模板单列开放问题；归档审计从最终实现反推并记录以下四个历史决策门。§1.1-§4.1 的设计决策均已收口，但 P4 仍有一项明确验收缺口：`no containers` 结构错误尚无定向回归锁住“不得按满包转成地面掉落”的契约。
 
-### 第一轮反方：是否只是理论满包，或已有 fallback？
+- 背包已满时，退款应落地还是保留 pending refund？
+- mixed manifest 遇到后项结构错误时，已成功前项是否允许部分提交？
+- 缺 `DroppedLootRegistry`、recipe 或持久化失败时，何时允许终结 session？
+- 重复 intent、断线重连、服务重启与掉落拾取如何维持 exactly-once？
 
-- **反方尝试推翻点**：也许 craft 起手扣材料腾出的格子天然足够接收退款；也许外层会处理 full inventory fallback；也许只是客户端显示数量错误。
-- **裁决**：推翻失败，bug 成立。
-- **关键理由**：
-  - `start_craft()` 只扣材料，不锁格、不预留退款空间。
-  - `craft_emit.rs` 只 import 并调用裸 `add_item_to_player_inventory`，系统参数也没有 `DroppedLootRegistry`。
-  - 显式取消分支失败只 `warn` 后仍发送预计算返回数量；finalize 失败分支虽然重算成功返回数，但失败项仍真实丢失。
+## 已落地决议
 
-### 第二轮反方：是否可达、是否重复、是否只是 close/cancel 旧题？
+### §1.1 决议：背包已满时退款去向
 
-- **反方尝试推翻点**：当前 client 关闭 craft UI 会发 cancel，玩家是否有机会在 session 中填满背包；本题是否被 `plan-craft-close-pause-loss-v1` 或 PR #1030/#1034 覆盖。
-- **裁决**：推翻失败，成立且不重复。
-- **关键理由**：
-  - server 侧没有 `CraftSession` 期间冻结库存的约束；库存移动、拾取掉落、NPC 交易、异步奖励等入包路径不查 craft session。
-  - `plan-craft-close-pause-loss-v1` 关注“中性关屏被错误映射为取消，导致设计内 30% 损耗”；本题关注“已进入退款路径后，设计应返还的 70% 因满包失败继续丢失”。
-  - PR #1030 是 craft outcome 网络线程反馈，PR #1034 是炼丹取丹满包吞产物，均非 craft refund 满包退款丢失。
+**结论 / 实施方案**：退款项必须“入包或落地”；只允许库存容量不足走既有 `add_item_to_player_inventory_or_ground`，不得只写日志后丢弃。
 
-## Skeleton Fix Plan
+**边界条件**：unknown template、`player inventory has no containers`、instance ID 越界/碰撞等结构错误不能伪装成掉落成功。`no containers` 的实现分类已存在，但 P4 专属测试尚未补齐。
 
-| 阶段 | 主题 | 路由 | 状态 |
-|------|------|------|------|
-| P0 | 钉死 refund grant 语义：退款项必须入包或落地，不能只 log 后丢弃 | fix_pr | ✅ 2026-07-12 |
-| P1 | 给 craft refund 路径接入 `DroppedLootRegistry`、玩家 `Position` 与 dimension | fix_pr | ✅ 2026-07-12 |
-| P2 | 显式取消分支按实际 grant / drop 结果统计 `material_returned`，避免虚报 | fix_pr | ✅ 2026-07-12 |
-| P3 | finalize 输出 grant 失败后的剩余批次退款同样使用入包或落地兜底 | fix_pr | ✅ 2026-07-12 |
-| P4 | 补满包、混合成功、无 registry、配置错误等回归测试 | fix_pr | ✅ 2026-07-12 |
+**落点**：`server/src/network/craft_emit.rs:156-226`（`refund_ground_context`、`grant_refund_manifest_to_inventory_or_ground`）/ 本 plan P0-P1。
 
-建议实现方向：
+### §2.1 决议：mixed manifest 与结构错误
 
-1. 在 `apply_craft_intents()` 与 `tick_craft_sessions()` 需要退款的分支引入 `Option<ResMut<DroppedLootRegistry>>`、玩家 `Position` 与当前 dimension 信息。
-2. 对 `refund_manifest` 使用 `add_item_to_player_inventory_or_ground(...)`；仅对 `inventory full:` 走地面掉落，其它结构性错误继续报错并保留可诊断日志。
-3. 显式取消分支不要复用 `cancel_craft()` 预计算的 `event.material_returned` 作为实际结果；应按成功入包和成功落地的数量重新赋值，或新增更准确的 outcome 字段。
-4. finalize 产物 grant 失败后的退款分支同样必须对失败项落地或保留 pending refund，不能在移除 `CraftSession` 后丢掉 manifest。
-5. 若 `DroppedLootRegistry` 不可用，应考虑保留 session / pending refund，而不是 silent loss；至少测试中要覆盖该错误路径。
+**结论 / 实施方案**：inventory、allocator、dropped-loot registry 全部 clone staging；manifest 任一结构错误即整批不发布，并把实际返还数清零，防止重试复制前项或遗留部分掉落。
 
-## 验收测试计划
+**边界条件**：满包且 registry 可用是正常 fallback；缺 registry、unknown template、`no containers`、allocator 边界和已有 drop ID 碰撞均是可诊断错误。现有测试覆盖除 `no containers` 外的列举分支；该缺口见 P4。
 
-- `cancel_refund_full_inventory_drops_to_ground`：起 craft 后填满背包，显式取消，退款项写入 `DroppedLootRegistry`，背包未收到也不丢失。
-- `cancel_refund_reports_actual_returned_count`：显式取消时部分入包、部分落地，`CraftOutcomeV1::Failed.material_returned` 与实际成功返还总数一致。
-- `finalize_failure_refund_full_inventory_drops_to_ground`：产物入包失败触发剩余批次取消，退款项满包时落地，不被吞。
-- `refund_structural_error_does_not_mask_config_bug`：unknown template / no containers 等非满包错误不被静默转成掉落。
-- `mixed_refund_manifest_no_partial_loss`：多材料退款中，部分材料可合并、部分需新格、部分落地，最终总数守恒。
+**落点**：`server/src/network/craft_emit.rs:170-226` 及 `refund_manifest_*` 回归 / 本 plan P0-P1、P4。
 
-## 风险
+### §3.1 决议：缺少 registry、recipe 或持久化失败
 
-- `craft_emit.rs` 的 system 签名会增加 dropped-loot 和位置/dimension 依赖，需要避免与现有调度、测试 app 最小资源集冲突。
-- 如果只修显式取消分支而漏掉 finalize 失败分支，批量 craft 仍会在产物 grant 失败时吞剩余退款。
-- 如果继续沿用预计算 `material_returned`，客户端会保留“显示返还但实际没返还/落地”的反馈漂移。
-- 不应把 unknown template、无容器、allocator 错误全部伪装成地面掉落；只有 `inventory full:` 适合走 `DroppedLootRegistry` fallback。
+**结论 / 实施方案**：不得终结退款凭证。缺 `DroppedLootRegistry`、缺 recipe 或 SQLite 检查点失败时保留 `CraftSession`/dirty 状态，不发 terminal outcome；依赖恢复后重试一次并只提交一次。
 
-## Finish Evidence
+**边界条件**：只有 inventory/session/durable drops 的统一检查点提交成功后，才发布 staging、发送终态事件并删除 session。
 
-- **落地清单**：`server/src/network/craft_emit.rs` 对 start/cancel/finalize 做 clone staging，成功写入 SQLite 后才发布 inventory/session/事件；退款满包落入 durable `DroppedLootRegistry`，结构错误整批回滚，同帧重复请求幂等。
-- **持久化闭环**：`server/src/persistence/mod.rs` v37 增加 `dropped_loot`；`server/src/player/state.rs` 将 inventory、craft session、cultivation qi、pending inflow 与退款掉落同事务提交，拾取时 inventory 与 durable row 删除同事务提交；重启 hydrate 同时推进 instance allocator 高水位。
-- **生命周期**：`server/src/player/mod.rs`、`server/src/network/mod.rs`、`server/src/cmd/dev/reset.rs` 覆盖通用 inventory flush 排序、失败 dirty 重试、登录恢复、断线/停服保存和 dev reset 清理。
-- **协议与 Bot**：`scripts/bot/proto_min.py` 解码 `craft_outcome.material_returned` 与 `dropped_loot_sync`；两个 production 场景验证满包双 cancel、唯一掉落/逐份拾取、断线暂停恢复和精确一次退款。
-- **关键 commit**：本 PR 的三笔最终提交分别锁定 durable 持久化、退款运行时守恒和 Bot/evidence；具体 hash 以 PR #1142 最终 HEAD 为准。
-- **测试结果**：`cargo check --all-targets` PASS；`cargo fmt --check` PASS；craft emit 39/39、craft session 41/41、事务故障注入与重启往返定向测试 PASS；Python protocol 50/50 PASS；production Bot 2/2 PASS。全量 `cargo test` 为 11226 PASS、1 ignored、唯一共享 POI 并发耗时阈值失败，单线程定向复跑 PASS（7.10s）。
-- **跨仓库核验**：server `CraftSessionPersistenceDirty` / `save_player_craft_checkpoint` / `dropped_loot`；Bot `craft_session_state` / `craft_outcome` / `dropped_loot_sync`；本修复不改 client 或 agent schema。
-- **遗留 / 后续**：`cargo clippy --all-targets -- -D warnings` 仍被 Rust 1.96 引入的 66 项共享基线 lint 阻断，本 PR 新增代码无诊断；不在 #1142 范围内追改。
+**落点**：`server/src/network/craft_emit.rs:396-731`（`apply_craft_cancel_intents`、`tick_craft_sessions`）、`:732-761`（`persist_dirty_craft_sessions`）、`server/src/player/state.rs:766-817` / 本 plan P2-P3。
 
-## 审计说明
+### §4.1 决议：重复请求、断线与重启
 
-- BugHunt skeleton 已由 PR #1142 消费并完成修复；未改依赖或生产配置。
-- 已用 `gh pr list --state open --limit 100` 检查开放 PR；已避开 #973/#981/#990/#1004/#1007/#1014/#1022/#1029/#1034 以及相邻 craft close / craft outcome 题目。
-- 反方 subagent 已完成两轮对抗审查，结论均为“成立且不重复”。
+**结论 / 实施方案**：同帧重复 start/cancel 先去重；断线和停服保存 session，登录恢复 session；durable drop 启动 hydrate 并推进 allocator high-water，拾取时 inventory 写入与 durable row 删除同事务。
+
+**边界条件**：重复 hydrate 不复制掉落，重连后已终结 session 不复活，拾取事务失败则 inventory/drop/zone 一起回滚。
+
+**落点**：`server/src/network/craft_emit.rs:396-731`、`server/src/inventory/mod.rs:899-930`、`server/src/player/mod.rs:193-525`、`server/src/player/state.rs:819-855` / 本 plan P3-P4。
+
+## 验收覆盖
+
+- **满包 / mixed / 实际计数**：`refund_manifest_full_inventory_drops_to_ground`、`refund_manifest_mixed_grant_and_drop_counts_actual_returned`、`cancel_refund_full_inventory_drops_to_ground_and_reports_actual_returned`。
+- **缺 registry / missing-unknown 配置**：`refund_manifest_full_inventory_without_registry_reports_error_without_counting_returned`、`refund_manifest_unknown_template_does_not_create_ground_drop`、`cancel_refund_missing_drop_registry_preserves_session_then_retries_once`、`cancel_intent_unknown_recipe_preserves_session_without_terminal_event`、`finalize_missing_recipe_preserves_completed_session_without_terminal_event`。
+- **原子 rollback**：`refund_manifest_structural_error_rolls_back_earlier_grants_atomically`、`refund_manifest_allocator_boundary_rolls_back_without_drop_id_collision`、`refund_manifest_rejects_existing_drop_id_collision_without_overwrite`、`start_persistence_failure_keeps_inventory_qi_ledger_and_session_at_pre_state`、`craft_checkpoint_rolls_back_every_slice_when_durable_drop_write_fails`、`pickup_checkpoint_rolls_back_inventory_drop_and_zone_together`。
+- **finalize**：`finalize_failure_refund_full_inventory_drops_to_ground_without_bone_coin_drift`。
+- **persistence / reconnect / idempotency**：`duplicate_start_intents_same_frame_consume_materials_only_once`、`duplicate_cancel_intents_same_frame_refund_only_once`、`inventory_and_craft_session_roundtrip_and_clear_atomically`、`durable_craft_drop_roundtrips_seeds_allocator_and_stays_deleted_after_pickup`、`disconnect_flush_persists_latest_player_slices_before_cleanup`、`shutdown_flush_persists_connected_player_slices_without_disconnect`。
+- **协议级生产链路**：`production_craft_cancel_full_inventory_refund.py` 验证同帧双 cancel 只退款一次、两份 durable drop 跨重连存活并可逐份拾取；`production_craft_disconnect_resume.py` 验证 session 断线暂停、同值恢复、取消后 exactly-once 退款且再次重连 inactive。
+
+## P4 未完成验收门
+
+原 active plan 的 `refund_structural_error_does_not_mask_config_bug` 明确点名 `unknown template / no containers`。当前实现已经具备正确分类和保留凭证的代码形状，但测试只锁住了 unknown template 等相邻分支，尚不能用等价推断替代一条直接构造 `PlayerInventory.containers.is_empty()` 的定向回归。
+
+**原 plan 的硬性归档门**：至少新增一条命中真实退款发放路径的 `no containers` 回归，断言错误包含 `player inventory has no containers`，实际返还计数为 0，不创建 `DroppedLootEntry`，且 inventory、allocator、registry 的 staged 变化均不发布。该回归只需直接证明“结构错误不会被当作 `inventory full:` 后落地成功”的原始契约；原 plan 没有规定必须在 helper、cancel、finalize 三个层级分别新增专属测试。
+
+**本次审计的非阻塞加固建议**：若后续实现 PR 希望进一步锁住运行链状态转换，可补 cancel 与 finalize 可达链用例，验证 terminal outcome 不发送且 `CraftSession` 保留重试；这两项是审计建议，不是原 plan 已点名的 P4 强制交付物，也不应在上述定向回归完成后单独阻塞归档。
+
+本归档审计的原始授权禁止修改产品代码/测试，因此这里只恢复 active 状态并如实记录原始门禁；后续实现 PR 补齐上述 `no containers` 定向回归并通过 server 完整 gate、fresh exact-HEAD validator 后，才可重新归档。
+
+## 当前核验证据
+
+- **落地清单**：
+  - `server/src/network/craft_emit.rs`：`grant_refund_manifest_to_inventory_or_ground`、`apply_craft_cancel_intents`、`tick_craft_sessions`、`persist_dirty_craft_sessions`，覆盖入包/落地、mixed manifest、结构错误 rollback、missing registry/recipe retry、实际 `material_returned`、同帧幂等与 finalize。
+  - `server/src/persistence/mod.rs`：migration v36 `player_craft_sessions`、v37 `dropped_loot` 及 durable dropped-loot CRUD/high-water 查询。
+  - `server/src/player/state.rs`：`save_player_craft_checkpoint` 与 `save_player_inventory_and_delete_dropped_loot` 两类 SQLite 原子事务及故障注入/重启回归。
+  - `server/src/inventory/mod.rs`、`server/src/player/mod.rs`、`server/src/network/mod.rs`：durable hydrate、allocator high-water、join/disconnect/shutdown 生命周期和 craft 系统发布顺序。
+  - `scripts/bot/proto_min.py`、`scripts/bot/test_protocol.py`、`scripts/bot/scenarios/production_craft_cancel_full_inventory_refund.py`、`scripts/bot/scenarios/production_craft_disconnect_resume.py`：wire 解码与生产黑盒闭环。
+- **关键 commit / PR**：PR [#1142](https://github.com/Kizunad/Bong/pull/1142) 于 2026-07-13 合并；其产品修复 final head 为 `89be0411a752c1a4e559e2fe072ab8eb74a6f8d5`，merge commit 为 `1b5fad889273a07be0bc459a470edbdc676cf3d2`。核心提交：`eb23c120ae05c211a58829de7ba034e90317e2e4`（满包落地兜底）、`26d2f411ded9a71143a338de36ff589b22d217f0`（取消路径回归）、`145ddeb0aa0eaeb47ebbc379a8b45f5aa329b5de`（重复取消幂等）、`36f0923c9cd2edbcb9b3c06d010f004a8189d4e9`（持久化检查点）、`8ae05978f0aa469d2cb40f6739d8ae15d7c5c276`（运行时守恒）、`364a678424ca54b932e8da7b24451a1221e9a779`（生产链路证据）、`07042372f08cef37a64d78eff4706a712d730e8e`（拾取原子持久化）、`89be0411a752c1a4e559e2fe072ab8eb74a6f8d5`（Bot 用户名修正）。
+- **PR #1142 测试结果**：[E2E run 29214120063](https://github.com/Kizunad/Bong/actions/runs/29214120063) 的 `head_sha` 明确为产品修复 final head `89be0411a752c1a4e559e2fe072ab8eb74a6f8d5`；该 run 成功，artifact `e2e-evidence` ID `8266243303` 也属于同一 run。原始 workflow log 显示 server `cargo test`：lib 11400 passed / 0 failed / 1 ignored，main 11/11，full-app 1/1，Tarkov e2e 4/4，doc tests 0 failed / 5 ignored；`craft_emit.rs` 当时 39 个 `#[test]`、`craft/session.rs` 41 个 `#[test]`。Bot protocol 51/51；`smoke-test-e2e.sh` 8/8；Bot e2e 26/26，其中目标场景分别 2.9s 与 3.2s PASS。该 final-head workflow 另含 proto lint、Java 17 client test、schema build/check/test、agent check/test、release server build，均成功。
+- **本次归档审计**：归档 PR #1232 初始 exact HEAD `384a871afa19d2b0bc955e1bb25c2ab74034942a` 曾由全新、无上下文、read-only validator 在第一步对拍后给出 PASS；随后紧邻执行 `git fetch origin && git merge origin/main`，结果为 Already up to date，HEAD 未变化。后续 `/review` 重新对照原 active plan，发现 P4 点名的 `no containers` 定向结构错误验收未落地，推翻了“可归档”的结论；因此本轮恢复 active，初始 PASS 只作为审计历史，不再作为 finished 门禁。run `29214120063` / artifact `8266243303` 仍只绑定上一条的 PR #1142 产品修复 SHA。
+- **历史 review / CI 事实**：CodeRabbit 三轮分别发布 3、2、7 条 actionable comments；前两轮代码/测试项已在后续提交处理，最终 7 条均为 plan 可核验性与生命周期问题（接入面、实现 symbol、措辞、纯 server A/V 声明、决议、exact SHA/CI、归档），由本 active 文档保留审计事实。Review Action runs [29191618111](https://github.com/Kizunad/Bong/actions/runs/29191618111)、[29214122629](https://github.com/Kizunad/Bong/actions/runs/29214122629) 因 reviewer HTTP 400 safety filter 降级，[29214126756](https://github.com/Kizunad/Bong/actions/runs/29214126756) 因 circuit preflight skipped 降级；workflow 评论均明确标为 infrastructure failure、不是代码 finding。
+- **跨仓库核验**：server `CraftSessionPersistenceDirty` / `save_player_craft_checkpoint` / `DroppedLootRegistry` / `CraftOutcomeV1::Failed.material_returned`；wire `craft_session_state` / `dropped_loot_sync` / `material_returned`；Bot 对三者解码并走真实 server 场景。PR #1142 未修改 client、agent 或 proto/schema 定义。
+- **重复 skeleton 处置**：`docs/plans-skeleton/plan-bughunt-craft-refund-full-inventory-loss-v1.md` 与被 PR #1142 消费的原 active 文档拥有同一 bug 摘要、证据、触发路径、反方裁决、P0-P4、验收和风险；skeleton 仅保留“未实施/只立骨架”的旧状态，没有 active 主文档未覆盖的额外交付物。因此保留本 active 主文档，仅删除同 basename 的滞后重复 skeleton。
+- **遗留 / 后续**：本 plan 唯一阻塞项是 P4 的 `no containers` 定向结构错误回归；补齐并通过门禁后才可归档。cancel/finalize 专属可达链测试可作为非阻塞加固建议。相邻的 UI close/cancel 语义属于 `plan-craft-close-pause-loss-v1`；未来若改变 craft outcome 或 dropped-loot wire，须继续维持“实际返还计数 + durable exactly-once”契约。

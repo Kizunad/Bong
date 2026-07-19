@@ -1020,9 +1020,9 @@ fn is_residue_ash_block(block: BlockState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::{ResMut, Resource};
+    use valence::prelude::{ResMut, Resource, UnloadedChunk};
     use valence::protocol::packets::play::CustomPayloadS2c;
-    use valence::testing::{create_mock_client, MockClientHelper};
+    use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
 
     #[derive(Resource)]
     struct MovementStateSerializerFailures {
@@ -1518,6 +1518,91 @@ mod tests {
             movement_zone_kind(Some(&ash_zone), false),
             MovementZoneKind::Normal
         );
+    }
+
+    #[test]
+    fn production_north_rift_coordinates_keep_residue_ash_movement_in_scorch_zone() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+
+        let registry = ZoneRegistry::load();
+        let cases = [
+            (
+                "relocated rift entrance",
+                DVec3::new(2000.0, 74.0, -7300.0),
+                "rift_mouth_north_002",
+                MovementZoneKind::Dead,
+            ),
+            (
+                "legacy rift entrance",
+                DVec3::new(2000.0, 74.0, -7800.0),
+                "north_waste_east_scorch",
+                MovementZoneKind::ResidueAsh,
+            ),
+            (
+                "inclusive scorch north boundary",
+                DVec3::new(2000.0, 74.0, -7500.0),
+                "north_waste_east_scorch",
+                MovementZoneKind::ResidueAsh,
+            ),
+        ];
+
+        for (label, position, expected_zone, _) in cases {
+            let zone = registry
+                .find_zone(DimensionKind::Overworld, position)
+                .unwrap_or_else(|| panic!("{label} must resolve through the production registry"));
+            assert_eq!(
+                zone.name, expected_zone,
+                "{label} must retain its production zone identity before movement consumes it"
+            );
+
+            let chunk_pos = [
+                position.x.floor() as i32 >> 4,
+                position.z.floor() as i32 >> 4,
+            ];
+            let mut layer = app
+                .world_mut()
+                .get_mut::<ChunkLayer>(scenario.layer)
+                .expect("test layer should carry ChunkLayer");
+            layer.insert_chunk(chunk_pos, UnloadedChunk::new());
+            layer.set_block(
+                BlockPos::new(
+                    position.x.floor() as i32,
+                    (position.y - 1.0).floor() as i32,
+                    position.z.floor() as i32,
+                ),
+                BlockState::COARSE_DIRT,
+            );
+        }
+
+        app.insert_resource(registry);
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(DimensionLayers {
+            overworld: scenario.layer,
+            tsy: scenario.layer,
+        });
+        app.add_systems(Update, apply_movement_speed_system);
+        app.world_mut().entity_mut(scenario.client).insert((
+            MovementState::default(),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        for (label, position, _, expected_kind) in cases {
+            app.world_mut()
+                .entity_mut(scenario.client)
+                .insert(Position::new(position));
+            app.update();
+
+            let movement = app
+                .world()
+                .get::<MovementState>(scenario.client)
+                .expect("movement consumer should preserve MovementState");
+            assert_eq!(
+                movement.zone_kind, expected_kind,
+                "{label} on the same residue block must derive movement semantics from its production zone"
+            );
+        }
     }
 
     #[test]
