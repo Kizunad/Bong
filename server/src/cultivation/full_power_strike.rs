@@ -49,6 +49,14 @@ pub const FULL_POWER_REACH: AttackReach = AttackReach {
 };
 pub const FULL_POWER_RELEASE_COOLDOWN_TICKS: u64 = 20;
 pub const FULL_POWER_RELEASE_ANIM_TICKS: u32 = 8;
+/// plan-skill-anim-fidelity-v1 P3 —— 全力一击专属蓄力循环动画（借用解除：原借
+/// 通用 `bong:windup_charge` 高举蓄力）。isLoop 闭环「抱脉沉桩」；PlayAnim 于
+/// `cast_full_power_charge`（baomai_v3/skills.rs），StopAnim 于释放/打断双退出
+/// 路径（network/full_power_emit.rs）——播/停必须同 id，共享本常量防两处漂移。
+pub const FULL_POWER_CHARGE_ANIM_ID: &str = "bong:baomai_full_power_charge";
+/// 全力一击专属释放动画（借用解除：原借通用 `bong:release_burst` 4t 模板）。
+/// 非循环瞬发「崩拳双锤」爆发帧+收势，与蓄力段姿态无缝衔接。
+pub const FULL_POWER_RELEASE_ANIM_ID: &str = "bong:baomai_full_power_release";
 pub const FULL_POWER_HIGH_REALM_FAME_DELTA: i32 = 25;
 
 #[derive(Debug, Clone, Component, PartialEq)]
