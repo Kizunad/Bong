@@ -1,6 +1,6 @@
 # plan-bughunt-ac-alchemy-hud-zero-targets-v1
 
-> **状态：finished（2026-07-17 最终验收；2026-07-15 promotion / 归档）**。来源：
+> **状态：finished（2026-07-19 最终验收；2026-07-15 promotion / 归档）**。来源：
 > `docs/plans-skeleton/plan-bughunt-ac-alchemy-hud-zero-targets-v1.md`（2026-07-05）。
 > 一句话主题：真实炼丹链路里，server 发给 client 的 `alchemy_session` payload 把
 > **`target_ticks` / `temp_target` / `temp_band` / `qi_target` / `stages`** 全部写成 0
@@ -46,7 +46,7 @@
 - [x] P0：加入修复前失败的 snapshot builder 契约测试，锁定真实目标值与阶段提示。✅ 2026-07-15
 - [x] P1：接通 `RecipeRegistry`，实现已知配方 snapshot 与未知配方 fail-closed。✅ 2026-07-15
 - [x] P2：更新五个真实调用点，完成定向测试与 server 完整门禁。✅ 2026-07-15
-- [x] P3：同步最新主线、对抗 validator、校正归档后的 Finish Evidence。✅ 2026-07-17
+- [x] P3：同步最新主线、对抗 validator、校正归档后的 Finish Evidence。✅ 2026-07-19
 
 ## 验收与测试矩阵
 
@@ -96,8 +96,11 @@
   `RecipeRegistry` 构造完整 session snapshot：恢复时长、温度目标/容差、注气目标、按声明
   顺序生成阶段材料摘要，并保留 completed/missed 与最近干预。
 - `server/src/network/client_request_handler.rs` 的 open furnace、ignite、intervention、feed
-  slot、take back 五条生产重推路径均对拍权威 registry；take-back 在炉 session 移除后仍先发
-  `active=false` 的 finished guidance，而不是退化为空炉零目标。
+  slot、take back 五条生产重推路径均对拍权威 registry；take-back 在炉 `end_session` 成功后无论产物
+  入袋成败，统一推送 **空炉 furnace + `active=false` finished session** 权威快照，避免客户端
+  残留 active HUD。non-explode 路径下 **allocator 缺失 / grant 失败** 仍推 finished+empty，但
+  **不发成功 VFX（`ALCHEMY_COMPLETE`）且不 emit `AlchemyOutcomeEvent`**；成功 grant 才触发
+  成功 VFX/outcome。炸炉分支仍走 explode VFX + 伤害/裂痕 outcome，与 reward 成败解耦。
 - `server/src/network/alchemy_snapshot_emit.rs` 的测试 helper 直接调用真实 `build_session_data`
   与生产 `serialize_server_data_payload_proto`，唯一生成 active / finished 两份完整
   `ServerDataEnvelope` 字节。普通测试只在内存重建并与仓库 fixture 逐字节比较；唯一写盘入口
@@ -136,39 +139,52 @@
 - `70b79e4c`（2026-07-17）：用 Rust 真实 builder + 生产 encoder 生成共享 protobuf 字节，
   普通 Rust 测试锁陈旧，Fabric active / finished 测试消费同一 fixture；这是本轮最后业务代码提交。
 - `d0b2005a`（2026-07-17）：双父合并 `origin/main=9d2e29d0`，在未提交 merge 树完成 server、
-  Java 17、Python 与真实炼丹场景复验后落盘；这是本轮主线同步提交。
-- **本节所在提交**（2026-07-17）：只原地校正既有 `## Finish Evidence`，明确区分最后业务
-  代码、主线 merge、文档证据与外部最终 validator，避免用无法自证的“自身 SHA”制造循环。
+  Java 17、Python 与真实炼丹场景复验后落盘。
+- `ed98a5eb`（2026-07-19）：修复 take_back 终态——`end_session` 成功后，allocator 缺失 /
+  grant 失败不再提前 return，统一推送 empty furnace + finished session；non-explode 失败路径
+  不发成功 VFX / `AlchemyOutcomeEvent`。饱和测试覆盖成功、缺编号器、grant 失败三条路径。
+- `f1a74ad7`（2026-07-19）：消解 take_back grant 分支 `needless_option_as_deref`，使
+  `cargo clippy --all-targets -- -D warnings` 再次清零。
+- `6e64052b`（2026-07-19）：双父合并 `origin/main=946ad6c2`（#1233 docs-only 归档
+  `plan-bughunt-r9-vortex-particle-atlas-v1`），无冲突；parents=`f1a74ad7` + `946ad6c2`。
+- **本节所在提交**（2026-07-19）：只原地校正既有 `## Finish Evidence`，绑定 take_back 终态语义
+  与 merge 后最新门禁事实；不改代码、不写无法自证的“自身 SHA”循环。
 
 ### 测试结果
 
-- Rust snapshot 定向：`cargo test network::alchemy_snapshot_emit::tests -- --nocapture` →
-  7 passed / 1 maintenance-only ignored / 0 failed；覆盖 active、两份生产 fixture 逐字节陈旧门、
-  空炉、未知 recipe、finished guidance。ignored writer 只有显式 `--ignored --exact` 才会写盘。
-- 五条生产 handler：open / ignite / intervention / feed 的 authoritative wire 用例 4/4，
-  take-back finished guidance 用例 1/1。
-- Python bot protocol：`python3 scripts/bot/test_protocol.py` → 124 passed / 0 failed；炼丹专属正向
-  用例 `test_alchemy_furnace_tag11_and_session_tag12` 验证 tag 12、完整目标字段、stages 与
-  interventions。
-- Fabric 定向（Java 17）：
+- Rust snapshot 定向（历史锁定，代码未再改 builder/fixture）：`cargo test
+  network::alchemy_snapshot_emit::tests -- --nocapture` → 7 passed / 1 maintenance-only
+  ignored / 0 failed；覆盖 active、两份生产 fixture 逐字节陈旧门、空炉、未知 recipe、finished
+  guidance。ignored writer 只有显式 `--ignored --exact` 才会写盘。
+- 生产 handler 定向：open / ignite / intervention / feed 的 authoritative wire 用例 4/4；
+  take-back 终态饱和 3/3：
+  1. 成功 take-back → finished guidance（`active=false` / `status_label=已结束` / 完整目标与
+     stages）；
+  2. 缺 `InventoryInstanceIdAllocator` → 错误聊天「实例编号器未就绪」，仍推 1× empty furnace +
+     1× finished session，不 invent 奖励、不 emit `AlchemyOutcomeEvent`；
+  3. grant 失败（缺 residue 模板）→ 错误聊天「炼丹产物入袋失败」，仍推 finished+empty，不留
+     partial 奖励、不 emit outcome。
+- Python bot protocol（历史锁定）：`python3 scripts/bot/test_protocol.py` → 124 passed /
+  0 failed；炼丹专属正向用例 `test_alchemy_furnace_tag11_and_session_tag12` 验证 tag 12、完整
+  目标字段、stages 与 interventions。
+- Fabric 定向（历史锁定，Java 17）：
   `./gradlew test --tests com.bong.client.network.alchemy.AlchemySessionHandlerProtoWireTest
-  --tests com.bong.client.hud.ProcessingHudPlannerTest` → 12 passed / 0 failed；覆盖完整 active、
-  finished terminal、Rust fixture 跨端链、缺省 wire、显式零 target、缺 recipe、direct-store
-  零 target、blank recipe；其中炼丹 proto 类 5/5、Processing HUD 类 7/7。
-- server 完整门禁（未提交 merge 树与 `d0b2005a` 内容相同，`BONG_SKIP_SKIN_PREFETCH=1`）：
-  `cargo fmt --check` 通过；`cargo clippy --all-targets -- -D warnings` 通过；`cargo test` 通过
-  （lib 11745 passed / 2 ignored / 0 failed，main 11，startup 1，backpack e2e 4，doc-tests 0 failed /
-  5 ignored）。
-- client 完整门禁（同一 `d0b2005a` merge 树，Java 17）：`./gradlew test build` →
-  BUILD SUCCESSFUL；JUnit XML 汇总 471 suites / 4110 tests / 0 failures / 0 errors / 0 skipped；产物
-  `client/build/libs/bong-client-0.1.0.jar`。
-- 真实目标场景：`python3 scripts/bot/run_scenarios.py --scenario production_alchemy_brew_pill`
-  在当前 checkout 自起 server 后 → 1/1 PASS；点火后的 active guidance 与 take-back 后的
-  finished guidance 均保留真实 target/stages。server 随后已清理，25565 释放。
-- 标准全量 e2e 最新一轮为 30 total / 28 PASS / 1 SKIP / 1 FAIL；唯一失败是无关的
-  `combat_weapon_equip_damage` NPC spawn 15s 超时，换全新 server 隔离复跑 1/1 PASS。
-  因此不把该轮写成全量全绿，但 #1213 目标链路已有独立与全量内双重 PASS。
-- 两份 fixture 在 merge 后再次对拍为 168 / 166 bytes，SHA-256 仍分别为
+  --tests com.bong.client.hud.ProcessingHudPlannerTest` → 12 passed / 0 failed；覆盖完整
+  active、finished terminal、Rust fixture 跨端链、缺省 wire、显式零 target、缺 recipe、
+  direct-store 零 target、blank recipe。
+- **server 完整门禁（2026-07-19，merge 前 clean HEAD `f1a74ad7`，`BONG_SKIP_SKIN_PREFETCH=1`）**：
+  `cargo fmt --check` → 0；`cargo clippy --all-targets -- -D warnings` → 0；`cargo test` → 0。
+  main 增量 `b150900e..946ad6c2` 仅 #1233 docs-only 归档（2 文件：finished plan 迁入 + 删除
+  active 占位），故 **merge 后未重复 server 全量门禁**。
+- **client 完整门禁（2026-07-19，merge 后 HEAD `6e64052b`，显式
+  `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`）**：
+  `cd client && ./gradlew test build` → **EXIT:0 / BUILD SUCCESSFUL in 1m 36s**；JUnit XML 汇总
+  **475 suites / 4148 tests / 0 failures / 0 errors / 0 skipped**；产物
+  `client/build/libs/bong-client-0.1.0.jar`。未接 `| tail`。
+- 真实目标场景（历史锁定）：`python3 scripts/bot/run_scenarios.py --scenario
+  production_alchemy_brew_pill` → 1/1 PASS；点火后 active guidance 与 take-back 后 finished
+  guidance 均保留真实 target/stages。
+- 两份 fixture 对拍仍为 168 / 166 bytes，SHA-256 仍分别为
   `73ac18233334d751c74b497d4bce002fe857a6e9c785c0d1da926e71c6a165cd` /
   `e70f4524635785f59e0c0e9a7181b61efcd1b430d0f3b800fbf4d2df8f23df48`。
 
@@ -183,31 +199,27 @@
 - review `issuecomment-5003480123` 随后指出两项新 blocker：Fabric 当时仍由 Java 自建正向
   protobuf，且文档把 `245d71b5` 与后续 docs-only PR HEAD 混称为最终验收 SHA。
 - `70b79e4ceba38c638f7c03e4b78648b163ec798d` 闭环第一项：Rust 真实 builder / encoder 唯一
-  生产共享字节，Fabric 直接消费；`d8d53637` 与 `064ddb20` 明确只是先前文档提交，不再冒充
-  最后业务代码。
-- fresh fetch 后 `origin/main=9d2e29d0871b004684eb4d29c11a798fc1c71d05`；
-  `git merge --no-commit --no-ff origin/main` 自动合并无冲突，主线只带入 skill icon / quickslot /
-  skillbar 相关 server/client 变化，未触及炼丹 fixture、proto 或本修复文件。完整受影响栈复验后
-  落为双父 `d0b2005ad89d3450f6dd6690c27bf6717c76469b`。
-- REBASE validator generation 4 绑定 clean `d0b2005ad89d3450f6dd6690c27bf6717c76469b`，唯一
-  `FAIL` 是本节仍陈旧；未对代码、fixture 链或主线 merge 报 finding。本节所在提交只修这一项。
-- **SHA 口径**：最后业务代码=`70b79e4c`；主线同步树=`d0b2005a`；Finish Evidence=
-  **本节所在提交**。包含本节的完整最终 PR HEAD 将由全新只读 FINAL validator 绑定，其 PASS /
-  FAIL 与远端 CI 结果写入 PR body / comment；不再修改已验证树来追写自身 SHA。
+  生产共享字节，Fabric 直接消费。
+- `ed98a5eb` 闭环 take_back 终态缺口：grant/allocator 失败不得阻断 finished HUD 推送；
+  成功 VFX/outcome 仅 grant 成功时触发。`f1a74ad7` 清 clippy。
+- 2026-07-19 fresh `git fetch origin main` 后 `origin/main=946ad6c26b497bbda86f7aeab878d4fd1bec91b0`
+  尚非祖先；普通 `git merge origin/main` 无冲突，落双父 `6e64052b`（parents `f1a74ad7` +
+  `946ad6c2`）。main 相对已同步点 `b150900e` 仅 #1233 docs-only 归档，未触及炼丹 handler /
+  fixture / proto / client。
+- **SHA 口径**：最后业务代码=`ed98a5eb`（clippy 微修 `f1a74ad7`）；主线同步树=`6e64052b`；
+  Finish Evidence=**本节所在提交**。包含本节的完整最终 PR HEAD 由全新只读 FINAL validator
+  绑定，不再追写自身 SHA 循环。
 
 ### 跨栈核验与遗留
 
 - server：`build_session_data` / `serialize_server_data_payload_proto` /
-  `assert_shared_fixture_is_current` / 五条真实 request handler。
+  `assert_shared_fixture_is_current` / 五条真实 request handler；`handle_alchemy_take_back`
+  的 end_session → empty+finished 终态 + grant 成败门禁。
 - proto：`AlchemySession` / `AlchemyStageHint` 既有 tag；共享 active / finished Rust producer
   fixture 与 maintenance-only regeneration contract。
 - client：`AlchemySessionHandler` / `AlchemySessionStore.Snapshot.isActive` /
   `ProtoServerDataBridge` / `AlchemyProgressHudPlanner` / `AlchemyScreen.refreshSessionText`。
 - bot：`decode_server_data_envelope` → `_alchemy_session` / `production_alchemy_brew_pill`。
-- earlier 标准全量在高 churn 场景曾触发 Valence `viewer count underflow`；同一 panic 已在锁定的
-  clean `origin/main=28cc3af4` baseline worktree 独立复现，证据保存在
-  `pr1213-origin-main-prefix16/server-run3.log`。它属于主线 chunk viewer 生命周期问题，禁止在
-  #1213 越 scope 修复；本轮最新全量未再触发该 panic。
-- 指定保留的 `server/data/backups/bong-20260717-121047.db` 与
-  `bong-20260717-121055.db` 在复验后仍存在，且未进入 git diff。
-- 无真元流动、配方数值、wire tag、A/V 资产变化；#1213 本身无已知功能遗留。
+- 指定保留的 `server/data/*` / `client/logs/*` / 其它 ignored 生成物本轮未删除、未入库。
+- 无真元流动、配方数值、wire tag 变化；成功 VFX 仍仅 grant 成功时触发（非新增资产）。#1213
+  无已知功能遗留。
