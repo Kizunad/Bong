@@ -84,7 +84,7 @@
 |------|------|------|
 | P0 | 全量审计矩阵落档 + 精度标准定稿 + 时长对齐自动对拍测试 | ⬜ |
 | P1 | 批次一重制：sword 基础 3（infuse 移 P2，见附录 A）+ beng_quan + zhenmai 5（高频主力短招） | ✅ 2026-07-19 |
-| P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段）。拆前半（本 PR，2026-07-19：去复用 6 招专属化——sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject，含 server 映射改指 + allowlist 删 5 条）+ 后半（下 PR：长引导两段式 charge_carrier/echo_fractal/armor_pierce/sword.infuse + manifest_cast 处置 + StopAnim 通道接线 §8.1 #3） | ⬜ |
+| P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段）。拆前半（2026-07-19：去复用 6 招专属化——sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject，含 server 映射改指 + allowlist 删 5 条）+ 后半（2026-07-19：charge_carrier / sword.infuse 真两段式 + StopAnim 三类通道接线 §8.1 #3 + echo_fractal / armor_pierce / manifest 瞬发结算型决策 (b) 专属化 + allowlist 删 sword.infuse；heaven_gate 精修移 P6 收口） | ✅ 2026-07-19 |
 | P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ⬜ |
 | P4 | yidao 5 招动画补齐（plan-yidao-v1 §5 欠账） | ⬜ |
 | P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ⬜ |
@@ -206,7 +206,7 @@
 | `sword.cleave` | 16 | `sword_cleave` | 20 | — | 8 | 168 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：举剑过头竖劈+弓步前压三段式；endTick=20 为与借用方 condense_edge（cast=12）区间交集 |
 | `sword.thrust` | 10 | `sword_thrust` | 16 | — | 8 | 172 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：收剑腰侧直刺+侧身送肩 |
 | `sword.parry` | 4 | `sword_parry` | 10 | — | 6 | 126 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：斜举格挡弹开，密度补齐 |
-| `sword.infuse` | 40 | `sword_infuse` | 40 | — | 29 | 29 | — | **B** | P2 | 专属；无 recovery、密度低；cast=40 属长引导域，按标准 #2 须两段式，移 P2 与 anqi 长引导批次同做（含 server 通道接线） |
+| `sword.infuse` | 40 | `sword_infuse`(loop)+`sword_infuse_release` | 28 loop+14 | ✓ | 9+7 | 207+154 | — | **A** | P2 | P2 后半两段式（2026-07-19）：真实引导窗（`cast_sword_infuse` 插 `Casting`+`PendingSwordInfuse`，sword_basics.rs:723-746）→ 蓄力段重制 isLoop 28t 横剑抚刃（id 沿用 v1 资产清单 pin）+ release 14t 剑身一振；打断 = cast_emit 三分支表驱动 StopAnim，完成 = completion_tick StopAnim+release（失败分支亦 StopAnim） |
 | `movement.dash` | 0 | `dash_forward` | 4 | — | 13 | 21 | — | **C** | P3 | 瞬发 4t 快闪；密度低 |
 | `shield_block` | 0 | `shield_raise` | 6 | ✓ | 35 | 35 | — | **B** | P3 | 循环举盾+StopAnim 闭环已有；密度低 |
 | `burst_meridian.beng_quan` | 8 | `beng_quan` | 14 | — | 9 | 194 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：沉马蓄劲→拳炸出→震颤收；endTick=14 为三借用方 cast 区间交集 |
@@ -236,18 +236,18 @@
 | `tuike.don` | 12 | `tuike_don_skin` | 16 | — | 16 | 48 | — | **B** | P3 | 16t/48KF；补 recovery 即达标 |
 | `tuike.shed` | 8 | `tuike_shed_burst` | 12 | — | 20 | 56 | — | **B** | P3 | 12t/56KF；可精修 |
 | `tuike.transfer_taint` | 10 | `tuike_taint_transfer` | 14 | — | 19 | 55 | — | **B** | P3 | 14t/55KF；可精修 |
-| `anqi.charge_carrier` | 400 | `windup_charge` | 16 | ✓ | 81 | 81 | ✓ | **D** | P2 | 借通用蓄力；cast=400 需专属循环结印段+release |
+| `anqi.charge_carrier` | 400 | `anqi_charge_carrier_loop`(+`_release`) | 32 loop+14 | ✓ | 9+7 | 207+154 | — | **A** | P2 | P2 后半两段式（2026-07-19）：真实 400t 通道（`CHARGE_DURATION_TICKS` carrier.rs:47）→ 专属封骨结印循环 32t + release 14t；`CarrierChargeBegan/Ended` 事件接线（begin 起播 / finish_charge 全退出路径 StopAnim / full_charge 才播 release，早退分支覆盖有专属 pin） |
 | `anqi.single_snipe` | 6 | `anqi_single_snipe` | 12 | — | 7 | 161 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：侧身瞄准线→骨镖弹射出手→随镖目送 |
 | `anqi.multi_shot` | 30 | `anqi_multi_shot` | 36 | — | 11 | 231 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：胸前拢镖蓄势（load-snap 呼吸）→双臂开扇撒出 |
 | `anqi.soul_inject` | 20 | `anqi_soul_inject` | 26 | — | 9 | 189 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：单手举镖凝神灌注→刺送注入 |
-| `anqi.armor_pierce` | 40 | `cast_invoke` | 15 | — | 75 | 75 | ✓ | **D** | P2 | 借通用施法；15t vs cast=40 错配 |
-| `anqi.echo_fractal` | 60 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P2 | 借通用爆发；4t vs cast=60 错配 56t 静止 |
+| `anqi.armor_pierce` | 40 | `anqi_armor_pierce` | 46 | — | 14 | 322 | — | **A** | P2 | P2 后半决策 (b)（2026-07-19）：**瞬发结算型长 cast**——`resolve_anqi_skill`（anqi_v2.rs:420-534）立即 emit_skill_event(L513)+`CastResult::Started`(L530)，无 `Casting`、无 timer、无打断窗，isLoop 蓄力段无停止信号可挂 → 46t 非循环单段专属（旋钻蓄力→螺旋贯刺，顶点=40+recovery 6），解除 cast_invoke 借用（负向 pin）；时长对拍驻 allowlist（cast≥40 机械断言要求 isLoop 不适用，真两段式待 cast 通道真实化——遗留 P6 与 allowlist 清零判据一并裁决） |
+| `anqi.echo_fractal` | 60 | `anqi_echo_fractal` | 66 | — | 19 | 437 | — | **A** | P2 | P2 后半决策 (b)（2026-07-19）：同 armor_pierce 瞬发结算型（同一 resolver 通道）→ 66t 非循环单段专属（织网撒饵 4t 步进反相编织→聚饵爆发仰撒，顶点=60+recovery 6），解除 release_burst 借用（负向 pin）；时长对拍驻 allowlist（同上遗留） |
 | `body.guangbo_ticao` | 60 | `guangbo_ticao` | 150 | — | 288 | 288 | — | **A** | — | 150t/288KF 高完成度 |
 | `sword_path.condense_edge` | 12 | `sword_path_condense_edge` | 18 | — | 7 | 147 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：收剑入鞘式蓄意→拔剑亮刃定势；endTick=18 ∈ [16,20]（去借用后仍达标，未入过 allowlist） |
 | `sword_path.qi_slash` | 20 | `sword_path_qi_slash` | 26 | — | 9 | 198 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：高位回环蓄势→大斩挥出剑随气送远 |
 | `sword_path.resonance` | 30 | `sword_path_resonance` | 36 | — | 13 | 273 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：双手持剑颤鸣蓄振（往复微颤帧）→振荡外放 |
-| `sword_path.manifest` | 40 | `sword_manifest_cast` | 40 | — | 32 | 32 | — | **B** | P2 | 40t/32KF 对齐 cast；补 recovery+密度 |
-| `sword_path.heaven_gate` | 80 | `sword_heaven_gate_charge(+release)` | 60+20 | — | 32+24 | 32+24 | — | **B** | P2 | 两段式先例；charge 60t 非循环 hold 末帧，精修密度 |
+| `sword_path.manifest` | 40 | `sword_manifest_cast` | 46 | — | 14 | 322 | — | **A** | P2 | P2 后半决策 (b)（2026-07-19）：**瞬发结算型**——`cast_manifest`（skill_register.rs:288-345）立即 spawn SwordIntentEntity+emit AV，追击期玩家可自由行动，循环段无停止信号可挂 → 保守重制 46t（双掌竖轴拉开凝形 3t 微颤→翻腕虚握送出，顶点=40+recovery 6，密度 ≤4t）；时长对拍驻 allowlist（同 armor_pierce 遗留） |
+| `sword_path.heaven_gate` | 80 | `sword_heaven_gate_charge(+release)` | 60+20 | — | 32+24 | 32+24 | — | **B** | P6 | 两段式先例；P2 后半决议不动——charge hold-末帧范式（非循环 60t）与 isLoop 正典的统一遗留 P6 收口（届时连同密度精修与 allowlist 条目一并裁决） |
 | `npc.heal_basic` | 20 | —— | — | — | — | — | — | **N/A** | P5 粒子 | NPC mob 无 PlayAnim 通道（§8.1 #2） |
 | `npc.buff_speed` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
 | `npc.buff_defense` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
@@ -258,3 +258,5 @@
 **P1 批次一后（2026-07-19）**：A×11 / B×11 / C×5 / D×19 / N-A×3——9 条重制达标转 A（sword 基础 3 + beng_quan + zhenmai 5），sword.infuse 移 P2 长引导批次；剩余 B+C+D = 35 条随 P2-P4 清空。
 
 **P2 前半后（2026-07-19）**：A×17 / B×11 / C×5 / D×13 / N-A×3——6 条去复用重制达标转 A（sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject），allowlist 删 5 条（condense_edge 原不在表）；剩余 B+C+D = 29 条随 P2 后半-P4 清空。
+
+**P2 后半后（2026-07-19）**：A×22 / B×9 / C×5 / D×10 / N-A×3——5 条转 A（sword.infuse / charge_carrier 真两段式落地 + armor_pierce / echo_fractal / manifest 瞬发结算型专属化）；heaven_gate 移 P6 收口。allowlist 删 1 条（sword.infuse；charge_carrier 原本不在表）。**遗留登记**：armor_pierce / echo_fractal / manifest 三条「瞬发结算型长 cast」的时长对拍条目仍驻 allowlist（cast≥40 机械断言要求 isLoop，与瞬发结算通道语义冲突——isLoop 无停止信号会永久循环；按覆盖结算期的非循环单段交付是当前最诚实形态）。P6 的「allowlist 清零」判据需据此裁决：要么 cast 通道真实化后落真两段式，要么把「瞬发结算型长 cast」升级为对拍测试登记例外（需 conventions §13 #2 修改授权，本批授权已用尽）。剩余 B+C+D = 24 条随 P3-P4 + P6 清空。

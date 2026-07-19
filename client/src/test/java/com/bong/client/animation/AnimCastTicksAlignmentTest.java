@@ -65,6 +65,9 @@ class AnimCastTicksAlignmentTest {
         m.put("sword.cleave", "sword_cleave");
         m.put("sword.thrust", "sword_thrust");
         m.put("sword.parry", "sword_parry");
+        // P2 批次二后半（2026-07-19）：sword.infuse 两段式——蓄力段沿用
+        // sword_infuse 文件名（重制为 isLoop 28t 横剑抚刃），release 段
+        // sword_infuse_release 由 server 完成分支接力（两段式招映射蓄力段）。
         m.put("sword.infuse", "sword_infuse");
         m.put("movement.dash", "dash_forward");
         m.put("shield_block", "shield_raise");
@@ -95,13 +98,19 @@ class AnimCastTicksAlignmentTest {
         m.put("tuike.don", "tuike_don_skin");
         m.put("tuike.shed", "tuike_shed_burst");
         m.put("tuike.transfer_taint", "tuike_taint_transfer");
-        m.put("anqi.charge_carrier", "windup_charge");
+        // P2 批次二后半（2026-07-19）：charge_carrier 两段式（真实 400t 通道，
+        // 映射蓄力段 anqi_charge_carrier_loop；release 段 anqi_charge_carrier_release
+        // 由 server CarrierChargeEndedEvent{full} 接力）。
+        m.put("anqi.charge_carrier", "anqi_charge_carrier_loop");
         // P2 批次二前半（2026-07-19）：anqi 3 招 + sword_path 3 招去复用换专属动画。
         m.put("anqi.single_snipe", "anqi_single_snipe");
         m.put("anqi.multi_shot", "anqi_multi_shot");
         m.put("anqi.soul_inject", "anqi_soul_inject");
-        m.put("anqi.armor_pierce", "cast_invoke");
-        m.put("anqi.echo_fractal", "release_burst");
+        // P2 批次二后半：armor_pierce / echo_fractal 专属单段（瞬发结算型长 cast，
+        // 决策 (b)——resolver 立即结算无引导窗，cast_ticks 是元数据；仍驻
+        // CAST_ALIGNMENT_ALLOWLIST，见该表注释）。
+        m.put("anqi.armor_pierce", "anqi_armor_pierce");
+        m.put("anqi.echo_fractal", "anqi_echo_fractal");
         m.put("body.guangbo_ticao", "guangbo_ticao");
         m.put("sword_path.condense_edge", "sword_path_condense_edge");
         m.put("sword_path.qi_slash", "sword_path_qi_slash");
@@ -138,8 +147,11 @@ class AnimCastTicksAlignmentTest {
     // P2 批次二前半（2026-07-19）删 5 条：anqi single_snipe/multi_shot/soul_inject
     // + sword_path qi_slash/resonance（6 招去复用专属化；condense_edge 原借 cleave
     // 时已达标故不在本表，专属化后 endTick=18 ∈ [16,20] 继续达标）。
+    // P2 批次二后半（2026-07-19）删 1 条：sword.infuse（两段式落地，蓄力段
+    // isLoop 28t 全轴同值闭环达标；charge_carrier 原本就不在表——windup_charge
+    // 借用即为 loop 形态，换专属 loop 后继续达标）。
     private static final Set<String> CAST_ALIGNMENT_ALLOWLIST = Set.of(
-        "sword.infuse", "movement.dash",
+        "movement.dash",
         "baomai.full_power_charge", "baomai.full_power_release",
         "woliu.heart", "woliu.vacuum_palm", "woliu.vortex_shield", "woliu.vacuum_lock",
         "woliu.turbulence_burst",
@@ -148,8 +160,18 @@ class AnimCastTicksAlignmentTest {
         // plan-bughunt-woliu-resonance-loop-arm-decay-v1**（本 plan 防重声明明确
         // 排除，标准只防再犯），该 bugfix merge 后删本条目。
         "woliu.vortex_resonance",
-        "anqi.armor_pierce", "anqi.echo_fractal",
-        "sword_path.manifest", "sword_path.heaven_gate", "morph.yixing");
+        // P2 后半处置（决策 (b)，plan 附录 A）：armor_pierce（cast=40）/
+        // echo_fractal（cast=60）/ sword_path.manifest（cast=40）三招为
+        // **瞬发结算型长 cast**——resolver 立即结算、无真实引导窗（anqi_v2.rs
+        // resolve_anqi_skill / skill_register.rs cast_manifest），cast_ticks 是
+        // 元数据；isLoop 蓄力段无停止信号可挂（会永久循环），故按「覆盖结算
+        // 期的非循环单段专属演出」交付（cast+4..cast+8 收势齐全），机械断言
+        // （cast≥40 须 isLoop）不适用但仍如实驻表。真两段式待 cast 通道真实化
+        // 后落地（plan 遗留，P6 收口时与 allowlist 清零判据一并裁决）。
+        "anqi.armor_pierce", "anqi.echo_fractal", "sword_path.manifest",
+        // heaven_gate：charge 段 hold-末帧范式（非循环 60t），与 isLoop 正典的
+        // 统一遗留 P6 收口（plan 附录 A 注记）。
+        "sword_path.heaven_gate", "morph.yixing");
 
     /** 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。 */
     private static final Set<String> MISSING_ANIM_ALLOWLIST =

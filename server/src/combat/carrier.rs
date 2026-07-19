@@ -209,6 +209,29 @@ pub struct CarrierChargedEvent {
     pub tick: u64,
 }
 
+/// plan-skill-anim-fidelity-v1 P2 后半 —— 封骨充能开始（`begin_charge_carrier`
+/// 成功插入 `CarrierCharging` 时发出）。纯观察事件：驱动循环蓄力段动画
+/// `anqi_charge_carrier_loop` 的 PlayAnim（vfx_animation_trigger 消费），不参与
+/// 任何数值结算。
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct CarrierChargeBeganEvent {
+    pub carrier: Entity,
+    pub tick: u64,
+}
+
+/// plan-skill-anim-fidelity-v1 P2 后半 —— 封骨充能结束（`finish_charge` **全部**
+/// 退出路径，含密封失败 / 密封量≈0 早退分支）。循环动画停止路径的权威信号
+/// （§8.1 #3 红线：任何退出路径都必须停循环段，`CarrierChargedEvent` 在早退
+/// 分支不发出、不能兜底）：
+/// - `full_charge=true` 充能完成 → StopAnim(循环段) + PlayAnim(release 收势)
+/// - `full_charge=false` 移动打断 → 仅 StopAnim（打断不奖励收势）
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct CarrierChargeEndedEvent {
+    pub carrier: Entity,
+    pub full_charge: bool,
+    pub tick: u64,
+}
+
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct CarrierImpactEvent {
     pub attacker: Entity,
@@ -244,6 +267,8 @@ pub fn register(app: &mut App) {
     app.add_event::<ChargeCarrierIntent>();
     app.add_event::<ThrowCarrierIntent>();
     app.add_event::<CarrierChargedEvent>();
+    app.add_event::<CarrierChargeBeganEvent>();
+    app.add_event::<CarrierChargeEndedEvent>();
     app.add_event::<CarrierImpactEvent>();
     app.add_event::<ProjectileDespawnedEvent>();
     app.add_systems(
@@ -400,6 +425,7 @@ fn begin_charge_carrier(
     mut commands: Commands,
     mut actors: Query<BeginChargeActor<'_>>,
     mut qi_transfers: EventWriter<QiTransfer>,
+    mut began_events: EventWriter<CarrierChargeBeganEvent>,
 ) {
     for intent in intents.read() {
         let Ok((entity, mut cultivation, _qi_color, lifecycle, position, inventory, charging)) =
@@ -439,6 +465,12 @@ fn begin_charge_carrier(
             started_at_tick: intent.issued_at_tick.max(clock.tick),
             start_pos: position.get(),
         });
+        // P2 后半：充能开始 → 循环蓄力段动画信号（纯观察，AV 消费在
+        // vfx_animation_trigger::emit_anqi_visual_triggers）。
+        began_events.send(CarrierChargeBeganEvent {
+            carrier: entity,
+            tick: clock.tick,
+        });
     }
 }
 
@@ -470,6 +502,7 @@ fn find_chargeable_hand(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn charge_carrier_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
@@ -477,6 +510,7 @@ fn charge_carrier_tick(
     mut commands: Commands,
     mut actors: Query<ChargingActor<'_>>,
     mut events: EventWriter<CarrierChargedEvent>,
+    mut ended_events: EventWriter<CarrierChargeEndedEvent>,
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for (entity, mut cultivation, qi_color, position, mut inventory, mut store, charging) in
@@ -501,6 +535,7 @@ fn charge_carrier_tick(
                 false,
                 (elapsed as f32 / CHARGE_DURATION_TICKS as f32).clamp(0.0, 1.0),
                 &mut events,
+                &mut ended_events,
             );
             continue;
         }
@@ -535,6 +570,7 @@ fn charge_carrier_tick(
             true,
             1.0,
             &mut events,
+            &mut ended_events,
         );
     }
 }
@@ -556,7 +592,15 @@ fn finish_charge(
     full_charge: bool,
     progress_ratio: f32,
     events: &mut EventWriter<CarrierChargedEvent>,
+    ended_events: &mut EventWriter<CarrierChargeEndedEvent>,
 ) {
+    // P2 后半：充能结束信号在**所有**退出路径发出（循环动画停止路径红线
+    // §8.1 #3——早退分支无 CarrierChargedEvent，循环段必须由本事件停止）。
+    ended_events.send(CarrierChargeEndedEvent {
+        carrier: entity,
+        full_charge,
+        tick,
+    });
     let total_deducted = if full_charge {
         charging.qi_target
     } else {
@@ -1497,9 +1541,25 @@ mod tests {
         app.insert_resource(ZoneRegistry::default());
         app.add_event::<ChargeCarrierIntent>();
         app.add_event::<CarrierChargedEvent>();
+        app.add_event::<CarrierChargeBeganEvent>();
+        app.add_event::<CarrierChargeEndedEvent>();
         app.add_event::<QiTransfer>();
         app.add_systems(Update, (begin_charge_carrier, charge_carrier_tick));
         app
+    }
+
+    fn drain_charge_began(app: &mut App) -> Vec<CarrierChargeBeganEvent> {
+        app.world_mut()
+            .resource_mut::<Events<CarrierChargeBeganEvent>>()
+            .drain()
+            .collect()
+    }
+
+    fn drain_charge_ended(app: &mut App) -> Vec<CarrierChargeEndedEvent> {
+        app.world_mut()
+            .resource_mut::<Events<CarrierChargeEndedEvent>>()
+            .drain()
+            .collect()
     }
 
     fn spawn_charge_actor(app: &mut App) -> Entity {
@@ -1635,6 +1695,187 @@ mod tests {
             .expect("移动中断时未封存的 prepaid_qi 必须释放回 zone，不能吞真元");
         assert_eq!(transfer.to, QiAccountId::zone("spawn".to_string()));
         assert!((transfer.amount - 15.0).abs() < f64::EPSILON);
+    }
+
+    // ── P2 后半：充能开始/结束观察事件（循环蓄力段动画停止路径 §8.1 #3）────────
+
+    /// 充能成功开始 → 恰发 1 条 CarrierChargeBeganEvent（循环段 PlayAnim 信号），
+    /// 此刻不得有任何 Ended（循环不能未播先停）。
+    #[test]
+    fn begin_charge_emits_charge_began_event_without_ended() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+
+        let began = drain_charge_began(&mut app);
+        assert_eq!(
+            began.len(),
+            1,
+            "充能开始应恰发 1 条 CarrierChargeBeganEvent（循环蓄力段动画信号），实际 {} 条",
+            began.len()
+        );
+        assert_eq!(began[0].carrier, actor, "Began 事件应指向充能者本人");
+        assert!(
+            drain_charge_ended(&mut app).is_empty(),
+            "充能刚开始不得发 CarrierChargeEndedEvent（循环段不能未播先停）"
+        );
+    }
+
+    /// 充能被拒（qi_target 超上限 → begin 静默 continue）→ 不发 Began：
+    /// 没开始的充能不能触发循环动画。
+    #[test]
+    fn rejected_begin_charge_emits_no_began_event() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            // default_qi_target(qi_max=200)=60，超出即拒。
+            qi_target: Some(90.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<CarrierCharging>(actor).is_none(),
+            "前置：超上限 qi_target 应被拒、不插 CarrierCharging"
+        );
+        assert!(
+            drain_charge_began(&mut app).is_empty(),
+            "被拒的充能不得发 CarrierChargeBeganEvent（否则循环动画凭空开播）"
+        );
+    }
+
+    /// 自然完成 → Ended{full_charge:true}（StopAnim+release 信号）且与
+    /// CarrierChargedEvent(full) 同拍。
+    #[test]
+    fn full_charge_completion_emits_ended_full() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+        drain_charge_ended(&mut app);
+
+        app.world_mut().resource_mut::<CombatClock>().tick = CHARGE_DURATION_TICKS;
+        app.update();
+
+        let ended = drain_charge_ended(&mut app);
+        assert_eq!(
+            ended.len(),
+            1,
+            "充能自然完成应恰发 1 条 CarrierChargeEndedEvent，实际 {} 条",
+            ended.len()
+        );
+        assert!(
+            ended[0].full_charge,
+            "自然完成的 Ended 必须 full_charge=true（驱动 StopAnim+release 收势）"
+        );
+        assert_eq!(ended[0].carrier, actor);
+        let charged: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<CarrierChargedEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            charged.iter().any(|event| event.full_charge),
+            "前置：自然完成应同拍发出 CarrierChargedEvent(full_charge=true)"
+        );
+    }
+
+    /// 半程移动打断 → Ended{full_charge:false}（仅 StopAnim，打断不奖励收势）。
+    #[test]
+    fn movement_interrupt_emits_ended_not_full() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+        drain_charge_ended(&mut app);
+
+        app.world_mut()
+            .entity_mut(actor)
+            .insert(Position::new([2.0, 66.0, 0.0]));
+        app.world_mut().resource_mut::<CombatClock>().tick = CHARGE_DURATION_TICKS / 2;
+        app.update();
+
+        let ended = drain_charge_ended(&mut app);
+        assert_eq!(
+            ended.len(),
+            1,
+            "移动打断应恰发 1 条 CarrierChargeEndedEvent，实际 {} 条",
+            ended.len()
+        );
+        assert!(
+            !ended[0].full_charge,
+            "移动打断的 Ended 必须 full_charge=false（仅 StopAnim，不播 release）"
+        );
+    }
+
+    /// 零进度立即打断（progress≈0 → 密封量≈0 走 finish_charge 早退分支，无
+    /// CarrierChargedEvent）→ **仍必须**发 Ended：早退路径漏发 = 循环动画永卡
+    /// （§8.1 #3 全退出路径覆盖的关键锚点）。
+    #[test]
+    fn zero_progress_interrupt_still_emits_ended_despite_no_charged_event() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+        drain_charge_ended(&mut app);
+
+        // clock 仍为 0：elapsed=0 → progress_ratio=0 → qi_amount=0 → 早退分支。
+        app.world_mut()
+            .entity_mut(actor)
+            .insert(Position::new([2.0, 66.0, 0.0]));
+        app.update();
+
+        assert!(
+            app.world().get::<CarrierCharging>(actor).is_none(),
+            "前置：零进度移动打断也应结束 CarrierCharging"
+        );
+        let charged: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<CarrierChargedEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            charged.is_empty(),
+            "前置：零进度打断走早退分支，不应发 CarrierChargedEvent"
+        );
+        let ended = drain_charge_ended(&mut app);
+        assert_eq!(
+            ended.len(),
+            1,
+            "早退分支（密封量≈0）也必须发 Ended——漏发 = 循环蓄力段动画永卡在玩家身上"
+        );
+        assert!(
+            !ended[0].full_charge,
+            "零进度打断的 Ended 必须 full_charge=false"
+        );
     }
 
     #[test]
