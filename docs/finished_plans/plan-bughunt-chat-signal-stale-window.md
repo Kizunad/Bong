@@ -152,7 +152,7 @@
 - P0：`agent/packages/schema/tests/chat-message.test.ts`、`agent/packages/tiandao/tests/chat-processor.test.ts`、`agent/packages/tiandao/tests/agent-real-context-injection.test.ts` 先锁定 schema、转换、300/301 秒窗口和真实 LLM prompt；review 返工又以 `aabfc244`、`99b0af1c` 分别复现客户端未来时间绕过与跨秒旧时钟误删。
 - P1：`agent/packages/schema/src/chat-message.ts` 为 `ChatMessageV1.ts` 明确 server-observed 秒契约、为 `ChatSignal.ts` 固定必填非负整数；`agent/packages/tiandao/src/chat-processor.ts` 从原消息注入权威时间，删除 `mentions_mechanic` 隐式解析，并以 `[now - 300, now]` 同时过滤旧值与未来值。
 - P2：`agent/packages/schema/generated/chat-message-v1.json`、`generated/chat-signal.json` 已重生成；`agent/packages/tiandao/src/runtime.ts` 增加 `RuntimeDeps.now` 注入面并在异步 drain / LLM 后、实际 merge 前刷新时钟，context/runtime fixtures 与跨秒回归全部对齐。
-- P3：`server/src/network/chat_collector.rs` 引入 `ChatObservationClock`，Redis wire 使用 server observation 秒，`PlayerChatCollected.timestamp` 保留原始 C2S 毫秒；`scripts/bot/bot.py` / `test_protocol.py` 支持默认当前毫秒与显式伪造毫秒；`scripts/e2e-chat-signal-window.sh` / `.mts` 覆盖登录后 `+1d` Bot→Rust→独立 Redis→Tiandao→future/300/301 秒→prompt，`.github/workflows/e2e.yml` 接入 e2e。合并 `origin/main@9d2e29d0` 后按所有受影响栈复验并以 `438c47e7` 落显式 merge commit。
+- P3：`server/src/network/chat_collector.rs` 引入 `ChatObservationClock`，Redis wire 使用 server observation 秒，`PlayerChatCollected.timestamp` 保留原始 C2S 毫秒；`scripts/bot/bot.py` / `test_protocol.py` 支持默认当前毫秒与显式伪造毫秒；`scripts/e2e-chat-signal-window.sh` / `.mts` 覆盖登录后 `+1d` Bot→Rust→独立 Redis→Tiandao→future/300/301 秒→prompt，`.github/workflows/e2e.yml` 接入 e2e。最终 ready-to-push 树在 `a3ce1b945`：双父 merge 含 `origin/main@2f9c70ad`（#1212 SearchHud）与此前 `#1233`/`#1241`。
 
 ### 关键 commit
 
@@ -173,24 +173,33 @@
 - `99b0af1c`（2026-07-17）：复现异步聊天处理跨秒时复用旧时钟的误删。
 - `057d4d52`（2026-07-17）：在实际 merge 前刷新 `RuntimeDeps.now`，保留跨秒合法消息。
 - `438c47e7`（2026-07-17）：合并并复验 `origin/main@9d2e29d0`，保留聊天信任边界与主线 skillbar/quickslot 契约。
+- `6cc92bdc`（2026-07-19）：普通 merge `origin/main@946ad6c2`（#1233 docs-only 归档）。
+- `3228424e`（2026-07-19）：普通 merge `origin/main@5d9bdd8f`（#1241 skill-anim-fidelity PR-5；触及 server + client）。
+- `a3ce1b945`（2026-07-19）：普通 merge `origin/main@2f9c70ad`（#1212 SearchHud 收口；仅 client + docs）。本 commit 之后的 docs-only evidence 纠错会再生成新 HEAD，最终 SHA 以 git 与 validator 对拍为准，不在文档中预写未来 docs commit。
 
 ### 测试结果
 
-- 定向 red/green：Rust collector 16/16、schema chat 13/13、chat processor 10/10、runtime 71/71、Python Bot 显式时间 2/2 与 `bash -n scripts/e2e-chat-signal-window.sh` 全部通过；覆盖客户端负/正偏移、epoch、`u64::MAX`、future `+1s/+1d`、300/301 秒、20 条容量、prompt 淘汰与跨秒 merge。
-- 主线同步前 `057d4d52` 完整门禁：server `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 通过（11,737 passed / 6 ignored / 0 failed）；schema 30 文件 / 893 项、405 generated fresh；tiandao 72 文件 / 835 项；agent workspace build；Python protocol 126/126。真实 e2e marker `chat-window-20260717-211703-4055824`，`client_ms=1784380789213 wire_ts=1784294389 now=1784294391 age=2`，客户端比 wire 超前 `86,400,213 ms`；证据目录 `.sisyphus/evidence/chat-signal-window-20260717-211703-4055824`。
-- 最终未提交 merge 树 `057d4d52 + origin/main@9d2e29d0` 完整门禁（随后落 `438c47e7`）：server `fmt` / `clippy` / `cargo test` 通过（11,752 passed / 6 ignored / 0 failed）；Temurin 17.0.19 client `./gradlew test build` 通过（4,103 tests / 0 failures / 0 errors / 0 skipped）；schema 893、405 generated fresh；tiandao 835；agent workspace build；Python protocol 126/126；`git diff --check` 通过。
-- 最终真实 e2e：marker `chat-window-20260717-214914-4138825`，`client_ms=1784382743490 wire_ts=1784296344 now=1784296350 age=6`，客户端伪造时间比 wire 超前 `86,399,490 ms`（至少 23 小时）；证据目录 `.sisyphus/evidence/chat-signal-window-20260717-214914-4138825`。脚本退出 0，独立 Redis 与本次 server 均完成清理，退出后 25565 为空；Tiandao snapshots 已移入 ignored evidence 并以 SHA-256 manifest 校验。
-- 对抗验证：首次 `aa3d1be8` validator FAIL 指出 runtime 复用异步前旧时钟；修复后 `FIX_VALIDATING` 对 `057d4d52` PASS，主线同步后 `REBASE_VALIDATING` 对 `438c47e7` PASS。
+- 定向 red/green：Rust collector 信任边界（负/正偏移、epoch、`u64::MAX`）、schema chat 13/13、chat processor future upper + 300/301 秒、runtime 跨秒 `mergeNowSeconds` 刷新、Python Bot 默认/伪造毫秒字节 pin 均存在且能在回退时撞红。
+- 最终代码树（server 全量在 `3228424e` 重跑；随后 `a3ce1b945` 仅合入 client SearchHud，server 源码与 `3228424e` 一致）：
+  - server：`cargo fmt --check` = 0；`cargo clippy --all-targets -- -D warnings` = 0；`cargo test` = 0。计数：lib 11799 passed / 1 ignored，main 11，full_app_startup 1，tarkov_backpack_p0_e2e 4，doc-tests 0 passed / 5 ignored → **合计 11815 passed / 0 failed / 6 ignored**。
+  - schema：build = 0；`npm test` 30 files / **893**；`npm run check` 405 generated fresh。
+  - tiandao：`npm test` 72 files / **835**。
+  - agent workspace：`npm run build` = 0。
+  - bot protocol：`python3 -m unittest scripts.bot.test_protocol` **126/126**。
+  - client Java 17（`JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`，HEAD `a3ce1b945`）：`./gradlew test build` = 0；JUnit **4153 tests / 0 failures / 0 errors / 0 skipped**；game tests 3/3。
+  - 真实 e2e（HEAD `a3ce1b945`）：`bash scripts/e2e-chat-signal-window.sh` = 0；marker `chat-window-20260719-235421-3764525`；`client_ms=1784562865145 wire_ts=1784476465 now=1784476467 age=2`；客户端伪造时间比 wire 超前 `86,400,180 ms`（≥23h）；证据目录 `.sisyphus/evidence/chat-signal-window-20260719-235421-3764525`。
+- 历史对抗验证：`FIX_VALIDATING` 对 `057d4d52` PASS；`REBASE_VALIDATING` 对 `438c47e7` PASS。最终 docs-only evidence 提交后必须对**新 HEAD** 再开无上下文只读 validator，结论绑定 exact SHA。
 
 ### 跨仓库核验
 
-- server：`ChatObservationClock` 独立生成 Redis `ChatMessageV1.ts` server-observed 秒；`PlayerChatCollected.timestamp` 仍保留客户端 C2S 毫秒，偏移与极值测试证明两条语义隔离。
-- Python Bot：`scripts/bot/bot.py` 模拟原版 `PacketByteBuf.writeInstant()` signed Unix 毫秒，同时暴露显式 `timestamp_millis` 供恶意/偏时钟客户端复现；`test_protocol.py` 对发包字节做 pin。
-- agent/schema：`ChatMessageV1` 描述、`ChatSignal`、`processChatBatch`、`isRecentSignal`、`mergeChatSignals`、`RuntimeDeps.now`、`buildChatSignalsBlock` 与 committed generated schema 已对齐。
-- client：不消费 `ChatSignal` 内部契约；因最终主线 merge 带入 client skill icon 测试，仍用 Java 17 完成 4,103 项全量回归。
-- CI/runtime：`.github/workflows/e2e.yml` 调用真实 e2e；runner 在 Bot 登录后即时生成 `+1d` 证据文件，使用独立 Redis 和本次 server listener，避免旧进程或预制 payload 假绿。
+- server：`ChatObservationClock` / `observed_at_seconds` → Redis `ChatMessageV1.ts` server-observed Unix 秒；`PlayerChatCollected.timestamp` 保留 C2S 毫秒；`server/src/network/mod.rs` 注册 `ChatObservationClock::default()`。
+- Python Bot：`Bot.chat(..., timestamp_millis=...)` 写 signed Unix 毫秒；`test_protocol.py` pin 默认时钟与伪造未来字节。
+- agent/schema：`ChatMessageV1.ts` 描述、`ChatSignal.ts` 必填、`processChatBatch` 从 `msg.ts` 注入、`isRecentSignal` 闭区间 `[now-300, now]`、`runtime` 在 async drain/LLM 后 `mergeNowSeconds = Math.floor(now()/1000)` 再 merge。
+- client：不消费 `ChatSignal`；因 main 合入 skill-anim + SearchHud，用 Java 17 全量回归锁住无回归。
+- CI/runtime：`.github/workflows/e2e.yml` 接线；真实 e2e 使用独立 Redis + 本次 server 进程树端口归属，拒绝误连旧 25565。
 
 ### 遗留 / 后续
 
-- 无代码遗留或阻塞标记；NTP / 客户端时钟漂移补偿、Redis 跨进程聊天持久化仍按非目标保持独立，Tiandao future upper 已在本 plan 内 fail closed。
-- 代码与主线 merge 树的已验证 SHA 是 `438c47e7`。本次原地文档纠错会产生新的 docs-only HEAD，不能在自身内容中稳定写入自己的 SHA 或预写未来 validator PASS；最终 HEAD、`FINAL_VALIDATING`、GitHub e2e、`/review` 与 CodeRabbit 统一在 PR body / 评论 / checks 中外部绑定。
+- 功能代码无阻塞遗留；NTP / 客户端时钟漂移补偿、Redis 跨进程聊天持久化仍按非目标保持独立；Tiandao `ts > now` fail closed 已在本 plan 内。
+- **运维事故（非代码交付）**：本 worktree 内来源不明 / untracked 的 `agent/packages/tiandao/data/` 在测试流程中被误删，**无可证恢复**。禁止伪造复制“恢复”该目录内容，也**禁止自动 cleanup 删除**同类 ignored/untracked 数据。该事故不是聊天时效修复的交付物，仅作遗留记账；后续 cleanup 必须人工确认路径来源后再动。
+- 最终 ready-to-push 代码祖先为 `a3ce1b945`（含 `origin/main@2f9c70ad`）。本 Finish Evidence 的 docs-only commit 会推高 HEAD；最终 exact SHA、fresh validator PASS、以及是否 push 均由 PR 会话外部绑定，**本会话不 push / 不 merge / 不 cleanup**。
