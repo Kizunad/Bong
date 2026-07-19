@@ -65,6 +65,9 @@ class AnimCastTicksAlignmentTest {
         m.put("sword.cleave", "sword_cleave");
         m.put("sword.thrust", "sword_thrust");
         m.put("sword.parry", "sword_parry");
+        // P2 批次二后半（2026-07-19）：sword.infuse 两段式——蓄力段沿用
+        // sword_infuse 文件名（重制为 isLoop 28t 横剑抚刃），release 段
+        // sword_infuse_release 由 server 完成分支接力（两段式招映射蓄力段）。
         m.put("sword.infuse", "sword_infuse");
         m.put("movement.dash", "dash_forward");
         m.put("shield_block", "shield_raise");
@@ -95,13 +98,19 @@ class AnimCastTicksAlignmentTest {
         m.put("tuike.don", "tuike_don_skin");
         m.put("tuike.shed", "tuike_shed_burst");
         m.put("tuike.transfer_taint", "tuike_taint_transfer");
-        m.put("anqi.charge_carrier", "windup_charge");
+        // P2 批次二后半（2026-07-19）：charge_carrier 两段式（真实 400t 通道，
+        // 映射蓄力段 anqi_charge_carrier_loop；release 段 anqi_charge_carrier_release
+        // 由 server CarrierChargeEndedEvent{full} 接力）。
+        m.put("anqi.charge_carrier", "anqi_charge_carrier_loop");
         // P2 批次二前半（2026-07-19）：anqi 3 招 + sword_path 3 招去复用换专属动画。
         m.put("anqi.single_snipe", "anqi_single_snipe");
         m.put("anqi.multi_shot", "anqi_multi_shot");
         m.put("anqi.soul_inject", "anqi_soul_inject");
-        m.put("anqi.armor_pierce", "cast_invoke");
-        m.put("anqi.echo_fractal", "release_burst");
+        // P2 批次二后半：armor_pierce / echo_fractal 专属单段（瞬发结算型长 cast，
+        // 决策 (b)——resolver 立即结算无引导窗，cast_ticks 是元数据；仍驻
+        // CAST_ALIGNMENT_ALLOWLIST，见该表注释）。
+        m.put("anqi.armor_pierce", "anqi_armor_pierce");
+        m.put("anqi.echo_fractal", "anqi_echo_fractal");
         m.put("body.guangbo_ticao", "guangbo_ticao");
         m.put("sword_path.condense_edge", "sword_path_condense_edge");
         m.put("sword_path.qi_slash", "sword_path_qi_slash");
@@ -138,8 +147,11 @@ class AnimCastTicksAlignmentTest {
     // P2 批次二前半（2026-07-19）删 5 条：anqi single_snipe/multi_shot/soul_inject
     // + sword_path qi_slash/resonance（6 招去复用专属化；condense_edge 原借 cleave
     // 时已达标故不在本表，专属化后 endTick=18 ∈ [16,20] 继续达标）。
+    // P2 批次二后半（2026-07-19）删 1 条：sword.infuse（两段式落地，蓄力段
+    // isLoop 28t 全轴同值闭环达标；charge_carrier 原本就不在表——windup_charge
+    // 借用即为 loop 形态，换专属 loop 后继续达标）。
     private static final Set<String> CAST_ALIGNMENT_ALLOWLIST = Set.of(
-        "sword.infuse", "movement.dash",
+        "movement.dash",
         "baomai.full_power_charge", "baomai.full_power_release",
         "woliu.heart", "woliu.vacuum_palm", "woliu.vortex_shield", "woliu.vacuum_lock",
         "woliu.turbulence_burst",
@@ -148,8 +160,31 @@ class AnimCastTicksAlignmentTest {
         // plan-bughunt-woliu-resonance-loop-arm-decay-v1**（本 plan 防重声明明确
         // 排除，标准只防再犯），该 bugfix merge 后删本条目。
         "woliu.vortex_resonance",
-        "anqi.armor_pierce", "anqi.echo_fractal",
-        "sword_path.manifest", "sword_path.heaven_gate", "morph.yixing");
+        // P2 后半 review r2 定形：armor_pierce / echo_fractal / sword_path.manifest
+        // 三招移出本表——它们不再是「豁免」而是**瞬发结算型分类契约**
+        // （{@link #INSTANT_RESOLVER_SKILLS}：resolver 在 cast 起始 tick 立即结算
+        // → strike 顶点必须=tick 0，instant spec manifest + 专属 pin 测试机械锁定，
+        // cast_ticks 为元数据不参与时长对拍）。
+        // heaven_gate：动画对齐 60t 充能相位（HEAVEN_GATE_CHARGE_END）而非
+        // cast_ticks=80 总窗，charge 段非循环 hold-末帧（定长充能相位全对齐、
+        // 末帧=release 交接帧，charge_hold segment manifest 锁密度）；与 isLoop
+        // 正典的统一归 P6 注记（P2 密度精修已交付）。
+        "sword_path.heaven_gate", "morph.yixing");
+
+    /**
+     * 瞬发结算型 resolver 招（review r2 分类契约，plan 附录 A）：gameplay 在
+     * cast 起始 tick 立即结算（`resolve_anqi_skill` / `cast_manifest` 无
+     * `Casting`、无 timer、无打断窗），cast_ticks 是元数据非施法窗。跨端时序
+     * 契约 = **动画 strike 顶点与结算同帧（tick 0）**——开帧即命中姿态，其后
+     * 只承担余韵与收势；由 instant spec manifest（strike_peak_tick=0）+
+     * {@link #instantResolverSkillsPinStrikePeakAtTickZero()} 机械锁定。该类招
+     * 不走 cast_ticks 时长对拍（元数据错配无意义），也不驻 allowlist（分类
+     * 契约取代豁免）。新招入类前必须核验 resolver 确为立即结算。
+     */
+    private static final Map<String, String> INSTANT_RESOLVER_SKILLS = Map.of(
+        "anqi.armor_pierce", "anqi_armor_pierce",
+        "anqi.echo_fractal", "anqi_echo_fractal",
+        "sword_path.manifest", "sword_manifest_cast");
 
     /** 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。 */
     private static final Set<String> MISSING_ANIM_ALLOWLIST =
@@ -361,7 +396,10 @@ class AnimCastTicksAlignmentTest {
             if (SUSTAINED_LOOP_EXCEPTIONS.contains(skillId)
                 || LONG_FORM_EXCEPTIONS.contains(skillId)
                 || CAST_ALIGNMENT_ALLOWLIST.contains(skillId)
-                || MISSING_ANIM_ALLOWLIST.contains(skillId)) {
+                || MISSING_ANIM_ALLOWLIST.contains(skillId)
+                // 瞬发结算型分类契约：不走 cast_ticks 时长对拍，由
+                // instantResolverSkillsPinStrikePeakAtTickZero + instant manifest 锁定。
+                || INSTANT_RESOLVER_SKILLS.containsKey(skillId)) {
                 continue;
             }
             assertNotNull(entry.getValue(),
@@ -410,6 +448,35 @@ class AnimCastTicksAlignmentTest {
         assertTrue(SKILL_ANIM.keySet().containsAll(P0_BASELINE),
             "基线含映射表之外的僵尸条目：" + P0_BASELINE.stream()
                 .filter(id -> !SKILL_ANIM.containsKey(id)).toList());
+    }
+
+    /**
+     * 瞬发结算型分类契约 pin（review r2）：结算 tick = strike 顶点 tick = 0。
+     * 每招必须 ① 映射到声明的专属动画 ② 不驻 allowlist（分类契约取代豁免）
+     * ③ 有 instant spec manifest 且 strike_peak_tick=0（manifest 结构与轴级
+     * 断言归 {@link #specManifestsEnforcePrecisionStandardMechanically()} 的
+     * instant 分支：strike 从 0 起、主打击轴 tick 0 落帧、密度/easing 同标准）。
+     */
+    @Test
+    void instantResolverSkillsPinStrikePeakAtTickZero() throws IOException {
+        for (Map.Entry<String, String> entry : INSTANT_RESOLVER_SKILLS.entrySet()) {
+            String skillId = entry.getKey();
+            assertEquals(entry.getValue(), SKILL_ANIM.get(skillId),
+                skillId + " 的映射动画与瞬发分类声明不一致——改映射必须同步 INSTANT_RESOLVER_SKILLS");
+            assertFalse(CAST_ALIGNMENT_ALLOWLIST.contains(skillId),
+                skillId + " 同时出现在瞬发分类与 CAST_ALIGNMENT_ALLOWLIST——分类契约取代豁免，二者互斥");
+            Path manifestFile = manifestRoot().resolve(entry.getValue() + ".json");
+            assertTrue(Files.isRegularFile(manifestFile),
+                skillId + " 缺 instant spec manifest：" + manifestFile
+                    + "——瞬发结算型必须机械锁定 strike 顶点=tick 0");
+            JsonObject manifest =
+                JsonParser.parseString(Files.readString(manifestFile)).getAsJsonObject();
+            assertTrue(manifest.has("instant") && manifest.get("instant").getAsBoolean(),
+                skillId + " 的 spec manifest 未声明 instant=true——瞬发结算型必须走 instant 契约");
+            assertEquals(0, manifest.get("strike_peak_tick").getAsInt(),
+                skillId + " strike_peak_tick 必须为 0：resolver 在 cast 起始 tick 立即结算，"
+                    + "视觉命中顶点必须与结算同帧");
+        }
     }
 
     /**
@@ -481,6 +548,77 @@ class AnimCastTicksAlignmentTest {
         JsonObject manifest = JsonParser.parseString(Files.readString(manifestFile)).getAsJsonObject();
         AnimMeta meta = readAnim(animName);
 
+        // 段式 manifest（P2 后半，review 返工新增）：两段式招的 loop 蓄力段 /
+        // 定长充能段没有三段式结构（strike 归其 release 段），改锁段语义——
+        // segment="loop"：isLoop=true + 每轴 endTick 同值补帧（库坑 #1）；
+        // segment="charge_hold"：非循环定长充能段（endTick=充能窗长，末帧=交接帧）。
+        // 两型共同：endTick pin、主轴密度 ≤4t、easing 显式非 linear、leg.pitch 红线。
+        if (manifest.has("segment")) {
+            String segment = manifest.get("segment").getAsString();
+            assertTrue(segment.equals("loop") || segment.equals("charge_hold"),
+                animName + " manifest segment 类型未知：`" + segment
+                    + "`（合法：loop / charge_hold）");
+            assertEquals(segment.equals("loop"), meta.isLoop(),
+                animName + " segment=" + segment + " 与 isLoop=" + meta.isLoop()
+                    + " 不符——loop 蓄力段必须 isLoop=true（配 StopAnim 停止路径），"
+                    + "charge_hold 定长充能段必须非循环（段长=通道相位长，无死帧）");
+            assertEquals(manifest.get("expected_end_tick").getAsInt(), meta.endTick(),
+                animName + " endTick=" + meta.endTick() + " 与 manifest expected_end_tick 漂移"
+                    + "——段长即通道契约（loop 周期 / 充能窗长），改动画必须同步 manifest");
+            List<String> primaryAxes = new ArrayList<>();
+            for (JsonElement axis : manifest.getAsJsonArray("primary_axes")) {
+                primaryAxes.add(axis.getAsString());
+            }
+            assertFalse(primaryAxes.isEmpty(),
+                animName + " segment manifest 必须声明至少一个主轴（primary_axes）");
+            AxisWalk walk = walkAxes(animName, meta);
+            for (String axis : primaryAxes) {
+                assertAxisDense(animName, walk, axis);
+            }
+            if (meta.isLoop()) {
+                List<String> seams = loopSeamViolations(meta);
+                assertTrue(seams.isEmpty(),
+                    animName + " 循环动画违反 endTick 同值补帧（库坑 #1，循环回绕跳变）：" + seams);
+            }
+            return;
+        }
+
+        // instant 型 manifest（review r2 瞬发结算型分类契约）：无 anticipation 段
+        // ——gameplay 已在 cast 起始 tick 结算，开帧必须就是命中顶点。strike 从
+        // 0 起、recovery 收在 endTick；每条主打击轴必须在 tick 0 落帧（顶点
+        // 落帧），密度/easing/leg.pitch 与三段式同标准。
+        if (manifest.has("instant")) {
+            assertTrue(manifest.get("instant").getAsBoolean(),
+                animName + " instant 字段只允许 true（非瞬发招不要写该字段）");
+            assertFalse(meta.isLoop(), animName + " 瞬发结算型动画必须非循环");
+            assertEquals(0, manifest.get("strike_peak_tick").getAsInt(),
+                animName + " strike_peak_tick 必须为 0（结算与视觉命中同帧，"
+                    + "review r2 跨端时序契约）");
+            JsonArray strikeRange = manifest.getAsJsonArray("strike");
+            int strikeFrom = strikeRange.get(0).getAsInt();
+            int strikeTo = strikeRange.get(1).getAsInt();
+            JsonArray recoveryRange = manifest.getAsJsonArray("recovery");
+            assertEquals(0, strikeFrom,
+                animName + " instant strike 必须从 tick 0 起（顶点即开帧，无 anticipation）");
+            assertTrue(strikeFrom < strikeTo, animName + " strike 段必须 from < to");
+            assertTrue(strikeTo <= recoveryRange.get(0).getAsInt(),
+                animName + " strike 与 recovery 必须有序不重叠");
+            assertEquals(meta.endTick(), recoveryRange.get(1).getAsInt(),
+                animName + " recovery 必须收在 endTick=" + meta.endTick());
+            List<String> instantAxes = new ArrayList<>();
+            for (JsonElement axis : manifest.getAsJsonArray("strike_axes")) {
+                instantAxes.add(axis.getAsString());
+            }
+            assertFalse(instantAxes.isEmpty(), animName + " instant manifest 必须声明主打击轴");
+            AxisWalk instantWalk = walkAxes(animName, meta);
+            for (String axis : instantAxes) {
+                assertAxisDense(animName, instantWalk, axis);
+                assertTrue(instantWalk.ticks().get(axis).contains(0),
+                    animName + " 主打击轴 `" + axis + "` 必须在 tick 0 有关键帧（顶点落帧）");
+            }
+            return;
+        }
+
         // 三段边界：anticipation/strike/recovery 的 [from, to]（tick，含端点）。
         Map<String, int[]> phases = new HashMap<>();
         for (String phase : List.of("anticipation", "strike", "recovery")) {
@@ -517,6 +655,34 @@ class AnimCastTicksAlignmentTest {
         }
         assertFalse(strikeAxes.isEmpty(), animName + " manifest 必须声明至少一个主打击轴");
 
+        AxisWalk walk = walkAxes(animName, meta);
+        Map<String, List<Integer>> axisTicks = walk.ticks();
+        // 三段各 ≥2 帧点（按任意轴在段内的帧点计）。
+        Set<Integer> allTicks = new HashSet<>();
+        axisTicks.values().forEach(allTicks::addAll);
+        for (Map.Entry<String, int[]> phase : phases.entrySet()) {
+            long inPhase = allTicks.stream()
+                .filter(t -> t >= phase.getValue()[0] && t <= phase.getValue()[1]).count();
+            assertTrue(inPhase >= 2,
+                animName + " " + phase.getKey() + " 段仅 " + inPhase + " 个帧点（应 ≥2，三段式结构红线）");
+        }
+        // 主打击轴：相邻帧间隔 ≤4 tick + 禁 linear。
+        for (String axis : strikeAxes) {
+            assertAxisDense(animName, walk, axis);
+        }
+        // 循环动画每轴 endTick 同值补帧（库坑 #1 完整语义：值相同，非仅存在）。
+        if (meta.isLoop()) {
+            List<String> seams = loopSeamViolations(meta);
+            assertTrue(seams.isEmpty(),
+                animName + " 循环动画违反 endTick 同值补帧（库坑 #1，循环回绕跳变）：" + seams);
+        }
+    }
+
+    /** 每轴关键帧走查结果：帧点清单 + easing 集合（key = {@code part.axis}）。 */
+    private record AxisWalk(Map<String, List<Integer>> ticks, Map<String, Set<String>> easings) {}
+
+    /** 走一遍全部关键帧：收集每轴帧点/easing，并断言 easing 显式 + leg.pitch 红线。 */
+    private static AxisWalk walkAxes(String animName, AnimMeta meta) {
         Map<String, List<Integer>> axisTicks = new HashMap<>();
         Map<String, Set<String>> axisEasings = new HashMap<>();
         for (JsonElement moveElement : meta.moves()) {
@@ -551,34 +717,21 @@ class AnimCastTicksAlignmentTest {
                 }
             }
         }
-        // 三段各 ≥2 帧点（按任意轴在段内的帧点计）。
-        Set<Integer> allTicks = new HashSet<>();
-        axisTicks.values().forEach(allTicks::addAll);
-        for (Map.Entry<String, int[]> phase : phases.entrySet()) {
-            long inPhase = allTicks.stream()
-                .filter(t -> t >= phase.getValue()[0] && t <= phase.getValue()[1]).count();
-            assertTrue(inPhase >= 2,
-                animName + " " + phase.getKey() + " 段仅 " + inPhase + " 个帧点（应 ≥2，三段式结构红线）");
+        return new AxisWalk(axisTicks, axisEasings);
+    }
+
+    /** 单轴机械断言：轴存在、相邻帧距 ≤4 tick、无 linear easing（打击轴与段式主轴共用）。 */
+    private static void assertAxisDense(String animName, AxisWalk walk, String axis) {
+        List<Integer> ticks = walk.ticks().get(axis);
+        assertNotNull(ticks, animName + " manifest 声明的主轴 `" + axis + "` 在动画中无关键帧");
+        List<Integer> sorted = ticks.stream().sorted().distinct().toList();
+        for (int i = 1; i < sorted.size(); i++) {
+            assertTrue(sorted.get(i) - sorted.get(i - 1) <= 4,
+                animName + " 主轴 `" + axis + "` 帧点 " + sorted.get(i - 1) + "→"
+                    + sorted.get(i) + " 间隔超过 4 tick（精度标准 #3 密度红线）");
         }
-        // 主打击轴：相邻帧间隔 ≤4 tick + 禁 linear。
-        for (String axis : strikeAxes) {
-            List<Integer> ticks = axisTicks.get(axis);
-            assertNotNull(ticks, animName + " manifest 声明的主打击轴 `" + axis + "` 在动画中无关键帧");
-            List<Integer> sorted = ticks.stream().sorted().distinct().toList();
-            for (int i = 1; i < sorted.size(); i++) {
-                assertTrue(sorted.get(i) - sorted.get(i - 1) <= 4,
-                    animName + " 主打击轴 `" + axis + "` 帧点 " + sorted.get(i - 1) + "→"
-                        + sorted.get(i) + " 间隔超过 4 tick（精度标准 #3 密度红线）");
-            }
-            Set<String> easings = axisEasings.getOrDefault(axis, Set.of());
-            assertFalse(easings.stream().anyMatch(e -> e.equalsIgnoreCase("linear")),
-                animName + " 主打击轴 `" + axis + "` 使用 linear easing（精度标准 #3 禁用）");
-        }
-        // 循环动画每轴 endTick 同值补帧（库坑 #1 完整语义：值相同，非仅存在）。
-        if (meta.isLoop()) {
-            List<String> seams = loopSeamViolations(meta);
-            assertTrue(seams.isEmpty(),
-                animName + " 循环动画违反 endTick 同值补帧（库坑 #1，循环回绕跳变）：" + seams);
-        }
+        Set<String> easings = walk.easings().getOrDefault(axis, Set.of());
+        assertFalse(easings.stream().anyMatch(e -> e.equalsIgnoreCase("linear")),
+            animName + " 主轴 `" + axis + "` 使用 linear easing（精度标准 #3 禁用）");
     }
 }

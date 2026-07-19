@@ -15,7 +15,9 @@ use crate::combat::anqi_v2::{
 };
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::body_conditioning::GuangboTicaoPracticeEvent;
-use crate::combat::carrier::CarrierChargedEvent;
+use crate::combat::carrier::{
+    CarrierChargeBeganEvent, CarrierChargeEndedEvent, CarrierChargedEvent,
+};
 use crate::combat::components::WoundKind;
 use crate::combat::dugu_v2::events::{
     EclipseNeedleEvent, PenetrateChainEvent, ReverseTriggeredEvent, SelfCureProgressEvent,
@@ -115,17 +117,25 @@ const ANQI_PRIORITY: u16 = 1500;
 
 // 暗器六招 AV 资产 id（client 侧 AnqiVfxPlayer / BongAnimations 已注册）。
 // plan-skill-anim-fidelity-v1 P2 前半：single_snipe / multi_shot / soul_inject
-// 三招去复用换专属动画（player_animation/anqi_*.json）；charge_carrier（cast=400
-// 两段式）与 armor_pierce / echo_fractal（长引导域）仍借通用资产，归 P2 后半
-// 批次重制。粒子复用现有 BongParticles sprite（无新贴图）。
-const ANIM_ANQI_CHARGE: &str = "bong:windup_charge";
+// 三招去复用换专属动画；P2 后半：charge_carrier 两段式（真实 400t 通道，循环
+// 蓄力段 + release 收势，CarrierChargeBegan/Ended 事件接线）+ armor_pierce /
+// echo_fractal 专属单段（瞬发结算型长 cast，附录 A 决策 (b)——cast_ticks 是
+// 元数据非真实引导窗，无循环段可挂）。粒子复用现有 BongParticles sprite。
+/// 封骨充能循环蓄力段（isLoop 32t）——`CarrierChargeBeganEvent` 起播，任何
+/// `CarrierChargeEndedEvent` 停播（§8.1 #3 停止路径红线）。
+const ANIM_ANQI_CHARGE: &str = "bong:anqi_charge_carrier_loop";
+/// 封骨充能完成收势（14t 非循环）——仅 `CarrierChargeEndedEvent{full_charge:true}`
+/// 播出；移动打断不奖励收势。
+const ANIM_ANQI_CHARGE_RELEASE: &str = "bong:anqi_charge_carrier_release";
+/// 循环蓄力段 StopAnim 淡出（tick）。与 full_power_emit 的 windup 停止参数同档。
+const ANQI_CHARGE_STOP_FADE_OUT_TICKS: u8 = 3;
 const ANIM_ANQI_SNIPE: &str = "bong:anqi_single_snipe";
 const ANIM_ANQI_VOLLEY: &str = "bong:anqi_multi_shot";
 const ANIM_ANQI_INJECT: &str = "bong:anqi_soul_inject";
-/// 破甲注射仍借通用施法——原与凝魂注射共用 `ANIM_ANQI_INJECT`，凝魂专属化后
-/// 拆出独立常量以保持本批不动其行为（P2 后半重制时再换专属）。
-const ANIM_ANQI_ARMOR_PIERCE: &str = "bong:cast_invoke";
-const ANIM_ANQI_ECHO: &str = "bong:release_burst";
+/// 破甲注射专属（46t 旋钻贯刺，P2 后半解除 cast_invoke 借用）。
+const ANIM_ANQI_ARMOR_PIERCE: &str = "bong:anqi_armor_pierce";
+/// 诱饵分形专属（66t 织网撒饵长演出，P2 后半解除 release_burst 借用）。
+const ANIM_ANQI_ECHO: &str = "bong:anqi_echo_fractal";
 const VFX_ANQI_CHARGE_SEAL: &str = "bong:anqi_charge_seal";
 const VFX_ANQI_SNIPE_BOLT: &str = "bong:anqi_snipe_bolt";
 const VFX_ANQI_MULTI_VOLLEY: &str = "bong:anqi_multi_volley";
@@ -860,17 +870,23 @@ pub fn emit_sword_path_visual_triggers(
 /// 结果型 events，对 caster 发 `PlayAnim` + `SpawnParticle`，引用 client 已注册的
 /// `AnqiVfxPlayer` 粒子 event_id 与 `BongAnimations` 动画 id。
 ///
-/// 招式 → 事件源映射（P2 前半：单射 / 齐射 / 凝魂三招专属动画）：
-/// - 封骨（充能）`CarrierChargedEvent` → windup_charge 动画 + 封骨密封粒子
+/// 招式 → 事件源映射（P2 后半：封骨两段式 + 破甲/诱饵专属化）：
+/// - 封骨开始 `CarrierChargeBeganEvent` → anqi_charge_carrier_loop 循环蓄力段起播
+/// - 封骨结束 `CarrierChargeEndedEvent` → StopAnim(循环段)；`full_charge=true`
+///   追加 anqi_charge_carrier_release 收势（打断不奖励收势，§8.1 #3）
+/// - 封骨密封落定 `CarrierChargedEvent` → 仅封骨密封粒子（动画已由 Began/Ended
+///   两段式接管，本事件不再播 windup_charge）
 /// - 单射狙击 `QiInjectionEvent{SingleSnipe}` → anqi_single_snipe 专属动画 + 狙击弹道（caster→target 方向）
 /// - 多发齐射 `MultiShotEvent` → anqi_multi_shot 专属动画 + 扇形齐射粒子
 /// - 凝魂注射 `QiInjectionEvent{SoulInject}` → anqi_soul_inject 专属动画 + 魂注紫雾
-/// - 破甲注射 `ArmorPierceEvent` → cast_invoke 动画 + 破甲金属火花（caster→target 方向）
-/// - 诱饵分形 `EchoFractalEvent` → release_burst 动画 + 分形回响涟漪
+/// - 破甲注射 `ArmorPierceEvent` → anqi_armor_pierce 专属动画 + 破甲金属火花（caster→target 方向）
+/// - 诱饵分形 `EchoFractalEvent` → anqi_echo_fractal 专属动画 + 分形回响涟漪
 ///
 /// **纯 cosmetic**：不读 / 改任何战斗数值 / qi_physics ledger / 命中结算。
 #[allow(clippy::too_many_arguments)]
 pub fn emit_anqi_visual_triggers(
+    mut charge_begins: EventReader<CarrierChargeBeganEvent>,
+    mut charge_ends: EventReader<CarrierChargeEndedEvent>,
     mut charges: EventReader<CarrierChargedEvent>,
     mut injections: EventReader<QiInjectionEvent>,
     mut multi_shots: EventReader<MultiShotEvent>,
@@ -880,11 +896,8 @@ pub fn emit_anqi_visual_triggers(
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
-    // 封骨（充能完成）：windup_charge 动画 + 封骨密封粒子（骨白）。
-    for event in charges.read() {
-        let Some(origin) = positions.get(event.carrier).map(|p| p.get()).ok() else {
-            continue;
-        };
+    // 封骨充能开始：循环蓄力段起播（结印灌注微循环）。
+    for event in charge_begins.read() {
         emit_play_for_entity(
             event.carrier,
             ANIM_ANQI_CHARGE,
@@ -893,6 +906,39 @@ pub fn emit_anqi_visual_triggers(
             &players,
             &mut vfx_events,
         );
+    }
+
+    // 封骨充能结束：任何退出路径都停循环段（§8.1 #3 停止路径红线）；
+    // 仅自然完成（full_charge）奖励 release 收势。
+    for event in charge_ends.read() {
+        let Ok((position, unique_id)) = players.get(event.carrier) else {
+            continue;
+        };
+        emit_stop_for_entity(
+            position,
+            unique_id,
+            ANIM_ANQI_CHARGE,
+            ANQI_CHARGE_STOP_FADE_OUT_TICKS,
+            &mut vfx_events,
+        );
+        if event.full_charge {
+            emit_play_for_entity(
+                event.carrier,
+                ANIM_ANQI_CHARGE_RELEASE,
+                ANQI_PRIORITY,
+                Some(1),
+                &players,
+                &mut vfx_events,
+            );
+        }
+    }
+
+    // 封骨密封落定：仅密封粒子（骨白）——动画归 Began/Ended 两段式，负向锁
+    // 「本事件不再播 windup_charge」见测试。
+    for event in charges.read() {
+        let Some(origin) = positions.get(event.carrier).map(|p| p.get()).ok() else {
+            continue;
+        };
         emit_anqi_particle(
             &mut vfx_events,
             VFX_ANQI_CHARGE_SEAL,
@@ -987,7 +1033,8 @@ pub fn emit_anqi_visual_triggers(
         );
     }
 
-    // 破甲注射：cast_invoke 动画 + 破甲金属火花（caster→target 朝向）。
+    // 破甲注射：anqi_armor_pierce 专属动画（P2 后半解除 cast_invoke 借用）
+    // + 破甲金属火花（caster→target 朝向）。
     for event in armor_pierces.read() {
         let origin = positions
             .get(event.caster)
@@ -1014,7 +1061,8 @@ pub fn emit_anqi_visual_triggers(
         );
     }
 
-    // 诱饵分形：release_burst 动画 + 分形回响涟漪（分身数缩放粒子）。
+    // 诱饵分形：anqi_echo_fractal 专属动画（P2 后半解除 release_burst 借用）
+    // + 分形回响涟漪（分身数缩放粒子）。
     for event in echoes.read() {
         let origin = positions
             .get(event.caster)
@@ -3077,6 +3125,8 @@ mod tests {
     fn setup_anqi_visual_app() -> App {
         let mut app = App::new();
         app.add_event::<CarrierChargedEvent>();
+        app.add_event::<CarrierChargeBeganEvent>();
+        app.add_event::<CarrierChargeEndedEvent>();
         app.add_event::<QiInjectionEvent>();
         app.add_event::<MultiShotEvent>();
         app.add_event::<ArmorPierceEvent>();
@@ -3096,9 +3146,94 @@ mod tests {
         }
     }
 
-    /// 封骨充能：windup_charge 动画 + 封骨密封粒子。
+    /// 封骨充能开始（P2 后半两段式）：循环蓄力段 anqi_charge_carrier_loop 起播，
+    /// 负向锁不再借通用蓄力 windup_charge。
     #[test]
-    fn anqi_charge_emits_windup_anim_and_seal_particle() {
+    fn anqi_charge_began_plays_carrier_loop_anim() {
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "Carry", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(CarrierChargeBeganEvent {
+            carrier: caster,
+            tick: 10,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1, "充能开始应恰 emit 1 条循环蓄力段动画");
+        assert_play_anim(&emitted[0], ANIM_ANQI_CHARGE, ANQI_PRIORITY);
+        assert_ne!(
+            play_anim_id(&emitted[0]),
+            "bong:windup_charge",
+            "去复用回归锁：封骨蓄力段不得再借通用蓄力 bong:windup_charge"
+        );
+    }
+
+    /// 封骨充能自然完成：StopAnim(循环段) + release 收势 PlayAnim（两段式接力）。
+    #[test]
+    fn anqi_charge_ended_full_stops_loop_and_plays_release() {
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "CarryDone", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(CarrierChargeEndedEvent {
+            carrier: caster,
+            full_charge: true,
+            tick: 410,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "自然完成应 emit StopAnim(循环) + PlayAnim(release)"
+        );
+        match &emitted[0].payload {
+            VfxEventPayloadV1::StopAnim {
+                anim_id,
+                fade_out_ticks,
+                ..
+            } => {
+                assert_eq!(
+                    anim_id, ANIM_ANQI_CHARGE,
+                    "停止的必须是循环蓄力段（§8.1 #3 停止路径红线）"
+                );
+                assert_eq!(fade_out_ticks, &Some(ANQI_CHARGE_STOP_FADE_OUT_TICKS));
+            }
+            other => panic!("expected StopAnim, got {other:?}"),
+        }
+        assert_play_anim(&emitted[1], ANIM_ANQI_CHARGE_RELEASE, ANQI_PRIORITY);
+    }
+
+    /// 封骨充能移动打断：仅 StopAnim(循环段)，**无** release 收势（打断不奖励收势）。
+    #[test]
+    fn anqi_charge_ended_interrupted_stops_loop_without_release() {
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "CarryMove", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(CarrierChargeEndedEvent {
+            carrier: caster,
+            full_charge: false,
+            tick: 200,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "移动打断应只 emit StopAnim（打断不奖励收势），实际 {} 条",
+            emitted.len()
+        );
+        match &emitted[0].payload {
+            VfxEventPayloadV1::StopAnim { anim_id, .. } => {
+                assert_eq!(anim_id, ANIM_ANQI_CHARGE);
+            }
+            other => panic!("expected StopAnim, got {other:?}"),
+        }
+    }
+
+    /// 封骨密封落定（CarrierChargedEvent）：仅密封粒子——动画已由 Began/Ended
+    /// 两段式接管，本事件不得再播任何 PlayAnim（负向回归锁）。
+    #[test]
+    fn anqi_charged_event_emits_seal_particle_only() {
         use crate::cultivation::components::ColorKind;
         let mut app = setup_anqi_visual_app();
         let caster = spawn_player(&mut app, "Carry", [0.0, 64.0, 0.0]);
@@ -3113,9 +3248,13 @@ mod tests {
         app.update();
 
         let emitted = drain_vfx(&mut app);
-        assert_eq!(emitted.len(), 2, "封骨应 emit 1 动画 + 1 粒子");
-        assert_play_anim(&emitted[0], ANIM_ANQI_CHARGE, ANQI_PRIORITY);
-        assert_spawn_particle(&emitted[1], VFX_ANQI_CHARGE_SEAL, Some(12));
+        assert_eq!(
+            emitted.len(),
+            1,
+            "CarrierChargedEvent 应只 emit 密封粒子（动画归 Began/Ended），实际 {} 条",
+            emitted.len()
+        );
+        assert_spawn_particle(&emitted[0], VFX_ANQI_CHARGE_SEAL, Some(12));
     }
 
     /// 单射狙击：anqi_single_snipe 专属动画（P2 前半去复用）+ 弹道粒子
@@ -3218,7 +3357,8 @@ mod tests {
         assert_spawn_particle(&emitted[1], VFX_ANQI_MULTI_VOLLEY, Some(20));
     }
 
-    /// 破甲注射：cast_invoke 动画 + 破甲火花（caster→target 方向）。
+    /// 破甲注射：anqi_armor_pierce 专属动画（P2 后半去复用）+ 破甲火花
+    /// （caster→target 方向）。
     #[test]
     fn anqi_armor_pierce_emits_directional_sparks() {
         use crate::combat::carrier::CarrierKind;
@@ -3242,10 +3382,10 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2);
         assert_play_anim(&emitted[0], ANIM_ANQI_ARMOR_PIERCE, ANQI_PRIORITY);
-        assert_eq!(
+        assert_ne!(
             play_anim_id(&emitted[0]),
             "bong:cast_invoke",
-            "破甲注射本批不动：仍借通用施法（P2 后半重制，与凝魂注射拆分后行为不变）"
+            "去复用回归锁：破甲注射不得再借通用施法 bong:cast_invoke"
         );
         match &emitted[1].payload {
             VfxEventPayloadV1::SpawnParticle {
@@ -3264,7 +3404,8 @@ mod tests {
         }
     }
 
-    /// 诱饵分形：release_burst 动画 + 分形回响涟漪（粒子随分身数缩放）。
+    /// 诱饵分形：anqi_echo_fractal 专属动画（P2 后半去复用）+ 分形回响涟漪
+    /// （粒子随分身数缩放）。
     #[test]
     fn anqi_echo_fractal_emits_decoy_ripple() {
         use crate::combat::carrier::CarrierKind;
@@ -3286,10 +3427,10 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2);
         assert_play_anim(&emitted[0], ANIM_ANQI_ECHO, ANQI_PRIORITY);
-        assert_eq!(
+        assert_ne!(
             play_anim_id(&emitted[0]),
             "bong:release_burst",
-            "诱饵分形本批不动：仍借通用爆发（P2 后半重制）"
+            "去复用回归锁：诱饵分形不得再借通用爆发 bong:release_burst"
         );
         // 4 分身 × 5 = 20 颗（在 clamp [10,40] 内）。
         assert_spawn_particle(&emitted[1], VFX_ANQI_ECHO_DECOY, Some(20));

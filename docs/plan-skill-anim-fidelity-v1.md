@@ -84,7 +84,7 @@
 |------|------|------|
 | P0 | 全量审计矩阵落档 + 精度标准定稿 + 时长对齐自动对拍测试 | ⬜ |
 | P1 | 批次一重制：sword 基础 3（infuse 移 P2，见附录 A）+ beng_quan + zhenmai 5（高频主力短招） | ✅ 2026-07-19 |
-| P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段）。拆前半（本 PR，2026-07-19：去复用 6 招专属化——sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject，含 server 映射改指 + allowlist 删 5 条）+ 后半（下 PR：长引导两段式 charge_carrier/echo_fractal/armor_pierce/sword.infuse + manifest_cast 处置 + StopAnim 通道接线 §8.1 #3） | ⬜ |
+| P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段）。拆前半（2026-07-19：去复用 6 招专属化——sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject，含 server 映射改指 + allowlist 删 5 条）+ 后半（2026-07-19：charge_carrier / sword.infuse 真两段式 + StopAnim 三类通道接线 §8.1 #3 + echo_fractal / armor_pierce / manifest 瞬发结算型分类契约（review r2 定形——strike 顶点=tick 0 与结算同帧，INSTANT_RESOLVER_SKILLS + instant manifest 机械锁，出 allowlist）+ heaven_gate 双段密度精修 + allowlist 净删 4 条） | ✅ 2026-07-19 |
 | P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ⬜ |
 | P4 | yidao 5 招动画补齐（plan-yidao-v1 §5 欠账） | ⬜ |
 | P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ⬜ |
@@ -190,7 +190,7 @@
 
 ## §10 实施工作流
 
-- 单 plan 多 PR 序列化：PR-1 = P0（审计+标准+对拍测试）；PR-2/3/4 = P1/P2/P3 批次；PR-5 = P4 yidao；PR-6 = P5 粒子；PR-7 = P6 收口。前一 PR merge 后开下一个。
+- 单 plan 多 PR 序列化（2026-07-19 更新：P2 按批量拆两 PR，后续顺延）：PR-1 = P0（审计+标准+对拍测试，#1234）；PR-2 = P1 批次一（#1235）；PR-3 = P2 前半去复用 6 招（#1239）；PR-4 = P2 后半长引导两段式+StopAnim 接线+heaven_gate 精修；PR-5/6/7/8 = P3/P4/P5/P6。前一 PR merge 后开下一个。
 - 每 PR 独立实施 subagent（context 隔离），动画批次 PR 强制 3 轮打磨 commit `(round N/3)` + 终轮 `<PROMISE>`。
 - CodeRabbit / `/review` 等待走 ScheduleWakeup 1200s 协议，修完意见重等 re-review。
 - **单次 consume-plan 全自动到 merge**：用户提交 `/consume-plan` 后全自动走完实施→review→merge→归档至 `docs/finished_plans/`，无需人工值守；动画属视觉资产，每批终轮三视图 PNG 附 PR body 供人工抽查。
@@ -206,7 +206,7 @@
 | `sword.cleave` | 16 | `sword_cleave` | 20 | — | 8 | 168 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：举剑过头竖劈+弓步前压三段式；endTick=20 为与借用方 condense_edge（cast=12）区间交集 |
 | `sword.thrust` | 10 | `sword_thrust` | 16 | — | 8 | 172 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：收剑腰侧直刺+侧身送肩 |
 | `sword.parry` | 4 | `sword_parry` | 10 | — | 6 | 126 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：斜举格挡弹开，密度补齐 |
-| `sword.infuse` | 40 | `sword_infuse` | 40 | — | 29 | 29 | — | **B** | P2 | 专属；无 recovery、密度低；cast=40 属长引导域，按标准 #2 须两段式，移 P2 与 anqi 长引导批次同做（含 server 通道接线） |
+| `sword.infuse` | 40 | `sword_infuse`(loop)+`sword_infuse_release` | 28 loop+14 | ✓ | 9+7 | 207+154 | — | **A** | P2 | P2 后半两段式（2026-07-19）：真实引导窗（`cast_sword_infuse` 插 `Casting`+`PendingSwordInfuse`，sword_basics.rs:723-746）→ 蓄力段重制 isLoop 28t 横剑抚刃（id 沿用 v1 资产清单 pin）+ release 14t 剑身一振；打断 = cast_emit 三分支表驱动 StopAnim，完成 = completion_tick StopAnim+release（失败分支亦 StopAnim） |
 | `movement.dash` | 0 | `dash_forward` | 4 | — | 13 | 21 | — | **C** | P3 | 瞬发 4t 快闪；密度低 |
 | `shield_block` | 0 | `shield_raise` | 6 | ✓ | 35 | 35 | — | **B** | P3 | 循环举盾+StopAnim 闭环已有；密度低 |
 | `burst_meridian.beng_quan` | 8 | `beng_quan` | 14 | — | 9 | 194 | — | **A** | P1 | 专属；P1 批次一重制（2026-07-19）：沉马蓄劲→拳炸出→震颤收；endTick=14 为三借用方 cast 区间交集 |
@@ -236,18 +236,18 @@
 | `tuike.don` | 12 | `tuike_don_skin` | 16 | — | 16 | 48 | — | **B** | P3 | 16t/48KF；补 recovery 即达标 |
 | `tuike.shed` | 8 | `tuike_shed_burst` | 12 | — | 20 | 56 | — | **B** | P3 | 12t/56KF；可精修 |
 | `tuike.transfer_taint` | 10 | `tuike_taint_transfer` | 14 | — | 19 | 55 | — | **B** | P3 | 14t/55KF；可精修 |
-| `anqi.charge_carrier` | 400 | `windup_charge` | 16 | ✓ | 81 | 81 | ✓ | **D** | P2 | 借通用蓄力；cast=400 需专属循环结印段+release |
+| `anqi.charge_carrier` | 400 | `anqi_charge_carrier_loop`(+`_release`) | 32 loop+14 | ✓ | 9+7 | 207+154 | — | **A** | P2 | P2 后半两段式（2026-07-19）：真实 400t 通道（`CHARGE_DURATION_TICKS` carrier.rs:47）→ 专属封骨结印循环 32t + release 14t；`CarrierChargeBegan/Ended` 事件接线（begin 起播 / finish_charge 全退出路径 StopAnim / full_charge 才播 release，早退分支覆盖有专属 pin） |
 | `anqi.single_snipe` | 6 | `anqi_single_snipe` | 12 | — | 7 | 161 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：侧身瞄准线→骨镖弹射出手→随镖目送 |
 | `anqi.multi_shot` | 30 | `anqi_multi_shot` | 36 | — | 11 | 231 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：胸前拢镖蓄势（load-snap 呼吸）→双臂开扇撒出 |
 | `anqi.soul_inject` | 20 | `anqi_soul_inject` | 26 | — | 9 | 189 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：单手举镖凝神灌注→刺送注入 |
-| `anqi.armor_pierce` | 40 | `cast_invoke` | 15 | — | 75 | 75 | ✓ | **D** | P2 | 借通用施法；15t vs cast=40 错配 |
-| `anqi.echo_fractal` | 60 | `release_burst` | 4 | — | 81 | 81 | ✓ | **D** | P2 | 借通用爆发；4t vs cast=60 错配 56t 静止 |
+| `anqi.armor_pierce` | 40 | `anqi_armor_pierce` | 12 | — | 6 | 138 | — | **A** | P2 | P2 后半（2026-07-19，review r2 定形）：**瞬发结算型分类契约**——`resolve_anqi_skill`（anqi_v2.rs:420-534）在 cast 起始 tick 立即结算，cast_ticks=40 为元数据 → 12t 非循环、**strike 顶点=tick 0**（开帧即贯刺命中，t2/t4 钻拧余震 roll 极值帧→撤臂收势），解除 cast_invoke 借用（负向 pin）；出 allowlist，改由 `INSTANT_RESOLVER_SKILLS` 分类 + instant manifest（strike_peak_tick=0）机械锁定（conventions §13 #2 例外 ③）；通道真实化则退类改两段式 |
+| `anqi.echo_fractal` | 60 | `anqi_echo_fractal` | 20 | — | 8 | 184 | — | **A** | P2 | P2 后半（2026-07-19，review r2 定形）：同 armor_pierce 瞬发结算型分类（同一 resolver 通道）→ 20t 非循环、**strike 顶点=tick 0**（开帧即爆撒仰开→织网反相波动余韵渐衰），解除 release_burst 借用（负向 pin）；出 allowlist（同 armor_pierce 分类契约） |
 | `body.guangbo_ticao` | 60 | `guangbo_ticao` | 150 | — | 288 | 288 | — | **A** | — | 150t/288KF 高完成度 |
 | `sword_path.condense_edge` | 12 | `sword_path_condense_edge` | 18 | — | 7 | 147 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：收剑入鞘式蓄意→拔剑亮刃定势；endTick=18 ∈ [16,20]（去借用后仍达标，未入过 allowlist） |
 | `sword_path.qi_slash` | 20 | `sword_path_qi_slash` | 26 | — | 9 | 198 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：高位回环蓄势→大斩挥出剑随气送远 |
 | `sword_path.resonance` | 30 | `sword_path_resonance` | 36 | — | 13 | 273 | — | **A** | P2 | 专属；P2 前半重制（2026-07-19）：双手持剑颤鸣蓄振（往复微颤帧）→振荡外放 |
-| `sword_path.manifest` | 40 | `sword_manifest_cast` | 40 | — | 32 | 32 | — | **B** | P2 | 40t/32KF 对齐 cast；补 recovery+密度 |
-| `sword_path.heaven_gate` | 80 | `sword_heaven_gate_charge(+release)` | 60+20 | — | 32+24 | 32+24 | — | **B** | P2 | 两段式先例；charge 60t 非循环 hold 末帧，精修密度 |
+| `sword_path.manifest` | 40 | `sword_manifest_cast` | 14 | — | 6 | 138 | — | **A** | P2 | P2 后半（2026-07-19，review r2 定形）：**瞬发结算型分类契约**——`cast_manifest`（skill_register.rs:288-345）tick 0 即 spawn SwordIntentEntity → 14t 非循环、**strike 顶点=tick 0**（开帧即翻腕送出→目送余韵 head.pitch -12），cast_ticks=40 为元数据；出 allowlist（同 armor_pierce 分类契约） |
+| `sword_path.heaven_gate` | 80 | `sword_heaven_gate_charge(+release)` | 60+20 | — | 16+8 | 368+184 | — | **A** | P2 | P2 后半精修（2026-07-19，review 返工补欠账）：charge 旧 4 帧（最大帧距 30t）重制为 4t 步进 16 帧参数化生成（提举/渐升脉动/蓄满微颤极值帧/拉满定格；60t=`HEAVEN_GATE_CHARGE_END` 充能相位全对齐、末帧=release 交接帧，charge_hold segment manifest 锁密度）+ release 旧 3 帧重制三段式 8 帧（巨斩顶点 t7 鞠躬补偿）；驻 allowlist（动画对齐 60t 充能相位而非 cast=80 总窗）；hold-末帧与 isLoop 正典统一归 P6 注记 |
 | `npc.heal_basic` | 20 | —— | — | — | — | — | — | **N/A** | P5 粒子 | NPC mob 无 PlayAnim 通道（§8.1 #2） |
 | `npc.buff_speed` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
 | `npc.buff_defense` | 10 | —— | — | — | — | — | — | **N/A** | P5 粒子 | 同上 |
@@ -258,3 +258,7 @@
 **P1 批次一后（2026-07-19）**：A×11 / B×11 / C×5 / D×19 / N-A×3——9 条重制达标转 A（sword 基础 3 + beng_quan + zhenmai 5），sword.infuse 移 P2 长引导批次；剩余 B+C+D = 35 条随 P2-P4 清空。
 
 **P2 前半后（2026-07-19）**：A×17 / B×11 / C×5 / D×13 / N-A×3——6 条去复用重制达标转 A（sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject），allowlist 删 5 条（condense_edge 原不在表）；剩余 B+C+D = 29 条随 P2 后半-P4 清空。
+
+**P2 后半后（2026-07-19，review r2 定形）**：A×23 / B×8 / C×5 / D×10 / N-A×3——6 条转 A（sword.infuse / charge_carrier 真两段式落地 + armor_pierce / echo_fractal / manifest 瞬发结算型分类契约交付 + heaven_gate 双段密度精修）。allowlist 净删 4 条（sword.infuse 两段式达标 + 三招瞬发分类出表；charge_carrier 原本不在表）。**瞬发结算型分类契约**（review r2 裁定，conventions §13 #2 例外 ③）：三招 resolver 在 cast 起始 tick 立即结算、cast_ticks 为元数据，动画 **strike 顶点=tick 0**（开帧即命中姿态，余韵/收势后置），由 `INSTANT_RESOLVER_SKILLS` 分类 pin + instant spec manifest（strike_peak_tick=0、主打击轴 tick 0 落帧）机械锁定——分类契约取代 allowlist 豁免；通道日后真实化（引入 Casting 引导窗，gameplay 变更需独立决议）则退类改两段式。**遗留登记**：仅 heaven_gate 一条驻 allowlist（动画对齐 60t 充能相位而非 cast=80 总窗）+ hold-末帧与 isLoop 正典统一注记，归 P6 裁决。剩余 B+C+D = 23 条随 P3-P4 清空。
+
+**P2 后半打磨记录（2026-07-19，两批各 3 轮）**：首批 7 资产（2 loop + 2 release + 3 单段）——(round 1/3) gen 脚本参数化 first cut → (round 2/3) `render_animation.py` 三视图 grid 目检（loop 首尾同帧 / release 与 loop 稳定帧衔接 / 轨迹互异）+ 机械四查（循环每轴 endTick 同值 / leg.pitch≤40° / 打击轴无 linear / 主轴密度 ≤4t）→ (round 3/3) 决定性再生成 7/7 字节一致 + 双栈门禁绿、终轮 commit 附 `<PROMISE>` 担保。**review 返工批**（PR #1240 blocker：三招瞬发结算与 40/60t 发力顶点脱节 + heaven_gate 欠账）5 资产——(round 1/3) strike 对齐重做 armor_pierce 18t / echo_fractal 24t / manifest_cast 20t + heaven_gate charge 16 帧 / release 8 帧精修 first cut → (round 2/3) 三视图 grid 目检 + 机械查全过 + segment manifest（loop / charge_hold 两型）扩展入对拍测试、7 份 manifest 锁密度 → (round 3/3) 动画测试组全绿 + client 门禁复验、终轮 commit 附 `<PROMISE>` 担保。**review r2 定形批**（r2 裁定 2t anticipation 仍违反「顶点贴 tick 0」契约）3 资产——(round 1/3) 顶点前置到开帧重做：armor_pierce 12t / echo_fractal 20t / manifest_cast 14t（t0 即命中姿态，余韵/收势后置）→ (round 2/3) instant 分类契约机械化：`INSTANT_RESOLVER_SKILLS` 分类 pin + instant spec manifest（strike_peak_tick=0、strike 从 0 起、主打击轴 tick 0 落帧）、三招出 CAST_ALIGNMENT_ALLOWLIST、conventions §13 #2 增例外 ③ → (round 3/3) 三视图 grid 目检（t0 开帧即全伸命中）+ 动画测试组全绿 + client 门禁复验、终轮 commit 附 `<PROMISE>` 担保。
