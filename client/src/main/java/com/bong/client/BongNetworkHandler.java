@@ -263,9 +263,11 @@ public class BongNetworkHandler {
     /**
      * {@code bong:server_data} 的可测试调度边界。
      *
-     * <p>生产 receiver 只在 Netty thread 把 buffer 拷入独立 byte array；后续 bridge、
-     * route、handler side effect 与最终 dispatch 统一排入一个 client-thread task，
-     * 并允许测试注入可控 executor 验证线程身份与顺序。</p>
+     * <p>生产 receiver 只在 Netty thread 做三件事：拷贝 buffer、捕获收包时刻
+     * {@code receivedAtMs} 与当前连接 generation、排入单一 client-thread task。
+     * 后续 bridge、route、handler side effect 与最终 dispatch 都在该 task 内；
+     * 连接 freshness 在 task 开头用收包时刻 + generation guard 回写，
+     * stale generation（断线/重连后）整段 no-op，不污染新连接状态。</p>
      */
     static void dispatchServerDataPayload(
         byte[] bytes,
@@ -273,17 +275,53 @@ public class BongNetworkHandler {
         Consumer<Runnable> clientExecutor,
         BiConsumer<ServerDataDispatch, String> dispatchApplier
     ) {
-        clientExecutor.accept(() -> processServerDataPayload(bytes, router, dispatchApplier));
+        dispatchServerDataPayload(
+            bytes,
+            router,
+            clientExecutor,
+            dispatchApplier,
+            Util.getMeasuringTimeMs(),
+            ClientConnectionStatusStore.currentGeneration()
+        );
+    }
+
+    /**
+     * 可注入收包时刻与连接代次的测试缝。production 路径经上一个 overload 捕获
+     * {@link Util#getMeasuringTimeMs()} 与 {@link ClientConnectionStatusStore#currentGeneration()}。
+     */
+    static void dispatchServerDataPayload(
+        byte[] bytes,
+        ServerDataRouter router,
+        Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        long receivedAtMs,
+        long connectionGeneration
+    ) {
+        clientExecutor.accept(() -> processServerDataPayload(
+            bytes,
+            router,
+            dispatchApplier,
+            receivedAtMs,
+            connectionGeneration
+        ));
     }
 
     private static void processServerDataPayload(
         byte[] bytes,
         ServerDataRouter router,
-        BiConsumer<ServerDataDispatch, String> dispatchApplier
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        long receivedAtMs,
+        long connectionGeneration
     ) {
-        int readableBytes = bytes.length;
+        // 收包时刻语义：用 receiver 捕获的 receivedAtMs + generation 回写 freshness。
+        // generation 过期时整段丢弃，避免 disconnect-before-drain / reconnect 后 stale task
+        // 复活 connected 或用 processing time 覆盖 lastPayloadAtMs。
+        if (!ClientConnectionStatusStore.isCurrentGeneration(connectionGeneration)) {
+            return;
+        }
+        ClientConnectionStatusStore.markPayloadReceived(receivedAtMs, connectionGeneration);
 
-        markConnectionPayload();
+        int readableBytes = bytes.length;
 
         // P3: wire format is now protobuf. Use ProtoServerDataBridge to decode proto
         // and convert back to legacy JSON for existing handlers.

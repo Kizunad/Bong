@@ -35,6 +35,11 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
 
     private String selectedId;
     private int flashTicks;
+
+    /** 测试观察点：当前完成闪光剩余 tick。 */
+    public int flashTicksForTests() {
+        return flashTicks;
+    }
     private long lastTickSoundElapsed = -1;
 
     // 5 个 listener 按"变了什么"分组件路由刷新，而不是统一 scheduleRefresh()→refreshAll()：
@@ -44,13 +49,13 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     // 没理由碰 recipeList / subtitle。
     private final Consumer<List<CraftRecipe>> recipeListener = recipes -> scheduleRefresh(this::refreshAll);
     private final Consumer<CraftSessionStateView> sessionListener = state -> scheduleRefresh(this::refreshSessionOnly);
-    private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener = event -> {
-        if (event.kind() == CraftStore.CraftOutcomeEvent.Kind.COMPLETED) {
-            flashTicks = 6;
-            playCompleteSound();
-        }
-        scheduleRefresh(this::refreshOutcomeOnly);
-    };
+    private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener = event ->
+        CraftOutcomeFeedback.apply(
+            event,
+            ticks -> flashTicks = ticks,
+            CraftOutcomeFeedback::playDefaultCompleteSound,
+            () -> scheduleRefresh(this::refreshOutcomeOnly)
+        );
     private final Consumer<CraftStore.RecipeUnlockedEvent> unlockListener = event -> scheduleRefresh(this::refreshAll);
     private final Consumer<InventoryModel> inventoryListener = inventory -> scheduleRefresh(this::refreshInventoryOnly);
 
@@ -136,6 +141,17 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+
+    /** 测试缝：只挂 outcome listener，不构建完整 owo UI 树。 */
+    public void attachOutcomeListenerForTests() {
+        CraftStore.addOutcomeListener(outcomeListener);
+    }
+
+    /** 测试缝：模拟 screen removed 时注销 outcome listener。 */
+    public void detachOutcomeListenerForTests() {
+        CraftStore.removeOutcomeListener(outcomeListener);
     }
 
     public static boolean tabHeightMatchesAlchemy() {
@@ -290,13 +306,6 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.player != null) {
             client.player.playSound(SoundEvents.BLOCK_ANVIL_USE, 0.1F, 1.5F);
-        }
-    }
-
-    private static void playCompleteSound() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client != null && client.player != null) {
-            client.player.playSound(SoundEvents.ENTITY_PLAYER_LEVELUP, 0.2F, 1.5F);
         }
     }
 

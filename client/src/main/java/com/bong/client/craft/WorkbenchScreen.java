@@ -44,17 +44,22 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
 
     private String selectedId;
     private int flashTicks;
+
+    /** 测试观察点：当前完成闪光剩余 tick。 */
+    public int flashTicksForTests() {
+        return flashTicks;
+    }
     private long lastTickSoundElapsed = -1;
 
     private final Consumer<List<CraftRecipe>> recipeListener = recipes -> scheduleRefresh();
     private final Consumer<CraftSessionStateView> sessionListener = state -> scheduleRefresh();
-    private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener = event -> {
-        if (event.kind() == CraftStore.CraftOutcomeEvent.Kind.COMPLETED) {
-            flashTicks = 6;
-            playCompleteSound();
-        }
-        scheduleRefresh();
-    };
+    private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener = event ->
+        CraftOutcomeFeedback.apply(
+            event,
+            ticks -> flashTicks = ticks,
+            CraftOutcomeFeedback::playDefaultCompleteSound,
+            this::scheduleRefresh
+        );
     private final Consumer<CraftStore.RecipeUnlockedEvent> unlockListener = event -> scheduleRefresh();
     private final Consumer<InventoryModel> inventoryListener = inventory -> scheduleRefresh();
 
@@ -144,6 +149,17 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+
+    /** 测试缝：只挂 outcome listener，不构建完整 owo UI 树。 */
+    public void attachOutcomeListenerForTests() {
+        CraftStore.addOutcomeListener(outcomeListener);
+    }
+
+    /** 测试缝：模拟 screen removed 时注销 outcome listener。 */
+    public void detachOutcomeListenerForTests() {
+        CraftStore.removeOutcomeListener(outcomeListener);
     }
 
     /** 返回当前 Store 里 station=="workbench" 的配方子集。 */
@@ -265,13 +281,6 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.player != null) {
             client.player.playSound(SoundEvents.BLOCK_ANVIL_USE, 0.1F, 1.5F);
-        }
-    }
-
-    private static void playCompleteSound() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client != null && client.player != null) {
-            client.player.playSound(SoundEvents.ENTITY_PLAYER_LEVELUP, 0.2F, 1.5F);
         }
     }
 

@@ -11,14 +11,35 @@ public final class ClientConnectionStatusStore {
     private static volatile long connectedAtMs;
     private static volatile long lastPayloadAtMs;
     private static volatile long disconnectedAtMs;
+    /**
+     * 连接代次：每次 {@link #markConnected(long)} / {@link #markDisconnected(long)} 递增。
+     * 收包时刻捕获的 generation 与当前不一致时，禁止 stale task 复活 connected
+     * 或刷新 lastPayloadAtMs。
+     */
+    private static volatile long connectionGeneration;
     private static volatile ConnectionStatusIndicator.Status lastStatus = ConnectionStatusIndicator.Status.HIDDEN;
 
     private ClientConnectionStatusStore() {
     }
 
+    /** 当前连接代次（线程安全）。receiver 应在收包瞬间捕获并随 task 传递。 */
+    public static long currentGeneration() {
+        synchronized (LOCK) {
+            return connectionGeneration;
+        }
+    }
+
+    /** stale task / 旧连接 payload 判定：generation 必须仍是当前代次。 */
+    public static boolean isCurrentGeneration(long generation) {
+        synchronized (LOCK) {
+            return generation == connectionGeneration;
+        }
+    }
+
     public static void markConnected(long nowMs) {
         synchronized (LOCK) {
             long now = Math.max(0L, nowMs);
+            connectionGeneration++;
             observed = true;
             connected = true;
             connectedAtMs = now;
@@ -27,8 +48,28 @@ public final class ClientConnectionStatusStore {
         }
     }
 
+    /**
+     * 以<strong>当前</strong>连接代次标记载荷到达（收包时刻语义）。
+     * 其他 channel 仍可在 network thread 直接调用；store 内部 synchronized。
+     */
     public static void markPayloadReceived(long nowMs) {
+        long generation;
         synchronized (LOCK) {
+            generation = connectionGeneration;
+        }
+        markPayloadReceived(nowMs, generation);
+    }
+
+    /**
+     * 以收包瞬间捕获的 generation + receivedAt 标记载荷。
+     * generation 与当前代次不一致时整段 no-op，防止 disconnect-before-drain /
+     * reconnect 后的 stale task 把状态机复活为 connected 或用 processing time 污染 freshness。
+     */
+    public static void markPayloadReceived(long nowMs, long generation) {
+        synchronized (LOCK) {
+            if (generation != connectionGeneration) {
+                return;
+            }
             long now = Math.max(0L, nowMs);
             observed = true;
             connected = true;
@@ -42,6 +83,7 @@ public final class ClientConnectionStatusStore {
 
     public static void markDisconnected(long nowMs) {
         synchronized (LOCK) {
+            connectionGeneration++;
             observed = true;
             connected = false;
             disconnectedAtMs = Math.max(0L, nowMs);
@@ -57,6 +99,20 @@ public final class ClientConnectionStatusStore {
             long lastAge = lastPayloadAtMs == 0L ? Long.MAX_VALUE : Math.max(0L, now - lastPayloadAtMs);
             long disconnectedDuration = connected ? 0L : Math.max(0L, now - disconnectedAtMs);
             return ConnectionStatusIndicator.evaluate(connected, currentNetworkLatencyMs(), disconnectedDuration, lastAge);
+        }
+    }
+
+    /** 测试观察点：最近一次成功标记的载荷时间（未观察时为 0）。 */
+    public static long lastPayloadAtMsForTests() {
+        synchronized (LOCK) {
+            return lastPayloadAtMs;
+        }
+    }
+
+    /** 测试观察点：当前是否视为已连接。 */
+    public static boolean connectedForTests() {
+        synchronized (LOCK) {
+            return connected;
         }
     }
 
@@ -85,6 +141,7 @@ public final class ClientConnectionStatusStore {
             connectedAtMs = 0L;
             lastPayloadAtMs = 0L;
             disconnectedAtMs = 0L;
+            connectionGeneration = 0L;
             lastStatus = ConnectionStatusIndicator.Status.HIDDEN;
         }
     }
