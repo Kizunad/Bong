@@ -107,6 +107,32 @@ public final class BongHudOrchestrator {
         BotanyProjection.Anchor botanyAnchor,
         HudRuntimeContext runtimeContext
     ) {
+        return buildCommands(
+            snapshot,
+            combat,
+            nowMillis,
+            widthMeasurer,
+            maxTextWidth,
+            screenWidth,
+            screenHeight,
+            botanyAnchor,
+            runtimeContext,
+            System.nanoTime()
+        );
+    }
+
+    static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor,
+        HudRuntimeContext runtimeContext,
+        long nowNanos
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
         CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
         HudRuntimeContext runtime = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
@@ -466,7 +492,7 @@ public final class BongHudOrchestrator {
             nowMillis
         ));
         commands.addAll(SearchProgressHudPlanner.buildCommands(
-            SearchHudStateStore.snapshot(),
+            SearchHudStateStore.snapshotAtNanos(nowNanos),
             screenWidth,
             screenHeight
         ));
