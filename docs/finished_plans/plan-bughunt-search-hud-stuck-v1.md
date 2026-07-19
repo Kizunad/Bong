@@ -165,7 +165,7 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 - `b6e28ffe`（2026-07-15）：补齐 orchestrator 最终命令流与生产 screen visibility 集成回归。
 - `e99cba9e`（2026-07-15）：将 headless 环境下的生产链确定性集成测试收口为等价验收门禁。
 - `112c753c`（2026-07-16）：返工锁定终态边界契约（固定 `startedAtNanos` + `nowNanos` seam，不再依赖真实墙钟）。
-- merge `origin/main`（2026-07-19）：重放确定性终态门禁到 main 最新 `BongHud` / `BongHudTest` / `BongNetworkHandlerTest` 形状，保留 Agent UI screen gate 与 Season state。
+- merge `origin/main`（2026-07-19）：先重放到 `b150900e`/`946ad6c2`（保留 Agent UI / Season 形状），再双父合并 main `5d9bdd8f`（#1241 技能动画精度批次三，client 资源/测试 + server）；Search HUD TTL 修复语义保持。
 
 ### 测试结果
 
@@ -173,7 +173,8 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 - 修复后定向：同两组测试 `BUILD SUCCESSFUL`，上述失败全部转绿。
 - review 返工定向门禁（JDK 17）：`SearchHudStateStoreTest` + `BongHudOrchestratorTest` + `BongHudTest` → `33 tests, 0 skipped, 0 failures, 0 errors`；覆盖 store → orchestrator 固定 `nowNanos` 最终命令流与 screen visibility 过滤。
 - main `b150900e` 同步后的客户端完整门禁（JDK 17，验证 HEAD `4c6ee91ee87b086530d2a5a6b5c572beb61f9cd3`）：`cd client && ./gradlew test build` → `BUILD SUCCESSFUL`；JUnit XML 汇总 `4153 tests, 0 failures, 0 errors, 0 skipped`，并有 `3 GAME TESTS COMPLETE`。随后仅合入 #1233 的 docs-only main `946ad6c2`，client tree 未变化；`c4aa35d7` 的 GitHub Java 17 e2e run `29688015516` 全阶段通过。
-- 实现/e2e 快照对抗验证：fresh、无上下文、read-only Grok validator 对拍实现快照 `c4aa35d7bbe46e441769d0b50a10923fabf00612`（非最终 ship exact HEAD），结论 `PASS`，未发现 blocker/major。最终 evidence/assertion-only commit 的 exact-HEAD validator 由主流程在该 commit 落盘后再跑，并记入 PR body/comment。
+- main `5d9bdd8f`（#1241 技能动画精度批次三；触及 client 资源/测试 + server）同步后的客户端完整门禁（JDK 17，验证 merge HEAD `e7567f9d4b7ff8f74aba87dcdc82ebc390f957cd`，parents `156a9b5c` + `5d9bdd8f`）：`export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; export PATH="$JAVA_HOME/bin:$PATH"; cd client && ./gradlew test build` → `EXIT:0` / `BUILD SUCCESSFUL`；JUnit XML 汇总 `4153 tests, 0 failures, 0 errors, 0 skipped`，并有 `3 GAME TESTS COMPLETE`。本轮未启动 validator；主流程将在最终 local SHA 后另起 fresh validator 重验。
+- 实现/e2e 快照对抗验证：fresh、无上下文、read-only Grok validator 对拍实现快照 `c4aa35d7bbe46e441769d0b50a10923fabf00612`（非最终 ship exact HEAD），结论 `PASS`，未发现 blocker/major。后续 exact-HEAD 对抗验证由主流程在最终 SHA 落盘后另跑并记入 PR body/comment。
 
 ### 跨仓库核验
 
@@ -183,5 +184,5 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 
 ### 遗留 / 后续
 
-- 无阻塞项，无协议迁移、真元守恒或视觉资产遗留；实现快照 `c4aa35d7bbe46e441769d0b50a10923fabf00612` 的 fresh validator 已 `PASS`（该 SHA 是 e2e/实现快照，不是最终 ship exact HEAD）。assertion/evidence-only commit 的 exact-HEAD validator 由主流程在 commit 后另跑并记录到 PR。
+- 无阻塞项，无协议迁移、真元守恒或视觉资产遗留；实现快照 `c4aa35d7bbe46e441769d0b50a10923fabf00612` 的 fresh validator 已 `PASS`（该 SHA 是 e2e/实现快照，不是最终 ship exact HEAD）。本轮仅完成 main `#1241` 同步与 client 完整门禁；exact-HEAD 对抗验证由主流程在最终 SHA 后另跑并记录到 PR。
 - 当前 SSH 环境无图形显示能力，未执行也未宣称执行 `runClient`；归档依据由 store 精确边界、固定 `nowNanos` 的生产 orchestrator 最终命令流、production screen visibility（含 `AGENT_UI_ONLY`）、JDK 17 完整门禁与 `c4aa35d7` e2e 共同提供。本地 WSLg 视觉 smoke 为可选后续，不构成本次归档条件。
