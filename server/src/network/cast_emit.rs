@@ -70,7 +70,9 @@ fn looping_cast_anim_id(skill_id: &str) -> Option<&'static str> {
         crate::combat::sword_basics::SWORD_INFUSE_SKILL_ID => {
             Some(crate::combat::sword_basics::ANIM_SWORD_INFUSE_CHARGE)
         }
-        _ => None,
+        // P4：yidao 5 招全部为长引导循环蓄力段（分表见 yidao.rs，映射由
+        // YidaoSkillId::loop_anim_id 单源派生），非 yidao 前缀查表 miss 返 None。
+        _ => crate::combat::yidao::yidao_loop_anim_for_skill_id(skill_id),
     }
 }
 
@@ -2479,15 +2481,44 @@ mod tests {
 
     // ── plan-skill-anim-fidelity-v1 P2 后半（§8.1 #3）：循环蓄力段停止路径 ──────
 
-    /// 查表契约：登记的循环蓄力段招式恰为 sword.infuse（新增循环段招式必须
-    /// 同步登记，否则打断后循环动画永卡——§13 #6 红线）。
+    /// 查表契约：登记的循环蓄力段招式 = sword.infuse + yidao 5 招（新增循环段
+    /// 招式必须同步登记，否则打断后循环动画永卡——§13 #6 红线）。
     #[test]
-    fn looping_cast_anim_table_registers_sword_infuse_only() {
+    fn looping_cast_anim_table_registers_expected_skills() {
         assert_eq!(
             looping_cast_anim_id(crate::combat::sword_basics::SWORD_INFUSE_SKILL_ID),
             Some(crate::combat::sword_basics::ANIM_SWORD_INFUSE_CHARGE),
             "sword.infuse 起手播循环蓄力段，必须登记停止映射"
         );
+        // P4：yidao 5 招逐条 pin（每招独立蓄力段 id，防映射串线/漂移）。
+        for (skill_id, expected_loop) in [
+            (
+                crate::combat::yidao::MERIDIAN_REPAIR_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_MERIDIAN_REPAIR_LOOP,
+            ),
+            (
+                crate::combat::yidao::CONTAM_PURGE_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_CONTAM_PURGE_LOOP,
+            ),
+            (
+                crate::combat::yidao::EMERGENCY_RESUSCITATE_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_EMERGENCY_RESUSCITATE_LOOP,
+            ),
+            (
+                crate::combat::yidao::LIFE_EXTENSION_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_LIFE_EXTENSION_LOOP,
+            ),
+            (
+                crate::combat::yidao::MASS_MERIDIAN_REPAIR_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
+            ),
+        ] {
+            assert_eq!(
+                looping_cast_anim_id(skill_id),
+                Some(expected_loop),
+                "yidao 招式 `{skill_id}` 起手播循环蓄力段，必须登记专属停止映射"
+            );
+        }
         assert_eq!(
             looping_cast_anim_id(GUANGBO_TICAO_ID),
             None,
@@ -2638,6 +2669,107 @@ mod tests {
                 Some(CAST_LOOP_ANIM_COMPLETE_FADE_OUT_TICKS),
             )],
             "自然完成分支必须防御性停循环蓄力段"
+        );
+    }
+
+    // ── plan-skill-anim-fidelity-v1 P4：yidao 循环蓄力段停止路径（事件路径 pin）──
+
+    fn yidao_casting(skill_id: &str, start_position: DVec3) -> Casting {
+        Casting {
+            source: CastSource::SkillBar,
+            slot: 0,
+            started_at_tick: 0,
+            duration_ticks: 600, // contam_purge cast_ticks_base（窗长可变，测试取基准）
+            started_at_ms: 0,
+            duration_ms: 30_000,
+            bound_instance_id: None,
+            start_position,
+            complete_cooldown_ticks: 200,
+            skill_id: Some(skill_id.to_string()),
+            skill_config: None,
+        }
+    }
+
+    /// 移动打断 yidao 引导：恰发 1 条 StopAnim(该招专属蓄力段, fade=打断档)，
+    /// 且不发 YidaoCastCompleteEvent（打断即无结算）。
+    #[test]
+    fn movement_interrupt_stops_yidao_charge_loop_without_complete_event() {
+        let mut app = build_cast_tick_app(10);
+        let entity = spawn_caster(
+            &mut app,
+            yidao_casting(
+                crate::combat::yidao::CONTAM_PURGE_SKILL_ID,
+                DVec3::new(10.0, 64.0, 10.0), // 距实体位置超移动阈值 → 移动打断
+            ),
+        );
+
+        app.update();
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "前置：移动打断应移除 Casting"
+        );
+        let payloads = drain_vfx_payloads(&mut app);
+        assert_eq!(
+            stop_anim_payloads(&payloads),
+            vec![(
+                crate::combat::yidao::ANIM_YIDAO_CONTAM_PURGE_LOOP.to_string(),
+                Some(CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS),
+            )],
+            "移动打断必须恰停一次 yidao 蓄力段（否则灸火循环永卡在玩家身上）"
+        );
+        let complete_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<crate::combat::yidao::YidaoCastCompleteEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            complete_events.is_empty(),
+            "打断不得发 YidaoCastCompleteEvent（打断即无结算），实际 {} 条",
+            complete_events.len()
+        );
+    }
+
+    /// 自然完成 yidao 引导：防御性兜底 StopAnim(蓄力段, fade=完成档) +
+    /// YidaoCastCompleteEvent（release 段由 `complete_yidao_casts` 有效结算分支
+    /// 接力，另有 yidao.rs 专属测试；本用例只锁通用分支）。
+    #[test]
+    fn natural_completion_stops_yidao_charge_loop_and_sends_complete_event() {
+        let mut app = build_cast_tick_app(1000);
+        let entity = spawn_caster(
+            &mut app,
+            yidao_casting(
+                crate::combat::yidao::MERIDIAN_REPAIR_SKILL_ID,
+                DVec3::new(0.0, 64.0, 0.0),
+            ),
+        );
+
+        app.update();
+
+        assert!(app.world().get::<Casting>(entity).is_none());
+        let payloads = drain_vfx_payloads(&mut app);
+        assert_eq!(
+            stop_anim_payloads(&payloads),
+            vec![(
+                crate::combat::yidao::ANIM_YIDAO_MERIDIAN_REPAIR_LOOP.to_string(),
+                Some(CAST_LOOP_ANIM_COMPLETE_FADE_OUT_TICKS),
+            )],
+            "自然完成分支必须防御性停 yidao 蓄力段"
+        );
+        let complete_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<crate::combat::yidao::YidaoCastCompleteEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            complete_events.len(),
+            1,
+            "自然完成必须恰发 1 条 YidaoCastCompleteEvent 供结算系统接力"
+        );
+        assert_eq!(
+            complete_events[0].skill_id,
+            crate::combat::yidao::MERIDIAN_REPAIR_SKILL_ID,
+            "完成事件必须携带原 skill_id"
         );
     }
 

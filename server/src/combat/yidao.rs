@@ -1,7 +1,7 @@
 //! 医道功法 v1：5 招治疗包 + 医者身份底盘。
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, DVec3, Entity, Event, Events, Position};
+use valence::prelude::{bevy_ecs, Component, DVec3, Entity, Event, Events, Position, UniqueId};
 
 use crate::combat::components::{
     CastSource, Casting, Lifecycle, LifecycleState, SkillBarBindings, Wounds,
@@ -42,6 +42,34 @@ pub const EMERGENCY_RESUSCITATE_SKILL_ID: &str = "yidao.emergency_resuscitate";
 pub const LIFE_EXTENSION_SKILL_ID: &str = "yidao.life_extension";
 pub const MASS_MERIDIAN_REPAIR_SKILL_ID: &str = "yidao.mass_meridian_repair";
 
+// ── plan-skill-anim-fidelity-v1 P4：yidao 5 招两段式动画 id（plan-yidao-v1 §5 欠账）──
+//
+// 全部 5 招走 `resolve_yidao_skill` → `insert_casting` 真实长引导窗（cast_ticks_base
+// 100-1200t，经 `yidao_cast_ticks` 按 mastery/平和色缩放——窗长可变，蓄力段 isLoop
+// 覆盖任意窗长）。起手由 `resolve_yidao_skill` 播蓄力循环段；停止路径 = cast_emit
+// `looping_cast_anim_id` 表驱动（三打断分支 + 自然完成分支 StopAnim，§13 #6 红线）；
+// release 收势段由 `complete_yidao_casts` 有效结算分支接力播出（完成时目标已
+// 失效的无效完成不奖励收势，与 sword_infuse 完成分支先例同语义）。
+// 改任一 id 必须同步 client `player_animation/` 资产与 `AnimCastTicksAlignmentTest`。
+pub const ANIM_YIDAO_MERIDIAN_REPAIR_LOOP: &str = "bong:yidao_meridian_repair_loop";
+pub const ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE: &str = "bong:yidao_meridian_repair_release";
+pub const ANIM_YIDAO_CONTAM_PURGE_LOOP: &str = "bong:yidao_contam_purge_loop";
+pub const ANIM_YIDAO_CONTAM_PURGE_RELEASE: &str = "bong:yidao_contam_purge_release";
+pub const ANIM_YIDAO_EMERGENCY_RESUSCITATE_LOOP: &str = "bong:yidao_emergency_resuscitate_loop";
+pub const ANIM_YIDAO_EMERGENCY_RESUSCITATE_RELEASE: &str =
+    "bong:yidao_emergency_resuscitate_release";
+pub const ANIM_YIDAO_LIFE_EXTENSION_LOOP: &str = "bong:yidao_life_extension_loop";
+pub const ANIM_YIDAO_LIFE_EXTENSION_RELEASE: &str = "bong:yidao_life_extension_release";
+pub const ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP: &str = "bong:yidao_mass_meridian_repair_loop";
+pub const ANIM_YIDAO_MASS_MERIDIAN_REPAIR_RELEASE: &str = "bong:yidao_mass_meridian_repair_release";
+
+/// yidao 施术动画优先级（与 sword_infuse 两段式先例同档：cast 起手/收势均 1200）。
+const YIDAO_ANIM_PRIORITY: u16 = 1200;
+/// 蓄力循环段起播淡入（与 `emit_self_visuals` 先例一致）。
+const YIDAO_LOOP_ANIM_FADE_IN_TICKS: u8 = 2;
+/// release 收势接力淡入（承接蓄力段稳定帧，与 sword_infuse release 先例一致）。
+const YIDAO_RELEASE_ANIM_FADE_IN_TICKS: u8 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum YidaoSkillId {
@@ -53,6 +81,15 @@ pub enum YidaoSkillId {
 }
 
 impl YidaoSkillId {
+    /// 全部 5 招（快照生成 / 映射测试的遍历锚，新增变体必须同步补入）。
+    pub const ALL: [Self; 5] = [
+        Self::MeridianRepair,
+        Self::ContamPurge,
+        Self::EmergencyResuscitate,
+        Self::LifeExtension,
+        Self::MassMeridianRepair,
+    ];
+
     pub fn skill_id(self) -> &'static str {
         match self {
             Self::MeridianRepair => MERIDIAN_REPAIR_SKILL_ID,
@@ -60,6 +97,29 @@ impl YidaoSkillId {
             Self::EmergencyResuscitate => EMERGENCY_RESUSCITATE_SKILL_ID,
             Self::LifeExtension => LIFE_EXTENSION_SKILL_ID,
             Self::MassMeridianRepair => MASS_MERIDIAN_REPAIR_SKILL_ID,
+        }
+    }
+
+    /// P4：蓄力循环段动画 id（`resolve_yidao_skill` 起手播出；停止映射见
+    /// `yidao_loop_anim_for_skill_id`）。
+    pub fn loop_anim_id(self) -> &'static str {
+        match self {
+            Self::MeridianRepair => ANIM_YIDAO_MERIDIAN_REPAIR_LOOP,
+            Self::ContamPurge => ANIM_YIDAO_CONTAM_PURGE_LOOP,
+            Self::EmergencyResuscitate => ANIM_YIDAO_EMERGENCY_RESUSCITATE_LOOP,
+            Self::LifeExtension => ANIM_YIDAO_LIFE_EXTENSION_LOOP,
+            Self::MassMeridianRepair => ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
+        }
+    }
+
+    /// P4：release 收势段动画 id（`complete_yidao_casts` 有效结算分支接力）。
+    pub fn release_anim_id(self) -> &'static str {
+        match self {
+            Self::MeridianRepair => ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE,
+            Self::ContamPurge => ANIM_YIDAO_CONTAM_PURGE_RELEASE,
+            Self::EmergencyResuscitate => ANIM_YIDAO_EMERGENCY_RESUSCITATE_RELEASE,
+            Self::LifeExtension => ANIM_YIDAO_LIFE_EXTENSION_RELEASE,
+            Self::MassMeridianRepair => ANIM_YIDAO_MASS_MERIDIAN_REPAIR_RELEASE,
         }
     }
 
@@ -172,6 +232,16 @@ pub fn yidao_skill_spec(skill: YidaoSkillId) -> YidaoSkillSpec {
             vfx_event_id: "bong:yidao_mass_meridian_repair",
         },
     }
+}
+
+/// P4：cast_emit `looping_cast_anim_id` 的 yidao 分表（skill_id 字符串 → 蓄力段
+/// 动画 id）。yidao 5 招全部起手播循环蓄力段，打断/自然完成的 StopAnim 停止路径
+/// 由 cast_emit 通用分支表驱动（§13 #6 红线：无停止路径的循环动画不予合入）。
+pub fn yidao_loop_anim_for_skill_id(skill_id: &str) -> Option<&'static str> {
+    YidaoSkillId::ALL
+        .into_iter()
+        .find(|skill| skill.skill_id() == skill_id)
+        .map(YidaoSkillId::loop_anim_id)
 }
 
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
@@ -478,6 +548,14 @@ pub fn resolve_yidao_skill(
         started_at_tick: now_tick,
     });
     insert_casting(world, caster, slot, spec, cast_ticks, now_tick);
+    // P4：起手播蓄力循环段（isLoop 覆盖可变引导窗）；打断/完成 StopAnim 由
+    // cast_emit 表驱动（`yidao_loop_anim_for_skill_id`），release 由完成分支接力。
+    emit_yidao_anim(
+        world,
+        caster,
+        skill.loop_anim_id(),
+        YIDAO_LOOP_ANIM_FADE_IN_TICKS,
+    );
     CastResult::Started {
         cooldown_ticks: spec.cooldown_ticks,
         anim_duration_ticks: cast_ticks as u32,
@@ -529,6 +607,15 @@ pub fn complete_yidao_casts(world: &mut bevy_ecs::world::World) {
                     event.caster,
                     patients.first().copied().unwrap_or(event.caster),
                     spec,
+                );
+                // P4：有效结算才接力 release 收势（蓄力段 StopAnim 已由
+                // cast_emit 自然完成分支同拍发出）；完成时目标失效的无效完成
+                // 不奖励收势——与 sword_infuse 完成分支先例同语义。
+                emit_yidao_anim(
+                    world,
+                    event.caster,
+                    pending.skill.release_anim_id(),
+                    YIDAO_RELEASE_ANIM_FADE_IN_TICKS,
                 );
             }
         }
@@ -1186,6 +1273,37 @@ fn insert_casting(
         skill_id: Some(spec.skill.skill_id().to_string()),
         skill_config: None,
     });
+}
+
+/// P4：对施术者发 PlayAnim（蓄力循环段起播 / release 收势接力共用）。缺
+/// `UniqueId` / `Position`（headless 测试实体或 NPC）时静默跳过；粒子/音效
+/// 维持既有 `emit_yidao_vfx_audio` 不动（本 PR 只接动画通道）。
+fn emit_yidao_anim(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    anim_id: &str,
+    fade_in_ticks: u8,
+) {
+    let Some(origin) = world.get::<Position>(caster).map(|position| position.get()) else {
+        return;
+    };
+    let Some(target_player) = world
+        .get::<UniqueId>(caster)
+        .map(|unique_id| unique_id.0.to_string())
+    else {
+        return;
+    };
+    if let Some(mut events) = world.get_resource_mut::<Events<VfxEventRequest>>() {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::PlayAnim {
+                target_player,
+                anim_id: anim_id.to_string(),
+                priority: YIDAO_ANIM_PRIORITY,
+                fade_in_ticks: Some(fade_in_ticks),
+            },
+        ));
+    }
 }
 
 fn emit_yidao_vfx_audio(
@@ -2720,6 +2838,198 @@ mod tests {
         assert_eq!(
             release_count, 0,
             "全员成功路径不应产生 ReleaseToZone 事件（成功份额已转给患者），实际有 {release_count} 条"
+        );
+    }
+
+    // ── plan-skill-anim-fidelity-v1 P4：两段式动画接线（事件路径 + id pin）─────
+
+    /// 双端 id 契约 pin：10 个动画 id 逐条锁字面量。改任一端必须同步 client
+    /// `player_animation/` 资产与 `AnimCastTicksAlignmentTest` 映射表。
+    #[test]
+    fn yidao_two_phase_anim_ids_pin_client_assets() {
+        assert_eq!(
+            ANIM_YIDAO_MERIDIAN_REPAIR_LOOP,
+            "bong:yidao_meridian_repair_loop"
+        );
+        assert_eq!(
+            ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE,
+            "bong:yidao_meridian_repair_release"
+        );
+        assert_eq!(ANIM_YIDAO_CONTAM_PURGE_LOOP, "bong:yidao_contam_purge_loop");
+        assert_eq!(
+            ANIM_YIDAO_CONTAM_PURGE_RELEASE,
+            "bong:yidao_contam_purge_release"
+        );
+        assert_eq!(
+            ANIM_YIDAO_EMERGENCY_RESUSCITATE_LOOP,
+            "bong:yidao_emergency_resuscitate_loop"
+        );
+        assert_eq!(
+            ANIM_YIDAO_EMERGENCY_RESUSCITATE_RELEASE,
+            "bong:yidao_emergency_resuscitate_release"
+        );
+        assert_eq!(
+            ANIM_YIDAO_LIFE_EXTENSION_LOOP,
+            "bong:yidao_life_extension_loop"
+        );
+        assert_eq!(
+            ANIM_YIDAO_LIFE_EXTENSION_RELEASE,
+            "bong:yidao_life_extension_release"
+        );
+        assert_eq!(
+            ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
+            "bong:yidao_mass_meridian_repair_loop"
+        );
+        assert_eq!(
+            ANIM_YIDAO_MASS_MERIDIAN_REPAIR_RELEASE,
+            "bong:yidao_mass_meridian_repair_release"
+        );
+    }
+
+    /// 映射契约：5 招 loop/release 两段 id 全部互异（跨招不共用、段间不串线），
+    /// skill_id 分表逐条命中且未知 id 返 None。
+    #[test]
+    fn yidao_anim_mappings_are_distinct_and_cover_all_skills() {
+        let mut seen = std::collections::HashSet::new();
+        for skill in YidaoSkillId::ALL {
+            assert!(
+                seen.insert(skill.loop_anim_id()),
+                "{skill:?} 蓄力段 id 与其他招共用——每招必须独立可辨"
+            );
+            assert!(
+                seen.insert(skill.release_anim_id()),
+                "{skill:?} release 段 id 与其他段共用——每招必须独立可辨"
+            );
+            assert_eq!(
+                yidao_loop_anim_for_skill_id(skill.skill_id()),
+                Some(skill.loop_anim_id()),
+                "{skill:?} skill_id 分表必须命中其蓄力段 id"
+            );
+        }
+        assert_eq!(seen.len(), 10, "5 招 × 两段 = 10 个互异动画 id");
+        assert_eq!(
+            yidao_loop_anim_for_skill_id("some.other.skill"),
+            None,
+            "非 yidao 招式查分表必须 miss（不误停别家动画）"
+        );
+    }
+
+    fn drain_play_anim_ids(app: &mut App) -> Vec<String> {
+        app.world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .filter_map(|request| match request.payload {
+                VfxEventPayloadV1::PlayAnim { anim_id, .. } => Some(anim_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 医者带 `UniqueId`（真实玩家形态）+ 断脉患者的接经术施术脚手架。
+    fn medic_with_identity_and_severed_patient(app: &mut App) -> (Entity, Entity) {
+        let medic = spawn_medic(app, Realm::Void);
+        app.world_mut()
+            .entity_mut(medic)
+            .insert(UniqueId::default())
+            .insert(HealingMastery {
+                meridian_repair: 100.0,
+                ..Default::default()
+            });
+        let patient = spawn_patient(app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(patient).insert(severed);
+        (medic, patient)
+    }
+
+    /// 事件路径 pin：cast 起手恰播 1 条蓄力循环段 PlayAnim（专属 id）。
+    #[test]
+    fn yidao_cast_start_plays_loop_anim() {
+        let mut app = app_with_yidao();
+        let (medic, patient) = medic_with_identity_and_severed_patient(&mut app);
+
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "前置：施术应进入引导，实际 {result:?}"
+        );
+        assert_eq!(
+            drain_play_anim_ids(&mut app),
+            vec![ANIM_YIDAO_MERIDIAN_REPAIR_LOOP.to_string()],
+            "cast 起手必须恰播接经术专属蓄力循环段（不播 release、不借别家动画）"
+        );
+    }
+
+    /// 负向：被拒绝的施术（无目标）不得播任何动画。
+    #[test]
+    fn yidao_rejected_cast_plays_no_anim() {
+        let mut app = app_with_yidao();
+        let (medic, _patient) = medic_with_identity_and_severed_patient(&mut app);
+
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, None);
+
+        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
+        assert!(
+            drain_play_anim_ids(&mut app).is_empty(),
+            "被拒绝的施术不得播蓄力段（无引导窗即无动画）"
+        );
+    }
+
+    /// 事件路径 pin：有效完成恰接力 1 条 release PlayAnim（蓄力段 StopAnim 由
+    /// cast_emit 自然完成分支发出，见 cast_emit.rs 专属测试）。
+    #[test]
+    fn yidao_completion_success_plays_release_anim() {
+        let mut app = app_with_yidao();
+        let (medic, patient) = medic_with_identity_and_severed_patient(&mut app);
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+        assert!(matches!(result, CastResult::Started { .. }));
+        // 排空起手蓄力段 PlayAnim，隔离完成分支的接力输出。
+        drain_play_anim_ids(&mut app);
+
+        complete_pending_yidao(&mut app, medic);
+
+        assert!(
+            !app.world()
+                .get::<MeridianSeveredPermanent>(patient)
+                .unwrap()
+                .is_severed(MeridianId::Lung),
+            "前置：接经应已修复肺经（有效结算）"
+        );
+        assert_eq!(
+            drain_play_anim_ids(&mut app),
+            vec![ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE.to_string()],
+            "有效完成必须恰接力 1 条接经术专属 release 收势"
+        );
+    }
+
+    /// 负向：完成时目标已失效（经脉已复通 → can_apply false）的无效完成不奖励
+    /// 收势——不播 release，且 PendingYidaoCast 照常清理。
+    #[test]
+    fn yidao_invalid_completion_plays_no_release_anim() {
+        let mut app = app_with_yidao();
+        let (medic, patient) = medic_with_identity_and_severed_patient(&mut app);
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+        assert!(matches!(result, CastResult::Started { .. }));
+        drain_play_anim_ids(&mut app);
+        // 引导期间患者经脉被他人复通 → 完成时 can_apply_yidao_effect 为 false。
+        app.world_mut()
+            .entity_mut(patient)
+            .insert(MeridianSeveredPermanent::default());
+
+        complete_pending_yidao(&mut app, medic);
+
+        assert!(
+            drain_play_anim_ids(&mut app).is_empty(),
+            "无效完成不得播 release（收势只奖励有效结算）"
+        );
+        assert!(
+            app.world().get::<PendingYidaoCast>(medic).is_none(),
+            "无效完成也必须清理 PendingYidaoCast"
         );
     }
 }
