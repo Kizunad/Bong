@@ -70,7 +70,7 @@ bug-hunt 线程 AF（限定 worktree：`bughunt-loop-20260705-af`，范围：`in
 ### 测试结果
 
 - 2026-07-19，Java 17：`cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH ./gradlew runGametest --console=plain` — **PASS**；Fabric Loader/Knot transformed server runtime 执行 **3 tests / 0 failures**，`client/build/gametest-results.xml` 分别记录 anonymous / exposed / unknown 三案。
-- 2026-07-19，合并 `origin/main@fc26ed5eb4b2181720bfed4104538291875bfcc1` 后以 Java 17 执行：`cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH ./gradlew test build --console=plain` — **PASS**；`test` 门禁执行上述 **3/3 GameTest**，JUnit 报告保持 **4128 tests / 0 skipped / 0 failures / 0 errors**（其中 `TargetInfoHudPlannerTest` 为 **9/9**），随后 `build` 成功。
+- 2026-07-19，合并 `origin/main@a07839ab02a531ca9267d337eb839f707b12f848` 后以 Java 17 执行：`cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH ./gradlew test build --console=plain` — **PASS**；`test` 门禁执行上述 **3/3 GameTest**，JUnit 报告保持 **4128 tests / 0 skipped / 0 failures / 0 errors**（其中 `TargetInfoHudPlannerTest` 为 **9/9**），随后 `build` 成功。
 - PR #1131：GitHub `e2e` check **PASS**（2026-07-07，20m55s）。该 PR 的 `review` 失败来自 4 个 Codex reviewer 执行失败，CodeRabbit 失败来自 review limit / prepaid credits exhausted；两者均未产生代码级 finding。
 - 生产链动态核验：真实 `ServerPlayerEntity` -> `TargetInfoStateStore.observeEntity(...)` -> `TargetInfoStateStore.snapshot()` -> `TargetInfoHudPlanner.buildCommands(...)`；anonymous / unknown 均显示“某修士”且不含 profile 或 scoreboard 装饰名，exposed 保留 scoreboard 装饰名。
 
