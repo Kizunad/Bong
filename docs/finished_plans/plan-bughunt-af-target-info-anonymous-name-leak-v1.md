@@ -1,7 +1,7 @@
 # plan-bughunt-af-target-info-anonymous-name-leak-v1
 
 > **Finished plan**。一句话主题：`inspect / social / hud / state` 主路径发现 1 个高置信真 bug：**匿名玩家头顶名牌虽已隐藏，但 `TargetInfo` 顶部 HUD 仍会在一次右键/攻击后泄漏其真实名字 5 秒**。这条链路直接绕过 `plan-social-v1` 的匿名设计，对 PvP/尾随/试探交互都有明确玩法后果。
-
+>
 > 立项动机：本轮限定扫描 `inspect/preview/social-hud/state` 主路径，并排除已立项题（trade bundle 少发货 / sparring invite hijack / trade gate / season stale client / tide_sky 漏接等）。本题落点集中、证据链短、玩家体感强，适合 skeleton-only 立项。
 
 ## 阶段总览
