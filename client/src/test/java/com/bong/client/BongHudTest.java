@@ -12,6 +12,8 @@ import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.hud.HudLayoutPreferenceStore;
 import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.ScreenHudVisibility;
+import com.bong.client.hud.SearchHudState;
+import com.bong.client.hud.SearchProgressHudPlanner;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -202,6 +204,72 @@ public class BongHudTest {
 
         assertEquals(0, frameBuildCount[0], "HIDDEN 屏幕不得采样 HUD frame");
         assertEquals(0, renderCount[0], "HIDDEN 屏幕不得触发最终 renderer");
+    }
+
+    @Test
+    public void productionScreenFiltersNeverLeakSearchFlashIntoOtherInterfaces() {
+        List<HudRenderCommand> commands = new ArrayList<>(
+            SearchProgressHudPlanner.buildCommands(SearchHudState.completed("残棺"), 320, 180)
+        );
+        commands.add(HudRenderCommand.text(HudRenderLayer.BASELINE, "baseline", 0, 0, 0xFFFFFF));
+        commands.add(HudRenderCommand.text(HudRenderLayer.CAST_BAR, "cast", 0, 0, 0xFFFFFF));
+        commands.add(HudRenderCommand.screenTint(HudRenderLayer.AGENT_UI, 0xCC000000));
+
+        List<HudRenderCommand> full = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.FULL
+        );
+        List<HudRenderCommand> inventory = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.INVENTORY_DIMMED
+        );
+        List<HudRenderCommand> castOnly = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.CAST_BAR_ONLY
+        );
+        List<HudRenderCommand> agentUiOnly = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.AGENT_UI_ONLY
+        );
+        List<HudRenderCommand> hidden = BongHud.filterCommandsForVisibility(
+            commands,
+            ScreenHudVisibility.HIDDEN
+        );
+
+        assertSame(
+            commands,
+            full,
+            "FULL 可见模式必须直接复用原命令列表，避免每帧无条件复制"
+        );
+        assertTrue(
+            full.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "FULL 必须保留 SEARCH_PROGRESS，因为主 HUD 应显示尚未过期的搜刮 flash，实际命令=" + full
+        );
+        assertTrue(
+            inventory.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "INVENTORY_DIMMED 不得泄漏 SEARCH_PROGRESS，因为库存界面只保留降噪层，实际命令=" + inventory
+        );
+        assertTrue(
+            castOnly.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "CAST_BAR_ONLY 不得泄漏 SEARCH_PROGRESS，因为该模式只保留施法条，实际命令=" + castOnly
+        );
+        assertTrue(
+            agentUiOnly.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "AGENT_UI_ONLY 不得泄漏 SEARCH_PROGRESS，因为天道界面隔离其它 HUD layer，实际命令=" + agentUiOnly
+        );
+        assertTrue(hidden.isEmpty(), "HIDDEN 必须过滤全部命令，实际命令=" + hidden);
+        assertTrue(
+            inventory.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.BASELINE),
+            "INVENTORY_DIMMED 应保留 BASELINE，因为库存界面仍显示基础 HUD，实际命令=" + inventory
+        );
+        assertTrue(
+            castOnly.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.CAST_BAR),
+            "CAST_BAR_ONLY 应保留 CAST_BAR，因为施法界面必须显示施法进度，实际命令=" + castOnly
+        );
+        assertTrue(
+            agentUiOnly.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.AGENT_UI),
+            "AGENT_UI_ONLY 应保留 AGENT_UI，因为天道专用 VFX 必须可见，实际命令=" + agentUiOnly
+        );
     }
 
     @Test
