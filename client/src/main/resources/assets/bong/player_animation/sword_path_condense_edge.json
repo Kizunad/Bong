@@ -36,6 +36,13 @@
       {
         "tick": 0,
         "easing": "INOUTSINE",
+        "head": {
+          "yaw": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
         "torso": {
           "pitch": 0.0523599
         }
@@ -178,6 +185,13 @@
         "easing": "OUTSINE",
         "head": {
           "pitch": 0.1047198
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTSINE",
+        "head": {
+          "yaw": 0.1396263
         }
       },
       {
@@ -330,6 +344,13 @@
       {
         "tick": 7,
         "easing": "OUTSINE",
+        "head": {
+          "yaw": 0.2094395
+        }
+      },
+      {
+        "tick": 7,
+        "easing": "OUTSINE",
         "torso": {
           "pitch": 0.1570796
         }
@@ -472,6 +493,13 @@
         "easing": "INQUAD",
         "head": {
           "pitch": 0.0
+        }
+      },
+      {
+        "tick": 10,
+        "easing": "INQUAD",
+        "head": {
+          "yaw": -0.0349066
         }
       },
       {
@@ -624,6 +652,13 @@
       {
         "tick": 12,
         "easing": "INQUAD",
+        "head": {
+          "yaw": -0.1047198
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INQUAD",
         "torso": {
           "pitch": -0.0698132
         }
@@ -771,6 +806,13 @@
       {
         "tick": 15,
         "easing": "INOUTSINE",
+        "head": {
+          "yaw": -0.0523599
+        }
+      },
+      {
+        "tick": 15,
+        "easing": "INOUTSINE",
         "torso": {
           "pitch": 0.0
         }
@@ -913,6 +955,13 @@
         "easing": "INOUTSINE",
         "head": {
           "pitch": -0.0523599
+        }
+      },
+      {
+        "tick": 18,
+        "easing": "INOUTSINE",
+        "head": {
+          "yaw": 0.0
         }
       },
       {

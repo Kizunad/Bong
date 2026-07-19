@@ -24,7 +24,7 @@ from anim_common import emit_json, inherit
 GUARD = dict(
     easing="INOUTSINE",
     body=dict(y=0.0, z=0.0),
-    head=dict(pitch=-3),
+    head=dict(pitch=-3, yaw=0),
     torso=dict(pitch=+3, yaw=-5),
     rightArm=dict(pitch=-55, yaw=-8, roll=+15, bend=35, axis=180),
     leftArm=dict(pitch=-45, yaw=+20, roll=-10, bend=55, axis=180),
@@ -36,7 +36,7 @@ GUARD = dict(
 APEX = dict(
     easing="INQUAD",
     body=dict(y=+0.03, z=+0.10),
-    head=dict(pitch=-8),
+    head=dict(pitch=-8, yaw=-6),
     torso=dict(pitch=-4, yaw=+10),
     rightArm=dict(pitch=-85, yaw=-14, roll=+8, bend=12, axis=180),
     leftArm=dict(pitch=-65, yaw=+8, roll=-12, bend=18, axis=180),
@@ -51,7 +51,7 @@ POSE = {
     3: dict(
         easing="OUTSINE",
         body=dict(y=-0.03, z=-0.05),
-        head=dict(pitch=+6),
+        head=dict(pitch=+6, yaw=+8),
         torso=dict(pitch=+6, yaw=-14),
         rightArm=dict(pitch=-20, yaw=+10, roll=-18, bend=50, axis=180),
         leftArm=dict(pitch=-35, yaw=+22, roll=+6, bend=60, axis=180),
@@ -63,7 +63,7 @@ POSE = {
     7: dict(
         easing="OUTSINE",
         body=dict(y=-0.06, z=-0.08),
-        head=dict(pitch=+10),
+        head=dict(pitch=+10, yaw=+12),
         torso=dict(pitch=+9, yaw=-20),
         rightArm=dict(pitch=-12, yaw=+8, roll=-35, bend=62, axis=180),
         leftArm=dict(pitch=-30, yaw=+26, roll=+14, bend=64, axis=180),
@@ -74,7 +74,7 @@ POSE = {
     10: dict(
         easing="INQUAD",
         body=dict(y=-0.01, z=+0.02),
-        head=dict(pitch=0),
+        head=dict(pitch=0, yaw=-2),
         torso=dict(pitch=+2, yaw=+2),
         rightArm=dict(pitch=-55, yaw=-5, roll=+20, bend=30, axis=180),
         leftArm=dict(pitch=-50, yaw=+12, roll=-10, bend=35, axis=180),
@@ -87,7 +87,7 @@ POSE = {
     15: dict(
         easing="INOUTSINE",
         body=dict(y=+0.01, z=+0.05),
-        head=dict(pitch=-5),
+        head=dict(pitch=-5, yaw=-3),
         torso=dict(pitch=0, yaw=+3),
         rightArm=dict(pitch=-70, yaw=-11, roll=+12, bend=24, axis=180),
         leftArm=dict(pitch=-55, yaw=+14, roll=-11, bend=36, axis=180),

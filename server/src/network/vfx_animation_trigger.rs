@@ -2545,7 +2545,11 @@ mod tests {
             "凝锋应发 1 动画 + 1 粒子，实际 {}",
             emitted.len()
         );
-        assert_play_anim(&emitted[0], ANIM_SWORD_PATH_CONDENSE_EDGE, SWORD_PATH_PRIORITY);
+        assert_play_anim(
+            &emitted[0],
+            ANIM_SWORD_PATH_CONDENSE_EDGE,
+            SWORD_PATH_PRIORITY,
+        );
         assert_ne!(
             play_anim_id(&emitted[0]),
             ANIM_SWORD_CLEAVE,
