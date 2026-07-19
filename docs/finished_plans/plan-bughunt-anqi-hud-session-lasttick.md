@@ -1,10 +1,13 @@
 # plan-bughunt-anqi-hud-session-lasttick
 
-> **Finished BugFix Plan（2026-07-15 归档）**。历史来源（升格前）：
+> **Finished BugFix Plan（2026-07-15 初版归档；2026-07-18 最终验收）**。历史来源（升格前）：
 > `docs/plans-skeleton/plan-bughunt-anqi-hud-session-lasttick.md`。
 > BugHunt C2 client-ui 第二轮结论：暗器 HUD 的 `AnqiHudStateStore` 在断线/切服时
 > 没有清理 per-dimension `lastTick`，导致同一客户端进程连接新 server / 新世界后，
 > 低 tick 的 `anqi_hud` payload 被当成旧包静默丢弃。
+
+阶段总览：P0 修复前失败契约 ✅ 2026-07-15；P1 生产断线 reset ✅ 2026-07-15；
+P2 定向测试与 client 门禁 ✅ 2026-07-15；P3 主线同步、审查与归档 ✅ 2026-07-18。
 
 ## Bug 摘要
 
@@ -32,7 +35,8 @@
   - `clear()` 能清所有维度，但生产断线路径未调用（约 L151-L157）。
   - `updateSlotCas()` 在 `newTick < current.lastTick()` 时静默 return（约 L187-L194）。
 - `client/src/main/java/com/bong/client/combat/handler/AnqiHudServerDataHandler.java`
-  - `handle()` 读取 payload `tick`，缺省为 0，然后传入 `AnqiHudStateStore.update*`（约 L45-L68）。
+  - `handle()` 要求 payload 精确包含 `tick`，并在字段缺失、类型错误或越界时拒绝该 payload；
+    合法 tick 才会传入 `AnqiHudStateStore.update*`（约 L49-L86）。
 - `client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java`
   - 每帧用 `AnqiHudStateStore.snapshot()` 构建暗器 HUD（约 L312-L317）。
 - `client/src/main/java/com/bong/client/combat/CombatHudBootstrap.java`
@@ -108,10 +112,13 @@
 
 ## 实施阶段
 
-- [x] P0：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约；修复前定向运行确认 3 项红灯。
-- [x] P1：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
-- [x] P2：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
-- [x] P3：同步主线、主 agent 对抗自审、填写 Finish Evidence 并归档。
+- P0 ✅ 2026-07-15：加入 TTL/stale gate 与生产 disconnect reset 的修复前失败契约；`cbcea83c` 初始运行出现
+  3 项失败，其中 1 项是错误比较历史 `expiresAt` 的测试 oracle；`e1759121` 校正后、
+  `9a3c839f` 生产修复前实际保留 2 项目标红灯。
+- P1 ✅ 2026-07-15：在 combat HUD 生产断线路径清理 `AnqiHudStateStore`。
+- P2 ✅ 2026-07-15：完成 store/bootstrap/handler 定向测试与 Java 17 client 完整门禁。
+- P3 ✅ 2026-07-18：同步主线、主 agent 对抗自审、填写 Finish Evidence 并完成最终验收；
+  2026-07-15 的归档提交保留为初版归档历史。
 
 ## 验收矩阵
 
@@ -162,31 +169,88 @@
 
 ### 关键提交
 
-- `25e2fc6c`：升格并补全本 BugFix plan。
-- `cbcea83c`：加入修复前失败契约与 store/bootstrap/handler 回归测试。
-- `e1759121`：校准过期快照断言，区分“显示字段为空”和历史 expiresAt。
-- `9a3c839f`：在生产断线 reset 接入 `AnqiHudStateStore.clear()`。
-- `311e40de`：稳定 handler 回归的测试时钟读取，避免慢 CI 的 2 秒 TTL 抖动。
-- `463e278b`：按 `/review` 意见，让 echo、charge、abrasion、multishot 四种低 tick payload
+- `25e2fc6c`（2026-07-15）：升格并补全本 BugFix plan。
+- `cbcea83c`（2026-07-15）：加入修复前失败契约与 store/bootstrap/handler 回归测试。
+- `e1759121`（2026-07-15）：校准过期快照断言，区分“显示字段为空”和历史 expiresAt。
+- `9a3c839f`（2026-07-15）：在生产断线 reset 接入 `AnqiHudStateStore.clear()`。
+- `311e40de`（2026-07-15）：稳定 handler 回归的测试时钟读取，避免慢 CI 的 2 秒 TTL 抖动。
+- `6c6721c3`、`2c13f7a4`（2026-07-15）：归档 plan 并补入首版 Finish Evidence。
+- `463e278b`（2026-07-15）：按 `/review` 意见，让 echo、charge、abrasion、multishot 四种低 tick payload
   均经过真实 envelope parser 与 handler，并分别断言 store 写入。
+- `5a67caf0`（2026-07-15）：收口首轮 review 返工证据。
+- `31a1dbe4`（2026-07-16）：补全 boolean 断言的可诊断失败信息。
+- `5ca2906a`（2026-07-16）：把当时最新 `origin/main` 合并进 PR 分支。
+- `4f02b240`（2026-07-16）：对合并主线后的最终代码树复验暗器 HUD 断言与门禁。
+- `0972f7c9`（2026-07-16）：PR #1214 合入 `main` 的最终 merge commit。
+- `5a4d4287`（2026-07-18）：校正 handler 必须显式携带 `tick` 的严格契约，并补齐
+  P0–P3 已完成状态与验收日期。
+- `c1c7218d`（2026-07-18）：显式合并主线 `62f90990`，在审计分支上复验归档证据。
+- `885a0d5f`（2026-07-18）：继续同步主线 `9a9d48a7`；该提交仅新增饱食饮水系统
+  skeleton，未改变本 plan 的 client/server 代码树。
 
 ### 测试结果
 
-- 修复前定向测试：3 项按预期失败，分别锁定过期 stale tick gate 与真实 disconnect reset/handler 路径。
+- 修复前定向测试：`cbcea83c` 初始有 3 项失败；其中 1 项是错误的 `expiresAt` 快照 oracle，
+  `e1759121` 校正后、`9a3c839f` 生产修复前实际有 2 项目标红灯，锁定真实 disconnect
+  reset 与 handler 路径。
 - 定向回归（JDK 17.0.19）：
   `./gradlew test --tests com.bong.client.hud.AnqiHudStateStoreTest --tests com.bong.client.combat.CombatHudBootstrapTest --tests com.bong.client.combat.handler.AnqiHudServerDataHandlerTest`，`BUILD SUCCESSFUL`。
 - 完整 client 门禁（JDK 17.0.19）：`./gradlew test build`，13 actionable tasks，`BUILD SUCCESSFUL`。
 - `/review` 返工代码树 `463e278b`：四维真实 handler 定向回归通过；随后
   `./gradlew test build` 再次通过（58s，13 actionable tasks）。
-- PR #1214 首轮 GitHub e2e 在 `2c13f7a4` 上通过（client、schema、agent、server、smoke 与
-  bot e2e 全链）；仓库 `/review` 的有效返工为四维 handler 回归及归档元数据一致性。
+- GitHub e2e run `29403697278` 在 `2c13f7a4` 上通过，run `29406478061` 在
+  `5a67caf0` 上再次通过。
+- 最终 PR HEAD `4f02b240` 的 e2e run `29496244134` 成功；Client stage（Java 17）、
+  schema、agent、server、smoke/E2E 与 bot e2e 各阶段均为 `success`。
+- 2026-07-18 归档核对完整 client 门禁（JDK 17）：`./gradlew test build`，4118 tests，
+  0 failures / 0 errors / 0 skipped，13 actionable tasks；合并 `62f90990` 后再次完整通过。
+- 2026-07-18 归档核对完整 server 门禁：
+  `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`，lib 11775、
+  main 11、integration 5，合计 11791 passed、0 failed、6 ignored。
 
-### 主线与自审
+### 主线、review 与独立复核
 
-- `git fetch origin main` 后 `origin/main=6f1faea5`，为本分支祖先；无需合并，最终工作树干净。
-- 主 agent 对 `origin/main...463e278b` 做逐入口审查：断线 hook 已注册并执行 `resetOnDisconnect()`；四个生产维度均由同一 store clear 重置并各自通过真实 parser/handler；TTL 过期不自动清 gate；debug clear 不是生产唯一依据。
+- PR 分支并非“无需合并主线”：`5ca2906a` 明确把当时最新主线提交 `14b34a62`
+  合入分支，随后 `4f02b240` 对合并后的相同代码树完成复验；PR 最终以 `0972f7c9`
+  合入 `main`。
+- 归档核对分支随后又以 `c1c7218d` 合并 `62f90990`，并以 `885a0d5f` 同步
+  `9a9d48a7`；后者只新增一份 skeleton，未触碰本 plan 相关栈。
+- 最终 `/review` 评论
+  `https://github.com/Kizunad/Bong/pull/1214#issuecomment-4991561202` 在 `4f02b240`
+  上给出 `4/0` APPROVE、无 blocker/major；模型记录为 `gpt-5.6-sol`。
+- CodeRabbit 汇总评论在最终 HEAD 更新为 “No actionable comments”，PR status 为 `SUCCESS`。
+- 逐入口复核确认：断线 hook 已注册并执行 `resetOnDisconnect()`；四个生产维度均由同一
+  store clear 重置并各自通过真实 parser/handler；TTL 过期不自动清 gate；debug clear
+  不是生产唯一依据。
 - `/review` 提出的“断线后在途旧连接 payload”缺少 Fabric 客户端生命周期倒序的可达证据，
   最终复投也判定不构成 major；引入 session UUID/generation 明确属于本 plan 非目标，未扩写。
 - `/review` 中 `.github/scripts/review.mjs` finding 来自审查模型端点 502/空响应，未指向本 PR
-  修改，也未改 review 基础设施；代码侧有效 finding 已在 `463e278b` 与本归档更新中处理。
-- 用户明确要求“本次不跑 subagent，仅主agent实施”，因此未运行独立 validator；不声称 validator PASS。无 `[BLOCKED: ...]` 项。
+  修改，也未改 review 基础设施；代码侧有效 finding 已在 `463e278b`、`31a1dbe4` 与
+  `4f02b240` 中处理。
+- 2026-07-18 归档核对时，早期 fresh read-only validator 未发现代码、接线或测试 blocker；
+  其 FAIL 指向旧 Finish Evidence 的主线/review/e2e 事实缺口，以及 handler `tick` 契约与
+  finished 状态格式。`5a4d4287` 完成后 generation 4 在该 HEAD 给出 PASS。
+- 主线两次同步后，generation 6 fresh read-only validator（`gpt-5.6-sol`）在
+  `885a0d5f239c91a6634cbcf6cb9172854d433826` 给出 PASS；这是最终证据纠偏前的中间历史验证，
+  不作为当前归档文档 HEAD 的最终 validator 结论。
+- 当前归档文档 exact HEAD 的 fresh read-only validator 结论使用稳定外部证据载体记录：
+  `https://github.com/Kizunad/Bong/pull/1230#issuecomment-5011798124`。该固定 URL 原地记录
+  目标 commit SHA、validator 模型、固定 PASS/FAIL、验证范围与时间，避免在 Git 树内写入自身 SHA
+  形成不可满足的自引用；归档核验以该评论中与本文件所在 HEAD 精确一致的记录为准。
+
+### 跨仓库核验
+
+- Client：`CombatHudBootstrap.register()` 注册 `ClientPlayConnectionEvents.DISCONNECT`，
+  `resetOnDisconnect()` 调用 `AnqiHudStateStore.clear()`；`CombatHudBootstrapTest` 通过真实
+  `ServerDataEnvelope` 与 `AnqiHudServerDataHandler` 锁定四种生产 kind 的跨会话低 tick 恢复。
+- Server：`CombatClock` / `tick_combat_clock` 从新 server 的低 tick epoch 起步；
+  `emit_anqi_hud_payloads` 把事件 tick 写入 `AnqiHudV1.tick`，与本 bug 的跨服触发条件一致。
+- Schema / proto：`AnqiHudV1`、`ServerDataAnqiHudV1`、`message AnqiHud` 及
+  `server-data.anqi-hud.*.sample.json` 继续锁定 `anqi_hud` 完整字段和 tick 契约；本修复未改 wire。
+- Agent：无运行时消费或命令变更；agent/schema 阶段已由最终 e2e run `29496244134` 验证。
+
+### 遗留 / 后续
+
+- `aim` 是正式 wire/store 维度，但当前 server 无生产事件源，因此不属于本 bug 的四维生产验收；
+  `clear()` 仍会自然重置它。
+- 无代码、schema、守恒或 A/V 遗留；本轮仅修正归档证据。无 `[BLOCKED: ...]` 项。
