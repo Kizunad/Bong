@@ -1,0 +1,9 @@
+{
+  "segment": "loop",
+  "expected_end_tick": 24,
+  "primary_axes": [
+    "rightArm.roll",
+    "body.y",
+    "torso.pitch"
+  ]
+}
