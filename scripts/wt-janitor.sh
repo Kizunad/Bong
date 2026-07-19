@@ -29,8 +29,11 @@
 #     UNKNOWN 既不整树回收，也不 clean-artifacts
 #   - CLOSED（未 merge）一律交人工（即使远端 tip 仍在、工作区干净）
 #   - 本地分支相对 origin/main 无法证明 patch-equivalent（每个 MERGED 候选都必须
-#     成功跑通 `git cherry origin/main refs/heads/$branch` 且无任何 `+`；
-#     远端可达性仅作诊断，绝不能单独放行）
+#     成功跑通 `git cherry origin/main refs/heads/$branch` 且无任何 `+`，且
+#     `origin/main..branch` 不存在 merge commit——cherry 看不到 branch-only merge
+#     的独有 tree/conflict resolution；远端可达性仅作诊断，绝不能单独放行）
+#   - PR 状态：先 `gh pr list --head --state all` 拉完整集合（不带 --base，避免
+#     隐藏同 head 的 develop PR），再本地要求恰好一条且 base=main（多条/字段异常→UNKNOWN）
 #   - remove 被 git 拒绝、或 remove 后本地分支删除失败的树
 #     （后者报告部分完成/交人工，不计完整回收；不用 --force）
 #   - APPLY 真正删除前对当前候选重新扫描 /proc：命中新进程则保留并转人工（防 TOCTOU）
@@ -172,31 +175,62 @@ busy() {
 # 删除前对当前候选重扫 /proc（不复用启动快照）。
 # 测试注入 seam：WT_JANITOR_BUSY_INJECT=<绝对路径> 时，对该路径强制视为 busy。
 busy_live() {
-  local p="$1" t c
-  # 测试注入 seam：强制把指定路径视为 busy（确定性，避免 flaky 真进程竞态）
+  # 删除前再扫 /proc：cwd / open-fd / cmdline（含相对 argv fail-closed）。
+  # 所有 /proc 读 fail-soft；find 扫 /proc 常因权限返回非零，必须 || true 后再判命中，
+  # 否则 set -o pipefail 会把「已命中但 find RC=1」当成未命中。
+  local p="$1" t c pid cwd_path arg resolved base fd_hit
   if [[ -n "${WT_JANITOR_BUSY_INJECT:-}" ]]; then
     case "${WT_JANITOR_BUSY_INJECT}" in
       "$p"|"$p"/*) return 0 ;;
     esac
   fi
-  # 删除前对当前候选重扫 /proc（不复用启动快照，防 TOCTOU）。
-  # cwd 快路径足够覆盖「cd 进树后编译」主场景；cmdline 用固定子串二次确认。
+
+  # 1) cwd 在树内
   for t in /proc/[0-9]*/cwd; do
     c=$(readlink "$t" 2>/dev/null) || continue
     case "$c" in
       "$p"|"$p"/*) return 0 ;;
     esac
   done
-  # cmdline：只扫仍存活、可读的 pid，避免 grep 在海量消失 fd 上拖慢
+
+  # 2) open fd 指向树内：find -regex 避免 ARG_MAX；-print -quit 首命中即停
+  fd_hit=$(find /proc -regextype posix-extended \
+    -regex '/proc/[0-9]+/fd/[0-9]+' \
+    \( -lname "$p" -o -lname "$p/*" \) \
+    -print -quit 2>/dev/null || true)
+  [[ -n "$fd_hit" ]] && return 0
+
+  # 3) cmdline 绝对路径；相对 argv 解析到树内，或相对片段含 worktree basename
+  base="${p##*/}"
   local _parts
   for t in /proc/[0-9]*/cmdline; do
     [[ -r "$t" ]] || continue
+    pid="${t#/proc/}"; pid="${pid%%/*}"
     _parts=()
     mapfile -d '' -t _parts < "$t" 2>/dev/null || continue
     [[ ${#_parts[@]} -gt 0 ]] || continue
     local IFS=' '
     c="${_parts[*]}"
     [[ -n "${c// /}" && "$c" == *"$p"* ]] && return 0
+    cwd_path=$(readlink "/proc/$pid/cwd" 2>/dev/null) || cwd_path=""
+    [[ -n "$cwd_path" ]] || continue
+    case "$cwd_path" in
+      "$p"|"$p"/*) return 0 ;;
+    esac
+    for arg in "${_parts[@]}"; do
+      [[ -z "$arg" || "$arg" == -* || "$arg" == /* ]] && continue
+      if [[ "$arg" == */* || "$arg" == *.* ]]; then
+        resolved=$(realpath -m -- "$cwd_path/$arg" 2>/dev/null) || resolved=""
+        if [[ -n "$resolved" ]]; then
+          case "$resolved" in
+            "$p"|"$p"/*) return 0 ;;
+          esac
+        fi
+        if [[ -n "$base" && "$arg" == *"$base"* ]]; then
+          return 0
+        fi
+      fi
+    done
   done
   return 1
 }
@@ -260,8 +294,12 @@ unsafe_non_cache_paths() {
 # 0=可视为内容已在 main；1=有未合入 patch；2=查询失败
 # 每个 MERGED 自动回收候选都必须无条件调用本函数；远端可达性不得绕过。
 branch_patches_in_main() {
+  # 0=patch 已在 main 且无 branch-only merge；1=有未合入内容；2=查询失败
+  # git cherry 只比较非 merge 提交的 patch equivalence，看不到 branch-only merge
+  # commit 的独有 tree（含 conflict resolution）。故 cherry 无 + 之后仍须
+  # 检查 origin/main..branch 是否存在 merge commit —— 有则 fail-closed。
   local br="$1"
-  local out line
+  local out line merges
   if ! git rev-parse --verify -q "refs/remotes/origin/main" >/dev/null; then
     return 2
   fi
@@ -276,26 +314,32 @@ branch_patches_in_main() {
       *) return 2 ;;
     esac
   done <<<"$out"
+  # branch-only merge commits：cherry 静默忽略，但 tree 可能含未进 main 的决议
+  if ! merges=$(git rev-list --merges "origin/main..refs/heads/$br" 2>/dev/null); then
+    return 2
+  fi
+  if [[ -n "$merges" ]]; then
+    return 1
+  fi
   return 0
 }
 
-# 解析 gh pr list JSON：限定 base=main 的完整结果集。
+# 解析 gh pr list JSON（先 exact head + state=all 全量，不带 --base）。
 # stdout：单一明确状态（OPEN/MERGED/CLOSED）或 NO_PR/UNKNOWN
 # 规则：
-#   - 查询失败 / 非 JSON / 字段异常 → UNKNOWN
+#   - 查询失败 / 非数组 / 字段异常 → UNKNOWN
 #   - 0 条 → NO_PR
-#   - >1 条 → UNKNOWN（多结果歧义 fail-closed）
+#   - >1 条 → UNKNOWN（含同 head 多 base；真实 gh --base main 会隐藏 develop）
 #   - 1 条：baseRefName 必须为 main；state 必须为 OPEN|MERGED|CLOSED；否则 UNKNOWN
 resolve_pr_state() {
   local branch="$1"
   local raw rc=0
-  raw=$(gh pr list --head "$branch" --base main --state all \
+  raw=$(gh pr list --head "$branch" --state all \
     --json number,state,baseRefName,headRefOid 2>/dev/null) || rc=$?
   if [[ $rc -ne 0 ]]; then
     echo "UNKNOWN"
     return 0
   fi
-  # 必须是 JSON 数组
   if ! printf '%s' "$raw" | jq -e 'type == "array"' >/dev/null 2>&1; then
     echo "UNKNOWN"
     return 0
@@ -306,18 +350,33 @@ resolve_pr_state() {
     echo "NO_PR"
     return 0
   fi
+  # 任一结果字段缺失/null/类型不对 → UNKNOWN
+  local bad
+  bad=$(printf '%s' "$raw" | jq '
+    map(select(
+      (.number == null) or
+      ((.number|type) != "number" and (.number|type) != "string") or
+      ((.number|tostring) == "") or
+      (.state == null) or (.state|type) != "string" or .state == "" or
+      (.baseRefName == null) or (.baseRefName|type) != "string" or .baseRefName == "" or
+      (.headRefOid == null) or (.headRefOid|type) != "string" or .headRefOid == ""
+    )) | length') || bad="err"
+  if [[ "$bad" == "err" || "$bad" != "0" ]]; then
+    echo "UNKNOWN"
+    return 0
+  fi
   if [[ "$count" != "1" ]]; then
-    # 多结果（含 MERGED+OPEN、历史复用等）一律 UNKNOWN
+    # 多结果：含 OPEN、或多 base（main+develop）一律 UNKNOWN
     echo "UNKNOWN"
     return 0
   fi
   local state base number head_oid
-  state=$(printf '%s' "$raw" | jq -r '.[0].state // empty')
-  base=$(printf '%s' "$raw" | jq -r '.[0].baseRefName // empty')
-  number=$(printf '%s' "$raw" | jq -r '.[0].number // empty')
-  head_oid=$(printf '%s' "$raw" | jq -r '.[0].headRefOid // empty')
-  # number/state/base/headRefOid 任一空或 null 都 fail-closed（jq 对 null 会出 "null" 字面量，一并拒）
-  if [[ -z "$state" || -z "$base" || -z "$number" || -z "$head_oid"      || "$state" == "null" || "$base" == "null" || "$number" == "null" || "$head_oid" == "null" ]]; then
+  state=$(printf '%s' "$raw" | jq -r '.[0].state')
+  base=$(printf '%s' "$raw" | jq -r '.[0].baseRefName')
+  number=$(printf '%s' "$raw" | jq -r '.[0].number')
+  head_oid=$(printf '%s' "$raw" | jq -r '.[0].headRefOid')
+  if [[ -z "$state" || -z "$base" || -z "$number" || -z "$head_oid" \
+     || "$state" == "null" || "$base" == "null" || "$number" == "null" || "$head_oid" == "null" ]]; then
     echo "UNKNOWN"
     return 0
   fi
@@ -457,10 +516,11 @@ for i in "${!paths[@]}"; do
             verdict="可回收（PR 已 MERGED，squash/patch 已等价合入 origin/main）"
           fi
         elif [[ $cherry_rc -eq 1 ]]; then
+          # 含：非 merge patch 未进 main，或 branch-only merge commit（独有 tree）
           if [[ "$unpushed" == "0" ]]; then
-            verdict="PR 已 MERGED 但本地分支有未合入 origin/main 的 patch（远端可达不能证明已进 main）→ 交人工"
+            verdict="PR 已 MERGED 但本地分支有未合入 origin/main 的 patch/merge（远端可达不能证明已进 main）→ 交人工"
           else
-            verdict="PR 已 MERGED 但本地分支有未合入 patch（$unpushed 个远端不可达提交）→ 交人工"
+            verdict="PR 已 MERGED 但本地分支有未合入 patch/merge（$unpushed 个远端不可达提交）→ 交人工"
           fi
         else
           verdict="squash 等价判定失败 → 交人工"
