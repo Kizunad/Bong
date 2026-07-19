@@ -28,11 +28,12 @@
 #   - gh / PR 状态查询失败 → UNKNOWN（与「成功但 0 条 PR → NO_PR」严格区分）；
 #     UNKNOWN 既不整树回收，也不 clean-artifacts
 #   - CLOSED（未 merge）一律交人工（即使远端 tip 仍在、工作区干净）
-#   - 本地分支存在远端不可达且无法证明已 patch-equivalent 合入 origin/main 的提交
-#     （squash-merge 后远端 branch 删除时，原 PR commits 的 SHA 不再可达；
-#      用 `git cherry origin/main <branch>`：出现任意 `+` = 有未合入 patch → 交人工；
-#      全为 `-` 或空 + PR=MERGED + 无额外本地提交 = 可回收）
-#   - remove 被 git 拒绝的树（转交人工，本轮继续处理其它树；不用 --force）
+#   - 本地分支相对 origin/main 无法证明 patch-equivalent（每个 MERGED 候选都必须
+#     成功跑通 `git cherry origin/main refs/heads/$branch` 且无任何 `+`；
+#     远端可达性仅作诊断，绝不能单独放行）
+#   - remove 被 git 拒绝、或 remove 后本地分支删除失败的树
+#     （后者报告部分完成/交人工，不计完整回收；不用 --force）
+#   - APPLY 真正删除前对当前候选重新扫描 /proc：命中新进程则保留并转人工（防 TOCTOU）
 #
 # 契约测试：bash scripts/tests/wt_janitor_test.sh（隔离沙箱仓库，锁死全部破坏性判定）
 set -euo pipefail
@@ -40,6 +41,35 @@ set -euo pipefail
 APPLY=0
 CLEAN_ARTIFACTS=0
 IDLE_DAYS=7
+
+print_help() {
+  # 输出 shebang 之后、首个非注释行之前的顶部注释块（稳健，不绑行号）
+  local line
+  local seen_shebang=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ $seen_shebang -eq 0 ]]; then
+      if [[ "$line" == \#!* ]]; then
+        seen_shebang=1
+      fi
+      continue
+    fi
+    case "$line" in
+      \#*)
+        # 去掉前导 "# " 或单独的 "#"
+        if [[ "$line" == "# " ]]; then
+          printf '\n'
+        elif [[ "$line" == \#\ * ]]; then
+          printf '%s\n' "${line#\# }"
+        else
+          printf '%s\n' "${line#\#}"
+        fi
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done < "$0"
+}
 
 for arg in "$@"; do
   case "$arg" in
@@ -51,7 +81,7 @@ for arg in "$@"; do
       [[ "$IDLE_DAYS" =~ ^[0-9]+$ ]] || { echo "非法闲置天数: $IDLE_DAYS" >&2; exit 2; }
       ;;
     -h|--help)
-      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+      print_help
       exit 0
       ;;
     *) echo "未知参数: $arg（支持 --apply / --clean-artifacts[=天数]）" >&2; exit 2 ;;
@@ -68,43 +98,105 @@ HAVE_GH=1
 command -v gh >/dev/null 2>&1 || HAVE_GH=0
 [[ $HAVE_GH -eq 0 ]] && echo "警告：gh 不可用，PR 状态一律按 UNKNOWN 处理（不会 --apply 回收任何树，也不会 clean-artifacts）" >&2
 
-# 已知可再生的构建缓存目录（相对 worktree 根）。
+# 已知可再生的构建缓存目录（相对 worktree 根）——单一真相源。
 # 回收前：① 主动枚举 ignored/untracked，只允许这些白名单路径；② 再物理删除缓存；
 # ③ 最后不带 --force 调用 worktree remove。安全门在脚本侧 fail-closed，
 # 不依赖 git remove 是否拒绝（Git 2.47 会对含 ignored 的干净树直接删掉）。
 CACHE_DIRS=("server/target" "client/build" "client/.gradle")
 
 reclaimed=0
+partial=0
 freed_hint=""
 
 # 进程占用快照：整轮巡检只扫一次 /proc，避免「每 worktree 全扫」在进程多时把
 # 巡检拖到数十秒（契约测试会连跑多次 janitor，累计超时）。
 # - cwd：cd 进树内的进程（argv 可能不含路径）
 # - cmdline：字面含路径的进程（固定字符串匹配，不用 pgrep -f 正则）
+# APPLY 真正删除前会对当前候选再扫一次（防启动快照与删除之间的 TOCTOU）。
 BUSY_CWDS=()
 BUSY_CMDS=()
-# 进程可能在枚举中途退出：所有 /proc 读都 fail-soft，不让 set -e 中断巡检
-for _cwd in /proc/[0-9]*/cwd; do
-  _t=$(readlink "$_cwd" 2>/dev/null) || continue
-  [[ -n "$_t" ]] && BUSY_CWDS+=("$_t")
-done
-for _cmdf in /proc/[0-9]*/cmdline; do
-  [[ -r "$_cmdf" ]] || continue
-  # tr 把 NUL 变空格；空 cmdline（僵尸等）跳过
-  _c=$(tr '\0' ' ' < "$_cmdf" 2>/dev/null || true)
-  [[ -n "${_c// /}" ]] && BUSY_CMDS+=("$_c")
-done
+# 进程可能在枚举中途退出：所有 /proc 读都 fail-soft，不让 set -e 中断巡检。
+# 用 readlink -f 批量 + mapfile 降子 shell；cmdline 用 bash 内建读代替 tr 管道。
+_snapshot_busy() {
+  local _cwd _t _cmdf _c _parts
+  BUSY_CWDS=()
+  BUSY_CMDS=()
+  for _cwd in /proc/[0-9]*/cwd; do
+    _t=$(readlink "$_cwd" 2>/dev/null) || continue
+    [[ -n "$_t" ]] && BUSY_CWDS+=("$_t")
+  done
+  for _cmdf in /proc/[0-9]*/cmdline; do
+    [[ -r "$_cmdf" ]] || continue
+    # bash 读二进制：用 mapfile -d '' 拆 NUL 字段再拼空格
+    # 注意：set -e 下 ((0)) 会非零退出，空 cmdline 必须用 [[ ]] 判断
+    _c=""
+    _parts=()
+    if mapfile -d '' -t _parts < "$_cmdf" 2>/dev/null; then
+      if [[ ${#_parts[@]} -gt 0 ]]; then
+        local IFS=' '
+        _c="${_parts[*]}"
+      fi
+    fi
+    [[ -n "${_c// /}" ]] && BUSY_CMDS+=("$_c")
+  done
+  return 0
+}
+_snapshot_busy
+
+path_is_busy_against() {
+  # path_is_busy_against <path> <cwd...> -- <cmdline...>
+  # 分隔符 "--"：左侧 cwd 列表，右侧 cmdline 列表
+  local p="$1"; shift
+  local mode=cwd t
+  for t in "$@"; do
+    if [[ "$t" == "--" ]]; then
+      mode=cmd
+      continue
+    fi
+    if [[ "$mode" == "cwd" ]]; then
+      case "$t" in
+        "$p"|"$p"/*) return 0 ;;
+      esac
+    else
+      [[ "$t" == *"$p"* ]] && return 0
+    fi
+  done
+  return 1
+}
 
 busy() {
+  local p="$1"
+  path_is_busy_against "$p" "${BUSY_CWDS[@]+"${BUSY_CWDS[@]}"}" -- "${BUSY_CMDS[@]+"${BUSY_CMDS[@]}"}"
+}
+
+# 删除前对当前候选重扫 /proc（不复用启动快照）。
+# 测试注入 seam：WT_JANITOR_BUSY_INJECT=<绝对路径> 时，对该路径强制视为 busy。
+busy_live() {
   local p="$1" t c
-  for t in "${BUSY_CWDS[@]+"${BUSY_CWDS[@]}"}"; do
-    case "$t" in
+  # 测试注入 seam：强制把指定路径视为 busy（确定性，避免 flaky 真进程竞态）
+  if [[ -n "${WT_JANITOR_BUSY_INJECT:-}" ]]; then
+    case "${WT_JANITOR_BUSY_INJECT}" in
+      "$p"|"$p"/*) return 0 ;;
+    esac
+  fi
+  # 删除前对当前候选重扫 /proc（不复用启动快照，防 TOCTOU）。
+  # cwd 快路径足够覆盖「cd 进树后编译」主场景；cmdline 用固定子串二次确认。
+  for t in /proc/[0-9]*/cwd; do
+    c=$(readlink "$t" 2>/dev/null) || continue
+    case "$c" in
       "$p"|"$p"/*) return 0 ;;
     esac
   done
-  for c in "${BUSY_CMDS[@]+"${BUSY_CMDS[@]}"}"; do
-    # 固定子串，避免 pgrep -f 把路径当正则（. 通配）
-    [[ "$c" == *"$p"* ]] && return 0
+  # cmdline：只扫仍存活、可读的 pid，避免 grep 在海量消失 fd 上拖慢
+  local _parts
+  for t in /proc/[0-9]*/cmdline; do
+    [[ -r "$t" ]] || continue
+    _parts=()
+    mapfile -d '' -t _parts < "$t" 2>/dev/null || continue
+    [[ ${#_parts[@]} -gt 0 ]] || continue
+    local IFS=' '
+    c="${_parts[*]}"
+    [[ -n "${c// /}" && "$c" == *"$p"* ]] && return 0
   done
   return 1
 }
@@ -118,6 +210,15 @@ is_allowlisted_cache() {
     if [[ "$rel" == "$d" || "$rel" == "$d"/* ]]; then
       return 0
     fi
+  done
+  return 1
+}
+
+# 候选树是否存在任一 CACHE_DIRS 目录（单一真相源，禁止散落硬编码）
+cache_dir_present() {
+  local p="$1" d
+  for d in "${CACHE_DIRS[@]}"; do
+    [[ -d "$p/$d" ]] && return 0
   done
   return 1
 }
@@ -157,6 +258,7 @@ unsafe_non_cache_paths() {
 
 # MERGED 且本地相对 origin/main 无未合入 patch（squash 友好）
 # 0=可视为内容已在 main；1=有未合入 patch；2=查询失败
+# 每个 MERGED 自动回收候选都必须无条件调用本函数；远端可达性不得绕过。
 branch_patches_in_main() {
   local br="$1"
   local out line
@@ -175,6 +277,60 @@ branch_patches_in_main() {
     esac
   done <<<"$out"
   return 0
+}
+
+# 解析 gh pr list JSON：限定 base=main 的完整结果集。
+# stdout：单一明确状态（OPEN/MERGED/CLOSED）或 NO_PR/UNKNOWN
+# 规则：
+#   - 查询失败 / 非 JSON / 字段异常 → UNKNOWN
+#   - 0 条 → NO_PR
+#   - >1 条 → UNKNOWN（多结果歧义 fail-closed）
+#   - 1 条：baseRefName 必须为 main；state 必须为 OPEN|MERGED|CLOSED；否则 UNKNOWN
+resolve_pr_state() {
+  local branch="$1"
+  local raw rc=0
+  raw=$(gh pr list --head "$branch" --base main --state all \
+    --json number,state,baseRefName,headRefOid 2>/dev/null) || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "UNKNOWN"
+    return 0
+  fi
+  # 必须是 JSON 数组
+  if ! printf '%s' "$raw" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "UNKNOWN"
+    return 0
+  fi
+  local count
+  count=$(printf '%s' "$raw" | jq 'length')
+  if [[ "$count" == "0" ]]; then
+    echo "NO_PR"
+    return 0
+  fi
+  if [[ "$count" != "1" ]]; then
+    # 多结果（含 MERGED+OPEN、历史复用等）一律 UNKNOWN
+    echo "UNKNOWN"
+    return 0
+  fi
+  local state base number
+  state=$(printf '%s' "$raw" | jq -r '.[0].state // empty')
+  base=$(printf '%s' "$raw" | jq -r '.[0].baseRefName // empty')
+  number=$(printf '%s' "$raw" | jq -r '.[0].number // empty')
+  if [[ -z "$state" || -z "$base" || -z "$number" ]]; then
+    echo "UNKNOWN"
+    return 0
+  fi
+  if [[ "$base" != "main" ]]; then
+    echo "UNKNOWN"
+    return 0
+  fi
+  case "$state" in
+    OPEN|MERGED|CLOSED)
+      echo "$state"
+      ;;
+    *)
+      echo "UNKNOWN"
+      ;;
+  esac
 }
 
 # 解析 git worktree list --porcelain 的块结构
@@ -233,7 +389,7 @@ for i in "${!paths[@]}"; do
     continue
   fi
 
-  # 有进程正引用该路径 → 一律跳过
+  # 有进程正引用该路径 → 一律跳过（启动快照）
   if busy "$path_real"; then
     printf '%-70s %-12s %-8s %-8s %s\n' "$path" "-" "-" "-" "BUSY（有进程引用，跳过）"
     continue
@@ -256,27 +412,13 @@ for i in "${!paths[@]}"; do
   pr_state="NO_BRANCH"
   if [[ -n "$branch" ]]; then
     if [[ $HAVE_GH -eq 1 ]]; then
-      # 区分：命令失败 → UNKNOWN；成功但 0 条 → NO_PR。禁止 || true 吞失败。
-      pr_out=""
-      pr_rc=0
-      pr_out=$(gh pr list --head "$branch" --state all --json state --jq '.[0].state // empty' 2>/dev/null) || pr_rc=$?
-      if [[ $pr_rc -ne 0 ]]; then
-        pr_state="UNKNOWN"
-      elif [[ -z "$pr_out" ]]; then
-        pr_state="NO_PR"
-      else
-        pr_state="$pr_out"
-      fi
+      pr_state=$(resolve_pr_state "$branch")
     else
       pr_state="UNKNOWN"
     fi
   fi
 
-  # 未推送提交守卫 + squash 等价判定：
-  # - unpushed==0：本地提交均被某远端 ref 覆盖 → 安全
-  # - unpushed>0 且 PR=MERGED：用 git cherry origin/main 判断 patch 是否已在 main
-  #   （squash 改写 SHA 后 rev-list --not --remotes 会永久 >0；cherry 的 `-` = patch 已在）
-  # - 任意 `+` / 查询失败 / origin/main 缺失 → 交人工
+  # 远端可达性仅诊断：不得单独放行回收。每个 MERGED 候选都必须过 cherry。
   unpushed="0"
   if [[ -n "$branch" ]]; then
     unpushed=$(git rev-list --count "refs/heads/$branch" --not --remotes 2>/dev/null) || unpushed="ERR"
@@ -297,19 +439,27 @@ for i in "${!paths[@]}"; do
         verdict="ignored 查询失败 → 交人工"
       elif [[ $unsafe_rc -ne 0 ]]; then
         verdict="PR 已 MERGED 但存在非缓存 ignored/untracked（$unsafe_reason）→ 交人工"
-      elif [[ "$unpushed" == "ERR" ]]; then
-        verdict="提交可达性查询失败 → 交人工"
-      elif [[ "$unpushed" == "0" ]]; then
-        can_reclaim=1
-        verdict="可回收（PR 已 MERGED，远端可达）"
+      elif [[ -z "$branch" ]]; then
+        verdict="PR 已 MERGED 但无本地分支名 → 交人工"
       else
+        # 无条件对 origin/main 做 patch-equivalence；远端可达不能放行
         cherry_rc=0
         branch_patches_in_main "$branch" || cherry_rc=$?
         if [[ $cherry_rc -eq 0 ]]; then
           can_reclaim=1
-          verdict="可回收（PR 已 MERGED，squash/patch 已等价合入 origin/main）"
+          if [[ "$unpushed" == "0" ]]; then
+            verdict="可回收（PR 已 MERGED，patch 已等价合入 origin/main）"
+          elif [[ "$unpushed" == "ERR" ]]; then
+            verdict="可回收（PR 已 MERGED，patch 已等价合入 origin/main；远端可达性查询失败仅诊断）"
+          else
+            verdict="可回收（PR 已 MERGED，squash/patch 已等价合入 origin/main）"
+          fi
         elif [[ $cherry_rc -eq 1 ]]; then
-          verdict="PR 已 MERGED 但本地分支有未合入 patch（$unpushed 个远端不可达提交）→ 交人工"
+          if [[ "$unpushed" == "0" ]]; then
+            verdict="PR 已 MERGED 但本地分支有未合入 origin/main 的 patch（远端可达不能证明已进 main）→ 交人工"
+          else
+            verdict="PR 已 MERGED 但本地分支有未合入 patch（$unpushed 个远端不可达提交）→ 交人工"
+          fi
         else
           verdict="squash 等价判定失败 → 交人工"
         fi
@@ -335,20 +485,40 @@ for i in "${!paths[@]}"; do
 
   if [[ $can_reclaim -eq 1 ]]; then
     if [[ $APPLY -eq 1 ]]; then
-      [[ $locked -eq 1 ]] && git worktree unlock "$path" 2>/dev/null || true
-      cache_ok=1
-      for d in "${CACHE_DIRS[@]}"; do
-        rm -rf "${path:?}/$d" 2>/dev/null || cache_ok=0
-      done
-      if [[ $cache_ok -eq 0 ]]; then
-        verdict="缓存清理失败（权限/挂载问题？）→ 交人工"
-      elif git worktree remove "$path" 2>/dev/null; then
-        [[ -n "$branch" ]] && git branch -D "$branch" >/dev/null 2>&1 || true
-        verdict="已回收（PR MERGED，本地分支已删）"
-        reclaimed=$((reclaimed + 1))
-        freed_hint="$freed_hint $size"
+      # 删除前对当前候选重扫 /proc，防止启动快照与删除之间的 TOCTOU
+      if busy_live "$path_real"; then
+        verdict="BUSY（删除前复扫发现进程引用）→ 交人工"
       else
-        verdict="remove 被拒 → 交人工"
+        [[ $locked -eq 1 ]] && git worktree unlock "$path" 2>/dev/null || true
+        cache_ok=1
+        for d in "${CACHE_DIRS[@]}"; do
+          rm -rf "${path:?}/$d" 2>/dev/null || cache_ok=0
+        done
+        if [[ $cache_ok -eq 0 ]]; then
+          verdict="缓存清理失败（权限/挂载问题？）→ 交人工"
+        elif git worktree remove "$path" 2>/dev/null; then
+          if [[ -z "$branch" ]]; then
+            verdict="已回收（PR MERGED，无本地分支）"
+            reclaimed=$((reclaimed + 1))
+            freed_hint="$freed_hint $size"
+          else
+            branch_del_ok=1
+            if ! git branch -D "$branch" >/dev/null 2>&1; then
+              branch_del_ok=0
+            fi
+            if [[ $branch_del_ok -eq 1 ]] && ! git show-ref --verify --quiet "refs/heads/$branch"; then
+              verdict="已回收（PR MERGED，本地分支已删）"
+              reclaimed=$((reclaimed + 1))
+              freed_hint="$freed_hint $size"
+            else
+              # 树已移除但本地分支仍在：部分完成，不计完整回收
+              verdict="已移除 worktree 但本地分支删除失败（$branch 仍在）→ 交人工"
+              partial=$((partial + 1))
+            fi
+          fi
+        else
+          verdict="remove 被拒 → 交人工"
+        fi
       fi
     fi
   fi
@@ -363,7 +533,7 @@ for i in "${!paths[@]}"; do
       verdict="$verdict + ignored 查询失败 → 不 clean（交人工）"
     elif [[ $unsafe_rc -ne 0 ]]; then
       verdict="$verdict + 存在非缓存 ignored/untracked（$unsafe_reason）→ 不 clean（交人工）"
-    elif [[ -d "$path/server/target" || -d "$path/client/build" || -d "$path/client/.gradle" ]]; then
+    elif cache_dir_present "$path"; then
       if [[ $APPLY -eq 1 ]]; then
         artifacts_ok=1
         for d in "${CACHE_DIRS[@]}"; do
@@ -386,7 +556,7 @@ done
 if [[ $APPLY -eq 1 ]]; then
   git worktree prune
   echo "---"
-  echo "已回收 $reclaimed 个 worktree（各自大小:${freed_hint:- 无}）；已执行 git worktree prune"
+  echo "已回收 $reclaimed 个 worktree（各自大小:${freed_hint:- 无}）；部分完成 $partial 个；已执行 git worktree prune"
 fi
 
 echo "---"
