@@ -36,13 +36,11 @@ check_not() { # 命令为假 = PASS
 }
 
 # ---- 可配置 fake gh ----
+# 模拟真实 gh：默认返回完整 head 集合（不按 --base 服务端过滤）。
+# 实现侧必须不带 --base 拉全集，再本地 fail-closed。
 # FAKE_GH_MODE:
-#   fail      → 非零退出
-#   multi     → 返回 MERGED+OPEN 两条
-#   nonmain   → 返回 base=develop 的 MERGED
-#   badfields → 字段缺失
-#   notjson   → 非 JSON
-#   默认按分支名前缀返回恰好一条 base=main 的结果
+#   fail / multi / nonmain / badfields / emptyoid / nulloid / notjson / dualbase
+# dualbase: 同 head 同时有 MERGED@main + MERGED@develop（真实 --base main 会隐藏 develop）
 mkdir -p "$SANDBOX/bin"
 cat > "$SANDBOX/bin/gh" <<'FAKEGH'
 #!/usr/bin/env bash
@@ -52,31 +50,28 @@ if [[ "${FAKE_GH_MODE:-}" == "fail" ]]; then
 fi
 branch=""
 prev=""
+has_base=0
+base_val=""
 for a in "$@"; do
   [[ "$prev" == "--head" ]] && branch="$a"
-  prev="$a"
-done
-# 必须看到 --base main（契约：查询限定 main）
-has_base_main=0
-prev=""
-for a in "$@"; do
-  if [[ "$prev" == "--base" && "$a" == "main" ]]; then
-    has_base_main=1
+  if [[ "$prev" == "--base" ]]; then
+    has_base=1
+    base_val="$a"
   fi
   prev="$a"
 done
-if [[ $has_base_main -eq 0 ]]; then
-  echo "fake-gh: missing --base main" >&2
+# 契约：实现不得用 --base 隐藏其它 base 的 PR；带 --base 则 fake 非零，逼实现改查询
+if [[ $has_base -eq 1 ]]; then
+  echo "fake-gh: unexpected --base $base_val (must query full head set without --base)" >&2
   exit 2
 fi
-# 必须请求完整字段（fake 侧锁契约：缺任一字段 → 非零，避免测试假绿）
+# 必须请求完整字段
 json_fields=""
 prev=""
 for a in "$@"; do
   [[ "$prev" == "--json" ]] && json_fields="$a"
   prev="$a"
 done
-# gh --json 字段以逗号分隔；逐字段精确匹配
 IFS=',' read -r -a _jf_arr <<< "$json_fields"
 for need in number state baseRefName headRefOid; do
   found=0
@@ -95,6 +90,14 @@ case "${FAKE_GH_MODE:-}" in
 EOF
     exit 0
     ;;
+  dualbase)
+    # 同 head：main MERGED + develop MERGED。真实 gh --base main 只会返回第一条，
+    # 隐藏 develop；本 fake 返回全集，要求实现本地看见多结果 → UNKNOWN
+    cat <<EOF
+[{"number":10,"state":"MERGED","baseRefName":"main","headRefOid":"ddd"},{"number":11,"state":"MERGED","baseRefName":"develop","headRefOid":"eee"}]
+EOF
+    exit 0
+    ;;
   nonmain)
     cat <<EOF
 [{"number":9,"state":"MERGED","baseRefName":"develop","headRefOid":"ccc"}]
@@ -108,7 +111,6 @@ EOF
     exit 0
     ;;
   emptyoid)
-    # number/state/base 齐全但 headRefOid 空 → 实现必须 UNKNOWN
     cat <<EOF
 [{"number":201,"state":"MERGED","baseRefName":"main","headRefOid":""}]
 EOF
@@ -125,7 +127,7 @@ EOF
     exit 0
     ;;
 esac
-# 默认：按分支名前缀返回恰好一条 base=main
+# 默认：按分支名前缀返回完整集合（不服务端过滤 base）
 case "$branch" in
   merged-*)
     cat <<EOF
@@ -143,9 +145,13 @@ EOF
 EOF
     ;;
   multi-*)
-    # 分支名也可触发 multi
     cat <<EOF
 [{"number":1,"state":"MERGED","baseRefName":"main","headRefOid":"aaa"},{"number":2,"state":"OPEN","baseRefName":"main","headRefOid":"bbb"}]
+EOF
+    ;;
+  dualbase-*)
+    cat <<EOF
+[{"number":10,"state":"MERGED","baseRefName":"main","headRefOid":"ddd"},{"number":11,"state":"MERGED","baseRefName":"develop","headRefOid":"eee"}]
 EOF
     ;;
   nonmain-*)
@@ -188,7 +194,7 @@ stamp_commit() {
   # stamp_commit <worktree> <days_ago> <msg>：在 worktree 上做 empty commit 并 push
   local wt="$1" days="$2" msg="$3"
   local ts
-  ts=$(date -d "@$(( $(date +%s) - days*86400 - 3600 ))" -R)
+  ts=$(date -d "@$(( $(date +%s) - days*86400 - 7200 ))" -R)
   GIT_AUTHOR_DATE="$ts" GIT_COMMITTER_DATE="$ts" \
     git -C ".agent-worktrees/$wt" commit --allow-empty -qm "$msg"
   git -C ".agent-worktrees/$wt" push -q origin "HEAD:$(git -C ".agent-worktrees/$wt" rev-parse --abbrev-ref HEAD)"
@@ -320,6 +326,65 @@ git -C ".agent-worktrees/wt-merged-squash-extra" commit -qm "extra after squash"
 new_wt wt-multi multi-head
 new_wt wt-nonmain nonmain-merged
 
+
+# ---- branch-only merge：非 merge patch 已 patch-equivalent 进 main，但 branch 仍有 merge ----
+# 这是 git cherry 的经典盲区：cherry 全为 - / 空，但 origin/main..branch 含 merge commit
+# （含 conflict resolution 的独有 tree 风险）。实现必须 fail-closed 保留。
+git checkout -q main
+git worktree add -q -b merged-mergeonly ".agent-worktrees/wt-merged-mergeonly" main
+echo mergeonly-feat > ".agent-worktrees/wt-merged-mergeonly/mergeonly-feat.txt"
+git -C ".agent-worktrees/wt-merged-mergeonly" add -A
+git -C ".agent-worktrees/wt-merged-mergeonly" commit -qm "mergeonly feature"
+# main 前进 + squash 合入 feature patch
+echo main-adv-for-mergeonly > main-adv-mergeonly.txt
+git add main-adv-mergeonly.txt
+git commit -qm "main advances before squash"
+git merge --squash merged-mergeonly
+git commit -qm "squash mergeonly feature into main"
+git push -q origin main
+git fetch -q origin
+# 分支 merge 新 main → 产生仅存在于 branch 的 merge commit
+git -C ".agent-worktrees/wt-merged-mergeonly" merge -q -m "branch-only merge of main" origin/main
+# 在 merge 上制造独有 conflict-resolution 树：再开旁支冲突合入
+git checkout -q -b side-conflict-for-mergeonly main
+echo conflict-side > conflict-res.txt
+git add conflict-res.txt
+git commit -qm "side conflict tip"
+git checkout -q main
+echo conflict-main > conflict-res.txt
+git add conflict-res.txt
+git commit -qm "main conflict tip"
+git push -q origin main
+git fetch -q origin
+git -C ".agent-worktrees/wt-merged-mergeonly" merge -q origin/main || true
+# 若无冲突，强制写 unique resolution 并作为 merge 结果提交
+if git -C ".agent-worktrees/wt-merged-mergeonly" rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  echo conflict-UNIQUE-resolution > ".agent-worktrees/wt-merged-mergeonly/conflict-res.txt"
+  git -C ".agent-worktrees/wt-merged-mergeonly" add -A
+  git -C ".agent-worktrees/wt-merged-mergeonly" commit -qm "branch-only merge unique resolution"
+else
+  # 干净 merge 后仍追加一个 merge from side 制造 merge commit
+  git -C ".agent-worktrees/wt-merged-mergeonly" merge -q -m "branch-only merge side" side-conflict-for-mergeonly || true
+  if git -C ".agent-worktrees/wt-merged-mergeonly" rev-parse -q --verify MERGE_HEAD >/dev/null; then
+    echo conflict-UNIQUE-resolution > ".agent-worktrees/wt-merged-mergeonly/conflict-res.txt"
+    git -C ".agent-worktrees/wt-merged-mergeonly" add -A
+    git -C ".agent-worktrees/wt-merged-mergeonly" commit -qm "branch-only merge unique resolution"
+  fi
+fi
+git -C ".agent-worktrees/wt-merged-mergeonly" push -q origin merged-mergeonly
+git fetch -q origin
+# 把 side 非 merge patch 也弄进 main，尽量让 cherry 干净，只剩 merge 盲区
+git checkout -q main
+# main 已有 conflict-main；side 的 tip 不进 main，但我们把 side 的文件内容用另一路径吸收非必要
+# 关键：至少保证存在 merge commit；若 cherry 仍有 + 也必须保留
+MERGE_ONLY_MERGES=$(git rev-list --merges origin/main..merged-mergeonly | wc -l)
+[[ "$MERGE_ONLY_MERGES" -ge 1 ]] || { echo "setup failed: no branch-only merge on merged-mergeonly" >&2; exit 1; }
+echo "mergeonly merges=$MERGE_ONLY_MERGES cherry=$(git cherry origin/main merged-mergeonly | wc -l) plus=$(git cherry origin/main merged-mergeonly | grep -c '^+')||true)"
+git checkout -q main
+
+# dualbase head 名
+new_wt wt-dualbase dualbase-head
+
 # ========== 0. --help ==========
 echo "== 0. --help 输出顶部注释块"
 help_out=$(bash "$JANITOR" --help)
@@ -337,7 +402,8 @@ check "open-idle 产物仍在"             test -f ".agent-worktrees/wt-open-idl
 check "报告标出可回收(patch 等价)"     grep -q "可回收（PR 已 MERGED，patch 已等价合入 origin/main）" <<<"$out"
 check "报告标出 squash 等价可回收"     grep -q "squash/patch 已等价合入 origin/main" <<<"$out"
 check "报告 remote-only 未合入交人工"  grep -q "远端可达不能证明已进 main" <<<"$out"
-check "报告 post-extra 未合入交人工"   grep -qE "未合入 origin/main 的 patch|远端可达不能证明" <<<"$out"
+check "报告 post-extra 未合入交人工"   grep -qE "未合入 origin/main 的 patch|远端可达不能证明|patch/merge" <<<"$out"
+check "报告 mergeonly 未合入交人工"    grep -qE "patch/merge|未合入" <<<"$out"
 check "报告标出未合入 patch 交人工"    grep -q "未合入 patch" <<<"$out"
 check "报告标出脏树交人工"             grep -q "PR 已 MERGED 但工作区不干净 → 交人工" <<<"$out"
 check "报告标出 .env ignored 交人工"   grep -q "非缓存 ignored/untracked" <<<"$out"
@@ -345,6 +411,8 @@ check "报告标出 CLOSED 交人工"         grep -q "PR 已 CLOSED（未 merge
 check "报告 multi 为 UNKNOWN"          grep -q "UNKNOWN" <<<"$out"
 check "slot-* 被跳过"                  grep -q "SLOT（常驻保温，跳过" <<<"$out"
 check ".env 文件仍在"                  test -f ".agent-worktrees/wt-merged-env/.env"
+check_not "mergeonly 不可回收正例"     grep -qE "wt-merged-mergeonly.*可回收" <<<"$out"
+check_not "dualbase 不可回收正例"      grep -qE "wt-dualbase.*可回收" <<<"$out"
 
 # ========== 2. clean-artifacts 不带 apply ==========
 echo "== 2. --clean-artifacts 不带 --apply：只报告待清，不删"
@@ -365,13 +433,21 @@ wait "$SLEEPER_PID" 2>/dev/null || true
 SLEEPER_PID=""
 
 # ========== 3b. 删除前 busy 复扫（TOCTOU seam）==========
-echo "== 3b. 删除前 busy 复扫注入"
+echo "== 3b. 删除前 busy 复扫注入（cwd/fd/rel_argv 语义）"
 # 启动时不 busy，但 APPLY 删除前注入
 CLEAN_ABS=$(realpath ".agent-worktrees/wt-merged-clean")
 out=$(WT_JANITOR_BUSY_INJECT="$CLEAN_ABS" bash "$JANITOR" --apply)
 check "pre-delete busy：树保留"        test -d ".agent-worktrees/wt-merged-clean"
 check "pre-delete busy：分支保留"      git show-ref -q "refs/heads/merged-clean"
 check "pre-delete busy：报告交人工"    grep -q "删除前复扫发现进程引用" <<<"$out"
+# fd 语义注入（实现扫 /proc/*/fd；seam 确定性覆盖该路径）
+out=$(WT_JANITOR_BUSY_INJECT="$CLEAN_ABS" WT_JANITOR_BUSY_INJECT_MODE=fd bash "$JANITOR" --apply)
+check "pre-delete fd inject：树保留"   test -d ".agent-worktrees/wt-merged-clean"
+check "pre-delete fd inject：报告BUSY" grep -q "删除前复扫发现进程引用" <<<"$out"
+# rel_argv 语义注入
+out=$(WT_JANITOR_BUSY_INJECT="$CLEAN_ABS" WT_JANITOR_BUSY_INJECT_MODE=rel_argv bash "$JANITOR" --apply)
+check "pre-delete rel_argv：树保留"    test -d ".agent-worktrees/wt-merged-clean"
+check "pre-delete rel_argv：报告BUSY"  grep -q "删除前复扫发现进程引用" <<<"$out"
 
 # ========== 4. --apply 主路径 ==========
 echo "== 4. --apply：安全 MERGED 可回收；危险态一律保留"
@@ -386,6 +462,10 @@ check "wt-merged-remote-only 保留"     test -d ".agent-worktrees/wt-merged-rem
 check "merged-remote-only 分支保留"    git show-ref -q "refs/heads/merged-remote-only"
 check "wt-merged-postextra 保留"       test -d ".agent-worktrees/wt-merged-postextra"
 check "merged-postextra 分支保留"      git show-ref -q "refs/heads/merged-postextra"
+check "wt-merged-mergeonly 保留"       test -d ".agent-worktrees/wt-merged-mergeonly"
+check "merged-mergeonly 分支保留"      git show-ref -q "refs/heads/merged-mergeonly"
+check "unique resolution 仍在"         test -f ".agent-worktrees/wt-merged-mergeonly/conflict-res.txt" || test -f ".agent-worktrees/wt-merged-mergeonly/mergeonly-feat.txt"
+check "wt-dualbase 保留"               test -d ".agent-worktrees/wt-dualbase"
 check "wt-merged-ahead 保留"           test -d ".agent-worktrees/wt-merged-ahead"
 check "merged-ahead 分支保留"          git show-ref -q "refs/heads/merged-ahead"
 check "wt-merged-dirty 保留"           test -d ".agent-worktrees/wt-merged-dirty"
@@ -471,11 +551,17 @@ check "emptyoid：报告 UNKNOWN"         grep -q "UNKNOWN" <<<"$out"
 export FAKE_GH_MODE=nulloid
 out=$(bash "$JANITOR" --apply)
 check "nulloid：报告 UNKNOWN"          grep -q "UNKNOWN" <<<"$out"
+export FAKE_GH_MODE=dualbase
+out=$(bash "$JANITOR" --apply)
+check "dualbase 模式：树保留"          test -d ".agent-worktrees/wt-dualbase"
+check "dualbase 模式：报告 UNKNOWN"    grep -q "UNKNOWN" <<<"$out"
+check "dualbase 模式：分支保留"        git show-ref -q "refs/heads/dualbase-head"
 export FAKE_GH_MODE=""
-# 分支名触发 multi/nonmain（与 FAKE_GH_MODE 解耦）
+# 分支名触发 multi/nonmain/dualbase（与 FAKE_GH_MODE 解耦）
 out=$(bash "$JANITOR")
 check "multi-head 报告 UNKNOWN"        grep -qE "wt-multi.*UNKNOWN|UNKNOWN.*wt-multi" <<<"$out" || grep -q "UNKNOWN" <<<"$out"
 check "nonmain-merged 报告 UNKNOWN"    grep -q "UNKNOWN" <<<"$out"
+check "dualbase-head 报告 UNKNOWN"     grep -q "UNKNOWN" <<<"$out"
 
 # ========== 8. HAVE_GH=0 ==========
 echo "== 8. HAVE_GH=0 → UNKNOWN 且不 clean/reclaim"
@@ -610,6 +696,29 @@ check "对照后 OPEN+.env 密钥仍在"      test -f ".agent-worktrees/wt-open-
 check "对照后 OPEN+.env cache 仍在"    test -f ".agent-worktrees/wt-open-env/server/target/blob"
 check "对照后 NO_PR+log 日志仍在"      test -f ".agent-worktrees/wt-nopr-log/agent.secret.log"
 check "对照后 NO_PR+log cache 仍在"    test -f ".agent-worktrees/wt-nopr-log/client/build/blob"
+
+
+# ========== 14. 真实 fd 占用：打开树内文件的进程挡住删除 ==========
+echo "== 14. 真实 /proc/fd 指向树内 → BUSY"
+setup_normal_merged wt-merged-fdhold merged-fdhold
+# hold 放在 allowlist cache 内，避免 dirty/unsafe 门挡住 reclaim 路径
+mkdir -p ".agent-worktrees/wt-merged-fdhold/server/target"
+FDHOLD_FILE=$(realpath ".agent-worktrees/wt-merged-fdhold/server/target")/hold.bin
+echo hold > "$FDHOLD_FILE"
+# 子进程保持 fd 打开，cwd 在树外（只靠 fd 探测）
+( cd /tmp && exec 9<"$FDHOLD_FILE" && sleep 300 ) &
+SLEEPER_PID=$!
+sleep 0.25
+out=$(bash "$JANITOR" --apply)
+check "fdhold 树未被回收"              test -d ".agent-worktrees/wt-merged-fdhold"
+check "fdhold 报告 BUSY 或删除前复扫"  bash -c 'grep -qE "BUSY|删除前复扫" <<<"$1"' _ "$out"
+kill "$SLEEPER_PID" 2>/dev/null || true
+wait "$SLEEPER_PID" 2>/dev/null || true
+SLEEPER_PID=""
+# 释放后应可回收
+out=$(bash "$JANITOR" --apply)
+check "fd 释放后 fdhold 已回收"        test ! -d ".agent-worktrees/wt-merged-fdhold"
+check "fd 释放后分支已删"              bash -c '! git show-ref -q refs/heads/merged-fdhold'
 
 echo "---"
 echo "PASS=$PASS FAIL=$FAIL"
