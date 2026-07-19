@@ -1943,9 +1943,7 @@ mod tests {
             .world()
             .resource::<Events<VfxEventRequest>>()
             .iter_current_update_events()
-            .filter(|request| {
-                matches!(&request.payload, VfxEventPayloadV1::SpawnParticle { .. })
-            })
+            .filter(|request| matches!(&request.payload, VfxEventPayloadV1::SpawnParticle { .. }))
             .count();
         assert_eq!(particles, 1, "护体粒子环应照发");
     }

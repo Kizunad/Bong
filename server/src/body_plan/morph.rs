@@ -987,7 +987,11 @@ mod tests {
                         // plan-skill-anim-fidelity-v1 P3：morph_cast 重制为瞬发结算
                         // 型 20t（顶点=tick 0），粒子 lifetime 随动画 endTick 对齐
                         // （表现层伴随参数，plan §8.1 #1 第 3 条）。
-                        assert_eq!(*duration_ticks, Some(20), "lifetime 随 P3 动画 endTick=20 对齐");
+                        assert_eq!(
+                            *duration_ticks,
+                            Some(20),
+                            "lifetime 随 P3 动画 endTick=20 对齐"
+                        );
                     }
                     other => panic!("易形粒子事件应为 SpawnParticle 变体，实际 {other:?}"),
                 }

@@ -245,11 +245,7 @@ pub fn cast_full_power_charge(
             emit_audio(world, "charge_start", pos);
             // P3 借用解除：专属抱脉蓄力循环段（原借通用 windup_charge），StopAnim
             // 侧共享同一常量（full_power_emit.rs 释放/打断双路）。
-            emit_anim(
-                world,
-                caster,
-                full_power_strike::FULL_POWER_CHARGE_ANIM_ID,
-            );
+            emit_anim(world, caster, full_power_strike::FULL_POWER_CHARGE_ANIM_ID);
         }
     }
     result
@@ -317,11 +313,7 @@ pub fn cast_full_power_release(
         if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
             emit_audio(world, "charge_release", pos);
             // P3 借用解除：专属崩拳双锤释放段（原借通用 release_burst 4t 模板）。
-            emit_anim(
-                world,
-                caster,
-                full_power_strike::FULL_POWER_RELEASE_ANIM_ID,
-            );
+            emit_anim(world, caster, full_power_strike::FULL_POWER_RELEASE_ANIM_ID);
         }
     }
     result

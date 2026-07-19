@@ -130,6 +130,12 @@ def main() -> int:
             "快举左臂盾贴防（pitch -80 / bend 110 / 沉桩）→ hold 段呼吸微晃"
             "（body.y -0.045↔-0.062 / 盾臂 roll +6↔+11 / 头微俯仰），t18 ≡ t6 "
             "闭合。三路 StopAnim（松盾/死亡/体力耗尽）既有接线不变。"
+            "<PROMISE>本动画已按视觉资产纪律 3 轮打磨（plan-skill-anim-fidelity-v1 "
+            "P3：round 1 参数化重制 / round 2 render_animation.py 三视图目检+机械"
+            "四查 / round 3 决定性再生成校验）。已检查[raise→hold 衔接、hold 段 "
+            "t6≡t18 闭合防单帧衰减、returnTick 回绕无缝、leg.pitch≤40°、easing "
+            "显式非 linear、密度≤4t]。仍存局限[stick-figure 渲染无法验证盾模型"
+            "与手臂的贴合，实机 TPV 复核归 P6]</PROMISE>"
         ),
         end_tick=18,
         stop_tick=21,
