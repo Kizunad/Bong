@@ -1,0 +1,9 @@
+{
+  "segment": "charge_hold",
+  "expected_end_tick": 60,
+  "primary_axes": [
+    "rightArm.pitch",
+    "leftArm.pitch",
+    "torso.pitch"
+  ]
+}
