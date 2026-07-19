@@ -1,15 +1,13 @@
 {
-  "anticipation": [
+  "instant": true,
+  "strike_peak_tick": 0,
+  "strike": [
     0,
     2
   ],
-  "strike": [
-    2,
-    8
-  ],
   "recovery": [
-    8,
-    20
+    2,
+    14
   ],
   "strike_axes": [
     "rightArm.pitch",

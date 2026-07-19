@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
-"""sword_manifest_cast —— 剑意化形：疾凝送出→目送余韵（P2 批次二后半，review 返工重做）。
+"""sword_manifest_cast —— 剑意化形：t0 送出命中→目送余韵（P2 后半，review r2 定形）。
 
 cast_ticks=40 是**元数据**：`cast_manifest`（skill_register.rs）在 cast 起始
-tick 立即 spawn SwordIntentEntity 追击实体、无引导窗。返工前的 46t 版本把化形
-送出顶点放在 tick 40，而化形剑 tick 0 已在场上飞——表演/结算脱节（PR #1240
-review blocker）。本版遵循「动画 strike 顶点对齐真实结算点」：20t 非循环，
-顶点 = tick 6（紧贴 tick 0 结算），凝形微颤保留在压缩的拉开段、目送余韵拉长。
-时长对拍 allowlist 条目保留（endTick=20 与 cast=40 元数据错配如实驻表）。
+tick 立即 spawn SwordIntentEntity 追击实体。r1 返工版仍留 2t anticipation
+（顶点 t6），r2 review 裁定违反「瞬发结算型 strike 顶点=tick 0」跨端时序契约
+——化形剑 tick 0 已在场上飞，动画开帧就必须是送出姿态。本版 **tick 0 即翻腕
+送出顶点**，其后只承担目送余韵与收势。契约由 instant spec manifest
+（strike_peak_tick=0）+ AnimCastTicksAlignmentTest INSTANT_RESOLVER_SKILLS
+分类 pin 机械锁定，不再驻 CAST_ALIGNMENT_ALLOWLIST。
 
-母题：疾凝送出。双掌急合胸前（0→2 快速 anticipation，掌间凝剑意），竖轴急
-拉开凝形（t4 上掌抬/下掌沉、剑身瞬间成形），右手翻腕虚握一送——化形剑离手
-（顶点 t6），随后长目送余韵（头随剑意望远、双臂缓落，t9→t17）收势。与
-heaven_gate（高举过顶蓄力）/ 基础剑招（持实剑挥斩）动向完全区分。
+母题：送出目送。开帧即右手翻腕虚握前送（化形剑离手、躯干甩转 +14、弓步
+body.z +0.16），随后长目送余韵（头随剑意抬望远方 head.pitch -12、双臂缓落，
+t5→t11）收势归中立。与 heaven_gate（高举过顶蓄力）/ 基础剑招（持实剑挥斩）
+动向完全区分。
 
-时序（精度标准 #1/#2/#3）：
-  anticipation 0→2   疾合：双掌急合胸前、俯首注视掌间
-  strike       2→8   凝形送出：t4 竖轴急拉开（右掌 -98 / 左掌 -26）→ t6 翻腕
-                     虚握前送顶点（rightArm pitch -92 前指 / torso.yaw +14 /
-                     body.z +0.16，INQUAD）→ t8 送出定格
-  recovery     8→20  目送余韵：t11 头随剑意抬望（head.pitch -12）→ t14 双臂
-                     缓落 → t17 直身 → t20 归中立（INOUTSINE）
-endTick=20，stopTick=22，非循环。主打击轴：rightArm.pitch / leftArm.pitch /
-torso.yaw / body.z（全程 ≤3t 帧距）。
+时序（instant 契约 + 精度标准 #3）：
+  strike    0→2   t0 翻腕送出顶点（rightArm pitch -92 前指 / torso.yaw +14 /
+                  body.z +0.16）→ t2 送出定格
+  recovery  2→14  t5 目送 A（head.pitch -12 随剑意望远）→ t8 双臂缓落 →
+                  t11 直身 → t14 归中立（INOUTSINE）
+endTick=14，stopTick=16，非循环。主打击轴：rightArm.pitch / leftArm.pitch /
+torso.yaw / body.z（全程 ≤3t 帧距，t0 全轴落帧）。
 """
 
 from __future__ import annotations
@@ -29,42 +28,9 @@ from __future__ import annotations
 from anim_common import emit_json
 
 POSE = {
-    # 疾合起手：双掌急合胸前、俯首。
+    # t0 = 翻腕送出顶点（与 spawn SwordIntentEntity 同帧）：化形剑离手飞出。
     0: dict(
         easing="OUTQUAD",
-        body=dict(x=0.0, y=-0.02, z=-0.02),
-        head=dict(pitch=+9, yaw=0),
-        torso=dict(pitch=+5, yaw=-2),
-        rightArm=dict(pitch=-62, yaw=-24, roll=-10, bend=66, axis=180),
-        leftArm=dict(pitch=-58, yaw=+26, roll=+10, bend=62, axis=180),
-        leftLeg=dict(pitch=-6, bend=8, z=-0.03),
-        rightLeg=dict(pitch=+5, bend=7, z=+0.02),
-    ),
-    # 合紧微沉：掌间凝意到最紧。
-    2: dict(
-        easing="INQUAD",
-        body=dict(x=0.0, y=-0.04, z=-0.03),
-        head=dict(pitch=+12, yaw=0),
-        torso=dict(pitch=+7, yaw=-4),
-        rightArm=dict(pitch=-66, yaw=-30, roll=-14, bend=76, axis=180),
-        leftArm=dict(pitch=-62, yaw=+32, roll=+14, bend=72, axis=180),
-        leftLeg=dict(pitch=-9, bend=12, z=-0.04),
-        rightLeg=dict(pitch=+7, bend=10, z=+0.03),
-    ),
-    # 竖轴急拉开凝形：上掌抬、下掌沉，剑身瞬间「拉长成形」。
-    4: dict(
-        easing="INQUAD",
-        body=dict(x=0.0, y=-0.03, z=0.0),
-        head=dict(pitch=+6, yaw=0),
-        torso=dict(pitch=+5, yaw=-2),
-        rightArm=dict(pitch=-98, yaw=-16, roll=-20, bend=30, axis=180),
-        leftArm=dict(pitch=-26, yaw=+20, roll=+16, bend=34, axis=180),
-        leftLeg=dict(pitch=-10, bend=13, z=-0.05),
-        rightLeg=dict(pitch=+8, bend=11, z=+0.04),
-    ),
-    # 翻腕虚握前送顶点（紧贴 tick 0 结算点）：化形剑离手飞出。
-    6: dict(
-        easing="INQUAD",
         body=dict(x=-0.01, y=-0.02, z=+0.16),
         head=dict(pitch=-2, yaw=+4),
         torso=dict(pitch=+8, yaw=+14),
@@ -74,7 +40,7 @@ POSE = {
         rightLeg=dict(pitch=+14, bend=16, z=+0.06),
     ),
     # 送出定格：臂保持前指、剑意远去。
-    8: dict(
+    2: dict(
         easing="OUTSINE",
         body=dict(x=-0.01, y=-0.02, z=+0.14),
         head=dict(pitch=-6, yaw=+3),
@@ -85,7 +51,7 @@ POSE = {
         rightLeg=dict(pitch=+13, bend=15, z=+0.06),
     ),
     # 目送 A：头随剑意抬望远方、前指臂微落。
-    11: dict(
+    5: dict(
         easing="INOUTSINE",
         body=dict(x=-0.01, y=-0.01, z=+0.10),
         head=dict(pitch=-12, yaw=+2),
@@ -96,7 +62,7 @@ POSE = {
         rightLeg=dict(pitch=+10, bend=12, z=+0.04),
     ),
     # 目送 B：双臂缓落。
-    14: dict(
+    8: dict(
         easing="INOUTSINE",
         body=dict(x=0.0, y=-0.01, z=+0.06),
         head=dict(pitch=-8, yaw=+1),
@@ -107,7 +73,7 @@ POSE = {
         rightLeg=dict(pitch=+7, bend=8, z=+0.03),
     ),
     # 直身。
-    17: dict(
+    11: dict(
         easing="INOUTSINE",
         body=dict(x=0.0, y=0.0, z=+0.02),
         head=dict(pitch=-3, yaw=0),
@@ -118,7 +84,7 @@ POSE = {
         rightLeg=dict(pitch=+3, bend=4, z=+0.01),
     ),
     # 归中立。
-    20: dict(
+    14: dict(
         easing="INOUTSINE",
         body=dict(x=0.0, y=0.0, z=0.0),
         head=dict(pitch=0, yaw=0),
@@ -136,15 +102,13 @@ def main() -> int:
         POSE,
         name="sword_manifest_cast",
         description=(
-            "P2 剑意化形专属（20t 非循环，strike 顶点 t6 对齐瞬发结算点——"
-            "cast_manifest tick 0 即 spawn SwordIntentEntity；cast_ticks=40 为"
-            "元数据、错配如实驻 allowlist）：anticipation 0→2 双掌疾合，strike "
-            "2→8 竖轴急拉开凝形→翻腕虚握前送（pitch -92 / torso.yaw +14 / "
-            "body.z +0.16），recovery 8→20 目送余韵（head.pitch -12 随剑意望远）"
-            "→归中立。"
+            "P2 剑意化形专属（14t 非循环，instant 契约：strike 顶点=tick 0 与 "
+            "cast_manifest spawn SwordIntentEntity 同帧；cast_ticks=40 为元数据）："
+            "t0 翻腕送出顶点（pitch -92 / torso.yaw +14 / body.z +0.16），"
+            "recovery 2→14 目送余韵（head.pitch -12 随剑意望远）→收势归中立。"
         ),
-        end_tick=20,
-        stop_tick=22,
+        end_tick=14,
+        stop_tick=16,
         is_loop=False,
     )
     return 0

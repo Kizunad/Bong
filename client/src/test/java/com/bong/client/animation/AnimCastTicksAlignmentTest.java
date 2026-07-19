@@ -160,21 +160,31 @@ class AnimCastTicksAlignmentTest {
         // plan-bughunt-woliu-resonance-loop-arm-decay-v1**（本 plan 防重声明明确
         // 排除，标准只防再犯），该 bugfix merge 后删本条目。
         "woliu.vortex_resonance",
-        // P2 后半处置（review 返工定形，plan 附录 A）：armor_pierce（cast=40）/
-        // echo_fractal（cast=60）/ sword_path.manifest（cast=40）三招为
-        // **瞬发结算型**——resolver 在 cast 起始 tick 立即结算、无真实引导窗
-        // （anqi_v2.rs resolve_anqi_skill / skill_register.rs cast_manifest），
-        // cast_ticks 是元数据。动画按「strike 顶点对齐真实结算点」交付
-        // （18/24/20t，顶点 t6/t4/t6 紧贴 tick 0 结算），isLoop 两段式在无停止
-        // 信号的通道上不可挂（会永久循环）。endTick 与 cast_ticks 元数据错配
-        // 如实驻表；清零出路 = cast 通道真实化（gameplay 变更，超出本 plan
-        // §8.1 #1 纯表现层边界，需独立决议）或元数据修正，P6 收口时裁决。
-        "anqi.armor_pierce", "anqi.echo_fractal", "sword_path.manifest",
+        // P2 后半 review r2 定形：armor_pierce / echo_fractal / sword_path.manifest
+        // 三招移出本表——它们不再是「豁免」而是**瞬发结算型分类契约**
+        // （{@link #INSTANT_RESOLVER_SKILLS}：resolver 在 cast 起始 tick 立即结算
+        // → strike 顶点必须=tick 0，instant spec manifest + 专属 pin 测试机械锁定，
+        // cast_ticks 为元数据不参与时长对拍）。
         // heaven_gate：动画对齐 60t 充能相位（HEAVEN_GATE_CHARGE_END）而非
         // cast_ticks=80 总窗，charge 段非循环 hold-末帧（定长充能相位全对齐、
-        // 末帧=release 交接帧，segment manifest 锁密度）；与 isLoop 正典的统一
-        // 归 P6 注记（P2 密度精修已交付）。
+        // 末帧=release 交接帧，charge_hold segment manifest 锁密度）；与 isLoop
+        // 正典的统一归 P6 注记（P2 密度精修已交付）。
         "sword_path.heaven_gate", "morph.yixing");
+
+    /**
+     * 瞬发结算型 resolver 招（review r2 分类契约，plan 附录 A）：gameplay 在
+     * cast 起始 tick 立即结算（`resolve_anqi_skill` / `cast_manifest` 无
+     * `Casting`、无 timer、无打断窗），cast_ticks 是元数据非施法窗。跨端时序
+     * 契约 = **动画 strike 顶点与结算同帧（tick 0）**——开帧即命中姿态，其后
+     * 只承担余韵与收势；由 instant spec manifest（strike_peak_tick=0）+
+     * {@link #instantResolverSkillsPinStrikePeakAtTickZero()} 机械锁定。该类招
+     * 不走 cast_ticks 时长对拍（元数据错配无意义），也不驻 allowlist（分类
+     * 契约取代豁免）。新招入类前必须核验 resolver 确为立即结算。
+     */
+    private static final Map<String, String> INSTANT_RESOLVER_SKILLS = Map.of(
+        "anqi.armor_pierce", "anqi_armor_pierce",
+        "anqi.echo_fractal", "anqi_echo_fractal",
+        "sword_path.manifest", "sword_manifest_cast");
 
     /** 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。 */
     private static final Set<String> MISSING_ANIM_ALLOWLIST =
@@ -386,7 +396,10 @@ class AnimCastTicksAlignmentTest {
             if (SUSTAINED_LOOP_EXCEPTIONS.contains(skillId)
                 || LONG_FORM_EXCEPTIONS.contains(skillId)
                 || CAST_ALIGNMENT_ALLOWLIST.contains(skillId)
-                || MISSING_ANIM_ALLOWLIST.contains(skillId)) {
+                || MISSING_ANIM_ALLOWLIST.contains(skillId)
+                // 瞬发结算型分类契约：不走 cast_ticks 时长对拍，由
+                // instantResolverSkillsPinStrikePeakAtTickZero + instant manifest 锁定。
+                || INSTANT_RESOLVER_SKILLS.containsKey(skillId)) {
                 continue;
             }
             assertNotNull(entry.getValue(),
@@ -435,6 +448,35 @@ class AnimCastTicksAlignmentTest {
         assertTrue(SKILL_ANIM.keySet().containsAll(P0_BASELINE),
             "基线含映射表之外的僵尸条目：" + P0_BASELINE.stream()
                 .filter(id -> !SKILL_ANIM.containsKey(id)).toList());
+    }
+
+    /**
+     * 瞬发结算型分类契约 pin（review r2）：结算 tick = strike 顶点 tick = 0。
+     * 每招必须 ① 映射到声明的专属动画 ② 不驻 allowlist（分类契约取代豁免）
+     * ③ 有 instant spec manifest 且 strike_peak_tick=0（manifest 结构与轴级
+     * 断言归 {@link #specManifestsEnforcePrecisionStandardMechanically()} 的
+     * instant 分支：strike 从 0 起、主打击轴 tick 0 落帧、密度/easing 同标准）。
+     */
+    @Test
+    void instantResolverSkillsPinStrikePeakAtTickZero() throws IOException {
+        for (Map.Entry<String, String> entry : INSTANT_RESOLVER_SKILLS.entrySet()) {
+            String skillId = entry.getKey();
+            assertEquals(entry.getValue(), SKILL_ANIM.get(skillId),
+                skillId + " 的映射动画与瞬发分类声明不一致——改映射必须同步 INSTANT_RESOLVER_SKILLS");
+            assertFalse(CAST_ALIGNMENT_ALLOWLIST.contains(skillId),
+                skillId + " 同时出现在瞬发分类与 CAST_ALIGNMENT_ALLOWLIST——分类契约取代豁免，二者互斥");
+            Path manifestFile = manifestRoot().resolve(entry.getValue() + ".json");
+            assertTrue(Files.isRegularFile(manifestFile),
+                skillId + " 缺 instant spec manifest：" + manifestFile
+                    + "——瞬发结算型必须机械锁定 strike 顶点=tick 0");
+            JsonObject manifest =
+                JsonParser.parseString(Files.readString(manifestFile)).getAsJsonObject();
+            assertTrue(manifest.has("instant") && manifest.get("instant").getAsBoolean(),
+                skillId + " 的 spec manifest 未声明 instant=true——瞬发结算型必须走 instant 契约");
+            assertEquals(0, manifest.get("strike_peak_tick").getAsInt(),
+                skillId + " strike_peak_tick 必须为 0：resolver 在 cast 起始 tick 立即结算，"
+                    + "视觉命中顶点必须与结算同帧");
+        }
     }
 
     /**
@@ -537,6 +579,42 @@ class AnimCastTicksAlignmentTest {
                 List<String> seams = loopSeamViolations(meta);
                 assertTrue(seams.isEmpty(),
                     animName + " 循环动画违反 endTick 同值补帧（库坑 #1，循环回绕跳变）：" + seams);
+            }
+            return;
+        }
+
+        // instant 型 manifest（review r2 瞬发结算型分类契约）：无 anticipation 段
+        // ——gameplay 已在 cast 起始 tick 结算，开帧必须就是命中顶点。strike 从
+        // 0 起、recovery 收在 endTick；每条主打击轴必须在 tick 0 落帧（顶点
+        // 落帧），密度/easing/leg.pitch 与三段式同标准。
+        if (manifest.has("instant")) {
+            assertTrue(manifest.get("instant").getAsBoolean(),
+                animName + " instant 字段只允许 true（非瞬发招不要写该字段）");
+            assertFalse(meta.isLoop(), animName + " 瞬发结算型动画必须非循环");
+            assertEquals(0, manifest.get("strike_peak_tick").getAsInt(),
+                animName + " strike_peak_tick 必须为 0（结算与视觉命中同帧，"
+                    + "review r2 跨端时序契约）");
+            JsonArray strikeRange = manifest.getAsJsonArray("strike");
+            int strikeFrom = strikeRange.get(0).getAsInt();
+            int strikeTo = strikeRange.get(1).getAsInt();
+            JsonArray recoveryRange = manifest.getAsJsonArray("recovery");
+            assertEquals(0, strikeFrom,
+                animName + " instant strike 必须从 tick 0 起（顶点即开帧，无 anticipation）");
+            assertTrue(strikeFrom < strikeTo, animName + " strike 段必须 from < to");
+            assertTrue(strikeTo <= recoveryRange.get(0).getAsInt(),
+                animName + " strike 与 recovery 必须有序不重叠");
+            assertEquals(meta.endTick(), recoveryRange.get(1).getAsInt(),
+                animName + " recovery 必须收在 endTick=" + meta.endTick());
+            List<String> instantAxes = new ArrayList<>();
+            for (JsonElement axis : manifest.getAsJsonArray("strike_axes")) {
+                instantAxes.add(axis.getAsString());
+            }
+            assertFalse(instantAxes.isEmpty(), animName + " instant manifest 必须声明主打击轴");
+            AxisWalk instantWalk = walkAxes(animName, meta);
+            for (String axis : instantAxes) {
+                assertAxisDense(animName, instantWalk, axis);
+                assertTrue(instantWalk.ticks().get(axis).contains(0),
+                    animName + " 主打击轴 `" + axis + "` 必须在 tick 0 有关键帧（顶点落帧）");
             }
             return;
         }
