@@ -1911,16 +1911,18 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
             icon_texture: "bong:textures/gui/skill/woliu_hold.png",
         },
         WoliuSkillId::Burst => WoliuSkillVisual {
-            // 瞬涡：200ms 弹反——短促爆发 pop 形态 + 脆响，快速推掌动作。
-            animation_id: "bong:palm_strike",
+            // 瞬涡：200ms 弹反——短促爆发 pop 形态 + 脆响。
+            // P3 借用解除：专属双掌交叉弹开动画（原借通用 palm_strike 单掌推击）。
+            animation_id: "bong:woliu_burst",
             particle_id: "bong:woliu_burst_pop",
             sound_recipe_id: "woliu_burst_pop",
             hud_hint: "burst",
             icon_texture: "bong:textures/gui/skill/woliu_burst.png",
         },
         WoliuSkillId::Mouth => WoliuSkillVisual {
-            // 涡口：远程点按——前推漏斗 funnel 形态 + 远端 siphon 声，瞄准推掌动作。
-            animation_id: "bong:palm_thrust",
+            // 涡口：远程点按——前推漏斗 funnel 形态 + 远端 siphon 声。
+            // P3 借用解除：专属单臂开口虹吸动画（原借通用 palm_thrust 推掌）。
+            animation_id: "bong:woliu_mouth",
             particle_id: "bong:woliu_mouth_funnel",
             sound_recipe_id: "woliu_mouth_funnel",
             hud_hint: "mouth",
@@ -1928,15 +1930,17 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
         },
         WoliuSkillId::Pull => WoliuSkillVisual {
             // 涡引：拉拽——向心拖尾 drag 形态 + 拉拽声，扣抓-收拢动作。
-            animation_id: "bong:woliu_vacuum_lock",
+            // P3 去共用：专属扣抓拖拽动画（原与进阶 vacuum_lock 共用一条）。
+            animation_id: "bong:woliu_pull",
             particle_id: "bong:woliu_pull_drag",
             sound_recipe_id: "woliu_pull_drag",
             hud_hint: "pull",
             icon_texture: "bong:textures/gui/skill/woliu_pull.png",
         },
         WoliuSkillId::Heart => WoliuSkillVisual {
-            // 涡心：山谷级强制断经——大范围强压 field 形态 + 低沉轰鸣，深沉立姿。
-            animation_id: "bong:vortex_spiral_stance",
+            // 涡心：山谷级强制断经——大范围强压 field 形态 + 低沉轰鸣。
+            // P3 去共用：专属举天下压重桩动画（原与 v1 站桩 vortex_spiral_stance 共用）。
+            animation_id: "bong:woliu_heart",
             particle_id: "bong:woliu_heart_field",
             sound_recipe_id: "woliu_heart_field",
             hud_hint: "heart",

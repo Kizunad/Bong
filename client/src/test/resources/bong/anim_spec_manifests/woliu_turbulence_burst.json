@@ -1,0 +1,17 @@
+{
+  "instant": true,
+  "strike_peak_tick": 0,
+  "strike": [
+    0,
+    4
+  ],
+  "recovery": [
+    4,
+    20
+  ],
+  "strike_axes": [
+    "rightArm.pitch",
+    "leftArm.pitch",
+    "torso.pitch"
+  ]
+}
