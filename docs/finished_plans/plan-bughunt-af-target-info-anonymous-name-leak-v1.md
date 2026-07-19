@@ -59,18 +59,20 @@ bug-hunt 线程 AF（限定 worktree：`bughunt-loop-20260705-af`，范围：`in
   - `client/src/main/java/com/bong/client/hud/TargetInfoStateStore.java` 与 `client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java`：攻击及主手交互继续走 `observeEntity(...) -> TargetInfoState.fromEntity(...)` 的真实生产入口。
   - `client/src/main/java/com/bong/client/hud/TargetInfoHudPlanner.java`：顶部 HUD 只渲染已经过上述门控的 `TargetInfoState.displayName()`，且 `Kind.PLAYER` 不渲染 HP / 真元条。
   - `client/src/test/java/com/bong/client/hud/TargetInfoHudPlannerTest.java`：保留 9 条 JUnit 契约测试，覆盖 anonymous / exposed / unknown remote、装饰显示名、遗骸伪玩家例外，以及 `fromPlayerTargetInfo(...)` 玩家快照分支。
-  - `client/build.gradle`、`client/src/gametest/resources/fabric.mod.json` 与 `client/src/gametest/java/com/bong/client/hud/TargetInfoPlayerGameTest.java`：新增独立 `gametest` source set / mod / `runGametest`，在 Fabric Loader/Knot transformed server runtime 中用真实 `ServerPlayerEntity` 锁定 `TargetInfoStateStore.observeEntity(...) -> snapshot() -> TargetInfoHudPlanner.buildCommands(...)`；anonymous、exposed、unknown 三案分别断言占位名、scoreboard 装饰名与 fail-closed 不泄漏。`test` 门禁显式依赖 `runGametest`。
+  - `client/build.gradle`、`client/src/gametest/resources/fabric.mod.json` 与 `client/src/gametest/java/com/bong/client/hud/TargetInfoPlayerGameTest.java`：新增独立 `gametest` source set / mod / `runGametest`，在 Fabric Loader/Knot transformed server runtime 中用真实 `ServerPlayerEntity` 锁定 `TargetInfoStateStore.observeEntity(...) -> snapshot() -> TargetInfoHudPlanner.buildCommands(...)`；anonymous、exposed、unknown 三案分别断言占位名、scoreboard 装饰名与 fail-closed 不泄漏。`test` 门禁显式依赖 `runGametest`，且 `runGametest` 每次启动前在专用、gitignored 的 `build/gametest/` 运行目录写入 `eula=true`，保证全新无 stdin 的 CI runner 不依赖本地残留文件也能启动 dedicated GameTest server。
 
 ### 关键 commit
 
 - `bb43988db477851157ea107dc3dfda378b59ce40` — 2026-07-06 — PR #892 首次让 `TargetInfoState` 复用 `SocialStateStore` 匿名判定，并加入 anonymous / exposed HUD 回归。
 - `b65fc1ca9d2419e582807582996720cb04480b9b` — 2026-07-08 — PR #1131 合并：将玩家真实入口收束到 `fromPlayerTargetInfo(...)`，修正遗骸伪玩家误匿名，并补足玩家分支与未知/装饰名回归测试。
 - `b7a76c9a` — 2026-07-19 — PR #1231 补入 Fabric GameTest harness 与 3 条真实 `ServerPlayerEntity` 生产入口回归，并把 `runGametest` 接入既有 `test` 门禁。
+- `cde7417231346ddbae1a49bed396a3d2767640e0` — 2026-07-19 — 修复 `runGametest` 在全新 CI runner 缺少 `eula.txt` 时被 owo 无 stdin 提示中止的问题；任务启动前显式生成专用运行目录的 `eula=true`。
 
 ### 测试结果
 
-- 2026-07-19，Java 17：`cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH ./gradlew runGametest --console=plain` — **PASS**；Fabric Loader/Knot transformed server runtime 执行 **3 tests / 0 failures**，`client/build/gametest-results.xml` 分别记录 anonymous / exposed / unknown 三案。
+- 2026-07-19，Java 17：先将本地 `client/build/gametest/eula.txt` 置于 `eula=false` 的冷启动等价状态，再执行 `cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH ./gradlew runGametest --console=plain` — **PASS**；`runGametest` 自行改写为 `eula=true`，Fabric Loader/Knot transformed server runtime 执行 **3 tests / 0 failures**，`client/build/gametest-results.xml` 分别记录 anonymous / exposed / unknown 三案。
 - 2026-07-19，合并 `origin/main@a07839ab02a531ca9267d337eb839f707b12f848` 后以 Java 17 执行：`cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH ./gradlew test build --console=plain` — **PASS**；`test` 门禁执行上述 **3/3 GameTest**，JUnit 报告保持 **4128 tests / 0 skipped / 0 failures / 0 errors**（其中 `TargetInfoHudPlannerTest` 为 **9/9**），随后 `build` 成功。
+- PR #1231 的 GitHub `e2e` runs `29670095186` / `29671623308` 均在全新 runner 的 `Client stage (gradlew test)` 可重复失败：`runGametest` 找不到 `server.properties` / `eula.txt` 后进入 owo 的交互式 `EULA:` 提示，无 stdin 导致 `java.util.NoSuchElementException`，进程以 255 退出；`cde7417231346ddbae1a49bed396a3d2767640e0` 已针对该 PR 引入的冷启动缺口补齐确定性 EULA 准备，待新 HEAD e2e 复验。
 - PR #1131：GitHub `e2e` check **PASS**（2026-07-07，20m55s）。该 PR 的 `review` 失败来自 4 个 Codex reviewer 执行失败，CodeRabbit 失败来自 review limit / prepaid credits exhausted；两者均未产生代码级 finding。
 - 生产链动态核验：真实 `ServerPlayerEntity` -> `TargetInfoStateStore.observeEntity(...)` -> `TargetInfoStateStore.snapshot()` -> `TargetInfoHudPlanner.buildCommands(...)`；anonymous / unknown 均显示“某修士”且不含 profile 或 scoreboard 装饰名，exposed 保留 scoreboard 装饰名。
 
