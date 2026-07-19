@@ -905,6 +905,7 @@ pub fn handle_client_request_payloads(
                     furnace_pos,
                     intervention.into(),
                     &mut clients,
+                    &combat_params.unique_ids,
                     &mut alchemy_params.furnaces,
                     &alchemy_params.recipe_registry,
                     alchemy_params.zones.as_deref(),
@@ -7423,6 +7424,192 @@ mod tests {
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
+    }
+
+    // ── plan-skill-av-relink-v1 P3 —— alchemy_stir 内联 emit pin ─────────────────
+
+    fn drain_alchemy_stir_anims(app: &mut App) -> Vec<(String, u16)> {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<VfxEventRequest>>()
+            .drain()
+            .filter_map(|request| match request.payload {
+                crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                    target_player,
+                    anim_id,
+                    priority,
+                    ..
+                } if anim_id == crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR => {
+                    Some((target_player, priority))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn spawn_azure_furnace_with_session(app: &mut App, owner: &str) -> valence::prelude::Entity {
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(8, 66, 8), 1);
+        furnace.owner = Some(owner.into());
+        furnace.session = Some(AlchemySession::new("kai_mai_pill_v0".into(), owner.into()));
+        app.world_mut().spawn(furnace).id()
+    }
+
+    fn send_alchemy_intervention_payload(
+        app: &mut App,
+        client: valence::prelude::Entity,
+        intervention_json: &str,
+    ) {
+        let data = format!(
+            r#"{{"type":"alchemy_intervention","v":1,"furnace_pos":[8,66,8],"intervention":{intervention_json}}}"#
+        );
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: data.into_bytes().into_boxed_slice(),
+            });
+    }
+
+    /// happy path：炉主对起炉中的丹炉干预生效 → 恰发一条 alchemy_stir 搅拌动画，
+    /// target = 干预者本人 uuid、优先级战斗动作档。
+    #[test]
+    fn alchemy_intervention_emits_stir_animation_for_owner() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let player_uuid = app
+            .world()
+            .get::<UniqueId>(entity)
+            .expect("mock client should carry UniqueId")
+            .0
+            .to_string();
+        spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"adjust_temp","temp":0.5}"#);
+        app.update();
+
+        let stirs = drain_alchemy_stir_anims(&mut app);
+        assert_eq!(
+            stirs.len(),
+            1,
+            "干预生效应恰发一条 alchemy_stir 搅拌动画，实际 {stirs:?}"
+        );
+        assert_eq!(
+            stirs[0].0, player_uuid,
+            "alchemy_stir 应发给干预者本人（target_player = 干预者 uuid）"
+        );
+        assert_eq!(
+            stirs[0].1,
+            crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
+            "alchemy_stir 优先级应为战斗动作档"
+        );
+    }
+
+    /// 重复触发语义：每次干预生效各配一次搅拌动画（两次干预两动画，1:1 无去重）。
+    #[test]
+    fn each_alchemy_intervention_emits_its_own_stir() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"adjust_temp","temp":0.5}"#);
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":2.0}"#);
+        app.update();
+
+        assert_eq!(
+            drain_alchemy_stir_anims(&mut app).len(),
+            2,
+            "每次干预生效各配一次 alchemy_stir（1:1）"
+        );
+    }
+
+    /// enum 变体饱和：AutoProfile 是保留 no-op（`apply_intervention` 不改任何
+    /// 状态、无真实搅拌动作），不发 alchemy_stir 动画。
+    #[test]
+    fn auto_profile_intervention_emits_no_stir_animation() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(
+            &mut app,
+            entity,
+            r#"{"kind":"auto_profile","profile_id":"gentle"}"#,
+        );
+        app.update();
+
+        assert!(
+            drain_alchemy_stir_anims(&mut app).is_empty(),
+            "AutoProfile 是保留 no-op 干预（不改炉温/真元），不应发 alchemy_stir 搅拌动画"
+        );
+    }
+
+    /// 错误分支：尚未起炉（furnace 无 session）→ 干预被拒不发搅拌动画。
+    #[test]
+    fn alchemy_intervention_without_session_does_not_emit_stir() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(8, 66, 8), 1);
+        furnace.owner = Some("offline:Azure".into());
+        app.world_mut().spawn(furnace);
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"adjust_temp","temp":0.5}"#);
+        app.update();
+
+        assert!(
+            drain_alchemy_stir_anims(&mut app).is_empty(),
+            "未起炉的干预被拒时不应发 alchemy_stir"
+        );
+    }
+
+    /// 错误分支：非炉主干预他人丹炉 → 路由拒绝不发搅拌动画。
+    #[test]
+    fn alchemy_intervention_on_foreign_furnace_does_not_emit_stir() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        spawn_azure_furnace_with_session(&mut app, "offline:Bob");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"adjust_temp","temp":0.5}"#);
+        app.update();
+
+        assert!(
+            drain_alchemy_stir_anims(&mut app).is_empty(),
+            "非炉主的干预被拒时不应发 alchemy_stir"
+        );
+    }
+
+    /// 状态前置分支：坍缩 zone 内 inject_qi 被忽略（干预未生效）→ 不发搅拌动画。
+    #[test]
+    fn alchemy_inject_qi_in_collapsed_zone_does_not_emit_stir() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut("spawn")
+            .unwrap()
+            .active_events
+            .push(EVENT_REALM_COLLAPSE.to_string());
+        app.insert_resource(zones);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":5.0}"#);
+        app.update();
+
+        assert!(
+            drain_alchemy_stir_anims(&mut app).is_empty(),
+            "坍缩 zone 内被忽略的 inject_qi 不应发 alchemy_stir（干预未生效）"
+        );
     }
 
     #[test]
@@ -15607,6 +15794,8 @@ fn handle_alchemy_intervention(
     furnace_pos: (i32, i32, i32),
     intervention: Intervention,
     clients: &mut Query<(&Username, &mut Client)>,
+    // plan-skill-av-relink-v1 P1 — alchemy_stir 搅拌动画的 target_player uuid。
+    unique_ids: &Query<&UniqueId>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     registry: &RecipeRegistry,
     zones: Option<&ZoneRegistry>,
@@ -15654,6 +15843,25 @@ fn handle_alchemy_intervention(
                     30,
                 ),
             );
+            // plan-skill-av-relink-v1 P1 — 干预生效 → alchemy_stir 搅拌动画（与上方
+            // 熬煮粒子同点内联：干预直接在 request handler 处理、无 bevy 事件可订阅）。
+            // 未起炉/非炉主等拒绝分支在前面已 return，不会走到这里。
+            // AutoProfile 是保留 no-op（session.rs apply_intervention 不改任何状态），
+            // 无真实搅拌动作，不发动画——只有生效干预（AdjustTemp/InjectQi）才发。
+            if !matches!(intervention, Intervention::AutoProfile(_)) {
+                if let Ok(unique_id) = unique_ids.get(entity) {
+                    events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                        alchemy_furnace_origin(furnace_pos),
+                        crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                            target_player: unique_id.0.to_string(),
+                            anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
+                                .to_string(),
+                            priority: crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
+                            fade_in_ticks: Some(2),
+                        },
+                    ));
+                }
+            }
         }
         tracing::info!(
             "[bong][network][alchemy] `{player_id}` intervention {intervention:?} pos={furnace_pos:?} → temp={:.2} qi={:.2}",
