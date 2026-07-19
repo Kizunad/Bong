@@ -48,7 +48,9 @@ pub const TIE_SHAN_KAO_OVERLOAD_RATIO: f64 = 1.6;
 /// 撕裂躯干经脉（Stomach）后的 integrity 残留比例 —— 比崩拳略缓（短爆而非零距灌入）。
 pub const TIE_SHAN_KAO_INTEGRITY_MULTIPLIER: f64 = 0.8;
 const TIE_SHAN_KAO_MERIDIANS: [MeridianId; 1] = [MeridianId::Stomach];
-const TIE_SHAN_KAO_ANIM_ID: &str = "bong:beng_quan";
+/// plan-skill-anim-fidelity-v1 P3 —— 专属靠身撞击动画（借用解除：原借崩拳出拳
+/// `bong:beng_quan`，肩胯靠撞与出拳姿态语义完全不同）。
+const TIE_SHAN_KAO_ANIM_ID: &str = "bong:tie_shan_kao";
 const TIE_SHAN_KAO_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
 const TIE_SHAN_KAO_AUDIO_RECIPE: &str = "hit_heavy";
 /// 与 known_techniques.tie_shan_kao.range 对齐（近身撞）。
@@ -62,7 +64,9 @@ pub const XUE_BENG_BU_INTEGRITY_MULTIPLIER: f64 = 0.75;
 /// 突进距离（格），与 known_techniques.xue_beng_bu.range 对齐。
 pub const XUE_BENG_BU_DASH_BLOCKS: f64 = 4.0;
 const XUE_BENG_BU_MERIDIANS: [MeridianId; 1] = [MeridianId::Gallbladder];
-const XUE_BENG_BU_ANIM_ID: &str = "bong:beng_quan";
+/// plan-skill-anim-fidelity-v1 P3 —— 专属步法突进动画（借用解除：原借崩拳出拳
+/// `bong:beng_quan`，位移招播出拳属姿态语义错位）。
+const XUE_BENG_BU_ANIM_ID: &str = "bong:xue_beng_bu";
 const XUE_BENG_BU_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
 const XUE_BENG_BU_AUDIO_RECIPE: &str = "movement_dash";
 
@@ -76,6 +80,9 @@ pub const NI_MAI_HU_TI_DAMAGE_REDUCTION: f32 = 0.35;
 /// 护体持续时间（tick）—— 与 known_techniques 的 cooldown 120 形成短窗高冷却节奏。
 pub const NI_MAI_HU_TI_BUFF_DURATION_TICKS: u64 = 60;
 const NI_MAI_HU_TI_MERIDIANS: [MeridianId; 1] = [MeridianId::Pericardium];
+/// plan-skill-anim-fidelity-v1 P3 —— 专属护体结印动画（缺失补齐：原 `anim_id: None`
+/// 完全不发 PlayAnim，护体招只有粒子+嗡音、玩家无姿态反馈）。
+const NI_MAI_HU_TI_ANIM_ID: &str = "bong:ni_mai_hu_ti";
 const NI_MAI_HU_TI_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
 const NI_MAI_HU_TI_AUDIO_RECIPE: &str = "zhenmai_shield_hum";
 
@@ -633,8 +640,9 @@ pub fn resolve_ni_mai_hu_ti(
         caster_position,
         None,
         BurstAv {
-            // 护体非攻击姿态，不复用崩拳出拳 anim（避免姿态语义错位）；仅护体粒子环 + 嗡音。
-            anim_id: None,
+            // P3 缺失补齐：专属护体结印动画（此前 None 不发 PlayAnim——护体非攻击
+            // 姿态不借崩拳出拳是对的，但缺动画=玩家零姿态反馈，MISSING allowlist 条目）。
+            anim_id: Some(NI_MAI_HU_TI_ANIM_ID),
             particle_id: NI_MAI_HU_TI_PARTICLE_ID,
             color: "#5BA8C9",
             strength: 0.7,
@@ -1834,6 +1842,112 @@ mod tests {
             .world()
             .resource::<Events<ApplyStatusEffectIntent>>()
             .is_empty());
+    }
+
+    // ─── plan-skill-anim-fidelity-v1 P3：专属动画 id pin（去复用 + 缺失补齐）────────
+
+    /// 收集本次 update 内发出的全部 PlayAnim anim_id。
+    fn emitted_play_anim_ids(app: &App) -> Vec<String> {
+        app.world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .filter_map(|request| match &request.payload {
+                VfxEventPayloadV1::PlayAnim { anim_id, .. } => Some(anim_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 事件路径 pin：三招 resolver 各自发出**专属** PlayAnim——tie_shan_kao 靠身
+    /// 撞击 / xue_beng_bu 步法突进解除崩拳借用，ni_mai_hu_ti 从 `anim_id: None`
+    /// 补齐护体结印动画；任何一招回退到 `bong:beng_quan`（旧借用）立即撞红。
+    /// 崩拳本尊仍合法使用 `bong:beng_quan`，见 beng_quan 专属用例。
+    #[test]
+    fn p3_bespoke_anim_ids_emitted_and_beng_quan_borrow_removed() {
+        let cases: [(&str, &str); 3] = [
+            (TIE_SHAN_KAO_SKILL_ID, TIE_SHAN_KAO_ANIM_ID),
+            (XUE_BENG_BU_SKILL_ID, XUE_BENG_BU_ANIM_ID),
+            (NI_MAI_HU_TI_SKILL_ID, NI_MAI_HU_TI_ANIM_ID),
+        ];
+        // 常量层面先锁专属 + 互异（id 拼写回退在 resolver 跑起来之前就撞红）。
+        assert_eq!(TIE_SHAN_KAO_ANIM_ID, "bong:tie_shan_kao");
+        assert_eq!(XUE_BENG_BU_ANIM_ID, "bong:xue_beng_bu");
+        assert_eq!(NI_MAI_HU_TI_ANIM_ID, "bong:ni_mai_hu_ti");
+        for (skill_id, anim_id) in cases {
+            assert_ne!(
+                anim_id, BENG_QUAN_ANIM_ID,
+                "去复用回归锁：{skill_id} 不得回退借崩拳动画 {BENG_QUAN_ANIM_ID}"
+            );
+        }
+
+        // 事件路径：tie_shan_kao（Condense，带 UniqueId 才走 PlayAnim 分支）。
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(valence::prelude::UniqueId::default());
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+        assert!(matches!(result, CastResult::Started { .. }));
+        let anims = emitted_play_anim_ids(&app);
+        assert_eq!(
+            anims,
+            vec![TIE_SHAN_KAO_ANIM_ID.to_string()],
+            "tie_shan_kao 应恰好发一条专属靠撞 PlayAnim，实际 {anims:?}"
+        );
+
+        // 事件路径：xue_beng_bu（需 Look 提供朝向）。
+        let mut app = full_app();
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(valence::prelude::UniqueId::default());
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        let anims = emitted_play_anim_ids(&app);
+        assert_eq!(
+            anims,
+            vec![XUE_BENG_BU_ANIM_ID.to_string()],
+            "xue_beng_bu 应恰好发一条专属步法 PlayAnim，实际 {anims:?}"
+        );
+
+        // 事件路径：ni_mai_hu_ti（缺失补齐——此前 anim_id: None 完全不发）。
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(valence::prelude::UniqueId::default());
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        let anims = emitted_play_anim_ids(&app);
+        assert_eq!(
+            anims,
+            vec![NI_MAI_HU_TI_ANIM_ID.to_string()],
+            "ni_mai_hu_ti 应恰好发一条专属护体结印 PlayAnim（MISSING 缺口已补），实际 {anims:?}"
+        );
+    }
+
+    /// 无 UniqueId（非玩家/无头）时 PlayAnim 分支静默跳过、粒子照发——
+    /// 锁 emit_burst_av 的防御分支不因 P3 接线改变。
+    #[test]
+    fn p3_ni_mai_hu_ti_without_unique_id_skips_anim_keeps_particle() {
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            emitted_play_anim_ids(&app).is_empty(),
+            "无 UniqueId 不应发 PlayAnim（防御分支）"
+        );
+        let particles = app
+            .world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .filter(|request| {
+                matches!(&request.payload, VfxEventPayloadV1::SpawnParticle { .. })
+            })
+            .count();
+        assert_eq!(particles, 1, "护体粒子环应照发");
     }
 
     // ─── 跨招守恒 / 精度 / 边界 ───────────────────────────────────────────────────

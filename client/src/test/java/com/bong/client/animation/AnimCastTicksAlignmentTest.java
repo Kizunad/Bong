@@ -72,29 +72,42 @@ class AnimCastTicksAlignmentTest {
         m.put("movement.dash", "dash_forward");
         m.put("shield_block", "shield_raise");
         m.put("burst_meridian.beng_quan", "beng_quan");
-        m.put("burst_meridian.tie_shan_kao", "beng_quan");
-        m.put("burst_meridian.xue_beng_bu", "beng_quan");
-        m.put("burst_meridian.ni_mai_hu_ti", null);
-        m.put("baomai.full_power_charge", "windup_charge");
-        m.put("baomai.full_power_release", "release_burst");
+        // P3 批次三（2026-07-19）：tie_shan_kao / xue_beng_bu 借用解除换专属
+        // （原借 beng_quan，burst_meridian.rs 常量改指）；ni_mai_hu_ti 缺失补齐
+        // （原 anim_id: None，出 MISSING_ANIM_ALLOWLIST）。
+        m.put("burst_meridian.tie_shan_kao", "tie_shan_kao");
+        m.put("burst_meridian.xue_beng_bu", "xue_beng_bu");
+        m.put("burst_meridian.ni_mai_hu_ti", "ni_mai_hu_ti");
+        // P3：全力一击两段借用解除（原借 windup_charge/release_burst）——charge
+        // 为持续维持型循环（ChargingState 按住蓄力 + 释放/打断双路 StopAnim，
+        // full_power_emit.rs），入 SUSTAINED_LOOP_EXCEPTIONS；release 瞬发。
+        m.put("baomai.full_power_charge", "baomai_full_power_charge");
+        m.put("baomai.full_power_release", "baomai_full_power_release");
         m.put("zhenmai.parry", "zhenmai_parry");
         m.put("zhenmai.neutralize", "zhenmai_neutralize");
         m.put("zhenmai.multipoint", "zhenmai_multipoint");
         m.put("zhenmai.harden", "zhenmai_harden");
         m.put("zhenmai.sever_chain", "zhenmai_sever_chain");
-        m.put("woliu.vortex", null);
+        // P3：woliu.vortex 缺口修正——调研证实并非「零发射」而是 field 出现时
+        // lifecycle 借播 v2 站桩 vortex_spiral_stance（vfx_animation_trigger.rs
+        // `emit_woliu_v1_vortex_visual_triggers`）；P3 换专属开涡 woliu_vortex_cast
+        // 并出 MISSING_ANIM_ALLOWLIST。burst/mouth/pull/heart 借用/共用解除
+        // （visual_for 改指，原借 palm_strike / palm_thrust / 共用 vacuum_lock /
+        // 共用 vortex_spiral_stance）。
+        m.put("woliu.vortex", "woliu_vortex_cast");
         m.put("woliu.hold", "vortex_palm_open");
-        m.put("woliu.burst", "palm_strike");
-        m.put("woliu.mouth", "palm_thrust");
-        m.put("woliu.pull", "woliu_vacuum_lock");
-        m.put("woliu.heart", "vortex_spiral_stance");
+        m.put("woliu.burst", "woliu_burst");
+        m.put("woliu.mouth", "woliu_mouth");
+        m.put("woliu.pull", "woliu_pull");
+        m.put("woliu.heart", "woliu_heart");
         m.put("woliu.vacuum_palm", "woliu_vacuum_palm");
         m.put("woliu.vortex_shield", "woliu_vortex_shield");
         m.put("woliu.vacuum_lock", "woliu_vacuum_lock");
         m.put("woliu.vortex_resonance", "woliu_vortex_resonance");
         m.put("woliu.turbulence_burst", "woliu_turbulence_burst");
         m.put("dugu.shoot_needle", "dugu_needle_throw");
-        m.put("dugu.infuse_poison", "dugu_needle_throw");
+        // P3 去共用：淬毒专属（原与凝针共用一条 throw，仅去重 id 区分）。
+        m.put("dugu.infuse_poison", "dugu_infuse_poison");
         m.put("tuike.don", "tuike_don_skin");
         m.put("tuike.shed", "tuike_shed_burst");
         m.put("tuike.transfer_taint", "tuike_taint_transfer");
@@ -126,10 +139,21 @@ class AnimCastTicksAlignmentTest {
         Set.of("npc.heal_basic", "npc.buff_speed", "npc.buff_defense");
 
     /**
-     * 持续维持型例外：循环 + StopAnim 停止路径是**正当设计**（举盾按住持续），
+     * 持续维持型例外：循环 + StopAnim 停止路径是**正当设计**（按住/维持期间循环），
      * 时长对拍三套断言不适用；专属用例断言其循环结构不退化。
+     *
+     * <p>P3 批次三增录（每条入册前已核验停止路径，§13 #6 红线）：
+     * <ul>
+     *   <li>{@code baomai.full_power_charge}：ChargingState 按住蓄力状态机，释放
+     *       （FullPowerReleasedEvent）与打断（ChargeInterruptedEvent）双退出路径
+     *       均 StopAnim（full_power_emit.rs `emit_full_power_charging_clear_payloads`）；</li>
+     *   <li>{@code woliu.vortex_shield}：VortexV2State 5s 持续窗，唯一退出路径 =
+     *       active_until_tick 自然到期，由 `emit_woliu_v2_visual_stop_triggers`
+     *       发 StopAnim（无提前破盾/主动取消机制，vfx_animation_trigger.rs:554）。</li>
+     * </ul>
      */
-    private static final Set<String> SUSTAINED_LOOP_EXCEPTIONS = Set.of("shield_block");
+    private static final Set<String> SUSTAINED_LOOP_EXCEPTIONS =
+        Set.of("shield_block", "baomai.full_power_charge", "woliu.vortex_shield");
 
     /**
      * 长演出例外：一次性完整长动画（cast 只是入口时长，动画刻意超长演出），
@@ -150,11 +174,15 @@ class AnimCastTicksAlignmentTest {
     // P2 批次二后半（2026-07-19）删 1 条：sword.infuse（两段式落地，蓄力段
     // isLoop 28t 全轴同值闭环达标；charge_carrier 原本就不在表——windup_charge
     // 借用即为 loop 形态，换专属 loop 后继续达标）。
+    // P3 批次三（2026-07-19）删 9 条：movement.dash（8t 瞬发重制）+
+    // baomai.full_power_charge（专属循环，入 SUSTAINED_LOOP_EXCEPTIONS）+
+    // baomai.full_power_release（专属 12t 瞬发）+ woliu.heart（专属 16t）+
+    // woliu.vacuum_palm（12t 重制）+ woliu.vortex_shield（闭环 loop，入
+    // SUSTAINED_LOOP_EXCEPTIONS）+ woliu.vacuum_lock（13t 重制）+
+    // woliu.turbulence_burst（cast=40 核验为 resolver 立即结算无引导窗，入
+    // INSTANT_RESOLVER_SKILLS）+ morph.yixing（同前，cast=60 无窗，入
+    // INSTANT_RESOLVER_SKILLS）。
     private static final Set<String> CAST_ALIGNMENT_ALLOWLIST = Set.of(
-        "movement.dash",
-        "baomai.full_power_charge", "baomai.full_power_release",
-        "woliu.heart", "woliu.vacuum_palm", "woliu.vortex_shield", "woliu.vacuum_lock",
-        "woliu.turbulence_burst",
         // vortex_resonance 时长模型达标（80t loop 对齐 cast=80），但 10 个手臂轴
         // endTick 无补帧（库坑 #1 单帧衰减）——**存量 bug 已登记归
         // plan-bughunt-woliu-resonance-loop-arm-decay-v1**（本 plan 防重声明明确
@@ -169,7 +197,7 @@ class AnimCastTicksAlignmentTest {
         // cast_ticks=80 总窗，charge 段非循环 hold-末帧（定长充能相位全对齐、
         // 末帧=release 交接帧，charge_hold segment manifest 锁密度）；与 isLoop
         // 正典的统一归 P6 注记（P2 密度精修已交付）。
-        "sword_path.heaven_gate", "morph.yixing");
+        "sword_path.heaven_gate");
 
     /**
      * 瞬发结算型 resolver 招（review r2 分类契约，plan 附录 A）：gameplay 在
@@ -184,11 +212,22 @@ class AnimCastTicksAlignmentTest {
     private static final Map<String, String> INSTANT_RESOLVER_SKILLS = Map.of(
         "anqi.armor_pierce", "anqi_armor_pierce",
         "anqi.echo_fractal", "anqi_echo_fractal",
-        "sword_path.manifest", "sword_manifest_cast");
+        "sword_path.manifest", "sword_manifest_cast",
+        // P3 批次三增录（入类前均已核验 resolver 确为立即结算）：
+        // turbulence_burst：`resolve_woliu_v2_skill` 同步一次性结算（woliu_v2/
+        // skills.rs，零 Casting 组件，cast=40 仅作 Started.anim_duration_ticks
+        // 透传）；yixing：`cast_morph_yixing` 双分支立即变形/解除（body_plan/
+        // morph.rs，YIXING_CAST_TICKS=60 纯元数据）——两招均无引导窗可挂循环段。
+        "woliu.turbulence_burst", "woliu_turbulence_burst",
+        "morph.yixing", "morph_cast");
 
-    /** 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。 */
-    private static final Set<String> MISSING_ANIM_ALLOWLIST =
-        Set.of("burst_meridian.ni_mai_hu_ti", "woliu.vortex");
+    /**
+     * 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。
+     * P3 批次三清零：ni_mai_hu_ti 补专属护体结印（burst_meridian.rs anim_id
+     * None→Some）；woliu.vortex 核验发现并非零发射而是 lifecycle 借播 v2 站桩，
+     * 换专属 woliu_vortex_cast 后走时长对拍主契约。
+     */
+    private static final Set<String> MISSING_ANIM_ALLOWLIST = Set.of();
 
     /**
      * P0 冻结基线（机器可执行的"只缩不涨"棘轮）：两份 allowlist 必须是本集合的
