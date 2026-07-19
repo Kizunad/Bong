@@ -106,6 +106,33 @@ sourceSets {
             srcDir "${rootProject.projectDir}/../proto"
         }
     }
+    gametest {
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.runtimeClasspath
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+loom {
+    mods {
+        'bong-client' {
+            sourceSet sourceSets.main
+        }
+        'bong-client-gametest' {
+            sourceSet sourceSets.gametest
+        }
+    }
+    runs {
+        gametest {
+            server()
+            source sourceSets.gametest
+            property 'fabric-api.gametest'
+            property 'fabric-api.gametest.report-file', file('build/gametest-results.xml').absolutePath
+            property 'geckolib.disable_examples', 'true'
+            runDir 'build/gametest'
+        }
+    }
 }
 
 def bongBlockManifest = file('../bong_blocks.json')
@@ -174,6 +201,10 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.withType(Test) {
     useJUnitPlatform()
+}
+
+tasks.named('test') {
+    dependsOn(tasks.named('runGametest'))
 }
 
 // runClientPreview — 用于 worldgen-snapshot 预览（plan-worldgen-snapshot-v1）。
