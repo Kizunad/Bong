@@ -147,11 +147,19 @@ const VFX_ANQI_ECHO_DECOY: &str = "bong:anqi_echo_decoy";
 // 动画复用现有 player_animation/dugu_needle_throw.json；粒子复用既有 BongParticles sprite
 // （swordQiTrail line / duguDarkGreenMist），无新贴图。
 const ANIM_DUGU_NEEDLE_THROW: &str = "bong:dugu_needle_throw";
+/// plan-skill-anim-fidelity-v1 P3 —— 灌毒蛊专属淬毒动画（去共用：原与凝针同发
+/// `dugu_needle_throw`，两招仅靠去重 id 区分、动画字符串完全相同）。举针过面 +
+/// 覆手灌毒 + 腕封收势，无掷出动作。
+const ANIM_DUGU_INFUSE_POISON: &str = "bong:dugu_infuse_poison";
 const VFX_DUGU_NEEDLE_BOLT: &str = "bong:dugu_needle_bolt";
 const VFX_DUGU_POISON_INFUSE: &str = "bong:dugu_poison_infuse";
 
-/// 绝灵涡流（woliu v1）起手式——复用 v2 涡旋站桩动画资产（client 已注册）。
-const ANIM_WOLIU_V1_STANCE: &str = "bong:vortex_spiral_stance";
+/// 绝灵涡流（woliu v1 `woliu.vortex`）开涡起手式。
+/// plan-skill-anim-fidelity-v1 P3 —— 专属双臂开涡动画（借用解除：原复用 v2
+/// 涡旋站桩 `vortex_spiral_stance` 20t，瞬发招 [6,12] 时长域不符且与
+/// woliu.heart 撞形）。field 出现即播（lifecycle 驱动，见
+/// `emit_woliu_v1_vortex_visual_triggers`），非循环无需 StopAnim。
+const ANIM_WOLIU_V1_STANCE: &str = "bong:woliu_vortex_cast";
 /// 绝灵涡流开涡吸入环。**与 client `VortexSpiralPlayer.WOLIU_V1_FIELD_OPEN` 逐字对齐。**
 const VFX_WOLIU_V1_FIELD_OPEN: &str = "bong:woliu_vortex_field";
 /// 绝灵涡流存续低频涡环。**与 client `VortexSpiralPlayer.WOLIU_V1_FIELD_AMBIENT` 逐字对齐。**
@@ -1180,7 +1188,8 @@ pub fn emit_dugu_needle_visual_triggers(
         );
     }
 
-    // 灌毒蛊：throw 动画 + 失谐真元毒绿雾（覆入飞针，无方向，绕身散布）。
+    // 灌毒蛊：专属淬毒动画（P3 去共用，原与凝针同发 throw）+ 失谐真元毒绿雾
+    // （覆入飞针，无方向，绕身散布）。
     for event in infusions.read() {
         let origin = positions
             .get(event.infuser)
@@ -1188,7 +1197,7 @@ pub fn emit_dugu_needle_visual_triggers(
             .unwrap_or_default();
         emit_play_for_entity(
             event.infuser,
-            ANIM_DUGU_NEEDLE_THROW,
+            ANIM_DUGU_INFUSE_POISON,
             DUGU_PRIORITY,
             Some(2),
             &players,
@@ -3536,9 +3545,10 @@ mod tests {
         }
     }
 
-    /// 灌毒蛊：dugu_needle_throw 动画 + 毒绿雾（无方向，绕身散布）。
+    /// 灌毒蛊：P3 专属淬毒动画（去共用，原与凝针同发 throw）+ 毒绿雾（无方向，
+    /// 绕身散布）。
     #[test]
-    fn dugu_infuse_poison_emits_throw_anim_and_poison_mist() {
+    fn dugu_infuse_poison_emits_bespoke_infuse_anim_and_poison_mist() {
         let mut app = setup_dugu_visual_app();
         let infuser = spawn_player(&mut app, "Infuser", [0.0, 64.0, 0.0]);
         app.world_mut().send_event(DuguObfuscationDisruptedEvent {
@@ -3549,7 +3559,16 @@ mod tests {
 
         let emitted = drain_vfx(&mut app);
         assert_eq!(emitted.len(), 2, "灌毒蛊应 emit 1 动画 + 1 毒雾粒子");
-        assert_play_anim(&emitted[0], ANIM_DUGU_NEEDLE_THROW, DUGU_PRIORITY);
+        assert_play_anim(&emitted[0], ANIM_DUGU_INFUSE_POISON, DUGU_PRIORITY);
+        // P3 去共用回归锁：灌毒蛊不得再借凝针掷出动画（两招此前动画字符串完全
+        // 相同、仅靠去重 id 区分，远观无法分辨"淬毒"与"射针"）。
+        match &emitted[0].payload {
+            VfxEventPayloadV1::PlayAnim { anim_id, .. } => assert_ne!(
+                anim_id, ANIM_DUGU_NEEDLE_THROW,
+                "去复用回归锁：灌毒蛊不得回退到共用 dugu_needle_throw"
+            ),
+            other => panic!("expected PlayAnim, got {other:?}"),
+        }
         assert_spawn_particle(&emitted[1], VFX_DUGU_POISON_INFUSE, Some(14));
         match &emitted[1].payload {
             VfxEventPayloadV1::SpawnParticle { direction, .. } => {
@@ -3850,7 +3869,10 @@ mod tests {
         caster
     }
 
-    /// field 出现 → 起手式动画 + 开涡吸入环；同 field 下一 tick 不重发开涡。
+    /// field 出现 → 专属开涡起手式动画 + 开涡吸入环；同 field 下一 tick 不重发。
+    /// plan-skill-anim-fidelity-v1 P3：`woliu.vortex` 借用解除——开涡不再复用 v2
+    /// 涡旋站桩 `vortex_spiral_stance`（20t 与瞬发 [6,12] 时长域不符且与
+    /// woliu.heart 撞形），改播专属 `bong:woliu_vortex_cast`。
     #[test]
     fn woliu_v1_field_appear_emits_stance_anim_and_open_burst_once() {
         let mut app = setup_woliu_v1_visual_app(101);
@@ -3866,6 +3888,12 @@ mod tests {
             emitted.len()
         );
         assert_play_anim(&emitted[0], ANIM_WOLIU_V1_STANCE, WOLIU_PRIORITY);
+        // P3 专属 id 拼写 pin + 去复用回归锁（常量回指旧借用会静默复现撞形）。
+        assert_eq!(ANIM_WOLIU_V1_STANCE, "bong:woliu_vortex_cast");
+        assert_ne!(
+            ANIM_WOLIU_V1_STANCE, "bong:vortex_spiral_stance",
+            "去复用回归锁：woliu.vortex 开涡不得回退借 v2 涡旋站桩"
+        );
         assert_spawn_particle(&emitted[1], VFX_WOLIU_V1_FIELD_OPEN, Some(24));
 
         // 下一 tick（非 ambient 周期）：不得重发开涡。
