@@ -203,6 +203,15 @@ tasks.withType(Test) {
     useJUnitPlatform()
 }
 
+tasks.named('runGametest') {
+    doFirst {
+        // Dedicated GameTest servers require an explicit EULA acceptance even on a fresh CI runner.
+        def eulaFile = file('build/gametest/eula.txt')
+        eulaFile.parentFile.mkdirs()
+        eulaFile.setText('eula=true\n', 'UTF-8')
+    }
+}
+
 tasks.named('test') {
     dependsOn(tasks.named('runGametest'))
 }
