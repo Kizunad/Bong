@@ -506,7 +506,10 @@ fn dugu_visual_ids_pin_eclipse() {
     assert_eq!(v.particle_id, "bong:dugu_taint_pulse");
     assert_eq!(v.sound_recipe_id, "dugu_needle_hiss");
     assert_eq!(v.hud_hint, "蚀针");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_eclipse.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png"
+    );
 }
 
 #[test]
@@ -517,7 +520,10 @@ fn dugu_visual_ids_pin_self_cure() {
     assert_eq!(v.particle_id, "bong:dugu_dark_green_mist");
     assert_eq!(v.sound_recipe_id, "dugu_self_cure_drink");
     assert_eq!(v.hud_hint, "自蕴");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_self_cure.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_self_cure.png"
+    );
 }
 
 #[test]
@@ -528,7 +534,10 @@ fn dugu_visual_ids_pin_penetrate() {
     assert_eq!(v.particle_id, "bong:dugu_taint_pulse");
     assert_eq!(v.sound_recipe_id, "dugu_needle_hiss");
     assert_eq!(v.hud_hint, "侵染");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_penetrate.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_penetrate.png"
+    );
 }
 
 #[test]
@@ -539,7 +548,10 @@ fn dugu_visual_ids_pin_shroud() {
     assert_eq!(v.particle_id, "bong:dugu_dark_green_mist");
     assert_eq!(v.sound_recipe_id, "dugu_self_cure_drink");
     assert_eq!(v.hud_hint, "神识遮蔽");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_shroud.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_shroud.png"
+    );
 }
 
 #[test]
@@ -550,7 +562,10 @@ fn dugu_visual_ids_pin_reverse() {
     assert_eq!(v.particle_id, "bong:dugu_reverse_burst");
     assert_eq!(v.sound_recipe_id, "dugu_curse_cackle");
     assert_eq!(v.hud_hint, "倒蚀");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_reverse.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_reverse.png"
+    );
 }
 
 #[test]
@@ -2729,4 +2744,29 @@ fn dugu_reverse_victim_qi_reason_pin_test() {
         "DuguReverseVictimQi 应区别于 ReleaseToZone（招式释放）"
     );
     assert_eq!(reason, reason, "DuguReverseVictimQi 与自身应相等");
+}
+
+/// plan-skill-av-relink-v1 P2 —— runtime visual 图标存在性 pin：五招 `visual_for`
+/// 的 `icon_texture` 逐条对应 client main resources 磁盘真实资产（经
+/// `CARGO_MANIFEST_DIR/../client` 解析），防 payload 下发悬空引用——2026-07-18
+/// 之前这五条引用的 `bong:textures/gui/skill/dugu_*.png` 全仓无文件、HUD 侧
+/// 探测恒失败，本 pin 锁住收编后不再漂移。
+#[test]
+fn every_dugu_v2_visual_icon_texture_points_at_real_client_asset() {
+    for skill in DuguSkillId::ALL {
+        let icon = crate::combat::dugu_v2::skills::visual_for(skill).icon_texture;
+        let (namespace, path) = icon.split_once(':').unwrap_or_else(|| {
+            panic!("dugu_v2 visual icon `{icon}` 缺少 `namespace:path` 冒号分隔")
+        });
+        let disk = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../client/src/main/resources/assets")
+            .join(namespace)
+            .join(path);
+        assert!(
+            disk.is_file(),
+            "dugu_v2 {skill:?} 的 runtime 图标 `{icon}` 在磁盘无对应资产 {}——\
+             server payload 会下发悬空引用，client HudTextureProbe 探测必失败",
+            disk.display()
+        );
+    }
 }

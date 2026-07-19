@@ -24,6 +24,8 @@
 
 **留白**：全世界通用的、按 zone 分变种/分品质的散布 lootcrate 不存在；supply_coffin loot 表是硬编 Rust。本 plan 填这块，并把 loot 定义迁到数据文件。
 
+> **2026-07-18 诊断补充**：早期玩法诊断（三路 Explore 实证）确认本 plan 是「世界内容密度」的主抓手——"捡箱子"体验目前只有剑冢 supply_coffin + 新手圈 SurfaceStash 两处，玩家离开出生圈后探索奖励密度骤降。与同批骨架 [[plan-first-technique-grant-v1]]（招式残卷分布梯度）、[[plan-ancient-relic-payoff-v1]]（遗物管线）存在 loot 表协调点，见 §8 #8/#9。
+
 ## 接入面（docs/CLAUDE.md §二 checklist）
 
 - **进料**：`ExternalContainerRegistry`/`ExternalContainer`（容器抽象，与 supply_coffin/placeable-containers 共用）；`TerrainProvider::query_surface`（地表吸附）；`ZoneRegistry`（分布配置按 zone）；`loot_pools.json` + `LootPoolRegistry`（`world/loot_pool.rs:21-94`）；`scripts/models/export_container_assets.py`（bbmodel→client geo/texture 导出管线）。
@@ -89,6 +91,8 @@
 5. **supply_coffin loot 硬编迁移**：顺手把 supply_coffin 三档 loot 迁 `loot_pools.json`（统一数据驱动）还是留原样——倾向留原样，本 plan 不动它（防 scope 蔓延），只登记后续待办。
 6. **天道叙事**：开高价值箱是否 emit 事件进天道 narration 信号（低优先）。
 7. **P4 皮肤资产形态**：程序化 nine-patch（零新贴图）够不够五套主题的质感，还是 gen-image 批产 GUI 纹理（进资源包，吃 sha1 同步）；`loot_container_open` payload 是否已带足 source_kind/variant 字段（不足则 server 补字段，wire 变更连 samples/.proto 一起改）。
+8. **（2026-07-18 追加）低危变种的招式残卷权重**：现状 8 种招式残卷全部压在深层 TSY pool——新手拿到第一招后（[[plan-first-technique-grant-v1]]），第 2-3 招在野外无获取梯度。P1 设计 `lootcrate_bone_lash`/`lootcrate_vine_chest` pool 时是否给低阶招式残卷小权重（如 3-5%），让世界散布箱承担"浅层招式梯度"职责；权重表与 TSY 深层的稀有度阶差要拉开（不稀释深层动机）。
+9. **（2026-07-18 追加）talisman 变种的遗物钩子**：`lootcrate_talisman`（宗门遗产）是否挂 `AncientRelicPool` 的极低概率入口（远低于 TSY 首入 1%，如 0.1%）——复用 [[plan-ancient-relic-payoff-v1]] 的注册与消费管线零重复实现；前提是不动 TSY 99/1 铁律的稀缺叙事（倾向：v1 不挂，登记待 relic-payoff 落地后再议）。
 
 ## §10（升 active 时补）
 

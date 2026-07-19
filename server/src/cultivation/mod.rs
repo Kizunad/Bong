@@ -77,6 +77,9 @@ pub mod skill_registry;
 pub mod special_talent;
 pub mod spiritual_sense;
 pub mod style_modifier;
+// plan-skill-anim-fidelity-v1 P0 —— technique cast_ticks 快照单向同步测试。
+#[cfg(test)]
+mod technique_cast_ticks_snapshot_test;
 // plan-skill-av-relink-v1 P3 —— technique 图标快照单向同步 + 映射约束测试。
 #[cfg(test)]
 mod technique_icon_snapshot_test;

@@ -47,10 +47,10 @@ class SkillIconSnapshotAssetTest {
     /**
      * 缺资产 allowlist 棘轮：登记"已知尚无图标资产"的 technique，**只许缩小不许增长**——
      * ① 非 allowlist 条目资产必须存在；② allowlist 条目资产必须仍缺失（资产落地即强制
-     * 删条目）；③ allowlist ⊆ 快照 key 集（防僵尸条目）。当前唯一条目 morph.yixing
-     * （全仓无 morph_yixing.png，见 known_techniques.rs 模块注释），P2 生成资产后清零。
+     * 删条目）；③ allowlist ⊆ 快照 key 集（防僵尸条目）。P2（2026-07-18）生成
+     * skill_scroll_morph_yixing.png 后已清零；新缺图的唯一出路是补资产（见冻结基线）。
      */
-    private static final Set<String> MISSING_ICON_ALLOWLIST = Set.of("morph.yixing");
+    private static final Set<String> MISSING_ICON_ALLOWLIST = Set.of();
 
     /**
      * PR-1 冻结基线（机器可执行的"只缩不涨"棘轮）：{@link #MISSING_ICON_ALLOWLIST} 必须
