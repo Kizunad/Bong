@@ -33,7 +33,7 @@
 
 - **历史证据（PR #1187）**：原修复 commit `b40fcdaf` 与 merge commit `353225a4` 的数据修复仍在主线；当时的 e2e、preflight、snapshot、review、finalize、CodeRabbit 六项检查均为 SUCCESS。这些检查只证明 2026-07-13 的坐标修复，不冒充本 replacement 的当前门禁。
 - **历史归档证据**：2026-07-18 的归档轮曾通过 server 全量门禁 `11793 passed / 0 failed / 6 ignored`，无上下文 validator 对当时 HEAD `13d03af6f54e83e7e25d06cec32c8bb496f69b29` 给出 PASS；两者均不冒充当前 replacement 的 exact-SHA 证据。
-- **replacement 初始证据**：2026-07-19 从最新 `origin/main` 的干净拓扑移植旧 tree patch，并新增真实 `mineral::register` + `zone::register` Startup 排序回归及 mmap-backed 非空 fossil 原子性回归；提交前 targeted `mineral::anchors::tests` 为 `21 passed / 0 failed / EXIT=0`。当前 code commit 的完整 SHA、canonical server gate 与 fresh validator 将在其实际完成后由独立 docs-only evidence commit 补记，不在本提交中预写未来结果。
+- **replacement exact-SHA 证据**：code/tests commit `b66aeff4a8a42d7a1eff16cf8235665c32c76453` 补齐真实 `mineral::register` + `zone::register` Startup 排序回归、最终候选整批 fail-closed 与 mmap-backed 非空 fossil 原子性回归；在合并最新 `origin/main` 后的 `3bc052b4922366395b9e4ea885bae0d34f2323ed` 洁净工作树上，targeted `mineral::anchors::tests` 为 `21 passed / 0 failed`，canonical server gate 四段退出码全 0，fresh read-only validator 给出绑定该完整 SHA 的 PASS。最终 docs-only commit 自身的 SHA 与 final-HEAD validator 留在 replacement PR 固定证据中，避免文档自引用。
 
 ## Bug 摘要
 
@@ -155,14 +155,17 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 
 - `b40fcdaf`（2026-07-13）：PR #1187 的原始数据修复，迁回 9 条远端 anchor 并加入数据契约测试。
 - `353225a4`（2026-07-13）：PR #1187 merge commit；六项 GitHub 检查均 SUCCESS。
-- 当前 replacement 的 code/tests commit：从最新 `origin/main` 干净拓扑移植旧净 tree patch，并补齐生产 Startup 排序与非空 fossil 原子性回归；其完整 SHA 将由紧随其后的 docs-only evidence commit 记录。
+- `b66aeff4a8a42d7a1eff16cf8235665c32c76453`（2026-07-19）：replacement code/tests commit；从干净主线移植旧净 tree patch，并补齐生产 Startup 排序、最终候选整批 preflight 与非空 fossil 原子性回归。
+- `3bc052b4922366395b9e4ea885bae0d34f2323ed`（2026-07-20）：合并最新 `origin/main`（含搜刮 HUD 终态修复）后的 exact gate/validator SHA；`origin/main` 是其祖先，replacement 自有 diff 仍仅为本 plan 的四个文件。
 
 ### 测试结果
 
 - **历史归档轮（2026-07-18，非 replacement 当前 gate）**：`cargo fmt --check` PASS；`cargo clippy --all-targets -- -D warnings` PASS；`cargo test` 为 `11793 passed / 0 failed / 6 ignored`。
-- **replacement 提交前 targeted（2026-07-19）**：`cargo test --lib mineral::anchors::tests -- --nocapture` → `21 passed / 0 failed / 0 ignored`，`EXIT=0`；日志 `/home/serverkizuna/.claude/jobs/3e0569dc/tmp/pr1228-replacement-targeted-precommit-g1.log`。该组包含真实 production registration ordering、最终候选边界、整批普通矿点 + mmap-backed fossil 原子性及显式 fossil expected-position 零物化回归。
-- **PR #1187 历史检查（非 replacement 当前 gate）**：`e2e`、`preflight`、`snapshot`、`review`、`finalize`、`CodeRabbit` 全部 SUCCESS。
-- replacement exact code SHA 上的 targeted/canonical server gate、资源终态与 fresh read-only validator 结果将在实际完成后由独立 docs-only evidence commit 补记；此初始提交不预写未来 SHA 或结果。
+- **replacement targeted（2026-07-20，exact SHA `3bc052b4922366395b9e4ea885bae0d34f2323ed`）**：`cargo test --lib mineral::anchors::tests -- --nocapture` → `21 passed / 0 failed / 0 ignored`，`TARGETED_EXIT=0`。该组包含真实 production registration ordering、最终候选边界、整批普通矿点 + mmap-backed fossil 原子性及显式 fossil expected-position 零物化回归。可移植日志标识：`pr1228-replacement-latest-3bc052b4-g1-targeted.log`。
+- **replacement canonical server gate（2026-07-20，exact SHA `3bc052b4922366395b9e4ea885bae0d34f2323ed`，clean）**：依次执行 `cargo fmt --check`、上述 targeted、`cargo clippy --all-targets -- -D warnings`、`cargo test`，`FINAL_FMT_EXIT=0 / FINAL_TARGETED_EXIT=0 / FINAL_CLIPPY_EXIT=0 / FINAL_TEST_EXIT=0 / GATE_EXIT=0`。全量测试分组为 `11808 + 11 + 1 + 4 = 11824 passed / 0 failed / 6 ignored`；可移植日志标识为 `pr1228-replacement-latest-3bc052b4-g1-summary.log` 与同前缀 `{fmt,targeted,clippy,test}.log`。
+- **replacement gate 资源终态**：`RESOURCE_ABORT=0 / ORPHAN_DESCENDANTS=0 / LIVE_DESCENDANTS=0`；起始可用空间 `12725911552` bytes，结束可用空间 `12382126080` bytes，6 GiB guard 未触发。
+- **replacement merge-SHA validator**：fresh、无上下文、只读 validator 首步对拍完整 HEAD 与洁净工作树，给出 `PASS 3bc052b4922366395b9e4ea885bae0d34f2323ed`；确认 production Startup 排序、最终候选整批 preflight、非 vacuous fossil 原子性、`radius=1` 合法 fixture、四文件自有 diff 与三个可解析 `Model: gpt-5.6-sol-max` trailer。
+- **集成边界（诚实口径）**：本 replacement 的生产 Startup 接线与普通矿点/fossil 物化由真实 Bevy `App::update()` 回归覆盖；未在本地另跑完整 Redis/bot E2E。PR #1187 的 `e2e`、`preflight`、`snapshot`、`review`、`finalize`、`CodeRabbit` SUCCESS 仅是历史数据修复证据，不冒充本次 runtime rework 的 exact-HEAD 集成 gate；replacement PR 将以其自身 exact-HEAD E2E 为外部门禁。
 
 ### 跨仓库核验
 
