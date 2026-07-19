@@ -284,7 +284,7 @@ class AnimCastTicksAlignmentTest {
                 + "）——对拍必须绑定 main source set");
     }
 
-    private record AnimMeta(int endTick, boolean isLoop, JsonArray moves) {
+    private record AnimMeta(int endTick, boolean isLoop, int returnTick, JsonArray moves) {
     }
 
     private static AnimMeta readAnim(String animName) throws IOException {
@@ -296,6 +296,7 @@ class AnimCastTicksAlignmentTest {
         return new AnimMeta(
             emote.get("endTick").getAsInt(),
             emote.has("isLoop") && emote.get("isLoop").getAsBoolean(),
+            emote.has("returnTick") ? emote.get("returnTick").getAsInt() : 0,
             emote.getAsJsonArray("moves"));
     }
 
@@ -356,21 +357,25 @@ class AnimCastTicksAlignmentTest {
     }
 
     /**
-     * 循环动画补帧同值检查：每个用到的轴在 endTick 必须有帧，且值 == 循环起点
-     * （最小 tick）帧值——库坑 #1 的完整语义（同值 keyframe，非仅存在）。
-     * 返回违规轴描述列表（空=通过）。
+     * 循环动画补帧同值检查：每个用到的轴在 endTick 必须有帧，且值 == 循环回绕锚点帧值
+     * ——库坑 #1 的完整语义（同值 keyframe，非仅存在）。回绕锚点是 emote 的
+     * {@code returnTick}（emotecraft 循环从 endTick 跳回 returnTick，而非一律回 tick 0；
+     * 例：shield_raise 举盾 0→6 + hold 循环 6→18，returnTick=6，缝合要求 t18≡t6）。
+     * 该轴在 returnTick 无关键帧时回落到该轴自身最小 tick 帧（returnTick=0 的存量
+     * 资产行为不变）。返回违规轴描述列表（空=通过）。
      */
     private static List<String> loopSeamViolations(AnimMeta meta) {
         List<String> violations = new ArrayList<>();
         for (Map.Entry<String, Map<Integer, Double>> axisEntry : collectAxisValues(meta).entrySet()) {
             Map<Integer, Double> byTick = axisEntry.getValue();
             int firstTick = byTick.keySet().stream().min(Integer::compare).orElseThrow();
+            int anchorTick = byTick.containsKey(meta.returnTick()) ? meta.returnTick() : firstTick;
             Double endValue = byTick.get(meta.endTick());
             if (endValue == null) {
                 violations.add(axisEntry.getKey() + "（endTick 无关键帧）");
-            } else if (!endValue.equals(byTick.get(firstTick))) {
-                violations.add(axisEntry.getKey() + "（endTick=" + endValue + " ≠ 起点帧="
-                    + byTick.get(firstTick) + "，循环回绕跳变）");
+            } else if (!endValue.equals(byTick.get(anchorTick))) {
+                violations.add(axisEntry.getKey() + "（endTick=" + endValue + " ≠ 回绕锚点帧(t"
+                    + anchorTick + ")=" + byTick.get(anchorTick) + "，循环回绕跳变）");
             }
         }
         return violations;
