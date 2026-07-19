@@ -147,8 +147,15 @@
   `cargo clippy --all-targets -- -D warnings` 再次清零。
 - `6e64052b`（2026-07-19）：双父合并 `origin/main=946ad6c2`（#1233 docs-only 归档
   `plan-bughunt-r9-vortex-particle-atlas-v1`），无冲突；parents=`f1a74ad7` + `946ad6c2`。
-- **本节所在提交**（2026-07-19）：只原地校正既有 `## Finish Evidence`，绑定 take_back 终态语义
-  与 merge 后最新门禁事实；不改代码、不写无法自证的“自身 SHA”循环。
+- `1c920bdd`（2026-07-19）：只原地校正既有 `## Finish Evidence`，绑定 take_back 终态语义
+  与 #1233 merge 后门禁事实。
+- `e32a44c2`（2026-07-19）：双父合并 `origin/main=5d9bdd8f`（#1241 技能动画精修，触
+  server+client），无冲突；parents=`1c920bdd` + `5d9bdd8f`。在该 SHA 上完成 server 全量门禁。
+- `f9215777`（2026-07-19）：双父合并 `origin/main=2f9c70ad`（#1212 搜刮 HUD 终态收尾，触
+  client network/HUD），无冲突；parents=`e32a44c2` + `2f9c70ad`。server 无 delta，故 server
+  门禁沿用 `e32a44c2` 实测；client 在 `f9215777` 重跑 Java 17 全量门禁。
+- **本节所在提交**（2026-07-19）：只原地校正既有 `## Finish Evidence`，绑定 #1241/#1212 双父
+  merge 与最新门禁事实（含真实 ignored 计数）；不改代码、不写无法自证的“自身 SHA”循环。
 
 ### 测试结果
 
@@ -172,15 +179,21 @@
   --tests com.bong.client.hud.ProcessingHudPlannerTest` → 12 passed / 0 failed；覆盖完整
   active、finished terminal、Rust fixture 跨端链、缺省 wire、显式零 target、缺 recipe、
   direct-store 零 target、blank recipe。
-- **server 完整门禁（2026-07-19，merge 前 clean HEAD `f1a74ad7`，`BONG_SKIP_SKIN_PREFETCH=1`）**：
-  `cargo fmt --check` → 0；`cargo clippy --all-targets -- -D warnings` → 0；`cargo test` → 0。
-  main 增量 `b150900e..946ad6c2` 仅 #1233 docs-only 归档（2 文件：finished plan 迁入 + 删除
-  active 占位），故 **merge 后未重复 server 全量门禁**。
-- **client 完整门禁（2026-07-19，merge 后 HEAD `6e64052b`，显式
-  `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`）**：
-  `cd client && ./gradlew test build` → **EXIT:0 / BUILD SUCCESSFUL in 1m 36s**；JUnit XML 汇总
-  **475 suites / 4148 tests / 0 failures / 0 errors / 0 skipped**；产物
+- **server 完整门禁（2026-07-19，#1241 merge 后 clean HEAD `e32a44c2`，
+  `BONG_SKIP_SKIN_PREFETCH=1`，log `/tmp/pr1213-gates-e32a44c2.log`）**：
+  `cargo fmt --check` → **FMT_EXIT:0**；`cargo clippy --all-targets -- -D warnings` →
+  **CLIPPY_EXIT:0**；`cargo test` → **TEST_EXIT:0**。汇总：`11810 + 11 + 1 + 4 = 11826 passed /
+  0 failed / 2+5=7 ignored`（lib 主套件 11810 passed / 2 ignored；其余 bin/integration 16
+  passed / 5 ignored）。#1212 仅 client+docs，server 树无 delta，故 server 门禁以 `e32a44c2`
+  为最终有效证据，不再因 #1212 重跑。
+- **client 完整门禁（2026-07-19，#1212 merge 后 clean HEAD `f9215777`，显式
+  `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`，log `/tmp/pr1213-client-f9215777.log`）**：
+  `cd client && ./gradlew test build` → **CLIENT_EXIT:0 / BUILD SUCCESSFUL in 7m 35s**；JUnit
+  XML 汇总 **475 suites / 4160 tests / 0 failures / 0 errors / 0 skipped**（相对 #1241 后
+  `e32a44c2` 的 4148 tests +12，来自 #1212 search HUD 新增用例）；产物
   `client/build/libs/bong-client-0.1.0.jar`。未接 `| tail`。
+- 中间态参考：#1241 merge 后、#1212 前的 `e32a44c2` 也曾跑过完整 client 门禁 → EXIT:0 /
+  BUILD SUCCESSFUL in 9m 19s / 475 suites / 4148 tests / 0 failed（保留为预合并证据）。
 - 真实目标场景（历史锁定）：`python3 scripts/bot/run_scenarios.py --scenario
   production_alchemy_brew_pill` → 1/1 PASS；点火后 active guidance 与 take-back 后 finished
   guidance 均保留真实 target/stages。
@@ -202,13 +215,15 @@
   生产共享字节，Fabric 直接消费。
 - `ed98a5eb` 闭环 take_back 终态缺口：grant/allocator 失败不得阻断 finished HUD 推送；
   成功 VFX/outcome 仅 grant 成功时触发。`f1a74ad7` 清 clippy。
-- 2026-07-19 fresh `git fetch origin main` 后 `origin/main=946ad6c26b497bbda86f7aeab878d4fd1bec91b0`
-  尚非祖先；普通 `git merge origin/main` 无冲突，落双父 `6e64052b`（parents `f1a74ad7` +
-  `946ad6c2`）。main 相对已同步点 `b150900e` 仅 #1233 docs-only 归档，未触及炼丹 handler /
-  fixture / proto / client。
-- **SHA 口径**：最后业务代码=`ed98a5eb`（clippy 微修 `f1a74ad7`）；主线同步树=`6e64052b`；
-  Finish Evidence=**本节所在提交**。包含本节的完整最终 PR HEAD 由全新只读 FINAL validator
-  绑定，不再追写自身 SHA 循环。
+- 2026-07-19 主线继续推进：`origin/main=5d9bdd8f`（#1241 server+client）→ 普通 merge 落
+  双父 `e32a44c2`（parents `1c920bdd` + `5d9bdd8f`），并完成 server/client 全量复验；随后
+  `origin/main=2f9c70ad`（#1212 client network/HUD）→ 再普通 merge 落双父 `f9215777`
+  （parents `e32a44c2` + `2f9c70ad`）。#1212 无 server/alchemy 变更，server 证据沿用
+  `e32a44c2`；client 在最终树 `f9215777` 重跑 Java 17 全量门禁绿。
+- **SHA 口径**：最后业务代码=`ed98a5eb`（clippy 微修 `f1a74ad7`）；主线同步树=
+  `f9215777`（含 #1233/#1241/#1212 双父 ancestry）；Finish Evidence=**本节所在提交**。
+  包含本节的完整最终 PR HEAD 由全新只读 FINAL validator 绑定，不再追写自身 SHA 循环。
+  显式排除 #1228，本轮未触及其分支/PR。
 
 ### 跨栈核验与遗留
 
