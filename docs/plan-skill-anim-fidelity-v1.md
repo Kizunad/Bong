@@ -260,3 +260,5 @@
 **P2 前半后（2026-07-19）**：A×17 / B×11 / C×5 / D×13 / N-A×3——6 条去复用重制达标转 A（sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject），allowlist 删 5 条（condense_edge 原不在表）；剩余 B+C+D = 29 条随 P2 后半-P4 清空。
 
 **P2 后半后（2026-07-19）**：A×22 / B×9 / C×5 / D×10 / N-A×3——5 条转 A（sword.infuse / charge_carrier 真两段式落地 + armor_pierce / echo_fractal / manifest 瞬发结算型专属化）；heaven_gate 移 P6 收口。allowlist 删 1 条（sword.infuse；charge_carrier 原本不在表）。**遗留登记**：armor_pierce / echo_fractal / manifest 三条「瞬发结算型长 cast」的时长对拍条目仍驻 allowlist（cast≥40 机械断言要求 isLoop，与瞬发结算通道语义冲突——isLoop 无停止信号会永久循环；按覆盖结算期的非循环单段交付是当前最诚实形态）。P6 的「allowlist 清零」判据需据此裁决：要么 cast 通道真实化后落真两段式，要么把「瞬发结算型长 cast」升级为对拍测试登记例外（需 conventions §13 #2 修改授权，本批授权已用尽）。剩余 B+C+D = 24 条随 P3-P4 + P6 清空。
+
+**P2 后半 3 轮打磨记录（2026-07-19）**：round 1 first cut（7 资产：2 loop + 2 release + 3 瞬发单段，gen 脚本参数化生成）→ round 2 自评（`render_animation.py` 7 份三视图 grid 目检：loop 首尾同帧、release 起手与 loop 稳定帧衔接、两 release 轨迹可区分、三瞬发招姿态语言互异；机械四查：循环每轴 endTick 同值 ✓ / leg.pitch≤40° ✓ / 打击轴无 linear（全 20 份 manifest 扫描）✓ / 主轴密度 ≤4t ✓）→ round 3 终轮（gen 脚本决定性再生成 7/7 字节一致；server 门禁 CLIPPY:0+TEST:0、client `test build` 于最终代码后真跑绿）——两轮审查零缺陷，无资产增量改动。
