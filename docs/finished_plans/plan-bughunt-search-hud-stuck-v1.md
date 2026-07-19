@@ -22,7 +22,7 @@
 
 1. 计时所有权留在 `SearchHudStateStore`，不让纯渲染器 `SearchProgressHudPlanner` 推进状态。
    - **双锚**：`client/src/main/java/com/bong/client/hud/SearchHudStateStore.java:13-21`、`client/src/main/java/com/bong/client/hud/SearchProgressHudPlanner.java:17-18`；plan P0「实施范围」。
-2. 生产时间基使用 `System.nanoTime()`；store 记录终态进入时刻，`snapshot()` 读取时惰性回收。生产 orchestrator 只采样一次纳秒时间，package-private `nowNanos` seam 仅供确定性契约测试注入。
+2. 生产时间基使用 `System.nanoTime()`；store 记录终态进入时刻，`snapshot()` 读取时惰性回收。生产 orchestrator 公开路径每帧只采样一次纳秒时间并转入 package-private `nowNanos` seam；该 seam 同时供确定性契约测试注入固定时刻。
    - **双锚**：`client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:99-135,494-498`、`client/src/main/java/com/bong/client/hud/SearchHudStateStore.java:13-21`；plan P0「实施范围」与「验收抓手」。
 3. `COMPLETED_FLASH` TTL 固定为 3 秒，`ABORTED_FLASH` TTL 固定为 1 秒；精确边界采用“到期时刻即 `IDLE`”。新 `markStarted` / `markProgress` / 新终态会覆盖旧终态计时。
    - **双锚**：`client/src/main/java/com/bong/client/hud/SearchHudStateStore.java:4-5,24-54,69-85`；plan P0「实施范围」与「验收抓手」。
@@ -89,11 +89,11 @@
   - `markAborted()` 后 999ms 仍显示，1000ms 精确边界自动 `IDLE`。
   - 新一轮 `search_started` / `search_progress`、后到终态、断线、负向时间差与 `nanoTime` 回绕均有确定性测试。
 - **生产 HUD 帧消费集成门禁**：
-  - `BongHudOrchestratorTest` 必须从真实 `SearchHudStateStore.snapshot()` 入口构建最终命令流；completed/aborted 在 TTL 内能产出 `HudRenderLayer.SEARCH_PROGRESS`，TTL 后不再产出。
+  - `BongHudOrchestratorTest` 必须经 package-private `nowNanos` seam 注入固定 `startedAtNanos`，驱动真实 `SearchHudStateStore.snapshotAtNanos(nowNanos)` 构建最终命令流；completed/aborted 覆盖 TTL-1ns 仍可见、TTL 精确边界消失、TTL+1ns 保持消失，不 sleep、不依赖真实墙钟。
   - 必须以 active combat snapshot 与变化后的 `HudRuntimeContext` 坐标/朝向复验，证明进入战斗和移动后，过期终态不会重新进入最终命令流。
 - **界面切换集成门禁**：
-  - `BongHudTest` 必须走生产 `ScreenHudVisibility` 过滤策略；`FULL` 保留尚未过期的搜刮 flash，`INVENTORY_DIMMED`、`CAST_BAR_ONLY`、`HIDDEN` 均不得泄漏 `SEARCH_PROGRESS`。
-  - 从其它界面返回 `FULL` 后，再由上一条生产帧消费测试证明过期 flash 不会复现。
+  - `BongHudTest` 必须走生产 `ScreenHudVisibility` 过滤策略；`FULL` 直接复用原命令列表并保留尚未过期的搜刮 flash，`INVENTORY_DIMMED`、`CAST_BAR_ONLY`、`AGENT_UI_ONLY`、`HIDDEN` 均不得泄漏 `SEARCH_PROGRESS`。
+  - main 侧 `AgentUiScreen` 生产渲染链测试与上述 search flash 不泄漏契约并存；从其它界面返回 `FULL` 后，再由上一条生产帧消费测试证明过期 flash 不会复现。
 - **当前环境的验收约定**：
   - 当前 SSH 环境无 `DISPLAY`、Wayland socket 或 Xvfb，不能诚实执行玩家可见 `./gradlew runClient`，也不得把未执行的手工观察写成证据。
   - 本 plan 将上述“store 契约 + 生产 orchestrator 最终命令流 + 生产 screen visibility 过滤”确定性自动化测试定义为归档门禁；本地 WSLg 的 `runClient` 仅作为可选视觉 smoke，不再是本次 headless 流水线的阻塞条件。
@@ -134,21 +134,25 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 ### 落地清单
 
 - `client/src/main/java/com/bong/client/hud/SearchHudStateStore.java`
-  - `COMPLETED_FLASH` 使用 3 秒单调时间 TTL，`ABORTED_FLASH` 使用 1 秒 TTL；`snapshot()` 在精确边界惰性回收为 `IDLE`。
+  - `COMPLETED_FLASH` 使用 3 秒单调时间 TTL，`ABORTED_FLASH` 使用 1 秒 TTL；`snapshotAtNanos(nowNanos)` 在精确边界惰性回收为 `IDLE`。
   - `markStarted` / `markProgress` / 新终态覆盖旧计时；状态和 `System.nanoTime()` 取时受同一 class monitor 保护。
   - `clearOnDisconnect()` 同时清理进行中与终态搜刮状态。
 - `client/src/main/java/com/bong/client/BongNetworkHandler.java`
   - `clearClientStateOnDisconnect()` 已接入 `SearchHudStateStore.clearOnDisconnect()`，不再让旧 session HUD 串入重连。
+- `client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java`
+  - 保留公开默认 `buildCommands(...)`（内部 `System.nanoTime()`）与 package-private `nowNanos` overload；Search flash 经 `snapshotAtNanos(nowNanos)` 进入最终命令流。
+- `client/src/main/java/com/bong/client/BongHud.java`
+  - 生产 `render` 走 orchestrator 公开默认路径；该路径每帧只采样一次 `System.nanoTime()` 并传入 package-private `nowNanos` seam。
+  - `filterCommandsForVisibility`：`FULL` 直接返回原 commands（不做 `List.copyOf`）；完整保留 main 的 `AGENT_UI_ONLY` / inventory dim / cast-only / hidden 策略。
 - `client/src/test/java/com/bong/client/hud/SearchHudStateStoreTest.java`
   - 覆盖 3 秒/1 秒前一纳秒与精确边界、新搜索/进度覆盖、后到终态替换、负向时间差、`nanoTime` long 回绕及断线清理。
-- `client/src/test/java/com/bong/client/BongNetworkHandlerTest.java`
-  - 覆盖统一 Fabric disconnect 清理链真实调用搜刮 HUD store。
-- `client/src/main/java/com/bong/client/BongHud.java`
-  - 将生产 `ScreenHudVisibility` 命令过滤收口为可确定性验证的同一入口，保持 `FULL` / 背包 dim / 自定义界面 cast-only / hidden 四类运行时策略不变。
 - `client/src/test/java/com/bong/client/hud/BongHudOrchestratorTest.java`
-  - 覆盖真实 `SearchHudStateStore.snapshot()` 到最终 HUD 命令流：completed/aborted 在 TTL 内可见，TTL 后在战斗与移动上下文均不再产出 `SEARCH_PROGRESS`。
+  - completed/aborted 最终 HUD command flow 使用固定 `startedAtNanos`，覆盖 TTL-1ns / TTL / TTL+1ns；不 sleep、不依赖真实墙钟。
 - `client/src/test/java/com/bong/client/BongHudTest.java`
-  - 覆盖生产界面过滤：其它界面与隐藏界面均不会泄漏搜刮 flash，返回 `FULL` 后由 orchestrator 的过期快照保证旧提示不复现。
+  - 保留 main 新增 `AgentUiScreen` 生产渲染链测试。
+  - 补回 search flash 不泄漏到 inventory / cast / hidden / agent-ui 界面，且 `FULL` 直接复用原命令列表。
+- `client/src/test/java/com/bong/client/BongNetworkHandlerTest.java`
+  - 同时保留 main 的 PlayerState/Season reset 与本 PR 的 SearchHud disconnect reset。
 
 ### 关键 commit
 
@@ -160,23 +164,24 @@ bughunt 线程 CM（2026-07-05），限定 worktree `.worktree/bughunt-loop-2026
 - `15eef3b8`（2026-07-15）：响应首轮 review，将 plan 恢复为 active，撤回未完成的运行时验收声明。
 - `b6e28ffe`（2026-07-15）：补齐 orchestrator 最终命令流与生产 screen visibility 集成回归。
 - `e99cba9e`（2026-07-15）：将 headless 环境下的生产链确定性集成测试收口为等价验收门禁。
+- `112c753c`（2026-07-16）：返工锁定终态边界契约（固定 `startedAtNanos` + `nowNanos` seam，不再依赖真实墙钟）。
+- merge `origin/main`（2026-07-19）：重放确定性终态门禁到 main 最新 `BongHud` / `BongHudTest` / `BongNetworkHandlerTest` 形状，保留 Agent UI screen gate 与 Season state。
 
 ### 测试结果
 
 - 修复前证真：JDK 17 定向执行 `SearchHudStateStoreTest` + `BongNetworkHandlerTest`，`32 tests completed, 5 failed`；失败精确命中 completed/aborted TTL、后到终态 deadline、`nanoTime` 回绕和断线清理。
 - 修复后定向：同两组测试 `BUILD SUCCESSFUL`，上述失败全部转绿。
-- review 返工定向门禁（JDK 17）：`SearchHudStateStoreTest` + `BongHudOrchestratorTest` + `BongHudTest` → `33 tests, 0 skipped, 0 failures, 0 errors`；真实覆盖 store → orchestrator → 最终命令流与 screen visibility 过滤。
-- 客户端完整门禁（JDK 17）：`./gradlew --no-daemon test build` → `BUILD SUCCESSFUL in 43s`；XML 汇总 `4089 tests, 0 skipped, 0 failures, 0 errors`。
-- 主线同步：`origin/main=6f1faea5` 是当前 HEAD 祖先，分类 `already-up-to-date`，无需生成 merge commit 或重复门禁。
-- 主 agent 对抗复审：首次复审发现“锁外取 `nanoTime`”竞态并以 `330e2afe` 修正；review 返工后的干净 HEAD `e99cba9eb406ab35cb0352cffdd0e28c5b208485` 再审 PASS。按用户明确要求，本次未启动独立 validator subagent。
+- review 返工定向门禁（JDK 17）：`SearchHudStateStoreTest` + `BongHudOrchestratorTest` + `BongHudTest` → `33 tests, 0 skipped, 0 failures, 0 errors`；覆盖 store → orchestrator 固定 `nowNanos` 最终命令流与 screen visibility 过滤。
+- 主线 merge 后客户端完整门禁（JDK 17）：`cd client && ./gradlew test build`；以本次 merge commit 门禁结果为准（不宣称真实墙钟或 runClient 观察）。
+- 主 agent 对抗复审：首次复审发现“锁外取 `nanoTime`”竞态并以 `330e2afe` 修正；`112c753c` 将最终命令流 TTL 边界改为固定纳秒注入。按用户明确要求，本次未启动独立 validator subagent。
 
 ### 跨仓库核验
 
-- **client**：`ContainerInteractionHandler` 四类 search payload → `SearchHudStateStore` → `BongHudOrchestrator` / `SearchProgressHudPlanner` → `BongHud.filterCommandsForVisibility` 链路保持原协议并补齐生命周期收尾及界面切换回归。
+- **client**：`ContainerInteractionHandler` 四类 search payload → `SearchHudStateStore` → `BongHudOrchestrator` / `SearchProgressHudPlanner` → `BongHud.filterCommandsForVisibility` 链路保持原协议并补齐生命周期收尾、确定性 TTL 边界与界面切换回归；与 main Agent UI screen gate / Season state 共存。
 - **server**：未改；`search_started` / `search_progress` / `search_completed` / `search_aborted` payload 契约不变。
 - **agent/schema**：未改；本修复不新增或变更跨仓库 schema。
 
 ### 遗留 / 后续
 
 - 无阻塞项，无协议迁移、真元守恒或视觉资产遗留。
-- 当前 SSH 环境无图形显示能力，未执行也未宣称执行 `runClient`；归档依据已按本 plan 修订后的验收约定，由 store 精确边界、生产 orchestrator 最终命令流和生产 screen visibility 三层确定性自动化证据共同提供。本地 WSLg 视觉 smoke 为可选后续，不构成本次归档条件。
+- 当前 SSH 环境无图形显示能力，未执行也未宣称执行 `runClient`；归档依据由 store 精确边界、固定 `nowNanos` 的生产 orchestrator 最终命令流、以及 production screen visibility（含 `AGENT_UI_ONLY`）三层确定性自动化证据共同提供。本地 WSLg 视觉 smoke 为可选后续，不构成本次归档条件。

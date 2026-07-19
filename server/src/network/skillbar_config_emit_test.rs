@@ -1,3 +1,10 @@
+//! skillbar_config 发射契约测试。
+//!
+//! plan-skill-av-relink-v1 P3（图标链）追加：Skill 槽下发的 icon_texture 必须严格
+//! 等于 `technique_definition(id).icon_texture` 且非空；Item 槽 icon_texture 恒空串
+//! （P0 显式契约：client 按 template_id 走 ItemIconRegistry 富解析）；未知
+//! technique id / 解析不到的 Item instance / 无 inventory 一律下发 None 槽。
+
 use std::collections::HashMap;
 
 use valence::prelude::{App, Update};
@@ -7,12 +14,13 @@ use valence::testing::create_mock_client;
 use super::skillbar_config_emit::emit_skillbar_config_payloads;
 use crate::combat::components::{SkillBarBindings, SkillSlot};
 use crate::combat::CombatClock;
+use crate::cultivation::known_techniques::{technique_definition, TECHNIQUE_DEFINITIONS};
 use crate::inventory::{
     ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemRegistry,
     ItemTemplate, PlacedItemState, PlayerInventory,
 };
 use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
-use crate::schema::combat_hud::SkillBarEntryV1;
+use crate::schema::combat_hud::{SkillBarConfigV1, SkillBarEntryV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 fn empty_inventory() -> PlayerInventory {
@@ -91,17 +99,58 @@ fn item_instance(instance_id: u64, template_id: &str) -> ItemInstance {
     }
 }
 
-#[test]
-fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
+/// 跑一轮 emit 系统并收取该 client 收到的 skillbar_config payload。
+/// `inventory` 传 `None` 时不挂 `PlayerInventory` component（覆盖 Option 兜底分支）。
+fn emit_and_collect_skillbar_config(
+    registry: ItemRegistry,
+    tick: u64,
+    bindings: SkillBarBindings,
+    inventory: Option<PlayerInventory>,
+) -> SkillBarConfigV1 {
     let mut app = App::new();
-    app.insert_resource(CombatClock { tick: 10 });
-    app.insert_resource(ItemRegistry::from_map(HashMap::from([(
-        "tea".to_string(),
-        template("tea", "清茶"),
-    )])));
+    app.insert_resource(CombatClock { tick });
+    app.insert_resource(registry);
     app.add_systems(Update, emit_skillbar_config_payloads);
 
     let (client_bundle, mut helper) = create_mock_client("Azure");
+    match inventory {
+        Some(inventory) => {
+            app.world_mut().spawn((client_bundle, bindings, inventory));
+        }
+        None => {
+            app.world_mut().spawn((client_bundle, bindings));
+        }
+    }
+
+    app.update();
+    let mut client_query = app.world_mut().query::<&mut valence::prelude::Client>();
+    for mut client in client_query.iter_mut(app.world_mut()) {
+        client
+            .flush_packets()
+            .expect("mock client packets should flush");
+    }
+
+    helper
+        .collect_received()
+        .0
+        .into_iter()
+        .find_map(|frame| {
+            let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                return None;
+            }
+            let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
+                .expect("server_data payload should decode");
+            match payload.payload {
+                ServerDataPayloadV1::SkillBarConfig(config) => Some(config),
+                _ => None,
+            }
+        })
+        .expect("skillbar_config should be emitted")
+}
+
+#[test]
+fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
     let mut inventory = empty_inventory();
     inventory.containers[0].items.push(PlacedItemState {
         row: 0,
@@ -117,52 +166,174 @@ fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
     ));
     assert!(bindings.set(1, SkillSlot::Item { instance_id: 42 }));
     bindings.set_cooldown(0, 70);
-    app.world_mut().spawn((client_bundle, bindings, inventory));
 
-    app.update();
-    let mut client_query = app.world_mut().query::<&mut valence::prelude::Client>();
-    for mut client in client_query.iter_mut(app.world_mut()) {
-        client
-            .flush_packets()
-            .expect("mock client packets should flush");
-    }
+    let skillbar = emit_and_collect_skillbar_config(
+        ItemRegistry::from_map(HashMap::from([(
+            "tea".to_string(),
+            template("tea", "清茶"),
+        )])),
+        10,
+        bindings,
+        Some(inventory),
+    );
 
-    let mut received = Vec::new();
-    for frame in helper.collect_received().0 {
-        let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
-            continue;
-        };
-        if packet.channel.as_str() != SERVER_DATA_CHANNEL {
-            continue;
-        }
-        let payload: ServerDataV1 =
-            serde_json::from_slice(packet.data.0 .0).expect("server_data payload should decode");
-        received.push(payload);
-    }
-
-    let skillbar = received
-        .into_iter()
-        .find_map(|payload| match payload.payload {
-            ServerDataPayloadV1::SkillBarConfig(config) => Some(config),
-            _ => None,
-        })
-        .expect("skillbar_config should be emitted");
+    let expected_icon = technique_definition("burst_meridian.beng_quan")
+        .expect("burst_meridian.beng_quan must be registered")
+        .icon_texture;
     assert_eq!(skillbar.slots.len(), 9);
     assert!(matches!(
         &skillbar.slots[0],
-        Some(SkillBarEntryV1::Skill { skill_id, display_name, cast_duration_ms, cooldown_ms, .. })
+        Some(SkillBarEntryV1::Skill { skill_id, display_name, cast_duration_ms, cooldown_ms, icon_texture })
             if skill_id == "burst_meridian.beng_quan"
                 && display_name == "崩拳"
                 && *cast_duration_ms == 400
                 && *cooldown_ms == 3000
+                && icon_texture == expected_icon
     ));
     assert!(matches!(
         &skillbar.slots[1],
-        Some(SkillBarEntryV1::Item { template_id, display_name, cast_duration_ms, cooldown_ms, .. })
+        Some(SkillBarEntryV1::Item { template_id, display_name, cast_duration_ms, cooldown_ms, icon_texture })
             if template_id == "tea"
                 && display_name == "清茶"
                 && *cast_duration_ms == 250
                 && *cooldown_ms == 1250
+                && icon_texture.is_empty()
     ));
     assert!(skillbar.cooldown_until_ms[0] > 0);
+}
+
+/// plan-skill-av-relink-v1 P3 —— 全部 technique 逐条对拍：Skill 槽下发的
+/// icon_texture 必须严格等于 `technique_definition(id).icon_texture` 且非空。
+/// SkillBar 只有 9 槽，按 9 条一批分批绑定跑 emit，保证 49 条全覆盖。
+#[test]
+fn skillbar_skill_slots_emit_definition_icon_texture_for_every_technique() {
+    let mut covered = 0usize;
+    for chunk in TECHNIQUE_DEFINITIONS.chunks(SkillBarBindings::SLOT_COUNT) {
+        let mut bindings = SkillBarBindings::default();
+        for (slot, def) in chunk.iter().enumerate() {
+            assert!(bindings.set(
+                slot as u8,
+                SkillSlot::Skill {
+                    skill_id: def.id.to_string(),
+                },
+            ));
+        }
+        let config = emit_and_collect_skillbar_config(
+            ItemRegistry::from_map(HashMap::new()),
+            0,
+            bindings,
+            Some(empty_inventory()),
+        );
+        assert_eq!(
+            config.slots.len(),
+            SkillBarBindings::SLOT_COUNT,
+            "skillbar_config.slots 长度必须恒为 {}（client 按 idx 取）",
+            SkillBarBindings::SLOT_COUNT
+        );
+        for (slot, def) in chunk.iter().enumerate() {
+            match &config.slots[slot] {
+                Some(SkillBarEntryV1::Skill {
+                    skill_id,
+                    icon_texture,
+                    ..
+                }) => {
+                    assert_eq!(
+                        skill_id.as_str(),
+                        def.id,
+                        "槽 {slot} 应回发绑定的 technique id"
+                    );
+                    assert_eq!(
+                        icon_texture.as_str(),
+                        def.icon_texture,
+                        "Skill 槽 `{}` 下发的 icon_texture 必须严格等于 \
+                         technique_definition 定义值 `{}`——漂移意味着 emit 路径没走定义表",
+                        def.id,
+                        def.icon_texture
+                    );
+                    assert!(
+                        !icon_texture.is_empty(),
+                        "Skill 槽 `{}` 的 icon_texture 不得为空串（HUD 无图标可渲染）",
+                        def.id
+                    );
+                }
+                other => panic!(
+                    "槽 {slot} 绑定了已注册 technique `{}`，应下发 Skill 条目，实际 {other:?}",
+                    def.id
+                ),
+            }
+        }
+        for slot in chunk.len()..SkillBarBindings::SLOT_COUNT {
+            assert!(
+                config.slots[slot].is_none(),
+                "未绑定的槽 {slot} 应下发 None，实际 {:?}",
+                config.slots[slot]
+            );
+        }
+        covered += chunk.len();
+    }
+    assert_eq!(
+        covered,
+        TECHNIQUE_DEFINITIONS.len(),
+        "分批循环必须遍历全部 technique 定义"
+    );
+}
+
+/// 未知 technique id / 背包解析不到的 Item instance → 槽位下发 None（不发条目、
+/// 不 panic、不发占位）。
+#[test]
+fn skillbar_unknown_skill_id_and_unresolvable_item_emit_none() {
+    let mut bindings = SkillBarBindings::default();
+    assert!(bindings.set(
+        0,
+        SkillSlot::Skill {
+            skill_id: "no.such_technique".to_string(),
+        },
+    ));
+    assert!(bindings.set(1, SkillSlot::Item { instance_id: 9999 }));
+
+    let config = emit_and_collect_skillbar_config(
+        ItemRegistry::from_map(HashMap::new()),
+        0,
+        bindings,
+        Some(empty_inventory()),
+    );
+
+    assert!(
+        config.slots[0].is_none(),
+        "未注册的 technique id 不应下发条目（technique_definition 返回 None），实际 {:?}",
+        config.slots[0]
+    );
+    assert!(
+        config.slots[1].is_none(),
+        "背包/装备/hotbar 均解析不到的 Item instance 不应下发条目，实际 {:?}",
+        config.slots[1]
+    );
+    assert!(
+        config.slots.iter().all(Option::is_none),
+        "其余空槽也应全部为 None"
+    );
+}
+
+/// Item 槽绑定存在但玩家实体没挂 `PlayerInventory` component → 槽位下发 None
+/// （emit 系统对 Option<&PlayerInventory> 的兜底分支）。
+#[test]
+fn skillbar_item_slot_without_inventory_component_emits_none() {
+    let mut bindings = SkillBarBindings::default();
+    assert!(bindings.set(0, SkillSlot::Item { instance_id: 42 }));
+
+    let config = emit_and_collect_skillbar_config(
+        ItemRegistry::from_map(HashMap::from([(
+            "tea".to_string(),
+            template("tea", "清茶"),
+        )])),
+        0,
+        bindings,
+        None,
+    );
+
+    assert!(
+        config.slots[0].is_none(),
+        "无 PlayerInventory component 时 Item 槽应下发 None，实际 {:?}",
+        config.slots[0]
+    );
 }

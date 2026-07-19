@@ -2,6 +2,9 @@ pub mod agent_bridge;
 pub mod agent_ui;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
+// plan-skill-av-relink-v1 P3 —— P1 接线 anim_id 共享清单单向同步测试。
+#[cfg(test)]
+mod anim_wiring_manifest_test;
 pub mod animation_trigger;
 pub mod anqi_event_bridge;
 pub mod anqi_hud_emit;
@@ -59,6 +62,9 @@ pub mod poison_trait_emit;
 pub mod qi_attrition_emit;
 pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
+// plan-skill-av-relink-v1 P3 —— quickslot 发射契约测试（Item 槽 icon_texture 恒空串）。
+#[cfg(test)]
+mod quickslot_config_emit_test;
 // plan-race-system-v1 P3c — 种族门元数据表（RaceGateMeta）构建 + join 首帧下发。
 pub mod morph_state_emit;
 pub mod race_gate_meta_emit;
@@ -792,6 +798,23 @@ pub fn register(app: &mut App) {
             // 广播体操练习完成 → guard_raise 伸展姿态 + happy_villager 正反馈粒子
             //（纯 cosmetic，复用现有 anim + vanilla 粒子，无净新资产）。
             vfx_animation_trigger::emit_guangbo_ticao_visual_triggers,
+        )
+            .before(vfx_event_emit::emit_vfx_event_payloads),
+    );
+    // plan-skill-av-relink-v1 P1 — 孤儿动画接线 adapter 组（上一组 tuple 已满 20 上限，
+    // 独立注册；同样约束在 emit_vfx_event_payloads 之前跑）。
+    app.add_systems(
+        Update,
+        (
+            // 激活功法（TechniqueLearnedEvent）→ 流派架势动画（stance_*）。卷轴习得
+            // 路走 client_request_handler，after 保证同 tick 播出；导师传授 / 首击
+            // 领悟路事件跨 tick 仍被消费（events 双缓冲）。
+            vfx_animation_trigger::emit_technique_learned_stance_triggers
+                .after(client_request_handler::handle_client_request_payloads),
+            // 淬炼按键（TemperingHit）→ forge_hammer 抡锤动画（与 forge 模块
+            // FORGE_HAMMER_STRIKE 粒子同源同 tick）。
+            vfx_animation_trigger::emit_forge_tempering_animation_triggers
+                .after(client_request_handler::handle_client_request_payloads),
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );

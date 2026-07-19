@@ -1,3 +1,21 @@
+//! 已知功法静态注册表（`TECHNIQUE_DEFINITIONS`，全部 49 条）。
+//!
+//! # `icon_texture` 命名约定（plan-skill-av-relink-v1 P0，单一真相源）
+//!
+//! technique 图标一律指向 client 卷轴图：
+//! `bong-client:textures/gui/items/skill_scroll_<safe_id>.png`，
+//! 其中 `safe_id` = 技能 id 里的 `.` / `:` / `/` 全部替换为 `_`
+//! （例：`sword.cleave` → `skill_scroll_sword_cleave.png`）。该约定与 client
+//! `SkillIconIds.scrollTexturePath` 的兜底拼法一致，新增 technique 按此命名出图。
+//!
+//! 既有专属图例外（现值真实存在，不重链）：
+//! - woliu 基础六式与 `body.guangbo_ticao` → `bong:textures/gui/skill/`
+//!   （该目录保留给非 technique 的 HUD 特化图）；
+//! - zhenmai 五式 → `bong-client:textures/gui/skill/`。
+//!
+//! 已知缺失：无——`morph.yixing` 已于 P2（2026-07-18）经 `/gen-image` 生成
+//! `skill_scroll_morph_yixing.png` 并按规范路径收编，缺资产 allowlist 清零。
+
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
@@ -151,7 +169,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 16,
         cooldown_ticks: 30,
         range: 3.0,
-        icon_texture: "bong:textures/gui/skill/sword_cleave.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_cleave.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -167,7 +185,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 10,
         cooldown_ticks: 20,
         range: 3.5,
-        icon_texture: "bong:textures/gui/skill/sword_thrust.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_thrust.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -183,7 +201,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 4,
         cooldown_ticks: 40,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/sword_parry.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_parry.png",
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
@@ -199,7 +217,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 40,
         cooldown_ticks: 100,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/sword_infuse.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_infuse.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -215,7 +233,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 0,
         cooldown_ticks: 40,
         range: 2.8,
-        icon_texture: "bong:textures/gui/skill/movement_dash.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_movement_dash.png",
         category: SkillCategory::Attack,
     },
     // plan-shield-block-v1 P4 — 盾牌格挡熟练度，无经脉前置，持盾即可习得。
@@ -232,7 +250,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 0,
         cooldown_ticks: 0,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/shield_block.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_shield_block.png",
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
@@ -261,7 +279,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 8,
         cooldown_ticks: 60,
         range: 1.3,
-        icon_texture: "bong:textures/gui/skill/beng_quan.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_burst_meridian_beng_quan.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -280,7 +298,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 10,
         cooldown_ticks: 70,
         range: 1.5,
-        icon_texture: "bong:textures/gui/skill/tie_shan_kao.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_burst_meridian_tie_shan_kao.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -299,7 +317,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 6,
         cooldown_ticks: 50,
         range: 4.0,
-        icon_texture: "bong:textures/gui/skill/xue_beng_bu.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_burst_meridian_xue_beng_bu.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -318,7 +336,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 12,
         cooldown_ticks: 120,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/ni_mai_hu_ti.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_burst_meridian_ni_mai_hu_ti.png",
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
@@ -334,7 +352,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 1,
         cooldown_ticks: 0,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/full_power_charge.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_baomai_full_power_charge.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -350,7 +368,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 1,
         cooldown_ticks: 20,
         range: 8.0,
-        icon_texture: "bong:textures/gui/skill/full_power_release.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_baomai_full_power_release.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -569,7 +587,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 6,
         cooldown_ticks: 60,
         range: 8.0,
-        icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_palm.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -585,7 +603,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 10,
         cooldown_ticks: 240,
         range: 2.0,
-        icon_texture: "bong:textures/gui/skill/woliu_hold.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vortex_shield.png",
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
@@ -601,7 +619,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 8,
         cooldown_ticks: 300,
         range: 12.0,
-        icon_texture: "bong:textures/gui/skill/woliu_pull.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_lock.png",
         category: SkillCategory::Control,
     },
     TechniqueDefinition {
@@ -617,7 +635,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 80,
         cooldown_ticks: 400,
         range: 6.0,
-        icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vortex_resonance.png",
         category: SkillCategory::Control,
     },
     TechniqueDefinition {
@@ -633,7 +651,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 40,
         cooldown_ticks: 600,
         range: 6.0,
-        icon_texture: "bong:textures/gui/skill/woliu_burst.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_turbulence_burst.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -649,7 +667,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 1,
         cooldown_ticks: 12,
         range: 50.0,
-        icon_texture: "bong:textures/gui/skill/dugu_shoot_needle.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_shoot_needle.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -665,7 +683,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 1,
         cooldown_ticks: 40,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/dugu_infuse_poison.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_infuse_poison.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -732,7 +750,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 400,
         cooldown_ticks: 400,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/anqi_charge_carrier.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_charge_carrier.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -761,7 +779,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 6,
         cooldown_ticks: 60,
         range: 80.0,
-        icon_texture: "bong:textures/gui/skill/anqi_single_snipe.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_single_snipe.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -780,7 +798,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 30,
         cooldown_ticks: 240,
         range: 30.0,
-        icon_texture: "bong:textures/gui/skill/anqi_multi_shot.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_multi_shot.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -799,7 +817,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 20,
         cooldown_ticks: 360,
         range: 50.0,
-        icon_texture: "bong:textures/gui/skill/anqi_soul_inject.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_soul_inject.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -818,7 +836,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 40,
         cooldown_ticks: 500,
         range: 80.0,
-        icon_texture: "bong:textures/gui/skill/anqi_armor_pierce.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_armor_pierce.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -837,7 +855,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 60,
         cooldown_ticks: 6000,
         range: 150.0,
-        icon_texture: "bong:textures/gui/skill/anqi_echo_fractal.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_echo_fractal.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -871,7 +889,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 12,
         cooldown_ticks: 40,
         range: 4.0,
-        icon_texture: "bong:textures/gui/skill/sword_condense_edge.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_condense_edge.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -887,7 +905,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 20,
         cooldown_ticks: 60,
         range: 8.0,
-        icon_texture: "bong:textures/gui/skill/sword_qi_slash.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_qi_slash.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -903,7 +921,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 30,
         cooldown_ticks: 120,
         range: 6.0,
-        icon_texture: "bong:textures/gui/skill/sword_resonance.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_resonance.png",
         category: SkillCategory::Control,
     },
     TechniqueDefinition {
@@ -919,7 +937,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 40,
         cooldown_ticks: 200,
         range: 5.0,
-        icon_texture: "bong:textures/gui/skill/sword_manifest.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_manifest.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -935,7 +953,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 80,
         cooldown_ticks: u32::MAX,
         range: 100.0,
-        icon_texture: "bong:textures/gui/skill/sword_heaven_gate.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_heaven_gate.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -951,7 +969,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 20,
         cooldown_ticks: 200,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/npc_heal_basic.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_npc_heal_basic.png",
         category: SkillCategory::Heal,
     },
     TechniqueDefinition {
@@ -967,7 +985,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 10,
         cooldown_ticks: 400,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/npc_buff_speed.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_npc_buff_speed.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -983,7 +1001,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 10,
         cooldown_ticks: 400,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/npc_buff_defense.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_npc_buff_defense.png",
         category: SkillCategory::Buff,
     },
     // plan-race-system-v1 P4 —— 易形：手动 cast 幂等切换（已易形时再次施放=解除，见
@@ -1005,7 +1023,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
         cast_ticks: 60,
         cooldown_ticks: 600,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/morph_yixing.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_morph_yixing.png",
         category: SkillCategory::Buff,
     },
 ];

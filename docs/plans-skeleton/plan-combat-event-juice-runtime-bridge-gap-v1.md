@@ -65,3 +65,9 @@
 
 - **建议优先级：P1 / fix_pr**
 - 原因：不改战斗数值，不牵涉世界观和守恒律，但直接影响每次命中体感；属于“线上一直在发生的表现层断桥”，修复面集中在 server schema / emit / client 端到端测试。
+
+## 2026-07-18 复核补充
+
+- **证据路径勘误**：上文各证据链接指向的 `/home/kiz/Code/Bong/.worktree/bughunt-loop-20260705-bp/` worktree 已删除，且本机 HOME 已迁移——实施时以 repo 相对路径为准：`server/src/network/combat_event_emit.rs`、`server/src/schema/server_data.rs`、`client/src/main/java/com/bong/client/combat/handler/CombatEventHandler.java`、`client/src/main/java/com/bong/client/combat/juice/{HitStopController,KillJuiceController}.java`。
+- **现状复核（对 origin/main 7ad2be2d）**：`CombatEventFloaterEntryV1` 此后新增了 `outgoing: bool` 方向字段（#1125 浮字方向修复），**其余富字段（attacker_uuid / target_uuid / local_player_uuid / victim_name / school / tier / direction_x / direction_z / kill / perfect / rare_drop）仍全部缺失，x/y/z 仍硬编码 0.0**（`combat_event_emit.rs:31-38` 实读确认）——断桥结论维持，修复建议 #1-#4 继续有效；#3 的坐标项与 #1125 的 outgoing 先例说明"逐字段补丁"路径可行，但建议一次补齐富字段族而非再来 N 轮单字段 PR。
+- **诊断定位**：2026-07-18 早期玩法诊断把本 plan 列为「反馈层黑箱」三件之一（另两件：[[plan-neardeath-ux-v1]]、`plan-beast-horde-v1`(active) P2/P3）——战斗是新手前 30 分钟少数可用的主动玩法，命中手感断桥直接放大"没反馈/没爽点"体感，建议三件同批收口。

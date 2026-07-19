@@ -45,6 +45,7 @@ public final class HudImmersionMode {
         HudRenderLayer.MERIDIAN_OPEN,
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
+        HudRenderLayer.AGENT_UI,
         HudRenderLayer.COFFIN,
         HudRenderLayer.LINGTIAN_OVERLAY,
         HudRenderLayer.REALM_COLLAPSE
@@ -66,6 +67,7 @@ public final class HudImmersionMode {
         HudRenderLayer.EVENT_STREAM,
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
+        HudRenderLayer.AGENT_UI,
         HudRenderLayer.COFFIN,
         HudRenderLayer.LINGTIAN_OVERLAY
     );
@@ -240,7 +242,8 @@ public final class HudImmersionMode {
             || layer == HudRenderLayer.NEAR_DEATH
             || layer == HudRenderLayer.TSY_EXTRACT
             || layer == HudRenderLayer.REALM_COLLAPSE
-            || layer == HudRenderLayer.HUD_VARIANT;
+            || layer == HudRenderLayer.HUD_VARIANT
+            || layer == HudRenderLayer.AGENT_UI;
     }
 
     private static boolean isMeditating(VisualEffectState visualEffectState, long nowMs) {
