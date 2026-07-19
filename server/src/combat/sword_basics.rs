@@ -36,6 +36,18 @@ pub const SWORD_THRUST_SKILL_ID: &str = "sword.thrust";
 pub const SWORD_PARRY_SKILL_ID: &str = "sword.parry";
 pub const SWORD_INFUSE_SKILL_ID: &str = "sword.infuse";
 
+/// plan-skill-anim-fidelity-v1 P2 后半 —— 注剑灌注两段式动画 id（§8.1 #3）。
+/// 蓄力段沿用既有 `bong:sword_infuse` id（v1 资产清单 pin 该文件名），资产已
+/// 重制为 isLoop 28t「横剑抚刃」循环；打断停止路径由 `cast_emit::looping_cast_anim_id`
+/// 表驱动（三打断分支 StopAnim），完成分支在 `sword_infuse_completion_tick`
+/// StopAnim + release 接力。
+pub const ANIM_SWORD_INFUSE_CHARGE: &str = "bong:sword_infuse";
+/// 灌注自然完成收势（14t 非循环「剑身一振」）——仅完成成功分支播出，打断 /
+/// 失败分支不奖励收势。
+pub const ANIM_SWORD_INFUSE_RELEASE: &str = "bong:sword_infuse_release";
+/// 完成/失败分支停循环蓄力段的淡出（tick）。
+const SWORD_INFUSE_CHARGE_STOP_FADE_OUT_TICKS: u8 = 2;
+
 const SWORD_INFUSE_MIN_QI: f64 = 5.0;
 const SWORD_INFUSE_MAX_FRACTION: f64 = 0.5;
 const SWORD_INFUSE_HITS: f64 = 5.0;
@@ -343,6 +355,14 @@ pub fn sword_infuse_completion_tick(
                 && weapon.instance_id == pending.weapon_instance_id
         });
         if !valid_weapon {
+            // P2 后半（§8.1 #3）：灌注失败也必须停循环蓄力段（无 release——
+            // 失败不奖励收势），否则抚刃循环永卡在玩家身上。
+            stop_infuse_charge_anim(
+                params.vfx_events.as_deref_mut(),
+                &params.positions,
+                &params.unique_ids,
+                entity,
+            );
             params
                 .commands
                 .entity(entity)
@@ -350,6 +370,12 @@ pub fn sword_infuse_completion_tick(
             continue;
         }
         let Ok(mut cultivation) = params.cultivations.get_mut(entity) else {
+            stop_infuse_charge_anim(
+                params.vfx_events.as_deref_mut(),
+                &params.positions,
+                &params.unique_ids,
+                entity,
+            );
             params
                 .commands
                 .entity(entity)
@@ -357,6 +383,12 @@ pub fn sword_infuse_completion_tick(
             continue;
         };
         if cultivation.qi_current + f64::EPSILON < pending.amount {
+            stop_infuse_charge_anim(
+                params.vfx_events.as_deref_mut(),
+                &params.positions,
+                &params.unique_ids,
+                entity,
+            );
             params
                 .commands
                 .entity(entity)
@@ -395,13 +427,23 @@ pub fn sword_infuse_completion_tick(
                 40,
             );
             if let Ok(unique_id) = params.unique_ids.get(entity) {
+                // P2 后半两段式接力（§8.1 #3）：停循环蓄力段 → 播 release 收势
+                // （「剑身一振」）。此前此处整播 40t 一次性 sword_infuse。
+                events.send(VfxEventRequest::new(
+                    position.get(),
+                    VfxEventPayloadV1::StopAnim {
+                        target_player: unique_id.0.to_string(),
+                        anim_id: ANIM_SWORD_INFUSE_CHARGE.to_string(),
+                        fade_out_ticks: Some(SWORD_INFUSE_CHARGE_STOP_FADE_OUT_TICKS),
+                    },
+                ));
                 events.send(VfxEventRequest::new(
                     position.get(),
                     VfxEventPayloadV1::PlayAnim {
                         target_player: unique_id.0.to_string(),
-                        anim_id: "bong:sword_infuse".to_string(),
+                        anim_id: ANIM_SWORD_INFUSE_RELEASE.to_string(),
                         priority: 1200,
-                        fade_in_ticks: Some(2),
+                        fade_in_ticks: Some(1),
                     },
                 ));
             }
@@ -417,6 +459,29 @@ pub fn sword_infuse_completion_tick(
             .entity(entity)
             .remove::<PendingSwordInfuse>();
     }
+}
+
+/// P2 后半（§8.1 #3）：灌注打断/失败分支停循环蓄力段（无 release——打断不奖励
+/// 收势）。缺 vfx 资源 / Position / UniqueId（headless 测试实体）时静默跳过。
+fn stop_infuse_charge_anim(
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    positions: &Query<&'static Position>,
+    unique_ids: &Query<&'static UniqueId>,
+    entity: Entity,
+) {
+    let (Some(events), Ok(position), Ok(unique_id)) =
+        (vfx_events, positions.get(entity), unique_ids.get(entity))
+    else {
+        return;
+    };
+    events.send(VfxEventRequest::new(
+        position.get(),
+        VfxEventPayloadV1::StopAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: ANIM_SWORD_INFUSE_CHARGE.to_string(),
+            fade_out_ticks: Some(SWORD_INFUSE_CHARGE_STOP_FADE_OUT_TICKS),
+        },
+    ));
 }
 
 pub fn drain_sword_qi_for_hit(world: &mut bevy_ecs::world::World, caster: Entity) -> f32 {
@@ -744,10 +809,12 @@ fn cast_sword_infuse(
             weapon.instance_id
         )),
     });
+    // P2 后半：起手播循环蓄力段（isLoop 横剑抚刃）；停止路径 = cast_emit 三打断
+    // 分支表驱动 StopAnim + 完成系统 StopAnim/release 接力（§8.1 #3）。
     emit_self_visuals(
         world,
         caster,
-        "bong:sword_infuse",
+        ANIM_SWORD_INFUSE_CHARGE,
         "bong:sword_infuse_glow",
         color_hex(color),
         1200,
@@ -2169,6 +2236,183 @@ mod tests {
         assert!(
             !app.world().resource::<Events<AttackIntent>>().is_empty(),
             "人形本体应真正走到 AttackIntent 发出（resolver 未被 race gate 误挡）"
+        );
+    }
+
+    // ── P2 后半：灌注两段式动画接力（§8.1 #3 停止路径红线）─────────────────
+
+    /// 双端 id 契约 pin：蓄力段沿用 `bong:sword_infuse`（v1 资产清单 pin 该文件，
+    /// 资产已重制为 isLoop）；release 段 = `bong:sword_infuse_release`。改动任一
+    /// 端必须同步 client `player_animation/` 资产与对拍映射。
+    #[test]
+    fn infuse_two_phase_anim_ids_pin_client_assets() {
+        assert_eq!(ANIM_SWORD_INFUSE_CHARGE, "bong:sword_infuse");
+        assert_eq!(ANIM_SWORD_INFUSE_RELEASE, "bong:sword_infuse_release");
+    }
+
+    fn infuse_completion_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 40 });
+        app.add_event::<QiTransfer>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, sword_infuse_completion_tick);
+        app
+    }
+
+    fn pending_infuse(weapon_instance_id: u64) -> PendingSwordInfuse {
+        PendingSwordInfuse {
+            amount: 10.0,
+            complete_at_tick: 40,
+            slot: 0,
+            weapon_instance_id,
+            carrier: ContainerKind::WieldedInWeapon,
+            infuser_color: ColorKind::Mellow,
+            container_account: QiAccountId::container("test_infuse_two_phase"),
+        }
+    }
+
+    fn stop_anim_ids(payloads: &[VfxEventPayloadV1]) -> Vec<String> {
+        payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                VfxEventPayloadV1::StopAnim { anim_id, .. } => Some(anim_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn play_anim_ids(payloads: &[VfxEventPayloadV1]) -> Vec<String> {
+        payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                VfxEventPayloadV1::PlayAnim { anim_id, .. } => Some(anim_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 灌注自然完成：StopAnim(蓄力段) + PlayAnim(release) 两段式接力；负向锁
+    /// 不再整播一次性 `bong:sword_infuse`（旧行为 = 完成时从头重播 40t）。
+    #[test]
+    fn infuse_completion_success_stops_charge_and_plays_release() {
+        use valence::prelude::UniqueId;
+        let mut app = infuse_completion_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                pending_infuse(1),
+                test_sword_weapon(),
+                Cultivation {
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                UniqueId::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<SwordQiStore>(entity).is_some(),
+            "前置：灌注成功应插入 SwordQiStore"
+        );
+        let payloads = emitted_particles(&app);
+        assert_eq!(
+            stop_anim_ids(&payloads),
+            vec![ANIM_SWORD_INFUSE_CHARGE.to_string()],
+            "完成分支必须恰停一次循环蓄力段（§8.1 #3 接力第一步）"
+        );
+        assert_eq!(
+            play_anim_ids(&payloads),
+            vec![ANIM_SWORD_INFUSE_RELEASE.to_string()],
+            "完成分支必须播 release 收势且不得再整播一次性 bong:sword_infuse"
+        );
+    }
+
+    /// 灌注失败（武器已换/丢）：仅 StopAnim(蓄力段)，无 release（失败不奖励收势）
+    /// ——漏发 = 抚刃循环永卡在玩家身上。
+    #[test]
+    fn infuse_completion_invalid_weapon_stops_charge_without_release() {
+        use valence::prelude::UniqueId;
+        let mut app = infuse_completion_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                // pending 绑 instance 999，实际武器 instance 1 → 失败分支。
+                pending_infuse(999),
+                test_sword_weapon(),
+                Cultivation {
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                UniqueId::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<SwordQiStore>(entity).is_none(),
+            "前置：武器不符不应插入 SwordQiStore"
+        );
+        assert!(
+            app.world().get::<PendingSwordInfuse>(entity).is_none(),
+            "前置：失败分支应移除 PendingSwordInfuse"
+        );
+        let payloads = emitted_particles(&app);
+        assert_eq!(
+            stop_anim_ids(&payloads),
+            vec![ANIM_SWORD_INFUSE_CHARGE.to_string()],
+            "武器失效分支必须停循环蓄力段"
+        );
+        assert!(
+            play_anim_ids(&payloads).is_empty(),
+            "失败分支不得播任何动画（打断不奖励收势），实际 {:?}",
+            play_anim_ids(&payloads)
+        );
+    }
+
+    /// 灌注失败（真元不足）：同样仅 StopAnim(蓄力段)，无 release。
+    #[test]
+    fn infuse_completion_insufficient_qi_stops_charge_without_release() {
+        use valence::prelude::UniqueId;
+        let mut app = infuse_completion_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                pending_infuse(1),
+                test_sword_weapon(),
+                Cultivation {
+                    qi_current: 1.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                UniqueId::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<SwordQiStore>(entity).is_none(),
+            "前置：真元不足不应插入 SwordQiStore"
+        );
+        let payloads = emitted_particles(&app);
+        assert_eq!(
+            stop_anim_ids(&payloads),
+            vec![ANIM_SWORD_INFUSE_CHARGE.to_string()],
+            "真元不足分支必须停循环蓄力段"
+        );
+        assert!(
+            play_anim_ids(&payloads).is_empty(),
+            "真元不足分支不得播任何动画，实际 {:?}",
+            play_anim_ids(&payloads)
         );
     }
 }
