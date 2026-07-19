@@ -123,7 +123,7 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 
 1. `git fetch origin` 后只从 `origin/main:docs/plans-skeleton/plan-bughunt-*.md` 选择疑似 bug；优先用户指定项，否则按可达性、影响和局部可修性排序。
 2. 派发前四查仅作辅助诊断：skeleton 仍存在、无同名 active plan、目标未被已合并修复覆盖、无同名远端分支/开放 PR。查询存在 TOCTOU，**不得把四查当互斥锁**。
-3. 一个 skeleton、subagent、worktree、branch、PR 必须一一对应。主干只传 skill 路径、skeleton 路径、任务 ID、绝对 worktree 目标路径和模型要求；不要传真伪判断或预设修法。
+3. 一个 skeleton、subagent、常驻 slot 进驻、branch、PR 必须一一对应（slot 是复用工作目录，不是每任务新建 worktree）。主干只传 skill 路径、skeleton 路径、任务 ID、绝对 slot 目标路径和模型要求；不要传真伪判断或预设修法。
 4. 没有可领取项时进入等待；不要制造 skeleton 充数。
 
 ## 等待协议
@@ -159,11 +159,15 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
 5. 进驻主干分派的 slot（**detached HEAD 即空闲**是 slot 的所有权语义：占用中的 slot 必然检出着任务分支，空闲 slot 恒为 detach 态；主干是 slot 分派的唯一持有者、串行分派）：
    - slot 尚不存在时，由主干在控制面用单条 `git worktree add --lock --detach .agent-worktrees/slot-<k> origin/main` 创建（常驻、永久 locked，之后不再重建）。
    - **双门核验**：① `git -C <slot绝对路径> symbolic-ref -q HEAD` 无输出（detached；检出着任何分支 = 已被占用）② `git -C <slot绝对路径> status --porcelain=v1 --untracked-files=all` 输出为空。任一不满足即拒绝进驻、回报主干处置，**禁止自行 clean/reset/切分支动他人数据**。
-   - 执行 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`。（`-B` 仅用于全新 claim 进驻；BLOCKED 恢复进驻必须直接检出既有本地分支，见「远端 claim 释放与孤儿巡检」节——-B 会把本地分支重置到远端、丢失未推送现场。）
+   - **ignored 安全门**：进驻前枚举 ignored（`git status --porcelain=v1 --untracked-files=all --ignored=matching`）。仅缓存白名单 `server/target`、`client/build`、`client/.gradle` 可接受；出现 `.env`、私有日志等非白名单 ignored → 拒绝进驻、转人工，不得覆盖或删除。
+   - **本地分支进驻（避免 `checkout -B` 覆盖残留提交）**：
+     - 本地 `refs/heads/bugfix/plan-X` **不存在**：才允许 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`。
+     - 本地分支**已存在**：禁止 `checkout -B`（会 reset 到远端、覆盖/丢弃残留本地提交）。改为 `git -C <slot绝对路径> checkout bugfix/plan-X`，核验 `rev-parse HEAD` 与 `claim_sha` 一致；不一致 → 转人工，不得强行对齐。
+     - BLOCKED 恢复进驻同样走「既有本地分支 + SHA 对拍」，禁止 `-B`。
 6. 对拍 `git -C <slot绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，并检查 slot 确实处于 locked 状态。
 7. create-ref 成功后的失败回滚分两种：
-   - **双门核验失败**（`checkout -B` 尚未执行）：不得在 slot 内执行任何写操作，直接回报主干处置/换 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在。
-   - **`checkout -B` 之后的步骤失败**（跟踪、SHA 对拍等）：在 slot 内 `git checkout --detach origin/main` 脱离并删除刚创建的本地分支，回报主干释放 slot，再删除刚创建的远端 claim ref 并核验不存在。
+   - **双门/ignored 核验失败**（checkout 尚未执行）：不得在 slot 内执行任何写操作，直接回报主干处置/换 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在。
+   - **checkout 之后的步骤失败**（跟踪、SHA 对拍等）：在 slot 内 `git checkout --detach origin/main` 脱离；若本轮新建了本地分支则删除它，回报主干释放 slot，再删除刚创建的远端 claim ref 并核验不存在。
    两种路径都不得留下孤儿锁，**不得 remove slot**。
 
 进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在 slot 绝对路径内执行；编译必须落在 slot 自身的 in-tree target（若环境设有全局 `CARGO_TARGET_DIR`，门禁命令前显式 `unset CARGO_TARGET_DIR`），保证保温缓存留在 slot 内。禁止进驻他人正占用的 slot，禁止修改主 checkout。
@@ -296,7 +300,7 @@ review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，�
 1. 确认 PR 仍 open，读取 `pr_head_sha` 与远端 branch 名。
 2. `git fetch origin refs/heads/<remote-branch>:refs/remotes/origin/<remote-branch>`，对拍远端跟踪 ref SHA 等于 `pr_head_sha`。
 3. 主干分派一个空闲 slot；核验 slot `git status --porcelain=v1 --untracked-files=all` 为空，并确认专用本地返工 branch 未被其它任务使用。若同名本地分支已存在，只能在确认未被任何 slot 检出且没有需保留的本地提交后删除并重建；不得盲目 reset。
-4. `git -C <slot绝对路径> checkout -B <专用本地返工branch> origin/<remote-branch>` 并显式设置 upstream，再对拍 slot HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
+4. 返工进驻同一规则：本地返工分支不存在时才 `checkout -B <专用本地返工branch> origin/<remote-branch>`；本地已存在则直接 checkout 并核验 SHA 与 `pr_head_sha` 一致（不一致转人工）。显式设置 upstream 后，对拍 slot HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
 5. 任一步失败时只在 slot 内 detach、删除本轮专用本地 branch，回报主干释放 slot；**开放 PR 的远端 claim ref 不得删除，slot 不得 remove**。
 
 完成四方 SHA 对拍后才进入任务面。
