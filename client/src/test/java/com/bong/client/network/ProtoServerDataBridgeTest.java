@@ -19,6 +19,7 @@ import com.bong.client.social.NicheGuardianStore;
 import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.protobuf.Descriptors;
@@ -2197,13 +2198,37 @@ class ProtoServerDataBridgeTest {
     // SeasonStateStore 永远停在默认夏季（或旧值）。
 
     @Test
-    void bridgePlayerStateNormalizesSeasonStateWinter() {
+    void bridgePlayerStateNormalizesSeasonStateSummer() {
+        assertEquals(1, Envelope.Season.SEASON_SUMMER.getNumber(),
+                "SEASON_SUMMER 的 protobuf wire numeric 必须固定为 1，重编号应立即撞红");
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setPlayerState(Envelope.PlayerState.newBuilder()
                         .setRealm(Common.Realm.REALM_CONDENSE)
                         .setZone("zone-1")
                         .setSeasonState(Envelope.SeasonState.newBuilder()
-                                .setSeason(Envelope.Season.SEASON_WINTER)
+                                .setSeasonValue(1)
+                                .setTickIntoPhase(100)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(1)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("summer",
+                json.getAsJsonObject("season_state").get("season").getAsString(),
+                "SEASON_SUMMER 必须剥成唯一合法 wire 值 'summer'；四个有效 Season variant "
+                + "都需要专属 pin，不能靠 WINTER 用例推定单段前缀分支正确");
+    }
+
+    @Test
+    void bridgePlayerStateNormalizesSeasonStateWinter() {
+        assertEquals(3, Envelope.Season.SEASON_WINTER.getNumber(),
+                "SEASON_WINTER 的 protobuf wire numeric 必须固定为 3，重编号应立即撞红");
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeasonValue(3)
                                 .setTickIntoPhase(100)
                                 .setPhaseTotalTicks(1000)
                                 .setYearIndex(1)))
@@ -2218,12 +2243,14 @@ class ProtoServerDataBridgeTest {
 
     @Test
     void bridgePlayerStateNormalizesSeasonStateSummerToWinter() {
+        assertEquals(2, Envelope.Season.SEASON_SUMMER_TO_WINTER.getNumber(),
+                "SEASON_SUMMER_TO_WINTER 的 protobuf wire numeric 必须固定为 2，重编号应立即撞红");
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setPlayerState(Envelope.PlayerState.newBuilder()
                         .setRealm(Common.Realm.REALM_CONDENSE)
                         .setZone("zone-1")
                         .setSeasonState(Envelope.SeasonState.newBuilder()
-                                .setSeason(Envelope.Season.SEASON_SUMMER_TO_WINTER)
+                                .setSeasonValue(2)
                                 .setTickIntoPhase(1)
                                 .setPhaseTotalTicks(1000)
                                 .setYearIndex(0)))
@@ -2238,12 +2265,14 @@ class ProtoServerDataBridgeTest {
 
     @Test
     void bridgePlayerStateNormalizesSeasonStateWinterToSummer() {
+        assertEquals(4, Envelope.Season.SEASON_WINTER_TO_SUMMER.getNumber(),
+                "SEASON_WINTER_TO_SUMMER 的 protobuf wire numeric 必须固定为 4，重编号应立即撞红");
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setPlayerState(Envelope.PlayerState.newBuilder()
                         .setRealm(Common.Realm.REALM_CONDENSE)
                         .setZone("zone-1")
                         .setSeasonState(Envelope.SeasonState.newBuilder()
-                                .setSeason(Envelope.Season.SEASON_WINTER_TO_SUMMER)
+                                .setSeasonValue(4)
                                 .setTickIntoPhase(1)
                                 .setPhaseTotalTicks(1000)
                                 .setYearIndex(0)))
@@ -2257,9 +2286,7 @@ class ProtoServerDataBridgeTest {
     @Test
     void bridgePlayerStateUnspecifiedSeasonStaysUnparseable() {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-                .setPlayerState(Envelope.PlayerState.newBuilder()
-                        .setRealm(Common.Realm.REALM_CONDENSE)
-                        .setZone("zone-1")
+                .setPlayerState(completeSeasonPlayerState()
                         .setSeasonState(Envelope.SeasonState.newBuilder()
                                 .setSeason(Envelope.Season.SEASON_UNSPECIFIED)
                                 .setTickIntoPhase(0)
@@ -2275,6 +2302,58 @@ class ProtoServerDataBridgeTest {
         assertTrue(com.bong.client.state.SeasonState.Phase.fromWire(season).isEmpty(),
                 "'unspecified' 必须让 SeasonState.Phase.fromWire 返回空，SeasonStateStore 不应"
                 + "被伪造出的夏季覆盖");
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "非法可选 season 不应吞掉其余合法 player_state：" + route.logMessage());
+        assertTrue(route.dispatch().seasonState().isEmpty(),
+                "SEASON_UNSPECIFIED 必须在 router 的 season 分支安全 no-op，不能覆盖现有 store");
+    }
+
+    @Test
+    void bridgePlayerStateMissingSeasonStateLeavesSeasonDispatchEmpty() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(completeSeasonPlayerState())
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "missing optional season_state must still bridge: " + result.errorMessage());
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertFalse(json.has("season_state"),
+                "未设置的 nested season_state 必须保持缺席，不能由 bridge 伪造默认夏季对象");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "missing optional season must not discard player_state: " + route.logMessage());
+        assertTrue(route.dispatch().seasonState().isEmpty(),
+                "missing season_state 应只让季节分支 no-op，不能产生默认值覆盖现有 store");
+    }
+
+    @Test
+    void bridgePlayerStateUnknownNumericSeasonStaysNumericAndDoesNotDispatchSeason() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(completeSeasonPlayerState()
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeasonValue(99)
+                                .setTickIntoPhase(10)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(3)))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "unknown enum numeric must not crash proto bridge: " + result.errorMessage());
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        JsonElement season = json.getAsJsonObject("season_state").get("season");
+        assertTrue(season.isJsonPrimitive() && season.getAsJsonPrimitive().isNumber(),
+                "protobuf unknown enum numeric 应保持 JSON number，不能被 SEASON_ helper 误当字符串改写");
+        assertEquals(99, season.getAsInt(), "bridge 必须原样保留未知 numeric，便于诊断未来 schema drift");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "unknown optional season must not discard valid player_state: " + route.logMessage());
+        assertTrue(route.dispatch().seasonState().isEmpty(),
+                "unknown numeric season 必须在 router 的 season 分支 no-op，不能映射成任一合法季节");
     }
 
     @Test
@@ -3403,6 +3482,23 @@ class ProtoServerDataBridgeTest {
         ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
         assertTrue(result.isSuccess(), "bridge should succeed: " + result.errorMessage());
         return JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+    }
+
+    private static Envelope.PlayerState.Builder completeSeasonPlayerState() {
+        return Envelope.PlayerState.newBuilder()
+                .setPlayer("offline:SeasonAudit")
+                .setRealm(Common.Realm.REALM_CONDENSE)
+                .setSpiritQi(50.0)
+                .setSpiritQiMax(100.0)
+                .setKarma(0.2)
+                .setCompositePower(0.35)
+                .setZone("zone-1")
+                .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                        .setCombat(0.2)
+                        .setWealth(0.4)
+                        .setSocial(0.65)
+                        .setKarma(0.2)
+                        .setTerritory(0.1));
     }
 
     /**
