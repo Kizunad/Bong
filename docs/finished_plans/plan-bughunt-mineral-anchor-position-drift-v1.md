@@ -32,7 +32,7 @@
 ## P3 — 主线验真与归档
 
 - 原修复 commit `b40fcdaf` 与 merge commit `353225a4` 的数据修复仍在主线；PR #1187 的 e2e、preflight、snapshot、review、finalize、CodeRabbit 六项检查均为 SUCCESS。
-- 2026-07-18 当前分支补齐生产校验与饱和回归后，通过 server 全量门禁 `11793 passed / 0 failed / 6 ignored`。
+- 2026-07-18 历史归档轮通过 server 全量门禁 `11793 passed / 0 failed / 6 ignored`；2026-07-19 最终候选整批 preflight 返工已补齐定向 20/20 回归，最终合并态的 canonical server gate 与 exact-SHA validator 作为 PR #1228 merge gate 单独留痕。
 - 无上下文 validator 对合并主线后的 `13d03af6f54e83e7e25d06cec32c8bb496f69b29` 给出 PASS，确认实现、测试、提交署名和主线合并边界均闭环。
 
 ## Bug 摘要
@@ -169,9 +169,10 @@ spawn          fan_tie   [16, 70, 16]      actual_runtime_zone=spawn
 - `cd server && cargo fmt --check`：PASS（历史归档轮）。
 - `cd server && cargo clippy --all-targets -- -D warnings`：PASS（历史归档轮）。
 - `cd server && cargo test`：`11793 passed / 0 failed / 6 ignored`（历史归档轮）。
-- 本轮 targeted（HEAD `9c0df4606d354426f3d02e54ac0cae1019f94122` 工作区含 uncommitted final-candidate 实现）：`CARGO_TARGET_DIR=/home/serverkizuna/Code/Bong/server/target cargo test --lib mineral::anchors::tests -- --nocapture` → **`20 passed; 0 failed`，`EXIT:0`**（含 `final_candidates_*` 四边界、`startup_keeps_multi_anchor_batch_atomic_when_later_final_candidate_is_invalid`、扩展后的默认 manifest preflight）。
+- 本轮 targeted（rework commit `77e6e61a9bda1ce9e176166e069eb03e7cdd11e1`）：`cargo test --lib mineral::anchors::tests -- --nocapture` → **`20 passed; 0 failed`，`EXIT:0`**（含 `final_candidates_*` 四边界、`startup_keeps_multi_anchor_batch_atomic_when_later_final_candidate_is_invalid`、扩展后的默认 manifest preflight）。
+- 最终合并态 canonical server gate（`cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` / `cargo test`）与无上下文只读 exact-SHA validator 均作为 PR #1228 merge gate 记录在固定 PR 评论；归档文档不写循环依赖的未来 HEAD SHA。
 - PR #1187：`e2e`、`preflight`、`snapshot`、`review`、`finalize`、`CodeRabbit` 全部 SUCCESS。
-- 无上下文只读 validator：`PASS 13d03af6f54e83e7e25d06cec32c8bb496f69b29`（归档轮）；本轮 rework 在 full gate / merge main 后再对 exact HEAD 重验。
+- 无上下文只读 validator：`PASS 13d03af6f54e83e7e25d06cec32c8bb496f69b29`（历史归档轮）；本轮返工的最终 exact-SHA validator 作为 PR #1228 merge gate 单独留痕，避免文档提交自引用。
 
 ### 跨仓库核验
 
