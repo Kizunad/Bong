@@ -69,17 +69,23 @@ if [[ $has_base_main -eq 0 ]]; then
   echo "fake-gh: missing --base main" >&2
   exit 2
 fi
-# 必须请求完整字段
+# 必须请求完整字段（fake 侧锁契约：缺任一字段 → 非零，避免测试假绿）
 json_fields=""
 prev=""
 for a in "$@"; do
   [[ "$prev" == "--json" ]] && json_fields="$a"
   prev="$a"
 done
+# gh --json 字段以逗号分隔；逐字段精确匹配
+IFS=',' read -r -a _jf_arr <<< "$json_fields"
 for need in number state baseRefName headRefOid; do
-  if [[ ",$json_fields," != *",$need,"* && "$json_fields" != *"$need"* ]]; then
-    # 宽松：字段串包含即可
-    :
+  found=0
+  for f in "${_jf_arr[@]+"${_jf_arr[@]}"}"; do
+    [[ "$f" == "$need" ]] && found=1 && break
+  done
+  if [[ $found -ne 1 ]]; then
+    echo "fake-gh: missing required --json field: $need (got: $json_fields)" >&2
+    exit 2
   fi
 done
 case "${FAKE_GH_MODE:-}" in
@@ -98,6 +104,19 @@ EOF
   badfields)
     cat <<EOF
 [{"number":null,"state":"MERGED","baseRefName":"","headRefOid":""}]
+EOF
+    exit 0
+    ;;
+  emptyoid)
+    # number/state/base 齐全但 headRefOid 空 → 实现必须 UNKNOWN
+    cat <<EOF
+[{"number":201,"state":"MERGED","baseRefName":"main","headRefOid":""}]
+EOF
+    exit 0
+    ;;
+  nulloid)
+    cat <<EOF
+[{"number":202,"state":"MERGED","baseRefName":"main","headRefOid":null}]
 EOF
     exit 0
     ;;
@@ -445,6 +464,13 @@ check "badfields：报告 UNKNOWN"        grep -q "UNKNOWN" <<<"$out"
 export FAKE_GH_MODE=notjson
 out=$(bash "$JANITOR" --apply)
 check "notjson：报告 UNKNOWN"          grep -q "UNKNOWN" <<<"$out"
+export FAKE_GH_MODE=emptyoid
+out=$(bash "$JANITOR" --apply)
+check "emptyoid：ghfail 树保留"        test -d ".agent-worktrees/wt-merged-ghfail"
+check "emptyoid：报告 UNKNOWN"         grep -q "UNKNOWN" <<<"$out"
+export FAKE_GH_MODE=nulloid
+out=$(bash "$JANITOR" --apply)
+check "nulloid：报告 UNKNOWN"          grep -q "UNKNOWN" <<<"$out"
 export FAKE_GH_MODE=""
 # 分支名触发 multi/nonmain（与 FAKE_GH_MODE 解耦）
 out=$(bash "$JANITOR")

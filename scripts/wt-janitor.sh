@@ -311,11 +311,13 @@ resolve_pr_state() {
     echo "UNKNOWN"
     return 0
   fi
-  local state base number
+  local state base number head_oid
   state=$(printf '%s' "$raw" | jq -r '.[0].state // empty')
   base=$(printf '%s' "$raw" | jq -r '.[0].baseRefName // empty')
   number=$(printf '%s' "$raw" | jq -r '.[0].number // empty')
-  if [[ -z "$state" || -z "$base" || -z "$number" ]]; then
+  head_oid=$(printf '%s' "$raw" | jq -r '.[0].headRefOid // empty')
+  # number/state/base/headRefOid 任一空或 null 都 fail-closed（jq 对 null 会出 "null" 字面量，一并拒）
+  if [[ -z "$state" || -z "$base" || -z "$number" || -z "$head_oid"      || "$state" == "null" || "$base" == "null" || "$number" == "null" || "$head_oid" == "null" ]]; then
     echo "UNKNOWN"
     return 0
   fi
@@ -497,24 +499,19 @@ for i in "${!paths[@]}"; do
         if [[ $cache_ok -eq 0 ]]; then
           verdict="缓存清理失败（权限/挂载问题？）→ 交人工"
         elif git worktree remove "$path" 2>/dev/null; then
-          if [[ -z "$branch" ]]; then
-            verdict="已回收（PR MERGED，无本地分支）"
+          # can_reclaim 仅在非空 branch + MERGED + cherry 通过时置 1；此处 branch 必非空
+          branch_del_ok=1
+          if ! git branch -D "$branch" >/dev/null 2>&1; then
+            branch_del_ok=0
+          fi
+          if [[ $branch_del_ok -eq 1 ]] && ! git show-ref --verify --quiet "refs/heads/$branch"; then
+            verdict="已回收（PR MERGED，本地分支已删）"
             reclaimed=$((reclaimed + 1))
             freed_hint="$freed_hint $size"
           else
-            branch_del_ok=1
-            if ! git branch -D "$branch" >/dev/null 2>&1; then
-              branch_del_ok=0
-            fi
-            if [[ $branch_del_ok -eq 1 ]] && ! git show-ref --verify --quiet "refs/heads/$branch"; then
-              verdict="已回收（PR MERGED，本地分支已删）"
-              reclaimed=$((reclaimed + 1))
-              freed_hint="$freed_hint $size"
-            else
-              # 树已移除但本地分支仍在：部分完成，不计完整回收
-              verdict="已移除 worktree 但本地分支删除失败（$branch 仍在）→ 交人工"
-              partial=$((partial + 1))
-            fi
+            # 树已移除但本地分支仍在：部分完成，不计完整回收
+            verdict="已移除 worktree 但本地分支删除失败（$branch 仍在）→ 交人工"
+            partial=$((partial + 1))
           fi
         else
           verdict="remove 被拒 → 交人工"
