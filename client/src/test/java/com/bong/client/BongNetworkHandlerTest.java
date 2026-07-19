@@ -1,5 +1,7 @@
 package com.bong.client;
 
+import bong.Common;
+import bong.Envelope;
 import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.craft.CraftCategory;
 import com.bong.client.craft.CraftRecipe;
@@ -14,12 +16,27 @@ import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.DroppedItemStore;
+import com.bong.client.network.ProtoServerDataBridge;
+import com.bong.client.network.ServerDataDispatch;
+import com.bong.client.network.ServerDataRouter;
 import com.bong.client.state.NarrationState;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.state.SeasonState;
+import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import net.minecraft.client.MinecraftClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,6 +56,77 @@ public class BongNetworkHandlerTest {
         IdentityPanelStateStore.resetForTest();
         FalseSkinHudStateStore.resetForTests();
         DuguV2HudStateStore.resetForTests();
+        PlayerStateStore.resetForTests();
+        SeasonStateStore.resetForTests();
+    }
+
+    @Test
+    void realPlayerStateProtoDispatchUpdatesStoresThroughPrivateProductionApplyDispatch() {
+        SeasonStateStore.replace(new SeasonState(SeasonState.Phase.SUMMER, 7L, 1000L, 0L));
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setPlayerState(seasonAuditPlayerState()
+                .setSeasonState(Envelope.SeasonState.newBuilder()
+                    .setSeason(Envelope.Season.SEASON_WINTER)
+                    .setTickIntoPhase(42)
+                    .setPhaseTotalTicks(1000)
+                    .setYearIndex(2)))
+            .build();
+
+        ServerDataRouter.RouteResult route = routeRealPlayerState(envelope, "有效 WINTER");
+
+        invokePrivateProductionApplyDispatch(route.dispatch(), "有效 WINTER");
+
+        assertCurrentClientPlayerStateProjection(
+            PlayerStateStore.snapshot(),
+            "有效 WINTER 最终 PlayerStateStore"
+        );
+        SeasonState stored = SeasonStateStore.snapshot();
+        assertEquals(SeasonState.Phase.WINTER, stored.phase(),
+            "private applyDispatch 必须把 router 产出的 WINTER 写进 store；"
+                + "否则 HUD/atmosphere/particle 仍会读取旧 SUMMER");
+        assertEquals(42L, stored.tickIntoPhase(), "有效 season 的 tick_into_phase 必须完整落库");
+        assertEquals(1000L, stored.phaseTotalTicks(), "有效 season 的 phase_total_ticks 必须完整落库");
+        assertEquals(2L, stored.yearIndex(), "有效 season 的 year_index 必须完整落库");
+    }
+
+    @Test
+    void missingSeasonStatePreservesEveryExistingSeasonStoreField() {
+        SeasonState sentinel = new SeasonState(SeasonState.Phase.WINTER, 31L, 777L, 5L);
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setPlayerState(seasonAuditPlayerState())
+            .build();
+
+        assertInvalidSeasonPreservesStore(envelope, sentinel, "missing season_state");
+    }
+
+    @Test
+    void unspecifiedSeasonPreservesEveryExistingSeasonStoreField() {
+        SeasonState sentinel = new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 42L, 888L, 6L);
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setPlayerState(seasonAuditPlayerState()
+                .setSeasonState(Envelope.SeasonState.newBuilder()
+                    .setSeasonValue(0)
+                    .setTickIntoPhase(10)
+                    .setPhaseTotalTicks(1000)
+                    .setYearIndex(3)))
+            .build();
+
+        assertInvalidSeasonPreservesStore(envelope, sentinel, "SEASON_UNSPECIFIED numeric 0");
+    }
+
+    @Test
+    void unknownNumericSeasonPreservesEveryExistingSeasonStoreField() {
+        SeasonState sentinel = new SeasonState(SeasonState.Phase.WINTER_TO_SUMMER, 53L, 999L, 7L);
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+            .setPlayerState(seasonAuditPlayerState()
+                .setSeasonState(Envelope.SeasonState.newBuilder()
+                    .setSeasonValue(99)
+                    .setTickIntoPhase(10)
+                    .setPhaseTotalTicks(1000)
+                    .setYearIndex(3)))
+            .build();
+
+        assertInvalidSeasonPreservesStore(envelope, sentinel, "unknown season numeric 99");
     }
 
     @Test
@@ -474,6 +562,157 @@ public class BongNetworkHandlerTest {
                 + " 是 sticky merge，漏掉这条调用会让上一局毒蛊 v2 HUD 跨 session 无限残留"
                 + "（plan-bughunt-dugu-v2-hud-disconnect-bleed-v1）；实际：清理 helper 内未找到该调用"
         );
+    }
+
+    private static Envelope.PlayerState.Builder seasonAuditPlayerState() {
+        return Envelope.PlayerState.newBuilder()
+            .setPlayer("offline:SeasonAudit")
+            .setRealm(Common.Realm.REALM_CONDENSE)
+            .setSpiritQi(50.0)
+            .setSpiritQiMax(100.0)
+            .setKarma(-0.37)
+            .setCompositePower(0.35)
+            .setZone("zone-1")
+            .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                .setCombat(0.21)
+                .setWealth(0.42)
+                .setSocial(0.63)
+                .setKarma(0.74)
+                .setTerritory(0.84));
+    }
+
+    private static ServerDataRouter.RouteResult routeRealPlayerState(
+        Envelope.ServerDataEnvelope envelope,
+        String scenario
+    ) {
+        ProtoServerDataBridge.BridgeResult bridge = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(
+            bridge.isSuccess(),
+            scenario + " 的真实 player_state proto bytes 应 bridge 成功：" + bridge.errorMessage()
+        );
+        JsonObject bridgeJson = JsonParser.parseString(bridge.legacyJson()).getAsJsonObject();
+        assertEquals(
+            -0.37,
+            bridgeJson.get("karma").getAsDouble(),
+            0.0001,
+            scenario + " bridge 必须保留带符号的顶层 karma"
+        );
+        assertEquals(
+            0.74,
+            bridgeJson.getAsJsonObject("breakdown").get("karma").getAsDouble(),
+            0.0001,
+            scenario + " bridge 必须独立保留 wire breakdown.karma，不能与顶层 karma 混接"
+        );
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(
+            bridge.legacyJson(),
+            bridge.legacyJson().getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(
+            route.isHandled(),
+            scenario + " 不应吞掉其余合法 player_state 字段：" + route.logMessage()
+        );
+        PlayerStateViewModel playerState = route.dispatch()
+            .playerStateViewModel()
+            .orElseThrow(() -> new AssertionError(
+                scenario + " 必须保留合法 player_state dispatch，不能因 season 无效而整包丢弃"
+            ));
+        assertCurrentClientPlayerStateProjection(
+            playerState,
+            scenario + " dispatch"
+        );
+        return route;
+    }
+
+    private static void assertInvalidSeasonPreservesStore(
+        Envelope.ServerDataEnvelope envelope,
+        SeasonState sentinel,
+        String scenario
+    ) {
+        SeasonStateStore.replace(sentinel);
+        ServerDataRouter.RouteResult route = routeRealPlayerState(envelope, scenario);
+        assertTrue(
+            route.dispatch().seasonState().isEmpty(),
+            scenario + " 必须只让 season 分支安全 no-op，不能产生默认季节"
+        );
+
+        invokePrivateProductionApplyDispatch(route.dispatch(), scenario);
+
+        assertCurrentClientPlayerStateProjection(
+            PlayerStateStore.snapshot(),
+            scenario + " 最终 PlayerStateStore"
+        );
+        SeasonState stored = SeasonStateStore.snapshot();
+        assertEquals(sentinel.phase(), stored.phase(), scenario + " 不得覆盖既有 phase");
+        assertEquals(
+            sentinel.tickIntoPhase(),
+            stored.tickIntoPhase(),
+            scenario + " 不得覆盖既有 tickIntoPhase"
+        );
+        assertEquals(
+            sentinel.phaseTotalTicks(),
+            stored.phaseTotalTicks(),
+            scenario + " 不得覆盖既有 phaseTotalTicks"
+        );
+        assertEquals(sentinel.yearIndex(), stored.yearIndex(), scenario + " 不得覆盖既有 yearIndex");
+    }
+
+    private static void assertCurrentClientPlayerStateProjection(
+        PlayerStateViewModel playerState,
+        String scenario
+    ) {
+        assertEquals("offline:SeasonAudit", playerState.playerId(), scenario + " 必须保留 player id");
+        assertEquals("Condense", playerState.realm(), scenario + " 必须保留 realm");
+        assertEquals(50.0, playerState.spiritQiCurrent(), 0.0001, scenario + " 必须保留 spirit qi");
+        assertEquals(100.0, playerState.spiritQiMax(), 0.0001, scenario + " 必须保留 spirit qi max");
+        assertEquals(-0.37, playerState.karma(), 0.0001, scenario + " 必须保留带符号的顶层 karma");
+        assertEquals(0.35, playerState.compositePower(), 0.0001, scenario + " 必须保留 composite power");
+        assertEquals("zone-1", playerState.zoneId(), scenario + " 必须保留 zone");
+        assertEquals(0.21, playerState.breakdown().combat(), 0.0001, scenario + " 必须保留 combat breakdown");
+        assertEquals(0.42, playerState.breakdown().wealth(), 0.0001, scenario + " 必须保留 wealth breakdown");
+        assertEquals(0.63, playerState.breakdown().social(), 0.0001, scenario + " 必须保留 social breakdown");
+        assertEquals(0.84, playerState.breakdown().territory(), 0.0001, scenario + " 必须保留 territory breakdown");
+    }
+
+    private static void invokePrivateProductionApplyDispatch(ServerDataDispatch dispatch, String scenario) {
+        try {
+            Method applyDispatch = BongNetworkHandler.class.getDeclaredMethod(
+                "applyDispatch",
+                MinecraftClient.class,
+                ServerDataDispatch.class,
+                String.class
+            );
+            assertTrue(
+                Modifier.isPrivate(applyDispatch.getModifiers()),
+                "applyDispatch 必须保持 private 生产边界，测试只通过反射进入"
+            );
+            applyDispatch.setAccessible(true);
+            applyDispatch.invoke(null, allocateHeadlessClientWithoutPlayer(), dispatch, "player_state");
+        } catch (InvocationTargetException exception) {
+            throw new AssertionError(
+                scenario + " 调用 private applyDispatch 时不应在 player == null 的合法 headless 边界抛错",
+                exception.getCause()
+            );
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError(scenario + " 无法反射调用 private applyDispatch", exception);
+        }
+    }
+
+    private static MinecraftClient allocateHeadlessClientWithoutPlayer() {
+        try {
+            Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+            Field singleton = unsafeClass.getDeclaredField("theUnsafe");
+            singleton.setAccessible(true);
+            Object unsafe = singleton.get(null);
+            Method allocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
+            MinecraftClient client = (MinecraftClient) allocateInstance.invoke(unsafe, MinecraftClient.class);
+            assertNull(client.player, "无构造 headless client 必须没有 player，才能只执行纯状态 dispatch 分支");
+            return client;
+        } catch (InvocationTargetException exception) {
+            throw new AssertionError("无法分配 non-null headless MinecraftClient", exception.getCause());
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法分配 non-null headless MinecraftClient", exception);
+        }
     }
 
     private static CraftRecipe sampleCraftRecipe(String id, boolean unlocked) {
