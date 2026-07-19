@@ -27,7 +27,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 - validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。每个已 GRANTED/ACKED/RECOVERING、但尚未出现在 live snapshot 的 validator token 都先预占 1 个平台槽；只有状态查询确认对应 validator 已出现后才转为 snapshot-accounted，避免重复授权或双扣。容量不可查时 validator 一次只授权 1 个。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
-- 所有运行者执行 `df -h /`。磁盘超过 90% 时，主干运行 `bash scripts/wt-janitor.sh`（report-only）并按报告回收遗留：PR 已 merge/close 的干净树用 `--apply` 自动收，无 PR 的交人工。常驻 slot 的 `server/target`/`client/build` 保温缓存**不属于**「私有可再生生成物」，不参与任何任务级清理。
+- 所有运行者执行 `df -h /`。磁盘超过 90% 时，主干运行 `bash scripts/wt-janitor.sh`（report-only）并按报告回收遗留：仅 PR **MERGED** 且干净、无非缓存 ignored（`.env` 等）、无未合入 patch 的树用 `--apply` 自动收（squash 后用 `git cherry` 判等价）；CLOSED/UNKNOWN/无 PR/脏树一律交人工。常驻 slot 的 `server/target`/`client/build` 保温缓存**不属于**「私有可再生生成物」，不参与任何任务级清理。
 - **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR` 与 slot 保温缓存**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 只用于该前提下的故障恢复（slot 路径恒定后，删 worktree 烙坏 valence_generated 绝对路径的故障不应再出现）。
 
 ### harness 能力探测与适配
@@ -278,7 +278,7 @@ PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 3. 识别并删除**明确属于该任务、独占、ignored、可再生**的非缓存生成物（`.tmp` 日志、临时导出等），再次确认没有源码/WIP。**保留 slot 的 `server/target`/`client/build` 保温缓存**，显式排除共享 `CARGO_TARGET_DIR`，绝不任务级清理它们。
 4. 在 slot 内执行 `git checkout --detach origin/main` 脱离任务分支；slot 保持 locked，**不 remove、不 prune**。
 5. 删除对应本地 branch；不得先删仍被 slot 检出的 branch（顺序：先 detach 后删）。
-6. 标记 slot 空闲并补下一个 skeleton。远端 claim 分支保留给 review 返工/merge。旧流程或异常残留的一次性 worktree 由主干用 `bash scripts/wt-janitor.sh` 巡检回收，不逐个手工追。
+6. 标记 slot 空闲并补下一个 skeleton。远端 claim 分支保留给 review 返工/merge。旧流程或异常残留的一次性 worktree 由主干用 `bash scripts/wt-janitor.sh` 巡检回收（MERGED+安全门通过才自动；CLOSED/未知/含非缓存 ignored 交人工），不逐个手工追。
 
 ### 远端 claim 释放与孤儿巡检
 
