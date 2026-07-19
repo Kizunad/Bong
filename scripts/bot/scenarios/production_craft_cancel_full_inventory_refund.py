@@ -184,11 +184,19 @@ def run(env) -> None:
         assert refund_ids.issubset(
             {drop["instance_id"] for drop in reconnect_drops}
         ), "重连后必须仍能观察并回收取消时的地面退款"
+        refund_drops = {
+            drop["instance_id"]: drop
+            for drop in reconnect_drops
+            if drop["instance_id"] in refund_ids
+        }
 
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
         remaining = set(refund_ids)
         for instance_id in sorted(refund_ids):
+            world_pos = refund_drops[instance_id]["world_pos"]
+            bot.move_to(*world_pos, speed=5.5)
+            time.sleep(0.8)
             anchor = last_event_time(bot)
             bot.intent(
                 {

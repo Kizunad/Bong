@@ -22,7 +22,8 @@ use crate::body_plan::types::{
     TopologyEdge,
 };
 use crate::cultivation::breakthrough::{
-    breakthrough_precondition_error_for_profile, BreakthroughError,
+    breakthrough_precondition_error_for_profile, try_breakthrough_with_profile, BreakthroughError,
+    RollSource,
 };
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::meridian::severed::{
@@ -352,4 +353,132 @@ fn npc_meridian_system_for_realm_uses_synthetic_profile_not_humanoid_default() {
     // Void 档：本 profile total=6（全通）。
     let sys_void = npc_meridian_system_for_realm(Realm::Void, &plan);
     assert_eq!(sys_void.opened_count(), 6);
+}
+
+// ─── ⑥ try_breakthrough_with_profile 全链（非 breakthrough_precondition_error_for_profile
+//      单独判定，跑通实际扣费/开境/失败裂痕的完整突破流程） ─────────────────────
+
+struct FixedRoll(f64);
+impl RollSource for FixedRoll {
+    fn roll_unit(&mut self) -> f64 {
+        self.0
+    }
+}
+
+/// plan-race-system-v1 P5 —— whale 等非人构型走通突破全链：本 profile Awaken→Induce
+/// 档 need=2（非 humanoid 曲线的 3），只开 2 条即应成功突破，且真元/境界按该 profile
+/// 曲线变化（不是 humanoid 曲线）。
+#[test]
+fn try_breakthrough_with_profile_succeeds_for_non_humanoid_target_at_its_own_quota() {
+    let profile = synthetic_whale_profile();
+    let mut sys = MeridianSystem::for_profile(&profile);
+    sys.get_mut("fin_1").opened = true;
+    sys.get_mut("fin_2").opened = true; // 本 profile need=2，humanoid 曲线是 3——若误
+                                        // 用 humanoid 曲线本测试会在这里就地撞
+                                        // NotEnoughMeridians 而非跑到成功分支。
+
+    let mut cultivation = Cultivation {
+        realm: Realm::Awaken,
+        qi_current: 1_000.0,
+        qi_max: 1_000.0,
+        composure: 1.0,
+        ..Default::default()
+    };
+
+    let result = try_breakthrough_with_profile(
+        &mut cultivation,
+        &mut sys,
+        0.0,
+        0.0,
+        None,
+        &profile,
+        &mut FixedRoll(0.0), // roll=0.0 <= 任意 success_rate，必然成功
+    );
+
+    let success = result.unwrap_or_else(|error| {
+        panic!("非人构型（本 profile need=2）满足自身配额后应突破成功，实际 Err({error:?})")
+    });
+    assert_eq!(
+        success.to,
+        Realm::Induce,
+        "突破成功后应到 Induce（本 profile Awaken→Induce 档），实际 {:?}",
+        success.to
+    );
+    assert_eq!(
+        success.used_qi, 8.0,
+        "Induce 档 breakthrough_qi_cost=8.0（与境界曲线无关的独立常量表），实际 {}",
+        success.used_qi
+    );
+    assert_eq!(
+        cultivation.realm,
+        Realm::Induce,
+        "突破成功后 cultivation.realm 必须切到 Induce"
+    );
+}
+
+/// 未达本 profile 自身配额（只开 1 条，need=2）时必须拒绝——即便 humanoid 曲线在
+/// 同一档只需要更少经脉，也不能让非人构型"借用" humanoid 更宽松的配额。
+#[test]
+fn try_breakthrough_with_profile_rejects_non_humanoid_target_below_its_own_quota() {
+    let profile = synthetic_whale_profile();
+    let mut sys = MeridianSystem::for_profile(&profile);
+    sys.get_mut("fin_1").opened = true; // 只开 1 条，本 profile need=2
+
+    let mut cultivation = Cultivation {
+        realm: Realm::Awaken,
+        qi_current: 1_000.0,
+        qi_max: 1_000.0,
+        composure: 1.0,
+        ..Default::default()
+    };
+
+    let err = try_breakthrough_with_profile(
+        &mut cultivation,
+        &mut sys,
+        0.0,
+        0.0,
+        None,
+        &profile,
+        &mut FixedRoll(0.0),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        err,
+        BreakthroughError::NotEnoughMeridians { need: 2, have: 1 },
+        "非人构型未达自身 profile 配额（need=2）必须被拒绝，实际 {err:?}"
+    );
+    assert_eq!(cultivation.realm, Realm::Awaken, "配额门未过时境界不应改变");
+}
+
+/// plan-race-system-v1 P5 换轨 —— human 行为不变回归锁：`try_breakthrough_with_profile`
+/// 显式传入 humanoid profile 时，与换轨前 `try_breakthrough`（走零参
+/// `Realm::required_meridians()` 硬编码 humanoid 曲线）的 need 值逐档 bit-for-bit
+/// 相等——这是本轮换轨"不改人族数值"的核心断言：任何把 humanoid 曲线改样的回归都会
+/// 让下面某一档撞红。
+#[test]
+fn try_breakthrough_with_profile_humanoid_need_matches_realm_required_meridians_every_rank() {
+    let humanoid_profile = crate::body_plan::humanoid_plan_static()
+        .meridian_profile
+        .as_ref()
+        .expect("humanoid plan must declare meridian_profile");
+    let ranked = [
+        (Realm::Awaken, Realm::Induce),
+        (Realm::Induce, Realm::Condense),
+        (Realm::Condense, Realm::Solidify),
+        (Realm::Solidify, Realm::Spirit),
+        (Realm::Spirit, Realm::Void),
+    ];
+    for (_from, next) in ranked {
+        let profile_need =
+            humanoid_profile.realm_requirements[next.rank() as usize - 1].total as usize;
+        assert_eq!(
+            profile_need,
+            next.required_meridians(),
+            "换轨后 humanoid profile 派生的 need（{next:?} 档）必须与\
+             Realm::required_meridians() 零参硬编码路径 bit-for-bit 相等，\
+             实际 profile={profile_need} vs required_meridians={}",
+            next.required_meridians()
+        );
+    }
 }

@@ -17,6 +17,7 @@ pub mod field;
 pub mod healing;
 pub mod knockback;
 pub mod ledger;
+pub mod prepare;
 pub mod projectile;
 pub mod release;
 pub mod tiandao;
@@ -59,10 +60,14 @@ pub use knockback::{
 };
 pub use ledger::{
     assert_conservation, build_qi_ledger_hash_fields, credit_pending_inflow,
-    pending_inflow_account, snapshot_for_ipc, summarize_world_qi, AttritionOpKind, QiAccountId,
-    QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
-    WorldQiBudget, WorldQiSnapshot, PENDING_INFLOW_ACCOUNT_ID, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
+    dying_elder_dan_excess_account, dying_elder_release_overflow_account, pending_inflow_account,
+    persistent_runtime_qi_accounts, snapshot_for_ipc, summarize_world_qi,
+    transfer_external_qi_to_ledger, AttritionOpKind, QiAccountId, QiAccountKind,
+    QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
+    WorldQiSnapshot, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+    PENDING_INFLOW_ACCOUNT_ID, PERSISTENT_RUNTIME_QI_ACCOUNT_IDS, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
 };
+pub use prepare::{prepare_transfer, TransferPlan};
 pub use projectile::{
     armor_penetrate, cone_dispersion, high_density_inject, ArmorPenetrationOutcome,
     ConeDispersionShot, HighDensityInjectionOutcome,
@@ -97,6 +102,11 @@ pub enum QiPhysicsError {
     AuditOnlyReason {
         reason: &'static str,
     },
+    /// 外部物理权威转入 ledger 时 source 与 sink 相同；这会让临时 source 恢复步骤
+    /// 抹掉看似成功的 sink credit，因此必须在任何余额变更前拒绝。
+    SameAccountTransfer {
+        account: String,
+    },
 }
 
 impl std::fmt::Display for QiPhysicsError {
@@ -125,6 +135,9 @@ impl std::fmt::Display for QiPhysicsError {
                 f,
                 "QiTransferReason::{reason} is audit-only and must not mutate WorldQiAccount balance"
             ),
+            Self::SameAccountTransfer { account } => {
+                write!(f, "qi transfer source and destination are identical: {account}")
+            }
         }
     }
 }
@@ -157,7 +170,7 @@ mod tests {
 
     /// `qi_physics::register` 本身只创建空运行期账本，不携带上一进程的审计轨迹或镜像。
     /// 生产 Startup 随后由 persistence 从各自物理权威恢复：zone 账户来自 zones_runtime；
-    /// 唯一没有 ECS/zone 字段承载的 pending inflow 自 v34 起由 qi_runtime_accounts 恢复。
+    /// 没有 ECS/zone 字段承载的三项稳定 runtime 池由 qi_runtime_accounts 白名单恢复。
     /// 本测试刻意只调用 register，锁住“资源初始化不暗中注水”的边界。
     #[test]
     fn register_starts_empty_before_persistence_hydration() {

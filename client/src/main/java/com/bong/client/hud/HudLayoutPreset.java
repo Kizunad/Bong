@@ -146,6 +146,9 @@ public enum HudLayoutPreset {
             // ZHENMAI_SEVER 是最长 60s 的增幅窗口倒计时条（与 ZHENMAI_HARDEN 同形），不是瞬态闪现，
             // 不能归 CRITICAL（否则极简密度下会满亮常驻整整一分钟）。
             case ZHENMAI_HARDEN, ZHENMAI_MULTIPOINT, ZHENMAI_NEUTRALIZE, ZHENMAI_SEVER -> Widget.BARS;
+            // plan-race-system-v1 PR-5b：易形形态图标 + 施法期 vignette，仅在易形/施法中
+            // 才出现（条件显示），归 CRITICAL 不受密度抑制。
+            case MORPH -> Widget.CRITICAL;
         };
     }
 

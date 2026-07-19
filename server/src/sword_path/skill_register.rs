@@ -21,6 +21,7 @@ use valence::prelude::{
     ResMut,
 };
 
+use crate::body_plan::intrinsic_is_humanoid_from_world;
 use crate::combat::components::{
     Casting, SkillBarBindings, Stamina, StaminaState, StatusEffects, WoundKind,
 };
@@ -30,7 +31,7 @@ use crate::combat::events::{
 use crate::combat::weapon::{Weapon, WeaponKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
@@ -859,6 +860,23 @@ fn build_cast_context(
         return Err(CastRejectReason::TechniqueInactive);
     }
 
+    // plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— race gate：拥有门后、境界门前。
+    // 剑道五招（sword_path.*）全数据表标 RaceGate::Humanoid（依赖人体专属经脉拓扑 +
+    // 双臂持械机能），本体非人形（`intrinsic_is_humanoid_from_world` 判 false）一律拒绝。
+    if let Some(definition) = technique_definition(skill_id) {
+        let cultivation_race = world
+            .get::<Cultivation>(caster)
+            .map(|c| c.race.clone())
+            .unwrap_or_else(|| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+        let intrinsic_is_humanoid = intrinsic_is_humanoid_from_world(world, caster);
+        if !definition
+            .required_race
+            .allows(&cultivation_race, intrinsic_is_humanoid)
+        {
+            return Err(CastRejectReason::RaceMismatch);
+        }
+    }
+
     // 境界（plan §techniques::required_realm）
     let cultivation = world
         .get::<Cultivation>(caster)
@@ -1258,6 +1276,115 @@ mod tests {
             avs,
             vec![SwordPathSkillId::CondenseEdge],
             "凝锋应 emit 恰好一个 CondenseEdge AV 事件，实际 {avs:?}"
+        );
+    }
+
+    // ── F1（P3 opus verify 发现）：施放门行为测试 —— build_cast_context race gate ──
+    //
+    // 修复前只有 known_techniques.rs 的 `.allows()` 真值表 pin，从不触达
+    // `build_cast_context` 里真实的 race gate 判定（line ~863-877）——回归删掉那段
+    // `if !definition.required_race.allows(...) { return Err(RaceMismatch) }` 整块
+    // 不会撞红。本测试直接调用真实 resolver 入口 `cast_condense_edge`（经
+    // `build_cast_context`）锁死该行为，并与上面的 `condense_edge_emits_av_event`
+    // （人形本体 happy path）对照。
+
+    /// 构造 is_humanoid=false 的合成种族 fixture 并插入 `app`（与
+    /// `combat::sword_basics` 测试同款手法：单部位 `HeightBands` 几何，
+    /// 只求 `resolve_body_plan` 校验通过）。
+    fn insert_non_humanoid_race_fixture(app: &mut App, race_id: &str) {
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::{
+            BodyPartDef, BodyPlan, BodyPlanRegistry, HeightBand, HeightBandAssignment, HitGeometry,
+            PartConsequence, RaceId, RaceRegistry, StandingAabbSpec,
+        };
+        use std::collections::HashMap;
+
+        let plan = BodyPlan {
+            id: format!("test_{race_id}_plan").into(),
+            display_name: "测试非人形构型".to_string(),
+            is_humanoid: false,
+            parts: vec![BodyPartDef {
+                id: "core".into(),
+                damage_mul: 1.0,
+                contam_mul: 1.0,
+                bleed_mul: 1.0,
+                consequence: PartConsequence::Core,
+            }],
+            hit_geometry: HitGeometry::HeightBands {
+                aabb: StandingAabbSpec {
+                    half_width: 0.3,
+                    height: 1.8,
+                },
+                bands: vec![HeightBand {
+                    min_rel_y: -1.0,
+                    assignment: HeightBandAssignment::Single {
+                        part: "core".into(),
+                    },
+                }],
+                lateral_threshold: 0.19,
+            },
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: HashMap::new(),
+        };
+        let plan_id = plan.id.clone();
+        let body_plans = BodyPlanRegistry::from_plans(vec![plan]).expect("plan must validate");
+        // `RaceRegistry::from_file_contents` 要求表内必须有一条 id=HUMAN_RACE_ID 的
+        // 默认条目——复用 `combat::resolve` 同款手法：让这条 "human" 条目指向本
+        // fixture 的 is_humanoid=false 构型，caster 的 `Cultivation.race` 同样设为
+        // HUMAN_RACE_ID 即可解析出非人形本体。
+        let races = RaceRegistry::from_parts_for_test(
+            vec![RaceEntry {
+                id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                display_name: format!("测试非人形种族({race_id})"),
+                body_plan_id: plan_id,
+                beast_kinds: vec![],
+            }],
+            vec![],
+            &body_plans,
+        )
+        .expect("races fixture must validate");
+        app.insert_resource(body_plans);
+        app.insert_resource(races);
+    }
+
+    #[test]
+    fn cast_condense_edge_rejects_race_mismatch_for_non_humanoid_caster_qi_untouched() {
+        // sword_path.condense_edge（剑道凝锋）全数据表标 RaceGate::Humanoid（§8.1
+        // #6，依赖人体专属经脉拓扑 + 双臂持械机能）。非人形本体（race="test_whale"
+        // + BodyPlan.is_humanoid=false）必须在 `build_cast_context` 的 race gate
+        // 被拒绝——早于境界门/经脉依赖门，且 `inject_bond_qi`/`credit_skill_qi_to_zone`
+        // 从未执行，qi_current 分毫不动（真元守恒律）。
+        let (mut app, caster) = setup_app();
+        insert_non_humanoid_race_fixture(&mut app, "test_whale");
+        app.world_mut().entity_mut(caster).insert(Cultivation {
+            race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            realm: Realm::Void,
+            qi_current: 5000.0,
+            qi_max: 5000.0,
+            ..Cultivation::default()
+        });
+        let target = app.world_mut().spawn(Position::default()).id();
+
+        let result = cast_condense_edge(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RaceMismatch
+            },
+            "非人形本体施放 sword_path.condense_edge 必须拒绝 RaceMismatch（realm=Void/\
+             weapon/proficiency 均已满足，唯独 race gate 应该是拒因），实际 {result:?}"
+        );
+        let avs = drain_av(&app);
+        assert!(
+            avs.is_empty(),
+            "race gate 拒绝必须发生在 AV 事件 emit 之前；期望零事件，实际 {avs:?}"
+        );
+        let qi_current = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_current - 5000.0).abs() < f64::EPSILON,
+            "race gate 拒绝不应扣真元（守恒律）；期望 5000.0 不变，实际 {qi_current}"
         );
     }
 

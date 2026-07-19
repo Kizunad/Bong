@@ -209,6 +209,29 @@ pub struct CarrierChargedEvent {
     pub tick: u64,
 }
 
+/// plan-skill-anim-fidelity-v1 P2 后半 —— 封骨充能开始（`begin_charge_carrier`
+/// 成功插入 `CarrierCharging` 时发出）。纯观察事件：驱动循环蓄力段动画
+/// `anqi_charge_carrier_loop` 的 PlayAnim（vfx_animation_trigger 消费），不参与
+/// 任何数值结算。
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct CarrierChargeBeganEvent {
+    pub carrier: Entity,
+    pub tick: u64,
+}
+
+/// plan-skill-anim-fidelity-v1 P2 后半 —— 封骨充能结束（`finish_charge` **全部**
+/// 退出路径，含密封失败 / 密封量≈0 早退分支）。循环动画停止路径的权威信号
+/// （§8.1 #3 红线：任何退出路径都必须停循环段，`CarrierChargedEvent` 在早退
+/// 分支不发出、不能兜底）：
+/// - `full_charge=true` 充能完成 → StopAnim(循环段) + PlayAnim(release 收势)
+/// - `full_charge=false` 移动打断 → 仅 StopAnim（打断不奖励收势）
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct CarrierChargeEndedEvent {
+    pub carrier: Entity,
+    pub full_charge: bool,
+    pub tick: u64,
+}
+
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct CarrierImpactEvent {
     pub attacker: Entity,
@@ -244,6 +267,8 @@ pub fn register(app: &mut App) {
     app.add_event::<ChargeCarrierIntent>();
     app.add_event::<ThrowCarrierIntent>();
     app.add_event::<CarrierChargedEvent>();
+    app.add_event::<CarrierChargeBeganEvent>();
+    app.add_event::<CarrierChargeEndedEvent>();
     app.add_event::<CarrierImpactEvent>();
     app.add_event::<ProjectileDespawnedEvent>();
     app.add_systems(
@@ -400,6 +425,7 @@ fn begin_charge_carrier(
     mut commands: Commands,
     mut actors: Query<BeginChargeActor<'_>>,
     mut qi_transfers: EventWriter<QiTransfer>,
+    mut began_events: EventWriter<CarrierChargeBeganEvent>,
 ) {
     for intent in intents.read() {
         let Ok((entity, mut cultivation, _qi_color, lifecycle, position, inventory, charging)) =
@@ -439,6 +465,12 @@ fn begin_charge_carrier(
             started_at_tick: intent.issued_at_tick.max(clock.tick),
             start_pos: position.get(),
         });
+        // P2 后半：充能开始 → 循环蓄力段动画信号（纯观察，AV 消费在
+        // vfx_animation_trigger::emit_anqi_visual_triggers）。
+        began_events.send(CarrierChargeBeganEvent {
+            carrier: entity,
+            tick: clock.tick,
+        });
     }
 }
 
@@ -470,6 +502,7 @@ fn find_chargeable_hand(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn charge_carrier_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
@@ -477,6 +510,7 @@ fn charge_carrier_tick(
     mut commands: Commands,
     mut actors: Query<ChargingActor<'_>>,
     mut events: EventWriter<CarrierChargedEvent>,
+    mut ended_events: EventWriter<CarrierChargeEndedEvent>,
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for (entity, mut cultivation, qi_color, position, mut inventory, mut store, charging) in
@@ -501,6 +535,7 @@ fn charge_carrier_tick(
                 false,
                 (elapsed as f32 / CHARGE_DURATION_TICKS as f32).clamp(0.0, 1.0),
                 &mut events,
+                &mut ended_events,
             );
             continue;
         }
@@ -535,6 +570,7 @@ fn charge_carrier_tick(
             true,
             1.0,
             &mut events,
+            &mut ended_events,
         );
     }
 }
@@ -556,7 +592,15 @@ fn finish_charge(
     full_charge: bool,
     progress_ratio: f32,
     events: &mut EventWriter<CarrierChargedEvent>,
+    ended_events: &mut EventWriter<CarrierChargeEndedEvent>,
 ) {
+    // P2 后半：充能结束信号在**所有**退出路径发出（循环动画停止路径红线
+    // §8.1 #3——早退分支无 CarrierChargedEvent，循环段必须由本事件停止）。
+    ended_events.send(CarrierChargeEndedEvent {
+        carrier: entity,
+        full_charge,
+        tick,
+    });
     let total_deducted = if full_charge {
         charging.qi_target
     } else {
@@ -929,13 +973,32 @@ fn projectile_tick_system(
         }
 
         let mut hit: Option<(Entity, f32)> = None;
-        for (target_entity, target_pos, _, _, _, _, _) in &mut targets {
+        for (target_entity, target_pos, _, _, _, target_cultivation, _) in &mut targets {
             if projectile.owner == Some(target_entity) {
                 continue;
             }
+            // plan-race-system-v1 P5/PR-6c —— 粗筛半径按目标当前 body_plan 动态派生
+            // （`body_plan::geometry::bounding_radius`），替换写死的 humanoid 专属
+            // `0.3`（`STANDING_HALF_WIDTH`）：whale 等横长非人构型的真实体积远大于
+            // 人形，固定 0.3 会让弹道在肉眼可见的"打中了"情况下被判定为未命中。
+            // humanoid 目标：`bounding_radius` 对 `HeightBands` 原样吐出
+            // `aabb.half_width`（0.3），与换轨前 bit-for-bit 相同，不回归。
+            let target_body_plan = resolve_body_plan_for_target(
+                target_entity,
+                BodyPlanPurpose::Intrinsic,
+                BodyPlanResolveInputs {
+                    cultivation: target_cultivation,
+                    beast_kind: None,
+                    morph_state: None,
+                },
+                body_plan_registry.as_deref(),
+                race_registry.as_deref(),
+            );
+            let target_radius =
+                crate::body_plan::geometry::bounding_radius(&target_body_plan.hit_geometry);
             let distance_to_segment =
                 segment_point_distance(current, next, target_pos.get() + DVec3::new(0.0, 1.0, 0.0));
-            if distance_to_segment <= f64::from(0.3 + flight.hitbox_inflation) {
+            if distance_to_segment <= f64::from(flight.hitbox_inflation) + target_radius {
                 hit = Some((
                     target_entity,
                     target_pos.get().distance(flight.spawn_pos) as f32,
@@ -983,6 +1046,7 @@ fn projectile_tick_system(
                 BodyPlanResolveInputs {
                     cultivation,
                     beast_kind: None,
+                    morph_state: None,
                 },
                 body_plan_registry.as_deref(),
                 race_registry.as_deref(),
@@ -1408,6 +1472,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -1476,9 +1541,25 @@ mod tests {
         app.insert_resource(ZoneRegistry::default());
         app.add_event::<ChargeCarrierIntent>();
         app.add_event::<CarrierChargedEvent>();
+        app.add_event::<CarrierChargeBeganEvent>();
+        app.add_event::<CarrierChargeEndedEvent>();
         app.add_event::<QiTransfer>();
         app.add_systems(Update, (begin_charge_carrier, charge_carrier_tick));
         app
+    }
+
+    fn drain_charge_began(app: &mut App) -> Vec<CarrierChargeBeganEvent> {
+        app.world_mut()
+            .resource_mut::<Events<CarrierChargeBeganEvent>>()
+            .drain()
+            .collect()
+    }
+
+    fn drain_charge_ended(app: &mut App) -> Vec<CarrierChargeEndedEvent> {
+        app.world_mut()
+            .resource_mut::<Events<CarrierChargeEndedEvent>>()
+            .drain()
+            .collect()
     }
 
     fn spawn_charge_actor(app: &mut App) -> Entity {
@@ -1614,6 +1695,187 @@ mod tests {
             .expect("移动中断时未封存的 prepaid_qi 必须释放回 zone，不能吞真元");
         assert_eq!(transfer.to, QiAccountId::zone("spawn".to_string()));
         assert!((transfer.amount - 15.0).abs() < f64::EPSILON);
+    }
+
+    // ── P2 后半：充能开始/结束观察事件（循环蓄力段动画停止路径 §8.1 #3）────────
+
+    /// 充能成功开始 → 恰发 1 条 CarrierChargeBeganEvent（循环段 PlayAnim 信号），
+    /// 此刻不得有任何 Ended（循环不能未播先停）。
+    #[test]
+    fn begin_charge_emits_charge_began_event_without_ended() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+
+        let began = drain_charge_began(&mut app);
+        assert_eq!(
+            began.len(),
+            1,
+            "充能开始应恰发 1 条 CarrierChargeBeganEvent（循环蓄力段动画信号），实际 {} 条",
+            began.len()
+        );
+        assert_eq!(began[0].carrier, actor, "Began 事件应指向充能者本人");
+        assert!(
+            drain_charge_ended(&mut app).is_empty(),
+            "充能刚开始不得发 CarrierChargeEndedEvent（循环段不能未播先停）"
+        );
+    }
+
+    /// 充能被拒（qi_target 超上限 → begin 静默 continue）→ 不发 Began：
+    /// 没开始的充能不能触发循环动画。
+    #[test]
+    fn rejected_begin_charge_emits_no_began_event() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            // default_qi_target(qi_max=200)=60，超出即拒。
+            qi_target: Some(90.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<CarrierCharging>(actor).is_none(),
+            "前置：超上限 qi_target 应被拒、不插 CarrierCharging"
+        );
+        assert!(
+            drain_charge_began(&mut app).is_empty(),
+            "被拒的充能不得发 CarrierChargeBeganEvent（否则循环动画凭空开播）"
+        );
+    }
+
+    /// 自然完成 → Ended{full_charge:true}（StopAnim+release 信号）且与
+    /// CarrierChargedEvent(full) 同拍。
+    #[test]
+    fn full_charge_completion_emits_ended_full() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+        drain_charge_ended(&mut app);
+
+        app.world_mut().resource_mut::<CombatClock>().tick = CHARGE_DURATION_TICKS;
+        app.update();
+
+        let ended = drain_charge_ended(&mut app);
+        assert_eq!(
+            ended.len(),
+            1,
+            "充能自然完成应恰发 1 条 CarrierChargeEndedEvent，实际 {} 条",
+            ended.len()
+        );
+        assert!(
+            ended[0].full_charge,
+            "自然完成的 Ended 必须 full_charge=true（驱动 StopAnim+release 收势）"
+        );
+        assert_eq!(ended[0].carrier, actor);
+        let charged: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<CarrierChargedEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            charged.iter().any(|event| event.full_charge),
+            "前置：自然完成应同拍发出 CarrierChargedEvent(full_charge=true)"
+        );
+    }
+
+    /// 半程移动打断 → Ended{full_charge:false}（仅 StopAnim，打断不奖励收势）。
+    #[test]
+    fn movement_interrupt_emits_ended_not_full() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+        drain_charge_ended(&mut app);
+
+        app.world_mut()
+            .entity_mut(actor)
+            .insert(Position::new([2.0, 66.0, 0.0]));
+        app.world_mut().resource_mut::<CombatClock>().tick = CHARGE_DURATION_TICKS / 2;
+        app.update();
+
+        let ended = drain_charge_ended(&mut app);
+        assert_eq!(
+            ended.len(),
+            1,
+            "移动打断应恰发 1 条 CarrierChargeEndedEvent，实际 {} 条",
+            ended.len()
+        );
+        assert!(
+            !ended[0].full_charge,
+            "移动打断的 Ended 必须 full_charge=false（仅 StopAnim，不播 release）"
+        );
+    }
+
+    /// 零进度立即打断（progress≈0 → 密封量≈0 走 finish_charge 早退分支，无
+    /// CarrierChargedEvent）→ **仍必须**发 Ended：早退路径漏发 = 循环动画永卡
+    /// （§8.1 #3 全退出路径覆盖的关键锚点）。
+    #[test]
+    fn zero_progress_interrupt_still_emits_ended_despite_no_charged_event() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+        drain_charge_ended(&mut app);
+
+        // clock 仍为 0：elapsed=0 → progress_ratio=0 → qi_amount=0 → 早退分支。
+        app.world_mut()
+            .entity_mut(actor)
+            .insert(Position::new([2.0, 66.0, 0.0]));
+        app.update();
+
+        assert!(
+            app.world().get::<CarrierCharging>(actor).is_none(),
+            "前置：零进度移动打断也应结束 CarrierCharging"
+        );
+        let charged: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<CarrierChargedEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            charged.is_empty(),
+            "前置：零进度打断走早退分支，不应发 CarrierChargedEvent"
+        );
+        let ended = drain_charge_ended(&mut app);
+        assert_eq!(
+            ended.len(),
+            1,
+            "早退分支（密封量≈0）也必须发 Ended——漏发 = 循环蓄力段动画永卡在玩家身上"
+        );
+        assert!(
+            !ended[0].full_charge,
+            "零进度打断的 Ended 必须 full_charge=false"
+        );
     }
 
     #[test]
@@ -2036,6 +2298,147 @@ mod tests {
                 "空隙命中仍应作为 HitTarget 消耗投射物（despawn 恰好一次），实测 {despawns:?}"
             );
             assert_eq!(despawns[0].reason, ProjectileDespawnReason::HitTarget);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // plan-race-system-v1 P5/PR-6c —— 粗筛半径按目标 body_plan 动态派生，用真实
+        // whale.json 目标验证：换轨前写死的 `0.3+ANQI_HITBOX_INFLATION=0.7` 判定不到
+        // 的横向偏移，换轨后（whale 半径 ≈5.74）必须能命中；humanoid 目标半径不回归。
+        // ══════════════════════════════════════════════════════════════════════
+
+        /// 加载真实磁盘 `assets/body_plans/plans/*.json` + `races.json`（而非合成
+        /// fixture）——本组测试要断言的是真实落盘 whale.json 数据驱动出的粗筛半径，
+        /// 不是任意手搓的 PartBoxes 构型。
+        fn real_registries() -> (BodyPlanRegistry, RaceRegistry) {
+            let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            let plans_dir = manifest_dir.join(crate::body_plan::registry::DEFAULT_BODY_PLANS_DIR);
+            let races_path = manifest_dir.join(crate::body_plan::race_registry::DEFAULT_RACES_PATH);
+            let body_plans =
+                BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
+            let races = RaceRegistry::load_file(&races_path, &body_plans)
+                .expect("real races.json should load");
+            (body_plans, races)
+        }
+
+        /// 组装一发沿世界 +X 飞行、在 `lateral_z_offset` 处经过目标的投射，目标携带
+        /// 给定 `race` 的 `Cultivation`（走真实 registries 解析 body_plan）。
+        fn run_lateral_projectile_at_real_target(
+            race: crate::body_plan::RaceId,
+            lateral_z_offset: f64,
+        ) -> (Wounds, Vec<CombatEvent>, Vec<ProjectileDespawnedEvent>) {
+            let (body_plans, races) = real_registries();
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 900 });
+            app.insert_resource(body_plans);
+            app.insert_resource(races);
+            app.add_event::<CombatEvent>();
+            app.add_event::<CarrierImpactEvent>();
+            app.add_event::<ProjectileDespawnedEvent>();
+            app.add_systems(Update, projectile_tick_system);
+
+            let target_feet = DVec3::new(0.0, 64.0, 0.0);
+            // 粗筛 capsule 的固定参照点是 `target_pos + (0,1,0)`，横向偏移全部落在 z
+            // 轴（射线沿世界 +X 飞行，不与该参照点在 x 上重合，只在 z 上偏移）。
+            let spawn_pos = DVec3::new(-3.0, target_feet.y + 1.0, lateral_z_offset);
+            app.world_mut().spawn((
+                Position::new([spawn_pos.x, spawn_pos.y, spawn_pos.z]),
+                QiProjectile {
+                    owner: None,
+                    qi_payload: 20.0,
+                },
+                AnqiProjectileFlight {
+                    carrier_kind: CarrierKind::BoneChip,
+                    qi_color: ColorKind::Sharp,
+                    carrier_grade: CarrierKind::BoneChip.grade(),
+                    spawn_pos,
+                    prev_pos: spawn_pos,
+                    velocity: DVec3::new(100.0, 0.0, 0.0),
+                    max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
+                    hitbox_inflation: ANQI_HITBOX_INFLATION,
+                },
+            ));
+            let target = app
+                .world_mut()
+                .spawn((
+                    Position::new([target_feet.x, target_feet.y, target_feet.z]),
+                    Wounds::default(),
+                    Contamination::default(),
+                    Cultivation {
+                        race,
+                        ..Default::default()
+                    },
+                ))
+                .id();
+
+            app.update();
+
+            let wounds = app.world().entity(target).get::<Wounds>().unwrap().clone();
+            let combat_events: Vec<CombatEvent> = app
+                .world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            let despawns: Vec<ProjectileDespawnedEvent> = app
+                .world()
+                .resource::<Events<ProjectileDespawnedEvent>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            (wounds, combat_events, despawns)
+        }
+
+        #[test]
+        fn humanoid_target_bounding_radius_does_not_regress_beyond_legacy_fixed_value() {
+            // 换轨前写死的判定半径是 0.3（STANDING_HALF_WIDTH 字面量）+
+            // ANQI_HITBOX_INFLATION(0.4) = 0.7。z 偏移 0.6 应命中（<0.7），0.8 应未命中
+            // （>0.7）——humanoid 目标必须与换轨前 bit-for-bit 一致的判定边界。
+            let (_, _, despawns_hit) = run_lateral_projectile_at_real_target(
+                crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                0.6,
+            );
+            assert_eq!(
+                despawns_hit.first().map(|d| d.reason),
+                Some(ProjectileDespawnReason::HitTarget),
+                "humanoid 目标 z 偏移 0.6（< 换轨前固定阈值 0.7）必须命中，实测 {despawns_hit:?}"
+            );
+
+            let (_, _, despawns_miss) = run_lateral_projectile_at_real_target(
+                crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                0.8,
+            );
+            assert!(
+                despawns_miss
+                    .iter()
+                    .all(|d| d.reason != ProjectileDespawnReason::HitTarget),
+                "humanoid 目标 z 偏移 0.8（> 换轨前固定阈值 0.7）单 tick 内不应产生 HitTarget \
+                 despawn，实测 {despawns_miss:?}"
+            );
+        }
+
+        #[test]
+        fn whale_target_bounding_radius_catches_offsets_that_would_miss_the_legacy_fixed_value() {
+            // whale.json 粗筛半径 ≈5.74（tail_fin 局部 z=-3.74±half 2.0）远大于换轨前
+            // 写死的 0.3——z 偏移 2.0 远超换轨前固定阈值 0.7（必定会被误判为未命中），
+            // 换轨后 whale 目标必须能命中。
+            let (wounds, combat_events, despawns) =
+                run_lateral_projectile_at_real_target(crate::body_plan::RaceId::new("whale"), 2.0);
+            assert_eq!(
+                despawns.first().map(|d| d.reason),
+                Some(ProjectileDespawnReason::HitTarget),
+                "whale 目标 z 偏移 2.0（换轨前固定阈值 0.7 判不到，换轨后动态半径应判到）必须命中，\
+                 实测 {despawns:?}"
+            );
+            assert_eq!(
+                combat_events.len(),
+                1,
+                "whale 目标命中仍应发出恰好一条 CombatEvent，实测 {combat_events:?}"
+            );
+            assert!(
+                wounds.health_current < Wounds::default().health_max,
+                "whale 目标命中应造成伤害（health_current 低于满血），实测 {}",
+                wounds.health_current
+            );
         }
     }
 

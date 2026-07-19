@@ -119,6 +119,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::DroppedLootSync => "dropped_loot_sync",
         ServerDataType::RemainsSync => "remains_sync",
         ServerDataType::BodyPlanLayout => "body_plan_layout",
+        ServerDataType::RaceGateMeta => "race_gate_meta",
+        ServerDataType::MorphState => "morph_state",
         ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
         ServerDataType::BotanyPlantV2RenderProfiles => "botany_plant_v2_render_profiles",
         ServerDataType::MiningProgress => "mining_progress",

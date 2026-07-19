@@ -1,0 +1,228 @@
+{
+  "id": "whale",
+  "display_name": "飞鲸",
+  "is_humanoid": false,
+  "parts": [
+    {
+      "id": "skull",
+      "damage_mul": 2.0,
+      "contam_mul": 1.5,
+      "bleed_mul": 1.5,
+      "consequence": {
+        "kind": "sensory"
+      }
+    },
+    {
+      "id": "torso",
+      "damage_mul": 1.0,
+      "contam_mul": 1.0,
+      "bleed_mul": 1.0,
+      "consequence": {
+        "kind": "core"
+      }
+    },
+    {
+      "id": "back_fin",
+      "damage_mul": 0.5,
+      "contam_mul": 0.6,
+      "bleed_mul": 0.8,
+      "consequence": {
+        "kind": "locomotion"
+      }
+    },
+    {
+      "id": "left_pectoral_fin",
+      "damage_mul": 0.5,
+      "contam_mul": 0.6,
+      "bleed_mul": 0.8,
+      "consequence": {
+        "kind": "locomotion"
+      }
+    },
+    {
+      "id": "right_pectoral_fin",
+      "damage_mul": 0.5,
+      "contam_mul": 0.6,
+      "bleed_mul": 0.8,
+      "consequence": {
+        "kind": "locomotion"
+      }
+    },
+    {
+      "id": "tail_fin",
+      "damage_mul": 0.6,
+      "contam_mul": 0.7,
+      "bleed_mul": 1.0,
+      "consequence": {
+        "kind": "locomotion"
+      }
+    }
+  ],
+  "hit_geometry": {
+    "mode": "part_boxes",
+    "boxes": [
+      {
+        "part_id": "skull",
+        "offset": [0.0, 0.72, 1.67],
+        "half_extents": [0.5, 0.53, 1.13],
+        "priority": 1
+      },
+      {
+        "part_id": "torso",
+        "offset": [0.0, 0.63, -0.66],
+        "half_extents": [0.56, 0.69, 1.22],
+        "priority": 0
+      },
+      {
+        "part_id": "back_fin",
+        "offset": [0.0, 1.54, -1.06],
+        "half_extents": [0.13, 0.22, 0.47],
+        "priority": 1
+      },
+      {
+        "part_id": "left_pectoral_fin",
+        "offset": [-1.42, 0.14, -0.31],
+        "half_extents": [1.26, 0.67, 0.74],
+        "priority": 1
+      },
+      {
+        "part_id": "right_pectoral_fin",
+        "offset": [1.42, 0.14, -0.31],
+        "half_extents": [1.26, 0.67, 0.74],
+        "priority": 1
+      },
+      {
+        "part_id": "tail_fin",
+        "offset": [0.0, 0.81, -3.74],
+        "half_extents": [1.48, 0.39, 2.0],
+        "priority": 1
+      }
+    ]
+  },
+  "equip_slots": [],
+  "meridian_profile": {
+    "channels": [
+      {
+        "id": "spout_meridian",
+        "family": "regular",
+        "body_part": "skull"
+      },
+      {
+        "id": "flipper_left_meridian",
+        "family": "regular",
+        "body_part": "left_pectoral_fin"
+      },
+      {
+        "id": "flipper_right_meridian",
+        "family": "regular",
+        "body_part": "right_pectoral_fin"
+      },
+      {
+        "id": "fluke_meridian",
+        "family": "regular",
+        "body_part": "tail_fin"
+      },
+      {
+        "id": "keel_meridian",
+        "family": "extraordinary",
+        "body_part": "torso",
+        "roles": [
+          "form_anchor"
+        ]
+      },
+      {
+        "id": "spine_meridian",
+        "family": "extraordinary",
+        "body_part": "torso",
+        "roles": [
+          "form_anchor"
+        ]
+      }
+    ],
+    "topology_edges": [
+      {
+        "from": "spout_meridian",
+        "to": "keel_meridian"
+      },
+      {
+        "from": "spout_meridian",
+        "to": "spine_meridian"
+      },
+      {
+        "from": "flipper_left_meridian",
+        "to": "keel_meridian"
+      },
+      {
+        "from": "flipper_right_meridian",
+        "to": "keel_meridian"
+      },
+      {
+        "from": "fluke_meridian",
+        "to": "spine_meridian"
+      },
+      {
+        "from": "keel_meridian",
+        "to": "spine_meridian"
+      }
+    ],
+    "realm_requirements": [
+      {
+        "total": 1,
+        "regular_min": 1,
+        "extraordinary_min": 0
+      },
+      {
+        "total": 2,
+        "regular_min": 2,
+        "extraordinary_min": 0
+      },
+      {
+        "total": 3,
+        "regular_min": 3,
+        "extraordinary_min": 0
+      },
+      {
+        "total": 6,
+        "regular_min": 4,
+        "extraordinary_min": 2
+      },
+      {
+        "total": 6,
+        "regular_min": 4,
+        "extraordinary_min": 2
+      },
+      {
+        "total": 6,
+        "regular_min": 0,
+        "extraordinary_min": 0
+      }
+    ],
+    "dugu_injection": [
+      {
+        "body_part": "skull",
+        "channel": "spine_meridian"
+      },
+      {
+        "body_part": "torso",
+        "channel": "keel_meridian"
+      },
+      {
+        "body_part": "back_fin",
+        "channel": "spine_meridian"
+      },
+      {
+        "body_part": "tail_fin",
+        "channel": "fluke_meridian"
+      },
+      {
+        "body_part": "left_pectoral_fin",
+        "channel": "flipper_left_meridian"
+      },
+      {
+        "body_part": "right_pectoral_fin",
+        "channel": "flipper_right_meridian"
+      }
+    ]
+  },
+  "mutation_slot_mapping": {}
+}

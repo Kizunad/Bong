@@ -70,12 +70,19 @@ pub mod possession;
 pub mod practice_session;
 pub mod qi_field;
 pub mod qi_zero_decay;
+pub mod race_change;
 pub mod realm_taint;
 pub mod realm_vision;
 pub mod skill_registry;
 pub mod special_talent;
 pub mod spiritual_sense;
 pub mod style_modifier;
+// plan-skill-anim-fidelity-v1 P0 —— technique cast_ticks 快照单向同步测试。
+#[cfg(test)]
+mod technique_cast_ticks_snapshot_test;
+// plan-skill-av-relink-v1 P3 —— technique 图标快照单向同步 + 映射约束测试。
+#[cfg(test)]
+mod technique_icon_snapshot_test;
 pub mod technique_mentor;
 pub mod technique_observe;
 pub mod technique_proficiency;
@@ -235,6 +242,9 @@ pub fn register(app: &mut App) {
     crate::dandao::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
     crate::cultivation::dugu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // plan-race-system-v1 P4：morph.yixing 无经脉前置表条目（专属 form_anchors_open
+    // 门在别处判定），显式声明空 deps 以满足审计完整性不变量。
+    crate::body_plan::morph::declare_meridian_dependencies(&mut skill_meridian_dependencies);
 
     // plan-race-system-v1 P1b：`MeridianTopology` 不再是全局单例 Resource——拓扑数据
     // 按实体解析出的 BodyPlan 现场派生（见 `body_plan::resolve_meridian_topology_for_target`）。
@@ -953,6 +963,12 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             }
         }
 
+        // plan-race-system-v1 P5/PR-6c —— `IntrinsicRace` 是本体种族的真源，join 首帧
+        // 必须与刚水合出来的 `Cultivation.race` 同步落地，否则任何只查 `IntrinsicRace`
+        // 组件（不回落 `Cultivation`）的消费点在玩家从未经历过 `RaceChange`（6a 只在
+        // 换种族事务里才 insert 本组件）时会读到组件缺失——这是本 PR 关闭的孤岛
+        // （recon 标定的最大孤岛：`IntrinsicRace` 定义了零处 insert）。
+        let intrinsic_race = crate::body_plan::IntrinsicRace(cultivation.race.clone());
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             cultivation,
@@ -970,7 +986,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             DuguPractice::default(),
             severed_permanent,
         ));
-        entity_commands.insert((poison_toxicity, digestion_load));
+        entity_commands.insert((poison_toxicity, digestion_load, intrinsic_race));
         // 转世必须无条件换掉寿元组件——`restored_lifespan` 里躺着的是刚才那个已终结角色
         // 耗尽的 120/120，`restored_lifespan.is_none()` 在这条分支恒为 false（attach_player_state
         // 已经把它挂上了），若不加 `|| reincarnation.is_some()` 这份 exhausted 值会原样留在
@@ -1193,6 +1209,9 @@ pub(crate) mod legacy_meridian_bundle {
                 .into_iter()
                 .map(MeridianId::channel_id)
                 .collect(),
+            // plan-race-system-v1 P5/PR-6a — 休眠登记是 RaceChange 换种族才产生的新
+            // 状态，legacy v1 存档（早于本机制）没有对应字段，恒空迁移。
+            dormant_meridians: HashMap::new(),
         })
     }
 
@@ -1621,6 +1640,43 @@ mod tests {
         assert_eq!(life_record.character_id, canonical_player_id("Alice"));
         assert_eq!(death_registry.char_id, canonical_player_id("Alice"));
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
+    }
+
+    /// plan-race-system-v1 P5/PR-6c —— `IntrinsicRace` 曾经零处 insert（6a 只在
+    /// `RaceChange` 换种族事务里才写它）。首次 join（无持久化 bundle,新角色）也必须
+    /// 在同一帧拿到 `IntrinsicRace`,且必须与同批插入的 `Cultivation.race` 一致——
+    /// 这是本 PR 关闭的孤岛核心断言。
+    #[test]
+    fn joined_client_receives_intrinsic_race_matching_cultivation_race_on_first_join() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("FreshJoiner");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<crate::cultivation::components::Cultivation>(entity)
+            .expect("joined client should receive Cultivation");
+        let intrinsic_race = app
+            .world()
+            .get::<crate::body_plan::IntrinsicRace>(entity)
+            .expect(
+                "joined client should receive IntrinsicRace on first join (no RaceChange needed)",
+            );
+
+        assert_eq!(
+            intrinsic_race.0, cultivation.race,
+            "IntrinsicRace must mirror the freshly-hydrated Cultivation.race"
+        );
+        assert_eq!(
+            intrinsic_race.0,
+            RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            "brand-new character with no persisted bundle must default to the human race"
+        );
     }
 
     #[test]

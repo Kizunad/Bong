@@ -31,7 +31,7 @@ use crate::fauna::components::BeastKind;
 
 use super::race_registry::RaceRegistry;
 use super::registry::BodyPlanRegistry;
-use super::types::{BodyPartId, BodyPlan, RaceId};
+use super::types::{BodyPartId, BodyPlan, BodyPlanId, MeridianProfile, RaceId};
 
 /// `resolve_body_plan` 的语义参数——P0 无实际差异（见模块文档），签名先行锁定供 P4 使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +48,10 @@ pub enum BodyPlanPurpose {
 pub struct BodyPlanResolveInputs<'a> {
     pub cultivation: Option<&'a Cultivation>,
     pub beast_kind: Option<&'a BeastKind>,
+    /// plan-race-system-v1 P4 —— 当前易形形态（`None` = 未易形）。**只在
+    /// `BodyPlanPurpose::Form` 分支被读取**——`Intrinsic` 分支恒等忽略本字段（未易形时
+    /// Form≡Intrinsic 的既有约定不受影响，既有调用点可安全传 `None`）。
+    pub morph_state: Option<&'a super::morph::MorphState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,11 +78,21 @@ impl std::error::Error for ResolveBodyPlanError {}
 
 pub fn resolve_body_plan<'a>(
     entity: Entity,
-    _purpose: BodyPlanPurpose,
+    purpose: BodyPlanPurpose,
     inputs: BodyPlanResolveInputs<'_>,
     body_plans: &'a BodyPlanRegistry,
     races: &RaceRegistry,
 ) -> Result<&'a BodyPlan, ResolveBodyPlanError> {
+    // plan-race-system-v1 P4 —— Form purpose + MorphState 在场：当前形态权威真源是
+    // `MorphState.form`，不再走 Tier1/2/3 本体判定。未易形（`morph_state = None`）时
+    // 无条件落进下方既有逻辑，保持"未易形 Form≡Intrinsic"这条 P0-P3 既有契约不变。
+    if matches!(purpose, BodyPlanPurpose::Form) {
+        if let Some(morph) = inputs.morph_state {
+            return resolve_race_to_plan(&morph.form, body_plans, races)
+                .ok_or_else(|| ResolveBodyPlanError::UnknownPlayerRace(morph.form.clone()));
+        }
+    }
+
     // Tier 1：BeastKind 组件在场即视为 NPC/fauna，优先于 Cultivation（防止「带着残留
     // Cultivation 组件的兽类」被误判为玩家身份）。
     if let Some(kind) = inputs.beast_kind {
@@ -219,6 +233,141 @@ pub fn resolve_meridian_topology_for_target<'a>(
     }
 }
 
+/// [`meridian_profile_for_target`] 的失败态——**只在实体已经成功解析出一个真实
+/// （非 humanoid 兜底）`BodyPlan`、但该 plan 本身没有声明 `meridian_profile` 时**触发。
+///
+/// review r2 major-2 收口：换轨前的实现对这种情形静默借用 humanoid 配额曲线
+/// （1/3/6/12/16/20），等价于"非人构型数据不完整 → 悄悄按人族标准判定突破"——违背
+/// plan「per-plan 配额 + 未知/非法身份 fail-closed」决议。**resolve 本身失败**（未知
+/// race / 资源缺失，见 [`resolve_body_plan_for_target`] 文档）仍然走 humanoid 兜底
+/// （那是环境退化，不是数据完整性问题）；本错误只覆盖"resolve 成功但 plan 数据不全"
+/// 这一支——两者必须严格区分，不能合并成同一个"没有 profile 就兜底"分支。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeridianProfileMissingError {
+    pub plan_id: BodyPlanId,
+}
+
+impl std::fmt::Display for MeridianProfileMissingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "body plan {} resolved successfully but declares no meridian_profile — refusing to \
+             silently borrow the humanoid quota curve (fail-closed)",
+            self.plan_id
+        )
+    }
+}
+
+impl std::error::Error for MeridianProfileMissingError {}
+
+/// plan-race-system-v1 P5 —— `cultivation::breakthrough` 突破配额消费点用，语义与
+/// [`resolve_meridian_topology_for_target`] 基本对齐，但**不对"plan 缺 meridian_profile"
+/// 这一支做同款退化**（见 [`MeridianProfileMissingError`] 文档——review r2 major-2）：
+///
+/// - resolve 本身失败（未知 race / `body_plans`/`races` 资源缺失）→ 仍退化到 humanoid
+///   （`resolve_body_plan_for_target` 内部已处理，humanoid 恒有 `meridian_profile`，本函数
+///   这一路径永远 `Ok`）——这是环境退化，不是本函数关心的失败态。
+/// - resolve **成功**解析出一个真实非 humanoid plan，但该 plan 没声明
+///   `meridian_profile` → `Err(MeridianProfileMissingError)`，调用方必须把这判定为
+///   突破失败，不能借用 humanoid 曲线顶上。
+///
+/// humanoid 目标本身经此函数解析出的结果与旧的零参
+/// `humanoid_plan_static().meridian_profile` 直读 bit-for-bit 相同（同一份
+/// `humanoid.json`），换轨不改变现有人族突破行为。
+pub fn meridian_profile_for_target<'a>(
+    entity: Entity,
+    purpose: BodyPlanPurpose,
+    inputs: BodyPlanResolveInputs<'_>,
+    body_plans: Option<&'a BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
+) -> Result<&'a MeridianProfile, MeridianProfileMissingError> {
+    let plan = resolve_body_plan_for_target(entity, purpose, inputs, body_plans, races);
+    plan.meridian_profile
+        .as_ref()
+        .ok_or_else(|| MeridianProfileMissingError {
+            plan_id: plan.id.clone(),
+        })
+}
+
+/// plan-race-system-v1 P3a —— 施放门 race gate 消费点用（`sword_path::skill_register`
+/// / `combat::sword_basics` 的技能 resolver 均以 `world: &bevy_ecs::world::World` 原始
+/// World 访问操作，而非 Bevy `Query`/`Res` system param），封装
+/// `resolve_body_plan_for_target(..., BodyPlanPurpose::Intrinsic, ...)` 的原始 World
+/// 版本，避免每个 resolver 各自手搓一遍 `world.get::<Cultivation>` /
+/// `world.get_resource::<BodyPlanRegistry>` 拼装。
+pub fn intrinsic_is_humanoid_from_world(
+    world: &valence::prelude::bevy_ecs::world::World,
+    entity: Entity,
+) -> bool {
+    let cultivation = world.get::<Cultivation>(entity);
+    let body_plans = world.get_resource::<super::registry::BodyPlanRegistry>();
+    let races = world.get_resource::<RaceRegistry>();
+    resolve_body_plan_for_target(
+        entity,
+        BodyPlanPurpose::Intrinsic,
+        BodyPlanResolveInputs {
+            cultivation,
+            // `BeastKind` 不是 Bevy `Component`（既有 `combat::resolve` / `combat::carrier` /
+            // `cultivation::meridian_open` 消费点同款简化，见 `resolve_body_plan` 模块文档）——
+            // sword_path / sword_basics 施放门只对玩家实体生效（NPC 不走这两条 cast 路径），
+            // `None` 与"真的查了 BeastKind"结果 bit-for-bit 一致。
+            beast_kind: None,
+            morph_state: None,
+        },
+        body_plans,
+        races,
+    )
+    .is_humanoid
+}
+
+/// plan-race-system-v1 P4 —— 给定种族 id，直接查表返回其 [`BodyPlan`]（`races.json`
+/// 的 `RaceEntry.body_plan_id` 一跳）。`resolve_body_plan` 的 Form 分支、
+/// `combat::resolve` 的护甲折算逆查等消费点复用本函数，避免各自手写
+/// `races.get(...).and_then(|e| body_plans.get(&e.body_plan_id))`。
+pub fn resolve_race_to_plan<'a>(
+    race: &RaceId,
+    body_plans: &'a BodyPlanRegistry,
+    races: &RaceRegistry,
+) -> Option<&'a BodyPlan> {
+    let entry = races.get(race)?;
+    body_plans.get(&entry.body_plan_id)
+}
+
+/// plan-race-system-v1 P4 —— Form 身份（当前形态 race_id + is_humanoid）的原始 World
+/// 版本，镜像 [`intrinsic_is_humanoid_from_world`] 的用法（无 Bevy `Query` 访问权限的
+/// resolver / 原始 `World` 消费点用）。修复此前"未易形时 Form≡Intrinsic 掩盖了
+/// `form_race_id` 恒等于本体 `Cultivation.race`"的问题——`MorphState` 落地后本函数
+/// 优先读取它，而不是无条件回落本体身份。
+pub fn form_identity_from_world(
+    world: &valence::prelude::bevy_ecs::world::World,
+    entity: Entity,
+) -> (RaceId, bool) {
+    let cultivation = world.get::<Cultivation>(entity);
+    let morph_state = world.get::<super::morph::MorphState>(entity);
+    let body_plans = world.get_resource::<super::registry::BodyPlanRegistry>();
+    let races = world.get_resource::<RaceRegistry>();
+
+    let intrinsic_race = cultivation
+        .map(|c| c.race.clone())
+        .unwrap_or_else(|| RaceId::new(super::race_registry::HUMAN_RACE_ID));
+    let form_race_id = morph_state
+        .map(|m| m.form.clone())
+        .unwrap_or(intrinsic_race);
+
+    let plan = resolve_body_plan_for_target(
+        entity,
+        BodyPlanPurpose::Form,
+        BodyPlanResolveInputs {
+            cultivation,
+            beast_kind: None,
+            morph_state,
+        },
+        body_plans,
+        races,
+    );
+    (form_race_id, plan.is_humanoid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +474,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: Some(&cultivation),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -347,6 +497,7 @@ mod tests {
             BodyPlanResolveInputs {
                 cultivation: Some(&cultivation),
                 beast_kind: None,
+                morph_state: None,
             },
             &body_plans,
             &races,
@@ -371,6 +522,7 @@ mod tests {
             BodyPlanResolveInputs {
                 cultivation: Some(&cultivation),
                 beast_kind: None,
+                morph_state: None,
             },
             &body_plans,
             &races,
@@ -402,6 +554,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: Some(&cultivation),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -425,6 +578,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: Some(&cultivation),
                     beast_kind: None,
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -453,6 +607,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: None,
                     beast_kind: Some(&BeastKind::Rat),
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -474,6 +629,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: None,
                     beast_kind: Some(&BeastKind::Whale),
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -500,6 +656,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: Some(&cultivation),
                     beast_kind: Some(&BeastKind::Spider),
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,
@@ -520,6 +677,7 @@ mod tests {
                 BodyPlanResolveInputs {
                     cultivation: None,
                     beast_kind: None,
+                    morph_state: None,
                 },
                 &body_plans,
                 &races,

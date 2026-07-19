@@ -11,7 +11,7 @@
 //! `load_file` 内完成——本 registry 天然需要持有已加载完毕的 `BodyPlanRegistry` 才能校验
 //! 这些引用，因此这就是 plan 所说的「跨 registry post-load 校验」的落点。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -22,6 +22,7 @@ use crate::fauna::components::BeastKind;
 
 use super::registry::BodyPlanRegistry;
 use super::types::{BodyPartId, BodyPlanId, RaceId};
+use crate::cultivation::components::MeridianChannelId;
 
 pub const DEFAULT_RACES_PATH: &str = "assets/body_plans/races.json";
 /// 必须存在的默认种族条目——加载期强制校验（`resolve_body_plan` 拒载未知种族依赖此）。
@@ -80,12 +81,76 @@ pub struct MorphPairDef {
     pub part_mapping: HashMap<BodyPartId, BodyPartId>,
 }
 
+impl MorphPairDef {
+    /// plan-race-system-v1 P4 —— `part_mapping` 单一封装查询：给定 form 部位（`to` 种族
+    /// 的部位 id），返回其折算回的 intrinsic 部位（`from` 种族的部位 id）。`None` = 该
+    /// form 部位未声明映射（part_mapping 允许部分单射，见类型文档）。
+    pub fn intrinsic_part_for(&self, form_part: &BodyPartId) -> Option<&BodyPartId> {
+        self.part_mapping.get(form_part)
+    }
+
+    /// plan-race-system-v1 P4 —— 逆查：给定 intrinsic 部位，返回映射到它的 form 部位
+    /// （`part_mapping` 值唯一——见加载期单射校验——故至多一个）。供护甲折算消费点
+    /// （`combat::resolve`）把命中在 intrinsic 部位上的伤害，反向折算回"形态外观"的
+    /// 护甲覆盖部位。
+    pub fn form_part_for_intrinsic(&self, intrinsic_part: &BodyPartId) -> Option<&BodyPartId> {
+        self.part_mapping
+            .iter()
+            .find(|(_, v)| *v == intrinsic_part)
+            .map(|(k, _)| k)
+    }
+}
+
+/// plan-race-system-v1 P5/PR-6a §8#9 —— 经脉迁移映射：`RaceChange` 换种族时，
+/// `from` 种族某条经脉 channel id 一对一映射到 `to` 种族的哪条 channel id（保留状态
+/// 直接迁移）。**未在 `entries` 中出现的 `from` 侧 channel** 不会被摧毁——由
+/// `cultivation::race_change` 挂进 `MeridianSeveredPermanent` 的"休眠登记"（见
+/// `cultivation::meridian::severed::MeridianSeveredPermanent::register_dormant`），
+/// 换回一个 profile 里恰好含有该 channel id 的种族时按 id 精确恢复。
+///
+/// 校验（`load_file`/`from_file_contents`）：
+/// - `from`/`to` 种族必须存在；
+/// - `entries` 每一端 channel id 必须真实存在于对应种族 body_plan 的
+///   `meridian_profile.channels`（body_plan 无 `meridian_profile` 时视为空 channel
+///   集合，任何引用都会失败）；
+/// - `entries` 必须**一对一**：同一 `from` channel 不可出现两次（禁一对多），
+///   同一 `to` channel 也不可被两个不同 `from` channel 同时瞄准（禁多对一）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MeridianMappingDef {
+    pub from: RaceId,
+    pub to: RaceId,
+    pub entries: Vec<(MeridianChannelId, MeridianChannelId)>,
+}
+
+impl MeridianMappingDef {
+    /// 给定 `from` 种族的 channel id，返回它迁移到的 `to` 种族 channel id
+    /// （加载期一对一校验保证至多一条匹配）。
+    pub fn target_for(&self, from_channel: &MeridianChannelId) -> Option<&MeridianChannelId> {
+        self.entries
+            .iter()
+            .find(|(f, _)| f == from_channel)
+            .map(|(_, t)| t)
+    }
+
+    /// 逆查：给定 `to` 种族的 channel id，返回它是从 `from` 种族哪条 channel 迁移
+    /// 过来的（加载期一对一校验保证至多一条匹配）。
+    pub fn source_for(&self, to_channel: &MeridianChannelId) -> Option<&MeridianChannelId> {
+        self.entries
+            .iter()
+            .find(|(_, t)| t == to_channel)
+            .map(|(f, _)| f)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RaceFile {
     races: Vec<RaceEntry>,
     #[serde(default)]
     morph_pairs: Vec<MorphPairDef>,
+    #[serde(default)]
+    meridian_mappings: Vec<MeridianMappingDef>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -93,6 +158,7 @@ pub struct RaceRegistry {
     by_id: HashMap<RaceId, RaceEntry>,
     beast_kind_owner: HashMap<String, RaceId>,
     morph_pairs: HashMap<(RaceId, RaceId), MorphPairDef>,
+    meridian_mappings: HashMap<(RaceId, RaceId), MeridianMappingDef>,
 }
 
 impl Resource for RaceRegistry {}
@@ -144,8 +210,40 @@ impl RaceRegistry {
         self.morph_pairs.get(&(from.clone(), to.clone()))
     }
 
+    /// plan-race-system-v1 P4 —— `morph_pair` 别名（规格命名 `resolve_morph_pair`），
+    /// 供易形消费点按语义更贴切的名字调用；行为与 [`Self::morph_pair`] 完全一致。
+    pub fn resolve_morph_pair(&self, from: &RaceId, to: &RaceId) -> Option<&MorphPairDef> {
+        self.morph_pair(from, to)
+    }
+
     pub fn morph_pair_count(&self) -> usize {
         self.morph_pairs.len()
+    }
+
+    /// plan-race-system-v1 P5/PR-6a §8#9 —— 查询 `(from, to)` 种族对之间声明的经脉
+    /// 迁移映射。`None` = 未声明（`cultivation::race_change` 据此把 `from` 种族全部
+    /// 经脉视为无映射，直接进休眠登记）。
+    pub fn meridian_mapping(&self, from: &RaceId, to: &RaceId) -> Option<&MeridianMappingDef> {
+        self.meridian_mappings.get(&(from.clone(), to.clone()))
+    }
+
+    pub fn meridian_mapping_count(&self) -> usize {
+        self.meridian_mappings.len()
+    }
+
+    /// plan-race-system-v1 P4 —— 给定本体（intrinsic）种族，列出全部它可易形前往的
+    /// 目标种族 id（按声明的 `to` 字典序排序，保证结果确定性）。目前生产 `races.json`
+    /// `morph_pairs` 为空数组（P5 才引入 whale 真数据），调用方（`morph.yixing` cast
+    /// resolver）据此可预期在生产环境恒返回空——"机制已通，缺数据"是预期状态而非 bug。
+    pub fn morph_targets_from(&self, from: &RaceId) -> Vec<&RaceId> {
+        let mut targets: Vec<&RaceId> = self
+            .morph_pairs
+            .keys()
+            .filter(|(pair_from, _)| pair_from == from)
+            .map(|(_, to)| to)
+            .collect();
+        targets.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        targets
     }
 
     /// `BeastKind → RaceId` 派生查询——数据源是 races.json 各条目的 `beast_kinds`
@@ -263,13 +361,106 @@ impl RaceRegistry {
                 }
             }
 
+            // plan-race-system-v1 P4（决议 #2）—— part_mapping 必须部分**单射**：两个不同
+            // form_part 不得映射到同一个 intrinsic_part（否则伤害折算/护甲逆查会撞出
+            // 一对多歧义，见 `MorphPairDef::form_part_for_intrinsic`）。允许部分缺项
+            // （不要求满射），只禁止值重复。
+            {
+                let mut seen_intrinsic_parts: std::collections::HashSet<&BodyPartId> =
+                    std::collections::HashSet::new();
+                for intrinsic_part in pair.part_mapping.values() {
+                    if !seen_intrinsic_parts.insert(intrinsic_part) {
+                        return Err(RaceLoadError::Invalid(format!(
+                            "morph pair {}->{} part_mapping is not injective: intrinsic part {} \
+                             is targeted by more than one form part",
+                            pair.from, pair.to, intrinsic_part
+                        )));
+                    }
+                }
+            }
+
             morph_pairs.insert(key, pair);
+        }
+
+        let mut meridian_mappings: HashMap<(RaceId, RaceId), MeridianMappingDef> = HashMap::new();
+        for mapping in parsed.meridian_mappings {
+            let key = (mapping.from.clone(), mapping.to.clone());
+            if meridian_mappings.contains_key(&key) {
+                return Err(RaceLoadError::Invalid(format!(
+                    "duplicate meridian mapping {} -> {}",
+                    mapping.from, mapping.to
+                )));
+            }
+            let from_entry = by_id.get(&mapping.from).ok_or_else(|| {
+                RaceLoadError::Invalid(format!(
+                    "meridian mapping references unknown from-race {}",
+                    mapping.from
+                ))
+            })?;
+            let to_entry = by_id.get(&mapping.to).ok_or_else(|| {
+                RaceLoadError::Invalid(format!(
+                    "meridian mapping references unknown to-race {}",
+                    mapping.to
+                ))
+            })?;
+            let from_plan = body_plans
+                .get(&from_entry.body_plan_id)
+                .expect("body_plan_id existence already validated above");
+            let to_plan = body_plans
+                .get(&to_entry.body_plan_id)
+                .expect("body_plan_id existence already validated above");
+            let from_channels: HashSet<&MeridianChannelId> = from_plan
+                .meridian_profile
+                .as_ref()
+                .map(|p| p.channels.iter().map(|c| &c.id).collect())
+                .unwrap_or_default();
+            let to_channels: HashSet<&MeridianChannelId> = to_plan
+                .meridian_profile
+                .as_ref()
+                .map(|p| p.channels.iter().map(|c| &c.id).collect())
+                .unwrap_or_default();
+
+            let mut seen_from: HashSet<&MeridianChannelId> = HashSet::new();
+            let mut seen_to: HashSet<&MeridianChannelId> = HashSet::new();
+            for (from_channel, to_channel) in &mapping.entries {
+                if !from_channels.contains(from_channel) {
+                    return Err(RaceLoadError::Invalid(format!(
+                        "meridian mapping {}->{} entry from-channel {} not found in from-race \
+                         body plan {} meridian_profile",
+                        mapping.from, mapping.to, from_channel, from_entry.body_plan_id
+                    )));
+                }
+                if !to_channels.contains(to_channel) {
+                    return Err(RaceLoadError::Invalid(format!(
+                        "meridian mapping {}->{} entry to-channel {} not found in to-race \
+                         body plan {} meridian_profile",
+                        mapping.from, mapping.to, to_channel, to_entry.body_plan_id
+                    )));
+                }
+                if !seen_from.insert(from_channel) {
+                    return Err(RaceLoadError::Invalid(format!(
+                        "meridian mapping {}->{} is not one-to-one: from-channel {} is mapped \
+                         more than once",
+                        mapping.from, mapping.to, from_channel
+                    )));
+                }
+                if !seen_to.insert(to_channel) {
+                    return Err(RaceLoadError::Invalid(format!(
+                        "meridian mapping {}->{} is not one-to-one: to-channel {} is targeted \
+                         by more than one from-channel",
+                        mapping.from, mapping.to, to_channel
+                    )));
+                }
+            }
+
+            meridian_mappings.insert(key, mapping);
         }
 
         Ok(Self {
             by_id,
             beast_kind_owner,
             morph_pairs,
+            meridian_mappings,
         })
     }
 
@@ -280,7 +471,32 @@ impl RaceRegistry {
         morph_pairs: Vec<MorphPairDef>,
         body_plans: &BodyPlanRegistry,
     ) -> Result<Self, RaceLoadError> {
-        Self::from_file_contents(RaceFile { races, morph_pairs }, body_plans)
+        Self::from_file_contents(
+            RaceFile {
+                races,
+                morph_pairs,
+                meridian_mappings: Vec::new(),
+            },
+            body_plans,
+        )
+    }
+
+    /// 供测试直接构造 registry（含 `meridian_mappings`），不走文件 IO。
+    #[cfg(test)]
+    pub fn from_parts_for_test_with_meridian_mappings(
+        races: Vec<RaceEntry>,
+        morph_pairs: Vec<MorphPairDef>,
+        meridian_mappings: Vec<MeridianMappingDef>,
+        body_plans: &BodyPlanRegistry,
+    ) -> Result<Self, RaceLoadError> {
+        Self::from_file_contents(
+            RaceFile {
+                races,
+                morph_pairs,
+                meridian_mappings,
+            },
+            body_plans,
+        )
     }
 }
 
@@ -654,12 +870,664 @@ mod tests {
         );
     }
 
+    /// plan-race-system-v1 P4（决议 #2 单射校验）—— 两个不同 form_part 映射到同一
+    /// intrinsic_part 必须在加载期拒绝，而不是静默接受后在护甲折算/命中折算时产生
+    /// 一对多歧义。
+    #[test]
+    fn morph_pair_part_mapping_duplicate_intrinsic_value_rejected() {
+        let body_plans = body_plans_with_humanoid_and("whale", &["skull", "tail_fin", "fin_l"]);
+        let mut part_mapping = HashMap::new();
+        part_mapping.insert(BodyPartId::new("tail_fin"), BodyPartId::new("leg_l"));
+        part_mapping.insert(BodyPartId::new("fin_l"), BodyPartId::new("leg_l"));
+        let err = RaceRegistry::from_parts_for_test(
+            vec![
+                human_entry(),
+                RaceEntry {
+                    id: RaceId::new("whale"),
+                    display_name: "飞鲸".to_string(),
+                    body_plan_id: BodyPlanId::new("whale"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![MorphPairDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                part_mapping,
+            }],
+            &body_plans,
+        )
+        .expect_err("part_mapping 值重复（两个 form 部位映射到同一 intrinsic 部位）必须拒绝加载");
+        assert!(
+            matches!(&err, RaceLoadError::Invalid(reason) if reason.contains("not injective")),
+            "错误信息应指出非单射，实际: {err:?}"
+        );
+    }
+
+    /// part_mapping 部分单射（值不重复但有缺项）必须仍能正常加载——单射只禁止值重复，
+    /// 不要求满射（`to` 部位数可以多于/少于映射条目数）。
+    #[test]
+    fn morph_pair_part_mapping_partial_injective_map_accepted() {
+        let body_plans = body_plans_with_humanoid_and("whale", &["skull", "tail_fin", "fin_l"]);
+        let mut part_mapping = HashMap::new();
+        part_mapping.insert(BodyPartId::new("tail_fin"), BodyPartId::new("leg_l"));
+        part_mapping.insert(BodyPartId::new("fin_l"), BodyPartId::new("leg_r"));
+        // "skull" 故意不映射——单射校验不要求满射。
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                human_entry(),
+                RaceEntry {
+                    id: RaceId::new("whale"),
+                    display_name: "飞鲸".to_string(),
+                    body_plan_id: BodyPlanId::new("whale"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![MorphPairDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                part_mapping,
+            }],
+            &body_plans,
+        )
+        .expect("部分单射（有缺项但值不重复）应合法加载");
+        assert_eq!(races.morph_pair_count(), 1);
+    }
+
+    /// `MorphPairDef::intrinsic_part_for` / `form_part_for_intrinsic` 正反查询。
+    #[test]
+    fn morph_pair_def_intrinsic_part_for_and_reverse_lookup() {
+        let mut part_mapping = HashMap::new();
+        part_mapping.insert(BodyPartId::new("tail_fin"), BodyPartId::new("leg_l"));
+        let pair = MorphPairDef {
+            from: RaceId::new(HUMAN_RACE_ID),
+            to: RaceId::new("whale"),
+            part_mapping,
+        };
+        assert_eq!(
+            pair.intrinsic_part_for(&BodyPartId::new("tail_fin")),
+            Some(&BodyPartId::new("leg_l"))
+        );
+        assert_eq!(pair.intrinsic_part_for(&BodyPartId::new("skull")), None);
+        assert_eq!(
+            pair.form_part_for_intrinsic(&BodyPartId::new("leg_l")),
+            Some(&BodyPartId::new("tail_fin"))
+        );
+        assert_eq!(
+            pair.form_part_for_intrinsic(&BodyPartId::new("leg_r")),
+            None
+        );
+    }
+
+    /// `resolve_morph_pair` 是 `morph_pair` 的别名，行为必须完全一致。
+    #[test]
+    fn resolve_morph_pair_is_alias_of_morph_pair() {
+        let body_plans = body_plans_with_humanoid_and("whale", &["skull", "tail_fin"]);
+        let mut part_mapping = HashMap::new();
+        part_mapping.insert(BodyPartId::new("tail_fin"), BodyPartId::new("leg_l"));
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                human_entry(),
+                RaceEntry {
+                    id: RaceId::new("whale"),
+                    display_name: "飞鲸".to_string(),
+                    body_plan_id: BodyPlanId::new("whale"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![MorphPairDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                part_mapping,
+            }],
+            &body_plans,
+        )
+        .expect("valid morph pair should load");
+        assert_eq!(
+            races.resolve_morph_pair(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale")),
+            races.morph_pair(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale")),
+        );
+    }
+
+    /// `morph_targets_from`：空 registry 返回空；多目标按字典序确定性排序；查询
+    /// 无关种族（无正向 pair）返回空，不 panic。
+    #[test]
+    fn morph_targets_from_empty_when_no_pairs_declared() {
+        let body_plans = body_plans_with_humanoid_and("humanoid", &["head"]);
+        let races = RaceRegistry::from_parts_for_test(vec![human_entry()], vec![], &body_plans)
+            .expect("human-only races.json should load");
+        assert!(races
+            .morph_targets_from(&RaceId::new(HUMAN_RACE_ID))
+            .is_empty());
+    }
+
+    #[test]
+    fn morph_targets_from_returns_sorted_targets_for_matching_from_race() {
+        let body_plans = BodyPlanRegistry::from_plans(vec![
+            plan_with_parts("humanoid", &["head", "chest", "leg_l", "leg_r"]),
+            plan_with_parts("whale", &["skull"]),
+            plan_with_parts("beetle", &["carapace"]),
+        ])
+        .expect("fixture plans should validate");
+        let races = RaceRegistry::from_parts_for_test(
+            vec![
+                human_entry(),
+                RaceEntry {
+                    id: RaceId::new("whale"),
+                    display_name: "飞鲸".to_string(),
+                    body_plan_id: BodyPlanId::new("whale"),
+                    beast_kinds: vec![],
+                },
+                RaceEntry {
+                    id: RaceId::new("beetle"),
+                    display_name: "甲虫".to_string(),
+                    body_plan_id: BodyPlanId::new("beetle"),
+                    beast_kinds: vec![],
+                },
+            ],
+            vec![
+                MorphPairDef {
+                    from: RaceId::new(HUMAN_RACE_ID),
+                    to: RaceId::new("whale"),
+                    part_mapping: HashMap::new(),
+                },
+                MorphPairDef {
+                    from: RaceId::new(HUMAN_RACE_ID),
+                    to: RaceId::new("beetle"),
+                    part_mapping: HashMap::new(),
+                },
+            ],
+            &body_plans,
+        )
+        .expect("two morph pairs from human should load");
+
+        let targets = races.morph_targets_from(&RaceId::new(HUMAN_RACE_ID));
+        assert_eq!(
+            targets,
+            vec![&RaceId::new("beetle"), &RaceId::new("whale")],
+            "多目标必须按 to race id 字典序确定性排序"
+        );
+        assert!(
+            races.morph_targets_from(&RaceId::new("whale")).is_empty(),
+            "whale 未声明任何 from=whale 的 pair，必须返回空而非 panic"
+        );
+    }
+
     #[test]
     fn empty_morph_pairs_is_valid() {
         let body_plans = body_plans_with_humanoid_and("humanoid", &["head"]);
         let races = RaceRegistry::from_parts_for_test(vec![human_entry()], vec![], &body_plans)
             .expect("empty morph_pairs is a valid state (P0 production races.json)");
         assert_eq!(races.morph_pair_count(), 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // plan-race-system-v1 P5/PR-6a §8#9 —— meridian_mappings 加载期校验 + 查询。
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn plan_with_meridian_channels(id: &str, channel_ids: &[&str]) -> BodyPlan {
+        use crate::body_plan::types::{
+            ChannelDef, MeridianFamily, MeridianProfile, RealmMeridianReq,
+        };
+
+        let mut plan = plan_with_parts(id, &["core"]);
+        plan.meridian_profile = Some(MeridianProfile {
+            channels: channel_ids
+                .iter()
+                .map(|cid| ChannelDef {
+                    id: MeridianChannelId::new(*cid),
+                    family: MeridianFamily::Regular,
+                    body_part: None,
+                    roles: vec![],
+                })
+                .collect(),
+            topology_edges: vec![],
+            realm_requirements: [RealmMeridianReq::default(); 6],
+            dugu_injection: vec![],
+        });
+        plan
+    }
+
+    fn human_and_whale_body_plans_with_channels(
+        human_channels: &[&str],
+        whale_channels: &[&str],
+    ) -> BodyPlanRegistry {
+        BodyPlanRegistry::from_plans(vec![
+            plan_with_meridian_channels("humanoid", human_channels),
+            plan_with_meridian_channels("whale", whale_channels),
+        ])
+        .expect("fixture plans with meridian_profile should validate")
+    }
+
+    fn human_whale_race_entries() -> Vec<RaceEntry> {
+        vec![
+            human_entry(),
+            RaceEntry {
+                id: RaceId::new("whale"),
+                display_name: "飞鲸".to_string(),
+                body_plan_id: BodyPlanId::new("whale"),
+                beast_kinds: vec![],
+            },
+        ]
+    }
+
+    #[test]
+    fn meridian_mapping_happy_path_round_trips_and_is_queryable() {
+        let body_plans =
+            human_and_whale_body_plans_with_channels(&["lung", "heart"], &["skull", "fin"]);
+        let races = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            human_whale_race_entries(),
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                entries: vec![(
+                    MeridianChannelId::new("lung"),
+                    MeridianChannelId::new("fin"),
+                )],
+            }],
+            &body_plans,
+        )
+        .expect("valid meridian mapping should load");
+
+        assert_eq!(races.meridian_mapping_count(), 1);
+        let mapping = races
+            .meridian_mapping(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale"))
+            .expect("mapping should be retrievable by (from, to) key");
+        assert_eq!(
+            mapping.target_for(&MeridianChannelId::new("lung")),
+            Some(&MeridianChannelId::new("fin"))
+        );
+        assert_eq!(
+            mapping.source_for(&MeridianChannelId::new("fin")),
+            Some(&MeridianChannelId::new("lung"))
+        );
+        assert_eq!(mapping.target_for(&MeridianChannelId::new("heart")), None);
+        assert_eq!(mapping.source_for(&MeridianChannelId::new("skull")), None);
+    }
+
+    #[test]
+    fn meridian_mapping_absent_pair_returns_none() {
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin"]);
+        let races = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            human_whale_race_entries(),
+            vec![],
+            vec![],
+            &body_plans,
+        )
+        .expect("empty meridian_mappings is a valid state");
+        assert_eq!(races.meridian_mapping_count(), 0);
+        assert!(races
+            .meridian_mapping(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale"))
+            .is_none());
+    }
+
+    #[test]
+    fn meridian_mapping_duplicate_from_to_rejected() {
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin"]);
+        let mapping = MeridianMappingDef {
+            from: RaceId::new(HUMAN_RACE_ID),
+            to: RaceId::new("whale"),
+            entries: vec![],
+        };
+        let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            human_whale_race_entries(),
+            vec![],
+            vec![mapping.clone(), mapping],
+            &body_plans,
+        )
+        .expect_err("duplicate meridian mapping must fail");
+        assert!(
+            matches!(err, RaceLoadError::Invalid(reason) if reason.contains("duplicate meridian mapping"))
+        );
+    }
+
+    #[test]
+    fn meridian_mapping_dangling_from_race_rejected() {
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin"]);
+        let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            vec![human_entry()],
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new("ghost_race"),
+                to: RaceId::new(HUMAN_RACE_ID),
+                entries: vec![],
+            }],
+            &body_plans,
+        )
+        .expect_err("dangling from-race must fail");
+        assert!(
+            matches!(err, RaceLoadError::Invalid(reason) if reason.contains("unknown from-race"))
+        );
+    }
+
+    #[test]
+    fn meridian_mapping_dangling_to_race_rejected() {
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin"]);
+        let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            vec![human_entry()],
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("ghost_race"),
+                entries: vec![],
+            }],
+            &body_plans,
+        )
+        .expect_err("dangling to-race must fail");
+        assert!(
+            matches!(err, RaceLoadError::Invalid(reason) if reason.contains("unknown to-race"))
+        );
+    }
+
+    #[test]
+    fn meridian_mapping_entry_from_channel_not_in_from_plan_rejected() {
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin"]);
+        let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            human_whale_race_entries(),
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                entries: vec![(
+                    MeridianChannelId::new("nonexistent_channel"),
+                    MeridianChannelId::new("fin"),
+                )],
+            }],
+            &body_plans,
+        )
+        .expect_err("dangling from-channel must fail");
+        assert!(
+            matches!(err, RaceLoadError::Invalid(reason) if reason.contains("from-channel") && reason.contains("not found"))
+        );
+    }
+
+    #[test]
+    fn meridian_mapping_entry_to_channel_not_in_to_plan_rejected() {
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin"]);
+        let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            human_whale_race_entries(),
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                entries: vec![(
+                    MeridianChannelId::new("lung"),
+                    MeridianChannelId::new("nonexistent_channel"),
+                )],
+            }],
+            &body_plans,
+        )
+        .expect_err("dangling to-channel must fail");
+        assert!(
+            matches!(err, RaceLoadError::Invalid(reason) if reason.contains("to-channel") && reason.contains("not found"))
+        );
+    }
+
+    #[test]
+    fn meridian_mapping_one_to_many_from_channel_rejected() {
+        // 同一个 from-channel 被两条 entry 同时映射 —— 一对多，禁止。
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin", "tail"]);
+        let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            human_whale_race_entries(),
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                entries: vec![
+                    (
+                        MeridianChannelId::new("lung"),
+                        MeridianChannelId::new("fin"),
+                    ),
+                    (
+                        MeridianChannelId::new("lung"),
+                        MeridianChannelId::new("tail"),
+                    ),
+                ],
+            }],
+            &body_plans,
+        )
+        .expect_err("one from-channel mapped twice (1:N) must fail");
+        assert!(
+            matches!(&err, RaceLoadError::Invalid(reason) if reason.contains("not one-to-one") && reason.contains("mapped more than once")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn meridian_mapping_many_to_one_to_channel_rejected() {
+        // 两个不同 from-channel 映射到同一个 to-channel —— 多对一，禁止。
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung", "heart"], &["fin"]);
+        let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            human_whale_race_entries(),
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                entries: vec![
+                    (
+                        MeridianChannelId::new("lung"),
+                        MeridianChannelId::new("fin"),
+                    ),
+                    (
+                        MeridianChannelId::new("heart"),
+                        MeridianChannelId::new("fin"),
+                    ),
+                ],
+            }],
+            &body_plans,
+        )
+        .expect_err("two from-channels targeting one to-channel (N:1) must fail");
+        assert!(
+            matches!(&err, RaceLoadError::Invalid(reason) if reason.contains("not one-to-one") && reason.contains("targeted by more than one")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn meridian_mapping_referencing_body_plan_without_meridian_profile_rejected() {
+        // to-race body plan 无 meridian_profile（None）——channel 集合视为空，任何引用必拒。
+        let body_plans = BodyPlanRegistry::from_plans(vec![
+            plan_with_meridian_channels("humanoid", &["lung"]),
+            plan_with_parts("no_meridian_plan", &["core"]),
+        ])
+        .expect("fixture plans should validate");
+        let races_entries = vec![
+            human_entry(),
+            RaceEntry {
+                id: RaceId::new("mindless"),
+                display_name: "无脉兽".to_string(),
+                body_plan_id: BodyPlanId::new("no_meridian_plan"),
+                beast_kinds: vec![],
+            },
+        ];
+        let err = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            races_entries,
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("mindless"),
+                entries: vec![(
+                    MeridianChannelId::new("lung"),
+                    MeridianChannelId::new("lung"),
+                )],
+            }],
+            &body_plans,
+        )
+        .expect_err("to-race without meridian_profile must reject any channel reference");
+        assert!(
+            matches!(err, RaceLoadError::Invalid(reason) if reason.contains("to-channel") && reason.contains("not found"))
+        );
+    }
+
+    #[test]
+    fn meridian_mapping_empty_entries_is_valid() {
+        // 声明了 mapping 但 entries 为空——合法状态（所有 from 侧经脉都进休眠登记）。
+        let body_plans = human_and_whale_body_plans_with_channels(&["lung"], &["fin"]);
+        let races = RaceRegistry::from_parts_for_test_with_meridian_mappings(
+            human_whale_race_entries(),
+            vec![],
+            vec![MeridianMappingDef {
+                from: RaceId::new(HUMAN_RACE_ID),
+                to: RaceId::new("whale"),
+                entries: vec![],
+            }],
+            &body_plans,
+        )
+        .expect("empty entries is a valid mapping declaration");
+        let mapping = races
+            .meridian_mapping(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale"))
+            .unwrap();
+        assert!(mapping.entries.is_empty());
+    }
+
+    /// plan-race-system-v1 P5/PR-6c —— 真实 races.json 的 `human<->whale` 双向经脉映射
+    /// per-key pin。**换轨**：whale 换成真非人 `whale.json`（6 条自身经脉，非 human 的
+    /// 20 条 TCM 名）后，human<->whale 不再是恒等映射——只有 6 对**真跨构型**映射
+    /// （human 12 正经/8 奇经里各挑 4 正经 + 2 奇经，一对一映射到 whale 的 4 正经 +
+    /// 2 奇经），其余 14 条 human 经脉在换轨到 whale 时走休眠登记（不在本测试断言
+    /// 范围）。human<->beast_common 因两者仍共用 `humanoid.json`，**保持恒等不变**
+    /// （见下方 `real_races_json_asset_human_beast_common_meridian_mapping_is_identity`）；
+    /// whale<->beast_common 与 human<->whale 同一套 6 对映射（beast_common 经脉集合
+    /// 与 human 相同）。删字段 / 删单个方向 / 清空 entries / 改错映射对必须撞红本测试。
+    #[test]
+    fn real_races_json_asset_meridian_mappings_load_and_validate() {
+        // 6 对 human 经脉 id -> whale 经脉 id 的真跨构型映射（一对一，非恒等）。
+        const EXPECTED_HUMAN_TO_WHALE: [(&str, &str); 6] = [
+            ("lung", "spout_meridian"),
+            ("large_intestine", "flipper_right_meridian"),
+            ("small_intestine", "flipper_left_meridian"),
+            ("kidney", "fluke_meridian"),
+            ("ren", "keel_meridian"),
+            ("du", "spine_meridian"),
+        ];
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans_dir = manifest_dir.join(super::super::registry::DEFAULT_BODY_PLANS_DIR);
+        let races_path = manifest_dir.join(DEFAULT_RACES_PATH);
+
+        let body_plans = BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
+        let races =
+            RaceRegistry::load_file(&races_path, &body_plans).expect("real races.json should load");
+
+        let expected_human_to_whale: HashSet<(MeridianChannelId, MeridianChannelId)> =
+            EXPECTED_HUMAN_TO_WHALE
+                .iter()
+                .map(|(from, to)| (MeridianChannelId::new(*from), MeridianChannelId::new(*to)))
+                .collect();
+        let expected_whale_to_human: HashSet<(MeridianChannelId, MeridianChannelId)> =
+            EXPECTED_HUMAN_TO_WHALE
+                .iter()
+                .map(|(from, to)| (MeridianChannelId::new(*to), MeridianChannelId::new(*from)))
+                .collect();
+
+        let human_to_whale = races
+            .meridian_mapping(&RaceId::new(HUMAN_RACE_ID), &RaceId::new("whale"))
+            .expect("races.json must declare human->whale meridian_mapping");
+        assert_eq!(
+            human_to_whale.entries.len(),
+            6,
+            "human->whale 必须精确声明 6 条真跨构型经脉迁移条目（whale 只有 6 条自身经脉）"
+        );
+        let human_to_whale_set: HashSet<(MeridianChannelId, MeridianChannelId)> =
+            human_to_whale.entries.iter().cloned().collect();
+        assert_eq!(
+            human_to_whale_set, expected_human_to_whale,
+            "human->whale 的 6 条 source/target 对必须与预期真跨构型映射完全一致"
+        );
+
+        let whale_to_human = races
+            .meridian_mapping(&RaceId::new("whale"), &RaceId::new(HUMAN_RACE_ID))
+            .expect("races.json must declare whale->human meridian_mapping (reverse direction)");
+        assert_eq!(
+            whale_to_human.entries.len(),
+            6,
+            "whale->human 必须精确声明 6 条真跨构型经脉迁移条目"
+        );
+        let whale_to_human_set: HashSet<(MeridianChannelId, MeridianChannelId)> =
+            whale_to_human.entries.iter().cloned().collect();
+        assert_eq!(
+            whale_to_human_set, expected_whale_to_human,
+            "whale->human 的 6 条 source/target 对必须与预期真跨构型映射（反向）完全一致"
+        );
+
+        let whale_to_beast_common = races
+            .meridian_mapping(&RaceId::new("whale"), &RaceId::new("beast_common"))
+            .expect("races.json must declare whale->beast_common meridian_mapping");
+        let whale_to_beast_common_set: HashSet<(MeridianChannelId, MeridianChannelId)> =
+            whale_to_beast_common.entries.iter().cloned().collect();
+        assert_eq!(
+            whale_to_beast_common_set, expected_whale_to_human,
+            "whale->beast_common 必须与 whale->human 使用同一套跨构型映射（beast_common \
+             与 human 共用 humanoid.json 经脉集合）"
+        );
+
+        let beast_common_to_whale = races
+            .meridian_mapping(&RaceId::new("beast_common"), &RaceId::new("whale"))
+            .expect("races.json must declare beast_common->whale meridian_mapping");
+        let beast_common_to_whale_set: HashSet<(MeridianChannelId, MeridianChannelId)> =
+            beast_common_to_whale.entries.iter().cloned().collect();
+        assert_eq!(
+            beast_common_to_whale_set, expected_human_to_whale,
+            "beast_common->whale 必须与 human->whale 使用同一套跨构型映射"
+        );
+    }
+
+    /// human<->beast_common 两者仍共用同一份 `humanoid.json`（20 条 TCM 经脉），
+    /// PR-6c 换轨 whale 真经脉后本对映射必须保持恒等不变——不能被误改。
+    #[test]
+    fn real_races_json_asset_human_beast_common_meridian_mapping_is_identity() {
+        const EXPECTED_IDENTITY_CHANNELS: [&str; 20] = [
+            "lung",
+            "large_intestine",
+            "stomach",
+            "spleen",
+            "heart",
+            "small_intestine",
+            "bladder",
+            "kidney",
+            "pericardium",
+            "triple_energizer",
+            "gallbladder",
+            "liver",
+            "ren",
+            "du",
+            "chong",
+            "dai",
+            "yin_qiao",
+            "yang_qiao",
+            "yin_wei",
+            "yang_wei",
+        ];
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans_dir = manifest_dir.join(super::super::registry::DEFAULT_BODY_PLANS_DIR);
+        let races_path = manifest_dir.join(DEFAULT_RACES_PATH);
+
+        let body_plans = BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
+        let races =
+            RaceRegistry::load_file(&races_path, &body_plans).expect("real races.json should load");
+
+        let expected: HashSet<(MeridianChannelId, MeridianChannelId)> = EXPECTED_IDENTITY_CHANNELS
+            .iter()
+            .map(|id| (MeridianChannelId::new(*id), MeridianChannelId::new(*id)))
+            .collect();
+
+        for (from, to) in [("human", "beast_common"), ("beast_common", "human")] {
+            let mapping = races
+                .meridian_mapping(&RaceId::new(from), &RaceId::new(to))
+                .unwrap_or_else(|| panic!("races.json must declare {from}->{to} meridian_mapping"));
+            assert_eq!(
+                mapping.entries.len(),
+                20,
+                "{from}->{to} 必须精确声明 20 条恒等经脉迁移条目"
+            );
+            let set: HashSet<(MeridianChannelId, MeridianChannelId)> =
+                mapping.entries.iter().cloned().collect();
+            assert_eq!(
+                set, expected,
+                "{from}->{to} 的 20 条 source/target identity 对必须与预期集合完全一致"
+            );
+        }
     }
 
     #[test]
@@ -726,6 +1594,30 @@ mod tests {
              `races` array, got {err:?}"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn real_races_json_asset_has_human_to_whale_morph_pair() {
+        // plan-race-system-v1 PR-5b —— 生产 races.json 必须声明 human→whale 正向
+        // morph_pair，否则 `morph.yixing` cast 永远 InvalidTarget（P4 遗留的已知缺口，
+        // 本 PR 补上真数据让 cast 端到端可用）。
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans_dir = manifest_dir.join(super::super::registry::DEFAULT_BODY_PLANS_DIR);
+        let races_path = manifest_dir.join(DEFAULT_RACES_PATH);
+
+        let body_plans = BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
+        let races =
+            RaceRegistry::load_file(&races_path, &body_plans).expect("real races.json should load");
+
+        assert!(
+            races.get(&RaceId::new("whale")).is_some(),
+            "races.json 必须声明独立的 whale 种族条目（易形目标）"
+        );
+        let targets = races.morph_targets_from(&RaceId::new(HUMAN_RACE_ID));
+        assert!(
+            targets.contains(&&RaceId::new("whale")),
+            "human 必须有正向 morph_pair 指向 whale，实际 targets={targets:?}"
+        );
     }
 
     #[test]

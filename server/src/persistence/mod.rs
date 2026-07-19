@@ -29,8 +29,11 @@ use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+#[cfg(test)]
+use crate::qi_physics::ledger::pending_inflow_account;
 use crate::qi_physics::ledger::{
-    pending_inflow_account, QiAccountId, WorldQiAccount, PENDING_INFLOW_ACCOUNT_ID,
+    persistent_runtime_qi_accounts, QiAccountId, WorldQiAccount, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
+    DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, PENDING_INFLOW_ACCOUNT_ID,
 };
 use crate::schema::common::NpcStateKind;
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
@@ -51,8 +54,9 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-/// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位。
-const CURRENT_USER_VERSION: i32 = 37;
+/// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位；
+/// v36/v37 分别持久化锻造会话与掉落；v38 新增两项垂死大能稳定 overflow 池。
+const CURRENT_USER_VERSION: i32 = 38;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -748,19 +752,12 @@ fn bootstrap_persistence_system(
         );
     }
 
-    let pending_inflow_balance = load_pending_inflow_balance(&settings).unwrap_or_else(|error| {
+    hydrate_runtime_qi_accounts(&settings, &mut qi_ledger).unwrap_or_else(|error| {
         panic!(
-            "[bong][persistence] cannot safely hydrate pending inflow at {}: {error}",
+            "[bong][persistence] cannot safely hydrate runtime qi accounts at {}: {error}",
             settings.db_path().display()
         )
     });
-    qi_ledger
-        .set_balance(pending_inflow_account(), pending_inflow_balance)
-        .unwrap_or_else(|error| {
-            panic!(
-                "[bong][persistence] invalid pending inflow balance={pending_inflow_balance}: {error}"
-            )
-        });
 
     if let Err(error) = scan_orphaned_npc_archives(&settings) {
         tracing::warn!(
@@ -814,8 +811,8 @@ fn bootstrap_persistence_system(
         if let Some(heartbeat) = heartbeat.as_deref_mut() {
             heartbeat.sync_active_pseudo_vein_qi_from_zones(zone_registry);
         }
-        // zone 余额从 zones_runtime 重建；pending inflow 是唯一没有 ECS/zone 物理字段
-        // 承载的账户，已由 qi_runtime_accounts 单独恢复。这里仅建立动态 zone 镜像，
+        // zone 余额从 zones_runtime 重建；三项稳定 runtime 池没有 ECS/zone 物理字段
+        // 承载，已由 qi_runtime_accounts 白名单恢复。这里仅建立动态 zone 镜像，
         // 不发生转账、不重复借款；后续消散通过 PseudoVeinSettle 归还到已恢复的池。
         for zone_id in restored_pseudo_vein_zone_ids {
             let Some(zone) = zone_registry.find_zone_by_name(zone_id.as_str()) else {
@@ -2316,6 +2313,31 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 38 {
+        let transaction = connection.transaction()?;
+        // 两个垂死大能 overflow 池在 v38 首次成为稳定持久账户；旧版本从未有可恢复的
+        // 聚合余额，因此升级时显式初始化为已知 0。pending inflow 仍保留 v34 的严格
+        // unknown 语义，绝不在这里补零。
+        for account_id in [
+            DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
+            DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+        ] {
+            transaction.execute(
+                "
+                INSERT INTO qi_runtime_accounts (
+                    account_id, balance, schema_version, last_updated_wall
+                ) VALUES (?1, 0.0, ?2, 0)
+                ON CONFLICT(account_id) DO NOTHING
+                ",
+                params![account_id, CURRENT_SCHEMA_VERSION],
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 38;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -3341,7 +3363,7 @@ fn persist_zone_runtime_snapshot_with_heartbeat_at_tick(
         let pseudo_veins = heartbeat.active_pseudo_vein_records_at_tick(zones, current_tick);
         replace_heartbeat_pseudo_vein_records(&transaction, &pseudo_veins, wall_clock)?;
     }
-    upsert_pending_inflow_balance(&transaction, qi_ledger, wall_clock)?;
+    upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
     transaction.commit().map_err(io::Error::other)
 }
 
@@ -5474,21 +5496,22 @@ fn validate_zone_runtime_record(record: &ZoneRuntimeRecord) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn upsert_pending_inflow_balance(
+pub(crate) fn upsert_runtime_qi_account_balances(
     transaction: &rusqlite::Transaction<'_>,
     qi_ledger: &WorldQiAccount,
     wall_clock: i64,
 ) -> io::Result<()> {
-    let balance = qi_ledger.balance(&pending_inflow_account());
-    if !balance.is_finite() || balance < 0.0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid pending inflow balance {balance}"),
-        ));
-    }
-    transaction
-        .execute(
-            "
+    for account in persistent_runtime_qi_accounts() {
+        let balance = qi_ledger.balance(&account);
+        if !balance.is_finite() || balance < 0.0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid runtime qi balance account={account} balance={balance}"),
+            ));
+        }
+        transaction
+            .execute(
+                "
             INSERT INTO qi_runtime_accounts (
                 account_id,
                 balance,
@@ -5500,14 +5523,15 @@ pub(crate) fn upsert_pending_inflow_balance(
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
-            params![
-                PENDING_INFLOW_ACCOUNT_ID,
-                balance,
-                CURRENT_SCHEMA_VERSION,
-                wall_clock,
-            ],
-        )
-        .map_err(io::Error::other)?;
+                params![
+                    account.id.as_str(),
+                    balance,
+                    CURRENT_SCHEMA_VERSION,
+                    wall_clock,
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
     Ok(())
 }
 
@@ -6318,31 +6342,74 @@ fn load_zone_runtime_snapshot_from_connection(
     Ok(records)
 }
 
-pub(crate) fn load_pending_inflow_balance(settings: &PersistenceSettings) -> io::Result<f64> {
+pub(crate) fn load_runtime_qi_account_balances(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<(QiAccountId, f64)>> {
     let connection = open_persistence_connection(settings)?;
-    let balance = connection
-        .query_row(
-            "
+    let mut balances = Vec::new();
+    for account in persistent_runtime_qi_accounts() {
+        let balance = connection
+            .query_row(
+                "
             SELECT balance
             FROM qi_runtime_accounts
             WHERE account_id = ?1
             ",
-            params![PENDING_INFLOW_ACCOUNT_ID],
-            |row| row.get::<_, f64>(0),
-        )
-        .optional()
-        .map_err(io::Error::other)?;
-    match balance {
-        Some(value) if value.is_finite() && value >= 0.0 => Ok(value),
-        Some(value) => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid persisted pending inflow balance {value}"),
-        )),
-        None => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "pending inflow balance is unknown after a pre-v34 upgrade; refusing to invent zero",
-        )),
+                params![account.id.as_str()],
+                |row| row.get::<_, f64>(0),
+            )
+            .optional()
+            .map_err(io::Error::other)?;
+        match balance {
+            Some(value) if value.is_finite() && value >= 0.0 => balances.push((account, value)),
+            Some(value) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid persisted runtime qi balance account={} balance={value}",
+                        account.id
+                    ),
+                ));
+            }
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "runtime qi balance account={} is unknown; refusing to invent zero",
+                        account.id
+                    ),
+                ));
+            }
+        }
     }
+    Ok(balances)
+}
+
+pub(crate) fn hydrate_runtime_qi_accounts(
+    settings: &PersistenceSettings,
+    qi_ledger: &mut WorldQiAccount,
+) -> io::Result<usize> {
+    let balances = load_runtime_qi_account_balances(settings)?;
+    for (account, balance) in &balances {
+        qi_ledger
+            .set_balance(account.clone(), *balance)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    }
+    Ok(balances.len())
+}
+
+#[cfg(test)]
+pub(crate) fn load_pending_inflow_balance(settings: &PersistenceSettings) -> io::Result<f64> {
+    load_runtime_qi_account_balances(settings)?
+        .into_iter()
+        .find(|(account, _)| *account == pending_inflow_account())
+        .map(|(_, balance)| balance)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "pending inflow account missing from persistent runtime whitelist",
+            )
+        })
 }
 
 fn load_heartbeat_pseudo_veins_from_connection(
@@ -11412,6 +11479,12 @@ mod persistence_tests {
         );
         persist_heartbeat_pseudo_veins_snapshot(&settings, &seed_heartbeat, &seed_zones)
             .expect("heartbeat pseudo-vein snapshot should persist");
+        let persisted_record = load_heartbeat_pseudo_veins_snapshot(&settings)
+            .expect("heartbeat pseudo-vein snapshot should load")
+            .into_iter()
+            .next()
+            .expect("persisted heartbeat pseudo-vein record should exist");
+        assert_eq!(persisted_record.observed_age_ticks, 800);
 
         let mut runtime_zones = seed_zones.clone();
         runtime_zones
@@ -11430,7 +11503,9 @@ mod persistence_tests {
         app.insert_resource(CultivationClock { tick: restart_tick });
         app.insert_resource(WorldQiAccount::default());
         app.add_systems(Startup, bootstrap_persistence_system);
+        let bootstrap_started_wall = current_unix_seconds();
         app.update();
+        let bootstrap_finished_wall = current_unix_seconds();
 
         let restored_heartbeat = app.world().resource::<WorldHeartbeat>();
         let restored_zones = app.world().resource::<crate::world::zone::ZoneRegistry>();
@@ -11447,15 +11522,32 @@ mod persistence_tests {
             "expected one persistable record after Startup hydration, actual {}",
             restored_records.len()
         );
+        let restored_age = restored_records[0]
+            .last_tick
+            .saturating_sub(restored_records[0].spawned_at_tick);
+        let expected_age_at = |current_wall: i64| {
+            let elapsed_seconds = current_wall
+                .saturating_sub(persisted_record.snapshot_wall)
+                .max(0);
+            persisted_record.observed_age_ticks.saturating_add(
+                u64::try_from(elapsed_seconds)
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(crate::worldgen::pseudo_vein::TICKS_PER_SECOND),
+            )
+        };
+        let minimum_expected_age = expected_age_at(bootstrap_started_wall);
+        let maximum_expected_age = expected_age_at(bootstrap_finished_wall);
+        let restored_offline_ticks = restored_age
+            .checked_sub(persisted_record.observed_age_ticks)
+            .expect("Startup hydration must not reduce the persisted pseudo-vein age");
+        assert!(
+            (minimum_expected_age..=maximum_expected_age).contains(&restored_age),
+            "expected Startup hydration at raw tick {restart_tick} to retain persisted age 800 plus wall-clock offline ticks in {minimum_expected_age}..={maximum_expected_age}, actual {restored_age}"
+        );
         assert_eq!(
-            restored_records[0]
-                .last_tick
-                .saturating_sub(restored_records[0].spawned_at_tick),
-            800,
-            "expected Startup hydration to retain age 800 at raw tick {restart_tick}, actual {}",
-            restored_records[0]
-                .last_tick
-                .saturating_sub(restored_records[0].spawned_at_tick)
+            restored_offline_ticks % crate::worldgen::pseudo_vein::TICKS_PER_SECOND,
+            0,
+            "expected Startup offline age increment to be quantized in whole-second tick steps, actual increment {restored_offline_ticks}"
         );
         let restored_zone = restored_zones
             .find_zone_by_name("pseudo_vein_heartbeat_7")
@@ -15708,6 +15800,268 @@ mod persistence_tests {
             "expected only a provably fresh database to initialize pending inflow to zero"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v38_migration_initializes_only_new_dying_elder_overflow_accounts() {
+        let db_path = database_path("v38-dying-elder-overflow-accounts");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v38-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DELETE FROM qi_runtime_accounts;
+                PRAGMA user_version = 37;
+                ",
+            )
+            .expect("fixture should emulate v37 with unknown pending inflow");
+
+        apply_migrations(&mut connection).expect("v37 to v38 migration should succeed");
+
+        for account_id in [
+            DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
+            DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+        ] {
+            let balance: f64 = connection
+                .query_row(
+                    "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                    params![account_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|error| panic!("v38 should add {account_id}: {error}"));
+            assert_eq!(
+                balance, 0.0,
+                "new v38 account {account_id} must start at known zero"
+            );
+        }
+        let pending_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("pending row count should query");
+        assert_eq!(
+            pending_rows, 0,
+            "v38 must not invent zero for a missing pre-v34 pending inflow balance"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_qi_accounts_persist_and_fresh_ledger_hydrate_roundtrip() {
+        let (settings, root) = persistence_settings("runtime-qi-three-account-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+
+        let expected = [
+            (pending_inflow_account(), 11.25),
+            (
+                crate::qi_physics::ledger::dying_elder_dan_excess_account(),
+                22.5,
+            ),
+            (
+                crate::qi_physics::ledger::dying_elder_release_overflow_account(),
+                33.75,
+            ),
+        ];
+        let mut source = WorldQiAccount::default();
+        for (account, balance) in &expected {
+            source
+                .set_balance(account.clone(), *balance)
+                .expect("fixture runtime balance should be valid");
+        }
+        // 白名单之外的 ledger 账户仍由自己的物理权威恢复，不能被本表顺手持久化。
+        source
+            .set_balance(QiAccountId::zone("spawn"), 99.0)
+            .expect("unrelated fixture balance should be valid");
+
+        persist_zone_runtime_snapshot_with_heartbeat(
+            &settings,
+            &crate::world::zone::ZoneRegistry::fallback(),
+            None,
+            &source,
+        )
+        .expect("production snapshot path should persist three runtime balances");
+
+        let mut hydrated = WorldQiAccount::default();
+        assert_eq!(
+            hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+                .expect("fresh ledger should hydrate all stable runtime accounts"),
+            3
+        );
+        for (account, balance) in expected {
+            assert_eq!(hydrated.balance(&account), balance, "account={account}");
+        }
+        assert_eq!(hydrated.balance(&QiAccountId::zone("spawn")), 0.0);
+        assert!(
+            hydrated.transfers().is_empty(),
+            "restart must not restore audit history"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_qi_account_persist_failure_rolls_back_staged_prefix() {
+        use crate::qi_physics::ledger::{
+            dying_elder_dan_excess_account, dying_elder_release_overflow_account, QiTransfer,
+            QiTransferReason,
+        };
+
+        let (settings, root) = persistence_settings("runtime-qi-persist-atomic-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+
+        let old_values = [
+            (PENDING_INFLOW_ACCOUNT_ID, 11.0),
+            (DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, 22.0),
+            (DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, 33.0),
+        ];
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        {
+            let transaction = connection
+                .transaction()
+                .expect("fixture transaction should start");
+            for (account_id, balance) in old_values {
+                transaction
+                    .execute(
+                        "UPDATE qi_runtime_accounts SET balance = ?2 WHERE account_id = ?1",
+                        params![account_id, balance],
+                    )
+                    .unwrap_or_else(|error| panic!("fixture should seed {account_id}: {error}"));
+            }
+            transaction
+                .commit()
+                .expect("fixture old balances should commit");
+        }
+
+        let mut source = WorldQiAccount::default();
+        source
+            .set_balance(pending_inflow_account(), 111.0)
+            .expect("pending staged balance should be valid");
+        source
+            .set_balance(dying_elder_dan_excess_account(), 222.0)
+            .expect("dan excess staged balance should be valid");
+
+        // `WorldQiAccount::transfer` 当前不会拒绝 destination + amount 溢出。利用这个
+        // 既有契约构造第三个 whitelist 账户的 +Inf，避免为测试放宽生产可见性。
+        let release_account = dying_elder_release_overflow_account();
+        let overflow_source = QiAccountId::overflow("runtime-qi-inf-fixture-source");
+        source
+            .set_balance(release_account.clone(), f64::MAX)
+            .expect("finite destination fixture should be valid");
+        source
+            .set_balance(overflow_source.clone(), f64::MAX)
+            .expect("finite source fixture should be valid");
+        source
+            .transfer(QiTransfer {
+                from: overflow_source,
+                to: release_account.clone(),
+                amount: f64::MAX,
+                reason: QiTransferReason::ReleaseToZone,
+            })
+            .expect("fixture transfer should expose the existing destination overflow behavior");
+        assert!(
+            source.balance(&release_account).is_infinite()
+                && source.balance(&release_account).is_sign_positive(),
+            "fixture third whitelist account must be +Inf"
+        );
+
+        {
+            let transaction = connection
+                .transaction()
+                .expect("failing persist transaction should start");
+            let error = upsert_runtime_qi_account_balances(&transaction, &source, 456)
+                .expect_err("+Inf third whitelist balance must reject the whole persist");
+            assert!(
+                error
+                    .to_string()
+                    .contains(DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID),
+                "error should identify the invalid third account, actual={error}"
+            );
+            drop(transaction);
+        }
+
+        for (account_id, expected_balance) in old_values {
+            let actual_balance: f64 = connection
+                .query_row(
+                    "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                    params![account_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("persisted balance should query {account_id}: {error}")
+                });
+            assert_eq!(
+                actual_balance, expected_balance,
+                "failed transaction must roll back staged prefix account={account_id}"
+            );
+        }
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_qi_accounts_missing_or_invalid_row_fail_closed_without_partial_hydrate() {
+        for (case, account_id) in [
+            ("pending", PENDING_INFLOW_ACCOUNT_ID),
+            ("dan-excess", DYING_ELDER_DAN_EXCESS_ACCOUNT_ID),
+            ("death-overflow", DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID),
+        ] {
+            for corruption in ["missing", "negative"] {
+                let test_name = format!("runtime-qi-{case}-{corruption}");
+                let (settings, root) = persistence_settings(&test_name);
+                bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+                    .expect("fixture sqlite should bootstrap");
+                let connection = Connection::open(settings.db_path()).expect("db should open");
+                match corruption {
+                    "missing" => {
+                        connection
+                            .execute(
+                                "DELETE FROM qi_runtime_accounts WHERE account_id = ?1",
+                                params![account_id],
+                            )
+                            .expect("fixture row should delete");
+                    }
+                    "negative" => {
+                        connection
+                            .execute_batch("PRAGMA ignore_check_constraints = ON;")
+                            .expect("fixture should allow deliberate corruption");
+                        connection
+                            .execute(
+                                "UPDATE qi_runtime_accounts SET balance = -1.0 WHERE account_id = ?1",
+                                params![account_id],
+                            )
+                            .expect("fixture row should corrupt");
+                    }
+                    _ => unreachable!(),
+                }
+                drop(connection);
+
+                let mut hydrated = WorldQiAccount::default();
+                let error = hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+                    .expect_err("missing/invalid stable pool must fail closed");
+                assert!(
+                    error.to_string().contains(account_id),
+                    "error should identify {account_id}, actual={error}"
+                );
+                assert!(
+                    hydrated.iter_balances().next().is_none(),
+                    "failed load must not partially hydrate earlier whitelist entries"
+                );
+                let _ = fs::remove_dir_all(root);
+            }
+        }
     }
 
     #[test]

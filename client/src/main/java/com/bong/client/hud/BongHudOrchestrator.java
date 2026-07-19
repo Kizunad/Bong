@@ -107,6 +107,32 @@ public final class BongHudOrchestrator {
         BotanyProjection.Anchor botanyAnchor,
         HudRuntimeContext runtimeContext
     ) {
+        return buildCommands(
+            snapshot,
+            combat,
+            nowMillis,
+            widthMeasurer,
+            maxTextWidth,
+            screenWidth,
+            screenHeight,
+            botanyAnchor,
+            runtimeContext,
+            System.nanoTime()
+        );
+    }
+
+    static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor,
+        HudRuntimeContext runtimeContext,
+        long nowNanos
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
         CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
         HudRuntimeContext runtime = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
@@ -414,6 +440,8 @@ public final class BongHudOrchestrator {
             ));
             // F5 fix — 灵龛守护状态（NicheGuardianStore）此前只进不出，从未被任何 HUD planner 消费。
             commands.addAll(NicheGuardianHudPlanner.buildCommands(screenWidth, screenHeight));
+            // plan-race-system-v1 PR-5b — 易形形态图标 + 施法期 vignette。
+            commands.addAll(MorphHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(NearDeathOverlayPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight
@@ -464,7 +492,7 @@ public final class BongHudOrchestrator {
             nowMillis
         ));
         commands.addAll(SearchProgressHudPlanner.buildCommands(
-            SearchHudStateStore.snapshot(),
+            SearchHudStateStore.snapshotAtNanos(nowNanos),
             screenWidth,
             screenHeight
         ));

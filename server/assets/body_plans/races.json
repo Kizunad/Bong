@@ -28,7 +28,128 @@
         "bone_dragon",
         "whale"
       ]
+    },
+    {
+      "id": "whale",
+      "display_name": "飞鲸",
+      "body_plan_id": "whale",
+      "beast_kinds": []
     }
   ],
-  "morph_pairs": []
+  "morph_pairs": [
+    {
+      "from": "human",
+      "to": "whale",
+      "part_mapping": {
+        "skull": "head",
+        "torso": "chest",
+        "back_fin": "back",
+        "left_pectoral_fin": "arm_l",
+        "right_pectoral_fin": "arm_r",
+        "tail_fin": "leg_l"
+      }
+    }
+  ],
+  "meridian_mappings": [
+    {
+      "from": "human",
+      "to": "whale",
+      "entries": [
+        ["lung", "spout_meridian"],
+        ["large_intestine", "flipper_right_meridian"],
+        ["small_intestine", "flipper_left_meridian"],
+        ["kidney", "fluke_meridian"],
+        ["ren", "keel_meridian"],
+        ["du", "spine_meridian"]
+      ]
+    },
+    {
+      "from": "whale",
+      "to": "human",
+      "entries": [
+        ["spout_meridian", "lung"],
+        ["flipper_right_meridian", "large_intestine"],
+        ["flipper_left_meridian", "small_intestine"],
+        ["fluke_meridian", "kidney"],
+        ["keel_meridian", "ren"],
+        ["spine_meridian", "du"]
+      ]
+    },
+    {
+      "from": "human",
+      "to": "beast_common",
+      "entries": [
+        ["lung", "lung"],
+        ["large_intestine", "large_intestine"],
+        ["stomach", "stomach"],
+        ["spleen", "spleen"],
+        ["heart", "heart"],
+        ["small_intestine", "small_intestine"],
+        ["bladder", "bladder"],
+        ["kidney", "kidney"],
+        ["pericardium", "pericardium"],
+        ["triple_energizer", "triple_energizer"],
+        ["gallbladder", "gallbladder"],
+        ["liver", "liver"],
+        ["ren", "ren"],
+        ["du", "du"],
+        ["chong", "chong"],
+        ["dai", "dai"],
+        ["yin_qiao", "yin_qiao"],
+        ["yang_qiao", "yang_qiao"],
+        ["yin_wei", "yin_wei"],
+        ["yang_wei", "yang_wei"]
+      ]
+    },
+    {
+      "from": "beast_common",
+      "to": "human",
+      "entries": [
+        ["lung", "lung"],
+        ["large_intestine", "large_intestine"],
+        ["stomach", "stomach"],
+        ["spleen", "spleen"],
+        ["heart", "heart"],
+        ["small_intestine", "small_intestine"],
+        ["bladder", "bladder"],
+        ["kidney", "kidney"],
+        ["pericardium", "pericardium"],
+        ["triple_energizer", "triple_energizer"],
+        ["gallbladder", "gallbladder"],
+        ["liver", "liver"],
+        ["ren", "ren"],
+        ["du", "du"],
+        ["chong", "chong"],
+        ["dai", "dai"],
+        ["yin_qiao", "yin_qiao"],
+        ["yang_qiao", "yang_qiao"],
+        ["yin_wei", "yin_wei"],
+        ["yang_wei", "yang_wei"]
+      ]
+    },
+    {
+      "from": "whale",
+      "to": "beast_common",
+      "entries": [
+        ["spout_meridian", "lung"],
+        ["flipper_right_meridian", "large_intestine"],
+        ["flipper_left_meridian", "small_intestine"],
+        ["fluke_meridian", "kidney"],
+        ["keel_meridian", "ren"],
+        ["spine_meridian", "du"]
+      ]
+    },
+    {
+      "from": "beast_common",
+      "to": "whale",
+      "entries": [
+        ["lung", "spout_meridian"],
+        ["large_intestine", "flipper_right_meridian"],
+        ["small_intestine", "flipper_left_meridian"],
+        ["kidney", "fluke_meridian"],
+        ["ren", "keel_meridian"],
+        ["du", "spine_meridian"]
+      ]
+    }
+  ]
 }

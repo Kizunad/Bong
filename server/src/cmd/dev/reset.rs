@@ -547,7 +547,7 @@ mod tests {
                 entries: vec![ContamSource {
                     amount: 3.0,
                     color: ColorKind::Turbid,
-                    meridian_id: Some(MeridianId::Lung),
+                    meridian_id: Some(MeridianId::Lung.channel_id()),
                     attacker_id: Some("npc:bad".to_string()),
                     introduced_at: 5,
                 }],

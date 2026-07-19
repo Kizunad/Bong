@@ -13,6 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, App, DVec3, Entity, IntoSystemConfigs, Resource, Update};
 
+use crate::world::dimension::DimensionKind;
+
+pub(crate) mod authority;
 pub mod interact;
 pub mod lifecycle;
 pub mod loot;
@@ -110,6 +113,8 @@ impl SupplyCoffinGrade {
 pub struct ActiveSupplyCoffin {
     pub grade: SupplyCoffinGrade,
     pub pos: DVec3,
+    /// 业务授权使用的逻辑位面；裸 XYZ 不得替代此身份。
+    pub dimension: DimensionKind,
     /// spawn 时的 wall-clock 秒（`current_wall_clock_secs()`）。
     pub spawned_at_wall_secs: u64,
 }
@@ -176,6 +181,8 @@ impl SupplyCoffinRegistry {
             ActiveSupplyCoffin {
                 grade,
                 pos,
+                // 当前 refresh 与 dev spawn 都显式落在 `layers.overworld`。
+                dimension: DimensionKind::Overworld,
                 spawned_at_wall_secs: now_secs,
             },
         );

@@ -12,6 +12,158 @@ use super::proto_gen::bong;
 use super::server_data::ServerDataPayloadV1;
 
 // ═══════════════════════════════════════════════════════════════
+// plan-race-system-v1 P3a —— RaceGate <-> proto RaceGate。
+//
+// `RaceGateOwned`（`body_plan::types`）尚未挂在任何 `ServerDataPayloadV1` oneof 字段
+// 下（本段是 P3 后续接入功法列表 / 装备 wire 时的复用底座，见 plan §P3 身份快照
+// bullet），故不在本文件的 `From<&ServerDataPayloadV1>` 主转换路径里；转换函数独立
+// 导出供直接单测 + 未来接入点调用。decode 方向对未知 kind fail-closed（返回 Err，
+// 不静默兜底 Any）。
+// ═══════════════════════════════════════════════════════════════
+
+pub fn race_gate_owned_to_proto(gate: &crate::body_plan::RaceGateOwned) -> bong::RaceGate {
+    use crate::body_plan::RaceGateOwned;
+    match gate {
+        RaceGateOwned::Any => bong::RaceGate {
+            kind: "any".to_string(),
+            species: Vec::new(),
+        },
+        RaceGateOwned::Humanoid => bong::RaceGate {
+            kind: "humanoid".to_string(),
+            species: Vec::new(),
+        },
+        RaceGateOwned::Species { species } => bong::RaceGate {
+            kind: "species".to_string(),
+            species: species.iter().map(|id| id.as_str().to_string()).collect(),
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RaceGateDecodeError {
+    /// 未知 `kind`——fail-closed，调用方必须拒绝而非兜底 `Any`。
+    UnknownKind(String),
+}
+
+impl std::fmt::Display for RaceGateDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RaceGateDecodeError::UnknownKind(kind) => {
+                write!(
+                    f,
+                    "unknown RaceGate wire kind {kind:?} — refusing to decode"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RaceGateDecodeError {}
+
+pub fn race_gate_owned_from_proto(
+    wire: &bong::RaceGate,
+) -> Result<crate::body_plan::RaceGateOwned, RaceGateDecodeError> {
+    use crate::body_plan::{RaceGateOwned, RaceId};
+    match wire.kind.as_str() {
+        "any" => Ok(RaceGateOwned::Any),
+        "humanoid" => Ok(RaceGateOwned::Humanoid),
+        "species" => Ok(RaceGateOwned::Species {
+            species: wire
+                .species
+                .iter()
+                .map(|s| RaceId::new(s.clone()))
+                .collect(),
+        }),
+        other => Err(RaceGateDecodeError::UnknownKind(other.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod race_gate_wire_tests {
+    use super::*;
+    use crate::body_plan::{RaceGateOwned, RaceId};
+
+    #[test]
+    fn any_round_trips() {
+        let value = RaceGateOwned::Any;
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "any");
+        assert!(wire.species.is_empty());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn humanoid_round_trips() {
+        let value = RaceGateOwned::Humanoid;
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "humanoid");
+        assert!(wire.species.is_empty());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_round_trips() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale")],
+        };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.kind, "species");
+        assert_eq!(wire.species, vec!["whale".to_string()]);
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_empty_list_round_trips() {
+        let value = RaceGateOwned::Species { species: vec![] };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.species, Vec::<String>::new());
+        assert_eq!(race_gate_owned_from_proto(&wire).unwrap(), value);
+    }
+
+    #[test]
+    fn species_duplicate_entries_preserved_through_wire() {
+        let value = RaceGateOwned::Species {
+            species: vec![RaceId::new("whale"), RaceId::new("whale")],
+        };
+        let wire = race_gate_owned_to_proto(&value);
+        assert_eq!(wire.species, vec!["whale".to_string(), "whale".to_string()]);
+        let decoded = race_gate_owned_from_proto(&wire).unwrap();
+        match decoded {
+            RaceGateOwned::Species { species } => assert_eq!(species.len(), 2),
+            other => panic!("expected Species, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_kind_decode_fails_closed() {
+        let wire = bong::RaceGate {
+            kind: "bogus".to_string(),
+            species: Vec::new(),
+        };
+        let err = race_gate_owned_from_proto(&wire)
+            .expect_err("unknown kind must fail closed, not silently default to Any");
+        assert_eq!(err, RaceGateDecodeError::UnknownKind("bogus".to_string()));
+    }
+
+    /// plan-race-system-v1 P3a —— 施放门 race gate 拒绝的 wire pin：
+    /// `CastOutcomeV1::RejectRaceMismatch` 必须映射到新增 proto 变体
+    /// `bong::CastOutcome::RejectRaceMismatch`（非默认 `Unspecified`/其余已存在变体）。
+    #[test]
+    fn cast_outcome_reject_race_mismatch_maps_to_dedicated_proto_variant() {
+        use super::super::combat_hud::CastOutcomeV1;
+        let proto_value = cast_outcome_to_proto(&CastOutcomeV1::RejectRaceMismatch);
+        assert_eq!(proto_value, bong::CastOutcome::RejectRaceMismatch as i32);
+        // 不与其余已存在的 reject 变体撞值（防止手滑复制粘贴出重复映射）。
+        assert_ne!(
+            proto_value,
+            bong::CastOutcome::RejectTechniqueInactive as i32
+        );
+        assert_ne!(proto_value, bong::CastOutcome::RejectNoWeapon as i32);
+        assert_ne!(proto_value, bong::CastOutcome::Unspecified as i32);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // helper: Rust enum → proto i32
 // ═══════════════════════════════════════════════════════════════
 
@@ -368,6 +520,25 @@ fn inventory_item_view_to_proto(
         // None → proto 不设 → JsonFormat 省键 → client readAlchemyLines 拿 null → 无 tooltip。
         // 修复 InventoryItemView.alchemy proto 漂移（生产走 protobuf 时此前被静默丢弃）。
         alchemy: v.alchemy.as_ref().map(alchemy_item_data_to_proto),
+        freshness: v.freshness.as_ref().map(inventory_freshness_to_proto),
+    }
+}
+
+fn inventory_freshness_to_proto(
+    freshness: &crate::shelflife::Freshness,
+) -> bong::InventoryFreshness {
+    let track = match freshness.track {
+        crate::shelflife::DecayTrack::Decay => "Decay",
+        crate::shelflife::DecayTrack::Spoil => "Spoil",
+        crate::shelflife::DecayTrack::Age => "Age",
+    };
+    bong::InventoryFreshness {
+        created_at_tick: freshness.created_at_tick,
+        initial_qi: freshness.initial_qi,
+        track: track.to_string(),
+        profile: freshness.profile.as_str().to_string(),
+        frozen_accumulated: freshness.frozen_accumulated,
+        frozen_since_tick: freshness.frozen_since_tick,
     }
 }
 
@@ -649,6 +820,11 @@ impl From<&ServerDataPayloadV1> for Payload {
                 practice_weights,
                 target_meridian,
                 body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => {
                 // SoA → AoS: 并行数组打包成 repeated MeridianState（plan-race-system-v1
                 // P1c：长度随 `channel_ids` 走，不再假设恰好 20 条）。
@@ -693,6 +869,11 @@ impl From<&ServerDataPayloadV1> for Payload {
                         })
                         .collect(),
                     body_plan_id: body_plan_id.clone(),
+                    race_id: race_id.clone(),
+                    form_race_id: form_race_id.clone(),
+                    form_body_plan_id: form_body_plan_id.clone(),
+                    intrinsic_is_humanoid: *intrinsic_is_humanoid,
+                    form_is_humanoid: *form_is_humanoid,
                 })
             }
             ServerDataPayloadV1::QiColorObserved(o) => {
@@ -809,6 +990,41 @@ impl From<&ServerDataPayloadV1> for Payload {
                         .collect(),
                 })
             }
+            ServerDataPayloadV1::RaceGateMeta(meta) => {
+                // plan-race-system-v1 P3c：RaceGateWireV1（flat wire）→ proto RaceGate。
+                // 直接构造 bong::RaceGate（kind + species），避免多绕一层 owned 转换。
+                let entry_to_proto =
+                    |e: &crate::schema::server_data::RaceGateMetaEntryV1| bong::RaceGateMetaEntry {
+                        id: e.id.clone(),
+                        gate: Some(bong::RaceGate {
+                            kind: e.gate.kind.clone(),
+                            species: e.gate.species.clone(),
+                        }),
+                    };
+                Payload::RaceGateMeta(bong::RaceGateMeta {
+                    item_wearer_race: meta.item_wearer_race.iter().map(entry_to_proto).collect(),
+                    technique_required_race: meta
+                        .technique_required_race
+                        .iter()
+                        .map(entry_to_proto)
+                        .collect(),
+                })
+            }
+            ServerDataPayloadV1::MorphState(state) => Payload::MorphState(bong::MorphState {
+                v: 1,
+                mode: state.mode.clone(),
+                entries: state
+                    .entries
+                    .iter()
+                    .map(|e| bong::MorphStateEntry {
+                        entity_id: e.entity_id,
+                        model_kind: e.model_kind,
+                        form_race_id: e.form_race_id.clone(),
+                        form_body_plan_id: e.form_body_plan_id.clone(),
+                        active: e.active,
+                    })
+                    .collect(),
+            }),
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -2031,6 +2247,7 @@ fn cast_outcome_to_proto(o: &super::combat_hud::CastOutcomeV1) -> i32 {
         CastOutcomeV1::RejectRealmTooLow => bong::CastOutcome::RejectRealmTooLow as i32,
         CastOutcomeV1::RejectNoWeapon => bong::CastOutcome::RejectNoWeapon as i32,
         CastOutcomeV1::RejectTechniqueInactive => bong::CastOutcome::RejectTechniqueInactive as i32,
+        CastOutcomeV1::RejectRaceMismatch => bong::CastOutcome::RejectRaceMismatch as i32,
     }
 }
 
@@ -4487,6 +4704,59 @@ mod tests {
         decoded.alchemy
     }
 
+    fn roundtrip_freshness(
+        view: &super::super::inventory::InventoryItemViewV1,
+    ) -> Option<bong::InventoryFreshness> {
+        let proto = inventory_item_view_to_proto(view);
+        let bytes = proto.encode_to_vec();
+        let decoded = bong::InventoryItemView::decode(bytes.as_slice())
+            .expect("InventoryItemView proto decode 应成功");
+        decoded.freshness
+    }
+
+    #[test]
+    fn inventory_item_view_freshness_survives_proto_roundtrip_for_all_tracks() {
+        use crate::shelflife::{DecayProfileId, DecayTrack, Freshness};
+
+        let initial_qi = f32::from_bits(0x42c5_0001);
+        for (track, expected_track) in [
+            (DecayTrack::Decay, "Decay"),
+            (DecayTrack::Spoil, "Spoil"),
+            (DecayTrack::Age, "Age"),
+        ] {
+            let mut view = alchemy_view(None);
+            view.freshness = Some(Freshness {
+                created_at_tick: 123,
+                initial_qi,
+                track,
+                profile: DecayProfileId::new(format!("{}_profile", expected_track.to_lowercase())),
+                frozen_accumulated: 17,
+                frozen_since_tick: Some(140),
+            });
+
+            let freshness = roundtrip_freshness(&view)
+                .expect("freshness 必须过 InventoryItemView protobuf wire 存活");
+            assert_eq!(freshness.created_at_tick, 123);
+            assert_eq!(
+                freshness.initial_qi.to_bits(),
+                initial_qi.to_bits(),
+                "Freshness.initial_qi 的权威类型是 f32，protobuf float 必须逐 bit 保真"
+            );
+            assert_eq!(freshness.track, expected_track);
+            assert_eq!(
+                freshness.profile,
+                format!("{}_profile", expected_track.to_lowercase())
+            );
+            assert_eq!(freshness.frozen_accumulated, 17);
+            assert_eq!(freshness.frozen_since_tick, Some(140));
+        }
+    }
+
+    #[test]
+    fn inventory_item_view_without_freshness_keeps_proto_field_absent() {
+        assert!(roundtrip_freshness(&alchemy_view(None)).is_none());
+    }
+
     #[test]
     fn inventory_item_view_pill_alchemy_survives_proto_roundtrip() {
         use crate::alchemy::recipe::SideEffect;
@@ -5933,7 +6203,7 @@ mod tests {
 
     // ─── plan-test-coverage-guards-v1 P0：exhaustive proto encoding guard ────────
 
-    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (126 total).
+    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (127 total).
     ///
     /// **Why a list and not an exhaustive match?**
     /// The list itself cannot be made compile-time exhaustive — Rust cannot iterate enum variants.
@@ -6113,6 +6383,11 @@ mod tests {
                 practice_weights: vec![],
                 target_meridian: None,
                 body_plan_id: "humanoid".to_string(),
+                race_id: String::new(),
+                form_race_id: String::new(),
+                form_body_plan_id: String::new(),
+                intrinsic_is_humanoid: false,
+                form_is_humanoid: false,
             }),
             fix!(ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
                 observer: "offline:Kiz".to_string(),
@@ -6192,6 +6467,40 @@ mod tests {
                     hud_anchors: vec![super::super::server_data::BodyPlanPartAnchorV1 {
                         part_id: "chest".to_string(),
                         point: super::super::server_data::BodyPlanPoint2V1 { x: 0.5, y: 0.19 },
+                    }],
+                }
+            )),
+            // plan-race-system-v1 P3c：种族门元数据表（含三档 gate pin）。
+            fix!(ServerDataPayloadV1::RaceGateMeta(
+                super::super::server_data::RaceGateMetaV1 {
+                    item_wearer_race: vec![super::super::server_data::RaceGateMetaEntryV1 {
+                        id: "armor_whale_plate".to_string(),
+                        gate: super::super::server_data::RaceGateWireV1 {
+                            kind: "species".to_string(),
+                            species: vec!["whale".to_string()],
+                        },
+                    }],
+                    technique_required_race: vec![super::super::server_data::RaceGateMetaEntryV1 {
+                        id: "sword.cleave".to_string(),
+                        gate: super::super::server_data::RaceGateWireV1 {
+                            kind: "humanoid".to_string(),
+                            species: vec![],
+                        },
+                    },],
+                }
+            )),
+            // plan-race-system-v1 P4：易形状态快照（此 fixture 列表每变体恰一条，见
+            // s2c_fixture_count_matches_variant_count 的 1:1 约束；delta/active=false 的
+            // 专项 round-trip 见 morph_state_delta_release_proto_round_trips）。
+            fix!(ServerDataPayloadV1::MorphState(
+                super::super::server_data::MorphStateV1 {
+                    mode: "full".to_string(),
+                    entries: vec![super::super::server_data::MorphStateEntryV1 {
+                        entity_id: 42,
+                        model_kind: 1,
+                        form_race_id: "whale".to_string(),
+                        form_body_plan_id: "whale".to_string(),
+                        active: true,
                     }],
                 }
             )),
@@ -7126,7 +7435,7 @@ mod tests {
         ]
     }
 
-    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (126 total).
+    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (127 total).
     ///
     /// This cross-checks the fixture count against `ServerDataType` discriminant count derived
     /// from `payload_type()`. If a new variant is added and a fixture is not added to
@@ -7134,6 +7443,40 @@ mod tests {
     ///
     /// NOTE: This test uses the `ServerDataType` enum variant count as the ground truth.
     /// That count is maintained by `payload_type()` which is also an exhaustive match.
+    /// plan-race-system-v1 P4 —— delta（`active=false`）易形解除快照的专项 proto 往返，
+    /// 补 `s2c_all_fixtures` 每变体 1:1 约束下无法放第二条 MorphState fixture 的覆盖。
+    #[test]
+    fn morph_state_delta_release_proto_round_trips() {
+        use super::super::server_data::{
+            MorphStateEntryV1, MorphStateV1, ServerDataPayloadV1, ServerDataV1,
+        };
+        use prost::Message;
+
+        let payload = ServerDataV1::new(ServerDataPayloadV1::MorphState(MorphStateV1 {
+            mode: "delta".to_string(),
+            entries: vec![MorphStateEntryV1 {
+                entity_id: 42,
+                model_kind: 0,
+                form_race_id: String::new(),
+                form_body_plan_id: String::new(),
+                active: false,
+            }],
+        }));
+        let bytes = payload.to_proto_bytes();
+        assert!(!bytes.is_empty());
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("delta morph_state envelope must decode");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::MorphState(state)) => {
+                assert_eq!(state.mode, "delta");
+                assert_eq!(state.entries.len(), 1);
+                assert_eq!(state.entries[0].entity_id, 42);
+                assert!(!state.entries[0].active, "解除态必须 active=false");
+            }
+            other => panic!("expected MorphState payload, got {other:?}"),
+        }
+    }
+
     #[test]
     fn s2c_fixture_count_matches_variant_count() {
         use super::super::server_data::ServerDataType;
@@ -7164,6 +7507,7 @@ mod tests {
             ServerDataType::DroppedLootSync,
             ServerDataType::RemainsSync,
             ServerDataType::BodyPlanLayout,
+            ServerDataType::RaceGateMeta,
             ServerDataType::BotanyHarvestProgress,
             ServerDataType::BotanyPlantV2RenderProfiles,
             ServerDataType::MiningProgress,
@@ -7280,6 +7624,7 @@ mod tests {
             ServerDataType::TutorialCoffinPos,
             ServerDataType::InventoryMoveRejected,
             ServerDataType::ScrollOpen,
+            ServerDataType::MorphState,
         ];
 
         let total_variants = all_types.len();
@@ -7387,8 +7732,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 128,
-            "Expected 128 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 130,
+            "Expected 130 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(

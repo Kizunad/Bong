@@ -13,6 +13,7 @@ import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.hud.DuguV2HudStateStore;
+import com.bong.client.hud.SearchHudStateStore;
 import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
@@ -922,6 +923,9 @@ public class BongNetworkHandler {
         // server 的区域 overlay/atmosphere 与 HUD tint/相机/FOV 视觉特效跨 session 残留，
         // 直到新服首个 zone_info 到达或旧 visual effect 自然过期。
         BongHudStateStore.clear();
+        // plan-bughunt-search-hud-stuck-v1 — 搜刮 HUD 是静态 store；断线时无 server
+        // payload 能替新 session 主动清掉旧 SEARCHING/terminal flash，必须随统一清理链复位。
+        SearchHudStateStore.clearOnDisconnect();
         // plan-era-state-v1 P3 — 断线时重置时代天象状态
         com.bong.client.era.EraAmbianceState.reset();
         // plan-agent-ui-data-v1 P1 — 断线时清理天道 UI 面板状态

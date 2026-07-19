@@ -1,5 +1,25 @@
+//! 已知功法静态注册表（`TECHNIQUE_DEFINITIONS`，全部 49 条）。
+//!
+//! # `icon_texture` 命名约定（plan-skill-av-relink-v1 P0，单一真相源）
+//!
+//! technique 图标一律指向 client 卷轴图：
+//! `bong-client:textures/gui/items/skill_scroll_<safe_id>.png`，
+//! 其中 `safe_id` = 技能 id 里的 `.` / `:` / `/` 全部替换为 `_`
+//! （例：`sword.cleave` → `skill_scroll_sword_cleave.png`）。该约定与 client
+//! `SkillIconIds.scrollTexturePath` 的兜底拼法一致，新增 technique 按此命名出图。
+//!
+//! 既有专属图例外（现值真实存在，不重链）：
+//! - woliu 基础六式与 `body.guangbo_ticao` → `bong:textures/gui/skill/`
+//!   （该目录保留给非 technique 的 HUD 特化图）；
+//! - zhenmai 五式 → `bong-client:textures/gui/skill/`。
+//!
+//! 已知缺失：无——`morph.yixing` 已于 P2（2026-07-18）经 `/gen-image` 生成
+//! `skill_scroll_morph_yixing.png` 并按规范路径收编，缺资产 allowlist 清零。
+
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
+
+use crate::body_plan::RaceGate;
 
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(not(feature = "dev-techniques"), derive(Default))]
@@ -36,7 +56,7 @@ impl KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 48] = [
+const TECHNIQUE_IDS: [&str; 49] = [
     "sword.cleave",
     "sword.thrust",
     "sword.parry",
@@ -85,6 +105,7 @@ const TECHNIQUE_IDS: [&str; 48] = [
     "npc.heal_basic",
     "npc.buff_speed",
     "npc.buff_defense",
+    "morph.yixing",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -104,6 +125,10 @@ pub struct TechniqueDefinition {
     pub description: &'static str,
     pub required_realm: &'static str,
     pub required_meridians: &'static [TechniqueRequiredMeridian],
+    /// plan-race-system-v1 P3a（决议 §8.1 #6）——种族三档匹配门。存量 48 条按「强依赖
+    /// 人体专属经脉拓扑 / 肢体机能者标 `Humanoid`，其余（含飞剑类神识/真元驱动）保持
+    /// `Any`」划定，逐条依据见本文件各条目就近注释。
+    pub required_race: RaceGate,
     pub qi_cost: f32,
     pub stamina_cost: f32,
     pub cast_ticks: u32,
@@ -130,7 +155,7 @@ const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
     },
 ];
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 49] = [
     TechniqueDefinition {
         id: "sword.cleave",
         display_name: "劈",
@@ -139,11 +164,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 8.0,
         cast_ticks: 16,
         cooldown_ticks: 30,
         range: 3.0,
-        icon_texture: "bong:textures/gui/skill/sword_cleave.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_cleave.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -154,11 +180,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 4.0,
         cast_ticks: 10,
         cooldown_ticks: 20,
         range: 3.5,
-        icon_texture: "bong:textures/gui/skill/sword_thrust.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_thrust.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -169,11 +196,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 6.0,
         cast_ticks: 4,
         cooldown_ticks: 40,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/sword_parry.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_parry.png",
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
@@ -184,11 +212,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 3.0,
         cast_ticks: 40,
         cooldown_ticks: 100,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/sword_infuse.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_infuse.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -199,11 +228,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 15.0,
         cast_ticks: 0,
         cooldown_ticks: 40,
         range: 2.8,
-        icon_texture: "bong:textures/gui/skill/movement_dash.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_movement_dash.png",
         category: SkillCategory::Attack,
     },
     // plan-shield-block-v1 P4 — 盾牌格挡熟练度，无经脉前置，持盾即可习得。
@@ -215,11 +245,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0, // 耗体力由 ShieldDrainOverride / stamina_tick 管理，非 cast 消耗
         cast_ticks: 0,
         cooldown_ticks: 0,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/shield_block.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_shield_block.png",
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
@@ -243,11 +274,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             },
         ],
         qi_cost: 0.4,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 60,
         range: 1.3,
-        icon_texture: "bong:textures/gui/skill/beng_quan.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_burst_meridian_beng_quan.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -261,11 +293,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.5,
         }],
         qi_cost: 35.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 70,
         range: 1.5,
-        icon_texture: "bong:textures/gui/skill/tie_shan_kao.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_burst_meridian_tie_shan_kao.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -279,11 +312,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.4,
         }],
         qi_cost: 25.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 50,
         range: 4.0,
-        icon_texture: "bong:textures/gui/skill/xue_beng_bu.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_burst_meridian_xue_beng_bu.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -297,11 +331,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.55,
         }],
         qi_cost: 45.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 12,
         cooldown_ticks: 120,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/ni_mai_hu_ti.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_burst_meridian_ni_mai_hu_ti.png",
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
@@ -312,11 +347,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 100.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 0,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/full_power_charge.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_baomai_full_power_charge.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -327,11 +363,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 20,
         range: 8.0,
-        icon_texture: "bong:textures/gui/skill/full_power_release.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_baomai_full_power_release.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -345,6 +382,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 600,
@@ -363,6 +401,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 18.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 4,
         cooldown_ticks: 200,
@@ -378,6 +417,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 12.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 600,
@@ -396,6 +436,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 5,
         cooldown_ticks: 300,
@@ -411,6 +452,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 50.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 1200,
@@ -429,6 +471,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 20,
@@ -447,6 +490,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 10,
@@ -465,6 +509,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 100,
@@ -483,6 +528,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 12.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 160,
@@ -501,6 +547,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 25.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 5,
         cooldown_ticks: 600,
@@ -519,6 +566,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 50.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 400,
@@ -534,11 +582,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 20.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 60,
         range: 8.0,
-        icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_palm.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -549,11 +598,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 50.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 240,
         range: 2.0,
-        icon_texture: "bong:textures/gui/skill/woliu_hold.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vortex_shield.png",
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
@@ -564,11 +614,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 35.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 300,
         range: 12.0,
-        icon_texture: "bong:textures/gui/skill/woliu_pull.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_lock.png",
         category: SkillCategory::Control,
     },
     TechniqueDefinition {
@@ -579,11 +630,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 50.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 80,
         cooldown_ticks: 400,
         range: 6.0,
-        icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vortex_resonance.png",
         category: SkillCategory::Control,
     },
     TechniqueDefinition {
@@ -594,11 +646,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 80.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 40,
         cooldown_ticks: 600,
         range: 6.0,
-        icon_texture: "bong:textures/gui/skill/woliu_burst.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_turbulence_burst.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -609,11 +662,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 1.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 12,
         range: 50.0,
-        icon_texture: "bong:textures/gui/skill/dugu_shoot_needle.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_shoot_needle.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -624,11 +678,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 5.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 40,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/dugu_infuse_poison.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_infuse_poison.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -639,6 +694,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 12,
         cooldown_ticks: 20,
@@ -654,6 +710,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 160,
@@ -669,6 +726,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 100,
@@ -687,11 +745,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 400,
         cooldown_ticks: 400,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/anqi_charge_carrier.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_charge_carrier.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -715,11 +774,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             },
         ],
         qi_cost: 0.25,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 60,
         range: 80.0,
-        icon_texture: "bong:textures/gui/skill/anqi_single_snipe.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_single_snipe.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -733,11 +793,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.40,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 30,
         cooldown_ticks: 240,
         range: 30.0,
-        icon_texture: "bong:textures/gui/skill/anqi_multi_shot.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_multi_shot.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -751,11 +812,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.35,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 20,
         cooldown_ticks: 360,
         range: 50.0,
-        icon_texture: "bong:textures/gui/skill/anqi_soul_inject.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_soul_inject.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -769,11 +831,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.45,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 40,
         cooldown_ticks: 500,
         range: 80.0,
-        icon_texture: "bong:textures/gui/skill/anqi_armor_pierce.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_armor_pierce.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -787,11 +850,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
             min_health: 0.01,
         }],
         qi_cost: 0.60,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 60,
         cooldown_ticks: 6000,
         range: 150.0,
-        icon_texture: "bong:textures/gui/skill/anqi_echo_fractal.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_anqi_echo_fractal.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -802,6 +866,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 1.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 5.0,
         cast_ticks: 60,
         cooldown_ticks: 200,
@@ -819,11 +884,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &SWORD_PATH_BASE_MERIDIANS,
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 8.0,
         cast_ticks: 12,
         cooldown_ticks: 40,
         range: 4.0,
-        icon_texture: "bong:textures/gui/skill/sword_condense_edge.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_condense_edge.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -834,11 +900,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Condense",
         required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
         qi_cost: 3.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 12.0,
         cast_ticks: 20,
         cooldown_ticks: 60,
         range: 8.0,
-        icon_texture: "bong:textures/gui/skill/sword_qi_slash.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_qi_slash.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -849,11 +916,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Solidify",
         required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
         qi_cost: 20.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 15.0,
         cast_ticks: 30,
         cooldown_ticks: 120,
         range: 6.0,
-        icon_texture: "bong:textures/gui/skill/sword_resonance.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_resonance.png",
         category: SkillCategory::Control,
     },
     TechniqueDefinition {
@@ -864,11 +932,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Spirit",
         required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
         qi_cost: 40.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 20.0,
         cast_ticks: 40,
         cooldown_ticks: 200,
         range: 5.0,
-        icon_texture: "bong:textures/gui/skill/sword_manifest.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_manifest.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -879,11 +948,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Void",
         required_meridians: &SWORD_PATH_HEAVEN_GATE_MERIDIANS,
         qi_cost: 0.0,
+        required_race: RaceGate::Humanoid,
         stamina_cost: 0.0,
         cast_ticks: 80,
         cooldown_ticks: u32::MAX,
         range: 100.0,
-        icon_texture: "bong:textures/gui/skill/sword_heaven_gate.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_path_heaven_gate.png",
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
@@ -894,11 +964,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Induce",
         required_meridians: &NPC_HEAL_REQUIRED_MERIDIANS,
         qi_cost: 8.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 20,
         cooldown_ticks: 200,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/npc_heal_basic.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_npc_heal_basic.png",
         category: SkillCategory::Heal,
     },
     TechniqueDefinition {
@@ -909,11 +980,12 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Condense",
         required_meridians: &NPC_BUFF_SPEED_REQUIRED_MERIDIANS,
         qi_cost: 5.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 400,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/npc_buff_speed.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_npc_buff_speed.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -924,11 +996,34 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         required_realm: "Condense",
         required_meridians: &NPC_BUFF_DEFENSE_REQUIRED_MERIDIANS,
         qi_cost: 6.0,
+        required_race: RaceGate::Any,
         stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 400,
         range: 0.0,
-        icon_texture: "bong:textures/gui/skill/npc_buff_defense.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_npc_buff_defense.png",
+        category: SkillCategory::Buff,
+    },
+    // plan-race-system-v1 P4 —— 易形：手动 cast 幂等切换（已易形时再次施放=解除，见
+    // `body_plan::MorphState` 消费点 `network::client_request_handler` cast 结算）。
+    // `required_race: Any`——非人形种族也要能学易形回人形，否则自相矛盾（决议 §5）；
+    // `required_meridians` 留空——本技能真正的经脉前置走专属
+    // `body_plan::form_anchors_open` 门（本体 `MeridianProfile` 内全部 `FormAnchor`
+    // 经脉，见 `technique_requires_form_anchor`），而不是这张通用表。
+    TechniqueDefinition {
+        id: "morph.yixing",
+        display_name: "易形",
+        grade: "rare",
+        description: "重塑己身经络流转之形，暂借他相外壳，任督二脉需先行贯通方可施为。",
+        required_realm: "Solidify",
+        required_meridians: &[],
+        qi_cost: 40.0,
+        required_race: RaceGate::Any,
+        stamina_cost: 20.0,
+        cast_ticks: 60,
+        cooldown_ticks: 600,
+        range: 0.0,
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_morph_yixing.png",
         category: SkillCategory::Buff,
     },
 ];
@@ -1062,10 +1157,10 @@ mod tests {
     }
 
     #[test]
-    fn dev_default_has_all_47() {
+    fn dev_default_has_all_49() {
         // plan-shield-block-v1 P4: shield_block 加入后总数升至 48
         let dev = KnownTechniques::dev_default();
-        assert_eq!(dev.entries.len(), 48);
+        assert_eq!(dev.entries.len(), 49);
         assert!(dev
             .entries
             .iter()
@@ -1382,5 +1477,149 @@ mod tests {
             !TECHNIQUE_IDS.contains(&"bao_mai.full_power_release"),
             "stale 'bao_mai.full_power_release' must not appear in TECHNIQUE_IDS"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // plan-race-system-v1 P3a（决议 §8.1 #6）—— 48 条存量功法 required_race 逐条 pin。
+    // 表驱动逐条断言，不写笼统「全 Any」——划定依据：强依赖人体专属经脉拓扑 / 双臂
+    // 持械机能者标 Humanoid，飞剑类神识 / 真元驱动、不依赖人体结构者保持 Any。
+    // ─────────────────────────────────────────────────────────────────
+
+    const HUMANOID_GATED_SKILL_IDS: [&str; 28] = [
+        "sword.cleave",
+        "sword.thrust",
+        "sword.parry",
+        "sword.infuse",
+        "shield_block",
+        "burst_meridian.beng_quan",
+        "burst_meridian.tie_shan_kao",
+        "burst_meridian.xue_beng_bu",
+        "burst_meridian.ni_mai_hu_ti",
+        "baomai.full_power_charge",
+        "baomai.full_power_release",
+        "woliu.vortex",
+        "woliu.hold",
+        "woliu.burst",
+        "woliu.mouth",
+        "woliu.pull",
+        "woliu.heart",
+        "woliu.vacuum_palm",
+        "woliu.vortex_shield",
+        "woliu.vacuum_lock",
+        "woliu.vortex_resonance",
+        "woliu.turbulence_burst",
+        "body.guangbo_ticao",
+        "sword_path.condense_edge",
+        "sword_path.qi_slash",
+        "sword_path.resonance",
+        "sword_path.manifest",
+        "sword_path.heaven_gate",
+    ];
+
+    const ANY_GATED_SKILL_IDS: [&str; 21] = [
+        "movement.dash",
+        "zhenmai.parry",
+        "zhenmai.neutralize",
+        "zhenmai.multipoint",
+        "zhenmai.harden",
+        "zhenmai.sever_chain",
+        "dugu.shoot_needle",
+        "dugu.infuse_poison",
+        "tuike.don",
+        "tuike.shed",
+        "tuike.transfer_taint",
+        "anqi.charge_carrier",
+        "anqi.single_snipe",
+        "anqi.multi_shot",
+        "anqi.soul_inject",
+        "anqi.armor_pierce",
+        "anqi.echo_fractal",
+        "npc.heal_basic",
+        "npc.buff_speed",
+        "npc.buff_defense",
+        "morph.yixing",
+    ];
+
+    #[test]
+    fn humanoid_gated_skill_ids_pin_28_entries_exhaustively() {
+        assert_eq!(HUMANOID_GATED_SKILL_IDS.len(), 28);
+        for id in HUMANOID_GATED_SKILL_IDS {
+            let def = technique_definition(id)
+                .unwrap_or_else(|| panic!("expected a definition for {id}"));
+            assert_eq!(
+                def.required_race,
+                RaceGate::Humanoid,
+                "{id} must be RaceGate::Humanoid per §8.1 #6 划定（人体专属经脉拓扑 / 肢体机能）"
+            );
+        }
+    }
+
+    #[test]
+    fn any_gated_skill_ids_pin_20_entries_exhaustively() {
+        assert_eq!(ANY_GATED_SKILL_IDS.len(), 21);
+        for id in ANY_GATED_SKILL_IDS {
+            let def = technique_definition(id)
+                .unwrap_or_else(|| panic!("expected a definition for {id}"));
+            assert_eq!(
+                def.required_race,
+                RaceGate::Any,
+                "{id} must be RaceGate::Any per §8.1 #6 划定（神识/真元驱动，不依赖人体结构）"
+            );
+        }
+    }
+
+    #[test]
+    fn humanoid_and_any_lists_partition_all_48_definitions_without_overlap_or_gap() {
+        let humanoid: std::collections::BTreeSet<&str> =
+            HUMANOID_GATED_SKILL_IDS.iter().copied().collect();
+        let any: std::collections::BTreeSet<&str> = ANY_GATED_SKILL_IDS.iter().copied().collect();
+        assert!(
+            humanoid.is_disjoint(&any),
+            "Humanoid 与 Any 两份清单不得重叠"
+        );
+        let all_ids: std::collections::BTreeSet<&str> =
+            TECHNIQUE_DEFINITIONS.iter().map(|d| d.id).collect();
+        let union: std::collections::BTreeSet<&str> = humanoid.union(&any).copied().collect();
+        assert_eq!(
+            all_ids, union,
+            "两份清单合并必须恰好覆盖全部 49 条存量功法，无遗漏无多余"
+        );
+        assert_eq!(TECHNIQUE_DEFINITIONS.len(), 49);
+    }
+
+    /// plan-race-system-v1 P3a —— 交叉一致性：`required_race.allows(...)` 是习得门
+    /// （`technique_scroll::learn_technique_if_allowed`）与施放门（`sword_path::
+    /// skill_register::build_cast_context` / `combat::sword_basics::race_gate_allows` /
+    /// `client_request_handler::handle_skill_bar_cast`）共享调用的**同一个函数**——本
+    /// 测试对全部 48 条功法、两种代表性身份（人形 humanoid=true / 非人形 humanoid=false）
+    /// 逐条断言该函数的判定结果，锁死两处收拢点镜像不漂移的前提（共享函数值不变）。
+    #[test]
+    fn required_race_allows_matrix_locked_for_every_definition_both_gates_agree_by_construction() {
+        use crate::body_plan::RaceId;
+
+        let humanoid_identity = (RaceId::new("human"), true);
+        let non_humanoid_identity = (RaceId::new("whale"), false);
+
+        for def in TECHNIQUE_DEFINITIONS.iter() {
+            // 人形本体：Any 与 Humanoid 两档均放行——两处收拢点用同一函数，结果天然一致。
+            assert!(
+                def.required_race
+                    .allows(&humanoid_identity.0, humanoid_identity.1),
+                "{}：人形本体（race=human, is_humanoid=true）必须通过 required_race={:?}",
+                def.id,
+                def.required_race
+            );
+            // 非人形本体：只有 Any 档放行，Humanoid 档必须拒绝——按划定表逐条核验。
+            let expects_pass = matches!(def.required_race, RaceGate::Any);
+            assert_eq!(
+                def.required_race
+                    .allows(&non_humanoid_identity.0, non_humanoid_identity.1),
+                expects_pass,
+                "{}：非人形本体（race=whale, is_humanoid=false）放行结果应为 {expects_pass}，\
+                 required_race={:?}",
+                def.id,
+                def.required_race
+            );
+        }
     }
 }

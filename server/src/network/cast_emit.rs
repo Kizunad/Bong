@@ -15,7 +15,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{
-    Client, Commands, Entity, EventWriter, Mut, ParamSet, Position, Query, Res, Username,
+    Client, Commands, Entity, EventWriter, Mut, ParamSet, Position, Query, Res, UniqueId, Username,
 };
 
 use crate::alchemy::pill::apply_wound_heal;
@@ -40,10 +40,12 @@ use crate::network::audio_trigger::{
     emit_recipe_audio_with_context, AudioEmitContext, AudioEmitWriter,
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::PlayerState;
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::shelflife::DecayProfileRegistry;
 
 /// Cooldown 默认值（plan §4.4）。中断后短冷却 0.5s（10 tick）；
@@ -51,6 +53,52 @@ use crate::shelflife::DecayProfileRegistry;
 pub const CAST_INTERRUPT_COOLDOWN_TICKS: u64 = 10;
 /// plan §4.3 移动中断阈值（米）。超过即视为主动位移中断。
 pub const CAST_MOVEMENT_INTERRUPT_THRESHOLD_M: f64 = 0.3;
+/// plan-skill-anim-fidelity-v1 P2 后半（§8.1 #3）：打断分支停循环蓄力段动画的淡出。
+const CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS: u8 = 3;
+/// 自然完成分支的循环段停止淡出（release 段随各招完成系统接力播出）。
+const CAST_LOOP_ANIM_COMPLETE_FADE_OUT_TICKS: u8 = 2;
+
+/// plan-skill-anim-fidelity-v1 P2 后半（§8.1 #3）——走通用 `Casting` 状态机、
+/// 起手播**循环蓄力段**动画的招式 → 循环 anim_id 查表（最小侵入方案：按
+/// skill_id 查表，不给 `Casting` 组件加字段）。`tick_casts_or_interrupt` 的
+/// 三打断分支与自然完成分支据此发 StopAnim；查表 miss（非循环段招式）不发。
+///
+/// 新增循环蓄力段招式时**必须**在此登记，否则打断后循环动画永卡在玩家身上
+/// （§13 #6 停止路径红线——无停止路径的循环动画不予合入）。
+fn looping_cast_anim_id(skill_id: &str) -> Option<&'static str> {
+    match skill_id {
+        crate::combat::sword_basics::SWORD_INFUSE_SKILL_ID => {
+            Some(crate::combat::sword_basics::ANIM_SWORD_INFUSE_CHARGE)
+        }
+        _ => None,
+    }
+}
+
+/// 若 `casting` 的招式登记了循环蓄力段，则对 caster 发 `StopAnim`（fade_out
+/// 按分支传入）；未登记 / 实体缺 `UniqueId`（非玩家）时静默跳过。
+fn stop_cast_loop_anim(
+    casting: &Casting,
+    entity: Entity,
+    position: &Position,
+    unique_ids: &Query<&UniqueId>,
+    fade_out_ticks: u8,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Some(anim_id) = casting.skill_id.as_deref().and_then(looping_cast_anim_id) else {
+        return;
+    };
+    let Ok(unique_id) = unique_ids.get(entity) else {
+        return;
+    };
+    vfx_events.send(VfxEventRequest::new(
+        position.get(),
+        VfxEventPayloadV1::StopAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: anim_id.to_string(),
+            fade_out_ticks: Some(fade_out_ticks),
+        },
+    ));
+}
 
 type CastTickQueryItem<'a> = (
     Entity,
@@ -102,6 +150,8 @@ pub fn tick_casts_or_interrupt(
         EventWriter<ConsumePoisonPillIntent>,
     )>,
     mut clients: Query<CastTickQueryItem<'_>>,
+    unique_ids: Query<&UniqueId>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     let mut audio_events = audio_events.context();
     for (
@@ -149,6 +199,15 @@ pub fn tick_casts_or_interrupt(
                 entity,
             );
             emit_cast_interrupt_audio(&mut audio_events, entity, position.get(), casting);
+            // §8.1 #3：控制打断停循环蓄力段（查表 miss 不发）。
+            stop_cast_loop_anim(
+                casting,
+                entity,
+                position,
+                &unique_ids,
+                CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS,
+                &mut vfx_events,
+            );
             tracing::info!(
                 "[bong][network][cast] control interrupt entity={entity:?} `{}` slot={} (Stunned)",
                 username.0,
@@ -183,6 +242,15 @@ pub fn tick_casts_or_interrupt(
                 entity,
             );
             emit_cast_interrupt_audio(&mut audio_events, entity, position.get(), casting);
+            // §8.1 #3：受击打断停循环蓄力段。
+            stop_cast_loop_anim(
+                casting,
+                entity,
+                position,
+                &unique_ids,
+                CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS,
+                &mut vfx_events,
+            );
             continue;
         }
         // 移动中断（plan §4.3）：当前位置与 cast 起始位置距离超阈值。
@@ -209,6 +277,15 @@ pub fn tick_casts_or_interrupt(
                 entity,
             );
             emit_cast_interrupt_audio(&mut audio_events, entity, position.get(), casting);
+            // §8.1 #3：移动打断停循环蓄力段。
+            stop_cast_loop_anim(
+                casting,
+                entity,
+                position,
+                &unique_ids,
+                CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS,
+                &mut vfx_events,
+            );
             tracing::info!(
                 "[bong][network][cast] movement interrupt entity={entity:?} `{}` slot={} moved={:.3}m",
                 username.0,
@@ -220,6 +297,16 @@ pub fn tick_casts_or_interrupt(
         // 自然完成
         if clock.tick >= casting.started_at_tick + casting.duration_ticks {
             commands.entity(entity).remove::<Casting>();
+            // §8.1 #3：自然完成也显式停循环蓄力段（防御性兜底——release 段由各招
+            // 完成系统同拍接力播出，重复 StopAnim 对不同 anim_id 的 release 无影响）。
+            stop_cast_loop_anim(
+                casting,
+                entity,
+                position,
+                &unique_ids,
+                CAST_LOOP_ANIM_COMPLETE_FADE_OUT_TICKS,
+                &mut vfx_events,
+            );
             if let Some(skill_id) = casting
                 .skill_id
                 .as_deref()
@@ -994,6 +1081,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -1081,6 +1169,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<crate::cultivation::lifespan::LifespanExtensionIntent>();
         app.add_event::<crate::cultivation::poison_trait::ConsumePoisonPillIntent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, tick_casts_or_interrupt);
 
         let (client_bundle, _helper) = create_mock_client("TestPlayer");
@@ -2050,6 +2139,7 @@ mod tests {
             shield_spec: None,
             shelflife_profile: Some("crit_block_test_profile".to_string()),
             shelflife_track: Some(DecayTrack::Spoil),
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         };
         let mut templates = HashMap::new();
         templates.insert(FOOD_ID.to_string(), food_template);
@@ -2129,6 +2219,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<crate::cultivation::lifespan::LifespanExtensionIntent>();
         app.add_event::<crate::cultivation::poison_trait::ConsumePoisonPillIntent>();
+        app.add_event::<VfxEventRequest>();
         // 注册 tick_casts_or_interrupt system
         app.add_systems(Update, tick_casts_or_interrupt);
 
@@ -2244,6 +2335,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<crate::cultivation::lifespan::LifespanExtensionIntent>();
         app.add_event::<crate::cultivation::poison_trait::ConsumePoisonPillIntent>();
+        app.add_event::<VfxEventRequest>();
         app.add_systems(Update, tick_casts_or_interrupt);
         app
     }
@@ -2382,6 +2474,193 @@ mod tests {
         assert!(
             app.world().get::<Casting>(entity).is_some(),
             "cast 未完成时 Casting 应仍在"
+        );
+    }
+
+    // ── plan-skill-anim-fidelity-v1 P2 后半（§8.1 #3）：循环蓄力段停止路径 ──────
+
+    /// 查表契约：登记的循环蓄力段招式恰为 sword.infuse（新增循环段招式必须
+    /// 同步登记，否则打断后循环动画永卡——§13 #6 红线）。
+    #[test]
+    fn looping_cast_anim_table_registers_sword_infuse_only() {
+        assert_eq!(
+            looping_cast_anim_id(crate::combat::sword_basics::SWORD_INFUSE_SKILL_ID),
+            Some(crate::combat::sword_basics::ANIM_SWORD_INFUSE_CHARGE),
+            "sword.infuse 起手播循环蓄力段，必须登记停止映射"
+        );
+        assert_eq!(
+            looping_cast_anim_id(GUANGBO_TICAO_ID),
+            None,
+            "广播体操是一次性长演出（非循环段），不得误停"
+        );
+        assert_eq!(looping_cast_anim_id("some.other.skill"), None);
+    }
+
+    fn infuse_casting(start_position: DVec3) -> Casting {
+        Casting {
+            source: CastSource::SkillBar,
+            slot: 0,
+            started_at_tick: 0,
+            duration_ticks: 40, // 与 known_techniques sword.infuse cast_ticks 一致
+            started_at_ms: 0,
+            duration_ms: 2000,
+            bound_instance_id: None,
+            start_position,
+            complete_cooldown_ticks: 200,
+            skill_id: Some(crate::combat::sword_basics::SWORD_INFUSE_SKILL_ID.to_string()),
+            skill_config: None,
+        }
+    }
+
+    fn drain_vfx_payloads(app: &mut App) -> Vec<crate::schema::vfx_event::VfxEventPayloadV1> {
+        app.world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .map(|request| request.payload)
+            .collect()
+    }
+
+    fn stop_anim_payloads(
+        payloads: &[crate::schema::vfx_event::VfxEventPayloadV1],
+    ) -> Vec<(String, Option<u8>)> {
+        payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                VfxEventPayloadV1::StopAnim {
+                    anim_id,
+                    fade_out_ticks,
+                    ..
+                } => Some((anim_id.clone(), *fade_out_ticks)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 移动打断 sword.infuse：恰发 1 条 StopAnim(蓄力段, fade=打断档)。
+    #[test]
+    fn movement_interrupt_stops_infuse_charge_loop() {
+        // clock=10 < 40 未完成；实体 Position(0,64,0) 距 start(10,64,10) 超阈值 → 移动打断。
+        let mut app = build_cast_tick_app(10);
+        let entity = spawn_caster(&mut app, infuse_casting(DVec3::new(10.0, 64.0, 10.0)));
+
+        app.update();
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "前置：移动打断应移除 Casting"
+        );
+        let payloads = drain_vfx_payloads(&mut app);
+        assert_eq!(
+            stop_anim_payloads(&payloads),
+            vec![(
+                crate::combat::sword_basics::ANIM_SWORD_INFUSE_CHARGE.to_string(),
+                Some(CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS),
+            )],
+            "移动打断必须恰停一次循环蓄力段（否则抚刃循环永卡在玩家身上）"
+        );
+    }
+
+    /// 受击打断 sword.infuse：本 tick 新增 wound → StopAnim(蓄力段)。
+    #[test]
+    fn damage_interrupt_stops_infuse_charge_loop() {
+        let mut app = build_cast_tick_app(10);
+        let entity = spawn_caster(&mut app, infuse_casting(DVec3::new(0.0, 64.0, 0.0)));
+        let mut wounds = Wounds::default();
+        wounds.entries.push(Wound {
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
+            kind: WoundKind::Cut,
+            severity: 0.2,
+            bleeding_per_sec: 1.0,
+            created_at_tick: 10, // == clock.tick → 本 tick 受击
+            inflicted_by: None,
+        });
+        app.world_mut().entity_mut(entity).insert(wounds);
+
+        app.update();
+
+        assert!(app.world().get::<Casting>(entity).is_none());
+        let payloads = drain_vfx_payloads(&mut app);
+        assert_eq!(
+            stop_anim_payloads(&payloads),
+            vec![(
+                crate::combat::sword_basics::ANIM_SWORD_INFUSE_CHARGE.to_string(),
+                Some(CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS),
+            )],
+            "受击打断必须停循环蓄力段"
+        );
+    }
+
+    /// 控制打断（Stunned）sword.infuse：优先级最高的打断分支同样 StopAnim。
+    #[test]
+    fn stun_interrupt_stops_infuse_charge_loop() {
+        use crate::combat::components::ActiveStatusEffect;
+        let mut app = build_cast_tick_app(10);
+        let entity = spawn_caster(&mut app, infuse_casting(DVec3::new(0.0, 64.0, 0.0)));
+        app.world_mut().entity_mut(entity).insert(StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::Stunned,
+                magnitude: 1.0,
+                remaining_ticks: 5,
+                source_pill: None,
+            }],
+        });
+
+        app.update();
+
+        assert!(app.world().get::<Casting>(entity).is_none());
+        let payloads = drain_vfx_payloads(&mut app);
+        assert_eq!(
+            stop_anim_payloads(&payloads),
+            vec![(
+                crate::combat::sword_basics::ANIM_SWORD_INFUSE_CHARGE.to_string(),
+                Some(CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS),
+            )],
+            "控制（Stunned）打断必须停循环蓄力段"
+        );
+    }
+
+    /// 自然完成 sword.infuse：防御性兜底 StopAnim(fade=完成档)——release 段由
+    /// `sword_infuse_completion_tick` 同拍接力（另有专属测试），此处只锁通用分支。
+    #[test]
+    fn natural_completion_stops_infuse_charge_loop_defensively() {
+        // clock=100 >= started 0 + duration 40 → 自然完成。
+        let mut app = build_cast_tick_app(100);
+        let entity = spawn_caster(&mut app, infuse_casting(DVec3::new(0.0, 64.0, 0.0)));
+
+        app.update();
+
+        assert!(app.world().get::<Casting>(entity).is_none());
+        let payloads = drain_vfx_payloads(&mut app);
+        assert_eq!(
+            stop_anim_payloads(&payloads),
+            vec![(
+                crate::combat::sword_basics::ANIM_SWORD_INFUSE_CHARGE.to_string(),
+                Some(CAST_LOOP_ANIM_COMPLETE_FADE_OUT_TICKS),
+            )],
+            "自然完成分支必须防御性停循环蓄力段"
+        );
+    }
+
+    /// 负向锚点：未登记循环段的招式（广播体操）被移动打断时不得发任何 StopAnim
+    /// ——查表 miss 静默跳过，不误伤一次性长演出动画。
+    #[test]
+    fn movement_interrupt_of_non_loop_skill_sends_no_stop_anim() {
+        let mut app = build_cast_tick_app(10);
+        let mut casting = guangbo_casting(GUANGBO_TICAO_ID);
+        casting.start_position = DVec3::new(10.0, 64.0, 10.0); // 触发移动打断
+        let entity = spawn_caster(&mut app, casting);
+
+        app.update();
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "前置：移动打断应移除 Casting"
+        );
+        let payloads = drain_vfx_payloads(&mut app);
+        assert!(
+            stop_anim_payloads(&payloads).is_empty(),
+            "非循环段招式打断不得发 StopAnim（查表 miss 静默），实际 {:?}",
+            stop_anim_payloads(&payloads)
         );
     }
 }

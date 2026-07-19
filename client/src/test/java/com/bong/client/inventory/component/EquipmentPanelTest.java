@@ -172,6 +172,117 @@ class EquipmentPanelTest {
         assertTrue(panel.slotFor(EquipSlotType.MAIN_HAND).isEmpty(), "重填后旧 held 应清空");
     }
 
+    // ─── plan-race-system-v1 P3c：种族门置灰（槽内物品当前形态不可穿） ──────
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDownRaceStores() {
+        com.bong.client.inventory.state.RaceGateMetaStore.resetForTests();
+        com.bong.client.inventory.state.PlayerRaceIdentityStore.resetForTests();
+    }
+
+    @Test
+    void raceMismatchedEquippedItemDimsSlot() {
+        // 当前形态非人形 whale，槽内是 human-only 面具 → 该槽种族门置灰。
+        com.bong.client.inventory.state.PlayerRaceIdentityStore.replace(
+            "human", "whale", "whale", true, false);
+        com.bong.client.inventory.state.RaceGateMetaStore.replace(
+            java.util.Map.of("human_mask", new com.bong.client.inventory.model.RaceGate("humanoid", List.of())),
+            java.util.Map.of());
+
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.populateFromModel(InventoryModel.builder()
+            .equip(EquipSlotType.HEAD, item(1L, "human_mask")).build());
+
+        assertTrue(panel.slotFor(EquipSlotType.HEAD).isDisabledByRace(),
+            "当前形态非人形时 human-only 装备槽应种族门置灰");
+        assertTrue(panel.slotFor(EquipSlotType.HEAD).isInteractionBlocked(),
+            "种族置灰的槽应整体不可交互（禁拖入/拖出）");
+    }
+
+    @Test
+    void raceMatchedEquippedItemDoesNotDim() {
+        com.bong.client.inventory.state.PlayerRaceIdentityStore.replace(
+            "human", "human", "humanoid", true, true);
+        com.bong.client.inventory.state.RaceGateMetaStore.replace(
+            java.util.Map.of("human_mask", new com.bong.client.inventory.model.RaceGate("humanoid", List.of())),
+            java.util.Map.of());
+
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.populateFromModel(InventoryModel.builder()
+            .equip(EquipSlotType.HEAD, item(1L, "human_mask")).build());
+
+        assertFalse(panel.slotFor(EquipSlotType.HEAD).isDisabledByRace(),
+            "未易形（人形形态）时 human-only 装备不应置灰");
+    }
+
+    @Test
+    void itemWithoutGateNeverDims() {
+        com.bong.client.inventory.state.PlayerRaceIdentityStore.replace(
+            "human", "whale", "whale", true, false);
+        // 表内无该 item → any → 不置灰（即便当前形态非人形）。
+        com.bong.client.inventory.state.RaceGateMetaStore.replace(java.util.Map.of(), java.util.Map.of());
+
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.populateFromModel(InventoryModel.builder()
+            .equip(EquipSlotType.HEAD, item(1L, "plain_helmet")).build());
+
+        assertFalse(panel.slotFor(EquipSlotType.HEAD).isDisabledByRace(),
+            "无 wearer_race 门的物品（any）永不因种族置灰");
+    }
+
+    @Test
+    void emptySlotNeverDimsByRace() {
+        com.bong.client.inventory.state.PlayerRaceIdentityStore.replace(
+            "human", "whale", "whale", true, false);
+        com.bong.client.inventory.state.RaceGateMetaStore.replace(
+            java.util.Map.of("human_mask", new com.bong.client.inventory.model.RaceGate("humanoid", List.of())),
+            java.util.Map.of());
+
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.populateFromModel(InventoryModel.builder().build());
+
+        assertFalse(panel.slotFor(EquipSlotType.HEAD).isDisabledByRace(),
+            "空槽无物品可判，绝不因种族置灰");
+    }
+
+    @Test
+    void repopulateClearsStaleRaceDim() {
+        // 状态转换：先易形成 whale 令 human 面具置灰，再变回人形 → 置灰清除。
+        com.bong.client.inventory.state.RaceGateMetaStore.replace(
+            java.util.Map.of("human_mask", new com.bong.client.inventory.model.RaceGate("humanoid", List.of())),
+            java.util.Map.of());
+        com.bong.client.inventory.state.PlayerRaceIdentityStore.replace(
+            "human", "whale", "whale", true, false);
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.populateFromModel(InventoryModel.builder()
+            .equip(EquipSlotType.HEAD, item(1L, "human_mask")).build());
+        assertTrue(panel.slotFor(EquipSlotType.HEAD).isDisabledByRace());
+
+        // 变回人形形态后 repopulate。
+        com.bong.client.inventory.state.PlayerRaceIdentityStore.replace(
+            "human", "human", "humanoid", true, true);
+        panel.populateFromModel(InventoryModel.builder()
+            .equip(EquipSlotType.HEAD, item(1L, "human_mask")).build());
+        assertFalse(panel.slotFor(EquipSlotType.HEAD).isDisabledByRace(),
+            "变回人形后 repopulate 应清除旧种族置灰");
+    }
+
+    @Test
+    void failClosedDimsWhenFormIdentityUnknown() {
+        // 收到 meta 但身份快照未到（form_race_id 空）→ 有 gate 的装备置灰。
+        com.bong.client.inventory.state.RaceGateMetaStore.replace(
+            java.util.Map.of("human_mask", new com.bong.client.inventory.model.RaceGate("humanoid", List.of())),
+            java.util.Map.of());
+        // 不调用 PlayerRaceIdentityStore.replace → 身份未知。
+
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.populateFromModel(InventoryModel.builder()
+            .equip(EquipSlotType.HEAD, item(1L, "human_mask")).build());
+
+        assertTrue(panel.slotFor(EquipSlotType.HEAD).isDisabledByRace(),
+            "身份未知（首帧乱序）时有 gate 的装备 fail-closed 置灰");
+    }
+
     private static InventoryItem item(long id, String itemId) {
         return InventoryItem.createFull(id, itemId, itemId, 1, 1, 1.0, "common", "", 1, 1.0, 1.0);
     }

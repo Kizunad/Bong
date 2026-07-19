@@ -56,6 +56,10 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.CULTIVATION_DETAIL, "cultivation_detail");
         // plan-race-system-v1 P2b
         m.put(Envelope.ServerDataEnvelope.PayloadCase.BODY_PLAN_LAYOUT, "body_plan_layout");
+        // plan-race-system-v1 P3c
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.RACE_GATE_META, "race_gate_meta");
+        // plan-race-system-v1 P4/PR-5b —— 易形状态（渲染消费见 MorphStateHandler）
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.MORPH_STATE, "morph_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.SKILL_XP_GAIN, "skill_xp_gain");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_SNAPSHOT, "inventory_snapshot");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.COMBAT_HUD_STATE, "combat_hud_state");
@@ -425,11 +429,11 @@ public final class ProtoServerDataBridge {
         // 灵龛守护 fatigue/broken 之前走 generic path，未剥 GUARDIAN_KIND_ 前缀，
         // 玩家会在 HUD/事件流看到裸 "GUARDIAN_KIND_PUPPET" 而非 "puppet"。
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.NICHE_GUARDIAN_FATIGUE) {
-            return bridgeStripEnums(envelope.getNicheGuardianFatigue(), typeString,
+            return bridgeStripEnumsOmittingUnspecified(envelope.getNicheGuardianFatigue(), typeString,
                     new String[] {"guardian_kind", "GUARDIAN_KIND_"});
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.NICHE_GUARDIAN_BROKEN) {
-            return bridgeStripEnums(envelope.getNicheGuardianBroken(), typeString,
+            return bridgeStripEnumsOmittingUnspecified(envelope.getNicheGuardianBroken(), typeString,
                     new String[] {"guardian_kind", "GUARDIAN_KIND_"});
         }
 
@@ -470,6 +474,8 @@ public final class ProtoServerDataBridge {
             case PLAYER_STATE: return envelope.getPlayerState();
             case CULTIVATION_DETAIL: return envelope.getCultivationDetail();
             case BODY_PLAN_LAYOUT: return envelope.getBodyPlanLayout();
+            case RACE_GATE_META: return envelope.getRaceGateMeta();
+            case MORPH_STATE: return envelope.getMorphState();
             case SKILL_XP_GAIN: return envelope.getSkillXpGain();
             case INVENTORY_SNAPSHOT: return envelope.getInventorySnapshot();
             case COMBAT_HUD_STATE: return envelope.getCombatHudState();
@@ -1241,16 +1247,50 @@ public final class ProtoServerDataBridge {
      */
     private static BridgeResult bridgeStripEnums(
             MessageOrBuilder msg, String typeString, String[]... fieldPrefixPairs) {
+        return bridgeStripEnums(msg, typeString, false, fieldPrefixPairs);
+    }
+
+    /**
+     * 与 {@link #bridgeStripEnums(MessageOrBuilder, String, String[]...)} 相同，但会移除
+     * proto3 默认枚举 {@code *_UNSPECIFIED}。灵龛 legacy schema 只接受三个真实守护类型；
+     * missing 与显式 UNSPECIFIED 在 wire bytes 上等价，均应让下游 required-field gate
+     * 安全 no-op，而不是伪造一个名为 {@code unspecified} 的 HUD/store key。
+     */
+    private static BridgeResult bridgeStripEnumsOmittingUnspecified(
+            MessageOrBuilder msg, String typeString, String[]... fieldPrefixPairs) {
+        return bridgeStripEnums(msg, typeString, true, fieldPrefixPairs);
+    }
+
+    private static BridgeResult bridgeStripEnums(
+            MessageOrBuilder msg,
+            String typeString,
+            boolean omitUnspecified,
+            String[]... fieldPrefixPairs) {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             for (String[] pair : fieldPrefixPairs) {
+                if (omitUnspecified && removeUnspecifiedEnum(root, pair[0], pair[1])) {
+                    continue;
+                }
                 stripEnumPrefix(root, pair[0], pair[1]);
             }
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
         }
+    }
+
+    private static boolean removeUnspecifiedEnum(JsonObject root, String field, String prefix) {
+        JsonElement value = root.get(field);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+            return false;
+        }
+        if (!(prefix + "UNSPECIFIED").equals(value.getAsString())) {
+            return false;
+        }
+        root.remove(field);
+        return true;
     }
 
     // ─── player_state: realm enum normalization ─────────────────────

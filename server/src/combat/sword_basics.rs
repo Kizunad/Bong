@@ -3,6 +3,7 @@ use valence::prelude::{
     Res, ResMut, UniqueId,
 };
 
+use crate::body_plan::intrinsic_is_humanoid_from_world;
 use crate::combat::components::{
     CastSource, Casting, SkillBarBindings, Stamina, StaminaState, StatusEffects, WoundKind,
     TICKS_PER_SECOND,
@@ -12,7 +13,7 @@ use crate::combat::status::{has_active_status, upsert_status_effect};
 use crate::combat::weapon::{Weapon, WeaponKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
@@ -34,6 +35,18 @@ pub const SWORD_CLEAVE_SKILL_ID: &str = "sword.cleave";
 pub const SWORD_THRUST_SKILL_ID: &str = "sword.thrust";
 pub const SWORD_PARRY_SKILL_ID: &str = "sword.parry";
 pub const SWORD_INFUSE_SKILL_ID: &str = "sword.infuse";
+
+/// plan-skill-anim-fidelity-v1 P2 后半 —— 注剑灌注两段式动画 id（§8.1 #3）。
+/// 蓄力段沿用既有 `bong:sword_infuse` id（v1 资产清单 pin 该文件名），资产已
+/// 重制为 isLoop 28t「横剑抚刃」循环；打断停止路径由 `cast_emit::looping_cast_anim_id`
+/// 表驱动（三打断分支 StopAnim），完成分支在 `sword_infuse_completion_tick`
+/// StopAnim + release 接力。
+pub const ANIM_SWORD_INFUSE_CHARGE: &str = "bong:sword_infuse";
+/// 灌注自然完成收势（14t 非循环「剑身一振」）——仅完成成功分支播出，打断 /
+/// 失败分支不奖励收势。
+pub const ANIM_SWORD_INFUSE_RELEASE: &str = "bong:sword_infuse_release";
+/// 完成/失败分支停循环蓄力段的淡出（tick）。
+const SWORD_INFUSE_CHARGE_STOP_FADE_OUT_TICKS: u8 = 2;
 
 const SWORD_INFUSE_MIN_QI: f64 = 5.0;
 const SWORD_INFUSE_MAX_FRACTION: f64 = 0.5;
@@ -342,6 +355,14 @@ pub fn sword_infuse_completion_tick(
                 && weapon.instance_id == pending.weapon_instance_id
         });
         if !valid_weapon {
+            // P2 后半（§8.1 #3）：灌注失败也必须停循环蓄力段（无 release——
+            // 失败不奖励收势），否则抚刃循环永卡在玩家身上。
+            stop_infuse_charge_anim(
+                params.vfx_events.as_deref_mut(),
+                &params.positions,
+                &params.unique_ids,
+                entity,
+            );
             params
                 .commands
                 .entity(entity)
@@ -349,6 +370,12 @@ pub fn sword_infuse_completion_tick(
             continue;
         }
         let Ok(mut cultivation) = params.cultivations.get_mut(entity) else {
+            stop_infuse_charge_anim(
+                params.vfx_events.as_deref_mut(),
+                &params.positions,
+                &params.unique_ids,
+                entity,
+            );
             params
                 .commands
                 .entity(entity)
@@ -356,6 +383,12 @@ pub fn sword_infuse_completion_tick(
             continue;
         };
         if cultivation.qi_current + f64::EPSILON < pending.amount {
+            stop_infuse_charge_anim(
+                params.vfx_events.as_deref_mut(),
+                &params.positions,
+                &params.unique_ids,
+                entity,
+            );
             params
                 .commands
                 .entity(entity)
@@ -394,13 +427,23 @@ pub fn sword_infuse_completion_tick(
                 40,
             );
             if let Ok(unique_id) = params.unique_ids.get(entity) {
+                // P2 后半两段式接力（§8.1 #3）：停循环蓄力段 → 播 release 收势
+                // （「剑身一振」）。此前此处整播 40t 一次性 sword_infuse。
+                events.send(VfxEventRequest::new(
+                    position.get(),
+                    VfxEventPayloadV1::StopAnim {
+                        target_player: unique_id.0.to_string(),
+                        anim_id: ANIM_SWORD_INFUSE_CHARGE.to_string(),
+                        fade_out_ticks: Some(SWORD_INFUSE_CHARGE_STOP_FADE_OUT_TICKS),
+                    },
+                ));
                 events.send(VfxEventRequest::new(
                     position.get(),
                     VfxEventPayloadV1::PlayAnim {
                         target_player: unique_id.0.to_string(),
-                        anim_id: "bong:sword_infuse".to_string(),
+                        anim_id: ANIM_SWORD_INFUSE_RELEASE.to_string(),
                         priority: 1200,
-                        fade_in_ticks: Some(2),
+                        fade_in_ticks: Some(1),
                     },
                 ));
             }
@@ -416,6 +459,29 @@ pub fn sword_infuse_completion_tick(
             .entity(entity)
             .remove::<PendingSwordInfuse>();
     }
+}
+
+/// P2 后半（§8.1 #3）：灌注打断/失败分支停循环蓄力段（无 release——打断不奖励
+/// 收势）。缺 vfx 资源 / Position / UniqueId（headless 测试实体）时静默跳过。
+fn stop_infuse_charge_anim(
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    positions: &Query<&'static Position>,
+    unique_ids: &Query<&'static UniqueId>,
+    entity: Entity,
+) {
+    let (Some(events), Ok(position), Ok(unique_id)) =
+        (vfx_events, positions.get(entity), unique_ids.get(entity))
+    else {
+        return;
+    };
+    events.send(VfxEventRequest::new(
+        position.get(),
+        VfxEventPayloadV1::StopAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: ANIM_SWORD_INFUSE_CHARGE.to_string(),
+            fade_out_ticks: Some(SWORD_INFUSE_CHARGE_STOP_FADE_OUT_TICKS),
+        },
+    ));
 }
 
 pub fn drain_sword_qi_for_hit(world: &mut bevy_ecs::world::World, caster: Entity) -> f32 {
@@ -489,6 +555,9 @@ fn cast_sword_attack(
     let Some(proficiency) = known_active_proficiency(world, caster, technique) else {
         return rejected(CastRejectReason::TechniqueInactive);
     };
+    if !race_gate_allows(world, caster, technique.id()) {
+        return rejected(CastRejectReason::RaceMismatch);
+    }
     let profile = sword_profile(technique, proficiency);
     spend_stamina(world, caster, profile.stamina_cost);
     set_cooldown(
@@ -633,6 +702,9 @@ fn cast_sword_parry(
     let Some(proficiency) = known_active_proficiency(world, caster, SwordTechnique::Parry) else {
         return rejected(CastRejectReason::TechniqueInactive);
     };
+    if !race_gate_allows(world, caster, SwordTechnique::Parry.id()) {
+        return rejected(CastRejectReason::RaceMismatch);
+    }
     let profile = sword_profile(SwordTechnique::Parry, proficiency);
     spend_stamina(world, caster, profile.stamina_cost);
     set_cooldown(
@@ -696,6 +768,9 @@ fn cast_sword_infuse(
     let Some(proficiency) = known_active_proficiency(world, caster, SwordTechnique::Infuse) else {
         return rejected(CastRejectReason::TechniqueInactive);
     };
+    if !race_gate_allows(world, caster, SwordTechnique::Infuse.id()) {
+        return rejected(CastRejectReason::RaceMismatch);
+    }
     let profile = sword_profile(SwordTechnique::Infuse, proficiency);
     let amount = (cultivation.qi_current * SWORD_INFUSE_MAX_FRACTION)
         .max(0.0)
@@ -734,10 +809,12 @@ fn cast_sword_infuse(
             weapon.instance_id
         )),
     });
+    // P2 后半：起手播循环蓄力段（isLoop 横剑抚刃）；停止路径 = cast_emit 三打断
+    // 分支表驱动 StopAnim + 完成系统 StopAnim/release 接力（§8.1 #3）。
     emit_self_visuals(
         world,
         caster,
-        "bong:sword_infuse",
+        ANIM_SWORD_INFUSE_CHARGE,
         "bong:sword_infuse_glow",
         color_hex(color),
         1200,
@@ -1082,6 +1159,27 @@ fn lerp_round(start: f32, end: f32, t: f32) -> u32 {
 
 fn rejected(reason: CastRejectReason) -> CastResult {
     CastResult::Rejected { reason }
+}
+
+/// plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— sword.cleave/thrust/parry/infuse 四招
+/// 全数据表标 `RaceGate::Humanoid`；本函数是三个 resolver（cleave+thrust 共用
+/// `cast_sword_attack`、`cast_sword_parry`、`cast_sword_infuse`）共享的 race gate 判定，
+/// 与 `sword_path::skill_register::build_cast_context` 的插入位置镜像一致：拥有门
+/// （`known_active_proficiency` 返回 `Some`）之后，其余门禁（体力/境界/经脉）之前。
+fn race_gate_allows(world: &bevy_ecs::world::World, caster: Entity, skill_id: &str) -> bool {
+    let Some(definition) = technique_definition(skill_id) else {
+        // 未知 skill_id 不在本函数职责——调用点各自已有 technique_definition 校验
+        // （或压根不需要，本 gate 缺 definition 时不拦截，交由后续逻辑处理）。
+        return true;
+    };
+    let cultivation_race = world
+        .get::<Cultivation>(caster)
+        .map(|c| c.race.clone())
+        .unwrap_or_else(|| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+    let intrinsic_is_humanoid = intrinsic_is_humanoid_from_world(world, caster);
+    definition
+        .required_race
+        .allows(&cultivation_race, intrinsic_is_humanoid)
 }
 
 #[cfg(test)]
@@ -1912,5 +2010,409 @@ mod tests {
                 "{technique:?} 不应经 emit_attack_particle 发粒子（它有自己的 emit_self_visuals）"
             );
         }
+    }
+
+    // ── F1（P3 opus verify 发现）：施放门行为测试 —— sword_path resolver 路径 ──────
+    //
+    // 修复前只有 known_techniques.rs 的 `.allows()` 真值表 pin，从不触达三个 resolver
+    // （`cast_sword_attack`/`cast_sword_parry`/`cast_sword_infuse`）里真实的
+    // `race_gate_allows(...)` 调用点——回归删掉那行 `if !race_gate_allows(...) {
+    // return rejected(RaceMismatch) }` 不会撞红。本节直接调用 resolver 函数本体
+    // （与本文件既有 `cleave_without_sword_rejects_with_no_weapon_not_invalid_target`
+    // 等测试同款手法：真实 resolver 入口 + 最小 World 构造）锁死该行为。
+
+    /// 构造 is_humanoid=false 的合成种族 `RaceRegistry`/`BodyPlanRegistry` fixture，
+    /// 插入 `app`。与 `combat::resolve::non_humanoid_consequence_integration_tests::
+    /// single_part_registries` 同款几何（`HeightBands` 单部位，只求 `resolve_body_plan`
+    /// 校验通过，不关心命中判定）。
+    fn insert_non_humanoid_race_fixture(app: &mut App, race_id: &str) {
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::{
+            BodyPartDef, BodyPlan, BodyPlanRegistry, HeightBand, HeightBandAssignment, HitGeometry,
+            PartConsequence, RaceId, RaceRegistry, StandingAabbSpec,
+        };
+        use std::collections::HashMap;
+
+        let plan = BodyPlan {
+            id: format!("test_{race_id}_plan").into(),
+            display_name: "测试非人形构型".to_string(),
+            is_humanoid: false,
+            parts: vec![BodyPartDef {
+                id: "core".into(),
+                damage_mul: 1.0,
+                contam_mul: 1.0,
+                bleed_mul: 1.0,
+                consequence: PartConsequence::Core,
+            }],
+            hit_geometry: HitGeometry::HeightBands {
+                aabb: StandingAabbSpec {
+                    half_width: 0.3,
+                    height: 1.8,
+                },
+                bands: vec![HeightBand {
+                    min_rel_y: -1.0,
+                    assignment: HeightBandAssignment::Single {
+                        part: "core".into(),
+                    },
+                }],
+                lateral_threshold: 0.19,
+            },
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: HashMap::new(),
+        };
+        let plan_id = plan.id.clone();
+        let body_plans = BodyPlanRegistry::from_plans(vec![plan]).expect("plan must validate");
+        // `RaceRegistry::from_file_contents` 要求表内必须有一条 id=HUMAN_RACE_ID 的
+        // 默认条目（否则 "races.json must contain a default human race entry" 校验失败）
+        // ——复用 `combat::resolve::non_humanoid_consequence_integration_tests::
+        // single_part_registries` 同款手法：让这条 "human" 条目指向本 fixture 的
+        // is_humanoid=false 构型，caster 的 `Cultivation.race` 同样设为 HUMAN_RACE_ID
+        // 即可解析出非人形本体（是否人形只看 body plan，不看 race id 字面意义）。
+        let races = RaceRegistry::from_parts_for_test(
+            vec![RaceEntry {
+                id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                display_name: format!("测试非人形种族({race_id})"),
+                body_plan_id: plan_id,
+                beast_kinds: vec![],
+            }],
+            vec![],
+            &body_plans,
+        )
+        .expect("races fixture must validate");
+        app.insert_resource(body_plans);
+        app.insert_resource(races);
+    }
+
+    fn test_sword_weapon() -> Weapon {
+        use crate::combat::weapon::EquipSlot;
+        Weapon {
+            slot: EquipSlot::MainHand,
+            instance_id: 1,
+            template_id: "test_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 10.0,
+            quality_tier: 0,
+            durability: 100.0,
+            durability_max: 100.0,
+        }
+    }
+
+    #[test]
+    fn cast_sword_cleave_rejects_race_mismatch_for_non_humanoid_caster_qi_untouched() {
+        // sword.cleave 全数据表标 RaceGate::Humanoid（§8.1 #6）。非人形本体
+        // （race="test_whale"）持剑、已激活技能，但必须在 `cast_sword_attack` 里的
+        // race gate（line 493）被拒绝，AttackIntent 从不发出、qi_current 分毫不动。
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        insert_non_humanoid_race_fixture(&mut app, "test_whale");
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_CLEAVE_SKILL_ID, 0.5),
+                test_sword_weapon(),
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    qi_current: 42.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let result = cast_sword_cleave(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RaceMismatch
+            },
+            "非人形本体施放 sword.cleave 必须拒绝 RaceMismatch，实际 {result:?}"
+        );
+        assert!(
+            app.world().resource::<Events<AttackIntent>>().is_empty(),
+            "race gate 拒绝必须发生在 AttackIntent 发出之前；期望零事件，实际存在"
+        );
+        let qi_current = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_current - 42.0).abs() < f64::EPSILON,
+            "race gate 拒绝不应扣真元（守恒律）；期望 42.0 不变，实际 {qi_current}"
+        );
+    }
+
+    #[test]
+    fn cast_sword_parry_rejects_race_mismatch_for_non_humanoid_caster() {
+        // sword.parry 同表 RaceGate::Humanoid。断言拒绝原因 + StatusEffects 未被写入
+        // SwordParrying（证明 resolver 在 race gate 就返回，未继续执行格挡逻辑）。
+        let mut app = App::new();
+        insert_non_humanoid_race_fixture(&mut app, "test_whale");
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_PARRY_SKILL_ID, 0.5),
+                test_sword_weapon(),
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let result = cast_sword_parry(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RaceMismatch
+            },
+            "非人形本体施放 sword.parry 必须拒绝 RaceMismatch，实际 {result:?}"
+        );
+        assert!(
+            app.world().get::<StatusEffects>(caster).is_none(),
+            "race gate 拒绝后不应插入 StatusEffects（说明格挡逻辑从未执行）"
+        );
+    }
+
+    #[test]
+    fn cast_sword_infuse_rejects_race_mismatch_for_non_humanoid_caster_qi_untouched() {
+        // sword.infuse 同表 RaceGate::Humanoid。realm 设为非 Awaken（避免被更早的
+        // RealmTooLow 门掩盖 RaceMismatch），qi_current 给足以证明 race gate 拒绝
+        // 不扣真元、也不插入 PendingSwordInfuse（灌注从未真正发生）。
+        let mut app = App::new();
+        insert_non_humanoid_race_fixture(&mut app, "test_whale");
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_INFUSE_SKILL_ID, 0.5),
+                test_sword_weapon(),
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    realm: Realm::Induce,
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let result = cast_sword_infuse(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RaceMismatch
+            },
+            "非人形本体施放 sword.infuse 必须拒绝 RaceMismatch（realm/weapon/proficiency \
+             均已满足，唯独 race gate 应该是拒因），实际 {result:?}"
+        );
+        assert!(
+            app.world().get::<PendingSwordInfuse>(caster).is_none(),
+            "race gate 拒绝后不应插入 PendingSwordInfuse（灌注从未真正发生）"
+        );
+        let qi_current = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_current - 50.0).abs() < f64::EPSILON,
+            "race gate 拒绝不应扣真元（守恒律）；期望 50.0 不变，实际 {qi_current}"
+        );
+    }
+
+    #[test]
+    fn cast_sword_cleave_allows_humanoid_caster_race_gate_passes() {
+        // 反向 happy：人形本体（未插入 RaceRegistry/BodyPlanRegistry → 退化到
+        // humanoid 单例，race 默认 "human"）施放 sword.cleave 不应被 race gate 拦下,
+        // 必须真正 Started 并发出 AttackIntent。与上面的非人形拒绝测试对照。
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        let caster = app
+            .world_mut()
+            .spawn((known(SWORD_CLEAVE_SKILL_ID, 0.5), test_sword_weapon()))
+            .id();
+
+        let result = cast_sword_cleave(app.world_mut(), caster, 0, None);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "人形本体施放 sword.cleave 不应被 race gate 拒绝，实际 {result:?}"
+        );
+        assert!(
+            !app.world().resource::<Events<AttackIntent>>().is_empty(),
+            "人形本体应真正走到 AttackIntent 发出（resolver 未被 race gate 误挡）"
+        );
+    }
+
+    // ── P2 后半：灌注两段式动画接力（§8.1 #3 停止路径红线）─────────────────
+
+    /// 双端 id 契约 pin：蓄力段沿用 `bong:sword_infuse`（v1 资产清单 pin 该文件，
+    /// 资产已重制为 isLoop）；release 段 = `bong:sword_infuse_release`。改动任一
+    /// 端必须同步 client `player_animation/` 资产与对拍映射。
+    #[test]
+    fn infuse_two_phase_anim_ids_pin_client_assets() {
+        assert_eq!(ANIM_SWORD_INFUSE_CHARGE, "bong:sword_infuse");
+        assert_eq!(ANIM_SWORD_INFUSE_RELEASE, "bong:sword_infuse_release");
+    }
+
+    fn infuse_completion_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 40 });
+        app.add_event::<QiTransfer>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, sword_infuse_completion_tick);
+        app
+    }
+
+    fn pending_infuse(weapon_instance_id: u64) -> PendingSwordInfuse {
+        PendingSwordInfuse {
+            amount: 10.0,
+            complete_at_tick: 40,
+            slot: 0,
+            weapon_instance_id,
+            carrier: ContainerKind::WieldedInWeapon,
+            infuser_color: ColorKind::Mellow,
+            container_account: QiAccountId::container("test_infuse_two_phase"),
+        }
+    }
+
+    fn stop_anim_ids(payloads: &[VfxEventPayloadV1]) -> Vec<String> {
+        payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                VfxEventPayloadV1::StopAnim { anim_id, .. } => Some(anim_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn play_anim_ids(payloads: &[VfxEventPayloadV1]) -> Vec<String> {
+        payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                VfxEventPayloadV1::PlayAnim { anim_id, .. } => Some(anim_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 灌注自然完成：StopAnim(蓄力段) + PlayAnim(release) 两段式接力；负向锁
+    /// 不再整播一次性 `bong:sword_infuse`（旧行为 = 完成时从头重播 40t）。
+    #[test]
+    fn infuse_completion_success_stops_charge_and_plays_release() {
+        use valence::prelude::UniqueId;
+        let mut app = infuse_completion_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                pending_infuse(1),
+                test_sword_weapon(),
+                Cultivation {
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                UniqueId::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<SwordQiStore>(entity).is_some(),
+            "前置：灌注成功应插入 SwordQiStore"
+        );
+        let payloads = emitted_particles(&app);
+        assert_eq!(
+            stop_anim_ids(&payloads),
+            vec![ANIM_SWORD_INFUSE_CHARGE.to_string()],
+            "完成分支必须恰停一次循环蓄力段（§8.1 #3 接力第一步）"
+        );
+        assert_eq!(
+            play_anim_ids(&payloads),
+            vec![ANIM_SWORD_INFUSE_RELEASE.to_string()],
+            "完成分支必须播 release 收势且不得再整播一次性 bong:sword_infuse"
+        );
+    }
+
+    /// 灌注失败（武器已换/丢）：仅 StopAnim(蓄力段)，无 release（失败不奖励收势）
+    /// ——漏发 = 抚刃循环永卡在玩家身上。
+    #[test]
+    fn infuse_completion_invalid_weapon_stops_charge_without_release() {
+        use valence::prelude::UniqueId;
+        let mut app = infuse_completion_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                // pending 绑 instance 999，实际武器 instance 1 → 失败分支。
+                pending_infuse(999),
+                test_sword_weapon(),
+                Cultivation {
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                UniqueId::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<SwordQiStore>(entity).is_none(),
+            "前置：武器不符不应插入 SwordQiStore"
+        );
+        assert!(
+            app.world().get::<PendingSwordInfuse>(entity).is_none(),
+            "前置：失败分支应移除 PendingSwordInfuse"
+        );
+        let payloads = emitted_particles(&app);
+        assert_eq!(
+            stop_anim_ids(&payloads),
+            vec![ANIM_SWORD_INFUSE_CHARGE.to_string()],
+            "武器失效分支必须停循环蓄力段"
+        );
+        assert!(
+            play_anim_ids(&payloads).is_empty(),
+            "失败分支不得播任何动画（打断不奖励收势），实际 {:?}",
+            play_anim_ids(&payloads)
+        );
+    }
+
+    /// 灌注失败（真元不足）：同样仅 StopAnim(蓄力段)，无 release。
+    #[test]
+    fn infuse_completion_insufficient_qi_stops_charge_without_release() {
+        use valence::prelude::UniqueId;
+        let mut app = infuse_completion_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                pending_infuse(1),
+                test_sword_weapon(),
+                Cultivation {
+                    qi_current: 1.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                UniqueId::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<SwordQiStore>(entity).is_none(),
+            "前置：真元不足不应插入 SwordQiStore"
+        );
+        let payloads = emitted_particles(&app);
+        assert_eq!(
+            stop_anim_ids(&payloads),
+            vec![ANIM_SWORD_INFUSE_CHARGE.to_string()],
+            "真元不足分支必须停循环蓄力段"
+        );
+        assert!(
+            play_anim_ids(&payloads).is_empty(),
+            "真元不足分支不得播任何动画，实际 {:?}",
+            play_anim_ids(&payloads)
+        );
     }
 }
