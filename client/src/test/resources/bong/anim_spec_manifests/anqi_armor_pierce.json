@@ -1,15 +1,15 @@
 {
   "anticipation": [
     0,
-    32
+    2
   ],
   "strike": [
-    32,
-    40
+    2,
+    6
   ],
   "recovery": [
-    40,
-    46
+    6,
+    18
   ],
   "strike_axes": [
     "rightArm.pitch",

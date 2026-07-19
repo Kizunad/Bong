@@ -5,16 +5,16 @@
   ],
   "strike": [
     2,
-    8
+    7
   ],
   "recovery": [
-    8,
+    7,
     20
   ],
   "strike_axes": [
     "rightArm.pitch",
     "leftArm.pitch",
-    "torso.yaw",
+    "torso.pitch",
     "body.z"
   ]
 }

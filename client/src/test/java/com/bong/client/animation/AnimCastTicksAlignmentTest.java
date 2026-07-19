@@ -160,17 +160,20 @@ class AnimCastTicksAlignmentTest {
         // plan-bughunt-woliu-resonance-loop-arm-decay-v1**（本 plan 防重声明明确
         // 排除，标准只防再犯），该 bugfix merge 后删本条目。
         "woliu.vortex_resonance",
-        // P2 后半处置（决策 (b)，plan 附录 A）：armor_pierce（cast=40）/
+        // P2 后半处置（review 返工定形，plan 附录 A）：armor_pierce（cast=40）/
         // echo_fractal（cast=60）/ sword_path.manifest（cast=40）三招为
-        // **瞬发结算型长 cast**——resolver 立即结算、无真实引导窗（anqi_v2.rs
-        // resolve_anqi_skill / skill_register.rs cast_manifest），cast_ticks 是
-        // 元数据；isLoop 蓄力段无停止信号可挂（会永久循环），故按「覆盖结算
-        // 期的非循环单段专属演出」交付（cast+4..cast+8 收势齐全），机械断言
-        // （cast≥40 须 isLoop）不适用但仍如实驻表。真两段式待 cast 通道真实化
-        // 后落地（plan 遗留，P6 收口时与 allowlist 清零判据一并裁决）。
+        // **瞬发结算型**——resolver 在 cast 起始 tick 立即结算、无真实引导窗
+        // （anqi_v2.rs resolve_anqi_skill / skill_register.rs cast_manifest），
+        // cast_ticks 是元数据。动画按「strike 顶点对齐真实结算点」交付
+        // （18/24/20t，顶点 t6/t4/t6 紧贴 tick 0 结算），isLoop 两段式在无停止
+        // 信号的通道上不可挂（会永久循环）。endTick 与 cast_ticks 元数据错配
+        // 如实驻表；清零出路 = cast 通道真实化（gameplay 变更，超出本 plan
+        // §8.1 #1 纯表现层边界，需独立决议）或元数据修正，P6 收口时裁决。
         "anqi.armor_pierce", "anqi.echo_fractal", "sword_path.manifest",
-        // heaven_gate：charge 段 hold-末帧范式（非循环 60t），与 isLoop 正典的
-        // 统一遗留 P6 收口（plan 附录 A 注记）。
+        // heaven_gate：动画对齐 60t 充能相位（HEAVEN_GATE_CHARGE_END）而非
+        // cast_ticks=80 总窗，charge 段非循环 hold-末帧（定长充能相位全对齐、
+        // 末帧=release 交接帧，segment manifest 锁密度）；与 isLoop 正典的统一
+        // 归 P6 注记（P2 密度精修已交付）。
         "sword_path.heaven_gate", "morph.yixing");
 
     /** 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。 */
@@ -503,6 +506,41 @@ class AnimCastTicksAlignmentTest {
         JsonObject manifest = JsonParser.parseString(Files.readString(manifestFile)).getAsJsonObject();
         AnimMeta meta = readAnim(animName);
 
+        // 段式 manifest（P2 后半，review 返工新增）：两段式招的 loop 蓄力段 /
+        // 定长充能段没有三段式结构（strike 归其 release 段），改锁段语义——
+        // segment="loop"：isLoop=true + 每轴 endTick 同值补帧（库坑 #1）；
+        // segment="charge_hold"：非循环定长充能段（endTick=充能窗长，末帧=交接帧）。
+        // 两型共同：endTick pin、主轴密度 ≤4t、easing 显式非 linear、leg.pitch 红线。
+        if (manifest.has("segment")) {
+            String segment = manifest.get("segment").getAsString();
+            assertTrue(segment.equals("loop") || segment.equals("charge_hold"),
+                animName + " manifest segment 类型未知：`" + segment
+                    + "`（合法：loop / charge_hold）");
+            assertEquals(segment.equals("loop"), meta.isLoop(),
+                animName + " segment=" + segment + " 与 isLoop=" + meta.isLoop()
+                    + " 不符——loop 蓄力段必须 isLoop=true（配 StopAnim 停止路径），"
+                    + "charge_hold 定长充能段必须非循环（段长=通道相位长，无死帧）");
+            assertEquals(manifest.get("expected_end_tick").getAsInt(), meta.endTick(),
+                animName + " endTick=" + meta.endTick() + " 与 manifest expected_end_tick 漂移"
+                    + "——段长即通道契约（loop 周期 / 充能窗长），改动画必须同步 manifest");
+            List<String> primaryAxes = new ArrayList<>();
+            for (JsonElement axis : manifest.getAsJsonArray("primary_axes")) {
+                primaryAxes.add(axis.getAsString());
+            }
+            assertFalse(primaryAxes.isEmpty(),
+                animName + " segment manifest 必须声明至少一个主轴（primary_axes）");
+            AxisWalk walk = walkAxes(animName, meta);
+            for (String axis : primaryAxes) {
+                assertAxisDense(animName, walk, axis);
+            }
+            if (meta.isLoop()) {
+                List<String> seams = loopSeamViolations(meta);
+                assertTrue(seams.isEmpty(),
+                    animName + " 循环动画违反 endTick 同值补帧（库坑 #1，循环回绕跳变）：" + seams);
+            }
+            return;
+        }
+
         // 三段边界：anticipation/strike/recovery 的 [from, to]（tick，含端点）。
         Map<String, int[]> phases = new HashMap<>();
         for (String phase : List.of("anticipation", "strike", "recovery")) {
@@ -539,6 +577,34 @@ class AnimCastTicksAlignmentTest {
         }
         assertFalse(strikeAxes.isEmpty(), animName + " manifest 必须声明至少一个主打击轴");
 
+        AxisWalk walk = walkAxes(animName, meta);
+        Map<String, List<Integer>> axisTicks = walk.ticks();
+        // 三段各 ≥2 帧点（按任意轴在段内的帧点计）。
+        Set<Integer> allTicks = new HashSet<>();
+        axisTicks.values().forEach(allTicks::addAll);
+        for (Map.Entry<String, int[]> phase : phases.entrySet()) {
+            long inPhase = allTicks.stream()
+                .filter(t -> t >= phase.getValue()[0] && t <= phase.getValue()[1]).count();
+            assertTrue(inPhase >= 2,
+                animName + " " + phase.getKey() + " 段仅 " + inPhase + " 个帧点（应 ≥2，三段式结构红线）");
+        }
+        // 主打击轴：相邻帧间隔 ≤4 tick + 禁 linear。
+        for (String axis : strikeAxes) {
+            assertAxisDense(animName, walk, axis);
+        }
+        // 循环动画每轴 endTick 同值补帧（库坑 #1 完整语义：值相同，非仅存在）。
+        if (meta.isLoop()) {
+            List<String> seams = loopSeamViolations(meta);
+            assertTrue(seams.isEmpty(),
+                animName + " 循环动画违反 endTick 同值补帧（库坑 #1，循环回绕跳变）：" + seams);
+        }
+    }
+
+    /** 每轴关键帧走查结果：帧点清单 + easing 集合（key = {@code part.axis}）。 */
+    private record AxisWalk(Map<String, List<Integer>> ticks, Map<String, Set<String>> easings) {}
+
+    /** 走一遍全部关键帧：收集每轴帧点/easing，并断言 easing 显式 + leg.pitch 红线。 */
+    private static AxisWalk walkAxes(String animName, AnimMeta meta) {
         Map<String, List<Integer>> axisTicks = new HashMap<>();
         Map<String, Set<String>> axisEasings = new HashMap<>();
         for (JsonElement moveElement : meta.moves()) {
@@ -573,34 +639,21 @@ class AnimCastTicksAlignmentTest {
                 }
             }
         }
-        // 三段各 ≥2 帧点（按任意轴在段内的帧点计）。
-        Set<Integer> allTicks = new HashSet<>();
-        axisTicks.values().forEach(allTicks::addAll);
-        for (Map.Entry<String, int[]> phase : phases.entrySet()) {
-            long inPhase = allTicks.stream()
-                .filter(t -> t >= phase.getValue()[0] && t <= phase.getValue()[1]).count();
-            assertTrue(inPhase >= 2,
-                animName + " " + phase.getKey() + " 段仅 " + inPhase + " 个帧点（应 ≥2，三段式结构红线）");
+        return new AxisWalk(axisTicks, axisEasings);
+    }
+
+    /** 单轴机械断言：轴存在、相邻帧距 ≤4 tick、无 linear easing（打击轴与段式主轴共用）。 */
+    private static void assertAxisDense(String animName, AxisWalk walk, String axis) {
+        List<Integer> ticks = walk.ticks().get(axis);
+        assertNotNull(ticks, animName + " manifest 声明的主轴 `" + axis + "` 在动画中无关键帧");
+        List<Integer> sorted = ticks.stream().sorted().distinct().toList();
+        for (int i = 1; i < sorted.size(); i++) {
+            assertTrue(sorted.get(i) - sorted.get(i - 1) <= 4,
+                animName + " 主轴 `" + axis + "` 帧点 " + sorted.get(i - 1) + "→"
+                    + sorted.get(i) + " 间隔超过 4 tick（精度标准 #3 密度红线）");
         }
-        // 主打击轴：相邻帧间隔 ≤4 tick + 禁 linear。
-        for (String axis : strikeAxes) {
-            List<Integer> ticks = axisTicks.get(axis);
-            assertNotNull(ticks, animName + " manifest 声明的主打击轴 `" + axis + "` 在动画中无关键帧");
-            List<Integer> sorted = ticks.stream().sorted().distinct().toList();
-            for (int i = 1; i < sorted.size(); i++) {
-                assertTrue(sorted.get(i) - sorted.get(i - 1) <= 4,
-                    animName + " 主打击轴 `" + axis + "` 帧点 " + sorted.get(i - 1) + "→"
-                        + sorted.get(i) + " 间隔超过 4 tick（精度标准 #3 密度红线）");
-            }
-            Set<String> easings = axisEasings.getOrDefault(axis, Set.of());
-            assertFalse(easings.stream().anyMatch(e -> e.equalsIgnoreCase("linear")),
-                animName + " 主打击轴 `" + axis + "` 使用 linear easing（精度标准 #3 禁用）");
-        }
-        // 循环动画每轴 endTick 同值补帧（库坑 #1 完整语义：值相同，非仅存在）。
-        if (meta.isLoop()) {
-            List<String> seams = loopSeamViolations(meta);
-            assertTrue(seams.isEmpty(),
-                animName + " 循环动画违反 endTick 同值补帧（库坑 #1，循环回绕跳变）：" + seams);
-        }
+        Set<String> easings = walk.easings().getOrDefault(axis, Set.of());
+        assertFalse(easings.stream().anyMatch(e -> e.equalsIgnoreCase("linear")),
+            animName + " 主轴 `" + axis + "` 使用 linear easing（精度标准 #3 禁用）");
     }
 }
