@@ -58,18 +58,21 @@ bug-hunt 线程 AF（限定 worktree：`bughunt-loop-20260705-af`，范围：`in
   - `client/src/main/java/com/bong/client/hud/TargetInfoState.java`：`fromEntity(Entity, long)` 的 `PlayerEntity` 分支统一进入 `fromPlayerTargetInfo(...)`；`playerDisplayNameForTargetInfo(...)` 复用 `SocialStateStore.shouldShowRemoteNameTag(...)`，匿名或未知远端显示 `ANONYMOUS_PLAYER_DISPLAY_NAME`（“某修士”），已暴露远端保留允许显示的名称，玩家目标的 realm / HP / 真元仍不额外泄漏。
   - `client/src/main/java/com/bong/client/hud/TargetInfoStateStore.java` 与 `client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java`：攻击及主手交互继续走 `observeEntity(...) -> TargetInfoState.fromEntity(...)` 的真实生产入口。
   - `client/src/main/java/com/bong/client/hud/TargetInfoHudPlanner.java`：顶部 HUD 只渲染已经过上述门控的 `TargetInfoState.displayName()`，且 `Kind.PLAYER` 不渲染 HP / 真元条。
-  - `client/src/test/java/com/bong/client/hud/TargetInfoHudPlannerTest.java`：覆盖 anonymous / exposed / unknown remote、装饰显示名、遗骸伪玩家例外，以及 `fromPlayerTargetInfo(...)` 玩家快照分支；断言匿名 HUD 不含真实名字、暴露 HUD 保留可见名。
+  - `client/src/test/java/com/bong/client/hud/TargetInfoHudPlannerTest.java`：保留 9 条 JUnit 契约测试，覆盖 anonymous / exposed / unknown remote、装饰显示名、遗骸伪玩家例外，以及 `fromPlayerTargetInfo(...)` 玩家快照分支。
+  - `client/build.gradle`、`client/src/gametest/resources/fabric.mod.json` 与 `client/src/gametest/java/com/bong/client/hud/TargetInfoPlayerGameTest.java`：新增独立 `gametest` source set / mod / `runGametest`，在 Fabric Loader/Knot transformed server runtime 中用真实 `ServerPlayerEntity` 锁定 `TargetInfoStateStore.observeEntity(...) -> snapshot() -> TargetInfoHudPlanner.buildCommands(...)`；anonymous、exposed、unknown 三案分别断言占位名、scoreboard 装饰名与 fail-closed 不泄漏。`test` 门禁显式依赖 `runGametest`。
 
 ### 关键 commit
 
 - `bb43988db477851157ea107dc3dfda378b59ce40` — 2026-07-06 — PR #892 首次让 `TargetInfoState` 复用 `SocialStateStore` 匿名判定，并加入 anonymous / exposed HUD 回归。
 - `b65fc1ca9d2419e582807582996720cb04480b9b` — 2026-07-08 — PR #1131 合并：将玩家真实入口收束到 `fromPlayerTargetInfo(...)`，修正遗骸伪玩家误匿名，并补足玩家分支与未知/装饰名回归测试。
+- `b7a76c9a` — 2026-07-19 — PR #1231 补入 Fabric GameTest harness 与 3 条真实 `ServerPlayerEntity` 生产入口回归，并把 `runGametest` 接入既有 `test` 门禁。
 
 ### 测试结果
 
-- 2026-07-18，Java 17：`client/gradlew --project-dir client test --tests com.bong.client.hud.TargetInfoHudPlannerTest --rerun-tasks` — **PASS**；JUnit 报告为 **9 tests / 0 skipped / 0 failures / 0 errors**。
+- 2026-07-19，Java 17：`cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH ./gradlew runGametest --console=plain` — **PASS**；Fabric Loader/Knot transformed server runtime 执行 **3 tests / 0 failures**，`client/build/gametest-results.xml` 分别记录 anonymous / exposed / unknown 三案。
+- 2026-07-19，Java 17：`cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH ./gradlew test build --console=plain` — **PASS**；`test` 先执行上述 **3/3 GameTest**，再执行 **4118 JUnit tests / 0 skipped / 0 failures / 0 errors**（其中 `TargetInfoHudPlannerTest` 为 **9/9**），随后 `build` 成功。
 - PR #1131：GitHub `e2e` check **PASS**（2026-07-07，20m55s）。该 PR 的 `review` 失败来自 4 个 Codex reviewer 执行失败，CodeRabbit 失败来自 review limit / prepaid credits exhausted；两者均未产生代码级 finding。
-- 2026-07-18 静态链核验：`attackEntity` / `interactEntity` -> `TargetInfoStateStore.observeEntity(...)` -> `TargetInfoState.fromEntity(...)` -> `fromPlayerTargetInfo(...)` -> `SocialStateStore.shouldShowRemoteNameTag(...)`，当前 `origin/main` 未发现后续回退提交。
+- 生产链动态核验：真实 `ServerPlayerEntity` -> `TargetInfoStateStore.observeEntity(...)` -> `TargetInfoStateStore.snapshot()` -> `TargetInfoHudPlanner.buildCommands(...)`；anonymous / unknown 均显示“某修士”且不含 profile 或 scoreboard 装饰名，exposed 保留 scoreboard 装饰名。
 
 ### 跨仓库核验
 
@@ -79,5 +82,5 @@ bug-hunt 线程 AF（限定 worktree：`bughunt-loop-20260705-af`，范围：`in
 
 ### 遗留 / 后续
 
-- 本 plan 范围内无遗留 blocker。`TargetInfoStateStore.observeEntity(...)` 是到 `TargetInfoState.fromEntity(...)` 的薄委托；JUnit 直接锁定其唯一 `PlayerEntity` 生产分支 `fromPlayerTargetInfo(...)`，并结合静态调用链排除了只测 `TargetInfoState.create(...)` 的假阳性。
+- 本 plan 范围内无遗留 blocker。普通 Gradle JUnit 缺少 Loader/Knot 对 Minecraft named jar 的 transformed package-access 处理，不能合规构造可运行的 literal `PlayerEntity` fixture；PR #1231 因此新增 Fabric GameTest，并已在真实 `ServerPlayerEntity` 上动态锁定完整生产入口，不再以 helper 单测或静态调用链代替入口回归。
 - 遗骸伪玩家例外仅在 zero UUID + `Remains_` profile + “遗骸” fallback 三条件同时满足时生效；其他未知玩家继续 fail-closed 为“某修士”。
