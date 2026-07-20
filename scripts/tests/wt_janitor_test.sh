@@ -36,71 +36,126 @@ check_not() { # 命令为假 = PASS
 }
 
 # ---- 可配置 fake gh ----
-# 模拟真实 gh：默认返回完整 head 集合（不按 --base 服务端过滤）。
-# 实现侧必须不带 --base 拉全集，再本地 fail-closed。
+# 模拟真实 gh：
+#   1) 必须 exact-head + --state all 全量查询（不带 --base；默认 OPEN 会漏 MERGED）
+#   2) 正常响应的 headRefOid = 本地 refs/heads/<branch> 真实 tip（40 hex）
+#   3) 缺 --state all / 带 --base / 缺 JSON 字段 → 非零退出（锁生产契约）
 # FAKE_GH_MODE:
-#   fail / multi / nonmain / badfields / emptyoid / nulloid / notjson / dualbase
+#   fail / multi / nonmain / badfields / emptyoid / nulloid / shortoid / notjson /
+#   dualbase / staleoid / no_state_all
 # dualbase: 同 head 同时有 MERGED@main + MERGED@develop（真实 --base main 会隐藏 develop）
+# staleoid: 返回合法 40-hex 但与当前 tip 不同（branch reuse 反例）
+#
+# 真正的 fake gh 在 MAIN 初始化后写入（见下方「重写 fake gh」），此处只占 PATH 槽位。
 mkdir -p "$SANDBOX/bin"
-cat > "$SANDBOX/bin/gh" <<'FAKEGH'
+REAL_GIT=$(command -v git)
+cat > "$SANDBOX/bin/gh" <<'PLACEHOLDER'
 #!/usr/bin/env bash
-if [[ "${FAKE_GH_MODE:-}" == "fail" ]]; then
+echo "fake-gh placeholder: MAIN not initialized" >&2
+exit 99
+PLACEHOLDER
+chmod +x "$SANDBOX/bin/gh"
+export PATH="$SANDBOX/bin:$PATH"
+export FAKE_GH_MODE=""
+
+# ---- 沙箱主仓 + bare 远端 ----
+git init -q --bare "$SANDBOX/origin.git"
+MAIN="$SANDBOX/repo"
+git init -q -b main "$MAIN"
+cd "$MAIN"
+git config user.email janitor-test@bong.local
+git config user.name janitor-test
+echo base > base.txt
+printf 'server/target/\nclient/build/\nclient/.gradle/\n.env\n*.log\n' > .gitignore
+git add -A && git commit -qm "沙箱基线"
+git remote add origin "$SANDBOX/origin.git"
+git push -q origin main
+mkdir -p .agent-worktrees
+
+# 现在 MAIN 已确定：重写 fake gh，把 MAIN_REPO 常量钉死（闭包不可变）
+cat > "$SANDBOX/bin/gh" <<FAKEGH
+#!/usr/bin/env bash
+set -euo pipefail
+REAL_GIT="$REAL_GIT"
+MAIN_REPO="$MAIN"
+if [[ "\${FAKE_GH_MODE:-}" == "fail" ]]; then
   echo "simulated gh failure" >&2
   exit 1
+fi
+if [[ "\${FAKE_GH_MODE:-}" == "no_state_all" ]]; then
+  echo "fake-gh: FAKE_GH_MODE=no_state_all forces missing --state all semantics" >&2
+  exit 2
 fi
 branch=""
 prev=""
 has_base=0
 base_val=""
-for a in "$@"; do
-  [[ "$prev" == "--head" ]] && branch="$a"
-  if [[ "$prev" == "--base" ]]; then
+has_state_all=0
+json_fields=""
+args=("\$@")
+for a in "\${args[@]}"; do
+  [[ "\$prev" == "--head" ]] && branch="\$a"
+  if [[ "\$prev" == "--base" ]]; then
     has_base=1
-    base_val="$a"
+    base_val="\$a"
   fi
-  prev="$a"
+  if [[ "\$prev" == "--state" && "\$a" == "all" ]]; then
+    has_state_all=1
+  fi
+  if [[ "\$a" == "--state=all" ]]; then
+    has_state_all=1
+  fi
+  if [[ "\$prev" == "--json" ]]; then
+    json_fields="\$a"
+  fi
+  prev="\$a"
 done
-# 契约：实现不得用 --base 隐藏其它 base 的 PR；带 --base 则 fake 非零，逼实现改查询
-if [[ $has_base -eq 1 ]]; then
-  echo "fake-gh: unexpected --base $base_val (must query full head set without --base)" >&2
+if [[ \$has_base -eq 1 ]]; then
+  echo "fake-gh: unexpected --base \$base_val (must query full head set without --base)" >&2
   exit 2
 fi
-# 必须请求完整字段
-json_fields=""
-prev=""
-for a in "$@"; do
-  [[ "$prev" == "--json" ]] && json_fields="$a"
-  prev="$a"
-done
-IFS=',' read -r -a _jf_arr <<< "$json_fields"
+if [[ \$has_state_all -ne 1 ]]; then
+  echo "fake-gh: missing required --state all (got: \${args[*]})" >&2
+  exit 2
+fi
+IFS=',' read -r -a _jf_arr <<< "\$json_fields"
 for need in number state baseRefName headRefOid; do
   found=0
-  for f in "${_jf_arr[@]+"${_jf_arr[@]}"}"; do
-    [[ "$f" == "$need" ]] && found=1 && break
+  for f in "\${_jf_arr[@]+"\${_jf_arr[@]}"}"; do
+    [[ "\$f" == "\$need" ]] && found=1 && break
   done
-  if [[ $found -ne 1 ]]; then
-    echo "fake-gh: missing required --json field: $need (got: $json_fields)" >&2
+  if [[ \$found -ne 1 ]]; then
+    echo "fake-gh: missing required --json field: \$need (got: \$json_fields)" >&2
     exit 2
   fi
 done
-case "${FAKE_GH_MODE:-}" in
+branch_tip=""
+if [[ -n "\$branch" ]]; then
+  branch_tip=\$("\$REAL_GIT" -C "\$MAIN_REPO" rev-parse --verify -q "refs/heads/\$branch^{commit}" 2>/dev/null || true)
+fi
+if [[ -z "\$branch_tip" ]]; then
+  branch_tip="0000000000000000000000000000000000000000"
+fi
+stale_oid="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+if [[ "\$stale_oid" == "\$branch_tip" ]]; then
+  stale_oid="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+fi
+case "\${FAKE_GH_MODE:-}" in
   multi)
     cat <<EOF
-[{"number":1,"state":"MERGED","baseRefName":"main","headRefOid":"aaa"},{"number":2,"state":"OPEN","baseRefName":"main","headRefOid":"bbb"}]
+[{"number":1,"state":"MERGED","baseRefName":"main","headRefOid":"\$branch_tip"},{"number":2,"state":"OPEN","baseRefName":"main","headRefOid":"\$branch_tip"}]
 EOF
     exit 0
     ;;
   dualbase)
-    # 同 head：main MERGED + develop MERGED。真实 gh --base main 只会返回第一条，
-    # 隐藏 develop；本 fake 返回全集，要求实现本地看见多结果 → UNKNOWN
     cat <<EOF
-[{"number":10,"state":"MERGED","baseRefName":"main","headRefOid":"ddd"},{"number":11,"state":"MERGED","baseRefName":"develop","headRefOid":"eee"}]
+[{"number":10,"state":"MERGED","baseRefName":"main","headRefOid":"\$branch_tip"},{"number":11,"state":"MERGED","baseRefName":"develop","headRefOid":"\$branch_tip"}]
 EOF
     exit 0
     ;;
   nonmain)
     cat <<EOF
-[{"number":9,"state":"MERGED","baseRefName":"develop","headRefOid":"ccc"}]
+[{"number":9,"state":"MERGED","baseRefName":"develop","headRefOid":"\$branch_tip"}]
 EOF
     exit 0
     ;;
@@ -122,41 +177,57 @@ EOF
 EOF
     exit 0
     ;;
+  shortoid)
+    cat <<EOF
+[{"number":203,"state":"MERGED","baseRefName":"main","headRefOid":"deadbeef"}]
+EOF
+    exit 0
+    ;;
+  staleoid)
+    cat <<EOF
+[{"number":204,"state":"MERGED","baseRefName":"main","headRefOid":"\$stale_oid"}]
+EOF
+    exit 0
+    ;;
   notjson)
     echo "not-a-json-payload"
     exit 0
     ;;
 esac
-# 默认：按分支名前缀返回完整集合（不服务端过滤 base）
-case "$branch" in
+case "\$branch" in
+  merged-reuse)
+    cat <<EOF
+[{"number":301,"state":"MERGED","baseRefName":"main","headRefOid":"\$stale_oid"}]
+EOF
+    ;;
   merged-*)
     cat <<EOF
-[{"number":101,"state":"MERGED","baseRefName":"main","headRefOid":"deadbeef"}]
+[{"number":101,"state":"MERGED","baseRefName":"main","headRefOid":"\$branch_tip"}]
 EOF
     ;;
   open-*)
     cat <<EOF
-[{"number":102,"state":"OPEN","baseRefName":"main","headRefOid":"deadbeef"}]
+[{"number":102,"state":"OPEN","baseRefName":"main","headRefOid":"\$branch_tip"}]
 EOF
     ;;
   closed-*)
     cat <<EOF
-[{"number":103,"state":"CLOSED","baseRefName":"main","headRefOid":"deadbeef"}]
+[{"number":103,"state":"CLOSED","baseRefName":"main","headRefOid":"\$branch_tip"}]
 EOF
     ;;
   multi-*)
     cat <<EOF
-[{"number":1,"state":"MERGED","baseRefName":"main","headRefOid":"aaa"},{"number":2,"state":"OPEN","baseRefName":"main","headRefOid":"bbb"}]
+[{"number":1,"state":"MERGED","baseRefName":"main","headRefOid":"\$branch_tip"},{"number":2,"state":"OPEN","baseRefName":"main","headRefOid":"\$branch_tip"}]
 EOF
     ;;
   dualbase-*)
     cat <<EOF
-[{"number":10,"state":"MERGED","baseRefName":"main","headRefOid":"ddd"},{"number":11,"state":"MERGED","baseRefName":"develop","headRefOid":"eee"}]
+[{"number":10,"state":"MERGED","baseRefName":"main","headRefOid":"\$branch_tip"},{"number":11,"state":"MERGED","baseRefName":"develop","headRefOid":"\$branch_tip"}]
 EOF
     ;;
   nonmain-*)
     cat <<EOF
-[{"number":9,"state":"MERGED","baseRefName":"develop","headRefOid":"ccc"}]
+[{"number":9,"state":"MERGED","baseRefName":"develop","headRefOid":"\$branch_tip"}]
 EOF
     ;;
   *)
@@ -165,23 +236,6 @@ EOF
 esac
 FAKEGH
 chmod +x "$SANDBOX/bin/gh"
-export PATH="$SANDBOX/bin:$PATH"
-export FAKE_GH_MODE=""
-REAL_GIT=$(command -v git)
-
-# ---- 沙箱主仓 + bare 远端 ----
-git init -q --bare "$SANDBOX/origin.git"
-MAIN="$SANDBOX/repo"
-git init -q -b main "$MAIN"
-cd "$MAIN"
-git config user.email janitor-test@bong.local
-git config user.name janitor-test
-echo base > base.txt
-printf 'server/target/\nclient/build/\nclient/.gradle/\n.env\n*.log\n' > .gitignore
-git add -A && git commit -qm "沙箱基线"
-git remote add origin "$SANDBOX/origin.git"
-git push -q origin main
-mkdir -p .agent-worktrees
 
 new_wt() {
   local name="$1" br="$2" base="${3:-main}"
@@ -556,6 +610,14 @@ out=$(bash "$JANITOR" --apply)
 check "dualbase 模式：树保留"          test -d ".agent-worktrees/wt-dualbase"
 check "dualbase 模式：报告 UNKNOWN"    grep -q "UNKNOWN" <<<"$out"
 check "dualbase 模式：分支保留"        git show-ref -q "refs/heads/dualbase-head"
+export FAKE_GH_MODE=shortoid
+out=$(bash "$JANITOR" --apply)
+check "shortoid 模式：ghfail 树保留"   test -d ".agent-worktrees/wt-merged-ghfail"
+check "shortoid 模式：报告 UNKNOWN"    grep -q "UNKNOWN" <<<"$out"
+export FAKE_GH_MODE=staleoid
+out=$(bash "$JANITOR" --apply)
+check "staleoid 模式：ghfail 树保留"   test -d ".agent-worktrees/wt-merged-ghfail"
+check "staleoid 模式：报告 UNKNOWN"    grep -q "UNKNOWN" <<<"$out"
 export FAKE_GH_MODE=""
 # 分支名触发 multi/nonmain/dualbase（与 FAKE_GH_MODE 解耦）
 out=$(bash "$JANITOR")
@@ -697,6 +759,118 @@ check "对照后 OPEN+.env cache 仍在"    test -f ".agent-worktrees/wt-open-en
 check "对照后 NO_PR+log 日志仍在"      test -f ".agent-worktrees/wt-nopr-log/agent.secret.log"
 check "对照后 NO_PR+log cache 仍在"    test -f ".agent-worktrees/wt-nopr-log/client/build/blob"
 
+
+# ========== 13b. headRefOid 必须绑定本地 tip；branch reuse fail-closed ==========
+echo "== 13b. headRefOid/tip 绑定 + branch reuse 反例 + --state all 契约"
+# 13b-1: 正常 MERGED 路径返回真实 tip 时可回收（setup_normal_merged + 默认 fake）
+setup_normal_merged wt-merged-tipok merged-tipok
+TIPOK=$(git rev-parse refs/heads/merged-tipok)
+# 直接问 fake gh，确认返回 tip
+gh_out=$(gh pr list --head merged-tipok --state all --json number,state,baseRefName,headRefOid)
+check "fake gh 返回真实 tip" bash -c 'grep -q "$1" <<<"$2"' _ "$TIPOK" "$gh_out"
+out=$(bash "$JANITOR" --apply)
+check "tipok 已回收"                   test ! -d ".agent-worktrees/wt-merged-tipok"
+check "tipok 分支已删"                 bash -c '! git show-ref -q refs/heads/merged-tipok'
+
+# 13b-2: 短 OID → UNKNOWN，树/分支保留
+setup_normal_merged wt-merged-shortoid merged-shortoid
+export FAKE_GH_MODE=shortoid
+out=$(bash "$JANITOR" --apply)
+check "shortoid：树保留"               test -d ".agent-worktrees/wt-merged-shortoid"
+check "shortoid：分支保留"             git show-ref -q "refs/heads/merged-shortoid"
+check "shortoid：报告 UNKNOWN"         grep -q "UNKNOWN" <<<"$out"
+export FAKE_GH_MODE=""
+
+# 13b-3: staleoid 模式（合法 40-hex 但 ≠ tip）→ UNKNOWN
+setup_normal_merged wt-merged-staleoid merged-staleoid
+export FAKE_GH_MODE=staleoid
+out=$(bash "$JANITOR" --apply)
+check "staleoid：树保留"               test -d ".agent-worktrees/wt-merged-staleoid"
+check "staleoid：分支保留"             git show-ref -q "refs/heads/merged-staleoid"
+check "staleoid：报告 UNKNOWN"         grep -q "UNKNOWN" <<<"$out"
+export FAKE_GH_MODE=""
+
+# 13b-4: branch reuse 反例
+# 历史：同名分支曾 MERGED（patch 已进 main）；本地同名分支被重建为与 main 等价 tip，
+# 但尚未开新 PR。fake 对 merged-reuse 固定返回旧 stale OID。
+# 即使 git cherry 为空，也必须 UNKNOWN，树和分支均保留。
+git checkout -q main
+# 先造一个已合入的 feature，模拟“历史 PR 对应 tip”
+git worktree add -q -b merged-reuse ".agent-worktrees/wt-merged-reuse" main
+echo "reuse-old" > ".agent-worktrees/wt-merged-reuse/reuse-old.txt"
+git -C ".agent-worktrees/wt-merged-reuse" add -A
+git -C ".agent-worktrees/wt-merged-reuse" commit -qm "reuse old feature"
+OLD_TIP=$(git -C ".agent-worktrees/wt-merged-reuse" rev-parse HEAD)
+git -C ".agent-worktrees/wt-merged-reuse" push -q origin merged-reuse
+git checkout -q main
+git merge -q --no-ff -m "merge merged-reuse" merged-reuse >/dev/null
+git push -q origin main
+git fetch -q origin
+# 删除 worktree + 本地分支，模拟历史 PR 已收工；再在 main tip 上重建同名分支
+git worktree remove ".agent-worktrees/wt-merged-reuse"
+git branch -D merged-reuse >/dev/null
+git worktree add -q -b merged-reuse ".agent-worktrees/wt-merged-reuse" main
+NEW_TIP=$(git rev-parse refs/heads/merged-reuse)
+# 新 tip 与 main 等价（cherry 空），但 ≠ 历史 OLD_TIP；fake 对 merged-reuse 返回 stale≠NEW_TIP
+check "reuse 新 tip 不同于旧 tip" bash -c '[[ "$1" != "$2" ]]' _ "$OLD_TIP" "$NEW_TIP"
+# cherry 应为空（无 +）
+plus_cnt=$(git cherry origin/main refs/heads/merged-reuse | grep -c '^+') || plus_cnt=0
+check "reuse cherry 无未合入 +" bash -c '[[ "$1" -eq 0 ]]' _ "$plus_cnt"
+out=$(bash "$JANITOR" --apply)
+check "reuse：树保留"                  test -d ".agent-worktrees/wt-merged-reuse"
+check "reuse：分支保留"                git show-ref -q "refs/heads/merged-reuse"
+check "reuse：报告 UNKNOWN"            grep -q "UNKNOWN" <<<"$out"
+check_not "reuse：不可回收"            grep -qE "wt-merged-reuse.*可回收|wt-merged-reuse.*已回收" <<<"$out"
+
+# 13b-5: --state all 契约
+# a) 生产路径：实现必须传 --state all，且 tip 绑定后可回收
+# b) 缺 --state all 时 fake 直接非零（锁契约，防止回归）
+setup_normal_merged wt-merged-stateall merged-stateall
+# 先备份完整 fake，再装 wrapper（顺序反了会 wrapper→wrapper 死递归）
+cp -f "$SANDBOX/bin/gh" "$SANDBOX/bin/gh.real"
+cat > "$SANDBOX/bin/gh" <<'WRAPGH'
+#!/usr/bin/env bash
+has_state_all=0
+prev=""
+for a in "$@"; do
+  if [[ "$prev" == "--state" && "$a" == "all" ]]; then has_state_all=1; fi
+  if [[ "$a" == "--state=all" ]]; then has_state_all=1; fi
+  prev="$a"
+done
+if [[ $has_state_all -ne 1 ]]; then
+  echo "wrap-gh: missing --state all" >&2
+  exit 2
+fi
+exec "$(dirname "$0")/gh.real" "$@"
+WRAPGH
+chmod +x "$SANDBOX/bin/gh" "$SANDBOX/bin/gh.real"
+out=$(bash "$JANITOR" --apply)
+if [[ -d ".agent-worktrees/wt-merged-stateall" ]]; then
+  echo "  FAIL: state-all 契约：实现可能未传 --state all 或 tip 对拍失败"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: state-all 契约：带 --state all 且 tip 绑定后已回收"
+  PASS=$((PASS + 1))
+fi
+# 反向：直接调底层 fake，故意省略 --state all → 必须非零
+if "$SANDBOX/bin/gh.real" pr list --head merged-stateall --json number,state,baseRefName,headRefOid >/dev/null 2>&1; then
+  echo "  FAIL: fake gh 缺 --state all 应非零"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: fake gh 缺 --state all 非零"
+  PASS=$((PASS + 1))
+fi
+# 正向：带 --state all 必须成功（即使分支已删，也至少不能因缺参失败；用 open-idle）
+if ! "$SANDBOX/bin/gh.real" pr list --head open-idle --state all --json number,state,baseRefName,headRefOid >/dev/null 2>&1; then
+  echo "  FAIL: fake gh 带 --state all 应成功"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: fake gh 带 --state all 成功"
+  PASS=$((PASS + 1))
+fi
+# 还原 gh（去掉 wrapper）
+mv -f "$SANDBOX/bin/gh.real" "$SANDBOX/bin/gh"
+chmod +x "$SANDBOX/bin/gh"
 
 # ========== 14. 真实 fd 占用：打开树内文件的进程挡住删除 ==========
 echo "== 14. 真实 /proc/fd 指向树内 → BUSY"

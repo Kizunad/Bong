@@ -33,7 +33,9 @@
 #     `origin/main..branch` 不存在 merge commit——cherry 看不到 branch-only merge
 #     的独有 tree/conflict resolution；远端可达性仅作诊断，绝不能单独放行）
 #   - PR 状态：先 `gh pr list --head --state all` 拉完整集合（不带 --base，避免
-#     隐藏同 head 的 develop PR），再本地要求恰好一条且 base=main（多条/字段异常→UNKNOWN）
+#     隐藏同 head 的 develop PR），再本地要求恰好一条、base=main、且 headRefOid
+#     完整 40 位 hex 并精确等于本地 refs/heads/$branch tip（多条/字段异常/OID
+#     非法/branch reuse 导致 tip 不一致 → UNKNOWN）
 #   - remove 被 git 拒绝、或 remove 后本地分支删除失败的树
 #     （后者报告部分完成/交人工，不计完整回收；不用 --force）
 #   - APPLY 真正删除前对当前候选重新扫描 /proc：命中新进程则保留并转人工（防 TOCTOU）
@@ -331,9 +333,13 @@ branch_patches_in_main() {
 #   - 0 条 → NO_PR
 #   - >1 条 → UNKNOWN（含同 head 多 base；真实 gh --base main 会隐藏 develop）
 #   - 1 条：baseRefName 必须为 main；state 必须为 OPEN|MERGED|CLOSED；否则 UNKNOWN
+#   - 唯一 PR 的 headRefOid 必须是完整 40 位 hex，且与本地 refs/heads/$branch tip
+#     精确相等（防同名 branch reuse：历史 MERGED PR 不得授权删除新 tip）
 resolve_pr_state() {
   local branch="$1"
   local raw rc=0
+  # 故意不带 --base：必须拉回该 head 的完整 PR 集合，再本地要求唯一且 base=main。
+  # --state all 强制：真实 gh 默认只列 OPEN，漏掉会把 MERGED 误判成 NO_PR。
   raw=$(gh pr list --head "$branch" --state all \
     --json number,state,baseRefName,headRefOid 2>/dev/null) || rc=$?
   if [[ $rc -ne 0 ]]; then
@@ -370,7 +376,7 @@ resolve_pr_state() {
     echo "UNKNOWN"
     return 0
   fi
-  local state base number head_oid
+  local state base number head_oid branch_tip
   state=$(printf '%s' "$raw" | jq -r '.[0].state')
   base=$(printf '%s' "$raw" | jq -r '.[0].baseRefName')
   number=$(printf '%s' "$raw" | jq -r '.[0].number')
@@ -381,6 +387,22 @@ resolve_pr_state() {
     return 0
   fi
   if [[ "$base" != "main" ]]; then
+    echo "UNKNOWN"
+    return 0
+  fi
+  # headRefOid 必须是完整 Git OID，并与待判定本地分支 tip 精确绑定。
+  # 短 OID / 杂质 / 解析失败 / tip 不一致 → UNKNOWN（fail-closed，防 branch reuse）。
+  head_oid=$(printf '%s' "$head_oid" | tr 'A-F' 'a-f')
+  if [[ ! "$head_oid" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "UNKNOWN"
+    return 0
+  fi
+  if ! branch_tip=$(git rev-parse --verify -q "refs/heads/$branch^{commit}" 2>/dev/null); then
+    echo "UNKNOWN"
+    return 0
+  fi
+  branch_tip=$(printf '%s' "$branch_tip" | tr 'A-F' 'a-f')
+  if [[ "$head_oid" != "$branch_tip" ]]; then
     echo "UNKNOWN"
     return 0
   fi
