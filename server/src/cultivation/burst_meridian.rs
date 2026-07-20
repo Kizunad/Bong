@@ -1,6 +1,6 @@
 use valence::entity::Look;
 use valence::prelude::{
-    bevy_ecs, Commands, Component, Despawned, DVec3, Entity, Event, EventWriter, Events, Position,
+    bevy_ecs, Commands, Component, DVec3, Despawned, Entity, Event, EventWriter, Events, Position,
     Query, Res, UniqueId, Without,
 };
 
@@ -2547,10 +2547,7 @@ mod tests {
             .get::<NiMaiHuTiAura>(caster)
             .copied()
             .expect("施放后必须挂上 NiMaiHuTiAura 锚点，否则重发系统永远找不到施法者");
-        assert_eq!(
-            aura.started_at_tick, CAST_TICK,
-            "重发相位基准应为施法 tick"
-        );
+        assert_eq!(aura.started_at_tick, CAST_TICK, "重发相位基准应为施法 tick");
         assert_eq!(
             aura.expires_at_tick,
             CAST_TICK + NI_MAI_HU_TI_BUFF_DURATION_TICKS,
@@ -2575,8 +2572,7 @@ mod tests {
              坐标上，玩家一移动纹即脱离体表"
         );
         assert!(
-            u64::from(NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS)
-                < NI_MAI_HU_TI_BUFF_DURATION_TICKS,
+            u64::from(NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS) < NI_MAI_HU_TI_BUFF_DURATION_TICKS,
             "单环寿命必须短于 buff 窗口，否则无从接力跟随"
         );
     }
@@ -2707,10 +2703,7 @@ mod tests {
     fn p5_ni_mai_hu_ti_cast_ring_and_reemit_ring_share_one_form_spec() {
         let mut app = aura_app();
         let caster = cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
-        let cast_ring = ni_mai_rings(&app)
-            .into_iter()
-            .next()
-            .expect("施放应发首环");
+        let cast_ring = ni_mai_rings(&app).into_iter().next().expect("施放应发首环");
         clear_vfx_events(&mut app);
 
         let moved = DVec3::new(7.0, 2.0, -4.0);
@@ -2779,10 +2772,7 @@ mod tests {
             .expect("重放后锚点仍在");
         assert_eq!(
             (aura.started_at_tick, aura.expires_at_tick),
-            (
-                recast_tick,
-                recast_tick + NI_MAI_HU_TI_BUFF_DURATION_TICKS
-            ),
+            (recast_tick, recast_tick + NI_MAI_HU_TI_BUFF_DURATION_TICKS),
             "重放应把窗口整体后移（insert 覆盖语义），而不是保留旧窗口"
         );
 
