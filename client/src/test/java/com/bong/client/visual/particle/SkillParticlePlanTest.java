@@ -143,6 +143,54 @@ public class SkillParticlePlanTest {
         assertEquals(0.55, pulse.velocityX(), EPS, "断脉爆冲速度应为 spec 的 0.55 格/t");
     }
 
+    /**
+     * 竖直分量的**归属**：FORWARD 取 {@code direction.y × speed}（可俯可仰），
+     * 其余形态取各自 spec 的固定 {@code pulseVertical}。
+     *
+     * <p>为什么单列一条：缺省 direction 退化成 +X（{@code dir[1] == 0}），而两个 FORWARD 形态
+     * （parry / sever）的 {@code pulseVertical} 恰好也都是 0.0——用缺省方向测时<b>两种映射结果
+     * 相同</b>，断言区分不了对错。必须给一个带俯仰的方向才能真正锁住这条映射。
+     */
+    @Test
+    void verticalVelocitySourceDiffersBetweenForwardAndRadialForms() {
+        // 3-4-5 直角三角：normalize 后恰为 {0.6, 0.8, 0.0}，免去浮点噪声。
+        Optional<double[]> pitched = Optional.of(new double[] { 0.6, 0.8, 0.0 });
+
+        // FORWARD：竖直分量来自 direction 本身。
+        for (Object[] forward : new Object[][] {
+            { ZhenmaiPulsePlayer.PARRY_FLASH, 0.35 },
+            { ZhenmaiPulsePlayer.SEVER_SNAP, 0.55 },
+        }) {
+            Identifier id = (Identifier) forward[0];
+            double speed = (Double) forward[1];
+            SkillParticleSpawn.Pulse pulse = assertInstanceOf(SkillParticleSpawn.Pulse.class,
+                ZhenmaiPulsePlayer.plan(payload(id, pitched, OptionalInt.empty(),
+                    Optional.empty(), OptionalInt.empty(), OptionalInt.empty())).get(0));
+
+            assertEquals(0.6 * speed, pulse.velocityX(), EPS, id + " 的水平分量");
+            assertEquals(0.8 * speed, pulse.velocityY(), EPS,
+                id + " 是 FORWARD 形态，竖直分量必须来自 direction.y × speed（仰角要能打出仰角）"
+                    + "——若误取 Form.pulseVertical 会得到 0.0；实际 " + pulse.velocityY());
+            assertEquals(0.0, pulse.velocityZ(), EPS);
+        }
+
+        // RADIAL_*：竖直分量是 spec 的固定值，**不吃** direction.y。
+        for (Object[] radial : new Object[][] {
+            { ZhenmaiPulsePlayer.NEUTRALIZE_DUST, -0.02 },
+            { ZhenmaiPulsePlayer.HARDEN_SHELL, 0.01 },
+        }) {
+            Identifier id = (Identifier) radial[0];
+            double expectedVertical = (Double) radial[1];
+            SkillParticleSpawn.Pulse pulse = assertInstanceOf(SkillParticleSpawn.Pulse.class,
+                ZhenmaiPulsePlayer.plan(payload(id, pitched, OptionalInt.empty(),
+                    Optional.empty(), OptionalInt.empty(), OptionalInt.empty())).get(0));
+
+            assertEquals(expectedVertical, pulse.velocityY(), EPS,
+                id + " 是 RADIAL 形态，竖直分量必须是 spec 的固定值 " + expectedVertical
+                    + "（径向散尘/护壳不该被施法者的俯仰角带跑）；实际 " + pulse.velocityY());
+        }
+    }
+
     // ─── review r1 #2：真环绕（三处）───────────────────────────────────────────────
 
     @Test
