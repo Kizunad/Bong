@@ -631,3 +631,49 @@ Bong 当前"正架 cross punch"基线。所有数值都经过 §11 渲染工具�
 5. **仅单侧声明的轴必须为中立 0.0**。一段写了某轴而另一段没写，等价于另一段把该轴当 0——若声明侧的值非 0，交接瞬间该轴凭空跳变。
 
 **落点**：机制 pin `client/src/test/java/com/bong/client/animation/TwoStageHandoffBlendTest.java`（合成动画锁桥接语义，含 `fadeOut=0` 退化对照）；资产预算 pin `AnimCastTicksAlignmentTest#twoStageHandoffHoldsAcrossEveryReachableLoopPhase()`（真实资产逐相位枚举，覆盖 `[0, 周期)` 全域，是「可达 cast_ticks 取余」的严格超集）；两段式登记表 `TWO_STAGE_PAIRS`（当前 8 对：`sword.infuse` / `anqi.charge_carrier` / `sword_path.heaven_gate` / yidao 5 招）。
+
+---
+
+## §15 easing 的管辖方向 —— 「写在哪帧」决定它管哪一段（plan-skill-anim-fidelity-v1 P6 review r1 定稿，2026-07-21）
+
+> 本节由 plan-skill-anim-fidelity-v1 P6 的 review r1 返工授权追加；**只追加不改写本文档既有段落**，§13 #3 继续有效，本节补的是它落地时的**方向**问题——「发力用 easeIn 族」到底该把 easeIn 写到哪一帧上。
+
+### §15.1 库语义：`before.ease`，管的是「本帧 → 下一帧」
+
+直觉上会以为 easing 描述的是「怎么**到达**这一帧」。**本仓不是。** 读源码得到的事实链：
+
+1. `KeyframeAnimationPlayer#getValueFromKeyframes`（PlayerAnimator 1.0.2，`:354`）：
+   `MathHelper.lerp((data.isEasingBefore ? after.ease : before.ease).invoke(f), before.value, after.value)`。
+2. `KeyframeAnimation.AnimationBuilder.isEasingBefore` 默认 **false**（`KeyframeAnimation.java:594`），只有 JSON 显式写 `easeBeforeKeyframe: true` 才会翻转（`AnimationJson.java:112`）。
+3. 本仓 `client/src/main/resources/assets/bong/player_animation/` 下 **140 份动画无一声明** `easeBeforeKeyframe`（`grep -l easeBeforeKeyframe` 结果为 0）。
+
+⇒ 三条合起来：**某关键帧上写的 easing，管辖的是「本帧 → 下一帧」这一段插值**，不是「上一帧 → 本帧」。
+
+### §15.2 推论：各段 easing 要写在该段的**起始侧**帧上
+
+把 §13 #3 的「蓄势用 easeOut 族、发力用 easeIn 族、收势 easeInOutSine」落到三段式结构上：
+
+| 段 | easing 写在哪些帧 | 写错的后果 |
+|---|---|---|
+| anticipation `[a0, a1]` | tick ∈ `[a0, a1)` | —— |
+| strike `[s0, s1]` | tick ∈ `[s0, s1)` | 写到 `s1`（顶点帧）上 → 实际跑去管 **recovery** 首段 |
+| recovery `[r0, r1]` | tick ∈ `[r0, r1)` | —— |
+
+**特别注意**：strike 段的 easeIn **不要**写在打击顶点帧上。顶点帧是 strike 的**末**帧，它的 easing 管的是顶点之后的收势段；发力加速要写在顶点**之前**的帧上。
+
+**踩过的两个坑**（均由 review r1 揪出，同一 off-by-one）：
+
+- `anqi_single_snipe`：生成器 docstring 白纸黑字写着「strike 4→6 弹射出手（easeIn 族 INQUAD）」，但 INQUAD 被放在顶点帧 `tick 6` 上——实际管的是 recovery `6→8`，而 strike 段 `4→6` 反被 `t4` 的 OUTSINE 管成**减速**，与作者本意正好相反：一记本该越甩越快的鞭甩弹射，实际是出手即泄力。
+- `stance_woliu`：strike 段 `8→20` 四帧全 `INOUTSINE`，整段没有任何加速，托举读不出「撑开」的力。
+
+**正例形态**（`beng_quan`，strike `[5,11]`）：`t5` OUTSINE（承蓄势末尾）→ `t7` INQUAD → `t8` INQUAD（发力加速，两帧都在段内）→ `t10` OUTQUAD（逼近顶点减速定格）→ `t11` INOUTSINE（交接收势）。新招按此排布。
+
+### §15.3 机械锁
+
+`AnimCastTicksAlignmentTest#strikePhaseCarriesEaseInDrive()`：按 spec manifest 的 strike 边界，断言该段内**至少一帧**触及声明的主打击轴且为 easeIn 族（`IN*` 排除 `INOUT*`，覆盖 `Ease` 枚举全部 easeIn 常量）。断言区间取**半开** `[strikeFrom, strikeTo)`，依据即 §15.1。
+
+设这条锁的原因：原有 `assertAxisDense` 只断言 easing「显式且非 linear」，而 `INOUTSINE` 两条都满足——于是整条 strike 段一个加速帧都没有也照样放行，§13 #3 的「发力」这一半此前是**没有机器把关的**。
+
+**豁免**：instant 型（`INSTANT_RESOLVER_SKILLS`，见 §13 #2 例外 ③）strike 顶点即 tick 0、开帧就是命中姿态，其后只有余韵与收势，没有「加速撞击」相位，easeOut 从 t0 起才是正确形态，故结构性豁免。为防「随手加个 `instant: true` 就能绕过」，该用例**反向核验**：任何声明 instant 的 manifest 必须确实登记在 `INSTANT_RESOLVER_SKILLS` 里。segment 型（loop 蓄力 / charge_hold 充能）无自身 strike 段（strike 归其 release 段），同样不适用。
+
+> **存量未审**：本锁只保证「strike 段内有发力帧」。§15.1 的方向问题在 anticipation / recovery 两段上是否也有存量写反，尚未全量审计——见 plan-skill-anim-fidelity-v1 Finish Evidence 遗留第 4 条。

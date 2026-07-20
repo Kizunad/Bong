@@ -239,7 +239,18 @@ P5 首版把三处「环绕」（`zhenmai.multipoint` / `burst_meridian.ni_mai_h
   - **客户端桥接 pin** ✅ `TwoStageHandoffBlendTest` 4 例（合成动画锁桥接语义，与资产预算 pin 互补不重叠）：任意相位交接瞬间姿态连续、全程不穿 vanilla、淡出后收敛到 release 且层不泄漏，外加 `fadeOut = 0` 退化对照——**实测该退化下姿态塌回 vanilla 中立而非 release 首帧**（比预想更糟：玩家会看到手臂先弹回下垂再抬起），故 `fadeOut > 0` 入硬约束。
 - **`stance_woliu` + `stance_zhenmai`「一次性亮相」遗留清偿** ✅（§8.1 #2 第 4 条）：两张资产原为 `isLoop:true` 站桩，但 `emit_technique_learned_stance_triggers` 只单发一次 `PlayAnim`、全仓无持续架势状态可驱动循环、也无任何 `StopAnim` —— 即 conventions §13 #6 红线违例。改为一次性亮相（`isLoop:false` + 收势回中立）：`stance_woliu` 32t「吸→吐」沉身收拢后双掌外旋托举撑开涡场；`stance_zhenmai` 28t「提指取穴→下针」以指代针前点、发力由 `torso.yaw` 送肩承担。顺带清偿两笔精度欠账（woliu 原 3 帧点间隔 20t、且除双臂外全身不动；zhenmai 原 3 帧点**逐字节完全相同**即静止图空转）。走视觉资产纪律 3 轮打磨：round 2 出三视图自评抓到并修复两处**远距离读招**缺陷（针脉正前方直点透视缩短成一个点 → 外分成斜线剪影；涡流双臂完全镜像只读作「举起双手」→ 螺旋错高），终轮 commit 带 `<PROMISE>`。补三段式 spec manifest 机械锁。
 - **TPV 实机验收（完成判据）** ✅：终轮全帧三视图存档 + 逐招人工验收 checklist 落 `client/tools/renders/stance_p6/`（沿用 PR-6 `yidao_p4/` 形态：grid PNG + `README.md`）。checklist 五栏（双手职责 / 姿态母题兑现 / 重心与全身协调 / 收势归中立 / 远距离可辨性），并明写哪些项已由机器断言因而不依赖肉眼，把人工验收收敛到真正只能用眼睛判的部分。**互不混淆判定**：涡流峰值 =「双臂上举、左右不等高」，针脉峰值 =「单臂斜伸 + 另一臂胸前虚扶 + 躯干拧转」。
-- **FPV 兼容性冒烟（非阻塞，不作为完成判据）**：现状第一人称渲染路径（`THIRD_PERSON_MODEL`）未改动，无回归。真正的第一人称手臂验收仍归梯队三 `plan-fpv-cast-av-v1` P5。
+- **FPV 兼容性冒烟（非阻塞，不作为完成判据）**：现状第一人称渲染路径（`THIRD_PERSON_MODEL`）未改动，无**路径**回归。真正的第一人称手臂验收仍归梯队三 `plan-fpv-cast-av-v1` P5。
+  - **判定从断言升级为机械证据**（review r1 #2 返工）：FPV 渲染路径的全部生产代码面 = ① `client/src/main/java/com/bong/client/animation/BongAnimationPlayer.java`（全仓**唯一**设置 `FirstPersonMode.THIRD_PERSON_MODEL` 的地方，同时掌管 fade-in/out 与 `ModifierLayer` 层管理，即任何动画进入 FPV 管线的必经口）、② `client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java`（该模式下 FPV 持握物注入）。判定命令与结果：
+    ```bash
+    git diff --stat origin/main...HEAD -- \
+      client/src/main/java/com/bong/client/animation/BongAnimationPlayer.java \
+      client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java
+    # → 空输出（零改动）
+    git diff --name-only origin/main...HEAD -- 'client/src/main/java/**'
+    # → 空输出（本 plan 全程未改动任何 client 生产 java）
+    ```
+  - **为什么「零改动即无路径回归」成立**：一份动画能否在 FPV 下被看到、以什么姿态被看到，只由三件事决定——(a) 该层被设成哪种 `FirstPersonMode`、(b) FPV 持握物渲染是否被接管、(c) 动画数据本身。(a)(b) 两项的代码逐字节未变（上方命令为证），(c) 在本 plan 内变化的只是 `player_animation/*.json` 数据，而 `THIRD_PERSON_MODEL` 对同一份数据在 FPV 与 TPV 走的是**同一套上半身模型渲染**，不存在只在 FPV 生效的分支逻辑。故本 plan 不可能引入「TPV 正常、FPV 坏掉」的路径级回归。
+  - **本条明确不主张的内容**（避免与梯队三职责混淆）：零改动**不等于**逐招 FPV 取景已验收——新资产的手臂是否落在第一人称视野内（conventions §3 的可见性判据）属于**资产取景**问题而非路径问题，必须实机逐招看，这正是梯队三 `plan-fpv-cast-av-v1` P5 的交付物。本 plan 从 P0 起即把 FPV 列为非阻塞冒烟、完成判据取 TPV 实机验收（见上一条），两处口径一致。
 - **server 侧映射表单测** ✅：核验结论 —— 本 plan 触碰过 `vfx_animation_trigger.rs` 的 PR 仅 PR-3/4/5，涉及 `emit_sword_path_visual_triggers` / `emit_anqi_visual_triggers` / `emit_dugu_needle_visual_triggers` / `emit_woliu_v1_vortex_visual_triggers`，**每个都已配 pin 测试**（随各自批次交付）。P6 在此基础上补 3 条契约级 pin：`anqi_two_stage_handoff_satisfies_phase_handoff_contract`（§14.2 的 fade 形状：`fade_out ≥ 2`、release `fade_in ≤ fade_out`、两段同 priority，且两个 fade 值都要求显式 `Some(..)` 不许回落客户端默认）、`heaven_gate_two_stage_uses_same_priority_for_both_phases`、`stance_reveal_play_anim_carries_explicit_cold_start_fade_in`（架势亮相是**冷起手**故要求 `fade_in ≥ 3`，方向与两段式 release 的「热交接宜短」相反，此前 `assert_play_anim` 用 `..` 丢弃该值、全无覆盖）。
   - 顺带登记（**不在本 plan 范围**）：`emit_defense_animation_triggers` / `emit_baomai_v3_visual_triggers` / `emit_scroll_read_stop_for_entity` 三个 arm 至今零 pin 测试，`emit_tribulation_animation_triggers` 仅有间接覆盖——均为本 plan 未触碰的**存量**缺口，见下「遗留与后续」。
 
@@ -447,20 +458,24 @@ P5 首版把三处「环绕」（`zhenmai.multipoint` / `burst_meridian.ni_mai_h
 | `5f95a97c3` | 2026-07-21 | P6：server 侧补相位承接契约与架势亮相的 payload pin |
 | `8bac838b0` / `b1b67d15a` / `cfedb6656` | 2026-07-21 | P6 架势亮相重制 round 1/2/3（终轮附 `<PROMISE>` + 三视图存档） |
 | `c72aa4228` | 2026-07-21 | P6：补全 plan 全量动画资源 pin（`BongAnimationRegistry.contains`，56 条） |
+| `2ee733501` | 2026-07-21 | P6：补通用停止路径的相位承接契约守卫（主干核验补漏） |
+| `c75c5c63e` | 2026-07-21 | review r1 #1/#3 资产侧：strike 发力 easing 修正（含 `anqi_single_snipe` off-by-one）+ 亮相 description 收敛 |
+| `529f59bfb` | 2026-07-21 | review r1 #1 锁侧：`strikePhaseCarriesEaseInDrive` 机械锁 + instant 豁免反向核验（三发变异验证） |
 
 ### 测试结果
 
-- **server**：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` —— FMT:0 / CLIPPY:0 / TEST:0，**11870 passed / 0 failed / 6 ignored**（全 target 合计：lib 11854 + 集成 binary 11/1/4）。P6 的净增量为 **+3**，由 diff 机械证明：`git diff origin/main HEAD -- server/` 只触及 `vfx_animation_trigger.rs` 一个文件，新增 `#[test]` 3 条、删除 0 条。`network::vfx_animation_trigger` 子集 **91 passed**（88 → 91）。
+- **server**：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` —— FMT:0 / CLIPPY:0 / TEST:0，**11871 passed / 0 failed / 6 ignored**（5 个 test binary 汇总，无非 ok）。P6 的净增量为 **+4**，由 diff 机械证明：`git diff origin/main...HEAD -- server/` 只触及 `vfx_animation_trigger.rs` 与 `cast_emit.rs` 两个文件，新增 `#[test]` 4 条、删除 0 条。（本行数字为 **review r1 返工后**的实测值；r1 未改动任何 server 代码，4 条净增全部来自 P6 本体的 3 条 payload pin + `2ee733501` 补的通用停止路径相位承接守卫 1 条。）
   > 口径说明：PR-7 记录的 11856 是**该 PR 本地门禁**的数字，与本分支 base（`origin/main` = PR-7 的 merge commit `14f8f5e1f`）实测不一致——按上述 diff，差额不由 P6 引入（本 PR 只增不减测试）。以本节实测值为准。
-- **client**：`cd client && ./gradlew test build` —— BUILD SUCCESSFUL，**4221 tests / 0 failures / 0 skipped**（PR-7 基线 4213 之上净增 **+8**，与 diff 一致：新增 `@Test` 8 条、删除 0 条；`AnimCastTicksAlignmentTest` +4、`TwoStageHandoffBlendTest` +4）。`AnimCastTicksAlignmentTest` 单类 **12 passed**。
+- **client**：`cd client && ./gradlew test build` —— BUILD SUCCESSFUL，**4222 tests / 0 failures / 0 skipped**（PR-7 基线 4213 之上净增 **+9**，与 diff 一致：`git diff origin/main...HEAD -- 'client/src/test/**'` 新增 `@Test` 9 条、删除 0 条；`AnimCastTicksAlignmentTest` +5、`TwoStageHandoffBlendTest` +4）。`AnimCastTicksAlignmentTest` 单类 **13 passed**。第 9 条即 review r1 新增的 `strikePhaseCarriesEaseInDrive`（12 → 13）。
 - **归档后复跑**：`git mv` 入 `docs/finished_plans/` 后 client 门禁**再跑一次**并绿（上列 4221/0 即归档后的数字）。`SkillParticleSpecDocTest` 经 `client/build.gradle:215-229` 的双路径 task input 与测试内 `PLAN_CANDIDATES` 双候选，路径变更后仍能定位 plan §P5.1 表格；并已核对其 JUnit XML 时间戳确认该类**确实重新执行**（4 例全绿）而非被判 UP-TO-DATE 跳过——「只改真源不改测试源就静默跳过」正是该 task input 要防的漂移。
 - **突变验证（防空测试）**：相位预算降到 40°（低于实测最大 46°）→ `twoStageHandoffHoldsAcrossEveryReachableLoopPhase` 撞红；`FIXED_PHASE_CHARGE_SKILLS` 期望 endTick 改 61 → `fixedPhaseChargeSeamIsExactAndNonLooping` 撞红；资源 pin 塞入不存在的 id → `everyPlanAnimIdResolvesThroughProductionRegistry` 撞红。
+  - **review r1 新锁的三发变异**（`strikePhaseCarriesEaseInDrive`，全部撞红、恢复后复绿）：① `stance_woliu` strike 三帧改回 `INOUTSINE` → FAILED，报文列出实际 easing `{8=INOUTSINE, 12=INOUTSINE, 16=INOUTSINE}` 并指明发力帧须落在段起始侧；② `anqi_single_snipe` 还原 `t4=OUTSINE / t6=INQUAD` 的 off-by-one 形态 → FAILED；③ 给**未登记**的 `beng_quan` manifest 强加 `instant: true` 试图绕过豁免 → FAILED。第 ③ 发专测「豁免通道本身不可被滥用」，是本锁与 PR-7 r1「只测枚举映射」式失效的关键区别。
 - **e2e**：`bash scripts/smoke-test-e2e.sh` 由 CI `e2e` job 在 PR HEAD 执行（`.github/workflows/e2e.yml:144`），按 §测试声明 的证据口径引用对应 HEAD 的绿色 job。
 
 ### 跨仓库核验（命中 symbol）
 
 - **server**：`vfx_animation_trigger::{emit_sword_path_visual_triggers, emit_anqi_visual_triggers, emit_technique_learned_stance_triggers, emit_dugu_needle_visual_triggers, emit_woliu_v1_vortex_visual_triggers}`；`ANIM_SWORD_HEAVEN_GATE_{CHARGE,RELEASE}` / `ANIM_ANQI_CHARGE{,_RELEASE}` / `ANIM_STANCE_{WOLIU,ZHENMAI}`；`cast_emit::{looping_cast_anim_id, cast_loop_stop_anim_request, CAST_LOOP_ANIM_*_FADE_OUT_TICKS}`；`combat::yidao::{YidaoSkillId::loop_anim_id, release_anim_id, yidao_loop_anim_for_skill_id}`；`combat::sword_basics::{ANIM_SWORD_INFUSE_CHARGE, ANIM_SWORD_INFUSE_RELEASE}`；`sword_path::heaven_gate::HEAVEN_GATE_CHARGE_END`；`cultivation::technique_cast_ticks_snapshot_test`；`network::skill_vfx_wiring`。
-- **client**：`BongAnimationRegistry.{contains, get, sourceOf}`；`BongAnimationPlayer.{playOnStack, stopOnStack}`；`AnimationLayerManager.{playOnStack, Channel.UPPER_BODY, channelForPriority}`；`ClientAnimationBridge.{playAnim, stopAnim}`；`VfxEventRouter`；测试侧 `AnimCastTicksAlignmentTest.{SKILL_ANIM, TWO_STAGE_PAIRS, FIXED_PHASE_CHARGE_SKILLS, INSTANT_RESOLVER_SKILLS, CAST_ALIGNMENT_ALLOWLIST, P0_BASELINE}` / `TwoStageHandoffBlendTest` / `ProductionAnimationResources.loadViaProductionReloadCallback`。
+- **client**：`BongAnimationRegistry.{contains, get, sourceOf}`；`BongAnimationPlayer.{playOnStack, stopOnStack}`；`AnimationLayerManager.{playOnStack, Channel.UPPER_BODY, channelForPriority}`；`ClientAnimationBridge.{playAnim, stopAnim}`；`VfxEventRouter`；测试侧 `AnimCastTicksAlignmentTest.{SKILL_ANIM, TWO_STAGE_PAIRS, FIXED_PHASE_CHARGE_SKILLS, INSTANT_RESOLVER_SKILLS, CAST_ALIGNMENT_ALLOWLIST, P0_BASELINE, strikePhaseCarriesEaseInDrive}` / `TwoStageHandoffBlendTest` / `ProductionAnimationResources.loadViaProductionReloadCallback`。
 - **agent**：本 plan 纯表现层，**不涉及** agent 侧 schema 与 IPC（§8.1 #1 决议：cast_ticks / 冷却 / 伤害零改动）。
 - **共享契约**：`bong:vfx_event` 的 `PlayAnim { anim_id, priority, fade_in_ticks }` / `StopAnim { anim_id, fade_out_ticks }`（`server/src/schema/vfx_event.rs`）；checked-in 快照 `technique_cast_ticks_snapshot.json`（server 单向生成 → client 只消费）。
 
@@ -471,6 +486,7 @@ P5 首版把三处「环绕」（`zhenmai.multipoint` / `burst_meridian.ni_mai_h
 1. `CAST_ALIGNMENT_ALLOWLIST` 余 **1 条** `woliu.vortex_resonance`：归 `docs/plans-skeleton/plan-bughunt-woliu-resonance-loop-arm-decay-v1.md`（**未消费骨架**，P0 ⬜）。实测 11 轴违反 endTick 同值补帧。该骨架被消费并 merge 后，`allowlistEntriesActuallyFailAlignment` 会因「条目已达标」立刻撞红，**强制**删除该条目——棘轮自带回收机制，无需人工记得。
 2. `woliu_vortex_resonance` 至今**无 spec manifest**（故不受 `specManifestsEnforcePrecisionStandardMechanically` 覆盖）；上述 bugfix 落地时应同批补一份 `{"segment":"loop"}` manifest。
 3. 架势亮相目前只在「习得时刻」单发。若日后落地**持续架势 gameplay 状态**需要循环形态，按 §8.1 #2 第 4 条原话另议新增循环资产，**不要**把这两张亮相图改回 `isLoop`（会重新引入无停止路径的红线违例）。
+4. **easing 管辖方向的存量未审**（review r1 副产物，建议单独 bugfix plan）：r1 返工期间读 PlayerAnimator 源码确认了本仓 easing 的真实语义是 `before.ease`——**某帧的 easing 管辖「本帧 → 下一帧」**（`isEasingBefore` 默认 false + 全仓 140 份动画无一声明 `easeBeforeKeyframe`；完整推导与正例落 conventions §15）。据此新设的 `strikePhaseCarriesEaseInDrive` 当场揪出两处写反：`stance_woliu`（strike 全段 INOUTSINE，无发力）与 `anqi_single_snipe`（生成器 docstring 写明要 easeIn，但 INQUAD 放在**顶点帧**上，实际管的是 recovery，strike 反被 OUTSINE 管成减速），两处均已修。**但本锁只覆盖 strike 段「是否存在发力帧」这一条**；anticipation 段的 easeOut、recovery 段的 easeInOutSine 是否也存在同类 off-by-one，**尚未全量审计**——`anqi_single_snipe` 的形态说明这类错误能长期潜伏且不被任何测试察觉（它甚至通过了自己批次的三视图人工验收，因为 `render_animation.py` 出图用线性插值、**对 easing 完全不敏感**，肉眼验收天然看不见 easing 错误）。建议立 bugfix plan 全量扫 140 份资产的三段 easing 方向，并把 anticipation/recovery 两段的族别一并机械化。
 
 **PR-7 移交的五条遗留（本 plan 范围外，登记不实施）**
 
