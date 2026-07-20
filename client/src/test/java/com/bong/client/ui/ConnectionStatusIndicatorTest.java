@@ -76,7 +76,8 @@ class ConnectionStatusIndicatorTest {
 
     @Test
     void disconnect_toast_once() {
-        ClientConnectionStatusStore.markDisconnected(1_000L);
+        Object handler = connectAt(500L);
+        assertTrue(ClientConnectionStatusStore.invalidateSession(handler, 1_000L));
         ClientConnectionStatusStore.tick(12_000L);
         long firstExpiry = BongToast.current(12_001L).expiresAtMillis();
 
@@ -89,9 +90,10 @@ class ConnectionStatusIndicatorTest {
 
     @Test
     void reconnect_toast_after_red() {
-        ClientConnectionStatusStore.markDisconnected(1_000L);
+        Object oldHandler = connectAt(500L);
+        assertTrue(ClientConnectionStatusStore.invalidateSession(oldHandler, 1_000L));
         ClientConnectionStatusStore.tick(12_000L);
-        ClientConnectionStatusStore.markConnected(13_000L);
+        connectAt(13_000L);
         ClientConnectionStatusStore.tick(13_000L);
 
         assertEquals("天道重注", BongToast.current(13_001L).text().getString());
@@ -99,10 +101,21 @@ class ConnectionStatusIndicatorTest {
 
     @Test
     void connection_status_uses_measuring_time_without_breaking_toast_wall_time() {
-        ClientConnectionStatusStore.markDisconnected(1_000L);
+        Object handler = connectAt(500L);
+        assertTrue(ClientConnectionStatusStore.invalidateSession(handler, 1_000L));
         ClientConnectionStatusStore.tick(12_000L, 50_000L);
 
         assertFalse(BongToast.current(50_001L).isEmpty());
         assertEquals(53_000L, BongToast.current(50_001L).expiresAtMillis());
+    }
+
+    private static Object connectAt(long nowMs) {
+        Object handler = new Object();
+        ClientConnectionStatusStore.initializeSession(handler);
+        assertTrue(
+            ClientConnectionStatusStore.activateSession(handler, nowMs),
+            "JOIN 必须激活 INIT 已分配的物理连接 token"
+        );
+        return handler;
     }
 }

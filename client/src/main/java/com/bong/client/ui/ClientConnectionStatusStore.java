@@ -4,91 +4,185 @@ import com.bong.client.hud.BongToast;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.PlayerListEntry;
 
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+
 public final class ClientConnectionStatusStore {
     private static final Object LOCK = new Object();
+    /**
+     * Fabric 为每条物理 PLAY 连接创建独立 ClientPlayNetworkHandler。这里按 identity
+     * 保存 INIT 时分配的不可变 token；禁止用 equals() 把两个 handler 合并成一条 session。
+     */
+    private static final Map<Object, SessionToken> SESSION_TOKENS = new IdentityHashMap<>();
+
     private static volatile boolean observed;
     private static volatile boolean connected;
     private static volatile long connectedAtMs;
     private static volatile long lastPayloadAtMs;
     private static volatile long disconnectedAtMs;
-    /**
-     * 连接代次：每次 {@link #markConnected(long)} / {@link #markDisconnected(long)} 递增。
-     * 收包时刻捕获的 generation 与当前不一致时，禁止 stale task 复活 connected
-     * 或刷新 lastPayloadAtMs。
-     */
-    private static volatile long connectionGeneration;
+    private static long nextSessionSequence;
+    private static SessionToken activeSessionToken;
     private static volatile ConnectionStatusIndicator.Status lastStatus = ConnectionStatusIndicator.Status.HIDDEN;
 
     private ClientConnectionStatusStore() {
     }
 
-    /** 当前连接代次（线程安全）。receiver 应在收包瞬间捕获并随 task 传递。 */
-    public static long currentGeneration() {
-        synchronized (LOCK) {
-            return connectionGeneration;
-        }
-    }
+    /**
+     * 每个物理 ClientPlayNetworkHandler 的不可变 session token。
+     * 构造器私有，只有 {@link #initializeSession(Object)} 能分配，调用方无法按序号伪造 token。
+     */
+    public static final class SessionToken {
+        private final long sequence;
 
-    /** stale task / 旧连接 payload 判定：generation 必须仍是当前代次。 */
-    public static boolean isCurrentGeneration(long generation) {
-        synchronized (LOCK) {
-            return generation == connectionGeneration;
+        private SessionToken(long sequence) {
+            this.sequence = sequence;
         }
-    }
 
-    public static void markConnected(long nowMs) {
-        synchronized (LOCK) {
-            long now = Math.max(0L, nowMs);
-            connectionGeneration++;
-            observed = true;
-            connected = true;
-            connectedAtMs = now;
-            lastPayloadAtMs = now;
-            disconnectedAtMs = 0L;
+        @Override
+        public String toString() {
+            return "SessionToken[" + sequence + "]";
         }
     }
 
     /**
-     * 以<strong>当前</strong>连接代次标记载荷到达（收包时刻语义）。
-     * 其他 channel 仍可在 network thread 直接调用；store 内部 synchronized。
+     * Fabric {@code ClientPlayConnectionEvents.INIT} 入口。
+     *
+     * <p>INIT 在 ClientPlayNetworkHandler 构造末尾、任何 PLAY payload 可达前同步触发。
+     * 同一 handler 的重复 INIT 幂等返回原 token，绝不为同一物理连接换代。</p>
      */
-    public static void markPayloadReceived(long nowMs) {
-        long generation;
+    public static SessionToken initializeSession(Object handler) {
+        Objects.requireNonNull(handler, "handler");
         synchronized (LOCK) {
-            generation = connectionGeneration;
-        }
-        markPayloadReceived(nowMs, generation);
-    }
-
-    /**
-     * 以收包瞬间捕获的 generation + receivedAt 标记载荷。
-     * generation 与当前代次不一致时整段 no-op，防止 disconnect-before-drain /
-     * reconnect 后的 stale task 把状态机复活为 connected 或用 processing time 污染 freshness。
-     * 同一代次的跨 channel / queue 乱序不得让 lastPayloadAtMs 回退。
-     */
-    public static void markPayloadReceived(long nowMs, long generation) {
-        synchronized (LOCK) {
-            if (generation != connectionGeneration) {
-                return;
+            SessionToken existing = SESSION_TOKENS.get(handler);
+            if (existing != null) {
+                return existing;
             }
+            final long sequence;
+            try {
+                sequence = Math.incrementExact(nextSessionSequence);
+            } catch (ArithmeticException overflow) {
+                throw new IllegalStateException("Client connection session token sequence exhausted", overflow);
+            }
+            SessionToken token = new SessionToken(sequence);
+            SESSION_TOKENS.put(handler, token);
+            return token;
+        }
+    }
+
+    /** raw receiver 必须按 Fabric 传入的 handler 捕获 token；未注册 handler 返回 empty。 */
+    public static Optional<SessionToken> sessionToken(Object handler) {
+        if (handler == null) {
+            return Optional.empty();
+        }
+        synchronized (LOCK) {
+            return Optional.ofNullable(SESSION_TOKENS.get(handler));
+        }
+    }
+
+    /**
+     * Fabric {@code JOIN} 入口：只激活 INIT 已分配的 token，不分配、不换代。
+     * 未注册 handler fail closed，返回 false 且不改变连接状态。
+     */
+    public static boolean activateSession(Object handler, long nowMs) {
+        if (handler == null) {
+            return false;
+        }
+        synchronized (LOCK) {
+            SessionToken token = SESSION_TOKENS.get(handler);
+            if (token == null) {
+                return false;
+            }
+
             long now = Math.max(0L, nowMs);
-            observed = true;
-            connected = true;
-            if (connectedAtMs == 0L) {
+            if (activeSessionToken != token) {
+                activeSessionToken = token;
                 connectedAtMs = now;
+                lastPayloadAtMs = now;
+            } else {
+                // JOIN 回调意外重复时保持同一 session 的 freshness 单调，不重置历史。
+                if (connectedAtMs == 0L) {
+                    connectedAtMs = now;
+                }
+                lastPayloadAtMs = Math.max(lastPayloadAtMs, now);
             }
-            lastPayloadAtMs = Math.max(lastPayloadAtMs, now);
+            observed = true;
+            connected = true;
             disconnectedAtMs = 0L;
+            return true;
         }
     }
 
-    public static void markDisconnected(long nowMs) {
+    /**
+     * Fabric {@code DISCONNECT} 入口：同步移除 handler→token 映射，使已排队 task 立即失效。
+     *
+     * @return true 仅当该 handler 正是当前 active session；调用方只有此时才应排全局 store 清理。
+     *         INIT 后 JOIN 前断线、重复断线、旧 handler 的迟到断线都返回 false，避免误清新 session。
+     */
+    public static boolean invalidateSession(Object handler, long nowMs) {
+        if (handler == null) {
+            return false;
+        }
         synchronized (LOCK) {
-            connectionGeneration++;
+            SessionToken token = SESSION_TOKENS.remove(handler);
+            if (token == null || activeSessionToken != token) {
+                return false;
+            }
+
+            activeSessionToken = null;
             observed = true;
             connected = false;
             disconnectedAtMs = Math.max(0L, nowMs);
+            return true;
         }
+    }
+
+    /** queued payload task 只有在捕获 token 仍是当前已激活 session 时才可执行。 */
+    public static boolean isActiveSession(SessionToken token) {
+        if (token == null) {
+            return false;
+        }
+        synchronized (LOCK) {
+            return connected && activeSessionToken == token;
+        }
+    }
+
+    /**
+     * 以当前已激活 session 标记载荷到达（收包时刻语义）。
+     * 其他 channel 仍可在 network thread 调用；INIT 后 JOIN 前或 DISCONNECT 后均 fail closed。
+     */
+    public static void markPayloadReceived(long nowMs) {
+        synchronized (LOCK) {
+            if (!connected || activeSessionToken == null) {
+                return;
+            }
+            markPayloadReceivedLocked(nowMs);
+        }
+    }
+
+    /**
+     * 以 raw receiver 捕获的不可变 token + receivedAt 标记载荷。
+     * token 已失效或尚未 JOIN 激活时整段 no-op；同一 token 内乱序、0/负时间戳不得回退 freshness。
+     */
+    public static void markPayloadReceived(long nowMs, SessionToken token) {
+        synchronized (LOCK) {
+            if (!connected || token == null || activeSessionToken != token) {
+                return;
+            }
+            markPayloadReceivedLocked(nowMs);
+        }
+    }
+
+    private static void markPayloadReceivedLocked(long nowMs) {
+        long now = Math.max(0L, nowMs);
+        observed = true;
+        connected = true;
+        if (connectedAtMs == 0L) {
+            connectedAtMs = now;
+        }
+        lastPayloadAtMs = Math.max(lastPayloadAtMs, now);
+        disconnectedAtMs = 0L;
     }
 
     public static ConnectionStatusIndicator.Snapshot snapshot(long nowMs) {
@@ -137,12 +231,14 @@ public final class ClientConnectionStatusStore {
 
     public static void resetForTests() {
         synchronized (LOCK) {
+            SESSION_TOKENS.clear();
             observed = false;
             connected = false;
             connectedAtMs = 0L;
             lastPayloadAtMs = 0L;
             disconnectedAtMs = 0L;
-            connectionGeneration = 0L;
+            nextSessionSequence = 0L;
+            activeSessionToken = null;
             lastStatus = ConnectionStatusIndicator.Status.HIDDEN;
         }
     }

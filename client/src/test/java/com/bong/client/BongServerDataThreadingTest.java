@@ -1,5 +1,6 @@
 package com.bong.client;
 
+import bong.Envelope;
 import com.bong.client.combat.CastState;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.UnifiedEventStore;
@@ -7,6 +8,7 @@ import com.bong.client.craft.CraftOutcomeFeedback;
 import com.bong.client.craft.CraftScreen;
 import com.bong.client.craft.CraftStore;
 import com.bong.client.craft.WorkbenchScreen;
+import com.bong.client.network.ProtoServerDataBridge;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataRouter;
 import com.bong.client.ui.ClientConnectionStatusStore;
@@ -23,9 +25,11 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BongServerDataThreadingTest {
@@ -33,6 +37,7 @@ class BongServerDataThreadingTest {
     private static final String CLIENT_THREAD = "minecraft-client-render-test";
 
     private final List<Runnable> clientTasks = new CopyOnWriteArrayList<>();
+    private Object activeHandler;
 
     @BeforeEach
     void setUp() {
@@ -41,7 +46,18 @@ class BongServerDataThreadingTest {
         CastStateStore.resetForTests();
         UnifiedEventStore.resetForTests();
         ClientConnectionStatusStore.resetForTests();
-        ClientConnectionStatusStore.markConnected(1_000L);
+        activeHandler = new Object();
+        ClientConnectionStatusStore.SessionToken token =
+            ClientConnectionStatusStore.initializeSession(activeHandler);
+        assertSame(
+            token,
+            ClientConnectionStatusStore.initializeSession(activeHandler),
+            "同一物理 handler 的重复 INIT 必须幂等返回原 token"
+        );
+        assertTrue(
+            ClientConnectionStatusStore.activateSession(activeHandler, 1_000L),
+            "测试前置连接必须激活 INIT 已分配的 token"
+        );
     }
 
     @AfterEach
@@ -247,14 +263,14 @@ class BongServerDataThreadingTest {
     @Test
     void markConnectionPayloadUsesReceiptTimestampNotProcessingTime() {
         long receiptAt = 2_500L;
-        long generation = ClientConnectionStatusStore.currentGeneration();
 
         runNamedThread(NETWORK_THREAD, () -> dispatch(
-            craftOutcome("completed", "craft.freshness"),
+            activeHandler,
+            craftOutcome("completed", "craft.freshness").getBytes(StandardCharsets.UTF_8),
             ServerDataRouter.createDefault(),
             (dispatch, type) -> {},
             receiptAt,
-            generation
+            ProtoServerDataBridge::bridge
         ));
 
         assertEquals(
@@ -265,7 +281,6 @@ class BongServerDataThreadingTest {
         );
         assertEquals(1, clientTasks.size(), "payload 应精确排入一个 client task");
 
-        // 模拟 queue 堵塞：处理时刻远晚于收包时刻
         runNextClientTask();
 
         assertEquals(
@@ -276,15 +291,16 @@ class BongServerDataThreadingTest {
         );
         assertTrue(
             ClientConnectionStatusStore.connectedForTests(),
-            "合法当前代次 payload 应保持 connected"
+            "合法当前 session payload 应保持 connected"
         );
     }
 
     @Test
-    void delayedSameGenerationTaskKeepsNewerCrossChannelFreshnessAndRoutesExactlyOnce() {
+    void delayedSameTokenTaskKeepsNewerCrossChannelFreshnessAndRoutesExactlyOnce() {
         long delayedReceiptAt = 2_500L;
         long newerCrossChannelReceiptAt = 2_600L;
-        long generation = ClientConnectionStatusStore.currentGeneration();
+        ClientConnectionStatusStore.SessionToken token =
+            ClientConnectionStatusStore.sessionToken(activeHandler).orElseThrow();
         AtomicInteger storeSideEffects = new AtomicInteger();
         List<String> routedRecipes = new CopyOnWriteArrayList<>();
         CraftStore.addOutcomeListener(event -> {
@@ -293,11 +309,12 @@ class BongServerDataThreadingTest {
         });
 
         runNamedThread(NETWORK_THREAD, () -> dispatch(
-            craftOutcome("completed", "craft.freshness.delayed"),
+            activeHandler,
+            craftOutcome("completed", "craft.freshness.delayed").getBytes(StandardCharsets.UTF_8),
             ServerDataRouter.createDefault(),
             (dispatch, type) -> {},
             delayedReceiptAt,
-            generation
+            ProtoServerDataBridge::bridge
         ));
 
         assertEquals(1, clientTasks.size(),
@@ -305,21 +322,19 @@ class BongServerDataThreadingTest {
         assertEquals(0, storeSideEffects.get(),
             "drain 前 route→CraftStore 副作用不得提前发生；实际次数=" + storeSideEffects.get());
 
-        // 模拟同一连接代次中，另一个 channel 在排队 task drain 前收到更新鲜的 payload。
-        ClientConnectionStatusStore.markPayloadReceived(newerCrossChannelReceiptAt, generation);
-        ClientConnectionStatusStore.markPayloadReceived(0L, generation);
-        ClientConnectionStatusStore.markPayloadReceived(-1L, generation);
+        ClientConnectionStatusStore.markPayloadReceived(newerCrossChannelReceiptAt, token);
+        ClientConnectionStatusStore.markPayloadReceived(0L, token);
+        ClientConnectionStatusStore.markPayloadReceived(-1L, token);
         assertEquals(
             newerCrossChannelReceiptAt,
             ClientConnectionStatusStore.lastPayloadAtMsForTests(),
-            "前置条件失败：跨 channel 新 payload 应把 freshness 推进到 "
-                + newerCrossChannelReceiptAt
-                + "，同 generation 的 0/负时间戳不得回退；实际="
+            "跨 channel 新 payload 应把 freshness 推进到 " + newerCrossChannelReceiptAt
+                + "，同 token 的 0/负时间戳不得回退；实际="
                 + ClientConnectionStatusStore.lastPayloadAtMsForTests()
         );
         assertTrue(
             ClientConnectionStatusStore.connectedForTests(),
-            "同 generation 的新 payload 应保持 connected；实际 connected="
+            "同 token 的新 payload 应保持 connected；实际 connected="
                 + ClientConnectionStatusStore.connectedForTests()
         );
 
@@ -328,14 +343,9 @@ class BongServerDataThreadingTest {
         assertEquals(
             newerCrossChannelReceiptAt,
             ClientConnectionStatusStore.lastPayloadAtMsForTests(),
-            "同 generation 的延迟 task 收包时刻 " + delayedReceiptAt
+            "同 token 的延迟 task 收包时刻 " + delayedReceiptAt
                 + " 不得把较新的跨 channel freshness " + newerCrossChannelReceiptAt
                 + " 回退；实际=" + ClientConnectionStatusStore.lastPayloadAtMsForTests()
-        );
-        assertTrue(
-            ClientConnectionStatusStore.connectedForTests(),
-            "延迟 task drain 后当前 generation 应保持 connected；实际 connected="
-                + ClientConnectionStatusStore.connectedForTests()
         );
         assertEquals(
             List.of("craft.freshness.delayed"),
@@ -349,103 +359,274 @@ class BongServerDataThreadingTest {
             "延迟 payload 的 route→CraftStore side effect 必须恰好一次；实际次数="
                 + storeSideEffects.get()
         );
-        assertTrue(
-            clientTasks.isEmpty(),
-            "单 payload drain 后不得残留嵌套/重复 task；实际 queue=" + clientTasks
-        );
+        assertTrue(clientTasks.isEmpty(),
+            "单 payload drain 后不得残留嵌套/重复 task；实际 queue=" + clientTasks);
     }
 
     @Test
-    void disconnectBeforeDrainDoesNotResurrectConnectionStatus() {
-        long generation = ClientConnectionStatusStore.currentGeneration();
-        runNamedThread(NETWORK_THREAD, () -> dispatch(
-            craftOutcome("completed", "craft.stale.after.disconnect"),
-            ServerDataRouter.createDefault(),
-            (dispatch, type) -> {},
-            3_000L,
-            generation
-        ));
-        assertEquals(1, clientTasks.size());
-
-        // 排队后、drain 前断线：generation 递增，connected=false
-        ClientConnectionStatusStore.markDisconnected(4_000L);
-        assertFalse(
-            ClientConnectionStatusStore.connectedForTests(),
-            "断线后 store 必须为 disconnected"
+    void preJoinRealProtobufHydrationAndOutcomeApplyExactlyOnceAfterJoinActivation() {
+        ClientConnectionStatusStore.resetForTests();
+        Object handler = new Object();
+        ClientConnectionStatusStore.SessionToken token =
+            ClientConnectionStatusStore.initializeSession(handler);
+        assertSame(
+            token,
+            ClientConnectionStatusStore.initializeSession(handler),
+            "同 handler 重复 INIT 不得为 pre-JOIN payload 换 token"
         );
-        long disconnectedPayloadAt = ClientConnectionStatusStore.lastPayloadAtMsForTests();
+
+        AtomicInteger bridgeCalls = new AtomicInteger();
+        AtomicInteger recipeNotifications = new AtomicInteger();
+        AtomicInteger sessionNotifications = new AtomicInteger();
+        AtomicInteger outcomeNotifications = new AtomicInteger();
+        AtomicInteger completeSounds = new AtomicInteger();
+        AtomicInteger refreshes = new AtomicInteger();
+        List<String> events = new CopyOnWriteArrayList<>();
+        CraftStore.addRecipeListener(recipes -> {
+            recipeNotifications.incrementAndGet();
+            events.add("recipes=" + recipes.size() + "@" + Thread.currentThread().getName());
+        });
+        CraftStore.addSessionListener(session -> {
+            sessionNotifications.incrementAndGet();
+            events.add("session=" + session.recipeId().orElse("idle") + "@"
+                + Thread.currentThread().getName());
+        });
+        CraftStore.addOutcomeListener(event -> {
+            outcomeNotifications.incrementAndGet();
+            events.add("outcome=" + event.recipeId() + "@" + Thread.currentThread().getName());
+            CraftOutcomeFeedback.apply(
+                event,
+                ticks -> events.add("flash=" + ticks + "@" + Thread.currentThread().getName()),
+                () -> {
+                    completeSounds.incrementAndGet();
+                    events.add("sound@" + Thread.currentThread().getName());
+                },
+                () -> {
+                    refreshes.incrementAndGet();
+                    events.add("refresh@" + Thread.currentThread().getName());
+                }
+            );
+        });
+        BongNetworkHandler.ServerDataPayloadBridge countingBridge = bytes -> {
+            bridgeCalls.incrementAndGet();
+            return ProtoServerDataBridge.bridge(bytes);
+        };
+
+        // Fabric JOIN callback 先排 activation；同一 network turn 随后的 raw payload 回调再排 task。
+        // INIT token 已同步存在，但 JOIN task 尚未 drain。
+        clientTasks.add(() -> assertTrue(
+            ClientConnectionStatusStore.activateSession(handler, 2_000L),
+            "JOIN 必须激活 INIT 分配的同一 token"
+        ));
+        runNamedThread(NETWORK_THREAD, () -> {
+            assertTrue(dispatch(
+                handler,
+                craftRecipeListProto(),
+                ServerDataRouter.createDefault(),
+                (dispatch, type) -> {},
+                2_100L,
+                countingBridge
+            ), "pre-JOIN recipe snapshot 应按 handler 捕获 INIT token 并排队");
+            assertTrue(dispatch(
+                handler,
+                craftSessionStateProto(),
+                ServerDataRouter.createDefault(),
+                (dispatch, type) -> {},
+                2_110L,
+                countingBridge
+            ), "pre-JOIN session snapshot 应按 handler 捕获 INIT token 并排队");
+            assertTrue(dispatch(
+                handler,
+                craftOutcomeProto("craft.prejoin.outcome"),
+                ServerDataRouter.createDefault(),
+                (dispatch, type) -> {},
+                2_120L,
+                countingBridge
+            ), "pre-JOIN outcome 应按 handler 捕获 INIT token 并排队");
+        });
+
+        assertEquals(4, clientTasks.size(),
+            "队列必须严格为 JOIN activation + 三条 pre-JOIN payload；实际=" + clientTasks);
+        assertEquals(0, bridgeCalls.get(), "JOIN/payload drain 前 protobuf bridge 不得在 network thread 执行");
+        assertTrue(CraftStore.recipes().isEmpty(), "drain 前 recipe hydration 不得提前写 store");
+        assertFalse(CraftStore.sessionState().active(), "drain 前 session hydration 不得提前写 store");
+        assertTrue(CraftStore.lastOutcome().isEmpty(), "drain 前 outcome 不得提前写 store");
 
         runNextClientTask();
+        assertTrue(ClientConnectionStatusStore.isActiveSession(token),
+            "JOIN task drain 后必须激活原 INIT token");
+        assertEquals(0, bridgeCalls.get(), "JOIN activation 本身不得 bridge payload");
+        assertTrue(CraftStore.recipes().isEmpty(), "仅 drain JOIN 后 recipe 仍应为空");
 
-        assertFalse(
-            ClientConnectionStatusStore.connectedForTests(),
-            "disconnect-before-drain 的 stale task 不得把 ClientConnectionStatusStore 复活为 connected；"
-                + " actual connected=" + ClientConnectionStatusStore.connectedForTests()
-        );
+        runNextClientTask();
+        runNextClientTask();
+        runNextClientTask();
+
+        assertEquals(3, bridgeCalls.get(), "三条真实 protobuf payload 必须各 bridge 恰好一次");
+        assertEquals(1, recipeNotifications.get(), "recipe hydration listener 必须恰好一次");
+        assertEquals(1, sessionNotifications.get(), "session hydration listener 必须恰好一次");
+        assertEquals(1, outcomeNotifications.get(), "outcome listener 必须恰好一次");
+        assertEquals(1, completeSounds.get(), "completed outcome 必须恰好一声完成音");
+        assertEquals(1, refreshes.get(), "completed outcome 必须恰好一次 refresh");
+        assertEquals("craft.prejoin.recipe", CraftStore.recipes().get(0).id());
+        assertEquals("workbench", CraftStore.recipes().get(0).station());
+        assertTrue(CraftStore.sessionState().active());
+        assertEquals("craft.prejoin.recipe", CraftStore.sessionState().recipeId().orElseThrow());
+        assertEquals("craft.prejoin.outcome", CraftStore.lastOutcome().orElseThrow().recipeId());
+        assertEquals(2_120L, ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "pre-JOIN payload drain 后 freshness 必须取同 token 收包时刻的单调最大值");
         assertEquals(
-            disconnectedPayloadAt,
-            ClientConnectionStatusStore.lastPayloadAtMsForTests(),
-            "stale task 不得刷新 lastPayloadAtMs；实际="
-                + ClientConnectionStatusStore.lastPayloadAtMsForTests()
+            List.of(
+                "recipes=1@" + CLIENT_THREAD,
+                "session=craft.prejoin.recipe@" + CLIENT_THREAD,
+                "outcome=craft.prejoin.outcome@" + CLIENT_THREAD,
+                "flash=6@" + CLIENT_THREAD,
+                "sound@" + CLIENT_THREAD,
+                "refresh@" + CLIENT_THREAD
+            ),
+            events,
+            "三条 hydration/outcome 必须按提交顺序且所有 listener/sound/refresh 都在 client thread；实际="
+                + events
         );
-        assertTrue(
-            CraftStore.lastOutcome().isEmpty(),
-            "stale generation task 必须整段 no-op，不得写 CraftStore；实际 lastOutcome="
-                + CraftStore.lastOutcome()
-        );
+        assertTrue(clientTasks.isEmpty(), "完整 drain 后不得残留 task；实际=" + clientTasks);
     }
 
     @Test
-    void reconnectInvalidatesOldQueuedTaskWithoutPollutingNewGeneration() {
-        long oldGeneration = ClientConnectionStatusStore.currentGeneration();
-        runNamedThread(NETWORK_THREAD, () -> dispatch(
-            craftOutcome("completed", "craft.old.generation"),
-            ServerDataRouter.createDefault(),
-            (dispatch, type) -> {},
-            5_000L,
-            oldGeneration
-        ));
+    void staleHandlerTaskHasZeroEffectsAfterDisconnectAndNewHandlerJoin() {
+        AtomicInteger bridgeCalls = new AtomicInteger();
+        AtomicInteger routeCalls = new AtomicInteger();
+        AtomicInteger storeCalls = new AtomicInteger();
+        AtomicInteger sounds = new AtomicInteger();
+        AtomicInteger refreshes = new AtomicInteger();
+        AtomicInteger applyCalls = new AtomicInteger();
+        CraftStore.addOutcomeListener(event -> {
+            storeCalls.incrementAndGet();
+            CraftOutcomeFeedback.apply(
+                event,
+                ticks -> {},
+                sounds::incrementAndGet,
+                refreshes::incrementAndGet
+            );
+        });
+        ServerDataRouter router = staleProbeRouter(routeCalls);
+        BongNetworkHandler.ServerDataPayloadBridge countingBridge = bytes -> {
+            bridgeCalls.incrementAndGet();
+            return ProtoServerDataBridge.bridge(bytes);
+        };
 
-        // 断线 + 重连：新 generation；新连接自身 freshness=9_000
-        ClientConnectionStatusStore.markDisconnected(8_000L);
-        ClientConnectionStatusStore.markConnected(9_000L);
-        long newGeneration = ClientConnectionStatusStore.currentGeneration();
-        assertTrue(newGeneration != oldGeneration, "reconnect 必须推进 connection generation");
+        runNamedThread(NETWORK_THREAD, () -> assertTrue(dispatch(
+            activeHandler,
+            staleProbe("craft.old.handler").getBytes(StandardCharsets.UTF_8),
+            router,
+            (dispatch, type) -> applyCalls.incrementAndGet(),
+            5_000L,
+            countingBridge
+        ), "已 INIT 的 handler A payload 必须成功排队"));
+        assertEquals(1, clientTasks.size());
+
+        assertTrue(ClientConnectionStatusStore.invalidateSession(activeHandler, 8_000L),
+            "DISCONNECT 必须同步移除 handler A token");
+        Object handlerB = new Object();
+        ClientConnectionStatusStore.SessionToken tokenB =
+            ClientConnectionStatusStore.initializeSession(handlerB);
+        assertTrue(ClientConnectionStatusStore.activateSession(handlerB, 9_000L),
+            "新 handler B JOIN 必须激活自己的 INIT token");
         assertEquals(9_000L, ClientConnectionStatusStore.lastPayloadAtMsForTests());
 
         runNextClientTask();
 
-        assertTrue(
-            ClientConnectionStatusStore.connectedForTests(),
-            "新连接应保持 connected"
-        );
-        assertEquals(
-            9_000L,
-            ClientConnectionStatusStore.lastPayloadAtMsForTests(),
-            "旧 generation task 不得把新连接 freshness 污染为旧 receivedAt；实际="
-                + ClientConnectionStatusStore.lastPayloadAtMsForTests()
-        );
-        assertTrue(
-            CraftStore.lastOutcome().isEmpty(),
-            "旧 generation task 不得写新连接 CraftStore；实际 lastOutcome="
-                + CraftStore.lastOutcome()
+        assertEquals(0, bridgeCalls.get(), "stale A task 必须在 bridge 前整段 no-op");
+        assertEquals(0, routeCalls.get(), "stale A task 不得 route");
+        assertEquals(0, storeCalls.get(), "stale A task 不得写 store/通知 listener");
+        assertEquals(0, sounds.get(), "stale A task 不得播放完成音");
+        assertEquals(0, refreshes.get(), "stale A task 不得 refresh screen");
+        assertEquals(0, applyCalls.get(), "stale A task 不得 apply dispatch");
+        assertTrue(CraftStore.lastOutcome().isEmpty(), "stale A task 不得污染 handler B 的 CraftStore");
+        assertTrue(ClientConnectionStatusStore.isActiveSession(tokenB), "handler B 必须保持 active");
+        assertEquals(9_000L, ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "stale A receivedAt 不得污染 handler B freshness");
+
+        runNamedThread(NETWORK_THREAD, () -> assertTrue(dispatch(
+            handlerB,
+            staleProbe("craft.new.handler").getBytes(StandardCharsets.UTF_8),
+            router,
+            (dispatch, type) -> applyCalls.incrementAndGet(),
+            9_500L,
+            countingBridge
+        ), "handler B 合法 payload 必须仍可排队"));
+        runNextClientTask();
+
+        assertEquals(1, bridgeCalls.get(), "只有 handler B 合法 payload 应 bridge 一次");
+        assertEquals(1, routeCalls.get(), "只有 handler B 合法 payload 应 route 一次");
+        assertEquals(1, storeCalls.get(), "handler B store/listener 必须 exactly once");
+        assertEquals(1, sounds.get(), "handler B completed 反馈必须恰好一声");
+        assertEquals(1, refreshes.get(), "handler B completed 反馈必须恰好一次 refresh");
+        assertEquals(1, applyCalls.get(), "handler B legacy dispatch 必须 exactly once");
+        assertEquals("craft.new.handler", CraftStore.lastOutcome().orElseThrow().recipeId());
+        assertEquals(9_500L, ClientConnectionStatusStore.lastPayloadAtMsForTests());
+    }
+
+    @Test
+    void lateOldHandlerDisconnectDoesNotQueueCleanupOrClearNewSession() {
+        Object oldHandler = activeHandler;
+        Object newHandler = new Object();
+        ClientConnectionStatusStore.SessionToken newToken =
+            ClientConnectionStatusStore.initializeSession(newHandler);
+        assertTrue(ClientConnectionStatusStore.activateSession(newHandler, 9_000L),
+            "handler B JOIN 必须先成为当前 active session");
+        CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+            "craft.new.session.sentinel", "rough_handle", 1, 9L));
+        List<Runnable> cleanupTasks = new CopyOnWriteArrayList<>();
+
+        assertFalse(
+            BongNetworkHandler.disconnectSession(
+                oldHandler, 9_100L, BongNetworkHandler::clearClientStateOnDisconnect, cleanupTasks::add),
+            "handler B 已激活后，handler A 的迟到 DISCONNECT 不得结束当前 session"
         );
 
-        // 新连接上的合法 payload 仍应按序 exactly-once 生效
-        runNamedThread(NETWORK_THREAD, () -> dispatch(
-            craftOutcome("completed", "craft.new.generation"),
-            ServerDataRouter.createDefault(),
-            (dispatch, type) -> {},
-            9_500L,
-            newGeneration
-        ));
-        runNextClientTask();
+        assertTrue(cleanupTasks.isEmpty(),
+            "迟到旧 handler DISCONNECT 不得排全局 store 清理；实际=" + cleanupTasks);
+        assertTrue(ClientConnectionStatusStore.sessionToken(oldHandler).isEmpty(),
+            "迟到旧 handler token 仍必须同步从注册表移除");
+        assertTrue(ClientConnectionStatusStore.isActiveSession(newToken),
+            "迟到旧 handler DISCONNECT 不得使 handler B 失活");
         assertEquals(
-            "craft.new.generation",
+            "craft.new.session.sentinel",
             CraftStore.lastOutcome().orElseThrow().recipeId(),
-            "新 generation 合法 payload 必须仍然生效"
+            "迟到旧 handler DISCONNECT 不得清空 handler B 已写入的 CraftStore"
         );
-        assertEquals(9_500L, ClientConnectionStatusStore.lastPayloadAtMsForTests());
+        assertEquals(9_000L, ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "迟到旧 handler DISCONNECT 不得回退 handler B freshness");
+    }
+
+    @Test
+    void unregisteredOrNullHandlerFailsClosedBeforeQueueBridgeAndRoute() {
+        AtomicInteger bridgeCalls = new AtomicInteger();
+        AtomicInteger routeCalls = new AtomicInteger();
+        AtomicInteger applyCalls = new AtomicInteger();
+        ServerDataRouter router = staleProbeRouter(routeCalls);
+        BongNetworkHandler.ServerDataPayloadBridge countingBridge = bytes -> {
+            bridgeCalls.incrementAndGet();
+            return ProtoServerDataBridge.bridge(bytes);
+        };
+        byte[] payload = staleProbe("craft.unregistered").getBytes(StandardCharsets.UTF_8);
+
+        assertFalse(dispatch(
+            new Object(), payload, router, (dispatch, type) -> applyCalls.incrementAndGet(),
+            3_000L, countingBridge
+        ), "未经过 INIT 的 handler 必须 fail closed");
+        assertFalse(dispatch(
+            null, payload, router, (dispatch, type) -> applyCalls.incrementAndGet(),
+            3_100L, countingBridge
+        ), "null handler 必须 fail closed");
+
+        assertTrue(clientTasks.isEmpty(), "fail-closed handler 不得排 client task；实际=" + clientTasks);
+        assertEquals(0, bridgeCalls.get(), "fail-closed handler 不得 bridge");
+        assertEquals(0, routeCalls.get(), "fail-closed handler 不得 route");
+        assertEquals(0, applyCalls.get(), "fail-closed handler 不得 apply dispatch");
+        assertTrue(CraftStore.lastOutcome().isEmpty(), "fail-closed handler 不得写 store");
+        assertEquals(1_000L, ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "fail-closed handler 不得刷新当前 session freshness");
     }
 
     @Test
@@ -463,28 +644,29 @@ class BongServerDataThreadingTest {
         ));
 
         runNamedThread(NETWORK_THREAD, () -> {
-            // unknown type → default no-op dispatch（handlers 里没有）
             dispatch(
-                "{\"v\":1,\"type\":\"totally_unknown_type_xyz\"}",
+                activeHandler,
+                "{\"v\":1,\"type\":\"totally_unknown_type_xyz\"}".getBytes(StandardCharsets.UTF_8),
                 new ServerDataRouter(Map.of()),
                 (dispatch, type) -> applied.add("apply-unknown:" + type),
                 10_000L,
-                ClientConnectionStatusStore.currentGeneration()
+                ProtoServerDataBridge::bridge
             );
-            // explicit null dispatch seam
             dispatch(
-                "{\"v\":1,\"type\":\"null_dispatch_probe\"}",
+                activeHandler,
+                "{\"v\":1,\"type\":\"null_dispatch_probe\"}".getBytes(StandardCharsets.UTF_8),
                 router,
                 (dispatch, type) -> applied.add("apply-null:" + type),
                 10_100L,
-                ClientConnectionStatusStore.currentGeneration()
+                ProtoServerDataBridge::bridge
             );
             dispatch(
-                "{\"v\":1,\"type\":\"ok_probe\"}",
+                activeHandler,
+                "{\"v\":1,\"type\":\"ok_probe\"}".getBytes(StandardCharsets.UTF_8),
                 router,
                 (dispatch, type) -> applied.add("apply-ok:" + type + "@" + Thread.currentThread().getName()),
                 10_200L,
-                ClientConnectionStatusStore.currentGeneration()
+                ProtoServerDataBridge::bridge
             );
         });
 
@@ -492,8 +674,8 @@ class BongServerDataThreadingTest {
         assertTrue(applied.isEmpty(), "drain 前不得 apply；实际=" + applied);
         assertTrue(CraftStore.lastOutcome().isEmpty(), "no-op 路径不得写 craft store");
 
-        runNextClientTask(); // unknown
-        runNextClientTask(); // null dispatch
+        runNextClientTask();
+        runNextClientTask();
         assertTrue(
             applied.isEmpty(),
             "unknown type 与 null dispatch 都不得调用 dispatchApplier；实际=" + applied
@@ -503,7 +685,7 @@ class BongServerDataThreadingTest {
             "unknown type 与 null dispatch 都不得写 craft store；实际=" + CraftStore.lastOutcome()
         );
 
-        runNextClientTask(); // ok
+        runNextClientTask();
         assertEquals(
             List.of("route@" + CLIENT_THREAD, "apply-ok:ok_probe@" + CLIENT_THREAD),
             applied,
@@ -516,13 +698,12 @@ class BongServerDataThreadingTest {
         CraftScreen craftScreen = new CraftScreen();
         WorkbenchScreen workbenchScreen = new WorkbenchScreen();
         craftScreen.attachOutcomeListenerForTests();
+        craftScreen.attachOutcomeListenerForTests();
+        workbenchScreen.attachOutcomeListenerForTests();
         workbenchScreen.attachOutcomeListenerForTests();
 
         List<String> sharedOrder = new ArrayList<>();
         AtomicInteger completeSounds = new AtomicInteger();
-
-        // 额外挂一个共享反馈观察 listener，锁定 flash→sound→refresh 顺序契约
-        // （与生产 CraftOutcomeFeedback 同序；不替代 screen flashTicks 断言）
         CraftStore.addOutcomeListener(event -> CraftOutcomeFeedback.apply(
             event,
             ticks -> sharedOrder.add("flash=" + ticks + "@" + Thread.currentThread().getName()),
@@ -556,7 +737,7 @@ class BongServerDataThreadingTest {
             "WorkbenchScreen completed 后 flashTicks 必须为 6；实际="
                 + workbenchScreen.flashTicksForTests()
         );
-        assertEquals(1, completeSounds.get(), "completed 必须恰好一声完成音；实际=" + completeSounds.get());
+        assertEquals(1, completeSounds.get(), "completed 必须恰好一声共享观察音；实际=" + completeSounds.get());
         assertEquals(
             List.of(
                 "flash=6@" + CLIENT_THREAD,
@@ -567,7 +748,6 @@ class BongServerDataThreadingTest {
             "completed 反馈顺序必须 flash→sound→refresh 且全在 client thread；实际=" + sharedOrder
         );
 
-        // failed：store/listener 更新，但无完成音、不改 flash
         sharedOrder.clear();
         completeSounds.set(0);
         int craftFlash = craftScreen.flashTicksForTests();
@@ -590,7 +770,6 @@ class BongServerDataThreadingTest {
             CraftStore.lastOutcome().orElseThrow().kind()
         );
 
-        // screen removed before drain：不得再写 flash / 播音
         craftScreen.detachOutcomeListenerForTests();
         workbenchScreen.detachOutcomeListenerForTests();
         CraftStore.clearAllListenersForTests();
@@ -608,46 +787,79 @@ class BongServerDataThreadingTest {
     }
 
     @Test
-    void disconnectClearsCraftStoreAndDropsQueuedOutcomeSideEffects() {
-        CraftStore.replaceRecipes(List.of());
+    void disconnectCleanupBeforeOldTaskDrainCannotResurrectStoresOrFreshness() {
         CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
             "pre.disconnect", "x", 1, 1L));
         assertTrue(
             CraftStore.lastOutcome().isPresent(),
             "precondition: disconnect 前 lastOutcome 必须有值；实际=" + CraftStore.lastOutcome()
         );
+        AtomicInteger bridgeCalls = new AtomicInteger();
+        BongNetworkHandler.ServerDataPayloadBridge countingBridge = bytes -> {
+            bridgeCalls.incrementAndGet();
+            return ProtoServerDataBridge.bridge(bytes);
+        };
 
-        long generation = ClientConnectionStatusStore.currentGeneration();
-        runNamedThread(NETWORK_THREAD, () -> dispatch(
-            craftOutcome("completed", "queued.before.disconnect"),
+        runNamedThread(NETWORK_THREAD, () -> assertTrue(dispatch(
+            activeHandler,
+            craftOutcomeProto("queued.before.disconnect"),
             ServerDataRouter.createDefault(),
             (dispatch, type) -> {},
             12_000L,
-            generation
-        ));
+            countingBridge
+        ), "disconnect 前已 INIT handler payload 必须成功排队"));
 
-        // 生产 disconnect 清理链
-        BongNetworkHandler.clearClientStateOnDisconnect();
+        List<Runnable> disconnectTasks = new CopyOnWriteArrayList<>();
+        assertTrue(
+            BongNetworkHandler.disconnectSession(
+                activeHandler, 12_100L, BongNetworkHandler::clearClientStateOnDisconnect,
+                disconnectTasks::add),
+            "DISCONNECT callback 必须同步 invalidate 当前 handler token 并排一份 client cleanup"
+        );
+        assertEquals(1, disconnectTasks.size(),
+            "当前 active handler 断线必须恰好排一份全局 store cleanup");
+        runNamedThread(CLIENT_THREAD, disconnectTasks.remove(0));
         assertTrue(
             CraftStore.lastOutcome().isEmpty(),
-            "clearClientStateOnDisconnect 必须清空 CraftStore outcome；实际="
+            "disconnect cleanup 必须清空 CraftStore outcome；实际="
                 + CraftStore.lastOutcome()
         );
         assertFalse(
             ClientConnectionStatusStore.connectedForTests(),
             "disconnect 后 connected 必须为 false"
         );
+        long freshnessAfterCleanup = ClientConnectionStatusStore.lastPayloadAtMsForTests();
 
         runNextClientTask();
+
+        assertEquals(0, bridgeCalls.get(), "cleanup 后 stale task 必须在 bridge 前丢弃");
         assertTrue(
             CraftStore.lastOutcome().isEmpty(),
-            "断线后 stale queued craft_outcome 不得回写 CraftStore；实际="
+            "cleanup 后 stale queued craft_outcome 不得回写 CraftStore；实际="
                 + CraftStore.lastOutcome()
         );
         assertFalse(
             ClientConnectionStatusStore.connectedForTests(),
             "stale task 不得复活 connected"
         );
+        assertEquals(
+            freshnessAfterCleanup,
+            ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "stale task 不得复活或刷新 disconnect 后 freshness"
+        );
+    }
+
+    private ServerDataRouter staleProbeRouter(AtomicInteger routeCalls) {
+        return new ServerDataRouter(Map.of(
+            "stale_probe",
+            envelope -> {
+                routeCalls.incrementAndGet();
+                CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+                    envelope.payload().get("recipe_id").getAsString(), "rough_handle", 1, 1L));
+                return ServerDataDispatch.handledWithLegacyMessage(
+                    envelope.type(), "probe", "stale probe handled");
+            }
+        ));
     }
 
     private void dispatchDefaultOnNetworkThread(String json) {
@@ -661,38 +873,41 @@ class BongServerDataThreadingTest {
     private void dispatch(
         String json,
         ServerDataRouter router,
-        java.util.function.BiConsumer<ServerDataDispatch, String> dispatchApplier
+        BiConsumer<ServerDataDispatch, String> dispatchApplier
     ) {
-        dispatch(
-            json,
+        assertTrue(dispatch(
+            activeHandler,
+            json.getBytes(StandardCharsets.UTF_8),
             router,
             dispatchApplier,
             1_500L,
-            ClientConnectionStatusStore.currentGeneration()
-        );
+            ProtoServerDataBridge::bridge
+        ), "测试 active handler 必须成功排入 payload task");
     }
 
-    private void dispatch(
-        String json,
+    private boolean dispatch(
+        Object handler,
+        byte[] bytes,
         ServerDataRouter router,
-        java.util.function.BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
         long receivedAtMs,
-        long connectionGeneration
+        BongNetworkHandler.ServerDataPayloadBridge payloadBridge
     ) {
-        BongNetworkHandler.dispatchServerDataPayload(
-            json.getBytes(StandardCharsets.UTF_8),
+        return BongNetworkHandler.dispatchServerDataPayload(
+            handler,
+            bytes,
             router,
             clientTasks::add,
             dispatchApplier,
             receivedAtMs,
-            connectionGeneration
+            payloadBridge
         );
     }
 
     private void dispatchOnNetworkThread(
         String json,
         ServerDataRouter router,
-        java.util.function.BiConsumer<ServerDataDispatch, String> dispatchApplier
+        BiConsumer<ServerDataDispatch, String> dispatchApplier
     ) {
         runNamedThread(NETWORK_THREAD, () -> dispatch(json, router, dispatchApplier));
     }
@@ -741,5 +956,67 @@ class BongServerDataThreadingTest {
              "recipe_id":"%s","output_template":"rough_handle","output_count":1,
              "completed_at_tick":5000,"ts":1}
             """.formatted(recipeId);
+    }
+
+    private static String staleProbe(String recipeId) {
+        return """
+            {"v":1,"type":"stale_probe","recipe_id":"%s"}
+            """.formatted(recipeId);
+    }
+
+    private static byte[] craftRecipeListProto() {
+        Envelope.CraftRecipeEntry recipe = Envelope.CraftRecipeEntry.newBuilder()
+            .setId("craft.prejoin.recipe")
+            .setCategory(Envelope.CraftCategory.CRAFT_CATEGORY_TOOL)
+            .setDisplayName("首包制作配方")
+            .addMaterials(Envelope.CraftMaterialPair.newBuilder()
+                .setTemplateId("rough_wood").setCount(2))
+            .setQiCost(0.0)
+            .setTimeTicks(40)
+            .setOutput(Envelope.CraftOutputPair.newBuilder()
+                .setTemplateId("rough_handle").setCount(1))
+            .setRequirements(Envelope.CraftRequirements.newBuilder())
+            .setUnlocked(true)
+            .setStation("workbench")
+            .build();
+        return Envelope.ServerDataEnvelope.newBuilder()
+            .setCraftRecipeList(Envelope.CraftRecipeList.newBuilder()
+                .setV(1)
+                .setPlayerId("offline:A")
+                .addRecipes(recipe)
+                .setTs(1))
+            .build()
+            .toByteArray();
+    }
+
+    private static byte[] craftSessionStateProto() {
+        return Envelope.ServerDataEnvelope.newBuilder()
+            .setCraftSessionState(Envelope.CraftSessionState.newBuilder()
+                .setV(1)
+                .setPlayerId("offline:A")
+                .setActive(true)
+                .setRecipeId("craft.prejoin.recipe")
+                .setElapsedTicks(10)
+                .setTotalTicks(40)
+                .setCompletedCount(0)
+                .setTotalCount(1)
+                .setTs(2))
+            .build()
+            .toByteArray();
+    }
+
+    private static byte[] craftOutcomeProto(String recipeId) {
+        return Envelope.ServerDataEnvelope.newBuilder()
+            .setCraftOutcome(Envelope.CraftOutcome.newBuilder()
+                .setCompleted(Envelope.CraftOutcomeCompleted.newBuilder()
+                    .setV(1)
+                    .setPlayerId("offline:A")
+                    .setRecipeId(recipeId)
+                    .setOutputTemplate("rough_handle")
+                    .setOutputCount(1)
+                    .setCompletedAtTick(5_000L)
+                    .setTs(3)))
+            .build()
+            .toByteArray();
     }
 }

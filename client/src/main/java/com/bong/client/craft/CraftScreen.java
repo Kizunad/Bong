@@ -35,6 +35,9 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
 
     private String selectedId;
     private int flashTicks;
+    private boolean listenersAttached;
+    private final CraftOutcomeFeedback.CompleteSoundPlayer completeSound;
+    private final Runnable outcomeRefresh;
 
     /** 测试观察点：当前完成闪光剩余 tick。 */
     public int flashTicksForTests() {
@@ -49,18 +52,27 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     // 没理由碰 recipeList / subtitle。
     private final Consumer<List<CraftRecipe>> recipeListener = recipes -> scheduleRefresh(this::refreshAll);
     private final Consumer<CraftSessionStateView> sessionListener = state -> scheduleRefresh(this::refreshSessionOnly);
-    private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener = event ->
-        CraftOutcomeFeedback.apply(
-            event,
-            ticks -> flashTicks = ticks,
-            CraftOutcomeFeedback::playDefaultCompleteSound,
-            () -> scheduleRefresh(this::refreshOutcomeOnly)
-        );
+    private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener;
     private final Consumer<CraftStore.RecipeUnlockedEvent> unlockListener = event -> scheduleRefresh(this::refreshAll);
     private final Consumer<InventoryModel> inventoryListener = inventory -> scheduleRefresh(this::refreshInventoryOnly);
 
     public CraftScreen() {
+        this(CraftOutcomeFeedback::playDefaultCompleteSound, null);
+    }
+
+    /** 测试注入点：观察 screen 自身的完成音与 outcome refresh，不替换 Store/feedback 链。 */
+    CraftScreen(CraftOutcomeFeedback.CompleteSoundPlayer completeSound, Runnable outcomeRefresh) {
         super(TITLE);
+        this.completeSound = completeSound;
+        this.outcomeRefresh = outcomeRefresh != null
+            ? outcomeRefresh
+            : () -> scheduleRefresh(this::refreshOutcomeOnly);
+        this.outcomeListener = event -> CraftOutcomeFeedback.apply(
+            event,
+            ticks -> flashTicks = ticks,
+            this.completeSound,
+            this.outcomeRefresh
+        );
     }
 
     @Override
@@ -107,11 +119,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         if (client != null && client.player != null && CraftStore.sessionState().active()) {
             ClientRequestSender.sendCraftCancel();
         }
-        CraftStore.removeRecipeListener(recipeListener);
-        CraftStore.removeSessionListener(sessionListener);
-        CraftStore.removeOutcomeListener(outcomeListener);
-        CraftStore.removeUnlockListener(unlockListener);
-        InventoryStateStore.removeListener(inventoryListener);
+        detachListeners();
         super.removed();
     }
 
@@ -144,14 +152,14 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     }
 
 
-    /** 测试缝：只挂 outcome listener，不构建完整 owo UI 树。 */
+    /** 测试缝：复用生产 attach，重复调用模拟 build/resize。 */
     public void attachOutcomeListenerForTests() {
-        CraftStore.addOutcomeListener(outcomeListener);
+        attachListeners();
     }
 
-    /** 测试缝：模拟 screen removed 时注销 outcome listener。 */
+    /** 测试缝：复用生产 detach。 */
     public void detachOutcomeListenerForTests() {
-        CraftStore.removeOutcomeListener(outcomeListener);
+        detachListeners();
     }
 
     public static boolean tabHeightMatchesAlchemy() {
@@ -171,11 +179,27 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void attachListeners() {
+        if (listenersAttached) {
+            return;
+        }
+        listenersAttached = true;
         CraftStore.addRecipeListener(recipeListener);
         CraftStore.addSessionListener(sessionListener);
         CraftStore.addOutcomeListener(outcomeListener);
         CraftStore.addUnlockListener(unlockListener);
         InventoryStateStore.addListener(inventoryListener);
+    }
+
+    private void detachListeners() {
+        if (!listenersAttached) {
+            return;
+        }
+        listenersAttached = false;
+        CraftStore.removeRecipeListener(recipeListener);
+        CraftStore.removeSessionListener(sessionListener);
+        CraftStore.removeOutcomeListener(outcomeListener);
+        CraftStore.removeUnlockListener(unlockListener);
+        InventoryStateStore.removeListener(inventoryListener);
     }
 
     /** 初始化 / 配方集合或解锁态变化（recipeListener、unlockListener）：结构可能变，全量刷新。 */

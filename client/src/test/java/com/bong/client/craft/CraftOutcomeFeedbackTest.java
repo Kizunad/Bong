@@ -171,6 +171,72 @@ class CraftOutcomeFeedbackTest {
         );
     }
 
+
+    @Test
+    void craftScreenDuplicateAttachPlaysAndRefreshesOnceThenRemovedStopsAllOutcomeEffects() {
+        AtomicInteger sounds = new AtomicInteger();
+        AtomicInteger refreshes = new AtomicInteger();
+        CraftScreen screen = new CraftScreen(sounds::incrementAndGet, refreshes::incrementAndGet);
+
+        screen.attachOutcomeListenerForTests();
+        screen.attachOutcomeListenerForTests(); // resize/rebuild 必须幂等
+        CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+            "craft.screen.idempotent", "rough_handle", 1, 42L));
+
+        assertEquals(1, sounds.get(),
+            "CraftScreen 重复 build/attach 后 completed 仍只能播放一声；实际=" + sounds.get());
+        assertEquals(1, refreshes.get(),
+            "CraftScreen 重复 build/attach 后 completed 仍只能 refresh 一次；实际=" + refreshes.get());
+        assertEquals(CraftOutcomeFeedback.COMPLETED_FLASH_TICKS, screen.flashTicksForTests(),
+            "CraftScreen completed 必须设置 flashTicks=6");
+
+        screen.removed();
+        int flashAfterRemoval = screen.flashTicksForTests();
+        CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+            "craft.screen.after_removed", "rough_handle", 1, 43L));
+
+        assertEquals(1, sounds.get(),
+            "CraftScreen removed() 必须注销 outcome listener，之后不得再播音；实际=" + sounds.get());
+        assertEquals(1, refreshes.get(),
+            "CraftScreen removed() 后不得再 refresh；实际=" + refreshes.get());
+        assertEquals(flashAfterRemoval, screen.flashTicksForTests(),
+            "CraftScreen removed() 后不得再写 flashTicks；实际=" + screen.flashTicksForTests());
+    }
+
+    @Test
+    void workbenchScreenDuplicateAttachPlaysAndRefreshesOnceThenRemovedStopsAllOutcomeEffects() {
+        AtomicInteger sounds = new AtomicInteger();
+        AtomicInteger refreshes = new AtomicInteger();
+        WorkbenchScreen screen = new WorkbenchScreen(
+            sounds::incrementAndGet,
+            refreshes::incrementAndGet
+        );
+
+        screen.attachOutcomeListenerForTests();
+        screen.attachOutcomeListenerForTests(); // resize/rebuild 必须幂等
+        CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+            "workbench.screen.idempotent", "stone_knife", 1, 7L));
+
+        assertEquals(1, sounds.get(),
+            "WorkbenchScreen 重复 build/attach 后 completed 仍只能播放一声；实际=" + sounds.get());
+        assertEquals(1, refreshes.get(),
+            "WorkbenchScreen 重复 build/attach 后 completed 仍只能 refresh 一次；实际=" + refreshes.get());
+        assertEquals(CraftOutcomeFeedback.COMPLETED_FLASH_TICKS, screen.flashTicksForTests(),
+            "WorkbenchScreen completed 必须设置 flashTicks=6");
+
+        screen.removed();
+        int flashAfterRemoval = screen.flashTicksForTests();
+        CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+            "workbench.screen.after_removed", "stone_knife", 1, 8L));
+
+        assertEquals(1, sounds.get(),
+            "WorkbenchScreen removed() 必须注销 outcome listener，之后不得再播音；实际=" + sounds.get());
+        assertEquals(1, refreshes.get(),
+            "WorkbenchScreen removed() 后不得再 refresh；实际=" + refreshes.get());
+        assertEquals(flashAfterRemoval, screen.flashTicksForTests(),
+            "WorkbenchScreen removed() 后不得再写 flashTicks；实际=" + screen.flashTicksForTests());
+    }
+
     @Test
     void playerAbsentCompleteSoundIsNoOpWithoutThrowing() {
         // 生产默认音效在 client/player 缺失时必须静默；unit 环境 MinecraftClient.getInstance()

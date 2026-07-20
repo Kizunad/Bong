@@ -133,19 +133,38 @@ public class BongNetworkHandler {
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
+        // Fabric 在 ClientPlayNetworkHandler 构造末尾同步触发 INIT，早于任何 PLAY payload。
+        // 每个物理 handler 在这里取得不可变 token；JOIN 只激活，不得再次换代。
+        ClientPlayConnectionEvents.INIT.register(
+            (handler, client) -> ClientConnectionStatusStore.initializeSession(handler)
+        );
         ClientPlayConnectionEvents.DISCONNECT.register(
-            (handler, client) -> client.execute(BongNetworkHandler::clearClientStateOnDisconnect)
+            (handler, client) -> disconnectSession(
+                handler,
+                Util.getMeasuringTimeMs(),
+                BongNetworkHandler::clearClientStateOnDisconnect,
+                client::execute
+            )
         );
         ClientPlayConnectionEvents.JOIN.register(
-            (handler, sender, client) -> client.execute(() -> {
-                ClientConnectionStatusStore.markConnected(Util.getMeasuringTimeMs());
-                // plan-combat-skill-feedback-bridges-v1 P1 — 初始化本玩家 wire id，
-                // 供 ResonanceLockHandler 区分 partner vs. self（格式：offline:<name>）。
-                if (client.player != null) {
-                    String localPlayerId = "offline:" + client.player.getName().getString();
-                    com.bong.client.combat.baomai.v4.ResonanceLockHandler.setLocalPlayerId(localPlayerId);
-                }
-            })
+            (handler, sender, client) -> {
+                // freshness 必须使用 JOIN callback 时刻，不能等 queue drain 后再采 processing time。
+                long joinedAtMs = Util.getMeasuringTimeMs();
+                client.execute(() -> {
+                    if (!ClientConnectionStatusStore.activateSession(handler, joinedAtMs)) {
+                        BongClient.LOGGER.error(
+                            "Ignoring ClientPlayConnectionEvents.JOIN for handler without INIT session token"
+                        );
+                        return;
+                    }
+                    // plan-combat-skill-feedback-bridges-v1 P1 — 初始化本玩家 wire id，
+                    // 供 ResonanceLockHandler 区分 partner vs. self（格式：offline:<name>）。
+                    if (client.player != null) {
+                        String localPlayerId = "offline:" + client.player.getName().getString();
+                        com.bong.client.combat.baomai.v4.ResonanceLockHandler.setLocalPlayerId(localPlayerId);
+                    }
+                });
+            }
         );
     }
 
@@ -245,65 +264,103 @@ public class BongNetworkHandler {
         });
     }
 
+    /**
+     * DISCONNECT 的可测试原子边界：先同步使当前 token 失效，再排全局 client store 清理。
+     * 迟到的旧 handler / 未 JOIN handler 只移除自身注册，不得清掉已经激活的新 session。
+     */
+    static boolean disconnectSession(
+        Object handler,
+        long disconnectedAtMs,
+        Runnable cleanupTask,
+        Consumer<Runnable> clientExecutor
+    ) {
+        boolean activeSessionEnded =
+            ClientConnectionStatusStore.invalidateSession(handler, disconnectedAtMs);
+        if (activeSessionEnded) {
+            clientExecutor.accept(cleanupTask);
+        }
+        return activeSessionEnded;
+    }
+
     private static void registerServerDataChannel() {
         ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "server_data"), (client, handler, buf, responseSender) -> {
             int readableBytes = buf.readableBytes();
             byte[] bytes = new byte[readableBytes];
             buf.readBytes(bytes);
 
-            dispatchServerDataPayload(
+            boolean scheduled = dispatchServerDataPayload(
+                handler,
                 bytes,
                 ROUTER,
                 client::execute,
                 (dispatch, envelopeType) -> applyDispatch(client, dispatch, envelopeType)
             );
+            if (!scheduled) {
+                BongClient.LOGGER.error(
+                    "Ignoring bong:server_data payload from handler without INIT session token"
+                );
+            }
         });
     }
 
     /**
      * {@code bong:server_data} 的可测试调度边界。
      *
-     * <p>生产 receiver 只在 Netty thread 做三件事：拷贝 buffer、捕获收包时刻
-     * {@code receivedAtMs} 与当前连接 generation、排入单一 client-thread task。
-     * 后续 bridge、route、handler side effect 与最终 dispatch 都在该 task 内；
-     * 连接 freshness 在 task 开头用收包时刻 + generation guard 回写，
-     * stale generation（断线/重连后）整段 no-op，不污染新连接状态。</p>
+     * <p>production receiver 只在 Netty thread 做四件事：复制 buffer、按传入的物理
+     * ClientPlayNetworkHandler 捕获 INIT token、捕获 receivedAt、排入单一 client-thread task。
+     * 未注册 handler fail closed，连 task 都不排。后续 bridge、route、handler/store/listener
+     * side effect 与最终 dispatch 全在该 task 内；JOIN 只激活同一 token，因此 pre-JOIN 首包
+     * 会在 JOIN task 之后 exactly once 落地；DISCONNECT 后 stale token 整段 no-op。</p>
+     *
+     * @return true iff handler 已在 INIT 注册且 payload task 已入队
      */
-    static void dispatchServerDataPayload(
+    static boolean dispatchServerDataPayload(
+        Object handler,
         byte[] bytes,
         ServerDataRouter router,
         Consumer<Runnable> clientExecutor,
         BiConsumer<ServerDataDispatch, String> dispatchApplier
     ) {
-        dispatchServerDataPayload(
+        return dispatchServerDataPayload(
+            handler,
             bytes,
             router,
             clientExecutor,
             dispatchApplier,
             Util.getMeasuringTimeMs(),
-            ClientConnectionStatusStore.currentGeneration()
+            com.bong.client.network.ProtoServerDataBridge::bridge
         );
     }
 
-    /**
-     * 可注入收包时刻与连接代次的测试缝。production 路径经上一个 overload 捕获
-     * {@link Util#getMeasuringTimeMs()} 与 {@link ClientConnectionStatusStore#currentGeneration()}。
-     */
-    static void dispatchServerDataPayload(
+    /** 可注入收包时刻与 bridge 的测试缝；token 仍必须从传入 handler 的 INIT 注册表捕获。 */
+    static boolean dispatchServerDataPayload(
+        Object handler,
         byte[] bytes,
         ServerDataRouter router,
         Consumer<Runnable> clientExecutor,
         BiConsumer<ServerDataDispatch, String> dispatchApplier,
         long receivedAtMs,
-        long connectionGeneration
+        ServerDataPayloadBridge payloadBridge
     ) {
+        ClientConnectionStatusStore.SessionToken sessionToken =
+            ClientConnectionStatusStore.sessionToken(handler).orElse(null);
+        if (sessionToken == null) {
+            return false;
+        }
         clientExecutor.accept(() -> processServerDataPayload(
             bytes,
             router,
             dispatchApplier,
             receivedAtMs,
-            connectionGeneration
+            sessionToken,
+            payloadBridge
         ));
+        return true;
+    }
+
+    @FunctionalInterface
+    interface ServerDataPayloadBridge {
+        com.bong.client.network.ProtoServerDataBridge.BridgeResult bridge(byte[] bytes);
     }
 
     private static void processServerDataPayload(
@@ -311,15 +368,15 @@ public class BongNetworkHandler {
         ServerDataRouter router,
         BiConsumer<ServerDataDispatch, String> dispatchApplier,
         long receivedAtMs,
-        long connectionGeneration
+        ClientConnectionStatusStore.SessionToken sessionToken,
+        ServerDataPayloadBridge payloadBridge
     ) {
-        // 收包时刻语义：用 receiver 捕获的 receivedAtMs + generation 回写 freshness。
-        // generation 过期时整段丢弃，避免 disconnect-before-drain / reconnect 后 stale task
-        // 复活 connected 或用 processing time 覆盖 lastPayloadAtMs。
-        if (!ClientConnectionStatusStore.isCurrentGeneration(connectionGeneration)) {
+        // task 执行时 token 必须仍是当前已 JOIN 激活的 session。INIT 后 JOIN 前的 payload
+        // 会因 queue 顺序在 JOIN task 后执行；disconnect/reconnect 后旧 token 则整段丢弃。
+        if (!ClientConnectionStatusStore.isActiveSession(sessionToken)) {
             return;
         }
-        ClientConnectionStatusStore.markPayloadReceived(receivedAtMs, connectionGeneration);
+        ClientConnectionStatusStore.markPayloadReceived(receivedAtMs, sessionToken);
 
         int readableBytes = bytes.length;
 
@@ -328,7 +385,7 @@ public class BongNetworkHandler {
         // Fallback to raw JSON for payloads not yet migrated to proto (e.g. status_snapshot).
         String jsonPayload;
         com.bong.client.network.ProtoServerDataBridge.BridgeResult bridgeResult =
-                com.bong.client.network.ProtoServerDataBridge.bridge(bytes);
+                payloadBridge.bridge(bytes);
         if (bridgeResult.isSuccess()) {
             jsonPayload = bridgeResult.legacyJson();
         } else {
@@ -937,7 +994,6 @@ public class BongNetworkHandler {
         TsyDeathVfxStore.reset();
         com.bong.client.hud.CoffinStateStore.clear();
         com.bong.client.gathering.GatheringSessionStore.clearOnDisconnect();
-        ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
         com.bong.client.audio.MusicStateMachine.instance().clear();
         MutationVisualState.reset();
         com.bong.client.combat.baomai.v4.CrackReadingHudStateStore.clear();
