@@ -126,6 +126,12 @@
 - **TPV 实机验收（完成判据）**：`render_animation.py` 三视图存档 + 远距离旁观者读招录屏对照——「能从姿态分辨对面在用 X 不是 Y」。
 - **FPV 兼容性冒烟（非阻塞，不作为完成判据）**：现状第一人称渲染路径（`THIRD_PERSON_MODEL`）不回归即可。真正的第一人称手臂验收归梯队三 `plan-fpv-cast-av-v1` P5——避免用尚未落地的下游能力当本 plan 完成条件（梯队三反过来以通过本 plan TPV 验收的动画为输入）。
 - server 侧映射表单测：`vfx_animation_trigger.rs` 新增/改动的 arm 各配 pin 测试。
+- **两段式招的「相位承接契约」统一裁决**（P4 review r4 提出，仓库所有者 2026-07-20 拍板归 P6 补强）：
+  - **问题**：长引导窗 `cast_ticks` 随 mastery / 平和色浮动，引导结束时 isLoop 蓄力段可能停在**任意相位**，而 release 首帧按循环基位对齐——中间相位完成时姿态不连续。
+  - **范围**：对全部 **4 个两段式招**同构成立（`sword.infuse` 28t / `anqi.charge_carrier` 32t / `sword_path.heaven_gate` 60t / `yidao.*` 20-90t），是 P2 后半确立的两段式契约的横切属性，非某个批次引入。
+  - **现状缓解**：release 接力带 `fade_in_ticks`（yidao 与 sword_infuse 同为 1），客户端据此做跨动画混合；现有机械对拍只锁「loop 基位 ↔ release 首帧」，未覆盖中间相位。
+  - **候选方案（P6 三选一并落 conventions 文档）**：① 明确「fade_in 混合即为契约」+ 补客户端桥接 pin 测试；② release 首帧改为相位无关的中性起手；③ server 完成时按当前相位选择 release 变体。
+  - **验收**：选定方案后为 4 招补相位覆盖测试（枚举可达 `cast_ticks` 对各自 loop 周期的余数，至少覆盖基位 / 中间相位 / 周期末相位）。
 
 ## §8 开放问题（P0 决策门前需收口）
 
