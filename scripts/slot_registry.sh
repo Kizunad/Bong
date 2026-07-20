@@ -49,9 +49,13 @@
 #   bash scripts/slot_registry.sh capacity
 #   bash scripts/slot_registry.sh is-held --slot slot-1
 #
-# 测试专用故障注入：SLOT_REGISTRY_TEST_HOLD_GATE_READY / _RELEASE FIFO 仅在 acquire
-# 获锁后、修改永久 registry 前阻塞；ready 消息携带真实 BASHPID/锁 FD，用于确定性
-# 验证超时与 SIGKILL 后内核释放，避免只杀包装进程造成假绿与 orphan。
+# 测试专用注入：
+# - SLOT_REGISTRY_TEST_HOLD_GATE_READY / _RELEASE：acquire 获锁后阻塞，ready 携带
+#   真实 BASHPID/锁 FD，用于核验 SIGKILL 后内核释放。
+# - SLOT_REGISTRY_TEST_WAIT_GATE_READY / _RELEASE / _ACK：竞争者先确认同一 gate
+#   正被占用，再停在 flock 前；统一放行后 ACK，供并发测试建立确定性 barrier。
+# - SLOT_REGISTRY_TEST_FAIL_ACQUIRE_STEP=write|date|mv：仅测试临时 reservation
+#   初始化失败时的 fail-clean，不修改任何永久 registry/lock。
 # 失败一律非零 + stderr 说明；任何查询异常不假装空闲。
 set -euo pipefail
 
@@ -132,16 +136,15 @@ validate_field() {
   [[ ${#value} -le 4096 ]] || die "invalid $label: too long"
 }
 
-read_field() {
-  local dir="$1" field="$2"
-  [[ -f "$dir/$field" ]] || { printf ''; return 0; }
-  local value rc=0
-  IFS= read -r -d '' value < "$dir/$field" || rc=$?
+read_field_into() {
+  local result_var="$1" dir="$2" field="$3" field_value rc=0
+  [[ -f "$dir/$field" ]] || { printf -v "$result_var" '%s' ''; return 0; }
+  IFS= read -r -d '' field_value < "$dir/$field" || rc=$?
   if [[ $rc -ne 0 ]]; then
     printf 'slot_registry: corrupt field (missing NUL terminator): %s\n' "$field" >&2
     return 2
   fi
-  printf '%s' "$value"
+  printf -v "$result_var" '%s' "$field_value"
 }
 
 write_field() {
@@ -152,7 +155,7 @@ write_field() {
 require_holder() {
   local dir="$1" task="$2" cur
   [[ -d "$dir" ]] || die "slot not held"
-  cur=$(read_field "$dir" task_id) || return
+  read_field_into cur "$dir" task_id || return
   [[ "$cur" == "$task" ]] || die "holder mismatch: have=$cur want=$task"
 }
 
@@ -160,12 +163,32 @@ require_state() {
   local dir="$1"
   shift
   local cur allowed want
-  cur=$(read_field "$dir" state) || return
+  read_field_into cur "$dir" state || return
   for allowed in "$@"; do
     [[ "$cur" == "$allowed" ]] && return 0
   done
   want=$(IFS=','; printf '%s' "$*")
   die "invalid state transition: state=$cur allowed=$want"
+}
+
+maybe_wait_at_gate_for_test() {
+  local ready="${SLOT_REGISTRY_TEST_WAIT_GATE_READY:-}"
+  local release="${SLOT_REGISTRY_TEST_WAIT_GATE_RELEASE:-}"
+  local ack="${SLOT_REGISTRY_TEST_WAIT_GATE_ACK:-}"
+  [[ -z "$ready" && -z "$release" && -z "$ack" ]] && return 0
+  [[ -n "$ready" && -n "$release" && -n "$ack" ]] || die "test gate wait requires ready, release, and ack FIFOs"
+  [[ -p "$ready" && -p "$release" && -p "$ack" ]] || die "test gate wait paths must be FIFOs"
+
+  if flock -n "$REGISTRY_FD"; then
+    flock -u "$REGISTRY_FD" || true
+    die "test gate wait expected acquire gate to be held"
+  fi
+
+  local signal
+  printf 'ready %s %s\n' "$BASHPID" "$REGISTRY_FD" > "$ready"
+  IFS= read -r signal < "$release"
+  [[ "$signal" == release ]] || die "invalid test gate wait release signal"
+  printf 'released %s %s\n' "$BASHPID" "$REGISTRY_FD" > "$ack"
 }
 
 with_registry_lock() {
@@ -174,6 +197,7 @@ with_registry_lock() {
   local fn="$1"
   shift
   exec {REGISTRY_FD}>"$GATE_FILE"
+  maybe_wait_at_gate_for_test
   if ! flock -w "$GATE_WAIT_SEC" "$REGISTRY_FD"; then
     exec {REGISTRY_FD}>&-
     die "acquire gate busy: timeout after ${GATE_WAIT_SEC}s (fail-closed)"
@@ -189,11 +213,19 @@ with_registry_lock() {
 maybe_hold_gate_for_test() {
   local ready="${SLOT_REGISTRY_TEST_HOLD_GATE_READY:-}"
   local release="${SLOT_REGISTRY_TEST_HOLD_GATE_RELEASE:-}"
+  local instance="${SLOT_REGISTRY_TEST_INSTANCE:-}"
   [[ -z "$ready" && -z "$release" ]] && return 0
   [[ -n "$ready" && -n "$release" ]] || die "test gate hold requires ready and release FIFOs"
   [[ -p "$ready" && -p "$release" ]] || die "test gate hold paths must be FIFOs"
-  printf 'ready %s %s\n' "$BASHPID" "$REGISTRY_FD" > "$ready"
-  local signal
+  [[ "$instance" =~ ^[A-Za-z0-9._-]+$ ]] || die "test gate hold requires a safe non-empty instance token"
+
+  local proc_stat stat_tail start_ticks signal
+  proc_stat=$(<"/proc/$BASHPID/stat")
+  stat_tail="${proc_stat##*) }"
+  read -r -a stat_fields <<< "$stat_tail"
+  start_ticks="${stat_fields[19]:-}"
+  [[ "$start_ticks" =~ ^[0-9]+$ ]] || die "cannot read holder start ticks"
+  printf 'ready %s %s %s %s\n' "$BASHPID" "$REGISTRY_FD" "$start_ticks" "$instance" > "$ready"
   IFS= read -r signal < "$release"
   [[ "$signal" == "release" ]] || die "invalid test gate release signal"
 }
@@ -243,33 +275,75 @@ cmd_init() {
   with_registry_lock init_locked "$VALUE"
 }
 
+acquire_temp_cleanup() {
+  local tmp="$1"
+  [[ -n "$tmp" && -d "$tmp" ]] || return 0
+  rm -rf -- "$tmp"
+}
+
+acquire_write_temp() {
+  local tmp="$1" normalized_claim reserved_at
+  normalized_claim=$(printf '%s' "$CLAIM" | tr 'A-F' 'a-f')
+
+  if [[ "${SLOT_REGISTRY_TEST_FAIL_ACQUIRE_STEP:-}" == write ]]; then
+    printf 'slot_registry: injected acquire write failure\n' >&2
+    return 2
+  fi
+  write_field "$tmp" task_id "$TASK" || return
+  write_field "$tmp" branch "$BRANCH" || return
+  write_field "$tmp" claim_sha "$normalized_claim" || return
+  write_field "$tmp" agent_id "$AGENT" || return
+  write_field "$tmp" state reserved || return
+  write_field "$tmp" created_local_branch false || return
+  if [[ "${SLOT_REGISTRY_TEST_FAIL_ACQUIRE_STEP:-}" == date ]]; then
+    printf 'slot_registry: injected acquire date failure\n' >&2
+    return 2
+  fi
+  reserved_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return
+  write_field "$tmp" reserved_at "$reserved_at" || return
+}
+
+acquire_publish_temp() {
+  local tmp="$1" lock="$2"
+  if [[ "${SLOT_REGISTRY_TEST_FAIL_ACQUIRE_STEP:-}" == mv ]]; then
+    printf 'slot_registry: injected acquire mv failure\n' >&2
+    return 2
+  fi
+  mv -T -- "$tmp" "$lock"
+}
+
 acquire_locked() {
-  local max held lock other tmp
+  local max held lock other tmp rc=0
   maybe_hold_gate_for_test
   max=$(read_capacity)
   require_slot_in_pool "$SLOT" "$max"
   lock="$REG_ROOT/$SLOT.lock"
   if [[ -d "$lock" ]]; then
-    other=$(read_field "$lock" task_id) || return
+    read_field_into other "$lock" task_id || return
     die "slot busy: $SLOT held_by=${other:-unknown}"
   fi
   held=$(count_held)
   (( held < max )) || die "capacity full: held=$held max=$max"
   tmp="$REG_ROOT/.${SLOT}.reservation.$$.$RANDOM"
   mkdir "$tmp"
-  trap 'rm -rf -- "$tmp"' RETURN
-  write_field "$tmp" task_id "$TASK"
-  write_field "$tmp" branch "$BRANCH"
-  write_field "$tmp" claim_sha "$(printf '%s' "$CLAIM" | tr 'A-F' 'a-f')"
-  write_field "$tmp" agent_id "$AGENT"
-  write_field "$tmp" state reserved
-  write_field "$tmp" created_local_branch false
-  write_field "$tmp" reserved_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if acquire_write_temp "$tmp"; then
+    :
+  else
+    rc=$?
+    acquire_temp_cleanup "$tmp"
+    return "$rc"
+  fi
   if [[ -e "$lock" ]]; then
+    acquire_temp_cleanup "$tmp"
     die "slot busy: $SLOT reservation appeared during acquire"
   fi
-  mv -T -- "$tmp" "$lock"
-  trap - RETURN
+  if acquire_publish_temp "$tmp" "$lock"; then
+    :
+  else
+    rc=$?
+    acquire_temp_cleanup "$tmp"
+    return "$rc"
+  fi
   printf 'OK acquire %s task=%s state=reserved\n' "$SLOT" "$TASK"
 }
 
@@ -289,7 +363,7 @@ mark_created_local_locked() {
   lock=$(slot_lock_dir "$SLOT")
   require_holder "$lock" "$TASK"
   require_state "$lock" reserved
-  current=$(read_field "$lock" created_local_branch) || return
+  read_field_into current "$lock" created_local_branch || return
   case "$VALUE:$current" in
     false:false|true:true) ;;
     true:false) write_field "$lock" created_local_branch true ;;
@@ -380,7 +454,7 @@ rollback_locked() {
   fi
   require_holder "$lock" "$TASK"
   require_state "$lock" reserved
-  created=$(read_field "$lock" created_local_branch) || return
+  read_field_into created "$lock" created_local_branch || return
   [[ "$created" == true ]] || created=false
   rm -rf -- "$lock"
   printf 'DELETE_LOCAL_BRANCH=%s\n' "$created"
@@ -398,8 +472,8 @@ is_held_locked() {
   lock=$(slot_lock_dir "$SLOT")
   if [[ -d "$lock" ]]; then
     local task state
-    task=$(read_field "$lock" task_id) || return
-    state=$(read_field "$lock" state) || return
+    read_field_into task "$lock" task_id || return
+    read_field_into state "$lock" state || return
     printf 'HELD task=%s state=%s\n' "$task" "$state"
     return 0
   fi
@@ -430,13 +504,13 @@ status_locked() {
     for d in "$REG_ROOT"/slot-*.lock; do
       [[ -d "$d" ]] || continue
       slot=$(basename "$d" .lock)
-      task=$(read_field "$d" task_id) || return
-      branch=$(read_field "$d" branch) || return
-      claim=$(read_field "$d" claim_sha) || return
-      agent=$(read_field "$d" agent_id) || return
-      state=$(read_field "$d" state) || return
-      created=$(read_field "$d" created_local_branch) || return
-      reserved=$(read_field "$d" reserved_at) || return
+      read_field_into task "$d" task_id || return
+      read_field_into branch "$d" branch || return
+      read_field_into claim "$d" claim_sha || return
+      read_field_into agent "$d" agent_id || return
+      read_field_into state "$d" state || return
+      read_field_into created "$d" created_local_branch || return
+      read_field_into reserved "$d" reserved_at || return
       [[ $first -eq 1 ]] || printf ','
       first=0
       printf '{"slot":'; printf '%s' "$slot" | json_string
@@ -455,11 +529,11 @@ status_locked() {
   printf 'capacity max=%s held=%s\n' "$max" "$held"
   for d in "$REG_ROOT"/slot-*.lock; do
     [[ -d "$d" ]] || continue
-    task=$(read_field "$d" task_id) || return
-    state=$(read_field "$d" state) || return
-    branch=$(read_field "$d" branch) || return
-    created=$(read_field "$d" created_local_branch) || return
-    agent=$(read_field "$d" agent_id) || return
+    read_field_into task "$d" task_id || return
+    read_field_into state "$d" state || return
+    read_field_into branch "$d" branch || return
+    read_field_into created "$d" created_local_branch || return
+    read_field_into agent "$d" agent_id || return
     printf '  %s: task=%q state=%q branch=%q created_local=%q agent=%q\n' \
       "$(basename "$d" .lock)" "$task" "$state" "$branch" "$created" "$agent"
   done
