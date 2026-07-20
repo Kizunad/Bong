@@ -216,12 +216,15 @@ public class SkillVfxPlayerFormTest {
     void burstFamilyHasSingleSharedIdentityColor() {
         assertEquals(0xC58B3F, BurstMeridianFamilyPlayer.FAMILY_RGB,
             "爆脉家族识别色被改动——plan §P5.1 ② 指定 #C58B3F");
-        // 护体 buff 窗口 60t 明显长于两记攻击招，这是形态之外的第二重可辨性。
-        assertTrue(
-            BurstMeridianFamilyPlayer.Form.BODY_COUNTERFLOW.defaultLifetime
-                > BurstMeridianFamilyPlayer.Form.IMPACT_RING.defaultLifetime,
-            "护体粒子应持续到 buff 窗口结束，明显长于撞击环");
     }
+
+    // 护体环 lifetime（12t = 一个重发间隔，而非 60t 护体窗口）的契约锁**不在本文件**，
+    // 刻意不在这里抄第三份 60/12：
+    //   · client ↔ plan：SkillParticleSpecDocTest 解析 plan §P5.1 ② 表逐格对拍 defaultLifetime；
+    //   · 窗口铺满算术：server burst_meridian 的
+    //     p5_ni_mai_hu_ti_aura_cadence_tiles_buff_window_exactly（常量在那边原生持有）。
+    // 单环若撑满整个 buff 窗口就会钉死在施法瞬间的世界坐标上（SpawnParticle payload 无实体
+    // 标识），玩家一移动纹即脱离体表——窗口由 server 逐环重发铺满，client 只画好单个环。
 
     // ─── NpcSkillAuraPlayer：3 招形态 ────────────────────────────────────────────
 

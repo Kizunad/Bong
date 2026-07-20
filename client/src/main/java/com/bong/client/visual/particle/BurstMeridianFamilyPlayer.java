@@ -70,12 +70,17 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
         IMPACT_RING(TIE_SHAN_KAO, 10, 4, 16, Motion.IMPACT, 0.0, 0.30, 0.45, 0.0, 0.05),
         /** 血崩步：步法残影短尾（沿 direction 反向拖出）。 */
         DASH_AFTERIMAGE(XUE_BENG_BU, 12, 2, 14, Motion.TRAIL, 0.25, 0.0, 0.0, 0.01, 0.0),
-        /** 逆脉护体：体表逆流纹（贴身<b>真环绕</b> + 缓慢上浮）。 */
-        BODY_COUNTERFLOW(NI_MAI_HU_TI, 14, 4, 60, Motion.ORBIT, 0.08, 0.55, 0.0, 0.015, 0.0);
+        /**
+         * 逆脉护体：体表逆流纹（贴身<b>真环绕</b> + 缓慢上浮）。
+         *
+         * <p>lifetime 只有一个重发间隔，不是整个 60t 护体窗口——窗口由 server 逐环接力
+         * 铺满，见 {@link #planBodyCounterflow}。
+         */
+        BODY_COUNTERFLOW(NI_MAI_HU_TI, 14, 4, 12, Motion.ORBIT, 0.08, 0.55, 0.0, 0.015, 0.0);
 
         /**
-         * 运动形态。{@link #ORBIT} 是 review r1 #2 的修复点——真绕圆心转（半径恒定），
-         * 而非「只给切向初速度」的抛射（那会让护体纹直线飞离身体）。
+         * 运动形态。{@link #ORBIT} 真绕圆心转、半径由参数化路径恒定，不是「只给切向初速度」
+         * 的抛射（那会让护体纹沿切线直线飞离身体）。
          */
         enum Motion { IMPACT, TRAIL, ORBIT }
 
@@ -229,12 +234,13 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
     /**
      * 逆脉护体：体表逆流纹。双高度环 + <b>真环绕</b>，贴身而非外扩（护体不是攻击）。
      *
-     * <p>review r1 #2：此前只设了切向初速度，粒子实际沿切线直线飞离——"护体"读成"炸开"。
-     * 现走 {@link SkillParticleSpawn.OrbitSpec}，圆心锚定 cast 瞬间的 origin，半径恒 0.55 格。
+     * <p>走 {@link SkillParticleSpawn.OrbitSpec}：位置由「圆心 + 恒定半径 × 角度」参数化给出，
+     * 半径 0.55 格是构造期不变量，不会随 tick 外扩。
      *
-     * <p><b>已知取舍</b>：圆心是 cast 瞬间的 origin 快照，不跟随施法者移动。既有粒子体系里
-     * 没有"粒子跟随实体"的锚定机制（{@link VortexSpiralParticle} 同样只存一次圆心），
-     * 引入这套属独立能力，不在 P5 范围；60t 窗口内玩家跑开会把纹留在原地。已写入 plan §P5.1 ②。
+     * <p><b>跟随施法者靠 server 接力</b>：{@code SpawnParticle} payload 只有世界坐标、没有实体
+     * 标识，单个环无从锚定移动中的身体。故每个环只活一个重发间隔（12t），60t 护体窗口由 server
+     * 的 {@code ni_mai_hu_ti_aura_vfx_tick} 以施法者**当前**位置逐环重发铺满——老环恰在新环生成
+     * 的同 tick 消失，既贴身又不叠环。本类只负责把单个环画对，窗口节奏不在 client 侧。
      */
     private static List<SkillParticleSpawn> planBodyCounterflow(
         Form form,

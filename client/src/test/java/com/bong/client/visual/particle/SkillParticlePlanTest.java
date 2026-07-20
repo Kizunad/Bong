@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * plan-skill-anim-fidelity-v1 P5 —— 三个新 VfxPlayer 的**真实发射输出**逐颗断言。
  *
- * <p><b>为什么必须有这一份</b>（review r1 #3 的根因）：{@link SkillVfxPlayerFormTest} 只测
+ * <p><b>为什么必须有这一份</b>：{@link SkillVfxPlayerFormTest} 只测
  * {@code Form} 枚举的 id→形态映射，<b>从未执行或观察实际 spawn</b>——于是「穴位点 lifetime 擅自
  * +6」「切向环绕实为切向抛射」两处实现偏离在全绿门禁下溜了过去。本文件消费各 player 的纯函数
  * {@code plan(payload)}，逐颗断言粒子基类 / 数量 / 初始位置 / 速度向量 / lifetime / 颜色 /
@@ -61,10 +61,10 @@ public class SkillParticlePlanTest {
             SkillParticleSpawn.Point point = assertInstanceOf(
                 SkillParticleSpawn.Point.class, spawn, "穴位点应是 BongSpriteParticle 描述符（Point）");
             assertEquals(20, point.maxAge(),
-                "review r1 #1：穴位点 lifetime 必须与脉冲一致（20t），"
+                "穴位点 lifetime 必须与脉冲一致（20t），"
                     + "此前实现私自 +6 = 26t 而 spec 写的是 20t；实际 " + point.maxAge());
             assertEquals(0.0, point.velocityY(), EPS,
-                "review r1 #1：plan §P5.1 ① parry 行明写「穴位点静止」，"
+                "plan §P5.1 ① parry 行明写「穴位点静止」，"
                     + "此前实现给了 0.008 上浮；实际 vy=" + point.velocityY());
             assertSame(SkillParticleSpawn.Sheet.LINGQI_RIPPLE, point.sheet(),
                 "穴位点复用 lingqi_ripple 贴图");
@@ -191,7 +191,7 @@ public class SkillParticlePlanTest {
         }
     }
 
-    // ─── review r1 #2：真环绕（三处）───────────────────────────────────────────────
+    // ─── 真环绕（三处）────────────────────────────────────────────────────────────
 
     @Test
     void zhenmaiMultipointOrbitsInsteadOfFlyingOffTangentially() {
@@ -203,7 +203,7 @@ public class SkillParticlePlanTest {
         for (int i = 0; i < 16; i++) {
             SkillParticleSpawn.OrbitPulse orbit = assertInstanceOf(
                 SkillParticleSpawn.OrbitPulse.class, spawns.get(i),
-                "review r1 #2：多点连环是「切向环绕」，必须是 OrbitPulse 真环绕描述符；"
+                "多点连环是「切向环绕」，必须是 OrbitPulse 真环绕描述符；"
                     + "普通 Pulse 只有切向初速度 = 沿切线直线飞离");
             assertEquals(ORIGIN[0], orbit.orbit().centerX(), EPS, "环心应锚在 origin");
             assertEquals(ORIGIN[2], orbit.orbit().centerZ(), EPS, "环心应锚在 origin");
@@ -232,7 +232,7 @@ public class SkillParticlePlanTest {
         for (int i = 0; i < spawns.size(); i++) {
             SkillParticleSpawn.OrbitPoint orbit = assertInstanceOf(
                 SkillParticleSpawn.OrbitPoint.class, spawns.get(i),
-                "review r1 #2：plan P5 原文写的是「Sprite 环绕」，必须是 OrbitPoint 真环绕");
+                "plan P5 原文写的是「Sprite 环绕」，必须是 OrbitPoint 真环绕");
             assertEquals(0.55, orbit.orbit().radius(), EPS, "贴身半径应为 spec 的 0.55 格");
             assertEquals(0.08, orbit.orbit().tangentialSpeed(), EPS, "环绕线速度 0.08 格/t");
             assertEquals(0.015, orbit.orbit().verticalSpeed(), EPS, "上浮 0.015 格/t");
@@ -254,7 +254,7 @@ public class SkillParticlePlanTest {
         for (SkillParticleSpawn spawn : spawns) {
             SkillParticleSpawn.OrbitPoint orbit = assertInstanceOf(
                 SkillParticleSpawn.OrbitPoint.class, spawn,
-                "review r1 #2：护体环必须真环绕，切向抛射会读成「炸开」而非「护住」");
+                "护体环必须真环绕，切向抛射会读成「炸开」而非「护住」");
             assertEquals(0.6, orbit.orbit().radius(), EPS);
             assertEquals(0.06, orbit.orbit().tangentialSpeed(), EPS);
             assertEquals(0.0, orbit.orbit().verticalSpeed(), EPS, "护环是严格水平环");
@@ -267,8 +267,9 @@ public class SkillParticlePlanTest {
     /**
      * 环绕的**行为**判据：推进整个 lifetime 后半径仍然恒定。
      *
-     * <p>这是 review r1 #2 的直接回归锁——切向抛射实现下，到中心的距离会随 tick 线性增长
-     * （60t × 0.08 格/t ≈ 4.8 格，粒子早飞出体表几个身位）。
+     * <p>这是真环绕的直接回归锁——切向抛射实现下，到中心的距离会随 tick 线性增长；
+     * 以护体环为例，12t × 0.08 格/t ≈ 0.96 格，相对 0.55 格的环绕半径已经翻倍不止，
+     * 「贴身逆流纹」会散成一圈外扩的点。
      */
     @Test
     void orbitingSpawnsKeepRadiusForTheirWholeLifetime() {
@@ -279,7 +280,8 @@ public class SkillParticlePlanTest {
                 ZhenmaiPulsePlayer.plan(payload(ZhenmaiPulsePlayer.MULTIPOINT_RING)).get(0)), 20),
             new Case("burst.ni_mai_hu_ti", orbitOf(
                 BurstMeridianFamilyPlayer.plan(
-                    payload(BurstMeridianFamilyPlayer.NI_MAI_HU_TI)).get(0)), 60),
+                    payload(BurstMeridianFamilyPlayer.NI_MAI_HU_TI)).get(0)),
+                BurstMeridianFamilyPlayer.Form.BODY_COUNTERFLOW.defaultLifetime),
             new Case("npc.buff_defense", orbitOf(
                 NpcSkillAuraPlayer.plan(payload(NpcSkillAuraPlayer.BUFF_DEFENSE)).get(0)), 40)
         );

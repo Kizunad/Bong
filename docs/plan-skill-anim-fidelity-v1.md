@@ -149,11 +149,20 @@
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `bong:burst_meridian_tie_shan_kao` | `burst_meridian.tie_shan_kao` | `BongGroundDecalParticle` | IMPACT | 10 | 4 | `cast_ticks`（缺省 16t） | 0.00 | 0.30 + 0.45×strength | 0.00 | 0.05 | `#C58B3F` | radial 地面撞击冲击环 | `lingqi_ripple` |
 | `bong:burst_meridian_xue_beng_bu` | `burst_meridian.xue_beng_bu` | `BongRibbonParticle` | TRAIL | 12 | 2 | `cast_ticks`（缺省 14t） | 0.25 | 不适用 | 0.01 | 不适用 | `#C58B3F` | continuous 步法短尾（沿 `direction` **反向**，残影落身后） | `qi_aura` |
-| `bong:burst_meridian_ni_mai_hu_ti` | `burst_meridian.ni_mai_hu_ti` | `BongOrbitSpriteParticle` | ORBIT | 14 | 4 | 60t（= buff 窗口） | 0.08 | 0.55 | 0.015 | 不适用 | `#C58B3F` | radial 双高度体表逆流纹（真环绕） | `qi_aura` |
+| `bong:burst_meridian_ni_mai_hu_ti` | `burst_meridian.ni_mai_hu_ti` | `BongOrbitSpriteParticle` | ORBIT | 14 | 4 | 12t（= 重发间隔） | 0.08 | 0.55 | 0.015 | 不适用 | `#C58B3F` | radial 双高度体表逆流纹（真环绕，随施法者重发） | `qi_aura` |
 
-**列语义**：`运动形态` = `BurstMeridianFamilyPlayer.Form.Motion` 枚举常量名。`lifetime` 由 server `emit_burst_av` 下发（前两招 = `cast_ticks`，护体 = `NI_MAI_HU_TI_BUFF_DURATION_TICKS` = 60），括号内是 payload 缺 `duration_ticks` 时的 client 回退值。`count 下限` 是 payload `count` 异常偏小时的钳制下界——环形招 4（低于此读不出「环」），线性残影 2 即可成束；上限统一 48。撞击环半径吃 `strength`（server 传 0.95）；`不适用` 的格子在实现里取 0。逆脉护体的双高度环：奇数颗在 `origin.y - 0.25`、偶数颗在 `origin.y + 0.45`。
+**列语义**：`运动形态` = `BurstMeridianFamilyPlayer.Form.Motion` 枚举常量名。`lifetime` 由 server `emit_burst_av` 下发（前两招 = `cast_ticks`，护体 = `NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS` = 12，即**单个环**的寿命而非整个 buff 窗口，见下），括号内是 payload 缺 `duration_ticks` 时的 client 回退值。`count 下限` 是 payload `count` 异常偏小时的钳制下界——环形招 4（低于此读不出「环」），线性残影 2 即可成束；上限统一 48。撞击环半径吃 `strength`（server 传 0.95）；`不适用` 的格子在实现里取 0。逆脉护体的双高度环：奇数颗在 `origin.y - 0.25`、偶数颗在 `origin.y + 0.45`。
 
-> **锚定取舍（review r1 #2 收口）**：`ni_mai_hu_ti` 的环绕圆心是 **cast 瞬间 `origin` 的快照，不跟随施法者移动**。既有粒子体系没有「粒子锚定实体」的机制（`VortexSpiralParticle` 同样只存一次圆心），引入属独立能力、不在 P5 范围；60t 窗口内玩家跑开会把逆流纹留在原地。半径恒 0.55 格由 `OrbitPath` 参数化保证（不是力平衡涌现），故不存在纹路逐渐外扩的退化。
+> **体表锚定契约（review r2 #1 收口，2026-07-20）**：`ni_mai_hu_ti` 的逆流纹**跟随施法者移动**——plan P5 正文「**体表**逆流纹」是字面交付物，脱离身体即未兑现。
+>
+> `SpawnParticle` payload 只有世界坐标 `origin`、无实体标识，单个粒子环无从锚定移动中的身体；给 payload 加实体字段属跨端 schema 契约变更，越出 P5「不新增 schema」的共同约束。故走 **server 侧 buff 存续期周期重发**：
+>
+> - `NiMaiHuTiAura { started_at_tick, expires_at_tick }`（`cultivation/burst_meridian.rs`）由 `resolve_ni_mai_hu_ti` 在施放时挂上，窗口 = `NI_MAI_HU_TI_BUFF_DURATION_TICKS`（60t），与减伤 buff 严格同步。**不复用 `StatusEffects`**：`StatusEffectKind::DamageReduction` 是共享 kind（渡劫丹 / NPC `buff_defense` 同写，`upsert_status_effect` 按 kind 取 max 合并），读它会给嗑了渡劫丹的玩家凭空挂上爆脉护体环。
+> - `ni_mai_hu_ti_aura_vfx_tick`（注册于 `network/mod.rs`，`.before(vfx_event_emit::emit_vfx_event_payloads)`）在窗口内每 `NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS` = 12t 以施法者**当前 `Position`** 重发一个环；到期即摘锚点停发。
+> - **环寿命 == 重发间隔**（12t）：老环恰在新环生成的同 tick 消失，既不叠环也不留空窗。`60 = 5 × 12` 整除，故 cast 首环 + 4 次重发正好铺满窗口，最后一环与 buff 同 tick 结束，不留「护体已过而纹还在转」的尾巴。
+> - 首环（`emit_burst_av`）与重发环共用同一组形态常量，`p5_ni_mai_hu_ti_cast_ring_and_reemit_ring_share_one_form_spec` 断言两者除 `origin` 外逐字段相等。
+>
+> 半径恒 0.55 格由 `OrbitPath` 参数化保证（不是力平衡涌现），故不存在纹路逐渐外扩的退化。
 
 **③ npc 3 招 —— `NpcSkillAuraPlayer`（形态从简，id + 颜色强制独立）**
 
@@ -192,6 +201,7 @@ P5 首版把三处「环绕」（`zhenmai.multipoint` / `burst_meridian.ni_mai_h
 - **贴图仍零新增**：三处环绕复用既有 `qi_aura` / `lingqi_ripple`，未引入任何 png/贴图资产。
 - **方向约定**：正线速度 = 俯视（自 +Y 向下看）自 +x 转向 +z。三处环绕招统一此约定（首版 `ni_mai_hu_ti` 注释写「逆时针」而 `multipoint` 写「顺时针」，两者数学其实相同，本次统一措辞）。
 - **回归锁**：`OrbitPathTest` 断言半径 600 tick 恒定、速度恒切于圆周且速率恒定、角速度 = 线速度/半径、退化参数（半径 0/负/NaN/Inf）构造期拒绝；`SkillParticlePlanTest` 断言三招确实产出 `Orbit*` 描述符，并推进各自完整 lifetime 后半径不漂。
+- **体表锚定的回归锁**（server，`cultivation::burst_meridian::tests`，见 ② 的锚定契约）：`p5_ni_mai_hu_ti_cast_installs_aura_anchor_matching_buff_window`（锚点窗口 == buff 时长）、`p5_ni_mai_hu_ti_cast_ring_lives_one_reemit_interval_not_whole_buff`（首环不再 60t）、`p5_ni_mai_hu_ti_aura_ring_follows_moving_caster`（**核心**：窗口内移动 4 段，逐环断言圆心 == 施法者当时位置）、`p5_ni_mai_hu_ti_aura_cadence_tiles_buff_window_exactly`（相位固定 + 首环与重发严丝合缝铺满 60t）、`p5_ni_mai_hu_ti_aura_stays_silent_on_cast_tick_and_off_phase_ticks`（cast 同帧不叠环）、`p5_ni_mai_hu_ti_aura_anchor_removed_and_silent_after_buff_expiry`（到期摘锚点 + 永久停发）、`p5_ni_mai_hu_ti_cast_ring_and_reemit_ring_share_one_form_spec`（两条发射路径除 origin 外逐字段相等）、`p5_ni_mai_hu_ti_recast_resets_aura_window_without_stacking`（重放覆盖窗口不叠环）。
 
 ### P5.2 双端闭环接线矩阵（交付物）
 
