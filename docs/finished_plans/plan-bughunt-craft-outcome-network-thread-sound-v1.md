@@ -192,11 +192,13 @@
   guard、真实 Screen 反馈与 Java17 **4171/0/0/0** 门禁计数；**不重复归档**。
 - `5bd4d9a66`：**docs-only**——把 final validator PASS 证据绑定到代码树
   `1b2063d2b` 之后的记录提交本身（当时 HEAD=`5bd4d9a66839102f606959133d6655fde4cbc77f`）。
-- **本条 docs-only 后续提交**（CodeRabbit unresolved threads 收口）：补足 3 条
-  `assertTrue` 失败诊断、头部「接入面」、开放问题审计说明，并诚实记录
-  fresh final validator 已对 `5bd4d9a66` PASS；**代码树与 `5bd4d9a66` 相同**
-  （测试消息与 docs 文本变更不改 runtime 逻辑）。**validator PASS 绑定
-  `5bd4d9a66`；本证据记录 commit 为 docs-only，新 HEAD 需再 final validator**。
+- `9ab6b713`：**测试诊断消息 + 文档证据**（CodeRabbit unresolved threads 收口；
+  **不是 pure docs-only**）——补足 3 条 `assertTrue` 失败诊断文案，并更新 archived
+  plan 头部「接入面」/开放问题审计/Finish Evidence。**production runtime 与
+  `5bd4d9a66` 相同**（仅测试诊断消息与文档文本）。Java17
+  `./gradlew test build` 已在 exact HEAD `9ab6b713` 成功：**4171/0/0/0** + GAME TESTS
+  **3/3**；fresh 只读 validator 对 `9ab6b713` 结论 **PASS**（`blocker=0`，`major=0`），
+  并指出把本条误标为 docs-only 属 minor 措辞错误——本段已纠正。
 
 ### 测试结果（历史基线）
 
@@ -253,18 +255,22 @@
   既有 inline 模式）。
 - **fresh final validator（外部、发生在 `5bd4d9a66` 之后）**：对
   `5bd4d9a66839102f606959133d6655fde4cbc77f` 结论 **PASS**，`blocker=0`，
-  `major=0`，`minor=3`。**validator PASS 绑定 `5bd4d9a66`**。
-- **本条 docs-only 证据记录 commit**：只补 3 条测试诊断消息 + archived plan 文档
-  （接入面 / 开放问题审计 / 本段 SHA 纪律）。**代码树与 `5bd4d9a66` 相同**
-  （runtime 逻辑未改；**不**把 4171 tests 说成在本 docs-only 新 SHA 上重跑）。
-  **本证据记录 commit 为 docs-only，新 HEAD 需再 final validator**——不得谎称
-  绑定 `5bd4d9a66` 的 PASS 覆盖未来 SHA。
+  `major=0`，`minor=3`。**validator PASS 曾绑定 `5bd4d9a66`**。
+- **`9ab6b713`（测试诊断消息 + 文档证据，非 pure docs-only）**：同时改了 3 条
+  测试 `assertTrue` 诊断消息 + archived plan 文档（接入面 / 开放问题审计 /
+  本段 SHA 纪律）。**production runtime 与 `5bd4d9a66` 相同**。Java17
+  `./gradlew test build` 已在 exact HEAD `9ab6b713` 成功：**4171/0/0/0** + GAME TESTS
+  **3/3**。fresh 只读 validator 对 `9ab6b713` 结论 **PASS**（`blocker=0`，`major=0`），
+  并指出「docs-only」属 minor 措辞错误——本段已纠正。**注意：后续对本 plan 的
+  corrective docs commit 会再次改变 HEAD，必须对最新 SHA 再跑 fresh validator**——
+  不得把 `9ab6b713` 的 PASS 自动外推到未来 SHA。
 
 ### 跨栈核验
 
 - client：修改 receiver 调度边界、连接状态机、共享反馈与饱和回归；完整门禁 **4171/0/0/0**
-  + GAME TESTS **3/3** 绑定代码树 `1b2063d2b`（runtime 与 `5bd4d9a66` / 本 docs-only
-  记录 commit 相同，未在 docs-only SHA 重跑 4171）。
+  + GAME TESTS **3/3** 已在代码树 `1b2063d2b` 与 exact HEAD `9ab6b713` 复验
+  （production runtime 与 `5bd4d9a66` 相同；`9ab6b713` 仅改测试诊断消息与文档，
+  非 pure docs-only）。
 - server：只读确认 `server/src/network/craft_emit.rs` 的 completed/failed 生产 emit；
   本 PR 无 server 代码改动，不需要额外 cargo gate。
 - agent/schema/worldgen：本 PR 修复范围未改协议/schema/资源/生成物；agent 不消费；
@@ -280,11 +286,11 @@
   3) 缺少 unknown/null-dispatch、disconnect/screen-close lifecycle 矩阵。
 - 代码修复：`81fe479d5` generation + receivedAt guard；共享 `CraftOutcomeFeedback`；
   饱和测试补齐。
-- 文档：`1b2063d2b` / `5bd4d9a66` 与本条 docs-only 更新原地纠正 Finish Evidence，
+- 文档：`1b2063d2b` / `5bd4d9a66` / `9ab6b713` 原地纠正 Finish Evidence，
   并诚实绑定 validator PASS；**不**再次 `git mv` 归档。
-- 门禁与精确计数以代码树 `1b2063d2b`（runtime 同 `5bd4d9a66`）上 Java 17
-  `./gradlew test build` 为准：**4171/0/0/0**，GAME TESTS **3/3**。
-  **不**声称在本 docs-only 新 SHA 上重跑完整 4171。
+- 门禁与精确计数：production runtime 同 `5bd4d9a66`；Java 17
+  `./gradlew test build` 已在 exact HEAD `9ab6b713` 成功：**4171/0/0/0**，
+  GAME TESTS **3/3**（`9ab6b713` 为测试诊断消息 + 文档证据，非 pure docs-only）。
 
 ### 2026-07-20 CodeRabbit unresolved threads 收口（docs + 诊断消息）
 
@@ -293,8 +299,10 @@
 - B major：plan 头部补集中「接入面」（进料/出料/共享类型/跨仓库/worldview/qi_physics）。
 - C major：严格按 `docs/CLAUDE.md` §五解读——有开放问题才强制 `§N.1`；本 plan
   无未决项，写「开放问题：无」归档审计说明，不倒填实施前决议。
-- D major：Finish Evidence 绑定 `5bd4d9a66` 的 fresh final validator PASS；本记录
-  commit 为 docs-only，**新 HEAD 需再 final validator**；代码树与 `5bd4d9a66` 相同。
+- D major：Finish Evidence 绑定 `9ab6b713` 的 fresh final validator PASS 与 Java17
+  完整门禁（**4171/0/0/0** + GAME TESTS **3/3**）。本条为「测试诊断消息 + 文档证据」
+  commit（**不是 pure docs-only**）；production runtime 与 `5bd4d9a66` 相同。
+  后续 corrective docs commit 会改 HEAD，**新 HEAD 需再 final validator**。
 
 ### 遗留 / 后续
 
