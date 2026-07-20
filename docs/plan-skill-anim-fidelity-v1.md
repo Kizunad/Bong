@@ -98,7 +98,7 @@
   - 瞬发招（cast ≤ 2）：总长 ∈ [6, 12]；
   - 长引导招（cast ≥ 40）：蓄力段动画 isLoop 且每个用到的轴在 endTick 有同值补帧（库坑 #1 边界）、release 段动画独立存在且两段 id 均被 server 映射表发射。
 - **精度红线机械化断言**（同一测试套件）：每份动画随批提交一份结构化 spec manifest（anticipation/strike/recovery 的 tick 边界 + 每段帧点数），测试逐项断言：三段各 ≥2 帧点、主要运动轴相邻帧点间隔 ≤4 tick、所有关键帧 easing 显式且主打击轴非 linear、`leg.pitch ≤ 40°`、循环动画每轴 endTick 同值补帧。无法机械判定的重心转移/全身协调，列为逐招人工验收证据：批次 PR 附 `render_animation.py` 三视图 PNG + 对照 checklist。
-- **快照单一真源**：快照由 server `TECHNIQUE_DEFINITIONS` 单向生成（server 侧同步测试保证快照=定义，快照缺失/重复/漂移条目直接判红），client 测试只消费不维护——杜绝「错误时长靠同步改快照混过关」。现状不达标项进 allowlist，逐批清空——allowlist 清零 = P1-P4 完成的机械判据；**allowlist 只允许缩小**，任何新增条目必须在 PR body 显式说明理由。
+- **快照单一真源**：快照由 server `TECHNIQUE_DEFINITIONS` 单向生成（server 侧同步测试保证快照=定义，快照缺失/重复/漂移条目直接判红），client 测试只消费不维护——杜绝「错误时长靠同步改快照混过关」。现状不达标项进 allowlist，逐批清空——allowlist 清零 = P1-P4 完成的机械判据（**口径见 §8.1 #5**：只覆盖属于 P1-P4 重制清单的条目，明示归属外部 plan / 后续阶段的余项不计入但必须登记归属）；**allowlist 只允许缩小**，任何新增条目必须在 PR body 显式说明理由。
 - 精度标准（上节）随 P0 一并进 `docs/player-animation-conventions.md`（该文档为动画约定正典，本 plan 允许追加不允许改写既有段落）。
 
 ## P1-P4 — 分批重制（每批同构）
@@ -122,7 +122,7 @@
 ## P6 — 回归收口
 
 - 动画资源 pin 测试：`BongAnimationRegistry.contains` 断言本 plan 全部新增/重制 anim_id 可解析。
-- P0 对拍测试 allowlist 清零。
+- P0 对拍测试 allowlist 清零——按 §8.1 #5 收口**余 2 条**：裁决 `sword_path.heaven_gate` 的对齐口径（改动画或改判据二选一，落 conventions 文档）+ 待 `plan-bughunt-woliu-resonance-loop-arm-decay-v1` merge 后复核 `woliu.vortex_resonance` 可否出表。
 - **TPV 实机验收（完成判据）**：`render_animation.py` 三视图存档 + 远距离旁观者读招录屏对照——「能从姿态分辨对面在用 X 不是 Y」。
 - **FPV 兼容性冒烟（非阻塞，不作为完成判据）**：现状第一人称渲染路径（`THIRD_PERSON_MODEL`）不回归即可。真正的第一人称手臂验收归梯队三 `plan-fpv-cast-av-v1` P5——避免用尚未落地的下游能力当本 plan 完成条件（梯队三反过来以通过本 plan TPV 验收的动画为输入）。
 - server 侧映射表单测：`vfx_animation_trigger.rs` 新增/改动的 arm 各配 pin 测试。
@@ -178,6 +178,18 @@
 3. 拒绝构建期导出：checked-in 快照有稳定 diff、review 可见、CI 无额外构建步骤，梯队一两份快照已证明该机制可靠。
 
 **落点**：新增 `server/src/cultivation/technique_cast_ticks_snapshot_test.rs` + `client/src/test/resources/bong/technique_cast_ticks_snapshot.json`；client 对拍测试消费点归 P0。
+
+#### #5 allowlist 清零判据的口径 —— 已收口（2026-07-20，P4 review 提出）：判据只覆盖**本 plan 责任内**条目
+
+**背景（矛盾点）**：P0 声明「allowlist 清零 = P1-P4 完成的机械判据」，但 P3/P4 交付完成时 `CAST_ALIGNMENT_ALLOWLIST` 仍余 2 条；同时 P6 段又把「P0 对拍测试 allowlist 清零」列为 P6 自己的交付物——同一文档两处对「何时应清零」口径打架，P3/P4 标 ✅ 缺少正式豁免依据。
+
+**决议**：
+1. P0 判据的原意是「P1-P4 的**重制批次**不得留下未达标的动画」，其成立前提是 allowlist 全部条目都落在 P1-P4 重制清单内。该前提在实施中被两类合法例外打破，故判据口径正式修订为：**P1-P4 完成判据 = allowlist 中属于 P1-P4 重制清单的条目清零**；明示归属外部 plan 或后续阶段的条目不计入，但必须在余项登记里写明归属，不得无主悬挂。
+2. 现存 2 条余项的归属逐条确认：`woliu.vortex_resonance` 归 active `plan-bughunt-woliu-resonance-loop-arm-decay-v1`（P3 段既定排除项，本 plan 全程零触碰以防重复修改）；`sword_path.heaven_gate` 归 **P6**（残留问题是「动画对齐 60t 充能相位而非 cast=80 总窗」的口径之争 + hold 末帧与 isLoop 正典统一，属跨招约定裁决而非单招重制欠账，P2 后半已把资产密度精修到位）。
+3. P6 段「allowlist 清零」交付物随之明确为**收口这 2 条余项**（裁决 heaven_gate 口径 → 改动画或改判据二选一并落文档；vortex_resonance 待其 bugfix plan merge 后复核可否出表），而非重复 P1-P4 的批量重制工作——两处不再冲突。
+4. 棘轮硬约束不变：allowlist **只允许缩小**，冻结基线 `P0_BASELINE` 永不追加；本决议只调整「完成判据如何读」，不放宽任何一条现存条目的达标要求。
+
+**落点**：P0「快照单一真源」条目与 P6「allowlist 清零」条目按本决议口径解读；余项归属登记见附录 A 后各批次统计段。
 
 > §8 原表保留作历史回溯。全部已在 §8.1 收口，**实施时以 §8.1 决议为准**。
 
