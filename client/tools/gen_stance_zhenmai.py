@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""stance_zhenmai —— 针脉功法习得亮相（P6，§8.1 #2 第 4 条遗留清偿）。
+"""stance_zhenmai —— 真脉功法习得亮相（P6，§8.1 #2 第 4 条遗留清偿）。
 
 **不是循环站桩**。原资产更糟：`isLoop:true`、20t、三个帧点（0/10/20）**逐字节
 完全相同**——是一张静止的持守姿态图在空转，没有任何动作。与
@@ -7,7 +7,7 @@
 路径（conventions §13 #6 红线违例）。P6 按决议改成一次性亮相：`isLoop:false`
 + 真实动作 + 收势回中立。
 
-母题：针脉 = 以指代针，点封经脉。左手虚扶（定位取穴），右手二指并拢自腰侧
+母题：真脉 = 以指代针，点封经脉。左手虚扶（定位取穴），右手二指并拢自腰侧
 提起、向前一记短促点出（下针），点定后收指归中立。发力由 torso 拧转送肩
 承担（§13 #4），不是单纯甩胳膊。
 
@@ -135,7 +135,7 @@ def main() -> int:
         POSE,
         name="stance_zhenmai",
         description=(
-            "针脉功法习得亮相（28t 非循环）：anticipation 0→8 提指取穴"
+            "真脉功法习得亮相（28t 非循环）：anticipation 0→8 提指取穴"
             "（右臂 pitch 0→-46 / torso.yaw +14 蓄拧 / body.y -0.045），strike "
             "8→20 以指代针前点下针（rightArm pitch -46→-104 / yaw -28 外分 / "
             "bend 62→14 近伸直 / torso.yaw +28 送肩 / body.z +0.11 / head.pitch "

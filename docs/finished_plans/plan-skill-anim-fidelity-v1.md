@@ -88,7 +88,7 @@
 | P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ✅ 2026-07-19 |
 | P4 | yidao 5 招动画补齐（plan-yidao-v1 §5 欠账） | ✅ 2026-07-19 |
 | P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ✅ 2026-07-20 |
-| P6 | 回归收口：资源 pin 测试 + FPV/TPV 实机验收 + 两项裁决（heaven_gate 对齐口径 / 两段式相位承接契约）+ 架势亮相遗留清偿 | ✅ 2026-07-21 |
+| P6 | 回归收口：资源 pin 测试 + **TPV 实机验收（完成判据）**+ FPV 兼容性冒烟（**非阻塞**，真正的第一人称手臂验收归梯队三 `plan-fpv-cast-av-v1` P5，见 P6 正文与 Finish Evidence 遗留 #7）+ 两项裁决（heaven_gate 对齐口径 / 两段式相位承接契约）+ 架势亮相遗留清偿 | ✅ 2026-07-21 |
 
 ## P0 — 审计矩阵 + 标准定稿 + 对拍测试
 
