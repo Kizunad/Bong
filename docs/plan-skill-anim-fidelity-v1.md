@@ -234,6 +234,8 @@
 
 **决议**：
 1. **npc 3 招动画列 N/A 成立**：调研证实三招 caster 是 NPC mob 实体（`server/src/npc/npc_skill.rs:284-287` 注册，big-brain `NpcTechniqueAction` 以 NPC Entity 施放），统一走 `emit_npc_skill_av`（`npc_skill.rs:239-266`）——头注释明写 NPC 非玩家实体、PlayAnim 不适用，只发 SpawnParticle + 音效。npc 3 招仅入 P5 粒子分化（且粒子 id/颜色已各自独立，P5 复核差异化充分性即可）。
+
+   > **P5 复核结论（2026-07-20，修正本条决议的乐观前提）**：本决议写「粒子 id/颜色已各自独立」不成立——三招 id 确实两两不同，但**全都是借来的**（heal 借 `bong:yidao_meridian_repair` / speed 借 `bong:jiemai_neutralize_dust` / defense 借 `bong:burst_meridian_beng_quan`），旁观者分不清是 NPC 施法还是玩家在放同名招；颜色上 speed `#9FD8C8` 与 heal `#A8E6CF` 同属淡青绿、仅单通道差 ~10%，远距离不可辨。故 P5 按本 plan P5 段正文「脱离借用，各给独立 event_id」执行（而非仅复核）：三招改 `bong:npc_*` 专属 id + `NpcSkillAuraPlayer`，speed 配色改麦黄 `#E3C766` 构成绿/黄/蓝三元组。附带修正：借用 id 命中玩家技能家族前缀曾让 NPC 背景 cosmetic 误吃 Important 优先级，专属 id 归 Normal 档后不再与玩家技能反馈争拥挤 chunk 的粒子配额。
 2. **重制清单 = 46 玩家招中 C/D 级全量，P1-P4 分批推进**（不做「先 20 招验证再扩」的折半）：标准已随 P0 定稿 + P1 首批交付本身就是标准验证批，后批照走同构流程，无需额外验证阶段。
 3. **morph_cast 归 P3 批次**：发射链活着（`server/src/body_plan/morph.rs:229-237` `emit_yixing_av` 发 `bong:morph_cast`，`cast_morph_yixing` 两分支触发），60↔30 错配证实（`YIXING_CAST_TICKS=60` @ morph.rs:96 vs `morph_cast.json` endTick=30）——P3 按标准 #2 重制对齐（cast 完成 = 发力顶点 + recovery），粒子 duration 同步对齐（见 #1 第 3 条）。
 4. **stance_woliu / stance_zhenmai 归 P3，按「一次性亮相」精修**：两 JSON 均为 `isLoop:true` 循环站桩形态（stance_woliu endTick=40 循环开合、stance_zhenmai endTick=20 三帧全同的静态持守），与梯队一接线的「习得时刻单发」语义错配（`vfx_animation_trigger.rs` `emit_technique_learned_stance_triggers` 单发、全仓无持续架势状态可驱动循环）。决议：改 `isLoop:false` + 补收势回中立，做成习得亮相动画；「循环站桩」形态等持续架势 gameplay 状态落地后另议（不在本 plan 造事件）。
