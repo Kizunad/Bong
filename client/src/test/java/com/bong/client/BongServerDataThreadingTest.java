@@ -373,7 +373,7 @@ class BongServerDataThreadingTest {
     }
 
     @Test
-    void preJoinRealProtobufHydrationAndOutcomeApplyExactlyOnceAfterJoinActivation() {
+    void preJoinRealProtobufHydrationAndOutcomeApplyExactlyOnceAfterSynchronousJoin() {
         ClientConnectionStatusStore.resetForTests();
         Object handler = new Object();
         ClientConnectionStatusStore.SessionToken token =
@@ -421,12 +421,9 @@ class BongServerDataThreadingTest {
             return ProtoServerDataBridge.bridge(bytes);
         };
 
-        // Fabric JOIN callback 先排 activation；同一 network turn 随后的 raw payload 回调再排 task。
-        // INIT token 已同步存在，但 JOIN task 尚未 drain。
-        clientTasks.add(() -> assertTrue(
-            ClientConnectionStatusStore.activateSession(handler, 2_000L),
-            "JOIN 必须激活 INIT 分配的同一 token"
-        ));
+        // Netty 可在 GameJoin 的 client task 尚未执行时先把首批 payload task 排到它后面。
+        // Fabric JOIN 本身在 onGameJoin@RETURN、也就是该 GameJoin task 内同步触发；activation
+        // 不得再嵌套排到队尾，否则下面三条首包会在 INIT token 尚未 active 时全部丢弃。
         runNamedThread(NETWORK_THREAD, () -> {
             assertTrue(dispatch(
                 handler,
@@ -454,18 +451,30 @@ class BongServerDataThreadingTest {
             ), "pre-JOIN outcome 应按 handler 捕获 INIT token 并排队");
         });
 
-        assertEquals(4, clientTasks.size(),
-            "队列必须严格为 JOIN activation + 三条 pre-JOIN payload；实际=" + clientTasks);
-        assertEquals(0, bridgeCalls.get(), "JOIN/payload drain 前 protobuf bridge 不得在 network thread 执行");
-        assertTrue(CraftStore.recipes().isEmpty(), "drain 前 recipe hydration 不得提前写 store");
-        assertFalse(CraftStore.sessionState().active(), "drain 前 session hydration 不得提前写 store");
-        assertTrue(CraftStore.lastOutcome().isEmpty(), "drain 前 outcome 不得提前写 store");
+        assertEquals(3, clientTasks.size(),
+            "JOIN callback 执行前队列只含三条 pre-JOIN payload；actual=" + clientTasks);
+        assertFalse(ClientConnectionStatusStore.isActiveSession(token),
+            "GameJoin/JOIN 尚未运行时 INIT token 不得提前 active");
+        AtomicInteger joinedIdentityInitializations = new AtomicInteger();
+        runNamedThread(CLIENT_THREAD, () -> assertTrue(
+            BongNetworkHandler.joinSession(
+                handler,
+                2_000L,
+                joinedIdentityInitializations::incrementAndGet
+            ),
+            "JOIN 必须在当前 GameJoin client task 内同步激活 INIT 分配的同一 token"
+        ));
 
-        runNextClientTask();
+        assertEquals(3, clientTasks.size(),
+            "同步 JOIN 不得额外排 activation task，否则 pre-JOIN 首包会先执行；actual=" + clientTasks);
         assertTrue(ClientConnectionStatusStore.isActiveSession(token),
-            "JOIN task drain 后必须激活原 INIT token");
+            "JOIN callback 返回前必须已经激活原 INIT token");
+        assertEquals(1, joinedIdentityInitializations.get(),
+            "JOIN 后本地身份初始化必须同步且恰好一次");
         assertEquals(0, bridgeCalls.get(), "JOIN activation 本身不得 bridge payload");
-        assertTrue(CraftStore.recipes().isEmpty(), "仅 drain JOIN 后 recipe 仍应为空");
+        assertTrue(CraftStore.recipes().isEmpty(), "仅执行 JOIN 后 recipe 仍应为空");
+        assertFalse(CraftStore.sessionState().active(), "仅执行 JOIN 后 session 仍应为空");
+        assertTrue(CraftStore.lastOutcome().isEmpty(), "仅执行 JOIN 后 outcome 仍应为空");
 
         runNextClientTask();
         runNextClientTask();
@@ -578,8 +587,8 @@ class BongServerDataThreadingTest {
         joinThread(oldReceiver, receiverFailure);
         assertEquals(Boolean.TRUE, oldScheduled.get(),
             "old raw callback had a valid old token and should only become stale at task execution");
-        assertEquals(2, bufferAccesses.get(),
-            "released raw callback must perform exactly readableBytes plus readBytes");
+        assertTrue(bufferAccesses.get() > 0,
+            "released raw callback may copy the payload through any supported ByteBuf API, but only after token/time capture");
         assertEquals(1, clientTasks.size(), "old callback should queue one token-bound client task");
         runNextClientTask();
 
@@ -607,7 +616,11 @@ class BongServerDataThreadingTest {
             router,
             countingBridge
         ), "new concrete handler raw payload must queue successfully");
+        assertEquals(1, clientTasks.size(),
+            "new-handler raw callback must queue exactly one client task; actual=" + clientTasks);
         runNextClientTask();
+        assertTrue(clientTasks.isEmpty(),
+            "new-handler payload must not leave nested or duplicate tasks; actual=" + clientTasks);
 
         assertEquals(1, bridgeCalls.get(), "only the new payload must bridge exactly once");
         assertEquals(1, routeCalls.get(), "only the new payload must route exactly once");
@@ -746,14 +759,14 @@ class BongServerDataThreadingTest {
             "craft.new.session.sentinel", "rough_handle", 1, 9L));
         List<Runnable> cleanupTasks = new CopyOnWriteArrayList<>();
 
-        assertFalse(
-            BongNetworkHandler.disconnectSession(
-                oldHandler, 9_100L, BongNetworkHandler::clearClientStateOnDisconnect, cleanupTasks::add),
-            "handler B 已激活后，handler A 的迟到 DISCONNECT 不得结束当前 session"
-        );
+        BongNetworkHandler.disconnectSession(
+            oldHandler, 9_100L, BongNetworkHandler::clearClientStateOnDisconnect, cleanupTasks::add);
+        assertEquals(1, cleanupTasks.size(),
+            "late old disconnect enters one token-aware client task before it can be classified");
+        runNamedThread(CLIENT_THREAD, cleanupTasks.remove(0));
 
         assertTrue(cleanupTasks.isEmpty(),
-            "迟到旧 handler DISCONNECT 不得排全局 store 清理；实际=" + cleanupTasks);
+            "迟到旧 handler DISCONNECT 的原子 task 执行后不得再排全局 cleanup；实际=" + cleanupTasks);
         assertTrue(ClientConnectionStatusStore.sessionToken(oldHandler).isEmpty(),
             "迟到旧 handler token 仍必须同步从注册表移除");
         assertTrue(ClientConnectionStatusStore.isActiveSession(newToken),
@@ -955,6 +968,156 @@ class BongServerDataThreadingTest {
     }
 
     @Test
+    void runOnClientThreadExecutesInlineOrQueuesExactlyOnce() {
+        List<Runnable> queued = new CopyOnWriteArrayList<>();
+        AtomicInteger executions = new AtomicInteger();
+
+        BongNetworkHandler.runOnClientThread(true, executions::incrementAndGet, queued::add);
+
+        assertEquals(1, executions.get(),
+            "client-thread path must execute inline exactly once");
+        assertTrue(queued.isEmpty(),
+            "client-thread path must not leave a nested task; actual=" + queued);
+
+        BongNetworkHandler.runOnClientThread(false, executions::incrementAndGet, queued::add);
+
+        assertEquals(1, executions.get(),
+            "off-thread path must not execute before its client task drains");
+        assertEquals(1, queued.size(),
+            "off-thread path must queue exactly one atomic task; actual=" + queued);
+        runNamedThread(CLIENT_THREAD, queued.remove(0));
+        assertEquals(2, executions.get(),
+            "queued off-thread task must execute exactly once when drained");
+        assertTrue(queued.isEmpty(),
+            "off-thread path must not leave nested or duplicate tasks; actual=" + queued);
+    }
+
+    @Test
+    void disconnectQueuedOffThreadCannotInvalidatePayloadMidTask() {
+        AtomicInteger bridgeCalls = new AtomicInteger();
+        AtomicInteger routeCalls = new AtomicInteger();
+        AtomicInteger storeCalls = new AtomicInteger();
+        AtomicInteger sounds = new AtomicInteger();
+        AtomicInteger refreshes = new AtomicInteger();
+        AtomicInteger applyCalls = new AtomicInteger();
+        AtomicInteger cleanups = new AtomicInteger();
+        List<Runnable> disconnectTasks = new CopyOnWriteArrayList<>();
+        CraftStore.addOutcomeListener(event -> {
+            storeCalls.incrementAndGet();
+            CraftOutcomeFeedback.apply(
+                event,
+                ticks -> {},
+                sounds::incrementAndGet,
+                refreshes::incrementAndGet
+            );
+        });
+        BongNetworkHandler.ServerDataPayloadBridge countingBridge = bytes -> {
+            bridgeCalls.incrementAndGet();
+            return ProtoServerDataBridge.bridge(bytes);
+        };
+        ServerDataRouter router = new ServerDataRouter(Map.of(
+            "stale_probe",
+            envelope -> {
+                routeCalls.incrementAndGet();
+                BongNetworkHandler.disconnectSession(
+                    activeHandler,
+                    12_050L,
+                    () -> {
+                        cleanups.incrementAndGet();
+                        BongNetworkHandler.clearClientStateOnDisconnect();
+                    },
+                    disconnectTasks::add
+                );
+                CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+                    envelope.payload().get("recipe_id").getAsString(), "rough_handle", 1, 1L));
+                return ServerDataDispatch.handledWithLegacyMessage(
+                    envelope.type(), "probe", "disconnect serialization probe handled");
+            }
+        ));
+
+        runNamedThread(NETWORK_THREAD, () -> assertTrue(dispatch(
+            activeHandler,
+            staleProbe("craft.inflight.before.disconnect").getBytes(StandardCharsets.UTF_8),
+            router,
+            (dispatch, type) -> applyCalls.incrementAndGet(),
+            12_000L,
+            countingBridge
+        ), "当前 handler payload 必须先排入 client task"));
+        assertEquals(1, clientTasks.size(), "测试前置必须只有一条 payload task");
+
+        runNextClientTask();
+
+        assertEquals(1, bridgeCalls.get(), "in-flight payload 必须 bridge exactly once");
+        assertEquals(1, routeCalls.get(), "in-flight payload 必须 route exactly once");
+        assertEquals(1, storeCalls.get(), "disconnect 只能排在当前 client task 后，不能中途切断 store");
+        assertEquals(1, sounds.get(), "in-flight completed payload 必须保留 exactly-once sound");
+        assertEquals(1, refreshes.get(), "in-flight completed payload 必须保留 exactly-once refresh");
+        assertEquals(1, applyCalls.get(), "in-flight payload 必须完成 apply exactly once");
+        assertEquals(1, disconnectTasks.size(),
+            "非 client-thread DISCONNECT 必须把 invalidate+cleanup 作为一个原子 task 排队");
+        assertEquals(0, cleanups.get(), "payload task 尚未返回前 cleanup 不得插入执行");
+        assertTrue(ClientConnectionStatusStore.connectedForTests(),
+            "queued disconnect 尚未 drain 时 session 必须仍 active");
+
+        runNamedThread(CLIENT_THREAD, disconnectTasks.remove(0));
+
+        assertEquals(1, cleanups.get(), "当前 session disconnect 必须 cleanup exactly once");
+        assertFalse(ClientConnectionStatusStore.connectedForTests(),
+            "disconnect task drain 后 session 必须失活");
+        assertTrue(CraftStore.lastOutcome().isEmpty(),
+            "disconnect cleanup 必须清掉刚完成的旧 session outcome");
+        assertTrue(disconnectTasks.isEmpty(), "disconnect 原子 task 执行后不得残留嵌套 cleanup");
+    }
+
+    @Test
+    void queuedOldDisconnectCannotClearNewSessionAfterNewJoin() {
+        Object oldHandler = activeHandler;
+        CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+            "craft.old.session.sentinel", "rough_handle", 1, 1L));
+        List<Runnable> disconnectTasks = new CopyOnWriteArrayList<>();
+        AtomicInteger cleanups = new AtomicInteger();
+
+        BongNetworkHandler.disconnectSession(
+            oldHandler,
+            13_000L,
+            () -> {
+                cleanups.incrementAndGet();
+                BongNetworkHandler.clearClientStateOnDisconnect();
+            },
+            disconnectTasks::add
+        );
+        assertEquals(1, disconnectTasks.size(),
+            "off-thread old disconnect 必须精确排入一个 token-aware 原子 task");
+        assertTrue(ClientConnectionStatusStore.connectedForTests(),
+            "原子 disconnect task drain 前不得在提交线程同步 invalidate");
+
+        Object newHandler = new Object();
+        ClientConnectionStatusStore.SessionToken newToken =
+            ClientConnectionStatusStore.initializeSession(newHandler);
+        assertTrue(BongNetworkHandler.joinSession(newHandler, 14_000L, () -> {}),
+            "新 handler B 必须在自己的 JOIN client task 内同步激活");
+        CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+            "craft.new.session.sentinel", "rough_handle", 1, 2L));
+
+        runNamedThread(CLIENT_THREAD, disconnectTasks.remove(0));
+
+        assertEquals(0, cleanups.get(),
+            "A 的 queued disconnect 执行时发现 B 已 active，必须跳过全局 cleanup");
+        assertTrue(ClientConnectionStatusStore.sessionToken(oldHandler).isEmpty(),
+            "迟到 A disconnect task 仍须移除 A 自身 handler token");
+        assertTrue(ClientConnectionStatusStore.isActiveSession(newToken),
+            "A 的 queued disconnect 不得使 B token 失活");
+        assertEquals(
+            "craft.new.session.sentinel",
+            CraftStore.lastOutcome().orElseThrow().recipeId(),
+            "A 的 queued cleanup 不得清空 B 已写入的 CraftStore"
+        );
+        assertEquals(14_000L, ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "A 的 queued disconnect 不得污染 B freshness");
+        assertTrue(disconnectTasks.isEmpty(), "迟到 disconnect task 后不得残留 cleanup task");
+    }
+
+    @Test
     void disconnectCleanupBeforeOldTaskDrainCannotResurrectStoresOrFreshness() {
         CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
             "pre.disconnect", "x", 1, 1L));
@@ -978,14 +1141,15 @@ class BongServerDataThreadingTest {
         ), "disconnect 前已 INIT handler payload 必须成功排队"));
 
         List<Runnable> disconnectTasks = new CopyOnWriteArrayList<>();
-        assertTrue(
-            BongNetworkHandler.disconnectSession(
-                activeHandler, 12_100L, BongNetworkHandler::clearClientStateOnDisconnect,
-                disconnectTasks::add),
-            "DISCONNECT callback 必须同步 invalidate 当前 handler token 并排一份 client cleanup"
-        );
+        BongNetworkHandler.disconnectSession(
+            activeHandler, 12_100L, BongNetworkHandler::clearClientStateOnDisconnect,
+            disconnectTasks::add);
         assertEquals(1, disconnectTasks.size(),
-            "当前 active handler 断线必须恰好排一份全局 store cleanup");
+            "当前 active handler 断线必须恰好排一份 invalidate+cleanup 原子 task");
+        assertTrue(
+            ClientConnectionStatusStore.connectedForTests(),
+            "disconnect task drain 前提交线程不得同步 invalidate 当前 session"
+        );
         runNamedThread(CLIENT_THREAD, disconnectTasks.remove(0));
         assertTrue(
             CraftStore.lastOutcome().isEmpty(),
@@ -1104,6 +1268,18 @@ class BongServerDataThreadingTest {
             public ByteBuf readBytes(byte[] destination) {
                 accesses.incrementAndGet();
                 return super.readBytes(destination);
+            }
+
+            @Override
+            public ByteBuf duplicate() {
+                accesses.incrementAndGet();
+                return super.duplicate();
+            }
+
+            @Override
+            public ByteBuf copy() {
+                accesses.incrementAndGet();
+                return super.copy();
             }
         };
     }

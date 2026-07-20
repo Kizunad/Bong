@@ -146,20 +146,16 @@ public class BongNetworkHandler {
                 handler,
                 Util.getMeasuringTimeMs(),
                 BongNetworkHandler::clearClientStateOnDisconnect,
-                client::execute
+                task -> runOnClientThread(client.isOnThread(), task, client::execute)
             )
         );
         ClientPlayConnectionEvents.JOIN.register(
             (handler, sender, client) -> {
-                // freshness 必须使用 JOIN callback 时刻，不能等 queue drain 后再采 processing time。
+                // onGameJoin 已由 NetworkThreadUtils 切到 client thread；JOIN 回调本身处在
+                // GameJoin task 内。这里若再 client.execute，会因 ReentrantThreadExecutor
+                // 正在执行 task 而排到队尾，让已排队的首批 server_data 先于 activation 运行。
                 long joinedAtMs = Util.getMeasuringTimeMs();
-                client.execute(() -> {
-                    if (!ClientConnectionStatusStore.activateSession(handler, joinedAtMs)) {
-                        BongClient.LOGGER.error(
-                            "Ignoring ClientPlayConnectionEvents.JOIN for handler without INIT session token"
-                        );
-                        return;
-                    }
+                boolean activated = joinSession(handler, joinedAtMs, () -> {
                     // plan-combat-skill-feedback-bridges-v1 P1 — 初始化本玩家 wire id，
                     // 供 ResonanceLockHandler 区分 partner vs. self（格式：offline:<name>）。
                     if (client.player != null) {
@@ -167,6 +163,11 @@ public class BongNetworkHandler {
                         com.bong.client.combat.baomai.v4.ResonanceLockHandler.setLocalPlayerId(localPlayerId);
                     }
                 });
+                if (!activated) {
+                    BongClient.LOGGER.error(
+                        "Ignoring ClientPlayConnectionEvents.JOIN for handler without INIT session token"
+                    );
+                }
             }
         );
     }
@@ -268,21 +269,47 @@ public class BongNetworkHandler {
     }
 
     /**
-     * DISCONNECT 的可测试原子边界：先同步使当前 token 失效，再排全局 client store 清理。
-     * 迟到的旧 handler / 未 JOIN handler 只移除自身注册，不得清掉已经激活的新 session。
+     * JOIN 已在 GameJoin client task 内执行；activation 与依赖本地玩家身份的初始化必须同步完成，
+     * 不能再嵌套排队，否则队列里已有的 pre-JOIN payload 会在 token 激活前被误丢弃。
      */
-    static boolean disconnectSession(
+    static boolean joinSession(Object handler, long joinedAtMs, Runnable afterActivation) {
+        if (!ClientConnectionStatusStore.activateSession(handler, joinedAtMs)) {
+            return false;
+        }
+        afterActivation.run();
+        return true;
+    }
+
+    /** client thread 上立即执行；其他线程只排一次，避免 MinecraftClient 重入 executor 再次延后。 */
+    static void runOnClientThread(
+        boolean onClientThread,
+        Runnable task,
+        Consumer<Runnable> clientExecutor
+    ) {
+        if (onClientThread) {
+            task.run();
+        } else {
+            clientExecutor.accept(task);
+        }
+    }
+
+    /**
+     * DISCONNECT 的可测试 client-thread 原子边界。Fabric 从
+     * ClientPlayNetworkHandler.onDisconnected 调用该事件；该方法先完成 handler token 失效，
+     * 随后在同一 client-thread 顺序点清理全局 store。若调用方不在 client thread，executor
+     * 会把整个边界排入队列；旧 cleanup 不会脱离 token 判定单独悬到后续 session。
+     */
+    static void disconnectSession(
         Object handler,
         long disconnectedAtMs,
         Runnable cleanupTask,
         Consumer<Runnable> clientExecutor
     ) {
-        boolean activeSessionEnded =
-            ClientConnectionStatusStore.invalidateSession(handler, disconnectedAtMs);
-        if (activeSessionEnded) {
-            clientExecutor.accept(cleanupTask);
-        }
-        return activeSessionEnded;
+        clientExecutor.accept(() -> {
+            if (ClientConnectionStatusStore.invalidateSession(handler, disconnectedAtMs)) {
+                cleanupTask.run();
+            }
+        });
     }
 
     private static void registerServerDataChannel() {
@@ -441,8 +468,9 @@ public class BongNetworkHandler {
         ClientConnectionStatusStore.SessionToken sessionToken,
         ServerDataPayloadBridge payloadBridge
     ) {
-        // task 执行时 token 必须仍是当前已 JOIN 激活的 session。INIT 后 JOIN 前的 payload
-        // 会因 queue 顺序在 JOIN task 后执行；disconnect/reconnect 后旧 token 则整段丢弃。
+        // task 执行时 token 必须仍是当前已 JOIN 激活的 session。JOIN 在 GameJoin task 内
+        // 同步 activation，因此排在该 task 后的 pre-JOIN payload 会看到 active token；
+        // DISCONNECT 的 invalidate + cleanup 与 payload 共用 client-thread 顺序，不会中途切断 route。
         if (!ClientConnectionStatusStore.isActiveSession(sessionToken)) {
             return;
         }
