@@ -136,7 +136,7 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 
 ### 1. 原子 claim 与进驻常驻 slot worktree
 
-subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan-basename>`。worktree 不再按任务新建，改为进驻主干分派的**常驻编译 slot**：`.agent-worktrees/slot-<k>`（k=1..N，主干按需一次性创建、永久 locked）。slot 跨任务保温 `server/target`/`client/build` 增量缓存——这是磁盘占用上限固定（不随任务数增长）与热编译的核心，**任何阶段都严禁 remove slot 或删除其构建缓存**。
+subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan-basename>`。worktree 不再按任务新建，改为进驻主干分派的**常驻编译 slot**：`.agent-worktrees/slot-<k>`（k=1..N，N 由 `scripts/slot_registry.sh init --max N` 固定，默认 2；主干按需一次性创建、永久 locked）。占用必须先过 `slot_registry.sh acquire` 原子 reservation，detached HEAD 不能单独充当空闲信号。slot 跨任务保温 `server/target`/`client/build` 增量缓存——这是磁盘占用上限固定（不随任务数增长）与热编译的核心，**任何阶段都严禁 remove slot 或删除其构建缓存**。
 
 严格区分作用域：
 
@@ -156,19 +156,20 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
    - `422`：先检查响应原因，再用 `git ls-remote --heads origin refs/heads/bugfix/plan-X` 确认同名 ref。只有 ref 确实存在才判“已占用”并回报主干换任务；ref 不存在或原因不是重复 ref 时，标记流程错误并带完整诊断，禁止伪装成占用。
    - 其它状态：认领失败，保留完整响应并停止本任务。
 4. 成功后执行 `git fetch origin refs/heads/bugfix/plan-X:refs/remotes/origin/bugfix/plan-X`，核验远端跟踪 ref SHA 等于 `claim_sha`。
-5. 进驻主干分派的 slot（**detached HEAD 即空闲**是 slot 的所有权语义：占用中的 slot 必然检出着任务分支，空闲 slot 恒为 detach 态；主干是 slot 分派的唯一持有者、串行分派）：
+5. 进驻主干分派的 slot（**占用权威 = `scripts/slot_registry.sh` 原子 reservation**，不是 detached HEAD。detached 只作辅助诊断：占用中的 slot 通常检出任务分支，空闲 slot 通常 detach；但无 registry 持有时禁止 checkout。容量由 `slot_registry.sh init --max N` 固定，默认 N=编译并发上限 2）：
    - slot 尚不存在时，由主干在控制面用单条 `git worktree add --lock --detach .agent-worktrees/slot-<k> origin/main` 创建（常驻、永久 locked，之后不再重建）。
-   - **双门核验**：① `git -C <slot绝对路径> symbolic-ref -q HEAD` 无输出（detached；检出着任何分支 = 已被占用）② `git -C <slot绝对路径> status --porcelain=v1 --untracked-files=all` 输出为空。任一不满足即拒绝进驻、回报主干处置，**禁止自行 clean/reset/切分支动他人数据**。
-   - **ignored 安全门**：进驻前枚举 ignored（`git status --porcelain=v1 --untracked-files=all --ignored=matching`）。仅缓存白名单 `server/target`、`client/build`、`client/.gradle` 可接受；出现 `.env`、私有日志等非白名单 ignored → 拒绝进驻、转人工，不得覆盖或删除。
+   - **先 acquire**：`bash scripts/slot_registry.sh acquire --slot slot-<k> --task <plan-basename> --branch bugfix/plan-X --claim-sha "$claim_sha" --agent <canonical-id>`。失败（busy / capacity full / 非法参数）→ 换 slot 或排队，**禁止**对未持有 reservation 的 slot 做任何写/checkout。
+   - **双门核验**：① `git -C <slot绝对路径> symbolic-ref -q HEAD` 无输出（detached；检出着任何分支 = 物理上已被占用，即使 registry 异常也 fail-closed）② `git -C <slot绝对路径> status --porcelain=v1 --untracked-files=all` 输出为空。任一不满足即 `rollback` 释放 reservation、回报主干处置，**禁止自行 clean/reset/切分支动他人数据**。
+   - **ignored 安全门**：进驻前枚举 ignored（`git status --porcelain=v1 --untracked-files=all --ignored=matching`）。仅缓存白名单 `server/target`、`client/build`、`client/.gradle` 可接受；出现 `.env`、私有日志等非白名单 ignored → `rollback`、转人工，不得覆盖或删除。
    - **本地分支进驻（避免 `checkout -B` 覆盖残留提交）**：
-     - 本地 `refs/heads/bugfix/plan-X` **不存在**：才允许 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`。
-     - 本地分支**已存在**：禁止 `checkout -B`（会 reset 到远端、覆盖/丢弃残留本地提交）。改为 `git -C <slot绝对路径> checkout bugfix/plan-X`，核验 `rev-parse HEAD` 与 `claim_sha` 一致；不一致 → 转人工，不得强行对齐。
+     - 本地 `refs/heads/bugfix/plan-X` **不存在**：才允许 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`，随后 `bash scripts/slot_registry.sh mark-created-local --slot slot-<k> --task <plan> --value true`。
+     - 本地分支**已存在**：禁止 `checkout -B`（会 reset 到远端、覆盖/丢弃残留本地提交）。改为 `git -C <slot绝对路径> checkout bugfix/plan-X`，核验 `rev-parse HEAD` 与 `claim_sha` 一致；不一致 → 转人工，不得强行对齐；`created_local_branch` 保持默认 `false`。
      - BLOCKED 恢复进驻同样走「既有本地分支 + SHA 对拍」，禁止 `-B`。
-6. 对拍 `git -C <slot绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，并检查 slot 确实处于 locked 状态。
-7. create-ref 成功后的失败回滚分两种：
-   - **双门/ignored 核验失败**（checkout 尚未执行）：不得在 slot 内执行任何写操作，直接回报主干处置/换 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在。
-   - **checkout 之后的步骤失败**（跟踪、SHA 对拍等）：在 slot 内 `git checkout --detach origin/main` 脱离；若本轮新建了本地分支则删除它，回报主干释放 slot，再删除刚创建的远端 claim ref 并核验不存在。
-   两种路径都不得留下孤儿锁，**不得 remove slot**。
+6. 对拍 `git -C <slot绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，检查 slot 确实处于 locked 状态，然后 `bash scripts/slot_registry.sh occupy --slot slot-<k> --task <plan>`。
+7. create-ref 成功后的失败回滚分两种（**均不得无条件 `branch -D`**）：
+   - **双门/ignored/acquire 后核验失败**（checkout 尚未执行）：不得在 slot 内执行任何写操作；`bash scripts/slot_registry.sh rollback --slot slot-<k> --task <plan>`（此时 `DELETE_LOCAL_BRANCH` 必为 false），回报主干处置/换 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在。
+   - **checkout 之后的步骤失败**（跟踪、SHA 对拍等）：在 slot 内 `git checkout --detach origin/main` 脱离；执行 `rollback` 并**仅当 stdout 含 `DELETE_LOCAL_BRANCH=true`（本轮 `mark-created-local true`）才删除本地分支**；既有分支（含 SHA 冲突/BLOCKED 残留）一律保留并交人工；回报主干，再删除刚创建的远端 claim ref 并核验不存在。
+   两种路径都不得留下孤儿锁，**不得 remove slot**。正常闭环释放：`detach` →（CLOSED）`branch -D` → `bash scripts/slot_registry.sh release --slot slot-<k> --task <plan>`。BLOCKED 干净释放：`detach` + **保留本地分支** + `release`；脏现场：`freeze-blocked` 并交人工。
 
 进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在 slot 绝对路径内执行；编译必须落在 slot 自身的 in-tree target（若环境设有全局 `CARGO_TARGET_DIR`，门禁命令前显式 `unset CARGO_TARGET_DIR`），保证保温缓存留在 slot 内。禁止进驻他人正占用的 slot，禁止修改主 checkout。
 
