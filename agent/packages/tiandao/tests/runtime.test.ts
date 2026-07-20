@@ -1073,8 +1073,23 @@ describe("runRuntime", () => {
   });
 
   it("refreshes the chat window clock after async drain before merging signals", async () => {
+    // 跨秒边界：loop 起点落在旧秒，async drain/annotate 完成后才进入新秒。
+    // 生产 runtime 单轮非 mock 路径对 now() 的完整序列是：
+    //   [0] loop 起点（旧秒）→ loopStartedAtSeconds
+    //   [1] async drain 后、merge 前刷新（新秒）→ mergeNowSeconds
+    //   [2] elapsed 计算（新秒）
+    // 禁止再用 mockReturnValueOnce 单次旧值——任何进入 loop 前的额外 now()
+    // 都会悄悄吃掉旧秒，让本用例在错误实现上假绿。
     const loopStartedAtSeconds = 10_000;
     const serverObservedAtSeconds = loopStartedAtSeconds + 1;
+    const loopStartedAtMs = loopStartedAtSeconds * 1_000;
+    const serverObservedAtMs = serverObservedAtSeconds * 1_000;
+    const nowCallSequenceMs = [
+      loopStartedAtMs, // [0] loop 起点：初始化本轮旧秒边界
+      serverObservedAtMs, // [1] async merge：必须重新读 now()，不得复用 loopStartedAtSeconds
+      serverObservedAtMs, // [2] elapsed：后续仍停在新秒
+    ] as const;
+
     const redis = new SequenceRuntimeRedis([createTestWorldState()]);
     redis.drainPlayerChat.mockResolvedValue([
       {
@@ -1097,10 +1112,19 @@ describe("runRuntime", () => {
       narrations: [],
       reasoning: "chat-window-clock",
     });
-    const now = vi
-      .fn(() => serverObservedAtSeconds * 1_000)
-      .mockReturnValueOnce(loopStartedAtSeconds * 1_000)
-      .mockReturnValue(serverObservedAtSeconds * 1_000);
+
+    let nowCallIndex = 0;
+    const now = vi.fn(() => {
+      if (nowCallIndex >= nowCallSequenceMs.length) {
+        throw new Error(
+          `unexpected now() call #${nowCallIndex + 1}; locked sequence has ${nowCallSequenceMs.length} values ` +
+            `(loop-start old, merge-refresh new, elapsed new)`,
+        );
+      }
+      const value = nowCallSequenceMs[nowCallIndex];
+      nowCallIndex += 1;
+      return value;
+    });
 
     await withIsolatedCwd(async () => {
       await runRuntime(
@@ -1125,6 +1149,12 @@ describe("runRuntime", () => {
       );
     });
 
+    expect(now).toHaveBeenCalledTimes(nowCallSequenceMs.length);
+    expect(now.mock.results.map((result) => result.value)).toEqual([...nowCallSequenceMs]);
+    expect(nowCallIndex).toBe(nowCallSequenceMs.length);
+    // merge 刷新用的是序列[1]（新秒），不是序列[0] 的 loop 旧秒
+    expect(Math.floor((now.mock.results[1]?.value as number) / 1000)).toBe(serverObservedAtSeconds);
+    expect(Math.floor((now.mock.results[0]?.value as number) / 1000)).toBe(loopStartedAtSeconds);
     expect(chatAwareAgent.receivedChatSignalPlayers).toEqual(["offline:Observed"]);
   });
 
