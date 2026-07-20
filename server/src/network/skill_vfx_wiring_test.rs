@@ -159,7 +159,12 @@ fn zhenmai_family_shares_gold_hue_but_every_skill_is_distinguishable() {
         .iter()
         .filter(|wiring| wiring.player_class == "ZhenmaiPulsePlayer")
         .collect();
-    assert_eq!(zhenmai.len(), 5, "真脉应有 5 招接线，实际 {}", zhenmai.len());
+    assert_eq!(
+        zhenmai.len(),
+        5,
+        "真脉应有 5 招接线，实际 {}",
+        zhenmai.len()
+    );
 
     let colors: BTreeSet<&str> = zhenmai.iter().map(|wiring| wiring.color).collect();
     assert_eq!(
@@ -288,10 +293,7 @@ fn wiring_lookup_finds_every_registered_skill_and_rejects_unknown() {
         wiring_for("zhenmai.not_a_real_skill").is_none(),
         "wiring_for 对未登记招式必须返回 None（防查表落空时静默取到相邻行）"
     );
-    assert!(
-        wiring_for("").is_none(),
-        "wiring_for 对空串必须返回 None"
-    );
+    assert!(wiring_for("").is_none(), "wiring_for 对空串必须返回 None");
 }
 
 /// `#RRGGBB` → (R, G, B)，取 i32 便于做差值比较。

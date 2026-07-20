@@ -1380,7 +1380,11 @@ mod tests {
     fn p5_npc_particles_match_shared_wiring_table() {
         for (skill_id, particle_id, color) in [
             ("npc.heal_basic", HEAL_PARTICLE_ID, HEAL_PARTICLE_COLOR),
-            ("npc.buff_speed", BUFF_SPEED_PARTICLE_ID, BUFF_SPEED_PARTICLE_COLOR),
+            (
+                "npc.buff_speed",
+                BUFF_SPEED_PARTICLE_ID,
+                BUFF_SPEED_PARTICLE_COLOR,
+            ),
             (
                 "npc.buff_defense",
                 BUFF_DEFENSE_PARTICLE_ID,

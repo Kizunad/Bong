@@ -2291,15 +2291,9 @@ mod tests {
     #[test]
     fn p5_bespoke_particle_ids_emitted_and_beng_quan_particle_borrow_removed() {
         // 常量层面先锁专属 + 互异。
-        assert_eq!(
-            TIE_SHAN_KAO_PARTICLE_ID,
-            "bong:burst_meridian_tie_shan_kao"
-        );
+        assert_eq!(TIE_SHAN_KAO_PARTICLE_ID, "bong:burst_meridian_tie_shan_kao");
         assert_eq!(XUE_BENG_BU_PARTICLE_ID, "bong:burst_meridian_xue_beng_bu");
-        assert_eq!(
-            NI_MAI_HU_TI_PARTICLE_ID,
-            "bong:burst_meridian_ni_mai_hu_ti"
-        );
+        assert_eq!(NI_MAI_HU_TI_PARTICLE_ID, "bong:burst_meridian_ni_mai_hu_ti");
         for particle_id in [
             TIE_SHAN_KAO_PARTICLE_ID,
             XUE_BENG_BU_PARTICLE_ID,
@@ -2369,9 +2363,6 @@ mod tests {
         let caster = spawn_caster(&mut app, Realm::Condense, 0.0, DVec3::ZERO);
         let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Rejected { .. }));
-        assert!(
-            emitted_particles(&app).is_empty(),
-            "被拒绝的施放不得发粒子"
-        );
+        assert!(emitted_particles(&app).is_empty(), "被拒绝的施放不得发粒子");
     }
 }

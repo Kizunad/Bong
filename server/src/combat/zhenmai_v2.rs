@@ -2568,6 +2568,16 @@ mod tests {
     fn p5_neutralize_emits_bespoke_gold_pulse() {
         let mut app = app_with_events();
         let entity = caster(&mut app, Realm::Condense, 100.0);
+        // 卸力中和需要有污染可卸——无污染时 resolver 直接 Rejected，粒子自然不发。
+        app.world_mut().entity_mut(entity).insert(Contamination {
+            entries: vec![ContamSource {
+                amount: 10.0,
+                color: ColorKind::Insidious,
+                meridian_id: Some(MeridianId::Lung.channel_id()),
+                attacker_id: None,
+                introduced_at: 1,
+            }],
+        });
         assert!(matches!(
             resolve_neutralize(app.world_mut(), entity, 0, None),
             CastResult::Started { .. }
@@ -2672,9 +2682,6 @@ mod tests {
             resolve_parry(app.world_mut(), entity, 0, None),
             CastResult::Rejected { .. }
         ));
-        assert!(
-            emitted_particles(&app).is_empty(),
-            "被拒绝的施放不得发粒子"
-        );
+        assert!(emitted_particles(&app).is_empty(), "被拒绝的施放不得发粒子");
     }
 }
