@@ -24,7 +24,11 @@ interface MockRedisRuntimeClient extends RedisRuntimeClient {
   emit(channel: string, message: string): void;
 }
 
-function makeMockRedisRuntimeClient(options: { subscribeError?: Error } = {}): MockRedisRuntimeClient {
+function makeMockRedisRuntimeClient(options: {
+  subscribeError?: Error;
+  unsubscribeError?: Error;
+  unsubscribePromise?: Promise<unknown>;
+} = {}): MockRedisRuntimeClient {
   const listeners = new Set<(channel: string, message: string) => void>();
   let subscriberMode = false;
 
@@ -46,6 +50,8 @@ function makeMockRedisRuntimeClient(options: { subscribeError?: Error } = {}): M
       listeners.delete(listener);
     }),
     unsubscribe: vi.fn(async () => {
+      if (options.unsubscribePromise) await options.unsubscribePromise;
+      if (options.unsubscribeError) throw options.unsubscribeError;
       subscriberMode = false;
     }),
     disconnect: vi.fn(() => undefined),
@@ -293,9 +299,11 @@ describe("Agent UI production startup factory", () => {
       expect(runtime.stats.realmGateRejected).toBe(1);
       expect(runtime.stats.narrationPublished).toBe(1);
 
-      await cleanup();
+      await Promise.all([cleanup(), cleanup()]);
+      expect(clients[1].off).toHaveBeenCalledWith("message", expect.any(Function));
+      expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
       for (const client of clients) {
-        expect(client.disconnect, "every production factory connection must close on shutdown").toHaveBeenCalled();
+        expect(client.disconnect, "every production factory connection must close exactly once").toHaveBeenCalledOnce();
       }
     } finally {
       logSpy.mockRestore();
@@ -342,7 +350,7 @@ describe("Agent UI production startup factory", () => {
 
       await expect(ready).rejects.toThrow("subscribe failed");
       await vi.waitFor(() => {
-        for (const client of clients) expect(client.disconnect).toHaveBeenCalled();
+        for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
       });
       expect(clients[0].publish).not.toHaveBeenCalled();
       expect(clients[1].publish, "failed subscriber connection must never publish").not.toHaveBeenCalled();
@@ -353,8 +361,87 @@ describe("Agent UI production startup factory", () => {
       );
 
       await expect(cleanup(), "cleanup remains idempotent after startup failure").resolves.toBeUndefined();
+      for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
     } finally {
       warnSpy.mockRestore();
+    }
+  });
+
+  it("closes every factory connection exactly once when unsubscribe rejects", async () => {
+    const clients = [
+      makeMockRedisRuntimeClient(),
+      makeMockRedisRuntimeClient({ unsubscribeError: new Error("unsubscribe failed") }),
+      makeMockRedisRuntimeClient(),
+    ];
+    const createRedisClient = vi
+      .fn<(url: string) => RedisRuntimeClient>()
+      .mockReturnValueOnce(clients[0])
+      .mockReturnValueOnce(clients[1])
+      .mockReturnValueOnce(clients[2]);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const { cleanup, ready } = await startAgentUiResponseRuntime({
+        redisUrl: "redis://unsubscribe-error:6380",
+        createRedisClient,
+      });
+      await ready;
+      await expect(cleanup()).resolves.toBeUndefined();
+      await expect(cleanup()).resolves.toBeUndefined();
+
+      expect(clients[1].off).toHaveBeenCalledWith("message", expect.any(Function));
+      expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
+      for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[tiandao] agent ui runtime disconnect error:",
+        expect.objectContaining({ message: "unsubscribe failed" }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("closes exactly once at the 500ms timeout and after late teardown", async () => {
+    vi.useFakeTimers();
+    let finishUnsubscribe: (() => void) | undefined;
+    const lateUnsubscribe = new Promise<void>((resolve) => {
+      finishUnsubscribe = resolve;
+    });
+    const clients = [
+      makeMockRedisRuntimeClient(),
+      makeMockRedisRuntimeClient({ unsubscribePromise: lateUnsubscribe }),
+      makeMockRedisRuntimeClient(),
+    ];
+    const createRedisClient = vi
+      .fn<(url: string) => RedisRuntimeClient>()
+      .mockReturnValueOnce(clients[0])
+      .mockReturnValueOnce(clients[1])
+      .mockReturnValueOnce(clients[2]);
+
+    try {
+      const { cleanup, ready } = await startAgentUiResponseRuntime({
+        redisUrl: "redis://cleanup-timeout:6380",
+        createRedisClient,
+      });
+      await ready;
+      const cleanupPromise = cleanup();
+      expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
+      for (const client of clients) expect(client.disconnect).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(499);
+      for (const client of clients) expect(client.disconnect).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await cleanupPromise;
+      for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
+
+      finishUnsubscribe?.();
+      await lateUnsubscribe;
+      await Promise.resolve();
+      await cleanup();
+      expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
+      for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

@@ -24,15 +24,10 @@ export interface AgentUiRuntimePubClient {
 }
 
 /**
- * narPub 专用接口：仅需要 publish + disconnect 两个方法。
- *
- * UiResponseConsumer.pub 在 disconnect() 时会调用 pub.disconnect()，
- * 因此不能用 AgentUiRuntimePubClient（只有 publish）。
- * 使用此接口代替不安全的 `as AgentUiRuntimeSubClient` 类型断言。
+ * narPub 专用接口：runtime 只发布 narration，不拥有 physical Redis client。
  */
 export interface AgentUiRuntimeNarPubClient {
   publish(channel: string, message: string): Promise<number>;
-  disconnect(): void;
 }
 
 export interface AgentUiRuntimeSubClient extends AgentUiRuntimePubClient {
@@ -40,7 +35,6 @@ export interface AgentUiRuntimeSubClient extends AgentUiRuntimePubClient {
   on(event: string, listener: (channel: string, message: string) => void): unknown;
   off?(event: string, listener: (channel: string, message: string) => void): unknown;
   unsubscribe(): Promise<unknown>;
-  disconnect(): void;
 }
 
 export interface AgentUiRuntimeConfig {

@@ -33,26 +33,21 @@ const { AGENT_UI_RESPONSE, AGENT_NARRATE } = CHANNELS;
 // ─── 接口 ────────────────────────────────────────────────────────────────────
 
 /**
- * sub 专用接口：subscribe/on/off/unsubscribe/disconnect。
- * 实例必须与 pub 分离，避免 subscriber mode 连接执行 publish。
+ * sub 专用接口：subscribe/on/off/unsubscribe。
+ * physical Redis client 的 disconnect 所有权留在创建它的 factory。
  */
 export interface UiResponseConsumerSubClient {
   subscribe(channel: string): Promise<unknown>;
   on(event: string, listener: (channel: string, message: string) => void): unknown;
   off?(event: string, listener: (channel: string, message: string) => void): unknown;
   unsubscribe(): Promise<unknown>;
-  disconnect(): void;
 }
 
 /**
- * pub 专用接口：仅需要 publish + disconnect 两个方法。
- *
- * disconnect 用于 consumer.disconnect() 时清理 pub 连接（narPub 可以是独立连接）。
- * 不包含 subscribe/on/off（pub 不需要订阅）。
+ * pub 专用接口：consumer 只发布 narration，不拥有 physical Redis client。
  */
 export interface UiResponseConsumerPubClient {
   publish(channel: string, message: string): Promise<number>;
-  disconnect(): void;
 }
 
 /**
@@ -118,6 +113,7 @@ export class UiResponseConsumer {
   private readonly onButtonClick: ButtonClickCallback | undefined;
   private readonly onSessionEnd: SessionEndCallback | undefined;
   private connected = false;
+  private disconnectPromise: Promise<void> | undefined;
 
   readonly stats: UiResponseConsumerStats = {
     received: 0,
@@ -163,17 +159,12 @@ export class UiResponseConsumer {
   }
 
   async disconnect(): Promise<void> {
-    this.connected = false;
-    try {
+    this.disconnectPromise ??= (async () => {
+      this.connected = false;
       this.sub.off?.("message", this.onMessage);
       await this.sub.unsubscribe();
-    } finally {
-      try {
-        this.sub.disconnect();
-      } finally {
-        this.pub.disconnect();
-      }
-    }
+    })();
+    return this.disconnectPromise;
   }
 
   async handlePayload(message: string): Promise<void> {

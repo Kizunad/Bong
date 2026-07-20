@@ -25,14 +25,12 @@ const consumer = new UiResponseConsumer({
     on: () => undefined,
     off: () => undefined,
     unsubscribe: async () => undefined,
-    disconnect: () => undefined,
   },
   pub: {
     publish: async (channel, message) => {
       publications.push({ channel, message });
       return 1;
     },
-    disconnect: () => undefined,
   },
   logger: {
     info: () => undefined,

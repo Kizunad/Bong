@@ -628,21 +628,37 @@ describe("UiResponseConsumer", () => {
       expect(sub.subscribe).toHaveBeenCalledTimes(1);
     });
 
-    it("disconnects cleanly", async () => {
+    it("cleans up listeners and subscription without taking physical client ownership", async () => {
       await consumer.connect();
       await consumer.disconnect();
-      expect(sub.unsubscribe).toHaveBeenCalled();
-      expect(sub.disconnect).toHaveBeenCalled();
-      expect(pub.disconnect).toHaveBeenCalled();
+      expect(sub.off).toHaveBeenCalledWith("message", expect.any(Function));
+      expect(sub.unsubscribe).toHaveBeenCalledOnce();
+      expect(sub.disconnect).not.toHaveBeenCalled();
+      expect(pub.disconnect).not.toHaveBeenCalled();
     });
 
-    it("disconnects both clients even when unsubscribe fails", async () => {
+    it("keeps cleanup idempotent without taking physical client ownership", async () => {
+      await consumer.connect();
+      const first = consumer.disconnect();
+      const second = consumer.disconnect();
+
+      await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+      expect(sub.off).toHaveBeenCalledTimes(2); // connect de-duplicates once, cleanup removes once
+      expect(sub.unsubscribe).toHaveBeenCalledOnce();
+      expect(sub.disconnect).not.toHaveBeenCalled();
+      expect(pub.disconnect).not.toHaveBeenCalled();
+    });
+
+    it("propagates unsubscribe failure but never disconnects physical clients", async () => {
       sub.unsubscribe.mockRejectedValue(new Error("unsubscribe failed"));
       await consumer.connect();
 
       await expect(consumer.disconnect()).rejects.toThrow("unsubscribe failed");
-      expect(sub.disconnect).toHaveBeenCalledOnce();
-      expect(pub.disconnect).toHaveBeenCalledOnce();
+      await expect(consumer.disconnect()).rejects.toThrow("unsubscribe failed");
+      expect(sub.off).toHaveBeenCalledTimes(2);
+      expect(sub.unsubscribe).toHaveBeenCalledOnce();
+      expect(sub.disconnect).not.toHaveBeenCalled();
+      expect(pub.disconnect).not.toHaveBeenCalled();
     });
 
     it("rejects aliasing publisher to subscriber", () => {
@@ -1096,9 +1112,9 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     expect(sub.publish, "sub.publish 不参与 narration").not.toHaveBeenCalled();
     expect(pub.publish, "pub.publish 不参与 narration").not.toHaveBeenCalled();
 
-    // disconnect 时调用 narPub.disconnect（不崩溃）
+    // runtime cleanup 只退订；physical clients 由外层 factory 统一关闭
     await runtime.disconnect();
-    expect(narPub.disconnect, "disconnect 时 narPub.disconnect 被调用").toHaveBeenCalled();
+    expect(narPub.disconnect, "runtime 不拥有 narPub physical client").not.toHaveBeenCalled();
   });
 
   it("e2e: dismissed → drainPendingSessionEnds 队列收到 session 结束事件", async () => {
@@ -1194,7 +1210,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     await runtime.connect();
     await expect(runtime.disconnect()).resolves.not.toThrow();
     expect(sub.unsubscribe, "disconnect 调用 unsubscribe").toHaveBeenCalled();
-    expect(sub.disconnect, "disconnect 调用 sub.disconnect").toHaveBeenCalled();
+    expect(sub.disconnect, "runtime 不拥有 sub physical client").not.toHaveBeenCalled();
   });
 
   it("e2e: target_player field in published command uses player.uuid (canonical offline:X format)", async () => {

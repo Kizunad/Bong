@@ -1521,8 +1521,11 @@ export async function startAgentUiResponseRuntime(opts: {
     createdClients.push(client);
     return client;
   };
+  const disconnectedClients = new Set<RedisRuntimeClient>();
   const disconnectCreatedClients = (): void => {
     for (const client of new Set(createdClients)) {
+      if (disconnectedClients.has(client)) continue;
+      disconnectedClients.add(client);
       try {
         client.disconnect();
       } catch (error) {

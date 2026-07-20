@@ -3,8 +3,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -29,10 +31,21 @@ import { GENERATED_SCHEMA_FILES, SCHEMA_REGISTRY } from "../src/schema-registry.
 
 // Workspace-declared Ajv (devDependency of @bong/schema). Prefer package metadata over host paths.
 const workspaceRequire = createRequire(import.meta.url);
-const AJV_PACKAGE_JSON_PATH = workspaceRequire.resolve("ajv/package.json");
+const SCHEMA_PACKAGE_JSON_PATH = join(import.meta.dirname, "..", "package.json");
+const SCHEMA_PACKAGE_JSON = JSON.parse(readFileSync(SCHEMA_PACKAGE_JSON_PATH, "utf8")) as {
+  devDependencies?: Record<string, string>;
+};
+const AJV_DECLARED_VERSION = SCHEMA_PACKAGE_JSON.devDependencies?.ajv;
+const AJV_PACKAGE_JSON_PATH = canonicalizePath(
+  workspaceRequire.resolve("ajv/package.json"),
+  "Ajv package metadata path",
+);
 const AJV_PACKAGE_VERSION = (workspaceRequire(AJV_PACKAGE_JSON_PATH) as { version?: string })
   .version;
-const AJV_RESOLVED_PATH = workspaceRequire.resolve("ajv");
+const AJV_RESOLVED_PATH = canonicalizePath(
+  workspaceRequire.resolve("ajv"),
+  "Ajv runtime path",
+);
 
 const tempDirs: string[] = [];
 const TIANDAO_SOURCE_DIR = join(import.meta.dirname, "../../tiandao/src");
@@ -123,7 +136,7 @@ const TRUSTED_AJV_NODE_MODULES_ROOTS = [
 ] as const;
 
 function isPathWithin(root: string, candidate: string): boolean {
-  const relativePath = relative(resolve(root), resolve(candidate));
+  const relativePath = relative(root, candidate);
   return (
     relativePath === "" ||
     (relativePath !== ".." &&
@@ -132,21 +145,36 @@ function isPathWithin(root: string, candidate: string): boolean {
   );
 }
 
+function canonicalizePath(path: string, label: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch (error) {
+    throw new Error(
+      `Cannot canonicalize ${label} ${path}; Ajv trust validation fails closed.`,
+      { cause: error },
+    );
+  }
+}
+
 function requireTrustedAjvNodeModulesRoot(
   paths: AjvResolutionPaths,
   trustedRoots: readonly string[] = TRUSTED_AJV_NODE_MODULES_ROOTS,
 ): string {
-  const candidates = [paths.packageJsonPath, paths.resolvedPath];
-  const trustedRoot = trustedRoots
-    .map((root) => resolve(root))
-    .find((root) => candidates.every((candidate) => isPathWithin(root, candidate)));
+  const packageJsonPath = canonicalizePath(paths.packageJsonPath, "Ajv package metadata path");
+  const resolvedPath = canonicalizePath(paths.resolvedPath, "Ajv runtime path");
+  const canonicalTrustedRoots = trustedRoots.map((root) =>
+    canonicalizePath(root, "trusted node_modules root"),
+  );
+  const trustedRoot = canonicalTrustedRoots.find(
+    (root) => isPathWithin(root, packageJsonPath) && isPathWithin(root, resolvedPath),
+  );
   if (!trustedRoot) {
     throw new Error(
       [
         "Ajv package metadata and runtime must resolve inside one trusted workspace node_modules root.",
-        `package=${paths.packageJsonPath}`,
-        `runtime=${paths.resolvedPath}`,
-        `trusted=${trustedRoots.map((root) => resolve(root)).join(",") || "<none>"}`,
+        `package=${packageJsonPath}`,
+        `runtime=${resolvedPath}`,
+        `trusted=${canonicalTrustedRoots.join(",") || "<none>"}`,
         "Install @bong/schema devDependency ajv@8.12.0 and re-run from the agent workspace.",
       ].join(" "),
     );
@@ -586,42 +614,54 @@ describe("generated schema freshness gate", () => {
     expect(schema.properties).toHaveProperty("target_player");
   });
 
-  it("finds a semantic Agent UI variant regardless of anyOf ordering", () => {
+  it.each<AgentUiVariantType>([
+    "agent_ui_response",
+    "agent_ui_request",
+    "agent_ui_close",
+  ])("finds semantic %s regardless of anyOf ordering", (variantType) => {
     const expected = {
-      properties: { type: { const: "agent_ui_request" }, request_id: { type: "string" } },
+      properties: { type: { const: variantType }, request_id: { type: "string" } },
     };
-    const unrelated = { properties: { type: { const: "agent_ui_close" } } };
+    const unrelated = { properties: { type: { const: "unrelated" } } };
 
-    expect(findUniqueVariantByType([unrelated, expected], "agent_ui_request")).toBe(expected);
-    expect(findUniqueVariantByType([expected, unrelated], "agent_ui_request")).toBe(expected);
+    expect(findUniqueVariantByType([unrelated, expected], variantType)).toBe(expected);
+    expect(findUniqueVariantByType([expected, unrelated], variantType)).toBe(expected);
   });
 
-  it("diagnoses a missing semantic Agent UI variant with available discriminants", () => {
+  it.each<AgentUiVariantType>([
+    "agent_ui_response",
+    "agent_ui_request",
+    "agent_ui_close",
+  ])("diagnoses missing semantic %s with available discriminants", (variantType) => {
     expect(() =>
       findUniqueVariantByType(
-        [{ properties: { type: { const: "agent_ui_close" } } }],
-        "agent_ui_request",
+        [{ properties: { type: { const: "unrelated" } } }],
+        variantType,
       ),
     ).toThrowError(
-      'Missing schema variant for type="agent_ui_request"; anyOf length=1; ' +
-        'available properties.type.const discriminants: [0]="agent_ui_close"',
+      `Missing schema variant for type=${JSON.stringify(variantType)}; anyOf length=1; ` +
+        'available properties.type.const discriminants: [0]="unrelated"',
     );
   });
 
-  it("diagnoses duplicate semantic Agent UI variants with every matched index", () => {
+  it.each<AgentUiVariantType>([
+    "agent_ui_response",
+    "agent_ui_request",
+    "agent_ui_close",
+  ])("diagnoses duplicate semantic %s with every matched index", (variantType) => {
     expect(() =>
       findUniqueVariantByType(
         [
-          { properties: { type: { const: "agent_ui_request" } } },
-          { properties: { type: { const: "agent_ui_close" } } },
-          { properties: { type: { const: "agent_ui_request" } } },
+          { properties: { type: { const: variantType } } },
+          { properties: { type: { const: "unrelated" } } },
+          { properties: { type: { const: variantType } } },
         ],
-        "agent_ui_request",
+        variantType,
       ),
     ).toThrowError(
-      'Duplicate schema variants for type="agent_ui_request"; matched indexes=[0, 2]; ' +
-        'anyOf length=3; available properties.type.const discriminants: ' +
-        '[0]="agent_ui_request", [1]="agent_ui_close", [2]="agent_ui_request"',
+      `Duplicate schema variants for type=${JSON.stringify(variantType)}; matched indexes=[0, 2]; ` +
+        `anyOf length=3; available properties.type.const discriminants: ` +
+        `[0]=${JSON.stringify(variantType)}, [1]="unrelated", [2]=${JSON.stringify(variantType)}`,
     );
   });
 
@@ -671,40 +711,73 @@ describe("generated schema freshness gate", () => {
     }
   });
 
-  it("accepts only Ajv paths contained by one injected trusted node_modules root", () => {
-    const trustedRoot = resolve("/srv/bong/agent/node_modules");
+  it("accepts only canonical Ajv paths within one real trusted node_modules root", () => {
+    const tempRoot = createTempDir();
+    const trustedRoot = join(tempRoot, "trusted", "node_modules");
+    const trustedAjvRoot = join(trustedRoot, "ajv");
+    const trustedRuntimeDir = join(trustedAjvRoot, "dist");
+    mkdirSync(trustedRuntimeDir, { recursive: true });
     const trustedPaths = {
-      packageJsonPath: join(trustedRoot, "ajv", "package.json"),
-      resolvedPath: join(trustedRoot, "ajv", "dist", "ajv.js"),
+      packageJsonPath: join(trustedAjvRoot, "package.json"),
+      resolvedPath: join(trustedRuntimeDir, "ajv.js"),
     };
+    writeFileSync(trustedPaths.packageJsonPath, '{"version":"8.12.0"}');
+    writeFileSync(trustedPaths.resolvedPath, "module.exports = {};");
 
-    expect(requireTrustedAjvNodeModulesRoot(trustedPaths, [trustedRoot])).toBe(trustedRoot);
+    expect(requireTrustedAjvNodeModulesRoot(trustedPaths, [trustedRoot])).toBe(
+      realpathSync.native(trustedRoot),
+    );
 
-    const externalAjvRoots = [
-      "/usr/share/nodejs/ajv",
-      "/usr/local/lib/node_modules/ajv",
-      "/opt/node-path/node_modules/ajv",
-      `${trustedRoot}-evil/ajv`,
-    ];
-    for (const externalRoot of externalAjvRoots) {
-      expect(
-        () =>
-          requireTrustedAjvNodeModulesRoot(
-            {
-              packageJsonPath: join(externalRoot, "package.json"),
-              resolvedPath: join(externalRoot, "dist", "ajv.js"),
-            },
-            [trustedRoot],
-          ),
-        `external/NODE_PATH Ajv root must be rejected: ${externalRoot}`,
-      ).toThrow(/one trusted workspace node_modules root/);
-    }
+    const externalAjvRoot = join(tempRoot, "external", "ajv");
+    mkdirSync(join(externalAjvRoot, "dist"), { recursive: true });
+    const externalPaths = {
+      packageJsonPath: join(externalAjvRoot, "package.json"),
+      resolvedPath: join(externalAjvRoot, "dist", "ajv.js"),
+    };
+    writeFileSync(externalPaths.packageJsonPath, '{"version":"8.12.0"}');
+    writeFileSync(externalPaths.resolvedPath, "module.exports = {};");
 
+    expect(() =>
+      requireTrustedAjvNodeModulesRoot(externalPaths, [trustedRoot]),
+    ).toThrow(/one trusted workspace node_modules root/);
     expect(() =>
       requireTrustedAjvNodeModulesRoot(
         {
           packageJsonPath: trustedPaths.packageJsonPath,
-          resolvedPath: "/usr/local/lib/node_modules/ajv/dist/ajv.js",
+          resolvedPath: externalPaths.resolvedPath,
+        },
+        [trustedRoot],
+      ),
+    ).toThrow(/one trusted workspace node_modules root/);
+    expect(() =>
+      requireTrustedAjvNodeModulesRoot(
+        {
+          packageJsonPath: join(trustedAjvRoot, "missing-package.json"),
+          resolvedPath: trustedPaths.resolvedPath,
+        },
+        [trustedRoot],
+      ),
+    ).toThrow(/Cannot canonicalize Ajv package metadata path/);
+    expect(() =>
+      requireTrustedAjvNodeModulesRoot(trustedPaths, [join(tempRoot, "missing-root")]),
+    ).toThrow(/Cannot canonicalize trusted node_modules root/);
+  });
+
+  it("rejects a lexical in-root Ajv symlink that canonically escapes the trusted root", () => {
+    const tempRoot = createTempDir();
+    const trustedRoot = join(tempRoot, "trusted", "node_modules");
+    const externalAjvRoot = join(tempRoot, "external", "ajv");
+    mkdirSync(trustedRoot, { recursive: true });
+    mkdirSync(join(externalAjvRoot, "dist"), { recursive: true });
+    writeFileSync(join(externalAjvRoot, "package.json"), '{"version":"8.12.0"}');
+    writeFileSync(join(externalAjvRoot, "dist", "ajv.js"), "module.exports = {};");
+    symlinkSync(externalAjvRoot, join(trustedRoot, "ajv"), "dir");
+
+    expect(() =>
+      requireTrustedAjvNodeModulesRoot(
+        {
+          packageJsonPath: join(trustedRoot, "ajv", "package.json"),
+          resolvedPath: join(trustedRoot, "ajv", "dist", "ajv.js"),
         },
         [trustedRoot],
       ),
@@ -716,6 +789,10 @@ describe("generated schema freshness gate", () => {
   it(
     "compiles generated Agent UI schemas with workspace Ajv and locks the full acceptance matrix",
     () => {
+      expect(
+        AJV_DECLARED_VERSION,
+        `@bong/schema devDependency 必须精确声明 ajv@8.12.0；package=${SCHEMA_PACKAGE_JSON_PATH}`,
+      ).toBe("8.12.0");
       expect(
         AJV_PACKAGE_VERSION,
         `Ajv package metadata 必须精确锁定 8.12.0；resolved=${AJV_PACKAGE_JSON_PATH}`,

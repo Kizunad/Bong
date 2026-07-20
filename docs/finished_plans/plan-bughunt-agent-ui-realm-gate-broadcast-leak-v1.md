@@ -106,8 +106,8 @@
 - `a9df92719`（2026-07-18）：更新 PR1217 收包返工证据。
 - `e70d52419`（2026-07-19）：合并最新主线并建立 PR1217 最终复验基线。
 - `efcd273fe`（2026-07-19）：合并 `origin/main` 同步 #1233 文档归档。
-- `e960ba5fc54795bbb572b015b93ea530578bd1cc`（2026-07-19）：合并 `origin/main=5d9bdd8f`（#1241 技能动画 PR-5）；在该树上完成 schema 892 / tiandao 831 / python 126 / client 4141 / server fmt+clippy+test 全绿（lib 11807 + bin 11 + 启动集成 1 + 背包 e2e 4 = 约 11823 passed / 0 failed / 6 ignored）。
-- `56b6e33dc577453d2e29f4206564e84b15fcb3fd`（2026-07-20）：紧邻 `git fetch origin && git merge origin/main` 合入 `2f9c70ad3`（#1212 搜刮 HUD 终态收尾）；delta 仅 client network/HUD + 归档文档，无 server/agent 源码增量。
+- `e960ba5fc54795bbb572b015b93ea530578bd1cc`（2026-07-19）：合并 `origin/main=5d9bdd8f`（#1241 技能动画 PR-5）；在该树上完成 schema 892 / tiandao 831 / python 126 / client 4141 / server fmt+clippy+test 全绿（lib 11807 + bin 11 + 启动集成 1 + 背包 e2e 4 = 约 11823 passed / 0 failed / 6 ignored）。该历史 commit 缺少 `Model` trailer；保留历史原样，不重写或 amend。
+- `56b6e33dc577453d2e29f4206564e84b15fcb3fd`（2026-07-20）：紧邻 `git fetch origin && git merge origin/main` 合入 `2f9c70ad3`（#1212 搜刮 HUD 终态收尾）；delta 仅 client network/HUD + 归档文档，无 server/agent 源码增量。该历史 commit 缺少 `Model` trailer；保留历史原样，不重写或 amend。
 - `30a71c767f4e58d8254d18fd12d68bbd344e4892`（2026-07-20）：初版补齐 `generated-artifacts` host Ajv 真编译门禁（`loadHostAjv` + 根 schema 矩阵）；默认 5s 超时下该用例仍会假红。
 - `bdc37989b6de5d2dee2dfb4ddf28aa90304b294a`（2026-07-20）：放宽 discover/host Ajv 用例到 60s，并打印宿主 Ajv version/path 与真实 `assertionCount`；本轮实测 assertionCount=157。
 - `f4f0c92d45a097043e8cb84ce3f0fd64d3599127`（2026-07-20）：纠正 Finish Evidence 的宿主 Ajv 78/78 overclaim，回填真实 gate 数字；当时仍写 host `/usr/share/nodejs/ajv` 路径。
