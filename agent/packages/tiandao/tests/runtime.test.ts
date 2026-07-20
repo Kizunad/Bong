@@ -1072,23 +1072,22 @@ describe("runRuntime", () => {
     expect(logger.log).toHaveBeenCalled();
   });
 
-  it("refreshes the chat window clock after async drain before merging signals", async () => {
-    // 跨秒边界：loop 起点落在旧秒，async drain/annotate 完成后才进入新秒。
-    // 生产 runtime 单轮非 mock 路径对 now() 的完整序列是：
-    //   [0] loop 起点（旧秒）→ loopStartedAtSeconds
-    //   [1] async drain 后、merge 前刷新（新秒）→ mergeNowSeconds
-    //   [2] elapsed 计算（新秒）
-    // 禁止再用 mockReturnValueOnce 单次旧值——任何进入 loop 前的额外 now()
-    // 都会悄悄吃掉旧秒，让本用例在错误实现上假绿。
+  it("reads the chat merge clock only after async annotation resolves", async () => {
     const loopStartedAtSeconds = 10_000;
     const serverObservedAtSeconds = loopStartedAtSeconds + 1;
-    const loopStartedAtMs = loopStartedAtSeconds * 1_000;
-    const serverObservedAtMs = serverObservedAtSeconds * 1_000;
-    const nowCallSequenceMs = [
-      loopStartedAtMs, // [0] loop 起点：初始化本轮旧秒边界
-      serverObservedAtMs, // [1] async merge：必须重新读 now()，不得复用 loopStartedAtSeconds
-      serverObservedAtMs, // [2] elapsed：后续仍停在新秒
-    ] as const;
+    let currentNowMs = loopStartedAtSeconds * 1_000;
+    let annotationResolved = false;
+    const timeline: string[] = [];
+
+    const createDeferred = () => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((complete) => {
+        resolve = () => complete();
+      });
+      return { promise, resolve };
+    };
+    const annotationEntered = createDeferred();
+    const releaseAnnotation = createDeferred();
 
     const redis = new SequenceRuntimeRedis([createTestWorldState()]);
     redis.drainPlayerChat.mockResolvedValue([
@@ -1107,27 +1106,56 @@ describe("runRuntime", () => {
         zone: "spawn",
       },
     ]);
+
+    const annotateChat = vi.fn(async (model: string) => {
+      timeline.push("annotation-entered");
+      annotationEntered.resolve();
+      await releaseAnnotation.promise;
+      annotationResolved = true;
+      timeline.push("annotation-resolved");
+      return createStructuredChatResult(
+        JSON.stringify([
+          {
+            player: "offline:Observed",
+            zone: "spawn",
+            raw: "跨秒到达的合法消息",
+            sentiment: 0.4,
+            intent: "social",
+            influence_weight: 0.5,
+          },
+          {
+            player: "offline:ForgedFuture",
+            zone: "spawn",
+            raw: "伪造未来消息",
+            sentiment: -0.8,
+            intent: "provoke",
+            influence_weight: 0.9,
+          },
+        ]),
+        model,
+      );
+    });
     const chatAwareAgent = new ChatAwareFakeAgent("calamity", {
       commands: [],
       narrations: [],
       reasoning: "chat-window-clock",
     });
+    const setChatSignals = chatAwareAgent.setChatSignals.bind(chatAwareAgent);
+    vi.spyOn(chatAwareAgent, "setChatSignals").mockImplementation((signals) => {
+      timeline.push("signals-injected");
+      setChatSignals(signals);
+    });
 
-    let nowCallIndex = 0;
     const now = vi.fn(() => {
-      if (nowCallIndex >= nowCallSequenceMs.length) {
-        throw new Error(
-          `unexpected now() call #${nowCallIndex + 1}; locked sequence has ${nowCallSequenceMs.length} values ` +
-            `(loop-start old, merge-refresh new, elapsed new)`,
-        );
-      }
-      const value = nowCallSequenceMs[nowCallIndex];
-      nowCallIndex += 1;
-      return value;
+      const currentNowSeconds = Math.floor(currentNowMs / 1_000);
+      timeline.push(
+        `clock:${annotationResolved ? "after-annotation" : "before-annotation"}:${currentNowSeconds}`,
+      );
+      return currentNowMs;
     });
 
     await withIsolatedCwd(async () => {
-      await runRuntime(
+      const runtimePromise = runRuntime(
         {
           mockMode: false,
           model: DEFAULT_MODEL,
@@ -1138,23 +1166,40 @@ describe("runRuntime", () => {
         {
           agents: [chatAwareAgent],
           createRedis: () => redis,
-          createClient: () => ({
-            chat: vi.fn(async (model: string) => createStructuredChatResult("[]", model)),
-          }),
+          createClient: () => ({ chat: annotateChat }),
           sleep: vi.fn(async () => {}),
           logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
           maxLoopIterations: 1,
           now,
         },
       );
+
+      await annotationEntered.promise;
+      expect(timeline).toContain("annotation-entered");
+      expect(timeline).not.toContain("annotation-resolved");
+      const blockedClockReads = timeline.filter((event) => event.startsWith("clock:"));
+      expect(blockedClockReads.length).toBeGreaterThan(0);
+      expect(
+        blockedClockReads.every(
+          (event) => event === `clock:before-annotation:${loopStartedAtSeconds}`,
+        ),
+      ).toBe(true);
+      expect(chatAwareAgent.receivedChatSignalPlayers).toEqual([]);
+
+      currentNowMs = serverObservedAtSeconds * 1_000;
+      releaseAnnotation.resolve();
+      await runtimePromise;
     });
 
-    expect(now).toHaveBeenCalledTimes(nowCallSequenceMs.length);
-    expect(now.mock.results.map((result) => result.value)).toEqual([...nowCallSequenceMs]);
-    expect(nowCallIndex).toBe(nowCallSequenceMs.length);
-    // merge 刷新用的是序列[1]（新秒），不是序列[0] 的 loop 旧秒
-    expect(Math.floor((now.mock.results[1]?.value as number) / 1000)).toBe(serverObservedAtSeconds);
-    expect(Math.floor((now.mock.results[0]?.value as number) / 1000)).toBe(loopStartedAtSeconds);
+    const annotationResolvedIndex = timeline.indexOf("annotation-resolved");
+    const mergeClockReadIndex = timeline.findIndex(
+      (event) => event === `clock:after-annotation:${serverObservedAtSeconds}`,
+    );
+    const signalsInjectedIndex = timeline.indexOf("signals-injected");
+
+    expect(annotationResolvedIndex).toBeGreaterThanOrEqual(0);
+    expect(mergeClockReadIndex).toBeGreaterThan(annotationResolvedIndex);
+    expect(signalsInjectedIndex).toBeGreaterThan(mergeClockReadIndex);
     expect(chatAwareAgent.receivedChatSignalPlayers).toEqual(["offline:Observed"]);
   });
 
