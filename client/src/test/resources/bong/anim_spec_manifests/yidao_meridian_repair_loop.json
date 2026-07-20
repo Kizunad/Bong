@@ -1,0 +1,10 @@
+{
+  "segment": "loop",
+  "expected_end_tick": 90,
+  "primary_axes": [
+    "rightArm.pitch",
+    "rightArm.roll",
+    "leftArm.pitch",
+    "leftArm.roll"
+  ]
+}

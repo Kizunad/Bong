@@ -2203,6 +2203,7 @@ pub fn handle_client_request_payloads(
                     &mut commands,
                     &mut clients,
                     &mut combat_params,
+                    alchemy_params.vfx_events.as_deref_mut(),
                     &inventories,
                 );
             }
@@ -2238,6 +2239,7 @@ pub fn handle_client_request_payloads(
                     &mut commands,
                     &mut clients,
                     &mut combat_params,
+                    alchemy_params.vfx_events.as_deref_mut(),
                     &skill_scroll_params.known_techniques,
                 );
             }
@@ -11789,6 +11791,181 @@ mod tests {
         assert_eq!(casting.complete_cooldown_ticks, 60);
     }
 
+    /// 槽位 3 绑定崩拳——「主动切槽取消」用例里那条**通过全部门禁**的新 cast
+    /// （空槽位/未学会都会在 cancel 判定之前早退，测不到取消路径）。
+    fn slot3_bound_to_beng_quan() -> SkillBarBindings {
+        let mut bindings = SkillBarBindings::default();
+        bindings.slots[3] = SkillSlot::Skill {
+            skill_id: "burst_meridian.beng_quan".to_string(),
+        };
+        bindings
+    }
+
+    /// 崩拳的经脉前置（大肠/小肠/三焦 opened + integrity 足量）。
+    fn beng_quan_ready_meridians() -> crate::cultivation::components::MeridianSystem {
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        for id in [
+            crate::cultivation::components::MeridianId::LargeIntestine,
+            crate::cultivation::components::MeridianId::SmallIntestine,
+            crate::cultivation::components::MeridianId::TripleEnergizer,
+        ] {
+            let m = ms.get_mut(id);
+            m.opened = true;
+            m.integrity = 1.0;
+        }
+        ms
+    }
+
+    /// 引导中的施法快照（槽位 0），供「主动切槽取消」两用例复用。
+    fn yidao_charge_casting(skill_id: &str) -> Casting {
+        Casting {
+            source: CastSource::SkillBar,
+            slot: 0,
+            started_at_tick: 0,
+            duration_ticks: 1200,
+            started_at_ms: 0,
+            duration_ms: 60_000,
+            bound_instance_id: None,
+            start_position: DVec3::new(0.0, 64.0, 0.0),
+            complete_cooldown_ticks: 60,
+            skill_id: Some(skill_id.to_string()),
+            skill_config: None,
+        }
+    }
+
+    /// plan-skill-anim-fidelity-v1 P4（review r1 补）——**用户主动切槽取消**是
+    /// `tick_casts_or_interrupt` 三打断分支之外的第四条退出路径：`Casting` 在
+    /// `cancel_previous_cast` 里被提前 remove，那边再也看不到它。若此处不补发
+    /// StopAnim，`bong:yidao_*_loop` 这类 isLoop 蓄力段会永卡客户端（yidao 引导
+    /// 窗长达 60s，命中概率远高于 sword.infuse）。
+    #[test]
+    fn user_cancel_by_slot_switch_stops_looping_charge_anim() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let unique_id = UniqueId::default();
+        let expected_target = unique_id.0.to_string();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            unique_id,
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            beng_quan_ready_meridians(),
+            slot3_bound_to_beng_quan(),
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            known(&["burst_meridian.beng_quan"]),
+            // 引导中的接经术（循环蓄力段已在客户端播放）。
+            yidao_charge_casting(crate::combat::yidao::MERIDIAN_REPAIR_SKILL_ID),
+        ));
+
+        // 切到另一个槽位施法 → 走 cancel_previous_cast（UserCancel）。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 3,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let stop_anims: Vec<(String, Option<u8>)> = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<VfxEventRequest>>()
+            .drain()
+            .filter_map(|request| match request.payload {
+                VfxEventPayloadV1::StopAnim {
+                    target_player,
+                    anim_id,
+                    fade_out_ticks,
+                } => {
+                    assert_eq!(
+                        target_player, expected_target,
+                        "StopAnim 必须寻址到取消施法的玩家本人"
+                    );
+                    Some((anim_id, fade_out_ticks))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            stop_anims,
+            vec![(
+                crate::combat::yidao::ANIM_YIDAO_MERIDIAN_REPAIR_LOOP.to_string(),
+                Some(crate::network::cast_emit::CAST_LOOP_ANIM_CANCEL_FADE_OUT_TICKS),
+            )],
+            "主动切槽取消必须恰停一次被取消招的循环蓄力段（否则动画永卡客户端）"
+        );
+    }
+
+    /// 负向：被取消的招式**没有**登记循环蓄力段时，取消路径不得发多余 StopAnim
+    /// （查表 miss = 该招本就没有需要停的循环动画）。
+    #[test]
+    fn user_cancel_of_non_looping_cast_emits_no_stop_anim() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            UniqueId::default(),
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            beng_quan_ready_meridians(),
+            slot3_bound_to_beng_quan(),
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            known(&["burst_meridian.beng_quan"]),
+            // 被取消的招式未登记循环蓄力段（崩拳是瞬发三段式）。
+            yidao_charge_casting("burst_meridian.beng_quan"),
+        ));
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 3,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let stop_anim_count = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<VfxEventRequest>>()
+            .drain()
+            .filter(|request| matches!(request.payload, VfxEventPayloadV1::StopAnim { .. }))
+            .count();
+        assert_eq!(
+            stop_anim_count, 0,
+            "非循环段招式被取消时不得发 StopAnim（查表 miss 即无循环动画需要停）"
+        );
+    }
+
     #[test]
     fn skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path() {
         // body.guangbo_ticao 是仍未实装 resolver 的 skeleton 招（不在 SkillRegistry 内，
@@ -13948,6 +14125,7 @@ fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_use_quick_slot(
     entity: valence::prelude::Entity,
     slot: u8,
@@ -13955,6 +14133,7 @@ fn handle_use_quick_slot(
     commands: &mut Commands,
     clients: &mut Query<(&Username, &mut Client)>,
     combat_params: &mut CombatRequestParams,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
     inventories: &Query<&mut PlayerInventory>,
 ) {
     if slot >= 9 {
@@ -13972,7 +14151,16 @@ fn handle_use_quick_slot(
             return;
         }
         let prev = CastCancelSnapshot::from(prev);
-        cancel_previous_cast(entity, prev, clock, commands, clients, combat_params, slot);
+        cancel_previous_cast(
+            entity,
+            prev,
+            clock,
+            commands,
+            clients,
+            combat_params,
+            vfx_events,
+            slot,
+        );
         // 继续到下面启动新 cast。
     }
     let (bound_instance_id, on_cooldown) = combat_params
@@ -14374,6 +14562,7 @@ fn handle_skill_bar_cast(
     commands: &mut Commands,
     clients: &mut Query<(&Username, &mut Client)>,
     combat_params: &mut CombatRequestParams,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
     known_techniques: &Query<&mut KnownTechniques>,
 ) {
     if slot >= SkillBarBindings::SLOT_COUNT as u8 {
@@ -14582,7 +14771,16 @@ fn handle_skill_bar_cast(
             return;
         }
         let prev = CastCancelSnapshot::from(prev);
-        cancel_previous_cast(entity, prev, clock, commands, clients, combat_params, slot);
+        cancel_previous_cast(
+            entity,
+            prev,
+            clock,
+            commands,
+            clients,
+            combat_params,
+            vfx_events,
+            slot,
+        );
     }
 
     let resolved_target = resolve_skill_cast_target(target.as_deref(), combat_params);
@@ -15062,6 +15260,7 @@ fn push_skill_cast_started_sync(world: &mut bevy_ecs::world::World, entity: Enti
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cancel_previous_cast(
     entity: valence::prelude::Entity,
     prev: CastCancelSnapshot,
@@ -15069,10 +15268,29 @@ fn cancel_previous_cast(
     commands: &mut Commands,
     clients: &mut Query<(&Username, &mut Client)>,
     combat_params: &mut CombatRequestParams,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
     next_slot: u8,
 ) {
     let prev_source = prev.source;
     let prev_slot = prev.slot;
+    // plan-skill-anim-fidelity-v1 P4（review r1 修）——用户主动切槽取消是
+    // `tick_casts_or_interrupt` 三打断分支之外的**第四条**退出路径：Casting 在此
+    // 被提前 remove，那边再也看不到它，不补发 StopAnim 循环蓄力段就永卡客户端
+    // （yidao 引导窗长达 60s，命中概率远高于 sword.infuse）。
+    if let (Some(vfx_events), Ok(unique_id), Ok(position)) = (
+        vfx_events,
+        combat_params.unique_ids.get(entity),
+        combat_params.positions.get(entity),
+    ) {
+        if let Some(request) = crate::network::cast_emit::cast_loop_stop_anim_request(
+            prev.skill_id.as_deref(),
+            unique_id,
+            position.get(),
+            crate::network::cast_emit::CAST_LOOP_ANIM_CANCEL_FADE_OUT_TICKS,
+        ) {
+            vfx_events.send(request);
+        }
+    }
     commands.entity(entity).remove::<Casting>();
     match prev_source {
         CastSource::QuickSlot => {
@@ -15111,12 +15329,15 @@ fn cancel_previous_cast(
     );
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct CastCancelSnapshot {
     source: CastSource,
     slot: u8,
     duration_ms: u32,
     started_at_ms: u64,
+    /// plan-skill-anim-fidelity-v1 P4：用户主动取消也要走停止路径（§13 #6），
+    /// 循环蓄力段的 `StopAnim` 需要按 skill_id 查表，故快照带上它。
+    skill_id: Option<String>,
 }
 
 impl From<&Casting> for CastCancelSnapshot {
@@ -15126,6 +15347,7 @@ impl From<&Casting> for CastCancelSnapshot {
             slot: casting.slot,
             duration_ms: casting.duration_ms,
             started_at_ms: casting.started_at_ms,
+            skill_id: casting.skill_id.clone(),
         }
     }
 }
