@@ -4,7 +4,33 @@ set -euo pipefail
 
 REG=$(realpath "$(dirname "$0")/../slot_registry.sh")
 SANDBOX=$(mktemp -d /tmp/slot-registry-test.XXXXXX)
-cleanup() { rm -rf "$SANDBOX"; }
+TEST_PIDS=()
+pid_belongs_to_this_test() {
+  local pid="$1"
+  python3 - "$pid" "$SANDBOX" <<'PYOWN'
+from pathlib import Path
+import os, sys
+pid, sandbox = sys.argv[1:]
+try:
+    env = Path(f"/proc/{pid}/environ").read_bytes()
+except OSError:
+    raise SystemExit(1)
+raise SystemExit(0 if os.fsencode(sandbox) in env else 1)
+PYOWN
+}
+cleanup() {
+  trap - EXIT
+  local pid
+  for pid in "${TEST_PIDS[@]}"; do
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && pid_belongs_to_this_test "$pid"; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+  for pid in "${TEST_PIDS[@]}"; do
+    [[ "$pid" =~ ^[0-9]+$ ]] && wait "$pid" 2>/dev/null || true
+  done
+  rm -rf "$SANDBOX"
+}
 trap cleanup EXIT
 
 PASS=0
@@ -28,6 +54,36 @@ expect_fail() {
   else
     fail "$desc（stderr 未含 $pattern）"
   fi
+}
+read_gate_ready() {
+  local fifo="$1"
+  IFS=' ' read -r GATE_WORD GATE_HOLDER_PID GATE_HOLDER_FD < "$fifo"
+  if [[ "$GATE_WORD" == ready && "$GATE_HOLDER_PID" =~ ^[0-9]+$ && "$GATE_HOLDER_FD" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  fail "gate ready 握手必须携带真实 holder PID/FD"
+  return 1
+}
+assert_no_hook_holder() {
+  local ready_fifo="$1"
+  python3 - "$ready_fifo" <<'PYPROC'
+from pathlib import Path
+import os, sys
+needle = os.fsencode("SLOT_REGISTRY_TEST_HOLD_GATE_READY=" + sys.argv[1]) + b"\0"
+found = []
+for proc in Path("/proc").iterdir():
+    if not proc.name.isdigit():
+        continue
+    try:
+        env = (proc / "environ").read_bytes()
+    except OSError:
+        continue
+    if needle in env:
+        found.append(int(proc.name))
+if found:
+    print("hook holder processes remain:", found, file=sys.stderr)
+    raise SystemExit(1)
+PYPROC
 }
 field() {
   python3 - "$1" <<'PYF'
@@ -121,6 +177,10 @@ out=$(bash scripts/slot_registry.sh init --max 4)
 check "init --max 4" grep -q 'capacity=4 held=0' <<<"$out"
 out=$(bash scripts/slot_registry.sh capacity)
 check "capacity 报告 max=4 held=0" grep -q 'max=4 held=0' <<<"$out"
+help=$(bash scripts/slot_registry.sh --help)
+check "help 含用法" grep -q '^用法（均在仓库根' <<<"$help"
+check_not "help 不泄漏 set -euo pipefail" grep -q 'set -euo pipefail' <<<"$help"
+check_not "help 不泄漏执行变量" grep -q '^cmd=' <<<"$help"
 
 printf '== 2. 固定池边界 0 / 1 / max / max+1\n'
 expect_fail "slot-0 拒绝" 'out of pool' "$SANDBOX/s0.out" "$SANDBOX/s0.err" acquire slot-0 zero
@@ -148,69 +208,99 @@ expect_fail "同 slot 第二 acquire 拒绝" 'slot busy' "$SANDBOX/same.out" "$S
 check "竞争后 holder 不变" python3 -c 'from pathlib import Path; assert Path("'$REGROOT'/slot-1.lock/task_id").read_bytes()==b"owner-a\0"'
 release_occupied slot-1 owner-a
 
-printf '== 4. 跨 slot 高并发 capacity 不超限\n'
+printf '== 4. 跨/同 slot 高并发 capacity 不超限\n'
 bash scripts/slot_registry.sh init --max 4 >/dev/null
 acquire slot-1 base-1 >/dev/null
 acquire slot-2 base-2 >/dev/null
-acquire slot-3 base-3 >/dev/null
 READY="$SANDBOX/cap.ready"; GO="$SANDBOX/cap.go"; mkfifo "$READY" "$GO"
-SLOT_REGISTRY_TEST_HOLD_GATE_READY="$READY" SLOT_REGISTRY_TEST_HOLD_GATE_RELEASE="$GO" \
-  acquire slot-4 race-four >"$SANDBOX/cap4.out" 2>"$SANDBOX/cap4.err" &
-p4=$!
-IFS= read -r ready < "$READY"
-[[ "$ready" == ready ]] || { fail "跨 slot holder readiness"; exit 1; }
-SLOT_REGISTRY_GATE_WAIT_SEC=3 acquire slot-4 same-slot >"$SANDBOX/cap-same.out" 2>"$SANDBOX/cap-same.err" &
-p_same=$!
-SLOT_REGISTRY_GATE_WAIT_SEC=3 acquire slot-3 busy-existing >"$SANDBOX/cap-busy.out" 2>"$SANDBOX/cap-busy.err" &
-p_busy=$!
+env SLOT_REGISTRY_TEST_HOLD_GATE_READY="$READY" SLOT_REGISTRY_TEST_HOLD_GATE_RELEASE="$GO" \
+  bash scripts/slot_registry.sh acquire --slot slot-3 --task race-three --branch bugfix/race-three \
+    --claim-sha "$SHA" --agent agent-race-three >"$SANDBOX/cap3.out" 2>"$SANDBOX/cap3.err" &
+p3=$!; TEST_PIDS+=("$p3")
+read_gate_ready "$READY"
+p3_holder=$GATE_HOLDER_PID; TEST_PIDS+=("$p3_holder")
+check "跨 slot holder 属于本次沙箱" pid_belongs_to_this_test "$p3_holder"
+env SLOT_REGISTRY_GATE_WAIT_SEC=3 bash scripts/slot_registry.sh acquire --slot slot-4 --task race-four \
+  --branch bugfix/race-four --claim-sha "$SHA" --agent agent-race-four \
+  >"$SANDBOX/cap4.out" 2>"$SANDBOX/cap4.err" &
+p4=$!; TEST_PIDS+=("$p4")
+env SLOT_REGISTRY_GATE_WAIT_SEC=3 bash scripts/slot_registry.sh acquire --slot slot-3 --task same-slot \
+  --branch bugfix/same-slot --claim-sha "$SHA" --agent agent-same-slot \
+  >"$SANDBOX/cap-same.out" 2>"$SANDBOX/cap-same.err" &
+p_same=$!; TEST_PIDS+=("$p_same")
 printf 'release\n' > "$GO"
-wait "$p4"; rc4=$?
 set +e
+wait "$p3"; rc3=$?
+wait "$p4"; rc4=$?
 wait "$p_same"; rcs=$?
-wait "$p_busy"; rcb=$?
 set -e
-if [[ $rc4 -eq 0 && $rcs -ne 0 && $rcb -ne 0 ]]; then pass "跨/同 slot 并发恰好一个新 reservation"; else fail "跨/同 slot 并发结果 rc=$rc4/$rcs/$rcb"; fi
+if [[ $rc3 -eq 0 && $rc4 -eq 0 && $rcs -ne 0 ]]; then
+  pass "两个不同空闲 slot 并发成功、同 slot 竞争者失败"
+else
+  fail "跨/同 slot 并发结果 rc=$rc3/$rc4/$rcs"
+fi
 out=$(bash scripts/slot_registry.sh capacity)
 check "高并发后 held=max=4" grep -q 'max=4 held=4' <<<"$out"
+check "不同空闲 slot-3 holder 正确" python3 -c 'from pathlib import Path; assert Path("'$REGROOT'/slot-3.lock/task_id").read_bytes()==b"race-three\0"'
+check "不同空闲 slot-4 holder 正确" python3 -c 'from pathlib import Path; assert Path("'$REGROOT'/slot-4.lock/task_id").read_bytes()==b"race-four\0"'
 check "同 slot loser 报 busy 或 capacity" grep -Eq 'slot busy|capacity full' "$SANDBOX/cap-same.err"
-check "既占 slot loser 报 busy 或 capacity" grep -Eq 'slot busy|capacity full' "$SANDBOX/cap-busy.err"
 release_occupied slot-1 base-1
 release_occupied slot-2 base-2
-release_occupied slot-3 base-3
+release_occupied slot-3 race-three
 release_occupied slot-4 race-four
 
 printf '== 5. flock 超时 fail-closed 与正常释放\n'
 READY="$SANDBOX/timeout.ready"; GO="$SANDBOX/timeout.go"; mkfifo "$READY" "$GO"
-SLOT_REGISTRY_TEST_HOLD_GATE_READY="$READY" SLOT_REGISTRY_TEST_HOLD_GATE_RELEASE="$GO" \
-  acquire slot-1 lock-holder >"$SANDBOX/holder.out" 2>"$SANDBOX/holder.err" &
-holder_pid=$!
-IFS= read -r ready < "$READY"
+env SLOT_REGISTRY_TEST_HOLD_GATE_READY="$READY" SLOT_REGISTRY_TEST_HOLD_GATE_RELEASE="$GO" \
+  bash scripts/slot_registry.sh acquire --slot slot-1 --task lock-holder --branch bugfix/lock-holder \
+    --claim-sha "$SHA" --agent agent-lock-holder >"$SANDBOX/holder.out" 2>"$SANDBOX/holder.err" &
+holder_wrapper_pid=$!; TEST_PIDS+=("$holder_wrapper_pid")
+read_gate_ready "$READY"
+holder_actual_pid=$GATE_HOLDER_PID; TEST_PIDS+=("$holder_actual_pid")
+check "超时用例命中真实 holder" pid_belongs_to_this_test "$holder_actual_pid"
 expect_fail "争用超时 fail-closed" 'acquire gate busy' "$SANDBOX/timeout.out" "$SANDBOX/timeout.err" \
   env SLOT_REGISTRY_GATE_WAIT_SEC=0.15 bash scripts/slot_registry.sh acquire --slot slot-2 --task timeout \
     --branch bugfix/timeout --claim-sha "$SHA" --agent timeout
 check_not "超时未创建 slot-2" test -e "$REGROOT/slot-2.lock"
 printf 'release\n' > "$GO"
-wait "$holder_pid"
+wait "$holder_wrapper_pid"
+check_not "正常释放后 holder 已退出" kill -0 "$holder_actual_pid"
 check "正常释放 gate 后可继续 acquire" acquire slot-2 after-timeout
 release_occupied slot-1 lock-holder
 release_occupied slot-2 after-timeout
 
-printf '== 6. SIGKILL 异常退出后内核释放 flock\n'
+printf '== 6. SIGKILL 真 holder 后内核释放同一 flock inode\n'
 READY="$SANDBOX/kill.ready"; GO="$SANDBOX/kill.go"; mkfifo "$READY" "$GO"
-setsid env SLOT_REGISTRY_TEST_HOLD_GATE_READY="$READY" SLOT_REGISTRY_TEST_HOLD_GATE_RELEASE="$GO" \
+env SLOT_REGISTRY_TEST_HOLD_GATE_READY="$READY" SLOT_REGISTRY_TEST_HOLD_GATE_RELEASE="$GO" \
   bash scripts/slot_registry.sh acquire --slot slot-1 --task doomed --branch bugfix/doomed \
     --claim-sha "$SHA" --agent agent-doomed >"$SANDBOX/doomed.out" 2>"$SANDBOX/doomed.err" &
-doomed_pid=$!
-IFS= read -r ready < "$READY"
-kill -KILL -- "-$doomed_pid"
+doomed_wrapper_pid=$!; TEST_PIDS+=("$doomed_wrapper_pid")
+read_gate_ready "$READY"
+doomed_holder_pid=$GATE_HOLDER_PID; doomed_holder_fd=$GATE_HOLDER_FD
+TEST_PIDS+=("$doomed_holder_pid")
+check "SIGKILL 目标是真实本次 holder" pid_belongs_to_this_test "$doomed_holder_pid"
+lock_inode_before=$(stat -Lc '%d:%i' "$LOCKROOT/acquire.lock")
+holder_inode_before=$(stat -Lc '%d:%i' "/proc/$doomed_holder_pid/fd/$doomed_holder_fd")
+if [[ "$lock_inode_before" == "$holder_inode_before" ]]; then
+  pass "hook 回报 FD 确实持有当前 acquire.lock inode"
+else
+  fail "hook FD inode 与 acquire.lock 不一致"
+fi
+kill -KILL "$doomed_holder_pid"
 set +e
-wait "$doomed_pid" 2>/dev/null
+wait "$doomed_wrapper_pid" 2>/dev/null
 kill_rc=$?
 set -e
-if [[ $kill_rc -ne 0 ]]; then pass "持锁进程被 SIGKILL"; else fail "SIGKILL 进程意外零退出"; fi
-check_not "SIGKILL 发生在 reservation 前" test -e "$REGROOT/slot-1.lock"
+if [[ $kill_rc -ne 0 ]]; then pass "真实持锁进程被 SIGKILL"; else fail "SIGKILL 进程意外零退出"; fi
+check_not "真实 holder PID 已退出" kill -0 "$doomed_holder_pid"
+check_not "旧 holder FD 已关闭" test -e "/proc/$doomed_holder_pid/fd/$doomed_holder_fd"
+check "本次 hook 无 orphan 进程" assert_no_hook_holder "$READY"
+check "SIGKILL 发生在 reservation 前" test ! -e "$REGROOT/slot-1.lock"
+check "锁路径仍为同一 inode（未删除重建假恢复）" \
+  test "$(stat -Lc '%d:%i' "$LOCKROOT/acquire.lock")" = "$lock_inode_before"
 out=$(SLOT_REGISTRY_GATE_WAIT_SEC=1 acquire slot-2 recovered)
-check "异常退出后后继 acquire 成功" grep -q 'OK acquire slot-2' <<<"$out"
+check "异常退出后同一 inode 上后继 acquire 成功" grep -q 'OK acquire slot-2' <<<"$out"
+check "恢复后本次 hook 仍无 orphan" assert_no_hook_holder "$READY"
 release_occupied slot-2 recovered
 
 printf '== 7. reserved 合法转换与 rollback 删除授权\n'
@@ -219,8 +309,14 @@ bash scripts/slot_registry.sh mark-created-local --slot slot-1 --task sm-reserve
 check "reserved 可幂等 mark false" python3 -c 'from pathlib import Path; assert Path("'$REGROOT'/slot-1.lock/created_local_branch").read_bytes()==b"false\0"'
 bash scripts/slot_registry.sh mark-created-local --slot slot-1 --task sm-reserved --value true >/dev/null
 check "reserved 可 false→true" python3 -c 'from pathlib import Path; assert Path("'$REGROOT'/slot-1.lock/created_local_branch").read_bytes()==b"true\0"'
+bash scripts/slot_registry.sh mark-created-local --slot slot-1 --task sm-reserved --value true >/dev/null
+check "reserved 可幂等 mark true" python3 -c 'from pathlib import Path; assert Path("'$REGROOT'/slot-1.lock/created_local_branch").read_bytes()==b"true\0"'
 assert_unchanged_after_failure "created_local true→false 拒绝且字段不变" "$REGROOT/slot-1.lock" 'monotonic' \
   bash scripts/slot_registry.sh mark-created-local --slot slot-1 --task sm-reserved --value false
+assert_unchanged_after_failure "reserved 上 release 拒绝且不变" "$REGROOT/slot-1.lock" 'invalid state transition' \
+  bash scripts/slot_registry.sh release --slot slot-1 --task sm-reserved
+assert_unchanged_after_failure "reserved 上 force-unfreeze 拒绝且不变" "$REGROOT/slot-1.lock" 'invalid state transition' \
+  bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task sm-reserved
 out=$(bash scripts/slot_registry.sh rollback --slot slot-1 --task sm-reserved)
 check "reserved rollback 输出 DELETE=true" grep -q 'DELETE_LOCAL_BRANCH=true' <<<"$out"
 check_not "rollback 清 reservation" test -e "$REGROOT/slot-1.lock"
@@ -243,6 +339,15 @@ bash scripts/slot_registry.sh release --slot slot-1 --task sm-occupied >/dev/nul
 check_not "occupied→free release" test -e "$REGROOT/slot-1.lock"
 out=$(bash scripts/slot_registry.sh release --slot slot-1 --task sm-occupied)
 check "free release 幂等" grep -q 'already free' <<<"$out"
+out=$(bash scripts/slot_registry.sh rollback --slot slot-1 --task sm-occupied)
+check "free rollback 幂等且无删除授权" grep -q 'DELETE_LOCAL_BRANCH=false' <<<"$out"
+for spec in occupy:occupy freeze-blocked:freeze force-unfreeze-blocked:force mark-created-local:mark; do
+  cmd=${spec%%:*}; label=${spec#*:}
+  args=(bash scripts/slot_registry.sh "$cmd" --slot slot-1 --task free-task)
+  [[ "$cmd" == mark-created-local ]] && args+=(--value true)
+  expect_fail "free 上 $label 拒绝" 'slot not held' "$SANDBOX/free-${cmd}.out" "$SANDBOX/free-${cmd}.err" "${args[@]}"
+  check_not "free 上 $label 失败不创建 reservation" test -e "$REGROOT/slot-1.lock"
+done
 
 printf '== 9. blocked_frozen 全部普通出口 fail-closed\n'
 acquire slot-1 sm-frozen-r >/dev/null

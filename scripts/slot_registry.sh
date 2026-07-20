@@ -50,7 +50,8 @@
 #   bash scripts/slot_registry.sh is-held --slot slot-1
 #
 # 测试专用故障注入：SLOT_REGISTRY_TEST_HOLD_GATE_READY / _RELEASE FIFO 仅在 acquire
-# 获锁后、修改永久 registry 前阻塞，用于确定性验证超时与 SIGKILL 后内核释放。
+# 获锁后、修改永久 registry 前阻塞；ready 消息携带真实 BASHPID/锁 FD，用于确定性
+# 验证超时与 SIGKILL 后内核释放，避免只杀包装进程造成假绿与 orphan。
 # 失败一律非零 + stderr 说明；任何查询异常不假装空闲。
 set -euo pipefail
 
@@ -80,8 +81,12 @@ validate_wait_seconds() {
   [[ "$GATE_WAIT_SEC" =~ ^([0-9]+)([.][0-9]+)?$ ]] || die "invalid SLOT_REGISTRY_GATE_WAIT_SEC: $GATE_WAIT_SEC"
 }
 
-ensure_reg() {
+ensure_roots() {
   mkdir -p "$REG_ROOT" "$LOCK_ROOT"
+}
+
+ensure_reg() {
+  ensure_roots
   if [[ ! -f "$REG_ROOT/capacity" ]]; then
     printf '%s\n' "$DEFAULT_MAX" > "$REG_ROOT/capacity"
   fi
@@ -165,7 +170,7 @@ require_state() {
 
 with_registry_lock() {
   validate_wait_seconds
-  ensure_reg
+  ensure_roots
   local fn="$1"
   shift
   exec {REGISTRY_FD}>"$GATE_FILE"
@@ -173,6 +178,7 @@ with_registry_lock() {
     exec {REGISTRY_FD}>&-
     die "acquire gate busy: timeout after ${GATE_WAIT_SEC}s (fail-closed)"
   fi
+  ensure_reg
   "$fn" "$@"
   local rc=$?
   flock -u "$REGISTRY_FD" || true
@@ -186,7 +192,7 @@ maybe_hold_gate_for_test() {
   [[ -z "$ready" && -z "$release" ]] && return 0
   [[ -n "$ready" && -n "$release" ]] || die "test gate hold requires ready and release FIFOs"
   [[ -p "$ready" && -p "$release" ]] || die "test gate hold paths must be FIFOs"
-  printf 'ready\n' > "$ready"
+  printf 'ready %s %s\n' "$BASHPID" "$REGISTRY_FD" > "$ready"
   local signal
   IFS= read -r signal < "$release"
   [[ "$signal" == "release" ]] || die "invalid test gate release signal"
@@ -474,7 +480,7 @@ case "$cmd" in
   capacity) cmd_capacity "$@" ;;
   status) cmd_status "$@" ;;
   ""|-h|--help)
-    perl -ne 'if ($. >= 2 && $. <= 56) { s/^# ?//; print }' "$0"
+    perl -ne 'next if $. == 1; if (/^#/) { s/^# ?//; print } else { exit }' "$0"
     exit 0
     ;;
   *) die "unknown command: $cmd" ;;
