@@ -167,8 +167,8 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
      - BLOCKED 恢复进驻同样走「既有本地分支 + SHA 对拍」，禁止 `-B`。
 6. 对拍 `git -C <slot绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，检查 slot 确实处于 locked 状态，然后只运行 `bash scripts/slot_registry.sh occupy --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"`；该 executable gate 会重验 canonical slot、registered+locked、branch/HEAD/upstream/claim、dirty/untracked/ignored，不能用前面的手工检查替代。
 7. create-ref 成功后的失败回滚分两种（**均不得无条件 `branch -D`**）：
-   - **双门/ignored/acquire 后核验失败**（checkout 尚未执行）：不得在 slot 内执行任何写操作；`bash scripts/slot_registry.sh rollback --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"`（此时 `DELETE_LOCAL_BRANCH` 必为 false），回报主干处置/换 slot，再由该 subagent 删除刚创建的远端 claim ref 并核验不存在。
-   - **checkout 之后的步骤失败**（跟踪、SHA 对拍等）：在 slot 内 `git checkout --detach origin/main` 脱离；执行带同一 `--slot/--task/--agent/--owner-token` 的 `slot_registry.sh rollback` 并**仅当 stdout 含 `DELETE_LOCAL_BRANCH=true`（本轮 `mark-created-local true`）才删除本地分支**；既有分支（含 SHA 冲突/BLOCKED 残留）一律保留并交人工；回报主干，再删除刚创建的远端 claim ref 并核验不存在。
+   - **双门/ignored/acquire 后核验失败**（checkout 尚未执行）：不得在 slot 内执行任何写操作；`bash scripts/slot_registry.sh rollback --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"`（此时 `DELETE_LOCAL_BRANCH` 必为 false），回报主干处置/换 slot。远端 claim ref 仅在本 subagent 本轮刚创建、PR 尚未创建、且删除前重新查询确认其 SHA 仍严格等于本轮 `claim_sha` 时，才由本 subagent 删除并核验不存在；任一条件不满足即保留 ref 交主干。
+   - **checkout 之后的步骤失败**（跟踪、SHA 对拍等）：在 slot 内 `git checkout --detach origin/main` 脱离；执行带同一 `--slot/--task/--agent/--owner-token` 的 `slot_registry.sh rollback` 并**仅当 stdout 含 `DELETE_LOCAL_BRANCH=true`（本轮 `mark-created-local true`）才删除本地分支**；既有分支（含 SHA 冲突/BLOCKED 残留）一律保留并交人工。远端 claim ref 仍只适用上一项完全相同的三条件失败回滚；其它释放、巡检与删除统一由主干负责。
    两种路径都不得留下孤儿锁，**不得 remove slot**。正常闭环释放：`detach` →（CLOSED）`branch -D` → `bash scripts/slot_registry.sh release --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"`。BLOCKED 干净释放：`detach` + **保留本地分支** + 带同一完整 owner identity 的 `slot_registry.sh release`；脏现场：`bash scripts/slot_registry.sh freeze-blocked --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"` 并交人工；恢复只允许运行 `manual-report` 后由人工以完整 reservation identity + operator + reason 执行 audited `force-unfreeze-blocked`，不宣称 PID/liveness 自动恢复。
 
 进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在 slot 绝对路径内执行；编译必须落在 slot 自身的 in-tree target（若环境设有全局 `CARGO_TARGET_DIR`，门禁命令前显式 `unset CARGO_TARGET_DIR`），保证保温缓存留在 slot 内。禁止进驻他人正占用的 slot，禁止修改主 checkout。
@@ -300,9 +300,9 @@ review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，�
 
 1. 确认 PR 仍 open，读取 `pr_head_sha` 与远端 branch 名。
 2. `git fetch origin refs/heads/<remote-branch>:refs/remotes/origin/<remote-branch>`，对拍远端跟踪 ref SHA 等于 `pr_head_sha`。
-3. 主干分派一个空闲 slot；核验 slot `git status --porcelain=v1 --untracked-files=all` 为空，并确认专用本地返工 branch 未被其它任务使用。若同名本地分支已存在，只能在确认未被任何 slot 检出且没有需保留的本地提交后删除并重建；不得盲目 reset。
-4. 返工进驻同一规则：本地返工分支不存在时才 `checkout -B <专用本地返工branch> origin/<remote-branch>`；本地已存在则直接 checkout 并核验 SHA 与 `pr_head_sha` 一致（不一致转人工）。显式设置 upstream 后，对拍 slot HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
-5. 任一步失败时只在 slot 内 detach、删除本轮专用本地 branch，回报主干释放 slot；**开放 PR 的远端 claim ref 不得删除，slot 不得 remove**。
+3. 主干分派一个空闲 slot；核验 slot `git status --porcelain=v1 --untracked-files=all` 为空，并确认专用本地返工 branch 未被其它任务使用。若同名本地分支已存在，禁止删除、重建或 reset；只能在确认未被任何 slot 检出后，按第 4 步直接 checkout 并核验 SHA。
+4. 返工进驻同一规则：本地返工分支不存在时才 `checkout -B <专用本地返工branch> origin/<remote-branch>`；本地已存在则直接 checkout 并核验 SHA 与 `pr_head_sha` 一致（不一致转人工并保留分支）。显式设置 upstream 后，对拍 slot HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
+5. 任一步失败时在 slot 内 detach；仅本轮新建的专用本地 branch 才可删除，既有 branch 必须保留并交人工。**开放 PR 的远端 claim ref 不得删除，slot 不得 remove**。
 
 完成四方 SHA 对拍后才进入任务面。
 

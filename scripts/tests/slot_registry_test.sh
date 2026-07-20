@@ -154,7 +154,8 @@ status=$(bash scripts/slot_registry.sh status); json=$(bash scripts/slot_registr
 check_not "文本 status 不泄漏 token" grep -q "$token_a" <<<"$status"
 check_not "JSON status 不含 owner_token key" grep -q 'owner_token' <<<"$json"
 check "JSON schema 可解析" python3 -c 'import json,sys;o=json.load(sys.stdin);assert o["held"]==1 and o["slots"][0]["task_id"]=="owner-a" and "owner_token" not in o["slots"][0]' <<<"$json"
-check "manual report 不泄漏 token" bash -c '! bash scripts/slot_registry.sh manual-report --slot slot-1 | grep -q "$1"' _ "$token_a"
+manual_report=$(bash scripts/slot_registry.sh manual-report --slot slot-1)
+check_not "manual report 不泄漏 token" grep -q "$token_a" <<<"$manual_report"
 mutate rollback slot-1 owner-a agent-a "$token_a" >/dev/null
 
 printf '== 3. 全局完整性与一一关系 fail-closed\n'
