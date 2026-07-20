@@ -528,7 +528,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
         }
         if (removed || furnaceStatusLabel == null) return;
 
-        refreshStageFlash(session);
+        refreshStageFlash(sessionPresentation);
         furnaceStatusLabel.text(Text.literal(sessionPresentation.statusText()));
         progressLabel.text(Text.literal(sessionPresentation.progressText()));
         tempValueLabel.text(Text.literal(sessionPresentation.temperatureText()));
@@ -546,7 +546,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
      * plan-alchemy-v1 §1.3 中途投料 — 当 elapsed_ticks ∈ [at_tick, at_tick+window] 内
      * 且 stage 未完成时,把对应 slot 高亮成 VALID(脉冲提示玩家"该投这一槽了")。
      */
-    private void refreshStageFlash(AlchemySessionStore.Snapshot s) {
+    private void refreshStageFlash(AlchemySessionPresentationPlanner.Presentation presentation) {
         if (furnaceSlots[0] == null) return;
         // 默认清掉 stage 闪烁(保留 drag 高亮 — drag 高亮是 update 时设的)
         for (int i = 0; i < FURNACE_SLOTS; i++) {
@@ -554,15 +554,9 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
                 furnaceSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
             }
         }
-        if (!s.isActive()) return;
-        int t = s.elapsedTicks();
-        for (int i = 0; i < s.stages().size() && i < FURNACE_SLOTS; i++) {
-            AlchemySessionStore.StageHint h = s.stages().get(i);
-            if (h.completed() || h.missed()) continue;
-            int start = h.atTick();
-            int end = start + h.window();
-            if (t >= start && t <= end && furnaceItems[i] == null) {
-                furnaceSlots[i].setHighlightState(GridSlotComponent.HighlightState.VALID);
+        for (int slot : presentation.flashingStageSlots()) {
+            if (slot >= 0 && slot < FURNACE_SLOTS && furnaceItems[slot] == null) {
+                furnaceSlots[slot].setHighlightState(GridSlotComponent.HighlightState.VALID);
             }
         }
     }

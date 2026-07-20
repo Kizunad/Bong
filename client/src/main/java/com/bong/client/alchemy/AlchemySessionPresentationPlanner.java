@@ -21,10 +21,14 @@ public final class AlchemySessionPresentationPlanner {
         String progressText,
         String temperatureText,
         String qiText,
-        List<String> detailLines
+        List<String> detailLines,
+        List<Integer> flashingStageSlots
     ) {
         public Presentation {
             detailLines = detailLines == null ? List.of() : List.copyOf(detailLines);
+            flashingStageSlots = flashingStageSlots == null
+                ? List.of()
+                : List.copyOf(flashingStageSlots);
         }
     }
 
@@ -51,7 +55,8 @@ public final class AlchemySessionPresentationPlanner {
                 "§70 / 0t",
                 "",
                 "",
-                List.of("§7干预")
+                List.of("§7干预"),
+                List.of()
             );
         }
 
@@ -69,7 +74,8 @@ public final class AlchemySessionPresentationPlanner {
                 progressText(safeSession),
                 temperatureText(safeSession),
                 qiText(safeSession),
-                interventionLines(safeSession)
+                interventionLines(safeSession),
+                flashingStageSlots(safeSession)
             );
         }
 
@@ -83,7 +89,8 @@ public final class AlchemySessionPresentationPlanner {
                 progressText(safeSession),
                 temperatureText(safeSession),
                 qiText(safeSession),
-                finishedGuidanceLines(safeSession)
+                finishedGuidanceLines(safeSession),
+                List.of()
             );
         }
 
@@ -95,7 +102,8 @@ public final class AlchemySessionPresentationPlanner {
             safeSession.targetTicks() > 0 ? progressText(safeSession) : "§7同步中",
             safeSession.tempTarget() > 0.0f ? temperatureText(safeSession) : "",
             safeSession.qiTarget() > 0.0 ? qiText(safeSession) : "",
-            interventionLines(safeSession)
+            interventionLines(safeSession),
+            List.of()
         );
     }
 
@@ -115,6 +123,20 @@ public final class AlchemySessionPresentationPlanner {
 
     private static String qiText(AlchemySessionStore.Snapshot session) {
         return String.format("§7%.1f / %.1f", session.qiInjected(), session.qiTarget());
+    }
+
+    private static List<Integer> flashingStageSlots(AlchemySessionStore.Snapshot session) {
+        List<Integer> slots = new ArrayList<>();
+        int elapsed = session.elapsedTicks();
+        for (int index = 0; index < session.stages().size(); index++) {
+            AlchemySessionStore.StageHint stage = session.stages().get(index);
+            if (stage.completed() || stage.missed()) continue;
+            int end = stage.atTick() + stage.window();
+            if (elapsed >= stage.atTick() && elapsed <= end) {
+                slots.add(index);
+            }
+        }
+        return slots;
     }
 
     private static List<String> interventionLines(AlchemySessionStore.Snapshot session) {

@@ -100,6 +100,8 @@ class AlchemyScreenSessionPresentationTest {
             initial.detailLines(),
             "首次 active snapshot 的 intervention guidance 必须直接进入已打开 screen"
         );
+        assertEquals(List.of(0), initial.flashingStageSlots(),
+            "首次 active snapshot 必须让当前窗口 stage 进入真实 slot 闪烁规划");
 
         AlchemySessionStore.replace(activeSessionAfterFeedAndIntervention());
 
@@ -115,6 +117,8 @@ class AlchemyScreenSessionPresentationTest {
             updated.detailLines(),
             "active-to-active 更新不得冻结旧 intervention guidance"
         );
+        assertEquals(List.of(1), updated.flashingStageSlots(),
+            "后续 active snapshot 必须清掉已完成 stage，并闪烁新窗口对应 slot");
         assertEquals(2, AlchemySessionStore.snapshot().stages().size());
         assertTrue(AlchemySessionStore.snapshot().stages().get(0).completed(),
             "后续 active snapshot 的 stage 完成态必须保留给 screen 的 stage-flash 消费链");
