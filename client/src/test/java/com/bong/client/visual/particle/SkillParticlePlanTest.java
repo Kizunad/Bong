@@ -236,7 +236,10 @@ public class SkillParticlePlanTest {
             assertEquals(0.55, orbit.orbit().radius(), EPS, "贴身半径应为 spec 的 0.55 格");
             assertEquals(0.08, orbit.orbit().tangentialSpeed(), EPS, "环绕线速度 0.08 格/t");
             assertEquals(0.015, orbit.orbit().verticalSpeed(), EPS, "上浮 0.015 格/t");
-            assertEquals(60, orbit.maxAge(), "护体粒子应持续到 60t buff 窗口结束");
+            assertEquals(12, orbit.maxAge(),
+                "单个护体环只活一个重发间隔（12t）：60t 护体窗口由 server 的 "
+                    + "ni_mai_hu_ti_aura_vfx_tick 以施法者当前位置逐环重发铺满。"
+                    + "单环若撑满整个窗口，就会钉死在施法瞬间的世界坐标上，玩家一移动纹即脱离体表");
             assertEquals(0xC58B3F, orbit.rgb(), "爆脉家族色 #C58B3F");
             // 奇偶分上下两环。
             double expectedCenterY = ORIGIN[1] + ((i % 2 == 0) ? -0.25 : 0.45);
