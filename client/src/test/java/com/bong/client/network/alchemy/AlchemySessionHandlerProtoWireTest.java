@@ -1,6 +1,7 @@
 package com.bong.client.network.alchemy;
 
 import bong.Envelope;
+import com.bong.client.alchemy.AlchemySessionPresentationPlanner;
 import com.bong.client.alchemy.state.AlchemyAttemptHistoryStore;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.alchemy.state.AlchemyOutcomeForecastStore;
@@ -127,7 +128,7 @@ class AlchemySessionHandlerProtoWireTest {
                         .setIntegrity(1.0)
                         .setIntegrityMax(1.0)
                         .setOwnerName("Azure")
-                        .setHasSession(false)
+                        .setHasSession(true)
                         .build()
         );
         assertTrue(furnaceDispatch.handled());
@@ -166,6 +167,22 @@ class AlchemySessionHandlerProtoWireTest {
         assertEquals("", snapshot.stages().get(2).summary());
         assertFalse(snapshot.stages().get(2).completed());
         assertFalse(snapshot.stages().get(2).missed());
+
+        AlchemySessionPresentationPlanner.Presentation screenPresentation =
+                AlchemySessionPresentationPlanner.describe(
+                        AlchemyFurnaceStore.snapshot(), snapshot);
+        assertTrue(screenPresentation.finishedUnclaimed(),
+                "Rust finished fixture + has_session=true 必须进入实际 AlchemyScreen 共用的等待取回呈现");
+        assertTrue(screenPresentation.statusText().contains("等待按 T 取回"));
+        assertEquals("§f44 / 180t", screenPresentation.progressText());
+        assertEquals("§e0.58 / 0.62", screenPresentation.temperatureText());
+        assertEquals("§77.3 / 12.5", screenPresentation.qiText());
+        assertTrue(screenPresentation.detailLines().contains(
+                "§a✓ §7t0 (+0) §fci_she_hao×2 + ling_shui×1"));
+        assertTrue(screenPresentation.detailLines().contains(
+                "§c× §7t40 (+6) §fdan_sha×3"));
+        assertTrue(screenPresentation.detailLines().contains(
+                "§e○ §7t120 (+4) §f（无投料）"));
 
         List<HudRenderCommand> commands =
                 AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L);
