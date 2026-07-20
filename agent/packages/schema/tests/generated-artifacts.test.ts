@@ -7,6 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
@@ -47,10 +48,194 @@ const AGENT_UI_ID_SCHEMA_PATHS: Readonly<
   ],
 };
 
+/** 六个 Agent UI ID 字段在宿主 Ajv 下共享的 code-point 边界矩阵。 */
+const AGENT_UI_ID_BOUNDARY_CASES = [
+  { name: "empty", value: "", valid: false },
+  { name: "64 emoji", value: "😀".repeat(64), valid: true },
+  { name: "65 emoji", value: "😀".repeat(65), valid: true },
+  { name: "128 emoji", value: "😀".repeat(128), valid: true },
+  { name: "129 emoji", value: "😀".repeat(129), valid: false },
+  { name: "127 BMP + 1 astral", value: `${"a".repeat(127)}😀`, valid: true },
+  { name: "128 BMP + 1 astral", value: `${"a".repeat(128)}😀`, valid: false },
+  { name: "128 BMP", value: "界".repeat(128), valid: true },
+  { name: "129 BMP", value: "界".repeat(129), valid: false },
+  { name: "127 BMP + LF", value: `${"a".repeat(127)}\n`, valid: true },
+  { name: "128 BMP + LF", value: `${"a".repeat(128)}\n`, valid: false },
+  { name: "127 BMP + CR", value: `${"a".repeat(127)}\r`, valid: true },
+  { name: "128 BMP + CR", value: `${"a".repeat(128)}\r`, valid: false },
+  { name: "126 BMP + CRLF", value: `${"a".repeat(126)}\r\n`, valid: true },
+  { name: "127 BMP + CRLF", value: `${"a".repeat(127)}\r\n`, valid: false },
+  { name: "127 BMP + U+2028", value: `${"a".repeat(127)} `, valid: true },
+  { name: "128 BMP + U+2028", value: `${"a".repeat(128)} `, valid: false },
+  { name: "127 BMP + U+2029", value: `${"a".repeat(127)} `, valid: true },
+  { name: "128 BMP + U+2029", value: `${"a".repeat(128)} `, valid: false },
+  { name: "lone high surrogate", value: "\ud800", valid: false },
+  { name: "lone low surrogate", value: "\udc00", valid: false },
+  { name: "embedded lone surrogate", value: "a\ud800b", valid: false },
+] as const;
+
 type LocatedStringSchema = Readonly<{
   path: string;
   schema: Record<string, unknown>;
 }>;
+
+type AjvValidate = ((data: unknown) => boolean) & {
+  errors: ReadonlyArray<unknown> | null | undefined;
+};
+
+type HostAjv = Readonly<{
+  version: string;
+  resolvedPath: string;
+  compile: (schema: object) => AjvValidate;
+}>;
+
+/**
+ * 使用仓库既有 Node 解析路径加载宿主 Ajv，不新增 package.json 依赖。
+ * 本环境 Debian nodejs 自带 `/usr/share/nodejs/ajv@8.12.0`；若不可解析则硬失败，
+ * 禁止用纯 RegExp 冒充 JSON Schema 宿主语义。
+ */
+function loadHostAjv(): HostAjv {
+  const require = createRequire(import.meta.url);
+  let resolvedPath: string;
+  let packageJsonPath: string;
+  try {
+    resolvedPath = require.resolve("ajv");
+    packageJsonPath = require.resolve("ajv/package.json");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      [
+        "Host Ajv is not resolvable via createRequire(import.meta.url).",
+        "@bong/schema package.json does not declare ajv; this gate intentionally uses the host Ajv",
+        "(historically claimed 8.12.0) instead of adding a dependency.",
+        `Resolve error: ${detail}`,
+      ].join(" "),
+    );
+  }
+
+  const version = (require(packageJsonPath) as { version?: string }).version;
+  if (typeof version !== "string" || !version) {
+    throw new Error(`Host Ajv package.json at ${packageJsonPath} is missing version`);
+  }
+
+  const mod = require("ajv") as
+    | { default?: new (options?: object) => { compile: (schema: object) => AjvValidate } }
+    | (new (options?: object) => { compile: (schema: object) => AjvValidate });
+  const AjvCtor =
+    typeof mod === "function"
+      ? mod
+      : (mod as {
+          default?: new (options?: object) => { compile: (schema: object) => AjvValidate };
+        }).default;
+  if (typeof AjvCtor !== "function") {
+    throw new Error(`Host Ajv module at ${resolvedPath} does not export a constructor`);
+  }
+
+  // strict:false 兼容 TypeBox 导出的附加元数据；allErrors 便于失败断言带完整路径。
+  const ajv = new AjvCtor({ allErrors: true, strict: false });
+  return {
+    version,
+    resolvedPath,
+    compile: (schema) => ajv.compile(schema),
+  };
+}
+
+function readGeneratedArtifact(file: (typeof AGENT_UI_GENERATED_FILES)[number]): unknown {
+  return JSON.parse(readFileSync(join(GENERATED_DIR, file), "utf8"));
+}
+
+/** 读取 `$.anyOf[N].properties.field` 风格 JSON path（仅支持本测试用到的子集）。 */
+function readJsonPath(root: unknown, path: string): unknown {
+  if (!path.startsWith("$")) {
+    throw new Error(`JSON path must start with $: ${path}`);
+  }
+  let current: unknown = root;
+  let index = 1;
+  while (index < path.length) {
+    const ch = path[index];
+    if (ch === ".") {
+      index += 1;
+      const start = index;
+      while (index < path.length && path[index] !== "." && path[index] !== "[") {
+        index += 1;
+      }
+      const key = path.slice(start, index);
+      if (typeof current !== "object" || current === null || Array.isArray(current)) {
+        throw new Error(`Cannot read key ${key} at ${path}`);
+      }
+      current = (current as Record<string, unknown>)[key];
+    } else if (ch === "[") {
+      const end = path.indexOf("]", index);
+      if (end < 0) throw new Error(`Unclosed [ in ${path}`);
+      const idx = Number(path.slice(index + 1, end));
+      if (!Array.isArray(current)) {
+        throw new Error(`Cannot index non-array at ${path}`);
+      }
+      current = current[idx];
+      index = end + 1;
+    } else {
+      throw new Error(`Unexpected token in JSON path ${path}: ${ch}`);
+    }
+  }
+  return current;
+}
+
+/**
+ * 为每个 pinned Agent UI ID path 构造最小合法 payload，并把目标字段设为 value。
+ * 校验走根 schema compile，而不是单字段 RegExp，覆盖 anyOf/required/additionalProperties。
+ */
+function buildAgentUiIdPayload(
+  file: (typeof AGENT_UI_GENERATED_FILES)[number],
+  fieldPath: string,
+  value: string,
+): Record<string, unknown> {
+  switch (`${file}:${fieldPath}`) {
+    case "agent-ui-response-payload-v1.json:$.properties.request_id":
+      return { request_id: value, action: "dismissed", params: {} };
+    case "agent-ui-response-payload-v1.json:$.properties.target_player":
+      return {
+        request_id: "response-request-id",
+        action: "error",
+        target_player: value,
+        params: { reason: "realm_gate_rejected" },
+      };
+    case "client-request-v1.json:$.anyOf[85].properties.request_id":
+      return {
+        v: 1,
+        type: "agent_ui_response",
+        request_id: value,
+        action: "dismissed",
+        params: {},
+      };
+    case "server-data-v1.json:$.anyOf[103].properties.request_id":
+      return {
+        v: 1,
+        type: "agent_ui_request",
+        request_id: value,
+        target_player: "offline:Target",
+        xml: "<flow-layout />",
+        timeout_ticks: 600,
+      };
+    case "server-data-v1.json:$.anyOf[103].properties.target_player":
+      return {
+        v: 1,
+        type: "agent_ui_request",
+        request_id: "server-data-request",
+        target_player: value,
+        xml: "<flow-layout />",
+        timeout_ticks: 600,
+      };
+    case "server-data-v1.json:$.anyOf[104].properties.request_id":
+      return {
+        v: 1,
+        type: "agent_ui_close",
+        request_id: value,
+        reason: "invalid_button_id",
+      };
+    default:
+      throw new Error(`No payload builder for ${file}:${fieldPath}`);
+  }
+}
 
 function findAgentUiIdStringSchemas(value: unknown, path = "$"): LocatedStringSchema[] {
   if (Array.isArray(value)) {
@@ -295,33 +480,10 @@ describe("generated schema freshness gate", () => {
   });
 
   it("keeps every generated Agent UI ID on one Unicode code-point acceptance set", () => {
-    const cases = [
-      { name: "empty", value: "", valid: false },
-      { name: "64 emoji", value: "😀".repeat(64), valid: true },
-      { name: "65 emoji", value: "😀".repeat(65), valid: true },
-      { name: "128 emoji", value: "😀".repeat(128), valid: true },
-      { name: "129 emoji", value: "😀".repeat(129), valid: false },
-      { name: "127 BMP + 1 astral", value: `${"a".repeat(127)}😀`, valid: true },
-      { name: "128 BMP + 1 astral", value: `${"a".repeat(128)}😀`, valid: false },
-      { name: "128 BMP", value: "界".repeat(128), valid: true },
-      { name: "129 BMP", value: "界".repeat(129), valid: false },
-      { name: "127 BMP + LF", value: `${"a".repeat(127)}\n`, valid: true },
-      { name: "128 BMP + LF", value: `${"a".repeat(128)}\n`, valid: false },
-      { name: "127 BMP + CR", value: `${"a".repeat(127)}\r`, valid: true },
-      { name: "128 BMP + CR", value: `${"a".repeat(128)}\r`, valid: false },
-      { name: "126 BMP + CRLF", value: `${"a".repeat(126)}\r\n`, valid: true },
-      { name: "127 BMP + CRLF", value: `${"a".repeat(127)}\r\n`, valid: false },
-      { name: "127 BMP + U+2028", value: `${"a".repeat(127)}\u2028`, valid: true },
-      { name: "128 BMP + U+2028", value: `${"a".repeat(128)}\u2028`, valid: false },
-      { name: "127 BMP + U+2029", value: `${"a".repeat(127)}\u2029`, valid: true },
-      { name: "128 BMP + U+2029", value: `${"a".repeat(128)}\u2029`, valid: false },
-      { name: "lone high surrogate", value: "\ud800", valid: false },
-      { name: "lone low surrogate", value: "\udc00", valid: false },
-      { name: "embedded lone surrogate", value: "a\ud800b", valid: false },
-    ];
+    const cases = AGENT_UI_ID_BOUNDARY_CASES;
 
     for (const file of AGENT_UI_GENERATED_FILES) {
-      const artifact = JSON.parse(readFileSync(join(GENERATED_DIR, file), "utf8"));
+      const artifact = readGeneratedArtifact(file);
       const idSchemas = findAgentUiIdStringSchemas(artifact);
       expect(
         idSchemas.map(({ path }) => path).sort(),
@@ -351,6 +513,186 @@ describe("generated schema freshness gate", () => {
         }
       }
     }
+  });
+
+  it("compiles generated Agent UI schemas with host Ajv and locks the full acceptance matrix", () => {
+    const hostAjv = loadHostAjv();
+    expect(
+      hostAjv.version,
+      `宿主 Ajv 版本必须可解析；当前 resolved=${hostAjv.resolvedPath}`,
+    ).toMatch(/^\d+\.\d+\.\d+/);
+    // 历史 Finish Evidence 写过 8.12.0；此断言锁住“真的是宿主 Ajv”，版本记录到失败消息便于证据修正。
+    expect(
+      hostAjv.resolvedPath.includes("ajv"),
+      `Host Ajv resolved path should look like an ajv package: ${hostAjv.resolvedPath}`,
+    ).toBe(true);
+
+    let assertionCount = 0;
+    const count = (condition: boolean, message: string): void => {
+      expect(condition, message).toBe(true);
+      assertionCount += 1;
+    };
+
+    for (const file of AGENT_UI_GENERATED_FILES) {
+      const artifact = readGeneratedArtifact(file);
+      const validateRoot = hostAjv.compile(artifact as object);
+      const idPaths = AGENT_UI_ID_SCHEMA_PATHS[file];
+
+      for (const fieldPath of idPaths) {
+        const fieldSchema = readJsonPath(artifact, fieldPath) as Record<string, unknown>;
+        count(
+          fieldSchema.type === "string" && typeof fieldSchema.pattern === "string",
+          `${file}:${fieldPath} 必须仍是 pattern-only string schema`,
+        );
+        count(
+          fieldSchema.maxLength === undefined && fieldSchema.minLength === undefined,
+          `${file}:${fieldPath} 不得恢复 minLength/maxLength`,
+        );
+
+        for (const testCase of AGENT_UI_ID_BOUNDARY_CASES) {
+          const payload = buildAgentUiIdPayload(file, fieldPath, testCase.value);
+          const got = validateRoot(payload);
+          count(
+            got === testCase.valid,
+            [
+              `host Ajv ${hostAjv.version} (${hostAjv.resolvedPath})`,
+              `${file}:${fieldPath}`,
+              testCase.name,
+              `expected valid=${testCase.valid}, got=${got}`,
+              got ? "" : `errors=${JSON.stringify(validateRoot.errors ?? null)}`,
+            ]
+              .filter(Boolean)
+              .join(" | "),
+          );
+        }
+      }
+
+      // 根 schema 级契约：额外字段 / 缺 required / optional null 分流。
+      if (file === "agent-ui-response-payload-v1.json") {
+        count(
+          validateRoot({
+            request_id: "legacy-ok",
+            action: "dismissed",
+            params: {},
+          }) === true,
+          `${file}: legacy 缺 target_player 必须可被宿主 Ajv 接受`,
+        );
+        count(
+          validateRoot({
+            request_id: "extra-bad",
+            action: "dismissed",
+            params: {},
+            unexpected_field: true,
+          }) === false,
+          `${file}: additionalProperties=false 必须拒绝额外字段`,
+        );
+        count(
+          validateRoot({
+            action: "dismissed",
+            params: {},
+          }) === false,
+          `${file}: 缺 request_id 必须失败`,
+        );
+        count(
+          validateRoot({
+            request_id: "null-target",
+            action: "dismissed",
+            params: {},
+            target_player: null,
+          }) === false,
+          `${file}: 显式 null target_player 必须失败`,
+        );
+      }
+
+      if (file === "client-request-v1.json") {
+        const base = {
+          v: 1,
+          type: "agent_ui_response",
+          request_id: "client-ok",
+          action: "dismissed",
+          params: {},
+        };
+        count(validateRoot(base) === true, `${file}: 最小 agent_ui_response 必须通过`);
+        count(
+          validateRoot({ ...base, target_player: "offline:ShouldNotExist" }) === false,
+          `${file}: C2S agent_ui_response 禁止 target_player 额外字段`,
+        );
+        count(
+          validateRoot({
+            v: 1,
+            type: "agent_ui_response",
+            action: "dismissed",
+            params: {},
+          }) === false,
+          `${file}: 缺 request_id 必须失败`,
+        );
+      }
+
+      if (file === "server-data-v1.json") {
+        const requestBase = {
+          v: 1,
+          type: "agent_ui_request",
+          request_id: "server-request-ok",
+          target_player: "offline:Target",
+          xml: "<flow-layout />",
+          timeout_ticks: 600,
+        };
+        const closeBase = {
+          v: 1,
+          type: "agent_ui_close",
+          request_id: "server-close-ok",
+          reason: "invalid_button_id",
+        };
+        count(validateRoot(requestBase) === true, `${file}: agent_ui_request 最小样本必须通过`);
+        count(validateRoot(closeBase) === true, `${file}: agent_ui_close 最小样本必须通过`);
+        count(
+          validateRoot({ ...requestBase, unexpected_field: 1 }) === false,
+          `${file}: agent_ui_request additionalProperties=false`,
+        );
+        count(
+          validateRoot({
+            v: 1,
+            type: "agent_ui_request",
+            request_id: "missing-target",
+            xml: "<flow-layout />",
+            timeout_ticks: 600,
+          }) === false,
+          `${file}: agent_ui_request 缺 target_player 必须失败`,
+        );
+        count(
+          validateRoot({
+            v: 1,
+            type: "agent_ui_close",
+            request_id: "close-null-reason",
+            reason: null,
+          }) === false,
+          `${file}: agent_ui_close 显式 null reason 必须失败`,
+        );
+      }
+    }
+
+    // 6 fields × 22 boundary cases = 132，再加上字段结构 pin 与根契约 pin。
+    // 用下界锁住“真 Ajv 矩阵已自动化”，避免退化成少量 smoke。
+    count(
+      assertionCount >= 132,
+      `host Ajv gate must keep the full boundary matrix; assertionCount=${assertionCount}`,
+    );
+    // 显式暴露给失败日志，方便 Finish Evidence 记录真实计数而非历史 overclaim 的 78。
+    expect(
+      {
+        hostAjvVersion: hostAjv.version,
+        hostAjvResolvedPath: hostAjv.resolvedPath,
+        assertionCount,
+        boundaryCases: AGENT_UI_ID_BOUNDARY_CASES.length,
+        idFields: Object.values(AGENT_UI_ID_SCHEMA_PATHS).flat().length,
+      },
+      "host Ajv gate summary",
+    ).toMatchObject({
+      hostAjvVersion: hostAjv.version,
+      assertionCount,
+      boundaryCases: 22,
+      idFields: 6,
+    });
   });
 
   it("reports missing and wrong runtime mappings", () => {
