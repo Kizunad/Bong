@@ -64,6 +64,7 @@ public final class ClientConnectionStatusStore {
      * 以收包瞬间捕获的 generation + receivedAt 标记载荷。
      * generation 与当前代次不一致时整段 no-op，防止 disconnect-before-drain /
      * reconnect 后的 stale task 把状态机复活为 connected 或用 processing time 污染 freshness。
+     * 同一代次的跨 channel / queue 乱序不得让 lastPayloadAtMs 回退。
      */
     public static void markPayloadReceived(long nowMs, long generation) {
         synchronized (LOCK) {
@@ -76,7 +77,7 @@ public final class ClientConnectionStatusStore {
             if (connectedAtMs == 0L) {
                 connectedAtMs = now;
             }
-            lastPayloadAtMs = now;
+            lastPayloadAtMs = Math.max(lastPayloadAtMs, now);
             disconnectedAtMs = 0L;
         }
     }

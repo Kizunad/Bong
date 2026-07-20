@@ -29,7 +29,7 @@ public final class CraftOutcomeFeedback {
      *
      * @param event          store 同步推送的 outcome
      * @param flashTicksSink completed 时写入 flashTicks（通常 = {@link #COMPLETED_FLASH_TICKS}）
-     * @param completeSound  completed 时播放完成音；failed / player 缺失路径不得调用
+     * @param completeSound  completed 时调用；回调负责 player 缺失时静默 no-op；failed 不调用
      * @param refresh        两种 outcome 都要触发的 UI 刷新（顺序上位于 flash/sound 之后）
      */
     public static void apply(

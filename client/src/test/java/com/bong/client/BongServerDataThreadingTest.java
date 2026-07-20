@@ -281,6 +281,81 @@ class BongServerDataThreadingTest {
     }
 
     @Test
+    void delayedSameGenerationTaskKeepsNewerCrossChannelFreshnessAndRoutesExactlyOnce() {
+        long delayedReceiptAt = 2_500L;
+        long newerCrossChannelReceiptAt = 2_600L;
+        long generation = ClientConnectionStatusStore.currentGeneration();
+        AtomicInteger storeSideEffects = new AtomicInteger();
+        List<String> routedRecipes = new CopyOnWriteArrayList<>();
+        CraftStore.addOutcomeListener(event -> {
+            storeSideEffects.incrementAndGet();
+            routedRecipes.add(event.recipeId());
+        });
+
+        runNamedThread(NETWORK_THREAD, () -> dispatch(
+            craftOutcome("completed", "craft.freshness.delayed"),
+            ServerDataRouter.createDefault(),
+            (dispatch, type) -> {},
+            delayedReceiptAt,
+            generation
+        ));
+
+        assertEquals(1, clientTasks.size(),
+            "延迟 server_data payload 应精确排入一个 client task；实际 queue=" + clientTasks);
+        assertEquals(0, storeSideEffects.get(),
+            "drain 前 route→CraftStore 副作用不得提前发生；实际次数=" + storeSideEffects.get());
+
+        // 模拟同一连接代次中，另一个 channel 在排队 task drain 前收到更新鲜的 payload。
+        ClientConnectionStatusStore.markPayloadReceived(newerCrossChannelReceiptAt, generation);
+        ClientConnectionStatusStore.markPayloadReceived(0L, generation);
+        ClientConnectionStatusStore.markPayloadReceived(-1L, generation);
+        assertEquals(
+            newerCrossChannelReceiptAt,
+            ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "前置条件失败：跨 channel 新 payload 应把 freshness 推进到 "
+                + newerCrossChannelReceiptAt
+                + "，同 generation 的 0/负时间戳不得回退；实际="
+                + ClientConnectionStatusStore.lastPayloadAtMsForTests()
+        );
+        assertTrue(
+            ClientConnectionStatusStore.connectedForTests(),
+            "同 generation 的新 payload 应保持 connected；实际 connected="
+                + ClientConnectionStatusStore.connectedForTests()
+        );
+
+        runNextClientTask();
+
+        assertEquals(
+            newerCrossChannelReceiptAt,
+            ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "同 generation 的延迟 task 收包时刻 " + delayedReceiptAt
+                + " 不得把较新的跨 channel freshness " + newerCrossChannelReceiptAt
+                + " 回退；实际=" + ClientConnectionStatusStore.lastPayloadAtMsForTests()
+        );
+        assertTrue(
+            ClientConnectionStatusStore.connectedForTests(),
+            "延迟 task drain 后当前 generation 应保持 connected；实际 connected="
+                + ClientConnectionStatusStore.connectedForTests()
+        );
+        assertEquals(
+            List.of("craft.freshness.delayed"),
+            routedRecipes,
+            "旧 receipt timestamp 只影响 freshness 合并，不得丢弃或重复 route→CraftStore；实际 recipes="
+                + routedRecipes
+        );
+        assertEquals(
+            1,
+            storeSideEffects.get(),
+            "延迟 payload 的 route→CraftStore side effect 必须恰好一次；实际次数="
+                + storeSideEffects.get()
+        );
+        assertTrue(
+            clientTasks.isEmpty(),
+            "单 payload drain 后不得残留嵌套/重复 task；实际 queue=" + clientTasks
+        );
+    }
+
+    @Test
     void disconnectBeforeDrainDoesNotResurrectConnectionStatus() {
         long generation = ClientConnectionStatusStore.currentGeneration();
         runNamedThread(NETWORK_THREAD, () -> dispatch(
