@@ -1708,7 +1708,9 @@ class BotChatPacketTest(unittest.TestCase):
             with self.subTest(expected_millis=expected_millis):
                 bot = _bare_bot()
                 sent: list[tuple[int, bytes]] = []
-                bot._send = lambda packet_id, body: sent.append((packet_id, body))
+                bot._send = lambda packet_id, body, _sent=sent: _sent.append(
+                    (packet_id, body)
+                )
 
                 with mock.patch("bot.bot.time.time_ns", return_value=time_ns):
                     bot.chat("窗口验真")
@@ -1742,7 +1744,7 @@ class BotChatPacketTest(unittest.TestCase):
         forged_future_millis = 1_712_432_100_999
         bot = _bare_bot()
         sent: list[tuple[int, bytes]] = []
-        bot._send = lambda packet_id, body: sent.append((packet_id, body))
+        bot._send = lambda packet_id, body, _sent=sent: _sent.append((packet_id, body))
 
         with mock.patch(
             "bot.bot.time.time_ns",
@@ -1760,6 +1762,62 @@ class BotChatPacketTest(unittest.TestCase):
             forged_future_millis,
             "测试 Bot 必须能按原版 C2S 字节精确模拟客户端未来时间，而不是在 harness 内预先钳制",
         )
+
+    def test_chat_packet_encodes_signed_i64_timestamp_boundaries(self):
+        cases = [
+            -(2**63),
+            -1,
+            2**63 - 1,
+        ]
+        for timestamp_millis in cases:
+            with self.subTest(timestamp_millis=timestamp_millis):
+                bot = _bare_bot()
+                sent: list[tuple[int, bytes]] = []
+                bot._send = lambda packet_id, body, _sent=sent: _sent.append(
+                    (packet_id, body)
+                )
+                bot.chat("边界时间验真", timestamp_millis=timestamp_millis)
+                self.assertEqual(
+                    len(sent),
+                    1,
+                    f"合法 signed i64 必须原样发出，timestamp={timestamp_millis}, sent={sent!r}",
+                )
+                packet_id, body = sent[0]
+                self.assertEqual(packet_id, mc.C2S_CHAT_MESSAGE)
+                reader = mc.Reader(body)
+                self.assertEqual(reader.string(), "边界时间验真")
+                self.assertEqual(
+                    reader.i64(),
+                    timestamp_millis,
+                    "signed i64 timestamp 边界必须可原样 encode/decode",
+                )
+                self.assertEqual(reader.i64(), 0, "offline bot 的 salt 保持 0")
+
+    def test_chat_packet_rejects_signed_i64_timestamp_overflow(self):
+        overflow_cases = [
+            -(2**63) - 1,
+            2**63,
+        ]
+        for timestamp_millis in overflow_cases:
+            with self.subTest(timestamp_millis=timestamp_millis):
+                bot = _bare_bot()
+                sent: list[tuple[int, bytes]] = []
+                bot._send = lambda packet_id, body, _sent=sent: _sent.append(
+                    (packet_id, body)
+                )
+                with self.assertRaises(
+                    (OverflowError, struct.error, ValueError),
+                    msg=(
+                        "越界 timestamp 必须在编码阶段失败，"
+                        f"timestamp={timestamp_millis}"
+                    ),
+                ):
+                    bot.chat("越界时间验真", timestamp_millis=timestamp_millis)
+                self.assertEqual(
+                    sent,
+                    [],
+                    f"越界 timestamp 不得发送任何包，timestamp={timestamp_millis}, sent={sent!r}",
+                )
 
 
 class RespawnDecodeTest(unittest.TestCase):

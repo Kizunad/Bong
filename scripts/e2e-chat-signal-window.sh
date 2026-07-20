@@ -5,6 +5,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/chat-window-port.sh
+source "$ROOT/scripts/lib/chat-window-port.sh"
 RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence/chat-signal-window-$RUN_ID"
 REDIS_LOG="$EVIDENCE_DIR/redis.log"
@@ -33,36 +35,6 @@ try:
 except OSError:
     raise SystemExit(1)
 PY
-}
-
-pid_belongs_to_tree() {
-  local candidate="$1"
-  local root_pid="$2"
-  while [[ "$candidate" =~ ^[0-9]+$ ]] && [ "$candidate" -gt 1 ]; do
-    [ "$candidate" = "$root_pid" ] && return 0
-    candidate="$(
-      awk '/^PPid:/ { print $2; exit }' "/proc/$candidate/status" 2>/dev/null || true
-    )"
-  done
-  return 1
-}
-
-port_owned_by_tree() {
-  local root_pid="$1"
-  local port="$2"
-  local listener_pid
-  while IFS= read -r listener_pid; do
-    if [ -n "$listener_pid" ] && pid_belongs_to_tree "$listener_pid" "$root_pid"; then
-      return 0
-    fi
-  done < <(
-    ss -4 -H -ltnp "sport = :$port" 2>/dev/null \
-      | grep -oE 'pid=[0-9]+' \
-      | cut -d= -f2 \
-      | sort -u \
-      || true
-  )
-  return 1
 }
 
 kill_tree() {
@@ -216,9 +188,11 @@ if ! [[ "$FORGED_FUTURE_TIMESTAMP_MILLIS" =~ ^[0-9]+$ ]]; then
 fi
 
 (
-  cd "$ROOT"
+  # Resolve @bong/schema + ioredis from the agent workspace package graph.
+  cd "$ROOT/agent/packages/tiandao"
   export REDIS_URL CHAT_WINDOW_E2E_MARKER="$MARKER"
   export CHAT_WINDOW_E2E_CLIENT_TIMESTAMP_MILLIS="$FORGED_FUTURE_TIMESTAMP_MILLIS"
+  export NODE_PATH="$ROOT/agent/node_modules${NODE_PATH:+:$NODE_PATH}"
   "$ROOT/agent/node_modules/.bin/tsx" "$ROOT/scripts/e2e/chat-signal-window.mts"
 ) >"$TIANDAO_LOG" 2>&1
 

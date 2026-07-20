@@ -80,6 +80,8 @@
 
 ## 接入面与收口决议
 
+> **规范核验（docs/CLAUDE.md）**：`§二 接入面 checklist` 约束的是**新 plan 头部**应列进料/出料/共享契约等字段；`§五 §N.1 决议` 是 feature plan 演进时把开放问题收口到 pre-P0 的模式。本文件是已归档的 finished bugfix plan，历史正文以「接入面与收口决议」承载同等决策信息即可，**不**为 bot 幻觉强加独立「开放问题」表 + `§N.1` 历史格式重写。
+
 - **进料**：server observation clock 在 `bong:player_chat` 发布的 `ChatMessageV1.ts` 是唯一权威观察时间；客户端 C2S 毫秒与 LLM 标注都不参与 freshness 判定。
 - **出料**：`processChatBatch()` 生成携带 `ts` 的 `ChatSignal`，经 `mergeChatSignals()` 写入 `latestChatSignals`，最终由 `buildChatSignalsBlock()` 决定是否进入天道 user prompt。
 - **共享契约**：直接把 `ts: integer >= 0` 加入现有 `@bong/schema` `ChatSignal`，不再另造 `ObservedChatSignal`；该类型当前只在 agent 内消费，收紧后所有手工 fixture 都必须显式声明观察时间。
@@ -152,7 +154,7 @@
 - P0：`agent/packages/schema/tests/chat-message.test.ts`、`agent/packages/tiandao/tests/chat-processor.test.ts`、`agent/packages/tiandao/tests/agent-real-context-injection.test.ts` 先锁定 schema、转换、300/301 秒窗口和真实 LLM prompt；review 返工又以 `aabfc244`、`99b0af1c` 分别复现客户端未来时间绕过与跨秒旧时钟误删。
 - P1：`agent/packages/schema/src/chat-message.ts` 为 `ChatMessageV1.ts` 明确 server-observed 秒契约、为 `ChatSignal.ts` 固定必填非负整数；`agent/packages/tiandao/src/chat-processor.ts` 从原消息注入权威时间，删除 `mentions_mechanic` 隐式解析，并以 `[now - 300, now]` 同时过滤旧值与未来值。
 - P2：`agent/packages/schema/generated/chat-message-v1.json`、`generated/chat-signal.json` 已重生成；`agent/packages/tiandao/src/runtime.ts` 增加 `RuntimeDeps.now` 注入面并在异步 drain / LLM 后、实际 merge 前刷新时钟，context/runtime fixtures 与跨秒回归全部对齐。
-- P3：`server/src/network/chat_collector.rs` 引入 `ChatObservationClock`，Redis wire 使用 server observation 秒，`PlayerChatCollected.timestamp` 保留原始 C2S 毫秒；`scripts/bot/bot.py` / `test_protocol.py` 支持默认当前毫秒与显式伪造毫秒；`scripts/e2e-chat-signal-window.sh` / `.mts` 覆盖登录后 `+1d` Bot→Rust→独立 Redis→Tiandao→future/300/301 秒→prompt，`.github/workflows/e2e.yml` 接入 e2e。最终 ready-to-push 树在 `a3ce1b945`：双父 merge 含 `origin/main@2f9c70ad`（#1212 SearchHud）与此前 `#1233`/`#1241`。
+- P3：`server/src/network/chat_collector.rs` 引入 `ChatObservationClock`，Redis wire 使用 server observation 秒，`PlayerChatCollected.timestamp` 保留原始 C2S 毫秒；`scripts/bot/bot.py` / `test_protocol.py` 支持默认当前毫秒与显式伪造毫秒；`scripts/e2e-chat-signal-window.sh` / `.mts` 覆盖登录后 `+1d` Bot→Rust→独立 Redis→Tiandao→future/300/301 秒→prompt，`.github/workflows/e2e.yml` 接入 e2e。代码起点祖先 `a3ce1b945`：双父 merge 含 `origin/main@2f9c70ad`（#1212 SearchHud）与此前 `#1233`/`#1241`；证据纠错 `c00e8d2d`；本会话 CodeRabbit 返工再落一枚 docs+脚本 commit（SHA 见下方关键 commit，commit 后回填）。
 
 ### 关键 commit
 
@@ -175,20 +177,25 @@
 - `438c47e7`（2026-07-17）：合并并复验 `origin/main@9d2e29d0`，保留聊天信任边界与主线 skillbar/quickslot 契约。
 - `6cc92bdc`（2026-07-19）：普通 merge `origin/main@946ad6c2`（#1233 docs-only 归档）。
 - `3228424e`（2026-07-19）：普通 merge `origin/main@5d9bdd8f`（#1241 skill-anim-fidelity PR-5；触及 server + client）。
-- `a3ce1b945`（2026-07-19）：普通 merge `origin/main@2f9c70ad`（#1212 SearchHud 收口；仅 client + docs）。本 commit 之后的 docs-only evidence 纠错会再生成新 HEAD，最终 SHA 以 git 与 validator 对拍为准，不在文档中预写未来 docs commit。
+- `a3ce1b945`（2026-07-19）：普通 merge `origin/main@2f9c70ad`（#1212 SearchHud 收口；仅 client + docs）。代码起点祖先。
+- `c00e8d2d`（2026-07-19）：纠偏聊天信号计划的最终门禁证据（docs-only）。
+- `HEAD_THIS_COMMIT`（2026-07-20）：CodeRabbit 返工——signed i64 协议边界、端口归属 fail-closed helper、真实 Tiandao runtime/prompt e2e，并原地纠正 Finish Evidence 最终树描述（exact SHA 以本 commit 本身为准，列表写在 commit message 对应 tree）。
 
 ### 测试结果
 
-- 定向 red/green：Rust collector 信任边界（负/正偏移、epoch、`u64::MAX`）、schema chat 13/13、chat processor future upper + 300/301 秒、runtime 跨秒 `mergeNowSeconds` 刷新、Python Bot 默认/伪造毫秒字节 pin 均存在且能在回退时撞红。
-- 最终代码树（server 全量在 `3228424e` 重跑；随后 `a3ce1b945` 仅合入 client SearchHud，server 源码与 `3228424e` 一致）：
+- 定向 red/green：Rust collector 信任边界（负/正偏移、epoch、`u64::MAX`）、schema chat 13/13、chat processor future upper + 300/301 秒、runtime 跨秒 `mergeNowSeconds` 刷新、Python Bot 默认/伪造毫秒/signed i64 边界字节 pin 均存在且能在回退时撞红。
+- 最终树描述：**代码起点** `a3ce1b945` + **证据纠错** `c00e8d2d` + **本会话返工 commit**（见下方关键 commit 末条 / `git rev-parse HEAD`）。server 源码自 `3228424e` 起未再改；本会话只动 Python bot 协议测试、e2e shell/helper、tiandao runtime e2e 脚本与本归档文档。
+- 历史全量门禁（server 在 `3228424e`；client 在 `a3ce1b945`）仍有效：
   - server：`cargo fmt --check` = 0；`cargo clippy --all-targets -- -D warnings` = 0；`cargo test` = 0。计数：lib 11799 passed / 1 ignored，main 11，full_app_startup 1，tarkov_backpack_p0_e2e 4，doc-tests 0 passed / 5 ignored → **合计 11815 passed / 0 failed / 6 ignored**。
   - schema：build = 0；`npm test` 30 files / **893**；`npm run check` 405 generated fresh。
-  - tiandao：`npm test` 72 files / **835**。
+  - tiandao：`npm test` 72 files / **835**（历史计数；本会话若重跑以实际输出为准）。
   - agent workspace：`npm run build` = 0。
-  - bot protocol：`python3 -m unittest scripts.bot.test_protocol` **126/126**。
   - client Java 17（`JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`，HEAD `a3ce1b945`）：`./gradlew test build` = 0；JUnit **4153 tests / 0 failures / 0 errors / 0 skipped**；game tests 3/3。
-  - 真实 e2e（HEAD `a3ce1b945`）：`bash scripts/e2e-chat-signal-window.sh` = 0；marker `chat-window-20260719-235421-3764525`；`client_ms=1784562865145 wire_ts=1784476465 now=1784476467 age=2`；客户端伪造时间比 wire 超前 `86,400,180 ms`（≥23h）；证据目录 `.sisyphus/evidence/chat-signal-window-20260719-235421-3764525`。
-- 历史对抗验证：`FIX_VALIDATING` 对 `057d4d52` PASS；`REBASE_VALIDATING` 对 `438c47e7` PASS。最终 docs-only evidence 提交后必须对**新 HEAD** 再开无上下文只读 validator，结论绑定 exact SHA。
+- 本会话返工复验（代码起点 `a3ce1b945` + 证据纠错 `c00e8d2d` + 本返工 commit）：
+  - bot protocol：`python3 -m unittest scripts.bot.test_protocol` → **128/128**（含 signed i64 边界 `-(2**63)` / `-1` / `2**63-1` 与两侧越界 0 包）。
+  - port helper：`bash -n scripts/e2e-chat-signal-window.sh scripts/lib/chat-window-port.sh scripts/test_chat_window_port.sh` = 0；`bash scripts/test_chat_window_port.sh` → **6/6**（ss 失败 fail-closed、pid tree、注入 ss 归属/拒绝）。
+  - 真实 e2e：`bash scripts/e2e-chat-signal-window.sh` = 0；marker `chat-window-20260720-094304-1605720`；`client_ms=1784598210704 wire_ts=1784511811 now=1784511819 age=8`；首轮 `chat drain: messages=1, signals=1` + 真实 `TiandaoAgent` user prompt 含 marker；第二轮 `signals=0` 且 prompt 无 marker；证据目录 `.sisyphus/evidence/chat-signal-window-20260720-094304-1605720`。
+- 历史对抗验证：`FIX_VALIDATING` 对 `057d4d52` PASS；`REBASE_VALIDATING` 对 `438c47e7` PASS。**本会话未另开无上下文 validator**；最终 exact SHA 以本返工 commit 为准。
 
 ### 跨仓库核验
 
@@ -196,10 +203,10 @@
 - Python Bot：`Bot.chat(..., timestamp_millis=...)` 写 signed Unix 毫秒；`test_protocol.py` pin 默认时钟与伪造未来字节。
 - agent/schema：`ChatMessageV1.ts` 描述、`ChatSignal.ts` 必填、`processChatBatch` 从 `msg.ts` 注入、`isRecentSignal` 闭区间 `[now-300, now]`、`runtime` 在 async drain/LLM 后 `mergeNowSeconds = Math.floor(now()/1000)` 再 merge。
 - client：不消费 `ChatSignal`；因 main 合入 skill-anim + SearchHud，用 Java 17 全量回归锁住无回归。
-- CI/runtime：`.github/workflows/e2e.yml` 接线；真实 e2e 使用独立 Redis + 本次 server 进程树端口归属，拒绝误连旧 25565。
+- CI/runtime：`.github/workflows/e2e.yml` 接线；真实 e2e 使用独立 Redis + 本次 server 进程树端口归属（`scripts/lib/chat-window-port.sh`，ss 失败 fail-closed），再经真实 `RedisIpc.drainPlayerChat` → `runRuntime` → `TiandaoAgent` user prompt 观测 300/301 窗口，拒绝误连旧 25565 / 伪 processChatBatch 直调。
 
 ### 遗留 / 后续
 
 - 功能代码无阻塞遗留；NTP / 客户端时钟漂移补偿、Redis 跨进程聊天持久化仍按非目标保持独立；Tiandao `ts > now` fail closed 已在本 plan 内。
 - **运维事故（非代码交付）**：本 worktree 内来源不明 / untracked 的 `agent/packages/tiandao/data/` 在测试流程中被误删，**无可证恢复**。禁止伪造复制“恢复”该目录内容，也**禁止自动 cleanup 删除**同类 ignored/untracked 数据。该事故不是聊天时效修复的交付物，仅作遗留记账；后续 cleanup 必须人工确认路径来源后再动。
-- 最终 ready-to-push 代码祖先为 `a3ce1b945`（含 `origin/main@2f9c70ad`）。本 Finish Evidence 的 docs-only commit 会推高 HEAD；最终 exact SHA、fresh validator PASS、以及是否 push 均由 PR 会话外部绑定，**本会话不 push / 不 merge / 不 cleanup**。
+- 最终树 = 代码起点 `a3ce1b945`（含 `origin/main@2f9c70ad`）+ 证据纠错 `c00e8d2d` + 本会话返工 commit。是否 push / merge / 另开 validator 均由 PR 会话外部绑定，**本会话不 push / 不 merge / 不 cleanup**；本会话未另开无上下文 validator。
