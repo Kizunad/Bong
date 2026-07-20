@@ -707,6 +707,14 @@ pub fn register(app: &mut App) {
             .after(crate::cultivation::full_power_strike::apply_full_power_attack_intent_system)
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
+    // 逆脉护体的体表逆流纹：buff 存续期内跟着施法者当前位置周期重发（见 burst_meridian
+    // §NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS）。与上面的 full_power 持续态 VFX 同理，
+    // 必须排在粒子投递之前才能当帧送达。
+    app.add_systems(
+        Update,
+        crate::cultivation::burst_meridian::ni_mai_hu_ti_aura_vfx_tick
+            .before(vfx_event_emit::emit_vfx_event_payloads),
+    );
     app.add_systems(
         Update,
         (
