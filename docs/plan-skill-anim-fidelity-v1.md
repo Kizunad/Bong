@@ -129,7 +129,7 @@
 
 | event_id | 招式 | Line 脉冲数 | Sprite 穴位点数 | lifetime | 速度 / 方向 | 颜色 hex | spawn 模式 | 贴图（复用） |
 |---|---|---|---|---|---|---|---|---|
-| `bong:zhenmai_parry_flash` | `zhenmai.parry` | 6 | 3 | 20t | 沿 `direction` 前向 0.35 格/t；穴位点静止 | `#D4AF6A`（金脉本色） | burst 单帧齐发 | `qi_aura` + `lingqi_ripple` |
+| `bong:zhenmai_parry_flash` | `zhenmai.parry` | 8 | 3 | 20t | 沿 `direction` 前向 0.35 格/t；穴位点静止 | `#D4AF6A`（金脉本色） | burst 单帧齐发 | `qi_aura` + `lingqi_ripple` |
 | `bong:zhenmai_neutralize_dust` | `zhenmai.neutralize` | 10 | 4 | 20t | 径向外散 0.12 格/t + 下沉 −0.02 格/t | `#C9A05C`（沉金，卸力散尘） | radial 水平环 | 同上 |
 | `bong:zhenmai_multipoint_ring` | `zhenmai.multipoint` | 16 | 8 | 20t | 切向环绕 0.10 格/t（顺时针） | `#E0C27E`（亮金，多点连环） | radial 腰高环，穴位点等角分布 | 同上 |
 | `bong:zhenmai_harden_shell` | `zhenmai.harden` | 8 | 6 | 20t | 向心内收 −0.06 格/t + 微上浮 0.01 格/t | `#B8944F`（暗金，硬化沉坠） | radial 双层护壳 | 同上 |

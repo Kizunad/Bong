@@ -10,9 +10,16 @@ import java.util.Locale;
  * <p>严格遵守 Bong HUD 极简哲学：每个维度只在 {@link ZhenmaiHudStateStore.Slot#active(long)}
  * 为真时 emit，未激活/不相关时完全隐藏。优先瞬态闪现 / 微条 / 中心环高亮，绝不新增常驻面板。
  *
- * <p>呈现策略（与各招的粒子/音效/动画对齐配色）：
+ * <p>呈现策略：
+ *
+ * <p><b>配色说明（plan-skill-anim-fidelity-v1 P5 后）</b>：本 planner 的配色是为屏幕可读性
+ * 单独调校的一套（例如 neutralize 用 {@code #CBD3DB} 而粒子端是 {@code #9CA3AF}），历来就与
+ * 粒子色值不逐位相同。P5 已把真脉 5 招粒子统一改为金脉色系（anchor {@code #D4AF6A}，
+ * 见 plan §P5.1 ①），HUD 侧配色本阶段<b>未随动</b>——P5 范围仅限粒子去复用，改 HUD 配色属
+ * 可感知 UX 变更，需单独决策。因此下方色值请勿再理解为「与粒子对齐」。
  * <ul>
- *   <li>parry（极限弹反）：中心十字环瞬态增亮（血红 {@code #B6172F}），呼应 jiemai_burst_blood 粒子。</li>
+ *   <li>parry（极限弹反）：中心十字环瞬态增亮（血红 {@code #B6172F}）。原设计意图是呼应
+ *       {@code bong:jiemai_burst_blood} 血爆粒子，该粒子已随 P5 去复用退役。</li>
  *   <li>neutralize（局部中和）：屏幕中下方瞬态去毒提示「中和 N%」（灰白 {@code #9CA3AF}）。</li>
  *   <li>multipoint（多点反震）：中心右侧微指示「反震 ×N」（暗红 {@code #9B1C31}），仅激活期。</li>
  *   <li>harden（护脉）：左侧护脉微条 + 剩余减伤%（金 {@code #C7A94B}），仅 buff 期。</li>
@@ -22,7 +29,7 @@ import java.util.Locale;
  */
 public final class ZhenmaiHudPlanner {
 
-    // ── 配色（与服务端 emit_skill_feedback 的 particle color 对齐）──
+    // ── 配色（屏幕可读性调校，非粒子色值镜像——见类 javadoc 配色说明）──
     static final int PARRY_COLOR = 0xFFB6172F;
     static final int NEUTRALIZE_COLOR = 0xFFCBD3DB;
     static final int MULTIPOINT_COLOR = 0xFFD9405A;

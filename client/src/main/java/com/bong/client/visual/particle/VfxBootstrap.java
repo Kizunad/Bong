@@ -170,18 +170,32 @@ public final class VfxBootstrap {
         registry.register(YidaoPeacePulsePlayer.EMERGENCY_RESUSCITATE, yidao);
         registry.register(YidaoPeacePulsePlayer.LIFE_EXTENSION,        yidao);
         registry.register(YidaoPeacePulsePlayer.MASS_MERIDIAN_REPAIR,  yidao);
-        registry.register(
-            new net.minecraft.util.Identifier("bong", "jiemai_burst_blood"),
-            new SwordQiSlashPlayer()
-        );
-        registry.register(
-            new net.minecraft.util.Identifier("bong", "jiemai_neutralize_dust"),
-            new SwordQiSlashPlayer()
-        );
+        // plan-skill-anim-fidelity-v1 P5 — 真脉 5 招粒子去复用。
+        // 此前 5 招挤在 3 个 bong:jiemai_* 上且全部指向剑气 SwordQiSlashPlayer，
+        // 旁观者看真脉全是剑气斩弧；现各招独立 event_id → ZhenmaiPulsePlayer。
+        ZhenmaiPulsePlayer zhenmaiPulse = new ZhenmaiPulsePlayer();
+        for (net.minecraft.util.Identifier eventId : ZhenmaiPulsePlayer.EVENT_IDS) {
+            registry.register(eventId, zhenmaiPulse);
+        }
+        // bong:jiemai_burst_blood / bong:jiemai_neutralize_dust 的注册随 P5 一并撤除
+        // ——去复用后全仓无发射方（原发射方仅 zhenmai 与 npc.buff_speed）。
+        // bong:jiemai_sever_flash 保留：被动断脉叙事仍由 meridian_severed_emit.rs 发射。
         registry.register(
             new net.minecraft.util.Identifier("bong", "jiemai_sever_flash"),
             new SwordQiSlashPlayer()
         );
+        // plan-skill-anim-fidelity-v1 P5 — 爆脉 3 招形态分化（共用 #C58B3F，
+        // 靠 GroundDecal 冲击环 / Ribbon 步法残影 / Sprite 体表逆流纹读招）。
+        // 崩拳本尊仍由上方 BurstMeridianBengQuanPlayer 承接。
+        BurstMeridianFamilyPlayer burstFamily = new BurstMeridianFamilyPlayer();
+        for (net.minecraft.util.Identifier eventId : BurstMeridianFamilyPlayer.EVENT_IDS) {
+            registry.register(eventId, burstFamily);
+        }
+        // plan-skill-anim-fidelity-v1 P5 — NPC 3 招脱离借用（原借医道/真脉/崩拳粒子）。
+        NpcSkillAuraPlayer npcSkillAura = new NpcSkillAuraPlayer();
+        for (net.minecraft.util.Identifier eventId : NpcSkillAuraPlayer.EVENT_IDS) {
+            registry.register(eventId, npcSkillAura);
+        }
         VortexSpiralPlayer woliuVortex = new VortexSpiralPlayer();
         registry.register(VortexSpiralPlayer.EVENT_ID,           woliuVortex);
         // AV 差异化：woliu 基础 5 招专属 particle IDs（必须与 server visual_for() particle_id 精确一致）
