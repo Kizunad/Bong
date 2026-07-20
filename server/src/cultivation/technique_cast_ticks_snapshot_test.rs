@@ -18,7 +18,8 @@ use std::path::PathBuf;
 
 use super::known_techniques::TECHNIQUE_DEFINITIONS;
 
-const REGEN_HINT: &str = "快照由 TECHNIQUE_DEFINITIONS 单向生成、禁止手改；重生成：\
+const REGEN_HINT: &str = "快照由 TECHNIQUE_DEFINITIONS + yidao_skill_spec 具名双表\
+    有序并集单向生成（plan-skill-anim-fidelity-v1 §8.1 #4a）、禁止手改；重生成：\
     cd server && BONG_REGEN_CAST_TICKS_SNAPSHOT=1 cargo test technique_cast_ticks_snapshot";
 
 fn snapshot_path() -> PathBuf {

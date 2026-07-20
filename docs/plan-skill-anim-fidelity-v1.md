@@ -98,7 +98,7 @@
   - 瞬发招（cast ≤ 2）：总长 ∈ [6, 12]；
   - 长引导招（cast ≥ 40）：蓄力段动画 isLoop 且每个用到的轴在 endTick 有同值补帧（库坑 #1 边界）、release 段动画独立存在且两段 id 均被 server 映射表发射。
 - **精度红线机械化断言**（同一测试套件）：每份动画随批提交一份结构化 spec manifest（anticipation/strike/recovery 的 tick 边界 + 每段帧点数），测试逐项断言：三段各 ≥2 帧点、主要运动轴相邻帧点间隔 ≤4 tick、所有关键帧 easing 显式且主打击轴非 linear、`leg.pitch ≤ 40°`、循环动画每轴 endTick 同值补帧。无法机械判定的重心转移/全身协调，列为逐招人工验收证据：批次 PR 附 `render_animation.py` 三视图 PNG + 对照 checklist。
-- **快照单一真源**：快照由 server `TECHNIQUE_DEFINITIONS` 单向生成（server 侧同步测试保证快照=定义，快照缺失/重复/漂移条目直接判红），client 测试只消费不维护——杜绝「错误时长靠同步改快照混过关」。现状不达标项进 allowlist，逐批清空——allowlist 清零 = P1-P4 完成的机械判据（**口径见 §8.1 #5**：只覆盖属于 P1-P4 重制清单的条目，明示归属外部 plan / 后续阶段的余项不计入但必须登记归属）；**allowlist 只允许缩小**，任何新增条目必须在 PR body 显式说明理由。
+- **快照单一真源**：快照由 server `TECHNIQUE_DEFINITIONS`（P4 起并入 `yidao_skill_spec`，具名双表有序并集，见 §8.1 #4a）单向生成（server 侧同步测试保证快照=定义，快照缺失/重复/漂移条目直接判红），client 测试只消费不维护——杜绝「错误时长靠同步改快照混过关」。现状不达标项进 allowlist，逐批清空——allowlist 清零 = P1-P4 完成的机械判据（**口径见 §8.1 #5**：只覆盖属于 P1-P4 重制清单的条目，明示归属外部 plan / 后续阶段的余项不计入但必须登记归属）；**allowlist 只允许缩小**，任何新增条目必须在 PR body 显式说明理由。
 - 精度标准（上节）随 P0 一并进 `docs/player-animation-conventions.md`（该文档为动画约定正典，本 plan 允许追加不允许改写既有段落）。
 
 ## P1-P4 — 分批重制（每批同构）
@@ -108,7 +108,7 @@
 - **P1**（高频短招，玩家看得最多）：`sword_{cleave,thrust,parry}`、`beng_quan`、`zhenmai_{parry,neutralize,multipoint,harden,sever_chain}`。瞬发招按标准 #2 做爆发帧+收势。（`sword_infuse` cast=40 属长引导域，移 P2，见附录 A。）
 - **P2**（去复用 + 长引导）：sword_path 5 招各自专属动画（`condense_edge` 凝锋收剑入鞘式 / `qi_slash` 远程挥斩 / `resonance` 双手持剑共鸣颤 / `manifest` 已有 / `heaven_gate` 已有两段式，精修）；anqi 6 招专属（`charge_carrier` cast=400 → 循环封骨结印段 + 完成收势；`echo_fractal` cast=60 → 循环撒饵段 + 4 tick 爆发保留为 release）；`sword_infuse` cast=40 拆「循环蓄力段 + release 段」两段式（含 server 通道接线）。
 - **P3**：`tie_shan_kao`（靠身撞击，与崩拳出拳区分）、`xue_beng_bu`（步法位移）、`ni_mai_hu_ti`（护体结印，当前 anim_id: None 补新）、dugu 2 / tuike 3 / woliu **基础与进阶**短招（`vacuum_palm`/`woliu.burst` 等 8-10 tick 快闪项）按标准精修。**明确排除涡流虚蚀 5 招**（`ambient_vortex`/`void_vortex`/`swallowing_vortex`/`vortex_echo`/`void_core`——其动画从无到有的补齐归 active `plan-bughunt-woliu-voidpath-missing-animations-v1`）；若将来需对其产物做二次精修，作为该 plan merge 后的后置依赖另列批次，且只改既有 JSON 精度、不新增动画、不动发射链。
-- **P4**：yidao 5 招按 plan-yidao-v1 §5 表格逐条落地（针灸双手持针 30 穴位序 / 灸火对掌 / CPR 按压 / 续命喂丹+接天引 / 环阵持法器），server 侧 yidao emit 补 `PlayAnim`（当前 yidao 无动画常量）。（✅ 2026-07-19 交付：5 招通道核验全部为 `resolve_yidao_skill → insert_casting` 真实长引导窗（cast_ticks_base 100-1200t，`yidao_cast_ticks` 按 mastery/平和色缩放可变窗）→ 全部两段式——蓄力循环段 20-32t isLoop 覆盖任意窗长 + release 收势段 12-14t 三段式；server 10 动画 id 常量 + 起手 PlayAnim + `looping_cast_anim_id` yidao 分表登记（三打断/自然完成 StopAnim）+ `complete_yidao_casts` 有效结算分支 release 接力（无效完成不奖励收势，sword_infuse 先例同语义）；cast_ticks 快照真源扩展为 `TECHNIQUE_DEFINITIONS` + `yidao_skill_spec` 单向合并；client `SKILL_ANIM` +5、10 份 spec manifest，allowlist 零新增。）
+- **P4**：yidao 5 招按 plan-yidao-v1 §5 表格逐条落地（针灸双手持针 30 穴位序 / 灸火对掌 / CPR 按压 / 续命喂丹+接天引 / 环阵持法器），server 侧 yidao emit 补 `PlayAnim`（当前 yidao 无动画常量）。（✅ 2026-07-19 交付：5 招通道核验全部为 `resolve_yidao_skill → insert_casting` 真实长引导窗（cast_ticks_base 100-1200t，`yidao_cast_ticks` 按 mastery/平和色缩放可变窗）→ 全部两段式——蓄力循环段 isLoop 覆盖任意窗长（逐招时长：接经术 **90t**（30 针×3t，r2 返工兑现 30 穴位序后的最终值）/ 排异 24t / 急救 20t / 续命 26t / 群体接经 32t）+ release 收势段 12-14t 三段式；server 10 动画 id 常量 + 起手 PlayAnim + `looping_cast_anim_id` yidao 分表登记（三打断/自然完成 StopAnim）+ `complete_yidao_casts` 有效结算分支 release 接力（无效完成不奖励收势，sword_infuse 先例同语义）；cast_ticks 快照真源扩展为 `TECHNIQUE_DEFINITIONS` + `yidao_skill_spec` 单向合并；client `SKILL_ANIM` +5、10 份 spec manifest，allowlist 零新增。）
 
 ## P5 — 粒子去复用
 
@@ -179,6 +179,13 @@
 
 **落点**：新增 `server/src/cultivation/technique_cast_ticks_snapshot_test.rs` + `client/src/test/resources/bong/technique_cast_ticks_snapshot.json`；client 对拍测试消费点归 P0。
 
+**修订 #4a（2026-07-20，P4 review r3 提出）——权威来源由单表改为「具名双表有序并集」**：
+
+- **背景**：P4 落地 yidao 5 招时发现它们不在 `TECHNIQUE_DEFINITIONS`（该表是**功法**注册表），其 cast_ticks 由 `combat::yidao::yidao_skill_spec()` 独立定义。实现遂改为双表合并生成快照（49→54 键），但 P0 与本决议原文仍写「由 `TECHNIQUE_DEFINITIONS` 单向生成」——形成同一 plan 内的互斥契约。
+- **决议**：正式采纳**双源**契约，不把 yidao 塞进 `TECHNIQUE_DEFINITIONS`——后者是功法表，yidao 是 combat 侧技能 spec，强行合表属 gameplay 结构改动，越出本 plan「纯表现层」边界（§8.1 #1）。
+- **契约细则**（同步测试逐条锁定）：权威输入 = `cultivation::known_techniques::TECHNIQUE_DEFINITIONS` ∪ `combat::yidao::yidao_skill_spec()`（两个**具名**来源，无第三方）；skill_id 全局唯一，**跨源撞名即判红**（不做静默覆盖）；`BTreeMap` 保证确定性排序；重生成唯一入口不变 `BONG_REGEN_CAST_TICKS_SNAPSHOT=1 cargo test technique_cast_ticks_snapshot`；快照仍不可手改，缺失/多余/漂移/撞名分别点名判红。
+- **落点**：P0「快照单一真源」条目按本修订读作「具名双表并集单向生成」；`server/src/cultivation/technique_cast_ticks_snapshot_test.rs` 的 `REGEN_HINT` 与模块注释同步表述。
+
 #### #5 allowlist 清零判据的口径 —— 已收口（2026-07-20，P4 review 提出）：判据只覆盖**本 plan 责任内**条目
 
 **背景（矛盾点）**：P0 声明「allowlist 清零 = P1-P4 完成的机械判据」，但 P3/P4 交付完成时 `CAST_ALIGNMENT_ALLOWLIST` 仍余 2 条；同时 P6 段又把「P0 对拍测试 allowlist 清零」列为 P6 自己的交付物——同一文档两处对「何时应清零」口径打架，P3/P4 标 ✅ 缺少正式豁免依据。
@@ -197,8 +204,8 @@
 
 - client：动画 JSON 元数据对拍测试（分类型时长断言 / 三段 manifest 帧点下限 / 主轴帧间隔 ≤4 / easing 显式且打击轴禁 linear / leg.pitch 上限 / 循环每轴 endTick 补帧 / 快照缺失/重复/漂移判红）+ 资源 pin + 粒子 registry 集合一致性（gradlew test）；
 - server：`vfx_animation_trigger` 映射 arm 单测（含借用改专属后旧 id 不再发出的负向断言）+ P5 粒子发射 pin + cast_ticks 快照单向同步测试（cargo test）；
-- 实机：每批 `render_animation.py` 三视图存档 + 人工验收 checklist（重心/协调等非机械项）+ P6 TPV 读招验收（FPV 仅非阻塞冒烟）；
-- e2e：`bash scripts/smoke-test-e2e.sh` 绿。
+- 实机：每批 `render_animation.py` 三视图存档 + 人工验收 checklist（重心/协调等非机械项）+ P6 TPV 读招验收（FPV 仅非阻塞冒烟）。**存档位置**：`client/tools/renders/<批次>/`（随 PR 提交，与仓库既有 renders 惯例一致），checklist 同目录 `README.md`——P4 批次见 `client/tools/renders/yidao_p4/`；
+- e2e：`bash scripts/smoke-test-e2e.sh` 绿。**证据口径**：该脚本由 CI `e2e` job 在每个 PR HEAD 上执行（`.github/workflows/e2e.yml:144`，同 job 另跑 `bot-e2e.sh`），验收记录引用对应 HEAD SHA 的绿色 job 即可，不要求本地重跑（本地无 headless MC 依赖链）。
 
 ## §10 实施工作流
 
