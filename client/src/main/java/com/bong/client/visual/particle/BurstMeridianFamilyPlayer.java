@@ -243,7 +243,12 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
         double[] origin = payload.origin();
         int count = clampInt(payload.count().orElse(form.defaultCount), form.minCount, MAX_COUNT);
         int rgb = payload.colorRgb().orElse(FAMILY_RGB);
+        double strength = clamp(payload.strength().orElse(0.7), 0.0, 1.0);
         int lifetime = payload.durationTicks().orElse(form.defaultLifetime);
+        // 走 radiusAt 而非直接读 radiusBase：本形态的 radiusStrength 当前为 0，两者等价，
+        // 但若将来 spec 表给这行写上 strength 系数，直读 radiusBase 会让渲染悄悄忽略它
+        // ——而 spec 对拍测试只校验枚举字段，照样绿。半径口径只留一条路。
+        double radius = form.radiusAt(strength);
 
         List<SkillParticleSpawn> spawns = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
@@ -252,7 +257,7 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
             spawns.add(new SkillParticleSpawn.OrbitPoint(
                 new SkillParticleSpawn.OrbitSpec(
                     origin[0], origin[1] + heightOffset, origin[2],
-                    form.radiusBase, angle, form.speed, form.verticalSpeed
+                    radius, angle, form.speed, form.verticalSpeed
                 ),
                 COUNTERFLOW_SCALE, rgb, COUNTERFLOW_ALPHA, lifetime,
                 SkillParticleSpawn.Sheet.QI_AURA

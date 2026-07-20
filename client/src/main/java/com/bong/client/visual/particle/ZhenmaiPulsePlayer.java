@@ -191,68 +191,63 @@ public final class ZhenmaiPulsePlayer implements VfxPlayer {
             double cos = Math.cos(angle);
             double sin = Math.sin(angle);
 
-            if (form.motion == Form.Motion.ORBIT) {
+            // switch 表达式（无 default）：新增 Motion 变体而忘了接分支 = 编译期撞红。
+            // 不用「早退 + 带 default 的 switch 语句」——那样漏接分支会静默不发脉冲，
+            // 而穴位点照发，连「该招没粒子」的非空断言都兜不住（与另两个 player 统一）。
+            SkillParticleSpawn spawn = switch (form.motion) {
                 // 真环绕：交给 OrbitSpec 持圆心 + 逐 tick 转角，半径恒定（review r1 #2）。
-                out.add(new SkillParticleSpawn.OrbitPulse(
+                case ORBIT -> new SkillParticleSpawn.OrbitPulse(
                     new SkillParticleSpawn.OrbitSpec(
                         origin[0], origin[1], origin[2],
                         form.radius, angle, form.speed, form.pulseVertical
                     ),
                     PULSE_LENGTH_FACTOR, PULSE_MIN_LENGTH, halfWidth,
                     rgb, alpha, lifetime, SkillParticleSpawn.Sheet.QI_AURA
-                ));
-                continue;
-            }
-
-            double px;
-            double py;
-            double pz;
-            double vx;
-            double vz;
-
-            switch (form.motion) {
+                );
+                // 沿 direction 前冲，横向按 side 轴铺成一道扇面。
+                // 竖直分量来自 direction 本身（可俯可仰），不取 spec 的固定垂直速度。
                 case FORWARD -> {
-                    // 沿 direction 前冲，横向按 side 轴铺成一道扇面。
                     double spread = pulses == 1 ? 0.0 : ((double) i / (pulses - 1)) * 2.0 - 1.0;
                     double lateral = spread * form.radius;
-                    px = origin[0] + side[0] * lateral;
-                    py = origin[1] + side[1] * lateral;
-                    pz = origin[2] + side[2] * lateral;
-                    vx = dir[0] * form.speed;
-                    vz = dir[2] * form.speed;
+                    yield pulse(
+                        origin[0] + side[0] * lateral,
+                        origin[1] + side[1] * lateral,
+                        origin[2] + side[2] * lateral,
+                        dir[0] * form.speed, dir[1] * form.speed, dir[2] * form.speed,
+                        halfWidth, rgb, alpha, lifetime);
                 }
-                case RADIAL_OUT -> {
-                    px = origin[0] + cos * form.radius;
-                    py = origin[1];
-                    pz = origin[2] + sin * form.radius;
-                    vx = cos * form.speed;
-                    vz = sin * form.speed;
-                }
+                case RADIAL_OUT -> pulse(
+                    origin[0] + cos * form.radius,
+                    origin[1],
+                    origin[2] + sin * form.radius,
+                    cos * form.speed, form.pulseVertical, sin * form.speed,
+                    halfWidth, rgb, alpha, lifetime);
+                // 双层护壳：奇偶粒子分内外两圈，向心收拢。
                 case RADIAL_IN -> {
-                    // 双层护壳：奇偶粒子分内外两圈，向心收拢。
                     double layer = (i % 2 == 0) ? 1.0 : 1.5;
-                    px = origin[0] + cos * form.radius * layer;
-                    py = origin[1] + (i % 2 == 0 ? 0.0 : 0.35);
-                    pz = origin[2] + sin * form.radius * layer;
-                    vx = -cos * form.speed;
-                    vz = -sin * form.speed;
+                    yield pulse(
+                        origin[0] + cos * form.radius * layer,
+                        origin[1] + (i % 2 == 0 ? 0.0 : 0.35),
+                        origin[2] + sin * form.radius * layer,
+                        -cos * form.speed, form.pulseVertical, -sin * form.speed,
+                        halfWidth, rgb, alpha, lifetime);
                 }
-                default -> {
-                    return;
-                }
-            }
-
-            // FORWARD 的竖直分量来自 direction 本身（可俯可仰），其余形态用 spec 的固定垂直速度。
-            double vy = form.motion == Form.Motion.FORWARD
-                ? dir[1] * form.speed
-                : form.pulseVertical;
-
-            out.add(new SkillParticleSpawn.Pulse(
-                px, py, pz, vx, vy, vz,
-                PULSE_LENGTH_FACTOR, PULSE_MIN_LENGTH, halfWidth,
-                rgb, alpha, lifetime, SkillParticleSpawn.Sheet.QI_AURA
-            ));
+            };
+            out.add(spawn);
         }
+    }
+
+    /** 三条直线形态共用的 Pulse 构造（几何各自算好，材质/贴图参数在此收口）。 */
+    private static SkillParticleSpawn.Pulse pulse(
+        double px, double py, double pz,
+        double vx, double vy, double vz,
+        double halfWidth, int rgb, float alpha, int lifetime
+    ) {
+        return new SkillParticleSpawn.Pulse(
+            px, py, pz, vx, vy, vz,
+            PULSE_LENGTH_FACTOR, PULSE_MIN_LENGTH, halfWidth,
+            rgb, alpha, lifetime, SkillParticleSpawn.Sheet.QI_AURA
+        );
     }
 
     /**
