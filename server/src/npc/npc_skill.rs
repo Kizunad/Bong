@@ -15,22 +15,30 @@ use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::zone::ZoneRegistry;
 
-// ─── AV reuse map (纯加法 cosmetic，无净新资产) ────────────────────────────────
-// 三招 AV 全部复用既有 particle event_id（client 已注册）+ audio recipe（server JSON 已存在）。
+// ─── AV map (plan-skill-anim-fidelity-v1 P5：粒子去借用) ──────────────────────
+// 去复用前三招粒子全是借的——heal 借医道 `bong:yidao_meridian_repair`、buff_speed
+// 借真脉 `bong:jiemai_neutralize_dust`、buff_defense 借崩拳
+// `bong:burst_meridian_beng_quan`。后果有二：① NPC 施法与玩家同招粒子完全同形，
+// 旁观者分不清「对面 NPC 在补血」还是「有玩家在放医道」；② 借来的 id 命中
+// `bong:yidao_` / `bong:jiemai_` 家族前缀，让 NPC 背景 cosmetic 误吃 Important
+// 优先级、在拥挤 chunk 里挤掉玩家自己的技能反馈。
 //
-// heal_basic → 医道平和色治疗脉络绿光（YidaoPeacePulsePlayer），与玩家「医道」回血同款语义。
-// buff_speed → 解脉中和尘 + 移动冲刺音，表达「经脉加速运转」的疾行尘。
-// buff_defense → 崩拳真元爆护体环 + 镇脉护盾嗡音，与 burst_meridian.ni_mai_hu_ti（同款 DamageReduction buff）一致。
-const HEAL_PARTICLE_ID: &str = "bong:yidao_meridian_repair";
-const HEAL_PARTICLE_COLOR: &str = "#A8E6CF";
+// 现改为 3 个 NPC 专属 id → client `NpcSkillAuraPlayer`（形态从简，见 plan §P5.1 ③），
+// 且**不登记**进玩家技能优先级表 —— NPC 施法归 Normal 档是正确档位。
+// audio recipe 仍复用既有条目（音效不在 P5 范围）。
+pub(crate) const HEAL_PARTICLE_ID: &str = "bong:npc_heal_basic";
+pub(crate) const HEAL_PARTICLE_COLOR: &str = "#A8E6CF";
 const HEAL_AUDIO_RECIPE: &str = "yidao_meridian_repair";
 
-const BUFF_SPEED_PARTICLE_ID: &str = "bong:jiemai_neutralize_dust";
-const BUFF_SPEED_PARTICLE_COLOR: &str = "#9FD8C8";
+pub(crate) const BUFF_SPEED_PARTICLE_ID: &str = "bong:npc_buff_speed";
+/// 麦黄。旧值 `#9FD8C8` 与 heal 的 `#A8E6CF` 同属淡青绿、仅单通道差 ~10%，
+/// 远距离不可辨——违背 plan P5「id 与颜色必须独立，保证旁观读招」。改后三招
+/// 构成 绿 / 黄 / 蓝 高分离色相三元组。
+pub(crate) const BUFF_SPEED_PARTICLE_COLOR: &str = "#E3C766";
 const BUFF_SPEED_AUDIO_RECIPE: &str = "movement_dash";
 
-const BUFF_DEFENSE_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
-const BUFF_DEFENSE_PARTICLE_COLOR: &str = "#5BA8C9";
+pub(crate) const BUFF_DEFENSE_PARTICLE_ID: &str = "bong:npc_buff_defense";
+pub(crate) const BUFF_DEFENSE_PARTICLE_COLOR: &str = "#5BA8C9";
 const BUFF_DEFENSE_AUDIO_RECIPE: &str = "zhenmai_shield_hum";
 
 /// AV 广播半径（与 audio/vfx 既有默认一致）。
@@ -1207,7 +1215,8 @@ mod tests {
 
     // === AV (particle + audio) emission ===
     //
-    // 锁定：① 三招各发对应 reused particle event_id + color ② 各发对应 reused audio recipe
+    // 锁定：① 三招各发**专属** particle event_id + color（P5 去复用，旧借用 id 负向锁）
+    //       ② 各发对应 reused audio recipe（音效不在 P5 范围）
     //       ③ AV 只在 cast 成功时发，rejection 不发 ④ 缺 Position 时静默跳过不发 AV 也不崩。
 
     fn make_position() -> Position {
@@ -1215,7 +1224,7 @@ mod tests {
     }
 
     #[test]
-    fn heal_basic_emits_reused_heal_particle_and_audio() {
+    fn heal_basic_emits_bespoke_heal_particle_and_reused_audio() {
         let mut world = world_with_events();
         let wounds = make_wounds(50.0, 100.0, vec![]);
         let entity = world
@@ -1236,24 +1245,29 @@ mod tests {
         );
         assert_eq!(
             particles[0].0, HEAL_PARTICLE_ID,
-            "heal must reuse 医道治疗 particle id (no net-new asset)"
+            "heal 应发 NPC 专属粒子 id（P5 去复用：原借医道 bong:yidao_meridian_repair，\
+             借用时旁观者分不清是 NPC 补血还是有玩家在放医道）"
         );
         assert_eq!(
             particles[0].1.as_deref(),
             Some(HEAL_PARTICLE_COLOR),
-            "heal particle color should be the green heal tint"
+            "heal 粒子应为薄荷绿（绿/黄/蓝三元组中的绿）"
+        );
+        assert_ne!(
+            particles[0].0, "bong:yidao_meridian_repair",
+            "heal 回退到了 P5 之前借用的医道粒子 id"
         );
 
         let audio = collected_audio(&world);
         assert_eq!(
             audio,
             vec![HEAL_AUDIO_RECIPE.to_string()],
-            "heal must reuse existing yidao_meridian_repair audio recipe"
+            "heal 仍复用既有 yidao_meridian_repair 音效配方——P5 只做粒子去复用，音效不在范围内"
         );
     }
 
     #[test]
-    fn buff_speed_emits_reused_speed_particle_and_audio() {
+    fn buff_speed_emits_bespoke_speed_particle_and_reused_audio() {
         let mut world = world_with_events();
         let entity = world
             .spawn((make_cultivation(Realm::Condense, 50.0), make_position()))
@@ -1265,20 +1279,28 @@ mod tests {
         assert_eq!(particles.len(), 1, "buff_speed should emit 1 particle");
         assert_eq!(
             particles[0].0, BUFF_SPEED_PARTICLE_ID,
-            "buff_speed must reuse 解脉中和尘 particle id"
+            "buff_speed 应发 NPC 专属粒子 id（P5 去复用：原借真脉 bong:jiemai_neutralize_dust）"
         );
-        assert_eq!(particles[0].1.as_deref(), Some(BUFF_SPEED_PARTICLE_COLOR));
+        assert_eq!(
+            particles[0].1.as_deref(),
+            Some(BUFF_SPEED_PARTICLE_COLOR),
+            "buff_speed 粒子应为麦黄——旧值 #9FD8C8 与 heal 的 #A8E6CF 同属淡青绿、远距离不可辨"
+        );
+        assert_ne!(
+            particles[0].0, "bong:jiemai_neutralize_dust",
+            "buff_speed 回退到了 P5 之前借用的真脉粒子 id"
+        );
 
         let audio = collected_audio(&world);
         assert_eq!(
             audio,
             vec![BUFF_SPEED_AUDIO_RECIPE.to_string()],
-            "buff_speed must reuse existing movement_dash audio recipe"
+            "buff_speed 仍复用既有 movement_dash 音效配方（P5 不动音效）"
         );
     }
 
     #[test]
-    fn buff_defense_emits_reused_shield_particle_and_audio() {
+    fn buff_defense_emits_bespoke_shield_particle_and_reused_audio() {
         let mut world = world_with_events();
         let entity = world
             .spawn((make_cultivation(Realm::Condense, 50.0), make_position()))
@@ -1290,15 +1312,24 @@ mod tests {
         assert_eq!(particles.len(), 1, "buff_defense should emit 1 particle");
         assert_eq!(
             particles[0].0, BUFF_DEFENSE_PARTICLE_ID,
-            "buff_defense must reuse 崩拳护体环 particle id (same as ni_mai_hu_ti)"
+            "buff_defense 应发 NPC 专属粒子 id（P5 去复用：原借崩拳 \
+             bong:burst_meridian_beng_quan，与玩家爆脉招完全同形）"
         );
-        assert_eq!(particles[0].1.as_deref(), Some(BUFF_DEFENSE_PARTICLE_COLOR));
+        assert_eq!(
+            particles[0].1.as_deref(),
+            Some(BUFF_DEFENSE_PARTICLE_COLOR),
+            "buff_defense 粒子应为青蓝（绿/黄/蓝三元组中的蓝）"
+        );
+        assert_ne!(
+            particles[0].0, "bong:burst_meridian_beng_quan",
+            "buff_defense 回退到了 P5 之前借用的崩拳粒子 id"
+        );
 
         let audio = collected_audio(&world);
         assert_eq!(
             audio,
             vec![BUFF_DEFENSE_AUDIO_RECIPE.to_string()],
-            "buff_defense must reuse existing zhenmai_shield_hum audio recipe"
+            "buff_defense 仍复用既有 zhenmai_shield_hum 音效配方（P5 不动音效）"
         );
     }
 
@@ -1311,6 +1342,66 @@ mod tests {
         assert_ne!(HEAL_AUDIO_RECIPE, BUFF_SPEED_AUDIO_RECIPE);
         assert_ne!(HEAL_AUDIO_RECIPE, BUFF_DEFENSE_AUDIO_RECIPE);
         assert_ne!(BUFF_SPEED_AUDIO_RECIPE, BUFF_DEFENSE_AUDIO_RECIPE);
+    }
+
+    // ─── plan-skill-anim-fidelity-v1 P5：粒子去借用回归锁 ─────────────────────────
+
+    /// 三招的粒子 id 不得是任何一个曾被借用的别家 id。
+    ///
+    /// 与上面的「三招互不相同」不可互相替代——三招彼此不同、但仍全是借来的，
+    /// 正是 P5 之前的状态（heal 借医道 / speed 借真脉 / defense 借崩拳，三者确实互异）。
+    #[test]
+    fn p5_no_npc_skill_borrows_another_style_particle() {
+        const LEGACY_BORROWED: [&str; 3] = [
+            "bong:yidao_meridian_repair",
+            "bong:jiemai_neutralize_dust",
+            "bong:burst_meridian_beng_quan",
+        ];
+        for particle_id in [
+            HEAL_PARTICLE_ID,
+            BUFF_SPEED_PARTICLE_ID,
+            BUFF_DEFENSE_PARTICLE_ID,
+        ] {
+            assert!(
+                !LEGACY_BORROWED.contains(&particle_id),
+                "{particle_id} 是 P5 之前借用的别家流派粒子——NPC 施法必须有自己的 id，\
+                 否则旁观者分不清是 NPC 在放技能还是玩家在放"
+            );
+            assert!(
+                particle_id.starts_with("bong:npc_"),
+                "{particle_id} 应落在 bong:npc_ 前缀下——该前缀**有意**不在玩家技能优先级表里，\
+                 NPC 背景 cosmetic 归 Normal 档，不与玩家技能反馈争拥挤 chunk 的粒子配额"
+            );
+        }
+    }
+
+    /// 三招接线与 `network::skill_vfx_wiring` 共享表逐项一致（client 按同一份表注册）。
+    #[test]
+    fn p5_npc_particles_match_shared_wiring_table() {
+        for (skill_id, particle_id, color) in [
+            ("npc.heal_basic", HEAL_PARTICLE_ID, HEAL_PARTICLE_COLOR),
+            (
+                "npc.buff_speed",
+                BUFF_SPEED_PARTICLE_ID,
+                BUFF_SPEED_PARTICLE_COLOR,
+            ),
+            (
+                "npc.buff_defense",
+                BUFF_DEFENSE_PARTICLE_ID,
+                BUFF_DEFENSE_PARTICLE_COLOR,
+            ),
+        ] {
+            let wiring = crate::network::skill_vfx_wiring::wiring_for(skill_id)
+                .unwrap_or_else(|| panic!("{skill_id} 未登记进 P5_SKILL_VFX_WIRING 接线表"));
+            assert_eq!(
+                wiring.event_id, particle_id,
+                "{skill_id} 的 event_id 与共享接线表不一致——client 按表注册，不符即 bridgeMiss"
+            );
+            assert_eq!(
+                wiring.color, color,
+                "{skill_id} 的粒子颜色与共享接线表不一致"
+            );
+        }
     }
 
     #[test]

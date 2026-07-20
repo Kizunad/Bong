@@ -39,10 +39,10 @@
 
 **③ 模板批量产物**：一批动画呈「81 轴关键帧 = 27 轴 × 首/中/尾 3 帧」特征（`palm_strike`/`release_burst`/`parry_block`/`sword_slash_down`/`dodge_roll`/全部 `stance_*` 等），是生成器模板一把梭的产物，所有轴同节奏起落，无重心转移、无预备-发力-收势的时序错落。
 
-**④ A/V 复用清单**（去复用 = 本 plan 差异化目标）：
+**④ A/V 复用清单**（去复用 = 本 plan 差异化目标）。**以下为 P0 立项时的基线快照，保留以备追溯；括号内标注各条的清偿阶段**：
 
-- 动画复用：sword_path `condense_edge`/`resonance` 借 `sword_cleave`、`qi_slash` 借 `sword_thrust`；anqi 6 招全借通用（`windup_charge`/`cast_invoke`/`release_burst`/`sword_stab`）；burst_meridian `tie_shan_kao`/`xue_beng_bu` 借 `beng_quan`、`ni_mai_hu_ti` 无动画（anim_id: None）。
-- 粒子复用：zhenmai 直接复用剑气 `SwordQiSlashPlayer`（`jiemai_*` 事件）；burst_meridian 全系共用 `bong:burst_meridian_beng_quan`；npc 3 招各借医道/真脉/崩拳粒子。
+- 动画复用：sword_path `condense_edge`/`resonance` 借 `sword_cleave`、`qi_slash` 借 `sword_thrust`；anqi 6 招全借通用（`windup_charge`/`cast_invoke`/`release_burst`/`sword_stab`）；burst_meridian `tie_shan_kao`/`xue_beng_bu` 借 `beng_quan`、`ni_mai_hu_ti` 无动画（anim_id: None）。（**已清偿**：sword_path / anqi 归 P2 ✅、burst_meridian 3 招归 P3 ✅）
+- 粒子复用：zhenmai 直接复用剑气 `SwordQiSlashPlayer`（`jiemai_*` 事件）；burst_meridian 全系共用 `bong:burst_meridian_beng_quan`；npc 3 招各借医道/真脉/崩拳粒子。（**已清偿**：全部 11 条归 P5 ✅ 2026-07-20——zhenmai 5 招转 `ZhenmaiPulsePlayer`、burst_meridian 3 招转 `BurstMeridianFamilyPlayer`、npc 3 招转 `NpcSkillAuraPlayer`，逐项接线见 P5.2 矩阵）
 - yidao 5 招：plan-yidao-v1 §5 表格承诺的 5 个差异化动画（针灸/灸火/CPR/续命咏唱/环阵）完全未落地（Finish Evidence 只兑现 audio+VFX+HUD）。
 
 ## 与既有 plan 的关系（防重声明）
@@ -87,7 +87,7 @@
 | P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段）。拆前半（2026-07-19：去复用 6 招专属化——sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject，含 server 映射改指 + allowlist 删 5 条）+ 后半（2026-07-19：charge_carrier / sword.infuse 真两段式 + StopAnim 三类通道接线 §8.1 #3 + echo_fractal / armor_pierce / manifest 瞬发结算型分类契约（review r2 定形——strike 顶点=tick 0 与结算同帧，INSTANT_RESOLVER_SKILLS + instant manifest 机械锁，出 allowlist）+ heaven_gate 双段密度精修 + allowlist 净删 4 条） | ✅ 2026-07-19 |
 | P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ✅ 2026-07-19 |
 | P4 | yidao 5 招动画补齐（plan-yidao-v1 §5 欠账） | ✅ 2026-07-19 |
-| P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ⬜ |
+| P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ✅ 2026-07-20 |
 | P6 | 回归收口：资源 pin 测试 + FPV/TPV 实机验收 | ⬜ |
 
 ## P0 — 审计矩阵 + 标准定稿 + 对拍测试
@@ -118,6 +118,113 @@
 - burst_meridian：`tie_shan_kao` 撞击冲击环（GroundDecal）、`xue_beng_bu` 步法残影（Ribbon 短尾）、`ni_mai_hu_ti` 体表逆流纹（Sprite 环绕），共用色系 #C58B3F 但形态分化。
 - npc 3 招：脱离借用，各给独立 event_id（形态可简，但 id 与颜色必须独立，保证旁观读招）。
 - **双端闭环接线矩阵（P5 交付物）**：每个新 event_id 一行——`招式 id / server 发射点（resolver 或 emit system 文件）/ SpawnParticle event_id / client VfxPlayer 类名 / VfxBootstrap 注册行`。矩阵同源生成一份共享 event_id 清单驱动双端测试：server 侧逐项断言对应招式事件发出正确 `SpawnParticle`（旧借用 id 不再发出的负向断言一并锁）；client 侧逐项断言 `VfxRegistry` 已注册同一 id 并返回预期 player；再加集合一致性断言（发射集合 == 注册集合，防两端字符串各自漂移）+ 未注册 id 走 bridgeMiss 不崩溃的错误分支。
+
+### P5.1 粒子 spec（按 docs/CLAUDE.md §四 视听精度要求，实施前定稿 2026-07-20）
+
+**全域共同约束**：贴图**零新增**——全部复用既有 `BongParticles` sprite provider（`qi_aura` → `qiAuraSprites`、`lingqi_ripple` → `lingqiRippleSprites`）；不新增 schema，全部走既有 `VfxEventPayloadV1::SpawnParticle` → `bong:vfx_event` → `VfxRegistry` → `VfxPlayer` 通道；server 侧 `count` 参数驱动主粒子数，副粒子（穴位点等）数量由 player 按形态自持。
+
+**① zhenmai 5 招 —— `ZhenmaiPulsePlayer`（金脉色系 anchor #D4AF6A）**
+
+基类组合固定为「`BongLineParticle` 沿经脉走向的短脉冲 + `BongSpriteParticle` 驻留穴位点」，逐招靠**运动形态 + 金脉明度阶梯**分化（同族可认、逐招可辨）：
+
+| event_id | 招式 | 运动形态 | 脉冲数 | 穴位点数 | lifetime | 主速度 格/t | 脉冲垂直 格/t | 穴位点漂移 格/t | 半径 格 | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:zhenmai_parry_flash` | `zhenmai.parry` | FORWARD | 8 | 3 | 20t | 0.35 | 0.00 | 0.00 | 0.55 | `#D4AF6A`（金脉本色） | burst 单帧齐发 | `qi_aura` + `lingqi_ripple` |
+| `bong:zhenmai_neutralize_dust` | `zhenmai.neutralize` | RADIAL_OUT | 10 | 4 | 20t | 0.12 | -0.02 | -0.02 | 0.40 | `#C9A05C`（沉金，卸力散尘） | radial 水平环 | 同上 |
+| `bong:zhenmai_multipoint_ring` | `zhenmai.multipoint` | ORBIT | 16 | 8 | 20t | 0.10 | 0.00 | 0.00 | 0.50 | `#E0C27E`（亮金，多点连环） | radial 腰高真环绕，穴位点等角分布 | 同上 |
+| `bong:zhenmai_harden_shell` | `zhenmai.harden` | RADIAL_IN | 8 | 6 | 20t | 0.06 | 0.01 | 0.01 | 0.45 | `#B8944F`（暗金，硬化沉坠） | radial 双层护壳 | 同上 |
+| `bong:zhenmai_sever_snap` | `zhenmai.sever_chain` | FORWARD | 18 | 2 | 20t | 0.55 | 0.00 | 0.00 | 0.70 | `#F2D68A`（最亮金，断脉爆闪） | burst 爆闪 | 同上 |
+
+**列语义**：`运动形态` = `ZhenmaiPulsePlayer.Form.Motion` 枚举常量名。`主速度` 在 FORWARD 下是沿 `direction` 的前冲速率、RADIAL_* 下是径向速率（RADIAL_IN 为向心，符号在实现里取负）、ORBIT 下是**线**速度（角速度 = 线速度 ÷ 半径）。`脉冲垂直` 是脉冲的固定垂直分量（FORWARD 形态例外：垂直分量来自 `direction` 本身，可俯可仰，故列 0.00）。`穴位点漂移` 是穴位点的垂直速度——**穴位点 lifetime 与脉冲严格一致**，不额外延长。`半径` 是脉冲起始铺开半径（ORBIT 下即环绕半径；穴位点铺在其 0.6 倍处）。
+
+明度阶梯 `harden(#B8944F) < neutralize(#C9A05C) < parry(#D4AF6A) < multipoint(#E0C27E) < sever(#F2D68A)` 与招式烈度同序。
+
+> **review r1 修正（2026-07-20）**：本表此前把 `穴位点` 的行为混在散文里（parry 行写「穴位点静止」），而实现对五招统一给了 `lifetime + 6` 与 `vy = 0.008` 上浮——spec 与实现两处静默不一致。现拆出 `穴位点漂移` 独立数值列并逐招定值，lifetime 收敛为「与脉冲一致」。同时 `zhenmai.multipoint` 的「切向环绕」此前实现只设切向初速度（= 切向抛射，粒子沿切线直线飞离），现改真环绕（见 §P5.1 ⑥）。
+
+**② burst_meridian 3 招 —— `BurstMeridianFamilyPlayer`（共用色系 `#C58B3F`，纯形态分化）**
+
+三招颜色**一律 `#C58B3F`**（与既有 `beng_quan` 本尊同色，统一爆脉家族识别色），读招完全靠形态：
+
+| event_id | 招式 | 基类 | 运动形态 | 数量 | count 下限 | lifetime | 主速度 格/t | 半径 格 | 垂直速度 格/t | 自旋 rad/t | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:burst_meridian_tie_shan_kao` | `burst_meridian.tie_shan_kao` | `BongGroundDecalParticle` | IMPACT | 10 | 4 | `cast_ticks`（缺省 16t） | 0.00 | 0.30 + 0.45×strength | 0.00 | 0.05 | `#C58B3F` | radial 地面撞击冲击环 | `lingqi_ripple` |
+| `bong:burst_meridian_xue_beng_bu` | `burst_meridian.xue_beng_bu` | `BongRibbonParticle` | TRAIL | 12 | 2 | `cast_ticks`（缺省 14t） | 0.25 | 不适用 | 0.01 | 不适用 | `#C58B3F` | continuous 步法短尾（沿 `direction` **反向**，残影落身后） | `qi_aura` |
+| `bong:burst_meridian_ni_mai_hu_ti` | `burst_meridian.ni_mai_hu_ti` | `BongOrbitSpriteParticle` | ORBIT | 14 | 4 | 12t（= 重发间隔） | 0.08 | 0.55 | 0.015 | 不适用 | `#C58B3F` | radial 双高度体表逆流纹（真环绕，随施法者重发） | `qi_aura` |
+
+**列语义**：`运动形态` = `BurstMeridianFamilyPlayer.Form.Motion` 枚举常量名。`lifetime` 由 server `emit_burst_av` 下发（前两招 = `cast_ticks`，护体 = `NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS` = 12，即**单个环**的寿命而非整个 buff 窗口，见下），括号内是 payload 缺 `duration_ticks` 时的 client 回退值。`count 下限` 是 payload `count` 异常偏小时的钳制下界——环形招 4（低于此读不出「环」），线性残影 2 即可成束；上限统一 48。撞击环半径吃 `strength`（server 传 0.95）；`不适用` 的格子在实现里取 0。逆脉护体的双高度环：奇数颗在 `origin.y - 0.25`、偶数颗在 `origin.y + 0.45`。
+
+> **体表锚定契约（review r2 #1 收口，2026-07-20）**：`ni_mai_hu_ti` 的逆流纹**跟随施法者移动**——plan P5 正文「**体表**逆流纹」是字面交付物，脱离身体即未兑现。
+>
+> `SpawnParticle` payload 只有世界坐标 `origin`、无实体标识，单个粒子环无从锚定移动中的身体；给 payload 加实体字段属跨端 schema 契约变更，越出 P5「不新增 schema」的共同约束。故走 **server 侧 buff 存续期周期重发**：
+>
+> - `NiMaiHuTiAura { started_at_tick, expires_at_tick }`（`cultivation/burst_meridian.rs`）由 `resolve_ni_mai_hu_ti` 在施放时挂上，窗口 = `NI_MAI_HU_TI_BUFF_DURATION_TICKS`（60t），与减伤 buff 严格同步。**不复用 `StatusEffects`**：`StatusEffectKind::DamageReduction` 是共享 kind（渡劫丹 / NPC `buff_defense` 同写，`upsert_status_effect` 按 kind 取 max 合并），读它会给嗑了渡劫丹的玩家凭空挂上爆脉护体环。
+> - `ni_mai_hu_ti_aura_vfx_tick`（注册于 `network/mod.rs`，`.before(vfx_event_emit::emit_vfx_event_payloads)`）在窗口内每 `NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS` = 12t 以施法者**当前 `Position`** 重发一个环；到期即摘锚点停发。
+> - **环寿命 == 重发间隔**（12t）：老环恰在新环生成的同 tick 消失，既不叠环也不留空窗。`60 = 5 × 12` 整除，故 cast 首环 + 4 次重发正好铺满窗口，最后一环与 buff 同 tick 结束，不留「护体已过而纹还在转」的尾巴。
+> - 首环（`emit_burst_av`）与重发环共用同一组形态常量，`p5_ni_mai_hu_ti_cast_ring_and_reemit_ring_share_one_form_spec` 断言两者除 `origin` 外逐字段相等。
+>
+> 半径恒 0.55 格由 `OrbitPath` 参数化保证（不是力平衡涌现），故不存在纹路逐渐外扩的退化。
+
+**③ npc 3 招 —— `NpcSkillAuraPlayer`（形态从简，id + 颜色强制独立）**
+
+| event_id | 招式 | 基类 | 运动形态 | 数量 | lifetime | 主速度 格/t | 半径 格 | 垂直速度 格/t | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:npc_heal_basic` | `npc.heal_basic` | `BongSpriteParticle` | COLUMN | 12 | 40t | 0.00 | 0.4 | 0.03 | `#A8E6CF`（薄荷绿） | radial 上升柱 | `qi_aura` |
+| `bong:npc_buff_speed` | `npc.buff_speed` | `BongLineParticle` | OUTRUSH | 12 | 40t | 0.22 | 0.3 | 0.01 | `#E3C766`（麦黄） | radial 疾行尘 | `qi_aura` |
+| `bong:npc_buff_defense` | `npc.buff_defense` | `BongOrbitSpriteParticle` | ORBIT | 12 | 40t | 0.06 | 0.6 | 0.00 | `#5BA8C9`（青蓝） | radial 护体环（真环绕） | `lingqi_ripple` |
+
+**列语义**：`运动形态` = `NpcSkillAuraPlayer.Form.Motion` 枚举常量名。`数量` / `lifetime` 与 server `emit_npc_skill_av` 下发的 `count: Some(12)` / `duration_ticks: Some(40)` 一致，列出的是 payload 缺省时的 client 回退值（count 钳制区间 1–48）。`半径` 是绕身铺开半径（ORBIT 下即环绕半径）。回血柱另按 `i % 4` 分四段身高错落（起点 `origin.y - 0.5`，步进 0.22），疾行尘贴 `origin.y - 0.6` 脚边。
+
+> **buff_speed 配色变更（本阶段有意决策，非漂移）**：旧值 `#9FD8C8` 与 heal 的 `#A8E6CF` 同属淡青绿、仅单通道差 ~10%，远距离不可辨——直接违背本条「颜色必须独立，保证旁观读招」的交付要求。改为麦黄 `#E3C766`，令三招构成 绿 / 黄 / 蓝 高分离色相三元组。heal 与 defense 颜色保持不变。
+
+**④ 优先级档位（`vfx_event_emit::vfx_default_priority`）**
+
+- zhenmai 5 个新 id 命中既有 `bong:zhenmai_` 前缀 → 自动 Important，**无需登记**（旧 `bong:jiemai_*` 同为 Important，档位无变化）。
+- burst_meridian：新增 `"bong:burst_meridian_"` 到 `PLAYER_SKILL_VFX_PREFIXES`。顺带修掉既存漏网——`bong:burst_meridian_beng_quan` 此前既不在前缀表也不在散号表（散号表登记的是 `bong:beng_quan`），实际掉在 Normal 档，与「玩家主动施放技能粒子归 Important」的设计意图不符；本阶段随家族前缀一并归位。
+- npc 3 个新 id **不登记**，落 Normal 档：NPC 施法属背景 cosmetic，不应与玩家技能反馈争抢拥挤 chunk 的粒子配额。注意这是相对现状的**有意降档**——旧借用 id 中 `bong:yidao_meridian_repair` / `bong:jiemai_neutralize_dust` 因借用而误吃 Important，去借用后回归正确档位。
+
+**⑤ 旧借用 id 的去向**
+
+| 旧 id | 去借用后是否仍有发射方 | 处置 |
+|---|---|---|
+| `bong:jiemai_burst_blood` | 否（原仅 zhenmai parry + multipoint） | 删 client 注册，成为死 id |
+| `bong:jiemai_neutralize_dust` | 否（原 zhenmai neutralize + harden + npc buff_speed） | 删 client 注册，成为死 id |
+| `bong:jiemai_sever_flash` | **是** —— `network/meridian_severed_emit.rs` 被动断脉仍发 | **保留** client 注册与 `bong:jiemai_` 前缀 |
+| `bong:burst_meridian_beng_quan` | 是 —— `beng_quan` 本尊 | 保留（`BurstMeridianBengQuanPlayer` 不动） |
+| `bong:yidao_meridian_repair` | 是 —— `combat/yidao.rs` 医道本尊 | 保留 |
+
+**⑥ 环绕形态的实现契约（review r1 #2 收口，2026-07-20）**
+
+P5 首版把三处「环绕」（`zhenmai.multipoint` / `burst_meridian.ni_mai_hu_ti` / `npc.buff_defense`）实现成**只设切向初速度**——粒子沿切线直线飞离，到中心距离随 tick 线性增长（护体 60t × 0.08 ≈ 4.8 格，早飞出体表几个身位），是切向抛射不是环绕。plan P5 正文「体表逆流纹（Sprite 环绕）」是字面交付物，故按真环绕重做而非改描述降级。
+
+- **`OrbitPath`（新增，纯 Java 无 MC 依赖）**：位置参数化为 `圆心 + 半径 × (cos θ, sin θ)`，θ 每 tick 加 `角速度 = 线速度 ÷ 半径`；垂直分量按 `verticalSpeed × 已过 tick` 线性累积。**半径由构造恒定**，是可硬断言的不变量——区别于既有 `VortexSpiralParticle` 的加力模拟（半径由切向力/向心拉力/阻尼平衡涌现，不可控也不可断言）。
+- **`BongOrbitSpriteParticle` / `BongOrbitLineParticle`（新增）**：把 `OrbitPath` 接到 MC 粒子生命周期。位置由轨道给出，速度字段每 tick 同步成当前切向量——`BongLineParticle` 的 quad 沿速度定向，故脉冲条始终切于圆周，朝向与运动自洽。
+- **贴图仍零新增**：三处环绕复用既有 `qi_aura` / `lingqi_ripple`，未引入任何 png/贴图资产。
+- **方向约定**：正线速度 = 俯视（自 +Y 向下看）自 +x 转向 +z。三处环绕招统一此约定（首版 `ni_mai_hu_ti` 注释写「逆时针」而 `multipoint` 写「顺时针」，两者数学其实相同，本次统一措辞）。
+- **回归锁**：`OrbitPathTest` 断言半径 600 tick 恒定、速度恒切于圆周且速率恒定、角速度 = 线速度/半径、退化参数（半径 0/负/NaN/Inf）构造期拒绝；`SkillParticlePlanTest` 断言三招确实产出 `Orbit*` 描述符，并推进各自完整 lifetime 后半径不漂。
+- **体表锚定的回归锁**（server，`cultivation::burst_meridian::tests`，见 ② 的锚定契约）：`p5_ni_mai_hu_ti_cast_installs_aura_anchor_matching_buff_window`（锚点窗口 == buff 时长）、`p5_ni_mai_hu_ti_cast_ring_lives_one_reemit_interval_not_whole_buff`（首环不再 60t）、`p5_ni_mai_hu_ti_aura_ring_follows_moving_caster`（**核心**：窗口内移动 4 段，逐环断言圆心 == 施法者当时位置）、`p5_ni_mai_hu_ti_aura_cadence_tiles_buff_window_exactly`（相位固定 + 首环与重发严丝合缝铺满 60t）、`p5_ni_mai_hu_ti_aura_stays_silent_on_cast_tick_and_off_phase_ticks`（cast 同帧不叠环）、`p5_ni_mai_hu_ti_aura_anchor_removed_and_silent_after_buff_expiry`（到期摘锚点 + 永久停发）、`p5_ni_mai_hu_ti_cast_ring_and_reemit_ring_share_one_form_spec`（两条发射路径除 origin 外逐字段相等）、`p5_ni_mai_hu_ti_recast_resets_aura_window_without_stacking`（重放覆盖窗口不叠环）。
+
+### P5.2 双端闭环接线矩阵（交付物）
+
+真源 = `server/src/network/skill_vfx_wiring.rs` 的 `P5_SKILL_VFX_WIRING` 表；单向导出 `client/src/test/resources/bong/skill_vfx_wiring_manifest.json` 供双端消费（重生成唯一入口 `cd server && BONG_REGEN_VFX_MANIFEST=1 cargo test skill_vfx_wiring`）。
+
+| 招式 id | server 发射点 | SpawnParticle event_id | 旧借用 id（已解除） | client VfxPlayer | VfxBootstrap 注册 |
+|---|---|---|---|---|---|
+| `zhenmai.parry` | `combat/zhenmai_v2.rs::resolve_parry` → `emit_skill_feedback` | `bong:zhenmai_parry_flash` | `bong:jiemai_burst_blood` | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.PARRY_FLASH` |
+| `zhenmai.neutralize` | `combat/zhenmai_v2.rs::resolve_neutralize` → `emit_skill_feedback` | `bong:zhenmai_neutralize_dust` | `bong:jiemai_neutralize_dust` | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.NEUTRALIZE_DUST` |
+| `zhenmai.multipoint` | `combat/zhenmai_v2.rs::resolve_multipoint` → `emit_skill_feedback` | `bong:zhenmai_multipoint_ring` | `bong:jiemai_burst_blood`（借 parry） | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.MULTIPOINT_RING` |
+| `zhenmai.harden` | `combat/zhenmai_v2.rs::resolve_harden` → `emit_skill_feedback` | `bong:zhenmai_harden_shell` | `bong:jiemai_neutralize_dust`（借 neutralize） | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.HARDEN_SHELL` |
+| `zhenmai.sever_chain` | `combat/zhenmai_v2.rs::resolve_sever_chain` → `emit_skill_feedback` | `bong:zhenmai_sever_snap` | `bong:jiemai_sever_flash` | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.SEVER_SNAP` |
+| `burst_meridian.tie_shan_kao` | `cultivation/burst_meridian.rs::resolve_tie_shan_kao` → `emit_burst_av` | `bong:burst_meridian_tie_shan_kao` | `bong:burst_meridian_beng_quan` | `BurstMeridianFamilyPlayer` | `BurstMeridianFamilyPlayer.TIE_SHAN_KAO` |
+| `burst_meridian.xue_beng_bu` | `cultivation/burst_meridian.rs::resolve_xue_beng_bu` → `emit_burst_av` | `bong:burst_meridian_xue_beng_bu` | `bong:burst_meridian_beng_quan` | `BurstMeridianFamilyPlayer` | `BurstMeridianFamilyPlayer.XUE_BENG_BU` |
+| `burst_meridian.ni_mai_hu_ti` | `cultivation/burst_meridian.rs::resolve_ni_mai_hu_ti` → `emit_burst_av` | `bong:burst_meridian_ni_mai_hu_ti` | `bong:burst_meridian_beng_quan` | `BurstMeridianFamilyPlayer` | `BurstMeridianFamilyPlayer.NI_MAI_HU_TI` |
+| `npc.heal_basic` | `npc/npc_skill.rs::npc_heal_basic` → `emit_npc_skill_av` | `bong:npc_heal_basic` | `bong:yidao_meridian_repair` | `NpcSkillAuraPlayer` | `NpcSkillAuraPlayer.HEAL_BASIC` |
+| `npc.buff_speed` | `npc/npc_skill.rs::npc_buff_speed` → `emit_npc_skill_av` | `bong:npc_buff_speed` | `bong:jiemai_neutralize_dust` | `NpcSkillAuraPlayer` | `NpcSkillAuraPlayer.BUFF_SPEED` |
+| `npc.buff_defense` | `npc/npc_skill.rs::npc_buff_defense` → `emit_npc_skill_av` | `bong:npc_buff_defense` | `bong:burst_meridian_beng_quan` | `NpcSkillAuraPlayer` | `NpcSkillAuraPlayer.BUFF_DEFENSE` |
+
+**双端测试覆盖**（由上表同源驱动）：
+
+- server `skill_vfx_wiring_test.rs`：清单 ↔ 常量表字节级对拍；11 招逐项断言 resolver 发出正确 event_id + color；**11 条旧借用 id 负向断言**（去复用不得回退）；发射集合 == 清单集合；id 形态（`bong` 命名空间 + Identifier 合法字符集）；优先级档位逐项 pin。
+- client `SkillVfxWiringManifestTest.java`：逐行断言 `VfxBootstrap.registerDefaults()` 后 `VfxRegistry` 命中同一 id 且 `lookup()` 返回的 player 类名与清单声明一致；注册集合 ⊇ 清单集合；**负向**断言 11 个 id 均不再指向 `SwordQiSlashPlayer` / `BurstMeridianBengQuanPlayer` / `YidaoPeacePulsePlayer`；未注册 id 经 `BongVfxParticleBridge` 返回 `false`（bridgeMiss）不抛异常。
 
 ## P6 — 回归收口
 
@@ -157,6 +264,8 @@
 
 **决议**：
 1. **npc 3 招动画列 N/A 成立**：调研证实三招 caster 是 NPC mob 实体（`server/src/npc/npc_skill.rs:284-287` 注册，big-brain `NpcTechniqueAction` 以 NPC Entity 施放），统一走 `emit_npc_skill_av`（`npc_skill.rs:239-266`）——头注释明写 NPC 非玩家实体、PlayAnim 不适用，只发 SpawnParticle + 音效。npc 3 招仅入 P5 粒子分化（且粒子 id/颜色已各自独立，P5 复核差异化充分性即可）。
+
+   > **P5 复核结论（2026-07-20，修正本条决议的乐观前提）**：本决议写「粒子 id/颜色已各自独立」不成立——三招 id 确实两两不同，但**全都是借来的**（heal 借 `bong:yidao_meridian_repair` / speed 借 `bong:jiemai_neutralize_dust` / defense 借 `bong:burst_meridian_beng_quan`），旁观者分不清是 NPC 施法还是玩家在放同名招；颜色上 speed `#9FD8C8` 与 heal `#A8E6CF` 同属淡青绿、仅单通道差 ~10%，远距离不可辨。故 P5 按本 plan P5 段正文「脱离借用，各给独立 event_id」执行（而非仅复核）：三招改 `bong:npc_*` 专属 id + `NpcSkillAuraPlayer`，speed 配色改麦黄 `#E3C766` 构成绿/黄/蓝三元组。附带修正：借用 id 命中玩家技能家族前缀曾让 NPC 背景 cosmetic 误吃 Important 优先级，专属 id 归 Normal 档后不再与玩家技能反馈争拥挤 chunk 的粒子配额。
 2. **重制清单 = 46 玩家招中 C/D 级全量，P1-P4 分批推进**（不做「先 20 招验证再扩」的折半）：标准已随 P0 定稿 + P1 首批交付本身就是标准验证批，后批照走同构流程，无需额外验证阶段。
 3. **morph_cast 归 P3 批次**：发射链活着（`server/src/body_plan/morph.rs:229-237` `emit_yixing_av` 发 `bong:morph_cast`，`cast_morph_yixing` 两分支触发），60↔30 错配证实（`YIXING_CAST_TICKS=60` @ morph.rs:96 vs `morph_cast.json` endTick=30）——P3 按标准 #2 重制对齐（cast 完成 = 发力顶点 + recovery），粒子 duration 同步对齐（见 #1 第 3 条）。
 4. **stance_woliu / stance_zhenmai 归 P3，按「一次性亮相」精修**：两 JSON 均为 `isLoop:true` 循环站桩形态（stance_woliu endTick=40 循环开合、stance_zhenmai endTick=20 三帧全同的静态持守），与梯队一接线的「习得时刻单发」语义错配（`vfx_animation_trigger.rs` `emit_technique_learned_stance_triggers` 单发、全仓无持续架势状态可驱动循环）。决议：改 `isLoop:false` + 补收势回中立，做成习得亮相动画；「循环站桩」形态等持续架势 gameplay 状态落地后另议（不在本 plan 造事件）。

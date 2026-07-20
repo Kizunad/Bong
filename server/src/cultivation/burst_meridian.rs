@@ -1,5 +1,8 @@
 use valence::entity::Look;
-use valence::prelude::{bevy_ecs, DVec3, Entity, Event, Events, Position, UniqueId};
+use valence::prelude::{
+    bevy_ecs, Commands, Component, DVec3, Despawned, Entity, Event, EventWriter, Events, Position,
+    Query, Res, UniqueId, Without,
+};
 
 use crate::combat::components::{CastSource, Casting, SkillBarBindings, WoundKind};
 use crate::combat::events::{
@@ -30,7 +33,12 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 const BENG_QUAN_ANIM_ID: &str = "bong:beng_quan";
-const BENG_QUAN_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+pub(crate) const BENG_QUAN_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+
+/// 爆脉家族统一识别色（plan §P5.1 ②）。四招共用同一色系，读招**完全靠形态**
+/// 分化——崩拳 Line 爆发 / 靠撞 GroundDecal 冲击环 / 血崩步 Ribbon 残影 /
+/// 逆脉护体 Sprite 体表环绕。
+pub(crate) const BURST_MERIDIAN_FAMILY_COLOR: &str = "#C58B3F";
 
 pub const BENG_QUAN_SKILL_ID: &str = "burst_meridian.beng_quan";
 pub const BENG_QUAN_EVENT_SKILL: &str = "beng_quan";
@@ -51,7 +59,10 @@ const TIE_SHAN_KAO_MERIDIANS: [MeridianId; 1] = [MeridianId::Stomach];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属靠身撞击动画（借用解除：原借崩拳出拳
 /// `bong:beng_quan`，肩胯靠撞与出拳姿态语义完全不同）。
 const TIE_SHAN_KAO_ANIM_ID: &str = "bong:tie_shan_kao";
-const TIE_SHAN_KAO_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+/// plan-skill-anim-fidelity-v1 P5 —— 专属撞击冲击环粒子（借用解除：原借崩拳
+/// `bong:burst_meridian_beng_quan`，与崩拳同粒子则旁观者无从分辨靠撞与出拳）。
+/// 形态 = 地面 `BongGroundDecalParticle` 冲击环，见 plan §P5.1 ②。
+pub(crate) const TIE_SHAN_KAO_PARTICLE_ID: &str = "bong:burst_meridian_tie_shan_kao";
 const TIE_SHAN_KAO_AUDIO_RECIPE: &str = "hit_heavy";
 /// 与 known_techniques.tie_shan_kao.range 对齐（近身撞）。
 const TIE_SHAN_KAO_REACH: AttackReach = AttackReach::new(1.0, 0.5);
@@ -67,7 +78,9 @@ const XUE_BENG_BU_MERIDIANS: [MeridianId; 1] = [MeridianId::Gallbladder];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属步法突进动画（借用解除：原借崩拳出拳
 /// `bong:beng_quan`，位移招播出拳属姿态语义错位）。
 const XUE_BENG_BU_ANIM_ID: &str = "bong:xue_beng_bu";
-const XUE_BENG_BU_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+/// plan-skill-anim-fidelity-v1 P5 —— 专属步法残影粒子（借用解除同上）。
+/// 形态 = `BongRibbonParticle` 反向拖尾短残影，见 plan §P5.1 ②。
+pub(crate) const XUE_BENG_BU_PARTICLE_ID: &str = "bong:burst_meridian_xue_beng_bu";
 const XUE_BENG_BU_AUDIO_RECIPE: &str = "movement_dash";
 
 // ─── 逆脉护体（ni_mai_hu_ti）─ 逆转真元护要害，短时压住外伤冲击 ────────────────────
@@ -83,8 +96,43 @@ const NI_MAI_HU_TI_MERIDIANS: [MeridianId; 1] = [MeridianId::Pericardium];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属护体结印动画（缺失补齐：原 `anim_id: None`
 /// 完全不发 PlayAnim，护体招只有粒子+嗡音、玩家无姿态反馈）。
 const NI_MAI_HU_TI_ANIM_ID: &str = "bong:ni_mai_hu_ti";
-const NI_MAI_HU_TI_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+/// plan-skill-anim-fidelity-v1 P5 —— 专属体表逆流纹粒子（借用解除同上）。
+/// 形态 = `BongSpriteParticle` 双高度体表环绕，见 plan §P5.1 ②。
+pub(crate) const NI_MAI_HU_TI_PARTICLE_ID: &str = "bong:burst_meridian_ni_mai_hu_ti";
 const NI_MAI_HU_TI_AUDIO_RECIPE: &str = "zhenmai_shield_hum";
+/// 护体环重发间隔（tick）—— plan §P5.1 ② 「体表逆流纹」的锚定实现。
+///
+/// `SpawnParticle` payload 只有世界坐标 `origin`、没有实体标识，一次性发一个 60t 长寿命
+/// 环等于把纹钉死在施法瞬间的坐标上——玩家一移动就把「体表」纹留在原地。故改由 server 在
+/// buff 存续期内按本间隔、以施法者**当前** `Position` 重发短寿命环。
+///
+/// `60 = 5 × 12` 整除，于是恰好 5 次发射（cast 首环 + 存续期重发 4 次）铺满 buff 窗口：
+/// 最后一环在 buff 到期的同一 tick 结束，不会出现「护体已过而纹还在转」的尾巴。
+pub const NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS: u64 = 12;
+/// 单环寿命 == 重发间隔：老环恰在新环生成的同 tick 消失，既不叠环也不留空窗。
+pub const NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS: u16 =
+    NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS as u16;
+/// 护体环形态参数 —— cast 首环（`emit_burst_av`）与存续期重发共用同一组常量，
+/// 两条路径发散会让窗口中途的环突然换个模样。
+const NI_MAI_HU_TI_PARTICLE_STRENGTH: f32 = 0.7;
+const NI_MAI_HU_TI_PARTICLE_COUNT: u16 = 14;
+
+/// 逆脉护体存续期的体表逆流纹锚点：存在即「护体窗口内」。
+///
+/// 由 `resolve_ni_mai_hu_ti` 插入、`ni_mai_hu_ti_aura_vfx_tick` 到期移除。
+///
+/// **为什么不复用 `StatusEffects`**：护体的减伤走 `StatusEffectKind::DamageReduction`，而这是
+/// 一个**共享 kind**——渡劫丹、NPC `buff_defense` 等也写它，且 `upsert_status_effect` 只按 kind
+/// 合并取 max。读 `StatusEffects` 无从分辨「护体开着」还是「别的减伤开着」，会给嗑了渡劫丹的
+/// 玩家凭空挂上爆脉护体环。
+#[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
+pub struct NiMaiHuTiAura {
+    /// 施法 tick。重发相位以此为基准，而非对全局 clock 取模——否则 cast 落在相位边界时
+    /// 首个重发环会紧跟着首环发出，间隔不足。
+    pub started_at_tick: u64,
+    /// buff 到期 tick = `started_at_tick + NI_MAI_HU_TI_BUFF_DURATION_TICKS`。
+    pub expires_at_tick: u64,
+}
 
 const RIGHT_ARM_MERIDIANS: [MeridianId; 3] = [
     MeridianId::LargeIntestine,
@@ -330,7 +378,7 @@ fn emit_beng_quan_vfx(
                 caster_position.z,
             ],
             direction: Some([direction.x, direction.y, direction.z]),
-            color: Some("#C58B3F".to_string()),
+            color: Some(BURST_MERIDIAN_FAMILY_COLOR.to_string()),
             strength: Some(0.9),
             count: Some(8),
             duration_ticks: Some(BENG_QUAN_ANIM_DURATION_TICKS as u16),
@@ -443,7 +491,7 @@ pub fn resolve_tie_shan_kao(
         BurstAv {
             anim_id: Some(TIE_SHAN_KAO_ANIM_ID),
             particle_id: TIE_SHAN_KAO_PARTICLE_ID,
-            color: "#B8763A",
+            color: BURST_MERIDIAN_FAMILY_COLOR,
             strength: 0.95,
             count: 10,
             duration_ticks: cast_ticks as u16,
@@ -545,7 +593,7 @@ pub fn resolve_xue_beng_bu(
         BurstAv {
             anim_id: Some(XUE_BENG_BU_ANIM_ID),
             particle_id: XUE_BENG_BU_PARTICLE_ID,
-            color: "#A23A3A",
+            color: BURST_MERIDIAN_FAMILY_COLOR,
             strength: 0.85,
             count: 12,
             duration_ticks: cast_ticks as u16,
@@ -625,6 +673,12 @@ pub fn resolve_ni_mai_hu_ti(
         duration_ticks: NI_MAI_HU_TI_BUFF_DURATION_TICKS,
         issued_at_tick: now_tick,
     });
+    // 逆流纹锚点：让 `ni_mai_hu_ti_aura_vfx_tick` 在 buff 存续期内跟着施法者重发护体环。
+    // 重复施放（冷却结束后再来一发）走 insert 覆盖语义，窗口整体后移，不会叠出两套环。
+    world.entity_mut(caster).insert(NiMaiHuTiAura {
+        started_at_tick: now_tick,
+        expires_at_tick: now_tick + NI_MAI_HU_TI_BUFF_DURATION_TICKS,
+    });
 
     world.send_event(BurstMeridianEvent {
         skill: NI_MAI_HU_TI_EVENT_SKILL,
@@ -644,10 +698,12 @@ pub fn resolve_ni_mai_hu_ti(
             // 姿态不借崩拳出拳是对的，但缺动画=玩家零姿态反馈，MISSING allowlist 条目）。
             anim_id: Some(NI_MAI_HU_TI_ANIM_ID),
             particle_id: NI_MAI_HU_TI_PARTICLE_ID,
-            color: "#5BA8C9",
-            strength: 0.7,
-            count: 14,
-            duration_ticks: NI_MAI_HU_TI_BUFF_DURATION_TICKS.min(u16::MAX as u64) as u16,
+            color: BURST_MERIDIAN_FAMILY_COLOR,
+            strength: NI_MAI_HU_TI_PARTICLE_STRENGTH,
+            count: NI_MAI_HU_TI_PARTICLE_COUNT,
+            // 首环也只活一个重发间隔——整个 60t 窗口由 `ni_mai_hu_ti_aura_vfx_tick`
+            // 逐环接力，而不是靠一个长寿命环撑满（那样纹会脱离移动中的身体）。
+            duration_ticks: NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS,
             audio_recipe: NI_MAI_HU_TI_AUDIO_RECIPE,
         },
     );
@@ -912,6 +968,10 @@ struct BurstAv {
     audio_recipe: &'static str,
 }
 
+/// 爆脉粒子相对脚底坐标的抬升（胸口高度）。护体环的存续期重发路径共用同一抬升，
+/// 保证首环与后续环处在同一身高、窗口中途不会「跳一格」。
+const BURST_AV_PARTICLE_Y_LIFT: f64 = 1.0;
+
 fn emit_burst_av(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
@@ -938,7 +998,7 @@ fn emit_burst_av(
             event_id: av.particle_id.to_string(),
             origin: [
                 caster_position.x,
-                caster_position.y + 1.0,
+                caster_position.y + BURST_AV_PARTICLE_Y_LIFT,
                 caster_position.z,
             ],
             direction: direction.map(|d| [d.x, d.y, d.z]),
@@ -961,6 +1021,53 @@ fn emit_burst_av(
                 radius: AUDIO_BROADCAST_RADIUS,
             },
         });
+    }
+}
+
+/// 护体逆流纹环的 `SpawnParticle` 请求（存续期重发路径）。
+///
+/// 形态参数与 cast 首环取自同一组常量，两条路径只差 `origin` —— 首环用施法瞬间的位置，
+/// 重发用施法者**当前**位置，接力起来就是一圈始终贴着身体的纹。
+fn ni_mai_hu_ti_aura_request(caster_position: DVec3) -> VfxEventRequest {
+    VfxEventRequest::new(
+        caster_position,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: NI_MAI_HU_TI_PARTICLE_ID.to_string(),
+            origin: [
+                caster_position.x,
+                caster_position.y + BURST_AV_PARTICLE_Y_LIFT,
+                caster_position.z,
+            ],
+            direction: None,
+            color: Some(BURST_MERIDIAN_FAMILY_COLOR.to_string()),
+            strength: Some(NI_MAI_HU_TI_PARTICLE_STRENGTH),
+            count: Some(NI_MAI_HU_TI_PARTICLE_COUNT),
+            duration_ticks: Some(NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS),
+        },
+    )
+}
+
+/// 逆脉护体存续期内，按 `NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS` 以施法者当前位置重发护体环；
+/// buff 到期即摘掉锚点、停止发射。
+///
+/// 必须排在 `vfx_event_emit::emit_vfx_event_payloads` 之前，否则本 tick 发的请求要等下一帧才投递。
+pub fn ni_mai_hu_ti_aura_vfx_tick(
+    clock: Res<CombatClock>,
+    auras: Query<(Entity, &Position, &NiMaiHuTiAura), Without<Despawned>>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    mut commands: Commands,
+) {
+    for (entity, position, aura) in &auras {
+        if clock.tick >= aura.expires_at_tick {
+            commands.entity(entity).remove::<NiMaiHuTiAura>();
+            continue;
+        }
+        let elapsed = clock.tick.saturating_sub(aura.started_at_tick);
+        // elapsed == 0 是 cast 同帧：`emit_burst_av` 已发过首环，这里再发就叠成两圈。
+        if elapsed == 0 || !elapsed.is_multiple_of(NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS) {
+            continue;
+        }
+        vfx_events.send(ni_mai_hu_ti_aura_request(position.get()));
     }
 }
 
@@ -997,7 +1104,7 @@ fn right_arm_integrity_snapshot(meridians: &MeridianSystem) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::{App, DVec3, Events};
+    use valence::prelude::{App, DVec3, Events, Update};
 
     fn spawn_caster(app: &mut App, realm: Realm, qi_current: f64, position: DVec3) -> Entity {
         app.world_mut()
@@ -2225,6 +2332,455 @@ mod tests {
             transfer.reason,
             QiTransferReason::ReleaseToZone,
             "overflow transfer reason must be ReleaseToZone"
+        );
+    }
+
+    // ─── plan-skill-anim-fidelity-v1 P5：粒子去复用回归锁 ─────────────────────────
+    //
+    // P3 解除了动画借用,粒子借用留到 P5：三招此前 100% 借崩拳
+    // `bong:burst_meridian_beng_quan`。与真脉相反,爆脉三招**共用**识别色 #C58B3F,
+    // 读招完全靠形态(GroundDecal 冲击环 / Ribbon 步法残影 / Sprite 体表逆流纹),
+    // 所以这里锁的是「id 全异 + 颜色全同」这一对方向相反的性质。
+
+    /// 收集本次 update 内发出的全部 SpawnParticle `(event_id, color)`。
+    fn emitted_particles(app: &App) -> Vec<(String, Option<String>)> {
+        app.world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .filter_map(|request| match &request.payload {
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id, color, ..
+                } => Some((event_id.clone(), color.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 逐招对拍共享接线表（`network::skill_vfx_wiring`,client 按同一份表注册）。
+    fn assert_emits_wired_particle(app: &App, skill_id: &str) {
+        let wiring = crate::network::skill_vfx_wiring::wiring_for(skill_id)
+            .unwrap_or_else(|| panic!("{skill_id} 未登记进 P5_SKILL_VFX_WIRING 接线表"));
+        let particles = emitted_particles(app);
+        assert_eq!(
+            particles.len(),
+            1,
+            "{skill_id} 应恰好发 1 条 SpawnParticle,实际 {particles:?}"
+        );
+        assert_eq!(
+            particles[0].0, wiring.event_id,
+            "{skill_id} 发出的粒子 event_id 与接线表不符(client 按表注册,不符即 bridgeMiss 静默无特效)"
+        );
+        assert_eq!(
+            particles[0].1.as_deref(),
+            Some(wiring.color),
+            "{skill_id} 的粒子颜色应为爆脉家族色 {}",
+            wiring.color
+        );
+        assert_ne!(
+            particles[0].0, wiring.legacy_event_id,
+            "{skill_id} 回退到了 P5 之前借用的崩拳粒子 `{}`",
+            wiring.legacy_event_id
+        );
+    }
+
+    #[test]
+    fn p5_bespoke_particle_ids_emitted_and_beng_quan_particle_borrow_removed() {
+        // 常量层面先锁专属 + 互异。
+        assert_eq!(TIE_SHAN_KAO_PARTICLE_ID, "bong:burst_meridian_tie_shan_kao");
+        assert_eq!(XUE_BENG_BU_PARTICLE_ID, "bong:burst_meridian_xue_beng_bu");
+        assert_eq!(NI_MAI_HU_TI_PARTICLE_ID, "bong:burst_meridian_ni_mai_hu_ti");
+        for particle_id in [
+            TIE_SHAN_KAO_PARTICLE_ID,
+            XUE_BENG_BU_PARTICLE_ID,
+            NI_MAI_HU_TI_PARTICLE_ID,
+        ] {
+            assert_ne!(
+                particle_id, BENG_QUAN_PARTICLE_ID,
+                "去复用回归锁：{particle_id} 不得回退借崩拳粒子 {BENG_QUAN_PARTICLE_ID}"
+            );
+        }
+
+        // 事件路径：tie_shan_kao。
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_emits_wired_particle(&app, TIE_SHAN_KAO_SKILL_ID);
+
+        // 事件路径：xue_beng_bu(需 Look 提供朝向)。
+        let mut app = full_app();
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_emits_wired_particle(&app, XUE_BENG_BU_SKILL_ID);
+
+        // 事件路径：ni_mai_hu_ti。
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_emits_wired_particle(&app, NI_MAI_HU_TI_SKILL_ID);
+    }
+
+    #[test]
+    fn p5_burst_family_shares_one_color_but_never_one_id() {
+        // 家族设计：共用识别色 + 形态分化。两个性质都必须成立——
+        // 只共用色而 id 也相同 = 回到借用；只 id 不同而颜色发散 = 失去家族识别。
+        let ids = [
+            BENG_QUAN_PARTICLE_ID,
+            TIE_SHAN_KAO_PARTICLE_ID,
+            XUE_BENG_BU_PARTICLE_ID,
+            NI_MAI_HU_TI_PARTICLE_ID,
+        ];
+        let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "爆脉四招粒子 id 必须两两不同,实际 {unique:?}"
+        );
+        for id in ids {
+            assert!(
+                id.starts_with("bong:burst_meridian_"),
+                "{id} 不在 bong:burst_meridian_ 家族前缀下,会掉出 Important 优先级档"
+            );
+        }
+        assert_eq!(
+            BURST_MERIDIAN_FAMILY_COLOR, "#C58B3F",
+            "爆脉家族识别色被改动——plan §P5.1 ② 指定为 #C58B3F"
+        );
+    }
+
+    #[test]
+    fn p5_rejected_burst_cast_emits_no_particle() {
+        // 拒绝路径(真元不足)不得发粒子。
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Condense, 0.0, DVec3::ZERO);
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Rejected { .. }));
+        assert!(emitted_particles(&app).is_empty(), "被拒绝的施放不得发粒子");
+    }
+
+    // ─── 逆脉护体「体表逆流纹」跟随施法者 ─────────────────────────────────────────
+    //
+    // 交付物是「体表」逆流纹：环必须贴着身体，而不是钉在施法瞬间的世界坐标上。
+    // 由于 `SpawnParticle` payload 无实体标识，跟随靠 server 在 buff 存续期内以施法者
+    // 当前 `Position` 周期重发短寿命环实现，下列用例逐个状态转换锁住这条链路。
+
+    /// `app()` 的初始 clock —— 下面所有相位算术都以它为 cast tick。
+    const CAST_TICK: u64 = 10;
+
+    /// 真跑 `ni_mai_hu_ti_aura_vfx_tick` 的取证 app。
+    fn aura_app() -> App {
+        let mut app = full_app();
+        app.add_systems(Update, ni_mai_hu_ti_aura_vfx_tick);
+        app
+    }
+
+    fn clear_vfx_events(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .clear();
+    }
+
+    fn move_caster(app: &mut App, caster: Entity, position: DVec3) {
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(Position::new([position.x, position.y, position.z]));
+    }
+
+    /// 本帧发出的护体环 payload（已按 event_id 过滤）。
+    fn ni_mai_rings(app: &App) -> Vec<VfxEventPayloadV1> {
+        app.world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .filter(|request| {
+                matches!(
+                    &request.payload,
+                    VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == NI_MAI_HU_TI_PARTICLE_ID
+                )
+            })
+            .map(|request| request.payload.clone())
+            .collect()
+    }
+
+    /// 把 clock 拨到 `tick` 跑一帧，返回本帧发出的护体环。
+    fn tick_aura(app: &mut App, tick: u64) -> Vec<VfxEventPayloadV1> {
+        app.world_mut().resource_mut::<CombatClock>().tick = tick;
+        app.update();
+        ni_mai_rings(app)
+    }
+
+    fn ring_origin(ring: &VfxEventPayloadV1) -> [f64; 3] {
+        match ring {
+            VfxEventPayloadV1::SpawnParticle { origin, .. } => *origin,
+            other => panic!("护体环应为 SpawnParticle，实际 {other:?}"),
+        }
+    }
+
+    fn ring_duration(ring: &VfxEventPayloadV1) -> Option<u16> {
+        match ring {
+            VfxEventPayloadV1::SpawnParticle { duration_ticks, .. } => *duration_ticks,
+            other => panic!("护体环应为 SpawnParticle，实际 {other:?}"),
+        }
+    }
+
+    fn cast_ni_mai_hu_ti(app: &mut App, position: DVec3) -> Entity {
+        let caster = spawn_caster(app, Realm::Solidify, 100.0, position);
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "护体施放前置不满足，用例本身失效：{result:?}"
+        );
+        caster
+    }
+
+    /// 施放即装上锚点，窗口 = cast tick + 60t（buff 常量），供重发系统判存续与到期。
+    #[test]
+    fn p5_ni_mai_hu_ti_cast_installs_aura_anchor_matching_buff_window() {
+        let mut app = aura_app();
+        let caster = cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
+
+        let aura = app
+            .world()
+            .get::<NiMaiHuTiAura>(caster)
+            .copied()
+            .expect("施放后必须挂上 NiMaiHuTiAura 锚点，否则重发系统永远找不到施法者");
+        assert_eq!(aura.started_at_tick, CAST_TICK, "重发相位基准应为施法 tick");
+        assert_eq!(
+            aura.expires_at_tick,
+            CAST_TICK + NI_MAI_HU_TI_BUFF_DURATION_TICKS,
+            "锚点窗口必须与减伤 buff 时长严格同步——视觉窗口比 buff 长=护体已过纹还在转，\
+             短=窗口后段裸奔无反馈"
+        );
+    }
+
+    /// 首环不再用 60t 长寿命撑满窗口（那正是纹脱离身体的根因）。
+    #[test]
+    fn p5_ni_mai_hu_ti_cast_ring_lives_one_reemit_interval_not_whole_buff() {
+        let mut app = aura_app();
+        cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
+
+        let rings = ni_mai_rings(&app);
+        assert_eq!(rings.len(), 1, "施放应恰好发 1 个首环，实际 {rings:?}");
+        assert_eq!(
+            ring_duration(&rings[0]),
+            Some(NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS),
+            "首环寿命应为一个重发间隔（{NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS}t）；\
+             若回到整个 buff 窗口 {NI_MAI_HU_TI_BUFF_DURATION_TICKS}t，环就会钉在施法瞬间的\
+             坐标上，玩家一移动纹即脱离体表"
+        );
+        assert!(
+            u64::from(NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS) < NI_MAI_HU_TI_BUFF_DURATION_TICKS,
+            "单环寿命必须短于 buff 窗口，否则无从接力跟随"
+        );
+    }
+
+    /// **核心回归锁**：窗口内施法者一路移动，每个重发环的圆心都必须落在其当时的位置。
+    #[test]
+    fn p5_ni_mai_hu_ti_aura_ring_follows_moving_caster() {
+        let mut app = aura_app();
+        let caster = cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
+        clear_vfx_events(&mut app);
+
+        // 相位落在 cast tick + 12 的整数倍上。
+        let waypoints = [
+            (CAST_TICK + 12, DVec3::new(3.0, 0.0, 0.0)),
+            (CAST_TICK + 24, DVec3::new(3.0, 0.0, 5.0)),
+            (CAST_TICK + 36, DVec3::new(-2.0, 1.0, 5.0)),
+            (CAST_TICK + 48, DVec3::new(-2.0, 1.0, 9.0)),
+        ];
+        for (tick, position) in waypoints {
+            move_caster(&mut app, caster, position);
+            let rings = tick_aura(&mut app, tick);
+            assert_eq!(
+                rings.len(),
+                1,
+                "tick {tick} 应恰好重发 1 个护体环，实际 {rings:?}"
+            );
+            assert_eq!(
+                ring_origin(&rings[0]),
+                [
+                    position.x,
+                    position.y + BURST_AV_PARTICLE_Y_LIFT,
+                    position.z
+                ],
+                "护体环圆心必须锚在施法者 tick {tick} 的**当前**位置（plan §P5.1 ② 「体表」\
+                 逆流纹是字面交付物），而不是 cast 瞬间的 origin"
+            );
+            clear_vfx_events(&mut app);
+        }
+    }
+
+    /// 重发相位固定，且「首环 + 各重发环」严丝合缝铺满 buff 窗口：不叠环、不留空窗。
+    #[test]
+    fn p5_ni_mai_hu_ti_aura_cadence_tiles_buff_window_exactly() {
+        let mut app = aura_app();
+        cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
+        clear_vfx_events(&mut app);
+
+        let mut emitted_at = Vec::new();
+        for tick in CAST_TICK..=CAST_TICK + NI_MAI_HU_TI_BUFF_DURATION_TICKS + 20 {
+            if !tick_aura(&mut app, tick).is_empty() {
+                emitted_at.push(tick);
+            }
+            clear_vfx_events(&mut app);
+        }
+
+        assert_eq!(
+            emitted_at,
+            vec![
+                CAST_TICK + 12,
+                CAST_TICK + 24,
+                CAST_TICK + 36,
+                CAST_TICK + 48
+            ],
+            "重发相位应严格是 cast tick 之后每 {NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS}t 一次\
+             且不越过 buff 到期，实际 {emitted_at:?}"
+        );
+        assert_eq!(
+            (emitted_at.len() as u64 + 1) * NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS,
+            NI_MAI_HU_TI_BUFF_DURATION_TICKS,
+            "首环 + {} 次重发，每环活 {}t，应严格铺满 {}t buff 窗口：\
+             不足则窗口中途断纹，超出则护体已过而纹还在转",
+            emitted_at.len(),
+            NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS,
+            NI_MAI_HU_TI_BUFF_DURATION_TICKS
+        );
+    }
+
+    /// cast 同帧不得补环（`emit_burst_av` 已发首环），非相位 tick 同样静默。
+    #[test]
+    fn p5_ni_mai_hu_ti_aura_stays_silent_on_cast_tick_and_off_phase_ticks() {
+        let mut app = aura_app();
+        cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
+        clear_vfx_events(&mut app);
+
+        assert!(
+            tick_aura(&mut app, CAST_TICK).is_empty(),
+            "cast 同帧系统不得再补一环——emit_burst_av 已发首环，重复即叠成双圈"
+        );
+        clear_vfx_events(&mut app);
+        for offset in [1_u64, 5, 11, 13, 23, 47, 59] {
+            let tick = CAST_TICK + offset;
+            assert!(
+                tick_aura(&mut app, tick).is_empty(),
+                "非重发相位 tick {tick}（cast 后第 {offset} tick）不得发环"
+            );
+            clear_vfx_events(&mut app);
+        }
+    }
+
+    /// buff 到期 → 摘锚点 + 永久停发（否则纹会一直转下去）。
+    #[test]
+    fn p5_ni_mai_hu_ti_aura_anchor_removed_and_silent_after_buff_expiry() {
+        let mut app = aura_app();
+        let caster = cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
+        clear_vfx_events(&mut app);
+
+        let expiry = CAST_TICK + NI_MAI_HU_TI_BUFF_DURATION_TICKS;
+        for tick in CAST_TICK..=expiry {
+            tick_aura(&mut app, tick);
+            clear_vfx_events(&mut app);
+        }
+
+        assert!(
+            app.world().get::<NiMaiHuTiAura>(caster).is_none(),
+            "buff 到期（tick {expiry}）后必须摘除锚点，否则重发会永久持续"
+        );
+        for tick in expiry + 1..=expiry + 60 {
+            assert!(
+                tick_aura(&mut app, tick).is_empty(),
+                "buff 到期后 tick {tick} 仍在发护体环"
+            );
+            clear_vfx_events(&mut app);
+        }
+    }
+
+    /// 首环与重发环除 origin 外逐字段同形 —— 两条发射路径发散会让窗口中途的环突然换模样。
+    #[test]
+    fn p5_ni_mai_hu_ti_cast_ring_and_reemit_ring_share_one_form_spec() {
+        let mut app = aura_app();
+        let caster = cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
+        let cast_ring = ni_mai_rings(&app).into_iter().next().expect("施放应发首环");
+        clear_vfx_events(&mut app);
+
+        let moved = DVec3::new(7.0, 2.0, -4.0);
+        move_caster(&mut app, caster, moved);
+        let reemit_ring = tick_aura(&mut app, CAST_TICK + 12)
+            .into_iter()
+            .next()
+            .expect("存续期应重发护体环");
+
+        assert_ne!(
+            ring_origin(&cast_ring),
+            ring_origin(&reemit_ring),
+            "施法者已移动，重发环必须换到新位置"
+        );
+
+        // 把首环的 origin 换成重发环的，其余字段应完全相等。
+        let VfxEventPayloadV1::SpawnParticle {
+            event_id,
+            direction,
+            color,
+            strength,
+            count,
+            duration_ticks,
+            ..
+        } = cast_ring.clone()
+        else {
+            panic!("首环应为 SpawnParticle");
+        };
+        let normalized = VfxEventPayloadV1::SpawnParticle {
+            event_id,
+            origin: ring_origin(&reemit_ring),
+            direction,
+            color,
+            strength,
+            count,
+            duration_ticks,
+        };
+        assert_eq!(
+            normalized, reemit_ring,
+            "首环与重发环只允许 origin 不同；其余字段（颜色/强度/颗数/寿命）发散会让\
+             护体窗口中途的环突然换个模样"
+        );
+    }
+
+    /// 冷却后重新施放 → 窗口整体后移，锚点被覆盖而不是叠出第二套环。
+    #[test]
+    fn p5_ni_mai_hu_ti_recast_resets_aura_window_without_stacking() {
+        let mut app = aura_app();
+        let caster = cast_ni_mai_hu_ti(&mut app, DVec3::ZERO);
+        clear_vfx_events(&mut app);
+
+        // 冷却 120t 之后再来一发。
+        let recast_tick = CAST_TICK + 200;
+        app.world_mut().resource_mut::<CombatClock>().tick = recast_tick;
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "冷却已过应可重放：{result:?}"
+        );
+        clear_vfx_events(&mut app);
+
+        let aura = app
+            .world()
+            .get::<NiMaiHuTiAura>(caster)
+            .copied()
+            .expect("重放后锚点仍在");
+        assert_eq!(
+            (aura.started_at_tick, aura.expires_at_tick),
+            (recast_tick, recast_tick + NI_MAI_HU_TI_BUFF_DURATION_TICKS),
+            "重放应把窗口整体后移（insert 覆盖语义），而不是保留旧窗口"
+        );
+
+        let rings = tick_aura(&mut app, recast_tick + 12);
+        assert_eq!(
+            rings.len(),
+            1,
+            "重放后每个相位 tick 仍只发 1 个环，不得叠出两套，实际 {rings:?}"
         );
     }
 }
