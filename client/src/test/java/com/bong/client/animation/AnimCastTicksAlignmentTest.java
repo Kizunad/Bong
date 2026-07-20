@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -924,11 +925,21 @@ class AnimCastTicksAlignmentTest {
         Path manifestDir = manifestRoot();
         assertTrue(Files.isDirectory(manifestDir),
             "spec manifest 目录缺失：" + manifestDir + "——P0 框架要求目录存在（随批次填充）");
+        List<Path> manifests;
         try (Stream<Path> files = Files.list(manifestDir)) {
-            for (Path manifestFile : files
-                    .filter(p -> p.getFileName().toString().endsWith(".json")).toList()) {
-                assertManifestHolds(manifestFile);
-            }
+            manifests = files
+                .filter(p -> p.getFileName().toString().endsWith(".json"))
+                .toList();
+        }
+        // 空转守卫：目录存在但被搬空/误删时，下面的 for 会零次迭代而方法照常 PASS——
+        // 本方法是「精度标准机械化」（三段边界 / 密度 / easing / leg.pitch / 循环补帧）
+        // 覆盖全部 manifest 的**唯一**入口，空转即整套红线静默失效。
+        // 同类守卫见 strikePhaseCarriesEaseInDrive 末尾的 checked.isEmpty() 断言。
+        assertFalse(manifests.isEmpty(),
+            "spec manifest 目录 " + manifestDir + " 下没有任何 .json——本锁已空转，"
+                + "整套精度标准机械断言一条都不会执行");
+        for (Path manifestFile : manifests) {
+            assertManifestHolds(manifestFile);
         }
     }
 
@@ -957,6 +968,36 @@ class AnimCastTicksAlignmentTest {
      * （loop 蓄力 / charge_hold 充能）没有自己的 strike 段（strike 归其 release 段
      * 动画），同样不适用。
      */
+    /**
+     * segment 型 manifest 的合法来源集合（anim 名），由三张登记表派生——
+     * 两段式配对（蓄力段 + release 段两个 anim 都算）、定长相位充能型、
+     * 持续维持型循环。供 {@link #strikePhaseCarriesEaseInDrive} 的豁免核验使用，
+     * 与 {@code INSTANT_RESOLVER_SKILLS} 之于 instant 豁免同规格。
+     */
+    private static Set<String> segmentExemptAnims() {
+        Set<String> anims = new HashSet<>();
+        for (String[] pair : TWO_STAGE_PAIRS.values()) {
+            anims.addAll(Arrays.asList(pair));
+        }
+        for (String skillId : FIXED_PHASE_CHARGE_SKILLS.keySet()) {
+            String[] pair = TWO_STAGE_PAIRS.get(skillId);
+            if (pair != null) {
+                anims.addAll(Arrays.asList(pair));
+            }
+            String mapped = SKILL_ANIM.get(skillId);
+            if (mapped != null) {
+                anims.add(mapped);
+            }
+        }
+        for (String skillId : SUSTAINED_LOOP_EXCEPTIONS) {
+            String mapped = SKILL_ANIM.get(skillId);
+            if (mapped != null) {
+                anims.add(mapped);
+            }
+        }
+        return anims;
+    }
+
     @Test
     void strikePhaseCarriesEaseInDrive() throws IOException {
         Set<String> instantAnims = new HashSet<>(INSTANT_RESOLVER_SKILLS.values());
@@ -968,6 +1009,16 @@ class AnimCastTicksAlignmentTest {
                 JsonObject manifest =
                     JsonParser.parseString(Files.readString(manifestFile)).getAsJsonObject();
                 if (manifest.has("segment")) {
+                    // 对称核验（与下方 instant 分支同规格）：segment 是本锁的第二条豁免
+                    // 通道，同样必须有登记依据，不能靠「随手加 segment 字段」绕过。
+                    // 合法来源三张表：两段式（蓄力/release 配对）、定长相位充能型、
+                    // 持续维持型循环。assertManifestHolds 的结构校验（isLoop 一致性 /
+                    // expected_end_tick / 循环缝合）已能挡住多数误标，此处补的是
+                    // 「该 anim 是否真属于某类两段式/维持型招式」的来源约束。
+                    assertTrue(segmentExemptAnims().contains(animName),
+                        animName + " 的 manifest 声明了 segment，却不属于任何已登记的"
+                            + "两段式 / 定长相位充能 / 持续维持型招式——segment 是 strike"
+                            + "发力帧红线的豁免通道，必须有登记依据");
                     continue;
                 }
                 if (manifest.has("instant")) {

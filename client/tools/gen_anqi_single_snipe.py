@@ -17,7 +17,9 @@ tick 6 上会跑去管收势段 6→8。由
 
 时序（精度标准 #1/#2/#3；cast=6 短蓄势压缩到 4 tick）：
   anticipation 0→4   侧身瞄准：骨镖扣至耳侧最深（bend 95→112）、拧腰 -25°、
-                     左臂瞄准线绷直（easeOut 族 OUTSINE 写在 t0/t2）
+                     左臂瞄准线绷直。t0 沿用 GUARD 的 INOUTSINE（管辖 0→2 的
+                     起手过渡），t2 才是 easeOut 族 OUTSINE（管辖 2→4 的收拢定位）
+                     ——按下方半开区间语义，anticipation 段实由这两帧共同驱动
   strike       4→6   弹射出手：右臂鞭甩前送（pitch -80→-88 / bend 112→6）、
                      躯干甩正 +8（easeIn 族 INQUAD 写在 t4），顶点 = tick 6
   recovery     6→12  随镖目送（t8 手型漂移+抬头）→ 收回侧身架（INOUTSINE）
