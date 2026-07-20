@@ -511,9 +511,11 @@ mod tests {
     use super::super::persistence::ExhaustedEntry;
     use super::super::registry::build_default_registry;
     use super::*;
-    use crate::world::zone::Zone;
+    use crate::world::zone::{Zone, ZoneRegistryStartupSet};
+    use std::any::TypeId;
     use std::env;
-    use valence::prelude::{App, DVec3, Startup};
+    use valence::prelude::bevy_ecs::schedule::{NodeId, ScheduleGraph};
+    use valence::prelude::{App, DVec3, IntoSystemConfigs, Startup, SystemSet};
 
     fn unique_tmp_path(name: &str) -> PathBuf {
         let stamp = std::time::SystemTime::now()
@@ -589,6 +591,71 @@ mod tests {
         });
         app.add_systems(Startup, spawn_mineral_anchor_nodes);
         app
+    }
+
+    fn system_node(graph: &ScheduleGraph, expected_name: &str) -> (NodeId, TypeId) {
+        graph
+            .systems()
+            .find_map(|(node, system, _)| {
+                (system.name().as_ref() == expected_name).then(|| (node, system.type_id()))
+            })
+            .unwrap_or_else(|| panic!("Startup schedule must contain system `{expected_name}`"))
+    }
+
+    fn system_type_set_node(graph: &ScheduleGraph, system_type: TypeId) -> NodeId {
+        graph
+            .system_sets()
+            .find_map(|(node, set, _)| (set.system_type() == Some(system_type)).then_some(node))
+            .expect("Startup schedule must expose the producer system's automatic SystemTypeSet")
+    }
+
+    fn concrete_set_node<S>(graph: &ScheduleGraph, expected: S) -> NodeId
+    where
+        S: SystemSet,
+    {
+        graph
+            .system_sets()
+            .find_map(|(node, set, _)| set.as_dyn_eq().dyn_eq(expected.as_dyn_eq()).then_some(node))
+            .expect("Startup schedule must contain the expected concrete system set")
+    }
+
+    fn assert_production_startup_dependencies(app: &App) {
+        let schedule = app
+            .get_schedule(Startup)
+            .expect("production registration must create the Startup schedule");
+        let graph = schedule.graph();
+        let (setup_world, setup_world_type) = system_node(
+            graph,
+            std::any::type_name_of_val(&crate::world::setup_world),
+        );
+        let (materializer, _) = system_node(
+            graph,
+            std::any::type_name_of_val(&spawn_mineral_anchor_nodes),
+        );
+        let setup_world_set = system_type_set_node(graph, setup_world_type);
+        let zone_registry_set = concrete_set_node(graph, ZoneRegistryStartupSet);
+
+        assert!(
+            graph
+                .hierarchy()
+                .graph()
+                .contains_edge(setup_world_set, setup_world),
+            "fixture must bind the real setup_world system to the exact SystemTypeSet targeted by .after(setup_world)"
+        );
+        assert!(
+            graph
+                .dependency()
+                .graph()
+                .contains_edge(setup_world_set, materializer),
+            "production mineral Startup must run after world::setup_world so deferred TerrainProviders exist before the one-shot materializer"
+        );
+        assert!(
+            graph
+                .dependency()
+                .graph()
+                .contains_edge(zone_registry_set, materializer),
+            "production mineral Startup must run after ZoneRegistryStartupSet so deferred ZoneRegistry exists before the one-shot materializer"
+        );
     }
 
     #[test]
@@ -932,7 +999,7 @@ mod tests {
     }
 
     #[test]
-    fn production_registration_runs_mineral_startup_after_zone_registry() {
+    fn production_registration_runs_mineral_startup_after_world_and_zone_registry() {
         let path = write_anchor_manifest(
             "production-startup-order",
             &[("spawn", "fan_tie", [16, 64, 16], 1, 1)],
@@ -943,13 +1010,17 @@ mod tests {
             tsy: None,
         });
 
-        // Deliberately register in the opposite order from main.rs. Correctness
-        // must come from ZoneRegistryStartupSet, not incidental insertion order.
+        // Register both real producer identities after the real mineral consumer.
+        // The setup system stays disabled because its full world bootstrap is not
+        // part of this focused regression; the raw Startup graph still has to
+        // carry both production dependencies before the schedule is run.
         crate::mineral::register(&mut app);
         crate::world::zone::register(&mut app);
+        app.add_systems(Startup, crate::world::setup_world.run_if(|| false));
         app.insert_resource(MineralAnchorConfig::with_path(&path));
         app.insert_resource(ExhaustedMineralsLog::default());
 
+        assert_production_startup_dependencies(&app);
         app.world_mut().run_schedule(Startup);
 
         let zones = app
