@@ -614,14 +614,20 @@ for i in "${!paths[@]}"; do
       verdict="$verdict + 存在非缓存 ignored/untracked（$unsafe_reason）→ 不 clean（交人工）"
     elif cache_dir_present "$path"; then
       if [[ $APPLY -eq 1 ]]; then
-        artifacts_ok=1
-        for d in "${CACHE_DIRS[@]}"; do
-          rm -rf "${path:?}/$d" 2>/dev/null || artifacts_ok=0
-        done
-        if [[ $artifacts_ok -eq 1 ]]; then
-          verdict="$verdict + 构建产物已清（闲置 ${idle_days}d ≥ ${IDLE_DAYS}d）"
+        # 缓存删除与整树回收一样是破坏动作；真正 rm 前必须重扫，避免启动快照后
+        # Cargo/Gradle 才进入该树而仍被删 target/build 的 TOCTOU。
+        if busy_live "$path_real"; then
+          verdict="$verdict + BUSY（构建产物删除前复扫发现进程引用）→ 不 clean（交人工）"
         else
-          verdict="$verdict + 构建产物清理失败 → 交人工"
+          artifacts_ok=1
+          for d in "${CACHE_DIRS[@]}"; do
+            rm -rf "${path:?}/$d" 2>/dev/null || artifacts_ok=0
+          done
+          if [[ $artifacts_ok -eq 1 ]]; then
+            verdict="$verdict + 构建产物已清（闲置 ${idle_days}d ≥ ${IDLE_DAYS}d）"
+          else
+            verdict="$verdict + 构建产物清理失败 → 交人工"
+          fi
         fi
       else
         verdict="$verdict + 构建产物待清（闲置 ${idle_days}d，加 --apply 生效）"

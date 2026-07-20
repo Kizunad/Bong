@@ -551,6 +551,22 @@ check "nopr-idle 产物已清"             test ! -e ".agent-worktrees/wt-nopr-i
 check "脏树产物未动"                   test -f ".agent-worktrees/wt-merged-dirty/server/target/blob"
 check "open-idle 树本体仍在"           test -d ".agent-worktrees/wt-open-idle"
 
+# ========== 5a. clean-artifacts 删除前 busy 复扫 ==========
+echo "== 5a. clean-artifacts 删除前 busy 复扫挡住迟到编译"
+# 上一段已经清空 open-idle；重建缓存，再用确定性 seam 模拟初检之后才进入树的进程。
+mkdir -p ".agent-worktrees/wt-open-idle/server/target"
+echo blob > ".agent-worktrees/wt-open-idle/server/target/blob"
+OPEN_IDLE_ABS=$(realpath ".agent-worktrees/wt-open-idle")
+out=$(WT_JANITOR_BUSY_INJECT="$OPEN_IDLE_ABS" bash "$JANITOR" --apply --clean-artifacts=0)
+check "artifact pre-delete busy：缓存保留" test -f ".agent-worktrees/wt-open-idle/server/target/blob"
+check "artifact pre-delete busy：树保留"   test -d ".agent-worktrees/wt-open-idle"
+check "artifact pre-delete busy：报告不 clean" grep -q "构建产物删除前复扫发现进程引用" <<<"$out"
+check_not "artifact pre-delete busy：不得宣称已清" grep -qE "wt-open-idle.*构建产物已清" <<<"$out"
+
+# 恢复无 busy 路径，确认同一候选随后仍可正常清理。
+out=$(bash "$JANITOR" --apply --clean-artifacts=0)
+check "artifact busy 解除后缓存已清" test ! -e ".agent-worktrees/wt-open-idle/server/target"
+
 # 恢复产物供阈值边界
 mkdir -p ".agent-worktrees/wt-open-idle/server/target"
 echo blob > ".agent-worktrees/wt-open-idle/server/target/blob"
