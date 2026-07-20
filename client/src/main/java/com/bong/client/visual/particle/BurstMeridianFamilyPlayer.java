@@ -5,6 +5,9 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 爆脉（burst_meridian）三招专属粒子播放器 —— plan-skill-anim-fidelity-v1 §P5.1 ②。
  *
@@ -14,24 +17,11 @@ import net.minecraft.util.Identifier;
  *
  * <p><b>设计取向与真脉相反</b>：真脉靠「同色系 + 明度阶梯」分化，爆脉则
  * <b>三招共用同一识别色 {@code #C58B3F}</b>（与崩拳本尊同色，统一爆脉家族识别），
- * 读招<b>完全靠形态</b>：
- * <table border="1">
- *   <caption>爆脉 3 招粒子 spec</caption>
- *   <tr><th>event_id</th><th>基类</th><th>数量</th><th>lifetime</th>
- *       <th>速度/方向</th><th>spawn</th><th>贴图</th></tr>
- *   <tr><td>burst_meridian_tie_shan_kao</td><td>{@link BongGroundDecalParticle}</td>
- *       <td>10</td><td>cast_ticks</td><td>贴地静止 + 自旋 0.05 rad/t</td>
- *       <td>radial 地面撞击冲击环</td><td>lingqi_ripple</td></tr>
- *   <tr><td>burst_meridian_xue_beng_bu</td><td>{@link BongRibbonParticle}</td>
- *       <td>12</td><td>cast_ticks</td><td>沿 direction <b>反向</b>拖尾 0.25/t</td>
- *       <td>continuous 步法短尾</td><td>qi_aura</td></tr>
- *   <tr><td>burst_meridian_ni_mai_hu_ti</td><td>{@link BongSpriteParticle}</td>
- *       <td>14</td><td>60t</td><td>切向环绕 0.08/t + 上浮 0.015/t</td>
- *       <td>radial 双高度体表纹</td><td>qi_aura</td></tr>
- * </table>
+ * 读招<b>完全靠形态</b>——撞击环贴地自旋 / 残影反向拖尾 / 逆流纹贴身环绕。
  *
- * <p>崩拳本尊 {@code bong:burst_meridian_beng_quan} 仍由
- * {@link BurstMeridianBengQuanPlayer} 承接，本类不接管。
+ * <p>逐招 spec 见 {@link Form}（与 plan §P5.1 ② 表格逐格对拍，由
+ * {@code SkillParticleSpecDocTest} 锁住）。崩拳本尊 {@code bong:burst_meridian_beng_quan}
+ * 仍由 {@link BurstMeridianBengQuanPlayer} 承接，本类不接管。
  */
 public final class BurstMeridianFamilyPlayer implements VfxPlayer {
     public static final Identifier TIE_SHAN_KAO =
@@ -47,26 +37,91 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
     /** 爆脉家族统一识别色（server `BURST_MERIDIAN_FAMILY_COLOR` 的 client 侧兜底）。 */
     static final int FAMILY_RGB = 0xC58B3F;
 
+    static final int MAX_COUNT = 48;
+
+    /** 撞击环贴地：server origin 抬到胸口高度，减 1 格落回脚下。 */
+    private static final double IMPACT_GROUND_DROP = -1.0;
+    private static final double IMPACT_Y_LIFT = 0.03;
+    private static final float IMPACT_ALPHA = 0.72f;
+
+    private static final double DASH_BACK_OFFSET = 0.15;
+    private static final double DASH_LATERAL_SPREAD = 0.5;
+    private static final double DASH_HEIGHT_BASE = -0.4;
+    private static final double DASH_HEIGHT_SPAN = 1.1;
+    private static final double DASH_RIBBON_TAIL = 0.02;
+    private static final float DASH_ALPHA = 0.68f;
+
+    /** 逆流纹双高度环：奇偶分上下两圈，读出「整个体表都在逆流」而不是一条腰带。 */
+    private static final double COUNTERFLOW_LOW_RING = -0.25;
+    private static final double COUNTERFLOW_HIGH_RING = 0.45;
+    private static final float COUNTERFLOW_ALPHA = 0.8f;
+    private static final float COUNTERFLOW_SCALE = 0.6f;
+
     /**
-     * 逐招形态参数。抽成枚举而非只在 {@link #play} 里比 id，是为了让 dispatch 与 spec
-     * 都能在无 MinecraftClient 的单测里被断言（{@link #formFor}）。
+     * 逐招形态参数 —— <b>plan §P5.1 ② spec 表的可执行副本</b>。
+     *
+     * <p>抽成枚举而非只在 {@link #play} 里比 id，是为了让 dispatch 与 spec 都能在无
+     * {@code MinecraftClient} 的单测里被断言，并与 plan 文档逐格对拍。
+     *
+     * <p>字段按形态取用，不适用者为 {@code 0.0}（例如残影没有半径、撞击环没有线速度）。
      */
     enum Form {
-        /** 贴山靠：地面撞击冲击环。 */
-        IMPACT_RING(TIE_SHAN_KAO, 10, 16),
-        /** 血崩步：步法残影短尾。 */
-        DASH_AFTERIMAGE(XUE_BENG_BU, 12, 14),
-        /** 逆脉护体：体表逆流纹。 */
-        BODY_COUNTERFLOW(NI_MAI_HU_TI, 14, 60);
+        /** 贴山靠：地面撞击冲击环（贴地静止 + 自旋，半径吃 strength）。 */
+        IMPACT_RING(TIE_SHAN_KAO, 10, 4, 16, Motion.IMPACT, 0.0, 0.30, 0.45, 0.0, 0.05),
+        /** 血崩步：步法残影短尾（沿 direction 反向拖出）。 */
+        DASH_AFTERIMAGE(XUE_BENG_BU, 12, 2, 14, Motion.TRAIL, 0.25, 0.0, 0.0, 0.01, 0.0),
+        /** 逆脉护体：体表逆流纹（贴身<b>真环绕</b> + 缓慢上浮）。 */
+        BODY_COUNTERFLOW(NI_MAI_HU_TI, 14, 4, 60, Motion.ORBIT, 0.08, 0.55, 0.0, 0.015, 0.0);
+
+        /**
+         * 运动形态。{@link #ORBIT} 是 review r1 #2 的修复点——真绕圆心转（半径恒定），
+         * 而非「只给切向初速度」的抛射（那会让护体纹直线飞离身体）。
+         */
+        enum Motion { IMPACT, TRAIL, ORBIT }
 
         final Identifier eventId;
         final int defaultCount;
+        /** count 下限：环形招 4（低于此读不出「环」），线性残影 2 即可成束。 */
+        final int minCount;
         final int defaultLifetime;
+        final Motion motion;
+        /** 主运动速度（格/tick）。{@link Motion#ORBIT} 下是线速度。 */
+        final double speed;
+        /** 半径基值（格）。{@link Motion#IMPACT} 下与 {@link #radiusStrength} 合成。 */
+        final double radiusBase;
+        /** 半径的 strength 系数（格）：实际半径 = radiusBase + radiusStrength × strength。 */
+        final double radiusStrength;
+        /** 垂直速度（格/tick）。 */
+        final double verticalSpeed;
+        /** 贴地符圈自旋（rad/tick）。 */
+        final double spinRate;
 
-        Form(Identifier eventId, int defaultCount, int defaultLifetime) {
+        Form(
+            Identifier eventId,
+            int defaultCount,
+            int minCount,
+            int defaultLifetime,
+            Motion motion,
+            double speed,
+            double radiusBase,
+            double radiusStrength,
+            double verticalSpeed,
+            double spinRate
+        ) {
             this.eventId = eventId;
             this.defaultCount = defaultCount;
+            this.minCount = minCount;
             this.defaultLifetime = defaultLifetime;
+            this.motion = motion;
+            this.speed = speed;
+            this.radiusBase = radiusBase;
+            this.radiusStrength = radiusStrength;
+            this.verticalSpeed = verticalSpeed;
+            this.spinRate = spinRate;
+        }
+
+        double radiusAt(double strength) {
+            return radiusBase + radiusStrength * strength;
         }
     }
 
@@ -89,48 +144,50 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
         if (world == null) {
             return;
         }
-        Form form = formFor(payload.eventId());
-        if (form == null) {
-            // 未登记 id：静默跳过（接线错误不该让渲染线程抛异常）。
-            return;
-        }
-        switch (form) {
-            case IMPACT_RING -> playImpactRing(client, world, payload);
-            case DASH_AFTERIMAGE -> playDashAfterimage(client, world, payload);
-            case BODY_COUNTERFLOW -> playBodyCounterflow(client, world, payload);
-        }
+        SkillParticleSpawner.spawnAll(client, world, plan(payload));
     }
 
-    /** 贴山靠：地面撞击冲击环。半径吃 strength，整圈自旋表达"碾压"。 */
-    private static void playImpactRing(
-        MinecraftClient client,
-        ClientWorld world,
+    /**
+     * 纯函数发射规划：payload → 逐颗粒子描述符。不碰 {@code MinecraftClient}，供单测直接断言。
+     *
+     * @return 未登记 event_id 返回空列表（接线错误不该让渲染线程抛异常）
+     */
+    static List<SkillParticleSpawn> plan(VfxEventPayload.SpawnParticle payload) {
+        Form form = formFor(payload.eventId());
+        if (form == null) {
+            return List.of();
+        }
+        return switch (form.motion) {
+            case IMPACT -> planImpactRing(form, payload);
+            case TRAIL -> planDashAfterimage(form, payload);
+            case ORBIT -> planBodyCounterflow(form, payload);
+        };
+    }
+
+    /** 贴山靠：地面撞击冲击环。半径吃 strength，整圈自旋表达「碾压」。 */
+    private static List<SkillParticleSpawn> planImpactRing(
+        Form form,
         VfxEventPayload.SpawnParticle payload
     ) {
         double[] origin = payload.origin();
-        int count = clampInt(payload.count().orElse(Form.IMPACT_RING.defaultCount), 4, 48);
-        float[] color = rgb(payload.colorRgb().orElse(FAMILY_RGB));
+        int count = clampInt(payload.count().orElse(form.defaultCount), form.minCount, MAX_COUNT);
+        int rgb = payload.colorRgb().orElse(FAMILY_RGB);
         double strength = clamp(payload.strength().orElse(0.95), 0.0, 1.0);
-        int lifetime = payload.durationTicks().orElse(Form.IMPACT_RING.defaultLifetime);
-        double halfSize = 0.30 + 0.45 * strength;
+        int lifetime = payload.durationTicks().orElse(form.defaultLifetime);
+        double halfSize = form.radiusAt(strength);
 
+        List<SkillParticleSpawn> spawns = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             double angle = Math.PI * 2.0 * i / count;
-            BongGroundDecalParticle particle = new BongGroundDecalParticle(
-                world,
+            spawns.add(new SkillParticleSpawn.Decal(
                 origin[0] + Math.cos(angle) * halfSize,
-                // 贴地：以 caster 脚下为准（server origin 抬高了 1 格胸口高度）。
-                origin[1] - 1.0 + 0.03,
-                origin[2] + Math.sin(angle) * halfSize
-            ).setDecalShape(halfSize, 0.03).setSpin(angle, 0.05);
-            particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic(0.72f);
-            particle.setMaxAgePublic(lifetime);
-            if (BongParticles.lingqiRippleSprites != null) {
-                particle.setSpritePublic(BongParticles.lingqiRippleSprites.getSprite(world.random));
-            }
-            client.particleManager.addParticle(particle);
+                origin[1] + IMPACT_GROUND_DROP + IMPACT_Y_LIFT,
+                origin[2] + Math.sin(angle) * halfSize,
+                halfSize, IMPACT_Y_LIFT, angle, form.spinRate,
+                rgb, IMPACT_ALPHA, lifetime, SkillParticleSpawn.Sheet.LINGQI_RIPPLE
+            ));
         }
+        return List.copyOf(spawns);
     }
 
     /**
@@ -139,90 +196,69 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
      * <p>关键取向——ribbon 沿 {@code direction} 的<b>反向</b>拖出，残影落在身后，
      * 才读得出"人往前窜了"。顺向拖尾会读成"往前喷气"，语义相反。
      */
-    private static void playDashAfterimage(
-        MinecraftClient client,
-        ClientWorld world,
+    private static List<SkillParticleSpawn> planDashAfterimage(
+        Form form,
         VfxEventPayload.SpawnParticle payload
     ) {
         double[] origin = payload.origin();
         double[] dir = ZhenmaiPulsePlayer.normalizedDirection(payload.direction().orElse(null));
-        int count = clampInt(payload.count().orElse(Form.DASH_AFTERIMAGE.defaultCount), 2, 48);
-        float[] color = rgb(payload.colorRgb().orElse(FAMILY_RGB));
+        int count = clampInt(payload.count().orElse(form.defaultCount), form.minCount, MAX_COUNT);
+        int rgb = payload.colorRgb().orElse(FAMILY_RGB);
         double strength = clamp(payload.strength().orElse(0.85), 0.0, 1.0);
-        int lifetime = payload.durationTicks().orElse(Form.DASH_AFTERIMAGE.defaultLifetime);
-        double speed = 0.25;
+        int lifetime = payload.durationTicks().orElse(form.defaultLifetime);
 
+        List<SkillParticleSpawn> spawns = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             // 沿身高分布 + 轻微横向抖动，构成一束残影而不是一条线。
             double t = count == 1 ? 0.0 : (double) i / (count - 1);
-            double lateral = (t - 0.5) * 0.5;
-            BongRibbonParticle particle = new BongRibbonParticle(
-                world,
-                origin[0] - dir[0] * 0.15 + lateral * -dir[2],
-                origin[1] - 0.4 + t * 1.1,
-                origin[2] - dir[2] * 0.15 + lateral * dir[0],
-                -dir[0] * speed,
-                0.01,
-                -dir[2] * speed
-            );
-            particle.setRibbonWidth(0.14 * (0.6 + strength), 0.02);
-            particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic(0.68f);
-            particle.setMaxAgePublic(lifetime);
-            if (BongParticles.qiAuraSprites != null) {
-                particle.setSpritePublic(BongParticles.qiAuraSprites.getSprite(world.random));
-            }
-            client.particleManager.addParticle(particle);
+            double lateral = (t - 0.5) * DASH_LATERAL_SPREAD;
+            spawns.add(new SkillParticleSpawn.Ribbon(
+                origin[0] - dir[0] * DASH_BACK_OFFSET + lateral * -dir[2],
+                origin[1] + DASH_HEIGHT_BASE + t * DASH_HEIGHT_SPAN,
+                origin[2] - dir[2] * DASH_BACK_OFFSET + lateral * dir[0],
+                -dir[0] * form.speed,
+                form.verticalSpeed,
+                -dir[2] * form.speed,
+                0.14 * (0.6 + strength), DASH_RIBBON_TAIL,
+                rgb, DASH_ALPHA, lifetime, SkillParticleSpawn.Sheet.QI_AURA
+            ));
         }
+        return List.copyOf(spawns);
     }
 
-    /** 逆脉护体：体表逆流纹。双高度环 + 切向环绕，贴身而非外扩（护体不是攻击）。 */
-    private static void playBodyCounterflow(
-        MinecraftClient client,
-        ClientWorld world,
+    /**
+     * 逆脉护体：体表逆流纹。双高度环 + <b>真环绕</b>，贴身而非外扩（护体不是攻击）。
+     *
+     * <p>review r1 #2：此前只设了切向初速度，粒子实际沿切线直线飞离——"护体"读成"炸开"。
+     * 现走 {@link SkillParticleSpawn.OrbitSpec}，圆心锚定 cast 瞬间的 origin，半径恒 0.55 格。
+     *
+     * <p><b>已知取舍</b>：圆心是 cast 瞬间的 origin 快照，不跟随施法者移动。既有粒子体系里
+     * 没有"粒子跟随实体"的锚定机制（{@link VortexSpiralParticle} 同样只存一次圆心），
+     * 引入这套属独立能力，不在 P5 范围；60t 窗口内玩家跑开会把纹留在原地。已写入 plan §P5.1 ②。
+     */
+    private static List<SkillParticleSpawn> planBodyCounterflow(
+        Form form,
         VfxEventPayload.SpawnParticle payload
     ) {
         double[] origin = payload.origin();
-        int count = clampInt(payload.count().orElse(Form.BODY_COUNTERFLOW.defaultCount), 4, 48);
-        float[] color = rgb(payload.colorRgb().orElse(FAMILY_RGB));
-        int lifetime = payload.durationTicks().orElse(Form.BODY_COUNTERFLOW.defaultLifetime);
-        double radius = 0.55;
-        double speed = 0.08;
+        int count = clampInt(payload.count().orElse(form.defaultCount), form.minCount, MAX_COUNT);
+        int rgb = payload.colorRgb().orElse(FAMILY_RGB);
+        int lifetime = payload.durationTicks().orElse(form.defaultLifetime);
 
+        List<SkillParticleSpawn> spawns = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             double angle = Math.PI * 2.0 * i / count;
-            double cos = Math.cos(angle);
-            double sin = Math.sin(angle);
-            // 奇偶分上下两环，读出"整个体表都在逆流"而不是只有一圈腰带。
-            double heightOffset = (i % 2 == 0) ? -0.25 : 0.45;
-
-            BongSpriteParticle particle = new BongSpriteParticle(
-                world,
-                origin[0] + cos * radius,
-                origin[1] + heightOffset,
-                origin[2] + sin * radius,
-                // 切向环绕（逆时针，与崩拳的直线爆发形成对比）+ 缓慢上浮。
-                -sin * speed,
-                0.015,
-                cos * speed
-            );
-            particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic(0.8f);
-            particle.setScalePublic(0.6f);
-            particle.setMaxAgePublic(lifetime);
-            if (BongParticles.qiAuraSprites != null) {
-                particle.setSpritePublic(BongParticles.qiAuraSprites.getSprite(world.random));
-            }
-            client.particleManager.addParticle(particle);
+            double heightOffset = (i % 2 == 0) ? COUNTERFLOW_LOW_RING : COUNTERFLOW_HIGH_RING;
+            spawns.add(new SkillParticleSpawn.OrbitPoint(
+                new SkillParticleSpawn.OrbitSpec(
+                    origin[0], origin[1] + heightOffset, origin[2],
+                    form.radiusBase, angle, form.speed, form.verticalSpeed
+                ),
+                COUNTERFLOW_SCALE, rgb, COUNTERFLOW_ALPHA, lifetime,
+                SkillParticleSpawn.Sheet.QI_AURA
+            ));
         }
-    }
-
-    private static float[] rgb(int rgb) {
-        return new float[] {
-            ((rgb >> 16) & 0xFF) / 255f,
-            ((rgb >> 8) & 0xFF) / 255f,
-            (rgb & 0xFF) / 255f,
-        };
+        return List.copyOf(spawns);
     }
 
     private static double clamp(double value, double lo, double hi) {

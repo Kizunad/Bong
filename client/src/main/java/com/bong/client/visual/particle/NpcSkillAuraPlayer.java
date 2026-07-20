@@ -5,6 +5,9 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * NPC 三招专属粒子播放器 —— plan-skill-anim-fidelity-v1 §P5.1 ③。
  *
@@ -17,19 +20,8 @@ import net.minecraft.util.Identifier;
  *
  * <p>NPC 是 mob 实体、无 PlayerAnimator 通道（plan §8.1 #2），所以三招只有粒子 + 音效，
  * 形态按 plan 允许的"从简"处理；但 <b>id 与颜色强制独立</b>，构成绿 / 黄 / 蓝
- * 高分离色相三元组，保证远距离读招：
- * <table border="1">
- *   <caption>NPC 3 招粒子 spec</caption>
- *   <tr><th>event_id</th><th>基类</th><th>数量</th><th>lifetime</th>
- *       <th>速度/方向</th><th>颜色</th><th>spawn</th><th>贴图</th></tr>
- *   <tr><td>npc_heal_basic</td><td>{@link BongSpriteParticle}</td><td>12</td><td>40t</td>
- *       <td>上浮 0.03/t</td><td>#A8E6CF</td><td>radial 上升柱</td><td>qi_aura</td></tr>
- *   <tr><td>npc_buff_speed</td><td>{@link BongLineParticle}</td><td>12</td><td>40t</td>
- *       <td>水平外冲 0.22/t</td><td>#E3C766</td><td>radial 疾行尘</td><td>qi_aura</td></tr>
- *   <tr><td>npc_buff_defense</td><td>{@link BongSpriteParticle}</td><td>12</td><td>40t</td>
- *       <td>切向环绕 0.06/t</td><td>#5BA8C9</td><td>radial 护体环</td>
- *       <td>lingqi_ripple</td></tr>
- * </table>
+ * 高分离色相三元组，保证远距离读招。逐招 spec 见 {@link Form}（与 plan §P5.1 ③ 表格逐格对拍，
+ * 由 {@code SkillParticleSpecDocTest} 锁住）。
  */
 public final class NpcSkillAuraPlayer implements VfxPlayer {
     public static final Identifier HEAL_BASIC = new Identifier("bong", "npc_heal_basic");
@@ -43,27 +35,68 @@ public final class NpcSkillAuraPlayer implements VfxPlayer {
     static final int SPEED_RGB = 0xE3C766;
     static final int DEFENSE_RGB = 0x5BA8C9;
 
-    private static final int DEFAULT_COUNT = 12;
-    private static final int DEFAULT_LIFETIME_TICKS = 40;
+    /** 与 server `emit_npc_skill_av` 的 `count: Some(12)` / `duration_ticks: Some(40)` 一致。 */
+    static final int DEFAULT_COUNT = 12;
+    static final int DEFAULT_LIFETIME_TICKS = 40;
+    static final int MIN_COUNT = 1;
+    static final int MAX_COUNT = 48;
+
+    private static final double HEAL_BASE_HEIGHT = -0.5;
+    private static final double HEAL_STEP_HEIGHT = 0.22;
+    private static final int HEAL_STEP_COUNT = 4;
+    private static final float HEAL_ALPHA = 0.85f;
+    private static final float HEAL_SCALE = 0.55f;
+
+    private static final double SPEED_HEIGHT = -0.6;
+    private static final float SPEED_ALPHA = 0.75f;
+
+    private static final float DEFENSE_ALPHA = 0.8f;
+    private static final float DEFENSE_SCALE = 0.6f;
 
     /**
-     * 逐招形态。抽成枚举而非只在 {@link #play} 里比 id，是为了让 dispatch 与配色 spec
-     * 都能在无 MinecraftClient 的单测里被断言（{@link #formFor}）。
+     * 逐招形态 —— <b>plan §P5.1 ③ spec 表的可执行副本</b>。
+     *
+     * <p>抽成枚举而非只在 {@link #play} 里比 id，是为了让 dispatch 与配色 / 运动 spec 都能在无
+     * {@code MinecraftClient} 的单测里被断言，并与 plan 文档逐格对拍。
      */
     enum Form {
         /** 回血：绕身上升的绿色光点柱。 */
-        HEAL_COLUMN(HEAL_BASIC, HEAL_RGB),
+        HEAL_COLUMN(HEAL_BASIC, HEAL_RGB, Motion.COLUMN, 0.0, 0.4, 0.03),
         /** 加速：水平外冲的麦黄疾行尘。 */
-        SPEED_DUST(BUFF_SPEED, SPEED_RGB),
-        /** 护体：贴身切向环绕的青蓝护环。 */
-        DEFENSE_RING(BUFF_DEFENSE, DEFENSE_RGB);
+        SPEED_DUST(BUFF_SPEED, SPEED_RGB, Motion.OUTRUSH, 0.22, 0.3, 0.01),
+        /** 护体：贴身<b>真环绕</b>的青蓝护环。 */
+        DEFENSE_RING(BUFF_DEFENSE, DEFENSE_RGB, Motion.ORBIT, 0.06, 0.6, 0.0);
+
+        /**
+         * 运动形态。{@link #ORBIT} 是 review r1 #2 的修复点——真绕圆心转（半径恒定），
+         * 而非「只给切向初速度」的抛射（那会让护环直线散开、读成"炸开"而非"护住"）。
+         */
+        enum Motion { COLUMN, OUTRUSH, ORBIT }
 
         final Identifier eventId;
         final int fallbackRgb;
+        final Motion motion;
+        /** 水平速度（格/tick）。{@link Motion#ORBIT} 下是线速度。 */
+        final double speed;
+        /** 起始铺开半径（格）；{@link Motion#ORBIT} 下即环绕半径。 */
+        final double radius;
+        /** 垂直速度（格/tick）。 */
+        final double verticalSpeed;
 
-        Form(Identifier eventId, int fallbackRgb) {
+        Form(
+            Identifier eventId,
+            int fallbackRgb,
+            Motion motion,
+            double speed,
+            double radius,
+            double verticalSpeed
+        ) {
             this.eventId = eventId;
             this.fallbackRgb = fallbackRgb;
+            this.motion = motion;
+            this.speed = speed;
+            this.radius = radius;
+            this.verticalSpeed = verticalSpeed;
         }
     }
 
@@ -86,129 +119,64 @@ public final class NpcSkillAuraPlayer implements VfxPlayer {
         if (world == null) {
             return;
         }
+        SkillParticleSpawner.spawnAll(client, world, plan(payload));
+    }
+
+    /**
+     * 纯函数发射规划：payload → 逐颗粒子描述符。不碰 {@code MinecraftClient}，供单测直接断言。
+     *
+     * @return 未登记 event_id 返回空列表
+     */
+    static List<SkillParticleSpawn> plan(VfxEventPayload.SpawnParticle payload) {
         Form form = formFor(payload.eventId());
         if (form == null) {
-            // 未登记 id：静默跳过。
-            return;
+            return List.of();
         }
-        switch (form) {
-            case HEAL_COLUMN -> playHealColumn(client, world, payload);
-            case SPEED_DUST -> playSpeedDust(client, world, payload);
-            case DEFENSE_RING -> playDefenseRing(client, world, payload);
-        }
-    }
 
-    /** 回血：绕身上升的绿色光点柱。 */
-    private static void playHealColumn(
-        MinecraftClient client,
-        ClientWorld world,
-        VfxEventPayload.SpawnParticle payload
-    ) {
         double[] origin = payload.origin();
-        int count = resolveCount(payload);
-        float[] color = rgb(payload.colorRgb().orElse(HEAL_RGB));
-        int lifetime = resolveLifetime(payload);
+        int count = clampInt(payload.count().orElse(DEFAULT_COUNT), MIN_COUNT, MAX_COUNT);
+        int rgb = payload.colorRgb().orElse(form.fallbackRgb);
+        int lifetime = payload.durationTicks().orElse(DEFAULT_LIFETIME_TICKS);
 
-        for (int i = 0; i < count; i++) {
-            double angle = Math.PI * 2.0 * i / count;
-            BongSpriteParticle particle = new BongSpriteParticle(
-                world,
-                origin[0] + Math.cos(angle) * 0.4,
-                origin[1] - 0.5 + (i % 4) * 0.22,
-                origin[2] + Math.sin(angle) * 0.4,
-                0.0, 0.03, 0.0
-            );
-            particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic(0.85f);
-            particle.setScalePublic(0.55f);
-            particle.setMaxAgePublic(lifetime);
-            if (BongParticles.qiAuraSprites != null) {
-                particle.setSpritePublic(BongParticles.qiAuraSprites.getSprite(world.random));
-            }
-            client.particleManager.addParticle(particle);
-        }
-    }
-
-    /** 加速：水平外冲的麦黄疾行尘（线粒子，与另两招的点粒子形态区分）。 */
-    private static void playSpeedDust(
-        MinecraftClient client,
-        ClientWorld world,
-        VfxEventPayload.SpawnParticle payload
-    ) {
-        double[] origin = payload.origin();
-        int count = resolveCount(payload);
-        float[] color = rgb(payload.colorRgb().orElse(SPEED_RGB));
-        int lifetime = resolveLifetime(payload);
-
+        List<SkillParticleSpawn> spawns = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             double angle = Math.PI * 2.0 * i / count;
             double cos = Math.cos(angle);
             double sin = Math.sin(angle);
-            BongLineParticle particle = new BongLineParticle(
-                world,
-                origin[0] + cos * 0.3,
-                origin[1] - 0.6,
-                origin[2] + sin * 0.3,
-                cos * 0.22, 0.01, sin * 0.22
-            );
-            particle.setLineShape(1.4, 0.5, 0.07);
-            particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic(0.75f);
-            particle.setMaxAgePublic(lifetime);
-            if (BongParticles.qiAuraSprites != null) {
-                particle.setSpritePublic(BongParticles.qiAuraSprites.getSprite(world.random));
-            }
-            client.particleManager.addParticle(particle);
+
+            // switch 表达式（无 default）：新增 Motion 变体而忘了接分支 = 编译期撞红。
+            SkillParticleSpawn spawn = switch (form.motion) {
+                // 回血：绕身一圈、分四段身高错落的上升光点柱。
+                case COLUMN -> new SkillParticleSpawn.Point(
+                    origin[0] + cos * form.radius,
+                    origin[1] + HEAL_BASE_HEIGHT + (i % HEAL_STEP_COUNT) * HEAL_STEP_HEIGHT,
+                    origin[2] + sin * form.radius,
+                    0.0, form.verticalSpeed, 0.0,
+                    HEAL_SCALE, rgb, HEAL_ALPHA, lifetime,
+                    SkillParticleSpawn.Sheet.QI_AURA
+                );
+                // 加速：脚边水平外冲的线粒子（与另两招的点粒子形态区分）。
+                case OUTRUSH -> new SkillParticleSpawn.Pulse(
+                    origin[0] + cos * form.radius,
+                    origin[1] + SPEED_HEIGHT,
+                    origin[2] + sin * form.radius,
+                    cos * form.speed, form.verticalSpeed, sin * form.speed,
+                    1.4, 0.5, 0.07,
+                    rgb, SPEED_ALPHA, lifetime, SkillParticleSpawn.Sheet.QI_AURA
+                );
+                // 护体：贴身真环绕，圆心锚定 cast 瞬间 origin（同 burst 逆脉护体的取舍）。
+                case ORBIT -> new SkillParticleSpawn.OrbitPoint(
+                    new SkillParticleSpawn.OrbitSpec(
+                        origin[0], origin[1], origin[2],
+                        form.radius, angle, form.speed, form.verticalSpeed
+                    ),
+                    DEFENSE_SCALE, rgb, DEFENSE_ALPHA, lifetime,
+                    SkillParticleSpawn.Sheet.LINGQI_RIPPLE
+                );
+            };
+            spawns.add(spawn);
         }
-    }
-
-    /** 护体：贴身切向环绕的青蓝护环。 */
-    private static void playDefenseRing(
-        MinecraftClient client,
-        ClientWorld world,
-        VfxEventPayload.SpawnParticle payload
-    ) {
-        double[] origin = payload.origin();
-        int count = resolveCount(payload);
-        float[] color = rgb(payload.colorRgb().orElse(DEFENSE_RGB));
-        int lifetime = resolveLifetime(payload);
-
-        for (int i = 0; i < count; i++) {
-            double angle = Math.PI * 2.0 * i / count;
-            double cos = Math.cos(angle);
-            double sin = Math.sin(angle);
-            BongSpriteParticle particle = new BongSpriteParticle(
-                world,
-                origin[0] + cos * 0.6,
-                origin[1],
-                origin[2] + sin * 0.6,
-                -sin * 0.06, 0.0, cos * 0.06
-            );
-            particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic(0.8f);
-            particle.setScalePublic(0.6f);
-            particle.setMaxAgePublic(lifetime);
-            if (BongParticles.lingqiRippleSprites != null) {
-                particle.setSpritePublic(BongParticles.lingqiRippleSprites.getSprite(world.random));
-            }
-            client.particleManager.addParticle(particle);
-        }
-    }
-
-    private static int resolveCount(VfxEventPayload.SpawnParticle payload) {
-        return clampInt(payload.count().orElse(DEFAULT_COUNT), 1, 48);
-    }
-
-    private static int resolveLifetime(VfxEventPayload.SpawnParticle payload) {
-        return payload.durationTicks().orElse(DEFAULT_LIFETIME_TICKS);
-    }
-
-    private static float[] rgb(int rgb) {
-        return new float[] {
-            ((rgb >> 16) & 0xFF) / 255f,
-            ((rgb >> 8) & 0xFF) / 255f,
-            (rgb & 0xFF) / 255f,
-        };
+        return List.copyOf(spawns);
     }
 
     private static int clampInt(int value, int lo, int hi) {
