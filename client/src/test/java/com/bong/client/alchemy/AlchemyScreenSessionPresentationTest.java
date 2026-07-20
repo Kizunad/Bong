@@ -78,6 +78,56 @@ class AlchemyScreenSessionPresentationTest {
     }
 
     @Test
+    void openedScreenRefreshesEveryActiveSnapshotIncludingStageAndInterventionChanges() {
+        AlchemyFurnaceStore.replace(furnace(true));
+        AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
+        List<AlchemySessionPresentationPlanner.Presentation> refreshes = new ArrayList<>();
+        screen.setSessionPresentationObserverForTests(refreshes::add);
+        screen.attachSessionListenerForTests();
+        int refreshesAfterAttach = refreshes.size();
+
+        AlchemySessionStore.replace(activeSessionAtStart());
+
+        assertEquals(refreshesAfterAttach + 1, refreshes.size(),
+            "首次异步 active snapshot 必须让已打开 screen 恰好刷新一次");
+        AlchemySessionPresentationPlanner.Presentation initial = screen.sessionPresentationForTests();
+        assertTrue(initial.active());
+        assertEquals("§f20 / 100t", initial.progressText());
+        assertEquals("§e0.50 / 0.55", initial.temperatureText());
+        assertEquals("§72.0 / 5.0", initial.qiText());
+        assertEquals(
+            List.of("§7干预", "§7AdjustTemp(0.50)"),
+            initial.detailLines(),
+            "首次 active snapshot 的 intervention guidance 必须直接进入已打开 screen"
+        );
+
+        AlchemySessionStore.replace(activeSessionAfterFeedAndIntervention());
+
+        assertEquals(refreshesAfterAttach + 2, refreshes.size(),
+            "后续 active stage/intervention snapshot 必须再次恰好刷新一次");
+        AlchemySessionPresentationPlanner.Presentation updated = screen.sessionPresentationForTests();
+        assertTrue(updated.active());
+        assertEquals("§f46 / 100t", updated.progressText());
+        assertEquals("§e0.57 / 0.55", updated.temperatureText());
+        assertEquals("§73.5 / 5.0", updated.qiText());
+        assertEquals(
+            List.of("§7干预", "§7FeedStage(0)", "§7InjectQi(3.5)"),
+            updated.detailLines(),
+            "active-to-active 更新不得冻结旧 intervention guidance"
+        );
+        assertEquals(2, AlchemySessionStore.snapshot().stages().size());
+        assertTrue(AlchemySessionStore.snapshot().stages().get(0).completed(),
+            "后续 active snapshot 的 stage 完成态必须保留给 screen 的 stage-flash 消费链");
+        assertEquals(40, AlchemySessionStore.snapshot().stages().get(1).atTick());
+        assertEquals(8, AlchemySessionStore.snapshot().stages().get(1).window());
+        assertEquals("dan_sha×3", AlchemySessionStore.snapshot().stages().get(1).summary());
+        assertFalse(initial.equals(updated),
+            "active-to-active 更新必须替换 presentation，不能保留首次网络快照");
+
+        screen.detachSessionListenerForTests();
+    }
+
+    @Test
     void retrySuccessEmptyFurnaceAndSessionClearCompletedPresentation() {
         AlchemyFurnaceStore.replace(furnace(true));
         AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
@@ -179,19 +229,46 @@ class AlchemyScreenSessionPresentationTest {
     }
 
     private static AlchemySessionStore.Snapshot activeSession() {
+        return activeSessionAtStart();
+    }
+
+    private static AlchemySessionStore.Snapshot activeSessionAtStart() {
         return new AlchemySessionStore.Snapshot(
             "active_contract_recipe",
             true,
             20,
             100,
-            0.5f,
-            0.5f,
-            0.1f,
+            0.50f,
+            0.55f,
+            0.08f,
             2.0,
             5.0,
             "炼制中",
-            List.of(),
-            List.of()
+            List.of(
+                new AlchemySessionStore.StageHint(18, 5, "ci_she_hao×2", false, false),
+                new AlchemySessionStore.StageHint(40, 8, "dan_sha×3", false, false)
+            ),
+            List.of("§7AdjustTemp(0.50)")
+        );
+    }
+
+    private static AlchemySessionStore.Snapshot activeSessionAfterFeedAndIntervention() {
+        return new AlchemySessionStore.Snapshot(
+            "active_contract_recipe",
+            true,
+            46,
+            100,
+            0.57f,
+            0.55f,
+            0.08f,
+            3.5,
+            5.0,
+            "炼制中",
+            List.of(
+                new AlchemySessionStore.StageHint(18, 5, "ci_she_hao×2", true, false),
+                new AlchemySessionStore.StageHint(40, 8, "dan_sha×3", false, false)
+            ),
+            List.of("§7FeedStage(0)", "§7InjectQi(3.5)")
         );
     }
 }
