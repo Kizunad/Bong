@@ -214,6 +214,20 @@ tasks.named('runGametest') {
 
 tasks.named('test') {
     dependsOn(tasks.named('runGametest'))
+
+    // 部分测试跨目录读仓库内的“真源”文件做对拍（client 常量 ↔ server/docs 真源），
+    // 这些文件不在 test sourceSet 里，不声明成任务输入的话：只改真源、不改测试代码时
+    // gradle 会判 UP-TO-DATE 直接跳过，漂移就悄悄溜过去了——正是这类对拍测试要防的事。
+    //   · SkillParticleSpecDocTest  → plan §P5.1 粒子 spec 表（归档后路径会变，两处都列）
+    //   · ArmorProfileStoreCrossCheckTest → server 护甲 profile JSON
+    inputs.files(
+        files(
+            '../docs/plan-skill-anim-fidelity-v1.md',
+            '../docs/finished_plans/plan-skill-anim-fidelity-v1.md'
+        ).filter { it.exists() },
+        fileTree('../server/assets/combat/armor_profiles') { include '**/*.json' }
+    ).withPropertyName('crossCheckedSourceOfTruthFiles')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // runClientPreview — 用于 worldgen-snapshot 预览（plan-worldgen-snapshot-v1）。

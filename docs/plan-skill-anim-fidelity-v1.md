@@ -127,33 +127,43 @@
 
 基类组合固定为「`BongLineParticle` 沿经脉走向的短脉冲 + `BongSpriteParticle` 驻留穴位点」，逐招靠**运动形态 + 金脉明度阶梯**分化（同族可认、逐招可辨）：
 
-| event_id | 招式 | Line 脉冲数 | Sprite 穴位点数 | lifetime | 速度 / 方向 | 颜色 hex | spawn 模式 | 贴图（复用） |
-|---|---|---|---|---|---|---|---|---|
-| `bong:zhenmai_parry_flash` | `zhenmai.parry` | 8 | 3 | 20t | 沿 `direction` 前向 0.35 格/t；穴位点静止 | `#D4AF6A`（金脉本色） | burst 单帧齐发 | `qi_aura` + `lingqi_ripple` |
-| `bong:zhenmai_neutralize_dust` | `zhenmai.neutralize` | 10 | 4 | 20t | 径向外散 0.12 格/t + 下沉 −0.02 格/t | `#C9A05C`（沉金，卸力散尘） | radial 水平环 | 同上 |
-| `bong:zhenmai_multipoint_ring` | `zhenmai.multipoint` | 16 | 8 | 20t | 切向环绕 0.10 格/t（顺时针） | `#E0C27E`（亮金，多点连环） | radial 腰高环，穴位点等角分布 | 同上 |
-| `bong:zhenmai_harden_shell` | `zhenmai.harden` | 8 | 6 | 20t | 向心内收 −0.06 格/t + 微上浮 0.01 格/t | `#B8944F`（暗金，硬化沉坠） | radial 双层护壳 | 同上 |
-| `bong:zhenmai_sever_snap` | `zhenmai.sever_chain` | 18 | 2 | 20t | 沿 `direction` 爆冲 0.55 格/t | `#F2D68A`（最亮金，断脉爆闪） | burst 爆闪 | 同上 |
+| event_id | 招式 | 运动形态 | 脉冲数 | 穴位点数 | lifetime | 主速度 格/t | 脉冲垂直 格/t | 穴位点漂移 格/t | 半径 格 | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:zhenmai_parry_flash` | `zhenmai.parry` | FORWARD | 8 | 3 | 20t | 0.35 | 0.00 | 0.00 | 0.55 | `#D4AF6A`（金脉本色） | burst 单帧齐发 | `qi_aura` + `lingqi_ripple` |
+| `bong:zhenmai_neutralize_dust` | `zhenmai.neutralize` | RADIAL_OUT | 10 | 4 | 20t | 0.12 | -0.02 | -0.02 | 0.40 | `#C9A05C`（沉金，卸力散尘） | radial 水平环 | 同上 |
+| `bong:zhenmai_multipoint_ring` | `zhenmai.multipoint` | ORBIT | 16 | 8 | 20t | 0.10 | 0.00 | 0.00 | 0.50 | `#E0C27E`（亮金，多点连环） | radial 腰高真环绕，穴位点等角分布 | 同上 |
+| `bong:zhenmai_harden_shell` | `zhenmai.harden` | RADIAL_IN | 8 | 6 | 20t | 0.06 | 0.01 | 0.01 | 0.45 | `#B8944F`（暗金，硬化沉坠） | radial 双层护壳 | 同上 |
+| `bong:zhenmai_sever_snap` | `zhenmai.sever_chain` | FORWARD | 18 | 2 | 20t | 0.55 | 0.00 | 0.00 | 0.70 | `#F2D68A`（最亮金，断脉爆闪） | burst 爆闪 | 同上 |
+
+**列语义**：`运动形态` = `ZhenmaiPulsePlayer.Form.Motion` 枚举常量名。`主速度` 在 FORWARD 下是沿 `direction` 的前冲速率、RADIAL_* 下是径向速率（RADIAL_IN 为向心，符号在实现里取负）、ORBIT 下是**线**速度（角速度 = 线速度 ÷ 半径）。`脉冲垂直` 是脉冲的固定垂直分量（FORWARD 形态例外：垂直分量来自 `direction` 本身，可俯可仰，故列 0.00）。`穴位点漂移` 是穴位点的垂直速度——**穴位点 lifetime 与脉冲严格一致**，不额外延长。`半径` 是脉冲起始铺开半径（ORBIT 下即环绕半径；穴位点铺在其 0.6 倍处）。
 
 明度阶梯 `harden(#B8944F) < neutralize(#C9A05C) < parry(#D4AF6A) < multipoint(#E0C27E) < sever(#F2D68A)` 与招式烈度同序。
+
+> **review r1 修正（2026-07-20）**：本表此前把 `穴位点` 的行为混在散文里（parry 行写「穴位点静止」），而实现对五招统一给了 `lifetime + 6` 与 `vy = 0.008` 上浮——spec 与实现两处静默不一致。现拆出 `穴位点漂移` 独立数值列并逐招定值，lifetime 收敛为「与脉冲一致」。同时 `zhenmai.multipoint` 的「切向环绕」此前实现只设切向初速度（= 切向抛射，粒子沿切线直线飞离），现改真环绕（见 §P5.1 ⑥）。
 
 **② burst_meridian 3 招 —— `BurstMeridianFamilyPlayer`（共用色系 `#C58B3F`，纯形态分化）**
 
 三招颜色**一律 `#C58B3F`**（与既有 `beng_quan` 本尊同色，统一爆脉家族识别色），读招完全靠形态：
 
-| event_id | 招式 | 基类 | 数量 | lifetime | 速度 / 方向 | 颜色 hex | spawn 模式 | 贴图（复用） |
-|---|---|---|---|---|---|---|---|---|
-| `bong:burst_meridian_tie_shan_kao` | `burst_meridian.tie_shan_kao` | `BongGroundDecalParticle` | 10 | `cast_ticks` | 贴地静止，半径 `0.30+0.45×strength`，自旋 0.05 rad/t | `#C58B3F` | radial 地面撞击冲击环 | `lingqi_ripple` |
-| `bong:burst_meridian_xue_beng_bu` | `burst_meridian.xue_beng_bu` | `BongRibbonParticle` | 12 | `cast_ticks` | 沿 `direction` **反向**拖尾 0.25 格/t（残影落身后） | `#C58B3F` | continuous 步法短尾 | `qi_aura` |
-| `bong:burst_meridian_ni_mai_hu_ti` | `burst_meridian.ni_mai_hu_ti` | `BongSpriteParticle` | 14 | 60t（= buff 窗口） | 体表切向环绕 0.08 格/t + 上浮 0.015 格/t | `#C58B3F` | radial 双高度体表逆流纹 | `qi_aura` |
+| event_id | 招式 | 基类 | 运动形态 | 数量 | count 下限 | lifetime | 主速度 格/t | 半径 格 | 垂直速度 格/t | 自旋 rad/t | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:burst_meridian_tie_shan_kao` | `burst_meridian.tie_shan_kao` | `BongGroundDecalParticle` | IMPACT | 10 | 4 | `cast_ticks`（缺省 16t） | 0.00 | 0.30 + 0.45×strength | 0.00 | 0.05 | `#C58B3F` | radial 地面撞击冲击环 | `lingqi_ripple` |
+| `bong:burst_meridian_xue_beng_bu` | `burst_meridian.xue_beng_bu` | `BongRibbonParticle` | TRAIL | 12 | 2 | `cast_ticks`（缺省 14t） | 0.25 | 不适用 | 0.01 | 不适用 | `#C58B3F` | continuous 步法短尾（沿 `direction` **反向**，残影落身后） | `qi_aura` |
+| `bong:burst_meridian_ni_mai_hu_ti` | `burst_meridian.ni_mai_hu_ti` | `BongOrbitSpriteParticle` | ORBIT | 14 | 4 | 60t（= buff 窗口） | 0.08 | 0.55 | 0.015 | 不适用 | `#C58B3F` | radial 双高度体表逆流纹（真环绕） | `qi_aura` |
+
+**列语义**：`运动形态` = `BurstMeridianFamilyPlayer.Form.Motion` 枚举常量名。`lifetime` 由 server `emit_burst_av` 下发（前两招 = `cast_ticks`，护体 = `NI_MAI_HU_TI_BUFF_DURATION_TICKS` = 60），括号内是 payload 缺 `duration_ticks` 时的 client 回退值。`count 下限` 是 payload `count` 异常偏小时的钳制下界——环形招 4（低于此读不出「环」），线性残影 2 即可成束；上限统一 48。撞击环半径吃 `strength`（server 传 0.95）；`不适用` 的格子在实现里取 0。逆脉护体的双高度环：奇数颗在 `origin.y - 0.25`、偶数颗在 `origin.y + 0.45`。
+
+> **锚定取舍（review r1 #2 收口）**：`ni_mai_hu_ti` 的环绕圆心是 **cast 瞬间 `origin` 的快照，不跟随施法者移动**。既有粒子体系没有「粒子锚定实体」的机制（`VortexSpiralParticle` 同样只存一次圆心），引入属独立能力、不在 P5 范围；60t 窗口内玩家跑开会把逆流纹留在原地。半径恒 0.55 格由 `OrbitPath` 参数化保证（不是力平衡涌现），故不存在纹路逐渐外扩的退化。
 
 **③ npc 3 招 —— `NpcSkillAuraPlayer`（形态从简，id + 颜色强制独立）**
 
-| event_id | 招式 | 基类 | 数量 | lifetime | 速度 / 方向 | 颜色 hex | spawn 模式 | 贴图（复用） |
-|---|---|---|---|---|---|---|---|---|
-| `bong:npc_heal_basic` | `npc.heal_basic` | `BongSpriteParticle` | 12 | 40t | 上浮 0.03 格/t | `#A8E6CF`（薄荷绿） | radial 上升柱 | `qi_aura` |
-| `bong:npc_buff_speed` | `npc.buff_speed` | `BongLineParticle` | 12 | 40t | 水平外冲 0.22 格/t | `#E3C766`（麦黄） | radial 疾行尘 | `qi_aura` |
-| `bong:npc_buff_defense` | `npc.buff_defense` | `BongSpriteParticle` | 12 | 40t | 切向环绕 0.06 格/t | `#5BA8C9`（青蓝） | radial 护体环 | `lingqi_ripple` |
+| event_id | 招式 | 基类 | 运动形态 | 数量 | lifetime | 主速度 格/t | 半径 格 | 垂直速度 格/t | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:npc_heal_basic` | `npc.heal_basic` | `BongSpriteParticle` | COLUMN | 12 | 40t | 0.00 | 0.4 | 0.03 | `#A8E6CF`（薄荷绿） | radial 上升柱 | `qi_aura` |
+| `bong:npc_buff_speed` | `npc.buff_speed` | `BongLineParticle` | OUTRUSH | 12 | 40t | 0.22 | 0.3 | 0.01 | `#E3C766`（麦黄） | radial 疾行尘 | `qi_aura` |
+| `bong:npc_buff_defense` | `npc.buff_defense` | `BongOrbitSpriteParticle` | ORBIT | 12 | 40t | 0.06 | 0.6 | 0.00 | `#5BA8C9`（青蓝） | radial 护体环（真环绕） | `lingqi_ripple` |
+
+**列语义**：`运动形态` = `NpcSkillAuraPlayer.Form.Motion` 枚举常量名。`数量` / `lifetime` 与 server `emit_npc_skill_av` 下发的 `count: Some(12)` / `duration_ticks: Some(40)` 一致，列出的是 payload 缺省时的 client 回退值（count 钳制区间 1–48）。`半径` 是绕身铺开半径（ORBIT 下即环绕半径）。回血柱另按 `i % 4` 分四段身高错落（起点 `origin.y - 0.5`，步进 0.22），疾行尘贴 `origin.y - 0.6` 脚边。
 
 > **buff_speed 配色变更（本阶段有意决策，非漂移）**：旧值 `#9FD8C8` 与 heal 的 `#A8E6CF` 同属淡青绿、仅单通道差 ~10%，远距离不可辨——直接违背本条「颜色必须独立，保证旁观读招」的交付要求。改为麦黄 `#E3C766`，令三招构成 绿 / 黄 / 蓝 高分离色相三元组。heal 与 defense 颜色保持不变。
 
@@ -172,6 +182,16 @@
 | `bong:jiemai_sever_flash` | **是** —— `network/meridian_severed_emit.rs` 被动断脉仍发 | **保留** client 注册与 `bong:jiemai_` 前缀 |
 | `bong:burst_meridian_beng_quan` | 是 —— `beng_quan` 本尊 | 保留（`BurstMeridianBengQuanPlayer` 不动） |
 | `bong:yidao_meridian_repair` | 是 —— `combat/yidao.rs` 医道本尊 | 保留 |
+
+**⑥ 环绕形态的实现契约（review r1 #2 收口，2026-07-20）**
+
+P5 首版把三处「环绕」（`zhenmai.multipoint` / `burst_meridian.ni_mai_hu_ti` / `npc.buff_defense`）实现成**只设切向初速度**——粒子沿切线直线飞离，到中心距离随 tick 线性增长（护体 60t × 0.08 ≈ 4.8 格，早飞出体表几个身位），是切向抛射不是环绕。plan P5 正文「体表逆流纹（Sprite 环绕）」是字面交付物，故按真环绕重做而非改描述降级。
+
+- **`OrbitPath`（新增，纯 Java 无 MC 依赖）**：位置参数化为 `圆心 + 半径 × (cos θ, sin θ)`，θ 每 tick 加 `角速度 = 线速度 ÷ 半径`；垂直分量按 `verticalSpeed × 已过 tick` 线性累积。**半径由构造恒定**，是可硬断言的不变量——区别于既有 `VortexSpiralParticle` 的加力模拟（半径由切向力/向心拉力/阻尼平衡涌现，不可控也不可断言）。
+- **`BongOrbitSpriteParticle` / `BongOrbitLineParticle`（新增）**：把 `OrbitPath` 接到 MC 粒子生命周期。位置由轨道给出，速度字段每 tick 同步成当前切向量——`BongLineParticle` 的 quad 沿速度定向，故脉冲条始终切于圆周，朝向与运动自洽。
+- **贴图仍零新增**：三处环绕复用既有 `qi_aura` / `lingqi_ripple`，未引入任何 png/贴图资产。
+- **方向约定**：正线速度 = 俯视（自 +Y 向下看）自 +x 转向 +z。三处环绕招统一此约定（首版 `ni_mai_hu_ti` 注释写「逆时针」而 `multipoint` 写「顺时针」，两者数学其实相同，本次统一措辞）。
+- **回归锁**：`OrbitPathTest` 断言半径 600 tick 恒定、速度恒切于圆周且速率恒定、角速度 = 线速度/半径、退化参数（半径 0/负/NaN/Inf）构造期拒绝；`SkillParticlePlanTest` 断言三招确实产出 `Orbit*` 描述符，并推进各自完整 lifetime 后半径不漂。
 
 ### P5.2 双端闭环接线矩阵（交付物）
 
