@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -929,6 +930,123 @@ class AnimCastTicksAlignmentTest {
                 assertManifestHolds(manifestFile);
             }
         }
+    }
+
+    /**
+     * strike 段发力帧机械锁（review r1 finding #1）：精度标准 #3 要求「蓄势用
+     * easeOut 族、<b>发力用 easeIn 族</b>、收势 easeInOutSine」，但
+     * {@link #assertAxisDense} 只断言 easing「显式且非 linear」——{@code INOUTSINE}
+     * 两条都满足，于是整条 strike 段一个加速帧都没有也照样放行
+     * （{@code stance_woliu} 即以此形态混过 P6 交付）。本用例把「发力」这一半机械化。
+     *
+     * <p><b>easing 管辖语义（决定断言区间；反直觉，实证得来）</b>：本仓 140 份动画
+     * JSON 无一声明 {@code easeBeforeKeyframe}，{@code KeyframeAnimation.isEasingBefore}
+     * 取默认 {@code false}，{@code KeyframeAnimationPlayer#getValueFromKeyframes}
+     * 因而走 {@code before.ease}——<b>某帧上写的 easing 管辖的是「本帧 → 下一帧」
+     * 这一段</b>，不是「上一帧 → 本帧」。所以真正管辖 strike 段的是 tick ∈
+     * {@code [strikeFrom, strikeTo)} 的帧；写在 strike <b>末</b>帧上的 easing 实际
+     * 跑去管收势段，不构成发力帧（{@code anqi_single_snipe} 原形态即栽在这里：
+     * 生成器 docstring 写着「strike 4→6 easeIn 族 INQUAD」，但 INQUAD 被放在顶点帧
+     * tick 6 上，实际管的是 recovery 6→8，strike 段反而被 t4 的 OUTSINE 管成减速）。
+     *
+     * <p><b>豁免</b>：instant 型（{@link #INSTANT_RESOLVER_SKILLS}）不适用——该类招
+     * strike 顶点即 tick 0，开帧就是命中姿态，其后只承担余韵与收势，根本没有
+     * 「加速撞击」相位，easeOut 从 t0 起才是正确形态。为防「随手加个
+     * {@code instant:true} 就绕过本锁」，此处<b>反向核验</b>：任何声明 instant 的
+     * manifest 必须确实登记在 {@code INSTANT_RESOLVER_SKILLS} 里。segment 型
+     * （loop 蓄力 / charge_hold 充能）没有自己的 strike 段（strike 归其 release 段
+     * 动画），同样不适用。
+     */
+    @Test
+    void strikePhaseCarriesEaseInDrive() throws IOException {
+        Set<String> instantAnims = new HashSet<>(INSTANT_RESOLVER_SKILLS.values());
+        List<String> checked = new ArrayList<>();
+        try (Stream<Path> files = Files.list(manifestRoot())) {
+            for (Path manifestFile : files
+                    .filter(p -> p.getFileName().toString().endsWith(".json")).sorted().toList()) {
+                String animName = manifestFile.getFileName().toString().replace(".json", "");
+                JsonObject manifest =
+                    JsonParser.parseString(Files.readString(manifestFile)).getAsJsonObject();
+                if (manifest.has("segment")) {
+                    continue;
+                }
+                if (manifest.has("instant")) {
+                    assertTrue(instantAnims.contains(animName),
+                        animName + " 的 manifest 声明了 instant，却没登记在 INSTANT_RESOLVER_SKILLS"
+                            + "——instant 是 strike 发力帧红线的唯一豁免通道（顶点在 tick 0、"
+                            + "无加速相位），不许拿它绕过 strikePhaseCarriesEaseInDrive；"
+                            + "新招入类前必须先核验 resolver 确为立即结算并登记进分类表");
+                    continue;
+                }
+                JsonArray strikeRange = manifest.getAsJsonArray("strike");
+                int strikeFrom = strikeRange.get(0).getAsInt();
+                int strikeTo = strikeRange.get(1).getAsInt();
+                Set<String> strikeAxes = new HashSet<>();
+                for (JsonElement axis : manifest.getAsJsonArray("strike_axes")) {
+                    strikeAxes.add(axis.getAsString());
+                }
+                AnimMeta meta = readAnim(animName);
+                List<String> driveFrames = new ArrayList<>();
+                Map<Integer, String> governingEasings = new TreeMap<>();
+                for (JsonElement moveElement : meta.moves()) {
+                    JsonObject move = moveElement.getAsJsonObject();
+                    int tick = move.get("tick").getAsInt();
+                    // 半开区间：只有 [from, to) 的帧其 easing 管辖的插值段落在 strike 内。
+                    if (tick < strikeFrom || tick >= strikeTo) {
+                        continue;
+                    }
+                    if (!move.has("easing") || !touchesAnyAxis(move, strikeAxes)) {
+                        continue;
+                    }
+                    String easing = move.get("easing").getAsString();
+                    governingEasings.put(tick, easing);
+                    if (isEaseInFamily(easing)) {
+                        driveFrames.add("t" + tick + "=" + easing);
+                    }
+                }
+                assertFalse(governingEasings.isEmpty(),
+                    animName + " strike 段 [" + strikeFrom + "," + strikeTo
+                        + ") 内没有任何一帧触及声明的主打击轴 " + strikeAxes
+                        + "——strike_axes 与实际关键帧漂移，发力节奏无从谈起");
+                assertFalse(driveFrames.isEmpty(),
+                    animName + " strike 段 [" + strikeFrom + "," + strikeTo
+                        + ") 缺少 easeIn 族发力帧（精度标准 #3「发力用 easeIn 族」）。"
+                        + "该段主打击轴各帧实际 easing = " + governingEasings
+                        + "；期望其中至少一帧为 easeIn 族（INQUAD / INCUBIC / INSINE / ...，"
+                        + "INOUT* 属 easeInOut 族不算发力）。注意库语义是 before.ease："
+                        + "帧上的 easing 管辖「本帧 → 下一帧」，所以发力帧要落在 strike 段的"
+                        + "起始侧（tick < " + strikeTo + "），写到末帧上会跑去管收势段");
+                checked.add(animName);
+            }
+        }
+        assertFalse(checked.isEmpty(),
+            "没有任何三段式 manifest 被 strike 发力帧红线覆盖——本锁已空转，"
+            + "检查 manifest 目录与类型分派（segment / instant 两类被有意跳过）");
+    }
+
+    /** easeIn 族判定：{@code IN*} 但排除 {@code INOUT*}（后者是 easeInOut 族，非发力）。 */
+    private static boolean isEaseInFamily(String easing) {
+        String upper = easing.toUpperCase(Locale.ROOT);
+        return upper.startsWith("IN") && !upper.startsWith("INOUT");
+    }
+
+    /** 该关键帧是否写到了给定轴集合里的任意一条（key = {@code part.axis}）。 */
+    private static boolean touchesAnyAxis(JsonObject move, Set<String> axes) {
+        for (String part : move.keySet()) {
+            if (part.equals("tick") || part.equals("easing") || part.equals("comment")) {
+                continue;
+            }
+            JsonElement axesElement = move.get(part);
+            if (!axesElement.isJsonObject()) {
+                continue;
+            }
+            for (String axis : axesElement.getAsJsonObject().keySet()) {
+                if (!axis.equals("comment") && axes.contains(part + "." + axis)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static Path manifestRoot() {
