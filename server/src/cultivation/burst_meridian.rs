@@ -30,7 +30,12 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 const BENG_QUAN_ANIM_ID: &str = "bong:beng_quan";
-const BENG_QUAN_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+pub(crate) const BENG_QUAN_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+
+/// 爆脉家族统一识别色（plan §P5.1 ②）。四招共用同一色系，读招**完全靠形态**
+/// 分化——崩拳 Line 爆发 / 靠撞 GroundDecal 冲击环 / 血崩步 Ribbon 残影 /
+/// 逆脉护体 Sprite 体表环绕。
+pub(crate) const BURST_MERIDIAN_FAMILY_COLOR: &str = "#C58B3F";
 
 pub const BENG_QUAN_SKILL_ID: &str = "burst_meridian.beng_quan";
 pub const BENG_QUAN_EVENT_SKILL: &str = "beng_quan";
@@ -51,7 +56,10 @@ const TIE_SHAN_KAO_MERIDIANS: [MeridianId; 1] = [MeridianId::Stomach];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属靠身撞击动画（借用解除：原借崩拳出拳
 /// `bong:beng_quan`，肩胯靠撞与出拳姿态语义完全不同）。
 const TIE_SHAN_KAO_ANIM_ID: &str = "bong:tie_shan_kao";
-const TIE_SHAN_KAO_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+/// plan-skill-anim-fidelity-v1 P5 —— 专属撞击冲击环粒子（借用解除：原借崩拳
+/// `bong:burst_meridian_beng_quan`，与崩拳同粒子则旁观者无从分辨靠撞与出拳）。
+/// 形态 = 地面 `BongGroundDecalParticle` 冲击环，见 plan §P5.1 ②。
+pub(crate) const TIE_SHAN_KAO_PARTICLE_ID: &str = "bong:burst_meridian_tie_shan_kao";
 const TIE_SHAN_KAO_AUDIO_RECIPE: &str = "hit_heavy";
 /// 与 known_techniques.tie_shan_kao.range 对齐（近身撞）。
 const TIE_SHAN_KAO_REACH: AttackReach = AttackReach::new(1.0, 0.5);
@@ -67,7 +75,9 @@ const XUE_BENG_BU_MERIDIANS: [MeridianId; 1] = [MeridianId::Gallbladder];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属步法突进动画（借用解除：原借崩拳出拳
 /// `bong:beng_quan`，位移招播出拳属姿态语义错位）。
 const XUE_BENG_BU_ANIM_ID: &str = "bong:xue_beng_bu";
-const XUE_BENG_BU_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+/// plan-skill-anim-fidelity-v1 P5 —— 专属步法残影粒子（借用解除同上）。
+/// 形态 = `BongRibbonParticle` 反向拖尾短残影，见 plan §P5.1 ②。
+pub(crate) const XUE_BENG_BU_PARTICLE_ID: &str = "bong:burst_meridian_xue_beng_bu";
 const XUE_BENG_BU_AUDIO_RECIPE: &str = "movement_dash";
 
 // ─── 逆脉护体（ni_mai_hu_ti）─ 逆转真元护要害，短时压住外伤冲击 ────────────────────
@@ -83,7 +93,9 @@ const NI_MAI_HU_TI_MERIDIANS: [MeridianId; 1] = [MeridianId::Pericardium];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属护体结印动画（缺失补齐：原 `anim_id: None`
 /// 完全不发 PlayAnim，护体招只有粒子+嗡音、玩家无姿态反馈）。
 const NI_MAI_HU_TI_ANIM_ID: &str = "bong:ni_mai_hu_ti";
-const NI_MAI_HU_TI_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+/// plan-skill-anim-fidelity-v1 P5 —— 专属体表逆流纹粒子（借用解除同上）。
+/// 形态 = `BongSpriteParticle` 双高度体表环绕，见 plan §P5.1 ②。
+pub(crate) const NI_MAI_HU_TI_PARTICLE_ID: &str = "bong:burst_meridian_ni_mai_hu_ti";
 const NI_MAI_HU_TI_AUDIO_RECIPE: &str = "zhenmai_shield_hum";
 
 const RIGHT_ARM_MERIDIANS: [MeridianId; 3] = [
@@ -330,7 +342,7 @@ fn emit_beng_quan_vfx(
                 caster_position.z,
             ],
             direction: Some([direction.x, direction.y, direction.z]),
-            color: Some("#C58B3F".to_string()),
+            color: Some(BURST_MERIDIAN_FAMILY_COLOR.to_string()),
             strength: Some(0.9),
             count: Some(8),
             duration_ticks: Some(BENG_QUAN_ANIM_DURATION_TICKS as u16),
@@ -443,7 +455,7 @@ pub fn resolve_tie_shan_kao(
         BurstAv {
             anim_id: Some(TIE_SHAN_KAO_ANIM_ID),
             particle_id: TIE_SHAN_KAO_PARTICLE_ID,
-            color: "#B8763A",
+            color: BURST_MERIDIAN_FAMILY_COLOR,
             strength: 0.95,
             count: 10,
             duration_ticks: cast_ticks as u16,
@@ -545,7 +557,7 @@ pub fn resolve_xue_beng_bu(
         BurstAv {
             anim_id: Some(XUE_BENG_BU_ANIM_ID),
             particle_id: XUE_BENG_BU_PARTICLE_ID,
-            color: "#A23A3A",
+            color: BURST_MERIDIAN_FAMILY_COLOR,
             strength: 0.85,
             count: 12,
             duration_ticks: cast_ticks as u16,
@@ -644,7 +656,7 @@ pub fn resolve_ni_mai_hu_ti(
             // 姿态不借崩拳出拳是对的，但缺动画=玩家零姿态反馈，MISSING allowlist 条目）。
             anim_id: Some(NI_MAI_HU_TI_ANIM_ID),
             particle_id: NI_MAI_HU_TI_PARTICLE_ID,
-            color: "#5BA8C9",
+            color: BURST_MERIDIAN_FAMILY_COLOR,
             strength: 0.7,
             count: 14,
             duration_ticks: NI_MAI_HU_TI_BUFF_DURATION_TICKS.min(u16::MAX as u64) as u16,
@@ -2225,6 +2237,141 @@ mod tests {
             transfer.reason,
             QiTransferReason::ReleaseToZone,
             "overflow transfer reason must be ReleaseToZone"
+        );
+    }
+
+    // ─── plan-skill-anim-fidelity-v1 P5：粒子去复用回归锁 ─────────────────────────
+    //
+    // P3 解除了动画借用,粒子借用留到 P5：三招此前 100% 借崩拳
+    // `bong:burst_meridian_beng_quan`。与真脉相反,爆脉三招**共用**识别色 #C58B3F,
+    // 读招完全靠形态(GroundDecal 冲击环 / Ribbon 步法残影 / Sprite 体表逆流纹),
+    // 所以这里锁的是「id 全异 + 颜色全同」这一对方向相反的性质。
+
+    /// 收集本次 update 内发出的全部 SpawnParticle `(event_id, color)`。
+    fn emitted_particles(app: &App) -> Vec<(String, Option<String>)> {
+        app.world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .filter_map(|request| match &request.payload {
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id, color, ..
+                } => Some((event_id.clone(), color.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 逐招对拍共享接线表（`network::skill_vfx_wiring`,client 按同一份表注册）。
+    fn assert_emits_wired_particle(app: &App, skill_id: &str) {
+        let wiring = crate::network::skill_vfx_wiring::wiring_for(skill_id)
+            .unwrap_or_else(|| panic!("{skill_id} 未登记进 P5_SKILL_VFX_WIRING 接线表"));
+        let particles = emitted_particles(app);
+        assert_eq!(
+            particles.len(),
+            1,
+            "{skill_id} 应恰好发 1 条 SpawnParticle,实际 {particles:?}"
+        );
+        assert_eq!(
+            particles[0].0, wiring.event_id,
+            "{skill_id} 发出的粒子 event_id 与接线表不符(client 按表注册,不符即 bridgeMiss 静默无特效)"
+        );
+        assert_eq!(
+            particles[0].1.as_deref(),
+            Some(wiring.color),
+            "{skill_id} 的粒子颜色应为爆脉家族色 {}",
+            wiring.color
+        );
+        assert_ne!(
+            particles[0].0, wiring.legacy_event_id,
+            "{skill_id} 回退到了 P5 之前借用的崩拳粒子 `{}`",
+            wiring.legacy_event_id
+        );
+    }
+
+    #[test]
+    fn p5_bespoke_particle_ids_emitted_and_beng_quan_particle_borrow_removed() {
+        // 常量层面先锁专属 + 互异。
+        assert_eq!(
+            TIE_SHAN_KAO_PARTICLE_ID,
+            "bong:burst_meridian_tie_shan_kao"
+        );
+        assert_eq!(XUE_BENG_BU_PARTICLE_ID, "bong:burst_meridian_xue_beng_bu");
+        assert_eq!(
+            NI_MAI_HU_TI_PARTICLE_ID,
+            "bong:burst_meridian_ni_mai_hu_ti"
+        );
+        for particle_id in [
+            TIE_SHAN_KAO_PARTICLE_ID,
+            XUE_BENG_BU_PARTICLE_ID,
+            NI_MAI_HU_TI_PARTICLE_ID,
+        ] {
+            assert_ne!(
+                particle_id, BENG_QUAN_PARTICLE_ID,
+                "去复用回归锁：{particle_id} 不得回退借崩拳粒子 {BENG_QUAN_PARTICLE_ID}"
+            );
+        }
+
+        // 事件路径：tie_shan_kao。
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_emits_wired_particle(&app, TIE_SHAN_KAO_SKILL_ID);
+
+        // 事件路径：xue_beng_bu(需 Look 提供朝向)。
+        let mut app = full_app();
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_emits_wired_particle(&app, XUE_BENG_BU_SKILL_ID);
+
+        // 事件路径：ni_mai_hu_ti。
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_emits_wired_particle(&app, NI_MAI_HU_TI_SKILL_ID);
+    }
+
+    #[test]
+    fn p5_burst_family_shares_one_color_but_never_one_id() {
+        // 家族设计：共用识别色 + 形态分化。两个性质都必须成立——
+        // 只共用色而 id 也相同 = 回到借用；只 id 不同而颜色发散 = 失去家族识别。
+        let ids = [
+            BENG_QUAN_PARTICLE_ID,
+            TIE_SHAN_KAO_PARTICLE_ID,
+            XUE_BENG_BU_PARTICLE_ID,
+            NI_MAI_HU_TI_PARTICLE_ID,
+        ];
+        let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "爆脉四招粒子 id 必须两两不同,实际 {unique:?}"
+        );
+        for id in ids {
+            assert!(
+                id.starts_with("bong:burst_meridian_"),
+                "{id} 不在 bong:burst_meridian_ 家族前缀下,会掉出 Important 优先级档"
+            );
+        }
+        assert_eq!(
+            BURST_MERIDIAN_FAMILY_COLOR, "#C58B3F",
+            "爆脉家族识别色被改动——plan §P5.1 ② 指定为 #C58B3F"
+        );
+    }
+
+    #[test]
+    fn p5_rejected_burst_cast_emits_no_particle() {
+        // 拒绝路径(真元不足)不得发粒子。
+        let mut app = full_app();
+        let caster = spawn_caster(&mut app, Realm::Condense, 0.0, DVec3::ZERO);
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Rejected { .. }));
+        assert!(
+            emitted_particles(&app).is_empty(),
+            "被拒绝的施放不得发粒子"
         );
     }
 }

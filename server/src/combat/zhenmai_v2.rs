@@ -56,9 +56,28 @@ const MULTIPOINT_ANIM_ID: &str = "bong:zhenmai_multipoint";
 const HARDEN_ANIM_ID: &str = "bong:zhenmai_harden";
 const SEVER_CHAIN_ANIM_ID: &str = "bong:zhenmai_sever_chain";
 
-const PARRY_PARTICLE_ID: &str = "bong:jiemai_burst_blood";
-const NEUTRALIZE_PARTICLE_ID: &str = "bong:jiemai_neutralize_dust";
-const SEVER_FLASH_PARTICLE_ID: &str = "bong:jiemai_sever_flash";
+// ─── plan-skill-anim-fidelity-v1 P5 —— 5 招专属粒子（借用解除）────────────────────
+//
+// 去复用前：5 招挤在 3 个 `bong:jiemai_*` id 上（multipoint 借 parry、harden 借
+// neutralize），且 client 侧三者**全部注册到剑气 `SwordQiSlashPlayer`**——真脉招式
+// 在旁观者眼里全是剑气斩弧，五招互不可辨。现改为 5 个专属 id → `ZhenmaiPulsePlayer`
+// （金脉短脉冲 + 穴位点）。
+//
+// 注意 `bong:jiemai_sever_flash` 并非就此消失：被动断脉叙事仍由
+// `network/meridian_severed_emit.rs` 发射该 id，client 注册保留。
+pub(crate) const PARRY_PARTICLE_ID: &str = "bong:zhenmai_parry_flash";
+pub(crate) const NEUTRALIZE_PARTICLE_ID: &str = "bong:zhenmai_neutralize_dust";
+pub(crate) const MULTIPOINT_PARTICLE_ID: &str = "bong:zhenmai_multipoint_ring";
+pub(crate) const HARDEN_PARTICLE_ID: &str = "bong:zhenmai_harden_shell";
+pub(crate) const SEVER_SNAP_PARTICLE_ID: &str = "bong:zhenmai_sever_snap";
+
+/// 金脉色系（plan §P5.1 ①）：anchor `#D4AF6A`，明度阶梯与招式烈度同序
+/// （harden 最沉 → sever 最亮），保证同族可认 + 逐招可辨。
+pub(crate) const PARRY_PARTICLE_COLOR: &str = "#D4AF6A";
+pub(crate) const NEUTRALIZE_PARTICLE_COLOR: &str = "#C9A05C";
+pub(crate) const MULTIPOINT_PARTICLE_COLOR: &str = "#E0C27E";
+pub(crate) const HARDEN_PARTICLE_COLOR: &str = "#B8944F";
+pub(crate) const SEVER_SNAP_PARTICLE_COLOR: &str = "#F2D68A";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,6 +125,50 @@ impl ZhenmaiSkillId {
             Self::MultiPoint => MULTIPOINT_ANIM_ID,
             Self::HardenMeridian => HARDEN_ANIM_ID,
             Self::SeverChain => SEVER_CHAIN_ANIM_ID,
+        }
+    }
+
+    /// 专属粒子 event_id（plan §P5.2 接线矩阵；client `ZhenmaiPulsePlayer`）。
+    pub(crate) fn particle_id(self) -> &'static str {
+        match self {
+            Self::Parry => PARRY_PARTICLE_ID,
+            Self::Neutralize => NEUTRALIZE_PARTICLE_ID,
+            Self::MultiPoint => MULTIPOINT_PARTICLE_ID,
+            Self::HardenMeridian => HARDEN_PARTICLE_ID,
+            Self::SeverChain => SEVER_SNAP_PARTICLE_ID,
+        }
+    }
+
+    /// 金脉色系逐招 hex（plan §P5.1 ① 明度阶梯）。
+    pub(crate) fn particle_color(self) -> &'static str {
+        match self {
+            Self::Parry => PARRY_PARTICLE_COLOR,
+            Self::Neutralize => NEUTRALIZE_PARTICLE_COLOR,
+            Self::MultiPoint => MULTIPOINT_PARTICLE_COLOR,
+            Self::HardenMeridian => HARDEN_PARTICLE_COLOR,
+            Self::SeverChain => SEVER_SNAP_PARTICLE_COLOR,
+        }
+    }
+
+    /// 粒子强度（沿用去复用前的逐招取值，本阶段不动表现强度）。
+    fn particle_strength(self) -> f32 {
+        match self {
+            Self::Parry => 0.8,
+            Self::Neutralize => 0.55,
+            Self::MultiPoint => 0.7,
+            Self::HardenMeridian => 0.45,
+            Self::SeverChain => 1.0,
+        }
+    }
+
+    /// Line 短脉冲数（穴位点数由 client `ZhenmaiPulsePlayer` 按形态自持）。
+    fn particle_count(self) -> u16 {
+        match self {
+            Self::Parry => 8,
+            Self::Neutralize => 10,
+            Self::MultiPoint => 16,
+            Self::HardenMeridian => 8,
+            Self::SeverChain => 18,
         }
     }
 }
@@ -550,15 +613,7 @@ fn resolve_parry(
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::Parry);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::Parry,
-        PARRY_PARTICLE_ID,
-        "#B6172F",
-        0.8,
-        8,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::Parry);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: 1,
@@ -620,15 +675,7 @@ fn resolve_neutralize(
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::Neutralize);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::Neutralize,
-        NEUTRALIZE_PARTICLE_ID,
-        "#9CA3AF",
-        0.55,
-        10,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::Neutralize);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: 4,
@@ -683,15 +730,7 @@ fn resolve_multipoint(
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::MultiPoint);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::MultiPoint,
-        PARRY_PARTICLE_ID,
-        "#9B1C31",
-        0.7,
-        16,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::MultiPoint);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: 6,
@@ -769,15 +808,7 @@ fn resolve_harden(
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::HardenMeridian);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::HardenMeridian,
-        NEUTRALIZE_PARTICLE_ID,
-        "#C7A94B",
-        0.45,
-        8,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::HardenMeridian);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: 5,
@@ -871,15 +902,7 @@ fn resolve_sever_chain(
         now_tick.saturating_add(SEVER_CHAIN_COOLDOWN_TICKS),
     );
     record_practice(world, caster, ZhenmaiSkillId::SeverChain);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::SeverChain,
-        SEVER_FLASH_PARTICLE_ID,
-        "#F4C542",
-        1.0,
-        18,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::SeverChain);
     CastResult::Started {
         cooldown_ticks: SEVER_CHAIN_COOLDOWN_TICKS,
         anim_duration_ticks: 8,
@@ -1461,15 +1484,12 @@ fn record_practice(world: &mut bevy_ecs::world::World, caster: Entity, skill: Zh
     });
 }
 
-fn emit_skill_feedback(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    skill: ZhenmaiSkillId,
-    particle_id: &str,
-    color: &str,
-    strength: f32,
-    count: u16,
-) {
+/// 发一招的完整 AV（PlayAnim + SpawnParticle + 音效）。
+///
+/// 粒子 id / 颜色 / 强度 / 数量全部由 `skill` 自持（`ZhenmaiSkillId::particle_*`），
+/// 不再由调用点各传各的——P5 去复用前 5 个调用点分别硬传 3 个共享 id，正是
+/// 「multipoint 借 parry、harden 借 neutralize」这类静默复用的滋生处。
+fn emit_skill_feedback(world: &mut bevy_ecs::world::World, caster: Entity, skill: ZhenmaiSkillId) {
     let origin = world
         .get::<Position>(caster)
         .map(|position| position.get())
@@ -1492,12 +1512,12 @@ fn emit_skill_feedback(
     world.send_event(VfxEventRequest::new(
         origin,
         VfxEventPayloadV1::SpawnParticle {
-            event_id: particle_id.to_string(),
+            event_id: skill.particle_id().to_string(),
             origin: [origin.x, origin.y + 1.0, origin.z],
             direction: Some([0.0, 0.1, 0.0]),
-            color: Some(color.to_string()),
-            strength: Some(strength),
-            count: Some(count),
+            color: Some(skill.particle_color().to_string()),
+            strength: Some(skill.particle_strength()),
+            count: Some(skill.particle_count()),
             duration_ticks: Some(20),
         },
     ));
@@ -2475,6 +2495,186 @@ mod tests {
             transfers.is_empty(),
             "no QiTransfer should be emitted on buff expiry (no drain); got {} events",
             transfers.len()
+        );
+    }
+
+    // ─── plan-skill-anim-fidelity-v1 P5：粒子去复用回归锁 ─────────────────────────
+    //
+    // 去复用前 5 招挤在 3 个 `bong:jiemai_*` 上（multipoint 借 parry、harden 借
+    // neutralize），client 侧三者又全部指向剑气 SwordQiSlashPlayer。这组测试锁住
+    // 「每招发自己的 id + 自己的金脉色 + 绝不回退借用值」，断言值一律取自
+    // `network::skill_vfx_wiring` 的共享接线表（双端同源，防两端字符串各自漂移）。
+
+    /// 收集本 tick 发出的 SpawnParticle `(event_id, color)`。
+    fn emitted_particles(app: &App) -> Vec<(String, Option<String>)> {
+        app.world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .filter_map(|request| match &request.payload {
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id, color, ..
+                } => Some((event_id.clone(), color.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 逐招对拍：恰好 1 条粒子、id/color 与共享接线表一致、且不是旧借用 id。
+    fn assert_emits_wired_particle(app: &App, skill: ZhenmaiSkillId, skill_id: &str) {
+        let wiring = crate::network::skill_vfx_wiring::wiring_for(skill_id)
+            .unwrap_or_else(|| panic!("{skill_id} 未登记进 P5_SKILL_VFX_WIRING 接线表"));
+
+        let particles = emitted_particles(app);
+        assert_eq!(
+            particles.len(),
+            1,
+            "{skill_id} 应恰好发 1 条 SpawnParticle，实际 {particles:?}"
+        );
+        assert_eq!(
+            particles[0].0, wiring.event_id,
+            "{skill_id} 发出的粒子 event_id 与接线表不符（client 按表注册，不符即 bridgeMiss 静默无特效）"
+        );
+        assert_eq!(
+            particles[0].1.as_deref(),
+            Some(wiring.color),
+            "{skill_id} 的粒子颜色应为金脉色系 {}，实际 {:?}",
+            wiring.color,
+            particles[0].1
+        );
+        assert_ne!(
+            particles[0].0, wiring.legacy_event_id,
+            "{skill_id} 回退到了 P5 之前的借用 id `{}`——去复用被撤销",
+            wiring.legacy_event_id
+        );
+        assert_eq!(
+            skill.particle_id(),
+            wiring.event_id,
+            "{skill_id} 的 ZhenmaiSkillId::particle_id() 与接线表不一致"
+        );
+    }
+
+    #[test]
+    fn p5_parry_emits_bespoke_gold_pulse() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Induce, 20.0);
+        assert!(matches!(
+            resolve_parry(app.world_mut(), entity, 0, None),
+            CastResult::Started { .. }
+        ));
+        assert_emits_wired_particle(&app, ZhenmaiSkillId::Parry, PARRY_SKILL_ID);
+    }
+
+    #[test]
+    fn p5_neutralize_emits_bespoke_gold_pulse() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Condense, 100.0);
+        assert!(matches!(
+            resolve_neutralize(app.world_mut(), entity, 0, None),
+            CastResult::Started { .. }
+        ));
+        assert_emits_wired_particle(&app, ZhenmaiSkillId::Neutralize, NEUTRALIZE_SKILL_ID);
+    }
+
+    #[test]
+    fn p5_multipoint_no_longer_borrows_parry_particle() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Solidify, 100.0);
+        assert!(matches!(
+            resolve_multipoint(app.world_mut(), entity, 0, None),
+            CastResult::Started { .. }
+        ));
+        assert_emits_wired_particle(&app, ZhenmaiSkillId::MultiPoint, MULTIPOINT_SKILL_ID);
+        // 定向负向断言：multipoint 曾直接复用 PARRY_PARTICLE_ID 常量本身。
+        assert_ne!(
+            MULTIPOINT_PARTICLE_ID, PARRY_PARTICLE_ID,
+            "multipoint 不得与 parry 共用粒子 id（去复用前正是这么写的）"
+        );
+    }
+
+    #[test]
+    fn p5_harden_no_longer_borrows_neutralize_particle() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Void, 100.0);
+        assert!(matches!(
+            resolve_harden(app.world_mut(), entity, 0, None),
+            CastResult::Started { .. }
+        ));
+        assert_emits_wired_particle(&app, ZhenmaiSkillId::HardenMeridian, HARDEN_SKILL_ID);
+        assert_ne!(
+            HARDEN_PARTICLE_ID, NEUTRALIZE_PARTICLE_ID,
+            "harden 不得与 neutralize 共用粒子 id（去复用前正是这么写的）"
+        );
+    }
+
+    #[test]
+    fn p5_sever_chain_emits_bespoke_gold_pulse() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Void, 200.0);
+        configure_sever_chain(
+            &mut app,
+            entity,
+            MeridianId::Du,
+            ZhenmaiAttackKind::PhysicalCarrier,
+        );
+        assert!(matches!(
+            resolve_sever_chain(app.world_mut(), entity, 0, None),
+            CastResult::Started { .. }
+        ));
+        assert_emits_wired_particle(&app, ZhenmaiSkillId::SeverChain, SEVER_CHAIN_SKILL_ID);
+        // sever 的旧 id 仍被 meridian_severed_emit 使用,所以这里锁的是"zhenmai 不再发它"。
+        assert_ne!(
+            SEVER_SNAP_PARTICLE_ID,
+            crate::network::meridian_severed_emit::SEVER_FLASH_PARTICLE_ID,
+            "主动断脉应发专属 id;被动断脉叙事才继续用 jiemai_sever_flash"
+        );
+    }
+
+    #[test]
+    fn p5_five_skills_have_pairwise_distinct_particles_in_gold_family() {
+        let skills = [
+            ZhenmaiSkillId::Parry,
+            ZhenmaiSkillId::Neutralize,
+            ZhenmaiSkillId::MultiPoint,
+            ZhenmaiSkillId::HardenMeridian,
+            ZhenmaiSkillId::SeverChain,
+        ];
+        let ids: std::collections::BTreeSet<&str> =
+            skills.iter().map(|skill| skill.particle_id()).collect();
+        assert_eq!(
+            ids.len(),
+            skills.len(),
+            "5 招粒子 id 必须两两不同（旁观读招前提），实际 {ids:?}"
+        );
+        let colors: std::collections::BTreeSet<&str> =
+            skills.iter().map(|skill| skill.particle_color()).collect();
+        assert_eq!(
+            colors.len(),
+            skills.len(),
+            "5 招粒子颜色必须两两不同（金脉明度阶梯），实际 {colors:?}"
+        );
+        // 全部落在 bong:zhenmai_ 前缀下——既是命名一致性,也让优先级前缀表自动命中 Important。
+        for skill in skills {
+            assert!(
+                skill.particle_id().starts_with("bong:zhenmai_"),
+                "{} 的粒子 id `{}` 不在 bong:zhenmai_ 家族前缀下,会掉出 Important 优先级档",
+                skill.action(),
+                skill.particle_id()
+            );
+        }
+    }
+
+    #[test]
+    fn p5_rejected_cast_emits_no_particle() {
+        // 拒绝路径不得发粒子（否则玩家看到特效却没生效,是最糟的反馈错配）。
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Induce, 1.0);
+        assert!(matches!(
+            resolve_parry(app.world_mut(), entity, 0, None),
+            CastResult::Rejected { .. }
+        ));
+        assert!(
+            emitted_particles(&app).is_empty(),
+            "被拒绝的施放不得发粒子"
         );
     }
 }

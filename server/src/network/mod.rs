@@ -77,6 +77,9 @@ pub mod scroll_open_emit;
 pub mod skill_config_emit;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
+pub mod skill_vfx_wiring;
+#[cfg(test)]
+mod skill_vfx_wiring_test;
 pub mod skillbar_config_emit;
 #[cfg(test)]
 mod skillbar_config_emit_test;
