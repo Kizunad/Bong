@@ -164,7 +164,9 @@ public final class NpcSkillAuraPlayer implements VfxPlayer {
                     1.4, 0.5, 0.07,
                     rgb, SPEED_ALPHA, lifetime, SkillParticleSpawn.Sheet.QI_AURA
                 );
-                // 护体：贴身真环绕，圆心锚定 cast 瞬间 origin（同 burst 逆脉护体的取舍）。
+                // 护体：真环绕（恒半径），圆心固定为本次 payload 的 origin——40t lifetime 内
+                // **不跟随** NPC 移动。这是一次性施法提示，与 burst 逆脉护体不同：后者是 60t
+                // 存续 buff 的「体表」逆流纹，由 server 按施法者当前位置周期重发实现跟随。
                 case ORBIT -> new SkillParticleSpawn.OrbitPoint(
                     new SkillParticleSpawn.OrbitSpec(
                         origin[0], origin[1], origin[2],
