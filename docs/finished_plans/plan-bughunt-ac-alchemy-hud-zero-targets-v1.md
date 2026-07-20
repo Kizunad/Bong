@@ -104,7 +104,11 @@
   + `active=false` finished guidance），可重试；恢复条件后重试成功且全程只一次发奖。炸炉仍是
   不可逆终局：立刻 end_session + explode VFX/伤害/裂痕 outcome，永不混入 complete。ignite 拒绝
   覆盖 unclaimed finished。`AlchemyFurnace::{has_session,has_unclaimed_finished}` +
-  `start_session` 占炉守卫同步加固。
+  `start_session` 占炉守卫同步加固。finished-unclaimed 等待取回期间，feed/intervention 还分别由
+  `alchemy_feed_slot_rejects_finished_unclaimed_session` /
+  `alchemy_intervention_rejects_finished_unclaimed_session` 经真实 `bong:client_request` handler seam
+  锁定：拒绝提示可见，staged materials / inventory / temperature / injected qi / interventions 全不变，
+  intervention 额外 0 `alchemy_stir`、0 intervention VFX、0 `AlchemyInterventionResult` payload。
 - `server/src/network/alchemy_snapshot_emit.rs` 的测试 helper 直接调用真实 `build_session_data`
   与生产 `serialize_server_data_payload_proto`，唯一生成 active / finished 两份完整
   `ServerDataEnvelope` 字节。普通测试只在内存重建并与仓库 fixture 逐字节比较；唯一写盘入口
@@ -164,8 +168,9 @@
 - **本节业务修复提交**（2026-07-20）：non-explode take-back 两阶段原子结算 + 饱和契约测试
   （成功/缺编号器可重试/背包满可重试/缺模板可重试/explode 不混 complete/ignite 拒覆盖）+ furnace
   占炉守卫。
-- **本节所在提交**（2026-07-20）：只原地校正既有 `## Finish Evidence`，绑定原子 take-back 语义与
-  最新 server 门禁；不重复 promotion/mv，不追加第二个 Finish Evidence，不写无法自证的“自身 SHA”。
+- **本节所在提交**（2026-07-20）：经真实 `bong:client_request` seam 新增 finished-unclaimed
+  feed/intervention 拒绝契约测试，并只原地更新既有 `## Finish Evidence`；production handler 逻辑未改，
+  不重复 promotion/mv，不追加第二个 Finish Evidence，不写无法自证的“自身 SHA”。
 
 ### 测试结果
 
@@ -195,13 +200,15 @@
 - **server 完整门禁（历史，2026-07-19，#1241 merge 后 clean HEAD `e32a44c2`）**：
   当时汇总 `11810 + 11 + 1 + 4 = 11826 passed / 0 failed / 7 ignored`；#1212 仅 client+docs，
   曾沿用该 server 证据。
-- **server 完整门禁（2026-07-20，本轮原子 take-back 返工，worktree 未提交树，
-  log `/tmp/alchemy_full_test3.log` + clippy `/tmp/alchemy_clippy3.log`）**：
-  `cargo fmt --check` → **FMT_EXIT:0**；`cargo clippy --all-targets -- -D warnings` →
-  **CLIPPY_EXIT:0**；`cargo test` → **TEST_EXIT:0**。汇总：`11814 + 11 + 1 + 4 = 11830 passed /
-  0 failed / 2+5=7 ignored`（lib 主套件 11814 passed / 2 ignored；其余 bin/integration 16
-  passed / 5 ignored）。定向：`alchemy_take_back*` 7/7、`alchemy_ignite_rejects_unclaimed*` 1/1、
-  `alchemy::furnace::` 8/8。
+- **server 完整门禁（2026-07-20，本轮 finished-unclaimed handler 契约补强，提交前树）**：
+  - `cargo test network::client_request_handler::tests::alchemy_feed_slot_rejects_finished_unclaimed_session -- --exact --nocapture`
+    → **1 passed / 0 failed / 0 ignored**（lib 其余 11817 filtered）；
+  - `cargo test network::client_request_handler::tests::alchemy_intervention_rejects_finished_unclaimed_session -- --exact --nocapture`
+    → **1 passed / 0 failed / 0 ignored**（lib 其余 11817 filtered）；
+  - `cargo fmt --check` → **EXIT 0**；`cargo clippy --all-targets -- -D warnings` → **EXIT 0**；
+    `cargo test` → **EXIT 0**，且三项均未接会吞真实退出码的尾部管道。
+  - 全量汇总：`11816 + 11 + 1 + 4 = 11832 passed / 0 failed / 2+5=7 ignored`
+    （lib 主套件 11816 passed / 2 ignored；其余 bin/integration 16 passed / 5 ignored）。
 - **client 完整门禁（2026-07-19，#1212 merge 后 clean HEAD `f9215777`，显式
   `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`，log `/tmp/pr1213-client-f9215777.log`）**：
   `cd client && ./gradlew test build` → **CLIENT_EXIT:0 / BUILD SUCCESSFUL in 7m 35s**；JUnit
@@ -230,9 +237,13 @@
 - `70b79e4ceba38c638f7c03e4b78648b163ec798d` 闭环第一项：Rust 真实 builder / encoder 唯一
   生产共享字节，Fabric 直接消费。
 - `ed98a5eb` 曾用「失败也 empty+finished」消 HUD 卡死；CodeRabbit 旧 unresolved thread 若仍
-  要求失败后 inactive+空炉，那正是 destructive product-loss 根因。**2026-07-20 返工契约明确
-  反转**：失败后保留 finished product/session 并发 active=false / retryable authoritative
-  snapshot；成功后才 inactive/clear + 恰好一次 COMPLETE/outcome。`f1a74ad7` 清 clippy。
+  要求失败后 inactive+空炉，那正是 destructive product-loss 根因。该 finding 对 current code 已
+  **stale**：`server/src/network/client_request_handler.rs:16894-16905` 只把 session 推到 `finished`
+  而不清炉；non-explode 在 `16994-17018` 先尝试 grant，只有 `17020-17061` 的 `granted` 分支才
+  `end_session` + COMPLETE/outcome，失败则 `17062-17077` 保留炉上 session 并重推 authoritative
+  finished snapshot。等待重试期间，intervention 的 finished guard 位于 `16478-16492`，早于
+  `apply_intervention`/VFX/animation/Redis publish；feed guard 位于 `16701-16712`，早于 recipe、
+  inventory、attrition、consume 和 staged mutation。**不得为迎合旧评论恢复失败即 clear**。
 - 2026-07-19 主线继续推进：`origin/main=5d9bdd8f`（#1241 server+client）→ 普通 merge 落
   双父 `e32a44c2`（parents `1c920bdd` + `5d9bdd8f`），并完成 server/client 全量复验；随后
   `origin/main=2f9c70ad`（#1212 client network/HUD）→ 再普通 merge 落双父 `f9215777`
