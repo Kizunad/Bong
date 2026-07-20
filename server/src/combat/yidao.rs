@@ -3032,4 +3032,193 @@ mod tests {
             "无效完成也必须清理 PendingYidaoCast"
         );
     }
+
+    /// 排异加速施术脚手架（患者带两源污染，医者带 UniqueId）。
+    fn medic_and_contaminated_patient(app: &mut App) -> (Entity, Entity) {
+        let medic = spawn_medic(app, Realm::Void);
+        app.world_mut()
+            .entity_mut(medic)
+            .insert(UniqueId::default());
+        let patient = spawn_patient(app);
+        app.world_mut().entity_mut(patient).insert(Contamination {
+            entries: vec![ContamSource {
+                amount: 20.0,
+                color: ColorKind::Insidious,
+                meridian_id: None,
+                attacker_id: None,
+                introduced_at: 1,
+            }],
+        });
+        (medic, patient)
+    }
+
+    /// 急救施术脚手架（患者濒死 + 出血，医者带 UniqueId）。
+    fn medic_and_near_death_patient(app: &mut App, realm: Realm) -> (Entity, Entity) {
+        let medic = spawn_medic(app, realm);
+        app.world_mut()
+            .entity_mut(medic)
+            .insert(UniqueId::default());
+        let patient = spawn_patient(app);
+        app.world_mut().entity_mut(patient).insert(Wounds {
+            health_current: 0.0,
+            health_max: 100.0,
+            entries: vec![crate::combat::components::Wound {
+                location: crate::body_plan::legacy_body_part_to_id(
+                    crate::combat::components::BodyPart::Chest,
+                ),
+                kind: crate::combat::components::WoundKind::Cut,
+                severity: 0.8,
+                bleeding_per_sec: 8.0,
+                created_at_tick: 90,
+                inflicted_by: None,
+            }],
+        });
+        let mut lifecycle = Lifecycle::default();
+        lifecycle.enter_near_death(90);
+        app.world_mut().entity_mut(patient).insert(lifecycle);
+        (medic, patient)
+    }
+
+    /// 群体接经施术脚手架（3 名断脉患者，医者带 UniqueId + 满熟练度）。
+    fn medic_and_severed_patient_group(app: &mut App) -> (Entity, Vec<Entity>) {
+        let medic = spawn_medic(app, Realm::Void);
+        app.world_mut()
+            .entity_mut(medic)
+            .insert(UniqueId::default())
+            .insert(HealingMastery {
+                mass_meridian_repair: 100.0,
+                ..Default::default()
+            });
+        let mut patients = Vec::new();
+        for meridian in [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney] {
+            let patient = spawn_patient(app);
+            let mut severed = MeridianSeveredPermanent::default();
+            severed.insert(
+                meridian,
+                crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                1,
+            );
+            app.world_mut().entity_mut(patient).insert(severed);
+            patients.push(patient);
+        }
+        (medic, patients)
+    }
+
+    /// 事件路径饱和 pin（review r1 补）——**5 招逐条**跑真实 resolve → emit 链路：
+    /// 起手恰播本招专属蓄力段、有效完成恰接力本招专属 release。此前只有接经术
+    /// 一招被真正跑过运行时链路，另 4 招仅有字符串级映射断言，委托分支写错
+    /// anim id / 漏调 emit_yidao_anim / 多患者混合结算的 release 分支有 bug
+    /// 都捕捉不到。
+    #[test]
+    fn every_yidao_skill_plays_own_loop_then_release_through_real_emit_path() {
+        type Setup = fn(&mut App) -> (Entity, Option<Entity>);
+        type Resolve = fn(&mut bevy_ecs::world::World, Entity, u8, Option<Entity>) -> CastResult;
+        let cases: Vec<(&str, Setup, Resolve, &str, &str)> = vec![
+            (
+                "接经术",
+                |app| {
+                    let (medic, patient) = medic_with_identity_and_severed_patient(app);
+                    (medic, Some(patient))
+                },
+                resolve_meridian_repair_skill,
+                ANIM_YIDAO_MERIDIAN_REPAIR_LOOP,
+                ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE,
+            ),
+            (
+                "排异加速",
+                |app| {
+                    let (medic, patient) = medic_and_contaminated_patient(app);
+                    (medic, Some(patient))
+                },
+                resolve_contam_purge_skill,
+                ANIM_YIDAO_CONTAM_PURGE_LOOP,
+                ANIM_YIDAO_CONTAM_PURGE_RELEASE,
+            ),
+            (
+                "急救",
+                |app| {
+                    let (medic, patient) = medic_and_near_death_patient(app, Realm::Induce);
+                    (medic, Some(patient))
+                },
+                resolve_emergency_resuscitate_skill,
+                ANIM_YIDAO_EMERGENCY_RESUSCITATE_LOOP,
+                ANIM_YIDAO_EMERGENCY_RESUSCITATE_RELEASE,
+            ),
+            (
+                "续命术",
+                |app| {
+                    let (medic, patient) = medic_and_near_death_patient(app, Realm::Spirit);
+                    (medic, Some(patient))
+                },
+                resolve_life_extension_skill,
+                ANIM_YIDAO_LIFE_EXTENSION_LOOP,
+                ANIM_YIDAO_LIFE_EXTENSION_RELEASE,
+            ),
+            (
+                "群体接经",
+                |app| {
+                    let (medic, patients) = medic_and_severed_patient_group(app);
+                    (medic, Some(patients[0]))
+                },
+                resolve_mass_meridian_repair_skill,
+                ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
+                ANIM_YIDAO_MASS_MERIDIAN_REPAIR_RELEASE,
+            ),
+        ];
+
+        for (name, setup, resolve, loop_anim, release_anim) in cases {
+            let mut app = app_with_yidao();
+            let (medic, target) = setup(&mut app);
+
+            let result = resolve(app.world_mut(), medic, 0, target);
+            assert!(
+                matches!(result, CastResult::Started { .. }),
+                "{name}：前置施术应进入引导，实际 {result:?}"
+            );
+            assert_eq!(
+                drain_play_anim_ids(&mut app),
+                vec![loop_anim.to_string()],
+                "{name}：cast 起手必须恰播本招专属蓄力循环段 {loop_anim}（防映射串线/漏发）"
+            );
+
+            complete_pending_yidao(&mut app, medic);
+
+            assert_eq!(
+                drain_play_anim_ids(&mut app),
+                vec![release_anim.to_string()],
+                "{name}：有效完成必须恰接力本招专属 release {release_anim}"
+            );
+        }
+    }
+
+    /// 负向 pin：非玩家施法者（缺 `UniqueId`）静默跳过动画发射——`emit_yidao_anim`
+    /// 的早退分支属于「合法无动画」而非漏发，5 招同构故取一招代表即可。
+    #[test]
+    fn yidao_cast_without_unique_id_emits_no_anim() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Void);
+        app.world_mut().entity_mut(medic).insert(HealingMastery {
+            meridian_repair: 100.0,
+            ..Default::default()
+        });
+        let patient = spawn_patient(&mut app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(patient).insert(severed);
+
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "前置：缺 UniqueId 不应阻断施术本身（只影响动画发射）"
+        );
+        assert!(
+            drain_play_anim_ids(&mut app).is_empty(),
+            "非玩家施法者缺 UniqueId 时不得发动画事件（无目标可寻址）"
+        );
+    }
 }
