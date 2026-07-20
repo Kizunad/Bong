@@ -47,9 +47,41 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
     /** 爆脉家族统一识别色（server `BURST_MERIDIAN_FAMILY_COLOR` 的 client 侧兜底）。 */
     static final int FAMILY_RGB = 0xC58B3F;
 
-    private static final int TIE_SHAN_KAO_DEFAULT_COUNT = 10;
-    private static final int XUE_BENG_BU_DEFAULT_COUNT = 12;
-    private static final int NI_MAI_HU_TI_DEFAULT_COUNT = 14;
+    /**
+     * 逐招形态参数。抽成枚举而非只在 {@link #play} 里比 id，是为了让 dispatch 与 spec
+     * 都能在无 MinecraftClient 的单测里被断言（{@link #formFor}）。
+     */
+    enum Form {
+        /** 贴山靠：地面撞击冲击环。 */
+        IMPACT_RING(TIE_SHAN_KAO, 10, 16),
+        /** 血崩步：步法残影短尾。 */
+        DASH_AFTERIMAGE(XUE_BENG_BU, 12, 14),
+        /** 逆脉护体：体表逆流纹。 */
+        BODY_COUNTERFLOW(NI_MAI_HU_TI, 14, 60);
+
+        final Identifier eventId;
+        final int defaultCount;
+        final int defaultLifetime;
+
+        Form(Identifier eventId, int defaultCount, int defaultLifetime) {
+            this.eventId = eventId;
+            this.defaultCount = defaultCount;
+            this.defaultLifetime = defaultLifetime;
+        }
+    }
+
+    /** event_id → 形态。未登记 id 返回 {@code null}（调用方静默跳过，绝不抛）。 */
+    static Form formFor(Identifier eventId) {
+        if (eventId == null) {
+            return null;
+        }
+        for (Form form : Form.values()) {
+            if (form.eventId.equals(eventId)) {
+                return form;
+            }
+        }
+        return null;
+    }
 
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
@@ -57,15 +89,16 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
         if (world == null) {
             return;
         }
-        Identifier id = payload.eventId();
-        if (TIE_SHAN_KAO.equals(id)) {
-            playImpactRing(client, world, payload);
-        } else if (XUE_BENG_BU.equals(id)) {
-            playDashAfterimage(client, world, payload);
-        } else if (NI_MAI_HU_TI.equals(id)) {
-            playBodyCounterflow(client, world, payload);
+        Form form = formFor(payload.eventId());
+        if (form == null) {
+            // 未登记 id：静默跳过（接线错误不该让渲染线程抛异常）。
+            return;
         }
-        // 未登记 id：静默跳过（接线错误不该让渲染线程抛异常）。
+        switch (form) {
+            case IMPACT_RING -> playImpactRing(client, world, payload);
+            case DASH_AFTERIMAGE -> playDashAfterimage(client, world, payload);
+            case BODY_COUNTERFLOW -> playBodyCounterflow(client, world, payload);
+        }
     }
 
     /** 贴山靠：地面撞击冲击环。半径吃 strength，整圈自旋表达"碾压"。 */
@@ -75,10 +108,10 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
         VfxEventPayload.SpawnParticle payload
     ) {
         double[] origin = payload.origin();
-        int count = clampInt(payload.count().orElse(TIE_SHAN_KAO_DEFAULT_COUNT), 4, 48);
+        int count = clampInt(payload.count().orElse(Form.IMPACT_RING.defaultCount), 4, 48);
         float[] color = rgb(payload.colorRgb().orElse(FAMILY_RGB));
         double strength = clamp(payload.strength().orElse(0.95), 0.0, 1.0);
-        int lifetime = payload.durationTicks().orElse(16);
+        int lifetime = payload.durationTicks().orElse(Form.IMPACT_RING.defaultLifetime);
         double halfSize = 0.30 + 0.45 * strength;
 
         for (int i = 0; i < count; i++) {
@@ -113,10 +146,10 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
     ) {
         double[] origin = payload.origin();
         double[] dir = ZhenmaiPulsePlayer.normalizedDirection(payload.direction().orElse(null));
-        int count = clampInt(payload.count().orElse(XUE_BENG_BU_DEFAULT_COUNT), 2, 48);
+        int count = clampInt(payload.count().orElse(Form.DASH_AFTERIMAGE.defaultCount), 2, 48);
         float[] color = rgb(payload.colorRgb().orElse(FAMILY_RGB));
         double strength = clamp(payload.strength().orElse(0.85), 0.0, 1.0);
-        int lifetime = payload.durationTicks().orElse(14);
+        int lifetime = payload.durationTicks().orElse(Form.DASH_AFTERIMAGE.defaultLifetime);
         double speed = 0.25;
 
         for (int i = 0; i < count; i++) {
@@ -150,9 +183,9 @@ public final class BurstMeridianFamilyPlayer implements VfxPlayer {
         VfxEventPayload.SpawnParticle payload
     ) {
         double[] origin = payload.origin();
-        int count = clampInt(payload.count().orElse(NI_MAI_HU_TI_DEFAULT_COUNT), 4, 48);
+        int count = clampInt(payload.count().orElse(Form.BODY_COUNTERFLOW.defaultCount), 4, 48);
         float[] color = rgb(payload.colorRgb().orElse(FAMILY_RGB));
-        int lifetime = payload.durationTicks().orElse(60);
+        int lifetime = payload.durationTicks().orElse(Form.BODY_COUNTERFLOW.defaultLifetime);
         double radius = 0.55;
         double speed = 0.08;
 

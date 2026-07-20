@@ -46,21 +46,56 @@ public final class NpcSkillAuraPlayer implements VfxPlayer {
     private static final int DEFAULT_COUNT = 12;
     private static final int DEFAULT_LIFETIME_TICKS = 40;
 
+    /**
+     * 逐招形态。抽成枚举而非只在 {@link #play} 里比 id，是为了让 dispatch 与配色 spec
+     * 都能在无 MinecraftClient 的单测里被断言（{@link #formFor}）。
+     */
+    enum Form {
+        /** 回血：绕身上升的绿色光点柱。 */
+        HEAL_COLUMN(HEAL_BASIC, HEAL_RGB),
+        /** 加速：水平外冲的麦黄疾行尘。 */
+        SPEED_DUST(BUFF_SPEED, SPEED_RGB),
+        /** 护体：贴身切向环绕的青蓝护环。 */
+        DEFENSE_RING(BUFF_DEFENSE, DEFENSE_RGB);
+
+        final Identifier eventId;
+        final int fallbackRgb;
+
+        Form(Identifier eventId, int fallbackRgb) {
+            this.eventId = eventId;
+            this.fallbackRgb = fallbackRgb;
+        }
+    }
+
+    /** event_id → 形态。未登记 id 返回 {@code null}（调用方静默跳过，绝不抛）。 */
+    static Form formFor(Identifier eventId) {
+        if (eventId == null) {
+            return null;
+        }
+        for (Form form : Form.values()) {
+            if (form.eventId.equals(eventId)) {
+                return form;
+            }
+        }
+        return null;
+    }
+
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
         ClientWorld world = client.world;
         if (world == null) {
             return;
         }
-        Identifier id = payload.eventId();
-        if (HEAL_BASIC.equals(id)) {
-            playHealColumn(client, world, payload);
-        } else if (BUFF_SPEED.equals(id)) {
-            playSpeedDust(client, world, payload);
-        } else if (BUFF_DEFENSE.equals(id)) {
-            playDefenseRing(client, world, payload);
+        Form form = formFor(payload.eventId());
+        if (form == null) {
+            // 未登记 id：静默跳过。
+            return;
         }
-        // 未登记 id：静默跳过。
+        switch (form) {
+            case HEAL_COLUMN -> playHealColumn(client, world, payload);
+            case SPEED_DUST -> playSpeedDust(client, world, payload);
+            case DEFENSE_RING -> playDefenseRing(client, world, payload);
+        }
     }
 
     /** 回血：绕身上升的绿色光点柱。 */
