@@ -53,6 +53,8 @@ import com.google.gson.JsonParser;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.network.PacketByteBuf;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
@@ -62,6 +64,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 
 public class BongNetworkHandler {
     public static final int EXPECTED_VERSION = ServerDataEnvelope.EXPECTED_VERSION;
@@ -283,34 +286,81 @@ public class BongNetworkHandler {
     }
 
     private static void registerServerDataChannel() {
-        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "server_data"), (client, handler, buf, responseSender) -> {
-            int readableBytes = buf.readableBytes();
-            byte[] bytes = new byte[readableBytes];
-            buf.readBytes(bytes);
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier("bong", "server_data"),
+            BongNetworkHandler::receiveServerDataPayload
+        );
+    }
 
-            boolean scheduled = dispatchServerDataPayload(
-                handler,
-                bytes,
-                ROUTER,
-                client::execute,
-                (dispatch, envelopeType) -> applyDispatch(client, dispatch, envelopeType)
+    private static void receiveServerDataPayload(
+        net.minecraft.client.MinecraftClient client,
+        ClientPlayNetworkHandler handler,
+        PacketByteBuf buf,
+        net.fabricmc.fabric.api.networking.v1.PacketSender responseSender
+    ) {
+        boolean scheduled = receiveServerDataPayload(
+            handler,
+            buf,
+            client::execute,
+            (dispatch, envelopeType) -> applyDispatch(client, dispatch, envelopeType),
+            Util::getMeasuringTimeMs,
+            () -> {},
+            ROUTER,
+            com.bong.client.network.ProtoServerDataBridge::bridge
+        );
+        if (!scheduled) {
+            BongClient.LOGGER.error(
+                "Ignoring bong:server_data payload from handler without INIT session token"
             );
-            if (!scheduled) {
-                BongClient.LOGGER.error(
-                    "Ignoring bong:server_data payload from handler without INIT session token"
-                );
-            }
-        });
+        }
+    }
+
+    /**
+     * Raw Fabric callback seam. The concrete handler's immutable token and receive timestamp
+     * are captured before the PacketByteBuf is inspected or copied.
+     */
+    static boolean receiveServerDataPayload(
+        ClientPlayNetworkHandler handler,
+        PacketByteBuf buf,
+        Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        LongSupplier receivedAtMs,
+        Runnable afterEnvelopeCapture,
+        ServerDataRouter router,
+        ServerDataPayloadBridge payloadBridge
+    ) {
+        ClientConnectionStatusStore.SessionToken sessionToken =
+            ClientConnectionStatusStore.sessionToken(handler).orElse(null);
+        if (sessionToken == null) {
+            return false;
+        }
+        long capturedReceivedAtMs = receivedAtMs.getAsLong();
+        afterEnvelopeCapture.run();
+
+        int readableBytes = buf.readableBytes();
+        byte[] bytes = new byte[readableBytes];
+        buf.readBytes(bytes);
+        return dispatchServerDataPayload(
+            bytes,
+            router,
+            clientExecutor,
+            dispatchApplier,
+            capturedReceivedAtMs,
+            sessionToken,
+            payloadBridge
+        );
     }
 
     /**
      * {@code bong:server_data} 的可测试调度边界。
      *
-     * <p>production receiver 只在 Netty thread 做四件事：复制 buffer、按传入的物理
-     * ClientPlayNetworkHandler 捕获 INIT token、捕获 receivedAt、排入单一 client-thread task。
-     * 未注册 handler fail closed，连 task 都不排。后续 bridge、route、handler/store/listener
-     * side effect 与最终 dispatch 全在该 task 内；JOIN 只激活同一 token，因此 pre-JOIN 首包
-     * 会在 JOIN task 之后 exactly once 落地；DISCONNECT 后 stale token 整段 no-op。</p>
+     * <p>production receiver 只在 Netty thread 做四件事：按传入的具体
+     * ClientPlayNetworkHandler 捕获 INIT token、捕获 receivedAt、复制 buffer、排入单一
+     * client-thread task。token 与时间必须先于任何 buffer access 捕获，防止旧 callback
+     * 在重连后把旧 bytes 错绑到新 session。未注册 handler fail closed，连 buffer 都不读。
+     * 后续 bridge、route、handler/store/listener side effect 与最终 dispatch 全在该 task 内；
+     * JOIN 只激活同一 token，因此 pre-JOIN 首包会在 JOIN task 之后 exactly once 落地；
+     * DISCONNECT 后 stale token 整段 no-op。</p>
      *
      * @return true iff handler 已在 INIT 注册且 payload task 已入队
      */
@@ -347,6 +397,26 @@ public class BongNetworkHandler {
         if (sessionToken == null) {
             return false;
         }
+        return dispatchServerDataPayload(
+            bytes,
+            router,
+            clientExecutor,
+            dispatchApplier,
+            receivedAtMs,
+            sessionToken,
+            payloadBridge
+        );
+    }
+
+    private static boolean dispatchServerDataPayload(
+        byte[] bytes,
+        ServerDataRouter router,
+        Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        long receivedAtMs,
+        ClientConnectionStatusStore.SessionToken sessionToken,
+        ServerDataPayloadBridge payloadBridge
+    ) {
         clientExecutor.accept(() -> processServerDataPayload(
             bytes,
             router,

@@ -12,20 +12,29 @@ import com.bong.client.network.ProtoServerDataBridge;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataRouter;
 import com.bong.client.ui.ClientConnectionStatusStore;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.network.PacketByteBuf;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
+
+import sun.misc.Unsafe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -492,6 +501,165 @@ class BongServerDataThreadingTest {
     }
 
     @Test
+    void rawReceiverCapturesOldHandlerBeforeBufferAccessAcrossReconnect() {
+        ClientPlayNetworkHandler oldHandler = newTestHandler();
+        ClientConnectionStatusStore.initializeSession(oldHandler);
+        assertTrue(ClientConnectionStatusStore.activateSession(oldHandler, 4_000L),
+            "old concrete handler must be active before the raw callback enters");
+
+        AtomicInteger bridgeCalls = new AtomicInteger();
+        AtomicInteger routeCalls = new AtomicInteger();
+        AtomicInteger storeCalls = new AtomicInteger();
+        AtomicInteger sounds = new AtomicInteger();
+        AtomicInteger refreshes = new AtomicInteger();
+        AtomicInteger applyCalls = new AtomicInteger();
+        AtomicInteger bufferAccesses = new AtomicInteger();
+        AtomicInteger receiveTimeCaptures = new AtomicInteger();
+        CraftStore.addOutcomeListener(event -> {
+            storeCalls.incrementAndGet();
+            CraftOutcomeFeedback.apply(
+                event,
+                ticks -> {},
+                sounds::incrementAndGet,
+                refreshes::incrementAndGet
+            );
+        });
+        ServerDataRouter router = staleProbeRouter(routeCalls);
+        BongNetworkHandler.ServerDataPayloadBridge countingBridge = bytes -> {
+            bridgeCalls.incrementAndGet();
+            return ProtoServerDataBridge.bridge(bytes);
+        };
+
+        CountDownLatch envelopeCaptured = new CountDownLatch(1);
+        CountDownLatch releaseOldReceiver = new CountDownLatch(1);
+        PacketByteBuf oldPayload = trackingBuffer(
+            staleProbe("craft.raw.old").getBytes(StandardCharsets.UTF_8), bufferAccesses);
+        AtomicReference<Boolean> oldScheduled = new AtomicReference<>();
+        AtomicReference<Throwable> receiverFailure = new AtomicReference<>();
+        Thread oldReceiver = new Thread(() -> {
+            try {
+                oldScheduled.set(BongNetworkHandler.receiveServerDataPayload(
+                    oldHandler,
+                    oldPayload,
+                    clientTasks::add,
+                    (dispatch, type) -> applyCalls.incrementAndGet(),
+                    () -> {
+                        receiveTimeCaptures.incrementAndGet();
+                        return 5_000L;
+                    },
+                    () -> {
+                        envelopeCaptured.countDown();
+                        awaitLatch(releaseOldReceiver, "release old raw receiver");
+                    },
+                    router,
+                    countingBridge
+                ));
+            } catch (Throwable throwable) {
+                receiverFailure.set(throwable);
+            }
+        }, NETWORK_THREAD + "-old");
+        oldReceiver.start();
+        awaitLatch(envelopeCaptured, "old raw receiver envelope capture");
+
+        assertEquals(1, receiveTimeCaptures.get(),
+            "raw callback must capture receivedAt exactly once before the barrier");
+        assertEquals(0, bufferAccesses.get(),
+            "barrier is immediately after token/time capture, so old buffer must still be untouched");
+        assertTrue(ClientConnectionStatusStore.invalidateSession(oldHandler, 6_000L),
+            "disconnect must invalidate old concrete handler while its callback is paused");
+
+        ClientPlayNetworkHandler newHandler = newTestHandler();
+        ClientConnectionStatusStore.SessionToken newToken =
+            ClientConnectionStatusStore.initializeSession(newHandler);
+        assertTrue(ClientConnectionStatusStore.activateSession(newHandler, 7_000L),
+            "JOIN must activate the new concrete handler before releasing the old callback");
+
+        releaseOldReceiver.countDown();
+        joinThread(oldReceiver, receiverFailure);
+        assertEquals(Boolean.TRUE, oldScheduled.get(),
+            "old raw callback had a valid old token and should only become stale at task execution");
+        assertEquals(2, bufferAccesses.get(),
+            "released raw callback must perform exactly readableBytes plus readBytes");
+        assertEquals(1, clientTasks.size(), "old callback should queue one token-bound client task");
+        runNextClientTask();
+
+        assertEquals(0, bridgeCalls.get(), "stale raw payload must be rejected before protobuf bridge");
+        assertEquals(0, routeCalls.get(), "stale raw payload must be rejected before router");
+        assertEquals(0, storeCalls.get(), "stale raw payload must not write store or notify listener");
+        assertEquals(0, sounds.get(), "stale raw payload must preserve craft sound no-op semantics");
+        assertEquals(0, refreshes.get(), "stale raw payload must not refresh screens");
+        assertEquals(0, applyCalls.get(), "stale raw payload must not reach dispatch applier");
+        assertTrue(CraftStore.lastOutcome().isEmpty(), "stale raw payload must leave CraftStore empty");
+        assertTrue(ClientConnectionStatusStore.isActiveSession(newToken),
+            "old callback must not invalidate the new handler token");
+        assertEquals(7_000L, ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "old receivedAt must not alter new-session freshness");
+
+        PacketByteBuf newPayload = trackingBuffer(
+            staleProbe("craft.raw.new").getBytes(StandardCharsets.UTF_8), bufferAccesses);
+        assertTrue(BongNetworkHandler.receiveServerDataPayload(
+            newHandler,
+            newPayload,
+            clientTasks::add,
+            (dispatch, type) -> applyCalls.incrementAndGet(),
+            () -> 7_500L,
+            () -> {},
+            router,
+            countingBridge
+        ), "new concrete handler raw payload must queue successfully");
+        runNextClientTask();
+
+        assertEquals(1, bridgeCalls.get(), "only the new payload must bridge exactly once");
+        assertEquals(1, routeCalls.get(), "only the new payload must route exactly once");
+        assertEquals(1, storeCalls.get(), "new payload store/listener must run exactly once");
+        assertEquals(1, sounds.get(), "new completed payload must preserve exactly one craft sound");
+        assertEquals(1, refreshes.get(), "new completed payload must refresh exactly once");
+        assertEquals(1, applyCalls.get(), "new payload dispatch must apply exactly once");
+        assertEquals("craft.raw.new", CraftStore.lastOutcome().orElseThrow().recipeId());
+        assertEquals(7_500L, ClientConnectionStatusStore.lastPayloadAtMsForTests());
+    }
+
+    @Test
+    void rawReceiverFailsClosedBeforeBufferAndClockForUnknownHandler() {
+        AtomicInteger bufferAccesses = new AtomicInteger();
+        AtomicInteger clockCalls = new AtomicInteger();
+        PacketByteBuf payload = trackingBuffer(
+            staleProbe("craft.raw.unregistered").getBytes(StandardCharsets.UTF_8), bufferAccesses);
+
+        assertFalse(BongNetworkHandler.receiveServerDataPayload(
+            newTestHandler(),
+            payload,
+            clientTasks::add,
+            (dispatch, type) -> {},
+            () -> {
+                clockCalls.incrementAndGet();
+                return 8_000L;
+            },
+            () -> {},
+            staleProbeRouter(new AtomicInteger()),
+            ProtoServerDataBridge::bridge
+        ), "unregistered concrete handler must fail closed at raw callback entry");
+
+        assertFalse(BongNetworkHandler.receiveServerDataPayload(
+            null,
+            payload,
+            clientTasks::add,
+            (dispatch, type) -> {},
+            () -> {
+                clockCalls.incrementAndGet();
+                return 8_100L;
+            },
+            () -> {},
+            staleProbeRouter(new AtomicInteger()),
+            ProtoServerDataBridge::bridge
+        ), "null concrete handler must fail closed at raw callback entry");
+
+        assertEquals(0, clockCalls.get(), "unknown/null handlers must fail before receivedAt capture");
+        assertEquals(0, bufferAccesses.get(), "unknown/null handlers must fail before any buffer access");
+        assertTrue(clientTasks.isEmpty(), "unknown/null handlers must not queue a task");
+    }
+
+    @Test
     void staleHandlerTaskHasZeroEffectsAfterDisconnectAndNewHandlerJoin() {
         AtomicInteger bridgeCalls = new AtomicInteger();
         AtomicInteger routeCalls = new AtomicInteger();
@@ -910,6 +1078,56 @@ class BongServerDataThreadingTest {
         BiConsumer<ServerDataDispatch, String> dispatchApplier
     ) {
         runNamedThread(NETWORK_THREAD, () -> dispatch(json, router, dispatchApplier));
+    }
+
+    private static ClientPlayNetworkHandler newTestHandler() {
+        try {
+            Field unsafeField = Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            Unsafe unsafe = (Unsafe) unsafeField.get(null);
+            return (ClientPlayNetworkHandler) unsafe.allocateInstance(ClientPlayNetworkHandler.class);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("failed to allocate identity-only ClientPlayNetworkHandler", failure);
+        }
+    }
+
+    private static PacketByteBuf trackingBuffer(byte[] payload, AtomicInteger accesses) {
+        ByteBuf delegate = Unpooled.wrappedBuffer(payload);
+        return new PacketByteBuf(delegate) {
+            @Override
+            public int readableBytes() {
+                accesses.incrementAndGet();
+                return super.readableBytes();
+            }
+
+            @Override
+            public ByteBuf readBytes(byte[] destination) {
+                accesses.incrementAndGet();
+                return super.readBytes(destination);
+            }
+        };
+    }
+
+    private static void awaitLatch(CountDownLatch latch, String description) {
+        try {
+            assertTrue(latch.await(5, TimeUnit.SECONDS), "timed out waiting for " + description);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while waiting for " + description, interrupted);
+        }
+    }
+
+    private static void joinThread(Thread thread, AtomicReference<Throwable> failure) {
+        try {
+            thread.join(5_000L);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while joining " + thread.getName(), interrupted);
+        }
+        assertFalse(thread.isAlive(), "timed out joining " + thread.getName());
+        if (failure.get() != null) {
+            throw new AssertionError("test thread failed: " + thread.getName(), failure.get());
+        }
     }
 
     private void runNextClientTask() {
