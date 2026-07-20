@@ -41,18 +41,28 @@ const AGENT_UI_GENERATED_FILES = [
   "client-request-v1.json",
   "server-data-v1.json",
 ] as const;
-const AGENT_UI_ID_SCHEMA_PATHS: Readonly<
-  Record<(typeof AGENT_UI_GENERATED_FILES)[number], readonly string[]>
+type AgentUiGeneratedFile = (typeof AGENT_UI_GENERATED_FILES)[number];
+type AgentUiVariantType = "agent_ui_response" | "agent_ui_request" | "agent_ui_close";
+type AgentUiIdFieldName = "request_id" | "target_player";
+type AgentUiIdSchemaTarget = Readonly<{
+  field: AgentUiIdFieldName;
+  variantType?: AgentUiVariantType;
+}>;
+
+const AGENT_UI_ID_SCHEMA_TARGETS: Readonly<
+  Record<AgentUiGeneratedFile, readonly AgentUiIdSchemaTarget[]>
 > = {
   "agent-ui-response-payload-v1.json": [
-    "$.properties.request_id",
-    "$.properties.target_player",
+    { field: "request_id" },
+    { field: "target_player" },
   ],
-  "client-request-v1.json": ["$.anyOf[85].properties.request_id"],
+  "client-request-v1.json": [
+    { variantType: "agent_ui_response", field: "request_id" },
+  ],
   "server-data-v1.json": [
-    "$.anyOf[103].properties.request_id",
-    "$.anyOf[103].properties.target_player",
-    "$.anyOf[104].properties.request_id",
+    { variantType: "agent_ui_request", field: "request_id" },
+    { variantType: "agent_ui_request", field: "target_player" },
+    { variantType: "agent_ui_close", field: "request_id" },
   ],
 };
 
@@ -87,6 +97,9 @@ type LocatedStringSchema = Readonly<{
   schema: Record<string, unknown>;
 }>;
 
+type LocatedAgentUiIdSchema = LocatedStringSchema &
+  Readonly<{ target: AgentUiIdSchemaTarget }>;
+
 type AjvValidate = ((data: unknown) => boolean) & {
   errors: ReadonlyArray<unknown> | null | undefined;
 };
@@ -107,18 +120,20 @@ function loadWorkspaceAjv(): WorkspaceAjv {
   if (typeof AJV_PACKAGE_VERSION !== "string" || !AJV_PACKAGE_VERSION) {
     throw new Error(`Workspace Ajv package.json at ${AJV_PACKAGE_JSON_PATH} is missing version`);
   }
-  if (!AJV_PACKAGE_VERSION.startsWith("8.")) {
+  if (AJV_PACKAGE_VERSION !== "8.12.0") {
     throw new Error(
-      `Workspace Ajv must be 8.x for claimed schema behavior; got ${AJV_PACKAGE_VERSION} at ${AJV_RESOLVED_PATH}`,
+      `Workspace Ajv must be exactly 8.12.0 for reproducible schema behavior; got ${AJV_PACKAGE_VERSION} at ${AJV_PACKAGE_JSON_PATH}`,
     );
   }
-  // 拒绝误解析到 Debian host 路径——门禁必须可复现于 clean CI。
-  if (AJV_RESOLVED_PATH.includes("/usr/share/nodejs/")) {
+  // 拒绝 package metadata 或 runtime 任一入口误解析到 Debian host 路径。
+  const hostNodePath = "/usr/share/nodejs/";
+  const resolvedPaths = [AJV_PACKAGE_JSON_PATH, AJV_RESOLVED_PATH];
+  if (resolvedPaths.some((path) => path.includes(hostNodePath))) {
     throw new Error(
       [
         "Ajv resolved to host Node path, not the workspace package:",
-        AJV_RESOLVED_PATH,
-        "Install @bong/schema devDependency ajv@8.x and re-run from the agent workspace.",
+        ...resolvedPaths,
+        "Install @bong/schema devDependency ajv@8.12.0 and re-run from the agent workspace.",
       ].join(" "),
     );
   }
@@ -137,40 +152,98 @@ function readGeneratedArtifact(file: (typeof AGENT_UI_GENERATED_FILES)[number]):
   return JSON.parse(readFileSync(join(GENERATED_DIR, file), "utf8"));
 }
 
-/** 读取 `$.anyOf[N].properties.field` 风格 JSON path（仅支持本测试用到的子集）。 */
-function readJsonPath(root: unknown, path: string): unknown {
-  if (!path.startsWith("$")) {
-    throw new Error(`JSON path must start with $: ${path}`);
+function requireSchemaObject(value: unknown, context: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${context} must be a schema object; got ${JSON.stringify(value)}`);
   }
-  let current: unknown = root;
-  let index = 1;
-  while (index < path.length) {
-    const ch = path[index];
-    if (ch === ".") {
-      index += 1;
-      const start = index;
-      while (index < path.length && path[index] !== "." && path[index] !== "[") {
-        index += 1;
+  return value as Record<string, unknown>;
+}
+
+function variantTypeConst(variant: unknown): unknown {
+  if (typeof variant !== "object" || variant === null || Array.isArray(variant)) {
+    return undefined;
+  }
+  const properties = (variant as Record<string, unknown>).properties;
+  if (typeof properties !== "object" || properties === null || Array.isArray(properties)) {
+    return undefined;
+  }
+  const typeSchema = (properties as Record<string, unknown>).type;
+  if (typeof typeSchema !== "object" || typeSchema === null || Array.isArray(typeSchema)) {
+    return undefined;
+  }
+  return (typeSchema as Record<string, unknown>).const;
+}
+
+/** 按 `properties.type.const` 唯一定位 anyOf variant，彻底解除生成顺序绑定。 */
+function findUniqueVariantByType(
+  anyOf: readonly unknown[],
+  expectedType: string,
+): Record<string, unknown> {
+  const candidates = anyOf.map((variant, index) => ({
+    index,
+    variant,
+    discriminant: variantTypeConst(variant),
+  }));
+  const matches = candidates.filter(({ discriminant }) => discriminant === expectedType);
+  const available = candidates
+    .filter(({ discriminant }) => discriminant !== undefined)
+    .map(({ index, discriminant }) => `[${index}]=${JSON.stringify(discriminant)}`)
+    .join(", ");
+  const diagnostics =
+    `anyOf length=${anyOf.length}; available properties.type.const discriminants: ` +
+    (available || "<none>");
+
+  if (matches.length === 0) {
+    throw new Error(
+      `Missing schema variant for type=${JSON.stringify(expectedType)}; ${diagnostics}`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `Duplicate schema variants for type=${JSON.stringify(expectedType)}; ` +
+        `matched indexes=[${matches.map(({ index }) => index).join(", ")}]; ${diagnostics}`,
+    );
+  }
+
+  return requireSchemaObject(
+    matches[0].variant,
+    `Schema variant type=${JSON.stringify(expectedType)} at anyOf[${matches[0].index}]`,
+  );
+}
+
+function locateAgentUiIdSchemas(
+  file: AgentUiGeneratedFile,
+  artifact: unknown,
+): LocatedAgentUiIdSchema[] {
+  const root = requireSchemaObject(artifact, `${file} root`);
+  return AGENT_UI_ID_SCHEMA_TARGETS[file].map((target) => {
+    const owner = (() => {
+      if (target.variantType === undefined) return root;
+      if (!Array.isArray(root.anyOf)) {
+        throw new Error(
+          `${file} must expose anyOf to locate type=${JSON.stringify(target.variantType)}; ` +
+            `root keys=${Object.keys(root).sort().join(", ") || "<none>"}`,
+        );
       }
-      const key = path.slice(start, index);
-      if (typeof current !== "object" || current === null || Array.isArray(current)) {
-        throw new Error(`Cannot read key ${key} at ${path}`);
-      }
-      current = (current as Record<string, unknown>)[key];
-    } else if (ch === "[") {
-      const end = path.indexOf("]", index);
-      if (end < 0) throw new Error(`Unclosed [ in ${path}`);
-      const idx = Number(path.slice(index + 1, end));
-      if (!Array.isArray(current)) {
-        throw new Error(`Cannot index non-array at ${path}`);
-      }
-      current = current[idx];
-      index = end + 1;
-    } else {
-      throw new Error(`Unexpected token in JSON path ${path}: ${ch}`);
+      return findUniqueVariantByType(root.anyOf, target.variantType);
+    })();
+    const path =
+      target.variantType === undefined
+        ? `$.properties.${target.field}`
+        : `$.anyOf{properties.type.const=${JSON.stringify(target.variantType)}}.properties.${target.field}`;
+    const properties = requireSchemaObject(owner.properties, `${file}:${path} owner.properties`);
+    if (!(target.field in properties)) {
+      throw new Error(
+        `Missing schema field ${file}:${path}; available properties: ` +
+          (Object.keys(properties).sort().join(", ") || "<none>"),
+      );
     }
-  }
-  return current;
+    return {
+      path,
+      schema: requireSchemaObject(properties[target.field], `${file}:${path}`),
+      target,
+    };
+  });
 }
 
 /**
@@ -178,21 +251,22 @@ function readJsonPath(root: unknown, path: string): unknown {
  * 校验走根 schema compile，而不是单字段 RegExp，覆盖 anyOf/required/additionalProperties。
  */
 function buildAgentUiIdPayload(
-  file: (typeof AGENT_UI_GENERATED_FILES)[number],
-  fieldPath: string,
+  file: AgentUiGeneratedFile,
+  target: AgentUiIdSchemaTarget,
   value: string,
 ): Record<string, unknown> {
-  switch (`${file}:${fieldPath}`) {
-    case "agent-ui-response-payload-v1.json:$.properties.request_id":
+  const semanticKey = `${file}:${target.variantType ?? "<root>"}:${target.field}`;
+  switch (semanticKey) {
+    case "agent-ui-response-payload-v1.json:<root>:request_id":
       return { request_id: value, action: "dismissed", params: {} };
-    case "agent-ui-response-payload-v1.json:$.properties.target_player":
+    case "agent-ui-response-payload-v1.json:<root>:target_player":
       return {
         request_id: "response-request-id",
         action: "error",
         target_player: value,
         params: { reason: "realm_gate_rejected" },
       };
-    case "client-request-v1.json:$.anyOf[85].properties.request_id":
+    case "client-request-v1.json:agent_ui_response:request_id":
       return {
         v: 1,
         type: "agent_ui_response",
@@ -200,7 +274,7 @@ function buildAgentUiIdPayload(
         action: "dismissed",
         params: {},
       };
-    case "server-data-v1.json:$.anyOf[103].properties.request_id":
+    case "server-data-v1.json:agent_ui_request:request_id":
       return {
         v: 1,
         type: "agent_ui_request",
@@ -209,7 +283,7 @@ function buildAgentUiIdPayload(
         xml: "<flow-layout />",
         timeout_ticks: 600,
       };
-    case "server-data-v1.json:$.anyOf[103].properties.target_player":
+    case "server-data-v1.json:agent_ui_request:target_player":
       return {
         v: 1,
         type: "agent_ui_request",
@@ -218,7 +292,7 @@ function buildAgentUiIdPayload(
         xml: "<flow-layout />",
         timeout_ticks: 600,
       };
-    case "server-data-v1.json:$.anyOf[104].properties.request_id":
+    case "server-data-v1.json:agent_ui_close:request_id":
       return {
         v: 1,
         type: "agent_ui_close",
@@ -226,7 +300,7 @@ function buildAgentUiIdPayload(
         reason: "invalid_button_id",
       };
     default:
-      throw new Error(`No payload builder for ${file}:${fieldPath}`);
+      throw new Error(`No payload builder for semantic Agent UI field ${semanticKey}`);
   }
 }
 
@@ -476,16 +550,65 @@ describe("generated schema freshness gate", () => {
     expect(schema.properties).toHaveProperty("target_player");
   });
 
+  it("finds a semantic Agent UI variant regardless of anyOf ordering", () => {
+    const expected = {
+      properties: { type: { const: "agent_ui_request" }, request_id: { type: "string" } },
+    };
+    const unrelated = { properties: { type: { const: "agent_ui_close" } } };
+
+    expect(findUniqueVariantByType([unrelated, expected], "agent_ui_request")).toBe(expected);
+    expect(findUniqueVariantByType([expected, unrelated], "agent_ui_request")).toBe(expected);
+  });
+
+  it("diagnoses a missing semantic Agent UI variant with available discriminants", () => {
+    expect(() =>
+      findUniqueVariantByType(
+        [{ properties: { type: { const: "agent_ui_close" } } }],
+        "agent_ui_request",
+      ),
+    ).toThrowError(
+      'Missing schema variant for type="agent_ui_request"; anyOf length=1; ' +
+        'available properties.type.const discriminants: [0]="agent_ui_close"',
+    );
+  });
+
+  it("diagnoses duplicate semantic Agent UI variants with every matched index", () => {
+    expect(() =>
+      findUniqueVariantByType(
+        [
+          { properties: { type: { const: "agent_ui_request" } } },
+          { properties: { type: { const: "agent_ui_close" } } },
+          { properties: { type: { const: "agent_ui_request" } } },
+        ],
+        "agent_ui_request",
+      ),
+    ).toThrowError(
+      'Duplicate schema variants for type="agent_ui_request"; matched indexes=[0, 2]; ' +
+        'anyOf length=3; available properties.type.const discriminants: ' +
+        '[0]="agent_ui_request", [1]="agent_ui_close", [2]="agent_ui_request"',
+    );
+  });
+
   it("keeps every generated Agent UI ID on one Unicode code-point acceptance set", () => {
     const cases = AGENT_UI_ID_BOUNDARY_CASES;
 
     for (const file of AGENT_UI_GENERATED_FILES) {
       const artifact = readGeneratedArtifact(file);
-      const idSchemas = findAgentUiIdStringSchemas(artifact);
+      const idSchemas = locateAgentUiIdSchemas(file, artifact);
+      const discoveredIdSchemas = findAgentUiIdStringSchemas(artifact);
+      const expectedSchemas = new Set(idSchemas.map(({ schema }) => schema));
       expect(
-        idSchemas.map(({ path }) => path).sort(),
-        `${file} 应精确覆盖每个 Agent UI ID JSON path，避免字段等量替换后仍假绿`,
-      ).toEqual([...AGENT_UI_ID_SCHEMA_PATHS[file]].sort());
+        {
+          missing: idSchemas
+            .filter(({ schema }) => !discoveredIdSchemas.some((found) => found.schema === schema))
+            .map(({ path }) => path),
+          unexpected: discoveredIdSchemas
+            .filter(({ schema }) => !expectedSchemas.has(schema))
+            .map(({ path }) => path),
+        },
+        `${file} 应按 properties.type.const 语义唯一定位全部 Agent UI ID 字段，避免顺序绑定或等量替换假绿`,
+      ).toEqual({ missing: [], unexpected: [] });
+      expect(discoveredIdSchemas).toHaveLength(idSchemas.length);
 
       for (const { path, schema } of idSchemas) {
         expect(
@@ -517,17 +640,23 @@ describe("generated schema freshness gate", () => {
   it(
     "compiles generated Agent UI schemas with workspace Ajv and locks the full acceptance matrix",
     () => {
+      expect(
+        AJV_PACKAGE_VERSION,
+        `Ajv package metadata 必须精确锁定 8.12.0；resolved=${AJV_PACKAGE_JSON_PATH}`,
+      ).toBe("8.12.0");
       const workspaceAjv = loadWorkspaceAjv();
       expect(
         workspaceAjv.version,
-        `workspace Ajv 版本必须可解析；当前 resolved=${workspaceAjv.resolvedPath}`,
-      ).toMatch(/^8\.\d+\.\d+/);
-      // 锁住可安装依赖而非宿主路径；版本来自 package.json，resolved 必须落在 node_modules。
+        `workspace Ajv 必须精确解析 8.12.0；package=${workspaceAjv.packageJsonPath}, runtime=${workspaceAjv.resolvedPath}`,
+      ).toBe("8.12.0");
+      // package metadata 与 runtime import 都必须来自可安装 workspace，而不是 Debian host。
       expect(
-        workspaceAjv.resolvedPath.includes("node_modules") &&
-          workspaceAjv.resolvedPath.includes("ajv") &&
-          !workspaceAjv.resolvedPath.includes("/usr/share/nodejs/"),
-        `Workspace Ajv must resolve under node_modules (not host): ${workspaceAjv.resolvedPath}`,
+        [workspaceAjv.packageJsonPath, workspaceAjv.resolvedPath].every(
+          (path) => path.includes("node_modules") && path.includes("ajv") &&
+            !path.includes("/usr/share/nodejs/"),
+        ),
+        `Workspace Ajv must resolve under node_modules (not host): ` +
+          `${workspaceAjv.packageJsonPath}, ${workspaceAjv.resolvedPath}`,
       ).toBe(true);
 
       let assertionCount = 0;
@@ -539,27 +668,26 @@ describe("generated schema freshness gate", () => {
       for (const file of AGENT_UI_GENERATED_FILES) {
         const artifact = readGeneratedArtifact(file);
         const validateRoot = workspaceAjv.compile(artifact as object);
-        const idPaths = AGENT_UI_ID_SCHEMA_PATHS[file];
+        const idSchemas = locateAgentUiIdSchemas(file, artifact);
 
-        for (const fieldPath of idPaths) {
-          const fieldSchema = readJsonPath(artifact, fieldPath) as Record<string, unknown>;
+        for (const { path, schema: fieldSchema, target } of idSchemas) {
           count(
             fieldSchema.type === "string" && typeof fieldSchema.pattern === "string",
-            `${file}:${fieldPath} 必须仍是 pattern-only string schema`,
+            `${file}:${path} 必须仍是 pattern-only string schema`,
           );
           count(
             fieldSchema.maxLength === undefined && fieldSchema.minLength === undefined,
-            `${file}:${fieldPath} 不得恢复 minLength/maxLength`,
+            `${file}:${path} 不得恢复 minLength/maxLength`,
           );
 
           for (const testCase of AGENT_UI_ID_BOUNDARY_CASES) {
-            const payload = buildAgentUiIdPayload(file, fieldPath, testCase.value);
+            const payload = buildAgentUiIdPayload(file, target, testCase.value);
             const got = validateRoot(payload);
             count(
               got === testCase.valid,
               [
                 `workspace Ajv ${workspaceAjv.version} (${workspaceAjv.resolvedPath})`,
-                `${file}:${fieldPath}`,
+                `${file}:${path}`,
                 testCase.name,
                 `expected valid=${testCase.valid}, got=${got}`,
                 got ? "" : `errors=${JSON.stringify(validateRoot.errors ?? null)}`,
@@ -689,7 +817,7 @@ describe("generated schema freshness gate", () => {
           ajvPackageJsonPath: workspaceAjv.packageJsonPath,
           assertionCount,
           boundaryCases: AGENT_UI_ID_BOUNDARY_CASES.length,
-          idFields: Object.values(AGENT_UI_ID_SCHEMA_PATHS).flat().length,
+          idFields: Object.values(AGENT_UI_ID_SCHEMA_TARGETS).flat().length,
         }),
       );
       expect(
@@ -698,7 +826,7 @@ describe("generated schema freshness gate", () => {
           ajvResolvedPath: workspaceAjv.resolvedPath,
           assertionCount,
           boundaryCases: AGENT_UI_ID_BOUNDARY_CASES.length,
-          idFields: Object.values(AGENT_UI_ID_SCHEMA_PATHS).flat().length,
+          idFields: Object.values(AGENT_UI_ID_SCHEMA_TARGETS).flat().length,
         },
         "workspace Ajv gate summary",
       ).toMatchObject({
