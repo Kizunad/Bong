@@ -3264,7 +3264,11 @@ mod tests {
         });
         app.update();
         let ended = drain_vfx(&mut app);
-        assert_eq!(ended.len(), 2, "自然完成应 StopAnim(循环) + PlayAnim(release)");
+        assert_eq!(
+            ended.len(),
+            2,
+            "自然完成应 StopAnim(循环) + PlayAnim(release)"
+        );
 
         let fade_out = stop_anim_fade_out(&ended[0])
             .expect("两段式循环段停止必须显式带 fade_out——None 会走客户端默认值，契约不可依赖默认");
