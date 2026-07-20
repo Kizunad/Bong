@@ -108,6 +108,7 @@
 - `efcd273fe`（2026-07-19）：合并 `origin/main` 同步 #1233 文档归档。
 - `e960ba5fc54795bbb572b015b93ea530578bd1cc`（2026-07-19）：合并 `origin/main=5d9bdd8f`（#1241 技能动画 PR-5）；在该树上完成 schema 892 / tiandao 831 / python 126 / client 4141 / server fmt+clippy+test 全绿（lib 11807 + bin 11 + 启动集成 1 + 背包 e2e 4 = 约 11823 passed / 0 failed / 6 ignored）。该历史 commit 缺少 `Model` trailer；保留历史原样，不重写或 amend。
 - `56b6e33dc577453d2e29f4206564e84b15fcb3fd`（2026-07-20）：紧邻 `git fetch origin && git merge origin/main` 合入 `2f9c70ad3`（#1212 搜刮 HUD 终态收尾）；delta 仅 client network/HUD + 归档文档，无 server/agent 源码增量。该历史 commit 缺少 `Model` trailer；保留历史原样，不重写或 amend。
+- `ca6bd940e352a0e8c452607c1880bea86fecac37`（2026-07-20）：把 `origin/main=610ed31f374039c5966ff9b831867147de844b63` 合入 production-wiring 返工树。该历史 merge commit 缺少 `Model` trailer；保留历史原样，不重写或 amend。
 - `30a71c767f4e58d8254d18fd12d68bbd344e4892`（2026-07-20）：初版补齐 `generated-artifacts` host Ajv 真编译门禁（`loadHostAjv` + 根 schema 矩阵）；默认 5s 超时下该用例仍会假红。
 - `bdc37989b6de5d2dee2dfb4ddf28aa90304b294a`（2026-07-20）：放宽 discover/host Ajv 用例到 60s，并打印宿主 Ajv version/path 与真实 `assertionCount`；本轮实测 assertionCount=157。
 - `f4f0c92d45a097043e8cb84ce3f0fd64d3599127`（2026-07-20）：纠正 Finish Evidence 的宿主 Ajv 78/78 overclaim，回填真实 gate 数字；当时仍写 host `/usr/share/nodejs/ajv` 路径。
@@ -146,6 +147,7 @@
   - snapshot 哈希（未改、未删）：`tiandao-snapshot-200.json` sha256=`c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`；`tiandao-snapshot-300.json` sha256=`eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。
   - 无上下文 read-only validator：第一步对拍 HEAD，结论 `PASS 1e8455876f710bd5507d0fa77d15cf83516adced`；确认精确依赖/lockfile、workspace 非 host 解析、真实生成物语义唯一定位、Unicode 矩阵与真实 Ajv compile/validate 均被锁住，无 blocker/major。
 - **production-wiring 返工补充（代码提交 `2ff99756479749721a99fa9a2d18807dc2dba0b5` + `31707c2dab3fe3d4b068e3419fe0a5c812cbc803`）**：package-local clean install、schema check/build/test/generate freshness、Tiandao 72 files / 836 tests、根 agent build 与 `git diff --check` 均退出 0；两份 snapshot 哈希仍逐字一致且保持 untracked。该补充提交后尚未运行 fresh validator，不能复用 `PASS 1e845587...` 外推到新 HEAD。
+- **本轮三文件返工（Ajv 备选根 + 所有权注释 + 元数据证据纠偏）**：`TRUSTED_AJV_NODE_MODULES_ROOTS` 明确作为合法备选安装布局处理；候选根仅在 `lstat` 明确返回 `ENOENT` / `ENOTDIR` 时视为缺失并跳过，任何已存在但无法 `realpathSync.native()` canonicalize 的根均 fail-closed。Ajv package metadata 与 runtime 路径自身始终先 canonicalize，且必须共同处于同一个实际存在的 canonical trusted root；自动化反例覆盖 workspace-only、package-local-only、两根均缺失、external path、metadata/runtime 跨根分裂、dangling trusted-root symlink 与 in-root Ajv symlink escape。`npm ci` 按既有根 lockfile安装 113 packages 并退出 0（仅报告 6 个 audit 项，未运行 audit fix、未改依赖）；`npm run build -w @bong/schema` 退出 0；定向 `npx vitest run tests/generated-artifacts.test.ts` 为 1 file / 26 tests passed；`npm run check` 退出 0且 406 generated artifacts fresh；完整 schema 为 29 files / 906 tests passed；根 `npm run build` 退出 0；完整 Tiandao 为 72 files / 839 tests passed。测试在隔离实施树生成的两份 untracked snapshot 与受保护 PR worktree 原件哈希分别保持 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`、`eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`，均未删除、stage 或覆盖；本轮提交后仍须对新 exact HEAD 运行 fresh validator，旧 SHA 结论不可外推。
 
 ### 跨仓库核验
 
@@ -154,7 +156,7 @@
 - agent → server：生产 consumer 输出经生产 `bong:agent_narrate` parser 进入 `process_redis_inbound`，`NarrationScope::Player` 最终选择唯一目标玩家；legacy 缺失或空白目标只记录 warning/丢弃计数，不发布 narration，因而不存在 broadcast 旁路。
 - server → client：目标玩家恰好收到一条 typed `bong:server_data` narration，旁观者无 typed payload；每个 mock client 只执行一次 `collect_received()`，并从同一批帧同时分类 typed narration 与 `GameMessageS2c`，因此“两名玩家都没有 chat mirror”是有效负断言而非空缓冲假绿。
 - client runtime：实际 Fabric renderer 线程完成 Bong 网络/HUD/动画/实体与 FeatureRenderer bootstrap，并创建 `Minecraft* 1.20.1` 窗口；不是只靠 JUnit classpath 或静态资源测试推断。
-- 提交元数据：逐枚执行 `git interpret-trailers --parse` 审计 `origin/main..HEAD`，所有本 PR commit 均存在精确 `Model:` trailer；早期提交为 `gpt-5.1`，返工提交为 `gpt-5.6-sol-max`，后续协议/e2e/主线复验与证据更新为 `gpt-5`。
+- 提交元数据：逐枚执行 `git interpret-trailers --parse` 审计 `origin/main..HEAD`。非 merge 的 implementation / test / evidence commits 均记录了精确 `Model:` trailer（早期为 `gpt-5.1`，返工为 `gpt-5.6-sol-max`，后续协议/e2e/证据更新为 `gpt-5`）；三个历史主线 merge `e960ba5fc54795bbb572b015b93ea530578bd1cc`、`56b6e33dc577453d2e29f4206564e84b15fcb3fd`、`ca6bd940e352a0e8c452607c1880bea86fecac37` 缺少 `Model:` trailer，已在关键提交清单如实登记并保留 commit object 原样，不 amend、不改写历史。
 
 ### 遗留 / 后续
 

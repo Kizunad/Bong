@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -156,22 +157,46 @@ function canonicalizePath(path: string, label: string): string {
   }
 }
 
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
+}
+
+function canonicalizeExistingTrustedRoot(root: string): string | undefined {
+  try {
+    // lstat keeps a dangling symlink distinguishable from an absent optional layout.
+    // Only a genuinely missing path is skipped; every other filesystem anomaly fails closed.
+    lstatSync(root);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw new Error(
+      `Cannot inspect trusted node_modules root ${root}; Ajv trust validation fails closed.`,
+      { cause: error },
+    );
+  }
+  return canonicalizePath(root, "trusted node_modules root");
+}
+
 function requireTrustedAjvNodeModulesRoot(
   paths: AjvResolutionPaths,
   trustedRoots: readonly string[] = TRUSTED_AJV_NODE_MODULES_ROOTS,
 ): string {
   const packageJsonPath = canonicalizePath(paths.packageJsonPath, "Ajv package metadata path");
   const resolvedPath = canonicalizePath(paths.resolvedPath, "Ajv runtime path");
-  const canonicalTrustedRoots = trustedRoots.map((root) =>
-    canonicalizePath(root, "trusted node_modules root"),
-  );
+  const canonicalTrustedRoots = trustedRoots.flatMap((root) => {
+    const canonicalRoot = canonicalizeExistingTrustedRoot(root);
+    return canonicalRoot === undefined ? [] : [canonicalRoot];
+  });
   const trustedRoot = canonicalTrustedRoots.find(
     (root) => isPathWithin(root, packageJsonPath) && isPathWithin(root, resolvedPath),
   );
   if (!trustedRoot) {
     throw new Error(
       [
-        "Ajv package metadata and runtime must resolve inside one trusted workspace node_modules root.",
+        "Ajv package metadata and runtime must resolve inside one existing trusted workspace node_modules root.",
         `package=${packageJsonPath}`,
         `runtime=${resolvedPath}`,
         `trusted=${canonicalTrustedRoots.join(",") || "<none>"}`,
@@ -711,23 +736,47 @@ describe("generated schema freshness gate", () => {
     }
   });
 
-  it("accepts only canonical Ajv paths within one real trusted node_modules root", () => {
+  it("accepts either installed Ajv layout when the other trusted root is absent", () => {
     const tempRoot = createTempDir();
-    const trustedRoot = join(tempRoot, "trusted", "node_modules");
-    const trustedAjvRoot = join(trustedRoot, "ajv");
-    const trustedRuntimeDir = join(trustedAjvRoot, "dist");
-    mkdirSync(trustedRuntimeDir, { recursive: true });
-    const trustedPaths = {
-      packageJsonPath: join(trustedAjvRoot, "package.json"),
-      resolvedPath: join(trustedRuntimeDir, "ajv.js"),
+    const workspaceRoot = join(tempRoot, "workspace", "node_modules");
+    const missingPackageLocalRoot = join(tempRoot, "package-local-missing", "node_modules");
+    const workspaceAjvRoot = join(workspaceRoot, "ajv");
+    mkdirSync(join(workspaceAjvRoot, "dist"), { recursive: true });
+    const workspacePaths = {
+      packageJsonPath: join(workspaceAjvRoot, "package.json"),
+      resolvedPath: join(workspaceAjvRoot, "dist", "ajv.js"),
     };
-    writeFileSync(trustedPaths.packageJsonPath, '{"version":"8.12.0"}');
-    writeFileSync(trustedPaths.resolvedPath, "module.exports = {};");
+    writeFileSync(workspacePaths.packageJsonPath, '{"version":"8.12.0"}');
+    writeFileSync(workspacePaths.resolvedPath, "module.exports = {};");
 
-    expect(requireTrustedAjvNodeModulesRoot(trustedPaths, [trustedRoot])).toBe(
-      realpathSync.native(trustedRoot),
-    );
+    expect(
+      requireTrustedAjvNodeModulesRoot(workspacePaths, [
+        workspaceRoot,
+        missingPackageLocalRoot,
+      ]),
+    ).toBe(realpathSync.native(workspaceRoot));
 
+    const missingWorkspaceRoot = join(tempRoot, "workspace-missing", "node_modules");
+    const packageLocalRoot = join(tempRoot, "package-local", "node_modules");
+    const packageLocalAjvRoot = join(packageLocalRoot, "ajv");
+    mkdirSync(join(packageLocalAjvRoot, "dist"), { recursive: true });
+    const packageLocalPaths = {
+      packageJsonPath: join(packageLocalAjvRoot, "package.json"),
+      resolvedPath: join(packageLocalAjvRoot, "dist", "ajv.js"),
+    };
+    writeFileSync(packageLocalPaths.packageJsonPath, '{"version":"8.12.0"}');
+    writeFileSync(packageLocalPaths.resolvedPath, "module.exports = {};");
+
+    expect(
+      requireTrustedAjvNodeModulesRoot(packageLocalPaths, [
+        missingWorkspaceRoot,
+        packageLocalRoot,
+      ]),
+    ).toBe(realpathSync.native(packageLocalRoot));
+  });
+
+  it("fails closed when no trusted layout exists or an existing root cannot canonicalize", () => {
+    const tempRoot = createTempDir();
     const externalAjvRoot = join(tempRoot, "external", "ajv");
     mkdirSync(join(externalAjvRoot, "dist"), { recursive: true });
     const externalPaths = {
@@ -738,29 +787,57 @@ describe("generated schema freshness gate", () => {
     writeFileSync(externalPaths.resolvedPath, "module.exports = {};");
 
     expect(() =>
-      requireTrustedAjvNodeModulesRoot(externalPaths, [trustedRoot]),
-    ).toThrow(/one trusted workspace node_modules root/);
+      requireTrustedAjvNodeModulesRoot(externalPaths, [
+        join(tempRoot, "workspace-missing", "node_modules"),
+        join(tempRoot, "package-local-missing", "node_modules"),
+      ]),
+    ).toThrow(/one existing trusted workspace node_modules root.*trusted=<none>/);
+
+    const existingTrustedRoot = join(tempRoot, "trusted", "node_modules");
+    mkdirSync(existingTrustedRoot, { recursive: true });
+    expect(() =>
+      requireTrustedAjvNodeModulesRoot(externalPaths, [existingTrustedRoot]),
+    ).toThrow(/one existing trusted workspace node_modules root/);
+
+    const danglingTrustedRoot = join(tempRoot, "dangling", "node_modules");
+    mkdirSync(join(tempRoot, "dangling"), { recursive: true });
+    symlinkSync(join(tempRoot, "missing-target"), danglingTrustedRoot, "dir");
+    expect(() =>
+      requireTrustedAjvNodeModulesRoot(externalPaths, [danglingTrustedRoot]),
+    ).toThrow(/Cannot canonicalize trusted node_modules root/);
+  });
+
+  it("requires package metadata and runtime to share one canonical trusted root", () => {
+    const tempRoot = createTempDir();
+    const firstRoot = join(tempRoot, "first", "node_modules");
+    const secondRoot = join(tempRoot, "second", "node_modules");
+    const firstAjvRoot = join(firstRoot, "ajv");
+    const secondAjvRoot = join(secondRoot, "ajv");
+    mkdirSync(join(firstAjvRoot, "dist"), { recursive: true });
+    mkdirSync(join(secondAjvRoot, "dist"), { recursive: true });
+    const firstPackageJsonPath = join(firstAjvRoot, "package.json");
+    const firstRuntimePath = join(firstAjvRoot, "dist", "ajv.js");
+    const secondRuntimePath = join(secondAjvRoot, "dist", "ajv.js");
+    writeFileSync(firstPackageJsonPath, '{"version":"8.12.0"}');
+    writeFileSync(firstRuntimePath, "module.exports = {};");
+    writeFileSync(join(secondAjvRoot, "package.json"), '{"version":"8.12.0"}');
+    writeFileSync(secondRuntimePath, "module.exports = {};");
+
     expect(() =>
       requireTrustedAjvNodeModulesRoot(
-        {
-          packageJsonPath: trustedPaths.packageJsonPath,
-          resolvedPath: externalPaths.resolvedPath,
-        },
-        [trustedRoot],
+        { packageJsonPath: firstPackageJsonPath, resolvedPath: secondRuntimePath },
+        [firstRoot, secondRoot],
       ),
-    ).toThrow(/one trusted workspace node_modules root/);
+    ).toThrow(/one existing trusted workspace node_modules root/);
     expect(() =>
       requireTrustedAjvNodeModulesRoot(
         {
-          packageJsonPath: join(trustedAjvRoot, "missing-package.json"),
-          resolvedPath: trustedPaths.resolvedPath,
+          packageJsonPath: join(firstAjvRoot, "missing-package.json"),
+          resolvedPath: firstRuntimePath,
         },
-        [trustedRoot],
+        [firstRoot],
       ),
     ).toThrow(/Cannot canonicalize Ajv package metadata path/);
-    expect(() =>
-      requireTrustedAjvNodeModulesRoot(trustedPaths, [join(tempRoot, "missing-root")]),
-    ).toThrow(/Cannot canonicalize trusted node_modules root/);
   });
 
   it("rejects a lexical in-root Ajv symlink that canonically escapes the trusted root", () => {
@@ -781,7 +858,7 @@ describe("generated schema freshness gate", () => {
         },
         [trustedRoot],
       ),
-    ).toThrow(/one trusted workspace node_modules root/);
+    ).toThrow(/one existing trusted workspace node_modules root/);
   });
 
   // workspace Ajv 对 client-request / server-data 全量 anyOf 根 schema 编译 + 边界矩阵较慢，

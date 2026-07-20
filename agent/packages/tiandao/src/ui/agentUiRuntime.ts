@@ -45,8 +45,9 @@ export interface AgentUiRuntimeConfig {
   /**
    * Redis pub for narration（发布 bong:agent_narrate，用于 realm_gate_rejected 降级）。
    *
-   * 必须是独立于 pub/sub 的发布连接，并同时提供 publish 和 disconnect。
-   * Redis 订阅连接进入 subscriber mode 后不能执行 publish。
+   * 必须是独立于 pub/sub 的发布连接。runtime 只借用 publish 能力；physical
+   * disconnect 由创建三条 Redis 连接的 factory 统一拥有和执行。Redis 订阅连接
+   * 进入 subscriber mode 后不能执行 publish。
    */
   narPub: AgentUiRuntimeNarPubClient;
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
