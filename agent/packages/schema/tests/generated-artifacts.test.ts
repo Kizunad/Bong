@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import Ajv from "ajv";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
@@ -108,13 +108,56 @@ type WorkspaceAjv = Readonly<{
   version: string;
   resolvedPath: string;
   packageJsonPath: string;
+  trustedNodeModulesRoot: string;
   compile: (schema: object) => AjvValidate;
 }>;
 
+type AjvResolutionPaths = Readonly<{
+  packageJsonPath: string;
+  resolvedPath: string;
+}>;
+
+const TRUSTED_AJV_NODE_MODULES_ROOTS = [
+  resolve(import.meta.dirname, "..", "node_modules"),
+  resolve(import.meta.dirname, "..", "..", "..", "node_modules"),
+] as const;
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const relativePath = relative(resolve(root), resolve(candidate));
+  return (
+    relativePath === "" ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith(`..${sep}`) &&
+      !isAbsolute(relativePath))
+  );
+}
+
+function requireTrustedAjvNodeModulesRoot(
+  paths: AjvResolutionPaths,
+  trustedRoots: readonly string[] = TRUSTED_AJV_NODE_MODULES_ROOTS,
+): string {
+  const candidates = [paths.packageJsonPath, paths.resolvedPath];
+  const trustedRoot = trustedRoots
+    .map((root) => resolve(root))
+    .find((root) => candidates.every((candidate) => isPathWithin(root, candidate)));
+  if (!trustedRoot) {
+    throw new Error(
+      [
+        "Ajv package metadata and runtime must resolve inside one trusted workspace node_modules root.",
+        `package=${paths.packageJsonPath}`,
+        `runtime=${paths.resolvedPath}`,
+        `trusted=${trustedRoots.map((root) => resolve(root)).join(",") || "<none>"}`,
+        "Install @bong/schema devDependency ajv@8.12.0 and re-run from the agent workspace.",
+      ].join(" "),
+    );
+  }
+  return trustedRoot;
+}
+
 /**
- * 使用 @bong/schema 工作区声明的可安装 Ajv（devDependency），不依赖机器宿主
- * `/usr/share/nodejs/ajv`。clean CI / GitHub runner 通过 npm workspace install 解析。
- * 禁止用纯 RegExp 冒充 JSON Schema 编译语义。
+ * 使用 @bong/schema 工作区声明的可安装 Ajv（devDependency），只接受当前仓库
+ * agent/schema workspace 的受信 node_modules 根。clean CI / GitHub runner 通过 npm
+ * workspace install 解析；禁止用纯 RegExp 冒充 JSON Schema 编译语义。
  */
 function loadWorkspaceAjv(): WorkspaceAjv {
   if (typeof AJV_PACKAGE_VERSION !== "string" || !AJV_PACKAGE_VERSION) {
@@ -125,18 +168,10 @@ function loadWorkspaceAjv(): WorkspaceAjv {
       `Workspace Ajv must be exactly 8.12.0 for reproducible schema behavior; got ${AJV_PACKAGE_VERSION} at ${AJV_PACKAGE_JSON_PATH}`,
     );
   }
-  // 拒绝 package metadata 或 runtime 任一入口误解析到 Debian host 路径。
-  const hostNodePath = "/usr/share/nodejs/";
-  const resolvedPaths = [AJV_PACKAGE_JSON_PATH, AJV_RESOLVED_PATH];
-  if (resolvedPaths.some((path) => path.includes(hostNodePath))) {
-    throw new Error(
-      [
-        "Ajv resolved to host Node path, not the workspace package:",
-        ...resolvedPaths,
-        "Install @bong/schema devDependency ajv@8.12.0 and re-run from the agent workspace.",
-      ].join(" "),
-    );
-  }
+  const trustedNodeModulesRoot = requireTrustedAjvNodeModulesRoot({
+    packageJsonPath: AJV_PACKAGE_JSON_PATH,
+    resolvedPath: AJV_RESOLVED_PATH,
+  });
 
   // strict:false 兼容 TypeBox 导出的附加元数据；allErrors 便于失败断言带完整路径。
   const ajv = new Ajv({ allErrors: true, strict: false });
@@ -144,6 +179,7 @@ function loadWorkspaceAjv(): WorkspaceAjv {
     version: AJV_PACKAGE_VERSION,
     resolvedPath: AJV_RESOLVED_PATH,
     packageJsonPath: AJV_PACKAGE_JSON_PATH,
+    trustedNodeModulesRoot,
     compile: (schema) => ajv.compile(schema) as AjvValidate,
   };
 }
@@ -635,6 +671,46 @@ describe("generated schema freshness gate", () => {
     }
   });
 
+  it("accepts only Ajv paths contained by one injected trusted node_modules root", () => {
+    const trustedRoot = resolve("/srv/bong/agent/node_modules");
+    const trustedPaths = {
+      packageJsonPath: join(trustedRoot, "ajv", "package.json"),
+      resolvedPath: join(trustedRoot, "ajv", "dist", "ajv.js"),
+    };
+
+    expect(requireTrustedAjvNodeModulesRoot(trustedPaths, [trustedRoot])).toBe(trustedRoot);
+
+    const externalAjvRoots = [
+      "/usr/share/nodejs/ajv",
+      "/usr/local/lib/node_modules/ajv",
+      "/opt/node-path/node_modules/ajv",
+      `${trustedRoot}-evil/ajv`,
+    ];
+    for (const externalRoot of externalAjvRoots) {
+      expect(
+        () =>
+          requireTrustedAjvNodeModulesRoot(
+            {
+              packageJsonPath: join(externalRoot, "package.json"),
+              resolvedPath: join(externalRoot, "dist", "ajv.js"),
+            },
+            [trustedRoot],
+          ),
+        `external/NODE_PATH Ajv root must be rejected: ${externalRoot}`,
+      ).toThrow(/one trusted workspace node_modules root/);
+    }
+
+    expect(() =>
+      requireTrustedAjvNodeModulesRoot(
+        {
+          packageJsonPath: trustedPaths.packageJsonPath,
+          resolvedPath: "/usr/local/lib/node_modules/ajv/dist/ajv.js",
+        },
+        [trustedRoot],
+      ),
+    ).toThrow(/one trusted workspace node_modules root/);
+  });
+
   // workspace Ajv 对 client-request / server-data 全量 anyOf 根 schema 编译 + 边界矩阵较慢，
   // 默认 5s 会假红；单独放宽到 60s，并打印 assertionCount 供 Finish Evidence。
   it(
@@ -649,15 +725,15 @@ describe("generated schema freshness gate", () => {
         workspaceAjv.version,
         `workspace Ajv 必须精确解析 8.12.0；package=${workspaceAjv.packageJsonPath}, runtime=${workspaceAjv.resolvedPath}`,
       ).toBe("8.12.0");
-      // package metadata 与 runtime import 都必须来自可安装 workspace，而不是 Debian host。
+      // package metadata 与 runtime import 必须共同位于当前仓库的一个受信 node_modules 根。
       expect(
-        [workspaceAjv.packageJsonPath, workspaceAjv.resolvedPath].every(
-          (path) => path.includes("node_modules") && path.includes("ajv") &&
-            !path.includes("/usr/share/nodejs/"),
-        ),
-        `Workspace Ajv must resolve under node_modules (not host): ` +
+        requireTrustedAjvNodeModulesRoot({
+          packageJsonPath: workspaceAjv.packageJsonPath,
+          resolvedPath: workspaceAjv.resolvedPath,
+        }),
+        `Workspace Ajv must resolve under one trusted root: ` +
           `${workspaceAjv.packageJsonPath}, ${workspaceAjv.resolvedPath}`,
-      ).toBe(true);
+      ).toBe(workspaceAjv.trustedNodeModulesRoot);
 
       let assertionCount = 0;
       const count = (condition: boolean, message: string): void => {
