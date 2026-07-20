@@ -135,12 +135,11 @@ def main() -> int:
         POSE,
         name="stance_zhenmai",
         description=(
-            "P6 针脉功法习得亮相（28t 非循环）：anticipation 0→8 提指取穴"
+            "针脉功法习得亮相（28t 非循环）：anticipation 0→8 提指取穴"
             "（右臂 pitch 0→-46 / torso.yaw +14 蓄拧 / body.y -0.045），strike "
             "8→20 以指代针前点下针（rightArm pitch -46→-104 / yaw -28 外分 / "
             "bend 62→14 近伸直 / torso.yaw +28 送肩 / body.z +0.11 / head.pitch "
             "+8 看穴），recovery 20→28 收指归中立。"
-            "取代原 20t isLoop 三帧全同的静止持守图。"
         ),
         end_tick=28,
         stop_tick=30,

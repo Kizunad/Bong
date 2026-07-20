@@ -21,13 +21,23 @@
 上举」正是全仓最拥挤的剪影区间（远距离与其他托举类动作混淆）。螺旋化后正面
 剪影左右不等高，远距离可辨性显著提高。
 
+**easing 管辖语义**（PlayerAnimator 1.0.2 实证，非直觉）：本仓动画一律不声明
+`easeBeforeKeyframe`，`KeyframeAnimation.isEasingBefore` 因而取默认 false，
+`KeyframeAnimationPlayer#getValueFromKeyframes` 走 `before.ease`——即**某帧上
+写的 easing 管辖的是「本帧 → 下一帧」这一段**，不是「上一帧 → 本帧」。所以
+「发力用 easeIn 族」要落在 strike 段的**起始侧帧**（tick ∈ [strike_from,
+strike_to)），写在 strike 末帧上会跑去管收势段。由
+`AnimCastTicksAlignmentTest#strikePhaseCarriesEaseInDrive` 机械锁定。
+
 时序（精度标准 #1/#2/#3）：
   anticipation 0→8    沉身收拢：body.y -0.06 下坐、torso.pitch +9 塌腰、
                       双臂收到胸前（pitch -38 / bend 74），OUTQUAD 收得快
   strike       8→20   外旋托举：右臂 pitch -38→-106 / 左臂 -38→-84（错开约
                       22° 成螺旋）、yaw 外分 -36 / +32、bend 74→44/62 展开，
                       torso.pitch +9→-5 挺身兼 yaw→+7 轻拧、
-                      body.y -0.06→+0.03 拔起，INOUTSINE；t20 = 托举顶点
+                      body.y -0.06→+0.03 拔起；easing 按发力节奏排布——
+                      t8 INQUAD（起手加速）→ t12 INCUBIC（撑开主发力）→
+                      t16 OUTQUAD（逼近顶点减速定格）；t20 = 托举顶点
   recovery     20→32  卸力归中立：全轴回零，INOUTSINE
 endTick=32，stopTick=34，非循环。主运动轴：rightArm.pitch / leftArm.pitch /
 torso.pitch / body.y。帧点 0,4,8,12,16,20,24,28,32 —— 全程间隔 ≤4t。
@@ -66,8 +76,10 @@ POSE = {
         rightLeg=dict(pitch=+4, bend=5, z=+0.015),
     ),
     # anticipation 末帧 / strike 起点：气收到底，双掌收拢在胸前。
+    # easing 归 strike：本帧 easing 管辖 8→12（库语义见模块 docstring），
+    # 是外旋发力的起手加速段，用 easeIn 族。
     8: dict(
-        easing="INOUTSINE",
+        easing="INQUAD",
         body=dict(x=0.0, y=-0.06, z=-0.02),
         head=dict(pitch=+8, yaw=0),
         torso=dict(pitch=+9, yaw=0),
@@ -77,8 +89,9 @@ POSE = {
         rightLeg=dict(pitch=+6, bend=9, z=+0.025),
     ),
     # 外旋起：掌根先向外翻，肘还没展开（load-snap，§2.4）。
+    # 管辖 12→16：涡场撑开的主发力段，加速度继续拉高（INQUAD→INCUBIC）。
     12: dict(
-        easing="INOUTSINE",
+        easing="INCUBIC",
         body=dict(x=0.0, y=-0.04, z=-0.01),
         head=dict(pitch=+4, yaw=0),
         torso=dict(pitch=+5, yaw=0),
@@ -88,8 +101,9 @@ POSE = {
         rightLeg=dict(pitch=+5, bend=8, z=+0.02),
     ),
     # 撑开中段：肘展、掌心相对，涡场被撑出来。
+    # 管辖 16→20：逼近托举顶点，减速定格（对齐 beng_quan 的 IN→IN→OUT 收束）。
     16: dict(
-        easing="INOUTSINE",
+        easing="OUTQUAD",
         body=dict(x=0.0, y=-0.01, z=0.0),
         head=dict(pitch=0, yaw=+3),
         torso=dict(pitch=0, yaw=+4),
@@ -150,12 +164,11 @@ def main() -> int:
         POSE,
         name="stance_woliu",
         description=(
-            "P6 涡流功法习得亮相（32t 非循环）：anticipation 0→8 沉身收拢"
-            "（body.y -0.06 / torso.pitch +9 / 双臂收胸前 bend 74），strike "
-            "8→20 双掌外旋托举撑开涡场，右臂 -106 / 左臂 -84 错开成螺旋、"
-            "yaw 外分 -36/+32、torso.yaw +7 轻拧、挺身 body.y +0.03），"
-            "recovery 20→32 卸力归中立。取代原 40t "
-            "isLoop 站桩（无停止路径、3 帧点、只动手臂）。"
+            "涡流功法习得亮相（32t 非循环）：anticipation 0→8 沉身收拢"
+            "（body.y -0.06 / torso.pitch +9 / 双臂收胸前 bend 74），"
+            "strike 8→20 双掌外旋托举撑开涡场（右臂 -106 / 左臂 -84 "
+            "错开成螺旋、yaw 外分 -36/+32、torso.yaw +7 轻拧、挺身 "
+            "body.y +0.03），recovery 20→32 卸力归中立。"
         ),
         end_tick=32,
         stop_tick=34,
