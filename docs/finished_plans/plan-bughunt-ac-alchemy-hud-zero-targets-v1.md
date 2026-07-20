@@ -96,11 +96,15 @@
   `RecipeRegistry` 构造完整 session snapshot：恢复时长、温度目标/容差、注气目标、按声明
   顺序生成阶段材料摘要，并保留 completed/missed 与最近干预。
 - `server/src/network/client_request_handler.rs` 的 open furnace、ignite、intervention、feed
-  slot、take back 五条生产重推路径均对拍权威 registry；take-back 在炉 `end_session` 成功后无论产物
-  入袋成败，统一推送 **空炉 furnace + `active=false` finished session** 权威快照，避免客户端
-  残留 active HUD。non-explode 路径下 **allocator 缺失 / grant 失败** 仍推 finished+empty，但
-  **不发成功 VFX（`ALCHEMY_COMPLETE`）且不 emit `AlchemyOutcomeEvent`**；成功 grant 才触发
-  成功 VFX/outcome。炸炉分支仍走 explode VFX + 伤害/裂痕 outcome，与 reward 成败解耦。
+  slot、take back 五条生产重推路径均对拍权威 registry。take-back 改为**两阶段原子结算**：
+  ① non-explode 先把 session 推到 `finished` 并保留在炉上（finished-but-unclaimed），再尝试
+  allocator/grant；② **仅 grant 成功后**才 `end_session` 并推 empty furnace + finished session，
+  同时发恰好一次 `ALCHEMY_COMPLETE` + `AlchemyOutcomeEvent`。allocator 缺失 / inventory full /
+  缺模板等 grant 失败路径：0 complete VFX、0 outcome，炉上保留 finished session（`has_session=true`
+  + `active=false` finished guidance），可重试；恢复条件后重试成功且全程只一次发奖。炸炉仍是
+  不可逆终局：立刻 end_session + explode VFX/伤害/裂痕 outcome，永不混入 complete。ignite 拒绝
+  覆盖 unclaimed finished。`AlchemyFurnace::{has_session,has_unclaimed_finished}` +
+  `start_session` 占炉守卫同步加固。
 - `server/src/network/alchemy_snapshot_emit.rs` 的测试 helper 直接调用真实 `build_session_data`
   与生产 `serialize_server_data_payload_proto`，唯一生成 active / finished 两份完整
   `ServerDataEnvelope` 字节。普通测试只在内存重建并与仓库 fixture 逐字节比较；唯一写盘入口
@@ -140,9 +144,10 @@
   普通 Rust 测试锁陈旧，Fabric active / finished 测试消费同一 fixture；这是本轮最后业务代码提交。
 - `d0b2005a`（2026-07-17）：双父合并 `origin/main=9d2e29d0`，在未提交 merge 树完成 server、
   Java 17、Python 与真实炼丹场景复验后落盘。
-- `ed98a5eb`（2026-07-19）：修复 take_back 终态——`end_session` 成功后，allocator 缺失 /
-  grant 失败不再提前 return，统一推送 empty furnace + finished session；non-explode 失败路径
-  不发成功 VFX / `AlchemyOutcomeEvent`。饱和测试覆盖成功、缺编号器、grant 失败三条路径。
+- `ed98a5eb`（2026-07-19）：中间态 take_back 终态修补——当时为消旧 review「失败提前 return 导致
+  HUD 卡 active」，把 allocator/grant 失败也推成 empty furnace + finished session；non-explode
+  失败路径不发成功 VFX / outcome。**该 intermediate 语义后来被识别为 destructive product-loss
+  根因，已被 2026-07-20 原子结算返工反转**（失败必须保留 finished-unclaimed 可重试）。
 - `f1a74ad7`（2026-07-19）：消解 take_back grant 分支 `needless_option_as_deref`，使
   `cargo clippy --all-targets -- -D warnings` 再次清零。
 - `6e64052b`（2026-07-19）：双父合并 `origin/main=946ad6c2`（#1233 docs-only 归档
@@ -154,8 +159,13 @@
 - `f9215777`（2026-07-19）：双父合并 `origin/main=2f9c70ad`（#1212 搜刮 HUD 终态收尾，触
   client network/HUD），无冲突；parents=`e32a44c2` + `2f9c70ad`。server 无 delta，故 server
   门禁沿用 `e32a44c2` 实测；client 在 `f9215777` 重跑 Java 17 全量门禁。
-- **本节所在提交**（2026-07-19）：只原地校正既有 `## Finish Evidence`，绑定 #1241/#1212 双父
-  merge 与最新门禁事实（含真实 ignored 计数）；不改代码、不写无法自证的“自身 SHA”循环。
+- **本节所在提交之前的 docs-only 校正**（2026-07-19）：绑定 #1241/#1212 双父 merge 与当时门禁
+  事实（含真实 ignored 计数）。
+- **本节业务修复提交**（2026-07-20）：non-explode take-back 两阶段原子结算 + 饱和契约测试
+  （成功/缺编号器可重试/背包满可重试/缺模板可重试/explode 不混 complete/ignite 拒覆盖）+ furnace
+  占炉守卫。
+- **本节所在提交**（2026-07-20）：只原地校正既有 `## Finish Evidence`，绑定原子 take-back 语义与
+  最新 server 门禁；不重复 promotion/mv，不追加第二个 Finish Evidence，不写无法自证的“自身 SHA”。
 
 ### 测试结果
 
@@ -164,13 +174,16 @@
   ignored / 0 failed；覆盖 active、两份生产 fixture 逐字节陈旧门、空炉、未知 recipe、finished
   guidance。ignored writer 只有显式 `--ignored --exact` 才会写盘。
 - 生产 handler 定向：open / ignite / intervention / feed 的 authoritative wire 用例 4/4；
-  take-back 终态饱和 3/3：
-  1. 成功 take-back → finished guidance（`active=false` / `status_label=已结束` / 完整目标与
-     stages）；
-  2. 缺 `InventoryInstanceIdAllocator` → 错误聊天「实例编号器未就绪」，仍推 1× empty furnace +
-     1× finished session，不 invent 奖励、不 emit `AlchemyOutcomeEvent`；
-  3. grant 失败（缺 residue 模板）→ 错误聊天「炼丹产物入袋失败」，仍推 finished+empty，不留
-     partial 奖励、不 emit outcome。
+  take-back 原子结算饱和（本轮重写；**取代**旧「allocator/grant 失败仍 empty+finished」断言）：
+  1. 成功 claim → 1× `ALCHEMY_COMPLETE` + 1× `AlchemyOutcomeEvent` + empty furnace + finished
+     guidance；重复 take-back 拒绝「尚未起炉」，不二次发奖/VFX/outcome；
+  2. 缺 `InventoryInstanceIdAllocator` → 0 complete / 0 outcome，保留 finished-unclaimed
+     （`has_session=true` + `active=false`）；恢复 allocator 后重试成功且全程只一次；
+  3. inventory full → 0/0 + finished-unclaimed；腾出容量后重试成功且只一次；
+  4. 缺 residue 模板 → 0/0 + finished-unclaimed；补模板后重试成功且只一次；
+  5. explode → 有 explode VFX/outcome，0 complete，会话清空（永不混 COMPLETE）；
+  6. ignite 覆盖 unclaimed finished → 拒绝并保留原 session。
+  上述 2/3/4 明确反证旧 finding：失败路径不得 inactive+clear 吞产物。
 - Python bot protocol（历史锁定）：`python3 scripts/bot/test_protocol.py` → 124 passed /
   0 failed；炼丹专属正向用例 `test_alchemy_furnace_tag11_and_session_tag12` 验证 tag 12、完整
   目标字段、stages 与 interventions。
@@ -179,13 +192,16 @@
   --tests com.bong.client.hud.ProcessingHudPlannerTest` → 12 passed / 0 failed；覆盖完整
   active、finished terminal、Rust fixture 跨端链、缺省 wire、显式零 target、缺 recipe、
   direct-store 零 target、blank recipe。
-- **server 完整门禁（2026-07-19，#1241 merge 后 clean HEAD `e32a44c2`，
-  `BONG_SKIP_SKIN_PREFETCH=1`，log `/tmp/pr1213-gates-e32a44c2.log`）**：
+- **server 完整门禁（历史，2026-07-19，#1241 merge 后 clean HEAD `e32a44c2`）**：
+  当时汇总 `11810 + 11 + 1 + 4 = 11826 passed / 0 failed / 7 ignored`；#1212 仅 client+docs，
+  曾沿用该 server 证据。
+- **server 完整门禁（2026-07-20，本轮原子 take-back 返工，worktree 未提交树，
+  log `/tmp/alchemy_full_test3.log` + clippy `/tmp/alchemy_clippy3.log`）**：
   `cargo fmt --check` → **FMT_EXIT:0**；`cargo clippy --all-targets -- -D warnings` →
-  **CLIPPY_EXIT:0**；`cargo test` → **TEST_EXIT:0**。汇总：`11810 + 11 + 1 + 4 = 11826 passed /
-  0 failed / 2+5=7 ignored`（lib 主套件 11810 passed / 2 ignored；其余 bin/integration 16
-  passed / 5 ignored）。#1212 仅 client+docs，server 树无 delta，故 server 门禁以 `e32a44c2`
-  为最终有效证据，不再因 #1212 重跑。
+  **CLIPPY_EXIT:0**；`cargo test` → **TEST_EXIT:0**。汇总：`11814 + 11 + 1 + 4 = 11830 passed /
+  0 failed / 2+5=7 ignored`（lib 主套件 11814 passed / 2 ignored；其余 bin/integration 16
+  passed / 5 ignored）。定向：`alchemy_take_back*` 7/7、`alchemy_ignite_rejects_unclaimed*` 1/1、
+  `alchemy::furnace::` 8/8。
 - **client 完整门禁（2026-07-19，#1212 merge 后 clean HEAD `f9215777`，显式
   `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`，log `/tmp/pr1213-client-f9215777.log`）**：
   `cd client && ./gradlew test build` → **CLIENT_EXIT:0 / BUILD SUCCESSFUL in 7m 35s**；JUnit
@@ -213,28 +229,33 @@
   protobuf，且文档把 `245d71b5` 与后续 docs-only PR HEAD 混称为最终验收 SHA。
 - `70b79e4ceba38c638f7c03e4b78648b163ec798d` 闭环第一项：Rust 真实 builder / encoder 唯一
   生产共享字节，Fabric 直接消费。
-- `ed98a5eb` 闭环 take_back 终态缺口：grant/allocator 失败不得阻断 finished HUD 推送；
-  成功 VFX/outcome 仅 grant 成功时触发。`f1a74ad7` 清 clippy。
+- `ed98a5eb` 曾用「失败也 empty+finished」消 HUD 卡死；CodeRabbit 旧 unresolved thread 若仍
+  要求失败后 inactive+空炉，那正是 destructive product-loss 根因。**2026-07-20 返工契约明确
+  反转**：失败后保留 finished product/session 并发 active=false / retryable authoritative
+  snapshot；成功后才 inactive/clear + 恰好一次 COMPLETE/outcome。`f1a74ad7` 清 clippy。
 - 2026-07-19 主线继续推进：`origin/main=5d9bdd8f`（#1241 server+client）→ 普通 merge 落
   双父 `e32a44c2`（parents `1c920bdd` + `5d9bdd8f`），并完成 server/client 全量复验；随后
   `origin/main=2f9c70ad`（#1212 client network/HUD）→ 再普通 merge 落双父 `f9215777`
   （parents `e32a44c2` + `2f9c70ad`）。#1212 无 server/alchemy 变更，server 证据沿用
   `e32a44c2`；client 在最终树 `f9215777` 重跑 Java 17 全量门禁绿。
-- **SHA 口径**：最后业务代码=`ed98a5eb`（clippy 微修 `f1a74ad7`）；主线同步树=
-  `f9215777`（含 #1233/#1241/#1212 双父 ancestry）；Finish Evidence=**本节所在提交**。
-  包含本节的完整最终 PR HEAD 由全新只读 FINAL validator 绑定，不再追写自身 SHA 循环。
-  显式排除 #1228，本轮未触及其分支/PR。
+- **SHA 口径**：此前业务代码=`ed98a5eb`（clippy `f1a74ad7`）；主线同步基线树含
+  #1233/#1241/#1212 双父 ancestry（`f9215777`/`88abb283` 一带）。**本轮新增业务修复** =
+  原子 take-back commit；Finish Evidence=**本节所在提交**。完整最终 PR HEAD 由只读 FINAL
+  validator 绑定，不追写自身 SHA 循环。显式排除 #1228，本轮未触及其分支/PR。
 
 ### 跨栈核验与遗留
 
 - server：`build_session_data` / `serialize_server_data_payload_proto` /
   `assert_shared_fixture_is_current` / 五条真实 request handler；`handle_alchemy_take_back`
-  的 end_session → empty+finished 终态 + grant 成败门禁。
+  两阶段原子结算（finished-unclaimed 可重试 → grant 成功才 end_session）+ explode 终局语义。
 - proto：`AlchemySession` / `AlchemyStageHint` 既有 tag；共享 active / finished Rust producer
   fixture 与 maintenance-only regeneration contract。
 - client：`AlchemySessionHandler` / `AlchemySessionStore.Snapshot.isActive` /
   `ProtoServerDataBridge` / `AlchemyProgressHudPlanner` / `AlchemyScreen.refreshSessionText`。
 - bot：`decode_server_data_envelope` → `_alchemy_session` / `production_alchemy_brew_pill`。
 - 指定保留的 `server/data/*` / `client/logs/*` / 其它 ignored 生成物本轮未删除、未入库。
-- 无真元流动、配方数值、wire tag 变化；成功 VFX 仍仅 grant 成功时触发（非新增资产）。#1213
-  无已知功能遗留。
+- 无真元流动、配方数值、wire tag 变化；成功 VFX/outcome 仍仅 grant 成功时触发（非新增资产）。
+  原 review major「end_session 后 grant 失败永久吞产物」已由可重试 finished-unclaimed 闭环。
+  **明确不迎合旧 CodeRabbit thread 恢复失败即 empty/clear**——测试已证明失败路径
+  `has_session=true` + `active=false` finished guidance + 0 COMPLETE/outcome，成功路径才
+  clear 并发奖。显式排除 #1228。#1213 无已知功能遗留（最终门禁计数见本轮测试结果补丁）。

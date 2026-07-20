@@ -70,13 +70,29 @@ impl AlchemyFurnace {
         self.integrity > 0.0 && self.tier >= recipe_tier_min
     }
 
+    /// 炉上是否挂着任何会话（含 finished-but-unclaimed）。
+    pub fn has_session(&self) -> bool {
+        self.session.is_some()
+    }
+
+    /// 仍在炼制中（未 finished）。finished 但未取走不算 busy，仍占炉。
     pub fn is_busy(&self) -> bool {
         self.session.as_ref().is_some_and(|s| !s.finished)
     }
 
+    /// 已结算但产物尚未成功入袋，等待 take-back 重试。
+    pub fn has_unclaimed_finished(&self) -> bool {
+        self.session.as_ref().is_some_and(|s| s.finished)
+    }
+
     pub fn start_session(&mut self, session: AlchemySession) -> Result<(), String> {
-        if self.is_busy() {
-            return Err("furnace is busy with an ongoing session".into());
+        // 进行中与 finished-unclaimed 都必须占炉，禁止覆盖导致吞产物。
+        if self.has_session() {
+            return Err(if self.has_unclaimed_finished() {
+                "furnace still holds an unclaimed finished session".into()
+            } else {
+                "furnace is busy with an ongoing session".into()
+            });
         }
         self.session = Some(session);
         Ok(())
@@ -133,9 +149,12 @@ mod tests {
         let mut f = AlchemyFurnace::new(1);
         let session = AlchemySession::new("r".into(), "alice".into());
         f.start_session(session).unwrap();
+        assert!(f.has_session());
         assert!(f.is_busy());
+        assert!(!f.has_unclaimed_finished());
         let ended = f.end_session();
         assert!(ended.is_some());
+        assert!(!f.has_session());
         assert!(!f.is_busy());
     }
 
@@ -146,6 +165,25 @@ mod tests {
             .unwrap();
         let again = f.start_session(AlchemySession::new("r".into(), "a".into()));
         assert!(again.is_err());
+        assert!(again.unwrap_err().contains("busy with an ongoing session"));
+    }
+
+    #[test]
+    fn cannot_start_over_unclaimed_finished_session() {
+        let mut f = AlchemyFurnace::new(1);
+        let mut session = AlchemySession::new("r".into(), "a".into());
+        session.finished = true;
+        f.session = Some(session);
+        assert!(f.has_session());
+        assert!(!f.is_busy());
+        assert!(f.has_unclaimed_finished());
+        let again = f.start_session(AlchemySession::new("r2".into(), "a".into()));
+        assert!(again.is_err());
+        assert!(again.unwrap_err().contains("unclaimed finished session"));
+        assert!(f
+            .session
+            .as_ref()
+            .is_some_and(|s| s.recipe == "r" && s.finished));
     }
 
     #[test]
