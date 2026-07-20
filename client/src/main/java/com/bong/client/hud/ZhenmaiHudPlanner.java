@@ -12,19 +12,21 @@ import java.util.Locale;
  *
  * <p>呈现策略：
  *
- * <p><b>配色说明（plan-skill-anim-fidelity-v1 P5 后）</b>：本 planner 的配色是为屏幕可读性
- * 单独调校的一套（例如 neutralize 用 {@code #CBD3DB} 而粒子端是 {@code #9CA3AF}），历来就与
- * 粒子色值不逐位相同。P5 已把真脉 5 招粒子统一改为金脉色系（anchor {@code #D4AF6A}，
- * 见 plan §P5.1 ①），HUD 侧配色本阶段<b>未随动</b>——P5 范围仅限粒子去复用，改 HUD 配色属
- * 可感知 UX 变更，需单独决策。因此下方色值请勿再理解为「与粒子对齐」。
+ * <p><b>配色说明（plan-skill-anim-fidelity-v1 P5 后）</b>：本 planner 的配色是为<b>屏幕可读性
+ * 单独调校</b>的一套，历来就与粒子色值不逐位相同，且 P5 把真脉 5 招粒子统一改成金脉色系
+ * （见 plan §P5.1 ①）后 HUD 侧<b>有意未随动</b>——P5 范围仅限粒子去复用，改 HUD 配色属可感知
+ * UX 变更，需单独决策。所以：<b>不要把这里的色值理解成粒子色的镜像，也不要为了「对齐」去改它</b>。
+ *
+ * <p>具体色值只在下方常量区维护一份——注释里不再重抄 hex（review r1 #4：此前散文抄的
+ * neutralize / multipoint 色值早已与常量不符，还夹带了 P5 前的旧粒子色，三处互相打架）。
  * <ul>
- *   <li>parry（极限弹反）：中心十字环瞬态增亮（血红 {@code #B6172F}）。原设计意图是呼应
+ *   <li>parry（极限弹反）：中心十字环瞬态增亮（血红）。原设计意图是呼应
  *       {@code bong:jiemai_burst_blood} 血爆粒子，该粒子已随 P5 去复用退役。</li>
- *   <li>neutralize（局部中和）：屏幕中下方瞬态去毒提示「中和 N%」（灰白 {@code #9CA3AF}）。</li>
- *   <li>multipoint（多点反震）：中心右侧微指示「反震 ×N」（暗红 {@code #9B1C31}），仅激活期。</li>
- *   <li>harden（护脉）：左侧护脉微条 + 剩余减伤%（金 {@code #C7A94B}），仅 buff 期。</li>
- *   <li>sever_chain（绝脉断链）：左侧断脉标记「✕脉名」+ 增幅倒计时微条（金 {@code #F4C542}）。</li>
- *   <li>shield_block（盾格挡）：准星下方瞬态盾弧确认（青蓝 {@code #4DA6FF}）。</li>
+ *   <li>neutralize（局部中和）：屏幕中下方瞬态去毒提示「中和 N%」（灰白）。</li>
+ *   <li>multipoint（多点反震）：中心右侧微指示「反震 ×N」（暗红），仅激活期。</li>
+ *   <li>harden（护脉）：左侧护脉微条 + 剩余减伤%（金），仅 buff 期。</li>
+ *   <li>sever_chain（绝脉断链）：左侧断脉标记「✕脉名」+ 增幅倒计时微条（金）。</li>
+ *   <li>shield_block（盾格挡）：准星下方瞬态盾弧确认（青蓝）。</li>
  * </ul>
  */
 public final class ZhenmaiHudPlanner {
