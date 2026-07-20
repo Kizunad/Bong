@@ -423,7 +423,10 @@ class BongServerDataThreadingTest {
             applied.isEmpty(),
             "unknown type 与 null dispatch 都不得调用 dispatchApplier；实际=" + applied
         );
-        assertTrue(CraftStore.lastOutcome().isEmpty());
+        assertTrue(
+            CraftStore.lastOutcome().isEmpty(),
+            "unknown type 与 null dispatch 都不得写 craft store；实际=" + CraftStore.lastOutcome()
+        );
 
         runNextClientTask(); // ok
         assertEquals(
@@ -534,7 +537,10 @@ class BongServerDataThreadingTest {
         CraftStore.replaceRecipes(List.of());
         CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
             "pre.disconnect", "x", 1, 1L));
-        assertTrue(CraftStore.lastOutcome().isPresent());
+        assertTrue(
+            CraftStore.lastOutcome().isPresent(),
+            "precondition: disconnect 前 lastOutcome 必须有值；实际=" + CraftStore.lastOutcome()
+        );
 
         long generation = ClientConnectionStatusStore.currentGeneration();
         runNamedThread(NETWORK_THREAD, () -> dispatch(

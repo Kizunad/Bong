@@ -130,7 +130,10 @@ class CraftOutcomeFeedbackTest {
             "screen 已关闭（listener 已注销）后 delayed completed 不得再写 flashTicks；实际="
                 + closed.flashTicksForTests()
         );
-        assertTrue(events.isEmpty() && sounds.get() == 0, "占位观察点保持空");
+        assertTrue(
+            events.isEmpty() && sounds.get() == 0,
+            "占位观察点保持空；实际 events=" + events + ", sounds=" + sounds.get()
+        );
     }
 
     @Test

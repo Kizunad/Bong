@@ -2,6 +2,19 @@
 
 > **Finished BugFix plan**。来源：`docs/plans-skeleton/plan-bughunt-craft-outcome-network-thread-sound-v1.md`；升格与归档日期：2026-07-13。主题：验证并修复 `craft_outcome` 完成反馈在 Fabric network thread 触达 screen / player / sound state 的线程契约违规。
 
+## 接入面
+
+- **进料**：server 生产路径在 `server/src/network/craft_emit.rs` 从 `CraftCompletedEvent` / `CraftFailedEvent` 构造并 emit `CraftOutcomeV1`（经 `ServerDataPayloadV1::CraftOutcome` / `bong:server_data`）；client raw receiver 复制 Netty buffer 后在 client thread 路由。
+- **出料**：client `ServerDataRouter` → `CraftOutcomeHandler` → `CraftStore.recordOutcome(...)` → `CraftScreen` / `WorkbenchScreen` listener（共享 `CraftOutcomeFeedback`：completed 的 `flashTicks=6` / 完成音 / refresh；failed 仅 refresh）。
+- **共享类型 / event**：复用既有 `CraftOutcomeV1` / `CraftStore.CraftOutcomeEvent` / screen outcome listener；本 plan 不另建 outcome event / schema 变体。
+- **跨仓库契约**：
+  - server：emit `CraftOutcomeV1`（本 PR 无 server 代码改动，只读确认生产可达）
+  - client：`bong:server_data` → `BongNetworkHandler` / `ServerDataRouter` / `CraftOutcomeHandler` / `CraftStore` / `CraftScreen` / `WorkbenchScreen`
+  - agent：**不消费**本 outcome 链路
+  - schema：**不改**（无 TypeBox / sample / dist 变更）
+- **worldview 锚点**：`worldview.md` §十 资源与匮乏的产出/加工闭环；本 plan 不改变资源、经济或制作数值规则。
+- **qi_physics 锚点**：**不涉及**真元/灵气流动、衰减或 ledger。
+
 ## 阶段总览
 
 | 阶段 | 主题 | 状态 |
@@ -27,6 +40,20 @@
 - **禁止扩项**：不改制作数值、配方、server craft 状态机、声音资产、UI 视觉规格或协议 schema；不做全量 handler 重构。
 - **玩家可感知规格**：保留既有完成音效、`flashTicks = 6` 闪光和输出预览刷新；本修复只保证三者在 client thread 按原顺序稳定发生，不新增粒子、动画、HUD、narration 或新资产。
 - **worldview 锚点**：制作属于 §十资源与匮乏的产出/加工闭环；本 plan 不改变资源、真元或经济规则，不触碰 `qi_physics` ledger。
+
+## 开放问题与 §N.1（归档审计说明）
+
+**开放问题：无。**
+
+依据 `docs/CLAUDE.md` §五：plan **常带**开放问题，**若有**则必须在 pre-P0 以 `§N → §N.1` 收口；**并非**每份 plan 无条件必须倒填开放问题清单。本 bugfix plan 在 promotion 时即由上方「范围与决策」一次性收口，历史实施前没有未决设计项，因此 **§N.1 决议结构不适用**。
+
+不伪造“实施前决议”时序。现有决策锚点如下（file:line / plan 章节）：
+
+- 线程边界最小修复：`client/src/main/java/com/bong/client/BongNetworkHandler.java` raw receiver 只复制 buffer，`route → handler/store/listener → applyDispatch` 统一进单一 `client.execute(...)` task；见本 plan「范围与决策」最小修复决策。
+- 收包时刻 freshness + generation guard：`ClientConnectionStatusStore` 代次与 `markPayloadReceived(now, generation)`；见 P1 落地结果（2026-07-20 复审补齐）。
+- 双屏共享反馈契约：`CraftOutcomeFeedback` + `CraftScreen` / `WorkbenchScreen` listener；完成音/闪光/刷新不改资产与数值。
+- 跨栈边界：server 只读确认 emit；agent 不消费；schema 不改；见头部「接入面」。
+- 明确非目标：其他 channel freshness、#1016 局部 UI 生命周期、制作数值/配方/schema。
 
 ## P0：第一性原理证真
 
@@ -163,6 +190,13 @@
 - `1b2063d2b`：**证据纠正（docs-only）**——原地更新 finished plan Finish Evidence，
   收回初版仅 7 项 store 线程测试即宣称完整矩阵的 overclaim，并写入 generation
   guard、真实 Screen 反馈与 Java17 **4171/0/0/0** 门禁计数；**不重复归档**。
+- `5bd4d9a66`：**docs-only**——把 final validator PASS 证据绑定到代码树
+  `1b2063d2b` 之后的记录提交本身（当时 HEAD=`5bd4d9a66839102f606959133d6655fde4cbc77f`）。
+- **本条 docs-only 后续提交**（CodeRabbit unresolved threads 收口）：补足 3 条
+  `assertTrue` 失败诊断、头部「接入面」、开放问题审计说明，并诚实记录
+  fresh final validator 已对 `5bd4d9a66` PASS；**代码树与 `5bd4d9a66` 相同**
+  （测试消息与 docs 文本变更不改 runtime 逻辑）。**validator PASS 绑定
+  `5bd4d9a66`；本证据记录 commit 为 docs-only，新 HEAD 需再 final validator**。
 
 ### 测试结果（历史基线）
 
@@ -212,27 +246,29 @@
   单一 `client.execute` task（bridge/fallback/route/handler/store/listener/applyDispatch）
   线程契约；Agent UI / Season 主线逻辑未丢。
 - post-merge 必须重跑 client 完整门禁；2026-07-20 复审返工代码+证据纠正后，
-  **validator 绑定 SHA 为 `1b2063d2b4bfd6ad826737c701d80660aa38affa`**（含代码修复
-  `81fe479d5` + Finish Evidence 纠正 `1b2063d2b`）。
-- **PR #1196 exact-head validator（无上下文、只读 Grok）**：对
+  代码树门禁以 `1b2063d2b` 的 **4171/0/0/0** 为准（见下节）。
+- **历史 exact-head validator**：对
   `1b2063d2b4bfd6ad826737c701d80660aa38affa` 结论 **PASS**，`blocker=0`，`major=0`，
-  `minor=3`：
-  1. 双屏单测对真实音效引擎的可观测限制（契约靠 seam/顺序断言，不模拟完整 sound pipeline）；
-  2. 其他 channel（vfx/audio/agent_ui 等）freshness 保持历史行为，**明确非目标**；
-  3. `scheduleRefresh` 沿用既有 on-thread inline 模式（非本 plan 扩项）。
-- **SHA 绑定纪律**：validator PASS **仅**绑定代码+证据提交前 HEAD
-  `1b2063d2b4bfd6ad826737c701d80660aa38affa`。**本条 docs-only 更新提交后会产生新的
-  SHA；不得谎称该 validator 验证了未来 SHA**。若后续再改代码或证据语义，必须对新
-  HEAD 重开无上下文 validator。
+  `minor=3`（双屏音效可观测限制；其他 channel freshness 非目标；`scheduleRefresh`
+  既有 inline 模式）。
+- **fresh final validator（外部、发生在 `5bd4d9a66` 之后）**：对
+  `5bd4d9a66839102f606959133d6655fde4cbc77f` 结论 **PASS**，`blocker=0`，
+  `major=0`，`minor=3`。**validator PASS 绑定 `5bd4d9a66`**。
+- **本条 docs-only 证据记录 commit**：只补 3 条测试诊断消息 + archived plan 文档
+  （接入面 / 开放问题审计 / 本段 SHA 纪律）。**代码树与 `5bd4d9a66` 相同**
+  （runtime 逻辑未改；**不**把 4171 tests 说成在本 docs-only 新 SHA 上重跑）。
+  **本证据记录 commit 为 docs-only，新 HEAD 需再 final validator**——不得谎称
+  绑定 `5bd4d9a66` 的 PASS 覆盖未来 SHA。
 
 ### 跨栈核验
 
-- client：修改 receiver 调度边界、连接状态机、共享反馈与饱和回归；最新完整门禁已绿
-  （`1b2063d2b`，**4171/0/0/0** + GAME TESTS **3/3**）。
+- client：修改 receiver 调度边界、连接状态机、共享反馈与饱和回归；完整门禁 **4171/0/0/0**
+  + GAME TESTS **3/3** 绑定代码树 `1b2063d2b`（runtime 与 `5bd4d9a66` / 本 docs-only
+  记录 commit 相同，未在 docs-only SHA 重跑 4171）。
 - server：只读确认 `server/src/network/craft_emit.rs` 的 completed/failed 生产 emit；
   本 PR 无 server 代码改动，不需要额外 cargo gate。
-- agent/schema/worldgen：本 PR 修复范围未改协议/schema/资源/生成物；merge 带入主线变更
-  但不属于本 plan 修复面，不另开对应门禁。
+- agent/schema/worldgen：本 PR 修复范围未改协议/schema/资源/生成物；agent 不消费；
+  schema 不改；merge 带入主线变更不属于本 plan 修复面，不另开对应门禁。
 - 真元/世界观/A/V：本修复不改变制作数值、资源流、真元 ledger、招式或视觉/音效资产；
   只保证既有完成音效、闪光与刷新在 client thread 执行。
 
@@ -244,10 +280,21 @@
   3) 缺少 unknown/null-dispatch、disconnect/screen-close lifecycle 矩阵。
 - 代码修复：`81fe479d5` generation + receivedAt guard；共享 `CraftOutcomeFeedback`；
   饱和测试补齐。
-- 文档：`1b2063d2b` 与本条 docs-only 更新原地纠正 Finish Evidence overclaim 并绑定
-  validator PASS；**不**再次 `git mv` 归档。
-- 门禁与精确计数以 `1b2063d2b` 上 Java 17 `./gradlew test build` 为准：**4171/0/0/0**，
-  GAME TESTS **3/3**。
+- 文档：`1b2063d2b` / `5bd4d9a66` 与本条 docs-only 更新原地纠正 Finish Evidence，
+  并诚实绑定 validator PASS；**不**再次 `git mv` 归档。
+- 门禁与精确计数以代码树 `1b2063d2b`（runtime 同 `5bd4d9a66`）上 Java 17
+  `./gradlew test build` 为准：**4171/0/0/0**，GAME TESTS **3/3**。
+  **不**声称在本 docs-only 新 SHA 上重跑完整 4171。
+
+### 2026-07-20 CodeRabbit unresolved threads 收口（docs + 诊断消息）
+
+- A minor：`BongServerDataThreadingTest` / `CraftOutcomeFeedbackTest` 三处 `assertTrue`
+  补失败诊断实际值；逻辑不变。
+- B major：plan 头部补集中「接入面」（进料/出料/共享类型/跨仓库/worldview/qi_physics）。
+- C major：严格按 `docs/CLAUDE.md` §五解读——有开放问题才强制 `§N.1`；本 plan
+  无未决项，写「开放问题：无」归档审计说明，不倒填实施前决议。
+- D major：Finish Evidence 绑定 `5bd4d9a66` 的 fresh final validator PASS；本记录
+  commit 为 docs-only，**新 HEAD 需再 final validator**；代码树与 `5bd4d9a66` 相同。
 
 ### 遗留 / 后续
 
