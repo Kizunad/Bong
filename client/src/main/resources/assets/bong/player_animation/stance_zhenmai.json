@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "stance_zhenmai",
-  "description": "P6 针脉功法习得亮相（28t 非循环）：anticipation 0→8 提指取穴（右臂 pitch 0→-46 / torso.yaw +14 蓄拧 / body.y -0.045），strike 8→20 以指代针前点下针（rightArm pitch -46→-104 / bend 62→14 近伸直 / torso.yaw +34 送肩 / body.z +0.11），recovery 20→28 收指归中立。取代原 20t isLoop 三帧全同的静止持守图。",
+  "description": "P6 针脉功法习得亮相（28t 非循环）：anticipation 0→8 提指取穴（右臂 pitch 0→-46 / torso.yaw +14 蓄拧 / body.y -0.045），strike 8→20 以指代针前点下针（rightArm pitch -46→-104 / yaw -28 外分 / bend 62→14 近伸直 / torso.yaw +28 送肩 / body.z +0.11 / head.pitch +8 看穴），recovery 20→28 收指归中立。取代原 20t isLoop 三帧全同的静止持守图。",
   "emote": {
     "beginTick": 0,
     "endTick": 28,
@@ -485,7 +485,7 @@
         "tick": 12,
         "easing": "INQUAD",
         "head": {
-          "yaw": 0.2094395
+          "yaw": 0.1919862
         }
       },
       {
@@ -499,7 +499,7 @@
         "tick": 12,
         "easing": "INQUAD",
         "torso": {
-          "yaw": 0.3839724
+          "yaw": 0.3490659
         }
       },
       {
@@ -513,7 +513,7 @@
         "tick": 12,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": -0.2792527
+          "yaw": -0.3490659
         }
       },
       {
@@ -625,14 +625,14 @@
         "tick": 16,
         "easing": "INQUAD",
         "head": {
-          "pitch": 0.0349066
+          "pitch": 0.1047198
         }
       },
       {
         "tick": 16,
         "easing": "INQUAD",
         "head": {
-          "yaw": 0.2443461
+          "yaw": 0.1745329
         }
       },
       {
@@ -646,7 +646,7 @@
         "tick": 16,
         "easing": "INQUAD",
         "torso": {
-          "yaw": 0.5235988
+          "yaw": 0.418879
         }
       },
       {
@@ -660,7 +660,7 @@
         "tick": 16,
         "easing": "INQUAD",
         "rightArm": {
-          "yaw": -0.2617994
+          "yaw": -0.418879
         }
       },
       {
@@ -772,14 +772,14 @@
         "tick": 20,
         "easing": "OUTQUAD",
         "head": {
-          "pitch": 0.0174533
+          "pitch": 0.1396263
         }
       },
       {
         "tick": 20,
         "easing": "OUTQUAD",
         "head": {
-          "yaw": 0.2617994
+          "yaw": 0.1570796
         }
       },
       {
@@ -793,7 +793,7 @@
         "tick": 20,
         "easing": "OUTQUAD",
         "torso": {
-          "yaw": 0.5934119
+          "yaw": 0.4886922
         }
       },
       {
@@ -807,7 +807,7 @@
         "tick": 20,
         "easing": "OUTQUAD",
         "rightArm": {
-          "yaw": -0.2443461
+          "yaw": -0.4886922
         }
       },
       {

@@ -15,15 +15,23 @@
 向外旋开托举，掌心相对撑出一个看不见的涡场（吐），最后卸力归中立。开合的
 「合」在前、「开」在后，与吞噬意象同向。
 
+**双臂刻意不做完全镜像**（round 2 修正）：托举段右臂比左臂高约 22°、外分也更大，
+配合 torso.yaw +7 的轻微拧转，整体呈**螺旋**而非对称平举。round 1 的完全镜像
+版本三视图审下来只读作「举起双手」——涡流的旋转意象完全不可见，而「对称双臂
+上举」正是全仓最拥挤的剪影区间（远距离与其他托举类动作混淆）。螺旋化后正面
+剪影左右不等高，远距离可辨性显著提高。
+
 时序（精度标准 #1/#2/#3）：
   anticipation 0→8    沉身收拢：body.y -0.06 下坐、torso.pitch +9 塌腰、
                       双臂收到胸前（pitch -38 / bend 74），OUTQUAD 收得快
-  strike       8→20   外旋托举：双臂 pitch -38→-96、yaw 外分 ±34、bend 74→52
-                      展开，torso.pitch +9→-5 挺身、body.y -0.06→+0.03 拔起，
-                      INOUTSINE；t20 = 托举顶点（撑住 2 帧成定格）
+  strike       8→20   外旋托举：右臂 pitch -38→-106 / 左臂 -38→-84（错开约
+                      22° 成螺旋）、yaw 外分 -36 / +32、bend 74→44/62 展开，
+                      torso.pitch +9→-5 挺身兼 yaw→+7 轻拧、
+                      body.y -0.06→+0.03 拔起，INOUTSINE；t20 = 托举顶点
   recovery     20→32  卸力归中立：全轴回零，INOUTSINE
 endTick=32，stopTick=34，非循环。主运动轴：rightArm.pitch / leftArm.pitch /
 torso.pitch / body.y。帧点 0,4,8,12,16,20,24,28,32 —— 全程间隔 ≤4t。
+收势段回到完全对称并归零（螺旋只存在于托举段，避免收势也歪着）。
 
 leg.pitch 全程 ≤ 12°（远在 §13 #5 的 40° 上限内），下盘只做微沉，重心表达
 交给 body.y + torso.pitch（§13 #4）。head/torso.roll 全程不写，规避
@@ -83,10 +91,10 @@ POSE = {
     16: dict(
         easing="INOUTSINE",
         body=dict(x=0.0, y=-0.01, z=0.0),
-        head=dict(pitch=0, yaw=0),
-        torso=dict(pitch=0, yaw=0),
-        rightArm=dict(pitch=-82, yaw=-30, bend=60, axis=180),
-        leftArm=dict(pitch=-82, yaw=+30, bend=60, axis=180),
+        head=dict(pitch=0, yaw=+3),
+        torso=dict(pitch=0, yaw=+4),
+        rightArm=dict(pitch=-90, yaw=-30, bend=54, axis=180),
+        leftArm=dict(pitch=-74, yaw=+30, bend=66, axis=180),
         leftLeg=dict(pitch=-4, bend=6, z=-0.012),
         rightLeg=dict(pitch=+3, bend=5, z=+0.012),
     ),
@@ -94,10 +102,10 @@ POSE = {
     20: dict(
         easing="INOUTSINE",
         body=dict(x=0.0, y=+0.03, z=+0.01),
-        head=dict(pitch=-4, yaw=0),
-        torso=dict(pitch=-5, yaw=0),
-        rightArm=dict(pitch=-96, yaw=-34, bend=52, axis=180),
-        leftArm=dict(pitch=-96, yaw=+34, bend=52, axis=180),
+        head=dict(pitch=-4, yaw=+5),
+        torso=dict(pitch=-5, yaw=+7),
+        rightArm=dict(pitch=-106, yaw=-36, bend=44, axis=180),
+        leftArm=dict(pitch=-84, yaw=+32, bend=62, axis=180),
         leftLeg=dict(pitch=-2, bend=4, z=-0.008),
         rightLeg=dict(pitch=+2, bend=3, z=+0.008),
     ),
@@ -105,10 +113,10 @@ POSE = {
     24: dict(
         easing="INOUTSINE",
         body=dict(x=0.0, y=+0.015, z=+0.005),
-        head=dict(pitch=-2, yaw=0),
-        torso=dict(pitch=-3, yaw=0),
-        rightArm=dict(pitch=-74, yaw=-24, bend=44, axis=180),
-        leftArm=dict(pitch=-74, yaw=+24, bend=44, axis=180),
+        head=dict(pitch=-2, yaw=+2),
+        torso=dict(pitch=-3, yaw=+3),
+        rightArm=dict(pitch=-80, yaw=-26, bend=40, axis=180),
+        leftArm=dict(pitch=-66, yaw=+22, bend=50, axis=180),
         leftLeg=dict(pitch=-1, bend=3, z=-0.005),
         rightLeg=dict(pitch=+1, bend=2, z=+0.005),
     ),
@@ -144,8 +152,9 @@ def main() -> int:
         description=(
             "P6 涡流功法习得亮相（32t 非循环）：anticipation 0→8 沉身收拢"
             "（body.y -0.06 / torso.pitch +9 / 双臂收胸前 bend 74），strike "
-            "8→20 双掌外旋托举撑开涡场（双臂 pitch -38→-96 / yaw 外分 ±34 / "
-            "挺身 body.y +0.03），recovery 20→32 卸力归中立。取代原 40t "
+            "8→20 双掌外旋托举撑开涡场，右臂 -106 / 左臂 -84 错开成螺旋、"
+            "yaw 外分 -36/+32、torso.yaw +7 轻拧、挺身 body.y +0.03），"
+            "recovery 20→32 卸力归中立。取代原 40t "
             "isLoop 站桩（无停止路径、3 帧点、只动手臂）。"
         ),
         end_tick=32,

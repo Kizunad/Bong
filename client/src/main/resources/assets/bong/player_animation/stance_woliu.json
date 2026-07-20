@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "stance_woliu",
-  "description": "P6 涡流功法习得亮相（32t 非循环）：anticipation 0→8 沉身收拢（body.y -0.06 / torso.pitch +9 / 双臂收胸前 bend 74），strike 8→20 双掌外旋托举撑开涡场（双臂 pitch -38→-96 / yaw 外分 ±34 / 挺身 body.y +0.03），recovery 20→32 卸力归中立。取代原 40t isLoop 站桩（无停止路径、3 帧点、只动手臂）。",
+  "description": "P6 涡流功法习得亮相（32t 非循环）：anticipation 0→8 沉身收拢（body.y -0.06 / torso.pitch +9 / 双臂收胸前 bend 74），strike 8→20 双掌外旋托举撑开涡场，右臂 -106 / 左臂 -84 错开成螺旋、yaw 外分 -36/+32、torso.yaw +7 轻拧、挺身 body.y +0.03），recovery 20→32 卸力归中立。取代原 40t isLoop 站桩（无停止路径、3 帧点、只动手臂）。",
   "emote": {
     "beginTick": 0,
     "endTick": 32,
@@ -632,7 +632,7 @@
         "tick": 16,
         "easing": "INOUTSINE",
         "head": {
-          "yaw": 0.0
+          "yaw": 0.0523599
         }
       },
       {
@@ -646,14 +646,14 @@
         "tick": 16,
         "easing": "INOUTSINE",
         "torso": {
-          "yaw": 0.0
+          "yaw": 0.0698132
         }
       },
       {
         "tick": 16,
         "easing": "INOUTSINE",
         "rightArm": {
-          "pitch": -1.43117
+          "pitch": -1.5707963
         }
       },
       {
@@ -667,7 +667,7 @@
         "tick": 16,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 1.0471976
+          "bend": 0.9424778
         }
       },
       {
@@ -681,7 +681,7 @@
         "tick": 16,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -1.43117
+          "pitch": -1.2915436
         }
       },
       {
@@ -695,7 +695,7 @@
         "tick": 16,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 1.0471976
+          "bend": 1.1519173
         }
       },
       {
@@ -779,7 +779,7 @@
         "tick": 20,
         "easing": "INOUTSINE",
         "head": {
-          "yaw": 0.0
+          "yaw": 0.0872665
         }
       },
       {
@@ -793,28 +793,28 @@
         "tick": 20,
         "easing": "INOUTSINE",
         "torso": {
-          "yaw": 0.0
+          "yaw": 0.122173
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "rightArm": {
-          "pitch": -1.6755161
+          "pitch": -1.850049
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": -0.5934119
+          "yaw": -0.6283185
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 0.9075712
+          "bend": 0.7679449
         }
       },
       {
@@ -828,21 +828,21 @@
         "tick": 20,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -1.6755161
+          "pitch": -1.4660766
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": 0.5934119
+          "yaw": 0.5585054
         }
       },
       {
         "tick": 20,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 0.9075712
+          "bend": 1.0821041
         }
       },
       {
@@ -926,7 +926,7 @@
         "tick": 24,
         "easing": "INOUTSINE",
         "head": {
-          "yaw": 0.0
+          "yaw": 0.0349066
         }
       },
       {
@@ -940,28 +940,28 @@
         "tick": 24,
         "easing": "INOUTSINE",
         "torso": {
-          "yaw": 0.0
+          "yaw": 0.0523599
         }
       },
       {
         "tick": 24,
         "easing": "INOUTSINE",
         "rightArm": {
-          "pitch": -1.2915436
+          "pitch": -1.3962634
         }
       },
       {
         "tick": 24,
         "easing": "INOUTSINE",
         "rightArm": {
-          "yaw": -0.418879
+          "yaw": -0.4537856
         }
       },
       {
         "tick": 24,
         "easing": "INOUTSINE",
         "rightArm": {
-          "bend": 0.7679449
+          "bend": 0.6981317
         }
       },
       {
@@ -975,21 +975,21 @@
         "tick": 24,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -1.2915436
+          "pitch": -1.1519173
         }
       },
       {
         "tick": 24,
         "easing": "INOUTSINE",
         "leftArm": {
-          "yaw": 0.418879
+          "yaw": 0.3839724
         }
       },
       {
         "tick": 24,
         "easing": "INOUTSINE",
         "leftArm": {
-          "bend": 0.7679449
+          "bend": 0.8726646
         }
       },
       {
