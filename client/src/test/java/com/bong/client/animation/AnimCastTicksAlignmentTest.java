@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -812,6 +814,52 @@ class AnimCastTicksAlignmentTest {
         assertTrue(violations.isEmpty(),
             "两段式相位承接超出混合预算：" + violations
                 + "——release 首帧必须落在蓄力段整个相位域的混合可达范围内");
+    }
+
+    /**
+     * P6 动画资源 pin：本 plan 涉及的**全部** anim id 都能经生产 resource-reload
+     * 链路装进 {@link BongAnimationRegistry} 并解析。
+     *
+     * <p>既有 {@code AnimWiringManifestTest} 的同类用例只覆盖 `P1_WIRED_ANIM_IDS`
+     * 的 7 条接线动画；本 plan 跨 P1-P6 新增/重制的资产远多于此，缺一条就意味着
+     * 真机上那一招**永远解析不到动画**（server 照发 PlayAnim，客户端静默 no-op）。
+     *
+     * <p>id 集合**从映射表派生而非手写清单**——手写清单必然随批次漂移，而
+     * {@link #SKILL_ANIM} / {@link #TWO_STAGE_PAIRS} 本就是对拍主契约的真源，
+     * 新招入表即自动纳入本 pin。另加两条不属于任何招式的架势亮相（P6 重制，
+     * 走 `TechniqueLearnedEvent` 通道，不在 skill 映射表内）。
+     */
+    @Test
+    void everyPlanAnimIdResolvesThroughProductionRegistry() {
+        ProductionAnimationResources.loadViaProductionReloadCallback();
+
+        Set<String> animNames = new TreeSet<>();
+        SKILL_ANIM.values().stream().filter(java.util.Objects::nonNull).forEach(animNames::add);
+        // 两段式的 release 段不在 SKILL_ANIM（该表按蓄力段建索引），单独并入。
+        TWO_STAGE_PAIRS.values().forEach(pair -> Collections.addAll(animNames, pair));
+        // P6 架势亮相（功法习得通道，非 skill）。
+        animNames.add("stance_woliu");
+        animNames.add("stance_zhenmai");
+
+        assertTrue(animNames.size() >= 50,
+            "派生出的 plan 动画集合只有 " + animNames.size() + " 条，明显偏少——"
+                + "映射表被截断或派生逻辑失效，本 pin 会退化成空测试");
+
+        List<String> unresolved = new ArrayList<>();
+        for (String animName : animNames) {
+            Identifier id = new Identifier("bong", animName);
+            if (!BongAnimationRegistry.contains(id)
+                || BongAnimationRegistry.get(id) == null
+                || BongAnimationRegistry.sourceOf(id) != BongAnimationRegistry.Source.JSON) {
+                unresolved.add(animName + "（contains=" + BongAnimationRegistry.contains(id)
+                    + " source=" + BongAnimationRegistry.sourceOf(id) + "）");
+            }
+        }
+        assertTrue(unresolved.isEmpty(),
+            "以下 anim id 经生产 reload 后无法从 BongAnimationRegistry 解析：" + unresolved
+                + "——真机上这些招会「server 照发 PlayAnim、客户端静默 no-op」，"
+                + "常见成因：JSON 的 name 字段与文件名不一致（注册表按 name 建键）、"
+                + "文件不在 assets/bong/player_animation/、或映射表指向了不存在的资产");
     }
 
     /** 两段式登记表自洽：每招都在映射表里、两段资产都存在且不同名。 */
