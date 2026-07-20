@@ -1175,16 +1175,29 @@ describe("runRuntime", () => {
       );
 
       await annotationEntered.promise;
-      expect(timeline).toContain("annotation-entered");
-      expect(timeline).not.toContain("annotation-resolved");
+      expect(
+        timeline,
+        "annotation Promise 应先进入阻塞点，证明测试真实跨越异步边界",
+      ).toContain("annotation-entered");
+      expect(
+        timeline,
+        "release 前 annotation 不得提前完成，否则无法锁住 merge 时钟 happens-before",
+      ).not.toContain("annotation-resolved");
       const blockedClockReads = timeline.filter((event) => event.startsWith("clock:"));
-      expect(blockedClockReads.length).toBeGreaterThan(0);
+      expect(
+        blockedClockReads.length,
+        "annotation 阻塞期间应至少记录 loop 初始化时钟，证明旧秒状态真实存在",
+      ).toBeGreaterThan(0);
       expect(
         blockedClockReads.every(
           (event) => event === `clock:before-annotation:${loopStartedAtSeconds}`,
         ),
+        "annotation 完成前不得读取推进后的 merge 时钟，否则时序门禁已提前越过异步边界",
       ).toBe(true);
-      expect(chatAwareAgent.receivedChatSignalPlayers).toEqual([]);
+      expect(
+        chatAwareAgent.receivedChatSignalPlayers,
+        "annotation 仍阻塞时不得提前向 agent 注入 chat signals",
+      ).toEqual([]);
 
       currentNowMs = serverObservedAtSeconds * 1_000;
       releaseAnnotation.resolve();
@@ -1197,10 +1210,22 @@ describe("runRuntime", () => {
     );
     const signalsInjectedIndex = timeline.indexOf("signals-injected");
 
-    expect(annotationResolvedIndex).toBeGreaterThanOrEqual(0);
-    expect(mergeClockReadIndex).toBeGreaterThan(annotationResolvedIndex);
-    expect(signalsInjectedIndex).toBeGreaterThan(mergeClockReadIndex);
-    expect(chatAwareAgent.receivedChatSignalPlayers).toEqual(["offline:Observed"]);
+    expect(
+      annotationResolvedIndex,
+      "annotation 必须完成；缺失表示 deferred 测试未真正释放异步处理",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      mergeClockReadIndex,
+      "合并时钟必须在 annotation resolve 后读取，否则会复用 loop 起点旧秒",
+    ).toBeGreaterThan(annotationResolvedIndex);
+    expect(
+      signalsInjectedIndex,
+      "chat signals 必须在刷新 merge 时钟后注入，否则 freshness 仍基于陈旧 now()",
+    ).toBeGreaterThan(mergeClockReadIndex);
+    expect(
+      chatAwareAgent.receivedChatSignalPlayers,
+      "最终只应保留 server-observed 的合法跨秒消息，未来伪造时间必须被过滤",
+    ).toEqual(["offline:Observed"]);
   });
 
   it("returns after single mock tick without sleep", async () => {
