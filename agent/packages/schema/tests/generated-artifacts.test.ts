@@ -460,11 +460,15 @@ describe("generated schema freshness gate", () => {
     }
   });
 
-  it("discovers called Tiandao runtime V1 validators and checks registry identity", () => {
-    const validators = discoverCalledSchemaValidators(TIANDAO_SOURCE_DIR);
-    expect(validators.size).toBeGreaterThan(0);
-    expect(runtimeErrors(validators, GENERATED_SCHEMA_FILES, schemaExports, RUNTIME_VALIDATOR_EXEMPTIONS)).toEqual([]);
-  });
+  it(
+    "discovers called Tiandao runtime V1 validators and checks registry identity",
+    () => {
+      const validators = discoverCalledSchemaValidators(TIANDAO_SOURCE_DIR);
+      expect(validators.size).toBeGreaterThan(0);
+      expect(runtimeErrors(validators, GENERATED_SCHEMA_FILES, schemaExports, RUNTIME_VALIDATOR_EXEMPTIONS)).toEqual([]);
+    },
+    60_000,
+  );
 
   it("exports the server-to-Tiandao Agent UI response as its own generated artifact", () => {
     const file = "agent-ui-response-payload-v1.json";
@@ -515,19 +519,23 @@ describe("generated schema freshness gate", () => {
     }
   });
 
-  it("compiles generated Agent UI schemas with host Ajv and locks the full acceptance matrix", () => {
-    const hostAjv = loadHostAjv();
-    expect(
-      hostAjv.version,
-      `宿主 Ajv 版本必须可解析；当前 resolved=${hostAjv.resolvedPath}`,
-    ).toMatch(/^\d+\.\d+\.\d+/);
-    // 历史 Finish Evidence 写过 8.12.0；此断言锁住“真的是宿主 Ajv”，版本记录到失败消息便于证据修正。
-    expect(
-      hostAjv.resolvedPath.includes("ajv"),
-      `Host Ajv resolved path should look like an ajv package: ${hostAjv.resolvedPath}`,
-    ).toBe(true);
+  // 宿主 Ajv 对 client-request / server-data 全量 anyOf 根 schema 编译 + 边界矩阵较慢，
+  // 默认 5s 会假红；单独放宽到 60s，并打印 assertionCount 供 Finish Evidence。
+  it(
+    "compiles generated Agent UI schemas with host Ajv and locks the full acceptance matrix",
+    () => {
+      const hostAjv = loadHostAjv();
+      expect(
+        hostAjv.version,
+        `宿主 Ajv 版本必须可解析；当前 resolved=${hostAjv.resolvedPath}`,
+      ).toMatch(/^\d+\.\d+\.\d+/);
+      // 历史 Finish Evidence 写过 8.12.0；此断言锁住“真的是宿主 Ajv”，版本记录到失败消息便于证据修正。
+      expect(
+        hostAjv.resolvedPath.includes("ajv"),
+        `Host Ajv resolved path should look like an ajv package: ${hostAjv.resolvedPath}`,
+      ).toBe(true);
 
-    let assertionCount = 0;
+let assertionCount = 0;
     const count = (condition: boolean, message: string): void => {
       expect(condition, message).toBe(true);
       assertionCount += 1;
@@ -677,8 +685,18 @@ describe("generated schema freshness gate", () => {
       assertionCount >= 132,
       `host Ajv gate must keep the full boundary matrix; assertionCount=${assertionCount}`,
     );
-    // 显式暴露给失败日志，方便 Finish Evidence 记录真实计数而非历史 overclaim 的 78。
-    expect(
+    // 显式打印，便于 Finish Evidence 抓取 assertionCount / 宿主 Ajv 路径。
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({
+        hostAjvVersion: hostAjv.version,
+        hostAjvResolvedPath: hostAjv.resolvedPath,
+        assertionCount,
+        boundaryCases: AGENT_UI_ID_BOUNDARY_CASES.length,
+        idFields: Object.values(AGENT_UI_ID_SCHEMA_PATHS).flat().length,
+      }),
+    );
+expect(
       {
         hostAjvVersion: hostAjv.version,
         hostAjvResolvedPath: hostAjv.resolvedPath,
@@ -693,7 +711,9 @@ describe("generated schema freshness gate", () => {
       boundaryCases: 22,
       idFields: 6,
     });
-  });
+    },
+    60_000,
+  );
 
   it("reports missing and wrong runtime mappings", () => {
     const validators = new Set(["validateCraftOutcomeV1Contract"]), contract = {};
