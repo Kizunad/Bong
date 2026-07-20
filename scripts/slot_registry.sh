@@ -10,18 +10,21 @@
 # - occupy 是唯一生产进驻门：reserved→occupied 前验证 canonical 固定 slot worktree
 #   存在、已注册且 locked，branch/HEAD/upstream/claim 对拍，tracked/untracked 干净，
 #   ignored 仅含窄缓存白名单。失败保持 state 不变。
-# - 不实现 PID/liveness 自动恢复。manual-report 只报告；blocked_frozen 只能经带完整
-#   reservation 身份、operator、reason 并落审计日志的人工 force-unfreeze 解冻。
+# - 不实现 PID/liveness 自动恢复。manual-report 只报告；blocked_frozen_* 仅记录冻结前
+#   状态，且只能经带完整 reservation 身份、operator、reason 的 write-ahead 审计后人工
+#   force-unfreeze 解冻。恢复严格回到冻结前状态，不能绕过 occupy 进驻门。
 #
 # 状态机：
 #   free --acquire--> reserved
 #   reserved --mark-created-local(false→true)--> reserved
 #   reserved --occupy(valid canonical worktree)--> occupied
-#   reserved|occupied --freeze-blocked--> blocked_frozen
-#   blocked_frozen --force-unfreeze-blocked(manual audited)--> occupied
+#   reserved --freeze-blocked--> blocked_frozen_from_reserved
+#   occupied --freeze-blocked--> blocked_frozen_from_occupied
+#   blocked_frozen_from_reserved --force-unfreeze-blocked(manual audited)--> reserved
+#   blocked_frozen_from_occupied --force-unfreeze-blocked(manual audited)--> occupied
 #   reserved --rollback--> free
 #   occupied --release--> free
-# blocked_frozen 不得走普通 occupy/release/rollback/mark；free 上 mutation 也拒绝，因为
+# blocked_frozen_* 不得走普通 occupy/release/rollback/mark；free 上 mutation 也拒绝，因为
 # reservation 已不存在，无法验证 owner token。
 #
 # 布局（相对主 checkout 根）：
@@ -51,6 +54,7 @@
 # - SLOT_REGISTRY_TEST_WAIT_GATE_READY / _RELEASE / _ACK / _INSTANCE：竞争者在 flock 前
 #   建立确定性 barrier。
 # - SLOT_REGISTRY_TEST_FAIL_ACQUIRE_STEP=write|date|mv：临时 reservation fail-clean。
+# - SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP=audit|state：人工恢复故障注入。
 #
 # 失败一律非零 + stderr；任何查询异常不假装空闲。
 set -euo pipefail
@@ -101,8 +105,19 @@ validate_owner_token() { [[ "$1" =~ ^[0-9a-f]{64}$ ]] || die "owner-token must b
 read_capacity() {
   [[ -f "$REG_ROOT/capacity" && ! -L "$REG_ROOT/capacity" ]] || die "registry not initialized: run init"
   local c
-  c=$(tr -d '[:space:]' < "$REG_ROOT/capacity")
-  [[ "$c" =~ ^[1-9][0-9]*$ ]] || die "invalid capacity file: $c"
+  c=$(python3 - "$REG_ROOT/capacity" <<'PYCAPACITY'
+from pathlib import Path
+import re, sys
+raw = Path(sys.argv[1]).read_bytes()
+if not re.fullmatch(rb"[1-9][0-9]*\n?", raw):
+    raise SystemExit(2)
+value = raw.rstrip(b"\n")
+# Bound the persisted pool to Bash's signed arithmetic range before any 10# expansion.
+if int(value) > 2**63 - 1:
+    raise SystemExit(2)
+sys.stdout.write(value.decode("ascii"))
+PYCAPACITY
+  ) || die "invalid capacity file"
   printf '%s\n' "$c"
 }
 write_capacity_atomic() {
@@ -144,6 +159,17 @@ write_field_atomic() {
   tmp=$(mktemp "$dir/.${field}.XXXXXX") || return
   if ! printf '%s\0' "$value" > "$tmp"; then rm -f -- "$tmp"; return 1; fi
   if ! mv -T -- "$tmp" "$dir/$field"; then rm -f -- "$tmp"; return 1; fi
+  fsync_dir "$dir"
+}
+fsync_dir() {
+  python3 - "$1" <<'PYFSYNCDIR'
+import os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PYFSYNCDIR
 }
 
 AUDIT_SLOTS=(); AUDIT_TASKS=(); AUDIT_BRANCHES=(); AUDIT_CLAIMS=()
@@ -181,7 +207,7 @@ audit_registry() {
     validate_field task "$task"; validate_branch "$branch"; validate_field agent "$agent"
     [[ "$claim" =~ ^[0-9a-f]{40}$ ]] || die "corrupt claim_sha in $slot"
     validate_owner_token "$token"
-    case "$state" in reserved|occupied|blocked_frozen) ;; *) die "corrupt state in $slot: $state" ;; esac
+    case "$state" in reserved|occupied|blocked_frozen_from_reserved|blocked_frozen_from_occupied) ;; *) die "corrupt state in $slot: $state" ;; esac
     case "$created" in true|false) ;; *) die "corrupt created_local_branch in $slot: $created" ;; esac
     [[ "$reserved" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "corrupt reserved_at in $slot"
     for i in "${!AUDIT_SLOTS[@]}"; do
@@ -461,42 +487,70 @@ occupy_locked() {
 }
 cmd_occupy() { parse_kv "$@"; validate_normal_owner_args; with_registry_lock occupy_locked; }
 freeze_blocked_locked() {
-  local lock; prepare_owned_lock; lock="$OWNED_LOCK"; require_state "$lock" reserved occupied
-  write_field_atomic "$lock" state blocked_frozen; printf 'OK freeze-blocked %s task=%s\n' "$SLOT" "$TASK"
+  local lock current frozen_state; prepare_owned_lock; lock="$OWNED_LOCK"; require_state "$lock" reserved occupied
+  read_field_into current "$lock" state || exit $?
+  case "$current" in
+    reserved) frozen_state=blocked_frozen_from_reserved ;;
+    occupied) frozen_state=blocked_frozen_from_occupied ;;
+    *) die "invalid state transition: state=$current allowed=reserved,occupied" ;;
+  esac
+  write_field_atomic "$lock" state "$frozen_state"; printf 'OK freeze-blocked %s task=%s from=%s\n' "$SLOT" "$TASK" "$current"
 }
 cmd_freeze_blocked() { parse_kv "$@"; validate_normal_owner_args; with_registry_lock freeze_blocked_locked; }
 
 append_manual_audit() {
-  local timestamp="$1"
-  python3 - "$MANUAL_AUDIT_FILE" "$timestamp" "$SLOT" "$TASK" "$BRANCH" "$CLAIM" "$AGENT" "$OPERATOR" "$REASON" <<'PYAUDIT'
+  local timestamp="$1" operation_id="$2" from_state="$3" target_state="$4"
+  [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != audit ]] || { printf 'slot_registry: injected manual audit failure\n' >&2; return 2; }
+  python3 - "$MANUAL_AUDIT_FILE" "$timestamp" "$operation_id" "$SLOT" "$TASK" "$BRANCH" "$CLAIM" "$AGENT" "$OPERATOR" "$REASON" "$from_state" "$target_state" <<'PYAUDIT'
 import json, os, sys
-path, timestamp, slot, task, branch, claim, agent, operator, reason = sys.argv[1:]
-record = {"event":"force-unfreeze-blocked-request","timestamp":timestamp,"slot":slot,
-          "task_id":task,"branch":branch,"claim_sha":claim.lower(),"agent_id":agent,
-          "operator":operator,"reason":reason,"uid":os.getuid()}
+(path, timestamp, operation_id, slot, task, branch, claim, agent, operator,
+ reason, from_state, target_state) = sys.argv[1:]
+record = {"event":"force-unfreeze-blocked-intent","operation_id":operation_id,
+          "timestamp":timestamp,"slot":slot,"task_id":task,"branch":branch,
+          "claim_sha":claim.lower(),"agent_id":agent,"operator":operator,
+          "reason":reason,"from_state":from_state,"target_state":target_state,
+          "uid":os.getuid()}
 data = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+created = not os.path.exists(path)
 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
 try:
-    os.write(fd, data); os.fsync(fd)
+    written = os.write(fd, data)
+    if written != len(data):
+        raise OSError(f"short audit write: {written}/{len(data)}")
+    os.fsync(fd)
 finally:
     os.close(fd)
+if created:
+    parent_fd = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
 PYAUDIT
 }
 force_unfreeze_locked() {
-  local max lock timestamp old_state rollback_rc=0
+  local max lock timestamp operation_id frozen_state target_state
   max=$(read_capacity); audit_registry "$max"; require_slot_in_pool "$SLOT" "$max"; lock="$REG_ROOT/$SLOT.lock"
-  require_manual_identity "$lock" "$TASK" "$BRANCH" "$CLAIM" "$AGENT"; require_state "$lock" blocked_frozen
+  require_manual_identity "$lock" "$TASK" "$BRANCH" "$CLAIM" "$AGENT"
+  require_state "$lock" blocked_frozen_from_reserved blocked_frozen_from_occupied
+  read_field_into frozen_state "$lock" state || exit $?
+  case "$frozen_state" in
+    blocked_frozen_from_reserved) target_state=reserved ;;
+    blocked_frozen_from_occupied) target_state=occupied ;;
+    *) die "invalid frozen state: $frozen_state" ;;
+  esac
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  # State first, then durable audit. If audit fails, restore blocked_frozen before returning nonzero;
-  # an audit record can therefore never claim a transition that did not happen.
-  old_state=blocked_frozen
-  write_field_atomic "$lock" state occupied
-  if ! append_manual_audit "$timestamp"; then
-    write_field_atomic "$lock" state "$old_state" || rollback_rc=$?
-    [[ $rollback_rc -eq 0 ]] || die "manual audit failed and blocked_frozen rollback failed"
-    die "manual audit persistence failed; state restored"
-  fi
-  printf 'OK force-unfreeze-blocked %s task=%s state=occupied audit=%s\n' "$SLOT" "$TASK" "$MANUAL_AUDIT_FILE"
+  operation_id=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+  # Write-ahead audit: any observable unfreeze has a durable intent first. An interrupted
+  # intent is truthful (it records the requested target) and manual-report surfaces it.
+  append_manual_audit "$timestamp" "$operation_id" "$frozen_state" "$target_state" \
+    || die "manual audit intent persistence failed; state unchanged"
+  [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != state ]] \
+    || die "injected unfreeze state failure; durable intent requires manual inspection"
+  write_field_atomic "$lock" state "$target_state" \
+    || die "unfreeze state persistence failed; durable intent requires manual inspection"
+  printf 'OK force-unfreeze-blocked %s task=%s state=%s audit=%s operation_id=%s\n' \
+    "$SLOT" "$TASK" "$target_state" "$MANUAL_AUDIT_FILE" "$operation_id"
 }
 cmd_force_unfreeze_blocked() {
   parse_kv "$@"; need "$SLOT" --slot; need "$TASK" --task; need "$BRANCH" --branch; need "$CLAIM" --claim-sha; need "$AGENT" --agent
@@ -548,15 +602,34 @@ status_locked() {
 }
 cmd_status() { parse_kv "$@"; with_registry_lock status_locked; }
 manual_report_locked() {
-  local max lock task branch claim agent state created reserved
+  local max lock task branch claim agent state created reserved pending
   max=$(read_capacity); audit_registry "$max"; require_slot_in_pool "$SLOT" "$max"; lock="$REG_ROOT/$SLOT.lock"
   [[ -d "$lock" && ! -L "$lock" ]] || die "slot not held"
   read_field_into task "$lock" task_id || exit $?; read_field_into branch "$lock" branch || exit $?
   read_field_into claim "$lock" claim_sha || exit $?; read_field_into agent "$lock" agent_id || exit $?
   read_field_into state "$lock" state || exit $?; read_field_into created "$lock" created_local_branch || exit $?
   read_field_into reserved "$lock" reserved_at || exit $?
-  printf 'RECOVERY_MODE=manual-report-only\nslot=%q task=%q branch=%q claim_sha=%q agent=%q state=%q created_local=%q reserved_at=%q\n' "$SLOT" "$task" "$branch" "$claim" "$agent" "$state" "$created" "$reserved"
-  printf 'No state changed. Inspect the slot and reservation manually; no PID/liveness recovery is implemented.\n'
+  pending=$(python3 - "$MANUAL_AUDIT_FILE" "$SLOT" "$task" "$branch" "$claim" "$agent" "$state" <<'PYPENDING'
+import json, pathlib, sys
+path, slot, task, branch, claim, agent, state = sys.argv[1:]
+count = 0
+p = pathlib.Path(path)
+if p.is_file() and not p.is_symlink():
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (row.get("event") == "force-unfreeze-blocked-intent"
+                and row.get("slot") == slot and row.get("task_id") == task
+                and row.get("branch") == branch and row.get("claim_sha") == claim
+                and row.get("agent_id") == agent and row.get("from_state") == state):
+            count += 1
+print(count)
+PYPENDING
+  )
+  printf 'RECOVERY_MODE=manual-report-only\nslot=%q task=%q branch=%q claim_sha=%q agent=%q state=%q created_local=%q reserved_at=%q pending_unfreeze_intents=%q\n' "$SLOT" "$task" "$branch" "$claim" "$agent" "$state" "$created" "$reserved" "$pending"
+  printf 'No state changed. Inspect the slot, reservation, and any durable unfreeze intent manually; no PID/liveness recovery is implemented.\n'
 }
 cmd_manual_report() { parse_kv "$@"; need "$SLOT" --slot; with_registry_lock manual_report_locked; }
 

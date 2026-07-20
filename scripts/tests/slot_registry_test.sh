@@ -114,7 +114,8 @@ reset_registry() {
     case "$state" in
       reserved) mutate rollback "$slot" "$task" "$agent" "$token" >/dev/null ;;
       occupied) mutate release "$slot" "$task" "$agent" "$token" >/dev/null ;;
-      blocked_frozen) force_unfreeze "$slot" "$task" "$branch" "$agent" >/dev/null; mutate release "$slot" "$task" "$agent" "$token" >/dev/null ;;
+      blocked_frozen_from_reserved) force_unfreeze "$slot" "$task" "$branch" "$agent" >/dev/null; mutate rollback "$slot" "$task" "$agent" "$token" >/dev/null ;;
+      blocked_frozen_from_occupied) force_unfreeze "$slot" "$task" "$branch" "$agent" >/dev/null; mutate release "$slot" "$task" "$agent" "$token" >/dev/null ;;
     esac
   done
 }
@@ -297,30 +298,66 @@ mutate release slot-1 cache agent-cache "$token" >/dev/null; destroy_slot slot-1
 # restore shared dynamic repository exclude fixture
 : > "$ROOT/.git/info/exclude"
 
-printf '== 9. blocked_frozen 与显式人工审计恢复\n'
-new_reservation token slot-1 frozen bugfix/frozen agent-frozen
-mutate freeze-blocked slot-1 frozen agent-frozen "$token" >/dev/null
+printf '== 9. blocked_frozen 来源保持与 write-ahead 人工审计恢复\n'
+# reserved 冻结必须恢复 reserved，不能绕过唯一 occupy 进驻门。
+new_reservation token slot-1 frozen-reserved bugfix/frozen-reserved agent-frozen-reserved
+mutate freeze-blocked slot-1 frozen-reserved agent-frozen-reserved "$token" >/dev/null
+check "reserved 冻结记录来源" test "$(field "$REGROOT/slot-1.lock/state")" = blocked_frozen_from_reserved
 for cmd in occupy release rollback mark-created-local freeze-blocked; do
   extra=(); [[ "$cmd" == mark-created-local ]] && extra=(--value true)
-  assert_fail_unchanged "frozen 普通 $cmd fail-closed" 'invalid state transition' mutate "$cmd" slot-1 frozen agent-frozen "$token" "${extra[@]}"
+  assert_fail_unchanged "frozen 普通 $cmd fail-closed" 'invalid state transition' mutate "$cmd" slot-1 frozen-reserved agent-frozen-reserved "$token" "${extra[@]}"
 done
 report=$(bash scripts/slot_registry.sh manual-report --slot slot-1)
 check "manual-report 明示只报告" grep -q 'RECOVERY_MODE=manual-report-only' <<<"$report"
-check "manual-report 不改 frozen" test "$(field "$REGROOT/slot-1.lock/state")" = blocked_frozen
-expect_fail "force-unfreeze 缺 operator/reason 拒绝" 'missing --operator|missing --reason' bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task frozen --branch bugfix/frozen --claim-sha "$SHA" --agent agent-frozen
-expect_fail "force-unfreeze task-only/错身份拒绝" 'manual recovery identity mismatch' bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task other --branch bugfix/frozen --claim-sha "$SHA" --agent agent-frozen --operator tester --reason ticket
-force_unfreeze slot-1 frozen bugfix/frozen agent-frozen >/dev/null
-check "显式人工恢复到 occupied" test "$(field "$REGROOT/slot-1.lock/state")" = occupied
+check "manual-report 初始无未完成 intent" grep -q 'pending_unfreeze_intents=0' <<<"$report"
+check "manual-report 不改 frozen" test "$(field "$REGROOT/slot-1.lock/state")" = blocked_frozen_from_reserved
+expect_fail "force-unfreeze 缺 operator/reason 拒绝" 'missing --operator|missing --reason' bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task frozen-reserved --branch bugfix/frozen-reserved --claim-sha "$SHA" --agent agent-frozen-reserved
+expect_fail "force-unfreeze task-only/错身份拒绝" 'manual recovery identity mismatch' bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task other --branch bugfix/frozen-reserved --claim-sha "$SHA" --agent agent-frozen-reserved --operator tester --reason ticket
+assert_fail_unchanged "审计写入失败保持 frozen 且零记录" 'manual audit intent persistence failed' env SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP=audit bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task frozen-reserved --branch bugfix/frozen-reserved --claim-sha "$SHA" --agent agent-frozen-reserved --operator tester --reason injected
+expect_fail "审计后 state 写入失败 fail-closed" 'durable intent requires manual inspection' env SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP=state bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task frozen-reserved --branch bugfix/frozen-reserved --claim-sha "$SHA" --agent agent-frozen-reserved --operator tester --reason injected
+check "state 失败保留 frozen" test "$(field "$REGROOT/slot-1.lock/state")" = blocked_frozen_from_reserved
+check "state 失败已有 durable intent" python3 - "$REGROOT/manual-recovery.audit.jsonl" <<'PYAFAIL'
+import json,sys
+rows=[json.loads(x) for x in open(sys.argv[1])]
+r=rows[-1]
+assert r['event']=='force-unfreeze-blocked-intent' and r['task_id']=='frozen-reserved'
+assert r['from_state']=='blocked_frozen_from_reserved' and r['target_state']=='reserved'
+PYAFAIL
+report=$(bash scripts/slot_registry.sh manual-report --slot slot-1)
+check "manual-report 暴露未完成 intent" grep -Eq 'pending_unfreeze_intents=[1-9][0-9]*' <<<"$report"
+force_unfreeze slot-1 frozen-reserved bugfix/frozen-reserved agent-frozen-reserved >/dev/null
+check "reserved 人工恢复仍为 reserved" test "$(field "$REGROOT/slot-1.lock/state")" = reserved
+expect_fail "恢复 reserved 后仍须走 occupy 门" 'canonical slot worktree missing' mutate occupy slot-1 frozen-reserved agent-frozen-reserved "$token"
+mutate rollback slot-1 frozen-reserved agent-frozen-reserved "$token" >/dev/null
+
+# occupied 冻结恢复 occupied；审计记录不含 owner token。
+branch=bugfix/frozen-occupied; make_remote_branch "$branch" "$SHA"; create_slot slot-1 "$branch" "$SHA"
+new_reservation token slot-1 frozen-occupied "$branch" agent-frozen-occupied
+mutate occupy slot-1 frozen-occupied agent-frozen-occupied "$token" >/dev/null
+mutate freeze-blocked slot-1 frozen-occupied agent-frozen-occupied "$token" >/dev/null
+check "occupied 冻结记录来源" test "$(field "$REGROOT/slot-1.lock/state")" = blocked_frozen_from_occupied
+force_unfreeze slot-1 frozen-occupied "$branch" agent-frozen-occupied >/dev/null
+check "occupied 人工恢复回 occupied" test "$(field "$REGROOT/slot-1.lock/state")" = occupied
 check "人工恢复持久化 audited identity" python3 - "$REGROOT/manual-recovery.audit.jsonl" <<'PYA'
 import json,sys
 rows=[json.loads(x) for x in open(sys.argv[1])]
 r=rows[-1]
-assert r['event']=='force-unfreeze-blocked-request' and r['task_id']=='frozen' and r['operator']=='tester' and r['reason']=='fixture recovery'
-assert 'owner_token' not in r
+assert r['event']=='force-unfreeze-blocked-intent' and r['task_id']=='frozen-occupied'
+assert r['operator']=='tester' and r['reason']=='fixture recovery'
+assert r['from_state']=='blocked_frozen_from_occupied' and r['target_state']=='occupied'
+assert len(r['operation_id'])==32 and 'owner_token' not in r
 PYA
-mutate release slot-1 frozen agent-frozen "$token" >/dev/null
+mutate release slot-1 frozen-occupied agent-frozen-occupied "$token" >/dev/null; destroy_slot slot-1
 
-printf '== 10. NUL/Unicode exact identity 与 init fail-closed\n'
+printf '== 10. capacity 严格 schema / NUL/Unicode exact identity / init fail-closed\n'
+capacity_before=$(<"$REGROOT/capacity")
+for spec in 'empty:' 'space:2 0' 'multi:2\n0\n' 'leading-zero:02\n' 'nondigit:2x\n' 'too-large:9223372036854775808\n'; do
+  name=${spec%%:*}; payload=${spec#*:}
+  printf '%b' "$payload" > "$REGROOT/capacity"
+  assert_fail_unchanged "capacity $name 损坏 fail-closed" 'invalid capacity file' bash scripts/slot_registry.sh status
+  printf '%s\n' "$capacity_before" > "$REGROOT/capacity"
+done
+
 task=$'任务\n尾随\n'; agent=$'代理\n尾随\n'; branch='bugfix/unicode'
 out=$(acquire slot-1 "$task" "$branch" "$agent"); token=$(owner_token_from "$out")
 check "NUL 字段逐字节 round-trip" python3 - "$REGROOT/slot-1.lock/task_id" "$task" <<'PYF'
