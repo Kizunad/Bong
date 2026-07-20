@@ -54,7 +54,7 @@
 # - SLOT_REGISTRY_TEST_WAIT_GATE_READY / _RELEASE / _ACK / _INSTANCE：竞争者在 flock 前
 #   建立确定性 barrier。
 # - SLOT_REGISTRY_TEST_FAIL_ACQUIRE_STEP=write|date|mv：临时 reservation fail-clean。
-# - SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP=audit|state：人工恢复故障注入。
+# - SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP=audit|state|complete：人工恢复故障注入。
 #
 # 失败一律非零 + stderr；任何查询异常不假装空闲。
 set -euo pipefail
@@ -499,13 +499,24 @@ freeze_blocked_locked() {
 cmd_freeze_blocked() { parse_kv "$@"; validate_normal_owner_args; with_registry_lock freeze_blocked_locked; }
 
 append_manual_audit() {
-  local timestamp="$1" operation_id="$2" from_state="$3" target_state="$4"
-  [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != audit ]] || { printf 'slot_registry: injected manual audit failure\n' >&2; return 2; }
-  python3 - "$MANUAL_AUDIT_FILE" "$timestamp" "$operation_id" "$SLOT" "$TASK" "$BRANCH" "$CLAIM" "$AGENT" "$OPERATOR" "$REASON" "$from_state" "$target_state" <<'PYAUDIT'
+  local event="$1" timestamp="$2" operation_id="$3" from_state="$4" target_state="$5"
+  case "$event" in
+    force-unfreeze-blocked-intent)
+      [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != audit ]] || { printf 'slot_registry: injected manual audit failure\n' >&2; return 2; }
+      ;;
+    force-unfreeze-blocked-completed)
+      [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != complete ]] || { printf 'slot_registry: injected manual completion audit failure\n' >&2; return 2; }
+      ;;
+    *)
+      printf 'slot_registry: invalid manual audit event: %s\n' "$event" >&2
+      return 2
+      ;;
+  esac
+  python3 - "$MANUAL_AUDIT_FILE" "$event" "$timestamp" "$operation_id" "$SLOT" "$TASK" "$BRANCH" "$CLAIM" "$AGENT" "$OPERATOR" "$REASON" "$from_state" "$target_state" <<'PYAUDIT'
 import json, os, sys
-(path, timestamp, operation_id, slot, task, branch, claim, agent, operator,
+(path, event, timestamp, operation_id, slot, task, branch, claim, agent, operator,
  reason, from_state, target_state) = sys.argv[1:]
-record = {"event":"force-unfreeze-blocked-intent","operation_id":operation_id,
+record = {"event":event,"operation_id":operation_id,
           "timestamp":timestamp,"slot":slot,"task_id":task,"branch":branch,
           "claim_sha":claim.lower(),"agent_id":agent,"operator":operator,
           "reason":reason,"from_state":from_state,"target_state":target_state,
@@ -543,12 +554,14 @@ force_unfreeze_locked() {
   operation_id=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
   # Write-ahead audit: any observable unfreeze has a durable intent first. An interrupted
   # intent is truthful (it records the requested target) and manual-report surfaces it.
-  append_manual_audit "$timestamp" "$operation_id" "$frozen_state" "$target_state" \
+  append_manual_audit force-unfreeze-blocked-intent "$timestamp" "$operation_id" "$frozen_state" "$target_state" \
     || die "manual audit intent persistence failed; state unchanged"
   [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != state ]] \
     || die "injected unfreeze state failure; durable intent requires manual inspection"
   write_field_atomic "$lock" state "$target_state" \
     || die "unfreeze state persistence failed; durable intent requires manual inspection"
+  append_manual_audit force-unfreeze-blocked-completed "$timestamp" "$operation_id" "$frozen_state" "$target_state" \
+    || die "unfreeze completed but completion audit persistence failed; durable intent requires manual inspection"
   printf 'OK force-unfreeze-blocked %s task=%s state=%s audit=%s operation_id=%s\n' \
     "$SLOT" "$TASK" "$target_state" "$MANUAL_AUDIT_FILE" "$operation_id"
 }
@@ -612,7 +625,8 @@ manual_report_locked() {
   pending=$(python3 - "$MANUAL_AUDIT_FILE" "$SLOT" "$task" "$branch" "$claim" "$agent" "$state" <<'PYPENDING'
 import json, pathlib, sys
 path, slot, task, branch, claim, agent, state = sys.argv[1:]
-count = 0
+intents = []
+completed = set()
 p = pathlib.Path(path)
 if p.is_file() and not p.is_symlink():
     for line in p.read_text(encoding="utf-8").splitlines():
@@ -620,12 +634,17 @@ if p.is_file() and not p.is_symlink():
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if (row.get("event") == "force-unfreeze-blocked-intent"
-                and row.get("slot") == slot and row.get("task_id") == task
-                and row.get("branch") == branch and row.get("claim_sha") == claim
-                and row.get("agent_id") == agent and row.get("from_state") == state):
-            count += 1
-print(count)
+        identity = (row.get("slot") == slot and row.get("task_id") == task
+                    and row.get("branch") == branch and row.get("claim_sha") == claim
+                    and row.get("agent_id") == agent)
+        if not identity:
+            continue
+        operation_id = row.get("operation_id")
+        if row.get("event") == "force-unfreeze-blocked-intent" and (row.get("from_state") == state or row.get("target_state") == state):
+            intents.append(operation_id)
+        elif row.get("event") == "force-unfreeze-blocked-completed" and (row.get("from_state") == state or row.get("target_state") == state):
+            completed.add(operation_id)
+print(sum(operation_id not in completed for operation_id in intents))
 PYPENDING
   )
   printf 'RECOVERY_MODE=manual-report-only\nslot=%q task=%q branch=%q claim_sha=%q agent=%q state=%q created_local=%q reserved_at=%q pending_unfreeze_intents=%q\n' "$SLOT" "$task" "$branch" "$claim" "$agent" "$state" "$created" "$reserved" "$pending"

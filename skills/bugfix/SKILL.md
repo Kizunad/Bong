@@ -300,9 +300,9 @@ review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，�
 
 1. 确认 PR 仍 open，读取 `pr_head_sha` 与远端 branch 名。
 2. `git fetch origin refs/heads/<remote-branch>:refs/remotes/origin/<remote-branch>`，对拍远端跟踪 ref SHA 等于 `pr_head_sha`。
-3. 主干分派一个空闲 slot；核验 slot `git status --porcelain=v1 --untracked-files=all` 为空，并确认专用本地返工 branch 未被其它任务使用。若同名本地分支已存在，禁止删除、重建或 reset；只能在确认未被任何 slot 检出后，按第 4 步直接 checkout 并核验 SHA。
-4. 返工进驻同一规则：本地返工分支不存在时才 `checkout -B <专用本地返工branch> origin/<remote-branch>`；本地已存在则直接 checkout 并核验 SHA 与 `pr_head_sha` 一致（不一致转人工并保留分支）。显式设置 upstream 后，对拍 slot HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
-5. 任一步失败时在 slot 内 detach；仅本轮新建的专用本地 branch 才可删除，既有 branch 必须保留并交人工。**开放 PR 的远端 claim ref 不得删除，slot 不得 remove**。
+3. 主干分派一个空闲 slot；返工 subagent 必须先执行 `slot_registry.sh acquire --slot <slot> --task <plan-basename> --branch <remote-branch> --claim-sha "$pr_head_sha" --agent <canonical-id>`，从本次 stdout 提取并私有保存 `OWNER_TOKEN`。acquire 失败则换 slot/排队，禁止 checkout；成功后核验 slot detached、`git status --porcelain=v1 --untracked-files=all` 为空且 ignored 仅含缓存白名单，并确认专用本地返工 branch 未被其它任务使用。若同名本地分支已存在，禁止删除、重建或 reset；只能在确认未被任何 slot 检出后，按第 4 步直接 checkout 并核验 SHA。
+4. 本地返工分支不存在时才 `checkout -B <专用本地返工branch> origin/<remote-branch>` 并执行 `mark-created-local --value true`；本地已存在则直接 checkout 并核验 SHA 与 `pr_head_sha` 一致（不一致转人工并保留分支）。显式设置 upstream 并完成 slot HEAD、upstream SHA、远端跟踪 ref、PR head 四方对拍后，必须使用同一 `OWNER_TOKEN` 执行 `slot_registry.sh occupy`；只有唯一生产进驻门成功，才能进入任务面。
+5. acquire 后任一步失败都先在 slot 内 detach（若已 checkout），再用同一 `--slot/--task/--agent/--owner-token` 执行 `rollback`；仅 stdout `DELETE_LOCAL_BRANCH=true` 时才删除本轮新建的本地 branch，既有 branch 必须保留并交人工。occupy 后的正常/BLOCKED 干净退出使用同一身份执行 `release`；脏现场只能 `freeze-blocked` 交人工。**开放 PR 的远端 claim ref 不得删除，slot 不得 remove**。
 
 完成四方 SHA 对拍后才进入任务面。
 

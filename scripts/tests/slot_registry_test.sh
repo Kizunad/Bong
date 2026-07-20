@@ -325,8 +325,31 @@ assert r['from_state']=='blocked_frozen_from_reserved' and r['target_state']=='r
 PYAFAIL
 report=$(bash scripts/slot_registry.sh manual-report --slot slot-1)
 check "manual-report 暴露未完成 intent" grep -Eq 'pending_unfreeze_intents=[1-9][0-9]*' <<<"$report"
-force_unfreeze slot-1 frozen-reserved bugfix/frozen-reserved agent-frozen-reserved >/dev/null
+expect_fail "完成审计写入失败显式转人工" 'completion audit persistence failed' env SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP=complete bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task frozen-reserved --branch bugfix/frozen-reserved --claim-sha "$SHA" --agent agent-frozen-reserved --operator tester --reason injected
+check "完成审计失败后状态已恢复" test "$(field "$REGROOT/slot-1.lock/state")" = reserved
+report=$(bash scripts/slot_registry.sh manual-report --slot slot-1)
+check "完成审计失败保留 pending intent" grep -Eq 'pending_unfreeze_intents=[1-9][0-9]*' <<<"$report"
+assert_fail_unchanged "完成审计失败后不能重复解冻" 'invalid state transition' force_unfreeze slot-1 frozen-reserved bugfix/frozen-reserved agent-frozen-reserved
+# Re-freeze the restored reservation, then a successful new operation completes its own intent.
+mutate freeze-blocked slot-1 frozen-reserved agent-frozen-reserved "$token" >/dev/null
+force_unfreeze_out=$(force_unfreeze slot-1 frozen-reserved bugfix/frozen-reserved agent-frozen-reserved)
+completed_operation_id=$(printf '%s\n' "$force_unfreeze_out" | perl -ne 'print $1 if /operation_id=([0-9a-f]{32})$/')
 check "reserved 人工恢复仍为 reserved" test "$(field "$REGROOT/slot-1.lock/state")" = reserved
+check "成功恢复写入同 operation_id 完成记录" python3 - "$REGROOT/manual-recovery.audit.jsonl" "$completed_operation_id" <<'PYCOMPLETE'
+import json,sys
+rows=[json.loads(x) for x in open(sys.argv[1])]
+matched=[r for r in rows if r.get('operation_id') == sys.argv[2]]
+assert [r['event'] for r in matched] == [
+    'force-unfreeze-blocked-intent',
+    'force-unfreeze-blocked-completed',
+]
+assert matched[0]['slot'] == matched[1]['slot'] == 'slot-1'
+assert matched[0]['task_id'] == matched[1]['task_id'] == 'frozen-reserved'
+assert matched[0]['from_state'] == matched[1]['from_state'] == 'blocked_frozen_from_reserved'
+assert matched[0]['target_state'] == matched[1]['target_state'] == 'reserved'
+PYCOMPLETE
+report=$(bash scripts/slot_registry.sh manual-report --slot slot-1)
+check "成功恢复不再报告本次已完成 intent" grep -q 'pending_unfreeze_intents=2' <<<"$report"
 expect_fail "恢复 reserved 后仍须走 occupy 门" 'canonical slot worktree missing' mutate occupy slot-1 frozen-reserved agent-frozen-reserved "$token"
 mutate rollback slot-1 frozen-reserved agent-frozen-reserved "$token" >/dev/null
 
@@ -336,13 +359,19 @@ new_reservation token slot-1 frozen-occupied "$branch" agent-frozen-occupied
 mutate occupy slot-1 frozen-occupied agent-frozen-occupied "$token" >/dev/null
 mutate freeze-blocked slot-1 frozen-occupied agent-frozen-occupied "$token" >/dev/null
 check "occupied 冻结记录来源" test "$(field "$REGROOT/slot-1.lock/state")" = blocked_frozen_from_occupied
-force_unfreeze slot-1 frozen-occupied "$branch" agent-frozen-occupied >/dev/null
+force_unfreeze_out=$(force_unfreeze slot-1 frozen-occupied "$branch" agent-frozen-occupied)
+completed_operation_id=$(printf '%s\n' "$force_unfreeze_out" | perl -ne 'print $1 if /operation_id=([0-9a-f]{32})$/')
 check "occupied 人工恢复回 occupied" test "$(field "$REGROOT/slot-1.lock/state")" = occupied
-check "人工恢复持久化 audited identity" python3 - "$REGROOT/manual-recovery.audit.jsonl" <<'PYA'
+check "人工恢复持久化 audited identity" python3 - "$REGROOT/manual-recovery.audit.jsonl" "$completed_operation_id" <<'PYA'
 import json,sys
 rows=[json.loads(x) for x in open(sys.argv[1])]
-r=rows[-1]
-assert r['event']=='force-unfreeze-blocked-intent' and r['task_id']=='frozen-occupied'
+matched=[r for r in rows if r.get('operation_id') == sys.argv[2]]
+assert [r['event'] for r in matched] == [
+    'force-unfreeze-blocked-intent',
+    'force-unfreeze-blocked-completed',
+]
+r=matched[0]
+assert r['task_id']=='frozen-occupied'
 assert r['operator']=='tester' and r['reason']=='fixture recovery'
 assert r['from_state']=='blocked_frozen_from_occupied' and r['target_state']=='occupied'
 assert len(r['operation_id'])==32 and 'owner_token' not in r
