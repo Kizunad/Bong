@@ -168,9 +168,16 @@
 - **本节业务修复提交**（2026-07-20）：non-explode take-back 两阶段原子结算 + 饱和契约测试
   （成功/缺编号器可重试/背包满可重试/缺模板可重试/explode 不混 complete/ignite 拒覆盖）+ furnace
   占炉守卫。
-- **本节所在提交**（2026-07-20）：经真实 `bong:client_request` seam 新增 finished-unclaimed
-  feed/intervention 拒绝契约测试，并只原地更新既有 `## Finish Evidence`；production handler 逻辑未改，
-  不重复 promotion/mv，不追加第二个 Finish Evidence，不写无法自证的“自身 SHA”。
+- `91aff7d65f9b67ed71c84d3fc20c98105d6ce14d`（2026-07-20）：修复炼丹炉界面会话实时刷新；
+  `AlchemySessionStore` 对每次 snapshot replace 通知已打开 screen，`AlchemyScreen` 幂等订阅并在
+  `removed()` 解绑，`AlchemySessionPresentationPlanner` 区分 true idle / active /
+  finished-unclaimed，保留完成态目标、阶段与干预 guidance，T 仍走真实 take-back 请求，中央 inactive
+  HUD 继续隐藏，empty furnace/session 清除旧完成态。
+- `47763faac13e0d76ed83b1032e3822074e34fc50`（2026-07-20）：补强已打开 screen 的异步
+  active A→B snapshot 回归，锁定 elapsed/temp/qi、stage 完成态/窗口/摘要与 intervention log 不冻结，
+  且每次 store update 恰好刷新一次。
+- **本节所在提交**（2026-07-20）：只原地更新既有 `## Finish Evidence`；不重复 promotion/mv，
+  不追加第二个 Finish Evidence，不写无法自证的“自身 SHA”。
 
 ### 测试结果
 
@@ -189,9 +196,18 @@
   5. explode → 有 explode VFX/outcome，0 complete，会话清空（永不混 COMPLETE）；
   6. ignite 覆盖 unclaimed finished → 拒绝并保留原 session。
   上述 2/3/4 明确反证旧 finding：失败路径不得 inactive+clear 吞产物。
-- Python bot protocol（历史锁定）：`python3 scripts/bot/test_protocol.py` → 124 passed /
-  0 failed；炼丹专属正向用例 `test_alchemy_furnace_tag11_and_session_tag12` 验证 tag 12、完整
-  目标字段、stages 与 interventions。
+- Python bot protocol（2026-07-20 重跑）：`python3 -m unittest scripts.bot.test_protocol` →
+  **124 passed / 0 failed**（另有非致命 unclosed socket `ResourceWarning`）；炼丹专属正向用例
+  `ProdConsumeDecodeTest.test_alchemy_furnace_tag11_and_session_tag12` 单独重跑 → **1 passed /
+  0 failed**，并锁定 stage `at_tick` / `window`。
+- 炼丹界面定向（2026-07-20，Java 17）：`./gradlew test --tests
+  com.bong.client.alchemy.AlchemyScreenSessionPresentationTest --tests
+  com.bong.client.network.alchemy.AlchemySessionHandlerProtoWireTest --tests
+  com.bong.client.hud.ProcessingHudPlannerTest` → **17 passed / 0 failures / 0 errors / 0 skipped**；其中
+  screen lifecycle/presentation 5 条，Rust fixture→handler/store→screen/HUD 5 条，processing HUD 7 条；
+  同轮 Fabric GameTest **3/3 required passed**。覆盖首次打开后的异步 active snapshot、后续 active
+  stage/intervention A→B 更新、finished-unclaimed guidance、重复 attach 幂等、removed detach/zombie
+  隔离、empty clear、真实 T take-back payload，以及 inactive 中央 HUD 隐藏。
 - Fabric 定向（历史锁定，Java 17）：
   `./gradlew test --tests com.bong.client.network.alchemy.AlchemySessionHandlerProtoWireTest
   --tests com.bong.client.hud.ProcessingHudPlannerTest` → 12 passed / 0 failed；覆盖完整
@@ -209,6 +225,11 @@
     `cargo test` → **EXIT 0**，且三项均未接会吞真实退出码的尾部管道。
   - 全量汇总：`11816 + 11 + 1 + 4 = 11832 passed / 0 failed / 2+5=7 ignored`
     （lib 主套件 11816 passed / 2 ignored；其余 bin/integration 16 passed / 5 ignored）。
+- **client 完整门禁（2026-07-20，最终业务 HEAD `47763faac13e0d76ed83b1032e3822074e34fc50`，
+  显式 `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`）**：`./gradlew test build --no-daemon
+  --console=plain` → **EXIT 0 / BUILD SUCCESSFUL in 2m 16s**；JUnit XML 汇总 **476 suites /
+  4165 tests / 0 failures / 0 errors / 0 skipped**；Fabric GameTest **3/3 required passed**；21 tasks
+  中 4 executed / 17 up-to-date。未接会吞真实退出码的尾部管道。
 - **client 完整门禁（2026-07-19，#1212 merge 后 clean HEAD `f9215777`，显式
   `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`，log `/tmp/pr1213-client-f9215777.log`）**：
   `cd client && ./gradlew test build` → **CLIENT_EXIT:0 / BUILD SUCCESSFUL in 7m 35s**；JUnit
@@ -261,8 +282,9 @@
   两阶段原子结算（finished-unclaimed 可重试 → grant 成功才 end_session）+ explode 终局语义。
 - proto：`AlchemySession` / `AlchemyStageHint` 既有 tag；共享 active / finished Rust producer
   fixture 与 maintenance-only regeneration contract。
-- client：`AlchemySessionHandler` / `AlchemySessionStore.Snapshot.isActive` /
-  `ProtoServerDataBridge` / `AlchemyProgressHudPlanner` / `AlchemyScreen.refreshSessionText`。
+- client：`AlchemySessionHandler` / `AlchemySessionStore.Snapshot.isActive` + replace listener /
+  `ProtoServerDataBridge` / `AlchemyProgressHudPlanner` / `AlchemySessionPresentationPlanner` /
+  `AlchemyScreen.refreshSessionText` + listener lifecycle；active 与 finished snapshot 都会刷新已打开 screen。
 - bot：`decode_server_data_envelope` → `_alchemy_session` / `production_alchemy_brew_pill`。
 - 指定保留的 `server/data/*` / `client/logs/*` / 其它 ignored 生成物本轮未删除、未入库。
 - 无真元流动、配方数值、wire tag 变化；成功 VFX/outcome 仍仅 grant 成功时触发（非新增资产）。
