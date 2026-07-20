@@ -1,7 +1,7 @@
 package com.bong.client.visual.particle;
 
 /**
- * 环绕轨道的**逐 tick 演化状态** —— plan-skill-anim-fidelity-v1 §P5.1（review r1 #2 引入）。
+ * 环绕轨道的**逐 tick 演化状态** —— plan-skill-anim-fidelity-v1 §P5.1。
  *
  * <p><b>为什么参数化而不是加力</b>：既有 {@link VortexSpiralParticle} 用「每 tick 往速度上叠切向力 +
  * 向心拉力 + 阻尼」模拟涡流，那套适合"乱流"观感，但半径由力平衡涌现、<b>不可控也不可断言</b>。
@@ -65,7 +65,7 @@ public final class OrbitPath {
     /**
      * 当前点到圆心的**水平**距离。环绕不变量：无论推进多少 tick 都恒等于 {@code spec.radius()}。
      *
-     * <p>这就是 review r1 #2 的判据——切向抛射实现下这个值会随 tick 单调增长直到粒子飞出视野。
+     * <p>这是区分真环绕与切向抛射的判据：抛射实现下这个值会随 tick 单调增长直到粒子飞出视野。
      */
     public double horizontalRadius() {
         double dx = x() - spec.centerX();

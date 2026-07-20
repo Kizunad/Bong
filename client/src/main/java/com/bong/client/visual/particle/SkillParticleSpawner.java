@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * 把 {@link SkillParticleSpawn} 描述符实例化成真粒子并投进 {@code particleManager}
- * —— plan-skill-anim-fidelity-v1 §P5.1（review r1 #3 引入）。
+ * —— plan-skill-anim-fidelity-v1 §P5.1。
  *
  * <p>这是三个招式 player 里<b>唯一</b>接触 {@code MinecraftClient} 的地方；「发射什么」全部前移到
  * 各 player 的纯函数 {@code plan(payload)}，于是单测能逐颗断言粒子参数而不需要 MC 运行时。

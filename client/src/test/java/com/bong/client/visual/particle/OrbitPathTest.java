@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link OrbitPath} / {@link SkillParticleSpawn.OrbitSpec} 的轨道数学 pin 测试
- * —— plan-skill-anim-fidelity-v1 §P5.1（review r1 #2）。
+ * —— plan-skill-anim-fidelity-v1 §P5.1。
  *
  * <p>「环绕」在这里是可证的不变量而非形容词：半径恒定、角速度 = 线速度/半径、
  * 垂直漂移线性累积。{@link SkillParticlePlanTest} 断言各招<b>用了</b>环绕描述符，

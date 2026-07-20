@@ -26,7 +26,7 @@ import java.util.List;
  *
  * <p><b>逐招 spec 是 {@link Form} 枚举，不是本注释</b>——plan §P5.1 ① 的表格与 {@code Form}
  * 各字段逐格对应，由 {@code SkillParticleSpecDocTest} 直接解析 plan markdown 对拍；
- * 任一侧改动而另一侧没跟，测试撞红。所以这里不再重抄一份数值表（review r1：抄第三份必然漂）。
+ * 任一侧改动而另一侧没跟，测试撞红。所以这里不重抄第三份数值表——抄第三份必然漂。
  */
 public final class ZhenmaiPulsePlayer implements VfxPlayer {
     public static final Identifier PARRY_FLASH = new Identifier("bong", "zhenmai_parry_flash");
@@ -77,8 +77,8 @@ public final class ZhenmaiPulsePlayer implements VfxPlayer {
         /**
          * 运动形态。分类而非裸速度，便于测试断言「两招形态确实不同」。
          *
-         * <p>{@link #ORBIT} 是 review r1 #2 的修复点：它走 {@link SkillParticleSpawn.OrbitPulse}
-         * 真绕圆心转，与「只给切向初速度」的抛射有本质区别（后者会直线飞离）。
+         * <p>{@link #ORBIT} 走 {@link SkillParticleSpawn.OrbitPulse} 真绕圆心转，与「只给切向
+         * 初速度」的抛射有本质区别——后者沿切线直线飞离，半径随 tick 线性增长。
          */
         enum Motion { FORWARD, RADIAL_OUT, RADIAL_IN, ORBIT }
 
@@ -96,9 +96,8 @@ public final class ZhenmaiPulsePlayer implements VfxPlayer {
         /**
          * 穴位点垂直漂移（格/tick）。
          *
-         * <p>review r1 #1：此前<b>所有招</b>统一硬编 {@code 0.008} 上浮且 lifetime 擅自 {@code +6}，
-         * 而 plan spec 写的是「parry 穴位点静止 / lifetime 20t」——实现静默偏离自家 spec。
-         * 现改为逐招显式配置且逐格写进 plan 表；穴位点 lifetime 与脉冲一致，不再私自延长。
+         * <p><b>逐招显式配置，不得统一硬编</b>：本字段与 plan §P5.1 ① 表的「穴位点漂移」列逐格
+         * 对应。穴位点 lifetime 与脉冲严格一致，实现侧不得私自延长——spec 是契约，要改先改 spec。
          */
         final double acupointDrift;
 
@@ -195,7 +194,7 @@ public final class ZhenmaiPulsePlayer implements VfxPlayer {
             // 不用「早退 + 带 default 的 switch 语句」——那样漏接分支会静默不发脉冲，
             // 而穴位点照发，连「该招没粒子」的非空断言都兜不住（与另两个 player 统一）。
             SkillParticleSpawn spawn = switch (form.motion) {
-                // 真环绕：交给 OrbitSpec 持圆心 + 逐 tick 转角，半径恒定（review r1 #2）。
+                // 真环绕：交给 OrbitSpec 持圆心 + 逐 tick 转角，半径恒定。
                 case ORBIT -> new SkillParticleSpawn.OrbitPulse(
                     new SkillParticleSpawn.OrbitSpec(
                         origin[0], origin[1], origin[2],
@@ -254,8 +253,7 @@ public final class ZhenmaiPulsePlayer implements VfxPlayer {
      * 第二层：驻留的穴位点。数量固定由形态自持（不吃 payload.count——那个参数是给脉冲用的），
      * 等角铺在腰高一圈，用来读「这一招点了几个穴」。
      *
-     * <p>lifetime 与脉冲<b>严格一致</b>：review r1 #1 之前这里私自 {@code +6} tick，与 plan spec
-     * 表的「20t」不符——spec 是契约，要延长得先改 spec。
+     * <p>lifetime 与脉冲<b>严格一致</b>，不得在此私自加减 tick——plan §P5.1 ① 的 spec 表是契约。
      */
     private static void addAcupoints(
         List<SkillParticleSpawn> out,

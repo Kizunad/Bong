@@ -19,9 +19,9 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * plan §P5.1 粒子 spec 表 ↔ 三个 player 生产常量的**逐格对拍**
- * —— plan-skill-anim-fidelity-v1（review r1 一致性要求）。
+ * —— plan-skill-anim-fidelity-v1。
  *
- * <p><b>为什么要解析文档</b>：review r1 的核心教训是 spec 与实现各自漂移——文档写「穴位点静止 /
+ * <p><b>为什么要解析文档</b>：spec 与实现会各自漂移——文档写「穴位点静止 /
  * lifetime 20t」，实现给了上浮 0.008 和 lifetime+6，两边都"自洽"却互相矛盾，而当时的测试两边
  * 都没测。修法不是"这次对齐一下"，而是让**任一侧改动而另一侧没跟就撞红**：本测试直接消费
  * plan markdown 表格里的数值，与 {@code Form} 枚举字段对拍。
@@ -165,7 +165,7 @@ public class SkillParticleSpecDocTest {
             assertEquals(form.pulseVertical, number(rows, id, "脉冲垂直 格/t"), EPS,
                 id + " 的脉冲垂直速度漂了");
             assertEquals(form.acupointDrift, number(rows, id, "穴位点漂移 格/t"), EPS,
-                id + " 的穴位点漂移漂了——review r1 #1 正是栽在这一格上");
+                id + " 的穴位点漂移漂了——spec 与实现必须逐格同源");
             assertEquals(form.radius, number(rows, id, "半径 格"), EPS,
                 id + " 的半径漂了");
             assertEquals(form.fallbackRgb, hex(rows, id), id + " 的兜底色漂了");

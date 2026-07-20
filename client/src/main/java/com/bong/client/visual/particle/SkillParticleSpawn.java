@@ -6,28 +6,25 @@ import net.minecraft.client.texture.Sprite;
 import net.minecraft.client.world.ClientWorld;
 
 /**
- * 招式粒子的**纯数据发射描述符** —— plan-skill-anim-fidelity-v1 §P5.1（review r1 #3 引入）。
+ * 招式粒子的**纯数据发射描述符** —— plan-skill-anim-fidelity-v1 §P5.1。
  *
- * <p><b>为什么存在</b>：P5 首版把 spawn 逻辑直接写在 {@code play(MinecraftClient, ...)} 里，
- * 而 {@code MinecraftClient} / {@code ClientWorld} 在纯 JVM 单测里造不出来——于是测试只能退化成
- * 「断言 {@code Form} 枚举的 id→形态映射」，<b>从未观察过一颗真实粒子的参数</b>。后果是 review r1
- * 抓到的两处实现偏离（穴位点 lifetime 擅自 +6、「切向环绕」实为切向抛射）在全绿门禁下溜了过去。
+ * <p><b>分层约束</b>：「发射什么粒子」与「怎么把粒子塞进 particleManager」必须分开。各 player 的
+ * {@code plan(payload)} 是<b>不依赖任何 MC 运行时的纯函数</b>，返回本描述符列表；只有
+ * {@link SkillParticleSpawner} 碰 {@code MinecraftClient}。这样单测无需 MC 运行时即可逐颗断言
+ * 基类 / 数量 / 初始位置 / 速度向量 / lifetime / 颜色 / 贴图 provider ——
+ * 否则测试只能退化成断言 id→形态映射，谁也没真正看过一颗粒子的参数。
  *
- * <p><b>修法</b>：把「发射什么粒子」与「怎么把粒子塞进 particleManager」切成两层——
- * 三个 player 的 {@code plan(payload)} 是<b>不依赖任何 MC 运行时的纯函数</b>，返回本描述符列表；
- * {@link SkillParticleSpawner} 才碰 {@code MinecraftClient}。测试直接消费 {@code plan()} 的输出，
- * 逐颗断言基类 / 数量 / 初始位置 / 速度向量 / lifetime / 颜色 / 贴图 provider。
+ * <p><b>纯度边界</b>：{@link #createParticle} 是唯一触碰 MC 类型的成员，只在渲染线程调用；
+ * 描述符自身字段全为纯数据。
  *
- * <p><b>为什么是 sealed + 各变体自带 {@link #createParticle}</b>：新增一种粒子形态时，
- * 不实现工厂方法就<b>编译不过</b>——「加了描述符却忘了接实例化」这类静默缺口由编译器兜住，
- * 不必靠测试。（Java 17 的 switch 类型模式还是预览特性，用不了，故取多态而非集中 switch。）
+ * <p><b>sealed + 各变体自带 {@link #createParticle}</b>：新增粒子形态时不实现工厂方法就编译不过，
+ * 「加了描述符却忘了接实例化」由编译器兜住。（Java 17 的 switch 类型模式仍是预览特性，
+ * 故取多态而非集中 switch。）
  *
- * <p><b>纯度边界</b>：{@link #createParticle} 是唯一触碰 MC 类型的成员，且只在渲染线程被调用；
- * 描述符本身的全部字段仍是纯数据，单测无需 MC 运行时就能构造与逐格断言——这正是本层的目的。
- *
- * <p>坐标语义：{@link #x()} / {@link #y()} / {@link #z()} 是<b>生成瞬间</b>的世界坐标，
- * {@link #velocityX()} 等同理。环绕形态（{@link OrbitPoint} / {@link OrbitPulse}）的这两组值
- * 由 {@link OrbitSpec} 在 {@code startAngle} 处求出，逐 tick 演化归 {@link OrbitPath}。
+ * <p><b>坐标语义</b>：{@link #x()} / {@link #y()} / {@link #z()} 与 {@link #velocityX()} 等是
+ * <b>生成瞬间</b>的世界坐标与速度。环绕形态（{@link OrbitPoint} / {@link OrbitPulse}）的这两组值
+ * 由 {@link OrbitSpec} 在 {@code startAngle} 处求出，逐 tick 演化归 {@link OrbitPath}——
+ * 半径是构造期不变量，不靠力平衡涌现。
  */
 public sealed interface SkillParticleSpawn
     permits SkillParticleSpawn.Pulse,
@@ -88,7 +85,7 @@ public sealed interface SkillParticleSpawn
     Particle createParticle(ClientWorld world);
 
     /**
-     * 环绕轨道参数 —— review r1 #2 的核心修复。
+     * 环绕轨道参数。
      *
      * <p><b>为什么不是「初速度设成切线方向」就完了</b>：只给切向初速度的粒子沿切线<b>直线飞离</b>，
      * 到中心的距离随 tick 线性增长，几个 tick 后就散成一圈外扩的点——那是切向抛射，不是环绕。

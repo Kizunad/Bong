@@ -68,8 +68,8 @@ public final class NpcSkillAuraPlayer implements VfxPlayer {
         DEFENSE_RING(BUFF_DEFENSE, DEFENSE_RGB, Motion.ORBIT, 0.06, 0.6, 0.0);
 
         /**
-         * 运动形态。{@link #ORBIT} 是 review r1 #2 的修复点——真绕圆心转（半径恒定），
-         * 而非「只给切向初速度」的抛射（那会让护环直线散开、读成"炸开"而非"护住"）。
+         * 运动形态。{@link #ORBIT} 真绕圆心转、半径恒定，而非「只给切向初速度」的抛射
+         * ——那会让护环直线散开，读成"炸开"而非"护住"。
          */
         enum Motion { COLUMN, OUTRUSH, ORBIT }
 

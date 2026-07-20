@@ -7,7 +7,7 @@ import net.minecraft.client.world.ClientWorld;
  *
  * <p>位置完全由 {@link OrbitPath} 参数化给出，<b>不走父类的速度积分</b>——速度字段仍逐 tick 同步成
  * 当前切向量，供渲染/下游读取，但它不再决定位置，所以半径恒定（对比：只设切向初速度的实现会
- * 沿切线直线飞离，见 review r1 #2）。
+ * 沿切线直线飞离）。
  *
  * <p>{@link BongOrbitLineParticle} 是本类的线粒子孪生：Java 单继承使两者无法共用父类，
  * 但**轨道数学全在 {@link OrbitPath} 里只有一份**，重复的仅是 6 行生命周期委托。
