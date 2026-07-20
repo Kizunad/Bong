@@ -2819,4 +2819,117 @@ mod tests {
             stop_anim_payloads(&payloads)
         );
     }
+
+    /// 三打断分支 × 5 招表驱动状态转换覆盖（review r4 补）——此前 yidao 只 pin 了
+    /// 移动分支，受击 / 控制两条独立退出路径没有 yidao 侧用例。三分支虽共用
+    /// `stop_cast_loop_anim` + 同一张查表（yidao 由构造即覆盖），但 CLAUDE.md
+    /// 「饱和化测试」要求所有状态转换都有命中用例：分支各自的前置条件判定改错
+    /// （例如漏判某分支就直接 `remove::<Casting>()`）不会被共享 helper 的测试撞红。
+    ///
+    /// 每分支逐招断言：恰发一次**本招专属** loop anim 的 StopAnim（fade=打断档）、
+    /// `Casting` 已退出、**不发** `YidaoCastCompleteEvent`（打断即无结算，故也不会
+    /// 有 release 接力——release 只在 `complete_yidao_casts` 的有效结算分支发出）。
+    #[test]
+    fn every_interrupt_branch_stops_every_yidao_charge_loop() {
+        use crate::combat::components::ActiveStatusEffect;
+
+        #[derive(Clone, Copy)]
+        enum Branch {
+            Movement,
+            Damage,
+            Stun,
+        }
+
+        let skills = [
+            (
+                crate::combat::yidao::MERIDIAN_REPAIR_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_MERIDIAN_REPAIR_LOOP,
+            ),
+            (
+                crate::combat::yidao::CONTAM_PURGE_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_CONTAM_PURGE_LOOP,
+            ),
+            (
+                crate::combat::yidao::EMERGENCY_RESUSCITATE_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_EMERGENCY_RESUSCITATE_LOOP,
+            ),
+            (
+                crate::combat::yidao::LIFE_EXTENSION_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_LIFE_EXTENSION_LOOP,
+            ),
+            (
+                crate::combat::yidao::MASS_MERIDIAN_REPAIR_SKILL_ID,
+                crate::combat::yidao::ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
+            ),
+        ];
+
+        for (branch, branch_name) in [
+            (Branch::Movement, "移动"),
+            (Branch::Damage, "受击"),
+            (Branch::Stun, "控制"),
+        ] {
+            for (skill_id, loop_anim) in skills {
+                let mut app = build_cast_tick_app(10);
+                // 移动分支靠 start_position 偏移触发；另两条留在原地，避免多分支同时命中。
+                let start_position = match branch {
+                    Branch::Movement => DVec3::new(10.0, 64.0, 10.0),
+                    Branch::Damage | Branch::Stun => DVec3::new(0.0, 64.0, 0.0),
+                };
+                let entity = spawn_caster(&mut app, yidao_casting(skill_id, start_position));
+                match branch {
+                    Branch::Movement => {}
+                    Branch::Damage => {
+                        let mut wounds = Wounds::default();
+                        wounds.entries.push(Wound {
+                            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
+                            kind: WoundKind::Cut,
+                            severity: 0.2,
+                            bleeding_per_sec: 1.0,
+                            created_at_tick: 10, // == clock.tick → 本 tick 受击
+                            inflicted_by: None,
+                        });
+                        app.world_mut().entity_mut(entity).insert(wounds);
+                    }
+                    Branch::Stun => {
+                        app.world_mut().entity_mut(entity).insert(StatusEffects {
+                            active: vec![ActiveStatusEffect {
+                                kind: StatusEffectKind::Stunned,
+                                magnitude: 1.0,
+                                remaining_ticks: 5,
+                                source_pill: None,
+                            }],
+                        });
+                    }
+                }
+
+                app.update();
+
+                assert!(
+                    app.world().get::<Casting>(entity).is_none(),
+                    "{branch_name}打断 `{skill_id}`：前置 Casting 应已退出"
+                );
+                let payloads = drain_vfx_payloads(&mut app);
+                assert_eq!(
+                    stop_anim_payloads(&payloads),
+                    vec![(
+                        loop_anim.to_string(),
+                        Some(CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS),
+                    )],
+                    "{branch_name}打断 `{skill_id}` 必须恰停一次本招专属蓄力段 \
+                     {loop_anim}（否则循环动画永卡玩家身上）"
+                );
+                let complete_events: Vec<_> = app
+                    .world_mut()
+                    .resource_mut::<Events<crate::combat::yidao::YidaoCastCompleteEvent>>()
+                    .drain()
+                    .collect();
+                assert!(
+                    complete_events.is_empty(),
+                    "{branch_name}打断 `{skill_id}` 不得发 YidaoCastCompleteEvent\
+                     （打断即无结算，故也无 release 接力），实际 {} 条",
+                    complete_events.len()
+                );
+            }
+        }
+    }
 }
