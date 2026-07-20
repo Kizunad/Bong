@@ -288,57 +288,104 @@ pub fn load_mineral_anchors(
     Ok(anchors)
 }
 
-fn validate_anchor_zones(anchors: &[MineralAnchor], zones: &ZoneRegistry) -> Result<(), String> {
-    for (index, anchor) in anchors.iter().enumerate() {
-        let declared_zone = zones.find_zone_by_name(&anchor.zone).ok_or_else(|| {
-            format!(
-                "anchors[{index}] mineral `{}` declares unknown runtime zone `{}`",
-                anchor.mineral_id.as_str(),
-                anchor.zone
-            )
-        })?;
-        if declared_zone.dimension != DimensionKind::Overworld {
-            return Err(format!(
-                "anchors[{index}] mineral `{}` declares zone `{}` in dimension {:?}, but fixed mineral anchors materialize in Overworld",
+#[derive(Clone, Copy)]
+enum AnchorZoneValidationContext {
+    Center,
+    FinalCandidates,
+}
+
+fn validate_anchor_zone_contract(
+    anchor_index: usize,
+    anchor: &MineralAnchor,
+    positions: &[BlockPos],
+    zones: &ZoneRegistry,
+    context: AnchorZoneValidationContext,
+) -> Result<(), String> {
+    let declared_zone = zones.find_zone_by_name(&anchor.zone).ok_or_else(|| match context {
+        AnchorZoneValidationContext::Center => format!(
+            "anchors[{anchor_index}] mineral `{}` declares unknown runtime zone `{}`",
+            anchor.mineral_id.as_str(),
+            anchor.zone
+        ),
+        AnchorZoneValidationContext::FinalCandidates => format!(
+            "anchors[{anchor_index}] mineral `{}` declares unknown runtime zone `{}` during final-candidate preflight",
+            anchor.mineral_id.as_str(),
+            anchor.zone
+        ),
+    })?;
+
+    if declared_zone.dimension != DimensionKind::Overworld {
+        return Err(match context {
+            AnchorZoneValidationContext::Center => format!(
+                "anchors[{anchor_index}] mineral `{}` declares zone `{}` in dimension {:?}, but fixed mineral anchors materialize in Overworld",
                 anchor.mineral_id.as_str(),
                 anchor.zone,
                 declared_zone.dimension
-            ));
-        }
-
-        let center = DVec3::new(
-            f64::from(anchor.center.x),
-            f64::from(anchor.center.y),
-            f64::from(anchor.center.z),
-        );
-        if !declared_zone.contains(center) {
-            return Err(format!(
-                "anchors[{index}] mineral `{}` center {:?} lies outside declared zone `{}` AABB {:?}",
+            ),
+            AnchorZoneValidationContext::FinalCandidates => format!(
+                "anchors[{anchor_index}] mineral `{}` declares zone `{}` in dimension {:?}, but fixed mineral anchors materialize in Overworld during final-candidate preflight",
                 anchor.mineral_id.as_str(),
-                anchor.center,
+                anchor.zone,
+                declared_zone.dimension
+            ),
+        });
+    }
+
+    for (position_index, pos) in positions.iter().copied().enumerate() {
+        let point = DVec3::new(f64::from(pos.x), f64::from(pos.y), f64::from(pos.z));
+        let describe_position = || match context {
+            AnchorZoneValidationContext::Center => format!("center {pos:?}"),
+            AnchorZoneValidationContext::FinalCandidates => format!(
+                "final candidate[{position_index}] {pos:?} after surface snap/dedup/max_units"
+            ),
+        };
+
+        if !declared_zone.contains(point) {
+            return Err(format!(
+                "anchors[{anchor_index}] mineral `{}` {} lies outside declared zone `{}` AABB {:?}",
+                anchor.mineral_id.as_str(),
+                describe_position(),
                 anchor.zone,
                 declared_zone.bounds
             ));
         }
 
         let actual_zone = zones
-            .find_zone(DimensionKind::Overworld, center)
+            .find_zone(DimensionKind::Overworld, point)
             .ok_or_else(|| {
                 format!(
-                    "anchors[{index}] mineral `{}` center {:?} does not resolve to any Overworld runtime zone",
+                    "anchors[{anchor_index}] mineral `{}` {} does not resolve to any Overworld runtime zone",
                     anchor.mineral_id.as_str(),
-                    anchor.center
+                    describe_position()
                 )
             })?;
         if actual_zone.name != anchor.zone {
+            let capture_target = match context {
+                AnchorZoneValidationContext::Center => "anchor",
+                AnchorZoneValidationContext::FinalCandidates => "ore node",
+            };
             return Err(format!(
-                "anchors[{index}] mineral `{}` center {:?} resolves to runtime zone `{}`, not declared `{}`; a more specific or overlapping zone would capture this anchor",
+                "anchors[{anchor_index}] mineral `{}` {} resolves to runtime zone `{}`, not declared `{}`; a more specific or overlapping zone would capture this {capture_target}",
                 anchor.mineral_id.as_str(),
-                anchor.center,
+                describe_position(),
                 actual_zone.name,
                 anchor.zone
             ));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_anchor_zones(anchors: &[MineralAnchor], zones: &ZoneRegistry) -> Result<(), String> {
+    for (index, anchor) in anchors.iter().enumerate() {
+        validate_anchor_zone_contract(
+            index,
+            anchor,
+            std::slice::from_ref(&anchor.center),
+            zones,
+            AnchorZoneValidationContext::Center,
+        )?;
     }
 
     Ok(())
@@ -442,45 +489,13 @@ fn validate_final_anchor_positions(
     debug_assert_eq!(anchors.len(), prepared.len());
 
     for (anchor_index, (anchor, positions)) in anchors.iter().zip(prepared).enumerate() {
-        let declared_zone = zones.find_zone_by_name(&anchor.zone).ok_or_else(|| {
-            format!(
-                "anchors[{anchor_index}] mineral `{}` declares unknown runtime zone `{}` during final-candidate preflight",
-                anchor.mineral_id.as_str(),
-                anchor.zone
-            )
-        })?;
-
-        for (candidate_index, pos) in positions.iter().copied().enumerate() {
-            let point = DVec3::new(f64::from(pos.x), f64::from(pos.y), f64::from(pos.z));
-            if !declared_zone.contains(point) {
-                return Err(format!(
-                    "anchors[{anchor_index}] mineral `{}` final candidate[{candidate_index}] {:?} after surface snap/dedup/max_units lies outside declared zone `{}` AABB {:?}",
-                    anchor.mineral_id.as_str(),
-                    pos,
-                    anchor.zone,
-                    declared_zone.bounds
-                ));
-            }
-
-            let actual_zone = zones
-                .find_zone(DimensionKind::Overworld, point)
-                .ok_or_else(|| {
-                    format!(
-                        "anchors[{anchor_index}] mineral `{}` final candidate[{candidate_index}] {:?} after surface snap/dedup/max_units does not resolve to any Overworld runtime zone",
-                        anchor.mineral_id.as_str(),
-                        pos
-                    )
-                })?;
-            if actual_zone.name != anchor.zone {
-                return Err(format!(
-                    "anchors[{anchor_index}] mineral `{}` final candidate[{candidate_index}] {:?} after surface snap/dedup/max_units resolves to runtime zone `{}`, not declared `{}`; a more specific or overlapping zone would capture this ore node",
-                    anchor.mineral_id.as_str(),
-                    pos,
-                    actual_zone.name,
-                    anchor.zone
-                ));
-            }
-        }
+        validate_anchor_zone_contract(
+            anchor_index,
+            anchor,
+            positions,
+            zones,
+            AnchorZoneValidationContext::FinalCandidates,
+        )?;
     }
 
     Ok(())
