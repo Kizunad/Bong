@@ -147,193 +147,121 @@
 ### 落地清单
 
 - `client/src/main/java/com/bong/client/BongNetworkHandler.java`
-  - raw `bong:server_data` receiver 只复制 Netty buffer，并捕获收包 `receivedAtMs` +
-    `ClientConnectionStatusStore.currentGeneration()`。
-  - protobuf bridge、legacy JSON fallback、`ServerDataRouter.route(...)`、所有 handler/store/listener
-    side effect 与最终 `applyDispatch(...)` 统一进入一个 client-thread task。
-  - task 开头用 generation guard + 收包时刻回写 freshness；stale generation 整段 no-op。
-  - 保留 parse error、未知 type/no-op、handler exception 收口、日志和 dispatch 判定语义；
-    没有给 `CraftScreen` / `WorkbenchScreen` 追加第二套局部线程兜底。
+  - Fabric `ClientPlayConnectionEvents.INIT` 按物理 `ClientPlayNetworkHandler` identity 同步分配不可变
+    `ClientConnectionStatusStore.SessionToken`；`JOIN` 捕获 callback 时刻并在 client task 中只激活
+    既有 token，不再换代。
+  - raw `bong:server_data` receiver 只复制 Netty buffer、按 callback `handler` 捕获 token 与
+    `receivedAtMs`、排入单一 client-thread task；未 INIT 的 null/陌生 handler fail closed，连 task
+    都不排。
+  - task 在 protobuf bridge 之前执行 active-token guard；合法链仍按
+    `bridge/fallback → ServerDataRouter.route → handler/store/listener → applyDispatch` 在同一 client
+    task 内有序运行。DISCONNECT/reconnect 后旧 token task 在 bridge 前整段 no-op。
+  - `disconnectSession(...)` 先同步失效当前物理连接，再且仅在该 handler 正是 active session 时
+    排 `clearClientStateOnDisconnect`；旧 handler 的迟到 DISCONNECT 只移除自身 token，不得误清
+    已激活的新 session。
 - `client/src/main/java/com/bong/client/ui/ClientConnectionStatusStore.java`
-  - 增加 `connectionGeneration`；`markConnected`/`markDisconnected` 递增代次；
-    `markPayloadReceived(now, generation)` 代次不一致时 no-op。
-  - 同一 generation 内以 `Math.max(lastPayloadAtMs, now)` 合并 freshness，跨 channel / queue
-    乱序以及 0/负时间戳均不得把较新收包时刻回退；disconnect/reconnect 仍按新代次重置。
-- `client/src/main/java/com/bong/client/craft/CraftOutcomeFeedback.java`
-  - CraftScreen / WorkbenchScreen 共用 completed/failed 反馈契约（可测 seam）。
+  - 以 `IdentityHashMap<Object, SessionToken>` 保存 INIT 注册；同一 handler 重复 INIT 幂等，token
+    构造器私有且 sequence 用 `Math.incrementExact` 防静默回绕。
+  - `activateSession(handler, joinedAt)`、`invalidateSession(handler, disconnectedAt)`、
+    `isActiveSession(token)` 与 `markPayloadReceived(receivedAt, token)` 共同锁定物理连接生命周期；
+    未注册、未激活、已失效 token 均 fail closed。
+  - 同一 active token 内以 `Math.max(lastPayloadAtMs, max(0, receivedAt))` 合并 freshness；乱序、
+    较旧、0、负时间戳不得回退，旧 token 不得复活 connected 或污染新 session。
 - `client/src/main/java/com/bong/client/craft/CraftScreen.java` /
   `WorkbenchScreen.java`
-  - outcome listener 改走共享反馈；提供 attach/detach/flashTicks 测试观察缝。
+  - 五类 Store/Inventory listener 共用单一 `listenersAttached` 状态；重复 build/resize/测试 attach
+    幂等，`removed()` 统一注销全部 listener。
+  - 两屏继续复用 `CraftOutcomeFeedback` 的 completed 契约
+    `flashTicks=6 → 一声完成音 → 一次 refresh` 与 failed 契约 `仅 refresh`；同型
+    `CompleteSoundPlayer`/refresh 注入 seam 只用于直接观察生产 listener 的 exactly-once 行为。
 - `client/src/test/java/com/bong/client/BongServerDataThreadingTest.java`
-  - 线程边界 + 连接状态机 + 真实 screen 反馈 + no-op/lifecycle 饱和回归。
+  - 16 项覆盖 network→client thread 边界、route/apply 顺序、completed/failed、`cast_sync`、连续
+    payload、坏 JSON、handler exception、unknown/null-dispatch 与收包时刻 freshness。
+  - 使用真实 protobuf `CraftRecipeList`、`CraftSessionState`、`CraftOutcome` 锁定
+    `INIT token A → pre-JOIN capture → JOIN activate A → drain` 后三类 join hydration/store/listener/
+    sound/refresh 各 exactly once。
+  - 锁定 `A capture → disconnect A → INIT/JOIN B → drain A` 的 bridge/route/store/listener/sound/
+    refresh/apply 全 0、cleanup-before-drain 不复活、迟到 A disconnect 不清 B、陌生/null handler
+    fail closed、同 token 时间戳单调。
 - `client/src/test/java/com/bong/client/craft/CraftOutcomeFeedbackTest.java`
-  - flash/sound/refresh 顺序、failed 无完成音、screen 关闭后不消费。
+  - 7 项覆盖共享反馈顺序、failed 无完成音、player 缺失，以及 CraftScreen/WorkbenchScreen 重复
+    attach 后一声一刷、`removed()` 后所有 outcome 反馈为 0。
+- `client/src/test/java/com/bong/client/ui/ConnectionStatusIndicatorTest.java`
+  - 8 项改走真实 INIT/JOIN/DISCONNECT token 生命周期，保留断线/重连 toast 与 measuring-time 契约。
 - `docs/finished_plans/plan-bughunt-craft-outcome-network-thread-sound-v1.md`
-  - 原地纠正 Finish Evidence overclaim，不重复归档。
+  - 只原地改写既有唯一 `## Finish Evidence`；不重复 promotion、归档、`git mv` 或新增同名 H2。
 
 ### 关键 commit
 
 - `3e3c80d8`：升格 skeleton，收口线程验证范围。
-- `33d8cb74`：补齐 completed/failed、异常、顺序与同根因验收矩阵。
-- `dbb8772c`：提取生产调度测试缝并提交修复前红测基线。
-- `867fd1a7`：把整条 server_data 处理链移入单一 client-thread task。
-- `f10f230e`：回填第一性原理证真与 195 项同根因回归证据。
-- `de5ccfc0`：归档 finished plan。
-- `e65fffdb`：回应 CodeRabbit，补足线程断言诊断与归档格式。
-- `3ccf908b`：普通 merge `origin/main@2f9c70ad`（含 #1212 SearchHud disconnect 清理等主线），
-  parents=`e65fffdb` + `2f9c70ad`；保留本 PR craft_outcome 单任务线程契约与 #1212 语义并存。
-- `689ffb94`：docs-only 更新 post-merge 门禁证据（后续被 2026-07-20 复审返工取代）。
-- `81fe479d5`：**代码修复**——恢复 `server_data` 收包时刻 freshness：receiver 捕获
-  `receivedAt` + `connectionGeneration`，client task 用代次守卫回写，断线/重连后
-  stale task 不得复活 `connected`；抽出 `CraftOutcomeFeedback` 锁定 completed
-  `flashTicks=6` / 一声完成音 / refresh 顺序与 failed 无完成音；补齐线程、生命周期
-  与 no-op 饱和回归（触达 `BongNetworkHandler`、`ClientConnectionStatusStore`、
-  `CraftOutcomeFeedback`、两屏 listener 与 threading/feedback 测试）。
-- `1b2063d2b`：**证据纠正（docs-only）**——原地更新 finished plan Finish Evidence，
-  收回初版仅 7 项 store 线程测试即宣称完整矩阵的 overclaim，并写入 generation
-  guard、真实 Screen 反馈与 Java17 **4171/0/0/0** 门禁计数；**不重复归档**。
-- `5bd4d9a66`：**docs-only**——把 final validator PASS 证据绑定到代码树
-  `1b2063d2b` 之后的记录提交本身（当时 HEAD=`5bd4d9a66839102f606959133d6655fde4cbc77f`）。
-- `9ab6b713`：**测试诊断消息 + 文档证据**（CodeRabbit unresolved threads 收口；
-  **不是 pure docs-only**）——补足 3 条 `assertTrue` 失败诊断文案，并更新 archived
-  plan 头部「接入面」/开放问题审计/Finish Evidence。**production runtime 与
-  `5bd4d9a66` 相同**（仅测试诊断消息与文档文本）。Java17
-  `./gradlew test build` 已在 exact HEAD `9ab6b713` 成功：**4171/0/0/0** + GAME TESTS
-  **3/3**；fresh 只读 validator 对 `9ab6b713` 结论 **PASS**（`blocker=0`，`major=0`），
-  并指出把本条误标为 docs-only 属 minor 措辞错误——本段已纠正。
-- `93369a145`：**current-head review 修复**——同一 connection generation 内以单调最大值
-  合并 payload freshness，避免延迟 `server_data` task 把较新的跨 channel 收包时刻回退；
-  保留 generation mismatch 整段 no-op 与 disconnect/reconnect 重置。新增真实
-  route→`CraftStore` exactly-once 集成回归（含 2500→2600 乱序、0/负时间戳），并纠正
-  `CraftOutcomeFeedback.completeSound` 文档为 completed 必调用、回调自行处理 player 缺失。
+- `dbb8772c`：提交修复前红测基线，7/7 复现 route/store 在 network thread 提前执行。
+- `867fd1a7`：把 server_data bridge/route/handler/apply 链移入单一 client-thread task。
+- `3ccf908b`：普通 merge `origin/main@2f9c70ad`，保留本修复与主线 disconnect 清理语义。
+- `81fe479d5`：补收包时刻 freshness、初版 generation guard、共享反馈与生命周期矩阵。
+- `93369a145`：同 generation freshness 改为单调最大值并补真实 route→CraftStore exactly-once。
+- `6fa6b99bf`：更新上一轮 current-head 证据；本次返工的精确起始 HEAD。
+- `d25dfba95300c5f3a0081c611cf20edbc6e7aa72`：**当前代码修复**——以 handler-bound immutable
+  session token 取代会丢 pre-JOIN 首包的全局 generation 采样；同步失效 active token、阻止迟到旧
+  handler 清新 session；两屏 listener 幂等与真实 protobuf/生命周期饱和回归。
 
 ### 测试结果（历史基线）
 
 - RED（Temurin 17）：
   `./gradlew test --tests com.bong.client.BongServerDataThreadingTest`
-  → `7 tests completed, 7 failed`；关键实际值为
-  `route@fabric-network-io-test`，craft/cast store 均在 queue drain 前提前变化。
-- targeted GREEN（Temurin 17）：新增线程测试及
-  `BongNetworkHandlerTest`、`CraftHandlerTest`、`CastSyncHandlerTest`、
-  `ServerDataRouterTest`、`ProtoServerDataBridgeTest`
-  → `195 tests, 0 failed, 0 skipped`。
-- client 完整门禁（归档时 Temurin 17）：`./gradlew test build`
-  → `BUILD SUCCESSFUL in 3m 32s`；JUnit XML 汇总
-  `3995 tests, 0 failures, 0 errors, 0 skipped`。
-- **post-merge 完整门禁（Temurin 17 @ `3ccf908b`，2026-07-19）**：
-  `export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; cd client && ./gradlew test build`
-  → exit `0`，`BUILD SUCCESSFUL in 4m 32s`；
-  JUnit XML 汇总 `4160 tests, 0 failures, 0 errors, 0 skipped`（475 suites）；
-  `BongServerDataThreadingTest` 7/7 全绿（completed/failed/`cast_sync`/route→apply/
-  连续 payload/坏 JSON/handler exception 后续合法 payload）；
-  GAME TESTS：`All 3 required tests passed`。
-- 构建仅输出仓库既有 Gradle deprecated-features 提示；无测试失败、编译失败或新增源码产物。
+  → `7 tests completed, 7 failed`；关键实际值为 `route@fabric-network-io-test`，证明 raw receiver
+  同步 route/store 违反 Fabric network-thread 契约。
+- 2026-07-20 本次返工前的 current-head 基线 `93369a145`：完整 client 门禁
+  **4172/0/0/0**（476 suites）+ GAME TESTS **3/3**；该版本仍用全局 generation，无法保证同一
+  新 handler 的 pre-JOIN 一次性 craft hydration 不被 JOIN 换代丢弃。
 
-### 测试结果（2026-07-20 复审返工后 @ `1b2063d2b`）
+### 测试结果（2026-07-20 handler-token 修复 @ `d25dfba95300c5f3a0081c611cf20edbc6e7aa72`）
 
-- client 完整门禁（Temurin 17）：
-  `export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; cd client && ./gradlew test build`
-  → exit `0`，`BUILD SUCCESSFUL`；
-  JUnit XML 汇总 **`4171 tests, 0 failures, 0 errors, 0 skipped`**（476 suites）即 **4171/0/0/0**；
-  GAME TESTS：**`All 3 required tests passed`（3/3）**。
-- 关键回归：
-  - `BongServerDataThreadingTest` **13/13**（含 receipt timestamp / disconnect-before-drain /
-    reconnect generation / unknown+null no-op / 真实 CraftScreen+WorkbenchScreen 反馈 /
-    disconnect CraftStore lifecycle）；
-  - `CraftOutcomeFeedbackTest` **5/5**；
-  - `BongNetworkHandlerTest` **21/21**；
-  - `ConnectionStatusIndicatorTest` **8/8**。
+- 扩展定向门禁（Temurin 17）：
+  `./gradlew test --tests com.bong.client.BongServerDataThreadingTest \
+  --tests com.bong.client.craft.CraftOutcomeFeedbackTest \
+  --tests com.bong.client.ui.ConnectionStatusIndicatorTest \
+  --tests com.bong.client.BongNetworkHandlerTest \
+  --tests com.bong.client.tiandao.TiandaoPresencePayloadHandlerTest`
+  → exit `0`，JUnit XML **58/0/0/0**：
+  - `BongServerDataThreadingTest` **16/0/0/0**；
+  - `CraftOutcomeFeedbackTest` **7/0/0/0**；
+  - `ConnectionStatusIndicatorTest` **8/0/0/0**；
+  - `BongNetworkHandlerTest` **21/0/0/0**；
+  - `TiandaoPresencePayloadHandlerTest` **6/0/0/0**；
+  - GAME TESTS **3/3**。
+- client 完整门禁（Temurin 17，命令无管道）：
+  `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH="$JAVA_HOME/bin:$PATH" ./gradlew test build`
+  → exit `0`，`BUILD SUCCESSFUL in 5m 5s`；JUnit XML **4176 tests, 0 failures, 0 errors,
+  0 skipped**（476 suites），GAME TESTS **3/3**。
+- 构建只输出仓库既有 Gradle deprecated-features、可选类缺失警告与一次 GameTest server TPS
+  落后提示；无编译、JUnit、GameTest、打包失败。
+- 本段 docs-only 修订提交不改变 runtime；提交后会在最终 exact HEAD 再执行同一扩展定向与完整
+  Java 17 门禁，结果以会话最终回报为准，不把 `d25dfba95` 的执行记录伪称为未来 SHA 验证。
 
-### 测试结果（2026-07-20 current-head review 修复 @ `93369a145`）
+### 主线同步与 SHA 纪律
 
-- 定向 client 回归（Temurin 17）：
-  `./gradlew test --tests com.bong.client.BongServerDataThreadingTest`
-  → exit `0`，`BongServerDataThreadingTest` **14/0/0/0**，GAME TESTS **3/3**。
-- client 完整门禁（Temurin 17）：
-  `export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; export PATH="$JAVA_HOME/bin:$PATH"; ./gradlew test build`
-  → exit `0`，`BUILD SUCCESSFUL in 2m 5s`（`:test` 为同一文件树复验，Gradle 标记 UP-TO-DATE）；JUnit XML 汇总
-  **`4172 tests, 0 failures, 0 errors, 0 skipped`**（476 suites）即 **4172/0/0/0**；
-  GAME TESTS：**`All 3 required tests passed`（3/3）**。
-- 新增回归锁定：先排入 `receivedAt=2500` 的真实 `craft_outcome` server_data task，
-  再在同 generation 直接标记 `2600`、`0`、`-1`，drain 后 `lastPayloadAtMs` 仍为
-  `2600`、`connected=true`，且 route→`CraftStore` listener/结果恰好一次；既有
-  disconnect-before-drain / reconnect 旧 generation 整段 no-op 覆盖仍全绿。
-- 本段完整 gate 绑定已存在的代码 commit
-  `93369a14547aea5c7cea03fab33e0eff22803709`；本 Finish Evidence docs commit
-  将另行创建，不把上述代码 gate 外推为对未来 SHA 的验证。
-
-### 主线同步与绑定 SHA 验证
-
-- 2026-07-19：`git fetch origin` 后 `origin/main@2f9c70ad` 不再是修复 tip 祖先；
-  对 PR 分支执行普通 `git merge origin/main`（禁止 rebase/force/reset/amend），
-  得到 merge commit `3ccf908b`（parents `e65fffdb` + `2f9c70ad`），工作区 clean。
-- 语义合并核验：`BongNetworkHandler` 无冲突标记；保留
-  `SearchHudStateStore.clearOnDisconnect()`（#1212）与
-  `dispatchServerDataPayload`/`processServerDataPayload` 的 raw-buffer-copy →
-  单一 `client.execute` task（bridge/fallback/route/handler/store/listener/applyDispatch）
-  线程契约；Agent UI / Season 主线逻辑未丢。
-- post-merge 必须重跑 client 完整门禁；2026-07-20 复审返工代码+证据纠正后，
-  代码树门禁以 `1b2063d2b` 的 **4171/0/0/0** 为准（见下节）。
-- **历史 exact-head validator**：对
-  `1b2063d2b4bfd6ad826737c701d80660aa38affa` 结论 **PASS**，`blocker=0`，`major=0`，
-  `minor=3`（双屏音效可观测限制；其他 channel freshness 非目标；`scheduleRefresh`
-  既有 inline 模式）。
-- **fresh final validator（外部、发生在 `5bd4d9a66` 之后）**：对
-  `5bd4d9a66839102f606959133d6655fde4cbc77f` 结论 **PASS**，`blocker=0`，
-  `major=0`，`minor=3`。**validator PASS 曾绑定 `5bd4d9a66`**。
-- **`9ab6b713`（测试诊断消息 + 文档证据，非 pure docs-only）**：同时改了 3 条
-  测试 `assertTrue` 诊断消息 + archived plan 文档（接入面 / 开放问题审计 /
-  本段 SHA 纪律）。**production runtime 与 `5bd4d9a66` 相同**。Java17
-  `./gradlew test build` 已在 exact HEAD `9ab6b713` 成功：**4171/0/0/0** + GAME TESTS
-  **3/3**。fresh 只读 validator 对 `9ab6b713` 结论 **PASS**（`blocker=0`，`major=0`），
-  并指出「docs-only」属 minor 措辞错误——本段已纠正。**注意：后续对本 plan 的
-  corrective docs commit 会再次改变 HEAD，必须对最新 SHA 再跑 fresh validator**——
-  不得把 `9ab6b713` 的 PASS 自动外推到未来 SHA。
+- `git merge-base --is-ancestor 2f9c70ad d25dfba95300c5f3a0081c611cf20edbc6e7aa72`
+  → exit `0`；本次修复仍包含 `3ccf908b` 合入的 `origin/main@2f9c70ad`。
+- 本次返工从用户指定且 clean 的 `6fa6b99bf423e834cf51eb09c40fbb5ac93d6a9f` 开始；未 fetch/merge/
+  rebase/reset/amend/force，未触碰远端分支。
+- 历史 validator PASS 只绑定其各自旧 SHA，不外推到 `d25dfba95` 或本次 docs-only 最终 HEAD；
+  本会话遵守“不得创建其他 agent”的明确限制，没有伪造新的外部 validator 结论。
 
 ### 跨栈核验
 
-- client：修改 receiver 调度边界、连接状态机、共享反馈与饱和回归；完整门禁 **4171/0/0/0**
-  + GAME TESTS **3/3** 已在代码树 `1b2063d2b` 与 exact HEAD `9ab6b713` 复验
-  （production runtime 与 `5bd4d9a66` 相同；`9ab6b713` 仅改测试诊断消息与文档，
-  非 pure docs-only）。
-- server：只读确认 `server/src/network/craft_emit.rs` 的 completed/failed 生产 emit；
-  本 PR 无 server 代码改动，不需要额外 cargo gate。
-- agent/schema/worldgen：本 PR 修复范围未改协议/schema/资源/生成物；agent 不消费；
-  schema 不改；merge 带入主线变更不属于本 plan 修复面，不另开对应门禁。
-- 真元/世界观/A/V：本修复不改变制作数值、资源流、真元 ledger、招式或视觉/音效资产；
-  只保证既有完成音效、闪光与刷新在 client thread 执行。
-
-### 2026-07-20 复审返工证据（原地纠正，不重复归档）
-
-- 触发：PR #1196 `/review` REQUEST_CHANGES（17 findings 主题收敛为 3 类）：
-  1) `markConnectionPayload` 从收包时刻推迟到 processing time / 可复活 connected；
-  2) 缺少 CraftScreen/WorkbenchScreen 真实反馈与 failed 无完成音回归；
-  3) 缺少 unknown/null-dispatch、disconnect/screen-close lifecycle 矩阵。
-- 代码修复：`81fe479d5` generation + receivedAt guard；共享 `CraftOutcomeFeedback`；
-  饱和测试补齐。
-- 文档：`1b2063d2b` / `5bd4d9a66` / `9ab6b713` 原地纠正 Finish Evidence，
-  并诚实绑定 validator PASS；**不**再次 `git mv` 归档。
-- 门禁与精确计数：production runtime 同 `5bd4d9a66`；Java 17
-  `./gradlew test build` 已在 exact HEAD `9ab6b713` 成功：**4171/0/0/0**，
-  GAME TESTS **3/3**（`9ab6b713` 为测试诊断消息 + 文档证据，非 pure docs-only）。
-
-### 2026-07-20 CodeRabbit unresolved threads 收口（docs + 诊断消息）
-
-- A minor：`BongServerDataThreadingTest` / `CraftOutcomeFeedbackTest` 三处 `assertTrue`
-  补失败诊断实际值；逻辑不变。
-- B major：plan 头部补集中「接入面」（进料/出料/共享类型/跨仓库/worldview/qi_physics）。
-- C major：严格按 `docs/CLAUDE.md` §五解读——有开放问题才强制 `§N.1`；本 plan
-  无未决项，写「开放问题：无」归档审计说明，不倒填实施前决议。
-- D major：Finish Evidence 绑定 `9ab6b713` 的 fresh final validator PASS 与 Java17
-  完整门禁（**4171/0/0/0** + GAME TESTS **3/3**）。本条为「测试诊断消息 + 文档证据」
-  commit（**不是 pure docs-only**）；production runtime 与 `5bd4d9a66` 相同。
-  后续 corrective docs commit 会改 HEAD，**新 HEAD 需再 final validator**。
+- client：修改 receiver 生命周期、connection store、两屏 listener 与回归；Java 17 完整门禁
+  **4176/0/0/0** + GAME TESTS **3/3**。
+- server：只读确认 `server/src/network/craft_emit.rs` 的 completed/failed 生产 emit 既有可达；本次
+  无 server 代码改动，不跑 cargo gate。
+- agent/schema/worldgen：未改协议、TypeBox/sample/dist、agent consumer、资源或生成物。
+- persistence：未改任何 SQLite/持久化代码、迁移或测试；不把无关 persistence 议题塞入本 PR。
+- 真元/世界观/A/V：不改变制作数值、资源流、真元 ledger 或音效资产；只保证既有完成反馈在正确
+  client session/thread exactly once 执行。
 
 ### 遗留 / 后续
 
-- 其他 channel（vfx/audio/agent_ui 等）仍在 network thread 直接 `markPayloadReceived()`，
-  其 freshness 语义保持历史行为，**明确非目标**，不在本 plan 扩项范围内。
-- validator minor（非阻塞）：双屏单测音效可观测限制；`scheduleRefresh` 既有 on-thread
-  inline 模式。二者不改变本 plan 验收结论。
-- 远端 gate 仍由 `/review`、CodeRabbit、e2e 等负责。
-- 明确排除 #1228：本会话不触碰、不停止任何来源不明进程。
+- 其他 channel（vfx/audio/agent_ui 等）仍使用历史 `markPayloadReceived()` freshness 路径，明确非
+  本 plan 范围；本修复只收口 `bong:server_data` 的 handler-bound session token。
+- 远端 `/review`、CodeRabbit、e2e 与 push 由主协调流程负责；本次会话不 push、不 merge、不开 PR、
+  不发评论。
+- 明确排除 PR #1228 与来源不明进程；本会话未触碰其他 worktree、主 checkout 或 PID `2399867`。
