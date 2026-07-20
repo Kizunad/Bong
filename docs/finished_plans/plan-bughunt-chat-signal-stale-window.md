@@ -179,7 +179,7 @@
 - `3228424e`（2026-07-19）：普通 merge `origin/main@5d9bdd8f`（#1241 skill-anim-fidelity PR-5；触及 server + client）。
 - `a3ce1b945`（2026-07-19）：普通 merge `origin/main@2f9c70ad`（#1212 SearchHud 收口；仅 client + docs）。代码起点祖先。
 - `c00e8d2d`（2026-07-19）：纠偏聊天信号计划的最终门禁证据（docs-only）。
-- `HEAD_THIS_COMMIT`（2026-07-20）：CodeRabbit 返工——signed i64 协议边界、端口归属 fail-closed helper、真实 Tiandao runtime/prompt e2e，并原地纠正 Finish Evidence 最终树描述（exact SHA 以本 commit 本身为准，列表写在 commit message 对应 tree）。
+- `87afb6f86`（2026-07-20）：CodeRabbit 返工——signed i64 协议边界、端口归属 fail-closed helper、真实 Tiandao runtime/prompt e2e，并原地纠正 Finish Evidence 最终树描述。exact SHA `87afb6f86926e0d06e3c3779f3dddb584d30f94f`。
 
 ### 测试结果
 
@@ -195,7 +195,7 @@
   - bot protocol：`python3 -m unittest scripts.bot.test_protocol` → **128/128**（含 signed i64 边界 `-(2**63)` / `-1` / `2**63-1` 与两侧越界 0 包）。
   - port helper：`bash -n scripts/e2e-chat-signal-window.sh scripts/lib/chat-window-port.sh scripts/test_chat_window_port.sh` = 0；`bash scripts/test_chat_window_port.sh` → **6/6**（ss 失败 fail-closed、pid tree、注入 ss 归属/拒绝）。
   - 真实 e2e：`bash scripts/e2e-chat-signal-window.sh` = 0；marker `chat-window-20260720-094304-1605720`；`client_ms=1784598210704 wire_ts=1784511811 now=1784511819 age=8`；首轮 `chat drain: messages=1, signals=1` + 真实 `TiandaoAgent` user prompt 含 marker；第二轮 `signals=0` 且 prompt 无 marker；证据目录 `.sisyphus/evidence/chat-signal-window-20260720-094304-1605720`。
-- 历史对抗验证：`FIX_VALIDATING` 对 `057d4d52` PASS；`REBASE_VALIDATING` 对 `438c47e7` PASS。**本会话未另开无上下文 validator**；最终 exact SHA 以本返工 commit 为准。
+- 历史对抗验证：`FIX_VALIDATING` 对 `057d4d52` PASS；`REBASE_VALIDATING` 对 `438c47e7` PASS。**本会话未另开无上下文 validator**；最终 exact SHA `87afb6f86926e0d06e3c3779f3dddb584d30f94f`。
 
 ### 跨仓库核验
 
@@ -209,4 +209,4 @@
 
 - 功能代码无阻塞遗留；NTP / 客户端时钟漂移补偿、Redis 跨进程聊天持久化仍按非目标保持独立；Tiandao `ts > now` fail closed 已在本 plan 内。
 - **运维事故（非代码交付）**：本 worktree 内来源不明 / untracked 的 `agent/packages/tiandao/data/` 在测试流程中被误删，**无可证恢复**。禁止伪造复制“恢复”该目录内容，也**禁止自动 cleanup 删除**同类 ignored/untracked 数据。该事故不是聊天时效修复的交付物，仅作遗留记账；后续 cleanup 必须人工确认路径来源后再动。
-- 最终树 = 代码起点 `a3ce1b945`（含 `origin/main@2f9c70ad`）+ 证据纠错 `c00e8d2d` + 本会话返工 commit。是否 push / merge / 另开 validator 均由 PR 会话外部绑定，**本会话不 push / 不 merge / 不 cleanup**；本会话未另开无上下文 validator。
+- 最终树 = 代码起点 `a3ce1b945`（含 `origin/main@2f9c70ad`）+ 证据纠错 `c00e8d2d` + 本会话返工 `87afb6f86`。是否 push / merge / 另开 validator 均由 PR 会话外部绑定，**本会话不 push / 不 merge / 不 cleanup**；本会话未另开无上下文 validator。
