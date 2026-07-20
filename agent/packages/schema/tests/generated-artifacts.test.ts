@@ -10,6 +10,7 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Ajv from "ajv";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -25,6 +26,13 @@ import {
   writeGeneratedSchemas,
 } from "../src/generated-artifacts.js";
 import { GENERATED_SCHEMA_FILES, SCHEMA_REGISTRY } from "../src/schema-registry.js";
+
+// Workspace-declared Ajv (devDependency of @bong/schema). Prefer package metadata over host paths.
+const workspaceRequire = createRequire(import.meta.url);
+const AJV_PACKAGE_JSON_PATH = workspaceRequire.resolve("ajv/package.json");
+const AJV_PACKAGE_VERSION = (workspaceRequire(AJV_PACKAGE_JSON_PATH) as { version?: string })
+  .version;
+const AJV_RESOLVED_PATH = workspaceRequire.resolve("ajv");
 
 const tempDirs: string[] = [];
 const TIANDAO_SOURCE_DIR = join(import.meta.dirname, "../../tiandao/src");
@@ -48,7 +56,7 @@ const AGENT_UI_ID_SCHEMA_PATHS: Readonly<
   ],
 };
 
-/** 六个 Agent UI ID 字段在宿主 Ajv 下共享的 code-point 边界矩阵。 */
+/** 六个 Agent UI ID 字段在 workspace Ajv 下共享的 code-point 边界矩阵。 */
 const AGENT_UI_ID_BOUNDARY_CASES = [
   { name: "empty", value: "", valid: false },
   { name: "64 emoji", value: "😀".repeat(64), valid: true },
@@ -83,60 +91,45 @@ type AjvValidate = ((data: unknown) => boolean) & {
   errors: ReadonlyArray<unknown> | null | undefined;
 };
 
-type HostAjv = Readonly<{
+type WorkspaceAjv = Readonly<{
   version: string;
   resolvedPath: string;
+  packageJsonPath: string;
   compile: (schema: object) => AjvValidate;
 }>;
 
 /**
- * 使用仓库既有 Node 解析路径加载宿主 Ajv，不新增 package.json 依赖。
- * 本环境 Debian nodejs 自带 `/usr/share/nodejs/ajv@8.12.0`；若不可解析则硬失败，
- * 禁止用纯 RegExp 冒充 JSON Schema 宿主语义。
+ * 使用 @bong/schema 工作区声明的可安装 Ajv（devDependency），不依赖机器宿主
+ * `/usr/share/nodejs/ajv`。clean CI / GitHub runner 通过 npm workspace install 解析。
+ * 禁止用纯 RegExp 冒充 JSON Schema 编译语义。
  */
-function loadHostAjv(): HostAjv {
-  const require = createRequire(import.meta.url);
-  let resolvedPath: string;
-  let packageJsonPath: string;
-  try {
-    resolvedPath = require.resolve("ajv");
-    packageJsonPath = require.resolve("ajv/package.json");
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+function loadWorkspaceAjv(): WorkspaceAjv {
+  if (typeof AJV_PACKAGE_VERSION !== "string" || !AJV_PACKAGE_VERSION) {
+    throw new Error(`Workspace Ajv package.json at ${AJV_PACKAGE_JSON_PATH} is missing version`);
+  }
+  if (!AJV_PACKAGE_VERSION.startsWith("8.")) {
+    throw new Error(
+      `Workspace Ajv must be 8.x for claimed schema behavior; got ${AJV_PACKAGE_VERSION} at ${AJV_RESOLVED_PATH}`,
+    );
+  }
+  // 拒绝误解析到 Debian host 路径——门禁必须可复现于 clean CI。
+  if (AJV_RESOLVED_PATH.includes("/usr/share/nodejs/")) {
     throw new Error(
       [
-        "Host Ajv is not resolvable via createRequire(import.meta.url).",
-        "@bong/schema package.json does not declare ajv; this gate intentionally uses the host Ajv",
-        "(historically claimed 8.12.0) instead of adding a dependency.",
-        `Resolve error: ${detail}`,
+        "Ajv resolved to host Node path, not the workspace package:",
+        AJV_RESOLVED_PATH,
+        "Install @bong/schema devDependency ajv@8.x and re-run from the agent workspace.",
       ].join(" "),
     );
   }
 
-  const version = (require(packageJsonPath) as { version?: string }).version;
-  if (typeof version !== "string" || !version) {
-    throw new Error(`Host Ajv package.json at ${packageJsonPath} is missing version`);
-  }
-
-  const mod = require("ajv") as
-    | { default?: new (options?: object) => { compile: (schema: object) => AjvValidate } }
-    | (new (options?: object) => { compile: (schema: object) => AjvValidate });
-  const AjvCtor =
-    typeof mod === "function"
-      ? mod
-      : (mod as {
-          default?: new (options?: object) => { compile: (schema: object) => AjvValidate };
-        }).default;
-  if (typeof AjvCtor !== "function") {
-    throw new Error(`Host Ajv module at ${resolvedPath} does not export a constructor`);
-  }
-
   // strict:false 兼容 TypeBox 导出的附加元数据；allErrors 便于失败断言带完整路径。
-  const ajv = new AjvCtor({ allErrors: true, strict: false });
+  const ajv = new Ajv({ allErrors: true, strict: false });
   return {
-    version,
-    resolvedPath,
-    compile: (schema) => ajv.compile(schema),
+    version: AJV_PACKAGE_VERSION,
+    resolvedPath: AJV_RESOLVED_PATH,
+    packageJsonPath: AJV_PACKAGE_JSON_PATH,
+    compile: (schema) => ajv.compile(schema) as AjvValidate,
   };
 }
 
@@ -519,202 +512,204 @@ describe("generated schema freshness gate", () => {
     }
   });
 
-  // 宿主 Ajv 对 client-request / server-data 全量 anyOf 根 schema 编译 + 边界矩阵较慢，
+  // workspace Ajv 对 client-request / server-data 全量 anyOf 根 schema 编译 + 边界矩阵较慢，
   // 默认 5s 会假红；单独放宽到 60s，并打印 assertionCount 供 Finish Evidence。
   it(
-    "compiles generated Agent UI schemas with host Ajv and locks the full acceptance matrix",
+    "compiles generated Agent UI schemas with workspace Ajv and locks the full acceptance matrix",
     () => {
-      const hostAjv = loadHostAjv();
+      const workspaceAjv = loadWorkspaceAjv();
       expect(
-        hostAjv.version,
-        `宿主 Ajv 版本必须可解析；当前 resolved=${hostAjv.resolvedPath}`,
-      ).toMatch(/^\d+\.\d+\.\d+/);
-      // 历史 Finish Evidence 写过 8.12.0；此断言锁住“真的是宿主 Ajv”，版本记录到失败消息便于证据修正。
+        workspaceAjv.version,
+        `workspace Ajv 版本必须可解析；当前 resolved=${workspaceAjv.resolvedPath}`,
+      ).toMatch(/^8\.\d+\.\d+/);
+      // 锁住可安装依赖而非宿主路径；版本来自 package.json，resolved 必须落在 node_modules。
       expect(
-        hostAjv.resolvedPath.includes("ajv"),
-        `Host Ajv resolved path should look like an ajv package: ${hostAjv.resolvedPath}`,
+        workspaceAjv.resolvedPath.includes("node_modules") &&
+          workspaceAjv.resolvedPath.includes("ajv") &&
+          !workspaceAjv.resolvedPath.includes("/usr/share/nodejs/"),
+        `Workspace Ajv must resolve under node_modules (not host): ${workspaceAjv.resolvedPath}`,
       ).toBe(true);
 
-let assertionCount = 0;
-    const count = (condition: boolean, message: string): void => {
-      expect(condition, message).toBe(true);
-      assertionCount += 1;
-    };
+      let assertionCount = 0;
+      const count = (condition: boolean, message: string): void => {
+        expect(condition, message).toBe(true);
+        assertionCount += 1;
+      };
 
-    for (const file of AGENT_UI_GENERATED_FILES) {
-      const artifact = readGeneratedArtifact(file);
-      const validateRoot = hostAjv.compile(artifact as object);
-      const idPaths = AGENT_UI_ID_SCHEMA_PATHS[file];
+      for (const file of AGENT_UI_GENERATED_FILES) {
+        const artifact = readGeneratedArtifact(file);
+        const validateRoot = workspaceAjv.compile(artifact as object);
+        const idPaths = AGENT_UI_ID_SCHEMA_PATHS[file];
 
-      for (const fieldPath of idPaths) {
-        const fieldSchema = readJsonPath(artifact, fieldPath) as Record<string, unknown>;
-        count(
-          fieldSchema.type === "string" && typeof fieldSchema.pattern === "string",
-          `${file}:${fieldPath} 必须仍是 pattern-only string schema`,
-        );
-        count(
-          fieldSchema.maxLength === undefined && fieldSchema.minLength === undefined,
-          `${file}:${fieldPath} 不得恢复 minLength/maxLength`,
-        );
-
-        for (const testCase of AGENT_UI_ID_BOUNDARY_CASES) {
-          const payload = buildAgentUiIdPayload(file, fieldPath, testCase.value);
-          const got = validateRoot(payload);
+        for (const fieldPath of idPaths) {
+          const fieldSchema = readJsonPath(artifact, fieldPath) as Record<string, unknown>;
           count(
-            got === testCase.valid,
-            [
-              `host Ajv ${hostAjv.version} (${hostAjv.resolvedPath})`,
-              `${file}:${fieldPath}`,
-              testCase.name,
-              `expected valid=${testCase.valid}, got=${got}`,
-              got ? "" : `errors=${JSON.stringify(validateRoot.errors ?? null)}`,
-            ]
-              .filter(Boolean)
-              .join(" | "),
+            fieldSchema.type === "string" && typeof fieldSchema.pattern === "string",
+            `${file}:${fieldPath} 必须仍是 pattern-only string schema`,
+          );
+          count(
+            fieldSchema.maxLength === undefined && fieldSchema.minLength === undefined,
+            `${file}:${fieldPath} 不得恢复 minLength/maxLength`,
+          );
+
+          for (const testCase of AGENT_UI_ID_BOUNDARY_CASES) {
+            const payload = buildAgentUiIdPayload(file, fieldPath, testCase.value);
+            const got = validateRoot(payload);
+            count(
+              got === testCase.valid,
+              [
+                `workspace Ajv ${workspaceAjv.version} (${workspaceAjv.resolvedPath})`,
+                `${file}:${fieldPath}`,
+                testCase.name,
+                `expected valid=${testCase.valid}, got=${got}`,
+                got ? "" : `errors=${JSON.stringify(validateRoot.errors ?? null)}`,
+              ]
+                .filter(Boolean)
+                .join(" | "),
+            );
+          }
+        }
+
+        // 根 schema 级契约：额外字段 / 缺 required / optional null 分流。
+        if (file === "agent-ui-response-payload-v1.json") {
+          count(
+            validateRoot({
+              request_id: "legacy-ok",
+              action: "dismissed",
+              params: {},
+            }) === true,
+            `${file}: legacy 缺 target_player 必须可被 workspace Ajv 接受`,
+          );
+          count(
+            validateRoot({
+              request_id: "extra-bad",
+              action: "dismissed",
+              params: {},
+              unexpected_field: true,
+            }) === false,
+            `${file}: additionalProperties=false 必须拒绝额外字段`,
+          );
+          count(
+            validateRoot({
+              action: "dismissed",
+              params: {},
+            }) === false,
+            `${file}: 缺 request_id 必须失败`,
+          );
+          count(
+            validateRoot({
+              request_id: "null-target",
+              action: "dismissed",
+              params: {},
+              target_player: null,
+            }) === false,
+            `${file}: 显式 null target_player 必须失败`,
+          );
+        }
+
+        if (file === "client-request-v1.json") {
+          const base = {
+            v: 1,
+            type: "agent_ui_response",
+            request_id: "client-ok",
+            action: "dismissed",
+            params: {},
+          };
+          count(validateRoot(base) === true, `${file}: 最小 agent_ui_response 必须通过`);
+          count(
+            validateRoot({ ...base, target_player: "offline:ShouldNotExist" }) === false,
+            `${file}: C2S agent_ui_response 禁止 target_player 额外字段`,
+          );
+          count(
+            validateRoot({
+              v: 1,
+              type: "agent_ui_response",
+              action: "dismissed",
+              params: {},
+            }) === false,
+            `${file}: 缺 request_id 必须失败`,
+          );
+        }
+
+        if (file === "server-data-v1.json") {
+          const requestBase = {
+            v: 1,
+            type: "agent_ui_request",
+            request_id: "server-request-ok",
+            target_player: "offline:Target",
+            xml: "<flow-layout />",
+            timeout_ticks: 600,
+          };
+          const closeBase = {
+            v: 1,
+            type: "agent_ui_close",
+            request_id: "server-close-ok",
+            reason: "invalid_button_id",
+          };
+          count(validateRoot(requestBase) === true, `${file}: agent_ui_request 最小样本必须通过`);
+          count(validateRoot(closeBase) === true, `${file}: agent_ui_close 最小样本必须通过`);
+          count(
+            validateRoot({ ...requestBase, unexpected_field: 1 }) === false,
+            `${file}: agent_ui_request additionalProperties=false`,
+          );
+          count(
+            validateRoot({
+              v: 1,
+              type: "agent_ui_request",
+              request_id: "missing-target",
+              xml: "<flow-layout />",
+              timeout_ticks: 600,
+            }) === false,
+            `${file}: agent_ui_request 缺 target_player 必须失败`,
+          );
+          count(
+            validateRoot({
+              v: 1,
+              type: "agent_ui_close",
+              request_id: "close-null-reason",
+              reason: null,
+            }) === false,
+            `${file}: agent_ui_close 显式 null reason 必须失败`,
           );
         }
       }
 
-      // 根 schema 级契约：额外字段 / 缺 required / optional null 分流。
-      if (file === "agent-ui-response-payload-v1.json") {
-        count(
-          validateRoot({
-            request_id: "legacy-ok",
-            action: "dismissed",
-            params: {},
-          }) === true,
-          `${file}: legacy 缺 target_player 必须可被宿主 Ajv 接受`,
-        );
-        count(
-          validateRoot({
-            request_id: "extra-bad",
-            action: "dismissed",
-            params: {},
-            unexpected_field: true,
-          }) === false,
-          `${file}: additionalProperties=false 必须拒绝额外字段`,
-        );
-        count(
-          validateRoot({
-            action: "dismissed",
-            params: {},
-          }) === false,
-          `${file}: 缺 request_id 必须失败`,
-        );
-        count(
-          validateRoot({
-            request_id: "null-target",
-            action: "dismissed",
-            params: {},
-            target_player: null,
-          }) === false,
-          `${file}: 显式 null target_player 必须失败`,
-        );
-      }
-
-      if (file === "client-request-v1.json") {
-        const base = {
-          v: 1,
-          type: "agent_ui_response",
-          request_id: "client-ok",
-          action: "dismissed",
-          params: {},
-        };
-        count(validateRoot(base) === true, `${file}: 最小 agent_ui_response 必须通过`);
-        count(
-          validateRoot({ ...base, target_player: "offline:ShouldNotExist" }) === false,
-          `${file}: C2S agent_ui_response 禁止 target_player 额外字段`,
-        );
-        count(
-          validateRoot({
-            v: 1,
-            type: "agent_ui_response",
-            action: "dismissed",
-            params: {},
-          }) === false,
-          `${file}: 缺 request_id 必须失败`,
-        );
-      }
-
-      if (file === "server-data-v1.json") {
-        const requestBase = {
-          v: 1,
-          type: "agent_ui_request",
-          request_id: "server-request-ok",
-          target_player: "offline:Target",
-          xml: "<flow-layout />",
-          timeout_ticks: 600,
-        };
-        const closeBase = {
-          v: 1,
-          type: "agent_ui_close",
-          request_id: "server-close-ok",
-          reason: "invalid_button_id",
-        };
-        count(validateRoot(requestBase) === true, `${file}: agent_ui_request 最小样本必须通过`);
-        count(validateRoot(closeBase) === true, `${file}: agent_ui_close 最小样本必须通过`);
-        count(
-          validateRoot({ ...requestBase, unexpected_field: 1 }) === false,
-          `${file}: agent_ui_request additionalProperties=false`,
-        );
-        count(
-          validateRoot({
-            v: 1,
-            type: "agent_ui_request",
-            request_id: "missing-target",
-            xml: "<flow-layout />",
-            timeout_ticks: 600,
-          }) === false,
-          `${file}: agent_ui_request 缺 target_player 必须失败`,
-        );
-        count(
-          validateRoot({
-            v: 1,
-            type: "agent_ui_close",
-            request_id: "close-null-reason",
-            reason: null,
-          }) === false,
-          `${file}: agent_ui_close 显式 null reason 必须失败`,
-        );
-      }
-    }
-
-    // 6 fields × 22 boundary cases = 132，再加上字段结构 pin 与根契约 pin。
-    // 用下界锁住“真 Ajv 矩阵已自动化”，避免退化成少量 smoke。
-    count(
-      assertionCount >= 132,
-      `host Ajv gate must keep the full boundary matrix; assertionCount=${assertionCount}`,
-    );
-    // 显式打印，便于 Finish Evidence 抓取 assertionCount / 宿主 Ajv 路径。
-    // eslint-disable-next-line no-console
-    console.log(
-      JSON.stringify({
-        hostAjvVersion: hostAjv.version,
-        hostAjvResolvedPath: hostAjv.resolvedPath,
+      // 6 fields × 22 boundary cases = 132，再加上字段结构 pin 与根契约 pin。
+      // 用下界锁住“真 Ajv 矩阵已自动化”，避免退化成少量 smoke。
+      count(
+        assertionCount >= 132,
+        `workspace Ajv gate must keep the full boundary matrix; assertionCount=${assertionCount}`,
+      );
+      // 显式打印，便于 Finish Evidence 抓取 assertionCount / workspace Ajv 路径。
+      // eslint-disable-next-line no-console
+      console.log(
+        JSON.stringify({
+          ajvVersion: workspaceAjv.version,
+          ajvResolvedPath: workspaceAjv.resolvedPath,
+          ajvPackageJsonPath: workspaceAjv.packageJsonPath,
+          assertionCount,
+          boundaryCases: AGENT_UI_ID_BOUNDARY_CASES.length,
+          idFields: Object.values(AGENT_UI_ID_SCHEMA_PATHS).flat().length,
+        }),
+      );
+      expect(
+        {
+          ajvVersion: workspaceAjv.version,
+          ajvResolvedPath: workspaceAjv.resolvedPath,
+          assertionCount,
+          boundaryCases: AGENT_UI_ID_BOUNDARY_CASES.length,
+          idFields: Object.values(AGENT_UI_ID_SCHEMA_PATHS).flat().length,
+        },
+        "workspace Ajv gate summary",
+      ).toMatchObject({
+        ajvVersion: workspaceAjv.version,
         assertionCount,
-        boundaryCases: AGENT_UI_ID_BOUNDARY_CASES.length,
-        idFields: Object.values(AGENT_UI_ID_SCHEMA_PATHS).flat().length,
-      }),
-    );
-expect(
-      {
-        hostAjvVersion: hostAjv.version,
-        hostAjvResolvedPath: hostAjv.resolvedPath,
-        assertionCount,
-        boundaryCases: AGENT_UI_ID_BOUNDARY_CASES.length,
-        idFields: Object.values(AGENT_UI_ID_SCHEMA_PATHS).flat().length,
-      },
-      "host Ajv gate summary",
-    ).toMatchObject({
-      hostAjvVersion: hostAjv.version,
-      assertionCount,
-      boundaryCases: 22,
-      idFields: 6,
-    });
+        boundaryCases: 22,
+        idFields: 6,
+      });
     },
     60_000,
   );
-
   it("reports missing and wrong runtime mappings", () => {
     const validators = new Set(["validateCraftOutcomeV1Contract"]), contract = {};
     expect(runtimeErrors(validators, {}, { CraftOutcomeV1: contract }, {})).toEqual([
