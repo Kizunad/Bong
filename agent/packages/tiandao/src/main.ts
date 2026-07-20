@@ -67,6 +67,17 @@ export interface MainOptions {
   auxiliaryRuntimeStarter?: AuxiliaryRuntimeStarter;
 }
 
+export interface RedisRuntimeClient {
+  publish(channel: string, message: string): Promise<number>;
+  subscribe(channel: string): Promise<unknown>;
+  on(event: string, listener: (channel: string, message: string) => void): unknown;
+  off?(event: string, listener: (channel: string, message: string) => void): unknown;
+  unsubscribe(): Promise<unknown>;
+  disconnect(): void;
+}
+
+export type RedisClientFactory = (url: string) => RedisRuntimeClient;
+
 export type RuntimeCleanup = () => Promise<void>;
 /** plan-agent-ui-data-v1 P2: AuxiliaryRuntimeStarter 可附带返回 agentUiRuntime 供 runRuntime 接线 */
 export interface AuxiliaryRuntimeResult {
@@ -1493,34 +1504,71 @@ const __filename = fileURLToPath(import.meta.url);
  *   runRuntime 每轮 tick 前 drain 并注入推演输入。
  * - onSessionEnd 记录 session 结束事件（dismissed / timeout）。
  */
-async function startAgentUiResponseRuntime(opts: {
+export async function startAgentUiResponseRuntime(opts: {
   redisUrl: string;
-}): Promise<{ cleanup: () => Promise<void>; runtime: AgentUiRuntime }> {
+  createRedisClient?: RedisClientFactory;
+}): Promise<{
+  cleanup: () => Promise<void>;
+  runtime: AgentUiRuntime;
+  ready: Promise<void>;
+}> {
   const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
-    Redis) as new (url: string) => unknown;
-  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
-    typeof AgentUiRuntime
-  >[0]["pub"];
-  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
-    typeof AgentUiRuntime
-  >[0]["sub"];
-
-  const runtime = new AgentUiRuntime({ pub, sub });
-  runtime
-    .connect()
-    .then(() => console.log("[tiandao] agent ui runtime online (renderer + response consumer)"))
-    .catch((error) =>
-      console.warn("[tiandao] agent ui runtime failed to start:", error),
-    );
-  const cleanup = async () => {
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
-    try {
-      await Promise.race([runtime.disconnect(), timeout]);
-    } catch (error) {
-      console.warn("[tiandao] agent ui runtime disconnect error:", error);
+    Redis) as new (url: string) => RedisRuntimeClient;
+  const createRedisClient = opts.createRedisClient ?? ((url: string) => new IORedisCtor(url));
+  const createdClients: RedisRuntimeClient[] = [];
+  const createTrackedClient = (): RedisRuntimeClient => {
+    const client = createRedisClient(opts.redisUrl);
+    createdClients.push(client);
+    return client;
+  };
+  const disconnectCreatedClients = (): void => {
+    for (const client of new Set(createdClients)) {
+      try {
+        client.disconnect();
+      } catch (error) {
+        console.warn("[tiandao] agent ui Redis disconnect error:", error);
+      }
     }
   };
-  return { cleanup, runtime };
+
+  try {
+    const pub = createTrackedClient();
+    const sub = createTrackedClient();
+    const narPub = createTrackedClient();
+    const runtime = new AgentUiRuntime({ pub, sub, narPub });
+
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = (): Promise<void> => {
+      cleanupPromise ??= (async () => {
+        const disconnectPromise = runtime.disconnect().catch((error) => {
+          console.warn("[tiandao] agent ui runtime disconnect error:", error);
+        });
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<void>((resolve) => {
+          timeoutId = setTimeout(resolve, 500);
+        });
+        try {
+          await Promise.race([disconnectPromise, timeout]);
+        } finally {
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
+          disconnectCreatedClients();
+        }
+      })();
+      return cleanupPromise;
+    };
+
+    const ready = runtime.connect();
+    void ready
+      .then(() => console.log("[tiandao] agent ui runtime online (renderer + response consumer)"))
+      .catch((error) => {
+        console.warn("[tiandao] agent ui runtime failed to start:", error);
+        return cleanup();
+      });
+    return { cleanup, runtime, ready };
+  } catch (error) {
+    disconnectCreatedClients();
+    throw error;
+  }
 }
 
 if (process.argv[1] === __filename) {

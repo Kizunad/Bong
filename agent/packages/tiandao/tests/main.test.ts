@@ -1,3 +1,4 @@
+import { CHANNELS } from "@bong/schema";
 import { describe, expect, it, vi } from "vitest";
 
 import { createMockClient } from "../src/llm.js";
@@ -6,9 +7,53 @@ import {
   getMockCompletionMarker,
   main,
   runMockTickForTest,
+  startAgentUiResponseRuntime,
   type PublishSink,
+  type RedisRuntimeClient,
 } from "../src/main.js";
+import { REALM_GATE_NARRATION_TEXT } from "../src/ui/uiResponseConsumer.js";
 import { WorldModel } from "../src/world-model.js";
+
+interface MockRedisRuntimeClient extends RedisRuntimeClient {
+  readonly publish: ReturnType<typeof vi.fn>;
+  readonly subscribe: ReturnType<typeof vi.fn>;
+  readonly on: ReturnType<typeof vi.fn>;
+  readonly off: ReturnType<typeof vi.fn>;
+  readonly unsubscribe: ReturnType<typeof vi.fn>;
+  readonly disconnect: ReturnType<typeof vi.fn>;
+  emit(channel: string, message: string): void;
+}
+
+function makeMockRedisRuntimeClient(options: { subscribeError?: Error } = {}): MockRedisRuntimeClient {
+  const listeners = new Set<(channel: string, message: string) => void>();
+  let subscriberMode = false;
+
+  return {
+    publish: vi.fn(async (_channel: string, _message: string) => {
+      if (subscriberMode) {
+        throw new Error("Connection in subscriber mode, only subscriber commands may be used");
+      }
+      return 1;
+    }),
+    subscribe: vi.fn(async (_channel: string) => {
+      if (options.subscribeError) throw options.subscribeError;
+      subscriberMode = true;
+    }),
+    on: vi.fn((_event: string, listener: (channel: string, message: string) => void) => {
+      listeners.add(listener);
+    }),
+    off: vi.fn((_event: string, listener: (channel: string, message: string) => void) => {
+      listeners.delete(listener);
+    }),
+    unsubscribe: vi.fn(async () => {
+      subscriberMode = false;
+    }),
+    disconnect: vi.fn(() => undefined),
+    emit(channel: string, message: string): void {
+      for (const listener of listeners) listener(channel, message);
+    },
+  };
+}
 
 const ERA_DECLARATION_RESPONSE = JSON.stringify({
   commands: [],
@@ -189,6 +234,127 @@ describe("main mock execution", () => {
       });
     } finally {
       runRuntimeSpy.mockRestore();
+    }
+  });
+});
+
+describe("Agent UI production startup factory", () => {
+  it("creates three dedicated Redis connections and privately publishes gate rejection", async () => {
+    const clients: MockRedisRuntimeClient[] = [];
+    const createRedisClient = vi.fn((_url: string) => {
+      const client = makeMockRedisRuntimeClient();
+      clients.push(client);
+      return client;
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      const { cleanup, runtime, ready } = await startAgentUiResponseRuntime({
+        redisUrl: "redis://factory-test:6380",
+        createRedisClient,
+      });
+
+      await ready;
+      expect(clients[1]?.subscribe).toHaveBeenCalledWith(CHANNELS.AGENT_UI_RESPONSE);
+      expect(createRedisClient).toHaveBeenCalledTimes(3);
+      expect(createRedisClient).toHaveBeenNthCalledWith(1, "redis://factory-test:6380");
+      expect(createRedisClient).toHaveBeenNthCalledWith(2, "redis://factory-test:6380");
+      expect(createRedisClient).toHaveBeenNthCalledWith(3, "redis://factory-test:6380");
+      expect(new Set(clients).size, "command pub, response sub, and narration pub must be distinct").toBe(3);
+
+      clients[1].emit(
+        CHANNELS.AGENT_UI_RESPONSE,
+        JSON.stringify({
+          request_id: "factory-private-narration",
+          action: "error",
+          target_player: "offline:TargetOnly",
+          params: { reason: "realm_gate_rejected", player_realm: "1", required_realm: "5" },
+        }),
+      );
+
+      await vi.waitFor(() => expect(clients[2].publish).toHaveBeenCalledOnce());
+      expect(clients[1].publish, "subscriber-mode connection must never publish").not.toHaveBeenCalled();
+      expect(clients[0].publish, "command publisher must not carry narration").not.toHaveBeenCalled();
+
+      const [channel, rawPayload] = clients[2].publish.mock.calls[0] as [string, string];
+      expect(channel).toBe(CHANNELS.AGENT_NARRATE);
+      expect(JSON.parse(rawPayload)).toEqual({
+        v: 1,
+        narrations: [
+          {
+            scope: "player",
+            target: "offline:TargetOnly",
+            style: "system_warning",
+            text: REALM_GATE_NARRATION_TEXT,
+          },
+        ],
+      });
+      expect(rawPayload).not.toContain('"scope":"broadcast"');
+      expect(runtime.stats.realmGateRejected).toBe(1);
+      expect(runtime.stats.narrationPublished).toBe(1);
+
+      await cleanup();
+      for (const client of clients) {
+        expect(client.disconnect, "every production factory connection must close on shutdown").toHaveBeenCalled();
+      }
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("rejects a startup factory that aliases narration publisher to subscriber", async () => {
+    const commandPub = makeMockRedisRuntimeClient();
+    const responseSub = makeMockRedisRuntimeClient();
+    const createRedisClient = vi
+      .fn<(url: string) => RedisRuntimeClient>()
+      .mockReturnValueOnce(commandPub)
+      .mockReturnValueOnce(responseSub)
+      .mockReturnValueOnce(responseSub);
+
+    await expect(
+      startAgentUiResponseRuntime({ redisUrl: "redis://alias-test:6380", createRedisClient }),
+    ).rejects.toThrow(/narration publisher must be distinct from subscriber/);
+
+    expect(createRedisClient).toHaveBeenCalledTimes(3);
+    expect(responseSub.subscribe, "alias must fail before entering subscriber mode").not.toHaveBeenCalled();
+    expect(commandPub.disconnect).toHaveBeenCalledOnce();
+    expect(responseSub.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("closes all three factory connections when response subscription fails", async () => {
+    const clients = [
+      makeMockRedisRuntimeClient(),
+      makeMockRedisRuntimeClient({ subscribeError: new Error("subscribe failed") }),
+      makeMockRedisRuntimeClient(),
+    ];
+    const createRedisClient = vi
+      .fn<(url: string) => RedisRuntimeClient>()
+      .mockReturnValueOnce(clients[0])
+      .mockReturnValueOnce(clients[1])
+      .mockReturnValueOnce(clients[2]);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const { cleanup, ready } = await startAgentUiResponseRuntime({
+        redisUrl: "redis://subscribe-error:6380",
+        createRedisClient,
+      });
+
+      await expect(ready).rejects.toThrow("subscribe failed");
+      await vi.waitFor(() => {
+        for (const client of clients) expect(client.disconnect).toHaveBeenCalled();
+      });
+      expect(clients[0].publish).not.toHaveBeenCalled();
+      expect(clients[1].publish, "failed subscriber connection must never publish").not.toHaveBeenCalled();
+      expect(clients[2].publish).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[tiandao] agent ui runtime failed to start:",
+        expect.objectContaining({ message: "subscribe failed" }),
+      );
+
+      await expect(cleanup(), "cleanup remains idempotent after startup failure").resolves.toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
     }
   });
 });

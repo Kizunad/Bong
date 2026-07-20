@@ -635,6 +635,22 @@ describe("UiResponseConsumer", () => {
       expect(sub.disconnect).toHaveBeenCalled();
       expect(pub.disconnect).toHaveBeenCalled();
     });
+
+    it("disconnects both clients even when unsubscribe fails", async () => {
+      sub.unsubscribe.mockRejectedValue(new Error("unsubscribe failed"));
+      await consumer.connect();
+
+      await expect(consumer.disconnect()).rejects.toThrow("unsubscribe failed");
+      expect(sub.disconnect).toHaveBeenCalledOnce();
+      expect(pub.disconnect).toHaveBeenCalledOnce();
+    });
+
+    it("rejects aliasing publisher to subscriber", () => {
+      expect(
+        () => new UiResponseConsumer({ sub, pub: sub }),
+      ).toThrow(/publisher must be distinct from subscriber/);
+      expect(sub.subscribe).not.toHaveBeenCalled();
+    });
   });
 
   // ── 初始 stats ────────────────────────────────────────────────────────────
@@ -952,7 +968,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: 生成活坍缩渊面板 → emit AgentUiRequestCommandV1 到 bong:agent_ui_cmd（P2 §3）", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub });
+    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
@@ -987,7 +1003,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: 玩家点击进入按钮 → button_click 进入 pendingButtonClicks 队列 → drain 后注入推演（P2 §3）", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub });
+    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
     await runtime.connect();
 
     // 触发面板
@@ -1029,54 +1045,23 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     await runtime.disconnect();
   });
 
-  it("e2e: realm_gate_rejected → 未传 narPub 时 narration 回退到 sub", async () => {
+  it("e2e: missing or aliased narration publisher is rejected before subscription", () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    // 不传 narPub → 内部回退到 sub（sub 有 publish + disconnect，类型安全）
-    const runtime = new AgentUiRuntime({ pub, sub });
-    await runtime.connect();
 
-    sub.emitUiResponse(
-      makeResponsePayload(
-        "error",
-        {
-          reason: "realm_gate_rejected",
-          player_realm: "2",
-          required_realm: "3",
-        },
-        "offline:E2EPlayer",
-      ),
-    );
-
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // narPub 回退到 sub → narration 走 sub.publish（不走 pub.publish）
-    expect(sub.publish, "narPub 回退到 sub：应 emit 叙事到 sub.publish").toHaveBeenCalledOnce();
-    expect(pub.publish, "pub.publish 不应被 narration 调用（narPub 回退到 sub）").not.toHaveBeenCalled();
-    const [narChannel, narRaw] = sub.publish.mock.calls[0];
-    expect(narChannel, "应发布到 AGENT_NARRATE").toBe(AGENT_NARRATE);
-    expect(JSON.parse(narRaw as string)).toEqual({
-      v: 1,
-      narrations: [
-        {
-          scope: "player",
-          target: "offline:E2EPlayer",
-          style: "system_warning",
-          text: REALM_GATE_NARRATION_TEXT,
-        },
-      ],
-    });
-
-    expect(runtime.stats.realmGateRejected, "stats.realmGateRejected=1").toBe(1);
-    expect(runtime.stats.narrationPublished, "stats.narrationPublished=1").toBe(1);
-
-    await runtime.disconnect();
+    expect(
+      () => new AgentUiRuntime({ pub, sub } as never),
+      "omitting narPub must fail instead of falling back to subscriber mode",
+    ).toThrow(/dedicated narration publisher/);
+    expect(
+      () => new AgentUiRuntime({ pub, sub, narPub: sub }),
+      "aliasing narPub to sub must fail before Redis subscribe",
+    ).toThrow(/narration publisher must be distinct from subscriber/);
+    expect(sub.subscribe).not.toHaveBeenCalled();
   });
 
-  it("e2e: realm_gate_rejected → 显式传 narPub 时 narration 走 narPub 而非 sub（断连路径不崩溃）", async () => {
-    // 测试显式 narPub 路径：narPub 有独立 publish + disconnect，不依赖 sub 或 pub
-    const listeners: Map<string, ((ch: string, msg: string) => void)[]> = new Map();
+  it("e2e: realm_gate_rejected → narration 走专用 narPub 而非 sub（断连路径不崩溃）", async () => {
+    // narPub 有独立 publish + disconnect，不依赖 sub 或 pub
     const narPub = {
       publish: vi.fn(async (_channel: string, _message: string) => 1),
       disconnect: vi.fn(() => {}),
@@ -1106,21 +1091,20 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // 显式 narPub 时 narration 走 narPub.publish，sub.publish / pub.publish 均不调用
-    expect(narPub.publish, "显式 narPub：narration 走 narPub.publish").toHaveBeenCalledOnce();
+    // narration 走 narPub.publish，sub.publish / pub.publish 均不调用
+    expect(narPub.publish, "narration 走专用 narPub.publish").toHaveBeenCalledOnce();
     expect(sub.publish, "sub.publish 不参与 narration").not.toHaveBeenCalled();
     expect(pub.publish, "pub.publish 不参与 narration").not.toHaveBeenCalled();
 
     // disconnect 时调用 narPub.disconnect（不崩溃）
     await runtime.disconnect();
     expect(narPub.disconnect, "disconnect 时 narPub.disconnect 被调用").toHaveBeenCalled();
-    void listeners; // suppress unused warning
   });
 
   it("e2e: dismissed → drainPendingSessionEnds 队列收到 session 结束事件", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub });
+    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
@@ -1149,7 +1133,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: timeout → drainPendingSessionEnds 队列收到 session 结束事件", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub });
+    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
@@ -1178,7 +1162,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: realm 不足时发布模糊版（不门控），blur=true，realm_gate=0", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub });
+    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
@@ -1205,7 +1189,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: connect 后生命周期正常 disconnect，不抛错", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub });
+    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
 
     await runtime.connect();
     await expect(runtime.disconnect()).resolves.not.toThrow();
@@ -1219,7 +1203,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     // matching server agent_ui.rs canonical_player_id comparison.
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub });
+    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
     await runtime.connect();
 
     const canonicalPlayer = {

@@ -51,10 +51,10 @@ export interface AgentUiRuntimeConfig {
   /**
    * Redis pub for narration（发布 bong:agent_narrate，用于 realm_gate_rejected 降级）。
    *
-   * 必须同时提供 publish 和 disconnect，因为 UiResponseConsumer 在 disconnect() 时
-   * 会调用 pub.disconnect()。若未提供则复用 sub（已满足接口）。
+   * 必须是独立于 pub/sub 的发布连接，并同时提供 publish 和 disconnect。
+   * Redis 订阅连接进入 subscriber mode 后不能执行 publish。
    */
-  narPub?: AgentUiRuntimeNarPubClient;
+  narPub: AgentUiRuntimeNarPubClient;
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 }
 
@@ -69,6 +69,19 @@ export class AgentUiRuntime {
   private readonly pendingSessionEnds: AgentUiResponsePayloadV1[] = [];
 
   constructor(config: AgentUiRuntimeConfig) {
+    if (!config.narPub) {
+      throw new Error("AgentUiRuntime requires a dedicated narration publisher");
+    }
+    if (Object.is(config.pub, config.sub)) {
+      throw new Error("AgentUiRuntime command publisher must be distinct from subscriber");
+    }
+    if (Object.is(config.narPub, config.sub)) {
+      throw new Error("AgentUiRuntime narration publisher must be distinct from subscriber");
+    }
+    if (Object.is(config.narPub, config.pub)) {
+      throw new Error("AgentUiRuntime narration publisher must be distinct from command publisher");
+    }
+
     const logger = config.logger ?? {
       info: (...args: unknown[]) => console.log("[agent-ui-runtime]", ...args),
       warn: (...args: unknown[]) => console.warn("[agent-ui-runtime]", ...args),
@@ -79,13 +92,9 @@ export class AgentUiRuntime {
       logger,
     });
 
-    // narPub 优先用于 realm_gate_rejected narration；
-    // 若未提供则复用 sub（sub 已实现 publish + disconnect，类型安全）
-    const narPub: AgentUiRuntimeNarPubClient = config.narPub ?? config.sub;
-
     this.consumer = new UiResponseConsumer({
       sub: config.sub,
-      pub: narPub,
+      pub: config.narPub,
       logger,
       onButtonClick: (response) => {
         this.pendingButtonClicks.push(response);

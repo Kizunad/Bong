@@ -1,16 +1,15 @@
 /**
- * Bot e2e adapter around the production AgentUiRuntime.
+ * Bot e2e adapter around the production startAgentUiResponseRuntime factory.
  *
- * This process uses real Redis clients and the production UiRenderer +
- * UiResponseConsumer. It deliberately supplies a stale high-realm player
+ * This process uses the real three-connection Redis startup path plus the
+ * production UiRenderer + UiResponseConsumer. It deliberately supplies a stale high-realm player
  * snapshot while the connected protocol Bot remains Awaken on the server:
  * UiRenderer therefore publishes the clear realm-gated panel, the server
  * authoritatively rejects it, and UiResponseConsumer publishes the private
  * system-warning narration back to the server.
  */
 
-import Redis from "ioredis";
-import { AgentUiRuntime } from "../src/ui/agentUiRuntime.js";
+import { startAgentUiResponseRuntime } from "../src/main.js";
 
 const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 const targetPlayer = process.env.TARGET_PLAYER;
@@ -20,30 +19,12 @@ if (!targetPlayer || !targetName) {
   throw new Error("TARGET_PLAYER and TARGET_NAME are required");
 }
 
-const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
-  Redis) as new (url: string) => {
-  publish(channel: string, message: string): Promise<number>;
-  subscribe(channel: string): Promise<unknown>;
-  on(event: string, listener: (channel: string, message: string) => void): unknown;
-  off(event: string, listener: (channel: string, message: string) => void): unknown;
-  unsubscribe(): Promise<unknown>;
-  disconnect(): void;
-};
-
-const commandPub = new IORedisCtor(redisUrl);
-const responseSub = new IORedisCtor(redisUrl);
-const narrationPub = new IORedisCtor(redisUrl);
-const runtime = new AgentUiRuntime({
-  pub: commandPub,
-  sub: responseSub,
-  narPub: narrationPub,
-  logger: { info: () => undefined, warn: () => undefined },
-});
+const { cleanup, runtime, ready } = await startAgentUiResponseRuntime({ redisUrl });
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 try {
-  await runtime.connect();
+  await ready;
   const rendered = await runtime.triggerUi({
     scenario: "tiandao_revelation",
     targetPlayer: {
@@ -91,6 +72,5 @@ try {
     })}\n`,
   );
 } finally {
-  await runtime.disconnect();
-  commandPub.disconnect();
+  await cleanup();
 }

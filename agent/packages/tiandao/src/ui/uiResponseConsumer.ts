@@ -34,7 +34,7 @@ const { AGENT_UI_RESPONSE, AGENT_NARRATE } = CHANNELS;
 
 /**
  * sub 专用接口：subscribe/on/off/unsubscribe/disconnect。
- * 兼容 UiResponseConsumerClient（向后兼容，旧代码传整个 client 仍可用）。
+ * 实例必须与 pub 分离，避免 subscriber mode 连接执行 publish。
  */
 export interface UiResponseConsumerSubClient {
   subscribe(channel: string): Promise<unknown>;
@@ -57,7 +57,7 @@ export interface UiResponseConsumerPubClient {
 
 /**
  * @deprecated 用 UiResponseConsumerSubClient（sub）+ UiResponseConsumerPubClient（pub）替代。
- * 保留以向后兼容现有调用方（旧代码传全量 client 到 sub/pub 仍可用）。
+ * 仅保留类型别名；同一实例不能同时作为 sub/pub。
  */
 export interface UiResponseConsumerClient
   extends UiResponseConsumerSubClient,
@@ -139,6 +139,10 @@ export class UiResponseConsumer {
   };
 
   constructor(config: UiResponseConsumerConfig) {
+    if (Object.is(config.sub, config.pub)) {
+      throw new Error("UiResponseConsumer publisher must be distinct from subscriber");
+    }
+
     this.sub = config.sub;
     this.pub = config.pub;
     this.logger = config.logger ?? {
@@ -160,10 +164,16 @@ export class UiResponseConsumer {
 
   async disconnect(): Promise<void> {
     this.connected = false;
-    this.sub.off?.("message", this.onMessage);
-    await this.sub.unsubscribe();
-    this.sub.disconnect();
-    this.pub.disconnect();
+    try {
+      this.sub.off?.("message", this.onMessage);
+      await this.sub.unsubscribe();
+    } finally {
+      try {
+        this.sub.disconnect();
+      } finally {
+        this.pub.disconnect();
+      }
+    }
   }
 
   async handlePayload(message: string): Promise<void> {
