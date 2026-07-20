@@ -76,6 +76,32 @@ fn looping_cast_anim_id(skill_id: &str) -> Option<&'static str> {
     }
 }
 
+/// 打断类停止的统一 fade_out（三打断分支 + 用户主动取消施法共用）。
+pub(crate) const CAST_LOOP_ANIM_CANCEL_FADE_OUT_TICKS: u8 = CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS;
+
+/// 构造循环蓄力段的 `StopAnim` 请求；招式未登记循环段时返回 `None`。
+///
+/// 抽出为独立构造器是因为停止路径有两类调用方，各自持有的事件通道类型不同：
+/// `tick_casts_or_interrupt` 用 `EventWriter`，而 `client_request_handler`
+/// 的用户主动取消路径只能拿到 `&mut Events`（同一 system 内已有 `ResMut`，
+/// 再加一个会触发 Bevy 资源冲突）。两侧共用本构造器保证 payload 一致。
+pub(crate) fn cast_loop_stop_anim_request(
+    skill_id: Option<&str>,
+    unique_id: &UniqueId,
+    position: valence::prelude::DVec3,
+    fade_out_ticks: u8,
+) -> Option<VfxEventRequest> {
+    let anim_id = skill_id.and_then(looping_cast_anim_id)?;
+    Some(VfxEventRequest::new(
+        position,
+        VfxEventPayloadV1::StopAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: anim_id.to_string(),
+            fade_out_ticks: Some(fade_out_ticks),
+        },
+    ))
+}
+
 /// 若 `casting` 的招式登记了循环蓄力段，则对 caster 发 `StopAnim`（fade_out
 /// 按分支传入）；未登记 / 实体缺 `UniqueId`（非玩家）时静默跳过。
 fn stop_cast_loop_anim(
@@ -86,20 +112,18 @@ fn stop_cast_loop_anim(
     fade_out_ticks: u8,
     vfx_events: &mut EventWriter<VfxEventRequest>,
 ) {
-    let Some(anim_id) = casting.skill_id.as_deref().and_then(looping_cast_anim_id) else {
-        return;
-    };
     let Ok(unique_id) = unique_ids.get(entity) else {
         return;
     };
-    vfx_events.send(VfxEventRequest::new(
+    let Some(request) = cast_loop_stop_anim_request(
+        casting.skill_id.as_deref(),
+        unique_id,
         position.get(),
-        VfxEventPayloadV1::StopAnim {
-            target_player: unique_id.0.to_string(),
-            anim_id: anim_id.to_string(),
-            fade_out_ticks: Some(fade_out_ticks),
-        },
-    ));
+        fade_out_ticks,
+    ) else {
+        return;
+    };
+    vfx_events.send(request);
 }
 
 type CastTickQueryItem<'a> = (
