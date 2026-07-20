@@ -157,6 +157,8 @@
 - `client/src/main/java/com/bong/client/ui/ClientConnectionStatusStore.java`
   - 增加 `connectionGeneration`；`markConnected`/`markDisconnected` 递增代次；
     `markPayloadReceived(now, generation)` 代次不一致时 no-op。
+  - 同一 generation 内以 `Math.max(lastPayloadAtMs, now)` 合并 freshness，跨 channel / queue
+    乱序以及 0/负时间戳均不得把较新收包时刻回退；disconnect/reconnect 仍按新代次重置。
 - `client/src/main/java/com/bong/client/craft/CraftOutcomeFeedback.java`
   - CraftScreen / WorkbenchScreen 共用 completed/failed 反馈契约（可测 seam）。
 - `client/src/main/java/com/bong/client/craft/CraftScreen.java` /
@@ -199,6 +201,11 @@
   `./gradlew test build` 已在 exact HEAD `9ab6b713` 成功：**4171/0/0/0** + GAME TESTS
   **3/3**；fresh 只读 validator 对 `9ab6b713` 结论 **PASS**（`blocker=0`，`major=0`），
   并指出把本条误标为 docs-only 属 minor 措辞错误——本段已纠正。
+- `93369a145`：**current-head review 修复**——同一 connection generation 内以单调最大值
+  合并 payload freshness，避免延迟 `server_data` task 把较新的跨 channel 收包时刻回退；
+  保留 generation mismatch 整段 no-op 与 disconnect/reconnect 重置。新增真实
+  route→`CraftStore` exactly-once 集成回归（含 2500→2600 乱序、0/负时间戳），并纠正
+  `CraftOutcomeFeedback.completeSound` 文档为 completed 必调用、回调自行处理 player 缺失。
 
 ### 测试结果（历史基线）
 
@@ -236,6 +243,24 @@
   - `CraftOutcomeFeedbackTest` **5/5**；
   - `BongNetworkHandlerTest` **21/21**；
   - `ConnectionStatusIndicatorTest` **8/8**。
+
+### 测试结果（2026-07-20 current-head review 修复 @ `93369a145`）
+
+- 定向 client 回归（Temurin 17）：
+  `./gradlew test --tests com.bong.client.BongServerDataThreadingTest`
+  → exit `0`，`BongServerDataThreadingTest` **14/0/0/0**，GAME TESTS **3/3**。
+- client 完整门禁（Temurin 17）：
+  `export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; export PATH="$JAVA_HOME/bin:$PATH"; ./gradlew test build`
+  → exit `0`，`BUILD SUCCESSFUL in 2m 5s`（`:test` 为同一文件树复验，Gradle 标记 UP-TO-DATE）；JUnit XML 汇总
+  **`4172 tests, 0 failures, 0 errors, 0 skipped`**（476 suites）即 **4172/0/0/0**；
+  GAME TESTS：**`All 3 required tests passed`（3/3）**。
+- 新增回归锁定：先排入 `receivedAt=2500` 的真实 `craft_outcome` server_data task，
+  再在同 generation 直接标记 `2600`、`0`、`-1`，drain 后 `lastPayloadAtMs` 仍为
+  `2600`、`connected=true`，且 route→`CraftStore` listener/结果恰好一次；既有
+  disconnect-before-drain / reconnect 旧 generation 整段 no-op 覆盖仍全绿。
+- 本段完整 gate 绑定已存在的代码 commit
+  `93369a14547aea5c7cea03fab33e0eff22803709`；本 Finish Evidence docs commit
+  将另行创建，不把上述代码 gate 外推为对未来 SHA 的验证。
 
 ### 主线同步与绑定 SHA 验证
 
