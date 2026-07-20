@@ -450,9 +450,10 @@ P5 首版把三处「环绕」（`zhenmai.multipoint` / `burst_meridian.ni_mai_h
 
 ### 测试结果
 
-- **server**：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` —— FMT:0 / CLIPPY:0 / TEST:0，**11862 passed / 0 failed**（P6 于 PR-7 基线 11856 之上净增 6：`vfx_animation_trigger` 3 条契约 pin + 既有用例随之细分）。`network::vfx_animation_trigger` 子集 **91 passed**（+3）。
-- **client**：`cd client && ./gradlew test build` —— BUILD SUCCESSFUL，**4221 tests / 0 failures**（PR-7 基线 4213 之上净增 8：`AnimCastTicksAlignmentTest` +4、`TwoStageHandoffBlendTest` +4）。`AnimCastTicksAlignmentTest` 单类 **12 passed**。
-- **归档后复跑**：`git mv` 入 `docs/finished_plans/` 后 client 门禁**再跑一次**并绿——`SkillParticleSpecDocTest` 经 `client/build.gradle:215-229` 的双路径 task input 与测试内 `PLAN_CANDIDATES` 双候选，路径变更后仍能定位 plan §P5.1 表格。
+- **server**：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` —— FMT:0 / CLIPPY:0 / TEST:0，**11870 passed / 0 failed / 6 ignored**（全 target 合计：lib 11854 + 集成 binary 11/1/4）。P6 的净增量为 **+3**，由 diff 机械证明：`git diff origin/main HEAD -- server/` 只触及 `vfx_animation_trigger.rs` 一个文件，新增 `#[test]` 3 条、删除 0 条。`network::vfx_animation_trigger` 子集 **91 passed**（88 → 91）。
+  > 口径说明：PR-7 记录的 11856 是**该 PR 本地门禁**的数字，与本分支 base（`origin/main` = PR-7 的 merge commit `14f8f5e1f`）实测不一致——按上述 diff，差额不由 P6 引入（本 PR 只增不减测试）。以本节实测值为准。
+- **client**：`cd client && ./gradlew test build` —— BUILD SUCCESSFUL，**4221 tests / 0 failures / 0 skipped**（PR-7 基线 4213 之上净增 **+8**，与 diff 一致：新增 `@Test` 8 条、删除 0 条；`AnimCastTicksAlignmentTest` +4、`TwoStageHandoffBlendTest` +4）。`AnimCastTicksAlignmentTest` 单类 **12 passed**。
+- **归档后复跑**：`git mv` 入 `docs/finished_plans/` 后 client 门禁**再跑一次**并绿（上列 4221/0 即归档后的数字）。`SkillParticleSpecDocTest` 经 `client/build.gradle:215-229` 的双路径 task input 与测试内 `PLAN_CANDIDATES` 双候选，路径变更后仍能定位 plan §P5.1 表格；并已核对其 JUnit XML 时间戳确认该类**确实重新执行**（4 例全绿）而非被判 UP-TO-DATE 跳过——「只改真源不改测试源就静默跳过」正是该 task input 要防的漂移。
 - **突变验证（防空测试）**：相位预算降到 40°（低于实测最大 46°）→ `twoStageHandoffHoldsAcrossEveryReachableLoopPhase` 撞红；`FIXED_PHASE_CHARGE_SKILLS` 期望 endTick 改 61 → `fixedPhaseChargeSeamIsExactAndNonLooping` 撞红；资源 pin 塞入不存在的 id → `everyPlanAnimIdResolvesThroughProductionRegistry` 撞红。
 - **e2e**：`bash scripts/smoke-test-e2e.sh` 由 CI `e2e` job 在 PR HEAD 执行（`.github/workflows/e2e.yml:144`），按 §测试声明 的证据口径引用对应 HEAD 的绿色 job。
 
