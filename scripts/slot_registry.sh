@@ -101,6 +101,15 @@ validate_branch() {
 }
 validate_claim() { [[ "$1" =~ ^[0-9a-fA-F]{40}$ ]] || die "claim-sha must be 40-hex"; }
 validate_owner_token() { [[ "$1" =~ ^[0-9a-f]{64}$ ]] || die "owner-token must be 64 lowercase hex"; }
+validate_capacity_value() {
+  local value="$1"
+  python3 - "$value" <<'PYVALIDATECAPACITY'
+import re, sys
+value = sys.argv[1]
+if not re.fullmatch(r"[1-9][0-9]*", value) or int(value) > 2**63 - 1:
+    raise SystemExit(2)
+PYVALIDATECAPACITY
+}
 
 read_capacity() {
   [[ -f "$REG_ROOT/capacity" && ! -L "$REG_ROOT/capacity" ]] || die "registry not initialized: run init"
@@ -328,7 +337,9 @@ validate_normal_owner_args() {
 
 init_locked() {
   local requested="$1" current max held entry i
-  [[ -z "$requested" || "$requested" =~ ^[1-9][0-9]*$ ]] || die "invalid --max $requested"
+  if [[ -n "$requested" ]] && ! validate_capacity_value "$requested"; then
+    die "invalid --max $requested"
+  fi
   if [[ ! -e "$REG_ROOT/capacity" && ! -L "$REG_ROOT/capacity" ]]; then
     for entry in "$REG_ROOT"/*.lock "$REG_ROOT"/.slot-*.reservation.*; do
       [[ -e "$entry" || -L "$entry" ]] || continue

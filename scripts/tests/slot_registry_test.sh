@@ -387,6 +387,28 @@ for spec in 'empty:' 'space:2 0' 'multi:2\n0\n' 'leading-zero:02\n' 'nondigit:2x
   printf '%s\n' "$capacity_before" > "$REGROOT/capacity"
 done
 
+capacity_snapshot=$(python3 - "$REGROOT/capacity" <<'PYCAPSNAP'
+from pathlib import Path
+import base64, sys
+print(base64.b64encode(Path(sys.argv[1]).read_bytes()).decode("ascii"))
+PYCAPSNAP
+)
+expect_fail "init 拒绝超 signed-64 容量" 'invalid --max 9223372036854775808' \
+  bash scripts/slot_registry.sh init --max 9223372036854775808
+check "非法 init 不毒化既有 capacity" python3 - "$REGROOT/capacity" "$capacity_snapshot" <<'PYCAPUNCHANGED'
+from pathlib import Path
+import base64, sys
+assert Path(sys.argv[1]).read_bytes() == base64.b64decode(sys.argv[2])
+PYCAPUNCHANGED
+
+missing_capacity_root="$SANDBOX/registry-init-too-large"
+missing_lock_root="$SANDBOX/flock-init-too-large"
+expect_fail "首次 init 也拒绝超 signed-64 容量" 'invalid --max 9223372036854775808' \
+  env SLOT_REGISTRY_ROOT_OVERRIDE="$missing_capacity_root" \
+      SLOT_REGISTRY_LOCK_ROOT_OVERRIDE="$missing_lock_root" \
+      bash scripts/slot_registry.sh init --max 9223372036854775808
+check_not "非法首次 init 不创建 capacity" test -e "$missing_capacity_root/capacity"
+
 task=$'任务\n尾随\n'; agent=$'代理\n尾随\n'; branch='bugfix/unicode'
 out=$(acquire slot-1 "$task" "$branch" "$agent"); token=$(owner_token_from "$out")
 check "NUL 字段逐字节 round-trip" python3 - "$REGROOT/slot-1.lock/task_id" "$task" <<'PYF'
