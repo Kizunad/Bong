@@ -176,6 +176,8 @@
 - `47763faac13e0d76ed83b1032e3822074e34fc50`（2026-07-20）：补强已打开 screen 的异步
   active A→B snapshot 回归，锁定 elapsed/temp/qi、stage 完成态/窗口/摘要与 intervention log 不冻结，
   且每次 store update 恰好刷新一次。
+- `f1f9df2f0`（2026-07-20）：把真实 slot 闪烁规划收进 screen 共用 presentation seam，
+  锁定 active A→B 时闪烁从当前窗口 slot 0 切换到新窗口 slot 1，已完成 stage 不再残留高亮。
 - **本节所在提交**（2026-07-20）：只原地更新既有 `## Finish Evidence`；不重复 promotion/mv，
   不追加第二个 Finish Evidence，不写无法自证的“自身 SHA”。
 
@@ -225,11 +227,11 @@
     `cargo test` → **EXIT 0**，且三项均未接会吞真实退出码的尾部管道。
   - 全量汇总：`11816 + 11 + 1 + 4 = 11832 passed / 0 failed / 2+5=7 ignored`
     （lib 主套件 11816 passed / 2 ignored；其余 bin/integration 16 passed / 5 ignored）。
-- **client 完整门禁（2026-07-20，最终业务 HEAD `47763faac13e0d76ed83b1032e3822074e34fc50`，
-  显式 `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`）**：`./gradlew test build --no-daemon
-  --console=plain` → **EXIT 0 / BUILD SUCCESSFUL in 2m 16s**；JUnit XML 汇总 **476 suites /
+- **client 完整门禁（2026-07-20，最终业务 HEAD `f1f9df2f0`，显式
+  `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`）**：`./gradlew test build --no-daemon
+  --console=plain` → **EXIT 0 / BUILD SUCCESSFUL in 6m 21s**；JUnit XML 汇总 **476 suites /
   4165 tests / 0 failures / 0 errors / 0 skipped**；Fabric GameTest **3/3 required passed**；21 tasks
-  中 4 executed / 17 up-to-date。未接会吞真实退出码的尾部管道。
+  中 6 executed / 15 up-to-date。未接会吞真实退出码的尾部管道。
 - **client 完整门禁（2026-07-19，#1212 merge 后 clean HEAD `f9215777`，显式
   `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10`，log `/tmp/pr1213-client-f9215777.log`）**：
   `cd client && ./gradlew test build` → **CLIENT_EXIT:0 / BUILD SUCCESSFUL in 7m 35s**；JUnit
