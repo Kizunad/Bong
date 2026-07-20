@@ -153,10 +153,18 @@
 - `e65fffdb`：回应 CodeRabbit，补足线程断言诊断与归档格式。
 - `3ccf908b`：普通 merge `origin/main@2f9c70ad`（含 #1212 SearchHud disconnect 清理等主线），
   parents=`e65fffdb` + `2f9c70ad`；保留本 PR craft_outcome 单任务线程契约与 #1212 语义并存。
-- `689ffb94`：docs-only 更新 post-merge 门禁证据（后续被 2026-07-20 复审返工取代为最新 HEAD）。
-- （本轮）generation/receivedAt 连接状态机修复 + CraftOutcomeFeedback + 饱和测试 + Finish Evidence 纠正。
+- `689ffb94`：docs-only 更新 post-merge 门禁证据（后续被 2026-07-20 复审返工取代）。
+- `81fe479d5`：**代码修复**——恢复 `server_data` 收包时刻 freshness：receiver 捕获
+  `receivedAt` + `connectionGeneration`，client task 用代次守卫回写，断线/重连后
+  stale task 不得复活 `connected`；抽出 `CraftOutcomeFeedback` 锁定 completed
+  `flashTicks=6` / 一声完成音 / refresh 顺序与 failed 无完成音；补齐线程、生命周期
+  与 no-op 饱和回归（触达 `BongNetworkHandler`、`ClientConnectionStatusStore`、
+  `CraftOutcomeFeedback`、两屏 listener 与 threading/feedback 测试）。
+- `1b2063d2b`：**证据纠正（docs-only）**——原地更新 finished plan Finish Evidence，
+  收回初版仅 7 项 store 线程测试即宣称完整矩阵的 overclaim，并写入 generation
+  guard、真实 Screen 反馈与 Java17 **4171/0/0/0** 门禁计数；**不重复归档**。
 
-### 测试结果
+### 测试结果（历史基线）
 
 - RED（Temurin 17）：
   `./gradlew test --tests com.bong.client.BongServerDataThreadingTest`
@@ -178,6 +186,21 @@
   GAME TESTS：`All 3 required tests passed`。
 - 构建仅输出仓库既有 Gradle deprecated-features 提示；无测试失败、编译失败或新增源码产物。
 
+### 测试结果（2026-07-20 复审返工后 @ `1b2063d2b`）
+
+- client 完整门禁（Temurin 17）：
+  `export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; cd client && ./gradlew test build`
+  → exit `0`，`BUILD SUCCESSFUL`；
+  JUnit XML 汇总 **`4171 tests, 0 failures, 0 errors, 0 skipped`**（476 suites）即 **4171/0/0/0**；
+  GAME TESTS：**`All 3 required tests passed`（3/3）**。
+- 关键回归：
+  - `BongServerDataThreadingTest` **13/13**（含 receipt timestamp / disconnect-before-drain /
+    reconnect generation / unknown+null no-op / 真实 CraftScreen+WorkbenchScreen 反馈 /
+    disconnect CraftStore lifecycle）；
+  - `CraftOutcomeFeedbackTest` **5/5**；
+  - `BongNetworkHandlerTest` **21/21**；
+  - `ConnectionStatusIndicatorTest` **8/8**。
+
 ### 主线同步与绑定 SHA 验证
 
 - 2026-07-19：`git fetch origin` 后 `origin/main@2f9c70ad` 不再是修复 tip 祖先；
@@ -188,13 +211,24 @@
   `dispatchServerDataPayload`/`processServerDataPayload` 的 raw-buffer-copy →
   单一 `client.execute` task（bridge/fallback/route/handler/store/listener/applyDispatch）
   线程契约；Agent UI / Season 主线逻辑未丢。
-- post-merge 必须重跑 client 完整门禁；2026-07-20 复审返工后以新 HEAD 的 Java 17
-  完整门禁与本文件最新落地清单为准（初版 7 项线程测试不足以覆盖 screen/lifecycle）。
+- post-merge 必须重跑 client 完整门禁；2026-07-20 复审返工代码+证据纠正后，
+  **validator 绑定 SHA 为 `1b2063d2b4bfd6ad826737c701d80660aa38affa`**（含代码修复
+  `81fe479d5` + Finish Evidence 纠正 `1b2063d2b`）。
+- **PR #1196 exact-head validator（无上下文、只读 Grok）**：对
+  `1b2063d2b4bfd6ad826737c701d80660aa38affa` 结论 **PASS**，`blocker=0`，`major=0`，
+  `minor=3`：
+  1. 双屏单测对真实音效引擎的可观测限制（契约靠 seam/顺序断言，不模拟完整 sound pipeline）；
+  2. 其他 channel（vfx/audio/agent_ui 等）freshness 保持历史行为，**明确非目标**；
+  3. `scheduleRefresh` 沿用既有 on-thread inline 模式（非本 plan 扩项）。
+- **SHA 绑定纪律**：validator PASS **仅**绑定代码+证据提交前 HEAD
+  `1b2063d2b4bfd6ad826737c701d80660aa38affa`。**本条 docs-only 更新提交后会产生新的
+  SHA；不得谎称该 validator 验证了未来 SHA**。若后续再改代码或证据语义，必须对新
+  HEAD 重开无上下文 validator。
 
 ### 跨栈核验
 
-- client：修改 receiver 调度边界并新增回归测试；merge main 后完整门禁已绿
-  （`3ccf908b`，4160/0/0/0 + GAME TESTS 3/3）。
+- client：修改 receiver 调度边界、连接状态机、共享反馈与饱和回归；最新完整门禁已绿
+  （`1b2063d2b`，**4171/0/0/0** + GAME TESTS **3/3**）。
 - server：只读确认 `server/src/network/craft_emit.rs` 的 completed/failed 生产 emit；
   本 PR 无 server 代码改动，不需要额外 cargo gate。
 - agent/schema/worldgen：本 PR 修复范围未改协议/schema/资源/生成物；merge 带入主线变更
@@ -202,35 +236,24 @@
 - 真元/世界观/A/V：本修复不改变制作数值、资源流、真元 ledger、招式或视觉/音效资产；
   只保证既有完成音效、闪光与刷新在 client thread 执行。
 
-### 测试结果（2026-07-20 复审返工后）
-
-- client 完整门禁（Temurin 17）：
-  `export JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10; cd client && ./gradlew test build`
-  → exit `0`，`BUILD SUCCESSFUL`；
-  JUnit XML 汇总 **`4171 tests, 0 failures, 0 errors, 0 skipped`**（476 suites）；
-  GAME TESTS：`All 3 required tests passed`。
-- 关键回归：
-  - `BongServerDataThreadingTest` **13/13**（含 receipt timestamp / disconnect-before-drain /
-    reconnect generation / unknown+null no-op / 真实 CraftScreen+WorkbenchScreen 反馈 /
-    disconnect CraftStore lifecycle）；
-  - `CraftOutcomeFeedbackTest` **5/5**；
-  - `BongNetworkHandlerTest` **21/21**；
-  - `ConnectionStatusIndicatorTest` **8/8**。
-
 ### 2026-07-20 复审返工证据（原地纠正，不重复归档）
 
 - 触发：PR #1196 `/review` REQUEST_CHANGES（17 findings 主题收敛为 3 类）：
   1) `markConnectionPayload` 从收包时刻推迟到 processing time / 可复活 connected；
   2) 缺少 CraftScreen/WorkbenchScreen 真实反馈与 failed 无完成音回归；
   3) 缺少 unknown/null-dispatch、disconnect/screen-close lifecycle 矩阵。
-- 代码修复：generation + receivedAt guard；共享 `CraftOutcomeFeedback`；饱和测试补齐。
-- 文档：本 Finish Evidence 原地纠正 overclaim（初版仅 7 项 store/listener 线程测试不足以
-  覆盖 plan 验收矩阵），**不**再次 `git mv` 归档。
-- 门禁与精确计数以本轮 Java 17 `./gradlew test build` 为准（见下方最新测试结果段）。
+- 代码修复：`81fe479d5` generation + receivedAt guard；共享 `CraftOutcomeFeedback`；
+  饱和测试补齐。
+- 文档：`1b2063d2b` 与本条 docs-only 更新原地纠正 Finish Evidence overclaim 并绑定
+  validator PASS；**不**再次 `git mv` 归档。
+- 门禁与精确计数以 `1b2063d2b` 上 Java 17 `./gradlew test build` 为准：**4171/0/0/0**，
+  GAME TESTS **3/3**。
 
 ### 遗留 / 后续
 
 - 其他 channel（vfx/audio/agent_ui 等）仍在 network thread 直接 `markPayloadReceived()`，
-  其 freshness 语义保持历史行为，不在本 plan 扩项范围内。
-- 本地不 push / 不开改合 PR；远端 gate 仍由 `/review`、CodeRabbit、e2e 等负责。
+  其 freshness 语义保持历史行为，**明确非目标**，不在本 plan 扩项范围内。
+- validator minor（非阻塞）：双屏单测音效可观测限制；`scheduleRefresh` 既有 on-thread
+  inline 模式。二者不改变本 plan 验收结论。
+- 远端 gate 仍由 `/review`、CodeRabbit、e2e 等负责。
 - 明确排除 #1228：本会话不触碰、不停止任何来源不明进程。
