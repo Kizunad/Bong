@@ -86,13 +86,16 @@
 - `2ff99756`（2026-07-20）：补齐 production factory 三条互异 Redis 连接及 startup/cleanup 归属回归。
 - `07683592`（2026-07-22）：修复 `UiResponseConsumer` cleanup/pending-subscribe 生命周期竞态。
 - `8b732ddb`（2026-07-22）：记录生命周期返工的测试证据；该证据将在本次 scope rollback 提交形成后由新 exact HEAD 取代。
+- `62cbc43d`（2026-07-22）：撤回超出私人路由修复范围的既有 Agent UI ID code-point 迁移与 Ajv 安装信任子系统，仅保留新增 S2A `target_player` 的 Unicode 边界。
+- `fbea9144`（2026-07-22）：为真实 Fabric C2S `AgentUiResponse` 添加 `target_player` 伪造负样本，明确锁定 client 不得注入该仅 server→agent 可写字段。
 
 ### 测试结果
 
 - 历史生产链证据：专用 Redis 双 Bot `agent_ui_realm_gate_private_narration` PASS；链路观测 `bong:agent_ui_cmd → bong:agent_ui_response(target_player) → bong:agent_narrate(scope=player)`，server 最终投递 1 recipient，旁观者无泄漏。
 - 历史 lifecycle 返工 `07683592`：Tiandao 定向 `agent-ui.test.ts + main.test.ts` 2 files / 117 tests passed；完整 Tiandao 72 files / 846 tests passed。覆盖 cleanup 早于 subscribe completion、500ms physical-disconnect timeout 后迟到 completion、exactly-once disconnect 与零 callback/narration/stats 副作用。
 - 本次 scope rollback 工作树定向门禁：`npm run build -w @bong/schema`、`npm run generate:check` 均退出 0，406 generated files fresh；`vitest run tests/agent-ui.test.ts` 为 1 file / 51 tests passed。Rust `cargo fmt --check` 退出 0；`schema::agent_ui::tests` 27/27、C2S JSON-bypass 1/1、`schema::client_request::tests::agent_ui_response*` 3/3 passed。
-- 本次 scope rollback 提交形成后，完整 schema/Tiandao/agent/server/client/Python 门禁、双 Bot、fresh validator、e2e、`/review` 与 CodeRabbit 都必须在同一精确 HEAD 重新建立；旧 SHA 的 PASS 不外推。最终 merge 前将准确命令、计数及 SHA 原地追加到本节。
+- 本地完整门禁已在 `62cbc43d` 后通过：`cd agent/packages/schema && npm run check && npm test`（29 files / 886 tests）；`cd agent/packages/tiandao && npm test`（72 files / 846 tests）；`cd agent && npm run build`；`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（合计 11875 passed / 0 failed / 6 ignored）；`cd client && ./gradlew --no-daemon test build`（3 required Fabric GameTests passed）；`python3 -m unittest scripts.bot.test_protocol`（126 tests）。Gradle 外层日志使用 OpenJDK 21.0.10，Fabric runtime 日志列出 Java 17；这只记录实际环境，不将其表述为额外 Java 17 toolchain pin。
+- `fbea9144` 增加 Rust C2S 伪造拒绝测试后，`cd server && cargo fmt --check && cargo test schema::client_request::tests::agent_ui_response` 通过（4/4）。该提交使前一条完整门禁不再是最终 exact-HEAD 证据；以下 remote e2e / fresh validator / `/review` / CodeRabbit 也尚未针对最终提交完成，merge 前必须同一 exact HEAD 重建。
 - 两份受保护 untracked snapshot 始终未 stage、删除或覆盖：`tiandao-snapshot-200.json` SHA-256 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`；`tiandao-snapshot-300.json` SHA-256 `eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。
 
 ### 跨仓库核验
