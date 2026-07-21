@@ -135,13 +135,14 @@ public final class BongAnimationPlayer {
         }
 
         KeyframeAnimationPlayer framePlayer = new KeyframeAnimationPlayer(anim);
-        // Phase 1 默认 THIRD_PERSON_MODEL：ItemInHandRendererMixin 只在此模式下 cancel
-        // vanilla 手/物品渲染并走动画管线；VANILLA 模式空手能看见、持物就被 vanilla 独立
-        // item 渲染路径盖掉（实测 2026-04-14）。
-        // 若某个动画在 TPP 下看起来臃肿（全上半身），未来可按 id 切换成 VANILLA。
-        framePlayer.setFirstPersonMode(
-            dev.kosmx.playerAnim.api.firstPerson.FirstPersonMode.THIRD_PERSON_MODEL
-        );
+        // 出厂默认 THIRD_PERSON_MODEL：ItemInHandRendererMixin 只在此模式下 cancel vanilla
+        // 手/物品渲染并走动画管线；VANILLA 模式空手能看见、持物就被 vanilla 独立 item 渲染路径
+        // 盖掉（实测 2026-04-14）。
+        // plan-fpv-cast-av-v1 P0：第一人称路线由 {@link FpvPocState} 运行时切换（A/B/C POC，
+        // 键位见 FpvPocControls）。OFF = 出厂行为（THIRD_PERSON_MODEL + 默认 config，第一人称只
+        // 见持物无手臂）。路线拍板后收敛为 per-animation 配置驱动（plan §P1），本 POC 分支随
+        // harness 一并移除。
+        FpvPocState.current().applyTo(framePlayer);
 
         Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer =
             ACTIVE_LAYERS.computeIfAbsent(pid, k -> new HashMap<>());
