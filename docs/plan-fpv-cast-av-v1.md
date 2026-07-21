@@ -32,7 +32,7 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⬜ |
+| P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
 | P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⬜ |
 | P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⬜ |
 | P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⬜ |
@@ -107,7 +107,7 @@
 3. **施法 juice 触发数据源**：纯 client（`CastStateStore` 本地推断 release，零 wire 变更，但 server 拒绝/打断的边缘一致性靠 cast_sync 已有回执）vs server 显式 juice hint（精确但加 payload 字段）。推荐纯 client 起步，误差可接受再不加字段。**两条路线都必须满足 P3 门控硬约束**（accepted 确认 + 取消令牌 + 幂等），纯 client 路线的收口前提是核实 cast_sync 回执在拒绝/打断路径的到达保证。
 4. **FPV 变体的维护成本边界**：每招两份动画（TPV+FPV）长期同步维护——是否约定「FPV 变体只在 TPV 定稿后产出、TPV 改动必须连带复核 FPV」写入 `docs/player-animation-conventions.md`。
 
-> **收口状态（2026-07-22）**：#2、#3、#4 已在 §8.1 收口（#2 音源渠道用户拍板 CC0 素材库、#3/#4 agent 核码可决）；仅 #1（FPV 技术路线）仍为**用户决策门**，待 P0 POC 真机遮挡对比证据后由用户拍板，不由 agent 自决。原表保留以备追溯，**实施时以 §8.1 决议为准**。
+> **收口状态（2026-07-22）**：全部 4 项已在 §8.1 收口——#1 FPV 技术路线用户真机拍板**路线 A**（库原生 `THIRD_PERSON_MODEL`+config，非 plan 预判的不存在的 `ENABLED`）、#2 音源渠道 CC0 素材库、#3 juice 数据源纯 client、#4 FPV 维护约定入档 §16。原表保留以备追溯，**实施时以 §8.1 决议为准**。
 
 ## §8.1 决议（pre-P0 收口，2026-07-22）
 
@@ -139,9 +139,16 @@
 
 **落点**：`docs/player-animation-conventions.md`（新增 §16，line 681 后追加）；`client/src/main/java/com/bong/client/animation/BongAnimationRegistry.java:120-129/170`（FPV 查找链落点，P1）；plan §P1/§P2。
 
-### #1 FPV 技术路线三选一（用户决策门，待 P0 POC 证据）
+### #1 FPV 技术路线 —— 用户真机拍板路线 A（2026-07-22）
 
-**收口路径**（未决，不由 agent 自决）：P0 在 `sword.cleave` 上对 A（`FirstPersonMode.ENABLED` + `FirstPersonConfiguration`）/ B（自绘 FPV 手臂层）/ C（mixin `HeldItemRenderer` 注入骨骼变换）三路线各出可跑 POC，真机 `runClient` + `render_animation.py` FPV 模式产出**持物遮挡 + 相机是否被 body 位移晃动**对比证据，交用户拍板后补本节决议 + 同步 plan 头部/P1 数据形状。预判倾向 A，但 playerAnim 1.20.1 分支 FPV 成熟度以实测为准，不凭预判开工 P1。
+**决议**：
+
+1. **锁定路线 A（库原生）**：`FirstPersonMode.THIRD_PERSON_MODEL` + 一个 `showRightArm/showLeftArm/showRightItem/showLeftItem=true` 的 `FirstPersonConfiguration`。**拒绝 B（自绘 FPV 手臂层）与 C（mixin 注入 vanilla 手臂）**——二者是 A 遮挡出问题时的后备，A 遮挡实测干净故无需做。
+2. **plan 预判的 `FirstPersonMode.ENABLED` 在 player-anim `1.0.2-rc1` 不存在**（该版本枚举仅 `NONE/VANILLA/THIRD_PERSON_MODEL/DISABLED`）——「库原生显示动画手臂」正解是 `THIRD_PERSON_MODEL` + config 开手臂。出厂 `BongAnimationPlayer.playOnStack` 只设 mode 没设 config，默认 config 的 `showArm=false` 正是第一人称无手臂的根因。库 `ItemInHandRendererMixin` 在 `THIRD_PERSON_MODEL` 下整段 cancel vanilla FP 手/物渲染 → plan 担心的「vanilla 盖掉持物」在 A 下**不发生**，真机印证。
+3. **真机 POC 证据（决定性判据=持物遮挡）**：POC harness（`FpvPocState`/`FpvPocControls` 运行时切 OFF/A/B/C + 键位 + `scripts/fpv-poc.sh` 快捷命令）在 `sword.cleave` 上真机对比——用户判定**A 下第一人称出现动画手臂 + 剑、遮挡正确**（无剑穿手/无 vanilla 双重渲染/无 z-fighting）。唯一观察：双手持剑时两手在贴脸视角**未视觉合拢**——经确认这是**姿态问题非路线问题**（剑=单手主手物只在右手渲染，左手空手摆双手持姿态，贴脸视差下需专门 FPV 变体把左手并到剑柄），归 **P2** 的 `sword_cleave_fpv.json` 处理，A/B/C 任选此姿态都要调。
+4. **P1 数据形状（据本决议定形）**：路线 A 的 `FirstPersonConfiguration` 收敛为 **per-animation 配置驱动** + 本地玩家 **`<anim_id>_fpv.json` 查找链**（本地玩家播 `sword.cleave` 优先查 `sword_cleave_fpv.json`，缺省回落路线 A 的自动配置=TPV 动画 + 开手臂 config）；远端玩家路径零变化。POC harness（B/C 占位 + 键位切换）在 PR-1/PR-2 收敛为正式路径时移除。
+
+**落点**：`client/src/main/java/com/bong/client/animation/FpvPocState.java`（POC 路线映射，applyTo 即路线 A 的 config）、`client/src/main/java/com/bong/client/animation/BongAnimationPlayer.java:137-145`（playOnStack 设 FirstPersonMode+config 处，P1 改 per-animation 驱动）、`client/src/main/java/com/bong/client/animation/BongAnimationRegistry.java:120-129/170`（`_fpv` 查找链落点，P1）；plan §P1/§P2；render 工具 `client/tools/render_animation.py --fpv`（P2 迭代双手合拢用）。
 
 ### #2 签名音效音源渠道 —— 用户拍板 CC0 素材库（2026-07-22）
 
