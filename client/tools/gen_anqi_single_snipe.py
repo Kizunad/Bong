@@ -7,11 +7,21 @@ cast_ticks=6，去复用（原借 sword_stab）。对拍区间 endTick ∈ [10,1
 一记鞭甩弹射出手（腕弹为主的轻脆爆发，非剑的躯干突刺），出手后手型张开、
 抬头随镖目送远去，再收回侧身架。
 
+**easing 管辖语义**（PlayerAnimator 1.0.2 实证，非直觉）：本仓动画一律不声明
+`easeBeforeKeyframe`，`KeyframeAnimation.isEasingBefore` 因而取默认 false，
+`KeyframeAnimationPlayer#getValueFromKeyframes` 走 `before.ease`——即**某帧上
+写的 easing 管辖「本帧 → 下一帧」这一段**。故各段的 easing 要写在该段的
+**起始侧帧**上：strike 段的 easeIn 落在 tick 4（管辖 4→6），写到顶点帧
+tick 6 上会跑去管收势段 6→8。由
+`AnimCastTicksAlignmentTest#strikePhaseCarriesEaseInDrive` 机械锁定。
+
 时序（精度标准 #1/#2/#3；cast=6 短蓄势压缩到 4 tick）：
   anticipation 0→4   侧身瞄准：骨镖扣至耳侧最深（bend 95→112）、拧腰 -25°、
-                     左臂瞄准线绷直（easeOut 族 OUTSINE）
+                     左臂瞄准线绷直。t0 沿用 GUARD 的 INOUTSINE（管辖 0→2 的
+                     起手过渡），t2 才是 easeOut 族 OUTSINE（管辖 2→4 的收拢定位）
+                     ——按下方半开区间语义，anticipation 段实由这两帧共同驱动
   strike       4→6   弹射出手：右臂鞭甩前送（pitch -80→-88 / bend 112→6）、
-                     躯干甩正 +8（easeIn 族 INQUAD），顶点 = tick 6
+                     躯干甩正 +8（easeIn 族 INQUAD 写在 t4），顶点 = tick 6
   recovery     6→12  随镖目送（t8 手型漂移+抬头）→ 收回侧身架（INOUTSINE）
 endTick=12，stopTick=14，非循环。主打击轴：rightArm.pitch / rightArm.bend /
 torso.yaw / body.z。
@@ -34,8 +44,10 @@ GUARD = dict(
 )
 
 # 弹射顶点（tick 6 = cast 完成瞬间）：右臂全伸展前送、躯干甩正、重心压前。
+# easing 管辖 6→8（见模块 docstring 的库语义），即目送段起手 → 收势族 INOUTSINE。
+# 发力用的 easeIn 归 tick 4 那帧（它才管辖 strike 段 4→6）。
 APEX = dict(
-    easing="INQUAD",
+    easing="INOUTSINE",
     body=dict(x=-0.03, y=0.0, z=+0.14),
     head=dict(pitch=-2, yaw=+2),
     torso=dict(pitch=+6, yaw=+8),
@@ -59,8 +71,10 @@ POSE = {
         rightLeg=dict(pitch=+14, bend=16, z=+0.07),
     ),
     # 蓄势顶点：镖扣最深、拧腰 -25°、后腿承重最深。
+    # 本帧 easing 管辖 strike 段 4→6（鞭甩弹射），故取 easeIn 族 INQUAD——
+    # 蓄势段自身的 easeOut 由 tick 0 / 2 两帧承担。
     4: dict(
-        easing="OUTSINE",
+        easing="INQUAD",
         body=dict(x=+0.04, y=-0.03, z=-0.06),
         head=dict(pitch=-3, yaw=+19),
         torso=dict(pitch=+3, yaw=-25),

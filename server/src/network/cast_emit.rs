@@ -2797,6 +2797,41 @@ mod tests {
         );
     }
 
+    /// P6 相位承接契约（conventions §14.2 裁决方案①）对**通用停止路径**的守卫。
+    ///
+    /// 契约要害：`fade_out = 0` 会让旧层被立即摘除、混合源随之消失，交接瞬间不是
+    /// 塌回 release 首帧而是**塌回 vanilla**（手臂先落下再抬起）——这条退化由 P6
+    /// 的 `TwoStageHandoffBlendTest` 实测确认，故 `fade_out > 0` 是硬约束而非风格。
+    ///
+    /// `anqi.charge_carrier` / `sword_path.heaven_gate` 在 `vfx_animation_trigger.rs`
+    /// 各有专属 pin；但 `sword.infuse` 与 `yidao.*` 走的是本文件这两个**共享常量**，
+    /// 此前无任何断言守着——把它们改成 0，契约会对这两族静默失效。既有用例断言的是
+    /// 「发出值 == 该常量」，属同义反复，捕不到常量本身被改坏。
+    #[test]
+    fn shared_loop_stop_fade_out_constants_honor_phase_handoff_contract() {
+        for (name, fade_out) in [
+            (
+                "CAST_LOOP_ANIM_COMPLETE_FADE_OUT_TICKS（自然完成→release 接力）",
+                CAST_LOOP_ANIM_COMPLETE_FADE_OUT_TICKS,
+            ),
+            (
+                "CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS（三类打断）",
+                CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS,
+            ),
+            (
+                "CAST_LOOP_ANIM_CANCEL_FADE_OUT_TICKS（用户主动切槽取消）",
+                CAST_LOOP_ANIM_CANCEL_FADE_OUT_TICKS,
+            ),
+        ] {
+            assert!(
+                fade_out >= 2,
+                "{name} = {fade_out}，违反 P6 相位承接契约：需 ≥2 tick 才够 release \
+                 在淡出窗口内成为完整姿态；0 会让交接瞬间塌回 vanilla（手臂先落再抬），\
+                 且 `sword.infuse` / `yidao.*` 两族全靠这些共享常量，无其它断言兜底"
+            );
+        }
+    }
+
     /// 负向锚点：未登记循环段的招式（广播体操）被移动打断时不得发任何 StopAnim
     /// ——查表 miss 静默跳过，不误伤一次性长演出动画。
     #[test]
