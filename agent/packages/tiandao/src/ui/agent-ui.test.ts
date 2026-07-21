@@ -67,6 +67,16 @@ function makeMockClient() {
   };
 }
 
+function makeDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function makeResponsePayload(
   action: AgentUiResponsePayloadV1["action"],
   params: Record<string, string> = {},
@@ -626,6 +636,117 @@ describe("UiResponseConsumer", () => {
       await consumer.connect();
       await consumer.connect();
       expect(sub.subscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it("shares one pending subscribe across concurrent connect calls", async () => {
+      const deferredSubscribe = makeDeferred();
+      sub.subscribe.mockImplementation(() => deferredSubscribe.promise);
+
+      const first = consumer.connect();
+      const second = consumer.connect();
+      await Promise.resolve();
+
+      expect(sub.subscribe).toHaveBeenCalledOnce();
+      expect(sub.on).not.toHaveBeenCalled();
+
+      deferredSubscribe.resolve();
+      await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+      expect(sub.on).toHaveBeenCalledOnce();
+    });
+
+    it("disconnect before pending subscribe resolves never installs or processes a late listener", async () => {
+      const deferredSubscribe = makeDeferred();
+      sub.subscribe.mockImplementation(() => deferredSubscribe.promise);
+
+      const connectPromise = consumer.connect();
+      await Promise.resolve();
+      expect(sub.subscribe).toHaveBeenCalledOnce();
+
+      const disconnectPromise = consumer.disconnect();
+      sub.emit(
+        AGENT_UI_RESPONSE,
+        JSON.stringify(makeResponsePayload("button_click", { button_id: "before-resolve" })),
+      );
+      await Promise.resolve();
+      expect(onButtonClick).not.toHaveBeenCalled();
+      expect(consumer.stats.received).toBe(0);
+
+      deferredSubscribe.resolve();
+      await expect(Promise.all([connectPromise, disconnectPromise])).resolves.toEqual([
+        undefined,
+        undefined,
+      ]);
+
+      expect(sub.on).not.toHaveBeenCalled();
+      expect(sub.unsubscribe).toHaveBeenCalledOnce();
+      sub.emit(
+        AGENT_UI_RESPONSE,
+        JSON.stringify(makeResponsePayload("button_click", { button_id: "after-resolve" })),
+      );
+      await Promise.resolve();
+      expect(onButtonClick).not.toHaveBeenCalled();
+      expect(onSessionEnd).not.toHaveBeenCalled();
+      expect(pub.publish).not.toHaveBeenCalled();
+      expect(consumer.stats.received).toBe(0);
+      await expect(consumer.connect()).rejects.toThrow(/cannot connect after disconnect/);
+      expect(sub.subscribe).toHaveBeenCalledOnce();
+    });
+
+    it("disconnect remains fail-closed when a pending subscribe rejects", async () => {
+      const deferredSubscribe = makeDeferred();
+      sub.subscribe.mockImplementation(() => deferredSubscribe.promise);
+
+      const connectPromise = consumer.connect();
+      await Promise.resolve();
+      const disconnectPromise = consumer.disconnect();
+      deferredSubscribe.reject(new Error("late subscribe failed"));
+
+      await expect(connectPromise).rejects.toThrow("late subscribe failed");
+      await expect(disconnectPromise).resolves.toBeUndefined();
+      expect(sub.on).not.toHaveBeenCalled();
+      expect(sub.unsubscribe).toHaveBeenCalledOnce();
+      await expect(consumer.connect()).rejects.toThrow(/cannot connect after disconnect/);
+    });
+
+    it("ignores a captured message callback after disconnect begins", async () => {
+      let capturedListener: ((channel: string, message: string) => void) | undefined;
+      sub.on.mockImplementation(
+        (_event: string, listener: (channel: string, message: string) => void) => {
+          capturedListener = listener;
+        },
+      );
+      const deferredUnsubscribe = makeDeferred();
+      sub.unsubscribe.mockImplementation(() => deferredUnsubscribe.promise);
+
+      await consumer.connect();
+      const disconnectPromise = consumer.disconnect();
+      capturedListener?.(
+        AGENT_UI_RESPONSE,
+        JSON.stringify(
+          makeResponsePayload(
+            "error",
+            { reason: "realm_gate_rejected" },
+            "offline:LateTarget",
+          ),
+        ),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(consumer.stats.received).toBe(0);
+      expect(pub.publish).not.toHaveBeenCalled();
+      deferredUnsubscribe.resolve();
+      await disconnectPromise;
+    });
+
+    it("connect may retry after subscribe failure before teardown", async () => {
+      sub.subscribe.mockRejectedValueOnce(new Error("transient subscribe failed"));
+      await expect(consumer.connect()).rejects.toThrow("transient subscribe failed");
+      expect(sub.on).not.toHaveBeenCalled();
+
+      await expect(consumer.connect()).resolves.toBeUndefined();
+      expect(sub.subscribe).toHaveBeenCalledTimes(2);
+      expect(sub.on).toHaveBeenCalledOnce();
     });
 
     it("cleans up listeners and subscription without taking physical client ownership", async () => {

@@ -24,8 +24,19 @@ interface MockRedisRuntimeClient extends RedisRuntimeClient {
   emit(channel: string, message: string): void;
 }
 
+function makeDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function makeMockRedisRuntimeClient(options: {
   subscribeError?: Error;
+  subscribePromise?: Promise<unknown>;
   unsubscribeError?: Error;
   unsubscribePromise?: Promise<unknown>;
 } = {}): MockRedisRuntimeClient {
@@ -40,6 +51,7 @@ function makeMockRedisRuntimeClient(options: {
       return 1;
     }),
     subscribe: vi.fn(async (_channel: string) => {
+      if (options.subscribePromise) await options.subscribePromise;
       if (options.subscribeError) throw options.subscribeError;
       subscriberMode = true;
     }),
@@ -439,6 +451,86 @@ describe("Agent UI production startup factory", () => {
       await Promise.resolve();
       await cleanup();
       expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
+      for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not reinstall the response listener when cleanup races pending subscribe", async () => {
+    const deferredSubscribe = makeDeferred();
+    const clients = [
+      makeMockRedisRuntimeClient(),
+      makeMockRedisRuntimeClient({ subscribePromise: deferredSubscribe.promise }),
+      makeMockRedisRuntimeClient(),
+    ];
+    const createRedisClient = vi
+      .fn<(url: string) => RedisRuntimeClient>()
+      .mockReturnValueOnce(clients[0])
+      .mockReturnValueOnce(clients[1])
+      .mockReturnValueOnce(clients[2]);
+    const narration = JSON.stringify({
+      request_id: "late-factory-response",
+      action: "error",
+      target_player: "offline:LateFactoryTarget",
+      params: { reason: "realm_gate_rejected" },
+    });
+
+    const { cleanup, runtime, ready } = await startAgentUiResponseRuntime({
+      redisUrl: "redis://factory-race:6380",
+      createRedisClient,
+    });
+    await Promise.resolve();
+    expect(clients[1].subscribe).toHaveBeenCalledOnce();
+
+    const cleanupPromise = cleanup();
+    clients[1].emit(CHANNELS.AGENT_UI_RESPONSE, narration);
+    deferredSubscribe.resolve();
+
+    await expect(ready).resolves.toBeUndefined();
+    await expect(cleanupPromise).resolves.toBeUndefined();
+    expect(clients[1].on).not.toHaveBeenCalled();
+    expect(clients[1].off).toHaveBeenCalledOnce();
+    expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
+    expect(runtime.stats.received).toBe(0);
+    expect(runtime.stats.realmGateRejected).toBe(0);
+    expect(clients[2].publish).not.toHaveBeenCalled();
+    for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("remains inert if subscribe resolves after the factory cleanup timeout", async () => {
+    vi.useFakeTimers();
+    const deferredSubscribe = makeDeferred();
+    const clients = [
+      makeMockRedisRuntimeClient(),
+      makeMockRedisRuntimeClient({ subscribePromise: deferredSubscribe.promise }),
+      makeMockRedisRuntimeClient(),
+    ];
+    const createRedisClient = vi
+      .fn<(url: string) => RedisRuntimeClient>()
+      .mockReturnValueOnce(clients[0])
+      .mockReturnValueOnce(clients[1])
+      .mockReturnValueOnce(clients[2]);
+
+    try {
+      const { cleanup, runtime, ready } = await startAgentUiResponseRuntime({
+        redisUrl: "redis://factory-timeout-race:6380",
+        createRedisClient,
+      });
+      await Promise.resolve();
+      const cleanupPromise = cleanup();
+      await vi.advanceTimersByTimeAsync(500);
+      await cleanupPromise;
+      for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
+
+      deferredSubscribe.resolve();
+      await expect(ready).resolves.toBeUndefined();
+      expect(clients[1].on).not.toHaveBeenCalled();
+      expect(clients[1].off).toHaveBeenCalledOnce();
+      expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
+      expect(runtime.stats.received).toBe(0);
+      expect(clients[2].publish).not.toHaveBeenCalled();
+      await expect(cleanup()).resolves.toBeUndefined();
       for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();

@@ -98,6 +98,13 @@ export interface UiResponseConsumerStats {
   narrationDroppedMissingTarget: number;
 }
 
+type UiResponseConsumerLifecycle =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "disconnecting"
+  | "disconnected";
+
 // ─── realm_gate_rejected narration 文本 ──────────────────────────────────────
 
 /** realm_gate_rejected 时向玩家发布的叙事文本 */
@@ -112,8 +119,10 @@ export class UiResponseConsumer {
   private readonly logger: UiResponseConsumerLogger;
   private readonly onButtonClick: ButtonClickCallback | undefined;
   private readonly onSessionEnd: SessionEndCallback | undefined;
-  private connected = false;
+  private lifecycle: UiResponseConsumerLifecycle = "idle";
+  private connectPromise: Promise<void> | undefined;
   private disconnectPromise: Promise<void> | undefined;
+  private unsubscribeStarted = false;
 
   readonly stats: UiResponseConsumerStats = {
     received: 0,
@@ -130,7 +139,7 @@ export class UiResponseConsumer {
   };
 
   private readonly onMessage = (channel: string, message: string): void => {
-    if (channel !== AGENT_UI_RESPONSE) return;
+    if (this.lifecycle !== "connected" || channel !== AGENT_UI_RESPONSE) return;
     void this.handlePayload(message);
   };
 
@@ -150,21 +159,53 @@ export class UiResponseConsumer {
   }
 
   async connect(): Promise<void> {
-    if (this.connected) return;
-    await this.sub.subscribe(AGENT_UI_RESPONSE);
-    this.sub.off?.("message", this.onMessage);
-    this.sub.on("message", this.onMessage);
-    this.connected = true;
-    this.logger.info(`[ui-response-consumer] subscribed to ${AGENT_UI_RESPONSE}`);
+    if (this.lifecycle === "connected") return;
+    if (this.lifecycle === "disconnecting" || this.lifecycle === "disconnected") {
+      throw new Error("UiResponseConsumer cannot connect after disconnect");
+    }
+    if (this.connectPromise !== undefined) return this.connectPromise;
+
+    this.lifecycle = "connecting";
+    const connectPromise = (async () => {
+      try {
+        await this.sub.subscribe(AGENT_UI_RESPONSE);
+        if (this.lifecycle !== "connecting") return;
+        this.sub.off?.("message", this.onMessage);
+        this.sub.on("message", this.onMessage);
+        this.lifecycle = "connected";
+        this.logger.info(`[ui-response-consumer] subscribed to ${AGENT_UI_RESPONSE}`);
+      } catch (error) {
+        if (this.lifecycle === "connecting") this.lifecycle = "idle";
+        throw error;
+      } finally {
+        this.connectPromise = undefined;
+      }
+    })();
+    this.connectPromise = connectPromise;
+    return connectPromise;
   }
 
   async disconnect(): Promise<void> {
-    this.disconnectPromise ??= (async () => {
-      this.connected = false;
-      this.sub.off?.("message", this.onMessage);
-      await this.sub.unsubscribe();
+    if (this.disconnectPromise !== undefined) return this.disconnectPromise;
+
+    this.lifecycle = "disconnecting";
+    const pendingConnect = this.connectPromise;
+    const disconnectPromise = (async () => {
+      try {
+        this.sub.off?.("message", this.onMessage);
+        if (!this.unsubscribeStarted) {
+          this.unsubscribeStarted = true;
+          await this.sub.unsubscribe();
+        }
+        if (pendingConnect !== undefined) {
+          await pendingConnect.catch(() => undefined);
+        }
+      } finally {
+        this.lifecycle = "disconnected";
+      }
     })();
-    return this.disconnectPromise;
+    this.disconnectPromise = disconnectPromise;
+    return disconnectPromise;
   }
 
   async handlePayload(message: string): Promise<void> {
