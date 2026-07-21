@@ -120,6 +120,7 @@
 - `21c59d41a63f5e9ec3178fd9ea0c7ff02f205ea1`（2026-07-20）：修复 Ajv 备选安装根被误当作同时必需的问题；仅跳过真正缺失的未采用布局，并以 canonical root 锁住 dangling root、跨根分裂与 symlink escape 反例。
 - `e804f7717571d36d9cdb48d2dc4fbadf95b91824`（2026-07-21）：普通合并 `origin/main=60a9931f88edbb8e19c26ad2866360b69d7b139e`（#1219），无冲突且未触及本 PR 三文件返工代码。该 merge commit 没有 `Model:` trailer；保留历史对象原样，不 amend。
 - `839a596a7c960a093a4ec3e7ed84849ae83886d9`（2026-07-21）：以独立非改写提交记录前述主线合并的真实执行模型 `gpt-5.6-sol-max`，不修改 `e804f771` 的历史 commit object。
+- `a9f2656a4c11b157a8f0423f99d60e71b946099f`（2026-07-21）：紧邻 fetch 后普通合并 `origin/main=9a2cff02c03e350c1525a101600666a647afa10b`（#1246 崩拳粒子可测性与边界加固）；增量仅为 client 粒子实现与测试，与本 PR 路径无交集。该 merge commit 直接带 `Model: gpt-5.6-sol-max`，无需另行补记或改写历史。
 
 ### 测试结果
 
@@ -159,7 +160,7 @@
 - agent → server：生产 consumer 输出经生产 `bong:agent_narrate` parser 进入 `process_redis_inbound`，`NarrationScope::Player` 最终选择唯一目标玩家；legacy 缺失或空白目标只记录 warning/丢弃计数，不发布 narration，因而不存在 broadcast 旁路。
 - server → client：目标玩家恰好收到一条 typed `bong:server_data` narration，旁观者无 typed payload；每个 mock client 只执行一次 `collect_received()`，并从同一批帧同时分类 typed narration 与 `GameMessageS2c`，因此“两名玩家都没有 chat mirror”是有效负断言而非空缓冲假绿。
 - client runtime：实际 Fabric renderer 线程完成 Bong 网络/HUD/动画/实体与 FeatureRenderer bootstrap，并创建 `Minecraft* 1.20.1` 窗口；不是只靠 JUnit classpath 或静态资源测试推断。
-- 提交元数据：逐枚执行 `git interpret-trailers --parse` 审计 `origin/main..HEAD`。非 merge 的 implementation / test / evidence commits 均记录了精确 `Model:` trailer（早期为 `gpt-5.1`，返工为 `gpt-5.6-sol-max`，后续协议/e2e/证据更新为 `gpt-5`）；四个历史主线 merge `e960ba5fc54795bbb572b015b93ea530578bd1cc`、`56b6e33dc577453d2e29f4206564e84b15fcb3fd`、`ca6bd940e352a0e8c452607c1880bea86fecac37`、`e804f7717571d36d9cdb48d2dc4fbadf95b91824` 缺少 `Model:` trailer，已在关键提交清单如实登记并保留 commit object 原样，不 amend、不改写历史；独立提交 `839a596a7c960a093a4ec3e7ed84849ae83886d9` 仅补记 `e804f771` 的真实执行模型，不伪装成 merge commit 本身的 trailer。
+- 提交元数据：逐枚执行 `git interpret-trailers --parse` 审计 `origin/main..HEAD`。非 merge 的 implementation / test / evidence commits 均记录了精确 `Model:` trailer（早期为 `gpt-5.1`，返工为 `gpt-5.6-sol-max`，后续协议/e2e/证据更新为 `gpt-5`）；四个历史主线 merge `e960ba5fc54795bbb572b015b93ea530578bd1cc`、`56b6e33dc577453d2e29f4206564e84b15fcb3fd`、`ca6bd940e352a0e8c452607c1880bea86fecac37`、`e804f7717571d36d9cdb48d2dc4fbadf95b91824` 缺少 `Model:` trailer，已在关键提交清单如实登记并保留 commit object 原样，不 amend、不改写历史；独立提交 `839a596a7c960a093a4ec3e7ed84849ae83886d9` 仅补记 `e804f771` 的真实执行模型，不伪装成 merge commit 本身的 trailer。后续 merge `a9f2656a4c11b157a8f0423f99d60e71b946099f` 已在创建时直接记录 `Model: gpt-5.6-sol-max`。
 
 ### 遗留 / 后续
 
