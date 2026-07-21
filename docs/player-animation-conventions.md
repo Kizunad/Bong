@@ -668,6 +668,8 @@ Bong 当前"正架 cross punch"基线。所有数值都经过 §11 渲染工具�
 
 **正例形态**（`beng_quan`，strike `[5,11]`）：`t5` OUTSINE（承蓄势末尾）→ `t7` INQUAD → `t8` INQUAD（发力加速，两帧都在段内）→ `t10` OUTQUAD（逼近顶点减速定格）→ `t11` INOUTSINE（交接收势）。新招按此排布。
 
+**判据是「段内有发力帧」，不是「strike 全程 easeIn」**：strike 段允许（并鼓励）一个**逼近顶点的减速定格帧**用 easeOut 收力——`beng_quan` `t10 OUTQUAD`（管 10→11）与 `stance_woliu` `t16 OUTQUAD`（管 16→20，逼近顶点 t20）是**同构正例**。发力主体（段内多数帧）走 easeIn 族即可，末段用 easeOut 定格收力，比强行全程 easeIn 撞进静止顶点更自然。§15.3 机械锁只断言「段内**至少一帧** easeIn 发力」，不要求整段；plan 精度标准正文出现的「strike … easeInCubic」是对**发力主体**的口径简写，落地以本节机械判据为准。（P6 review r4：`stance_woliu` t16 曾被复读为违约「strike 未全程 easeIn」，经仓库所有者按**发力感优先**裁决维持现状——末帧定格 easeOut 是正例形态，不追溯已 merge 的 `beng_quan` 等基准资产。）
+
 ### §15.3 机械锁
 
 `AnimCastTicksAlignmentTest#strikePhaseCarriesEaseInDrive()`：按 spec manifest 的 strike 边界，断言该段内**至少一帧**触及声明的主打击轴且为 easeIn 族（`IN*` 排除 `INOUT*`，覆盖 `Ease` 枚举全部 easeIn 常量）。断言区间取**半开** `[strikeFrom, strikeTo)`，依据即 §15.1。
