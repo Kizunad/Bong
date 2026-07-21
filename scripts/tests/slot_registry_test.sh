@@ -340,7 +340,7 @@ done
 report=$(bash scripts/slot_registry.sh manual-report --slot slot-1)
 check "manual-report 明示只报告" grep -q 'RECOVERY_MODE=manual-report-only' <<<"$report"
 check "manual-report 初始无 pending handoff" grep -q 'pending_handoff=false' <<<"$report"
-check "manual-report 不泄漏旧 token" grep -qv "$old_token" <<<"$report"
+check_not "manual-report 不泄漏旧 token" grep -q "$old_token" <<<"$report"
 check "manual-report 不改 frozen" test "$(field "$REGROOT/slot-1.lock/state")" = blocked_frozen_from_reserved
 expect_fail "force-unfreeze 缺 operator/reason/recovery-agent 拒绝" 'missing --operator|missing --reason|missing --recovery-agent' bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task frozen-reserved --branch bugfix/frozen-reserved --claim-sha "$SHA" --agent agent-frozen-reserved
 expect_fail "force-unfreeze task-only/错身份拒绝" 'manual recovery identity mismatch' bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task other --branch bugfix/frozen-reserved --claim-sha "$SHA" --agent agent-frozen-reserved --recovery-agent recovery-reserved --operator tester --reason ticket
