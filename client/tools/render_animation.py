@@ -224,15 +224,24 @@ def sample_part(kfs, part: str, tick: float) -> Dict[str, float]:
 
 # ----- skeleton solve ------------------------------------------------------
 
-def solve_skeleton(kfs, tick: float) -> Dict[str, Dict[str, np.ndarray]]:
+def solve_skeleton(
+    kfs, tick: float, body_disp_scale: float = 1.0
+) -> Dict[str, Dict[str, np.ndarray]]:
     """Compute world-space joint positions at a given tick.
 
     Returns a dict:
       {part: {"start": ndarray, "end": ndarray, "elbow": ndarray or None}}
     All positions are in MC model space (+X=left, +Y=down, +Z=back).
+
+    body_disp_scale scales the whole-body translation (body.x/y/z). 1.0 = raw
+    animation; 0.0 previews an FPV variant that zeroes body displacement (the
+    anti-camera-swim rule, see docs/player-animation-conventions.md §16.1);
+    0.5 halves it. Body rotation is left intact.
     """
     body = sample_part(kfs, "body", tick)
-    body_pos = np.array([body["x"], body["y"], body["z"]], dtype=np.float64)
+    body_pos = (
+        np.array([body["x"], body["y"], body["z"]], dtype=np.float64) * body_disp_scale
+    )
     body_rot = part_rotation_matrix(body["pitch"], body["yaw"], body["roll"])
 
     out: Dict[str, Dict[str, np.ndarray]] = {}
@@ -472,16 +481,319 @@ def render_grid(json_path: Path, out_dir: Path, ticks: Optional[List[float]] = N
     return grid_path
 
 
+# ----- first-person (FPV) rendering ----------------------------------------
+#
+# Anchors a perspective camera at the player's eye in the *body* frame, looking
+# down -Z (player-forward), and renders ONLY the arms + a schematic held-item
+# blade. Purpose: headless iteration of FIRST-PERSON arm poses
+# (plan-fpv-cast-av-v1 P0/P2) — is the arm actually in frame, how much of the
+# swing is visible, and does body.* displacement swim the camera?
+#
+# IMPORTANT: this does NOT replicate vanilla HeldItemRenderer. The DECISIVE
+# held-item OCCLUSION judgment that picks route A/B/C (plan §8.1 #1) can only be
+# seen in real runClient. Here the blade is a proxy line to gauge sweep, not
+# occlusion. Read the "world-ref" dot's drift off the crosshair as camera swim.
+
+# Eye position in body-local model space: mid-head height (y=-4). Placed at the
+# back of the head cube (z=+2) rather than the face plane so the close, splayed
+# arms stay within the frustum — MC's real FPV uses a separate screen-anchored
+# arm model we can't replicate headless, so this vantage is tuned for readable
+# pose framing (arm angles + blade sweep + body-swim), not pixel fidelity.
+# +X=left / +Y=down / +Z=back.
+FPV_EYE_LOCAL = np.array([0.0, -4.0, 2.0], dtype=np.float64)
+
+
+def compute_fpv_camera(kfs, tick: float, body_disp_scale: float = 1.0) -> dict:
+    """Eye world position + orthonormal camera basis, in MC model space.
+
+    The camera rides the animated body transform (rotation always; translation
+    scaled by body_disp_scale) — exactly how FirstPersonMode.ENABLED lets body.*
+    move the first-person view. body_disp_scale=0 previews an FPV variant that
+    zeroes body displacement (the anti-swim rule), 0.5 halves it.
+    """
+    body = sample_part(kfs, "body", tick)
+    body_pos = (
+        np.array([body["x"], body["y"], body["z"]], dtype=np.float64) * body_disp_scale
+    )
+    body_rot = part_rotation_matrix(body["pitch"], body["yaw"], body["roll"])
+    eye = body_rot @ FPV_EYE_LOCAL + body_pos
+    fwd = body_rot @ np.array([0.0, 0.0, -1.0])  # player faces -Z
+    up = body_rot @ np.array([0.0, -1.0, 0.0])  # MC up = -Y
+    right = body_rot @ np.array([-1.0, 0.0, 0.0])  # player's right = -X
+    return {"eye": eye, "fwd": fwd, "up": up, "right": right, "body_pos": body_pos}
+
+
+def project_fpv(
+    pos: np.ndarray, cam: dict, focal: float, origin: Tuple[int, int]
+) -> Optional[Tuple[int, int]]:
+    """Perspective-project a world point; None if at/behind the near plane."""
+    rel = pos - cam["eye"]
+    d = float(np.dot(rel, cam["fwd"]))
+    if d <= 0.5:
+        return None
+    u = float(np.dot(rel, cam["right"]))
+    v = float(np.dot(rel, cam["up"]))
+    cx, cy = origin
+    return (int(cx + focal * (u / d)), int(cy - focal * (v / d)))
+
+
+def _fpv_line(draw, a, b, color, width) -> None:
+    if a is not None and b is not None:
+        draw.line([a, b], fill=color, width=width)
+
+
+def project_seg_fpv(
+    a_world: np.ndarray,
+    b_world: np.ndarray,
+    cam: dict,
+    focal: float,
+    origin: Tuple[int, int],
+    near: float = 0.5,
+) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    """Project a world segment, clipping against the near plane so a segment
+    with ONE endpoint behind the camera still renders its visible part.
+
+    Arm shoulders sit behind the eye, so without clipping the shoulder→elbow
+    segment is dropped whole and the arm looks amputated. This keeps the in-view
+    part.
+    """
+    da = float(np.dot(a_world - cam["eye"], cam["fwd"]))
+    db = float(np.dot(b_world - cam["eye"], cam["fwd"]))
+    a, b = a_world, b_world
+    if da < near and db < near:
+        return None  # entirely behind the near plane
+    if da < near:
+        t = (near - da) / (db - da)
+        a = a_world + (b_world - a_world) * t
+    elif db < near:
+        t = (near - db) / (da - db)
+        b = b_world + (a_world - b_world) * t
+    pa = project_fpv(a, cam, focal, origin)
+    pb = project_fpv(b, cam, focal, origin)
+    if pa is None or pb is None:
+        return None
+    return (pa, pb)
+
+
+def draw_fpv_view(
+    draw: ImageDraw.ImageDraw,
+    skel: Dict[str, Dict[str, np.ndarray]],
+    cam: dict,
+    bbox: Tuple[int, int, int, int],
+    focal: float,
+    label: str,
+    font: ImageFont.ImageFont,
+    draw_item: bool = True,
+) -> None:
+    x0, y0, x1, y1 = bbox
+    draw.rectangle(bbox, fill=(18, 20, 28), outline=(40, 40, 60), width=1)
+    draw.text((x0 + 4, y0 + 2), label, fill=(200, 200, 220), font=font)
+    cx = (x0 + x1) // 2
+    cy = (y0 + y1) // 2
+    origin = (cx, cy)
+
+    # crosshair = where the camera aims (screen center)
+    draw.line([(cx - 8, cy), (cx + 8, cy)], fill=(90, 90, 110), width=1)
+    draw.line([(cx, cy - 8), (cx, cy + 8)], fill=(90, 90, 110), width=1)
+
+    # world-fixed reference dot at (0,0,-40): NOT tied to the body, so body.*
+    # swim makes it drift off the crosshair — read the offset as camera shake.
+    ref = project_fpv(np.array([0.0, 0.0, -40.0]), cam, focal, origin)
+    if ref is not None and x0 <= ref[0] <= x1 and y0 <= ref[1] <= y1:
+        draw.ellipse(
+            [ref[0] - 3, ref[1] - 3, ref[0] + 3, ref[1] + 3],
+            outline=(230, 200, 90),
+            width=1,
+        )
+        draw.text((ref[0] + 5, ref[1] - 6), "world-ref", fill=(230, 200, 90), font=font)
+
+    # arms only (FPV never shows legs/torso from the eye). Near-plane clipping
+    # keeps the visible part of segments whose shoulder is behind the eye.
+    for part in ("leftArm", "rightArm"):
+        seg = skel[part]
+        color = COLORS[part]
+        upper = project_seg_fpv(seg["start"], seg["elbow"], cam, focal, origin)
+        fore = project_seg_fpv(seg["elbow"], seg["end"], cam, focal, origin)
+        if upper is not None:
+            draw.line(list(upper), fill=color, width=5)
+        if fore is not None:
+            draw.line(list(fore), fill=color, width=5)
+        # joint dots only for joints actually in front of the eye
+        for joint in ("elbow", "end"):
+            pt = project_fpv(seg[joint], cam, focal, origin)
+            if pt is not None and x0 <= pt[0] <= x1 and y0 <= pt[1] <= y1:
+                draw.ellipse([pt[0] - 3, pt[1] - 3, pt[0] + 3, pt[1] + 3], fill=color)
+
+    # held-item proxy: schematic blade from the right hand along the forearm
+    # direction. NOT occlusion-accurate — real check = runClient.
+    if draw_item:
+        rseg = skel["rightArm"]
+        dirv = rseg["end"] - rseg["elbow"]
+        n = float(np.linalg.norm(dirv))
+        if n > 1e-6:
+            blade_tip = rseg["end"] + (dirv / n) * 22.0  # ~1.4 blocks of blade
+            blade = project_seg_fpv(rseg["end"], blade_tip, cam, focal, origin)
+            if blade is not None:
+                draw.line(list(blade), fill=(170, 175, 185), width=3)
+                draw.text(
+                    (blade[1][0] + 3, blade[1][1] - 4),
+                    "item(proxy)",
+                    fill=(150, 155, 165),
+                    font=font,
+                )
+
+
+def render_tick_fpv(
+    kfs,
+    tick: float,
+    out_path: Path,
+    title: str,
+    body_disp_scale: float = 1.0,
+    fov_deg: float = 70.0,
+    draw_item: bool = True,
+    font: Optional[ImageFont.ImageFont] = None,
+) -> None:
+    panel_w, panel_h = 560, 460
+    total_w, total_h = panel_w + 20, panel_h + 52
+    img = Image.new("RGB", (total_w, total_h), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    if font is None:
+        try:
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11
+            )
+        except OSError:
+            font = ImageFont.load_default()
+    big_font = font
+    try:
+        big_font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13
+        )
+    except OSError:
+        pass
+    draw.text((10, 6), title, fill=(20, 20, 30), font=big_font)
+
+    skel = solve_skeleton(kfs, tick, body_disp_scale=body_disp_scale)
+    cam = compute_fpv_camera(kfs, tick, body_disp_scale=body_disp_scale)
+    focal = (panel_w / 2) / math.tan(math.radians(fov_deg) / 2)
+
+    body = sample_part(kfs, "body", tick)
+    r = math.degrees
+    ex, ey, ez = cam["eye"]
+    summary = (
+        f"FPV  fov={fov_deg:.0f}deg  body-scale={body_disp_scale:.2f}  "
+        f"eye=({ex:+.2f},{ey:+.2f},{ez:+.2f})  "
+        f"body xyz=({body['x']:+.2f},{body['y']:+.2f},{body['z']:+.2f}) "
+        f"pitch={r(body['pitch']):+.0f} yaw={r(body['yaw']):+.0f}"
+    )
+    draw.text((10, 26), summary, fill=(60, 60, 80), font=font)
+
+    bbox = (10, 46, 10 + panel_w, 46 + panel_h)
+    label = (
+        "FIRST-PERSON (eye @ body frame, look -Z) — arm pose + blade sweep; "
+        "occlusion NOT modeled (use runClient)"
+    )
+    draw_fpv_view(draw, skel, cam, bbox, focal, label, font, draw_item=draw_item)
+    img.save(out_path)
+
+
+def render_grid_fpv(
+    json_path: Path,
+    out_dir: Path,
+    ticks: Optional[List[float]] = None,
+    body_disp_scale: float = 1.0,
+    fov_deg: float = 70.0,
+    draw_item: bool = True,
+) -> Path:
+    data = json.loads(json_path.read_text())
+    emote = data["emote"]
+    if emote.get("degrees", True):
+        print(
+            "WARNING: emote.degrees=true/absent — values assumed radians.",
+            file=sys.stderr,
+        )
+    kfs = collect_keyframes(emote)
+    if ticks is None:
+        all_ticks = set()
+        for part in kfs.values():
+            for axis_list in part.values():
+                for t, _, _ in axis_list:
+                    all_ticks.add(int(t))
+        ticks = sorted(all_ticks)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = json_path.stem
+    description = emote.get("description", "")
+    scale_tag = f"_b{int(round(body_disp_scale * 100)):03d}"
+    per_tick: List[Path] = []
+    for tick in ticks:
+        out_path = out_dir / f"{name}_fpv{scale_tag}_t{int(tick):02d}.png"
+        title = f"{name} FPV  tick={tick}  {description[:90]}"
+        render_tick_fpv(
+            kfs,
+            tick,
+            out_path,
+            title,
+            body_disp_scale=body_disp_scale,
+            fov_deg=fov_deg,
+            draw_item=draw_item,
+        )
+        per_tick.append(out_path)
+    imgs = [Image.open(p) for p in per_tick]
+    w = max(i.width for i in imgs)
+    total_h = sum(i.height for i in imgs)
+    grid = Image.new("RGB", (w, total_h), (255, 255, 255))
+    y = 0
+    for i in imgs:
+        grid.paste(i, (0, y))
+        y += i.height
+    grid_path = out_dir / f"{name}_fpv{scale_tag}_grid.png"
+    grid.save(grid_path)
+    return grid_path
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("json", type=Path, help="path to fist_punch_right.json")
+    ap.add_argument("json", type=Path, help="path to a player_animation JSON")
     ap.add_argument("-o", "--out", type=Path, default=Path("/tmp/anim_render"))
-    ap.add_argument("--ticks", type=str, default="", help="comma-separated ticks (default: use all keyframe ticks)")
+    ap.add_argument(
+        "--ticks",
+        type=str,
+        default="",
+        help="comma-separated ticks (default: use all keyframe ticks)",
+    )
+    ap.add_argument(
+        "--fpv",
+        action="store_true",
+        help="render a first-person (eye) view instead of the 3 ortho views",
+    )
+    ap.add_argument(
+        "--body-scale",
+        type=float,
+        default=1.0,
+        help="[fpv] scale body.* displacement: 1=raw TPV (shows camera swim), "
+        "0=FPV-variant (no swim), 0.5=halved",
+    )
+    ap.add_argument("--fov", type=float, default=70.0, help="[fpv] vertical FOV degrees")
+    ap.add_argument(
+        "--no-item",
+        action="store_true",
+        help="[fpv] hide the held-item proxy blade",
+    )
     args = ap.parse_args()
     ticks = None
     if args.ticks:
         ticks = [float(t) for t in args.ticks.split(",")]
-    grid_path = render_grid(args.json, args.out, ticks=ticks)
+    if args.fpv:
+        grid_path = render_grid_fpv(
+            args.json,
+            args.out,
+            ticks=ticks,
+            body_disp_scale=args.body_scale,
+            fov_deg=args.fov,
+            draw_item=not args.no_item,
+        )
+    else:
+        grid_path = render_grid(args.json, args.out, ticks=ticks)
     print(f"wrote grid: {grid_path}")
     return 0
 
