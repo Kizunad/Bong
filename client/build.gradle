@@ -214,6 +214,18 @@ tasks.named('runGametest') {
 
 tasks.named('test') {
     dependsOn(tasks.named('runGametest'))
+
+    // SkillParticleSpecDocTest 跨目录读 plan §P5.1 粒子 spec 表做对拍。该文件不在 test
+    // sourceSet 里，不声明成任务输入的话：只改 spec 表、不改测试代码时 gradle 会判
+    // UP-TO-DATE 直接跳过，漂移就悄悄溜过去了——正是这类对拍测试要防的事。
+    // （plan 归档后路径会从 docs/ 变到 docs/finished_plans/，两处都列。）
+    inputs.files(
+        files(
+            '../docs/plan-skill-anim-fidelity-v1.md',
+            '../docs/finished_plans/plan-skill-anim-fidelity-v1.md'
+        ).filter { it.exists() }
+    ).withPropertyName('skillParticleSpecDoc')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // runClientPreview — 用于 worldgen-snapshot 预览（plan-worldgen-snapshot-v1）。

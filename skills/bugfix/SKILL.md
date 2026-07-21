@@ -1,6 +1,6 @@
 ---
 name: bugfix
-description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施 subagent，在独立 worktree/branch 中完成原子 claim、promotion、第一性原理证真或证伪、最小修复、绑定干净 HEAD 的无上下文对抗验证、完整门禁、合并主线复验、归档、PR、review 与 e2e。用户未指定时默认 2 路实施、gpt-5.6-sol-xhigh 实施与 validator。主 agent 只调度、等待、锁运维和清理，不直接修代码。用于 /bugfix、$bugfix、“跑 BugFix”“持续修 bug”“把 bug skeleton 闭环”等请求。
+description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施 subagent，在常驻 slot/branch 中完成原子 claim、进驻、promotion、第一性原理证真或证伪、最小修复、绑定干净 HEAD 的无上下文对抗验证、完整门禁、合并主线复验、归档、PR、review 与 e2e。用户未指定时默认 2 路实施、gpt-5.6-sol-xhigh 实施与 validator。主 agent 只调度、等待、锁运维和清理，不直接修代码。用于 /bugfix、$bugfix、“跑 BugFix”“持续修 bug”“把 bug skeleton 闭环”等请求。
 ---
 
 # Bong BugFix 主干调度
@@ -14,21 +14,21 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 1. 维护任务表与用户指定的实施槽位。
 2. 启动、等待、唤醒和关闭实施或返工 subagent。
 3. 盯 PR review/e2e，维护 claim ref 生命周期，巡检孤儿锁。
-4. 完整清理已闭环任务的本地 worktree、分支和私有生成物，再立即补位。
+4. 收口已闭环任务：释放常驻 slot（detach + 删本地分支 + 清任务私有生成物，**保留 slot 保温缓存**），巡检遗留一次性 worktree，再立即补位。
 
 禁止主干直接修改业务代码、plan、测试或 PR diff，禁止在主 checkout 提交，禁止 stash/reset 用户工作，禁止替 subagent 创建 claim、push 提交、开 PR 或 merge。删除远端 claim ref 是锁运维，是“不 push”禁令的唯一例外。
 
 ## 启动参数、并发与资源
 
 - 启动时读取并保持三个独立参数：实施数量 `N`、实施模型、validator 模型。用户未指定时才默认 `N=2`、实施模型 `gpt-5.6-sol-xhigh`、validator 模型 `gpt-5.6-sol-xhigh`；不得用默认值覆盖用户输入。
-- 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 worktree 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
+- 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 slot/task 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
 - 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
 - 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，每次补位按实时快照计算 `min(max(0, N - 当前实施 agent 数), max(0, platform_total - live_agents - 未入 snapshot reservation - validator_reserve - 未计入 live 的主干占位))`；容量不可查时只按 `max(0, N - 当前实施 agent 数)` 补位，编译并发仍由独立 token 限制为 2。平台满载、已有无关 agent 或 outstanding reservation 都会减少可启动数；超额任务进 FIFO，不 spawn。
 - validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。每个已 GRANTED/ACKED/RECOVERING、但尚未出现在 live snapshot 的 validator token 都先预占 1 个平台槽；只有状态查询确认对应 validator 已出现后才转为 snapshot-accounted，避免重复授权或双扣。容量不可查时 validator 一次只授权 1 个。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
-- 所有运行者执行 `df -h /`。磁盘超过 90% 时，只删除本轮已闭环 worktree 的私有可再生生成物。
-- **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR`**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 也只用于该前提下的故障恢复。
+- 所有运行者执行 `df -h /`。磁盘超过 90% 时，主干运行 `bash scripts/wt-janitor.sh`（report-only）并按报告回收遗留：仅 PR **MERGED** 且干净、无非缓存 ignored（`.env` 等）、无未合入 patch 的树用 `--apply` 自动收（squash 后用 `git cherry` 判等价）；CLOSED/UNKNOWN/无 PR/脏树一律交人工。常驻 slot 的 `server/target`/`client/build` 保温缓存**不属于**「私有可再生生成物」，不参与任何任务级清理。
+- **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR` 与 slot 保温缓存**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 只用于该前提下的故障恢复（slot 路径恒定后，删 worktree 烙坏 valence_generated 绝对路径的故障不应再出现）。
 
 ### harness 能力探测与适配
 
@@ -123,7 +123,7 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 
 1. `git fetch origin` 后只从 `origin/main:docs/plans-skeleton/plan-bughunt-*.md` 选择疑似 bug；优先用户指定项，否则按可达性、影响和局部可修性排序。
 2. 派发前四查仅作辅助诊断：skeleton 仍存在、无同名 active plan、目标未被已合并修复覆盖、无同名远端分支/开放 PR。查询存在 TOCTOU，**不得把四查当互斥锁**。
-3. 一个 skeleton、subagent、worktree、branch、PR 必须一一对应。主干只传 skill 路径、skeleton 路径、任务 ID、绝对 worktree 目标路径和模型要求；不要传真伪判断或预设修法。
+3. 一个 skeleton、subagent、常驻 slot 进驻、branch、PR 必须一一对应（slot 是复用工作目录，不是每任务新建 worktree）。主干只传 skill 路径、skeleton 路径、任务 ID、绝对 slot 目标路径和模型要求；不要传真伪判断或预设修法。
 4. 没有可领取项时进入等待；不要制造 skeleton 充数。
 
 ## 等待协议
@@ -134,14 +134,14 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 
 ## 实施 subagent 强制状态机
 
-### 1. 原子 claim 与锁定 worktree
+### 1. 原子 claim 与进驻常驻 slot worktree
 
-subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan-basename>`，worktree 固定为仓库下绝对路径 `.agent-worktrees/bugfix-<plan-basename>`。
+subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan-basename>`。worktree 不再按任务新建，改为进驻主干分派的**常驻编译 slot**：`.agent-worktrees/slot-<k>`（k=1..N，N 由 `scripts/slot_registry.sh init --max N` 固定，默认 2；主干按需一次性创建、永久 locked）。占用必须先过 `slot_registry.sh acquire` 原子 reservation，detached HEAD 不能单独充当空闲信号。slot 跨任务保温 `server/target`/`client/build` 增量缓存——这是磁盘占用上限固定（不随任务数增长）与热编译的核心，**任何阶段都严禁 remove slot 或删除其构建缓存**。
 
 严格区分作用域：
 
-- **控制面**：以下 claim、fetch、`git worktree add`、失败回滚、最终 remove/prune 命令必须在已经存在的主仓库绝对路径或专用调度目录执行，目标 worktree 尚未创建时不得把 cwd 指向它。
-- **任务面**：只有 worktree 已创建、locked、upstream 与三方 SHA 对拍完成后，才允许在目标绝对 worktree 中读取任务代码、编辑、测试、commit、push 和操作 PR。
+- **控制面**：以下 claim、fetch、slot 创建、失败回滚命令必须在已经存在的主仓库绝对路径或专用调度目录执行。
+- **任务面**：只有 slot 进驻完成、locked、upstream 与三方 SHA 对拍完成后，才允许在 slot 绝对路径中读取任务代码、编辑、测试、commit、push 和操作 PR。
 
 1. 执行 `git fetch origin main`，记录 `claim_sha=$(git rev-parse origin/main)`。
 2. 调用 GitHub create-ref API，保留完整 HTTP 状态、响应头和响应体：
@@ -156,11 +156,22 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
    - `422`：先检查响应原因，再用 `git ls-remote --heads origin refs/heads/bugfix/plan-X` 确认同名 ref。只有 ref 确实存在才判“已占用”并回报主干换任务；ref 不存在或原因不是重复 ref 时，标记流程错误并带完整诊断，禁止伪装成占用。
    - 其它状态：认领失败，保留完整响应并停止本任务。
 4. 成功后执行 `git fetch origin refs/heads/bugfix/plan-X:refs/remotes/origin/bugfix/plan-X`，核验远端跟踪 ref SHA 等于 `claim_sha`。
-5. 用单条 `git worktree add --lock -b bugfix/plan-X <绝对路径> origin/bugfix/plan-X` 创建并锁定 worktree，再在 worktree 内显式设置 upstream 为 `origin/bugfix/plan-X`。
-6. 对拍 `git -C <绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，并检查 worktree 确实处于 locked 状态。
-7. create-ref 成功后，若 fetch、建树、锁定、跟踪或 SHA 对拍任一步失败，在控制面安全移除本轮半成品 worktree/local branch，再由该 subagent 删除刚创建的远端 claim ref并核验不存在；不得留下孤儿锁。
+5. 进驻主干分派的 slot（**占用权威 = `scripts/slot_registry.sh` 原子 reservation**，不是 detached HEAD。detached 只作辅助诊断：占用中的 slot 通常检出任务分支，空闲 slot 通常 detach；但无 registry 持有时禁止 checkout。容量由 `slot_registry.sh init --max N` 固定，默认 N=编译并发上限 2）：
+   - slot 尚不存在时，由主干在控制面用单条 `git worktree add --lock --detach .agent-worktrees/slot-<k> origin/main` 创建（常驻、永久 locked，之后不再重建）。
+   - **先 acquire**：`out=$(bash scripts/slot_registry.sh acquire --slot slot-<k> --task <plan-basename> --branch bugfix/plan-X --claim-sha "$claim_sha" --agent <canonical-id>)`，从这次 stdout 提取 opaque `OWNER_TOKEN` 到仅 holder 可见的 `owner_token`（默认 status 不暴露）。失败（busy / capacity full / 非法参数）→ 换 slot 或排队，**禁止**对未持有 reservation 的 slot 做任何写/checkout。
+   - **双门核验**：① `git -C <slot绝对路径> symbolic-ref -q HEAD` 无输出（detached；检出着任何分支 = 物理上已被占用，即使 registry 异常也 fail-closed）② `git -C <slot绝对路径> status --porcelain=v1 --untracked-files=all` 输出为空。任一不满足即 `rollback` 释放 reservation、回报主干处置，**禁止自行 clean/reset/切分支动他人数据**。
+   - **ignored 安全门**：进驻前枚举 ignored（`git status --porcelain=v1 --untracked-files=all --ignored=matching`）。仅缓存白名单 `server/target`、`client/build`、`client/.gradle` 可接受；出现 `.env`、私有日志等非白名单 ignored → `rollback`、转人工，不得覆盖或删除。
+   - **本地分支进驻（避免 `checkout -B` 覆盖残留提交）**：
+     - 本地 `refs/heads/bugfix/plan-X` **不存在**：才允许 `git -C <slot绝对路径> checkout -B bugfix/plan-X origin/bugfix/plan-X`，并显式设置 upstream 为 `origin/bugfix/plan-X`，随后 `bash scripts/slot_registry.sh mark-created-local --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token" --value true`。
+     - 本地分支**已存在**：禁止 `checkout -B`（会 reset 到远端、覆盖/丢弃残留本地提交）。改为 `git -C <slot绝对路径> checkout bugfix/plan-X`，核验 `rev-parse HEAD` 与 `claim_sha` 一致；不一致 → 转人工，不得强行对齐；`created_local_branch` 保持默认 `false`。
+     - BLOCKED 干净释放后的恢复进驻走普通「acquire + 既有本地分支 + SHA 对拍」；脏现场仍占 frozen reservation 时，必须先按本节 audited handoff 取得该 reservation 的新 token，再走「既有本地分支 + SHA 对拍」，禁止 `-B`。
+6. 对拍 `git -C <slot绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，检查 slot 确实处于 locked 状态，然后只运行 `bash scripts/slot_registry.sh occupy --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"`；该 executable gate 会重验 canonical slot、registered+locked、branch/HEAD/upstream/claim、dirty/untracked/ignored，不能用前面的手工检查替代。
+7. create-ref 成功后的失败回滚分两种（**均不得无条件 `branch -D`**）：
+   - **双门/ignored/acquire 后核验失败**（checkout 尚未执行）：不得在 slot 内执行任何写操作；`bash scripts/slot_registry.sh rollback --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"`（此时 `DELETE_LOCAL_BRANCH` 必为 false），回报主干处置/换 slot。远端 claim ref 仅在本 subagent 本轮刚创建、PR 尚未创建、且删除前重新查询确认其 SHA 仍严格等于本轮 `claim_sha` 时，才由本 subagent 删除并核验不存在；任一条件不满足即保留 ref 交主干。
+   - **checkout 之后的步骤失败**（跟踪、SHA 对拍等）：在 slot 内 `git checkout --detach origin/main` 脱离；执行带同一 `--slot/--task/--agent/--owner-token` 的 `slot_registry.sh rollback` 并**仅当 stdout 含 `DELETE_LOCAL_BRANCH=true`（本轮 `mark-created-local true`）才删除本地分支**；既有分支（含 SHA 冲突/BLOCKED 残留）一律保留并交人工。远端 claim ref 仍只适用上一项完全相同的三条件失败回滚；其它释放、巡检与删除统一由主干负责。
+   两种路径都不得留下孤儿锁，**不得 remove slot**。正常闭环释放：`detach` →（CLOSED）`branch -D` → `bash scripts/slot_registry.sh release --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"`。BLOCKED 干净释放：`detach` + **保留本地分支** + 带同一完整 owner identity 的 `slot_registry.sh release`；脏现场：`bash scripts/slot_registry.sh freeze-blocked --slot slot-<k> --task <plan> --agent <canonical-id> --owner-token "$owner_token"` 并交人工。恢复前先运行 `manual-report`；人工随后以完整旧 reservation identity、`--recovery-agent <new-canonical-id>`、operator、reason 执行 audited `force-unfreeze-blocked`。该命令只准备 durable private handoff + public intent，不修改 reservation；从 stdout 提取并安全保存一次性 `OPERATION_ID` 与新 `OWNER_TOKEN`（不得写日志/audit），然后由恢复者携同一 operation/token/operator/reason 调用 `resume-unfreeze-blocked`。resume 按 agent→token→state→completion audit→private cleanup 续跑，任一中断点都可用同一凭据恢复；private handoff 已落盘而 public intent 缺失时普通命令 fail-closed，合法 resume 会先补写并 fsync intent 后才 mutation。status/report/audit 不泄漏 raw token（public audit 只存新 token SHA-256）。reserved 来源最终回到 reserved，恢复者持新 token 继续现有 reservation，完成现场核验后执行 `occupy`，**不得再 acquire**；occupied 来源最终回到 occupied，恢复者持新 token 直接接管 authority。全程不宣称 PID/liveness 自动恢复。
 
-进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在绝对 worktree 内执行。禁止复用别人的 worktree，禁止修改主 checkout。
+进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在 slot 绝对路径内执行；编译必须落在 slot 自身的 in-tree target（若环境设有全局 `CARGO_TARGET_DIR`，门禁命令前显式 `unset CARGO_TARGET_DIR`），保证保温缓存留在 slot 内。禁止进驻他人正占用的 slot，禁止修改主 checkout。
 
 ### 2. Promotion 单独提交
 
@@ -268,30 +279,30 @@ Validator-Model: <实际 validator 模型精确 id>
 PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 
 1. 记录 PR URL、最终 SHA、结论、测试、validator 和 gate 状态，关闭实施 subagent。
-2. 在 worktree 仍存在时执行 `git status --porcelain=v1 --untracked-files=all`，确认没有源码、用户 WIP 或未提交改动，也没有本流程产生的孤儿 stash；不干净则停止清理并派恢复。
-3. 识别并删除**明确属于该 worktree、独占、ignored、可再生**的生成目录，再次确认没有源码/WIP。显式排除共享 `CARGO_TARGET_DIR`，绝不任务级清理它。
-4. 在控制面执行 `git worktree unlock <path>`，再 `git worktree remove <path>`。
-5. 删除对应本地 branch；不得先删仍被 worktree 检出的 branch。
-6. 执行 `git worktree prune`，释放槽位并补下一个 skeleton。远端 claim 分支保留给 review 返工/merge。
+2. 在 slot 内执行 `git status --porcelain=v1 --untracked-files=all`，确认没有源码、用户 WIP 或未提交改动，也没有本流程产生的孤儿 stash；不干净则停止清理并派恢复。
+3. 识别并删除**明确属于该任务、独占、ignored、可再生**的非缓存生成物（`.tmp` 日志、临时导出等），再次确认没有源码/WIP。**保留 slot 的 `server/target`/`client/build` 保温缓存**，显式排除共享 `CARGO_TARGET_DIR`，绝不任务级清理它们。
+4. 在 slot 内执行 `git checkout --detach origin/main` 脱离任务分支；slot 保持 locked，**不 remove、不 prune**。
+5. 删除对应本地 branch；不得先删仍被 slot 检出的 branch（顺序：先 detach 后删）。
+6. 标记 slot 空闲并补下一个 skeleton。远端 claim 分支保留给 review 返工/merge。旧流程或异常残留的一次性 worktree 由主干用 `bash scripts/wt-janitor.sh` 巡检回收（MERGED+安全门通过才自动；CLOSED/未知/含非缓存 ignored 交人工），不逐个手工追。
 
 ### 远端 claim 释放与孤儿巡检
 
 - PR merge：核验远端 claim 是否已删；未删时由主干删除并再次核验。
 - PR close 且确认放弃：先确认无开放 PR、无存活 subagent、远端提交无需保留，再删除 claim ref，让 skeleton 重新开放。
 - claim 成功但 PR 未创建便异常退出/失联：主干确认无开放 PR、无存活 subagent、远端无须保留提交后删除孤儿 claim。每轮补位都巡检一次。
-- 其它失败：保留有恢复价值的 worktree/ref，派恢复 subagent；不要盲删 BLOCKED 任务。
+- 其它失败：保留有恢复价值的现场/ref，派恢复 subagent；不要盲删 BLOCKED 任务。**BLOCKED 不占死 slot**：现场以 commit 形式留在任务分支上（工作区干净）后，主干在 slot 内 `git checkout --detach origin/main`、**保留本地分支**（未推送的提交仍在分支上）、释放 slot。工作区不干净的 BLOCKED 现场冻结该 slot 交人工——这是唯一允许 slot 被长期占用的情形，主干在状态表持续告警。脏现场恢复者先经 audited `force-unfreeze-blocked --recovery-agent <new-id>` handoff 取得轮换后的 `OWNER_TOKEN`；reserved 来源不再 acquire，使用这份 token 完成 slot/branch/checkpoint 核验并过 `occupy`，occupied 来源直接接管。**BLOCKED 恢复进驻走既有本地分支**：在 slot 内 `git checkout bugfix/plan-X`（直接检出保留的本地分支），检出后与状态表记录的 checkpoint SHA 对拍；**禁止 `checkout -B ... origin/...`**——-B 会把本地分支重置到远端位置，远端不含 BLOCKED 的本地提交时现场即刻丢失。step 5 的 `checkout -B` 仅用于全新 claim 进驻。
 
 ### review/e2e 返工责任链
 
-review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，从同一远端 PR branch 重建并锁定 worktree；不要让主干修，也不要假设旧 worktree 仍在。
+review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，从同一远端 PR branch 进驻空闲 slot；不要让主干修，也不要假设原任务的进驻状态仍在。返工与新实施**共用同一 slot 池**：无空闲 slot 时返工任务排队并**优先于新 skeleton 派发**获得下一个释放的 slot；不得为返工中断在跑任务或强占其 slot。
 
-返工建树不调用 create-ref。在控制面执行以下幂等链：
+返工进驻不调用 create-ref。执行以下幂等链：
 
 1. 确认 PR 仍 open，读取 `pr_head_sha` 与远端 branch 名。
 2. `git fetch origin refs/heads/<remote-branch>:refs/remotes/origin/<remote-branch>`，对拍远端跟踪 ref SHA 等于 `pr_head_sha`。
-3. 确认目标 worktree 路径和专用本地返工 branch 未被其它任务使用；执行 `git branch --track <专用本地返工branch> origin/<remote-branch>` 创建唯一专用跟踪分支。若同名本地分支已存在，只能在确认未被 worktree 使用且没有需保留的本地提交后删除并重建；不得盲目 reset。
-4. `git worktree add --lock <绝对路径> <专用本地返工branch>`，再对拍 worktree HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
-5. 任一步失败时只 unlock/remove 半成品 worktree、删除本轮专用本地 branch并 prune；**开放 PR 的远端 claim ref 不得删除**。
+3. 主干分派一个空闲 slot；返工 subagent 必须先执行 `slot_registry.sh acquire --slot <slot> --task <plan-basename> --branch <remote-branch> --claim-sha "$pr_head_sha" --agent <canonical-id>`，从本次 stdout 提取并私有保存 `OWNER_TOKEN`。acquire 失败则换 slot/排队，禁止 checkout；成功后核验 slot detached、`git status --porcelain=v1 --untracked-files=all` 为空且 ignored 仅含缓存白名单，并确认专用本地返工 branch 未被其它任务使用。若同名本地分支已存在，禁止删除、重建或 reset；只能在确认未被任何 slot 检出后，按第 4 步直接 checkout 并核验 SHA。
+4. 本地返工分支不存在时才 `checkout -B <专用本地返工branch> origin/<remote-branch>` 并执行 `mark-created-local --value true`；本地已存在则直接 checkout 并核验 SHA 与 `pr_head_sha` 一致（不一致转人工并保留分支）。显式设置 upstream 并完成 slot HEAD、upstream SHA、远端跟踪 ref、PR head 四方对拍后，必须使用同一 `OWNER_TOKEN` 执行 `slot_registry.sh occupy`；只有唯一生产进驻门成功，才能进入任务面。
+5. acquire 后任一步失败都先在 slot 内 detach（若已 checkout），再用同一 `--slot/--task/--agent/--owner-token` 执行 `rollback`；仅 stdout `DELETE_LOCAL_BRANCH=true` 时才删除本轮新建的本地 branch，既有 branch 必须保留并交人工。occupy 后的正常/BLOCKED 干净退出使用同一身份执行 `release`；脏现场只能 `freeze-blocked` 交人工。**开放 PR 的远端 claim ref 不得删除，slot 不得 remove**。
 
 完成四方 SHA 对拍后才进入任务面。
 

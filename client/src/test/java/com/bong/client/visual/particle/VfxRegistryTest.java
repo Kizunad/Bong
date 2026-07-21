@@ -258,12 +258,19 @@ public class VfxRegistryTest {
             "bootstrap should register yidao_life_extension");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.MASS_MERIDIAN_REPAIR),
             "bootstrap should register yidao_mass_meridian_repair");
-        assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "jiemai_burst_blood")),
-            "bootstrap should register zhenmai parry blood burst");
-        assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "jiemai_neutralize_dust")),
-            "bootstrap should register zhenmai neutralize dust");
+        // plan-skill-anim-fidelity-v1 P5：真脉 5 招已从 bong:jiemai_* 借用改为专属 id
+        // （逐项断言 + player 类归属见 SkillVfxWiringManifestTest）。
+        // bong:jiemai_sever_flash 仍保留——meridian_severed_emit.rs 的被动断脉叙事在发。
         assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "jiemai_sever_flash")),
-            "bootstrap should register zhenmai sever flash");
+            "bootstrap should register jiemai_sever_flash (被动断脉叙事 meridian_severed_emit.rs "
+                + "仍发射该 id；漏注册会让非主动断脉完全没有视觉反馈)");
+        assertFalse(VfxRegistry.instance().contains(new Identifier("bong", "jiemai_burst_blood")),
+            "bong:jiemai_burst_blood 应随 P5 去复用撤除注册——去复用后全仓无发射方"
+                + "（原发射方仅 zhenmai.parry / zhenmai.multipoint），保留注册即死代码");
+        assertFalse(VfxRegistry.instance()
+                .contains(new Identifier("bong", "jiemai_neutralize_dust")),
+            "bong:jiemai_neutralize_dust 应随 P5 去复用撤除注册——去复用后全仓无发射方"
+                + "（原发射方 zhenmai.neutralize / zhenmai.harden / npc.buff_speed）");
         assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.EVENT_ID),
             "bootstrap should register vortex_spiral");
         // AV 差异化：woliu 基础 5 招专属 particle 注册（漏注册→cast 时 VFX 被静默丢弃）

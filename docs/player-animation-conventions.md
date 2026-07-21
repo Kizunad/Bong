@@ -576,3 +576,106 @@ Bong 当前"正架 cross punch"基线。所有数值都经过 §11 渲染工具�
 6. **循环动画停止路径红线**（plan §8.1 #3）：任何 `isLoop:true` 引导段动画，落地时必须同批交付停止路径——正常完成时刻由 release 段 PlayAnim 同优先级覆盖或显式 `StopAnim`；打断时刻必须显式 `StopAnim`（既有先例：`full_power_emit.rs` ChargeInterrupted → StopAnim(windup_charge)）。无停止路径的循环动画不予合入。
 7. **工具流**：动画一律脚本生成（`client/tools/gen_<anim>.py`，参照 `gen_fist_punch_right.py` 先例）便于参数化迭代；每批走 `render_animation.py` 三视图 headless 预览；按视觉资产纪律 3 轮打磨 + 终轮 `<PROMISE>` 担保。
 8. **机械化对拍**：cast_ticks ↔ 动画时长契约由 client 侧对拍测试锁定（快照 `technique_cast_ticks_snapshot.json` 由 server `TECHNIQUE_DEFINITIONS` 单向生成）；现状不达标项走只缩不涨 allowlist，清零 = plan-skill-anim-fidelity-v1 P1-P4 完成的机械判据。
+---
+
+## §14 两段式招的相位承接契约 + 长引导对齐口径裁决（plan-skill-anim-fidelity-v1 P6 定稿，2026-07-21）
+
+> 本节由 plan-skill-anim-fidelity-v1 P6 明文授权追加（该 plan §P6「相位承接契约统一裁决」+「allowlist 按 §8.1 #5 收口」两项交付物的正典化入档）；**只追加不改写本文档既有段落**，§13 各条继续有效，本节只补充 §13 #2「长引导招必须拆循环蓄力段 + release 段」的**适用边界**与**交接语义**。
+
+### §14.1 裁决一：长引导对齐口径 —— 新增「定长相位充能型」第四类登记例外
+
+**背景**：`sword_path.heaven_gate` 长期驻留 `CAST_ALIGNMENT_ALLOWLIST`，原因是其充能动画 `sword_heaven_gate_charge` 对齐 60 tick 的**充能相位**而非 `cast_ticks=80` 的总窗，且该段 `isLoop=false`，撞上 §13 #2「`cast_ticks ≥ 40` 长引导招蓄力段必须 isLoop」的判据。P6 需在「改动画」与「改判据」之间二选一。
+
+**裁决：改判据，不改动画。** 理由是读代码得出的结构性事实，不是口径偏好：
+
+1. **该段窗长是确定的，不是可变的**。`HEAVEN_GATE_CHARGE_END = 60`（`server/src/sword_path/heaven_gate.rs:15`）是服务端**具名相位常量**，不随 mastery / 平和色缩放；`cast_ticks=80` 是含后续判定相位的总窗，不是充能段时长。而 §13 #2 要求 isLoop 的前提正是「窗长可变、需要循环覆盖任意时长」——前提在此不成立。
+2. **改成循环会主动引入缺陷**。充能段资产是一条单调递进的抬剑坡道（`rightArm.pitch` 由 -0.698 递进到 -2.688 rad）。把一条有始有终的坡道标成 isLoop，就必须在 endTick 把所有轴补回起点值（§13 #5 库坑红线），即在坡道顶端硬接一个回落——为满足判据而制造出这条演出本不存在的回绕跳变。
+3. **定长相位可以锁得比循环更严**。窗长确定 ⇒ 交接点是确定的单点（charge 末帧 → release 首帧），可以要求**逐轴精确相等**（零容差），而不是循环档那样只能给一个相位混合预算。现网资产已经满足：`sword_heaven_gate_charge@t60` 与 `sword_heaven_gate_release@t0` 逐轴字节相同。
+
+**登记为 §13 #2 的第四类例外**（与既有三类「持续维持型 / 长演出型 / 瞬发结算型」并列）：
+
+> **④ 定长相位充能型**：充能段由服务端**具名确定性相位常量**驱动（非 mastery 缩放的变长引导窗）的两段式招。不适用「蓄力段必须 isLoop」判据，改由更严的确定性接缝契约锁定。
+
+**入类门槛（新招援引前逐条核验，缺一不可）**：
+
+| # | 要求 | 机械锁 |
+|---|---|---|
+| ① | 充能段时长 = 服务端具名相位常量（非可变窗） | 人工核验 + ② 的字面量镜像 |
+| ② | 充能段非循环，且 `endTick` == 该相位常量 | `FIXED_PHASE_CHARGE_SKILLS` 值即常量镜像，任一端漂移判红 |
+| ③ | 充能段**末帧**与 release 段**首帧**逐轴精确相等（零容差） | `fixedPhaseChargeSeamIsExactAndNonLooping()` |
+| ④ | 两段 anim id 均被服务端映射表真实发射 | server `emit_sword_path_visual_triggers` 既有 pin |
+| ⑤ | 不同时驻 `CAST_ALIGNMENT_ALLOWLIST`（分类契约取代豁免） | 同上用例互斥断言 |
+
+**落点**：`client/src/test/java/com/bong/client/animation/AnimCastTicksAlignmentTest.java` 的 `FIXED_PHASE_CHARGE_SKILLS` + `fixedPhaseChargeSeamIsExactAndNonLooping()`。`sword_path.heaven_gate` 随本裁决**移出 allowlist**（豁免 → 正向机械锁）。
+
+### §14.2 裁决二：两段式「相位承接契约」采纳方案① —— fade 混合即为契约
+
+**问题**：变长引导窗（`cast_ticks` 随 mastery / 平和色浮动）结束时，isLoop 蓄力段可能停在**任意相位**，而 release 段首帧是固定的——中间相位完成时姿态是否会跳变？
+
+**三个候选**：① 明确「fade 混合即为契约」+ 补客户端桥接 pin；② release 首帧改相位无关的中性起手；③ server 按当前相位选 release 变体。
+
+**裁决：采纳 ①。** 依据是 PlayerAnimator + 本仓桥接层的语义链——读库源码才能确认，靠猜必然选错：
+
+1. `AnimationLayerManager.playOnStack` 同 channel 换 animId 时，先对旧 id 调 `BongAnimationPlayer.stopOnStack`；`fadeOutTicks > 0` 时该层**不立即摘除**，进 `PENDING_REMOVALS` 继续留在 `AnimationStack` 上。
+2. `AnimationStack.addAnimLayer` 对**同优先级**的插入点是「第一个 priority ≥ 新值的位置」，于是**后进的 release 层位于先进的蓄力层之下**；而 `AnimationStack.get3DTransform` 自低索引向高索引逐层求值、把下层结果当作上层的 `value0`。即：**正在淡出的蓄力段位于 release 段之上，向它混合下去**。
+3. `stopOnStack` 走 `replaceAnimationWithFade(fade, null)`，`ModifierLayer` 把淡出前的动画实例挂成 `AbstractFadeModifier.beginAnimation`；而 `AbstractFadeModifier.get3DTransform` 的混合源正是 `beginAnimation.get3DTransform(...)` —— **蓄力段当前相位的姿态**，不是 tick 0，更不是 vanilla 默认姿态。
+
+三条合起来：**引导窗停在任意相位，都由「蓄力段当时姿态 → release 首帧」的真实交叉淡入承接，相位无关性是结构性保证而非资产巧合**。库已经把事情做对了，需要的是把它写进正典并钉住——而不是像 ② 那样牺牲基位连续性去迁就中间相位，或像 ③ 那样为每招增列 N 份 release 变体资产。
+
+**由此确立的硬约束**（违反即打回）：
+
+1. **`fadeOut > 0` 是必要条件，不是美观调节**。`fadeOut = 0` 会立即摘除旧层、混合源随之消失，交接瞬间姿态**塌回 vanilla 中立**（release 自身 fade-in 在 tick 0 进度为 0，只剩下层 `value0`）——玩家看到手臂先弹回下垂再抬起，比硬跳到 release 更糟。两段式招的 loop 段停止路径**必须**带 `fade_out_ticks ≥ 2`。
+2. **两段必须同 channel、同 priority**。跨 channel 或抬高 release 优先级都会打破 2 的层序前提，混合源随之失效。
+3. **release 的 `fade_in_ticks` 宜短（1-2 tick）**。与 §2.7「fade-in ≥ 3 tick」不矛盾：§2.7 约束的是**从 vanilla 冷起手**的场景（差距大、需要长淡入铺垫）；两段式交接是**热交接**，release 需要尽快成为完整的混合目标，淡入过长反而会在淡出窗口内让混合目标本身仍是半 vanilla 状态，制造二次塌陷。
+4. **相位姿态预算**：变长引导窗两段式招在**任意**相位上，蓄力段姿态与 release 首帧姿态的逐轴最大差 ≤ **60°**。取值依据：现网实测跨 8 对全相位最大差 = 46°（`yidao.contam_purge` 中段 `rightArm.bend`），留 ~30% 余量而非空断言；且 §2.7 已确立「冷起手 45° 差用 3 tick fade-in 可接受」的先例，热交接严格温和于冷起手，故 60° 是保守上界。
+5. **仅单侧声明的轴必须为中立 0.0**。一段写了某轴而另一段没写，等价于另一段把该轴当 0——若声明侧的值非 0，交接瞬间该轴凭空跳变。
+
+**落点**：机制 pin `client/src/test/java/com/bong/client/animation/TwoStageHandoffBlendTest.java`（合成动画锁桥接语义，含 `fadeOut=0` 退化对照）；资产预算 pin `AnimCastTicksAlignmentTest#twoStageHandoffHoldsAcrossEveryReachableLoopPhase()`（真实资产逐相位枚举，覆盖 `[0, 周期)` 全域，是「可达 cast_ticks 取余」的严格超集）；两段式登记表 `TWO_STAGE_PAIRS`（当前 8 对：`sword.infuse` / `anqi.charge_carrier` / `sword_path.heaven_gate` / yidao 5 招）。
+
+---
+
+## §15 easing 的管辖方向 —— 「写在哪帧」决定它管哪一段（plan-skill-anim-fidelity-v1 P6 review r1 定稿，2026-07-21）
+
+> 本节由 plan-skill-anim-fidelity-v1 P6 的 review r1 返工授权追加；**只追加不改写本文档既有段落**，§13 #3 继续有效，本节补的是它落地时的**方向**问题——「发力用 easeIn 族」到底该把 easeIn 写到哪一帧上。
+
+### §15.1 库语义：`before.ease`，管的是「本帧 → 下一帧」
+
+直觉上会以为 easing 描述的是「怎么**到达**这一帧」。**本仓不是。** 读源码得到的事实链：
+
+1. `KeyframeAnimationPlayer#getValueFromKeyframes`（PlayerAnimator 1.0.2，`:354`）：
+   `MathHelper.lerp((data.isEasingBefore ? after.ease : before.ease).invoke(f), before.value, after.value)`。
+2. `KeyframeAnimation.AnimationBuilder.isEasingBefore` 默认 **false**（`KeyframeAnimation.java:594`），只有 JSON 显式写 `easeBeforeKeyframe: true` 才会翻转（`AnimationJson.java:112`）。
+3. 本仓 `client/src/main/resources/assets/bong/player_animation/` 下 **140 份动画无一声明** `easeBeforeKeyframe`（`grep -l easeBeforeKeyframe` 结果为 0）。
+
+⇒ 三条合起来：**某关键帧上写的 easing，管辖的是「本帧 → 下一帧」这一段插值**，不是「上一帧 → 本帧」。
+
+### §15.2 推论：各段 easing 要写在该段的**起始侧**帧上
+
+把 §13 #3 的「蓄势用 easeOut 族、发力用 easeIn 族、收势 easeInOutSine」落到三段式结构上：
+
+| 段 | easing 写在哪些帧 | 写错的后果 |
+|---|---|---|
+| anticipation `[a0, a1]` | tick ∈ `[a0, a1)` | —— |
+| strike `[s0, s1]` | tick ∈ `[s0, s1)` | 写到 `s1`（顶点帧）上 → 实际跑去管 **recovery** 首段 |
+| recovery `[r0, r1]` | tick ∈ `[r0, r1)` | —— |
+
+**特别注意**：strike 段的 easeIn **不要**写在打击顶点帧上。顶点帧是 strike 的**末**帧，它的 easing 管的是顶点之后的收势段；发力加速要写在顶点**之前**的帧上。
+
+**踩过的两个坑**（均由 review r1 揪出，同一 off-by-one）：
+
+- `anqi_single_snipe`：生成器 docstring 白纸黑字写着「strike 4→6 弹射出手（easeIn 族 INQUAD）」，但 INQUAD 被放在顶点帧 `tick 6` 上——实际管的是 recovery `6→8`，而 strike 段 `4→6` 反被 `t4` 的 OUTSINE 管成**减速**，与作者本意正好相反：一记本该越甩越快的鞭甩弹射，实际是出手即泄力。
+- `stance_woliu`：strike 段 `8→20` 四帧全 `INOUTSINE`，整段没有任何加速，托举读不出「撑开」的力。
+
+**正例形态**（`beng_quan`，strike `[5,11]`）：`t5` OUTSINE（承蓄势末尾）→ `t7` INQUAD → `t8` INQUAD（发力加速，两帧都在段内）→ `t10` OUTQUAD（逼近顶点减速定格）→ `t11` INOUTSINE（交接收势）。新招按此排布。
+
+**判据是「段内有发力帧」，不是「strike 全程 easeIn」**：strike 段允许（并鼓励）一个**逼近顶点的减速定格帧**用 easeOut 收力——`beng_quan` `t10 OUTQUAD`（管 10→11）与 `stance_woliu` `t16 OUTQUAD`（管 16→20，逼近顶点 t20）是**同构正例**。发力主体（段内多数帧）走 easeIn 族即可，末段用 easeOut 定格收力，比强行全程 easeIn 撞进静止顶点更自然。§15.3 机械锁只断言「段内**至少一帧** easeIn 发力」，不要求整段；plan 精度标准正文出现的「strike … easeInCubic」是对**发力主体**的口径简写，落地以本节机械判据为准。（P6 review r4：`stance_woliu` t16 曾被复读为违约「strike 未全程 easeIn」，经仓库所有者按**发力感优先**裁决维持现状——末帧定格 easeOut 是正例形态，不追溯已 merge 的 `beng_quan` 等基准资产。）
+
+### §15.3 机械锁
+
+`AnimCastTicksAlignmentTest#strikePhaseCarriesEaseInDrive()`：按 spec manifest 的 strike 边界，断言该段内**至少一帧**触及声明的主打击轴且为 easeIn 族（`IN*` 排除 `INOUT*`，覆盖 `Ease` 枚举全部 easeIn 常量）。断言区间取**半开** `[strikeFrom, strikeTo)`，依据即 §15.1。
+
+设这条锁的原因：原有 `assertAxisDense` 只断言 easing「显式且非 linear」，而 `INOUTSINE` 两条都满足——于是整条 strike 段一个加速帧都没有也照样放行，§13 #3 的「发力」这一半此前是**没有机器把关的**。
+
+**豁免**：instant 型（`INSTANT_RESOLVER_SKILLS`，见 §13 #2 例外 ③）strike 顶点即 tick 0、开帧就是命中姿态，其后只有余韵与收势，没有「加速撞击」相位，easeOut 从 t0 起才是正确形态，故结构性豁免。为防「随手加个 `instant: true` 就能绕过」，该用例**反向核验**：任何声明 instant 的 manifest 必须确实登记在 `INSTANT_RESOLVER_SKILLS` 里。segment 型（loop 蓄力 / charge_hold 充能）无自身 strike 段（strike 归其 release 段），同样不适用。
+
+> **存量未审**：本锁只保证「strike 段内有发力帧」。§15.1 的方向问题在 anticipation / recovery 两段上是否也有存量写反，尚未全量审计——见 plan-skill-anim-fidelity-v1 Finish Evidence 遗留第 4 条。

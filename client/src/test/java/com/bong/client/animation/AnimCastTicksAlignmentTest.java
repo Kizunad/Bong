@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -13,16 +14,21 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -46,7 +52,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </ol>
  *
  * <p>现状不达标项进 {@link #CAST_ALIGNMENT_ALLOWLIST}（只缩不涨棘轮，冻结基线
- * {@link #P0_BASELINE} 永不追加）；<b>allowlist 清零 = P1-P4 完成的机械判据</b>。
+ * {@link #P0_BASELINE} 永不追加）；<b>allowlist 清零 = P1-P4 完成的机械判据</b>
+ * ——口径按 plan §8.1 #5 读作「allowlist 中<b>属于 P1-P4 重制清单</b>的条目清零」，
+ * 明示归属外部 plan 的条目不计入但必须写明归属。
+ *
+ * <p>P6 收口（2026-07-21）后本表**余 1 条**：{@code woliu.vortex_resonance}
+ * （归未消费骨架 plan-bughunt-woliu-resonance-loop-arm-decay-v1）。
+ * {@code sword_path.heaven_gate} 已按 conventions §14.1 裁决移出，转由
+ * {@link #FIXED_PHASE_CHARGE_SKILLS} 正向机械锁定。
+ *
+ * <p>两段式招的相位承接契约（conventions §14.2 裁决方案①）由
+ * {@link #twoStageHandoffHoldsAcrossEveryReachableLoopPhase()} 覆盖全相位域锁定。
  */
 class AnimCastTicksAlignmentTest {
     private static final String SNAPSHOT_RESOURCE = "bong/technique_cast_ticks_snapshot.json";
@@ -196,22 +212,20 @@ class AnimCastTicksAlignmentTest {
     // woliu.turbulence_burst（cast=40 核验为 resolver 立即结算无引导窗，入
     // INSTANT_RESOLVER_SKILLS）+ morph.yixing（同前，cast=60 无窗，入
     // INSTANT_RESOLVER_SKILLS）。
+    // P6 收口（2026-07-21）删 1 条：sword_path.heaven_gate——口径之争按
+    // conventions §14.1 裁决为**改判据不改动画**，移出本表进
+    // {@link #FIXED_PHASE_CHARGE_SKILLS} 定长相位充能型分类契约（正向机械锁
+    // 取代豁免）。裁决理由见该表注释。
     private static final Set<String> CAST_ALIGNMENT_ALLOWLIST = Set.of(
-        // vortex_resonance 时长模型达标（80t loop 对齐 cast=80），但 10 个手臂轴
-        // endTick 无补帧（库坑 #1 单帧衰减）——**存量 bug 已登记归
-        // plan-bughunt-woliu-resonance-loop-arm-decay-v1**（本 plan 防重声明明确
-        // 排除，标准只防再犯），该 bugfix merge 后删本条目。
-        "woliu.vortex_resonance",
-        // P2 后半 review r2 定形：armor_pierce / echo_fractal / sword_path.manifest
-        // 三招移出本表——它们不再是「豁免」而是**瞬发结算型分类契约**
-        // （{@link #INSTANT_RESOLVER_SKILLS}：resolver 在 cast 起始 tick 立即结算
-        // → strike 顶点必须=tick 0，instant spec manifest + 专属 pin 测试机械锁定，
-        // cast_ticks 为元数据不参与时长对拍）。
-        // heaven_gate：动画对齐 60t 充能相位（HEAVEN_GATE_CHARGE_END）而非
-        // cast_ticks=80 总窗，charge 段非循环 hold-末帧（定长充能相位全对齐、
-        // 末帧=release 交接帧，charge_hold segment manifest 锁密度）；与 isLoop
-        // 正典的统一归 P6 注记（P2 密度精修已交付）。
-        "sword_path.heaven_gate");
+        // vortex_resonance 时长模型达标（80t loop 对齐 cast=80），但 11 个轴
+        // endTick 无补帧/回绕跳变（库坑 #1 单帧衰减：双臂 10 轴末帧停在 t40 无
+        // t80 补帧，外加 torso.pitch t80=0.0 ≠ 回绕锚点 t40=-0.06）——**存量 bug
+        // 已登记归 plan-bughunt-woliu-resonance-loop-arm-decay-v1**（截至
+        // 2026-07-21 仍是 docs/plans-skeleton/ 下**未消费骨架**，P0 ⬜、无开放
+        // PR；本 plan §P3 明确全程零触碰以防重复修改，标准只防再犯），该 bugfix
+        // merge 后删本条目。**本 plan 收官时唯一余项**（§8.1 #5 口径：明示归属
+        // 外部 plan 的条目不计入 P1-P4 完成判据）。
+        "woliu.vortex_resonance");
 
     /**
      * 瞬发结算型 resolver 招（review r2 分类契约，plan 附录 A）：gameplay 在
@@ -234,6 +248,79 @@ class AnimCastTicksAlignmentTest {
         // morph.rs，YIXING_CAST_TICKS=60 纯元数据）——两招均无引导窗可挂循环段。
         "woliu.turbulence_burst", "woliu_turbulence_burst",
         "morph.yixing", "morph_cast");
+
+    /**
+     * 两段式招登记表（P6 相位承接契约 §14.2 的机械锚点）：
+     * skill_id → {蓄力/充能段动画, release 段动画}。
+     *
+     * <p>四招同构（plan P6「相位承接契约」范围）：前三条是**变长引导窗 + isLoop
+     * 蓄力段**（引导时长随 mastery/平和色浮动，结束相位任意）；heaven_gate 是
+     * **定长相位充能段**（见 {@link #FIXED_PHASE_CHARGE_SKILLS}），无相位歧义，
+     * 在相位覆盖用例里作为确定性退化档单独断言（要求接缝**逐轴精确相等**，比
+     * 变长档的预算断言更严）。yidao 5 招各自成对，合计 8 对。
+     */
+    private static final Map<String, String[]> TWO_STAGE_PAIRS = buildTwoStagePairs();
+
+    private static Map<String, String[]> buildTwoStagePairs() {
+        Map<String, String[]> m = new TreeMap<>();
+        m.put("sword.infuse", new String[] {"sword_infuse", "sword_infuse_release"});
+        m.put("anqi.charge_carrier",
+            new String[] {"anqi_charge_carrier_loop", "anqi_charge_carrier_release"});
+        m.put("sword_path.heaven_gate",
+            new String[] {"sword_heaven_gate_charge", "sword_heaven_gate_release"});
+        m.put("yidao.meridian_repair",
+            new String[] {"yidao_meridian_repair_loop", "yidao_meridian_repair_release"});
+        m.put("yidao.contam_purge",
+            new String[] {"yidao_contam_purge_loop", "yidao_contam_purge_release"});
+        m.put("yidao.emergency_resuscitate",
+            new String[] {"yidao_emergency_resuscitate_loop",
+                "yidao_emergency_resuscitate_release"});
+        m.put("yidao.life_extension",
+            new String[] {"yidao_life_extension_loop", "yidao_life_extension_release"});
+        m.put("yidao.mass_meridian_repair",
+            new String[] {"yidao_mass_meridian_repair_loop",
+                "yidao_mass_meridian_repair_release"});
+        return m;
+    }
+
+    /**
+     * 相位承接姿态预算（弧度）：变长引导窗两段式招在**任意**结束相位上，蓄力段
+     * 姿态与 release 段首帧姿态的逐轴最大差不得超过本值。
+     *
+     * <p>取值依据（conventions §14.2）：① 现网实测跨 8 对、全相位最大差 = 46°
+     * （{@code yidao.contam_purge} 中段 {@code rightArm.bend}），本预算 60° 留
+     * ~30% 余量而非空断言；② 交接由**外层淡出**承担真实姿态混合（见 §14.2 机制
+     * 推导），混合起点就是蓄力段的当前相位姿态，不经过 vanilla；③ 本文档 §2.7
+     * 已确立的先例是「从 vanilla 冷起手 45° 差用 3 tick fade-in 可接受」，而热
+     * 交接严格温和于冷起手，故 60° 是保守上界。
+     */
+    private static final double PHASE_HANDOFF_BUDGET_RAD = Math.toRadians(60.0);
+
+    /**
+     * 定长相位充能型分类契约（P6 裁决，conventions §14.1）：充能段由**服务端确定
+     * 性相位常量**驱动（非 mastery 缩放的变长引导窗），故不适用「长引导招蓄力段
+     * 必须 isLoop」的判据——该判据的前提是窗长可变、需要循环覆盖任意时长。
+     *
+     * <p>裁决为**改判据不改动画**，理由（读代码实证，非口径偏好）：
+     * <ul>
+     *   <li>{@code sword_path.heaven_gate} 的充能相位是 {@code HEAVEN_GATE_CHARGE_END
+     *       = 60}（server/src/sword_path/heaven_gate.rs:15）的**定长**相位，
+     *       cast_ticks=80 是含后续判定相位的总窗，不是充能段时长；</li>
+     *   <li>充能段资产是一条**单调递进的抬剑坡道**（rightArm.pitch 由 -0.698
+     *       递进到 -2.688 rad），改成 isLoop 会在接缝制造这条坡道本不存在的
+     *       回绕跳变，即为了满足判据而**引入**库坑 #1 类缺陷；</li>
+     *   <li>定长相位下不存在「结束在任意相位」的歧义，接缝是确定的单点，可以
+     *       比循环档**更严格**地锁死（逐轴精确相等，见
+     *       {@link #fixedPhaseChargeSeamIsExactAndNonLooping()}）。</li>
+     * </ul>
+     *
+     * <p>入类门槛（新招援引本类前逐条核验）：① 充能段时长 = 服务端具名相位常量
+     * ② 充能段非循环且 endTick == 该常量 ③ 充能段末帧与 release 段首帧逐轴精确
+     * 相等 ④ 两段 id 均被服务端映射表发射。value = 期望 endTick（= 服务端相位
+     * 常量的客户端镜像，任一端漂移即判红）。
+     */
+    private static final Map<String, Integer> FIXED_PHASE_CHARGE_SKILLS = Map.of(
+        "sword_path.heaven_gate", 60);
 
     /**
      * 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。
@@ -395,6 +482,91 @@ class AnimCastTicksAlignmentTest {
         return violations;
     }
 
+    /**
+     * 在给定 tick 采样整套姿态（轴 → 值），相邻关键帧之间线性插值、两端钳制。
+     *
+     * <p>用线性插值而非复刻 easing 曲线是**刻意**的：本采样只用于衡量两段动画
+     * 之间的姿态差幅度，easing 只改变同一对端点之间的走法、不改变端点值，故对
+     * 「最大差」这个量的判定不产生影响；复刻 Ease 家族反而会把测试绑死在库的
+     * 内部实现上（测契约不测实现）。
+     */
+    private static Map<String, Double> poseAt(AnimMeta meta, int tick) {
+        Map<String, Double> pose = new TreeMap<>();
+        for (Map.Entry<String, Map<Integer, Double>> axisEntry
+                : collectAxisValues(meta).entrySet()) {
+            Map<Integer, Double> byTick = axisEntry.getValue();
+            List<Integer> ticks = new ArrayList<>(byTick.keySet());
+            Collections.sort(ticks);
+            int first = ticks.get(0);
+            int last = ticks.get(ticks.size() - 1);
+            double value;
+            if (tick <= first) {
+                value = byTick.get(first);
+            } else if (tick >= last) {
+                value = byTick.get(last);
+            } else {
+                int lo = first;
+                int hi = last;
+                for (int candidate : ticks) {
+                    if (candidate <= tick) {
+                        lo = candidate;
+                    }
+                    if (candidate >= tick) {
+                        hi = candidate;
+                        break;
+                    }
+                }
+                double lowValue = byTick.get(lo);
+                double highValue = byTick.get(hi);
+                value = hi == lo
+                    ? highValue
+                    : lowValue + (highValue - lowValue) * ((double) (tick - lo) / (hi - lo));
+            }
+            pose.put(axisEntry.getKey(), value);
+        }
+        return pose;
+    }
+
+    /**
+     * 两套姿态的逐轴最大差。只比较**两侧都声明**的轴；仅单侧声明的轴另行校验
+     * 「其值必须为中立 0.0」——否则一段动画悄悄少写一条非中立轴就能绕过差值断言
+     * （{@code body.x} 这类两侧写法不一致但恒为 0.0 的存量差异因此被正确放行）。
+     * 返回 {@code [最大差, 描述]}，描述在超预算时进断言消息。
+     */
+    private static Map.Entry<Double, String> maxAxisDelta(
+        Map<String, Double> left,
+        Map<String, Double> right,
+        String leftLabel,
+        String rightLabel
+    ) {
+        double worst = 0.0;
+        String worstAxis = "（无共同轴）";
+        for (Map.Entry<String, Double> entry : left.entrySet()) {
+            Double other = right.get(entry.getKey());
+            if (other == null) {
+                assertEquals(0.0, entry.getValue(), 1e-9,
+                    "轴 `" + entry.getKey() + "` 只在 " + leftLabel + " 声明而 " + rightLabel
+                        + " 未声明，且其值非中立 0.0——单侧非中立轴会在交接瞬间凭空跳变，"
+                        + "两段必须同时声明该轴");
+                continue;
+            }
+            double delta = Math.abs(entry.getValue() - other);
+            if (delta > worst) {
+                worst = delta;
+                worstAxis = entry.getKey();
+            }
+        }
+        for (Map.Entry<String, Double> entry : right.entrySet()) {
+            if (!left.containsKey(entry.getKey())) {
+                assertEquals(0.0, entry.getValue(), 1e-9,
+                    "轴 `" + entry.getKey() + "` 只在 " + rightLabel + " 声明而 " + leftLabel
+                        + " 未声明，且其值非中立 0.0——单侧非中立轴会在交接瞬间凭空跳变，"
+                        + "两段必须同时声明该轴");
+            }
+        }
+        return Map.entry(worst, worstAxis);
+    }
+
     /** 精度标准 #2 三套断言；返回 null=达标，非 null=不达标原因（供 allowlist 双向棘轮复用）。 */
     private static String alignmentFailure(int cast, AnimMeta meta) {
         if (cast <= 2) {
@@ -457,7 +629,11 @@ class AnimCastTicksAlignmentTest {
                 || MISSING_ANIM_ALLOWLIST.contains(skillId)
                 // 瞬发结算型分类契约：不走 cast_ticks 时长对拍，由
                 // instantResolverSkillsPinStrikePeakAtTickZero + instant manifest 锁定。
-                || INSTANT_RESOLVER_SKILLS.containsKey(skillId)) {
+                || INSTANT_RESOLVER_SKILLS.containsKey(skillId)
+                // 定长相位充能型分类契约（P6 §14.1）：充能段由服务端确定性相位常量
+                // 驱动，不适用「长引导必须 isLoop」判据，由
+                // fixedPhaseChargeSeamIsExactAndNonLooping 以更严的零容差接缝锁定。
+                || FIXED_PHASE_CHARGE_SKILLS.containsKey(skillId)) {
                 continue;
             }
             assertNotNull(entry.getValue(),
@@ -538,6 +714,174 @@ class AnimCastTicksAlignmentTest {
     }
 
     /**
+     * 定长相位充能型分类契约 pin（P6 裁决，conventions §14.1）——**取代 heaven_gate
+     * 原先的 allowlist 豁免**，把「跳过检查」换成比循环档更严的正向锁：
+     * ① 充能段非循环 ② endTick == 服务端相位常量镜像 ③ 充能段**末帧**与 release
+     * 段**首帧**逐轴精确相等（确定性接缝，零容差）④ 不驻 allowlist（互斥）。
+     */
+    @Test
+    void fixedPhaseChargeSeamIsExactAndNonLooping() throws IOException {
+        for (Map.Entry<String, Integer> entry : FIXED_PHASE_CHARGE_SKILLS.entrySet()) {
+            String skillId = entry.getKey();
+            int expectedEndTick = entry.getValue();
+            assertFalse(CAST_ALIGNMENT_ALLOWLIST.contains(skillId),
+                skillId + " 同时出现在定长相位充能分类与 CAST_ALIGNMENT_ALLOWLIST——"
+                    + "分类契约取代豁免，二者互斥");
+            String[] pair = TWO_STAGE_PAIRS.get(skillId);
+            assertNotNull(pair,
+                skillId + " 声明为定长相位充能型却未登记两段式配对——"
+                    + "两段式招必须在 TWO_STAGE_PAIRS 有 {充能段, release 段}");
+            assertEquals(pair[0], SKILL_ANIM.get(skillId),
+                skillId + " 的映射动画与两段式配对声明不一致——改映射必须同步 TWO_STAGE_PAIRS");
+
+            AnimMeta charge = readAnim(pair[0]);
+            AnimMeta release = readAnim(pair[1]);
+            assertFalse(charge.isLoop(),
+                skillId + " 充能段 `" + pair[0] + "` 不应为循环：定长相位无需循环覆盖任意窗长，"
+                    + "改 isLoop 会给这条单调递进坡道引入本不存在的回绕跳变（conventions §14.1）");
+            assertEquals(expectedEndTick, charge.endTick(),
+                skillId + " 充能段 endTick=" + charge.endTick() + " 与服务端相位常量镜像 "
+                    + expectedEndTick + " 不一致——server/src/sword_path/heaven_gate.rs 的"
+                    + " HEAVEN_GATE_CHARGE_END 与本资产任一端漂移都必须同步改，"
+                    + "否则充能动画与充能相位错位");
+
+            Map.Entry<Double, String> worst = maxAxisDelta(
+                poseAt(charge, charge.endTick()), poseAt(release, 0),
+                pair[0] + "@t" + charge.endTick(), pair[1] + "@t0");
+            assertEquals(0.0, worst.getKey(), 1e-9,
+                skillId + " 充能段末帧与 release 段首帧不一致（最大差轴 `" + worst.getValue()
+                    + "` = " + worst.getKey() + " rad）——定长相位的接缝是确定性单点，"
+                    + "必须逐轴精确相等，不吃相位混合预算");
+        }
+    }
+
+    /**
+     * 两段式「相位承接契约」相位覆盖用例（P6 裁决方案①，conventions §14.2）。
+     *
+     * <p>锁的是：变长引导窗结束在**任意相位**时，蓄力段当时的姿态与 release 段
+     * 首帧姿态的差都在混合预算内——因为客户端交接是「外层淡出的蓄力段混入下层
+     * 刚起播的 release 段」，混合起点是蓄力段的**当前相位姿态**（不是 tick 0、
+     * 也不经过 vanilla），所以契约必须对整个相位域成立，而不只对基位成立。
+     *
+     * <p>覆盖口径：直接枚举 {@code [0, 周期)} 的**全部整数相位**——这是 plan 要求
+     * 的「可达 cast_ticks 对 loop 周期取余」的严格超集（无论 cast_ticks 怎样随
+     * mastery/平和色浮动，其余数必落在本域内），且对未来 cast_ticks 调参免疫。
+     * plan 点名的三个相位（基位 / 中间相位 / 周期末相位）额外单独断言留痕。
+     */
+    @Test
+    void twoStageHandoffHoldsAcrossEveryReachableLoopPhase() throws IOException {
+        List<String> violations = new ArrayList<>();
+        for (Map.Entry<String, String[]> entry : TWO_STAGE_PAIRS.entrySet()) {
+            String skillId = entry.getKey();
+            if (FIXED_PHASE_CHARGE_SKILLS.containsKey(skillId)) {
+                // 定长相位充能段无相位歧义，接缝由 fixedPhaseChargeSeamIsExactAndNonLooping
+                // 以零容差锁死（更严），不重复走预算断言。
+                continue;
+            }
+            String loopName = entry.getValue()[0];
+            String releaseName = entry.getValue()[1];
+            AnimMeta loop = readAnim(loopName);
+            AnimMeta release = readAnim(releaseName);
+            assertTrue(loop.isLoop(),
+                skillId + " 蓄力段 `" + loopName + "` 应为循环——变长引导窗必须由循环段覆盖任意窗长");
+            assertFalse(release.isLoop(),
+                skillId + " release 段 `" + releaseName + "` 不应循环——收势是一次性演出");
+
+            Map<String, Double> releaseFirst = poseAt(release, 0);
+            int period = loop.endTick();
+            for (int phase = 0; phase < period; phase++) {
+                Map.Entry<Double, String> worst = maxAxisDelta(
+                    poseAt(loop, phase), releaseFirst,
+                    loopName + "@相位" + phase, releaseName + "@t0");
+                if (worst.getKey() > PHASE_HANDOFF_BUDGET_RAD) {
+                    violations.add(skillId + " 相位 " + phase + "/" + period + " 轴 `"
+                        + worst.getValue() + "` 差 "
+                        + String.format("%.1f", Math.toDegrees(worst.getKey())) + "° > 预算 "
+                        + String.format("%.1f", Math.toDegrees(PHASE_HANDOFF_BUDGET_RAD)) + "°");
+                }
+            }
+            // plan 点名的三个相位单独留痕（基位 / 中间相位 / 周期末相位）。
+            for (int phase : List.of(0, period / 2, period - 1)) {
+                Map.Entry<Double, String> worst = maxAxisDelta(
+                    poseAt(loop, phase), releaseFirst,
+                    loopName + "@相位" + phase, releaseName + "@t0");
+                assertTrue(worst.getKey() <= PHASE_HANDOFF_BUDGET_RAD,
+                    skillId + " 在点名相位 " + phase + "（周期 " + period + "）承接超预算：轴 `"
+                        + worst.getValue() + "` 差 "
+                        + String.format("%.1f", Math.toDegrees(worst.getKey())) + "°，预算 "
+                        + String.format("%.1f", Math.toDegrees(PHASE_HANDOFF_BUDGET_RAD))
+                        + "°——须收窄 release 首帧与蓄力段的姿态距离（conventions §14.2）");
+            }
+        }
+        assertTrue(violations.isEmpty(),
+            "两段式相位承接超出混合预算：" + violations
+                + "——release 首帧必须落在蓄力段整个相位域的混合可达范围内");
+    }
+
+    /**
+     * P6 动画资源 pin：本 plan 涉及的**全部** anim id 都能经生产 resource-reload
+     * 链路装进 {@link BongAnimationRegistry} 并解析。
+     *
+     * <p>既有 {@code AnimWiringManifestTest} 的同类用例只覆盖 `P1_WIRED_ANIM_IDS`
+     * 的 7 条接线动画；本 plan 跨 P1-P6 新增/重制的资产远多于此，缺一条就意味着
+     * 真机上那一招**永远解析不到动画**（server 照发 PlayAnim，客户端静默 no-op）。
+     *
+     * <p>id 集合**从映射表派生而非手写清单**——手写清单必然随批次漂移，而
+     * {@link #SKILL_ANIM} / {@link #TWO_STAGE_PAIRS} 本就是对拍主契约的真源，
+     * 新招入表即自动纳入本 pin。另加两条不属于任何招式的架势亮相（P6 重制，
+     * 走 `TechniqueLearnedEvent` 通道，不在 skill 映射表内）。
+     */
+    @Test
+    void everyPlanAnimIdResolvesThroughProductionRegistry() {
+        ProductionAnimationResources.loadViaProductionReloadCallback();
+
+        Set<String> animNames = new TreeSet<>();
+        SKILL_ANIM.values().stream().filter(java.util.Objects::nonNull).forEach(animNames::add);
+        // 两段式的 release 段不在 SKILL_ANIM（该表按蓄力段建索引），单独并入。
+        TWO_STAGE_PAIRS.values().forEach(pair -> Collections.addAll(animNames, pair));
+        // P6 架势亮相（功法习得通道，非 skill）。
+        animNames.add("stance_woliu");
+        animNames.add("stance_zhenmai");
+
+        assertTrue(animNames.size() >= 50,
+            "派生出的 plan 动画集合只有 " + animNames.size() + " 条，明显偏少——"
+                + "映射表被截断或派生逻辑失效，本 pin 会退化成空测试");
+
+        List<String> unresolved = new ArrayList<>();
+        for (String animName : animNames) {
+            Identifier id = new Identifier("bong", animName);
+            if (!BongAnimationRegistry.contains(id)
+                || BongAnimationRegistry.get(id) == null
+                || BongAnimationRegistry.sourceOf(id) != BongAnimationRegistry.Source.JSON) {
+                unresolved.add(animName + "（contains=" + BongAnimationRegistry.contains(id)
+                    + " source=" + BongAnimationRegistry.sourceOf(id) + "）");
+            }
+        }
+        assertTrue(unresolved.isEmpty(),
+            "以下 anim id 经生产 reload 后无法从 BongAnimationRegistry 解析：" + unresolved
+                + "——真机上这些招会「server 照发 PlayAnim、客户端静默 no-op」，"
+                + "常见成因：JSON 的 name 字段与文件名不一致（注册表按 name 建键）、"
+                + "文件不在 assets/bong/player_animation/、或映射表指向了不存在的资产");
+    }
+
+    /** 两段式登记表自洽：每招都在映射表里、两段资产都存在且不同名。 */
+    @Test
+    void twoStagePairsAreRegisteredConsistently() throws IOException {
+        for (Map.Entry<String, String[]> entry : TWO_STAGE_PAIRS.entrySet()) {
+            String skillId = entry.getKey();
+            String[] pair = entry.getValue();
+            assertEquals(2, pair.length, skillId + " 两段式配对必须恰好 {蓄力段, release 段}");
+            assertNotEquals(pair[0], pair[1],
+                skillId + " 两段指向同一动画——两段式的意义就是两段可分辨的演出");
+            assertEquals(pair[0], SKILL_ANIM.get(skillId),
+                skillId + " 的 SKILL_ANIM 映射必须是蓄力段（对拍主契约按蓄力段判长引导）");
+            // 两段资产都必须真实存在（readAnim 内部对缺文件硬失败）。
+            readAnim(pair[0]);
+            readAnim(pair[1]);
+        }
+    }
+
+    /**
      * 持续维持型例外（shield_block）：循环结构 + 每轴 endTick 有帧不退化。
      * 注意此处刻意只查**帧存在**不查同值——shield_raise 是「举起后保持」语义，
      * 首尾帧值不同是既有资产的刻意设计（0→6 举起后循环维持末段姿态），与
@@ -581,12 +925,179 @@ class AnimCastTicksAlignmentTest {
         Path manifestDir = manifestRoot();
         assertTrue(Files.isDirectory(manifestDir),
             "spec manifest 目录缺失：" + manifestDir + "——P0 框架要求目录存在（随批次填充）");
+        List<Path> manifests;
         try (Stream<Path> files = Files.list(manifestDir)) {
-            for (Path manifestFile : files
-                    .filter(p -> p.getFileName().toString().endsWith(".json")).toList()) {
-                assertManifestHolds(manifestFile);
+            manifests = files
+                .filter(p -> p.getFileName().toString().endsWith(".json"))
+                .toList();
+        }
+        // 空转守卫：目录存在但被搬空/误删时，下面的 for 会零次迭代而方法照常 PASS——
+        // 本方法是「精度标准机械化」（三段边界 / 密度 / easing / leg.pitch / 循环补帧）
+        // 覆盖全部 manifest 的**唯一**入口，空转即整套红线静默失效。
+        // 同类守卫见 strikePhaseCarriesEaseInDrive 末尾的 checked.isEmpty() 断言。
+        assertFalse(manifests.isEmpty(),
+            "spec manifest 目录 " + manifestDir + " 下没有任何 .json——本锁已空转，"
+                + "整套精度标准机械断言一条都不会执行");
+        for (Path manifestFile : manifests) {
+            assertManifestHolds(manifestFile);
+        }
+    }
+
+    /**
+     * strike 段发力帧机械锁（review r1 finding #1）：精度标准 #3 要求「蓄势用
+     * easeOut 族、<b>发力用 easeIn 族</b>、收势 easeInOutSine」，但
+     * {@link #assertAxisDense} 只断言 easing「显式且非 linear」——{@code INOUTSINE}
+     * 两条都满足，于是整条 strike 段一个加速帧都没有也照样放行
+     * （{@code stance_woliu} 即以此形态混过 P6 交付）。本用例把「发力」这一半机械化。
+     *
+     * <p><b>easing 管辖语义（决定断言区间；反直觉，实证得来）</b>：本仓 140 份动画
+     * JSON 无一声明 {@code easeBeforeKeyframe}，{@code KeyframeAnimation.isEasingBefore}
+     * 取默认 {@code false}，{@code KeyframeAnimationPlayer#getValueFromKeyframes}
+     * 因而走 {@code before.ease}——<b>某帧上写的 easing 管辖的是「本帧 → 下一帧」
+     * 这一段</b>，不是「上一帧 → 本帧」。所以真正管辖 strike 段的是 tick ∈
+     * {@code [strikeFrom, strikeTo)} 的帧；写在 strike <b>末</b>帧上的 easing 实际
+     * 跑去管收势段，不构成发力帧（{@code anqi_single_snipe} 原形态即栽在这里：
+     * 生成器 docstring 写着「strike 4→6 easeIn 族 INQUAD」，但 INQUAD 被放在顶点帧
+     * tick 6 上，实际管的是 recovery 6→8，strike 段反而被 t4 的 OUTSINE 管成减速）。
+     *
+     * <p><b>豁免</b>：instant 型（{@link #INSTANT_RESOLVER_SKILLS}）不适用——该类招
+     * strike 顶点即 tick 0，开帧就是命中姿态，其后只承担余韵与收势，根本没有
+     * 「加速撞击」相位，easeOut 从 t0 起才是正确形态。为防「随手加个
+     * {@code instant:true} 就绕过本锁」，此处<b>反向核验</b>：任何声明 instant 的
+     * manifest 必须确实登记在 {@code INSTANT_RESOLVER_SKILLS} 里。segment 型
+     * （loop 蓄力 / charge_hold 充能）没有自己的 strike 段（strike 归其 release 段
+     * 动画），同样不适用。
+     */
+    /**
+     * segment 型 manifest 的合法来源集合（anim 名），由三张登记表派生——
+     * 两段式配对（蓄力段 + release 段两个 anim 都算）、定长相位充能型、
+     * 持续维持型循环。供 {@link #strikePhaseCarriesEaseInDrive} 的豁免核验使用，
+     * 与 {@code INSTANT_RESOLVER_SKILLS} 之于 instant 豁免同规格。
+     */
+    private static Set<String> segmentExemptAnims() {
+        Set<String> anims = new HashSet<>();
+        for (String[] pair : TWO_STAGE_PAIRS.values()) {
+            anims.addAll(Arrays.asList(pair));
+        }
+        for (String skillId : FIXED_PHASE_CHARGE_SKILLS.keySet()) {
+            String[] pair = TWO_STAGE_PAIRS.get(skillId);
+            if (pair != null) {
+                anims.addAll(Arrays.asList(pair));
+            }
+            String mapped = SKILL_ANIM.get(skillId);
+            if (mapped != null) {
+                anims.add(mapped);
             }
         }
+        for (String skillId : SUSTAINED_LOOP_EXCEPTIONS) {
+            String mapped = SKILL_ANIM.get(skillId);
+            if (mapped != null) {
+                anims.add(mapped);
+            }
+        }
+        return anims;
+    }
+
+    @Test
+    void strikePhaseCarriesEaseInDrive() throws IOException {
+        Set<String> instantAnims = new HashSet<>(INSTANT_RESOLVER_SKILLS.values());
+        List<String> checked = new ArrayList<>();
+        try (Stream<Path> files = Files.list(manifestRoot())) {
+            for (Path manifestFile : files
+                    .filter(p -> p.getFileName().toString().endsWith(".json")).sorted().toList()) {
+                String animName = manifestFile.getFileName().toString().replace(".json", "");
+                JsonObject manifest =
+                    JsonParser.parseString(Files.readString(manifestFile)).getAsJsonObject();
+                if (manifest.has("segment")) {
+                    // 对称核验（与下方 instant 分支同规格）：segment 是本锁的第二条豁免
+                    // 通道，同样必须有登记依据，不能靠「随手加 segment 字段」绕过。
+                    // 合法来源三张表：两段式（蓄力/release 配对）、定长相位充能型、
+                    // 持续维持型循环。assertManifestHolds 的结构校验（isLoop 一致性 /
+                    // expected_end_tick / 循环缝合）已能挡住多数误标，此处补的是
+                    // 「该 anim 是否真属于某类两段式/维持型招式」的来源约束。
+                    assertTrue(segmentExemptAnims().contains(animName),
+                        animName + " 的 manifest 声明了 segment，却不属于任何已登记的"
+                            + "两段式 / 定长相位充能 / 持续维持型招式——segment 是 strike"
+                            + "发力帧红线的豁免通道，必须有登记依据");
+                    continue;
+                }
+                if (manifest.has("instant")) {
+                    assertTrue(instantAnims.contains(animName),
+                        animName + " 的 manifest 声明了 instant，却没登记在 INSTANT_RESOLVER_SKILLS"
+                            + "——instant 是 strike 发力帧红线的唯一豁免通道（顶点在 tick 0、"
+                            + "无加速相位），不许拿它绕过 strikePhaseCarriesEaseInDrive；"
+                            + "新招入类前必须先核验 resolver 确为立即结算并登记进分类表");
+                    continue;
+                }
+                JsonArray strikeRange = manifest.getAsJsonArray("strike");
+                int strikeFrom = strikeRange.get(0).getAsInt();
+                int strikeTo = strikeRange.get(1).getAsInt();
+                Set<String> strikeAxes = new HashSet<>();
+                for (JsonElement axis : manifest.getAsJsonArray("strike_axes")) {
+                    strikeAxes.add(axis.getAsString());
+                }
+                AnimMeta meta = readAnim(animName);
+                List<String> driveFrames = new ArrayList<>();
+                Map<Integer, String> governingEasings = new TreeMap<>();
+                for (JsonElement moveElement : meta.moves()) {
+                    JsonObject move = moveElement.getAsJsonObject();
+                    int tick = move.get("tick").getAsInt();
+                    // 半开区间：只有 [from, to) 的帧其 easing 管辖的插值段落在 strike 内。
+                    if (tick < strikeFrom || tick >= strikeTo) {
+                        continue;
+                    }
+                    if (!move.has("easing") || !touchesAnyAxis(move, strikeAxes)) {
+                        continue;
+                    }
+                    String easing = move.get("easing").getAsString();
+                    governingEasings.put(tick, easing);
+                    if (isEaseInFamily(easing)) {
+                        driveFrames.add("t" + tick + "=" + easing);
+                    }
+                }
+                assertFalse(governingEasings.isEmpty(),
+                    animName + " strike 段 [" + strikeFrom + "," + strikeTo
+                        + ") 内没有任何一帧触及声明的主打击轴 " + strikeAxes
+                        + "——strike_axes 与实际关键帧漂移，发力节奏无从谈起");
+                assertFalse(driveFrames.isEmpty(),
+                    animName + " strike 段 [" + strikeFrom + "," + strikeTo
+                        + ") 缺少 easeIn 族发力帧（精度标准 #3「发力用 easeIn 族」）。"
+                        + "该段主打击轴各帧实际 easing = " + governingEasings
+                        + "；期望其中至少一帧为 easeIn 族（INQUAD / INCUBIC / INSINE / ...，"
+                        + "INOUT* 属 easeInOut 族不算发力）。注意库语义是 before.ease："
+                        + "帧上的 easing 管辖「本帧 → 下一帧」，所以发力帧要落在 strike 段的"
+                        + "起始侧（tick < " + strikeTo + "），写到末帧上会跑去管收势段");
+                checked.add(animName);
+            }
+        }
+        assertFalse(checked.isEmpty(),
+            "没有任何三段式 manifest 被 strike 发力帧红线覆盖——本锁已空转，"
+            + "检查 manifest 目录与类型分派（segment / instant 两类被有意跳过）");
+    }
+
+    /** easeIn 族判定：{@code IN*} 但排除 {@code INOUT*}（后者是 easeInOut 族，非发力）。 */
+    private static boolean isEaseInFamily(String easing) {
+        String upper = easing.toUpperCase(Locale.ROOT);
+        return upper.startsWith("IN") && !upper.startsWith("INOUT");
+    }
+
+    /** 该关键帧是否写到了给定轴集合里的任意一条（key = {@code part.axis}）。 */
+    private static boolean touchesAnyAxis(JsonObject move, Set<String> axes) {
+        for (String part : move.keySet()) {
+            if (part.equals("tick") || part.equals("easing") || part.equals("comment")) {
+                continue;
+            }
+            JsonElement axesElement = move.get(part);
+            if (!axesElement.isJsonObject()) {
+                continue;
+            }
+            for (String axis : axesElement.getAsJsonObject().keySet()) {
+                if (!axis.equals("comment") && axes.contains(part + "." + axis)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static Path manifestRoot() {

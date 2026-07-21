@@ -1,0 +1,7 @@
+# dev 构建瘦身：debuginfo 只保留行号表（测试失败的 file:line 回溯仍在，
+# 完整变量级 debuginfo 去掉，单份 target 体积大幅下降）。
+# 背景：多 worktree 并行修复场景下，每个 worktree 各背一份全量 debuginfo 的
+# target（实测 16~35G/份），曾把磁盘塞到 100%。
+# 注意：本文件合入后 profile 指纹变化，所有既有 target 首次编译会整体重编一次，属预期。
+[profile.dev]
+debug = "line-tables-only"
