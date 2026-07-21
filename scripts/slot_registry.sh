@@ -11,8 +11,11 @@
 #   存在、已注册且 locked，branch/HEAD/upstream/claim 对拍，tracked/untracked 干净，
 #   ignored 仅含窄缓存白名单。失败保持 state 不变。
 # - 不实现 PID/liveness 自动恢复。manual-report 只报告；blocked_frozen_* 仅记录冻结前
-#   状态，且只能经带完整 reservation 身份、operator、reason 的 write-ahead 审计后人工
-#   force-unfreeze 解冻。恢复严格回到冻结前状态，不能绕过 occupy 进驻门。
+#   状态与旧 reservation 身份。人工 force-unfreeze 必须携带完整旧身份、operator、reason、
+#   recovery-agent，先写 durable 私有 handoff 与公开 intent，再一次性返回 OPERATION_ID 和新
+#   OWNER_TOKEN；随后 recovery agent 必须以这两个凭据调用 resume-unfreeze-blocked。resume 可从
+#   agent/token/state/completion 任一中断点继续；旧 holder 在 agent/token 轮换后失效。reserved
+#   来源最终只回到 reserved，仍须过 occupy；occupied 来源最终回到 occupied。
 #
 # 状态机：
 #   free --acquire--> reserved
@@ -20,15 +23,17 @@
 #   reserved --occupy(valid canonical worktree)--> occupied
 #   reserved --freeze-blocked--> blocked_frozen_from_reserved
 #   occupied --freeze-blocked--> blocked_frozen_from_occupied
-#   blocked_frozen_from_reserved --force-unfreeze-blocked(manual audited)--> reserved
-#   blocked_frozen_from_occupied --force-unfreeze-blocked(manual audited)--> occupied
+#   blocked_frozen_from_reserved --force-unfreeze-blocked(prepare audited handoff)--> blocked_frozen_from_reserved
+#   blocked_frozen_from_reserved --resume-unfreeze-blocked(resumable)--> reserved
+#   blocked_frozen_from_occupied --force-unfreeze-blocked(prepare audited handoff)--> blocked_frozen_from_occupied
+#   blocked_frozen_from_occupied --resume-unfreeze-blocked(resumable)--> occupied
 #   reserved --rollback--> free
 #   occupied --release--> free
 # blocked_frozen_* 不得走普通 occupy/release/rollback/mark；free 上 mutation 也拒绝，因为
 # reservation 已不存在，无法验证 owner token。
 #
 # 布局（相对主 checkout 根）：
-#   .agent-worktrees/.slot-registry/{capacity,manual-recovery.audit.jsonl,slot-<k>.lock/}
+#   .agent-worktrees/.slot-registry/{capacity,manual-recovery.audit.jsonl,manual-handoff.lock/,slot-<k>.lock/}
 #   .agent-worktrees/.slot-registry-locks/acquire.lock
 #   .agent-worktrees/slot-<k>/                 # canonical 常驻 locked worktree
 #
@@ -44,7 +49,11 @@
 #       # rollback stdout：DELETE_LOCAL_BRANCH=true|false
 #   bash scripts/slot_registry.sh manual-report --slot slot-1
 #   bash scripts/slot_registry.sh force-unfreeze-blocked --slot slot-1 --task T --branch B \
-#     --claim-sha S --agent A --operator '<human>' --reason '<ticket/reason>'
+#     --claim-sha S --agent OLD --recovery-agent NEW --operator '<human>' --reason '<ticket/reason>'
+#       # stdout contains one-time OPERATION_ID + OWNER_TOKEN; save both, then call resume below.
+#   bash scripts/slot_registry.sh resume-unfreeze-blocked --slot slot-1 --task T --branch B \
+#     --claim-sha S --recovery-agent NEW --operation-id OP --owner-token "$owner_token" \
+#     --operator '<human>' --reason '<same-ticket/reason>'
 #   bash scripts/slot_registry.sh status [--json]
 #   bash scripts/slot_registry.sh capacity
 #   bash scripts/slot_registry.sh is-held --slot slot-1
@@ -54,7 +63,7 @@
 # - SLOT_REGISTRY_TEST_WAIT_GATE_READY / _RELEASE / _ACK / _INSTANCE：竞争者在 flock 前
 #   建立确定性 barrier。
 # - SLOT_REGISTRY_TEST_FAIL_ACQUIRE_STEP=write|date|mv：临时 reservation fail-clean。
-# - SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP=audit|state|complete：人工恢复故障注入。
+# - SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP=audit|audit-absent|audit-written|prepare|agent|token|state|complete|cleanup：人工恢复故障注入。
 #
 # 失败一律非零 + stderr；任何查询异常不假装空闲。
 set -euo pipefail
@@ -72,6 +81,8 @@ DEFAULT_MAX=2
 GATE_WAIT_SEC="${SLOT_REGISTRY_GATE_WAIT_SEC:-5}"
 CACHE_DIRS=("server/target" "client/build" "client/.gradle")
 REQUIRED_FIELDS=(task_id branch claim_sha agent_id owner_token state created_local_branch reserved_at)
+HANDOFF_DIR_NAME=manual-handoff
+REQUIRED_HANDOFF_FIELDS=(operation_id task_id branch claim_sha old_agent old_token recovery_agent new_token from_state target_state operator reason timestamp)
 
 # 测试只隔离 registry/lock；canonical slot 仍是沙箱仓的真实 .agent-worktrees/slot-N。
 if [[ -n "${SLOT_REGISTRY_ROOT_OVERRIDE:-}" ]]; then
@@ -181,14 +192,52 @@ finally:
 PYFSYNCDIR
 }
 
+handoff_progress() {
+  local lock="$1" old_agent="$2" old_token="$3" recovery_agent="$4" new_token="$5" from_state="$6" target_state="$7"
+  local agent token state
+  read_field_into agent "$lock" agent_id || exit $?
+  read_field_into token "$lock" owner_token || exit $?
+  read_field_into state "$lock" state || exit $?
+  if [[ "$agent" == "$old_agent" && "$token" == "$old_token" && "$state" == "$from_state" ]]; then printf '0\n'; return; fi
+  if [[ "$agent" == "$recovery_agent" && "$token" == "$old_token" && "$state" == "$from_state" ]]; then printf '1\n'; return; fi
+  if [[ "$agent" == "$recovery_agent" && "$token" == "$new_token" && "$state" == "$from_state" ]]; then printf '2\n'; return; fi
+  if [[ "$agent" == "$recovery_agent" && "$token" == "$new_token" && "$state" == "$target_state" ]]; then printf '3\n'; return; fi
+  die "manual handoff fields are inconsistent; manual inspection required"
+}
+
 AUDIT_SLOTS=(); AUDIT_TASKS=(); AUDIT_BRANCHES=(); AUDIT_CLAIMS=()
 AUDIT_AGENTS=(); AUDIT_TOKENS=(); AUDIT_STATES=(); AUDIT_CREATED=(); AUDIT_RESERVED=()
+AUDIT_HANDOFF_SLOTS=(); AUDIT_HANDOFF_OPERATIONS=(); AUDIT_HANDOFF_OLD_AGENTS=(); AUDIT_HANDOFF_OLD_TOKENS=()
+AUDIT_HANDOFF_RECOVERY_AGENTS=(); AUDIT_HANDOFF_NEW_TOKENS=()
+AUDIT_MANUAL_INTENT_OPERATIONS=(); AUDIT_MANUAL_COMPLETED_OPERATIONS=()
+AUDIT_ALLOW_MISSING_INTENT=0
+
+audit_value_exists_other_slot() {
+  local needle="$1" kind="$2" skip_slot="$3" i
+  for i in "${!AUDIT_SLOTS[@]}"; do
+    [[ "${AUDIT_SLOTS[$i]}" == "$skip_slot" ]] && continue
+    case "$kind" in
+      task) [[ "${AUDIT_TASKS[$i]}" == "$needle" ]] && return 0 ;;
+      branch) [[ "${AUDIT_BRANCHES[$i]}" == "$needle" ]] && return 0 ;;
+      agent) [[ "${AUDIT_AGENTS[$i]}" == "$needle" ]] && return 0 ;;
+      token) [[ "${AUDIT_TOKENS[$i]}" == "$needle" ]] && return 0 ;;
+      *) die "unknown audited field: $kind" ;;
+    esac
+  done
+  return 1
+}
 
 # Must run under registry flock. Success fills AUDIT_*; failure is read-only.
 audit_registry() {
   local max="$1" entry name slot n task branch claim agent token state created reserved field i
+  local handoff_root operation old_agent old_token recovery_agent new_token from_state target_state operator reason timestamp lock
+  local audit_operation audit_output
+  local -a audit_operations=()
   AUDIT_SLOTS=(); AUDIT_TASKS=(); AUDIT_BRANCHES=(); AUDIT_CLAIMS=()
   AUDIT_AGENTS=(); AUDIT_TOKENS=(); AUDIT_STATES=(); AUDIT_CREATED=(); AUDIT_RESERVED=()
+  AUDIT_HANDOFF_SLOTS=(); AUDIT_HANDOFF_OPERATIONS=(); AUDIT_HANDOFF_OLD_AGENTS=(); AUDIT_HANDOFF_OLD_TOKENS=()
+  AUDIT_HANDOFF_RECOVERY_AGENTS=(); AUDIT_HANDOFF_NEW_TOKENS=()
+  AUDIT_MANUAL_INTENT_OPERATIONS=(); AUDIT_MANUAL_COMPLETED_OPERATIONS=()
 
   for entry in "$REG_ROOT"/.slot-*.reservation.*; do
     [[ -e "$entry" || -L "$entry" ]] || continue
@@ -197,6 +246,7 @@ audit_registry() {
   for entry in "$REG_ROOT"/*.lock; do
     [[ -e "$entry" || -L "$entry" ]] || continue
     name=$(basename "$entry")
+    [[ "$name" == "$HANDOFF_DIR_NAME.lock" ]] && continue
     [[ "$name" =~ ^slot-([1-9][0-9]*)[.]lock$ ]] || die "invalid reservation entry: $name"
     n="${BASH_REMATCH[1]}"; slot="slot-$((10#$n))"
     [[ "$name" == "$slot.lock" ]] || die "non-canonical reservation entry: $name"
@@ -229,6 +279,186 @@ audit_registry() {
     AUDIT_CLAIMS+=("$claim"); AUDIT_AGENTS+=("$agent"); AUDIT_TOKENS+=("$token")
     AUDIT_STATES+=("$state"); AUDIT_CREATED+=("$created"); AUDIT_RESERVED+=("$reserved")
   done
+
+  if [[ -e "$MANUAL_AUDIT_FILE" || -L "$MANUAL_AUDIT_FILE" ]]; then
+    [[ -f "$MANUAL_AUDIT_FILE" && ! -L "$MANUAL_AUDIT_FILE" ]] || die "manual audit is not a real file"
+    audit_output=$(python3 - "$MANUAL_AUDIT_FILE" <<'PYAUDITCHECK'
+import json
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+raw_data = path.read_bytes()
+if raw_data and not raw_data.endswith(b"\n"):
+    raise SystemExit("manual audit must end with a newline")
+required = {
+    "event", "operation_id", "timestamp", "slot", "task_id", "branch",
+    "claim_sha", "agent_id", "recovery_agent_id", "owner_token_sha256",
+    "operator", "reason", "from_state", "target_state", "uid",
+}
+operations = {}
+for line_number, raw in enumerate(path.read_bytes().splitlines(), 1):
+    try:
+        line = raw.decode("utf-8")
+        row = json.loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"invalid manual audit JSON at line {line_number}: {exc}")
+    if not isinstance(row, dict) or set(row) != required:
+        raise SystemExit(f"invalid manual audit fields at line {line_number}")
+    event = row["event"]
+    if event not in {"force-unfreeze-blocked-intent", "force-unfreeze-blocked-completed"}:
+        raise SystemExit(f"invalid manual audit event at line {line_number}")
+    string_fields = required - {"uid"}
+    if any(not isinstance(row[name], str) or not row[name] for name in string_fields):
+        raise SystemExit(f"invalid manual audit string at line {line_number}")
+    if not isinstance(row["uid"], int) or isinstance(row["uid"], bool) or row["uid"] < 0:
+        raise SystemExit(f"invalid manual audit uid at line {line_number}")
+    if not re.fullmatch(r"[0-9a-f]{32}", row["operation_id"]):
+        raise SystemExit(f"invalid manual audit operation_id at line {line_number}")
+    if not re.fullmatch(r"[0-9a-f]{40}", row["claim_sha"]):
+        raise SystemExit(f"invalid manual audit claim_sha at line {line_number}")
+    if not re.fullmatch(r"[0-9a-f]{64}", row["owner_token_sha256"]):
+        raise SystemExit(f"invalid manual audit token digest at line {line_number}")
+    if not re.fullmatch(r"slot-[1-9][0-9]*", row["slot"]):
+        raise SystemExit(f"invalid manual audit slot at line {line_number}")
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", row["timestamp"]):
+        raise SystemExit(f"invalid manual audit timestamp at line {line_number}")
+    if (row["from_state"], row["target_state"]) not in {
+        ("blocked_frozen_from_reserved", "reserved"),
+        ("blocked_frozen_from_occupied", "occupied"),
+    }:
+        raise SystemExit(f"invalid manual audit state pair at line {line_number}")
+    operation_id = row["operation_id"]
+    identity = {name: row[name] for name in required - {"event"}}
+    operation = operations.setdefault(operation_id, {"identity": identity, "events": []})
+    if operation["identity"] != identity:
+        raise SystemExit(f"conflicting manual audit identity for operation {operation_id}")
+    operation["events"].append(event)
+
+for operation_id, operation in operations.items():
+    events = operation["events"]
+    if events not in [
+        ["force-unfreeze-blocked-intent"],
+        ["force-unfreeze-blocked-intent", "force-unfreeze-blocked-completed"],
+    ]:
+        raise SystemExit(f"invalid manual audit lifecycle for operation {operation_id}")
+    print(("completed" if len(events) == 2 else "intent") + " " + operation_id)
+PYAUDITCHECK
+    ) || die "manual audit validation failed"
+    if [[ -n "$audit_output" ]]; then
+      mapfile -t audit_operations <<< "$audit_output"
+    fi
+    for audit_operation in "${audit_operations[@]}"; do
+      case "$audit_operation" in
+        "intent "*) AUDIT_MANUAL_INTENT_OPERATIONS+=("${audit_operation#intent }") ;;
+        "completed "*)
+          AUDIT_MANUAL_INTENT_OPERATIONS+=("${audit_operation#completed }")
+          AUDIT_MANUAL_COMPLETED_OPERATIONS+=("${audit_operation#completed }")
+          ;;
+        *) die "manual audit validation returned an invalid record" ;;
+      esac
+    done
+  fi
+
+  handoff_root="$REG_ROOT/$HANDOFF_DIR_NAME.lock"
+  if [[ -e "$handoff_root" || -L "$handoff_root" ]]; then
+    [[ -d "$handoff_root" && ! -L "$handoff_root" ]] || die "manual handoff root is not a real directory"
+    for entry in "$handoff_root"/* "$handoff_root"/.*; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      name=$(basename "$entry")
+      [[ "$name" != . && "$name" != .. ]] || continue
+      [[ "$name" =~ ^slot-([1-9][0-9]*)$ ]] || die "invalid manual handoff entry: $name"
+      n="${BASH_REMATCH[1]}"; slot="slot-$((10#$n))"
+      [[ "$name" == "$slot" ]] || die "non-canonical manual handoff entry: $name"
+      (( 10#$n <= max )) || die "manual handoff outside capacity: $slot max=$max"
+      [[ -d "$entry" && ! -L "$entry" ]] || die "manual handoff is not a real directory: $name"
+      for field in "${REQUIRED_HANDOFF_FIELDS[@]}"; do
+        [[ -f "$entry/$field" && ! -L "$entry/$field" ]] || die "incomplete manual handoff $slot: missing/corrupt $field"
+      done
+      read_field_into operation "$entry" operation_id || exit $?
+      read_field_into task "$entry" task_id || exit $?
+      read_field_into branch "$entry" branch || exit $?
+      read_field_into claim "$entry" claim_sha || exit $?
+      read_field_into old_agent "$entry" old_agent || exit $?
+      read_field_into old_token "$entry" old_token || exit $?
+      read_field_into recovery_agent "$entry" recovery_agent || exit $?
+      read_field_into new_token "$entry" new_token || exit $?
+      read_field_into from_state "$entry" from_state || exit $?
+      read_field_into target_state "$entry" target_state || exit $?
+      read_field_into operator "$entry" operator || exit $?
+      read_field_into reason "$entry" reason || exit $?
+      read_field_into timestamp "$entry" timestamp || exit $?
+      [[ "$operation" =~ ^[0-9a-f]{32}$ ]] || die "corrupt operation_id in manual handoff $slot"
+      validate_field task "$task"; validate_branch "$branch"; validate_field old-agent "$old_agent"
+      validate_field recovery-agent "$recovery_agent"; validate_field operator "$operator"; validate_field reason "$reason"
+      [[ "$claim" =~ ^[0-9a-f]{40}$ ]] || die "corrupt claim_sha in manual handoff $slot"
+      validate_owner_token "$old_token"; validate_owner_token "$new_token"
+      [[ "$old_agent" != "$recovery_agent" ]] || die "manual handoff reuses agent in $slot"
+      [[ "$old_token" != "$new_token" ]] || die "manual handoff reuses owner_token in $slot"
+      case "$from_state:$target_state" in
+        blocked_frozen_from_reserved:reserved|blocked_frozen_from_occupied:occupied) ;;
+        *) die "corrupt state pair in manual handoff $slot" ;;
+      esac
+      [[ "$timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "corrupt timestamp in manual handoff $slot"
+      if value_exists "$operation" "${AUDIT_MANUAL_COMPLETED_OPERATIONS[@]}"; then
+        [[ "$AUDIT_ALLOW_MISSING_INTENT" == 1 ]] \
+          || die "completed manual audit still has pending handoff: $operation"
+      fi
+      if ! value_exists "$operation" "${AUDIT_MANUAL_INTENT_OPERATIONS[@]}"; then
+        [[ "$AUDIT_ALLOW_MISSING_INTENT" == 1 ]] \
+          || die "manual handoff has no durable public intent: $operation"
+        [[ "$(handoff_progress "$REG_ROOT/$slot.lock" "$old_agent" "$old_token" "$recovery_agent" "$new_token" "$from_state" "$target_state")" == 0 ]] \
+          || die "manual handoff without public intent has already mutated reservation: $operation"
+      fi
+      if value_exists "$operation" "${AUDIT_MANUAL_INTENT_OPERATIONS[@]}"; then
+        if ! python3 - "$MANUAL_AUDIT_FILE" "$operation" "$slot" "$task" "$branch" "$claim" "$old_agent" "$recovery_agent" "$new_token" "$operator" "$reason" "$from_state" "$target_state" "$timestamp" <<'PYHANDOFFMATCH'
+import hashlib
+import json
+import os
+import sys
+
+(path, operation_id, slot, task, branch, claim, old_agent, recovery_agent,
+ new_token, operator, reason, from_state, target_state, timestamp) = sys.argv[1:]
+expected = {
+    "operation_id": operation_id,
+    "timestamp": timestamp,
+    "slot": slot,
+    "task_id": task,
+    "branch": branch,
+    "claim_sha": claim,
+    "agent_id": old_agent,
+    "recovery_agent_id": recovery_agent,
+    "owner_token_sha256": hashlib.sha256(new_token.encode("ascii")).hexdigest(),
+    "operator": operator,
+    "reason": reason,
+    "from_state": from_state,
+    "target_state": target_state,
+    "uid": os.getuid(),
+}
+rows = [json.loads(line) for line in open(path, encoding="utf-8")]
+intent = next((row for row in rows if row["operation_id"] == operation_id and
+               row["event"] == "force-unfreeze-blocked-intent"), None)
+if intent is None or {key: intent[key] for key in expected} != expected:
+    raise SystemExit(2)
+PYHANDOFFMATCH
+        then
+          die "manual handoff does not match durable public intent: $operation"
+        fi
+      fi
+      value_exists "$operation" "${AUDIT_HANDOFF_OPERATIONS[@]}" && die "duplicate manual handoff operation_id"
+      value_exists "$recovery_agent" "${AUDIT_HANDOFF_RECOVERY_AGENTS[@]}" && die "duplicate manual handoff recovery_agent"
+      value_exists "$new_token" "${AUDIT_HANDOFF_NEW_TOKENS[@]}" && die "duplicate manual handoff new_token"
+      audit_value_exists_other_slot "$recovery_agent" agent "$slot" && die "manual handoff recovery_agent already reserved"
+      audit_value_exists_other_slot "$new_token" token "$slot" && die "manual handoff new_token already reserved"
+      lock="$REG_ROOT/$slot.lock"
+      [[ -d "$lock" && ! -L "$lock" ]] || die "orphan manual handoff without reservation: $slot"
+      handoff_progress "$lock" "$old_agent" "$old_token" "$recovery_agent" "$new_token" "$from_state" "$target_state" >/dev/null
+      AUDIT_HANDOFF_SLOTS+=("$slot"); AUDIT_HANDOFF_OPERATIONS+=("$operation")
+      AUDIT_HANDOFF_OLD_AGENTS+=("$old_agent"); AUDIT_HANDOFF_OLD_TOKENS+=("$old_token")
+      AUDIT_HANDOFF_RECOVERY_AGENTS+=("$recovery_agent"); AUDIT_HANDOFF_NEW_TOKENS+=("$new_token")
+    done
+  fi
 }
 
 require_owner() {
@@ -311,7 +541,7 @@ maybe_hold_gate_for_test() {
 }
 
 parse_kv() {
-  SLOT=""; TASK=""; BRANCH=""; CLAIM=""; AGENT=""; OWNER_TOKEN=""
+  SLOT=""; TASK=""; BRANCH=""; CLAIM=""; AGENT=""; RECOVERY_AGENT=""; OPERATION_ID=""; OWNER_TOKEN=""
   VALUE=""; REASON=""; OPERATOR=""; JSON=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -320,6 +550,8 @@ parse_kv() {
       --branch) [[ $# -ge 2 ]] || die "missing value for --branch"; BRANCH="$2"; shift 2 ;;
       --claim-sha) [[ $# -ge 2 ]] || die "missing value for --claim-sha"; CLAIM="$2"; shift 2 ;;
       --agent) [[ $# -ge 2 ]] || die "missing value for --agent"; AGENT="$2"; shift 2 ;;
+      --recovery-agent) [[ $# -ge 2 ]] || die "missing value for --recovery-agent"; RECOVERY_AGENT="$2"; shift 2 ;;
+      --operation-id) [[ $# -ge 2 ]] || die "missing value for --operation-id"; OPERATION_ID="$2"; shift 2 ;;
       --owner-token) [[ $# -ge 2 ]] || die "missing value for --owner-token"; OWNER_TOKEN="$2"; shift 2 ;;
       --value) [[ $# -ge 2 ]] || die "missing value for --value"; VALUE="$2"; shift 2 ;;
       --max) [[ $# -ge 2 ]] || die "missing value for --max"; VALUE="$2"; shift 2 ;;
@@ -341,7 +573,7 @@ init_locked() {
     die "invalid --max $requested"
   fi
   if [[ ! -e "$REG_ROOT/capacity" && ! -L "$REG_ROOT/capacity" ]]; then
-    for entry in "$REG_ROOT"/*.lock "$REG_ROOT"/.slot-*.reservation.*; do
+    for entry in "$REG_ROOT"/slot-*.lock "$REG_ROOT"/.slot-*.reservation.* "$REG_ROOT/$HANDOFF_DIR_NAME.lock"; do
       [[ -e "$entry" || -L "$entry" ]] || continue
       die "registry has reservations but no capacity; manual inspection required"
     done
@@ -386,6 +618,7 @@ acquire_locked() {
   value_exists "$TASK" "${AUDIT_TASKS[@]}" && die "task_id already reserved"
   value_exists "$BRANCH" "${AUDIT_BRANCHES[@]}" && die "branch already reserved"
   value_exists "$AGENT" "${AUDIT_AGENTS[@]}" && die "agent_id already reserved"
+  value_exists "$AGENT" "${AUDIT_HANDOFF_RECOVERY_AGENTS[@]}" && die "agent_id reserved by pending manual handoff"
   held=${#AUDIT_SLOTS[@]}; (( held < max )) || die "capacity full: held=$held max=$max"
   while :; do
     token=$(generate_owner_token); validate_owner_token "$token"
@@ -510,28 +743,54 @@ freeze_blocked_locked() {
 cmd_freeze_blocked() { parse_kv "$@"; validate_normal_owner_args; with_registry_lock freeze_blocked_locked; }
 
 append_manual_audit() {
-  local event="$1" timestamp="$2" operation_id="$3" from_state="$4" target_state="$5"
+  local event="$1" timestamp="$2" operation_id="$3" from_state="$4" target_state="$5" old_agent="$6" recovery_agent="$7" handoff_token="$8"
   case "$event" in
-    force-unfreeze-blocked-intent)
-      [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != audit ]] || { printf 'slot_registry: injected manual audit failure\n' >&2; return 2; }
-      ;;
-    force-unfreeze-blocked-completed)
-      [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != complete ]] || { printf 'slot_registry: injected manual completion audit failure\n' >&2; return 2; }
-      ;;
+    force-unfreeze-blocked-intent|force-unfreeze-blocked-completed) ;;
     *)
       printf 'slot_registry: invalid manual audit event: %s\n' "$event" >&2
       return 2
       ;;
   esac
-  python3 - "$MANUAL_AUDIT_FILE" "$event" "$timestamp" "$operation_id" "$SLOT" "$TASK" "$BRANCH" "$CLAIM" "$AGENT" "$OPERATOR" "$REASON" "$from_state" "$target_state" <<'PYAUDIT'
-import json, os, sys
-(path, event, timestamp, operation_id, slot, task, branch, claim, agent, operator,
- reason, from_state, target_state) = sys.argv[1:]
-record = {"event":event,"operation_id":operation_id,
-          "timestamp":timestamp,"slot":slot,"task_id":task,"branch":branch,
-          "claim_sha":claim.lower(),"agent_id":agent,"operator":operator,
-          "reason":reason,"from_state":from_state,"target_state":target_state,
-          "uid":os.getuid()}
+  if [[ -n "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" && "$event" == force-unfreeze-blocked-intent ]]; then
+    case "$SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP" in
+      audit)
+        printf 'slot_registry: injected manual audit failure\n' >&2
+        return 2
+        ;;
+      audit-absent)
+        printf 'slot_registry: injected absent manual audit intent\n' >&2
+        return 2
+        ;;
+      audit-written) ;;
+    esac
+  fi
+  if [[ ! -e "$MANUAL_AUDIT_FILE" && ! -L "$MANUAL_AUDIT_FILE" ]]; then
+    : > "$MANUAL_AUDIT_FILE" || return 1
+    fsync_dir "$REG_ROOT" || return 1
+  fi
+  [[ -f "$MANUAL_AUDIT_FILE" && ! -L "$MANUAL_AUDIT_FILE" ]] || die "manual audit is not a real file"
+  if [[ "$event" == force-unfreeze-blocked-completed ]] && value_exists "$operation_id" "${AUDIT_MANUAL_COMPLETED_OPERATIONS[@]}"; then
+    return 0
+  fi
+  if [[ "$event" == force-unfreeze-blocked-completed && "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" == complete ]]; then
+    printf 'slot_registry: injected manual completion audit failure\n' >&2
+    return 2
+  fi
+  python3 - "$MANUAL_AUDIT_FILE" "$event" "$timestamp" "$operation_id" "$SLOT" "$TASK" "$BRANCH" "$CLAIM" "$old_agent" "$recovery_agent" "$OPERATOR" "$REASON" "$from_state" "$target_state" "$handoff_token" <<'PYAUDIT'
+import hashlib
+import json
+import os
+import sys
+
+(path, event, timestamp, operation_id, slot, task, branch, claim, old_agent,
+ recovery_agent, operator, reason, from_state, target_state, handoff_token) = sys.argv[1:]
+record = {"event": event, "operation_id": operation_id,
+          "timestamp": timestamp, "slot": slot, "task_id": task, "branch": branch,
+          "claim_sha": claim.lower(), "agent_id": old_agent,
+          "recovery_agent_id": recovery_agent,
+          "owner_token_sha256": hashlib.sha256(handoff_token.encode("ascii")).hexdigest(),
+          "operator": operator, "reason": reason, "from_state": from_state,
+          "target_state": target_state, "uid": os.getuid()}
 data = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 created = not os.path.exists(path)
 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -549,38 +808,166 @@ if created:
     finally:
         os.close(parent_fd)
 PYAUDIT
+  if [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" == audit-written && "$event" == force-unfreeze-blocked-intent ]]; then
+    printf 'slot_registry: injected post-audit-write interruption\n' >&2
+    return 2
+  fi
+}
+remove_handoff_dir() {
+  local dir="$1" parent
+  rm -rf -- "$dir"
+  parent=$(dirname "$dir")
+  rmdir -- "$parent" 2>/dev/null || true
+  fsync_dir "$REG_ROOT"
+}
+handoff_dir() { printf '%s/%s.lock/%s\n' "$REG_ROOT" "$HANDOFF_DIR_NAME" "$SLOT"; }
+write_handoff_intent() {
+  local dir="$1" operation_id="$2" old_agent="$3" old_token="$4" new_token="$5" frozen_state="$6" target_state="$7" timestamp="$8" tmp
+  [[ ! -e "$dir" && ! -L "$dir" ]] || die "manual handoff already pending for $SLOT"
+  mkdir -p "$REG_ROOT/$HANDOFF_DIR_NAME.lock"
+  tmp=$(mktemp -d "$REG_ROOT/$HANDOFF_DIR_NAME.lock/.${SLOT}.XXXXXX") || return
+  write_field "$tmp" operation_id "$operation_id"
+  write_field "$tmp" task_id "$TASK"; write_field "$tmp" branch "$BRANCH"; write_field "$tmp" claim_sha "${CLAIM,,}"
+  write_field "$tmp" old_agent "$old_agent"; write_field "$tmp" old_token "$old_token"
+  write_field "$tmp" recovery_agent "$RECOVERY_AGENT"
+  write_field "$tmp" new_token "$new_token"; write_field "$tmp" from_state "$frozen_state"; write_field "$tmp" target_state "$target_state"
+  write_field "$tmp" operator "$OPERATOR"; write_field "$tmp" reason "$REASON"; write_field "$tmp" timestamp "$timestamp"
+  [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != prepare ]] || { rm -rf -- "$tmp"; printf 'slot_registry: injected manual handoff prepare failure\n' >&2; return 2; }
+  fsync_dir "$tmp"
+  mv -T -- "$tmp" "$dir" || { rm -rf -- "$tmp"; return 1; }
+  fsync_dir "$(dirname "$dir")"
+}
+read_handoff_into_globals() {
+  local dir="$1" field
+  [[ -d "$dir" && ! -L "$dir" ]] || die "no pending manual handoff for $SLOT"
+  for field in "${REQUIRED_HANDOFF_FIELDS[@]}"; do
+    [[ -f "$dir/$field" && ! -L "$dir/$field" ]] || die "incomplete manual handoff $SLOT: $field"
+  done
+  read_field_into HANDOFF_OPERATION_ID "$dir" operation_id || exit $?
+  read_field_into HANDOFF_TASK "$dir" task_id || exit $?
+  read_field_into HANDOFF_BRANCH "$dir" branch || exit $?
+  read_field_into HANDOFF_CLAIM "$dir" claim_sha || exit $?
+  read_field_into HANDOFF_OLD_AGENT "$dir" old_agent || exit $?
+  read_field_into HANDOFF_OLD_TOKEN "$dir" old_token || exit $?
+  read_field_into HANDOFF_RECOVERY_AGENT "$dir" recovery_agent || exit $?
+  read_field_into HANDOFF_NEW_TOKEN "$dir" new_token || exit $?
+  read_field_into HANDOFF_FROM_STATE "$dir" from_state || exit $?
+  read_field_into HANDOFF_TARGET_STATE "$dir" target_state || exit $?
+  read_field_into HANDOFF_OPERATOR "$dir" operator || exit $?
+  read_field_into HANDOFF_REASON "$dir" reason || exit $?
+  read_field_into HANDOFF_TIMESTAMP "$dir" timestamp || exit $?
+  validate_owner_token "$HANDOFF_OLD_TOKEN"; validate_owner_token "$HANDOFF_NEW_TOKEN"
+}
+current_handoff_step() {
+  handoff_progress "$1" "$HANDOFF_OLD_AGENT" "$HANDOFF_OLD_TOKEN" "$HANDOFF_RECOVERY_AGENT" "$HANDOFF_NEW_TOKEN" "$HANDOFF_FROM_STATE" "$HANDOFF_TARGET_STATE"
+}
+continue_handoff_locked() {
+  local lock="$1" dir="$2" step
+  step=$(current_handoff_step "$lock")
+  if (( step < 1 )); then
+    [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != agent ]] || die "injected owner handoff agent failure; durable intent requires manual inspection"
+    write_field_atomic "$lock" agent_id "$HANDOFF_RECOVERY_AGENT" || die "owner handoff agent persistence failed; durable intent requires manual inspection"
+  fi
+  if (( step < 2 )); then
+    [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != token ]] || die "injected owner handoff token failure; durable intent requires manual inspection"
+    write_field_atomic "$lock" owner_token "$HANDOFF_NEW_TOKEN" || die "owner handoff token persistence failed; durable intent requires manual inspection"
+  fi
+  if (( step < 3 )); then
+    [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != state ]] || die "injected unfreeze state failure; durable intent requires manual inspection"
+    write_field_atomic "$lock" state "$HANDOFF_TARGET_STATE" || die "unfreeze state persistence failed; durable intent requires manual inspection"
+  fi
+  append_manual_audit force-unfreeze-blocked-completed "$HANDOFF_TIMESTAMP" "$HANDOFF_OPERATION_ID" "$HANDOFF_FROM_STATE" "$HANDOFF_TARGET_STATE" \
+    "$HANDOFF_OLD_AGENT" "$HANDOFF_RECOVERY_AGENT" "$HANDOFF_NEW_TOKEN" \
+    || die "unfreeze completed but completion audit persistence failed; durable intent requires manual inspection"
+  if [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" == cleanup ]]; then
+    printf 'slot_registry: injected manual handoff cleanup failure\n' >&2
+    return 2
+  fi
+  remove_handoff_dir "$dir"
+  printf 'OK resume-unfreeze-blocked %s task=%s state=%s recovery_agent=%s audit=%s operation_id=%s\n' \
+    "$SLOT" "$TASK" "$HANDOFF_TARGET_STATE" "$HANDOFF_RECOVERY_AGENT" "$MANUAL_AUDIT_FILE" "$HANDOFF_OPERATION_ID"
 }
 force_unfreeze_locked() {
-  local max lock timestamp operation_id frozen_state target_state
-  max=$(read_capacity); audit_registry "$max"; require_slot_in_pool "$SLOT" "$max"; lock="$REG_ROOT/$SLOT.lock"
+  local max lock timestamp operation_id frozen_state target_state old_agent old_token new_token attempts=0 dir
+  max=$(read_capacity); audit_registry "$max"; require_slot_in_pool "$SLOT" "$max"; lock="$REG_ROOT/$SLOT.lock"; dir=$(handoff_dir)
   require_manual_identity "$lock" "$TASK" "$BRANCH" "$CLAIM" "$AGENT"
   require_state "$lock" blocked_frozen_from_reserved blocked_frozen_from_occupied
   read_field_into frozen_state "$lock" state || exit $?
+  read_field_into old_agent "$lock" agent_id || exit $?
+  read_field_into old_token "$lock" owner_token || exit $?
   case "$frozen_state" in
     blocked_frozen_from_reserved) target_state=reserved ;;
     blocked_frozen_from_occupied) target_state=occupied ;;
     *) die "invalid frozen state: $frozen_state" ;;
   esac
+  [[ "$RECOVERY_AGENT" != "$old_agent" ]] || die "recovery-agent must differ from current agent"
+  value_exists "$RECOVERY_AGENT" "${AUDIT_AGENTS[@]}" && die "recovery agent already reserved"
+  value_exists "$RECOVERY_AGENT" "${AUDIT_HANDOFF_RECOVERY_AGENTS[@]}" && die "recovery agent reserved by pending manual handoff"
+  while :; do
+    new_token=$(generate_owner_token); validate_owner_token "$new_token"
+    if ! value_exists "$new_token" "${AUDIT_TOKENS[@]}" && ! value_exists "$new_token" "${AUDIT_HANDOFF_NEW_TOKENS[@]}"; then break; fi
+    attempts=$((attempts + 1)); (( attempts < 3 )) || die "owner token collision"
+  done
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   operation_id=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
-  # Write-ahead audit: any observable unfreeze has a durable intent first. An interrupted
-  # intent is truthful (it records the requested target) and manual-report surfaces it.
-  append_manual_audit force-unfreeze-blocked-intent "$timestamp" "$operation_id" "$frozen_state" "$target_state" \
-    || die "manual audit intent persistence failed; state unchanged"
-  [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != state ]] \
-    || die "injected unfreeze state failure; durable intent requires manual inspection"
-  write_field_atomic "$lock" state "$target_state" \
-    || die "unfreeze state persistence failed; durable intent requires manual inspection"
-  append_manual_audit force-unfreeze-blocked-completed "$timestamp" "$operation_id" "$frozen_state" "$target_state" \
-    || die "unfreeze completed but completion audit persistence failed; durable intent requires manual inspection"
-  printf 'OK force-unfreeze-blocked %s task=%s state=%s audit=%s operation_id=%s\n' \
-    "$SLOT" "$TASK" "$target_state" "$MANUAL_AUDIT_FILE" "$operation_id"
+  write_handoff_intent "$dir" "$operation_id" "$old_agent" "$old_token" "$new_token" "$frozen_state" "$target_state" "$timestamp" \
+    || die "manual handoff persistence failed; state unchanged"
+  if ! append_manual_audit force-unfreeze-blocked-intent "$timestamp" "$operation_id" "$frozen_state" "$target_state" \
+    "$old_agent" "$RECOVERY_AGENT" "$new_token"; then
+    if [[ "${SLOT_REGISTRY_TEST_FAIL_UNFREEZE_STEP:-}" != audit-written ]]; then
+      remove_handoff_dir "$dir"
+      die "manual audit intent persistence failed; state unchanged"
+    fi
+    die "manual audit intent write interrupted; durable handoff requires resume"
+  fi
+  printf 'OWNER_TOKEN=%s\nOPERATION_ID=%s\nHANDOFF_PREPARED slot=%s task=%s recovery_agent=%s\n' \
+    "$new_token" "$operation_id" "$SLOT" "$TASK" "$RECOVERY_AGENT"
+}
+resume_handoff_locked() {
+  local max lock dir handoff_index=-1 i old_allow_missing_intent="$AUDIT_ALLOW_MISSING_INTENT" audit_rc
+  AUDIT_ALLOW_MISSING_INTENT=1
+  max=$(read_capacity)
+  audit_registry "$max" || {
+    audit_rc=$?
+    AUDIT_ALLOW_MISSING_INTENT="$old_allow_missing_intent"
+    return "$audit_rc"
+  }
+  AUDIT_ALLOW_MISSING_INTENT="$old_allow_missing_intent"
+  require_slot_in_pool "$SLOT" "$max"; lock="$REG_ROOT/$SLOT.lock"; dir=$(handoff_dir)
+  for i in "${!AUDIT_HANDOFF_SLOTS[@]}"; do
+    if [[ "${AUDIT_HANDOFF_SLOTS[$i]}" == "$SLOT" ]]; then handoff_index=$i; break; fi
+  done
+  (( handoff_index >= 0 )) || die "no pending manual handoff for $SLOT"
+  read_handoff_into_globals "$dir"
+  [[ "$HANDOFF_OPERATION_ID" == "$OPERATION_ID" && "$HANDOFF_TASK" == "$TASK" && "$HANDOFF_BRANCH" == "$BRANCH" \
+     && "$HANDOFF_CLAIM" == "${CLAIM,,}" && "$HANDOFF_RECOVERY_AGENT" == "$RECOVERY_AGENT" \
+     && "$HANDOFF_NEW_TOKEN" == "$OWNER_TOKEN" && "$HANDOFF_OPERATOR" == "$OPERATOR" \
+     && "$HANDOFF_REASON" == "$REASON" ]] || die "manual handoff resume identity mismatch"
+  AGENT="$HANDOFF_OLD_AGENT"; OPERATOR="$HANDOFF_OPERATOR"; REASON="$HANDOFF_REASON"
+  if ! value_exists "$HANDOFF_OPERATION_ID" "${AUDIT_MANUAL_INTENT_OPERATIONS[@]}"; then
+    [[ "$(current_handoff_step "$lock")" == 0 ]] \
+      || die "manual handoff without public intent has already mutated reservation"
+    append_manual_audit force-unfreeze-blocked-intent "$HANDOFF_TIMESTAMP" "$HANDOFF_OPERATION_ID" \
+      "$HANDOFF_FROM_STATE" "$HANDOFF_TARGET_STATE" "$HANDOFF_OLD_AGENT" "$HANDOFF_RECOVERY_AGENT" \
+      "$HANDOFF_NEW_TOKEN" \
+      || die "manual handoff intent recovery failed; reservation remains frozen"
+    AUDIT_MANUAL_INTENT_OPERATIONS+=("$HANDOFF_OPERATION_ID")
+  fi
+  continue_handoff_locked "$lock" "$dir"
 }
 cmd_force_unfreeze_blocked() {
   parse_kv "$@"; need "$SLOT" --slot; need "$TASK" --task; need "$BRANCH" --branch; need "$CLAIM" --claim-sha; need "$AGENT" --agent
-  need "$OPERATOR" --operator; need "$REASON" --reason
-  validate_field task "$TASK"; validate_branch "$BRANCH"; validate_claim "$CLAIM"; validate_field agent "$AGENT"
+  need "$RECOVERY_AGENT" --recovery-agent; need "$OPERATOR" --operator; need "$REASON" --reason
+  validate_field task "$TASK"; validate_branch "$BRANCH"; validate_claim "$CLAIM"; validate_field agent "$AGENT"; validate_field recovery-agent "$RECOVERY_AGENT"
   validate_field operator "$OPERATOR"; validate_field reason "$REASON"; with_registry_lock force_unfreeze_locked
+}
+cmd_resume_unfreeze_blocked() {
+  parse_kv "$@"; need "$SLOT" --slot; need "$TASK" --task; need "$BRANCH" --branch; need "$CLAIM" --claim-sha
+  need "$RECOVERY_AGENT" --recovery-agent; need "$OPERATION_ID" --operation-id; need "$OWNER_TOKEN" --owner-token
+  need "$OPERATOR" --operator; need "$REASON" --reason
+  validate_field task "$TASK"; validate_branch "$BRANCH"; validate_claim "$CLAIM"; validate_field recovery-agent "$RECOVERY_AGENT"
+  validate_owner_token "$OWNER_TOKEN"; validate_field operation-id "$OPERATION_ID"; validate_field operator "$OPERATOR"; validate_field reason "$REASON"
+  with_registry_lock resume_handoff_locked
 }
 release_locked() {
   local lock; prepare_owned_lock; lock="$OWNED_LOCK"; require_state "$lock" occupied; rm -rf -- "$lock"; printf 'OK release %s task=%s\n' "$SLOT" "$TASK"
@@ -626,40 +1013,28 @@ status_locked() {
 }
 cmd_status() { parse_kv "$@"; with_registry_lock status_locked; }
 manual_report_locked() {
-  local max lock task branch claim agent state created reserved pending
+  local max lock task branch claim agent state created reserved handoff_root handoff operation recovery_agent from_state target_state operator timestamp progress
   max=$(read_capacity); audit_registry "$max"; require_slot_in_pool "$SLOT" "$max"; lock="$REG_ROOT/$SLOT.lock"
   [[ -d "$lock" && ! -L "$lock" ]] || die "slot not held"
   read_field_into task "$lock" task_id || exit $?; read_field_into branch "$lock" branch || exit $?
   read_field_into claim "$lock" claim_sha || exit $?; read_field_into agent "$lock" agent_id || exit $?
   read_field_into state "$lock" state || exit $?; read_field_into created "$lock" created_local_branch || exit $?
   read_field_into reserved "$lock" reserved_at || exit $?
-  pending=$(python3 - "$MANUAL_AUDIT_FILE" "$SLOT" "$task" "$branch" "$claim" "$agent" "$state" <<'PYPENDING'
-import json, pathlib, sys
-path, slot, task, branch, claim, agent, state = sys.argv[1:]
-intents = []
-completed = set()
-p = pathlib.Path(path)
-if p.is_file() and not p.is_symlink():
-    for line in p.read_text(encoding="utf-8").splitlines():
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        identity = (row.get("slot") == slot and row.get("task_id") == task
-                    and row.get("branch") == branch and row.get("claim_sha") == claim
-                    and row.get("agent_id") == agent)
-        if not identity:
-            continue
-        operation_id = row.get("operation_id")
-        if row.get("event") == "force-unfreeze-blocked-intent" and (row.get("from_state") == state or row.get("target_state") == state):
-            intents.append(operation_id)
-        elif row.get("event") == "force-unfreeze-blocked-completed" and (row.get("from_state") == state or row.get("target_state") == state):
-            completed.add(operation_id)
-print(sum(operation_id not in completed for operation_id in intents))
-PYPENDING
-  )
-  printf 'RECOVERY_MODE=manual-report-only\nslot=%q task=%q branch=%q claim_sha=%q agent=%q state=%q created_local=%q reserved_at=%q pending_unfreeze_intents=%q\n' "$SLOT" "$task" "$branch" "$claim" "$agent" "$state" "$created" "$reserved" "$pending"
-  printf 'No state changed. Inspect the slot, reservation, and any durable unfreeze intent manually; no PID/liveness recovery is implemented.\n'
+  printf 'RECOVERY_MODE=manual-report-only\nslot=%q task=%q branch=%q claim_sha=%q agent=%q state=%q created_local=%q reserved_at=%q' \
+    "$SLOT" "$task" "$branch" "$claim" "$agent" "$state" "$created" "$reserved"
+  handoff_root="$REG_ROOT/$HANDOFF_DIR_NAME.lock"; handoff="$handoff_root/$SLOT"
+  if [[ -d "$handoff" && ! -L "$handoff" ]]; then
+    read_handoff_into_globals "$handoff"
+    operation="$HANDOFF_OPERATION_ID"; recovery_agent="$HANDOFF_RECOVERY_AGENT"
+    from_state="$HANDOFF_FROM_STATE"; target_state="$HANDOFF_TARGET_STATE"
+    operator="$HANDOFF_OPERATOR"; timestamp="$HANDOFF_TIMESTAMP"
+    progress=$(current_handoff_step "$lock")
+    printf ' pending_handoff=true operation_id=%q recovery_agent=%q from_state=%q target_state=%q operator=%q timestamp=%q progress=%q\n' \
+      "$operation" "$recovery_agent" "$from_state" "$target_state" "$operator" "$timestamp" "$progress"
+  else
+    printf ' pending_handoff=false\n'
+  fi
+  printf 'No state changed. Inspect the slot, reservation, and any durable handoff manually; no PID/liveness recovery is implemented.\n'
 }
 cmd_manual_report() { parse_kv "$@"; need "$SLOT" --slot; with_registry_lock manual_report_locked; }
 
@@ -670,6 +1045,7 @@ case "$cmd" in
   occupy) cmd_occupy "$@" ;;
   freeze-blocked) cmd_freeze_blocked "$@" ;;
   force-unfreeze-blocked) cmd_force_unfreeze_blocked "$@" ;;
+  resume-unfreeze-blocked) cmd_resume_unfreeze_blocked "$@" ;;
   release) cmd_release "$@" ;;
   rollback) cmd_rollback "$@" ;;
   manual-report) cmd_manual_report "$@" ;;
