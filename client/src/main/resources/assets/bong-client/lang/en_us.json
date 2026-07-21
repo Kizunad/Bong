@@ -1,7 +1,6 @@
 {
   "category.bong-client.controls": "Bong Controls",
   "key.bong-client.interact": "Interact",
-  "key.bong-client.fpv_poc_cycle": "FPV Route Cycle (POC)",
   "key.bong-client.open_cultivation_screen": "Open Cultivation Screen",
   "key.bong-client.open_craft_screen": "Open Craft Screen",
   "category.bong-client.combat": "Bong Combat HUD",

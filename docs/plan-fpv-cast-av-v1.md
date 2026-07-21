@@ -33,8 +33,8 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
-| P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⬜ |
-| P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⬜ |
+| P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
+| P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` 双手合拢 round 1（gen 脚本 + 变体 json），待真机复测迭代 |
 | P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⬜ |
 | P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ⬜ |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |
@@ -146,9 +146,9 @@
 1. **锁定路线 A（库原生）**：`FirstPersonMode.THIRD_PERSON_MODEL` + 一个 `showRightArm/showLeftArm/showRightItem/showLeftItem=true` 的 `FirstPersonConfiguration`。**拒绝 B（自绘 FPV 手臂层）与 C（mixin 注入 vanilla 手臂）**——二者是 A 遮挡出问题时的后备，A 遮挡实测干净故无需做。
 2. **plan 预判的 `FirstPersonMode.ENABLED` 在 player-anim `1.0.2-rc1` 不存在**（该版本枚举仅 `NONE/VANILLA/THIRD_PERSON_MODEL/DISABLED`）——「库原生显示动画手臂」正解是 `THIRD_PERSON_MODEL` + config 开手臂。出厂 `BongAnimationPlayer.playOnStack` 只设 mode 没设 config，默认 config 的 `showArm=false` 正是第一人称无手臂的根因。库 `ItemInHandRendererMixin` 在 `THIRD_PERSON_MODEL` 下整段 cancel vanilla FP 手/物渲染 → plan 担心的「vanilla 盖掉持物」在 A 下**不发生**，真机印证。
 3. **真机 POC 证据（决定性判据=持物遮挡）**：POC harness（`FpvPocState`/`FpvPocControls` 运行时切 OFF/A/B/C + 键位 + `scripts/fpv-poc.sh` 快捷命令）在 `sword.cleave` 上真机对比——用户判定**A 下第一人称出现动画手臂 + 剑、遮挡正确**（无剑穿手/无 vanilla 双重渲染/无 z-fighting）。唯一观察：双手持剑时两手在贴脸视角**未视觉合拢**——经确认这是**姿态问题非路线问题**（剑=单手主手物只在右手渲染，左手空手摆双手持姿态，贴脸视差下需专门 FPV 变体把左手并到剑柄），归 **P2** 的 `sword_cleave_fpv.json` 处理，A/B/C 任选此姿态都要调。
-4. **P1 数据形状（据本决议定形）**：路线 A 的 `FirstPersonConfiguration` 收敛为 **per-animation 配置驱动** + 本地玩家 **`<anim_id>_fpv.json` 查找链**（本地玩家播 `sword.cleave` 优先查 `sword_cleave_fpv.json`，缺省回落路线 A 的自动配置=TPV 动画 + 开手臂 config）；远端玩家路径零变化。POC harness（B/C 占位 + 键位切换）在 PR-1/PR-2 收敛为正式路径时移除。
+4. **P1 数据形状（据本决议定形，已落地）**：本地玩家 **`<anim_id>_fpv` 查找链** + 路线 A 的 `FirstPersonConfiguration` 落于 `BongAnimationPlayer.playOnStack`——本地玩家播 `bong:sword_cleave` 时优先取 `bong:sword_cleave_fpv`，命中则播变体 + `applyFirstPersonRendering(true)`（`THIRD_PERSON_MODEL` + 开双臂/持物）。**回落语义（对 plan 原文的实现细化）**：无 `_fpv` 变体或远端玩家 → 出厂行为（`applyFirstPersonRendering(false)`，第一人称隐藏手臂）——即 **FPV 手臂按 `_fpv` 变体存在与否 opt-in**，而非 plan 原文的「缺省 blanket 开手臂」；理由是未调姿态的 TPV 动作直接进第一人称贴脸会显糙（用户实测），逐招授权变体更稳。远端玩家渲染分支零变化。POC harness（`FpvPocState`/`FpvPocControls`/键位/`fpv-poc.sh`）已在本 PR 收敛移除。
 
-**落点**：`client/src/main/java/com/bong/client/animation/FpvPocState.java`（POC 路线映射，applyTo 即路线 A 的 config）、`client/src/main/java/com/bong/client/animation/BongAnimationPlayer.java:137-145`（playOnStack 设 FirstPersonMode+config 处，P1 改 per-animation 驱动）、`client/src/main/java/com/bong/client/animation/BongAnimationRegistry.java:120-129/170`（`_fpv` 查找链落点，P1）；plan §P1/§P2；render 工具 `client/tools/render_animation.py --fpv`（P2 迭代双手合拢用）。
+**落点**：`client/src/main/java/com/bong/client/animation/BongAnimationPlayer.java`（`playOnStack` 内 `_fpv` 查找 + `isLocalPlayer`/`fpvVariantId`/`applyFirstPersonRendering` 三 helper）、`client/src/test/java/com/bong/client/animation/BongAnimationPlayerFpvTest.java`（变体 id + config pin）、`client/src/main/java/com/bong/client/animation/BongAnimationRegistry.java:122-135`（`contains`/`get` 查找源）；`client/tools/gen_sword_cleave_fpv.py` + `assets/bong/player_animation/sword_cleave_fpv.json`（P2 双手合拢变体）；render 工具 `client/tools/render_animation.py --fpv`（P2 迭代用）。
 
 ### #2 签名音效音源渠道 —— 用户拍板 CC0 素材库（2026-07-22）
 

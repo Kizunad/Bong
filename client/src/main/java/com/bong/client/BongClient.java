@@ -2,7 +2,6 @@ package com.bong.client;
 
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
-import com.bong.client.animation.FpvPocControls;
 import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.armor.ArmorRenderBootstrap;
 import com.bong.client.compat.SodiumChunkReload;
@@ -89,7 +88,6 @@ public class BongClient implements ClientModInitializer {
         InteractionKeybindings.register();
         NpcInteractionLogControls.register();
         HudImmersionControls.register();
-        FpvPocControls.register(); // plan-fpv-cast-av-v1 P0：FPV 路线 A/B/C POC 切换键（默认不绑定）
         MovementKeybindings.register();
         DyingElderInteractionKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();

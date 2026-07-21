@@ -1,5 +1,7 @@
 package com.bong.client.animation;
 
+import dev.kosmx.playerAnim.api.firstPerson.FirstPersonConfiguration;
+import dev.kosmx.playerAnim.api.firstPerson.FirstPersonMode;
 import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import dev.kosmx.playerAnim.api.layered.KeyframeAnimationPlayer;
 import dev.kosmx.playerAnim.api.layered.ModifierLayer;
@@ -8,6 +10,7 @@ import dev.kosmx.playerAnim.core.data.KeyframeAnimation;
 import dev.kosmx.playerAnim.core.util.Ease;
 import dev.kosmx.playerAnim.minecraftApi.PlayerAnimationAccess;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
@@ -129,20 +132,28 @@ public final class BongAnimationPlayer {
         if (stack == null || pid == null || animId == null) {
             return false;
         }
-        KeyframeAnimation anim = BongAnimationRegistry.get(animId);
+        // plan-fpv-cast-av-v1 P1：本地玩家第一人称手臂——本地玩家播 <id> 时优先取 <id>_fpv
+        // 变体（贴脸视角专调姿态，见 docs/player-animation-conventions.md §16）。命中则播变体
+        // + 开第一人称双臂/持物（路线 A，§8.1 #1：THIRD_PERSON_MODEL + FirstPersonConfiguration）；
+        // 无变体或远端玩家 → 出厂行为（TPV 动画 + 库默认 config，第一人称隐藏手臂）。远端玩家渲染
+        // 分支零变化（FPV 只影响本地玩家）。
+        Identifier contentId = animId;
+        boolean useFpvArms = false;
+        if (isLocalPlayer(pid)) {
+            Identifier fpvId = fpvVariantId(animId);
+            if (BongAnimationRegistry.contains(fpvId)) {
+                contentId = fpvId;
+                useFpvArms = true;
+            }
+        }
+
+        KeyframeAnimation anim = BongAnimationRegistry.get(contentId);
         if (anim == null) {
             return false;
         }
 
         KeyframeAnimationPlayer framePlayer = new KeyframeAnimationPlayer(anim);
-        // 出厂默认 THIRD_PERSON_MODEL：ItemInHandRendererMixin 只在此模式下 cancel vanilla
-        // 手/物品渲染并走动画管线；VANILLA 模式空手能看见、持物就被 vanilla 独立 item 渲染路径
-        // 盖掉（实测 2026-04-14）。
-        // plan-fpv-cast-av-v1 P0：第一人称路线由 {@link FpvPocState} 运行时切换（A/B/C POC，
-        // 键位见 FpvPocControls）。OFF = 出厂行为（THIRD_PERSON_MODEL + 默认 config，第一人称只
-        // 见持物无手臂）。路线拍板后收敛为 per-animation 配置驱动（plan §P1），本 POC 分支随
-        // harness 一并移除。
-        FpvPocState.current().applyTo(framePlayer);
+        applyFirstPersonRendering(framePlayer, useFpvArms);
 
         Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer =
             ACTIVE_LAYERS.computeIfAbsent(pid, k -> new HashMap<>());
@@ -165,6 +176,47 @@ public final class BongAnimationPlayer {
         stack.addAnimLayer(priority, layer);
         perPlayer.put(animId, layer);
         return true;
+    }
+
+    /**
+     * 第一人称渲染配置（plan-fpv-cast-av-v1 路线 A，§8.1 #1 真机拍板）。
+     *
+     * <p>始终用 {@link FirstPersonMode#THIRD_PERSON_MODEL}：库 {@code ItemInHandRendererMixin}
+     * 在此模式下整段 cancel vanilla 第一人称手/物渲染，改由模型渲染、受 {@link FirstPersonConfiguration}
+     * 门控（player-anim 1.0.2-rc1 无 {@code ENABLED} 值，此为库原生第一人称正路）。库默认 config 的
+     * {@code showRightArm/showLeftArm=false} 会隐藏手臂——这正是出厂第一人称只见持物无手臂的根因。
+     *
+     * @param useFpvArms true（本地玩家 + 命中 {@code _fpv} 变体）→ 开双臂 + 双手持物；
+     *                   false（无变体 / 远端玩家）→ 库默认 config（隐藏手臂，出厂行为不变）
+     */
+    static void applyFirstPersonRendering(KeyframeAnimationPlayer framePlayer, boolean useFpvArms) {
+        if (useFpvArms) {
+            framePlayer
+                .setFirstPersonConfiguration(
+                    new FirstPersonConfiguration()
+                        .setShowRightArm(true)
+                        .setShowLeftArm(true)
+                        .setShowRightItem(true)
+                        .setShowLeftItem(true))
+                .setFirstPersonMode(FirstPersonMode.THIRD_PERSON_MODEL);
+        } else {
+            framePlayer.setFirstPersonMode(FirstPersonMode.THIRD_PERSON_MODEL);
+        }
+    }
+
+    /**
+     * 本地玩家判定。单测 / 无 client 环境（{@code getInstance()==null} 或无 player）返回 false，
+     * 故 {@code _fpv} 变体路径只在真实客户端本地玩家上触发——远端玩家路径与既有 playOnStack
+     * 单测均不受影响。
+     */
+    private static boolean isLocalPlayer(UUID pid) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        return mc != null && mc.player != null && mc.player.getUuid().equals(pid);
+    }
+
+    /** {@code <ns>:<path>} → {@code <ns>:<path>_fpv}（本地玩家第一人称变体查找 id，plan §P1）。 */
+    static Identifier fpvVariantId(Identifier animId) {
+        return new Identifier(animId.getNamespace(), animId.getPath() + "_fpv");
     }
 
     /** 便捷重载：默认 fade-out。 */
