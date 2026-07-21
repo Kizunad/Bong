@@ -190,7 +190,8 @@ class BurstMeridianBengQuanPlayerTest {
     void nanStrengthFallsBackToDefaultNotPropagated() {
         double s = BurstMeridianBengQuanPlayer.resolveBurstSpec(
             withStrength(Optional.of(Double.NaN))).strength();
-        assertTrue(Double.isFinite(s), "NaN strength 必须被 isFinite 守卫拦下，结果保持有限");
+        assertTrue(Double.isFinite(s),
+            "NaN strength 必须被 isFinite 守卫拦下，结果保持有限，实际 s=" + s);
         assertEquals(DEFAULT_STRENGTH, s, EPS, "NaN strength 回落 0.9（旧实现会把 NaN 传进 alpha/速度/线宽）");
     }
 
