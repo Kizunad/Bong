@@ -107,6 +107,46 @@
 3. **施法 juice 触发数据源**：纯 client（`CastStateStore` 本地推断 release，零 wire 变更，但 server 拒绝/打断的边缘一致性靠 cast_sync 已有回执）vs server 显式 juice hint（精确但加 payload 字段）。推荐纯 client 起步，误差可接受再不加字段。**两条路线都必须满足 P3 门控硬约束**（accepted 确认 + 取消令牌 + 幂等），纯 client 路线的收口前提是核实 cast_sync 回执在拒绝/打断路径的到达保证。
 4. **FPV 变体的维护成本边界**：每招两份动画（TPV+FPV）长期同步维护——是否约定「FPV 变体只在 TPV 定稿后产出、TPV 改动必须连带复核 FPV」写入 `docs/player-animation-conventions.md`。
 
+> **收口状态（2026-07-22）**：#3、#4 为 agent 可决项，已在 §8.1 收口；#1（FPV 技术路线）、#2（签名音效音源渠道）为**用户决策门**——#1 待 P0 POC 实测对比证据后由用户拍板，#2 待用户拍板音源渠道，均不由 agent 自决。原表保留以备追溯，**实施时 #3/#4 以 §8.1 决议为准**。
+
+## §8.1 决议（pre-P0 收口，2026-07-22）
+
+> 本节按 `docs/CLAUDE.md §5.1` 追加。#3/#4 由两个并行 Explore agent 核查 origin/main（`9a2cff02c`）代码现状产出（不拍脑袋）；#1/#2 为用户决策门，仅记录收口路径与卡点，待用户拍板后补决议。
+
+### #3 施法 juice 触发数据源 —— 采纳纯 client，零 wire 变更
+
+**决议**：
+
+1. **采纳纯 client 路线**，juice 触发数据源 = `CastStateStore` 单快照（`phase==CASTING` 即已 accepted；`COMPLETE`/`INTERRUPT` 为终态）；**拒绝 server 显式 juice hint 路线**——不加 payload 字段，wire 层零变更的设计目标守住。
+2. **门控硬约束（accepted 确认 + 取消令牌作废 pending + 幂等）在纯 client 下已满足**，逐路径核验：
+   - **施放前拒绝**（真元不足 / 冷却 / 未习得 / 经脉门 / race gate 等）：部分分支 server 静默 `return`（`client_request_handler.rs:13320/13431/13437/12892/12898/12905`），部分发 Idle+reject outcome（`:13358/13404/13465`、`push_skill_cast_rejected_sync:13944`）。**但施放前 client 从未收到 Casting/accepted sync → 无 pending juice 可作废 → 对门控无害**（juice 只绑已 accepted 的 cast，reject 静默不构成缺口）。
+   - **施法中打断**（控制 / 受击 / 移动）：三分支全发 `cast_sync` Interrupt（`cast_emit.rs:215/258/293`，对应 Casting 移除 `:207/250/285`）→ client `transitionToInterrupt` → **到达保证 ✓**，作废 pending。
+   - **切槽主动取消**：发 UserCancel（`client_request_handler.rs:14034`，对应 Casting 移除 `:14014`）→ **到达保证 ✓**。
+   - **施法中非受击死亡**（修炼死 / 真元枯竭 / 坠落溺水，无同 tick wound）：server 在 `combat/lifecycle.rs:1857` 玩家状态重置路径静默 `remove::<Casting>`，而 `CastOutcomeV1::Death` 定义了却全仓从不 emit（`schema/combat_hud.rs:69` 定义、仅 `schema/proto_convert.rs:2239` 映射引用）——**这是唯一 server 静默缺口**。**由 P3 已明令的 client 侧 death teardown 关闭**（P3 契约原文：「teardown：断线、切世界、玩家死亡时立即复位基准并清 pending 状态」）：client 观测本地玩家死亡即作废 pending juice + 复位 FOV，不依赖 server 回执。**故纯 client 路线的收口前提（拒绝/打断路径到达保证）成立，死亡缺口不构成破功点**。
+3. **幂等 + 取消令牌语义的实现依据**：`CastStateStore` 是单个 volatile 快照、`replace(next)` 整体替换（`CastStateStore.java:18/60`），无唯一 cast id，身份 = `(source, slot, startedAtMs)` 三元组。P3 的 pending juice **必须绑定当前快照身份并每 tick 从 store 重解算**：快照身份变化（新 `startedAtMs`）即视前一 pending 作废（supersession），同一身份重复 release 只认第一次（幂等）——快速同槽连发不会误触前一次 pending。
+
+**落点**：`client/src/main/java/com/bong/client/network/CastSyncHandler.java:37-53/105-127`（phase/outcome 分派）、`client/src/main/java/com/bong/client/combat/CastStateStore.java:18/60/76-91`（单快照 replace + tick 300ms 自回 idle）、`server/src/network/cast_emit.rs:215/258/293/469`（interrupt/complete emit）、`server/src/network/client_request_handler.rs:14034`（UserCancel）、`server/src/combat/lifecycle.rs:1857`（死亡静默移除 Casting，缺口）；plan §P3（`CastFovController` 生命周期契约 + death teardown）。
+
+**可选后续（非本 plan 范围）**：server 在 `combat/lifecycle.rs:1857` 施法中死亡路径补发 `cast_sync`(Interrupt, `CastOutcomeV1::Death`) 可让死亡缺口获得权威回执、并退掉 `CastOutcomeV1::Death` 的死代码状态——但纯 client death teardown 已完全满足 juice 门控，此项为健壮性增益，不阻塞本 plan，宜另立 skeleton 处理。
+
+### #4 FPV 变体维护成本边界 —— 约定入档 player-animation-conventions.md §16
+
+**决议**：
+
+1. **采纳约定并写入文档**：`docs/player-animation-conventions.md` 新增 **§16**（授权追加节，格式对齐既有 §13/§14/§15 的引言块 + `---` 分隔模式），明文规定「FPV 变体只在对应 TPV 动画定稿后产出；TPV 改动必须连带复核 / 同步 FPV 变体」。
+2. **不与既有 §3 重叠**：§3「FPV 可见性要求」管的是**单份动画**在第一人称视野内的骨骼可见性（guard 位置等）；§16 管的是 **TPV↔FPV 双份资产的同步维护约定**，是新维度，独立成节。
+3. **机器把关留到 FPV 资产落地时**：pre-P0 全仓无任何 `*_fpv.json`（`player_animation/` 140 份动画均单份），暂无可锁对象；§16 先立文字约定，并指明将来 P1/P2 FPV 变体落地后参照 §14.1「机械锁登记表」模式（`AnimCastTicksAlignmentTest` 的 `FIXED_PHASE_CHARGE_SKILLS` 先例）加一条 TPV↔FPV 对拍锁，把「连带复核」从文字升级为机器判据。
+
+**落点**：`docs/player-animation-conventions.md`（新增 §16，line 681 后追加）；`client/src/main/java/com/bong/client/animation/BongAnimationRegistry.java:120-129/170`（FPV 查找链落点，P1）；plan §P1/§P2。
+
+### #1 FPV 技术路线三选一（用户决策门，待 P0 POC 证据）
+
+**收口路径**（未决，不由 agent 自决）：P0 在 `sword.cleave` 上对 A（`FirstPersonMode.ENABLED` + `FirstPersonConfiguration`）/ B（自绘 FPV 手臂层）/ C（mixin `HeldItemRenderer` 注入骨骼变换）三路线各出可跑 POC，真机 `runClient` + `render_animation.py` FPV 模式产出**持物遮挡 + 相机是否被 body 位移晃动**对比证据，交用户拍板后补本节决议 + 同步 plan 头部/P1 数据形状。预判倾向 A，但 playerAnim 1.20.1 分支 FPV 成熟度以实测为准，不凭预判开工 P1。
+
+### #2 签名音效音源渠道（用户决策门，待用户拍板）
+
+**收口路径**（未决，涉及外部资源与授权，agent 不自决）：AI 生成（类比 `/gen-image` 建 `/gen-audio` 管线）/ CC0 素材库（须核许可证）/ 用户自供，三选一由用户拍板。仅卡 P4（PR-6），不阻塞 P0–P3、P5。用户拍板后补本节决议。
+
 ## 测试声明
 
 - client：FPV 查找链/回落/远端隔离单测、juice 状态机饱和单测（从真实 CastSyncHandler 入口驱动：正常/拒绝/晚到打断/乱序/重复 release 幂等/连续/重叠/倍率 0 立即复位/死亡切世界断线复位，全路径终点断言基准 FOV）、sounds.json↔ogg 双向对应扫描（gradlew test）；
