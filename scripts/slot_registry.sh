@@ -453,6 +453,12 @@ PYHANDOFFMATCH
       audit_value_exists_other_slot "$new_token" token "$slot" && die "manual handoff new_token already reserved"
       lock="$REG_ROOT/$slot.lock"
       [[ -d "$lock" && ! -L "$lock" ]] || die "orphan manual handoff without reservation: $slot"
+      local reservation_task reservation_branch reservation_claim
+      read_field_into reservation_task "$lock" task_id || exit $?
+      read_field_into reservation_branch "$lock" branch || exit $?
+      read_field_into reservation_claim "$lock" claim_sha || exit $?
+      [[ "$reservation_task" == "$task" && "$reservation_branch" == "$branch" && "$reservation_claim" == "$claim" ]] \
+        || die "manual handoff does not match reservation identity: $operation"
       handoff_progress "$lock" "$old_agent" "$old_token" "$recovery_agent" "$new_token" "$from_state" "$target_state" >/dev/null
       AUDIT_HANDOFF_SLOTS+=("$slot"); AUDIT_HANDOFF_OPERATIONS+=("$operation")
       AUDIT_HANDOFF_OLD_AGENTS+=("$old_agent"); AUDIT_HANDOFF_OLD_TOKENS+=("$old_token")

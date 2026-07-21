@@ -494,7 +494,7 @@ PYA
 mutate release slot-1 frozen-occupied recovery-occupied "$new_token" >/dev/null; destroy_slot slot-1
 
 printf '== 9b. private handoff / public audit corruption 全局 fail-closed\n'
-for mode in root-symlink entry-symlink orphan missing-field bad-nul bad-pair audit-symlink audit-bad-json audit-bad-fields audit-bad-digest audit-conflict audit-completion-only; do
+for mode in root-symlink entry-symlink orphan missing-field bad-nul bad-pair reservation-identity audit-symlink audit-bad-json audit-bad-fields audit-bad-digest audit-conflict audit-completion-only; do
   reset_registry
   new_reservation token slot-1 "handoff-$mode" "bugfix/handoff-$mode" "agent-handoff-$mode"
   mutate freeze-blocked slot-1 "handoff-$mode" "agent-handoff-$mode" "$token" >/dev/null
@@ -515,6 +515,16 @@ for mode in root-symlink entry-symlink orphan missing-field bad-nul bad-pair aud
     bad-pair)
       prepared=$(force_unfreeze slot-1 "handoff-$mode" "bugfix/handoff-$mode" "agent-handoff-$mode" "recovery-$mode")
       write_field "$REGROOT/manual-handoff.lock/slot-1" occupied target_state ;;
+    reservation-identity)
+      prepared=$(force_unfreeze slot-1 "handoff-$mode" "bugfix/handoff-$mode" "agent-handoff-$mode" "recovery-$mode")
+      write_field "$REGROOT/manual-handoff.lock/slot-1" different-task task_id
+      python3 - "$REGROOT/manual-recovery.audit.jsonl" <<'PYRESERVATIONIDENTITY'
+import json,pathlib,sys
+path=pathlib.Path(sys.argv[1]); rows=[json.loads(x) for x in path.read_text().splitlines()]
+rows[-1]['task_id']='different-task'
+path.write_text('\n'.join(json.dumps(x,separators=(',',':')) for x in rows)+'\n')
+PYRESERVATIONIDENTITY
+      ;;
     audit-symlink)
       mv "$REGROOT/manual-recovery.audit.jsonl" "$REGROOT/audit-saved"; ln -s audit-saved "$REGROOT/manual-recovery.audit.jsonl" ;;
     audit-bad-json)
@@ -549,7 +559,7 @@ path.write_text('\n'.join(json.dumps(x,separators=(',',':')) for x in rows)+'\n'
 PYCOMPLETIONONLY
       ;;
   esac
-  assert_fail_unchanged "$mode handoff/audit 使 status fail-closed" 'manual handoff|manual audit|invalid reservation|corrupt field|invalid manual audit|conflicting manual audit' bash scripts/slot_registry.sh status
+  assert_fail_unchanged "$mode handoff/audit 使 status fail-closed" 'manual handoff|manual audit|invalid reservation|corrupt field|invalid manual audit|conflicting manual audit|reservation identity' bash scripts/slot_registry.sh status
   case "$mode" in
     root-symlink) rm "$REGROOT/manual-handoff.lock"; rm -rf "$REGROOT/handoff-target" ;;
     entry-symlink) rm "$REGROOT/manual-handoff.lock/slot-1"; rmdir "$REGROOT/manual-handoff.lock" ;;
@@ -557,6 +567,13 @@ PYCOMPLETIONONLY
     missing-field) write_field "$REGROOT/manual-handoff.lock/slot-1" 'fixture recovery' reason ;;
     bad-nul) write_field "$REGROOT/manual-handoff.lock/slot-1" "$(operation_id_from "$prepared")" operation_id ;;
     bad-pair) write_field "$REGROOT/manual-handoff.lock/slot-1" reserved target_state ;;
+    reservation-identity)
+      write_field "$REGROOT/manual-handoff.lock/slot-1" "handoff-$mode" task_id
+      rm "$REGROOT/manual-recovery.audit.jsonl"
+      operation_id=$(field "$REGROOT/manual-handoff.lock/slot-1/operation_id")
+      new_token=$(field "$REGROOT/manual-handoff.lock/slot-1/new_token")
+      resume_unfreeze slot-1 "handoff-$mode" "bugfix/handoff-$mode" "recovery-$mode" "$operation_id" "$new_token" >/dev/null
+      ;;
     audit-symlink) rm "$REGROOT/manual-recovery.audit.jsonl" "$REGROOT/audit-saved" ;;
     audit-bad-json|audit-bad-fields) rm "$REGROOT/manual-recovery.audit.jsonl" ;;
     audit-bad-digest|audit-conflict|audit-completion-only)
