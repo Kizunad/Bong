@@ -1198,6 +1198,16 @@ mod tests {
     }
 
     #[test]
+    fn agent_ui_response_rejects_spoofed_target_player() {
+        let spoofed = r#"{"type":"agent_ui_response","v":1,"request_id":"req_spoof","action":"button_click","params":{"button_id":"enter_realm"},"target_player":"offline:Victim"}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(spoofed);
+        assert!(
+            result.is_err(),
+            "Fabric C2S agent_ui_response 不得伪造仅 server→agent 可写的 target_player，实为 {result:?}"
+        );
+    }
+
+    #[test]
     fn forge_request_roundtrip() {
         let json = r#"{"type":"forge_request","v":1,"meridian":"ren","axis":"Rate"}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
