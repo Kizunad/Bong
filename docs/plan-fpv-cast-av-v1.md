@@ -107,7 +107,7 @@
 3. **施法 juice 触发数据源**：纯 client（`CastStateStore` 本地推断 release，零 wire 变更，但 server 拒绝/打断的边缘一致性靠 cast_sync 已有回执）vs server 显式 juice hint（精确但加 payload 字段）。推荐纯 client 起步，误差可接受再不加字段。**两条路线都必须满足 P3 门控硬约束**（accepted 确认 + 取消令牌 + 幂等），纯 client 路线的收口前提是核实 cast_sync 回执在拒绝/打断路径的到达保证。
 4. **FPV 变体的维护成本边界**：每招两份动画（TPV+FPV）长期同步维护——是否约定「FPV 变体只在 TPV 定稿后产出、TPV 改动必须连带复核 FPV」写入 `docs/player-animation-conventions.md`。
 
-> **收口状态（2026-07-22）**：#3、#4 为 agent 可决项，已在 §8.1 收口；#1（FPV 技术路线）、#2（签名音效音源渠道）为**用户决策门**——#1 待 P0 POC 实测对比证据后由用户拍板，#2 待用户拍板音源渠道，均不由 agent 自决。原表保留以备追溯，**实施时 #3/#4 以 §8.1 决议为准**。
+> **收口状态（2026-07-22）**：#2、#3、#4 已在 §8.1 收口（#2 音源渠道用户拍板 CC0 素材库、#3/#4 agent 核码可决）；仅 #1（FPV 技术路线）仍为**用户决策门**，待 P0 POC 真机遮挡对比证据后由用户拍板，不由 agent 自决。原表保留以备追溯，**实施时以 §8.1 决议为准**。
 
 ## §8.1 决议（pre-P0 收口，2026-07-22）
 
@@ -143,9 +143,16 @@
 
 **收口路径**（未决，不由 agent 自决）：P0 在 `sword.cleave` 上对 A（`FirstPersonMode.ENABLED` + `FirstPersonConfiguration`）/ B（自绘 FPV 手臂层）/ C（mixin `HeldItemRenderer` 注入骨骼变换）三路线各出可跑 POC，真机 `runClient` + `render_animation.py` FPV 模式产出**持物遮挡 + 相机是否被 body 位移晃动**对比证据，交用户拍板后补本节决议 + 同步 plan 头部/P1 数据形状。预判倾向 A，但 playerAnim 1.20.1 分支 FPV 成熟度以实测为准，不凭预判开工 P1。
 
-### #2 签名音效音源渠道（用户决策门，待用户拍板）
+### #2 签名音效音源渠道 —— 用户拍板 CC0 素材库（2026-07-22）
 
-**收口路径**（未决，涉及外部资源与授权，agent 不自决）：AI 生成（类比 `/gen-image` 建 `/gen-audio` 管线）/ CC0 素材库（须核许可证）/ 用户自供，三选一由用户拍板。仅卡 P4（PR-6），不阻塞 P0–P3、P5。用户拍板后补本节决议。
+**决议**：
+
+1. **采纳 CC0 素材库**（freesound 等）作首批 8 条 signature 音效音源；拒绝 AI 生成与用户自供。
+2. **许可证硬约束**：每条采用的 `.ogg` 必须逐一核验为 **CC0 / 等价公有领域 / 无署名要求**许可，并在 P4 PR 内留出处清单（源 URL + 许可证 + 检索日期），落一份 `client/src/main/resources/assets/bong/sounds/ATTRIBUTION.md`（或等价出处文件）。**非 CC0（含要求署名的 CC-BY）不采用**，避免署名义务渗入资源包。
+3. **音色基调**（plan §P4 已定，此处重申）：末法衰败——骨裂 / 锈金属 / 闷雷 / 砂砾摩擦，禁华丽仙侠音（`worldview.md §四`）。
+4. **管线复用**（plan §P4 原样）：CC0 源 → 切样本（mono / 44.1kHz / ≤3s）→ `.ogg` → client `sounds.json` 注册 `bong:skill.<school>.<move>` → recipe 主层换 `bong:` 事件；同步 `resourcepack.rs` + committed manifest 的 sha1/size。
+
+**落点**：plan §P4；`client/src/main/resources/assets/bong/sounds.json`（P4 新建）+ `server/assets/audio/recipes/*.json`（P4 换音源层）+ 出处文件 `assets/bong/sounds/ATTRIBUTION.md`。仅卡 P4/PR-6，不阻塞 P0–P3、P5。
 
 ## 测试声明
 
