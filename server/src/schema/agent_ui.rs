@@ -1,14 +1,13 @@
 //! plan-agent-ui-data-v1 P0 — 天道 UI-as-Data Rust serde 镜像。
 //!
 //! 与 TypeScript `agent/packages/schema/src/payloads/agent-ui.ts` 1:1 对应。
-//! 字段不混用：四个 schema 各自独立（AgentUiRequestCommandV1 / AgentUiRequestPayloadV1 /
-//! AgentUiResponsePayloadV1 / AgentUiClosePayloadV1）。
+//! 字段不混用：C2S 与 server→agent response 独立，权威目标字段只存在于后者。
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-const AGENT_UI_ID_MAX_CODE_POINTS: usize = 128;
+const AGENT_UI_ID_MAX_CHARS: usize = 128;
 
 // ─── Action 字面联合 ─────────────────────────────────────────────────────────
 
@@ -39,15 +38,7 @@ pub enum AgentUiActionType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiRequestCommandV1 {
-    #[serde(
-        deserialize_with = "deserialize_agent_ui_request_id",
-        serialize_with = "serialize_agent_ui_request_id"
-    )]
     pub request_id: String,
-    #[serde(
-        deserialize_with = "deserialize_agent_ui_target_player",
-        serialize_with = "serialize_agent_ui_target_player"
-    )]
     pub target_player: String,
     pub xml: String,
     /// 超时时间（ticks），范围 20..=2400，默认 600。
@@ -59,7 +50,7 @@ pub struct AgentUiRequestCommandV1 {
 }
 
 impl AgentUiRequestCommandV1 {
-    /// 校验：request_id / target_player 为 1..=128 Unicode code points，realm_gate ∈ [0,6]，
+    /// 校验：request_id / target_player 为 1..=128 字符，realm_gate ∈ [0,6]，
     /// allowed_button_ids.len() ≤ 16，timeout_ticks ∈ [20,2400]。
     ///
     /// realm_gate 范围：0=不门控，1=醒灵+，2=引气+，3=凝脉+，4=固元+，5=通灵+，6=化虚+（最高境界）。
@@ -89,16 +80,13 @@ impl AgentUiRequestCommandV1 {
 }
 
 fn validate_agent_ui_id(field: &str, value: &str) -> Result<(), String> {
-    // TypeBox 与生成的标准 JSON Schema 都通过同一 ECMA-262 pattern 约束
-    // 1..=128 个 Unicode code points；Rust String 已保证序列 well-formed。
-    // serde ingress / egress 因此按 `chars()` 镜像同一 wire 接受集合。
-    let code_point_len = value.chars().count();
-    if code_point_len == 0 {
+    let len = value.chars().count();
+    if len == 0 {
         return Err(format!("{field} 不能为空"));
     }
-    if code_point_len > AGENT_UI_ID_MAX_CODE_POINTS {
+    if len > AGENT_UI_ID_MAX_CHARS {
         return Err(format!(
-            "{field} Unicode code point 长度 {code_point_len} 超出上限 {AGENT_UI_ID_MAX_CODE_POINTS}"
+            "{field} 长度 {len} 超出上限 {AGENT_UI_ID_MAX_CHARS}"
         ));
     }
     Ok(())
@@ -112,15 +100,7 @@ fn validate_agent_ui_id(field: &str, value: &str) -> Result<(), String> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiRequestPayloadV1 {
-    #[serde(
-        deserialize_with = "deserialize_agent_ui_request_id",
-        serialize_with = "serialize_agent_ui_request_id"
-    )]
     pub request_id: String,
-    #[serde(
-        deserialize_with = "deserialize_agent_ui_target_player",
-        serialize_with = "serialize_agent_ui_target_player"
-    )]
     pub target_player: String,
     pub xml: String,
     /// 超时时间（ticks），范围 20..=2400。
@@ -129,83 +109,50 @@ pub struct AgentUiRequestPayloadV1 {
 
 // ─── Schema 3：Client → Server CustomPayload + Server → Agent Redis ───────────
 
-/// server 转发给 agent 的面板交互响应（Redis bong:agent_ui_response）。
+/// server 转发给 agent 的面板响应（Redis `bong:agent_ui_response`）。
 ///
-/// `params` 为 `HashMap<String,String>` 以保留可扩展性：
-///   - `button_click` → `params["button_id"] = "<id>"`
-///   - `error` → `params["reason"] = "realm_gate_rejected"` 等
-///
-/// `target_player` 为 server→agent 权威拒绝类响应可选回填的 canonical_player_id。
-/// 真实 C2S 形状由 `schema::client_request::ClientRequestV1::AgentUiResponse`
-/// 独立表示，不允许 client 声明 `target_player`。
+/// `target_player` 只在 server 权威拒绝路径回填；真实 C2S payload 不含该字段。
+/// 省略字段兼容滚动升级，显式 `null` 则拒绝，避免坏 payload 冒充 legacy。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiResponsePayloadV1 {
-    #[serde(
-        deserialize_with = "deserialize_agent_ui_request_id",
-        serialize_with = "serialize_agent_ui_request_id"
-    )]
     pub request_id: String,
     pub action: AgentUiActionType,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_optional_agent_ui_id",
-        serialize_with = "serialize_optional_agent_ui_id"
+        deserialize_with = "deserialize_optional_agent_ui_target_player",
+        serialize_with = "serialize_optional_agent_ui_target_player"
     )]
     pub target_player: Option<String>,
     pub params: HashMap<String, String>,
 }
 
-pub(crate) fn deserialize_agent_ui_request_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn validate_agent_ui_target_player(value: &str) -> Result<(), String> {
+    let code_point_len = value.chars().count();
+    if code_point_len == 0 {
+        return Err("target_player 不能为空".to_string());
+    }
+    if code_point_len > AGENT_UI_ID_MAX_CHARS {
+        return Err(format!(
+            "target_player Unicode code point 长度 {code_point_len} 超出上限 {AGENT_UI_ID_MAX_CHARS}"
+        ));
+    }
+    Ok(())
+}
+
+fn deserialize_optional_agent_ui_target_player<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = String::deserialize(deserializer)?;
-    validate_agent_ui_id("request_id", &value).map_err(serde::de::Error::custom)?;
-    Ok(value)
-}
-
-pub(crate) fn serialize_agent_ui_request_id<S>(
-    value: &str,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    validate_agent_ui_id("request_id", value).map_err(serde::ser::Error::custom)?;
-    serializer.serialize_str(value)
-}
-
-fn deserialize_agent_ui_target_player<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = String::deserialize(deserializer)?;
-    validate_agent_ui_id("target_player", &value).map_err(serde::de::Error::custom)?;
-    Ok(value)
-}
-
-fn serialize_agent_ui_target_player<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    validate_agent_ui_id("target_player", value).map_err(serde::ser::Error::custom)?;
-    serializer.serialize_str(value)
-}
-
-fn deserialize_optional_agent_ui_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // `default` handles an omitted field. If the field is present it must be a
-    // string, so JSON null cannot silently collapse into the legacy None case.
-    let value = String::deserialize(deserializer)?;
-    validate_agent_ui_id("target_player", &value).map_err(serde::de::Error::custom)?;
+    validate_agent_ui_target_player(&value).map_err(serde::de::Error::custom)?;
     Ok(Some(value))
 }
 
-fn serialize_optional_agent_ui_id<S>(
+fn serialize_optional_agent_ui_target_player<S>(
     value: &Option<String>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
@@ -214,7 +161,7 @@ where
 {
     match value {
         Some(value) => {
-            validate_agent_ui_id("target_player", value).map_err(serde::ser::Error::custom)?;
+            validate_agent_ui_target_player(value).map_err(serde::ser::Error::custom)?;
             serializer.serialize_some(value)
         }
         None => serializer.serialize_none(),
@@ -230,10 +177,6 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiClosePayloadV1 {
-    #[serde(
-        deserialize_with = "deserialize_agent_ui_request_id",
-        serialize_with = "serialize_agent_ui_request_id"
-    )]
     pub request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -396,8 +339,8 @@ mod tests {
     #[test]
     fn agent_ui_request_command_accepts_id_fields_at_128_chars() {
         let cmd = AgentUiRequestCommandV1 {
-            request_id: "r".repeat(AGENT_UI_ID_MAX_CODE_POINTS),
-            target_player: "p".repeat(AGENT_UI_ID_MAX_CODE_POINTS),
+            request_id: "r".repeat(AGENT_UI_ID_MAX_CHARS),
+            target_player: "p".repeat(AGENT_UI_ID_MAX_CHARS),
             xml: "x".into(),
             timeout_ticks: 600,
             realm_gate: 0,
@@ -553,7 +496,6 @@ mod tests {
         let json = r#"{
             "request_id": "test",
             "action": "error",
-            "target_player": "offline:TestPlayer",
             "params": {
                 "reason": "realm_gate_rejected",
                 "player_realm": "2",
@@ -572,418 +514,6 @@ mod tests {
             Some(&"2".to_string()),
             "params.player_realm 应为 2"
         );
-        assert_eq!(
-            resp.target_player.as_deref(),
-            Some("offline:TestPlayer"),
-            "realm_gate_rejected 应保留 target_player 供 agent 定向路由"
-        );
-    }
-
-    #[test]
-    fn agent_ui_response_target_player_optional_for_legacy_payload() {
-        let json = r#"{
-            "request_id": "legacy",
-            "action": "error",
-            "params": {
-                "reason": "realm_gate_rejected",
-                "player_realm": "2",
-                "required_realm": "3"
-            }
-        }"#;
-        let resp: AgentUiResponsePayloadV1 =
-            serde_json::from_str(json).expect("旧 realm_gate_rejected payload 应保持兼容");
-        assert!(
-            resp.target_player.is_none(),
-            "旧 payload 缺省 target_player 时应反序列化为 None，实为 {:?}",
-            resp.target_player
-        );
-    }
-
-    fn agent_ui_id_code_point_boundary_cases() -> Vec<(&'static str, String, usize, usize, bool)> {
-        vec![
-            ("empty", String::new(), 0, 0, false),
-            ("64 emoji", "\u{1F600}".repeat(64), 128, 64, true),
-            ("65 emoji", "\u{1F600}".repeat(65), 130, 65, true),
-            ("128 emoji", "\u{1F600}".repeat(128), 256, 128, true),
-            ("129 emoji", "\u{1F600}".repeat(129), 258, 129, false),
-            (
-                "127 BMP + 1 astral",
-                format!("{}\u{1F600}", "a".repeat(127)),
-                129,
-                128,
-                true,
-            ),
-            (
-                "128 BMP + 1 astral",
-                format!("{}\u{1F600}", "a".repeat(128)),
-                130,
-                129,
-                false,
-            ),
-            ("128 BMP", "界".repeat(128), 128, 128, true),
-            ("129 BMP", "界".repeat(129), 129, 129, false),
-            (
-                "127 BMP + LF",
-                format!("{}\n", "a".repeat(127)),
-                128,
-                128,
-                true,
-            ),
-            (
-                "128 BMP + LF",
-                format!("{}\n", "a".repeat(128)),
-                129,
-                129,
-                false,
-            ),
-            (
-                "127 BMP + CR",
-                format!("{}\r", "a".repeat(127)),
-                128,
-                128,
-                true,
-            ),
-            (
-                "128 BMP + CR",
-                format!("{}\r", "a".repeat(128)),
-                129,
-                129,
-                false,
-            ),
-            (
-                "126 BMP + CRLF",
-                format!("{}\r\n", "a".repeat(126)),
-                128,
-                128,
-                true,
-            ),
-            (
-                "127 BMP + CRLF",
-                format!("{}\r\n", "a".repeat(127)),
-                129,
-                129,
-                false,
-            ),
-            (
-                "127 BMP + U+2028",
-                format!("{}\u{2028}", "a".repeat(127)),
-                128,
-                128,
-                true,
-            ),
-            (
-                "128 BMP + U+2028",
-                format!("{}\u{2028}", "a".repeat(128)),
-                129,
-                129,
-                false,
-            ),
-            (
-                "127 BMP + U+2029",
-                format!("{}\u{2029}", "a".repeat(127)),
-                128,
-                128,
-                true,
-            ),
-            (
-                "128 BMP + U+2029",
-                format!("{}\u{2029}", "a".repeat(128)),
-                129,
-                129,
-                false,
-            ),
-        ]
-    }
-
-    #[test]
-    fn agent_ui_command_and_server_data_ids_enforce_code_point_wire_boundaries() {
-        for (name, value, expected_utf16, expected_scalars, should_pass) in
-            agent_ui_id_code_point_boundary_cases()
-        {
-            let command_with_request_id = AgentUiRequestCommandV1 {
-                request_id: value.clone(),
-                target_player: "offline:Target".to_string(),
-                xml: "<flow-layout />".to_string(),
-                timeout_ticks: 600,
-                realm_gate: 0,
-                allowed_button_ids: vec![],
-            };
-            assert_eq!(
-                command_with_request_id.validate().is_ok(),
-                should_pass,
-                "AgentUiRequestCommandV1.request_id {name}（{expected_scalars} code points，{expected_utf16} UTF-16 units）validate 结果应为 {should_pass}"
-            );
-            assert_eq!(
-                serde_json::to_value(&command_with_request_id).is_ok(),
-                should_pass,
-                "AgentUiRequestCommandV1.request_id {name} 出站结果应为 {should_pass}"
-            );
-            let command_request_inbound =
-                serde_json::from_value::<AgentUiRequestCommandV1>(serde_json::json!({
-                    "request_id": value.clone(),
-                    "target_player": "offline:Target",
-                    "xml": "<flow-layout />",
-                    "timeout_ticks": 600,
-                    "realm_gate": 0,
-                    "allowed_button_ids": [],
-                }));
-            assert_eq!(
-                command_request_inbound.is_ok(),
-                should_pass,
-                "AgentUiRequestCommandV1.request_id {name} 入站结果应为 {should_pass}，实为：{command_request_inbound:?}"
-            );
-
-            let command_with_target = AgentUiRequestCommandV1 {
-                request_id: "command-target-boundary".to_string(),
-                target_player: value.clone(),
-                xml: "<flow-layout />".to_string(),
-                timeout_ticks: 600,
-                realm_gate: 0,
-                allowed_button_ids: vec![],
-            };
-            assert_eq!(
-                command_with_target.validate().is_ok(),
-                should_pass,
-                "AgentUiRequestCommandV1.target_player {name} validate 结果应为 {should_pass}"
-            );
-            assert_eq!(
-                serde_json::to_value(&command_with_target).is_ok(),
-                should_pass,
-                "AgentUiRequestCommandV1.target_player {name} 出站结果应为 {should_pass}"
-            );
-            let command_target_inbound =
-                serde_json::from_value::<AgentUiRequestCommandV1>(serde_json::json!({
-                    "request_id": "command-target-boundary",
-                    "target_player": value.clone(),
-                    "xml": "<flow-layout />",
-                    "timeout_ticks": 600,
-                    "realm_gate": 0,
-                    "allowed_button_ids": [],
-                }));
-            assert_eq!(
-                command_target_inbound.is_ok(),
-                should_pass,
-                "AgentUiRequestCommandV1.target_player {name} 入站结果应为 {should_pass}，实为：{command_target_inbound:?}"
-            );
-
-            let request_payload_with_request_id = AgentUiRequestPayloadV1 {
-                request_id: value.clone(),
-                target_player: "offline:Target".to_string(),
-                xml: "<flow-layout />".to_string(),
-                timeout_ticks: 600,
-            };
-            assert_eq!(
-                serde_json::to_value(&request_payload_with_request_id).is_ok(),
-                should_pass,
-                "AgentUiRequestPayloadV1.request_id {name} 出站结果应为 {should_pass}"
-            );
-            let request_payload_request_inbound =
-                serde_json::from_value::<AgentUiRequestPayloadV1>(serde_json::json!({
-                    "request_id": value.clone(),
-                    "target_player": "offline:Target",
-                    "xml": "<flow-layout />",
-                    "timeout_ticks": 600,
-                }));
-            assert_eq!(
-                request_payload_request_inbound.is_ok(),
-                should_pass,
-                "AgentUiRequestPayloadV1.request_id {name} 入站结果应为 {should_pass}，实为：{request_payload_request_inbound:?}"
-            );
-
-            let request_payload_with_target = AgentUiRequestPayloadV1 {
-                request_id: "server-data-target-boundary".to_string(),
-                target_player: value.clone(),
-                xml: "<flow-layout />".to_string(),
-                timeout_ticks: 600,
-            };
-            assert_eq!(
-                serde_json::to_value(&request_payload_with_target).is_ok(),
-                should_pass,
-                "AgentUiRequestPayloadV1.target_player {name} 出站结果应为 {should_pass}"
-            );
-            let request_payload_target_inbound =
-                serde_json::from_value::<AgentUiRequestPayloadV1>(serde_json::json!({
-                    "request_id": "server-data-target-boundary",
-                    "target_player": value.clone(),
-                    "xml": "<flow-layout />",
-                    "timeout_ticks": 600,
-                }));
-            assert_eq!(
-                request_payload_target_inbound.is_ok(),
-                should_pass,
-                "AgentUiRequestPayloadV1.target_player {name} 入站结果应为 {should_pass}，实为：{request_payload_target_inbound:?}"
-            );
-
-            let close = AgentUiClosePayloadV1 {
-                request_id: value.clone(),
-                reason: None,
-            };
-            assert_eq!(
-                serde_json::to_value(close).is_ok(),
-                should_pass,
-                "AgentUiClosePayloadV1.request_id {name} 出站结果应为 {should_pass}"
-            );
-            let close_inbound = serde_json::from_value::<AgentUiClosePayloadV1>(
-                serde_json::json!({ "request_id": value.clone() }),
-            );
-            assert_eq!(
-                close_inbound.is_ok(),
-                should_pass,
-                "AgentUiClosePayloadV1.request_id {name} 入站结果应为 {should_pass}，实为：{close_inbound:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn agent_ui_response_target_player_deserialize_enforces_code_point_wire_boundaries() {
-        for (name, target_player, expected_utf16, expected_scalars, should_pass) in
-            agent_ui_id_code_point_boundary_cases()
-        {
-            assert_eq!(
-                target_player.encode_utf16().count(),
-                expected_utf16,
-                "{name} 的 UTF-16 code unit 计数用于锁住历史分叉边界"
-            );
-            assert_eq!(
-                target_player.chars().count(),
-                expected_scalars,
-                "{name} 的 Unicode scalar 计数应锁住 astral 与 BMP 差异"
-            );
-            let json = serde_json::json!({
-                "request_id": "target-boundary",
-                "action": "error",
-                "target_player": target_player,
-                "params": { "reason": "realm_gate_rejected" },
-            });
-            let result = serde_json::from_value::<AgentUiResponsePayloadV1>(json);
-            assert_eq!(
-                result.is_ok(),
-                should_pass,
-                "{name}（{expected_scalars} Unicode code points，{expected_utf16} UTF-16 units）入站接受结果应为 {should_pass}，实为：{result:?}"
-            );
-        }
-
-        let null_target = serde_json::json!({
-            "request_id": "target-null",
-            "action": "error",
-            "target_player": null,
-            "params": { "reason": "realm_gate_rejected" },
-        });
-        assert!(
-            serde_json::from_value::<AgentUiResponsePayloadV1>(null_target).is_err(),
-            "TypeBox optional string 不接受 null，Rust wire 镜像也必须拒绝"
-        );
-    }
-
-    #[test]
-    fn agent_ui_response_raw_json_rejects_lone_surrogates_and_accepts_valid_pair() {
-        for (name, escaped_target) in [
-            ("lone high surrogate", r#"\ud800"#),
-            ("lone low surrogate", r#"\udc00"#),
-        ] {
-            let json = format!(
-                r#"{{"request_id":"surrogate-target","action":"error","target_player":"{escaped_target}","params":{{"reason":"realm_gate_rejected"}}}}"#
-            );
-            let result = serde_json::from_str::<AgentUiResponsePayloadV1>(&json);
-            assert!(
-                result.is_err(),
-                "{name} 不是 Rust String 可表示的 well-formed Unicode，必须在 wire 边界拒绝：{result:?}"
-            );
-        }
-
-        let valid_pair = r#"{"request_id":"surrogate-pair","action":"error","target_player":"\ud83d\ude00","params":{"reason":"realm_gate_rejected"}}"#;
-        let response: AgentUiResponsePayloadV1 = serde_json::from_str(valid_pair)
-            .expect("合法 surrogate pair 应解码为单个 Unicode scalar");
-        assert_eq!(
-            response.target_player.as_deref(),
-            Some("😀"),
-            "合法 surrogate pair 应与 TypeBox 产生的 emoji 字符一致"
-        );
-
-        let lone_request_id = r#"{"request_id":"\ud800","action":"dismissed","params":{}}"#;
-        assert!(
-            serde_json::from_str::<AgentUiResponsePayloadV1>(lone_request_id).is_err(),
-            "request_id 与 target_player 必须共用同一 well-formed Unicode wire 契约"
-        );
-    }
-
-    #[test]
-    fn agent_ui_response_request_id_enforces_code_point_wire_boundaries() {
-        for (name, request_id, expected_utf16, expected_scalars, should_pass) in
-            agent_ui_id_code_point_boundary_cases()
-        {
-            let json = serde_json::json!({
-                "request_id": request_id,
-                "action": "dismissed",
-                "params": {},
-            });
-            let inbound = serde_json::from_value::<AgentUiResponsePayloadV1>(json);
-            assert_eq!(
-                inbound.is_ok(),
-                should_pass,
-                "request_id {name}（{expected_scalars} Unicode code points，{expected_utf16} UTF-16 units）入站接受结果应为 {should_pass}，实为：{inbound:?}"
-            );
-
-            let outbound = serde_json::to_value(AgentUiResponsePayloadV1 {
-                request_id,
-                action: AgentUiActionType::Dismissed,
-                target_player: None,
-                params: HashMap::new(),
-            });
-            assert_eq!(
-                outbound.is_ok(),
-                should_pass,
-                "request_id {name}（{expected_scalars} Unicode code points，{expected_utf16} UTF-16 units）出站接受结果应为 {should_pass}，实为：{outbound:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn agent_ui_response_target_player_serialize_enforces_code_point_wire_boundaries() {
-        for (name, target_player, expected_utf16, expected_scalars, should_pass) in
-            agent_ui_id_code_point_boundary_cases()
-        {
-            assert_eq!(
-                target_player.encode_utf16().count(),
-                expected_utf16,
-                "{name} 的 UTF-16 code unit 计数用于锁住历史分叉边界"
-            );
-            assert_eq!(
-                target_player.chars().count(),
-                expected_scalars,
-                "{name} 的 Unicode scalar 计数应锁住 astral 与 BMP 差异"
-            );
-            let response = AgentUiResponsePayloadV1 {
-                request_id: "target-outbound-boundary".to_string(),
-                action: AgentUiActionType::Error,
-                target_player: Some(target_player),
-                params: [("reason".to_string(), "realm_gate_rejected".to_string())]
-                    .into_iter()
-                    .collect(),
-            };
-            let result = serde_json::to_value(response);
-            assert_eq!(
-                result.is_ok(),
-                should_pass,
-                "{name}（{expected_scalars} Unicode code points，{expected_utf16} UTF-16 units）出站接受结果应为 {should_pass}，实为：{result:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn agent_ui_response_target_player_none_is_omitted_on_serialize() {
-        let response = AgentUiResponsePayloadV1 {
-            request_id: "legacy-outbound".to_string(),
-            action: AgentUiActionType::Dismissed,
-            target_player: None,
-            params: HashMap::new(),
-        };
-        let value: serde_json::Value =
-            serde_json::to_value(response).expect("旧 C2S response 序列化不应失败");
-        assert!(
-            value.get("target_player").is_none(),
-            "target_player=None 应保持 legacy server→agent payload 不带该字段：{value}"
-        );
     }
 
     #[test]
@@ -994,6 +524,87 @@ mod tests {
             result.is_err(),
             "非法 action 字面量应反序列化失败，得到 Ok 变体"
         );
+    }
+
+    #[test]
+    fn agent_ui_response_target_player_contract_is_narrow_and_fail_closed() {
+        let targeted = serde_json::json!({
+            "request_id": "targeted",
+            "action": "error",
+            "target_player": "offline:TestPlayer",
+            "params": {"reason": "realm_gate_rejected"},
+        });
+        let response: AgentUiResponsePayloadV1 =
+            serde_json::from_value(targeted).expect("合法 server→agent target_player 应能反序列化");
+        assert_eq!(
+            response.target_player.as_deref(),
+            Some("offline:TestPlayer")
+        );
+
+        let legacy = serde_json::json!({
+            "request_id": "legacy",
+            "action": "error",
+            "params": {"reason": "realm_gate_rejected"},
+        });
+        let response: AgentUiResponsePayloadV1 = serde_json::from_value(legacy)
+            .expect("legacy server→agent payload 缺省 target_player 应继续可读");
+        assert!(response.target_player.is_none());
+        let serialized = serde_json::to_value(&response).expect("legacy payload 应能序列化");
+        assert!(
+            serialized.get("target_player").is_none(),
+            "target_player=None 不应在 wire 上变成 null：{serialized}"
+        );
+
+        for (name, value, should_pass) in [
+            ("empty", String::new(), false),
+            ("128 emoji", "😀".repeat(128), true),
+            ("129 emoji", "😀".repeat(129), false),
+            ("127 BMP + 1 astral", format!("{}😀", "a".repeat(127)), true),
+            (
+                "128 BMP + 1 astral",
+                format!("{}😀", "a".repeat(128)),
+                false,
+            ),
+        ] {
+            let inbound = serde_json::from_value::<AgentUiResponsePayloadV1>(serde_json::json!({
+                "request_id": "boundary",
+                "action": "error",
+                "target_player": value,
+                "params": {"reason": "realm_gate_rejected"},
+            }));
+            assert_eq!(
+                inbound.is_ok(),
+                should_pass,
+                "新增 target_player {name} 应按 1..=128 Unicode code points 判定为 {should_pass}：{inbound:?}"
+            );
+        }
+
+        let explicit_null = serde_json::json!({
+            "request_id": "null-target",
+            "action": "error",
+            "target_player": null,
+            "params": {"reason": "realm_gate_rejected"},
+        });
+        assert!(
+            serde_json::from_value::<AgentUiResponsePayloadV1>(explicit_null).is_err(),
+            "显式 null 不得冒充 legacy 缺字段"
+        );
+    }
+
+    #[test]
+    fn agent_ui_response_raw_json_rejects_lone_surrogate_and_accepts_pair() {
+        let lone_surrogate =
+            r#"{"request_id":"bad","action":"error","target_player":"\ud800","params":{}}"#;
+        assert!(
+            serde_json::from_str::<AgentUiResponsePayloadV1>(lone_surrogate).is_err(),
+            "raw JSON lone surrogate 必须拒绝"
+        );
+
+        let valid_pair =
+            r#"{"request_id":"good","action":"error","target_player":"\ud83d\ude00","params":{}}"#;
+        let response: AgentUiResponsePayloadV1 = serde_json::from_str(valid_pair)
+            .expect("合法 surrogate pair 应解码为单个 Unicode scalar");
+        assert_eq!(response.target_player.as_deref(), Some("😀"));
     }
 
     // ── AgentUiClosePayloadV1 roundtrip ──────────────────────────────────────
@@ -1140,42 +751,46 @@ mod tests {
         );
     }
 
-    /// client-request.agent-ui-response.sample.json → ClientRequestV1 roundtrip
+    /// client-request.agent-ui-response.sample.json → AgentUiResponsePayloadV1 roundtrip
     #[test]
     fn sample_client_request_agent_ui_response_roundtrip() {
-        use crate::schema::client_request::ClientRequestV1;
-
         let json = include_str!(
             "../../../agent/packages/schema/samples/client-request.agent-ui-response.sample.json"
         );
-        let request: ClientRequestV1 = serde_json::from_str(json)
-            .expect("真实 C2S sample 应能按完整 ClientRequestV1 反序列化");
-        match &request {
-            ClientRequestV1::AgentUiResponse {
-                v,
-                request_id,
-                action,
-                params,
-            } => {
-                assert_eq!(*v, 1, "sample wire version 应为 1");
-                assert_eq!(request_id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
-                assert!(matches!(action, AgentUiActionType::ButtonClick));
-                assert_eq!(
-                    params.get("button_id").map(String::as_str),
-                    Some("enter_realm"),
-                    "sample params.button_id 应为 enter_realm"
-                );
-            }
-            other => panic!("expected C2S AgentUiResponse, got {other:?}"),
-        }
-
-        let serialized =
-            serde_json::to_string(&request).expect("ClientRequestV1::AgentUiResponse 应能序列化");
-        let roundtrip: ClientRequestV1 = serde_json::from_str(&serialized)
-            .expect("ClientRequestV1::AgentUiResponse roundtrip 应能反序列化");
+        let val: serde_json::Value = serde_json::from_str(json)
+            .expect("client-request.agent-ui-response sample 应能解析为 JSON");
+        assert_eq!(
+            val["type"].as_str(),
+            Some("agent_ui_response"),
+            "sample type 字段应为 agent_ui_response"
+        );
+        // AgentUiResponsePayloadV1 有 deny_unknown_fields，只取业务字段
+        let payload_val = serde_json::json!({
+            "request_id": val["request_id"],
+            "action": val["action"],
+            "params": val["params"],
+        });
+        let payload: AgentUiResponsePayloadV1 = serde_json::from_value(payload_val).expect(
+            "client-request.agent-ui-response sample 应能反序列化为 AgentUiResponsePayloadV1",
+        );
         assert!(
-            matches!(roundtrip, ClientRequestV1::AgentUiResponse { .. }),
-            "roundtrip 后必须仍是 C2S AgentUiResponse"
+            matches!(payload.action, AgentUiActionType::ButtonClick),
+            "sample action 应为 button_click，实为 {:?}",
+            payload.action
+        );
+        assert_eq!(
+            payload.params.get("button_id").map(|s| s.as_str()),
+            Some("enter_realm"),
+            "sample params.button_id 应为 enter_realm，实为 {:?}",
+            payload.params.get("button_id")
+        );
+        let serialized =
+            serde_json::to_string(&payload).expect("AgentUiResponsePayloadV1 应能序列化");
+        let payload2: AgentUiResponsePayloadV1 = serde_json::from_str(&serialized)
+            .expect("AgentUiResponsePayloadV1 roundtrip 应能反序列化");
+        assert_eq!(
+            payload.request_id, payload2.request_id,
+            "roundtrip 后 request_id 应一致"
         );
     }
 

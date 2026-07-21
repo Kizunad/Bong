@@ -28,20 +28,15 @@ export const AgentUiActionType = Type.Union([
 ]);
 export type AgentUiActionType = Static<typeof AgentUiActionType>;
 
-// 标准 JSON Schema 的 maxLength 按 Unicode code point 计数，但 TypeBox Value.Check
-// 在 JavaScript runtime 中按 UTF-16 code unit 计数。为避免 astral 字符造成接受集合
-// 分叉，长度与 well-formed Unicode 约束统一放进同一个 ECMA-262 pattern：无 flag
-// 解释把 surrogate pair 作为第二分支的一次重复，Unicode-aware `u` 解释把 astral
-// 字符作为第一分支的一次重复；两者都精确计数 1..=128 个 Unicode code points，
-// 并拒绝 JavaScript 可表示、但 Rust serde_json 无法接收的 lone surrogate。尾部
-// `(?![\s\S])` 显式要求不存在任何剩余 code unit，避免依赖 `$` 的宿主尾锚解释。
-const AGENT_UI_ID_PATTERN =
+// 本 plan 只为新增的 server→agent target_player 定义 Unicode code-point 边界。
+// 既有 Agent UI ID 字段继续保持 minLength/maxLength 契约，避免借隐私修复迁移
+// 其他协议面。该 pattern 在无 flag 与 Unicode-aware `u` 两种 ECMA-262 解释下
+// 都将 surrogate pair 计为一个 code point，并拒绝 lone surrogate。
+const SERVER_TARGET_PLAYER_PATTERN =
   "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}(?![\\s\\S])";
 
-function agentUiIdV1() {
-  return Type.String({
-    pattern: AGENT_UI_ID_PATTERN,
-  });
+function serverTargetPlayerV1() {
+  return Type.String({ pattern: SERVER_TARGET_PLAYER_PATTERN });
 }
 
 // ─── Schema 1：Agent → Server（Redis bong:agent_ui_cmd）──────────────────────
@@ -54,8 +49,8 @@ function agentUiIdV1() {
  */
 export const AgentUiRequestCommandV1 = Type.Object(
   {
-    request_id: agentUiIdV1(),
-    target_player: agentUiIdV1(),
+    request_id: Type.String({ minLength: 1, maxLength: 128 }),
+    target_player: Type.String({ minLength: 1, maxLength: 128 }),
     xml: Type.String({ maxLength: 8192 }),
     timeout_ticks: Type.Integer({ minimum: 20, maximum: 2400, default: 600 }),
     /**
@@ -84,8 +79,8 @@ export type AgentUiRequestCommandV1 = Static<typeof AgentUiRequestCommandV1>;
  */
 export const AgentUiRequestPayloadV1 = Type.Object(
   {
-    request_id: agentUiIdV1(),
-    target_player: agentUiIdV1(),
+    request_id: Type.String({ minLength: 1, maxLength: 128 }),
+    target_player: Type.String({ minLength: 1, maxLength: 128 }),
     xml: Type.String({ maxLength: 8192 }),
     timeout_ticks: Type.Integer({ minimum: 20, maximum: 2400 }),
   },
@@ -124,7 +119,7 @@ export type AgentUiErrorReasonV1 =
  */
 export const AgentUiClientResponsePayloadV1 = Type.Object(
   {
-    request_id: agentUiIdV1(),
+    request_id: Type.String({ minLength: 1, maxLength: 128 }),
     action: AgentUiActionType,
     params: Type.Record(Type.String(), Type.String()),
   },
@@ -143,7 +138,7 @@ export type AgentUiClientResponsePayloadV1 = Static<
 export const AgentUiResponsePayloadV1 = Type.Object(
   {
     ...AgentUiClientResponsePayloadV1.properties,
-    target_player: Type.Optional(agentUiIdV1()),
+    target_player: Type.Optional(serverTargetPlayerV1()),
   },
   { additionalProperties: false },
 );
@@ -165,7 +160,7 @@ export type AgentUiCloseReasonV1 = Static<typeof AgentUiCloseReasonV1>;
  */
 export const AgentUiClosePayloadV1 = Type.Object(
   {
-    request_id: agentUiIdV1(),
+    request_id: Type.String({ minLength: 1, maxLength: 128 }),
     reason: Type.Optional(AgentUiCloseReasonV1),
   },
   { additionalProperties: false },
@@ -175,11 +170,15 @@ export type AgentUiClosePayloadV1 = Static<typeof AgentUiClosePayloadV1>;
 // ─── Validate helpers ────────────────────────────────────────────────────────
 
 /** TypeBox 契约校验：AgentUiResponsePayloadV1（server → agent Redis channel） */
-export function validateAgentUiResponsePayloadV1Contract(data: unknown): ValidationResult {
+export function validateAgentUiResponsePayloadV1Contract(
+  data: unknown,
+): ValidationResult {
   return validate(AgentUiResponsePayloadV1, data);
 }
 
 /** TypeBox 契约校验：AgentUiRequestCommandV1（agent → server Redis channel） */
-export function validateAgentUiRequestCommandV1Contract(data: unknown): ValidationResult {
+export function validateAgentUiRequestCommandV1Contract(
+  data: unknown,
+): ValidationResult {
   return validate(AgentUiRequestCommandV1, data);
 }
