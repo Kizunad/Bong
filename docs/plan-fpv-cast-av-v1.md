@@ -32,9 +32,9 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⬜ |
-| P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⬜ |
-| P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⬜ |
+| P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
+| P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
+| P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 3/3 定稿：双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂**逐 tick** IK 合握，加密防插值脱手），关键帧残差 ≤0.55、中间帧最差 2.43 模型单位，t0=t20 收势闭合。剩余招式 FPV 变体待续 |
 | P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⬜ |
 | P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ⬜ |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |
@@ -106,6 +106,60 @@
 2. **签名音效音源渠道**：AI 音效生成（类比 `/gen-image` 建 `/gen-audio` 管线）/ CC0 素材库（freesound 等，须核许可证）/ 用户自供——**需用户拍板**，涉及外部资源与授权，agent 不自决。
 3. **施法 juice 触发数据源**：纯 client（`CastStateStore` 本地推断 release，零 wire 变更，但 server 拒绝/打断的边缘一致性靠 cast_sync 已有回执）vs server 显式 juice hint（精确但加 payload 字段）。推荐纯 client 起步，误差可接受再不加字段。**两条路线都必须满足 P3 门控硬约束**（accepted 确认 + 取消令牌 + 幂等），纯 client 路线的收口前提是核实 cast_sync 回执在拒绝/打断路径的到达保证。
 4. **FPV 变体的维护成本边界**：每招两份动画（TPV+FPV）长期同步维护——是否约定「FPV 变体只在 TPV 定稿后产出、TPV 改动必须连带复核 FPV」写入 `docs/player-animation-conventions.md`。
+
+> **收口状态（2026-07-22）**：全部 4 项已在 §8.1 收口——#1 FPV 技术路线用户真机拍板**路线 A**（库原生 `THIRD_PERSON_MODEL`+config，非 plan 预判的不存在的 `ENABLED`）、#2 音源渠道 CC0 素材库、#3 juice 数据源纯 client、#4 FPV 维护约定入档 §16。原表保留以备追溯，**实施时以 §8.1 决议为准**。
+
+## §8.1 决议（pre-P0 收口，2026-07-22）
+
+> 本节按 `docs/CLAUDE.md §5.1` 追加。#3/#4 由两个并行 Explore agent 核查 origin/main（`9a2cff02c`）代码现状产出（不拍脑袋）；#1/#2 为用户决策门，**已于 2026-07-22 用户拍板收口**（#1 路线 A、#2 CC0 素材库，决议见下文对应小节）。
+
+### #3 施法 juice 触发数据源 —— 采纳纯 client，零 wire 变更
+
+**决议**：
+
+1. **采纳纯 client 路线**，juice 触发数据源 = `CastStateStore` 单快照（`phase==CASTING` 即已 accepted；`COMPLETE`/`INTERRUPT` 为终态）；**拒绝 server 显式 juice hint 路线**——不加 payload 字段，wire 层零变更的设计目标守住。
+2. **门控硬约束（accepted 确认 + 取消令牌作废 pending + 幂等）在纯 client 下已满足**，逐路径核验：
+   - **施放前拒绝**（真元不足 / 冷却 / 未习得 / 经脉门 / race gate 等）：部分分支 server 静默 `return`（`client_request_handler.rs:13320/13431/13437/12892/12898/12905`），部分发 Idle+reject outcome（`:13358/13404/13465`、`push_skill_cast_rejected_sync:13944`）。**但施放前 client 从未收到 Casting/accepted sync → 无 pending juice 可作废 → 对门控无害**（juice 只绑已 accepted 的 cast，reject 静默不构成缺口）。
+   - **施法中打断**（控制 / 受击 / 移动）：三分支全发 `cast_sync` Interrupt（`cast_emit.rs:215/258/293`，对应 Casting 移除 `:207/250/285`）→ client `transitionToInterrupt` → **到达保证 ✓**，作废 pending。
+   - **切槽主动取消**：发 UserCancel（`client_request_handler.rs:14034`，对应 Casting 移除 `:14014`）→ **到达保证 ✓**。
+   - **施法中非受击死亡**（修炼死 / 真元枯竭 / 坠落溺水，无同 tick wound）：server 在 `combat/lifecycle.rs:1857` 玩家状态重置路径静默 `remove::<Casting>`，而 `CastOutcomeV1::Death` 定义了却全仓从不 emit（`schema/combat_hud.rs:69` 定义、仅 `schema/proto_convert.rs:2239` 映射引用）——**这是唯一 server 静默缺口**。**由 P3 已明令的 client 侧 death teardown 关闭**（P3 契约原文：「teardown：断线、切世界、玩家死亡时立即复位基准并清 pending 状态」）：client 观测本地玩家死亡即作废 pending juice + 复位 FOV，不依赖 server 回执。**故纯 client 路线的收口前提（拒绝/打断路径到达保证）成立，死亡缺口不构成破功点**。
+3. **幂等 + 取消令牌语义的实现依据**：`CastStateStore` 是单个 volatile 快照、`replace(next)` 整体替换（`CastStateStore.java:18/60`），无唯一 cast id，身份 = `(source, slot, startedAtMs)` 三元组。P3 的 pending juice **必须绑定当前快照身份并每 tick 从 store 重解算**：快照身份变化（新 `startedAtMs`）即视前一 pending 作废（supersession），同一身份重复 release 只认第一次（幂等）——快速同槽连发不会误触前一次 pending。
+
+**落点**：`client/src/main/java/com/bong/client/network/CastSyncHandler.java:37-53/105-127`（phase/outcome 分派）、`client/src/main/java/com/bong/client/combat/CastStateStore.java:18/60/76-91`（单快照 replace + tick 300ms 自回 idle）、`server/src/network/cast_emit.rs:215/258/293/469`（interrupt/complete emit）、`server/src/network/client_request_handler.rs:14034`（UserCancel）、`server/src/combat/lifecycle.rs:1857`（死亡静默移除 Casting，缺口）；plan §P3（`CastFovController` 生命周期契约 + death teardown）。
+
+**可选后续（非本 plan 范围）**：server 在 `combat/lifecycle.rs:1857` 施法中死亡路径补发 `cast_sync`(Interrupt, `CastOutcomeV1::Death`) 可让死亡缺口获得权威回执、并退掉 `CastOutcomeV1::Death` 的死代码状态——但纯 client death teardown 已完全满足 juice 门控，此项为健壮性增益，不阻塞本 plan，宜另立 skeleton 处理。
+
+### #4 FPV 变体维护成本边界 —— 约定入档 player-animation-conventions.md §16
+
+**决议**：
+
+1. **采纳约定并写入文档**：`docs/player-animation-conventions.md` 新增 **§16**（授权追加节，格式对齐既有 §13/§14/§15 的引言块 + `---` 分隔模式），明文规定「FPV 变体只在对应 TPV 动画定稿后产出；TPV 改动必须连带复核 / 同步 FPV 变体」。
+2. **不与既有 §3 重叠**：§3「FPV 可见性要求」管的是**单份动画**在第一人称视野内的骨骼可见性（guard 位置等）；§16 管的是 **TPV↔FPV 双份资产的同步维护约定**，是新维度，独立成节。
+3. **机器把关留到 FPV 资产落地时**：pre-P0 全仓无任何 `*_fpv.json`（`player_animation/` 140 份动画均单份），暂无可锁对象；§16 先立文字约定，并指明将来 P1/P2 FPV 变体落地后参照 §14.1「机械锁登记表」模式（`AnimCastTicksAlignmentTest` 的 `FIXED_PHASE_CHARGE_SKILLS` 先例）加一条 TPV↔FPV 对拍锁，把「连带复核」从文字升级为机器判据。
+
+**落点**：`docs/player-animation-conventions.md`（新增 §16，line 681 后追加）；`client/src/main/java/com/bong/client/animation/BongAnimationRegistry.java:120-129/170`（FPV 查找链落点，P1）；plan §P1/§P2。
+
+### #1 FPV 技术路线 —— 用户真机拍板路线 A（2026-07-22）
+
+**决议**：
+
+1. **锁定路线 A（库原生）**：`FirstPersonMode.THIRD_PERSON_MODEL` + 一个 `showRightArm/showLeftArm/showRightItem/showLeftItem=true` 的 `FirstPersonConfiguration`。**拒绝 B（自绘 FPV 手臂层）与 C（mixin 注入 vanilla 手臂）**——二者是 A 遮挡出问题时的后备，A 遮挡实测干净故无需做。
+2. **plan 预判的 `FirstPersonMode.ENABLED` 在 player-anim `1.0.2-rc1` 不存在**（该版本枚举仅 `NONE/VANILLA/THIRD_PERSON_MODEL/DISABLED`）——「库原生显示动画手臂」正解是 `THIRD_PERSON_MODEL` + config 开手臂。出厂 `BongAnimationPlayer.playOnStack` 只设 mode 没设 config，默认 config 的 `showArm=false` 正是第一人称无手臂的根因。库 `ItemInHandRendererMixin` 在 `THIRD_PERSON_MODEL` 下整段 cancel vanilla FP 手/物渲染 → plan 担心的「vanilla 盖掉持物」在 A 下**不发生**，真机印证。
+3. **真机 POC 证据（决定性判据=持物遮挡）**：POC harness（`FpvPocState`/`FpvPocControls` 运行时切 OFF/A/B/C + 键位 + `scripts/fpv-poc.sh` 快捷命令）在 `sword.cleave` 上真机对比——用户判定**A 下第一人称出现动画手臂 + 剑、遮挡正确**（无剑穿手/无 vanilla 双重渲染/无 z-fighting）。唯一观察：双手持剑时两手在贴脸视角**未视觉合拢**——经确认这是**姿态问题非路线问题**（剑=单手主手物只在右手渲染，左手空手摆双手持姿态，贴脸视差下需专门 FPV 变体把左手并到剑柄），归 **P2** 的 `sword_cleave_fpv.json` 处理，A/B/C 任选此姿态都要调。
+4. **P1 数据形状（据本决议定形，已落地）**：本地玩家 **`<anim_id>_fpv` 查找链** + 路线 A 的 `FirstPersonConfiguration` 落于 `BongAnimationPlayer.playOnStack`——本地玩家播 `bong:sword_cleave` 时优先取 `bong:sword_cleave_fpv`，命中则播变体 + `applyFirstPersonRendering(true)`（`THIRD_PERSON_MODEL` + 开双臂/持物）。**回落语义（对 plan 原文的实现细化）**：无 `_fpv` 变体或远端玩家 → 出厂行为（`applyFirstPersonRendering(false)`，第一人称隐藏手臂）——即 **FPV 手臂按 `_fpv` 变体存在与否 opt-in**，而非 plan 原文的「缺省 blanket 开手臂」；理由是未调姿态的 TPV 动作直接进第一人称贴脸会显糙（用户实测），逐招授权变体更稳。远端玩家渲染分支零变化。POC harness（`FpvPocState`/`FpvPocControls`/键位/`fpv-poc.sh`）已在本 PR 收敛移除。
+
+**落点**：`client/src/main/java/com/bong/client/animation/BongAnimationPlayer.java`（`playOnStack` 内 `_fpv` 查找 + `isLocalPlayer`/`fpvVariantId`/`applyFirstPersonRendering` 三 helper）、`client/src/test/java/com/bong/client/animation/BongAnimationPlayerFpvTest.java`（变体 id + config pin）、`client/src/main/java/com/bong/client/animation/BongAnimationRegistry.java:122-135`（`contains`/`get` 查找源）；`client/tools/gen_sword_cleave_fpv.py` + `assets/bong/player_animation/sword_cleave_fpv.json`（P2 双手合拢变体）；render 工具 `client/tools/render_animation.py --fpv`（P2 迭代用）。
+
+### #2 签名音效音源渠道 —— 用户拍板 CC0 素材库（2026-07-22）
+
+**决议**：
+
+1. **采纳 CC0 素材库**（freesound 等）作首批 8 条 signature 音效音源；拒绝 AI 生成与用户自供。
+2. **许可证硬约束**：每条采用的 `.ogg` 必须逐一核验为 **CC0 / 等价公有领域 / 无署名要求**许可，并在 P4 PR 内留出处清单（源 URL + 许可证 + 检索日期），落一份 `client/src/main/resources/assets/bong/sounds/ATTRIBUTION.md`（或等价出处文件）。**非 CC0（含要求署名的 CC-BY）不采用**，避免署名义务渗入资源包。
+3. **音色基调**（plan §P4 已定，此处重申）：末法衰败——骨裂 / 锈金属 / 闷雷 / 砂砾摩擦，禁华丽仙侠音（`worldview.md §四`）。
+4. **管线复用**（plan §P4 原样）：CC0 源 → 切样本（mono / 44.1kHz / ≤3s）→ `.ogg` → client `sounds.json` 注册 `bong:skill.<school>.<move>` → recipe 主层换 `bong:` 事件；同步 `resourcepack.rs` + committed manifest 的 sha1/size。
+
+**落点**：plan §P4；`client/src/main/resources/assets/bong/sounds.json`（P4 新建）+ `server/assets/audio/recipes/*.json`（P4 换音源层）+ 出处文件 `assets/bong/sounds/ATTRIBUTION.md`。仅卡 P4/PR-6，不阻塞 P0–P3、P5。
 
 ## 测试声明
 
