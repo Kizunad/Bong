@@ -26,7 +26,7 @@ import { FalseSkinKindV1 } from "./tuike.js";
 import { VoidActionRequestV1 } from "./void-actions.js";
 import {
   AgentUiActionType,
-  AgentUiResponsePayloadV1,
+  AgentUiClientResponsePayloadV1,
 } from "./payloads/agent-ui.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
@@ -1050,13 +1050,14 @@ export type BlockPlaceRequestV1 = Static<typeof BlockPlaceRequestV1>;
 
 /**
  * 玩家天道 UI 面板交互响应（client → server CustomPayload）。
- * 与 server→agent Redis 使用同一 payload 结构 AgentUiResponsePayloadV1。
+ * 真实 Fabric producer 只发 request_id/action/params；target_player 由 server 依
+ * 已认证连接实体权威确定，不得由 C2S 声明。
  */
 export const AgentUiResponseRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("agent_ui_response"),
-    ...AgentUiResponsePayloadV1.properties,
+    ...AgentUiClientResponsePayloadV1.properties,
   },
   { additionalProperties: false },
 );

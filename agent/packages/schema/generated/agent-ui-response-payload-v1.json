@@ -1,0 +1,56 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "request_id",
+    "action",
+    "params"
+  ],
+  "properties": {
+    "request_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "action": {
+      "anyOf": [
+        {
+          "const": "button_click",
+          "type": "string"
+        },
+        {
+          "const": "dismissed",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "type": "string"
+        },
+        {
+          "const": "replaced",
+          "type": "string"
+        },
+        {
+          "const": "error",
+          "type": "string"
+        },
+        {
+          "const": "parse_error",
+          "type": "string"
+        }
+      ]
+    },
+    "params": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "type": "string"
+        }
+      }
+    },
+    "target_player": {
+      "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}(?![\\s\\S])",
+      "type": "string"
+    }
+  }
+}

@@ -2480,6 +2480,27 @@ mod tests {
         }
     }
 
+    /// 取 PlayAnim 的 (priority, fade_in_ticks)——P6 相位承接契约
+    /// （docs/player-animation-conventions.md §14.2）的 pin 用。
+    fn play_anim_priority_and_fade_in(request: &VfxEventRequest) -> (u16, Option<u8>) {
+        match &request.payload {
+            VfxEventPayloadV1::PlayAnim {
+                priority,
+                fade_in_ticks,
+                ..
+            } => (*priority, *fade_in_ticks),
+            other => panic!("expected PlayAnim, got {other:?}"),
+        }
+    }
+
+    /// 取 StopAnim 的 fade_out_ticks。
+    fn stop_anim_fade_out(request: &VfxEventRequest) -> Option<u8> {
+        match &request.payload {
+            VfxEventPayloadV1::StopAnim { fade_out_ticks, .. } => *fade_out_ticks,
+            other => panic!("expected StopAnim, got {other:?}"),
+        }
+    }
+
     fn assert_play_anim(request: &VfxEventRequest, expected_anim: &str, expected_priority: u16) {
         match &request.payload {
             VfxEventPayloadV1::PlayAnim {
@@ -3210,6 +3231,111 @@ mod tests {
             other => panic!("expected StopAnim, got {other:?}"),
         }
         assert_play_anim(&emitted[1], ANIM_ANQI_CHARGE_RELEASE, ANQI_PRIORITY);
+    }
+
+    /// P6 相位承接契约 pin（conventions §14.2）——封骨两段式交接的 fade 形状。
+    ///
+    /// 契约要害（读 PlayerAnimator 源码得出，靠猜必错）：同 channel 换 animId 时，
+    /// 旧层带 `fade_out` 留栈并**位于新层之上**向其混合下去，混合源是蓄力段
+    /// **当前相位**的姿态——所以引导窗停在任意相位都能平滑承接。三个前提缺一不可：
+    ///
+    /// 1. `fade_out_ticks >= 2`：`fade_out = 0` 会立即摘层、混合源消失，交接瞬间
+    ///    姿态塌回 vanilla 中立（实测，见 client `TwoStageHandoffBlendTest`
+    ///    `zeroFadeOutBreaksContinuityAndIsThereforeForbiddenForTwoStage`）；
+    /// 2. release 的 `fade_in <= fade_out`：release 必须在淡出窗口内尽快成为完整的
+    ///    混合目标，否则混合目标自身还是半 vanilla 状态，造成二次塌陷；
+    /// 3. 两段**同 priority**：跨优先级会打破层序前提，混合源随之失效。
+    #[test]
+    fn anqi_two_stage_handoff_satisfies_phase_handoff_contract() {
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "CarryFade", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(CarrierChargeBeganEvent {
+            carrier: caster,
+            tick: 10,
+        });
+        app.update();
+        let began = drain_vfx(&mut app);
+        let (loop_priority, _) = play_anim_priority_and_fade_in(&began[0]);
+
+        app.world_mut().send_event(CarrierChargeEndedEvent {
+            carrier: caster,
+            full_charge: true,
+            tick: 410,
+        });
+        app.update();
+        let ended = drain_vfx(&mut app);
+        assert_eq!(
+            ended.len(),
+            2,
+            "自然完成应 StopAnim(循环) + PlayAnim(release)"
+        );
+
+        let fade_out = stop_anim_fade_out(&ended[0])
+            .expect("两段式循环段停止必须显式带 fade_out——None 会走客户端默认值，契约不可依赖默认");
+        let (release_priority, release_fade_in) = play_anim_priority_and_fade_in(&ended[1]);
+        let fade_in = release_fade_in
+            .expect("release 段必须显式带 fade_in——交接混合的时间预算不可留给默认值");
+
+        assert!(
+            fade_out >= 2,
+            "循环段停止 fade_out={fade_out} < 2：fade_out=0/1 会让混合源过早消失，\
+             交接瞬间姿态塌回 vanilla（conventions §14.2 硬约束 1）"
+        );
+        assert!(
+            fade_in <= fade_out,
+            "release fade_in={fade_in} > 循环段 fade_out={fade_out}：release 必须在淡出\
+             窗口内尽快成为完整混合目标，否则混合目标自身仍是半 vanilla 状态\
+             （conventions §14.2 硬约束 3）"
+        );
+        assert_eq!(
+            loop_priority, release_priority,
+            "两段式两段必须同 priority——跨优先级会打破「淡出层在上、向下层混合」的\
+             层序前提，混合源随之失效（conventions §14.2 硬约束 2）"
+        );
+    }
+
+    /// P6 相位承接契约 pin——天门两段式（定长相位充能型，conventions §14.1）
+    /// 两段同 priority。该招无 StopAnim（充能段非循环、自然播完），交接靠客户端
+    /// 同 channel 换 id 的默认淡出，故此处只锁 priority 一致性这一前提。
+    #[test]
+    fn heaven_gate_two_stage_uses_same_priority_for_both_phases() {
+        let mut app = setup_sword_path_visual_app();
+        let caster = spawn_player(&mut app, "HeavenGate", [0.0, 64.0, 0.0]);
+
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::HeavenGateCharge,
+            caster,
+            valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            None,
+        ));
+        app.update();
+        let charge = drain_vfx(&mut app).remove(0);
+
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::HeavenGateRelease,
+            caster,
+            valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            None,
+        ));
+        app.update();
+        let release = drain_vfx(&mut app).remove(0);
+
+        let (charge_priority, _) = play_anim_priority_and_fade_in(&charge);
+        let (release_priority, _) = play_anim_priority_and_fade_in(&release);
+        assert_eq!(
+            charge_priority, release_priority,
+            "天门充能段与 release 段必须同 priority（conventions §14.1/§14.2）"
+        );
+        assert_eq!(
+            play_anim_id(&charge),
+            ANIM_SWORD_HEAVEN_GATE_CHARGE,
+            "充能段动画 id 漂移"
+        );
+        assert_eq!(
+            play_anim_id(&release),
+            ANIM_SWORD_HEAVEN_GATE_RELEASE,
+            "release 段动画 id 漂移"
+        );
     }
 
     /// 封骨充能移动打断：仅 StopAnim(循环段)，**无** release 收势（打断不奖励收势）。
@@ -4159,6 +4285,35 @@ mod tests {
                 "习得 `{technique_id}` 应恰发一条架势动画，实际 {emitted:?}"
             );
             assert_play_anim(&emitted[0], expected_anim, STORY_PRIORITY);
+        }
+    }
+
+    /// P6：架势亮相是**一次性单发**动画，其 fade_in 必须显式且 ≥ 3 tick。
+    ///
+    /// 与两段式 release 的「热交接宜短」相反（conventions §14.2 硬约束 3），架势
+    /// 亮相是**从 vanilla 冷起手**——按 conventions §2.7「fade-in ≥ 3 tick」适用，
+    /// 差距大需要淡入铺垫。P6 把两个架势资产由 `isLoop:true` 改为一次性亮相
+    /// （§8.1 #2 第 4 条），发射侧本就是单发 + `Some(3)`，此前无任何用例锁住该值，
+    /// 本用例补上：既防 fade_in 被悄悄改小造成冷起手闪跳，也防被改成 None 回落默认。
+    #[test]
+    fn stance_reveal_play_anim_carries_explicit_cold_start_fade_in() {
+        for technique_id in ["woliu.vortex", "zhenmai.parry"] {
+            let mut app = setup_stance_app();
+            let player = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+            send_technique_learned(&mut app, player, technique_id);
+            app.update();
+
+            let emitted = drain_vfx(&mut app);
+            let (_, fade_in) = play_anim_priority_and_fade_in(&emitted[0]);
+            let fade_in = fade_in.expect(
+                "架势亮相必须显式带 fade_in——None 会回落客户端默认值，冷起手的淡入预算不可依赖默认",
+            );
+            assert!(
+                fade_in >= 3,
+                "习得 `{technique_id}` 的架势亮相 fade_in={fade_in} < 3：\
+                 从 vanilla 冷起手到架势姿态差距大，淡入不足会闪跳\
+                 （conventions §2.7）"
+            );
         }
     }
 

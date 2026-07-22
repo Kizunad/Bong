@@ -1497,28 +1497,40 @@ async function startAgentUiResponseRuntime(opts: {
   redisUrl: string;
 }): Promise<{ cleanup: () => Promise<void>; runtime: AgentUiRuntime }> {
   const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
-    Redis) as new (url: string) => unknown;
-  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
-    typeof AgentUiRuntime
-  >[0]["pub"];
-  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
-    typeof AgentUiRuntime
-  >[0]["sub"];
-
+    Redis) as new (url: string) => {
+    publish(channel: string, message: string): Promise<number>;
+    subscribe(channel: string): Promise<unknown>;
+    on(event: string, listener: (channel: string, message: string) => void): unknown;
+    off?(event: string, listener: (channel: string, message: string) => void): unknown;
+    unsubscribe(): Promise<unknown>;
+    disconnect(): void;
+  };
+  const pub = new IORedisCtor(opts.redisUrl);
+  const sub = new IORedisCtor(opts.redisUrl);
   const runtime = new AgentUiRuntime({ pub, sub });
+
   runtime
     .connect()
     .then(() => console.log("[tiandao] agent ui runtime online (renderer + response consumer)"))
     .catch((error) =>
       console.warn("[tiandao] agent ui runtime failed to start:", error),
     );
-  const cleanup = async () => {
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
-    try {
-      await Promise.race([runtime.disconnect(), timeout]);
-    } catch (error) {
-      console.warn("[tiandao] agent ui runtime disconnect error:", error);
-    }
+
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = (): Promise<void> => {
+    cleanupPromise ??= (async () => {
+      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+      const disconnected = runtime.disconnect().catch((error) => {
+        console.warn("[tiandao] agent ui runtime disconnect error:", error);
+      });
+      try {
+        await Promise.race([disconnected, timeout]);
+      } finally {
+        pub.disconnect();
+        sub.disconnect();
+      }
+    })();
+    return cleanupPromise;
   };
   return { cleanup, runtime };
 }
