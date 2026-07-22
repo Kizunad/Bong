@@ -439,16 +439,16 @@ pub fn should_recycle_ambient(nearest_player_planar_dist: f64) -> bool {
 
 /// Result of consulting the live runtime column for an ambient spawn.
 ///
-/// `Unavailable` means the runtime cannot answer inside Navigator's standard scan window, so a
-/// passable raster may be consulted. `LoadedUnsafe` is different: the loaded chunk did identify a
-/// support block, but that support or either resulting feet/head cell is liquid. Liquid detection
-/// uses [`BlockState::is_liquid`] so Anvil-preserved properties such as `level=1` cannot bypass the
-/// authoritative runtime veto or be overridden by stale raster data.
+/// `NeedsRaster { loaded_chunk: false }` means no runtime column is available, so a passable raster
+/// may provide the fallback directly. A loaded chunk whose standard scan misses returns
+/// `NeedsRaster { loaded_chunk: true }`: after obtaining the raster Y, ambient must re-check that
+/// exact runtime landing before accepting it. `LoadedUnsafe` is an authoritative veto discovered
+/// by the standard scan and never consults stale raster data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AmbientRuntimeGround {
     Safe(i32),
     LoadedUnsafe,
-    Unavailable,
+    NeedsRaster { loaded_chunk: bool },
 }
 
 fn resolve_ambient_runtime_ground(
@@ -458,16 +458,20 @@ fn resolve_ambient_runtime_ground(
     layer: Option<&ChunkLayer>,
 ) -> AmbientRuntimeGround {
     let Some(layer) = layer else {
-        return AmbientRuntimeGround::Unavailable;
+        return AmbientRuntimeGround::NeedsRaster {
+            loaded_chunk: false,
+        };
     };
     let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
     if layer.chunk(chunk_pos).is_none() {
-        return AmbientRuntimeGround::Unavailable;
+        return AmbientRuntimeGround::NeedsRaster {
+            loaded_chunk: false,
+        };
     }
 
     let Some(ground_y) = resolve_ground_y_from_chunk(world_x, world_z, reference_y, Some(layer))
     else {
-        return AmbientRuntimeGround::Unavailable;
+        return AmbientRuntimeGround::NeedsRaster { loaded_chunk: true };
     };
 
     let chunk = layer
@@ -495,13 +499,59 @@ fn resolve_ambient_runtime_ground(
     }
 }
 
+/// Validate a raster fallback against the exact landing cells of an already-loaded runtime chunk.
+///
+/// Raster surface Y is a baked hint, not authority over authored/player blocks. The support cell may
+/// be solid (the normal floor) or air (the existing high-reference fallback contract), but it must
+/// not be liquid. Feet/head must be readable, non-liquid, and non-motion-blocking. An out-of-height
+/// landing is not verifiable and therefore fails closed.
+fn resolve_loaded_raster_landing(
+    world_x: i32,
+    world_z: i32,
+    surface_y: i32,
+    layer: &ChunkLayer,
+) -> AmbientRuntimeGround {
+    let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
+    let Some(chunk) = layer.chunk(chunk_pos) else {
+        return AmbientRuntimeGround::LoadedUnsafe;
+    };
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+    let local_x = world_x.rem_euclid(16) as u32;
+    let local_z = world_z.rem_euclid(16) as u32;
+    let block_at = |world_y: i32| {
+        (min_y..=max_y)
+            .contains(&world_y)
+            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
+    };
+    let (Some(support), Some(feet), Some(head)) = (
+        block_at(surface_y),
+        block_at(surface_y + 1),
+        block_at(surface_y + 2),
+    ) else {
+        return AmbientRuntimeGround::LoadedUnsafe;
+    };
+
+    if support.is_liquid()
+        || feet.is_liquid()
+        || feet.blocks_motion()
+        || head.is_liquid()
+        || head.blocks_motion()
+    {
+        AmbientRuntimeGround::LoadedUnsafe
+    } else {
+        AmbientRuntimeGround::Safe(surface_y)
+    }
+}
+
 /// Resolve an ambient ground candidate from the live world first, then the terrain raster.
 ///
 /// A loaded [`ChunkLayer`] is authoritative because it contains caves, floating islands,
 /// decorations, and player-built blocks that the baked raster cannot represent. The runtime
 /// scan deliberately reuses Navigator's standard `ref_y - 16 .. ref_y + 4` support/headroom
-/// contract. Missing runtime data or a standard-window miss may consult a passable raster; a
-/// loaded support whose support/feet/head block is any water or lava state is an authoritative
+/// contract. Missing runtime data may use a passable raster directly; a loaded standard-window
+/// miss may use it only after the exact runtime raster landing passes support/feet/head validation.
+/// A loaded support whose support/feet/head block is any water or lava state is an authoritative
 /// veto. Both sources missing or unsafe rejects the candidate; the sampled/player Y is never
 /// preserved.
 pub fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
@@ -513,22 +563,37 @@ pub fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
     let world_z = candidate.z.floor() as i32;
     let reference_y = candidate.y.floor() as i32;
 
-    match resolve_ambient_runtime_ground(world_x, world_z, reference_y, layer) {
-        AmbientRuntimeGround::Safe(ground_y) => {
-            return Some(DVec3::new(
-                candidate.x,
-                f64::from(ground_y + 1),
-                candidate.z,
-            ));
-        }
-        AmbientRuntimeGround::LoadedUnsafe => return None,
-        AmbientRuntimeGround::Unavailable => {}
-    }
+    let loaded_chunk_needs_raster_validation =
+        match resolve_ambient_runtime_ground(world_x, world_z, reference_y, layer) {
+            AmbientRuntimeGround::Safe(ground_y) => {
+                return Some(DVec3::new(
+                    candidate.x,
+                    f64::from(ground_y + 1),
+                    candidate.z,
+                ));
+            }
+            AmbientRuntimeGround::LoadedUnsafe => return None,
+            AmbientRuntimeGround::NeedsRaster { loaded_chunk } => loaded_chunk,
+        };
 
     let surface = terrain?.query_surface(world_x, world_z);
-    surface
-        .passable
-        .then(|| DVec3::new(candidate.x, f64::from(surface.y + 1), candidate.z))
+    if !surface.passable {
+        return None;
+    }
+    if loaded_chunk_needs_raster_validation {
+        match resolve_loaded_raster_landing(world_x, world_z, surface.y, layer?) {
+            AmbientRuntimeGround::Safe(_) => {}
+            AmbientRuntimeGround::LoadedUnsafe | AmbientRuntimeGround::NeedsRaster { .. } => {
+                return None
+            }
+        }
+    }
+
+    Some(DVec3::new(
+        candidate.x,
+        f64::from(surface.y + 1),
+        candidate.z,
+    ))
 }
 
 /// 以 `anchor`（通常是触发巡检的玩家位置）为圆心，在
@@ -1215,6 +1280,208 @@ mod tests {
             Some((1, 2)),
             "standard runtime window miss must consult the raster fallback"
         );
+    }
+
+    #[test]
+    fn ambient_ground_position_standard_window_boundaries_are_inclusive() {
+        const REF_Y: i32 = 80;
+
+        for (case, support_y, expected_raster_query) in [
+            ("lower inclusive -16", REF_Y - 16, false),
+            ("lower outside -17", REF_Y - 17, true),
+            ("upper inclusive +4", REF_Y + 4, false),
+            ("upper outside +5", REF_Y + 5, true),
+        ] {
+            let (app, layer_entity) =
+                make_runtime_layer(&[(0, 0)], &[(2, support_y, 3, BlockState::STONE)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: support_y,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(2.5, f64::from(REF_Y), 3.25),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                Some(DVec3::new(2.5, f64::from(support_y + 1), 3.25)),
+                "{case}: support must resolve at the exact standard-window boundary contract"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                expected_raster_query.then_some((2, 3)),
+                "{case}: only -17/+5 may leave the inclusive -16..+4 runtime window"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_scan_miss_revalidates_raster_landing() {
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        assert_ne!(water_level_one, BlockState::WATER);
+        assert_ne!(lava_level_one, BlockState::LAVA);
+
+        for (case, obstacle, obstacle_y) in [
+            ("solid at feet", BlockState::STONE, 71),
+            ("solid at head", BlockState::STONE, 72),
+            ("default water at feet", BlockState::WATER, 71),
+            ("default water at head", BlockState::WATER, 72),
+            ("default lava at feet", BlockState::LAVA, 71),
+            ("default lava at head", BlockState::LAVA, 72),
+            ("water level=1 at feet", water_level_one, 71),
+            ("water level=1 at head", water_level_one, 72),
+            ("lava level=1 at feet", lava_level_one, 71),
+            ("lava level=1 at head", lava_level_one, 72),
+        ] {
+            let (app, layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 70, 2, BlockState::STONE), (1, obstacle_y, 2, obstacle)],
+            );
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: 70,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, 200.0, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: loaded scan miss must veto an obstructed runtime raster landing"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                Some((1, 2)),
+                "{case}: loaded scan miss must query raster before revalidating its exact Y"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_loaded_scan_miss_obstacle_skips_both_pools_markers_and_pending() {
+        fn panic_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            panic!("runtime raster landing veto must occur before either ambient pool is called");
+        }
+
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        for (case, obstacle, obstacle_y) in [
+            ("solid at feet", BlockState::STONE, 71),
+            ("solid at head", BlockState::STONE, 72),
+            ("default water at feet", BlockState::WATER, 71),
+            ("default water at head", BlockState::WATER, 72),
+            ("default lava at feet", BlockState::LAVA, 71),
+            ("default lava at head", BlockState::LAVA, 72),
+            ("water level=1 at feet", water_level_one, 71),
+            ("water level=1 at head", water_level_one, 72),
+            ("lava level=1 at feet", lava_level_one, 71),
+            ("lava level=1 at head", lava_level_one, 72),
+        ] {
+            let (runtime_app, runtime_layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 70, 2, BlockState::STONE), (1, obstacle_y, 2, obstacle)],
+            );
+            let runtime_layer = runtime_app
+                .world()
+                .get::<ChunkLayer>(runtime_layer_entity)
+                .unwrap();
+            let terrain = FixtureSurface {
+                y: 70,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+            let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+            for kind in ["mundane", "threat"] {
+                let mut output = App::new();
+                let entity_layer = output.world_mut().spawn_empty().id();
+                let mut pending = HashMap::new();
+                let spawned = {
+                    let mut commands = output.world_mut().commands();
+                    match kind {
+                        "mundane" => submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, 200.0, 2.5),
+                                season: Season::Summer,
+                                now: 88,
+                            },
+                        ),
+                        "threat" => submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, 200.0, 2.5),
+                                season: Season::Summer,
+                                now: 88,
+                            },
+                        ),
+                        _ => unreachable!(),
+                    }
+                };
+                output.world_mut().flush();
+
+                assert_eq!(
+                    spawned, None,
+                    "{case}/{kind}: obstacle must reject candidate"
+                );
+                assert!(
+                    pending.is_empty(),
+                    "{case}/{kind}: runtime raster veto must not consume pending budget"
+                );
+                let world = output.world_mut();
+                let mut mundane = world.query::<&MundaneFaunaMarker>();
+                assert_eq!(
+                    mundane.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no mundane marker"
+                );
+                let mut threat = world.query::<&AmbientThreatMarker>();
+                assert_eq!(
+                    threat.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no threat marker"
+                );
+                let mut spawned_by_pool = world.query_filtered::<(), With<NpcMarker>>();
+                assert_eq!(
+                    spawned_by_pool.iter(world).count(),
+                    0,
+                    "{case}/{kind}: vetoed landing must not leave a pool entity"
+                );
+            }
+
+            assert_eq!(
+                terrain.queried.get(),
+                Some((1, 2)),
+                "{case}: both kinds must query the passable raster before runtime landing veto"
+            );
+        }
     }
 
     #[test]
