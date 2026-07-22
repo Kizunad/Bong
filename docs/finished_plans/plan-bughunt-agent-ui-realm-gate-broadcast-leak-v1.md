@@ -80,21 +80,20 @@
 
 - `e68ae6ea`（2026-07-16）：升格并收口 active plan。
 - `2ec1ea3a` / `e5622e0d` / `b0b8a166`（2026-07-16）：建立 S2A 目标字段、权威回填与 player-only fail-closed 路由。
-- `8ddb72eb` / `1cb25a79`（2026-07-16）：贯通真实 producer→consumer→selector 双玩家回归并补 legacy/null 分流。
-- `5a8f84d2` / `a93c3dc7` / `31db8f98`（2026-07-18）：拆分真实 C2S/S2A schema，补 production runtime/专用 Redis Bot 路径与独立 S2A generated artifact。
-- `1ac6b96f`（2026-07-18）：修复 narration 测试二次 drain 假绿，改为同批 typed payload/chat canary 分类。
-- `2ff99756`（2026-07-20）：历史上曾引入三连接 factory；最终候选已收缩为 command/narration 共用普通 publisher + response-only subscriber 的两连接接线。
-- `07683592` / `937f7e54`（2026-07-22）：历史 lifecycle 返工及其 accepted-handler drain；后续 review 发现其超出本 plan 且可能无界等待，最终候选已撤回，仅保留 pending-subscribe 的最小 generation 门与 bounded physical cleanup。
-- `62cbc43d`（2026-07-22）：撤回超出私人路由修复范围的既有 Agent UI ID code-point 迁移与 Ajv 安装信任子系统，仅保留新增 S2A `target_player` 的 Unicode 边界。
-- `fbea9144`（2026-07-22）：为真实 Fabric C2S `AgentUiResponse` 添加 `target_player` 伪造负样本，明确锁定 client 不得注入该仅 server→agent 可写字段。
+- `8ddb72eb` / `1cb25a79` / `1ac6b96f`（2026-07-16—18）：贯通 producer→consumer→selector 双玩家回归，补 legacy/null 分流并修复 narration 二次 drain 假绿。
+- `5a8f84d2` / `a93c3dc7` / `31db8f98`（2026-07-17—18）：拆分真实 C2S/S2A schema，接入 production runtime、专用 Redis Bot 路径与独立 S2A generated artifact。
+- `07683592` / `c0f4c200` / `feaeed6e` / `0b3650f8`（2026-07-22）：以 generation 门收口 pending-subscribe/cleanup 竞态，收缩为两连接 ownership，限制 subscriber 类型边界，并处理 bounded cleanup 后迟到的 disconnect rejection。
+- `62cbc43d` / `fbea9144` / `49bac969`（2026-07-22）：撤回越界的全 ID/Ajv 子系统，锁定 Fabric C2S `target_player` 伪造拒绝，补齐 1-code-point 正边界与失败诊断。
+- **implementation candidate**：`0b3650f8ee4281638620ed5c8189b5460a93db71`；其 exact-head E2E 与独立只读 validator 均已通过。本文档证据更新 commit 是后续 docs-only HEAD，按 exact-head 规则另行复跑门禁，不把候选 SHA 的结果外推。
 
 ### 测试结果
 
-- 历史生产链证据：专用 Redis 双 Bot `agent_ui_realm_gate_private_narration` PASS；链路观测 `bong:agent_ui_cmd → bong:agent_ui_response(target_player) → bong:agent_narrate(scope=player)`，server 最终投递 1 recipient，旁观者无泄漏。
-- 最终 scope-tightened 工作树门禁（合入 `origin/main` 后）：`cd agent && npm run build` 通过；schema 29 files / 883 tests、Tiandao 72 files / 833 tests；Tiandao 定向 `agent-ui.test.ts + main.test.ts` 2 files / 104 tests。定向生命周期用例锁定 pending subscribe 后 cleanup 不迟挂 listener，以及旧 connect 迟到完成不覆盖更新一代 connect。
-- 跨栈门禁：`./gradlew test build` 与 `python3 -m unittest scripts/bot/test_protocol.py` 已通过（Python 126 tests；Fabric 3 required GameTests）；Rust `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 已启动，最终结果将在候选 commit 的 exact-head gate 中记录。
-- `target_player` 契约矩阵覆盖：1..=128 BMP/astral/mixed Unicode code points、129 off-by-one、lone surrogate、legacy omission、显式 null，以及 Fabric C2S payload/envelope 伪造拒绝。
-- 两份受保护 untracked snapshot 始终未 stage、删除或覆盖：`tiandao-snapshot-200.json` SHA-256 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`；`tiandao-snapshot-300.json` SHA-256 `eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。
+- **implementation candidate exact-head CI**：GitHub Actions E2E run [`29903861410`](https://github.com/Kizunad/Bong/actions/runs/29903861410) 的 `head_sha` 精确为 `0b3650f8ee4281638620ed5c8189b5460a93db71`，结论 `success`。Java 17 client stage `BUILD SUCCESSFUL` 且 3/3 required GameTests；schema 29 files / 885 tests；Tiandao 72 files / 833 tests；server 11860 lib + 11 main + 1 startup integration + 4 Tarkov integration 全部通过（0 failed；另有既有 ignored）；smoke 9/9。
+- **真实双 Bot 私人路由**：同一 run 中 `agent_ui_realm_gate_private_narration` 明确执行并 `PASS`；production `AgentUiRuntime` + 双真实 Redis client + 双协议 Bot 观测到仅 canonical target 收到一条 `system_warning` narration，旁观者零 payload，双方零 `GameMessage` chat mirror。bot 汇总 `total=31 pass=30 skip=1 fail=0`；其协议单测 126 tests `OK`。
+- **本地受影响栈门禁**：`cd agent && npm run build` 通过；schema 29/885、Tiandao 72/833；`python3 -m unittest scripts/bot/test_protocol.py` 126/126；Rust `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与完整 `cargo test` 通过；显式 `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10` 的 `./gradlew --no-daemon test build` 使用 Temurin 17.0.19，3/3 required GameTests，`BUILD SUCCESSFUL`。
+- **独立 exact-head validator**：fresh read-only workflow `wf_ae9d9521-88e` 首先对拍 `observedSha=0b3650f8ee4281638620ed5c8189b5460a93db71`，随后审查权威 producer、C2S/S2A schema、Unicode 边界、Redis ownership/lifecycle、production 双 Bot 场景；结论 `PASS`，`findings=[]`。先前卡死且仅有 `started` journal 的 validator 不作为证据。
+- `target_player` 契约矩阵覆盖：1/128 BMP、astral 与 mixed Unicode code points 的合法边界，空串/129 off-by-one/lone 或 embedded surrogate/显式 null 的非法边界，legacy omission，以及 Fabric C2S payload/envelope/union 与 Rust JSON bypass 伪造拒绝。
+- 两份受保护 untracked snapshot 始终未 stage、删除、移动或覆盖：`tiandao-snapshot-200.json` SHA-256 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`；`tiandao-snapshot-300.json` SHA-256 `eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。
 
 ### 跨仓库核验
 
