@@ -239,6 +239,49 @@ class ServerDataDecodeTest(unittest.TestCase):
     def test_malformed_server_data_returns_none(self):
         self.assertIsNone(decode_server_data_payload(b"\xff\x00not protobuf"))
 
+    def test_proto_narration_payload_decodes_routing_fields(self):
+        decoded = decode_server_data_payload(_server_data_narration_bytes())
+
+        self.assertEqual(decoded["type"], "narration")
+        self.assertEqual(
+            decoded["narrations"],
+            [
+                {
+                    "text": "天道的注意力掠过，境界未至",
+                    "scope": "player",
+                    "style": "system_warning",
+                    "target": "offline:Alice",
+                    "kind": "realm_gate_rejected",
+                },
+                {
+                    "text": "旧式全服旁白",
+                    "scope": "broadcast",
+                    "style": "narration",
+                },
+            ],
+            "Bot 必须解出 narration text/scope/style/optional target/kind，"
+            "否则双玩家黑盒无法区分目标提示与同轮无关旁白",
+        )
+
+    def test_bot_dispatch_emits_decoded_narration_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_narration_bytes()
+        )
+
+        bot._dispatch(body)
+
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(decoded_events[0].data["payload_type"], "narration")
+        self.assertEqual(
+            decoded_events[0].data["payload"]["narrations"][0]["target"],
+            "offline:Alice",
+            "真实 Bot reader 必须把 production protobuf narration 暴露为可断言事件",
+        )
+
     def test_proto_zone_info_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_zone_info_bytes())
 
@@ -1349,6 +1392,22 @@ def _server_data_inventory_snapshot_bytes() -> bytes:
     return _pb_message(8, snapshot)
 
 
+def _server_data_narration_bytes() -> bytes:
+    target = (
+        _pb_string(1, "天道的注意力掠过，境界未至")
+        + _pb_string(2, "player")
+        + _pb_string(3, "system_warning")
+        + _pb_string(4, "offline:Alice")
+        + _pb_string(5, "realm_gate_rejected")
+    )
+    broadcast = (
+        _pb_string(1, "旧式全服旁白")
+        + _pb_string(2, "broadcast")
+        + _pb_string(3, "narration")
+    )
+    return _pb_message(3, _pb_message(1, target) + _pb_message(1, broadcast))
+
+
 def _server_data_inventory_event_moved_bytes() -> bytes:
     from_location = _pb_message(
         1,
@@ -1577,6 +1636,7 @@ class RunnerLogicTest(unittest.TestCase):
     def test_discover_scenarios_finds_committed_set(self):
         names = set(discover_scenarios())
         expected = {
+            "agent_ui_realm_gate_private_narration",
             "cmd_dev_give_feedback",
             "cultivation_realm_qi",
             "network_client_request_tolerance",

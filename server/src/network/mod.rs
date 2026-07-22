@@ -4611,12 +4611,15 @@ mod tests {
         use crate::skill::components::SkillId;
         use crate::world::zone::Zone;
         use crossbeam_channel::Sender;
+        use valence::message::SendMessage;
         use valence::prelude::DVec3;
         use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
         use valence::testing::MockClientHelper;
 
-        fn setup_narration_app(zone_registry: Option<ZoneRegistry>) -> (App, Sender<RedisInbound>) {
-            let (tx_outbound, _rx_outbound) = unbounded();
+        fn setup_narration_app_with_agent_ui(
+            zone_registry: Option<ZoneRegistry>,
+        ) -> (App, Sender<RedisInbound>, Receiver<RedisOutbound>) {
+            let (tx_outbound, rx_outbound) = unbounded();
             let (tx_inbound, rx_inbound) = unbounded();
             let mut app = App::new();
 
@@ -4626,16 +4629,24 @@ mod tests {
             });
             app.insert_resource(CommandExecutorResource::default());
             app.insert_resource(NarrationDedupeResource::default());
+            app.init_resource::<agent_ui::AgentUiSessionStore>();
 
             if let Some(zone_registry) = zone_registry {
                 app.insert_resource(zone_registry);
             }
 
             app.add_event::<crate::cultivation::insight::InsightOffer>();
-            // plan-agent-ui-data-v1 P0 — process_redis_inbound 需要 AgentUiCmdEvent。
             app.add_event::<agent_ui::AgentUiCmdEvent>();
-            app.add_systems(Update, process_redis_inbound);
+            app.add_systems(
+                Update,
+                (process_redis_inbound, agent_ui::receive_agent_ui_cmd_system),
+            );
 
+            (app, tx_inbound, rx_outbound)
+        }
+
+        fn setup_narration_app(zone_registry: Option<ZoneRegistry>) -> (App, Sender<RedisInbound>) {
+            let (app, tx_inbound, _rx_outbound) = setup_narration_app_with_agent_ui(zone_registry);
             (app, tx_inbound)
         }
 
@@ -4671,10 +4682,17 @@ mod tests {
             }
         }
 
-        fn collect_typed_narration_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataV1> {
+        fn collect_narration_and_chat_packets(
+            helper: &mut MockClientHelper,
+        ) -> (Vec<ServerDataV1>, usize) {
             let mut payloads = Vec::new();
+            let mut game_message_packets = 0;
 
             for frame in helper.collect_received().0 {
+                if frame.decode::<GameMessageS2c>().is_ok() {
+                    game_message_packets += 1;
+                }
+
                 let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                     continue;
                 };
@@ -4691,16 +4709,7 @@ mod tests {
                 }
             }
 
-            payloads
-        }
-
-        fn collect_game_message_packets(helper: &mut MockClientHelper) -> usize {
-            helper
-                .collect_received()
-                .0
-                .into_iter()
-                .filter(|frame| frame.decode::<GameMessageS2c>().is_ok())
-                .count()
+            (payloads, game_message_packets)
         }
 
         fn assert_single_narration_payload(payloads: &[ServerDataV1], expected_text: &str) {
@@ -4739,13 +4748,45 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
-            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
+            let (alice_payloads, alice_chat_packets) =
+                collect_narration_and_chat_packets(&mut alice_helper);
 
             assert_single_narration_payload(alice_payloads.as_slice(), "天地震荡，灵气翻涌。");
             assert_eq!(
                 alice_chat_packets, 0,
                 "narration path should not emit mirrored GameMessageS2c chat packets"
+            );
+        }
+
+        #[test]
+        fn packet_collection_classifies_narration_and_chat_from_the_same_batch() {
+            let (mut app, tx_inbound) = setup_narration_app(None);
+            let (alice, mut alice_helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            enqueue_single_narration(
+                &tx_inbound,
+                Narration {
+                    scope: NarrationScope::Broadcast,
+                    target: None,
+                    text: "同批分类测试。".to_string(),
+                    style: NarrationStyle::Narration,
+                    kind: None,
+                },
+            );
+
+            app.update();
+            app.world_mut()
+                .get_mut::<Client>(alice)
+                .expect("test client should remain connected")
+                .send_chat_message("同批聊天探针。");
+            flush_all_client_packets(&mut app);
+
+            let (payloads, chat_packets) = collect_narration_and_chat_packets(&mut alice_helper);
+            assert_single_narration_payload(payloads.as_slice(), "同批分类测试。");
+            assert_eq!(
+                chat_packets, 1,
+                "single receive batch should retain and classify the injected GameMessageS2c probe"
             );
         }
 
@@ -4803,10 +4844,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
-            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
-            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
-            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
+            let (alice_payloads, alice_chat_packets) =
+                collect_narration_and_chat_packets(&mut alice_helper);
+            let (bob_payloads, bob_chat_packets) =
+                collect_narration_and_chat_packets(&mut bob_helper);
 
             assert!(
                 alice_payloads.is_empty(),
@@ -4845,10 +4886,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let steve_plain = collect_typed_narration_payloads(&mut steve_helper);
-            let alex_plain = collect_typed_narration_payloads(&mut alex_helper);
-            let steve_chat_packets = collect_game_message_packets(&mut steve_helper);
-            let alex_chat_packets = collect_game_message_packets(&mut alex_helper);
+            let (steve_plain, steve_chat_packets) =
+                collect_narration_and_chat_packets(&mut steve_helper);
+            let (alex_plain, alex_chat_packets) =
+                collect_narration_and_chat_packets(&mut alex_helper);
 
             assert_single_narration_payload(steve_plain.as_slice(), "第一段单人叙事。");
             assert!(
@@ -4878,10 +4919,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let steve_alias = collect_typed_narration_payloads(&mut steve_helper);
-            let alex_alias = collect_typed_narration_payloads(&mut alex_helper);
-            let steve_alias_chat_packets = collect_game_message_packets(&mut steve_helper);
-            let alex_alias_chat_packets = collect_game_message_packets(&mut alex_helper);
+            let (steve_alias, steve_alias_chat_packets) =
+                collect_narration_and_chat_packets(&mut steve_helper);
+            let (alex_alias, alex_alias_chat_packets) =
+                collect_narration_and_chat_packets(&mut alex_helper);
 
             assert_single_narration_payload(steve_alias.as_slice(), "第二段单人叙事。");
             assert!(
@@ -4895,6 +4936,204 @@ mod tests {
             assert_eq!(
                 alex_alias_chat_packets, 0,
                 "non-targeted player must not receive chat packets"
+            );
+        }
+
+        fn consume_agent_ui_response_through_tiandao(
+            response: &crate::schema::agent_ui::AgentUiResponsePayloadV1,
+        ) -> NarrationV1 {
+            use std::io::Write as _;
+            use std::process::{Command, Stdio};
+
+            let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("server crate should live directly below the repository root");
+            let tsx = repo_root.join("agent/node_modules/.bin/tsx");
+            let runner =
+                repo_root.join("agent/packages/tiandao/tests/ui-response-consumer-runner.ts");
+            assert!(
+                tsx.is_file(),
+                "cross-stack test requires npm dependencies at {}; run npm ci in agent first",
+                tsx.display()
+            );
+            assert!(
+                runner.is_file(),
+                "Tiandao test runner is missing at {}",
+                runner.display()
+            );
+
+            let (response_channel, producer_json) =
+                redis_bridge::encode_agent_ui_response_wire_for_test(response)
+                    .expect("server producer response should pass the production Redis encoder");
+            assert_eq!(
+                response_channel,
+                crate::schema::channels::CH_AGENT_UI_RESPONSE,
+                "AgentUiResponse must use the production response channel"
+            );
+            let mut child = Command::new(&tsx)
+                .arg(&runner)
+                .current_dir(repo_root.join("agent/packages/tiandao"))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "failed to start production UiResponseConsumer through {}: {error}",
+                        tsx.display()
+                    )
+                });
+            child
+                .stdin
+                .take()
+                .expect("Tiandao runner stdin should be piped")
+                .write_all(producer_json.as_bytes())
+                .expect("production Redis response wire should reach the Tiandao runner");
+
+            let output = child
+                .wait_with_output()
+                .expect("Tiandao runner should exit after one consumer dispatch");
+            assert!(
+                output.status.success(),
+                "production UiResponseConsumer runner failed: status={} stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.stderr.is_empty(),
+                "successful Tiandao runner must not emit stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let consumer_wire = std::str::from_utf8(&output.stdout).unwrap_or_else(|error| {
+                panic!(
+                    "UiResponseConsumer stdout must be UTF-8 Redis wire JSON: {error}; stdout={:?}",
+                    output.stdout
+                )
+            });
+            redis_bridge::parse_agent_narration_wire_for_test(consumer_wire).unwrap_or_else(
+                |error| {
+                    panic!(
+                        "UiResponseConsumer stdout must pass the production narration decoder: {error}; stdout={consumer_wire}"
+                    )
+                },
+            )
+        }
+
+        #[test]
+        fn realm_gate_producer_consumer_selector_routes_only_target_player() {
+            const TARGET_USERNAME: &str = "E2EPlayer";
+            const BYSTANDER_USERNAME: &str = "Bystander";
+            const EXPECTED_TEXT: &str =
+                "天道的注意力掠过，境界未至，缘分尚浅——此时感知到的，只是一片模糊的余韵。";
+
+            let (mut app, tx_inbound, rx_outbound) = setup_narration_app_with_agent_ui(None);
+            let (target, mut target_helper) =
+                spawn_test_client_with_helper(&mut app, TARGET_USERNAME, [8.0, 66.0, 8.0]);
+            let (bystander, mut bystander_helper) =
+                spawn_test_client_with_helper(&mut app, BYSTANDER_USERNAME, [18.0, 66.0, 18.0]);
+            app.world_mut().entity_mut(target).insert(Cultivation {
+                realm: Realm::Induce,
+                ..Cultivation::default()
+            });
+            app.world_mut().entity_mut(bystander).insert(Cultivation {
+                realm: Realm::Void,
+                ..Cultivation::default()
+            });
+
+            let target_player = canonical_player_id(TARGET_USERNAME);
+            app.world_mut()
+                .send_event(agent_ui::AgentUiCmdEvent(
+                    crate::schema::agent_ui::AgentUiRequestCommandV1 {
+                        request_id: "req-realm-gate-real-chain".to_string(),
+                        target_player: target_player.clone(),
+                        xml: r#"<owo-ui><components><flow-layout><button id="btn_a">确认</button></flow-layout></components></owo-ui>"#.to_string(),
+                        timeout_ticks: 600,
+                        realm_gate: Realm::Condense.rank(),
+                        allowed_button_ids: vec!["btn_a".to_string()],
+                    },
+                ));
+
+            // Stage 1: execute the production server gate and take its real Redis response.
+            app.update();
+            let response = match rx_outbound
+                .try_recv()
+                .expect("realm gate producer should emit one Redis response")
+            {
+                RedisOutbound::AgentUiResponse(response) => response,
+                other => panic!("expected AgentUiResponse from producer, got {other:?}"),
+            };
+            assert_eq!(response.request_id, "req-realm-gate-real-chain");
+            assert!(matches!(
+                response.action,
+                crate::schema::agent_ui::AgentUiActionType::Error
+            ));
+            assert_eq!(
+                response.target_player.as_deref(),
+                Some(target_player.as_str())
+            );
+            assert_eq!(
+                response.params.get("reason").map(String::as_str),
+                Some("realm_gate_rejected")
+            );
+            assert_eq!(
+                response.params.get("player_realm").map(String::as_str),
+                Some("2")
+            );
+            assert_eq!(
+                response.params.get("required_realm").map(String::as_str),
+                Some("3")
+            );
+            assert!(
+                rx_outbound.try_recv().is_err(),
+                "realm gate producer must emit exactly one response"
+            );
+
+            // Stage 2: execute the production TypeScript UiResponseConsumer in a real process.
+            let narration_envelope = consume_agent_ui_response_through_tiandao(&response);
+            assert_eq!(
+                narration_envelope.narrations.len(),
+                1,
+                "UiResponseConsumer should publish exactly one private narration"
+            );
+            assert_eq!(
+                narration_envelope.narrations[0].target.as_deref(),
+                Some(target_player.as_str()),
+                "consumer must preserve the producer's canonical target_player"
+            );
+            assert_eq!(narration_envelope.narrations[0].text, EXPECTED_TEXT);
+
+            // Stage 3: feed that actual consumer output through the production recipient selector.
+            tx_inbound
+                .send(RedisInbound::AgentNarration(narration_envelope))
+                .expect("consumer narration should enqueue into the server Redis inbound channel");
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let (target_payloads, target_chat_packets) =
+                collect_narration_and_chat_packets(&mut target_helper);
+            let (bystander_payloads, bystander_chat_packets) =
+                collect_narration_and_chat_packets(&mut bystander_helper);
+            assert_single_narration_payload(target_payloads.as_slice(), EXPECTED_TEXT);
+            match &target_payloads[0].payload {
+                ServerDataPayloadV1::Narration { narrations } => assert_eq!(
+                    narrations[0].style,
+                    NarrationStyle::SystemWarning,
+                    "target player must receive a realm-gate system_warning"
+                ),
+                other => panic!("real chain should produce narration payload, got {other:?}"),
+            }
+            assert!(
+                bystander_payloads.is_empty(),
+                "bystander {BYSTANDER_USERNAME} must not receive {TARGET_USERNAME}'s rejection"
+            );
+            assert_eq!(
+                target_chat_packets, 0,
+                "target player should not receive a mirrored chat packet"
+            );
+            assert_eq!(
+                bystander_chat_packets, 0,
+                "bystander should not receive any mirrored chat packet"
             );
         }
 
@@ -4920,10 +5159,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let azure_payloads = collect_typed_narration_payloads(&mut azure_helper);
-            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
-            let azure_chat_packets = collect_game_message_packets(&mut azure_helper);
-            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
+            let (azure_payloads, azure_chat_packets) =
+                collect_narration_and_chat_packets(&mut azure_helper);
+            let (bob_payloads, bob_chat_packets) =
+                collect_narration_and_chat_packets(&mut bob_helper);
 
             assert_single_narration_payload(azure_payloads.as_slice(), "第三段单人叙事。");
             assert!(
@@ -5009,10 +5248,10 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let alice_payloads = collect_typed_narration_payloads(&mut alice_helper);
-            let bob_payloads = collect_typed_narration_payloads(&mut bob_helper);
-            let alice_chat_packets = collect_game_message_packets(&mut alice_helper);
-            let bob_chat_packets = collect_game_message_packets(&mut bob_helper);
+            let (alice_payloads, alice_chat_packets) =
+                collect_narration_and_chat_packets(&mut alice_helper);
+            let (bob_payloads, bob_chat_packets) =
+                collect_narration_and_chat_packets(&mut bob_helper);
 
             assert!(
                 alice_payloads.is_empty(),
@@ -5052,7 +5291,7 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let payloads = collect_typed_narration_payloads(&mut alice_helper);
+            let (payloads, _) = collect_narration_and_chat_packets(&mut alice_helper);
             assert_eq!(
                 payloads.len(),
                 1,
@@ -5080,7 +5319,7 @@ mod tests {
             app.update();
             flush_all_client_packets(&mut app);
 
-            let payloads = collect_typed_narration_payloads(&mut alice_helper);
+            let (payloads, _) = collect_narration_and_chat_packets(&mut alice_helper);
             assert_eq!(
                 payloads.len(),
                 1,

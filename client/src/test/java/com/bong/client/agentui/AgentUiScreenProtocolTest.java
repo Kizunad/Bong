@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -71,6 +72,9 @@ public class AgentUiScreenProtocolTest {
             "action 应为 'button_click'");
         assertEquals("enter_realm", obj.getAsJsonObject("params").get("button_id").getAsString(),
             "params.button_id 应为 'enter_realm'");
+        assertEquals(Set.of("type", "v", "request_id", "action", "params"), obj.keySet(),
+            "真实 Fabric C2S producer 只能发送 request_id/action/params 业务字段；"
+                + "target_player 由 server 按已认证连接权威确定，不得出现在 wire JSON");
     }
 
     @Test
