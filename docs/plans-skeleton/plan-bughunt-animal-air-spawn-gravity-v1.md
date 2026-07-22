@@ -2,7 +2,7 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：Skeleton，2026-07-22 起草；6 路 Sonnet 调查 + 2 路 Sonnet 无上下文审查已确认根因和最小边界。本 skeleton 由 BugFix 工作流以 **1 skeleton = 1 branch = 1 PR** 消费。
+**状态**：Skeleton，2026-07-21 UTC（本地起草日 2026-07-22）起草；6 路 Sonnet 调查 + 2 路 Sonnet 无上下文审查已确认根因和最小边界。本 skeleton 由 BugFix 工作流以 **1 skeleton = 1 branch = 1 PR** 消费。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
