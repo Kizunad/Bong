@@ -783,42 +783,25 @@ impl AmbientDevSpawnKind {
     }
 }
 
-/// One-shot dev ambient input. It preserves the production resolver inputs while keeping the
-/// command seam from growing a flat argument list.
-pub(crate) struct AmbientDevSpawnRequest<'a, P: SurfaceProvider + ?Sized> {
-    pub kind: AmbientDevSpawnKind,
-    pub layer: Entity,
-    pub runtime_layer: Option<&'a ChunkLayer>,
-    pub terrain: Option<&'a P>,
-    pub zone: &'a Zone,
-    pub candidate: DVec3,
-    pub season: Season,
-    pub now: u64,
-}
-
 /// Submit exactly one dev ambient candidate through the production resolver, real species pool,
 /// marker insertion, and pending accounting path.
 ///
-/// `request.layer` is the authoritative Overworld entity layer used by the real pool.
-/// `request.runtime_layer` and `request.terrain` deliberately remain independently optional: a
-/// loaded runtime layer works without a raster, while a passable raster can resolve an
-/// unloaded/missing runtime layer. The local pending map exists only to preserve the production
-/// submission contract; this one-shot bypasses scheduler cadence and budget by design and never
-/// leaks its resolved Y as a command oracle.
+/// `layer` is the authoritative Overworld entity layer used by the real pool. `runtime_layer` and
+/// `terrain` deliberately remain independently optional: a loaded runtime layer works without a
+/// raster, while a passable raster can resolve an unloaded/missing runtime layer. The local pending
+/// map exists only to preserve the production submission contract; this one-shot bypasses scheduler
+/// cadence and budget by design and never leaks its resolved Y as a command oracle.
 pub(crate) fn submit_ambient_dev_spawn_once<P: SurfaceProvider + ?Sized>(
     commands: &mut Commands,
-    request: AmbientDevSpawnRequest<'_, P>,
+    kind: AmbientDevSpawnKind,
+    layer: Entity,
+    runtime_layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+    zone: &Zone,
+    candidate: DVec3,
+    season: Season,
+    now: u64,
 ) -> Option<Entity> {
-    let AmbientDevSpawnRequest {
-        kind,
-        layer,
-        runtime_layer,
-        terrain,
-        zone,
-        candidate,
-        season,
-        now,
-    } = request;
     let request = AmbientSpawnRequest {
         layer,
         zone,
@@ -2192,16 +2175,14 @@ mod tests {
             let mut commands = output.world_mut().commands();
             submit_ambient_dev_spawn_once::<FixtureSurface>(
                 &mut commands,
-                AmbientDevSpawnRequest {
-                    kind: AmbientDevSpawnKind::Mundane,
-                    layer: entity_layer,
-                    runtime_layer: Some(runtime_layer),
-                    terrain: None,
-                    zone: &zone,
-                    candidate: DVec3::new(5.0, 152.0, 3.0),
-                    season: Season::Summer,
-                    now: 901,
-                },
+                AmbientDevSpawnKind::Mundane,
+                entity_layer,
+                Some(runtime_layer),
+                None,
+                &zone,
+                DVec3::new(5.0, 152.0, 3.0),
+                Season::Summer,
+                901,
             )
         };
         output.world_mut().flush();
@@ -2252,16 +2233,14 @@ mod tests {
             let mut commands = app.world_mut().commands();
             submit_ambient_dev_spawn_once(
                 &mut commands,
-                AmbientDevSpawnRequest {
-                    kind: AmbientDevSpawnKind::Threat,
-                    layer: entity_layer,
-                    runtime_layer: None,
-                    terrain: Some(&terrain),
-                    zone: &zone,
-                    candidate: DVec3::new(5.0, 152.0, 3.0),
-                    season: Season::Winter,
-                    now: 902,
-                },
+                AmbientDevSpawnKind::Threat,
+                entity_layer,
+                None,
+                Some(&terrain),
+                &zone,
+                DVec3::new(5.0, 152.0, 3.0),
+                Season::Winter,
+                902,
             )
         };
         app.world_mut().flush();
@@ -2301,16 +2280,14 @@ mod tests {
             let mut commands = app.world_mut().commands();
             submit_ambient_dev_spawn_once::<FixtureSurface>(
                 &mut commands,
-                AmbientDevSpawnRequest {
-                    kind: AmbientDevSpawnKind::Threat,
-                    layer: entity_layer,
-                    runtime_layer: None,
-                    terrain: None,
-                    zone: &zone,
-                    candidate: DVec3::new(5.0, 152.0, 3.0),
-                    season: Season::Summer,
-                    now: 903,
-                },
+                AmbientDevSpawnKind::Threat,
+                entity_layer,
+                None,
+                None,
+                &zone,
+                DVec3::new(5.0, 152.0, 3.0),
+                Season::Summer,
+                903,
             )
         };
         app.world_mut().flush();
@@ -2341,16 +2318,14 @@ mod tests {
             let mut commands = app.world_mut().commands();
             submit_ambient_dev_spawn_once(
                 &mut commands,
-                AmbientDevSpawnRequest {
-                    kind: AmbientDevSpawnKind::Mundane,
-                    layer: entity_layer,
-                    runtime_layer: None,
-                    terrain: Some(&terrain),
-                    zone: &zone,
-                    candidate: DVec3::new(5.0, 152.0, 3.0),
-                    season: Season::Summer,
-                    now: 904,
-                },
+                AmbientDevSpawnKind::Mundane,
+                entity_layer,
+                None,
+                Some(&terrain),
+                &zone,
+                DVec3::new(5.0, 152.0, 3.0),
+                Season::Summer,
+                904,
             )
         };
         app.world_mut().flush();
