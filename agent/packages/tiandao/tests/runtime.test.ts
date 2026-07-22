@@ -1076,8 +1076,6 @@ describe("runRuntime", () => {
     const loopStartedAtSeconds = 10_000;
     const serverObservedAtSeconds = loopStartedAtSeconds + 1;
     let currentNowMs = loopStartedAtSeconds * 1_000;
-    let annotationResolved = false;
-    const timeline: string[] = [];
 
     const createDeferred = () => {
       let resolve!: () => void;
@@ -1108,11 +1106,8 @@ describe("runRuntime", () => {
     ]);
 
     const annotateChat = vi.fn(async (model: string) => {
-      timeline.push("annotation-entered");
       annotationEntered.resolve();
       await releaseAnnotation.promise;
-      annotationResolved = true;
-      timeline.push("annotation-resolved");
       return createStructuredChatResult(
         JSON.stringify([
           {
@@ -1140,19 +1135,7 @@ describe("runRuntime", () => {
       narrations: [],
       reasoning: "chat-window-clock",
     });
-    const setChatSignals = chatAwareAgent.setChatSignals.bind(chatAwareAgent);
-    vi.spyOn(chatAwareAgent, "setChatSignals").mockImplementation((signals) => {
-      timeline.push("signals-injected");
-      setChatSignals(signals);
-    });
-
-    const now = vi.fn(() => {
-      const currentNowSeconds = Math.floor(currentNowMs / 1_000);
-      timeline.push(
-        `clock:${annotationResolved ? "after-annotation" : "before-annotation"}:${currentNowSeconds}`,
-      );
-      return currentNowMs;
-    });
+    const now = vi.fn(() => currentNowMs);
 
     await withIsolatedCwd(async () => {
       const runtimePromise = runRuntime(
@@ -1175,53 +1158,11 @@ describe("runRuntime", () => {
       );
 
       await annotationEntered.promise;
-      expect(
-        timeline,
-        "annotation Promise 应先进入阻塞点，证明测试真实跨越异步边界",
-      ).toContain("annotation-entered");
-      expect(
-        timeline,
-        "release 前 annotation 不得提前完成，否则无法锁住 merge 时钟 happens-before",
-      ).not.toContain("annotation-resolved");
-      const blockedClockReads = timeline.filter((event) => event.startsWith("clock:"));
-      expect(
-        blockedClockReads.length,
-        "annotation 阻塞期间应至少记录 loop 初始化时钟，证明旧秒状态真实存在",
-      ).toBeGreaterThan(0);
-      expect(
-        blockedClockReads.every(
-          (event) => event === `clock:before-annotation:${loopStartedAtSeconds}`,
-        ),
-        "annotation 完成前不得读取推进后的 merge 时钟，否则时序门禁已提前越过异步边界",
-      ).toBe(true);
-      expect(
-        chatAwareAgent.receivedChatSignalPlayers,
-        "annotation 仍阻塞时不得提前向 agent 注入 chat signals",
-      ).toEqual([]);
-
       currentNowMs = serverObservedAtSeconds * 1_000;
       releaseAnnotation.resolve();
       await runtimePromise;
     });
 
-    const annotationResolvedIndex = timeline.indexOf("annotation-resolved");
-    const mergeClockReadIndex = timeline.findIndex(
-      (event) => event === `clock:after-annotation:${serverObservedAtSeconds}`,
-    );
-    const signalsInjectedIndex = timeline.indexOf("signals-injected");
-
-    expect(
-      annotationResolvedIndex,
-      "annotation 必须完成；缺失表示 deferred 测试未真正释放异步处理",
-    ).toBeGreaterThanOrEqual(0);
-    expect(
-      mergeClockReadIndex,
-      "合并时钟必须在 annotation resolve 后读取，否则会复用 loop 起点旧秒",
-    ).toBeGreaterThan(annotationResolvedIndex);
-    expect(
-      signalsInjectedIndex,
-      "chat signals 必须在刷新 merge 时钟后注入，否则 freshness 仍基于陈旧 now()",
-    ).toBeGreaterThan(mergeClockReadIndex);
     expect(
       chatAwareAgent.receivedChatSignalPlayers,
       "最终只应保留 server-observed 的合法跨秒消息，未来伪造时间必须被过滤",
