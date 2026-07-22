@@ -48,7 +48,11 @@ public final class CastFovController {
     /** 时钟 seam：生产 = {@code System.currentTimeMillis}；单测注入可推进时钟。 */
     private static volatile LongSupplier clock = System::currentTimeMillis;
 
-    /** 全局 juice 强度倍率（0 = 关闭），默认 1.0。fovDelta 每帧乘它 → 进行中调 0 立即复位。 */
+    /**
+     * 全局 juice 强度倍率（0 = 关闭），默认 1.0。**FOV 分量**每帧在 {@link #fovDelta()} 里乘它
+     * → 进行中调 0 时 FOV 即时归基准（持久可见分量，测试断言的对象）。**shake 分量**在
+     * {@link #fire} 触发时刻并入强度（走共享单通道无法追溯缩放；短抖动 ≤400ms 自然播完）。
+     */
     private static volatile float multiplier = 1.0f;
 
     /** 当前 FOV 脉冲（不可变；volatile 供渲染线程读）。null = idle（基准 FOV）。 */
@@ -157,22 +161,31 @@ public final class CastFovController {
             teardown();
             return;
         }
-        Pulse p = pulse;
-        if (p != null && !p.activeAt(clock.getAsLong())) {
-            pulse = null;  // 脉冲自然结束 → 回 idle
+        // pulse 的 check-then-clear 与 fire() 的写入共用 LOCK（fire 在 onCastState 的
+        // synchronized 内跑）——否则网络线程恰在本处检查与清空之间 fire 新脉冲，主线程会误清
+        // 刚武装的脉冲（KillJuiceController.activeKill 同款同锁模式）。fovDelta 的 volatile 读无锁。
+        synchronized (LOCK) {
+            Pulse p = pulse;
+            if (p != null && !p.activeAt(clock.getAsLong())) {
+                pulse = null;  // 脉冲自然结束 → 回 idle
+            }
         }
     }
 
     /** 断线 / 切世界 / 死亡：立即复位基准 FOV + 清 pending（幂等，重复调用无副作用）。 */
     public static void teardown() {
-        pulse = null;
+        // pulse 清空与 fire() 写入同锁，避免死亡/断线 teardown 被随后落地的 fire 复活一帧。
         synchronized (LOCK) {
+            pulse = null;
             pending = null;
             voidedId = null;
         }
     }
 
-    /** 全局 juice 强度倍率（0 = 关闭）。进行中调 0：fovDelta 每帧乘它已即时复位。 */
+    /**
+     * 设全局 juice 强度倍率（0 = 关闭）。FOV 分量即时复位（{@link #fovDelta} 每帧乘它）；
+     * shake 分量下次 {@link #fire} 时并入（已在播的短抖动自然播完）。见 {@link #multiplier}。
+     */
     public static void setJuiceMultiplier(float value) {
         multiplier = Float.isNaN(value) || value < 0f ? 0f : value;
     }
