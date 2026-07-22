@@ -117,7 +117,37 @@
 
 ---
 
-## 已收口的实施决议
+## §8 开放问题（P0 决策门前需收口）
+
+以下问题是本 skeleton 从调查结论进入实现前必须保留的决策记录；不得在实现 subagent 未重新核对代码锚点时擅自扩大范围。它们已由 6 路 Sonnet 只读调查、2 路 Sonnet 无上下文审查和生产注册/测试 fixture 复核收口，历史问题表保留以便追溯，实施时以 §8.1 为准。
+
+### #1 ambient 地表门禁应放在哪一层？
+
+必须选择 scheduler 采样成功后、`config.pool_fn` 调用前的单一边界，还是在 mundane/threat 各自 pool 内重复查询；同时确认不会复制 worldgen 高度公式。
+
+### #2 缺失 provider / 不可走 surface 的语义是什么？
+
+必须选择 fail-closed 丢弃候选，还是沿用 `snap_spawn_y_to_surface` 的 fail-open 原 Y；同时确认失败候选不调用 pool、不占 pending 预算。
+
+### #3 地面型动物的最终 Y 采用哪套坐标合同？
+
+必须确认 `SurfaceInfo.y` 是顶层实心块绝对 world Y，并决定实体脚点使用 `surface_y + 1`，不得混入玩家出生 `safe_y` 的碰撞安全偏移。
+
+### #4 `TerrainProviders` 的生产注册与测试注入是否真实存在？
+
+必须确认生产启动路径已插入 `TerrainProviders`，并为 ambient scheduler 的 `make_app` 及手工构建 `App` 的集成 fixture 安装 fake provider；资源缺失分支也必须有测试。
+
+### #5 本 PR 的边界是否会吞并 Navigator 或邻接动物入口？
+
+必须确认本原子修复只覆盖 ambient mundane + threat 共用链，不顺手改 Navigator、兽潮、botany、教程鼠、繁衍、hydrate、飞鲸或 ghost。
+
+### #6 bot 验收如何避免随机 ambient 等待？
+
+必须选择固定 seed + fake/fixture surface + 最小真实 scheduler/pool 接缝，禁止把随机刷新等待或 `/spawn_npc` 旁路当作生产链验收。
+
+## §8.1 决议（pre-P0 收口，2026-07-22）
+
+以下决议依据上列只读调查和代码锚点形成；active promotion 后，实施 subagent 仍须以 `origin/main` 重新核对行号与签名，若代码已漂移，先更新本节再进入 P0。原开放问题保留以备追溯，**实施时以本节决议为准**。
 
 ### #1 唯一修复边界
 
@@ -152,9 +182,9 @@ fn resolve_ambient_ground_position(
 
 ### #4 provider / passable 错误策略
 
-**决议**：scheduler 新增 `Option<Res<TerrainProviders>>`；生产环境只取 `providers.overworld`。资源缺失、查询列不可走时跳过本次 spawn；不调用 pool、不增加 `pending_spawns_by_zone`。保留现有 scheduler 周期重试，自然在后续巡检重新选候选，不新增永久 pending state。
+**决议**：scheduler 新增 `Option<Res<TerrainProviders>>`；生产环境只取 `providers.overworld`。`TerrainProviders` 由 `server/src/world/terrain/raster.rs:421-425` 定义，并在生产启动路径 `server/src/world/terrain/mod.rs:576-579` 插入；资源缺失、查询列不可走时跳过本次 spawn；不调用 pool、不增加 `pending_spawns_by_zone`。保留现有 scheduler 周期重试，自然在后续巡检重新选候选，不新增永久 pending state。现有 ambient 测试 fixture `ambient_scheduler.rs:1664-1674` 的 `make_app`、以及手工构建 scheduler 的 `:2080-2088` 等落点，实施时必须显式插入 fake `TerrainProviders`；另加资源缺失用例验证 fail-closed，而不是依赖生产资源偶然存在。
 
-**落点**：`server/src/npc/spawn/ambient_scheduler.rs:614-635,784-801` / 本 plan P0、P1。
+**落点**：`server/src/npc/spawn/ambient_scheduler.rs:614-635,784-801`、`server/src/world/terrain/mod.rs:576-579`、`server/src/npc/spawn/ambient_scheduler.rs:1664-1674,2080-2088` / 本 plan P0、P1。
 
 ### #5 Navigator 与邻接 caller 边界
 
