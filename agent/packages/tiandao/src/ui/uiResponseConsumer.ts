@@ -121,8 +121,11 @@ export class UiResponseConsumer {
   private readonly onSessionEnd: SessionEndCallback | undefined;
   private lifecycle: UiResponseConsumerLifecycle = "idle";
   private connectPromise: Promise<void> | undefined;
+  private closeAdmissionPromise: Promise<void> | undefined;
+  private drainPromise: Promise<void> | undefined;
   private disconnectPromise: Promise<void> | undefined;
   private unsubscribeStarted = false;
+  private readonly inFlightHandlers = new Set<Promise<void>>();
 
   readonly stats: UiResponseConsumerStats = {
     received: 0,
@@ -140,8 +143,25 @@ export class UiResponseConsumer {
 
   private readonly onMessage = (channel: string, message: string): void => {
     if (this.lifecycle !== "connected" || channel !== AGENT_UI_RESPONSE) return;
-    void this.handlePayload(message);
+
+    const handler = Promise.resolve().then(() => this.handlePayload(message));
+    this.inFlightHandlers.add(handler);
+    void this.observeHandler(handler);
   };
+
+  private async observeHandler(handler: Promise<void>): Promise<void> {
+    try {
+      await handler;
+    } catch (error) {
+      try {
+        this.logger.warn("[ui-response-consumer] response handler failed:", error);
+      } catch {
+        // Logger failures must not escape a detached Redis message callback.
+      }
+    } finally {
+      this.inFlightHandlers.delete(handler);
+    }
+  }
 
   constructor(config: UiResponseConsumerConfig) {
     if (Object.is(config.sub, config.pub)) {
@@ -185,27 +205,65 @@ export class UiResponseConsumer {
     return connectPromise;
   }
 
+  startDisconnect(): void {
+    this.beginDisconnect();
+  }
+
+  closeAdmission(): Promise<void> {
+    this.beginDisconnect();
+    this.closeAdmissionPromise ??= (async () => {
+      const pendingConnect = this.connectPromise;
+      if (pendingConnect !== undefined) {
+        await pendingConnect.catch(() => undefined);
+      }
+    })();
+    return this.closeAdmissionPromise;
+  }
+
+  drainInFlightHandlers(): Promise<void> {
+    this.beginDisconnect();
+    this.drainPromise ??= (async () => {
+      while (this.inFlightHandlers.size > 0) {
+        await Promise.allSettled([...this.inFlightHandlers]);
+      }
+    })();
+    return this.drainPromise;
+  }
+
+  async unsubscribe(): Promise<void> {
+    await this.closeAdmission();
+    if (!this.unsubscribeStarted) {
+      this.unsubscribeStarted = true;
+      await this.sub.unsubscribe();
+    }
+  }
+
   async disconnect(): Promise<void> {
     if (this.disconnectPromise !== undefined) return this.disconnectPromise;
 
-    this.lifecycle = "disconnecting";
-    const pendingConnect = this.connectPromise;
+    this.beginDisconnect();
     const disconnectPromise = (async () => {
       try {
-        this.sub.off?.("message", this.onMessage);
-        if (!this.unsubscribeStarted) {
-          this.unsubscribeStarted = true;
-          await this.sub.unsubscribe();
-        }
-        if (pendingConnect !== undefined) {
-          await pendingConnect.catch(() => undefined);
-        }
+        await this.drainInFlightHandlers();
+        await this.unsubscribe();
       } finally {
         this.lifecycle = "disconnected";
       }
     })();
     this.disconnectPromise = disconnectPromise;
     return disconnectPromise;
+  }
+
+  private beginDisconnect(): void {
+    if (
+      this.lifecycle !== "idle" &&
+      this.lifecycle !== "connecting" &&
+      this.lifecycle !== "connected"
+    ) {
+      return;
+    }
+    this.lifecycle = "disconnecting";
+    this.sub.off?.("message", this.onMessage);
   }
 
   async handlePayload(message: string): Promise<void> {

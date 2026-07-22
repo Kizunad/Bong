@@ -739,6 +739,107 @@ describe("UiResponseConsumer", () => {
       await disconnectPromise;
     });
 
+    it("waits for an in-flight private narration before disconnect completes", async () => {
+      const deferredPublish = makeDeferred<number>();
+      pub.publish.mockImplementation(() => deferredPublish.promise);
+
+      await consumer.connect();
+      sub.emit(
+        AGENT_UI_RESPONSE,
+        JSON.stringify(
+          makeResponsePayload(
+            "error",
+            { reason: "realm_gate_rejected" },
+            "offline:InFlightTarget",
+          ),
+        ),
+      );
+      await vi.waitFor(() => expect(pub.publish).toHaveBeenCalledOnce());
+
+      const disconnectPromise = consumer.disconnect();
+      let disconnected = false;
+      void disconnectPromise.then(() => {
+        disconnected = true;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(disconnected).toBe(false);
+      expect(consumer.stats.narrationPublished).toBe(0);
+
+      deferredPublish.resolve(1);
+      await expect(disconnectPromise).resolves.toBeUndefined();
+      expect(consumer.stats.narrationPublished).toBe(1);
+      expect(sub.unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("keeps an in-flight publish failure contained while disconnect waits", async () => {
+      const deferredPublish = makeDeferred<number>();
+      pub.publish.mockImplementation(() => deferredPublish.promise);
+
+      await consumer.connect();
+      sub.emit(
+        AGENT_UI_RESPONSE,
+        JSON.stringify(
+          makeResponsePayload(
+            "error",
+            { reason: "realm_gate_rejected" },
+            "offline:InFlightFailure",
+          ),
+        ),
+      );
+      await vi.waitFor(() => expect(pub.publish).toHaveBeenCalledOnce());
+
+      const disconnectPromise = consumer.disconnect();
+      deferredPublish.reject(new Error("late publish failed"));
+
+      await expect(disconnectPromise).resolves.toBeUndefined();
+      expect(consumer.stats.narrationPublished).toBe(0);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[ui-response-consumer] failed to publish realm_gate_rejected narration:",
+        expect.objectContaining({ message: "late publish failed" }),
+      );
+    });
+
+    it("contains a throwing response callback without an unhandled rejection", async () => {
+      const callbackError = new Error("callback exploded");
+      const unhandledRejections: unknown[] = [];
+      const onUnhandledRejection = (reason: unknown): void => {
+        unhandledRejections.push(reason);
+      };
+      const throwingWarn = vi.fn(() => {
+        throw new Error("logger exploded");
+      });
+      consumer = new UiResponseConsumer({
+        sub,
+        pub,
+        onButtonClick: () => {
+          throw callbackError;
+        },
+        onSessionEnd,
+        logger: { info: vi.fn(), warn: throwingWarn },
+      });
+      process.on("unhandledRejection", onUnhandledRejection);
+
+      try {
+        await consumer.connect();
+        sub.emit(
+          AGENT_UI_RESPONSE,
+          JSON.stringify(makeResponsePayload("button_click", { button_id: "explode" })),
+        );
+        await expect(consumer.disconnect()).resolves.toBeUndefined();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        expect(throwingWarn).toHaveBeenCalledWith(
+          "[ui-response-consumer] response handler failed:",
+          callbackError,
+        );
+        expect(unhandledRejections).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandledRejection);
+      }
+    });
+
     it("connect may retry after subscribe failure before teardown", async () => {
       sub.subscribe.mockRejectedValueOnce(new Error("transient subscribe failed"));
       await expect(consumer.connect()).rejects.toThrow("transient subscribe failed");

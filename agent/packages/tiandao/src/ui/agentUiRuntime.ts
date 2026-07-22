@@ -114,6 +114,26 @@ export class AgentUiRuntime {
     await this.consumer.connect();
   }
 
+  /** 同步关闭响应 admission，cleanup 调用返回前即拒绝新消息。 */
+  startDisconnect(): void {
+    this.consumer.startDisconnect();
+  }
+
+  /** 等待 pending connect 到达不可复活状态。 */
+  async closeAdmission(): Promise<void> {
+    await this.consumer.closeAdmission();
+  }
+
+  /** cleanup 前已接收的 handler 的强完成边界。 */
+  async drainInFlightHandlers(): Promise<void> {
+    await this.consumer.drainInFlightHandlers();
+  }
+
+  /** 仅执行 Redis 逻辑退订；physical client 仍归 factory。 */
+  async unsubscribe(): Promise<void> {
+    await this.consumer.unsubscribe();
+  }
+
   /** 断开连接，清理资源。 */
   async disconnect(): Promise<void> {
     await this.consumer.disconnect();

@@ -379,6 +379,68 @@ describe("Agent UI production startup factory", () => {
     }
   });
 
+  it("does not let the teardown timeout overtake accepted narration work", async () => {
+    vi.useFakeTimers();
+    const deferredPublish = makeDeferred<number>();
+    const clients = [
+      makeMockRedisRuntimeClient(),
+      makeMockRedisRuntimeClient(),
+      makeMockRedisRuntimeClient(),
+    ];
+    clients[2].publish.mockImplementation(() => deferredPublish.promise);
+    const createRedisClient = vi
+      .fn<(url: string) => RedisRuntimeClient>()
+      .mockReturnValueOnce(clients[0])
+      .mockReturnValueOnce(clients[1])
+      .mockReturnValueOnce(clients[2]);
+
+    try {
+      const { cleanup, runtime, ready } = await startAgentUiResponseRuntime({
+        redisUrl: "redis://in-flight-cleanup:6380",
+        createRedisClient,
+      });
+      await ready;
+      clients[1].emit(
+        CHANNELS.AGENT_UI_RESPONSE,
+        JSON.stringify({
+          request_id: "in-flight-factory-response",
+          action: "error",
+          target_player: "offline:InFlightFactoryTarget",
+          params: { reason: "realm_gate_rejected" },
+        }),
+      );
+      await vi.waitFor(() => expect(clients[2].publish).toHaveBeenCalledOnce());
+
+      const cleanupPromise = cleanup();
+      let cleanupCompleted = false;
+      void cleanupPromise.then(() => {
+        cleanupCompleted = true;
+      });
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(cleanupCompleted, "transport timeout cannot skip accepted logical work").toBe(false);
+      for (const client of clients) {
+        expect(
+          client.disconnect,
+          "physical clients stay open while accepted work is pending",
+        ).not.toHaveBeenCalled();
+      }
+
+      deferredPublish.resolve(1);
+      await expect(cleanupPromise).resolves.toBeUndefined();
+      expect(runtime.stats.narrationPublished).toBe(1);
+      for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
+
+      const settledStats = { ...runtime.stats };
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(runtime.stats).toEqual(settledStats);
+      await expect(cleanup()).resolves.toBeUndefined();
+      for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closes every factory connection exactly once when unsubscribe rejects", async () => {
     const clients = [
       makeMockRedisRuntimeClient(),
@@ -437,6 +499,7 @@ describe("Agent UI production startup factory", () => {
       });
       await ready;
       const cleanupPromise = cleanup();
+      await Promise.resolve();
       expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
       for (const client of clients) expect(client.disconnect).not.toHaveBeenCalled();
 
@@ -498,7 +561,7 @@ describe("Agent UI production startup factory", () => {
     for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
   });
 
-  it("remains inert if subscribe resolves after the factory cleanup timeout", async () => {
+  it("bounds a pending subscribe teardown and remains inert after its late resolve", async () => {
     vi.useFakeTimers();
     const deferredSubscribe = makeDeferred();
     const clients = [
@@ -519,6 +582,9 @@ describe("Agent UI production startup factory", () => {
       });
       await Promise.resolve();
       const cleanupPromise = cleanup();
+      expect(clients[1].off).toHaveBeenCalledOnce();
+      expect(clients[1].unsubscribe).not.toHaveBeenCalled();
+
       await vi.advanceTimersByTimeAsync(500);
       await cleanupPromise;
       for (const client of clients) expect(client.disconnect).toHaveBeenCalledOnce();
@@ -526,7 +592,6 @@ describe("Agent UI production startup factory", () => {
       deferredSubscribe.resolve();
       await expect(ready).resolves.toBeUndefined();
       expect(clients[1].on).not.toHaveBeenCalled();
-      expect(clients[1].off).toHaveBeenCalledOnce();
       expect(clients[1].unsubscribe).toHaveBeenCalledOnce();
       expect(runtime.stats.received).toBe(0);
       expect(clients[2].publish).not.toHaveBeenCalled();

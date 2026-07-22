@@ -1542,16 +1542,23 @@ export async function startAgentUiResponseRuntime(opts: {
 
     let cleanupPromise: Promise<void> | undefined;
     const cleanup = (): Promise<void> => {
+      runtime.startDisconnect();
       cleanupPromise ??= (async () => {
-        const disconnectPromise = runtime.disconnect().catch((error) => {
+        const admissionPromise = runtime.closeAdmission();
+        const unsubscribePromise = runtime.unsubscribe().catch((error) => {
           console.warn("[tiandao] agent ui runtime disconnect error:", error);
         });
+        const inFlightHandlersPromise = runtime.drainInFlightHandlers();
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<void>((resolve) => {
           timeoutId = setTimeout(resolve, 500);
         });
         try {
-          await Promise.race([disconnectPromise, timeout]);
+          await Promise.race([
+            Promise.all([admissionPromise, unsubscribePromise]).then(() => undefined),
+            timeout,
+          ]);
+          await inFlightHandlersPromise;
         } finally {
           if (timeoutId !== undefined) clearTimeout(timeoutId);
           disconnectCreatedClients();
