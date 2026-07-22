@@ -1,15 +1,15 @@
 /**
- * Bot e2e adapter around the production startAgentUiResponseRuntime factory.
+ * Bot e2e adapter around the production AgentUiRuntime.
  *
- * This process uses the real three-connection Redis startup path plus the
- * production UiRenderer + UiResponseConsumer. It deliberately supplies a stale high-realm player
- * snapshot while the connected protocol Bot remains Awaken on the server:
- * UiRenderer therefore publishes the clear realm-gated panel, the server
- * authoritatively rejects it, and UiResponseConsumer publishes the private
- * system-warning narration back to the server.
+ * This process uses two real Redis clients and the production UiRenderer +
+ * UiResponseConsumer. The publisher sends both UI commands and narrations;
+ * the subscriber is reserved for responses and never publishes in Redis
+ * subscriber mode. A deliberately stale high-realm snapshot makes the server
+ * authoritatively reject the panel and exercise the private warning route.
  */
 
-import { startAgentUiResponseRuntime } from "../src/main.js";
+import Redis from "ioredis";
+import { AgentUiRuntime } from "../src/ui/agentUiRuntime.js";
 
 const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 const targetPlayer = process.env.TARGET_PLAYER;
@@ -19,12 +19,28 @@ if (!targetPlayer || !targetName) {
   throw new Error("TARGET_PLAYER and TARGET_NAME are required");
 }
 
-const { cleanup, runtime, ready } = await startAgentUiResponseRuntime({ redisUrl });
+const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+  Redis) as new (url: string) => {
+  publish(channel: string, message: string): Promise<number>;
+  subscribe(channel: string): Promise<unknown>;
+  on(event: string, listener: (channel: string, message: string) => void): unknown;
+  off(event: string, listener: (channel: string, message: string) => void): unknown;
+  unsubscribe(): Promise<unknown>;
+  disconnect(): void;
+};
+
+const publisher = new IORedisCtor(redisUrl);
+const responseSubscriber = new IORedisCtor(redisUrl);
+const runtime = new AgentUiRuntime({
+  pub: publisher,
+  sub: responseSubscriber,
+  logger: { info: () => undefined, warn: () => undefined },
+});
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 try {
-  await ready;
+  await runtime.connect();
   const rendered = await runtime.triggerUi({
     scenario: "tiandao_revelation",
     targetPlayer: {
@@ -72,5 +88,7 @@ try {
     })}\n`,
   );
 } finally {
-  await cleanup();
+  await runtime.disconnect().catch(() => undefined);
+  publisher.disconnect();
+  responseSubscriber.disconnect();
 }

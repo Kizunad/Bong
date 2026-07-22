@@ -23,13 +23,6 @@ export interface AgentUiRuntimePubClient {
   publish(channel: string, message: string): Promise<number>;
 }
 
-/**
- * narPub 专用接口：runtime 只发布 narration，不拥有 physical Redis client。
- */
-export interface AgentUiRuntimeNarPubClient {
-  publish(channel: string, message: string): Promise<number>;
-}
-
 export interface AgentUiRuntimeSubClient extends AgentUiRuntimePubClient {
   subscribe(channel: string): Promise<unknown>;
   on(event: string, listener: (channel: string, message: string) => void): unknown;
@@ -38,18 +31,10 @@ export interface AgentUiRuntimeSubClient extends AgentUiRuntimePubClient {
 }
 
 export interface AgentUiRuntimeConfig {
-  /** Redis pub（发布 bong:agent_ui_cmd） */
+  /** Redis pub（发布 bong:agent_ui_cmd，也发布 bong:agent_narrate） */
   pub: AgentUiRuntimePubClient;
-  /** Redis sub（订阅 bong:agent_ui_response） */
+  /** Redis sub（仅订阅 bong:agent_ui_response） */
   sub: AgentUiRuntimeSubClient;
-  /**
-   * Redis pub for narration（发布 bong:agent_narrate，用于 realm_gate_rejected 降级）。
-   *
-   * 必须是独立于 pub/sub 的发布连接。runtime 只借用 publish 能力；physical
-   * disconnect 由创建三条 Redis 连接的 factory 统一拥有和执行。Redis 订阅连接
-   * 进入 subscriber mode 后不能执行 publish。
-   */
-  narPub: AgentUiRuntimeNarPubClient;
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 }
 
@@ -64,17 +49,8 @@ export class AgentUiRuntime {
   private readonly pendingSessionEnds: AgentUiResponsePayloadV1[] = [];
 
   constructor(config: AgentUiRuntimeConfig) {
-    if (!config.narPub) {
-      throw new Error("AgentUiRuntime requires a dedicated narration publisher");
-    }
     if (Object.is(config.pub, config.sub)) {
-      throw new Error("AgentUiRuntime command publisher must be distinct from subscriber");
-    }
-    if (Object.is(config.narPub, config.sub)) {
-      throw new Error("AgentUiRuntime narration publisher must be distinct from subscriber");
-    }
-    if (Object.is(config.narPub, config.pub)) {
-      throw new Error("AgentUiRuntime narration publisher must be distinct from command publisher");
+      throw new Error("AgentUiRuntime publisher must be distinct from subscriber");
     }
 
     const logger = config.logger ?? {
@@ -87,9 +63,11 @@ export class AgentUiRuntime {
       logger,
     });
 
+    // 命令与 narration 都是普通 Redis publish，可安全复用同一发布连接；
+    // 订阅连接进入 subscriber mode 后绝不参与 publish。
     this.consumer = new UiResponseConsumer({
       sub: config.sub,
-      pub: config.narPub,
+      pub: config.pub,
       logger,
       onButtonClick: (response) => {
         this.pendingButtonClicks.push(response);
@@ -114,27 +92,7 @@ export class AgentUiRuntime {
     await this.consumer.connect();
   }
 
-  /** 同步关闭响应 admission，cleanup 调用返回前即拒绝新消息。 */
-  startDisconnect(): void {
-    this.consumer.startDisconnect();
-  }
-
-  /** 等待 pending connect 到达不可复活状态。 */
-  async closeAdmission(): Promise<void> {
-    await this.consumer.closeAdmission();
-  }
-
-  /** cleanup 前已接收的 handler 的强完成边界。 */
-  async drainInFlightHandlers(): Promise<void> {
-    await this.consumer.drainInFlightHandlers();
-  }
-
-  /** 仅执行 Redis 逻辑退订；physical client 仍归 factory。 */
-  async unsubscribe(): Promise<void> {
-    await this.consumer.unsubscribe();
-  }
-
-  /** 断开连接，清理资源。 */
+  /** 断开逻辑订阅；physical Redis client 由创建方关闭。 */
   async disconnect(): Promise<void> {
     await this.consumer.disconnect();
   }

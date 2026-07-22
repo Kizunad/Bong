@@ -67,17 +67,6 @@ export interface MainOptions {
   auxiliaryRuntimeStarter?: AuxiliaryRuntimeStarter;
 }
 
-export interface RedisRuntimeClient {
-  publish(channel: string, message: string): Promise<number>;
-  subscribe(channel: string): Promise<unknown>;
-  on(event: string, listener: (channel: string, message: string) => void): unknown;
-  off?(event: string, listener: (channel: string, message: string) => void): unknown;
-  unsubscribe(): Promise<unknown>;
-  disconnect(): void;
-}
-
-export type RedisClientFactory = (url: string) => RedisRuntimeClient;
-
 export type RuntimeCleanup = () => Promise<void>;
 /** plan-agent-ui-data-v1 P2: AuxiliaryRuntimeStarter 可附带返回 agentUiRuntime 供 runRuntime 接线 */
 export interface AuxiliaryRuntimeResult {
@@ -1504,81 +1493,45 @@ const __filename = fileURLToPath(import.meta.url);
  *   runRuntime 每轮 tick 前 drain 并注入推演输入。
  * - onSessionEnd 记录 session 结束事件（dismissed / timeout）。
  */
-export async function startAgentUiResponseRuntime(opts: {
+async function startAgentUiResponseRuntime(opts: {
   redisUrl: string;
-  createRedisClient?: RedisClientFactory;
-}): Promise<{
-  cleanup: () => Promise<void>;
-  runtime: AgentUiRuntime;
-  ready: Promise<void>;
-}> {
+}): Promise<{ cleanup: () => Promise<void>; runtime: AgentUiRuntime }> {
   const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
-    Redis) as new (url: string) => RedisRuntimeClient;
-  const createRedisClient = opts.createRedisClient ?? ((url: string) => new IORedisCtor(url));
-  const createdClients: RedisRuntimeClient[] = [];
-  const createTrackedClient = (): RedisRuntimeClient => {
-    const client = createRedisClient(opts.redisUrl);
-    createdClients.push(client);
-    return client;
+    Redis) as new (url: string) => {
+    publish(channel: string, message: string): Promise<number>;
+    subscribe(channel: string): Promise<unknown>;
+    on(event: string, listener: (channel: string, message: string) => void): unknown;
+    off?(event: string, listener: (channel: string, message: string) => void): unknown;
+    unsubscribe(): Promise<unknown>;
+    disconnect(): void;
   };
-  const disconnectedClients = new Set<RedisRuntimeClient>();
-  const disconnectCreatedClients = (): void => {
-    for (const client of new Set(createdClients)) {
-      if (disconnectedClients.has(client)) continue;
-      disconnectedClients.add(client);
+  const pub = new IORedisCtor(opts.redisUrl);
+  const sub = new IORedisCtor(opts.redisUrl);
+  const runtime = new AgentUiRuntime({ pub, sub });
+
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] agent ui runtime online (renderer + response consumer)"))
+    .catch((error) =>
+      console.warn("[tiandao] agent ui runtime failed to start:", error),
+    );
+
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = (): Promise<void> => {
+    cleanupPromise ??= (async () => {
+      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
       try {
-        client.disconnect();
+        await Promise.race([runtime.disconnect(), timeout]);
       } catch (error) {
-        console.warn("[tiandao] agent ui Redis disconnect error:", error);
+        console.warn("[tiandao] agent ui runtime disconnect error:", error);
+      } finally {
+        pub.disconnect();
+        sub.disconnect();
       }
-    }
+    })();
+    return cleanupPromise;
   };
-
-  try {
-    const pub = createTrackedClient();
-    const sub = createTrackedClient();
-    const narPub = createTrackedClient();
-    const runtime = new AgentUiRuntime({ pub, sub, narPub });
-
-    let cleanupPromise: Promise<void> | undefined;
-    const cleanup = (): Promise<void> => {
-      runtime.startDisconnect();
-      cleanupPromise ??= (async () => {
-        const admissionPromise = runtime.closeAdmission();
-        const unsubscribePromise = runtime.unsubscribe().catch((error) => {
-          console.warn("[tiandao] agent ui runtime disconnect error:", error);
-        });
-        const inFlightHandlersPromise = runtime.drainInFlightHandlers();
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<void>((resolve) => {
-          timeoutId = setTimeout(resolve, 500);
-        });
-        try {
-          await Promise.race([
-            Promise.all([admissionPromise, unsubscribePromise]).then(() => undefined),
-            timeout,
-          ]);
-          await inFlightHandlersPromise;
-        } finally {
-          if (timeoutId !== undefined) clearTimeout(timeoutId);
-          disconnectCreatedClients();
-        }
-      })();
-      return cleanupPromise;
-    };
-
-    const ready = runtime.connect();
-    void ready
-      .then(() => console.log("[tiandao] agent ui runtime online (renderer + response consumer)"))
-      .catch((error) => {
-        console.warn("[tiandao] agent ui runtime failed to start:", error);
-        return cleanup();
-      });
-    return { cleanup, runtime, ready };
-  } catch (error) {
-    disconnectCreatedClients();
-    throw error;
-  }
+  return { cleanup, runtime };
 }
 
 if (process.argv[1] === __filename) {

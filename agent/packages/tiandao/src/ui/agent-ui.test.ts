@@ -67,16 +67,6 @@ function makeMockClient() {
   };
 }
 
-function makeDeferred<T = void>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
-}
-
 function makeResponsePayload(
   action: AgentUiResponsePayloadV1["action"],
   params: Record<string, string> = {},
@@ -85,7 +75,7 @@ function makeResponsePayload(
   return {
     request_id: "test-req-001",
     action,
-    ...(targetPlayer ? { target_player: targetPlayer } : {}),
+    ...(targetPlayer !== undefined ? { target_player: targetPlayer } : {}),
     params,
   };
 }
@@ -638,219 +628,31 @@ describe("UiResponseConsumer", () => {
       expect(sub.subscribe).toHaveBeenCalledTimes(1);
     });
 
-    it("shares one pending subscribe across concurrent connect calls", async () => {
-      const deferredSubscribe = makeDeferred();
-      sub.subscribe.mockImplementation(() => deferredSubscribe.promise);
+    it("disconnect during pending subscribe prevents late listener attachment", async () => {
+      let resolveSubscribe: (() => void) | undefined;
+      sub.subscribe.mockImplementation(
+        () => new Promise<void>((resolve) => (resolveSubscribe = resolve)),
+      );
 
-      const first = consumer.connect();
-      const second = consumer.connect();
+      const connecting = consumer.connect();
       await Promise.resolve();
-
       expect(sub.subscribe).toHaveBeenCalledOnce();
+
+      await consumer.disconnect();
+      resolveSubscribe?.();
+      await connecting;
+
       expect(sub.on).not.toHaveBeenCalled();
-
-      deferredSubscribe.resolve();
-      await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
-      expect(sub.on).toHaveBeenCalledOnce();
-    });
-
-    it("disconnect before pending subscribe resolves never installs or processes a late listener", async () => {
-      const deferredSubscribe = makeDeferred();
-      sub.subscribe.mockImplementation(() => deferredSubscribe.promise);
-
-      const connectPromise = consumer.connect();
-      await Promise.resolve();
-      expect(sub.subscribe).toHaveBeenCalledOnce();
-
-      const disconnectPromise = consumer.disconnect();
       sub.emit(
         AGENT_UI_RESPONSE,
-        JSON.stringify(makeResponsePayload("button_click", { button_id: "before-resolve" })),
+        JSON.stringify(makeResponsePayload("button_click", { button_id: "late" })),
       );
       await Promise.resolve();
       expect(onButtonClick).not.toHaveBeenCalled();
       expect(consumer.stats.received).toBe(0);
-
-      deferredSubscribe.resolve();
-      await expect(Promise.all([connectPromise, disconnectPromise])).resolves.toEqual([
-        undefined,
-        undefined,
-      ]);
-
-      expect(sub.on).not.toHaveBeenCalled();
-      expect(sub.unsubscribe).toHaveBeenCalledOnce();
-      sub.emit(
-        AGENT_UI_RESPONSE,
-        JSON.stringify(makeResponsePayload("button_click", { button_id: "after-resolve" })),
-      );
-      await Promise.resolve();
-      expect(onButtonClick).not.toHaveBeenCalled();
-      expect(onSessionEnd).not.toHaveBeenCalled();
-      expect(pub.publish).not.toHaveBeenCalled();
-      expect(consumer.stats.received).toBe(0);
-      await expect(consumer.connect()).rejects.toThrow(/cannot connect after disconnect/);
-      expect(sub.subscribe).toHaveBeenCalledOnce();
     });
 
-    it("disconnect remains fail-closed when a pending subscribe rejects", async () => {
-      const deferredSubscribe = makeDeferred();
-      sub.subscribe.mockImplementation(() => deferredSubscribe.promise);
-
-      const connectPromise = consumer.connect();
-      await Promise.resolve();
-      const disconnectPromise = consumer.disconnect();
-      deferredSubscribe.reject(new Error("late subscribe failed"));
-
-      await expect(connectPromise).rejects.toThrow("late subscribe failed");
-      await expect(disconnectPromise).resolves.toBeUndefined();
-      expect(sub.on).not.toHaveBeenCalled();
-      expect(sub.unsubscribe).toHaveBeenCalledOnce();
-      await expect(consumer.connect()).rejects.toThrow(/cannot connect after disconnect/);
-    });
-
-    it("ignores a captured message callback after disconnect begins", async () => {
-      let capturedListener: ((channel: string, message: string) => void) | undefined;
-      sub.on.mockImplementation(
-        (_event: string, listener: (channel: string, message: string) => void) => {
-          capturedListener = listener;
-        },
-      );
-      const deferredUnsubscribe = makeDeferred();
-      sub.unsubscribe.mockImplementation(() => deferredUnsubscribe.promise);
-
-      await consumer.connect();
-      const disconnectPromise = consumer.disconnect();
-      capturedListener?.(
-        AGENT_UI_RESPONSE,
-        JSON.stringify(
-          makeResponsePayload(
-            "error",
-            { reason: "realm_gate_rejected" },
-            "offline:LateTarget",
-          ),
-        ),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(consumer.stats.received).toBe(0);
-      expect(pub.publish).not.toHaveBeenCalled();
-      deferredUnsubscribe.resolve();
-      await disconnectPromise;
-    });
-
-    it("waits for an in-flight private narration before disconnect completes", async () => {
-      const deferredPublish = makeDeferred<number>();
-      pub.publish.mockImplementation(() => deferredPublish.promise);
-
-      await consumer.connect();
-      sub.emit(
-        AGENT_UI_RESPONSE,
-        JSON.stringify(
-          makeResponsePayload(
-            "error",
-            { reason: "realm_gate_rejected" },
-            "offline:InFlightTarget",
-          ),
-        ),
-      );
-      await vi.waitFor(() => expect(pub.publish).toHaveBeenCalledOnce());
-
-      const disconnectPromise = consumer.disconnect();
-      let disconnected = false;
-      void disconnectPromise.then(() => {
-        disconnected = true;
-      });
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(disconnected).toBe(false);
-      expect(consumer.stats.narrationPublished).toBe(0);
-
-      deferredPublish.resolve(1);
-      await expect(disconnectPromise).resolves.toBeUndefined();
-      expect(consumer.stats.narrationPublished).toBe(1);
-      expect(sub.unsubscribe).toHaveBeenCalledOnce();
-    });
-
-    it("keeps an in-flight publish failure contained while disconnect waits", async () => {
-      const deferredPublish = makeDeferred<number>();
-      pub.publish.mockImplementation(() => deferredPublish.promise);
-
-      await consumer.connect();
-      sub.emit(
-        AGENT_UI_RESPONSE,
-        JSON.stringify(
-          makeResponsePayload(
-            "error",
-            { reason: "realm_gate_rejected" },
-            "offline:InFlightFailure",
-          ),
-        ),
-      );
-      await vi.waitFor(() => expect(pub.publish).toHaveBeenCalledOnce());
-
-      const disconnectPromise = consumer.disconnect();
-      deferredPublish.reject(new Error("late publish failed"));
-
-      await expect(disconnectPromise).resolves.toBeUndefined();
-      expect(consumer.stats.narrationPublished).toBe(0);
-      expect(warnSpy).toHaveBeenCalledWith(
-        "[ui-response-consumer] failed to publish realm_gate_rejected narration:",
-        expect.objectContaining({ message: "late publish failed" }),
-      );
-    });
-
-    it("contains a throwing response callback without an unhandled rejection", async () => {
-      const callbackError = new Error("callback exploded");
-      const unhandledRejections: unknown[] = [];
-      const onUnhandledRejection = (reason: unknown): void => {
-        unhandledRejections.push(reason);
-      };
-      const throwingWarn = vi.fn(() => {
-        throw new Error("logger exploded");
-      });
-      consumer = new UiResponseConsumer({
-        sub,
-        pub,
-        onButtonClick: () => {
-          throw callbackError;
-        },
-        onSessionEnd,
-        logger: { info: vi.fn(), warn: throwingWarn },
-      });
-      process.on("unhandledRejection", onUnhandledRejection);
-
-      try {
-        await consumer.connect();
-        sub.emit(
-          AGENT_UI_RESPONSE,
-          JSON.stringify(makeResponsePayload("button_click", { button_id: "explode" })),
-        );
-        await expect(consumer.disconnect()).resolves.toBeUndefined();
-        await new Promise<void>((resolve) => setImmediate(resolve));
-
-        expect(throwingWarn).toHaveBeenCalledWith(
-          "[ui-response-consumer] response handler failed:",
-          callbackError,
-        );
-        expect(unhandledRejections).toEqual([]);
-      } finally {
-        process.off("unhandledRejection", onUnhandledRejection);
-      }
-    });
-
-    it("connect may retry after subscribe failure before teardown", async () => {
-      sub.subscribe.mockRejectedValueOnce(new Error("transient subscribe failed"));
-      await expect(consumer.connect()).rejects.toThrow("transient subscribe failed");
-      expect(sub.on).not.toHaveBeenCalled();
-
-      await expect(consumer.connect()).resolves.toBeUndefined();
-      expect(sub.subscribe).toHaveBeenCalledTimes(2);
-      expect(sub.on).toHaveBeenCalledOnce();
-    });
-
-    it("cleans up listeners and subscription without taking physical client ownership", async () => {
+    it("disconnect removes the listener and unsubscribes without owning physical clients", async () => {
       await consumer.connect();
       await consumer.disconnect();
       expect(sub.off).toHaveBeenCalledWith("message", expect.any(Function));
@@ -859,35 +661,30 @@ describe("UiResponseConsumer", () => {
       expect(pub.disconnect).not.toHaveBeenCalled();
     });
 
-    it("keeps cleanup idempotent without taking physical client ownership", async () => {
+    it("late first connect cannot overwrite a newer successful connect", async () => {
+      let resolveFirstSubscribe: (() => void) | undefined;
+      sub.subscribe
+        .mockImplementationOnce(
+          () => new Promise<void>((resolve) => (resolveFirstSubscribe = resolve)),
+        )
+        .mockResolvedValueOnce(undefined);
+
+      const firstConnect = consumer.connect();
+      await Promise.resolve();
+      await consumer.disconnect();
       await consumer.connect();
-      const first = consumer.disconnect();
-      const second = consumer.disconnect();
+      resolveFirstSubscribe?.();
+      await firstConnect;
 
-      await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
-      expect(sub.off).toHaveBeenCalledTimes(2); // connect de-duplicates once, cleanup removes once
-      expect(sub.unsubscribe).toHaveBeenCalledOnce();
-      expect(sub.disconnect).not.toHaveBeenCalled();
-      expect(pub.disconnect).not.toHaveBeenCalled();
-    });
-
-    it("propagates unsubscribe failure but never disconnects physical clients", async () => {
-      sub.unsubscribe.mockRejectedValue(new Error("unsubscribe failed"));
-      await consumer.connect();
-
-      await expect(consumer.disconnect()).rejects.toThrow("unsubscribe failed");
-      await expect(consumer.disconnect()).rejects.toThrow("unsubscribe failed");
-      expect(sub.off).toHaveBeenCalledTimes(2);
-      expect(sub.unsubscribe).toHaveBeenCalledOnce();
-      expect(sub.disconnect).not.toHaveBeenCalled();
-      expect(pub.disconnect).not.toHaveBeenCalled();
-    });
-
-    it("rejects aliasing publisher to subscriber", () => {
-      expect(
-        () => new UiResponseConsumer({ sub, pub: sub }),
-      ).toThrow(/publisher must be distinct from subscriber/);
-      expect(sub.subscribe).not.toHaveBeenCalled();
+      expect(sub.on).toHaveBeenCalledOnce();
+      sub.emit(
+        AGENT_UI_RESPONSE,
+        JSON.stringify(makeResponsePayload("button_click", { button_id: "current" })),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(onButtonClick).toHaveBeenCalledOnce();
+      expect(consumer.stats.received).toBe(1);
     });
   });
 
@@ -970,11 +767,15 @@ describe("UiResponseConsumer", () => {
 
   it("error+realm_gate_rejected + target_player → emits player-scoped narration", async () => {
     await sendMessage(
-      makeResponsePayload("error", {
-        reason: "realm_gate_rejected",
-        player_realm: "2",
-        required_realm: "3",
-      }, "offline:TestPlayer"),
+      makeResponsePayload(
+        "error",
+        {
+          reason: "realm_gate_rejected",
+          player_realm: "2",
+          required_realm: "3",
+        },
+        "offline:TestPlayer",
+      ),
     );
     expect(pub.publish).toHaveBeenCalledOnce();
     const [channel, raw] = pub.publish.mock.calls[0];
@@ -982,10 +783,12 @@ describe("UiResponseConsumer", () => {
     const narrationMsg = JSON.parse(raw as string);
     expect(narrationMsg.v).toBe(1);
     expect(narrationMsg.narrations).toHaveLength(1);
-    expect(narrationMsg.narrations[0].text).toBe(REALM_GATE_NARRATION_TEXT);
-    expect(narrationMsg.narrations[0].style).toBe("system_warning");
-    expect(narrationMsg.narrations[0].scope).toBe("player");
-    expect(narrationMsg.narrations[0].target).toBe("offline:TestPlayer");
+    expect(narrationMsg.narrations[0]).toEqual({
+      scope: "player",
+      target: "offline:TestPlayer",
+      style: "system_warning",
+      text: REALM_GATE_NARRATION_TEXT,
+    });
     expect(consumer.stats.realmGateRejected).toBe(1);
     expect(consumer.stats.narrationPublished).toBe(1);
   });
@@ -1002,37 +805,23 @@ describe("UiResponseConsumer", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("realm_gate_rejected missing target_player"),
     );
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("dropping private narration"),
-    );
     expect(pub.publish).not.toHaveBeenCalled();
     expect(consumer.stats.realmGateRejected).toBe(1);
     expect(consumer.stats.narrationPublished).toBe(0);
     expect(consumer.stats.narrationDroppedMissingTarget).toBe(1);
   });
 
-  it("error+realm_gate_rejected with whitespace target_player → warns and drops private narration", async () => {
+  it("error+realm_gate_rejected with whitespace target_player → drops private narration", async () => {
     await sendMessage(
-      makeResponsePayload(
-        "error",
-        { reason: "realm_gate_rejected" },
-        "   ",
-      ),
+      makeResponsePayload("error", { reason: "realm_gate_rejected" }, "   "),
     );
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("realm_gate_rejected missing target_player"),
-    );
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("dropping private narration"),
-    );
     expect(pub.publish).not.toHaveBeenCalled();
     expect(consumer.stats.realmGateRejected).toBe(1);
-    expect(consumer.stats.narrationPublished).toBe(0);
     expect(consumer.stats.narrationDroppedMissingTarget).toBe(1);
   });
 
-  it("error+realm_gate_rejected with null target_player → rejects contract without narration", async () => {
+  it("error+realm_gate_rejected with null target_player → rejects contract", async () => {
     await sendMessage({
       request_id: "null-target-player",
       action: "error",
@@ -1040,10 +829,6 @@ describe("UiResponseConsumer", () => {
       params: { reason: "realm_gate_rejected" },
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("invalid AgentUiResponsePayloadV1"),
-      expect.any(String),
-    );
     expect(pub.publish).not.toHaveBeenCalled();
     expect(consumer.stats.received).toBe(0);
     expect(consumer.stats.rejectedContract).toBe(1);
@@ -1190,7 +975,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   }
 
   const tsyPlayer = {
-    uuid: "offline:E2EPlayer",
+    uuid: "player-uuid-e2e-001",
     name: "E2EPlayer",
     realm: "Condense", // rank=3 == tsy_discovery realm_gate=3
     composite_power: 0.6,
@@ -1206,7 +991,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: 生成活坍缩渊面板 → emit AgentUiRequestCommandV1 到 bong:agent_ui_cmd（P2 §3）", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
+    const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
@@ -1241,7 +1026,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: 玩家点击进入按钮 → button_click 进入 pendingButtonClicks 队列 → drain 后注入推演（P2 §3）", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
+    const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
     // 触发面板
@@ -1283,66 +1068,72 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     await runtime.disconnect();
   });
 
-  it("e2e: missing or aliased narration publisher is rejected before subscription", () => {
+  it("e2e: realm_gate_rejected → player narration 走普通 publisher，subscriber 不发布", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-
-    expect(
-      () => new AgentUiRuntime({ pub, sub } as never),
-      "omitting narPub must fail instead of falling back to subscriber mode",
-    ).toThrow(/dedicated narration publisher/);
-    expect(
-      () => new AgentUiRuntime({ pub, sub, narPub: sub }),
-      "aliasing narPub to sub must fail before Redis subscribe",
-    ).toThrow(/narration publisher must be distinct from subscriber/);
-    expect(sub.subscribe).not.toHaveBeenCalled();
-  });
-
-  it("e2e: realm_gate_rejected → narration 走专用 narPub 而非 sub（断连路径不崩溃）", async () => {
-    // narPub 有独立 publish + disconnect，不依赖 sub 或 pub
-    const narPub = {
-      publish: vi.fn(async (_channel: string, _message: string) => 1),
-      disconnect: vi.fn(() => {}),
-    };
-    const pub = makeFullMockClient();
-    const sub = makeFullMockClient();
-
-    const runtime = new AgentUiRuntime({ pub, sub, narPub });
+    const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
-      scenario: "tiandao_revelation",
-      targetPlayer: { ...tsyPlayer, realm: "Spirit" }, // realm_gate=5 通过
-      params: { tiandao_message: "天机将至" },
+      scenario: "tsy_discovery",
+      targetPlayer: tsyPlayer,
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.72",
+        danger_tier: "高危",
+        agent_narrative: "裂缝收拢中",
+      },
     });
 
-    sub.publish.mockClear();
     pub.publish.mockClear();
-
+    sub.publish.mockClear();
     sub.emitUiResponse({
       request_id: result.requestId,
       action: "error",
       target_player: tsyPlayer.uuid,
-      params: { reason: "realm_gate_rejected" },
+      params: {
+        reason: "realm_gate_rejected",
+        player_realm: "1",
+        required_realm: "3",
+      },
     });
 
     await Promise.resolve();
     await Promise.resolve();
 
-    // narration 走 narPub.publish，sub.publish / pub.publish 均不调用
-    expect(narPub.publish, "narration 走专用 narPub.publish").toHaveBeenCalledOnce();
-    expect(sub.publish, "sub.publish 不参与 narration").not.toHaveBeenCalled();
-    expect(pub.publish, "pub.publish 不参与 narration").not.toHaveBeenCalled();
+    expect(pub.publish, "普通 publisher 发布私人 narration").toHaveBeenCalledOnce();
+    expect(sub.publish, "subscriber-mode connection 不得 publish").not.toHaveBeenCalled();
+    const [narChannel, narRaw] = pub.publish.mock.calls[0];
+    expect(narChannel).toBe(AGENT_NARRATE);
+    expect(JSON.parse(narRaw as string)).toEqual({
+      v: 1,
+      narrations: [
+        {
+          scope: "player",
+          target: tsyPlayer.uuid,
+          style: "system_warning",
+          text: REALM_GATE_NARRATION_TEXT,
+        },
+      ],
+    });
+    expect(runtime.stats.realmGateRejected).toBe(1);
+    expect(runtime.stats.narrationPublished).toBe(1);
 
-    // runtime cleanup 只退订；physical clients 由外层 factory 统一关闭
     await runtime.disconnect();
-    expect(narPub.disconnect, "runtime 不拥有 narPub physical client").not.toHaveBeenCalled();
+  });
+
+  it("e2e: publisher 与 subscriber 别名在订阅前拒绝", () => {
+    const client = makeFullMockClient();
+    expect(
+      () => new AgentUiRuntime({ pub: client, sub: client }),
+    ).toThrow(/publisher must be distinct from subscriber/);
+    expect(client.subscribe).not.toHaveBeenCalled();
   });
 
   it("e2e: dismissed → drainPendingSessionEnds 队列收到 session 结束事件", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
+    const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
@@ -1371,7 +1162,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: timeout → drainPendingSessionEnds 队列收到 session 结束事件", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
+    const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
@@ -1400,7 +1191,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: realm 不足时发布模糊版（不门控），blur=true，realm_gate=0", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
+    const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
     const result = await runtime.triggerUi({
@@ -1427,12 +1218,13 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
   it("e2e: connect 后生命周期正常 disconnect，不抛错", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
+    const runtime = new AgentUiRuntime({ pub, sub });
 
     await runtime.connect();
     await expect(runtime.disconnect()).resolves.not.toThrow();
     expect(sub.unsubscribe, "disconnect 调用 unsubscribe").toHaveBeenCalled();
     expect(sub.disconnect, "runtime 不拥有 sub physical client").not.toHaveBeenCalled();
+    expect(pub.disconnect, "runtime 不拥有 pub physical client").not.toHaveBeenCalled();
   });
 
   it("e2e: target_player field in published command uses player.uuid (canonical offline:X format)", async () => {
@@ -1441,7 +1233,7 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     // matching server agent_ui.rs canonical_player_id comparison.
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
-    const runtime = new AgentUiRuntime({ pub, sub, narPub: makeFullMockClient() });
+    const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
     const canonicalPlayer = {

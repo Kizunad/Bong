@@ -32,6 +32,8 @@ import {
   ClientRequestV1,
 } from "../src/client-request.js";
 
+// ─── AgentUiResponsePayloadV1.target_player（server → agent only）────────────
+
 describe("AgentUiResponsePayloadV1.target_player Unicode contract", () => {
   const payload = (targetPlayer: string) => ({
     request_id: "response-payload",
@@ -39,15 +41,15 @@ describe("AgentUiResponsePayloadV1.target_player Unicode contract", () => {
     target_player: targetPlayer,
     params: { reason: "realm_gate_rejected" },
   });
+
   const boundaryCases = [
     { name: "empty", value: "", valid: false },
-    { name: "65 emoji", value: "😀".repeat(65), valid: true },
-    { name: "128 emoji", value: "😀".repeat(128), valid: true },
-    { name: "129 emoji", value: "😀".repeat(129), valid: false },
-    { name: "127 BMP + 1 astral", value: `${"a".repeat(127)}😀`, valid: true },
-    { name: "128 BMP + 1 astral", value: `${"a".repeat(128)}😀`, valid: false },
     { name: "128 BMP", value: "界".repeat(128), valid: true },
     { name: "129 BMP", value: "界".repeat(129), valid: false },
+    { name: "128 astral", value: "😀".repeat(128), valid: true },
+    { name: "129 astral", value: "😀".repeat(129), valid: false },
+    { name: "127 BMP + 1 astral", value: `${"a".repeat(127)}😀`, valid: true },
+    { name: "128 BMP + 1 astral", value: `${"a".repeat(128)}😀`, valid: false },
     { name: "lone high surrogate", value: "\ud800", valid: false },
     { name: "lone low surrogate", value: "\udc00", valid: false },
     { name: "embedded lone surrogate", value: "a\ud800b", valid: false },
@@ -62,15 +64,34 @@ describe("AgentUiResponsePayloadV1.target_player Unicode contract", () => {
     }
   });
 
-  it("保留既有 request_id 的 minLength/maxLength 接受集合", () => {
-    expect(
-      Value.Check(AgentUiResponsePayloadV1, {
-        request_id: "😀".repeat(65),
-        action: "dismissed",
-        params: {},
-      }),
-      "既有 request_id 仍由 TypeBox UTF-16 maxLength=128 约束，不在本 PR 迁移",
-    ).toBe(false);
+  it("兼容 legacy 省略字段，但拒绝显式 null", () => {
+    const legacy = {
+      request_id: "legacy-response",
+      action: "error",
+      params: { reason: "realm_gate_rejected" },
+    };
+    expect(Value.Check(AgentUiResponsePayloadV1, legacy)).toBe(true);
+    expect(Value.Check(AgentUiResponsePayloadV1, { ...legacy, target_player: null })).toBe(
+      false,
+    );
+  });
+
+  it("Fabric C2S payload 与 envelope 均拒绝伪造 target_player", () => {
+    const spoofedPayload = {
+      request_id: "spoofed-response",
+      action: "button_click",
+      params: { button_id: "enter_realm" },
+      target_player: "offline:Victim",
+    };
+    const spoofedEnvelope = {
+      type: "agent_ui_response",
+      v: 1,
+      ...spoofedPayload,
+    };
+
+    expect(Value.Check(AgentUiClientResponsePayloadV1, spoofedPayload)).toBe(false);
+    expect(Value.Check(AgentUiResponseRequestV1, spoofedEnvelope)).toBe(false);
+    expect(Value.Check(ClientRequestV1, spoofedEnvelope)).toBe(false);
   });
 });
 
@@ -80,127 +101,92 @@ describe("AgentUiRequestCommandV1", () => {
   const validCommand = {
     request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     target_player: "b2c3d4e5-f6a7-8901-bcde-f01234567891",
-    xml: '<flow-layout><button id="enter_realm">踏入</button></flow-layout>',
+    xml: "<flow-layout><button id=\"enter_realm\">踏入</button></flow-layout>",
     timeout_ticks: 600,
     realm_gate: 3,
     allowed_button_ids: ["enter_realm", "dismiss"],
   };
 
   it("happy path: 正样本通过校验", () => {
-    expect(
-      Value.Check(AgentUiRequestCommandV1, validCommand),
-      "完整合法的 AgentUiRequestCommandV1 应通过校验",
-    ).toBe(true);
+    expect(Value.Check(AgentUiRequestCommandV1, validCommand)).toBe(true);
   });
 
   it("happy path: realm_gate=0 任意境界可见", () => {
-    expect(
-      Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 0 }),
-      "realm_gate 下界 0 应表示无门控并通过校验",
-    ).toBe(true);
+    expect(Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 0 })).toBe(
+      true,
+    );
   });
 
   it("happy path: realm_gate=5 通灵+ 专属", () => {
-    expect(
-      Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 5 }),
-      "realm_gate=5 应是合法的通灵境门槛",
-    ).toBe(true);
+    expect(Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 5 })).toBe(
+      true,
+    );
   });
 
   it("happy path: realm_gate=6 化虚+ 专属（上限值，最高境界）", () => {
-    expect(
-      Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 6 }),
-      "realm_gate 上界 6 应是合法的化虚境门槛",
-    ).toBe(true);
+    expect(Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 6 })).toBe(
+      true,
+    );
   });
 
   it("happy path: allowed_button_ids 空数组（不门控任何按钮）", () => {
     expect(
-      Value.Check(AgentUiRequestCommandV1, {
-        ...validCommand,
-        allowed_button_ids: [],
-      }),
-      "allowed_button_ids 空数组应表示没有可点击按钮并通过校验",
+      Value.Check(AgentUiRequestCommandV1, { ...validCommand, allowed_button_ids: [] }),
     ).toBe(true);
   });
 
   it("happy path: allowed_button_ids 16 条（边界最大值）", () => {
     const ids = Array.from({ length: 16 }, (_, i) => `btn_${i}`);
     expect(
-      Value.Check(AgentUiRequestCommandV1, {
-        ...validCommand,
-        allowed_button_ids: ids,
-      }),
-      "allowed_button_ids 上界 16 条应通过校验",
+      Value.Check(AgentUiRequestCommandV1, { ...validCommand, allowed_button_ids: ids }),
     ).toBe(true);
   });
 
   it("负样本: allowed_button_ids 第 17 条 → 超出 maxItems:16", () => {
     const ids = Array.from({ length: 17 }, (_, i) => `btn_${i}`);
     expect(
-      Value.Check(AgentUiRequestCommandV1, {
-        ...validCommand,
-        allowed_button_ids: ids,
-      }),
-      "allowed_button_ids 17 条超过 maxItems=16 应被拒绝",
+      Value.Check(AgentUiRequestCommandV1, { ...validCommand, allowed_button_ids: ids }),
     ).toBe(false);
   });
 
   it("负样本: realm_gate=7 → 超出 maximum:6", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 7 }),
-      "realm_gate=7 超过最高境界门槛 6 应被拒绝",
     ).toBe(false);
   });
 
   it("负样本: realm_gate=-1 → 低于 minimum:0", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: -1 }),
-      "realm_gate=-1 低于无门控下界 0 应被拒绝",
     ).toBe(false);
   });
 
   it("负样本: timeout_ticks=19 → 低于 minimum:20", () => {
     expect(
-      Value.Check(AgentUiRequestCommandV1, {
-        ...validCommand,
-        timeout_ticks: 19,
-      }),
-      "timeout_ticks=19 低于最短 20 ticks 应被拒绝",
+      Value.Check(AgentUiRequestCommandV1, { ...validCommand, timeout_ticks: 19 }),
     ).toBe(false);
   });
 
   it("负样本: timeout_ticks=2401 → 超出 maximum:2400", () => {
     expect(
-      Value.Check(AgentUiRequestCommandV1, {
-        ...validCommand,
-        timeout_ticks: 2401,
-      }),
-      "timeout_ticks=2401 超过最长 2400 ticks 应被拒绝",
+      Value.Check(AgentUiRequestCommandV1, { ...validCommand, timeout_ticks: 2401 }),
     ).toBe(false);
   });
 
   it("负样本: 缺失 request_id", () => {
     const { request_id: _, ...missing } = validCommand;
-    expect(
-      Value.Check(AgentUiRequestCommandV1, missing),
-      "AgentUiRequestCommandV1 缺失必填 request_id 应被拒绝",
-    ).toBe(false);
+    expect(Value.Check(AgentUiRequestCommandV1, missing)).toBe(false);
   });
 
   it("负样本: 缺失 allowed_button_ids", () => {
     const { allowed_button_ids: _, ...missing } = validCommand;
-    expect(
-      Value.Check(AgentUiRequestCommandV1, missing),
-      "AgentUiRequestCommandV1 缺失必填 allowed_button_ids 应被拒绝",
-    ).toBe(false);
+    expect(Value.Check(AgentUiRequestCommandV1, missing)).toBe(false);
   });
 
   it("负样本: xml 超 8192 字节", () => {
     const bigXml = "<label>" + "x".repeat(8200) + "</label>";
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, xml: bigXml }),
-      "AgentUiRequestCommandV1 的 xml 超过 8192 字符上限应被拒绝",
     ).toBe(false);
   });
 });
@@ -237,15 +223,12 @@ describe("AgentUiRequestPayloadV1", () => {
 
   it("负样本: timeout_ticks=19 → 低于 minimum:20", () => {
     expect(
-      Value.Check(AgentUiRequestPayloadV1, {
-        ...validPayload,
-        timeout_ticks: 19,
-      }),
+      Value.Check(AgentUiRequestPayloadV1, { ...validPayload, timeout_ticks: 19 }),
     ).toBe(false);
   });
 });
 
-// ─── AgentUiResponsePayloadV1（C2S CustomPayload + server→agent Redis）───────
+// ─── AgentUiResponsePayloadV1（server → agent Redis）────────────────────────
 
 describe("AgentUiResponsePayloadV1", () => {
   it("happy path: button_click 正样本", () => {
@@ -297,25 +280,6 @@ describe("AgentUiResponsePayloadV1", () => {
     expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(true);
   });
 
-  it("兼容旧 payload: target_player 缺省仍通过校验", () => {
-    const payload = {
-      request_id: "legacy-response",
-      action: "error",
-      params: { reason: "realm_gate_rejected" },
-    };
-    expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(true);
-  });
-
-  it("负样本: target_player 显式 null 不得冒充 legacy 缺字段", () => {
-    const payload = {
-      request_id: "null-target",
-      action: "error",
-      target_player: null,
-      params: { reason: "realm_gate_rejected" },
-    };
-    expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(false);
-  });
-
   it("AgentUiErrorReasonV1 覆盖 server 实发 error reason", () => {
     const reasons: AgentUiErrorReasonV1[] = [
       "realm_gate_rejected",
@@ -362,43 +326,6 @@ describe("AgentUiResponsePayloadV1", () => {
       params: { button_id: 123 }, // number 不符合 Record<string, string>
     };
     expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(false);
-  });
-});
-
-describe("AgentUiClientResponsePayloadV1 / AgentUiResponseRequestV1", () => {
-  const clientPayload = {
-    request_id: "req-c2s-real-producer",
-    action: "button_click" as const,
-    params: { button_id: "enter_realm" },
-  };
-  const clientRequest = {
-    v: 1 as const,
-    type: "agent_ui_response" as const,
-    ...clientPayload,
-  };
-
-  it("接受真实 Fabric producer 的 request_id/action/params 形状", () => {
-    expect(Value.Check(AgentUiClientResponsePayloadV1, clientPayload)).toBe(
-      true,
-    );
-    expect(Value.Check(AgentUiResponseRequestV1, clientRequest)).toBe(true);
-    expect(Value.Check(ClientRequestV1, clientRequest)).toBe(true);
-  });
-
-  it("拒绝 C2S 伪造 target_player，该字段只属于 server→agent 权威响应", () => {
-    const spoofedPayload = {
-      ...clientPayload,
-      target_player: "offline:Bystander",
-    };
-    const spoofedRequest = {
-      ...clientRequest,
-      target_player: "offline:Bystander",
-    };
-    expect(Value.Check(AgentUiClientResponsePayloadV1, spoofedPayload)).toBe(
-      false,
-    );
-    expect(Value.Check(AgentUiResponseRequestV1, spoofedRequest)).toBe(false);
-    expect(Value.Check(ClientRequestV1, spoofedRequest)).toBe(false);
   });
 });
 
@@ -478,19 +405,19 @@ describe("sample roundtrip: agent_ui_request_command.sample.json", () => {
 });
 
 describe("sample roundtrip: client-request.agent-ui-response.sample.json", () => {
-  it("符合 AgentUiResponsePayloadV1 schema（button_click action）", () => {
+  it("符合真实 Fabric C2S AgentUiClientResponsePayloadV1（button_click action）", () => {
     const sample = loadSample("client-request.agent-ui-response.sample.json");
-    // sample 含 v/type 额外字段（C2S CustomPayload 格式），提取 agent-facing 字段做校验
+    // sample 含 v/type envelope 字段，提取真实 C2S payload 字段做校验
     const asRecord = sample as Record<string, unknown>;
-    const agentPayload = {
+    const clientPayload = {
       request_id: asRecord["request_id"],
       action: asRecord["action"],
       params: asRecord["params"],
     };
-    const result = Value.Check(AgentUiResponsePayloadV1, agentPayload);
+    const result = Value.Check(AgentUiClientResponsePayloadV1, clientPayload);
     expect(
       result,
-      `client-request.agent-ui-response.sample.json 的 agent-facing 字段应通过 AgentUiResponsePayloadV1 校验`,
+      `client-request.agent-ui-response.sample.json 的 C2S 字段应通过 AgentUiClientResponsePayloadV1 校验`,
     ).toBe(true);
   });
 });
@@ -502,9 +429,7 @@ describe("sample roundtrip: server-data.agent-ui-close.sample.json", () => {
     const asRecord = sample as Record<string, unknown>;
     const closePayload = {
       request_id: asRecord["request_id"],
-      ...(asRecord["reason"] !== undefined
-        ? { reason: asRecord["reason"] }
-        : {}),
+      ...(asRecord["reason"] !== undefined ? { reason: asRecord["reason"] } : {}),
     };
     const result = Value.Check(AgentUiClosePayloadV1, closePayload);
     expect(
@@ -535,9 +460,7 @@ describe("shared wire fixture: agent-ui-close.channel-wire.sample.json", () => {
 
     for (const entry of fixture.cases) {
       const payload = JSON.parse(entry.payload_utf8) as unknown;
-      expect(Value.Check(AgentUiClosePayloadV1, payload), entry.name).toBe(
-        true,
-      );
+      expect(Value.Check(AgentUiClosePayloadV1, payload), entry.name).toBe(true);
       expect(payload).toEqual({
         request_id: entry.request_id,
         ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
