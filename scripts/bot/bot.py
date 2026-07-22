@@ -269,10 +269,16 @@ class Bot:
         )
         self._send(mc.C2S_COMMAND_EXECUTION, body)
 
-    def chat(self, message: str) -> None:
+    def chat(self, message: str, *, timestamp_millis: int | None = None) -> None:
+        # Vanilla 1.20.1 writes Instant.now() through PacketByteBuf.writeInstant(),
+        # whose wire representation is signed Unix epoch milliseconds. Tests may
+        # override this value to model skewed or malicious clients; the server
+        # must still derive ChatMessageV1.ts from its own observation clock.
+        if timestamp_millis is None:
+            timestamp_millis = time.time_ns() // 1_000_000
         body = (
             mc_string(message)
-            + struct.pack(">qq", 0, 0)
+            + struct.pack(">qq", timestamp_millis, 0)
             + b"\x00"  # has_signature=false
             + write_varint(0)  # message_count
             + b"\x00\x00\x00"  # acknowledged BitSet

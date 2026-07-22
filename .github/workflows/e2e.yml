@@ -150,6 +150,11 @@ jobs:
           BOT_E2E_KILL_STALE: "1"
         run: bash scripts/bot-e2e.sh
 
+      - name: Bot chat timestamp → Tiandao window e2e
+        env:
+          CHAT_WINDOW_E2E_PROFILE: release
+        run: bash scripts/e2e-chat-signal-window.sh
+
       - name: Upload e2e evidence artifacts
         if: always()
         uses: actions/upload-artifact@v4

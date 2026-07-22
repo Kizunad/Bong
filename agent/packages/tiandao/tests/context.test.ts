@@ -189,6 +189,7 @@ describe("context with chat signals", () => {
   it("renders chat signals block with sentiment summary", () => {
     const input = createContextInput(createTestWorldState(), [
       {
+        ts: 10_000,
         player: "offline:Steve",
         raw: "灵气太少了",
         sentiment: -0.7,
@@ -196,13 +197,14 @@ describe("context with chat signals", () => {
         influence_weight: 0.8,
       },
       {
+        ts: 10_000,
         player: "offline:Alex",
         raw: "今天不错",
         sentiment: 0.3,
         intent: "social",
         influence_weight: 0.2,
       },
-    ]);
+    ], 10_000);
 
     const text = chatSignalsBlock.render(input);
     expect(text).toContain("## 近期民意");
@@ -216,13 +218,14 @@ describe("context with chat signals", () => {
       CALAMITY_RECIPE,
       createContextInput(createTestWorldState(), [
         {
+          ts: 10_000,
           player: "offline:Steve",
           raw: "灵气太少了",
           sentiment: -0.7,
           intent: "complaint",
           influence_weight: 0.8,
         },
-      ]),
+      ], 10_000),
     );
 
     expect(context).toContain("## 近期民意");
@@ -236,6 +239,7 @@ describe("context with chat signals", () => {
     };
 
     const manySignals: ChatSignal[] = Array.from({ length: 10 }, (_, i) => ({
+      ts: 10_000,
       player: `offline:p${i}`,
       raw: "灵气太少了灵气太少了灵气太少了",
       sentiment: -0.5,
@@ -245,7 +249,7 @@ describe("context with chat signals", () => {
 
     const context = assembleContext(
       tinyRecipe,
-      createContextInput(createTestWorldState(), manySignals),
+      createContextInput(createTestWorldState(), manySignals, 10_000),
     );
 
     expect(context).not.toContain("## 近期民意");
@@ -367,6 +371,7 @@ describe("context with task-21 world model blocks", () => {
   it("preserves required blocks and trims optional task-21 blocks under token pressure", () => {
     const { model, state } = createSeededWorldModel();
     const noisySignals: ChatSignal[] = Array.from({ length: 10 }, (_, index) => ({
+      ts: 1_710_000_123,
       player: `offline:p${index}`,
       raw: "灵气太少了灵气太少了灵气太少了灵气太少了",
       sentiment: -0.5,
