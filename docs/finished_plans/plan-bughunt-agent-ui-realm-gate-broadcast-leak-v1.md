@@ -73,7 +73,7 @@
 - `server/src/network/agent_ui.rs`：仅真实 `realm_gate_rejected` 权威 producer 回填 `Some(cmd.target_player.clone())`；其它 response 终态保持 `None`。
 - `agent/packages/tiandao/src/ui/uiResponseConsumer.ts`、`agent/packages/tiandao/src/ui/agent-ui.test.ts`：合法目标发布 `scope="player"` / `target=<canonical player id>`；目标缺失或 trim 后空白时 warning、递增 `narrationDroppedMissingTarget` 并 fail-closed，绝不恢复 `broadcast/world`。
 - `server/src/network/redis_bridge.rs`、`server/src/network/mod.rs`、`agent/packages/tiandao/tests/ui-response-consumer-runner.ts`、`scripts/bot/scenarios/agent_ui_realm_gate_private_narration.py`：以 production encoder、真实 TypeScript consumer、production narration decoder 与 recipient selector 串起双玩家隔离链；目标玩家收到 typed system warning，旁观玩家与双方 chat mirror 均保持干净。
-- `agent/packages/tiandao/src/ui/uiResponseConsumer.ts`、`agent/packages/tiandao/src/ui/agentUiRuntime.ts`、`agent/packages/tiandao/src/main.ts`、对应测试：修复 cleanup 与 pending subscribe 竞态。logical consumer one-shot 生命周期在 cleanup 开始时同步关门并移除 listener；迟到 subscribe resolve/reject 不得重新挂 listener或处理消息；三个 Redis client 的 physical ownership 继续只属于 factory，cleanup exactly-once 断开。
+- `agent/packages/tiandao/src/ui/uiResponseConsumer.ts`、`agent/packages/tiandao/src/ui/agentUiRuntime.ts`、`agent/packages/tiandao/src/main.ts`、对应测试：修复 cleanup 与 pending subscribe 竞态及 cleanup 前已接收 handler 越界。logical consumer 在 cleanup 开始时同步关闭 admission 并移除 listener；迟到 subscribe resolve/reject 不得重新挂 listener或处理消息；callback/logger 抛错被 detached-handler observer 吞并安全记录；500ms 只约束 subscribe/unsubscribe transport teardown，不能越过已接收 handler 的强完成边界。三个 Redis client 的 physical ownership 继续只属于 factory，cleanup exactly-once 断开。
 - 范围纠偏：此前提交过的“全部 Agent UI ID 统一 code-point”以及 Ajv 精确依赖、双 lockfile、trusted-root/canonical-path/symlink-escape 子系统均已在最终返工中撤回；`agent/package-lock.json`、package-local lock/package metadata、`generated-artifacts.test.ts`、聚合 client/server schema 与 Rust C2S mirror 均恢复 `origin/main` 对应契约。本 plan 只为新增 S2A `target_player` 定义 Unicode 边界。
 
 ### 关键提交
@@ -88,7 +88,7 @@
 - `8b732ddb`（2026-07-22）：记录生命周期返工的历史测试证据；当前候选 HEAD 的精确门禁见下方“测试结果”。
 - `62cbc43d`（2026-07-22）：撤回超出私人路由修复范围的既有 Agent UI ID code-point 迁移与 Ajv 安装信任子系统，仅保留新增 S2A `target_player` 的 Unicode 边界。
 - `fbea9144`（2026-07-22）：为真实 Fabric C2S `AgentUiResponse` 添加 `target_player` 伪造负样本，明确锁定 client 不得注入该仅 server→agent 可写字段。
-- `2e1d9b49` / `49bac969`（2026-07-22）：补记 scope rollback 后的返工门禁，并为 Agent UI command schema 边界断言补齐可定位失败诊断。
+- `937f7e54`（2026-07-22）：补齐 cleanup 前已接收响应的强完成边界，消除 detached handler 派生 Promise 的未处理拒绝，并把 500ms timeout 限定为 transport teardown 门禁。
 
 ### 测试结果
 
@@ -97,9 +97,9 @@
 - 本次 scope rollback 工作树定向门禁：`npm run build -w @bong/schema`、`npm run generate:check` 均退出 0，406 generated files fresh；`vitest run tests/agent-ui.test.ts` 为 1 file / 51 tests passed。Rust `cargo fmt --check` 退出 0；`schema::agent_ui::tests` 27/27、C2S JSON-bypass 1/1、`schema::client_request::tests::agent_ui_response*` 3/3 passed。
 - 本地完整门禁已在 `62cbc43d` 后通过：`cd agent/packages/schema && npm run check && npm test`（29 files / 886 tests）；`cd agent/packages/tiandao && npm test`（72 files / 846 tests）；`cd agent && npm run build`；`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（合计 11875 passed / 0 failed / 6 ignored）；`cd client && ./gradlew --no-daemon test build`（3 required Fabric GameTests passed）；`python3 -m unittest scripts.bot.test_protocol`（126 tests）。Gradle 外层日志使用 OpenJDK 21.0.10，Fabric runtime 日志列出 Java 17；这只记录实际环境，不将其表述为额外 Java 17 toolchain pin。
 - `fbea9144` 增加 Rust C2S 伪造拒绝测试后，`cd server && cargo fmt --check && cargo test schema::client_request::tests::agent_ui_response` 通过（4/4）。
-- 候选 HEAD `49bac96971f8c99ed30f022d5bd4efd7be3e11ba` 精确门禁（2026-07-22）：`cd agent && npm run build -w @bong/schema`、`cd packages/schema && npm run generate:check && npm run check && npm test`（406 generated files fresh；29 files / 886 tests）、`cd ../tiandao && npm test`（72 files / 846 tests）、`cd agent && npm run build` 全部通过；GitHub Actions e2e run `29884691016` 对拍同一 SHA 并 `SUCCESS`。
-- 候选 HEAD `49bac96971f8c99ed30f022d5bd4efd7be3e11ba` 独立只读四维复核全部通过：production-wiring、cross-stack-contract、redis-lifecycle、tests-evidence 均返回 `passed=true`、`findings=[]` 并严格对拍该 SHA。复核分别核验权威 gate rejection→Redis→真实 Tiandao consumer→player selector 双玩家隔离，TypeBox/generated/Rust/Java 的 S2A optional target 与 C2S spoof 拒绝，connect/cleanup/late subscribe/late message/unsubscribe failure/500ms timeout/exactly-once 三连接状态机，以及同批 narration/chat 分类、真实 Bot/CI 接线和唯一 Finish Evidence。生命周期 validator 另执行 `vitest run src/ui/agent-ui.test.ts tests/main.test.ts --cache=false`，2 files / 117 tests passed。
-- `/review` 在该候选 HEAD 的两次 `respond` job 因 reviewer provider 503 而 `SKIPPED`，不计作批准；CodeRabbit 最新自动轮次 rate-limited，也不计作批准或代码 finding。此前实质行内意见中，同批 narration/chat 二次 drain 与 stale validator SHA 已修复；`49bac969` 的断言诊断意见已被 CodeRabbit 确认 addressed。`params #[serde(default)]` 是 `origin/main` 既有 C2S 契约漂移，明确留作独立 follow-up，不扩大本 plan 范围。
+- 生命周期修复 HEAD `937f7e54f45a42fed153fd5cef66c6b967298218` 精确门禁（2026-07-22）：定向 `npm test -- --run src/ui/agent-ui.test.ts tests/main.test.ts` 为 2 files / 121 tests，完整 Tiandao 为 72 files / 850 tests，`cd agent && npm run build` 通过。测试锁定 cleanup 前 narration publish 跨过 500ms 仍不得物理断连/返回、throwing callback + throwing logger 不产生 `unhandledRejection`、pending subscribe/unsubscribe timeout 后保持 inert，以及三个 physical clients exactly-once disconnect。
+- 同一 HEAD 的无上下文只读 validator 严格对拍 `937f7e54f45a42fed153fd5cef66c6b967298218` 后返回 `passed=true`、`findings=[]`；其复核覆盖 handler rejection containment、同步 admission close、accepted-work 强完成边界、pending subscribe/unsubscribe late completion 与 physical ownership。此前 validator 在 `8664196523e27997bfc079e3345b5acb6fba30ed` 工作树上发现的两项 major（ignored `finally` 派生拒绝、500ms timeout 越过 accepted handler）已由 `937f7e54` 修复并由上述回归锁定。
+- `8664196523e27997bfc079e3345b5acb6fba30ed` 的 GitHub Actions e2e run `29890273905` 已 `SUCCESS`，但只作为历史基线；`937f7e54` 及后续 evidence commit 均需重新取得 exact-head remote e2e/review，旧 SHA 结果不外推。
 - 两份受保护 untracked snapshot 始终未 stage、删除或覆盖：`tiandao-snapshot-200.json` SHA-256 `c6ee23bbe36c6fde5f2c5c2d470359c89b0a64174226ab2691a2afe32f82d0ab`；`tiandao-snapshot-300.json` SHA-256 `eb0b116cad4cd803e5548e0faaf5f9d7f77766310304c7e7acf1c964e9d416e8`。
 
 ### 跨仓库核验
@@ -107,7 +107,7 @@
 - client→server：TypeBox `AgentUiResponseRequestV1` 与 Rust `ClientRequestV1::AgentUiResponse` 都拒绝额外 `target_player`；真实 Fabric producer 仍只发送 `request_id/action/params`。
 - server→agent：`receive_agent_ui_cmd_system` 从已认证目标命令的 canonical id 构造 realm-gate rejection，production Redis encoder 序列化 optional `target_player`；legacy 缺字段继续可读，显式 `null` 与 malformed target 被拒绝。
 - agent→server：`UiResponseConsumer` 只为合法 target 发布 player-scoped narration；缺目标或坏 payload 无发布旁路。production parser 与 `RecipientSelector::player` 最终只命中目标实体。
-- 生命周期：consumer/runtime 只拥有 logical listener；factory 拥有三个 physical Redis client。cleanup 与 connect 任意交错后 listener 都保持 inert，物理断开 exactly once。
+- 生命周期：consumer/runtime 只拥有 logical listener；factory 拥有三个 physical Redis client。cleanup 同步关闭 admission，500ms 仅约束 pending connect/unsubscribe transport teardown；cleanup 前已接收 handler 必须先 settle，且任何 handler/logger 异常不得形成 process-level unhandled rejection。物理断开 exactly once。
 - scope：既有 request/command/close ID 不属于本 plan 的 Unicode migration；Ajv 安装布局与 trust-root 防护也不属于私人路由修复。
 
 ### 遗留 / 后续
