@@ -154,7 +154,7 @@
 - P0：`agent/packages/schema/tests/chat-message.test.ts`、`agent/packages/tiandao/tests/chat-processor.test.ts`、`agent/packages/tiandao/tests/agent-real-context-injection.test.ts` 先锁定 schema、转换、300/301 秒窗口和真实 LLM prompt；review 返工又以 `aabfc244`、`99b0af1c` 分别复现客户端未来时间绕过与跨秒旧时钟误删。
 - P1：`agent/packages/schema/src/chat-message.ts` 为 `ChatMessageV1.ts` 明确 server-observed 秒契约、为 `ChatSignal.ts` 固定必填非负整数；`agent/packages/tiandao/src/chat-processor.ts` 从原消息注入权威时间，删除 `mentions_mechanic` 隐式解析，并以 `[now - 300, now]` 同时过滤旧值与未来值。
 - P2：`agent/packages/schema/generated/chat-message-v1.json`、`generated/chat-signal.json` 已重生成；`agent/packages/tiandao/src/runtime.ts` 增加 `RuntimeDeps.now` 注入面并在异步 drain / LLM 后、实际 merge 前刷新时钟，context/runtime fixtures 与跨秒回归全部对齐。
-- P3：`server/src/network/chat_collector.rs` 引入 `ChatObservationClock`，Redis wire 使用 server observation 秒，`PlayerChatCollected.timestamp` 保留原始 C2S 毫秒；`scripts/bot/bot.py` / `test_protocol.py` 支持默认当前毫秒与显式伪造毫秒；`scripts/e2e-chat-signal-window.sh` / `.mts` 覆盖登录后 `+1d` Bot→Rust→独立 Redis→Tiandao→future/300/301 秒→prompt，`.github/workflows/e2e.yml` 接入 e2e。代码起点祖先 `a3ce1b945`：双父 merge 含 `origin/main@2f9c70ad`（#1212 SearchHud）与此前 `#1233`/`#1241`；证据纠错 `c00e8d2d`；CodeRabbit 返工 `87afb6f86`；当前 `/review` 异步边界返工以 `39e7f6993` 把调用次数测试改成真实 deferred annotation happens-before，既有归档文档只原地纠正。
+- P3：`server/src/network/chat_collector.rs` 引入 `ChatObservationClock`，Redis wire 使用 server observation 秒，`PlayerChatCollected.timestamp` 保留原始 C2S 毫秒；`scripts/bot/bot.py` / `test_protocol.py` 支持默认当前毫秒与显式伪造毫秒；`scripts/e2e-chat-signal-window.sh` / `.mts` 覆盖登录后 `+1d` Bot→Rust→独立 Redis→Tiandao→future/300/301 秒→prompt，`.github/workflows/e2e.yml` 接入 e2e。代码起点祖先 `a3ce1b945`：双父 merge 含 `origin/main@2f9c70ad`（#1212 SearchHud）与此前 `#1233`/`#1241`；证据纠错 `c00e8d2d`；CodeRabbit 返工 `87afb6f86`；异步边界返工 `39e7f6993` 与诊断补强 `e871f3ea`；候选树最终合入 `origin/main@2da64590`，exact SHA `8a78b2bf88a372b4a6344675d11d3b0b55a088bf` 的 fresh validator 与真实生产链 e2e 均 PASS。既有归档文档只原地纠正，不重复 promotion、归档或 `Finish Evidence`。
 
 ### 关键 commit
 
@@ -181,9 +181,19 @@
 - `c00e8d2d`（2026-07-19）：纠偏聊天信号计划的最终门禁证据（docs-only）。
 - `87afb6f86`（2026-07-20）：CodeRabbit 返工——signed i64 协议边界、端口归属 fail-closed helper、真实 Tiandao runtime/prompt e2e，并原地纠正 Finish Evidence 最终树描述。exact SHA `87afb6f86926e0d06e3c3779f3dddb584d30f94f`。
 - `39e7f6993`（2026-07-20）：用 deferred Promise 阻塞真实 `processChatBatch` annotation，锁定 annotation resolve 后才读取 merge 时钟，并以 agent 可观察信号证明合法 server-observed 消息保留、未来伪造消息淘汰。exact SHA `39e7f6993ff6bd2ad18001a8ea948b7e6a3c8421`。
+- `e871f3eab`（2026-07-20）：为 deferred async regression 的异步进入、阻塞、时钟读取与 signal 注入断言补齐可定位失败线索，不改变 production 或放宽契约。
+- `8a78b2bf8`（2026-07-22）：普通 merge `origin/main@2da6459012103d837b89b6cddd39d1ef79dac2fc`，在最新主线树上复跑跨栈门禁、fresh exact-head validator 与真实生产链 e2e。
 
 ### 测试结果
 
+- 最新候选树 `8a78b2bf88a372b4a6344675d11d3b0b55a088bf`（合入 `origin/main@2da6459012103d837b89b6cddd39d1ef79dac2fc`）门禁：
+  - server：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` = 0；lib **11862 passed / 0 failed / 1 ignored**，main 11，`full_app_startup` 1，`tarkov_backpack_p0_e2e` 4，doc-tests 0 passed / 5 ignored。
+  - schema：workspace build = 0；`npm test` **30 files / 898 tests**；**406** 份 generated artifacts fresh。
+  - Tiandao：目标 deferred regression **1 passed / 70 skipped**；全量 `npm test` **72 files / 840 tests**；workspace build = 0。
+  - client：Temurin 17.0.19 `./gradlew test build` = 0；JUnit **4246 tests / 0 failures / 0 errors / 0 skipped**；game tests 3/3。
+  - Python protocol：`python3 -m unittest scripts.bot.test_protocol` = 0，**130/130**；port helper **6/6**；`git diff --check origin/main...HEAD` = 0。
+  - fresh read-only validator：workflow `wf_e9ad5ee9-805` 首步对拍 exact SHA `8a78b2bf88a372b4a6344675d11d3b0b55a088bf`，按 `origin/main...HEAD` 审查 21 文件，并定向复验 Tiandao 6 项、schema 13 项、Bot 4 项、port helper 6 项；结论 **PASS，0 blocker / 0 major**。归档格式裁决同样 PASS：该历史 bugfix skeleton 无开放问题，现有「接入面与收口决议」已经完成实际收口，不伪造 `§N.1` 历史流程。
+  - 真实生产链 e2e：`bash scripts/e2e-chat-signal-window.sh` = 0；marker `chat-window-20260722-214216-176409`，证据目录 `.sisyphus/evidence/chat-signal-window-20260722-214216-176409`；`client_ms=1784814154272 wire_ts=1784727754 now=1784727761 age=7`。第一轮真实 `runRuntime`/`TiandaoAgent`：`messages=1, signals=1` 且 user prompt 含 marker；第二轮 `now=ts+301`：`messages=1, signals=0` 且 prompt 不含 marker。server log 同时命中启动锚点和当前进程树端口归属，未误连历史 25565。
 - 本轮 deferred async boundary mutation RED/GREEN（起点 `72e124e5aeb898d4ba12ff32250437c26ff9b1cb`，测试 commit `39e7f6993ff6bd2ad18001a8ea948b7e6a3c8421`）：
   - GREEN（正确 production）：`npm exec -- vitest run tests/runtime.test.ts -t 'reads the chat merge clock only after async annotation resolves'` 真实退出 **0**，**1 passed / 70 skipped**。测试让真实 annotate client 返回 deferred Promise；确认已进入 `processChatBatch` 阻塞后，fake clock 仍固定旧秒且 agent 尚未收到 signal，再推进到新秒并 resolve。timeline 契约断言 `annotation-resolved < merge clock read < signals-injected`，最终只注入 `offline:Observed`，`offline:ForgedFuture` 被 future upper 淘汰。
   - MUTATION RED：脚本仅临时把 production `mergeNowSeconds` 提前到 `drainPlayerChat` / annotation 之前缓存，并删除 `await processChatBatch(...)` 后的取时；同一目标命令连续 **3/3** 次真实退出 **1**，每次均 **1 failed / 70 skipped**，稳定撞在 happens-before 断言（`expected 4 to be greater than 5`）。错误实现中 annotation 后的新秒读取只剩 loop elapsed，发生在 signal 注入之后，因而不能冒充 merge 时钟。
@@ -215,4 +225,4 @@
 
 - 功能代码无阻塞遗留；NTP / 客户端时钟漂移补偿、Redis 跨进程聊天持久化仍按非目标保持独立；Tiandao `ts > now` fail closed 已在本 plan 内。
 - **运维事故（非代码交付）**：本 worktree 的 `agent/packages/tiandao/data/` 历史上曾被误删，**无可证恢复**。本轮开工时两份 untracked snapshot 已存在，只按用户给定 SHA-256 逐字节保全并反复核验；未删除、未修改、未暂存，也不据此声称历史上“已恢复”。禁止自动 cleanup 删除同类 ignored/untracked 数据；后续 cleanup 必须人工确认路径来源后再动。
-- 既有功能树 = 代码起点 `a3ce1b945`（含 `origin/main@2f9c70ad`）+ 证据纠错 `c00e8d2d` + CodeRabbit 返工 `87afb6f86` + 后续证据 commit 至本轮起点 `72e124e5aeb898d4ba12ff32250437c26ff9b1cb`。本轮测试 commit 为 `39e7f6993ff6bd2ad18001a8ea948b7e6a3c8421`；本 Finish Evidence 的原地更新 commit 由 Git history 记录，不在同一 commit 内伪造自引用。production mutation 未提交；**本轮不 push / 不 merge / 不 cleanup**。
+- 既有功能树 = 代码起点 `a3ce1b945`（含 `origin/main@2f9c70ad`）+ 证据纠错 `c00e8d2d` + CodeRabbit 返工 `87afb6f86` + 异步边界回归 `39e7f6993` + 失败诊断补强 `e871f3eab`；候选树以 `8a78b2bf88a372b4a6344675d11d3b0b55a088bf` 合入最新 `origin/main@2da6459012103d837b89b6cddd39d1ef79dac2fc` 并取得 fresh validator / 全栈门禁 / 真实 e2e PASS。本 Finish Evidence 的原地更新 commit 由 Git history 记录，不在同一 commit 内伪造自引用。production mutation 未提交；push 后仍必须将 GitHub e2e、独立 `/review` 与 CodeRabbit 绑定到新的最终 docs HEAD，旧 HEAD 的远端证据不外推。
