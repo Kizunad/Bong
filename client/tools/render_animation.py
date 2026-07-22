@@ -562,11 +562,17 @@ def project_seg_fpv(
     a, b = a_world, b_world
     if da < near and db < near:
         return None  # entirely behind the near plane
+    # Clip to just IN FRONT of the near plane, not exactly onto it: project_fpv
+    # rejects d <= near, so landing the clipped endpoint at d == near would make
+    # project_fpv return None and drop the whole segment — defeating the clip
+    # (the shoulder→elbow upper-arm segment, shoulder usually behind the eye,
+    # would still vanish and the arm looks amputated).
+    eps = 1e-3
     if da < near:
-        t = (near - da) / (db - da)
+        t = (near + eps - da) / (db - da)
         a = a_world + (b_world - a_world) * t
     elif db < near:
-        t = (near - db) / (da - db)
+        t = (near + eps - db) / (da - db)
         b = b_world + (a_world - b_world) * t
     pa = project_fpv(a, cam, focal, origin)
     pb = project_fpv(b, cam, focal, origin)
