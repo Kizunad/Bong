@@ -9,8 +9,8 @@ import java.util.List;
 /**
  * Headless presentation seam shared by {@link AlchemyScreen} and protobuf/store contract tests.
  * It renders the latest authoritative session snapshot for the furnace screen. Active guidance is
- * distinct from terminal guidance: a finished snapshot may retain targets and stages for review,
- * while an empty furnace still clears stale terminal data.
+ * distinct from terminal guidance: a completed snapshot may retain targets and stages for review.
+ * A furnace packet only clears that terminal presentation after its accompanying session reset arrives.
  */
 public final class AlchemySessionPresentationPlanner {
     public record Presentation(
@@ -46,20 +46,6 @@ public final class AlchemySessionPresentationPlanner {
             ? AlchemySessionStore.Snapshot.empty()
             : session;
 
-        if (!safeFurnace.hasSession()) {
-            return new Presentation(
-                true,
-                false,
-                false,
-                "§8未起炉",
-                "§70 / 0t",
-                "",
-                "",
-                List.of("§7干预"),
-                List.of()
-            );
-        }
-
         if (safeSession.isActive()) {
             return new Presentation(
                 false,
@@ -84,11 +70,25 @@ public final class AlchemySessionPresentationPlanner {
                 false,
                 false,
                 true,
-                "§a已结束 · §f" + statusOr(safeSession.statusLabel(), "已结束"),
+                "§a" + statusOr(safeSession.statusLabel(), "已结束"),
                 progressText(safeSession),
                 temperatureText(safeSession),
                 qiText(safeSession),
                 finishedGuidanceLines(safeSession),
+                List.of()
+            );
+        }
+
+        if (!safeFurnace.hasSession()) {
+            return new Presentation(
+                true,
+                false,
+                false,
+                "§8未起炉",
+                "§70 / 0t",
+                "",
+                "",
+                List.of("§7干预"),
                 List.of()
             );
         }

@@ -1,16 +1,25 @@
 package com.bong.client.alchemy;
 
+import bong.Envelope;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.alchemy.state.AlchemySessionStore;
 import com.bong.client.hud.AlchemyProgressHudPlanner;
 import com.bong.client.hud.HudRenderLayer;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.network.ProtoServerDataBridge;
+import com.bong.client.network.ServerDataDispatch;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
+import com.bong.client.network.alchemy.AlchemySessionHandler;
 import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,6 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AlchemyScreenSessionPresentationTest {
     private static final BlockPos FURNACE_POS = new BlockPos(12, 64, -8);
+    private static final Path RUST_PROTO_FIXTURE_DIR = Path.of("..", "proto", "fixtures");
+    private static final String ACTIVE_SESSION_FIXTURE = "alchemy_session_active_v1.pb";
+    private static final String FINISHED_SESSION_FIXTURE = "alchemy_session_finished_v1.pb";
 
     private final List<String> sentPayloads = new ArrayList<>();
 
@@ -42,26 +54,23 @@ class AlchemyScreenSessionPresentationTest {
 
     @Test
     void openedScreenRefreshesTerminalGuidanceAndKeepsCentralHudHidden() {
-        AlchemyFurnaceStore.replace(furnace(true));
+        AlchemyFurnaceStore.replace(furnace(false));
         AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
         screen.attachSessionListenerForTests();
         AlchemySessionPresentationPlanner.Presentation awaiting =
             screen.sessionPresentationForTests();
-        assertFalse(awaiting.idle(),
-            "furnace 已声明 has_session=true 时不得暂时伪装成未起炉");
-        assertTrue(awaiting.statusText().contains("等待同步"),
-            "session packet 尚未到达时应显示等待同步，而不是丢失炉内占用态");
+        assertTrue(awaiting.idle(),
+            "空炉且尚未收到 session 时必须显示真正 idle，而不是伪造会话占用");
 
         AlchemySessionStore.replace(finishedSession());
 
         AlchemySessionPresentationPlanner.Presentation view = screen.sessionPresentationForTests();
         assertNotNull(view, "已打开 screen 必须收到 AlchemySessionStore 网络更新");
         assertTrue(view.terminal(),
-            "has_session=true + active=false + 完整 guidance 必须进入 terminal 呈现");
+            "空炉收到完整 inactive guidance 后必须进入 terminal 呈现");
         assertFalse(view.active());
-        assertTrue(view.statusText().contains("已完成"));
-        assertTrue(view.statusText().contains("已结束"),
-            "服务端 status_label 必须保留在结束态文案中");
+        assertEquals("§a已结束", view.statusText(),
+            "终态文案应保留服务端 status_label 且不重复追加相同状态");
         assertEquals("§f177 / 240t", view.progressText());
         assertEquals("§e0.73 / 0.61", view.temperatureText());
         assertEquals("§713.5 / 18.0", view.qiText());
@@ -72,6 +81,68 @@ class AlchemyScreenSessionPresentationTest {
         assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
                 .noneMatch(command -> command.layer() == HudRenderLayer.PROCESSING_HUD),
             "terminal snapshot 为 inactive，会保留炉内 guidance，但中央 HUD 必须继续隐藏");
+
+        screen.detachSessionListenerForTests();
+    }
+
+    @Test
+    void rustProducedActiveSnapshotRefreshesAlreadyOpenRealScreenThroughProductionWire() {
+        AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
+        screen.attachSessionListenerForTests();
+        AlchemySessionPresentationPlanner.Presentation awaiting =
+            screen.sessionPresentationForTests();
+        assertTrue(awaiting.idle(),
+            "screen 先打开且尚未收到任何快照时必须显示 idle");
+
+        ServerDataDispatch sessionDispatch = dispatchRustProductionSessionFixture(
+            ACTIVE_SESSION_FIXTURE
+        );
+        assertTrue(sessionDispatch.handled(),
+            "Rust 生产的 active fixture 必须经 production bridge/handler 入 store，实际 log="
+                + sessionDispatch.logMessage());
+
+        AlchemySessionPresentationPlanner.Presentation view = screen.sessionPresentationForTests();
+        assertTrue(view.active(),
+            "Rust fixture 必须经 production proto bridge 刷新已打开的真实 AlchemyScreen");
+        assertEquals("§f44 / 180t", view.progressText());
+        assertEquals("§e0.58 / 0.62", view.temperatureText());
+        assertEquals("§77.3 / 12.5", view.qiText());
+        assertTrue(view.detailLines().contains("§7AdjustTemp(0.58)"));
+        assertEquals(List.of(), view.flashingStageSlots(),
+            "fixture 当前两个未完成 stage 都不在 elapsed=44 的开放窗口内");
+
+        screen.detachSessionListenerForTests();
+    }
+
+    @Test
+    void rustProducedFinishedSnapshotSurvivesNormalEmptyFurnaceOrderingOnOpenScreen() {
+        AlchemyFurnaceStore.replace(furnace(false));
+        AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
+        screen.attachSessionListenerForTests();
+        assertTrue(screen.sessionPresentationForTests().idle());
+
+        ServerDataDispatch sessionDispatch = dispatchRustProductionSessionFixture(
+            FINISHED_SESSION_FIXTURE
+        );
+        assertTrue(sessionDispatch.handled(),
+            "Rust 生产的 finished fixture 必须经 production bridge/handler 入 store，实际 log="
+                + sessionDispatch.logMessage());
+
+        AlchemySessionPresentationPlanner.Presentation view = screen.sessionPresentationForTests();
+        assertTrue(view.terminal(),
+            "empty furnace → completed session 的生产顺序必须保留终态权威 guidance");
+        assertFalse(view.active());
+        assertEquals("§a已结束", view.statusText());
+        assertEquals("§f44 / 180t", view.progressText());
+        assertEquals("§e0.58 / 0.62", view.temperatureText());
+        assertEquals("§77.3 / 12.5", view.qiText());
+        assertTrue(view.detailLines().contains(
+            "§a✓ §7t0 (+0) §fci_she_hao×2 + ling_shui×1"));
+        assertTrue(view.detailLines().contains("§c× §7t40 (+6) §fdan_sha×3"));
+        assertTrue(view.detailLines().contains("§e○ §7t120 (+4) §f（无投料）"));
+        assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
+                .noneMatch(command -> command.layer() == HudRenderLayer.PROCESSING_HUD),
+            "finished fixture 为 inactive，真实 screen 保留 guidance 时中央 HUD 仍必须隐藏");
 
         screen.detachSessionListenerForTests();
     }
@@ -131,7 +202,7 @@ class AlchemyScreenSessionPresentationTest {
     }
 
     @Test
-    void retrySuccessEmptyFurnaceAndSessionClearCompletedPresentation() {
+    void emptyFurnaceAndSessionResetClearTerminalPresentation() {
         AlchemyFurnaceStore.replace(furnace(true));
         AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
         screen.attachSessionListenerForTests();
@@ -143,7 +214,7 @@ class AlchemyScreenSessionPresentationTest {
 
         AlchemySessionPresentationPlanner.Presentation cleared = screen.sessionPresentationForTests();
         assertTrue(cleared.idle(),
-            "重试发奖成功后的 empty furnace/session 必须清除旧完成态");
+            "empty furnace/session reset 必须清除旧终态");
         assertEquals("§8未起炉", cleared.statusText());
         assertEquals("§70 / 0t", cleared.progressText());
         assertEquals("", cleared.temperatureText());
@@ -201,6 +272,45 @@ class AlchemyScreenSessionPresentationTest {
             sentPayloads,
             "terminal session 的 T 必须走真实 ClientRequestSender alchemy_take_back seam"
         );
+    }
+
+    private static ServerDataDispatch dispatchRustProductionSessionFixture(String fileName) {
+        ServerDataEnvelope parsed = decodeThroughProductionBridge(
+            readRustProductionFixture(fileName)
+        );
+        assertEquals("alchemy_session", parsed.type(),
+            "共享 Rust fixture 必须是完整 ServerDataEnvelope.alchemy_session");
+        return new AlchemySessionHandler().handle(parsed);
+    }
+
+    private static byte[] readRustProductionFixture(String fileName) {
+        Path fixturePath = RUST_PROTO_FIXTURE_DIR.resolve(fileName);
+        assertTrue(Files.isRegularFile(fixturePath),
+            "Rust 生产 protobuf fixture 必须存在：" + fixturePath.toAbsolutePath());
+        try {
+            return Files.readAllBytes(fixturePath);
+        } catch (IOException error) {
+            throw new AssertionError(
+                "读取 Rust 生产 protobuf fixture 失败：" + fixturePath.toAbsolutePath(),
+                error
+            );
+        }
+    }
+
+    private static ServerDataEnvelope decodeThroughProductionBridge(byte[] envelopeBytes) {
+        ProtoServerDataBridge.BridgeResult bridged = ProtoServerDataBridge.bridge(envelopeBytes);
+        assertTrue(bridged.isSuccess(),
+            "proto→legacyJson 桥接应成功，实际 error=" + bridged.errorMessage());
+
+        String legacyJson = bridged.legacyJson();
+        ServerPayloadParseResult parsed = ServerDataEnvelope.parse(
+            legacyJson,
+            legacyJson.getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(parsed.isSuccess(),
+            "桥输出的 legacyJson 应能被解析，实际 error=" + parsed.errorMessage()
+                + "，legacyJson=" + legacyJson);
+        return parsed.envelope();
     }
 
     private static AlchemyFurnaceStore.Snapshot furnace(boolean hasSession) {
