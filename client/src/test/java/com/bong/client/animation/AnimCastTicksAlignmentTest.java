@@ -192,6 +192,18 @@ class AnimCastTicksAlignmentTest {
     private static final Set<String> LONG_FORM_EXCEPTIONS = Set.of("body.guangbo_ticao");
 
     /**
+     * 已落地第一人称手臂变体的招（plan-fpv-cast-av-v1 P2）——每招的
+     * {@code <tpv_anim>_fpv.json} 必须存在且与 TPV 父动画共享 endTick / isLoop，
+     * 保证第一人称施法时序与第三人称逐帧对齐（PlayerAnimator 按 endTick 结束播放，
+     * cast 完成瞬间的关键姿态必须两视角同刻）。变体命名与
+     * {@code BongAnimationPlayer.fpvVariantId} 一致：TPV path + {@code _fpv}。
+     *
+     * <p>新招落地 FPV 变体时**在此登记**（conventions §16.3 机器锁）——登记即锁定
+     * endTick 对齐，TPV 改 endTick 忘同步变体会立刻撞红。
+     */
+    private static final Set<String> FPV_VARIANT_SKILLS = Set.of("sword.cleave");
+
+    /**
      * 现状时长对拍不达标 allowlist（P0 落档，2026-07-18 离线全量核算产出）——
      * **只许缩小不许增长**：修好一招必须删对应条目；清零 = P1-P4 完成的机械判据。
      */
@@ -647,6 +659,30 @@ class AnimCastTicksAlignmentTest {
         assertTrue(violations.isEmpty(),
             "以下招式违反精度标准 #2 时长对拍且不在 allowlist：" + violations
                 + "——新招/重制动画必须直接达标，不得扩大 allowlist（冻结基线只缩不涨）");
+    }
+
+    /**
+     * FPV 变体机器锁（conventions §16.3）：每个登记的第一人称变体必须存在，且与 TPV
+     * 父动画 endTick / isLoop 完全一致——否则第一人称施法时序与第三人称错位（cast
+     * 完成瞬间关键姿态不同刻）。TPV 改 endTick 忘同步变体，本用例撞红。
+     */
+    @Test
+    void fpvVariantSharesCastTimingWithTpvParent() throws IOException {
+        for (String skillId : FPV_VARIANT_SKILLS) {
+            String tpvAnim = SKILL_ANIM.get(skillId);
+            assertNotNull(tpvAnim,
+                "FPV 变体登记招 `" + skillId + "` 无 TPV 动画映射——先在 SKILL_ANIM 登记父动画");
+            AnimMeta tpv = readAnim(tpvAnim);
+            AnimMeta fpv = readAnim(tpvAnim + "_fpv");  // readAnim 自带存在性断言
+            assertEquals(tpv.endTick(), fpv.endTick(),
+                "FPV 变体 `" + tpvAnim + "_fpv` 的 endTick=" + fpv.endTick()
+                    + " 与 TPV 父动画 `" + tpvAnim + "` 的 endTick=" + tpv.endTick()
+                    + " 不一致——第一人称施法时序会与第三人称错位（cast 完成瞬间不同刻）；"
+                    + "改 TPV endTick 后必须重跑 gen_" + tpvAnim + "_fpv.py 同步变体");
+            assertEquals(tpv.isLoop(), fpv.isLoop(),
+                "FPV 变体 `" + tpvAnim + "_fpv` 的 isLoop=" + fpv.isLoop()
+                    + " 与 TPV 父动画 isLoop=" + tpv.isLoop() + " 不一致——循环性必须继承");
+        }
     }
 
     /** 棘轮下界：allowlist 条目必须确实不达标——动画修好即强制删条目。 */
