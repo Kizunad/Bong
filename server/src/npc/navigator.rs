@@ -781,7 +781,7 @@ fn resolve_surface_y(wx: i32, wz: i32, terrain: Option<&TerrainProvider>) -> i32
 ///
 /// Returns `None` if the chunk is not loaded (caller should fall back to
 /// TerrainProvider).
-fn resolve_ground_y_from_chunk(
+pub(crate) fn resolve_ground_y_from_chunk(
     wx: i32,
     wz: i32,
     ref_y: i32,

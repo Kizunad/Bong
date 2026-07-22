@@ -6,7 +6,7 @@
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | ambient 共用地表门禁：mundane + threat 生成前统一解析 `surface_y + 1` | ⬜ |
+| P0 | ambient 共用地表门禁：mundane + threat 生成前统一解析 runtime `ground_y + 1` / raster fallback | ⬜ |
 | P1 | 饱和回归：纯函数、真实 scheduler→pool 生产链、预算与错误分支 | ⬜ |
 | P2 | 确定性 bot 场景 + 非目标隔离 + 完整 server 门禁 | ⬜ |
 
@@ -65,7 +65,7 @@
 1. 在 Overworld 的 ambient zone 内放置一个玩家。
 2. 令玩家处于明显高于周围自然地表的位置，例如玩家 Y=200、环带地表 Y≈66–72。
 3. 让 ambient mundane 或 threat 预算放行一次。
-4. 当前实现会在玩家 24–64 格水平环带生成 `Position.y≈200` 的地面型动物，而正确脚点应为该候选 X/Z 的 `query_surface(...).y + 1`。
+4. 当前实现会在玩家 24–64 格水平环带生成 `Position.y≈200` 的地面型动物，而正确脚点应优先来自该候选 X/Z 的 loaded `ChunkLayer` 安全支撑 `ground_y + 1`；runtime 标准窗口无法解析时才允许使用 passable raster `query_surface(...).y + 1`。
 5. 下一 Navigator tick 可能突然纠正；若 ground snap 失败/跳过，则继续悬空。
 
 测试实现不得依赖随机等待；必须用固定 seed、fake `SurfaceProvider` 和可控 scheduler/pool 测试接缝构造 witness。
@@ -91,17 +91,19 @@
 
 - **进料**：
   - `ambient_scheduler_system::<M>`、`sample_ambient_ring_position`、`AmbientSchedulerConfig<M>`、`AmbientMarkerData`。
-  - `TerrainProviders.overworld`、`SurfaceProvider::query_surface`、`SurfaceInfo { y, passable }`。
+  - `DimensionLayers.overworld`、runtime `ChunkLayer`、Navigator 标准地面扫描 helper。
+  - fallback `TerrainProviders.overworld`、`SurfaceProvider::query_surface`、`SurfaceInfo { y, passable }`。
   - `MundaneFaunaMarker` / `AmbientThreatMarker` 及既有 pool/spawn 函数。
-  - 既有 NPC 脚点口径 `surface_y + 1`。
+  - 既有 NPC 脚点口径 `ground_y + 1` / `surface_y + 1`。
 
 - **出料**：
   - scheduler 在 pool 调用前得到 surface-resolved `spawn_pos`；mundane 和 threat 共用同一个门禁。
-  - provider 缺失或 `passable=false` 时，本次候选不 spawn；不回退到玩家 Y，不占用本 tick pending budget。
+  - runtime/raster 双源均不可用或不安全时，本次候选不 spawn；不回退到玩家 Y，不占用本 tick pending budget。
+  - loaded runtime 支撑存在时不查询 raster；无 `TerrainProviders` 的 Flat/Anvil loaded chunk 仍能正常刷新。
   - spawn 成功后的 marker、zone 预算、era gate、ring radius、回收、qi 守恒逻辑保持不变。
 
 - **共享类型 / event**：
-  - 只复用 `TerrainProviders` / `SurfaceProvider` / `Position` / `AmbientMarkerData` 等已有类型。
+  - 只复用 `DimensionLayers` / `ChunkLayer` / `TerrainProviders` / `SurfaceProvider` / `Position` / `AmbientMarkerData` 等已有类型。
   - 不新增 `Gravity`、`Grounded`、第二套 height helper、spawn event 或近义 marker。
   - 不修改 `QiTransfer`、`TsySpawnRequested`、死亡/掉落事件。
 
@@ -157,22 +159,26 @@
 
 ### #2 helper 语义
 
-**决议**：新增或抽出一个可注入 `SurfaceProvider` 的纯函数，例如：
+**决议**：新增一个同时可注入 runtime `ChunkLayer` 与 raster `SurfaceProvider` 的 strict resolver：
 
 ```rust
 fn resolve_ambient_ground_position(
     candidate: DVec3,
+    layer: Option<&ChunkLayer>,
     terrain: Option<&impl SurfaceProvider>,
 ) -> Option<DVec3>
 ```
 
-- provider 存在且 `passable=true` → `Some(x, surface_y + 1, z)`；
-- provider 缺失或 `passable=false` → `None`；
-- 不复用 `snap_spawn_y_to_surface` 的 fail-open 返回值，除非先扩出明确的 strict variant；禁止根据函数结果是否“恰好等于输入”猜成功/失败。
+解析顺序固定：
 
-**理由**：ambient 候选可以安全丢弃并等下一轮；保留错误玩家 Y 比少刷一只更坏。
+1. 对 candidate X/Z/Y 使用 `floor` 得到 world block 坐标与 `ref_y`，优先复用 Navigator 既有标准窗口扫描（`ref_y - 16 .. ref_y + 4`，并按 layer 高度夹取）；该 helper 已统一 Euclidean chunk/local 坐标、支撑方块分类与双格净空规则，ambient 不复制规则；
+2. runtime loaded chunk 找到安全支撑 → `Some(x, ground_y + 1, z)`，不得再查询 raster；
+3. chunk 未加载或标准窗口无安全支撑 → 才允许查询 raster；`passable=true` 时返回 `Some(x, surface_y + 1, z)`；
+4. runtime 与 raster 均缺失/不安全 → `None`。禁止保留 candidate/player Y，也禁止根据结果是否“恰好等于输入”猜成功/失败。
 
-**落点**：`server/src/npc/spawn/common.rs:219-229`（对照，不改变既有 caller 的 fail-open 语义）+ `ambient_scheduler.rs` 新 strict helper / 本 plan P0。
+不复用 `snap_spawn_y_to_surface` 的 fail-open 返回值，也不复制 worldgen 高度公式。ambient 候选可以安全丢弃并等下一轮；保留错误玩家 Y 比少刷一只更坏。
+
+**落点**：`server/src/npc/navigator.rs:1047-1057`（标准 loaded-chunk helper）+ `server/src/npc/spawn/common.rs:219-229`（fail-open 对照，不改既有 caller）+ `server/src/npc/spawn/ambient_scheduler.rs` strict resolver / 本 plan P0、P1。
 
 ### #3 脚点口径
 
@@ -182,15 +188,17 @@ fn resolve_ambient_ground_position(
 
 ### #4 provider / passable 错误策略
 
-**决议**：scheduler 新增 `Option<Res<TerrainProviders>>`；生产环境只取 `providers.overworld`。`TerrainProviders` 由 `server/src/world/terrain/raster.rs:421-425` 定义，并在生产启动路径 `server/src/world/terrain/mod.rs:576-579` 插入；资源缺失、查询列不可走时跳过本次 spawn；不调用 pool、不增加 `pending_spawns_by_zone`。保留现有 scheduler 周期重试，自然在后续巡检重新选候选，不新增永久 pending state。现有 ambient 测试 fixture `ambient_scheduler.rs:1664-1674` 的 `make_app`、以及手工构建 scheduler 的 `:2080-2088` 等落点，实施时必须显式插入 fake `TerrainProviders`；另加资源缺失用例验证 fail-closed，而不是依赖生产资源偶然存在。
+**决议**：scheduler 同时注入 `Query<&ChunkLayer>` 与既有 `Option<Res<TerrainProviders>>`，通过 `DimensionLayers.overworld` 取得权威 runtime layer；`TerrainProviders.overworld` 只作为标准 runtime 窗口 miss/unloaded chunk 后的次级 fallback。这样 raster 世界仍可兜底远离 loaded window 的自然地表，而没有 `TerrainProviders` 的 fallback Flat/Anvil 世界只要目标 chunk 已加载且有安全支撑就能正常刷新，不会永久停刷。
 
-**落点**：`server/src/npc/spawn/ambient_scheduler.rs:614-635,784-801`、`server/src/world/terrain/mod.rs:576-579`、`server/src/npc/spawn/ambient_scheduler.rs:1664-1674,2080-2088` / 本 plan P0、P1。
+runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool、不增加 `pending_spawns_by_zone`。保留现有 scheduler 周期重试，不新增永久 pending state。测试 fixture 必须分别覆盖 loaded `ChunkLayer` 无 provider 成功、unloaded chunk + passable raster 成功、双源失败、runtime 胜过冲突 raster，以及完整 `App → ambient_scheduler_system::<M> → real pool → ECS Position` 两条生产链。
+
+**落点**：`server/src/npc/spawn/ambient_scheduler.rs:665-861`、`server/src/world/dimension.rs:37-57`、`server/src/world/terrain/raster.rs:412-444` / 本 plan P0、P1。
 
 ### #5 Navigator 与邻接 caller 边界
 
-**决议**：本 PR 不改 `navigator.rs`，不重做 `plan-npc-fixups-v3` 已完成的 idle/Dormant snap；也不修改兽潮、botany 吸引、教程鼠、繁衍、hydrate。它们是独立调用链的邻接风险，记录到 Finish Evidence 遗留；后续狩猎应按 entity archetype 单独验真，不能“凡 spawn 都 snap”。
+**决议**：本 PR 不改变 `navigator_tick_system`、idle/Dormant snap、深扫描 fallback 或任何导航状态机行为；只把其既有标准 loaded-chunk 地面 helper 提升为 `pub(crate)` 供 ambient 复用，从而共享 Euclidean 坐标、支撑分类、双格净空与窗口夹取规则，禁止 ambient 复制一份近义实现。也不修改兽潮、botany 吸引、教程鼠、繁衍、hydrate；它们是独立调用链的邻接风险，记录到 Finish Evidence 遗留。
 
-**落点**：`server/src/npc/navigator.rs:366-385,496-507,1047-1117`（明确不改）/ 本 plan非目标与遗留。
+**落点**：`server/src/npc/navigator.rs:1047-1057`（仅扩大 helper 可见性，导航行为不变）+ `server/src/npc/spawn/ambient_scheduler.rs` strict resolver / 本 plan P0、P1 与非目标。
 
 ### #6 bot 验收方式
 
@@ -216,19 +224,21 @@ fn resolve_ambient_ground_position(
 ### 交付物
 
 - `server/src/npc/spawn/ambient_scheduler.rs`：
-  - system 注入 `Option<Res<TerrainProviders>>`；
-  - 新 strict surface resolver（或放在 `spawn/common.rs` 并明确 strict 名称）；
+  - system 注入 `Query<&ChunkLayer>` + `Option<Res<TerrainProviders>>`，通过 `DimensionLayers.overworld` 读取 runtime layer；
+  - strict resolver 固定执行 runtime 标准窗口第一权威、passable raster 第二 fallback、双源失败返回 `None`；
+  - runtime 规则复用 `npc::navigator::resolve_ground_y_from_chunk`，不复制支撑/净空/坐标规则；
   - ring candidate 解析成功后才调用 `config.pool_fn`；
   - 失败时 continue，不写 pending budget；
-  - X/Z 保持 ring sample，Y 只来自 `query_surface(floor(x), floor(z)).y + 1`。
-- mundane/threat pool 与 spawn 函数无需各自复制 surface 查询。
+  - X/Z 保持 ring sample，Y 只来自 runtime `ground_y + 1` 或 fallback raster `surface_y + 1`，永不继承 candidate/player Y。
+- mundane/threat pool 与 spawn 函数无需各自复制地表查询。
 - 现有 `snap_spawn_y_to_surface` fail-open caller 保持兼容，不在本 PR 顺手改全局语义。
 
 ### 验收
 
-- 高处玩家和地下玩家都不能决定动物 Y。
+- 高处玩家和地下玩家都不能直接决定动物 Y；只在各自 `ref_y - 16 .. ref_y + 4` runtime 窗口内选安全支撑，窗口 miss 才使用 passable raster。
+- loaded runtime 支撑优先于冲突 raster，且 Flat/Anvil loaded chunk 在无 `TerrainProviders` 时仍可生成。
 - mundane 与 threat/rat 真实生产链都经过同一个 strict resolver。
-- provider/不可走失败不 spawn，不污染 pending/alive budget。
+- 双源缺失、液体/不可走或 pool `None` 均不 spawn，不污染 pending/alive budget。
 - ring radius、zone bounds、seed determinism、era/danger/season gate、回收和 qi 守恒行为不回归。
 
 ---
@@ -237,23 +247,26 @@ fn resolve_ambient_ground_position(
 
 测试名可按模块风格微调，但必须保留以下可 grep 的语义抓手：
 
-### 纯函数测试（`npc::spawn::ambient_scheduler::tests`）
+### strict resolver 测试（`npc::spawn::ambient_scheduler::tests`）
 
-- `ambient_ground_position_high_anchor_uses_surface_plus_one`：candidate Y=200、surface=66 → 67。
-- `ambient_ground_position_low_anchor_uses_surface_plus_one`：candidate Y=40、surface=66 → 67。
-- `ambient_ground_position_floors_negative_fractional_xz`：负数/小数 XZ 查询坐标准确，输出保留原小数 X/Z。
-- `ambient_ground_position_missing_provider_rejects_candidate`：`None` → `None`。
-- `ambient_ground_position_impassable_rejects_candidate`：深水/岩浆语义 → `None`。
+- `ambient_ground_position_loaded_runtime_surface_beats_raster`：loaded runtime surface 与 raster 冲突时采用 runtime，且不查询 raster。
+- `ambient_ground_position_high_reference_uses_runtime_standard_window` / `low_reference_*`：高/低 candidate 分别只按自己的 `ref_y - 16 .. ref_y + 4` 窗口选支撑。
+- `ambient_ground_position_loaded_chunk_without_raster_succeeds`：Flat/Anvil 模式无 `TerrainProviders` 仍使用 loaded chunk。
+- `ambient_ground_position_unloaded_chunk_uses_passable_raster` / `without_raster_rejects_candidate`：unloaded runtime 的 fallback 与双源 fail-closed。
+- `ambient_ground_position_blocked_headroom_scans_farther_down` / `multi_layer_column_chooses_highest_safe_support`：双格净空与降序最高安全支撑。
+- `ambient_ground_position_negative_fractional_xz_routes_runtime_chunk_euclidean`：负数/小数 XZ 使用 floor + Euclidean chunk/local 坐标，输出保留原小数 X/Z。
+- `ambient_ground_position_liquid_runtime_and_impassable_raster_reject`：液体不算 runtime 支撑、不可走 raster 不得兜底。
 
 ### scheduler / pool 生产集成测试
 
-- `ambient_scheduler_snaps_mundane_pool_before_spawn`：固定 player Y=200 / fake surface=66，真实 mundane pool 产出 entity Y=67。
-- `ambient_scheduler_snaps_threat_pool_before_spawn`：同条件真实 threat/rat pool 产出 Y=67。
-- `ambient_scheduler_surface_rejection_does_not_call_pool`：provider 缺失与 `passable=false` 两分支均不调用 pool。
+- `ambient_scheduler_system_snaps_mundane_real_pool_on_loaded_chunk_without_raster`：真实 `App → ambient_scheduler_system::<MundaneFaunaMarker> → mundane_pool_fn`，玩家 Y 与 runtime surface 至少相差 13 格，最终 ECS entity Y=`ground_y+1`。
+- `ambient_scheduler_system_snaps_threat_real_pool_on_loaded_chunk_without_raster`：同条件真实 `ambient_scheduler_system::<AmbientThreatMarker> → ambient_threat_pool_fn → rat` 产出。
+- `ambient_scheduler_surface_rejection_does_not_call_pool`：双源缺失与 `passable=false` 分支不调用 pool。
+- `ambient_scheduler_pool_none_does_not_tag_or_consume_pending_budget`：surface 成功但 pool 返回 `None` 时不挂 marker、不占 pending。
 - `ambient_scheduler_surface_rejection_does_not_consume_pending_budget`：同 tick 失败候选不增加 `pending_spawns_by_zone`，后续合法候选仍可在预算内生成。
 - 保留并复跑既有 `ring_sample_*`、`ambient_threat_pool_fn_spawns_*`、mundane pool/register 相关测试。
 
-测试必须断言最终 ECS `Position.y`，不能只测试 strict helper 或手工把已 snap 坐标塞进 spawn 函数。
+测试必须断言最终 ECS `Position.y`，真实 pool 的两条主用例必须实际运行 `ambient_scheduler_system::<M>`，不能只调用 private submission seam 或手工把已 snap 坐标塞进 spawn 函数。
 
 ---
 
