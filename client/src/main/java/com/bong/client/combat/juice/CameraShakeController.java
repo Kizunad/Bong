@@ -11,13 +11,35 @@ public final class CameraShakeController {
         if (profile == null || profile.shakeIntensity() <= 0f || profile.shakeDurationTicks() <= 0) {
             return Shake.none();
         }
-        double[] perpendicular = perpendicular(directionX, directionZ, profile.reverseShake());
-        Shake next = new Shake(
+        return triggerDirect(
             profile.shakeIntensity(),
             profile.shakeDurationTicks(),
+            directionX,
+            directionZ,
+            profile.reverseShake(),
+            nowMs
+        );
+    }
+
+    /**
+     * plan-fpv-cast-av-v1 P3 —— 直接以显式强度/时长触发抖动（施法 release juice 用，其参数按招
+     * pin 于 {@link CastJuiceProfile}，不经 school/tier 的 {@link CombatJuiceProfile}）。复用同一
+     * {@link #active} 单通道（last-write-wins，与命中抖动共享，不新建相机通道）。
+     * intensity ≤ 0 或 durationTicks ≤ 0 → 不触发（返回 {@link Shake#none()}）。
+     */
+    public static Shake triggerDirect(
+        float intensity, int durationTicks, double directionX, double directionZ, boolean reverse, long nowMs
+    ) {
+        if (intensity <= 0f || durationTicks <= 0) {
+            return Shake.none();
+        }
+        double[] perpendicular = perpendicular(directionX, directionZ, reverse);
+        Shake next = new Shake(
+            intensity,
+            durationTicks,
             perpendicular[0],
             perpendicular[1],
-            profile.reverseShake(),
+            reverse,
             Math.max(0L, nowMs)
         );
         active = next;
