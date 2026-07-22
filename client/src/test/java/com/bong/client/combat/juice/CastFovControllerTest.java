@@ -246,6 +246,35 @@ class CastFovControllerTest {
     }
 
     @Test
+    void shakeBakesMultiplierAtFireTimeNotLiveRecompute() {
+        // shake 分量：fire 时刻把倍率并入 CameraShakeController 强度（与 FOV 每帧乘算不对称，
+        // 见 CastFovController.multiplier javadoc 的刻意取舍）。
+        CastFovController.setJuiceMultiplier(0.5f);
+        predict(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        long fireNow = now[0];
+        CameraShakeController.Offsets scaled = CameraShakeController.activeOffsets(fireNow);
+        assertFalse(scaled.isZero(), "倍率 0.5 → shake 以缩放后强度触发（非零抖动）");
+
+        // 触发后改倍率：在播 shake 不追溯缩放（FOV 才每帧乘算）。
+        CastFovController.setJuiceMultiplier(0.0f);
+        CameraShakeController.Offsets afterChange = CameraShakeController.activeOffsets(fireNow);
+        assertEquals(scaled.yawDegrees(), afterChange.yawDegrees(), 1e-9f,
+            "shake 用触发时刻的倍率，事后改倍率不追溯（与 FOV 每帧乘算的取舍差异）");
+        assertEquals(scaled.pitchDegrees(), afterChange.pitchDegrees(), 1e-9f, "俯仰分量同理");
+    }
+
+    @Test
+    void shakeSuppressedWhenMultiplierZeroAtFire() {
+        CastFovController.setJuiceMultiplier(0.0f);
+        predict(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "fire 时倍率 0 → 强度 0 → 不触发 shake（juice 全局关闭）");
+        assertBaseline("倍率 0 时 FOV 也无脉冲");
+    }
+
+    @Test
     void deathTeardownResetsMidPulse() {
         predict(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
