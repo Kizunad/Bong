@@ -397,7 +397,7 @@ class AnimCastTicksAlignmentTest {
                 + "）——对拍必须绑定 main source set");
     }
 
-    private record AnimMeta(int endTick, boolean isLoop, int returnTick, JsonArray moves) {
+    private record AnimMeta(int endTick, int stopTick, boolean isLoop, int returnTick, JsonArray moves) {
     }
 
     private static AnimMeta readAnim(String animName) throws IOException {
@@ -406,11 +406,32 @@ class AnimCastTicksAlignmentTest {
             "映射表指向的动画资产不存在：" + file + "——映射表与磁盘漂移，先修映射再谈对拍");
         JsonObject emote = JsonParser.parseString(Files.readString(file))
             .getAsJsonObject().getAsJsonObject("emote");
+        int endTick = emote.get("endTick").getAsInt();
         return new AnimMeta(
-            emote.get("endTick").getAsInt(),
+            endTick,
+            emote.has("stopTick") ? emote.get("stopTick").getAsInt() : endTick,
             emote.has("isLoop") && emote.get("isLoop").getAsBoolean(),
             emote.has("returnTick") ? emote.get("returnTick").getAsInt() : 0,
             emote.getAsJsonArray("moves"));
+    }
+
+    /** 各招 body.x/y/z 的峰值绝对位移（模型 meters；FPV↔TPV 防晃对拍用，见 §16.1）。 */
+    private static double[] peakBodyDisplacement(AnimMeta meta) {
+        double[] peak = new double[3];  // x, y, z
+        String[] axes = {"x", "y", "z"};
+        for (JsonElement moveElement : meta.moves()) {
+            JsonObject move = moveElement.getAsJsonObject();
+            if (!move.has("body") || !move.get("body").isJsonObject()) {
+                continue;
+            }
+            JsonObject body = move.getAsJsonObject("body");
+            for (int i = 0; i < axes.length; i++) {
+                if (body.has(axes[i])) {
+                    peak[i] = Math.max(peak[i], Math.abs(body.get(axes[i]).getAsDouble()));
+                }
+            }
+        }
+        return peak;
     }
 
     /** 动画用到的全部轴（part.axis）集合，及 endTick 帧上出现的轴集合。 */
@@ -662,12 +683,21 @@ class AnimCastTicksAlignmentTest {
     }
 
     /**
-     * FPV 变体机器锁（conventions §16.3）：每个登记的第一人称变体必须存在，且与 TPV
-     * 父动画 endTick / isLoop 完全一致——否则第一人称施法时序与第三人称错位（cast
-     * 完成瞬间关键姿态不同刻）。TPV 改 endTick 忘同步变体，本用例撞红。
+     * FPV 变体机器锁（conventions §16.3）。当前锁定的可执行判据：
+     * <ol>
+     *   <li>变体资产存在（{@code readAnim} 自带存在性断言）；</li>
+     *   <li>{@code endTick} / {@code stopTick} 与 TPV 父动画一致——否则第一人称施法时序
+     *       与第三人称错位（cast 完成瞬间关键姿态不同刻、收尾不同刻）；</li>
+     *   <li>{@code isLoop} 继承 TPV；</li>
+     *   <li>FPV 各轴 {@code body.*} 峰值位移 ≤ TPV 半量（§16.1「FPV body 位移禁用或减半」，
+     *       {@code body.*} 走 MatrixStack 会整体位移相机，贴脸视角下大位移 = 晃晕）。</li>
+     * </ol>
+     * §16.3 另提到的「主打击轴逐帧时序对齐」判据定义较软（需按招标注打击轴语义），
+     * 归 plan-fpv-cast-av-v1 P5 视觉差异化回归收口，本锁暂不覆盖（见 conventions §16.3）。
      */
     @Test
     void fpvVariantSharesCastTimingWithTpvParent() throws IOException {
+        double bodyEps = 1e-3;  // meters；容忍舍入
         for (String skillId : FPV_VARIANT_SKILLS) {
             String tpvAnim = SKILL_ANIM.get(skillId);
             assertNotNull(tpvAnim,
@@ -679,9 +709,24 @@ class AnimCastTicksAlignmentTest {
                     + " 与 TPV 父动画 `" + tpvAnim + "` 的 endTick=" + tpv.endTick()
                     + " 不一致——第一人称施法时序会与第三人称错位（cast 完成瞬间不同刻）；"
                     + "改 TPV endTick 后必须重跑 gen_" + tpvAnim + "_fpv.py 同步变体");
+            assertEquals(tpv.stopTick(), fpv.stopTick(),
+                "FPV 变体 `" + tpvAnim + "_fpv` 的 stopTick=" + fpv.stopTick()
+                    + " 与 TPV 父动画 stopTick=" + tpv.stopTick() + " 不一致——收尾不同刻，"
+                    + "两视角淡出/摘层时机会错位");
             assertEquals(tpv.isLoop(), fpv.isLoop(),
                 "FPV 变体 `" + tpvAnim + "_fpv` 的 isLoop=" + fpv.isLoop()
                     + " 与 TPV 父动画 isLoop=" + tpv.isLoop() + " 不一致——循环性必须继承");
+
+            double[] tpvBody = peakBodyDisplacement(tpv);
+            double[] fpvBody = peakBodyDisplacement(fpv);
+            String[] axisName = {"x", "y", "z"};
+            for (int i = 0; i < axisName.length; i++) {
+                assertTrue(fpvBody[i] <= 0.5 * tpvBody[i] + bodyEps,
+                    "FPV 变体 `" + tpvAnim + "_fpv` 的 body." + axisName[i] + " 峰值位移 "
+                        + fpvBody[i] + " 超过 TPV 半量 " + (0.5 * tpvBody[i])
+                        + "——§16.1 要求 FPV body.* 禁用或减半（body.* 走 MatrixStack 整体位移"
+                        + "相机，贴脸视角下大位移会晃晕）；重跑 gen_" + tpvAnim + "_fpv.py 减半 body");
+            }
         }
     }
 

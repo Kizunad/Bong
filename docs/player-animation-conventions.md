@@ -699,4 +699,8 @@ Bong 当前"正架 cross punch"基线。所有数值都经过 §11 渲染工具�
 
 ### §16.3 机器把关（FPV 资产落地后启用）
 
-pre-P0 时全仓无 `*_fpv.json`，暂无可锁对象，本节先立文字约定。**待 P1/P2 FPV 变体落地后**，参照 §14.1「机械锁登记表」模式在 `client/src/test/java/com/bong/client/animation/AnimCastTicksAlignmentTest.java` 加一条 TPV↔FPV 对拍锁（登记 `FPV_VARIANT_SKILLS`：每个有 FPV 变体的招式，断言其 FPV 与 TPV 的 endTick / stopTick 一致、主打击轴时序对齐、FPV 无 `body.*` 大位移），把「连带复核」从文字约定升级为机器判据。此锁的落地是 plan-fpv-cast-av-v1 P1/P2 的交付物之一。
+pre-P0 时全仓无 `*_fpv.json`，暂无可锁对象，本节先立文字约定。**P1/P2 FPV 变体落地后已启用**：参照 §14.1「机械锁登记表」模式，在 `client/src/test/java/com/bong/client/animation/AnimCastTicksAlignmentTest.java` 落 `FPV_VARIANT_SKILLS` 登记表 + `fpvVariantSharesCastTimingWithTpvParent` 对拍锁，把「连带复核」从文字约定升级为机器判据。
+
+**当前锁定的可执行判据**（每个登记招的 FPV 变体 vs TPV 父动画）：① 变体资产存在；② `endTick` / `stopTick` 一致；③ `isLoop` 继承；④ FPV 各轴 `body.*` 峰值位移 ≤ TPV 半量（落地 §16.1「FPV body 位移禁用或减半」防相机晃）。
+
+**暂未机器锁定、留待后续**：§16.2 提到的「主打击轴逐帧时序对齐」判据定义较软（需按招标注哪条是打击轴、以及时序对齐的容差语义），归 plan-fpv-cast-av-v1 **P5 视觉差异化回归**收口，本锁暂不覆盖——在 P5 之前，主轴时序一致性仍靠 §16.2 的人工连带复核约定兜底。
