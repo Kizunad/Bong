@@ -1,6 +1,7 @@
 package com.bong.client.network.alchemy;
 
 import bong.Envelope;
+import com.bong.client.alchemy.AlchemyScreen;
 import com.bong.client.alchemy.AlchemySessionPresentationPlanner;
 import com.bong.client.alchemy.state.AlchemyAttemptHistoryStore;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
@@ -69,6 +70,9 @@ class AlchemySessionHandlerProtoWireTest {
                 "active furnace proto 必须进入 AlchemyFurnaceStore，实际 log="
                         + furnaceDispatch.logMessage());
 
+        AlchemyScreen screen = new AlchemyScreen();
+        screen.attachSessionListenerForTests();
+
         ServerDataDispatch sessionDispatch = dispatchRustProductionSessionFixture(
                 ACTIVE_SESSION_FIXTURE);
         assertTrue(sessionDispatch.handled(),
@@ -118,6 +122,18 @@ class AlchemySessionHandlerProtoWireTest {
         assertTrue(commands.stream().anyMatch(command ->
                         command.layer() == HudRenderLayer.PROCESSING_HUD && command.isRect()),
                 "活跃炼丹 session 必须进入真实 HUD 命令流");
+
+        AlchemySessionPresentationPlanner.Presentation screenPresentation =
+                screen.sessionPresentationForTests();
+        assertTrue(screenPresentation.active(),
+                "Rust fixture 必须经 production bridge/handler/store 刷新已打开的真实 AlchemyScreen");
+        assertEquals("§f44 / 180t", screenPresentation.progressText());
+        assertEquals("§e0.58 / 0.62", screenPresentation.temperatureText());
+        assertEquals("§77.3 / 12.5", screenPresentation.qiText());
+        assertTrue(screenPresentation.detailLines().contains("§7AdjustTemp(0.58)"));
+        assertEquals(List.of(), screenPresentation.flashingStageSlots(),
+                "fixture 当前两个未完成 stage 都不在 elapsed=44 的开放窗口内");
+        screen.detachSessionListenerForTests();
     }
 
     @Test
