@@ -441,8 +441,9 @@ pub fn should_recycle_ambient(nearest_player_planar_dist: f64) -> bool {
 ///
 /// `Unavailable` means the runtime cannot answer inside Navigator's standard scan window, so a
 /// passable raster may be consulted. `LoadedUnsafe` is different: the loaded chunk did identify a
-/// support block, but the resulting feet/head cells contain liquid, so the authoritative runtime
-/// vetoes the candidate and stale raster data must not override it.
+/// support block, but that support or either resulting feet/head cell is liquid. Liquid detection
+/// uses [`BlockState::is_liquid`] so Anvil-preserved properties such as `level=1` cannot bypass the
+/// authoritative runtime veto or be overridden by stale raster data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AmbientRuntimeGround {
     Safe(i32),
@@ -483,14 +484,11 @@ fn resolve_ambient_runtime_ground(
             chunk.block_state(local_x, (world_y - min_y) as u32, local_z)
         }
     };
+    let support = block_at(ground_y);
     let feet = block_at(ground_y + 1);
     let head = block_at(ground_y + 2);
 
-    if feet == BlockState::WATER
-        || feet == BlockState::LAVA
-        || head == BlockState::WATER
-        || head == BlockState::LAVA
-    {
+    if support.is_liquid() || feet.is_liquid() || head.is_liquid() {
         AmbientRuntimeGround::LoadedUnsafe
     } else {
         AmbientRuntimeGround::Safe(ground_y)
@@ -503,8 +501,9 @@ fn resolve_ambient_runtime_ground(
 /// decorations, and player-built blocks that the baked raster cannot represent. The runtime
 /// scan deliberately reuses Navigator's standard `ref_y - 16 .. ref_y + 4` support/headroom
 /// contract. Missing runtime data or a standard-window miss may consult a passable raster; a
-/// loaded support whose feet/head cells contain water or lava is an authoritative veto. Both
-/// sources missing or unsafe rejects the candidate; the sampled/player Y is never preserved.
+/// loaded support whose support/feet/head block is any water or lava state is an authoritative
+/// veto. Both sources missing or unsafe rejects the candidate; the sampled/player Y is never
+/// preserved.
 pub fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
     candidate: DVec3,
     layer: Option<&ChunkLayer>,
@@ -1022,7 +1021,7 @@ mod tests {
     use super::*;
     use crate::npc::spawn::common::NpcMarker;
     use crate::world::terrain::{SurfaceInfo, TerrainProvider};
-    use valence::prelude::{App, BlockState, Chunk, UnloadedChunk};
+    use valence::prelude::{App, BlockState, Chunk, PropName, PropValue, UnloadedChunk};
     use valence::testing::ScenarioSingleClient;
 
     struct FixtureSurface {
@@ -1299,11 +1298,30 @@ mod tests {
 
     #[test]
     fn ambient_ground_position_loaded_liquid_headroom_vetoes_passable_raster() {
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        assert_ne!(
+            water_level_one,
+            BlockState::WATER,
+            "test fixture must use a non-default water level state"
+        );
+        assert_ne!(
+            lava_level_one,
+            BlockState::LAVA,
+            "test fixture must use a non-default lava level state"
+        );
+        assert!(water_level_one.is_liquid());
+        assert!(lava_level_one.is_liquid());
+
         for (case, liquid, liquid_y) in [
             ("water at feet", BlockState::WATER, 67),
             ("water at head", BlockState::WATER, 68),
             ("lava at feet", BlockState::LAVA, 67),
             ("lava at head", BlockState::LAVA, 68),
+            ("water level=1 at feet", water_level_one, 67),
+            ("water level=1 at head", water_level_one, 68),
+            ("lava level=1 at feet", lava_level_one, 67),
+            ("lava level=1 at head", lava_level_one, 68),
         ] {
             let (app, layer_entity) = make_runtime_layer(
                 &[(0, 0)],
@@ -1346,11 +1364,30 @@ mod tests {
             panic!("runtime liquid veto must occur before either ambient pool is called");
         }
 
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        assert_ne!(
+            water_level_one,
+            BlockState::WATER,
+            "test fixture must use a non-default water level state"
+        );
+        assert_ne!(
+            lava_level_one,
+            BlockState::LAVA,
+            "test fixture must use a non-default lava level state"
+        );
+        assert!(water_level_one.is_liquid());
+        assert!(lava_level_one.is_liquid());
+
         for (case, liquid, liquid_y) in [
             ("water at feet", BlockState::WATER, 67),
             ("water at head", BlockState::WATER, 68),
             ("lava at feet", BlockState::LAVA, 67),
             ("lava at head", BlockState::LAVA, 68),
+            ("water level=1 at feet", water_level_one, 67),
+            ("water level=1 at head", water_level_one, 68),
+            ("lava level=1 at feet", lava_level_one, 67),
+            ("lava level=1 at head", lava_level_one, 68),
         ] {
             let (runtime_app, runtime_layer_entity) = make_runtime_layer(
                 &[(0, 0)],
