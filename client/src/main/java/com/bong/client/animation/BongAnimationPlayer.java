@@ -132,28 +132,15 @@ public final class BongAnimationPlayer {
         if (stack == null || pid == null || animId == null) {
             return false;
         }
-        // plan-fpv-cast-av-v1 P1：本地玩家第一人称手臂——本地玩家播 <id> 时优先取 <id>_fpv
-        // 变体（贴脸视角专调姿态，见 docs/player-animation-conventions.md §16）。命中则播变体
-        // + 开第一人称双臂/持物（路线 A，§8.1 #1：THIRD_PERSON_MODEL + FirstPersonConfiguration）；
-        // 无变体或远端玩家 → 出厂行为（TPV 动画 + 库默认 config，第一人称隐藏手臂）。远端玩家渲染
-        // 分支零变化（FPV 只影响本地玩家）。
-        Identifier contentId = animId;
-        boolean useFpvArms = false;
-        if (isLocalPlayer(pid)) {
-            Identifier fpvId = fpvVariantId(animId);
-            if (BongAnimationRegistry.contains(fpvId)) {
-                contentId = fpvId;
-                useFpvArms = true;
-            }
-        }
+        FpvResolution resolution = resolveFpvContent(pid, animId);
 
-        KeyframeAnimation anim = BongAnimationRegistry.get(contentId);
+        KeyframeAnimation anim = BongAnimationRegistry.get(resolution.contentId());
         if (anim == null) {
             return false;
         }
 
         KeyframeAnimationPlayer framePlayer = new KeyframeAnimationPlayer(anim);
-        applyFirstPersonRendering(framePlayer, useFpvArms);
+        applyFirstPersonRendering(framePlayer, resolution.useFpvArms());
 
         Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer =
             ACTIVE_LAYERS.computeIfAbsent(pid, k -> new HashMap<>());
@@ -205,13 +192,61 @@ public final class BongAnimationPlayer {
     }
 
     /**
-     * 本地玩家判定。单测 / 无 client 环境（{@code getInstance()==null} 或无 player）返回 false，
-     * 故 {@code _fpv} 变体路径只在真实客户端本地玩家上触发——远端玩家路径与既有 playOnStack
-     * 单测均不受影响。
+     * {@link #resolveFpvContent} 结果：要播的动画 id（原招或 {@code _fpv} 变体）+ 是否开
+     * 第一人称双臂。作为 {@link #playOnStack} 内 FPV 分支逻辑的可测契约（plan §P1）。
      */
-    private static boolean isLocalPlayer(UUID pid) {
+    record FpvResolution(Identifier contentId, boolean useFpvArms) {
+    }
+
+    /**
+     * FPV 内容解析（plan-fpv-cast-av-v1 P1，纯逻辑可测 seam）：本地玩家播 {@code <id>} 时
+     * 优先取 {@code <id>_fpv} 变体（贴脸视角专调姿态，见 docs/player-animation-conventions.md §16）
+     * —— 命中则 {@code (变体 id, useFpvArms=true)}（路线 A，§8.1 #1：THIRD_PERSON_MODEL +
+     * FirstPersonConfiguration 开双臂/持物）；无变体或远端玩家 → {@code (原 id, false)}（TPV 动画
+     * + 库默认 config，第一人称隐藏手臂，出厂行为）。**远端玩家渲染分支零变化**（FPV 只影响本地
+     * 玩家，plan §P1 硬约束）。
+     *
+     * <p>本地玩家判定经 {@link #localPlayerPredicate} seam 注入——生产 = MinecraftClient 当前玩家，
+     * 单测经 {@link #setLocalPlayerPredicateForTest} 驱动本分支（headless 下
+     * {@code MinecraftClient.getInstance()==null}，否则此 wiring 永不被自动化测试覆盖）。
+     */
+    static FpvResolution resolveFpvContent(UUID pid, Identifier animId) {
+        if (localPlayerPredicate.isLocal(pid)) {
+            Identifier fpvId = fpvVariantId(animId);
+            if (BongAnimationRegistry.contains(fpvId)) {
+                return new FpvResolution(fpvId, true);
+            }
+        }
+        return new FpvResolution(animId, false);
+    }
+
+    /** 本地玩家判定 seam（{@link #resolveFpvContent}）。生产默认 = MinecraftClient 当前玩家。 */
+    @FunctionalInterface
+    interface LocalPlayerPredicate {
+        boolean isLocal(UUID pid);
+    }
+
+    /**
+     * 生产实现：仅真实客户端上、UUID == 当前本地玩家时为 true。单测 / 无 client 环境
+     * （{@code getInstance()==null} 或无 player）返回 false——故 {@code _fpv} 变体路径默认只在
+     * 真实客户端本地玩家上触发，远端玩家路径与既有 playOnStack 单测均不受影响。
+     */
+    private static boolean isLocalPlayerFromClient(UUID pid) {
         MinecraftClient mc = MinecraftClient.getInstance();
         return mc != null && mc.player != null && mc.player.getUuid().equals(pid);
+    }
+
+    /** 当前生效的本地玩家判定（默认生产实现，单测可注入）。 */
+    private static LocalPlayerPredicate localPlayerPredicate =
+        BongAnimationPlayer::isLocalPlayerFromClient;
+
+    /**
+     * 测试钩子：注入本地玩家判定，驱动 {@link #resolveFpvContent} 的 FPV 变体分支
+     * （headless 下真实 MinecraftClient 恒 null，该分支否则不可自动化回归）。用后必须
+     * {@link #resetForTest} 复位，防跨测试污染。
+     */
+    static void setLocalPlayerPredicateForTest(LocalPlayerPredicate predicate) {
+        localPlayerPredicate = predicate;
     }
 
     /** {@code <ns>:<path>} → {@code <ns>:<path>_fpv}（本地玩家第一人称变体查找 id，plan §P1）。 */
@@ -305,7 +340,7 @@ public final class BongAnimationPlayer {
         PENDING_REMOVALS.add(new PendingRemoval(stack, layer, ticks));
     }
 
-    /** 测试钩子：清零 pending 队列，防止跨测试污染。 */
+    /** 测试钩子：清零 pending 队列 + 复位本地玩家判定 seam，防止跨测试污染。 */
     static void resetForTest() {
         synchronized (PENDING_REMOVALS) {
             PENDING_REMOVALS.clear();
@@ -313,6 +348,7 @@ public final class BongAnimationPlayer {
         synchronized (ACTIVE_LAYERS) {
             ACTIVE_LAYERS.clear();
         }
+        localPlayerPredicate = BongAnimationPlayer::isLocalPlayerFromClient;
     }
 
     /** 每 client tick 扣 1；到 0 的从 AnimationStack 摘除并出队。 */
