@@ -34,7 +34,7 @@
 |------|------|------|
 | P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
 | P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
-| P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 2：真机反馈"要交叉劈砍"→ 改双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂四轴 IK 合握，逐帧残差 ≤0.56 模型单位），待真机复测 |
+| P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 3/3 定稿：双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂**逐 tick** IK 合握，加密防插值脱手），关键帧残差 ≤0.55、中间帧最差 2.43 模型单位，t0=t20 收势闭合。剩余招式 FPV 变体待续 |
 | P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⬜ |
 | P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ⬜ |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |

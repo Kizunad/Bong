@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
 """sword_cleave_fpv —— sword.cleave 的第一人称变体（plan-fpv-cast-av-v1 P2）。
 
-目标：贴脸视角下双手**交叉合握**剑柄沿中线劈砍。round 1 真机反馈"两手没握到
-一起"；round 2 排查发现根因不在左手偏移量——TPV 右臂全程在右肩矢状面
-（x≈-5）里挥，发力顶点右拳甩到右胯后下方，离左肩球面（臂长 12）之外，
-左手**物理不可达**（IK 残差 9.2 模型单位实证）。真·双手劈砍 = 挥击平面收
-到身体中线，两只手都要动：
+目标：贴脸视角下双手**交叉合握**剑柄沿中线劈砍，且**全程**（含关键帧之间的
+快速劈击插值段）不脱手。
 
-  1. 右臂中线校正：pitch/bend（挥击弧线与发力时序）原样继承 TPV，只解
-     yaw/roll 两轴把右拳钉到中线面（x=MIDLINE_X），强正则贴原姿态。
-  2. 左臂 IK 合握：解 pitch/yaw/roll/bend 四轴，左拳钉到「校正后右拳沿前臂
-     轴往柄尾退 GRIP_STACK」的握把点——两腕交叠 = 交叉合握。
+演进：
+  round 1 固定偏移 → 两手没合上（左手物理够不到右拳）。
+  round 2 双臂离线 IK（右臂 yaw/roll 中线校正 + 左臂四轴 IK 合握）→ 关键帧上
+    合握，但 t13→t16 快速劈击段左臂配置差 152°，MC 线性插关节角时手端画圆弧
+    中途向左鼓出（三视图实证：t14/t15 左拳甩到体侧）。
+  round 3（本版）加密左臂锚点：左臂**每 tick 一个 IK 关键帧**，插值段 ≤1 tick，
+    手端来不及偏离；右臂/头/躯干/腿仍只保留原 TPV 关键帧（连带缓动 easing），
+    保挥击质感不被拍平。中间 tick 的左手握把目标 = 对**已校正右臂**按 MC 真实
+    缓动（destination 帧的 easing）插值后 FK，与运行时右手轨迹逐帧对齐。
 
-全部离线烘焙（MC 运行时无 IK，conventions §9）：复用 render_animation.py 的
-正向运动学（PIVOTS / part_rotation_matrix / bent_end_local，v8 真机对拍过），
-解出的角度写回普通关键帧，运行时零额外成本。头/躯干/腿继承 TPV，`body.*`
-位移减半防相机晃（conventions §16.1）。维护（§16.2）：TPV 改了挥击轴/时序，
-重跑本生成器即可——两臂逐帧重解自动跟随。
-
-求解器：坐标下降 + 步长减半（目标函数便宜，无需 scipy）。左臂多起点
-（前帧解 / 当帧 TPV 左臂）防局部极小（round 2 初版单起点热启动在 t13→t16
-快速下挥段被卡在举臂解上）；帧间正则贴前帧解保时间连贯；右臂姿态相同的帧
-（t0 guard / t20 收势回 guard）复用同一解保首尾闭合。
+全部生成期离线烘焙（MC 运行时无 IK，conventions §9）：复用 render_animation.py
+的正向运动学（PIVOTS / part_rotation_matrix / bent_end_local，v8 真机对拍过）。
+`body.*` 位移减半防相机晃（conventions §16.1）。维护（§16.2）：TPV 改了挥击轴/
+时序，重跑本生成器即可——两臂逐帧重解自动跟随。
 """
 
 from __future__ import annotations
@@ -60,6 +56,31 @@ RIGHT_MAX_DEV = {"yaw": 55.0, "roll": 65.0}
 W_RIGHT_AUTH = 0.002  # 强正则贴 TPV 原姿态：中线优先，偏移最小化
 
 
+# ----- 缓动（对齐 MC/Emotecraft 对 destination 帧应用 easing）----------------
+
+def _ease(name: str, a: float) -> float:
+    n = (name or "linear").upper()
+    if n in ("LINEAR", "CONSTANT"):
+        return a
+    if n == "INSINE":
+        return 1.0 - math.cos(a * math.pi / 2)
+    if n == "OUTSINE":
+        return math.sin(a * math.pi / 2)
+    if n == "INOUTSINE":
+        return -(math.cos(math.pi * a) - 1) / 2
+    if n == "INQUAD":
+        return a * a
+    if n == "OUTQUAD":
+        return 1 - (1 - a) ** 2
+    if n == "INOUTQUAD":
+        return 2 * a * a if a < 0.5 else 1 - (-2 * a + 2) ** 2 / 2
+    if n == "INCUBIC":
+        return a ** 3
+    if n == "OUTCUBIC":
+        return 1 - (1 - a) ** 3
+    return a  # 未知缓动退化为线性
+
+
 def _arm_points(part: str, pose_deg: dict) -> tuple[np.ndarray, np.ndarray]:
     """body 帧内 (肘, 拳端) 位置。双臂共享 body 变换，作相对目标时可整体略去。"""
     pivot = np.array(PIVOTS[part], dtype=np.float64)
@@ -95,13 +116,12 @@ def _descend(energy, params: dict, clamp) -> dict:
     return params
 
 
-def solve_right(auth: dict) -> tuple[dict, float]:
-    """右臂中线校正：只解 yaw/roll 把拳端拉到 x=MIDLINE_X，返回 (完整姿态, 残差)。
+def solve_right(auth: dict) -> dict:
+    """右臂中线校正：只解 yaw/roll 把拳端拉到 x=MIDLINE_X，返回完整校正姿态（度）。
 
     近垂直举臂段 yaw 对 x 失效（绕臂轴自旋），roll 补位——两轴联合覆盖全程。
     """
     _, auth_hand = _arm_points("rightArm", auth)
-    target_x = MIDLINE_X
 
     def clamp(k: str, v: float) -> float:
         base = float(auth.get(k, 0.0))
@@ -113,8 +133,7 @@ def solve_right(auth: dict) -> tuple[dict, float]:
 
     def energy(p: dict) -> float:
         _, hand = _arm_points("rightArm", full(p))
-        # x 钉中线为主；y/z 弱贴原轨迹（防 roll 把拳甩离挥击弧线）
-        e = (hand[0] - target_x) ** 2
+        e = (hand[0] - MIDLINE_X) ** 2
         e += 0.15 * ((hand[1] - auth_hand[1]) ** 2 + (hand[2] - auth_hand[2]) ** 2)
         e += W_RIGHT_AUTH * sum(
             (p[k] - float(auth.get(k, 0.0))) ** 2 for k in RIGHT_KEYS
@@ -122,10 +141,7 @@ def solve_right(auth: dict) -> tuple[dict, float]:
         return e
 
     seed = {k: float(auth.get(k, 0.0)) for k in RIGHT_KEYS}
-    solved = _descend(energy, seed, clamp)
-    result = full(solved)
-    _, hand = _arm_points("rightArm", result)
-    return result, abs(float(hand[0]) - target_x)
+    return full(_descend(energy, seed, clamp))
 
 
 def grip_target(right_pose: dict) -> np.ndarray:
@@ -136,8 +152,15 @@ def grip_target(right_pose: dict) -> np.ndarray:
     return hand - GRIP_STACK * n
 
 
-def solve_left(target: np.ndarray, seeds: list, prev: dict) -> tuple[dict, float]:
-    """左臂四轴 IK：多起点坐标下降，取最优解。prev = 帧间正则锚点（度）。"""
+def solve_left(
+    target: np.ndarray, seeds: list, prev: dict, w_prev: float = W_LEFT_PREV
+) -> tuple[dict, float]:
+    """左臂四轴 IK：多起点坐标下降，取最优解。prev = 帧间正则锚点（度）。
+
+    w_prev 控连续性正则强度：锚点用默认（弱压解跳变）；加密的中间帧用近零权重
+    （平滑改由每 tick 一锚点的密度保证，正则再拉会把解拽离握把靶——快速段实测能
+    偏 ~3 模型单位），只靠起点选 basin 维持配置连续。
+    """
 
     def clamp(k: str, v: float) -> float:
         lo, hi = LEFT_BOUNDS[k]
@@ -149,7 +172,7 @@ def solve_left(target: np.ndarray, seeds: list, prev: dict) -> tuple[dict, float
         return float(diff @ diff)
 
     def energy(p: dict) -> float:
-        return hand_dist2(p) + W_LEFT_PREV * sum(
+        return hand_dist2(p) + w_prev * sum(
             (p[k] - prev.get(k, 0.0)) ** 2 for k in LEFT_KEYS
         )
 
@@ -163,12 +186,29 @@ def solve_left(target: np.ndarray, seeds: list, prev: dict) -> tuple[dict, float
     return best_params, math.sqrt(hand_dist2(best_params))
 
 
+def _left_move(solved: dict) -> dict:
+    return {
+        "pitch": round(solved["pitch"], 1),
+        "yaw": round(solved["yaw"], 1),
+        "roll": round(solved["roll"], 1),
+        "bend": round(solved["bend"], 1),
+        "axis": AXIS_FIXED,
+    }
+
+
 def build_pose_table() -> dict:
-    out = {}
-    solved_cache: dict[tuple, tuple[dict, dict]] = {}
+    tpv_ticks = sorted(tpv.POSE.keys())
+    lo, hi = tpv_ticks[0], tpv_ticks[-1]
+
+    # ---- 一遍：解 TPV 锚点（右臂中线校正 + 左臂 IK），记右臂校正角供加密插值 ----
+    anchor_pose: dict[int, dict] = {}  # 完整锚点姿态（度，body 已减半）
+    corrected_right: dict[int, dict] = {}  # 校正后右臂角（度），供中间 tick 插值
+    anchor_left: dict[int, dict] = {}  # 锚点左臂解（度），供中间 tick 混合起点
     prev_left = {k: float(tpv.GUARD["leftArm"].get(k, 0.0)) for k in LEFT_KEYS}
-    print("tick |  right yaw/roll (auth->solved)  x-resid | left pitch/yaw/roll/bend  resid")
-    for tick in sorted(tpv.POSE.keys()):
+    right_cache: dict[tuple, dict] = {}
+    left_cache: dict[tuple, dict] = {}  # 按右臂姿态缓存左臂解 → t20 复用 t0 保收势闭合
+    print("tick |  right yaw/roll (auth->solved) | left pitch/yaw/roll/bend  resid")
+    for tick in tpv_ticks:
         p = copy.deepcopy(tpv.POSE[tick])
         body = p.get("body")
         if body:  # body 位移减半（防相机晃）
@@ -176,26 +216,20 @@ def build_pose_table() -> dict:
                 if ax in body:
                     body[ax] *= BODY_DISP_SCALE
         auth_right = p["rightArm"]
-        key = tuple(
+        rkey = tuple(
             round(float(auth_right.get(k, 0.0)), 3)
             for k in ("pitch", "yaw", "roll", "bend", "axis")
         )
-        if key in solved_cache:  # 右臂姿态相同 → 复用解（t0/t20 首尾闭合）
-            right, left = solved_cache[key]
-            print(f"{tick:4d} | (cached)")
+        right = right_cache.get(rkey) or solve_right(auth_right)
+        right_cache[rkey] = right
+        if rkey in left_cache:  # 右臂姿态相同 → 握把目标相同 → 复用左臂解（t0/t20 闭合）
+            left, lres = left_cache[rkey], -1.0
         else:
-            right, rx = solve_right(auth_right)
             seeds = [prev_left, p["leftArm"]]  # 前帧解 + 当帧 TPV 左臂（防局部极小）
             left, lres = solve_left(grip_target(right), seeds, prev_left)
-            solved_cache[key] = (right, left)
-            print(
-                f"{tick:4d} | y {float(auth_right.get('yaw', 0)):6.1f}->{right['yaw']:6.1f}"
-                f"  r {float(auth_right.get('roll', 0)):6.1f}->{right['roll']:6.1f}"
-                f"  {rx:5.2f} | "
-                f"{left['pitch']:6.1f}/{left['yaw']:6.1f}/{left['roll']:6.1f}/{left['bend']:5.1f}"
-                f"  {lres:5.2f}"
-            )
+            left_cache[rkey] = left
         prev_left = left
+
         p["rightArm"] = {
             "pitch": float(auth_right["pitch"]),
             "yaw": round(float(right["yaw"]), 1),
@@ -203,14 +237,58 @@ def build_pose_table() -> dict:
             "bend": float(auth_right["bend"]),
             "axis": AXIS_FIXED,
         }
-        p["leftArm"] = {
-            "pitch": round(left["pitch"], 1),
-            "yaw": round(left["yaw"], 1),
-            "roll": round(left["roll"], 1),
-            "bend": round(left["bend"], 1),
-            "axis": AXIS_FIXED,
+        p["leftArm"] = _left_move(left)
+        anchor_pose[tick] = p
+        corrected_right[tick] = dict(p["rightArm"])
+        anchor_left[tick] = dict(left)
+        tag = "(cached)" if lres < 0 else f"{lres:5.2f}"
+        print(
+            f"{tick:4d} | y {float(auth_right.get('yaw', 0)):6.1f}->{right['yaw']:6.1f}"
+            f"  r {float(auth_right.get('roll', 0)):6.1f}->{right['roll']:6.1f} | "
+            f"{left['pitch']:6.1f}/{left['yaw']:6.1f}/{left['roll']:6.1f}/{left['bend']:5.1f}"
+            f"  {tag}"
+        )
+
+    # ---- 二遍：左臂每 tick 一个 IK 锚点，防插值中脱手 ----
+    def right_at(tick: int) -> dict:
+        """MC 真实缓动下的校正右臂角（度）：对 destination 帧 easing 插两侧锚点。"""
+        if tick in corrected_right:
+            return corrected_right[tick]
+        a = max(t for t in tpv_ticks if t < tick)
+        b = min(t for t in tpv_ticks if t > tick)
+        alpha = _ease(tpv.POSE[b].get("easing", "linear"), (tick - a) / (b - a))
+        ra, rb = corrected_right[a], corrected_right[b]
+        return {
+            k: ra[k] + (rb[k] - ra[k]) * alpha
+            for k in ("pitch", "yaw", "roll", "bend", "axis")
         }
-        out[tick] = p
+
+    out: dict[int, dict] = {}
+    prev_left = {k: float(anchor_pose[lo]["leftArm"][k]) for k in LEFT_KEYS}
+    max_resid = 0.0
+    for tick in range(lo, hi + 1):
+        if tick in anchor_pose:
+            out[tick] = anchor_pose[tick]  # 完整锚点（保 TPV 右臂/身体缓动）
+            prev_left = dict(anchor_left[tick])
+            continue
+        # 中间 tick：只补左臂锚点，右臂/身体走 MC 自然缓动插值。
+        # 起点 = 前帧解 + 两侧锚点解按缓动混合（顺插值路径收敛，消尾段跳变）。
+        a = max(t for t in tpv_ticks if t < tick)
+        b = min(t for t in tpv_ticks if t > tick)
+        alpha = _ease(tpv.POSE[b].get("easing", "linear"), (tick - a) / (b - a))
+        blend = {
+            k: anchor_left[a][k] + (anchor_left[b][k] - anchor_left[a][k]) * alpha
+            for k in LEFT_KEYS
+        }
+        target = grip_target(right_at(tick))
+        # 多起点：前帧解 + 缓动混合 + 两侧锚点解本身（锚点是已知贴靶的低残差配置，
+        # 直接从它们出发下降避免中间帧卡局部极小）；近零正则让每 tick 都贴紧握把靶。
+        seeds = [prev_left, blend, anchor_left[a], anchor_left[b]]
+        left, lres = solve_left(target, seeds, prev_left, w_prev=1e-5)
+        max_resid = max(max_resid, lres)
+        out[tick] = {"easing": "linear", "leftArm": _left_move(left)}
+        prev_left = left
+    print(f"densify: 左臂锚点 {lo}..{hi} 全 tick，中间帧最大合握残差 {max_resid:.2f}")
     return out
 
 
@@ -220,9 +298,9 @@ def main() -> int:
         name="sword_cleave_fpv",
         description=(
             "sword.cleave 第一人称变体：挥击平面收到身体中线的双手交叉合握劈砍——"
-            "右臂 yaw/roll 中线校正（pitch/bend 挥击弧线继承 TPV），左臂逐关键帧"
-            "离线 IK 钉到右拳柄尾握把点，body 位移减半防晃"
-            "（plan-fpv-cast-av-v1 P2 round 2）。"
+            "右臂 yaw/roll 中线校正（pitch/bend 挥击弧线继承 TPV），左臂逐 tick 离线"
+            "IK 钉到右拳柄尾握把点（关键帧间也不脱手），body 位移减半防晃"
+            "（plan-fpv-cast-av-v1 P2 round 3）。"
         ),
         end_tick=20,
         stop_tick=22,
