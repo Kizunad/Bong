@@ -23,7 +23,7 @@ export interface AgentUiRuntimePubClient {
   publish(channel: string, message: string): Promise<number>;
 }
 
-export interface AgentUiRuntimeSubClient extends AgentUiRuntimePubClient {
+export interface AgentUiRuntimeSubClient {
   subscribe(channel: string): Promise<unknown>;
   on(event: string, listener: (channel: string, message: string) => void): unknown;
   off?(event: string, listener: (channel: string, message: string) => void): unknown;
