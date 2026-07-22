@@ -1520,10 +1520,11 @@ async function startAgentUiResponseRuntime(opts: {
   const cleanup = (): Promise<void> => {
     cleanupPromise ??= (async () => {
       const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
-      try {
-        await Promise.race([runtime.disconnect(), timeout]);
-      } catch (error) {
+      const disconnected = runtime.disconnect().catch((error) => {
         console.warn("[tiandao] agent ui runtime disconnect error:", error);
+      });
+      try {
+        await Promise.race([disconnected, timeout]);
       } finally {
         pub.disconnect();
         sub.disconnect();

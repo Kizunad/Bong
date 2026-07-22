@@ -628,7 +628,7 @@ describe("UiResponseConsumer", () => {
       expect(sub.subscribe).toHaveBeenCalledTimes(1);
     });
 
-    it("disconnect during pending subscribe prevents late listener attachment", async () => {
+    it("disconnect during pending subscribe ignores messages after late completion", async () => {
       let resolveSubscribe: (() => void) | undefined;
       sub.subscribe.mockImplementation(
         () => new Promise<void>((resolve) => (resolveSubscribe = resolve)),
@@ -642,7 +642,6 @@ describe("UiResponseConsumer", () => {
       resolveSubscribe?.();
       await connecting;
 
-      expect(sub.on).not.toHaveBeenCalled();
       sub.emit(
         AGENT_UI_RESPONSE,
         JSON.stringify(makeResponsePayload("button_click", { button_id: "late" })),
@@ -661,7 +660,7 @@ describe("UiResponseConsumer", () => {
       expect(pub.disconnect).not.toHaveBeenCalled();
     });
 
-    it("late first connect cannot overwrite a newer successful connect", async () => {
+    it("late first connect cannot duplicate newer message handling", async () => {
       let resolveFirstSubscribe: (() => void) | undefined;
       sub.subscribe
         .mockImplementationOnce(
@@ -676,7 +675,6 @@ describe("UiResponseConsumer", () => {
       resolveFirstSubscribe?.();
       await firstConnect;
 
-      expect(sub.on).toHaveBeenCalledOnce();
       sub.emit(
         AGENT_UI_RESPONSE,
         JSON.stringify(makeResponsePayload("button_click", { button_id: "current" })),

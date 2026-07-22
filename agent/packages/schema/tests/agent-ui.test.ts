@@ -44,6 +44,8 @@ describe("AgentUiResponsePayloadV1.target_player Unicode contract", () => {
 
   const boundaryCases = [
     { name: "empty", value: "", valid: false },
+    { name: "1 BMP", value: "界", valid: true },
+    { name: "1 astral", value: "😀", valid: true },
     { name: "128 BMP", value: "界".repeat(128), valid: true },
     { name: "129 BMP", value: "界".repeat(129), valid: false },
     { name: "128 astral", value: "😀".repeat(128), valid: true },
@@ -57,9 +59,13 @@ describe("AgentUiResponsePayloadV1.target_player Unicode contract", () => {
 
   it("只对新增 server→agent target_player 锁定 1..=128 code points", () => {
     for (const testCase of boundaryCases) {
+      const actual = Value.Check(
+        AgentUiResponsePayloadV1,
+        payload(testCase.value),
+      );
       expect(
-        Value.Check(AgentUiResponsePayloadV1, payload(testCase.value)),
-        `target_player 对 ${testCase.name} 应判定为 ${testCase.valid}`,
+        actual,
+        `target_player 对 ${testCase.name} 期望=${testCase.valid}，实际=${actual}`,
       ).toBe(testCase.valid);
     }
   });
@@ -70,10 +76,20 @@ describe("AgentUiResponsePayloadV1.target_player Unicode contract", () => {
       action: "error",
       params: { reason: "realm_gate_rejected" },
     };
-    expect(Value.Check(AgentUiResponsePayloadV1, legacy)).toBe(true);
-    expect(Value.Check(AgentUiResponsePayloadV1, { ...legacy, target_player: null })).toBe(
-      false,
-    );
+    const legacyActual = Value.Check(AgentUiResponsePayloadV1, legacy);
+    expect(
+      legacyActual,
+      `legacy S2A response 省略 target_player 应兼容通过；实际=${legacyActual}`,
+    ).toBe(true);
+
+    const nullActual = Value.Check(AgentUiResponsePayloadV1, {
+      ...legacy,
+      target_player: null,
+    });
+    expect(
+      nullActual,
+      `显式 null target_player 应被拒绝；实际=${nullActual}`,
+    ).toBe(false);
   });
 
   it("Fabric C2S payload 与 envelope 均拒绝伪造 target_player", () => {
@@ -89,9 +105,29 @@ describe("AgentUiResponsePayloadV1.target_player Unicode contract", () => {
       ...spoofedPayload,
     };
 
-    expect(Value.Check(AgentUiClientResponsePayloadV1, spoofedPayload)).toBe(false);
-    expect(Value.Check(AgentUiResponseRequestV1, spoofedEnvelope)).toBe(false);
-    expect(Value.Check(ClientRequestV1, spoofedEnvelope)).toBe(false);
+    const payloadActual = Value.Check(
+      AgentUiClientResponsePayloadV1,
+      spoofedPayload,
+    );
+    expect(
+      payloadActual,
+      `Fabric C2S payload 不得伪造 server-only target_player；实际=${payloadActual}`,
+    ).toBe(false);
+
+    const envelopeActual = Value.Check(
+      AgentUiResponseRequestV1,
+      spoofedEnvelope,
+    );
+    expect(
+      envelopeActual,
+      `agent_ui_response C2S envelope 不得伪造 target_player；实际=${envelopeActual}`,
+    ).toBe(false);
+
+    const unionActual = Value.Check(ClientRequestV1, spoofedEnvelope);
+    expect(
+      unionActual,
+      `ClientRequestV1 union 不得接受伪造 target_player；实际=${unionActual}`,
+    ).toBe(false);
   });
 });
 
@@ -161,6 +197,31 @@ describe("AgentUiRequestCommandV1", () => {
     ).toBe(false);
   });
 
+  it("happy path: timeout_ticks 接受 20 与 2400 边界", () => {
+    for (const timeoutTicks of [20, 2400]) {
+      const actual = Value.Check(AgentUiRequestCommandV1, {
+        ...validCommand,
+        timeout_ticks: timeoutTicks,
+      });
+      expect(
+        actual,
+        `timeout_ticks=${timeoutTicks} 应通过闭区间边界校验；实际=${actual}`,
+      ).toBe(true);
+    }
+  });
+
+  it("happy path: xml 接受恰好 8192 个字符", () => {
+    const xmlAtLimit = "x".repeat(8192);
+    const actual = Value.Check(AgentUiRequestCommandV1, {
+      ...validCommand,
+      xml: xmlAtLimit,
+    });
+    expect(
+      actual,
+      `xml 恰好 8192 个字符应通过 maxLength 边界；实际=${actual}`,
+    ).toBe(true);
+  });
+
   it("负样本: timeout_ticks=19 → 低于 minimum:20", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, timeout_ticks: 19 }),
@@ -183,8 +244,8 @@ describe("AgentUiRequestCommandV1", () => {
     expect(Value.Check(AgentUiRequestCommandV1, missing)).toBe(false);
   });
 
-  it("负样本: xml 超 8192 字节", () => {
-    const bigXml = "<label>" + "x".repeat(8200) + "</label>";
+  it("负样本: xml 超过 8192 个字符", () => {
+    const bigXml = "x".repeat(8193);
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, xml: bigXml }),
     ).toBe(false);
@@ -407,6 +468,12 @@ describe("sample roundtrip: agent_ui_request_command.sample.json", () => {
 describe("sample roundtrip: client-request.agent-ui-response.sample.json", () => {
   it("符合真实 Fabric C2S AgentUiClientResponsePayloadV1（button_click action）", () => {
     const sample = loadSample("client-request.agent-ui-response.sample.json");
+    const envelopeActual = Value.Check(AgentUiResponseRequestV1, sample);
+    expect(
+      envelopeActual,
+      `C2S sample 完整 envelope 应通过 AgentUiResponseRequestV1 且不得藏入 server-only 字段；实际=${envelopeActual}`,
+    ).toBe(true);
+
     // sample 含 v/type envelope 字段，提取真实 C2S payload 字段做校验
     const asRecord = sample as Record<string, unknown>;
     const clientPayload = {
@@ -417,7 +484,7 @@ describe("sample roundtrip: client-request.agent-ui-response.sample.json", () =>
     const result = Value.Check(AgentUiClientResponsePayloadV1, clientPayload);
     expect(
       result,
-      `client-request.agent-ui-response.sample.json 的 C2S 字段应通过 AgentUiClientResponsePayloadV1 校验`,
+      `client-request.agent-ui-response.sample.json 的 C2S 字段应通过 AgentUiClientResponsePayloadV1 校验；实际=${result}`,
     ).toBe(true);
   });
 });
