@@ -37,8 +37,8 @@ use std::marker::PhantomData;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned,
-    Entity, Position, Query, Res, ResMut, Resource, Update, With, Without,
+    bevy_ecs, App, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned, Entity,
+    Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
@@ -451,6 +451,41 @@ enum AmbientRuntimeGround {
     NeedsRaster { loaded_chunk: bool },
 }
 
+fn loaded_ambient_landing_is_safe(
+    world_x: i32,
+    world_z: i32,
+    ground_y: i32,
+    layer: &ChunkLayer,
+) -> bool {
+    let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
+    let Some(chunk) = layer.chunk(chunk_pos) else {
+        return false;
+    };
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+    let local_x = world_x.rem_euclid(16) as u32;
+    let local_z = world_z.rem_euclid(16) as u32;
+    let block_at = |world_y: i32| {
+        (min_y..=max_y)
+            .contains(&world_y)
+            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
+    };
+    let (Some(support), Some(feet), Some(head)) = (
+        block_at(ground_y),
+        block_at(ground_y + 1),
+        block_at(ground_y + 2),
+    ) else {
+        return false;
+    };
+
+    support.blocks_motion()
+        && !support.is_liquid()
+        && !feet.blocks_motion()
+        && !feet.is_liquid()
+        && !head.blocks_motion()
+        && !head.is_liquid()
+}
+
 fn resolve_ambient_runtime_ground(
     world_x: i32,
     world_z: i32,
@@ -474,28 +509,10 @@ fn resolve_ambient_runtime_ground(
         return AmbientRuntimeGround::NeedsRaster { loaded_chunk: true };
     };
 
-    let chunk = layer
-        .chunk(chunk_pos)
-        .expect("loaded ambient chunk was checked above");
-    let min_y = layer.min_y();
-    let max_y = min_y + layer.height() as i32 - 1;
-    let local_x = world_x.rem_euclid(16) as u32;
-    let local_z = world_z.rem_euclid(16) as u32;
-    let block_at = |world_y: i32| {
-        if world_y < min_y || world_y > max_y {
-            BlockState::AIR
-        } else {
-            chunk.block_state(local_x, (world_y - min_y) as u32, local_z)
-        }
-    };
-    let support = block_at(ground_y);
-    let feet = block_at(ground_y + 1);
-    let head = block_at(ground_y + 2);
-
-    if support.is_liquid() || feet.is_liquid() || head.is_liquid() {
-        AmbientRuntimeGround::LoadedUnsafe
-    } else {
+    if loaded_ambient_landing_is_safe(world_x, world_z, ground_y, layer) {
         AmbientRuntimeGround::Safe(ground_y)
+    } else {
+        AmbientRuntimeGround::LoadedUnsafe
     }
 }
 
@@ -511,41 +528,13 @@ fn resolve_loaded_raster_landing(
     surface_y: i32,
     layer: &ChunkLayer,
 ) -> AmbientRuntimeGround {
-    if resolve_ground_y_from_chunk(world_x, world_z, surface_y, Some(layer)) != Some(surface_y) {
-        return AmbientRuntimeGround::LoadedUnsafe;
-    }
-
-    let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
-    let Some(chunk) = layer.chunk(chunk_pos) else {
-        return AmbientRuntimeGround::LoadedUnsafe;
-    };
-    let min_y = layer.min_y();
-    let max_y = min_y + layer.height() as i32 - 1;
-    let local_x = world_x.rem_euclid(16) as u32;
-    let local_z = world_z.rem_euclid(16) as u32;
-    let block_at = |world_y: i32| {
-        (min_y..=max_y)
-            .contains(&world_y)
-            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
-    };
-    let (Some(support), Some(feet), Some(head)) = (
-        block_at(surface_y),
-        block_at(surface_y + 1),
-        block_at(surface_y + 2),
-    ) else {
-        return AmbientRuntimeGround::LoadedUnsafe;
-    };
-
-    if support.is_liquid()
-        || feet.is_liquid()
-        || feet.blocks_motion()
-        || head.is_liquid()
-        || head.blocks_motion()
+    if resolve_ground_y_from_chunk(world_x, world_z, surface_y, Some(layer)) != Some(surface_y)
+        || !loaded_ambient_landing_is_safe(world_x, world_z, surface_y, layer)
     {
-        AmbientRuntimeGround::LoadedUnsafe
-    } else {
-        AmbientRuntimeGround::Safe(surface_y)
+        return AmbientRuntimeGround::LoadedUnsafe;
     }
+
+    AmbientRuntimeGround::Safe(surface_y)
 }
 
 /// Resolve an ambient ground candidate from the live world first, then the terrain raster.
@@ -1606,6 +1595,178 @@ mod tests {
             Some((1, 2)),
             "both kinds must query the passable raster before rejecting its air support"
         );
+    }
+
+    #[test]
+    fn ambient_ground_position_support_bounds_rejects_layer_edge_headroom() {
+        let (probe, probe_layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let probe_layer = probe.world().get::<ChunkLayer>(probe_layer_entity).unwrap();
+        let max_y = probe_layer.min_y() + probe_layer.height() as i32 - 1;
+
+        for (case, support_y) in [
+            ("support at max_y puts both body cells outside", max_y),
+            ("support at max_y - 1 puts head outside", max_y - 1),
+        ] {
+            let (app, layer_entity) =
+                make_runtime_layer(&[(0, 0)], &[(1, support_y, 2, BlockState::STONE)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert_eq!(
+                resolve_ambient_ground_position::<FixtureSurface>(
+                    DVec3::new(1.5, f64::from(support_y), 2.5),
+                    Some(layer),
+                    None,
+                ),
+                None,
+                "{case}: loaded runtime landing must reject unrepresentable feet/head cells"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_ground_position_non_motion_support_rejects_standard_and_raster_paths() {
+        let sign = BlockState::REDSTONE_WIRE;
+        assert!(
+            !sign.blocks_motion() && !sign.is_liquid(),
+            "fixture must be non-liquid and non-motion-blocking"
+        );
+
+        for (case, candidate_y, support_y) in [
+            ("standard runtime", 80.0, 66),
+            ("loaded raster exact landing", 200.0, 70),
+        ] {
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, support_y, 2, sign)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: support_y,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, candidate_y, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: non-motion-blocking sign must not be an ambient support"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_support_vetoes_skip_both_pools_markers_and_pending() {
+        fn panic_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            panic!("invalid ambient support must veto before either pool is called");
+        }
+
+        let (probe, probe_layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let probe_layer = probe.world().get::<ChunkLayer>(probe_layer_entity).unwrap();
+        let max_y = probe_layer.min_y() + probe_layer.height() as i32 - 1;
+        let sign = BlockState::REDSTONE_WIRE;
+        assert!(!sign.blocks_motion() && !sign.is_liquid());
+
+        for (case, candidate_y, terrain_y, support_y, support) in [
+            (
+                "runtime support at max_y",
+                f64::from(max_y),
+                max_y,
+                max_y,
+                BlockState::STONE,
+            ),
+            ("standard non-motion sign", 80.0, 66, 66, sign),
+            ("raster exact non-motion sign", 200.0, 70, 70, sign),
+        ] {
+            let (runtime_app, runtime_layer_entity) =
+                make_runtime_layer(&[(0, 0)], &[(1, support_y, 2, support)]);
+            let runtime_layer = runtime_app
+                .world()
+                .get::<ChunkLayer>(runtime_layer_entity)
+                .unwrap();
+            let terrain = FixtureSurface {
+                y: terrain_y,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+            let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+            for kind in ["mundane", "threat"] {
+                let mut output = App::new();
+                let entity_layer = output.world_mut().spawn_empty().id();
+                let mut pending = HashMap::new();
+                let spawned = {
+                    let mut commands = output.world_mut().commands();
+                    match kind {
+                        "mundane" => submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, candidate_y, 2.5),
+                                season: Season::Summer,
+                                now: 88,
+                            },
+                        ),
+                        "threat" => submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, candidate_y, 2.5),
+                                season: Season::Summer,
+                                now: 88,
+                            },
+                        ),
+                        _ => unreachable!(),
+                    }
+                };
+                output.world_mut().flush();
+
+                assert_eq!(
+                    spawned, None,
+                    "{case}/{kind}: invalid support rejects candidate"
+                );
+                assert!(
+                    pending.is_empty(),
+                    "{case}/{kind}: invalid support must not consume pending budget"
+                );
+                let world = output.world_mut();
+                let mut mundane = world.query::<&MundaneFaunaMarker>();
+                assert_eq!(
+                    mundane.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no mundane marker"
+                );
+                let mut threat = world.query::<&AmbientThreatMarker>();
+                assert_eq!(
+                    threat.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no threat marker"
+                );
+                let mut spawned_by_pool = world.query_filtered::<(), With<NpcMarker>>();
+                assert_eq!(
+                    spawned_by_pool.iter(world).count(),
+                    0,
+                    "{case}/{kind}: invalid support leaves no pool entity"
+                );
+            }
+        }
     }
 
     #[test]
