@@ -501,16 +501,20 @@ fn resolve_ambient_runtime_ground(
 
 /// Validate a raster fallback against the exact landing cells of an already-loaded runtime chunk.
 ///
-/// Raster surface Y is a baked hint, not authority over authored/player blocks. The support cell may
-/// be solid (the normal floor) or air (the existing high-reference fallback contract), but it must
-/// not be liquid. Feet/head must be readable, non-liquid, and non-motion-blocking. An out-of-height
-/// landing is not verifiable and therefore fails closed.
+/// Raster surface Y is a baked hint, not authority over authored/player blocks. The landing must
+/// first satisfy Navigator's exact support/headroom contract at the raster Y, then its
+/// support/feet/head cells must be readable, non-liquid, and non-motion-blocking. An
+/// out-of-height or non-standable landing is not verifiable and therefore fails closed.
 fn resolve_loaded_raster_landing(
     world_x: i32,
     world_z: i32,
     surface_y: i32,
     layer: &ChunkLayer,
 ) -> AmbientRuntimeGround {
+    if resolve_ground_y_from_chunk(world_x, world_z, surface_y, Some(layer)) != Some(surface_y) {
+        return AmbientRuntimeGround::LoadedUnsafe;
+    }
+
     let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
     let Some(chunk) = layer.chunk(chunk_pos) else {
         return AmbientRuntimeGround::LoadedUnsafe;
@@ -1258,7 +1262,7 @@ mod tests {
 
     #[test]
     fn ambient_ground_position_loaded_chunk_standard_window_miss_uses_passable_raster() {
-        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 66, 2, BlockState::STONE)]);
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 70, 2, BlockState::STONE)]);
         let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
         let terrain = FixtureSurface {
             y: 70,
@@ -1482,6 +1486,126 @@ mod tests {
                 "{case}: both kinds must query the passable raster before runtime landing veto"
             );
         }
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_scan_miss_rejects_air_support() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 70,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(1.5, 200.0, 2.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            None,
+            "loaded runtime data must reject a stale raster surface whose support is air"
+        );
+        assert_eq!(
+            terrain.queried.get(),
+            Some((1, 2)),
+            "loaded standard-window miss must query the raster before rejecting its air support"
+        );
+    }
+
+    #[test]
+    fn ambient_loaded_scan_miss_air_support_skips_both_pools_markers_and_pending() {
+        fn panic_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            panic!("air support veto must occur before either ambient pool is called");
+        }
+
+        let (runtime_app, runtime_layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let runtime_layer = runtime_app
+            .world()
+            .get::<ChunkLayer>(runtime_layer_entity)
+            .unwrap();
+        let terrain = FixtureSurface {
+            y: 70,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+        for kind in ["mundane", "threat"] {
+            let mut output = App::new();
+            let entity_layer = output.world_mut().spawn_empty().id();
+            let mut pending = HashMap::new();
+            let spawned = {
+                let mut commands = output.world_mut().commands();
+                match kind {
+                    "mundane" => submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                        &mut commands,
+                        Some(runtime_layer),
+                        Some(&terrain),
+                        panic_pool_fn,
+                        &mut pending,
+                        AmbientSpawnRequest {
+                            layer: entity_layer,
+                            zone: &zone,
+                            candidate: DVec3::new(1.5, 200.0, 2.5),
+                            season: Season::Summer,
+                            now: 88,
+                        },
+                    ),
+                    "threat" => submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                        &mut commands,
+                        Some(runtime_layer),
+                        Some(&terrain),
+                        panic_pool_fn,
+                        &mut pending,
+                        AmbientSpawnRequest {
+                            layer: entity_layer,
+                            zone: &zone,
+                            candidate: DVec3::new(1.5, 200.0, 2.5),
+                            season: Season::Summer,
+                            now: 88,
+                        },
+                    ),
+                    _ => unreachable!(),
+                }
+            };
+            output.world_mut().flush();
+
+            assert_eq!(spawned, None, "air support must reject {kind} candidate");
+            assert!(
+                pending.is_empty(),
+                "air support veto must not consume {kind} pending budget"
+            );
+            let world = output.world_mut();
+            let mut mundane = world.query::<&MundaneFaunaMarker>();
+            assert_eq!(
+                mundane.iter(world).count(),
+                0,
+                "no mundane marker for {kind}"
+            );
+            let mut threat = world.query::<&AmbientThreatMarker>();
+            assert_eq!(threat.iter(world).count(), 0, "no threat marker for {kind}");
+            let mut spawned_by_pool = world.query_filtered::<(), With<NpcMarker>>();
+            assert_eq!(
+                spawned_by_pool.iter(world).count(),
+                0,
+                "air support veto must not leave a {kind} pool entity"
+            );
+        }
+
+        assert_eq!(
+            terrain.queried.get(),
+            Some((1, 2)),
+            "both kinds must query the passable raster before rejecting its air support"
+        );
     }
 
     #[test]
