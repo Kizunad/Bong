@@ -9,7 +9,9 @@ use valence::prelude::{
 };
 
 use crate::npc::movement::GameTick;
-use crate::npc::spawn::ambient_scheduler::{submit_ambient_dev_spawn_once, AmbientDevSpawnKind};
+use crate::npc::spawn::ambient_scheduler::{
+    submit_ambient_dev_spawn_once, AmbientDevSpawnKind, AmbientDevSpawnRequest,
+};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::season::WorldSeasonState;
 use crate::world::terrain::TerrainProviders;
@@ -140,14 +142,16 @@ pub fn handle_ambient_spawn(
 
         let accepted = submit_ambient_dev_spawn_once(
             &mut commands,
-            kind,
-            overworld_layer,
-            runtime_layer,
-            terrain,
-            zone,
-            candidate,
-            season,
-            now,
+            AmbientDevSpawnRequest {
+                kind,
+                layer: overworld_layer,
+                runtime_layer,
+                terrain,
+                zone,
+                candidate,
+                season,
+                now,
+            },
         )
         .is_some();
         if accepted {
