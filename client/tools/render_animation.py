@@ -502,6 +502,11 @@ def render_grid(json_path: Path, out_dir: Path, ticks: Optional[List[float]] = N
 # +X=left / +Y=down / +Z=back.
 FPV_EYE_LOCAL = np.array([0.0, -4.0, 2.0], dtype=np.float64)
 
+# 近平面深度：project_fpv 与 project_seg_fpv 共用同一边界（防两处魔数 0.5 漂移）。
+# 语义 = "d < FPV_NEAR 才算在相机后/太近而剔除"，d == FPV_NEAR 可正常投影——故
+# 近平面裁剪可精确裁到 FPV_NEAR 而不被 project_fpv 判否（裁剪端点 t∈[0,1] 无外推）。
+FPV_NEAR = 0.5
+
 
 def compute_fpv_camera(kfs, tick: float, body_disp_scale: float = 1.0) -> dict:
     """Eye world position + orthonormal camera basis, in MC model space.
@@ -526,10 +531,15 @@ def compute_fpv_camera(kfs, tick: float, body_disp_scale: float = 1.0) -> dict:
 def project_fpv(
     pos: np.ndarray, cam: dict, focal: float, origin: Tuple[int, int]
 ) -> Optional[Tuple[int, int]]:
-    """Perspective-project a world point; None if at/behind the near plane."""
+    """Perspective-project a world point; None if strictly behind the near plane.
+
+    Accepts a point exactly AT the near plane (d == FPV_NEAR) so that near-plane
+    clipping in project_seg_fpv can land its clipped endpoint precisely on the
+    plane and still render.
+    """
     rel = pos - cam["eye"]
     d = float(np.dot(rel, cam["fwd"]))
-    if d <= 0.5:
+    if d < FPV_NEAR:
         return None
     u = float(np.dot(rel, cam["right"]))
     v = float(np.dot(rel, cam["up"]))
@@ -548,7 +558,7 @@ def project_seg_fpv(
     cam: dict,
     focal: float,
     origin: Tuple[int, int],
-    near: float = 0.5,
+    near: float = FPV_NEAR,
 ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
     """Project a world segment, clipping against the near plane so a segment
     with ONE endpoint behind the camera still renders its visible part.
@@ -562,17 +572,15 @@ def project_seg_fpv(
     a, b = a_world, b_world
     if da < near and db < near:
         return None  # entirely behind the near plane
-    # Clip to just IN FRONT of the near plane, not exactly onto it: project_fpv
-    # rejects d <= near, so landing the clipped endpoint at d == near would make
-    # project_fpv return None and drop the whole segment — defeating the clip
-    # (the shoulder→elbow upper-arm segment, shoulder usually behind the eye,
-    # would still vanish and the arm looks amputated).
-    eps = 1e-3
+    # Clip the behind-plane endpoint exactly ONTO the near plane. project_fpv
+    # accepts d == near, so the clipped endpoint renders; and because the moved
+    # endpoint has da < near <= db (or symmetric), t = (near-da)/(db-da) stays in
+    # [0, 1] — no extrapolation past the segment's far endpoint.
     if da < near:
-        t = (near + eps - da) / (db - da)
+        t = (near - da) / (db - da)
         a = a_world + (b_world - a_world) * t
     elif db < near:
-        t = (near + eps - db) / (da - db)
+        t = (near - db) / (da - db)
         b = b_world + (a_world - b_world) * t
     pa = project_fpv(a, cam, focal, origin)
     pb = project_fpv(b, cam, focal, origin)
