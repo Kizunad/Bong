@@ -41,7 +41,7 @@ class AlchemyScreenSessionPresentationTest {
     }
 
     @Test
-    void openedScreenRefreshesFinishedUnclaimedGuidanceAndKeepsCentralHudHidden() {
+    void openedScreenRefreshesTerminalGuidanceAndKeepsCentralHudHidden() {
         AlchemyFurnaceStore.replace(furnace(true));
         AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
         screen.attachSessionListenerForTests();
@@ -52,15 +52,14 @@ class AlchemyScreenSessionPresentationTest {
         assertTrue(awaiting.statusText().contains("等待同步"),
             "session packet 尚未到达时应显示等待同步，而不是丢失炉内占用态");
 
-        AlchemySessionStore.replace(finishedUnclaimed());
+        AlchemySessionStore.replace(finishedSession());
 
         AlchemySessionPresentationPlanner.Presentation view = screen.sessionPresentationForTests();
         assertNotNull(view, "已打开 screen 必须收到 AlchemySessionStore 网络更新");
-        assertTrue(view.finishedUnclaimed(),
-            "has_session=true + active=false + 完整 guidance 必须进入 finished-unclaimed 呈现");
+        assertTrue(view.terminal(),
+            "has_session=true + active=false + 完整 guidance 必须进入 terminal 呈现");
         assertFalse(view.active());
         assertTrue(view.statusText().contains("已完成"));
-        assertTrue(view.statusText().contains("等待按 T 取回"));
         assertTrue(view.statusText().contains("已结束"),
             "服务端 status_label 必须保留在结束态文案中");
         assertEquals("§f177 / 240t", view.progressText());
@@ -72,7 +71,7 @@ class AlchemyScreenSessionPresentationTest {
         assertTrue(view.detailLines().contains("§7干预：§7AdjustTemp(0.73)"));
         assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
                 .noneMatch(command -> command.layer() == HudRenderLayer.PROCESSING_HUD),
-            "finished-unclaimed 为 inactive，会保留炉内 guidance，但中央 HUD 必须继续隐藏");
+            "terminal snapshot 为 inactive，会保留炉内 guidance，但中央 HUD 必须继续隐藏");
 
         screen.detachSessionListenerForTests();
     }
@@ -136,8 +135,8 @@ class AlchemyScreenSessionPresentationTest {
         AlchemyFurnaceStore.replace(furnace(true));
         AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
         screen.attachSessionListenerForTests();
-        AlchemySessionStore.replace(finishedUnclaimed());
-        assertTrue(screen.sessionPresentationForTests().finishedUnclaimed());
+        AlchemySessionStore.replace(finishedSession());
+        assertTrue(screen.sessionPresentationForTests().terminal());
 
         AlchemyFurnaceStore.replace(furnace(false));
         AlchemySessionStore.replace(AlchemySessionStore.Snapshot.empty());
@@ -168,11 +167,11 @@ class AlchemyScreenSessionPresentationTest {
             "重复 init/build/resize 等价 attach 必须只保留一个 session listener");
         int refreshesBeforeUpdate = refreshCount[0];
 
-        AlchemySessionStore.replace(finishedUnclaimed());
+        AlchemySessionStore.replace(finishedSession());
         assertEquals(refreshesBeforeUpdate + 1, refreshCount[0],
             "单次 store update 必须恰好刷新一次，不能因重复 attach 倍增");
         AlchemySessionPresentationPlanner.Presentation retained = screen.sessionPresentationForTests();
-        assertTrue(retained.finishedUnclaimed(),
+        assertTrue(retained.terminal(),
             "幂等 listener 仍必须把 store 更新送到已打开 screen");
 
         screen.detachSessionListenerForTests();
@@ -191,16 +190,16 @@ class AlchemyScreenSessionPresentationTest {
     }
 
     @Test
-    void finishedUnclaimedStillSendsRealTakeBackAction() {
+    void terminalSessionStillSendsRealTakeBackAction() {
         AlchemyFurnaceStore.replace(furnace(true));
-        AlchemySessionStore.replace(finishedUnclaimed());
+        AlchemySessionStore.replace(finishedSession());
         AlchemyScreen screen = new AlchemyScreen(FURNACE_POS);
 
         assertTrue(screen.takeBackForTests(), "T take-back action 必须继续由 AlchemyScreen 消费");
         assertEquals(
             List.of("{\"type\":\"alchemy_take_back\",\"v\":1,\"furnace_pos\":[12,64,-8],\"slot_idx\":0}"),
             sentPayloads,
-            "finished-unclaimed 的 T 必须走真实 ClientRequestSender alchemy_take_back seam"
+            "terminal session 的 T 必须走真实 ClientRequestSender alchemy_take_back seam"
         );
     }
 
@@ -210,7 +209,7 @@ class AlchemyScreenSessionPresentationTest {
         );
     }
 
-    private static AlchemySessionStore.Snapshot finishedUnclaimed() {
+    private static AlchemySessionStore.Snapshot finishedSession() {
         return new AlchemySessionStore.Snapshot(
             "finished_contract_recipe",
             false,

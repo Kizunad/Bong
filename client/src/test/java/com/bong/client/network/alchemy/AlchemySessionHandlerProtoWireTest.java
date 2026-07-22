@@ -171,9 +171,8 @@ class AlchemySessionHandlerProtoWireTest {
         AlchemySessionPresentationPlanner.Presentation screenPresentation =
                 AlchemySessionPresentationPlanner.describe(
                         AlchemyFurnaceStore.snapshot(), snapshot);
-        assertTrue(screenPresentation.finishedUnclaimed(),
-                "Rust finished fixture + has_session=true 必须进入实际 AlchemyScreen 共用的等待取回呈现");
-        assertTrue(screenPresentation.statusText().contains("等待按 T 取回"));
+        assertTrue(screenPresentation.terminal(),
+                "Rust finished fixture + has_session=true 必须进入实际 AlchemyScreen 共用的终态呈现");
         assertEquals("§f44 / 180t", screenPresentation.progressText());
         assertEquals("§e0.58 / 0.62", screenPresentation.temperatureText());
         assertEquals("§77.3 / 12.5", screenPresentation.qiText());

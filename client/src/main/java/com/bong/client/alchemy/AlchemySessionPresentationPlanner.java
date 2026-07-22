@@ -8,15 +8,15 @@ import java.util.List;
 
 /**
  * Headless presentation seam shared by {@link AlchemyScreen} and protobuf/store contract tests.
- * It keeps the furnace-presence bit authoritative: a retained inactive session is waiting for
- * take-back, while an empty furnace clears even if the terminal session packet still carries
- * completed guidance for diagnostics.
+ * It renders the latest authoritative session snapshot for the furnace screen. Active guidance is
+ * distinct from terminal guidance: a finished snapshot may retain targets and stages for review,
+ * while an empty furnace still clears stale terminal data.
  */
 public final class AlchemySessionPresentationPlanner {
     public record Presentation(
         boolean idle,
         boolean active,
-        boolean finishedUnclaimed,
+        boolean terminal,
         String statusText,
         String progressText,
         String temperatureText,
@@ -84,8 +84,7 @@ public final class AlchemySessionPresentationPlanner {
                 false,
                 false,
                 true,
-                "§a已完成 · 等待按 T 取回 · §f"
-                    + statusOr(safeSession.statusLabel(), "已结束"),
+                "§a已结束 · §f" + statusOr(safeSession.statusLabel(), "已结束"),
                 progressText(safeSession),
                 temperatureText(safeSession),
                 qiText(safeSession),
