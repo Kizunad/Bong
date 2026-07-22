@@ -37,8 +37,8 @@ use std::marker::PhantomData;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, ChunkLayer, Commands, Component, DVec3, Despawned, Entity, Position, Query, Res,
-    ResMut, Resource, Update, With, Without,
+    bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned,
+    Entity, Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
@@ -437,14 +437,74 @@ pub fn should_recycle_ambient(nearest_player_planar_dist: f64) -> bool {
 // 距离环采样 —— 复用 PoissonSpawnSampler 的自适应间距参数，环带范围为自研逻辑
 // ---------------------------------------------------------------------------
 
+/// Result of consulting the live runtime column for an ambient spawn.
+///
+/// `Unavailable` means the runtime cannot answer inside Navigator's standard scan window, so a
+/// passable raster may be consulted. `LoadedUnsafe` is different: the loaded chunk did identify a
+/// support block, but the resulting feet/head cells contain liquid, so the authoritative runtime
+/// vetoes the candidate and stale raster data must not override it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AmbientRuntimeGround {
+    Safe(i32),
+    LoadedUnsafe,
+    Unavailable,
+}
+
+fn resolve_ambient_runtime_ground(
+    world_x: i32,
+    world_z: i32,
+    reference_y: i32,
+    layer: Option<&ChunkLayer>,
+) -> AmbientRuntimeGround {
+    let Some(layer) = layer else {
+        return AmbientRuntimeGround::Unavailable;
+    };
+    let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
+    if layer.chunk(chunk_pos).is_none() {
+        return AmbientRuntimeGround::Unavailable;
+    }
+
+    let Some(ground_y) = resolve_ground_y_from_chunk(world_x, world_z, reference_y, Some(layer))
+    else {
+        return AmbientRuntimeGround::Unavailable;
+    };
+
+    let chunk = layer
+        .chunk(chunk_pos)
+        .expect("loaded ambient chunk was checked above");
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+    let local_x = world_x.rem_euclid(16) as u32;
+    let local_z = world_z.rem_euclid(16) as u32;
+    let block_at = |world_y: i32| {
+        if world_y < min_y || world_y > max_y {
+            BlockState::AIR
+        } else {
+            chunk.block_state(local_x, (world_y - min_y) as u32, local_z)
+        }
+    };
+    let feet = block_at(ground_y + 1);
+    let head = block_at(ground_y + 2);
+
+    if feet == BlockState::WATER
+        || feet == BlockState::LAVA
+        || head == BlockState::WATER
+        || head == BlockState::LAVA
+    {
+        AmbientRuntimeGround::LoadedUnsafe
+    } else {
+        AmbientRuntimeGround::Safe(ground_y)
+    }
+}
+
 /// Resolve an ambient ground candidate from the live world first, then the terrain raster.
 ///
 /// A loaded [`ChunkLayer`] is authoritative because it contains caves, floating islands,
 /// decorations, and player-built blocks that the baked raster cannot represent. The runtime
 /// scan deliberately reuses Navigator's standard `ref_y - 16 .. ref_y + 4` support/headroom
-/// contract. Only when that scan cannot find safe support (including an unloaded chunk) may a
-/// passable raster column provide the fallback. Both sources missing or unsafe rejects the
-/// candidate; the sampled/player Y is never preserved.
+/// contract. Missing runtime data or a standard-window miss may consult a passable raster; a
+/// loaded support whose feet/head cells contain water or lava is an authoritative veto. Both
+/// sources missing or unsafe rejects the candidate; the sampled/player Y is never preserved.
 pub fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
     candidate: DVec3,
     layer: Option<&ChunkLayer>,
@@ -454,12 +514,16 @@ pub fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
     let world_z = candidate.z.floor() as i32;
     let reference_y = candidate.y.floor() as i32;
 
-    if let Some(ground_y) = resolve_ground_y_from_chunk(world_x, world_z, reference_y, layer) {
-        return Some(DVec3::new(
-            candidate.x,
-            f64::from(ground_y + 1),
-            candidate.z,
-        ));
+    match resolve_ambient_runtime_ground(world_x, world_z, reference_y, layer) {
+        AmbientRuntimeGround::Safe(ground_y) => {
+            return Some(DVec3::new(
+                candidate.x,
+                f64::from(ground_y + 1),
+                candidate.z,
+            ));
+        }
+        AmbientRuntimeGround::LoadedUnsafe => return None,
+        AmbientRuntimeGround::Unavailable => {}
     }
 
     let surface = terrain?.query_surface(world_x, world_z);
@@ -1231,6 +1295,150 @@ mod tests {
             None,
             "floor(-2.25/-3.75) must route to world block -3/-4 in chunk -1/-1"
         );
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_liquid_headroom_vetoes_passable_raster() {
+        for (case, liquid, liquid_y) in [
+            ("water at feet", BlockState::WATER, 67),
+            ("water at head", BlockState::WATER, 68),
+            ("lava at feet", BlockState::LAVA, 67),
+            ("lava at head", BlockState::LAVA, 68),
+        ] {
+            let (app, layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 66, 2, BlockState::STONE), (1, liquid_y, 2, liquid)],
+            );
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: 12,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, 80.0, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: loaded runtime liquid must veto a stale passable raster"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                None,
+                "{case}: authoritative runtime veto must not query raster fallback"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_loaded_liquid_veto_skips_both_pools_markers_and_pending() {
+        fn panic_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            panic!("runtime liquid veto must occur before either ambient pool is called");
+        }
+
+        for (case, liquid, liquid_y) in [
+            ("water at feet", BlockState::WATER, 67),
+            ("water at head", BlockState::WATER, 68),
+            ("lava at feet", BlockState::LAVA, 67),
+            ("lava at head", BlockState::LAVA, 68),
+        ] {
+            let (runtime_app, runtime_layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 66, 2, BlockState::STONE), (1, liquid_y, 2, liquid)],
+            );
+            let runtime_layer = runtime_app
+                .world()
+                .get::<ChunkLayer>(runtime_layer_entity)
+                .unwrap();
+            let terrain = FixtureSurface {
+                y: 12,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+            let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+            for kind in ["mundane", "threat"] {
+                let mut output = App::new();
+                let entity_layer = output.world_mut().spawn_empty().id();
+                let mut pending = HashMap::new();
+                let spawned = {
+                    let mut commands = output.world_mut().commands();
+                    match kind {
+                        "mundane" => submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, 80.0, 2.5),
+                                season: Season::Summer,
+                                now: 77,
+                            },
+                        ),
+                        "threat" => submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, 80.0, 2.5),
+                                season: Season::Summer,
+                                now: 77,
+                            },
+                        ),
+                        _ => unreachable!(),
+                    }
+                };
+                output.world_mut().flush();
+
+                assert_eq!(spawned, None, "{case}/{kind}: liquid must reject candidate");
+                assert!(
+                    pending.is_empty(),
+                    "{case}/{kind}: liquid veto must not consume pending budget"
+                );
+                let world = output.world_mut();
+                let mut mundane = world.query::<&MundaneFaunaMarker>();
+                assert_eq!(
+                    mundane.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no mundane marker may remain"
+                );
+                let mut threat = world.query::<&AmbientThreatMarker>();
+                assert_eq!(
+                    threat.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no threat marker may remain"
+                );
+                let mut spawned_by_pool = world.query_filtered::<(), With<NpcMarker>>();
+                assert_eq!(
+                    spawned_by_pool.iter(world).count(),
+                    0,
+                    "{case}/{kind}: pool must not leave a spawned entity"
+                );
+            }
+
+            assert_eq!(
+                terrain.queried.get(),
+                None,
+                "{case}: neither kind may override runtime veto with raster"
+            );
+        }
     }
 
     #[test]
