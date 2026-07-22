@@ -39,10 +39,10 @@
 
 **③ 模板批量产物**：一批动画呈「81 轴关键帧 = 27 轴 × 首/中/尾 3 帧」特征（`palm_strike`/`release_burst`/`parry_block`/`sword_slash_down`/`dodge_roll`/全部 `stance_*` 等），是生成器模板一把梭的产物，所有轴同节奏起落，无重心转移、无预备-发力-收势的时序错落。
 
-**④ A/V 复用清单**（去复用 = 本 plan 差异化目标）：
+**④ A/V 复用清单**（去复用 = 本 plan 差异化目标）。**以下为 P0 立项时的基线快照，保留以备追溯；括号内标注各条的清偿阶段**：
 
-- 动画复用：sword_path `condense_edge`/`resonance` 借 `sword_cleave`、`qi_slash` 借 `sword_thrust`；anqi 6 招全借通用（`windup_charge`/`cast_invoke`/`release_burst`/`sword_stab`）；burst_meridian `tie_shan_kao`/`xue_beng_bu` 借 `beng_quan`、`ni_mai_hu_ti` 无动画（anim_id: None）。
-- 粒子复用：zhenmai 直接复用剑气 `SwordQiSlashPlayer`（`jiemai_*` 事件）；burst_meridian 全系共用 `bong:burst_meridian_beng_quan`；npc 3 招各借医道/真脉/崩拳粒子。
+- 动画复用：sword_path `condense_edge`/`resonance` 借 `sword_cleave`、`qi_slash` 借 `sword_thrust`；anqi 6 招全借通用（`windup_charge`/`cast_invoke`/`release_burst`/`sword_stab`）；burst_meridian `tie_shan_kao`/`xue_beng_bu` 借 `beng_quan`、`ni_mai_hu_ti` 无动画（anim_id: None）。（**已清偿**：sword_path / anqi 归 P2 ✅、burst_meridian 3 招归 P3 ✅）
+- 粒子复用：zhenmai 直接复用剑气 `SwordQiSlashPlayer`（`jiemai_*` 事件）；burst_meridian 全系共用 `bong:burst_meridian_beng_quan`；npc 3 招各借医道/真脉/崩拳粒子。（**已清偿**：全部 11 条归 P5 ✅ 2026-07-20——zhenmai 5 招转 `ZhenmaiPulsePlayer`、burst_meridian 3 招转 `BurstMeridianFamilyPlayer`、npc 3 招转 `NpcSkillAuraPlayer`，逐项接线见 P5.2 矩阵）
 - yidao 5 招：plan-yidao-v1 §5 表格承诺的 5 个差异化动画（针灸/灸火/CPR/续命咏唱/环阵）完全未落地（Finish Evidence 只兑现 audio+VFX+HUD）。
 
 ## 与既有 plan 的关系（防重声明）
@@ -82,13 +82,13 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | 全量审计矩阵落档 + 精度标准定稿 + 时长对齐自动对拍测试 | ⬜ |
+| P0 | 全量审计矩阵落档 + 精度标准定稿 + 时长对齐自动对拍测试 | ✅ 2026-07-18 |
 | P1 | 批次一重制：sword 基础 3（infuse 移 P2，见附录 A）+ beng_quan + zhenmai 5（高频主力短招） | ✅ 2026-07-19 |
 | P2 | 批次二：sword_path 5 专属化 + anqi 6 专属化 + sword_infuse 两段式（去复用 + 长引导循环段）。拆前半（2026-07-19：去复用 6 招专属化——sword_path condense_edge/qi_slash/resonance + anqi single_snipe/multi_shot/soul_inject，含 server 映射改指 + allowlist 删 5 条）+ 后半（2026-07-19：charge_carrier / sword.infuse 真两段式 + StopAnim 三类通道接线 §8.1 #3 + echo_fractal / armor_pierce / manifest 瞬发结算型分类契约（review r2 定形——strike 顶点=tick 0 与结算同帧，INSTANT_RESOLVER_SKILLS + instant manifest 机械锁，出 allowlist）+ heaven_gate 双段密度精修 + allowlist 净删 4 条） | ✅ 2026-07-19 |
 | P3 | 批次三：burst_meridian 3 借用招专属化 + ni_mai_hu_ti 新增 + dugu 2 / tuike 3 / woliu 短招精修 | ✅ 2026-07-19 |
 | P4 | yidao 5 招动画补齐（plan-yidao-v1 §5 欠账） | ✅ 2026-07-19 |
-| P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ⬜ |
-| P6 | 回归收口：资源 pin 测试 + FPV/TPV 实机验收 | ⬜ |
+| P5 | 粒子去复用：zhenmai 专属 player + burst_meridian 家族分化 + npc 3 招分化 | ✅ 2026-07-20 |
+| P6 | 回归收口：资源 pin 测试 + **TPV 实机验收（完成判据）**+ FPV 兼容性冒烟（**非阻塞**，真正的第一人称手臂验收归梯队三 `plan-fpv-cast-av-v1` P5，见 P6 正文与 Finish Evidence 遗留 #7）+ 两项裁决（heaven_gate 对齐口径 / 两段式相位承接契约）+ 架势亮相遗留清偿 | ✅ 2026-07-21 |
 
 ## P0 — 审计矩阵 + 标准定稿 + 对拍测试
 
@@ -119,19 +119,140 @@
 - npc 3 招：脱离借用，各给独立 event_id（形态可简，但 id 与颜色必须独立，保证旁观读招）。
 - **双端闭环接线矩阵（P5 交付物）**：每个新 event_id 一行——`招式 id / server 发射点（resolver 或 emit system 文件）/ SpawnParticle event_id / client VfxPlayer 类名 / VfxBootstrap 注册行`。矩阵同源生成一份共享 event_id 清单驱动双端测试：server 侧逐项断言对应招式事件发出正确 `SpawnParticle`（旧借用 id 不再发出的负向断言一并锁）；client 侧逐项断言 `VfxRegistry` 已注册同一 id 并返回预期 player；再加集合一致性断言（发射集合 == 注册集合，防两端字符串各自漂移）+ 未注册 id 走 bridgeMiss 不崩溃的错误分支。
 
-## P6 — 回归收口
+### P5.1 粒子 spec（按 docs/CLAUDE.md §四 视听精度要求，实施前定稿 2026-07-20）
 
-- 动画资源 pin 测试：`BongAnimationRegistry.contains` 断言本 plan 全部新增/重制 anim_id 可解析。
-- P0 对拍测试 allowlist 清零——按 §8.1 #5 收口**余 2 条**：裁决 `sword_path.heaven_gate` 的对齐口径（改动画或改判据二选一，落 conventions 文档）+ 待 `plan-bughunt-woliu-resonance-loop-arm-decay-v1` merge 后复核 `woliu.vortex_resonance` 可否出表。
-- **TPV 实机验收（完成判据）**：`render_animation.py` 三视图存档 + 远距离旁观者读招录屏对照——「能从姿态分辨对面在用 X 不是 Y」。
-- **FPV 兼容性冒烟（非阻塞，不作为完成判据）**：现状第一人称渲染路径（`THIRD_PERSON_MODEL`）不回归即可。真正的第一人称手臂验收归梯队三 `plan-fpv-cast-av-v1` P5——避免用尚未落地的下游能力当本 plan 完成条件（梯队三反过来以通过本 plan TPV 验收的动画为输入）。
-- server 侧映射表单测：`vfx_animation_trigger.rs` 新增/改动的 arm 各配 pin 测试。
-- **两段式招的「相位承接契约」统一裁决**（P4 review r4 提出，仓库所有者 2026-07-20 拍板归 P6 补强）：
-  - **问题**：长引导窗 `cast_ticks` 随 mastery / 平和色浮动，引导结束时 isLoop 蓄力段可能停在**任意相位**，而 release 首帧按循环基位对齐——中间相位完成时姿态不连续。
-  - **范围**：对全部 **4 个两段式招**同构成立（`sword.infuse` 28t / `anqi.charge_carrier` 32t / `sword_path.heaven_gate` 60t / `yidao.*` 20-90t），是 P2 后半确立的两段式契约的横切属性，非某个批次引入。
-  - **现状缓解**：release 接力带 `fade_in_ticks`（yidao 与 sword_infuse 同为 1），客户端据此做跨动画混合；现有机械对拍只锁「loop 基位 ↔ release 首帧」，未覆盖中间相位。
-  - **候选方案（P6 三选一并落 conventions 文档）**：① 明确「fade_in 混合即为契约」+ 补客户端桥接 pin 测试；② release 首帧改为相位无关的中性起手；③ server 完成时按当前相位选择 release 变体。
-  - **验收**：选定方案后为 4 招补相位覆盖测试（枚举可达 `cast_ticks` 对各自 loop 周期的余数，至少覆盖基位 / 中间相位 / 周期末相位）。
+**全域共同约束**：贴图**零新增**——全部复用既有 `BongParticles` sprite provider（`qi_aura` → `qiAuraSprites`、`lingqi_ripple` → `lingqiRippleSprites`）；不新增 schema，全部走既有 `VfxEventPayloadV1::SpawnParticle` → `bong:vfx_event` → `VfxRegistry` → `VfxPlayer` 通道；server 侧 `count` 参数驱动主粒子数，副粒子（穴位点等）数量由 player 按形态自持。
+
+**① zhenmai 5 招 —— `ZhenmaiPulsePlayer`（金脉色系 anchor #D4AF6A）**
+
+基类组合固定为「`BongLineParticle` 沿经脉走向的短脉冲 + `BongSpriteParticle` 驻留穴位点」，逐招靠**运动形态 + 金脉明度阶梯**分化（同族可认、逐招可辨）：
+
+| event_id | 招式 | 运动形态 | 脉冲数 | 穴位点数 | lifetime | 主速度 格/t | 脉冲垂直 格/t | 穴位点漂移 格/t | 半径 格 | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:zhenmai_parry_flash` | `zhenmai.parry` | FORWARD | 8 | 3 | 20t | 0.35 | 0.00 | 0.00 | 0.55 | `#D4AF6A`（金脉本色） | burst 单帧齐发 | `qi_aura` + `lingqi_ripple` |
+| `bong:zhenmai_neutralize_dust` | `zhenmai.neutralize` | RADIAL_OUT | 10 | 4 | 20t | 0.12 | -0.02 | -0.02 | 0.40 | `#C9A05C`（沉金，卸力散尘） | radial 水平环 | 同上 |
+| `bong:zhenmai_multipoint_ring` | `zhenmai.multipoint` | ORBIT | 16 | 8 | 20t | 0.10 | 0.00 | 0.00 | 0.50 | `#E0C27E`（亮金，多点连环） | radial 腰高真环绕，穴位点等角分布 | 同上 |
+| `bong:zhenmai_harden_shell` | `zhenmai.harden` | RADIAL_IN | 8 | 6 | 20t | 0.06 | 0.01 | 0.01 | 0.45 | `#B8944F`（暗金，硬化沉坠） | radial 双层护壳 | 同上 |
+| `bong:zhenmai_sever_snap` | `zhenmai.sever_chain` | FORWARD | 18 | 2 | 20t | 0.55 | 0.00 | 0.00 | 0.70 | `#F2D68A`（最亮金，断脉爆闪） | burst 爆闪 | 同上 |
+
+**列语义**：`运动形态` = `ZhenmaiPulsePlayer.Form.Motion` 枚举常量名。`主速度` 在 FORWARD 下是沿 `direction` 的前冲速率、RADIAL_* 下是径向速率（RADIAL_IN 为向心，符号在实现里取负）、ORBIT 下是**线**速度（角速度 = 线速度 ÷ 半径）。`脉冲垂直` 是脉冲的固定垂直分量（FORWARD 形态例外：垂直分量来自 `direction` 本身，可俯可仰，故列 0.00）。`穴位点漂移` 是穴位点的垂直速度——**穴位点 lifetime 与脉冲严格一致**，不额外延长。`半径` 是脉冲起始铺开半径（ORBIT 下即环绕半径；穴位点铺在其 0.6 倍处）。
+
+明度阶梯 `harden(#B8944F) < neutralize(#C9A05C) < parry(#D4AF6A) < multipoint(#E0C27E) < sever(#F2D68A)` 与招式烈度同序。
+
+> **review r1 修正（2026-07-20）**：本表此前把 `穴位点` 的行为混在散文里（parry 行写「穴位点静止」），而实现对五招统一给了 `lifetime + 6` 与 `vy = 0.008` 上浮——spec 与实现两处静默不一致。现拆出 `穴位点漂移` 独立数值列并逐招定值，lifetime 收敛为「与脉冲一致」。同时 `zhenmai.multipoint` 的「切向环绕」此前实现只设切向初速度（= 切向抛射，粒子沿切线直线飞离），现改真环绕（见 §P5.1 ⑥）。
+
+**② burst_meridian 3 招 —— `BurstMeridianFamilyPlayer`（共用色系 `#C58B3F`，纯形态分化）**
+
+三招颜色**一律 `#C58B3F`**（与既有 `beng_quan` 本尊同色，统一爆脉家族识别色），读招完全靠形态：
+
+| event_id | 招式 | 基类 | 运动形态 | 数量 | count 下限 | lifetime | 主速度 格/t | 半径 格 | 垂直速度 格/t | 自旋 rad/t | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:burst_meridian_tie_shan_kao` | `burst_meridian.tie_shan_kao` | `BongGroundDecalParticle` | IMPACT | 10 | 4 | `cast_ticks`（缺省 16t） | 0.00 | 0.30 + 0.45×strength | 0.00 | 0.05 | `#C58B3F` | radial 地面撞击冲击环 | `lingqi_ripple` |
+| `bong:burst_meridian_xue_beng_bu` | `burst_meridian.xue_beng_bu` | `BongRibbonParticle` | TRAIL | 12 | 2 | `cast_ticks`（缺省 14t） | 0.25 | 不适用 | 0.01 | 不适用 | `#C58B3F` | continuous 步法短尾（沿 `direction` **反向**，残影落身后） | `qi_aura` |
+| `bong:burst_meridian_ni_mai_hu_ti` | `burst_meridian.ni_mai_hu_ti` | `BongOrbitSpriteParticle` | ORBIT | 14 | 4 | 12t（= 重发间隔） | 0.08 | 0.55 | 0.015 | 不适用 | `#C58B3F` | radial 双高度体表逆流纹（真环绕，随施法者重发） | `qi_aura` |
+
+**列语义**：`运动形态` = `BurstMeridianFamilyPlayer.Form.Motion` 枚举常量名。`lifetime` 由 server `emit_burst_av` 下发（前两招 = `cast_ticks`，护体 = `NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS` = 12，即**单个环**的寿命而非整个 buff 窗口，见下），括号内是 payload 缺 `duration_ticks` 时的 client 回退值。`count 下限` 是 payload `count` 异常偏小时的钳制下界——环形招 4（低于此读不出「环」），线性残影 2 即可成束；上限统一 48。撞击环半径吃 `strength`（server 传 0.95）；`不适用` 的格子在实现里取 0。逆脉护体的双高度环：奇数颗在 `origin.y - 0.25`、偶数颗在 `origin.y + 0.45`。
+
+> **体表锚定契约（review r2 #1 收口，2026-07-20）**：`ni_mai_hu_ti` 的逆流纹**跟随施法者移动**——plan P5 正文「**体表**逆流纹」是字面交付物，脱离身体即未兑现。
+>
+> `SpawnParticle` payload 只有世界坐标 `origin`、无实体标识，单个粒子环无从锚定移动中的身体；给 payload 加实体字段属跨端 schema 契约变更，越出 P5「不新增 schema」的共同约束。故走 **server 侧 buff 存续期周期重发**：
+>
+> - `NiMaiHuTiAura { started_at_tick, expires_at_tick }`（`cultivation/burst_meridian.rs`）由 `resolve_ni_mai_hu_ti` 在施放时挂上，窗口 = `NI_MAI_HU_TI_BUFF_DURATION_TICKS`（60t），与减伤 buff 严格同步。**不复用 `StatusEffects`**：`StatusEffectKind::DamageReduction` 是共享 kind（渡劫丹 / NPC `buff_defense` 同写，`upsert_status_effect` 按 kind 取 max 合并），读它会给嗑了渡劫丹的玩家凭空挂上爆脉护体环。
+> - `ni_mai_hu_ti_aura_vfx_tick`（注册于 `network/mod.rs`，`.before(vfx_event_emit::emit_vfx_event_payloads)`）在窗口内每 `NI_MAI_HU_TI_AURA_REEMIT_INTERVAL_TICKS` = 12t 以施法者**当前 `Position`** 重发一个环；到期即摘锚点停发。
+> - **环寿命 == 重发间隔**（12t）：老环恰在新环生成的同 tick 消失，既不叠环也不留空窗。`60 = 5 × 12` 整除，故 cast 首环 + 4 次重发正好铺满窗口，最后一环与 buff 同 tick 结束，不留「护体已过而纹还在转」的尾巴。
+> - 首环（`emit_burst_av`）与重发环共用同一组形态常量，`p5_ni_mai_hu_ti_cast_ring_and_reemit_ring_share_one_form_spec` 断言两者除 `origin` 外逐字段相等。
+>
+> 半径恒 0.55 格由 `OrbitPath` 参数化保证（不是力平衡涌现），故不存在纹路逐渐外扩的退化。
+
+**③ npc 3 招 —— `NpcSkillAuraPlayer`（形态从简，id + 颜色强制独立）**
+
+| event_id | 招式 | 基类 | 运动形态 | 数量 | lifetime | 主速度 格/t | 半径 格 | 垂直速度 格/t | 颜色 hex | spawn 模式 | 贴图（复用） |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bong:npc_heal_basic` | `npc.heal_basic` | `BongSpriteParticle` | COLUMN | 12 | 40t | 0.00 | 0.4 | 0.03 | `#A8E6CF`（薄荷绿） | radial 上升柱 | `qi_aura` |
+| `bong:npc_buff_speed` | `npc.buff_speed` | `BongLineParticle` | OUTRUSH | 12 | 40t | 0.22 | 0.3 | 0.01 | `#E3C766`（麦黄） | radial 疾行尘 | `qi_aura` |
+| `bong:npc_buff_defense` | `npc.buff_defense` | `BongOrbitSpriteParticle` | ORBIT | 12 | 40t | 0.06 | 0.6 | 0.00 | `#5BA8C9`（青蓝） | radial 护体环（真环绕） | `lingqi_ripple` |
+
+**列语义**：`运动形态` = `NpcSkillAuraPlayer.Form.Motion` 枚举常量名。`数量` / `lifetime` 与 server `emit_npc_skill_av` 下发的 `count: Some(12)` / `duration_ticks: Some(40)` 一致，列出的是 payload 缺省时的 client 回退值（count 钳制区间 1–48）。`半径` 是绕身铺开半径（ORBIT 下即环绕半径）。回血柱另按 `i % 4` 分四段身高错落（起点 `origin.y - 0.5`，步进 0.22），疾行尘贴 `origin.y - 0.6` 脚边。
+
+> **buff_speed 配色变更（本阶段有意决策，非漂移）**：旧值 `#9FD8C8` 与 heal 的 `#A8E6CF` 同属淡青绿、仅单通道差 ~10%，远距离不可辨——直接违背本条「颜色必须独立，保证旁观读招」的交付要求。改为麦黄 `#E3C766`，令三招构成 绿 / 黄 / 蓝 高分离色相三元组。heal 与 defense 颜色保持不变。
+
+**④ 优先级档位（`vfx_event_emit::vfx_default_priority`）**
+
+- zhenmai 5 个新 id 命中既有 `bong:zhenmai_` 前缀 → 自动 Important，**无需登记**（旧 `bong:jiemai_*` 同为 Important，档位无变化）。
+- burst_meridian：新增 `"bong:burst_meridian_"` 到 `PLAYER_SKILL_VFX_PREFIXES`。顺带修掉既存漏网——`bong:burst_meridian_beng_quan` 此前既不在前缀表也不在散号表（散号表登记的是 `bong:beng_quan`），实际掉在 Normal 档，与「玩家主动施放技能粒子归 Important」的设计意图不符；本阶段随家族前缀一并归位。
+- npc 3 个新 id **不登记**，落 Normal 档：NPC 施法属背景 cosmetic，不应与玩家技能反馈争抢拥挤 chunk 的粒子配额。注意这是相对现状的**有意降档**——旧借用 id 中 `bong:yidao_meridian_repair` / `bong:jiemai_neutralize_dust` 因借用而误吃 Important，去借用后回归正确档位。
+
+**⑤ 旧借用 id 的去向**
+
+| 旧 id | 去借用后是否仍有发射方 | 处置 |
+|---|---|---|
+| `bong:jiemai_burst_blood` | 否（原仅 zhenmai parry + multipoint） | 删 client 注册，成为死 id |
+| `bong:jiemai_neutralize_dust` | 否（原 zhenmai neutralize + harden + npc buff_speed） | 删 client 注册，成为死 id |
+| `bong:jiemai_sever_flash` | **是** —— `network/meridian_severed_emit.rs` 被动断脉仍发 | **保留** client 注册与 `bong:jiemai_` 前缀 |
+| `bong:burst_meridian_beng_quan` | 是 —— `beng_quan` 本尊 | 保留（`BurstMeridianBengQuanPlayer` 不动） |
+| `bong:yidao_meridian_repair` | 是 —— `combat/yidao.rs` 医道本尊 | 保留 |
+
+**⑥ 环绕形态的实现契约（review r1 #2 收口，2026-07-20）**
+
+P5 首版把三处「环绕」（`zhenmai.multipoint` / `burst_meridian.ni_mai_hu_ti` / `npc.buff_defense`）实现成**只设切向初速度**——粒子沿切线直线飞离，到中心距离随 tick 线性增长（护体 60t × 0.08 ≈ 4.8 格，早飞出体表几个身位），是切向抛射不是环绕。plan P5 正文「体表逆流纹（Sprite 环绕）」是字面交付物，故按真环绕重做而非改描述降级。
+
+- **`OrbitPath`（新增，纯 Java 无 MC 依赖）**：位置参数化为 `圆心 + 半径 × (cos θ, sin θ)`，θ 每 tick 加 `角速度 = 线速度 ÷ 半径`；垂直分量按 `verticalSpeed × 已过 tick` 线性累积。**半径由构造恒定**，是可硬断言的不变量——区别于既有 `VortexSpiralParticle` 的加力模拟（半径由切向力/向心拉力/阻尼平衡涌现，不可控也不可断言）。
+- **`BongOrbitSpriteParticle` / `BongOrbitLineParticle`（新增）**：把 `OrbitPath` 接到 MC 粒子生命周期。位置由轨道给出，速度字段每 tick 同步成当前切向量——`BongLineParticle` 的 quad 沿速度定向，故脉冲条始终切于圆周，朝向与运动自洽。
+- **贴图仍零新增**：三处环绕复用既有 `qi_aura` / `lingqi_ripple`，未引入任何 png/贴图资产。
+- **方向约定**：正线速度 = 俯视（自 +Y 向下看）自 +x 转向 +z。三处环绕招统一此约定（首版 `ni_mai_hu_ti` 注释写「逆时针」而 `multipoint` 写「顺时针」，两者数学其实相同，本次统一措辞）。
+- **回归锁**：`OrbitPathTest` 断言半径 600 tick 恒定、速度恒切于圆周且速率恒定、角速度 = 线速度/半径、退化参数（半径 0/负/NaN/Inf）构造期拒绝；`SkillParticlePlanTest` 断言三招确实产出 `Orbit*` 描述符，并推进各自完整 lifetime 后半径不漂。
+- **体表锚定的回归锁**（server，`cultivation::burst_meridian::tests`，见 ② 的锚定契约）：`p5_ni_mai_hu_ti_cast_installs_aura_anchor_matching_buff_window`（锚点窗口 == buff 时长）、`p5_ni_mai_hu_ti_cast_ring_lives_one_reemit_interval_not_whole_buff`（首环不再 60t）、`p5_ni_mai_hu_ti_aura_ring_follows_moving_caster`（**核心**：窗口内移动 4 段，逐环断言圆心 == 施法者当时位置）、`p5_ni_mai_hu_ti_aura_cadence_tiles_buff_window_exactly`（相位固定 + 首环与重发严丝合缝铺满 60t）、`p5_ni_mai_hu_ti_aura_stays_silent_on_cast_tick_and_off_phase_ticks`（cast 同帧不叠环）、`p5_ni_mai_hu_ti_aura_anchor_removed_and_silent_after_buff_expiry`（到期摘锚点 + 永久停发）、`p5_ni_mai_hu_ti_cast_ring_and_reemit_ring_share_one_form_spec`（两条发射路径除 origin 外逐字段相等）、`p5_ni_mai_hu_ti_recast_resets_aura_window_without_stacking`（重放覆盖窗口不叠环）。
+
+### P5.2 双端闭环接线矩阵（交付物）
+
+真源 = `server/src/network/skill_vfx_wiring.rs` 的 `P5_SKILL_VFX_WIRING` 表；单向导出 `client/src/test/resources/bong/skill_vfx_wiring_manifest.json` 供双端消费（重生成唯一入口 `cd server && BONG_REGEN_VFX_MANIFEST=1 cargo test skill_vfx_wiring`）。
+
+| 招式 id | server 发射点 | SpawnParticle event_id | 旧借用 id（已解除） | client VfxPlayer | VfxBootstrap 注册 |
+|---|---|---|---|---|---|
+| `zhenmai.parry` | `combat/zhenmai_v2.rs::resolve_parry` → `emit_skill_feedback` | `bong:zhenmai_parry_flash` | `bong:jiemai_burst_blood` | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.PARRY_FLASH` |
+| `zhenmai.neutralize` | `combat/zhenmai_v2.rs::resolve_neutralize` → `emit_skill_feedback` | `bong:zhenmai_neutralize_dust` | `bong:jiemai_neutralize_dust` | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.NEUTRALIZE_DUST` |
+| `zhenmai.multipoint` | `combat/zhenmai_v2.rs::resolve_multipoint` → `emit_skill_feedback` | `bong:zhenmai_multipoint_ring` | `bong:jiemai_burst_blood`（借 parry） | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.MULTIPOINT_RING` |
+| `zhenmai.harden` | `combat/zhenmai_v2.rs::resolve_harden` → `emit_skill_feedback` | `bong:zhenmai_harden_shell` | `bong:jiemai_neutralize_dust`（借 neutralize） | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.HARDEN_SHELL` |
+| `zhenmai.sever_chain` | `combat/zhenmai_v2.rs::resolve_sever_chain` → `emit_skill_feedback` | `bong:zhenmai_sever_snap` | `bong:jiemai_sever_flash` | `ZhenmaiPulsePlayer` | `ZhenmaiPulsePlayer.SEVER_SNAP` |
+| `burst_meridian.tie_shan_kao` | `cultivation/burst_meridian.rs::resolve_tie_shan_kao` → `emit_burst_av` | `bong:burst_meridian_tie_shan_kao` | `bong:burst_meridian_beng_quan` | `BurstMeridianFamilyPlayer` | `BurstMeridianFamilyPlayer.TIE_SHAN_KAO` |
+| `burst_meridian.xue_beng_bu` | `cultivation/burst_meridian.rs::resolve_xue_beng_bu` → `emit_burst_av` | `bong:burst_meridian_xue_beng_bu` | `bong:burst_meridian_beng_quan` | `BurstMeridianFamilyPlayer` | `BurstMeridianFamilyPlayer.XUE_BENG_BU` |
+| `burst_meridian.ni_mai_hu_ti` | `cultivation/burst_meridian.rs::resolve_ni_mai_hu_ti` → `emit_burst_av` | `bong:burst_meridian_ni_mai_hu_ti` | `bong:burst_meridian_beng_quan` | `BurstMeridianFamilyPlayer` | `BurstMeridianFamilyPlayer.NI_MAI_HU_TI` |
+| `npc.heal_basic` | `npc/npc_skill.rs::npc_heal_basic` → `emit_npc_skill_av` | `bong:npc_heal_basic` | `bong:yidao_meridian_repair` | `NpcSkillAuraPlayer` | `NpcSkillAuraPlayer.HEAL_BASIC` |
+| `npc.buff_speed` | `npc/npc_skill.rs::npc_buff_speed` → `emit_npc_skill_av` | `bong:npc_buff_speed` | `bong:jiemai_neutralize_dust` | `NpcSkillAuraPlayer` | `NpcSkillAuraPlayer.BUFF_SPEED` |
+| `npc.buff_defense` | `npc/npc_skill.rs::npc_buff_defense` → `emit_npc_skill_av` | `bong:npc_buff_defense` | `bong:burst_meridian_beng_quan` | `NpcSkillAuraPlayer` | `NpcSkillAuraPlayer.BUFF_DEFENSE` |
+
+**双端测试覆盖**（由上表同源驱动）：
+
+- server `skill_vfx_wiring_test.rs`：清单 ↔ 常量表字节级对拍；11 招逐项断言 resolver 发出正确 event_id + color；**11 条旧借用 id 负向断言**（去复用不得回退）；发射集合 == 清单集合；id 形态（`bong` 命名空间 + Identifier 合法字符集）；优先级档位逐项 pin。
+- client `SkillVfxWiringManifestTest.java`：逐行断言 `VfxBootstrap.registerDefaults()` 后 `VfxRegistry` 命中同一 id 且 `lookup()` 返回的 player 类名与清单声明一致；注册集合 ⊇ 清单集合；**负向**断言 11 个 id 均不再指向 `SwordQiSlashPlayer` / `BurstMeridianBengQuanPlayer` / `YidaoPeacePulsePlayer`；未注册 id 经 `BongVfxParticleBridge` 返回 `false`（bridgeMiss）不抛异常。
+
+## P6 — 回归收口 ✅ 2026-07-21
+
+> 交付摘要：8 项交付物全部兑现；两项裁决落 `docs/player-animation-conventions.md` §14（纯追加 55 行、零删除）；`CAST_ALIGNMENT_ALLOWLIST` 由 2 条降至 **1 条**（余项归外部未消费骨架，按 §8.1 #5 口径不计入本 plan 判据）。
+
+- **动画资源 pin 测试** ✅：`AnimCastTicksAlignmentTest#everyPlanAnimIdResolvesThroughProductionRegistry` —— 经**生产** resource-reload 入口（`ProductionAnimationResources`，与 F3+T 同一实现）装载后，逐条断言 `BongAnimationRegistry.contains` / `get` 非空 / `sourceOf == JSON`（三者齐才算真解析；只查 `contains` 挡不住命中 inline 源的测试污染假阳性）。id 集合**从 `SKILL_ANIM` + `TWO_STAGE_PAIRS` 派生而非手写清单**（手写必随批次漂移），另加两条走习得通道的架势亮相，共 **56** 条；配 `size >= 50` 下界断言防派生失效退化成空测试。既有 `AnimWiringManifestTest` 同类用例只覆盖 7 条接线动画，本 pin 是其超集补位。
+- **allowlist 按 §8.1 #5 收口** ✅ —— 2 条余项逐条落定，**最终余 1 条**：
+  - `sword_path.heaven_gate`：裁决为**改判据不改动画**，**已出表**。新增第四类登记例外「定长相位充能型」（`FIXED_PHASE_CHARGE_SKILLS`），把豁免换成比循环档更严的正向机械锁。理由是结构性事实而非口径偏好：① 该段窗长是 `HEAVEN_GATE_CHARGE_END = 60`（`server/src/sword_path/heaven_gate.rs:15`）这一**具名确定性相位常量**，不随 mastery/平和色缩放，而「长引导必须 isLoop」的前提正是窗长可变；② 充能段是一条单调递进的抬剑坡道（`rightArm.pitch` -0.698 → -2.688 rad），强改 isLoop 就必须在 endTick 把所有轴补回起点，等于为满足判据而**引入**库坑 #1 类回绕跳变；③ 定长相位下交接点是确定单点，可要求**逐轴精确相等**（零容差）——现网资产已满足。裁决与入类门槛（5 条）落 conventions §14.1。
+  - `woliu.vortex_resonance`：**维持在表**。复核结论：所属 `plan-bughunt-woliu-resonance-loop-arm-decay-v1` 截至 2026-07-21 仍在 `docs/plans-skeleton/` 下、**P0 ⬜ 未消费**、无同名远端分支与开放 PR（PR #1038 只是产出该骨架的 bughunt 轮次，不是修复）。**订正 §8.1 #5 原文的「归 active」表述**：它是 skeleton 而非 active。本 plan §P3 明确对涡流 5 招全程零触碰以防重复修改，故不越界代修。实测违规轴为 **11** 条（双臂 10 轴 endTick 无补帧 + `torso.pitch` t80=0.0 ≠ 回绕锚点 t40=-0.06 的值跳变），allowlist 注释原写「10 个手臂轴」已一并订正。
+- **两段式「相位承接契约」统一裁决** ✅ —— **采纳方案①（fade 混合即为契约）**。依据是读 PlayerAnimator 源码得到的三段语义链（同 channel 换 animId 时旧层带 `fadeOut` 留栈；同优先级下后进的 release 层位于其**下方**；`AbstractFadeModifier` 的混合源是 `beginAnimation` 即蓄力段**当前相位**姿态）——故任意相位结束都由真实交叉淡入承接，**相位无关性是结构性保证而非资产巧合**，无需像 ② 那样牺牲基位连续性、也无需像 ③ 那样为每招增列 release 变体。据此确立 5 条硬约束（`fadeOut > 0` 为必要条件、两段同 channel 同 priority、release `fade_in` 宜短、相位姿态预算 60°、仅单侧声明的轴必须中立）。裁决落 conventions §14.2。
+  - **相位覆盖测试** ✅ `AnimCastTicksAlignmentTest#twoStageHandoffHoldsAcrossEveryReachableLoopPhase`：对 4 招（`sword.infuse` / `anqi.charge_carrier` / `sword_path.heaven_gate` / yidao 5 招，共 **8 对**）枚举 `[0, 周期)` **全部整数相位**——这是 plan 原文「可达 `cast_ticks` 对 loop 周期取余」的**严格超集**（无论 cast_ticks 怎样浮动其余数必落在本域内），且对未来调参免疫；plan 点名的基位 / 中间相位 / 周期末相位另行单独断言留痕。`heaven_gate` 作为定长相位的确定性退化档，改由零容差接缝断言覆盖（比预算更严）。预算 60° 依据现网实测全相位最大差 46°（`yidao.contam_purge` 中段 `rightArm.bend`）留余量，已用突变验证（降到 40° 即撞红）。
+  - **客户端桥接 pin** ✅ `TwoStageHandoffBlendTest` 4 例（合成动画锁桥接语义，与资产预算 pin 互补不重叠）：任意相位交接瞬间姿态连续、全程不穿 vanilla、淡出后收敛到 release 且层不泄漏，外加 `fadeOut = 0` 退化对照——**实测该退化下姿态塌回 vanilla 中立而非 release 首帧**（比预想更糟：玩家会看到手臂先弹回下垂再抬起），故 `fadeOut > 0` 入硬约束。
+- **`stance_woliu` + `stance_zhenmai`「一次性亮相」遗留清偿** ✅（§8.1 #2 第 4 条）：两张资产原为 `isLoop:true` 站桩，但 `emit_technique_learned_stance_triggers` 只单发一次 `PlayAnim`、全仓无持续架势状态可驱动循环、也无任何 `StopAnim` —— 即 conventions §13 #6 红线违例。改为一次性亮相（`isLoop:false` + 收势回中立）：`stance_woliu` 32t「吸→吐」沉身收拢后双掌外旋托举撑开涡场；`stance_zhenmai` 28t「提指取穴→下针」以指代针前点、发力由 `torso.yaw` 送肩承担。顺带清偿两笔精度欠账（woliu 原 3 帧点间隔 20t、且除双臂外全身不动；zhenmai 原 3 帧点**逐字节完全相同**即静止图空转）。走视觉资产纪律 3 轮打磨：round 2 出三视图自评抓到并修复两处**远距离读招**缺陷（针脉正前方直点透视缩短成一个点 → 外分成斜线剪影；涡流双臂完全镜像只读作「举起双手」→ 螺旋错高），终轮 commit 带 `<PROMISE>`。补三段式 spec manifest 机械锁。
+- **TPV 实机验收（完成判据）** ✅：终轮全帧三视图存档 + 逐招人工验收 checklist 落 `client/tools/renders/stance_p6/`（沿用 PR-6 `yidao_p4/` 形态：grid PNG + `README.md`）。checklist 五栏（双手职责 / 姿态母题兑现 / 重心与全身协调 / 收势归中立 / 远距离可辨性），并明写哪些项已由机器断言因而不依赖肉眼，把人工验收收敛到真正只能用眼睛判的部分。**互不混淆判定**：涡流峰值 =「双臂上举、左右不等高」，针脉峰值 =「单臂斜伸 + 另一臂胸前虚扶 + 躯干拧转」。
+- **FPV 兼容性冒烟（非阻塞，不作为完成判据）**：现状第一人称渲染路径（`THIRD_PERSON_MODEL`）未改动，无**路径**回归。真正的第一人称手臂验收仍归梯队三 `plan-fpv-cast-av-v1` P5。
+  - **判定从断言升级为机械证据**（review r1 #2 返工）：FPV 渲染路径的全部生产代码面 = ① `client/src/main/java/com/bong/client/animation/BongAnimationPlayer.java`（全仓**唯一**设置 `FirstPersonMode.THIRD_PERSON_MODEL` 的地方，同时掌管 fade-in/out 与 `ModifierLayer` 层管理，即任何动画进入 FPV 管线的必经口）、② `client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java`（该模式下 FPV 持握物注入）。判定命令与结果：
+    ```bash
+    git diff --stat origin/main...HEAD -- \
+      client/src/main/java/com/bong/client/animation/BongAnimationPlayer.java \
+      client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java
+    # → 空输出（零改动）
+    git diff --name-only origin/main...HEAD -- 'client/src/main/java/**'
+    # → 空输出（本 plan 全程未改动任何 client 生产 java）
+    ```
+  - **为什么「零改动即无路径回归」成立**：一份动画能否在 FPV 下被看到、以什么姿态被看到，只由三件事决定——(a) 该层被设成哪种 `FirstPersonMode`、(b) FPV 持握物渲染是否被接管、(c) 动画数据本身。(a)(b) 两项的代码逐字节未变（上方命令为证），(c) 在本 plan 内变化的只是 `player_animation/*.json` 数据，而 `THIRD_PERSON_MODEL` 对同一份数据在 FPV 与 TPV 走的是**同一套上半身模型渲染**，不存在只在 FPV 生效的分支逻辑。故本 plan 不可能引入「TPV 正常、FPV 坏掉」的路径级回归。
+  - **本条明确不主张的内容**（避免与梯队三职责混淆）：零改动**不等于**逐招 FPV 取景已验收——新资产的手臂是否落在第一人称视野内（conventions §3 的可见性判据）属于**资产取景**问题而非路径问题，必须实机逐招看，这正是梯队三 `plan-fpv-cast-av-v1` P5 的交付物。本 plan 从 P0 起即把 FPV 列为非阻塞冒烟、完成判据取 TPV 实机验收（见上一条），两处口径一致。
+- **server 侧映射表单测** ✅：核验结论 —— 本 plan 触碰过 `vfx_animation_trigger.rs` 的 PR 仅 PR-3/4/5，涉及 `emit_sword_path_visual_triggers` / `emit_anqi_visual_triggers` / `emit_dugu_needle_visual_triggers` / `emit_woliu_v1_vortex_visual_triggers`，**每个都已配 pin 测试**（随各自批次交付）。P6 在此基础上补 3 条契约级 pin：`anqi_two_stage_handoff_satisfies_phase_handoff_contract`（§14.2 的 fade 形状：`fade_out ≥ 2`、release `fade_in ≤ fade_out`、两段同 priority，且两个 fade 值都要求显式 `Some(..)` 不许回落客户端默认）、`heaven_gate_two_stage_uses_same_priority_for_both_phases`、`stance_reveal_play_anim_carries_explicit_cold_start_fade_in`（架势亮相是**冷起手**故要求 `fade_in ≥ 3`，方向与两段式 release 的「热交接宜短」相反，此前 `assert_play_anim` 用 `..` 丢弃该值、全无覆盖）。
+  - 顺带登记（**不在本 plan 范围**）：`emit_defense_animation_triggers` / `emit_baomai_v3_visual_triggers` / `emit_scroll_read_stop_for_entity` 三个 arm 至今零 pin 测试，`emit_tribulation_animation_triggers` 仅有间接覆盖——均为本 plan 未触碰的**存量**缺口，见下「遗留与后续」。
 
 ## §8 开放问题（P0 决策门前需收口）
 
@@ -157,6 +278,8 @@
 
 **决议**：
 1. **npc 3 招动画列 N/A 成立**：调研证实三招 caster 是 NPC mob 实体（`server/src/npc/npc_skill.rs:284-287` 注册，big-brain `NpcTechniqueAction` 以 NPC Entity 施放），统一走 `emit_npc_skill_av`（`npc_skill.rs:239-266`）——头注释明写 NPC 非玩家实体、PlayAnim 不适用，只发 SpawnParticle + 音效。npc 3 招仅入 P5 粒子分化（且粒子 id/颜色已各自独立，P5 复核差异化充分性即可）。
+
+   > **P5 复核结论（2026-07-20，修正本条决议的乐观前提）**：本决议写「粒子 id/颜色已各自独立」不成立——三招 id 确实两两不同，但**全都是借来的**（heal 借 `bong:yidao_meridian_repair` / speed 借 `bong:jiemai_neutralize_dust` / defense 借 `bong:burst_meridian_beng_quan`），旁观者分不清是 NPC 施法还是玩家在放同名招；颜色上 speed `#9FD8C8` 与 heal `#A8E6CF` 同属淡青绿、仅单通道差 ~10%，远距离不可辨。故 P5 按本 plan P5 段正文「脱离借用，各给独立 event_id」执行（而非仅复核）：三招改 `bong:npc_*` 专属 id + `NpcSkillAuraPlayer`，speed 配色改麦黄 `#E3C766` 构成绿/黄/蓝三元组。附带修正：借用 id 命中玩家技能家族前缀曾让 NPC 背景 cosmetic 误吃 Important 优先级，专属 id 归 Normal 档后不再与玩家技能反馈争拥挤 chunk 的粒子配额。
 2. **重制清单 = 46 玩家招中 C/D 级全量，P1-P4 分批推进**（不做「先 20 招验证再扩」的折半）：标准已随 P0 定稿 + P1 首批交付本身就是标准验证批，后批照走同构流程，无需额外验证阶段。
 3. **morph_cast 归 P3 批次**：发射链活着（`server/src/body_plan/morph.rs:229-237` `emit_yixing_av` 发 `bong:morph_cast`，`cast_morph_yixing` 两分支触发），60↔30 错配证实（`YIXING_CAST_TICKS=60` @ morph.rs:96 vs `morph_cast.json` endTick=30）——P3 按标准 #2 重制对齐（cast 完成 = 发力顶点 + recovery），粒子 duration 同步对齐（见 #1 第 3 条）。
 4. **stance_woliu / stance_zhenmai 归 P3，按「一次性亮相」精修**：两 JSON 均为 `isLoop:true` 循环站桩形态（stance_woliu endTick=40 循环开合、stance_zhenmai endTick=20 三帧全同的静态持守），与梯队一接线的「习得时刻单发」语义错配（`vfx_animation_trigger.rs` `emit_technique_learned_stance_triggers` 单发、全仓无持续架势状态可驱动循环）。决议：改 `isLoop:false` + 补收势回中立，做成习得亮相动画；「循环站桩」形态等持续架势 gameplay 状态落地后另议（不在本 plan 造事件）。
@@ -203,6 +326,8 @@
 4. 棘轮硬约束不变：allowlist **只允许缩小**，冻结基线 `P0_BASELINE` 永不追加；本决议只调整「完成判据如何读」，不放宽任何一条现存条目的达标要求。
 
 **落点**：P0「快照单一真源」条目与 P6「allowlist 清零」条目按本决议口径解读；余项归属登记见附录 A 后各批次统计段。
+
+**P6 收口结果（2026-07-21）**：2 条余项已逐条落定，`CAST_ALIGNMENT_ALLOWLIST` **最终余 1 条**。① `sword_path.heaven_gate` 裁决为**改判据不改动画**并**已出表**，转入新设的第四类登记例外「定长相位充能型」（`FIXED_PHASE_CHARGE_SKILLS`，正向机械锁取代豁免），裁决理由与入类门槛见 conventions §14.1 与 P6 段。② `woliu.vortex_resonance` **维持在表**——**订正本决议第 2 点的「归 active」表述**：`plan-bughunt-woliu-resonance-loop-arm-decay-v1` 截至 2026-07-21 仍在 `docs/plans-skeleton/` 下、P0 ⬜ **未消费**、无同名远端分支与开放 PR（PR #1038 只是产出该骨架的 bughunt 轮次而非修复），故不是 active plan；按 §P3 既定排除本 plan 不越界代修。另订正实测违规轴数为 **11** 条（双臂 10 轴 endTick 无补帧 + `torso.pitch` t80 值跳变），allowlist 注释原写「10 个手臂轴」已同步更正。
 
 > §8 原表保留作历史回溯。全部已在 §8.1 收口，**实施时以 §8.1 决议为准**。
 
@@ -297,3 +422,85 @@
 **P4 打磨记录（2026-07-19/20，3 轮）**：10 资产（5 loop BASE-inherit 机械闭环 + 5 release 三段式）——(round 1/3) 逐招第一性原理通道核验（结论以函数锚写入各 gen 脚本 docstring：5 招同走 `resolve_yidao_skill` 真实引导窗、完成链 cast_emit → `complete_yidao_casts`）后参数化 first cut → (round 2/3) 机械四查复跑（循环缝合按 returnTick 回绕锚点同值 / leg.pitch≤40°，实测最大帧距 4t、无 linear easing）**ALL CLEAN**；`render_animation.py` 三视图 grid 目检 5 loop 姿态语言互异可辨（俯身左右分点施针 vs 直立对掌推送起伏 vs 深俯中线合掌按压 vs 右臂朝天左臂喂丹不对称 vs 双臂举过头顶环视）+ 5 release 收势轨迹互异且终帧回中立；新增机械项「loop 基位 → release 承接帧」对拍：4/5 完全一致（0 轴偏差），`mass_meridian_repair` 7 轴微差系 `torso.yaw` 在循环内 ±16° 环视摆动、release 取中位锚点所致（该轴不存在可精确承接的单一相位），仍显著优于已 merge 两段式先例（sword.infuse 9 轴 / charge_carrier 12 轴 / heaven_gate 16 轴偏差）——判定零缺陷无资产增量改动（记录并入终轮，PR-4 先例）→ (round 3/3) 决定性再生成 10/10 字节一致 + 双栈门禁于最终资产之后真跑全绿（server FMT:0 / CLIPPY:0 / TEST:0，11821 passed 0 failed；client `gradlew test build` BUILD SUCCESSFUL，AnimCastTicksAlignmentTest 8/8 含新 10 份 manifest 机械断言），终轮 commit 附 `<PROMISE>` 担保。**执行说明**：round 1 由实施 subagent 交付后撞 session 限额终止（transcript 丢失不可续跑），round 2/3 核验与收口由主干接手完成。
 
 **P4 review r2 返工（2026-07-20）**：`/review` 引擎首次跑通（前三轮连续 infra 降级），4 reviewer 一致 REQUEST_CHANGES，实质 finding 一条——**接经术未兑现 plan 锁定的「双手持针 30 穴位序」**：初版交付为「右手持针 + 左手探穴、一循环四落点」，在双手职责与穴位序规模两项上均不等价。按原交付物重做（未走裁剪决议路线）：`yidao_meridian_repair_loop` 由 28t/4 落点重制为 **90t/30 针**（每 3t 一针 = 密度红线内最密，左右手各 15 针交替落针，落点沿经脉三角 sweep 外推再回程，i=30 与 i=0 同相位机械闭环）；下顿/提针幅度按「远距离读招」验收口径由 13°/6° 拉开至 pitch 20°/bend 14°/roll 18°；`yidao_meridian_repair_release` 同步改为**双手同拔**并逐轴对齐新 BASE（t0 承接零偏差，否则接力瞬间左手会从持针跳成空手）；manifest `expected_end_tick` 28→90、主轴增列 `leftArm.roll`。另 3 条 finding 不采纳：2 条为 Codex reviewer 524 超时的 infra 噪音；1 条 blocker「contam_purge body.x 缺 endTick 补帧」经提出者 D 复投时自行撤销、A/B/C 均核实 tick 24 确有 `body.x=0.0`（本地机械缝合检查同样 ALL CLEAN），属误报。
+
+**P6 收口后（2026-07-21）**：矩阵 A×46 / N-A×3 不变（P6 不含矩阵行重制）。`CAST_ALIGNMENT_ALLOWLIST` **由 2 条降至 1 条**——`sword_path.heaven_gate` 出表转「定长相位充能型」分类契约（conventions §14.1），`woliu.vortex_resonance` 维持在表并订正归属为**未消费骨架**（非 active）。矩阵外交付：`stance_woliu` / `stance_zhenmai` 两张架势亮相由 `isLoop:true` 站桩重制为一次性亮相（§8.1 #2 第 4 条遗留清偿，两者均非矩阵行、走 `TechniqueLearnedEvent` 通道而非 skill 通道）。新增分类登记：`FIXED_PHASE_CHARGE_SKILLS += sword_path.heaven_gate`。`TWO_STAGE_PAIRS` 登记 8 对两段式配对，全部纳入全相位承接预算断言。
+
+**P6 打磨记录（2026-07-21，3 轮）**：2 资产（stance_woliu 32t / stance_zhenmai 28t，均由 `isLoop:true` 改一次性亮相）——(round 1/3) 按精度标准建三段结构 + 4t 步进帧点参数化 first cut → (round 2/3) `render_animation.py` 三视图 grid 自评，抓到两处**远距离读招**缺陷并修复：针脉 round 1 为正前方直点（`rightArm.yaw` 仅 -14 / `torso.yaw` +34），正面视图几乎完全透视缩短成一个点——正前方直刺是最差剪影，改为手臂外分 `yaw -28` + `torso.yaw` 收到 +28（世界方向仍近乎正前，即「拧身而直点」，但手臂相对躯干张开成清晰斜线）+ `head.pitch +8` 低头看穴；涡流 round 1 双臂完全镜像只读作「举起双手」，涡流旋转意象不可见且「对称双臂上举」是全仓最拥挤剪影区间，改为托举段右臂比左臂高约 22°、外分更大 + `torso.yaw +7` 轻拧成螺旋（收势段回对称并归零）。同轮补三段式 spec manifest 机械锁 → (round 3/3) 终轮全帧三视图存档 + 逐招五栏 checklist 落 `client/tools/renders/stance_p6/`；末帧全轴归零核验（一次性亮相播完不僵停，从 isLoop 改单发后最易漏的一条）；终轮 commit 附 `<PROMISE>` 担保。
+
+---
+
+## Finish Evidence
+
+### 落地清单（每阶段 → 真实模块/文件路径）
+
+| 阶段 | 落地路径 |
+|---|---|
+| **P0** 审计矩阵 + 标准定稿 + 对拍测试 | `client/src/test/java/com/bong/client/animation/AnimCastTicksAlignmentTest.java`（三套时长断言 + 双 allowlist 棘轮 + `P0_BASELINE` 冻结基线 + spec manifest 框架）；`server/src/cultivation/technique_cast_ticks_snapshot_test.rs` + `client/src/test/resources/bong/technique_cast_ticks_snapshot.json`（单向生成快照）；精度标准入档 `docs/player-animation-conventions.md` §13；本 plan 附录 A 49 招矩阵 |
+| **P1** 批次一 高频短招 | `client/src/main/resources/assets/bong/player_animation/{sword_cleave,sword_thrust,sword_parry,beng_quan,zhenmai_parry,zhenmai_neutralize,zhenmai_multipoint,zhenmai_harden,zhenmai_sever_chain}.json` + 对应 `client/tools/gen_*.py` |
+| **P2** 批次二 去复用 + 长引导两段式 | 前半：`sword_path_{condense_edge,qi_slash,resonance}.json` / `anqi_{single_snipe,multi_shot,soul_inject}.json` + `server/src/network/vfx_animation_trigger.rs`（`sword_path_anim_for_skill` / anqi 常量改指）。后半：`sword_infuse{,_release}.json` / `anqi_charge_carrier_{loop,release}.json` / `anqi_{armor_pierce,echo_fractal}.json` / `sword_manifest_cast.json` / `sword_heaven_gate_{charge,release}.json`；StopAnim 三通道接线 `server/src/network/cast_emit.rs`（`looping_cast_anim_id` / 三打断分支）+ `server/src/combat/sword_basics.rs` + `server/src/combat/carrier.rs` |
+| **P3** 批次三 借用招专属化 + 缺失补齐 + 短招精修 | `tie_shan_kao.json` / `xue_beng_bu.json` / `ni_mai_hu_ti.json`（新增）/ `dugu_infuse_poison.json` / `woliu_vortex_cast.json` / `woliu_{burst,mouth,pull,heart,vacuum_palm,vacuum_lock,vortex_shield,turbulence_burst}.json` / `dash_forward.json` / `baomai_full_power_{charge,release}.json` / `morph_cast.json` + `server/src/combat/burst_meridian.rs`（anim_id `None → Some`） |
+| **P4** yidao 5 招补齐 | `yidao_{meridian_repair,contam_purge,emergency_resuscitate,life_extension,mass_meridian_repair}_{loop,release}.json`（10 份）+ `server/src/combat/yidao.rs`（10 anim id 常量 / `loop_anim_id` / `release_anim_id` / `complete_yidao_casts` release 接力）；快照真源扩展为双表并集 |
+| **P5** 粒子去复用 | `server/src/network/skill_vfx_wiring.rs` + `server/src/network/skill_vfx_wiring_test.rs`；`server/src/combat/zhenmai_v2.rs` / `burst_meridian.rs` / `server/src/npc/npc_skill.rs`（NPC 三招改 `bong:npc_*` 专属 id）；client 粒子 player 与注册 |
+| **P6** 回归收口 | `AnimCastTicksAlignmentTest`（`FIXED_PHASE_CHARGE_SKILLS` / `TWO_STAGE_PAIRS` / `PHASE_HANDOFF_BUDGET_RAD` + 4 条新用例）；`client/src/test/java/com/bong/client/animation/TwoStageHandoffBlendTest.java`（新增，4 例）；`server/src/network/vfx_animation_trigger.rs`（3 条契约 pin + 2 个取值助手）；`client/tools/gen_stance_{woliu,zhenmai}.py` + 两份重制 JSON + `client/src/test/resources/bong/anim_spec_manifests/stance_{woliu,zhenmai}.json`；`client/tools/renders/stance_p6/`（三视图存档 + checklist）；两项裁决入档 `docs/player-animation-conventions.md` §14 |
+
+### 关键 commit
+
+| hash | 日期 | 一句话 |
+|---|---|---|
+| `ab15e6474` | 2026-07-18 | PR-1：P0 审计矩阵 + 精度标准 + cast_ticks 对拍防回归（#1234） |
+| `79db7d898` | 2026-07-19 | PR-2：P1 批次一 9 招高频短招重制（#1235） |
+| `a2a162ce3` | 2026-07-19 | PR-3：P2 前半 6 招去复用专属化（#1239） |
+| `2bef48b40` | 2026-07-19 | PR-4：P2 后半 长引导两段式 + StopAnim 停止路径接线（#1240） |
+| `5d9bdd8fe` | 2026-07-19 | PR-5：P3 批次三 借用招专属化 + 缺失补齐 + 短招精修群（#1241） |
+| `610ed31f3` | 2026-07-19 | PR-6：P4 yidao 5 招两段式动画补齐（矩阵外欠账清偿）（#1243） |
+| `14f8f5e1f` | 2026-07-20 | PR-7：P5 粒子去复用（11 招脱离借用 + 双端闭环接线矩阵）（#1244） |
+| `bd0b4d975` | 2026-07-21 | P6 裁决：heaven_gate 改判据 + 两段式相位承接契约采纳 fade 混合 |
+| `5f95a97c3` | 2026-07-21 | P6：server 侧补相位承接契约与架势亮相的 payload pin |
+| `8bac838b0` / `b1b67d15a` / `cfedb6656` | 2026-07-21 | P6 架势亮相重制 round 1/2/3（终轮附 `<PROMISE>` + 三视图存档） |
+| `c72aa4228` | 2026-07-21 | P6：补全 plan 全量动画资源 pin（`BongAnimationRegistry.contains`，56 条） |
+| `2ee733501` | 2026-07-21 | P6：补通用停止路径的相位承接契约守卫（主干核验补漏） |
+| `c75c5c63e` | 2026-07-21 | review r1 #1/#3 资产侧：strike 发力 easing 修正（含 `anqi_single_snipe` off-by-one）+ 亮相 description 收敛 |
+| `529f59bfb` | 2026-07-21 | review r1 #1 锁侧：`strikePhaseCarriesEaseInDrive` 机械锁 + instant 豁免反向核验（三发变异验证） |
+
+### 测试结果
+
+- **server**：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` —— FMT:0 / CLIPPY:0 / TEST:0，**11871 passed / 0 failed / 6 ignored**（5 个 test binary 汇总，无非 ok）。P6 的净增量为 **+4**，由 diff 机械证明：`git diff origin/main...HEAD -- server/` 只触及 `vfx_animation_trigger.rs` 与 `cast_emit.rs` 两个文件，新增 `#[test]` 4 条、删除 0 条。（本行数字为 **review r1 返工后**的实测值；r1 未改动任何 server 代码，4 条净增全部来自 P6 本体的 3 条 payload pin + `2ee733501` 补的通用停止路径相位承接守卫 1 条。）
+  > 口径说明：PR-7 记录的 11856 是**该 PR 本地门禁**的数字，与本分支 base（`origin/main` = PR-7 的 merge commit `14f8f5e1f`）实测不一致——按上述 diff，差额不由 P6 引入（本 PR 只增不减测试）。以本节实测值为准。
+- **client**：`cd client && ./gradlew test build` —— BUILD SUCCESSFUL，**4222 tests / 0 failures / 0 skipped**（PR-7 基线 4213 之上净增 **+9**，与 diff 一致：`git diff origin/main...HEAD -- 'client/src/test/**'` 新增 `@Test` 9 条、删除 0 条；`AnimCastTicksAlignmentTest` +5、`TwoStageHandoffBlendTest` +4）。`AnimCastTicksAlignmentTest` 单类 **13 passed**。第 9 条即 review r1 新增的 `strikePhaseCarriesEaseInDrive`（12 → 13）。
+- **归档后复跑**：`git mv` 入 `docs/finished_plans/` 后 client 门禁**再跑一次**并绿（上列 4222/0 即归档后的数字）。`SkillParticleSpecDocTest` 经 `client/build.gradle:215-229` 的双路径 task input 与测试内 `PLAN_CANDIDATES` 双候选，路径变更后仍能定位 plan §P5.1 表格；并已核对其 JUnit XML 时间戳确认该类**确实重新执行**（4 例全绿）而非被判 UP-TO-DATE 跳过——「只改真源不改测试源就静默跳过」正是该 task input 要防的漂移。
+- **突变验证（防空测试）**：相位预算降到 40°（低于实测最大 46°）→ `twoStageHandoffHoldsAcrossEveryReachableLoopPhase` 撞红；`FIXED_PHASE_CHARGE_SKILLS` 期望 endTick 改 61 → `fixedPhaseChargeSeamIsExactAndNonLooping` 撞红；资源 pin 塞入不存在的 id → `everyPlanAnimIdResolvesThroughProductionRegistry` 撞红。
+  - **review r1 新锁的三发变异**（`strikePhaseCarriesEaseInDrive`，全部撞红、恢复后复绿）：① `stance_woliu` strike 三帧改回 `INOUTSINE` → FAILED，报文列出实际 easing `{8=INOUTSINE, 12=INOUTSINE, 16=INOUTSINE}` 并指明发力帧须落在段起始侧；② `anqi_single_snipe` 还原 `t4=OUTSINE / t6=INQUAD` 的 off-by-one 形态 → FAILED；③ 给**未登记**的 `beng_quan` manifest 强加 `instant: true` 试图绕过豁免 → FAILED。第 ③ 发专测「豁免通道本身不可被滥用」，是本锁与 PR-7 r1「只测枚举映射」式失效的关键区别。
+- **e2e**：`bash scripts/smoke-test-e2e.sh` 由 CI `e2e` job 在 PR HEAD 执行（`.github/workflows/e2e.yml:144`），按 §测试声明 的证据口径引用对应 HEAD 的绿色 job。
+
+### 跨仓库核验（命中 symbol）
+
+- **server**：`vfx_animation_trigger::{emit_sword_path_visual_triggers, emit_anqi_visual_triggers, emit_technique_learned_stance_triggers, emit_dugu_needle_visual_triggers, emit_woliu_v1_vortex_visual_triggers}`；`ANIM_SWORD_HEAVEN_GATE_{CHARGE,RELEASE}` / `ANIM_ANQI_CHARGE{,_RELEASE}` / `ANIM_STANCE_{WOLIU,ZHENMAI}`；`cast_emit::{looping_cast_anim_id, cast_loop_stop_anim_request, CAST_LOOP_ANIM_*_FADE_OUT_TICKS}`；`combat::yidao::{YidaoSkillId::loop_anim_id, release_anim_id, yidao_loop_anim_for_skill_id}`；`combat::sword_basics::{ANIM_SWORD_INFUSE_CHARGE, ANIM_SWORD_INFUSE_RELEASE}`；`sword_path::heaven_gate::HEAVEN_GATE_CHARGE_END`；`cultivation::technique_cast_ticks_snapshot_test`；`network::skill_vfx_wiring`。
+- **client**：`BongAnimationRegistry.{contains, get, sourceOf}`；`BongAnimationPlayer.{playOnStack, stopOnStack}`；`AnimationLayerManager.{playOnStack, Channel.UPPER_BODY, channelForPriority}`；`ClientAnimationBridge.{playAnim, stopAnim}`；`VfxEventRouter`；测试侧 `AnimCastTicksAlignmentTest.{SKILL_ANIM, TWO_STAGE_PAIRS, FIXED_PHASE_CHARGE_SKILLS, INSTANT_RESOLVER_SKILLS, CAST_ALIGNMENT_ALLOWLIST, P0_BASELINE, strikePhaseCarriesEaseInDrive}` / `TwoStageHandoffBlendTest` / `ProductionAnimationResources.loadViaProductionReloadCallback`。
+- **agent**：本 plan 纯表现层，**不涉及** agent 侧 schema 与 IPC（§8.1 #1 决议：cast_ticks / 冷却 / 伤害零改动）。
+- **共享契约**：`bong:vfx_event` 的 `PlayAnim { anim_id, priority, fade_in_ticks }` / `StopAnim { anim_id, fade_out_ticks }`（`server/src/schema/vfx_event.rs`）；checked-in 快照 `technique_cast_ticks_snapshot.json`（server 单向生成 → client 只消费）。
+
+### 遗留 / 后续
+
+**本 plan 范围内已知余项**
+
+1. `CAST_ALIGNMENT_ALLOWLIST` 余 **1 条** `woliu.vortex_resonance`：归 `docs/plans-skeleton/plan-bughunt-woliu-resonance-loop-arm-decay-v1.md`（**未消费骨架**，P0 ⬜）。实测 11 轴违反 endTick 同值补帧。该骨架被消费并 merge 后，`allowlistEntriesActuallyFailAlignment` 会因「条目已达标」立刻撞红，**强制**删除该条目——棘轮自带回收机制，无需人工记得。
+2. `woliu_vortex_resonance` 至今**无 spec manifest**（故不受 `specManifestsEnforcePrecisionStandardMechanically` 覆盖）；上述 bugfix 落地时应同批补一份 `{"segment":"loop"}` manifest。
+3. 架势亮相目前只在「习得时刻」单发。若日后落地**持续架势 gameplay 状态**需要循环形态，按 §8.1 #2 第 4 条原话另议新增循环资产，**不要**把这两张亮相图改回 `isLoop`（会重新引入无停止路径的红线违例）。
+4. **easing 管辖方向的存量未审**（review r1 副产物，建议单独 bugfix plan）：r1 返工期间读 PlayerAnimator 源码确认了本仓 easing 的真实语义是 `before.ease`——**某帧的 easing 管辖「本帧 → 下一帧」**（`isEasingBefore` 默认 false + 全仓 140 份动画无一声明 `easeBeforeKeyframe`；完整推导与正例落 conventions §15）。据此新设的 `strikePhaseCarriesEaseInDrive` 当场揪出两处写反：`stance_woliu`（strike 全段 INOUTSINE，无发力）与 `anqi_single_snipe`（生成器 docstring 写明要 easeIn，但 INQUAD 放在**顶点帧**上，实际管的是 recovery，strike 反被 OUTSINE 管成减速），两处均已修。**但本锁只覆盖 strike 段「是否存在发力帧」这一条**；anticipation 段的 easeOut、recovery 段的 easeInOutSine 是否也存在同类 off-by-one，**尚未全量审计**——`anqi_single_snipe` 的形态说明这类错误能长期潜伏且不被任何测试察觉（它甚至通过了自己批次的三视图人工验收，因为 `render_animation.py` 出图用线性插值、**对 easing 完全不敏感**，肉眼验收天然看不见 easing 错误）。建议立 bugfix plan 全量扫 140 份资产的三段 easing 方向，并把 anticipation/recovery 两段的族别一并机械化。
+
+**PR-7 移交的五条遗留（本 plan 范围外，登记不实施）**
+
+1. `ArmorProfileStoreCrossCheckTest` 的 gradle task input **未声明**：该测试跨目录读 `server/assets/combat/armor_profiles/*.json`，但 `client/build.gradle` 只为 `SkillParticleSpecDocTest` 声明了 input（`:215-229`）。只改 server 侧 profile JSON、不动 client 测试源时 `:test` 会判 UP-TO-DATE 直接跳过，漂移静默溜过——与 PR-7 为 spec doc 修的是同一类窗口。修法：同一 `tasks.named('test')` 块内加 `inputs.dir('../server/assets/combat/armor_profiles').withPropertyName('serverArmorProfiles')`。PR-7 r2 按范围纪律移出。
+2. client 侧字面量 `12` 与 server `NI_MAI_HU_TI_AURA_PARTICLE_LIFETIME_TICKS` **无机器对拍**。要闭死需给 `SkillVfxWiring` 表加 `duration` 字段并重新生成 manifest。
+3. 环绕粒子的 `tick()` / `createParticle()` **无测试覆盖**（需真 `ClientWorld`）。暴露面已缩到 6 行委托，风险有限。
+4. `SpawnParticle.strength` **无区间校验**（schema 层）。
+5. `server/src/network/gameplay_vfx.rs:90` 的 `f32::clamp` 对 `NaN` 返回 `NaN`，导致整包被静默丢弃——真缺陷，建议单独 bugfix plan（`clamp` 前先判 `is_finite`）。
+
+**存量缺口（本 plan 未触碰，顺带登记）**
+
+6. `vfx_animation_trigger.rs` 三个 arm 至今零 pin 测试：`emit_defense_animation_triggers`（格挡 / parry）、`emit_baomai_v3_visual_triggers`（baomai v3 全招）、`emit_scroll_read_stop_for_entity`（读卷停止）；`emit_tribulation_animation_triggers` 仅有间接覆盖（一条「不受结算系统干扰」的非干涉断言）。本 plan 触碰过的 arm 均已配 pin，这四条属既有欠账。
+
+**下游依赖**
+
+7. 梯队三 `plan-fpv-cast-av-v1` P5 以本 plan 通过 TPV 验收的动画为输入，负责真正的第一人称手臂验收（本 plan 的 FPV 冒烟为非阻塞项）。
+

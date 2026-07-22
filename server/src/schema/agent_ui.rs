@@ -1,8 +1,7 @@
 //! plan-agent-ui-data-v1 P0 — 天道 UI-as-Data Rust serde 镜像。
 //!
 //! 与 TypeScript `agent/packages/schema/src/payloads/agent-ui.ts` 1:1 对应。
-//! 字段不混用：三个 schema 各自独立（AgentUiRequestCommandV1 / AgentUiRequestPayloadV1 /
-//! AgentUiResponsePayloadV1）。
+//! 字段不混用：C2S 与 server→agent response 独立，权威目标字段只存在于后者。
 
 use std::collections::HashMap;
 
@@ -110,17 +109,63 @@ pub struct AgentUiRequestPayloadV1 {
 
 // ─── Schema 3：Client → Server CustomPayload + Server → Agent Redis ───────────
 
-/// 玩家面板交互响应（C2S CustomPayload + server→agent Redis）。
+/// server 转发给 agent 的面板响应（Redis `bong:agent_ui_response`）。
 ///
-/// `params` 为 `HashMap<String,String>` 以保留可扩展性：
-///   - `button_click` → `params["button_id"] = "<id>"`
-///   - `error` → `params["reason"] = "realm_gate_rejected"` 等
+/// `target_player` 只在 server 权威拒绝路径回填；真实 C2S payload 不含该字段。
+/// 省略字段兼容滚动升级，显式 `null` 则拒绝，避免坏 payload 冒充 legacy。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUiResponsePayloadV1 {
     pub request_id: String,
     pub action: AgentUiActionType,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_agent_ui_target_player",
+        serialize_with = "serialize_optional_agent_ui_target_player"
+    )]
+    pub target_player: Option<String>,
     pub params: HashMap<String, String>,
+}
+
+fn validate_agent_ui_target_player(value: &str) -> Result<(), String> {
+    let code_point_len = value.chars().count();
+    if code_point_len == 0 {
+        return Err("target_player 不能为空".to_string());
+    }
+    if code_point_len > AGENT_UI_ID_MAX_CHARS {
+        return Err(format!(
+            "target_player Unicode code point 长度 {code_point_len} 超出上限 {AGENT_UI_ID_MAX_CHARS}"
+        ));
+    }
+    Ok(())
+}
+
+fn deserialize_optional_agent_ui_target_player<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    validate_agent_ui_target_player(&value).map_err(serde::de::Error::custom)?;
+    Ok(Some(value))
+}
+
+fn serialize_optional_agent_ui_target_player<S>(
+    value: &Option<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(value) => {
+            validate_agent_ui_target_player(value).map_err(serde::ser::Error::custom)?;
+            serializer.serialize_some(value)
+        }
+        None => serializer.serialize_none(),
+    }
 }
 
 // ─── Schema 4：Server → Client close 信号（bong:server_data 变体 agent_ui_close）──
@@ -479,6 +524,87 @@ mod tests {
             result.is_err(),
             "非法 action 字面量应反序列化失败，得到 Ok 变体"
         );
+    }
+
+    #[test]
+    fn agent_ui_response_target_player_contract_is_narrow_and_fail_closed() {
+        let targeted = serde_json::json!({
+            "request_id": "targeted",
+            "action": "error",
+            "target_player": "offline:TestPlayer",
+            "params": {"reason": "realm_gate_rejected"},
+        });
+        let response: AgentUiResponsePayloadV1 =
+            serde_json::from_value(targeted).expect("合法 server→agent target_player 应能反序列化");
+        assert_eq!(
+            response.target_player.as_deref(),
+            Some("offline:TestPlayer")
+        );
+
+        let legacy = serde_json::json!({
+            "request_id": "legacy",
+            "action": "error",
+            "params": {"reason": "realm_gate_rejected"},
+        });
+        let response: AgentUiResponsePayloadV1 = serde_json::from_value(legacy)
+            .expect("legacy server→agent payload 缺省 target_player 应继续可读");
+        assert!(response.target_player.is_none());
+        let serialized = serde_json::to_value(&response).expect("legacy payload 应能序列化");
+        assert!(
+            serialized.get("target_player").is_none(),
+            "target_player=None 不应在 wire 上变成 null：{serialized}"
+        );
+
+        for (name, value, should_pass) in [
+            ("empty", String::new(), false),
+            ("128 emoji", "😀".repeat(128), true),
+            ("129 emoji", "😀".repeat(129), false),
+            ("127 BMP + 1 astral", format!("{}😀", "a".repeat(127)), true),
+            (
+                "128 BMP + 1 astral",
+                format!("{}😀", "a".repeat(128)),
+                false,
+            ),
+        ] {
+            let inbound = serde_json::from_value::<AgentUiResponsePayloadV1>(serde_json::json!({
+                "request_id": "boundary",
+                "action": "error",
+                "target_player": value,
+                "params": {"reason": "realm_gate_rejected"},
+            }));
+            assert_eq!(
+                inbound.is_ok(),
+                should_pass,
+                "新增 target_player {name} 应按 1..=128 Unicode code points 判定为 {should_pass}：{inbound:?}"
+            );
+        }
+
+        let explicit_null = serde_json::json!({
+            "request_id": "null-target",
+            "action": "error",
+            "target_player": null,
+            "params": {"reason": "realm_gate_rejected"},
+        });
+        assert!(
+            serde_json::from_value::<AgentUiResponsePayloadV1>(explicit_null).is_err(),
+            "显式 null 不得冒充 legacy 缺字段"
+        );
+    }
+
+    #[test]
+    fn agent_ui_response_raw_json_rejects_lone_surrogate_and_accepts_pair() {
+        let lone_surrogate =
+            r#"{"request_id":"bad","action":"error","target_player":"\ud800","params":{}}"#;
+        assert!(
+            serde_json::from_str::<AgentUiResponsePayloadV1>(lone_surrogate).is_err(),
+            "raw JSON lone surrogate 必须拒绝"
+        );
+
+        let valid_pair =
+            r#"{"request_id":"good","action":"error","target_player":"\ud83d\ude00","params":{}}"#;
+        let response: AgentUiResponsePayloadV1 = serde_json::from_str(valid_pair)
+            .expect("合法 surrogate pair 应解码为单个 Unicode scalar");
+        assert_eq!(response.target_player.as_deref(), Some("😀"));
     }
 
     // ── AgentUiClosePayloadV1 roundtrip ──────────────────────────────────────

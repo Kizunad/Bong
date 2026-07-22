@@ -175,6 +175,8 @@ export interface RuntimeDeps {
   loadMockState?: () => WorldStateV1;
   worldModel?: WorldModel;
   sleep?: (ms: number) => Promise<void>;
+  /** Wall clock in Unix milliseconds; injectable for chat-window boundary tests. */
+  now?: () => number;
   logger?: Pick<typeof console, "log" | "error" | "warn">;
   maxLoopIterations?: number;
   telemetrySink?: TelemetrySink;
@@ -1172,6 +1174,7 @@ export async function runRuntime(
   const annotateModel = modelOverrides.annotate;
   const worldModel = deps.worldModel ?? new WorldModel();
   const sleep = deps.sleep ?? defaultSleep;
+  const now = deps.now ?? Date.now;
   const telemetrySink = deps.telemetrySink ?? createDefaultTelemetrySink({ logger });
   const qiColorNarrationTracker = new QiColorNarrationTracker();
   const ecologyAnalyzer = new EcologyAnalyzer();
@@ -1196,7 +1199,7 @@ export async function runRuntime(
       publishCommands: async () => {},
       publishNarrations: async () => {},
       logger,
-      tickStartedAtMs: Date.now(),
+      tickStartedAtMs: now(),
       reconnectCount: 0,
       backoffCount: 0,
       staleStateSkipped: false,
@@ -1241,9 +1244,9 @@ export async function runRuntime(
   try {
     while (running && loopIterations < maxLoopIterations) {
       loopIterations += 1;
-      const tickStartedAt = Date.now();
-      const nowSeconds = Math.floor(tickStartedAt / 1000);
-      latestChatSignals = mergeChatSignals(latestChatSignals, [], nowSeconds);
+      const tickStartedAt = now();
+      const loopStartedAtSeconds = Math.floor(tickStartedAt / 1000);
+      latestChatSignals = mergeChatSignals(latestChatSignals, [], loopStartedAtSeconds);
 
       try {
         if (!connected) {
@@ -1279,10 +1282,11 @@ export async function runRuntime(
               annotateModel,
               logger,
             });
+            const mergeNowSeconds = Math.floor(now() / 1000);
             latestChatSignals = mergeChatSignals(
               latestChatSignals,
               annotatedSignals,
-              nowSeconds,
+              mergeNowSeconds,
             );
             logger.log(
               `[tiandao] chat drain: messages=${drainedChat.length}, signals=${latestChatSignals.length}`,
@@ -1456,7 +1460,7 @@ export async function runRuntime(
           }
         }
 
-        const elapsedMs = Date.now() - tickStartedAt;
+        const elapsedMs = now() - tickStartedAt;
         logger.log(`[tiandao] loop tick took ${elapsedMs}ms`);
 
         if (failureStreak > 0) {

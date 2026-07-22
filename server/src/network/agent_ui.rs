@@ -379,6 +379,7 @@ fn process_agent_ui_cmd(
         let resp = AgentUiResponsePayloadV1 {
             request_id: cmd.request_id.clone(),
             action: AgentUiActionType::Error,
+            target_player: None,
             params: [("reason".to_string(), "player_offline".to_string())]
                 .into_iter()
                 .collect(),
@@ -398,6 +399,7 @@ fn process_agent_ui_cmd(
         let resp = AgentUiResponsePayloadV1 {
             request_id: cmd.request_id.clone(),
             action: AgentUiActionType::Error,
+            target_player: Some(cmd.target_player.clone()),
             params: [
                 ("reason".to_string(), "realm_gate_rejected".to_string()),
                 ("player_realm".to_string(), player_rank.to_string()),
@@ -418,6 +420,7 @@ fn process_agent_ui_cmd(
             let resp = AgentUiResponsePayloadV1 {
                 request_id: cmd.request_id.clone(),
                 action: AgentUiActionType::Error,
+                target_player: None,
                 params: [
                     ("reason".to_string(), "xml_sanitize_failed".to_string()),
                     ("detail".to_string(), e.to_string()),
@@ -448,6 +451,7 @@ fn process_agent_ui_cmd(
         let replaced_resp = AgentUiResponsePayloadV1 {
             request_id: old.request_id.clone(),
             action: AgentUiActionType::Replaced,
+            target_player: None,
             params: HashMap::new(),
         };
         let _ = redis
@@ -552,6 +556,7 @@ fn send_error_response(redis: &RedisBridgeResource, request_id: &str, reason: &s
     let resp = AgentUiResponsePayloadV1 {
         request_id: request_id.to_owned(),
         action: AgentUiActionType::Error,
+        target_player: None,
         params: [("reason".to_string(), reason.to_string())]
             .into_iter()
             .collect(),
@@ -596,6 +601,7 @@ pub fn agent_ui_tick_system(
             let resp = AgentUiResponsePayloadV1 {
                 request_id: session.request_id.clone(),
                 action: AgentUiActionType::Timeout,
+                target_player: None,
                 params: HashMap::new(),
             };
             let _ = redis.tx_outbound.send(RedisOutbound::AgentUiResponse(resp));
@@ -671,6 +677,7 @@ pub fn receive_agent_ui_response_system(
                 let resp = AgentUiResponsePayloadV1 {
                     request_id: ev.request_id.clone(),
                     action: AgentUiActionType::Error,
+                    target_player: None,
                     params: [("reason".to_string(), "invalid_button_id".to_string())]
                         .into_iter()
                         .collect(),
@@ -696,6 +703,7 @@ pub fn receive_agent_ui_response_system(
         let resp = AgentUiResponsePayloadV1 {
             request_id: ev.request_id.clone(),
             action: ev.action.clone(),
+            target_player: None,
             params: ev.params.clone(),
         };
         tracing::debug!(
@@ -725,6 +733,7 @@ pub fn receive_player_disconnect_system(
                 let resp = AgentUiResponsePayloadV1 {
                     request_id: session.request_id.clone(),
                     action: AgentUiActionType::Dismissed,
+                    target_player: None,
                     params: HashMap::new(),
                 };
                 let _ = redis.tx_outbound.send(RedisOutbound::AgentUiResponse(resp));
@@ -853,13 +862,19 @@ mod tests {
         }
     }
 
-    /// realm_gate 拒绝低境界 → Redis emit AgentUiResponse{action:error, reason:realm_gate_rejected}
+    /// 真实 realm gate producer 必须生成只指向目标玩家的拒绝 response。
     #[test]
-    fn system_realm_gate_rejected_emits_error_response() {
+    fn system_realm_gate_rejected_emits_private_response() {
         let (mut app, rx) = build_agent_ui_app();
-        // 引气 rank=2，realm_gate=3 → 拒绝
-        spawn_test_player(&mut app, "TestPlayer", Realm::Induce);
-        let cmd = make_cmd("req-realm-gate", "TestPlayer", 3);
+        let target_username = "E2EPlayer";
+        // 引气 rank=2，凝脉 gate=3 → 拒绝。
+        spawn_test_player(&mut app, target_username, Realm::Induce);
+        let cmd = make_cmd(
+            "req-realm-gate-private-response",
+            target_username,
+            Realm::Condense.rank(),
+        );
+        let expected_target = cmd.target_player.clone();
         app.world_mut().send_event(AgentUiCmdEvent(cmd));
         app.update();
 
@@ -867,31 +882,32 @@ mod tests {
             RedisOutbound::AgentUiResponse(r) => r,
             other => panic!("期望 AgentUiResponse，实为 {other:?}"),
         };
+        assert!(matches!(resp.action, AgentUiActionType::Error));
+        assert_eq!(resp.request_id, "req-realm-gate-private-response");
         assert_eq!(
-            resp.request_id, "req-realm-gate",
-            "request_id 应对齐，实为 {}",
-            resp.request_id
-        );
-        assert!(
-            matches!(resp.action, AgentUiActionType::Error),
-            "action 应为 Error（realm_gate_rejected），实为 {:?}",
-            resp.action
+            resp.target_player.as_deref(),
+            Some(expected_target.as_str())
         );
         assert_eq!(
-            resp.params.get("reason").map(|s| s.as_str()),
-            Some("realm_gate_rejected"),
-            "reason 应为 realm_gate_rejected，实为 {:?}",
-            resp.params.get("reason")
+            resp.params.get("reason").map(String::as_str),
+            Some("realm_gate_rejected")
+        );
+        assert_eq!(
+            resp.params.get("player_realm").map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            resp.params.get("required_realm").map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(
+            resp.params.len(),
+            3,
+            "realm gate producer 不得夹带未约定字段"
         );
         assert!(
-            resp.params.contains_key("player_realm"),
-            "params 应含 player_realm 字段，实为 {:?}",
-            resp.params
-        );
-        assert!(
-            resp.params.contains_key("required_realm"),
-            "params 应含 required_realm 字段，实为 {:?}",
-            resp.params
+            rx.try_recv().is_err(),
+            "一次 realm gate 拒绝必须只生成一条 response"
         );
     }
 

@@ -711,6 +711,85 @@ impl TerrainProvider {
         }
     }
 
+    /// Build the smallest mmap-backed provider that can materialize a real
+    /// whalefall fossil node. The fixture intentionally accepts only one raster
+    /// column: callers that need a wider terrain surface should use the on-disk
+    /// raster fixture instead of silently relying on wilderness fallbacks.
+    #[cfg(test)]
+    pub(crate) fn with_fossil_for_tests(fossil: FossilBbox, mask: u8) -> Self {
+        assert_ne!(mask, 0, "fossil test provider requires a non-zero mask");
+        assert_eq!(
+            fossil.min_x, fossil.max_x,
+            "fossil test provider supports exactly one x column"
+        );
+        assert_eq!(
+            fossil.min_z, fossil.max_z,
+            "fossil test provider supports exactly one z column"
+        );
+
+        let mut spans = vec![0_u8; SPAN_STRIDE];
+        for slot in 0..MAX_SPANS {
+            let offset = slot * 4;
+            spans[offset..offset + 2].copy_from_slice(&SPAN_SENTINEL.to_le_bytes());
+            spans[offset + 2..offset + 4].copy_from_slice(&SPAN_SENTINEL.to_le_bytes());
+        }
+        let floor_y = i16::try_from(super::MIN_Y).expect("terrain MIN_Y must fit the span format");
+        spans[0..2].copy_from_slice(&floor_y.to_le_bytes());
+        spans[2..4].copy_from_slice(&64_i16.to_le_bytes());
+        let zero_f32 = 0.0_f32.to_le_bytes();
+
+        let tile = TileFields {
+            spans_count: anonymous_mmap_for_tests(&[1]),
+            spans: anonymous_mmap_for_tests(&spans),
+            surface_id: anonymous_mmap_for_tests(&[0]),
+            subsurface_id: anonymous_mmap_for_tests(&[0]),
+            biome_id: anonymous_mmap_for_tests(&[0]),
+            water_level: anonymous_mmap_for_tests(&zero_f32),
+            feature_mask: anonymous_mmap_for_tests(&zero_f32),
+            boundary_weight: anonymous_mmap_for_tests(&zero_f32),
+            rift_axis_sdf: None,
+            portal_anchor_sdf: None,
+            rim_edge_mask: None,
+            fracture_mask: None,
+            neg_pressure: None,
+            ruin_density: None,
+            qi_density: None,
+            mofa_decay: None,
+            qi_vein_flow: None,
+            spirit_eye_candidates: None,
+            realm_collapse_mask: None,
+            sky_island_mask: None,
+            underground_tier: None,
+            flora_density: None,
+            flora_variant_id: None,
+            ground_cover_density: None,
+            ground_cover_id: None,
+            zongmen_origin_id: None,
+            mineral_density: None,
+            mineral_kind: None,
+            fossil_bbox: Some(anonymous_mmap_for_tests(&[mask])),
+            anomaly_intensity: None,
+            anomaly_kind: None,
+            tsy_presence: None,
+            tsy_origin_id: None,
+            tsy_depth_tier: None,
+        };
+        let tile_key = (fossil.min_x, fossil.min_z);
+
+        Self {
+            tiles: HashMap::from([(tile_key, tile)]),
+            tile_size: 1,
+            world_bounds: Bounds2D {
+                min_x: fossil.min_x,
+                max_x: fossil.max_x,
+                min_z: fossil.min_z,
+                max_z: fossil.max_z,
+            },
+            fossil_bboxes: vec![fossil],
+            ..Self::empty_for_tests()
+        }
+    }
+
     /// Build a `TerrainProvider` that already has a populated placement index.
     /// Used by P1 unit tests to verify bucket lookup without touching disk.
     #[cfg(test)]
@@ -1230,6 +1309,15 @@ fn map_file(path: &Path, expected_len: usize) -> Result<Mmap, String> {
 
     unsafe { Mmap::map(&file) }
         .map_err(|error| format!("failed to mmap raster layer {}: {error}", path.display()))
+}
+
+#[cfg(test)]
+fn anonymous_mmap_for_tests(bytes: &[u8]) -> Mmap {
+    let mut mmap = memmap2::MmapMut::map_anon(bytes.len())
+        .expect("anonymous test raster mmap should allocate");
+    mmap.copy_from_slice(bytes);
+    mmap.make_read_only()
+        .expect("anonymous test raster mmap should become read-only")
 }
 
 fn read_u8(bytes: &Mmap, index: usize) -> u8 {
