@@ -1042,6 +1042,24 @@ mod tests {
     }
 
     #[test]
+    fn fixed_bot_ambient_witness_selects_cow_in_all_four_seasons() {
+        let position = DVec3::new(5.0, 73.0, 3.0);
+        for season in [
+            Season::Summer,
+            Season::Winter,
+            Season::SummerToWinter,
+            Season::WinterToSummer,
+        ] {
+            assert_eq!(
+                mundane_species_for_position_seasonal("spawn", position, season),
+                MundaneFaunaKind::Cow,
+                "bot ambient witness (zone=spawn,x=5,z=3) must remain Cow in {season:?}; \
+                 changing this pin also requires an explicit protocol witness update"
+            );
+        }
+    }
+
+    #[test]
     fn species_for_position_seasonal_respects_biome_pool() {
         for season in [
             Season::Summer,

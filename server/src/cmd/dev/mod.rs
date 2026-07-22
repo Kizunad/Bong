@@ -1,3 +1,5 @@
+// plan-bughunt-animal-air-spawn-gravity-v1 P2：确定性 ambient one-shot dev 命令
+pub mod ambient_spawn;
 // plan-tribulation-balance-v1 P0：/balance tribulation dev 命令
 pub mod balance;
 pub mod baolongwang;
@@ -45,6 +47,7 @@ pub mod zones;
 use valence::prelude::App;
 
 pub fn register(app: &mut App) {
+    ambient_spawn::register(app);
     balance::register(app);
     baolongwang::register(app);
     block_picker::register(app);

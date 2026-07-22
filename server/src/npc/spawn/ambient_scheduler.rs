@@ -42,6 +42,7 @@ use valence::prelude::{
 };
 
 use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
+use crate::fauna::mundane::{mundane_pool_fn, MundaneFaunaMarker};
 use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
@@ -642,6 +643,71 @@ where
         .entry(request.zone.name.clone())
         .or_insert(0) += 1;
     Some(spawned)
+}
+
+/// Dev-only one-shot ambient pool selector. This is crate-visible so the command layer can exercise
+/// the exact production submission boundary without exposing either concrete `spawn_*` function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AmbientDevSpawnKind {
+    Mundane,
+    Threat,
+}
+
+impl AmbientDevSpawnKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mundane => "mundane",
+            Self::Threat => "threat",
+        }
+    }
+}
+
+/// Submit exactly one dev ambient candidate through the production resolver, real species pool,
+/// marker insertion, and pending accounting path.
+///
+/// `layer` is the authoritative Overworld entity layer used by the real pool. `runtime_layer` and
+/// `terrain` deliberately remain independently optional: a loaded runtime layer works without a
+/// raster, while a passable raster can resolve an unloaded/missing runtime layer. The local pending
+/// map exists only to preserve the production submission contract; this one-shot bypasses scheduler
+/// cadence and budget by design and never leaks its resolved Y as a command oracle.
+pub(crate) fn submit_ambient_dev_spawn_once<P: SurfaceProvider + ?Sized>(
+    commands: &mut Commands,
+    kind: AmbientDevSpawnKind,
+    layer: Entity,
+    runtime_layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+    zone: &Zone,
+    candidate: DVec3,
+    season: Season,
+    now: u64,
+) -> Option<Entity> {
+    let request = AmbientSpawnRequest {
+        layer,
+        zone,
+        candidate,
+        season,
+        now,
+    };
+    let mut pending_spawns_by_zone = HashMap::new();
+
+    match kind {
+        AmbientDevSpawnKind::Mundane => submit_ambient_spawn_candidate::<MundaneFaunaMarker, P>(
+            commands,
+            runtime_layer,
+            terrain,
+            mundane_pool_fn,
+            &mut pending_spawns_by_zone,
+            request,
+        ),
+        AmbientDevSpawnKind::Threat => submit_ambient_spawn_candidate::<AmbientThreatMarker, P>(
+            commands,
+            runtime_layer,
+            terrain,
+            ambient_threat_pool_fn,
+            &mut pending_spawns_by_zone,
+            request,
+        ),
+    }
 }
 
 /// 每 marker_type 独立注入的调度配置：`budget_fn` 决定"刷多少/多久"，`pool_fn` 决定
@@ -1291,6 +1357,197 @@ mod tests {
         assert_eq!(marker.spawned_at, 456);
         assert_eq!(marker.home_zone, "test_zone");
         assert_eq!(pending.get("test_zone"), Some(&1));
+    }
+
+    #[test]
+    fn ambient_dev_spawn_once_mundane_dispatches_real_pool_on_runtime_without_raster() {
+        use crate::fauna::mundane::{MundaneFaunaKind, MundaneFaunaSpecies};
+
+        let (runtime_app, runtime_layer_entity) =
+            make_runtime_layer(&[(0, 0)], &[(5, 140, 3, BlockState::STONE)]);
+        let runtime_layer = runtime_app
+            .world()
+            .get::<ChunkLayer>(runtime_layer_entity)
+            .expect("runtime fixture must expose its loaded ChunkLayer");
+        let mut output = App::new();
+        let entity_layer = output.world_mut().spawn_empty().id();
+        let mut zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        zone.name = "spawn".to_string();
+
+        let spawned = {
+            let mut commands = output.world_mut().commands();
+            submit_ambient_dev_spawn_once::<FixtureSurface>(
+                &mut commands,
+                AmbientDevSpawnKind::Mundane,
+                entity_layer,
+                Some(runtime_layer),
+                None,
+                &zone,
+                DVec3::new(5.0, 152.0, 3.0),
+                Season::Summer,
+                901,
+            )
+        };
+        output.world_mut().flush();
+
+        let entity = spawned.expect("loaded runtime support + real mundane pool must spawn");
+        assert_eq!(
+            output
+                .world()
+                .get::<Position>(entity)
+                .expect("real mundane pool must attach Position")
+                .get(),
+            DVec3::new(5.0, 141.0, 3.0),
+            "one-shot mundane must use runtime ground_y+1, never executor/candidate y=152"
+        );
+        let marker = output
+            .world()
+            .get::<MundaneFaunaMarker>(entity)
+            .expect("Mundane dev kind must attach the production mundane marker");
+        assert_eq!(marker.spawned_at, 901);
+        assert_eq!(marker.home_zone, "spawn");
+        assert_eq!(
+            output
+                .world()
+                .get::<MundaneFaunaSpecies>(entity)
+                .expect("real mundane pool must attach its concrete species")
+                .0,
+            MundaneFaunaKind::Cow,
+            "the fixed (spawn,5,3,Summer) bot witness must dispatch to Cow"
+        );
+        assert!(
+            output.world().get::<AmbientThreatMarker>(entity).is_none(),
+            "Mundane dev kind must not cross-tag the entity as a threat"
+        );
+    }
+
+    #[test]
+    fn ambient_dev_spawn_once_threat_dispatches_real_rat_pool_through_raster_fallback() {
+        let mut app = App::new();
+        let entity_layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let terrain = FixtureSurface {
+            y: 72,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_dev_spawn_once(
+                &mut commands,
+                AmbientDevSpawnKind::Threat,
+                entity_layer,
+                None,
+                Some(&terrain),
+                &zone,
+                DVec3::new(5.0, 152.0, 3.0),
+                Season::Winter,
+                902,
+            )
+        };
+        app.world_mut().flush();
+
+        let entity = spawned.expect("passable raster + danger-one real threat pool must spawn Rat");
+        assert_eq!(terrain.queried.get(), Some((5, 3)));
+        assert_eq!(
+            app.world()
+                .get::<Position>(entity)
+                .expect("real Rat pool must attach Position")
+                .get(),
+            DVec3::new(5.0, 73.0, 3.0),
+            "one-shot threat must use raster surface_y+1, never executor/candidate y=152"
+        );
+        assert!(
+            app.world().get::<RatBlackboard>(entity).is_some(),
+            "Threat dev kind at danger one must dispatch to the real Rat production pool"
+        );
+        let marker = app
+            .world()
+            .get::<AmbientThreatMarker>(entity)
+            .expect("Threat dev kind must attach the production threat marker");
+        assert_eq!(marker.spawned_at, 902);
+        assert_eq!(marker.home_zone, "test_zone");
+        assert!(
+            app.world().get::<MundaneFaunaMarker>(entity).is_none(),
+            "Threat dev kind must not cross-tag the entity as mundane fauna"
+        );
+    }
+
+    #[test]
+    fn ambient_dev_spawn_once_rejects_when_runtime_and_raster_are_both_missing() {
+        let mut app = App::new();
+        let entity_layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_dev_spawn_once::<FixtureSurface>(
+                &mut commands,
+                AmbientDevSpawnKind::Threat,
+                entity_layer,
+                None,
+                None,
+                &zone,
+                DVec3::new(5.0, 152.0, 3.0),
+                Season::Summer,
+                903,
+            )
+        };
+        app.world_mut().flush();
+
+        assert_eq!(spawned, None, "dual-source miss must fail closed");
+        let world = app.world_mut();
+        let mut markers = world.query::<&AmbientThreatMarker>();
+        assert_eq!(
+            markers.iter(world).count(),
+            0,
+            "surface rejection must occur before the real threat pool and marker insertion"
+        );
+    }
+
+    #[test]
+    fn ambient_dev_spawn_once_surface_success_still_honors_mundane_habitat_rejection() {
+        use crate::fauna::mundane::MundaneFaunaSpecies;
+
+        let mut app = App::new();
+        let entity_layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.0, DimensionKind::Overworld);
+        let terrain = FixtureSurface {
+            y: 72,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_dev_spawn_once(
+                &mut commands,
+                AmbientDevSpawnKind::Mundane,
+                entity_layer,
+                None,
+                Some(&terrain),
+                &zone,
+                DVec3::new(5.0, 152.0, 3.0),
+                Season::Summer,
+                904,
+            )
+        };
+        app.world_mut().flush();
+
+        assert_eq!(
+            terrain.queried.get(),
+            Some((5, 3)),
+            "test precondition: raster surface must resolve before the real pool rejects"
+        );
+        assert_eq!(spawned, None, "dead-zone mundane pool must reject");
+        let world = app.world_mut();
+        let mut markers = world.query::<&MundaneFaunaMarker>();
+        assert_eq!(markers.iter(world).count(), 0);
+        let mut species = world.query::<&MundaneFaunaSpecies>();
+        assert_eq!(
+            species.iter(world).count(),
+            0,
+            "pool rejection must not leave a partially spawned mundane entity"
+        );
     }
 
     #[test]

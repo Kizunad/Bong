@@ -2,13 +2,13 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：Skeleton，2026-07-21 UTC（本地起草日 2026-07-22）起草；6 路 Sonnet 调查 + 2 路 Sonnet 无上下文审查已确认根因和最小边界。本 skeleton 由 BugFix 工作流以 **1 skeleton = 1 branch = 1 PR** 消费。
+**状态**：Active，2026-07-22；P0/P1 已完成并通过定向回归，P2 的确定性命令、Bot 场景与定向门禁已完成，完整 server gate / 真实 Bot e2e 尚未运行，故保持 active 且不归档。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | ambient 共用地表门禁：mundane + threat 生成前统一解析 runtime `ground_y + 1` / raster fallback | ⬜ |
-| P1 | 饱和回归：纯函数、真实 scheduler→pool 生产链、预算与错误分支 | ⬜ |
-| P2 | 确定性 bot 场景 + 非目标隔离 + 完整 server 门禁 | ⬜ |
+| P0 | ambient 共用地表门禁：mundane + threat 生成前统一解析 runtime `ground_y + 1` / raster fallback | ✅ 2026-07-22 |
+| P1 | 饱和回归：纯函数、真实 scheduler→pool 生产链、预算与错误分支 | ✅ 2026-07-22 |
+| P2 | 确定性 bot 场景 + 非目标隔离 + 完整 server 门禁 | ⏳（实现与定向门禁已绿；完整 gate/e2e 待验收） |
 
 ---
 
@@ -219,7 +219,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool
 
 ---
 
-## P0：ambient 共用地表门禁 ⬜
+## P0：ambient 共用地表门禁 ✅ 2026-07-22
 
 ### 交付物
 
@@ -243,7 +243,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool
 
 ---
 
-## P1：饱和回归 ⬜
+## P1：饱和回归 ✅ 2026-07-22
 
 测试名可按模块风格微调，但必须保留以下可 grep 的语义抓手：
 
@@ -270,7 +270,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool
 
 ---
 
-## P2：确定性 bot 场景与门禁 ⬜
+## P2：确定性 bot 场景与门禁 ⏳
 
 - 新增/扩展一个 `scripts/bot/scenarios/` 场景，使用 §#6 的确定性 dev-only 接缝触发一次 mundane 和一次 threat/rat ambient 生成。
 - 玩家测试高度与 fixture surface 至少相差 32 格；bot 从真实 spawn/move 包跟踪实体 Position，断言：
@@ -282,6 +282,20 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool
 - 完整门禁：
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
   - 对应 bot scenario + `bash scripts/smoke-test-e2e.sh`（按 CI 现有入口执行，headless 设 `BONG_SKIP_SKIN_PREFETCH=1`）。
+
+### P2 当前实现与定向证据（2026-07-22）
+
+- `server/src/cmd/dev/ambient_spawn.rs` 注册确定性 `/ambient_spawn once mundane <x> <z>` 与 `/ambient_spawn once threat <x> <z>`；共享 `ambient_spawn once` wire 根、双 `double` 参数叶节点，并通过 `submit_ambient_dev_spawn_once` 复用 strict resolver、真实 `mundane_pool_fn` / `ambient_threat_pool_fn` 与真实 marker。
+- handler 只从执行者权威 `Position.y` 构造 candidate reference，拒绝非玩家、非有限 X/Z、缺 Position、缺 CurrentDimension、非 Overworld、缺 zone/layer；缺 runtime 时保留 raster fallback，缺 provider 时保留 runtime 路径，双源失败稳定拒绝；accepted chat 不暴露 resolved Y。
+- `scripts/bot/scenarios/npc_ambient_surface_resolution.py` 已自动发现并通过 Python 语法检查；场景固定 `/tpzone spawn` 后玩家 `(0,152,0)`、候选 `(5,3)`，按事件水位匹配 Cow type 18 / Rat type 126 的首帧 `y=73`，并用 `entity_pos` 二次复核、禁止随机 ambient 等待。
+- `server/src/fauna/mundane.rs` 仅新增 `(spawn,5,3)` 四季 Cow witness pin；未改变生产物种池或权重。
+- 已运行且实际命中测试：
+  - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml cmd::dev::ambient_spawn::tests -- --test-threads=1`：`running 11 tests`，11 passed。
+  - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml cmd::registry_pin::tests -- --test-threads=1`：`running 3 tests`，3 passed。
+  - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml 'cmd::tests::' -- --test-threads=1`：`running 4 tests`，4 passed。
+  - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml ambient -- --test-threads=1`：`running 119 tests`，119 passed。
+  - `cargo fmt --manifest-path server/Cargo.toml -- --check`、`git diff --check`、`python3 -m py_compile scripts/bot/scenarios/npc_ambient_surface_resolution.py` 与场景自动发现检查均通过。
+- 本轮按任务边界未运行 `cargo clippy --all-targets -- -D warnings`、全量 `cargo test`、对应 Bot e2e 或 `bash scripts/smoke-test-e2e.sh`；P2 因完整验收尚未完成保持 `⏳`，不得归档。
 
 ---
 
