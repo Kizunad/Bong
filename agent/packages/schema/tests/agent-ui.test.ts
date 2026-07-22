@@ -87,24 +87,30 @@ describe("AgentUiRequestCommandV1", () => {
   };
 
   it("happy path: 正样本通过校验", () => {
-    expect(Value.Check(AgentUiRequestCommandV1, validCommand)).toBe(true);
+    expect(
+      Value.Check(AgentUiRequestCommandV1, validCommand),
+      "完整合法的 AgentUiRequestCommandV1 应通过校验",
+    ).toBe(true);
   });
 
   it("happy path: realm_gate=0 任意境界可见", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 0 }),
+      "realm_gate 下界 0 应表示无门控并通过校验",
     ).toBe(true);
   });
 
   it("happy path: realm_gate=5 通灵+ 专属", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 5 }),
+      "realm_gate=5 应是合法的通灵境门槛",
     ).toBe(true);
   });
 
   it("happy path: realm_gate=6 化虚+ 专属（上限值，最高境界）", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 6 }),
+      "realm_gate 上界 6 应是合法的化虚境门槛",
     ).toBe(true);
   });
 
@@ -114,6 +120,7 @@ describe("AgentUiRequestCommandV1", () => {
         ...validCommand,
         allowed_button_ids: [],
       }),
+      "allowed_button_ids 空数组应表示没有可点击按钮并通过校验",
     ).toBe(true);
   });
 
@@ -124,6 +131,7 @@ describe("AgentUiRequestCommandV1", () => {
         ...validCommand,
         allowed_button_ids: ids,
       }),
+      "allowed_button_ids 上界 16 条应通过校验",
     ).toBe(true);
   });
 
@@ -134,18 +142,21 @@ describe("AgentUiRequestCommandV1", () => {
         ...validCommand,
         allowed_button_ids: ids,
       }),
+      "allowed_button_ids 17 条超过 maxItems=16 应被拒绝",
     ).toBe(false);
   });
 
   it("负样本: realm_gate=7 → 超出 maximum:6", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 7 }),
+      "realm_gate=7 超过最高境界门槛 6 应被拒绝",
     ).toBe(false);
   });
 
   it("负样本: realm_gate=-1 → 低于 minimum:0", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: -1 }),
+      "realm_gate=-1 低于无门控下界 0 应被拒绝",
     ).toBe(false);
   });
 
@@ -155,6 +166,7 @@ describe("AgentUiRequestCommandV1", () => {
         ...validCommand,
         timeout_ticks: 19,
       }),
+      "timeout_ticks=19 低于最短 20 ticks 应被拒绝",
     ).toBe(false);
   });
 
@@ -164,23 +176,31 @@ describe("AgentUiRequestCommandV1", () => {
         ...validCommand,
         timeout_ticks: 2401,
       }),
+      "timeout_ticks=2401 超过最长 2400 ticks 应被拒绝",
     ).toBe(false);
   });
 
   it("负样本: 缺失 request_id", () => {
     const { request_id: _, ...missing } = validCommand;
-    expect(Value.Check(AgentUiRequestCommandV1, missing)).toBe(false);
+    expect(
+      Value.Check(AgentUiRequestCommandV1, missing),
+      "AgentUiRequestCommandV1 缺失必填 request_id 应被拒绝",
+    ).toBe(false);
   });
 
   it("负样本: 缺失 allowed_button_ids", () => {
     const { allowed_button_ids: _, ...missing } = validCommand;
-    expect(Value.Check(AgentUiRequestCommandV1, missing)).toBe(false);
+    expect(
+      Value.Check(AgentUiRequestCommandV1, missing),
+      "AgentUiRequestCommandV1 缺失必填 allowed_button_ids 应被拒绝",
+    ).toBe(false);
   });
 
   it("负样本: xml 超 8192 字节", () => {
     const bigXml = "<label>" + "x".repeat(8200) + "</label>";
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, xml: bigXml }),
+      "AgentUiRequestCommandV1 的 xml 超过 8192 字符上限应被拒绝",
     ).toBe(false);
   });
 });
