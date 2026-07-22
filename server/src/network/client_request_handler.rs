@@ -5185,129 +5185,17 @@ mod tests {
         assert_authoritative_alchemy_guidance(&snapshots[0], [(true, false), (false, false)]);
     }
 
-    fn alchemy_take_back_request_body() -> serde_json::Value {
-        serde_json::json!({
-            "type": "alchemy_take_back",
-            "v": 1,
-            "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
-            "slot_idx": 0,
-        })
-    }
-
-    fn alchemy_take_back_ready_session(player_id: &str) -> AlchemySession {
-        let mut session = alchemy_snapshot_active_session(player_id);
-        session.staged.completed_stages = vec![0, 1];
-        session
-            .staged
-            .materials
-            .insert(ALCHEMY_SNAPSHOT_MATERIAL.into(), 2);
-        session
-    }
-
-    fn alchemy_take_back_residue_registry() -> ItemRegistry {
-        ItemRegistry::from_map(HashMap::from([(
+    #[test]
+    fn alchemy_take_back_repushes_finished_guidance_after_furnace_session_is_removed() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(alchemy_snapshot_recipe_registry());
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID.into(),
             ItemTemplate::minimal_for_test(
                 crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID,
             ),
-        )]))
-    }
-
-    fn fill_inventory_no_free_slot(inventory: &mut PlayerInventory) {
-        let container = &mut inventory.containers[0];
-        container.items.clear();
-        let mut instance_id = 1u64;
-        for row in 0..container.rows {
-            for col in 0..container.cols {
-                container.items.push(PlacedItemState {
-                    row,
-                    col,
-                    instance: inventory_test_item(instance_id, "blocker_filler", 1),
-                });
-                instance_id += 1;
-            }
-        }
-    }
-
-    fn count_template_in_inventory(inventory: &PlayerInventory, template_id: &str) -> u32 {
-        inventory
-            .containers
-            .iter()
-            .flat_map(|container| container.items.iter())
-            .filter(|placed| placed.instance.template_id == template_id)
-            .map(|placed| placed.instance.stack_count)
-            .sum()
-    }
-
-    struct AlchemyTakeBackWire {
-        messages: Vec<String>,
-        snapshots: Vec<crate::schema::alchemy::AlchemySessionDataV1>,
-        furnace_payloads: Vec<crate::schema::alchemy::AlchemyFurnaceDataV1>,
-    }
-
-    fn collect_alchemy_take_back_wire(helper: &mut MockClientHelper) -> AlchemyTakeBackWire {
-        let frames = helper.collect_received().0;
-        let mut messages = Vec::new();
-        let mut snapshots = Vec::new();
-        let mut furnace_payloads = Vec::new();
-        for frame in frames {
-            if let Ok(packet) = frame.decode::<GameMessageS2c>() {
-                messages.push(packet.chat.to_legacy_lossy());
-            }
-            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
-                continue;
-            };
-            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
-                continue;
-            }
-            let Ok(payload) = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0) else {
-                continue;
-            };
-            match payload.payload {
-                ServerDataPayloadV1::AlchemySession(snapshot) => snapshots.push(*snapshot),
-                ServerDataPayloadV1::AlchemyFurnace(data) => furnace_payloads.push(*data),
-                _ => {}
-            }
-        }
-        AlchemyTakeBackWire {
-            messages,
-            snapshots,
-            furnace_payloads,
-        }
-    }
-
-    fn drain_alchemy_spawn_vfx_event_ids(app: &mut App) -> Vec<String> {
-        app.world_mut()
-            .resource_mut::<valence::prelude::Events<VfxEventRequest>>()
-            .drain()
-            .filter_map(|request| match request.payload {
-                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
-                    Some(event_id)
-                }
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn drain_alchemy_outcome_events(app: &mut App) -> Vec<crate::alchemy::AlchemyOutcomeEvent> {
-        app.world_mut()
-            .resource_mut::<valence::prelude::Events<crate::alchemy::AlchemyOutcomeEvent>>()
-            .drain()
-            .collect()
-    }
-
-    fn assert_finished_guidance_snapshot(snapshot: &crate::schema::alchemy::AlchemySessionDataV1) {
-        assert!(!snapshot.active, "finished snapshot must be inactive");
-        assert_eq!(snapshot.status_label, "已结束");
-        assert_authoritative_alchemy_guidance(snapshot, [(true, false), (true, false)]);
-    }
-
-    #[test]
-    fn alchemy_take_back_success_claims_once_emits_complete_and_outcome() {
-        let mut app = App::new();
-        register_request_app(&mut app);
-        app.insert_resource(alchemy_snapshot_recipe_registry());
-        app.insert_resource(alchemy_take_back_residue_registry());
+        )])));
         app.insert_resource(InventoryInstanceIdAllocator::default());
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let client = app.world_mut().spawn(client_bundle).id();
@@ -5316,104 +5204,55 @@ mod tests {
             PlayerState::default(),
             empty_inventory(),
         ));
-        let furnace = spawn_owned_alchemy_snapshot_furnace(
+        let mut session = alchemy_snapshot_active_session("offline:Azure");
+        session.staged.completed_stages = vec![0, 1];
+        session
+            .staged
+            .materials
+            .insert(ALCHEMY_SNAPSHOT_MATERIAL.into(), 2);
+        let furnace =
+            spawn_owned_alchemy_snapshot_furnace(&mut app, "offline:Azure", Some(session));
+
+        let snapshots = run_alchemy_snapshot_request(
             &mut app,
-            "offline:Azure",
-            Some(alchemy_take_back_ready_session("offline:Azure")),
+            client,
+            &mut helper,
+            serde_json::json!({
+                "type": "alchemy_take_back",
+                "v": 1,
+                "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+                "slot_idx": 0,
+            }),
         );
 
-        // first take-back: claim success
-        send_alchemy_snapshot_request(&mut app, client, alchemy_take_back_request_body());
-        app.update();
-        flush_all_client_packets(&mut app);
-
-        let wire = collect_alchemy_take_back_wire(&mut helper);
-        let complete_vfx = drain_alchemy_spawn_vfx_event_ids(&mut app)
-            .into_iter()
-            .filter(|id| id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let outcomes = drain_alchemy_outcome_events(&mut app);
-
         assert_eq!(
-            wire.snapshots.len(),
+            snapshots.len(),
             1,
-            "success must push one finished session"
+            "successful take-back must emit one finished session snapshot rather than an empty-furnace snapshot"
         );
-        assert_finished_guidance_snapshot(&wire.snapshots[0]);
-        assert_eq!(wire.furnace_payloads.len(), 1);
-        assert!(
-            !wire.furnace_payloads[0].has_session,
-            "success must clear furnace session authority"
-        );
-        assert_eq!(
-            complete_vfx, 1,
-            "success must emit exactly one ALCHEMY_COMPLETE"
-        );
-        assert_eq!(
-            outcomes.len(),
-            1,
-            "success must emit exactly one AlchemyOutcomeEvent"
-        );
+        assert!(!snapshots[0].active, "finished snapshot must be inactive");
+        assert_eq!(snapshots[0].status_label, "已结束");
+        assert_authoritative_alchemy_guidance(&snapshots[0], [(true, false), (true, false)]);
         assert!(
             app.world()
                 .get::<AlchemyFurnace>(furnace)
                 .is_some_and(|furnace| furnace.session.is_none()),
-            "success must end furnace session"
-        );
-        let inventory = app.world().get::<PlayerInventory>(client).unwrap();
-        assert_eq!(
-            count_template_in_inventory(
-                inventory,
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID
-            ),
-            1,
-            "success must grant residue once"
-        );
-
-        // second take-back: no double reward / no second complete / no second outcome
-        send_alchemy_snapshot_request(&mut app, client, alchemy_take_back_request_body());
-        app.update();
-        flush_all_client_packets(&mut app);
-        let wire_retry = collect_alchemy_take_back_wire(&mut helper);
-        let complete_vfx_retry = drain_alchemy_spawn_vfx_event_ids(&mut app)
-            .into_iter()
-            .filter(|id| id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let outcomes_retry = drain_alchemy_outcome_events(&mut app);
-        assert!(
-            wire_retry
-                .messages
-                .iter()
-                .any(|message| message.contains("尚未起炉")),
-            "repeat take-back after claim must reject empty furnace, messages={:?}",
-            wire_retry.messages
-        );
-        assert_eq!(
-            complete_vfx_retry, 0,
-            "repeat take-back must not re-emit complete"
-        );
-        assert!(
-            outcomes_retry.is_empty(),
-            "repeat take-back must not re-emit outcome"
-        );
-        let inventory = app.world().get::<PlayerInventory>(client).unwrap();
-        assert_eq!(
-            count_template_in_inventory(
-                inventory,
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID
-            ),
-            1,
-            "repeat take-back must not double-grant residue"
+            "take-back must keep the furnace empty after sending guidance from the completed session"
         );
     }
 
     #[test]
-    fn alchemy_take_back_missing_allocator_keeps_finished_retryable_then_claims_once() {
+    fn alchemy_take_back_missing_allocator_still_pushes_finished_session() {
         let mut app = App::new();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
-        app.insert_resource(alchemy_take_back_residue_registry());
-        // 故意不插 InventoryInstanceIdAllocator：覆盖 non-explode 缺编号器分支。
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID.into(),
+            ItemTemplate::minimal_for_test(
+                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID,
+            ),
+        )])));
+        // 故意不插入 InventoryInstanceIdAllocator：覆盖 non-explode 缺编号器分支。
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let client = app.world_mut().spawn(client_bundle).id();
         app.world_mut().entity_mut(client).insert((
@@ -5421,53 +5260,95 @@ mod tests {
             PlayerState::default(),
             empty_inventory(),
         ));
-        let furnace = spawn_owned_alchemy_snapshot_furnace(
-            &mut app,
-            "offline:Azure",
-            Some(alchemy_take_back_ready_session("offline:Azure")),
-        );
+        let mut session = alchemy_snapshot_active_session("offline:Azure");
+        session.staged.completed_stages = vec![0, 1];
+        session
+            .staged
+            .materials
+            .insert(ALCHEMY_SNAPSHOT_MATERIAL.into(), 2);
+        let furnace =
+            spawn_owned_alchemy_snapshot_furnace(&mut app, "offline:Azure", Some(session));
 
-        send_alchemy_snapshot_request(&mut app, client, alchemy_take_back_request_body());
+        send_alchemy_snapshot_request(
+            &mut app,
+            client,
+            serde_json::json!({
+                "type": "alchemy_take_back",
+                "v": 1,
+                "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+                "slot_idx": 0,
+            }),
+        );
         app.update();
         flush_all_client_packets(&mut app);
 
-        let wire = collect_alchemy_take_back_wire(&mut helper);
-        let complete_vfx = drain_alchemy_spawn_vfx_event_ids(&mut app)
-            .into_iter()
-            .filter(|id| id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let outcomes = drain_alchemy_outcome_events(&mut app);
+        let frames = helper.collect_received().0;
+        let messages: Vec<String> = frames
+            .iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect();
+        let snapshots: Vec<crate::schema::alchemy::AlchemySessionDataV1> = frames
+            .iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::AlchemySession(snapshot) => Some(*snapshot),
+                    _ => None,
+                }
+            })
+            .collect();
+        let furnace_payloads = frames
+            .iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::AlchemyFurnace(data) => Some(*data),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
 
         assert!(
-            wire.messages
+            messages
                 .iter()
                 .any(|message| message.contains("实例编号器未就绪")),
-            "missing allocator must surface alchemy error chat, messages={:?}",
-            wire.messages
-        );
-        assert_eq!(wire.snapshots.len(), 1);
-        assert_finished_guidance_snapshot(&wire.snapshots[0]);
-        assert_eq!(wire.furnace_payloads.len(), 1);
-        assert!(
-            wire.furnace_payloads[0].has_session,
-            "allocator miss must keep furnace session authority for retry"
+            "missing allocator must surface alchemy error chat, messages={messages:?}"
         );
         assert_eq!(
-            complete_vfx, 0,
-            "allocator miss must emit 0 ALCHEMY_COMPLETE"
+            snapshots.len(),
+            1,
+            "allocator missing must still emit exactly one finished session snapshot so HUD clears"
+        );
+        assert!(!snapshots[0].active, "finished snapshot must be inactive");
+        assert_eq!(snapshots[0].status_label, "已结束");
+        assert_authoritative_alchemy_guidance(&snapshots[0], [(true, false), (true, false)]);
+        assert_eq!(
+            furnace_payloads.len(),
+            1,
+            "allocator missing must still push empty-furnace authority once"
         );
         assert!(
-            outcomes.is_empty(),
-            "allocator miss must emit 0 AlchemyOutcomeEvent"
+            !furnace_payloads[0].has_session,
+            "empty furnace payload must report has_session=false"
         );
         assert!(
             app.world()
                 .get::<AlchemyFurnace>(furnace)
-                .is_some_and(|furnace| furnace
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.finished)),
-            "allocator miss must retain finished-unclaimed session"
+                .is_some_and(|furnace| furnace.session.is_none()),
+            "session must remain ended even when reward grant is skipped"
         );
         assert!(
             app.world()
@@ -5476,169 +5357,20 @@ mod tests {
                     .containers
                     .iter()
                     .all(|container| container.items.is_empty())),
-            "allocator miss must not invent reward items"
+            "missing allocator must not invent reward items"
         );
-
-        // restore allocator and retry: exactly one claim across the whole lifecycle
-        app.insert_resource(InventoryInstanceIdAllocator::default());
-        send_alchemy_snapshot_request(&mut app, client, alchemy_take_back_request_body());
-        app.update();
-        flush_all_client_packets(&mut app);
-
-        let wire_retry = collect_alchemy_take_back_wire(&mut helper);
-        let complete_vfx_retry = drain_alchemy_spawn_vfx_event_ids(&mut app)
-            .into_iter()
-            .filter(|id| id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let outcomes_retry = drain_alchemy_outcome_events(&mut app);
-        assert_eq!(wire_retry.snapshots.len(), 1);
-        assert_finished_guidance_snapshot(&wire_retry.snapshots[0]);
-        assert_eq!(wire_retry.furnace_payloads.len(), 1);
-        assert!(!wire_retry.furnace_payloads[0].has_session);
-        assert_eq!(complete_vfx_retry, 1);
-        assert_eq!(outcomes_retry.len(), 1);
-        assert!(app
+        let outcome_events = app
             .world()
-            .get::<AlchemyFurnace>(furnace)
-            .is_some_and(|furnace| furnace.session.is_none()));
-        let inventory = app.world().get::<PlayerInventory>(client).unwrap();
-        assert_eq!(
-            count_template_in_inventory(
-                inventory,
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID
-            ),
-            1,
-            "retry after allocator restore must grant exactly once overall"
+            .resource::<valence::prelude::Events<crate::alchemy::AlchemyOutcomeEvent>>();
+        let mut reader = outcome_events.get_reader();
+        assert!(
+            reader.read(outcome_events).next().is_none(),
+            "failed grant path must not emit AlchemyOutcomeEvent"
         );
     }
 
     #[test]
-    fn alchemy_take_back_inventory_full_keeps_finished_retryable_then_claims_once() {
-        let mut app = App::new();
-        register_request_app(&mut app);
-        app.insert_resource(alchemy_snapshot_recipe_registry());
-        let mut templates = HashMap::new();
-        templates.insert(
-            crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID.into(),
-            ItemTemplate::minimal_for_test(
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID,
-            ),
-        );
-        templates.insert(
-            "blocker_filler".into(),
-            ItemTemplate::minimal_for_test("blocker_filler"),
-        );
-        app.insert_resource(ItemRegistry::from_map(templates));
-        app.insert_resource(InventoryInstanceIdAllocator::default());
-        let (client_bundle, mut helper) = create_mock_client("Azure");
-        let client = app.world_mut().spawn(client_bundle).id();
-        let mut inventory = empty_inventory();
-        fill_inventory_no_free_slot(&mut inventory);
-        app.world_mut().entity_mut(client).insert((
-            Cultivation::default(),
-            PlayerState::default(),
-            inventory,
-        ));
-        let furnace = spawn_owned_alchemy_snapshot_furnace(
-            &mut app,
-            "offline:Azure",
-            Some(alchemy_take_back_ready_session("offline:Azure")),
-        );
-
-        send_alchemy_snapshot_request(&mut app, client, alchemy_take_back_request_body());
-        app.update();
-        flush_all_client_packets(&mut app);
-
-        let wire = collect_alchemy_take_back_wire(&mut helper);
-        let complete_vfx = drain_alchemy_spawn_vfx_event_ids(&mut app)
-            .into_iter()
-            .filter(|id| id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let outcomes = drain_alchemy_outcome_events(&mut app);
-
-        assert!(
-            wire.messages.iter().any(|message| {
-                message.contains("炼丹产物入袋失败")
-                    && message.contains(crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID)
-            }),
-            "inventory full must surface alchemy error chat, messages={:?}",
-            wire.messages
-        );
-        assert_eq!(wire.snapshots.len(), 1);
-        assert_finished_guidance_snapshot(&wire.snapshots[0]);
-        assert_eq!(wire.furnace_payloads.len(), 1);
-        assert!(
-            wire.furnace_payloads[0].has_session,
-            "inventory full must keep furnace session authority for retry"
-        );
-        assert_eq!(
-            complete_vfx, 0,
-            "inventory full must emit 0 ALCHEMY_COMPLETE"
-        );
-        assert!(
-            outcomes.is_empty(),
-            "inventory full must emit 0 AlchemyOutcomeEvent"
-        );
-        assert!(
-            app.world()
-                .get::<AlchemyFurnace>(furnace)
-                .is_some_and(|furnace| furnace
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.finished)),
-            "inventory full must retain finished-unclaimed session"
-        );
-        let inventory = app.world().get::<PlayerInventory>(client).unwrap();
-        assert_eq!(
-            count_template_in_inventory(
-                inventory,
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID
-            ),
-            0,
-            "failed grant must not leave partial residue"
-        );
-
-        // free capacity and retry
-        {
-            let mut inventory = app
-                .world_mut()
-                .get_mut::<PlayerInventory>(client)
-                .expect("inventory");
-            inventory.containers[0].items.clear();
-        }
-        send_alchemy_snapshot_request(&mut app, client, alchemy_take_back_request_body());
-        app.update();
-        flush_all_client_packets(&mut app);
-
-        let wire_retry = collect_alchemy_take_back_wire(&mut helper);
-        let complete_vfx_retry = drain_alchemy_spawn_vfx_event_ids(&mut app)
-            .into_iter()
-            .filter(|id| id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let outcomes_retry = drain_alchemy_outcome_events(&mut app);
-        assert_eq!(wire_retry.snapshots.len(), 1);
-        assert_finished_guidance_snapshot(&wire_retry.snapshots[0]);
-        assert_eq!(wire_retry.furnace_payloads.len(), 1);
-        assert!(!wire_retry.furnace_payloads[0].has_session);
-        assert_eq!(complete_vfx_retry, 1);
-        assert_eq!(outcomes_retry.len(), 1);
-        assert!(app
-            .world()
-            .get::<AlchemyFurnace>(furnace)
-            .is_some_and(|furnace| furnace.session.is_none()));
-        let inventory = app.world().get::<PlayerInventory>(client).unwrap();
-        assert_eq!(
-            count_template_in_inventory(
-                inventory,
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID
-            ),
-            1,
-            "retry after freeing capacity must grant exactly once overall"
-        );
-    }
-
-    #[test]
-    fn alchemy_take_back_missing_template_keeps_finished_retryable_then_claims_once() {
+    fn alchemy_take_back_grant_failure_still_pushes_finished_session() {
         let mut app = App::new();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
@@ -5652,173 +5384,12 @@ mod tests {
             PlayerState::default(),
             empty_inventory(),
         ));
-        let furnace = spawn_owned_alchemy_snapshot_furnace(
-            &mut app,
-            "offline:Azure",
-            Some(alchemy_take_back_ready_session("offline:Azure")),
-        );
-
-        send_alchemy_snapshot_request(&mut app, client, alchemy_take_back_request_body());
-        app.update();
-        flush_all_client_packets(&mut app);
-
-        let wire = collect_alchemy_take_back_wire(&mut helper);
-        let complete_vfx = drain_alchemy_spawn_vfx_event_ids(&mut app)
-            .into_iter()
-            .filter(|id| id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let outcomes = drain_alchemy_outcome_events(&mut app);
-
-        assert!(
-            wire.messages.iter().any(|message| {
-                message.contains("炼丹产物入袋失败")
-                    && message.contains(crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID)
-            }),
-            "missing template must surface alchemy error chat, messages={:?}",
-            wire.messages
-        );
-        assert_eq!(wire.snapshots.len(), 1);
-        assert_finished_guidance_snapshot(&wire.snapshots[0]);
-        assert_eq!(wire.furnace_payloads.len(), 1);
-        assert!(wire.furnace_payloads[0].has_session);
-        assert_eq!(complete_vfx, 0);
-        assert!(outcomes.is_empty());
-        assert!(app
-            .world()
-            .get::<AlchemyFurnace>(furnace)
-            .is_some_and(|furnace| furnace
-                .session
-                .as_ref()
-                .is_some_and(|session| session.finished)));
-
-        // restore template and retry
-        app.insert_resource(alchemy_take_back_residue_registry());
-        send_alchemy_snapshot_request(&mut app, client, alchemy_take_back_request_body());
-        app.update();
-        flush_all_client_packets(&mut app);
-        let complete_vfx_retry = drain_alchemy_spawn_vfx_event_ids(&mut app)
-            .into_iter()
-            .filter(|id| id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let outcomes_retry = drain_alchemy_outcome_events(&mut app);
-        assert_eq!(complete_vfx_retry, 1);
-        assert_eq!(outcomes_retry.len(), 1);
-        assert!(app
-            .world()
-            .get::<AlchemyFurnace>(furnace)
-            .is_some_and(|furnace| furnace.session.is_none()));
-        let inventory = app.world().get::<PlayerInventory>(client).unwrap();
-        assert_eq!(
-            count_template_in_inventory(
-                inventory,
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID
-            ),
-            1
-        );
-    }
-
-    #[test]
-    fn alchemy_take_back_explode_emits_explode_not_complete_and_clears_session() {
-        let mut app = App::new();
-        register_request_app(&mut app);
-        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
-        app.insert_resource(crate::inventory::load_item_registry().unwrap());
-        app.insert_resource(InventoryInstanceIdAllocator::default());
-
-        let (client_bundle, mut helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        let mut meridians = crate::cultivation::components::MeridianSystem::default();
-        meridians
-            .get_mut(crate::cultivation::components::MeridianId::Lung)
-            .opened = true;
-        app.world_mut().entity_mut(entity).insert((
-            crate::combat::components::Wounds {
-                health_current: 100.0,
-                health_max: 100.0,
-                entries: Vec::new(),
-            },
-            meridians,
-            crate::cultivation::components::Cultivation::default(),
-            PlayerState::default(),
-            inventory_with_stack("ci_she_hao", 3),
-        ));
-
-        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(2, 64, 3), 1);
-        furnace.owner = Some("offline:Azure".into());
-        let furnace_entity = app.world_mut().spawn(furnace).id();
-        for data in [
-            br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[2,64,3],"recipe_id":"kai_mai_pill_v0"}"#.as_slice(),
-            br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[2,64,3],"slot_idx":0,"material":"ci_she_hao","count":3}"#.as_slice(),
-            br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[2,64,3],"intervention":{"kind":"adjust_temp","temp":1.0}}"#.as_slice(),
-            br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[2,64,3],"slot_idx":0}"#.as_slice(),
-        ] {
-            app.world_mut()
-                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
-                .send(CustomPayloadEvent {
-                    client: entity,
-                    channel: ident!("bong:client_request").into(),
-                    data: data.to_vec().into_boxed_slice(),
-                });
-        }
-        app.update();
-        flush_all_client_packets(&mut app);
-
-        let vfx_ids = drain_alchemy_spawn_vfx_event_ids(&mut app);
-        let complete_count = vfx_ids
-            .iter()
-            .filter(|id| *id == gameplay_vfx::ALCHEMY_COMPLETE)
-            .count();
-        let explode_count = vfx_ids
-            .iter()
-            .filter(|id| *id == gameplay_vfx::ALCHEMY_EXPLODE)
-            .count();
-        assert_eq!(
-            complete_count, 0,
-            "explode must never emit ALCHEMY_COMPLETE"
-        );
-        assert!(
-            explode_count >= 1,
-            "explode must emit ALCHEMY_EXPLODE, vfx={vfx_ids:?}"
-        );
-        let outcomes = drain_alchemy_outcome_events(&mut app);
-        assert_eq!(
-            outcomes.len(),
-            1,
-            "explode must emit one AlchemyOutcomeEvent"
-        );
-        assert!(matches!(
-            outcomes[0].outcome,
-            crate::alchemy::ResolvedOutcome::Explode { .. }
-        ));
-        assert!(
-            app.world()
-                .get::<AlchemyFurnace>(furnace_entity)
-                .is_some_and(|furnace| furnace.session.is_none()),
-            "explode must clear furnace session"
-        );
-        let wire = collect_alchemy_take_back_wire(&mut helper);
-        assert!(
-            wire.furnace_payloads
-                .last()
-                .is_some_and(|payload| !payload.has_session),
-            "explode authority must report empty furnace"
-        );
-    }
-
-    #[test]
-    fn alchemy_ignite_rejects_unclaimed_finished_session() {
-        let mut app = App::new();
-        register_request_app(&mut app);
-        app.insert_resource(alchemy_snapshot_recipe_registry());
-        let (client_bundle, mut helper) = create_mock_client("Azure");
-        let client = app.world_mut().spawn(client_bundle).id();
-        app.world_mut().entity_mut(client).insert((
-            Cultivation::default(),
-            PlayerState::default(),
-            empty_inventory(),
-        ));
-        let mut session = alchemy_take_back_ready_session("offline:Azure");
-        session.finished = true;
+        let mut session = alchemy_snapshot_active_session("offline:Azure");
+        session.staged.completed_stages = vec![0, 1];
+        session
+            .staged
+            .materials
+            .insert(ALCHEMY_SNAPSHOT_MATERIAL.into(), 2);
         let furnace =
             spawn_owned_alchemy_snapshot_furnace(&mut app, "offline:Azure", Some(session));
 
@@ -5826,34 +5397,100 @@ mod tests {
             &mut app,
             client,
             serde_json::json!({
-                "type": "alchemy_ignite",
+                "type": "alchemy_take_back",
                 "v": 1,
                 "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
-                "recipe_id": ALCHEMY_SNAPSHOT_RECIPE_ID,
+                "slot_idx": 0,
             }),
         );
         app.update();
         flush_all_client_packets(&mut app);
 
-        let wire = collect_alchemy_take_back_wire(&mut helper);
+        let frames = helper.collect_received().0;
+        let messages: Vec<String> = frames
+            .iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect();
+        let snapshots: Vec<crate::schema::alchemy::AlchemySessionDataV1> = frames
+            .iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::AlchemySession(snapshot) => Some(*snapshot),
+                    _ => None,
+                }
+            })
+            .collect();
+        let furnace_payloads = frames
+            .iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::AlchemyFurnace(data) => Some(*data),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+
         assert!(
-            wire.messages
-                .iter()
-                .any(|message| message.contains("未取走的丹成结果")),
-            "ignite over unclaimed finished must be rejected, messages={:?}",
-            wire.messages
+            messages.iter().any(|message| {
+                message.contains("炼丹产物入袋失败")
+                    && message.contains(crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID)
+            }),
+            "grant failure must surface alchemy error chat, messages={messages:?}"
+        );
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "grant failure must still emit exactly one finished session snapshot"
+        );
+        assert!(!snapshots[0].active, "finished snapshot must be inactive");
+        assert_eq!(snapshots[0].status_label, "已结束");
+        assert_authoritative_alchemy_guidance(&snapshots[0], [(true, false), (true, false)]);
+        assert_eq!(
+            furnace_payloads.len(),
+            1,
+            "grant failure must still push empty-furnace authority once"
+        );
+        assert!(
+            !furnace_payloads[0].has_session,
+            "empty furnace payload must report has_session=false"
         );
         assert!(
             app.world()
                 .get::<AlchemyFurnace>(furnace)
-                .is_some_and(
-                    |furnace| furnace
-                        .session
-                        .as_ref()
-                        .is_some_and(|session| session.finished
-                            && session.recipe == ALCHEMY_SNAPSHOT_RECIPE_ID)
-                ),
-            "rejected ignite must not overwrite unclaimed finished session"
+                .is_some_and(|furnace| furnace.session.is_none()),
+            "grant failure must not resurrect the ended furnace session"
+        );
+        assert!(
+            app.world()
+                .get::<PlayerInventory>(client)
+                .is_some_and(|inventory| inventory
+                    .containers
+                    .iter()
+                    .all(|container| container.items.is_empty())),
+            "failed grant must not leave partial reward items"
+        );
+        let outcome_events = app
+            .world()
+            .resource::<valence::prelude::Events<crate::alchemy::AlchemyOutcomeEvent>>();
+        let mut reader = outcome_events.get_reader();
+        assert!(
+            reader.read(outcome_events).next().is_none(),
+            "failed grant path must not emit AlchemyOutcomeEvent"
         );
     }
 
@@ -16407,14 +16044,6 @@ fn handle_alchemy_intervention(
                 return;
             }
         };
-        if session.finished {
-            send_alchemy_error(
-                &mut client,
-                &player_id,
-                "丹成结果待取回，无法继续干预".to_string(),
-            );
-            return;
-        }
         session.apply_intervention(intervention.clone());
         if let Some(events) = vfx_events {
             let (event_id, color, strength, count) = match intervention {
@@ -16514,14 +16143,6 @@ fn handle_alchemy_ignite(
         }
         if furnace.is_busy() {
             send_alchemy_error(&mut client, &player_id, "炉中已有丹火".to_string());
-            return;
-        }
-        if furnace.has_unclaimed_finished() {
-            send_alchemy_error(
-                &mut client,
-                &player_id,
-                "炉中尚有未取走的丹成结果，请先取回".to_string(),
-            );
             return;
         }
         let session = AlchemySession::new(recipe.id.clone(), player_id.clone());
@@ -16627,14 +16248,6 @@ fn handle_alchemy_feed_slot(
             send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
             return;
         };
-        if session.finished {
-            send_alchemy_error(
-                &mut client,
-                &player_id,
-                "丹成结果待取回，无法继续投料".to_string(),
-            );
-            return;
-        }
         let Some(recipe) = registry.get(&session.recipe) else {
             send_alchemy_error(
                 &mut client,
@@ -16815,24 +16428,21 @@ fn handle_alchemy_take_back(
                 );
                 return;
             };
-
-            // Phase 1：把未结束会话推进到 finished，但先不 end_session。
-            // finished-but-unclaimed 可重复 take-back；成功 grant 后才清炉。
-            if !session.finished {
-                let remaining = recipe
-                    .fire_profile
-                    .target_duration_ticks
-                    .saturating_sub(session.elapsed_ticks);
-                for _ in 0..remaining {
-                    session.tick();
-                }
-                session.finished = true;
+            let remaining = recipe
+                .fire_profile
+                .target_duration_ticks
+                .saturating_sub(session.elapsed_ticks);
+            for _ in 0..remaining {
+                session.tick();
             }
-
+            session.finished = true;
+            let Some(ended) = furnace.end_session() else {
+                return;
+            };
+            let elapsed_ticks = ended.elapsed_ticks;
             // P3 — 催化炉加成：透传炉 tier 给 resolver，对变异丹配方叠加成功率加成。
-            // resolve 对同一 session 确定性；失败重试不会改桶。
             let resolved = crate::alchemy::resolver::resolve_with_meta_and_furnace(
-                session,
+                &ended,
                 recipe,
                 registry,
                 0,
@@ -16841,17 +16451,13 @@ fn handle_alchemy_take_back(
             let bucket = resolved.bucket;
             let outcome = resolved.outcome;
             let event_recipe_id = Some(recipe.id.clone());
-            let elapsed_ticks = session.elapsed_ticks;
-
+            // end_session 已成功：无论产物入袋成败，都必须继续推送 finished/空炉终态，
+            // 避免客户端残留 active HUD。奖励/VFX/outcome 事件仅在非 explode 且 grant 成功时触发。
             match &outcome {
                 crate::alchemy::ResolvedOutcome::Explode {
                     damage,
                     meridian_crack,
                 } => {
-                    // 炸炉是不可逆终局：立刻 end_session，伤害/裂痕/explode VFX 与 grant 成败解耦。
-                    let Some(ended) = furnace.end_session() else {
-                        return;
-                    };
                     if let Some(events) = vfx_events {
                         gameplay_vfx::send_spawn(
                             events,
@@ -16901,23 +16507,8 @@ fn handle_alchemy_take_back(
                     client.send_chat_message(format!(
                         "§c[炼丹] 炸炉反噬：气血 -{scaled_damage:.1}，经脉裂痕 +{scaled_meridian_crack:.2}"
                     ));
-                    tracing::info!(
-                        "[bong][network][alchemy] `{player_id}` take_back explode pos={furnace_pos:?} slot={slot_idx} bucket={bucket:?}"
-                    );
-                    alchemy_snapshot_emit::send_furnace_from_furnace(
-                        &mut client,
-                        &player_id,
-                        furnace,
-                    );
-                    alchemy_snapshot_emit::send_session_from_completed_session(
-                        &mut client,
-                        &player_id,
-                        &ended,
-                        registry,
-                    );
                 }
                 _ => {
-                    // Phase 2：先 grant，成功才 end_session；失败保留 finished-unclaimed 供重试。
                     let granted = match instance_allocator {
                         Some(instance_allocator) => grant_alchemy_outcome_item(
                             entity,
@@ -16941,11 +16532,7 @@ fn handle_alchemy_take_back(
                             false
                         }
                     };
-
                     if granted {
-                        let Some(ended) = furnace.end_session() else {
-                            return;
-                        };
                         if let Some(events) = vfx_events {
                             gameplay_vfx::send_spawn(
                                 events,
@@ -16970,39 +16557,19 @@ fn handle_alchemy_take_back(
                                 elapsed_ticks,
                             });
                         }
-                        tracing::info!(
-                            "[bong][network][alchemy] `{player_id}` take_back claimed pos={furnace_pos:?} slot={slot_idx} resolved bucket={bucket:?}"
-                        );
-                        alchemy_snapshot_emit::send_furnace_from_furnace(
-                            &mut client,
-                            &player_id,
-                            furnace,
-                        );
-                        alchemy_snapshot_emit::send_session_from_completed_session(
-                            &mut client,
-                            &player_id,
-                            &ended,
-                            registry,
-                        );
-                    } else {
-                        // 权威 finished-but-unclaimed：炉仍挂 session，HUD 显示 inactive finished。
-                        tracing::warn!(
-                            "[bong][network][alchemy] `{player_id}` take_back deferred pos={furnace_pos:?} slot={slot_idx} bucket={bucket:?} (grant failed; session retained)"
-                        );
-                        alchemy_snapshot_emit::send_furnace_from_furnace(
-                            &mut client,
-                            &player_id,
-                            furnace,
-                        );
-                        alchemy_snapshot_emit::send_session_from_furnace(
-                            &mut client,
-                            &player_id,
-                            furnace,
-                            registry,
-                        );
                     }
                 }
             }
+            tracing::info!(
+                "[bong][network][alchemy] `{player_id}` take_back pos={furnace_pos:?} slot={slot_idx} resolved bucket={bucket:?}"
+            );
+            alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
+            alchemy_snapshot_emit::send_session_from_completed_session(
+                &mut client,
+                &player_id,
+                &ended,
+                registry,
+            );
         },
     );
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "take_back");
