@@ -92,24 +92,12 @@ public final class ClientConnectionStatusStore {
      * 未注册 handler fail closed，返回 false 且不改变连接状态。
      */
     public static boolean activateSession(Object handler, long nowMs) {
-        SessionToken token;
-        synchronized (LOCK) {
-            token = SESSION_TOKENS.get(handler);
-        }
-        return activateSession(token, nowMs);
-    }
-
-    /**
-     * Fabric JOIN callback 在 INIT 时已经捕获对应 token；用 token 而不是重新按 handler 查询，
-     * 防止旧 handler 的迟到 JOIN 在新的物理连接已经 INIT/JOIN 后重新夺回 active session。
-     */
-    public static boolean activateSession(SessionToken token, long nowMs) {
-        if (token == null) {
+        if (handler == null) {
             return false;
         }
         synchronized (LOCK) {
-            // token 必须仍在注册表中；DISCONNECT 已移除的 token 永远不能复活。
-            if (!SESSION_TOKENS.containsValue(token)) {
+            SessionToken token = SESSION_TOKENS.get(handler);
+            if (token == null) {
                 return false;
             }
             // INIT 已经观察到更新的物理 handler 后，较旧 handler 的迟到 JOIN 必须 fail closed。
