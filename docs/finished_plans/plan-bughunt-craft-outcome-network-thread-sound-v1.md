@@ -188,7 +188,8 @@
   - 7 项覆盖共享反馈顺序、failed 无完成音、player 缺失，以及 CraftScreen/WorkbenchScreen 重复
     attach 后一声一刷、`removed()` 后所有 outcome 反馈为 0。
 - `client/src/test/java/com/bong/client/ui/ConnectionStatusIndicatorTest.java`
-  - 8 项改走真实 INIT/JOIN/DISCONNECT token 生命周期，保留断线/重连 toast 与 measuring-time 契约。
+  - 9 项改走真实 INIT/JOIN/DISCONNECT token 生命周期，保留断线/重连 toast 与 measuring-time 契约；
+    并锁定同一 handler 重复 INIT 幂等、后继物理 handler 的可观察 token sequence 从 1 推进到 2。
 - `docs/finished_plans/plan-bughunt-craft-outcome-network-thread-sound-v1.md`
   - 只原地改写既有唯一 `## Finish Evidence`；不重复 promotion、归档、`git mv` 或新增同名 H2。
 
@@ -212,8 +213,8 @@
   激活旧 token 或污染 B 的 CraftStore/freshness。
 - `89a5e41c9`：收敛会话激活入口，删除不必要的 public token overload，保持生产 JOIN 与测试均走
   `activateSession(handler, joinedAt)` 单一路径。
-- `437e3e0318f69aee3345107629579b024e28955c`：普通 merge `origin/main@746794871a91c843958e6692291c4194c0dad085`；
-  当前待 push exact HEAD。
+- `437e3e0318f69aee3345107629579b024e28955c`：普通 merge `origin/main@746794871a91c843958e6692291c4194c0dad085`。
+- `397629ef3910dddb656d6d99755c87cd834b2e4b`：修复 `nextSessionSequence` 计算后未写回，确保 successive physical session token 序号真正递增；补充同 handler INIT 幂等与 `SessionToken[1]` → `SessionToken[2]` 回归测试。
 
 ### 测试结果（历史基线）
 
@@ -225,42 +226,51 @@
   **4172/0/0/0**（476 suites）+ GAME TESTS **3/3**；该版本仍用全局 generation，无法保证同一
   新 handler 的 pre-JOIN 一次性 craft hydration 不被 JOIN 换代丢弃。
 
-### 测试结果（2026-07-23 当前候选 @ `437e3e0318f69aee3345107629579b024e28955c`）
+### 测试结果（2026-07-23 最新源码候选 @ `397629ef3910dddb656d6d99755c87cd834b2e4b`）
 
 - client 完整门禁（Temurin 17，命令无管道）：
   `JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH="$JAVA_HOME/bin:$PATH" ./gradlew test build`
-  → exit `0`，`BUILD SUCCESSFUL in 6m 56s`；JUnit XML **4304 tests, 0 failures, 0 errors,
+  → exit `0`，`BUILD SUCCESSFUL`；JUnit XML **4305 tests, 0 failures, 0 errors,
   0 skipped**（486 files），GAME TESTS **3/3**。
 - 目标测试计数：
   - `BongServerDataThreadingTest` **23/0/0/0**；
   - `CraftOutcomeFeedbackTest` **7/0/0/0**；
-  - `ConnectionStatusIndicatorTest` **8/0/0/0**。
-- 两份互相独立、read-only、第一性原理 validator 均先对拍 commit object，再审生产 wiring 与测试/
-  evidence；结论都严格绑定 `437e3e0318f69aee3345107629579b024e28955c`：**VERDICT PASS，
-  blocker/major: none**。
+  - `ConnectionStatusIndicatorTest` **9/0/0/0**。
+- 独立、read-only、第一性原理 validator 先对拍 commit object，再审修复可达性、同步边界与回归；
+  结论严格绑定 `397629ef3910dddb656d6d99755c87cd834b2e4b`：**VERDICT PASS，
+  blocker/major: none**。此前两份独立 validator 绑定主线 merge 候选 `437e3e0318f69aee3345107629579b024e28955c`
+  亦均 PASS；不把旧 SHA 结论外推到本次源码修复。
+- 远端旧 HEAD `dd744653d477d58788011d3e2bde5e403be5c580` 的 CodeRabbit 确认一个 MAJOR：
+  `nextSessionSequence` 经 `Math.incrementExact(...)` 计算后未写回，导致每条物理连接的可观察 token
+  都重复为 `SessionToken[1]`，且溢出保护不可达。`397629ef` 已最小修复并以 successive physical
+  session 回归锁定；同轮 Minor 断言诊断与 Trivial 异常兜底不属于 blocker/major，未扩项修改。
 - 历史 E2E run `29716656367` 绑定远端旧 HEAD `6fa6b99bf423e834cf51eb09c40fbb5ac93d6a9f`：
   `Client stage (gradlew test)`、schema、agent 与 server release build 均成功；唯一失败是无关的 server
   `persistence::persistence_tests::phase9_throttled_write_regression_handles_1000_npc_and_50_players`
   （`lock_failures=1`，`errors=["database is locked"]`，11796 passed / 1 failed / 1 ignored），故后续
   Smoke/E2E 与 Bot e2e 被跳过。该 run 不能宣称整条 E2E 通过，也不构成本 client craft_outcome PR
   引入 SQLite/persistence 修改的理由。
+- 后续远端 run `29976859401` 绑定 `dd744653d477d58788011d3e2bde5e403be5c580`，client/schema/agent/
+  server release+test/Smoke E2E/Bot e2e/Tiandao window 全部成功；该结果仍只属于旧 SHA，最终 evidence
+  commit push 后必须重新等待 exact-head E2E。
 
 ### 主线同步与 SHA 纪律
 
 - `437e3e0318f69aee3345107629579b024e28955c` 的第二父提交是
   `origin/main@746794871a91c843958e6692291c4194c0dad085`；merge 后完整 Java 17 client gate 与两份 validator
-  已重新执行，未继承任何旧 SHA 结论。
-- 更新本证据前，远端 claim branch 仍精确停在
-  `6fa6b99bf423e834cf51eb09c40fbb5ac93d6a9f`；本地 worktree clean，未发现远端未知提交，允许普通
-  fast-forward push，禁止 force/amend/rebase。
-- 历史 validator、本地 gate、E2E、`/review` 与 CodeRabbit 结论只绑定各自旧 SHA；普通 push 后必须
-  对新的 docs commit HEAD 重跑必要 exact-head client gate，并重新触发/等待同一 SHA 的 E2E、
-  `/review` 与 CodeRabbit，不能把 `437e3e031` 的证据外推到未来 SHA。
+  已重新执行。后继源码修复 `397629ef3910dddb656d6d99755c87cd834b2e4b` 又独立重跑 client gate 与
+  exact-SHA validator，未继承旧 SHA 结论。
+- 更新本证据前，远端 claim branch 精确停在
+  `dd744653d477d58788011d3e2bde5e403be5c580`；本地 worktree 在 `397629ef` 上仅增加本次 evidence
+  原地改写，未发现远端未知提交，允许普通 fast-forward push，禁止 force/amend/rebase。
+- 历史 validator、本地 gate、E2E、`/review` 与 CodeRabbit 结论只绑定各自旧 SHA；本 evidence commit
+  产生最终新 HEAD 后，必须重跑必要 exact-head client gate/validator，并重新触发或等待同一 SHA 的
+  E2E、`/review` 与 CodeRabbit，不能把 `397629ef` 或更早结论外推到最终 docs HEAD。
 
 ### 跨栈核验
 
 - client：修改 receiver 生命周期、connection store、两屏 listener 与回归；当前候选 Java 17 完整门禁
-  **4304/0/0/0**（486 XML files）+ GAME TESTS **3/3**。
+  **4305/0/0/0**（486 XML files）+ GAME TESTS **3/3**。
 - server：只读确认 `server/src/network/craft_emit.rs` 的 completed/failed 生产 emit 既有可达；本次
   无 server 代码改动，不跑 cargo gate。
 - agent/schema/worldgen：未改协议、TypeBox/sample/dist、agent consumer、资源或生成物。
