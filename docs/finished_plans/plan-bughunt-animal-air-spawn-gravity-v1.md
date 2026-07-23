@@ -242,11 +242,11 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - 双源缺失、液体/不可走或 pool `None` 均不 spawn，不污染 pending/alive budget。
 - ring radius、zone bounds、seed determinism、era/danger/season gate、回收和 qi 守恒行为不回归。
 
-### 玩家可感知反馈（本 PR 不新增或改变）
+### 玩家可感知反馈
 
 - **粒子/VFX**：无新增、无颜色/数量/lifetime/spawn 模式变化；本 PR 只修正 server 权威首帧 `Position.y`，不发新的 `bong:vfx_event`。
 - **音效**：无新增或变更的 `audio_recipe`、vanilla sound、pitch、volume、delay；动物既有生成/环境音保持原样。
-- **HUD/屏幕效果**：无新增 HUD layer、overlay、vignette、tint、shake 或提示文本；client 零改。
+- **HUD/屏幕效果**：游戏 HUD、client 渲染、layer、overlay、vignette、tint 与 shake 均不变；dev-only `/ambient_spawn once` 新增 accepted/rejected chat，仅回显 kind、请求 X/Z 与拒绝原因，不暴露 resolved Y。
 - **环境/动画**：不改天空、雾、方块、terrain profile、动物动画或 Navigator 后续行为；只禁止错误的空中首帧。
 - **narration**：不新增 broadcast/zone/player narration；既有事件流不变。
 
