@@ -135,9 +135,22 @@ def run(env) -> None:
             description=f"/tpzone {SPAWN_ZONE} 的确认 chat",
         )
         teleported = bot.wait_for(
-            lambda event: event.kind == "pos_look" and event.t > teleport_anchor,
+            lambda event: event.kind == "pos_look"
+            and event.t > teleport_anchor
+            and math.isclose(
+                event.data["x"], EXECUTOR_POSITION[0], abs_tol=POSITION_EPSILON
+            )
+            and math.isclose(
+                event.data["y"], EXECUTOR_POSITION[1], abs_tol=POSITION_EPSILON
+            )
+            and math.isclose(
+                event.data["z"], EXECUTOR_POSITION[2], abs_tol=POSITION_EPSILON
+            ),
             timeout=10.0,
-            description=f"/tpzone {SPAWN_ZONE} 后 server 权威 PositionLook",
+            description=(
+                f"/tpzone {SPAWN_ZONE} 后匹配 {EXECUTOR_POSITION} 的 server 权威 "
+                "PositionLook；不得把迟到的登录出生位置误认成命令回包"
+            ),
         )
         _assert_position(
             (teleported.data["x"], teleported.data["y"], teleported.data["z"]),
