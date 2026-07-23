@@ -44,9 +44,11 @@ class StructuredFakeLlmClient implements LlmClient {
 
 class ChatAwareFakeAgent extends FakeAgent {
   public receivedChatSignalsCount = 0;
+  public receivedChatSignalPlayers: string[] = [];
 
   setChatSignals(signals: { player: string }[]): void {
     this.receivedChatSignalsCount = signals.length;
+    this.receivedChatSignalPlayers = signals.map((signal) => signal.player);
   }
 }
 
@@ -662,6 +664,7 @@ describe("runTick", () => {
       model: DEFAULT_MODEL,
       chatSignals: [
         {
+          ts: 1_712_345_678,
           player: "offline:Steve",
           raw: "灵气太少了",
           sentiment: -0.6,
@@ -822,6 +825,7 @@ describe("runTick", () => {
       publishNarrations: vi.fn(async () => {}),
       chatSignals: [
         {
+          ts: 1_712_345_678,
           player: "offline:Steve",
           raw: "灵气枯竭",
           sentiment: -0.8,
@@ -1066,6 +1070,103 @@ describe("runRuntime", () => {
 
     expect(createRedis).not.toHaveBeenCalled();
     expect(logger.log).toHaveBeenCalled();
+  });
+
+  it("reads the chat merge clock only after async annotation resolves", async () => {
+    const loopStartedAtSeconds = 10_000;
+    const serverObservedAtSeconds = loopStartedAtSeconds + 1;
+    let currentNowMs = loopStartedAtSeconds * 1_000;
+
+    const createDeferred = () => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((complete) => {
+        resolve = () => complete();
+      });
+      return { promise, resolve };
+    };
+    const annotationEntered = createDeferred();
+    const releaseAnnotation = createDeferred();
+
+    const redis = new SequenceRuntimeRedis([createTestWorldState()]);
+    redis.drainPlayerChat.mockResolvedValue([
+      {
+        v: 1,
+        ts: serverObservedAtSeconds,
+        player: "offline:Observed",
+        raw: "跨秒到达的合法消息",
+        zone: "spawn",
+      },
+      {
+        v: 1,
+        ts: serverObservedAtSeconds + 86_400,
+        player: "offline:ForgedFuture",
+        raw: "伪造未来消息",
+        zone: "spawn",
+      },
+    ]);
+
+    const annotateChat = vi.fn(async (model: string) => {
+      annotationEntered.resolve();
+      await releaseAnnotation.promise;
+      return createStructuredChatResult(
+        JSON.stringify([
+          {
+            player: "offline:Observed",
+            zone: "spawn",
+            raw: "跨秒到达的合法消息",
+            sentiment: 0.4,
+            intent: "social",
+            influence_weight: 0.5,
+          },
+          {
+            player: "offline:ForgedFuture",
+            zone: "spawn",
+            raw: "伪造未来消息",
+            sentiment: -0.8,
+            intent: "provoke",
+            influence_weight: 0.9,
+          },
+        ]),
+        model,
+      );
+    });
+    const chatAwareAgent = new ChatAwareFakeAgent("calamity", {
+      commands: [],
+      narrations: [],
+      reasoning: "chat-window-clock",
+    });
+    const now = vi.fn(() => currentNowMs);
+
+    await withIsolatedCwd(async () => {
+      const runtimePromise = runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          agents: [chatAwareAgent],
+          createRedis: () => redis,
+          createClient: () => ({ chat: annotateChat }),
+          sleep: vi.fn(async () => {}),
+          logger: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
+          maxLoopIterations: 1,
+          now,
+        },
+      );
+
+      await annotationEntered.promise;
+      currentNowMs = serverObservedAtSeconds * 1_000;
+      releaseAnnotation.resolve();
+      await runtimePromise;
+    });
+
+    expect(
+      chatAwareAgent.receivedChatSignalPlayers,
+      "最终只应保留 server-observed 的合法跨秒消息，未来伪造时间必须被过滤",
+    ).toEqual(["offline:Observed"]);
   });
 
   it("returns after single mock tick without sleep", async () => {

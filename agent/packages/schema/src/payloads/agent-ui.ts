@@ -1,10 +1,11 @@
 /**
- * plan-agent-ui-data-v1 P0 — 天道 UI-as-Data 三个独立 schema。
+ * plan-agent-ui-data-v1 P0 — 天道 UI-as-Data 四个独立 schema。
  *
- * 三个 schema 独立，字段不得混用：
+ * 四个 schema 独立，字段不得混用：
  *   AgentUiRequestCommandV1  — agent → server（Redis bong:agent_ui_cmd）
  *   AgentUiRequestPayloadV1  — server → client（CustomPayload via server_data）
- *   AgentUiResponsePayloadV1 — client → server（CustomPayload）+ server → agent（Redis）
+ *   AgentUiClientResponsePayloadV1 — client → server（CustomPayload）
+ *   AgentUiResponsePayloadV1 — server → agent（Redis bong:agent_ui_response）
  */
 
 import { Type, type Static } from "@sinclair/typebox";
@@ -14,7 +15,7 @@ import { validate, type ValidationResult } from "../validate.js";
 
 /**
  * 天道 UI 面板交互动作枚举。
- * client → server CustomPayload + server → agent Redis 共用同一 schema。
+ * client → server 与 server → agent 两条独立 payload schema 共用同一组字面量。
  */
 export const AgentUiActionType = Type.Union([
   Type.Literal("button_click"),
@@ -26,6 +27,17 @@ export const AgentUiActionType = Type.Union([
   Type.Literal("parse_error"),
 ]);
 export type AgentUiActionType = Static<typeof AgentUiActionType>;
+
+// 本 plan 只为新增的 server→agent target_player 定义 Unicode code-point 边界。
+// 既有 Agent UI ID 字段继续保持 minLength/maxLength 契约，避免借隐私修复迁移
+// 其他协议面。该 pattern 在无 flag 与 Unicode-aware `u` 两种 ECMA-262 解释下
+// 都将 surrogate pair 计为一个 code point，并拒绝 lone surrogate。
+const SERVER_TARGET_PLAYER_PATTERN =
+  "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}(?![\\s\\S])";
+
+function serverTargetPlayerV1() {
+  return Type.String({ pattern: SERVER_TARGET_PLAYER_PATTERN });
+}
 
 // ─── Schema 1：Agent → Server（Redis bong:agent_ui_cmd）──────────────────────
 
@@ -98,18 +110,35 @@ export type AgentUiErrorReasonV1 =
   | "xml_sanitize_failed";
 
 /**
- * 玩家面板交互响应，双向使用（C2S CustomPayload + server→agent Redis）。
+ * 玩家面板交互响应（client→server CustomPayload）。
  *
  * params 为 Record<string, string> 以保留可扩展性：
  *   button_click → params.button_id = "<id>"
  *   error        → params.reason: AgentUiErrorReasonV1（见上方联合类型）
  *                  realm_gate_rejected 还有 params.player_realm / params.required_realm
  */
-export const AgentUiResponsePayloadV1 = Type.Object(
+export const AgentUiClientResponsePayloadV1 = Type.Object(
   {
     request_id: Type.String({ minLength: 1, maxLength: 128 }),
     action: AgentUiActionType,
     params: Type.Record(Type.String(), Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type AgentUiClientResponsePayloadV1 = Static<
+  typeof AgentUiClientResponsePayloadV1
+>;
+
+/**
+ * server 转发给 agent 的面板响应（Redis bong:agent_ui_response）。
+ *
+ * 只有这条权威 server→agent 边界可回填 target_player；真实 Fabric C2S
+ * 从不发送该字段，server 依已认证的连接实体确定玩家。
+ */
+export const AgentUiResponsePayloadV1 = Type.Object(
+  {
+    ...AgentUiClientResponsePayloadV1.properties,
+    target_player: Type.Optional(serverTargetPlayerV1()),
   },
   { additionalProperties: false },
 );
@@ -141,11 +170,15 @@ export type AgentUiClosePayloadV1 = Static<typeof AgentUiClosePayloadV1>;
 // ─── Validate helpers ────────────────────────────────────────────────────────
 
 /** TypeBox 契约校验：AgentUiResponsePayloadV1（server → agent Redis channel） */
-export function validateAgentUiResponsePayloadV1Contract(data: unknown): ValidationResult {
+export function validateAgentUiResponsePayloadV1Contract(
+  data: unknown,
+): ValidationResult {
   return validate(AgentUiResponsePayloadV1, data);
 }
 
 /** TypeBox 契约校验：AgentUiRequestCommandV1（agent → server Redis channel） */
-export function validateAgentUiRequestCommandV1Contract(data: unknown): ValidationResult {
+export function validateAgentUiRequestCommandV1Contract(
+  data: unknown,
+): ValidationResult {
   return validate(AgentUiRequestCommandV1, data);
 }

@@ -239,6 +239,49 @@ class ServerDataDecodeTest(unittest.TestCase):
     def test_malformed_server_data_returns_none(self):
         self.assertIsNone(decode_server_data_payload(b"\xff\x00not protobuf"))
 
+    def test_proto_narration_payload_decodes_routing_fields(self):
+        decoded = decode_server_data_payload(_server_data_narration_bytes())
+
+        self.assertEqual(decoded["type"], "narration")
+        self.assertEqual(
+            decoded["narrations"],
+            [
+                {
+                    "text": "天道的注意力掠过，境界未至",
+                    "scope": "player",
+                    "style": "system_warning",
+                    "target": "offline:Alice",
+                    "kind": "realm_gate_rejected",
+                },
+                {
+                    "text": "旧式全服旁白",
+                    "scope": "broadcast",
+                    "style": "narration",
+                },
+            ],
+            "Bot 必须解出 narration text/scope/style/optional target/kind，"
+            "否则双玩家黑盒无法区分目标提示与同轮无关旁白",
+        )
+
+    def test_bot_dispatch_emits_decoded_narration_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_narration_bytes()
+        )
+
+        bot._dispatch(body)
+
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(decoded_events[0].data["payload_type"], "narration")
+        self.assertEqual(
+            decoded_events[0].data["payload"]["narrations"][0]["target"],
+            "offline:Alice",
+            "真实 Bot reader 必须把 production protobuf narration 暴露为可断言事件",
+        )
+
     def test_proto_zone_info_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_zone_info_bytes())
 
@@ -1349,6 +1392,22 @@ def _server_data_inventory_snapshot_bytes() -> bytes:
     return _pb_message(8, snapshot)
 
 
+def _server_data_narration_bytes() -> bytes:
+    target = (
+        _pb_string(1, "天道的注意力掠过，境界未至")
+        + _pb_string(2, "player")
+        + _pb_string(3, "system_warning")
+        + _pb_string(4, "offline:Alice")
+        + _pb_string(5, "realm_gate_rejected")
+    )
+    broadcast = (
+        _pb_string(1, "旧式全服旁白")
+        + _pb_string(2, "broadcast")
+        + _pb_string(3, "narration")
+    )
+    return _pb_message(3, _pb_message(1, target) + _pb_message(1, broadcast))
+
+
 def _server_data_inventory_event_moved_bytes() -> bytes:
     from_location = _pb_message(
         1,
@@ -1577,6 +1636,7 @@ class RunnerLogicTest(unittest.TestCase):
     def test_discover_scenarios_finds_committed_set(self):
         names = set(discover_scenarios())
         expected = {
+            "agent_ui_realm_gate_private_narration",
             "cmd_dev_give_feedback",
             "cultivation_realm_qi",
             "network_client_request_tolerance",
@@ -1693,6 +1753,131 @@ def _bare_bot() -> Bot:
     bot.disconnect_reason = None
     bot.chunk_count = 0
     return bot
+
+
+class BotChatPacketTest(unittest.TestCase):
+    def test_chat_packet_uses_unix_milliseconds_at_protocol_boundaries(self):
+        cases = [
+            (0, 0),
+            (1_000_000_000, 1_000),
+            (1_999_000_000, 1_999),
+            (1_712_345_700_999_000_000, 1_712_345_700_999),
+        ]
+
+        for time_ns, expected_millis in cases:
+            with self.subTest(expected_millis=expected_millis):
+                bot = _bare_bot()
+                sent: list[tuple[int, bytes]] = []
+                bot._send = lambda packet_id, body, _sent=sent: _sent.append(
+                    (packet_id, body)
+                )
+
+                with mock.patch("bot.bot.time.time_ns", return_value=time_ns):
+                    bot.chat("窗口验真")
+
+                self.assertEqual(
+                    len(sent),
+                    1,
+                    f"一次 Bot.chat 必须只发一帧 C2S chat，实际 sent={sent!r}",
+                )
+                packet_id, body = sent[0]
+                self.assertEqual(packet_id, mc.C2S_CHAT_MESSAGE)
+
+                reader = mc.Reader(body)
+                self.assertEqual(reader.string(), "窗口验真")
+                self.assertEqual(
+                    reader.i64(),
+                    expected_millis,
+                    "Minecraft 1.20.1 ChatMessageC2s timestamp 必须是 Unix 毫秒；"
+                    "0/1000/1999 与真实 13 位值均不得误写成 Unix 秒",
+                )
+                self.assertEqual(reader.i64(), 0, "offline bot 的 salt 保持 0")
+                self.assertFalse(reader.boolean(), "offline bot 不携带聊天签名")
+                self.assertEqual(reader.varint(), 0, "message_count 保持 0")
+                self.assertEqual(
+                    reader.rest(),
+                    b"\x00\x00\x00",
+                    "acknowledged 必须保留协议 763 的 20-bit 固定 BitSet",
+                )
+
+    def test_chat_packet_can_model_a_forged_future_client_timestamp(self):
+        forged_future_millis = 1_712_432_100_999
+        bot = _bare_bot()
+        sent: list[tuple[int, bytes]] = []
+        bot._send = lambda packet_id, body, _sent=sent: _sent.append((packet_id, body))
+
+        with mock.patch(
+            "bot.bot.time.time_ns",
+            side_effect=AssertionError("explicit protocol timestamps must not read the local clock"),
+        ):
+            bot.chat("未来时间验真", timestamp_millis=forged_future_millis)
+
+        self.assertEqual(len(sent), 1)
+        packet_id, body = sent[0]
+        self.assertEqual(packet_id, mc.C2S_CHAT_MESSAGE)
+        reader = mc.Reader(body)
+        self.assertEqual(reader.string(), "未来时间验真")
+        self.assertEqual(
+            reader.i64(),
+            forged_future_millis,
+            "测试 Bot 必须能按原版 C2S 字节精确模拟客户端未来时间，而不是在 harness 内预先钳制",
+        )
+
+    def test_chat_packet_encodes_signed_i64_timestamp_boundaries(self):
+        cases = [
+            -(2**63),
+            -1,
+            2**63 - 1,
+        ]
+        for timestamp_millis in cases:
+            with self.subTest(timestamp_millis=timestamp_millis):
+                bot = _bare_bot()
+                sent: list[tuple[int, bytes]] = []
+                bot._send = lambda packet_id, body, _sent=sent: _sent.append(
+                    (packet_id, body)
+                )
+                bot.chat("边界时间验真", timestamp_millis=timestamp_millis)
+                self.assertEqual(
+                    len(sent),
+                    1,
+                    f"合法 signed i64 必须原样发出，timestamp={timestamp_millis}, sent={sent!r}",
+                )
+                packet_id, body = sent[0]
+                self.assertEqual(packet_id, mc.C2S_CHAT_MESSAGE)
+                reader = mc.Reader(body)
+                self.assertEqual(reader.string(), "边界时间验真")
+                self.assertEqual(
+                    reader.i64(),
+                    timestamp_millis,
+                    "signed i64 timestamp 边界必须可原样 encode/decode",
+                )
+                self.assertEqual(reader.i64(), 0, "offline bot 的 salt 保持 0")
+
+    def test_chat_packet_rejects_signed_i64_timestamp_overflow(self):
+        overflow_cases = [
+            -(2**63) - 1,
+            2**63,
+        ]
+        for timestamp_millis in overflow_cases:
+            with self.subTest(timestamp_millis=timestamp_millis):
+                bot = _bare_bot()
+                sent: list[tuple[int, bytes]] = []
+                bot._send = lambda packet_id, body, _sent=sent: _sent.append(
+                    (packet_id, body)
+                )
+                with self.assertRaises(
+                    (OverflowError, struct.error, ValueError),
+                    msg=(
+                        "越界 timestamp 必须在编码阶段失败，"
+                        f"timestamp={timestamp_millis}"
+                    ),
+                ):
+                    bot.chat("越界时间验真", timestamp_millis=timestamp_millis)
+                self.assertEqual(
+                    sent,
+                    [],
+                    f"越界 timestamp 不得发送任何包，timestamp={timestamp_millis}, sent={sent!r}",
+                )
 
 
 class RespawnDecodeTest(unittest.TestCase):
@@ -2329,14 +2514,52 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
 
     def test_alchemy_furnace_tag11_and_session_tag12(self):
-        furnace = _pb_varint_field(4, 1)
+        furnace = (
+            _pb_varint_field(4, 1)
+            + _pb_fixed64(5, 0.92)
+            + _pb_fixed64(6, 1.0)
+            + _pb_string(7, "Azure")
+            + _pb_varint_field(8, 1)
+        )
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(11, furnace))
         self.assertEqual(
             decoded["type"], "alchemy_furnace", "envelope tag 11 应分发到 alchemy_furnace"
         )
         self.assertEqual(decoded["tier"], 1, "AlchemyFurnace.tier 是 field 4")
+        self.assertAlmostEqual(decoded["integrity"], 0.92)
+        self.assertAlmostEqual(decoded["integrity_max"], 1.0)
+        self.assertEqual(decoded["owner_name"], "Azure")
+        self.assertTrue(decoded["has_session"], "AlchemyFurnace.has_session 是 field 8")
 
-        session = _pb_len_field(1, b"ling_xi_wan_v1") + _pb_varint_field(2, 1)
+        first_stage = (
+            _pb_varint_field(1, 0)
+            + _pb_varint_field(2, 0)
+            + _pb_string(3, "spirit_grass×3")
+            + _pb_varint_field(4, 1)
+            + _pb_varint_field(5, 0)
+        )
+        empty_stage = (
+            _pb_varint_field(1, 80)
+            + _pb_varint_field(2, 4)
+            + _pb_string(3, "")
+            + _pb_varint_field(4, 0)
+            + _pb_varint_field(5, 1)
+        )
+        session = (
+            _pb_len_field(1, b"ling_xi_wan_v1")
+            + _pb_varint_field(2, 1)
+            + _pb_varint_field(3, 44)
+            + _pb_varint_field(4, 80)
+            + _pb_fixed64(5, 0.30)
+            + _pb_fixed64(6, 0.30)
+            + _pb_fixed64(7, 0.15)
+            + _pb_fixed64(8, 8.0)
+            + _pb_fixed64(9, 5.0)
+            + _pb_string(10, "炼制中")
+            + _pb_message(11, first_stage)
+            + _pb_message(11, empty_stage)
+            + _pb_string(12, "§7InjectQi(8.0)")
+        )
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(12, session))
         self.assertEqual(
             decoded["type"], "alchemy_session", "envelope tag 12 应分发到 alchemy_session"
@@ -2345,6 +2568,24 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             decoded["recipe_id"], "ling_xi_wan_v1", "AlchemySession.recipe_id 是 field 1"
         )
         self.assertTrue(decoded["active"], "AlchemySession.active 是 field 2")
+        self.assertEqual(decoded["elapsed_ticks"], 44)
+        self.assertEqual(decoded["target_ticks"], 80)
+        self.assertAlmostEqual(decoded["temp_current"], 0.30)
+        self.assertAlmostEqual(decoded["temp_target"], 0.30)
+        self.assertAlmostEqual(decoded["temp_band"], 0.15)
+        self.assertAlmostEqual(decoded["qi_injected"], 8.0)
+        self.assertAlmostEqual(decoded["qi_target"], 5.0)
+        self.assertEqual(decoded["status_label"], "炼制中")
+        self.assertEqual(len(decoded["stages"]), 2)
+        self.assertEqual(decoded["stages"][0]["at_tick"], 0)
+        self.assertEqual(decoded["stages"][0]["window"], 0)
+        self.assertEqual(decoded["stages"][0]["summary"], "spirit_grass×3")
+        self.assertTrue(decoded["stages"][0]["completed"])
+        self.assertEqual(decoded["stages"][1]["at_tick"], 80)
+        self.assertEqual(decoded["stages"][1]["window"], 4)
+        self.assertEqual(decoded["stages"][1]["summary"], "")
+        self.assertTrue(decoded["stages"][1]["missed"])
+        self.assertEqual(decoded["interventions_recent"], ["§7InjectQi(8.0)"])
 
     def test_alchemy_outcome_resolved_tag14(self):
         outcome = _pb_varint_field(1, 1) + _pb_len_field(3, b"ling_xi_wan")

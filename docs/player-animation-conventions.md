@@ -679,3 +679,28 @@ Bong 当前"正架 cross punch"基线。所有数值都经过 §11 渲染工具�
 **豁免**：instant 型（`INSTANT_RESOLVER_SKILLS`，见 §13 #2 例外 ③）strike 顶点即 tick 0、开帧就是命中姿态，其后只有余韵与收势，没有「加速撞击」相位，easeOut 从 t0 起才是正确形态，故结构性豁免。为防「随手加个 `instant: true` 就能绕过」，该用例**反向核验**：任何声明 instant 的 manifest 必须确实登记在 `INSTANT_RESOLVER_SKILLS` 里。segment 型（loop 蓄力 / charge_hold 充能）无自身 strike 段（strike 归其 release 段），同样不适用。
 
 > **存量未审**：本锁只保证「strike 段内有发力帧」。§15.1 的方向问题在 anticipation / recovery 两段上是否也有存量写反，尚未全量审计——见 plan-skill-anim-fidelity-v1 Finish Evidence 遗留第 4 条。
+
+---
+
+## §16 TPV↔FPV 双份动画的同步维护约定（plan-fpv-cast-av-v1 pre-P0 §8 #4 收口，2026-07-22）
+
+> 本节由 plan-fpv-cast-av-v1 pre-P0 收口（§8.1 #4 决议）明文授权追加；**只追加不改写既有段落**，§3「FPV 可见性要求」继续有效。§3 管的是**单份动画**在第一人称视野内的骨骼可见性；本节管的是**同一招式的 TPV（第三人称）与 FPV（第一人称）两份资产之间的同步维护约定**，是新维度。
+
+**背景**：梯队三（plan-fpv-cast-av-v1）起，主力招在 TPV 动画之外另产一份 FPV 变体（`<anim_id>_fpv.json`，贴脸视角专用，见该 plan §P1/§P2）。一招两份长期并存，改一份忘另一份 = 主视角与他人视角脱节。
+
+### §16.1 产出顺序：FPV 后于 TPV
+
+1. **TPV 是权威底稿，FPV 是其贴脸改编**。FPV 变体**只在对应 TPV 动画定稿后产出**——不允许 FPV 先行或与 TPV 并行迭代（TPV 姿态未定就做 FPV 是白工）。
+2. FPV 变体书写差异（详见 plan §P2，此处只登记硬约束）：只做腰以上（相机外肢体不做无效关键帧）；`body.*` 位移在 FPV 变体中**禁用或减半**（§7.3 库坑：`body.*` 走 MatrixStack 会整体位移相机，贴脸视角下 = 晃晕）；手臂动作幅度按 FPV 适度放大。
+
+### §16.2 连带复核：TPV 改动必须同步 FPV
+
+**改了某招的 TPV 动画（`gen_<anim>.py` / `<anim_id>.json`），必须在同一改动内连带复核并按需同步其 FPV 变体（`gen_<anim>_fpv.py` / `<anim_id>_fpv.json`）**——参照本仓既有「连带同步」措辞先例（如 `plan-weapon-v1.1` 的连带清单式约定、CLAUDE.md「schema 改动连同 sample 一起改」）。判据：TPV 主打击轴 / 时序（endTick、分段边界）/ 持物手姿态发生变化时，FPV 变体的对应轴必须一并核验，不允许「只改 TPV 留 FPV 漂移」。仅美术微调且不触及上半身主打击轴的 TPV 改动，可在 commit body 注明「FPV 无需同步（未触上半身主轴）」豁免。
+
+### §16.3 机器把关（FPV 资产落地后启用）
+
+pre-P0 时全仓无 `*_fpv.json`，暂无可锁对象，本节先立文字约定。**P1/P2 FPV 变体落地后已启用**：参照 §14.1「机械锁登记表」模式，在 `client/src/test/java/com/bong/client/animation/AnimCastTicksAlignmentTest.java` 落 `FPV_VARIANT_SKILLS` 登记表 + `fpvVariantSharesCastTimingWithTpvParent` 对拍锁，把「连带复核」从文字约定升级为机器判据。
+
+**当前锁定的可执行判据**（每个登记招的 FPV 变体 vs TPV 父动画）：① 变体资产存在；② `endTick` / `stopTick` 一致；③ `isLoop` 继承；④ FPV 各轴 `body.*` 峰值位移 ≤ TPV 半量（落地 §16.1「FPV body 位移禁用或减半」防相机晃）。
+
+**暂未机器锁定、留待后续**：§16.2 提到的「主打击轴逐帧时序对齐」判据定义较软（需按招标注哪条是打击轴、以及时序对齐的容差语义），归 plan-fpv-cast-av-v1 **P5 视觉差异化回归**收口，本锁暂不覆盖——在 P5 之前，主轴时序一致性仍靠 §16.2 的人工连带复核约定兜底。
