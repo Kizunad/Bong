@@ -541,4 +541,105 @@ mod tests {
             Err(SoundRecipeLoadError::Duplicate(id)) if id == "pill_consume"
         ));
     }
+
+    /// plan-fpv-cast-av-v1 P4 —— 跨端签名音效契约（server 侧半，client 侧半在
+    /// `SignatureAudioContractTest`）：扫所有 server recipe 引用的 `bong:` sound 事件，
+    /// 断言它们全部 ⊆ client `assets/bong/sounds.json` 注册的事件键。任一 recipe 指向
+    /// 未注册的 `bong:` 事件 → 运行时静默无声 = 判红。
+    #[test]
+    fn signature_recipes_reference_registered_bong_events() {
+        use std::collections::HashSet;
+        use std::path::Path;
+
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let recipe_dir = crate_dir.join("assets/audio/recipes");
+        let sounds_json_path =
+            crate_dir.join("../client/src/main/resources/assets/bong/sounds.json");
+
+        let sounds_raw = std::fs::read_to_string(&sounds_json_path).unwrap_or_else(|error| {
+            panic!(
+                "读 client sounds.json 失败 {}: {error} —— P4 应已提交该文件",
+                sounds_json_path.display()
+            )
+        });
+        let sounds: serde_json::Value =
+            serde_json::from_str(&sounds_raw).expect("client sounds.json 应为合法 JSON");
+        let registered: HashSet<String> = sounds
+            .as_object()
+            .expect("sounds.json 顶层应为对象")
+            .keys()
+            .cloned()
+            .collect();
+        assert!(
+            registered.len() >= 8,
+            "client sounds.json 应至少注册 8 条 signature 事件，实际 {}",
+            registered.len()
+        );
+
+        let mut bong_refs = 0usize;
+        for entry in std::fs::read_dir(&recipe_dir).expect("server recipe 目录应存在") {
+            let path = entry.expect("recipe entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).expect("读 recipe 文件");
+            let recipe: serde_json::Value = serde_json::from_str(&raw)
+                .unwrap_or_else(|error| panic!("recipe {} 非法 JSON: {error}", path.display()));
+            let Some(layers) = recipe.get("layers").and_then(|l| l.as_array()) else {
+                continue;
+            };
+            for layer in layers {
+                let Some(sound) = layer.get("sound").and_then(|s| s.as_str()) else {
+                    continue;
+                };
+                if let Some(event) = sound.strip_prefix("bong:") {
+                    bong_refs += 1;
+                    assert!(
+                        registered.contains(event),
+                        "recipe {} 引用 bong: 事件 `{sound}` 但 client sounds.json 未注册 `{event}` \
+                         —— 运行时静默无声（server↔client 音效契约破裂）",
+                        path.file_name().unwrap().to_string_lossy()
+                    );
+                }
+            }
+        }
+        assert!(
+            bong_refs >= 7,
+            "server recipe 应至少含 7 条 bong: signature 引用（heaven_gate 在 client 侧另算），实际 {bong_refs}"
+        );
+    }
+
+    /// 逐项 pin：7 条 server signature recipe 的层确实引用了为它新建的 `bong:` 事件
+    /// （防「注册了事件却没 recipe 消费」= 死资产反向漂移）。heaven_gate 是 client 侧
+    /// recipe，由 `SignatureAudioContractTest` 覆盖。
+    #[test]
+    fn each_server_signature_recipe_uses_its_bong_event() {
+        use std::path::Path;
+
+        let recipe_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/audio/recipes");
+        let pins = [
+            ("woliu_void_core", "bong:skill.woliu.void_core"),
+            ("zhenmai_sever_crack", "bong:skill.zhenmai.sever_chain"),
+            ("baomai_signature", "bong:skill.baomai.full_power_release"),
+            ("dugu_poison_signature", "bong:skill.dugu.infuse_poison"),
+            ("tuike_signature", "bong:skill.tuike.shed"),
+            ("anqi_echo_fractal", "bong:skill.anqi.echo_fractal"),
+            ("yixing_cast", "bong:skill.morph.yixing"),
+        ];
+        for (recipe_id, expected_event) in pins {
+            let path = recipe_dir.join(format!("{recipe_id}.json"));
+            let raw = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("读 {} 失败: {error}", path.display()));
+            let recipe: serde_json::Value = serde_json::from_str(&raw).expect("recipe 合法 JSON");
+            let layers = recipe["layers"].as_array().expect("recipe 应有 layers");
+            let referenced = layers
+                .iter()
+                .any(|l| l.get("sound").and_then(|s| s.as_str()) == Some(expected_event));
+            assert!(
+                referenced,
+                "signature recipe {recipe_id} 应引用其 bong: 事件 {expected_event}\
+                 （防资产只注册不消费），实际 layers 无此引用"
+            );
+        }
+    }
 }
