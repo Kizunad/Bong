@@ -64,6 +64,11 @@ const ANIM_BREAKTHROUGH_NINGMAI: &str = "bong:breakthrough_ningmai";
 const ANIM_BREAKTHROUGH_GUYUAN: &str = "bong:breakthrough_guyuan";
 const ANIM_BREAKTHROUGH_TONGLING: &str = "bong:breakthrough_tongling";
 const ANIM_TRIBULATION_BRACE: &str = "bong:tribulation_brace";
+/// 渡劫失败（`TribulationFailed`）时收掉 `ANIM_TRIBULATION_BRACE` 循环动画的淡出 tick。
+/// brace 以 `STORY_PRIORITY`（FULL_BODY 通道）isLoop:true 播放；渡劫失败结局存活
+/// （不进入死亡生命周期），若不显式 StopAnim，`ANIM_HURT_STAGGER`（`HIT_RECOIL_PRIORITY`，
+/// UPPER_BODY 通道）顶不掉 FULL_BODY 循环，玩家会永久卡在抱臂姿势。
+const TRIBULATION_BRACE_STOP_FADE_OUT_TICKS: u8 = 3;
 const ANIM_HARVEST_CROUCH: &str = "bong:harvest_crouch";
 /// 广播体操练习完成 → 专属完整套路动画（150tick/7.5s，5 节：伸展/扩胸/体转/体侧/下蹲）。
 /// 此前复用 guard_raise（4tick 举臂格挡），真机表现"只动了一下"；改为
@@ -468,6 +473,18 @@ pub fn emit_tribulation_animation_triggers(
     }
 
     for failure in failures.read() {
+        // 渡劫失败是存活结局（不进入死亡生命周期，没有死亡动画顺带清通道）。
+        // brace 循环挂在 FULL_BODY 通道（STORY_PRIORITY），必须显式 StopAnim
+        // 才能收掉；否则永久卡在抱臂姿势（见 TRIBULATION_BRACE_STOP_FADE_OUT_TICKS 注释）。
+        if let Ok((position, unique_id)) = players.get(failure.entity) {
+            emit_stop_for_entity(
+                position,
+                unique_id,
+                ANIM_TRIBULATION_BRACE,
+                TRIBULATION_BRACE_STOP_FADE_OUT_TICKS,
+                &mut vfx_events,
+            );
+        }
         emit_play_for_entity(
             failure.entity,
             ANIM_HURT_STAGGER,
@@ -3143,11 +3160,94 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(
             emitted.len(),
-            1,
-            "TribulationFailed must still emit exactly one VFX (hurt_stagger), got {}",
+            2,
+            "TribulationFailed must emit StopAnim(tribulation_brace) + PlayAnim(hurt_stagger), got {}",
             emitted.len()
         );
-        assert_play_anim(&emitted[0], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
+        assert_stop_anim(
+            &emitted[0],
+            ANIM_TRIBULATION_BRACE,
+            TRIBULATION_BRACE_STOP_FADE_OUT_TICKS,
+        );
+        assert_play_anim(&emitted[1], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
+    }
+
+    #[test]
+    fn tribulation_failed_stops_stuck_brace_full_body_loop() {
+        // Bug: tribulation_brace（isLoop:true, STORY_PRIORITY=FULL_BODY 通道）由
+        // TribulationAnnounce 起播；渡劫失败是存活结局，没有死亡动画顺带清通道。
+        // hurt_stagger 走 HIT_RECOIL_PRIORITY=UPPER_BODY 通道，顶不掉 FULL_BODY 循环，
+        // 玩家会永久卡在抱臂姿势——必须显式 StopAnim(tribulation_brace) 收掉。
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_animation_triggers);
+        let player = spawn_player(&mut app, "Frank", [5.0, 64.0, 5.0]);
+
+        // 1. TribulationAnnounce 起播 brace 循环（FULL_BODY，STORY_PRIORITY）。
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: player,
+            char_id: "frank".to_string(),
+            actor_name: "Frank".to_string(),
+            epicenter: [5.0, 64.0, 5.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+        app.update();
+        let announce_emitted = drain_vfx(&mut app);
+        assert_eq!(announce_emitted.len(), 1);
+        assert_play_anim(&announce_emitted[0], ANIM_TRIBULATION_BRACE, STORY_PRIORITY);
+
+        // 2. 渡劫失败：必须显式 StopAnim(brace) 收掉 FULL_BODY 循环，否则永久卡姿势。
+        app.world_mut().send_event(TribulationFailed {
+            entity: player,
+            wave: 2,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "TribulationFailed must emit StopAnim(tribulation_brace) to release the FULL_BODY \
+             channel plus PlayAnim(hurt_stagger); got {} — without the StopAnim the player is \
+             stuck in the brace pose forever",
+            emitted.len()
+        );
+        assert_stop_anim(
+            &emitted[0],
+            ANIM_TRIBULATION_BRACE,
+            TRIBULATION_BRACE_STOP_FADE_OUT_TICKS,
+        );
+        assert_play_anim(&emitted[1], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
+    }
+
+    #[test]
+    fn tribulation_settled_success_outcomes_do_not_regress_with_explicit_brace_stop() {
+        // Regression guard: TribulationSettled(Ascended/HalfStep) success path already relies on
+        // a FULL_BODY breakthrough animation (STORY_PRIORITY) to overwrite the brace loop — it
+        // must keep emitting exactly PlayAnim + SpawnParticle, no extra StopAnim(brace) added.
+        for outcome in [DuXuOutcomeV1::Ascended, DuXuOutcomeV1::HalfStep] {
+            let mut app = App::new();
+            app.add_event::<TribulationSettled>();
+            app.add_event::<VfxEventRequest>();
+            app.add_systems(Update, emit_tribulation_settled_vfx_triggers);
+            let player = spawn_player(&mut app, "Grace", [5.0, 64.0, 5.0]);
+
+            app.world_mut()
+                .send_event(make_tribulation_settled(player, outcome));
+            app.update();
+
+            let emitted = drain_vfx(&mut app);
+            assert_eq!(
+                emitted.len(),
+                2,
+                "success settlement ({outcome:?}) must stay at 2 VFX events (PlayAnim + \
+                 SpawnParticle) — the brace fix targets TribulationFailed only, got {}",
+                emitted.len()
+            );
+        }
     }
 
     // ─── 暗器六招：emit_anqi_visual_triggers ──────────────────────
