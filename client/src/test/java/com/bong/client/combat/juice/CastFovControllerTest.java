@@ -31,13 +31,15 @@ import org.junit.jupiter.api.Test;
 class CastFovControllerTest {
     private static final int HEAVY_SLOT = 3;
     private static final int LIGHT_SLOT = 5;    // 非重型招（无 profile）
-    private static final String HEAVY_SKILL = "sword_path.heaven_gate";  // 强/8t, FOV +6°/4t
+    private static final String HEAVY_SKILL = "sword_path.heaven_gate";  // 强/24t 持续, FOV +12°/8t
     private static final String LIGHT_SKILL = "sword.cleave";            // 未登记 → 无 juice
     private static final int DURATION_MS = 2000;
     private static final long START = 1_700_000_000_000L;
-    /** heaven_gate FOV 脉冲：peak +6°、时长 4 tick = 200ms。 */
-    private static final double HEAVY_FOV_PEAK = 6.0;
-    private static final int FOV_DURATION_MS = 4 * 50;
+    /** heaven_gate FOV punch：peak +12°、时长 8 tick = 400ms。 */
+    private static final double HEAVY_FOV_PEAK = 12.0;
+    private static final int FOV_DURATION_MS = 8 * 50;
+    /** heaven_gate 持续抖动时长：24 tick = 1200ms（sustained 包络）。 */
+    private static final int SHAKE_DURATION_MS = 24 * 50;
 
     private final long[] now = {10_000_000L};
 
@@ -101,9 +103,9 @@ class CastFovControllerTest {
         CastJuiceProfile gate = CastJuiceProfiles.get("sword_path.heaven_gate");
         assertNotNull(gate, "heaven_gate 必须登记");
         assertEquals(CastJuiceProfiles.STRONG, gate.shakeIntensity(), "heaven_gate = 强抖动");
-        assertEquals(8, gate.shakeDurationTicks());
-        assertEquals(6.0f, gate.fovPeakDegrees(), 1e-6f);
-        assertEquals(4, gate.fovDurationTicks());
+        assertEquals(24, gate.shakeDurationTicks(), "旗舰招持续震动 ≈1.2s，不是抖一下");
+        assertEquals(12.0f, gate.fovPeakDegrees(), 1e-6f, "FOV punch +12°（放大到明显能感到）");
+        assertEquals(8, gate.fovDurationTicks());
 
         assertNotNull(CastJuiceProfiles.get("baomai.full_power_release"));
         assertNotNull(CastJuiceProfiles.get("woliu.turbulence_burst"));
@@ -272,6 +274,28 @@ class CastFovControllerTest {
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
             "fire 时倍率 0 → 强度 0 → 不触发 shake（juice 全局关闭）");
         assertBaseline("倍率 0 时 FOV 也无脉冲");
+    }
+
+    @Test
+    void castShakeIsSustainedNotSingleJerk() {
+        // 施法 release 的抖动是持续震动（fire 走 sustained=true 包络）：同相位 tick 上，
+        // 时长 50% 处幅度与起始一致（满幅维持），而非线性「抖一下」衰减到近半。
+        predict(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");  // fire
+        long fireNow = now[0];
+
+        // tick 0 与 tick 12（=24t 的 50%）同为满相位（elapsedTick % 4 == 0）。
+        CameraShakeController.Offsets atStart = CameraShakeController.activeOffsets(fireNow);
+        CameraShakeController.Offsets atMid =
+            CameraShakeController.activeOffsets(fireNow + SHAKE_DURATION_MS / 2);
+        assertFalse(atStart.isZero(), "起始有抖动");
+        assertFalse(atMid.isZero(), "50% 处仍在抖（持续，未提前结束）");
+        assertEquals(atStart.yawDegrees(), atMid.yawDegrees(), 1e-5f,
+            "持续型：50% 处同相位幅度不衰减（若退化成线性衰减会减半）");
+        assertEquals(atStart.pitchDegrees(), atMid.pitchDegrees(), 1e-5f, "俯仰分量同理");
+
+        assertTrue(CameraShakeController.activeOffsets(fireNow + SHAKE_DURATION_MS + 50).isZero(),
+            "抖动时长后自然归零");
     }
 
     @Test

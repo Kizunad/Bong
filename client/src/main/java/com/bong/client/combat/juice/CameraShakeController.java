@@ -26,9 +26,22 @@ public final class CameraShakeController {
      * pin 于 {@link CastJuiceProfile}，不经 school/tier 的 {@link CombatJuiceProfile}）。复用同一
      * {@link #active} 单通道（last-write-wins，与命中抖动共享，不新建相机通道）。
      * intensity ≤ 0 或 durationTicks ≤ 0 → 不触发（返回 {@link Shake#none()}）。
+     * 本重载非持续型（{@code sustained=false}），命中抖动用：线性前重衰减「抖一下」。
      */
     public static Shake triggerDirect(
         float intensity, int durationTicks, double directionX, double directionZ, boolean reverse, long nowMs
+    ) {
+        return triggerDirect(intensity, durationTicks, directionX, directionZ, reverse, false, nowMs);
+    }
+
+    /**
+     * 持续型开关重载：{@code sustained=true} 时抖动前 {@code SUSTAIN_FRACTION}（70%）维持满幅、
+     * 末段才线性收束——施法大招的「持续震动」用，把存在感撑满，不是命中的「抖一下」；
+     * {@code false} 走原线性衰减。共享同一 {@link #active} 单通道（last-write-wins）。
+     */
+    public static Shake triggerDirect(
+        float intensity, int durationTicks, double directionX, double directionZ, boolean reverse,
+        boolean sustained, long nowMs
     ) {
         if (intensity <= 0f || durationTicks <= 0) {
             return Shake.none();
@@ -40,6 +53,7 @@ public final class CameraShakeController {
             perpendicular[0],
             perpendicular[1],
             reverse,
+            sustained,
             Math.max(0L, nowMs)
         );
         active = next;
@@ -59,7 +73,7 @@ public final class CameraShakeController {
         if (shake == null || !shake.activeAt(nowMs)) {
             return ZERO;
         }
-        double ratio = shake.remainingRatioAt(nowMs);
+        double ratio = shake.envelopeAt(nowMs);
         long elapsedTick = Math.max(0L, nowMs - shake.startedAtMs()) / 50L;
         double phase = switch ((int) (elapsedTick % 4L)) {
             case 0 -> 1.0;
@@ -103,10 +117,14 @@ public final class CameraShakeController {
         double perpX,
         double perpZ,
         boolean reverse,
+        boolean sustained,
         long startedAtMs
     ) {
+        /** 持续型抖动维持满幅的时间占比（前 70%），其后线性收束到 0。 */
+        private static final double SUSTAIN_FRACTION = 0.7;
+
         public static Shake none() {
-            return new Shake(0f, 0, 0.0, 0.0, false, 0L);
+            return new Shake(0f, 0, 0.0, 0.0, false, false, 0L);
         }
 
         public long durationMillis() {
@@ -115,6 +133,29 @@ public final class CameraShakeController {
 
         public boolean activeAt(long nowMs) {
             return intensity > 0f && durationMillis() > 0L && nowMs - startedAtMs < durationMillis();
+        }
+
+        /**
+         * 幅度包络系数 ∈ [0,1]：{@code sustained} 时前 {@link #SUSTAIN_FRACTION} 维持满幅 1.0、
+         * 末段线性收束到 0（持续震动）；否则退化为 {@link #remainingRatioAt} 线性衰减（抖一下）。
+         */
+        public double envelopeAt(long nowMs) {
+            long duration = durationMillis();
+            if (duration <= 0L) {
+                return 0.0;
+            }
+            long elapsed = Math.max(0L, nowMs - startedAtMs);
+            if (elapsed >= duration) {
+                return 0.0;
+            }
+            if (!sustained) {
+                return remainingRatioAt(nowMs);
+            }
+            double progress = elapsed / (double) duration;
+            if (progress <= SUSTAIN_FRACTION) {
+                return 1.0;
+            }
+            return 1.0 - (progress - SUSTAIN_FRACTION) / (1.0 - SUSTAIN_FRACTION);
         }
 
         public double remainingRatioAt(long nowMs) {

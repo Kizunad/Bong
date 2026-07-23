@@ -131,12 +131,15 @@ public final class CastFovController {
             pulse = new Pulse(profile.fovPeakDegrees(), profile.fovDurationTicks(), now);
         }
         if (profile.hasShake()) {
+            // 施法 release = 持续震动（sustained 包络）：把大招的存在感撑满整个时长，
+            // 不是命中的「抖一下」线性衰减。倍率在触发时刻并入强度（0 → 不触发）。
             CameraShakeController.triggerDirect(
                 profile.shakeIntensity() * multiplier,
                 profile.shakeDurationTicks(),
                 CAST_SHAKE_DIR_X,
                 CAST_SHAKE_DIR_Z,
                 false,
+                true,
                 now
             );
         }

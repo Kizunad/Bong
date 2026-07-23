@@ -75,10 +75,30 @@ class CombatJuiceTest {
 
     @Test
     void shake_decays_linearly() {
-        CameraShakeController.Shake shake = new CameraShakeController.Shake(1.0f, 10, 1.0, 0.0, false, 1_000L);
+        CameraShakeController.Shake shake =
+            new CameraShakeController.Shake(1.0f, 10, 1.0, 0.0, false, false, 1_000L);
         assertEquals(1.0, shake.remainingRatioAt(1_000L), 0.0001);
         assertEquals(0.5, shake.remainingRatioAt(1_250L), 0.0001);
         assertEquals(0.0, shake.remainingRatioAt(1_500L), 0.0001);
+    }
+
+    @Test
+    void sustained_shake_holds_full_then_releases() {
+        // 持续型包络（施法 release 用）：前 70% 维持满幅 1.0，末 30% 线性收束到 0，
+        // 与上面的线性「抖一下」衰减分叉——这是「持续震动」的手感来源。
+        CameraShakeController.Shake s =
+            new CameraShakeController.Shake(1.0f, 20, 1.0, 0.0, false, true, 1_000L);
+        long dur = 20 * 50;  // 1000ms
+        assertEquals(1.0, s.envelopeAt(1_000L), 1e-9, "t=0 满幅");
+        assertEquals(1.0, s.envelopeAt(1_000L + dur / 2), 1e-9, "50% 仍满幅（线性会是 0.5）");
+        assertEquals(1.0, s.envelopeAt(1_000L + (long) (dur * 0.7)), 1e-9, "70% 边界仍满幅");
+        assertEquals(0.5, s.envelopeAt(1_000L + (long) (dur * 0.85)), 1e-9, "85% → 收束一半");
+        assertEquals(0.0, s.envelopeAt(1_000L + dur), 1e-9, "结束归 0");
+
+        // 非持续型同参数在 50% 处应为线性 0.5，证明包络确实按 sustained 分叉。
+        CameraShakeController.Shake lin =
+            new CameraShakeController.Shake(1.0f, 20, 1.0, 0.0, false, false, 1_000L);
+        assertEquals(0.5, lin.envelopeAt(1_000L + dur / 2), 1e-9, "非持续型 50% = 线性 0.5");
     }
 
     @Test
