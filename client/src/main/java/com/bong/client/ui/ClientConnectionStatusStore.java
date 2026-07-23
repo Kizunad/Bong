@@ -70,6 +70,7 @@ public final class ClientConnectionStatusStore {
             } catch (ArithmeticException overflow) {
                 throw new IllegalStateException("Client connection session token sequence exhausted", overflow);
             }
+            nextSessionSequence = sequence;
             SessionToken token = new SessionToken(sequence);
             SESSION_TOKENS.put(handler, token);
             newestSessionToken = token;

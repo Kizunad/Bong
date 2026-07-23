@@ -10,6 +10,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConnectionStatusIndicatorTest {
@@ -17,6 +18,26 @@ class ConnectionStatusIndicatorTest {
     void resetStore() {
         ClientConnectionStatusStore.resetForTests();
         BongToast.resetForTests();
+    }
+
+    @Test
+    void successivePhysicalSessionsReceiveDistinctSequenceTokens() {
+        Object firstHandler = new Object();
+        Object secondHandler = new Object();
+
+        ClientConnectionStatusStore.SessionToken firstToken =
+            ClientConnectionStatusStore.initializeSession(firstHandler);
+        ClientConnectionStatusStore.SessionToken repeatedFirstToken =
+            ClientConnectionStatusStore.initializeSession(firstHandler);
+        ClientConnectionStatusStore.SessionToken secondToken =
+            ClientConnectionStatusStore.initializeSession(secondHandler);
+
+        assertSame(firstToken, repeatedFirstToken,
+            "同一物理 handler 的重复 INIT 必须保持原 session token identity");
+        assertEquals("SessionToken[1]", firstToken.toString(),
+            "reset 后首条物理连接必须获得首个可观察序号");
+        assertEquals("SessionToken[2]", secondToken.toString(),
+            "后继物理连接必须推进可观察序号，而非重复分配 SessionToken[1]");
     }
 
     @Test
