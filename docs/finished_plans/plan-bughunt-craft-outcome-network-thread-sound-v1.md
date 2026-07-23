@@ -251,8 +251,10 @@
   Smoke/E2E 与 Bot e2e 被跳过。该 run 不能宣称整条 E2E 通过，也不构成本 client craft_outcome PR
   引入 SQLite/persistence 修改的理由。
 - 后续远端 run `29976859401` 绑定 `dd744653d477d58788011d3e2bde5e403be5c580`，client/schema/agent/
-  server release+test/Smoke E2E/Bot e2e/Tiandao window 全部成功；该结果仍只属于旧 SHA，最终 evidence
-  commit push 后必须重新等待 exact-head E2E。
+  server release+test/Smoke E2E/Bot e2e/Tiandao window 全部成功。
+- evidence parent `4e4a81d47adbda4529f615994946ea5ccf9ec211` 已重新完成 Java 17 client 门禁：
+  JUnit XML **4305/0/0/0**（486 files）+ GAME TESTS **3/3**；fresh read-only exact-SHA validator
+  **VERDICT PASS，blocker/major: none**。同 SHA 的 E2E run `29980110481` 全阶段成功。
 
 ### 主线同步与 SHA 纪律
 
@@ -260,17 +262,17 @@
   `origin/main@746794871a91c843958e6692291c4194c0dad085`；merge 后完整 Java 17 client gate 与两份 validator
   已重新执行。后继源码修复 `397629ef3910dddb656d6d99755c87cd834b2e4b` 又独立重跑 client gate 与
   exact-SHA validator，未继承旧 SHA 结论。
-- 更新本证据前，远端 claim branch 精确停在
-  `dd744653d477d58788011d3e2bde5e403be5c580`；本地 worktree 在 `397629ef` 上仅增加本次 evidence
-  原地改写，未发现远端未知提交，允许普通 fast-forward push，禁止 force/amend/rebase。
-- 历史 validator、本地 gate、E2E、`/review` 与 CodeRabbit 结论只绑定各自旧 SHA；本 evidence commit
-  产生最终新 HEAD 后，必须重跑必要 exact-head client gate/validator，并重新触发或等待同一 SHA 的
-  E2E、`/review` 与 CodeRabbit，不能把 `397629ef` 或更早结论外推到最终 docs HEAD。
+- evidence parent `4e4a81d47adbda4529f615994946ea5ccf9ec211` 已完成最终本地门禁、fresh exact-SHA validator、
+  E2E run `29980110481` 与 CodeRabbit；`/review` run `29980117127` 为 403 预扣费基础设施降级，
+  没有代码 finding，也不作为 approval。
+- 每轮结论均只绑定各自 SHA。最终归档 commit 无法在自身正文中自引用未来 commit hash；其 exact
+  object 由 PR head、CI/checks 与外部 validator 绑定，不再通过追加 docs commit 制造无限自引用。
 
 ### 跨栈核验
 
-- client：修改 receiver 生命周期、connection store、两屏 listener 与回归；当前候选 Java 17 完整门禁
-  **4305/0/0/0**（486 XML files）+ GAME TESTS **3/3**。
+- client：修改 receiver 生命周期、connection store、两屏 listener 与回归；源码候选 `397629ef` 与
+  evidence parent `4e4a81d47` 的 Java 17 完整门禁均为 **4305/0/0/0**（486 XML files）+
+  GAME TESTS **3/3**；`4e4a81d47` 的 E2E run `29980110481` 全阶段成功。
 - server：只读确认 `server/src/network/craft_emit.rs` 的 completed/failed 生产 emit 既有可达；本次
   无 server 代码改动，不跑 cargo gate。
 - agent/schema/worldgen：未改协议、TypeBox/sample/dist、agent consumer、资源或生成物。
@@ -282,7 +284,10 @@
 
 - 其他 channel（vfx/audio/agent_ui 等）仍使用历史 `markPayloadReceived()` freshness 路径，明确非
   本 plan 范围；本修复只收口 `bong:server_data` 的 handler-bound session token。
-- 远端 exact-head `/review`、CodeRabbit 与 E2E 仍须在本证据 docs commit push 后重新触发并收敛；
-  任何新 blocker/major 都需独立复核、修复并从 validator/client gate 开始重验。
+- evidence parent `4e4a81d47` 的 exact-head `/review`、CodeRabbit 与 E2E 已完成并核验：E2E
+  `29980110481` SUCCESS；CodeRabbit final review 已撤回陈旧 `3ece1e`/4171 前提，仅保留已独立分类的
+  Trivial 测试诊断建议；`/review` `29980117127` 为 403 预扣费基础设施降级，未产生代码 finding，
+  不冒充 approval。归档最终 commit 的 exact object 由 PR head/CI/validator 外部绑定，不再将其写成
+  “仍须等待”。
 - 明确排除 PR #1228、PR #1215 worktree、Tiandao snapshots 与来源不明进程；未触碰其他 worktree、
-  主 checkout 或 PID `2399867`。
+  主 checkout 或 PID `2399867`。以前的无关 persistence `database is locked` 失败不纳入本 PR 修复。
