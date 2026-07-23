@@ -2,13 +2,13 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：Active，2026-07-22；P0/P1 已完成并通过定向回归，P2 的确定性命令、Bot 场景与定向门禁已完成，完整 server gate / 真实 Bot e2e 尚未运行，故保持 active 且不归档。
+**状态**：Finished，2026-07-23；P0/P1/P2 均已完成，merged HEAD 的 server/schema/agent/client 门禁、确定性 Bot、无上下文 validator 与隔离 full smoke 均已验收。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
 | P0 | ambient 共用地表门禁：mundane + threat 生成前统一解析 runtime `ground_y + 1` / raster fallback | ✅ 2026-07-22 |
 | P1 | 饱和回归：纯函数、真实 scheduler→pool 生产链、预算与错误分支 | ✅ 2026-07-22 |
-| P2 | 确定性 bot 场景 + 非目标隔离 + 完整 server 门禁 | ⏳（实现与定向门禁已绿；完整 gate/e2e 待验收） |
+| P2 | 确定性 bot 场景 + 非目标隔离 + 完整 server 门禁 | ✅ 2026-07-23 |
 
 ---
 
@@ -173,8 +173,9 @@ fn resolve_ambient_ground_position(
 
 1. 对 candidate X/Z/Y 使用 `floor` 得到 world block 坐标与 `ref_y`，优先复用 Navigator 既有标准窗口扫描（`ref_y - 16 .. ref_y + 4`，并按 layer 高度夹取）；该 helper 已统一 Euclidean chunk/local 坐标、支撑方块分类与双格净空规则，ambient 不复制规则；
 2. runtime loaded chunk 找到安全支撑 → `Some(x, ground_y + 1, z)`，不得再查询 raster；
-3. chunk 未加载或标准窗口无安全支撑 → 才允许查询 raster；`passable=true` 时返回 `Some(x, surface_y + 1, z)`；
-4. runtime 与 raster 均缺失/不安全 → `None`。禁止保留 candidate/player Y，也禁止根据结果是否“恰好等于输入”猜成功/失败。
+3. chunk 未加载 → 才允许直接采用 passable raster 的 `surface_y + 1`；
+4. loaded chunk 的标准窗口 miss → raster 只能提供候选支撑 Y，必须在 live `ChunkLayer` 精确复核 support/feet/head：支撑需非液体且 `blocks_motion()`，双格净空需非液体且不阻挡，三格都需位于 layer bounds；任一不满足即拒绝，禁止 stale raster、空气或属性液体绕过；
+5. runtime 与 raster 均缺失/不安全 → `None`。禁止保留 candidate/player Y，也禁止根据结果是否“恰好等于输入”猜成功/失败。
 
 不复用 `snap_spawn_y_to_surface` 的 fail-open 返回值，也不复制 worldgen 高度公式。ambient 候选可以安全丢弃并等下一轮；保留错误玩家 Y 比少刷一只更坏。
 
@@ -190,7 +191,7 @@ fn resolve_ambient_ground_position(
 
 **决议**：scheduler 同时注入 `Query<&ChunkLayer>` 与既有 `Option<Res<TerrainProviders>>`，通过 `DimensionLayers.overworld` 取得权威 runtime layer；`TerrainProviders.overworld` 只作为标准 runtime 窗口 miss/unloaded chunk 后的次级 fallback。这样 raster 世界仍可兜底远离 loaded window 的自然地表，而没有 `TerrainProviders` 的 fallback Flat/Anvil 世界只要目标 chunk 已加载且有安全支撑就能正常刷新，不会永久停刷。
 
-runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool、不增加 `pending_spawns_by_zone`。保留现有 scheduler 周期重试，不新增永久 pending state。测试 fixture 必须分别覆盖 loaded `ChunkLayer` 无 provider 成功、unloaded chunk + passable raster 成功、双源失败、runtime 胜过冲突 raster，以及完整 `App → ambient_scheduler_system::<M> → real pool → ECS Position` 两条生产链。
+runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime 明确不安全即 veto，loaded scan miss 的 raster Y 必须回到 live chunk 精确复核，只有 unloaded chunk 才允许直接采用 passable raster。失败时不调用 pool、不增加 `pending_spawns_by_zone`。保留现有 scheduler 周期重试，不新增永久 pending state。测试 fixture 必须分别覆盖 loaded `ChunkLayer` 无 provider 成功、unloaded chunk + passable raster 成功、loaded scan miss 的 stale/液体/空气/越界拒绝、双源失败、runtime 胜过冲突 raster，以及完整 `App → ambient_scheduler_system::<M> → real pool → ECS Position` 两条生产链。
 
 **落点**：`server/src/npc/spawn/ambient_scheduler.rs:665-861`、`server/src/world/dimension.rs:37-57`、`server/src/world/terrain/raster.rs:412-444` / 本 plan P0、P1。
 
@@ -270,7 +271,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool
 
 ---
 
-## P2：确定性 bot 场景与门禁 ⏳
+## P2：确定性 bot 场景与门禁 ✅ 2026-07-23
 
 - 新增/扩展一个 `scripts/bot/scenarios/` 场景，使用 §#6 的确定性 dev-only 接缝触发一次 mundane 和一次 threat/rat ambient 生成。
 - 玩家测试高度与 fixture surface 至少相差 32 格；bot 从真实 spawn/move 包跟踪实体 Position，断言：
@@ -295,7 +296,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool
   - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml 'cmd::tests::' -- --test-threads=1`：`running 4 tests`，4 passed。
   - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml ambient -- --test-threads=1`：`running 119 tests`，119 passed。
   - `cargo fmt --manifest-path server/Cargo.toml -- --check`、`git diff --check`、`python3 -m py_compile scripts/bot/scenarios/npc_ambient_surface_resolution.py` 与场景自动发现检查均通过。
-- 本轮按任务边界未运行 `cargo clippy --all-targets -- -D warnings`、全量 `cargo test`、对应 Bot e2e 或 `bash scripts/smoke-test-e2e.sh`；P2 因完整验收尚未完成保持 `⏳`，不得归档。
+- merged HEAD `da3196a35684e54660d4dec739bc52fa2e38ffe4` 已完成全量验收：server `fmt + clippy -D warnings + cargo test`、schema/Tiandao、Java 17 client `test build`、确定性 ambient Bot 以及隔离 runtime data 的 `smoke-test-e2e` 均通过；完整证据见 `## Finish Evidence`。
 
 ---
 
@@ -311,30 +312,42 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；不调用 pool
 
 ## Finish Evidence
 
-> Skeleton 阶段留空；BugFix 完成后填写。
-
 ### 落地清单
 
-- P0：
-- P1：
-- P2：
+- **P0**：`server/src/npc/spawn/ambient_scheduler.rs` 新增 runtime-first strict resolver 与 `AmbientRuntimeGround` tri-state；loaded runtime 明确不安全即拒绝，loaded scan miss 的 raster Y 必须回到 live `ChunkLayer` 验证 support/feet/head，双源失败不调用 pool、不占 pending budget。`server/src/npc/navigator.rs` 只把既有 `resolve_ground_y_from_chunk` 扩为 `pub(crate)`，未改变导航/重力行为。
+- **P1**：`npc::spawn::ambient_scheduler::tests` 覆盖 runtime/raster 优先级、unloaded fallback、负坐标、扫描窗口、双格净空、默认/属性液体、空气/非运动支撑、layer 边界、pool `None` 与预算副作用；另以真实 `ambient_scheduler_system::<M>` → mundane/threat pool → ECS `Position` 锁住两条生产链。
+- **P2**：`server/src/cmd/dev/ambient_spawn.rs`、`server/src/cmd/registry_pin.rs` 提供 X/Z-only 的 deterministic one-shot；`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 通过真实协议包验证 Cow/Rat 脚点 `y=73`，拒绝继承执行者 `y=152`，并以命令前事件水位避免旧 `PositionLook` 假阳性。
 
 ### 关键 commit
 
-- 待填写
+- `7e0ae868f`（2026-07-22）：提升 skeleton 为 active plan。
+- `e65707a10`（2026-07-22）：接入 ambient runtime-first 地表门禁与饱和回归。
+- `5bcbf20b3`（2026-07-22）：补齐 deterministic one-shot 命令与 Bot witness。
+- `e35a91d7e`、`3bd728680`（2026-07-22）：封堵默认液体与 property liquid 净空绕过。
+- `359d9f26c`、`d5cc483f7`、`9ff30f675`（2026-07-22）：封堵 loaded scan miss、空气支撑、非运动支撑与 layer 边界绕过。
+- `36e310152`（2026-07-22）：以 request object 收束 dev helper，恢复全量 clippy 参数门禁。
+- `8114e7e3e`（2026-07-23）：修复 Bot 对迟到登录 `PositionLook` 的误匹配。
+- `da3196a35`（2026-07-23）：合并最新 `origin/main`，固定最终验证基线 `da3196a35684e54660d4dec739bc52fa2e38ffe4`。
 
 ### 测试结果
 
-- 待填写
+- **定向 server**：`cmd::dev::ambient_spawn::tests` 11/11、`cmd::registry_pin::tests` 3/3、`cmd::tests::` 4/4、`ambient` 119/119；均实际命中非零测试。
+- **merged server gate**（`da3196a35684e54660d4dec739bc52fa2e38ffe4`）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11919 passed / 2 ignored，main 11 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
+- **schema / agent**：schema build/check/generate freshness 406 artifacts，30 files / 898 tests passed；Tiandao 72 files / 840 tests passed。
+- **client**：Java `17.0.19` 执行 `./gradlew test build` 成功，3/3 Fabric GameTests passed，`BUILD SUCCESSFUL`。
+- **协议 Bot**：merged HEAD 的 `npc_ambient_surface_resolution` 1/1 passed；Cow type 18 与 Rat type 126 均在 `(5,73,3)`，未继承执行者 `(0,152,0)`。此前完整 Bot suite 为 28 pass / 1 skip / 2 fail；失败仅为既有 `production_craft_disconnect_resume` 与 `production_spiritwood_full_inventory_drop`，目标 ambient 场景独立通过，故未将完整套件误报为全绿。
+- **full smoke**：共享 runtime DB 直接运行时，north-rift preview 正确 hydrate `zones_runtime` 的 `0.2661459988600612`，与静态 fixture `0.290146` 不同而失败；未删除或改写用户 DB。改用临时空 `server/data` 并在 trap 中恢复原数据后，pre-merge 与 merged HEAD 两轮 `bash scripts/smoke-test-e2e.sh` 均为 9 passed / 0 failed。最终 run id：`20260723-152959-1866492-ambient-surface-isolated-postmerge`，`SMOKE_STATUS=0`，原 runtime data 已恢复。
+- **无上下文 validator**：对 exact target commit object `da3196a35684e54660d4dec739bc52fa2e38ffe4` 给出 PASS；确认 runtime/raster fail-closed、两条真实 pool、side-effect 提交边界、Bot 真实命令链及 Navigator 零行为扩张。
 
 ### 跨仓库核验
 
-- server：
-- bot：
-- client：零改
-- agent/schema：零改
+- **server**：`resolve_ambient_ground_position`、`resolve_loaded_raster_landing`、`submit_ambient_spawn_candidate`、`submit_ambient_dev_spawn_once`、`AmbientSpawnCmd` 与 command graph pin 均落地；mundane/threat 共用同一 resolver 和提交边界。
+- **bot**：`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 走真实 `/tpzone`、`/ambient_spawn once`、`entity_spawn` 与位置 mirror，不依赖随机 ambient tick。
+- **client**：零代码改动；继续渲染 server 权威 `Position`，未加入 client gravity hack；Java 17 全门禁通过。
+- **agent/schema**：零代码改动、零 Redis/wire 变更；合并主线后 schema/Tiandao 全门禁通过。
 
 ### 遗留 / 后续
 
 - Navigator active-goal + path-empty/repath-fail 的 ground reconciliation 独立验真。
 - 兽潮、botany 吸引、教程鼠、territory reproduction、hydrate 的最终 X/Z surface contract 按 archetype 分别验真；不得直接扩本 PR。
+- `e2e-redis.sh` 默认复用 `server/data/bong.db`，静态地形 fixture 会被合法的 `zones_runtime` hydrate 覆盖；测试数据隔离属于独立 harness 改进，不混入本 gameplay 修复。
