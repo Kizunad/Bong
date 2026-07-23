@@ -327,12 +327,14 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `359d9f26c`、`d5cc483f7`、`9ff30f675`（2026-07-22）：封堵 loaded scan miss、空气支撑、非运动支撑与 layer 边界绕过。
 - `36e310152`（2026-07-22）：以 request object 收束 dev helper，恢复全量 clippy 参数门禁。
 - `8114e7e3e`（2026-07-23）：修复 Bot 对迟到登录 `PositionLook` 的误匹配。
+- `71e5ea3ab`（2026-07-23）：按完整 diff review 修复 loaded scan miss 的 raster 精确落点；附近更高支撑不再否决已通过 live support/feet/head 校验的 raster Y，并补提交边界回归。
 - `da3196a35`（2026-07-23）：合并 `746794871` 基线，完成 server/schema/agent/Bot/smoke 全量验证。
 - `2361b7ee3`（2026-07-23）：再次合并最新 `origin/main` 的 review API 配置与 craft_outcome client 网络线程修复；无冲突、未触及本 plan 的 server/Bot gameplay 文件，并复跑 Java 17 client 完整门禁。
 
 ### 测试结果
 
-- **定向 server**：`cmd::dev::ambient_spawn::tests` 11/11、`cmd::registry_pin::tests` 3/3、`cmd::tests::` 4/4、`ambient` 119/119；均实际命中非零测试。
+- **定向 server**：`cmd::dev::ambient_spawn::tests` 11/11、`cmd::registry_pin::tests` 3/3、`cmd::tests::` 4/4、`ambient` 119/119；均实际命中非零测试。完整 diff review 返工后，`ambient_ground_position_loaded_scan_miss_*` 3/3 通过，锁定精确 raster Y、空气支撑拒绝与 live 落点复验。
+- **review 返工 server gate**（`71e5ea3ab`）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11920 passed / 2 ignored，main 11 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
 - **merged server gate**（`da3196a35684e54660d4dec739bc52fa2e38ffe4`）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11919 passed / 2 ignored，main 11 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
 - **schema / agent**：schema build/check/generate freshness 406 artifacts，30 files / 898 tests passed；Tiandao 72 files / 840 tests passed。
 - **client**：Java `17.0.19` 两次执行 `./gradlew test build` 均成功，3/3 Fabric GameTests passed；最新 `origin/main` 带入 client 网络线程修复后再次得到 `BUILD SUCCESSFUL`（21 tasks，6m07s）。
