@@ -242,6 +242,14 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - 双源缺失、液体/不可走或 pool `None` 均不 spawn，不污染 pending/alive budget。
 - ring radius、zone bounds、seed determinism、era/danger/season gate、回收和 qi 守恒行为不回归。
 
+### 玩家可感知反馈（本 PR 不新增或改变）
+
+- **粒子/VFX**：无新增、无颜色/数量/lifetime/spawn 模式变化；本 PR 只修正 server 权威首帧 `Position.y`，不发新的 `bong:vfx_event`。
+- **音效**：无新增或变更的 `audio_recipe`、vanilla sound、pitch、volume、delay；动物既有生成/环境音保持原样。
+- **HUD/屏幕效果**：无新增 HUD layer、overlay、vignette、tint、shake 或提示文本；client 零改。
+- **环境/动画**：不改天空、雾、方块、terrain profile、动物动画或 Navigator 后续行为；只禁止错误的空中首帧。
+- **narration**：不新增 broadcast/zone/player narration；既有事件流不变。
+
 ---
 
 ## P1：饱和回归 ✅ 2026-07-22
@@ -354,3 +362,4 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - Navigator active-goal + path-empty/repath-fail 的 ground reconciliation 独立验真。
 - 兽潮、botany 吸引、教程鼠、territory reproduction、hydrate 的最终 X/Z surface contract 按 archetype 分别验真；不得直接扩本 PR。
 - `e2e-redis.sh` 默认复用 `server/data/bong.db`，静态地形 fixture 会被合法的 `zones_runtime` hydrate 覆盖；测试数据隔离属于独立 harness 改进，不混入本 gameplay 修复。
+- CodeRabbit 对 `return_spider_drained_qi_to_zone` 的账本 finding 经独立验真为真实但 out-of-scope：该 helper 与 ambient 回收调用由 `31bd564e45` 引入，`mimic_spider.rs` 不在本 PR diff。后续应另立拟态蛛 ledger 修复，覆盖死亡/超距回收、`qi_release_to_zone` accepted/overflow、账户归零、满区与重复回收测试；本 PR 不修改该既有链。
