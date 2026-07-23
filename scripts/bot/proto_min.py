@@ -614,6 +614,21 @@ def _alchemy_furnace(data: bytes) -> dict[str, Any]:
             _optional_varint(fields, 3),
         ],
         "tier": _varint(fields, 4),
+        "integrity": _double(fields, 5),
+        "integrity_max": _double(fields, 6),
+        "owner_name": _string(fields, 7),
+        "has_session": bool(_varint(fields, 8)),
+    }
+
+
+def _alchemy_stage_hint(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "at_tick": _varint(fields, 1),
+        "window": _varint(fields, 2),
+        "summary": _string(fields, 3),
+        "completed": bool(_varint(fields, 4)),
+        "missed": bool(_varint(fields, 5)),
     }
 
 
@@ -626,6 +641,16 @@ def _alchemy_session(data: bytes) -> dict[str, Any]:
         "active": bool(_varint(fields, 2)),
         "elapsed_ticks": _varint(fields, 3),
         "target_ticks": _varint(fields, 4),
+        "temp_current": _double(fields, 5),
+        "temp_target": _double(fields, 6),
+        "temp_band": _double(fields, 7),
+        "qi_injected": _double(fields, 8),
+        "qi_target": _double(fields, 9),
+        "status_label": _string(fields, 10),
+        "stages": [_alchemy_stage_hint(raw) for raw in _messages(fields, 11)],
+        "interventions_recent": [
+            raw.decode("utf-8", errors="replace") for raw in _messages(fields, 12)
+        ],
     }
 
 

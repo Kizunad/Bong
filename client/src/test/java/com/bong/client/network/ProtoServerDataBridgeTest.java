@@ -19,6 +19,13 @@ import com.bong.client.social.NicheGuardianPanel;
 import com.bong.client.social.NicheGuardianStore;
 import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.inventory.model.MeridianBody;
+import com.bong.client.inventory.model.MeridianChannel;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
+import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.inventory.state.PlayerRaceIdentityStore;
+import com.bong.client.skill.SkillMilestoneStore;
+import com.bong.client.skill.SkillSetStore;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -3785,5 +3792,181 @@ class ProtoServerDataBridgeTest {
             }
         }
         return null;
+    }
+
+    // ─── cultivation_detail: AoS→SoA meridian 解包（plan-race-system-v1 P1c 回归护栏）──
+    //
+    // wire 上 meridians 是 repeated MeridianState（AoS，每条自带 snake_case channel id）；
+    // CultivationDetailHandler 期望 SoA——channel_ids[] + opened[]/flow_rate[]/... 并行数组。
+    // bridge 负责 AoS→SoA 解包。历史回归：bridge 一直用 pre-P1c 的固定 20 位枚举名索引表
+    // （"MERIDIAN_ID_LUNG"）映射 P1c 的 string id（"lung"）→ 每条查不到 → 全跳过 → opened 恒
+    // false（玩家 /meridian open_all 后 UI 仍显示未开启），且不产出 channel_ids、错把
+    // target_meridian 转成 int 下标。以下测试锁死 SoA 解包契约。
+
+    private static Envelope.ServerDataEnvelope cultivationEnvelope(Envelope.CultivationDetail detail) {
+        return Envelope.ServerDataEnvelope.newBuilder().setCultivationDetail(detail).build();
+    }
+
+    private static Envelope.MeridianState meridian(String id, boolean opened) {
+        return Envelope.MeridianState.newBuilder().setId(id).setOpened(opened).build();
+    }
+
+    private static JsonObject bridgeCultivation(Envelope.CultivationDetail detail) {
+        ProtoServerDataBridge.BridgeResult result =
+                ProtoServerDataBridge.bridge(cultivationEnvelope(detail).toByteArray());
+        assertTrue(result.isSuccess(), () -> "bridge cultivation_detail 应成功，实际: " + result.legacyJson());
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals("cultivation_detail", json.get("type").getAsString());
+        return json;
+    }
+
+    private static List<String> stringList(JsonArray arr) {
+        List<String> out = new ArrayList<>(arr.size());
+        for (JsonElement el : arr) out.add(el.getAsString());
+        return out;
+    }
+
+    // 用户实测 bug：/meridian open_all 后仍显示"未开启经脉"。旧 bridge 用 stale 索引表映射
+    // snake_case id → 全跳过 → opened 恒 false。锁死：20 条全 opened 原样透传。
+    @Test
+    void openAllMeridiansSurviveBridgeAsOpened() {
+        Envelope.CultivationDetail.Builder detail = Envelope.CultivationDetail.newBuilder();
+        for (MeridianChannel ch : MeridianChannel.values()) {
+            detail.addMeridians(meridian(ch.channelId(), true));
+        }
+        JsonObject json = bridgeCultivation(detail.build());
+
+        JsonArray opened = json.getAsJsonArray("opened");
+        JsonArray channelIds = json.getAsJsonArray("channel_ids");
+        assertEquals(20, opened.size(),
+                "20 条经脉必须全部出现在 opened 数组（旧 bridge 因索引表失配全跳过 → 空数组）");
+        assertEquals(20, channelIds.size(), "channel_ids 必须与 opened 同长同序");
+        for (int i = 0; i < opened.size(); i++) {
+            assertTrue(opened.get(i).getAsBoolean(),
+                    "channel_ids[" + i + "]=" + channelIds.get(i).getAsString()
+                            + " open_all 后应为 opened=true，实测 false 即回归");
+        }
+        assertFalse(json.has("meridians"), "AoS meridians 键必须已被解包移除");
+    }
+
+    // 真 e2e：proto bytes → bridge → ServerDataEnvelope.parse → CultivationDetailHandler →
+    // MeridianStateStore。锁死整条链路——open_all 后每条 channel 在 store 里 blocked=false。
+    @Test
+    void openAllReachesStoreUnblockedEndToEnd() {
+        Envelope.CultivationDetail.Builder detail = Envelope.CultivationDetail.newBuilder();
+        for (MeridianChannel ch : MeridianChannel.values()) {
+            detail.addMeridians(meridian(ch.channelId(), true));
+        }
+        try {
+            MeridianStateStore.resetForTests();
+            BodyPlanLayoutStore.resetForTests();
+            PlayerRaceIdentityStore.resetForTests();
+
+            ProtoServerDataBridge.BridgeResult result =
+                    ProtoServerDataBridge.bridge(cultivationEnvelope(detail.build()).toByteArray());
+            assertTrue(result.isSuccess());
+            String legacyJson = result.legacyJson();
+            ServerPayloadParseResult parsed = ServerDataEnvelope.parse(legacyJson, legacyJson.length());
+            assertTrue(parsed.isSuccess(), () -> "bridged json 应能解析成 envelope: " + parsed.errorMessage());
+
+            new CultivationDetailHandler().handle(parsed.envelope());
+
+            MeridianBody body = MeridianStateStore.snapshot();
+            for (MeridianChannel ch : MeridianChannel.values()) {
+                ChannelStateProbe.assertUnblocked(body, ch);
+            }
+        } finally {
+            MeridianStateStore.resetForTests();
+            BodyPlanLayoutStore.resetForTests();
+            PlayerRaceIdentityStore.resetForTests();
+            SkillSetStore.resetForTests();
+            SkillMilestoneStore.resetForTests();
+        }
+    }
+
+    /** 小工具：断言某 channel 已在 store 里、且未被阻塞（打通即 blocked=false）。 */
+    private static final class ChannelStateProbe {
+        static void assertUnblocked(MeridianBody body, MeridianChannel ch) {
+            var state = body.channel(ch);
+            assertNotNull(state, ch.channelId() + " 打通后应存在于 MeridianStateStore");
+            assertFalse(state.blocked(),
+                    ch.channelId() + " 打通后 UI 应显示未阻塞（blocked=false），实测阻塞即回归");
+        }
+    }
+
+    // 每 channel 字段按 meridians 顺序原样映射（不再经固定位置重排），channel_ids 保序。
+    @Test
+    void perChannelFieldsPreserveOrderAndValues() {
+        Envelope.CultivationDetail detail = Envelope.CultivationDetail.newBuilder()
+                .addMeridians(Envelope.MeridianState.newBuilder()
+                        .setId("lung").setOpened(true).setFlowRate(2.5).setFlowCapacity(9.0)
+                        .setIntegrity(0.9).setOpenProgress(1.0).setCracksCount(0).build())
+                .addMeridians(Envelope.MeridianState.newBuilder()
+                        .setId("ren").setOpened(false).setFlowRate(0.0).setFlowCapacity(3.0)
+                        .setIntegrity(0.3).setOpenProgress(0.42).setCracksCount(2).build())
+                .build();
+        JsonObject json = bridgeCultivation(detail);
+
+        assertIterableEquals(List.of("lung", "ren"), stringList(json.getAsJsonArray("channel_ids")),
+                "channel_ids 顺序必须等于 meridians 顺序");
+        assertTrue(json.getAsJsonArray("opened").get(0).getAsBoolean());
+        assertFalse(json.getAsJsonArray("opened").get(1).getAsBoolean());
+        assertEquals(2.5, json.getAsJsonArray("flow_rate").get(0).getAsDouble(), 1e-9);
+        assertEquals(3.0, json.getAsJsonArray("flow_capacity").get(1).getAsDouble(), 1e-9);
+        assertEquals(0.9, json.getAsJsonArray("integrity").get(0).getAsDouble(), 1e-9);
+        assertEquals(0.42, json.getAsJsonArray("open_progress").get(1).getAsDouble(), 1e-9);
+        assertEquals(2, json.getAsJsonArray("cracks_count").get(1).getAsInt());
+    }
+
+    // 非 humanoid 构型（P5 飞鲸等）的 channel id 不在 20 条 TCM 之列；旧固定索引表会整条丢弃。
+    // 新解包必须原样透传（是否有 UI 由 handler 侧决定，不是 bridge 丢数据）。
+    @Test
+    void nonHumanoidChannelIdPassesThroughInsteadOfBeingDropped() {
+        Envelope.CultivationDetail detail = Envelope.CultivationDetail.newBuilder()
+                .addMeridians(meridian("whale_dorsal_line", true))
+                .addMeridians(meridian("lung", true))
+                .build();
+        JsonObject json = bridgeCultivation(detail);
+        assertIterableEquals(List.of("whale_dorsal_line", "lung"),
+                stringList(json.getAsJsonArray("channel_ids")),
+                "非 humanoid channel 必须原样保留在 channel_ids（旧 bridge 会丢弃）");
+        assertEquals(2, json.getAsJsonArray("opened").size());
+        assertTrue(json.getAsJsonArray("opened").get(0).getAsBoolean());
+    }
+
+    // target_meridian 现为 channel id 字符串，client 直接 fromChannelId 解析——不再转 int。
+    @Test
+    void targetMeridianStaysStringChannelId() {
+        Envelope.CultivationDetail detail = Envelope.CultivationDetail.newBuilder()
+                .addMeridians(meridian("kidney", true))
+                .setTargetMeridian("kidney")
+                .build();
+        JsonObject json = bridgeCultivation(detail);
+        assertTrue(json.has("target_meridian"), "设了 target_meridian 应透传");
+        assertTrue(json.get("target_meridian").getAsJsonPrimitive().isString(),
+                "P1c 起 target_meridian 是 channel id 字符串，不再是 int 下标");
+        assertEquals("kidney", json.get("target_meridian").getAsString());
+    }
+
+    // proto optional string 未设 → 不应出现 target_meridian 键（空串边角也被剥）。
+    @Test
+    void targetMeridianUnsetIsAbsent() {
+        Envelope.CultivationDetail detail = Envelope.CultivationDetail.newBuilder()
+                .addMeridians(meridian("lung", false))
+                .build();
+        JsonObject json = bridgeCultivation(detail);
+        assertFalse(json.has("target_meridian"),
+                "未设 target_meridian 时不应出现该键（空串被剥），避免下游误当有效 channel");
+    }
+
+    // 边界：零条经脉不 crash，AoS 键被移除。
+    @Test
+    void emptyMeridiansHandledWithoutCrash() {
+        JsonObject json = bridgeCultivation(Envelope.CultivationDetail.newBuilder().build());
+        assertFalse(json.has("meridians"), "空 meridians 也应被解包移除，不残留 AoS 键");
+        if (json.has("channel_ids")) {
+            assertEquals(0, json.getAsJsonArray("channel_ids").size());
+            assertEquals(0, json.getAsJsonArray("opened").size());
+        }
     }
 }

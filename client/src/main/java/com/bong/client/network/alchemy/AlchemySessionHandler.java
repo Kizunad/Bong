@@ -18,7 +18,9 @@ public final class AlchemySessionHandler implements ServerDataHandler {
         JsonObject p = envelope.payload();
         try {
             String recipeId = readString(p, "recipe_id", "");
-            boolean active = p.has("active") && p.get("active").isJsonPrimitive() && p.get("active").getAsBoolean();
+            boolean requestedActive = p.has("active")
+                && p.get("active").isJsonPrimitive()
+                && p.get("active").getAsBoolean();
             int elapsed = readInt(p, "elapsed_ticks", 0);
             int target = readInt(p, "target_ticks", 0);
             float tempCur = (float) readDouble(p, "temp_current", 0.0);
@@ -49,11 +51,16 @@ public final class AlchemySessionHandler implements ServerDataHandler {
             if (ints != null) {
                 for (JsonElement el : ints) if (el.isJsonPrimitive()) log.add(el.getAsString());
             }
+            boolean active = requestedActive && hasUsableActiveGuidance(recipeId, target);
             AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
                 recipeId, active, elapsed, target, tempCur, tempTgt, tempBand, qiInj, qiTgt,
                 status, List.copyOf(stages), List.copyOf(log)));
+            String compatibilityNote = requestedActive && !active
+                ? ", downgraded incomplete active guidance"
+                : "";
             return ServerDataDispatch.handled(envelope.type(),
-                "Applied alchemy_session snapshot (elapsed=" + elapsed + "/" + target + ")");
+                "Applied alchemy_session snapshot (elapsed=" + elapsed + "/" + target
+                    + compatibilityNote + ")");
         } catch (RuntimeException e) {
             return ServerDataDispatch.noOp(envelope.type(),
                 "alchemy_session payload malformed: " + e.getMessage());
@@ -79,5 +86,9 @@ public final class AlchemySessionHandler implements ServerDataHandler {
         if (!el.isJsonPrimitive() || !el.getAsJsonPrimitive().isNumber()) return fallback;
         double v = el.getAsDouble();
         return Double.isFinite(v) ? v : fallback;
+    }
+
+    private static boolean hasUsableActiveGuidance(String recipeId, int targetTicks) {
+        return recipeId != null && !recipeId.isBlank() && targetTicks > 0;
     }
 }
