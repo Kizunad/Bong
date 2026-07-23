@@ -296,7 +296,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
   - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml 'cmd::tests::' -- --test-threads=1`：`running 4 tests`，4 passed。
   - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml ambient -- --test-threads=1`：`running 119 tests`，119 passed。
   - `cargo fmt --manifest-path server/Cargo.toml -- --check`、`git diff --check`、`python3 -m py_compile scripts/bot/scenarios/npc_ambient_surface_resolution.py` 与场景自动发现检查均通过。
-- merged HEAD `da3196a35684e54660d4dec739bc52fa2e38ffe4` 已完成全量验收：server `fmt + clippy -D warnings + cargo test`、schema/Tiandao、Java 17 client `test build`、确定性 ambient Bot 以及隔离 runtime data 的 `smoke-test-e2e` 均通过；完整证据见 `## Finish Evidence`。
+- gameplay merge `da3196a35684e54660d4dec739bc52fa2e38ffe4` 已完成 server `fmt + clippy -D warnings + cargo test`、schema/Tiandao、Java 17 client `test build`、确定性 ambient Bot 与隔离 runtime data 的 `smoke-test-e2e`；其后再次合并最新 `origin/main` 的 client/review-only 变化并复跑 Java 17 client 完整门禁。完整证据见 `## Finish Evidence`。
 
 ---
 
@@ -327,17 +327,18 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `359d9f26c`、`d5cc483f7`、`9ff30f675`（2026-07-22）：封堵 loaded scan miss、空气支撑、非运动支撑与 layer 边界绕过。
 - `36e310152`（2026-07-22）：以 request object 收束 dev helper，恢复全量 clippy 参数门禁。
 - `8114e7e3e`（2026-07-23）：修复 Bot 对迟到登录 `PositionLook` 的误匹配。
-- `da3196a35`（2026-07-23）：合并最新 `origin/main`，固定最终验证基线 `da3196a35684e54660d4dec739bc52fa2e38ffe4`。
+- `da3196a35`（2026-07-23）：合并 `746794871` 基线，完成 server/schema/agent/Bot/smoke 全量验证。
+- `2361b7ee3`（2026-07-23）：再次合并最新 `origin/main` 的 review API 配置与 craft_outcome client 网络线程修复；无冲突、未触及本 plan 的 server/Bot gameplay 文件，并复跑 Java 17 client 完整门禁。
 
 ### 测试结果
 
 - **定向 server**：`cmd::dev::ambient_spawn::tests` 11/11、`cmd::registry_pin::tests` 3/3、`cmd::tests::` 4/4、`ambient` 119/119；均实际命中非零测试。
 - **merged server gate**（`da3196a35684e54660d4dec739bc52fa2e38ffe4`）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11919 passed / 2 ignored，main 11 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
 - **schema / agent**：schema build/check/generate freshness 406 artifacts，30 files / 898 tests passed；Tiandao 72 files / 840 tests passed。
-- **client**：Java `17.0.19` 执行 `./gradlew test build` 成功，3/3 Fabric GameTests passed，`BUILD SUCCESSFUL`。
+- **client**：Java `17.0.19` 两次执行 `./gradlew test build` 均成功，3/3 Fabric GameTests passed；最新 `origin/main` 带入 client 网络线程修复后再次得到 `BUILD SUCCESSFUL`（21 tasks，6m07s）。
 - **协议 Bot**：merged HEAD 的 `npc_ambient_surface_resolution` 1/1 passed；Cow type 18 与 Rat type 126 均在 `(5,73,3)`，未继承执行者 `(0,152,0)`。此前完整 Bot suite 为 28 pass / 1 skip / 2 fail；失败仅为既有 `production_craft_disconnect_resume` 与 `production_spiritwood_full_inventory_drop`，目标 ambient 场景独立通过，故未将完整套件误报为全绿。
 - **full smoke**：共享 runtime DB 直接运行时，north-rift preview 正确 hydrate `zones_runtime` 的 `0.2661459988600612`，与静态 fixture `0.290146` 不同而失败；未删除或改写用户 DB。改用临时空 `server/data` 并在 trap 中恢复原数据后，pre-merge 与 merged HEAD 两轮 `bash scripts/smoke-test-e2e.sh` 均为 9 passed / 0 failed。最终 run id：`20260723-152959-1866492-ambient-surface-isolated-postmerge`，`SMOKE_STATUS=0`，原 runtime data 已恢复。
-- **无上下文 validator**：对 exact target commit object `da3196a35684e54660d4dec739bc52fa2e38ffe4` 给出 PASS；确认 runtime/raster fail-closed、两条真实 pool、side-effect 提交边界、Bot 真实命令链及 Navigator 零行为扩张。
+- **无上下文 validator**：先对 gameplay exact target `da3196a35684e54660d4dec739bc52fa2e38ffe4` 给出 PASS；最终归档 HEAD 在 push 前再次 exact-target 验证，确认后续仅为 client/review 主线合并与 docs evidence，不改变 runtime/raster fail-closed、两条真实 pool、side-effect 提交边界、Bot 真实命令链及 Navigator 零行为扩张；最终 target SHA 记录于 PR body。
 
 ### 跨仓库核验
 
