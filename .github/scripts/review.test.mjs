@@ -66,6 +66,39 @@ const realRequestChanges = {
   findings: [{ file: "server/src/main.rs", title: "真实代码缺陷" }],
 };
 const reviewScript = fileURLToPath(new URL("./review.mjs", import.meta.url));
+const textEncoder = new TextEncoder();
+
+function responseSseEvent(type, payload = {}, lineEnding = "\n") {
+  return `event: ${type}${lineEnding}data: ${JSON.stringify({ type, ...payload })}${lineEnding}${lineEnding}`;
+}
+
+function completedSse(output, lineEnding = "\n") {
+  const response = typeof output === "string"
+    ? { output: [{ type: "message", content: [{ type: "output_text", text: output }] }] }
+    : output;
+  return responseSseEvent("response.completed", { response }, lineEnding);
+}
+
+function byteStream(chunks, { neverClose = false, cancel } = {}) {
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk instanceof Uint8Array ? chunk : textEncoder.encode(chunk));
+      if (!neverClose) controller.close();
+    },
+    cancel(reason) {
+      cancel?.(reason);
+    },
+  });
+}
+
+function sseResponse(chunks, options = {}) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    body: byteStream(chunks, options),
+  };
+}
 
 function runReviewCommand(
   command,
@@ -591,33 +624,35 @@ test("Responses endpoint: 规范化 root/v1/responses 并拒绝凭据与非 HTTP
   }
 });
 
-test("Responses request: 无 tools、high reasoning、store false，并解析 typed output", async () => {
+test("Responses request: SSE、无 tools、high reasoning、store false，并解析 typed output", async () => {
   let request;
+  const output = '{"vote":"APPROVE"}';
   const result = await requestResponses("审查提示", 1_000, {
     apiKey: "provider-secret",
     baseUrl: "https://api.example.com/v1",
     model: "gpt-5.6-sol",
     fetchImpl: async (url, init) => {
       request = { url, init, body: JSON.parse(init.body) };
-      return {
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        text: async () => JSON.stringify({
-          output: [{ type: "message", content: [{ type: "output_text", text: '{"vote":"APPROVE"}' }] }],
-        }),
-      };
+      return sseResponse([
+        responseSseEvent("response.created", { response: { id: "resp-1" } }),
+        responseSseEvent("response.output_text.delta", { delta: '{"vote":' }),
+        responseSseEvent("response.output_text.done", { text: output }),
+        responseSseEvent("response.output_text.delta", { delta: '"APPROVE"}' }),
+        completedSse(output),
+      ]);
     },
   });
   assert.equal(result.code, 0);
-  assert.equal(result.stdout, '{"vote":"APPROVE"}');
+  assert.equal(result.stdout, output, "completed 信封优先且不得与 delta 重复");
   assert.equal(request.url, "https://api.example.com/v1/responses");
   assert.equal(request.init.headers.Authorization, "Bearer provider-secret");
+  assert.equal(request.init.headers.Accept, "text/event-stream");
   assert.deepEqual(request.body, {
     model: "gpt-5.6-sol",
     input: "审查提示",
     reasoning: { effort: "high" },
     store: false,
+    stream: true,
   });
   assert.equal(Object.hasOwn(request.body, "tools"), false, "生产 reviewer 不得获得 shell 或其他 tool");
   assert.equal(extractResponsesOutputText({ output_text: "兼容输出" }), "兼容输出");
@@ -685,10 +720,10 @@ test("Responses request: HTTP 错误保留 final text，malformed 与 timeout �
   const malformed = await requestResponses("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
-    fetchImpl: async () => ({ ok: true, status: 200, statusText: "OK", text: async () => "not-json" }),
+    fetchImpl: async () => sseResponse(["data: not-json\n\n"]),
   });
   assert.equal(malformed.code, 1);
-  assert.match(malformed.stderr, /无法解析/);
+  assert.match(malformed.stderr, /不是合法 JSON/);
 
   const timedOut = await requestResponses("prompt", 10, {
     apiKey: "key",
@@ -705,6 +740,89 @@ test("Responses request: HTTP 错误保留 final text，malformed 与 timeout �
   assert.equal(timedOut.signal, "SIGTERM");
 });
 
+
+test("Responses SSE: UTF-8 分片、CRLF/comment 与 completed fallback", async () => {
+  const delta = `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "中文🙂" })}\r\n\r\n`;
+  const completed = completedSse({ output: [] }, "\r\n").replaceAll("\r\n", "\r");
+  const bytes = textEncoder.encode(`: ping\r\n\r\n${delta}${completed}`);
+  const cut = bytes.indexOf(0x9f);
+  assert.ok(cut > 0, "fixture 必须把 emoji 的 UTF-8 字节拆到两个网络 chunk");
+
+  const result = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse([bytes.slice(0, cut), bytes.slice(cut)]),
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, "中文🙂");
+});
+
+test("Responses SSE: failed/incomplete/error、断流与 malformed 均不得假成功", async () => {
+  const cases = [
+    { stream: [responseSseEvent("response.output_text.delta", { delta: '{"vote":"APPROVE"}' }), responseSseEvent("response.failed", { response: { error: { message: "model failed" } } })], error: /model failed/ },
+    { stream: [responseSseEvent("response.incomplete", { response: { incomplete_details: { reason: "max_output_tokens" } } })], error: /max_output_tokens/ },
+    { stream: [responseSseEvent("error", { error: { message: "provider exploded" } })], error: /provider exploded/ },
+    { stream: [responseSseEvent("response.output_text.delta", { delta: "partial" })], error: /disconnected/ },
+    { stream: ["data: not-json\n\n"], error: /不是合法 JSON/ },
+    { stream: ["data: [DONE]\n\n"], error: /disconnected/ },
+  ];
+  for (const scenario of cases) {
+    const result = await requestResponses("prompt", 1_000, {
+      apiKey: "key",
+      baseUrl: "https://api.example.com",
+      fetchImpl: async () => sseResponse(scenario.stream),
+    });
+    assert.equal(result.code, 1);
+    assert.equal(isSuccessfulCodexResponse(result), false);
+    assert.match(result.stderr, scenario.error);
+  }
+});
+
+test("Responses SSE: reader error 与绝对 timeout 保留 partial stdout", async () => {
+  const partialFrame = responseSseEvent("response.output_text.delta", { delta: "partial" });
+  const readerFailed = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      body: new ReadableStream({
+        pull(controller) {
+          if (!this.sentPartial) {
+            this.sentPartial = true;
+            controller.enqueue(textEncoder.encode(partialFrame));
+            return;
+          }
+          controller.error(new Error("reader boom"));
+        },
+      }),
+    }),
+  });
+  assert.equal(readerFailed.code, 1);
+  assert.equal(readerFailed.stdout, "partial");
+  assert.match(readerFailed.stderr, /reader boom/);
+
+  const timedOut = await requestResponses("prompt", 20, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async (_url, init) => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(textEncoder.encode(partialFrame));
+          const onAbort = () => controller.error(Object.assign(new Error("aborted"), { name: "AbortError" }));
+          init.signal.addEventListener("abort", onAbort, { once: true });
+        },
+      }),
+    }),
+  });
+  assert.equal(timedOut.code, 124);
+  assert.equal(timedOut.signal, "SIGTERM");
+  assert.equal(timedOut.stdout, "partial");
+});
 test("evaluateCircuit: 阈值前关闭，达到阈值后开启", () => {
   const events = ["00:00", "00:10", "00:20"].map((time) => ({
     kind: "infra_failure",
@@ -1481,6 +1599,7 @@ test("isRetryableCodexFailure: 仅重试限流、上游暂时失败和超时", (
   assert.equal(isRetryableCodexFailure({ code: 1, stderr: "429 Too Many Requests" }), true);
   assert.equal(isRetryableCodexFailure({ code: 1, stderr: "channel is temporarily unavailable; upstream_400" }), true);
   assert.equal(isRetryableCodexFailure({ code: 1, stderr: "503 Service Unavailable" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 524, stderr: "" }), true);
   assert.equal(isRetryableCodexFailure({ code: 124, stderr: "" }), true);
   assert.equal(isRetryableCodexFailure({ code: 1, stderr: "invalid API key" }), false);
 });
