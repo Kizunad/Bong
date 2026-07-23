@@ -1,5 +1,6 @@
 package com.bong.client.combat.juice;
 
+import com.bong.client.animation.BongAnimations;
 import com.bong.client.combat.CastState;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.SkillBarEntry;
@@ -7,7 +8,11 @@ import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.store.DeathStateStore;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.Identifier;
 
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 
@@ -131,7 +136,7 @@ public final class CastFovController {
             pulse = new Pulse(profile.fovPeakDegrees(), profile.fovDurationTicks(), now);
         }
         if (profile.hasShake()) {
-            // 施法 release = 持续震动（sustained 包络）：把大招的存在感撑满整个时长，
+            // 施法 release = 持续震动（SUSTAIN 包络）：把大招的存在感撑满整个时长，
             // 不是命中的「抖一下」线性衰减。倍率在触发时刻并入强度（0 → 不触发）。
             CameraShakeController.triggerDirect(
                 profile.shakeIntensity() * multiplier,
@@ -139,10 +144,94 @@ public final class CastFovController {
                 CAST_SHAKE_DIR_X,
                 CAST_SHAKE_DIR_Z,
                 false,
-                true,
+                CameraShakeController.Envelope.SUSTAIN,
                 now
             );
         }
+    }
+
+    // ─── 动画事件驱动的 juice（heaven_gate 专用，与 cast 条脱钩）─────────────────
+    //
+    // heaven_gate 的 cast_ticks(80=4s) 与真实引导窗（HeavenGateChanneling 到
+    // HEAVEN_GATE_AOE_END=140=7s 才 emit release）错开 3s，走 CastState 驱动会让 juice 在
+    // cast 条走完（4s、举剑蓄力中途）就触发、而非劈下那一刻（7s）。故 heaven_gate 从
+    // CastJuiceProfiles（CastState 驱动）移除，改由**动画事件**驱动：charge 动画起播 →
+    // CRESCENDO 渐强震动；release 动画（劈下）起播 → SUSTAIN 最大震动 + FOV punch。二者
+    // 都是 server 在视觉正确时刻发的 PlayAnim，故 juice 与画面严格对齐。
+
+    /** 蓄力段动画 → 渐强震动（CRESCENDO：0→peak 爬满后维持，撑到 release 顶替）。 */
+    private record ChargeShake(float peakIntensity, int buildDurationTicks) {
+    }
+
+    /** 释放段动画 → 最大震动（SUSTAIN）+ FOV punch，落在劈下那一刻。 */
+    private record ReleaseBurst(
+        float shakeIntensity, int shakeDurationTicks, float fovPeakDegrees, int fovDurationTicks) {
+    }
+
+    /** 蓄力渐强震动 buildDuration=160t：ramp 到峰值 ~144t，覆盖 release(140t)+RTT 余量。 */
+    private static final Map<Identifier, ChargeShake> CHARGE_ANIM_JUICE = Map.of(
+        BongAnimations.SWORD_HEAVEN_GATE_CHARGE, new ChargeShake(0.8f, 160));
+
+    /** release 最大震动 24t（≈1.2s SUSTAIN）+ FOV +12°/8t punch。 */
+    private static final Map<Identifier, ReleaseBurst> RELEASE_ANIM_JUICE = Map.of(
+        BongAnimations.SWORD_HEAVEN_GATE_RELEASE, new ReleaseBurst(1.5f, 24, 12.0f, 8));
+
+    /** 本地玩家判定 seam（动画事件驱动的 juice 只对本地玩家自己的施法触发）。 */
+    @FunctionalInterface
+    public interface LocalPlayerPredicate {
+        boolean isLocal(UUID playerId);
+    }
+
+    private static volatile LocalPlayerPredicate localPlayerPredicate =
+        CastFovController::isLocalPlayerFromClient;
+
+    /**
+     * 动画事件驱动 juice 入口（{@code VfxEventRouter} 在 PlayAnim 分支调）：只对**本地玩家
+     * 自己**的登记动画触发。charge 动画 → CRESCENDO 渐强震动；release 动画（劈下那一刻）→
+     * SUSTAIN 最大震动 + FOV 脉冲。二者共享 {@link CameraShakeController} 单通道，release 的
+     * SUSTAIN 顶替 charge 的 CRESCENDO。非本地玩家 / 非登记动画 = no-op。
+     */
+    public static void onAnimPlayed(UUID targetPlayer, Identifier animId) {
+        if (targetPlayer == null || animId == null || !localPlayerPredicate.isLocal(targetPlayer)) {
+            return;
+        }
+        long now = clock.getAsLong();
+        ChargeShake charge = CHARGE_ANIM_JUICE.get(animId);
+        if (charge != null) {
+            CameraShakeController.triggerDirect(
+                charge.peakIntensity() * multiplier,
+                charge.buildDurationTicks(),
+                CAST_SHAKE_DIR_X,
+                CAST_SHAKE_DIR_Z,
+                false,
+                CameraShakeController.Envelope.CRESCENDO,
+                now
+            );
+            return;
+        }
+        ReleaseBurst burst = RELEASE_ANIM_JUICE.get(animId);
+        if (burst != null) {
+            if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
+                synchronized (LOCK) {
+                    pulse = new Pulse(burst.fovPeakDegrees(), burst.fovDurationTicks(), now);
+                }
+            }
+            CameraShakeController.triggerDirect(
+                burst.shakeIntensity() * multiplier,
+                burst.shakeDurationTicks(),
+                CAST_SHAKE_DIR_X,
+                CAST_SHAKE_DIR_Z,
+                false,
+                CameraShakeController.Envelope.SUSTAIN,
+                now
+            );
+        }
+    }
+
+    private static boolean isLocalPlayerFromClient(UUID playerId) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        return client != null && client.player != null
+            && client.player.getUuid().equals(playerId);
     }
 
     /**
@@ -175,7 +264,7 @@ public final class CastFovController {
         }
     }
 
-    /** 断线 / 切世界 / 死亡：立即复位基准 FOV + 清 pending（幂等，重复调用无副作用）。 */
+    /** 断线 / 切世界 / 死亡：立即复位基准 FOV + 清 pending + 清抖动（幂等，重复调用无副作用）。 */
     public static void teardown() {
         // pulse 清空与 fire() 写入同锁，避免死亡/断线 teardown 被随后落地的 fire 复活一帧。
         synchronized (LOCK) {
@@ -183,6 +272,8 @@ public final class CastFovController {
             pending = null;
             voidedId = null;
         }
+        // 死亡/断线也清抖动：蓄力 CRESCENDO 长达数秒，玩家已死不应继续震屏。
+        CameraShakeController.clear();
     }
 
     /**
@@ -221,6 +312,11 @@ public final class CastFovController {
         clock = c == null ? System::currentTimeMillis : c;
     }
 
+    /** 动画事件驱动 juice 的本地玩家判定 seam（单测注入，免 MinecraftClient）。 */
+    static void setLocalPlayerPredicateForTest(LocalPlayerPredicate p) {
+        localPlayerPredicate = p == null ? CastFovController::isLocalPlayerFromClient : p;
+    }
+
     static void resetForTests() {
         pulse = null;
         synchronized (LOCK) {
@@ -229,6 +325,7 @@ public final class CastFovController {
         }
         multiplier = 1.0f;
         clock = System::currentTimeMillis;
+        localPlayerPredicate = CastFovController::isLocalPlayerFromClient;
     }
 
     /** FOV 脉冲：峰值 + 时长；{@code sin} 半弧「收缩回弹」（progress 0→peak→0，终点归基准）。 */

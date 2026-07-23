@@ -75,8 +75,8 @@ class CombatJuiceTest {
 
     @Test
     void shake_decays_linearly() {
-        CameraShakeController.Shake shake =
-            new CameraShakeController.Shake(1.0f, 10, 1.0, 0.0, false, false, 1_000L);
+        CameraShakeController.Shake shake = new CameraShakeController.Shake(
+            1.0f, 10, 1.0, 0.0, false, CameraShakeController.Envelope.DECAY, 1_000L);
         assertEquals(1.0, shake.remainingRatioAt(1_000L), 0.0001);
         assertEquals(0.5, shake.remainingRatioAt(1_250L), 0.0001);
         assertEquals(0.0, shake.remainingRatioAt(1_500L), 0.0001);
@@ -84,10 +84,10 @@ class CombatJuiceTest {
 
     @Test
     void sustained_shake_holds_full_then_releases() {
-        // 持续型包络（施法 release 用）：前 70% 维持满幅 1.0，末 30% 线性收束到 0，
-        // 与上面的线性「抖一下」衰减分叉——这是「持续震动」的手感来源。
-        CameraShakeController.Shake s =
-            new CameraShakeController.Shake(1.0f, 20, 1.0, 0.0, false, true, 1_000L);
+        // SUSTAIN 包络（施法 release 用）：前 70% 维持满幅 1.0，末 30% 线性收束到 0，
+        // 与线性「抖一下」DECAY 分叉——这是「持续震动」的手感来源。
+        CameraShakeController.Shake s = new CameraShakeController.Shake(
+            1.0f, 20, 1.0, 0.0, false, CameraShakeController.Envelope.SUSTAIN, 1_000L);
         long dur = 20 * 50;  // 1000ms
         assertEquals(1.0, s.envelopeAt(1_000L), 1e-9, "t=0 满幅");
         assertEquals(1.0, s.envelopeAt(1_000L + dur / 2), 1e-9, "50% 仍满幅（线性会是 0.5）");
@@ -95,10 +95,23 @@ class CombatJuiceTest {
         assertEquals(0.5, s.envelopeAt(1_000L + (long) (dur * 0.85)), 1e-9, "85% → 收束一半");
         assertEquals(0.0, s.envelopeAt(1_000L + dur), 1e-9, "结束归 0");
 
-        // 非持续型同参数在 50% 处应为线性 0.5，证明包络确实按 sustained 分叉。
-        CameraShakeController.Shake lin =
-            new CameraShakeController.Shake(1.0f, 20, 1.0, 0.0, false, false, 1_000L);
-        assertEquals(0.5, lin.envelopeAt(1_000L + dur / 2), 1e-9, "非持续型 50% = 线性 0.5");
+        // DECAY 同参数在 50% 处应为线性 0.5，证明包络确实按 Envelope 分叉。
+        CameraShakeController.Shake lin = new CameraShakeController.Shake(
+            1.0f, 20, 1.0, 0.0, false, CameraShakeController.Envelope.DECAY, 1_000L);
+        assertEquals(0.5, lin.envelopeAt(1_000L + dur / 2), 1e-9, "DECAY 50% = 线性 0.5");
+    }
+
+    @Test
+    void crescendo_shake_ramps_up_then_holds_full() {
+        // CRESCENDO 包络（蓄力渐强用）：幅度由 0 线性爬到满（前 90%），其后维持满幅撑到
+        // release 顶替——与 SUSTAIN（起手即满）、DECAY（起手即满后衰减）都不同。
+        CameraShakeController.Shake c = new CameraShakeController.Shake(
+            1.0f, 20, 1.0, 0.0, false, CameraShakeController.Envelope.CRESCENDO, 1_000L);
+        long dur = 20 * 50;  // 1000ms
+        assertEquals(0.0, c.envelopeAt(1_000L), 1e-9, "t=0 幅度为 0（蓄力起手无震动）");
+        assertEquals(0.5, c.envelopeAt(1_000L + (long) (dur * 0.45)), 1e-9, "45% → 爬到一半（0.45/0.9）");
+        assertEquals(1.0, c.envelopeAt(1_000L + (long) (dur * 0.9)), 1e-9, "90% → 爬满");
+        assertEquals(1.0, c.envelopeAt(1_000L + (long) (dur * 0.95)), 1e-9, "95% → 维持满幅（撑到 release）");
     }
 
     @Test

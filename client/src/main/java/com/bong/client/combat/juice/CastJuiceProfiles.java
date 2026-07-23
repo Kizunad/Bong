@@ -16,12 +16,16 @@ import java.util.Set;
  *
  * <table>
  *   <tr><th>招式</th><th>shake（持续型）</th><th>FOV punch</th></tr>
- *   <tr><td>sword_path.heaven_gate</td><td>强 / 24t≈1.2s</td><td>+12° / 8t</td></tr>
  *   <tr><td>baomai.full_power_release</td><td>强 / 20t≈1.0s</td><td>+9° / 7t</td></tr>
  *   <tr><td>woliu.turbulence_burst</td><td>中 / 18t≈0.9s</td><td>+6° / 6t</td></tr>
  *   <tr><td>zhenmai.sever_chain</td><td>中 / 14t≈0.7s</td><td>—</td></tr>
  *   <tr><td>anqi.echo_fractal</td><td>弱 / 12t≈0.6s</td><td>—</td></tr>
  * </table>
+ *
+ * <p><b>heaven_gate 例外</b>：{@code sword_path.heaven_gate} 的 cast 条时长（cast_ticks=80=4s）
+ * 与真实引导窗（到 140t=7s 才 emit release）错开 3s，走 CastState 驱动会让 juice 在举剑蓄力
+ * 中途触发、而非劈下那一刻。故它**不在本表**，改由 {@link CastFovController#onAnimPlayed}
+ * 动画事件驱动（charge 动画→渐强 / release 动画→最大+FOV），与画面严格对齐。
  */
 public final class CastJuiceProfiles {
     /** 抖动强度三档（映射 §P3 表「强/中/弱」；peak 幅度 = 2·intensity 度，见 CameraShakeController）。 */
@@ -36,7 +40,7 @@ public final class CastJuiceProfiles {
 
     private static Map<String, CastJuiceProfile> build() {
         Map<String, CastJuiceProfile> m = new LinkedHashMap<>();
-        register(m, new CastJuiceProfile("sword_path.heaven_gate", STRONG, 24, 12.0f, 8));
+        // heaven_gate 不登记——cast 条与引导窗错开 3s，改由动画事件驱动（见类文档 + CastFovController）。
         register(m, new CastJuiceProfile("baomai.full_power_release", STRONG, 20, 9.0f, 7));
         register(m, new CastJuiceProfile("woliu.turbulence_burst", MEDIUM, 18, 6.0f, 6));
         register(m, new CastJuiceProfile("zhenmai.sever_chain", MEDIUM, 14, 0f, 0));

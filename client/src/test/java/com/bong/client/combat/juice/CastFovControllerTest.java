@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.bong.client.animation.BongAnimations;
 import com.bong.client.combat.CastState;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.SkillBarEntry;
@@ -14,8 +15,10 @@ import com.bong.client.combat.store.DeathStateStore;
 import com.bong.client.network.CastSyncHandler;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerPayloadParseResult;
+import net.minecraft.util.Identifier;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,15 +34,23 @@ import org.junit.jupiter.api.Test;
 class CastFovControllerTest {
     private static final int HEAVY_SLOT = 3;
     private static final int LIGHT_SLOT = 5;    // 非重型招（无 profile）
-    private static final String HEAVY_SKILL = "sword_path.heaven_gate";  // 强/24t 持续, FOV +12°/8t
+    // CastState 驱动的重型招（baomai 全力释放）。heaven_gate 已移到动画事件驱动，
+    // 走 onAnimPlayed（cast 条 4s 与引导窗 7s 错开），见 animDriven* 测试。
+    private static final String HEAVY_SKILL = "baomai.full_power_release";  // 强/20t 持续, FOV +9°/7t
     private static final String LIGHT_SKILL = "sword.cleave";            // 未登记 → 无 juice
     private static final int DURATION_MS = 2000;
     private static final long START = 1_700_000_000_000L;
-    /** heaven_gate FOV punch：peak +12°、时长 8 tick = 400ms。 */
-    private static final double HEAVY_FOV_PEAK = 12.0;
-    private static final int FOV_DURATION_MS = 8 * 50;
-    /** heaven_gate 持续抖动时长：24 tick = 1200ms（sustained 包络）。 */
-    private static final int SHAKE_DURATION_MS = 24 * 50;
+    /** baomai FOV punch：peak +9°、时长 7 tick = 350ms。 */
+    private static final double HEAVY_FOV_PEAK = 9.0;
+    private static final int FOV_DURATION_MS = 7 * 50;
+    /** baomai 持续抖动时长：20 tick = 1000ms（SUSTAIN 包络）。 */
+    private static final int SHAKE_DURATION_MS = 20 * 50;
+    /** 同相位采样点：tick 8 = 400ms（elapsedTick%4==0 = 满相位，落在 SUSTAIN 平台段内）。 */
+    private static final int SUSTAIN_SAMPLE_MS = 8 * 50;
+
+    /** 动画事件驱动 juice 的本地玩家 / 非本地玩家 UUID（固定，免 Math.random）。 */
+    private static final UUID LOCAL_PLAYER = new UUID(0x1111L, 0x2222L);
+    private static final UUID OTHER_PLAYER = new UUID(0x3333L, 0x4444L);
 
     private final long[] now = {10_000_000L};
 
@@ -50,11 +61,13 @@ class CastFovControllerTest {
         SkillBarStore.resetForTests();
         DeathStateStore.resetForTests();
         CameraShakeController.resetForTests();
-        SkillBarStore.updateSlot(HEAVY_SLOT, SkillBarEntry.skill(HEAVY_SKILL, "开天", DURATION_MS, 0, ""));
+        SkillBarStore.updateSlot(HEAVY_SLOT, SkillBarEntry.skill(HEAVY_SKILL, "全力", DURATION_MS, 0, ""));
         SkillBarStore.updateSlot(LIGHT_SLOT, SkillBarEntry.skill(LIGHT_SKILL, "竖劈", 1000, 0, ""));
         // 注册真实 cast 转换监听（生产由 bootstrap 挂；单测无 Fabric 事件环境，仅挂 listener）。
         CastStateStore.addListener(CastFovController::onCastState);
         CastFovController.setClockForTest(() -> now[0]);
+        // 动画事件驱动 juice 的本地玩家判定 seam（免 MinecraftClient）。
+        CastFovController.setLocalPlayerPredicateForTest(LOCAL_PLAYER::equals);
     }
 
     @AfterEach
@@ -99,15 +112,14 @@ class CastFovControllerTest {
     // ---- profile 注册表 pin ----
 
     @Test
-    void registryPinsHeavySkillProfilesAndOmitsOthers() {
-        CastJuiceProfile gate = CastJuiceProfiles.get("sword_path.heaven_gate");
-        assertNotNull(gate, "heaven_gate 必须登记");
-        assertEquals(CastJuiceProfiles.STRONG, gate.shakeIntensity(), "heaven_gate = 强抖动");
-        assertEquals(24, gate.shakeDurationTicks(), "旗舰招持续震动 ≈1.2s，不是抖一下");
-        assertEquals(12.0f, gate.fovPeakDegrees(), 1e-6f, "FOV punch +12°（放大到明显能感到）");
-        assertEquals(8, gate.fovDurationTicks());
+    void registryPinsCastStateSkillsAndOmitsHeavenGateAndOthers() {
+        CastJuiceProfile baomai = CastJuiceProfiles.get("baomai.full_power_release");
+        assertNotNull(baomai, "baomai 全力释放必须登记（CastState 驱动）");
+        assertEquals(CastJuiceProfiles.STRONG, baomai.shakeIntensity(), "baomai = 强抖动");
+        assertEquals(20, baomai.shakeDurationTicks(), "持续震动 ≈1.0s，不是抖一下");
+        assertEquals(9.0f, baomai.fovPeakDegrees(), 1e-6f);
+        assertEquals(7, baomai.fovDurationTicks());
 
-        assertNotNull(CastJuiceProfiles.get("baomai.full_power_release"));
         assertNotNull(CastJuiceProfiles.get("woliu.turbulence_burst"));
         // sever_chain / echo_fractal 有 shake 无 FOV
         CastJuiceProfile sever = CastJuiceProfiles.get("zhenmai.sever_chain");
@@ -116,10 +128,13 @@ class CastFovControllerTest {
         assertFalse(sever.hasFovPulse(), "sever_chain 无 FOV 脉冲（表中 —）");
         assertFalse(CastJuiceProfiles.get("anqi.echo_fractal").hasFovPulse(), "echo_fractal 无 FOV");
 
+        // heaven_gate 已从 CastState 驱动移除（cast 条 4s 与引导窗 7s 错开）→ 改动画事件驱动。
+        assertNull(CastJuiceProfiles.get("sword_path.heaven_gate"),
+            "heaven_gate 不再走 CastState 驱动（改 onAnimPlayed 动画事件，见 animDriven* 测试）");
         // 沉浸式极简：普通招零 juice
         assertNull(CastJuiceProfiles.get("sword.cleave"), "普通招不登记 → 无 juice");
         assertNull(CastJuiceProfiles.get(null));
-        assertEquals(5, CastJuiceProfiles.skillIds().size(), "当前仅 5 个重型招登记");
+        assertEquals(4, CastJuiceProfiles.skillIds().size(), "CastState 驱动仅剩 4 个重型招");
     }
 
     // ---- 状态机全路径（终点断言基准） ----
@@ -278,21 +293,22 @@ class CastFovControllerTest {
 
     @Test
     void castShakeIsSustainedNotSingleJerk() {
-        // 施法 release 的抖动是持续震动（fire 走 sustained=true 包络）：同相位 tick 上，
-        // 时长 50% 处幅度与起始一致（满幅维持），而非线性「抖一下」衰减到近半。
+        // 施法 release 的抖动是持续震动（fire 走 SUSTAIN 包络）：同相位 tick 上，平台段内
+        // 幅度与起始一致（满幅维持），而非线性「抖一下」衰减到近半。
         predict(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");  // fire
         long fireNow = now[0];
 
-        // tick 0 与 tick 12（=24t 的 50%）同为满相位（elapsedTick % 4 == 0）。
+        // tick 0 与 tick 8（=SUSTAIN_SAMPLE_MS，落在 20t 的 40%<70% 平台段内）同为满相位
+        //（elapsedTick % 4 == 0），故 SUSTAIN 下两点幅度应逐字段相等。
         CameraShakeController.Offsets atStart = CameraShakeController.activeOffsets(fireNow);
-        CameraShakeController.Offsets atMid =
-            CameraShakeController.activeOffsets(fireNow + SHAKE_DURATION_MS / 2);
+        CameraShakeController.Offsets atPlateau =
+            CameraShakeController.activeOffsets(fireNow + SUSTAIN_SAMPLE_MS);
         assertFalse(atStart.isZero(), "起始有抖动");
-        assertFalse(atMid.isZero(), "50% 处仍在抖（持续，未提前结束）");
-        assertEquals(atStart.yawDegrees(), atMid.yawDegrees(), 1e-5f,
-            "持续型：50% 处同相位幅度不衰减（若退化成线性衰减会减半）");
-        assertEquals(atStart.pitchDegrees(), atMid.pitchDegrees(), 1e-5f, "俯仰分量同理");
+        assertFalse(atPlateau.isZero(), "平台段仍在抖（持续，未提前结束）");
+        assertEquals(atStart.yawDegrees(), atPlateau.yawDegrees(), 1e-5f,
+            "持续型：平台段同相位幅度不衰减（若退化成线性衰减会减小）");
+        assertEquals(atStart.pitchDegrees(), atPlateau.pitchDegrees(), 1e-5f, "俯仰分量同理");
 
         assertTrue(CameraShakeController.activeOffsets(fireNow + SHAKE_DURATION_MS + 50).isZero(),
             "抖动时长后自然归零");
@@ -345,5 +361,64 @@ class CastFovControllerTest {
         CastState terminal = CastStateStore.snapshot();
         assertEquals(CastState.Phase.COMPLETE, terminal.phase(), "complete 终态");
         assertBaseline("脉冲结束后稳定在基准");
+    }
+
+    // ---- 动画事件驱动 juice（heaven_gate：charge 渐强 / release 最大+FOV，与劈下对齐）----
+
+    @Test
+    void animDrivenChargeStartsCrescendoThatGrows() {
+        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_CHARGE);
+        long fire = now[0];
+        // CRESCENDO 起手幅度 0（蓄力从 0 涨起），同相位 tick 4 → tick 40 幅度递增。
+        assertTrue(CameraShakeController.activeOffsets(fire).isZero(), "蓄力起手幅度为 0（渐强从 0）");
+        double early = Math.abs(CameraShakeController.activeOffsets(fire + 4 * 50).yawDegrees());
+        double later = Math.abs(CameraShakeController.activeOffsets(fire + 40 * 50).yawDegrees());
+        assertTrue(early > 0.0, "tick4 已有微弱抖动");
+        assertTrue(later > early, "渐强：tick40 幅度 > tick4（同相位）——" + later + " > " + early);
+        assertBaseline("蓄力段只震动、无 FOV 脉冲");
+    }
+
+    @Test
+    void animDrivenReleaseFiresMaxShakeAndFovPunch() {
+        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        long fire = now[0];
+        assertFalse(CameraShakeController.activeOffsets(fire).isZero(),
+            "劈下即最大震动（SUSTAIN 起手满幅，≠ crescendo 从 0）");
+        // FOV punch +12°/8t：半程（4t=200ms）达峰。
+        advanceMs(4 * 50);
+        assertEquals(12.0, fov(), 1e-6, "release FOV punch 半程达峰 +12°");
+        advanceMs(8 * 50);
+        CastFovController.tick();
+        assertBaseline("release FOV 脉冲结束回基准");
+    }
+
+    @Test
+    void animDrivenReleaseSupersedesChargeCrescendo() {
+        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_CHARGE);
+        advanceMs(2000);  // 蓄力渐强进行中（幅度已涨到一部分）
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "蓄力中有抖动");
+
+        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        long releaseFire = now[0];
+        // 顶替生效：新 shake 起手 elapsed=0，SUSTAIN 满幅 → |yaw| 落在 max（≈2.1°）区间；
+        // 若仍是 charge crescendo（elapsed=2000ms 才涨到 ~28%）则仅 ~0.3°，据此区分。
+        double mag = Math.abs(CameraShakeController.activeOffsets(releaseFire).yawDegrees());
+        assertTrue(mag > 1.5, "release 的 SUSTAIN 最大震动顶替了 charge 的 CRESCENDO（|yaw|=" + mag + " > 1.5）");
+    }
+
+    @Test
+    void animDrivenJuiceOnlyForLocalPlayer() {
+        CastFovController.onAnimPlayed(OTHER_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        advanceMs(4 * 50);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "非本地玩家的施法不震本地相机");
+        assertBaseline("非本地玩家的施法不打本地 FOV");
+    }
+
+    @Test
+    void animDrivenIgnoresUnregisteredAnim() {
+        CastFovController.onAnimPlayed(LOCAL_PLAYER, new Identifier("bong", "sword_cleave"));
+        advanceMs(4 * 50);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "未登记动画无震动 juice");
+        assertBaseline("未登记动画无 FOV");
     }
 }
