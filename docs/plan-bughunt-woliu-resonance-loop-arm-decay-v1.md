@@ -1,6 +1,6 @@
 # plan-bughunt-woliu-resonance-loop-arm-decay-v1
 
-> **活跃 skeleton plan**。一句话主题：`bong:woliu_vortex_resonance` 是 80 tick 持续型 loop 玩家动画，但双臂 `rightArm/leftArm` 的关键轴只写到 tick 40，`endTick=80` 没有补同轴 keyframe；PlayerAnimator 会把后半段插回默认值，导致涡流共振施法窗口后半段角色双臂逐渐垂回默认姿态。
+> 一句话主题：`bong:woliu_vortex_resonance` 是 80 tick 持续型 loop 玩家动画，但双臂 `rightArm/leftArm` 的关键轴只写到 tick 40，`endTick=80` 没有补同轴 keyframe；PlayerAnimator 会把后半段插回默认值，导致涡流共振施法窗口后半段角色双臂逐渐垂回默认姿态。**收口日期 2026-07-23，骨架 → active → finished 同 PR 内一次性收口。**
 
 > 立项动机：本轮 BugHunt D9 聚焦 client combat/skills/cast animation/VFX/SFX/HUD/icon registry/packet bridge。该问题落在实际涡流共振施法的玩家动画反馈链路上，不重复 #987 技能配置拒绝缺少施法同步、#997/#1002 毒蛊视听/HUD、#1012 vfx_event slash 契约、#1018 蜕壳视听双源、#1027 技能栏施法源、#1033 爆脉视听双源。
 
@@ -58,11 +58,11 @@
 
 **通过理由**：修订表述已经避开机制失效和全链路丢失的夸大，只保留 `bong:woliu_vortex_resonance` 这个 80 tick loop 动画后半段双臂姿态被插回默认值的事实。开放 PR 中没有同一涡流共振 loop 姿态/PlayerAnimator 末帧补值问题。
 
-## Skeleton Fix Plan
+## 阶段总览
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 修复涡流共振 loop 动画 endTick 双臂轴补帧 | fix_pr | ⬜ |
+| P0 | 修复涡流共振 loop 动画 endTick 双臂轴补帧 | fix_pr | ✅ 2026-07-23 |
 
 ### P0 — 修复涡流共振 loop 动画 endTick 双臂轴补帧
 
