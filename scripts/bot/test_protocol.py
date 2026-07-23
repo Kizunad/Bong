@@ -2514,14 +2514,52 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
 
     def test_alchemy_furnace_tag11_and_session_tag12(self):
-        furnace = _pb_varint_field(4, 1)
+        furnace = (
+            _pb_varint_field(4, 1)
+            + _pb_fixed64(5, 0.92)
+            + _pb_fixed64(6, 1.0)
+            + _pb_string(7, "Azure")
+            + _pb_varint_field(8, 1)
+        )
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(11, furnace))
         self.assertEqual(
             decoded["type"], "alchemy_furnace", "envelope tag 11 应分发到 alchemy_furnace"
         )
         self.assertEqual(decoded["tier"], 1, "AlchemyFurnace.tier 是 field 4")
+        self.assertAlmostEqual(decoded["integrity"], 0.92)
+        self.assertAlmostEqual(decoded["integrity_max"], 1.0)
+        self.assertEqual(decoded["owner_name"], "Azure")
+        self.assertTrue(decoded["has_session"], "AlchemyFurnace.has_session 是 field 8")
 
-        session = _pb_len_field(1, b"ling_xi_wan_v1") + _pb_varint_field(2, 1)
+        first_stage = (
+            _pb_varint_field(1, 0)
+            + _pb_varint_field(2, 0)
+            + _pb_string(3, "spirit_grass×3")
+            + _pb_varint_field(4, 1)
+            + _pb_varint_field(5, 0)
+        )
+        empty_stage = (
+            _pb_varint_field(1, 80)
+            + _pb_varint_field(2, 4)
+            + _pb_string(3, "")
+            + _pb_varint_field(4, 0)
+            + _pb_varint_field(5, 1)
+        )
+        session = (
+            _pb_len_field(1, b"ling_xi_wan_v1")
+            + _pb_varint_field(2, 1)
+            + _pb_varint_field(3, 44)
+            + _pb_varint_field(4, 80)
+            + _pb_fixed64(5, 0.30)
+            + _pb_fixed64(6, 0.30)
+            + _pb_fixed64(7, 0.15)
+            + _pb_fixed64(8, 8.0)
+            + _pb_fixed64(9, 5.0)
+            + _pb_string(10, "炼制中")
+            + _pb_message(11, first_stage)
+            + _pb_message(11, empty_stage)
+            + _pb_string(12, "§7InjectQi(8.0)")
+        )
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(12, session))
         self.assertEqual(
             decoded["type"], "alchemy_session", "envelope tag 12 应分发到 alchemy_session"
@@ -2530,6 +2568,24 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             decoded["recipe_id"], "ling_xi_wan_v1", "AlchemySession.recipe_id 是 field 1"
         )
         self.assertTrue(decoded["active"], "AlchemySession.active 是 field 2")
+        self.assertEqual(decoded["elapsed_ticks"], 44)
+        self.assertEqual(decoded["target_ticks"], 80)
+        self.assertAlmostEqual(decoded["temp_current"], 0.30)
+        self.assertAlmostEqual(decoded["temp_target"], 0.30)
+        self.assertAlmostEqual(decoded["temp_band"], 0.15)
+        self.assertAlmostEqual(decoded["qi_injected"], 8.0)
+        self.assertAlmostEqual(decoded["qi_target"], 5.0)
+        self.assertEqual(decoded["status_label"], "炼制中")
+        self.assertEqual(len(decoded["stages"]), 2)
+        self.assertEqual(decoded["stages"][0]["at_tick"], 0)
+        self.assertEqual(decoded["stages"][0]["window"], 0)
+        self.assertEqual(decoded["stages"][0]["summary"], "spirit_grass×3")
+        self.assertTrue(decoded["stages"][0]["completed"])
+        self.assertEqual(decoded["stages"][1]["at_tick"], 80)
+        self.assertEqual(decoded["stages"][1]["window"], 4)
+        self.assertEqual(decoded["stages"][1]["summary"], "")
+        self.assertTrue(decoded["stages"][1]["missed"])
+        self.assertEqual(decoded["interventions_recent"], ["§7InjectQi(8.0)"])
 
     def test_alchemy_outcome_resolved_tag14(self):
         outcome = _pb_varint_field(1, 1) + _pb_len_field(3, b"ling_xi_wan")
