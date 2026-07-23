@@ -23,6 +23,11 @@ public final class ClientConnectionStatusStore {
     private static volatile long lastPayloadAtMs;
     private static volatile long disconnectedAtMs;
     private static long nextSessionSequence;
+    /**
+     * 最近一次 INIT 新建的 token。只有它可以首次 JOIN；即使较旧 handler 的 JOIN 回调迟到，
+     * 也不得重新夺回已经推进到更新物理连接的全局 session。
+     */
+    private static SessionToken newestSessionToken;
     private static SessionToken activeSessionToken;
     private static volatile ConnectionStatusIndicator.Status lastStatus = ConnectionStatusIndicator.Status.HIDDEN;
 
@@ -67,6 +72,7 @@ public final class ClientConnectionStatusStore {
             }
             SessionToken token = new SessionToken(sequence);
             SESSION_TOKENS.put(handler, token);
+            newestSessionToken = token;
             return token;
         }
     }
@@ -86,12 +92,29 @@ public final class ClientConnectionStatusStore {
      * 未注册 handler fail closed，返回 false 且不改变连接状态。
      */
     public static boolean activateSession(Object handler, long nowMs) {
-        if (handler == null) {
+        SessionToken token;
+        synchronized (LOCK) {
+            token = SESSION_TOKENS.get(handler);
+        }
+        return activateSession(token, nowMs);
+    }
+
+    /**
+     * Fabric JOIN callback 在 INIT 时已经捕获对应 token；用 token 而不是重新按 handler 查询，
+     * 防止旧 handler 的迟到 JOIN 在新的物理连接已经 INIT/JOIN 后重新夺回 active session。
+     */
+    public static boolean activateSession(SessionToken token, long nowMs) {
+        if (token == null) {
             return false;
         }
         synchronized (LOCK) {
-            SessionToken token = SESSION_TOKENS.get(handler);
-            if (token == null) {
+            // token 必须仍在注册表中；DISCONNECT 已移除的 token 永远不能复活。
+            if (!SESSION_TOKENS.containsValue(token)) {
+                return false;
+            }
+            // INIT 已经观察到更新的物理 handler 后，较旧 handler 的迟到 JOIN 必须 fail closed。
+            // 同一 active handler 的重复 JOIN 仍可进入下方幂等分支，保持 freshness 单调。
+            if (activeSessionToken != token && newestSessionToken != token) {
                 return false;
             }
 
@@ -126,7 +149,10 @@ public final class ClientConnectionStatusStore {
         }
         synchronized (LOCK) {
             SessionToken token = SESSION_TOKENS.remove(handler);
-            if (token == null || activeSessionToken != token) {
+            if (token == null) {
+                return false;
+            }
+            if (activeSessionToken != token) {
                 return false;
             }
 
@@ -238,6 +264,7 @@ public final class ClientConnectionStatusStore {
             lastPayloadAtMs = 0L;
             disconnectedAtMs = 0L;
             nextSessionSequence = 0L;
+            newestSessionToken = null;
             activeSessionToken = null;
             lastStatus = ConnectionStatusIndicator.Status.HIDDEN;
         }

@@ -748,6 +748,56 @@ class BongServerDataThreadingTest {
     }
 
     @Test
+    void lateOldHandlerJoinCannotReclaimNewActiveSession() {
+        Object oldHandler = activeHandler;
+        ClientConnectionStatusStore.SessionToken oldToken =
+            ClientConnectionStatusStore.sessionToken(oldHandler).orElseThrow();
+        Object newHandler = new Object();
+        ClientConnectionStatusStore.SessionToken newToken =
+            ClientConnectionStatusStore.initializeSession(newHandler);
+        assertTrue(BongNetworkHandler.joinSession(newHandler, 9_000L, () -> {}),
+            "handler B JOIN 必须先激活最新 INIT token");
+        CraftStore.recordOutcome(CraftStore.CraftOutcomeEvent.completed(
+            "craft.new.session.sentinel", "rough_handle", 1, 9L));
+
+        assertFalse(BongNetworkHandler.joinSession(oldHandler, 9_100L, () -> {}),
+            "handler B 已激活后，handler A 的迟到 JOIN 必须 fail closed");
+
+        assertFalse(ClientConnectionStatusStore.isActiveSession(oldToken),
+            "迟到旧 JOIN 不得重新激活 handler A token");
+        assertTrue(ClientConnectionStatusStore.isActiveSession(newToken),
+            "迟到旧 JOIN 不得使 handler B token 失活");
+        assertEquals(
+            "craft.new.session.sentinel",
+            CraftStore.lastOutcome().orElseThrow().recipeId(),
+            "迟到旧 JOIN 不得清空或污染 handler B 已写入的 CraftStore"
+        );
+        assertEquals(9_000L, ClientConnectionStatusStore.lastPayloadAtMsForTests(),
+            "迟到旧 JOIN 不得回退或覆盖 handler B freshness");
+    }
+
+    @Test
+    void newerInitMakesOlderPreJoinHandlerIneligibleToActivate() {
+        ClientConnectionStatusStore.resetForTests();
+        Object oldHandler = new Object();
+        ClientConnectionStatusStore.SessionToken oldToken =
+            ClientConnectionStatusStore.initializeSession(oldHandler);
+        Object newHandler = new Object();
+        ClientConnectionStatusStore.SessionToken newToken =
+            ClientConnectionStatusStore.initializeSession(newHandler);
+
+        assertFalse(BongNetworkHandler.joinSession(oldHandler, 10_000L, () -> {}),
+            "观察到 handler B INIT 后，handler A 的迟到首次 JOIN 必须 fail closed");
+        assertFalse(ClientConnectionStatusStore.isActiveSession(oldToken),
+            "较旧 pre-JOIN handler 不得夺回尚未激活的全局 session");
+        assertTrue(BongNetworkHandler.joinSession(newHandler, 10_100L, () -> {}),
+            "最新 INIT 的 handler B 仍必须可正常 JOIN");
+        assertTrue(ClientConnectionStatusStore.isActiveSession(newToken),
+            "handler B JOIN 后必须保持 active");
+        assertEquals(10_100L, ClientConnectionStatusStore.lastPayloadAtMsForTests());
+    }
+
+    @Test
     void lateOldHandlerDisconnectDoesNotQueueCleanupOrClearNewSession() {
         Object oldHandler = activeHandler;
         Object newHandler = new Object();
