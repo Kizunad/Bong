@@ -918,12 +918,9 @@ function responseErrorDetail(payload, fallback) {
   return incompleteReason ? String(incompleteReason) : fallback;
 }
 
-export function reduceResponsesSseEvent(state, event) {
+function reduceResponsesSseEvent(state, event) {
   const data = String(event?.data ?? "");
-  if (data === "[DONE]") {
-    state.sawDone = true;
-    return state;
-  }
+  if (data === "[DONE]") return state;
   if (!data.trim()) return state;
 
   let payload;
@@ -970,7 +967,7 @@ export function reduceResponsesSseEvent(state, event) {
   }
 }
 
-export async function consumeResponsesSse(body, state = {}) {
+async function consumeResponsesSse(body, state = {}) {
   if (!body || typeof body.getReader !== "function") throw responsesSseError("响应缺少可读 body。");
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -988,7 +985,6 @@ export async function consumeResponsesSse(body, state = {}) {
   streamState.completed ??= false;
   streamState.terminal ??= false;
   streamState.failure ??= "";
-  streamState.sawDone ??= false;
 
   const resetEvent = () => {
     eventName = "";
@@ -1112,7 +1108,6 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
     completed: false,
     terminal: false,
     failure: "",
-    sawDone: false,
   };
   try {
     const response = await fetchImpl(endpoint, {
