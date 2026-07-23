@@ -23,7 +23,7 @@ const GH_TIMEOUT_MS = intEnv("REVIEW_GH_TIMEOUT_MS", 30_000, 1_000);
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
 const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
 const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
-const RESPONSES_BASE_URL = process.env.REVIEW_CODEX_BASE_URL || "https://oai.sb";
+const RESPONSES_BASE_URL = process.env.REVIEW_CODEX_BASE_URL || "https://api.claudeopus.world";
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
 const CIRCUIT_MARKER = "bong-review-circuit";
@@ -1077,7 +1077,7 @@ export function renderComment(context, firstRound, finalRound, gate) {
 
 ${passLine}：${gate.label}${tieNote}
 
-> 引擎：4 个 Codex reviewer，模型 \`${MODEL}\`，reasoning high，base_url 默认 \`https://oai.sb\`。
+> 引擎：4 个 Codex reviewer，模型 \`${MODEL}\`，reasoning high，base_url 默认 \`https://api.claudeopus.world\`。
 > 触发：PR 首次创建自动跑；后续提交不自动跑，需要评论 \`/review\` 复审。
 ${context.plan ? `> Plan：\`${context.plan.name}\`${context.plan.path ? ` (${context.plan.path})` : "（未找到文件）"}` : "> Plan：未检测到 plan"}
 ${context.diffTruncated ? `> Diff 已截断至 ${MAX_DIFF} 字符，reviewer 可继续用只读工具查仓库。` : ""}
