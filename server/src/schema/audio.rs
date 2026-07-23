@@ -1,9 +1,12 @@
 //! Audio recipe schema and S2C CustomPayload payloads (`bong:audio/play`, `bong:audio/stop`).
 //!
-//! Audio v1 intentionally uses vanilla Minecraft sound ids only. The server keeps
-//! the authoritative JSON recipe registry and includes the resolved recipe snapshot
-//! in each play payload so the client can play hot-reloaded recipes without a
-//! parallel resource-pack registry.
+//! Audio v1 started vanilla-Minecraft-sound-only; plan-fpv-cast-av-v1 P4 adds
+//! signature layers that reference `bong:` sound events resolved via the client
+//! resource-pack `assets/bong/sounds.json` (bed layers stay vanilla). The server
+//! keeps the authoritative JSON recipe registry and includes the resolved recipe
+//! snapshot in each play payload so the client can play hot-reloaded recipes
+//! without a parallel resource-pack registry. `validate_identifier` accepts any
+//! `namespace:path`, so `bong:` and `minecraft:` layers coexist.
 
 use serde::{Deserialize, Serialize};
 
