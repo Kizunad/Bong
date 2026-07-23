@@ -13,7 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -1003,63 +1002,44 @@ public final class ProtoServerDataBridge {
 
     // ─── cultivation_detail: AoS→SoA + enum normalization ──────────
 
-    private static final Map<String, Integer> MERIDIAN_ID_TO_INDEX;
-    static {
-        Map<String, Integer> m = new HashMap<>();
-        m.put("MERIDIAN_ID_LUNG", 0);
-        m.put("MERIDIAN_ID_LARGE_INTESTINE", 1);
-        m.put("MERIDIAN_ID_STOMACH", 2);
-        m.put("MERIDIAN_ID_SPLEEN", 3);
-        m.put("MERIDIAN_ID_HEART", 4);
-        m.put("MERIDIAN_ID_SMALL_INTESTINE", 5);
-        m.put("MERIDIAN_ID_BLADDER", 6);
-        m.put("MERIDIAN_ID_KIDNEY", 7);
-        m.put("MERIDIAN_ID_PERICARDIUM", 8);
-        m.put("MERIDIAN_ID_TRIPLE_ENERGIZER", 9);
-        m.put("MERIDIAN_ID_GALLBLADDER", 10);
-        m.put("MERIDIAN_ID_LIVER", 11);
-        m.put("MERIDIAN_ID_REN", 12);
-        m.put("MERIDIAN_ID_DU", 13);
-        m.put("MERIDIAN_ID_CHONG", 14);
-        m.put("MERIDIAN_ID_DAI", 15);
-        m.put("MERIDIAN_ID_YIN_QIAO", 16);
-        m.put("MERIDIAN_ID_YANG_QIAO", 17);
-        m.put("MERIDIAN_ID_YIN_WEI", 18);
-        m.put("MERIDIAN_ID_YANG_WEI", 19);
-        MERIDIAN_ID_TO_INDEX = Map.copyOf(m);
-    }
-
     private static BridgeResult bridgeCultivationDetail(
             MessageOrBuilder msg, String typeString) {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
 
+            // plan-race-system-v1 P1c：wire 上 meridians 是 AoS（repeated MeridianState，
+            // 每条自带 snake_case channel id）；CultivationDetailHandler 期望 SoA——并行
+            // channel_ids[] + opened[]/flow_rate[]/... 同序同长，handler 按 channel_ids[i]
+            // keyed 查 MeridianChannel。此处忠实 AoS→SoA 解包：channel id 原样透传进
+            // channel_ids（不再经固定 20 位 TCM 索引表映射，非 humanoid 构型的 channel
+            // 也照常保留），数组元素顺序 == meridians 顺序 == server 发送顺序。
             if (root.has("meridians") && root.get("meridians").isJsonArray()) {
                 JsonArray meridians = root.getAsJsonArray("meridians");
-                int size = 20;
-                JsonArray opened = initArray(size, false);
-                JsonArray flowRate = initDoubleArray(size);
-                JsonArray flowCapacity = initDoubleArray(size);
-                JsonArray integrity = initDoubleArray(size);
-                JsonArray openProgress = initDoubleArray(size);
-                JsonArray cracksCount = initArray(size, 0);
+                JsonArray channelIds = new JsonArray();
+                JsonArray opened = new JsonArray();
+                JsonArray flowRate = new JsonArray();
+                JsonArray flowCapacity = new JsonArray();
+                JsonArray integrity = new JsonArray();
+                JsonArray openProgress = new JsonArray();
+                JsonArray cracksCount = new JsonArray();
 
                 for (JsonElement el : meridians) {
                     if (el == null || !el.isJsonObject()) continue;
                     JsonObject m = el.getAsJsonObject();
-                    String idStr = m.has("id") ? m.get("id").getAsString() : null;
-                    Integer idx = idStr != null ? MERIDIAN_ID_TO_INDEX.get(idStr) : null;
-                    if (idx == null) continue;
-                    if (m.has("opened")) opened.set(idx, m.get("opened"));
-                    if (m.has("flow_rate")) flowRate.set(idx, m.get("flow_rate"));
-                    if (m.has("flow_capacity")) flowCapacity.set(idx, m.get("flow_capacity"));
-                    if (m.has("integrity")) integrity.set(idx, m.get("integrity"));
-                    if (m.has("open_progress")) openProgress.set(idx, m.get("open_progress"));
-                    if (m.has("cracks_count")) cracksCount.set(idx, m.get("cracks_count"));
+                    String id = meridianString(m, "id");
+                    if (id == null || id.isEmpty()) continue;  // 无 channel key 无法定位，跳过
+                    channelIds.add(id);
+                    opened.add(meridianBool(m, "opened"));
+                    flowRate.add(meridianDouble(m, "flow_rate"));
+                    flowCapacity.add(meridianDouble(m, "flow_capacity"));
+                    integrity.add(meridianDouble(m, "integrity"));
+                    openProgress.add(meridianDouble(m, "open_progress"));
+                    cracksCount.add(meridianInt(m, "cracks_count"));
                 }
 
                 root.remove("meridians");
+                root.add("channel_ids", channelIds);
                 root.add("opened", opened);
                 root.add("flow_rate", flowRate);
                 root.add("flow_capacity", flowCapacity);
@@ -1070,12 +1050,14 @@ public final class ProtoServerDataBridge {
 
             normalizeRealmField(root, "realm");
 
-            if (root.has("target_meridian") && root.get("target_meridian").isJsonPrimitive()
-                    && root.get("target_meridian").getAsJsonPrimitive().isString()) {
-                Integer idx = MERIDIAN_ID_TO_INDEX.get(root.get("target_meridian").getAsString());
-                if (idx != null) {
-                    root.addProperty("target_meridian", idx);
-                } else {
+            // plan-race-system-v1 P1c：target_meridian 现为 channel id 字符串，client 直接
+            // MeridianChannel.fromChannelId 解析——保持字符串原样，不再转 int 下标。仅剥掉
+            // 空串（proto optional 未设的边角），避免下游把空当作有效 channel。
+            if (root.has("target_meridian")) {
+                JsonElement tm = root.get("target_meridian");
+                boolean validString = tm.isJsonPrimitive() && tm.getAsJsonPrimitive().isString()
+                        && !tm.getAsString().isEmpty();
+                if (!validString) {
                     root.remove("target_meridian");
                 }
             }
@@ -1488,20 +1470,32 @@ public final class ProtoServerDataBridge {
         }
     }
 
-    private static JsonArray initDoubleArray(int size) {
-        JsonArray arr = new JsonArray(size);
-        for (int i = 0; i < size; i++) arr.add(0.0);
-        return arr;
+    // ── cultivation_detail meridian AoS→SoA 字段读取。proto includingDefaultValueFields
+    //    保证 present MeridianState 的标量字段齐全，此处仍做防御式类型校验：printer 选项
+    //    未来变动或畸形 payload 都优雅退化到默认值，不 NPE。 ──
+    private static String meridianString(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        return (e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isString())
+                ? e.getAsString() : null;
     }
 
-    private static JsonArray initArray(int size, Object defaultVal) {
-        JsonArray arr = new JsonArray(size);
-        for (int i = 0; i < size; i++) {
-            if (defaultVal instanceof Boolean b) arr.add(b);
-            else if (defaultVal instanceof Number n) arr.add(n);
-            else arr.add(JsonNull.INSTANCE);
-        }
-        return arr;
+    private static boolean meridianBool(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        return e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isBoolean()
+                && e.getAsBoolean();
+    }
+
+    private static double meridianDouble(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        if (e == null || !e.isJsonPrimitive() || !e.getAsJsonPrimitive().isNumber()) return 0.0;
+        double v = e.getAsDouble();
+        return Double.isFinite(v) ? v : 0.0;
+    }
+
+    private static int meridianInt(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        if (e == null || !e.isJsonPrimitive() || !e.getAsJsonPrimitive().isNumber()) return 0;
+        return (int) Math.max(0L, e.getAsLong());
     }
 
     private static final Pattern INT64_STRING = Pattern.compile("-?\\d{1,20}");
