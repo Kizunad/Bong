@@ -2,11 +2,11 @@
   "version": 3,
   "author": "Bong",
   "name": "sword_heaven_gate_charge",
-  "description": "P2 天门充能段精修（60t 非循环 = HEAVEN_GATE_CHARGE_END 充能窗全对齐，旧 4 关键帧重制为 4t 步进 16 帧）：0→16 低位提举过顶，16→40 渐升 + roll 交替脉动渐涨，40→56 高位蓄满微颤（极值直落采样帧）+ 重心渐沉，56→60 拉满定格（背弓头仰，末帧=release 交接帧）。",
+  "description": "天门充能段：0→16 低位提举过顶，16→40 渐升 + roll 交替脉动渐涨，40→56 高位蓄满微颤（极值直落采样帧）+ 重心渐沉，56→60 拉满定格（背弓头仰）；60→200 顶点冻结保持撑过 release（140t 顶替）——修用户实机所见的『举臂→掉回默认→再劈下』割裂（旧 endTick=60 播完淡回默认）。",
   "emote": {
     "beginTick": 0,
-    "endTick": 60,
-    "stopTick": 64,
+    "endTick": 200,
+    "stopTick": 204,
     "isLoop": false,
     "returnTick": 0,
     "nsfw": false,
@@ -2583,6 +2583,167 @@
       },
       {
         "tick": 60,
+        "easing": "OUTSINE",
+        "rightLeg": {
+          "z": 0.04
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "body": {
+          "x": 0.0
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "body": {
+          "y": -0.04
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "body": {
+          "z": -0.04
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "head": {
+          "pitch": -0.3141593
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "head": {
+          "yaw": 0.0
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "torso": {
+          "pitch": -0.1570796
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "torso": {
+          "yaw": 0.0
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "rightArm": {
+          "pitch": -2.687807
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "rightArm": {
+          "yaw": -0.0698132
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "rightArm": {
+          "roll": 0.1047198
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "rightArm": {
+          "bend": 0.1396263
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "rightArm": {
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "pitch": -2.6179939
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "yaw": 0.0698132
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "roll": -0.1047198
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "bend": 0.2094395
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "leftLeg": {
+          "pitch": -0.1919862
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "leftLeg": {
+          "bend": 0.2617994
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "leftLeg": {
+          "z": -0.05
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "rightLeg": {
+          "pitch": 0.1570796
+        }
+      },
+      {
+        "tick": 200,
+        "easing": "OUTSINE",
+        "rightLeg": {
+          "bend": 0.2268928
+        }
+      },
+      {
+        "tick": 200,
         "easing": "OUTSINE",
         "rightLeg": {
           "z": 0.04

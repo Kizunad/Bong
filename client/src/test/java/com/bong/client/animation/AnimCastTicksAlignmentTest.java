@@ -309,30 +309,41 @@ class AnimCastTicksAlignmentTest {
     private static final double PHASE_HANDOFF_BUDGET_RAD = Math.toRadians(60.0);
 
     /**
-     * 定长相位充能型分类契约（P6 裁决，conventions §14.1）：充能段由**服务端确定
-     * 性相位常量**驱动（非 mastery 缩放的变长引导窗），故不适用「长引导招蓄力段
-     * 必须 isLoop」的判据——该判据的前提是窗长可变、需要循环覆盖任意时长。
-     *
-     * <p>裁决为**改判据不改动画**，理由（读代码实证，非口径偏好）：
+     * 天门开阖·充能相位常量（客户端镜像 server/src/sword_path/）：
      * <ul>
-     *   <li>{@code sword_path.heaven_gate} 的充能相位是 {@code HEAVEN_GATE_CHARGE_END
-     *       = 60}（server/src/sword_path/heaven_gate.rs:15）的**定长**相位，
-     *       cast_ticks=80 是含后续判定相位的总窗，不是充能段时长；</li>
-     *   <li>充能段资产是一条**单调递进的抬剑坡道**（rightArm.pitch 由 -0.698
-     *       递进到 -2.688 rad），改成 isLoop 会在接缝制造这条坡道本不存在的
-     *       回绕跳变，即为了满足判据而**引入**库坑 #1 类缺陷；</li>
-     *   <li>定长相位下不存在「结束在任意相位」的歧义，接缝是确定的单点，可以
-     *       比循环档**更严格**地锁死（逐轴精确相等，见
-     *       {@link #fixedPhaseChargeSeamIsExactAndNonLooping()}）。</li>
+     *   <li>{@code HEAVEN_GATE_CHARGE_COMPLETE_TICK = 60}（{@code HEAVEN_GATE_CHARGE_END}）——
+     *       举剑过顶到达顶点（拉满定格）的 tick；</li>
+     *   <li>{@code HEAVEN_GATE_RELEASE_TICK = 140}（{@code HEAVEN_GATE_AOE_END}）——
+     *       {@code heaven_gate_phase_system} 在 {@code elapsed ≥ 140} 才 emit
+     *       {@code sword_heaven_gate_release}（劈下），与 charge 同 {@code SWORD_PATH_PRIORITY}
+     *       同通道，播出即顶替 charge。</li>
      * </ul>
+     */
+    private static final int HEAVEN_GATE_CHARGE_COMPLETE_TICK = 60;
+    private static final int HEAVEN_GATE_RELEASE_TICK = 140;
+
+    /**
+     * 定长相位充能型分类契约（P6 裁决 + 用户实机修正，conventions §14.1）：充能段由
+     * **服务端确定性相位常量**驱动（非 mastery 缩放的变长引导窗），不适用「长引导招蓄力段
+     * 必须 isLoop」判据（该判据前提是窗长可变、需循环覆盖任意时长）——**但充能段末帧必须
+     * 冻结顶点、hold 过 release 交接点**。
      *
-     * <p>入类门槛（新招援引本类前逐条核验）：① 充能段时长 = 服务端具名相位常量
-     * ② 充能段非循环且 endTick == 该常量 ③ 充能段末帧与 release 段首帧逐轴精确
-     * 相等 ④ 两段 id 均被服务端映射表发射。value = 期望 endTick（= 服务端相位
-     * 常量的客户端镜像，任一端漂移即判红）。
+     * <p>**原裁决的错误前提（本次修正）**：旧契约要求 {@code endTick == HEAVEN_GATE_CHARGE_END
+     * = 60}，前提是"充能满即入 release，末帧即交接帧"。但 release 实际在
+     * {@code HEAVEN_GATE_AOE_END = 140} 才发（charge 60→140 之间是 AoE/aftermath 相位）——
+     * endTick=60 的非循环动画播完即经 stopTick 淡出**回默认站姿**，60→140 有 ~80t 空窗，
+     * 玩家看到「举臂→掉回默认→140t 再从顶点劈下」。修正：充能段到顶点后**静态冻结定住**
+     * 到 {@code endTick ≥ HEAVEN_GATE_RELEASE_TICK}，把顶点姿势撑过 release 顶替点。
+     * isLoop 仍为 false——单调抬剑坡道改循环会在接缝引入库坑 #1 回绕跳变（此理由不变）；
+     * 冻结定住无此问题，且比循环档更严（顶点逐帧精确相等）。
+     *
+     * <p>入类门槛（新招援引本类前逐条核验）：① 充能顶点在 {@code CHARGE_COMPLETE} 到达且其后
+     * 逐帧冻结 ② 充能段非循环且 {@code endTick ≥ release tick}（hold 过交接，无掉回默认空窗）
+     * ③ 充能段末帧（= 冻结顶点）与 release 段首帧逐轴精确相等 ④ 两段 id 均被服务端映射表
+     * 发射。value = release tick（{@code HEAVEN_GATE_AOE_END} 客户端镜像，任一端漂移即判红）。
      */
     private static final Map<String, Integer> FIXED_PHASE_CHARGE_SKILLS = Map.of(
-        "sword_path.heaven_gate", 60);
+        "sword_path.heaven_gate", HEAVEN_GATE_RELEASE_TICK);
 
     /**
      * 无任何动画发射的招（D 级缺失，重制批次补动画后删条目）。
@@ -804,7 +815,7 @@ class AnimCastTicksAlignmentTest {
     void fixedPhaseChargeSeamIsExactAndNonLooping() throws IOException {
         for (Map.Entry<String, Integer> entry : FIXED_PHASE_CHARGE_SKILLS.entrySet()) {
             String skillId = entry.getKey();
-            int expectedEndTick = entry.getValue();
+            int releaseTick = entry.getValue();
             assertFalse(CAST_ALIGNMENT_ALLOWLIST.contains(skillId),
                 skillId + " 同时出现在定长相位充能分类与 CAST_ALIGNMENT_ALLOWLIST——"
                     + "分类契约取代豁免，二者互斥");
@@ -818,19 +829,31 @@ class AnimCastTicksAlignmentTest {
             AnimMeta charge = readAnim(pair[0]);
             AnimMeta release = readAnim(pair[1]);
             assertFalse(charge.isLoop(),
-                skillId + " 充能段 `" + pair[0] + "` 不应为循环：定长相位无需循环覆盖任意窗长，"
-                    + "改 isLoop 会给这条单调递进坡道引入本不存在的回绕跳变（conventions §14.1）");
-            assertEquals(expectedEndTick, charge.endTick(),
-                skillId + " 充能段 endTick=" + charge.endTick() + " 与服务端相位常量镜像 "
-                    + expectedEndTick + " 不一致——server/src/sword_path/heaven_gate.rs 的"
-                    + " HEAVEN_GATE_CHARGE_END 与本资产任一端漂移都必须同步改，"
-                    + "否则充能动画与充能相位错位");
+                skillId + " 充能段 `" + pair[0] + "` 不应为循环：单调递进抬剑坡道改 isLoop 会在"
+                    + "接缝引入本不存在的回绕跳变（库坑 #1）；顶点保持靠静态冻结而非循环（conventions §14.1）");
 
+            // 修正契约：endTick 必须 hold 过 release 顶替点（≥ release tick）。旧契约 endTick==60
+            // 让充能段播完先淡回默认站姿，60→140 留 ~80t 空窗，玩家见「举臂→掉回默认→再劈下」。
+            assertTrue(charge.endTick() >= releaseTick,
+                skillId + " 充能段 endTick=" + charge.endTick() + " 必须 ≥ release tick "
+                    + releaseTick + "（HEAVEN_GATE_AOE_END 镜像）——release 在该 tick 才同通道顶替 charge，"
+                    + "endTick 不到就会先淡回默认站姿留空窗（本 bug 根源）");
+
+            // 顶点从 CHARGE_COMPLETE(60) 起逐帧冻结到 endTick（静态 hold，非继续运动）。
+            Map.Entry<Double, String> holdDrift = maxAxisDelta(
+                poseAt(charge, HEAVEN_GATE_CHARGE_COMPLETE_TICK), poseAt(charge, charge.endTick()),
+                pair[0] + "@t" + HEAVEN_GATE_CHARGE_COMPLETE_TICK, pair[0] + "@t" + charge.endTick());
+            assertEquals(0.0, holdDrift.getKey(), 1e-9,
+                skillId + " 顶点(t" + HEAVEN_GATE_CHARGE_COMPLETE_TICK + ")到 endTick 必须逐轴冻结"
+                    + "（最大漂移轴 `" + holdDrift.getValue() + "`=" + holdDrift.getKey()
+                    + " rad）——hold 段是静态定住，不得有残留运动");
+
+            // 接缝：冻结顶点（充能段末帧）与 release 段首帧逐轴精确相等。
             Map.Entry<Double, String> worst = maxAxisDelta(
                 poseAt(charge, charge.endTick()), poseAt(release, 0),
                 pair[0] + "@t" + charge.endTick(), pair[1] + "@t0");
             assertEquals(0.0, worst.getKey(), 1e-9,
-                skillId + " 充能段末帧与 release 段首帧不一致（最大差轴 `" + worst.getValue()
+                skillId + " 充能段末帧(冻结顶点)与 release 段首帧不一致（最大差轴 `" + worst.getValue()
                     + "` = " + worst.getKey() + " rad）——定长相位的接缝是确定性单点，"
                     + "必须逐轴精确相等，不吃相位混合预算");
         }
@@ -1222,8 +1245,23 @@ class AnimCastTicksAlignmentTest {
             assertFalse(primaryAxes.isEmpty(),
                 animName + " segment manifest 必须声明至少一个主轴（primary_axes）");
             AxisWalk walk = walkAxes(animName, meta);
+            // charge_hold 定长充能段：运动段（0→motion_end_tick）查主轴密度，冻结保持段
+            //（motion_end_tick→endTick，撑过 release 交接）无运动豁免密度但须逐主轴恒定。
+            // loop 段无 motion_end_tick，整段查密度（densityMaxTick=endTick）。
+            int densityMaxTick = manifest.has("motion_end_tick")
+                ? manifest.get("motion_end_tick").getAsInt() : meta.endTick();
             for (String axis : primaryAxes) {
-                assertAxisDense(animName, walk, axis);
+                assertAxisDense(animName, walk, axis, densityMaxTick);
+            }
+            if (densityMaxTick < meta.endTick()) {
+                // 冻结验证：hold 段每主轴在 endTick 的值 == motion_end 值（静态定住，无残留运动）。
+                Map<String, Double> atMotionEnd = poseAt(meta, densityMaxTick);
+                Map<String, Double> atEnd = poseAt(meta, meta.endTick());
+                for (String axis : primaryAxes) {
+                    assertEquals(atMotionEnd.get(axis), atEnd.get(axis), 1e-9,
+                        animName + " charge_hold 主轴 `" + axis + "` 在冻结段(t" + densityMaxTick
+                            + "→t" + meta.endTick() + ")未恒定——hold 段必须静态定住撑过 release");
+                }
             }
             if (meta.isLoop()) {
                 List<String> seams = loopSeamViolations(meta);
@@ -1372,13 +1410,23 @@ class AnimCastTicksAlignmentTest {
 
     /** 单轴机械断言：轴存在、相邻帧距 ≤4 tick、无 linear easing（打击轴与段式主轴共用）。 */
     private static void assertAxisDense(String animName, AxisWalk walk, String axis) {
+        assertAxisDense(animName, walk, axis, Integer.MAX_VALUE);
+    }
+
+    /**
+     * 主轴密度红线（精度标准 #3）：{@code tick ≤ densityMaxTick} 的运动段内相邻帧点间隔
+     * ≤4t。{@code densityMaxTick} 之后（charge_hold 定长充能段的冻结保持区）无运动、豁免
+     * 密度——冻结恒定另由调用方核验。默认 {@code Integer.MAX_VALUE}（全段查密度）；
+     * easing 禁 linear 覆盖全轴（含冻结帧）。
+     */
+    private static void assertAxisDense(String animName, AxisWalk walk, String axis, int densityMaxTick) {
         List<Integer> ticks = walk.ticks().get(axis);
         assertNotNull(ticks, animName + " manifest 声明的主轴 `" + axis + "` 在动画中无关键帧");
-        List<Integer> sorted = ticks.stream().sorted().distinct().toList();
-        for (int i = 1; i < sorted.size(); i++) {
-            assertTrue(sorted.get(i) - sorted.get(i - 1) <= 4,
-                animName + " 主轴 `" + axis + "` 帧点 " + sorted.get(i - 1) + "→"
-                    + sorted.get(i) + " 间隔超过 4 tick（精度标准 #3 密度红线）");
+        List<Integer> motion = ticks.stream().filter(t -> t <= densityMaxTick).sorted().distinct().toList();
+        for (int i = 1; i < motion.size(); i++) {
+            assertTrue(motion.get(i) - motion.get(i - 1) <= 4,
+                animName + " 主轴 `" + axis + "` 帧点 " + motion.get(i - 1) + "→"
+                    + motion.get(i) + " 间隔超过 4 tick（精度标准 #3 密度红线）");
         }
         Set<String> easings = walk.easings().getOrDefault(axis, Set.of());
         assertFalse(easings.stream().anyMatch(e -> e.equalsIgnoreCase("linear")),
