@@ -518,19 +518,16 @@ fn resolve_ambient_runtime_ground(
 
 /// Validate a raster fallback against the exact landing cells of an already-loaded runtime chunk.
 ///
-/// Raster surface Y is a baked hint, not authority over authored/player blocks. The landing must
-/// first satisfy Navigator's exact support/headroom contract at the raster Y, then its
-/// support/feet/head cells must be readable, non-liquid, and non-motion-blocking. An
-/// out-of-height or non-standable landing is not verifiable and therefore fails closed.
+/// Raster surface Y is a baked hint, not authority over authored/player blocks. Its exact
+/// support/feet/head cells must be readable, standable, and non-liquid. Nearby supports do not
+/// override the raster landing; an out-of-height or unsafe landing fails closed.
 fn resolve_loaded_raster_landing(
     world_x: i32,
     world_z: i32,
     surface_y: i32,
     layer: &ChunkLayer,
 ) -> AmbientRuntimeGround {
-    if resolve_ground_y_from_chunk(world_x, world_z, surface_y, Some(layer)) != Some(surface_y)
-        || !loaded_ambient_landing_is_safe(world_x, world_z, surface_y, layer)
-    {
+    if !loaded_ambient_landing_is_safe(world_x, world_z, surface_y, layer) {
         return AmbientRuntimeGround::LoadedUnsafe;
     }
 
@@ -1326,6 +1323,83 @@ mod tests {
                 "{case}: only -17/+5 may leave the inclusive -16..+4 runtime window"
             );
         }
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_scan_miss_accepts_exact_raster_landing_with_higher_neighbor()
+    {
+        let (app, layer_entity) = make_runtime_layer(
+            &[(0, 0)],
+            &[(1, 70, 2, BlockState::STONE), (1, 73, 2, BlockState::STONE)],
+        );
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 70,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(1.5, 200.0, 2.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            Some(DVec3::new(1.5, 71.0, 2.5)),
+            "loaded scan miss must accept the exact safe raster landing even when a higher support exists"
+        );
+        assert_eq!(
+            terrain.queried.get(),
+            Some((1, 2)),
+            "loaded scan miss must query raster before validating its exact landing"
+        );
+
+        let mut output = App::new();
+        let entity_layer = output.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let mut pending = HashMap::new();
+        let spawned = {
+            let mut commands = output.world_mut().commands();
+            submit_ambient_spawn_candidate::<TestFaunaMarker, _>(
+                &mut commands,
+                Some(layer),
+                Some(&terrain),
+                test_pool_fn,
+                &mut pending,
+                AmbientSpawnRequest {
+                    layer: entity_layer,
+                    zone: &zone,
+                    candidate: DVec3::new(1.5, 200.0, 2.5),
+                    season: Season::Summer,
+                    now: 77,
+                },
+            )
+        };
+        output.world_mut().flush();
+
+        let entity = spawned.expect("exact raster landing must reach the pool exactly once");
+        assert_eq!(
+            output
+                .world()
+                .get::<Position>(entity)
+                .expect("successful pool result must expose Position")
+                .get(),
+            DVec3::new(1.5, 71.0, 2.5)
+        );
+        assert_eq!(
+            output
+                .world()
+                .get::<TestFaunaMarker>(entity)
+                .unwrap()
+                .spawned_at,
+            77,
+            "successful fallback must attach one marker"
+        );
+        assert_eq!(
+            pending.get("test_zone"),
+            Some(&1),
+            "successful fallback must consume exactly one pending slot"
+        );
     }
 
     #[test]
