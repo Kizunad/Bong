@@ -32,6 +32,8 @@ class BuildResourcepackTest(unittest.TestCase):
             self._write(assets / "bong-client" / "textures" / "gui" / "items" / "huge_icon.png", b"ui")
             self._write(assets / "bong" / "audio_recipes" / "wind.json", b'{"id":"wind"}')
             self._write(assets / "bong" / "atmosphere" / "wind.ogg", b"ogg")
+            self._write(assets / "bong" / "sounds" / "skill" / "heaven_gate.ogg", b"sig-ogg")
+            self._write(assets / "bong" / "sounds.json", b'{"skill.demo":{"sounds":["bong:skill/heaven_gate"]}}')
 
             env = self._env(assets, out, version="test")
             subprocess.run([BASH, str(SCRIPT)], check=True, cwd=REPO_ROOT, env=env)
@@ -84,7 +86,7 @@ class BuildResourcepackTest(unittest.TestCase):
             self.assertEqual(1, counts["mineral"], f"expected one mineral fixture, actual {counts['mineral']}")
             self.assertEqual(4, counts["entity-model"], f"expected geo/obj/mtl/entity texture fixtures, actual {counts['entity-model']}")
             self.assertEqual(3, counts["vfx"], f"expected particle json/texture/hud effect fixtures, actual {counts['vfx']}")
-            self.assertEqual(2, counts["audio"], f"expected audio recipe plus ogg fixtures, actual {counts['audio']}")
+            self.assertEqual(3, counts["audio"], f"expected audio recipe + atmosphere ogg + signature sound ogg fixtures, actual {counts['audio']}")
 
             with zipfile.ZipFile(pack) as zf:
                 names = set(zf.namelist())
@@ -97,6 +99,8 @@ class BuildResourcepackTest(unittest.TestCase):
             self.assertIn("assets/bong/particles/ash.json", names, "expected particle json in zip because P0 includes VFX definitions")
             self.assertIn("assets/bong/textures/particle/ash.png", names, "expected particle texture in zip because P0 includes VFX textures")
             self.assertIn("assets/bong-client/textures/hud/effects/bleeding.png", names, "expected HUD effect texture in zip because status-effect VFX assets are included")
+            self.assertIn("assets/bong/sounds/skill/heaven_gate.ogg", names, "expected signature sound ogg in zip because P4 ships bong: signature SFX")
+            self.assertIn("assets/bong/sounds.json", names, "expected sounds.json manifest in zip because P4 registers bong: sound events for the resource pack")
             self.assertNotIn("assets/bong-client/textures/gui/items/huge_icon.png", names, "expected GUI item icon excluded because P0 avoids huge non-resourcepack UI icon payload")
 
     def test_empty_assets_tree_builds_metadata_only_pack(self) -> None:

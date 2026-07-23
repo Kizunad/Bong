@@ -49,6 +49,8 @@ INCLUDE_PREFIXES=(
   "bong-client/textures/gui/skill"
   "bong/atmosphere"
   "bong/audio_recipes"
+  "bong/sounds"
+  "bong/sounds.json"
 )
 
 should_include() {
@@ -119,7 +121,7 @@ subpacks = [
     ("mineral", ["minecraft/blockstates", "minecraft/models", "minecraft/textures/block", "minecraft/atlases", "bong/blockstates", "bong/textures/block"]),
     ("entity-model", ["bong/geo", "bong/animations", "bong/models", "bong/textures/entity", "bong/textures/item", "bong/textures/armor"]),
     ("vfx", ["bong/particles", "bong/textures/particle", "bong-client/textures/hud/effects", "bong-client/textures/gui/skill"]),
-    ("audio", ["bong/atmosphere", "bong/audio_recipes"]),
+    ("audio", ["bong/atmosphere", "bong/audio_recipes", "bong/sounds"]),
 ]
 
 def count_files(prefixes: list[str]) -> int:

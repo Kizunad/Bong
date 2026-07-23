@@ -1,0 +1,82 @@
+{
+  "skill.sword_path.heaven_gate": {
+    "category": "player",
+    "subtitle": "subtitle.bong.skill.sword_path.heaven_gate",
+    "sounds": [
+      {
+        "name": "bong:skill/sword_path/heaven_gate",
+        "stream": false
+      }
+    ]
+  },
+  "skill.woliu.void_core": {
+    "category": "player",
+    "subtitle": "subtitle.bong.skill.woliu.void_core",
+    "sounds": [
+      {
+        "name": "bong:skill/woliu/void_core",
+        "stream": false
+      }
+    ]
+  },
+  "skill.zhenmai.sever_chain": {
+    "category": "player",
+    "subtitle": "subtitle.bong.skill.zhenmai.sever_chain",
+    "sounds": [
+      {
+        "name": "bong:skill/zhenmai/sever_chain",
+        "stream": false
+      }
+    ]
+  },
+  "skill.baomai.full_power_release": {
+    "category": "player",
+    "subtitle": "subtitle.bong.skill.baomai.full_power_release",
+    "sounds": [
+      {
+        "name": "bong:skill/baomai/full_power_release",
+        "stream": false
+      }
+    ]
+  },
+  "skill.dugu.infuse_poison": {
+    "category": "player",
+    "subtitle": "subtitle.bong.skill.dugu.infuse_poison",
+    "sounds": [
+      {
+        "name": "bong:skill/dugu/infuse_poison",
+        "stream": false
+      }
+    ]
+  },
+  "skill.tuike.shed": {
+    "category": "player",
+    "subtitle": "subtitle.bong.skill.tuike.shed",
+    "sounds": [
+      {
+        "name": "bong:skill/tuike/shed",
+        "stream": false
+      }
+    ]
+  },
+  "skill.anqi.echo_fractal": {
+    "category": "player",
+    "subtitle": "subtitle.bong.skill.anqi.echo_fractal",
+    "sounds": [
+      {
+        "name": "bong:skill/anqi/echo_fractal",
+        "stream": false
+      }
+    ]
+  },
+  "skill.morph.yixing": {
+    "category": "player",
+    "subtitle": "subtitle.bong.skill.morph.yixing",
+    "sounds": [
+      {
+        "name": "bong:skill/morph/yixing",
+        "stream": false
+      }
+    ]
+  }
+}
