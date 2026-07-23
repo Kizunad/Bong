@@ -2,6 +2,7 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
+    "ts",
     "player",
     "raw",
     "sentiment",
@@ -9,6 +10,11 @@
     "influence_weight"
   ],
   "properties": {
+    "ts": {
+      "minimum": 0,
+      "description": "Observed Unix timestamp (seconds)",
+      "type": "integer"
+    },
     "player": {
       "type": "string"
     },

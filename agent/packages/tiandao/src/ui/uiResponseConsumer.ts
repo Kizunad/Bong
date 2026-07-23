@@ -15,7 +15,8 @@
  *   - error (其余 reason)               → 记录警告日志
  *
  * narration 格式（realm_gate_rejected）：
- *   scope="player"，target=player_uuid（若无则 scope="broadcast"，target="world"）
+ *   scope="player"，target=target_player
+ *   缺失或空白 target_player 时告警并 fail-closed，不发布私人提示
  *   style="system_warning"
  *   text 文本来自 REALM_GATE_NARRATION_TEXT
  */
@@ -31,33 +32,20 @@ const { AGENT_UI_RESPONSE, AGENT_NARRATE } = CHANNELS;
 
 // ─── 接口 ────────────────────────────────────────────────────────────────────
 
-/**
- * sub 专用接口：subscribe/on/off/unsubscribe/disconnect。
- * 兼容 UiResponseConsumerClient（向后兼容，旧代码传整个 client 仍可用）。
- */
+/** sub 专用接口：subscribe/on/off/unsubscribe。 */
 export interface UiResponseConsumerSubClient {
   subscribe(channel: string): Promise<unknown>;
   on(event: string, listener: (channel: string, message: string) => void): unknown;
   off?(event: string, listener: (channel: string, message: string) => void): unknown;
   unsubscribe(): Promise<unknown>;
-  disconnect(): void;
 }
 
-/**
- * pub 专用接口：仅需要 publish + disconnect 两个方法。
- *
- * disconnect 用于 consumer.disconnect() 时清理 pub 连接（narPub 可以是独立连接）。
- * 不包含 subscribe/on/off（pub 不需要订阅）。
- */
+/** pub 专用接口：仅发布 narration。 */
 export interface UiResponseConsumerPubClient {
   publish(channel: string, message: string): Promise<number>;
-  disconnect(): void;
 }
 
-/**
- * @deprecated 用 UiResponseConsumerSubClient（sub）+ UiResponseConsumerPubClient（pub）替代。
- * 保留以向后兼容现有调用方（旧代码传全量 client 到 sub/pub 仍可用）。
- */
+/** @deprecated 用 UiResponseConsumerSubClient（sub）+ UiResponseConsumerPubClient（pub）替代。 */
 export interface UiResponseConsumerClient
   extends UiResponseConsumerSubClient,
     UiResponseConsumerPubClient {}
@@ -67,15 +55,10 @@ export interface UiResponseConsumerLogger {
   warn: (...args: unknown[]) => void;
 }
 
-/**
- * button_click 事件的 Arbiter 注入回调。
- * 供 runtime 在下一轮推演时感知玩家选择。
- */
+/** button_click 事件的 Arbiter 注入回调。 */
 export type ButtonClickCallback = (response: AgentUiResponsePayloadV1) => void;
 
-/**
- * 会话结束（dismissed / timeout / completed）回调。
- */
+/** 会话结束（dismissed / timeout / completed）回调。 */
 export type SessionEndCallback = (response: AgentUiResponsePayloadV1) => void;
 
 export interface UiResponseConsumerConfig {
@@ -99,6 +82,7 @@ export interface UiResponseConsumerStats {
   otherError: number;
   rejectedContract: number;
   narrationPublished: number;
+  narrationDroppedMissingTarget: number;
 }
 
 // ─── realm_gate_rejected narration 文本 ──────────────────────────────────────
@@ -116,6 +100,8 @@ export class UiResponseConsumer {
   private readonly onButtonClick: ButtonClickCallback | undefined;
   private readonly onSessionEnd: SessionEndCallback | undefined;
   private connected = false;
+  /** 使 cleanup 期间尚未完成的 subscribe 不得迟到安装 message listener。 */
+  private connectionGeneration = 0;
 
   readonly stats: UiResponseConsumerStats = {
     received: 0,
@@ -128,14 +114,19 @@ export class UiResponseConsumer {
     otherError: 0,
     rejectedContract: 0,
     narrationPublished: 0,
+    narrationDroppedMissingTarget: 0,
   };
 
   private readonly onMessage = (channel: string, message: string): void => {
-    if (channel !== AGENT_UI_RESPONSE) return;
+    if (!this.connected || channel !== AGENT_UI_RESPONSE) return;
     void this.handlePayload(message);
   };
 
   constructor(config: UiResponseConsumerConfig) {
+    if (Object.is(config.sub, config.pub)) {
+      throw new Error("UiResponseConsumer publisher must be distinct from subscriber");
+    }
+
     this.sub = config.sub;
     this.pub = config.pub;
     this.logger = config.logger ?? {
@@ -148,7 +139,9 @@ export class UiResponseConsumer {
 
   async connect(): Promise<void> {
     if (this.connected) return;
+    const generation = ++this.connectionGeneration;
     await this.sub.subscribe(AGENT_UI_RESPONSE);
+    if (generation !== this.connectionGeneration) return;
     this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
@@ -156,11 +149,10 @@ export class UiResponseConsumer {
   }
 
   async disconnect(): Promise<void> {
+    this.connectionGeneration += 1;
     this.connected = false;
     this.sub.off?.("message", this.onMessage);
     await this.sub.unsubscribe();
-    this.sub.disconnect();
-    this.pub.disconnect();
   }
 
   async handlePayload(message: string): Promise<void> {
@@ -271,11 +263,19 @@ export class UiResponseConsumer {
   private async emitRealmGateRejectedNarration(
     response: AgentUiResponsePayloadV1,
   ): Promise<void> {
-    // 由于 AgentUiResponsePayloadV1 不含 target_player 字段（server→agent Redis 同构），
-    // 只能从 params 推断（无标准 target_player 字段），因此使用 broadcast scope。
+    const targetPlayer = response.target_player?.trim();
+    if (!targetPlayer) {
+      this.stats.narrationDroppedMissingTarget += 1;
+      this.logger.warn(
+        `[ui-response-consumer] realm_gate_rejected missing target_player; ` +
+          `dropping private narration request_id=${response.request_id}`,
+      );
+      return;
+    }
+
     const narration: Narration = {
-      scope: "broadcast",
-      target: "world",
+      scope: "player",
+      target: targetPlayer,
       style: "system_warning",
       text: REALM_GATE_NARRATION_TEXT,
     };

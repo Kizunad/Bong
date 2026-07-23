@@ -1,5 +1,7 @@
 package com.bong.client.animation;
 
+import dev.kosmx.playerAnim.api.firstPerson.FirstPersonConfiguration;
+import dev.kosmx.playerAnim.api.firstPerson.FirstPersonMode;
 import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import dev.kosmx.playerAnim.api.layered.KeyframeAnimationPlayer;
 import dev.kosmx.playerAnim.api.layered.ModifierLayer;
@@ -8,6 +10,7 @@ import dev.kosmx.playerAnim.core.data.KeyframeAnimation;
 import dev.kosmx.playerAnim.core.util.Ease;
 import dev.kosmx.playerAnim.minecraftApi.PlayerAnimationAccess;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
@@ -129,19 +132,15 @@ public final class BongAnimationPlayer {
         if (stack == null || pid == null || animId == null) {
             return false;
         }
-        KeyframeAnimation anim = BongAnimationRegistry.get(animId);
+        FpvResolution resolution = resolveFpvContent(pid, animId);
+
+        KeyframeAnimation anim = BongAnimationRegistry.get(resolution.contentId());
         if (anim == null) {
             return false;
         }
 
         KeyframeAnimationPlayer framePlayer = new KeyframeAnimationPlayer(anim);
-        // Phase 1 默认 THIRD_PERSON_MODEL：ItemInHandRendererMixin 只在此模式下 cancel
-        // vanilla 手/物品渲染并走动画管线；VANILLA 模式空手能看见、持物就被 vanilla 独立
-        // item 渲染路径盖掉（实测 2026-04-14）。
-        // 若某个动画在 TPP 下看起来臃肿（全上半身），未来可按 id 切换成 VANILLA。
-        framePlayer.setFirstPersonMode(
-            dev.kosmx.playerAnim.api.firstPerson.FirstPersonMode.THIRD_PERSON_MODEL
-        );
+        applyFirstPersonRendering(framePlayer, resolution.useFpvArms());
 
         Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer =
             ACTIVE_LAYERS.computeIfAbsent(pid, k -> new HashMap<>());
@@ -164,6 +163,95 @@ public final class BongAnimationPlayer {
         stack.addAnimLayer(priority, layer);
         perPlayer.put(animId, layer);
         return true;
+    }
+
+    /**
+     * 第一人称渲染配置（plan-fpv-cast-av-v1 路线 A，§8.1 #1 真机拍板）。
+     *
+     * <p>始终用 {@link FirstPersonMode#THIRD_PERSON_MODEL}：库 {@code ItemInHandRendererMixin}
+     * 在此模式下整段 cancel vanilla 第一人称手/物渲染，改由模型渲染、受 {@link FirstPersonConfiguration}
+     * 门控（player-anim 1.0.2-rc1 无 {@code ENABLED} 值，此为库原生第一人称正路）。库默认 config 的
+     * {@code showRightArm/showLeftArm=false} 会隐藏手臂——这正是出厂第一人称只见持物无手臂的根因。
+     *
+     * @param useFpvArms true（本地玩家 + 命中 {@code _fpv} 变体）→ 开双臂 + 双手持物；
+     *                   false（无变体 / 远端玩家）→ 库默认 config（隐藏手臂，出厂行为不变）
+     */
+    static void applyFirstPersonRendering(KeyframeAnimationPlayer framePlayer, boolean useFpvArms) {
+        if (useFpvArms) {
+            framePlayer
+                .setFirstPersonConfiguration(
+                    new FirstPersonConfiguration()
+                        .setShowRightArm(true)
+                        .setShowLeftArm(true)
+                        .setShowRightItem(true)
+                        .setShowLeftItem(true))
+                .setFirstPersonMode(FirstPersonMode.THIRD_PERSON_MODEL);
+        } else {
+            framePlayer.setFirstPersonMode(FirstPersonMode.THIRD_PERSON_MODEL);
+        }
+    }
+
+    /**
+     * {@link #resolveFpvContent} 结果：要播的动画 id（原招或 {@code _fpv} 变体）+ 是否开
+     * 第一人称双臂。作为 {@link #playOnStack} 内 FPV 分支逻辑的可测契约（plan §P1）。
+     */
+    record FpvResolution(Identifier contentId, boolean useFpvArms) {
+    }
+
+    /**
+     * FPV 内容解析（plan-fpv-cast-av-v1 P1，纯逻辑可测 seam）：本地玩家播 {@code <id>} 时
+     * 优先取 {@code <id>_fpv} 变体（贴脸视角专调姿态，见 docs/player-animation-conventions.md §16）
+     * —— 命中则 {@code (变体 id, useFpvArms=true)}（路线 A，§8.1 #1：THIRD_PERSON_MODEL +
+     * FirstPersonConfiguration 开双臂/持物）；无变体或远端玩家 → {@code (原 id, false)}（TPV 动画
+     * + 库默认 config，第一人称隐藏手臂，出厂行为）。**远端玩家渲染分支零变化**（FPV 只影响本地
+     * 玩家，plan §P1 硬约束）。
+     *
+     * <p>本地玩家判定经 {@link #localPlayerPredicate} seam 注入——生产 = MinecraftClient 当前玩家，
+     * 单测经 {@link #setLocalPlayerPredicateForTest} 驱动本分支（headless 下
+     * {@code MinecraftClient.getInstance()==null}，否则此 wiring 永不被自动化测试覆盖）。
+     */
+    static FpvResolution resolveFpvContent(UUID pid, Identifier animId) {
+        if (localPlayerPredicate.isLocal(pid)) {
+            Identifier fpvId = fpvVariantId(animId);
+            if (BongAnimationRegistry.contains(fpvId)) {
+                return new FpvResolution(fpvId, true);
+            }
+        }
+        return new FpvResolution(animId, false);
+    }
+
+    /** 本地玩家判定 seam（{@link #resolveFpvContent}）。生产默认 = MinecraftClient 当前玩家。 */
+    @FunctionalInterface
+    interface LocalPlayerPredicate {
+        boolean isLocal(UUID pid);
+    }
+
+    /**
+     * 生产实现：仅真实客户端上、UUID == 当前本地玩家时为 true。单测 / 无 client 环境
+     * （{@code getInstance()==null} 或无 player）返回 false——故 {@code _fpv} 变体路径默认只在
+     * 真实客户端本地玩家上触发，远端玩家路径与既有 playOnStack 单测均不受影响。
+     */
+    private static boolean isLocalPlayerFromClient(UUID pid) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        return mc != null && mc.player != null && mc.player.getUuid().equals(pid);
+    }
+
+    /** 当前生效的本地玩家判定（默认生产实现，单测可注入）。 */
+    private static LocalPlayerPredicate localPlayerPredicate =
+        BongAnimationPlayer::isLocalPlayerFromClient;
+
+    /**
+     * 测试钩子：注入本地玩家判定，驱动 {@link #resolveFpvContent} 的 FPV 变体分支
+     * （headless 下真实 MinecraftClient 恒 null，该分支否则不可自动化回归）。用后必须
+     * {@link #resetForTest} 复位，防跨测试污染。
+     */
+    static void setLocalPlayerPredicateForTest(LocalPlayerPredicate predicate) {
+        localPlayerPredicate = predicate;
+    }
+
+    /** {@code <ns>:<path>} → {@code <ns>:<path>_fpv}（本地玩家第一人称变体查找 id，plan §P1）。 */
+    static Identifier fpvVariantId(Identifier animId) {
+        return new Identifier(animId.getNamespace(), animId.getPath() + "_fpv");
     }
 
     /** 便捷重载：默认 fade-out。 */
@@ -252,7 +340,7 @@ public final class BongAnimationPlayer {
         PENDING_REMOVALS.add(new PendingRemoval(stack, layer, ticks));
     }
 
-    /** 测试钩子：清零 pending 队列，防止跨测试污染。 */
+    /** 测试钩子：清零 pending 队列 + 复位本地玩家判定 seam，防止跨测试污染。 */
     static void resetForTest() {
         synchronized (PENDING_REMOVALS) {
             PENDING_REMOVALS.clear();
@@ -260,6 +348,7 @@ public final class BongAnimationPlayer {
         synchronized (ACTIVE_LAYERS) {
             ACTIVE_LAYERS.clear();
         }
+        localPlayerPredicate = BongAnimationPlayer::isLocalPlayerFromClient;
     }
 
     /** 每 client tick 扣 1；到 0 的从 AnimationStack 摘除并出队。 */

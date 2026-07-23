@@ -162,6 +162,11 @@ const PLAYER_SKILL_VFX_PREFIXES: &[&str] = &[
     "bong:zhenmai_",
     "bong:jiemai_",
     "bong:palm_",
+    // plan-skill-anim-fidelity-v1 P5：爆脉家族。登记前缀顺带修掉一处既存漏网——
+    // `bong:burst_meridian_beng_quan` 既不在本前缀表也不在下面的散号表（散号表登记
+    // 的是 `bong:beng_quan`），此前实际掉在 Normal 档，与「玩家主动施放技能粒子归
+    // Important」的设计意图不符。P5 新增的靠撞/血崩步/逆脉护体三个 id 随家族归位。
+    "bong:burst_meridian_",
 ];
 
 /// 无家族前缀的玩家技能粒子散号(爆脉/蜕壳的分招粒子、盾格挡、毒雾)。
@@ -773,7 +778,16 @@ mod tests {
             "bong:baomai_blood_burn",
             "bong:yidao_meridian_repair",
             "bong:zhenmai_sever_chain",
-            "bong:jiemai_burst_blood",
+            // P5 去复用后的真脉 5 招粒子（前缀 `bong:zhenmai_` 原地继承 Important）
+            "bong:zhenmai_parry_flash",
+            "bong:zhenmai_sever_snap",
+            // 被动断脉叙事仍发 jiemai_sever_flash，家族前缀保留
+            "bong:jiemai_sever_flash",
+            // P5 新登记的爆脉家族前缀（含既存漏网的 beng_quan 本尊）
+            "bong:burst_meridian_beng_quan",
+            "bong:burst_meridian_tie_shan_kao",
+            "bong:burst_meridian_xue_beng_bu",
+            "bong:burst_meridian_ni_mai_hu_ti",
             "bong:palm_strike",
         ] {
             assert_eq!(
@@ -805,6 +819,13 @@ mod tests {
             "bong:movement_dash",
             "bong:lingtian_till",
             "bong:cultivation_absorb",
+            // plan-skill-anim-fidelity-v1 P5：NPC 施法粒子有意留在 Normal 档。
+            // 去借用前它们借的 `bong:yidao_meridian_repair` / `bong:jiemai_neutralize_dust`
+            // 命中玩家技能家族前缀、误吃 Important,在拥挤 chunk 里挤掉玩家自己的技能
+            // 反馈;NPC 背景 cosmetic 不该与玩家主动施放争配额。
+            "bong:npc_heal_basic",
+            "bong:npc_buff_speed",
+            "bong:npc_buff_defense",
         ] {
             assert_eq!(
                 vfx_default_priority(id),

@@ -396,6 +396,37 @@ impl fmt::Display for ValidationError {
     }
 }
 
+/// Narrow test seam for exercising the production Redis encoder without
+/// exposing the bridge's general-purpose I/O command enum.
+#[cfg(test)]
+pub(super) fn encode_agent_ui_response_wire_for_test(
+    response: &AgentUiResponsePayloadV1,
+) -> Result<(&'static str, String), String> {
+    match prepare_outbound_command(RedisOutbound::AgentUiResponse(response.clone()))
+        .map_err(|error| error.to_string())?
+    {
+        RedisIoCommand::Publish { channel, payload } => Ok((channel, payload)),
+        other => Err(format!(
+            "AgentUiResponse must encode as a Redis publish command, got {other:?}"
+        )),
+    }
+}
+
+/// Narrow test seam for exercising the production narration decoder on the
+/// exact Redis channel emitted by Tiandao's `UiResponseConsumer`.
+#[cfg(test)]
+pub(super) fn parse_agent_narration_wire_for_test(payload: &str) -> Result<NarrationV1, String> {
+    match parse_inbound_message(CH_AGENT_NARRATE, payload).map_err(|error| error.to_string())? {
+        Some(RedisInbound::AgentNarration(narration)) => Ok(narration),
+        Some(other) => Err(format!(
+            "{CH_AGENT_NARRATE} must decode as AgentNarration, got {other:?}"
+        )),
+        None => Err(format!(
+            "{CH_AGENT_NARRATE} unexpectedly decoded as an ignored channel"
+        )),
+    }
+}
+
 pub fn spawn_redis_bridge(
     redis_url: &str,
 ) -> (

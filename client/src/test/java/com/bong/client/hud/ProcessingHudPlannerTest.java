@@ -11,6 +11,7 @@ import net.minecraft.util.math.BlockPos;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProcessingHudPlannerTest {
@@ -104,6 +105,57 @@ class ProcessingHudPlannerTest {
         List<HudRenderCommand> commands = AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L);
 
         assertTrue(commands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.PROCESSING_HUD));
+    }
+
+    @Test
+    void alchemyDirectStoreZeroTargetCannotBypassActiveHudGuard() {
+        AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(
+            new BlockPos(0, 64, 0), 1, 92f, 100f, "self", true));
+        AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
+            "legacy_recipe",
+            true,
+            50,
+            0,
+            0.5f,
+            0.5f,
+            0.1f,
+            5.0,
+            10.0,
+            "炼制中",
+            List.of(),
+            List.of()
+        ));
+
+        assertFalse(AlchemySessionStore.snapshot().isActive(),
+            "direct-store active=true 也必须服从 targetTicks > 0 不变量");
+        assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
+                .noneMatch(cmd -> cmd.layer() == HudRenderLayer.PROCESSING_HUD),
+            "绕过 handler 写入的零目标快照也不得渲染“炼制 0%”");
+    }
+
+    @Test
+    void alchemyDirectStoreBlankRecipeCannotBypassActiveHudGuard() {
+        AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(
+            new BlockPos(0, 64, 0), 1, 92f, 100f, "self", true));
+        AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
+            "   ",
+            true,
+            50,
+            100,
+            0.5f,
+            0.5f,
+            0.1f,
+            5.0,
+            10.0,
+            "炼制中",
+            List.of(),
+            List.of()
+        ));
+
+        assertFalse(AlchemySessionStore.snapshot().isActive(),
+            "blank recipe id 不得被 direct-store active=true 绕过");
+        assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
+                .noneMatch(cmd -> cmd.layer() == HudRenderLayer.PROCESSING_HUD));
     }
 
     @Test
