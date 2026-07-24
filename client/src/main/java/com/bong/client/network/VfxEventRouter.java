@@ -73,6 +73,10 @@ public final class VfxEventRouter {
                     play.priority(),
                     play.fadeInTicks()
                 );
+                // 动画事件驱动的施法 juice（heaven_gate 蓄力渐强 / 释放最大震动）——只对本地
+                // 玩家自己的登记动画触发，非本地/非登记 = no-op，不影响动画派发结果。
+                com.bong.client.combat.juice.CastFovController.onAnimPlayed(
+                    play.targetPlayer(), play.animId());
                 missContext = "bridge declined play_anim " + play.animId() + " on " + play.targetPlayer();
             } else if (payload instanceof VfxEventPayload.PlayAnimInline inline) {
                 ok = animationBridge.playAnimInline(

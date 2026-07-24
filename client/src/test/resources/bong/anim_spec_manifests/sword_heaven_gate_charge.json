@@ -1,6 +1,7 @@
 {
   "segment": "charge_hold",
-  "expected_end_tick": 60,
+  "expected_end_tick": 200,
+  "motion_end_tick": 60,
   "primary_axes": [
     "rightArm.pitch",
     "leftArm.pitch",
