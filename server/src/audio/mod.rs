@@ -609,11 +609,13 @@ mod tests {
         );
     }
 
-    /// 逐项 pin：7 条 server signature recipe 的层确实引用了为它新建的 `bong:` 事件
-    /// （防「注册了事件却没 recipe 消费」= 死资产反向漂移）。heaven_gate 是 client 侧
-    /// recipe，由 `SignatureAudioContractTest` 覆盖。
+    /// 逐项 pin：7 条 server signature recipe 的 **L0 主层** 确实换成了为它新建的 `bong:` 事件
+    /// 且 **pitch 复位 1.0**（plan §P4「把主层 sound id 从 minecraft: 换成 bong: 事件、pitch 复位」）。
+    /// 只查「任意层引用」不够——签名事件若被挪到不显著的铺底层，声音天花板依旧锁死却测试假绿；
+    /// 因此锁死 `layers[0].sound` 与 `layers[0].pitch`。heaven_gate 是 client 侧 recipe，由
+    /// `SignatureAudioContractTest` 覆盖（含 charge_2s 前兆层的 pitch=0.72/volume=0.4 pin）。
     #[test]
-    fn each_server_signature_recipe_uses_its_bong_event() {
+    fn each_server_signature_recipe_swaps_l0_main_layer_to_its_bong_event() {
         use std::path::Path;
 
         let recipe_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/audio/recipes");
@@ -632,13 +634,23 @@ mod tests {
                 .unwrap_or_else(|error| panic!("读 {} 失败: {error}", path.display()));
             let recipe: serde_json::Value = serde_json::from_str(&raw).expect("recipe 合法 JSON");
             let layers = recipe["layers"].as_array().expect("recipe 应有 layers");
-            let referenced = layers
-                .iter()
-                .any(|l| l.get("sound").and_then(|s| s.as_str()) == Some(expected_event));
+            let l0 = layers
+                .first()
+                .unwrap_or_else(|| panic!("signature recipe {recipe_id} 至少应有 L0 主层"));
+            assert_eq!(
+                l0.get("sound").and_then(|s| s.as_str()),
+                Some(expected_event),
+                "signature recipe {recipe_id} 的 **L0 主层** sound 应 == {expected_event}\
+                 （plan 要求主层 swap，非把签名挪到铺底层——挪走则声音天花板未打开却假绿）"
+            );
+            let pitch = l0
+                .get("pitch")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or_else(|| panic!("signature recipe {recipe_id} 的 L0 应有 pitch"));
             assert!(
-                referenced,
-                "signature recipe {recipe_id} 应引用其 bong: 事件 {expected_event}\
-                 （防资产只注册不消费），实际 layers 无此引用"
+                (pitch - 1.0).abs() < 1e-9,
+                "signature recipe {recipe_id} 的 L0 pitch 应复位 1.0（plan 要求；伪装音靠叠 pitch，\
+                 签名真音须原速），实际 {pitch}"
             );
         }
     }
