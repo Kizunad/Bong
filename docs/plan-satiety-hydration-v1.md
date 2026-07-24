@@ -1,6 +1,6 @@
 # plan-satiety-hydration-v1 — 玩家饱食度 + 水分双轴生存系统（塔科夫式）
 
-> **状态：骨架（skeleton）**。转 active 前必须按 `docs/CLAUDE.md §五` 把 §8 开放问题收口成 §8.1 决议。
+> **状态：Active（pre-P0 决策门已收口，2026-07-19）**。§8 原问题表保留作历史追溯；实施以 §8.1 决议为准。
 >
 > 一句话主题：给玩家加「饱食度 + 水分」双生理轴（0–120，出生 80），五段生理带驱动体力恢复加速 / 虚弱 / 极度虚弱 / 缓慢掉血 / 过饱移动呕吐；参考塔科夫（Energy/Hydration）在 Inventory Tab 放双状态条；**存量食物全量迁移**为「使用后加减食/水数值」（可为负，如干粮扣水）。
 
@@ -59,35 +59,40 @@ pub fn band_of(value: f32) -> NourishBand   // 阈值见下表，边界闭开约
 
 **周期消耗**（`tick.rs`，仿 `shelflife/sweep.rs` 每 200 tick = 10s 扫一次）：
 
-- `NOURISH_SATIETY_LOSS_PER_MIN = 0.8`、`NOURISH_HYDRATION_LOSS_PER_MIN = 1.2`（静止基准；80→20 分别约 75 / 50 分钟，塔科夫式「水比饭掉得快」）
+- `NOURISH_SATIETY_LOSS_PER_MIN = 0.8`、`NOURISH_HYDRATION_LOSS_PER_MIN = 1.2`（静止基准；醒灵 80→20 分别约 75 / 50 分钟，塔科夫式「水比饭掉得快」）
 - 活动乘数：该 sweep 窗口内有水平位移 ×1.5，`MovementState.action == Dashing` ×3.0
-- clamp 到 0 不为负；数值全部标「§8 #5 待校准」，P4 按 playtest 调
+- 境界乘数由纯函数 `nourishment_loss_multiplier(Realm)` 给出：醒灵 1.00、引气 0.95、凝脉 0.90、固元 0.85、通灵 0.80、化虚 0.75；化虚静止 80→20 分别约 100 / 66.7 分钟，仍不存在辟谷或零消耗
+- 每轴实际扣减 = `base_loss × activity_multiplier × realm_multiplier`；境界乘数只作用于周期消耗，不改食水恢复、Critical 掉血或呕吐扣减
+- clamp 到 0 不为负；上述数值是 v1 初始基线，P4 只能按 §8.1 #5 的同步校准契约调整
 
 ## §2 饥渴掉血（P1）
 
-仿 `wound_bleed_tick`（`combat/lifecycle.rs:171`）新写 `nourishment_starve_tick`（每 20 tick），**每轴独立结算**：饱食轴处于 Critical 扣 `NOURISH_STARVE_HP_PER_SEC = 0.04`，水分轴处于 Critical 扣 `NOURISH_PARCH_HP_PER_SEC = 0.08`，仅当**两轴同时 Critical** 才叠加为 0.12/s（对应 §1「掉血两轴叠加」——单轴时只扣该轴自己的速率），扣 `Wounds.health_current`，跨死亡线时 `deaths.send(DeathEvent { cause: "starvation" | "dehydration", attacker: None })` 进 `death_arbiter_tick` → NearDeath 正常链路。**禁止**绕过 `DeathEvent` 直接判死。掉血速率相对 `health_max` 的实际标定（预期：纯饿死 Critical 满血起 ≥8 分钟、纯渴死 ≥4 分钟）在 P1 落地时按真实 `health_max` 换算并 pin 测试。
+仿 `wound_bleed_tick`（`combat/lifecycle.rs:171`）新写 `nourishment_starve_tick`（每 20 tick），**每轴独立结算**：以 `NOURISH_STARVE_FULL_HEALTH_SECONDS = 600`、`NOURISH_PARCH_FULL_HEALTH_SECONDS = 300` 锁定纯饥饿 Critical 满血致死 10 分钟、纯脱水 5 分钟；每秒伤害分别按 `health_max / 600`、`health_max / 300` 计算，默认 `health_max = 100` 时约为 `0.1666667`、`0.3333333 HP/s`。仅当**两轴同时 Critical** 才叠加，默认满血约 3 分 20 秒，对应 §1「掉血两轴叠加」。扣 `Wounds.health_current`，跨死亡线时 `deaths.send(DeathEvent { cause: "starvation" | "dehydration", attacker: None })` 进 `death_arbiter_tick` → NearDeath 正常链路。**禁止**绕过 `DeathEvent` 直接判死。上述时长与公式由边界测试 pin；P4 校准必须同步 plan、常数与测试（§8.1 #5）。
 
 ## §3 过饱呕吐（P1，机制 + A/V 同交付物）
 
 `vomit.rs`：任一轴 Overfull 时，每 tick 比较 `Position` vs `OldPosition` 水平位移 > 0.05 格判「在移动」，反胃值 `nausea` +1.2（Dashing +3.0）；静止时 nausea 每 tick −0.5 回落。`nausea ≥ 100` → 呕吐结算：
 
 - `satiety −15`、`hydration −10`（吐了白吃），nausea 清零，`NOURISH_VOMIT_COOLDOWN_TICKS = 200` 冷却
-- 挂 `StatusEffectKind::Slowed`（**复用既有通用减速变体**，magnitude 0.5 = 移速减半，duration 60 tick）走 `ApplyStatusEffectIntent` 标准链——不新增 `Nausea` 变体：`Slowed` 已是 magnitude 参数化通用 debuff（sword_path/alchemy/npc/zhenfa 等 15+ 处复用），另造近义变体是命名红旗；若后续呕吐需要独立 HUD 图标语义再评估拆分
+- 呕吐开始即施加与 20-tick 动画对齐的 `StatusEffectKind::Stunned`，复用现有 attack / defense / cast 权威门；活跃 cast 必须走既有 `CastSyncV1::InterruptControl` 中断链，不能只删组件
+- 若玩家正在举盾，emit/复用 `LowerShieldIntent` 解除 `ShieldBlock`；raise-shield 与 movement/dash 入口必须显式拒绝活跃 `Stunned` 并以测试 pin，不能假定现有门已覆盖
+- 呕吐结束后继续挂 `StatusEffectKind::Slowed`（**复用既有通用减速变体**，magnitude 0.5 = 移速减半，duration 60 tick）走 `ApplyStatusEffectIntent` 标准链——它是恢复期减速，不替代动作互斥；不新增 `Nausea` 变体：`Slowed` 已是 magnitude 参数化通用 debuff（sword_path/alchemy/npc/zhenfa 等 15+ 处复用），另造近义变体是命名红旗
 - 事件流：「胃里翻江倒海，你把刚吃下的东西吐了个干净。」（player scope，World 频道，Normal 优先级，perception）
 
 **呕吐 A/V 规格**（视听与机制同阶段交付，不后置）：
 
 - **粒子**：`BongSpriteParticle`，burst 模式一次 14 枚，lifetime 12–18 tick，初速沿玩家视线前下方 0.15–0.3 格/tick 锥形散布，颜色 `#7A8F3C` / `#5C6E2E` 交替，贴图新增 `vomit_chunk`（4×4 斑点两帧），`bong:vfx_event` ID `vomit_burst`，client 侧 `VomitBurstVfxPlayer`
 - **音效**：audio_recipe `vomit.json` 三层——L1 `entity.player.burp` pitch 0.6 vol 0.8 delay 0；L2 `entity.slime.squish` pitch 0.65 vol 0.9 delay 2；L3 `block.pointed_dripstone.drip_water` pitch 0.7 vol 0.5 delay 5
-- **动画**：`gen_vomit.py` 产 PlayerAnimator JSON——torso.pitch 0→0.55rad（6 tick，easeOutQuad）→ 保持 8 tick → 回正 6 tick，head.pitch +0.3rad 同步，body.z 前移 0.05；endTick 20 处**所有用到的 axis 补同值关键帧**（PlayerAnimator 循环衰减库坑 #1）
+- **动画**：`gen_vomit.py` 产 PlayerAnimator JSON——torso.pitch 0→0.55rad（6 tick，easeOutQuad）→ 保持 8 tick → 回正 6 tick，head.pitch +0.3rad 同步，body.z 前移 0.05；endTick 20 处**所有用到的 axis 补同值关键帧**（PlayerAnimator 循环衰减库坑 #1）；以 semantic priority `3000` 进入 `FULL_BODY` channel，client 通道覆盖只承担表现，server 的 `Stunned`/cast/盾/移动门才是权威互斥
 - **HUD**：`screenTint` `#4A5D2A` opacity 0.22，fade-in 10 tick / fade-out 15 tick，VISUAL 层（仿 `TiandaoPresenceHudPlanner`）
 
 ## §4 P0 — server 底盘
 
 - `server/src/nourishment/{mod,tick,effects,vomit}.rs`：`Nourishment` / `NourishBand` / `band_of` / 常数表；sweep system 注册进主 schedule
-- **持久化**：仿 `DigestionLoad` 模板（`cultivation/poison_trait/components.rs`）——`persist_player_cultivation_bundle`（`persistence/mod.rs:6153`）bundle 加 `"nourishment"` 键；`cultivation/mod.rs:910` hydration 段加解码块；autosave query 带上组件；转世/复活重置 80/80（§8 #3）
+- **持久化**：仿 `DigestionLoad` 模板（`cultivation/poison_trait/components.rs`）——`persist_player_cultivation_bundle`（`persistence/mod.rs:6153`）bundle 加 `"nourishment"` 键；`cultivation/mod.rs:910` hydration 段加解码块；autosave / disconnect / shutdown query 与 cultivation 转世即时保存全部带上组件
+- **出生与生命周期重置**：join hydration 无存档时插入 80/80；正式复活在 `revive_lifecycle` 成功并 emit `PlayerRevived` 后重置 80/80；创建新角色/转世在 `reset_for_new_character` 独立路径重置 80/80。死亡瞬间、NearDeath 自救、登录、断线重连与普通持久化恢复均不得免费重置（§8.1 #3）
 - **dev 命令**：`/nourish set satiety|hydration <value>`、`/nourish show`（brigadier，dev-only 直写绕过消耗，对齐 `/qi set` 模式；CLAUDE.md dev 命令表更新交人工，本 plan 不改 CLAUDE.md）
-- **饱和测试**：五带边界逐点 pin（120.0/100.0/100.01/60.0/40.0/20.0/0.0，含 off-by-one）、消耗 clamp 0、活动乘数、持久化 roundtrip、断线重连保留、转世重置、`band_of` 全带专属 case
+- **饱和测试**：五带边界逐点 pin（120.0/100.0/100.01/60.0/40.0/20.0/0.0，含 off-by-one）、消耗 clamp 0、活动与六境界乘数、持久化 roundtrip、断线重连保留、正式复活重置、新角色/转世重置、NearDeath 自救不重置、`band_of` 全带专属 case
 
 ## §5 P2 — 物品迁移（塔科夫式食水数值，存量全迁）
 
@@ -99,9 +104,9 @@ satiety = 12.0      # 可为负（如烈酒/干粮脱水）
 hydration = 15.0
 ```
 
-`inventory/mod.rs` 加 `NourishProfile { satiety: f32, hydration: f32 }` 解析（`parse_item_effect` 旁新 `parse_item_nourish`）；`apply_cast_item_effect`（`cast_emit.rs:679`）在既有 effect 结算旁加食水入账：`value = clamp(value + delta, 0, 120)`——**允许吃过 100 顶到 120**（过饱是玩家自己的选择，超 120 部分浪费；§8 #4）。
+`inventory/mod.rs` 加 `NourishProfile { satiety: f32, hydration: f32 }` 解析（`parse_item_effect` 旁新 `parse_item_nourish`）；`apply_cast_item_effect`（`cast_emit.rs:679`）必须扩为完整消费事务，而非只在 `ItemEffect::FoodRegen` match 内加副作用：无既有 effect、但有 nourish 的食物/饮水也必须可消费。只有 freshness 与 cast 全部通过、物品成功扣除后才执行 `value = clamp(value + delta, 0, 120)`；freshness `CriticalBlock` 不扣物也不加食水，负 nourish delta 合法。**允许吃过 100 顶到 120**（过饱是玩家自己的选择，超 120 部分浪费；§8.1 #4）。
 
-**存量 food.toml 5 食迁移基线**（数值 §8 #5 校准；干湿分明，参考塔科夫）：
+**存量 food.toml 5 食迁移基线**（v1 初值；校准契约见 §8.1 #5，干湿分明，参考塔科夫）：
 
 | 物品 | satiety | hydration | 既有 effect |
 |------|------|------|------|
@@ -111,9 +116,9 @@ hydration = 15.0
 | 陈酒 | +3 | +18 | 保留 |
 | 陈醋 | +2 | +10 | 保留 |
 
-**水囊实装**：`water_skin`（现为 `workbench_materials.toml:260` 材料）加「满水囊」`water_skin_filled` 真实物品（`ItemCategory::Liquid`）：`hydration +55`，用后退回空 `water_skin`。注意：该 id 目前**仅**出现在过滤器单测的内存 fixture（`inventory/mod.rs:15134` `test_template(...)`，非生产注册）——P2 需**从零接线**（TOML 注册 + 消费链 + icon），不存在"落地即接活"的捷径，命名沿用该 id 只为与测试语汇一致。灌装交互（对水方块右键 C2S）见 §8 #2。新物品 icon 走 `/gen-image item`（跑不了则 `[BLOCKED: 需 /gen-image 生成 water_skin_filled.png]` + 占位接线）。
+**水囊实装**：`water_skin`（现为 `workbench_materials.toml:260`、`category = "misc"` 的材料）加「满水囊」`water_skin_filled` 真实物品，**沿用 `category = "misc"`；本 plan 不新增、不修改、也不依赖任何 `ItemCategory` 扩张**。满水囊 `hydration +55`，用后原子替换回空 `water_skin`；背包若无法容纳返回物，整笔消费失败，禁止先扣满水囊再丢空囊。注意：该 id 目前**仅**出现在过滤器单测的内存 fixture（`inventory/mod.rs:15134` `test_template(...)`，非生产注册）——P2 需**从零接线**（TOML 注册 + 消费事务 + icon），不存在“落地即接活”的捷径，命名沿用该 id 只为与测试语汇一致。灌装交互纳入 v1：client 准星检测发 `ClientRequestV1::WaterSkinFill { v, x, y, z, item_instance_id }`，server 复核存活/同维度/中心距离 ≤5/目标精确为 `BlockState::WATER`/实例仍是权威持有的空水囊后原子替换；灌装本身不恢复 hydration。新物品 icon 走 `/gen-image item`（跑不了则 `[BLOCKED: 需 /gen-image 生成 water_skin_filled.png]` + 占位接线）。
 
-**测试**：nourish 字段解析正反 sample、负值扣减、120 截断、空/满水囊转换、5 存量食物逐项 pin、无 nourish 字段物品行为不变（向后兼容）。
+**测试**：nourish 字段解析正反 sample、负值扣减、120 截断、无既有 effect 的 nourish-only 消费、freshness CriticalBlock 原子拒绝、满水囊饮用后空囊原子返回、背包无返回空间时整笔拒绝、水源请求 schema 正反 sample、服务端距离/维度/方块/实例权限负分支、5 存量食物逐项 pin、无 nourish 字段物品行为不变（向后兼容）。
 
 ## §6 P3 — schema + client（塔科夫双条进 Inventory Tab）
 
@@ -132,7 +137,7 @@ hydration = 15.0
 
 - bot e2e：`scripts/bot/scenarios/survival_nourishment.py`（仿 `cultivation_pill_consume.py` 结构）——`give` 熟肉 → intent 吃 → `wait_for` `combat_hud_state` satiety 上升；`/nourish set satiety 15` → 断言掉血 + 事件流；`/nourish set satiety 115` + 移动 → 断言呕吐（satiety 回落 + `vomit_burst` vfx event）；水囊满→空转换
 - A/V 差异化回归：呕吐动画/粒子/音效三件在真机可辨；双条/警示图标/vignette 各带截图核对
-- 数值校准：一轮真机 playtest 核 §1/§2 表（消耗节奏、掉血致死时长、呕吐触发手感），校准结果回写本 plan 数值表
+- 数值校准：一轮真机 playtest 核 §1/§2/§5 表（消耗节奏、掉血致死时长、呕吐触发手感、食水物品收益）；校准只能改数值，且同一 PR 同步更新本 plan 数值表、server constants 与 pin tests，禁止留下文档/代码/测试三方漂移
 - 全栈门禁：server `cargo fmt/clippy/test`、client `./gradlew test build`、schema `npm test`、`bash scripts/smoke-test-e2e.sh`
 
 ## §8 开放问题（P0 决策门前需收口）
@@ -145,6 +150,82 @@ hydration = 15.0
 6. **worldview 是否补锚**：§十 资源表无「食物」条目。**建议**：补一句「凡躯饮食」入 §十（人工单独 PR，本 plan 不动 worldview.md）；不补也不阻塞——匮乏基调已覆盖。
 7. **NPC 是否共用**：`npc/hunger.rs` 是否迁移到 `Nourishment`？**建议**：不迁，NPC AI need 与玩家生理轴目标不同（NPC 要的是 utility scorer 输入），另立 plan 再议。
 8. **呕吐动画与现有动作互斥**：呕吐动画播放期间 cast/格挡是否打断？**建议**：呕吐不打断硬动作，只叠加 `Slowed` 减速——保持简单，§8.1 时核 `PlayerAnimator` 通道占用现状再定。
+
+> 以上开放问题全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
+
+## §8.1 决议（pre-P0 收口，2026-07-19）
+
+### #1 境界是否降低消耗
+
+**决议**：
+1. 境界只降低饱食/水分的周期消耗，不形成辟谷：醒灵 1.00、引气 0.95、凝脉 0.90、固元 0.85、通灵 0.80、化虚 0.75。
+2. 在 `nourishment` 模块提供纯函数 `nourishment_loss_multiplier(Realm) -> f32`；每轴扣减公式固定为 `base_loss × activity_multiplier × realm_multiplier`，不保存可由 `Realm` 推导的冗余组件。
+3. 该倍率不作用于食物/饮水入账、Critical 掉血、呕吐扣减或其他 status；拒绝复用体力恢复/移速公式，也拒绝化虚零消耗。
+
+**落点**：`server/src/cultivation/components.rs:Realm::rank`、`server/src/movement/mod.rs:stamina_regen_rate` / plan §1 周期消耗、§4 P0。
+
+### #2 水源灌装交互与污染水
+
+**决议**：
+1. 灌装闭环纳入 v1，不延期：新增 `ClientRequestV1::WaterSkinFill { v, x, y, z, item_instance_id }`，client 只报准星意图，server 保持唯一权威。
+2. server 必须复核玩家存活、同维度、目标中心距离 ≤5、目标精确为 `BlockState::WATER`、`item_instance_id` 仍是玩家权威持有的空 `water_skin`，然后以原子库存事务替换为 `water_skin_filled`；灌装不直接恢复 hydration，饮用才 `+55`。
+3. v1 不接受 waterlogged 方块、炼药锅或客户端自报水质。现有 zone 没有 `water_quality`/`pollution`/`potable` 真源，因此所有合法 WATER 统一视作普通水；污染水延后到显式水质契约，禁止用 `danger_level`、`spirit_qi`、zone 名称、经脉 `Contamination` 或 `PoisonPillKind` 猜测。
+
+**落点**：`client/src/main/java/com/bong/client/input/IntentHandler.java`、`client/src/main/java/com/bong/client/input/InteractKeyRouter.java`、`client/src/main/java/com/bong/client/network/ClientRequestSender.java`、`server/src/schema/client_request.rs:ClientRequestV1` / plan §5 水囊实装、§7 bot e2e。
+
+### #3 死亡、复活与转世重置值
+
+**决议**：
+1. 正式复活成功后重置 80/80；创建新角色/转世也重置 80/80，但两者是两条独立生命周期接线。
+2. 正式复活在 `revive_lifecycle` 完整成功并 emit `PlayerRevived` 后处理；新角色路径在 `reset_for_new_character` 处理。死亡瞬间、`PlayerTerminated`、登录、断线重连和普通持久化恢复都不重置。
+3. NearDeath 自救不得免费恢复 80/80，并须有专门测试。若实现发现某类自救也发送 `PlayerRevived`，必须按 revival action/reason 收窄，而非泛监听后无条件重置。
+
+**落点**：`server/src/combat/lifecycle.rs:revive_lifecycle`、`server/src/combat/lifecycle.rs:reset_for_new_character`、`server/src/cultivation/death_hooks.rs:PlayerRevived` / plan §4 持久化与生命周期重置。
+
+### #4 过饱进食与消费事务
+
+**决议**：
+1. 任一轴 >100 时仍允许进食/饮用，成功消费后统一 `clamp(value + delta, 0, 120)`；超过 120 的部分浪费，负 nourish delta 合法，不加 100 禁食门。
+2. nourish 是与 `[item.effect]` 正交的消费契约；没有 `ItemEffect` 但有 `NourishProfile` 的物品也必须进入完整 cast/freshness/扣物事务。只有物品成功消费后才能入账，freshness `CriticalBlock` 不扣物也不加食水。
+3. `water_skin_filled` 饮用后返回 `water_skin` 必须原子化；背包无法容纳返回物时整笔拒绝，禁止先扣满水囊再丢空囊。
+
+**落点**：`server/src/network/cast_emit.rs:tick_casts_or_interrupt`、`server/src/inventory/mod.rs:ItemTemplate`、`server/assets/items/food.toml` / plan §5 物品迁移与测试。
+
+### #5 数值校准归属
+
+**决议**：
+1. v1 结构与语义现已锁定；初始数值采用 §1/§2/§5 的基线，不再把实施前置设计标作未决。
+2. Critical 致死标定为纯饥饿 600 秒、纯脱水 300 秒，按真实 `health_max` 等比例结算；双轴同时 Critical 时独立伤害叠加，默认 100 HP 约 200 秒。
+3. P4 playtest 可以调数值但不能改结构；每次校准必须同一 PR 同步 plan 表、server constants 与 pin tests，三者缺一即不算收口。
+
+**落点**：`server/src/combat/components.rs:DEFAULT_HEALTH_MAX`、`server/src/combat/components.rs:TICKS_PER_SECOND` / plan §1 周期消耗、§2 掉血、§5 食物表、§7 数值校准。
+
+### #6 worldview 是否补锚
+
+**决议**：
+1. 当前 plan 不修改 `docs/worldview.md`；食水双轴是对 worldview §十“资源与匮乏”的 gameplay 外推，与搜打撤和末法匮乏基调一致。
+2. 正典当前没有明确写“凡躯必须饮食”或“辟谷”，plan 不把推论伪称为已有原文；不补资源表不阻塞实施。
+3. 若未来要补「凡躯饮食」canon，必须人工另开单独 PR review，不能由 `/consume-plan` 顺手改 worldview。
+
+**落点**：`docs/worldview.md §十 资源与匮乏`、`docs/CLAUDE.md §6.3` / plan 接入面 worldview 锚点、§10 PR 边界。
+
+### #7 NPC 是否共用玩家双轴
+
+**决议**：
+1. 不迁移、不复用：玩家 `Nourishment` 是 0–120 的双轴生理状态；NPC `Hunger` 是 0–1 的 BigBrain utility scorer 输入，语义、尺度与消费者均不同。
+2. 本 plan 不强行给 NPC 增加 hydration，不抽象通用 trait，也不改现有 NPC 饥饿衰减、FarmAction、捕食回补、日程或繁衍门槛。
+3. 未来若 NPC 需要双轴生理，另立 plan 完整迁移组件、scorer 和行为数值，禁止在本 plan 半迁移留下两套真相源。
+
+**落点**：`server/src/npc/hunger.rs:Hunger`、`server/src/npc/hunger.rs:hunger_pressure` / plan 接入面近义重名声明、§1 `Nourishment`。
+
+### #8 呕吐与现有动作互斥
+
+**决议**：
+1. 呕吐是 server 权威硬动作，不能仅播动画或只挂 `Slowed`：触发时施加与 20-tick 动画对齐的 `StatusEffectKind::Stunned`，复用现有 attack、defense 与 cast 门；cast 必须走 `CastSyncV1::InterruptControl` 标准中断链。
+2. 活跃 `ShieldBlock` 必须经 `LowerShieldIntent` 解除；raise-shield 与 movement/dash 入口都必须新增活跃 `Stunned` 拒绝及饱和测试。现有 `Stunned` 尚不能被假定覆盖移动或重新举盾。
+3. client `bong:vomit` 动画以 priority 3000 进入 `FULL_BODY` channel、持续 20 tick；动画通道只负责表现。动作结束后再施加 `Slowed { magnitude: 0.5, duration: 60 }` 作为恢复期，禁止另造未接既有门的孤立动作状态。
+
+**落点**：`server/src/network/cast_emit.rs:tick_casts_or_interrupt`、`server/src/combat/resolve.rs:apply_defense_intents`、`server/src/combat/resolve.rs:resolve_attack_intents`、`server/src/combat/shield_block.rs:LowerShieldIntent`、`client/src/main/java/com/bong/client/animation/AnimationLayerManager.java:Channel` / plan §3 呕吐机制与 A/V。
 
 ## §10 实施工作流（scope = 5 PR，按 docs/CLAUDE.md §六）
 
