@@ -1,5 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize};
-use valence::prelude::{bevy_ecs, App, Component, IntoSystemConfigs, Update};
+use valence::prelude::{apply_deferred, bevy_ecs, App, Component, IntoSystemConfigs, Update};
 
 use crate::cultivation::components::Realm;
 
@@ -20,6 +20,7 @@ pub const NOURISH_IDLE_ACTIVITY_MULTIPLIER: f32 = 1.0;
 pub const NOURISH_MOVE_ACTIVITY_MULTIPLIER: f32 = 1.5;
 pub const NOURISH_DASH_ACTIVITY_MULTIPLIER: f32 = 3.0;
 pub const NOURISH_MOVEMENT_EPSILON_BLOCKS: f64 = 0.05;
+pub const NOURISH_MOVEMENT_LEASE_TICKS: u64 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NourishmentAxis {
@@ -197,9 +198,16 @@ pub fn nourishment_loss_multiplier(realm: Realm) -> f32 {
 }
 
 pub fn register(app: &mut App) {
+    app.add_event::<valence::movement::MovementEvent>();
     app.add_systems(
         Update,
-        tick::tick_nourishment
+        (
+            tick::attach_movement_tracker,
+            apply_deferred,
+            tick::record_movement_events,
+            tick::tick_nourishment,
+        )
+            .chain()
             .after(crate::movement::tick_movement_actions)
             .after(crate::movement::handle_movement_action_intents),
     );
@@ -342,11 +350,68 @@ mod tests {
     }
 
     #[test]
+    fn production_schedule_consumes_movement_event_and_attaches_default_tracker_same_update() {
+        use valence::movement::MovementEvent;
+        use valence::prelude::{DVec3, Look};
+
+        let mut app = valence::prelude::App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 31 });
+        app.add_event::<MovementEvent>();
+        crate::nourishment::register(&mut app);
+
+        let (client_bundle, _helper) = valence::testing::create_mock_client("WalkNourishment");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                crate::movement::MovementState::default(),
+                crate::cultivation::components::Cultivation::default(),
+                Nourishment::spawn_default(),
+                tick::NourishmentActivityWindow::default(),
+            ))
+            .id();
+
+        app.world_mut().send_event(MovementEvent {
+            client: entity,
+            position: DVec3::new(0.051, 64.0, 0.0),
+            old_position: DVec3::new(0.0, 64.0, 0.0),
+            look: Look::default(),
+            old_look: Look::default(),
+            on_ground: true,
+            old_on_ground: true,
+        });
+        app.update();
+
+        assert_eq!(
+            *app.world()
+                .get::<tick::NourishmentActivityWindow>(entity)
+                .expect("production nourishment register should retain an activity window"),
+            tick::NourishmentActivityWindow {
+                idle_ticks: 0,
+                move_ticks: 1,
+                dash_ticks: 0,
+            },
+            "a qualifying MovementEvent must count as movement in the same production update"
+        );
+        assert_eq!(
+            app.world()
+                .get::<tick::NourishmentMovementTracker>(entity)
+                .expect(
+                    "production register must attach the session tracker before consuming events"
+                )
+                .last_moved_at_tick(),
+            Some(31),
+            "the attached default tracker must be visible through deferred Commands and refreshed"
+        );
+    }
+
+    #[test]
     fn production_schedule_counts_dash_intent_as_dash_on_its_starting_tick() {
         let mut app = valence::prelude::App::new();
         app.insert_resource(crate::combat::CombatClock { tick: 17 });
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
+        app.add_event::<valence::movement::MovementEvent>();
         crate::movement::register(&mut app);
         crate::nourishment::register(&mut app);
 

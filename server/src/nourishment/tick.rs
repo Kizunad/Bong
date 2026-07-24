@@ -1,14 +1,19 @@
 use serde::{Deserialize, Deserializer, Serialize};
-use valence::prelude::{bevy_ecs, Client, Component, OldPosition, Position, Query, With};
+use valence::movement::MovementEvent;
+use valence::prelude::{
+    bevy_ecs, Client, Commands, Component, Entity, EventReader, Query, Res, With, Without,
+};
 
+use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::movement::{MovementAction, MovementState};
 
 use super::{
     nourishment_loss_multiplier, Nourishment, NOURISH_DASH_ACTIVITY_MULTIPLIER,
     NOURISH_HYDRATION_LOSS_PER_MIN, NOURISH_IDLE_ACTIVITY_MULTIPLIER,
-    NOURISH_MOVEMENT_EPSILON_BLOCKS, NOURISH_MOVE_ACTIVITY_MULTIPLIER,
-    NOURISH_SATIETY_LOSS_PER_MIN, NOURISH_SWEEP_INTERVAL_TICKS, NOURISH_TICKS_PER_MINUTE,
+    NOURISH_MOVEMENT_EPSILON_BLOCKS, NOURISH_MOVEMENT_LEASE_TICKS,
+    NOURISH_MOVE_ACTIVITY_MULTIPLIER, NOURISH_SATIETY_LOSS_PER_MIN, NOURISH_SWEEP_INTERVAL_TICKS,
+    NOURISH_TICKS_PER_MINUTE,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Component)]
@@ -80,6 +85,63 @@ impl NourishmentActivityWindow {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Component)]
+pub struct NourishmentMovementTracker {
+    last_moved_at_tick: Option<u64>,
+}
+
+impl NourishmentMovementTracker {
+    fn record_movement(&mut self, now_tick: u64) {
+        self.last_moved_at_tick = Some(now_tick);
+    }
+
+    fn elapsed_ticks(self, now_tick: u64) -> Option<u64> {
+        self.last_moved_at_tick
+            .map(|last_moved_at_tick| now_tick.saturating_sub(last_moved_at_tick))
+    }
+
+    fn is_moving(self, now_tick: u64) -> bool {
+        self.elapsed_ticks(now_tick)
+            .is_some_and(|elapsed_ticks| elapsed_ticks < NOURISH_MOVEMENT_LEASE_TICKS)
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_moved_at_tick(self) -> Option<u64> {
+        self.last_moved_at_tick
+    }
+}
+
+pub fn attach_movement_tracker(
+    mut commands: Commands,
+    players: Query<Entity, (With<Client>, Without<NourishmentMovementTracker>)>,
+) {
+    for entity in &players {
+        commands
+            .entity(entity)
+            .insert(NourishmentMovementTracker::default());
+    }
+}
+
+fn has_qualifying_horizontal_movement(event: &MovementEvent) -> bool {
+    let delta_x = event.position.x - event.old_position.x;
+    let delta_z = event.position.z - event.old_position.z;
+    delta_x.hypot(delta_z) > NOURISH_MOVEMENT_EPSILON_BLOCKS
+}
+
+pub fn record_movement_events(
+    clock: Res<CombatClock>,
+    mut events: EventReader<MovementEvent>,
+    mut trackers: Query<&mut NourishmentMovementTracker, With<Client>>,
+) {
+    for event in events.read() {
+        if has_qualifying_horizontal_movement(event) {
+            if let Ok(mut tracker) = trackers.get_mut(event.client) {
+                tracker.record_movement(clock.tick);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NourishmentActivity {
     Idle,
@@ -88,19 +150,15 @@ pub enum NourishmentActivity {
 }
 
 pub fn classify_activity(
-    position: &Position,
-    old_position: &OldPosition,
+    tracker: &NourishmentMovementTracker,
     movement_state: &MovementState,
+    now_tick: u64,
 ) -> NourishmentActivity {
     if movement_state.action == MovementAction::Dashing {
         return NourishmentActivity::Dashing;
     }
 
-    let position = position.get();
-    let old_position = old_position.get();
-    let delta_x = position.x - old_position.x;
-    let delta_z = position.z - old_position.z;
-    if delta_x.hypot(delta_z) > NOURISH_MOVEMENT_EPSILON_BLOCKS {
+    if tracker.is_moving(now_tick) {
         NourishmentActivity::Moving
     } else {
         NourishmentActivity::Idle
@@ -124,22 +182,21 @@ type NourishmentTickQueryItem<'a> = (
     &'a mut Nourishment,
     &'a mut NourishmentActivityWindow,
     &'a Cultivation,
-    &'a Position,
-    &'a OldPosition,
+    Option<&'a NourishmentMovementTracker>,
     &'a MovementState,
 );
 
-pub fn tick_nourishment(mut players: Query<NourishmentTickQueryItem<'_>, With<Client>>) {
-    for (
-        mut nourishment,
-        mut activity_window,
-        cultivation,
-        position,
-        old_position,
-        movement_state,
-    ) in &mut players
+pub fn tick_nourishment(
+    clock: Option<Res<CombatClock>>,
+    mut players: Query<NourishmentTickQueryItem<'_>, With<Client>>,
+) {
+    let now_tick = clock.map_or(0, |clock| clock.tick);
+    for (mut nourishment, mut activity_window, cultivation, tracker, movement_state) in &mut players
     {
-        activity_window.record(classify_activity(position, old_position, movement_state));
+        let activity = tracker.map_or(NourishmentActivity::Idle, |tracker| {
+            classify_activity(tracker, movement_state, now_tick)
+        });
+        activity_window.record(activity);
         if !activity_window.is_complete() {
             continue;
         }
@@ -158,38 +215,166 @@ mod tests {
     use super::*;
     use crate::cultivation::components::Realm;
     use crate::nourishment::NOURISH_SPAWN_VALUE;
-    use valence::prelude::{App, Update};
+    use valence::prelude::{App, DVec3, Entity, Look, Update};
     use valence::testing::create_mock_client;
 
+    fn movement_event(client: Entity, old: [f64; 3], new: [f64; 3]) -> MovementEvent {
+        MovementEvent {
+            client,
+            position: DVec3::from_array(new),
+            old_position: DVec3::from_array(old),
+            look: Look::default(),
+            old_look: Look::default(),
+            on_ground: true,
+            old_on_ground: true,
+        }
+    }
+
+    fn event_is_qualifying(old: [f64; 3], new: [f64; 3]) -> bool {
+        has_qualifying_horizontal_movement(&movement_event(Entity::PLACEHOLDER, old, new))
+    }
+
     #[test]
-    fn activity_classification_prioritizes_dash_then_horizontal_motion() {
-        let position = Position::new([1.0, 64.0, 0.0]);
-        let old = OldPosition::new([0.0, 10.0, 0.0]);
-        assert_eq!(
-            classify_activity(&position, &old, &MovementState::default()),
-            NourishmentActivity::Moving,
-            "vertical movement must be ignored while horizontal movement counts"
+    fn horizontal_movement_threshold_is_strictly_above_epsilon() {
+        assert!(
+            !event_is_qualifying([0.0, 64.0, 0.0], [0.049, 64.0, 0.0]),
+            "horizontal movement below epsilon must remain idle"
         );
+        assert!(
+            !event_is_qualifying(
+                [0.0, 64.0, 0.0],
+                [NOURISH_MOVEMENT_EPSILON_BLOCKS, 64.0, 0.0],
+            ),
+            "horizontal movement exactly at epsilon must remain idle"
+        );
+        assert!(
+            event_is_qualifying([0.0, 64.0, 0.0], [0.051, 64.0, 0.0]),
+            "horizontal movement above epsilon must refresh activity"
+        );
+    }
 
-        let position = Position::new([0.05, 90.0, 0.0]);
-        let old = OldPosition::new([0.0, 10.0, 0.0]);
+    #[test]
+    fn vertical_and_zero_horizontal_events_do_not_qualify() {
+        assert!(
+            !event_is_qualifying([2.0, 10.0, -4.0], [2.0, 90.0, -4.0]),
+            "pure vertical movement must not refresh horizontal activity"
+        );
+        assert!(
+            !event_is_qualifying([2.0, 10.0, -4.0], [2.0, 10.0, -4.0]),
+            "look/on-ground packets with zero position delta must not refresh activity"
+        );
+    }
+
+    #[test]
+    fn movement_lease_pins_freshness_boundaries_and_saturates() {
+        let mut tracker = NourishmentMovementTracker::default();
         assert_eq!(
-            classify_activity(&position, &old, &MovementState::default()),
+            classify_activity(&tracker, &MovementState::default(), u64::MAX),
             NourishmentActivity::Idle,
-            "the exact epsilon boundary is idle"
+            "a tracker with no qualifying event must be idle"
         );
 
+        tracker.record_movement(100);
+        for (now_tick, expected, label) in [
+            (100, NourishmentActivity::Moving, "age 0"),
+            (119, NourishmentActivity::Moving, "age 19"),
+            (120, NourishmentActivity::Idle, "age 20"),
+            (50, NourishmentActivity::Moving, "clock regression"),
+        ] {
+            assert_eq!(
+                classify_activity(&tracker, &MovementState::default(), now_tick),
+                expected,
+                "{label} must obey the 20-tick freshness lease using saturating subtraction"
+            );
+        }
+
+        tracker.record_movement(120);
+        assert_eq!(
+            classify_activity(&tracker, &MovementState::default(), 139),
+            NourishmentActivity::Moving,
+            "a later qualifying event must refresh the lease"
+        );
+        assert_eq!(
+            classify_activity(&tracker, &MovementState::default(), 140),
+            NourishmentActivity::Idle,
+            "the refreshed lease must still expire exactly at age 20"
+        );
+    }
+
+    #[test]
+    fn dash_overrides_absent_or_stale_movement() {
         let movement = MovementState {
             action: MovementAction::Dashing,
             ..Default::default()
         };
         assert_eq!(
-            classify_activity(
-                &Position::new([0.0, 64.0, 0.0]),
-                &OldPosition::new([0.0, 64.0, 0.0]),
-                &movement,
-            ),
-            NourishmentActivity::Dashing
+            classify_activity(&NourishmentMovementTracker::default(), &movement, 500),
+            NourishmentActivity::Dashing,
+            "dash must win even when no movement event was ever observed"
+        );
+
+        let tracker = NourishmentMovementTracker {
+            last_moved_at_tick: Some(1),
+        };
+        assert_eq!(
+            classify_activity(&tracker, &movement, 500),
+            NourishmentActivity::Dashing,
+            "dash must win over an expired movement lease"
+        );
+    }
+
+    #[test]
+    fn session_tracker_attaches_default_before_nourishment_tick() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 7 });
+        app.add_event::<MovementEvent>();
+        crate::nourishment::register(&mut app);
+        let entity = app
+            .world_mut()
+            .spawn(create_mock_client("FreshSession").0)
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentMovementTracker>(entity)
+                .expect("production register must attach the session tracker"),
+            NourishmentMovementTracker::default(),
+            "a new session tracker must not inherit movement from persistence"
+        );
+    }
+
+    #[test]
+    fn same_tick_zero_delta_event_cannot_erase_qualifying_movement() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 42 });
+        app.add_event::<MovementEvent>();
+        app.add_systems(Update, record_movement_events);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NourishmentMovementTracker::default(),
+                create_mock_client("MultiPacket").0,
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(movement_event(entity, [0.0, 64.0, 0.0], [0.051, 64.0, 0.0]));
+        app.world_mut().send_event(movement_event(
+            entity,
+            [0.051, 64.0, 0.0],
+            [0.051, 80.0, 0.0],
+        ));
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<NourishmentMovementTracker>(entity)
+                .expect("tracker should remain attached")
+                .last_moved_at_tick,
+            Some(42),
+            "any qualifying event in a tick must win over later zero-horizontal events"
         );
     }
 
@@ -361,10 +546,9 @@ mod tests {
     #[test]
     fn production_tick_waits_for_full_window_then_applies_loss_and_resets() {
         let mut app = App::new();
+        app.insert_resource(CombatClock::default());
         app.add_systems(Update, tick_nourishment);
-        let (mut client_bundle, _helper) = create_mock_client("Azure");
-        client_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
-        client_bundle.player.old_position = OldPosition::new([0.0, 64.0, 0.0]);
+        let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app
             .world_mut()
             .spawn((
@@ -374,6 +558,7 @@ mod tests {
                     ..Default::default()
                 },
                 MovementState::default(),
+                NourishmentMovementTracker::default(),
                 Nourishment::spawn_default(),
                 NourishmentActivityWindow::default(),
             ))
