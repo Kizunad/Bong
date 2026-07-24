@@ -14,6 +14,8 @@ use crate::cultivation::death_hooks::{
     apply_revive_penalty, CultivationDeathCause, CultivationDeathTrigger, PlayerRevived,
     PlayerTerminated,
 };
+use crate::cultivation::insight::InsightQuota;
+use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
@@ -21,6 +23,8 @@ use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted, RebirthChanceInput,
     ZoneDeathKind,
 };
+use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
+use crate::cultivation::poison_trait::{DigestionLoad, PoisonToxicity};
 use crate::cultivation::tribulation::AscensionQuotaOpened;
 use crate::cultivation::{
     color::PracticeLog,
@@ -36,9 +40,12 @@ use crate::network::agent_bridge::{
 };
 use crate::network::send_server_data_payload;
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::nourishment::tick::NourishmentActivityWindow;
+use crate::nourishment::Nourishment;
 use crate::npc::spawn::NpcMarker;
 use crate::persistence::{
-    persist_near_death_transition, persist_revival_transition, persist_termination_transition,
+    persist_near_death_transition, persist_player_cultivation_bundle_with_nourishment,
+    persist_revival_transition, persist_termination_transition,
     persist_termination_transition_with_death_context, release_ascension_quota_slot,
     LifespanEventRecord, PersistenceSettings,
 };
@@ -55,6 +62,7 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillSet;
 use crate::skin::NpcVisualProfile;
 use crate::world::dimension::DimensionKind;
+use crate::world::spawn_tutorial::TutorialState;
 use crate::world::spirit_eye::SpiritEyeRegistry;
 use crate::world::zone::ZoneRegistry;
 
@@ -125,7 +133,11 @@ type NearDeathPersistenceQueryItem<'a> = (
     Option<&'a NpcVisualProfile>,
     Option<&'a mut PlayerInventory>,
     Option<&'a mut SkillSet>,
-    Option<&'a FaunaTag>,
+    (
+        Option<&'a FaunaTag>,
+        Option<&'a mut Nourishment>,
+        Option<&'a mut NourishmentActivityWindow>,
+    ),
 );
 
 struct DeathScreenContext<'a> {
@@ -753,7 +765,7 @@ pub fn near_death_tick(
         npc_visual_profile,
         _inventory,
         _skill_set,
-        fauna_tag,
+        (fauna_tag, _nourishment, _nourishment_activity),
     ) in &mut lifecycle_q
     {
         if lifecycle
@@ -1031,7 +1043,7 @@ pub fn handle_revival_action_intents(
             npc_visual_profile,
             inventory,
             skill_set,
-            _fauna_tag,
+            (_fauna_tag, nourishment, nourishment_activity),
         )) = lifecycle_q.get_mut(intent.entity)
         else {
             continue;
@@ -1064,6 +1076,8 @@ pub fn handle_revival_action_intents(
                         combat_state,
                         player_state,
                         position,
+                        nourishment,
+                        nourishment_activity,
                         &mut revived,
                         &mut quota_opened,
                         &mut commands,
@@ -1170,6 +1184,7 @@ pub fn handle_revival_action_intents(
                     entity,
                     &mut commands,
                     clock.tick,
+                    &persistence,
                     &mut lifecycle,
                     life_record,
                     death_registry,
@@ -1182,6 +1197,8 @@ pub fn handle_revival_action_intents(
                     username,
                     inventory,
                     skill_set,
+                    nourishment,
+                    nourishment_activity,
                     player_persistence.as_deref(),
                     default_loadout.as_deref(),
                     item_registry.as_deref(),
@@ -1515,6 +1532,8 @@ fn revive_lifecycle(
     combat_state: Option<valence::prelude::Mut<'_, CombatState>>,
     player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
     position: Option<valence::prelude::Mut<'_, Position>>,
+    nourishment: Option<valence::prelude::Mut<'_, Nourishment>>,
+    nourishment_activity: Option<valence::prelude::Mut<'_, NourishmentActivityWindow>>,
     revived: &mut EventWriter<PlayerRevived>,
     quota_opened: &mut EventWriter<AscensionQuotaOpened>,
     // P0 fix: coffin 清除参数（复活后不应继续锁棺）
@@ -1621,6 +1640,19 @@ fn revive_lifecycle(
         );
     }
 
+    if let Some(mut nourishment) = nourishment {
+        nourishment.reset_to_spawn();
+    } else {
+        commands.entity(entity).insert(Nourishment::spawn_default());
+    }
+    if let Some(mut nourishment_activity) = nourishment_activity {
+        nourishment_activity.reset();
+    } else {
+        commands
+            .entity(entity)
+            .insert(NourishmentActivityWindow::default());
+    }
+
     // P0 fix: 清 coffin 状态（复活后不应继续锁棺）。统一走 clear_coffin_on_exit 四件套。
     clear_coffin_on_exit(
         entity,
@@ -1631,12 +1663,88 @@ fn revive_lifecycle(
         coffin_username,
         coffin_lifespan,
     );
+    queue_nourishment_cultivation_bundle_persist(commands, entity, persistence.clone());
 
     revived.send(PlayerRevived { entity });
     true
 }
 
-/// 棺材状态四件套清除：CoffinRegistry + CoffinComponent(ECS) + SQLite(persist_in_coffin) + CoffinStateChanged。
+fn queue_nourishment_cultivation_bundle_persist(
+    commands: &mut valence::prelude::Commands,
+    entity: Entity,
+    settings: PersistenceSettings,
+) {
+    commands.add(
+        move |world: &mut valence::prelude::bevy_ecs::world::World| {
+            let (
+                Some(username),
+                Some(cultivation),
+                Some(meridians),
+                Some(qi_color),
+                Some(karma),
+                Some(contamination),
+                Some(life_record),
+                Some(practice_log),
+                Some(insight_quota),
+                Some(unlocked_perceptions),
+                Some(insight_modifiers),
+                Some(nourishment),
+                Some(nourishment_activity),
+            ) = (
+                world.get::<Username>(entity),
+                world.get::<Cultivation>(entity),
+                world.get::<MeridianSystem>(entity),
+                world.get::<QiColor>(entity),
+                world.get::<Karma>(entity),
+                world.get::<Contamination>(entity),
+                world.get::<LifeRecord>(entity),
+                world.get::<PracticeLog>(entity),
+                world.get::<InsightQuota>(entity),
+                world.get::<UnlockedPerceptions>(entity),
+                world.get::<InsightModifiers>(entity),
+                world.get::<Nourishment>(entity),
+                world.get::<NourishmentActivityWindow>(entity),
+            )
+            else {
+                tracing::warn!(
+                    "[bong][combat] skipped immediate nourishment persistence for {entity:?}: cultivation bundle is incomplete"
+                );
+                return;
+            };
+
+            let severed = world
+                .get::<MeridianSeveredPermanent>(entity)
+                .cloned()
+                .unwrap_or_default();
+            if let Err(error) = persist_player_cultivation_bundle_with_nourishment(
+                &settings,
+                username.0.as_str(),
+                cultivation,
+                meridians,
+                qi_color,
+                karma,
+                contamination,
+                life_record,
+                practice_log,
+                insight_quota,
+                unlocked_perceptions,
+                insight_modifiers,
+                world.get::<TutorialState>(entity),
+                &severed,
+                world.get::<PoisonToxicity>(entity),
+                world.get::<DigestionLoad>(entity),
+                Some(nourishment),
+                Some(nourishment_activity),
+            ) {
+                tracing::warn!(
+                    "[bong][combat] failed to persist nourishment lifecycle reset for `{}`: {error}",
+                    username.0,
+                );
+            }
+        },
+    );
+}
+
 ///
 /// 用于 revive / terminate / new_char 三条退出路径，确保任何离棺场景都不遗漏。
 /// 仅当玩家确实在棺内（registry.clear_player 返回 Some）时才落持久化和事件，避免噪音。
@@ -1804,6 +1912,7 @@ fn reset_for_new_character(
     entity: Entity,
     commands: &mut valence::prelude::Commands,
     now_tick: u64,
+    persistence: &PersistenceSettings,
     lifecycle: &mut Lifecycle,
     life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
     death_registry: Option<valence::prelude::Mut<'_, DeathRegistry>>,
@@ -1816,6 +1925,8 @@ fn reset_for_new_character(
     username: Option<&Username>,
     inventory: Option<valence::prelude::Mut<'_, PlayerInventory>>,
     skill_set: Option<valence::prelude::Mut<'_, SkillSet>>,
+    nourishment: Option<valence::prelude::Mut<'_, Nourishment>>,
+    nourishment_activity: Option<valence::prelude::Mut<'_, NourishmentActivityWindow>>,
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
     item_registry: Option<&crate::inventory::ItemRegistry>,
@@ -1927,6 +2038,18 @@ fn reset_for_new_character(
     } else {
         commands.entity(entity).insert(SkillSet::default());
     }
+    if let Some(mut nourishment) = nourishment {
+        nourishment.reset_to_spawn();
+    } else {
+        commands.entity(entity).insert(Nourishment::spawn_default());
+    }
+    if let Some(mut nourishment_activity) = nourishment_activity {
+        nourishment_activity.reset();
+    } else {
+        commands
+            .entity(entity)
+            .insert(NourishmentActivityWindow::default());
+    }
 
     let mut learned_recipes = LearnedRecipes::default();
     learned_recipes.learn("kai_mai_pill_v0".into());
@@ -1995,6 +2118,7 @@ fn reset_for_new_character(
             grade: None,
         });
     }
+    queue_nourishment_cultivation_bundle_persist(commands, entity, persistence.clone());
 }
 
 fn detect_zone_kind(
@@ -2387,6 +2511,30 @@ mod tests {
             ),
             root,
         )
+    }
+
+    fn load_persisted_nourishment(
+        settings: &PersistenceSettings,
+        username: &str,
+    ) -> (Nourishment, NourishmentActivityWindow) {
+        let bundle = crate::persistence::load_player_cultivation_bundle(settings, username)
+            .expect("cultivation bundle reload should succeed")
+            .expect("cultivation bundle should exist");
+        let nourishment = serde_json::from_value(
+            bundle
+                .get("nourishment")
+                .cloned()
+                .expect("cultivation bundle should persist nourishment"),
+        )
+        .expect("persisted nourishment should decode");
+        let activity_window = serde_json::from_value(
+            bundle
+                .get("nourishment_activity_window")
+                .cloned()
+                .expect("cultivation bundle should persist the activity window"),
+        )
+        .expect("persisted activity window should decode");
+        (nourishment, activity_window)
     }
 
     #[test]
@@ -3328,6 +3476,92 @@ mod tests {
             biography_len_before,
             "期望 biography 不新增 NearDeath 条目因为守卫应在 push 之前 continue；实际长度 {}",
             life_record.biography.len()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn near_death_stabilization_preserves_nourishment_and_activity_window() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("near-death-nourishment-preserve");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathCinematicPublished>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(
+            Update,
+            (
+                death_arbiter_tick,
+                near_death_tick.after(death_arbiter_tick),
+            ),
+        );
+
+        let expected_nourishment = Nourishment {
+            satiety: 37.0,
+            hydration: 46.0,
+        };
+        let expected_activity = NourishmentActivityWindow {
+            idle_ticks: 17,
+            move_ticks: 23,
+            dash_ticks: 31,
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                LifeRecord::new("offline:Stable"),
+                Lifecycle::default(),
+                expected_nourishment,
+                expected_activity,
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "test_stabilization".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 100,
+        });
+        app.update();
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::NearDeath,
+            "the production death arbiter should enter NearDeath before healing"
+        );
+
+        app.world_mut()
+            .get_mut::<Wounds>(entity)
+            .expect("near-death actor should retain wounds")
+            .health_current = 2.0;
+        app.world_mut().resource_mut::<CombatClock>().tick = 101;
+        app.update();
+
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::Alive);
+        assert_eq!(lifecycle.near_death_deadline_tick, None);
+        assert_eq!(
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            expected_nourishment,
+            "stabilizing above the strict five-percent threshold is not a formal revival and must preserve both axes"
+        );
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap(),
+            expected_activity,
+            "stabilization must preserve every accumulated activity tick"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -4308,10 +4542,28 @@ mod tests {
                     ..Default::default()
                 },
                 crate::cultivation::components::MeridianSystem::default(),
+                crate::cultivation::components::QiColor::default(),
+                crate::cultivation::components::Karma::default(),
+                crate::cultivation::color::PracticeLog::default(),
                 crate::cultivation::components::Contamination::default(),
                 LifeRecord::new("offline:Ancestor"),
+                crate::cultivation::insight::InsightQuota::default(),
+                crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+                crate::cultivation::insight_apply::InsightModifiers::new(),
+                Username("Ancestor".to_string()),
             ))
             .id();
+        app.world_mut().entity_mut(entity).insert((
+            Nourishment {
+                satiety: 7.0,
+                hydration: 8.0,
+            },
+            NourishmentActivityWindow {
+                idle_ticks: 30,
+                move_ticks: 40,
+                dash_ticks: 50,
+            },
+        ));
 
         app.world_mut().send_event(DeathEvent {
             target: entity,
@@ -4390,6 +4642,30 @@ mod tests {
         assert_eq!(
             app.world().entity(entity).get::<Lifecycle>().unwrap().state,
             LifecycleState::Alive
+        );
+        assert_eq!(
+            *app.world()
+                .entity(entity)
+                .get::<Nourishment>()
+                .expect("reincarnated player should retain nourishment component"),
+            Nourishment::spawn_default(),
+            "formal Reincarnate must reset both nourishment axes to 80/80"
+        );
+        assert_eq!(
+            *app.world()
+                .entity(entity)
+                .get::<NourishmentActivityWindow>()
+                .expect("reincarnated player should retain activity window"),
+            NourishmentActivityWindow::default(),
+            "formal Reincarnate must clear every accumulated activity tick"
+        );
+        assert_eq!(
+            load_persisted_nourishment(&settings, "Ancestor"),
+            (
+                Nourishment::spawn_default(),
+                NourishmentActivityWindow::default()
+            ),
+            "formal Reincarnate must persist the reset axes and window in the same cultivation bundle"
         );
         assert!(matches!(
             app.world()
@@ -5109,6 +5385,15 @@ mod tests {
                 Position::new([99.0, 64.0, 99.0]),
                 username.clone(),
                 SkillSet::default(),
+                Nourishment {
+                    satiety: 11.0,
+                    hydration: 12.0,
+                },
+                NourishmentActivityWindow {
+                    idle_ticks: 20,
+                    move_ticks: 30,
+                    dash_ticks: 40,
+                },
             ))
             .id();
 
@@ -5188,6 +5473,20 @@ mod tests {
         assert_eq!(anticheat_counter.cooldown_violations, 0);
         assert_eq!(anticheat_counter.qi_invest_violations, 0);
         assert!(anticheat_counter.last_reach_details.is_empty());
+        assert_eq!(
+            *entity_ref
+                .get::<Nourishment>()
+                .expect("fresh character should retain nourishment component"),
+            Nourishment::spawn_default(),
+            "CreateNewCharacter must reset both nourishment axes to 80/80"
+        );
+        assert_eq!(
+            *entity_ref
+                .get::<NourishmentActivityWindow>()
+                .expect("fresh character should retain activity window"),
+            NourishmentActivityWindow::default(),
+            "CreateNewCharacter must clear every accumulated activity tick"
+        );
 
         let persisted = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
@@ -5203,6 +5502,14 @@ mod tests {
         assert!(persisted_lifespan.years_lived >= 0.0);
         assert!(persisted_lifespan.years_lived < 0.01);
         assert_eq!(persisted_lifespan.offline_pause_tick, None);
+        assert_eq!(
+            load_persisted_nourishment(&settings, username.0.as_str()),
+            (
+                Nourishment::spawn_default(),
+                NourishmentActivityWindow::default()
+            ),
+            "CreateNewCharacter must persist reset nourishment and activity window immediately"
+        );
 
         let _ = fs::remove_dir_all(root);
     }

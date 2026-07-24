@@ -25,7 +25,9 @@ use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::poison_trait::{DigestionLoad, PoisonToxicity};
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
-use crate::persistence::persist_player_cultivation_bundle;
+use crate::nourishment::tick::NourishmentActivityWindow;
+use crate::nourishment::Nourishment;
+use crate::persistence::persist_player_cultivation_bundle_with_nourishment;
 use crate::persistence::PersistenceSettings;
 use crate::skill::components::SkillSet;
 use crate::skill::config::{SkillConfigSchemas, SkillConfigStore};
@@ -90,8 +92,16 @@ type ChangedKnownTechniquesClientsQueryFilter = (
     Changed<KnownTechniques>,
     Without<KnownTechniquesLoadFailed>,
 );
-type CultivationBundleQueryItem<'a> = (
-    &'a Username,
+type CultivationOptionalSlices<'a> = (
+    Option<&'a TutorialState>,
+    Option<&'a MeridianSeveredPermanent>,
+    Option<&'a PoisonToxicity>,
+    Option<&'a DigestionLoad>,
+    Option<&'a Nourishment>,
+    Option<&'a NourishmentActivityWindow>,
+);
+
+type CultivationSnapshotQueryItem<'a> = (
     &'a Cultivation,
     &'a MeridianSystem,
     &'a QiColor,
@@ -102,11 +112,10 @@ type CultivationBundleQueryItem<'a> = (
     &'a InsightQuota,
     &'a UnlockedPerceptions,
     &'a InsightModifiers,
-    Option<&'a TutorialState>,
-    Option<&'a MeridianSeveredPermanent>,
-    Option<&'a PoisonToxicity>,
-    Option<&'a DigestionLoad>,
+    CultivationOptionalSlices<'a>,
 );
+
+type CultivationBundleQueryItem<'a> = (&'a Username, CultivationSnapshotQueryItem<'a>);
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
@@ -372,22 +381,7 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&CraftSession>,
         Option<&Lifecycle>,
     )>,
-    cultivation_bundle: Query<(
-        &Cultivation,
-        &MeridianSystem,
-        &QiColor,
-        &Karma,
-        &PracticeLog,
-        &Contamination,
-        &LifeRecord,
-        &InsightQuota,
-        &UnlockedPerceptions,
-        &InsightModifiers,
-        Option<&TutorialState>,
-        Option<&MeridianSeveredPermanent>,
-        Option<&PoisonToxicity>,
-        Option<&DigestionLoad>,
-    )>,
+    cultivation_bundle: Query<CultivationSnapshotQueryItem<'_>>,
 ) {
     let combat_clock_tick = combat_clock.as_deref().map_or(0, |clock| clock.tick);
     for entity in disconnected_clients.read() {
@@ -429,14 +423,18 @@ pub(crate) fn despawn_disconnected_clients(
                 insight_quota,
                 unlocked_perceptions,
                 insight_modifiers,
-                tutorial_state,
-                severed,
-                poison_toxicity,
-                digestion_load,
+                (
+                    tutorial_state,
+                    severed,
+                    poison_toxicity,
+                    digestion_load,
+                    nourishment,
+                    nourishment_activity,
+                ),
             )) = cultivation_bundle.get(entity)
             {
                 let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
-                if let Err(error) = persist_player_cultivation_bundle(
+                if let Err(error) = persist_player_cultivation_bundle_with_nourishment(
                     &settings,
                     username.0.as_str(),
                     cultivation,
@@ -453,6 +451,8 @@ pub(crate) fn despawn_disconnected_clients(
                     &severed_owned,
                     poison_toxicity,
                     digestion_load,
+                    nourishment,
+                    nourishment_activity,
                 ) {
                     tracing::warn!(
                         "[bong][player] failed to persist cultivation bundle for disconnected client `{}`: {error}",
@@ -558,22 +558,7 @@ fn flush_connected_players_on_shutdown(
         ),
         With<Client>,
     >,
-    cultivation_bundle: Query<(
-        &Cultivation,
-        &MeridianSystem,
-        &QiColor,
-        &Karma,
-        &PracticeLog,
-        &Contamination,
-        &LifeRecord,
-        &InsightQuota,
-        &UnlockedPerceptions,
-        &InsightModifiers,
-        Option<&TutorialState>,
-        Option<&MeridianSeveredPermanent>,
-        Option<&PoisonToxicity>,
-        Option<&DigestionLoad>,
-    )>,
+    cultivation_bundle: Query<CultivationSnapshotQueryItem<'_>>,
 ) {
     if app_exit.read().next().is_none() {
         return;
@@ -611,14 +596,18 @@ fn flush_connected_players_on_shutdown(
             insight_quota,
             unlocked_perceptions,
             insight_modifiers,
-            tutorial_state,
-            severed,
-            poison_toxicity,
-            digestion_load,
+            (
+                tutorial_state,
+                severed,
+                poison_toxicity,
+                digestion_load,
+                nourishment,
+                nourishment_activity,
+            ),
         )) = cultivation_bundle.get(entity)
         {
             let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
-            if let Err(error) = persist_player_cultivation_bundle(
+            if let Err(error) = persist_player_cultivation_bundle_with_nourishment(
                 &settings,
                 username.0.as_str(),
                 cultivation,
@@ -635,6 +624,8 @@ fn flush_connected_players_on_shutdown(
                 &severed_owned,
                 poison_toxicity,
                 digestion_load,
+                nourishment,
+                nourishment_activity,
             ) {
                 tracing::warn!(
                     "[bong][player] failed to persist cultivation bundle during shutdown flush for `{}`: {error}",
@@ -776,24 +767,30 @@ fn autosave_player_cultivation_bundles(
 
     for (
         username,
-        cultivation,
-        meridians,
-        qi_color,
-        karma,
-        practice_log,
-        contamination,
-        life_record,
-        insight_quota,
-        unlocked_perceptions,
-        insight_modifiers,
-        tutorial_state,
-        severed,
-        poison_toxicity,
-        digestion_load,
+        (
+            cultivation,
+            meridians,
+            qi_color,
+            karma,
+            practice_log,
+            contamination,
+            life_record,
+            insight_quota,
+            unlocked_perceptions,
+            insight_modifiers,
+            (
+                tutorial_state,
+                severed,
+                poison_toxicity,
+                digestion_load,
+                nourishment,
+                nourishment_activity,
+            ),
+        ),
     ) in &players
     {
         let severed_owned: MeridianSeveredPermanent = severed.cloned().unwrap_or_default();
-        match persist_player_cultivation_bundle(
+        match persist_player_cultivation_bundle_with_nourishment(
             &settings,
             username.0.as_str(),
             cultivation,
@@ -810,6 +807,8 @@ fn autosave_player_cultivation_bundles(
             &severed_owned,
             poison_toxicity,
             digestion_load,
+            nourishment,
+            nourishment_activity,
         ) {
             Ok(()) => saved_count += 1,
             Err(error) => tracing::warn!(
@@ -1273,6 +1272,21 @@ mod tests {
             ),
         );
 
+        let saved_nourishment = Nourishment {
+            satiety: 71.0,
+            hydration: 63.0,
+        };
+        let saved_activity = NourishmentActivityWindow {
+            idle_ticks: 100,
+            move_ticks: 60,
+            dash_ticks: 39,
+        };
+        assert_eq!(
+            saved_activity.total_ticks(),
+            crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS - 1,
+            "periodic autosave fixture must contain a legal mixed 199-tick window"
+        );
+
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
         app.world_mut().entity_mut(entity).insert((
@@ -1291,6 +1305,8 @@ mod tests {
             InsightQuota::default(),
             UnlockedPerceptions::default(),
             InsightModifiers::new(),
+            saved_nourishment,
+            saved_activity,
         ));
 
         app.update();
@@ -1301,6 +1317,20 @@ mod tests {
         assert_eq!(bundle["cultivation"]["realm"].as_str(), Some("Condense"));
         assert_eq!(bundle["cultivation"]["qi_current"].as_f64(), Some(42.0));
         assert_eq!(bundle["cultivation"]["qi_max"].as_f64(), Some(88.0));
+        assert_eq!(
+            serde_json::from_value::<Nourishment>(bundle["nourishment"].clone())
+                .expect("periodic autosave nourishment should decode"),
+            saved_nourishment,
+            "the real 60-second cultivation autosave must persist both non-default nourishment axes"
+        );
+        assert_eq!(
+            serde_json::from_value::<NourishmentActivityWindow>(
+                bundle["nourishment_activity_window"].clone(),
+            )
+            .expect("periodic autosave activity window should decode"),
+            saved_activity,
+            "the real 60-second cultivation autosave must preserve every mixed tick in the incomplete 199-tick window"
+        );
 
         let _ = persistence;
         let _ = fs::remove_dir_all(&data_dir);
@@ -1490,6 +1520,186 @@ mod tests {
         assert!(
             app.world().get::<Despawned>(entity).is_some(),
             "disconnect cleanup should mark entity as despawned"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn disconnect_round_trip_restores_partial_activity_and_settles_on_first_nourishment_tick() {
+        let (persistence, data_dir, db_path) =
+            sqlite_persistence("nourishment-disconnect-round-trip");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        let settings = PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-nourishment-disconnect-round-trip",
+        );
+        let saved_nourishment = Nourishment {
+            satiety: 71.0,
+            hydration: 63.0,
+        };
+        let saved_activity = NourishmentActivityWindow {
+            idle_ticks: 100,
+            move_ticks: 60,
+            dash_ticks: 39,
+        };
+        assert_eq!(
+            saved_activity.total_ticks(),
+            crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS - 1,
+            "fixture must persist the last incomplete tick window"
+        );
+
+        let mut disconnect_app = App::new();
+        disconnect_app.insert_resource(persistence.clone());
+        disconnect_app.insert_resource(settings.clone());
+        disconnect_app.add_systems(Update, despawn_disconnected_clients);
+
+        let (mut client_bundle, _disconnect_helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([18.0, 70.0, -9.0]);
+        let disconnected_entity = disconnect_app.world_mut().spawn(client_bundle).id();
+        disconnect_app
+            .world_mut()
+            .entity_mut(disconnected_entity)
+            .insert((
+                PlayerState::default(),
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Condense,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                QiColor::default(),
+                Karma::default(),
+                PracticeLog::default(),
+                Contamination::default(),
+                LifeRecord::new(canonical_player_id("Azure")),
+                InsightQuota::default(),
+                UnlockedPerceptions::default(),
+                InsightModifiers::new(),
+                saved_nourishment,
+                saved_activity,
+            ));
+
+        disconnect_app
+            .world_mut()
+            .entity_mut(disconnected_entity)
+            .remove::<Client>();
+        disconnect_app.update();
+
+        let persisted_bundle: serde_json::Value =
+            serde_json::from_str(&read_cultivation_json(&db_path))
+                .expect("disconnect cultivation bundle should decode");
+        assert_eq!(
+            serde_json::from_value::<Nourishment>(persisted_bundle["nourishment"].clone())
+                .expect("disconnect nourishment should decode"),
+            saved_nourishment,
+            "disconnect flush must persist both latest nourishment axes"
+        );
+        assert_eq!(
+            serde_json::from_value::<NourishmentActivityWindow>(
+                persisted_bundle["nourishment_activity_window"].clone(),
+            )
+            .expect("disconnect activity window should decode"),
+            saved_activity,
+            "disconnect flush must persist all 199 accumulated activity ticks"
+        );
+
+        let mut reconnect_app = App::new();
+        reconnect_app.insert_resource(persistence);
+        reconnect_app.insert_resource(settings);
+        reconnect_app.add_systems(
+            Update,
+            crate::cultivation::attach_cultivation_to_joined_clients,
+        );
+
+        let (mut reconnect_bundle, _reconnect_helper) = create_mock_client("Azure");
+        reconnect_bundle.player.position = Position::new([18.0, 70.0, -9.0]);
+        reconnect_bundle.player.old_position =
+            valence::prelude::OldPosition::new([18.0, 70.0, -9.0]);
+        let reconnected_entity = reconnect_app
+            .world_mut()
+            .spawn((reconnect_bundle, crate::movement::MovementState::default()))
+            .id();
+
+        reconnect_app.update();
+        assert_eq!(
+            *reconnect_app
+                .world()
+                .get::<Nourishment>(reconnected_entity)
+                .expect("join hydration should restore nourishment"),
+            saved_nourishment
+        );
+        assert_eq!(
+            *reconnect_app
+                .world()
+                .get::<NourishmentActivityWindow>(reconnected_entity)
+                .expect("join hydration should restore activity window"),
+            saved_activity,
+            "a legal 199-tick window must survive a full SQLite and new-App round trip"
+        );
+
+        reconnect_app.add_systems(Update, crate::nourishment::tick::tick_nourishment);
+        reconnect_app.update();
+
+        let completed_weighted_ticks = saved_activity.weighted_activity_ticks()
+            + crate::nourishment::NOURISH_IDLE_ACTIVITY_MULTIPLIER;
+        let completed_weighted_minutes =
+            completed_weighted_ticks / crate::nourishment::NOURISH_TICKS_PER_MINUTE;
+        let realm_multiplier = crate::nourishment::nourishment_loss_multiplier(
+            crate::cultivation::components::Realm::Condense,
+        );
+        let expected_after_settlement = Nourishment {
+            satiety: saved_nourishment.satiety
+                - crate::nourishment::NOURISH_SATIETY_LOSS_PER_MIN
+                    * completed_weighted_minutes
+                    * realm_multiplier,
+            hydration: saved_nourishment.hydration
+                - crate::nourishment::NOURISH_HYDRATION_LOSS_PER_MIN
+                    * completed_weighted_minutes
+                    * realm_multiplier,
+        };
+        let after_settlement = *reconnect_app
+            .world()
+            .get::<Nourishment>(reconnected_entity)
+            .expect("first nourishment tick should retain component");
+        assert!(
+            (after_settlement.satiety - expected_after_settlement.satiety).abs() < 1e-6,
+            "the first nourishment tick after reconnect must settle the restored 199-tick window exactly once"
+        );
+        assert!(
+            (after_settlement.hydration - expected_after_settlement.hydration).abs() < 1e-6,
+            "hydration must use the same restored mixed-activity window"
+        );
+        assert_eq!(
+            *reconnect_app
+                .world()
+                .get::<NourishmentActivityWindow>(reconnected_entity)
+                .unwrap(),
+            NourishmentActivityWindow::default(),
+            "the completed reconnect window must reset after settlement"
+        );
+
+        reconnect_app.update();
+        assert_eq!(
+            *reconnect_app
+                .world()
+                .get::<Nourishment>(reconnected_entity)
+                .unwrap(),
+            after_settlement,
+            "the next tick must not deduct the completed window a second time"
+        );
+        assert_eq!(
+            *reconnect_app
+                .world()
+                .get::<NourishmentActivityWindow>(reconnected_entity)
+                .unwrap(),
+            NourishmentActivityWindow {
+                idle_ticks: 1,
+                move_ticks: 0,
+                dash_ticks: 0,
+            },
+            "after settlement a fresh activity window should start from one idle tick"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
@@ -1765,6 +1975,21 @@ mod tests {
         ));
         app.add_systems(Last, flush_connected_players_on_shutdown);
 
+        let saved_nourishment = Nourishment {
+            satiety: 54.0,
+            hydration: 46.0,
+        };
+        let saved_activity = NourishmentActivityWindow {
+            idle_ticks: 80,
+            move_ticks: 70,
+            dash_ticks: 49,
+        };
+        assert_eq!(
+            saved_activity.total_ticks(),
+            crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS - 1,
+            "shutdown fixture must contain a legal mixed 199-tick window"
+        );
+
         let (mut client_bundle, _helper) = create_mock_client("Azure");
         client_bundle.player.position = Position::new([64.0, 80.0, -12.0]);
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -1776,6 +2001,25 @@ mod tests {
         app.world_mut()
             .entity_mut(entity)
             .insert(dash_known_techniques(0.64));
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: crate::cultivation::components::Realm::Solidify,
+                qi_current: 27.0,
+                qi_max: 91.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            QiColor::default(),
+            Karma::default(),
+            PracticeLog::default(),
+            Contamination::default(),
+            LifeRecord::new(canonical_player_id("Azure")),
+            InsightQuota::default(),
+            UnlockedPerceptions::default(),
+            InsightModifiers::new(),
+            saved_nourishment,
+            saved_activity,
+        ));
 
         app.world_mut().send_event(AppExit::Success);
         app.update();
@@ -1784,6 +2028,9 @@ mod tests {
         let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
         let inventory_json = read_inventory_json(&db_path);
         let known_techniques_json = read_known_techniques_json(&db_path);
+        let cultivation_bundle: serde_json::Value =
+            serde_json::from_str(&read_cultivation_json(&db_path))
+                .expect("shutdown cultivation bundle should decode");
 
         assert_eq!(karma, 0.33);
         assert_eq!(inventory_score, 0.85);
@@ -1793,6 +2040,20 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&inventory_json)
                 .expect("inventory_json should decode"),
             serde_json::Value::Null
+        );
+        assert_eq!(
+            serde_json::from_value::<Nourishment>(cultivation_bundle["nourishment"].clone())
+                .expect("shutdown nourishment should decode"),
+            saved_nourishment,
+            "the real AppExit shutdown flush must persist both non-default nourishment axes"
+        );
+        assert_eq!(
+            serde_json::from_value::<NourishmentActivityWindow>(
+                cultivation_bundle["nourishment_activity_window"].clone(),
+            )
+            .expect("shutdown activity window should decode"),
+            saved_activity,
+            "the real AppExit shutdown flush must preserve every mixed tick in the incomplete 199-tick window"
         );
         assert!(
             app.world().get::<Client>(entity).is_some(),

@@ -6208,6 +6208,50 @@ pub fn persist_player_cultivation_bundle(
     poison_toxicity: Option<&crate::cultivation::poison_trait::PoisonToxicity>,
     digestion_load: Option<&crate::cultivation::poison_trait::DigestionLoad>,
 ) -> io::Result<()> {
+    persist_player_cultivation_bundle_with_nourishment(
+        settings,
+        username,
+        cultivation,
+        meridians,
+        qi_color,
+        karma,
+        contamination,
+        life_record,
+        practice_log,
+        insight_quota,
+        unlocked_perceptions,
+        insight_modifiers,
+        tutorial_state,
+        meridian_severed,
+        poison_toxicity,
+        digestion_load,
+        None,
+        None,
+    )
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[allow(clippy::too_many_arguments)]
+pub fn persist_player_cultivation_bundle_with_nourishment(
+    settings: &PersistenceSettings,
+    username: &str,
+    cultivation: &crate::cultivation::components::Cultivation,
+    meridians: &crate::cultivation::components::MeridianSystem,
+    qi_color: &crate::cultivation::components::QiColor,
+    karma: &crate::cultivation::components::Karma,
+    contamination: &crate::cultivation::components::Contamination,
+    life_record: &crate::cultivation::life_record::LifeRecord,
+    practice_log: &crate::cultivation::color::PracticeLog,
+    insight_quota: &crate::cultivation::insight::InsightQuota,
+    unlocked_perceptions: &crate::cultivation::insight_apply::UnlockedPerceptions,
+    insight_modifiers: &crate::cultivation::insight_apply::InsightModifiers,
+    tutorial_state: Option<&crate::world::spawn_tutorial::TutorialState>,
+    meridian_severed: &crate::cultivation::meridian::severed::MeridianSeveredPermanent,
+    poison_toxicity: Option<&crate::cultivation::poison_trait::PoisonToxicity>,
+    digestion_load: Option<&crate::cultivation::poison_trait::DigestionLoad>,
+    nourishment: Option<&crate::nourishment::Nourishment>,
+    nourishment_activity_window: Option<&crate::nourishment::tick::NourishmentActivityWindow>,
+) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
     let bundle = serde_json::json!({
         // plan-race-system-v1 P1a —— bump 1→2：`meridians`/`meridian_severed` 子字段
@@ -6230,6 +6274,8 @@ pub fn persist_player_cultivation_bundle(
         "meridian_severed": meridian_severed,
         "poison_toxicity": poison_toxicity,
         "digestion_load": digestion_load,
+        "nourishment": nourishment,
+        "nourishment_activity_window": nourishment_activity_window,
     });
     let cultivation_json = serde_json::to_string(&bundle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

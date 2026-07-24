@@ -197,9 +197,12 @@ use self::tribulation::{
 };
 use crate::body_plan::RaceId;
 use crate::cultivation::components::Realm;
+use crate::nourishment::tick::NourishmentActivityWindow;
+use crate::nourishment::Nourishment;
 use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
-    load_active_tribulation, load_player_cultivation_bundle, release_ascension_quota_slot,
+    load_active_tribulation, load_player_cultivation_bundle,
+    persist_player_cultivation_bundle_with_nourishment, release_ascension_quota_slot,
     PersistenceSettings,
 };
 use crate::player::state::{
@@ -595,8 +598,9 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // `cultivation` 字段的解码分支里做校验，一旦拒绝也只把 `cultivation` 变量留在
         // `Cultivation::default()`，但 `meridians`/`qi_color`/`karma`/`practice_log`/
         // `contamination`/`life_record`/`insight_quota`/`unlocked_perceptions`/
-        // `insight_modifiers`/`meridian_severed`/`poison_toxicity`/`digestion_load`
-        // 这 12 个 sibling slice 全部照常从同一份不可信 bundle 里正常水合——一份来自
+        // `insight_modifiers`/`meridian_severed`/`poison_toxicity`/`digestion_load`/
+        // `nourishment` / `nourishment_activity_window` 这 14 个 sibling slice 全部照常从同一份
+        // 不可信 bundle 里正常水合——一份来自
         // 不兼容部署（race 在当前 RaceRegistry 里根本不存在）的存档，其经脉拓扑/
         // 真元/毒性等字段同样不可信，"只挡 race 字段本身"等于开了个后门：醒灵后
         // 立刻嵌合体全通经脉、满毒素抗性表白跳突破。这里在任何字段解码之前先窥探
@@ -619,7 +623,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                      RaceRegistry — falling back to default state for every slice \
                      (cultivation/meridians/qi_color/karma/practice_log/contamination/\
                      life_record/insight_quota/unlocked_perceptions/insight_modifiers/\
-                     meridian_severed/poison_toxicity/digestion_load), not just the \
+                     meridian_severed/poison_toxicity/digestion_load/nourishment/\
+                     nourishment_activity_window), not just the \
                      `cultivation` field",
                     username.0,
                 );
@@ -661,6 +666,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         let mut insight_quota = InsightQuota::default();
         let mut unlocked_perceptions = UnlockedPerceptions::default();
         let mut insight_modifiers = InsightModifiers::new();
+        let mut nourishment = Nourishment::spawn_default();
+        let mut nourishment_activity_window = NourishmentActivityWindow::default();
 
         if let Some(persisted_bundle) = persisted_bundle.as_ref() {
             // Best-effort hydration; schema is versioned and may evolve.
@@ -742,6 +749,24 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                     Err(error) => {
                         warn_cultivation_decode(username.0.as_str(), "insight_modifiers", error)
                     }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("nourishment") {
+                match serde_json::from_value::<Nourishment>(value.clone()) {
+                    Ok(decoded) => nourishment = decoded,
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "nourishment", error)
+                    }
+                }
+            }
+            if let Some(value) = persisted_bundle.get("nourishment_activity_window") {
+                match serde_json::from_value::<NourishmentActivityWindow>(value.clone()) {
+                    Ok(decoded) => nourishment_activity_window = decoded,
+                    Err(error) => warn_cultivation_decode(
+                        username.0.as_str(),
+                        "nourishment_activity_window",
+                        error,
+                    ),
                 }
             }
         } else if player_state.is_some() {
@@ -926,19 +951,21 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         }
 
         if reincarnation.is_some() {
-            // `severed_permanent` / `poison_toxicity` / `digestion_load` 三个 hydration 块
-            // 上面已经无条件从（终结前那具旧角色的）`persisted_bundle` 读过一轮——转世必须
-            // 把它们也清成新角色的默认值，否则旧身体的经脉永久损伤 / 中毒进度会原样附体
-            // 到新生命上。
+            // `severed_permanent` / `poison_toxicity` / `digestion_load` / `nourishment` /
+            // `nourishment_activity_window` 五个 hydration 块上面已经无条件从（终结前那具旧角色的）
+            // `persisted_bundle` 读过一轮——转世必须把它们也清成新角色的默认值，否则旧身体的
+            // 永久损伤、中毒进度、饥渴和活动计数会原样附体到新生命上。
             severed_permanent = MeridianSeveredPermanent::default();
             poison_toxicity = PoisonToxicity::default();
             digestion_load = DigestionLoad::for_realm(cultivation.realm);
+            nourishment.reset_to_spawn();
+            nourishment_activity_window.reset();
 
             // 立即落盘新的 cultivation bundle：`player_cultivation` 表按 username（非
             // char_id）整行覆盖，不马上写回的话，玩家下一次 join 仍会读到刚才这份
             // Terminated life_record，陷入"每次 join 都判定终结 → 重复转世"的抖动
             // （幂等性依赖这一步）。
-            if let Err(error) = crate::persistence::persist_player_cultivation_bundle(
+            if let Err(error) = persist_player_cultivation_bundle_with_nourishment(
                 &settings,
                 username.0.as_str(),
                 &cultivation,
@@ -955,6 +982,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 &severed_permanent,
                 Some(&poison_toxicity),
                 Some(&digestion_load),
+                Some(&nourishment),
+                Some(&nourishment_activity_window),
             ) {
                 tracing::warn!(
                     "[bong][cultivation] failed to persist reincarnated cultivation bundle for `{}`: {error}",
@@ -986,7 +1015,13 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             DuguPractice::default(),
             severed_permanent,
         ));
-        entity_commands.insert((poison_toxicity, digestion_load, intrinsic_race));
+        entity_commands.insert((
+            poison_toxicity,
+            digestion_load,
+            nourishment,
+            nourishment_activity_window,
+            intrinsic_race,
+        ));
         // 转世必须无条件换掉寿元组件——`restored_lifespan` 里躺着的是刚才那个已终结角色
         // 耗尽的 120/120，`restored_lifespan.is_none()` 在这条分支恒为 false（attach_player_state
         // 已经把它挂上了），若不加 `|| reincarnation.is_some()` 这份 exhausted 值会原样留在
@@ -1824,11 +1859,61 @@ mod tests {
             crate::player::state::rotate_current_character_id(&player_persistence, "Azure")
                 .expect("seeding current_char_id should succeed");
         let old_canonical_id = crate::player::state::player_character_id("Azure", &old_raw_id);
-        seed_cultivation_bundle(
+        let terminated_record = terminated_life_record(&old_canonical_id);
+        let persisted_nourishment = Nourishment {
+            satiety: 19.0,
+            hydration: 31.0,
+        };
+        let persisted_activity_window = NourishmentActivityWindow {
+            idle_ticks: 90,
+            move_ticks: 70,
+            dash_ticks: 39,
+        };
+        assert_eq!(
+            persisted_activity_window.total_ticks(),
+            crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS - 1,
+            "reincarnation fixture must seed a legal mixed 199-tick window"
+        );
+        crate::persistence::persist_player_cultivation_bundle_with_nourishment(
             &settings,
             "Azure",
-            Realm::Spirit,
-            &terminated_life_record(&old_canonical_id),
+            &Cultivation {
+                realm: Realm::Spirit,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            &terminated_record,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            None,
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+            Some(&persisted_nourishment),
+            Some(&persisted_activity_window),
+        )
+        .expect("seeding terminated cultivation bundle with nourishment should succeed");
+        let seeded_bundle = crate::persistence::load_player_cultivation_bundle(&settings, "Azure")
+            .expect("seeded bundle reload should succeed")
+            .expect("seeded bundle should exist before join");
+        assert_eq!(
+            serde_json::from_value::<Nourishment>(seeded_bundle["nourishment"].clone())
+                .expect("seeded nourishment should decode"),
+            persisted_nourishment,
+            "SQLite must contain the non-default nourishment axes before the real join attach"
+        );
+        assert_eq!(
+            serde_json::from_value::<NourishmentActivityWindow>(
+                seeded_bundle["nourishment_activity_window"].clone(),
+            )
+            .expect("seeded nourishment activity window should decode"),
+            persisted_activity_window,
+            "SQLite must contain all 199 mixed activity ticks before the real join attach"
         );
         // 老角色寿元耗尽（Spirit cap 满）——复现"ECS 本 session 挂着旧值又立刻老死"的坑：
         // 转世门必须无条件覆写它，不能指望这份 exhausted 值自然被替换掉。
@@ -1872,6 +1957,31 @@ mod tests {
             .id();
 
         app.update();
+
+        let reincarnated_nourishment = *app
+            .world()
+            .get::<Nourishment>(entity)
+            .expect("reincarnated client should have Nourishment");
+        assert_eq!(
+            reincarnated_nourishment,
+            Nourishment::spawn_default(),
+            "the real join-time reincarnation attach must discard both nourishment axes from the terminated body"
+        );
+        assert_eq!(
+            (
+                reincarnated_nourishment.satiety,
+                reincarnated_nourishment.hydration,
+            ),
+            (80.0, 80.0),
+            "join-time reincarnation must attach the new body's exact 80/80 nourishment spawn state"
+        );
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .expect("reincarnated client should have a nourishment activity window"),
+            NourishmentActivityWindow::default(),
+            "join-time reincarnation must discard the terminated body's 199-tick activity window"
+        );
 
         let cultivation = app
             .world()
@@ -1964,6 +2074,30 @@ mod tests {
         assert!(
             persisted_life_record.biography.is_empty(),
             "落盘的 life_record 也必须是新角色的空白生平，否则重连会再次触发转世"
+        );
+        let persisted_reincarnated_nourishment =
+            serde_json::from_value::<Nourishment>(persisted["nourishment"].clone())
+                .expect("persisted reincarnated nourishment should decode");
+        assert_eq!(
+            persisted_reincarnated_nourishment,
+            Nourishment::spawn_default(),
+            "join-time reincarnation must immediately overwrite SQLite with the new body's nourishment"
+        );
+        assert_eq!(
+            (
+                persisted_reincarnated_nourishment.satiety,
+                persisted_reincarnated_nourishment.hydration,
+            ),
+            (80.0, 80.0),
+            "the immediate SQLite overwrite must contain exact 80/80 nourishment axes"
+        );
+        assert_eq!(
+            serde_json::from_value::<NourishmentActivityWindow>(
+                persisted["nourishment_activity_window"].clone(),
+            )
+            .expect("persisted reincarnated nourishment activity window should decode"),
+            NourishmentActivityWindow::default(),
+            "join-time reincarnation must immediately overwrite SQLite with a zeroed activity window"
         );
 
         let _ = std::fs::remove_dir_all(root);
@@ -2739,6 +2873,215 @@ mod tests {
         .expect("seeding cultivation bundle with a custom race should succeed");
     }
 
+    fn seed_raw_cultivation_bundle(
+        settings: &PersistenceSettings,
+        username: &str,
+        bundle: serde_json::Value,
+    ) {
+        let cultivation_json =
+            serde_json::to_string(&bundle).expect("hand-built cultivation bundle must serialize");
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("open sqlite connection to seed a raw cultivation bundle");
+        connection
+            .execute(
+                "
+                INSERT INTO player_cultivation (
+                    username,
+                    cultivation_json,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, 1, 0)
+                ON CONFLICT(username) DO UPDATE SET
+                    cultivation_json = excluded.cultivation_json,
+                    schema_version = excluded.schema_version,
+                    last_updated_wall = excluded.last_updated_wall
+                ",
+                rusqlite::params![username, cultivation_json],
+            )
+            .expect("insert raw cultivation bundle");
+    }
+
+    #[test]
+    fn joined_clients_hydrate_nourishment_and_activity_window_from_legacy_and_corrupt_sqlite_rows()
+    {
+        struct Case {
+            username: &'static str,
+            nourishment: Option<serde_json::Value>,
+            activity_window: Option<serde_json::Value>,
+            expected_nourishment: Nourishment,
+            expected_activity_window: NourishmentActivityWindow,
+        }
+
+        let cases = [
+            Case {
+                username: "NourishMissing",
+                nourishment: None,
+                activity_window: None,
+                expected_nourishment: Nourishment::spawn_default(),
+                expected_activity_window: NourishmentActivityWindow::default(),
+            },
+            Case {
+                username: "NourishAxisMissing",
+                nourishment: Some(serde_json::json!({"satiety": 31.0})),
+                activity_window: Some(serde_json::json!({
+                    "idle_ticks": 40,
+                    "move_ticks": 50,
+                    "dash_ticks": 60
+                })),
+                expected_nourishment: Nourishment {
+                    satiety: 31.0,
+                    hydration: Nourishment::spawn_default().hydration,
+                },
+                expected_activity_window: NourishmentActivityWindow {
+                    idle_ticks: 40,
+                    move_ticks: 50,
+                    dash_ticks: 60,
+                },
+            },
+            Case {
+                username: "NourishNull",
+                nourishment: Some(serde_json::Value::Null),
+                activity_window: Some(serde_json::Value::Null),
+                expected_nourishment: Nourishment::spawn_default(),
+                expected_activity_window: NourishmentActivityWindow::default(),
+            },
+            Case {
+                username: "NourishTopLevelBadTypes",
+                nourishment: Some(serde_json::json!("not-an-object")),
+                activity_window: Some(serde_json::json!([1, 2, 3])),
+                expected_nourishment: Nourishment::spawn_default(),
+                expected_activity_window: NourishmentActivityWindow::default(),
+            },
+            Case {
+                username: "NourishBadTypes",
+                nourishment: Some(serde_json::json!({
+                    "satiety": "bad",
+                    "hydration": 44.0
+                })),
+                activity_window: Some(serde_json::json!({
+                    "idle_ticks": "bad",
+                    "move_ticks": 61,
+                    "dash_ticks": false
+                })),
+                expected_nourishment: Nourishment {
+                    satiety: Nourishment::spawn_default().satiety,
+                    hydration: 44.0,
+                },
+                expected_activity_window: NourishmentActivityWindow {
+                    idle_ticks: 0,
+                    move_ticks: 61,
+                    dash_ticks: 0,
+                },
+            },
+            Case {
+                username: "NourishClamped",
+                nourishment: Some(serde_json::json!({
+                    "satiety": -9.0,
+                    "hydration": 999.0
+                })),
+                activity_window: Some(serde_json::json!({
+                    "idle_ticks": 198,
+                    "move_ticks": 1
+                })),
+                expected_nourishment: Nourishment {
+                    satiety: crate::nourishment::NOURISH_MIN_VALUE,
+                    hydration: crate::nourishment::NOURISH_MAX_VALUE,
+                },
+                expected_activity_window: NourishmentActivityWindow {
+                    idle_ticks: 198,
+                    move_ticks: 1,
+                    dash_ticks: 0,
+                },
+            },
+            Case {
+                username: "NourishCompleteWindow",
+                nourishment: Some(serde_json::json!({
+                    "satiety": 23.0,
+                    "hydration": 24.0
+                })),
+                activity_window: Some(serde_json::json!({
+                    "idle_ticks": 199,
+                    "move_ticks": 1,
+                    "dash_ticks": 0
+                })),
+                expected_nourishment: Nourishment {
+                    satiety: 23.0,
+                    hydration: 24.0,
+                },
+                expected_activity_window: NourishmentActivityWindow::default(),
+            },
+            Case {
+                username: "NourishOversizedWindow",
+                nourishment: Some(serde_json::json!({
+                    "satiety": 25.0,
+                    "hydration": 26.0
+                })),
+                activity_window: Some(serde_json::json!({
+                    "idle_ticks": u32::MAX,
+                    "move_ticks": u32::MAX,
+                    "dash_ticks": u32::MAX
+                })),
+                expected_nourishment: Nourishment {
+                    satiety: 25.0,
+                    hydration: 26.0,
+                },
+                expected_activity_window: NourishmentActivityWindow::default(),
+            },
+        ];
+
+        let (settings, root) = temp_persistence_settings("nourishment-hydration-table");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let mut entities = Vec::new();
+        let mut client_helpers = Vec::new();
+        for case in &cases {
+            let mut bundle = serde_json::Map::new();
+            if let Some(nourishment) = &case.nourishment {
+                bundle.insert("nourishment".to_string(), nourishment.clone());
+            }
+            if let Some(activity_window) = &case.activity_window {
+                bundle.insert(
+                    "nourishment_activity_window".to_string(),
+                    activity_window.clone(),
+                );
+            }
+            seed_raw_cultivation_bundle(
+                &settings,
+                case.username,
+                serde_json::Value::Object(bundle),
+            );
+
+            let (client_bundle, helper) = create_mock_client(case.username);
+            entities.push(app.world_mut().spawn(client_bundle).id());
+            client_helpers.push(helper);
+        }
+
+        app.update();
+
+        for (case, entity) in cases.iter().zip(entities) {
+            assert_eq!(
+                *app.world()
+                    .get::<Nourishment>(entity)
+                    .expect("joined client should receive nourishment"),
+                case.expected_nourishment,
+                "{} should hydrate each nourishment axis independently",
+                case.username
+            );
+            assert_eq!(
+                *app.world()
+                    .get::<NourishmentActivityWindow>(entity)
+                    .expect("joined client should receive an activity window"),
+                case.expected_activity_window,
+                "{} should restore only a legal incomplete activity window",
+                case.username
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// 手写 SQL 插入模拟"race 字段加入前"的旧存档形状：`persist_player_cultivation_bundle`
     /// 恒序列化完整 `Cultivation`（`race` 字段总在场），无法产出缺 race 字段的 bundle，
     /// 所以这里绕开它直接拼一份不含 "race" key 的 JSON 落库。
@@ -2846,7 +3189,7 @@ mod tests {
 
     /// plan-race-system-v1 bughunt major-2：未知 race 的 bundle 里 sibling slice 全部
     /// 塞进明显偏离默认值的数据（经脉全开/带毒/带污染/带洞察额度……），用来证明拒载
-    /// 覆盖的不只是 `Cultivation` 一个组件——旧实现只回退 `cultivation`，其余约 12 个
+    /// 覆盖的不只是 `Cultivation` 一个组件——旧实现只回退 `cultivation`，其余 14 个
     /// slice 会原样水合，相当于"醒灵即刻全通经脉 + 满毒素抗性表"的白嫖突破后门。
     #[test]
     fn joined_clients_reject_persisted_bundle_with_unknown_race_resets_every_sibling_slice() {
@@ -2912,8 +3255,17 @@ mod tests {
             digest_lock_until_tick: None,
             ..Default::default()
         };
+        let poisoned_nourishment = Nourishment {
+            satiety: 3.0,
+            hydration: 4.0,
+        };
+        let poisoned_nourishment_activity = NourishmentActivityWindow {
+            idle_ticks: 10,
+            move_ticks: 20,
+            dash_ticks: 30,
+        };
 
-        crate::persistence::persist_player_cultivation_bundle(
+        crate::persistence::persist_player_cultivation_bundle_with_nourishment(
             &settings,
             username,
             &Cultivation {
@@ -2934,6 +3286,8 @@ mod tests {
             &poisoned_severed,
             Some(&poisoned_poison_toxicity),
             Some(&poisoned_digestion_load),
+            Some(&poisoned_nourishment),
+            Some(&poisoned_nourishment_activity),
         )
         .expect("seeding a poisoned unknown-race bundle should succeed");
 
@@ -3027,6 +3381,20 @@ mod tests {
             live_digestion_load.current, 500.0,
             "digestion_load sibling slice must reset to the realm default, not inherit the \
              poisoned current=500.0"
+        );
+        assert_eq!(
+            *world
+                .get::<Nourishment>(entity)
+                .expect("nourishment must still attach"),
+            Nourishment::spawn_default(),
+            "nourishment sibling slice must reset to the spawn default, not inherit 3/4"
+        );
+        assert_eq!(
+            *world
+                .get::<NourishmentActivityWindow>(entity)
+                .expect("nourishment activity window must still attach"),
+            NourishmentActivityWindow::default(),
+            "activity-window sibling slice must reset instead of inheriting 10/20/30"
         );
 
         let _ = std::fs::remove_dir_all(root);
