@@ -345,7 +345,7 @@ class SignatureAudioContractTest {
     // ---- 音频格式契约：ffmpeg 完整解码 + ffprobe 精确采样数（统一谓词，正负向共用）----
     //
     // plan §P4「mono, 44.1kHz，短样本 ≤3s」。只读元数据不够（损坏 packet 的伪 Vorbis 元数据仍合法），
-    // 故 ① `ffmpeg -f null` 完整解码每个 packet（退出码非 0 = 损坏/不可解码）② `ffprobe -count_samples`
+    // 故 ① `ffmpeg -f null` 完整解码每个 packet（退出码非 0 = 损坏/不可解码）② `ffprobe duration_ts`
     // 读**精确采样数**，严格 ≤132300（= 3s @ 44.1kHz，不用浮点容差）。正向真资产与负向 fixture（ffmpeg
     // 现场 lavfi 合成的 stereo/48k/超长/非 Vorbis）**共用同一 validateSignatureAudio 谓词**，防测试谓词与门禁
     // 漂移。工具/编码器缺失时 Assumptions 跳过而非误红——skip-if-absent 优于因缺工具破红 CI；标准 CI
