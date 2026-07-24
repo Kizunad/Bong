@@ -1,6 +1,6 @@
 # plan-bughunt-woliu-resonance-loop-arm-decay-v1
 
-> **活跃 skeleton plan**。一句话主题：`bong:woliu_vortex_resonance` 是 80 tick 持续型 loop 玩家动画，但双臂 `rightArm/leftArm` 的关键轴只写到 tick 40，`endTick=80` 没有补同轴 keyframe；PlayerAnimator 会把后半段插回默认值，导致涡流共振施法窗口后半段角色双臂逐渐垂回默认姿态。
+> 一句话主题：`bong:woliu_vortex_resonance` 是 80 tick 持续型 loop 玩家动画，但双臂 `rightArm/leftArm` 的关键轴只写到 tick 40，`endTick=80` 没有补同轴 keyframe；PlayerAnimator 会把后半段插回默认值，导致涡流共振施法窗口后半段角色双臂逐渐垂回默认姿态。**收口日期 2026-07-23，骨架 → active → finished 同 PR 内一次性收口。**
 
 > 立项动机：本轮 BugHunt D9 聚焦 client combat/skills/cast animation/VFX/SFX/HUD/icon registry/packet bridge。该问题落在实际涡流共振施法的玩家动画反馈链路上，不重复 #987 技能配置拒绝缺少施法同步、#997/#1002 毒蛊视听/HUD、#1012 vfx_event slash 契约、#1018 蜕壳视听双源、#1027 技能栏施法源、#1033 爆脉视听双源。
 
@@ -58,11 +58,11 @@
 
 **通过理由**：修订表述已经避开机制失效和全链路丢失的夸大，只保留 `bong:woliu_vortex_resonance` 这个 80 tick loop 动画后半段双臂姿态被插回默认值的事实。开放 PR 中没有同一涡流共振 loop 姿态/PlayerAnimator 末帧补值问题。
 
-## Skeleton Fix Plan
+## 阶段总览
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 修复涡流共振 loop 动画 endTick 双臂轴补帧 | fix_pr | ⬜ |
+| P0 | 修复涡流共振 loop 动画 endTick 双臂轴补帧 | fix_pr | ✅ 2026-07-23 |
 
 ### P0 — 修复涡流共振 loop 动画 endTick 双臂轴补帧
 
@@ -89,3 +89,32 @@
 ## 审计来源
 
 BugHunt D9 client-combat 定点轮。方法：开放 PR 去重、server 施法路径与 client PlayerAnimator JSON 播放路径对照、loop 玩家动画批量扫描、两轮反方 subagent 对抗审查。当前 PR 仅新增 report-only skeleton plan，不修改代码/配置/依赖/资源，不消费/归档 plan。
+
+## Finish Evidence
+
+### 落地清单（P0）
+
+- `client/tools/gen_woliu_vortex_resonance.py`（新增）：原资产手写无生成器，改用 `anim_common.emit_json`（自带 `_check_loop_closure` 强校验，`is_loop=True` 时若 tick0/endTick 逐轴不等会直接 `AssertionError` 拒绝生成）。POSE 表在 tick 40 保留原始峰值托举姿态不变，只在 endTick(80) 补 `rightArm`/`leftArm` 全部轴（pitch/yaw/roll/bend/axis）== tick0 的收尾帧，并在 tick0 补 `torso.pitch` == endTick(80) 值(0.0)的起手帧。原始弧度值经 `math.degrees()` 换算，往返 `round(...,7)` 精度下与原文件逐位相等（已用 Python 验证零漂移，见关键 commit）。
+- `client/src/main/resources/assets/bong/player_animation/woliu_vortex_resonance.json`：经上述生成器重新生成，`emote.isLoop=true`/`endTick=80`/`returnTick=0` 不变，`moves` 从 9 组扩到 36 组（一 move 一 axis，与仓库内其余 `anim_common` 生成资产格式一致，如 `woliu_vortex_cast.json`）。
+- `client/src/test/java/com/bong/client/animation/AnimCastTicksAlignmentTest.java`：`CAST_ALIGNMENT_ALLOWLIST` 从含 `woliu.vortex_resonance` 单条改为 `Set.of()`（清零）；类头 Javadoc 同步更新「本表余 1 条」为「本表清零」。`woliu.vortex_resonance` 现直接经主契约 `castAlignmentContractHoldsForEverySkillOutsideAllowlist` 的 `loopSeamViolations` 校验（cast_ticks=80 走长引导 loop 分支），不再依赖 allowlist 豁免。
+- headless 渲染核验（`client/tools/render_animation.py --ticks 0,40,60,79,80`）：tick0 与 tick80 姿态逐值相同（`rArm p=-29 y=-23 bend=+54@ax+180`），tick60/79 在 tick40 峰值（`p=-77`）与 tick0/80 基位之间平滑过渡，无跳变/回默认值现象。
+
+### 关键 commit
+
+- `ed2bbc350`（2026-07-23）docs(promote): 骨架 → active。
+- `ff545b20a`（2026-07-23）fix(client): woliu_vortex_resonance 补齐循环闭合关键帧，修 PlayerAnimator 库坑 #1 单帧衰减。
+
+### 测试结果
+
+- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew test build` → `BUILD SUCCESSFUL`；全量 4274 个测试用例 0 failures / 0 errors / 0 skipped（`build/test-results/test/TEST-*.xml` 统计）。`AnimCastTicksAlignmentTest` 14/14 通过（含 `castAlignmentContractHoldsForEverySkillOutsideAllowlist`、`allowlistEntriesActuallyFailAlignment`、`allowlistsOnlyShrinkAgainstFrozenBaseline`）。
+- 独立无上下文 read-only validator agent（对拍 HEAD `ff545b20aa6f6e83e9794d0baa8e55e5f3ac297d`）逐轴核验 tick0/tick80 闭合、生成器确定性重跑无 diff、tick40 峰值姿态未被破坏、改动范围仅限 3 个文件——结论 **PASS**。
+
+### 跨仓库核验
+
+- **client**：`BongAnimationRegistry`（消费 `assets/bong/player_animation/woliu_vortex_resonance.json`，未改，仅资产内容更新）、`AnimCastTicksAlignmentTest`（改）。
+- **server**：`server/src/combat/woliu_v2/skills.rs`（`cast_vortex_resonance`/`vortex_resonance_spec`）、`server/src/network/vfx_animation_trigger.rs`（`emit_woliu_v2_visual_triggers`）——均未改动，核验为可达但无辜（cast_ticks=80 与动画 endTick=80 对齐正确，PlayAnim/StopAnim 接线正常）。
+- **无** schema / IPC / Redis key 改动；**无** agent 改动；不涉及粒子/音效/HUD/icon（bug 本身与这些无关）。
+
+### 遗留 / 后续
+
+- 骨架 §验收测试计划 #1 提到的「资源级批量扫描所有 `isLoop=true` json」未新增独立扫描器——`AnimCastTicksAlignmentTest` 的 allowlist 棘轮机制已对 `woliu.vortex_resonance` 提供等价的机械 pin（清零后任何回归会立刻在主契约撞红），且该测试已覆盖仓库内全部走 `SKILL_ANIM` 映射的 loop 动画，判定无需额外重复扫描器；若未来出现不经 `SKILL_ANIM` 映射的 loop 动画（如纯装饰性亮相动作），扫描器仍是有效补强，留给后续 bughunt 轮次视需要立项。
