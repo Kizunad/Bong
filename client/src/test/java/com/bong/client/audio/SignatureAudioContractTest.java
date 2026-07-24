@@ -14,6 +14,8 @@ import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -340,25 +342,30 @@ class SignatureAudioContractTest {
         }
     }
 
-    // ---- 音频格式契约：ffprobe 真解码校验 codec/channels/sample_rate/duration ----
+    // ---- 音频格式契约：ffmpeg 完整解码 + ffprobe 精确采样数（统一谓词，正负向共用）----
     //
-    // plan §P4 音源规格「mono, 44.1kHz，短样本 ≤3s」。手写结构探针无法证明"可解码"（header-only
-    // 伪文件能蒙混），故改用真实解码器 ffprobe 打开每条资产读取流信息——ffprobe 成功退出 + 读出
-    // 期望流参数即证明可解码。ffprobe 不可用时（罕见环境）用 Assumptions 跳过而非误红；标准 CI
+    // plan §P4「mono, 44.1kHz，短样本 ≤3s」。只读元数据不够（损坏 packet 的伪 Vorbis 元数据仍合法），
+    // 故 ① `ffmpeg -f null` 完整解码每个 packet（退出码非 0 = 损坏/不可解码）② `ffprobe -count_samples`
+    // 读**精确采样数**，严格 ≤132300（= 3s @ 44.1kHz，不用浮点容差）。正向真资产与负向 fixture（ffmpeg
+    // 现场 lavfi 合成的 stereo/48k/超长/非 Vorbis）**共用同一 validateSignatureAudio 谓词**，防测试谓词与门禁
+    // 漂移。工具/编码器缺失时 Assumptions 跳过而非误红——skip-if-absent 优于因缺工具破红 CI；标准 CI
     // （ubuntu-latest 自带 ffmpeg）与本地均可用。校验只作用于 SIGNATURE_SPEC（不误伤未来非 signature 事件）。
 
     private static final int SIGNATURE_SAMPLE_RATE = 44100;
-    private static final double SIGNATURE_MAX_SECONDS = 3.0;
-    // 3.0s 边界 + ffprobe duration 浮点，放 ~10ms 容差既容边界又判死 4s 级越界。
-    private static final double SIGNATURE_DURATION_EPS = 0.01;
+    /** 3s @ 44.1kHz 的精确采样上界（严格 ≤3s，无浮点容差）。 */
+    private static final long MAX_SIGNATURE_SAMPLES = SIGNATURE_SAMPLE_RATE * 3L;
 
-    private record Ffprobe(int exit, String codec, int channels, int sampleRate, double duration) {}
+    private record ProcResult(int exit, String out) {}
 
-    private static boolean ffprobeAvailable() {
+    private static ProcResult run(String... cmd) throws IOException, InterruptedException {
+        Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        return new ProcResult(p.waitFor(), out);
+    }
+
+    private static boolean toolAvailable(String tool) {
         try {
-            Process p = new ProcessBuilder("ffprobe", "-version").redirectErrorStream(true).start();
-            p.getInputStream().readAllBytes();
-            return p.waitFor() == 0;
+            return run(tool, "-version").exit() == 0;
         } catch (IOException e) {
             return false;
         } catch (InterruptedException e) {
@@ -367,22 +374,30 @@ class SignatureAudioContractTest {
         }
     }
 
-    /** 用 ffprobe 读第一条音频流的 codec/channels/sample_rate + 容器 duration（key=value 逐行）。 */
-    private static Ffprobe ffprobe(Path file) throws IOException, InterruptedException {
-        Process p = new ProcessBuilder(
-            "ffprobe", "-v", "error",
-            "-select_streams", "a:0",
-            "-show_entries", "stream=codec_name,channels,sample_rate:format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=0",
-            file.toString())
-            .redirectErrorStream(true).start();
-        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        int exit = p.waitFor();
+    /**
+     * 统一签名音频校验谓词（正向真资产 + 负向 fixture 共用，防漂移）：
+     * ① `ffmpeg -f null` 完整解码成功；② `ffprobe -count_samples` 精确 codec=vorbis / mono / 44.1kHz /
+     * 0 < 采样数 ≤ 132300。返回问题列表（空 = 合格）。
+     */
+    private static List<String> validateSignatureAudio(Path file) throws IOException, InterruptedException {
+        List<String> problems = new ArrayList<>();
+        ProcResult decode = run("ffmpeg", "-v", "error", "-nostdin",
+            "-i", file.toString(), "-map", "0:a:0", "-f", "null", "-");
+        if (decode.exit() != 0) {
+            // 完整解码失败（损坏 packet / 无音频流 / 不可解码）——元数据无意义，直接判红
+            problems.add("完整解码失败（ffmpeg -f null exit=" + decode.exit() + "）: " + decode.out().strip());
+            return problems;
+        }
+        // duration_ts = 流时长（time_base 单位）；44.1kHz Vorbis 的 time_base = 1/44100，故 duration_ts
+        // 即**精确采样数**（3.0s → 132300），比 float duration 严格、无浮点容差。
+        ProcResult probe = run("ffprobe", "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=codec_name,channels,sample_rate,duration_ts",
+            "-of", "default=noprint_wrappers=1:nokey=0", file.toString());
         String codec = "";
         int channels = 0;
         int sampleRate = 0;
-        double duration = 0.0;
-        for (String line : out.split("\\R")) {
+        long samples = -1;
+        for (String line : probe.out().split("\\R")) {
             int eq = line.indexOf('=');
             if (eq < 0) {
                 continue;
@@ -394,61 +409,109 @@ class SignatureAudioContractTest {
                     case "codec_name" -> codec = v;
                     case "channels" -> channels = Integer.parseInt(v);
                     case "sample_rate" -> sampleRate = Integer.parseInt(v);
-                    case "duration" -> duration = Double.parseDouble(v);
+                    case "duration_ts" -> samples = Long.parseLong(v);
                     default -> { }
                 }
             } catch (NumberFormatException ignored) {
-                // "N/A" 等非数值字段保持默认（0）——后续断言据默认值判红
+                // "N/A" 等非数值字段保持默认，由下方断言判红
             }
         }
-        return new Ffprobe(exit, codec, channels, sampleRate, duration);
+        if (!"vorbis".equals(codec)) {
+            problems.add("codec 非 vorbis: " + codec);
+        }
+        if (channels != 1) {
+            problems.add("非 mono: 声道=" + channels);
+        }
+        if (sampleRate != SIGNATURE_SAMPLE_RATE) {
+            problems.add("非 44.1kHz: " + sampleRate);
+        }
+        if (samples <= 0) {
+            problems.add("无音频采样: duration_ts=" + samples);
+        } else if (samples > MAX_SIGNATURE_SAMPLES) {
+            problems.add("超 3s: " + samples + " > " + MAX_SIGNATURE_SAMPLES + " 采样");
+        }
+        return problems;
     }
 
     @Test
-    void everySignatureOggDecodesAsMonoVorbis44kUnderThreeSeconds() throws Exception {
-        Assumptions.assumeTrue(ffprobeAvailable(),
-            "ffprobe 不可用——跳过真解码格式门禁（标准 CI/本地应自带 ffmpeg）");
+    void everySignatureOggFullyDecodesAsMonoVorbis44kUnderThreeSeconds() throws Exception {
+        Assumptions.assumeTrue(toolAvailable("ffmpeg") && toolAvailable("ffprobe"),
+            "ffmpeg/ffprobe 不可用——跳过真解码格式门禁（标准 CI/本地应自带 ffmpeg）");
         for (SignatureSpec spec : SIGNATURE_SPEC) {
             Path ogg = SOUNDS_DIR.resolve(spec.oggRelPath());
             assertTrue(Files.isRegularFile(ogg), spec.event() + " 的 ogg 缺失: " + ogg);
-            Ffprobe r = ffprobe(ogg);
-            assertEquals(0, r.exit(),
-                spec.event() + " 的 ogg 无法被 ffprobe 解析（不可解码 / 损坏）: " + ogg);
-            assertEquals("vorbis", r.codec(),
-                spec.event() + " 必须是 Vorbis codec，实际 " + r.codec() + " @ " + ogg);
-            assertEquals(1, r.channels(),
-                spec.event() + " 必须 mono（plan §P4），实际声道=" + r.channels() + " @ " + ogg);
-            assertEquals(SIGNATURE_SAMPLE_RATE, r.sampleRate(),
-                spec.event() + " 必须 44.1kHz，实际=" + r.sampleRate() + "Hz @ " + ogg);
-            assertTrue(r.duration() > 0.0 && r.duration() <= SIGNATURE_MAX_SECONDS + SIGNATURE_DURATION_EPS,
-                spec.event() + " 时长必须落在 (0, 3s]（可解码且短样本），实际=" + r.duration() + "s @ " + ogg);
+            List<String> problems = validateSignatureAudio(ogg);
+            assertTrue(problems.isEmpty(),
+                spec.event() + " 的 ogg 不满足签名格式契约（完整解码 + mono/44.1k/≤3s）: " + problems + " @ " + ogg);
+        }
+    }
+
+    /** ffmpeg lavfi 合成一个测试音到 dir/name（指定声道数与编码器），返回其路径。失败即断言错。 */
+    private static Path synth(Path dir, String name, String lavfi, int channels, String codec)
+            throws IOException, InterruptedException {
+        Path out = dir.resolve(name);
+        ProcResult r = run("ffmpeg", "-v", "error", "-nostdin", "-y",
+            "-f", "lavfi", "-i", lavfi, "-ac", Integer.toString(channels), "-c:a", codec, out.toString());
+        assertEquals(0, r.exit(), "合成 fixture " + name + " 失败（ffmpeg 缺 " + codec + " 编码器?）: " + r.out().strip());
+        return out;
+    }
+
+    private static boolean canSynthesizeVorbisAndOpus() {
+        try {
+            Path probe = Files.createTempDirectory("bong-synth-probe-");
+            try {
+                synth(probe, "v.ogg", "sine=frequency=440:duration=1:sample_rate=44100", 1, "libvorbis");
+                synth(probe, "o.ogg", "sine=frequency=440:duration=1:sample_rate=48000", 1, "libopus");
+                return true;
+            } finally {
+                deleteRecursively(probe);
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static void deleteRecursively(Path dir) throws IOException {
+        try (Stream<Path> walk = Files.walk(dir)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                    // best-effort 清理
+                }
+            });
         }
     }
 
     @Test
-    void ffprobeRejectsUndecodableFixtures() throws Exception {
-        Assumptions.assumeTrue(ffprobeAvailable(), "ffprobe 不可用——跳过错误分支门禁");
-        // 每个伪文件都非 mono/44.1k Vorbis 或根本不可解码，均不得被判为合法签名音频（错误分支覆盖）。
-        byte[][] bad = {
-            "NOT_AN_OGG_FILE".getBytes(StandardCharsets.UTF_8),        // 非 OGG
-            {'O', 'g', 'g', 'S', 0, 0, 0, 0},                         // OggS 魔数但无有效流
-            {},                                                        // 空文件
-        };
-        for (int i = 0; i < bad.length; i++) {
-            Path tmp = Files.createTempFile("bong-bad-audio-" + i + "-", ".ogg");
-            try {
-                Files.write(tmp, bad[i]);
-                Ffprobe r = ffprobe(tmp);
-                boolean looksValidSignature = r.exit() == 0
-                    && "vorbis".equals(r.codec())
-                    && r.channels() == 1
-                    && r.sampleRate() == SIGNATURE_SAMPLE_RATE
-                    && r.duration() > 0.0;
-                assertFalse(looksValidSignature,
-                    "损坏/伪 OGG（fixture #" + i + "）不应被判为合法 mono/44.1k Vorbis");
-            } finally {
-                Files.deleteIfExists(tmp);
-            }
+    void signatureValidatorRejectsRealOutOfSpecFixtures() throws Exception {
+        Assumptions.assumeTrue(toolAvailable("ffmpeg") && toolAvailable("ffprobe") && canSynthesizeVorbisAndOpus(),
+            "ffmpeg 缺 libvorbis/libopus 编码器——跳过合成 fixture 错误分支门禁");
+        Path dir = Files.createTempDirectory("bong-audio-fixtures-");
+        try {
+            // 控制组：合成的合法 mono/44.1k/1s Vorbis 走同一谓词应通过（证明合成路径本身能过）
+            Path ok = synth(dir, "ok.ogg", "sine=frequency=440:duration=1:sample_rate=44100", 1, "libvorbis");
+            assertTrue(validateSignatureAudio(ok).isEmpty(), "合成的合法 mono/44.1k/1s Vorbis 应通过谓词");
+
+            // 负向：每个只破坏一项，全部走同一 validateSignatureAudio（防谓词漂移）
+            Path stereo = synth(dir, "stereo.ogg", "sine=frequency=440:duration=1:sample_rate=44100", 2, "libvorbis");
+            assertFalse(validateSignatureAudio(stereo).isEmpty(), "stereo Vorbis 必须被谓词判红");
+
+            Path hz48 = synth(dir, "48k.ogg", "sine=frequency=440:duration=1:sample_rate=48000", 1, "libvorbis");
+            assertFalse(validateSignatureAudio(hz48).isEmpty(), "48kHz Vorbis 必须被判红");
+
+            Path long4s = synth(dir, "long.ogg", "sine=frequency=440:duration=4:sample_rate=44100", 1, "libvorbis");
+            assertFalse(validateSignatureAudio(long4s).isEmpty(), ">3s Vorbis 必须被判红");
+
+            Path opus = synth(dir, "opus.ogg", "sine=frequency=440:duration=1:sample_rate=48000", 1, "libopus");
+            assertFalse(validateSignatureAudio(opus).isEmpty(), "非 Vorbis codec（Opus）必须被判红");
+
+            // 不可解码：非音频字节 → ffmpeg 完整解码失败（找不到音频流）
+            Path garbage = dir.resolve("garbage.ogg");
+            Files.write(garbage, "NOT_A_REAL_AUDIO_STREAM".getBytes(StandardCharsets.UTF_8));
+            assertFalse(validateSignatureAudio(garbage).isEmpty(), "非解码文件必须被判红（完整解码失败）");
+        } finally {
+            deleteRecursively(dir);
         }
     }
 }
