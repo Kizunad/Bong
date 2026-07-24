@@ -1,6 +1,7 @@
 {
   "id": "heaven_gate_charge_2s",
   "layers": [
+    { "sound": "bong:skill.sword_path.heaven_gate", "volume": 0.4, "pitch": 0.72, "delay_ticks": 0 },
     { "sound": "minecraft:block.beacon.ambient", "volume": 0.55, "pitch": 1.25, "delay_ticks": 0 }
   ],
   "priority": 67,

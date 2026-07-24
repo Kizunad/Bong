@@ -35,8 +35,8 @@
 | P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
 | P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
 | P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 3/3 定稿：双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂**逐 tick** IK 合握，加密防插值脱手），关键帧残差 ≤0.55、中间帧最差 2.43 模型单位，t0=t20 收势闭合。剩余招式 FPV 变体待续 |
-| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⬜ |
-| P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ⬜ |
+| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⬜（拆到独立 PR #1249，本 PR 不含） |
+| P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ✅ 2026-07-24（纯资产 + 管线，8 条 CC0 真 `.ogg` 落地；heaven_gate 客户端 recipe（release + charge 尾程）+ 7 招 server recipe 主层换 `bong:` 事件；resourcepack 纳入 `bong/sounds` + `bong/sounds.json` + sha1 同步；跨端契约测试 server 2 + client 13） |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |
 
 ## P0 — FPV 技术路线 POC（决策门）
@@ -92,6 +92,16 @@
 - 管线建立（一次性基建，后续扩曲目录复用）：音源 → `.ogg`（mono, 44.1kHz，短样本 ≤3s）→ `client/.../assets/bong/sounds.json`（新建，注册 `bong:skill.<school>.<move>` 事件）→ 对应 `server/assets/audio/recipes/*.json` 把主层 sound id 从 `minecraft:` 换成 `bong:` 事件（recipe 其余混音层保留做空间感铺底）。
 - **资产变更硬约束**：同步 `resourcepack.rs` + committed manifest 的 sha1/size（否则 Build resource pack CI 红）。
 - **跨端音效契约测试（同一测试联结三级 ID，不许 server/client 各自维护互不校验的清单）**：提取全部 server audio recipe 引用的 `bong:` sound ID 集合，断言 ⊆ client `sounds.json` 事件键集合；`sounds.json` 每个事件引用的 `.ogg` 文件真实存在且已进 committed manifest（双向：注册无文件、文件无注册均判红）；错误分支覆盖重复键、非法命名空间前缀、缺文件。首批 8 条 signature 招逐项 pin：各自 recipe **真实引用**了为它新建的 `bong:` 事件（防资产只注册不消费）。
+
+### P4 落地（2026-07-24）
+
+- **音源**：8 条 CC0 signature `.ogg`，全部源自 [BigSoundBank](https://bigsoundbank.com)（作者 Joseph SARDIN，**CC0 / public-domain-equivalent，无署名义务**）——WebSearch 检索 → WebFetch 核许可 → `curl` 下载 → `ffmpeg`（`silenceremove`+`loudnorm -16 LUFS`+`afade`，输出 mono / 44.1kHz / ≤3s vorbis）。出处清单 `client/src/main/resources/assets/bong/sounds/ATTRIBUTION.md`。
+- **事件↔资产**：`client/src/main/resources/assets/bong/sounds.json`（新建，8 事件）→ `assets/bong/sounds/skill/<school>/<move>.ogg`。事件键用 `.`（`skill.zhenmai.sever_chain`），文件名用 `/`（`bong:skill/zhenmai/sever_chain`）。
+- **recipe 主层 swap（保留 vanilla 铺底层）**：heaven_gate = 客户端 recipe `assets/bong/audio_recipes/heaven_gate_release.json`（release）+ `heaven_gate_charge_2s.json`（**charge 尾程**：蓄满顶点复用同条 `bong:skill.sword_path.heaven_gate` 低音量 0.4 / 压调 pitch 0.72 前兆层，beacon shimmer 保留铺底）；其余 7 = server `assets/audio/recipes/{woliu_void_core, zhenmai_sever_crack, baomai_signature, dugu_poison_signature, tuike_signature, anqi_echo_fractal, yixing_cast}.json`。L0 `sound` → `bong:skill.<school>.<move>`、pitch 复位 1.0。`schema::audio::validate_identifier` 接受任意 `namespace:path`，`bong:` 与 `minecraft:` 层共存。
+- **resourcepack**：`scripts/build-resourcepack.sh` INCLUDE_PREFIXES + audio 子包均纳入 `bong/sounds` + `bong/sounds.json`（`count_files` 支持文件前缀计数）；`scripts/test_build_resourcepack.py` 加 fixture + audio 子包路径/计数断言；`server/src/network/resourcepack.rs` sha1/size 同步为新构建值（sha1 `7073b361…`，size 72_501_901；`publish-release` job 在 merge 到 main 时自动重建 + 上传 release 资产）。
+- **跨端契约测试**：server `audio::signature_recipes_reference_registered_bong_events`（recipe `bong:` 引用 ⊆ client sounds.json 键）+ `each_server_signature_recipe_swaps_l0_main_layer_to_its_bong_event`（server 7 招锁 **L0 主层** sound + pitch=1.0，非「任意层」）；client `SignatureAudioContractTest`（13 用例，全部从单一 canonical `SIGNATURE_SPEC` 表派生：事件→sound name→ogg 路径逐项映射 + sounds.json↔ogg 双向 + **heaven_gate L0 主层 pin**（release L0 pitch 1.0/vol 0.9、charge_2s L0 pitch 0.72/vol 0.4）补齐 8/8 主层锁 + **错误分支**：重复事件键 token 级检测 + 非法命名空间前缀拒绝 + **committed manifest 覆盖** + **音频格式 ffmpeg 完整解码门禁**：统一 `validateSignatureAudio` 谓词（`ffmpeg -f null` 完整解码每 packet + `ffprobe duration_ts` 精确采样数严格 ≤132300=3s@44.1k，无浮点容差），正向真资产与负向 fixture（ffmpeg lavfi 现场合成的 stereo/48k/超长/Opus + garbage）**共用同一谓词**防漂移；工具/编码器缺失时 Assumptions 跳过而非破红 CI。校验只作用于 signature 集合。sounds.json 移除未接线的 `subtitle` key + Minecraft 不消费的 `category` field（字幕/分类：字幕留 P5 补 lang；播放分类由 recipe 的 `category`/`SoundSource` 在播放入口设置）。
+- **听审记录（听觉资产 3 轮 + `<PROMISE>`，plan §10 硬约束）**：8 条经用户逐条真机试听 + 多轮换源定稿——Round 1 首版 8 条 → Round 2 用户听审反馈换源（涡心：无人机声 → 呼啸风 #0155；回响分形：尖叫鸡 → 藏铜钵 #1110；脱壳：平淡撕→激烈撕毁 #0013 长撕段）+ 修静音 bug（`atrim` 未重置 PTS 致淡出吞声）→ Round 3 用户复听全部拍板「ok了」。终审 `<PROMISE>` 见本轮音效 commit message。
+- **遗留**：heaven_gate charge 尾程复用 release 签名的压调前兆层（未单独取音），P5 盲听时若前兆感不足再单独取一条 charge 专属音；其余 7 招 P5 走差异化盲听回归（能从流派分辨）。
 
 ## P5 — 回归收口
 
