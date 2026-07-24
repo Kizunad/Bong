@@ -1,6 +1,5 @@
 {
   "skill.sword_path.heaven_gate": {
-    "category": "player",
     "sounds": [
       {
         "name": "bong:skill/sword_path/heaven_gate",
@@ -9,7 +8,6 @@
     ]
   },
   "skill.woliu.void_core": {
-    "category": "player",
     "sounds": [
       {
         "name": "bong:skill/woliu/void_core",
@@ -18,7 +16,6 @@
     ]
   },
   "skill.zhenmai.sever_chain": {
-    "category": "player",
     "sounds": [
       {
         "name": "bong:skill/zhenmai/sever_chain",
@@ -27,7 +24,6 @@
     ]
   },
   "skill.baomai.full_power_release": {
-    "category": "player",
     "sounds": [
       {
         "name": "bong:skill/baomai/full_power_release",
@@ -36,7 +32,6 @@
     ]
   },
   "skill.dugu.infuse_poison": {
-    "category": "player",
     "sounds": [
       {
         "name": "bong:skill/dugu/infuse_poison",
@@ -45,7 +40,6 @@
     ]
   },
   "skill.tuike.shed": {
-    "category": "player",
     "sounds": [
       {
         "name": "bong:skill/tuike/shed",
@@ -54,7 +48,6 @@
     ]
   },
   "skill.anqi.echo_fractal": {
-    "category": "player",
     "sounds": [
       {
         "name": "bong:skill/anqi/echo_fractal",
@@ -63,7 +56,6 @@
     ]
   },
   "skill.morph.yixing": {
-    "category": "player",
     "sounds": [
       {
         "name": "bong:skill/morph/yixing",
