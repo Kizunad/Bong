@@ -3,8 +3,8 @@
   "name": "bong-full",
   "version": "v1",
   "file": "bong-full-v1.zip",
-  "sha1": "9cec0d547a4499a31a8c895efccc501ceb4c3269",
-  "size": 72501925,
+  "sha1": "6931ce03fce1ea98ecf9c2fea16a0ef16dc9e077",
+  "size": 72501963,
   "url_env": "BONG_RESOURCE_PACK_URL",
   "sha1_env": "BONG_RESOURCE_PACK_SHA1",
   "force_accept_default": false,
@@ -48,9 +48,10 @@
       "paths": [
         "bong/atmosphere",
         "bong/audio_recipes",
-        "bong/sounds"
+        "bong/sounds",
+        "bong/sounds.json"
       ],
-      "file_count": 65
+      "file_count": 66
     }
   ]
 }
