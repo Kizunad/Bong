@@ -324,7 +324,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 - **P0**：`server/src/npc/spawn/ambient_scheduler.rs` 新增 runtime-first strict resolver 与 `AmbientRuntimeGround` tri-state；loaded runtime 明确不安全即拒绝，loaded scan miss 的 raster Y 必须回到 live `ChunkLayer` 验证 support/feet/head，双源失败不调用 pool、不占 pending budget。`server/src/npc/navigator.rs` 只把既有 `resolve_ground_y_from_chunk` 扩为 `pub(crate)`，未改变导航/重力行为。
 - **P1**：`npc::spawn::ambient_scheduler::tests` 覆盖 runtime/raster 优先级、unloaded fallback、负坐标、扫描窗口、双格净空、默认/属性液体、空气/非运动支撑、layer 边界、pool `None` 与预算副作用；另以真实 `ambient_scheduler_system::<M>` → mundane/threat pool → ECS `Position` 锁住两条生产链。
-- **P2**：`server/src/cmd/dev/ambient_spawn.rs`、`server/src/cmd/registry_pin.rs` 提供 X/Z-only 的 deterministic one-shot；`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 通过真实协议包验证 Cow/Rat 脚点 `y=73`，拒绝继承执行者 `y=152`，并以命令前事件水位避免旧 `PositionLook` 假阳性。
+- **P2**：`server/src/cmd/dev/ambient_spawn.rs`、`server/src/cmd/dev/mod.rs`、`server/src/cmd/mod.rs`、`server/src/cmd/registry_pin.rs` 提供 X/Z-only 的 deterministic one-shot；生产默认不向 Brigadier command tree 注册 `ambient_spawn` root，只有显式 `BONG_DEV_MODE` 才注册命令并安装私有 `AmbientSpawnDevAccess` capability，handler 对内部伪造 event 仍在 resolver/pool 前 fail-closed。`scripts/bot-e2e.sh` 的自起服路径显式开启 dev mode，`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 通过真实协议包验证 Cow/Rat 脚点 `y=73`，拒绝继承执行者 `y=152`，并以命令前事件水位避免旧 `PositionLook` 假阳性。
 
 ### 关键 commit
 
@@ -344,15 +344,16 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - **定向 server**：`cmd::dev::ambient_spawn::tests` 11/11、`cmd::registry_pin::tests` 3/3、`cmd::tests::` 4/4、`ambient` 119/119；均实际命中非零测试。完整 diff review 返工后，`ambient_ground_position_loaded_scan_miss_*` 3/3 通过，锁定精确 raster Y、空气支撑拒绝与 live 落点复验。
 - **review 返工 server gate**（`71e5ea3ab`）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11920 passed / 2 ignored，main 11 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
 - **merged server gate**（`da3196a35684e54660d4dec739bc52fa2e38ffe4`）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11919 passed / 2 ignored，main 11 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
+- **最终 access-control gate**（最终 HEAD）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11922 passed / 2 ignored，main 12 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。`production_command_registry_does_not_expose_ambient_spawn` 与 `forged_events_without_dev_access_are_rejected_before_either_pool` 各实际命中 1/1；`cmd::dev::ambient_spawn::tests` 12/12，`dev_mode_enabled_*` 2/2，锁定生产默认隐藏 root、伪造 mundane/threat event 零实体副作用，以及 dev-enabled 正向真实 pool 不退化。
 - **schema / agent**：schema build/check/generate freshness 406 artifacts，30 files / 898 tests passed；Tiandao 72 files / 840 tests passed。
 - **client**：Java `17.0.19` 两次执行 `./gradlew test build` 均成功，3/3 Fabric GameTests passed；最新 `origin/main` 带入 client 网络线程修复后再次得到 `BUILD SUCCESSFUL`（21 tasks，6m07s）。
-- **协议 Bot**：merged HEAD 的 `npc_ambient_surface_resolution` 1/1 passed；Cow type 18 与 Rat type 126 均在 `(5,73,3)`，未继承执行者 `(0,152,0)`。此前完整 Bot suite 为 28 pass / 1 skip / 2 fail；失败仅为既有 `production_craft_disconnect_resume` 与 `production_spiritwood_full_inventory_drop`，目标 ambient 场景独立通过，故未将完整套件误报为全绿。
+- **协议 Bot**：最终 access-control HEAD 的 `npc_ambient_surface_resolution` 1/1 passed；Cow type 18 与 Rat type 126 均在 `(5,73,3)`，未继承执行者 `(0,152,0)`，同时证明自起服显式 dev mode 能进入受 capability 保护的命令链。最终完整 Bot suite 诚实结果为 30 pass / 1 skip / 1 fail；唯一失败是非目标 `production_spiritwood_full_inventory_drop` 等待 240-tick `lumber_progress terminal` 超时，目标 ambient 场景独立通过，故未将完整套件误报为全绿。此前完整 suite 的 `production_craft_disconnect_resume` 本轮已通过。
 - **full smoke**：共享 runtime DB 直接运行时，north-rift preview 正确 hydrate `zones_runtime` 的 `0.2661459988600612`，与静态 fixture `0.290146` 不同而失败；未删除或改写用户 DB。改用临时空 `server/data` 并在 trap 中恢复原数据后，pre-merge 与 merged HEAD 两轮 `bash scripts/smoke-test-e2e.sh` 均为 9 passed / 0 failed。最终 run id：`20260723-152959-1866492-ambient-surface-isolated-postmerge`，`SMOKE_STATUS=0`，原 runtime data 已恢复。
 - **无上下文 validator**：先对 gameplay exact target `da3196a35684e54660d4dec739bc52fa2e38ffe4` 给出 PASS；最终归档 HEAD 在 push 前再次 exact-target 验证，确认后续仅为 client/review 主线合并与 docs evidence，不改变 runtime/raster fail-closed、两条真实 pool、side-effect 提交边界、Bot 真实命令链及 Navigator 零行为扩张；最终 target SHA 记录于 PR body。
 
 ### 跨仓库核验
 
-- **server**：`resolve_ambient_ground_position`、`resolve_loaded_raster_landing`、`submit_ambient_spawn_candidate`、`submit_ambient_dev_spawn_once`、`AmbientSpawnCmd` 与 command graph pin 均落地；mundane/threat 共用同一 resolver 和提交边界。
+- **server**：`resolve_ambient_ground_position`、`resolve_loaded_raster_landing`、`submit_ambient_spawn_candidate`、`submit_ambient_dev_spawn_once`、`AmbientSpawnCmd`、`AmbientSpawnDevAccess` 与 command graph pin 均落地；mundane/threat 共用同一 resolver 和提交边界，`BONG_DEV_MODE` 默认关闭命令树入口且 capability 拒绝伪造 event。
 - **bot**：`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 走真实 `/tpzone`、`/ambient_spawn once`、`entity_spawn` 与位置 mirror，不依赖随机 ambient tick。
 - **client**：零代码改动；继续渲染 server 权威 `Position`，未加入 client gravity hack；Java 17 全门禁通过。
 - **agent/schema**：零代码改动、零 Redis/wire 变更；合并主线后 schema/Tiandao 全门禁通过。

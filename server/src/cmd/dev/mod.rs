@@ -46,8 +46,23 @@ pub mod zones;
 
 use valence::prelude::App;
 
+pub fn dev_mode_enabled() -> bool {
+    std::env::var("BONG_DEV_MODE").ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes"
+        )
+    })
+}
+
 pub fn register(app: &mut App) {
-    ambient_spawn::register(app);
+    register_for_dev_mode(app, dev_mode_enabled());
+}
+
+pub(crate) fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
+    if dev_mode_enabled {
+        ambient_spawn::register_enabled(app);
+    }
     balance::register(app);
     baolongwang::register(app);
     block_picker::register(app);

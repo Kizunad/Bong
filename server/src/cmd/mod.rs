@@ -8,9 +8,13 @@ use valence::prelude::{App, PostStartup};
 use valence::EventLoopPreUpdate;
 
 pub fn register(app: &mut App) {
+    register_for_dev_mode(app, dev::dev_mode_enabled());
+}
+
+fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
     let _pinned_command_names = registry_pin::COMMAND_NAMES;
     ping::register(app);
-    dev::register(app);
+    dev::register_for_dev_mode(app, dev_mode_enabled);
     gameplay::register(app);
     // Tab 补全：全部 add_command 完成后（PostStartup）标记 AskServer 节点，
     // 运行期在事件循环里应答客户端补全请求。
@@ -21,6 +25,11 @@ pub fn register(app: &mut App) {
 /// 测试用：注册全部命令的最小 App（completions / registry_pin 测试共用）。
 #[cfg(test)]
 pub fn test_command_app() -> App {
+    test_command_app_for_dev_mode(true)
+}
+
+#[cfg(test)]
+fn test_command_app_for_dev_mode(dev_mode_enabled: bool) -> App {
     use crate::combat::events::DebugCombatCommand;
     use crate::cultivation::tribulation::StartDuXuRequest;
     use crate::fauna::rat_phase::RatPhaseChangeEvent;
@@ -41,7 +50,7 @@ pub fn test_command_app() -> App {
     app.insert_resource(PendingScenario::default());
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(ShaderStatePayload::default());
-    register(&mut app);
+    register_for_dev_mode(&mut app, dev_mode_enabled);
     app.finish();
     app.cleanup();
     app.update();
@@ -58,6 +67,26 @@ mod tests {
 
     fn setup_registry_app() -> App {
         test_command_app()
+    }
+
+    #[test]
+    fn production_command_registry_does_not_expose_ambient_spawn() {
+        let app = test_command_app_for_dev_mode(false);
+        let registry = app.world().resource::<CommandRegistry>();
+        let roots = registry
+            .graph
+            .graph
+            .neighbors(registry.graph.root)
+            .filter_map(|node| match &registry.graph.graph[node].data {
+                NodeData::Literal { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            !roots.contains(&"ambient_spawn"),
+            "production command tree must not expose /ambient_spawn when BONG_DEV_MODE is disabled; roots={roots:?}"
+        );
     }
 
     #[test]

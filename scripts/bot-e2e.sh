@@ -172,6 +172,8 @@ else
     cd "$ROOT/server"
     export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
     export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
+    # 协议 Bot 覆盖大量 dev-only 命令；生产默认不暴露这些确定性测试接缝。
+    export BONG_DEV_MODE="${BONG_DEV_MODE:-1}"
     exec cargo run $PROFILE_FLAG
   ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!

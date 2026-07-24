@@ -5,7 +5,8 @@ use valence::command::parsers::CommandArg;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{
-    App, ChunkLayer, Client, Commands, DVec3, EventReader, Position, Query, Res, Update, With,
+    App, ChunkLayer, Client, Commands, DVec3, EventReader, Position, Query, Res, Resource, Update,
+    With,
 };
 
 use crate::npc::movement::GameTick;
@@ -53,8 +54,13 @@ impl Command for AmbientSpawnCmd {
     }
 }
 
-pub fn register(app: &mut App) {
-    app.add_command::<AmbientSpawnCmd>()
+struct AmbientSpawnDevAccess;
+
+impl Resource for AmbientSpawnDevAccess {}
+
+pub(super) fn register_enabled(app: &mut App) {
+    app.insert_resource(AmbientSpawnDevAccess)
+        .add_command::<AmbientSpawnCmd>()
         .add_systems(Update, handle_ambient_spawn);
 }
 
@@ -80,13 +86,19 @@ pub fn handle_ambient_spawn(
     terrain_providers: Option<Res<TerrainProviders>>,
     season: Option<Res<WorldSeasonState>>,
     tick: Option<Res<GameTick>>,
+    dev_access: Option<Res<AmbientSpawnDevAccess>>,
 ) {
+    let dev_access_enabled = dev_access.is_some();
     for event in events.read() {
         let Ok((position, current_dimension, mut client)) = players.get_mut(event.executor) else {
             // A command result may be injected for a non-player entity by a malformed dev test or
             // an internal caller. Do not let that entity reach the ambient production path.
             continue;
         };
+        if !dev_access_enabled {
+            client.send_chat_message("[dev] ambient_spawn rejected: dev mode disabled");
+            continue;
+        }
 
         let (kind, x, z) = match event.result {
             AmbientSpawnCmd::OnceMundane { x, z } => (AmbientDevSpawnKind::Mundane, x, z),
@@ -191,7 +203,7 @@ mod tests {
     fn command_graph_has_one_shared_once_root_with_two_executable_kinds() {
         let mut app = App::new();
         app.add_plugins(CommandPlugin);
-        register(&mut app);
+        register_enabled(&mut app);
         app.finish();
         app.cleanup();
         app.update();
@@ -313,8 +325,15 @@ mod tests {
     }
 
     fn setup_app() -> App {
+        setup_app_with_dev_access(true)
+    }
+
+    fn setup_app_with_dev_access(dev_access_enabled: bool) -> App {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<AmbientSpawnCmd>>();
+        if dev_access_enabled {
+            app.insert_resource(AmbientSpawnDevAccess);
+        }
         app.add_systems(Update, handle_ambient_spawn);
         app
     }
@@ -400,9 +419,20 @@ mod tests {
         spirit_qi: f64,
         danger_level: u8,
     ) -> (App, Entity, MockClientHelper, Entity) {
+        setup_runtime_app_with_dev_access(spirit_qi, danger_level, true)
+    }
+
+    fn setup_runtime_app_with_dev_access(
+        spirit_qi: f64,
+        danger_level: u8,
+        dev_access_enabled: bool,
+    ) -> (App, Entity, MockClientHelper, Entity) {
         let scenario = ScenarioSingleClient::new();
         let mut app = scenario.app;
         app.add_event::<CommandResultEvent<AmbientSpawnCmd>>();
+        if dev_access_enabled {
+            app.insert_resource(AmbientSpawnDevAccess);
+        }
         app.add_systems(Update, handle_ambient_spawn);
         app.world_mut().entity_mut(scenario.client).insert((
             Position::new([0.0, EXECUTOR_Y, 0.0]),
@@ -635,6 +665,58 @@ mod tests {
         );
         let mut markers = app.world_mut().query::<&MundaneFaunaMarker>();
         assert_eq!(markers.iter(app.world()).count(), 0);
+    }
+
+    #[test]
+    fn forged_events_without_dev_access_are_rejected_before_either_pool() {
+        let (mut app, player, mut helper, _) = setup_runtime_app_with_dev_access(0.5, 1, false);
+        assert!(
+            app.world()
+                .get_resource::<AmbientSpawnDevAccess>()
+                .is_none(),
+            "test precondition: forged events must run without the explicit dev capability"
+        );
+
+        send(
+            &mut app,
+            player,
+            AmbientSpawnCmd::OnceMundane {
+                x: TARGET_X,
+                z: TARGET_Z,
+            },
+        );
+        send(
+            &mut app,
+            player,
+            AmbientSpawnCmd::OnceThreat {
+                x: TARGET_X,
+                z: TARGET_Z,
+            },
+        );
+        app.update();
+
+        assert_eq!(
+            flush_and_collect_chat(&mut app, &mut helper),
+            vec![
+                "[dev] ambient_spawn rejected: dev mode disabled".to_string(),
+                "[dev] ambient_spawn rejected: dev mode disabled".to_string(),
+            ],
+            "forged mundane/threat events must receive the same stable dev-mode rejection"
+        );
+
+        let world = app.world_mut();
+        let mut mundane_markers = world.query::<&MundaneFaunaMarker>();
+        let mut threat_markers = world.query::<&AmbientThreatMarker>();
+        assert_eq!(
+            mundane_markers.iter(world).count(),
+            0,
+            "missing dev capability must stop forged mundane events before the real pool, marker, and entity side effects"
+        );
+        assert_eq!(
+            threat_markers.iter(world).count(),
+            0,
+            "missing dev capability must stop forged threat events before the real pool, marker, and entity side effects"
+        );
     }
 
     #[test]

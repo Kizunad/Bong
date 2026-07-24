@@ -284,7 +284,7 @@ fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
             }
         }
         "import" => {
-            if !cli_dev_mode_enabled() {
+            if !cmd::dev::dev_mode_enabled() {
                 eprintln!("导入命令仅允许在 dev 模式下执行（设置 BONG_DEV_MODE=1）");
                 return Err(2);
             }
@@ -428,21 +428,12 @@ fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
     }
 }
 
-fn cli_dev_mode_enabled() -> bool {
-    matches!(
-        std::env::var("BONG_DEV_MODE").ok().as_deref(),
-        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
-    )
-}
-
 #[cfg(test)]
 mod cli_tests {
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard};
 
-    use super::{
-        cli_dev_mode_enabled, full_app_startup_smoke_enabled, is_truthy_env_value, run_cli,
-    };
+    use super::{cmd, full_app_startup_smoke_enabled, is_truthy_env_value, run_cli};
 
     static CLI_ENV_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -574,9 +565,25 @@ mod cli_tests {
     }
 
     #[test]
-    fn cli_dev_mode_enabled_accepts_common_truthy_values() {
-        let _guard = ScopedEnvVar::set("BONG_DEV_MODE", Some("true"));
-        assert!(cli_dev_mode_enabled());
+    fn dev_mode_enabled_accepts_common_truthy_values() {
+        for value in ["1", "true", "TRUE", " yes "] {
+            let _guard = ScopedEnvVar::set("BONG_DEV_MODE", Some(value));
+            assert!(
+                cmd::dev::dev_mode_enabled(),
+                "BONG_DEV_MODE={value:?} should enable dev-only command registration"
+            );
+        }
+    }
+
+    #[test]
+    fn dev_mode_enabled_rejects_falsey_values() {
+        for value in ["", "0", "false", "no", "off"] {
+            let _guard = ScopedEnvVar::set("BONG_DEV_MODE", Some(value));
+            assert!(
+                !cmd::dev::dev_mode_enabled(),
+                "BONG_DEV_MODE={value:?} must keep dev-only command registration disabled"
+            );
+        }
     }
 
     #[test]

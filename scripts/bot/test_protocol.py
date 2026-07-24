@@ -665,6 +665,31 @@ class NorthRiftScenarioContractTest(unittest.TestCase):
         )
 
 
+class BotE2eDevModeContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (
+            pathlib.Path(__file__).parents[2] / "scripts/bot-e2e.sh"
+        ).read_text(encoding="utf-8")
+
+    def test_self_started_server_explicitly_enables_dev_mode_before_cargo_run(self):
+        start = self.source.index('(\n    cd "$ROOT/server"')
+        end = self.source.index('  ) >"$SERVER_LOG"', start)
+        launch = self.source[start:end]
+        dev_mode = 'export BONG_DEV_MODE="${BONG_DEV_MODE:-1}"'
+
+        self.assertIn(
+            dev_mode,
+            launch,
+            "Bot 自起 server 必须显式开启 BONG_DEV_MODE，才能执行受门禁保护的确定性 dev 场景",
+        )
+        self.assertLess(
+            launch.index(dev_mode),
+            launch.index("exec cargo run $PROFILE_FLAG"),
+            "BONG_DEV_MODE 必须在 server 进程启动前导出",
+        )
+
+
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
