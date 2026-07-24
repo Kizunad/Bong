@@ -324,7 +324,7 @@ type MovementActionQueryItem<'a> = (
 // 惯例（每个 system param 对应一个函数参数），拆结构体收拢会改变既有调用点/测试的
 // 构造方式，收益不足以抵消改动面。
 #[allow(clippy::too_many_arguments)]
-fn handle_movement_action_intents(
+pub(crate) fn handle_movement_action_intents(
     clock: Res<CombatClock>,
     body_plans: Option<Res<crate::body_plan::BodyPlanRegistry>>,
     races: Option<Res<crate::body_plan::RaceRegistry>>,
@@ -479,7 +479,7 @@ fn dash_tick_decision(action: MovementAction, active_until_tick: u64, now: u64) 
     }
 }
 
-fn tick_movement_actions(
+pub(crate) fn tick_movement_actions(
     clock: Res<CombatClock>,
     mut players: Query<MovementTickItem<'_>, With<Client>>,
 ) {

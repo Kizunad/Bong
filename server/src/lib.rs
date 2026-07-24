@@ -84,6 +84,7 @@ pub mod mineral;
 pub mod mob;
 pub mod movement;
 pub mod network;
+pub mod nourishment;
 pub mod npc;
 pub mod persistence;
 pub mod player;

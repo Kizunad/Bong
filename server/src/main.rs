@@ -11,9 +11,10 @@ use std::time::Duration;
 use bong_server::{
     alchemy, audio, body_plan, botany, cmd, coffin, combat, craft, cultivation, dandao,
     death_lifecycle, economy, fauna, forge, gathering, identity, inventory, lingtian, mineral,
-    movement, network, npc, persistence, player, preview, qi_physics, server_readiness, shader,
-    shelflife, shutdown, skill, skin, social, spiritwood, supply_coffin, sword_path, tools, world,
-    zhenfa,
+<<<<<<< HEAD
+    movement, network, nourishment, npc, persistence, player, preview, qi_physics, server_readiness,
+    shader, shelflife, shutdown, skill, skin, social, spiritwood, supply_coffin, sword_path, tools,
+    world, zhenfa,
 };
 
 use crossbeam_channel::unbounded;
@@ -128,6 +129,7 @@ fn build_server_app() -> App {
     shelflife::register(&mut app);
     economy::register(&mut app);
     movement::register(&mut app);
+    nourishment::register(&mut app);
     npc::register(&mut app);
     zhenfa::register(&mut app);
     sword_path::register(&mut app);
