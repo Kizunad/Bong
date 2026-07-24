@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.stream.JsonReader;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -61,16 +62,27 @@ class SignatureAudioContractTest {
     /** committed 资源包 manifest（CI「Build resource pack」核验对象）。test 工作目录 = client/。 */
     private static final Path COMMITTED_MANIFEST = Path.of("resourcepack/manifest.json");
 
-    /** plan §P4 首批 8 条 signature 招（与 server signature 侧、ATTRIBUTION.md 三方对齐）。 */
-    private static final Set<String> SIGNATURE_EVENTS = Set.of(
-        "skill.sword_path.heaven_gate",
-        "skill.woliu.void_core",
-        "skill.zhenmai.sever_chain",
-        "skill.baomai.full_power_release",
-        "skill.dugu.infuse_poison",
-        "skill.tuike.shed",
-        "skill.anqi.echo_fractal",
-        "skill.morph.yixing");
+    /**
+     * plan §P4 首批 8 条 signature 招的**单一 canonical 规格表**：事件键 → sounds.json sound name → ogg 相对路径。
+     * 三者一一映射（事件键用「.」、sound name/文件路径用「/」）。契约测试全部从此表派生——事件↔具体 ogg
+     * 逐项锁定 + 格式校验只作用于 signature 集合（不误伤未来非 signature 事件），避免 server/client 各自
+     * 维护互不校验的清单。与 server signature 侧、ATTRIBUTION.md 三方对齐。
+     */
+    private record SignatureSpec(String event, String soundName, String oggRelPath) {}
+
+    private static final List<SignatureSpec> SIGNATURE_SPEC = List.of(
+        new SignatureSpec("skill.sword_path.heaven_gate", "bong:skill/sword_path/heaven_gate", "skill/sword_path/heaven_gate.ogg"),
+        new SignatureSpec("skill.woliu.void_core", "bong:skill/woliu/void_core", "skill/woliu/void_core.ogg"),
+        new SignatureSpec("skill.zhenmai.sever_chain", "bong:skill/zhenmai/sever_chain", "skill/zhenmai/sever_chain.ogg"),
+        new SignatureSpec("skill.baomai.full_power_release", "bong:skill/baomai/full_power_release", "skill/baomai/full_power_release.ogg"),
+        new SignatureSpec("skill.dugu.infuse_poison", "bong:skill/dugu/infuse_poison", "skill/dugu/infuse_poison.ogg"),
+        new SignatureSpec("skill.tuike.shed", "bong:skill/tuike/shed", "skill/tuike/shed.ogg"),
+        new SignatureSpec("skill.anqi.echo_fractal", "bong:skill/anqi/echo_fractal", "skill/anqi/echo_fractal.ogg"),
+        new SignatureSpec("skill.morph.yixing", "bong:skill/morph/yixing", "skill/morph/yixing.ogg"));
+
+    /** 从 canonical 表派生的事件键集合（供全量存在性 / 命名空间等复用）。 */
+    private static final Set<String> SIGNATURE_EVENTS =
+        SIGNATURE_SPEC.stream().map(SignatureSpec::event).collect(Collectors.toSet());
 
     /**
      * 第 8 招 heaven_gate 的 client recipe 的 **L0 主层** 逐项 pin（release + charge 尾程）。
@@ -139,6 +151,27 @@ class SignatureAudioContractTest {
         JsonObject root = soundsJson();
         for (String ev : SIGNATURE_EVENTS) {
             assertTrue(root.has(ev), "plan §P4 首批 signature 事件缺注册: " + ev);
+        }
+    }
+
+    /**
+     * canonical 逐项映射：每条 signature 的 sounds.json 事件必须**精确解析**到其规格表指定的 sound name，
+     * 且该 sound name 对应的 ogg 文件真实存在于规格表指定路径。防「事件挂错文件 / 路径漂移」——只查
+     * 「存在某个 ogg」不够，必须是**它自己那条**。
+     */
+    @Test
+    void eachSignatureEventResolvesToItsExactOgg() throws IOException {
+        JsonObject root = soundsJson();
+        for (SignatureSpec spec : SIGNATURE_SPEC) {
+            assertTrue(root.has(spec.event()), "signature 事件缺注册: " + spec.event());
+            JsonArray sounds = root.getAsJsonObject(spec.event()).getAsJsonArray("sounds");
+            assertTrue(sounds != null && sounds.size() == 1,
+                spec.event() + " 应恰好引用 1 条 sound（signature 单音源），实际 " + (sounds == null ? "null" : sounds.size()));
+            assertEquals(spec.soundName(), soundName(sounds.get(0)),
+                spec.event() + " 的 sound name 必须精确 == " + spec.soundName() + "（防事件挂错文件）");
+            Path ogg = SOUNDS_DIR.resolve(spec.oggRelPath());
+            assertTrue(Files.isRegularFile(ogg) && Files.size(ogg) > 0,
+                spec.event() + " 的 ogg 必须存在于规格路径且非空: " + ogg);
         }
     }
 
@@ -307,253 +340,115 @@ class SignatureAudioContractTest {
         }
     }
 
-    // ---- 音频格式契约：机器校验 Ogg Vorbis codec/channels/sample_rate/duration + 容器完整性 ----
+    // ---- 音频格式契约：ffprobe 真解码校验 codec/channels/sample_rate/duration ----
     //
-    // plan §P4 音源规格写明「mono, 44.1kHz，短样本 ≤3s」。仅校验文件存在+非空挡不住换源引入的
-    // stereo / 48kHz / 超长 / 伪 OGG——这里解析 Ogg Vorbis 容器逐项机器 pin。probe 只依赖标准库
-    // （不引第三方解码器，避免 CI 环境依赖）；它是**结构探针不是完整解码器**，故除 codec/声道/采样率/
-    // 时长外还校验三项完整性以挡「有效魔数前缀但截断/无音频」的伪文件：① identification header 完整
-    // 30 字节且 framing bit 置位 ② 末页带 EOS 标志（header_type & 0x04）③ 末页 granule>0（=确有 PCM
-    // 采样）。真资产由 ffmpeg 管线保证可解码，本探针在测试期兜住结构层伪造。
+    // plan §P4 音源规格「mono, 44.1kHz，短样本 ≤3s」。手写结构探针无法证明"可解码"（header-only
+    // 伪文件能蒙混），故改用真实解码器 ffprobe 打开每条资产读取流信息——ffprobe 成功退出 + 读出
+    // 期望流参数即证明可解码。ffprobe 不可用时（罕见环境）用 Assumptions 跳过而非误红；标准 CI
+    // （ubuntu-latest 自带 ffmpeg）与本地均可用。校验只作用于 SIGNATURE_SPEC（不误伤未来非 signature 事件）。
 
     private static final int SIGNATURE_SAMPLE_RATE = 44100;
     private static final double SIGNATURE_MAX_SECONDS = 3.0;
-    // 采样对齐的时长上界容差：3.0s 正好 = 132300 granule；编码 padding 可能多出个别采样，放 ~5ms
-    // 容差既容忍边界又能判死 4s 级越界。
-    private static final double SIGNATURE_DURATION_EPS = 0.005;
-    /** Vorbis identification header 固定 30 字节（含末尾 framing flag）。 */
-    private static final int VORBIS_ID_HEADER_LEN = 30;
+    // 3.0s 边界 + ffprobe duration 浮点，放 ~10ms 容差既容边界又判死 4s 级越界。
+    private static final double SIGNATURE_DURATION_EPS = 0.01;
 
-    private record OggVorbisProbe(
-        boolean vorbis, int channels, int sampleRate, double durationSeconds, boolean structurallyComplete) {}
+    private record Ffprobe(int exit, String codec, int channels, int sampleRate, double duration) {}
 
-    /** 末页扫描结果：granule_position（Vorbis 里 = 累计 PCM 采样数）+ header_type（bit2=EOS）。 */
-    private record LastPage(long granule, int headerType) {}
-
-    private static boolean startsWithOggS(byte[] data, int off) {
-        return off + 4 <= data.length
-            && data[off] == 'O' && data[off + 1] == 'g' && data[off + 2] == 'g' && data[off + 3] == 'S';
-    }
-
-    private static int readLeU32(byte[] b, int off) {
-        return (b[off] & 0xFF) | ((b[off + 1] & 0xFF) << 8) | ((b[off + 2] & 0xFF) << 16) | ((b[off + 3] & 0xFF) << 24);
-    }
-
-    private static long readLeU64(byte[] b, int off) {
-        long v = 0;
-        for (int i = 0; i < 8; i++) {
-            v |= ((long) (b[off + i] & 0xFF)) << (8 * i);
+    private static boolean ffprobeAvailable() {
+        try {
+            Process p = new ProcessBuilder("ffprobe", "-version").redirectErrorStream(true).start();
+            p.getInputStream().readAllBytes();
+            return p.waitFor() == 0;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
-        return v;
     }
 
-    /**
-     * 逐页扫描到最后一个 Ogg 页，返回其 granule + header_type（header_type@页偏移+5）。
-     * 逐页跳转：body 长度 = segment_table 各字节之和（含 255 lacing）。截断/越界即停在已见的最后一页。
-     */
-    private static LastPage scanLastPage(byte[] data) {
-        long granule = 0;
-        int headerType = 0;
-        int i = 0;
-        while (i + 27 <= data.length) {
-            if (!startsWithOggS(data, i)) {
-                i++; // well-formed 文件页对齐，resync 兜底
+    /** 用 ffprobe 读第一条音频流的 codec/channels/sample_rate + 容器 duration（key=value 逐行）。 */
+    private static Ffprobe ffprobe(Path file) throws IOException, InterruptedException {
+        Process p = new ProcessBuilder(
+            "ffprobe", "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=codec_name,channels,sample_rate:format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=0",
+            file.toString())
+            .redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        int exit = p.waitFor();
+        String codec = "";
+        int channels = 0;
+        int sampleRate = 0;
+        double duration = 0.0;
+        for (String line : out.split("\\R")) {
+            int eq = line.indexOf('=');
+            if (eq < 0) {
                 continue;
             }
-            int segs = data[i + 26] & 0xFF;
-            int segTableEnd = i + 27 + segs;
-            if (segTableEnd > data.length) {
-                break; // segment table 被截断 → 本页不完整，不采信其 granule/EOS
+            String k = line.substring(0, eq).trim();
+            String v = line.substring(eq + 1).trim();
+            try {
+                switch (k) {
+                    case "codec_name" -> codec = v;
+                    case "channels" -> channels = Integer.parseInt(v);
+                    case "sample_rate" -> sampleRate = Integer.parseInt(v);
+                    case "duration" -> duration = Double.parseDouble(v);
+                    default -> { }
+                }
+            } catch (NumberFormatException ignored) {
+                // "N/A" 等非数值字段保持默认（0）——后续断言据默认值判红
             }
-            int bodyLen = 0;
-            for (int s = 0; s < segs; s++) {
-                bodyLen += data[i + 27 + s] & 0xFF;
-            }
-            if (segTableEnd + bodyLen > data.length) {
-                break; // page body 被截断 → 文件不完整
-            }
-            headerType = data[i + 5] & 0xFF;
-            granule = readLeU64(data, i + 6);
-            i = segTableEnd + bodyLen;
         }
-        return new LastPage(granule, headerType);
-    }
-
-    /**
-     * 解析 Ogg Vorbis：首页 identification header 取 codec/channels/sample_rate，末页 granule/sample_rate
-     * 得时长。非 Ogg 或非 Vorbis identification header → vorbis=false。structurallyComplete = id header 完整
-     * 30 字节且 framing bit 置位 && 末页带 EOS && granule>0（挡截断/无音频伪文件）。
-     */
-    private static OggVorbisProbe probeOggVorbis(byte[] data) {
-        if (!startsWithOggS(data, 0) || data.length < 28) {
-            return new OggVorbisProbe(false, 0, 0, 0.0, false);
-        }
-        int pageSegments = data[26] & 0xFF;
-        int packetStart = 27 + pageSegments;
-        // identification header: 0x01 "vorbis" version(4) channels(1) sample_rate(4) ... blocksize(1) framing(1)
-        if (packetStart + 16 > data.length
-            || (data[packetStart] & 0xFF) != 0x01
-            || data[packetStart + 1] != 'v' || data[packetStart + 2] != 'o' || data[packetStart + 3] != 'r'
-            || data[packetStart + 4] != 'b' || data[packetStart + 5] != 'i' || data[packetStart + 6] != 's') {
-            return new OggVorbisProbe(false, 0, 0, 0.0, false);
-        }
-        int channels = data[packetStart + 11] & 0xFF;
-        int sampleRate = readLeU32(data, packetStart + 12);
-        // framing flag @ id header 偏移 29（bit0 必须为 1）；要求 header 完整 30 字节。
-        boolean framingOk = packetStart + VORBIS_ID_HEADER_LEN <= data.length
-            && (data[packetStart + 29] & 0x01) == 0x01;
-        LastPage last = scanLastPage(data);
-        boolean eos = (last.headerType() & 0x04) != 0;
-        boolean structurallyComplete = framingOk && eos && last.granule() > 0;
-        double duration = sampleRate > 0 ? (double) last.granule() / sampleRate : 0.0;
-        return new OggVorbisProbe(true, channels, sampleRate, duration, structurallyComplete);
-    }
-
-    private static boolean isSignatureFormatOk(OggVorbisProbe p) {
-        return p.vorbis()
-            && p.structurallyComplete()
-            && p.channels() == 1
-            && p.sampleRate() == SIGNATURE_SAMPLE_RATE
-            && p.durationSeconds() <= SIGNATURE_MAX_SECONDS + SIGNATURE_DURATION_EPS;
+        return new Ffprobe(exit, codec, channels, sampleRate, duration);
     }
 
     @Test
-    void everySignatureOggIsMonoVorbis44kUnderThreeSeconds() throws IOException {
-        JsonObject root = soundsJson();
-        for (String event : root.keySet()) {
-            for (JsonElement el : root.getAsJsonObject(event).getAsJsonArray("sounds")) {
-                String name = soundName(el);
-                Path ogg = SOUNDS_DIR.resolve(name.substring("bong:".length()) + ".ogg");
-                OggVorbisProbe p = probeOggVorbis(Files.readAllBytes(ogg));
-                assertTrue(p.vorbis(),
-                    "事件 " + event + " 的资产不是 Ogg Vorbis 容器（可能是伪 OGG / 换错格式）: " + ogg);
-                assertTrue(p.structurallyComplete(),
-                    "事件 " + event + " 的 ogg 容器不完整（framing/EOS/granule 缺失 → 截断或无音频）: " + ogg);
-                assertEquals(1, p.channels(),
-                    "事件 " + event + " 的 ogg 必须 mono（plan §P4 音源规格），实际声道=" + p.channels() + " @ " + ogg);
-                assertEquals(SIGNATURE_SAMPLE_RATE, p.sampleRate(),
-                    "事件 " + event + " 的 ogg 必须 44.1kHz，实际=" + p.sampleRate() + "Hz @ " + ogg);
-                assertTrue(p.durationSeconds() <= SIGNATURE_MAX_SECONDS + SIGNATURE_DURATION_EPS,
-                    "事件 " + event + " 的 ogg 必须 ≤3s（短样本），实际=" + p.durationSeconds() + "s @ " + ogg);
+    void everySignatureOggDecodesAsMonoVorbis44kUnderThreeSeconds() throws Exception {
+        Assumptions.assumeTrue(ffprobeAvailable(),
+            "ffprobe 不可用——跳过真解码格式门禁（标准 CI/本地应自带 ffmpeg）");
+        for (SignatureSpec spec : SIGNATURE_SPEC) {
+            Path ogg = SOUNDS_DIR.resolve(spec.oggRelPath());
+            assertTrue(Files.isRegularFile(ogg), spec.event() + " 的 ogg 缺失: " + ogg);
+            Ffprobe r = ffprobe(ogg);
+            assertEquals(0, r.exit(),
+                spec.event() + " 的 ogg 无法被 ffprobe 解析（不可解码 / 损坏）: " + ogg);
+            assertEquals("vorbis", r.codec(),
+                spec.event() + " 必须是 Vorbis codec，实际 " + r.codec() + " @ " + ogg);
+            assertEquals(1, r.channels(),
+                spec.event() + " 必须 mono（plan §P4），实际声道=" + r.channels() + " @ " + ogg);
+            assertEquals(SIGNATURE_SAMPLE_RATE, r.sampleRate(),
+                spec.event() + " 必须 44.1kHz，实际=" + r.sampleRate() + "Hz @ " + ogg);
+            assertTrue(r.duration() > 0.0 && r.duration() <= SIGNATURE_MAX_SECONDS + SIGNATURE_DURATION_EPS,
+                spec.event() + " 时长必须落在 (0, 3s]（可解码且短样本），实际=" + r.duration() + "s @ " + ogg);
+        }
+    }
+
+    @Test
+    void ffprobeRejectsUndecodableFixtures() throws Exception {
+        Assumptions.assumeTrue(ffprobeAvailable(), "ffprobe 不可用——跳过错误分支门禁");
+        // 每个伪文件都非 mono/44.1k Vorbis 或根本不可解码，均不得被判为合法签名音频（错误分支覆盖）。
+        byte[][] bad = {
+            "NOT_AN_OGG_FILE".getBytes(StandardCharsets.UTF_8),        // 非 OGG
+            {'O', 'g', 'g', 'S', 0, 0, 0, 0},                         // OggS 魔数但无有效流
+            {},                                                        // 空文件
+        };
+        for (int i = 0; i < bad.length; i++) {
+            Path tmp = Files.createTempFile("bong-bad-audio-" + i + "-", ".ogg");
+            try {
+                Files.write(tmp, bad[i]);
+                Ffprobe r = ffprobe(tmp);
+                boolean looksValidSignature = r.exit() == 0
+                    && "vorbis".equals(r.codec())
+                    && r.channels() == 1
+                    && r.sampleRate() == SIGNATURE_SAMPLE_RATE
+                    && r.duration() > 0.0;
+                assertFalse(looksValidSignature,
+                    "损坏/伪 OGG（fixture #" + i + "）不应被判为合法 mono/44.1k Vorbis");
+            } finally {
+                Files.deleteIfExists(tmp);
             }
         }
-    }
-
-    // ── 合成 Ogg fixture（证明格式校验的错误分支真会判红；每个 fixture 只破坏一项以精准定位）──
-
-    /** 构造最小单页 Ogg：capture "OggS" + header_type（EOS）+ granule + 单 segment 承载 payload（payload<255）。 */
-    private static byte[] buildOggPage(byte[] payload, long granule, boolean eos) {
-        byte[] page = new byte[28 + payload.length];
-        page[0] = 'O';
-        page[1] = 'g';
-        page[2] = 'g';
-        page[3] = 'S';
-        page[5] = (byte) (eos ? 0x04 : 0x00); // header_type：bit2 = EOS
-        for (int i = 0; i < 8; i++) {
-            page[6 + i] = (byte) ((granule >> (8 * i)) & 0xFF);
-        }
-        page[26] = 1; // page_segments
-        page[27] = (byte) payload.length; // segment_table[0]
-        System.arraycopy(payload, 0, page, 28, payload.length);
-        return page;
-    }
-
-    /** 完整 30 字节 Vorbis identification header：0x01 "vorbis" version(4)=0 channels(1) sample_rate(4) … framing=1。 */
-    private static byte[] fullVorbisIdHeader(int channels, int sampleRate) {
-        byte[] h = new byte[VORBIS_ID_HEADER_LEN];
-        h[0] = 0x01;
-        h[1] = 'v';
-        h[2] = 'o';
-        h[3] = 'r';
-        h[4] = 'b';
-        h[5] = 'i';
-        h[6] = 's';
-        h[11] = (byte) channels;
-        h[12] = (byte) (sampleRate & 0xFF);
-        h[13] = (byte) ((sampleRate >> 8) & 0xFF);
-        h[14] = (byte) ((sampleRate >> 16) & 0xFF);
-        h[15] = (byte) ((sampleRate >> 24) & 0xFF);
-        h[29] = 0x01; // framing flag
-        return h;
-    }
-
-    /** 除被测属性外一切合法的签名 ogg（完整 header + framing + EOS + granule>0）。 */
-    private static byte[] validSignatureOgg(int channels, int sampleRate, long granule, boolean eos) {
-        return buildOggPage(fullVorbisIdHeader(channels, sampleRate), granule, eos);
-    }
-
-    @Test
-    void audioFormatProbeRoundTripsFullyValidSyntheticOgg() {
-        OggVorbisProbe ok = probeOggVorbis(validSignatureOgg(1, 44100, 44100, true));
-        assertTrue(ok.vorbis(), "合成的合法 mono/44.1k header 应判定为 Vorbis");
-        assertTrue(ok.structurallyComplete(), "完整 header + framing + EOS + granule>0 应判定结构完整");
-        assertEquals(1, ok.channels());
-        assertEquals(44100, ok.sampleRate());
-        assertEquals(1.0, ok.durationSeconds(), 1e-9, "granule 44100 / 44100Hz 应算出 1.0s");
-        assertTrue(isSignatureFormatOk(ok), "合法 mono/44.1k/1s/结构完整 应通过签名格式契约");
-    }
-
-    @Test
-    void audioFormatContractRejectsOutOfSpecFixtures() {
-        // 每个 fixture 仅破坏一项、其余全合法，确保「判红」归因到被测属性而非旁路缺陷。
-
-        // stereo
-        OggVorbisProbe stereo = probeOggVorbis(validSignatureOgg(2, 44100, 44100, true));
-        assertEquals(2, stereo.channels(), "探针应正确读出 stereo 声道数");
-        assertFalse(isSignatureFormatOk(stereo), "stereo 必须被格式契约判红");
-
-        // 48kHz
-        OggVorbisProbe wrongRate = probeOggVorbis(validSignatureOgg(1, 48000, 48000, true));
-        assertEquals(48000, wrongRate.sampleRate(), "探针应读出 48kHz");
-        assertFalse(isSignatureFormatOk(wrongRate), "48kHz 必须被判红");
-
-        // 超长：granule = 4s 采样
-        OggVorbisProbe tooLong = probeOggVorbis(validSignatureOgg(1, 44100, 4L * 44100, true));
-        assertTrue(tooLong.durationSeconds() > SIGNATURE_MAX_SECONDS, "探针应算出时长 >3s");
-        assertFalse(isSignatureFormatOk(tooLong), ">3s 必须被判红");
-
-        // 缺 EOS：结构不完整（截断/未收尾）
-        OggVorbisProbe noEos = probeOggVorbis(validSignatureOgg(1, 44100, 44100, false));
-        assertFalse(noEos.structurallyComplete(), "缺 EOS 应判定结构不完整");
-        assertFalse(isSignatureFormatOk(noEos), "缺 EOS（可能截断）必须被判红");
-
-        // granule=0：无 PCM 采样（空音频）
-        OggVorbisProbe zeroGranule = probeOggVorbis(validSignatureOgg(1, 44100, 0, true));
-        assertFalse(zeroGranule.structurallyComplete(), "granule=0 应判定结构不完整");
-        assertFalse(isSignatureFormatOk(zeroGranule), "granule=0（无音频）必须被判红");
-
-        // 截断 identification header（16 字节，无 framing flag）：有效魔数前缀但 header 不完整
-        OggVorbisProbe truncated = probeOggVorbis(buildOggPage(truncatedVorbisIdHeader(), 44100, true));
-        assertTrue(truncated.vorbis(), "有 OggS + vorbis 前缀，探针仍识别为 Vorbis codec");
-        assertFalse(truncated.structurallyComplete(), "截断 header（无 framing）应判定结构不完整");
-        assertFalse(isSignatureFormatOk(truncated), "截断伪 Vorbis 必须被判红（本轮 review 核心缺口）");
-
-        // 伪 OGG / 损坏：无 OggS capture
-        OggVorbisProbe notOgg = probeOggVorbis("NOT_AN_OGG_FILE".getBytes(StandardCharsets.UTF_8));
-        assertFalse(notOgg.vorbis(), "非 Ogg 数据应判定 vorbis=false");
-        assertFalse(isSignatureFormatOk(notOgg), "非 Vorbis 必须被判红");
-
-        // 有 OggS 但 identification header 不是 Vorbis
-        OggVorbisProbe notVorbis = probeOggVorbis(buildOggPage("OpusHead".getBytes(StandardCharsets.UTF_8), 0, true));
-        assertFalse(notVorbis.vorbis(), "Ogg 容器但非 Vorbis identification header 应判定 vorbis=false");
-        assertFalse(isSignatureFormatOk(notVorbis), "非 Vorbis codec 必须被判红");
-    }
-
-    /** 截断的 Vorbis id header：只有 16 字节（到 sample_rate 为止），无 framing flag → 结构不完整。 */
-    private static byte[] truncatedVorbisIdHeader() {
-        byte[] h = new byte[16];
-        h[0] = 0x01;
-        h[1] = 'v';
-        h[2] = 'o';
-        h[3] = 'r';
-        h[4] = 'b';
-        h[5] = 'i';
-        h[6] = 's';
-        h[11] = 1;
-        h[12] = (byte) (44100 & 0xFF);
-        h[13] = (byte) ((44100 >> 8) & 0xFF);
-        h[14] = (byte) ((44100 >> 16) & 0xFF);
-        h[15] = (byte) ((44100 >> 24) & 0xFF);
-        return h;
     }
 }
