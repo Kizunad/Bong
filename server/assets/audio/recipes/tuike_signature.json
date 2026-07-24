@@ -2,9 +2,9 @@
   "id": "tuike_signature",
   "layers": [
     {
-      "sound": "bong:skill.tuike.shed",
+      "sound": "minecraft:entity.phantom.flap",
       "volume": 0.22,
-      "pitch": 1.0,
+      "pitch": 0.3,
       "delay_ticks": 0
     },
     {
