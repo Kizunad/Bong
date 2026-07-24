@@ -910,7 +910,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     era_state: Option<Res<WorldEraState>>,
     world_season: Option<Res<WorldSeasonState>>,
     terrain_providers: Option<Res<TerrainProviders>>,
-    chunk_layers: Query<&ChunkLayer>,
+    chunk_layers: Query<&ChunkLayer, Without<Despawned>>,
     mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut commands: Commands,
 ) {
@@ -921,6 +921,17 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         .as_deref()
         .map(|s| s.current.season)
         .unwrap_or_default();
+
+    // A raster only replaces surface data for an unloaded chunk *inside* a live layer. Validate
+    // that entity target before any other work, including scheduler state and recycle-side qi
+    // effects, so a stale, non-ChunkLayer or despawning DimensionLayers.overworld makes this
+    // scheduler invocation a strict no-op.
+    let Some(layers) = dimension_layers.as_deref() else {
+        return;
+    };
+    let Ok(overworld_chunk_layer) = chunk_layers.get(layers.overworld) else {
+        return;
+    };
 
     // 粗节流：与 heiwushi 一致，避免每 tick 都做全量 zone/query 扫描。
     // `now == 0` 时必须放行（对齐 `should_run_interval` 的 tick==0 分支）——否则
@@ -935,10 +946,6 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     let Some(registry) = zone_registry.as_deref_mut() else {
         return;
     };
-    let Some(layers) = dimension_layers.as_deref() else {
-        return;
-    };
-    let overworld_chunk_layer = chunk_layers.get(layers.overworld).ok();
     let density_mul = era_state
         .as_deref()
         .map(|e| e.current_modifiers().beast_density_mul)
@@ -1064,7 +1071,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         };
         let spawned = submit_ambient_spawn_candidate::<M, _>(
             &mut commands,
-            overworld_chunk_layer,
+            Some(overworld_chunk_layer),
             terrain_providers
                 .as_deref()
                 .map(|providers| &providers.overworld),
@@ -3496,7 +3503,11 @@ mod tests {
     }
 
     fn make_app() -> App {
-        let mut app = App::new();
+        let scenario = ScenarioSingleClient::new();
+        let client = scenario.client;
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.world_mut().despawn(client);
         app.insert_resource(AmbientSchedulerState::<AmbientThreatMarker>::default())
             .insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
                 threat_budget,
@@ -3509,7 +3520,15 @@ mod tests {
     }
 
     fn install_layers(app: &mut App) -> Entity {
-        let overworld = app.world_mut().spawn_empty().id();
+        let overworld = {
+            let world = app.world_mut();
+            let mut query =
+                world.query_filtered::<Entity, (With<ChunkLayer>, Without<Despawned>)>();
+            query
+                .iter(world)
+                .next()
+                .expect("scheduler test app must provide one live ChunkLayer")
+        };
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
         overworld
@@ -3582,6 +3601,68 @@ mod tests {
             "runtime scheduler fixture must not install raster providers"
         );
         app
+    }
+
+    #[test]
+    fn ambient_scheduler_rejects_invalid_overworld_layer_before_any_side_effect() {
+        for invalid_layer in [
+            InvalidOverworldLayer::Missing,
+            InvalidOverworldLayer::NonChunk,
+            InvalidOverworldLayer::Despawning,
+        ] {
+            let mut app = make_runtime_scheduler_app::<TestFaunaMarker>(
+                threat_budget,
+                test_pool_fn,
+                false,
+                1,
+            );
+            let original = app.world().resource::<DimensionLayers>().overworld;
+            match invalid_layer {
+                InvalidOverworldLayer::Missing => {
+                    let stale = app.world_mut().spawn_empty().id();
+                    app.world_mut().despawn(stale);
+                    app.world_mut().resource_mut::<DimensionLayers>().overworld = stale;
+                }
+                InvalidOverworldLayer::NonChunk => {
+                    let non_chunk = app.world_mut().spawn_empty().id();
+                    app.world_mut().resource_mut::<DimensionLayers>().overworld = non_chunk;
+                }
+                InvalidOverworldLayer::Despawning => {
+                    app.world_mut().entity_mut(original).insert(Despawned);
+                }
+            }
+            app.insert_resource(GameTick(1_000_000));
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: None,
+            });
+
+            app.update();
+
+            let spawned = app
+                .world_mut()
+                .query_filtered::<Entity, With<TestFaunaMarker>>()
+                .iter(app.world())
+                .count();
+            assert_eq!(
+                spawned, 0,
+                "missing, non-ChunkLayer or despawning overworld targets must be rejected before raster fallback or pool submission"
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<AmbientSchedulerState<TestFaunaMarker>>()
+                    .last_check_tick,
+                0,
+                "invalid overworld layer must reject before mutating scheduler state"
+            );
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum InvalidOverworldLayer {
+        Missing,
+        NonChunk,
+        Despawning,
     }
 
     #[test]
@@ -3824,7 +3905,7 @@ mod tests {
                 },
             ))
             .id();
-        app.update();
+        app.world_mut().run_schedule(Update);
 
         assert!(
             app.world().get::<Despawned>(stray).is_some(),
@@ -3873,7 +3954,7 @@ mod tests {
             .expect("seeding the rat ledger balance must succeed");
         app.insert_resource(ledger);
 
-        app.update();
+        app.world_mut().run_schedule(Update);
 
         assert!(
             app.world().get::<Despawned>(stray).is_some(),
@@ -3947,7 +4028,7 @@ mod tests {
                 spider_blackboard,
             ))
             .id();
-        app.update();
+        app.world_mut().run_schedule(Update);
 
         assert!(
             app.world().get::<Despawned>(stray).is_some(),
@@ -4053,16 +4134,13 @@ mod tests {
         };
         use valence::prelude::Events;
 
-        let mut app = App::new();
-        app.insert_resource(AmbientSchedulerState::<AmbientThreatMarker>::default())
-            .insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
-                threat_budget,
-                ambient_threat_pool_fn,
-                true,
-            ))
-            .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
+        let mut app = make_app();
+        app.insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
+            threat_budget,
+            ambient_threat_pool_fn,
+            true,
+        ));
         install_layers(&mut app);
-        install_test_terrain(&mut app);
         app.insert_resource(ZoneRegistry {
             zones: vec![
                 Zone {

@@ -56,6 +56,12 @@ from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     _set_qi_max_and_wait,
     _snapshot_after_server_tick_fence,
 )
+from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
+    FIXTURE_MANIFEST_ENV,
+    FIXTURE_OWNED_ENV,
+    FIXTURE_TOKEN_ENV,
+    _assert_raster_fixture_contract,
+)
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
 )
@@ -181,10 +187,26 @@ class DiggingActionTest(unittest.TestCase):
 
 
 class NoviceRasterFixtureTest(unittest.TestCase):
+    TOKEN = "unit-test-ambient-fixture-token"
+
+    def _generate(self, root: pathlib.Path) -> pathlib.Path:
+        return make_novice_raster_fixture.generate(root, self.TOKEN)
+
+    def _contract_env(self, manifest_path: pathlib.Path, token: str | None = None):
+        return mock.patch.dict(
+            os.environ,
+            {
+                FIXTURE_OWNED_ENV: "1",
+                FIXTURE_MANIFEST_ENV: str(manifest_path),
+                FIXTURE_TOKEN_ENV: self.TOKEN if token is None else token,
+            },
+            clear=False,
+        )
+
     def test_fixture_exposes_deterministic_spiritwood_seed_without_changing_poi_tile(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
-            manifest_path = make_novice_raster_fixture.generate(root)
+            manifest_path = self._generate(root)
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
             self.assertEqual(
@@ -213,6 +235,52 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             spirit_biomes = (root / "tile_5_5" / "biome_id.bin").read_bytes()
             seed_index = (1519 - 5 * 256) * 256 + (1292 - 5 * 256)
             self.assertEqual(spirit_biomes[seed_index], 4)
+
+    def test_fixture_pins_ambient_support_air_and_no_water_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["bot_fixture"],
+                {
+                    "kind": "ambient-surface-v1",
+                    "token": self.TOKEN,
+                    "surface_y": 72,
+                    "support": "grass_block",
+                    "feet_y": 73,
+                    "head_y": 74,
+                },
+            )
+            with self._contract_env(manifest_path):
+                _assert_raster_fixture_contract()
+
+    def test_ambient_fixture_contract_rejects_stale_token_and_missing_ownership(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            with self._contract_env(manifest_path, token="wrong-token"):
+                with self.assertRaises(BotAssertionError, msg="stale token must not pin a prior fixture"):
+                    _assert_raster_fixture_contract()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    FIXTURE_OWNED_ENV: "0",
+                    FIXTURE_MANIFEST_ENV: str(manifest_path),
+                    FIXTURE_TOKEN_ENV: self.TOKEN,
+                },
+                clear=False,
+            ):
+                with self.assertRaises(BotAssertionError, msg="reuse/no-ownership must fail closed"):
+                    _assert_raster_fixture_contract()
+
+    def test_fixture_generator_requires_explicit_token(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(TypeError):
+                make_novice_raster_fixture.generate(pathlib.Path(temp_dir))
+
+            with self.assertRaises(ValueError):
+                make_novice_raster_fixture.generate(pathlib.Path(temp_dir), " ")
 
 
 class ChatTextTest(unittest.TestCase):
@@ -688,6 +756,120 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             launch.index("exec cargo run $PROFILE_FLAG"),
             "BONG_DEV_MODE 必须在 server 进程启动前导出",
         )
+
+    def test_self_started_server_builds_unique_exact_fixture_identity(self):
+        fixture_start = self.source.index('if [ "$REUSE" != "1" ]; then')
+        fixture_end = self.source.index('\nfi\n\nSERVER_PID=', fixture_start)
+        fixture = self.source[fixture_start:fixture_end]
+        for required in (
+            'mktemp -d "$EVIDENCE_DIR/novice-raster.XXXXXX"',
+            '--fixture-token "$BOT_E2E_AMBIENT_FIXTURE_TOKEN"',
+            'export BOT_E2E_AMBIENT_FIXTURE_TOKEN',
+            'export BOT_E2E_AMBIENT_FIXTURE_MANIFEST="$BONG_TERRAIN_RASTER_PATH"',
+            "pathlib.Path(sys.argv[1]).resolve(strict=True)",
+            'BOT_RASTER_READY_PAYLOAD="[bong][world] BOT_RASTER_FIXTURE_READY '
+            'manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(
+                    required,
+                    fixture,
+                    "self-start harness 必须以本轮私有目录、canonical manifest 与 token "
+                    "构造可由 server 反证的 fixture identity",
+                )
+
+        self.assertIn(
+            '自起 server 不接受外部 BONG_TERRAIN_RASTER_PATH',
+            fixture,
+            "严格场景不得把调用方外部 raster 冒充本轮 harness 独占 fixture",
+        )
+        self.assertNotIn(
+            'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1',
+            fixture,
+            "仅生成本地文件不能授予 ownership；必须等 server exact ready marker",
+        )
+
+    def test_fixture_ownership_is_granted_only_after_exact_server_marker_and_port_ownership(self):
+        readiness_start = self.source.index(
+            'echo "[bot-e2e] 等待 $HOST:$PORT 与本轮 raster fixture 就绪'
+        )
+        readiness_end = self.source.index("\n# ---- 场景 ----", readiness_start)
+        readiness = self.source[readiness_start:readiness_end]
+        marker_match = 'grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"'
+        ownership = 'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1'
+
+        self.assertIn(marker_match, readiness)
+        self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', readiness)
+        self.assertIn('port_open "$HOST" "$PORT"', readiness)
+        self.assertIn(ownership, readiness)
+        self.assertLess(
+            readiness.index(marker_match),
+            readiness.index(ownership),
+            "必须先由 server 日志对拍 canonical manifest+token，再允许场景声明 ownership",
+        )
+        self.assertLess(
+            self.source.index(ownership, readiness_start),
+            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py" --all'),
+            "场景只可在本轮 server fixture identity 与端口 ownership 同时成立后运行",
+        )
+
+    def test_fixture_runtime_ownership_is_rechecked_during_and_after_scenarios(self):
+        helper_start = self.source.index("self_started_fixture_runtime_is_current() {")
+        helper_end = self.source.index("\n}\n", helper_start)
+        helper = self.source[helper_start:helper_end]
+        for required in (
+            'kill -0 "$SERVER_PID"',
+            'grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"',
+            'port_open "$HOST" "$PORT"',
+            'port_owned_by_tree "$SERVER_PID" "$PORT"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(
+                    required,
+                    helper,
+                    "fixture runtime helper 必须重新绑定活 server、exact marker 与当前 listener",
+                )
+
+        scenario_start = self.source.index("# ---- 场景 ----")
+        scenario = self.source[scenario_start:]
+        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py" --all'
+        self.assertIn('while true; do', scenario)
+        self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
+        self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
+        self.assertIn('echo complete >"$RUNTIME_WATCH_LOG"', scenario)
+        self.assertIn("EXIT_CODE=${PIPESTATUS[0]}", scenario)
+        self.assertIn('wait "$WATCH_PID"', scenario)
+        self.assertGreaterEqual(
+            scenario.count("self_started_fixture_runtime_is_current"),
+            2,
+            "场景前和场景后都必须重验 server/fixture ownership，不能把一次 readiness 当永久授权",
+        )
+        self.assertLess(
+            scenario.index("self_started_fixture_runtime_is_current"),
+            scenario.index(runner),
+            "运行 Bot 前必须重新验证本轮 server 仍持有 listener",
+        )
+        self.assertGreater(
+            scenario.rindex("self_started_fixture_runtime_is_current"),
+            scenario.index(runner),
+            "Bot 结束后必须再次验证本轮 server 仍是证据主体",
+        )
+
+    def test_reuse_mode_clears_fixture_ownership_instead_of_claiming_external_server(self):
+        fixture_start = self.source.index('if [ "$REUSE" != "1" ]; then')
+        fixture_end = self.source.index('\nfi\n\nSERVER_PID=', fixture_start)
+        fixture = self.source[fixture_start:fixture_end]
+        for variable in (
+            "BOT_E2E_AMBIENT_FIXTURE_OWNED",
+            "BOT_E2E_AMBIENT_FIXTURE_MANIFEST",
+            "BOT_E2E_AMBIENT_FIXTURE_TOKEN",
+        ):
+            with self.subTest(variable=variable):
+                self.assertIn(
+                    f"unset {variable}",
+                    fixture,
+                    "REUSE harness 无法证明外部 server 启动输入，必须 fail-closed 清除 ownership",
+                )
 
 
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
@@ -1703,6 +1885,7 @@ class RunnerLogicTest(unittest.TestCase):
                 return_value={"terrain_north_rift_scorch_zone_identity": scenario},
             ),
             mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {NORTH_RIFT_REQUIRED_ENV: "0"}, clear=False),
             mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
             redirect_stdout(output),
         ):
@@ -1712,6 +1895,35 @@ class RunnerLogicTest(unittest.TestCase):
         run.assert_not_called()
         self.assertIn("SKIP", output.getvalue())
         self.assertIn("skip=1", output.getvalue())
+
+    def test_all_runs_owned_dedicated_scenario_when_required_env_is_present(self):
+        run = mock.Mock()
+        required_env = "BOT_E2E_TEST_OWNED_FIXTURE"
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="owned fixture",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=required_env,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"owned_fixture": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {required_env: "1"}, clear=False),
+            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        run.assert_called_once()
+        self.assertIn("PASS", output.getvalue())
+        self.assertIn("pass=1", output.getvalue())
 
     def test_scenarios_do_not_reuse_literal_bot_tags(self):
         owners: dict[str, str] = {}

@@ -122,9 +122,15 @@ def main() -> int:
     for name in selected:
         module = scenarios[name]
         print(f"\n=== scenario: {name} ===\n    {module.DESCRIPTION}")
-        if args.scenario is None and not getattr(module, "DEFAULT_ENABLED", True):
-            required_env = getattr(module, "REQUIRED_ENV", "dedicated runner invocation")
-            reason = f"专用场景；常规 --all 不执行（显式 --scenario + {required_env}=1）"
+        default_enabled = getattr(module, "DEFAULT_ENABLED", True)
+        required_env = getattr(module, "REQUIRED_ENV", None)
+        enabled_by_env = required_env is not None and os.environ.get(required_env) == "1"
+        if args.scenario is None and not default_enabled and not enabled_by_env:
+            reason = (
+                f"专用场景；常规 --all 仅在 {required_env}=1 时执行"
+                if required_env is not None
+                else "专用场景；常规 --all 不执行（需显式 --scenario）"
+            )
             results.append((name, "SKIP", reason))
             print(f"    SKIP: {reason}")
             continue

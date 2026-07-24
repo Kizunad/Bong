@@ -11,7 +11,11 @@ teleport 权威位置表复核。
 
 from __future__ import annotations
 
+import json
 import math
+import os
+import struct
+from pathlib import Path
 
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time
@@ -20,6 +24,8 @@ DESCRIPTION = (
     "/ambient_spawn once 以 runtime/raster 权威地表生成 Cow/Rat，绝不继承玩家空中 Y"
 )
 MODULES = ["cmd", "npc", "fauna", "terrain"]
+DEFAULT_ENABLED = False
+REQUIRED_ENV = "BOT_E2E_AMBIENT_FIXTURE_OWNED"
 
 SPAWN_ZONE = "spawn"
 EXECUTOR_POSITION = (0.0, 152.0, 0.0)
@@ -29,6 +35,110 @@ CANDIDATE_COMMAND = (5, 3)
 COW_ENTITY_TYPE = 18
 RAT_ENTITY_TYPE = 126
 POSITION_EPSILON = 1e-6
+FIXTURE_KIND = "ambient-surface-v1"
+FIXTURE_MANIFEST_ENV = "BOT_E2E_AMBIENT_FIXTURE_MANIFEST"
+FIXTURE_TOKEN_ENV = "BOT_E2E_AMBIENT_FIXTURE_TOKEN"
+FIXTURE_OWNED_ENV = "BOT_E2E_AMBIENT_FIXTURE_OWNED"
+SPAN_SENTINEL = 32767
+SPAN_STRIDE = 16
+
+
+def _read_exact(path: Path, offset: int, size: int) -> bytes:
+    try:
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            value = stream.read(size)
+    except OSError as error:
+        raise BotAssertionError(f"无法读取 ambient fixture 二进制 {path}: {error}") from error
+    if len(value) != size:
+        raise BotAssertionError(
+            f"期望 fixture 文件 {path} 在 offset={offset} 有 {size} 字节，实际只有 {len(value)}；"
+            "manifest/tile 不完整，不能作为本轮地表证据"
+        )
+    return value
+
+
+def _assert_raster_fixture_contract() -> None:
+    owned = os.environ.get(FIXTURE_OWNED_ENV)
+    manifest_value = os.environ.get(FIXTURE_MANIFEST_ENV)
+    expected_token = os.environ.get(FIXTURE_TOKEN_ENV)
+    if owned != "1" or not manifest_value or not expected_token:
+        raise BotAssertionError(
+            "npc_ambient_surface_resolution 只接受 harness 本轮自建并标记 ownership 的 raster；"
+            f"要求 {FIXTURE_OWNED_ENV}=1、{FIXTURE_MANIFEST_ENV} 与 {FIXTURE_TOKEN_ENV} 非空，"
+            "复用/外部 server 无法证明其实际加载了该 fixture"
+        )
+
+    manifest_path = Path(manifest_value).resolve()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BotAssertionError(
+            f"无法读取本轮 ambient raster manifest {manifest_path}: {error}"
+        ) from error
+
+    fixture = manifest.get("bot_fixture")
+    expected_fixture = {
+        "kind": FIXTURE_KIND,
+        "token": expected_token,
+        "surface_y": 72,
+        "support": "grass_block",
+        "feet_y": 73,
+        "head_y": 74,
+    }
+    if fixture != expected_fixture:
+        raise BotAssertionError(
+            f"期望本轮 manifest bot_fixture={expected_fixture!r}，实际 {fixture!r}；"
+            "token 或 support/净空契约陈旧，拒绝运行协议断言"
+        )
+    if manifest.get("version") != 2 or manifest.get("tile_size") != 256:
+        raise BotAssertionError(
+            "ambient fixture 必须是 version=2、tile_size=256；"
+            f"实际 version={manifest.get('version')!r} tile_size={manifest.get('tile_size')!r}"
+        )
+
+    tile = next(
+        (
+            row
+            for row in manifest.get("tiles", [])
+            if row.get("tile_x") == 0 and row.get("tile_z") == 0
+        ),
+        None,
+    )
+    if tile is None:
+        raise BotAssertionError("ambient fixture manifest 缺少目标 tile (0,0)")
+    if not tile.get("spans"):
+        raise BotAssertionError("ambient fixture tile (0,0) 未声明 spans=true")
+
+    tile_size = manifest["tile_size"]
+    world_x, world_z = CANDIDATE_COMMAND
+    index = world_z % tile_size * tile_size + world_x % tile_size
+    tile_dir = manifest_path.parent / tile["dir"]
+    span_count = _read_exact(tile_dir / "spans_count.bin", index, 1)[0]
+    spans = struct.unpack(
+        "<8h", _read_exact(tile_dir / "spans.bin", index * SPAN_STRIDE, SPAN_STRIDE)
+    )
+    surface_id = _read_exact(tile_dir / "surface_id.bin", index, 1)[0]
+    water_level = struct.unpack(
+        "<f", _read_exact(tile_dir / "water_level.bin", index * 4, 4)
+    )[0]
+
+    expected_spans = (-64, 72) + (SPAN_SENTINEL,) * 6
+    if span_count != 1 or spans != expected_spans:
+        raise BotAssertionError(
+            f"期望候选列 ({world_x},{world_z}) 只有 solid span (-64,72) 且其余槽为 sentinel，"
+            f"实际 count={span_count} spans={spans}; 无法证明 y=73/74 为净空"
+        )
+    palette = manifest.get("surface_palette", [])
+    if surface_id >= len(palette) or palette[surface_id] != "grass_block":
+        actual = palette[surface_id] if surface_id < len(palette) else None
+        raise BotAssertionError(
+            f"期望候选列 support surface_id 指向 grass_block，实际 id={surface_id} block={actual!r}"
+        )
+    if not math.isclose(water_level, -1.0, abs_tol=POSITION_EPSILON):
+        raise BotAssertionError(
+            f"期望候选列 water_level=-1.0（无液体），实际 {water_level}"
+        )
 
 
 def _chunk_is_loaded(bot, chunk: tuple[int, int]) -> bool:
@@ -121,6 +231,7 @@ def _wait_for_fixed_spawn(bot, anchor: float, entity_type: int, label: str):
 
 
 def run(env) -> None:
+    _assert_raster_fixture_contract()
     with env.new_bot("AmbSur") as bot:
         bot.expect_event("game_join", timeout=15.0)
         bot.expect_event("pos_look", timeout=15.0)

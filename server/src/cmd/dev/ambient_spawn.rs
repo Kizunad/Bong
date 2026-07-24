@@ -5,8 +5,8 @@ use valence::command::parsers::CommandArg;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{
-    App, ChunkLayer, Client, Commands, DVec3, EventReader, Position, Query, Res, Resource, Update,
-    With,
+    App, ChunkLayer, Client, Commands, DVec3, Despawned, EventReader, Position, Query, Res,
+    Resource, Update, With, Without,
 };
 
 use crate::npc::movement::GameTick;
@@ -82,7 +82,7 @@ pub fn handle_ambient_spawn(
     mut players: PlayerQuery<'_, '_>,
     zones: Option<Res<ZoneRegistry>>,
     layers: Option<Res<DimensionLayers>>,
-    chunk_layers: Query<&ChunkLayer>,
+    chunk_layers: Query<&ChunkLayer, Without<Despawned>>,
     terrain_providers: Option<Res<TerrainProviders>>,
     season: Option<Res<WorldSeasonState>>,
     tick: Option<Res<GameTick>>,
@@ -139,10 +139,14 @@ pub fn handle_ambient_spawn(
             continue;
         };
 
-        // The layer entity is required by the real pool. Its ChunkLayer component is deliberately
-        // optional: if absent, submit_ambient_dev_spawn_once may still resolve through raster.
+        // The real pool always requires a live ChunkLayer entity. Raster may replace missing
+        // surface data for an unloaded target chunk, but it must never replace the entity layer
+        // itself: entities bound to a stale/non-layer EntityLayerId are not a valid protocol seam.
         let overworld_layer = dimension_layers.overworld;
-        let runtime_layer = chunk_layers.get(overworld_layer).ok();
+        let Ok(runtime_layer) = chunk_layers.get(overworld_layer) else {
+            client.send_chat_message("[dev] ambient_spawn rejected: overworld layer unavailable");
+            continue;
+        };
         let terrain = terrain_providers
             .as_deref()
             .map(|providers| &providers.overworld);
@@ -157,7 +161,7 @@ pub fn handle_ambient_spawn(
             AmbientDevSpawnRequest {
                 kind,
                 layer: overworld_layer,
-                runtime_layer,
+                runtime_layer: Some(runtime_layer),
                 terrain,
                 zone,
                 candidate,
@@ -189,7 +193,7 @@ mod tests {
     use crate::world::zone::Zone;
     use valence::command::manager::CommandPlugin;
     use valence::command::CommandRegistry;
-    use valence::prelude::{BlockState, Chunk, Entity, Events, UnloadedChunk};
+    use valence::prelude::{BlockState, Chunk, Entity, EntityLayerId, Events, UnloadedChunk};
     use valence::protocol::packets::play::command_tree_s2c::{CommandTreeS2c, NodeData, Parser};
     use valence::protocol::packets::play::GameMessageS2c;
     use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
@@ -635,19 +639,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_runtime_layer_and_provider_rejects_without_spawning() {
-        let mut app = setup_app();
-        app.insert_resource(ZoneRegistry {
-            zones: vec![test_zone(0.5, 1)],
-        });
-        app.insert_resource(DimensionLayers {
-            overworld: Entity::PLACEHOLDER,
-            tsy: Entity::PLACEHOLDER,
-        });
-        let (player, mut helper) = spawn_client(
-            &mut app,
-            [0.0, EXECUTOR_Y, 0.0],
-            Some(DimensionKind::Overworld),
+    fn missing_provider_still_rejects_after_validating_live_layer() {
+        let (mut app, player, mut helper, _) = setup_runtime_app(0.5, 1);
+        app.world_mut().remove_resource::<TerrainProviders>();
+        let layer = app.world().resource::<DimensionLayers>().overworld;
+        let removed = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(layer)
+            .expect("test precondition: overworld must remain a live ChunkLayer")
+            .remove_chunk([0, 0]);
+        assert!(
+            removed.is_some(),
+            "test precondition: no runtime chunk and no raster provider must reach surface rejection"
         );
         send(
             &mut app,
@@ -828,13 +831,14 @@ mod tests {
     }
 
     #[test]
-    fn provider_without_runtime_layer_is_a_valid_fallback() {
+    fn stale_overworld_layer_is_rejected_before_either_pool() {
         let mut app = setup_app();
         app.insert_resource(ZoneRegistry {
             zones: vec![test_zone(0.5, 1)],
         });
+        let non_chunk_layer = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers {
-            overworld: Entity::PLACEHOLDER,
+            overworld: non_chunk_layer,
             tsy: Entity::PLACEHOLDER,
         });
         app.insert_resource(TerrainProviders {
@@ -846,6 +850,15 @@ mod tests {
             [0.0, EXECUTOR_Y, 0.0],
             Some(DimensionKind::Overworld),
         );
+
+        send(
+            &mut app,
+            player,
+            AmbientSpawnCmd::OnceMundane {
+                x: TARGET_X,
+                z: TARGET_Z,
+            },
+        );
         send(
             &mut app,
             player,
@@ -855,16 +868,139 @@ mod tests {
             },
         );
         app.update();
+
+        assert_eq!(
+            flush_and_collect_chat(&mut app, &mut helper),
+            vec![
+                "[dev] ambient_spawn rejected: overworld layer unavailable".to_string(),
+                "[dev] ambient_spawn rejected: overworld layer unavailable".to_string(),
+            ],
+            "raster surface data must never make a stale entity layer valid for either pool"
+        );
+        let world = app.world_mut();
+        let mut mundane_markers = world.query::<&MundaneFaunaMarker>();
+        let mut threat_markers = world.query::<&AmbientThreatMarker>();
+        assert_eq!(
+            mundane_markers.iter(world).count(),
+            0,
+            "a live entity without ChunkLayer must reject mundane before pool/entity/marker side effects"
+        );
+        assert_eq!(
+            threat_markers.iter(world).count(),
+            0,
+            "a live entity without ChunkLayer must reject threat before pool/entity/marker side effects"
+        );
+    }
+
+    #[test]
+    fn despawning_overworld_layer_is_rejected_before_either_pool() {
+        let (mut app, player, mut helper, layer) = setup_runtime_app(0.5, 1);
+        app.insert_resource(TerrainProviders {
+            overworld: TerrainProvider::empty_for_tests(),
+            tsy: None,
+        });
+        app.world_mut().entity_mut(layer).insert(Despawned);
+
+        send(
+            &mut app,
+            player,
+            AmbientSpawnCmd::OnceMundane {
+                x: TARGET_X,
+                z: TARGET_Z,
+            },
+        );
+        send(
+            &mut app,
+            player,
+            AmbientSpawnCmd::OnceThreat {
+                x: TARGET_X,
+                z: TARGET_Z,
+            },
+        );
+        app.update();
+
+        assert_eq!(
+            flush_and_collect_chat(&mut app, &mut helper),
+            vec![
+                "[dev] ambient_spawn rejected: overworld layer unavailable".to_string(),
+                "[dev] ambient_spawn rejected: overworld layer unavailable".to_string(),
+            ],
+            "Despawned + ChunkLayer must be treated as stale for both pools even when raster exists"
+        );
+        let world = app.world_mut();
+        let mut mundane_markers = world.query::<&MundaneFaunaMarker>();
+        let mut threat_markers = world.query::<&AmbientThreatMarker>();
+        assert_eq!(
+            mundane_markers.iter(world).count(),
+            0,
+            "despawning layer must reject mundane before pool/entity/marker side effects"
+        );
+        assert_eq!(
+            threat_markers.iter(world).count(),
+            0,
+            "despawning layer must reject threat before pool/entity/marker side effects"
+        );
+    }
+
+    #[test]
+    fn valid_layer_with_unloaded_target_chunk_uses_raster_fallback() {
+        let mut scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        app.add_event::<CommandResultEvent<AmbientSpawnCmd>>();
+        app.insert_resource(AmbientSpawnDevAccess);
+        app.add_systems(Update, handle_ambient_spawn);
+        app.world_mut().entity_mut(scenario.client).insert((
+            Position::new([0.0, EXECUTOR_Y, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        let target_chunk_is_absent = app
+            .world()
+            .get::<ChunkLayer>(scenario.layer)
+            .expect("scenario must provide a live ChunkLayer entity")
+            .chunk([0, 0])
+            .is_none();
+        assert!(
+            target_chunk_is_absent,
+            "test precondition: target chunk must be absent so raster is the sole surface source"
+        );
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers {
+            overworld: scenario.layer,
+            tsy,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![test_zone(0.5, 1)],
+        });
+        app.insert_resource(TerrainProviders {
+            overworld: TerrainProvider::empty_for_tests(),
+            tsy: None,
+        });
+
+        send(
+            &mut app,
+            scenario.client,
+            AmbientSpawnCmd::OnceThreat {
+                x: TARGET_X,
+                z: TARGET_Z,
+            },
+        );
+        app.update();
         assert_single_chat(
             &mut app,
-            &mut helper,
+            &mut scenario.helper,
             "[dev] ambient_spawn accepted: kind=threat x=5.000 z=3.000",
         );
-        let mut markers = app.world_mut().query::<&AmbientThreatMarker>();
+
+        let world = app.world_mut();
+        let mut spawned = world.query::<(&AmbientThreatMarker, &EntityLayerId)>();
+        let rows = spawned
+            .iter(world)
+            .map(|(_, layer)| layer.0)
+            .collect::<Vec<_>>();
         assert_eq!(
-            markers.iter(app.world()).count(),
-            1,
-            "missing runtime ChunkLayer must still succeed through passable raster provider"
+            rows,
+            vec![scenario.layer],
+            "unloaded-chunk raster fallback must still bind the spawned threat to the live ChunkLayer entity"
         );
     }
 
