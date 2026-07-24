@@ -736,12 +736,17 @@ class NorthRiftScenarioContractTest(unittest.TestCase):
 class BotE2eDevModeContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.source = (
-            pathlib.Path(__file__).parents[2] / "scripts/bot-e2e.sh"
-        ).read_text(encoding="utf-8")
+        root = pathlib.Path(__file__).parents[2]
+        cls.source = (root / "scripts/bot-e2e.sh").read_text(encoding="utf-8")
+        cls.compose_source = (root / "docker-compose.test.yml").read_text(
+            encoding="utf-8"
+        )
+        cls.workflow_source = (root / ".github/workflows/e2e.yml").read_text(
+            encoding="utf-8"
+        )
 
     def test_self_started_server_explicitly_enables_dev_mode_before_cargo_run(self):
-        start = self.source.index('(\n    cd "$ROOT/server"')
+        start = self.source.index('(\n    cd "$SERVER_RUNTIME_DIR/server"')
         end = self.source.index('  ) >"$SERVER_LOG"', start)
         launch = self.source[start:end]
         dev_mode = 'export BONG_DEV_MODE="${BONG_DEV_MODE:-1}"'
@@ -753,7 +758,9 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
         self.assertLess(
             launch.index(dev_mode),
-            launch.index("exec cargo run $PROFILE_FLAG"),
+            launch.index(
+                'exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG'
+            ),
             "BONG_DEV_MODE 必须在 server 进程启动前导出",
         )
 
@@ -778,10 +785,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     "构造可由 server 反证的 fixture identity",
                 )
 
+        guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
+        guard = self.source[:guard_end]
         self.assertIn(
             '自起 server 不接受外部 BONG_TERRAIN_RASTER_PATH',
-            fixture,
-            "严格场景不得把调用方外部 raster 冒充本轮 harness 独占 fixture",
+            guard,
+            "严格场景必须在创建本轮 evidence/fixture 前拒绝调用方外部 raster",
         )
         self.assertNotIn(
             'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1',
@@ -870,6 +879,157 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     fixture,
                     "REUSE harness 无法证明外部 server 启动输入，必须 fail-closed 清除 ownership",
                 )
+
+    def test_reuse_without_listener_fails_closed_before_private_self_start(self):
+        server_start = self.source.index("# ---- server ----")
+        server = self.source[server_start:]
+        rejection = (
+            'BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起'
+        )
+        launch = 'cd "$SERVER_RUNTIME_DIR/server"'
+
+        self.assertIn(rejection, server)
+        self.assertLess(
+            server.index(rejection),
+            server.index(launch),
+            "REUSE 无 listener 时必须退出，不能在没有私有 runtime/fixture 的前提下退化为自起",
+        )
+
+    def test_self_start_uses_private_runtime_cwd_without_touching_checkout_data(self):
+        evidence_setup_end = self.source.index(
+            '# 测试诚实性约束：Bot 必须能黑盒证明真实 manifest'
+        )
+        evidence_setup = self.source[:evidence_setup_end]
+        launch_start = self.source.index('(\n    cd "$SERVER_RUNTIME_DIR/server"')
+        launch_end = self.source.index('  ) >"$SERVER_LOG"', launch_start)
+        launch = self.source[launch_start:launch_end]
+
+        for required in (
+            'SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"',
+            'mkdir -p "$SERVER_RUNTIME_DIR/server/data" "$SERVER_RUNTIME_DIR/library-web/public/deceased"',
+            'ln -s "$ROOT/server/assets" "$SERVER_RUNTIME_DIR/server/assets"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, evidence_setup)
+
+        for required in (
+            'cd "$SERVER_RUNTIME_DIR/server"',
+            'export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"',
+            'export BONG_ASSETS_DIR="$ROOT/server"',
+            'export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}"',
+            'exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(
+                    required,
+                    launch,
+                    "self-start server 必须从本轮私有 cwd 启动，同时从当前 checkout 构建并只读资产",
+                )
+
+        self.assertNotIn(
+            'cd "$ROOT/server"',
+            launch,
+            "从 checkout/server cwd 启动会污染持久化 data/、startup backup 与 craft/NPC 文件",
+        )
+        runtime_create = evidence_setup.index(
+            'SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"'
+        )
+        runtime_guard = evidence_setup.rfind(
+            'if [ "$REUSE" != "1" ]; then', 0, runtime_create
+        )
+        runtime_guard_end = evidence_setup.index("\nfi", runtime_create)
+        self.assertLess(runtime_guard, runtime_create)
+        self.assertLess(
+            runtime_create,
+            runtime_guard_end,
+            "只有 self-start 可以创建本轮 runtime；REUSE 不得替外部 server 宣称运行目录",
+        )
+
+    def test_each_run_owns_private_evidence_and_persistent_logs(self):
+        evidence_setup_end = self.source.index(
+            '# 测试诚实性约束：Bot 必须能黑盒证明真实 manifest'
+        )
+        evidence_setup = self.source[:evidence_setup_end]
+        for required in (
+            'EVIDENCE_ROOT="$ROOT/.sisyphus/evidence/bot-e2e"',
+            'EVIDENCE_DIR="$(mktemp -d "$EVIDENCE_ROOT/run.XXXXXXXXXX")"',
+            'SERVER_LOG="$EVIDENCE_DIR/server.log"',
+            'SCENARIOS_LOG="$EVIDENCE_DIR/scenarios.log"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, self.source)
+
+        self.assertIn('mkdir -p "$EVIDENCE_ROOT"', evidence_setup)
+        self.assertLess(
+            evidence_setup.index('EVIDENCE_DIR="$(mktemp -d'),
+            evidence_setup.index('SERVER_LOG="$EVIDENCE_DIR/server.log"'),
+            "必须先原子创建本轮私有 evidence 目录，再打开会截断的日志文件",
+        )
+        self.assertNotIn(
+            'EVIDENCE_DIR="$ROOT/.sisyphus/evidence/bot-e2e"',
+            self.source,
+            "固定 evidence 目录会让并发/相邻 run 相互截断 server.log 与 scenarios.log",
+        )
+
+    def test_self_start_rejects_external_spiritwood_state_and_uses_private_file(self):
+        guard_start = self.source.index("# 先做无副作用输入门禁")
+        guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"', guard_start)
+        guard = self.source[guard_start:guard_end]
+        state_start = self.source.index("# 真实灵木场景会按生产契约持久化已采伐位置")
+        state_end = self.source.index("\nport_open() {", state_start)
+        state = self.source[state_start:state_end]
+
+        self.assertIn(
+            'if [ "$REUSE" != "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then',
+            guard,
+        )
+        self.assertIn("自起 server 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH", guard)
+        self.assertIn('exit 2', guard)
+        self.assertIn(
+            'SPIRITWOOD_STATE_DIR="$SERVER_RUNTIME_DIR/server/data/spiritwood"',
+            state,
+        )
+        self.assertIn('mkdir -p "$SPIRITWOOD_STATE_DIR"', state)
+        self.assertIn(
+            'export BONG_SPIRITWOOD_HARVESTED_PATH="$SPIRITWOOD_STATE_DIR/harvested.json"',
+            state,
+        )
+        self.assertLess(
+            self.source.index("自起 server 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH"),
+            self.source.index('EVIDENCE_DIR="$(mktemp -d'),
+            "外部持久化路径必须在创建任何本轮 evidence/state 前 fail-closed",
+        )
+
+    def test_self_start_owns_unique_redis_project_and_never_globally_kills_servers(self):
+        redis_start = self.source.index("# ---- redis（self-start server")
+        redis_end = self.source.index("\n# ---- server ----", redis_start)
+        redis = self.source[redis_start:redis_end]
+        cleanup_start = self.source.index("cleanup() {")
+        cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
+        cleanup = self.source[cleanup_start:cleanup_end]
+
+        for required in (
+            'REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"',
+            'BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0',
+            'docker compose -f "$ROOT/docker-compose.test.yml" up -d redis --wait',
+            'docker compose -f "$ROOT/docker-compose.test.yml" port redis 6379',
+            'export REDIS_URL="redis://127.0.0.1:$redis_port"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, redis)
+
+        self.assertIn('BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT"', cleanup)
+        self.assertIn('BONG_TEST_REDIS_PORT=0', cleanup)
+        self.assertNotIn("pkill", self.source)
+        self.assertNotIn("BOT_E2E_KILL_STALE", self.source)
+        self.assertNotIn("BOT_E2E_KILL_STALE", self.workflow_source)
+        self.assertIn(
+            "name: ${BONG_TEST_COMPOSE_PROJECT:-bong-test}", self.compose_source
+        )
+        self.assertIn(
+            '"127.0.0.1:${BONG_TEST_REDIS_PORT:-6379}:6379"',
+            self.compose_source,
+        )
 
 
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):

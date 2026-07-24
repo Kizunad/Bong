@@ -147,7 +147,6 @@ jobs:
       - name: Bot e2e stage (protocol-level player scenarios)
         env:
           BOT_E2E_RUN_TAG: ci
-          BOT_E2E_KILL_STALE: "1"
         run: bash scripts/bot-e2e.sh
 
       - name: Bot chat timestamp → Tiandao window e2e
