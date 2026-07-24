@@ -86,7 +86,20 @@ class BuildResourcepackTest(unittest.TestCase):
             self.assertEqual(1, counts["mineral"], f"expected one mineral fixture, actual {counts['mineral']}")
             self.assertEqual(4, counts["entity-model"], f"expected geo/obj/mtl/entity texture fixtures, actual {counts['entity-model']}")
             self.assertEqual(3, counts["vfx"], f"expected particle json/texture/hud effect fixtures, actual {counts['vfx']}")
-            self.assertEqual(3, counts["audio"], f"expected audio recipe + atmosphere ogg + signature sound ogg fixtures, actual {counts['audio']}")
+            self.assertEqual(4, counts["audio"], f"expected audio recipe + atmosphere ogg + signature sound ogg + sounds.json registry fixtures, actual {counts['audio']}")
+
+            audio_paths = next(entry["paths"] for entry in manifest["packs"] if entry["id"] == "audio")
+            self.assertIn(
+                "bong/sounds.json",
+                audio_paths,
+                "expected audio subpack to declare bong/sounds.json because the sound-event registry must travel with the audio assets it registers"
+                f" (else selecting the audio subpack loads OGGs with no event registry → silent), actual {audio_paths}",
+            )
+            self.assertIn(
+                "bong/sounds",
+                audio_paths,
+                f"expected audio subpack to declare bong/sounds because signature OGGs live there, actual {audio_paths}",
+            )
 
             with zipfile.ZipFile(pack) as zf:
                 names = set(zf.namelist())

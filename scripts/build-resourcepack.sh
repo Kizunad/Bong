@@ -121,16 +121,23 @@ subpacks = [
     ("mineral", ["minecraft/blockstates", "minecraft/models", "minecraft/textures/block", "minecraft/atlases", "bong/blockstates", "bong/textures/block"]),
     ("entity-model", ["bong/geo", "bong/animations", "bong/models", "bong/textures/entity", "bong/textures/item", "bong/textures/armor"]),
     ("vfx", ["bong/particles", "bong/textures/particle", "bong-client/textures/hud/effects", "bong-client/textures/gui/skill"]),
-    ("audio", ["bong/atmosphere", "bong/audio_recipes", "bong/sounds"]),
+    ("audio", ["bong/atmosphere", "bong/audio_recipes", "bong/sounds", "bong/sounds.json"]),
 ]
+
+_RUNTIME_SUFFIXES = {".png", ".json", ".ogg", ".obj", ".mtl"}
 
 def count_files(prefixes: list[str]) -> int:
     total = 0
     for prefix in prefixes:
         base = assets_root / prefix
+        # 前缀既可能是目录（rglob 展开），也可能直接指向单个文件（如 bong/sounds.json）。
+        if base.is_file():
+            if base.suffix.lower() in _RUNTIME_SUFFIXES:
+                total += 1
+            continue
         if not base.exists():
             continue
-        total += sum(1 for p in base.rglob("*") if p.is_file() and p.suffix.lower() in {".png", ".json", ".ogg", ".obj", ".mtl"})
+        total += sum(1 for p in base.rglob("*") if p.is_file() and p.suffix.lower() in _RUNTIME_SUFFIXES)
     return total
 
 manifest = {
