@@ -922,17 +922,6 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         .map(|s| s.current.season)
         .unwrap_or_default();
 
-    // A raster only replaces surface data for an unloaded chunk *inside* a live layer. Validate
-    // that entity target before any other work, including scheduler state and recycle-side qi
-    // effects, so a stale, non-ChunkLayer or despawning DimensionLayers.overworld makes this
-    // scheduler invocation a strict no-op.
-    let Some(layers) = dimension_layers.as_deref() else {
-        return;
-    };
-    let Ok(overworld_chunk_layer) = chunk_layers.get(layers.overworld) else {
-        return;
-    };
-
     // 粗节流：与 heiwushi 一致，避免每 tick 都做全量 zone/query 扫描。
     // `now == 0` 时必须放行（对齐 `should_run_interval` 的 tick==0 分支）——否则
     // `state.last_check_tick` 默认值也是 0，`0.saturating_sub(0) == 0 < STRIDE` 会让世界
@@ -944,6 +933,9 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
 
     let mut zone_registry = zone_registry;
     let Some(registry) = zone_registry.as_deref_mut() else {
+        return;
+    };
+    let Some(layers) = dimension_layers.as_deref() else {
         return;
     };
     let density_mul = era_state
@@ -1067,6 +1059,12 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         let Some(spawn_pos) =
             sample_ambient_ring_position(zone.bounds, *player_pos, &alive_in_zone, spawn_seed)
         else {
+            continue;
+        };
+        // Raster 只能替代有效 live layer 内未加载 chunk 的 surface 数据。把 live-layer
+        // 门禁限定在候选提交边界：stale、non-ChunkLayer 或 Despawned target 禁止新 spawn，
+        // 但不能截断本轮前面已经执行的既有 ambient 回收与 qi 归还。
+        let Ok(overworld_chunk_layer) = chunk_layers.get(layers.overworld) else {
             continue;
         };
         let spawned = submit_ambient_spawn_candidate::<M, _>(
@@ -3502,6 +3500,17 @@ mod tests {
         )
     }
 
+    fn panic_scheduler_pool_fn(
+        _commands: &mut Commands,
+        _layer: Entity,
+        _zone: &Zone,
+        _spawn_position: DVec3,
+        _patrol_target: DVec3,
+        _season: Season,
+    ) -> Option<Entity> {
+        panic!("invalid live layer must reject before ambient pool submission");
+    }
+
     fn make_app() -> App {
         let scenario = ScenarioSingleClient::new();
         let client = scenario.client;
@@ -3603,66 +3612,152 @@ mod tests {
         app
     }
 
+    #[derive(Clone, Copy, Debug)]
+    enum InvalidOverworldLayer {
+        Missing,
+        NonChunk,
+        Despawning,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum RecycleQiCarrier {
+        Rat,
+        MimicSpider,
+    }
+
     #[test]
-    fn ambient_scheduler_rejects_invalid_overworld_layer_before_any_side_effect() {
+    fn ambient_scheduler_invalid_layer_rejects_spawn_but_preserves_recycle_and_qi_return() {
+        use valence::prelude::ChunkPos;
+
         for invalid_layer in [
             InvalidOverworldLayer::Missing,
             InvalidOverworldLayer::NonChunk,
             InvalidOverworldLayer::Despawning,
         ] {
-            let mut app = make_runtime_scheduler_app::<TestFaunaMarker>(
-                threat_budget,
-                test_pool_fn,
-                false,
-                1,
-            );
-            let original = app.world().resource::<DimensionLayers>().overworld;
-            match invalid_layer {
-                InvalidOverworldLayer::Missing => {
-                    let stale = app.world_mut().spawn_empty().id();
-                    app.world_mut().despawn(stale);
-                    app.world_mut().resource_mut::<DimensionLayers>().overworld = stale;
+            for carrier in [RecycleQiCarrier::Rat, RecycleQiCarrier::MimicSpider] {
+                let mut app = make_app();
+                let original = install_layers(&mut app);
+                install_zone_registry(&mut app, 1);
+                // danger=1 的 600 tick 周期在此恰好命中，若 live-layer 门禁失效，下面的
+                // panic pool 会证明 scheduler 确实进入了新 spawn 提交路径。
+                app.insert_resource(GameTick(600));
+                app.insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
+                    threat_budget,
+                    panic_scheduler_pool_fn,
+                    true,
+                ));
+                // 玩家仍在 test_zone 内，但与原点的待回收实体相距 >96 格；候选环也完整落在
+                // zone bounds 内，确保 invalid layer 是拒绝新 spawn 的唯一前置条件。
+                app.world_mut()
+                    .spawn((ClientMarker, Position::new([200.0, 64.0, 200.0])));
+
+                let (stray, rat_account, expected_zone_qi) = match carrier {
+                    RecycleQiCarrier::Rat => {
+                        let mut blackboard = RatBlackboard::new("test_zone", ChunkPos::new(0, 0));
+                        blackboard.drained_qi = 10.0;
+                        let stray = app
+                            .world_mut()
+                            .spawn((
+                                Position::new([0.0, 64.0, 0.0]),
+                                AmbientThreatMarker {
+                                    spawned_at: 0,
+                                    home_zone: "test_zone".to_string(),
+                                },
+                                blackboard,
+                            ))
+                            .id();
+                        let rat_account = QiAccountId::npc(format!("rat:{}", stray.index()));
+                        let mut ledger = WorldQiAccount::default();
+                        ledger
+                            .set_balance(rat_account.clone(), 10.0)
+                            .expect("seeding invalid-layer rat balance must succeed");
+                        app.insert_resource(ledger);
+                        let expected = (0.5
+                            + 10.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+                            .clamp(-1.0, 1.0);
+                        (stray, Some(rat_account), expected)
+                    }
+                    RecycleQiCarrier::MimicSpider => {
+                        let mut blackboard =
+                            MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
+                        blackboard.drained_qi = 50.0;
+                        let stray = app
+                            .world_mut()
+                            .spawn((
+                                Position::new([0.0, 64.0, 0.0]),
+                                AmbientThreatMarker {
+                                    spawned_at: 0,
+                                    home_zone: "test_zone".to_string(),
+                                },
+                                blackboard,
+                            ))
+                            .id();
+                        let expected = (0.5
+                            + (50.0
+                                * crate::fauna::mimic_spider::SPIDER_DRAINED_QI_DEATH_RETURN_RATIO)
+                                / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+                            .clamp(-1.0, 1.0);
+                        (stray, None, expected)
+                    }
+                };
+
+                match invalid_layer {
+                    InvalidOverworldLayer::Missing => {
+                        let stale = app.world_mut().spawn_empty().id();
+                        app.world_mut().despawn(stale);
+                        app.world_mut().resource_mut::<DimensionLayers>().overworld = stale;
+                    }
+                    InvalidOverworldLayer::NonChunk => {
+                        let non_chunk = app.world_mut().spawn_empty().id();
+                        app.world_mut().resource_mut::<DimensionLayers>().overworld = non_chunk;
+                    }
+                    InvalidOverworldLayer::Despawning => {
+                        app.world_mut().entity_mut(original).insert(Despawned);
+                    }
                 }
-                InvalidOverworldLayer::NonChunk => {
-                    let non_chunk = app.world_mut().spawn_empty().id();
-                    app.world_mut().resource_mut::<DimensionLayers>().overworld = non_chunk;
+
+                // 只跑 Update，避免 Last schedule 把带 Despawned 的测试实体真正移除后失去断言点。
+                app.world_mut().run_schedule(Update);
+
+                assert!(
+                    app.world().get::<Despawned>(stray).is_some(),
+                    "{invalid_layer:?}/{carrier:?}: invalid spawn layer must not block existing ambient recycle"
+                );
+                assert_eq!(
+                    app.world()
+                        .resource::<AmbientSchedulerState<AmbientThreatMarker>>()
+                        .last_check_tick,
+                    600,
+                    "{invalid_layer:?}/{carrier:?}: scheduler must keep its pre-existing cadence/recycle control flow"
+                );
+                let zone_after = app
+                    .world()
+                    .resource::<ZoneRegistry>()
+                    .find_zone_by_name("test_zone")
+                    .expect("test_zone must remain available")
+                    .spirit_qi;
+                assert!(
+                    (zone_after - expected_zone_qi).abs() < 1e-9,
+                    "{invalid_layer:?}/{carrier:?}: recycle must preserve the existing qi return contract; expected {expected_zone_qi}, actual {zone_after}"
+                );
+                if let Some(rat_account) = rat_account {
+                    assert_eq!(
+                        app.world().resource::<WorldQiAccount>().balance(&rat_account),
+                        0.0,
+                        "{invalid_layer:?}/{carrier:?}: rat recycle must still clear the npc ledger account"
+                    );
                 }
-                InvalidOverworldLayer::Despawning => {
-                    app.world_mut().entity_mut(original).insert(Despawned);
-                }
+                let spawned_pool_entities = app
+                    .world_mut()
+                    .query_filtered::<Entity, With<NpcMarker>>()
+                    .iter(app.world())
+                    .count();
+                assert_eq!(
+                    spawned_pool_entities, 0,
+                    "{invalid_layer:?}/{carrier:?}: invalid live layer must not submit a new pool entity"
+                );
             }
-            app.insert_resource(GameTick(1_000_000));
-            app.insert_resource(TerrainProviders {
-                overworld: TerrainProvider::empty_for_tests(),
-                tsy: None,
-            });
-
-            app.update();
-
-            let spawned = app
-                .world_mut()
-                .query_filtered::<Entity, With<TestFaunaMarker>>()
-                .iter(app.world())
-                .count();
-            assert_eq!(
-                spawned, 0,
-                "missing, non-ChunkLayer or despawning overworld targets must be rejected before raster fallback or pool submission"
-            );
-            assert_eq!(
-                app.world()
-                    .resource::<AmbientSchedulerState<TestFaunaMarker>>()
-                    .last_check_tick,
-                0,
-                "invalid overworld layer must reject before mutating scheduler state"
-            );
         }
-    }
-
-    #[derive(Clone, Copy)]
-    enum InvalidOverworldLayer {
-        Missing,
-        NonChunk,
-        Despawning,
     }
 
     #[test]

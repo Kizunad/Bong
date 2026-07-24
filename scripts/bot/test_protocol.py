@@ -15,6 +15,7 @@ import pathlib
 import re
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -745,24 +746,50 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-    def test_self_started_server_explicitly_enables_dev_mode_before_cargo_run(self):
+    def test_self_started_server_forces_dev_mode_before_cargo_run(self):
         start = self.source.index('(\n    cd "$SERVER_RUNTIME_DIR/server"')
         end = self.source.index('  ) >"$SERVER_LOG"', start)
         launch = self.source[start:end]
-        dev_mode = 'export BONG_DEV_MODE="${BONG_DEV_MODE:-1}"'
+        expected = "export BONG_DEV_MODE=1"
+        actual = next(
+            line.strip()
+            for line in launch.splitlines()
+            if line.strip().startswith("export BONG_DEV_MODE=")
+        )
 
-        self.assertIn(
-            dev_mode,
-            launch,
-            "Bot 自起 server 必须显式开启 BONG_DEV_MODE，才能执行受门禁保护的确定性 dev 场景",
+        self.assertEqual(
+            actual,
+            expected,
+            "Bot 自起 server 必须覆盖调用环境并确定性开启 BONG_DEV_MODE，不能继承 falsey 值",
         )
         self.assertLess(
-            launch.index(dev_mode),
+            launch.index(expected),
             launch.index(
                 'exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG'
             ),
             "BONG_DEV_MODE 必须在 server 进程启动前导出",
         )
+
+        for inherited in ("0", "false", "no", "off"):
+            with self.subTest(inherited=inherited):
+                env = os.environ.copy()
+                env["BONG_DEV_MODE"] = inherited
+                completed = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        f'{actual}\nprintf "%s" "$BONG_DEV_MODE"',
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertEqual(
+                    completed.stdout,
+                    "1",
+                    f"self-start 必须把继承的 BONG_DEV_MODE={inherited} 覆盖为 1",
+                )
 
     def test_self_started_server_builds_unique_exact_fixture_identity(self):
         fixture_start = self.source.index('if [ "$REUSE" != "1" ]; then')

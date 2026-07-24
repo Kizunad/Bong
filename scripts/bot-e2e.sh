@@ -258,8 +258,10 @@ else
     # private cwd 不会自动发现 checkout/server/.cargo/config.toml；显式保持同一 dev profile，
     # 否则 debug 构建会切回 full debuginfo、重编整棵依赖并突破 600s readiness 门。
     export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}"
-    # 协议 Bot 覆盖大量 dev-only 命令；生产默认不暴露这些确定性测试接缝。
-    export BONG_DEV_MODE="${BONG_DEV_MODE:-1}"
+    # 协议 Bot 覆盖大量 dev-only 命令；self-start 进程由本轮 harness 独占，必须覆盖
+    # 调用方的 0/false/no/off，确定性安装命令 root 与私有 capability。REUSE 不走此分支，
+    # 仍不声称能修改外部 server 的启动环境。
+    export BONG_DEV_MODE=1
     exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG
   ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
