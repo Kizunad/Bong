@@ -473,9 +473,8 @@ pub fn emit_tribulation_animation_triggers(
     }
 
     for failure in failures.read() {
-        // 渡劫失败是存活结局（不进入死亡生命周期，没有死亡动画顺带清通道）。
-        // brace 循环挂在 FULL_BODY 通道（STORY_PRIORITY），必须显式 StopAnim
-        // 才能收掉；否则永久卡在抱臂姿势（见 TRIBULATION_BRACE_STOP_FADE_OUT_TICKS 注释）。
+        // 存活结局，无死亡动画清通道：显式 StopAnim 收掉 FULL_BODY brace 循环
+        // （根因见 TRIBULATION_BRACE_STOP_FADE_OUT_TICKS 注释）。
         if let Ok((position, unique_id)) = players.get(failure.entity) {
             emit_stop_for_entity(
                 position,
@@ -3225,10 +3224,15 @@ mod tests {
 
     #[test]
     fn tribulation_settled_success_outcomes_do_not_regress_with_explicit_brace_stop() {
-        // Regression guard: TribulationSettled(Ascended/HalfStep) success path already relies on
-        // a FULL_BODY breakthrough animation (STORY_PRIORITY) to overwrite the brace loop — it
-        // must keep emitting exactly PlayAnim + SpawnParticle, no extra StopAnim(brace) added.
-        for outcome in [DuXuOutcomeV1::Ascended, DuXuOutcomeV1::HalfStep] {
+        // Regression guard: the success path (Ascended/HalfStep) clears the FULL_BODY brace loop by
+        // *overwriting* it with a breakthrough PlayAnim at STORY_PRIORITY — so it must NOT also add
+        // a StopAnim(brace) (the brace fix targets the survive-and-stuck TribulationFailed path
+        // only). Assert the concrete event contract, not just the count, so a spurious StopAnim
+        // leaking in from the failure fix — or a wrong anim/particle — turns this red.
+        for (outcome, expected_anim, expected_count) in [
+            (DuXuOutcomeV1::Ascended, ANIM_BREAKTHROUGH_TONGLING, 16u16),
+            (DuXuOutcomeV1::HalfStep, ANIM_BREAKTHROUGH_GUYUAN, 10u16),
+        ] {
             let mut app = App::new();
             app.add_event::<TribulationSettled>();
             app.add_event::<VfxEventRequest>();
@@ -3243,9 +3247,25 @@ mod tests {
             assert_eq!(
                 emitted.len(),
                 2,
-                "success settlement ({outcome:?}) must stay at 2 VFX events (PlayAnim + \
-                 SpawnParticle) — the brace fix targets TribulationFailed only, got {}",
+                "success settlement ({outcome:?}) must emit exactly PlayAnim(breakthrough) + \
+                 SpawnParticle(pillar); got {}",
                 emitted.len()
+            );
+            // event[0]: breakthrough anim on the FULL_BODY channel at STORY_PRIORITY — this is what
+            // overwrites the brace loop, so its id + priority are the load-bearing contract.
+            assert_play_anim(&emitted[0], expected_anim, STORY_PRIORITY);
+            // event[1]: breakthrough pillar particle, outcome-specific density.
+            assert_spawn_particle(&emitted[1], "bong:breakthrough_pillar", Some(expected_count));
+            // The contract this test's name claims: NO StopAnim on the success path. A StopAnim here
+            // (e.g. copy-pasted from the TribulationFailed fix) would still keep count at 2 if it
+            // displaced the particle, so the count check alone can't catch it — assert absence.
+            assert!(
+                !emitted
+                    .iter()
+                    .any(|e| matches!(e.payload, VfxEventPayloadV1::StopAnim { .. })),
+                "success settlement ({outcome:?}) must NOT emit StopAnim — the breakthrough anim \
+                 already overwrites the FULL_BODY brace loop; a StopAnim here means the \
+                 failure-path fix leaked into the success path. emitted={emitted:?}"
             );
         }
     }
