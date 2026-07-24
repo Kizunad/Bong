@@ -3173,10 +3173,9 @@ mod tests {
 
     #[test]
     fn tribulation_failed_stops_stuck_brace_full_body_loop() {
-        // Bug: tribulation_brace（isLoop:true, STORY_PRIORITY=FULL_BODY 通道）由
-        // TribulationAnnounce 起播；渡劫失败是存活结局，没有死亡动画顺带清通道。
-        // hurt_stagger 走 HIT_RECOIL_PRIORITY=UPPER_BODY 通道，顶不掉 FULL_BODY 循环，
-        // 玩家会永久卡在抱臂姿势——必须显式 StopAnim(tribulation_brace) 收掉。
+        // 渡劫失败必须显式 StopAnim(brace) 收掉 FULL_BODY 循环（根因见
+        // TRIBULATION_BRACE_STOP_FADE_OUT_TICKS 注释）。Arrange: Announce 起播 brace →
+        // Act: Failed → Assert: 恰好 StopAnim(brace) + PlayAnim(hurt_stagger)。
         let mut app = App::new();
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationFailed>();
@@ -3224,11 +3223,9 @@ mod tests {
 
     #[test]
     fn tribulation_settled_success_outcomes_do_not_regress_with_explicit_brace_stop() {
-        // Regression guard: the success path (Ascended/HalfStep) clears the FULL_BODY brace loop by
-        // *overwriting* it with a breakthrough PlayAnim at STORY_PRIORITY — so it must NOT also add
-        // a StopAnim(brace) (the brace fix targets the survive-and-stuck TribulationFailed path
-        // only). Assert the concrete event contract, not just the count, so a spurious StopAnim
-        // leaking in from the failure fix — or a wrong anim/particle — turns this red.
+        // 成功结局（Ascended/HalfStep）靠 STORY_PRIORITY 的 breakthrough PlayAnim 覆盖 brace 循环，
+        // 故**不**额外发 StopAnim（brace 修复只针对存活卡姿的 TribulationFailed）。断言具体事件契约
+        // 而非仅个数，让 spurious StopAnim 或错 anim/particle 判红。
         for (outcome, expected_anim, expected_count) in [
             (DuXuOutcomeV1::Ascended, ANIM_BREAKTHROUGH_TONGLING, 16u16),
             (DuXuOutcomeV1::HalfStep, ANIM_BREAKTHROUGH_GUYUAN, 10u16),
