@@ -64,6 +64,11 @@ const ANIM_BREAKTHROUGH_NINGMAI: &str = "bong:breakthrough_ningmai";
 const ANIM_BREAKTHROUGH_GUYUAN: &str = "bong:breakthrough_guyuan";
 const ANIM_BREAKTHROUGH_TONGLING: &str = "bong:breakthrough_tongling";
 const ANIM_TRIBULATION_BRACE: &str = "bong:tribulation_brace";
+/// 渡劫失败（`TribulationFailed`）时收掉 `ANIM_TRIBULATION_BRACE` 循环动画的淡出 tick。
+/// brace 以 `STORY_PRIORITY`（FULL_BODY 通道）isLoop:true 播放；渡劫失败结局存活
+/// （不进入死亡生命周期），若不显式 StopAnim，`ANIM_HURT_STAGGER`（`HIT_RECOIL_PRIORITY`，
+/// UPPER_BODY 通道）顶不掉 FULL_BODY 循环，玩家会永久卡在抱臂姿势。
+const TRIBULATION_BRACE_STOP_FADE_OUT_TICKS: u8 = 3;
 const ANIM_HARVEST_CROUCH: &str = "bong:harvest_crouch";
 /// 广播体操练习完成 → 专属完整套路动画（150tick/7.5s，5 节：伸展/扩胸/体转/体侧/下蹲）。
 /// 此前复用 guard_raise（4tick 举臂格挡），真机表现"只动了一下"；改为
@@ -468,6 +473,17 @@ pub fn emit_tribulation_animation_triggers(
     }
 
     for failure in failures.read() {
+        // 存活结局，无死亡动画清通道：显式 StopAnim 收掉 FULL_BODY brace 循环
+        // （根因见 TRIBULATION_BRACE_STOP_FADE_OUT_TICKS 注释）。
+        if let Ok((position, unique_id)) = players.get(failure.entity) {
+            emit_stop_for_entity(
+                position,
+                unique_id,
+                ANIM_TRIBULATION_BRACE,
+                TRIBULATION_BRACE_STOP_FADE_OUT_TICKS,
+                &mut vfx_events,
+            );
+        }
         emit_play_for_entity(
             failure.entity,
             ANIM_HURT_STAGGER,
@@ -3143,11 +3159,112 @@ mod tests {
         let emitted = drain_vfx(&mut app);
         assert_eq!(
             emitted.len(),
-            1,
-            "TribulationFailed must still emit exactly one VFX (hurt_stagger), got {}",
+            2,
+            "TribulationFailed must emit StopAnim(tribulation_brace) + PlayAnim(hurt_stagger), got {}",
             emitted.len()
         );
-        assert_play_anim(&emitted[0], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
+        assert_stop_anim(
+            &emitted[0],
+            ANIM_TRIBULATION_BRACE,
+            TRIBULATION_BRACE_STOP_FADE_OUT_TICKS,
+        );
+        assert_play_anim(&emitted[1], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
+    }
+
+    #[test]
+    fn tribulation_failed_stops_stuck_brace_full_body_loop() {
+        // 渡劫失败必须显式 StopAnim(brace) 收掉 FULL_BODY 循环（根因见
+        // TRIBULATION_BRACE_STOP_FADE_OUT_TICKS 注释）。Arrange: Announce 起播 brace →
+        // Act: Failed → Assert: 恰好 StopAnim(brace) + PlayAnim(hurt_stagger)。
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_animation_triggers);
+        let player = spawn_player(&mut app, "Frank", [5.0, 64.0, 5.0]);
+
+        // 1. TribulationAnnounce 起播 brace 循环（FULL_BODY，STORY_PRIORITY）。
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: player,
+            char_id: "frank".to_string(),
+            actor_name: "Frank".to_string(),
+            epicenter: [5.0, 64.0, 5.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+        app.update();
+        let announce_emitted = drain_vfx(&mut app);
+        assert_eq!(announce_emitted.len(), 1);
+        assert_play_anim(&announce_emitted[0], ANIM_TRIBULATION_BRACE, STORY_PRIORITY);
+
+        // 2. 渡劫失败：必须显式 StopAnim(brace) 收掉 FULL_BODY 循环，否则永久卡姿势。
+        app.world_mut().send_event(TribulationFailed {
+            entity: player,
+            wave: 2,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "TribulationFailed must emit StopAnim(tribulation_brace) to release the FULL_BODY \
+             channel plus PlayAnim(hurt_stagger); got {} — without the StopAnim the player is \
+             stuck in the brace pose forever",
+            emitted.len()
+        );
+        assert_stop_anim(
+            &emitted[0],
+            ANIM_TRIBULATION_BRACE,
+            TRIBULATION_BRACE_STOP_FADE_OUT_TICKS,
+        );
+        assert_play_anim(&emitted[1], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
+    }
+
+    #[test]
+    fn tribulation_settled_success_outcomes_do_not_regress_with_explicit_brace_stop() {
+        // 成功结局（Ascended/HalfStep）靠 STORY_PRIORITY 的 breakthrough PlayAnim 覆盖 brace 循环，
+        // 故**不**额外发 StopAnim（brace 修复只针对存活卡姿的 TribulationFailed）。断言具体事件契约
+        // 而非仅个数，让 spurious StopAnim 或错 anim/particle 判红。
+        for (outcome, expected_anim, expected_count) in [
+            (DuXuOutcomeV1::Ascended, ANIM_BREAKTHROUGH_TONGLING, 16u16),
+            (DuXuOutcomeV1::HalfStep, ANIM_BREAKTHROUGH_GUYUAN, 10u16),
+        ] {
+            let mut app = App::new();
+            app.add_event::<TribulationSettled>();
+            app.add_event::<VfxEventRequest>();
+            app.add_systems(Update, emit_tribulation_settled_vfx_triggers);
+            let player = spawn_player(&mut app, "Grace", [5.0, 64.0, 5.0]);
+
+            app.world_mut()
+                .send_event(make_tribulation_settled(player, outcome));
+            app.update();
+
+            let emitted = drain_vfx(&mut app);
+            assert_eq!(
+                emitted.len(),
+                2,
+                "success settlement ({outcome:?}) must emit exactly PlayAnim(breakthrough) + \
+                 SpawnParticle(pillar); got {}",
+                emitted.len()
+            );
+            // event[0]: breakthrough anim on the FULL_BODY channel at STORY_PRIORITY — this is what
+            // overwrites the brace loop, so its id + priority are the load-bearing contract.
+            assert_play_anim(&emitted[0], expected_anim, STORY_PRIORITY);
+            // event[1]: breakthrough pillar particle, outcome-specific density.
+            assert_spawn_particle(&emitted[1], "bong:breakthrough_pillar", Some(expected_count));
+            // The contract this test's name claims: NO StopAnim on the success path. A StopAnim here
+            // (e.g. copy-pasted from the TribulationFailed fix) would still keep count at 2 if it
+            // displaced the particle, so the count check alone can't catch it — assert absence.
+            assert!(
+                !emitted
+                    .iter()
+                    .any(|e| matches!(e.payload, VfxEventPayloadV1::StopAnim { .. })),
+                "success settlement ({outcome:?}) must NOT emit StopAnim — the breakthrough anim \
+                 already overwrites the FULL_BODY brace loop; a StopAnim here means the \
+                 failure-path fix leaked into the success path. emitted={emitted:?}"
+            );
+        }
     }
 
     // ─── 暗器六招：emit_anqi_visual_triggers ──────────────────────
