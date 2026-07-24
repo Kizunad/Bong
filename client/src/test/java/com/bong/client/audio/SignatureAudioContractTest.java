@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
@@ -19,6 +20,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -300,5 +302,188 @@ class SignatureAudioContractTest {
                         + audioPaths);
             }
         }
+    }
+
+    // ---- 音频格式契约：机器校验 Ogg Vorbis codec/channels/sample_rate/duration ----
+    //
+    // plan §P4 音源规格写明「mono, 44.1kHz，短样本 ≤3s」。仅校验文件存在+非空挡不住换源引入的
+    // stereo / 48kHz / 超长 / 伪 OGG——这里解析 Ogg Vorbis 容器逐项机器 pin，并用合成越界 fixture
+    // 证明校验真会判红（错误分支覆盖）。probe 只依赖标准库，不引第三方解码器。
+
+    private static final int SIGNATURE_SAMPLE_RATE = 44100;
+    private static final double SIGNATURE_MAX_SECONDS = 3.0;
+    // 采样对齐的时长上界容差：3.0s 正好 = 132300 granule；编码 padding 可能多出个别采样，放 ~5ms
+    // 容差既容忍边界又能判死 4s 级越界。
+    private static final double SIGNATURE_DURATION_EPS = 0.005;
+
+    private record OggVorbisProbe(boolean vorbis, int channels, int sampleRate, double durationSeconds) {}
+
+    private static boolean startsWithOggS(byte[] data, int off) {
+        return off + 4 <= data.length
+            && data[off] == 'O' && data[off + 1] == 'g' && data[off + 2] == 'g' && data[off + 3] == 'S';
+    }
+
+    private static int readLeU32(byte[] b, int off) {
+        return (b[off] & 0xFF) | ((b[off + 1] & 0xFF) << 8) | ((b[off + 2] & 0xFF) << 16) | ((b[off + 3] & 0xFF) << 24);
+    }
+
+    private static long readLeU64(byte[] b, int off) {
+        long v = 0;
+        for (int i = 0; i < 8; i++) {
+            v |= ((long) (b[off + i] & 0xFF)) << (8 * i);
+        }
+        return v;
+    }
+
+    /**
+     * 扫描所有 Ogg 页，返回最后一页的 granule_position（Vorbis 里 = 累计 PCM 采样数）。
+     * 逐页跳转：body 长度 = segment_table 各字节之和（含 255 lacing）。
+     */
+    private static long lastPageGranule(byte[] data) {
+        long granule = 0;
+        int i = 0;
+        while (i + 27 <= data.length) {
+            if (!startsWithOggS(data, i)) {
+                i++; // 理论上不该发生（well-formed 文件页对齐），resync 兜底
+                continue;
+            }
+            granule = readLeU64(data, i + 6);
+            int segs = data[i + 26] & 0xFF;
+            int segTableEnd = i + 27 + segs;
+            if (segTableEnd > data.length) {
+                break;
+            }
+            int bodyLen = 0;
+            for (int s = 0; s < segs; s++) {
+                bodyLen += data[i + 27 + s] & 0xFF;
+            }
+            i = segTableEnd + bodyLen;
+        }
+        return granule;
+    }
+
+    /**
+     * 解析 Ogg Vorbis：首页 identification header 取 codec/channels/sample_rate，
+     * 末页 granule / sample_rate 得时长。非 Ogg 或非 Vorbis identification header → vorbis=false。
+     */
+    private static OggVorbisProbe probeOggVorbis(byte[] data) {
+        if (!startsWithOggS(data, 0) || data.length < 28) {
+            return new OggVorbisProbe(false, 0, 0, 0.0);
+        }
+        int pageSegments = data[26] & 0xFF;
+        int packetStart = 27 + pageSegments;
+        // identification header: 0x01 "vorbis" version(4) channels(1) sample_rate(4) ...
+        if (packetStart + 16 > data.length
+            || (data[packetStart] & 0xFF) != 0x01
+            || data[packetStart + 1] != 'v' || data[packetStart + 2] != 'o' || data[packetStart + 3] != 'r'
+            || data[packetStart + 4] != 'b' || data[packetStart + 5] != 'i' || data[packetStart + 6] != 's') {
+            return new OggVorbisProbe(false, 0, 0, 0.0);
+        }
+        int channels = data[packetStart + 11] & 0xFF;
+        int sampleRate = readLeU32(data, packetStart + 12);
+        long lastGranule = lastPageGranule(data);
+        double duration = sampleRate > 0 ? (double) lastGranule / sampleRate : 0.0;
+        return new OggVorbisProbe(true, channels, sampleRate, duration);
+    }
+
+    private static boolean isSignatureFormatOk(OggVorbisProbe p) {
+        return p.vorbis()
+            && p.channels() == 1
+            && p.sampleRate() == SIGNATURE_SAMPLE_RATE
+            && p.durationSeconds() <= SIGNATURE_MAX_SECONDS + SIGNATURE_DURATION_EPS;
+    }
+
+    @Test
+    void everySignatureOggIsMonoVorbis44kUnderThreeSeconds() throws IOException {
+        JsonObject root = soundsJson();
+        for (String event : root.keySet()) {
+            for (JsonElement el : root.getAsJsonObject(event).getAsJsonArray("sounds")) {
+                String name = soundName(el);
+                Path ogg = SOUNDS_DIR.resolve(name.substring("bong:".length()) + ".ogg");
+                OggVorbisProbe p = probeOggVorbis(Files.readAllBytes(ogg));
+                assertTrue(p.vorbis(),
+                    "事件 " + event + " 的资产不是 Ogg Vorbis 容器（可能是伪 OGG / 换错格式）: " + ogg);
+                assertEquals(1, p.channels(),
+                    "事件 " + event + " 的 ogg 必须 mono（plan §P4 音源规格），实际声道=" + p.channels() + " @ " + ogg);
+                assertEquals(SIGNATURE_SAMPLE_RATE, p.sampleRate(),
+                    "事件 " + event + " 的 ogg 必须 44.1kHz，实际=" + p.sampleRate() + "Hz @ " + ogg);
+                assertTrue(p.durationSeconds() <= SIGNATURE_MAX_SECONDS + SIGNATURE_DURATION_EPS,
+                    "事件 " + event + " 的 ogg 必须 ≤3s（短样本），实际=" + p.durationSeconds() + "s @ " + ogg);
+            }
+        }
+    }
+
+    // ── 合成 Ogg fixture（证明格式校验的错误分支真会判红）──
+
+    /** 构造最小单页 Ogg：capture "OggS" + granule + 单 segment 承载 payload（payload<255）。 */
+    private static byte[] buildOggPage(byte[] payload, long granule) {
+        byte[] page = new byte[28 + payload.length];
+        page[0] = 'O';
+        page[1] = 'g';
+        page[2] = 'g';
+        page[3] = 'S';
+        for (int i = 0; i < 8; i++) {
+            page[6 + i] = (byte) ((granule >> (8 * i)) & 0xFF);
+        }
+        page[26] = 1; // page_segments
+        page[27] = (byte) payload.length; // segment_table[0]
+        System.arraycopy(payload, 0, page, 28, payload.length);
+        return page;
+    }
+
+    /** Vorbis identification header：0x01 "vorbis" version(4)=0 channels(1) sample_rate(4)。 */
+    private static byte[] vorbisIdHeader(int channels, int sampleRate) {
+        byte[] h = new byte[16];
+        h[0] = 0x01;
+        h[1] = 'v';
+        h[2] = 'o';
+        h[3] = 'r';
+        h[4] = 'b';
+        h[5] = 'i';
+        h[6] = 's';
+        h[11] = (byte) channels;
+        h[12] = (byte) (sampleRate & 0xFF);
+        h[13] = (byte) ((sampleRate >> 8) & 0xFF);
+        h[14] = (byte) ((sampleRate >> 16) & 0xFF);
+        h[15] = (byte) ((sampleRate >> 24) & 0xFF);
+        return h;
+    }
+
+    @Test
+    void audioFormatProbeRoundTripsSyntheticMonoHeader() {
+        OggVorbisProbe ok = probeOggVorbis(buildOggPage(vorbisIdHeader(1, 44100), 44100));
+        assertTrue(ok.vorbis(), "合成的合法 mono/44.1k header 应判定为 Vorbis");
+        assertEquals(1, ok.channels());
+        assertEquals(44100, ok.sampleRate());
+        assertEquals(1.0, ok.durationSeconds(), 1e-9, "granule 44100 / 44100Hz 应算出 1.0s");
+        assertTrue(isSignatureFormatOk(ok), "合法 mono/44.1k/1s 应通过签名格式契约");
+    }
+
+    @Test
+    void audioFormatContractRejectsOutOfSpecFixtures() {
+        // stereo：探针应读出声道 2，契约拒绝
+        OggVorbisProbe stereo = probeOggVorbis(buildOggPage(vorbisIdHeader(2, 44100), 44100));
+        assertEquals(2, stereo.channels(), "探针应正确读出 stereo 声道数");
+        assertFalse(isSignatureFormatOk(stereo), "stereo 必须被格式契约判红");
+
+        // 48kHz：采样率越界
+        OggVorbisProbe wrongRate = probeOggVorbis(buildOggPage(vorbisIdHeader(1, 48000), 48000));
+        assertEquals(48000, wrongRate.sampleRate(), "探针应读出 48kHz");
+        assertFalse(isSignatureFormatOk(wrongRate), "48kHz 必须被判红");
+
+        // 超长：granule = 4s 采样
+        OggVorbisProbe tooLong = probeOggVorbis(buildOggPage(vorbisIdHeader(1, 44100), 4L * 44100));
+        assertTrue(tooLong.durationSeconds() > SIGNATURE_MAX_SECONDS, "探针应算出时长 >3s");
+        assertFalse(isSignatureFormatOk(tooLong), ">3s 必须被判红");
+
+        // 伪 OGG / 损坏：无 OggS capture
+        OggVorbisProbe notOgg = probeOggVorbis("NOT_AN_OGG_FILE".getBytes(StandardCharsets.UTF_8));
+        assertFalse(notOgg.vorbis(), "非 Ogg 数据应判定 vorbis=false");
+        assertFalse(isSignatureFormatOk(notOgg), "非 Vorbis 必须被判红");
+
+        // 有 OggS 但 identification header 不是 Vorbis（首字节非 0x01/无 "vorbis"）
+        OggVorbisProbe notVorbis = probeOggVorbis(buildOggPage("OpusHead".getBytes(StandardCharsets.UTF_8), 0));
+        assertFalse(notVorbis.vorbis(), "Ogg 容器但非 Vorbis identification header 应判定 vorbis=false");
+        assertFalse(isSignatureFormatOk(notVorbis), "非 Vorbis codec 必须被判红");
     }
 }
