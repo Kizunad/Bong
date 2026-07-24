@@ -609,22 +609,34 @@ mod tests {
         );
     }
 
-    /// 逐项 pin：7 条 server signature recipe 的 **L0 主层** 确实换成了为它新建的 `bong:` 事件
-    /// 且 **pitch 复位 1.0**（plan §P4「把主层 sound id 从 minecraft: 换成 bong: 事件、pitch 复位」）。
-    /// 只查「任意层引用」不够——签名事件若被挪到不显著的铺底层，声音天花板依旧锁死却测试假绿；
-    /// 因此锁死 `layers[0].sound` 与 `layers[0].pitch`。heaven_gate 是 client 侧 recipe，由
-    /// `SignatureAudioContractTest` 覆盖（含 charge_2s 前兆层的 pitch=0.72/volume=0.4 pin）。
+    /// **运行时消费** pin：逐项锁定「signature 招式**实际 emit** 的 recipe」的 L0 主层是其 `bong:` 事件
+    /// 且 pitch 复位 1.0。**这是防 P4 那类 bug 的关键回归门**——P4 曾把 signature 事件换进「同名但招式
+    /// 不消费」的死 recipe（heaven_gate 换了 `heaven_gate_release` 但招式实际播 `sword_manifest_strike`；
+    /// tuike 换了 `tuike_signature` 但招式实际播 `shed_skin_burst`），静态「recipe 文件引用 bong:」测试
+    /// 假绿、实机零签名音。故本表的 recipe id 必须是**代码里招式真正 emit 的那个**（来源逐条标注），
+    /// 改动招式→recipe 映射或把这些 recipe 退回 vanilla 都会撞红。
+    ///
+    /// 来源（招式 → 实际 emit 的 recipe id）：
+    /// - sword_path.heaven_gate(release) → `sword_manifest_strike`（`network::audio_trigger::sword_path_recipe_for_skill`）
+    /// - woliu.void_core → `woliu_void_core`（`combat::woliu_v2::skills`）
+    /// - zhenmai.sever_chain → `zhenmai_sever_crack`（`combat::zhenmai_v2`）
+    /// - baomai.full_power_release → `baomai_signature`（`network::audio_trigger::baomai_recipe_for_skill`）
+    /// - dugu.infuse_poison → `dugu_poison_signature`（`combat::dugu_v2::skills`）
+    /// - tuike.shed → `shed_skin_burst`（`combat::tuike_v2::events`）
+    /// - anqi.echo_fractal → `anqi_echo_fractal`（`network::audio_trigger`）
+    /// - morph.yixing → `yixing_cast`（`body_plan::morph`）
     #[test]
-    fn each_server_signature_recipe_swaps_l0_main_layer_to_its_bong_event() {
+    fn each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event() {
         use std::path::Path;
 
         let recipe_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/audio/recipes");
         let pins = [
+            ("sword_manifest_strike", "bong:skill.sword_path.heaven_gate"),
             ("woliu_void_core", "bong:skill.woliu.void_core"),
             ("zhenmai_sever_crack", "bong:skill.zhenmai.sever_chain"),
             ("baomai_signature", "bong:skill.baomai.full_power_release"),
             ("dugu_poison_signature", "bong:skill.dugu.infuse_poison"),
-            ("tuike_signature", "bong:skill.tuike.shed"),
+            ("shed_skin_burst", "bong:skill.tuike.shed"),
             ("anqi_echo_fractal", "bong:skill.anqi.echo_fractal"),
             ("yixing_cast", "bong:skill.morph.yixing"),
         ];
