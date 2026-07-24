@@ -14,6 +14,7 @@ pub mod health;
 pub mod heiwushi;
 pub mod kill;
 pub mod meridian;
+pub mod nourish;
 pub mod npc_scenario;
 pub mod preview_tp;
 pub mod qi;
@@ -80,6 +81,7 @@ pub(crate) fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
     health::register(app);
     kill::register(app);
     meridian::register(app);
+    nourish::register(app);
     qi::register(app);
     race::register(app);
     realm::register(app);
