@@ -2934,6 +2934,11 @@ mod tests {
     fn setup_zhenmai_audio_app() -> App {
         let mut app = App::new();
         app.init_resource::<AudioImplementationDedup>();
+        // 装**真实** registry：recipient 路由由 recipe 的 attenuation 推出，不插 registry 会退化成
+        // `Single(caster)`，路由断言就成了空转。
+        app.insert_resource(
+            SoundRecipeRegistry::load_default().expect("default audio recipes should load"),
+        );
         app.add_event::<ZhenmaiSkillCastEvent>();
         app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, emit_zhenmai_v2_audio_triggers);
@@ -3034,7 +3039,18 @@ mod tests {
         assert_eq!(
             emitted[1].pos,
             Some([-21, 70, 11]),
-            "caster 无 Position 时同样用 event.center，不静默丢招式声"
+            "caster 无 Position 时同样用 event.cast_center，不静默丢招式声"
+        );
+        // 路由锁：收听范围由 recipe 声明的 attenuation（真脉五招全是 world_3d）推出 = 64 格广播，
+        // 圆心同为 cast-time center。重构前是内联硬编码的 32 格；这条已在 plan 披露为「只放宽收包」，
+        // 此处钉住它——若哪天被改成听者锚点或 MELEE 8 格（dugu 踩过的坑）立刻撞红。
+        assert_eq!(
+            emitted[0].recipient,
+            AudioRecipient::Radius {
+                origin: DVec3::new(7.5, 64.0, -3.5),
+                radius: AUDIO_BROADCAST_RADIUS,
+            },
+            "真脉音效收听范围应是以 cast-time center 为圆心的 world_3d 64 格广播"
         );
     }
 
