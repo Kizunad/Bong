@@ -47,7 +47,9 @@ use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
-use crate::npc::navigator::{is_safe_ground_landing_at, resolve_ground_y_from_chunk};
+use crate::npc::navigator::{
+    is_safe_ground_landing_at, scan_ground_landing_from_chunk, GroundLandingScan,
+};
 use crate::npc::spawn::PoissonSpawnSampler;
 use crate::npc::spawn_rat::{spawn_rat_npc_at, RatBlackboard};
 use crate::qi_physics::{QiAccountId, WorldQiAccount};
@@ -478,15 +480,10 @@ fn resolve_ambient_runtime_ground(
         };
     }
 
-    let Some(ground_y) = resolve_ground_y_from_chunk(world_x, world_z, reference_y, Some(layer))
-    else {
-        return AmbientRuntimeGround::NeedsRaster { loaded_chunk: true };
-    };
-
-    if loaded_ambient_landing_is_safe(world_x, world_z, ground_y, layer) {
-        AmbientRuntimeGround::Safe(ground_y)
-    } else {
-        AmbientRuntimeGround::LoadedUnsafe
+    match scan_ground_landing_from_chunk(world_x, world_z, reference_y, Some(layer)) {
+        GroundLandingScan::Safe(ground_y) => AmbientRuntimeGround::Safe(ground_y),
+        GroundLandingScan::Unsafe => AmbientRuntimeGround::LoadedUnsafe,
+        GroundLandingScan::Miss => AmbientRuntimeGround::NeedsRaster { loaded_chunk: true },
     }
 }
 
