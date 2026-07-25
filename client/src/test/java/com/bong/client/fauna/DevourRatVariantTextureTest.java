@@ -4,6 +4,9 @@ import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -14,6 +17,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -264,6 +268,87 @@ class DevourRatVariantTextureTest {
             assertNotEquals(base, FaunaModel.glowTextureFor(base),
                 "glow 路径必须与底图不同，相同会把底图当发光层整只全亮");
         }
+    }
+
+    // ── glow 贴图像素级回归 pin（锁住真出过的那个 bug）─────────────────────────
+
+    /** 读 PNG 统计 (不透明像素数, 总像素数)。alpha > 0 即算不透明（本项目 glow 图 alpha 是二值）。 */
+    private static int[] opaqueAndTotalPixels(Identifier texture) throws IOException {
+        BufferedImage image = ImageIO.read(assetFile(texture).toFile());
+        assertNotNull(image, "应能解码 PNG: " + assetFile(texture));
+        int opaque = 0;
+        int total = image.getWidth() * image.getHeight();
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if ((image.getRGB(x, y) >>> 24) > 0) {
+                    opaque++;
+                }
+            }
+        }
+        return new int[]{opaque, total};
+    }
+
+    /**
+     * glow 贴图**必须是透明底**——这是真实发生过并已修复的 bug 的回归防线。
+     *
+     * <p>{@link FaunaEmissiveGlowLayer} 用 glow 贴图把**整个模型**重绘一遍，非透明像素一律
+     * 全亮。生成器早期版本写的是 {@code Image.new(..., (0,0,0,255))}（不透明黑底），照此接线
+     * 整只鼠会被涂成"全亮黑"而不是只有蓝脊+红眼发光。
+     *
+     * <p>此前只有生成器脚本里的注释在约束这件事：有人手改 PNG、或把生成器改回去，都会静默复发，
+     * 而"文件存在""路径不同"那几条断言全都照绿。故在测试里直接读像素钉死。
+     */
+    @Test
+    void glow_textures_have_transparent_background() throws IOException {
+        for (int tier = 0; tier <= RatQiTierHandler.TIER_MAX; tier++) {
+            Identifier glow = FaunaModel.glowTextureFor(FaunaModel.devourRatTexture(tier));
+            int[] counts = opaqueAndTotalPixels(glow);
+            int opaque = counts[0];
+            int total = counts[1];
+            assertTrue(
+                opaque > 0,
+                "档位 " + tier + " 的 glow 贴图 " + glow + " 全透明 = 完全不发光，发光特性形同不存在"
+            );
+            assertTrue(
+                opaque * 2 < total,
+                "档位 " + tier + " 的 glow 贴图 " + glow + " 有 " + opaque + "/" + total
+                    + " 个非透明像素（过半）——glow 底必须透明，否则 emissive 层会把整只鼠涂成全亮，"
+                    + "而不是只亮红眼与尾脊。（生成器早期的不透明黑底 bug 即为此。）"
+            );
+        }
+    }
+
+    /**
+     * 发光面积必须**逐档严格递增**——这才是"吸的真元越多、尾脊亮得越多"这条玩法表达
+     * 在资产层的硬约束。三张 glow 图若面积相同（例如有人把 q1/q2 覆盖成同一张），
+     * 贴图路径分支照样全绿，但玩家看不出任何差别。
+     */
+    @Test
+    void glow_lit_area_strictly_increases_with_tier() throws IOException {
+        int previous = -1;
+        for (int tier = 0; tier <= RatQiTierHandler.TIER_MAX; tier++) {
+            Identifier glow = FaunaModel.glowTextureFor(FaunaModel.devourRatTexture(tier));
+            int opaque = opaqueAndTotalPixels(glow)[0];
+            assertTrue(
+                opaque > previous,
+                "档位 " + tier + " 的发光像素数 " + opaque + " 必须严格大于上一档的 " + previous
+                    + "（贴图 " + glow + "）——档位递增却不更亮，玩家分辨不出鼠吸没吸饱"
+            );
+            previous = opaque;
+        }
+    }
+
+    /**
+     * 底图三档也必须**内容真不同**：只断言路径不同挡不住"三个文件内容一样"。
+     */
+    @Test
+    void tier_base_textures_have_distinct_pixel_content() throws IOException {
+        byte[] q0 = Files.readAllBytes(assetFile(FaunaModel.devourRatTexture(0)));
+        byte[] q1 = Files.readAllBytes(assetFile(FaunaModel.devourRatTexture(1)));
+        byte[] q2 = Files.readAllBytes(assetFile(FaunaModel.devourRatTexture(2)));
+        assertFalse(Arrays.equals(q0, q1), "q0 与 q1 底图内容不得相同（尾脊蓝填充量应不同）");
+        assertFalse(Arrays.equals(q1, q2), "q1 与 q2 底图内容不得相同");
+        assertFalse(Arrays.equals(q0, q2), "q0 与 q2 底图内容不得相同");
     }
 
     @Test
