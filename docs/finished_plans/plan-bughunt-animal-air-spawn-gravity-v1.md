@@ -227,15 +227,14 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `server/src/npc/spawn/ambient_scheduler.rs`：
   - system 注入 `Query<&ChunkLayer>` + `Option<Res<TerrainProviders>>`，通过 `DimensionLayers.overworld` 读取 runtime layer；
   - strict resolver 固定执行 runtime 标准窗口第一权威、passable raster 第二 fallback、双源失败返回 `None`；
-  - runtime 规则复用 `npc::navigator::resolve_ground_y_from_chunk`，不复制支撑/净空/坐标规则；
+  - runtime 规则复用 ambient 专用 strict `npc::navigator::scan_ground_landing_from_chunk`，Navigator 既有 resolver/caller 语义不变；
   - ring candidate 解析成功后才调用 `config.pool_fn`；
   - 失败时 continue，不写 pending budget；
   - X/Z 保持 ring sample，Y 只来自 runtime `ground_y + 1` 或 fallback raster `surface_y + 1`，永不继承 candidate/player Y。
 - `server/src/npc/navigator.rs` 提供共享 `GroundLandingScan::{Safe, Unsafe, Miss}`：`Unsafe` 只表示 live runtime 已发现可站支撑但 feet/head 含液体，形成 stale raster 不得绕过的权威否决；普通窗口缺失保持 `Miss`，允许调用方沿既有 fallback。
 - `server/src/npc/spawn/ambient_scheduler.rs` 以 `AmbientRuntimeGround::{Safe, LoadedUnsafe, NeedsRaster { loaded_chunk }}` 映射共享三态；loaded scan miss 的 raster Y 仍须回到 live `ChunkLayer` 精确复核，mundane/threat 共用同一 resolver 和提交边界。
-- ring sampler 只在满足 `min_same_archetype_dist` 的合法候选中择优；候选全部越界或间距不足时返回 `None`，不再返回“最远但仍非法”的 fallback。
-- scheduler 同时维护数量占位 `pending_spawns_by_zone` 与空间占位 `submitted_positions_by_zone`；只有 resolver 和真实 pool 均成功后才写入真实脚点，后续同 zone 玩家在同 tick 采样时把这些脚点并入 occupied set。
-- `same_tick_same_anchor_keeps_submitted_positions_poisson_separated` 由两个显式同锚点玩家驱动真实 scheduler，并把最终 ECS `Position` 精确对拍到第一次 sampler 与 occupied-aware 第二次 sampler；第二次无合法候选时只生成一只才算合法。
+- ring sampler 在 in-bounds 候选中保留既有按距离评分的 best-effort 最远 fallback；最小间距是偏好而非新增拒绝策略。
+- scheduler 仅维护 tick 前活体位置与 `pending_spawns_by_zone` 数量预算；不新增 same-tick 空间占位或 strict Poisson 提交政策。
 
 ### 验收
 
@@ -328,7 +327,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ### 落地清单
 
-- **P0**：`server/src/npc/spawn/ambient_scheduler.rs` 新增 runtime-first strict resolver 与 `AmbientRuntimeGround` tri-state；loaded runtime 明确不安全即拒绝，loaded scan miss 的 raster Y 必须回到 live `ChunkLayer` 验证 support/feet/head，双源失败不调用 pool、不占 pending budget。`server/src/npc/navigator.rs` 只把既有 `resolve_ground_y_from_chunk` 扩为 `pub(crate)`，未改变导航/重力行为。
+- **P0**：`server/src/npc/spawn/ambient_scheduler.rs` 新增 runtime-first strict resolver 与 `AmbientRuntimeGround` tri-state；loaded runtime 明确不安全即拒绝，loaded scan miss 的 raster Y 必须回到 live `ChunkLayer` 验证 support/feet/head，双源失败不调用 pool、不占 pending budget。`server/src/npc/navigator.rs` 保留 Navigator 原有 resolver/caller 语义，另以 ambient 专用 `GroundLandingScan` 提供严格三格 runtime 分类。
 - **P1**：`npc::spawn::ambient_scheduler::tests` 覆盖 runtime/raster 优先级、unloaded fallback、负坐标、扫描窗口、双格净空、默认/属性液体、空气/非运动支撑、layer 边界、pool `None` 与预算副作用；另以真实 `ambient_scheduler_system::<M>` → mundane/threat pool → ECS `Position` 锁住两条生产链。
 - **P2**：`server/src/cmd/dev/ambient_spawn.rs`、`server/src/cmd/dev/mod.rs`、`server/src/cmd/mod.rs`、`server/src/cmd/registry_pin.rs` 提供 X/Z-only 的 deterministic one-shot；生产默认不向 Brigadier command tree 注册 `ambient_spawn` root，只有显式 `BONG_DEV_MODE` 才注册命令并安装私有 `AmbientSpawnDevAccess` capability，handler 对内部伪造 event 仍在 resolver/pool 前 fail-closed。命令 handler 与生产 `ambient_scheduler_system` 均只接受未标记 `Despawned` 的真实 `ChunkLayer`；raster 只能替代有效 live layer 内未加载 chunk 的 surface，不能替代 pool 的目标 layer。`scripts/bot-e2e.sh` 的自起服路径显式开启 dev mode，为每轮创建私有 fixture 目录并写入高熵 token；`TerrainProvider::load` 完整解析、验证并 mmap 所有 tile 后，server 才输出 canonical manifest path + token 的 `BOT_RASTER_FIXTURE_READY` marker，harness 同时对拍 exact marker、端口可连与 PID tree ownership 后才向 `scripts/bot/scenarios/npc_ambient_surface_resolution.py` 授予 ownership。场景在发命令前逐字节核验 `(5,3)` 的 `spans_count.bin` / `spans.bin` / `surface_id.bin` / `water_level.bin`，证明同 token fixture 的 support `y=72`、feet/head `y=73/74` 净空且无液体，再通过真实协议包验证 Cow/Rat 脚点 `y=73`，拒绝继承执行者 `y=152`。REUSE 模式不伪造 fixture ownership；REUSE 无 listener 时也不退化为缺少私有 runtime 的 self-start。self-start 为每轮独占 evidence、Redis Compose project/随机 host port 与 private runtime CWD，checkout `server/assets` 仅作 CWD-relative loader 的输入桥，所有相对持久化输出落在 evidence 内；运行前、运行中、运行后均校验 server/listener ownership，cleanup 只终止本轮进程树与本轮 Redis project。
 
@@ -350,7 +349,8 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `f2451ed73`、`5c1c62fc0`、`f0df73b96`（2026-07-25）：统一 Navigator/ambient 安全落点规则源，引入 `GroundLandingScan` 三态并区分液体权威否决与普通扫描缺失。
 - `1cd990838`、`18f5bad7f`、`84927434a`、`c2280e304`（2026-07-25）：修复 Bot dedicated 场景执行语义、runner/tee 失败传播、真实 pipeline 合同回归与显式缺 env 假绿。
 - `2c6afd4f4`（2026-07-25）：将确定性 Cow witness 收紧为 `Season::Summer`，不冻结其他季节生态。
-- `95891d20e`、`46f307132`、`7c5e3d880`、`de0da7c27`（2026-07-25）：补同 tick 真实脚点空间占位、泛型调用修复，并以双同锚点玩家锁定 sampler→resolver→ECS 精确结果。
+- `95891d20e`、`46f307132`、`7c5e3d880`、`de0da7c27`（2026-07-25）：补同 tick 数量预算、泛型调用修复与 scheduler→resolver→ECS 提交边界回归。
+- 本次 review 返工（2026-07-25）：恢复 Navigator exact base resolver/caller 兼容性与 ambient ring best-effort fallback；移除新增的 strict Poisson/same-tick 空间占位政策，同时保留 ambient strict runtime/raster 落点门禁。
 
 ### 测试结果（前一目标代码树 `fb5c4cf4752f412b9c275a5a5904e034c72e34aa`；仅文档随后变化）
 
@@ -360,7 +360,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - **协议 Bot 合同**：`python3 scripts/bot/test_protocol.py` 148/148 通过；覆盖 dedicated missing-env `ERROR`、`--all` opt-in、fixture ownership 以及 runner/`tee` 真实 pipeline 退出状态矩阵。
 - **定向 ambient 协议 witness**：isolated `npc_ambient_surface_resolution` 1/1 PASS；Cow type 18 与 Rat type 126 均由真实 `entity_spawn`/`entity_pos` 证明位于 `(5,73,3)`，未继承玩家 `(0,152,0)`。证据绑定本节目标 SHA，persistent state `UNCHANGED`，25565 与私有 Redis `60493` 均已清理。
 - **隔离全栈闭环 smoke**：PASS；先通过 dev-reload detach、schema、Tiandao 与无 listener full-app startup，再以 private runtime CWD、private Redis `56019`、当前 checkout debug server 和 deterministic Tiandao one-tick 跑跨进程闭环。独立 subscriber 观测 `bong:world_state`、`bong:agent_command`、`bong:agent_narrate`，server 观测两个 `command_anchor stage=end ... result=ok`；persistent state `UNCHANGED`，25565 与 Redis 端口均已清理。第一次尝试仅因 listener readiness race 失败，修正为 listener + PID-tree 轮询后重试成功；失败轮不计作 PASS。
-- **完整 Bot suite（历史证据，非全绿）**：30 pass / 1 skip / 1 fail；唯一失败为本 plan 范围外的 `combat_weapon_equip_damage` 等待 NPC spawn 超时。不得将该轮写成全绿，也不得用它替代上述定向 witness。
+- **共享 Bot harness**：exact-head CI 当前为 31 pass / 1 skip / 0 fail；不再将历史 combat 失败描述为当前结果。
 - **历史证据边界**：`71e5ea3ab`、`da3196a35`、`7c4c068f8` 等旧树门禁只证明各自 SHA，不再称“最终 HEAD”；其 validator 也均因后续代码变更失效。
 - **最终 PR 闭环待办**：本节测试树 `fb5c4cf...` 之后仅有本 plan 的 docs-only 证据提交；以实际 `git rev-parse HEAD` 为唯一候选身份。必须对该 exact SHA 启动无上下文、read-only validator，并在 push 后重新触发独立 `/review`、等待 exact-head CI 与 CodeRabbit。三者完成前，本计划不宣称 Finished。
 

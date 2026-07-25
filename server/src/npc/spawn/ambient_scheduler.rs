@@ -564,8 +564,9 @@ pub fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
 /// 逻辑——`PoissonSpawnSampler::sample_position` 采的是整个 zone AABB 均匀候选点，不是
 /// "距玩家 24~64 格环带"，两者用途不同不可直接复用。
 ///
-/// 候选点会被钳制在 `zone_bounds` 内（超出 zone 边界的候选点丢弃）；若 `max_candidates`
-/// 次尝试全部越界或与既有点距离不足，返回 `None`（zone 太小/已饱和，本次跳过不刷）。
+/// 候选点会被钳制在 `zone_bounds` 内（超出 zone 边界的候选点丢弃）。在合法候选中优先
+/// 选择距既有点最远者；若它们都低于最小间距，仍保留最远候选作为既有 best-effort fallback。
+/// 只有所有候选均越界时才返回 `None`。
 pub fn sample_ambient_ring_position(
     zone_bounds: (DVec3, DVec3),
     anchor: DVec3,
@@ -606,12 +607,8 @@ pub fn sample_ambient_ring_position(
                 (dx * dx + dz * dz).sqrt()
             })
             .fold(f64::INFINITY, f64::min);
-        // `best-candidate` 只在合法的 Poisson 候选之间择优；不能把"距离最远但仍不足
-        // min_same_archetype_dist"的负分候选作为 fallback 返回，否则同类实体仍会重叠。
-        // existing_positions 为空时 min_dist == f64::INFINITY，首个越界通过的候选仍会被采用。
-        if min_dist < sampler.min_same_archetype_dist {
-            continue;
-        }
+        // Keep the pre-fix sampler's best-effort fallback: density is a scoring
+        // preference, not an admission gate for an in-bounds ring candidate.
         if min_dist > best_score {
             best_score = min_dist;
             best = Some(candidate);
@@ -719,32 +716,6 @@ where
     M: AmbientMarkerData,
     P: SurfaceProvider + ?Sized,
 {
-    submit_ambient_spawn_candidate_tracking::<M, P>(
-        commands,
-        layer,
-        terrain,
-        pool_fn,
-        pending_spawns_by_zone,
-        None,
-        request,
-    )
-}
-
-/// 与 [`submit_ambient_spawn_candidate`] 相同，但在真实提交成功后可把本 tick 位置回传给
-/// scheduler；只有调度循环需要这份瞬时占位，dev command 与单候选测试不应获得额外状态。
-fn submit_ambient_spawn_candidate_tracking<M, P>(
-    commands: &mut Commands,
-    layer: Option<&ChunkLayer>,
-    terrain: Option<&P>,
-    pool_fn: AmbientPoolFn,
-    pending_spawns_by_zone: &mut HashMap<String, u32>,
-    submitted_positions_by_zone: Option<&mut HashMap<String, Vec<DVec3>>>,
-    request: AmbientSpawnRequest<'_>,
-) -> Option<Entity>
-where
-    M: AmbientMarkerData,
-    P: SurfaceProvider + ?Sized,
-{
     let spawn_position = resolve_ambient_ground_position(request.candidate, layer, terrain)?;
     let spawned = pool_fn(
         commands,
@@ -760,12 +731,6 @@ where
     *pending_spawns_by_zone
         .entry(request.zone.name.clone())
         .or_insert(0) += 1;
-    if let Some(submitted_positions_by_zone) = submitted_positions_by_zone {
-        submitted_positions_by_zone
-            .entry(request.zone.name.clone())
-            .or_default()
-            .push(spawn_position);
-    }
     Some(spawned)
 }
 
@@ -1021,16 +986,9 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         return;
     }
 
-    // §Verify blocker③(并发预算越界) — 本 tick 内逐玩家循环重复读同一份 tick 前 `alive`
-    // 快照，`Commands::spawn` 延迟应用到下一次 flush，后一个玩家看不到前一个玩家本 tick
-    // 已排队的 spawn。同一 zone 若有多名玩家各自独立通过预算门，各自都会刷出一只，合计
-    // 可越过 `max_alive`。用本地累加器记录"本 tick 已排队但未落地"的 spawn 数，并入
-    // `alive_count` 一起送进 `decide_ambient_check`，让同 zone 后续玩家的判定看得见前面
-    // 玩家本 tick 已经占用的预算。
+    // `Commands::spawn` is deferred, so pending count—not same-tick spatial
+    // occupancy—preserves the existing per-zone budget until the next tick.
     let mut pending_spawns_by_zone: HashMap<String, u32> = HashMap::new();
-    // 同一 tick 内成功提交的实体尚未 flush 进 `alive` query；按 zone 留下真实脚点，供后续
-    // 玩家采样时和 tick 前活体一起参与 Poisson 最小距离门。
-    let mut submitted_positions_by_zone: HashMap<String, Vec<DVec3>> = HashMap::new();
 
     // 2) 逐玩家找 zone，判定预算 + 间隔 + era 密度门，命中就在距该玩家 24~64 格环带内刷新。
     for player_pos in &overworld_players {
@@ -1043,13 +1001,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
             .filter(|(_, marker, _, _, _)| marker.home_zone() == zone.name)
             .map(|(_, _, pos, _, _)| pos.get())
             .collect();
-        let alive_count_before_pending = alive_in_zone.len() as u32;
-        let mut occupied_positions = alive_in_zone;
-        if let Some(submitted) = submitted_positions_by_zone.get(&zone.name) {
-            occupied_positions.extend(submitted.iter().copied());
-        }
         let pending_in_zone = pending_spawns_by_zone.get(&zone.name).copied().unwrap_or(0);
-        let alive_count = alive_count_before_pending + pending_in_zone;
+        let alive_count = alive_in_zone.len() as u32 + pending_in_zone;
 
         let spawn_seed =
             now.wrapping_add((zone.name.len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
@@ -1071,7 +1024,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         };
 
         let Some(spawn_pos) =
-            sample_ambient_ring_position(zone.bounds, *player_pos, &occupied_positions, spawn_seed)
+            sample_ambient_ring_position(zone.bounds, *player_pos, &alive_in_zone, spawn_seed)
         else {
             continue;
         };
@@ -1081,7 +1034,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         let Ok(overworld_chunk_layer) = chunk_layers.get(layers.overworld) else {
             continue;
         };
-        let spawned = submit_ambient_spawn_candidate_tracking::<M, _>(
+        let spawned = submit_ambient_spawn_candidate::<M, _>(
             &mut commands,
             Some(overworld_chunk_layer),
             terrain_providers
@@ -1089,7 +1042,6 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
                 .map(|providers| &providers.overworld),
             config.pool_fn,
             &mut pending_spawns_by_zone,
-            Some(&mut submitted_positions_by_zone),
             AmbientSpawnRequest {
                 layer: layers.overworld,
                 zone,
@@ -2484,16 +2436,14 @@ mod tests {
             let mut app = App::new();
             let layer = app.world_mut().spawn_empty().id();
             let mut pending = HashMap::new();
-            let mut submitted_positions = HashMap::new();
             let spawned = {
                 let mut commands = app.world_mut().commands();
-                submit_ambient_spawn_candidate_tracking::<TestFaunaMarker, FixtureSurface>(
+                submit_ambient_spawn_candidate::<TestFaunaMarker, FixtureSurface>(
                     &mut commands,
                     None,
                     terrain.as_ref(),
                     test_pool_fn,
                     &mut pending,
-                    Some(&mut submitted_positions),
                     AmbientSpawnRequest {
                         layer,
                         zone: &zone,
@@ -2515,10 +2465,6 @@ mod tests {
             assert!(
                 pending.is_empty(),
                 "{case} 时不应产生任何 pending 记账副作用"
-            );
-            assert!(
-                submitted_positions.is_empty(),
-                "{case} 时不应占用同 tick 位置"
             );
         }
     }
@@ -2545,16 +2491,14 @@ mod tests {
             queried: std::cell::Cell::new(None),
         };
         let mut pending = HashMap::new();
-        let mut submitted_positions = HashMap::new();
         let spawned = {
             let mut commands = app.world_mut().commands();
-            submit_ambient_spawn_candidate_tracking::<TestFaunaMarker, _>(
+            submit_ambient_spawn_candidate::<TestFaunaMarker, _>(
                 &mut commands,
                 None,
                 Some(&terrain),
                 rejecting_pool_fn,
                 &mut pending,
-                Some(&mut submitted_positions),
                 AmbientSpawnRequest {
                     layer,
                     zone: &zone,
@@ -2575,10 +2519,6 @@ mod tests {
         assert!(
             pending.is_empty(),
             "pool None must not consume this tick's pending budget"
-        );
-        assert!(
-            submitted_positions.is_empty(),
-            "pool None must not reserve an occupied position for later same-tick players"
         );
         let mut markers = app.world_mut().query::<&TestFaunaMarker>();
         assert_eq!(
@@ -3469,26 +3409,6 @@ mod tests {
     }
 
     #[test]
-    fn ring_sample_none_when_all_in_bounds_candidates_violate_min_spacing() {
-        let anchor = DVec3::new(0.0, 64.0, 0.0);
-        let seed = 7;
-        let occupied = sample_ambient_ring_position(wide_open_bounds(), anchor, &[], seed)
-            .expect("wide open ring must yield a deterministic candidate");
-        let tight_bounds = (
-            DVec3::new(occupied.x - 0.01, 0.0, occupied.z - 0.01),
-            DVec3::new(occupied.x + 0.01, 200.0, occupied.z + 0.01),
-        );
-        assert!(
-            sample_ambient_ring_position(tight_bounds, anchor, &[], seed).is_some(),
-            "test precondition: the narrow zone must still admit the deterministic candidate"
-        );
-        assert_eq!(
-            sample_ambient_ring_position(tight_bounds, anchor, &[occupied], seed),
-            None,
-            "all admitted candidates are inside min_same_archetype_dist; sampler must skip rather than return a negative-score fallback"
-        );
-    }
-    #[test]
     fn ring_sample_respects_existing_position_spacing_preference() {
         // 存在既有点时，采样器应更偏向远离既有点的候选（best_score 逻辑）——
         // 用两个不同 existing_positions 集合验证输出不同，证明 existing_positions 确实
@@ -3989,117 +3909,6 @@ mod tests {
             2,
             "danger=1 已有 2 个活体（=max_alive）时不应再刷新第 3 个"
         );
-    }
-
-    #[test]
-    fn same_tick_same_anchor_keeps_submitted_positions_poisson_separated() {
-        fn two_spawn_budget(_danger: u8) -> ThreatBudget {
-            ThreatBudget {
-                max_alive: 2,
-                spawn_interval_ticks: 1,
-                pack_size_range: (1, 1),
-            }
-        }
-
-        let mut app =
-            make_runtime_scheduler_app::<TestFaunaMarker>(two_spawn_budget, test_pool_fn, true, 1);
-        // The runtime fixture contributes one client. Remove it so this test owns exactly two
-        // players, both at the same anchor, and can prove the scheduler makes two iterations.
-        let fixture_players: Vec<Entity> = app
-            .world_mut()
-            .query_filtered::<Entity, With<ClientMarker>>()
-            .iter(app.world())
-            .collect();
-        for entity in fixture_players {
-            app.world_mut().despawn(entity);
-        }
-
-        let anchor = DVec3::new(0.0, 80.0, 0.0);
-        for _ in 0..2 {
-            app.world_mut()
-                .spawn((ClientMarker, Position::new(anchor.to_array())));
-        }
-        let mut players = app
-            .world_mut()
-            .query_filtered::<&Position, With<ClientMarker>>();
-        let player_positions: Vec<DVec3> = players
-            .iter(app.world())
-            .map(|position| position.get())
-            .collect();
-        assert_eq!(
-            player_positions,
-            vec![anchor; 2],
-            "fixture must contain exactly two explicit ClientMarker players at the same anchor"
-        );
-
-        let spawn_seed = ("test_zone".len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        let first_candidate =
-            sample_ambient_ring_position(wide_open_bounds(), anchor, &[], spawn_seed).expect(
-                "the first same-anchor scheduler iteration must have an open-ring candidate",
-            );
-        // Runtime ground in make_runtime_scheduler_app is y=66, so the resolver submits feet at 67.
-        let first_submitted = DVec3::new(first_candidate.x, 67.0, first_candidate.z);
-        let second_candidate = sample_ambient_ring_position(
-            wide_open_bounds(),
-            anchor,
-            &[first_submitted],
-            spawn_seed,
-        );
-        let mut expected_positions = vec![first_submitted];
-        if let Some(second_candidate) = second_candidate {
-            expected_positions.push(DVec3::new(second_candidate.x, 67.0, second_candidate.z));
-        }
-
-        app.update();
-
-        let mut spawned = app
-            .world_mut()
-            .query_filtered::<&Position, With<TestFaunaMarker>>();
-        let positions: Vec<DVec3> = spawned
-            .iter(app.world())
-            .map(|position| position.get())
-            .collect();
-        assert_eq!(
-            positions.len(),
-            expected_positions.len(),
-            "two same-anchor scheduler iterations must match the sampler's occupied-position outcome"
-        );
-        for expected in &expected_positions {
-            assert!(
-                positions.contains(expected),
-                "actual ambient positions {positions:?} must contain sampler-resolved position {expected:?}"
-            );
-        }
-
-        let min_same_archetype_dist =
-            PoissonSpawnSampler::adaptive_for_zone(wide_open_bounds()).min_same_archetype_dist;
-        match (second_candidate, positions.as_slice()) {
-            (None, [only]) => assert_eq!(
-                *only, first_submitted,
-                "one spawn is valid only when the second same-anchor sampler attempt has no legal position"
-            ),
-            (Some(expected_second), [first, second]) => {
-                let second_submitted = DVec3::new(expected_second.x, 67.0, expected_second.z);
-                let dx = first.x - second.x;
-                let dz = first.z - second.z;
-                let distance = (dx * dx + dz * dz).sqrt();
-                assert!(
-                    distance >= min_same_archetype_dist,
-                    "two same-anchor submissions must be at least {min_same_archetype_dist} apart; actual {distance}"
-                );
-                assert_ne!(
-                    first, second,
-                    "same-tick submissions must never occupy the identical position"
-                );
-                assert!(
-                    positions.contains(&first_submitted) && positions.contains(&second_submitted),
-                    "two submitted ECS positions must exactly equal the first and occupied-aware second sampler results"
-                );
-            }
-            _ => panic!(
-                "actual ECS positions must exactly follow the first and occupied-aware second sampling result: expected {expected_positions:?}, actual {positions:?}"
-            ),
-        }
     }
 
     #[test]
