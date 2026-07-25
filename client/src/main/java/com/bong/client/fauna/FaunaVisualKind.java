@@ -88,6 +88,20 @@ public enum FaunaVisualKind {
         return "animation.fauna.idle";
     }
 
+    /**
+     * 该物种是否挂 emissive 发光层（{@link FaunaEmissiveGlowLayer}）。
+     *
+     * <p>为 {@code true} 的物种**必须**为其 {@code getTextureResource} 可能返回的**每一张**
+     * 底图都备好同名 {@code _glow.png}（见 {@link FaunaModel#glowTextureFor}）——缺一张就会
+     * 在该状态下渲染 missing texture（紫黑格）盖住整只怪。
+     *
+     * <p>目前只有噬元鼠：红眼恒亮 + 尾脊蓝格按吸元档位（q0/q1/q2）递增发光，
+     * 让玩家隔着距离就能看出"这只鼠吸饱了"。
+     */
+    public boolean hasEmissiveGlow() {
+        return this == DEVOUR_RAT;
+    }
+
     public int expectedRawId() {
         return expectedRawId;
     }

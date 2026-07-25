@@ -2,6 +2,7 @@ package com.bong.client;
 
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.fauna.FaunaActionBridge;
+import com.bong.client.fauna.RatQiTierHandler;
 import com.bong.client.daozhan.DaoZhanDisguiseHandler;
 import com.bong.client.spider.SpiderDisguiseHandler;
 import com.bong.client.audio.SoundRecipePlayer;
@@ -115,6 +116,8 @@ public class BongNetworkHandler {
         // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装渲染 CustomPayload
         registerSpiderDisguiseEnterChannel();
         registerSpiderAmbushTriggerChannel();
+        // plan-devour-rat-model P2 — 噬元鼠吸元档位（贴图变体 + emissive）
+        registerRatQiTierChannel();
         // plan-daozhan-v1 P1 — 道伥伪装渲染 CustomPayload
         registerDaoZhanDisguiseEnterChannel();
         registerDaoZhanRevealChannel();
@@ -872,6 +875,37 @@ public class BongNetworkHandler {
         );
     }
 
+    // ── plan-devour-rat-model P2 — 噬元鼠吸元档位 CustomPayload channel ─────────
+
+    /**
+     * 注册 {@code bong:rat_qi_tier} channel。
+     * payload JSON → {@link RatQiTierHandler#handleSync} → 全量替换「entity id → 吸元档位」表。
+     *
+     * <p>服务端每 20 tick 全量 broadcast（仅含视距内、{@code tier > 0} 的鼠）；
+     * client 全量替换，缺席即 0 档。{@code FaunaModel.selectTexture} 每帧查表选
+     * {@code devour_rat_q{0,1,2}.png}。
+     */
+    private static void registerRatQiTierChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier(RatQiTierHandler.CHANNEL_NAMESPACE, RatQiTierHandler.CHANNEL_PATH),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    boolean handled = RatQiTierHandler.handleSync(jsonPayload, readableBytes);
+                    if (handled) {
+                        BongClient.LOGGER.debug("Processed bong:rat_qi_tier ({} bytes)", readableBytes);
+                    } else {
+                        BongClient.LOGGER.warn("Ignoring bong:rat_qi_tier payload (parse failed)");
+                    }
+                });
+            }
+        );
+    }
+
     // ── plan-daozhan-v1 P1 — daozhan disguise CustomPayload channels ────────────
 
     /**
@@ -1100,6 +1134,9 @@ public class BongNetworkHandler {
         com.bong.client.visual.VoidErosionVisualStore.reset();
         // plan-fauna-mimic-spider-v1 P2 — 断线时清理伪装蛛列表
         SpiderDisguiseHandler.clearOnDisconnect();
+        // plan-devour-rat-model P2 — 断线时清理噬元鼠吸元档位表
+        // （entity id 会被下个 session 重新分配给别的实体，留着会串档）
+        RatQiTierHandler.clearOnDisconnect();
         // plan-daozhan-v1 P1 — 断线时清理道伥伪装列表
         DaoZhanDisguiseHandler.clearOnDisconnect();
         // plan-fauna-stitched-beast-v1 P3 — 断线时清理幻觉层状态
