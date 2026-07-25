@@ -822,14 +822,9 @@ fn resolve_ground_y_from_chunk_range(
         return None;
     }
 
-    // From scan_top downward, find the first safe two-block footing.
-    for y in (scan_bottom..=scan_top).rev() {
-        if is_safe_ground_landing_at(wx, wz, y, layer) {
-            return Some(y);
-        }
-    }
-
-    None
+    (scan_bottom..=scan_top)
+        .rev()
+        .find(|&y| is_safe_ground_landing_at(wx, wz, y, layer))
 }
 
 /// Whether `ground_y` is a safe NPC footing in a loaded layer.
