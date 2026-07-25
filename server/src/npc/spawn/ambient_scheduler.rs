@@ -719,7 +719,7 @@ where
     M: AmbientMarkerData,
     P: SurfaceProvider + ?Sized,
 {
-    submit_ambient_spawn_candidate_tracking(
+    submit_ambient_spawn_candidate_tracking::<M, P>(
         commands,
         layer,
         terrain,
