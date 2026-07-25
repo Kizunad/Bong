@@ -74,7 +74,7 @@ impl Drop for ChildGuard {
     }
 }
 
-fn wait_for_ready(child: &mut ChildGuard, ready_path: &Path) {
+fn wait_for_ready(child: &mut ChildGuard, ready_path: &Path, stderr_path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if ready_path.exists() {
@@ -86,8 +86,9 @@ fn wait_for_ready(child: &mut ChildGuard, ready_path: &Path) {
             .expect("poll shutdown signal probe while waiting for readiness")
         {
             panic!(
-                "shutdown signal probe exited before readiness; status={status}; ready_path={}",
-                ready_path.display()
+                "shutdown signal probe exited before readiness; status={status}; ready_path={}\nstderr:\n{}",
+                ready_path.display(),
+                fs::read_to_string(stderr_path).unwrap_or_else(|error| format!("<read stderr failed: {error}>"))
             );
         }
         assert!(
@@ -102,17 +103,23 @@ fn wait_for_ready(child: &mut ChildGuard, ready_path: &Path) {
 fn spawn_probe(root: &TempRoot) -> (ChildGuard, PathBuf) {
     let unlock_path = root.path.join("data/craft/recipe_unlocks.json");
     let ready_path = root.path.join("probe.ready");
-    let child = Command::new(env!("CARGO_BIN_EXE_bong-server"))
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .env("BONG_SHUTDOWN_SIGNAL_PROBE", "1")
-        .env("BONG_SHUTDOWN_SIGNAL_PROBE_UNLOCK_PATH", &unlock_path)
-        .env("BONG_SHUTDOWN_SIGNAL_PROBE_READY_PATH", &ready_path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn shutdown signal probe binary");
+    let stderr_path = root.path.join("probe.stderr");
+    let child =
+        Command::new(env!("CARGO_BIN_EXE_bong-server"))
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .env("BONG_SHUTDOWN_SIGNAL_PROBE", "1")
+            .env("BONG_SHUTDOWN_SIGNAL_PROBE_UNLOCK_PATH", &unlock_path)
+            .env("BONG_SHUTDOWN_SIGNAL_PROBE_READY_PATH", &ready_path)
+            .env("BONG_SKIP_SKIN_PREFETCH", "1")
+            .env("REDIS_URL", "redis://127.0.0.1:1")
+            .stdout(Stdio::null())
+            .stderr(fs::File::create(&stderr_path).unwrap_or_else(|error| {
+                panic!("create shutdown signal probe stderr file: {error}")
+            }))
+            .spawn()
+            .expect("spawn shutdown signal probe binary");
     let mut child = ChildGuard::new(child);
-    wait_for_ready(&mut child, &ready_path);
+    wait_for_ready(&mut child, &ready_path, &stderr_path);
     (child, unlock_path)
 }
 

@@ -62,26 +62,29 @@
 ### 落地清单
 
 - `server/src/craft/unlock.rs` / `server/src/craft/mod.rs`：dirty 配方解锁继续按 600 tick 运行期节流，并在 `Last` 观察 `AppExit` 时执行原子末次 flush；失败仅告警且保留 dirty 状态。
-- `server/src/shutdown.rs`、`server/src/main.rs`：命名 listener thread 在 Unix 注册 `SIGINT`/`SIGTERM`，通过容量为 1 的 channel 在 `PreUpdate` 仅发送一次 `AppExit::Success`；生产 App 显式断言 resource 已装配。
-- `server/tests/shutdown_signal.rs`：真实子进程在 ready 后接收 `kill -INT` 与 `kill -TERM`，验证正常退出、600 tick 前未提前落盘、JSON hydrate、版本、解锁和无 `.tmp` 残留。
-- `scripts/lib/bong-server-lifecycle.sh`、`scripts/{start,stop,dev-reload}.sh`：以 PID、`/proc/<pid>/stat` starttime 和 canonical executable 建立原子 ownership record；标准停服按 TERM→有界等待→身份复核→KILL 流程处理，绝不按 server 名称杀进程。
-- `scripts/test-server-lifecycle.sh`、`scripts/test-dev-reload-disown.sh`、`scripts/smoke-test-e2e.sh`：锁住优雅 TERM、KILL 升级、stale/foreign record、相对 `CARGO_TARGET_DIR`、无 name-based kill 与 detached launch record 契约。
+- `server/src/shutdown.rs`、`server/src/main.rs`：命名 listener thread 在 Unix 注册 `SIGINT`/`SIGTERM`，通过容量为 1 的 channel 在 `PreUpdate` 仅发送一次 `AppExit::Success`；生产 `build_server_app()` 安装 bridge 并断言 resource 已装配，非 Unix Ctrl-C 初次 poll 已完成时直接排队退出而不重复 await。
+- `server/tests/shutdown_signal.rs`：真实子进程通过生产 `build_server_app()` 注册链路在 ready 后接收 `kill -INT` 与 `kill -TERM`，验证正常退出、600 tick 前未提前落盘、JSON hydrate、版本、解锁和无 `.tmp` 残留。
+- `scripts/lib/bong-server-lifecycle.sh`、`scripts/{start,stop,dev-reload}.sh`：完整生命周期事务由同一 `flock` 串行；ownership record 以 PID、`/proc/<pid>/stat` starttime、canonical executable 和 `/proc/<pid>/exe` device/inode image identity 验证。标准停服按 TERM→有界等待→身份复核→KILL 处理，未验证记录或任意 tmux 窗口 pane 后代中的未记录 server 会 fail closed，绝不按 server 名称杀进程。
+- `scripts/test-server-lifecycle.sh`、`scripts/test-dev-reload-disown.sh`、`scripts/smoke-test-e2e.sh`：锁住优雅 TERM、KILL 升级、malformed/foreign record fail-closed、跨锁串行、可执行文件置换、跨 tmux 窗口 pane 后代 server 检测、相对 `CARGO_TARGET_DIR`、无 name-based kill 与 detached launch record 契约。
 
 ### 关键 commit
 
 - `79b2c87e8`（2026-07-24）`修复配方解锁关服窗口丢失`。
 - `c4ca31f54`（2026-07-25）`修复服务端信号关服刷盘`。
 - `402fb6651`（2026-07-25）`修复服务端停服进程归属`。
+- 本次提交：补齐生产 builder signal probe、非 Unix Ctrl-C 初次 poll 状态机、可执行 image identity 与全事务 lifecycle lock；commit hash 以本节归档提交后记录为准。
 
 ### 测试结果
 
 - `cd server && cargo test craft::unlock`：54 passed。
-- `cd server && cargo test shutdown`：6 passed。
-- `cd server && cargo test --test shutdown_signal`：2 passed（真实 SIGINT/SIGTERM）。
+- `cd server && cargo test shutdown`：7 passed。
+- `cd server && cargo test --test shutdown_signal`：2 passed（真实 SIGINT/SIGTERM，经生产 builder）。
 - `cd server && cargo test --test full_app_startup`：1 passed。
 - `cd server && cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && cargo test`：11,889 个库测试、11 个 binary 测试、全部 integration tests 通过；7 个既有 doc-test ignored。
+- `cd server && cargo test`：11,890 个库测试、11 个 binary 测试、全部 integration tests 通过；5 个既有 doc-test ignored。
 - `bash scripts/test-server-lifecycle.sh` 与 `bash scripts/test-dev-reload-disown.sh`：通过。
+- `bash scripts/smoke-test-e2e.sh`：本地两次在 release 编译尚未完成时由执行环境向 `rustc` 发送 SIGTERM，harness 因此报 missing world bootstrap anchor，未到 server 启动或本 plan 的 shutdown 路径；交由推送后的 CI 隔离环境重新执行，不能记为本地通过。
+- `cd server && cargo fmt --check`：仅报告未触及的 `server/src/network/vfx_animation_trigger.rs:3252` 基线格式差异；本 plan 改动的 Rust 文件已执行 `rustfmt`。
 
 ### 跨仓库核验
 
@@ -90,4 +93,5 @@
 ### 遗留 / 后续
 
 - `stop.sh` 中 Tiandao 与 Redis 的既有 name-based/process ownership 语义不在本 plan 范围；本次只消除 server 的宽泛 kill。
+- 本地 smoke e2e 的 release build 被执行环境 SIGTERM 两次，CI 必须在新 HEAD 上重新确认完整 e2e；未取得 CI 通过前不得把本 plan 视为最终门禁全绿。
 - `cargo fmt --check` 仍会报告未触及的 `server/src/network/vfx_animation_trigger.rs` 基线格式差异；本计划未将其纳入改动。

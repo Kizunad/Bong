@@ -99,6 +99,27 @@ fn forward_shutdown_signal_to_app_exit(
     }
 }
 
+#[cfg(any(not(unix), test))]
+fn handle_initial_ctrl_c_poll(
+    sender: &Sender<ShutdownSignal>,
+    ready: &mpsc::SyncSender<Result<(), String>>,
+    initial_poll: std::task::Poll<Result<(), std::io::Error>>,
+) -> bool {
+    match initial_poll {
+        std::task::Poll::Ready(Ok(())) => {
+            if ready.send(Ok(())).is_ok() {
+                let _ = forward_shutdown_signal_to_app_exit(sender, ShutdownSignal::CtrlC);
+            }
+            false
+        }
+        std::task::Poll::Ready(Err(error)) => {
+            let _ = ready.send(Err(format!("install Ctrl-C handler: {error}")));
+            false
+        }
+        std::task::Poll::Pending => ready.send(Ok(())).is_ok(),
+    }
+}
+
 #[cfg(unix)]
 fn run_listener_thread(
     sender: Sender<ShutdownSignal>,
@@ -179,24 +200,16 @@ fn run_listener_thread(
 
     runtime.block_on(async move {
         // `tokio::signal::ctrl_c()` installs its handler when its future is first
-        // polled. Poll it once before confirming readiness; otherwise readiness
-        // would claim the listener is armed while the handler is not installed.
+        // polled. Preserve that poll's result: if Ctrl-C has already arrived, the
+        // future is complete and must not be awaited a second time.
         let mut ctrl_c = Box::pin(tokio::signal::ctrl_c());
-        let install_result = std::future::poll_fn(|context| {
-            match std::future::Future::poll(ctrl_c.as_mut(), context) {
-                std::task::Poll::Ready(result) => std::task::Poll::Ready(result),
-                std::task::Poll::Pending => std::task::Poll::Ready(Ok(())),
-            }
+        let initial_poll = std::future::poll_fn(|context| {
+            std::task::Poll::Ready(std::future::Future::poll(ctrl_c.as_mut(), context))
         })
         .await;
-        if let Err(error) = install_result {
-            let _ = ready.send(Err(format!("install Ctrl-C handler: {error}")));
+        if !handle_initial_ctrl_c_poll(&sender, &ready, initial_poll) {
             return;
         }
-        if ready.send(Ok(())).is_err() {
-            return;
-        }
-
         match ctrl_c.await {
             Ok(()) => {
                 let _ = forward_shutdown_signal_to_app_exit(&sender, ShutdownSignal::CtrlC);
@@ -282,6 +295,52 @@ mod tests {
             app.world().resource::<ExitEventsSeen>().0,
             1,
             "Last must see the PreUpdate exit in the shutdown frame"
+        );
+    }
+
+    #[test]
+    fn initial_ctrl_c_poll_routes_pending_ready_and_error_without_repolling() {
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = bounded(1);
+        assert!(handle_initial_ctrl_c_poll(
+            &sender,
+            &ready_sender,
+            std::task::Poll::Pending,
+        ));
+        assert!(matches!(ready_receiver.recv(), Ok(Ok(()))));
+        assert!(
+            receiver.try_recv().is_err(),
+            "pending Ctrl-C must await a future signal"
+        );
+
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = bounded(1);
+        assert!(!handle_initial_ctrl_c_poll(
+            &sender,
+            &ready_sender,
+            std::task::Poll::Ready(Ok(())),
+        ));
+        assert!(matches!(ready_receiver.recv(), Ok(Ok(()))));
+        assert_eq!(
+            receiver.try_recv(),
+            Ok(ShutdownSignal::CtrlC),
+            "an already-complete Ctrl-C future must be forwarded without a second poll"
+        );
+
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = bounded(1);
+        assert!(!handle_initial_ctrl_c_poll(
+            &sender,
+            &ready_sender,
+            std::task::Poll::Ready(Err(std::io::Error::other("listener unavailable"))),
+        ));
+        assert!(
+            ready_receiver.recv().is_ok_and(|result| result.is_err()),
+            "Ctrl-C setup failure must reject readiness"
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "failed Ctrl-C setup must not emit shutdown"
         );
     }
 

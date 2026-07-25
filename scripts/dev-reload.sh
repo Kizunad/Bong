@@ -312,14 +312,20 @@ if [ "$LAUNCH_CONSOLE" = true ]; then
     echo "    viewer  -> cd worldgen/console && npm install && npm run dev"
 fi
 
-# --- Step 3: Rebuild server ---
-echo "==> [3/4] Building server..."
+restart_bong_server() {
+# --- Step 3: Stop the previous server before rebuilding ---
+# Cargo may atomically replace the executable. Stop while its exact PID/starttime
+# record is still valid so a normal SIGTERM reaches the AppExit bridge.
+echo "==> [3/5] Stopping previous server..."
+bong_server_stop_managed
+
+# --- Step 4: Rebuild server ---
+echo "==> [4/5] Building server..."
 (cd server && cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
 echo "    OK"
 
-# --- Step 4: Restart server ---
-echo "==> [4/4] Restarting server..."
-bong_server_stop_managed
+# --- Step 5: Launch server ---
+echo "==> [5/5] Starting server..."
 MANIFEST_ABS="$(pwd)/$MANIFEST"
 TSY_MANIFEST_ABS="$(pwd)/$TSY_MANIFEST"
 ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
@@ -336,3 +342,6 @@ else
 fi
 
 echo "==> Done. Connect to localhost:25565"
+}
+
+bong_server_with_lock restart_bong_server

@@ -4,6 +4,30 @@ bong_server_pid_file() {
     printf '%s\n' "${BONG_SERVER_PID_FILE:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/bong-server-${UID}.pid}"
 }
 
+bong_server_with_lock() {
+    local record lock directory fd status
+
+    if [ "${BONG_SERVER_LIFECYCLE_LOCK_DEPTH:-0}" -gt 0 ]; then
+        "$@"
+        return $?
+    fi
+
+    record="$(bong_server_pid_file)"
+    directory="$(dirname -- "$record")"
+    mkdir -p -- "$directory" || return 1
+    lock="${record}.lock"
+    exec {fd}>"$lock" || return 1
+    flock -x "$fd" || {
+        exec {fd}>&-
+        return 1
+    }
+    BONG_SERVER_LIFECYCLE_LOCK_DEPTH=1 "$@"
+    status=$?
+    flock -u "$fd"
+    exec {fd}>&-
+    return "$status"
+}
+
 bong_server_process_is_running() {
     local pid="${1:-}"
     local state
@@ -35,6 +59,13 @@ bong_server_process_executable() {
     readlink -f -- "/proc/$pid/exe" 2>/dev/null
 }
 
+bong_server_process_executable_identity() {
+    local pid="${1:-}"
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    stat -Lc '%d:%i' -- "/proc/$pid/exe" 2>/dev/null
+}
+
 bong_server_resolve_executable() {
     local working_directory="${1:-}"
     local executable_path="${2:-}"
@@ -49,7 +80,7 @@ bong_server_resolve_executable() {
 
 bong_server_read_record() {
     local record line key value
-    local pid="" starttime="" executable=""
+    local pid="" starttime="" executable="" executable_identity=""
     local count=0
 
     record="$(bong_server_pid_file)"
@@ -59,33 +90,37 @@ bong_server_read_record() {
             pid=*) key=pid; value="${line#pid=}" ;;
             starttime=*) key=starttime; value="${line#starttime=}" ;;
             executable=*) key=executable; value="${line#executable=}" ;;
+            executable_identity=*) key=executable_identity; value="${line#executable_identity=}" ;;
             *) return 1 ;;
         esac
         case "$key" in
             pid) [ -z "$pid" ] || return 1; pid="$value" ;;
             starttime) [ -z "$starttime" ] || return 1; starttime="$value" ;;
             executable) [ -z "$executable" ] || return 1; executable="$value" ;;
+            executable_identity) [ -z "$executable_identity" ] || return 1; executable_identity="$value" ;;
         esac
         count=$((count + 1))
     done < "$record"
 
-    [ "$count" -eq 3 ] || return 1
+    [ "$count" -eq 4 ] || return 1
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     [[ "$starttime" =~ ^[0-9]+$ ]] || return 1
     [ -n "$executable" ] || return 1
+    [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
     BONG_SERVER_RECORDED_PID="$pid"
     BONG_SERVER_RECORDED_STARTTIME="$starttime"
     BONG_SERVER_RECORDED_EXECUTABLE="$executable"
+    BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY="$executable_identity"
 }
 
 bong_server_record_matches_process() {
-    local actual_starttime actual_executable
+    local actual_starttime actual_executable_identity
 
     bong_server_process_is_running "$BONG_SERVER_RECORDED_PID" || return 1
     actual_starttime="$(bong_server_process_starttime "$BONG_SERVER_RECORDED_PID")" || return 1
-    actual_executable="$(bong_server_process_executable "$BONG_SERVER_RECORDED_PID")" || return 1
-    [ "$actual_starttime" = "$BONG_SERVER_RECORDED_STARTTIME" ] \
-        && [ "$actual_executable" = "$BONG_SERVER_RECORDED_EXECUTABLE" ]
+    [ "$actual_starttime" = "$BONG_SERVER_RECORDED_STARTTIME" ] || return 1
+    actual_executable_identity="$(bong_server_process_executable_identity "$BONG_SERVER_RECORDED_PID")" || return 1
+    [ "$actual_executable_identity" = "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" ]
 }
 
 bong_server_clear_record() {
@@ -99,27 +134,30 @@ bong_server_clear_record_if_matches() {
     local expected_pid="${1:-}"
     local expected_starttime="${2:-}"
     local expected_executable="${3:-}"
+    local expected_executable_identity="${4:-}"
 
     if ! bong_server_read_record; then
         return 0
     fi
     if [ "$BONG_SERVER_RECORDED_PID" = "$expected_pid" ] \
         && [ "$BONG_SERVER_RECORDED_STARTTIME" = "$expected_starttime" ] \
-        && [ "$BONG_SERVER_RECORDED_EXECUTABLE" = "$expected_executable" ]; then
+        && [ "$BONG_SERVER_RECORDED_EXECUTABLE" = "$expected_executable" ] \
+        && [ "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" = "$expected_executable_identity" ]; then
         bong_server_clear_record
     fi
 }
 
-bong_server_write_record() {
+_bong_server_write_record() {
     local pid="${1:-}"
     local expected_executable="${2:-}"
-    local record directory temporary starttime executable
+    local record directory temporary starttime executable executable_identity
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     [ -n "$expected_executable" ] || return 1
     bong_server_process_is_running "$pid" || return 1
     starttime="$(bong_server_process_starttime "$pid")" || return 1
     executable="$(bong_server_process_executable "$pid")" || return 1
+    executable_identity="$(bong_server_process_executable_identity "$pid")" || return 1
     expected_executable="$(readlink -f -- "$expected_executable")" || return 1
     [ "$executable" = "$expected_executable" ] || return 1
 
@@ -127,11 +165,16 @@ bong_server_write_record() {
     directory="$(dirname -- "$record")"
     mkdir -p -- "$directory" || return 1
     temporary="$(mktemp "$directory/.bong-server.pid.XXXXXX")" || return 1
-    if ! printf 'pid=%s\nstarttime=%s\nexecutable=%s\n' "$pid" "$starttime" "$executable" > "$temporary"; then
+    if ! printf 'pid=%s\nstarttime=%s\nexecutable=%s\nexecutable_identity=%s\n' \
+        "$pid" "$starttime" "$executable" "$executable_identity" > "$temporary"; then
         rm -f -- "$temporary"
         return 1
     fi
     mv -f -- "$temporary" "$record"
+}
+
+bong_server_write_record() {
+    bong_server_with_lock _bong_server_write_record "$@"
 }
 
 bong_server_wait_for_executable() {
@@ -169,40 +212,78 @@ bong_server_wait_for_exit() {
     done
 }
 
-bong_server_stop_managed() {
+bong_server_process_tree_has_server() {
+    local pid="${1:-}"
+    local child executable executable_name command_line
+
+    bong_server_process_is_running "$pid" || return 1
+    executable="$(bong_server_process_executable "$pid")" || executable=""
+    executable_name="$(basename -- "$executable")"
+    command_line="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    if [ "$executable_name" = bong-server ] \
+        || [[ "$command_line" == *bong-server* ]]; then
+        return 0
+    fi
+
+    while IFS= read -r child; do
+        bong_server_process_tree_has_server "$child" && return 0
+    done < <(pgrep -P "$pid" 2>/dev/null || true)
+    return 1
+}
+
+bong_server_tmux_has_unmanaged_server() {
+    local session="${1:-}"
+    local pane_pid
+
+    [ -n "$session" ] || return 1
+    while IFS= read -r pane_pid; do
+        bong_server_process_tree_has_server "$pane_pid" && return 0
+    done < <(tmux list-panes -a -t "$session" -F '#{pane_pid}' 2>/dev/null)
+    return 1
+}
+
+_bong_server_stop_managed() {
     local grace_seconds="${BONG_SERVER_STOP_GRACE_SECONDS:-10}"
-    local pid starttime executable
+    local record pid starttime executable executable_identity
 
     [[ "$grace_seconds" =~ ^[0-9]+$ ]] || {
         echo "FAIL: BONG_SERVER_STOP_GRACE_SECONDS must be a non-negative integer: $grace_seconds" >&2
         return 1
     }
-    if ! bong_server_read_record; then
-        bong_server_clear_record
+    record="$(bong_server_pid_file)"
+    if [ ! -e "$record" ]; then
         return 0
     fi
-    if ! bong_server_record_matches_process; then
-        bong_server_clear_record_if_matches \
-            "$BONG_SERVER_RECORDED_PID" "$BONG_SERVER_RECORDED_STARTTIME" "$BONG_SERVER_RECORDED_EXECUTABLE"
-        return 0
+    if ! bong_server_read_record; then
+        echo "FAIL: managed bong-server record is malformed; refusing to destroy an unverified session" >&2
+        return 2
     fi
 
     pid="$BONG_SERVER_RECORDED_PID"
     starttime="$BONG_SERVER_RECORDED_STARTTIME"
     executable="$BONG_SERVER_RECORDED_EXECUTABLE"
+    executable_identity="$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY"
+    if ! bong_server_process_is_running "$pid"; then
+        bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
+        return 0
+    fi
+    if ! bong_server_record_matches_process; then
+        echo "FAIL: managed bong-server record no longer identifies pid $pid; refusing to signal an unverified process" >&2
+        return 2
+    fi
+
     kill -TERM "$pid" 2>/dev/null || true
     if bong_server_wait_for_exit "$pid" "$grace_seconds"; then
-        bong_server_clear_record_if_matches "$pid" "$starttime" "$executable"
+        bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
         return 0
     fi
-    if ! bong_server_read_record || ! bong_server_record_matches_process; then
-        bong_server_clear_record_if_matches "$pid" "$starttime" "$executable"
+    if ! bong_server_process_is_running "$pid"; then
+        bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
         return 0
     fi
-    if [ "$BONG_SERVER_RECORDED_PID" != "$pid" ] \
-        || [ "$BONG_SERVER_RECORDED_STARTTIME" != "$starttime" ] \
-        || [ "$BONG_SERVER_RECORDED_EXECUTABLE" != "$executable" ]; then
-        return 0
+    if ! bong_server_record_matches_process; then
+        echo "FAIL: managed bong-server identity changed while waiting; refusing SIGKILL" >&2
+        return 2
     fi
 
     kill -KILL "$pid" 2>/dev/null || true
@@ -210,5 +291,9 @@ bong_server_stop_managed() {
         echo "FAIL: managed bong-server pid $pid did not exit after SIGKILL" >&2
         return 1
     fi
-    bong_server_clear_record_if_matches "$pid" "$starttime" "$executable"
+    bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
+}
+
+bong_server_stop_managed() {
+    bong_server_with_lock _bong_server_stop_managed
 }

@@ -38,9 +38,17 @@ if ! command -v redis-server &>/dev/null; then
   exit 1
 fi
 
+start_bong_stack() {
 # 先让已记录的精确 server PID 完整处理 SIGTERM/AppExit/Last；不能先杀 tmux，
 # 否则其 HUP 会跳过服务器的优雅关服路径。
-bong_server_stop_managed
+if ! bong_server_stop_managed; then
+  echo "FAIL: refusing to destroy tmux session while managed server ownership is unverified" >&2
+  exit 1
+fi
+if bong_server_tmux_has_unmanaged_server "$SESSION"; then
+  echo "FAIL: tmux session '$SESSION' still owns an unrecorded bong-server; refusing HUP shutdown" >&2
+  exit 1
+fi
 
 # 杀掉旧会话
 tmux kill-session -t "$SESSION" 2>/dev/null || true
@@ -89,6 +97,11 @@ if [ -z "$server_pid" ]; then
   exit 1
 fi
 if ! bong_server_write_record "$server_pid" "$server_executable"; then
+  kill -TERM "$server_pid" 2>/dev/null || true
+  if ! bong_server_wait_for_exit "$server_pid" 10; then
+    kill -KILL "$server_pid" 2>/dev/null || true
+    bong_server_wait_for_exit "$server_pid" 2 || true
+  fi
   tmux kill-session -t "$SESSION" 2>/dev/null || true
   echo "FAIL: could not record server pid $server_pid" >&2
   exit 1
@@ -113,3 +126,6 @@ echo "Panes:"
 echo "  0: Redis"
 echo "  1: Rust server (:25565)"
 echo "  2: Tiandao agent ($AGENT_CMD)"
+}
+
+bong_server_with_lock start_bong_stack

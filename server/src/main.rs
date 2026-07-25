@@ -154,11 +154,8 @@ fn run_shutdown_signal_probe() {
         "fresh shutdown probe state must become dirty before waiting for a real OS signal"
     );
 
-    let mut app = App::new();
-    shutdown::register(&mut app);
+    let mut app = build_server_app();
     app.insert_resource(unlock_state);
-    app.add_systems(Update, craft::tick_recipe_unlock_flush);
-    app.add_systems(Last, craft::flush_recipe_unlocks_on_shutdown);
 
     let mut ready_file = std::fs::File::create(&ready_path).unwrap_or_else(|error| {
         panic!("write shutdown signal probe readiness file failed: {error}")
