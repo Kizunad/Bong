@@ -7,6 +7,12 @@
 
 用途：视觉资产纪律的自评环节——看"是不是同心圆""像不像血"。
 
+**常数不手抄**：散布常数直接从 `BloodSplatterLayout.java` 解析（见下方
+{@link _layout_constants}）。手抄一份会在只改 Java 侧时静默漂移，让预览图跟实机
+对不上——而"预览能代表实机"正是这个工具唯一的价值。少任何一个常数就当场报错，
+不给"看起来跑通了其实在骗人"留余地。抽样<em>顺序</em>仍是人工镜像（无从自动化），
+改 Java 侧的抽样次序时必须同步改本文件。
+
 跑法：
     python3 scripts/images/preview_blood_splatter.py [输出目录]
 """
@@ -14,6 +20,7 @@
 from __future__ import annotations
 
 import math
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,21 +29,58 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 TEX_DIR = ROOT / "client/src/main/resources/assets/bong/textures/particle"
+LAYOUT_JAVA = ROOT / (
+    "client/src/main/java/com/bong/client/visual/particle/BloodSplatterLayout.java"
+)
 
 TAU = math.pi * 2.0
 
-# ---- BloodSplatterLayout 常数（改 Java 侧记得同步这里，否则预览就骗人了） ----
-POOL_HALF_MIN = 0.24
-POOL_HALF_SPAN = 0.16
-SPREAD_MIN = 0.38
-SPREAD_SPAN = 0.42
-DROPLET_MIN = 4
-DROPLET_SPAN = 6
-STREAK_MIN = 1
-STREAK_SPAN = 2
-DROPLET_ANGLE_SPREAD = 1.70
-BACKSPLASH_CHANCE = 0.15
-STREAK_CONE = 1.10
+
+def _layout_constants(names: tuple[str, ...]) -> dict[str, float]:
+    """从 BloodSplatterLayout.java 里抠出 private static final 数值常数。"""
+    source = LAYOUT_JAVA.read_text(encoding="utf-8")
+    out: dict[str, float] = {}
+    for name in names:
+        match = re.search(
+            rf"static\s+final\s+(?:double|int)\s+{re.escape(name)}\s*=\s*(-?[\d.]+)\s*;",
+            source,
+        )
+        if match is None:
+            raise SystemExit(
+                f"BloodSplatterLayout.java 里找不到常数 {name} —— 预览脚本与实现已经脱节，"
+                f"先对齐再跑，别拿骗人的图做自评"
+            )
+        out[name] = float(match.group(1))
+    return out
+
+
+_C = _layout_constants(
+    (
+        "POOL_HALF_MIN",
+        "POOL_HALF_SPAN",
+        "SPREAD_MIN",
+        "SPREAD_SPAN",
+        "DROPLET_MIN",
+        "DROPLET_SPAN",
+        "STREAK_MIN",
+        "STREAK_SPAN",
+        "DROPLET_ANGLE_SPREAD",
+        "BACKSPLASH_CHANCE",
+        "STREAK_CONE",
+    )
+)
+
+POOL_HALF_MIN = _C["POOL_HALF_MIN"]
+POOL_HALF_SPAN = _C["POOL_HALF_SPAN"]
+SPREAD_MIN = _C["SPREAD_MIN"]
+SPREAD_SPAN = _C["SPREAD_SPAN"]
+DROPLET_MIN = int(_C["DROPLET_MIN"])
+DROPLET_SPAN = int(_C["DROPLET_SPAN"])
+STREAK_MIN = int(_C["STREAK_MIN"])
+STREAK_SPAN = int(_C["STREAK_SPAN"])
+DROPLET_ANGLE_SPREAD = _C["DROPLET_ANGLE_SPREAD"]
+BACKSPLASH_CHANCE = _C["BACKSPLASH_CHANCE"]
+STREAK_CONE = _C["STREAK_CONE"]
 
 BLOOD_RGB = (0x8C, 0x1F, 0x1F)
 GROUND_RGB = (78, 74, 66)
