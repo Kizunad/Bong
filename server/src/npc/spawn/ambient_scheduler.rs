@@ -606,11 +606,14 @@ pub fn sample_ambient_ring_position(
                 (dx * dx + dz * dz).sqrt()
             })
             .fold(f64::INFINITY, f64::min);
-        // existing_positions 为空时 min_dist == f64::INFINITY，score 恒最大，首个越界通过的
-        // 候选点即被采用——与 PoissonSpawnSampler 首个 NPC 直接落点的语义一致。
-        let score = min_dist - sampler.min_same_archetype_dist;
-        if score > best_score {
-            best_score = score;
+        // `best-candidate` 只在合法的 Poisson 候选之间择优；不能把"距离最远但仍不足
+        // min_same_archetype_dist"的负分候选作为 fallback 返回，否则同类实体仍会重叠。
+        // existing_positions 为空时 min_dist == f64::INFINITY，首个越界通过的候选仍会被采用。
+        if min_dist < sampler.min_same_archetype_dist {
+            continue;
+        }
+        if min_dist > best_score {
+            best_score = min_dist;
             best = Some(candidate);
         }
     }
@@ -716,6 +719,32 @@ where
     M: AmbientMarkerData,
     P: SurfaceProvider + ?Sized,
 {
+    submit_ambient_spawn_candidate_tracking(
+        commands,
+        layer,
+        terrain,
+        pool_fn,
+        pending_spawns_by_zone,
+        None,
+        request,
+    )
+}
+
+/// 与 [`submit_ambient_spawn_candidate`] 相同，但在真实提交成功后可把本 tick 位置回传给
+/// scheduler；只有调度循环需要这份瞬时占位，dev command 与单候选测试不应获得额外状态。
+fn submit_ambient_spawn_candidate_tracking<M, P>(
+    commands: &mut Commands,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+    pool_fn: AmbientPoolFn,
+    pending_spawns_by_zone: &mut HashMap<String, u32>,
+    submitted_positions_by_zone: Option<&mut HashMap<String, Vec<DVec3>>>,
+    request: AmbientSpawnRequest<'_>,
+) -> Option<Entity>
+where
+    M: AmbientMarkerData,
+    P: SurfaceProvider + ?Sized,
+{
     let spawn_position = resolve_ambient_ground_position(request.candidate, layer, terrain)?;
     let spawned = pool_fn(
         commands,
@@ -731,6 +760,12 @@ where
     *pending_spawns_by_zone
         .entry(request.zone.name.clone())
         .or_insert(0) += 1;
+    if let Some(submitted_positions_by_zone) = submitted_positions_by_zone {
+        submitted_positions_by_zone
+            .entry(request.zone.name.clone())
+            .or_default()
+            .push(spawn_position);
+    }
     Some(spawned)
 }
 
@@ -993,6 +1028,9 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     // `alive_count` 一起送进 `decide_ambient_check`，让同 zone 后续玩家的判定看得见前面
     // 玩家本 tick 已经占用的预算。
     let mut pending_spawns_by_zone: HashMap<String, u32> = HashMap::new();
+    // 同一 tick 内成功提交的实体尚未 flush 进 `alive` query；按 zone 留下真实脚点，供后续
+    // 玩家采样时和 tick 前活体一起参与 Poisson 最小距离门。
+    let mut submitted_positions_by_zone: HashMap<String, Vec<DVec3>> = HashMap::new();
 
     // 2) 逐玩家找 zone，判定预算 + 间隔 + era 密度门，命中就在距该玩家 24~64 格环带内刷新。
     for player_pos in &overworld_players {
@@ -1005,8 +1043,13 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
             .filter(|(_, marker, _, _, _)| marker.home_zone() == zone.name)
             .map(|(_, _, pos, _, _)| pos.get())
             .collect();
+        let alive_count_before_pending = alive_in_zone.len() as u32;
+        let mut occupied_positions = alive_in_zone;
+        if let Some(submitted) = submitted_positions_by_zone.get(&zone.name) {
+            occupied_positions.extend(submitted.iter().copied());
+        }
         let pending_in_zone = pending_spawns_by_zone.get(&zone.name).copied().unwrap_or(0);
-        let alive_count = alive_in_zone.len() as u32 + pending_in_zone;
+        let alive_count = alive_count_before_pending + pending_in_zone;
 
         let spawn_seed =
             now.wrapping_add((zone.name.len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
@@ -1028,7 +1071,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         };
 
         let Some(spawn_pos) =
-            sample_ambient_ring_position(zone.bounds, *player_pos, &alive_in_zone, spawn_seed)
+            sample_ambient_ring_position(zone.bounds, *player_pos, &occupied_positions, spawn_seed)
         else {
             continue;
         };
@@ -1038,7 +1081,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         let Ok(overworld_chunk_layer) = chunk_layers.get(layers.overworld) else {
             continue;
         };
-        let spawned = submit_ambient_spawn_candidate::<M, _>(
+        let spawned = submit_ambient_spawn_candidate_tracking::<M, _>(
             &mut commands,
             Some(overworld_chunk_layer),
             terrain_providers
@@ -1046,6 +1089,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
                 .map(|providers| &providers.overworld),
             config.pool_fn,
             &mut pending_spawns_by_zone,
+            Some(&mut submitted_positions_by_zone),
             AmbientSpawnRequest {
                 layer: layers.overworld,
                 zone,
@@ -2440,14 +2484,16 @@ mod tests {
             let mut app = App::new();
             let layer = app.world_mut().spawn_empty().id();
             let mut pending = HashMap::new();
+            let mut submitted_positions = HashMap::new();
             let spawned = {
                 let mut commands = app.world_mut().commands();
-                submit_ambient_spawn_candidate::<TestFaunaMarker, FixtureSurface>(
+                submit_ambient_spawn_candidate_tracking::<TestFaunaMarker, FixtureSurface>(
                     &mut commands,
                     None,
                     terrain.as_ref(),
                     test_pool_fn,
                     &mut pending,
+                    Some(&mut submitted_positions),
                     AmbientSpawnRequest {
                         layer,
                         zone: &zone,
@@ -2469,6 +2515,10 @@ mod tests {
             assert!(
                 pending.is_empty(),
                 "{case} 时不应产生任何 pending 记账副作用"
+            );
+            assert!(
+                submitted_positions.is_empty(),
+                "{case} 时不应占用同 tick 位置"
             );
         }
     }
@@ -2495,14 +2545,16 @@ mod tests {
             queried: std::cell::Cell::new(None),
         };
         let mut pending = HashMap::new();
+        let mut submitted_positions = HashMap::new();
         let spawned = {
             let mut commands = app.world_mut().commands();
-            submit_ambient_spawn_candidate::<TestFaunaMarker, _>(
+            submit_ambient_spawn_candidate_tracking::<TestFaunaMarker, _>(
                 &mut commands,
                 None,
                 Some(&terrain),
                 rejecting_pool_fn,
                 &mut pending,
+                Some(&mut submitted_positions),
                 AmbientSpawnRequest {
                     layer,
                     zone: &zone,
@@ -2523,6 +2575,10 @@ mod tests {
         assert!(
             pending.is_empty(),
             "pool None must not consume this tick's pending budget"
+        );
+        assert!(
+            submitted_positions.is_empty(),
+            "pool None must not reserve an occupied position for later same-tick players"
         );
         let mut markers = app.world_mut().query::<&TestFaunaMarker>();
         assert_eq!(
@@ -3413,6 +3469,26 @@ mod tests {
     }
 
     #[test]
+    fn ring_sample_none_when_all_in_bounds_candidates_violate_min_spacing() {
+        let anchor = DVec3::new(0.0, 64.0, 0.0);
+        let seed = 7;
+        let occupied = sample_ambient_ring_position(wide_open_bounds(), anchor, &[], seed)
+            .expect("wide open ring must yield a deterministic candidate");
+        let tight_bounds = (
+            DVec3::new(occupied.x - 0.01, 0.0, occupied.z - 0.01),
+            DVec3::new(occupied.x + 0.01, 200.0, occupied.z + 0.01),
+        );
+        assert!(
+            sample_ambient_ring_position(tight_bounds, anchor, &[], seed).is_some(),
+            "test precondition: the narrow zone must still admit the deterministic candidate"
+        );
+        assert_eq!(
+            sample_ambient_ring_position(tight_bounds, anchor, &[occupied], seed),
+            None,
+            "all admitted candidates are inside min_same_archetype_dist; sampler must skip rather than return a negative-score fallback"
+        );
+    }
+    #[test]
     fn ring_sample_respects_existing_position_spacing_preference() {
         // 存在既有点时，采样器应更偏向远离既有点的候选（best_score 逻辑）——
         // 用两个不同 existing_positions 集合验证输出不同，证明 existing_positions 确实
@@ -3913,6 +3989,49 @@ mod tests {
             2,
             "danger=1 已有 2 个活体（=max_alive）时不应再刷新第 3 个"
         );
+    }
+
+    #[test]
+    fn same_tick_same_anchor_keeps_submitted_positions_poisson_separated() {
+        fn two_spawn_budget(_danger: u8) -> ThreatBudget {
+            ThreatBudget {
+                max_alive: 2,
+                spawn_interval_ticks: 1,
+                pack_size_range: (1, 1),
+            }
+        }
+
+        let mut app =
+            make_runtime_scheduler_app::<TestFaunaMarker>(two_spawn_budget, test_pool_fn, true, 1);
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([0.0, 80.0, 0.0])));
+        app.update();
+
+        let mut spawned = app
+            .world_mut()
+            .query_filtered::<&Position, With<TestFaunaMarker>>();
+        let positions: Vec<DVec3> = spawned
+            .iter(app.world())
+            .map(|position| position.get())
+            .collect();
+        assert!(
+            (1..=2).contains(&positions.len()),
+            "two same-zone players with budget >= 2 must submit at least one and at most two candidates, actual {}",
+            positions.len()
+        );
+        let min_same_archetype_dist =
+            PoissonSpawnSampler::adaptive_for_zone(wide_open_bounds()).min_same_archetype_dist;
+        for (index, first) in positions.iter().enumerate() {
+            for second in &positions[index + 1..] {
+                let dx = first.x - second.x;
+                let dz = first.z - second.z;
+                let distance = (dx * dx + dz * dz).sqrt();
+                assert!(
+                    distance >= min_same_archetype_dist,
+                    "same tick same-anchor submissions must be at least {min_same_archetype_dist} apart or skip the second; actual {distance}"
+                );
+            }
+        }
     }
 
     #[test]
