@@ -4,6 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-server-lifecycle.sh"
 
 AGENT_CMD="npx tsx src/main.ts"
 for arg in "$@"; do
@@ -37,8 +38,18 @@ if ! command -v redis-server &>/dev/null; then
   exit 1
 fi
 
+# 先让已记录的精确 server PID 完整处理 SIGTERM/AppExit/Last；不能先杀 tmux，
+# 否则其 HUP 会跳过服务器的优雅关服路径。
+bong_server_stop_managed
+
 # 杀掉旧会话
 tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+(
+  cd "$ROOT/server"
+  cargo build --release
+)
+server_executable="$(bong_server_resolve_executable "$ROOT/server" "$CARGO_TARGET_DIR/release/bong-server")"
 
 # 创建 tmux session，3 个 pane
 #   pane 0: Redis
@@ -51,11 +62,7 @@ tmux new-session -d -s "$SESSION" -n main
 tmux send-keys -t "$SESSION:main" "if redis-cli ping >/dev/null 2>&1; then printf '[bong] redis already running on :6379\n'; else redis-server --loglevel warning; fi" Enter
 
 # Pane 1: Server
-# BONG_ROGUE_SEED_COUNT 默认 20 hydrated（真实 ECS 实体，有 AI/碰撞/客户端下发，真负载）。
-# BONG_DORMANT_ROGUE_SEED_COUNT 默认 1000 dormant（虚拟化快照，HashMap 数据条目，
-#   每 60s 批 tick 一次，≈零成本；玩家走进 64 格才 hydrate 成实体）。dormant 用 R2 低差异
-#   序列在各 zone 内均匀铺点，hydrate 时不再一坨叠一起。需要更低负载可手动覆盖：
-# BONG_ROGUE_SEED_COUNT=10 BONG_DORMANT_ROGUE_SEED_COUNT=0 bash start.sh
+# 先 build，再由 shell 直接 exec 最终二进制；记录的 PID 始终是 server 本身，不是 cargo 或 pane shell。
 tmux split-window -h -t "$SESSION:main"
 tmux send-keys -t "$SESSION:main.1" \
   "export PATH='${RUNTIME_PATH}' && \
@@ -65,10 +72,28 @@ tmux send-keys -t "$SESSION:main.1" \
    export BONG_DORMANT_ROGUE_SEED_COUNT='${BONG_DORMANT_ROGUE_SEED_COUNT:-1000}' && \
    export BONG_NPC_NO_DORMANT='${BONG_NPC_NO_DORMANT:-0}' && \
    cd '$ROOT/server' && \
-   echo '[bong] starting server (rogue seed='\$BONG_ROGUE_SEED_COUNT', dormant rogue seed='\$BONG_DORMANT_ROGUE_SEED_COUNT')...' && \
-   cargo run --release 2>&1" Enter
+   exec '${CARGO_TARGET_DIR}/release/bong-server'" Enter
 
-# Pane 2: Agent (延迟启动，等 server + redis 就绪)
+server_pid=""
+for _ in $(seq 1 500); do
+  pane_pid="$(tmux display-message -p -t "$SESSION:main.1" '#{pane_pid}' 2>/dev/null || true)"
+  if bong_server_wait_for_executable "$pane_pid" "$server_executable" 1; then
+    server_pid="$pane_pid"
+    break
+  fi
+  sleep 0.01
+done
+if [ -z "$server_pid" ]; then
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  echo "FAIL: server pane did not exec $server_executable" >&2
+  exit 1
+fi
+if ! bong_server_write_record "$server_pid" "$server_executable"; then
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  echo "FAIL: could not record server pid $server_pid" >&2
+  exit 1
+fi
+
 tmux split-window -v -t "$SESSION:main.1"
 tmux send-keys -t "$SESSION:main.2" \
   "sleep 8 && \
