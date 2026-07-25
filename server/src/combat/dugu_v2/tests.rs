@@ -1149,6 +1149,69 @@ fn reverse_cast_emits_signature_recipe_end_to_end() {
     );
 }
 
+/// **拒绝路径必须无声**（PR #1262 review 补门）：境界不足（非化虚）被 `Rejected` 的倒蚀，
+/// 既不许发 `ReverseTriggeredEvent`，跑完真实音效系统后也不许有任何 `PlaySoundRecipeRequest`。
+#[test]
+fn rejected_reverse_emits_no_audio_and_no_domain_event() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_dugu_v2_audio_triggers;
+    use valence::prelude::Update;
+
+    let mut app = setup_zone_credit_app(0.0);
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_event::<crate::combat::needle::QiNeedleChargedEvent>();
+    app.add_event::<crate::cultivation::dugu::DuguObfuscationDisruptedEvent>();
+    app.add_systems(Update, emit_dugu_v2_audio_triggers);
+
+    // 倒蚀要求化虚（Realm::Void）；通灵施法者必被拒（RealmTooLow）。
+    let low_caster = actor(&mut app, Realm::Spirit, 500.0, 500.0, 0.0);
+    let victim = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    app.world_mut().entity_mut(victim).insert(TaintMark {
+        caster: low_caster,
+        intensity: 5.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 4.95,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        low_caster,
+        0,
+        Some(victim),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Rejected { .. }),
+        "通灵境施倒蚀应被拒（RealmTooLow），实际={result:?}"
+    );
+    app.update();
+
+    let reverse_events: usize = {
+        let events = app.world().resource::<Events<ReverseTriggeredEvent>>();
+        events.iter_current_update_events().count()
+    };
+    assert_eq!(
+        reverse_events, 0,
+        "被拒绝的倒蚀不得发 ReverseTriggeredEvent"
+    );
+    let recipes: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .map(|event| event.recipe_id)
+        .collect();
+    assert!(
+        recipes.is_empty(),
+        "被拒绝的倒蚀不得有任何招式音（含签名），实际 {recipes:?}"
+    );
+}
+
 /// 守恒不变式：Eclipse 前后，zone_qi 增量 == returned_zone_qi（容差内）。
 ///
 /// 修法 ② 后 Eclipse.returned_zone_qi = rejected_qi × 0.99，仅覆盖被排斥立即散逸部分。

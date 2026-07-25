@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, Client, DVec3, Entity, EventReader, EventWriter, Position, Query, Res, ResMut,
-    Resource, With,
+    bevy_ecs, App, Client, DVec3, Entity, EventReader, EventWriter, IntoSystemConfigs, Position,
+    Query, Res, ResMut, Resource, Update, With,
 };
 
 use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome, StartAlchemyRequest};
@@ -57,6 +57,50 @@ use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{SocialPactEvent, SocialRenownDeltaEvent};
 use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
+
+/// **audio-trigger 调度的唯一生产注册入口**（`network::register` 调它，别处不许再散着 `add_systems`）。
+///
+/// 提取自 `network::mod`（PR #1262 review 意见）：接线门禁测试跑的就是这个函数，于是「某个 emit
+/// 系统没被注册进调度」不再是测试照不到的死角——测试不再自己抄一份系统清单，从这里删掉任何一个
+/// 系统，`register_wires_all_audio_trigger_systems` 立刻撞红。
+///
+/// 调度契约（与提取前逐条一致）：所有 emit 系统 `.after(tick_audio_dedup_clock)`（拿到当帧 dedup
+/// 逻辑 tick）`.before(audio_event_emit::emit_audio_play_payloads)`（同帧把 `PlaySoundRecipeRequest`
+/// 投递给客户端，不跨帧延迟）。
+pub fn register(app: &mut App) {
+    app.add_systems(Update, tick_audio_dedup_clock);
+    app.add_systems(
+        Update,
+        (
+            emit_combat_audio_triggers.after(crate::combat::resolve::resolve_attack_intents),
+            emit_npc_death_audio_triggers.after(crate::combat::resolve::resolve_attack_intents),
+            emit_cultivation_audio_triggers,
+            emit_tribulation_audio_triggers,
+            emit_alchemy_audio_triggers,
+            emit_forge_audio_triggers,
+            emit_botany_audio_triggers,
+            emit_lingtian_audio_triggers,
+            emit_woliu_v2_audio_triggers,
+            // 绝灵涡流（woliu v1）开涡 / 反噬 → 音效（lifecycle 驱动，复用现有 recipe）。
+            emit_woliu_v1_vortex_audio_triggers,
+            emit_baomai_v3_audio_triggers,
+            emit_tuike_v2_audio_triggers,
+            // 真脉五招 cast（`ZhenmaiSkillCastEvent`）→ 逐招专属音效（含 sever_chain 签名）。
+            emit_zhenmai_v2_audio_triggers,
+            emit_sword_path_audio_triggers,
+            // 暗器六招 cast → 专属音效（纯 cosmetic，复用 vanilla 音色 recipe）。
+            emit_anqi_audio_triggers,
+            // 蛊道（凝针 / 灌毒蛊 / 倒蚀签名）cast → 专属音效（纯 cosmetic）。
+            emit_dugu_v2_audio_triggers,
+            emit_skill_audio_triggers,
+            emit_social_audio_triggers
+                .after(crate::cultivation::possession::process_duo_she_requests),
+            emit_player_state_audio_triggers,
+        )
+            .after(tick_audio_dedup_clock)
+            .before(crate::network::audio_event_emit::emit_audio_play_payloads),
+    );
+}
 
 #[derive(Debug, Default)]
 pub struct AudioTriggerState {
@@ -928,8 +972,10 @@ pub fn emit_dugu_v2_audio_triggers(
 
 /// 真脉五招 cast → 各招专属音效配方（`ZhenmaiSkillId::audio_recipe` 单一真源映射）。
 ///
-/// 读 `ZhenmaiSkillCastEvent`（cast 侧 `emit_skill_feedback` 发），caster 无 `Position`
-/// 时落到事件自带的 `center`，保证施法者断 Position 也能出招声。
+/// 读 `ZhenmaiSkillCastEvent`（cast 侧 `emit_skill_feedback` 发），音源**无条件**取事件自带的
+/// `center`——那是**施法当时**取到的 caster 位置。这里刻意不查实时 `Position`：重构前的内联
+/// emit 锁的就是 cast-time 位置，若改读消费时位置，音源会随「事件跨帧才被读到」与「施法后玩家
+/// 移动 / 传送」漂移，且依赖未声明的 ECS 生产者-消费者顺序（PR #1262 review 指出）。
 ///
 /// plan-fpv-cast-av-v1 P5：原先音效内联在 `zhenmai_v2::emit_skill_feedback`（Pattern B），
 /// 改为本独立系统后「招式实际发出哪条 recipe」可被 emit-path 集成测试锁住。
@@ -937,20 +983,15 @@ pub fn emit_dugu_v2_audio_triggers(
 /// **纯 cosmetic**：只发音效，不读 / 改任何战斗 / 真元状态。
 pub fn emit_zhenmai_v2_audio_triggers(
     mut casts: EventReader<ZhenmaiSkillCastEvent>,
-    positions: Query<&Position>,
     mut audio: AudioEmitWriter,
 ) {
     let mut audio = audio.context();
     for event in casts.read() {
-        let origin = positions
-            .get(event.caster)
-            .map(|position| position.get())
-            .unwrap_or(event.center);
         emit_play(
             &mut audio,
             event.skill.audio_recipe(),
             event.caster,
-            origin,
+            event.center,
             None,
             1.0,
             0.0,
@@ -2534,6 +2575,101 @@ mod tests {
         );
     }
 
+    // ─── 生产接线门禁：跑真实注册入口，不在测试里另抄系统清单 ───
+
+    /// 收集某个 App 的 `Update` 调度里所有系统名（`ScheduleGraph` 在 `add_systems` 时即填充，
+    /// 无需初始化/运行，故不受「缺 Events 资源会 panic」影响）。
+    fn update_schedule_system_names(app: &App) -> Vec<String> {
+        app.get_schedule(Update)
+            .expect("Update 调度应存在")
+            .graph()
+            .systems()
+            .map(|(_, system, _)| system.name().to_string())
+            .collect()
+    }
+
+    /// **接线门禁**：跑**生产**注册入口 `audio_trigger::register`，断言三条签名链的 emit 系统
+    /// 真的进了 `Update` 调度（外加 dedup 时钟与既有 Pattern A 家族）。
+    ///
+    /// 这是「系统没接线也撞红」的那道门：本测试不自己 `add_systems` 被测函数，而是调生产函数，
+    /// 从 `register` 里删掉任一系统即撞红（已变异验证）。残余接缝：`network::register` 里对
+    /// 本函数的那一行调用无法在单测覆盖——调它会拉起 Redis bridge 线程。
+    #[test]
+    fn register_wires_all_audio_trigger_systems() {
+        let mut app = App::new();
+        super::register(&mut app);
+
+        let names = update_schedule_system_names(&app);
+        for expected in [
+            "tick_audio_dedup_clock",
+            // P5 emit 架构统一的三条签名链
+            "emit_zhenmai_v2_audio_triggers",
+            "emit_dugu_v2_audio_triggers",
+            "emit_tuike_v2_audio_triggers",
+            // 既有 Pattern A 家族（同一注册入口，防提取时漏搬）
+            "emit_sword_path_audio_triggers",
+            "emit_baomai_v3_audio_triggers",
+            "emit_woliu_v2_audio_triggers",
+            "emit_woliu_v1_vortex_audio_triggers",
+            "emit_anqi_audio_triggers",
+            "emit_combat_audio_triggers",
+            "emit_npc_death_audio_triggers",
+            "emit_cultivation_audio_triggers",
+            "emit_tribulation_audio_triggers",
+            "emit_alchemy_audio_triggers",
+            "emit_forge_audio_triggers",
+            "emit_botany_audio_triggers",
+            "emit_lingtian_audio_triggers",
+            "emit_skill_audio_triggers",
+            "emit_social_audio_triggers",
+            "emit_player_state_audio_triggers",
+        ] {
+            assert!(
+                names.iter().any(|name| name.ends_with(expected)),
+                "生产 audio_trigger::register 应把 `{expected}` 注册进 Update 调度——\
+                 没进调度 = 运行时永不触发（功能孤岛），实际注册了 {names:?}"
+            );
+        }
+    }
+
+    /// **接线门禁（事件侧）**：三条签名链读的事件必须由**各自模块的生产 `register`** 装进 World，
+    /// 否则 cast 侧 `world.send_event` 会静默丢弃 → 实机零签名音。
+    ///
+    /// 测试调生产 register 而非自己 `add_event`：从生产 register 里删掉 `add_event` 即撞红
+    /// （已变异验证）。
+    #[test]
+    fn production_module_registers_install_signature_cast_events() {
+        use crate::combat::dugu_v2::ReverseTriggeredEvent;
+        use crate::combat::tuike_v2::FalseSkinSheddedEvent;
+        use crate::combat::zhenmai_v2::ZhenmaiSkillCastEvent;
+
+        let mut app = App::new();
+        crate::combat::zhenmai_v2::register(&mut app);
+        assert!(
+            app.world()
+                .contains_resource::<Events<ZhenmaiSkillCastEvent>>(),
+            "zhenmai_v2::register 必须 add_event::<ZhenmaiSkillCastEvent>()——\
+             缺它则 emit_skill_feedback 的 send_event 被静默丢弃，实机零招式音"
+        );
+
+        let mut app = App::new();
+        crate::combat::dugu_v2::register(&mut app);
+        assert!(
+            app.world()
+                .contains_resource::<Events<ReverseTriggeredEvent>>(),
+            "dugu_v2::register 必须 add_event::<ReverseTriggeredEvent>()——缺它则倒蚀签名音无事件可读"
+        );
+
+        let mut app = App::new();
+        crate::combat::tuike_v2::register(&mut app);
+        assert!(
+            app.world()
+                .contains_resource::<Events<FalseSkinSheddedEvent>>(),
+            "tuike_v2::register 必须 add_event::<FalseSkinSheddedEvent>()——\
+             缺它则主动 / 被动蜕壳签名音都无事件可读"
+        );
+    }
+
     // ─── 真脉五招：emit_zhenmai_v2_audio_triggers（P5 emit 架构统一）───
 
     fn setup_zhenmai_audio_app() -> App {
@@ -2589,19 +2725,33 @@ mod tests {
         }
     }
 
-    /// 真脉签名 `sever_chain` 的音源在 caster 断 `Position` 时落到事件自带 `center`
-    /// （断线 / 未同步位置时不静默丢招式声）。
+    /// 真脉音源锁 **cast-time 语义**：音源恒为事件自带的 `center`（施法当时的位置），与重构前
+    /// 内联 emit 一致——不受「事件跨帧才被读到」「施法后玩家移动 / 传送」影响，也不依赖未声明的
+    /// ECS 生产者-消费者顺序（PR #1262 review 指出的行为回归，本测试即其回归门）。
+    ///
+    /// 两条边界一起锁：① 事件发出后 caster 传送到远处，音源仍是施法点；
+    /// ② caster 根本没有 `Position`（断线 / 未同步）时照样发声、音源仍是事件 center。
     #[test]
-    fn zhenmai_audio_falls_back_to_event_center_without_position() {
+    fn zhenmai_audio_uses_cast_time_center_not_live_position() {
         use crate::combat::zhenmai_v2::ZhenmaiSkillId;
 
         let mut app = setup_zhenmai_audio_app();
-        let caster = app.world_mut().spawn(()).id();
+        let moved_caster = app.world_mut().spawn(Position::new([7.5, 64.0, -3.5])).id();
+        let positionless_caster = app.world_mut().spawn(()).id();
         app.world_mut().send_event(ZhenmaiSkillCastEvent {
-            caster,
+            caster: moved_caster,
             skill: ZhenmaiSkillId::SeverChain,
             center: DVec3::new(7.5, 64.0, -3.5),
         });
+        app.world_mut().send_event(ZhenmaiSkillCastEvent {
+            caster: positionless_caster,
+            skill: ZhenmaiSkillId::Parry,
+            center: DVec3::new(-20.5, 70.0, 11.5),
+        });
+        // 施法之后、音效系统跑之前，caster 传送到很远处（跨帧消费 / 玩家继续跑动的模型）。
+        app.world_mut()
+            .entity_mut(moved_caster)
+            .insert(Position::new([900.0, 12.0, -900.0]));
         app.update();
 
         let emitted: Vec<_> = app
@@ -2609,12 +2759,7 @@ mod tests {
             .resource_mut::<Events<PlaySoundRecipeRequest>>()
             .drain()
             .collect();
-        assert_eq!(
-            emitted.len(),
-            1,
-            "caster 无 Position 也应发声（音源退到 event.center），实际发了 {} 条",
-            emitted.len()
-        );
+        assert_eq!(emitted.len(), 2, "两条 cast 事件应各发一条音效");
         assert_eq!(
             emitted[0].recipe_id,
             ZhenmaiSkillId::SeverChain.audio_recipe()
@@ -2622,7 +2767,13 @@ mod tests {
         assert_eq!(
             emitted[0].pos,
             Some([7, 64, -4]),
-            "无 Position 时音源应落到 event.center"
+            "音源必须锁 cast-time center（施法点），不得跟着 caster 移动后的实时 Position 漂移"
+        );
+        assert_eq!(emitted[1].recipe_id, ZhenmaiSkillId::Parry.audio_recipe());
+        assert_eq!(
+            emitted[1].pos,
+            Some([-21, 70, 11]),
+            "caster 无 Position 时同样用 event.center，不静默丢招式声"
         );
     }
 
@@ -2686,9 +2837,10 @@ mod tests {
         );
     }
 
-    /// 蛊道两条基础招（凝针 / 灌毒蛊）与倒蚀签名互不串味：同一系统三条 reader 各发各的 recipe。
+    /// 蛊道三条 reader（凝针 / 灌毒蛊 / 倒蚀签名）同帧全触发时互不串味：各发各的 recipe，
+    /// 不多不少三条。
     #[test]
-    fn dugu_basic_skills_and_reverse_signature_do_not_cross_talk() {
+    fn dugu_three_readers_do_not_cross_talk() {
         let mut app = setup_dugu_audio_app();
         let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
         app.world_mut().send_event(QiNeedleChargedEvent {
@@ -2696,18 +2848,27 @@ mod tests {
             target: None,
             tick: 1,
         });
+        app.world_mut().send_event(DuguObfuscationDisruptedEvent {
+            infuser: caster,
+            until_tick: 40,
+        });
         app.world_mut()
             .send_event(reverse_event(caster, DVec3::new(0.0, 64.0, 0.0)));
         app.update();
 
-        let recipes = drain_recipes(&mut app);
+        let mut recipes = drain_recipes(&mut app);
+        recipes.sort();
+        let mut expected = vec![
+            "dugu_cast".to_string(),
+            "dugu_poison_cast".to_string(),
+            DUGU_POISON_SIGNATURE_RECIPE.to_string(),
+        ];
+        expected.sort();
         assert_eq!(
-            recipes,
-            vec![
-                "dugu_cast".to_string(),
-                DUGU_POISON_SIGNATURE_RECIPE.to_string()
-            ],
-            "凝针应发 dugu_cast、倒蚀应发签名 {DUGU_POISON_SIGNATURE_RECIPE}，实际 {recipes:?}"
+            recipes, expected,
+            "凝针 → dugu_cast、灌毒蛊 → dugu_poison_cast、倒蚀 → 签名 \
+             {DUGU_POISON_SIGNATURE_RECIPE}，三条各一不缺不重（顺序非契约，按 recipe 排序对拍），\
+             实际 {recipes:?}"
         );
     }
 

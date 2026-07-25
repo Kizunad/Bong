@@ -1146,6 +1146,60 @@ fn active_cast_shed_emits_signature_recipe_exactly_once_end_to_end() {
     );
 }
 
+/// **拒绝路径必须无声**（PR #1262 review 补门）：身上没假皮层时 `cast_shed` 被 `Rejected`，
+/// 既不许发 `FalseSkinSheddedEvent`，跑完真实音效系统后也不许有任何 `PlaySoundRecipeRequest`。
+#[test]
+fn rejected_cast_shed_emits_no_audio_and_no_shed_event() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_tuike_v2_audio_triggers;
+    use valence::prelude::Position;
+
+    let mut app = App::new();
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_systems(Update, emit_tuike_v2_audio_triggers);
+    app.world_mut().insert_resource(CombatClock { tick: 100 });
+    add_tuike_events(app.world_mut());
+    // 无 StackedFalseSkins（没披假皮）→ InvalidTarget
+    let entity = app
+        .world_mut()
+        .spawn((
+            cultivation(Realm::Void, 1000.0, 1000.0),
+            inventory_with_skin("stone", 1.0),
+            SkillBarBindings::default(),
+            DerivedAttrs::default(),
+            PracticeLog::default(),
+            Position::new([5.0, 64.0, -2.0]),
+        ))
+        .id();
+
+    assert_rejected(
+        cast_shed(app.world_mut(), entity, 0, None),
+        CastRejectReason::InvalidTarget,
+    );
+    app.update();
+
+    let shed_events: usize = {
+        let events = app.world().resource::<Events<FalseSkinSheddedEvent>>();
+        events.iter_current_update_events().count()
+    };
+    assert_eq!(
+        shed_events, 0,
+        "被拒绝的蜕壳不得发 FalseSkinSheddedEvent（发了就等于凭空掉了一层假皮）"
+    );
+    let recipes: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .map(|event| event.recipe_id)
+        .collect();
+    assert!(
+        recipes.is_empty(),
+        "被拒绝的蜕壳不得有任何招式音（含签名），实际 {recipes:?}"
+    );
+}
+
 #[test]
 fn shed_outer_layer_emits_residue() {
     let (mut world, entity) = world_with_player(Realm::Void, 1000.0, FALSE_SKIN_ANCIENT_ITEM_ID);

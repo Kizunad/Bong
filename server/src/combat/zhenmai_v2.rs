@@ -2699,7 +2699,54 @@ mod tests {
         assert_eq!(
             emitted[0].pos,
             Some([12, 64, -8]),
-            "音源应落在施法者 Position"
+            "音源应落在施法时刻的施法者位置（事件 center）"
+        );
+    }
+
+    /// **拒绝路径必须无声**（PR #1262 review 补门）：真元不足被 `Rejected` 的施法，
+    /// 既不许发 `ZhenmaiSkillCastEvent`，跑完真实音效系统后也不许有任何 `PlaySoundRecipeRequest`。
+    ///
+    /// 「起手失败却响了招式音」是玩家可感知的错误反馈；只测成功路径锁不住它。
+    #[test]
+    fn rejected_cast_emits_no_audio_and_no_cast_event() {
+        use crate::audio::implementation::AudioImplementationDedup;
+        use crate::network::audio_trigger::emit_zhenmai_v2_audio_triggers;
+
+        let mut app = app_with_events();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_systems(Update, emit_zhenmai_v2_audio_triggers);
+        // 真元 3.0 < PARRY_QI_COST(8.0) —— 复用既有 `resolve_parry_rejects_insufficient_qi` 的前置
+        let entity = caster(&mut app, Realm::Induce, 3.0);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Position::new([12.0, 64.0, -8.0]));
+
+        assert_eq!(
+            resolve_parry(app.world_mut(), entity, 0, None),
+            CastResult::Rejected {
+                reason: CastRejectReason::QiInsufficient
+            }
+        );
+        app.update();
+
+        let cast_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ZhenmaiSkillCastEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            cast_events.is_empty(),
+            "被拒绝的施法不得发 ZhenmaiSkillCastEvent，实际 {cast_events:?}"
+        );
+        let recipes: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .map(|event| event.recipe_id)
+            .collect();
+        assert!(
+            recipes.is_empty(),
+            "被拒绝的施法（真元不足）不得有任何招式音，实际 {recipes:?}"
         );
     }
 
