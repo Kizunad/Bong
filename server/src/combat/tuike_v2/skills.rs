@@ -23,7 +23,7 @@ use crate::world::zone::ZoneRegistry;
 
 use super::events::{
     ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent, PermanentTaintAbsorbedEvent,
-    TuikeSkillId, TuikeSkillVisual,
+    TuikeSkillId, TuikeSkillVisual, SHED_SKIN_BURST_RECIPE,
 };
 use super::physics::{
     max_layers_for_realm, shed_start_cost, transfer_cooldown_ticks, transfer_taint_to_outer_skin,
@@ -170,7 +170,7 @@ pub fn cast_shed(
             18,
             34,
         );
-        emit_audio(world, "shed_skin_burst", pos);
+        emit_audio(world, SHED_SKIN_BURST_RECIPE, pos);
         emit_anim(world, caster, "bong:tuike_shed_burst");
     }
 
