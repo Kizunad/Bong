@@ -79,6 +79,12 @@ pub(crate) fn low_hp_heartbeat_instance_id(entity: Entity) -> u64 {
     entity.to_bits().max(1)
 }
 
+/// 低血心跳的唯一触发判据（严格小于阈值）。抽成函数是为了让「重生血量会不会重新
+/// 起心跳」这类不变量能对着**生产判据**断言，而不是在测试里另写一遍比较。
+pub(crate) fn is_low_hp_for_heartbeat(hp_ratio: f32) -> bool {
+    hp_ratio < LOW_HP_HEARTBEAT_RATIO
+}
+
 type PlayerAudioStateItem<'a> = (
     Entity,
     &'a Position,
@@ -97,7 +103,7 @@ pub fn emit_player_state_audio_triggers(
     for (entity, position, wounds, cultivation) in &players {
         if let Some(wounds) = wounds {
             let hp_ratio = wounds.health_current / wounds.health_max.max(1.0);
-            let low_hp = hp_ratio < LOW_HP_HEARTBEAT_RATIO;
+            let low_hp = is_low_hp_for_heartbeat(hp_ratio);
             let was_low_hp = state.low_hp.get(&entity).copied().unwrap_or(false);
             if low_hp && !was_low_hp {
                 emit_play_loop(
@@ -2402,13 +2408,19 @@ mod tests {
     /// （即便 loop 生命周期正确，玩家听到的仍是「重生就有受伤音」）。
     #[test]
     fn revive_health_fraction_never_rearms_low_hp_heartbeat() {
+        // 对着**生产判据** is_low_hp_for_heartbeat 断言，而不是在测试里重写比较。
+        let revive_hp_ratio = crate::combat::components::REVIVE_HEALTH_FRACTION;
         assert!(
-            crate::combat::components::REVIVE_HEALTH_FRACTION >= LOW_HP_HEARTBEAT_RATIO,
-            "期望 REVIVE_HEALTH_FRACTION({}) >= LOW_HP_HEARTBEAT_RATIO({}) 因为重生血量若低于心跳阈值，\
-             重生那一刻就会自动起低血心跳（含 entity.player.hurt 层）= 玩家听到的「重生受伤音」；\
-             要调低重生血量必须同时重设计心跳触发",
-            crate::combat::components::REVIVE_HEALTH_FRACTION,
-            LOW_HP_HEARTBEAT_RATIO,
+            !is_low_hp_for_heartbeat(revive_hp_ratio),
+            "期望重生血量比例 {revive_hp_ratio} 不触发低血心跳（阈值 {LOW_HP_HEARTBEAT_RATIO}）——\
+             否则重生那一刻就会自动起一条含 entity.player.hurt 层的心跳 loop，玩家听到的就是\
+             「重生就有受伤音」；要调低重生血量必须同时重设计心跳触发",
+        );
+        // 反向对照：略低于重生血量的 hp 必须仍被判为低血（防止有人把判据改成恒 false 让本测试蒙过）。
+        assert!(
+            is_low_hp_for_heartbeat(revive_hp_ratio - 0.01),
+            "期望比重生血量再低一点（{}）仍被判低血，否则判据被改坏成恒 false、低血心跳整体失效",
+            revive_hp_ratio - 0.01,
         );
     }
 
