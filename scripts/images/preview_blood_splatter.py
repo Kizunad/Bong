@@ -36,21 +36,35 @@ LAYOUT_JAVA = ROOT / (
 TAU = math.pi * 2.0
 
 
+def _strip_java_comments(source: str) -> str:
+    """去掉块注释与行注释。
+
+    否则一行被注释掉的旧定义（`// private static final double SPREAD_MIN = 0.99;`）
+    只要排在真定义前面就会被抓走——那正是本函数要根除的"静默用错值"。
+    """
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"//[^\n]*", "", source)
+
+
 def _layout_constants(names: tuple[str, ...]) -> dict[str, float]:
-    """从 BloodSplatterLayout.java 里抠出 private static final 数值常数。"""
-    source = LAYOUT_JAVA.read_text(encoding="utf-8")
+    """从 BloodSplatterLayout.java 里抠出 static final 数值常数。
+
+    找不到、或找到多于一个同名定义（内部类里撞名等），都当场退出——
+    宁可跑不起来，也不能渲出一张"看着像实机其实不是"的图。
+    """
+    source = _strip_java_comments(LAYOUT_JAVA.read_text(encoding="utf-8"))
     out: dict[str, float] = {}
     for name in names:
-        match = re.search(
+        matches = re.findall(
             rf"static\s+final\s+(?:double|int)\s+{re.escape(name)}\s*=\s*(-?[\d.]+)\s*;",
             source,
         )
-        if match is None:
+        if len(matches) != 1:
             raise SystemExit(
-                f"BloodSplatterLayout.java 里找不到常数 {name} —— 预览脚本与实现已经脱节，"
-                f"先对齐再跑，别拿骗人的图做自评"
+                f"BloodSplatterLayout.java 里 {name} 匹配到 {len(matches)} 处定义（应为 1 处）"
+                f" —— 预览脚本与实现已经脱节，先对齐再跑，别拿骗人的图做自评"
             )
-        out[name] = float(match.group(1))
+        out[name] = float(matches[0])
     return out
 
 
