@@ -19,8 +19,9 @@ use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 
-/// 蛊毒·灌毒签名 recipe——单一真源，供生产 emit 与 `audio::each_signature_skill_*` 运行时消费
-/// 契约测试共同引用，避免测试另抄一份 recipe id 造成映射漂移假绿。
+/// 蛊毒·灌毒签名 recipe——单一真源，供生产 emit（`network::audio_trigger::emit_dugu_v2_audio_triggers`
+/// 读 `ReverseTriggeredEvent` 发出）与 `audio::each_signature_skill_*` 运行时消费契约测试共同引用，
+/// 避免测试另抄一份 recipe id 造成映射漂移假绿。
 pub(crate) const DUGU_POISON_SIGNATURE_RECIPE: &str = "dugu_poison_signature";
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::qi_physics::{qi_release_to_zone, reverse_burst_all_marks};
@@ -554,7 +555,9 @@ fn apply_reverse(
         },
     );
     emit_vfx(world, center, "bong:poison_mist", "#006400", 1.0, 24, 80);
-    emit_audio(world, DUGU_POISON_SIGNATURE_RECIPE, center);
+    // 签名音效不再内联发（plan-fpv-cast-av-v1 P5 emit 架构统一）：上面已发的
+    // `ReverseTriggeredEvent` 由 `network::audio_trigger::emit_dugu_v2_audio_triggers`
+    // 消费 → 发 `DUGU_POISON_SIGNATURE_RECIPE`（音源同为 `center`）。
     emit_anim(world, caster, "bong:dugu_pointing_curse");
     emit_reveal_if_needed(world, caster, target.unwrap_or(caster), now_tick);
     Ok(())

@@ -23,7 +23,6 @@ use crate::cultivation::meridian::severed::{
     MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
-use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
@@ -352,6 +351,23 @@ pub struct JiemaiBackfireBloodSpray {
     pub tick: u64,
 }
 
+/// 真脉一招施法完成 → 音效解耦事件（Pattern A）。
+///
+/// cast 逻辑只发本事件，由 `network::audio_trigger::emit_zhenmai_v2_audio_triggers`
+/// 读它、经 `ZhenmaiSkillId::audio_recipe` 映射发 `PlaySoundRecipeRequest`——
+/// 与 sword_path / baomai / woliu / tuike 同一套架构（cast 不再内联发声）。
+///
+/// **纯 cosmetic**：只承载「哪招在哪响」，不带任何战斗 / 真元语义，消费端也只发音效。
+#[derive(Debug, Clone, Copy, Event, PartialEq)]
+pub struct ZhenmaiSkillCastEvent {
+    pub caster: Entity,
+    pub skill: ZhenmaiSkillId,
+    /// **施法时刻**捕获的权威音源坐标（cast 现场的 caster 位置，无 `Position` 时为原点）。
+    /// 消费端必须无条件用它，**不得改读实时 `Position`**——那会让音源随跨帧消费与玩家后续
+    /// 移动 / 传送漂移（回归门 `zhenmai_audio_uses_cast_time_center_not_live_position`）。
+    pub cast_center: DVec3,
+}
+
 pub fn register(app: &mut App) {
     if let Some(mut dependencies) = app
         .world_mut()
@@ -370,6 +386,7 @@ pub fn register(app: &mut App) {
     app.add_event::<BackfireAmplificationActiveEvent>();
     app.add_event::<ParrySuccessEvent>();
     app.add_event::<JiemaiBackfireBloodSpray>();
+    app.add_event::<ZhenmaiSkillCastEvent>();
     app.add_event::<QiTransfer>();
     app.add_systems(
         Update,
@@ -1484,11 +1501,15 @@ fn record_practice(world: &mut bevy_ecs::world::World, caster: Entity, skill: Zh
     });
 }
 
-/// 发一招的完整 AV（PlayAnim + SpawnParticle + 音效）。
+/// 发一招的完整 AV（PlayAnim + SpawnParticle + 音效事件）。
 ///
 /// 粒子 id / 颜色 / 强度 / 数量全部由 `skill` 自持（`ZhenmaiSkillId::particle_*`），
 /// 不再由调用点各传各的——P5 去复用前 5 个调用点分别硬传 3 个共享 id，正是
 /// 「multipoint 借 parry、harden 借 neutralize」这类静默复用的滋生处。
+///
+/// 音效**不再内联发 `PlaySoundRecipeRequest`**（plan-fpv-cast-av-v1 P5 emit 架构统一）：
+/// 这里只发 `ZhenmaiSkillCastEvent`，由 `network::audio_trigger::emit_zhenmai_v2_audio_triggers`
+/// 独立系统消费（Pattern A），使「招式实际发出哪条 recipe」可被 emit-path 集成测试锁住。
 fn emit_skill_feedback(world: &mut bevy_ecs::world::World, caster: Entity, skill: ZhenmaiSkillId) {
     let origin = world
         .get::<Position>(caster)
@@ -1521,17 +1542,10 @@ fn emit_skill_feedback(world: &mut bevy_ecs::world::World, caster: Entity, skill
             duration_ticks: Some(20),
         },
     ));
-    world.send_event(PlaySoundRecipeRequest {
-        recipe_id: skill.audio_recipe().to_string(),
-        instance_id: 0,
-        pos: Some([origin.x as i32, origin.y as i32, origin.z as i32]),
-        flag: None,
-        volume_mul: 1.0,
-        pitch_shift: 0.0,
-        recipient: AudioRecipient::Radius {
-            origin,
-            radius: 32.0,
-        },
+    world.send_event(ZhenmaiSkillCastEvent {
+        caster,
+        skill,
+        cast_center: origin,
     });
 }
 
@@ -1544,6 +1558,7 @@ mod tests {
     use super::*;
     use crate::combat::components::{WoundKind, Wounds};
     use crate::cultivation::components::{ContamSource, MeridianSystem};
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
     use crate::skill::config::SkillConfig;
     use valence::prelude::{App, Events, GameMode};
 
@@ -1572,6 +1587,7 @@ mod tests {
         app.add_event::<MeridianSeveredEvent>();
         app.add_event::<MeridianSeveredVoluntaryEvent>();
         app.add_event::<BackfireAmplificationActiveEvent>();
+        app.add_event::<ZhenmaiSkillCastEvent>();
         app
     }
 
@@ -2637,6 +2653,160 @@ mod tests {
             crate::network::meridian_severed_emit::SEVER_FLASH_PARTICLE_ID,
             "主动断脉应发专属 id;被动断脉叙事才继续用 jiemai_sever_flash"
         );
+    }
+
+    /// P5 emit 架构统一 —— **端到端 emit-path 门**：真跑一次 `resolve_sever_chain` 施法，
+    /// 再跑真实音效系统 `emit_zhenmai_v2_audio_triggers`，断言实发的
+    /// `PlaySoundRecipeRequest.recipe_id` == 签名 `zhenmai_sever_crack`
+    /// （recipe id 从生产映射 `ZhenmaiSkillId::audio_recipe` 取，不另抄）。
+    ///
+    /// 锁住整条链：cast 不发 `ZhenmaiSkillCastEvent` / 音效系统没读它 / 映射串味，任一处断都撞红。
+    #[test]
+    fn sever_chain_cast_emits_signature_recipe_end_to_end() {
+        use crate::audio::implementation::AudioImplementationDedup;
+        use crate::network::audio_trigger::emit_zhenmai_v2_audio_triggers;
+
+        let mut app = app_with_events();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_systems(Update, emit_zhenmai_v2_audio_triggers);
+        let entity = caster(&mut app, Realm::Void, 200.0);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Position::new([12.0, 64.0, -8.0]));
+        configure_sever_chain(
+            &mut app,
+            entity,
+            MeridianId::Du,
+            ZhenmaiAttackKind::PhysicalCarrier,
+        );
+
+        assert!(matches!(
+            resolve_sever_chain(app.world_mut(), entity, 0, None),
+            CastResult::Started { .. }
+        ));
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec![ZhenmaiSkillId::SeverChain.audio_recipe()],
+            "断脉施法应经真实 emit 系统实发签名 `{}`（不多不少一条），实际 {recipes:?}",
+            ZhenmaiSkillId::SeverChain.audio_recipe()
+        );
+        assert_eq!(
+            emitted[0].pos,
+            Some([12, 64, -8]),
+            "音源应落在施法时刻的施法者位置（事件 center）"
+        );
+    }
+
+    /// **拒绝路径必须无声**（PR #1262 review 补门）：真元不足被 `Rejected` 的施法，
+    /// 既不许发 `ZhenmaiSkillCastEvent`，跑完真实音效系统后也不许有任何 `PlaySoundRecipeRequest`。
+    ///
+    /// 「起手失败却响了招式音」是玩家可感知的错误反馈；只测成功路径锁不住它。
+    #[test]
+    fn rejected_cast_emits_no_audio_and_no_cast_event() {
+        use crate::audio::implementation::AudioImplementationDedup;
+        use crate::network::audio_trigger::emit_zhenmai_v2_audio_triggers;
+
+        let mut app = app_with_events();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_systems(Update, emit_zhenmai_v2_audio_triggers);
+        // 真元 3.0 < PARRY_QI_COST(8.0) —— 复用既有 `resolve_parry_rejects_insufficient_qi` 的前置
+        let entity = caster(&mut app, Realm::Induce, 3.0);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Position::new([12.0, 64.0, -8.0]));
+
+        assert_eq!(
+            resolve_parry(app.world_mut(), entity, 0, None),
+            CastResult::Rejected {
+                reason: CastRejectReason::QiInsufficient
+            }
+        );
+        app.update();
+
+        let cast_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ZhenmaiSkillCastEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            cast_events.is_empty(),
+            "被拒绝的施法不得发 ZhenmaiSkillCastEvent，实际 {cast_events:?}"
+        );
+        let recipes: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .map(|event| event.recipe_id)
+            .collect();
+        assert!(
+            recipes.is_empty(),
+            "被拒绝的施法（真元不足）不得有任何招式音，实际 {recipes:?}"
+        );
+    }
+
+    /// 五招施法各自发出带本招 id 的 `ZhenmaiSkillCastEvent`（音效解耦事件不串味）——
+    /// 与 `emit_zhenmai_v2_audio_triggers` 的 `zhenmai_skills_emit_their_mapped_recipes` 合起来
+    /// 覆盖「每招 → 各自 recipe」全链。
+    #[test]
+    fn each_skill_cast_sends_its_own_audio_cast_event() {
+        /// cast 入口签名（与 `SkillRegistry::register` 收的函数指针同型）。
+        type ResolveFn = fn(&mut bevy_ecs::world::World, Entity, u8, Option<Entity>) -> CastResult;
+
+        let cases: [(ResolveFn, ZhenmaiSkillId); 5] = [
+            (resolve_parry, ZhenmaiSkillId::Parry),
+            (resolve_neutralize, ZhenmaiSkillId::Neutralize),
+            (resolve_multipoint, ZhenmaiSkillId::MultiPoint),
+            (resolve_harden, ZhenmaiSkillId::HardenMeridian),
+            (resolve_sever_chain, ZhenmaiSkillId::SeverChain),
+        ];
+        for (resolve, expected) in cases {
+            let mut app = app_with_events();
+            let entity = caster(&mut app, Realm::Void, 200.0);
+            if expected == ZhenmaiSkillId::SeverChain {
+                configure_sever_chain(
+                    &mut app,
+                    entity,
+                    MeridianId::Du,
+                    ZhenmaiAttackKind::PhysicalCarrier,
+                );
+            }
+            if expected == ZhenmaiSkillId::Neutralize {
+                app.world_mut().entity_mut(entity).insert(Contamination {
+                    entries: vec![ContamSource {
+                        amount: 10.0,
+                        color: ColorKind::Insidious,
+                        meridian_id: Some(MeridianId::Lung.channel_id()),
+                        attacker_id: None,
+                        introduced_at: 1,
+                    }],
+                });
+            }
+            assert!(
+                matches!(
+                    resolve(app.world_mut(), entity, 0, None),
+                    CastResult::Started { .. }
+                ),
+                "{expected:?} 应能起手（测试环境前置不足会让本断言先撞红）"
+            );
+            let events = app.world().resource::<Events<ZhenmaiSkillCastEvent>>();
+            let skills: Vec<_> = events
+                .iter_current_update_events()
+                .map(|event| event.skill)
+                .collect();
+            assert_eq!(
+                skills,
+                vec![expected],
+                "{expected:?} 施法应发且只发一条本招 ZhenmaiSkillCastEvent，实际 {skills:?}"
+            );
+        }
     }
 
     #[test]
