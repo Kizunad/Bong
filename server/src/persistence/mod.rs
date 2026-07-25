@@ -10461,6 +10461,7 @@ mod persistence_tests {
             idle_ticks: 100,
             move_ticks: 70,
             dash_ticks: 29,
+            had_qualifying_movement: false,
         };
         let cultivation = Cultivation::default();
         let meridians = crate::cultivation::components::MeridianSystem::default();
@@ -10559,6 +10560,7 @@ mod persistence_tests {
             idle_ticks: 100,
             move_ticks: 70,
             dash_ticks: 29,
+            had_qualifying_movement: false,
         };
         let cultivation = Cultivation::default();
         let meridians = crate::cultivation::components::MeridianSystem::default();

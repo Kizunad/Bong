@@ -3509,6 +3509,7 @@ mod tests {
             idle_ticks: 17,
             move_ticks: 23,
             dash_ticks: 31,
+            had_qualifying_movement: false,
         };
         let entity = app
             .world_mut()
@@ -4562,6 +4563,7 @@ mod tests {
                 idle_ticks: 30,
                 move_ticks: 40,
                 dash_ticks: 50,
+                had_qualifying_movement: false,
             },
         ));
 
@@ -5393,6 +5395,7 @@ mod tests {
                     idle_ticks: 20,
                     move_ticks: 30,
                     dash_ticks: 40,
+                    had_qualifying_movement: false,
                 },
             ))
             .id();

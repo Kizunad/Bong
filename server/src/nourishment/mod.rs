@@ -400,6 +400,7 @@ mod tests {
                 idle_ticks: 0,
                 move_ticks: 1,
                 dash_ticks: 0,
+                had_qualifying_movement: true,
             },
             "a qualifying MovementEvent must count as movement in the same production update"
         );
@@ -464,6 +465,7 @@ mod tests {
                 idle_ticks: 0,
                 move_ticks: 0,
                 dash_ticks: 1,
+                had_qualifying_movement: false,
             },
             "nourishment must run after both movement systems so the dash starting tick counts as dash"
         );

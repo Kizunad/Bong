@@ -1868,6 +1868,7 @@ mod tests {
             idle_ticks: 90,
             move_ticks: 70,
             dash_ticks: 39,
+            had_qualifying_movement: false,
         };
         assert_eq!(
             persisted_activity_window.total_ticks(),
@@ -2936,6 +2937,7 @@ mod tests {
                     idle_ticks: 40,
                     move_ticks: 50,
                     dash_ticks: 60,
+                    had_qualifying_movement: false,
                 },
             },
             Case {
@@ -2971,6 +2973,7 @@ mod tests {
                     idle_ticks: 0,
                     move_ticks: 61,
                     dash_ticks: 0,
+                    had_qualifying_movement: false,
                 },
             },
             Case {
@@ -2991,6 +2994,7 @@ mod tests {
                     idle_ticks: 198,
                     move_ticks: 1,
                     dash_ticks: 0,
+                    had_qualifying_movement: false,
                 },
             },
             Case {
@@ -3263,6 +3267,7 @@ mod tests {
             idle_ticks: 10,
             move_ticks: 20,
             dash_ticks: 30,
+            had_qualifying_movement: false,
         };
 
         crate::persistence::persist_player_cultivation_bundle_with_nourishment(

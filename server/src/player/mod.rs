@@ -1280,6 +1280,7 @@ mod tests {
             idle_ticks: 100,
             move_ticks: 60,
             dash_ticks: 39,
+            had_qualifying_movement: false,
         };
         assert_eq!(
             saved_activity.total_ticks(),
@@ -1544,6 +1545,7 @@ mod tests {
             idle_ticks: 100,
             move_ticks: 60,
             dash_ticks: 39,
+            had_qualifying_movement: false,
         };
         assert_eq!(
             saved_activity.total_ticks(),
@@ -1986,6 +1988,7 @@ mod tests {
             idle_ticks: 80,
             move_ticks: 70,
             dash_ticks: 49,
+            had_qualifying_movement: false,
         };
         assert_eq!(
             saved_activity.total_ticks(),
