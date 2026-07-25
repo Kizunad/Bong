@@ -15,6 +15,10 @@ use crate::cultivation::components::{Cultivation, MeridianSystem};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tick::CultivationClock;
+
+/// 易形（形态变换）签名 recipe——单一真源，供生产 emit 与 `audio::each_signature_skill_*`
+/// 运行时消费契约测试共同引用，避免测试另抄一份 recipe id 造成映射漂移假绿。
+pub(crate) const YIXING_CAST_RECIPE: &str = "yixing_cast";
 use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
@@ -243,7 +247,7 @@ fn emit_yixing_av(
 
     if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
         events.send(PlaySoundRecipeRequest {
-            recipe_id: "yixing_cast".to_string(),
+            recipe_id: YIXING_CAST_RECIPE.to_string(),
             instance_id: 0,
             pos: None,
             flag: None,

@@ -673,7 +673,7 @@ pub fn emit_baomai_v3_audio_triggers(
     }
 }
 
-fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
+pub(crate) fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
     match skill {
         // 崩拳走专属配方（穿透爆发的形意拳直拳），不再借用通用 baomai_hit_heavy 槽。
         BaomaiSkillId::BengQuan => "beng_quan",
@@ -715,14 +715,17 @@ pub fn emit_sword_path_audio_triggers(
     }
 }
 
-fn sword_path_recipe_for_skill(skill: SwordPathSkillId) -> &'static str {
+pub(crate) fn sword_path_recipe_for_skill(skill: SwordPathSkillId) -> &'static str {
     match skill {
         SwordPathSkillId::CondenseEdge => "sword_condense_edge",
         SwordPathSkillId::QiSlash => "sword_qi_slash",
         SwordPathSkillId::Resonance => "sword_resonance",
         SwordPathSkillId::Manifest => "sword_manifest_summon",
-        // 蓄力沿用 infuse（注剑蓄势）；释放用 manifest_strike（开天劈击）。
-        SwordPathSkillId::HeavenGateCharge => "sword_infuse",
+        // 蓄力走专属 `heaven_gate_charge`（复用 release 的 `bong:skill.sword_path.heaven_gate`
+        // 签名 ogg 作 pitch 0.72/volume 0.4 前兆层 + amethyst 铺底）；释放用 manifest_strike
+        // （开天劈击）。**不能复用共享的 `sword_infuse`**——那被基础剑招（sword_basics）也消费，
+        // 塞签名会泄漏到普通注剑。
+        SwordPathSkillId::HeavenGateCharge => "heaven_gate_charge",
         SwordPathSkillId::HeavenGateRelease => "sword_manifest_strike",
     }
 }
@@ -737,6 +740,10 @@ fn sword_path_audio_flag(skill: SwordPathSkillId) -> &'static str {
         SwordPathSkillId::HeavenGateRelease => "sword_path_heaven_gate_release",
     }
 }
+
+/// 诱饵分形（回声）签名 recipe——单一真源，供生产 emit 与 `audio::each_signature_skill_*`
+/// 运行时消费契约测试共同引用，避免测试另抄一份 recipe id 造成映射漂移假绿。
+pub(crate) const ANQI_ECHO_FRACTAL_RECIPE: &str = "anqi_echo_fractal";
 
 /// 暗器六招 cast → `PlaySoundRecipeRequest`，引用 `audio_recipes/anqi_*.json`
 /// （全部复用 vanilla 音色分层，无新音频文件）。
@@ -839,10 +846,10 @@ pub fn emit_anqi_audio_triggers(
             .unwrap_or_default();
         emit_play(
             &mut audio,
-            "anqi_echo_fractal",
+            ANQI_ECHO_FRACTAL_RECIPE,
             event.caster,
             origin,
-            Some("anqi_echo_fractal".to_string()),
+            Some(ANQI_ECHO_FRACTAL_RECIPE.to_string()),
             1.0,
             0.0,
         );
@@ -2251,7 +2258,7 @@ mod tests {
                 "sword_qi_slash",
                 "sword_resonance",
                 "sword_manifest_summon",
-                "sword_infuse",
+                "heaven_gate_charge",
                 "sword_manifest_strike",
             ],
             "六个 cast 阶段（含天门 charge/release）各应 emit 其专属配方"

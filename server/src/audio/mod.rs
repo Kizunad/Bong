@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            270,
+            271,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -221,7 +221,11 @@ mod tests {
              劈低频/刺高频差异化，无新音频文件) \
              plus 1 yixing_cast recipe (plan-race-system-v1 PR-5b 易形施法音效，\
              evoker.prepare_wololo + illusioner.mirror_move + amethyst_block.chime 三层\
-             变形类音色，无新音频文件)"
+             变形类音色，无新音频文件) \
+             plus 1 heaven_gate_charge recipe (plan-fpv-cast-av-v1 P4 天门蓄力专属配方——\
+             复用 release 的 bong:skill.sword_path.heaven_gate 签名 ogg 作 pitch 0.72/vol 0.4 \
+             前兆 L0 + amethyst 铺底；蓄力不再借用 sword_basics 共享的 sword_infuse，避免签名\
+             泄漏到普通注剑)"
         );
         assert!(
             registry.get("fauna_mundane_wither").is_some(),
@@ -604,46 +608,91 @@ mod tests {
             }
         }
         assert!(
-            bong_refs >= 7,
-            "server recipe 应至少含 7 条 bong: signature 引用（heaven_gate 在 client 侧另算），实际 {bong_refs}"
+            bong_refs >= 9,
+            "server recipe 应至少含 9 条 bong: signature L0 引用（9 招签名：sword_path.heaven_gate \
+             release + charge 前兆均在 server 侧、woliu/zhenmai/baomai/dugu/tuike/anqi/morph 各一），\
+             实际 {bong_refs}"
         );
     }
 
-    /// **运行时消费** pin：逐项锁定「signature 招式**实际 emit** 的 recipe」的 L0 主层是其 `bong:` 事件
-    /// 且 pitch 复位 1.0。**这是防 P4 那类 bug 的关键回归门**——P4 曾把 signature 事件换进「同名但招式
-    /// 不消费」的死 recipe（heaven_gate 换了 `heaven_gate_release` 但招式实际播 `sword_manifest_strike`；
-    /// tuike 换了 `tuike_signature` 但招式实际播 `shed_skin_burst`），静态「recipe 文件引用 bong:」测试
-    /// 假绿、实机零签名音。故本表的 recipe id 必须是**代码里招式真正 emit 的那个**（来源逐条标注），
-    /// 改动招式→recipe 映射或把这些 recipe 退回 vanilla 都会撞红。
+    /// **运行时消费** pin：逐项锁定「signature 招式**实际 emit** 的 recipe」的 L0 主层是其 `bong:`
+    /// 事件、且 pitch 符合设计（release/常规招原速 1.0；天门蓄力前兆压调 0.72）。
     ///
-    /// 来源（招式 → 实际 emit 的 recipe id）：
-    /// - sword_path.heaven_gate(release) → `sword_manifest_strike`（`network::audio_trigger::sword_path_recipe_for_skill`）
-    /// - woliu.void_core → `woliu_void_core`（`combat::woliu_v2::skills`）
-    /// - zhenmai.sever_chain → `zhenmai_sever_crack`（`combat::zhenmai_v2`）
-    /// - baomai.full_power_release → `baomai_signature`（`network::audio_trigger::baomai_recipe_for_skill`）
-    /// - dugu.infuse_poison → `dugu_poison_signature`（`combat::dugu_v2::skills`）
-    /// - tuike.shed → `shed_skin_burst`（`combat::tuike_v2::events`）
-    /// - anqi.echo_fractal → `anqi_echo_fractal`（`network::audio_trigger`）
-    /// - morph.yixing → `yixing_cast`（`body_plan::morph`）
+    /// **关键——recipe id 一律从生产映射取，测试内不另抄一份表**：每招调用**真实映射函数**
+    /// （`sword_path_recipe_for_skill` / `baomai_recipe_for_skill` / `ZhenmaiSkillId::audio_recipe`）
+    /// 或引用生产 `pub(crate) const` 单一真源（`WOLIU_VOID_CORE_RECIPE` / `SHED_SKIN_BURST_RECIPE` /
+    /// `DUGU_POISON_SIGNATURE_RECIPE` / `YIXING_CAST_RECIPE` / `ANQI_ECHO_FRACTAL_RECIPE`）——都是生产
+    /// emit 路径真正消费的同一个值。于是：
+    /// - 招式改播别的 recipe（映射函数/const 改指向）→ 本测试跟着查那个新 recipe，若它没接 `bong:`
+    ///   主层就撞红；
+    /// - 目标 recipe 退回 vanilla（L0 不再是 `bong:`）→ 撞红。
+    ///
+    /// 这正是防 P4 那类 bug 的回归门：P4 曾把签名塞进「同名但招式**不消费**」的死 recipe
+    /// （heaven_gate release 塞 `heaven_gate_release` 但招式实际播 `sword_manifest_strike`；蓄力塞
+    /// `heaven_gate_charge_2s` 但招式实际播专属 `heaven_gate_charge`；tuike 塞 `tuike_signature` 但招式
+    /// 实际播 `shed_skin_burst`），静态「recipe 文件引用 bong:」测试假绿、实机零签名音。旧版本把 recipe
+    /// id 手写死同样假绿（映射漂移检测不到），故此处务必从生产入口取 id。
     #[test]
     fn each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event() {
+        use crate::body_plan::morph::YIXING_CAST_RECIPE;
+        use crate::combat::baomai_v3::BaomaiSkillId;
+        use crate::combat::dugu_v2::skills::DUGU_POISON_SIGNATURE_RECIPE;
+        use crate::combat::tuike_v2::events::SHED_SKIN_BURST_RECIPE;
+        use crate::combat::woliu_v2::skills::WOLIU_VOID_CORE_RECIPE;
+        use crate::combat::zhenmai_v2::ZhenmaiSkillId;
+        use crate::network::audio_trigger::{
+            baomai_recipe_for_skill, sword_path_recipe_for_skill, ANQI_ECHO_FRACTAL_RECIPE,
+        };
+        use crate::sword_path::av_event::SwordPathSkillId;
         use std::path::Path;
 
         let recipe_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/audio/recipes");
-        let pins = [
-            ("sword_manifest_strike", "bong:skill.sword_path.heaven_gate"),
-            ("woliu_void_core", "bong:skill.woliu.void_core"),
-            ("zhenmai_sever_crack", "bong:skill.zhenmai.sever_chain"),
-            ("baomai_signature", "bong:skill.baomai.full_power_release"),
-            ("dugu_poison_signature", "bong:skill.dugu.infuse_poison"),
-            ("shed_skin_burst", "bong:skill.tuike.shed"),
-            ("anqi_echo_fractal", "bong:skill.anqi.echo_fractal"),
-            ("yixing_cast", "bong:skill.morph.yixing"),
+        // (从生产映射取到的 recipe id, 期望 L0 bong: 事件, 期望 L0 pitch)
+        let pins: [(&str, &str, f64); 9] = [
+            (
+                sword_path_recipe_for_skill(SwordPathSkillId::HeavenGateRelease),
+                "bong:skill.sword_path.heaven_gate",
+                1.0,
+            ),
+            (
+                // 天门蓄力前兆：复用 release 的签名 ogg，pitch 0.72 压调作预示（专属 heaven_gate_charge）。
+                sword_path_recipe_for_skill(SwordPathSkillId::HeavenGateCharge),
+                "bong:skill.sword_path.heaven_gate",
+                0.72,
+            ),
+            (
+                baomai_recipe_for_skill(BaomaiSkillId::FullPowerRelease),
+                "bong:skill.baomai.full_power_release",
+                1.0,
+            ),
+            (
+                ZhenmaiSkillId::SeverChain.audio_recipe(),
+                "bong:skill.zhenmai.sever_chain",
+                1.0,
+            ),
+            (WOLIU_VOID_CORE_RECIPE, "bong:skill.woliu.void_core", 1.0),
+            (SHED_SKIN_BURST_RECIPE, "bong:skill.tuike.shed", 1.0),
+            (
+                DUGU_POISON_SIGNATURE_RECIPE,
+                "bong:skill.dugu.infuse_poison",
+                1.0,
+            ),
+            (YIXING_CAST_RECIPE, "bong:skill.morph.yixing", 1.0),
+            (
+                ANQI_ECHO_FRACTAL_RECIPE,
+                "bong:skill.anqi.echo_fractal",
+                1.0,
+            ),
         ];
-        for (recipe_id, expected_event) in pins {
+        for (recipe_id, expected_event, expected_pitch) in pins {
             let path = recipe_dir.join(format!("{recipe_id}.json"));
-            let raw = std::fs::read_to_string(&path)
-                .unwrap_or_else(|error| panic!("读 {} 失败: {error}", path.display()));
+            let raw = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                panic!(
+                    "读生产映射取到的 signature recipe `{recipe_id}` 失败 {}: {error}\
+                     （招式→recipe 映射指向了一个不存在的 recipe 文件）",
+                    path.display()
+                )
+            });
             let recipe: serde_json::Value = serde_json::from_str(&raw).expect("recipe 合法 JSON");
             let layers = recipe["layers"].as_array().expect("recipe 应有 layers");
             let l0 = layers
@@ -652,17 +701,18 @@ mod tests {
             assert_eq!(
                 l0.get("sound").and_then(|s| s.as_str()),
                 Some(expected_event),
-                "signature recipe {recipe_id} 的 **L0 主层** sound 应 == {expected_event}\
-                 （plan 要求主层 swap，非把签名挪到铺底层——挪走则声音天花板未打开却假绿）"
+                "招式实际 emit 的 recipe `{recipe_id}`（生产映射取得）的 **L0 主层** sound 应 == \
+                 {expected_event}——若签名被挪到铺底层 / recipe 退回 vanilla / 映射改指向没接签名的 \
+                 recipe，实机零签名音，此断言即该回归门"
             );
             let pitch = l0
                 .get("pitch")
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or_else(|| panic!("signature recipe {recipe_id} 的 L0 应有 pitch"));
             assert!(
-                (pitch - 1.0).abs() < 1e-9,
-                "signature recipe {recipe_id} 的 L0 pitch 应复位 1.0（plan 要求；伪装音靠叠 pitch，\
-                 签名真音须原速），实际 {pitch}"
+                (pitch - expected_pitch).abs() < 1e-9,
+                "signature recipe {recipe_id} 的 L0 pitch 应 == {expected_pitch}\
+                 （release/常规招原速 1.0；天门蓄力前兆压调 0.72），实际 {pitch}"
             );
         }
     }

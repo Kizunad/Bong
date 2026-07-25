@@ -12,6 +12,11 @@ use crate::combat::CombatClock;
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
 };
+
+/// 涡流·虚渊核签名 recipe——单一真源，供生产 emit（招式映射 + 视觉规格）与
+/// `audio::each_signature_skill_*` 运行时消费契约测试共同引用，避免测试另抄一份 recipe id
+/// 造成映射漂移假绿。
+pub(crate) const WOLIU_VOID_CORE_RECIPE: &str = "woliu_void_core";
 use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent, SkillMeridianDependencies,
@@ -1548,7 +1553,7 @@ pub(super) fn woliu_av_mapping(skill: WoliuSkillId) -> (&'static str, &'static s
         ),
         WoliuSkillId::VoidCore => (
             "bong:woliu_void_core_collapse",
-            "woliu_void_core",
+            WOLIU_VOID_CORE_RECIPE,
             "bong:woliu_void_core",
         ),
         _ => (
@@ -2013,7 +2018,7 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
         WoliuSkillId::VoidCore => WoliuSkillVisual {
             animation_id: "bong:woliu_void_core",
             particle_id: "bong:woliu_void_core_collapse",
-            sound_recipe_id: "woliu_void_core",
+            sound_recipe_id: WOLIU_VOID_CORE_RECIPE,
             hud_hint: "void_core",
             icon_texture: "bong:textures/gui/skill/woliu_void_core.png",
         },
