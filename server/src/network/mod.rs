@@ -884,6 +884,9 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         audio_trigger::stop_low_hp_heartbeat_on_revive
+            // 排在低血上沿系统之后：同一帧里先让血量记账落定，再由重生收尾清账 + 发 stop，
+            // 顺序确定（否则两系统争 AudioTriggerState 的先后是 Bevy ambiguous order）。
+            .after(audio_trigger::emit_player_state_audio_triggers)
             .before(audio_event_emit::emit_audio_stop_payloads),
     );
     app.add_systems(
