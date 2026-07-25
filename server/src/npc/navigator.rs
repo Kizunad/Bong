@@ -814,10 +814,7 @@ fn resolve_ground_y_from_chunk_range(
     let max_y = min_y + layer.height() as i32 - 1;
 
     let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
-    let chunk = layer.chunk(chunk_pos)?;
-
-    let lx = wx.rem_euclid(16) as u32;
-    let lz = wz.rem_euclid(16) as u32;
+    layer.chunk(chunk_pos)?;
 
     let scan_top = top.min(max_y);
     let scan_bottom = bottom.max(min_y);
@@ -825,48 +822,63 @@ fn resolve_ground_y_from_chunk_range(
         return None;
     }
 
-    // From scan_top downward, find first solid block with air/passable above.
+    // From scan_top downward, find the first safe two-block footing.
     for y in (scan_bottom..=scan_top).rev() {
-        let local_y = (y - min_y) as u32;
-        let block = chunk.block_state(lx, local_y, lz);
-        if is_solid_for_ground(block) {
-            // Verify there's room to stand (feet + head above must be passable).
-            let above1 = if y < max_y {
-                chunk.block_state(lx, (y + 1 - min_y) as u32, lz)
-            } else {
-                BlockState::AIR
-            };
-            let above2 = if y + 1 < max_y {
-                chunk.block_state(lx, (y + 2 - min_y) as u32, lz)
-            } else {
-                BlockState::AIR
-            };
-            if !is_solid_for_ground(above1) && !is_solid_for_ground(above2) {
-                return Some(y);
-            }
+        if is_safe_ground_landing_at(wx, wz, y, layer) {
+            return Some(y);
         }
     }
 
     None
 }
 
+/// Whether `ground_y` is a safe NPC footing in a loaded layer.
+///
+/// The support block must stand on solid ground, while both feet and head cells
+/// must be readable, non-liquid, and clear. All three cells must be within the
+/// layer, so callers cannot treat missing headroom at its edge as air.
+pub(crate) fn is_safe_ground_landing_at(
+    wx: i32,
+    wz: i32,
+    ground_y: i32,
+    layer: &ChunkLayer,
+) -> bool {
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
+    let Some(chunk) = layer.chunk(chunk_pos) else {
+        return false;
+    };
+    let local_x = wx.rem_euclid(16) as u32;
+    let local_z = wz.rem_euclid(16) as u32;
+    let block_at = |world_y: i32| {
+        (min_y..=max_y)
+            .contains(&world_y)
+            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
+    };
+    let (Some(support), Some(feet), Some(head)) = (
+        block_at(ground_y),
+        block_at(ground_y + 1),
+        block_at(ground_y + 2),
+    ) else {
+        return false;
+    };
+
+    is_solid_for_ground(support) && is_clear_for_ground(feet) && is_clear_for_ground(head)
+}
+
 /// Whether a block counts as "solid ground" that an NPC can stand on.
 /// Excludes passthrough blocks (grass, flowers), fluids, and leaves
 /// (so NPCs don't try to walk on tree canopies).
 fn is_solid_for_ground(block: BlockState) -> bool {
-    if block == BlockState::AIR || block == BlockState::CAVE_AIR {
-        return false;
-    }
-    if block == BlockState::WATER || block == BlockState::LAVA {
-        return false;
-    }
-    if is_passthrough_block(block) {
-        return false;
-    }
-    if is_leaf_block(block) {
-        return false;
-    }
-    true
+    block.blocks_motion()
+        && !block.is_liquid()
+        && !is_passthrough_block(block)
+        && !is_leaf_block(block)
+}
+
+fn is_clear_for_ground(block: BlockState) -> bool {
+    !block.blocks_motion() && !block.is_liquid()
 }
 
 // ---------------------------------------------------------------------------
@@ -1371,6 +1383,125 @@ mod tests {
         }
         app.add_systems(Update, navigator_tick_system);
         (app, layer_entity)
+    }
+
+    fn make_landing_layer(blocks: &[(i32, i32, i32, BlockState)]) -> (App, Entity) {
+        use valence::prelude::{Chunk, UnloadedChunk};
+        use valence::testing::ScenarioSingleClient;
+
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        let layer_entity = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<ChunkLayer>>();
+            q.iter(world).next().unwrap()
+        };
+        let (min_y, height) = {
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            (layer.min_y(), layer.height())
+        };
+        let mut chunks = HashMap::new();
+        for &(world_x, world_y, world_z, block) in blocks {
+            let chunk = chunks
+                .entry((world_x.div_euclid(16), world_z.div_euclid(16)))
+                .or_insert_with(|| UnloadedChunk::with_height(height));
+            chunk.set_block_state(
+                world_x.rem_euclid(16) as u32,
+                (world_y - min_y) as u32,
+                world_z.rem_euclid(16) as u32,
+                block,
+            );
+        }
+        let mut layer = app.world_mut().get_mut::<ChunkLayer>(layer_entity).unwrap();
+        for ((chunk_x, chunk_z), chunk) in chunks {
+            layer.insert_chunk([chunk_x, chunk_z], chunk);
+        }
+        (app, layer_entity)
+    }
+
+    #[test]
+    fn exact_landing_helper_and_scan_share_safety_contract() {
+        use valence::prelude::{PropName, PropValue};
+
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        for (case, extra_blocks, exact_safe, scanned_ground_y) in [
+            ("solid support", vec![], true, Some(66)),
+            (
+                "passthrough support",
+                vec![(66, BlockState::GRASS)],
+                false,
+                None,
+            ),
+            (
+                "leaf support",
+                vec![(66, BlockState::OAK_LEAVES)],
+                false,
+                None,
+            ),
+            (
+                "default water support",
+                vec![(66, BlockState::WATER)],
+                false,
+                None,
+            ),
+            (
+                "water property support",
+                vec![(66, water_level_one)],
+                false,
+                None,
+            ),
+            ("solid feet", vec![(67, BlockState::STONE)], false, Some(67)),
+            ("solid head", vec![(68, BlockState::STONE)], false, Some(68)),
+            (
+                "default water feet",
+                vec![(67, BlockState::WATER)],
+                false,
+                None,
+            ),
+            (
+                "water property head",
+                vec![(68, water_level_one)],
+                false,
+                None,
+            ),
+            (
+                "passthrough feet",
+                vec![(67, BlockState::GRASS)],
+                true,
+                Some(66),
+            ),
+        ] {
+            let mut blocks = vec![(-1, 66, 17, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((-1, y, 17, block));
+            }
+            let (app, layer_entity) = make_landing_layer(&blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert_eq!(
+                is_safe_ground_landing_at(-1, 17, 66, layer),
+                exact_safe,
+                "{case}: exact landing helper must classify support/feet/head consistently"
+            );
+            assert_eq!(
+                resolve_ground_y_from_chunk(-1, 17, 80, Some(layer)),
+                scanned_ground_y,
+                "{case}: standard scan must only return a Y accepted by the exact landing helper"
+            );
+        }
+    }
+
+    #[test]
+    fn exact_landing_helper_rejects_layer_edges_and_missing_chunk() {
+        let (app, layer_entity) = make_landing_layer(&[(1, 319, 2, BlockState::STONE)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let max_y = layer.min_y() + layer.height() as i32 - 1;
+
+        assert!(!is_safe_ground_landing_at(1, 2, max_y, layer));
+        assert!(!is_safe_ground_landing_at(1, 2, max_y - 1, layer));
+        assert!(!is_safe_ground_landing_at(32, 2, 66, layer));
     }
 
     fn spawn_idle_npc(app: &mut App, y: f64) -> Entity {

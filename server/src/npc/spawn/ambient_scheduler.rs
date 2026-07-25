@@ -37,8 +37,8 @@ use std::marker::PhantomData;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned, Entity,
-    Position, Query, Res, ResMut, Resource, Update, With, Without,
+    bevy_ecs, App, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned, Entity, Position,
+    Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
@@ -47,7 +47,7 @@ use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
-use crate::npc::navigator::resolve_ground_y_from_chunk;
+use crate::npc::navigator::{is_safe_ground_landing_at, resolve_ground_y_from_chunk};
 use crate::npc::spawn::PoissonSpawnSampler;
 use crate::npc::spawn_rat::{spawn_rat_npc_at, RatBlackboard};
 use crate::qi_physics::{QiAccountId, WorldQiAccount};
@@ -457,33 +457,7 @@ fn loaded_ambient_landing_is_safe(
     ground_y: i32,
     layer: &ChunkLayer,
 ) -> bool {
-    let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
-    let Some(chunk) = layer.chunk(chunk_pos) else {
-        return false;
-    };
-    let min_y = layer.min_y();
-    let max_y = min_y + layer.height() as i32 - 1;
-    let local_x = world_x.rem_euclid(16) as u32;
-    let local_z = world_z.rem_euclid(16) as u32;
-    let block_at = |world_y: i32| {
-        (min_y..=max_y)
-            .contains(&world_y)
-            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
-    };
-    let (Some(support), Some(feet), Some(head)) = (
-        block_at(ground_y),
-        block_at(ground_y + 1),
-        block_at(ground_y + 2),
-    ) else {
-        return false;
-    };
-
-    support.blocks_motion()
-        && !support.is_liquid()
-        && !feet.blocks_motion()
-        && !feet.is_liquid()
-        && !head.blocks_motion()
-        && !head.is_liquid()
+    is_safe_ground_landing_at(world_x, world_z, ground_y, layer)
 }
 
 fn resolve_ambient_runtime_ground(
