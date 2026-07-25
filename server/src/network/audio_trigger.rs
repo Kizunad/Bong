@@ -2404,17 +2404,19 @@ mod tests {
         assert_eq!(plays[0].recipe_id, "heartbeat_low_hp");
     }
 
-    /// 常数 pin：重生血量比例不得低于心跳阈值，否则重生瞬间又会自动起一条心跳
-    /// （即便 loop 生命周期正确，玩家听到的仍是「重生就有受伤音」）。
-    /// 更严的同族 pin：不只比常数，而是**照生产的 f32 算术**把重生血量算出来再过判据。
+    /// 比常数 pin 更严的同族 pin：**照生产的 f32 算术**把重生血量算出来再过判据。
     ///
     /// 生产链路是 `health_current = (health_max * REVIVE_HEALTH_FRACTION).max(1.0)`
     /// （`combat::lifecycle::revive_lifecycle`）→ `hp_ratio = health_current / health_max.max(1.0)`
     /// （本文件的心跳系统）。f32 舍入让「比例常数 >= 阈值」并不能推出「算出来的商 >= 阈值」：
-    /// health_max = 20.5 / 41.0 / 82.0 等取值下商会落到 0.19999999 < 0.2，重生那一刻又自动
-    /// 起一条含 `entity.player.hurt` 层的心跳。今天玩家 health_max 恒为 `Wounds::default()`
-    /// 的 100.0（100 × 0.2 = 20.0，商恰好 0.2）所以安全；这条 pin 就是为了「以后按境界/属性
-    /// 缩放最大血量」时立刻撞红，而不是让玩家先在实机听到重生受伤音。
+    /// health_max = 20.5 / 41.0 / 82.0 等取值下商会落到 0.19999999 < 0.2（实算复核过 41.0：
+    /// `41 × 0.2f32` 舍入成 8.19999980926，除 41 得 0.199999995），重生那一刻又自动起一条含
+    /// `entity.player.hurt` 层的心跳。今天玩家 health_max 恒为 `Wounds::default()` 的 100.0
+    /// （100 × 0.2 = 20.0，商恰好 0.2）所以安全。
+    ///
+    /// **覆盖边界（别过度指望这条）**：它只盯 `Wounds::default()` 这一个来源，所以能挡住
+    /// 改 `DEFAULT_HEALTH_MAX` / `REVIVE_HEALTH_FRACTION`。若将来按境界/属性走**运行时赋值**
+    /// 改玩家 `health_max`（不动 Default），这条 pin 不会撞红——那种改法必须自己重算这个商。
     #[test]
     fn revive_health_ratio_computed_like_production_never_rearms_heartbeat() {
         let health_max = Wounds::default().health_max;
