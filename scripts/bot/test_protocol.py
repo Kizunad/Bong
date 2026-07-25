@@ -849,27 +849,29 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             "场景只可在本轮 server fixture identity 与端口 ownership 同时成立后运行",
         )
 
-    def test_bot_e2e_pipeline_propagates_runner_then_tee_status(self):
-        pipeline = '''
-set +e
-bash -c "$1" | bash -c "$2"
-pipeline_status=("${PIPESTATUS[@]}")
-if [ "${pipeline_status[0]}" -ne 0 ]; then
-  exit "${pipeline_status[0]}"
-fi
-exit "${pipeline_status[1]}"
-'''
+    def test_bot_e2e_pipeline_propagates_runner_then_tee_status(self) -> None:
+        scenario_start = self.source.index("set +e\n", self.source.index("# ---- 场景 ----"))
+        scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
+        pipeline = self.source[scenario_start:scenario_end]
+        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
+  python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1'''
+        sink = 'tee "$SCENARIOS_LOG"'
+        self.assertIn(runner, pipeline)
+        self.assertIn(sink, pipeline)
+
         for runner_code, tee_code, expected in ((7, 0, 7), (0, 9, 9), (0, 0, 0)):
             with self.subTest(runner_code=runner_code, tee_code=tee_code):
+                executable = pipeline.replace(
+                    runner,
+                    f"bash -c 'exit {runner_code}'",
+                    1,
+                ).replace(
+                    sink,
+                    f"bash -c 'exit {tee_code}'",
+                    1,
+                )
                 result = subprocess.run(
-                    [
-                        "bash",
-                        "-c",
-                        pipeline,
-                        "pipeline-status",
-                        f"exit {runner_code}",
-                        f"exit {tee_code}",
-                    ],
+                    ["bash", "-c", f'{executable}\nexit "$EXIT_CODE"'],
                     check=False,
                     capture_output=True,
                     text=True,
@@ -877,10 +879,10 @@ exit "${pipeline_status[1]}"
                 self.assertEqual(
                     result.returncode,
                     expected,
-                    "runner 失败必须优先；仅 tee 失败时也必须将其非零码传播",
+                    "真实 bot-e2e status block 必须优先传播 runner 失败，并传播独立 sink 失败",
                 )
 
-
+    def test_fixture_runtime_ownership_is_rechecked_during_and_after_scenarios(self) -> None:
         helper_start = self.source.index("self_started_fixture_runtime_is_current() {")
         helper_end = self.source.index("\n}\n", helper_start)
         helper = self.source[helper_start:helper_end]
