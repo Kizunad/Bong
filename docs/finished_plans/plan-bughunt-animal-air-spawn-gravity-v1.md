@@ -2,13 +2,13 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：Finished，2026-07-23；P0/P1/P2 均已完成，merged HEAD 的 server/schema/agent/client 门禁、确定性 Bot、无上下文 validator 与隔离 full smoke 均已验收。
+**状态**：⏳ 最终 PR 闭环待验收。P0/P1/P2 实现及定向验证已完成；前一目标代码树 `fb5c4cf4752f412b9c275a5a5904e034c72e34aa` 的 server、Java 17 client、协议 Bot、隔离 ambient 场景与隔离全栈闭环 smoke 已通过。当前文档证据提交后的 exact HEAD 尚待新的无上下文 validator、`/review` 与 CI 验收，因此不得把本文件表述为最终验收完成。归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | ambient 共用地表门禁：mundane + threat 生成前统一解析 runtime `ground_y + 1` / raster fallback | ✅ 2026-07-22 |
-| P1 | 饱和回归：纯函数、真实 scheduler→pool 生产链、预算与错误分支 | ✅ 2026-07-22 |
-| P2 | 确定性 bot 场景 + 非目标隔离 + 完整 server 门禁 | ✅ 2026-07-23 |
+| P0 | ambient 共用地表门禁：mundane + threat 生成前统一解析 runtime `ground_y + 1` / raster fallback | ✅ 2026-07-25 |
+| P1 | 饱和回归：纯函数、真实 scheduler→pool 生产链、预算与错误分支 | ✅ 2026-07-25 |
+| P2 | 确定性 bot 场景 + 非目标隔离 + 完整门禁 | ⏳ 实现与本地门禁完成，最终 PR gate 待验收 |
 
 ---
 
@@ -220,7 +220,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ---
 
-## P0：ambient 共用地表门禁 ✅ 2026-07-22
+## P0：ambient 共用地表门禁（实现与本地验证完成）
 
 ### 交付物
 
@@ -231,8 +231,11 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
   - ring candidate 解析成功后才调用 `config.pool_fn`；
   - 失败时 continue，不写 pending budget；
   - X/Z 保持 ring sample，Y 只来自 runtime `ground_y + 1` 或 fallback raster `surface_y + 1`，永不继承 candidate/player Y。
-- mundane/threat pool 与 spawn 函数无需各自复制地表查询。
-- 现有 `snap_spawn_y_to_surface` fail-open caller 保持兼容，不在本 PR 顺手改全局语义。
+- `server/src/npc/navigator.rs` 提供共享 `GroundLandingScan::{Safe, Unsafe, Miss}`：`Unsafe` 只表示 live runtime 已发现可站支撑但 feet/head 含液体，形成 stale raster 不得绕过的权威否决；普通窗口缺失保持 `Miss`，允许调用方沿既有 fallback。
+- `server/src/npc/spawn/ambient_scheduler.rs` 以 `AmbientRuntimeGround::{Safe, LoadedUnsafe, NeedsRaster { loaded_chunk }}` 映射共享三态；loaded scan miss 的 raster Y 仍须回到 live `ChunkLayer` 精确复核，mundane/threat 共用同一 resolver 和提交边界。
+- ring sampler 只在满足 `min_same_archetype_dist` 的合法候选中择优；候选全部越界或间距不足时返回 `None`，不再返回“最远但仍非法”的 fallback。
+- scheduler 同时维护数量占位 `pending_spawns_by_zone` 与空间占位 `submitted_positions_by_zone`；只有 resolver 和真实 pool 均成功后才写入真实脚点，后续同 zone 玩家在同 tick 采样时把这些脚点并入 occupied set。
+- `same_tick_same_anchor_keeps_submitted_positions_poisson_separated` 由两个显式同锚点玩家驱动真实 scheduler，并把最终 ECS `Position` 精确对拍到第一次 sampler 与 occupied-aware 第二次 sampler；第二次无合法候选时只生成一只才算合法。
 
 ### 验收
 
@@ -252,7 +255,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ---
 
-## P1：饱和回归 ✅ 2026-07-22
+## P1：饱和回归（实现与本地验证完成）
 
 测试名可按模块风格微调，但必须保留以下可 grep 的语义抓手：
 
@@ -279,7 +282,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ---
 
-## P2：确定性 bot 场景与门禁 ✅ 2026-07-23
+## P2：确定性 bot 场景与门禁（实现完成；最终 validator/review/CI 待验收）
 
 - 新增/扩展一个 `scripts/bot/scenarios/` 场景，使用 §#6 的确定性 dev-only 接缝触发一次 mundane 和一次 threat/rat ambient 生成。
 - 玩家测试高度与 fixture surface 至少相差 32 格；bot 从真实 spawn/move 包跟踪实体 Position，断言：
@@ -292,12 +295,14 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
   - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
   - 对应 bot scenario + `bash scripts/smoke-test-e2e.sh`（按 CI 现有入口执行，headless 设 `BONG_SKIP_SKIN_PREFETCH=1`）。
 
-### P2 当前实现与定向证据（2026-07-22）
+### P2 当前实现与定向证据（2026-07-25）
 
 - `server/src/cmd/dev/ambient_spawn.rs` 注册确定性 `/ambient_spawn once mundane <x> <z>` 与 `/ambient_spawn once threat <x> <z>`；共享 `ambient_spawn once` wire 根、双 `double` 参数叶节点，并通过 `submit_ambient_dev_spawn_once` 复用 strict resolver、真实 `mundane_pool_fn` / `ambient_threat_pool_fn` 与真实 marker。
 - handler 只从执行者权威 `Position.y` 构造 candidate reference，拒绝非玩家、非有限 X/Z、缺 Position、缺 CurrentDimension、非 Overworld、缺 zone/layer；缺 runtime 时保留 raster fallback，缺 provider 时保留 runtime 路径，双源失败稳定拒绝；accepted chat 不暴露 resolved Y。
-- `scripts/bot/scenarios/npc_ambient_surface_resolution.py` 已自动发现并通过 Python 语法检查；场景固定 `/tpzone spawn` 后玩家 `(0,152,0)`、候选 `(5,3)`，按事件水位匹配 Cow type 18 / Rat type 126 的首帧 `y=73`，并用 `entity_pos` 二次复核、禁止随机 ambient 等待。
-- `server/src/fauna/mundane.rs` 仅新增 `(spawn,5,3)` 四季 Cow witness pin；未改变生产物种池或权重。
+- `scripts/bot/scenarios/npc_ambient_surface_resolution.py` 已自动发现并通过 Python 语法检查；场景固定 `/tpzone spawn` 后玩家 `(0,152,0)`、候选 `(5,3)`，在默认 `Season::Summer` 下按事件水位匹配 Cow type 18 / Rat type 126 的首帧 `y=73`，并用 `entity_pos` 二次复核、禁止随机 ambient 等待。
+- `server/src/fauna/mundane.rs` 仅新增 `(spawn,5,3, Season::Summer)` 的 Cow witness pin；该 pin 不冻结 Winter 或转季时的生态权重与物种选择。
+- dedicated 场景以 `REQUIRED_ENV = "BOT_E2E_AMBIENT_FIXTURE_OWNED"` 保护 fixture ownership；显式 `--scenario npc_ambient_surface_resolution` 缺该环境变量时，`scripts/bot/run_scenarios.py` 必须记录 `ERROR` 并令 runner 非零，禁止 `SKIP` 假绿。常规 `--all` 仅在 `RUN_IN_ALL_WHEN_ENV` 对应环境变量为 `1` 时 opt-in。
+- `scripts/bot-e2e.sh` 读取 `PIPESTATUS`：runner 非零时优先返回 runner；runner 成功才采用 `tee` 状态。协议合同测试直接提取并执行真实 pipeline block，覆盖 runner/tee 四态及两者同时失败时的 runner 优先级。
 - 已运行且实际命中测试：
   - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml cmd::dev::ambient_spawn::tests -- --test-threads=1`：`running 11 tests`，11 passed。
   - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml cmd::registry_pin::tests -- --test-threads=1`：`running 3 tests`，3 passed。
@@ -313,7 +318,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 1. Subagent 原子 claim 本 skeleton，promotion 为 active 后第一性原理复验。
 2. 单 PR 完成 P0–P2；代码修复、server 饱和测试、bot 场景可拆原子 commit，但不得拆成多个 PR。
-3. 无上下文 validator 对最终 HEAD 验证：主证据链、strict fail-closed、真实两 pool、预算不泄漏、bot 不走假生产链。
+3. 无上下文 validator 对最终候选 HEAD 验证：主证据链、strict fail-closed、真实两 pool、预算不泄漏、bot 不走假生产链。
 4. 按受影响栈跑完整门禁；merge 最新 `origin/main` 后若 HEAD 变化，重新 validator + 门禁。
 5. 全阶段 ✅、补齐 Finish Evidence 后归档；PR body 与 commit 带真实模型 trailer，并发独立 `/review` 评论。
 
@@ -341,21 +346,23 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `2361b7ee3`（2026-07-23）：再次合并最新 `origin/main` 的 review API 配置与 craft_outcome client 网络线程修复；无冲突、未触及本 plan 的 server/Bot gameplay 文件，并复跑 Java 17 client 完整门禁。
 - `aa822b447`（2026-07-24）：格式化主线带入的突破动画断言，恢复 server `cargo fmt --check`。
 - `29b18cbdd`（2026-07-24）：隔离 Bot E2E 的 evidence、Redis、runtime CWD 与持久化输出，移除全局 stale-server kill，并补齐 144 条 harness 合同。
-- `7c4c068f8`（2026-07-24）：将 ambient 无效 live-layer 门禁收窄到新 spawn 提交边界，保留既有回收/真元归还，并令 Bot 自起服强制开发态。
+- `fb5c4cf47`（2026-07-25）：合并最新 `origin/main`（`5828a5510`）；目标代码树包含本轮全部 hardening 与主线最新音频/client 变化，无冲突。
+- `f2451ed73`、`5c1c62fc0`、`f0df73b96`（2026-07-25）：统一 Navigator/ambient 安全落点规则源，引入 `GroundLandingScan` 三态并区分液体权威否决与普通扫描缺失。
+- `1cd990838`、`18f5bad7f`、`84927434a`、`c2280e304`（2026-07-25）：修复 Bot dedicated 场景执行语义、runner/tee 失败传播、真实 pipeline 合同回归与显式缺 env 假绿。
+- `2c6afd4f4`（2026-07-25）：将确定性 Cow witness 收紧为 `Season::Summer`，不冻结其他季节生态。
+- `95891d20e`、`46f307132`、`7c5e3d880`、`de0da7c27`（2026-07-25）：补同 tick 真实脚点空间占位、泛型调用修复，并以双同锚点玩家锁定 sampler→resolver→ECS 精确结果。
 
-### 测试结果
+### 测试结果（前一目标代码树 `fb5c4cf4752f412b9c275a5a5904e034c72e34aa`；仅文档随后变化）
 
-- **定向 server**：`cmd::dev::ambient_spawn::tests` 11/11、`cmd::registry_pin::tests` 3/3、`cmd::tests::` 4/4、`ambient` 119/119；均实际命中非零测试。完整 diff review 返工后，`ambient_ground_position_loaded_scan_miss_*` 3/3 通过，锁定精确 raster Y、空气支撑拒绝与 live 落点复验。
-- **review 返工 server gate**（`71e5ea3ab`）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11920 passed / 2 ignored，main 11 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
-- **merged server gate**（`da3196a35684e54660d4dec739bc52fa2e38ffe4`）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11919 passed / 2 ignored，main 11 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
-- **最终 access-control gate**（最终 HEAD）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11922 passed / 2 ignored，main 12 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。`production_command_registry_does_not_expose_ambient_spawn` 与 `forged_events_without_dev_access_are_rejected_before_either_pool` 各实际命中 1/1；`cmd::dev::ambient_spawn::tests` 12/12，`dev_mode_enabled_*` 2/2，锁定生产默认隐藏 root、伪造 mundane/threat event 零实体副作用，以及 dev-enabled 正向真实 pool 不退化。
-- **最终 P2 review 返工定向门禁**：`cmd::dev::ambient_spawn::tests` 14/14，`stale_overworld_layer_is_rejected_before_either_pool` 锁定 live non-`ChunkLayer` entity 对 mundane/threat 均稳定拒绝且零 marker，`despawning_overworld_layer_is_rejected_before_either_pool` 锁定 `ChunkLayer + Despawned`，`valid_layer_with_unloaded_target_chunk_uses_raster_fallback` 锁定 live layer + 未加载目标 chunk 仍通过 raster，并断言产物 `EntityLayerId` 等于真实 layer。生产 scheduler 的 `ambient_scheduler_invalid_layer_rejects_spawn_but_preserves_recycle_and_qi_return` 以 missing / non-`ChunkLayer` / `Despawned` × Rat / MimicSpider 六组状态矩阵锁住：pool 未调用且无新 marker/pending，同时已有实体仍回收、Rat 账户清零并归还 zone、MimicSpider 保持既有 qi 归还语义；live-layer 门禁不再截断 cadence/recycle/qi 控制流。`scripts/bot/test_protocol.py` 144/144，除 per-run token、manifest metadata、目标列 span/support/no-water、stale token、缺 ownership、private runtime/assets bridge、每轮私有 Redis/evidence、REUSE 无 listener 与 listener ownership 外，还执行子 shell 覆盖调用方预置 `BONG_DEV_MODE=0/false/no/off`，断言 self-start 最终环境恒为 `1`；`py_compile`、`bash -n scripts/bot-e2e.sh` 与 `git diff --check` 通过。
-- **本轮 server / Bot 定向门禁**（`7c4c068f8`，2026-07-24）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 全绿；lib 11933 passed / 2 ignored，main 12 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。`ambient_scheduler_invalid_layer_rejects_spawn_but_preserves_recycle_and_qi_return` 矩阵 1/1，`scripts/bot/test_protocol.py` 144/144；`bash -n scripts/bot-e2e.sh`、`python3 -m py_compile scripts/bot/test_protocol.py` 与 `git diff --check` 通过。未把未运行的完整 Bot E2E suite 误报为绿色。
-- **schema / agent**：schema build/check/generate freshness 406 artifacts，30 files / 898 tests passed；Tiandao 72 files / 840 tests passed。
-- **client**：Java `17.0.19` 两次执行 `./gradlew test build` 均成功，3/3 Fabric GameTests passed；最新 `origin/main` 带入 client 网络线程修复后再次得到 `BUILD SUCCESSFUL`（21 tasks，6m07s）。
-- **协议 Bot**：private-runtime debug 全套 `run.IafKZMxoJL` 为 29 pass / 1 skip / 2 fail；目标 `npc_ambient_surface_resolution` 通过，Cow type 18 与 Rat type 126 均在 `(5,73,3)`，未继承执行者 `(0,152,0)`。两项失败均如实保留：非目标 `production_craft_disconnect_resume` 在 10 秒内未推进到 20 gameplay ticks、非目标 `production_spiritwood_full_inventory_drop` 在 25 秒内未完成 240 gameplay ticks；server 未 panic，后续场景继续通过。运行前后对 `server/data/**` 与 `library-web/public/deceased/**` 的路径、大小、SHA-256 清单对拍为 `UNCHANGED`，25565 与本轮 Redis project 均由 trap 清理。另一次首场多 Bot run 暴露 Valence `viewer count underflow` panic，降低两个 rogue seeder 后未复现；不把失败轮误报为绿。release profile 因本 slot 无热 release fingerprint，在 600 秒 readiness 窗口内仍处于依赖编译，未执行场景，不能算 release suite 结果；最终 CI release E2E 以 PR exact-HEAD check 为准。
-- **full smoke**：共享 runtime DB 直接运行时，north-rift preview 正确 hydrate `zones_runtime` 的 `0.2661459988600612`，与静态 fixture `0.290146` 不同而失败；未删除或改写用户 DB。改用临时空 `server/data` 并在 trap 中恢复原数据后，pre-merge 与 merged HEAD 两轮 `bash scripts/smoke-test-e2e.sh` 均为 9 passed / 0 failed。最终 run id：`20260723-152959-1866492-ambient-surface-isolated-postmerge`，`SMOKE_STATUS=0`，原 runtime data 已恢复。
-- **无上下文 validator**：先对 gameplay exact target `da3196a35684e54660d4dec739bc52fa2e38ffe4` 给出 PASS；后续 client/review 主线合并、live-layer hardening 与 Bot harness isolation 均使旧结论失效，因此 push 前必须再对最终归档 HEAD 启动全新、无上下文、read-only exact-target validator。最终 PASS target 与理由记录于 PR body，不以旧 SHA 或本段自报替代。
+- **server 完整门禁**：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过；lib 11943 passed / 0 failed / 2 ignored，main 12 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
+- **client**：Java `17.0.19` 执行 `./gradlew test build` 成功；3/3 Fabric GameTests passed，21 tasks，4m11s。
+- **schema / agent**：schema 生成物 freshness 为 406 files，30 files / 898 tests passed；Tiandao 72 files / 840 tests passed。
+- **协议 Bot 合同**：`python3 scripts/bot/test_protocol.py` 148/148 通过；覆盖 dedicated missing-env `ERROR`、`--all` opt-in、fixture ownership 以及 runner/`tee` 真实 pipeline 退出状态矩阵。
+- **定向 ambient 协议 witness**：isolated `npc_ambient_surface_resolution` 1/1 PASS；Cow type 18 与 Rat type 126 均由真实 `entity_spawn`/`entity_pos` 证明位于 `(5,73,3)`，未继承玩家 `(0,152,0)`。证据绑定本节目标 SHA，persistent state `UNCHANGED`，25565 与私有 Redis `60493` 均已清理。
+- **隔离全栈闭环 smoke**：PASS；先通过 dev-reload detach、schema、Tiandao 与无 listener full-app startup，再以 private runtime CWD、private Redis `56019`、当前 checkout debug server 和 deterministic Tiandao one-tick 跑跨进程闭环。独立 subscriber 观测 `bong:world_state`、`bong:agent_command`、`bong:agent_narrate`，server 观测两个 `command_anchor stage=end ... result=ok`；persistent state `UNCHANGED`，25565 与 Redis 端口均已清理。第一次尝试仅因 listener readiness race 失败，修正为 listener + PID-tree 轮询后重试成功；失败轮不计作 PASS。
+- **完整 Bot suite（历史证据，非全绿）**：30 pass / 1 skip / 1 fail；唯一失败为本 plan 范围外的 `combat_weapon_equip_damage` 等待 NPC spawn 超时。不得将该轮写成全绿，也不得用它替代上述定向 witness。
+- **历史证据边界**：`71e5ea3ab`、`da3196a35`、`7c4c068f8` 等旧树门禁只证明各自 SHA，不再称“最终 HEAD”；其 validator 也均因后续代码变更失效。
+- **最终 PR 闭环待办**：文档更新会产生新的 exact HEAD。必须对该新 SHA 启动无上下文、read-only validator，并在 push 后重新触发独立 `/review`、等待 exact-head CI 与 CodeRabbit。三者完成前，本计划不宣称 Finished。
 
 ### 跨仓库核验
 
