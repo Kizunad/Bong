@@ -34,7 +34,7 @@ jobs:
       issues: write
     uses: Kizunad/review/.github/workflows/review.yml@4f06a977a33371df0d35be0a659f4592c8d4d6fa
     with:
-      pr_number: ${{ github.event.issue.number || inputs.pr_number }}
+      pr_number: ${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v1.json
       review_base_url: ${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
       shadow: true
