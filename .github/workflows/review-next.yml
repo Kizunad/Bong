@@ -28,10 +28,11 @@ jobs:
        github.event.comment.body == '/review-next' &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     permissions:
+      actions: read
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@ad2d25b929324861535c57d464448f25c0f1d2dc
+    uses: Kizunad/review/.github/workflows/review.yml@4f06a977a33371df0d35be0a659f4592c8d4d6fa
     with:
       pr_number: ${{ github.event.issue.number || inputs.pr_number }}
       policy_path: .github/review-policy/bong.v1.json
