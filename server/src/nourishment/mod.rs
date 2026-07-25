@@ -29,14 +29,6 @@ pub enum NourishmentAxis {
 }
 
 impl NourishmentAxis {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "satiety" => Some(Self::Satiety),
-            "hydration" => Some(Self::Hydration),
-            _ => None,
-        }
-    }
-
     pub fn wire_name(self) -> &'static str {
         match self {
             Self::Satiety => "satiety",
@@ -469,20 +461,5 @@ mod tests {
             },
             "nourishment must run after both movement systems so the dash starting tick counts as dash"
         );
-    }
-
-    #[test]
-    fn axis_parser_accepts_only_canonical_names() {
-        assert_eq!(
-            NourishmentAxis::parse("satiety"),
-            Some(NourishmentAxis::Satiety)
-        );
-        assert_eq!(
-            NourishmentAxis::parse("hydration"),
-            Some(NourishmentAxis::Hydration)
-        );
-        for invalid in ["", "food", "water", "Satiety", "hydration "] {
-            assert_eq!(NourishmentAxis::parse(invalid), None);
-        }
     }
 }
