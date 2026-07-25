@@ -647,44 +647,53 @@ mod tests {
         use std::path::Path;
 
         let recipe_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/audio/recipes");
-        // (从生产映射取到的 recipe id, 期望 L0 bong: 事件, 期望 L0 pitch)
-        let pins: [(&str, &str, f64); 9] = [
+        // (从生产映射取到的 recipe id, 期望 L0 bong: 事件, 期望 L0 pitch, 期望 L0 最小 delay_ticks)
+        // min_delay：常规招原速即响=0；**天门蓄力前兆延迟到蓄力尾段（尾程）**——招式于蓄力
+        // 起始 emit，delay_ticks 把压调签名推到临界→释放前（≥60 tick）才响，兑现 plan 的
+        // 「charge 尾程」而非 charge 开始就播。
+        let pins: [(&str, &str, f64, u64); 9] = [
             (
                 sword_path_recipe_for_skill(SwordPathSkillId::HeavenGateRelease),
                 "bong:skill.sword_path.heaven_gate",
                 1.0,
+                0,
             ),
             (
-                // 天门蓄力前兆：复用 release 的签名 ogg，pitch 0.72 压调作预示（专属 heaven_gate_charge）。
+                // 天门蓄力尾程前兆：复用 release 的签名 ogg，pitch 0.72 压调 + delay 到尾段作预示（专属 heaven_gate_charge）。
                 sword_path_recipe_for_skill(SwordPathSkillId::HeavenGateCharge),
                 "bong:skill.sword_path.heaven_gate",
                 0.72,
+                60,
             ),
             (
                 baomai_recipe_for_skill(BaomaiSkillId::FullPowerRelease),
                 "bong:skill.baomai.full_power_release",
                 1.0,
+                0,
             ),
             (
                 ZhenmaiSkillId::SeverChain.audio_recipe(),
                 "bong:skill.zhenmai.sever_chain",
                 1.0,
+                0,
             ),
-            (WOLIU_VOID_CORE_RECIPE, "bong:skill.woliu.void_core", 1.0),
-            (SHED_SKIN_BURST_RECIPE, "bong:skill.tuike.shed", 1.0),
+            (WOLIU_VOID_CORE_RECIPE, "bong:skill.woliu.void_core", 1.0, 0),
+            (SHED_SKIN_BURST_RECIPE, "bong:skill.tuike.shed", 1.0, 0),
             (
                 DUGU_POISON_SIGNATURE_RECIPE,
                 "bong:skill.dugu.infuse_poison",
                 1.0,
+                0,
             ),
-            (YIXING_CAST_RECIPE, "bong:skill.morph.yixing", 1.0),
+            (YIXING_CAST_RECIPE, "bong:skill.morph.yixing", 1.0, 0),
             (
                 ANQI_ECHO_FRACTAL_RECIPE,
                 "bong:skill.anqi.echo_fractal",
                 1.0,
+                0,
             ),
         ];
-        for (recipe_id, expected_event, expected_pitch) in pins {
+        for (recipe_id, expected_event, expected_pitch, min_delay_ticks) in pins {
             let path = recipe_dir.join(format!("{recipe_id}.json"));
             let raw = std::fs::read_to_string(&path).unwrap_or_else(|error| {
                 panic!(
@@ -712,7 +721,29 @@ mod tests {
             assert!(
                 (pitch - expected_pitch).abs() < 1e-9,
                 "signature recipe {recipe_id} 的 L0 pitch 应 == {expected_pitch}\
-                 （release/常规招原速 1.0；天门蓄力前兆压调 0.72），实际 {pitch}"
+                 （release/常规招原速 1.0；天门蓄力尾程前兆压调 0.72），实际 {pitch}"
+            );
+            // 音量必须 > 0——签名主层若 volume=0 则实机静音（虽 sound/pitch 对也零签名音），
+            // 这是 reviewer 指出的假绿缺口：静音 recipe 仍会通过 sound/pitch 断言。
+            let volume = l0
+                .get("volume")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or_else(|| panic!("signature recipe {recipe_id} 的 L0 应有 volume"));
+            assert!(
+                volume > 0.0,
+                "signature recipe {recipe_id} 的 L0 volume 必须 > 0（volume=0 = 实机静音签名，\
+                 即使 sound/pitch 正确也零签名音），实际 {volume}"
+            );
+            // delay_ticks 下界：天门蓄力签名必须延迟到尾段（≥60 tick）才响，兑现 plan 的
+            // 「charge 尾程」；常规招 min=0（原速即响）。
+            let delay = l0
+                .get("delay_ticks")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_else(|| panic!("signature recipe {recipe_id} 的 L0 应有 delay_ticks"));
+            assert!(
+                delay >= min_delay_ticks,
+                "signature recipe {recipe_id} 的 L0 delay_ticks 应 >= {min_delay_ticks}\
+                 （天门蓄力签名须延迟到蓄力尾段才响=charge 尾程，非蓄力起始就播），实际 {delay}"
             );
         }
     }

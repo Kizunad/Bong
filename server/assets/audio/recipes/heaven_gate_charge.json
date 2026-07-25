@@ -5,7 +5,7 @@
       "sound": "bong:skill.sword_path.heaven_gate",
       "volume": 0.4,
       "pitch": 0.72,
-      "delay_ticks": 0
+      "delay_ticks": 100
     },
     {
       "sound": "minecraft:block.amethyst_block.chime",
