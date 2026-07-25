@@ -5,11 +5,14 @@
 //! binary is the thin consumer: it wires every module's `register(&mut App)` and
 //! owns the CLI / startup-smoke entry points exactly as before.
 
+use std::io::Write;
+use std::time::Duration;
+
 use bong_server::{
     alchemy, audio, body_plan, botany, cmd, coffin, combat, craft, cultivation, dandao,
     death_lifecycle, economy, fauna, forge, gathering, identity, inventory, lingtian, mineral,
-    movement, network, npc, persistence, player, preview, qi_physics, shader, shelflife, skill,
-    skin, social, spiritwood, supply_coffin, sword_path, tools, world, zhenfa,
+    movement, network, npc, persistence, player, preview, qi_physics, shader, shelflife, shutdown,
+    skill, skin, social, spiritwood, supply_coffin, sword_path, tools, world, zhenfa,
 };
 
 use crossbeam_channel::unbounded;
@@ -39,6 +42,11 @@ fn main() {
     let _ = dotenvy::dotenv();
     init_tracing();
 
+    if shutdown_signal_probe_enabled() {
+        run_shutdown_signal_probe();
+        return;
+    }
+
     if let Err(code) = run_cli(std::env::args()) {
         std::process::exit(code);
     }
@@ -48,6 +56,12 @@ fn main() {
     } else {
         run_server();
     }
+}
+
+fn shutdown_signal_probe_enabled() -> bool {
+    std::env::var("BONG_SHUTDOWN_SIGNAL_PROBE")
+        .ok()
+        .is_some_and(|value| is_truthy_env_value(&value))
 }
 
 fn full_app_startup_smoke_enabled() -> bool {
@@ -81,6 +95,8 @@ fn build_server_app() -> App {
     })
     .insert_resource(NetworkBridgeResource::new(tx_to_agent, rx_from_agent))
     .add_plugins(DefaultPlugins.build().disable::<LogPlugin>());
+
+    shutdown::register(&mut app);
 
     world::register(&mut app);
     player::register(&mut app);
@@ -121,6 +137,46 @@ fn build_server_app() -> App {
     preview::register(&mut app);
 
     app
+}
+
+fn run_shutdown_signal_probe() {
+    let unlock_path = std::env::var_os("BONG_SHUTDOWN_SIGNAL_PROBE_UNLOCK_PATH")
+        .expect("BONG_SHUTDOWN_SIGNAL_PROBE_UNLOCK_PATH is required for the signal probe");
+    let ready_path = std::env::var_os("BONG_SHUTDOWN_SIGNAL_PROBE_READY_PATH")
+        .expect("BONG_SHUTDOWN_SIGNAL_PROBE_READY_PATH is required for the signal probe");
+
+    let mut unlock_state = craft::RecipeUnlockState::new()
+        .with_path(unlock_path)
+        .with_flush_interval(600);
+    let probe_recipe = craft::RecipeId::new("craft.probe.shutdown.flush");
+    assert!(
+        unlock_state.unlock("offline:shutdown-probe", probe_recipe),
+        "fresh shutdown probe state must become dirty before waiting for a real OS signal"
+    );
+
+    let mut app = App::new();
+    shutdown::register(&mut app);
+    app.insert_resource(unlock_state);
+    app.add_systems(Update, craft::tick_recipe_unlock_flush);
+    app.add_systems(Last, craft::flush_recipe_unlocks_on_shutdown);
+
+    let mut ready_file = std::fs::File::create(&ready_path).unwrap_or_else(|error| {
+        panic!("write shutdown signal probe readiness file failed: {error}")
+    });
+    ready_file
+        .write_all(b"ready\n")
+        .and_then(|()| ready_file.flush())
+        .unwrap_or_else(|error| {
+            panic!("flush shutdown signal probe readiness file failed: {error}")
+        });
+
+    loop {
+        app.update();
+        if app.should_exit().is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn run_full_app_startup_smoke() {
@@ -166,6 +222,10 @@ fn assert_full_app_core_resources(app: &App) {
     // 必崩。这里断言真实生产注册路径（`build_server_app()` → `network::register`）
     // 装好了该资源，且下面的 `app.update()` 必须真的跑一个 tick 不 panic——
     // 若又漏掉某个 `init_resource`，本测试会立刻撞红，而不是靠模块单测手塞掩盖。
+    assert!(
+        world.contains_resource::<shutdown::ShutdownSignalReceiver>(),
+        "full server App must install ShutdownSignalReceiver (shutdown::register()) so OS signals emit AppExit before Last persistence systems"
+    );
     assert!(
         world.contains_resource::<MorphStateEmitState>(),
         "full server App must install MorphStateEmitState (network::register()) — \

@@ -96,6 +96,7 @@ pub mod preview;
 #[allow(dead_code)]
 pub mod schema;
 pub mod shader;
+pub mod shutdown;
 pub mod skin;
 pub mod social;
 pub mod spiritwood;

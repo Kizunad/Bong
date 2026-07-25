@@ -35,7 +35,7 @@ big-brain = "0.21"
 bevy_transform = "0.14.2"
 pathfinding = "4"
 seldom_state = "0.11"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
