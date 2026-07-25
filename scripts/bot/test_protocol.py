@@ -856,10 +856,23 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
   python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1'''
         sink = 'tee "$SCENARIOS_LOG"'
-        self.assertIn(runner, pipeline)
-        self.assertIn(sink, pipeline)
+        self.assertEqual(
+            pipeline.count(runner),
+            1,
+            "场景块必须仅含一个 canonical runner，避免测试替换到错误命令",
+        )
+        self.assertEqual(
+            pipeline.count(sink),
+            1,
+            "场景块必须仅含一个 canonical sink，避免测试替换到错误管道",
+        )
 
-        for runner_code, tee_code, expected in ((7, 0, 7), (0, 9, 9), (0, 0, 0)):
+        for runner_code, tee_code, expected in (
+            (7, 0, 7),
+            (7, 9, 7),
+            (0, 9, 9),
+            (0, 0, 0),
+        ):
             with self.subTest(runner_code=runner_code, tee_code=tee_code):
                 executable = pipeline.replace(
                     runner,
