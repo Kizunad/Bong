@@ -15,7 +15,7 @@ pub const NOURISH_SAPPED_THRESHOLD: f32 = 20.0;
 pub const NOURISH_SATIETY_LOSS_PER_MIN: f32 = 0.8;
 pub const NOURISH_HYDRATION_LOSS_PER_MIN: f32 = 1.2;
 pub const NOURISH_SWEEP_INTERVAL_TICKS: u32 = 200;
-pub const NOURISH_TICKS_PER_MINUTE: f32 = 1_200.0;
+pub const NOURISH_TICKS_PER_MINUTE: f32 = (crate::combat::components::TICKS_PER_SECOND * 60) as f32;
 pub const NOURISH_IDLE_ACTIVITY_MULTIPLIER: f32 = 1.0;
 pub const NOURISH_MOVE_ACTIVITY_MULTIPLIER: f32 = 1.5;
 pub const NOURISH_DASH_ACTIVITY_MULTIPLIER: f32 = 3.0;
@@ -217,6 +217,15 @@ pub fn register(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ticks_per_minute_is_derived_from_combat_clock_rate() {
+        assert_eq!(
+            NOURISH_TICKS_PER_MINUTE,
+            (crate::combat::components::TICKS_PER_SECOND * 60) as f32,
+            "nourishment minute duration must stay pinned to the combat clock rate",
+        );
+    }
 
     #[test]
     fn band_boundaries_pin_every_interval_edge() {

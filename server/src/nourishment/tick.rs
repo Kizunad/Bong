@@ -94,7 +94,10 @@ pub struct NourishmentSweepCursor {
 
 impl NourishmentSweepCursor {
     fn claim_tick(&mut self, now_tick: u64) -> bool {
-        if self.last_processed_tick == Some(now_tick) {
+        if self
+            .last_processed_tick
+            .is_some_and(|last_processed_tick| now_tick <= last_processed_tick)
+        {
             return false;
         }
         self.last_processed_tick = Some(now_tick);
@@ -150,11 +153,15 @@ pub fn attach_movement_tracker(
     }
 }
 
-#[cfg(test)]
-fn has_qualifying_horizontal_movement(event: &MovementEvent) -> bool {
+fn horizontal_distance(event: &MovementEvent) -> f64 {
     let delta_x = event.position.x - event.old_position.x;
     let delta_z = event.position.z - event.old_position.z;
-    delta_x.hypot(delta_z) > NOURISH_MOVEMENT_EPSILON_BLOCKS
+    delta_x.hypot(delta_z)
+}
+
+#[cfg(test)]
+fn has_qualifying_horizontal_movement(event: &MovementEvent) -> bool {
+    horizontal_distance(event) > NOURISH_MOVEMENT_EPSILON_BLOCKS
 }
 
 pub fn record_movement_events(
@@ -162,15 +169,13 @@ pub fn record_movement_events(
     mut events: EventReader<MovementEvent>,
     mut trackers: Query<&mut NourishmentMovementTracker, With<Client>>,
 ) {
-    let mut horizontal_displacements = HashMap::<Entity, (f64, f64)>::new();
+    let mut horizontal_distances = HashMap::<Entity, f64>::new();
     for event in events.read() {
-        let entry = horizontal_displacements.entry(event.client).or_default();
-        entry.0 += event.position.x - event.old_position.x;
-        entry.1 += event.position.z - event.old_position.z;
+        *horizontal_distances.entry(event.client).or_default() += horizontal_distance(event);
     }
 
-    for (entity, (delta_x, delta_z)) in horizontal_displacements {
-        if delta_x.hypot(delta_z) > NOURISH_MOVEMENT_EPSILON_BLOCKS {
+    for (entity, distance) in horizontal_distances {
+        if distance > NOURISH_MOVEMENT_EPSILON_BLOCKS {
             if let Ok(mut tracker) = trackers.get_mut(entity) {
                 tracker.record_movement(clock.tick);
             }
@@ -245,10 +250,7 @@ pub fn tick_nourishment(
             classify_activity(tracker, movement_state, clock.tick)
         });
         activity_window.record(activity);
-        if !clock
-            .tick
-            .is_multiple_of(u64::from(NOURISH_SWEEP_INTERVAL_TICKS))
-        {
+        if activity_window.total_ticks() < NOURISH_SWEEP_INTERVAL_TICKS {
             continue;
         }
 
@@ -430,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn same_tick_displacements_are_aggregated_before_the_threshold_check() {
+    fn same_tick_movement_uses_sum_of_non_negative_horizontal_distances() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 42 });
         app.add_event::<MovementEvent>();
@@ -456,6 +458,22 @@ mod tests {
                 .last_moved_at_tick,
             Some(42),
             "two same-tick 0.03-block fragments must aggregate past the 0.05 threshold"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 43;
+        app.world_mut()
+            .send_event(movement_event(entity, [0.0, 64.0, 0.0], [0.06, 64.0, 0.0]));
+        app.world_mut()
+            .send_event(movement_event(entity, [0.06, 64.0, 0.0], [0.0, 64.0, 0.0]));
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<NourishmentMovementTracker>(entity)
+                .expect("tracker should remain attached")
+                .last_moved_at_tick,
+            Some(43),
+            "opposite same-tick movement must add traveled distance instead of cancelling"
         );
     }
 
@@ -658,12 +676,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn production_tick_uses_combat_clock_boundaries_and_ignores_duplicate_updates() {
+    fn nourishment_test_app(
+        name: &str,
+        activity_window: NourishmentActivityWindow,
+    ) -> (App, Entity) {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 1 });
         app.add_systems(Update, tick_nourishment);
-        let (client_bundle, _helper) = create_mock_client("Azure");
+        let (client_bundle, _helper) = create_mock_client(name);
         let entity = app
             .world_mut()
             .spawn((
@@ -676,53 +696,173 @@ mod tests {
                 NourishmentMovementTracker::default(),
                 NourishmentSweepCursor::default(),
                 Nourishment::spawn_default(),
-                NourishmentActivityWindow::default(),
+                activity_window,
             ))
             .id();
+        (app, entity)
+    }
 
+    fn advance_distinct_ticks(app: &mut App, start_tick: u64, count: u32) {
+        for offset in 0..count {
+            app.world_mut().resource_mut::<CombatClock>().tick = start_tick + u64::from(offset);
+            app.update();
+        }
+    }
+
+    fn assert_spawn_nourishment(app: &App, entity: Entity, reason: &str) {
+        assert_eq!(
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            Nourishment::spawn_default(),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn new_player_at_global_tick_199_accumulates_a_full_personal_window_before_loss() {
+        let (mut app, entity) =
+            nourishment_test_app("LateJoin", NourishmentActivityWindow::default());
+        advance_distinct_ticks(&mut app, 199, NOURISH_SWEEP_INTERVAL_TICKS - 1);
+        assert_spawn_nourishment(
+            &app,
+            entity,
+            "a player joining near a global phase boundary must not settle early",
+        );
+        assert_eq!(
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap()
+                .total_ticks(),
+            NOURISH_SWEEP_INTERVAL_TICKS - 1,
+            "the new player must own all 199 accumulated ticks",
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 398;
+        app.update();
+        assert!(
+            app.world().get::<Nourishment>(entity).unwrap().satiety < NOURISH_SPAWN_VALUE,
+            "the 200th distinct tick for this player must settle its personal window",
+        );
+    }
+
+    #[test]
+    fn reset_at_global_boundary_starts_a_fresh_personal_window() {
+        let (mut app, entity) = nourishment_test_app(
+            "Revived",
+            NourishmentActivityWindow {
+                idle_ticks: NOURISH_SWEEP_INTERVAL_TICKS - 1,
+                ..Default::default()
+            },
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<NourishmentActivityWindow>()
+            .unwrap()
+            .reset();
+        app.world_mut().resource_mut::<CombatClock>().tick = 200;
+        app.update();
+
+        assert_spawn_nourishment(
+            &app,
+            entity,
+            "a formal lifecycle reset on a global boundary must not settle old activity",
+        );
+        assert_eq!(
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap()
+                .total_ticks(),
+            1,
+            "the first tick after reset must begin a new personal window",
+        );
+    }
+
+    #[test]
+    fn reconnect_with_199_ticks_settles_after_one_new_distinct_tick() {
+        let (mut app, entity) = nourishment_test_app(
+            "Reconnect199",
+            NourishmentActivityWindow {
+                idle_ticks: 100,
+                move_ticks: 60,
+                dash_ticks: 39,
+            },
+        );
+        app.world_mut().resource_mut::<CombatClock>().tick = 777;
+        app.update();
+
+        assert!(
+            app.world().get::<Nourishment>(entity).unwrap().satiety < NOURISH_SPAWN_VALUE,
+            "a restored legal 199-tick window must settle after one newly experienced tick",
+        );
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap(),
+            NourishmentActivityWindow::default(),
+            "a settled restored window must reset",
+        );
+    }
+
+    #[test]
+    fn reconnect_with_100_ticks_requires_100_new_distinct_ticks() {
+        let (mut app, entity) = nourishment_test_app(
+            "Reconnect100",
+            NourishmentActivityWindow {
+                idle_ticks: 100,
+                ..Default::default()
+            },
+        );
+        advance_distinct_ticks(&mut app, 1_000, 99);
+        assert_spawn_nourishment(
+            &app,
+            entity,
+            "a restored 100-tick window must not settle after only 99 new ticks",
+        );
+        app.world_mut().resource_mut::<CombatClock>().tick = 1_099;
+        app.update();
+        assert!(
+            app.world().get::<Nourishment>(entity).unwrap().satiety < NOURISH_SPAWN_VALUE,
+            "a restored 100-tick window must settle on its 100th new distinct tick",
+        );
+    }
+
+    #[test]
+    fn duplicate_and_regressed_clock_ticks_do_not_duplicate_counting() {
+        let (mut app, entity) =
+            nourishment_test_app("Deduplicate", NourishmentActivityWindow::default());
+        app.world_mut().resource_mut::<CombatClock>().tick = 42;
         app.update();
         app.update();
         assert_eq!(
             app.world()
                 .get::<NourishmentActivityWindow>(entity)
-                .expect("activity window should remain attached")
+                .unwrap()
                 .total_ticks(),
             1,
-            "duplicate Update calls at a fixed CombatClock tick must not advance nourishment"
+            "duplicate Update calls at one CombatClock tick must count once",
         );
 
-        app.world_mut().resource_mut::<CombatClock>().tick = 199;
+        app.world_mut().resource_mut::<CombatClock>().tick = 41;
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 42;
         app.update();
         assert_eq!(
-            *app.world().get::<Nourishment>(entity).unwrap(),
-            Nourishment::spawn_default(),
-            "the 199th CombatClock tick must not settle the sweep"
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap()
+                .total_ticks(),
+            1,
+            "clock regression must not let an already observed runtime tick count twice",
         );
 
-        app.world_mut().resource_mut::<CombatClock>().tick = 200;
-        app.update();
-        let nourishment_after_boundary = *app.world().get::<Nourishment>(entity).unwrap();
-        let expected_minutes = NOURISH_SWEEP_INTERVAL_TICKS as f32 / NOURISH_TICKS_PER_MINUTE;
-        assert!(
-            (nourishment_after_boundary.satiety
-                - (NOURISH_SPAWN_VALUE - NOURISH_SATIETY_LOSS_PER_MIN * expected_minutes))
-                .abs()
-                < 1e-6,
-            "the 200th CombatClock tick must settle exactly one idle sweep"
-        );
-        assert!(
-            (nourishment_after_boundary.hydration
-                - (NOURISH_SPAWN_VALUE - NOURISH_HYDRATION_LOSS_PER_MIN * expected_minutes))
-                .abs()
-                < 1e-6,
-            "the 200th CombatClock tick must settle exactly one idle sweep"
-        );
-
+        app.world_mut().resource_mut::<CombatClock>().tick = 43;
         app.update();
         assert_eq!(
-            *app.world().get::<Nourishment>(entity).unwrap(),
-            nourishment_after_boundary,
-            "repeating the boundary clock tick must not settle a second sweep"
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap()
+                .total_ticks(),
+            2,
+            "the first tick after a regression catches up must continue the personal window",
         );
     }
 }
