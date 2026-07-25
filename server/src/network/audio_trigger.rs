@@ -65,8 +65,10 @@ use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
 /// 系统，`register_wires_all_audio_trigger_systems` 立刻撞红。
 ///
 /// 调度契约（与提取前逐条一致）：所有 emit 系统 `.after(tick_audio_dedup_clock)`（拿到当帧 dedup
-/// 逻辑 tick）`.before(audio_event_emit::emit_audio_play_payloads)`（同帧把 `PlaySoundRecipeRequest`
-/// 投递给客户端，不跨帧延迟）。
+/// 逻辑 tick）`.before(audio_event_emit::emit_audio_play_payloads)`（本系统发出的
+/// `PlaySoundRecipeRequest` 同帧投递给客户端）。注意这只约束「emit 系统 → payload 投递」这一跳：
+/// cast 逻辑 → emit 系统之间没有显式 order，cast 事件最坏跨 1 tick 才被读到（`EventReader`
+/// 双缓冲保证不丢），与重构前 cast 命令 flush 的时序同量级，非本次引入。
 pub fn register(app: &mut App) {
     app.add_systems(Update, tick_audio_dedup_clock);
     app.add_systems(
