@@ -21,11 +21,14 @@ use crate::combat::anqi_v2::{
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::carrier::CarrierChargedEvent;
 use crate::combat::components::{Lifecycle, Wounds};
+use crate::combat::dugu_v2::skills::DUGU_POISON_SIGNATURE_RECIPE;
+use crate::combat::dugu_v2::ReverseTriggeredEvent;
 use crate::combat::events::{AttackSource, CombatEvent, DeathEvent, DefenseKind};
 use crate::combat::needle::QiNeedleChargedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::combat::woliu::{VortexBackfireEvent, VortexField};
 use crate::combat::woliu_v2::VortexCastEvent;
+use crate::combat::zhenmai_v2::ZhenmaiSkillCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::dugu::DuguObfuscationDisruptedEvent;
@@ -856,16 +859,21 @@ pub fn emit_anqi_audio_triggers(
     }
 }
 
-/// 蛊道（独孤毒流）基础两招 cast → `PlaySoundRecipeRequest`，引用 `audio_recipes/dugu_*.json`
-/// （全部复用 vanilla 音色分层，无新音频文件）。
+/// 蛊道（独孤毒流）cast → `PlaySoundRecipeRequest`，引用 `audio_recipes/dugu_*.json`
+/// （除签名 `dugu_poison_signature` 外全部复用 vanilla 音色分层）。
 ///
 /// - 凝针 `QiNeedleChargedEvent` → `dugu_cast`（arrow.shoot：真元凝针远距直刺）
 /// - 灌毒蛊 `DuguObfuscationDisruptedEvent` → `dugu_poison_cast`（bee aggressive：失谐真元覆毒）
+/// - 倒蚀 `ReverseTriggeredEvent` → `DUGU_POISON_SIGNATURE_RECIPE`（蛊道签名 `bong:skill.dugu.infuse_poison`）
+///
+/// 倒蚀签名原先内联在 `dugu_v2::skills::apply_reverse`（Pattern B）里发，
+/// plan-fpv-cast-av-v1 P5 改为读 cast 事件的独立系统（Pattern A），使 emit-path 可测。
 ///
 /// **纯 cosmetic**：只发音效，不读 / 改任何战斗 / 真元状态。
-pub fn emit_dugu_needle_audio_triggers(
+pub fn emit_dugu_v2_audio_triggers(
     mut needles: EventReader<QiNeedleChargedEvent>,
     mut infusions: EventReader<DuguObfuscationDisruptedEvent>,
+    mut reverses: EventReader<ReverseTriggeredEvent>,
     positions: Query<&Position>,
     mut audio: AudioEmitWriter,
 ) {
@@ -898,6 +906,52 @@ pub fn emit_dugu_needle_audio_triggers(
             event.infuser,
             origin,
             Some("dugu_infuse_poison".to_string()),
+            1.0,
+            0.0,
+        );
+    }
+
+    // 倒蚀签名：音源锚在爆发中心（`event.center` = 目标位置，无目标时退到施法者位置，
+    // 由 cast 侧算好），与重构前内联 emit 的音源一致。
+    for event in reverses.read() {
+        emit_play(
+            &mut audio,
+            DUGU_POISON_SIGNATURE_RECIPE,
+            event.caster,
+            event.center,
+            Some("dugu_reverse".to_string()),
+            1.0,
+            0.0,
+        );
+    }
+}
+
+/// 真脉五招 cast → 各招专属音效配方（`ZhenmaiSkillId::audio_recipe` 单一真源映射）。
+///
+/// 读 `ZhenmaiSkillCastEvent`（cast 侧 `emit_skill_feedback` 发），caster 无 `Position`
+/// 时落到事件自带的 `center`，保证施法者断 Position 也能出招声。
+///
+/// plan-fpv-cast-av-v1 P5：原先音效内联在 `zhenmai_v2::emit_skill_feedback`（Pattern B），
+/// 改为本独立系统后「招式实际发出哪条 recipe」可被 emit-path 集成测试锁住。
+///
+/// **纯 cosmetic**：只发音效，不读 / 改任何战斗 / 真元状态。
+pub fn emit_zhenmai_v2_audio_triggers(
+    mut casts: EventReader<ZhenmaiSkillCastEvent>,
+    positions: Query<&Position>,
+    mut audio: AudioEmitWriter,
+) {
+    let mut audio = audio.context();
+    for event in casts.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|position| position.get())
+            .unwrap_or(event.center);
+        emit_play(
+            &mut audio,
+            event.skill.audio_recipe(),
+            event.caster,
+            origin,
+            None,
             1.0,
             0.0,
         );
@@ -2477,6 +2531,183 @@ mod tests {
             recipes,
             vec!["shed_skin_burst"],
             "tuike 被动蜕壳应经 emit 系统实发 shed_skin_burst（event.visual.sound_recipe_id），实际 {recipes:?}"
+        );
+    }
+
+    // ─── 真脉五招：emit_zhenmai_v2_audio_triggers（P5 emit 架构统一）───
+
+    fn setup_zhenmai_audio_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<ZhenmaiSkillCastEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_zhenmai_v2_audio_triggers);
+        app
+    }
+
+    fn drain_recipes(app: &mut App) -> Vec<String> {
+        app.world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .map(|event| event.recipe_id)
+            .collect()
+    }
+
+    /// 真脉五招逐招经**真实 emit 系统**实发自己的 recipe（recipe id 从生产映射
+    /// `ZhenmaiSkillId::audio_recipe` 取，测试内不另抄表）。
+    ///
+    /// 「运行时消费」emit-path 门：跑 `emit_zhenmai_v2_audio_triggers` 读 `ZhenmaiSkillCastEvent`
+    /// → 发 `PlaySoundRecipeRequest`；删掉发声调用 / 系统没接线 / 招式→recipe 映射串味都撞红。
+    /// 含签名招 `sever_chain`（`zhenmai_sever_crack`，`bong:skill.zhenmai.sever_chain`）。
+    #[test]
+    fn zhenmai_skills_emit_dedicated_recipes() {
+        use crate::combat::zhenmai_v2::ZhenmaiSkillId;
+
+        for skill in [
+            ZhenmaiSkillId::Parry,
+            ZhenmaiSkillId::Neutralize,
+            ZhenmaiSkillId::MultiPoint,
+            ZhenmaiSkillId::HardenMeridian,
+            ZhenmaiSkillId::SeverChain,
+        ] {
+            let mut app = setup_zhenmai_audio_app();
+            let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+            app.world_mut().send_event(ZhenmaiSkillCastEvent {
+                caster,
+                skill,
+                center: DVec3::new(0.0, 64.0, 0.0),
+            });
+            app.update();
+
+            let recipes = drain_recipes(&mut app);
+            assert_eq!(
+                recipes,
+                vec![skill.audio_recipe().to_string()],
+                "真脉 {skill:?} 应经 emit 系统实发 `{}`（生产映射 ZhenmaiSkillId::audio_recipe），实际 {recipes:?}",
+                skill.audio_recipe()
+            );
+        }
+    }
+
+    /// 真脉签名 `sever_chain` 的音源在 caster 断 `Position` 时落到事件自带 `center`
+    /// （断线 / 未同步位置时不静默丢招式声）。
+    #[test]
+    fn zhenmai_audio_falls_back_to_event_center_without_position() {
+        use crate::combat::zhenmai_v2::ZhenmaiSkillId;
+
+        let mut app = setup_zhenmai_audio_app();
+        let caster = app.world_mut().spawn(()).id();
+        app.world_mut().send_event(ZhenmaiSkillCastEvent {
+            caster,
+            skill: ZhenmaiSkillId::SeverChain,
+            center: DVec3::new(7.5, 64.0, -3.5),
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "caster 无 Position 也应发声（音源退到 event.center），实际发了 {} 条",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id,
+            ZhenmaiSkillId::SeverChain.audio_recipe()
+        );
+        assert_eq!(
+            emitted[0].pos,
+            Some([7, 64, -4]),
+            "无 Position 时音源应落到 event.center"
+        );
+    }
+
+    // ─── 蛊道倒蚀签名：emit_dugu_v2_audio_triggers（P5 emit 架构统一）───
+
+    fn setup_dugu_audio_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<QiNeedleChargedEvent>();
+        app.add_event::<DuguObfuscationDisruptedEvent>();
+        app.add_event::<ReverseTriggeredEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_dugu_v2_audio_triggers);
+        app
+    }
+
+    fn reverse_event(caster: Entity, center: DVec3) -> ReverseTriggeredEvent {
+        use crate::combat::dugu_v2::events::DuguSkillId;
+        use crate::combat::dugu_v2::skills::visual_for;
+
+        ReverseTriggeredEvent {
+            caster,
+            affected_targets: 1,
+            burst_damage: 12.0,
+            returned_zone_qi: 1.0,
+            juebi_delay_ticks: None,
+            tick: 1,
+            center,
+            visual: visual_for(DuguSkillId::Reverse),
+        }
+    }
+
+    /// 蛊道签名（倒蚀 `ReverseTriggeredEvent`）经**真实 emit 系统**实发 `dugu_poison_signature`
+    /// （recipe id 引生产 const `DUGU_POISON_SIGNATURE_RECIPE` 单一真源）。
+    ///
+    /// 「运行时消费」emit-path 门：原先内联在 `apply_reverse`（Pattern B）无法独立驱动，
+    /// P5 改为本系统读 cast 事件后可锁——删掉发声调用 / 系统没接线都撞红。
+    #[test]
+    fn dugu_reverse_emits_signature_recipe() {
+        let mut app = setup_dugu_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut()
+            .send_event(reverse_event(caster, DVec3::new(3.0, 64.0, 4.0)));
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec![DUGU_POISON_SIGNATURE_RECIPE],
+            "蛊道倒蚀应经 emit 系统实发 {DUGU_POISON_SIGNATURE_RECIPE}，实际 {recipes:?}"
+        );
+        assert_eq!(
+            emitted[0].pos,
+            Some([3, 64, 4]),
+            "倒蚀签名音源应锚在爆发中心 event.center（= 目标位置），而非施法者脚下"
+        );
+    }
+
+    /// 蛊道两条基础招（凝针 / 灌毒蛊）与倒蚀签名互不串味：同一系统三条 reader 各发各的 recipe。
+    #[test]
+    fn dugu_basic_skills_and_reverse_signature_do_not_cross_talk() {
+        let mut app = setup_dugu_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(QiNeedleChargedEvent {
+            shooter: caster,
+            target: None,
+            tick: 1,
+        });
+        app.world_mut()
+            .send_event(reverse_event(caster, DVec3::new(0.0, 64.0, 0.0)));
+        app.update();
+
+        let recipes = drain_recipes(&mut app);
+        assert_eq!(
+            recipes,
+            vec![
+                "dugu_cast".to_string(),
+                DUGU_POISON_SIGNATURE_RECIPE.to_string()
+            ],
+            "凝针应发 dugu_cast、倒蚀应发签名 {DUGU_POISON_SIGNATURE_RECIPE}，实际 {recipes:?}"
         );
     }
 

@@ -850,8 +850,8 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_sword_path_audio_triggers,
             // 暗器六招 cast → 专属音效（纯 cosmetic，复用 vanilla 音色 recipe）。
             audio_trigger::emit_anqi_audio_triggers,
-            // 蛊道两招（凝针 / 灌毒蛊）cast → 专属音效（纯 cosmetic，复用 vanilla 音色 recipe）。
-            audio_trigger::emit_dugu_needle_audio_triggers,
+            // 蛊道（凝针 / 灌毒蛊 / 倒蚀签名）cast → 专属音效（纯 cosmetic）。
+            audio_trigger::emit_dugu_v2_audio_triggers,
             audio_trigger::emit_skill_audio_triggers,
             audio_trigger::emit_social_audio_triggers
                 .after(crate::cultivation::possession::process_duo_she_requests),
@@ -865,11 +865,15 @@ pub fn register(app: &mut App) {
             .after(audio_trigger::tick_audio_dedup_clock)
             .before(audio_event_emit::emit_audio_play_payloads),
     );
-    // 绝灵涡流（woliu v1）开涡 / 反噬 → 音效（lifecycle 驱动，复用现有 recipe）。
     // 单独一个 add_systems：上面的 audio tuple 已满 20 系统（Bevy 元组上限）。
+    // - 绝灵涡流（woliu v1）开涡 / 反噬 → 音效（lifecycle 驱动，复用现有 recipe）。
+    // - 真脉五招 cast（`ZhenmaiSkillCastEvent`）→ 逐招专属音效（含 sever_chain 签名）。
     app.add_systems(
         Update,
-        audio_trigger::emit_woliu_v1_vortex_audio_triggers
+        (
+            audio_trigger::emit_woliu_v1_vortex_audio_triggers,
+            audio_trigger::emit_zhenmai_v2_audio_triggers,
+        )
             .after(audio_trigger::tick_audio_dedup_clock)
             .before(audio_event_emit::emit_audio_play_payloads),
     );
