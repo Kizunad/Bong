@@ -863,7 +863,9 @@ pub fn register(app: &mut App) {
             npc_metadata::emit_npc_metadata_payloads,
         )
             .after(audio_trigger::tick_audio_dedup_clock)
-            .before(audio_event_emit::emit_audio_play_payloads),
+            .before(audio_event_emit::emit_audio_play_payloads)
+            // loop recipe 的收尾（如低血心跳血量回升）也要同帧下发，别拖到下一帧。
+            .before(audio_event_emit::emit_audio_stop_payloads),
     );
     // 绝灵涡流（woliu v1）开涡 / 反噬 → 音效（lifecycle 驱动，复用现有 recipe）。
     // 单独一个 add_systems：上面的 audio tuple 已满 20 系统（Bevy 元组上限）。
@@ -872,6 +874,14 @@ pub fn register(app: &mut App) {
         audio_trigger::emit_woliu_v1_vortex_audio_triggers
             .after(audio_trigger::tick_audio_dedup_clock)
             .before(audio_event_emit::emit_audio_play_payloads),
+    );
+    // 重生必须收掉低血心跳 loop（`heartbeat_low_hp` 第二层 = entity.player.hurt，
+    // client 侧每 20 tick 自行重放，漏 stop 就变成重生后一直响受伤音）。
+    // 排在 emit_audio_stop_payloads 之前，保证同帧下发。
+    app.add_systems(
+        Update,
+        audio_trigger::stop_low_hp_heartbeat_on_revive
+            .before(audio_event_emit::emit_audio_stop_payloads),
     );
     app.add_systems(
         Update,
