@@ -2,7 +2,7 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：⏳ 最终 PR 闭环待验收（当前候选 HEAD：`25eb78ed2d567b8fe6ed0c0e9be63c8f41664fc3`）。P0/P1/P2 实现及定向验证已完成；前一目标代码树 `fb5c4cf4752f412b9c275a5a5904e034c72e34aa` 的 server、Java 17 client、协议 Bot、隔离 ambient 场景与隔离全栈闭环 smoke 已通过。当前文档证据提交后的 exact HEAD 尚待新的无上下文 validator、`/review` 与 CI 验收，因此不得把本文件表述为最终验收完成。归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。
+**状态**：⏳ 最终 PR 闭环待验收（当前候选 HEAD：`9626ab13805426466c0eb3513756958fa62bf090`）。P0/P1/P2 实现及定向验证已完成；前一目标代码树 `fb5c4cf4752f412b9c275a5a5904e034c72e34aa` 的 server、Java 17 client、协议 Bot、隔离 ambient 场景与隔离全栈闭环 smoke 已通过。当前文档证据提交后的 exact HEAD 尚待新的无上下文 validator、`/review` 与 CI 验收，因此不得把本文件表述为最终验收完成。归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
@@ -362,7 +362,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - **隔离全栈闭环 smoke**：PASS；先通过 dev-reload detach、schema、Tiandao 与无 listener full-app startup，再以 private runtime CWD、private Redis `56019`、当前 checkout debug server 和 deterministic Tiandao one-tick 跑跨进程闭环。独立 subscriber 观测 `bong:world_state`、`bong:agent_command`、`bong:agent_narrate`，server 观测两个 `command_anchor stage=end ... result=ok`；persistent state `UNCHANGED`，25565 与 Redis 端口均已清理。第一次尝试仅因 listener readiness race 失败，修正为 listener + PID-tree 轮询后重试成功；失败轮不计作 PASS。
 - **完整 Bot suite（历史证据，非全绿）**：30 pass / 1 skip / 1 fail；唯一失败为本 plan 范围外的 `combat_weapon_equip_damage` 等待 NPC spawn 超时。不得将该轮写成全绿，也不得用它替代上述定向 witness。
 - **历史证据边界**：`71e5ea3ab`、`da3196a35`、`7c4c068f8` 等旧树门禁只证明各自 SHA，不再称“最终 HEAD”；其 validator 也均因后续代码变更失效。
-- **最终 PR 闭环待办**：当前候选 HEAD 为 `25eb78ed2d567b8fe6ed0c0e9be63c8f41664fc3`，相对 `fb5c4cf...` 仅修改本 plan 文档。必须对该 SHA 启动无上下文、read-only validator，并在 push 后重新触发独立 `/review`、等待 exact-head CI 与 CodeRabbit。三者完成前，本计划不宣称 Finished。
+- **最终 PR 闭环待办**：当前候选 HEAD 为 `9626ab13805426466c0eb3513756958fa62bf090`，相对 `fb5c4cf...` 仅修改本 plan 文档。必须对该 SHA 启动无上下文、read-only validator，并在 push 后重新触发独立 `/review`、等待 exact-head CI 与 CodeRabbit。三者完成前，本计划不宣称 Finished。
 
 ### 跨仓库核验
 
