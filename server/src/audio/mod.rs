@@ -633,10 +633,17 @@ mod tests {
     /// `PlaySoundRecipeRequest.recipe_id`：`network::audio_trigger` 的
     /// `sword_path_skills_emit_dedicated_recipes`（heaven_gate charge/release）、
     /// `anqi_skills_emit_dedicated_recipes`（echo_fractal）、`baomai_full_power_release_emits_signature_recipe`、
-    /// `woliu_void_core_emits_signature_recipe`、`tuike_shed_passive_emits_signature_recipe`（被动蜕壳），
-    /// 及 `body_plan::morph` 的 yixing emit 断言。剩 zhenmai `sever_chain` / dugu `infuse_poison` /
-    /// tuike **主动施法** `cast_shed` 的签名 emit 内联在 cast 逻辑（Pattern B，需全套 combat 环境难驱动），
-    /// 待 P5 重构为 Pattern A 独立 `emit_*_audio_triggers` 系统后补 emit-path 测试。
+    /// `woliu_void_core_emits_signature_recipe`、`tuike_shed_passive_emits_signature_recipe`（被动蜕壳）、
+    /// `zhenmai_skills_emit_dedicated_recipes`（五招含 sever_chain 签名）、
+    /// `dugu_reverse_emits_signature_recipe`（倒蚀签名），及 `body_plan::morph` 的 yixing emit 断言。
+    ///
+    /// P5 emit 架构统一后，原先内联在 cast 逻辑里的三处签名 emit（Pattern B：zhenmai
+    /// `emit_skill_feedback` / dugu `apply_reverse` / tuike 主动 `cast_shed`）已改为读 cast 事件的
+    /// 独立 `emit_*_audio_triggers` 系统（Pattern A），并各自补了**端到端** emit-path 门（真跑一次
+    /// 施法 + 真跑音效系统）：`combat::zhenmai_v2::tests::sever_chain_cast_emits_signature_recipe_end_to_end`、
+    /// `combat::dugu_v2::tests::reverse_cast_emits_signature_recipe_end_to_end`、
+    /// `combat::tuike_v2::tests::active_cast_shed_emits_signature_recipe_exactly_once_end_to_end`
+    /// —— 至此 9 招签名 emit-firing 全覆盖。
     ///
     /// 天门蓄力尾程窗口从生产相位常量 `HEAVEN_GATE_CHARGE_END`/`HEAVEN_GATE_AOE_END` 派生（非手写
     /// 数字）——相位机改时序则本断言窗口跟着走，锁的是真实播放时序契约。
