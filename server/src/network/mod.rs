@@ -408,7 +408,8 @@ fn bootstrap_redis_bridge(app: &mut App) {
     app.insert_resource(runtime_mirror_redis);
 }
 
-/// **纯 App 装配**（只 `insert_resource` / `add_systems` / `add_event`，无线程无 IO）——
+/// **纯 App 装配**（只 `insert_resource` / `add_systems` / `add_event`；无线程、无网络 / 文件 IO，
+/// 仅 `ResourcePackConfig::from_env` 读几个环境变量且无 panic 路径）——
 /// 生产由 `register` 调用，接线门禁测试也调用同一个它。于是「顶层把
 /// `audio_trigger::register(app)` 那行删掉」不再是测试照不到的死角。
 pub(crate) fn register_app_wiring(app: &mut App) {
@@ -846,8 +847,6 @@ pub(crate) fn register_app_wiring(app: &mut App) {
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
-    // 全部 audio-trigger 系统的调度**唯一生产真源**在 `audio_trigger::register`——
-    // 生产与接线门禁测试共用同一份系统清单，测试里不许再抄一遍（PR #1262 review 要求）。
     // 全部 audio-trigger 系统的调度**唯一生产真源**在 `audio_trigger::register`——
     // 生产与接线门禁测试共用同一份系统清单，测试里不许再抄一遍（PR #1262 review 要求）。
     audio_trigger::register(app);

@@ -62,7 +62,8 @@ use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
 ///
 /// 提取自 `network::mod`（PR #1262 review 意见）：接线门禁测试跑的就是这个函数，于是「某个 emit
 /// 系统没被注册进调度」不再是测试照不到的死角——测试不再自己抄一份系统清单，从这里删掉任何一个
-/// 系统，`register_wires_all_audio_trigger_systems` 立刻撞红。
+/// 系统，`production_wiring_registers_audio_trigger_systems_exactly_once_in_order` 立刻撞红
+/// （它跑的是更上一层的生产 `network::register_app_wiring`，还顺带锁了「恰好注册一次」与两条调度边）。
 ///
 /// 调度契约（与提取前逐条一致）：所有 emit 系统 `.after(tick_audio_dedup_clock)`（拿到当帧 dedup
 /// 逻辑 tick）`.before(audio_event_emit::emit_audio_play_payloads)`（本系统发出的
@@ -2837,6 +2838,15 @@ mod tests {
             first.len(),
             2,
             "同 owner 的两条蜕壳应被 dedup 合成一条、另一 owner 独立发一条（共 2 条），实际 {first:?}"
+        );
+        let recipients: std::collections::BTreeSet<_> = first
+            .iter()
+            .map(|(recipient, _)| format!("{recipient:?}"))
+            .collect();
+        assert_eq!(
+            recipients.len(),
+            2,
+            "这 2 条应分属两个不同 owner（dedup key 含 entity，别人的蜕壳不该被我的抑制），实际 {first:?}"
         );
 
         // ② 窗口内（下一帧，逻辑 tick 差 1 < 2）再来一条 → 仍被抑制。
