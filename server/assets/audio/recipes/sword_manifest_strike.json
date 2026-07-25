@@ -1,7 +1,18 @@
 {
   "id": "sword_manifest_strike",
   "layers": [
-    { "sound": "minecraft:entity.player.attack.strong", "volume": 0.6, "pitch": 1.25, "delay_ticks": 0 }
+    {
+      "sound": "bong:skill.sword_path.heaven_gate",
+      "volume": 0.9,
+      "pitch": 1.0,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.player.attack.strong",
+      "volume": 0.5,
+      "pitch": 1.25,
+      "delay_ticks": 0
+    }
   ],
   "priority": 55,
   "attenuation": "world_3d",
