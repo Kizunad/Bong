@@ -31,9 +31,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * 查不到就按 0 档渲染。每次 sync 是**全量替换**——某只鼠从名单里消失（死亡 / 离开视野 /
  * 储量归还 zone）即自动降回 0 档，无需额外的"降档"事件。
  *
- * <p>线程安全：{@link #TIERS} 用 {@link ConcurrentHashMap}，网络线程写、渲染线程读。
- * 全量替换用逐 key diff 而非 clear+putAll，避免渲染线程在 clear 后的空窗里把所有鼠
- * 闪回 q0。
+ * <p>线程安全：{@link #handleSync} 由 {@code BongNetworkHandler} 经
+ * {@code client.execute(...)} 派回主（渲染）线程执行，渲染层读也在同一线程，故正常路径下
+ * 并无跨线程竞争。{@link #TIERS} 仍用 {@link ConcurrentHashMap} 兜底（断线清理等旁路可能
+ * 从别处调用），全量替换用逐 key diff 而非 clear+putAll——即便只是同线程，clear 之后到
+ * putAll 之前若插入任何读取（将来有人加个 hook / 换成异步派发）都会把整群鼠闪回 q0。
  */
 public final class RatQiTierHandler {
 

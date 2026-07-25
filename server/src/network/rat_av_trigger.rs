@@ -130,6 +130,32 @@ mod tests {
             .collect()
     }
 
+    // ── 接线核验（防功能孤岛）────────────────────────────────────────────────
+
+    /// 两条接线断任一条，鼠咬人就永远只播 idle，而本文件单测照样全绿：
+    /// ① `emit_rat_attack_entity_anim` 没被 `network::register` 注册 → 事件无人消费；
+    /// ② `RatAttackAvEvent` 没被 `brain_rat::register` 注册 → `EventWriter` 取不到资源。
+    #[test]
+    fn emit_system_and_event_are_wired_into_app() {
+        let network_mod = include_str!("mod.rs");
+        assert!(
+            network_mod.contains("rat_av_trigger::register(app)"),
+            "network::register 必须调用 rat_av_trigger::register(app)，否则 RatAttackAvEvent \
+             无人消费——鼠咬人永远只播 idle"
+        );
+        assert!(
+            network_mod.contains("pub mod rat_av_trigger;"),
+            "rat_av_trigger 必须在 network 下声明为模块"
+        );
+
+        let brain_rat = include_str!("../npc/brain_rat.rs");
+        assert!(
+            brain_rat.contains("add_event::<RatAttackAvEvent>()"),
+            "brain_rat::register 必须注册 RatAttackAvEvent 事件类型，否则 action system 的 \
+             EventWriter<RatAttackAvEvent> 取不到 Events 资源"
+        );
+    }
+
     // ── 三招各自的 anim / duration / entity_id ────────────────────────────────
 
     #[test]

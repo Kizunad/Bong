@@ -222,6 +222,27 @@ pub fn register(app: &mut valence::prelude::App) {
 mod tests {
     use super::*;
 
+    // ── 接线核验（防功能孤岛）────────────────────────────────────────────────
+
+    /// `register` 写了却没被 `network::register` 调用 = 永不运行的孤岛：档位永不下发，
+    /// 客户端所有鼠恒渲染 q0，而本文件的纯函数单测照样全绿。
+    ///
+    /// ECS 系统本身起不了真 app（需要 valence 全量插件 + client），故退一步在**源码层**
+    /// 钉住调用点存在（对齐 client 侧 `FaunaEmissiveGlowWiringTest` 的字节码接线核验思路）。
+    #[test]
+    fn register_is_wired_into_network_register() {
+        let network_mod = include_str!("mod.rs");
+        assert!(
+            network_mod.contains("rat_qi_tier_emit::register(app)"),
+            "network::register 必须调用 rat_qi_tier_emit::register(app)，否则档位下发系统\
+             永不运行——客户端所有噬元鼠恒渲染 q0，而本模块单测仍会全绿"
+        );
+        assert!(
+            network_mod.contains("pub mod rat_qi_tier_emit;"),
+            "rat_qi_tier_emit 必须在 network 下声明为模块"
+        );
+    }
+
     // ── 档位阈值（含边界 off-by-one 与脏数值）────────────────────────────────
 
     #[test]
@@ -262,24 +283,28 @@ mod tests {
         }
     }
 
+    /// 非有限值一律归 0 档 —— 包括 `+inf`。
+    ///
+    /// `+inf` 数值上确实落在「大于二档阈值」一侧，但它和 NaN 一样只可能来自**账本被写坏**，
+    /// 不是「吸得特别多」。选择让所有非有限值走同一条保守分支（0 档），而不是给 `+inf` 开
+    /// 一个「饱和到满档」的特例：脏数据不该被奖励成最亮的表现，且 NaN 无论如何比较不出来，
+    /// 特例化只会让这条规则多一个记不住的分叉。
     #[test]
-    fn tier_zero_for_negative_and_non_finite() {
-        for qi in [-1.0, -f64::MAX, f64::NAN, f64::NEG_INFINITY] {
+    fn tier_zero_for_negative_and_all_non_finite() {
+        for qi in [
+            -1.0,
+            -f64::MAX,
+            f64::NAN,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+        ] {
             assert_eq!(
                 rat_qi_tier(qi),
                 0,
-                "脏储量 {qi} 必须归 0 档，不能让 NaN/负值变成客户端查不到的贴图下标"
+                "脏储量 {qi} 必须归 0 档：非有限值只可能来自账本损坏，不能让它变成\
+                 客户端查不到的贴图下标、也不该被奖励成满档发光"
             );
         }
-    }
-
-    #[test]
-    fn tier_two_for_positive_infinity() {
-        assert_eq!(
-            rat_qi_tier(f64::INFINITY),
-            RAT_QI_TIER_MAX,
-            "+inf 属于「大于二档阈值」一侧，应饱和到 {RAT_QI_TIER_MAX} 而非回落 0"
-        );
     }
 
     // ── wire 格式 pin（client RatQiTierHandler 逐字对齐）──────────────────────

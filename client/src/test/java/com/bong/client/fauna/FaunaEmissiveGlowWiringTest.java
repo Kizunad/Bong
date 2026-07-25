@@ -123,11 +123,13 @@ class FaunaEmissiveGlowWiringTest {
 
     @Test
     void full_bright_light_constant_is_max_lightmap() {
-        // block=15, sky=15 → (15<<20) | (15<<4) = 15728640；与 GeckoLib AutoGlowingGeoLayer 同值。
+        // 用**字面量**断言，不复述生产里的 (15<<20)|(15<<4) 表达式——照抄表达式就成了同义反复，
+        // 生产改成 (7<<20)|(7<<4) 也照样绿。15728880 = LightmapTextureManager.pack(15, 15)。
         assertEquals(
-            (15 << 20) | (15 << 4),
+            15728880,
             FaunaEmissiveGlowLayer.FULL_BRIGHT_LIGHT,
-            "全亮 packed light 必须是 lightmap 上限，否则发光层仍会被环境光压暗"
+            "全亮 packed light 必须是 lightmap 上限 15728880（block=15 & sky=15），"
+                + "否则发光层在会读 lightmap 的 RenderLayer 下仍会被环境光压暗"
         );
     }
 }
