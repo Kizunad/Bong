@@ -1088,6 +1088,64 @@ fn cast_shed_routes_spent_qi_to_overflow_without_zone_context() {
     );
 }
 
+/// plan-fpv-cast-av-v1 P5 emit 架构统一 —— **端到端 emit-path 门**（主动施法路径）：
+/// 真跑一次 `cast_shed`，再跑真实音效系统 `emit_tuike_v2_audio_triggers`，断言实发的
+/// `PlaySoundRecipeRequest.recipe_id` == 签名 `SHED_SKIN_BURST_RECIPE`（引生产 const 单一真源），
+/// 且**只发一条**。
+///
+/// 重构前 `cast_shed` 内联再发一条同 recipe（Pattern B），与 `FalseSkinSheddedEvent` 驱动的
+/// Pattern A 系统重复发声——「只发一条」正是锁这个；反过来若哪天 cast 不再发
+/// `FalseSkinSheddedEvent`、或系统不再读它，则一条都发不出来，同样撞红。
+#[test]
+fn active_cast_shed_emits_signature_recipe_exactly_once_end_to_end() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_tuike_v2_audio_triggers;
+    use valence::prelude::Position;
+
+    use super::events::SHED_SKIN_BURST_RECIPE;
+
+    let mut app = App::new();
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_systems(Update, emit_tuike_v2_audio_triggers);
+    app.world_mut().insert_resource(CombatClock { tick: 100 });
+    add_tuike_events(app.world_mut());
+    let entity = app
+        .world_mut()
+        .spawn((
+            cultivation(Realm::Void, 1000.0, 1000.0),
+            inventory_with_skin(FALSE_SKIN_ANCIENT_ITEM_ID, 1.0),
+            SkillBarBindings::default(),
+            DerivedAttrs::default(),
+            PracticeLog::default(),
+            stack_with(FalseSkinTier::Ancient, 1.0),
+            Position::new([5.0, 64.0, -2.0]),
+        ))
+        .id();
+
+    assert_started(cast_shed(app.world_mut(), entity, 0, None));
+    app.update();
+
+    let emitted: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .collect();
+    let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+    assert_eq!(
+        recipes,
+        vec![SHED_SKIN_BURST_RECIPE],
+        "主动蜕壳应经真实 emit 系统实发签名 {SHED_SKIN_BURST_RECIPE}，且只发一条（内联 emit 与 \
+         Pattern A 系统各发一条 = 重复发声），实际 {recipes:?}"
+    );
+    assert_eq!(
+        emitted[0].pos,
+        Some([5, 64, -2]),
+        "音源应落在施法者 Position"
+    );
+}
+
 #[test]
 fn shed_outer_layer_emits_residue() {
     let (mut world, entity) = world_with_player(Realm::Void, 1000.0, FALSE_SKIN_ANCIENT_ITEM_ID);

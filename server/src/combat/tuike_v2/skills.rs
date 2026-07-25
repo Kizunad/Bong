@@ -23,7 +23,7 @@ use crate::world::zone::ZoneRegistry;
 
 use super::events::{
     ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent, PermanentTaintAbsorbedEvent,
-    TuikeSkillId, TuikeSkillVisual, SHED_SKIN_BURST_RECIPE,
+    TuikeSkillId, TuikeSkillVisual,
 };
 use super::physics::{
     max_layers_for_realm, shed_start_cost, transfer_cooldown_ticks, transfer_taint_to_outer_skin,
@@ -170,7 +170,10 @@ pub fn cast_shed(
             18,
             34,
         );
-        emit_audio(world, SHED_SKIN_BURST_RECIPE, pos);
+        // 蜕壳签名音效不再内联发（plan-fpv-cast-av-v1 P5 emit 架构统一）：主动施法与被动
+        // 掉壳都走 `shed_outer_layer` 发的 `FalseSkinSheddedEvent`，由
+        // `network::audio_trigger::emit_tuike_v2_audio_triggers` 消费 → 发
+        // `SHED_SKIN_BURST_RECIPE`（= `visual.sound_recipe_id`）。内联那份是同 recipe 的重复发声。
         emit_anim(world, caster, "bong:tuike_shed_burst");
     }
 
