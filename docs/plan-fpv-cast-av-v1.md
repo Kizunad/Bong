@@ -36,7 +36,7 @@
 | P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
 | P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 3/3 定稿：双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂**逐 tick** IK 合握，加密防插值脱手），关键帧残差 ≤0.55、中间帧最差 2.43 模型单位，t0=t20 收势闭合。剩余招式 FPV 变体待续 |
 | P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⬜（拆到独立 PR #1249，本 PR 不含） |
-| P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ✅ 2026-07-24（纯资产 + 管线，8 条 CC0 真 `.ogg` 落地；**9 条 server recipe 主层/前兆层换 `bong:` 事件**——8 招 signature + heaven_gate charge 前兆，heaven_gate release（`sword_manifest_strike`）+ charge（专属 `heaven_gate_charge`）均在 server 侧；resourcepack 纳入 `bong/sounds` + `bong/sounds.json` + sha1 同步；跨端契约测试 server 3 + client 13，含**运行时消费 pin** 从生产映射取 recipe id） |
+| P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ✅ 2026-07-24（纯资产 + 管线，8 条 CC0 真 `.ogg` 落地；**9 条 server recipe 主层/前兆层换 `bong:` 事件**——8 招 signature + heaven_gate charge 前兆，heaven_gate release（`sword_manifest_strike`）+ charge（专属 `heaven_gate_charge`）均在 server 侧；resourcepack 纳入 `bong/sounds` + `bong/sounds.json` + sha1 同步；跨端契约测试 server 3 + client 12（heaven_gate signature pin 移到 server 侧后删了 client 对应用例），含**运行时消费 pin** 从生产映射取 recipe id + 经真实 registry 查找） |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |
 
 ## P0 — FPV 技术路线 POC（决策门）
@@ -103,7 +103,7 @@
 - **跨端契约测试**：server `audio::signature_recipes_reference_registered_bong_events`（recipe `bong:` 引用 ⊆ client sounds.json 键）+ **`each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event`**（**运行时消费 pin**：9 招逐项锁「招式实际 emit 的 recipe」L0=bong: + pitch（release/常规招 1.0、天门蓄力前兆 0.72）——**recipe id 一律从生产映射取**：调真实映射函数 `sword_path_recipe_for_skill`/`baomai_recipe_for_skill`/`ZhenmaiSkillId::audio_recipe` 或引用生产 `pub(crate) const` 单一真源 `WOLIU_VOID_CORE_RECIPE`/`SHED_SKIN_BURST_RECIPE`/`DUGU_POISON_SIGNATURE_RECIPE`/`YIXING_CAST_RECIPE`/`ANQI_ECHO_FRACTAL_RECIPE`，测试内不另抄 recipe id 表；招式改播别的 recipe 或目标 recipe 退回 vanilla 都撞红——防「换错死 recipe」bug 回归）；client `SignatureAudioContractTest`（从单一 canonical `SIGNATURE_SPEC` 表派生：事件→sound name→ogg 路径逐项映射 + sounds.json↔ogg 双向 + **错误分支**：重复事件键 token 级检测 + 非法命名空间前缀拒绝 + **committed manifest 覆盖** + **音频格式 ffmpeg 完整解码门禁**：统一 `validateSignatureAudio` 谓词（`ffmpeg -f null` 完整解码每 packet + `ffprobe duration_ts` 精确采样数严格 ≤132300=3s@44.1k，无浮点容差），正向真资产与负向 fixture（ffmpeg lavfi 现场合成的 stereo/48k/超长/Opus + garbage）**共用同一谓词**防漂移；工具/编码器缺失时 Assumptions 跳过而非破红 CI。校验只作用于 signature 集合。sounds.json 移除未接线的 `subtitle` key + Minecraft 不消费的 `category` field（字幕/分类：字幕留 P5 补 lang；播放分类由 recipe 的 `category`/`SoundSource` 在播放入口设置）。
 - **听审记录（听觉资产 3 轮 + `<PROMISE>`，plan §10 硬约束）**：8 条经用户逐条真机试听 + 多轮换源定稿——Round 1 首版 8 条 → Round 2 用户听审反馈换源（涡心：无人机声 → 呼啸风 #0155；回响分形：尖叫鸡 → 藏铜钵 #1110；脱壳：平淡撕→激烈撕毁 #0013 长撕段）+ 修静音 bug（`atrim` 未重置 PTS 致淡出吞声）→ Round 3 用户复听全部拍板「ok了」。终审 `<PROMISE>` 见本轮音效 commit message。
 - **已交付（charge 尾程）**：heaven_gate charge 尾程签名 = 复用 release 签名 ogg 的压调层（pitch 0.72/vol 0.4），接进 charge 招式实际消费的专属 server recipe `heaven_gate_charge`（`sword_path_recipe_for_skill(HeavenGateCharge)` 指向它）。天门是 committed 单向门（蓄力 elapsed 0→60 临界→120 冲击波→140 释放，cast 即结算不可中断），recipe 于蓄力起始 emit、L0 `delay_ticks=100` 把压调签名推到蓄力**尾段**（临界后、释放前 ~2s）才响——兑现「charge 尾程」预示（非蓄力起始就播）。运行时消费 pin 锁 `delay_ticks>=60` + `volume>0` + L0=bong: 事件 + pitch 0.72。未单独取音（复用 release ogg 压调）。
-- **遗留**：P5 盲听时若 charge 前兆感不足，再单独取一条 charge 专属音（当前压调复用已可辨）；其余 8 招 P5 走差异化盲听回归（能从流派分辨）。
+- **遗留**：P5 盲听时若 charge 前兆感不足，再单独取一条 charge 专属音（当前压调复用已可辨）；其余 7 招（heaven_gate 之外的 woliu/zhenmai/baomai/dugu/tuike/morph/anqi）P5 走差异化盲听回归（能从流派分辨）。
 
 ## P5 — 回归收口
 
