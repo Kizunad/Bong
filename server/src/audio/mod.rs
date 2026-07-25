@@ -633,9 +633,13 @@ mod tests {
     /// `PlaySoundRecipeRequest.recipe_id`：`network::audio_trigger` 的
     /// `sword_path_skills_emit_dedicated_recipes`（heaven_gate charge/release）、
     /// `anqi_skills_emit_dedicated_recipes`（echo_fractal）、`baomai_full_power_release_emits_signature_recipe`、
-    /// `woliu_void_core_emits_signature_recipe`，及 `body_plan::morph` 的 yixing emit 断言。
-    /// 剩 zhenmai `sever_chain` / dugu `infuse_poison` 的签名 emit 内联在 cast 逻辑（Pattern B，需全套
-    /// combat 环境难驱动），待 P5 重构为 Pattern A 独立 `emit_*_audio_triggers` 系统后补 emit-path 测试。
+    /// `woliu_void_core_emits_signature_recipe`、`tuike_shed_passive_emits_signature_recipe`（被动蜕壳），
+    /// 及 `body_plan::morph` 的 yixing emit 断言。剩 zhenmai `sever_chain` / dugu `infuse_poison` /
+    /// tuike **主动施法** `cast_shed` 的签名 emit 内联在 cast 逻辑（Pattern B，需全套 combat 环境难驱动），
+    /// 待 P5 重构为 Pattern A 独立 `emit_*_audio_triggers` 系统后补 emit-path 测试。
+    ///
+    /// 天门蓄力尾程窗口从生产相位常量 `HEAVEN_GATE_CHARGE_END`/`HEAVEN_GATE_AOE_END` 派生（非手写
+    /// 数字）——相位机改时序则本断言窗口跟着走，锁的是真实播放时序契约。
     #[test]
     fn each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event() {
         use crate::body_plan::morph::YIXING_CAST_RECIPE;
@@ -648,13 +652,16 @@ mod tests {
             baomai_recipe_for_skill, sword_path_recipe_for_skill, ANQI_ECHO_FRACTAL_RECIPE,
         };
         use crate::sword_path::av_event::SwordPathSkillId;
+        use crate::sword_path::heaven_gate::{HEAVEN_GATE_AOE_END, HEAVEN_GATE_CHARGE_END};
 
         /// 签名 L0 可听音量下限——低于此实机近静音。
         const AUDIBLE_FLOOR: f32 = 0.1;
-        // 天门四阶段：elapsed 0 蓄力 → 60 临界 → 120 冲击波 → 140 释放。蓄力签名须落在 [60, 140)：
-        // 既过了蓄力起始（不是 charge 开始就播）、又在释放前（不是释放后甚至永不响）。
-        const CHARGE_TAIL_MIN: u32 = 60;
-        const CHARGE_TAIL_MAX: u32 = 139;
+        // 天门蓄力尾程窗口**从生产相位常量派生**（非手写数字，相位机改时序则本断言跟着走）：
+        // `heaven_gate_phase_system` 阶段 elapsed 0 蓄力 → CHARGE_END 临界 → CRITICAL_END 冲击波
+        // → AOE_END 释放。蓄力签名须落在 [CHARGE_END, AOE_END)：过了蓄力起始（不是 charge 开始就
+        // 播）、又在释放前（不是释放后甚至永不响）。
+        const CHARGE_TAIL_MIN: u32 = HEAVEN_GATE_CHARGE_END;
+        const CHARGE_TAIL_MAX: u32 = HEAVEN_GATE_AOE_END - 1;
         // 常规招即响：允许极小铺垫但不得被延迟到听不见。
         const INSTANT_MAX: u32 = 20;
 

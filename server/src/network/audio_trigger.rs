@@ -2424,6 +2424,62 @@ mod tests {
         );
     }
 
+    // ─── 蜕壳签名（被动路径）：emit_tuike_v2_audio_triggers（运行时消费 emit-path 覆盖）───
+
+    fn setup_tuike_audio_app() -> App {
+        use crate::combat::tuike_v2::events::{
+            ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent,
+        };
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<DonFalseSkinEvent>();
+        app.add_event::<FalseSkinSheddedEvent>();
+        app.add_event::<ContamTransferredEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_tuike_v2_audio_triggers);
+        app
+    }
+
+    /// tuike.shed **被动蜕壳**（`FalseSkinSheddedEvent`）经真实 emit 系统实发签名 `shed_skin_burst`
+    /// （经 `event.visual.sound_recipe_id`）。「运行时消费」emit-path 门（Pattern A 侧）；主动施法
+    /// `cast_shed`（Pattern B 内联在 cast 逻辑）待 P5 重构为 Pattern A 后补。
+    #[test]
+    fn tuike_shed_passive_emits_signature_recipe() {
+        use crate::combat::tuike_v2::events::{
+            FalseSkinSheddedEvent, TuikeSkillId, TuikeSkillVisual,
+        };
+        use crate::combat::tuike_v2::FalseSkinTier;
+
+        let mut app = setup_tuike_audio_app();
+        let owner = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(FalseSkinSheddedEvent {
+            owner,
+            attacker: None,
+            tier: FalseSkinTier::Light,
+            damage_absorbed: 0.0,
+            damage_overflow: 0.0,
+            contam_load: 0.0,
+            permanent_taint_load: 0.0,
+            layers_after: 0,
+            active: true,
+            tick: 1,
+            visual: TuikeSkillVisual::for_skill(TuikeSkillId::Shed, false).into(),
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec!["shed_skin_burst"],
+            "tuike 被动蜕壳应经 emit 系统实发 shed_skin_burst（event.visual.sound_recipe_id），实际 {recipes:?}"
+        );
+    }
+
     // ─── 暗器六招：emit_anqi_audio_triggers ───────────────────────
 
     fn setup_anqi_audio_app() -> App {
