@@ -31,6 +31,7 @@ use crate::combat::woliu_v2::VortexCastEvent;
 use crate::combat::zhenmai_v2::ZhenmaiSkillCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::death_hooks::PlayerRevived;
 use crate::cultivation::dugu::DuguObfuscationDisruptedEvent;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian_open::MeridianOpenedEvent;
@@ -49,7 +50,8 @@ use crate::lingtian::events::{
     TillCompleted,
 };
 use crate::network::audio_event_emit::{
-    recipient_for_attenuation, AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+    recipient_for_attenuation, AudioRecipient, PlaySoundRecipeRequest, StopSoundRecipeRequest,
+    AUDIO_BROADCAST_RADIUS,
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
@@ -103,6 +105,21 @@ pub fn register(app: &mut App) {
             .after(tick_audio_dedup_clock)
             .before(crate::network::audio_event_emit::emit_audio_play_payloads),
     );
+    // 重生必须收掉低血心跳 loop（`heartbeat_low_hp` 第二层 = entity.player.hurt，client 侧每
+    // 20 tick 自行重放，漏 stop 就变成重生后一直响受伤音）。约束与 #1264 逐字一致：排在低血上沿
+    // 系统之后（先让血量记账落定，再由重生收尾清账 + 发 stop，否则两系统争 `AudioTriggerState`
+    // 是 Bevy ambiguous order），并在 stop payload 投递之前，保证同帧下发。
+    // 注意它挂的是 **stop** sink，与上面那组 emit 系统的 `.before(emit_audio_play_payloads)` 不同，
+    // 故单独一个 add_systems 而不是并进那个 tuple。
+    // add_event 幂等：这里自带一次注册，别让本系统的可运行性依赖 `cmd::dev::revive` 恰好也注册了
+    // 同一事件（dev 入口不该是生产路径的前提）。
+    app.add_event::<crate::cultivation::death_hooks::PlayerRevived>();
+    app.add_systems(
+        Update,
+        stop_low_hp_heartbeat_on_revive
+            .after(emit_player_state_audio_triggers)
+            .before(crate::network::audio_event_emit::emit_audio_stop_payloads),
+    );
 }
 
 #[derive(Debug, Default)]
@@ -116,6 +133,23 @@ impl Resource for AudioTriggerState {}
 const LOW_HP_HEARTBEAT_RATIO: f32 = 0.2;
 const LOW_HP_HEARTBEAT_FLAG: &str = "hp_below_20";
 
+/// 低血心跳 loop 的稳定 instance id（同 fauna fuya pressure hum 惯例：`Entity::to_bits`）。
+///
+/// `heartbeat_low_hp` 是 **loop recipe**（`interval_ticks: 20`，第二层是
+/// `minecraft:entity.player.hurt`），client 侧收到后由 `SoundRecipePlayer` 自己每秒重放；
+/// 想收掉它必须发 `bong:audio/stop` 带**同一个 instance id**。所以这条 loop 不能再用
+/// `instance_id: 0`（让 server 侧 allocator 随机分配、事后无从指认），必须按玩家实体派生
+/// 一个稳定 id。
+pub(crate) fn low_hp_heartbeat_instance_id(entity: Entity) -> u64 {
+    entity.to_bits().max(1)
+}
+
+/// 低血心跳的唯一触发判据（严格小于阈值）。抽成函数是为了让「重生血量会不会重新
+/// 起心跳」这类不变量能对着**生产判据**断言，而不是在测试里另写一遍比较。
+pub(crate) fn is_low_hp_for_heartbeat(hp_ratio: f32) -> bool {
+    hp_ratio < LOW_HP_HEARTBEAT_RATIO
+}
+
 type PlayerAudioStateItem<'a> = (
     Entity,
     &'a Position,
@@ -128,22 +162,30 @@ pub fn emit_player_state_audio_triggers(
     mut state: ResMut<AudioTriggerState>,
     players: Query<PlayerAudioStateItem<'_>, PlayerAudioStateFilter>,
     mut audio: AudioEmitWriter,
+    mut audio_stops: EventWriter<StopSoundRecipeRequest>,
 ) {
     let mut audio = audio.context();
     for (entity, position, wounds, cultivation) in &players {
         if let Some(wounds) = wounds {
             let hp_ratio = wounds.health_current / wounds.health_max.max(1.0);
-            let low_hp = hp_ratio < LOW_HP_HEARTBEAT_RATIO;
-            if low_hp && !state.low_hp.get(&entity).copied().unwrap_or(false) {
-                emit_play(
+            let low_hp = is_low_hp_for_heartbeat(hp_ratio);
+            let was_low_hp = state.low_hp.get(&entity).copied().unwrap_or(false);
+            if low_hp && !was_low_hp {
+                emit_play_loop(
                     &mut audio,
                     "heartbeat_low_hp",
                     entity,
                     position.get(),
+                    low_hp_heartbeat_instance_id(entity),
                     Some(LOW_HP_HEARTBEAT_FLAG.to_string()),
                     1.0,
-                    0.0,
                 );
+            } else if !low_hp && was_low_hp {
+                // 血量回到阈值以上必须显式收 loop：开 loop 的一方负责关（同
+                // fauna fuya pressure hum 的 play/stop 配对惯例）。漏关的话 client
+                // 侧心跳会一直每秒重放 `entity.player.hurt` 层——实机表现就是
+                // 重生（血量回到 REVIVE_HEALTH_FRACTION）之后仍在响受伤音。
+                audio_stops.send(stop_low_hp_heartbeat(entity));
             }
             state.low_hp.insert(entity, low_hp);
         }
@@ -164,6 +206,34 @@ pub fn emit_player_state_audio_triggers(
             }
             state.low_qi.insert(entity, low_qi);
         }
+    }
+}
+
+/// 重生（`PlayerRevived`）时无条件收掉该玩家的低血心跳 loop。
+///
+/// 血量回到 `REVIVE_HEALTH_FRACTION` 后 `emit_player_state_audio_triggers` 的下沿也会
+/// 发一次 stop，但那条路径依赖 `REVIVE_HEALTH_FRACTION >= LOW_HP_HEARTBEAT_RATIO` 这个
+/// 常数巧合（见 `revive_health_fraction_never_rearms_low_hp_heartbeat` pin 测试）。重生
+/// 必须**干净**：这里按 `PlayerRevived` 显式收一次，并清掉 low_hp 记账，让下一次真掉血
+/// 能重新起心跳。stop 是幂等的——client 侧没有该 instance 时 `loops.remove` / `sink.stop`
+/// 都是 no-op。
+pub fn stop_low_hp_heartbeat_on_revive(
+    mut state: ResMut<AudioTriggerState>,
+    mut revived: EventReader<PlayerRevived>,
+    mut audio_stops: EventWriter<StopSoundRecipeRequest>,
+) {
+    for event in revived.read() {
+        state.low_hp.remove(&event.entity);
+        audio_stops.send(stop_low_hp_heartbeat(event.entity));
+    }
+}
+
+fn stop_low_hp_heartbeat(entity: Entity) -> StopSoundRecipeRequest {
+    StopSoundRecipeRequest {
+        instance_id: low_hp_heartbeat_instance_id(entity),
+        // 心跳是 player_local 的贴耳音，硬停（无淡出）才不会在重生后拖出尾音。
+        fade_out_ticks: 0,
+        recipient: AudioRecipient::Single(entity),
     }
 }
 
@@ -1273,6 +1343,52 @@ fn emit_play(
     volume_mul: f32,
     pitch_shift: f32,
 ) {
+    emit_play_inner(
+        audio,
+        recipe_id,
+        entity,
+        origin,
+        0,
+        flag,
+        volume_mul,
+        pitch_shift,
+    );
+}
+
+/// 带稳定 instance id 的 loop recipe 发声——调用方必须在条件结束时用同一 id 发
+/// `StopSoundRecipeRequest` 收尾（一次性音效走 `emit_play`，instance 由 server 分配即可）。
+fn emit_play_loop(
+    audio: &mut AudioEmitContext<'_, '_>,
+    recipe_id: impl Into<String>,
+    entity: Entity,
+    origin: DVec3,
+    instance_id: u64,
+    flag: Option<String>,
+    volume_mul: f32,
+) {
+    emit_play_inner(
+        audio,
+        recipe_id,
+        entity,
+        origin,
+        instance_id,
+        flag,
+        volume_mul,
+        0.0,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_play_inner(
+    audio: &mut AudioEmitContext<'_, '_>,
+    recipe_id: impl Into<String>,
+    entity: Entity,
+    origin: DVec3,
+    instance_id: u64,
+    flag: Option<String>,
+    volume_mul: f32,
+    pitch_shift: f32,
+) {
     let recipe_id = recipe_id.into();
     if !audio.should_emit(entity, &recipe_id) {
         return;
@@ -1280,7 +1396,7 @@ fn emit_play(
     let recipient = audio.recipient(&recipe_id, entity, origin);
     audio.send(PlaySoundRecipeRequest {
         recipe_id,
-        instance_id: 0,
+        instance_id,
         pos: Some(block_pos(origin)),
         flag,
         volume_mul,
@@ -1401,7 +1517,7 @@ mod tests {
     use crate::combat::events::{CombatEvent, DeathEvent};
     use crate::forge::session::{ForgeSession, ForgeSessionId};
     use valence::prelude::{App, Events, Update};
-    use valence::testing::create_mock_client;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     #[test]
     fn jiemai_combat_event_emits_parry_recipe() {
@@ -2185,6 +2301,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<AudioTriggerState>();
         app.add_event::<PlaySoundRecipeRequest>();
+        app.add_event::<StopSoundRecipeRequest>();
         app.add_systems(Update, emit_player_state_audio_triggers);
         let (mut bundle, _helper) = create_mock_client("low_hp");
         bundle.player.position = Position::new([0.0, 64.0, 0.0]);
@@ -2221,6 +2338,322 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].recipe_id, "heartbeat_low_hp");
         assert_eq!(emitted[0].flag.as_deref(), Some("hp_below_20"));
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 低血心跳 loop 生命周期（重生残留受伤音修复）
+    //
+    // 实机 bug：死亡→点重生后仍每秒响一次受伤音。抓包实证根因——`heartbeat_low_hp`
+    // 是 loop recipe（interval 20 ticks，第二层 `minecraft:entity.player.hurt`），
+    // server 只在血量跌破 20% 的上沿发一次 play、**从不发 stop**；client 侧带 flag
+    // 的 loop 又把 flag 自注册成 sticky，while_flag 判定永真 → loop 永生。
+    // 下面这组用例把「谁开谁关」锁死在 server 侧。
+    // ────────────────────────────────────────────────────────────────────
+
+    /// 构造一个跑心跳生命周期的最小 App：两条 audio 事件通道 + 上沿/下沿系统 + 重生系统。
+    /// 返回的 `MockClientHelper` 必须由调用方持住（drop 会断开 mock client 连接）。
+    fn heartbeat_app(username: &str) -> (App, Entity, MockClientHelper) {
+        let mut app = App::new();
+        app.init_resource::<AudioTriggerState>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_event::<StopSoundRecipeRequest>();
+        app.add_event::<PlayerRevived>();
+        app.add_systems(
+            Update,
+            (
+                emit_player_state_audio_triggers,
+                stop_low_hp_heartbeat_on_revive,
+            ),
+        );
+        let (mut bundle, helper) = create_mock_client(username);
+        bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let player = app.world_mut().spawn(bundle).id();
+        (app, player, helper)
+    }
+
+    fn set_health(app: &mut App, player: Entity, health_current: f32) {
+        app.world_mut().entity_mut(player).insert(Wounds {
+            health_current,
+            health_max: 100.0,
+            ..Default::default()
+        });
+    }
+
+    fn drain_plays(app: &mut App) -> Vec<PlaySoundRecipeRequest> {
+        app.world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect()
+    }
+
+    fn drain_stops(app: &mut App) -> Vec<StopSoundRecipeRequest> {
+        app.world_mut()
+            .resource_mut::<Events<StopSoundRecipeRequest>>()
+            .drain()
+            .collect()
+    }
+
+    /// loop 必须带稳定 instance id（否则事后无从 stop——这是原 bug 的结构性成因）。
+    #[test]
+    fn low_hp_heartbeat_play_carries_stable_stoppable_instance_id() {
+        let (mut app, player, _client) = heartbeat_app("hbid");
+        set_health(&mut app, player, 10.0);
+
+        app.update();
+
+        let plays = drain_plays(&mut app);
+        assert_eq!(plays.len(), 1, "跌破 20% 应只发一次心跳 loop play");
+        assert_eq!(plays[0].recipe_id, "heartbeat_low_hp");
+        assert_ne!(
+            plays[0].instance_id, 0,
+            "期望心跳 loop 带非 0 的稳定 instance id 因为 instance_id=0 会让 server 侧 allocator 现分配、\
+             之后无法用同一 id 发 stop（loop 永生 → 重生后仍响受伤音）；实际 0"
+        );
+        assert_eq!(
+            plays[0].instance_id,
+            low_hp_heartbeat_instance_id(player),
+            "期望 instance id 由玩家实体派生（与 stop 侧同一函数）因为收 loop 要按同一 id 对齐；实际不一致"
+        );
+    }
+
+    /// 契约 pin：心跳 recipe 必须是 `player_local`（→ 收件人 `Single(player)`），
+    /// 因为 stop 侧写死了 `AudioRecipient::Single`。若有人把 attenuation 改成广播类，
+    /// play 会到别人客户端、stop 却只回自己 → 别人耳朵里的心跳永生。
+    #[test]
+    fn low_hp_heartbeat_recipe_is_player_local_so_single_recipient_stop_matches() {
+        let registry =
+            crate::audio::SoundRecipeRegistry::load_default().expect("默认 audio recipe 应能加载");
+        let recipe = registry
+            .get("heartbeat_low_hp")
+            .expect("heartbeat_low_hp recipe 应存在");
+        assert!(
+            recipe.loop_cfg.is_some(),
+            "期望 heartbeat_low_hp 仍是 loop recipe 因为整套 play/stop 配对治法就是为 loop 设计的；实际没有 loop 段"
+        );
+        assert_eq!(
+            recipe.attenuation,
+            crate::schema::audio::AudioAttenuation::PlayerLocal,
+            "期望 heartbeat_low_hp 保持 player_local 因为 stop 侧按 Single(player) 定向；\
+             改成广播类会让别人客户端收到 play 却收不到 stop（心跳在他们耳里永生）；实际 {:?}",
+            recipe.attenuation,
+        );
+    }
+
+    /// 下沿（血量回到阈值以上）必须发 stop，且是发给该玩家自己。
+    #[test]
+    fn low_hp_heartbeat_stops_when_health_recovers_above_threshold() {
+        let (mut app, player, _client) = heartbeat_app("hbrec");
+        set_health(&mut app, player, 10.0);
+        app.update();
+        assert_eq!(drain_plays(&mut app).len(), 1, "先起心跳");
+        assert!(
+            drain_stops(&mut app).is_empty(),
+            "上沿不该发 stop——loop 刚起来"
+        );
+
+        set_health(&mut app, player, 25.0);
+        app.update();
+
+        let stops = drain_stops(&mut app);
+        assert_eq!(
+            stops.len(),
+            1,
+            "期望血量回到 25%（> 20% 阈值）时发 1 条 stop 因为开 loop 的一方负责关掉它；实际 {} 条",
+            stops.len()
+        );
+        assert_eq!(stops[0].instance_id, low_hp_heartbeat_instance_id(player));
+        assert_eq!(
+            stops[0].fade_out_ticks, 0,
+            "期望硬停（fade_out_ticks=0）因为贴耳心跳淡出会在重生后拖出受伤尾音；实际有淡出"
+        );
+        assert_eq!(
+            stops[0].recipient,
+            AudioRecipient::Single(player),
+            "期望只发给该玩家因为心跳是 player_local 私有反馈；实际收件人不对"
+        );
+        assert!(drain_plays(&mut app).is_empty(), "血量回升不该再发 play");
+    }
+
+    /// 持续低血只有一条 play、零 stop（心跳不能每 tick 重开，也不能自己断掉）。
+    #[test]
+    fn low_hp_heartbeat_is_not_restarted_or_stopped_while_health_stays_low() {
+        let (mut app, player, _client) = heartbeat_app("hbhold");
+        set_health(&mut app, player, 10.0);
+        app.update();
+        assert_eq!(drain_plays(&mut app).len(), 1);
+        drain_stops(&mut app);
+
+        set_health(&mut app, player, 5.0);
+        app.update();
+        app.update();
+
+        assert!(
+            drain_plays(&mut app).is_empty(),
+            "期望持续低血不再重发 play 因为 loop 由 client 侧自行重放（上沿触发语义）；实际重发了"
+        );
+        assert!(
+            drain_stops(&mut app).is_empty(),
+            "期望持续低血不发 stop 因为条件还成立；实际误停了心跳"
+        );
+    }
+
+    /// 主线场景：低血 → 死亡 → 重生。重生必须收掉心跳 loop（否则重生后一直响受伤音）。
+    #[test]
+    fn revive_stops_low_hp_heartbeat_loop() {
+        let (mut app, player, _client) = heartbeat_app("hbrev");
+        set_health(&mut app, player, 10.0);
+        app.update();
+        assert_eq!(drain_plays(&mut app).len(), 1, "低血先起心跳");
+        drain_stops(&mut app);
+
+        // 死亡（hp=0）期间心跳照旧（条件仍成立），关键是重生这一刻要收掉。
+        set_health(&mut app, player, 0.0);
+        app.update();
+        assert!(drain_stops(&mut app).is_empty(), "死亡本身不触发 stop");
+
+        app.world_mut().send_event(PlayerRevived { entity: player });
+        app.update();
+
+        let stops = drain_stops(&mut app);
+        assert!(
+            stops
+                .iter()
+                .any(|stop| stop.instance_id == low_hp_heartbeat_instance_id(player)),
+            "期望 PlayerRevived 后发出针对该玩家心跳 instance 的 stop 因为重生必须干净、\
+             不能残留 heartbeat_low_hp 的 entity.player.hurt 层；实际 stop 列表 {:?}",
+            stops
+                .iter()
+                .map(|stop| stop.instance_id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// 重生后记账要清干净：下一次真掉血能重新起心跳（修复不能把低血反馈永久关死）。
+    #[test]
+    fn low_hp_heartbeat_rearms_after_revive_when_player_drops_low_again() {
+        let (mut app, player, _client) = heartbeat_app("hbrearm");
+        set_health(&mut app, player, 10.0);
+        app.update();
+        drain_plays(&mut app);
+
+        app.world_mut().send_event(PlayerRevived { entity: player });
+        // 重生把血量拉回 REVIVE_HEALTH_FRACTION（20%）——正好在阈值上，不该再起心跳。
+        set_health(&mut app, player, 20.0);
+        app.update();
+        drain_stops(&mut app);
+        assert!(
+            drain_plays(&mut app).is_empty(),
+            "期望重生血量（20% = 阈值）不重开心跳因为判据是严格小于阈值；实际重开了"
+        );
+
+        // 之后再被打到 15% —— 心跳必须回来（低血反馈没被永久关死）。
+        set_health(&mut app, player, 15.0);
+        app.update();
+
+        let plays = drain_plays(&mut app);
+        assert_eq!(
+            plays.len(),
+            1,
+            "期望重生后再次跌破 20% 能重新起心跳因为重生只清记账、不禁用低血反馈；实际 {} 条 play",
+            plays.len()
+        );
+        assert_eq!(plays[0].recipe_id, "heartbeat_low_hp");
+    }
+
+    /// 比常数 pin 更严的同族 pin：**照生产的 f32 算术**把重生血量算出来再过判据。
+    ///
+    /// 生产链路是 `health_current = (health_max * REVIVE_HEALTH_FRACTION).max(1.0)`
+    /// （`combat::lifecycle::revive_lifecycle`）→ `hp_ratio = health_current / health_max.max(1.0)`
+    /// （本文件的心跳系统）。f32 舍入让「比例常数 >= 阈值」并不能推出「算出来的商 >= 阈值」：
+    /// health_max = 20.5 / 41.0 / 82.0 等取值下商会落到 0.19999999 < 0.2（实算复核过 41.0：
+    /// `41 × 0.2f32` 舍入成 8.19999980926，除 41 得 0.199999995），重生那一刻又自动起一条含
+    /// `entity.player.hurt` 层的心跳。今天玩家 health_max 恒为 `Wounds::default()` 的 100.0
+    /// （100 × 0.2 = 20.0，商恰好 0.2）所以安全。
+    ///
+    /// **覆盖边界（别过度指望这条）**：它只盯 `Wounds::default()` 这一个来源，所以能挡住
+    /// 改 `DEFAULT_HEALTH_MAX` / `REVIVE_HEALTH_FRACTION`。若将来按境界/属性走**运行时赋值**
+    /// 改玩家 `health_max`（不动 Default），这条 pin 不会撞红——那种改法必须自己重算这个商。
+    #[test]
+    fn revive_health_ratio_computed_like_production_never_rearms_heartbeat() {
+        let health_max = Wounds::default().health_max;
+        let revived_health =
+            (health_max * crate::combat::components::REVIVE_HEALTH_FRACTION).max(1.0);
+        let revived_ratio = revived_health / health_max.max(1.0);
+        assert!(
+            !is_low_hp_for_heartbeat(revived_ratio),
+            "期望按生产算术算出的重生血量比例 {revived_ratio}（health_max={health_max} → \
+             health_current={revived_health}）不触发低血心跳（阈值 {LOW_HP_HEARTBEAT_RATIO}）——\
+             f32 舍入一旦让商落到阈值之下，重生瞬间就会自动起一条含 entity.player.hurt 层的\
+             心跳 loop；改动 health_max / REVIVE_HEALTH_FRACTION 时必须同时重设计心跳触发",
+        );
+    }
+
+    #[test]
+    fn revive_health_fraction_never_rearms_low_hp_heartbeat() {
+        // 对着**生产判据** is_low_hp_for_heartbeat 断言，而不是在测试里重写比较。
+        let revive_hp_ratio = crate::combat::components::REVIVE_HEALTH_FRACTION;
+        assert!(
+            !is_low_hp_for_heartbeat(revive_hp_ratio),
+            "期望重生血量比例 {revive_hp_ratio} 不触发低血心跳（阈值 {LOW_HP_HEARTBEAT_RATIO}）——\
+             否则重生那一刻就会自动起一条含 entity.player.hurt 层的心跳 loop，玩家听到的就是\
+             「重生就有受伤音」；要调低重生血量必须同时重设计心跳触发",
+        );
+        // 反向对照：略低于重生血量的 hp 必须仍被判为低血（防止有人把判据改成恒 false 让本测试蒙过）。
+        assert!(
+            is_low_hp_for_heartbeat(revive_hp_ratio - 0.01),
+            "期望比重生血量再低一点（{}）仍被判低血，否则判据被改坏成恒 false、低血心跳整体失效",
+            revive_hp_ratio - 0.01,
+        );
+    }
+
+    /// 反向锁：修复只动 loop 生命周期，**真受伤的一次性音效照旧**（含重生之后再被打）。
+    #[test]
+    fn combat_hit_audio_still_plays_after_revive() {
+        let mut app = App::new();
+        app.init_resource::<AudioTriggerState>();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_event::<StopSoundRecipeRequest>();
+        app.add_event::<PlayerRevived>();
+        app.add_systems(
+            Update,
+            (stop_low_hp_heartbeat_on_revive, emit_combat_audio_triggers),
+        );
+        let attacker = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        let target = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+
+        app.world_mut().send_event(PlayerRevived { entity: target });
+        app.world_mut().send_event(CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 7,
+            body_part: BodyPart::Chest,
+            wound_kind: WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
+            debug_command: false,
+            physical_damage: 0.0,
+            damage: 12.0,
+            contam_delta: 0.0,
+            description: "post-revive hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        });
+
+        app.update();
+
+        let recipes: Vec<_> = drain_plays(&mut app)
+            .into_iter()
+            .map(|request| request.recipe_id)
+            .collect();
+        assert_eq!(
+            recipes,
+            vec!["hit_heavy", "wound_inflict"],
+            "期望重生后被打（胸部 12 伤害）仍发 hit_heavy + wound_inflict（后者含 entity.player.hurt 层）\
+             因为修复只收心跳 loop、不该动真受伤反馈；实际 recipes={recipes:?}"
+        );
     }
 
     #[test]
@@ -2735,6 +3168,21 @@ mod tests {
                  PlaySoundRecipeRequest 要等下一帧才投递给客户端（本文件 register 的调度契约）"
             );
         }
+
+        // 重生收心跳 loop（#1264）挂的是 **stop** sink，约束与上面那组不同，单独锁一遍：
+        // 漏 `.after(emit_player_state_audio_triggers)` 会与低血上沿系统争 `AudioTriggerState`
+        // （Bevy ambiguous order）；漏 `.before(emit_audio_stop_payloads)` 则 stop 跨帧才下发。
+        let revive_stop = locate_exactly_once(&systems, "stop_low_hp_heartbeat_on_revive");
+        let low_hp_state = locate_system_type_set(&app, "emit_player_state_audio_triggers");
+        let stop_sink = locate_system_type_set(&app, "emit_audio_stop_payloads");
+        assert!(
+            dependency.contains_edge(low_hp_state, revive_stop),
+            "`stop_low_hp_heartbeat_on_revive` 必须 .after(emit_player_state_audio_triggers)"
+        );
+        assert!(
+            dependency.contains_edge(revive_stop, stop_sink),
+            "`stop_low_hp_heartbeat_on_revive` 必须 .before(emit_audio_stop_payloads)"
+        );
     }
 
     /// **接线门禁（事件侧）**：三条签名链读的事件必须由**各自模块的生产 `register`** 装进 World，

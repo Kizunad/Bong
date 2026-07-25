@@ -860,7 +860,9 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             npc_metadata::emit_npc_metadata_payloads,
         )
             .after(audio_trigger::tick_audio_dedup_clock)
-            .before(audio_event_emit::emit_audio_play_payloads),
+            .before(audio_event_emit::emit_audio_play_payloads)
+            // loop recipe 的收尾（如低血心跳血量回升）也要同帧下发，别拖到下一帧。
+            .before(audio_event_emit::emit_audio_stop_payloads),
     );
     app.add_systems(
         Update,
