@@ -6253,6 +6253,32 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
     nourishment_activity_window: Option<&crate::nourishment::tick::NourishmentActivityWindow>,
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
+    let connection = open_persistence_connection(settings)?;
+    let existing_bundle = connection
+        .query_row(
+            "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+            [username],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok());
+    let existing_field = |field: &str| {
+        existing_bundle
+            .as_ref()
+            .and_then(|bundle| bundle.get(field))
+            .cloned()
+    };
+    let nourishment = nourishment
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .or_else(|| existing_field("nourishment"));
+    let nourishment_activity_window = nourishment_activity_window
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .or_else(|| existing_field("nourishment_activity_window"));
     let bundle = serde_json::json!({
         // plan-race-system-v1 P1a —— bump 1→2：`meridians`/`meridian_severed` 子字段
         // channel id 从 `MeridianId` PascalCase 枚举名换轨为 humanoid.json 声明的
@@ -6280,7 +6306,6 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
     let cultivation_json = serde_json::to_string(&bundle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
-    let connection = open_persistence_connection(settings)?;
     connection
         .execute(
             "
@@ -10369,6 +10394,97 @@ mod persistence_tests {
         assert!(
             decisions.is_empty(),
             "stale agent decisions should be pruned"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_cultivation_bundle_writer_preserves_existing_nourishment_slices() {
+        let (settings, root) = persistence_settings("legacy-bundle-preserves-nourishment");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("test database should bootstrap");
+        let nourishment = crate::nourishment::Nourishment {
+            satiety: 31.0,
+            hydration: 47.0,
+        };
+        let activity = crate::nourishment::tick::NourishmentActivityWindow {
+            idle_ticks: 100,
+            move_ticks: 70,
+            dash_ticks: 29,
+        };
+        let cultivation = Cultivation::default();
+        let meridians = crate::cultivation::components::MeridianSystem::default();
+        let qi_color = crate::cultivation::components::QiColor::default();
+        let karma = crate::cultivation::components::Karma::default();
+        let contamination = crate::cultivation::components::Contamination::default();
+        let life_record = LifeRecord::new("legacy-nourishment".to_string());
+        let practice_log = crate::cultivation::color::PracticeLog::default();
+        let insight_quota = crate::cultivation::insight::InsightQuota::default();
+        let perceptions = crate::cultivation::insight_apply::UnlockedPerceptions::default();
+        let modifiers = crate::cultivation::insight_apply::InsightModifiers::new();
+        let severed = crate::cultivation::meridian::severed::MeridianSeveredPermanent::default();
+
+        persist_player_cultivation_bundle_with_nourishment(
+            &settings,
+            "Azure",
+            &cultivation,
+            &meridians,
+            &qi_color,
+            &karma,
+            &contamination,
+            &life_record,
+            &practice_log,
+            &insight_quota,
+            &perceptions,
+            &modifiers,
+            None,
+            &severed,
+            None,
+            None,
+            Some(&nourishment),
+            Some(&activity),
+        )
+        .expect("initial bundle with non-default nourishment should persist");
+
+        persist_player_cultivation_bundle(
+            &settings,
+            "Azure",
+            &cultivation,
+            &meridians,
+            &qi_color,
+            &karma,
+            &contamination,
+            &life_record,
+            &practice_log,
+            &insight_quota,
+            &perceptions,
+            &modifiers,
+            None,
+            &severed,
+            None,
+            None,
+        )
+        .expect("legacy writer should update other cultivation fields safely");
+
+        let persisted = load_player_cultivation_bundle(&settings, "Azure")
+            .expect("bundle should reload")
+            .expect("bundle row should remain present");
+        assert_eq!(
+            serde_json::from_value::<crate::nourishment::Nourishment>(
+                persisted["nourishment"].clone(),
+            )
+            .expect("legacy writer must retain nourishment JSON"),
+            nourishment,
+            "a legacy save must not replace existing satiety/hydration with null"
+        );
+        assert_eq!(
+            serde_json::from_value::<crate::nourishment::tick::NourishmentActivityWindow>(
+                persisted["nourishment_activity_window"].clone(),
+            )
+            .expect("legacy writer must retain activity-window JSON"),
+            activity,
+            "a legacy save must not replace the partial sweep window with null"
         );
 
         let _ = fs::remove_dir_all(root);

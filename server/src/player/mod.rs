@@ -1639,37 +1639,44 @@ mod tests {
             "a legal 199-tick window must survive a full SQLite and new-App round trip"
         );
 
+        reconnect_app.insert_resource(crate::combat::CombatClock {
+            tick: u64::from(crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS),
+        });
+        reconnect_app
+            .world_mut()
+            .entity_mut(reconnected_entity)
+            .insert(crate::nourishment::tick::NourishmentSweepCursor::default());
         reconnect_app.add_systems(Update, crate::nourishment::tick::tick_nourishment);
         reconnect_app.update();
 
-        let completed_weighted_ticks = saved_activity.weighted_activity_ticks()
-            + crate::nourishment::NOURISH_IDLE_ACTIVITY_MULTIPLIER;
-        let completed_weighted_minutes =
-            completed_weighted_ticks / crate::nourishment::NOURISH_TICKS_PER_MINUTE;
+        let sweep_minutes = crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS as f32
+            / crate::nourishment::NOURISH_TICKS_PER_MINUTE;
         let realm_multiplier = crate::nourishment::nourishment_loss_multiplier(
             crate::cultivation::components::Realm::Condense,
         );
         let expected_after_settlement = Nourishment {
             satiety: saved_nourishment.satiety
                 - crate::nourishment::NOURISH_SATIETY_LOSS_PER_MIN
-                    * completed_weighted_minutes
+                    * sweep_minutes
+                    * crate::nourishment::NOURISH_DASH_ACTIVITY_MULTIPLIER
                     * realm_multiplier,
             hydration: saved_nourishment.hydration
                 - crate::nourishment::NOURISH_HYDRATION_LOSS_PER_MIN
-                    * completed_weighted_minutes
+                    * sweep_minutes
+                    * crate::nourishment::NOURISH_DASH_ACTIVITY_MULTIPLIER
                     * realm_multiplier,
         };
         let after_settlement = *reconnect_app
             .world()
             .get::<Nourishment>(reconnected_entity)
-            .expect("first nourishment tick should retain component");
+            .expect("the CombatClock sweep should retain nourishment");
         assert!(
             (after_settlement.satiety - expected_after_settlement.satiety).abs() < 1e-6,
-            "the first nourishment tick after reconnect must settle the restored 199-tick window exactly once"
+            "the restored 199-tick window must settle on the 200-tick CombatClock boundary using its dash peak"
         );
         assert!(
             (after_settlement.hydration - expected_after_settlement.hydration).abs() < 1e-6,
-            "hydration must use the same restored mixed-activity window"
+            "hydration must use the restored mixed window's dash peak"
         );
         assert_eq!(
             *reconnect_app
@@ -1687,19 +1694,15 @@ mod tests {
                 .get::<Nourishment>(reconnected_entity)
                 .unwrap(),
             after_settlement,
-            "the next tick must not deduct the completed window a second time"
+            "a duplicate 200-tick Update must not deduct the completed window a second time"
         );
         assert_eq!(
             *reconnect_app
                 .world()
                 .get::<NourishmentActivityWindow>(reconnected_entity)
                 .unwrap(),
-            NourishmentActivityWindow {
-                idle_ticks: 1,
-                move_ticks: 0,
-                dash_ticks: 0,
-            },
-            "after settlement a fresh activity window should start from one idle tick"
+            NourishmentActivityWindow::default(),
+            "a duplicate 200-tick Update must not start a new activity window"
         );
 
         let _ = fs::remove_dir_all(&data_dir);

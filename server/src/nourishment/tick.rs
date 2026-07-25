@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use valence::movement::MovementEvent;
 use valence::prelude::{
@@ -70,18 +72,44 @@ impl NourishmentActivityWindow {
             .saturating_add(self.dash_ticks)
     }
 
-    pub fn is_complete(self) -> bool {
-        self.total_ticks() >= NOURISH_SWEEP_INTERVAL_TICKS
-    }
-
-    pub fn weighted_activity_ticks(self) -> f32 {
-        self.idle_ticks as f32 * NOURISH_IDLE_ACTIVITY_MULTIPLIER
-            + self.move_ticks as f32 * NOURISH_MOVE_ACTIVITY_MULTIPLIER
-            + self.dash_ticks as f32 * NOURISH_DASH_ACTIVITY_MULTIPLIER
+    pub fn activity_multiplier(self) -> f32 {
+        if self.dash_ticks > 0 {
+            NOURISH_DASH_ACTIVITY_MULTIPLIER
+        } else if self.move_ticks > 0 {
+            NOURISH_MOVE_ACTIVITY_MULTIPLIER
+        } else {
+            NOURISH_IDLE_ACTIVITY_MULTIPLIER
+        }
     }
 
     pub fn reset(&mut self) {
         *self = Self::default();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Component)]
+pub struct NourishmentSweepCursor {
+    last_processed_tick: Option<u64>,
+}
+
+impl NourishmentSweepCursor {
+    fn claim_tick(&mut self, now_tick: u64) -> bool {
+        if self.last_processed_tick == Some(now_tick) {
+            return false;
+        }
+        self.last_processed_tick = Some(now_tick);
+        true
+    }
+}
+
+pub fn attach_sweep_cursor(
+    mut commands: Commands,
+    players: Query<Entity, (With<Client>, Without<NourishmentSweepCursor>)>,
+) {
+    for entity in &players {
+        commands
+            .entity(entity)
+            .insert(NourishmentSweepCursor::default());
     }
 }
 
@@ -122,6 +150,7 @@ pub fn attach_movement_tracker(
     }
 }
 
+#[cfg(test)]
 fn has_qualifying_horizontal_movement(event: &MovementEvent) -> bool {
     let delta_x = event.position.x - event.old_position.x;
     let delta_z = event.position.z - event.old_position.z;
@@ -133,9 +162,16 @@ pub fn record_movement_events(
     mut events: EventReader<MovementEvent>,
     mut trackers: Query<&mut NourishmentMovementTracker, With<Client>>,
 ) {
+    let mut horizontal_displacements = HashMap::<Entity, (f64, f64)>::new();
     for event in events.read() {
-        if has_qualifying_horizontal_movement(event) {
-            if let Ok(mut tracker) = trackers.get_mut(event.client) {
+        let entry = horizontal_displacements.entry(event.client).or_default();
+        entry.0 += event.position.x - event.old_position.x;
+        entry.1 += event.position.z - event.old_position.z;
+    }
+
+    for (entity, (delta_x, delta_z)) in horizontal_displacements {
+        if delta_x.hypot(delta_z) > NOURISH_MOVEMENT_EPSILON_BLOCKS {
+            if let Ok(mut tracker) = trackers.get_mut(entity) {
                 tracker.record_movement(clock.tick);
             }
         }
@@ -166,38 +202,53 @@ pub fn classify_activity(
 }
 
 pub fn sweep_losses(window: NourishmentActivityWindow, realm_multiplier: f32) -> (f32, f32) {
-    let weighted_minutes = window.weighted_activity_ticks() / NOURISH_TICKS_PER_MINUTE;
+    let sweep_minutes = NOURISH_SWEEP_INTERVAL_TICKS as f32 / NOURISH_TICKS_PER_MINUTE;
     let realm_multiplier = if realm_multiplier.is_finite() {
         realm_multiplier.max(0.0)
     } else {
         1.0
     };
+    let activity_multiplier = window.activity_multiplier();
     (
-        NOURISH_SATIETY_LOSS_PER_MIN * weighted_minutes * realm_multiplier,
-        NOURISH_HYDRATION_LOSS_PER_MIN * weighted_minutes * realm_multiplier,
+        NOURISH_SATIETY_LOSS_PER_MIN * sweep_minutes * activity_multiplier * realm_multiplier,
+        NOURISH_HYDRATION_LOSS_PER_MIN * sweep_minutes * activity_multiplier * realm_multiplier,
     )
 }
 
 type NourishmentTickQueryItem<'a> = (
     &'a mut Nourishment,
     &'a mut NourishmentActivityWindow,
+    &'a mut NourishmentSweepCursor,
     &'a Cultivation,
     Option<&'a NourishmentMovementTracker>,
     &'a MovementState,
 );
 
 pub fn tick_nourishment(
-    clock: Option<Res<CombatClock>>,
+    clock: Res<CombatClock>,
     mut players: Query<NourishmentTickQueryItem<'_>, With<Client>>,
 ) {
-    let now_tick = clock.map_or(0, |clock| clock.tick);
-    for (mut nourishment, mut activity_window, cultivation, tracker, movement_state) in &mut players
+    for (
+        mut nourishment,
+        mut activity_window,
+        mut sweep_cursor,
+        cultivation,
+        tracker,
+        movement_state,
+    ) in &mut players
     {
+        if !sweep_cursor.claim_tick(clock.tick) {
+            continue;
+        }
+
         let activity = tracker.map_or(NourishmentActivity::Idle, |tracker| {
-            classify_activity(tracker, movement_state, now_tick)
+            classify_activity(tracker, movement_state, clock.tick)
         });
         activity_window.record(activity);
-        if !activity_window.is_complete() {
+        if !clock
+            .tick
+            .is_multiple_of(u64::from(NOURISH_SWEEP_INTERVAL_TICKS))
+        {
             continue;
         }
 
@@ -379,7 +430,37 @@ mod tests {
     }
 
     #[test]
-    fn activity_window_accumulates_each_tick_and_resets_without_carryover() {
+    fn same_tick_displacements_are_aggregated_before_the_threshold_check() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 42 });
+        app.add_event::<MovementEvent>();
+        app.add_systems(Update, record_movement_events);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NourishmentMovementTracker::default(),
+                create_mock_client("FragmentedMove").0,
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(movement_event(entity, [0.0, 64.0, 0.0], [0.03, 64.0, 0.0]));
+        app.world_mut()
+            .send_event(movement_event(entity, [0.03, 64.0, 0.0], [0.06, 64.0, 0.0]));
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<NourishmentMovementTracker>(entity)
+                .expect("tracker should remain attached")
+                .last_moved_at_tick,
+            Some(42),
+            "two same-tick 0.03-block fragments must aggregate past the 0.05 threshold"
+        );
+    }
+
+    #[test]
+    fn activity_window_records_ticks_and_selects_the_peak_window_activity() {
         let mut window = NourishmentActivityWindow::default();
         for _ in 0..50 {
             window.record(NourishmentActivity::Idle);
@@ -392,12 +473,14 @@ mod tests {
         }
 
         assert_eq!(window.total_ticks(), NOURISH_SWEEP_INTERVAL_TICKS);
-        assert!(window.is_complete());
-        assert!((window.weighted_activity_ticks() - 387.5).abs() < f32::EPSILON);
+        assert_eq!(
+            window.activity_multiplier(),
+            NOURISH_DASH_ACTIVITY_MULTIPLIER,
+            "a dash anywhere in a sweep must select the full-window dash multiplier"
+        );
 
         window.reset();
         assert_eq!(window, NourishmentActivityWindow::default());
-        assert!(!window.is_complete());
     }
 
     #[test]
@@ -529,24 +612,56 @@ mod tests {
     }
 
     #[test]
-    fn mixed_window_uses_tick_weighted_average_not_peak_activity() {
-        let window = NourishmentActivityWindow {
-            idle_ticks: 100,
-            move_ticks: 50,
-            dash_ticks: 50,
-        };
-        let (satiety, hydration) = sweep_losses(window, 0.75);
-        let weighted_minutes = 325.0 / NOURISH_TICKS_PER_MINUTE;
-        assert!((satiety - NOURISH_SATIETY_LOSS_PER_MIN * weighted_minutes * 0.75).abs() < 1e-6);
-        assert!(
-            (hydration - NOURISH_HYDRATION_LOSS_PER_MIN * weighted_minutes * 0.75).abs() < 1e-6
-        );
+    fn mixed_window_uses_peak_activity_with_dash_priority() {
+        let cases = [
+            (
+                NourishmentActivityWindow {
+                    idle_ticks: 199,
+                    move_ticks: 1,
+                    dash_ticks: 0,
+                },
+                NOURISH_MOVE_ACTIVITY_MULTIPLIER,
+                "one qualifying movement tick must elevate the entire sweep",
+            ),
+            (
+                NourishmentActivityWindow {
+                    idle_ticks: 199,
+                    move_ticks: 0,
+                    dash_ticks: 1,
+                },
+                NOURISH_DASH_ACTIVITY_MULTIPLIER,
+                "one dash tick must elevate the entire sweep to dash",
+            ),
+            (
+                NourishmentActivityWindow {
+                    idle_ticks: 100,
+                    move_ticks: 99,
+                    dash_ticks: 1,
+                },
+                NOURISH_DASH_ACTIVITY_MULTIPLIER,
+                "dash must win over moving in a mixed sweep",
+            ),
+        ];
+        let minutes = NOURISH_SWEEP_INTERVAL_TICKS as f32 / NOURISH_TICKS_PER_MINUTE;
+
+        for (window, multiplier, label) in cases {
+            let (satiety, hydration) = sweep_losses(window, 0.75);
+            assert!(
+                (satiety - NOURISH_SATIETY_LOSS_PER_MIN * minutes * multiplier * 0.75).abs() < 1e-6,
+                "{label}"
+            );
+            assert!(
+                (hydration - NOURISH_HYDRATION_LOSS_PER_MIN * minutes * multiplier * 0.75).abs()
+                    < 1e-6,
+                "{label}"
+            );
+        }
     }
 
     #[test]
-    fn production_tick_waits_for_full_window_then_applies_loss_and_resets() {
+    fn production_tick_uses_combat_clock_boundaries_and_ignores_duplicate_updates() {
         let mut app = App::new();
-        app.insert_resource(CombatClock::default());
+        app.insert_resource(CombatClock { tick: 1 });
         app.add_systems(Update, tick_nourishment);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app
@@ -559,40 +674,55 @@ mod tests {
                 },
                 MovementState::default(),
                 NourishmentMovementTracker::default(),
+                NourishmentSweepCursor::default(),
                 Nourishment::spawn_default(),
                 NourishmentActivityWindow::default(),
             ))
             .id();
 
-        for _ in 0..NOURISH_SWEEP_INTERVAL_TICKS - 1 {
-            app.update();
-        }
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .expect("activity window should remain attached")
+                .total_ticks(),
+            1,
+            "duplicate Update calls at a fixed CombatClock tick must not advance nourishment"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 199;
+        app.update();
         assert_eq!(
             *app.world().get::<Nourishment>(entity).unwrap(),
             Nourishment::spawn_default(),
-            "no partial window may deduct nourishment"
+            "the 199th CombatClock tick must not settle the sweep"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 200;
+        app.update();
+        let nourishment_after_boundary = *app.world().get::<Nourishment>(entity).unwrap();
+        let expected_minutes = NOURISH_SWEEP_INTERVAL_TICKS as f32 / NOURISH_TICKS_PER_MINUTE;
+        assert!(
+            (nourishment_after_boundary.satiety
+                - (NOURISH_SPAWN_VALUE - NOURISH_SATIETY_LOSS_PER_MIN * expected_minutes))
+                .abs()
+                < 1e-6,
+            "the 200th CombatClock tick must settle exactly one idle sweep"
+        );
+        assert!(
+            (nourishment_after_boundary.hydration
+                - (NOURISH_SPAWN_VALUE - NOURISH_HYDRATION_LOSS_PER_MIN * expected_minutes))
+                .abs()
+                < 1e-6,
+            "the 200th CombatClock tick must settle exactly one idle sweep"
         );
 
         app.update();
-        let nourishment = app.world().get::<Nourishment>(entity).unwrap();
-        let expected_minutes = NOURISH_SWEEP_INTERVAL_TICKS as f32 / NOURISH_TICKS_PER_MINUTE;
-        assert!(
-            (nourishment.satiety
-                - (NOURISH_SPAWN_VALUE - NOURISH_SATIETY_LOSS_PER_MIN * expected_minutes))
-                .abs()
-                < 1e-6
-        );
-        assert!(
-            (nourishment.hydration
-                - (NOURISH_SPAWN_VALUE - NOURISH_HYDRATION_LOSS_PER_MIN * expected_minutes))
-                .abs()
-                < 1e-6
-        );
         assert_eq!(
-            *app.world()
-                .get::<NourishmentActivityWindow>(entity)
-                .unwrap(),
-            NourishmentActivityWindow::default()
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            nourishment_after_boundary,
+            "repeating the boundary clock tick must not settle a second sweep"
         );
     }
 }

@@ -203,6 +203,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             tick::attach_movement_tracker,
+            tick::attach_sweep_cursor,
             apply_deferred,
             tick::record_movement_events,
             tick::tick_nourishment,
