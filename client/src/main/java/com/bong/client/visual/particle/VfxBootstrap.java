@@ -230,7 +230,8 @@ public final class VfxBootstrap {
             new CombatHitDirectionPlayer(false));
         registry.register(CombatHitDirectionPlayer.HEAD_CRIT,
             new CombatHitDirectionPlayer(CombatHitDirectionPlayer.Kind.HEAD_CRIT));
-        // 腿伤减速触发时目标脚下血渍 decal（复用 lingqi_ripple 环形贴图，无新资产）。
+        // 腿伤减速触发时目标脚下血渍 decal（blood_splat / blood_streak 专用贴图 +
+        // BloodSplatterLayout 不规则散布；早先复用 lingqi_ripple 环形贴图会画成红色同心圆）。
         registry.register(LegWoundBloodDecalPlayer.EVENT_ID, new LegWoundBloodDecalPlayer());
         registry.register(ForgeHammerStrikePlayer.HAMMER,
             new ForgeHammerStrikePlayer(ForgeHammerStrikePlayer.Kind.HAMMER));
