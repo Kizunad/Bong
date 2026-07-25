@@ -878,6 +878,9 @@ pub fn register(app: &mut App) {
     // 重生必须收掉低血心跳 loop（`heartbeat_low_hp` 第二层 = entity.player.hurt，
     // client 侧每 20 tick 自行重放，漏 stop 就变成重生后一直响受伤音）。
     // 排在 emit_audio_stop_payloads 之前，保证同帧下发。
+    // add_event 是幂等的：这里自带一次注册，别让本系统的可运行性依赖
+    // `cmd::dev::revive` 恰好也注册了同一事件（dev 入口不该是生产路径的前提）。
+    app.add_event::<crate::cultivation::death_hooks::PlayerRevived>();
     app.add_systems(
         Update,
         audio_trigger::stop_low_hp_heartbeat_on_revive
