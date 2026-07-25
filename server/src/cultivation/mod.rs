@@ -2937,7 +2937,7 @@ mod tests {
                     idle_ticks: 40,
                     move_ticks: 50,
                     dash_ticks: 60,
-                    had_qualifying_movement: false,
+                    had_qualifying_movement: true,
                 },
             },
             Case {
@@ -2973,7 +2973,7 @@ mod tests {
                     idle_ticks: 0,
                     move_ticks: 61,
                     dash_ticks: 0,
-                    had_qualifying_movement: false,
+                    had_qualifying_movement: true,
                 },
             },
             Case {
@@ -2994,7 +2994,7 @@ mod tests {
                     idle_ticks: 198,
                     move_ticks: 1,
                     dash_ticks: 0,
-                    had_qualifying_movement: false,
+                    had_qualifying_movement: true,
                 },
             },
             Case {

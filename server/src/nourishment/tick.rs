@@ -50,11 +50,18 @@ impl<'de> Deserialize<'de> for NourishmentActivityWindow {
         let Some(persisted) = value.as_object() else {
             return Ok(Self::default());
         };
+        let idle_ticks = persisted_ticks(persisted.get("idle_ticks"));
+        let move_ticks = persisted_ticks(persisted.get("move_ticks"));
+        let dash_ticks = persisted_ticks(persisted.get("dash_ticks"));
+        let had_qualifying_movement = match persisted.get("had_qualifying_movement") {
+            Some(value) => persisted_movement(Some(value)),
+            None => move_ticks > 0,
+        };
         let window = Self {
-            idle_ticks: persisted_ticks(persisted.get("idle_ticks")),
-            move_ticks: persisted_ticks(persisted.get("move_ticks")),
-            dash_ticks: persisted_ticks(persisted.get("dash_ticks")),
-            had_qualifying_movement: persisted_movement(persisted.get("had_qualifying_movement")),
+            idle_ticks,
+            move_ticks,
+            dash_ticks,
+            had_qualifying_movement,
         };
 
         if window.total_ticks() < NOURISH_SWEEP_INTERVAL_TICKS {
@@ -645,6 +652,168 @@ mod tests {
                 "{label} should default only invalid fields"
             );
         }
+    }
+
+    #[test]
+    fn legacy_activity_window_derives_movement_from_move_ticks_and_settles_moving() {
+        let restored = serde_json::from_value::<NourishmentActivityWindow>(serde_json::json!({
+            "idle_ticks": 198,
+            "move_ticks": 1,
+            "dash_ticks": 0
+        }))
+        .expect("a legal legacy activity window should deserialize");
+        assert!(
+            restored.had_qualifying_movement,
+            "a legacy snapshot with moving ticks must preserve its moving-window semantics"
+        );
+
+        let (mut app, entity) = nourishment_test_app("LegacyMoving", restored);
+        app.update();
+        let (moving_satiety_loss, moving_hydration_loss) = sweep_losses(
+            NourishmentActivityWindow {
+                had_qualifying_movement: true,
+                ..Default::default()
+            },
+            nourishment_loss_multiplier(Realm::Awaken),
+        );
+        let nourishment = app
+            .world()
+            .get::<Nourishment>(entity)
+            .expect("restored player should retain nourishment after its sweep");
+        assert!(
+            (nourishment.satiety - (NOURISH_SPAWN_VALUE - moving_satiety_loss)).abs() < 1e-6
+                && (nourishment.hydration - (NOURISH_SPAWN_VALUE - moving_hydration_loss)).abs()
+                    < 1e-6,
+            "a legacy 199-tick moving window must settle at the 1.5 moving multiplier"
+        );
+    }
+
+    #[test]
+    fn activity_window_json_respects_explicit_movement_field_over_move_ticks() {
+        let explicit_false =
+            serde_json::from_value::<NourishmentActivityWindow>(serde_json::json!({
+                "idle_ticks": 198,
+                "move_ticks": 1,
+                "dash_ticks": 0,
+                "had_qualifying_movement": false
+            }))
+            .expect("a legal lease-derived moving window should deserialize");
+        assert!(
+            !explicit_false.had_qualifying_movement,
+            "an explicit false must not be overwritten by legacy move-tick inference"
+        );
+
+        let (mut app, entity) = nourishment_test_app("LeaseDerivedMoving", explicit_false);
+        app.update();
+        let (idle_satiety_loss, idle_hydration_loss) = sweep_losses(
+            NourishmentActivityWindow::default(),
+            nourishment_loss_multiplier(Realm::Awaken),
+        );
+        let nourishment = app
+            .world()
+            .get::<Nourishment>(entity)
+            .expect("restored player should retain nourishment after its sweep");
+        assert!(
+            (nourishment.satiety - (NOURISH_SPAWN_VALUE - idle_satiety_loss)).abs() < 1e-6
+                && (nourishment.hydration - (NOURISH_SPAWN_VALUE - idle_hydration_loss)).abs()
+                    < 1e-6,
+            "an explicit false with moving ticks must settle at the 1.0 idle multiplier"
+        );
+
+        let explicit_true =
+            serde_json::from_value::<NourishmentActivityWindow>(serde_json::json!({
+                "idle_ticks": 198,
+                "move_ticks": 1,
+                "dash_ticks": 0,
+                "had_qualifying_movement": true
+            }))
+            .expect("an explicit qualifying movement window should deserialize");
+        assert!(
+            explicit_true.had_qualifying_movement,
+            "an explicit true must remain true"
+        );
+        assert_eq!(
+            explicit_true.activity_multiplier(),
+            NOURISH_MOVE_ACTIVITY_MULTIPLIER,
+            "an explicit true must retain the moving multiplier"
+        );
+    }
+
+    #[test]
+    fn activity_window_json_keeps_corrupt_movement_field_fail_closed() {
+        for (value, label) in [
+            (
+                serde_json::json!({
+                    "idle_ticks": 198,
+                    "move_ticks": 1,
+                    "dash_ticks": 0,
+                    "had_qualifying_movement": null
+                }),
+                "null",
+            ),
+            (
+                serde_json::json!({
+                    "idle_ticks": 198,
+                    "move_ticks": 1,
+                    "dash_ticks": 0,
+                    "had_qualifying_movement": "bad"
+                }),
+                "wrong type",
+            ),
+        ] {
+            let restored = serde_json::from_value::<NourishmentActivityWindow>(value)
+                .unwrap_or_else(|error| panic!("{label} movement field should fail safe: {error}"));
+            assert!(
+                !restored.had_qualifying_movement,
+                "an explicit {label} movement field must not be mistaken for a legacy omission"
+            );
+            assert_eq!(
+                restored.activity_multiplier(),
+                NOURISH_IDLE_ACTIVITY_MULTIPLIER,
+                "an explicit {label} movement field must retain the fail-closed idle multiplier"
+            );
+        }
+    }
+
+    #[test]
+    fn activity_window_json_round_trip_preserves_explicit_false_with_move_ticks() {
+        let expected = NourishmentActivityWindow {
+            idle_ticks: 100,
+            move_ticks: 99,
+            dash_ticks: 0,
+            had_qualifying_movement: false,
+        };
+        let encoded = serde_json::to_value(expected).expect("activity window should serialize");
+        assert_eq!(
+            encoded.get("had_qualifying_movement"),
+            Some(&serde_json::Value::Bool(false)),
+            "new activity-window snapshots must serialize an explicit movement boolean"
+        );
+        let decoded = serde_json::from_value::<NourishmentActivityWindow>(encoded)
+            .expect("serialized activity window should deserialize");
+        assert_eq!(
+            decoded, expected,
+            "an explicit false must survive JSON round-trip even with moving ticks"
+        );
+    }
+
+    #[test]
+    fn legacy_activity_window_without_move_ticks_stays_idle() {
+        let restored = serde_json::from_value::<NourishmentActivityWindow>(serde_json::json!({
+            "idle_ticks": 199,
+            "move_ticks": 0,
+            "dash_ticks": 0
+        }))
+        .expect("a legal idle legacy activity window should deserialize");
+        assert!(
+            !restored.had_qualifying_movement,
+            "a legacy snapshot without moving ticks must remain idle"
+        );
+        assert_eq!(
+            restored.activity_multiplier(),
+            NOURISH_IDLE_ACTIVITY_MULTIPLIER,
+            "a legacy snapshot without moving ticks must keep the idle multiplier"
+        );
     }
 
     #[test]
