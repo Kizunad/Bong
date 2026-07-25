@@ -965,7 +965,7 @@ fn classify_ground_landing_at(
         return GroundLandingCheck::Miss;
     };
 
-    if !support.blocks_motion() || support.is_liquid() {
+    if !is_strict_ground_support(support) {
         return GroundLandingCheck::Miss;
     }
     if feet.is_liquid() || head.is_liquid() {
@@ -997,8 +997,15 @@ fn is_solid_for_ground(block: BlockState) -> bool {
     true
 }
 
+fn is_strict_ground_support(block: BlockState) -> bool {
+    block.blocks_motion()
+        && !block.is_liquid()
+        && !is_passthrough_block(block)
+        && !is_leaf_block(block)
+}
+
 fn is_clear_for_ground(block: BlockState) -> bool {
-    !block.blocks_motion() && !block.is_liquid()
+    !block.blocks_motion() && !block.is_liquid() && !is_leaf_block(block)
 }
 
 // ---------------------------------------------------------------------------
@@ -1661,7 +1668,7 @@ mod tests {
     }
 
     #[test]
-    fn landing_scan_treats_non_motion_support_and_non_liquid_obstruction_as_miss() {
+    fn landing_scan_rejects_non_strict_support_and_body_obstructions() {
         for (case, blocks, expected) in [
             (
                 "liquid support",
@@ -1671,7 +1678,7 @@ mod tests {
             (
                 "leaf support",
                 vec![(-1, 66, 17, BlockState::OAK_LEAVES)],
-                GroundLandingScan::Safe(66),
+                GroundLandingScan::Miss,
             ),
             (
                 "passthrough support",
@@ -1679,12 +1686,12 @@ mod tests {
                 GroundLandingScan::Miss,
             ),
             (
-                "non-motion body obstruction",
+                "leaf body obstruction",
                 vec![
                     (-1, 66, 17, BlockState::STONE),
                     (-1, 67, 17, BlockState::OAK_LEAVES),
                 ],
-                GroundLandingScan::Safe(67),
+                GroundLandingScan::Miss,
             ),
         ] {
             let (app, layer_entity) = make_landing_layer(&blocks);
