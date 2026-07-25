@@ -108,7 +108,7 @@ impl ZhenmaiSkillId {
         }
     }
 
-    fn audio_recipe(self) -> &'static str {
+    pub(crate) fn audio_recipe(self) -> &'static str {
         match self {
             Self::Parry => "zhenmai_parry_thud",
             Self::Neutralize => "zhenmai_neutralize_hiss",

@@ -673,7 +673,7 @@ pub fn emit_baomai_v3_audio_triggers(
     }
 }
 
-fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
+pub(crate) fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
     match skill {
         // 崩拳走专属配方（穿透爆发的形意拳直拳），不再借用通用 baomai_hit_heavy 槽。
         BaomaiSkillId::BengQuan => "beng_quan",
@@ -715,14 +715,17 @@ pub fn emit_sword_path_audio_triggers(
     }
 }
 
-fn sword_path_recipe_for_skill(skill: SwordPathSkillId) -> &'static str {
+pub(crate) fn sword_path_recipe_for_skill(skill: SwordPathSkillId) -> &'static str {
     match skill {
         SwordPathSkillId::CondenseEdge => "sword_condense_edge",
         SwordPathSkillId::QiSlash => "sword_qi_slash",
         SwordPathSkillId::Resonance => "sword_resonance",
         SwordPathSkillId::Manifest => "sword_manifest_summon",
-        // 蓄力沿用 infuse（注剑蓄势）；释放用 manifest_strike（开天劈击）。
-        SwordPathSkillId::HeavenGateCharge => "sword_infuse",
+        // 蓄力走专属 `heaven_gate_charge`（复用 release 的 `bong:skill.sword_path.heaven_gate`
+        // 签名 ogg 作 pitch 0.72/volume 0.4 前兆层 + amethyst 铺底）；释放用 manifest_strike
+        // （开天劈击）。**不能复用共享的 `sword_infuse`**——那被基础剑招（sword_basics）也消费，
+        // 塞签名会泄漏到普通注剑。
+        SwordPathSkillId::HeavenGateCharge => "heaven_gate_charge",
         SwordPathSkillId::HeavenGateRelease => "sword_manifest_strike",
     }
 }
@@ -737,6 +740,10 @@ fn sword_path_audio_flag(skill: SwordPathSkillId) -> &'static str {
         SwordPathSkillId::HeavenGateRelease => "sword_path_heaven_gate_release",
     }
 }
+
+/// 诱饵分形（回声）签名 recipe——单一真源，供生产 emit 与 `audio::each_signature_skill_*`
+/// 运行时消费契约测试共同引用，避免测试另抄一份 recipe id 造成映射漂移假绿。
+pub(crate) const ANQI_ECHO_FRACTAL_RECIPE: &str = "anqi_echo_fractal";
 
 /// 暗器六招 cast → `PlaySoundRecipeRequest`，引用 `audio_recipes/anqi_*.json`
 /// （全部复用 vanilla 音色分层，无新音频文件）。
@@ -839,10 +846,10 @@ pub fn emit_anqi_audio_triggers(
             .unwrap_or_default();
         emit_play(
             &mut audio,
-            "anqi_echo_fractal",
+            ANQI_ECHO_FRACTAL_RECIPE,
             event.caster,
             origin,
-            Some("anqi_echo_fractal".to_string()),
+            Some(ANQI_ECHO_FRACTAL_RECIPE.to_string()),
             1.0,
             0.0,
         );
@@ -2251,7 +2258,7 @@ mod tests {
                 "sword_qi_slash",
                 "sword_resonance",
                 "sword_manifest_summon",
-                "sword_infuse",
+                "heaven_gate_charge",
                 "sword_manifest_strike",
             ],
             "六个 cast 阶段（含天门 charge/release）各应 emit 其专属配方"
@@ -2319,6 +2326,157 @@ mod tests {
             emitted[0].pos,
             Some([7, 64, 7]),
             "无 Position 时音源应落到 event.center"
+        );
+    }
+
+    // ─── 崩脉签名：emit_baomai_v3_audio_triggers（运行时消费 emit-path 覆盖）───
+
+    fn setup_baomai_audio_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<BaomaiSkillEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_baomai_v3_audio_triggers);
+        app
+    }
+
+    /// 崩脉签名 `full_power_release` 经**真实 emit 系统** emit `baomai_signature`。
+    /// 「运行时消费」emit-path 门：跑 `emit_baomai_v3_audio_triggers` 读 `BaomaiSkillEvent`
+    /// → `baomai_recipe_for_skill` → 发 `PlaySoundRecipeRequest`；删掉发声调用 / 改坏 skill→recipe
+    /// 映射都会撞红（补 `audio::each_signature_skill_*` 静态 pin 之外的 emit 断链覆盖）。
+    #[test]
+    fn baomai_full_power_release_emits_signature_recipe() {
+        let mut app = setup_baomai_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(BaomaiSkillEvent {
+            skill: BaomaiSkillId::FullPowerRelease,
+            caster,
+            target: None,
+            tick: 1,
+            qi_invested: 0.0,
+            damage: 0.0,
+            radius_blocks: None,
+            blood_multiplier: 0.0,
+            flow_rate_multiplier: 0.0,
+            meridian_dependencies: Vec::new(),
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec!["baomai_signature"],
+            "崩脉 full_power_release 应经 emit 系统实发 baomai_signature，实际 {recipes:?}"
+        );
+    }
+
+    // ─── 涡流签名：emit_woliu_v2_audio_triggers（运行时消费 emit-path 覆盖）───
+
+    fn setup_woliu_audio_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<VortexCastEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_woliu_v2_audio_triggers);
+        app
+    }
+
+    /// 涡流签名 `void_core` 经**真实 emit 系统** emit `woliu_void_core`（经 `event.visual.sound_recipe_id`）。
+    /// 「运行时消费」emit-path 门：跑 `emit_woliu_v2_audio_triggers` 读 `VortexCastEvent` → 发
+    /// `PlaySoundRecipeRequest`；删掉发声调用 / visual→recipe 映射漂移都会撞红。
+    #[test]
+    fn woliu_void_core_emits_signature_recipe() {
+        use crate::combat::woliu_v2::skills::visual_for;
+        use crate::combat::woliu_v2::WoliuSkillId;
+
+        let mut app = setup_woliu_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(VortexCastEvent {
+            caster,
+            skill: WoliuSkillId::VoidCore,
+            tick: 1,
+            center: DVec3::new(0.0, 64.0, 0.0),
+            lethal_radius: 0.0,
+            influence_radius: 0.0,
+            turbulence_radius: 0.0,
+            absorbed_qi: 0.0,
+            swirl_qi: 0.0,
+            backfire_level: None,
+            visual: visual_for(WoliuSkillId::VoidCore),
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec!["woliu_void_core"],
+            "涡流 void_core 应经 emit 系统实发 woliu_void_core（event.visual.sound_recipe_id），实际 {recipes:?}"
+        );
+    }
+
+    // ─── 蜕壳签名（被动路径）：emit_tuike_v2_audio_triggers（运行时消费 emit-path 覆盖）───
+
+    fn setup_tuike_audio_app() -> App {
+        use crate::combat::tuike_v2::events::{
+            ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent,
+        };
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<DonFalseSkinEvent>();
+        app.add_event::<FalseSkinSheddedEvent>();
+        app.add_event::<ContamTransferredEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_tuike_v2_audio_triggers);
+        app
+    }
+
+    /// tuike.shed **被动蜕壳**（`FalseSkinSheddedEvent`）经真实 emit 系统实发签名 `shed_skin_burst`
+    /// （经 `event.visual.sound_recipe_id`）。「运行时消费」emit-path 门（Pattern A 侧）；主动施法
+    /// `cast_shed`（Pattern B 内联在 cast 逻辑）待 P5 重构为 Pattern A 后补。
+    #[test]
+    fn tuike_shed_passive_emits_signature_recipe() {
+        use crate::combat::tuike_v2::events::{
+            FalseSkinSheddedEvent, TuikeSkillId, TuikeSkillVisual,
+        };
+        use crate::combat::tuike_v2::FalseSkinTier;
+
+        let mut app = setup_tuike_audio_app();
+        let owner = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(FalseSkinSheddedEvent {
+            owner,
+            attacker: None,
+            tier: FalseSkinTier::Light,
+            damage_absorbed: 0.0,
+            damage_overflow: 0.0,
+            contam_load: 0.0,
+            permanent_taint_load: 0.0,
+            layers_after: 0,
+            active: true,
+            tick: 1,
+            visual: TuikeSkillVisual::for_skill(TuikeSkillId::Shed, false).into(),
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec!["shed_skin_burst"],
+            "tuike 被动蜕壳应经 emit 系统实发 shed_skin_burst（event.visual.sound_recipe_id），实际 {recipes:?}"
         );
     }
 

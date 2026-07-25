@@ -41,8 +41,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>plan 硬约束额外锁三类**错误分支 / 逐项消费**（防"只注册不消费""静默漂移"）：
  * <ul>
- *   <li>第 8 招 heaven_gate 的 client recipe 的 L0 主层必须是其 {@code bong:} 事件（{@link #heavenGateRecipesSwapL0MainLayerToTheirBongEvent}）——
- *       server 侧只 pin 了另外 7 招，这里补齐 8/8 逐项主层锁；把 recipe 主层改回 {@code minecraft:} 或挪到铺底层立即判红；</li>
+ *   <li>8 招 signature 招式**实际 emit** 的 recipe 的 L0 主层必须是其 {@code bong:} 事件——由 server 侧
+ *       {@code audio::mod::each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event} 逐项 pin
+ *       （heaven_gate 走 server recipe `sword_manifest_strike`、tuike 走 `shed_skin_burst`，防 P4 那类「换错死 recipe」bug）；</li>
  *   <li>sounds.json 重复事件键（Gson 会静默后值覆盖）——{@link #soundsJsonHasNoDuplicateEventKeys} 用 token 级流式扫描锁真实文件无重复，
  *       {@link #duplicateKeyDetectorActuallyCatchesDuplicates} 用合成 fixture 证明检测器真的能抓；</li>
  *   <li>非法命名空间前缀——{@link #everyRegisteredSoundNameUsesValidBongNamespace} 锁真实文件全 {@code bong:} 合法，
@@ -85,19 +86,6 @@ class SignatureAudioContractTest {
     /** 从 canonical 表派生的事件键集合（供全量存在性 / 命名空间等复用）。 */
     private static final Set<String> SIGNATURE_EVENTS =
         SIGNATURE_SPEC.stream().map(SignatureSpec::event).collect(Collectors.toSet());
-
-    /**
-     * 第 8 招 heaven_gate 的 client recipe 的 **L0 主层** 逐项 pin（release + charge 尾程）。
-     * plan「charge 尾程 + release」范围 + 「主层 swap」要求：签名事件必须坐 {@code layers[0]}，
-     * 不是任意铺底层（挪到铺底则声音天花板没打开却假绿）。charge_2s 是压调前兆层
-     * （pitch 0.72 / volume 0.4），release 是原速主音（pitch 1.0 / volume 0.9）。server 侧
-     * 另 7 招同强度 pin 见 {@code audio::mod::each_server_signature_recipe_swaps_l0_main_layer_to_its_bong_event}。
-     */
-    private record HeavenGatePin(String recipeFile, String event, double pitch, double volume) {}
-
-    private static final List<HeavenGatePin> HEAVEN_GATE_L0_PINS = List.of(
-        new HeavenGatePin("heaven_gate_release.json", "bong:skill.sword_path.heaven_gate", 1.0, 0.9),
-        new HeavenGatePin("heaven_gate_charge_2s.json", "bong:skill.sword_path.heaven_gate", 0.72, 0.4));
 
     private JsonObject soundsJson() throws IOException {
         assertTrue(Files.isRegularFile(SOUNDS_JSON), "sounds.json 必须提交: " + SOUNDS_JSON.toAbsolutePath());
@@ -201,32 +189,10 @@ class SignatureAudioContractTest {
         }
     }
 
-    /**
-     * 第 8 招逐项消费锁：heaven_gate 的 client recipe（charge 尾程 + release）的 **L0 主层** 必须是
-     * 其 signature 事件，且 pitch/volume 符合契约。锁 {@code layers[0]}（非「任意层」）——把主层改回
-     * {@code minecraft:} 或把签名挪到铺底层都会立即判红。补齐 plan 要求的 8/8 逐项主层 pin
-     * （server 侧另 7 招同强度 pin 在 audio::mod）。
-     */
-    @Test
-    void heavenGateRecipesSwapL0MainLayerToTheirBongEvent() throws IOException {
-        for (HeavenGatePin pin : HEAVEN_GATE_L0_PINS) {
-            Path recipeFile = CLIENT_RECIPE_DIR.resolve(pin.recipeFile());
-            assertTrue(Files.isRegularFile(recipeFile),
-                "heaven_gate 逐项 pin 的 recipe 缺失: " + recipeFile.toAbsolutePath());
-            JsonObject recipe = JsonParser.parseString(Files.readString(recipeFile)).getAsJsonObject();
-            JsonArray layers = recipe.getAsJsonArray("layers");
-            assertTrue(layers != null && layers.size() > 0, pin.recipeFile() + " 必须含非空 layers");
-            JsonObject l0 = layers.get(0).getAsJsonObject();
-            assertEquals(pin.event(), l0.get("sound").getAsString(),
-                pin.recipeFile() + " 的 **L0 主层** sound 必须 == " + pin.event()
-                    + "（防签名被挪到铺底层——挪走则第 8 招签名音永不作主，声音天花板没打开）");
-            assertEquals(pin.pitch(), l0.get("pitch").getAsDouble(), 1e-9,
-                pin.recipeFile() + " 的 L0 pitch 契约=" + pin.pitch()
-                    + "（release 原速 1.0；charge_2s 压调前兆 0.72）");
-            assertEquals(pin.volume(), l0.get("volume").getAsDouble(), 1e-9,
-                pin.recipeFile() + " 的 L0 volume 契约=" + pin.volume());
-        }
-    }
+    // heaven_gate 的 signature 消费 pin 已移到 server 侧：sword_path.heaven_gate(release) 招式实际 emit 的
+    // 是 server recipe `sword_manifest_strike`（不是同名 client recipe `heaven_gate_release`——那个招式不
+    // 消费，是死 recipe），由 audio::mod 的 each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event
+    // 逐项 pin。client 侧仍锁 sounds.json↔ogg 与格式（含 heaven_gate 的事件/ogg）。
 
     // ---- 错误分支：重复事件键（Gson 静默后值覆盖，普通 getAsJsonObject 抓不到）----
 
