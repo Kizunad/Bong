@@ -141,9 +141,12 @@ def main():
     GEO.write_text(json.dumps(geo, ensure_ascii=False, indent=1))
 
     # ── 3 组贴图 (底图 + emissive), 尾脊蓝填充 0/2/4 ──
+    # glow 底**必须透明**：client `FaunaEmissiveGlowLayer` 走
+    # `RenderLayer.getEntityTranslucentEmissive` 整模重绘一遍 glow 贴图，非透明像素一律
+    # 全亮。若 glow 底是不透明黑（历史 bug），整只鼠会被涂成"全亮黑"而不是只有蓝脊+红眼发光。
     def make_tex(fill):
         base = Image.new("RGBA", (TW, TH), (0, 0, 0, 0))
-        glow = Image.new("RGBA", (TW, TH), (0, 0, 0, 255))
+        glow = Image.new("RGBA", (TW, TH), (0, 0, 0, 0))
         db, dg = ImageDraw.Draw(base), ImageDraw.Draw(glow)
         for name, (zx, zy) in CELL.items():
             if name.startswith("ridge"):
@@ -164,6 +167,12 @@ def main():
         base, glow = make_tex(fill)
         base.save(TEXDIR / f"devour_rat_q{q}.png")
         glow.save(TEXDIR / f"devour_rat_q{q}_glow.png")
+        if q == 0:
+            # `FaunaVisualKind.DEVOUR_RAT.textureId()` 的物种缺省贴图 = q0 别名。
+            # 正常路径 `FaunaModel.selectTexture` 恒返回 q0/q1/q2，这两张只在缺省兜底
+            # 路径被取到；缺了会渲染 missing texture（紫黑格），故一并产出。
+            base.save(TEXDIR / "devour_rat.png")
+            glow.save(TEXDIR / "devour_rat_glow.png")
 
     # ── animations → geckolib .animation.json ──
     anims = {}
