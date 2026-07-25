@@ -57,8 +57,12 @@ pub const RAT_QI_TIER_MAX: u8 = 2;
 
 /// 吸元储量 → 展示档位。
 ///
-/// 非有限值（NaN / ±inf 的 NaN 侧）与负值一律归 0 档：wire 上只允许 0..=`RAT_QI_TIER_MAX`，
-/// 不能让脏数值变成客户端查不到的贴图下标。
+/// 负值与**全部**非有限值（NaN / +inf / -inf）一律归 0 档：wire 上只允许
+/// 0..=`RAT_QI_TIER_MAX`，不能让脏数值变成客户端查不到的贴图下标。
+///
+/// `+inf` 也归 0 而非饱和到满档：`drained_qi` 镜像的是被 `SPIRIT_QI_TOTAL` 封顶的账本余额，
+/// 物理上到不了 inf，出现即账本损坏——脏数据不该被奖励成最亮的表现，且 NaN 本就比较不出来，
+/// 给 `+inf` 开特例只会让这条规则多一个记不住的分叉。
 pub fn rat_qi_tier(drained_qi: f64) -> u8 {
     if !drained_qi.is_finite() || drained_qi < RAT_QI_TIER_1_THRESHOLD {
         return 0;
@@ -224,6 +228,19 @@ mod tests {
 
     // ── 接线核验（防功能孤岛）────────────────────────────────────────────────
 
+    /// 取源码的**生产半区**（砍掉 inline `#[cfg(test)] mod tests {` 之后的内容 + 剔纯注释行）。
+    /// 详见 `network::rat_av_trigger` 里同名 helper 的注释——不剔注释的话
+    /// `// rat_qi_tier_emit::register(app);` 这种注释掉的调用也能让 pin 通过。
+    fn production_source(src: &str) -> String {
+        src.split("#[cfg(test)]\nmod tests {")
+            .next()
+            .unwrap_or(src)
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// `register` 写了却没被 `network::register` 调用 = 永不运行的孤岛：档位永不下发，
     /// 客户端所有鼠恒渲染 q0，而本文件的纯函数单测照样全绿。
     ///
@@ -231,7 +248,7 @@ mod tests {
     /// 钉住调用点存在（对齐 client 侧 `FaunaEmissiveGlowWiringTest` 的字节码接线核验思路）。
     #[test]
     fn register_is_wired_into_network_register() {
-        let network_mod = include_str!("mod.rs");
+        let network_mod = production_source(include_str!("mod.rs"));
         assert!(
             network_mod.contains("rat_qi_tier_emit::register(app)"),
             "network::register 必须调用 rat_qi_tier_emit::register(app)，否则档位下发系统\
@@ -240,6 +257,18 @@ mod tests {
         assert!(
             network_mod.contains("pub mod rat_qi_tier_emit;"),
             "rat_qi_tier_emit 必须在 network 下声明为模块"
+        );
+    }
+
+    /// 元测试：证明上面那条 pin 不是恒真的（删掉生产注册行就该失去命中）。
+    #[test]
+    fn wiring_pin_actually_fails_when_production_registration_is_removed() {
+        let network_mod = production_source(include_str!("mod.rs"));
+        let mutated = network_mod.replacen("    rat_qi_tier_emit::register(app);\n", "", 1);
+        assert!(
+            !mutated.contains("rat_qi_tier_emit::register(app)"),
+            "生产半区里 rat_qi_tier_emit::register(app) 应当只出现一次；删掉后仍命中 = \
+             接线 pin 恒真、挡不住孤岛"
         );
     }
 
@@ -291,13 +320,7 @@ mod tests {
     /// 特例化只会让这条规则多一个记不住的分叉。
     #[test]
     fn tier_zero_for_negative_and_all_non_finite() {
-        for qi in [
-            -1.0,
-            -f64::MAX,
-            f64::NAN,
-            f64::NEG_INFINITY,
-            f64::INFINITY,
-        ] {
+        for qi in [-1.0, -f64::MAX, f64::NAN, f64::NEG_INFINITY, f64::INFINITY] {
             assert_eq!(
                 rat_qi_tier(qi),
                 0,

@@ -132,12 +132,33 @@ mod tests {
 
     // ── 接线核验（防功能孤岛）────────────────────────────────────────────────
 
-    /// 两条接线断任一条，鼠咬人就永远只播 idle，而本文件单测照样全绿：
+    /// 取源码的**生产半区**：砍掉 inline `#[cfg(test)] mod tests {` 之后的全部内容，
+    /// 再剔除纯注释行。
+    ///
+    /// 必要性（这条 helper 本身就是一次返工的产物）：needle
+    /// `add_event::<RatAttackAvEvent>()` 在 `brain_rat.rs` 里出现 9 次——生产 `register()`
+    /// 1 次 + 8 个单测各自建 app 时 1 次。对全文件裸 `contains` 是**恒真**的：把生产那行删掉
+    /// 照样绿，正好放过它声称要挡的失败。剔注释行则另外挡住「把调用注释掉但 pin 仍过」的绕法。
+    ///
+    /// 只砍 `mod tests {`（inline 模块，带花括号），不砍 `#[cfg(test)] mod xxx_test;`
+    /// 这种文件级声明——`network/mod.rs` 顶部就有若干条，按前者切会把整个 `register` 函数
+    /// 一起切掉，断言反而恒假。
+    fn production_source(src: &str) -> String {
+        src.split("#[cfg(test)]\nmod tests {")
+            .next()
+            .unwrap_or(src)
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 两条接线断任一条，鼠咬人就永远只播 idle，而本文件其余单测照样全绿：
     /// ① `emit_rat_attack_entity_anim` 没被 `network::register` 注册 → 事件无人消费；
     /// ② `RatAttackAvEvent` 没被 `brain_rat::register` 注册 → `EventWriter` 取不到资源。
     #[test]
     fn emit_system_and_event_are_wired_into_app() {
-        let network_mod = include_str!("mod.rs");
+        let network_mod = production_source(include_str!("mod.rs"));
         assert!(
             network_mod.contains("rat_av_trigger::register(app)"),
             "network::register 必须调用 rat_av_trigger::register(app)，否则 RatAttackAvEvent \
@@ -148,11 +169,34 @@ mod tests {
             "rat_av_trigger 必须在 network 下声明为模块"
         );
 
-        let brain_rat = include_str!("../npc/brain_rat.rs");
+        let brain_rat = production_source(include_str!("../npc/brain_rat.rs"));
         assert!(
             brain_rat.contains("add_event::<RatAttackAvEvent>()"),
             "brain_rat::register 必须注册 RatAttackAvEvent 事件类型，否则 action system 的 \
              EventWriter<RatAttackAvEvent> 取不到 Events 资源"
+        );
+    }
+
+    /// 元测试：证明上面那条 pin **不是恒真的**。
+    ///
+    /// 直接锁住 `production_source` 的判别力——若它退化成"返回全文"（或有人把生产半区的
+    /// 切分逻辑改坏），删掉生产注册行后 needle 仍能命中，这条会撞红。
+    #[test]
+    fn wiring_pin_actually_fails_when_production_registration_is_removed() {
+        let brain_rat = production_source(include_str!("../npc/brain_rat.rs"));
+        let mutated = brain_rat.replacen("    app.add_event::<RatAttackAvEvent>();\n", "", 1);
+        assert!(
+            !mutated.contains("add_event::<RatAttackAvEvent>()"),
+            "生产半区里 add_event::<RatAttackAvEvent>() 应当只出现一次（brain_rat::register 内）；\
+             删掉后仍能命中 = 上面的接线 pin 是恒真的、挡不住孤岛。\
+             （测试模块里的 8 次同名调用必须已被 production_source 切掉。）"
+        );
+
+        let network_mod = production_source(include_str!("mod.rs"));
+        let mutated_net = network_mod.replacen("    rat_av_trigger::register(app);\n", "", 1);
+        assert!(
+            !mutated_net.contains("rat_av_trigger::register(app)"),
+            "生产半区里 rat_av_trigger::register(app) 应当只出现一次"
         );
     }
 
