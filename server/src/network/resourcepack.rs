@@ -21,8 +21,8 @@ const DEFAULT_RESOURCE_PACK_MANIFEST: ResourcePackManifest = ResourcePackManifes
     name: "bong-full",
     version: "v1",
     file: "bong-full-v1.zip",
-    sha1: "3d0866dd81966959d8c1f51c1b3e9a90f500d68f",
-    size: 72_501_865,
+    sha1: "115850050852140d70a16426645301aa6a53079a",
+    size: 72_506_139,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
