@@ -1093,9 +1093,14 @@ fn cast_shed_routes_spent_qi_to_overflow_without_zone_context() {
 /// `PlaySoundRecipeRequest.recipe_id` == 签名 `SHED_SKIN_BURST_RECIPE`（引生产 const 单一真源），
 /// 且**只发一条**。
 ///
-/// 重构前 `cast_shed` 内联再发一条同 recipe（Pattern B），与 `FalseSkinSheddedEvent` 驱动的
-/// Pattern A 系统重复发声——「只发一条」正是锁这个；反过来若哪天 cast 不再发
+/// 重构前 `cast_shed` 内联再发一条**同 recipe 但不同路由**的请求（Pattern B：`pos: None`
+/// 听者锚点 + 64 格广播，不过 dedup），与 `FalseSkinSheddedEvent` 驱动的 Pattern A 那条
+/// （世界锚点 + 距离衰减）叠在一起播——「只发一条」正是锁这个；反过来若哪天 cast 不再发
 /// `FalseSkinSheddedEvent`、或系统不再读它，则一条都发不出来，同样撞红。
+///
+/// 删内联的代价已知并接受：主动蜕壳对 16~64 格外第三方由「有声」变「无声」（L0 volume 0.9
+/// 的世界锚点实际可听约 16 格）。蜕壳是发生在施法者身上的爆发，空间化才是正确表现，
+/// 被动掉壳一直如此；详见 `skills::cast_shed` 处注释。
 #[test]
 fn active_cast_shed_emits_signature_recipe_exactly_once_end_to_end() {
     use crate::audio::implementation::AudioImplementationDedup;

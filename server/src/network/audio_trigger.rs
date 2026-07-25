@@ -955,7 +955,8 @@ pub fn emit_dugu_v2_audio_triggers(
         );
     }
 
-    // 倒蚀签名：路由与重构前内联 emit **逐字段一致**——听者位置发声（`pos: None`，无空间衰减）
+    // 倒蚀签名：**可听字段**（pos / recipient / volume / pitch）与重构前内联 emit 一致——
+    // 听者位置发声（`pos: None`，几乎无空间衰减）
     // + 以爆发中心 `event.center` 为圆心的 64 格广播（`emit_play_listener_anchored_broadcast`
     // 的 doc 写了为什么这里不能走 recipe attenuation）。`event.center` = 目标位置，无目标时退到
     // 施法者位置，由 cast 侧算好。
@@ -1313,8 +1314,11 @@ fn emit_play_at_block(
 /// Pattern A 时保持路由逐字段不变。
 ///
 /// 与 `emit_play` 的差别（都不是随便选的）：
-/// - `pos: None` → client 把音源放在**听者自己脚下**（`MinecraftSoundSink` 的 fallback），
-///   距离恒为 0 ⇒ 无空间衰减、原音量；`emit_play` 的 `Some(block_pos)` 则是世界锚点 + LINEAR 衰减。
+/// - `pos: None` → client 把音源放在**听者自己脚下**（`MinecraftSoundSink` 的 fallback，
+///   `relative=false` + LINEAR，实际距离仅方块角到耳朵的 1~2 格）⇒ 近满音量、不随距离掉；
+///   `emit_play` 的 `Some(block_pos)` 则是世界锚点 + LINEAR 衰减（音量决定可听半径）。
+/// - 另有两处非可听差异：新增 `flag`（调试标记；client 只在带 `loop` 的 recipe 上消费，
+///   `dugu_poison_signature` 无 loop ⇒ no-op）与 dedup 门（同 entity+recipe 2 tick 内不重发）。
 /// - recipient 用固定 `AUDIO_BROADCAST_RADIUS`，不查 recipe 的 `attenuation`。
 ///
 /// 为什么倒蚀签名要走这条：重构前 `dugu_v2::skills::emit_audio` 就是 `pos: None` + 64 格广播；
