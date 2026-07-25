@@ -1322,9 +1322,10 @@ fn emit_play_at_block(
 /// - recipient 用固定 `AUDIO_BROADCAST_RADIUS`，不查 recipe 的 `attenuation`。
 ///
 /// 为什么倒蚀签名要走这条：重构前 `dugu_v2::skills::emit_audio` 就是 `pos: None` + 64 格广播；
-/// 若改用 `emit_play`，`dugu_poison_signature` 声明的 `MELEE` 会把收听范围砍到 8 格（比该招自己
-/// 10 格的 `ReverseAftermathCloud` 还小），再叠上世界锚点的距离衰减与 L0 volume 0.24，实机几乎
-/// 听不见——正是 P4 已经吃过两次的「签名进了资产却听不到」（PR #1262 review 抓出）。
+/// 若改用 `emit_play`，`dugu_poison_signature` 声明的 `MELEE` 会把**收包半径**从 64 格砍到 8 格
+/// （比该招自己 10 格的 `ReverseAftermathCloud` 还小——站在毒雾里都可能收不到包），再叠上世界锚点
+/// 的 LINEAR 衰减（L0 volume 0.24，8 格处已衰掉约一半）。近场增益两条路线量级相当，**塌的是
+/// 收听范围**——正是 P4 吃过两次的「签名进了资产却听不到」那一类（PR #1262 review 抓出）。
 /// 要不要把倒蚀改成空间化签名（需同步调 recipe 的 attenuation/volume）留 P5 盲听回归再定。
 fn emit_play_listener_anchored_broadcast(
     audio: &mut AudioEmitContext<'_, '_>,
