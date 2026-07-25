@@ -2560,7 +2560,7 @@ mod tests {
     /// → 发 `PlaySoundRecipeRequest`；删掉发声调用 / 系统没接线 / 招式→recipe 映射串味都撞红。
     /// 含签名招 `sever_chain`（`zhenmai_sever_crack`，`bong:skill.zhenmai.sever_chain`）。
     #[test]
-    fn zhenmai_skills_emit_dedicated_recipes() {
+    fn zhenmai_skills_emit_their_mapped_recipes() {
         use crate::combat::zhenmai_v2::ZhenmaiSkillId;
 
         for skill in [

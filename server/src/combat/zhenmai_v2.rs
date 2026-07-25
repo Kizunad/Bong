@@ -2704,7 +2704,7 @@ mod tests {
     }
 
     /// 五招施法各自发出带本招 id 的 `ZhenmaiSkillCastEvent`（音效解耦事件不串味）——
-    /// 与 `emit_zhenmai_v2_audio_triggers` 的 `zhenmai_skills_emit_dedicated_recipes` 合起来
+    /// 与 `emit_zhenmai_v2_audio_triggers` 的 `zhenmai_skills_emit_their_mapped_recipes` 合起来
     /// 覆盖「每招 → 各自 recipe」全链。
     #[test]
     fn each_skill_cast_sends_its_own_audio_cast_event() {

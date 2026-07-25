@@ -634,7 +634,7 @@ mod tests {
     /// `sword_path_skills_emit_dedicated_recipes`（heaven_gate charge/release）、
     /// `anqi_skills_emit_dedicated_recipes`（echo_fractal）、`baomai_full_power_release_emits_signature_recipe`、
     /// `woliu_void_core_emits_signature_recipe`、`tuike_shed_passive_emits_signature_recipe`（被动蜕壳）、
-    /// `zhenmai_skills_emit_dedicated_recipes`（五招含 sever_chain 签名）、
+    /// `zhenmai_skills_emit_their_mapped_recipes`（五招含 sever_chain 签名）、
     /// `dugu_reverse_emits_signature_recipe`（倒蚀签名），及 `body_plan::morph` 的 yixing emit 断言。
     ///
     /// P5 emit 架构统一后，原先内联在 cast 逻辑里的三处签名 emit（Pattern B：zhenmai
