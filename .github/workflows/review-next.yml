@@ -32,7 +32,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@a5e438052ec895b8e5718963d9d52119d6a343be
+    uses: Kizunad/review/.github/workflows/review.yml@7992dc9a2a2bdd7bea83d532aee0d232a5672c82
     with:
       pr_number: ${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v1.json
@@ -40,6 +40,7 @@ jobs:
       shadow: true
       max_diff_chars: 40000
       max_shard_chars: 12000
-      worker_timeout_ms: 120000
+      worker_timeout_ms: 300000
+      circuit_manual_retry: ${{ github.event_name == 'workflow_dispatch' }}
     secrets:
       review_api_key: ${{ secrets.REVIEW_CLAUDE_API_KEY }}
