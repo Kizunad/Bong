@@ -374,14 +374,18 @@ pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
     );
 }
 
+/// network 层生产注册入口 = 外部 bridge bootstrap（有副作用）+ 纯 App 装配。
+///
+/// 拆成两段是为了让接线门禁测试能跑**真正的生产装配路径**：`register_app_wiring` 只做
+/// `insert_resource` / `add_systems` / `add_event`，不起线程、不碰 IO，测试可直接调用；
+/// 起 Redis bridge 线程那段单独关在 `bootstrap_redis_bridge` 里（PR #1262 review 要求）。
 pub fn register(app: &mut App) {
-    // Legacy mock bridge systems
-    app.add_systems(
-        Update,
-        (send_welcome_payload_on_join, process_bridge_messages),
-    );
+    bootstrap_redis_bridge(app);
+    register_app_wiring(app);
+}
 
-    // Redis bridge
+/// **唯一有外部副作用的一段**：起 Redis bridge 线程 + 装入 redis 相关资源。测试不调它。
+fn bootstrap_redis_bridge(app: &mut App) {
     let redis_url = redis_url_from_env();
     tracing::info!(
         "[bong][redis] configured redis endpoint: {}",
@@ -402,6 +406,18 @@ pub fn register(app: &mut App) {
             )
         });
     app.insert_resource(runtime_mirror_redis);
+}
+
+/// **纯 App 装配**（只 `insert_resource` / `add_systems` / `add_event`，无线程无 IO）——
+/// 生产由 `register` 调用，接线门禁测试也调用同一个它。于是「顶层把
+/// `audio_trigger::register(app)` 那行删掉」不再是测试照不到的死角。
+pub(crate) fn register_app_wiring(app: &mut App) {
+    // Legacy mock bridge systems
+    app.add_systems(
+        Update,
+        (send_welcome_payload_on_join, process_bridge_messages),
+    );
+
     app.insert_resource(WorldStateTimer::default());
     app.insert_resource(QiLedgerTimer::default());
     app.insert_resource(ZoneTransitionTracker::default());
@@ -830,6 +846,8 @@ pub fn register(app: &mut App) {
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
+    // 全部 audio-trigger 系统的调度**唯一生产真源**在 `audio_trigger::register`——
+    // 生产与接线门禁测试共用同一份系统清单，测试里不许再抄一遍（PR #1262 review 要求）。
     // 全部 audio-trigger 系统的调度**唯一生产真源**在 `audio_trigger::register`——
     // 生产与接线门禁测试共用同一份系统清单，测试里不许再抄一遍（PR #1262 review 要求）。
     audio_trigger::register(app);

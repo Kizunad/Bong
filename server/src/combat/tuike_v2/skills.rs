@@ -170,24 +170,12 @@ pub fn cast_shed(
             18,
             34,
         );
-        // 蜕壳签名音效不再内联发（plan-fpv-cast-av-v1 P5 emit 架构统一）：主动施法与被动
-        // 掉壳都走 `shed_outer_layer` 发的 `FalseSkinSheddedEvent`，由
-        // `network::audio_trigger::emit_tuike_v2_audio_triggers` 消费 → 发
-        // `SHED_SKIN_BURST_RECIPE`（= `visual.sound_recipe_id`）。
-        //
-        // 精确说：删掉的内联那条与幸存的 Pattern A 那条 **recipe 相同但路由不同**——内联走
-        // `emit_audio`（`pos: None` 听者锚点、64 格内人人恒近满音量 ≈0.79、不过 dedup），
-        // Pattern A 走 `emit_play`（世界锚点 + LINEAR 衰减 ≈ `0.9 × (1 − d/16)`，超 16 格截止，
-        // 且过 dedup 门）。所以这不只是去重，有四点玩家可感知的变化，都是**有意接受**的：
-        // ① 16~64 格外第三方由有声变无声；② 近场也随距离变轻（4 格 ≈0.68 / 8 格 ≈0.45 /
-        // 12 格 ≈0.23），只有贴身几乎不变；③ 与维护 / 被动掉壳共用 dedup key
-        // `(owner, shed_skin_burst)`，0.1s 内相撞则只响一次（旧内联无 dedup 必响）；
-        // ④ 幸存那条在 `permanent_taint_load > 0` 时带 `pitch_shift = +0.08`（client 按
-        // `pitch × 2^shift` 算 ⇒ 约 +5.7%、近一个半音），删掉的内联恒 0.0——蜕带永久污的壳
-        // 正是主动蜕壳的主用法，故这一支音高确有变化。
-        // 接受的理由：蜕壳是发生在施法者身上的爆发，空间化才是正确表现（被动掉壳一直就是这么播的），
-        // 非空间化的远距离满音量才是异常。与 dugu 倒蚀保留原路由的差别在于那边丢的是**收包半径**
-        // （recipe 声明 `MELEE` ⇒ 64 格塌到 8 格，连近场之外都收不到包），不是衰减曲线。
+        // 蜕壳签名音效不再内联发（plan-fpv-cast-av-v1 P5 emit 架构统一）：主动施法与被动 / 维护
+        // 掉壳统一由 `shed_outer_layer` 发的 `FalseSkinSheddedEvent` 驱动
+        // `network::audio_trigger::emit_tuike_v2_audio_triggers` 发声。删掉的内联那条 recipe 相同
+        // 但路由不同（听者锚点 + 不过 dedup），改成空间化 + 走 dedup 是**有意的行为变化**——
+        // 具体听感差异与取舍见 plan「P5 emit 架构统一」条，状态转换由
+        // `audio_trigger::tests::shed_signature_dedup_collides_within_window_and_recovers_after` 锁。
         emit_anim(world, caster, "bong:tuike_shed_burst");
     }
 

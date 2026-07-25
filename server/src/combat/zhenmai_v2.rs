@@ -362,8 +362,10 @@ pub struct JiemaiBackfireBloodSpray {
 pub struct ZhenmaiSkillCastEvent {
     pub caster: Entity,
     pub skill: ZhenmaiSkillId,
-    /// caster 断 `Position` 时的音源兜底（cast 现场取到的 origin）。
-    pub center: DVec3,
+    /// **施法时刻**捕获的权威音源坐标（cast 现场的 caster 位置，无 `Position` 时为原点）。
+    /// 消费端必须无条件用它，**不得改读实时 `Position`**——那会让音源随跨帧消费与玩家后续
+    /// 移动 / 传送漂移（回归门 `zhenmai_audio_uses_cast_time_center_not_live_position`）。
+    pub cast_center: DVec3,
 }
 
 pub fn register(app: &mut App) {
@@ -1543,7 +1545,7 @@ fn emit_skill_feedback(world: &mut bevy_ecs::world::World, caster: Entity, skill
     world.send_event(ZhenmaiSkillCastEvent {
         caster,
         skill,
-        center: origin,
+        cast_center: origin,
     });
 }
 
