@@ -2,6 +2,7 @@
 """在**用户几何(devour_rat_v2_user.bbmodel)**基础上：重建骨骼名+枢轴（不动 from/to/rotation）、
 按位置重新上色（黑身+红眼+深蓝glow尾）、加多个动画。geometry 一律保留。"""
 import base64
+import copy as _copy
 import io
 import json
 import uuid
@@ -166,7 +167,6 @@ def main():
             zone = "back"  # 尾核变黑
         paint(c, zone)
 
-    import copy as _copy
     ridge_uuids = []
     for c in tail_cubes:
         f, t = c["from"], c["to"]
@@ -188,7 +188,7 @@ def main():
                 "uuid": str(uuid.uuid4()), "time": round(time, 3), "color": -1,
                 "interpolation": interp}
 
-    def animator(bone, name, keyframes):
+    def animator(name, keyframes):
         return {"name": name, "type": "bone", "keyframes": keyframes}
 
     def anim(name, length, loop, animators):
@@ -202,32 +202,32 @@ def main():
 
     # idle: 呼吸 bob + 尾摆 + 头微动
     animations.append(anim("idle", 2.4, "loop", {
-        U["body"]: animator(U["body"], "body", [kf("position", 0, 0, 0, 0), kf("position", 1.2, 0, 0.4, 0), kf("position", 2.4, 0, 0, 0)]),
-        U["head"]: animator(U["head"], "head", [kf("rotation", 0, 0, 0, 0), kf("rotation", 1.2, -3, 2, 0), kf("rotation", 2.4, 0, 0, 0)]),
-        U["tail"]: animator(U["tail"], "tail", [kf("rotation", 0, 0, 10, 0), kf("rotation", 0.8, 0, -10, 0), kf("rotation", 1.6, 0, 10, 0), kf("rotation", 2.4, 0, 10, 0)]),
+        U["body"]: animator("body", [kf("position", 0, 0, 0, 0), kf("position", 1.2, 0, 0.4, 0), kf("position", 2.4, 0, 0, 0)]),
+        U["head"]: animator("head", [kf("rotation", 0, 0, 0, 0), kf("rotation", 1.2, -3, 2, 0), kf("rotation", 2.4, 0, 0, 0)]),
+        U["tail"]: animator("tail", [kf("rotation", 0, 0, 10, 0), kf("rotation", 0.8, 0, -10, 0), kf("rotation", 1.6, 0, 10, 0), kf("rotation", 2.4, 0, 10, 0)]),
     }))
 
     # walk: 对角步态(FL+BR / FR+BL) + 身体上下 + 尾巴反向摆
     A = 32  # 腿摆幅度
     animations.append(anim("walk", 0.8, "loop", {
-        U["body"]: animator(U["body"], "body", [kf("position", 0, 0, 0, 0), kf("position", 0.2, 0, 0.5, 0), kf("position", 0.4, 0, 0, 0), kf("position", 0.6, 0, 0.5, 0), kf("position", 0.8, 0, 0, 0)]),
-        U["leg_fl"]: animator(U["leg_fl"], "leg_fl", [kf("rotation", 0, A, 0, 0), kf("rotation", 0.4, -A, 0, 0), kf("rotation", 0.8, A, 0, 0)]),
-        U["leg_br"]: animator(U["leg_br"], "leg_br", [kf("rotation", 0, A, 0, 0), kf("rotation", 0.4, -A, 0, 0), kf("rotation", 0.8, A, 0, 0)]),
-        U["leg_fr"]: animator(U["leg_fr"], "leg_fr", [kf("rotation", 0, -A, 0, 0), kf("rotation", 0.4, A, 0, 0), kf("rotation", 0.8, -A, 0, 0)]),
-        U["leg_bl"]: animator(U["leg_bl"], "leg_bl", [kf("rotation", 0, -A, 0, 0), kf("rotation", 0.4, A, 0, 0), kf("rotation", 0.8, -A, 0, 0)]),
-        U["tail"]: animator(U["tail"], "tail", [kf("rotation", 0, 0, 14, 0), kf("rotation", 0.4, 0, -14, 0), kf("rotation", 0.8, 0, 14, 0)]),
+        U["body"]: animator("body", [kf("position", 0, 0, 0, 0), kf("position", 0.2, 0, 0.5, 0), kf("position", 0.4, 0, 0, 0), kf("position", 0.6, 0, 0.5, 0), kf("position", 0.8, 0, 0, 0)]),
+        U["leg_fl"]: animator("leg_fl", [kf("rotation", 0, A, 0, 0), kf("rotation", 0.4, -A, 0, 0), kf("rotation", 0.8, A, 0, 0)]),
+        U["leg_br"]: animator("leg_br", [kf("rotation", 0, A, 0, 0), kf("rotation", 0.4, -A, 0, 0), kf("rotation", 0.8, A, 0, 0)]),
+        U["leg_fr"]: animator("leg_fr", [kf("rotation", 0, -A, 0, 0), kf("rotation", 0.4, A, 0, 0), kf("rotation", 0.8, -A, 0, 0)]),
+        U["leg_bl"]: animator("leg_bl", [kf("rotation", 0, -A, 0, 0), kf("rotation", 0.4, A, 0, 0), kf("rotation", 0.8, -A, 0, 0)]),
+        U["tail"]: animator("tail", [kf("rotation", 0, 0, 14, 0), kf("rotation", 0.4, 0, -14, 0), kf("rotation", 0.8, 0, 14, 0)]),
     }))
 
     # run: 更快更大幅 + 前后腿聚拢(gallop 感)
     R = 46
     animations.append(anim("run", 0.44, "loop", {
-        U["body"]: animator(U["body"], "body", [kf("position", 0, 0, 0, 0), kf("position", 0.11, 0, 1.1, 0), kf("position", 0.22, 0, 0, 0), kf("position", 0.33, 0, 0.9, 0), kf("position", 0.44, 0, 0, 0),
+        U["body"]: animator("body", [kf("position", 0, 0, 0, 0), kf("position", 0.11, 0, 1.1, 0), kf("position", 0.22, 0, 0, 0), kf("position", 0.33, 0, 0.9, 0), kf("position", 0.44, 0, 0, 0),
                                                 kf("rotation", 0, 6, 0, 0), kf("rotation", 0.22, -6, 0, 0), kf("rotation", 0.44, 6, 0, 0)]),
-        U["leg_fl"]: animator(U["leg_fl"], "leg_fl", [kf("rotation", 0, R, 0, 0), kf("rotation", 0.22, -R, 0, 0), kf("rotation", 0.44, R, 0, 0)]),
-        U["leg_fr"]: animator(U["leg_fr"], "leg_fr", [kf("rotation", 0, R, 0, 0), kf("rotation", 0.22, -R, 0, 0), kf("rotation", 0.44, R, 0, 0)]),
-        U["leg_bl"]: animator(U["leg_bl"], "leg_bl", [kf("rotation", 0, -R, 0, 0), kf("rotation", 0.22, R, 0, 0), kf("rotation", 0.44, -R, 0, 0)]),
-        U["leg_br"]: animator(U["leg_br"], "leg_br", [kf("rotation", 0, -R, 0, 0), kf("rotation", 0.22, R, 0, 0), kf("rotation", 0.44, -R, 0, 0)]),
-        U["tail"]: animator(U["tail"], "tail", [kf("rotation", 0, -18, 0, 0), kf("rotation", 0.44, -18, 0, 0)]),
+        U["leg_fl"]: animator("leg_fl", [kf("rotation", 0, R, 0, 0), kf("rotation", 0.22, -R, 0, 0), kf("rotation", 0.44, R, 0, 0)]),
+        U["leg_fr"]: animator("leg_fr", [kf("rotation", 0, R, 0, 0), kf("rotation", 0.22, -R, 0, 0), kf("rotation", 0.44, R, 0, 0)]),
+        U["leg_bl"]: animator("leg_bl", [kf("rotation", 0, -R, 0, 0), kf("rotation", 0.22, R, 0, 0), kf("rotation", 0.44, -R, 0, 0)]),
+        U["leg_br"]: animator("leg_br", [kf("rotation", 0, -R, 0, 0), kf("rotation", 0.22, R, 0, 0), kf("rotation", 0.44, -R, 0, 0)]),
+        U["tail"]: animator("tail", [kf("rotation", 0, -18, 0, 0), kf("rotation", 0.44, -18, 0, 0)]),
     }))
 
     # 约定(已 pose 验证): 头咬下=head -X, 头抬(蓄)=+X; 前进=-Z; 腿前扫=+X, 后勾(蓄)=-X;
@@ -235,30 +235,30 @@ def main():
 
     # ① 啄咬 peck —— 头主导快啄: 抬头蓄 → 猛地下啄 → 咬住顿 → 收
     animations.append(anim("peck", 0.5, "once", {
-        U["head"]: animator(U["head"], "head", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.12, 24, 0, 0), kf("rotation", 0.24, -34, 0, 0), kf("rotation", 0.3, -34, 0, 0), kf("rotation", 0.5, 0, 0, 0)]),
-        U["body"]: animator(U["body"], "body", [kf("position", 0, 0, 0, 0), kf("position", 0.12, 0, 0.3, 0.4), kf("position", 0.24, 0, -0.2, -0.8), kf("position", 0.5, 0, 0, 0)]),
-        U["tail"]: animator(U["tail"], "tail", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.12, -14, 0, 0), kf("rotation", 0.5, 0, 0, 0)]),
+        U["head"]: animator("head", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.12, 24, 0, 0), kf("rotation", 0.24, -34, 0, 0), kf("rotation", 0.3, -34, 0, 0), kf("rotation", 0.5, 0, 0, 0)]),
+        U["body"]: animator("body", [kf("position", 0, 0, 0, 0), kf("position", 0.12, 0, 0.3, 0.4), kf("position", 0.24, 0, -0.2, -0.8), kf("position", 0.5, 0, 0, 0)]),
+        U["tail"]: animator("tail", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.12, -14, 0, 0), kf("rotation", 0.5, 0, 0, 0)]),
     }))
 
     # ② 抓 claw —— 前起身(蓄) → 右前爪由后上猛扒到前下(发力) → 收
     animations.append(anim("claw", 0.6, "once", {
-        U["body"]: animator(U["body"], "body", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.18, 16, 0, 0), kf("rotation", 0.34, 3, 0, 0), kf("rotation", 0.6, 0, 0, 0),
+        U["body"]: animator("body", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.18, 16, 0, 0), kf("rotation", 0.34, 3, 0, 0), kf("rotation", 0.6, 0, 0, 0),
                                                 kf("position", 0, 0, 0, 0), kf("position", 0.18, 0, 0.8, 0), kf("position", 0.34, 0, 0, -0.6), kf("position", 0.6, 0, 0, 0)]),
-        U["leg_fr"]: animator(U["leg_fr"], "leg_fr", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.18, -50, 0, 0), kf("rotation", 0.32, 56, 0, 0), kf("rotation", 0.44, 10, 0, 0), kf("rotation", 0.6, 0, 0, 0)]),
-        U["leg_fl"]: animator(U["leg_fl"], "leg_fl", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.18, -18, 0, 0), kf("rotation", 0.34, 14, 0, 0), kf("rotation", 0.6, 0, 0, 0)]),
-        U["head"]: animator(U["head"], "head", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.18, 10, -8, 0), kf("rotation", 0.34, -14, 6, 0), kf("rotation", 0.6, 0, 0, 0)]),
+        U["leg_fr"]: animator("leg_fr", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.18, -50, 0, 0), kf("rotation", 0.32, 56, 0, 0), kf("rotation", 0.44, 10, 0, 0), kf("rotation", 0.6, 0, 0, 0)]),
+        U["leg_fl"]: animator("leg_fl", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.18, -18, 0, 0), kf("rotation", 0.34, 14, 0, 0), kf("rotation", 0.6, 0, 0, 0)]),
+        U["head"]: animator("head", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.18, 10, -8, 0), kf("rotation", 0.34, -14, 6, 0), kf("rotation", 0.6, 0, 0, 0)]),
     }))
 
     # ③ 扑 pounce —— 蹲伏聚力(慢) → 后腿蹬地前上爆冲(快) → 空中前爪伸+空咬 → 落地收
     animations.append(anim("pounce", 0.78, "once", {
-        U["body"]: animator(U["body"], "body", [kf("position", 0, 0, 0, 0), kf("position", 0.22, 0, -1.8, 2.6), kf("position", 0.4, 0, 4.2, -6.5), kf("position", 0.52, 0, 1.2, -3), kf("position", 0.78, 0, 0, 0),
+        U["body"]: animator("body", [kf("position", 0, 0, 0, 0), kf("position", 0.22, 0, -1.8, 2.6), kf("position", 0.4, 0, 4.2, -6.5), kf("position", 0.52, 0, 1.2, -3), kf("position", 0.78, 0, 0, 0),
                                                 kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, 9, 0, 0), kf("rotation", 0.4, -9, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
-        U["leg_bl"]: animator(U["leg_bl"], "leg_bl", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, 32, 0, 0), kf("rotation", 0.4, -44, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
-        U["leg_br"]: animator(U["leg_br"], "leg_br", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, 32, 0, 0), kf("rotation", 0.4, -44, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
-        U["leg_fl"]: animator(U["leg_fl"], "leg_fl", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, -14, 0, 0), kf("rotation", 0.4, 44, 0, 0), kf("rotation", 0.52, 22, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
-        U["leg_fr"]: animator(U["leg_fr"], "leg_fr", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, -14, 0, 0), kf("rotation", 0.4, 44, 0, 0), kf("rotation", 0.52, 22, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
-        U["head"]: animator(U["head"], "head", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, -14, 0, 0), kf("rotation", 0.4, -2, 0, 0), kf("rotation", 0.48, -24, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
-        U["tail"]: animator(U["tail"], "tail", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, 20, 0, 0), kf("rotation", 0.4, -22, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
+        U["leg_bl"]: animator("leg_bl", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, 32, 0, 0), kf("rotation", 0.4, -44, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
+        U["leg_br"]: animator("leg_br", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, 32, 0, 0), kf("rotation", 0.4, -44, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
+        U["leg_fl"]: animator("leg_fl", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, -14, 0, 0), kf("rotation", 0.4, 44, 0, 0), kf("rotation", 0.52, 22, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
+        U["leg_fr"]: animator("leg_fr", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, -14, 0, 0), kf("rotation", 0.4, 44, 0, 0), kf("rotation", 0.52, 22, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
+        U["head"]: animator("head", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, -14, 0, 0), kf("rotation", 0.4, -2, 0, 0), kf("rotation", 0.48, -24, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
+        U["tail"]: animator("tail", [kf("rotation", 0, 0, 0, 0), kf("rotation", 0.22, 20, 0, 0), kf("rotation", 0.4, -22, 0, 0), kf("rotation", 0.78, 0, 0, 0)]),
     }))
 
     d["animations"] = animations

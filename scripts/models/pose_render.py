@@ -14,7 +14,8 @@ import render_bbmodel as R  # noqa: E402
 
 
 def load_posed(path, pose):
-    d = json.loads(open(path).read())
+    with open(path, encoding="utf-8") as fh:
+        d = json.load(fh)
     res = d["resolution"]
     rw, rh = res["width"], res["height"]
     src = d["textures"][0]["source"].split(",", 1)[1]
