@@ -59,28 +59,29 @@
 
 ## P1B — mineral/forge durable source settlement ⬜
 
-### Stable ID、source/WAL 状态
+### Stable ID、source/WAL 与 durable station 状态
 
 1. 公共 `InventorySettlementId` 为 UUID/ULID；retry/reconnect/reload/notification 全复用。禁止 Entity、tick、runtime `ForgeSessionId`。
-2. mineral source key 至少含 dimension、`BlockPos`、canonical `mineral_id`、持久 `generation_id`、单调 `extraction_seq`/source revision；同坐标再生必为新 generation，绝不串账。
-3. 新增持久 `ForgeAttemptId`：inputs accept/lock 时创建并写 source record；runtime `ForgeSession` 只带投影。Perfect/Good/Flawed/Waste/Explode 五档 terminal 只 CAS 一次。
-4. durable source/settlement WAL row（可等价命名但全文一致）保存 stable ID、canonical player identity、immutable source before/after、完整 item 或 no-item payload、XP delta、drop context、forge quality/color/effects/tier/consecration/station state、audit。状态至少 `Prepared`、`CommittedStored`、`CommittedDroppedToGround`、`CommittedNoItem`；Perfect/Good/Flawed 前两种 item terminal，Waste/Explode 仅 NoItem，Explode 持久 station integrity/wear；五档均唯一 terminal row。
-5. **禁止路线**：consumer-first `insert_if_absent PendingInventoryIngress` 不是耐久；不得保留/重发/重读 transient source event；不得 generic commit 后立即 outcome；不得将网络通知承诺为端到端一次交付；不得留下模糊 consumer pending worker 充 source truth。
+2. mineral immutable source unique key 至少含 dimension、`BlockPos`、canonical `mineral_id`、持久 `generation_id`、单调 `extraction_seq`/source revision；同坐标再生必为新 generation，绝不串账。
+3. `ForgeStationId { dimension: DimensionKind, pos: BlockPos, generation: u64 }` 是唯一锻炉 durable identity，**owner 不入 ID**。SQLite `forge_stations` 是真源，ECS `WeaponForgeStation` 与 ANVIL block 只为投影。row 至少持完整 ID、tier、nullable canonical owner player identity、integrity、revision、`state: Active|Removed`、nullable `active_attempt_id`、schema_version 与 audit timestamps。placement 在 `BEGIN IMMEDIATE` 内按 `(dimension,pos)` 单调分配 generation、写 Active 后才投影 ECS/block；同址拆除重建必须取得新 generation。
+4. 新增持久 `ForgeAttemptId`：inputs accept/lock 时以同一 `BEGIN IMMEDIATE` transaction 写可恢复 immutable session/input payload、完整 `ForgeStationId`、canonical player、expected station revision、Prepared attempt row，并 CAS station `(id, expected revision, active_attempt_id=None)` 为 `active_attempt_id=attempt` 和 revision +1；runtime `ForgeSessionId`/Entity 只作投影。五档 terminal 都只能 CAS 一次。
+5. durable source/settlement WAL row（可等价命名但全文一致）保存 settlement ID、canonical player identity、immutable source before/after、完整 item 或 no-item payload、XP delta、drop context、forge quality/color/effects/tier/consecration、完整 station state 与 audit。状态至少 `Prepared`、`CommittedStored`、`CommittedDroppedToGround`、`CommittedNoItem`；Perfect/Good/Flawed 只能走前两种 item terminal，Waste/Explode 只能 NoItem；Explode 同时持久 station integrity/wear，五档都有唯一 terminal row。
+6. **禁止路线**：consumer-first `insert_if_absent PendingInventoryIngress` 不是耐久；不得保留/重发/重读 transient source event；不得 generic commit 后立即 outcome；不得将网络通知承诺为端到端一次交付；不得留下模糊 consumer pending worker 充 source truth。
 
-### 唯一 durable commit API：WAL 顺序
+### 唯一 durable commit API：WAL、station CAS 与恢复顺序
 
-1. **线性化**：mineral break/forge attempt 先 durable 写 `Prepared`，再取得 stable ID。此前不得扣 mineral remaining、despawn、将 forge session 标 Done、发 XP 或 outcome。重复 source 只拿同 ID。
-2. **transaction**：同 ID + expected source/inventory/skill revision 进入明确单 connection `BEGIN IMMEDIATE`（或等价）；CAS `Prepared`。同一 transaction 写 source terminal、`inventories` candidate JSON、`player_skills` candidate JSON、可选 `dropped_loot`、settlement terminal/audit；新增 transaction-local skill/source/drop helpers，禁止拼既有独立 save API；首次无 inventory row 也在这里创建。
-3. **失败**：任一 SQL/serialize/CAS 失败 rollback；DB/ECS/source/drop/XP/outcome 均不变，Prepared 留存重试。
-4. **install**：commit 成功后同一主线程安装 transaction 返回的**同一 committed snapshots** 至 `PlayerInventory`、`SkillSet`、`DroppedLootRegistry`、mineral node/index/despawn 或 forge session/station ECS。不得先改 ECS，防 autosave/disconnect 用旧 ECS 覆盖 DB。
-5. **event**：install 后才发 keyed `InventorySettlementCommittedEvent`。经济 source/item/XP/drop/terminal row exactly-once；network/audio/Redis 为 keyed-ID at-least-once + consumer dedupe。若用 durable notification outbox，必须写状态/ack；否则明确 commit 后通知可重放但不能重复经济副作用。
-6. **恢复**：startup/player hydration 的 Prepared 同 ID retry；Committed 从 DB snapshot 重装 ECS，不重算经济；覆盖 commit 后/ECS install 前 crash，autosave/disconnect/shutdown 不能回退 DB。
+1. **线性化**：先生成 candidate `InventorySettlementId`，再以 immutable source unique key + candidate ID 插入 durable `Prepared`，该 insert 是线性化点。重复 source 的 unique conflict 必须查询并返回既有 settlement ID，绝不重生成经济；在 Prepared 前 source/inventory/XP/outcome 均零副作用。此后才可按该 ID 重试。
+2. **transaction**：同 ID + expected source/inventory/skill revision 进入明确单 connection `BEGIN IMMEDIATE`（或等价）；CAS `Prepared`。forge terminal 还必须同一 transaction CAS attempt `Prepared` 和 station `(完整 ForgeStationId, expected revision, active_attempt_id=attempt)`，清 durable active lock 并 revision +1：Perfect/Good/Flawed 写 Stored/Dropped item terminal，Waste/Explode 写 NoItem；只有 Explode 改 integrity/wear，其余四档只清 lock。transaction 内同时写 source terminal、`inventories` candidate JSON、`player_skills` candidate JSON、可选 `dropped_loot`、station/attempt/settlement terminal 与 audit。必须新增 transaction-local skill/source/drop/station helper，禁止拼接既有独立 save API；首次无 inventory row 也在这里创建。
+3. **失败**：任一 SQL/serialize/CAS 失败 rollback；DB/ECS/source/drop/XP/outcome均不变，Prepared 保留可重试；stale source/inventory/skill/station revision 或 active lock 不匹配是 typed reject，绝不以 live ECS 覆写数据库。
+4. **install**：commit 成功后同一主线程安装 transaction 返回的**同一 committed snapshots**至 `PlayerInventory`、`SkillSet`、`DroppedLootRegistry`、mineral node/index/despawn 或 forge session/station ECS。不得先改 ECS，防 autosave/disconnect 用旧 ECS 覆盖 DB。
+5. **station lifecycle**：专用 forge break 路径必须先于 `world::block_break::apply_default_block_break` 的 AIR 写入执行；`active_attempt_id` 非空即 typed busy reject，只有空闲 station 才在 transaction 写 Removed + revision 后删除 ECS/block 投影。startup 读取 Active rows 建 durable index/ECS；dimension chunk 未加载时保留 DB/index 状态并延期、幂等投影 ANVIL，绝不因 block 暂缺删除 row。startup/player hydration 对 Prepared attempt 以原完整 `ForgeStationId` 重建 runtime session；Committed 只从 DB snapshot 重装 ECS，不重算经济；同址 generation 隔离旧 attempt。
+6. **event/notification**：install 后才发 keyed `InventorySettlementCommittedEvent`。经济 source/item/XP/drop/terminal row exactly-once；不在本 plan 增加 durable notification outbox/ack，因此 network/audio/Redis 仅为 keyed best-effort wake/notification，重复可按 settlement ID 去重，断线/重启依赖 authoritative DB hydration/resync，绝不声称端到端 at-least-once 或 exactly-once。
 
-### 生产切流与测试
+### 生产切流与饱和测试
 
-`mineral/break_handler.rs` 先 source Prepared/transaction，成功后才更新 remaining/exhausted/index/despawn；`MineralDropEvent` 最多为含 ID wake/notification。forge 在 inputs lock 写 `ForgeAttemptId` source，canonical XP pure function 产 candidate `SkillSet`，五档终局同 transaction；禁止先 `SkillXpGain` 再 `ForgeOutcomeEvent`。inventory bridge/S2C/Redis/audio/source readers 改读 committed-ID event/dedupe，P1B 不接 P2 snapshot routing。
+`mineral/break_handler.rs` 先 source Prepared/transaction，成功后才更新 remaining/exhausted/index/despawn；`MineralDropEvent` 最多为含 ID wake/notification。forge station placement commit 后才投影；专用 break 在默认 AIR 前 CAS；inputs lock 创建 `ForgeAttemptId`；canonical XP pure function 产 candidate `SkillSet`，五档终局同 transaction；禁止先 `SkillXpGain` 再 `ForgeOutcomeEvent`。inventory bridge/S2C/Redis/audio/source readers 改读 committed-ID wake 并去重，P1B 不接 P2 snapshot routing，也不扩展其它 placeable。
 
-测试必须覆盖：mineral generation/sequence、同坐标再生、forge Perfect/Good/Flawed 的 Stored 与 DroppedToGround、Waste/Explode 的 NoItem（Explode station integrity/wear）、满包不可drop、首次无 inventory row、duplicate source/wakeup/retry/reconnect/reload；Prepared 前、Prepared 后/txn 前、每个 SQL write 失败、commit 后/ECS install 前、install 后/notification 前、stale source/inventory/skill revision；autosave/disconnect/shutdown 不回退；经济物/XP/source/drop/outcome row 恰一次；notification 按 ID dedupe 且不声称网络 exactly-once。P1A 未 merge不得开 P1B；P1B 完整 crash matrix 未过不得开 P2。
+测试必须覆盖：mineral generation/sequence 与同坐标再生；station 同址 generation、placement commit-before-project、busy break typed reject、空闲 break Removed、chunk unloaded deferred ANVIL projection；forge attempt 完整 station ID/input payload、Prepared restart session hydration、五档全部释放 active lock、Perfect/Good/Flawed Stored/Dropped、Waste/Explode NoItem、Explode station wear exactly once、非 Explode 不改 integrity；满包不可drop、首次无 inventory row、duplicate source/wake/retry/reconnect/reload；Prepared 前、Prepared 后/txn 前、每个 SQL write 失败、stale source/inventory/skill/station revision、commit 后/ECS install 前、install 后/notification 前、terminal retry；autosave/disconnect/shutdown 不回退；经济物/XP/source/drop/outcome row 恰一次；best-effort notification 只按 ID dedupe，不声称 delivery guarantee。P1A 未 merge不得开 P1B；P1B 完整 crash matrix 未过不得开 P2。
 
 ## P2 — freshness、integrity、snapshot 唯一调度 ⬜
 
@@ -131,9 +132,9 @@ P2 独占 `apply_container_freshness_transition`、`sealed_vial=Halve`、`spirit
 **落点**：`server/src/inventory/mod.rs:469-482`（`ContainerState`）/ `server/src/inventory/mod.rs:6549-6592`（静态分类）+ 本 plan「基线」「P1A」。
 
 ### #2 resolver + durable source/WAL
-**决议**：P1A 交付 process-local prepared core；borrowed mutation/ordinary commit 永不跨 DB、不作 crash atomic。P1B 交付 `PreparedInventorySettlement`、`InventorySettlementId`、mineral generation/sequence、`ForgeAttemptId`、Prepared→Committed source/WAL 和单事务 inventory/skill/drop/source/station，commit 后安装同 snapshots ECS、再发 committed-ID event。现有 mineral direct consumer/forge direct grant 只为待替基线；禁止 consumer-first pending、source-event 重发、runtime session key、generic durable commit 和端到端一次通知承诺。
+**决议**：P1A 交付 process-local prepared core；borrowed mutation/ordinary commit 永不跨 DB、不作 crash atomic。P1B 交付 `PreparedInventorySettlement`、`InventorySettlementId`、mineral generation/sequence、`ForgeStationId`/SQLite `forge_stations`、`ForgeAttemptId`、Prepared→Committed source/WAL 和单事务 inventory/skill/drop/source/station；station placement 先 durable commit 后投影，busy break 在默认 AIR 前 typed reject，Active row/Prepared attempt 支持 deferred projection 与 hydration。commit 后安装同 snapshots ECS、再发 committed-ID best-effort wake；现有 mineral direct consumer/forge direct grant 只为待替基线；禁止 consumer-first pending、source-event 重发、runtime session key、generic durable commit 和端到端一次通知承诺。
 
-**落点**：`server/src/mineral/break_handler.rs:170-260`（source 起点）/ `server/src/mineral/inventory_grant.rs:38-138`（direct consumer）/ `server/src/forge/session.rs:81-160`（runtime session）/ `server/src/forge/inventory_bridge.rs:12-145`（direct grant）/ `server/src/player/state.rs:1313-1375,2342-2367`（load/transaction helper）+ 本 plan「P1A」「P1B」。
+**落点**：`server/src/mineral/break_handler.rs:170-260`（source 起点）/ `server/src/mineral/inventory_grant.rs:38-138`（direct consumer）/ `server/src/forge/station.rs:26-165`（现有 ECS placement projection）/ `server/src/forge/mod.rs:182-384`、`server/src/forge/session.rs:81-222`（runtime attempt baseline）/ `server/src/world/block_break.rs:34-59`（AIR 前 forge break gate）/ `server/src/persistence/mod.rs:1083-2351`（`forge_stations` migration）/ `server/src/player/state.rs:1313-1375,2342-2367`（load/transaction helper）+ 本 plan「P1A」「P1B」。
 
 ### #3 P1 raw freshness，P2 transition
 **决议**：P1A/P1B hook 原样携 freshness；P2 独占 transition、integrity、reconciliation 和 six-stage snapshot。P2 观察 committed writers，不 retry settlement/补发经济。
@@ -164,7 +165,7 @@ P2 独占 `apply_container_freshness_transition`、`sealed_vial=Halve`、`spirit
 
 ### §10.2 五个严格串行 PR
 1. **PR-1 / P1A**：owner migration/resolver/category、process-local `PreparedInventoryMutation`、owned settlement preparation、ordinary/non-durable staged writers 与 identity freshness；不动 snapshot sender，不做 durable source commit。
-2. **PR-2 / P1B**：settlement ID、mineral generation/sequence、ForgeAttemptId、WAL、single transaction、ECS install/hydration/retry/committed-ID dedupe 和 crash matrix；不接 P2 snapshot routing。
+2. **PR-2 / P1B**：settlement ID、mineral generation/sequence、`ForgeStationId`/`forge_stations`、`ForgeAttemptId`、WAL、single transaction、station placement/break/hydrator、ECS install/hydration/retry/committed-ID best-effort dedupe 和 crash matrix；不接 P2 snapshot routing，不扩展其它 placeable。
 3. **PR-3 / P2**：freshness transition、integrity/reconciliation、六阶段 snapshot pipeline，覆盖 P1A/P1B writers，不重算 settlement。
 4. **PR-4 / P3**：九容器 TOML、12 Anqi、coin 文案、registry/save-load/filter tests；不含 placeable 转换。
 5. **PR-5 / P4**：filter/lock/category wire、Worn/Pack/Inspect、bot/九容器 e2e；全部验收后填写真实 Finish Evidence、阶段状态与归档。归档 commit 后重跑 exact-HEAD validator、门禁、CI、`/review`、CodeRabbit。
