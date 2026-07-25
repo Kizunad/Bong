@@ -627,6 +627,15 @@ mod tests {
     ///
     /// 招式改播别的 recipe / recipe 退回 vanilla / 签名挪到铺底层 / 静音 / 时序错位都撞红——这是
     /// 招式→recipe 映射漂移与静默签名的回归门。
+    ///
+    /// 本 pin 校验的是**recipe 内容正确**；招式**是否真跑 emit 系统发出该 recipe**（防「删掉发声
+    /// 调用」这类 emit 断链）由**独立 emit-path 集成测试**覆盖——跑真实 emit 系统、断言实发的
+    /// `PlaySoundRecipeRequest.recipe_id`：`network::audio_trigger` 的
+    /// `sword_path_skills_emit_dedicated_recipes`（heaven_gate charge/release）、
+    /// `anqi_skills_emit_dedicated_recipes`（echo_fractal）、`baomai_full_power_release_emits_signature_recipe`、
+    /// `woliu_void_core_emits_signature_recipe`，及 `body_plan::morph` 的 yixing emit 断言。
+    /// 剩 zhenmai `sever_chain` / dugu `infuse_poison` 的签名 emit 内联在 cast 逻辑（Pattern B，需全套
+    /// combat 环境难驱动），待 P5 重构为 Pattern A 独立 `emit_*_audio_triggers` 系统后补 emit-path 测试。
     #[test]
     fn each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event() {
         use crate::body_plan::morph::YIXING_CAST_RECIPE;

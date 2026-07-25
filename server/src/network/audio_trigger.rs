@@ -2329,6 +2329,101 @@ mod tests {
         );
     }
 
+    // ─── 崩脉签名：emit_baomai_v3_audio_triggers（运行时消费 emit-path 覆盖）───
+
+    fn setup_baomai_audio_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<BaomaiSkillEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_baomai_v3_audio_triggers);
+        app
+    }
+
+    /// 崩脉签名 `full_power_release` 经**真实 emit 系统** emit `baomai_signature`。
+    /// 「运行时消费」emit-path 门：跑 `emit_baomai_v3_audio_triggers` 读 `BaomaiSkillEvent`
+    /// → `baomai_recipe_for_skill` → 发 `PlaySoundRecipeRequest`；删掉发声调用 / 改坏 skill→recipe
+    /// 映射都会撞红（补 `audio::each_signature_skill_*` 静态 pin 之外的 emit 断链覆盖）。
+    #[test]
+    fn baomai_full_power_release_emits_signature_recipe() {
+        let mut app = setup_baomai_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(BaomaiSkillEvent {
+            skill: BaomaiSkillId::FullPowerRelease,
+            caster,
+            target: None,
+            tick: 1,
+            qi_invested: 0.0,
+            damage: 0.0,
+            radius_blocks: None,
+            blood_multiplier: 0.0,
+            flow_rate_multiplier: 0.0,
+            meridian_dependencies: Vec::new(),
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec!["baomai_signature"],
+            "崩脉 full_power_release 应经 emit 系统实发 baomai_signature，实际 {recipes:?}"
+        );
+    }
+
+    // ─── 涡流签名：emit_woliu_v2_audio_triggers（运行时消费 emit-path 覆盖）───
+
+    fn setup_woliu_audio_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<VortexCastEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_woliu_v2_audio_triggers);
+        app
+    }
+
+    /// 涡流签名 `void_core` 经**真实 emit 系统** emit `woliu_void_core`（经 `event.visual.sound_recipe_id`）。
+    /// 「运行时消费」emit-path 门：跑 `emit_woliu_v2_audio_triggers` 读 `VortexCastEvent` → 发
+    /// `PlaySoundRecipeRequest`；删掉发声调用 / visual→recipe 映射漂移都会撞红。
+    #[test]
+    fn woliu_void_core_emits_signature_recipe() {
+        use crate::combat::woliu_v2::skills::visual_for;
+        use crate::combat::woliu_v2::WoliuSkillId;
+
+        let mut app = setup_woliu_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(VortexCastEvent {
+            caster,
+            skill: WoliuSkillId::VoidCore,
+            tick: 1,
+            center: DVec3::new(0.0, 64.0, 0.0),
+            lethal_radius: 0.0,
+            influence_radius: 0.0,
+            turbulence_radius: 0.0,
+            absorbed_qi: 0.0,
+            swirl_qi: 0.0,
+            backfire_level: None,
+            visual: visual_for(WoliuSkillId::VoidCore),
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec!["woliu_void_core"],
+            "涡流 void_core 应经 emit 系统实发 woliu_void_core（event.visual.sound_recipe_id），实际 {recipes:?}"
+        );
+    }
+
     // ─── 暗器六招：emit_anqi_audio_triggers ───────────────────────
 
     fn setup_anqi_audio_app() -> App {
