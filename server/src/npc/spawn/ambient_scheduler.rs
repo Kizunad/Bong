@@ -4003,13 +4003,53 @@ mod tests {
 
         let mut app =
             make_runtime_scheduler_app::<TestFaunaMarker>(two_spawn_budget, test_pool_fn, true, 1);
-        // Keep two explicit players at the exact same anchor so the second iteration cannot pass
-        // merely because its player position changed. The runtime fixture's client may also be
-        // present, but it is colocated by make_runtime_scheduler_app and does not alter this seam.
+        // The runtime fixture contributes one client. Remove it so this test owns exactly two
+        // players, both at the same anchor, and can prove the scheduler makes two iterations.
+        let fixture_players: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<ClientMarker>>()
+            .iter(app.world())
+            .collect();
+        for entity in fixture_players {
+            app.world_mut().despawn(entity);
+        }
+
+        let anchor = DVec3::new(0.0, 80.0, 0.0);
         for _ in 0..2 {
             app.world_mut()
-                .spawn((ClientMarker, Position::new([0.0, 80.0, 0.0])));
+                .spawn((ClientMarker, Position::new(anchor.to_array())));
         }
+        let mut players = app
+            .world_mut()
+            .query_filtered::<&Position, With<ClientMarker>>();
+        let player_positions: Vec<DVec3> = players
+            .iter(app.world())
+            .map(|position| position.get())
+            .collect();
+        assert_eq!(
+            player_positions,
+            vec![anchor; 2],
+            "fixture must contain exactly two explicit ClientMarker players at the same anchor"
+        );
+
+        let spawn_seed = ("test_zone".len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let first_candidate =
+            sample_ambient_ring_position(wide_open_bounds(), anchor, &[], spawn_seed).expect(
+                "the first same-anchor scheduler iteration must have an open-ring candidate",
+            );
+        // Runtime ground in make_runtime_scheduler_app is y=66, so the resolver submits feet at 67.
+        let first_submitted = DVec3::new(first_candidate.x, 67.0, first_candidate.z);
+        let second_candidate = sample_ambient_ring_position(
+            wide_open_bounds(),
+            anchor,
+            &[first_submitted],
+            spawn_seed,
+        );
+        let mut expected_positions = vec![first_submitted];
+        if let Some(second_candidate) = second_candidate {
+            expected_positions.push(DVec3::new(second_candidate.x, 67.0, second_candidate.z));
+        }
+
         app.update();
 
         let mut spawned = app
@@ -4019,19 +4059,27 @@ mod tests {
             .iter(app.world())
             .map(|position| position.get())
             .collect();
-        assert!(
-            (1..=2).contains(&positions.len()),
-            "two same-anchor players with budget >= 2 must submit one or two candidates, actual {}",
-            positions.len()
+        assert_eq!(
+            positions.len(),
+            expected_positions.len(),
+            "two same-anchor scheduler iterations must match the sampler's occupied-position outcome"
         );
+        for expected in &expected_positions {
+            assert!(
+                positions.contains(expected),
+                "actual ambient positions {positions:?} must contain sampler-resolved position {expected:?}"
+            );
+        }
+
         let min_same_archetype_dist =
             PoissonSpawnSampler::adaptive_for_zone(wide_open_bounds()).min_same_archetype_dist;
-        match positions.as_slice() {
-            [_] => {
-                // The second same-anchor attempt was correctly rejected because its only
-                // deterministic candidate was already occupied by the first submission.
-            }
-            [first, second] => {
+        match (second_candidate, positions.as_slice()) {
+            (None, [only]) => assert_eq!(
+                *only, first_submitted,
+                "one spawn is valid only when the second same-anchor sampler attempt has no legal position"
+            ),
+            (Some(expected_second), [first, second]) => {
+                let second_submitted = DVec3::new(expected_second.x, 67.0, expected_second.z);
                 let dx = first.x - second.x;
                 let dz = first.z - second.z;
                 let distance = (dx * dx + dz * dz).sqrt();
@@ -4043,8 +4091,14 @@ mod tests {
                     first, second,
                     "same-tick submissions must never occupy the identical position"
                 );
+                assert!(
+                    positions.contains(&first_submitted) && positions.contains(&second_submitted),
+                    "two submitted ECS positions must exactly equal the first and occupied-aware second sampler results"
+                );
             }
-            _ => unreachable!("the preceding assertion bounds positions to one or two"),
+            _ => panic!(
+                "actual ECS positions must exactly follow the first and occupied-aware second sampling result: expected {expected_positions:?}, actual {positions:?}"
+            ),
         }
     }
 
