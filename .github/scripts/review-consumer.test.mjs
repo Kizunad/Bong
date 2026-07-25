@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const workflowPath = new URL('../workflows/review-next.yml', import.meta.url);
+const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
 const policyPath = new URL('../review-policy/bong.v1.json', import.meta.url);
 
 async function workflow() {
   return readFile(workflowPath, 'utf8');
+}
+
+async function canaryWorkflow() {
+  return readFile(canaryWorkflowPath, 'utf8');
 }
 
 async function policy() {
@@ -46,6 +51,23 @@ test('shadow caller maps only the existing Claude credential and grants the cent
   assert.equal((yaml.match(/uses: Kizunad\/review\//g) ?? []).length, 1);
 });
 
+test('provider canary remains dispatch-only, minimally permissioned, and secret-isolated', async () => {
+  const yaml = await canaryWorkflow();
+  assert.match(yaml, /^  workflow_dispatch:$/m);
+  assert.doesNotMatch(yaml, /^  (?:pull_request|pull_request_target|issue_comment|push|schedule):/m);
+  assert.match(yaml, /^permissions: \{\}$/m);
+  assert.match(yaml, /permissions:\n      actions: read/);
+  assert.doesNotMatch(yaml, /contents:|pull-requests:|issues:/);
+  assert.match(
+    yaml,
+    /uses: Kizunad\/review\/\.github\/workflows\/provider-canary\.yml@[0-9a-f]{40}/,
+  );
+  assert.doesNotMatch(yaml, /provider-canary\.yml@(main|master|v?\d|[0-9a-f]{1,39})\b/);
+  assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);
+  assert.match(yaml, /worker_timeout_ms: 60000/);
+  assert.match(yaml, /review_api_key: \$\{\{ secrets\.REVIEW_CLAUDE_API_KEY \}\}/);
+  assert.doesNotMatch(yaml, /secrets:\s*inherit|CLAUDE_CODE_OAUTH_TOKEN|PI_CLIPROXY_KEY|OPENAI_API_KEY/);
+});
 test('Bong policy is bounded declarative data with canonical project rules', async () => {
   const value = await policy();
   assert.deepEqual(Object.keys(value).sort(), [

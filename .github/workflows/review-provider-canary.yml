@@ -1,0 +1,17 @@
+name: Central provider canary
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  canary:
+    permissions:
+      actions: read
+    uses: Kizunad/review/.github/workflows/provider-canary.yml@a353d8df3759887083739952f5a7932ea02b3a7d
+    with:
+      review_base_url: ${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
+      worker_timeout_ms: 60000
+    secrets:
+      review_api_key: ${{ secrets.REVIEW_CLAUDE_API_KEY }}
