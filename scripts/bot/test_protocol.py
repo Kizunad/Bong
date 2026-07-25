@@ -2188,7 +2188,7 @@ class RunnerLogicTest(unittest.TestCase):
         run.assert_not_called()
         self.assertIn("SKIP", output.getvalue())
 
-    def test_explicit_scenario_still_requires_its_dedicated_env(self):
+    def test_explicit_scenario_without_required_env_fails_closed(self):
         run = mock.Mock()
         required_env = "BOT_E2E_TEST_DEDICATED"
         scenario = types.SimpleNamespace(
@@ -2220,9 +2220,47 @@ class RunnerLogicTest(unittest.TestCase):
         ):
             result = scenario_runner.main()
 
-        self.assertEqual(result, 0)
+        self.assertEqual(result, 1, "显式场景缺 REQUIRED_ENV 必须以非零退出")
         run.assert_not_called()
+        self.assertIn("ERROR", output.getvalue())
         self.assertIn(f"需 {required_env}=1", output.getvalue())
+
+    def test_explicit_scenario_with_required_env_runs_normally(self):
+        run = mock.Mock()
+        required_env = "BOT_E2E_TEST_DEDICATED"
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="dedicated",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=required_env,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"terrain_north_rift_scorch_zone_identity": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {required_env: "1"}, clear=False),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "run_scenarios.py",
+                    "--scenario",
+                    "terrain_north_rift_scorch_zone_identity",
+                ],
+            ),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0, "满足 REQUIRED_ENV 的显式场景应保留正常 PASS 语义")
+        run.assert_called_once()
+        self.assertIn("PASS", output.getvalue())
+        self.assertIn("pass=1", output.getvalue())
 
     def test_scenarios_do_not_reuse_literal_bot_tags(self):
         owners: dict[str, str] = {}

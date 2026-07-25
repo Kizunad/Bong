@@ -140,8 +140,8 @@ def main() -> int:
             continue
         if args.scenario is not None and required_env is not None and os.environ.get(required_env) != "1":
             reason = f"专用场景；显式 --scenario 需 {required_env}=1"
-            results.append((name, "SKIP", reason))
-            print(f"    SKIP: {reason}")
+            results.append((name, "ERROR", reason))
+            print(f"    ERROR: {reason}")
             continue
         started = time.monotonic()
         try:
