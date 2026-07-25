@@ -30,7 +30,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class FaunaEmissiveGlowWiringTest {
 
+    /**
+     * {@code invokedMethods} 收的是 <b>owner.name</b> 全限定形式（如
+     * {@code com/bong/client/fauna/FaunaVisualKind.hasEmissiveGlow}）。
+     *
+     * <p>只收裸方法名判别力不够：任何 owner 上任何同名方法被调过就算通过，
+     * 断言会退化成"某处调过一个叫 hasEmissiveGlow 的东西"。
+     */
     private record Bytecode(Set<String> invokedMethods, Set<String> newTypes) {
+        boolean invoked(String owner, String method) {
+            return invokedMethods.contains(owner + "." + method);
+        }
     }
 
     private static Bytecode scan(Class<?> target, String simpleName) {
@@ -51,7 +61,7 @@ class FaunaEmissiveGlowWiringTest {
                             int opcode, String owner, String methodName,
                             String methodDescriptor, boolean isInterface
                         ) {
-                            invoked.add(methodName);
+                            invoked.add(owner + "." + methodName);
                         }
 
                         @Override
@@ -69,6 +79,8 @@ class FaunaEmissiveGlowWiringTest {
         return new Bytecode(invoked, newTypes);
     }
 
+    private static final String FAUNA_PKG = "com/bong/client/fauna/";
+
     @Test
     void fauna_renderer_attaches_the_emissive_layer() {
         Bytecode renderer = scan(FaunaRenderer.class, "FaunaRenderer");
@@ -78,8 +90,10 @@ class FaunaEmissiveGlowWiringTest {
             "FaunaRenderer 必须 new FaunaEmissiveGlowLayer —— 只写层类不挂上 = 永不执行的孤岛，"
                 + "实机零发光。实际 NEW 的类型: " + renderer.newTypes()
         );
+        // owner 是 FaunaRenderer 而非 GeoEntityRenderer：`addRenderLayer` 是继承来的方法、
+        // 在 `this` 上调用，javac 按接收者静态类型（即本类）写 owner。
         assertTrue(
-            renderer.invokedMethods().contains("addRenderLayer"),
+            renderer.invoked(FAUNA_PKG + "FaunaRenderer", "addRenderLayer"),
             "FaunaRenderer 必须调 addRenderLayer 把发光层挂进 GeoEntityRenderer，实际调用: "
                 + renderer.invokedMethods()
         );
@@ -89,9 +103,17 @@ class FaunaEmissiveGlowWiringTest {
     void emissive_layer_attachment_is_gated_by_has_emissive_glow() {
         Bytecode renderer = scan(FaunaRenderer.class, "FaunaRenderer");
         assertTrue(
-            renderer.invokedMethods().contains("hasEmissiveGlow"),
-            "挂层必须受 FaunaVisualKind.hasEmissiveGlow() 门控 —— 无条件挂会让未备 _glow 资产的"
+            renderer.invoked(FAUNA_PKG + "FaunaVisualKind", "hasEmissiveGlow"),
+            "挂层必须受 **FaunaVisualKind**.hasEmissiveGlow() 门控 —— 无条件挂会让未备 _glow 资产的"
                 + "物种整只被 missing texture 紫黑格盖住。实际调用: " + renderer.invokedMethods()
+        );
+        // 光有调用还不够：得证明它真的是**条件跳转**的判据，而不是一句被丢弃的无用调用
+        // （例如塞进日志里）。hasEmissiveGlow 返回 boolean，门控必然伴随 IFEQ/IFNE 分支。
+        assertTrue(
+            hasConditionalBranchAfter(FaunaRenderer.class, "FaunaRenderer",
+                FAUNA_PKG + "FaunaVisualKind", "hasEmissiveGlow"),
+            "hasEmissiveGlow() 的返回值必须被条件跳转消费（门控挂层），而不是调完就丢——"
+                + "后者等于无条件挂层，正好放过它声称要挡的失败"
         );
     }
 
@@ -100,25 +122,72 @@ class FaunaEmissiveGlowWiringTest {
         Bytecode layer = scan(FaunaEmissiveGlowLayer.class, "FaunaEmissiveGlowLayer");
 
         assertTrue(
-            layer.invokedMethods().contains("glowTextureFor"),
-            "发光层必须调 FaunaModel.glowTextureFor 由**当前**底图推导 glow 贴图 —— 写死一张会让"
+            layer.invoked(FAUNA_PKG + "FaunaModel", "glowTextureFor"),
+            "发光层必须调 **FaunaModel**.glowTextureFor 由当前底图推导 glow 贴图 —— 写死一张会让"
                 + "噬元鼠换档（q0→q1→q2）时发光层不跟着换。实际调用: " + layer.invokedMethods()
         );
         assertTrue(
-            layer.invokedMethods().contains("getTextureResource"),
-            "发光层必须每帧取当前底图（getTextureResource），而不是构造期缓存。实际调用: "
-                + layer.invokedMethods()
+            layer.invoked(FAUNA_PKG + "FaunaEmissiveGlowLayer", "getTextureResource")
+                || layer.invoked("software/bernie/geckolib/renderer/layer/GeoRenderLayer",
+                    "getTextureResource"),
+            "发光层必须每帧经 GeoRenderLayer.getTextureResource 取当前底图，而不是构造期缓存。"
+                + "实际调用: " + layer.invokedMethods()
         );
         assertTrue(
-            layer.invokedMethods().contains("reRender"),
-            "发光层必须调 GeoRenderer.reRender 把模型用发光 RenderLayer 再画一遍 —— 不重绘就没有"
+            layer.invoked("software/bernie/geckolib/renderer/GeoRenderer", "reRender"),
+            "发光层必须调 **GeoRenderer**.reRender 把模型用发光 RenderLayer 再画一遍 —— 不重绘就没有"
                 + "第二层，发光不存在。实际调用: " + layer.invokedMethods()
         );
         assertTrue(
-            layer.invokedMethods().contains("getEntityTranslucentEmissive"),
-            "发光层必须走 RenderLayer.getEntityTranslucentEmissive（禁 lightmap = 全亮、alpha 生效 = "
-                + "透明像素不画）。实际调用: " + layer.invokedMethods()
+            layer.invoked("net/minecraft/client/render/RenderLayer", "getEntityTranslucentEmissive"),
+            "发光层必须走 **RenderLayer**.getEntityTranslucentEmissive（禁 lightmap = 全亮、"
+                + "alpha 生效 = 透明像素不画）。实际调用: " + layer.invokedMethods()
         );
+    }
+
+    /**
+     * 扫描：目标类里是否存在「调用 {@code owner.method} 之后紧接着一条条件跳转」的指令序列。
+     *
+     * <p>用来区分"真门控"与"调完丢弃"——后者字节码里不会有消费返回值的条件跳转。
+     */
+    private static boolean hasConditionalBranchAfter(
+        Class<?> target, String simpleName, String owner, String method
+    ) {
+        boolean[] found = {false};
+        try (InputStream input = target.getResourceAsStream(simpleName + ".class")) {
+            if (input == null) {
+                throw new AssertionError("读不到 " + simpleName + ".class");
+            }
+            new ClassReader(input).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(
+                    int access, String name, String descriptor, String signature, String[] exceptions
+                ) {
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        private boolean armed = false;
+
+                        @Override
+                        public void visitMethodInsn(
+                            int opcode, String insnOwner, String insnName,
+                            String insnDescriptor, boolean isInterface
+                        ) {
+                            armed = owner.equals(insnOwner) && method.equals(insnName);
+                        }
+
+                        @Override
+                        public void visitJumpInsn(int opcode, org.objectweb.asm.Label label) {
+                            if (armed && (opcode == Opcodes.IFEQ || opcode == Opcodes.IFNE)) {
+                                found[0] = true;
+                            }
+                            armed = false;
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        } catch (IOException error) {
+            throw new AssertionError("读取 " + simpleName + ".class 失败", error);
+        }
+        return found[0];
     }
 
     @Test

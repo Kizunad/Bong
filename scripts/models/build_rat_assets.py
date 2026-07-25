@@ -8,6 +8,7 @@
 import base64
 import io
 import json
+import sys
 import uuid
 from pathlib import Path
 
@@ -41,7 +42,17 @@ def bb(cs):
 
 
 def main():
-    d = json.loads(SRC.read_text())
+    # 输入 bbmodel 走 gitignored 的 local_models/（用户在 Blockbench 手雕后放这里）。
+    # 缺文件时裸 FileNotFoundError 读不出"该把文件放到哪"，故给明确提示。
+    # 允许用 CLI 参数覆盖，保留原路径为默认。
+    src = Path(sys.argv[1]) if len(sys.argv) > 1 else SRC
+    if not src.is_file():
+        raise SystemExit(
+            f"找不到输入 bbmodel：{src}\n"
+            f"用法：python3 {Path(__file__).name} [输入.bbmodel]（默认 {SRC}）\n"
+            f"该目录是 gitignored 的本地工作区——请先把 Blockbench 手雕的模型放进去。"
+        )
+    d = json.loads(src.read_text())
     els = {e["uuid"]: e for e in d["elements"]}
     root = d["outliner"][0]
 
@@ -108,9 +119,16 @@ def main():
     def geo_cube(c):
         f, t = c["from"], c["to"]
         zx, zy = CELL[cube_cell[c["uuid"]]]
-        # box-uv 起点内缩 3px：展开 bbox(≤19.5x8.5)四周都留 ≥3px 同色边距 → MC 过滤不溢色
-        gc = {"origin": [round(v, 3) for v in f],
-              "size": [round(t[i] - f[i], 3) for i in range(3)], "uv": [zx + 3, zy + 3]}
+        # from/to 归一化：Blockbench 允许某轴 to < from（用户手雕时很容易出现），直接
+        # `to - from` 会得到**负 size**。Bedrock geometry 约定 size 非负，负宽度会让该 cube
+        # 退化/翻面（背面剔除后从外面看不见）。取 min 作 origin、取绝对值作 size —— 得到的是
+        # 几何上完全相同的盒子，只是端点顺序摆正。
+        # （实测命中：用户 bbmodel 的尾脊末段 ridge3 是 to.x < from.x，size.x = -0.186，
+        #  而它正是 q2 满档才点亮的第 4 段蓝脊；不修则"吃饱"态的最后一段可能整段看不见。）
+        lo = [min(f[i], t[i]) for i in range(3)]
+        size = [abs(t[i] - f[i]) for i in range(3)]
+        gc = {"origin": [round(v, 3) for v in lo],
+              "size": [round(v, 3) for v in size], "uv": [zx + 3, zy + 3]}
         if any(c.get("rotation", [0, 0, 0])):
             gc["rotation"] = c["rotation"]
             gc["pivot"] = c.get("origin", [0, 0, 0])

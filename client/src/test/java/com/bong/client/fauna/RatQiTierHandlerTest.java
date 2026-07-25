@@ -8,6 +8,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -238,11 +239,10 @@ class RatQiTierHandlerTest {
     void snapshot_is_unmodifiable() {
         feed(sync("[{\"id\":41,\"tier\":1}]"));
         Map<Integer, Integer> snapshot = RatQiTierHandler.snapshot();
-        try {
-            snapshot.put(99, 2);
-            throw new AssertionError("snapshot 应为只读，put 必须抛 UnsupportedOperationException");
-        } catch (UnsupportedOperationException expected) {
-            // 预期
-        }
+        assertThrows(
+            UnsupportedOperationException.class,
+            () -> snapshot.put(99, 2),
+            "snapshot 必须是只读视图——返回可变副本会让调用方误以为改它能影响档位表"
+        );
     }
 }

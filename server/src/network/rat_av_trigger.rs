@@ -144,10 +144,18 @@ mod tests {
     /// 这种文件级声明——`network/mod.rs` 顶部就有若干条，按前者切会把整个 `register` 函数
     /// 一起切掉，断言反而恒假。
     fn production_source(src: &str) -> String {
-        src.split("#[cfg(test)]\nmod tests {")
-            .next()
-            .unwrap_or(src)
-            .lines()
+        let head = src
+            .split_once("#[cfg(test)]\nmod tests {")
+            .map(|(head, _)| head)
+            // 切分串对 rustfmt 输出形态敏感。落空时直接 panic 把失败点钉在真正原因上，
+            // 而不是退化成"返回全文 → pin 恒真"、让同伴元测试以误导性信息撞红。
+            .unwrap_or_else(|| {
+                panic!(
+                    "production_source 未找到 inline 测试模块起点 `#[cfg(test)]\\nmod tests {{`；\
+                     被审文件的形态变了（属性与 mod 间多了空行/注释？），切分逻辑需同步更新"
+                )
+            });
+        head.lines()
             .filter(|line| !line.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n")

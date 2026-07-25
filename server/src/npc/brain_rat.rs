@@ -403,13 +403,6 @@ fn harass_bite_action_system(
             *state = ActionState::Failure;
             continue;
         };
-        // 群居鼠敢整只扑上来，独行/过渡期鼠只敢前爪抓一下。相位组件缺席按独行处理。
-        let harass_kind = if matches!(phase, Some(RatPhase::Gregarious)) {
-            RatAttackKind::Pounce
-        } else {
-            RatAttackKind::Claw
-        };
-
         match *state {
             ActionState::Requested => *state = ActionState::Executing,
             ActionState::Executing => {
@@ -426,9 +419,15 @@ fn harass_bite_action_system(
                         target,
                         qi_steal: 1,
                     });
+                    // 群居鼠敢整只扑上来，独行/过渡期鼠只敢前爪抓一下。相位组件缺席按独行处理。
+                    // 就地算：`Init/Success/Failure` 分支用不到，没必要每 actor 每 tick 都算。
                     attack_av.send(RatAttackAvEvent {
                         rat: *actor,
-                        kind: harass_kind,
+                        kind: if matches!(phase, Some(RatPhase::Gregarious)) {
+                            RatAttackKind::Pounce
+                        } else {
+                            RatAttackKind::Claw
+                        },
                         origin: position.get(),
                     });
                     blackboard.harass_cooldown_until_tick = tick + PLAYER_HARASS_COOLDOWN_TICKS;

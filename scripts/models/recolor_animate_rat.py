@@ -37,7 +37,9 @@ def png_data_url(img):
 
 def build_textures():
     base = Image.new("RGBA", (TEX_W, TEX_H), (0, 0, 0, 0))
-    glow = Image.new("RGBA", (TEX_W, TEX_H), (0, 0, 0, 255))  # emissive mask: 黑底
+    # emissive mask 底必须**透明**（原为不透明黑底，是已修 bug 的同款）：
+    # `FaunaEmissiveGlowLayer` 整模重绘 glow 贴图、非透明像素全亮，黑底 = 整只鼠全亮。
+    glow = Image.new("RGBA", (TEX_W, TEX_H), (0, 0, 0, 0))
     db, dg = ImageDraw.Draw(base), ImageDraw.Draw(glow)
     origins = {}
     for i, key in enumerate(ZONE_ORDER):

@@ -32,7 +32,10 @@ def png_url(img):
 
 def build_tex():
     base = Image.new("RGBA", (TEX_W, TEX_H), (0, 0, 0, 0))
-    glow = Image.new("RGBA", (TEX_W, TEX_H), (0, 0, 0, 255))
+    # glow 底必须**透明**：client `FaunaEmissiveGlowLayer` 走
+    # `RenderLayer.getEntityTranslucentEmissive` 整模重绘 glow 贴图，非透明像素一律全亮。
+    # 不透明黑底会把整只鼠涂成"全亮黑"而不是只有蓝脊+红眼发光（build_rat_assets.py 已修同款）。
+    glow = Image.new("RGBA", (TEX_W, TEX_H), (0, 0, 0, 0))
     db, dg = ImageDraw.Draw(base), ImageDraw.Draw(glow)
     origin = {}
     for i, k in enumerate(ZONE_ORDER):
@@ -70,7 +73,6 @@ def main():
 
     # 识别 7 部位 + 原地命名/枢轴（uuid 不变→动画仍绑）
     groups = [c for c in root["children"] if isinstance(c, dict)]
-    sc = [(g, *[(min(v) + max(v)) / 2 for v in bb(under(g))[:1]], bb(under(g))) for g in groups]
     info = [(g, bb(under(g))) for g in groups]
     head = min(info, key=lambda t: min(t[1][2]))[0]
     rest = [t for t in info if t[0] is not head]

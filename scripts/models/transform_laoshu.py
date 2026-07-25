@@ -73,6 +73,14 @@ def main():
     parts = root["children"]  # 7 body parts (顺序: head,body,legFL,legFR,legBL,legBR,tail)
     part_cubes = [cubes_under(p) for p in parts]
     labels = ["head", "body", "leg_fl", "leg_fr", "leg_bl", "leg_br", "tail"]
+    # 本脚本按 outliner **下标**硬绑部位（同批的 build_rat_assets / make_variants 用的是
+    # 几何质心自动识别）。少一个组或顺序变一次就会把腿当尾、把尾当头，且全程不报错，
+    # 只在最终渲染时表现为上色/枢轴错乱——先把这条顺序契约断言出来。
+    if len(parts) != len(labels):
+        raise SystemExit(
+            f"outliner 顶层组数为 {len(parts)}，本脚本按固定顺序 {labels} 硬绑部位，"
+            f"需恰好 {len(labels)} 个；请检查输入 bbmodel 的分组"
+        )
 
     # ── 计算全局 bbox → scale + recenter ─────────────────────────
     allc = [c for pc in part_cubes for c in pc]
@@ -80,6 +88,8 @@ def main():
     ys = [v for c in allc for v in (c["from"][1], c["to"][1])]
     zs = [v for c in allc for v in (c["from"][2], c["to"][2])]
     lenZ = max(zs) - min(zs)
+    if lenZ <= 0:
+        raise SystemExit("输入模型 Z 跨度为 0（退化的单薄片/空 cube 集），无法按体长缩放")
     S = TARGET_LEN / lenZ
     # recenter: 缩放后 脚落 Y=0, X 居中, Z 居中
     cx = (min(xs) + max(xs)) / 2

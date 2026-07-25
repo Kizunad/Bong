@@ -133,7 +133,10 @@ class DevourRatVariantTextureTest {
     void multiple_rats_pick_their_own_variant_independently() {
         String payload = "{\"v\":1,\"type\":\"rat_qi_tier\",\"entries\":"
             + "[{\"id\":1,\"tier\":1},{\"id\":2,\"tier\":2}]}";
-        RatQiTierHandler.handleSync(payload, payload.getBytes().length);
+        assertTrue(
+            RatQiTierHandler.handleSync(payload, payload.getBytes().length),
+            "测试前置：多鼠 payload 应被接受——若被拒，下面会表现为「全是 q0」而不是「前置未成立」"
+        );
 
         assertEquals(FaunaModel.devourRatTexture(1),
             FaunaModel.selectTexture(FaunaVisualKind.DEVOUR_RAT, 1));

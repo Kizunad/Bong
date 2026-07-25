@@ -95,7 +95,7 @@ if __name__ == "__main__":
     ims = [(nm, render_pose(path, p, yaw=90, pitch=8, size=440)) for nm, p in poses.items()]
     W = sum(i.width for _, i in ims)
     H = max(i.height for _, i in ims)
-    canvas = Image.new("RGB", (W, H), bg=(120, 122, 128)) if False else Image.new("RGB", (W, H), (120, 122, 128))
+    canvas = Image.new("RGB", (W, H), (120, 122, 128))
     x = 0
     for _, im in ims:
         canvas.paste(im, (x, 0))

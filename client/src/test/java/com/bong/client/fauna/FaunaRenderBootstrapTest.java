@@ -1,5 +1,7 @@
 package com.bong.client.fauna;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.util.Identifier;
@@ -281,6 +283,72 @@ public class FaunaRenderBootstrapTest {
                 error
             );
         }
+    }
+
+    /**
+     * 全仓不变式：**任何** GeckoLib geo 文件里都不得出现负 {@code size} 的 cube。
+     *
+     * <p>Blockbench 允许某轴 {@code to < from}（手雕时很容易出现），转换脚本若直接
+     * {@code to - from} 就会写出负 size。Bedrock geometry 约定 size 非负，负宽度会让该 cube
+     * 退化 / 翻面——背面剔除后从外面直接看不见，而加载、解析、渲染全程**不报任何错**，
+     * 只能靠实机盯出来。
+     *
+     * <p>实战命中：噬元鼠尾脊末段 {@code ridge3}（`to.x < from.x`，size.x = -0.186）正是
+     * q2 满档才点亮的第 4 段蓝脊；不修则"吸饱了"这一档的最后一段可能整段不可见，而所有
+     * 贴图/档位/发光测试照样全绿。
+     */
+    @Test
+    void noFaunaGeoModelContainsNegativeCubeSize() throws IOException {
+        Path geoDir = Path.of("src", "main", "resources", "assets", "bong", "geo");
+        assertTrue(Files.isDirectory(geoDir), "geo 资源目录应存在：" + geoDir);
+
+        List<String> offenders = new ArrayList<>();
+        List<Path> geoFiles;
+        try (var stream = Files.list(geoDir)) {
+            geoFiles = stream.filter(p -> p.getFileName().toString().endsWith(".geo.json"))
+                .sorted()
+                .toList();
+        }
+        assertFalse(geoFiles.isEmpty(), "geo 目录不应为空，否则本不变式形同虚设");
+
+        for (Path file : geoFiles) {
+            JsonObject root = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+            if (!root.has("minecraft:geometry")) {
+                continue;
+            }
+            for (JsonElement geometry : root.getAsJsonArray("minecraft:geometry")) {
+                JsonObject geo = geometry.getAsJsonObject();
+                if (!geo.has("bones")) {
+                    continue;
+                }
+                for (JsonElement boneElement : geo.getAsJsonArray("bones")) {
+                    JsonObject bone = boneElement.getAsJsonObject();
+                    if (!bone.has("cubes")) {
+                        continue;
+                    }
+                    for (JsonElement cubeElement : bone.getAsJsonArray("cubes")) {
+                        JsonObject cube = cubeElement.getAsJsonObject();
+                        if (!cube.has("size")) {
+                            continue;
+                        }
+                        JsonArray size = cube.getAsJsonArray("size");
+                        for (int axis = 0; axis < size.size(); axis++) {
+                            if (size.get(axis).getAsDouble() < 0) {
+                                offenders.add(file.getFileName() + " bone=" + bone.get("name")
+                                    + " size=" + size + "（轴 " + axis + " 为负）");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertTrue(
+            offenders.isEmpty(),
+            "以下 cube 的 size 含负值 —— 会退化/翻面且全程不报错，只能实机盯出来；"
+                + "转换脚本应取 min(from,to) 作 origin、abs(to-from) 作 size：\n  "
+                + String.join("\n  ", offenders)
+        );
     }
 
     private static Method assertCanHitMethod() {
