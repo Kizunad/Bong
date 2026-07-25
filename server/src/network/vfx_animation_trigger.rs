@@ -3252,7 +3252,11 @@ mod tests {
             // overwrites the brace loop, so its id + priority are the load-bearing contract.
             assert_play_anim(&emitted[0], expected_anim, STORY_PRIORITY);
             // event[1]: breakthrough pillar particle, outcome-specific density.
-            assert_spawn_particle(&emitted[1], "bong:breakthrough_pillar", Some(expected_count));
+            assert_spawn_particle(
+                &emitted[1],
+                "bong:breakthrough_pillar",
+                Some(expected_count),
+            );
             // The contract this test's name claims: NO StopAnim on the success path. A StopAnim here
             // (e.g. copy-pasted from the TribulationFailed fix) would still keep count at 2 if it
             // displaced the particle, so the count check alone can't catch it — assert absence.
