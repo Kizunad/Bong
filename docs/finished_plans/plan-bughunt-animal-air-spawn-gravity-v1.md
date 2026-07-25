@@ -2,7 +2,7 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：⏳ 最终 PR 闭环待验收（当前候选由本节测试树 `fb5c4cf...` 之后的 docs-only 证据提交组成）。P0/P1/P2 实现及定向验证已完成；前一目标代码树 `fb5c4cf4752f412b9c275a5a5904e034c72e34aa` 的 server、Java 17 client、协议 Bot、隔离 ambient 场景与隔离全栈闭环 smoke 已通过。当前文档证据提交后的 exact HEAD 尚待新的无上下文 validator、`/review` 与 CI 验收，因此不得把本文件表述为最终验收完成。归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。
+**状态**：⏳ 最终 PR 闭环待验收。P0/P1/P2 已实现，但后续功能返工已改变目标代码；此前 validator、local gate 与 CI 只证明各自历史 SHA，不能用作当前候选验收。以实际 `git rev-parse HEAD` 为唯一候选身份；在该 exact HEAD 重新完成无上下文 validator、受影响 server 本地门禁，并在 push 后通过 E2E、CodeRabbit 与独立 `/review` 前，不得把本文件表述为最终验收完成。归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
@@ -352,17 +352,17 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `95891d20e`、`46f307132`、`7c5e3d880`、`de0da7c27`（2026-07-25）：补同 tick 数量预算、泛型调用修复与 scheduler→resolver→ECS 提交边界回归。
 - 本次 review 返工（2026-07-25）：恢复 Navigator exact base resolver/caller 兼容性与 ambient ring best-effort fallback；移除新增的 strict Poisson/same-tick 空间占位政策，同时保留 ambient strict runtime/raster 落点门禁。
 
-### 测试结果（前一目标代码树 `fb5c4cf4752f412b9c275a5a5904e034c72e34aa`；仅文档随后变化）
+### 测试结果（历史候选证据；不是当前 exact HEAD 的 gate）
 
 - **server 完整门禁**：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 通过；lib 11943 passed / 0 failed / 2 ignored，main 12 passed，full-app startup 1 passed，Tarkov integration 4 passed，doc 5 ignored。
 - **client**：Java `17.0.19` 执行 `./gradlew test build` 成功；3/3 Fabric GameTests passed，21 tasks，4m11s。
 - **schema / agent**：schema 生成物 freshness 为 406 files，30 files / 898 tests passed；Tiandao 72 files / 840 tests passed。
 - **协议 Bot 合同**：`python3 scripts/bot/test_protocol.py` 148/148 通过；覆盖 dedicated missing-env `ERROR`、`--all` opt-in、fixture ownership 以及 runner/`tee` 真实 pipeline 退出状态矩阵。
-- **定向 ambient 协议 witness**：isolated `npc_ambient_surface_resolution` 1/1 PASS；Cow type 18 与 Rat type 126 均由真实 `entity_spawn`/`entity_pos` 证明位于 `(5,73,3)`，未继承玩家 `(0,152,0)`。证据绑定本节目标 SHA，persistent state `UNCHANGED`，25565 与私有 Redis `60493` 均已清理。
-- **隔离全栈闭环 smoke**：PASS；先通过 dev-reload detach、schema、Tiandao 与无 listener full-app startup，再以 private runtime CWD、private Redis `56019`、当前 checkout debug server 和 deterministic Tiandao one-tick 跑跨进程闭环。独立 subscriber 观测 `bong:world_state`、`bong:agent_command`、`bong:agent_narrate`，server 观测两个 `command_anchor stage=end ... result=ok`；persistent state `UNCHANGED`，25565 与 Redis 端口均已清理。第一次尝试仅因 listener readiness race 失败，修正为 listener + PID-tree 轮询后重试成功；失败轮不计作 PASS。
-- **共享 Bot harness**：exact-head CI 当前为 31 pass / 1 skip / 0 fail；不再将历史 combat 失败描述为当前结果。
-- **历史证据边界**：`71e5ea3ab`、`da3196a35`、`7c4c068f8` 等旧树门禁只证明各自 SHA，不再称“最终 HEAD”；其 validator 也均因后续代码变更失效。
-- **最终 PR 闭环待办**：本节测试树 `fb5c4cf...` 之后仅有本 plan 的 docs-only 证据提交；以实际 `git rev-parse HEAD` 为唯一候选身份。必须对该 exact SHA 启动无上下文、read-only validator，并在 push 后重新触发独立 `/review`、等待 exact-head CI 与 CodeRabbit。三者完成前，本计划不宣称 Finished。
+- **定向 ambient 协议 witness**：isolated `npc_ambient_surface_resolution` 1/1 PASS；Cow type 18 与 Rat type 126 均由真实 `entity_spawn`/`entity_pos` 证明位于 `(5,73,3)`，未继承玩家 `(0,152,0)`。证据绑定对应历史目标 SHA，persistent state `UNCHANGED`，25565 与私有 Redis `60493` 均已清理。
+- **隔离全栈闭环 smoke**：PASS；先通过 dev-reload detach、schema、Tiandao 与无 listener full-app startup，再以 private runtime CWD、private Redis `56019`、当时 checkout debug server 和 deterministic Tiandao one-tick 跑跨进程闭环。独立 subscriber 观测 `bong:world_state`、`bong:agent_command`、`bong:agent_narrate`，server 观测两个 `command_anchor stage=end ... result=ok`；persistent state `UNCHANGED`，25565 与 Redis 端口均已清理。第一次尝试仅因 listener readiness race 失败，修正为 listener + PID-tree 轮询后重试成功；失败轮不计作 PASS。
+- **共享 Bot harness**：GitHub E2E run `30151469631` 对历史候选 `77d8ec7c93645648c1fe05681295017146d6d2df` 产出 31 pass / 1 skip / 0 fail；该 artifact 不是当前候选的 exact-head CI gate。
+- **历史证据边界**：`71e5ea3ab`、`da3196a35`、`7c4c068f8`、`77d8ec7c` 等旧树门禁只证明各自 SHA。`72b518685` 与 `f8141905` 为后续功能代码返工，已使此前 code gate、validator 与 E2E 对当前候选全部失效。
+- **最终 PR 闭环待办**：以实际 `git rev-parse HEAD` 为唯一候选身份。必须先对该 exact SHA 重跑受影响 server 本地门禁并启动无上下文、read-only validator；push 后重新触发并通过 exact-head E2E、CodeRabbit 与独立 `/review`。上述闭环完成前，本计划不宣称 Finished。
 
 ### 跨仓库核验
 
