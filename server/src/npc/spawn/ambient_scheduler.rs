@@ -4003,8 +4003,13 @@ mod tests {
 
         let mut app =
             make_runtime_scheduler_app::<TestFaunaMarker>(two_spawn_budget, test_pool_fn, true, 1);
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([0.0, 80.0, 0.0])));
+        // Keep two explicit players at the exact same anchor so the second iteration cannot pass
+        // merely because its player position changed. The runtime fixture's client may also be
+        // present, but it is colocated by make_runtime_scheduler_app and does not alter this seam.
+        for _ in 0..2 {
+            app.world_mut()
+                .spawn((ClientMarker, Position::new([0.0, 80.0, 0.0])));
+        }
         app.update();
 
         let mut spawned = app
@@ -4016,21 +4021,30 @@ mod tests {
             .collect();
         assert!(
             (1..=2).contains(&positions.len()),
-            "two same-zone players with budget >= 2 must submit at least one and at most two candidates, actual {}",
+            "two same-anchor players with budget >= 2 must submit one or two candidates, actual {}",
             positions.len()
         );
         let min_same_archetype_dist =
             PoissonSpawnSampler::adaptive_for_zone(wide_open_bounds()).min_same_archetype_dist;
-        for (index, first) in positions.iter().enumerate() {
-            for second in &positions[index + 1..] {
+        match positions.as_slice() {
+            [_] => {
+                // The second same-anchor attempt was correctly rejected because its only
+                // deterministic candidate was already occupied by the first submission.
+            }
+            [first, second] => {
                 let dx = first.x - second.x;
                 let dz = first.z - second.z;
                 let distance = (dx * dx + dz * dz).sqrt();
                 assert!(
                     distance >= min_same_archetype_dist,
-                    "same tick same-anchor submissions must be at least {min_same_archetype_dist} apart or skip the second; actual {distance}"
+                    "two same-anchor submissions must be at least {min_same_archetype_dist} apart; actual {distance}"
+                );
+                assert_ne!(
+                    first, second,
+                    "same-tick submissions must never occupy the identical position"
                 );
             }
+            _ => unreachable!("the preceding assertion bounds positions to one or two"),
         }
     }
 
