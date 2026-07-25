@@ -124,13 +124,22 @@ def main() -> int:
         print(f"\n=== scenario: {name} ===\n    {module.DESCRIPTION}")
         default_enabled = getattr(module, "DEFAULT_ENABLED", True)
         required_env = getattr(module, "REQUIRED_ENV", None)
-        enabled_by_env = required_env is not None and os.environ.get(required_env) == "1"
+        run_in_all_when_env = getattr(module, "RUN_IN_ALL_WHEN_ENV", None)
+        enabled_by_env = (
+            run_in_all_when_env is not None
+            and os.environ.get(run_in_all_when_env) == "1"
+        )
         if args.scenario is None and not default_enabled and not enabled_by_env:
             reason = (
-                f"专用场景；常规 --all 仅在 {required_env}=1 时执行"
-                if required_env is not None
+                f"专用场景；常规 --all 仅在 {run_in_all_when_env}=1 时执行"
+                if run_in_all_when_env is not None
                 else "专用场景；常规 --all 不执行（需显式 --scenario）"
             )
+            results.append((name, "SKIP", reason))
+            print(f"    SKIP: {reason}")
+            continue
+        if args.scenario is not None and required_env is not None and os.environ.get(required_env) != "1":
+            reason = f"专用场景；显式 --scenario 需 {required_env}=1"
             results.append((name, "SKIP", reason))
             print(f"    SKIP: {reason}")
             continue

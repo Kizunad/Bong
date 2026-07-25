@@ -736,7 +736,7 @@ class NorthRiftScenarioContractTest(unittest.TestCase):
 
 class BotE2eDevModeContractTest(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         root = pathlib.Path(__file__).parents[2]
         cls.source = (root / "scripts/bot-e2e.sh").read_text(encoding="utf-8")
         cls.compose_source = (root / "docker-compose.test.yml").read_text(
@@ -849,7 +849,38 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             "场景只可在本轮 server fixture identity 与端口 ownership 同时成立后运行",
         )
 
-    def test_fixture_runtime_ownership_is_rechecked_during_and_after_scenarios(self):
+    def test_bot_e2e_pipeline_propagates_runner_then_tee_status(self):
+        pipeline = '''
+set +e
+bash -c "$1" | bash -c "$2"
+pipeline_status=("${PIPESTATUS[@]}")
+if [ "${pipeline_status[0]}" -ne 0 ]; then
+  exit "${pipeline_status[0]}"
+fi
+exit "${pipeline_status[1]}"
+'''
+        for runner_code, tee_code, expected in ((7, 0, 7), (0, 9, 9), (0, 0, 0)):
+            with self.subTest(runner_code=runner_code, tee_code=tee_code):
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        pipeline,
+                        "pipeline-status",
+                        f"exit {runner_code}",
+                        f"exit {tee_code}",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    expected,
+                    "runner 失败必须优先；仅 tee 失败时也必须将其非零码传播",
+                )
+
+
         helper_start = self.source.index("self_started_fixture_runtime_is_current() {")
         helper_end = self.source.index("\n}\n", helper_start)
         helper = self.source[helper_start:helper_end]
@@ -873,7 +904,9 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
         self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
         self.assertIn('echo complete >"$RUNTIME_WATCH_LOG"', scenario)
-        self.assertIn("EXIT_CODE=${PIPESTATUS[0]}", scenario)
+        self.assertIn('pipeline_status=("${PIPESTATUS[@]}")', scenario)
+        self.assertIn('EXIT_CODE=${pipeline_status[0]}', scenario)
+        self.assertIn('EXIT_CODE=${pipeline_status[1]}', scenario)
         self.assertIn('wait "$WATCH_PID"', scenario)
         self.assertGreaterEqual(
             scenario.count("self_started_fixture_runtime_is_current"),
@@ -1061,7 +1094,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         cls.source = (
             pathlib.Path(__file__).parents[2] / "scripts/e2e-redis.sh"
         ).read_text(encoding="utf-8")
@@ -2055,7 +2088,7 @@ class RunnerLogicTest(unittest.TestCase):
             "runner SKIP 提示与场景执行门必须引用同一个显式环境变量",
         )
 
-    def test_all_explicitly_skips_dedicated_scenario_without_calling_run(self):
+    def test_all_skips_north_rift_even_when_preview_env_is_present(self):
         run = mock.Mock()
         scenario = types.SimpleNamespace(
             DESCRIPTION="dedicated",
@@ -2072,7 +2105,7 @@ class RunnerLogicTest(unittest.TestCase):
                 return_value={"terrain_north_rift_scorch_zone_identity": scenario},
             ),
             mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
-            mock.patch.dict(os.environ, {NORTH_RIFT_REQUIRED_ENV: "0"}, clear=False),
+            mock.patch.dict(os.environ, {NORTH_RIFT_REQUIRED_ENV: "1"}, clear=False),
             mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
             redirect_stdout(output),
         ):
@@ -2083,11 +2116,68 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertIn("SKIP", output.getvalue())
         self.assertIn("skip=1", output.getvalue())
 
-    def test_all_runs_owned_dedicated_scenario_when_required_env_is_present(self):
+    def test_all_runs_ambient_only_when_fixture_ownership_is_declared(self):
         run = mock.Mock()
-        required_env = "BOT_E2E_TEST_OWNED_FIXTURE"
         scenario = types.SimpleNamespace(
             DESCRIPTION="owned fixture",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=FIXTURE_OWNED_ENV,
+            RUN_IN_ALL_WHEN_ENV=FIXTURE_OWNED_ENV,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"npc_ambient_surface_resolution": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {FIXTURE_OWNED_ENV: "1"}, clear=False),
+            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        run.assert_called_once()
+        self.assertIn("PASS", output.getvalue())
+        self.assertIn("pass=1", output.getvalue())
+
+    def test_all_skips_ambient_without_fixture_ownership(self):
+        run = mock.Mock()
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="owned fixture",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=FIXTURE_OWNED_ENV,
+            RUN_IN_ALL_WHEN_ENV=FIXTURE_OWNED_ENV,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"npc_ambient_surface_resolution": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {FIXTURE_OWNED_ENV: "0"}, clear=False),
+            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        run.assert_not_called()
+        self.assertIn("SKIP", output.getvalue())
+
+    def test_explicit_scenario_still_requires_its_dedicated_env(self):
+        run = mock.Mock()
+        required_env = "BOT_E2E_TEST_DEDICATED"
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="dedicated",
             MODULES=["terrain"],
             DEFAULT_ENABLED=False,
             REQUIRED_ENV=required_env,
@@ -2098,19 +2188,26 @@ class RunnerLogicTest(unittest.TestCase):
             mock.patch.object(
                 scenario_runner,
                 "discover_scenarios",
-                return_value={"owned_fixture": scenario},
+                return_value={"terrain_north_rift_scorch_zone_identity": scenario},
             ),
             mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
-            mock.patch.dict(os.environ, {required_env: "1"}, clear=False),
-            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            mock.patch.dict(os.environ, {required_env: "0"}, clear=False),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "run_scenarios.py",
+                    "--scenario",
+                    "terrain_north_rift_scorch_zone_identity",
+                ],
+            ),
             redirect_stdout(output),
         ):
             result = scenario_runner.main()
 
         self.assertEqual(result, 0)
-        run.assert_called_once()
-        self.assertIn("PASS", output.getvalue())
-        self.assertIn("pass=1", output.getvalue())
+        run.assert_not_called()
+        self.assertIn(f"需 {required_env}=1", output.getvalue())
 
     def test_scenarios_do_not_reuse_literal_bot_tags(self):
         owners: dict[str, str] = {}

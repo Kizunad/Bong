@@ -340,7 +340,12 @@ fi
 set +e
 BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \
   python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1 | tee "$SCENARIOS_LOG"
-EXIT_CODE=${PIPESTATUS[0]}
+pipeline_status=("${PIPESTATUS[@]}")
+if [ "${pipeline_status[0]}" -ne 0 ]; then
+  EXIT_CODE=${pipeline_status[0]}
+else
+  EXIT_CODE=${pipeline_status[1]}
+fi
 set -e
 
 if [ -n "$WATCH_PID" ]; then
