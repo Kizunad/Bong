@@ -1142,10 +1142,19 @@ fn reverse_cast_emits_signature_recipe_end_to_end() {
         vec![DUGU_POISON_SIGNATURE_RECIPE],
         "倒蚀施法应经真实 emit 系统实发签名 {DUGU_POISON_SIGNATURE_RECIPE}（不多不少一条），实际 {recipes:?}"
     );
+    // 路由与重构前内联 emit 逐字段一致：听者位置发声（无空间衰减）+ 以爆发中心（目标位置 x=1）
+    // 为圆心的 64 格广播。改成世界锚点 + recipe 的 MELEE 8 格会让实机几乎听不见（PR #1262 review）。
     assert_eq!(
-        emitted[0].pos,
-        Some([1, 64, 0]),
-        "签名音源应锚在爆发中心（目标位置 x=1），而非施法者脚下"
+        emitted[0].pos, None,
+        "签名应 pos=None（听者位置、无空间衰减），与重构前一致"
+    );
+    assert_eq!(
+        emitted[0].recipient,
+        crate::network::audio_event_emit::AudioRecipient::Radius {
+            origin: valence::prelude::DVec3::new(1.0, 64.0, 0.0),
+            radius: crate::network::audio_event_emit::AUDIO_BROADCAST_RADIUS,
+        },
+        "签名收听范围应是以爆发中心（目标位置）为圆心的 64 格广播"
     );
 }
 

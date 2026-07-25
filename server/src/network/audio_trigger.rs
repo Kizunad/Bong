@@ -955,17 +955,17 @@ pub fn emit_dugu_v2_audio_triggers(
         );
     }
 
-    // 倒蚀签名：音源锚在爆发中心（`event.center` = 目标位置，无目标时退到施法者位置，
-    // 由 cast 侧算好），与重构前内联 emit 的音源一致。
+    // 倒蚀签名：路由与重构前内联 emit **逐字段一致**——听者位置发声（`pos: None`，无空间衰减）
+    // + 以爆发中心 `event.center` 为圆心的 64 格广播（`emit_play_listener_anchored_broadcast`
+    // 的 doc 写了为什么这里不能走 recipe attenuation）。`event.center` = 目标位置，无目标时退到
+    // 施法者位置，由 cast 侧算好。
     for event in reverses.read() {
-        emit_play(
+        emit_play_listener_anchored_broadcast(
             &mut audio,
             DUGU_POISON_SIGNATURE_RECIPE,
             event.caster,
             event.center,
             Some("dugu_reverse".to_string()),
-            1.0,
-            0.0,
         );
     }
 }
@@ -1306,6 +1306,44 @@ fn emit_play_at_block(
         volume_mul,
         pitch_shift: 0.0,
         recipient,
+    });
+}
+
+/// 「听者位置 + 广播半径」发声——**只给重构前本就这么发的站点用**，用于把内联 emit 迁到
+/// Pattern A 时保持路由逐字段不变。
+///
+/// 与 `emit_play` 的差别（都不是随便选的）：
+/// - `pos: None` → client 把音源放在**听者自己脚下**（`MinecraftSoundSink` 的 fallback），
+///   距离恒为 0 ⇒ 无空间衰减、原音量；`emit_play` 的 `Some(block_pos)` 则是世界锚点 + LINEAR 衰减。
+/// - recipient 用固定 `AUDIO_BROADCAST_RADIUS`，不查 recipe 的 `attenuation`。
+///
+/// 为什么倒蚀签名要走这条：重构前 `dugu_v2::skills::emit_audio` 就是 `pos: None` + 64 格广播；
+/// 若改用 `emit_play`，`dugu_poison_signature` 声明的 `MELEE` 会把收听范围砍到 8 格（比该招自己
+/// 10 格的 `ReverseAftermathCloud` 还小），再叠上世界锚点的距离衰减与 L0 volume 0.24，实机几乎
+/// 听不见——正是 P4 已经吃过两次的「签名进了资产却听不到」（PR #1262 review 抓出）。
+/// 要不要把倒蚀改成空间化签名（需同步调 recipe 的 attenuation/volume）留 P5 盲听回归再定。
+fn emit_play_listener_anchored_broadcast(
+    audio: &mut AudioEmitContext<'_, '_>,
+    recipe_id: impl Into<String>,
+    entity: Entity,
+    origin: DVec3,
+    flag: Option<String>,
+) {
+    let recipe_id = recipe_id.into();
+    if !audio.should_emit(entity, &recipe_id) {
+        return;
+    }
+    audio.send(PlaySoundRecipeRequest {
+        recipe_id,
+        instance_id: 0,
+        pos: None,
+        flag,
+        volume_mul: 1.0,
+        pitch_shift: 0.0,
+        recipient: AudioRecipient::Radius {
+            origin,
+            radius: AUDIO_BROADCAST_RADIUS,
+        },
     });
 }
 
@@ -2689,12 +2727,14 @@ mod tests {
             .collect()
     }
 
-    /// 真脉五招逐招经**真实 emit 系统**实发自己的 recipe（recipe id 从生产映射
-    /// `ZhenmaiSkillId::audio_recipe` 取，测试内不另抄表）。
+    /// 真脉五招逐招经**真实 emit 系统**实发自己的 recipe（期望值调生产映射
+    /// `ZhenmaiSkillId::audio_recipe` 得到，测试内不另抄表）。
     ///
     /// 「运行时消费」emit-path 门：跑 `emit_zhenmai_v2_audio_triggers` 读 `ZhenmaiSkillCastEvent`
-    /// → 发 `PlaySoundRecipeRequest`；删掉发声调用 / 系统没接线 / 招式→recipe 映射串味都撞红。
-    /// 含签名招 `sever_chain`（`zhenmai_sever_crack`，`bong:skill.zhenmai.sever_chain`）。
+    /// → 发 `PlaySoundRecipeRequest`。锁的是「事件被吃掉 / 串到别招的 recipe / 多发漏发」；
+    /// **映射表本身写错**（如 sever_chain 指向别的 recipe）不由本测试锁——期望值与生产读同一张表，
+    /// 那条由 `audio::each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event`
+    /// 的 registry 内容 pin 覆盖。含签名招 `sever_chain`（`zhenmai_sever_crack`）。
     #[test]
     fn zhenmai_skills_emit_their_mapped_recipes() {
         use crate::combat::zhenmai_v2::ZhenmaiSkillId;
@@ -2830,10 +2870,21 @@ mod tests {
             vec![DUGU_POISON_SIGNATURE_RECIPE],
             "蛊道倒蚀应经 emit 系统实发 {DUGU_POISON_SIGNATURE_RECIPE}，实际 {recipes:?}"
         );
+        // 路由锁（PR #1262 review）：重构前该站点是「听者位置发声 + 以爆发中心为圆心的 64 格广播」。
+        // 若哪天「顺手统一」成 emit_play，recipe 声明的 MELEE 会把收听范围砍到 8 格、再叠上世界锚点
+        // 的距离衰减（L0 volume 0.24）→ 实机几乎听不见，本断言即撞红。
         assert_eq!(
-            emitted[0].pos,
-            Some([3, 64, 4]),
-            "倒蚀签名音源应锚在爆发中心 event.center（= 目标位置），而非施法者脚下"
+            emitted[0].pos, None,
+            "倒蚀签名应 pos=None（听者位置、无空间衰减），与重构前内联 emit 一致"
+        );
+        assert_eq!(
+            emitted[0].recipient,
+            AudioRecipient::Radius {
+                origin: DVec3::new(3.0, 64.0, 4.0),
+                radius: AUDIO_BROADCAST_RADIUS,
+            },
+            "倒蚀签名收听范围应是以爆发中心为圆心的 64 格广播（重构前语义），\
+             不得退化成 recipe attenuation 的 MELEE 8 格"
         );
     }
 

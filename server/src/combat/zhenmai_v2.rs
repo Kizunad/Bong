@@ -2758,15 +2758,24 @@ mod tests {
         /// cast 入口签名（与 `SkillRegistry::register` 收的函数指针同型）。
         type ResolveFn = fn(&mut bevy_ecs::world::World, Entity, u8, Option<Entity>) -> CastResult;
 
-        let cases: [(ResolveFn, ZhenmaiSkillId); 4] = [
+        let cases: [(ResolveFn, ZhenmaiSkillId); 5] = [
             (resolve_parry, ZhenmaiSkillId::Parry),
             (resolve_neutralize, ZhenmaiSkillId::Neutralize),
             (resolve_multipoint, ZhenmaiSkillId::MultiPoint),
             (resolve_harden, ZhenmaiSkillId::HardenMeridian),
+            (resolve_sever_chain, ZhenmaiSkillId::SeverChain),
         ];
         for (resolve, expected) in cases {
             let mut app = app_with_events();
             let entity = caster(&mut app, Realm::Void, 200.0);
+            if expected == ZhenmaiSkillId::SeverChain {
+                configure_sever_chain(
+                    &mut app,
+                    entity,
+                    MeridianId::Du,
+                    ZhenmaiAttackKind::PhysicalCarrier,
+                );
+            }
             if expected == ZhenmaiSkillId::Neutralize {
                 app.world_mut().entity_mut(entity).insert(Contamination {
                     entries: vec![ContamSource {
