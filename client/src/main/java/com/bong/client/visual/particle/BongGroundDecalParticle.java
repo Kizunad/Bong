@@ -19,6 +19,8 @@ import net.minecraft.util.shape.VoxelShape;
  *   <li>法线锁定 +Y（quad 永远水平）</li>
  *   <li>绕 +Y 旋转（{@link #rotationRad}）—— 符阵自转</li>
  *   <li>{@link #yLift} 微抬防止 z-fighting（默认 0.02）</li>
+ *   <li>长宽可分离（{@link #setDecalShape(double, double, double)}）—— 血溅拖尾等要沿朝向拉长</li>
+ *   <li>可选尾段淡出（{@link #setFadeOutFrom}）—— 默认关闭，既有 decal 表现不变</li>
  * </ul>
  *
  * <p>构建几何时会采样当前位置与下方方块的 collision / outline shape，将 decal 中心 Y 吸附到
@@ -26,10 +28,16 @@ import net.minecraft.util.shape.VoxelShape;
  */
 public class BongGroundDecalParticle extends SpriteBillboardParticle {
     protected double halfSize = 0.5;
+    /** 本地 X 轴半长。默认与 {@link #halfSize} 相等（方形）；拉长的血道等用它单独放大。 */
+    protected double halfLength = 0.5;
     protected double rotationRad = 0.0;
     /** 符阵自转角速度（rad / tick）。正值 CCW。 */
     protected double rotationVelocity = 0.0;
     protected double yLift = 0.02;
+    /** 生命周期进度超过此比例后线性淡出；≥1 表示不淡出（默认，保持既有 decal 表现）。 */
+    protected float fadeOutFrom = 1.0f;
+    /** 淡出基准 alpha —— 记录 {@link #setAlphaPublic} 传入的初始值。 */
+    protected float baseAlpha = 1.0f;
 
     public BongGroundDecalParticle(
         ClientWorld world,
@@ -45,8 +53,28 @@ public class BongGroundDecalParticle extends SpriteBillboardParticle {
     }
 
     public BongGroundDecalParticle setDecalShape(double halfSize, double yLift) {
-        this.halfSize = halfSize;
+        return setDecalShape(halfSize, halfSize, yLift);
+    }
+
+    /** 长宽分离版：{@code halfLength} 沿本地 +X（即 {@link #rotationRad} 指向），{@code halfWidth} 沿本地 +Z。 */
+    public BongGroundDecalParticle setDecalShape(double halfLength, double halfWidth, double yLift) {
+        this.halfLength = halfLength;
+        this.halfSize = halfWidth;
         this.yLift = yLift;
+        return this;
+    }
+
+    /**
+     * 开启尾段淡出。
+     *
+     * <p>MC 的 {@code SpriteBillboardParticle} 默认 alpha 恒定到死——decal 会"啪"地消失。
+     * 血渍需要慢慢渗掉，所以在 {@code age / maxAge > fadeOutFrom} 之后线性把 alpha 收到 0。
+     * 默认 1.0（不淡出），既有符阵 / 涟漪 decal 表现不受影响。
+     *
+     * @param fadeOutFrom 开始淡出的生命周期比例，钳到 [0, 1]
+     */
+    public BongGroundDecalParticle setFadeOutFrom(float fadeOutFrom) {
+        this.fadeOutFrom = Math.max(0.0f, Math.min(1.0f, fadeOutFrom));
         return this;
     }
 
@@ -64,6 +92,7 @@ public class BongGroundDecalParticle extends SpriteBillboardParticle {
     }
 
     public BongGroundDecalParticle setAlphaPublic(float alpha) {
+        this.baseAlpha = alpha;
         this.setAlpha(alpha);
         return this;
     }
@@ -81,6 +110,25 @@ public class BongGroundDecalParticle extends SpriteBillboardParticle {
             this.rotationRad + this.rotationVelocity,
             Math.PI * 2.0
         );
+        this.setAlpha(fadedAlpha(this.age, this.maxAge, this.baseAlpha, this.fadeOutFrom));
+    }
+
+    /**
+     * 尾段线性淡出后的 alpha（纯函数，便于单测）。
+     *
+     * <p>{@code fadeOutFrom >= 1} 或 {@code maxAge <= 0} 时原样返回 {@code baseAlpha}。
+     */
+    static float fadedAlpha(int age, int maxAge, float baseAlpha, float fadeOutFrom) {
+        if (fadeOutFrom >= 1.0f || maxAge <= 0) {
+            return baseAlpha;
+        }
+        float progress = Math.min(1.0f, Math.max(0.0f, (float) age / (float) maxAge));
+        if (progress <= fadeOutFrom) {
+            return baseAlpha;
+        }
+        float span = 1.0f - fadeOutFrom;
+        float remaining = span <= 0.0f ? 0.0f : (1.0f - progress) / span;
+        return baseAlpha * Math.max(0.0f, Math.min(1.0f, remaining));
     }
 
     @Override
@@ -98,6 +146,7 @@ public class BongGroundDecalParticle extends SpriteBillboardParticle {
 
         float[] quad = BongParticleGeometry.buildGroundDecalQuad(
             new double[] { cx, cy, cz },
+            this.halfLength,
             this.halfSize,
             this.rotationRad,
             this.yLift
