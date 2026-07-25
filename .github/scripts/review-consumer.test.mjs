@@ -23,11 +23,13 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@a5e438052ec895b8e5718963d9d52119d6a343be/,
+    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@7992dc9a2a2bdd7bea83d532aee0d232a5672c82/,
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
   assert.match(yaml, /shadow: true/);
+  assert.match(yaml, /worker_timeout_ms: 300000/);
+  assert.match(yaml, /circuit_manual_retry: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/);
   assert.match(yaml, /policy_path: \.github\/review-policy\/bong\.v1\.json/);
   assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);
 });
