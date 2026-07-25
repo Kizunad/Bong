@@ -6230,6 +6230,46 @@ pub fn persist_player_cultivation_bundle(
     )
 }
 
+#[cfg(test)]
+type PlayerCultivationBundleReadHook = std::sync::Arc<dyn Fn(&Path, &str) + Send + Sync>;
+
+/// Test-only synchronization point after the legacy-slice source bundle has been read.
+///
+/// A second SQLite connection can try `BEGIN IMMEDIATE` here: it must receive `SQLITE_BUSY`,
+/// proving that the read stays inside the writer's transaction until the subsequent upsert commits.
+#[cfg(test)]
+static PLAYER_CULTIVATION_BUNDLE_READ_HOOK: OnceLock<
+    Mutex<Option<PlayerCultivationBundleReadHook>>,
+> = OnceLock::new();
+
+#[cfg(test)]
+static PLAYER_CULTIVATION_BUNDLE_READ_HOOK_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+struct PlayerCultivationBundleReadHookReset;
+
+#[cfg(test)]
+impl Drop for PlayerCultivationBundleReadHookReset {
+    fn drop(&mut self) {
+        *PLAYER_CULTIVATION_BUNDLE_READ_HOOK
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+}
+
+#[cfg(test)]
+fn run_player_cultivation_bundle_read_hook(db_path: &Path, username: &str) {
+    let hook = PLAYER_CULTIVATION_BUNDLE_READ_HOOK
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("player cultivation bundle read hook mutex should not be poisoned")
+        .clone();
+    if let Some(hook) = hook {
+        hook(db_path, username);
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub fn persist_player_cultivation_bundle_with_nourishment(
@@ -6253,8 +6293,14 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
     nourishment_activity_window: Option<&crate::nourishment::tick::NourishmentActivityWindow>,
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
-    let connection = open_persistence_connection(settings)?;
-    let existing_bundle = connection
+    let mut connection = open_persistence_connection(settings)?;
+    // Legacy cultivation writers omit nourishment slices. Keep the read, merge, and upsert in one
+    // IMMEDIATE transaction so an autosave cannot read a stale bundle then overwrite a concurrent
+    // nourishment reset or deferred flush with that stale slice.
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
+    let existing_bundle = transaction
         .query_row(
             "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
             [username],
@@ -6263,6 +6309,8 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
         .optional()
         .map_err(io::Error::other)?
         .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok());
+    #[cfg(test)]
+    run_player_cultivation_bundle_read_hook(settings.db_path(), username);
     let existing_field = |field: &str| {
         existing_bundle
             .as_ref()
@@ -6306,7 +6354,7 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
     let cultivation_json = serde_json::to_string(&bundle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
-    connection
+    transaction
         .execute(
             "
             INSERT INTO player_cultivation (
@@ -6328,6 +6376,7 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
             ],
         )
         .map_err(io::Error::other)?;
+    transaction.commit().map_err(io::Error::other)?;
     Ok(())
 }
 
@@ -10485,6 +10534,167 @@ mod persistence_tests {
             .expect("legacy writer must retain activity-window JSON"),
             activity,
             "a legacy save must not replace the partial sweep window with null"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_cultivation_writer_holds_immediate_transaction_across_nourishment_read() {
+        use rusqlite::ErrorCode;
+        use std::sync::mpsc::sync_channel;
+
+        let _hook_test_guard = PLAYER_CULTIVATION_BUNDLE_READ_HOOK_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (settings, root) = persistence_settings("legacy-bundle-immediate-serialization");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("test database should bootstrap");
+        let nourishment = crate::nourishment::Nourishment {
+            satiety: 31.0,
+            hydration: 47.0,
+        };
+        let activity = crate::nourishment::tick::NourishmentActivityWindow {
+            idle_ticks: 100,
+            move_ticks: 70,
+            dash_ticks: 29,
+        };
+        let cultivation = Cultivation::default();
+        let meridians = crate::cultivation::components::MeridianSystem::default();
+        let qi_color = crate::cultivation::components::QiColor::default();
+        let karma = crate::cultivation::components::Karma::default();
+        let contamination = crate::cultivation::components::Contamination::default();
+        let life_record = LifeRecord::new("serialized-nourishment".to_string());
+        let practice_log = crate::cultivation::color::PracticeLog::default();
+        let insight_quota = crate::cultivation::insight::InsightQuota::default();
+        let perceptions = crate::cultivation::insight_apply::UnlockedPerceptions::default();
+        let modifiers = crate::cultivation::insight_apply::InsightModifiers::new();
+        let severed = crate::cultivation::meridian::severed::MeridianSeveredPermanent::default();
+
+        persist_player_cultivation_bundle_with_nourishment(
+            &settings,
+            "Azure",
+            &cultivation,
+            &meridians,
+            &qi_color,
+            &karma,
+            &contamination,
+            &life_record,
+            &practice_log,
+            &insight_quota,
+            &perceptions,
+            &modifiers,
+            None,
+            &severed,
+            None,
+            None,
+            Some(&nourishment),
+            Some(&activity),
+        )
+        .expect("initial bundle should persist");
+
+        let (read_tx, read_rx) = sync_channel(0);
+        let (resume_tx, resume_rx) = sync_channel(0);
+        let resume_rx = Arc::new(Mutex::new(resume_rx));
+        let expected_db_path = settings
+            .db_path()
+            .canonicalize()
+            .expect("test database path should canonicalize");
+        let hook: PlayerCultivationBundleReadHook = Arc::new(move |db_path, username| {
+            let observed_db_path = db_path
+                .canonicalize()
+                .expect("hook database path should canonicalize");
+            if observed_db_path != expected_db_path || username != "Azure" {
+                return;
+            }
+            read_tx
+                .send(())
+                .expect("test coordinator should receive read synchronization point");
+            resume_rx
+                .lock()
+                .expect("legacy writer resume receiver mutex should not be poisoned")
+                .recv()
+                .expect("test coordinator should release legacy writer after lock assertion");
+        });
+        *PLAYER_CULTIVATION_BUNDLE_READ_HOOK
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("player cultivation bundle read hook mutex should not be poisoned") =
+            Some(hook);
+        let _reset_hook = PlayerCultivationBundleReadHookReset;
+
+        std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                persist_player_cultivation_bundle(
+                    &settings,
+                    "Azure",
+                    &cultivation,
+                    &meridians,
+                    &qi_color,
+                    &karma,
+                    &contamination,
+                    &life_record,
+                    &practice_log,
+                    &insight_quota,
+                    &perceptions,
+                    &modifiers,
+                    None,
+                    &severed,
+                    None,
+                    None,
+                )
+            });
+            read_rx
+                .recv()
+                .expect("legacy writer must signal only after its source bundle SELECT completes");
+
+            // The hook is inside the production read→merge→upsert critical section. A legacy
+            // read-then-upsert implementation would have completed SELECT without a transaction,
+            // so this independent BEGIN IMMEDIATE would succeed and this assertion would red.
+            // The fixed implementation already owns the immediate writer lock, so it fails
+            // immediately and a deferred nourishment flush cannot interleave after the read.
+            let mut competing_connection =
+                Connection::open(settings.db_path()).expect("competing connection should open");
+            competing_connection
+                .busy_timeout(Duration::ZERO)
+                .expect("competing connection should disable busy waits for a deterministic probe");
+            let contention = competing_connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .err();
+            let contention_code = contention
+                .as_ref()
+                .and_then(rusqlite::Error::sqlite_error_code);
+
+            // Always release the hook before asserting. If a future refactor moves SELECT outside
+            // the transaction, the probe succeeds; this still lets the writer finish instead of
+            // stranding its test thread, then fails deterministically below.
+            drop(contention);
+            resume_tx
+                .send(())
+                .expect("test coordinator should resume legacy writer");
+            writer
+                .join()
+                .expect("legacy writer thread should not panic")
+                .expect("legacy writer should commit after its read-lock probe");
+            assert_eq!(
+                contention_code,
+                Some(ErrorCode::DatabaseBusy),
+                "legacy writer must hold an IMMEDIATE transaction at the exact post-SELECT hook; \
+                 a read/write split would allow this nourishment writer to start and overwrite its stale slice"
+            );
+        });
+
+        let persisted = load_player_cultivation_bundle(&settings, "Azure")
+            .expect("bundle should reload")
+            .expect("bundle row should remain present");
+        assert_eq!(
+            serde_json::from_value::<crate::nourishment::Nourishment>(
+                persisted["nourishment"].clone(),
+            )
+            .expect("legacy writer must preserve nourishment JSON after serializing its read"),
+            nourishment,
+            "a legacy writer must not replace nourishment after its immediate transaction commits"
         );
 
         let _ = fs::remove_dir_all(root);
