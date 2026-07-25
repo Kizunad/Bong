@@ -4,7 +4,7 @@ import net.minecraft.entity.EntityDimensions;
 import net.minecraft.util.Identifier;
 
 public enum FaunaVisualKind {
-    DEVOUR_RAT("devour_rat", 126, 0.6f, 0.5f, 0.65f, 0.25f, null),
+    DEVOUR_RAT("devour_rat", 126, 0.6f, 0.5f, 0.65f, 0.25f, "devour_rat"),
     ASH_SPIDER("ash_spider", 127, 0.9f, 0.45f, 0.75f, 0.22f, null),
     HYBRID_BEAST("hybrid_beast", 128, 1.2f, 1.4f, 0.95f, 0.45f, null),
     VOID_DISTORTED("void_distorted", 129, 1.2f, 1.5f, 1.05f, 0.5f, null),

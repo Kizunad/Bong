@@ -150,8 +150,12 @@ public class FaunaRenderBootstrapTest {
     @Test
     void idleAnimationNameDerivesFromAnimPath() {
         // 通用 fauna 模型（animPath==null）→ animation.fauna.idle（在 fauna.animation.json 内）
-        assertEquals("animation.fauna.idle", FaunaVisualKind.DEVOUR_RAT.idleAnimationName(),
+        assertEquals("animation.fauna.idle", FaunaVisualKind.ASH_SPIDER.idleAnimationName(),
             "通用 fauna 物种应回退 animation.fauna.idle");
+        // 噬元鼠改走专属模型（devour_rat.geo.json + devour_rat.animation.json，含 idle/walk/run/peck/claw/pounce），
+        // idle 应取 animation.bong.devour_rat.idle 而非通用回退。
+        assertEquals("animation.bong.devour_rat.idle", FaunaVisualKind.DEVOUR_RAT.idleAnimationName(),
+            "噬元鼠走专属模型动画文件，idle 应取 animation.bong.devour_rat.idle");
         // 专属模型（animPath!=null）→ animation.bong.<animPath>.idle（在各物种文件内）
         // 黑武士现走专属 heiwushi.animation.json（boss 招式动画 dark_barrage/dark_vortex/transform
         // 都在该文件，idle 同理），故 idle 名应为 animation.bong.heiwushi.idle 而非通用回退。

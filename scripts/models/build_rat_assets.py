@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""P0: 用户 bbmodel → GeckoLib 资产。产出:
+- geo/devour_rat.geo.json (共享几何; 尾脊 4 cube 各占独立 UV cell 以便贴图控制填充)
+- textures/entity/fauna/devour_rat_q{0,1,2}.png (底图: 尾脊蓝填充 0/半/全)
+- textures/entity/fauna/devour_rat_q{0,1,2}_glow.png (emissive: 蓝脊+红眼发光)
+- animations/devour_rat.animation.json (idle/walk/run/peck/claw/pounce)
+几何/动画取自用户最新 bbmodel; 骨骼原地命名(uuid不变)。"""
+import base64
+import io
+import json
+import uuid
+from pathlib import Path
+
+from PIL import Image, ImageDraw
+
+SRC = Path("local_models/devour_rat_v3_user2.bbmodel")
+CLIENT = Path("client/src/main/resources/assets/bong")
+GEO = CLIENT / "geo/devour_rat.geo.json"
+TEXDIR = CLIENT / "textures/entity/fauna"
+ANIM = CLIENT / "animations/devour_rat.animation.json"
+
+# 色板 (黑身/红眼/深蓝脊)
+COL = {"back": (26, 26, 32), "belly": (46, 46, 56), "foot": (12, 12, 16),
+       "eye": (232, 24, 24), "ear": (34, 30, 40), "tooth": (176, 172, 168),
+       "blue": (42, 68, 240), "blk": (20, 20, 26)}
+# 图集 128x48, cell 24x12, grid 4 列
+TW, TH, CW, CH, PX, PY = 128, 48, 24, 12, 30, 15
+# 固定 cell 坐标
+CELL = {"back": (0, 0), "belly": (30, 0), "foot": (60, 0), "eye": (90, 0),
+        "ear": (0, 15), "tooth": (30, 15),
+        "ridge0": (0, 30), "ridge1": (30, 30), "ridge2": (60, 30), "ridge3": (90, 30)}
+OLD = {(0, 0): "back", (30, 0): "belly", (60, 0): "foot", (90, 0): "tail",
+       (0, 15): "eye", (30, 15): "ear", (60, 15): "tooth"}
+
+
+def bb(cs):
+    xs = [v for c in cs for v in (c["from"][0], c["to"][0])]
+    ys = [v for c in cs for v in (c["from"][1], c["to"][1])]
+    zs = [v for c in cs for v in (c["from"][2], c["to"][2])]
+    return xs, ys, zs
+
+
+def main():
+    d = json.loads(SRC.read_text())
+    els = {e["uuid"]: e for e in d["elements"]}
+    root = d["outliner"][0]
+
+    def under(n):
+        acc, st = [], list(n.get("children", []))
+        while st:
+            x = st.pop()
+            if isinstance(x, str):
+                if x in els:
+                    acc.append(els[x])
+            elif isinstance(x, dict):
+                st += x.get("children", [])
+        return acc
+
+    # 识别 7 部位 + 命名/枢轴 (原地)
+    groups = [c for c in root["children"] if isinstance(c, dict)]
+    info = [(g, bb(under(g))) for g in groups]
+    head = min(info, key=lambda t: min(t[1][2]))[0]
+    rest = [t for t in info if t[0] is not head]
+    tail = max(rest, key=lambda t: max(t[1][2]))[0]
+    legs = sorted([t for t in rest if t[0] is not tail], key=lambda t: (min(t[1][2]) + max(t[1][2])) / 2)
+    front, back = legs[:2], legs[2:]
+
+    def cx(t): return (min(t[1][0]) + max(t[1][0])) / 2
+    fl, fr = min(front, key=cx)[0], max(front, key=cx)[0]
+    bl, br = min(back, key=cx)[0], max(back, key=cx)[0]
+
+    def setname(g, nm, piv):
+        g["name"] = nm
+        g["origin"] = [round(p, 3) for p in piv]
+    _, gy, gz = bb(list(els.values()))
+    setname(root, "body", [0, (min(gy) + max(gy)) / 2, (min(gz) + max(gz)) / 2])
+    hx, hy, hz = bb(under(head)); setname(head, "head", [0, min(hy), max(hz)])
+    tx, ty, tz = bb(under(tail)); setname(tail, "tail", [0, (min(ty) + max(ty)) / 2, min(tz)])
+    for nm, g in (("leg_fl", fl), ("leg_fr", fr), ("leg_bl", bl), ("leg_br", br)):
+        xs, ys, zs = bb(under(g)); setname(g, nm, [(min(xs) + max(xs)) / 2, max(ys), (min(zs) + max(zs)) / 2])
+
+    # 每 cube 的 UV cell: 尾脊 4 段各独立 cell; 其余按色区; 尾核黑
+    ridge = sorted([e for e in d["elements"] if e.get("name") == "tail_glow"],
+                   key=lambda e: (e["from"][2] + e["to"][2]) / 2)
+    ridge_cell = {r["uuid"]: f"ridge{i}" for i, r in enumerate(ridge)}
+    cube_cell = {}
+    for c in els.values():
+        if c["uuid"] in ridge_cell:
+            cube_cell[c["uuid"]] = ridge_cell[c["uuid"]]
+        else:
+            off = tuple(c.get("uv_offset", [])[:2]) if isinstance(c.get("uv_offset"), list) else None
+            z = OLD.get(off, "back")
+            cube_cell[c["uuid"]] = "back" if z == "tail" else z
+
+    # ── geo.json: 只建 7 个命名骨骼; 每骨收集其下所有 cube(跳过命名子骨骼) ──
+    NAMED = {"body", "head", "tail", "leg_fl", "leg_fr", "leg_bl", "leg_br"}
+
+    def cubes_of_bone(g):
+        acc = []
+        for ch in g.get("children", []):
+            if isinstance(ch, str):
+                if ch in els:
+                    acc.append(els[ch])
+            elif isinstance(ch, dict) and ch.get("name") not in NAMED:
+                acc += cubes_of_bone(ch)  # 未命名子组: 递归收集; 命名子骨骼: 跳过(单独成骨)
+        return acc
+
+    def geo_cube(c):
+        f, t = c["from"], c["to"]
+        zx, zy = CELL[cube_cell[c["uuid"]]]
+        gc = {"origin": [round(v, 3) for v in f],
+              "size": [round(t[i] - f[i], 3) for i in range(3)], "uv": [zx, zy]}
+        if any(c.get("rotation", [0, 0, 0])):
+            gc["rotation"] = c["rotation"]
+            gc["pivot"] = c.get("origin", [0, 0, 0])
+        return gc
+
+    def mk_bone(g, name, parent):
+        b = {"name": name, "pivot": g.get("origin", [0, 0, 0])}
+        if parent:
+            b["parent"] = parent
+        cubes = [geo_cube(c) for c in cubes_of_bone(g)]
+        if cubes:
+            b["cubes"] = cubes
+        return b
+
+    bones = [
+        mk_bone(root, "body", None),
+        mk_bone(head, "head", "body"),
+        mk_bone(tail, "tail", "body"),
+        mk_bone(fl, "leg_fl", "body"), mk_bone(fr, "leg_fr", "body"),
+        mk_bone(bl, "leg_bl", "body"), mk_bone(br, "leg_br", "body"),
+    ]
+    geo = {"format_version": "1.12.0", "minecraft:geometry": [{
+        "description": {"identifier": "geometry.bong.devour_rat",
+                        "texture_width": TW, "texture_height": TH,
+                        "visible_bounds_width": 3, "visible_bounds_height": 2,
+                        "visible_bounds_offset": [0, 0.6, 0]},
+        "bones": bones}]}
+    GEO.write_text(json.dumps(geo, ensure_ascii=False, indent=1))
+
+    # ── 3 组贴图 (底图 + emissive), 尾脊蓝填充 0/2/4 ──
+    def make_tex(fill):
+        base = Image.new("RGBA", (TW, TH), (0, 0, 0, 0))
+        glow = Image.new("RGBA", (TW, TH), (0, 0, 0, 255))
+        db, dg = ImageDraw.Draw(base), ImageDraw.Draw(glow)
+        for name, (zx, zy) in CELL.items():
+            if name.startswith("ridge"):
+                idx = int(name[-1])
+                blue = idx < fill
+                c = COL["blue"] if blue else COL["blk"]
+                db.rectangle([zx, zy, zx + CW - 1, zy + CH - 1], fill=c + (255,))
+                if blue:
+                    dg.rectangle([zx, zy, zx + CW - 1, zy + CH - 1], fill=COL["blue"] + (255,))
+            else:
+                db.rectangle([zx, zy, zx + CW - 1, zy + CH - 1], fill=COL[name] + (255,))
+                if name == "eye":
+                    dg.rectangle([zx, zy, zx + CW - 1, zy + CH - 1], fill=COL["eye"] + (255,))
+        return base, glow
+
+    TEXDIR.mkdir(parents=True, exist_ok=True)
+    for q, fill in ((0, 0), (1, 2), (2, 4)):
+        base, glow = make_tex(fill)
+        base.save(TEXDIR / f"devour_rat_q{q}.png")
+        glow.save(TEXDIR / f"devour_rat_q{q}_glow.png")
+
+    # ── animations → geckolib .animation.json ──
+    anims = {}
+    for a in d.get("animations", []):
+        bones = {}
+        for av in a["animators"].values():
+            nm = av["name"]
+            chans = {}
+            for kf in av["keyframes"]:
+                ch = "position" if kf["channel"] == "position" else "rotation"
+                dp = kf["data_points"][0]
+                chans.setdefault(ch, {})[str(round(kf["time"], 4))] = [dp.get("x", 0), dp.get("y", 0), dp.get("z", 0)]
+            bones[nm] = chans
+        entry = {"animation_length": round(a["length"], 4), "bones": bones}
+        if a.get("loop") == "loop":
+            entry["loop"] = True
+        anims[f"animation.bong.devour_rat.{a['name']}"] = entry
+    ANIM.parent.mkdir(parents=True, exist_ok=True)
+    ANIM.write_text(json.dumps({"format_version": "1.8.0", "animations": anims}, ensure_ascii=False, indent=1))
+
+    nbones = len(geo["minecraft:geometry"][0]["bones"])
+    ncubes = sum(len(b.get("cubes", [])) for b in geo["minecraft:geometry"][0]["bones"])
+    print(f"geo: {nbones} bones / {ncubes} cubes → {GEO}")
+    print(f"textures: devour_rat_q0/1/2(.png +_glow) → {TEXDIR}")
+    print(f"anims: {list(anims.keys())}")
+    print(f"        → {ANIM}")
+
+
+if __name__ == "__main__":
+    main()
