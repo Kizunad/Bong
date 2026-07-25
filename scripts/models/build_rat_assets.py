@@ -23,12 +23,12 @@ ANIM = CLIENT / "animations/devour_rat.animation.json"
 COL = {"back": (26, 26, 32), "belly": (46, 46, 56), "foot": (12, 12, 16),
        "eye": (232, 24, 24), "ear": (34, 30, 40), "tooth": (176, 172, 168),
        "blue": (42, 68, 240), "blk": (20, 20, 26)}
-# 图集 128x48, cell 24x12, grid 4 列
-TW, TH, CW, CH, PX, PY = 128, 48, 24, 12, 30, 15
-# 固定 cell 坐标
-CELL = {"back": (0, 0), "belly": (30, 0), "foot": (60, 0), "eye": (90, 0),
-        "ear": (0, 15), "tooth": (30, 15),
-        "ridge0": (0, 30), "ridge1": (30, 30), "ridge2": (60, 30), "ridge3": (90, 30)}
+# 图集 128x48, cell 32x16 **填满无缝**（max box-uv 展开 19.5x8.5，留 12/7px 边距防 MC 过滤溢色）
+TW, TH, CW, CH = 128, 48, 32, 16
+# 固定 cell 坐标（4 列 × 3 行，无缝紧贴）
+CELL = {"back": (0, 0), "belly": (32, 0), "foot": (64, 0), "eye": (96, 0),
+        "ear": (0, 16), "tooth": (32, 16), "ridge0": (64, 16), "ridge1": (96, 16),
+        "ridge2": (0, 32), "ridge3": (32, 32)}
 OLD = {(0, 0): "back", (30, 0): "belly", (60, 0): "foot", (90, 0): "tail",
        (0, 15): "eye", (30, 15): "ear", (60, 15): "tooth"}
 
@@ -108,8 +108,9 @@ def main():
     def geo_cube(c):
         f, t = c["from"], c["to"]
         zx, zy = CELL[cube_cell[c["uuid"]]]
+        # box-uv 起点内缩 3px：展开 bbox(≤19.5x8.5)四周都留 ≥3px 同色边距 → MC 过滤不溢色
         gc = {"origin": [round(v, 3) for v in f],
-              "size": [round(t[i] - f[i], 3) for i in range(3)], "uv": [zx, zy]}
+              "size": [round(t[i] - f[i], 3) for i in range(3)], "uv": [zx + 3, zy + 3]}
         if any(c.get("rotation", [0, 0, 0])):
             gc["rotation"] = c["rotation"]
             gc["pivot"] = c.get("origin", [0, 0, 0])
