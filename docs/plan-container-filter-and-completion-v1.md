@@ -34,6 +34,7 @@
 4. `resolve_item_category(item,item_registry,mineral_registry)` 是唯一 category authority：registered template 取 canonical category；未注册仅 canonical `mineral_id`、registry hit、精确 `mineral_<canonical>` template 三者齐备才 Mineral；spoof/unknown/mismatch typed invalid，绝不 fallback `Misc`。
 5. `water_skin` 已移出 scope，仅保留“历史移交 satiety/hydration”的说明；不得出现于容器数量、grid/filter、`ContainerSpec`、阶段交付、测试或 PR scope。`trade_crate`/`dead_drop_box` 是 placeable 边界，`herb_crate_placed` 为独立 placed twin，P3 不实现转换。
 6. nested/session 容器路线已否决，唯一玩家移动入口仍是 `InventoryMoveIntent`；forge runtime session 只投影 durable `ForgeAttemptId`。
+7. P1A 固定内部 `ContainerAcceptanceLockReason::{OwnerMissing, OwnerNotFound, OwnerInvalid}`，判定口径即上第 2 条 resolver 的 owner allowlist/eligible surface 三态；P2 持久化 `integrity_lock.reason` 与 P4 `acceptance_lock.reason` 均取该类型，wire 编码见 P4。
 
 ## P0 — 筛选数据模型 ✅ 2026-06-13
 
@@ -91,7 +92,12 @@
 
 P2 独占 `apply_container_freshness_transition`、`sealed_vial=Halve`、`spirit_seal_box=Freeze`、`moisture_guard=SpoilOnly { rate: 0.3 }` 的 4×4 mapping；P1A/P1B 全部 writer 以 post-transition identity merge。持久 `integrity_lock(reason,detected_tick)`，唯一 `reconcile_container_integrity_freshness` 管 owner corruption。固定 `InventoryReconciliationSet::{Commit,SnapshotRequestProducer,Reconcile,Sweep,CollectSnapshots,EmitSnapshots}`：所有 P1A/P1B business/reconciliation writer 只 request；唯一 reader/outbox/emitter 每 entity/tick 最终一帧。P2 不 retry settlement、不补发 XP/物品、不把 settlement retry 混入 reconciliation。
 
-**饱和测试**：逐格覆盖 4×4 freshness 转换及每个 P1A/P1B writer 的 raw→transition、merge identity、spill/drop；保存/加载每种 integrity lock、首次/reason-change/repair revision +1 与 same-reason 0；静态 gate 断言唯一 `EventReader<InventorySnapshotRequest>` 和唯一 emitter；同 tick 多 P1A/P1B writer、多 reason、Added/Changed/join/revive、两个 entity 隔离、缺 client/serialize/send failure drain、最终 revision/content 一帧。任何 snapshot/reconcile 测试都不得重试 settlement 或重放经济副作用。
+- locked 期间该容器 behavior 强制 `Normal`；任何 active Freeze interval 整段 discard（`frozen_since_tick` 清空且**不**计入 `frozen_accumulated`），items 的位置/stack/layout 不变。
+- 同 reason 重复检测零修改、revision 不变；reason 改变则更新 reason/detected_tick 并同样 discard active interval。
+- repair 在**同一原子 commit** 清 `integrity_lock`：修复后 behavior=Freeze 则以新 `now_tick` 对每个 Freshness item `enter_container` 重开 interval，否则保持 None；首次 lock/reason-change/repair 各恰 +1，same-reason 0。
+- 4×4 mapping 与上述强制 `Normal` 均锚回既有实现 `server/src/shelflife/container.rs`：`container_storage_multiplier`（:30，Halve 非 Stepwise 减半/Stepwise 退 Normal，Freeze time-based 0.0/Stepwise 必须 1.0**禁 0.0**）、`enter_container`（:82）、`exit_container`（:94，SpoilOnly{0.3} 仅 Spoil track/Decay·Age 退 Normal）。
+
+**饱和测试**：逐格覆盖 4×4 freshness 转换及每个 P1A/P1B writer 的 raw→transition、merge identity、spill/drop；保存/加载三个 reason 各一条 integrity lock、首次/reason-change/repair revision +1 与 same-reason 0；静态 gate 断言唯一 `EventReader<InventorySnapshotRequest>` 和唯一 emitter；同 tick 多 P1A/P1B writer、多 reason、Added/Changed/join/revive、两个 entity 隔离、缺 client/serialize/send failure drain、最终 revision/content 一帧。任何 snapshot/reconcile 测试都不得重试 settlement 或重放经济副作用。
 
 ## P3 — 暗器迁移与恰好九个随身容器 ⬜
 
@@ -111,9 +117,9 @@ P3 的随身 `ContainerSpec` allowlist 必须与上表 **exact set equality**，
 
 ## P4 — filter wire、client 预提示、e2e 与归档 ⬜
 
-`ContainerSnapshotV1.accept_filter` required array/repeated，optional presence `acceptance_lock={reason}`；健康 absent+`[]` 才 all，present 时 exact `[]` inert；P4 从 P2 persisted reason 投影，不下发 tick。`InventoryItemViewV1.category` 由 P1A resolver 产 canonical lower-snake；Rust/protobuf/TypeBox/Java/client 同步，非法/unknown/missing/null/extra key 整份 snapshot fail-closed。Worn/Pack/Inspect 以 `ContainerFilterRules.accepts` 预提示，预测非法/locked 仍发 `InventoryMoveIntent`，server 权威。P4 不接 snapshot routing。bot/e2e 覆盖两通用背包仍收多类别、七专用容器过滤（含 ore_sack pass/herb reject、swap reverse、moisture_guard）、locked source/target、integrity revision、同 template 双 owner，并验证默认 loadout、`basic.grass_pouch` recipe、旧存档的 canonical template/owner/container ID 不变及无 `herb_pouch`/`herb_crate` ContainerSpec。
+`ContainerSnapshotV1.accept_filter` required array/repeated，optional presence `acceptance_lock={reason: ContainerAcceptanceLockReason}`（canonical lower-snake `owner_missing`/`owner_not_found`/`owner_invalid`，与 `category` 同级 Rust/protobuf/TypeBox/Java/client 同步）；健康 absent+`[]` 才 all，present 时 exact `[]` inert；P4 从 P2 persisted reason 投影，不下发 tick。`InventoryItemViewV1.category` 由 P1A resolver 产 canonical lower-snake；Rust/protobuf/TypeBox/Java/client 同步，非法/unknown/missing/null/extra key 整份 snapshot fail-closed。Worn/Pack/Inspect 以 `ContainerFilterRules.accepts` 预提示，预测非法/locked 仍发 `InventoryMoveIntent`，server 权威。P4 不接 snapshot routing。bot/e2e 覆盖两通用背包仍收多类别、七专用容器过滤（含 ore_sack pass/herb reject、swap reverse、moisture_guard）、locked source/target、integrity revision、同 template 双 owner，并验证默认 loadout、`basic.grass_pouch` recipe、旧存档的 canonical template/owner/container ID 不变及无 `herb_pouch`/`herb_crate` ContainerSpec。
 
-**饱和测试**：两种 filter tagged variant、required array/repeated、healthy absent+empty 与 locked present+exact empty、locked non-empty、缺/null/unknown/extra-key 的 Rust/protobuf/TypeBox/JsonFormat/client parser fail-closed；18 个 canonical category 和 synthetic mineral 正反；Worn/Pack/Inspect 的 category/prefix/empty/footprint/lock `VALID`/`INVALID` 与仍发送 Intent；bot/e2e 对九容器逐一真实验证。
+**饱和测试**：两种 filter tagged variant、required array/repeated、healthy absent+empty 与 locked present+exact empty、locked non-empty、缺/null/unknown/extra-key 的 Rust/protobuf/TypeBox/JsonFormat/client parser fail-closed；18 个 canonical category 和 synthetic mineral 正反；`ContainerAcceptanceLockReason` 三变体各自正反 round-trip、unknown reason 整份 snapshot fail-closed；Worn/Pack/Inspect 的 category/prefix/empty/footprint/lock `VALID`/`INVALID` 与仍发送 Intent；bot/e2e 对九容器逐一真实验证。
 
 ## §8 开放问题（历史表，全部已收口）
 
