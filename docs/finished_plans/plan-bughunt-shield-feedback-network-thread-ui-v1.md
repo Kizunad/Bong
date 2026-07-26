@@ -88,3 +88,15 @@ Skeleton Plan：`shield_broken` / `shield_block_hit` 两个盾牌反馈 payload 
 - 不应把所有 `ROUTER.route(...)` 粗暴包进 `client.execute` 后立即结束；部分 handler 当前只更新线程安全 store 或纯解析，统一迁移需要单独审计。
 - 不要顺手改盾牌数值、耐久、server 状态机或资源规格。
 - `ZhenmaiHudStateStore` 写入本身是 `AtomicReference`，不是主证据；主修复动机是 Sound / VFX / MC game state 访问必须在主线程。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+本 plan 定位的具体症状（`shield_broken` / `shield_block_hit` 在网络线程内直接触发音效/粒子/HUD）属于更大一类问题——任意 `server_data` payload handler 脱离主线程运行——已被 `craft-outcome-network-thread` 系列 plan 的通用化修复根治：PR #1196（commit `16984e142`，2026-07-23）把 `BongNetworkHandler.processServerDataPayload:499` 的 `router.route` 全量经 `clientExecutor`（`client::execute`）切换到主线程，使 Shield 的两个 handler 结构性地不再可能从网络线程被触达。本 plan 未产出专属实施，问题作为该通用修复的副作用被解决。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/java/com/bong/client/BongNetworkHandler.java:499`（`processServerDataPayload` 将 `router.route` 全量经 `clientExecutor`/`client::execute` 切主线程），覆盖范围含本 plan 提及的 `ShieldBrokenHandler` / `ShieldBlockHitHandler`
+- **关键 commit**：`16984e142`（2026-07-23，PR #1196，craft-outcome-network-thread 通用主线程路由修复）
+- **测试结果**：2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：client `BongNetworkHandler.processServerDataPayload` 通用路由已覆盖 `ShieldBrokenHandler`/`ShieldBlockHitHandler`；server 侧 `emit_shield_broken_payloads`/`emit_shield_block_hit_payloads`（`server/src/network/mod.rs:984-998`）无需改动
+- **遗留 / 后续**：无（根因已被通用主线程路由修复覆盖）
