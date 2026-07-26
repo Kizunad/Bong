@@ -2,7 +2,7 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：✅ 2026-07-26。最新已验证的功能代码候选是 `e4bb94a96d780218e79718516d438bf18d0b5d63`；它包含 ambient 非叶 `Waterlogged=True` 落点绕过的闭合修复，且 `662609339d69e14a06964b557497394fdeea03a5` 为其祖先、`origin/main` 未再前进。P0/P1/P2 均已闭合；本次归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。PR 仍开放且未合并；本 docs-only 证据提交不得预先声称自身 GitHub E2E、CodeRabbit、`/review` 或 `CLEAN` 状态，push 后须以当时 PR body/status 的 exact HEAD 记录为准。
+**状态**：✅ 2026-07-26。当前权威功能代码候选是 `88c8f25f8c1eea8abc7c91c36acfd5ba01b407b7`；`662609339d69e14a06964b557497394fdeea03a5` 为其祖先、权威 slot porcelain clean。P0/P1/P2 均已闭合；本次归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。PR 仍开放且未合并；本 docs-only 证据提交不得预先声称自身 GitHub E2E、CodeRabbit、`/review` 或 `CLEAN` 状态，push 后须以当时 PR body/status 的 exact HEAD 记录为准。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
@@ -329,9 +329,9 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ### 落地清单
 
-- **P0**：`server/src/npc/spawn/ambient_scheduler.rs` 私有实现 runtime-first strict resolver 与 `AmbientRuntimeGround` tri-state；loaded runtime 明确不安全即拒绝，loaded scan miss 的 raster Y 必须回到 live `ChunkLayer` 验证 support/feet/head，三格统一经私有 `contains_ambient_liquid` 拒绝 Water/Lava kind 与所有 `Waterlogged=True`，双源失败不调用 pool、不占 pending budget。严格 `GroundLandingScan`/分类/扫描只被 ambient 调用，Navigator 保持主线原有状态、caller、resolver、测试和 legacy 语义；功能候选 `e4bb94a96d780218e79718516d438bf18d0b5d63` 相对 `b398c4071042b091f1590989998568b49dce401e` 的 `server/src/npc/navigator.rs` diff 为空。
+- **P0**：`server/src/npc/spawn/ambient_scheduler.rs` 私有实现 runtime-first strict resolver 与 `AmbientRuntimeGround` tri-state；loaded runtime 明确不安全即拒绝，loaded scan miss 的 raster Y 必须回到 live `ChunkLayer` 验证 support/feet/head，三格统一经私有 `contains_ambient_liquid` 拒绝 Water/Lava kind 与所有 `Waterlogged=True`，双源失败不调用 pool、不占 pending budget。`ac8b2c5ab7f015c0db7dcdf35888b8aa87978cf4` 令运动阻塞水浸 support 成为权威 veto；`88c8f25f8c1eea8abc7c91c36acfd5ba01b407b7` 将其收束为仅结构性、非叶、非 passthrough 支撑，叶子仍为 scan `Miss`。严格 `GroundLandingScan`/分类/扫描只被 ambient 调用，Navigator 保持主线原有状态、caller、resolver、测试和 legacy 语义；功能候选 `88c8f25f8c1eea8abc7c91c36acfd5ba01b407b7` 相对 `b398c4071042b091f1590989998568b49dce401e` 的 `server/src/npc/navigator.rs` diff 为空。
 - **P1**：`npc::spawn::ambient_scheduler::tests` 覆盖 runtime/raster 优先级、unloaded fallback、负坐标、扫描窗口、双格净空、默认/属性液体、空气/非运动支撑、layer 边界、pool `None` 与预算副作用；水浸闭合明确锁住无属性 stone、`waterlogged=false`、水浸 Oak stairs support 和水浸 Rail feet/head，并由 direct 三格分类、runtime scan/resolve 与 loaded-raster 精确复核共同覆盖；本轮额外锁住**窗口内运动阻塞的水浸非叶支撑**必须先归类 `LiquidObstructed`、映射 `LoadedUnsafe`、拒绝同列另一安全 raster 高度且 `SurfaceProvider` 零查询；另以真实 `ambient_scheduler_system::<M>` → mundane/threat pool → ECS `Position` 锁住两条生产链。
-- **P2**：`server/src/cmd/dev/ambient_spawn.rs`、`server/src/cmd/dev/mod.rs`、`server/src/cmd/mod.rs`、`server/src/cmd/registry_pin.rs` 提供 X/Z-only 的 deterministic one-shot；生产默认不向 Brigadier command tree 注册 `ambient_spawn` root，只有显式 `BONG_DEV_MODE` 才注册命令并安装私有 `AmbientSpawnDevAccess` capability，handler 对内部伪造 event 仍在 resolver/pool 前 fail-closed。命令 handler 与生产 `ambient_scheduler_system` 均只接受未标记 `Despawned` 的真实 `ChunkLayer`；raster 只能替代有效 live layer 内未加载 chunk 的 surface，不能替代 pool 的目标 layer。`scripts/bot-e2e.sh` 的 **generic** 默认模式保留 caller raster/state/Redis 与 `$ROOT/server` CWD；无显式 `REDIS_URL` 时先探测并沿用调用方 `127.0.0.1:6379` listener，只有缺失时才创建/清理私有 Compose Redis。CI 显式选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 的 **owned** 模式，才无条件创建私有 token/state/Redis/private CWD，并严格核验 marker、PID 与 listener ownership。REUSE 仅接管 ordinary existing server、无 listener fail-closed；cleanup owner-safe，保留无全局 `pkill`。场景在发命令前逐字节核验 `(5,3)` 的 `spans_count.bin` / `spans.bin` / `surface_id.bin` / `water_level.bin`，证明同 token fixture 的 support `y=72`、feet/head `y=73/74` 净空且无液体，再通过真实协议包验证 Cow/Rat 脚点 `y=73`，拒绝继承执行者 `y=152`。generic caller-inputs 的真实 Docker/server E2E 尚未运行。
+- **P2**：`server/src/cmd/dev/ambient_spawn.rs`、`server/src/cmd/dev/mod.rs`、`server/src/cmd/mod.rs`、`server/src/cmd/registry_pin.rs` 提供 X/Z-only 的 deterministic one-shot；生产默认不向 Brigadier command tree 注册 `ambient_spawn` root，只有显式 `BONG_DEV_MODE` 才注册命令并安装私有 `AmbientSpawnDevAccess` capability，handler 对内部伪造 event 仍在 resolver/pool 前 fail-closed。命令 handler 与生产 `ambient_scheduler_system` 均只接受未标记 `Despawned` 的真实 `ChunkLayer`；raster 只能替代有效 live layer 内未加载 chunk 的 surface，不能替代 pool 的目标 layer。`ac8b2c5ab7f015c0db7dcdf35888b8aa87978cf4` 令 `scripts/bot-e2e.sh` generic self-start 在未显式 `REDIS_URL` 时先探测/沿用 caller `127.0.0.1:6379` listener，缺失才启动并清理私有 Compose Redis；显式 `REDIS_URL` 原样保留。CI 显式选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 的 **owned** 模式，仍无条件创建私有 token/state/Redis/private CWD，并严格核验 marker、PID 与 listener ownership。REUSE 仅接管 ordinary existing server、无 listener fail-closed；cleanup owner-safe，保留无全局 `pkill`。可执行 fake-tool shell 合同覆盖已有默认 listener 时不调用 Docker、不覆盖 `REDIS_URL`、不 teardown caller Redis，及默认端口缺失时自起私有实例；generic 默认 listener 的真实 Docker/server E2E 尚未单独运行。场景在发命令前逐字节核验 `(5,3)` 的 `spans_count.bin` / `spans.bin` / `surface_id.bin` / `water_level.bin`，证明同 token fixture 的 support `y=72`、feet/head `y=73/74` 净空且无液体，再通过真实协议包验证 Cow/Rat 脚点 `y=73`，拒绝继承执行者 `y=152`。
 
 ### 关键 commit
 
@@ -354,6 +354,8 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `f9b590a7aa7ad0779d643749126dc3e6facd2608`（2026-07-26）：历史 latest-main 合并候选；将 `662609339d69e14a06964b557497394fdeea03a5` 合入 7a0，带入 docs/README 主线变更，未改变 server 代码树。
 - `7e7c3ead20e4dc5ae8ff6169bf82bb327e552b2d`（2026-07-26）：将 Bot harness 收束为 explicit owned mode（CI 选择）与保留 caller 输入的 generic default；owned mode 保留私有 token/state/Redis/CWD、strict marker/PID ownership 和 owner-safe cleanup，REUSE 仅接管已有 ordinary server。
 - `81f57ea44978e07673a87a7430b5b95b322110ca`（2026-07-26）：generic 无 raster 传递高熵 fixture token，owned mode 即使继承 `REDIS_URL` 仍强制私有 Redis，并在启动前拒绝非法 mode 值。
+- `ac8b2c5ab7f015c0db7dcdf35888b8aa87978cf4`（2026-07-26）：PR #1254 review canonical 修复；将水浸结构支撑升级为权威 runtime veto，拒绝 raster 回退，并恢复 generic self-start 未显式 `REDIS_URL` 时对 caller 默认 `127.0.0.1:6379` Redis 的复用。
+- `88c8f25f8c1eea8abc7c91c36acfd5ba01b407b7`（2026-07-26）：收束水浸 veto 边界；仅结构性、非叶、非 passthrough 支撑映射 `LoadedUnsafe`，property-variant waterlogged leaf 保持 `Miss`。
 - `e4bb94a96d780218e79718516d438bf18d0b5d63`（2026-07-26）：修复 ambient 非叶水浸落点绕过；私有 `contains_ambient_liquid` 统一拒绝 Water/Lava kind 与 `Waterlogged=True`，覆盖 support、feet/head、direct 三格、runtime scan/resolve 与 loaded-raster 精确复核；isolated targeted test 2 passed / 0 failed / 12018 filtered。
 - 本轮 PR #1254 review 返工（2026-07-26）：将运动阻塞的 Water/Lava 或 `Waterlogged=True` support 在 strict-support 拒绝前归类为 `LiquidObstructed`，使其权威映射 `LoadedUnsafe` 并禁止 raster 查询；Bot generic self-start 在未显式 `REDIS_URL` 时先沿用 `127.0.0.1:6379` 的调用方 listener，不存在才启动并清理本轮私有 Compose Redis，owned / REUSE 语义保持不变。
 - `0f04aa2efe7af0eb63fd79b190f54a65156419b0`（2026-07-26）：此前 docs closure；其 exact-head GitHub E2E `30193835466` SUCCESS，Client/schema/agent/server/Smoke/Bot/Chat 均成功。此为历史 exact-head 证据，不是当前候选。
@@ -366,14 +368,15 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ### 测试结果
 
-#### 当前功能候选 `e4bb94a96d780218e79718516d438bf18d0b5d63` 证据
+#### 当前功能候选 `88c8f25f8c1eea8abc7c91c36acfd5ba01b407b7` 证据
 
-- **server 本地门禁**：`cargo fmt --check` PASS；`cargo clippy --all-targets -- -D warnings` PASS（4m17s）；完整 `cargo test` PASS：lib 12018 passed / 0 failed / 2 ignored，main 12 passed，full-app 1 passed，Tarkov 4 passed，doc 5 ignored。
-- **Bot 静态/协议门禁**：`bash -n scripts/bot-e2e.sh` PASS；`python3 scripts/bot/test_protocol.py` 153 passed / 0 failed。执行曾出现 `ResourceWarning`，但退出码为 0，未予隐去。
-- **Bot 无上下文 revalidator**：以 `81f57ea44978e07673a87a7430b5b95b322110ca` 审核，PASS、0 blocker / 0 major；其明确限制是未运行真实 Docker/server E2E，generic caller inputs 的真实端到端仍待补证。
-- **历史 exact-head E2E**：run `30198353661` 对前一 `0766` 候选 exact HEAD SUCCESS，Client/schema/agent/server/Smoke/Bot/Chat stages 全成功；它只是历史证据，不能替代 e4bb 或本 docs-only commit 的 exact-HEAD gate。
-- **历史 CodeRabbit / PR 状态**：`0766` 的 CodeRabbit status success、description `Review completed`，且当时 PR 为 `MERGEABLE/CLEAN`；均不适用于 e4bb 或本 docs-only commit。
-- **review 裁决**：comment `5083160080` / run `30198393271` 的 workflow 因 dedup skipped，但 primary adjacent trigger path 已产出完整评论。其一确认 non-leaf `Waterlogged=True` 可逃过 `BlockState::is_liquid()`，已由 e4bb 收口。其二确认 Bot generic caller external-input contract 被此前全局拒绝；已由 7e7c3ead2 / 81f57ea44 的两模式设计修复。该评论提出的 global `REQUIRED_ENV` fail-closed finding 经追踪仍被证伪：仅两个 hard-prerequisite declaration，supported caller 提供它，未作额外 runner semantic 改动。不得将更广的 Bot scope concern 描述为完全 refuted。
+- **权威代码树**：`662609339d69e14a06964b557497394fdeea03a5` 是 `88c` 的祖先；权威 slot porcelain clean。
+- **server 本地门禁**：`cargo fmt --check` PASS；`cargo clippy --all-targets -- -D warnings` PASS；完整 `cargo test` exit 0：lib 12019 passed / 0 failed / 2 ignored，main 12 passed，full-app 1 passed，Tarkov 4 passed，doc 5 ignored。
+- **Bot 静态/协议门禁**：`bash -n scripts/bot-e2e.sh` PASS；`python3 scripts/bot/test_protocol.py` 154 passed / 0 failed、exit 0。执行曾出现非失败 `ResourceWarning`，未予隐去。
+- **ambient 定向**：`cargo test ... ambient_ -- --test-threads=1` 138 passed / 0 failed / 11883 filtered；状态转换 pin 覆盖 waterlogged structural support → `LiquidObstructed` → `LoadedUnsafe`，raster `SurfaceProvider` 查询计数为 0。
+- **fresh 无上下文 validator**：目标 `88c`，PASS、0 blocker / 0 major。
+- **review 裁决**：comment `5083912427` 的两个去重 major 均为 CONFIRMED→FIXED：水浸结构支撑的权威 veto 与 generic 默认 Redis listener 复用均已落地；但该评论针对旧 HEAD `83b` 且为 `REQUEST_CHANGES`，push 后必须对新 exact HEAD 重发 `/review`，不得预称复审通过。
+- **外部门禁边界**：历史 `83b` E2E run `30205470993` 仅证明该历史 HEAD。push 后 GitHub E2E、CodeRabbit 与 PR `CLEAN` 必须绑定最终 docs commit 的 exact HEAD；generic 默认 listener 的真实 full Docker/server E2E 尚未单独运行，现有可执行 fake-tool shell 合同只证明不调用 Docker / 不 teardown caller Redis 与缺 listener 的 private self-start 分支。
 
 #### 历史候选 7a0 / f9 证据（已被后续功能修复取代）
 
@@ -408,8 +411,8 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ### 跨仓库核验
 
-- **server**：`resolve_ambient_ground_position`、`resolve_loaded_raster_landing`、`submit_ambient_spawn_candidate`、`submit_ambient_dev_spawn_once`、`AmbientSpawnCmd`、`AmbientSpawnDevAccess` 与 command graph pin 均落地；mundane/threat 共用同一 resolver 和提交边界，`contains_ambient_liquid` 在 support、feet/head 统一拒绝 Water/Lava kind 与非叶 `Waterlogged=True`，`BONG_DEV_MODE` 默认关闭命令树入口且 capability 拒绝伪造 event。
-- **bot**：`scripts/bot/make_novice_raster_fixture.py` 为 owned mode fixture 写入 `ambient-surface-v1` token 与 support/feet/head 元数据；`scripts/bot-e2e.sh` 的 generic 默认模式保留 caller raster/state/Redis 和 `$ROOT/server` CWD，CI 显式选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 才启用 private fixture/Redis/CWD、strict marker/PID ownership 与 owner-safe cleanup。REUSE 仅使用已有 ordinary server，缺 listener fail-closed；无 global `pkill`。`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 先核验同 token 的真实 tile 二进制，再走 `/tpzone`、`/ambient_spawn once`、`entity_spawn` 与位置 mirror，不依赖随机 ambient tick；generic caller-inputs 的真实 Docker/server E2E 尚待执行。
+- **server**：`resolve_ambient_ground_position`、`resolve_loaded_raster_landing`、`submit_ambient_spawn_candidate`、`submit_ambient_dev_spawn_once`、`AmbientSpawnCmd`、`AmbientSpawnDevAccess` 与 command graph pin 均落地；mundane/threat 共用同一 resolver 和提交边界。`ac8b2c5` / `88c8f25` 将仅结构性、非叶、非 passthrough 的 Water/Lava 或 `Waterlogged=True` support 映射为 `LiquidObstructed` / `LoadedUnsafe`，并使 leaf 保持 `Miss`；`BONG_DEV_MODE` 默认关闭命令树入口且 capability 拒绝伪造 event。
+- **bot**：`scripts/bot/make_novice_raster_fixture.py` 为 owned mode fixture 写入 `ambient-surface-v1` token 与 support/feet/head 元数据；`ac8b2c5` 后 `scripts/bot-e2e.sh` 的 generic self-start 保留 caller raster/state/Redis 与 `$ROOT/server` CWD，显式 `REDIS_URL` 原样保留，未显式时先采用 caller `127.0.0.1:6379` listener、缺失才自起私有 Compose Redis。CI 显式选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 才启用 private fixture/Redis/CWD、strict marker/PID ownership 与 owner-safe cleanup。REUSE 仅使用已有 ordinary server，缺 listener fail-closed；无 global `pkill`。fake-tool shell 合同覆盖 default listener 时无 Docker / 无 caller teardown 以及缺 listener 的 private self-start；generic 默认 listener 的真实 Docker/server E2E 尚待执行。`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 先核验同 token 的真实 tile 二进制，再走 `/tpzone`、`/ambient_spawn once`、`entity_spawn` 与位置 mirror，不依赖随机 ambient tick。
 - **client**：零代码改动；继续渲染 server 权威 `Position`，未加入 client gravity hack；Java 17 全门禁为历史候选证据。
 - **agent/schema**：零代码改动、零 Redis/wire 变更；合并主线后的 schema/Tiandao 门禁为历史候选证据。
 
