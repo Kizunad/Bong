@@ -185,6 +185,14 @@ pub struct NpcBlackboard {
     pub target_position: Option<DVec3>,
     /// GameTick of the last melee attack (for cooldown tracking).
     pub last_melee_tick: u32,
+    /// `CombatClock.tick` of the last successfully-fired `NpcDefenseAction`
+    /// (bug npc-defense-scorer-starved-by-melee-ordering). Read by
+    /// `npc_defense_scorer_system` to gate re-scoring: without this, Defense's
+    /// realm-based score has no notion of "just fired" and would win the
+    /// FirstToScore pick on every single tick once registered ahead of
+    /// Melee/Chase, permanently starving them (the mirror-image of the bug
+    /// this field fixes). `None` means "never fired" — always ready.
+    pub last_defense_tick: Option<u64>,
     /// Composite threat assessment for the nearest player (P2).
     pub threat_assessment: Option<ThreatAssessment>,
     /// Self-interest decision derived from threat assessment + memory (P2).
@@ -204,6 +212,7 @@ impl Default for NpcBlackboard {
             player_distance: f32::INFINITY,
             target_position: None,
             last_melee_tick: 0,
+            last_defense_tick: None,
             threat_assessment: None,
             self_interest_decision: None,
             retaliation_target: None,

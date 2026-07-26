@@ -155,13 +155,23 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(TribulationReadyScorer, StartDuXuAction)
         .when(NpcHealScorer, NpcHealAction)
         .when(NpcTechniqueScorer, NpcTechniqueAction)
+        // NpcDefenseScorer MUST come before MeleeRangeScorer: MeleeRangeScorer's raw
+        // distance check is unconditionally >0.05 whenever a player is in reach, so with
+        // no cooldown of its own it would win FirstToScore on *every* tick and Defense
+        // would never fire (bug npc-defense-scorer-starved-by-melee-ordering). This is
+        // now safe to register first because `npc_defense_scorer_system` carries its own
+        // distance gate (mirrors MeleeRangeScorer's) + a per-realm cooldown
+        // (`defense_cooldown_elapsed`) — it only wins briefly, every
+        // `defense_interval_range(realm)` ticks, producing an "攻→防→攻" rhythm instead
+        // of permanently starving Melee (which is what registering Defense first used to
+        // do before commit 4eb958688 flipped the order the other way).
+        .when(NpcDefenseScorer, NpcDefenseAction::default())
         .when(MeleeRangeScorer, MeleeAttackAction)
         // PlayerProximityScorer MUST come before ChaseTargetScorer: at close range
         // (≤3.2 blocks) chase also scores >0.05 in a FirstToScore chain, so flee
         // must be evaluated first or it is permanently blocked. See bug npc-flee-blocked.
         .when(PlayerProximityScorer, FleeAction)
         .when(ChaseTargetScorer, ChaseAction)
-        .when(NpcDefenseScorer, NpcDefenseAction::default())
         .when(CultivationDriveScorer, CultivateAction)
         .when(TradeStallScorer, StallAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
@@ -180,13 +190,15 @@ pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(LingtianFarmingScorer::replenish(), ReplenishAction)
         .when(LingtianFarmingScorer::plant(), PlantAction)
         .when(LingtianFarmingScorer::till(), TillAction)
+        // NpcDefenseScorer MUST come before MeleeRangeScorer — see rogue_npc_thinker()
+        // above for the full rationale (bug npc-defense-scorer-starved-by-melee-ordering).
+        .when(NpcDefenseScorer, NpcDefenseAction::default())
         .when(MeleeRangeScorer, MeleeAttackAction)
         // PlayerProximityScorer MUST come before ChaseTargetScorer: at close range
         // (≤3.2 blocks) chase also scores >0.05 in a FirstToScore chain, so flee
         // must be evaluated first or it is permanently blocked. See bug npc-flee-blocked.
         .when(PlayerProximityScorer, FleeAction)
         .when(ChaseTargetScorer, ChaseAction)
-        .when(NpcDefenseScorer, NpcDefenseAction::default())
         .when(CultivationDriveScorer, CultivateAction)
         .when(TradeStallScorer, StallAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
@@ -619,6 +631,47 @@ mod ordering_tests {
     #[test]
     fn scattered_cultivator_thinker_flees_before_chasing() {
         assert_flee_before_chase(
+            &format!("{:?}", scattered_cultivator_thinker()),
+            "scattered_cultivator_thinker",
+        );
+    }
+
+    // Regression lock for bug npc-defense-scorer-starved-by-melee-ordering.
+    //
+    // MeleeRangeScorer's raw distance check has no cooldown of its own — it scores
+    // >0.05 unconditionally whenever a player is in reach. If it's registered ahead of
+    // NpcDefenseScorer in a FirstToScore chain, Defense can never win the pick during
+    // real melee combat, so NpcDefenseAction never fires (the bug). NpcDefenseScorer
+    // now carries its own distance + per-realm cooldown gate (defense_cooldown_elapsed
+    // in scorers_combat.rs), so it's safe to register it *before* Melee without
+    // reintroducing the mirror-image bug (Defense permanently starving Melee/Chase,
+    // which is what commit 4eb958688 fixed the first time Defense sat ahead of them).
+
+    fn assert_defense_before_melee(debug_str: &str, thinker_name: &str) {
+        let defense_pos = debug_str.find("NpcDefenseScorer").unwrap_or_else(|| {
+            panic!("{thinker_name} must register NpcDefenseScorer (drives NpcDefenseAction)")
+        });
+        let melee_pos = debug_str.find("MeleeRangeScorer").unwrap_or_else(|| {
+            panic!("{thinker_name} must register MeleeRangeScorer (drives MeleeAttackAction)")
+        });
+        assert!(
+            defense_pos < melee_pos,
+            "{thinker_name}: NpcDefenseScorer (NpcDefenseAction) must be registered BEFORE \
+             MeleeRangeScorer (MeleeAttackAction) — FirstToScore picks first-above-threshold \
+             in registration order, and MeleeRangeScorer's score has no cooldown of its own, \
+             so melee-first permanently starves defense. \
+             found NpcDefenseScorer at byte {defense_pos}, MeleeRangeScorer at byte {melee_pos}"
+        );
+    }
+
+    #[test]
+    fn rogue_npc_thinker_defends_before_meleeing() {
+        assert_defense_before_melee(&format!("{:?}", rogue_npc_thinker()), "rogue_npc_thinker");
+    }
+
+    #[test]
+    fn scattered_cultivator_thinker_defends_before_meleeing() {
+        assert_defense_before_melee(
             &format!("{:?}", scattered_cultivator_thinker()),
             "scattered_cultivator_thinker",
         );

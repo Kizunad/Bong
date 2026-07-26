@@ -451,14 +451,23 @@ fn lifecycle_blocks_combat_action(lifecycle: Option<&Lifecycle>) -> bool {
 #[allow(clippy::type_complexity)]
 pub(crate) fn npc_defense_action_system(
     mut actions: Query<(&Actor, &mut ActionState, &mut NpcDefenseAction)>,
-    npcs: Query<(&Cultivation, Option<&StatusEffects>, Option<&Lifecycle>), With<NpcMarker>>,
+    mut npcs: Query<
+        (
+            &Cultivation,
+            Option<&StatusEffects>,
+            Option<&Lifecycle>,
+            Option<&mut NpcBlackboard>,
+        ),
+        With<NpcMarker>,
+    >,
     mut defense_intents: EventWriter<DefenseIntent>,
     combat_clock: Option<Res<CombatClock>>,
 ) {
     let now_tick = combat_clock.as_deref().map(|c| c.tick).unwrap_or(0);
 
     for (Actor(actor), mut state, mut defense_action) in &mut actions {
-        let Ok((cultivation, statuses_opt, lifecycle)) = npcs.get(*actor) else {
+        let Ok((cultivation, statuses_opt, lifecycle, mut blackboard)) = npcs.get_mut(*actor)
+        else {
             if matches!(*state, ActionState::Requested | ActionState::Executing) {
                 *state = ActionState::Failure;
             }
@@ -511,6 +520,14 @@ pub(crate) fn npc_defense_action_system(
                         issued_at_tick: now_tick,
                     });
                     defense_action.last_defense_tick = Some(now_tick);
+                    // Mirror the fire timestamp onto the NPC's own blackboard (bug
+                    // npc-defense-scorer-starved-by-melee-ordering). `npc_defense_scorer_system`
+                    // reads this to go quiet for `defense_interval_range(realm).0` ticks after
+                    // firing — without it, Defense's realm score has no cooldown and would win
+                    // FirstToScore on every tick once registered ahead of Melee/Chase.
+                    if let Some(bb) = blackboard.as_deref_mut() {
+                        bb.last_defense_tick = Some(now_tick);
+                    }
                     *state = ActionState::Success;
                 }
             }

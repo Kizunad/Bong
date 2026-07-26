@@ -12367,6 +12367,7 @@ mod persistence_tests {
                 player_distance: 6.5,
                 target_position: Some(DVec3::new(8.0, 66.0, 8.0)),
                 last_melee_tick: 77,
+                last_defense_tick: None,
                 threat_assessment: None,
                 self_interest_decision: None,
                 retaliation_target: None,

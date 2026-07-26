@@ -344,11 +344,36 @@ fn has_blocking_status(statuses: &StatusEffects) -> bool {
         || has_active_status(statuses, StatusEffectKind::Staggered)
 }
 
+/// Scorer-side cooldown gate (bug npc-defense-scorer-starved-by-melee-ordering).
+///
+/// `npc_defense_score_for_realm` is a static per-realm value with no notion of
+/// "just fired" — without this gate it would clear the FirstToScore threshold on
+/// *every* tick a player is in range. Since NpcDefenseScorer must now be
+/// registered ahead of MeleeRangeScorer/ChaseTargetScorer for defense to ever
+/// win the pick (see rogue_npc_thinker/scattered_cultivator_thinker), an
+/// unconditional score would let it win *every* tick, reintroducing the mirror
+/// bug commit 4eb958688 fixed ("NPC 只会狂 parry，永不追击反扑"). This gate makes
+/// Defense go quiet for at least `defense_interval_range(realm).0` ticks after
+/// its last successful fire, so Melee/Chase get the rest of the time — matching
+/// the "攻→防→攻" rhythm `plan-npc-combat-ai-v1.md:316` originally assumed.
+pub(crate) fn defense_cooldown_elapsed(
+    current_tick: u64,
+    last_defense_tick: Option<u64>,
+    realm: Realm,
+) -> bool {
+    let Some(last) = last_defense_tick else {
+        return true;
+    };
+    let (min_interval, _max_interval) = super::actions_combat::defense_interval_range(realm);
+    current_tick.saturating_sub(last) >= min_interval
+}
+
 #[allow(clippy::type_complexity)]
 pub(crate) fn npc_defense_scorer_system(
     npcs: Query<
         (
             &NpcBlackboard,
+            &NpcMeleeProfile,
             &Cultivation,
             Option<&StatusEffects>,
             Option<&NpcLodTier>,
@@ -359,11 +384,15 @@ pub(crate) fn npc_defense_scorer_system(
     mut scorers: Query<(&Actor, &mut Score), With<NpcDefenseScorer>>,
     lod_config: Option<valence::prelude::Res<NpcLodConfig>>,
     lod_tick: Option<valence::prelude::Res<NpcLodTick>>,
+    combat_clock: Option<valence::prelude::Res<crate::combat::CombatClock>>,
 ) {
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    let now_tick = combat_clock.as_deref().map(|c| c.tick).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, cultivation, statuses_opt, tier, lifecycle)) = npcs.get(*actor) {
+        let value = if let Ok((bb, profile, cultivation, statuses_opt, tier, lifecycle)) =
+            npcs.get(*actor)
+        {
             // NPC is not alive — suppress all defense scoring.
             if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
                 score.set(0.0);
@@ -373,10 +402,21 @@ pub(crate) fn npc_defense_scorer_system(
                 if bb.nearest_player.is_none() {
                     return 0.0;
                 }
+                // Only defend while genuinely melee-engaged (same gate MeleeRangeScorer
+                // uses). `bb.nearest_player` is the server-wide nearest player with no
+                // scan radius cap, so without this a distant "nearest" player would let
+                // Defense outscore ChaseTargetScorer during the pure-chase phase —
+                // recreating "NPC never chases, only tries to defend" (commit 4eb958688).
+                if bb.player_distance > profile.reach.max {
+                    return 0.0;
+                }
                 if let Some(statuses) = statuses_opt {
                     if has_blocking_status(statuses) {
                         return 0.0;
                     }
+                }
+                if !defense_cooldown_elapsed(now_tick, bb.last_defense_tick, cultivation.realm) {
+                    return 0.0;
                 }
                 npc_defense_score_for_realm(cultivation.realm)
             }) {
@@ -843,6 +883,7 @@ mod tests {
                     player_distance: f32::INFINITY,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Solidify,
                     ..Default::default()
@@ -884,6 +925,7 @@ mod tests {
                     player_distance: 3.0,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Condense,
                     ..Default::default()
@@ -926,6 +968,7 @@ mod tests {
                     player_distance: 3.0,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Solidify,
                     ..Default::default()
@@ -977,6 +1020,7 @@ mod tests {
                     player_distance: 3.0,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Condense,
                     ..Default::default()
@@ -1028,6 +1072,7 @@ mod tests {
                     player_distance: 3.0,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Condense,
                     ..Default::default()
@@ -1076,6 +1121,7 @@ mod tests {
                     player_distance: 3.0,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Solidify,
                     ..Default::default()
@@ -1126,6 +1172,7 @@ mod tests {
                     player_distance: 3.0,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Condense,
                     ..Default::default()
@@ -1168,6 +1215,7 @@ mod tests {
                     player_distance: 3.0,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Condense,
                     ..Default::default()
@@ -1555,6 +1603,7 @@ mod tests {
                     player_distance: 3.0,
                     ..Default::default()
                 },
+                NpcMeleeProfile::spear(),
                 Cultivation {
                     realm: Realm::Spirit,
                     ..Default::default()
@@ -1575,5 +1624,377 @@ mod tests {
             0.0,
             "defense scorer should return 0 for Far LOD tier (ScorerKind::Cosmetic)"
         );
+    }
+
+    // ─── defense_cooldown_elapsed (scorer-side cooldown gate) ──────────────
+    // Regression lock for bug npc-defense-scorer-starved-by-melee-ordering.
+
+    #[test]
+    fn defense_cooldown_elapsed_true_when_never_fired() {
+        assert!(
+            defense_cooldown_elapsed(1_000, None, Realm::Induce),
+            "no prior fire (None) must always be ready, regardless of realm"
+        );
+    }
+
+    #[test]
+    fn defense_cooldown_elapsed_false_one_tick_before_min_interval() {
+        // Realm::Void min interval = 20 ticks (defense_interval_range).
+        let last = 100_u64;
+        assert!(
+            !defense_cooldown_elapsed(last + 19, Some(last), Realm::Void),
+            "19 ticks after a Void fire (min=20) must still be on cooldown"
+        );
+    }
+
+    #[test]
+    fn defense_cooldown_elapsed_true_exactly_at_min_interval_boundary() {
+        let last = 100_u64;
+        assert!(
+            defense_cooldown_elapsed(last + 20, Some(last), Realm::Void),
+            "exactly 20 ticks after a Void fire (min=20) must be ready — boundary is inclusive"
+        );
+    }
+
+    #[test]
+    fn defense_cooldown_elapsed_true_well_past_min_interval() {
+        let last = 100_u64;
+        assert!(
+            defense_cooldown_elapsed(last + 500, Some(last), Realm::Induce),
+            "500 ticks after any realm's fire must be ready (Induce min=80)"
+        );
+    }
+
+    #[test]
+    fn defense_cooldown_elapsed_respects_per_realm_min_interval() {
+        // (realm, min_interval) pairs mirror actions_combat::defense_interval_range exactly —
+        // if the tuning ever changes there, this test should be updated alongside it.
+        let cases = [
+            (Realm::Induce, 80_u64),
+            (Realm::Condense, 60),
+            (Realm::Solidify, 40),
+            (Realm::Spirit, 20),
+            (Realm::Void, 20),
+        ];
+        for (realm, min_interval) in cases {
+            let last = 1_000_u64;
+            assert!(
+                !defense_cooldown_elapsed(last + min_interval - 1, Some(last), realm),
+                "{realm:?}: {} ticks (min-1) after fire must still be on cooldown",
+                min_interval - 1
+            );
+            assert!(
+                defense_cooldown_elapsed(last + min_interval, Some(last), realm),
+                "{realm:?}: {min_interval} ticks (min) after fire must be ready"
+            );
+        }
+    }
+
+    // ─── npc_defense_scorer_system: distance + cooldown gates (new) ────────
+
+    #[test]
+    fn defense_scorer_system_returns_zero_beyond_melee_reach() {
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+
+        // fist() reach.max = 2.6; distance well beyond it (this is also within
+        // ChaseTargetScorer's normal range, i.e. a realistic "chasing, not yet
+        // engaged" snapshot) must score 0 — otherwise Defense would outscore
+        // Chase during the pure-chase phase, reintroducing "NPC never chases"
+        // (commit 4eb958688).
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: 10.0,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+                Cultivation {
+                    realm: Realm::Solidify,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "defense scorer must return 0 when the player is outside melee reach.max \
+             (distance=10.0 > fist reach.max=2.6)"
+        );
+    }
+
+    #[test]
+    fn defense_scorer_system_scores_at_exact_reach_max_boundary() {
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+        let profile = NpcMeleeProfile::fist();
+        let reach_max = profile.reach.max;
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: reach_max,
+                    ..Default::default()
+                },
+                profile,
+                Cultivation {
+                    realm: Realm::Solidify,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            (actual - 0.7).abs() < f32::EPSILON,
+            "distance exactly at reach.max must still score (boundary is inclusive, \
+             `>` not `>=`), got {actual}"
+        );
+    }
+
+    #[test]
+    fn defense_scorer_system_returns_zero_immediately_after_firing() {
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 100 });
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: 3.0,
+                    // Fired 1 tick ago (Solidify min interval = 40) — must be quiet.
+                    last_defense_tick: Some(99),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+                Cultivation {
+                    realm: Realm::Solidify,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "defense scorer must return 0 right after firing (1 tick ago, Solidify min=40) — \
+             otherwise it would win FirstToScore every tick once ordered ahead of Melee/Chase, \
+             starving them (bug npc-defense-scorer-starved-by-melee-ordering's mirror image)"
+        );
+    }
+
+    #[test]
+    fn defense_scorer_system_scores_again_once_cooldown_elapsed() {
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 140 });
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: 3.0,
+                    // Fired exactly 40 ticks ago (Solidify min interval) — ready again.
+                    last_defense_tick: Some(100),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+                Cultivation {
+                    realm: Realm::Solidify,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            (actual - 0.7).abs() < f32::EPSILON,
+            "defense scorer must resume scoring once its per-realm min interval has fully \
+             elapsed (40 ticks for Solidify), got {actual}"
+        );
+    }
+
+    // ─── Integration: Defense/Melee alternate over sustained combat ────────
+
+    #[test]
+    fn defense_and_melee_alternate_over_sustained_combat() {
+        // Regression lock for bug npc-defense-scorer-starved-by-melee-ordering.
+        //
+        // With NpcDefenseScorer registered ahead of MeleeRangeScorer (the fix — see
+        // rogue_npc_thinker/scattered_cultivator_thinker), a player standing
+        // continuously inside melee reach must still see at least one DefenseIntent
+        // fire over a sustained combat window, AND melee attacks must keep
+        // happening too (Defense must not permanently starve Melee — the *opposite*
+        // regression commit 4eb958688 already fixed once).
+        use crate::combat::events::{AttackIntent, DefenseIntent};
+        use crate::combat::CombatClock;
+        use crate::cultivation::components::Cultivation;
+        use crate::npc::brain::{
+            melee_attack_action_system, npc_defense_action_system, MeleeAttackAction,
+            NpcDefenseAction,
+        };
+        use crate::npc::movement::GameTick;
+        use crate::npc::navigator::Navigator;
+        use valence::prelude::{EventReader, Position, Resource, Update};
+
+        #[derive(Default)]
+        struct Captured {
+            defense_ticks: Vec<u64>,
+            attack_count: usize,
+        }
+        impl Resource for Captured {}
+
+        fn capture(
+            mut defense: EventReader<DefenseIntent>,
+            mut attack: EventReader<AttackIntent>,
+            mut captured: valence::prelude::ResMut<Captured>,
+        ) {
+            for event in defense.read() {
+                captured.defense_ticks.push(event.issued_at_tick);
+            }
+            captured.attack_count += attack.read().count();
+        }
+
+        fn advance_clocks(
+            mut game_tick: valence::prelude::ResMut<GameTick>,
+            mut combat_clock: valence::prelude::ResMut<CombatClock>,
+        ) {
+            game_tick.0 = game_tick.0.wrapping_add(1);
+            combat_clock.tick = combat_clock.tick.saturating_add(1);
+        }
+
+        let mut app = App::new();
+        app.add_plugins(big_brain::prelude::BigBrainPlugin::new(PreUpdate));
+        app.insert_resource(GameTick(0));
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(Captured::default());
+        app.add_event::<AttackIntent>();
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (melee_range_scorer_system, npc_defense_scorer_system).in_set(BigBrainSet::Scorers),
+        );
+        app.add_systems(
+            PreUpdate,
+            (melee_attack_action_system, npc_defense_action_system).in_set(BigBrainSet::Actions),
+        );
+        app.add_systems(Update, (advance_clocks, capture).chain());
+
+        let player = app.world_mut().spawn_empty().id();
+
+        // Player fixed inside fist() reach.max (2.6) for the whole run — nothing
+        // updates NpcBlackboard.player_distance in this minimal harness, which is
+        // exactly the "玩家固定站在 melee reach 内" scenario the fix must survive.
+        app.world_mut().spawn((
+            NpcMarker,
+            Position::new([0.0, 66.0, 0.0]),
+            Navigator::new(),
+            NpcBlackboard {
+                nearest_player: Some(player),
+                player_distance: 2.0,
+                ..Default::default()
+            },
+            NpcMeleeProfile::fist(),
+            Cultivation {
+                realm: Realm::Spirit, // defense_interval_range=(20,40): fastest realm window
+                qi_current: 999.0,
+                qi_max: 999.0,
+                ..Default::default()
+            },
+            Thinker::build()
+                .picker(FirstToScore { threshold: 0.05 })
+                .when(NpcDefenseScorer, NpcDefenseAction::default())
+                .when(MeleeRangeScorer, MeleeAttackAction),
+        ));
+
+        for _ in 0..400 {
+            app.update();
+        }
+
+        let captured = app.world().resource::<Captured>();
+        assert!(
+            !captured.defense_ticks.is_empty(),
+            "NpcDefenseAction must fire at least once over 400 ticks of sustained melee-range \
+             combat — this is the exact starvation this bug fixes"
+        );
+        assert!(
+            captured.attack_count > 0,
+            "MeleeAttackAction must still fire too — Defense must not permanently starve Melee \
+             (that would reintroduce the bug commit 4eb958688 fixed)"
+        );
+        for pair in captured.defense_ticks.windows(2) {
+            let gap = pair[1] - pair[0];
+            assert!(
+                gap >= 20,
+                "consecutive DefenseIntents must be spaced by at least the Spirit realm's \
+                 min interval (20 ticks); got gap={gap} between {} and {}",
+                pair[0],
+                pair[1]
+            );
+        }
     }
 }

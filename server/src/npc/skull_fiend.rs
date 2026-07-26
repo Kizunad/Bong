@@ -1011,6 +1011,7 @@ mod tests {
             player_distance: 12.0,
             target_position: None,
             last_melee_tick: 0,
+            last_defense_tick: None,
             threat_assessment: None,
             self_interest_decision: None,
             retaliation_target: None,
