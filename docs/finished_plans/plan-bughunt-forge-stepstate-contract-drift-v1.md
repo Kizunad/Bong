@@ -98,3 +98,15 @@
   - 单点修 `forge_snapshot_emit + forge schema`
   - 顺手补 3 条 snapshot contract pin 测试
   - 不扩面触碰 `forge/lingtian processing` 主题
+
+## 验证结论（2026-07-26 整理审计追认）
+
+forge `step_state` 快照契约漂移已由 1283cc302（2026-07-06，「修复 forge step_state 快照契约漂移」）修复：`server/src/network/forge_snapshot_emit.rs:336-380` 的 `build_step_state` 改为取 Blueprint 真值填充 `tempering.pattern` / `inscription.max_slots` / `consecration.min_realm`，`server/src/schema/forge.rs:143` 补上此前缺失的 `min_realm` 字段，三条复现路径（空轨道 / 双槽自锁 / 低境界误导注入）均已闭合。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/network/forge_snapshot_emit.rs`（`build_step_state`）、`server/src/schema/forge.rs`（`min_realm` 字段）
+- **关键 commit**：1283cc302（2026-07-06，「修复 forge step_state 快照契约漂移」）
+- **测试结果**：四条 pin 测试落地（针对 tempering pattern 非空、inscription max_slots 正确、consecration min_realm 回填）；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server（`network::forge_snapshot_emit::build_step_state`、`schema::forge::min_realm`）；client 侧 `TemperingTrackComponent`/`InscriptionPanelComponent`/`ConsecrationPanelComponent` 为该契约的既有消费方，本次审计未逐一重新核验 client 代码现状
+- **遗留 / 后续**：无（agent 侧 `agent/packages/schema/src/forge.ts` 是否已同步补 `min_realm` 未在本次只读审计中核实，如后续发现漂移需单独跟进）
