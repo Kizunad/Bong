@@ -1188,7 +1188,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
     def _run_owned_fixture_runtime_case(
         self, runner_mode: str, *, runner_exit: int = 0, tee_exit: int | None = None
-    ) -> tuple[subprocess.CompletedProcess[str], str]:
+    ) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
         """Run the real bot-e2e shell path against only test-owned fake processes."""
         root = pathlib.Path(__file__).parents[2]
         real_python = shutil.which("python3")
@@ -1199,9 +1199,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             fake_bin = temp / "bin"
             fake_bin.mkdir()
             runner_log = temp / "runner.log"
+            runner_result_file = temp / "runner-result"
             server_pid_file = temp / "server.pid"
             listener_pid_file = temp / "listener.pid"
             replacement_pid_file = temp / "replacement.pid"
+            replacement_ready_file = temp / "replacement-ready"
+            watcher_status_file = temp / "watcher-status"
             redis_port = 39999
             port = self._unused_local_port()
             fake_python = fake_bin / "python3"
@@ -1222,14 +1225,27 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "    local status\n"
                 "    for _ in $(seq 1 200); do\n"
                 "      status=$(find \"$FAKE_EVIDENCE_ROOT\" -path '*/runtime-watch.*/status' -type f -print -quit)\n"
-                "      test -n \"$status\" && test \"$(cat \"$status\" 2>/dev/null || true)\" = lost && return 0\n"
+                "      if test -n \"$status\" && test \"$(cat \"$status\" 2>/dev/null || true)\" = lost; then\n"
+                "        printf 'watcher-lost-observed\\n' > \"$FAKE_RUNNER_RESULT_FILE\"\n"
+                "        return 0\n"
+                "      fi\n"
                 "      sleep 0.01\n"
                 "    done\n"
+                "    printf 'watcher-lost-timeout\\n' > \"$FAKE_RUNNER_RESULT_FILE\"\n"
                 "    return 1\n"
                 "  }\n"
+                "  port_owned_by_pid() {\n"
+                "    kill -0 \"$1\" 2>/dev/null || return 1\n"
+                "    \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY' || return 1\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "    lsof -nP -iTCP:\"$BOT_E2E_PORT\" -sTCP:LISTEN -Fp 2>/dev/null | grep -q \"p$1\"\n"
+                "  }\n"
                 "  case \"$FAKE_RUNNER_MODE\" in\n"
-                "    success) exit 0 ;;\n"
-                "    runner-fail) exit \"$FAKE_RUNNER_EXIT\" ;;\n"
+                "    success) printf 'runner-complete\\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 0 ;;\n"
+                "    runner-fail) printf 'runner-failed\\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit \"$FAKE_RUNNER_EXIT\" ;;\n"
                 "    kill-server)\n"
                 "      kill -TERM \"$(cat \"$FAKE_SERVER_PID_FILE\")\"\n"
                 "      for _ in $(seq 1 200); do\n"
@@ -1248,8 +1264,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
                 "    pass\n"
                 "PY\n"
-                "      then exit 79; fi\n"
-                "      wait_watcher_lost || exit 80\n"
+                "      then printf 'fault-setup-timeout\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 79; fi\n"
+                "      wait_watcher_lost || { printf 'watcher-lost-timeout\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 80; }\n"
                 "      exit 0\n"
                 "      ;;\n"
                 "    replace-listener)\n"
@@ -1263,21 +1279,17 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "        then break; fi\n"
                 "        sleep 0.01\n"
                 "      done\n"
-                "      \"$real_python\" -u -c 'import socket, sys, time\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nfor _ in range(100):\n    try:\n        s.bind((\"127.0.0.1\", int(sys.argv[1])))\n        break\n    except OSError:\n        time.sleep(0.01)\nelse:\n    raise SystemExit(77)\ns.listen()\nwhile True:\n    conn, _ = s.accept()\n    conn.close()' \"$BOT_E2E_PORT\" </dev/null >/dev/null 2>&1 &\n"
+                "      \"$real_python\" -u -c 'import os, socket, sys, time\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nfor _ in range(100):\n    try:\n        s.bind((\"127.0.0.1\", int(sys.argv[1])))\n        break\n    except OSError:\n        time.sleep(0.01)\nelse:\n    raise SystemExit(77)\ns.listen()\nopen(sys.argv[2], \"w\").write(str(os.getpid()))\nwhile True:\n    conn, _ = s.accept()\n    conn.close()' \"$BOT_E2E_PORT\" \"$FAKE_REPLACEMENT_READY_FILE\" </dev/null >/dev/null 2>&1 &\n"
                 f"      printf '%s\\n' \"$!\" > {shlex.quote(str(replacement_pid_file))}\n"
                 "      for _ in $(seq 1 200); do\n"
-                "        if \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
-                "import socket, sys\n"
-                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
-                "    pass\n"
-                "PY\n"
-                "        then break; fi\n"
+                "        test -s \"$FAKE_REPLACEMENT_READY_FILE\" && port_owned_by_pid \"$(cat \"$FAKE_REPLACEMENT_READY_FILE\")\" && break\n"
                 "        sleep 0.01\n"
                 "      done\n"
+                "      test -s \"$FAKE_REPLACEMENT_READY_FILE\" && port_owned_by_pid \"$(cat \"$FAKE_REPLACEMENT_READY_FILE\")\" || { printf 'replacement-owner-timeout\\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 81; }\n"
                 "      wait_watcher_lost || exit 80\n"
                 "      exit 0\n"
                 "      ;;\n"
-                "    *) exit 78 ;;\n"
+                "    *) printf 'invalid-mode\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 78 ;;\n"
                 "  esac\n"
                 "fi\n"
                 "if [[ \"${1:-}\" == \"-\" && \"${2:-}\" == \"127.0.0.1\" && \"${3:-}\" == \"39999\" ]]; then exit 0; fi\n"
@@ -1338,11 +1350,16 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     "FAKE_SERVER_PID_FILE": str(server_pid_file),
                     "FAKE_LISTENER_PID_FILE": str(listener_pid_file),
                     "FAKE_EVIDENCE_ROOT": str(evidence_root),
+                    "FAKE_RUNNER_RESULT_FILE": str(runner_result_file),
+                    "FAKE_REPLACEMENT_READY_FILE": str(replacement_ready_file),
+                    "BOT_E2E_WATCH_STATUS_EVIDENCE_PATH": str(watcher_status_file),
                 }
             )
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
             evidence_before = set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
             runner_output = ""
+            runner_result = ""
+            watcher_status = ""
             try:
                 result = subprocess.run(
                     ["bash", "scripts/bot-e2e.sh"],
@@ -1356,6 +1373,16 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 runner_output = (
                     runner_log.read_text(encoding="utf-8") if runner_log.exists() else ""
                 )
+                runner_result = (
+                    runner_result_file.read_text(encoding="utf-8")
+                    if runner_result_file.exists()
+                    else ""
+                )
+                watcher_status = (
+                    watcher_status_file.read_text(encoding="utf-8")
+                    if watcher_status_file.exists()
+                    else ""
+                )
             finally:
                 for pid_file in (server_pid_file, listener_pid_file, replacement_pid_file):
                     if pid_file.exists():
@@ -1366,7 +1393,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 if evidence_root.exists():
                     for evidence_dir in set(evidence_root.glob("run.*")) - evidence_before:
                         shutil.rmtree(evidence_dir, ignore_errors=True)
-            return result, runner_output
+            return result, runner_output, runner_result, watcher_status
 
     @staticmethod
     def _unused_local_port() -> int:
@@ -1375,37 +1402,50 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             return int(sock.getsockname()[1])
 
     def test_owned_fixture_runtime_watcher_accepts_successful_owned_runner(self):
-        result, runner_output = self._run_owned_fixture_runtime_case("success")
+        result, runner_output, runner_result, watcher_status = (
+            self._run_owned_fixture_runtime_case("success")
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(runner_output.strip(), "success")
+        self.assertEqual(runner_result.strip(), "runner-complete")
+        self.assertEqual(watcher_status.strip(), "complete")
 
     def test_owned_fixture_runtime_watcher_rejects_server_exit_during_runner(self):
-        result, runner_output = self._run_owned_fixture_runtime_case("kill-server")
+        result, runner_output, runner_result, watcher_status = (
+            self._run_owned_fixture_runtime_case("kill-server")
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(runner_output.strip(), "kill-server")
-        self.assertTrue(
-            "失去端口 ownership" in result.stderr or "ownership 不再成立" in result.stderr,
-            result.stderr,
-        )
+        self.assertEqual(runner_result.strip(), "watcher-lost-observed")
+        self.assertEqual(watcher_status.strip(), "lost")
+        self.assertIn("失去端口 ownership", result.stderr)
 
     def test_owned_fixture_runtime_watcher_rejects_replacement_listener(self):
-        result, runner_output = self._run_owned_fixture_runtime_case("replace-listener")
+        result, runner_output, runner_result, watcher_status = (
+            self._run_owned_fixture_runtime_case("replace-listener")
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(runner_output.strip(), "replace-listener")
-        self.assertTrue(
-            "失去端口 ownership" in result.stderr or "ownership 不再成立" in result.stderr,
-            result.stderr,
-        )
+        self.assertEqual(runner_result.strip(), "watcher-lost-observed")
+        self.assertEqual(watcher_status.strip(), "lost")
+        self.assertIn("失去端口 ownership", result.stderr)
 
     def test_owned_fixture_runtime_preserves_runner_then_tee_failure_priority(self):
         for runner_exit, tee_exit, expected in ((7, None, 7), (7, 9, 7), (0, 9, 9)):
             with self.subTest(runner_exit=runner_exit, tee_exit=tee_exit):
                 mode = "runner-fail" if runner_exit else "success"
-                result, runner_output = self._run_owned_fixture_runtime_case(
-                    mode, runner_exit=runner_exit, tee_exit=tee_exit
+                result, runner_output, runner_result, watcher_status = (
+                    self._run_owned_fixture_runtime_case(
+                        mode, runner_exit=runner_exit, tee_exit=tee_exit
+                    )
                 )
                 self.assertEqual(result.returncode, expected, result.stderr)
-                self.assertTrue(runner_output.strip(), "runner must execute before its failure is judged")
+                self.assertTrue(runner_output.strip())
+                self.assertEqual(
+                    runner_result.strip(),
+                    "runner-failed" if runner_exit else "runner-complete",
+                )
+                self.assertEqual(watcher_status.strip(), "complete")
 
 
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):

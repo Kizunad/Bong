@@ -402,6 +402,9 @@ if [ -n "$WATCH_PID" ]; then
   touch "$RUNTIME_WATCH_LOG.stop"
   wait "$WATCH_PID" || true
   watch_result="$(cat "$RUNTIME_WATCH_LOG" 2>/dev/null || true)"
+  if [ -n "${BOT_E2E_WATCH_STATUS_EVIDENCE_PATH:-}" ]; then
+    printf '%s\n' "$watch_result" >"$BOT_E2E_WATCH_STATUS_EVIDENCE_PATH"
+  fi
   rm -f "$RUNTIME_WATCH_LOG.stop" "$RUNTIME_WATCH_LOG"
   rmdir "$RUNTIME_WATCH_DIR" 2>/dev/null || true
   RUNTIME_WATCH_LOG=""
