@@ -581,24 +581,39 @@ pub fn save_player_shrine_anchor_slice(
 /// 状态机（`state`/`fortune_remaining`/`awaiting_decision`/各 deadline tick）。
 /// `None` = 该用户名从未落过盘（首次登录，或 pre-v39 老档），调用方应回退到
 /// `Lifecycle::default()` 而非当作"读取失败"处理。
+///
+/// `current_combat_clock_tick` 是读档当刻（重连那一瞬）的 `CombatClock.tick`——用于把
+/// 落盘时刻记录的"绝对 tick" deadline（`near_death_deadline_tick`/
+/// `revival_decision_deadline_tick`/`weakened_until_tick`）折算到当前 tick 空间，
+/// 详见 `translate_lifecycle_deadline_tick_across_restart` 的文档注释。
 pub fn load_player_lifecycle_slice(
     persistence: &PlayerStatePersistence,
     username: &str,
+    current_combat_clock_tick: u64,
 ) -> io::Result<Option<crate::combat::components::Lifecycle>> {
     let connection = open_player_connection(persistence)?;
-    load_player_lifecycle_from_sqlite(&connection, username)
+    load_player_lifecycle_from_sqlite(&connection, username, current_combat_clock_tick)
 }
 
 /// bughunt player-lifecycle-relog-death-consequence-wipe：断线/关服 flush 时把当前
 /// `Lifecycle` 组件整份落盘，让重连不再盲插 `Lifecycle::default()`（否则濒死/待复活玩家
 /// 会被静默重置成满运气次数的"新角色"，绕过渡劫概率判定与永久终结风险）。
+///
+/// `combat_clock_tick` 是落盘那一刻的 `CombatClock.tick`，作为跨重启折算 deadline 的锚点
+/// 存进 `combat_clock_tick_at_save` 列（见 `load_player_lifecycle_slice`）。
 pub fn save_player_lifecycle_slice(
     persistence: &PlayerStatePersistence,
     username: &str,
     lifecycle: &crate::combat::components::Lifecycle,
+    combat_clock_tick: u64,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
-    persist_player_lifecycle_slice_in_sqlite(&mut connection, username, lifecycle)?;
+    persist_player_lifecycle_slice_in_sqlite(
+        &mut connection,
+        username,
+        lifecycle,
+        combat_clock_tick,
+    )?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -1910,30 +1925,96 @@ fn load_player_known_techniques_from_sqlite(
 /// bughunt player-lifecycle-relog-death-consequence-wipe：`None` = 未落过盘（vs. 老档 /
 /// 首次登录），调用方要能区分"从未持久化"和"反序列化失败"（后者仍走 `Err` fail-loud，
 /// 不静默吞成 `None` 掩盖坏数据）。
+///
+/// 读回后会把三个"绝对 tick" deadline 字段（`near_death_deadline_tick`/
+/// `revival_decision_deadline_tick`/`weakened_until_tick`）折算到 `current_combat_clock_tick`
+/// 所在的 tick 空间——见 `translate_lifecycle_deadline_tick_across_restart`。
 fn load_player_lifecycle_from_sqlite(
     connection: &Connection,
     username: &str,
+    current_combat_clock_tick: u64,
 ) -> io::Result<Option<crate::combat::components::Lifecycle>> {
-    let lifecycle_json: Option<String> = connection
+    let row: Option<(String, i64, u64)> = connection
         .query_row(
             "
-            SELECT lifecycle_json
+            SELECT lifecycle_json, last_updated_wall, combat_clock_tick_at_save
             FROM player_lifecycle
             WHERE username = ?1
             ",
             params![username],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(io::Error::other)?;
 
-    let Some(lifecycle_json) = lifecycle_json else {
+    let Some((lifecycle_json, last_updated_wall, combat_clock_tick_at_save)) = row else {
         return Ok(None);
     };
 
-    serde_json::from_str::<crate::combat::components::Lifecycle>(&lifecycle_json)
-        .map(Some)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    let mut lifecycle =
+        serde_json::from_str::<crate::combat::components::Lifecycle>(&lifecycle_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    let now_wall = current_unix_seconds();
+    lifecycle.near_death_deadline_tick = translate_lifecycle_deadline_tick_across_restart(
+        lifecycle.near_death_deadline_tick,
+        combat_clock_tick_at_save,
+        last_updated_wall,
+        now_wall,
+        current_combat_clock_tick,
+    );
+    lifecycle.revival_decision_deadline_tick = translate_lifecycle_deadline_tick_across_restart(
+        lifecycle.revival_decision_deadline_tick,
+        combat_clock_tick_at_save,
+        last_updated_wall,
+        now_wall,
+        current_combat_clock_tick,
+    );
+    lifecycle.weakened_until_tick = translate_lifecycle_deadline_tick_across_restart(
+        lifecycle.weakened_until_tick,
+        combat_clock_tick_at_save,
+        last_updated_wall,
+        now_wall,
+        current_combat_clock_tick,
+    );
+
+    Ok(Some(lifecycle))
+}
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）：把落盘时刻记录
+/// 的"绝对 tick" deadline 折算到读档当刻的 `CombatClock` tick 空间。
+///
+/// `CombatClock` 每次进程重启都从 0 重新计数（`combat::mod::register` 里
+/// `insert_resource(CombatClock::default())`），全仓没有任何从持久化恢复 tick 的代码。
+/// `near_death_deadline_tick`/`revival_decision_deadline_tick`/`weakened_until_tick` 都是
+/// 落盘那一刻算出的"绝对 tick"值——若跨重启直接复用，新进程 tick=0 时，旧 deadline 动辄
+/// 百万级，等价于几十小时后才会被 `near_death_tick`/`auto_confirm_revival_decisions`
+/// 结算，期间玩家会卡在 AwaitingRevival（`resolve.rs` 同时禁止攻击与被攻击）却没有任何
+/// UI 解释为什么，然后在数小时后的随机时刻被强制渡劫、可能永久终结角色。
+///
+/// 用 `combat_clock_tick_at_save`（落盘时刻 CombatClock.tick）+ `last_updated_wall`
+/// （落盘时刻墙钟）两个锚点，按真实流逝的墙钟秒数折算出"距 deadline 还剩多少 tick"，
+/// 再叠加到 `current_combat_clock_tick` 上，重建一个在当前 tick 空间里有意义的新
+/// deadline——镜像 `player_lifespan.offline_pause_wall` 按墙钟折算离线寿元的模式
+/// （`load_player_lifespan_from_sqlite`）。同一进程内断线重连（未重启）时，这个折算
+/// 结果应与直接复用旧绝对值几乎一致（wall 流逝与 tick 流逝理论上同步，±1 tick 抖动可忽略）；
+/// 跨重启时则会正确地把"早已过期"的 deadline 立即结算（`remaining_now` 饱和到 0），而不是
+/// 把它错当成几十小时后的未来事件。
+fn translate_lifecycle_deadline_tick_across_restart(
+    deadline_tick: Option<u64>,
+    combat_clock_tick_at_save: u64,
+    last_updated_wall: i64,
+    now_wall: i64,
+    current_combat_clock_tick: u64,
+) -> Option<u64> {
+    let deadline_tick = deadline_tick?;
+    let remaining_at_save = deadline_tick.saturating_sub(combat_clock_tick_at_save);
+    // now_wall < last_updated_wall（系统时钟回拨）时按 0 流逝处理，不倒推出负数流逝时间。
+    let elapsed_wall_seconds = now_wall.saturating_sub(last_updated_wall).max(0) as u64;
+    let elapsed_ticks =
+        elapsed_wall_seconds.saturating_mul(crate::combat::components::TICKS_PER_SECOND);
+    let remaining_now = remaining_at_save.saturating_sub(elapsed_ticks);
+    Some(current_combat_clock_tick.saturating_add(remaining_now))
 }
 
 fn persist_player_core_slice_in_sqlite(
@@ -2162,10 +2243,14 @@ fn persist_player_known_techniques_slice_in_sqlite(
 /// `player_lifecycle.lifecycle_json`（同 known_techniques 的单 JSON 列模式），覆盖
 /// state/fortune_remaining/awaiting_decision/各 deadline tick —— 调用方（断线清理 /
 /// 关服 flush）必须传入断连那一刻的真实组件值，不得传入尚未跑过状态转换的陈旧快照。
+///
+/// `combat_clock_tick` 是落盘那一刻的 `CombatClock.tick`，写入 `combat_clock_tick_at_save`
+/// 列，作为读档时折算"绝对 tick" deadline 的锚点（见 `load_player_lifecycle_from_sqlite`）。
 fn persist_player_lifecycle_slice_in_sqlite(
     connection: &mut Connection,
     username: &str,
     lifecycle: &crate::combat::components::Lifecycle,
+    combat_clock_tick: u64,
 ) -> io::Result<()> {
     let lifecycle_json = serde_json::to_string(lifecycle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -2178,18 +2263,21 @@ fn persist_player_lifecycle_slice_in_sqlite(
                 username,
                 lifecycle_json,
                 schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4)
+                last_updated_wall,
+                combat_clock_tick_at_save
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(username) DO UPDATE SET
                 lifecycle_json = excluded.lifecycle_json,
                 schema_version = excluded.schema_version,
-                last_updated_wall = excluded.last_updated_wall
+                last_updated_wall = excluded.last_updated_wall,
+                combat_clock_tick_at_save = excluded.combat_clock_tick_at_save
             ",
             params![
                 username,
                 lifecycle_json,
                 PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
+                last_updated_wall,
+                combat_clock_tick
             ],
         )
         .map_err(io::Error::other)?;
@@ -4285,7 +4373,7 @@ mod player_state_tests {
         save_player_state(&persistence, "Azure", &PlayerState::default())
             .expect("baseline player state should persist");
 
-        let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure", 0)
             .expect("missing row should not be an I/O error");
 
         assert!(
@@ -4304,9 +4392,9 @@ mod player_state_tests {
         let (persistence, data_dir) = sqlite_persistence("lifecycle-roundtrip-awaiting");
         let lifecycle = sample_lifecycle_awaiting_revival_zero_fortune();
 
-        save_player_lifecycle_slice(&persistence, "Azure", &lifecycle)
+        save_player_lifecycle_slice(&persistence, "Azure", &lifecycle, 0)
             .expect("lifecycle slice should persist");
-        let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure", 0)
             .expect("lifecycle slice should load")
             .expect("lifecycle row should exist after save");
 
@@ -4348,9 +4436,9 @@ mod player_state_tests {
         assert_eq!(lifecycle.state, LifecycleState::Alive);
         assert_eq!(lifecycle.fortune_remaining, 3);
 
-        save_player_lifecycle_slice(&persistence, "Azure", &lifecycle)
+        save_player_lifecycle_slice(&persistence, "Azure", &lifecycle, 0)
             .expect("lifecycle slice should persist");
-        let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure", 0)
             .expect("lifecycle slice should load")
             .expect("lifecycle row should exist after save");
 
@@ -4377,9 +4465,9 @@ mod player_state_tests {
                 ..Lifecycle::default()
             };
 
-            save_player_lifecycle_slice(&persistence, "Azure", &lifecycle)
+            save_player_lifecycle_slice(&persistence, "Azure", &lifecycle, 0)
                 .expect("lifecycle slice should persist");
-            let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+            let loaded = load_player_lifecycle_slice(&persistence, "Azure", 0)
                 .expect("lifecycle slice should load")
                 .expect("lifecycle row should exist after save");
 
@@ -4406,9 +4494,9 @@ mod player_state_tests {
                 ..Lifecycle::default()
             };
 
-            save_player_lifecycle_slice(&persistence, "Azure", &lifecycle)
+            save_player_lifecycle_slice(&persistence, "Azure", &lifecycle, 0)
                 .expect("lifecycle slice should persist");
-            let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+            let loaded = load_player_lifecycle_slice(&persistence, "Azure", 0)
                 .expect("lifecycle slice should load")
                 .expect("lifecycle row should exist after save");
 
@@ -4440,14 +4528,14 @@ mod player_state_tests {
             near_death_deadline_tick: Some(100),
             ..Lifecycle::default()
         };
-        save_player_lifecycle_slice(&persistence, "Azure", &first)
+        save_player_lifecycle_slice(&persistence, "Azure", &first, 0)
             .expect("first lifecycle slice should persist");
 
         let second = sample_lifecycle_awaiting_revival_zero_fortune();
-        save_player_lifecycle_slice(&persistence, "Azure", &second)
+        save_player_lifecycle_slice(&persistence, "Azure", &second, 0)
             .expect("second lifecycle slice should overwrite");
 
-        let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure", 0)
             .expect("lifecycle slice should load")
             .expect("lifecycle row should exist after save");
 
@@ -4467,6 +4555,250 @@ mod player_state_tests {
             )
             .expect("row count query should succeed");
         assert_eq!(row_count, 1, "覆盖保存不能在 player_lifecycle 里堆出重复行");
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // ── bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）──
+    //
+    // CombatClock 每次进程重启都从 0 重新计数，而 near_death_deadline_tick /
+    // revival_decision_deadline_tick / weakened_until_tick 都是落盘时刻算出的"绝对 tick"。
+    // 跨重启直接复用会把早已过期的 deadline 错当成几十小时后的未来事件，玩家会无限期卡在
+    // AwaitingRevival（无敌但无 UI）。下面的纯函数用例锁住
+    // `translate_lifecycle_deadline_tick_across_restart` 的折算数学，sqlite 集成用例锁住
+    // 端到端的读档行为。
+
+    #[test]
+    fn translate_lifecycle_deadline_tick_across_restart_passes_through_none() {
+        assert_eq!(
+            translate_lifecycle_deadline_tick_across_restart(None, 500_000, 1_000, 1_000, 0),
+            None,
+            "无 deadline（None）必须原样返回 None，不能凭空造出一个 tick"
+        );
+    }
+
+    #[test]
+    fn translate_lifecycle_deadline_tick_across_restart_is_identity_with_zero_elapsed_wall_time() {
+        // 同一进程内瞬时往返（wall 时间未流逝、CombatClock 未重启）：折算结果必须与直接
+        // 复用旧绝对值完全一致，不能引入任何偏差。
+        let deadline = translate_lifecycle_deadline_tick_across_restart(
+            Some(9_999),
+            0,     // combat_clock_tick_at_save
+            1_000, // last_updated_wall
+            1_000, // now_wall（未流逝）
+            0,     // current_combat_clock_tick（未重启）
+        );
+        assert_eq!(
+            deadline,
+            Some(9_999),
+            "wall 时间零流逝时折算必须是恒等映射，实际 {deadline:?}"
+        );
+    }
+
+    #[test]
+    fn translate_lifecycle_deadline_tick_across_restart_settles_deadline_that_expired_during_downtime(
+    ) {
+        // 跨重启核心场景：落盘时 CombatClock.tick=500_000，60 秒决策窗口
+        // deadline=501_200，但进程重启期间墙钟流逝了 300 秒（远超 60 秒窗口）——折算结果
+        // 必须落在新 tick 空间的"已过期"区间（<= current_combat_clock_tick），而不是被
+        // 误当成还剩 501_200 tick（~7 小时）。
+        let deadline = translate_lifecycle_deadline_tick_across_restart(
+            Some(501_200),
+            500_000,
+            1_000,       // last_updated_wall
+            1_000 + 300, // now_wall：重启耗时 300 秒
+            0,           // current_combat_clock_tick：新进程刚启动
+        );
+        assert_eq!(
+            deadline,
+            Some(0),
+            "决策窗口早已在墙钟层面过期，折算结果必须落在 current_combat_clock_tick(0)，\
+             不能残留几十万 tick 的旧绝对值让玩家无限期卡在 AwaitingRevival；实际 {deadline:?}"
+        );
+    }
+
+    #[test]
+    fn translate_lifecycle_deadline_tick_across_restart_preserves_remaining_window_when_still_valid(
+    ) {
+        // 落盘时刻还剩 30 秒(600 tick)才到期，重启只耗时 5 秒(100 tick)——折算后应保留约
+        // 25 秒(500 tick)的真实剩余窗口，而不是无条件清零。
+        let deadline = translate_lifecycle_deadline_tick_across_restart(
+            Some(500_600), // combat_clock_tick_at_save(500_000) + 600
+            500_000,
+            1_000,     // last_updated_wall
+            1_000 + 5, // now_wall：重启耗时 5 秒 = 100 tick
+            0,         // current_combat_clock_tick：新进程刚启动
+        );
+        assert_eq!(
+            deadline,
+            Some(500), // 600 - 100 = 500 剩余 tick，叠加到新 tick 空间的 0 上
+            "重启耗时仅 5 秒，60 秒窗口原本还剩 30 秒，折算后应保留约 25 秒(500 tick)的\
+             剩余窗口；实际 {deadline:?}"
+        );
+    }
+
+    #[test]
+    fn translate_lifecycle_deadline_tick_across_restart_clamps_wall_clock_rewind_to_zero_elapsed() {
+        // 系统时钟回拨（now_wall < last_updated_wall）防御：不能因为负数流逝时间反而
+        // "倒推"出比落盘时更长的剩余窗口。
+        let deadline = translate_lifecycle_deadline_tick_across_restart(
+            Some(500_600),
+            500_000,
+            2_000, // last_updated_wall（比 now_wall 还晚，模拟时钟回拨）
+            1_000, // now_wall
+            0,
+        );
+        assert_eq!(
+            deadline,
+            Some(600),
+            "时钟回拨应按 0 流逝处理（remaining_at_save 原样保留），不能因为负数差值产生\
+             异常膨胀的剩余窗口；实际 {deadline:?}"
+        );
+    }
+
+    #[test]
+    fn translate_lifecycle_deadline_tick_across_restart_anchors_to_current_tick_within_same_session(
+    ) {
+        // 同进程断线重连（未重启）：CombatClock 没有归零，current_combat_clock_tick 已经
+        // 推进到与墙钟流逝匹配的新值——折算逻辑必须叠加到这个新值上，而不是继续锚定在 0。
+        let deadline = translate_lifecycle_deadline_tick_across_restart(
+            Some(1_200), // combat_clock_tick_at_save(1_000) + 200
+            1_000,
+            1_000,     // last_updated_wall
+            1_000 + 5, // now_wall：5 秒后重连 = 100 tick
+            1_100,     // current_combat_clock_tick：同进程内已经走到 1_100（未重启）
+        );
+        // 剩余 = 200 - 100 = 100；叠加到 current_combat_clock_tick(1_100) 上 = 1_200，
+        // 与"不折算直接复用旧绝对值 1_200"几乎一致（同进程内 wall 流逝与 tick 流逝同步时
+        // 应收敛到相近结果）。
+        assert_eq!(
+            deadline,
+            Some(1_200),
+            "同进程内断线重连必须锚定在当前 CombatClock tick 上折算，实际 {deadline:?}"
+        );
+    }
+
+    #[test]
+    fn player_lifecycle_slice_settles_expired_deadline_across_process_restart() {
+        // 端到端集成锁：sqlite 里模拟"服务器重启前落盘、重启后读档"的完整链路。断线前
+        // CombatClock.tick=500_000，60 秒决策窗口 deadline=501_200；落盘时刻是 5 分钟前
+        // （远超 60 秒窗口），模拟"重启耗时够长，决策窗口早已到期"。修复前：
+        // attach_combat_bundle_to_joined_clients 会原样复用 501_200 这个绝对值，重启后
+        // CombatClock 从 0 计数，玩家要等 501_200 tick（~7 小时）才会被
+        // auto_confirm_revival_decisions 结算，期间卡在 AwaitingRevival 无敌状态。
+        let (persistence, data_dir) = sqlite_persistence("lifecycle-cross-restart-expired");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let combat_clock_tick_at_save = 500_000_u64;
+        let revival_decision_deadline_tick = combat_clock_tick_at_save + 1_200; // 60s 窗口
+        let last_updated_wall = current_unix_seconds() - 300;
+        let lifecycle = Lifecycle {
+            state: LifecycleState::AwaitingRevival,
+            awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.3 }),
+            revival_decision_deadline_tick: Some(revival_decision_deadline_tick),
+            ..Lifecycle::default()
+        };
+        let lifecycle_json = serde_json::to_string(&lifecycle).expect("lifecycle should serialize");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO player_lifecycle (
+                    username, lifecycle_json, schema_version, last_updated_wall,
+                    combat_clock_tick_at_save
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                ",
+                params![
+                    "Azure",
+                    lifecycle_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall,
+                    combat_clock_tick_at_save,
+                ],
+            )
+            .expect("lifecycle fixture row should insert");
+
+        // 模拟进程重启：新 CombatClock 从 0 开始。
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure", 0)
+            .expect("lifecycle slice should load")
+            .expect("lifecycle row should exist");
+
+        assert_eq!(
+            loaded.state,
+            LifecycleState::AwaitingRevival,
+            "跨重启不应该丢失 AwaitingRevival 状态本身，只应该折算 deadline"
+        );
+        assert_eq!(
+            loaded.revival_decision_deadline_tick,
+            Some(0),
+            "决策窗口早已在墙钟层面过期，折算后的 deadline 必须落在重启后的\
+             current_combat_clock_tick(0) 上，实际 {:?}——否则 auto_confirm_revival_decisions \
+             会把它当成几万 tick 之后才到期，玩家无限期卡在 AwaitingRevival",
+            loaded.revival_decision_deadline_tick
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifecycle_slice_preserves_partial_decision_window_across_short_restart() {
+        // 短暂重启（比如几秒的滚动重启）不应该把仍然有效的决策窗口错误地清零——折算逻辑
+        // 要保留按真实流逝时间计算出的剩余窗口。
+        let (persistence, data_dir) = sqlite_persistence("lifecycle-cross-restart-partial");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let combat_clock_tick_at_save = 500_000_u64;
+        // 60 秒决策窗口，落盘时刻 tick=500_000，窗口在 tick=501_200 到期。
+        let revival_decision_deadline_tick = combat_clock_tick_at_save + 1_200;
+        // 落盘 10 秒前——决策窗口还剩约 50 秒（1_000 tick）。
+        let last_updated_wall = current_unix_seconds() - 10;
+        let lifecycle = Lifecycle {
+            state: LifecycleState::AwaitingRevival,
+            awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+            revival_decision_deadline_tick: Some(revival_decision_deadline_tick),
+            ..Lifecycle::default()
+        };
+        let lifecycle_json = serde_json::to_string(&lifecycle).expect("lifecycle should serialize");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "
+                INSERT INTO player_lifecycle (
+                    username, lifecycle_json, schema_version, last_updated_wall,
+                    combat_clock_tick_at_save
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                ",
+                params![
+                    "Azure",
+                    lifecycle_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall,
+                    combat_clock_tick_at_save,
+                ],
+            )
+            .expect("lifecycle fixture row should insert");
+
+        // 模拟短暂重启：新进程 CombatClock 刚启动 20 tick（约 1 秒）。
+        let current_combat_clock_tick = 20_u64;
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure", current_combat_clock_tick)
+            .expect("lifecycle slice should load")
+            .expect("lifecycle row should exist");
+
+        let translated = loaded
+            .revival_decision_deadline_tick
+            .expect("decision deadline should still be Some after a short restart");
+        let remaining_ticks = translated.saturating_sub(current_combat_clock_tick);
+        // 预期剩余约 1_000 tick（50 秒），容忍 ±TICKS_PER_SECOND（1 秒）的墙钟取整抖动。
+        let lower = 1_000_u64.saturating_sub(TICKS_PER_SECOND);
+        let upper = 1_000_u64.saturating_add(TICKS_PER_SECOND);
+        assert!(
+            (lower..=upper).contains(&remaining_ticks),
+            "60 秒决策窗口在落盘 10 秒后重启，应仍剩约 50 秒(1000 tick)的有效决策时间；\
+             实际剩余 {remaining_ticks} tick（容忍区间 {lower}..={upper}）——过短说明误把\
+             还有效的窗口判定成过期，过长说明没有正确扣减已流逝的时间",
+        );
 
         let _ = fs::remove_dir_all(&data_dir);
     }
