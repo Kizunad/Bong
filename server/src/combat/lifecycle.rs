@@ -2394,6 +2394,7 @@ mod tests {
     use crate::cultivation::life_record::LifeRecord;
     use crate::cultivation::tick::CultivationClock;
     use crate::death_lifecycle::cinematic::DeathCinematicInit;
+    use crate::movement::{MovementAction, MovementState};
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::persistence::{
         bootstrap_sqlite, complete_tribulation_ascension, load_ascension_quota,
@@ -2525,6 +2526,403 @@ mod tests {
                 .expect("cultivation bundle should persist nourishment"),
         )
         .expect("persisted nourishment should decode")
+    }
+
+    fn seed_revival_nourishment_bundle(
+        settings: &PersistenceSettings,
+        username: &str,
+        cultivation: &Cultivation,
+        meridians: &MeridianSystem,
+        contamination: &Contamination,
+        life_record: &LifeRecord,
+        nourishment: Nourishment,
+    ) {
+        crate::persistence::persist_player_cultivation_bundle_with_nourishment(
+            settings,
+            username,
+            cultivation,
+            meridians,
+            &crate::cultivation::components::QiColor::default(),
+            &crate::cultivation::components::Karma::default(),
+            contamination,
+            life_record,
+            &crate::cultivation::color::PracticeLog::default(),
+            &crate::cultivation::insight::InsightQuota::default(),
+            &crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+            &crate::cultivation::insight_apply::InsightModifiers::new(),
+            None,
+            &crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            None,
+            None,
+            Some(&nourishment),
+        )
+        .expect("test setup must persist the pre-revival nourishment axes");
+    }
+
+    fn revival_action_test_app(settings: PersistenceSettings, tick: u64) -> App {
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick });
+        app.add_event::<valence::movement::MovementEvent>();
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
+        app.add_systems(
+            Update,
+            (
+                crate::nourishment::tick::sample_activity,
+                handle_revival_action_intents,
+            ),
+        );
+        app
+    }
+
+    struct RevivalActionActorState {
+        lifecycle: Lifecycle,
+        cultivation: Cultivation,
+        meridians: MeridianSystem,
+        contamination: Contamination,
+        life_record: LifeRecord,
+        nourishment: Nourishment,
+    }
+
+    fn spawn_revival_action_actor(
+        app: &mut App,
+        username: &str,
+        state: RevivalActionActorState,
+    ) -> Entity {
+        let RevivalActionActorState {
+            lifecycle,
+            cultivation,
+            meridians,
+            contamination,
+            life_record,
+            nourishment,
+        } = state;
+        let (client_bundle, _helper) = create_mock_client(username);
+        let entity = app.world_mut().spawn_empty().id();
+        app.world_mut().entity_mut(entity).insert(client_bundle);
+        app.world_mut().entity_mut(entity).insert((
+            lifecycle,
+            cultivation,
+            meridians,
+            contamination,
+            life_record,
+            Wounds {
+                health_current: 3.0,
+                health_max: 30.0,
+                entries: vec![Wound {
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
+                    kind: WoundKind::Cut,
+                    severity: 0.5,
+                    bleeding_per_sec: 1.0,
+                    created_at_tick: 1,
+                    inflicted_by: None,
+                }],
+            },
+            Stamina {
+                current: 2.0,
+                max: 10.0,
+                state: StaminaState::Combat,
+                ..Default::default()
+            },
+            CombatState {
+                incoming_window: Some(DefenseWindow {
+                    opened_at_tick: 1,
+                    duration_ms: 950,
+                }),
+                in_combat_until_tick: Some(20),
+                last_attack_at_tick: Some(1),
+            },
+            Position::new([12.0, 70.0, -4.0]),
+            Username(username.to_string()),
+        ));
+        app.world_mut().entity_mut(entity).insert((
+            crate::cultivation::components::QiColor::default(),
+            crate::cultivation::components::Karma::default(),
+            crate::cultivation::color::PracticeLog::default(),
+            crate::cultivation::insight::InsightQuota::default(),
+            crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+            crate::cultivation::insight_apply::InsightModifiers::new(),
+            NourishmentActivityWindow::default(),
+            nourishment,
+            MovementState {
+                action: MovementAction::Dashing,
+                ..Default::default()
+            },
+        ));
+        entity
+    }
+
+    #[test]
+    fn reincarnate_action_gate_rejection_preserves_ecs_and_sqlite_nourishment() {
+        let (settings, root) = persistence_settings("reincarnate-action-gate-rejection");
+        let username = "RejectedReincarnate";
+        let cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 7.0,
+            qi_max: 24.0,
+            ..Default::default()
+        };
+        let meridians = MeridianSystem::default();
+        let contamination = Contamination::default();
+        let life_record = LifeRecord::new(crate::player::state::canonical_player_id(username));
+        let persisted_nourishment = Nourishment {
+            satiety: 37.0,
+            hydration: 46.0,
+        };
+        seed_revival_nourishment_bundle(
+            &settings,
+            username,
+            &cultivation,
+            &meridians,
+            &contamination,
+            &life_record,
+            persisted_nourishment,
+        );
+
+        let mut app = revival_action_test_app(settings.clone(), 700);
+        let entity = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle::default(),
+                cultivation,
+                meridians,
+                contamination,
+                life_record,
+                nourishment: persisted_nourishment,
+            },
+        );
+        app.update();
+        let activity_before = *app
+            .world()
+            .get::<NourishmentActivityWindow>(entity)
+            .expect("sampling update must retain the activity window");
+        assert_eq!(
+            activity_before.observed_flags(),
+            (false, true),
+            "test setup must provide non-empty session activity before the rejected intent"
+        );
+        let lifecycle_before = serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+            .expect("lifecycle snapshot should serialize");
+        let nourishment_before = *app.world().get::<Nourishment>(entity).unwrap();
+        let life_record_before =
+            serde_json::to_value(app.world().get::<LifeRecord>(entity).unwrap())
+                .expect("life record snapshot should serialize");
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 700,
+        });
+        app.update();
+
+        assert_eq!(
+            serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+                .expect("lifecycle snapshot should serialize"),
+            lifecycle_before,
+            "Reincarnate outside AwaitingRevival must not create a revival transition"
+        );
+        assert_eq!(
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            nourishment_before,
+            "a rejected Reincarnate must not reset live satiety or hydration"
+        );
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap(),
+            activity_before,
+            "a rejected Reincarnate must not clear session movement or dash flags"
+        );
+        assert_eq!(
+            serde_json::to_value(app.world().get::<LifeRecord>(entity).unwrap())
+                .expect("life record snapshot should serialize"),
+            life_record_before,
+            "the action gate must not append a rebirth biography entry"
+        );
+        assert_eq!(
+            app.world().resource::<Events<PlayerRevived>>().len(),
+            0,
+            "a rejected Reincarnate must not emit PlayerRevived"
+        );
+        assert_eq!(
+            load_persisted_nourishment(&settings, username),
+            persisted_nourishment,
+            "a rejected Reincarnate must leave the stored nourishment axes untouched"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reincarnate_persistence_failure_is_atomic_for_ecs_and_nourishment_bundle() {
+        let (settings, root) = persistence_settings("reincarnate-persistence-atomicity");
+        let username = "AtomicReincarnate";
+        let cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 7.0,
+            qi_max: 24.0,
+            ..Default::default()
+        };
+        let meridians = MeridianSystem::default();
+        let contamination = Contamination::default();
+        let life_record = LifeRecord::new(crate::player::state::canonical_player_id(username));
+        let persisted_nourishment = Nourishment {
+            satiety: 21.0,
+            hydration: 34.0,
+        };
+        seed_revival_nourishment_bundle(
+            &settings,
+            username,
+            &cultivation,
+            &meridians,
+            &contamination,
+            &life_record,
+            persisted_nourishment,
+        );
+
+        let mut app = revival_action_test_app(settings.clone(), 701);
+        let entity = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                cultivation,
+                meridians,
+                contamination,
+                life_record,
+                nourishment: persisted_nourishment,
+            },
+        );
+        app.update();
+        let lifecycle_before = serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+            .expect("lifecycle snapshot should serialize");
+        let cultivation_before = app.world().get::<Cultivation>(entity).unwrap().clone();
+        let meridians_before = app.world().get::<MeridianSystem>(entity).unwrap().clone();
+        let contamination_before =
+            serde_json::to_value(app.world().get::<Contamination>(entity).unwrap())
+                .expect("contamination snapshot should serialize");
+        let life_record_before =
+            serde_json::to_value(app.world().get::<LifeRecord>(entity).unwrap())
+                .expect("life record snapshot should serialize");
+        let wounds_before = serde_json::to_value(app.world().get::<Wounds>(entity).unwrap())
+            .expect("wounds snapshot should serialize");
+        let stamina_before = serde_json::to_value(app.world().get::<Stamina>(entity).unwrap())
+            .expect("stamina snapshot should serialize");
+        let combat_before = serde_json::to_value(app.world().get::<CombatState>(entity).unwrap())
+            .expect("combat snapshot should serialize");
+        let nourishment_before = *app.world().get::<Nourishment>(entity).unwrap();
+        let activity_before = *app
+            .world()
+            .get::<NourishmentActivityWindow>(entity)
+            .unwrap();
+        assert_eq!(
+            activity_before.observed_flags(),
+            (false, true),
+            "test setup must provide non-empty session activity before the persistence failure"
+        );
+
+        let database_path = settings.db_path().to_path_buf();
+        let parked_database_path = root.join("parked-bong.db");
+        fs::rename(&database_path, &parked_database_path)
+            .expect("test setup must park the closed SQLite database");
+        fs::create_dir(&database_path).expect(
+            "a directory at the database path must make Connection::open fail deterministically",
+        );
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 701,
+        });
+        app.update();
+
+        let revived_event_count = app.world().resource::<Events<PlayerRevived>>().len();
+
+        fs::remove_dir(&database_path)
+            .expect("test teardown must remove the path used to force Connection::open failure");
+        fs::rename(&parked_database_path, &database_path)
+            .expect("test teardown must restore the parked SQLite database before verification");
+        let persisted_after = load_persisted_nourishment(&settings, username);
+
+        assert_eq!(
+            serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+                .expect("lifecycle snapshot should serialize"),
+            lifecycle_before,
+            "failed revival persistence must leave lifecycle AwaitingRevival"
+        );
+        assert_eq!(
+            *app.world().get::<Cultivation>(entity).unwrap(),
+            cultivation_before,
+            "failed revival persistence must not apply the cultivation penalty"
+        );
+        assert_eq!(
+            *app.world().get::<MeridianSystem>(entity).unwrap(),
+            meridians_before,
+            "failed revival persistence must not mutate meridians"
+        );
+        assert_eq!(
+            serde_json::to_value(app.world().get::<Contamination>(entity).unwrap())
+                .expect("contamination snapshot should serialize"),
+            contamination_before,
+            "failed revival persistence must not mutate contamination"
+        );
+        assert_eq!(
+            serde_json::to_value(app.world().get::<LifeRecord>(entity).unwrap())
+                .expect("life record snapshot should serialize"),
+            life_record_before,
+            "failed revival persistence must not append rebirth biography"
+        );
+        assert_eq!(
+            serde_json::to_value(app.world().get::<Wounds>(entity).unwrap())
+                .expect("wounds snapshot should serialize"),
+            wounds_before,
+            "failed revival persistence must not clear wounds or restore health"
+        );
+        assert_eq!(
+            serde_json::to_value(app.world().get::<Stamina>(entity).unwrap())
+                .expect("stamina snapshot should serialize"),
+            stamina_before,
+            "failed revival persistence must not restore stamina"
+        );
+        assert_eq!(
+            serde_json::to_value(app.world().get::<CombatState>(entity).unwrap())
+                .expect("combat snapshot should serialize"),
+            combat_before,
+            "failed revival persistence must not clear combat state"
+        );
+        assert_eq!(
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            nourishment_before,
+            "failed revival persistence must not reset satiety or hydration"
+        );
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap(),
+            activity_before,
+            "failed revival persistence must not clear session movement or dash flags"
+        );
+        assert_eq!(
+            revived_event_count, 0,
+            "failed revival persistence must not emit PlayerRevived"
+        );
+        assert_eq!(
+            persisted_after, persisted_nourishment,
+            "failed revival persistence must leave SQLite nourishment axes untouched"
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
