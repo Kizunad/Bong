@@ -16,10 +16,10 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 _自动生成于 2026-07-26 · 共 170 份 plan_
 
 ```text
-总进度  ███████████████████████████░░░  88.5%
+总进度  ██████████████████████████░░░░  88.3%
 ```
 
-**分布**：`merged` 140 · `wip` 15 · `design` 9 · `skeleton` 3 · `done` 3
+**分布**：`merged` 139 · `wip` 16 · `design` 9 · `skeleton` 3 · `done` 3
 
 ### 坍缩渊（TSY）
 
@@ -136,7 +136,7 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 36 份 · 组均 8
 
 ### 基础设施 / 工作流
 
-_IPC schema、持久化、工作流、内容、音效 · 24 份 · 组均 86%_
+_IPC schema、持久化、工作流、内容、音效 · 24 份 · 组均 84%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -146,7 +146,6 @@ _IPC schema、持久化、工作流、内容、音效 · 24 份 · 组均 86%_
 | `merged` | **自检 round3 findings** <br/><sub>`finished_plans/plan-bughunt-r3-findings-v1.md`</sub> | `████████████` 100% | #589 #612 #616 | 2026-06-29 |
 | `merged` | **自检 round4 findings** <br/><sub>`finished_plans/plan-bughunt-r4-findings-v1.md`</sub> | `████████████` 100% | #588 #601 #607 | 2026-06-29 |
 | `merged` | **自检 round5 findings** <br/><sub>`finished_plans/plan-bughunt-r5-findings-v1.md`</sub> | `████████████` 100% | #603 #594 #614 | 2026-06-29 |
-| `merged` | **CI Redis 镜像拉取韧性** <br/><sub>`finished_plans/plan-ci-redis-pull-resilience-v1.md`</sub> | `████████████` 100% | #575 | 2026-07-27 |
 | `merged` | **客户端接线缺口收口** <br/><sub>`finished_plans/plan-client-wiring-gaps-v1.md`</sub> | `████████████` 100% | #236 | 2026-06-08 |
 | `merged` | **跨系统接入缺口补丁** <br/><sub>`finished_plans/plan-cross-system-patch-v1.md`</sub> | `████████████` 100% | #92 | 2026-06-08 |
 | `merged` | **Tripo3D 模型资产批产** <br/><sub>`finished_plans/plan-model-asset-v1.md`</sub> | `████████████` 100% | — | 2026-06-09 |
@@ -160,6 +159,7 @@ _IPC schema、持久化、工作流、内容、音效 · 24 份 · 组均 86%_
 | `merged` | **天道叙事模板** <br/><sub>`finished_plans/plan-narrative-v1.md`</sub> | `███████████░`  90% | #89 | 2026-06-08 |
 | `wip` | **r2 跨端/境界门控/守恒 bug 修复** <br/><sub>`plan-bughunt-r2-findings-v1.md`</sub> | `███████████░`  90% | #605 #611 #617 #593 #602 #604 #597 | 2026-06-18 |
 | `wip` | **r1 机械型 bug 批量修复** <br/><sub>`plan-bughunt-r1-mechanical-fixes-v1.md`</sub> | `██████████░░`  85% | #599 #702 #595 #576 #590 #585 | 2026-06-25 |
+| `wip` | **CI Redis 镜像拉取韧性** <br/><sub>`plan-ci-redis-pull-resilience-v1.md`</sub> | `████████░░░░`  65% | #575 | 2026-07-27 |
 | `wip` | **r7 顿悟 modifier/UI 生命周期 bug** <br/><sub>`plan-bughunt-r7-findings-v1.md`</sub> | `█████░░░░░░░`  40% | #709 #708 #707 #711 | 2026-06-25 |
 | `wip` | **r8 派生属性孤岛审计** <br/><sub>`plan-bughunt-r8-modifier-orphan-audit-v1.md`</sub> | `████░░░░░░░░`  33% | #1143 | 2026-07-09 |
 | `wip` | **r6 炼丹/装备 registry/渡劫 bug** <br/><sub>`plan-bughunt-r6-findings-v1.md`</sub> | `███░░░░░░░░░`  25% | #1068 | 2026-07-07 |
