@@ -60,8 +60,10 @@ def _apply_bong_conventions(geo: dict, anim: dict, namespace: str, name: str) ->
     for g in geo.get("minecraft:geometry", []):
         g.setdefault("description", {})["identifier"] = f"geometry.{namespace}.{name}"
     anims = anim.get("animations", {})
+    # 取裸动画名再套 Bong 前缀：既支持 bbmodel 里的裸名（idle/walk），也支持 GeckoLib 常见的
+    # animation.<model>.<name> 全名（取最后一段 → 不会 double-prefix 成解析不到的 key）。
     anim["animations"] = {
-        f"animation.{namespace}.{name}.{k}": v for k, v in anims.items()
+        f"animation.{namespace}.{name}.{k.rsplit('.', 1)[-1]}": v for k, v in anims.items()
     }
 
 
@@ -119,8 +121,9 @@ def _export_via_blockbench(bbmodel_path: Path, timeout_ms: int) -> tuple[str, st
                 window.__cap = {};
                 window.__origExport = Blockbench.export;
                 Blockbench.export = function(options, cb){
-                    const key = (options && options.name) || ('f'+Object.keys(window.__cap).length);
-                    window.__cap[key] = options && options.content;
+                    // 单调计数 key，不按 options.name——万一 model/animation 导出同名不会互相覆盖；
+                    // geo vs animation 靠内容分类（见取回处正则），不依赖 name。
+                    window.__cap['f' + Object.keys(window.__cap).length] = options && options.content;
                     if (typeof cb === 'function') { try { cb({}); } catch(e){} }
                 };
             }"""
