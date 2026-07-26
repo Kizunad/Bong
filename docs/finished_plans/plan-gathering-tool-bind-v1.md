@@ -8,8 +8,8 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | herb_bundle:去重配方 + shelflife 挂载 | ⬜ |
-| P1 | cao_lian:required_tool 接通(割手草本) | ⬜ |
+| P0 | herb_bundle:去重配方 + shelflife 挂载 | ✅ 2026-07-27 |
+| P1 | cao_lian:required_tool 接通(割手草本) | ✅ 2026-07-27 |
 
 ---
 
@@ -90,3 +90,36 @@
 3. 不选择 `spirit_grass`；其 v1 基础灵草定位已有 `server/src/botany/registry.rs:1635` 测试锁定。
 
 **落点**：`server/src/botany/registry.rs:173` / `server/src/botany/registry.rs:1032` / `server/src/botany/registry.rs:1635` / plan P1。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0**：`server/assets/items/workbench_materials.toml`（herb_bundle 挂 `shelflife_profile = "fresh_herb_v1"` + `shelflife_track = "spoil"`）；`server/src/craft/workbench_recipes.rs`（`herb_bundle_recipe_registered_exactly_once` / `re_registering_herb_bundle_recipe_id_is_rejected_as_duplicate` 唯一性回归 pin）；`server/src/inventory/mod.rs`（`herb_bundle_item_template_has_shelflife_profile_set` / `runtime_instance_from_template_attaches_freshness_for_herb_bundle` / `herb_bundle_decay_curve_reaches_spoiled_state_over_three_game_days` / `herb_bundle_decays_identically_to_single_herb_on_shared_fresh_herb_v1_profile` / `herb_bundle_freshness_ignores_stack_count`）。
+- **P1**：`server/src/botany/registry.rs`（`DuanJiCi` / `XueSeMaiCao` 叠加 `HarvestHazard::WoundOnBareHand{ Laceration, required_tool: CaoLian }`）；`server/src/botany/hazard.rs`（`apply_completion_hazards` 返回值改为 `bool`，标记徒手割手是否命中）；`server/src/botany/harvest.rs`（`HarvestTerminalEvent` 消费方计算 `bare_hand_wound` / `required_tool_used` 正交字段，新增 3 条覆盖测试）；`server/src/botany/components.rs`（`HarvestTerminalEvent` 新增字段定义）。
+- **视听接线**（P1 规格内联段，非独立阶段）：`server/assets/audio/recipes/cao_lian_harvest_swing.json` + `botany_bare_hand_wound.json`（新 audio recipe，走既有 server 权威运行时）；`server/src/network/audio_trigger.rs`（`emit_botany_audio_triggers` 扩展差异化 SFX 分支）；`server/src/network/vfx_animation_trigger.rs`（复用 `BOTANY_HARVEST_VFX` 差异化粒子参数）；`server/src/network/event_stream_emit.rs`（新 `emit_botany_harvest_wound_to_event_stream` system，推「叶缘割手」HUD 提示）；`server/src/network/mod.rs`（新 system 注册）；`server/src/audio/mod.rs`（audio registry 计数 pin 271→273 + 2 条 recipe 数值回归测试）。
+
+### 关键 commit
+
+- `e2846ed50`（2026-07-27）P0：herb_bundle 挂载 fresh_herb_v1 保鲜 profile + 配方唯一性回归 pin（含衰减对照测试数学假设修正——`fresh_herb_v1` 走 `DecayFormula::Linear`，比例对照必须固定同一 `initial_qi`，另加 `stack_count` 无关性直接 pin）。
+- `51cb428d0`（2026-07-27）P1：草镰(cao_lian)接通 required_tool 本职——DuanJiCi/XueSeMaiCao 割手草本。
+- `4515619ec`（2026-07-27）视听接线：草镰持镰收割 vs 徒手割手差异化 SFX/VFX/HUD（全部复用既有客户端消费通道，无 client 改动）。
+
+### 测试结果
+
+- 定向测试：`cargo test --lib` 命中 P0/P1/AV 全部新增与相关既有测试，`inventory::` 508 passed、`craft::` 212 passed、`botany::` 149 passed、`network::vfx_animation_trigger::tests` 93 passed、`network::event_stream_emit::tests` 6 passed、`audio::tests` 17 passed（含 `loads_default_audio_recipes` 271→273 计数 pin），均 0 failed。
+- `cargo fmt --check` RC=0；`cargo clippy --lib -- -D warnings` RC=0。
+- 全量 `cargo test`（consume 前独立跑过一次）：11968 passed / 2 failed；两条失败均已在本轮收口——① `herb_bundle_decays_identically_to_single_herb_on_shared_fresh_herb_v1_profile` 系测试自身数学假设错误（非实现 bug），已改为固定 `initial_qi` 对照 + `stack_count` 无关性 pin，重跑绿；② `narration_tests::realm_gate_producer_consumer_selector_routes_only_target_player` 系 worktree 环境缺口（缺 `agent/node_modules` + 未构建 `@bong/schema` dist），`npm ci` + `npm run build -w @bong/schema` 后重跑绿，与本 plan 代码无关。
+- 对抗验证（validator，无上下文、read-only）：`VALIDATOR VERDICT: PASS (SHA=4515619ec5b26402a1957bf24f0573fe6c001c70)`，四项审查（测试真实性/AV 消费方真实性/§8.1 范围核验/commit 范围一致性）全 PASS。
+
+### 跨仓库核验
+
+- **server**：见上方落地清单。
+- **client**：本 plan 无新增 client 代码。视听接线全部复用已注册的既有消费方——`client/src/main/java/com/bong/client/audio/SoundRecipePlayer.java`（通用按 recipe id 播放，新 recipe 无需新 Java 分支）、`client/src/main/java/com/bong/client/visual/particle/BotanyHarvestBurstPlayer.java`（`EVENT_ID = "bong:botany_harvest"`，已在 `VfxBootstrap.java:109` 注册）、event_stream World channel（既有通用 HUD 消费方，`overflow` 提示先例同款复用）。validator 已逐一核实字符串 id 匹配 + 注册代码真实存在，非孤岛。
+- **agent**：无接触。
+
+### 遗留 / 后续
+
+- 草镰速度/品质加成（`GatheringToolKind::Sickle` 变体 + 与 `bao_chu` 重新平衡）明确不在本 plan 范围内（§8.1 决议 #3），留待后续独立 plan。

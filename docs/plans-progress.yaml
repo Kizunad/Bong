@@ -1488,15 +1488,15 @@ plans:
   - 581
   blocking_on: []
   summary: P0 已落地（resolve.rs:1644 should_block_contamination 拦截）；P1 文档背离修正未做。状态标记与代码一致。
-- file: plan-gathering-tool-bind-v1.md
-  group: gameplay-npc
+- file: finished_plans/plan-gathering-tool-bind-v1.md
+  group: finished
   title: 草药捆保鲜挂载 + 草镰采集接通
-  state: active-design
-  percent: 0
-  last_updated: '2026-06-14'
+  state: finished
+  percent: 100
+  last_updated: '2026-07-27'
   pr_refs: []
   blocking_on: []
-  summary: 'PR #558 只做 promote+决议收口（docs-only）；P0/P1 代码零落地（workbench_materials.toml 无 shelflife 字段），文档 ⬜ 如实。'
+  summary: P0（herb_bundle 挂 fresh_herb_v1）+ P1（cao_lian required_tool 接通 DuanJiCi/XueSeMaiCao）+ 视听接线全部落地，对抗验证 PASS，已归档。
 - file: plan-nested-pack-base-v1.md
   group: gameplay-npc
   title: 塔科夫式套包（物品内嵌子容器）
