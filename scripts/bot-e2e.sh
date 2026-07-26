@@ -238,8 +238,12 @@ python3 "$ROOT/scripts/bot/test_protocol.py"
 
 # ---- redis ----
 # Owned fixture evidence always receives an isolated Redis, even if CI/global environment exports
-# REDIS_URL. Generic mode preserves an explicit caller URL; otherwise it also uses a private run.
-if [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then
+# REDIS_URL. Generic self-start preserves an explicit caller URL. With no explicit URL it first
+# adopts the historical caller Redis at 127.0.0.1:6379; only an absent default listener gets a
+# private Compose Redis owned and cleaned up by this run.
+if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then
+  echo "[bot-e2e] 沿用调用方默认 Redis 127.0.0.1:6379"
+elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then
   REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"
   STARTED_REDIS=1
   echo "[bot-e2e] 启动本轮私有 Redis project: $REDIS_COMPOSE_PROJECT"

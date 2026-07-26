@@ -541,6 +541,13 @@ fn classify_ground_landing_at(
         return GroundLandingCheck::Miss;
     };
 
+    // A motion-blocking liquid/waterlogged support is not merely an invalid
+    // foothold: it is authoritative loaded data that must veto raster fallback.
+    // Test liquid before the strict support predicate, whose normal rejection
+    // semantics intentionally cover non-motion blocks, passthrough, and leaves.
+    if support.blocks_motion() && contains_ambient_liquid(support) {
+        return GroundLandingCheck::LiquidObstructed;
+    }
     if !is_strict_ground_support(support) {
         return GroundLandingCheck::Miss;
     }
@@ -1249,6 +1256,12 @@ mod tests {
         queried: std::cell::Cell<Option<(i32, i32)>>,
     }
 
+    impl FixtureSurface {
+        fn query_count(&self) -> u32 {
+            u32::from(self.queried.get().is_some())
+        }
+    }
+
     impl SurfaceProvider for FixtureSurface {
         fn query_surface(&self, world_x: i32, world_z: i32) -> SurfaceInfo {
             self.queried.set(Some((world_x, world_z)));
@@ -1501,6 +1514,46 @@ mod tests {
                 "{case}: only the target landing cell differs; complete headroom prevents false-positive rejection"
             );
         }
+    }
+
+    #[test]
+    fn ambient_waterlogged_motion_support_is_authoritative_raster_veto() {
+        let (_, wet_stairs, _, _) = waterlogged_non_leaf_fixtures();
+        let (app, layer_entity) = make_runtime_layer(
+            &[(0, 0)],
+            &[(1, 70, 2, wet_stairs), (1, 60, 2, BlockState::STONE)],
+        );
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 60,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            classify_ground_landing_at(1, 2, 70, layer),
+            GroundLandingCheck::LiquidObstructed,
+            "a waterlogged, motion-blocking support must be classified as liquid obstruction before strict-support rejection"
+        );
+        assert_eq!(
+            resolve_ambient_runtime_ground(1, 2, 80, Some(layer)),
+            AmbientRuntimeGround::LoadedUnsafe,
+            "a scan-window waterlogged support must map to the authoritative loaded unsafe state"
+        );
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(1.5, 80.0, 2.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            None,
+            "loaded waterlogged support must reject the candidate instead of using a safe raster landing elsewhere in the column"
+        );
+        assert_eq!(
+            terrain.query_count(),
+            0,
+            "LoadedUnsafe must reject before querying SurfaceProvider"
+        );
     }
 
     #[test]

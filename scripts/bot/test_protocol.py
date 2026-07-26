@@ -881,6 +881,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             (fake_bin / "python3").chmod(0o755)
             (fake_bin / "docker").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
             (fake_bin / "docker").chmod(0o755)
+            (fake_bin / "cargo").write_text("#!/usr/bin/env bash\nexit 46\n", encoding="utf-8")
+            (fake_bin / "cargo").chmod(0o755)
             env = os.environ.copy()
             for name in (
                 "BOT_E2E_AMBIENT_FIXTURE_MODE",
@@ -1089,6 +1091,80 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn('mkdir -p "$EVIDENCE_ROOT"', evidence_setup)
         self.assertNotIn('EVIDENCE_DIR="$ROOT/.sisyphus/evidence/bot-e2e"', self.source)
 
+    def test_redis_adopts_default_listener_or_starts_owned_private_instance(self):
+        redis_start = self.source.index("# ---- redis ----")
+        redis_end = self.source.index("\n# ---- server ----", redis_start)
+        redis = self.source[redis_start:redis_end]
+        cleanup_start = self.source.index("cleanup() {")
+        cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
+        cleanup = self.source[cleanup_start:cleanup_end]
+
+        adopt_guard = 'if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then'
+        private_guard = 'elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
+        self.assertIn(adopt_guard, redis)
+        self.assertIn('沿用调用方默认 Redis 127.0.0.1:6379', redis)
+        self.assertIn(private_guard, redis)
+        self.assertLess(redis.index(adopt_guard), redis.index(private_guard))
+        self.assertNotIn('export REDIS_URL=', redis[:redis.index(private_guard)])
+        self.assertIn('if [ "$STARTED_REDIS" = "1" ] && [ -n "$REDIS_COMPOSE_PROJECT" ]; then', cleanup)
+
+        root = pathlib.Path(__file__).parents[2]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_bin = pathlib.Path(temp_dir) / "bin"
+            fake_bin.mkdir()
+            log_path = pathlib.Path(temp_dir) / "tools.log"
+            real_python = shutil.which("python3")
+            (fake_bin / "python3").write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf 'python3 %s\\n' \"$*\" >> {shlex.quote(str(log_path))}\n"
+                "if [[ \"$1\" == *test_protocol.py ]]; then exit 0; fi\n"
+                "if [[ \"$1\" == *make_novice_raster_fixture.py ]]; then printf '%s/manifest.json\\n' \"$2\"; exit 0; fi\n"
+                "if [[ \"$1\" == '-' ]] && [[ \"$2\" == '127.0.0.1' ]] && [[ \"$3\" == '6379' ]]; then exit \"${FAKE_DEFAULT_REDIS_OPEN:-1}\"; fi\n"
+                f"exec {shlex.quote(real_python)} \"$@\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "python3").chmod(0o755)
+            (fake_bin / "docker").write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf 'docker %s\\n' \"$*\" >> {shlex.quote(str(log_path))}\n"
+                "exit 47\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "docker").chmod(0o755)
+            (fake_bin / "cargo").write_text("#!/usr/bin/env bash\nexit 46\n", encoding="utf-8")
+            (fake_bin / "cargo").chmod(0o755)
+
+            base_env = os.environ.copy()
+            for name in (
+                "BOT_E2E_AMBIENT_FIXTURE_MODE", "BOT_E2E_REUSE", "BOT_E2E_HOST",
+                "BOT_E2E_PORT", "BONG_TERRAIN_RASTER_PATH",
+                "BONG_SPIRITWOOD_HARVESTED_PATH", "REDIS_URL",
+            ):
+                base_env.pop(name, None)
+            base_env["PATH"] = f"{fake_bin}{os.pathsep}{base_env['PATH']}"
+
+            adopted = base_env | {"FAKE_DEFAULT_REDIS_OPEN": "0"}
+            adopted_result = subprocess.run(
+                ["bash", "scripts/bot-e2e.sh"], cwd=root, env=adopted,
+                capture_output=True, text=True, check=False, timeout=20,
+            )
+            adopted_tools = log_path.read_text(encoding="utf-8")
+            self.assertIn("沿用调用方默认 Redis 127.0.0.1:6379", adopted_result.stdout)
+            self.assertNotIn("docker ", adopted_tools)
+            self.assertNotIn("REDIS_URL=", adopted_tools)
+            self.assertNotIn("down -v", adopted_tools)
+
+            log_path.unlink()
+            private = base_env | {"FAKE_DEFAULT_REDIS_OPEN": "1"}
+            private_result = subprocess.run(
+                ["bash", "scripts/bot-e2e.sh"], cwd=root, env=private,
+                capture_output=True, text=True, check=False, timeout=20,
+            )
+            private_tools = log_path.read_text(encoding="utf-8")
+            self.assertEqual(private_result.returncode, 47, private_result.stderr)
+            self.assertIn("docker compose", private_tools)
+            self.assertIn("up -d redis --wait", private_tools)
+
     def test_redis_is_private_only_when_generic_caller_did_not_supply_url(self):
         redis_start = self.source.index("# ---- redis ----")
         redis_end = self.source.index("\n# ---- server ----", redis_start)
@@ -1096,7 +1172,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         cleanup_start = self.source.index("cleanup() {")
         cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
         cleanup = self.source[cleanup_start:cleanup_end]
-        self.assertIn('if [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then', redis)
+        self.assertIn('if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then', redis)
+        self.assertIn('elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then', redis)
         for required in (
             'REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"',
             'BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0',
