@@ -59,6 +59,7 @@ use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{SocialPactEvent, SocialRenownDeltaEvent};
 use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
+use crate::tools::ToolKind;
 
 /// **audio-trigger 调度的唯一生产注册入口**（`network::register` 调它，别处不许再散着 `add_systems`）。
 ///
@@ -646,7 +647,12 @@ pub fn emit_botany_audio_triggers(
             0.0,
         );
         // plan-gathering-tool-bind-v1 P1：草镰接通本职——持镰收割 vs 徒手割手的差异化 SFX。
-        if event.bare_hand_wound {
+        // PR #1293 review 修正：required_tool_used/bare_hand_wound 是"任意 required_tool
+        // 草本"的通用布尔值，仓库里已有 DunQiJia/GuaDao/BingJiaShouTao 三类既有 required_tool
+        // 草本——必须额外限定 required_tool_kind == CaoLian，否则这些既有草本的持工具/徒手
+        // 采集也会错误播放草镰专属 SFX。
+        let is_cao_lian = event.required_tool_kind == Some(ToolKind::CaoLian);
+        if event.bare_hand_wound && is_cao_lian {
             emit_play(
                 &mut audio,
                 "botany_bare_hand_wound",
@@ -656,7 +662,7 @@ pub fn emit_botany_audio_triggers(
                 1.0,
                 0.0,
             );
-        } else if event.required_tool_used {
+        } else if event.required_tool_used && is_cao_lian {
             emit_play(
                 &mut audio,
                 "cao_lian_harvest_swing",
@@ -3904,6 +3910,141 @@ mod tests {
             emitted[0].recipe_id, "woliu_burst_pop",
             "回落路径也必须是爆裂声 recipe，实际 {}",
             emitted[0].recipe_id
+        );
+    }
+
+    // ── plan-gathering-tool-bind-v1 P1（PR #1293 review 修正）：草镰专属 SFX 必须严格限定
+    // required_tool_kind == CaoLian，不能对任意 required_tool 草本一律播放 ──
+
+    fn botany_harvest_terminal_event(
+        client_entity: Entity,
+        bare_hand_wound: bool,
+        required_tool_used: bool,
+        required_tool_kind: Option<ToolKind>,
+    ) -> HarvestTerminalEvent {
+        HarvestTerminalEvent {
+            client_entity,
+            session_id: "offline:Azure".to_string(),
+            target_id: "plant-1".to_string(),
+            target_name: "test_plant".to_string(),
+            plant_kind: "test_plant".to_string(),
+            mode: crate::botany::components::BotanyHarvestMode::Manual,
+            interrupted: false,
+            completed: true,
+            detail: "采得 1 株".to_string(),
+            target_pos: Some([10.0, 64.0, 10.0]),
+            spirit_quality: 0.9,
+            duration_ticks: 40,
+            gathering_quality: None,
+            tool_used: None,
+            overflow_to_ground: false,
+            bare_hand_wound,
+            required_tool_used,
+            required_tool_kind,
+        }
+    }
+
+    fn botany_audio_test_app() -> App {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_botany_audio_triggers);
+        app
+    }
+
+    #[test]
+    fn cao_lian_harvest_swing_emits_after_cao_lian_tool_used() {
+        let mut app = botany_audio_test_app();
+        let player = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(botany_harvest_terminal_event(
+            player,
+            false,
+            true,
+            Some(ToolKind::CaoLian),
+        ));
+        app.update();
+
+        let recipes: Vec<_> = drain_audio(&mut app)
+            .into_iter()
+            .map(|e| e.recipe_id)
+            .collect();
+        assert_eq!(
+            recipes,
+            vec!["harvest_pluck", "cao_lian_harvest_swing"],
+            "持草镰完成采集应在基础采集声之后追加草镰挥砍声"
+        );
+    }
+
+    #[test]
+    fn botany_bare_hand_wound_emits_after_cao_lian_bare_hand_hit() {
+        let mut app = botany_audio_test_app();
+        let player = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(botany_harvest_terminal_event(
+            player,
+            true,
+            false,
+            Some(ToolKind::CaoLian),
+        ));
+        app.update();
+
+        let recipes: Vec<_> = drain_audio(&mut app)
+            .into_iter()
+            .map(|e| e.recipe_id)
+            .collect();
+        assert_eq!(
+            recipes,
+            vec!["harvest_pluck", "botany_bare_hand_wound"],
+            "草镰目标草本徒手割手应在基础采集声之后追加割手痛呼声"
+        );
+    }
+
+    /// 回归：既有 DunQiJia 门槛草本（`XuanGenWei` 等）持工具完成采集，不得播放
+    /// 草镰专属的 `cao_lian_harvest_swing`——required_tool_used 只是"任意 required_tool
+    /// 命中"的通用信号，必须靠 required_tool_kind 甄别。
+    #[test]
+    fn non_cao_lian_required_tool_harvest_does_not_emit_cao_lian_swing() {
+        let mut app = botany_audio_test_app();
+        let player = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(botany_harvest_terminal_event(
+            player,
+            false,
+            true,
+            Some(ToolKind::DunQiJia),
+        ));
+        app.update();
+
+        let recipes: Vec<_> = drain_audio(&mut app)
+            .into_iter()
+            .map(|e| e.recipe_id)
+            .collect();
+        assert_eq!(
+            recipes,
+            vec!["harvest_pluck"],
+            "既有 DunQiJia 门槛草本不属于本 plan 范围，不应播放草镰专属挥砍声"
+        );
+    }
+
+    /// 回归：既有 DunQiJia 门槛草本徒手割手，不得播放草镰专属的 `botany_bare_hand_wound`。
+    #[test]
+    fn non_cao_lian_bare_hand_wound_does_not_emit_botany_bare_hand_wound_recipe() {
+        let mut app = botany_audio_test_app();
+        let player = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(botany_harvest_terminal_event(
+            player,
+            true,
+            false,
+            Some(ToolKind::DunQiJia),
+        ));
+        app.update();
+
+        let recipes: Vec<_> = drain_audio(&mut app)
+            .into_iter()
+            .map(|e| e.recipe_id)
+            .collect();
+        assert_eq!(
+            recipes,
+            vec!["harvest_pluck"],
+            "既有 DunQiJia 门槛草本的徒手割手不属于本 plan 范围，不应播放草镰专属割手声"
         );
     }
 }

@@ -140,6 +140,7 @@ fn send_structural_cancel_terminal(
         overflow_to_ground: false,
         bare_hand_wound: false,
         required_tool_used: false,
+        required_tool_kind: None,
     });
 }
 
@@ -402,6 +403,7 @@ pub fn complete_harvest_for_player(
         overflow_to_ground,
         bare_hand_wound,
         required_tool_used: required_tool_matched,
+        required_tool_kind: session_required_tool,
     });
     Ok(())
 }
@@ -566,6 +568,7 @@ pub fn enforce_harvest_session_constraints(
             overflow_to_ground: false,
             bare_hand_wound: false,
             required_tool_used: false,
+            required_tool_kind: None,
         });
     }
 }
@@ -627,6 +630,7 @@ pub fn release_disconnected_harvest_sessions(
             overflow_to_ground: false,
             bare_hand_wound: false,
             required_tool_used: false,
+            required_tool_kind: None,
         });
     }
 }

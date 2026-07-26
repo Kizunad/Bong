@@ -19,6 +19,7 @@ use crate::network::agent_bridge::{
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::combat_hud::{EventChannelV1, EventPriorityV1, EventStreamPushV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::tools::ToolKind;
 
 pub fn emit_combat_events_to_event_stream(
     mut combat_reader: EventReader<CombatEvent>,
@@ -106,13 +107,22 @@ pub fn emit_botany_harvest_overflow_to_event_stream(
 /// 提示「叶缘割手」（World channel，非战斗但复用同一既有推送管线）。仅在
 /// `bare_hand_wound && completed && !interrupted` 时推送，遵循
 /// `feedback_hud_immersive_minimal`：持镰免伤的 happy path 不刷屏。
+///
+/// PR #1293 review 修正：`bare_hand_wound` 是"任意 required_tool 草本徒手割手"的通用
+/// 布尔值，仓库里已有 DunQiJia/GuaDao/BingJiaShouTao 三类既有 required_tool 草本——
+/// 「叶缘割手」是草镰(CaoLian)专属的收割文案，必须额外限定 `required_tool_kind ==
+/// Some(ToolKind::CaoLian)`，否则既有草本的徒手割手也会被错误地报成"叶缘割手"。
 pub fn emit_botany_harvest_wound_to_event_stream(
     mut terminal: EventReader<HarvestTerminalEvent>,
     mut clients: Query<(&Username, &mut Client)>,
 ) {
     let now_ms = current_unix_millis();
     for ev in terminal.read() {
-        if !ev.bare_hand_wound || !ev.completed || ev.interrupted {
+        if !ev.bare_hand_wound
+            || !ev.completed
+            || ev.interrupted
+            || ev.required_tool_kind != Some(ToolKind::CaoLian)
+        {
             continue;
         }
         push_to_client_priority(
@@ -259,6 +269,7 @@ mod tests {
             overflow_to_ground,
             bare_hand_wound: false,
             required_tool_used: false,
+            required_tool_kind: None,
         }
     }
 
@@ -339,11 +350,14 @@ mod tests {
     }
 
     /// plan-gathering-tool-bind-v1 P1 测试用 `HarvestTerminalEvent` 构造器（bare_hand_wound 变体）。
+    /// `required_tool_kind`（PR #1293 review 修正新增参数）：目标植物 hazard 声明的
+    /// required_tool，`None` 表示植物本身没有该 hazard。
     fn wound_terminal_event(
         client_entity: Entity,
         bare_hand_wound: bool,
         completed: bool,
         interrupted: bool,
+        required_tool_kind: Option<ToolKind>,
     ) -> HarvestTerminalEvent {
         HarvestTerminalEvent {
             client_entity,
@@ -363,10 +377,12 @@ mod tests {
             overflow_to_ground: false,
             bare_hand_wound,
             required_tool_used: false,
+            required_tool_kind,
         }
     }
 
-    /// ① bare_hand_wound=true → client 收到 1 条 World/P1Important 推送「叶缘割手」。
+    /// ① bare_hand_wound=true + required_tool_kind=CaoLian → client 收到 1 条
+    /// World/P1Important 推送「叶缘割手」。
     #[test]
     fn bare_hand_wound_terminal_event_pushes_world_channel_event_stream() {
         let mut app = App::new();
@@ -374,8 +390,13 @@ mod tests {
         app.add_systems(Update, emit_botany_harvest_wound_to_event_stream);
 
         let (player, mut player_helper) = spawn_mock_client(&mut app, "Azure");
-        app.world_mut()
-            .send_event(wound_terminal_event(player, true, true, false));
+        app.world_mut().send_event(wound_terminal_event(
+            player,
+            true,
+            true,
+            false,
+            Some(ToolKind::CaoLian),
+        ));
 
         app.update();
         flush_all_client_packets(&mut app);
@@ -404,8 +425,13 @@ mod tests {
         app.add_systems(Update, emit_botany_harvest_wound_to_event_stream);
 
         let (player, mut player_helper) = spawn_mock_client(&mut app, "Azure");
-        app.world_mut()
-            .send_event(wound_terminal_event(player, false, true, false));
+        app.world_mut().send_event(wound_terminal_event(
+            player,
+            false,
+            true,
+            false,
+            Some(ToolKind::CaoLian),
+        ));
 
         app.update();
         flush_all_client_packets(&mut app);
@@ -426,8 +452,13 @@ mod tests {
         app.add_systems(Update, emit_botany_harvest_wound_to_event_stream);
 
         let (player, mut player_helper) = spawn_mock_client(&mut app, "Azure");
-        app.world_mut()
-            .send_event(wound_terminal_event(player, true, false, true));
+        app.world_mut().send_event(wound_terminal_event(
+            player,
+            true,
+            false,
+            true,
+            Some(ToolKind::CaoLian),
+        ));
 
         app.update();
         flush_all_client_packets(&mut app);
@@ -437,6 +468,36 @@ mod tests {
             pushes.len(),
             0,
             "interrupted terminal events must never push a botany-bare-hand-wound event, even with bare_hand_wound mistakenly true"
+        );
+    }
+
+    /// ④ PR #1293 review 回归：既有非草镰 required_tool 草本（DunQiJia 门槛）徒手割手时，
+    /// 不得被误报成草镰专属的「叶缘割手」文案——`required_tool_kind` 必须严格限定到
+    /// `ToolKind::CaoLian` 才推送。
+    #[test]
+    fn bare_hand_wound_on_non_cao_lian_required_tool_plant_does_not_push_leaf_edge_text() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_systems(Update, emit_botany_harvest_wound_to_event_stream);
+
+        let (player, mut player_helper) = spawn_mock_client(&mut app, "Azure");
+        app.world_mut().send_event(wound_terminal_event(
+            player,
+            true,
+            true,
+            false,
+            Some(ToolKind::DunQiJia),
+        ));
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let pushes = collect_event_stream_pushes(&mut player_helper);
+        assert_eq!(
+            pushes.len(),
+            0,
+            "既有 DunQiJia 门槛草本的徒手割手不属于本 plan 的草镰专属反馈范围，\
+             不应推送「叶缘割手」HUD 提示"
         );
     }
 }
