@@ -22,6 +22,23 @@ import java.util.Set;
  *   <tr><td>anqi.echo_fractal</td><td>弱 / 12t≈0.6s</td><td>—</td></tr>
  * </table>
  *
+ * <p><b>⚠️ 服务端权威 CASTING 缺口（本表 4 招里 3 招当前拿不到 juice）</b>：
+ * {@link CastFovController} 按 plan §P3 门控硬约束只认服务端权威 {@code cast_sync{phase:casting}}
+ * 作为 accepted 凭据（本地预测不算）。而服务端 {@code push_skill_cast_started_sync}
+ * （{@code server/src/network/client_request_handler.rs}）在实体上没有 {@code Casting} 组件时
+ * 直接 early-return——下列 resolver 全程不插 {@code Casting}（属瞬发招，resolver 内一次结算完，
+ * 没有引导窗），故服务端**从不**为它们下发权威 CASTING：
+ * <ul>
+ *   <li>{@code baomai.full_power_release} —— {@code combat::baomai_v3::skills::cast_full_power_release}</li>
+ *   <li>{@code woliu.turbulence_burst} —— {@code combat::woliu_v2::skills::resolve_woliu_v2_skill}</li>
+ *   <li>{@code anqi.echo_fractal} —— {@code combat::anqi_v2::resolve_anqi_skill}</li>
+ * </ul>
+ * 只有 {@code zhenmai.sever_chain}（{@code zhenmai_v2::insert_casting_snapshot}）与走动画事件
+ * 路径的 {@code sword_path.heaven_gate}（{@code sword_path::skill_register::insert_casting}）
+ * 会下发。本表条目**故意保留**：参数是 plan §P3 定稿，服务端补发权威 CASTING（或把这些瞬发招
+ * 也接到动画事件驱动）后即刻生效——**那是服务端/跨端改动，不在本纯 client PR 范围**。
+ * 不为了让它们「看起来能用」而放宽 accepted 门控。
+ *
  * <p><b>heaven_gate 例外</b>：{@code sword_path.heaven_gate} 的 cast 条时长（cast_ticks=80=4s）
  * 与真实引导窗（到 140t=7s 才 emit release）错开 3s，走 CastState 驱动会让 juice 在举剑蓄力
  * 中途触发、而非劈下那一刻。故它**不在本表**，改由 {@link CastFovController#onAnimPlayed}

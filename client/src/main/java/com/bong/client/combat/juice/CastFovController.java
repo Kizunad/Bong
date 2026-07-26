@@ -34,12 +34,21 @@ import java.util.function.LongSupplier;
  *       下方「动画事件驱动的 juice」段。</li>
  * </ol>
  *
- * <p><b>门控</b>（§8.1 #3）：release juice 只绑**已 accepted（观测到 CASTING）的 cast identity**。
+ * <p><b>门控</b>（§8.1 #3）：release juice 只绑**已 accepted 的 cast identity**。
  * identity = {@code (slot, startedAtMs)} 二元组（{@link CastState} 无唯一 cast id；不含推断得来的
  * source，理由见 {@link Identity}）。
+ *
+ * <p><b>「accepted」= 服务端权威回执，不是本地预测</b>（{@link CastStateStore.Origin}）：
+ * {@code SkillBarKeyRouter} 在**按键那一刻**就 {@code beginSkillBarCast} 写出一条 CASTING
+ * （纯乐观预测，服务端还没回话），{@code CastStateStore.tick} 也会按本地计时把它推到 COMPLETE。
+ * 只有 {@code CastSyncHandler} → {@link CastStateStore#replace} 落地的 CASTING 才是
+ * {@link CastStateStore.Origin#SERVER_AUTHORITATIVE}，也才允许武装。本地预测最多是**候选**：
+ * 它只影响 {@code CastSyncHandler.sourceFor} 的 SKILL_BAR 推断（见 {@link #resolveSkillId}），
+ * 不授予任何触发权。**服务端拒绝 / 压根没接受的施法，本地计时到点也零 juice。**
  * <ul>
- *   <li>CASTING：按 identity 武装 pending（该招在 {@link CastJuiceProfiles} 有 profile 才武装）；
- *       同 identity 重复 CASTING 幂等，异 identity 取代旧 pending（supersession）。</li>
+ *   <li>CASTING（仅权威）：按 identity 武装 pending（该招在 {@link CastJuiceProfiles} 有 profile
+ *       才武装）；同 identity 重复 CASTING 幂等，异 identity 取代旧 pending（supersession）。
+ *       预测来源的 CASTING 一律不武装。</li>
  *   <li>COMPLETE：identity 匹配且未触发过 → 触发 FOV 脉冲 + shake，标记已触发（同 identity 重复
  *       release 幂等）。</li>
  *   <li>INTERRUPT：只作废**同 identity** 的 pending（异 identity 的在飞 cast 不受牵连），并记录
@@ -90,7 +99,8 @@ public final class CastFovController {
         if (!BOOTSTRAPPED.compareAndSet(false, true)) {
             return;
         }
-        CastStateStore.addListener(CastFovController::onCastState);
+        // 必须挂**带来源**的监听：Consumer 版拿不到 Origin，会把本地预测当成 accepted。
+        CastStateStore.addTransitionListener(CastFovController::onCastState);
         ClientTickEvents.END_CLIENT_TICK.register(client -> tick());
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> teardown());
         // 切世界（跨维度 / 换服）：vanilla 不重建 ClientPlayNetworkHandler，只发 PlayerRespawn
@@ -115,15 +125,24 @@ public final class CastFovController {
     /**
      * cast 状态转换回调（{@code CastSyncHandler.replace} / 本地预测 → {@code CastStateStore
      * .setSnapshot} → 本方法）。这是驱动 juice 状态机的唯一入口（不直接暴露 arm/fire 给外部）。
+     *
+     * <p><b>只有 {@link CastStateStore.Origin#SERVER_AUTHORITATIVE} 的 CASTING 才武装</b>——
+     * 预测来源的 CASTING 只是候选（见类文档「accepted」段）。COMPLETE 不看来源：它只是**触发
+     * 时刻**信号，权限来自那条已被权威武装的 pending；缺 pending（= 未 accepted 或已作废）
+     * 一律 no-op，故「按键预测 → 本地计时到点 → COMPLETE」拿不到 juice。
      */
-    static void onCastState(CastState state) {
+    static void onCastState(CastState state, CastStateStore.Origin origin) {
         if (state == null) {
             return;
         }
         long now = clock.getAsLong();
         synchronized (LOCK) {
             switch (state.phase()) {
-                case CASTING -> arm(state);
+                case CASTING -> {
+                    if (origin == CastStateStore.Origin.SERVER_AUTHORITATIVE) {
+                        arm(state);
+                    }
+                }
                 case COMPLETE -> release(state, now);
                 case INTERRUPT -> voidPending(state);
                 case IDLE -> pending = null;
@@ -394,8 +413,14 @@ public final class CastFovController {
     }
 
     /**
-     * slot → skillId。juice profile 皆技能栏技能；本地预测 {@code beginSkillBarCast}
-     * （{@code SkillBarKeyRouter}）保住 SKILL_BAR source。QUICK_SLOT = 快捷物品，无技能 profile。
+     * slot → skillId。juice profile 皆技能栏技能；QUICK_SLOT = 快捷物品，无技能 profile。
+     *
+     * <p><b>本地预测在此处（且仅在此处）起作用</b>：{@code source} 不是 wire 字段，
+     * {@code CastSyncHandler.sourceFor} 靠「当前快照是否正 CASTING 在同一 slot 且为 SKILL_BAR」
+     * 推断它——而那条快照正是按键时的本地预测（{@code SkillBarKeyRouter.beginSkillBarCast}）。
+     * 所以预测是权威 CASTING 能被认成技能栏施法的**前提**，但它本身不武装任何东西（门控见类
+     * 文档）。预测已被本地打断/清掉时 {@code sourceFor} 退化成 QUICK_SLOT → 解析不出 profile
+     * → 不武装；那种情形下这次施法本来就已被玩家取消，不触发 juice 是正确结果。
      */
     private static String resolveSkillId(CastState state) {
         if (state.source() != CastState.Source.SKILL_BAR) {

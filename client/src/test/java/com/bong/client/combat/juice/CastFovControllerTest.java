@@ -26,10 +26,16 @@ import org.junit.jupiter.api.Test;
 /**
  * plan-fpv-cast-av-v1 P3 施法 juice 状态机饱和测试。
  *
- * <p>**从真实入口驱动**（§P3 硬约束「不直接调 controller 方法」）：arming 走本地预测
+ * <p>**从真实入口驱动**（§P3 硬约束「不直接调 controller 方法」）：本地预测走
  * {@link CastStateStore#beginSkillBarCast}（{@code SkillBarKeyRouter} 的真实入口，保住 SKILL_BAR
- * source），release/interrupt/reject 走真实 {@link CastSyncHandler#handle} 消费 server cast_sync。
- * 断言只读外部可观察量 {@link CastFovController#fovDelta()}（加法 FOV 偏移），每条路径终点断言归基准 0。
+ * source），<b>accepted 武装 / release / interrupt / reject 全部走真实 {@link CastSyncHandler#handle}
+ * 消费 server cast_sync</b>。断言只读外部可观察量 {@link CastFovController#fovDelta()}（加法 FOV
+ * 偏移），每条路径终点断言归基准 0。
+ *
+ * <p><b>arming 需要「预测 + 权威」两步</b>（review finding B）：{@link #predict} 只是候选，
+ * 它的作用是让 {@code CastSyncHandler.sourceFor} 把随后的权威回执认成 SKILL_BAR；真正武装
+ * pending 的是 {@link #accept}（权威 {@code cast_sync{phase:casting}}）。只 predict 不 accept 的
+ * 路径必须零 juice，见 {@link #localPredictionAloneNeverArmsSoTimerCompleteIsSilent()}。
  */
 class CastFovControllerTest {
     private static final int HEAVY_SLOT = 3;
@@ -65,7 +71,8 @@ class CastFovControllerTest {
         SkillBarStore.updateSlot(HEAVY_SLOT, SkillBarEntry.skill(HEAVY_SKILL, "全力", DURATION_MS, 0, ""));
         SkillBarStore.updateSlot(LIGHT_SLOT, SkillBarEntry.skill(LIGHT_SKILL, "竖劈", 1000, 0, ""));
         // 注册真实 cast 转换监听（生产由 bootstrap 挂；单测无 Fabric 事件环境，仅挂 listener）。
-        CastStateStore.addListener(CastFovController::onCastState);
+        // 必须是**带来源**的 transition listener——Consumer 版拿不到 Origin。
+        CastStateStore.addTransitionListener(CastFovController::onCastState);
         CastFovController.setClockForTest(() -> now[0]);
         // 动画事件驱动 juice 的本地玩家判定 seam（免 MinecraftClient）。
         CastFovController.setLocalPlayerPredicateForTest(LOCAL_PLAYER::equals);
@@ -83,9 +90,23 @@ class CastFovControllerTest {
 
     // ---- 驱动辅助（真实入口） ----
 
-    /** 本地预测开始技能栏施法（SkillBarKeyRouter 的真实入口）——武装 pending。 */
+    /**
+     * 本地预测开始技能栏施法（{@code SkillBarKeyRouter} 的真实入口）——<b>只建候选，不武装</b>。
+     * 它唯一的作用是让随后的权威回执经 {@code CastSyncHandler.sourceFor} 认成 SKILL_BAR。
+     */
     private void predict(int slot, long startedAt) {
         CastStateStore.beginSkillBarCast(slot, DURATION_MS, startedAt);
+    }
+
+    /** 服务端权威 {@code cast_sync{phase:casting}}（真实 wire 入口）——这才武装 pending。 */
+    private void accept(int slot, long startedAt) {
+        serverSync("casting", slot, startedAt, "none");
+    }
+
+    /** 预测 + 权威确认：生产上一次正常施法起手的完整两步。 */
+    private void predictAndAccept(int slot, long startedAt) {
+        predict(slot, startedAt);
+        accept(slot, startedAt);
     }
 
     /** server cast_sync 消费（真实 CastSyncHandler 入口）。 */
@@ -144,12 +165,12 @@ class CastFovControllerTest {
     @Test
     void bootstrapRegistersCastStateListenerSoProductionPathIsNotAnIsland() {
         // 其余用例都是 setUp 手工挂 listener（单测无 Fabric 事件环境），于是 bootstrap() 本身
-        // 零覆盖——把 CastStateStore.addListener 那行删掉，整条 CastState 驱动 juice 会静默
-        // 变成孤岛而测试全绿。这里清空 listener 后走**真正的 bootstrap()**，再用真实入口驱动。
+        // 零覆盖——把 CastStateStore.addTransitionListener 那行删掉，整条 CastState 驱动 juice
+        // 会静默变成孤岛而测试全绿。这里清空 listener 后走**真正的 bootstrap()**，再用真实入口驱动。
         CastStateStore.resetForTests();   // 清掉 setUp 手工挂的 listener
         CastFovController.bootstrap();    // 生产接线（幂等，AtomicBoolean 一次性）
 
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6,
@@ -160,12 +181,68 @@ class CastFovControllerTest {
         assertBaseline("经 bootstrap 接线的脉冲同样 decay 回基准");
     }
 
+    // ---- accepted 门控：本地预测不得武装（review finding B） ----
+
+    @Test
+    void localPredictionAloneNeverArmsSoTimerCompleteIsSilent() {
+        // 生产真实序列：按键 → SkillBarKeyRouter.beginSkillBarCast（乐观预测）→ 服务端**从未**
+        // 回 casting（被拒 / 丢包 / 该招服务端压根不发权威 CASTING）→ CastStateStore.tick 按
+        // 本地计时把它推到 COMPLETE。这条路径必须零 juice：预测不是 accepted。
+        predict(HEAVY_SLOT, START);
+        CastStateStore.tick(START + DURATION_MS + 1);   // 本地计时到点（BongHud 每帧调的真实入口）
+        assertEquals(CastState.Phase.COMPLETE, CastStateStore.snapshot().phase(),
+            "前提校验：本地计时确实把预测推到了 COMPLETE（否则本用例假绿）");
+
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("服务端从未确认 accepted → 本地计时到点也不许触发 FOV 脉冲");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "服务端从未确认 accepted → 抖动同样一点都不许有");
+    }
+
+    @Test
+    void serverAcceptedThenLocalTimerCompleteFiresNormally() {
+        // 上一条的反证：加上权威 casting 回执后，同一条本地计时 COMPLETE 必须正常触发——
+        // 证明门控挡的是「缺确认」，不是把整条路径关死。
+        predict(HEAVY_SLOT, START);
+        accept(HEAVY_SLOT, START);
+        CastStateStore.tick(START + DURATION_MS + 1);   // COMPLETE 只是**触发时刻**信号
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6,
+            "已 accepted 的施法，本地计时到点的 COMPLETE 照常触发脉冲");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("脉冲 decay 完毕");
+    }
+
+    @Test
+    void onlyAcceptedIdentityFiresWhenServerClockDiffersFromPrediction() {
+        // 生产常态：预测的 startedAtMs 是**客户端**时钟，权威回执的是**服务端**时钟，二者不等。
+        // 于是 identity 必须以权威回执为准：预测身份的 COMPLETE 不触发，权威身份的才触发。
+        long serverStart = START + 37;
+        predict(HEAVY_SLOT, START);
+        accept(HEAVY_SLOT, serverStart);
+
+        serverSync("complete", HEAVY_SLOT, START, "completed");   // 按**预测**身份来的 release
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("身份不是被 accepted 的那个 → 不触发");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+
+        serverSync("complete", HEAVY_SLOT, serverStart, "completed");  // 按**权威**身份来的 release
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "权威身份的 release 正常触发");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("脉冲 decay 完毕");
+    }
+
     // ---- 状态机全路径（终点断言基准） ----
 
     @Test
     void normalReleaseFiresPulseThenDecaysToBaseline() {
         assertBaseline("施法前");
-        predict(HEAVY_SLOT, START);            // 武装
+        predictAndAccept(HEAVY_SLOT, START);            // 武装
         assertBaseline("CASTING 中不触发（release 才触发）");
         serverSync("complete", HEAVY_SLOT, START, "completed");  // release
 
@@ -187,7 +264,7 @@ class CastFovControllerTest {
         assertBaseline("施放前拒绝不触发 juice");
 
         // 预测后被拒（打断回执作废 pending）
-        predict(HEAVY_SLOT, START + 1);
+        predictAndAccept(HEAVY_SLOT, START + 1);
         serverSync("interrupt", HEAVY_SLOT, START + 1, "reject_qi_insufficient");
         serverSync("complete", HEAVY_SLOT, START + 1, "completed");  // 迟到的 complete 不应复活
         advanceMs(FOV_DURATION_MS / 2);
@@ -196,7 +273,7 @@ class CastFovControllerTest {
 
     @Test
     void interruptVoidsPendingBeforeRelease() {
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("interrupt", HEAVY_SLOT, START, "interrupt_contam");  // 施法中打断
         serverSync("complete", HEAVY_SLOT, START, "completed");         // 打断后的迟到 complete
         advanceMs(FOV_DURATION_MS / 2);
@@ -214,22 +291,22 @@ class CastFovControllerTest {
     }
 
     @Test
-    void outOfOrderInterruptBlocksLaterLocalPredictOfSameCast() {
+    void outOfOrderInterruptBlocksLaterAuthoritativeCastingOfSameCast() {
         // 上一条用例走纯 server sync，CASTING 那步经 sourceFor 退化成 QUICK_SLOT、本来就
-        // 解析不出 profile——即便删掉 voidedId 机制它也照样绿。本例改用**本地预测**重新
-        // 起同一 identity（beginSkillBarCast 直接写 SKILL_BAR，绕开 sourceFor 退化），
-        // 让「取消令牌记住被作废身份」这条真正成为唯一挡住 juice 的机制。
+        // 解析不出 profile——即便删掉作废记录它也照样绿。本例先用本地预测把快照恢复成
+        // CASTING/SKILL_BAR（玩家重按键的真实序列），让随后那条**权威** CASTING 真能解析出
+        // profile，于是「取消令牌记住被作废身份」成为唯一挡住 juice 的机制。
         serverSync("interrupt", HEAVY_SLOT, START, "interrupt_control");  // 打断先到
 
-        predict(HEAVY_SLOT, START);  // 同 identity 的 CASTING 后到（本地预测，SKILL_BAR）
+        predictAndAccept(HEAVY_SLOT, START);  // 同 identity 的权威 CASTING 后到（乱序/重传）
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
-        assertBaseline("已作废身份即便后来收到 CASTING 也不得武装 → release 不触发");
+        assertBaseline("已作废身份即便后来收到权威 CASTING 也不得武装 → release 不触发");
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
 
-        // 反证：换一个未被作废的身份，同样的本地预测 + release 必须正常触发，
+        // 反证：换一个未被作废的身份，同样的预测+权威+release 必须正常触发，
         // 证明上面的「不触发」来自作废记录，而不是这条路径整体就打不通。
-        predict(HEAVY_SLOT, START + 5000);
+        predictAndAccept(HEAVY_SLOT, START + 5000);
         serverSync("complete", HEAVY_SLOT, START + 5000, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "未被作废的身份走同一路径应正常触发");
@@ -244,7 +321,7 @@ class CastFovControllerTest {
         // 回归（PR #1249 review finding 1）：A 起 → B 取代 A → 迟到的 INTERRUPT(A) → COMPLETE(B)
         // **仍然**触发脉冲。旧实现 voidPending 无条件清 pending，迟到的旧打断会误杀新施法；
         // 且旧 identity 含推断得来的 source，INTERRUPT 落地后 COMPLETE 会退化成 QUICK_SLOT 认不出自己。
-        predict(HEAVY_SLOT, START);                                   // 武装 A
+        predictAndAccept(HEAVY_SLOT, START);                                   // 武装 A
         serverSync("casting", HEAVY_SLOT, START + 5000, "none");      // B 取代 A（supersession）
         serverSync("interrupt", HEAVY_SLOT, START, "interrupt_movement");  // 迟到/重传的 INTERRUPT(A)
 
@@ -262,7 +339,7 @@ class CastFovControllerTest {
     @Test
     void lateInterruptStillVoidsItsOwnPending() {
         // 身份匹配时照旧作废（取消令牌语义不能因为「只清同身份」而失效）。
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("casting", HEAVY_SLOT, START + 5000, "none");      // B 取代 A
         serverSync("interrupt", HEAVY_SLOT, START + 5000, "interrupt_contam");  // 打断的正是 B
         serverSync("complete", HEAVY_SLOT, START + 5000, "completed");          // 迟到的 complete
@@ -272,7 +349,7 @@ class CastFovControllerTest {
 
     @Test
     void duplicateReleaseIsIdempotent() {
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         double afterFirst = fov();
@@ -292,13 +369,13 @@ class CastFovControllerTest {
     @Test
     void consecutiveCastsSecondPulseSupersedesFirst() {
         // cast1 release
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);   // cast1 脉冲半程
         assertTrue(fov() > 0.0, "cast1 脉冲进行中");
 
         // 前一脉冲 decay 中开新 cast（不同 startedAtMs = 新身份）
-        predict(HEAVY_SLOT, START + 5000);
+        predictAndAccept(HEAVY_SLOT, START + 5000);
         serverSync("complete", HEAVY_SLOT, START + 5000, "completed");
         // cast2 刚 fire（进度 0）→ 偏移应为 cast2 的 0，不是 cast1+cast2 叠加
         assertEquals(0.0, fov(), 1e-9, "重叠触发 = last-wins 单脉冲，非叠加（cast2 刚起进度 0）");
@@ -312,7 +389,7 @@ class CastFovControllerTest {
 
     @Test
     void nonHeavySkillProducesNoJuice() {
-        predict(LIGHT_SLOT, START);
+        predictAndAccept(LIGHT_SLOT, START);
         serverSync("complete", LIGHT_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertBaseline("普通招（无 profile）release 不产生 FOV 脉冲");
@@ -320,7 +397,7 @@ class CastFovControllerTest {
 
     @Test
     void multiplierZeroMidPulseCancelsBothChannelsImmediately() {
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertTrue(fov() > 0.0, "脉冲进行中");
@@ -338,7 +415,7 @@ class CastFovControllerTest {
 
     @Test
     void multiplierRestoreDoesNotReviveCancelledPulse() {
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertTrue(fov() > 0.0, "脉冲进行中");
@@ -352,7 +429,7 @@ class CastFovControllerTest {
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同理不复活");
 
         // 「只影响后续 release」的正面证明：下一发照常触发。
-        predict(HEAVY_SLOT, START + 9000);
+        predictAndAccept(HEAVY_SLOT, START + 9000);
         serverSync("complete", HEAVY_SLOT, START + 9000, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "恢复倍率后的新 release 正常触发");
@@ -390,7 +467,7 @@ class CastFovControllerTest {
     @Test
     void multiplierScalesPulseAmplitude() {
         JuiceConfig.setJuiceMultiplier(0.5f);
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertEquals(HEAVY_FOV_PEAK * 0.5, fov(), 1e-6, "倍率 0.5 → 峰值减半");
@@ -404,7 +481,7 @@ class CastFovControllerTest {
     void bothChannelsBakeMultiplierAtFireTimeAndDoNotRetroScale() {
         // 两个通道对称：fire 时刻把倍率并入 shake 强度与 Pulse 峰值。
         JuiceConfig.setJuiceMultiplier(0.5f);
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         long fireNow = now[0];
         CameraShakeController.Offsets scaled = CameraShakeController.activeOffsets(fireNow);
@@ -428,7 +505,7 @@ class CastFovControllerTest {
     @Test
     void multiplierZeroAtFireSuppressesBothChannelsAndLeavesNoZombiePulse() {
         JuiceConfig.setJuiceMultiplier(0.0f);
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
             "fire 时倍率 0 → 不触发 shake（juice 全局关闭）");
@@ -444,7 +521,7 @@ class CastFovControllerTest {
     void castShakeIsSustainedNotSingleJerk() {
         // 施法 release 的抖动是持续震动（fire 走 SUSTAIN 包络）：同相位 tick 上，平台段内
         // 幅度与起始一致（满幅维持），而非线性「抖一下」衰减到近半。
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");  // fire
         long fireNow = now[0];
 
@@ -469,7 +546,7 @@ class CastFovControllerTest {
 
     @Test
     void deathTeardownResetsMidPulse() {
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertTrue(fov() > 0.0, "脉冲进行中");
@@ -483,7 +560,7 @@ class CastFovControllerTest {
 
     @Test
     void disconnectTeardownResetsMidPulse() {
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertTrue(fov() > 0.0, "脉冲进行中");
@@ -502,7 +579,7 @@ class CastFovControllerTest {
         // 切维度 / 换服：vanilla 不重建 ClientPlayNetworkHandler，DISCONNECT 不触发；
         // Fabric 在 onPlayerRespawn/onGameJoin/clearWorld 对旧世界全量 emit ENTITY_UNLOAD。
         CastFovController.setLocalPlayerEntityPredicateForTest(entity -> true);  // 卸载的是本地玩家实体
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertTrue(fov() > 0.0, "脉冲进行中");
@@ -516,7 +593,7 @@ class CastFovControllerTest {
     @Test
     void worldSwitchClearsPendingSoLateCompleteDoesNotRefire() {
         CastFovController.setLocalPlayerEntityPredicateForTest(entity -> true);
-        predict(HEAVY_SLOT, START);              // 武装 pending，尚未 release
+        predictAndAccept(HEAVY_SLOT, START);              // 武装 pending，尚未 release
         CastFovController.onEntityUnload(null);  // 切世界
 
         serverSync("complete", HEAVY_SLOT, START, "completed");  // 旧世界的迟到 complete
@@ -529,7 +606,7 @@ class CastFovControllerTest {
     void unloadingNonLocalEntityDoesNotTearDownJuice() {
         // 远端玩家 / 怪物离开视野也会 emit ENTITY_UNLOAD——不能把本地 juice 一起拆了。
         CastFovController.setLocalPlayerEntityPredicateForTest(entity -> false);
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         double before = fov();
@@ -545,7 +622,7 @@ class CastFovControllerTest {
 
     @Test
     void teardownClearsPendingSoLaterReleaseDoesNotFire() {
-        predict(HEAVY_SLOT, START);          // 武装 pending
+        predictAndAccept(HEAVY_SLOT, START);          // 武装 pending
         CastFovController.teardown();         // 施法中断线：清 pending
         serverSync("complete", HEAVY_SLOT, START, "completed");  // 迟到 complete
         advanceMs(FOV_DURATION_MS / 2);
@@ -554,7 +631,7 @@ class CastFovControllerTest {
 
     @Test
     void completeIsTerminalAndStaysAtBaselineAfterDecay() {
-        predict(HEAVY_SLOT, START);
+        predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS);
         CastFovController.tick();
@@ -567,7 +644,7 @@ class CastFovControllerTest {
     void idlePhaseClearsPendingSoLaterReleaseDoesNotFire() {
         // IDLE 分支（枚举变体饱和）：cast 条 300ms 后自回 idle / 施放前 NONE 拒绝，
         // 都以 phase="idle" + outcome="none" 落到 CastStateStore → 清 pending。
-        predict(HEAVY_SLOT, START);                       // 武装 pending
+        predictAndAccept(HEAVY_SLOT, START);                       // 武装 pending
         serverSync("idle", HEAVY_SLOT, START, "none");    // 真实 idle 回执
         assertEquals(CastState.Phase.IDLE, CastStateStore.snapshot().phase(), "回到 idle 相");
 
