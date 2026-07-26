@@ -4,6 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.bong.client.combat.CastStateStore;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
+import com.bong.client.network.CastSyncHandler;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
+
+import java.nio.charset.StandardCharsets;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +30,8 @@ class JuiceConfigTest {
         CastFovController.resetForTests();
         CameraShakeController.resetForTests();
         JuiceConfig.resetForTests();
+        CastStateStore.resetForTests();
+        SkillBarStore.resetForTests();
         CastFovController.setClockForTest(() -> now[0]);
         CastFovController.setLocalPlayerPredicateForTest(id -> true);
     }
@@ -30,6 +41,8 @@ class JuiceConfigTest {
         CastFovController.resetForTests();
         CameraShakeController.resetForTests();
         JuiceConfig.resetForTests();
+        CastStateStore.resetForTests();
+        SkillBarStore.resetForTests();
     }
 
     // ---- 默认值 ----
@@ -122,13 +135,39 @@ class JuiceConfigTest {
 
     // ---- 接线证明：写配置 → 控制器真的收到（不是两套互不相干的静态） ----
 
+    /**
+     * 走完整真实链路打出一发在播 juice（FOV 脉冲 7t + 持续震动 20t）：技能栏预测 →
+     * 服务端权威 {@code cast_sync{casting}} 武装 → {@code cast_sync{complete}} 触发。
+     * 不直接调 {@code onAnimPlayed}/{@code fire}——两条路径现在都要求服务端已 accepted
+     * （plan §P3 门控硬约束，review finding A/B）。
+     */
+    private void fireOneCast() {
+        int slot = 3;
+        long startedAt = 1_700_000_000_000L;
+        SkillBarStore.updateSlot(slot,
+            SkillBarEntry.skill("baomai.full_power_release", "全力", 2000, 0, ""));
+        CastStateStore.addTransitionListener(CastFovController::onCastState);
+        CastStateStore.beginSkillBarCast(slot, 2000, startedAt);
+        castSync("casting", slot, startedAt, "none");
+        castSync("complete", slot, startedAt, "completed");
+    }
+
+    /** server cast_sync 消费（真实 {@link CastSyncHandler} 入口）。 */
+    private static void castSync(String phase, int slot, long startedAt, String outcome) {
+        String json = "{\"v\":1,\"type\":\"cast_sync\",\"phase\":\"" + phase + "\",\"slot\":" + slot
+            + ",\"duration_ms\":2000,\"started_at_ms\":" + startedAt
+            + ",\"outcome\":\"" + outcome + "\"}";
+        ServerPayloadParseResult parsed =
+            ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(parsed.isSuccess(), parsed.errorMessage());
+        new CastSyncHandler().handle(parsed.envelope());
+    }
+
     @Test
     void writingZeroPropagatesCancelToController() {
-        // 用动画事件驱动的 juice 起一段 FOV punch + 长震动（不需要 cast 状态机）。
-        CastFovController.onAnimPlayed(
-            new java.util.UUID(1L, 2L), com.bong.client.animation.BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        fireOneCast();
         long fire = now[0];
-        now[0] += 4 * 50;   // FOV punch 8t 的半程 → 达峰
+        now[0] += 3 * 50;   // FOV punch 7t 的半程 → 达峰
         assertTrue(CastFovController.fovDelta() > 0.0, "取消前 FOV 脉冲确实有非零偏移");
         assertTrue(!CameraShakeController.activeOffsets(fire).isZero(), "取消前震动确实在播");
 
@@ -141,10 +180,9 @@ class JuiceConfigTest {
 
     @Test
     void writingNonZeroDoesNotCancelInFlightJuice() {
-        CastFovController.onAnimPlayed(
-            new java.util.UUID(1L, 2L), com.bong.client.animation.BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        fireOneCast();
         long fire = now[0];
-        now[0] += 4 * 50;
+        now[0] += 3 * 50;
         double peak = CastFovController.fovDelta();
         assertTrue(peak > 0.0, "脉冲进行中");
 

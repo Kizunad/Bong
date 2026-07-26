@@ -16,6 +16,7 @@ import net.minecraft.util.Identifier;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
@@ -31,8 +32,9 @@ import java.util.function.LongSupplier;
  *   <li><b>cast 状态转换</b>——{@link CastStateStore} 的回调（由 {@code CastSyncHandler} /
  *       本地预测 replace 触发），走下述 identity 门控。绝大多数重型招走这条。</li>
  *   <li><b>动画事件</b>——{@link #onAnimPlayed}（{@code VfxEventRouter} 在 play_anim 真正播出后调）。
- *       heaven_gate 专用：它的 cast 条与真实引导窗错开 3s，只有动画事件能对准劈下那一刻，详见
- *       下方「动画事件驱动的 juice」段。</li>
+ *       heaven_gate 专用：它的 cast 条与真实引导窗错开 3s，只有动画事件能对准劈下那一刻。
+ *       <b>动画事件只决定触发时刻，授权仍来自权威 CASTING 武装的 {@link AnimCastToken}</b>，
+ *       与路径 1 同一套 identity 门控与终态记录，详见下方「动画事件驱动的 juice」段。</li>
  * </ol>
  *
  * <p><b>门控</b>（§8.1 #3）：release juice 只绑**已 accepted 的 cast identity**。
@@ -88,6 +90,13 @@ public final class CastFovController {
     /** 施法 release 抖动方向（自施法无攻击方向，取对角 → 偏航+俯仰混合抖动）。 */
     private static final double CAST_SHAKE_DIR_X = 1.0;
     private static final double CAST_SHAKE_DIR_Z = 1.0;
+
+    /**
+     * 天门开阖 skillId（对齐服务端 {@code sword_path::skill_register::SWORD_PATH_HEAVEN_GATE_ID}
+     * 与 client {@code SkillBarEntry.id()}）——唯一走动画事件驱动的招，见
+     * {@link #ANIM_DRIVEN_SKILLS}。
+     */
+    static final String HEAVEN_GATE_SKILL_ID = "sword_path.heaven_gate";
 
     /** 时钟 seam：生产 = {@code System.currentTimeMillis}；单测注入可推进时钟。 */
     private static volatile LongSupplier clock = System::currentTimeMillis;
@@ -180,7 +189,7 @@ public final class CastFovController {
             switch (state.phase()) {
                 case CASTING -> {
                     if (origin == CastStateStore.Origin.SERVER_AUTHORITATIVE) {
-                        arm(state);
+                        arm(state, now);
                     }
                 }
                 case COMPLETE -> release(state, now);
@@ -190,18 +199,38 @@ public final class CastFovController {
         }
     }
 
-    private static void arm(CastState state) {
+    /**
+     * 权威 CASTING → 武装。按招式分两条：走动画事件驱动的招（{@link #ANIM_DRIVEN_SKILLS}）
+     * 发一枚 {@link AnimCastToken}（触发时刻由 {@link #onAnimPlayed} 决定），其余重型招按
+     * {@link CastJuiceProfiles} 武装 pending（触发时刻是 COMPLETE）。
+     */
+    private static void arm(CastState state, long now) {
         Identity id = Identity.of(state);
         if (terminals.containsKey(id)) {
             return;  // 该身份已终态（FIRED 不重放 / VOIDED 不复活），含乱序打断早到与 teardown
         }
+        // supersession：异身份的新施法取代旧 pending / 旧令牌（两条通道都只留最新一次施法）
         if (pending != null && !pending.id().equals(id)) {
-            pending = null;  // supersession：新 cast 身份取代旧 pending
+            pending = null;
+        }
+        if (animToken != null && !animToken.id.equals(id)) {
+            animToken = null;
+        }
+        String skillId = resolveSkillId(state);
+        if (skillId == null) {
+            return;  // 非技能栏施法 / 空槽 → 无 juice
+        }
+        AnimDrivenJuice animJuice = ANIM_DRIVEN_SKILLS.get(skillId);
+        if (animJuice != null) {
+            if (animToken == null) {
+                animToken = new AnimCastToken(id, animJuice, now);  // 同身份重复 CASTING：幂等
+            }
+            return;  // 该招不由 COMPLETE 触发，只发令牌
         }
         if (pending != null) {
             return;  // 同身份重复 CASTING：幂等
         }
-        CastJuiceProfile profile = resolveProfile(state);
+        CastJuiceProfile profile = CastJuiceProfiles.get(skillId);
         if (profile != null) {
             pending = new Pending(id, profile);
         }
@@ -233,6 +262,9 @@ public final class CastFovController {
         if (pending != null && pending.id().equals(id)) {
             pending = null;
         }
+        if (animToken != null && animToken.id.equals(id)) {
+            animToken = null;  // 取消后迟到的 charge/release 动画不再授权（review finding A）
+        }
     }
 
     /** 终态先到者胜：已 FIRED 的身份不因一条迟到的打断被改写成 VOIDED（LOCK 内调用）。 */
@@ -256,15 +288,8 @@ public final class CastFovController {
         if (profile.hasShake()) {
             // 施法 release = 持续震动（SUSTAIN 包络）：把大招的存在感撑满整个时长，
             // 不是命中的「抖一下」线性衰减。
-            CameraShakeController.triggerDirect(
-                profile.shakeIntensity() * scale,
-                profile.shakeDurationTicks(),
-                CAST_SHAKE_DIR_X,
-                CAST_SHAKE_DIR_Z,
-                false,
-                CameraShakeController.Envelope.SUSTAIN,
-                now
-            );
+            triggerShake(profile.shakeIntensity() * scale, profile.shakeDurationTicks(),
+                CameraShakeController.Envelope.SUSTAIN, now);
         }
     }
 
@@ -274,16 +299,25 @@ public final class CastFovController {
     // HEAVEN_GATE_AOE_END=140=7s 才 emit release）错开 3s，走 CastState 驱动会让 juice 在
     // cast 条走完（4s、举剑蓄力中途）就触发、而非劈下那一刻（7s）。故 heaven_gate 从
     // CastJuiceProfiles（CastState 驱动）移除，改由**动画事件**驱动：charge 动画起播 →
-    // CRESCENDO 渐强震动；release 动画（劈下）起播 → SUSTAIN 最大震动 + FOV punch。二者
-    // 都是 server 在视觉正确时刻发的 PlayAnim，故 juice 与画面严格对齐。
+    // CRESCENDO 渐强震动；release 动画（劈下）起播 → SUSTAIN 最大震动 + FOV punch。
+    //
+    // ⚠️ 动画事件只是**触发时刻**信号，不是授权。授权凭据仍是权威 CASTING 武装出来的
+    // AnimCastToken（见 #animToken）——bridge 播出成功只证明「这段动画播了」，不证明
+    // 「这次施法被服务端 accepted / 尚未被取消 / 尚未触发过」。
 
-    /** 蓄力段动画 → 渐强震动（CRESCENDO：0→peak 爬满后维持，撑到 release 顶替）。 */
-    private record ChargeShake(float peakIntensity, int buildDurationTicks) {
+    /** 蓄力段动画 → 渐强震动（CRESCENDO：0→peak 爬满后维持）。 */
+    record ChargeShake(
+        float peakIntensity, int buildDurationTicks, CameraShakeController.Envelope envelope) {
     }
 
     /** 释放段动画 → 最大震动（SUSTAIN）+ FOV punch，落在劈下那一刻。 */
-    private record ReleaseBurst(
-        float shakeIntensity, int shakeDurationTicks, float fovPeakDegrees, int fovDurationTicks) {
+    record ReleaseBurst(
+        float shakeIntensity,
+        int shakeDurationTicks,
+        float fovPeakDegrees,
+        int fovDurationTicks,
+        CameraShakeController.Envelope envelope
+    ) {
     }
 
     /**
@@ -294,12 +328,61 @@ public final class CastFovController {
      * 会让「画面上没有蓄力动作了却还在震」，违背本条 juice「与画面严格对齐」的前提。charge
      * 动画时长本身归 P2（动画资产阶段），本 plan P3 只跟随它取值。
      */
-    private static final Map<Identifier, ChargeShake> CHARGE_ANIM_JUICE = Map.of(
-        BongAnimations.SWORD_HEAVEN_GATE_CHARGE, new ChargeShake(0.8f, 60));
+    private static final ChargeShake HEAVEN_GATE_CHARGE_JUICE =
+        new ChargeShake(0.8f, 60, CameraShakeController.Envelope.CRESCENDO);
 
     /** release 最大震动 24t（≈1.2s SUSTAIN）+ FOV +12°/8t punch。 */
-    private static final Map<Identifier, ReleaseBurst> RELEASE_ANIM_JUICE = Map.of(
-        BongAnimations.SWORD_HEAVEN_GATE_RELEASE, new ReleaseBurst(1.5f, 24, 12.0f, 8));
+    private static final ReleaseBurst HEAVEN_GATE_RELEASE_JUICE =
+        new ReleaseBurst(1.5f, 24, 12.0f, 8, CameraShakeController.Envelope.SUSTAIN);
+
+    /**
+     * 动画事件驱动招式的 juice 契约：该招的 charge / release 动画 id + 两段参数。
+     *
+     * <p>动画 id 与 skillId 一起登记，是「动画事件如何无歧义关联到 cast identity」的答案：
+     * 令牌由该 skillId 的权威 CASTING 武装，只有**这一对** animId 能消费它。别的招的动画
+     * 到达时找不到匹配令牌 → no-op，不会误用当前令牌。
+     */
+    private record AnimDrivenJuice(
+        Identifier chargeAnim, Identifier releaseAnim, ChargeShake charge, ReleaseBurst release) {
+    }
+
+    /** 走动画事件驱动的招（skillId → 契约）。当前仅 heaven_gate（理由见上方段注释）。 */
+    private static final Map<String, AnimDrivenJuice> ANIM_DRIVEN_SKILLS = Map.of(
+        HEAVEN_GATE_SKILL_ID,
+        new AnimDrivenJuice(
+            BongAnimations.SWORD_HEAVEN_GATE_CHARGE,
+            BongAnimations.SWORD_HEAVEN_GATE_RELEASE,
+            HEAVEN_GATE_CHARGE_JUICE,
+            HEAVEN_GATE_RELEASE_JUICE));
+
+    /**
+     * 令牌存活上限（ms）。heaven_gate 的 release 动画在引导第 140t（7s）才发，故窗口必须
+     * 宽于 7s；15s 留足 RTT / 卡顿余量。有上限是硬要求：release 动画因丢包/异常始终没来时，
+     * 令牌不能一直挂着等一条几分钟后到达的杂散 PlayAnim 把它消费掉。
+     */
+    static final long ANIM_TOKEN_TTL_MS = 15_000L;
+
+    /**
+     * 当前 heaven_gate 施法的动画 juice 令牌（LOCK 保护）。由**权威 CASTING** 武装，
+     * charge/release 动画各自一次性消费；INTERRUPT / teardown 按身份作废；异身份的权威
+     * CASTING 取代（supersession）；超过 {@link #ANIM_TOKEN_TTL_MS} 视为过期。
+     */
+    private static AnimCastToken animToken = null;
+
+    /** 动画事件驱动 juice 的授权令牌：绑 cast identity + 两段各自的一次性消费标记。 */
+    private static final class AnimCastToken {
+        final Identity id;
+        final AnimDrivenJuice juice;
+        final long armedAtMs;
+        boolean chargeFired;
+        boolean releaseFired;
+
+        AnimCastToken(Identity id, AnimDrivenJuice juice, long armedAtMs) {
+            this.id = id;
+            this.juice = juice;
+            this.armedAtMs = armedAtMs;
+        }
+    }
 
     /** 本地玩家判定 seam（动画事件驱动的 juice 只对本地玩家自己的施法触发）。 */
     @FunctionalInterface
@@ -327,60 +410,111 @@ public final class CastFovController {
         entity -> entity instanceof ClientPlayerEntity;
 
     /**
-     * 动画事件驱动 juice 入口（{@code VfxEventRouter} 在 PlayAnim 分支调）：只对**本地玩家
-     * 自己**的登记动画触发。charge 动画 → CRESCENDO 渐强震动；release 动画（劈下那一刻）→
-     * SUSTAIN 最大震动 + FOV 脉冲。二者共享 {@link CameraShakeController} 单通道，release 的
-     * SUSTAIN 顶替 charge 的 CRESCENDO。非本地玩家 / 非登记动画 = no-op。
+     * 动画事件驱动 juice 入口（{@code VfxEventRouter} 在 PlayAnim 真正播出后调）。
+     *
+     * <p><b>动画事件只决定触发时刻，授权来自令牌</b>（review finding A）：必须先有一枚由
+     * 权威 CASTING 武装、未过期、未被作废的 {@link #animToken}，且该 animId 正是这枚令牌所属
+     * 招式的 charge / release 动画，才允许触发。charge 与 release 各自**一次性消费**
+     * （{@code chargeFired} / {@code releaseFired}），release 消费后 charge 也不再触发（不回退）。
+     * 于是：未 accepted 就来的 PlayAnim、重复 PlayAnim、reject/INTERRUPT/teardown 之后迟到的
+     * PlayAnim，全部 no-op。
+     *
+     * <p>非本地玩家（别人放大招不震我的相机）/ 非登记动画 / 无令牌 = no-op。两段共享
+     * {@link CameraShakeController} 单通道，release 的 SUSTAIN 顶替 charge 的 CRESCENDO。
      */
     public static void onAnimPlayed(UUID targetPlayer, Identifier animId) {
         if (targetPlayer == null || animId == null || !localPlayerPredicate.isLocal(targetPlayer)) {
             return;
         }
         long now = clock.getAsLong();
-        ChargeShake charge = CHARGE_ANIM_JUICE.get(animId);
-        if (charge != null) {
-            synchronized (LOCK) {
-                // 倍率在锁内读，与 fire() 同：否则「读到非 0」与「落地」之间被归 0 插进来，
-                // 会绕过取消路径留下僵尸抖动。
-                float scale = JuiceConfig.juiceMultiplier();
-                if (scale <= 0f) {
-                    return;  // juice 全局关闭
-                }
-                CameraShakeController.triggerDirect(
-                    charge.peakIntensity() * scale,
-                    charge.buildDurationTicks(),
-                    CAST_SHAKE_DIR_X,
-                    CAST_SHAKE_DIR_Z,
-                    false,
-                    CameraShakeController.Envelope.CRESCENDO,
-                    now
-                );
+        // 两个通道在同一临界区落地，与 teardown / onJuiceMultiplierChanged 的清空对称——
+        // 否则「清脉冲…清抖动」与「建脉冲…起抖动」交错时会漏下一条孤儿抖动。
+        // 倍率也在锁内读，与 fire() 同：否则「读到非 0」与「落地」之间被归 0 插进来，
+        // 会绕过取消路径留下僵尸抖动。
+        synchronized (LOCK) {
+            AnimCastToken token = liveAnimToken(now);
+            if (token == null) {
+                return;  // 无已 accepted 的在飞施法 → 动画事件不授权任何 juice
             }
-            return;
-        }
-        ReleaseBurst burst = RELEASE_ANIM_JUICE.get(animId);
-        if (burst != null) {
-            // 两个通道在同一临界区落地，与 teardown / onJuiceMultiplierChanged 的清空对称——
-            // 否则「清脉冲…清抖动」与「建脉冲…起抖动」交错时会漏下一条孤儿抖动。
-            synchronized (LOCK) {
-                float scale = JuiceConfig.juiceMultiplier();
-                if (scale <= 0f) {
-                    return;  // juice 全局关闭
-                }
-                if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
-                    pulse = new Pulse(burst.fovPeakDegrees() * scale, burst.fovDurationTicks(), now);
-                }
-                CameraShakeController.triggerDirect(
-                    burst.shakeIntensity() * scale,
-                    burst.shakeDurationTicks(),
-                    CAST_SHAKE_DIR_X,
-                    CAST_SHAKE_DIR_Z,
-                    false,
-                    CameraShakeController.Envelope.SUSTAIN,
-                    now
-                );
+            AnimDrivenJuice juice = token.juice;
+            boolean isCharge = juice.chargeAnim().equals(animId);
+            boolean isRelease = juice.releaseAnim().equals(animId);
+            if (!isCharge && !isRelease) {
+                return;  // 该动画不属于持令牌的这一招 → 不得挪用
             }
+            if (token.releaseFired || (isCharge && token.chargeFired)) {
+                return;  // 一次性消费：重复 charge / 重复 release / release 之后的迟到 charge
+            }
+            float scale = JuiceConfig.juiceMultiplier();
+            if (scale <= 0f) {
+                return;  // juice 全局关闭（不消费令牌：关闭期间的事件视为未发生）
+            }
+            if (isCharge) {
+                token.chargeFired = true;
+                triggerShake(juice.charge().peakIntensity() * scale,
+                    juice.charge().buildDurationTicks(), juice.charge().envelope(), now);
+                return;
+            }
+            token.releaseFired = true;
+            // release 是这次施法的终点：落 FIRED 终态，之后同身份的权威 CASTING 也不再重开令牌。
+            markTerminal(token.id, Terminal.FIRED);
+            ReleaseBurst burst = juice.release();
+            if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
+                pulse = new Pulse(burst.fovPeakDegrees() * scale, burst.fovDurationTicks(), now);
+            }
+            triggerShake(burst.shakeIntensity() * scale, burst.shakeDurationTicks(),
+                burst.envelope(), now);
         }
+    }
+
+    /** 当前可用令牌（LOCK 内调用）：过期即清掉并返回 null。 */
+    private static AnimCastToken liveAnimToken(long now) {
+        AnimCastToken token = animToken;
+        if (token == null) {
+            return null;
+        }
+        if (now - token.armedAtMs > ANIM_TOKEN_TTL_MS || now < token.armedAtMs) {
+            animToken = null;  // 过期（或时钟回跳）：不再授权
+            return null;
+        }
+        return token;
+    }
+
+    /** 施法 juice 的抖动通道写入（LOCK 内调用；方向固定对角，见 {@link #CAST_SHAKE_DIR_X}）。 */
+    private static void triggerShake(
+        float intensity, int durationTicks, CameraShakeController.Envelope envelope, long now
+    ) {
+        CameraShakeController.triggerDirect(
+            intensity, durationTicks, CAST_SHAKE_DIR_X, CAST_SHAKE_DIR_Z, false, envelope, now);
+    }
+
+    /** heaven_gate 两段动画 juice 参数的只读查询 seam（测试逐字段 pin 用，不放宽封装）。 */
+    static ChargeShake chargeAnimJuice(String skillId) {
+        AnimDrivenJuice juice = ANIM_DRIVEN_SKILLS.get(skillId);
+        return juice == null ? null : juice.charge();
+    }
+
+    /** 同 {@link #chargeAnimJuice}：release 段参数只读查询。 */
+    static ReleaseBurst releaseAnimJuice(String skillId) {
+        AnimDrivenJuice juice = ANIM_DRIVEN_SKILLS.get(skillId);
+        return juice == null ? null : juice.release();
+    }
+
+    /** 动画事件驱动招式的 id 集合（测试 pin 用：登记集合必须精确相等）。 */
+    static Set<String> animDrivenSkillIds() {
+        return ANIM_DRIVEN_SKILLS.keySet();
+    }
+
+    /** 该招登记的 charge / release 动画 id（测试 pin：动画↔招式的关联契约）。 */
+    static Identifier chargeAnimId(String skillId) {
+        AnimDrivenJuice juice = ANIM_DRIVEN_SKILLS.get(skillId);
+        return juice == null ? null : juice.chargeAnim();
+    }
+
+    /** 同 {@link #chargeAnimId}：release 段动画 id。 */
+    static Identifier releaseAnimId(String skillId) {
+        AnimDrivenJuice juice = ANIM_DRIVEN_SKILLS.get(skillId);
+        return juice == null ? null : juice.releaseAnim();
     }
 
     private static boolean isLocalPlayerFromClient(UUID playerId) {
@@ -440,6 +574,10 @@ public final class CastFovController {
                 markTerminal(pending.id(), Terminal.VOIDED);
                 pending = null;
             }
+            if (animToken != null) {
+                markTerminal(animToken.id, Terminal.VOIDED);
+                animToken = null;  // teardown 后迟到的 charge/release 动画不再授权
+            }
             // 死亡/断线也清抖动：蓄力 CRESCENDO 长达数秒，玩家已死不应继续震屏。
             CameraShakeController.clear();
         }
@@ -469,10 +607,6 @@ public final class CastFovController {
             pulse = null;
             CameraShakeController.clear();
         }
-    }
-
-    private static CastJuiceProfile resolveProfile(CastState state) {
-        return CastJuiceProfiles.get(resolveSkillId(state));
     }
 
     /**
@@ -533,6 +667,7 @@ public final class CastFovController {
         synchronized (LOCK) {
             pulse = null;
             pending = null;
+            animToken = null;
             terminals.clear();
         }
         JuiceConfig.resetForTests();

@@ -15,9 +15,12 @@ import com.bong.client.combat.store.DeathStateStore;
 import com.bong.client.network.CastSyncHandler;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerPayloadParseResult;
+import com.bong.client.network.VfxEventAnimationBridge;
+import com.bong.client.network.VfxEventRouter;
 import net.minecraft.util.Identifier;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.OptionalInt;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,6 +61,15 @@ class CastFovControllerTest {
     private static final UUID LOCAL_PLAYER = new UUID(0x1111L, 0x2222L);
     private static final UUID OTHER_PLAYER = new UUID(0x3333L, 0x4444L);
 
+    /** 动画事件驱动的招（heaven_gate）：令牌必须由它的权威 CASTING 武装。 */
+    private static final int GATE_SLOT = 7;
+    private static final String GATE_SKILL = CastFovController.HEAVEN_GATE_SKILL_ID;
+    /** heaven_gate release FOV punch：peak +12°、时长 8 tick = 400ms。 */
+    private static final double GATE_FOV_PEAK = 12.0;
+    private static final int GATE_FOV_DURATION_MS = 8 * 50;
+    /** heaven_gate release 抖动时长：24 tick = 1200ms。 */
+    private static final int GATE_SHAKE_DURATION_MS = 24 * 50;
+
     private final long[] now = {10_000_000L};
 
     @BeforeEach
@@ -70,6 +82,7 @@ class CastFovControllerTest {
         JuiceConfig.resetForTests();
         SkillBarStore.updateSlot(HEAVY_SLOT, SkillBarEntry.skill(HEAVY_SKILL, "全力", DURATION_MS, 0, ""));
         SkillBarStore.updateSlot(LIGHT_SLOT, SkillBarEntry.skill(LIGHT_SKILL, "竖劈", 1000, 0, ""));
+        SkillBarStore.updateSlot(GATE_SLOT, SkillBarEntry.skill(GATE_SKILL, "天门开阖", 4000, 0, ""));
         // 注册真实 cast 转换监听（生产由 bootstrap 挂；单测无 Fabric 事件环境，仅挂 listener）。
         // 必须是**带来源**的 transition listener——Consumer 版拿不到 Origin。
         CastStateStore.addTransitionListener(CastFovController::onCastState);
@@ -118,6 +131,21 @@ class CastFovControllerTest {
             ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
         assertTrue(parsed.isSuccess(), parsed.errorMessage());
         new CastSyncHandler().handle(parsed.envelope());
+    }
+
+    /** 预测 + 权威确认一次 heaven_gate 施法 → 武装动画事件 juice 令牌。 */
+    private void acceptGateCast(long startedAt) {
+        predict(GATE_SLOT, startedAt);
+        accept(GATE_SLOT, startedAt);
+    }
+
+    /** 服务端 PlayAnim 播出（真实入口 {@code VfxEventRouter} → 本方法）。 */
+    private void chargeAnim() {
+        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_CHARGE);
+    }
+
+    private void releaseAnim() {
+        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
     }
 
     private void advanceMs(long ms) {
@@ -441,7 +469,8 @@ class CastFovControllerTest {
     @Test
     void multiplierZeroCancelsAnimDrivenChargeShake() {
         // 蓄力 CRESCENDO 长达 60t（3s）——「倍率只遮 FOV 读数」的实现会让它一路震到底。
-        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_CHARGE);
+        acceptGateCast(START);
+        chargeAnim();
         advanceMs(2000);
         assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "蓄力震动进行中");
 
@@ -453,8 +482,9 @@ class CastFovControllerTest {
 
     @Test
     void multiplierZeroSuppressesAnimDrivenRelease() {
+        acceptGateCast(START);
         JuiceConfig.setJuiceMultiplier(0.0f);
-        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        releaseAnim();
         advanceMs(4 * 50);
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "倍率 0 → 动画事件震动不触发");
         assertBaseline("倍率 0 → 动画事件 FOV punch 不触发");
@@ -779,10 +809,14 @@ class CastFovControllerTest {
     }
 
     // ---- 动画事件驱动 juice（heaven_gate：charge 渐强 / release 最大+FOV，与劈下对齐）----
+    //
+    // 动画事件只是**触发时刻**信号：每条路径都必须先由权威 CASTING 武装令牌
+    //（acceptGateCast），否则零 juice——见 animEventWithoutAcceptedCastFiresNothing 起的一组。
 
     @Test
     void animDrivenChargeStartsCrescendoThatGrows() {
-        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_CHARGE);
+        acceptGateCast(START);
+        chargeAnim();
         long fire = now[0];
         // CRESCENDO 起手幅度 0（蓄力从 0 涨起），同相位 tick 4 → tick 40 幅度递增。
         assertTrue(CameraShakeController.activeOffsets(fire).isZero(), "蓄力起手幅度为 0（渐强从 0）");
@@ -795,25 +829,27 @@ class CastFovControllerTest {
 
     @Test
     void animDrivenReleaseFiresMaxShakeAndFovPunch() {
-        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        acceptGateCast(START);
+        releaseAnim();
         long fire = now[0];
         assertFalse(CameraShakeController.activeOffsets(fire).isZero(),
             "劈下即最大震动（SUSTAIN 起手满幅，≠ crescendo 从 0）");
         // FOV punch +12°/8t：半程（4t=200ms）达峰。
-        advanceMs(4 * 50);
-        assertEquals(12.0, fov(), 1e-6, "release FOV punch 半程达峰 +12°");
-        advanceMs(8 * 50);
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6, "release FOV punch 半程达峰 +12°");
+        advanceMs(GATE_FOV_DURATION_MS);
         CastFovController.tick();
         assertBaseline("release FOV 脉冲结束回基准");
     }
 
     @Test
     void animDrivenReleaseSupersedesChargeCrescendo() {
-        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_CHARGE);
+        acceptGateCast(START);
+        chargeAnim();
         advanceMs(2000);  // 蓄力渐强进行中（幅度已涨到一部分）
         assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "蓄力中有抖动");
 
-        CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        releaseAnim();
         long releaseFire = now[0];
         // 顶替生效：新 shake 起手 elapsed=0，SUSTAIN 满幅 → |yaw| ≈ 2.12°；
         // 若仍是 charge crescendo（elapsed=2000ms 于 60t 窗内只涨到 74%）则仅 ≈0.84°，据此区分。
@@ -827,6 +863,7 @@ class CastFovControllerTest {
 
     @Test
     void animDrivenJuiceOnlyForLocalPlayer() {
+        acceptGateCast(START);   // 令牌已武装，唯一变量是动画目标是别人
         CastFovController.onAnimPlayed(OTHER_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
         advanceMs(4 * 50);
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "非本地玩家的施法不震本地相机");
@@ -835,9 +872,277 @@ class CastFovControllerTest {
 
     @Test
     void animDrivenIgnoresUnregisteredAnim() {
+        acceptGateCast(START);   // 令牌已武装，唯一变量是动画不属于这一招
         CastFovController.onAnimPlayed(LOCAL_PLAYER, new Identifier("bong", "sword_cleave"));
         advanceMs(4 * 50);
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "未登记动画无震动 juice");
         assertBaseline("未登记动画无 FOV");
+    }
+
+    // ---- 动画事件的令牌门控（review finding A：动画播出 ≠ 已 accepted） ----
+
+    @Test
+    void animEventWithoutAcceptedCastFiresNothing() {
+        // 服务端从未确认过任何 heaven_gate 施法（被拒 / 未 accepted / 纯杂散事件）：
+        // 即便 bridge 真把动画播出来了，也不许放出相机反馈。
+        chargeAnim();
+        advanceMs(2000);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "无令牌 → 蓄力动画不得触发震动");
+
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "无令牌 → 释放动画不得触发震动");
+        assertBaseline("无令牌 → 释放动画不得触发 FOV punch");
+    }
+
+    @Test
+    void localPredictionAloneDoesNotArmAnimToken() {
+        // 与 CastState 路径同一条硬约束：按键预测不是 accepted，不发令牌。
+        predict(GATE_SLOT, START);
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "仅预测 → 无令牌 → 零震动");
+        assertBaseline("仅预测 → 无令牌 → 零 FOV");
+    }
+
+    @Test
+    void rejectedGateCastNeverArmsAnimToken() {
+        // 施放前被拒（服务端 cast_sync{idle, reject_*} → CastSyncHandler 合成 INTERRUPT）：
+        // 从未 accepted → 无令牌；之后哪怕来一条 release 动画也不许触发。
+        predict(GATE_SLOT, START);
+        serverSync("idle", GATE_SLOT, START, "reject_qi_insufficient");
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "被拒后动画不触发震动");
+        assertBaseline("被拒后动画不触发 FOV");
+    }
+
+    @Test
+    void nonAnimDrivenAcceptedCastDoesNotAuthorizeGateAnims() {
+        // 令牌只由**动画事件驱动的那一招**的权威 CASTING 发：baomai 被 accepted 不等于
+        // heaven_gate 的动画可以挪用它。
+        predictAndAccept(HEAVY_SLOT, START);
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "别的招的 accepted 不得授权 heaven_gate 动画");
+        assertBaseline("同上：FOV 也不许动");
+    }
+
+    @Test
+    void duplicateReleaseAnimFiresOnlyOnce() {
+        acceptGateCast(START);
+        releaseAnim();
+        // 让第一次的两个通道都走完，第二次若真触发一定看得见。
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("第一次 release 的脉冲已走完");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "第一次 release 的抖动已走完");
+
+        releaseAnim();   // 重复 PlayAnim（重传 / 服务端重复发）
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("同一令牌的 release 只许消费一次");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "重复 release 不得重启抖动");
+    }
+
+    @Test
+    void duplicateChargeAnimDoesNotRestartCrescendo() {
+        acceptGateCast(START);
+        chargeAnim();
+        long fire = now[0];
+        advanceMs(2000);
+        double growing = Math.abs(CameraShakeController.activeOffsets(fire + 2000).yawDegrees());
+        assertTrue(growing > 0.0, "蓄力渐强进行中");
+
+        chargeAnim();   // 重复 charge PlayAnim
+        assertEquals(growing,
+            Math.abs(CameraShakeController.activeOffsets(now[0]).yawDegrees()), 1e-9,
+            "重复 charge 不得把 CRESCENDO 重置回 0 起点（幅度应保持在原进度上）");
+
+        advanceMs(60 * 50);
+        CastFovController.tick();
+        assertBaseline("蓄力段路径终点同样是基准 FOV");
+    }
+
+    @Test
+    void chargeAnimAfterReleaseDoesNotReopenJuice() {
+        acceptGateCast(START);
+        releaseAnim();
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("release 的脉冲已走完");
+
+        chargeAnim();   // release 之后迟到的 charge（乱序）
+        advanceMs(4 * 50);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "release 已消费令牌 → 迟到的 charge 不得重开蓄力震动");
+        assertBaseline("同上：FOV 保持基准");
+    }
+
+    @Test
+    void interruptVoidsAnimTokenSoLateReleaseAnimDoesNotFire() {
+        acceptGateCast(START);
+        serverSync("interrupt", GATE_SLOT, START, "interrupt_movement");  // 引导被打断
+
+        releaseAnim();   // 打断后迟到的 release 动画
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "打断作废令牌 → 零震动");
+        assertBaseline("打断作废令牌 → 零 FOV");
+    }
+
+    @Test
+    void teardownVoidsAnimTokenSoLateReleaseAnimDoesNotFire() {
+        acceptGateCast(START);
+        chargeAnim();
+        advanceMs(1000);
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "蓄力震动进行中");
+
+        CastFovController.teardown();   // 死亡 / 断线 / 切世界
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "teardown 停在播蓄力震动");
+
+        releaseAnim();   // 旧世界/旧会话迟到的 release 动画
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "teardown 作废令牌 → 零震动");
+        assertBaseline("teardown 作废令牌 → 零 FOV");
+
+        // 反证：teardown 之后**全新** heaven_gate 施法照常拿到 juice。
+        acceptGateCast(START + 20_000);
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6, "teardown 后的新施法照常触发");
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("新脉冲 decay 完毕");
+    }
+
+    @Test
+    void animTokenExpiresAfterTtlSoStrayLateAnimDoesNotFire() {
+        // release 动画因丢包/异常始终没来时令牌不能一直挂着：超过 TTL 视为过期，
+        // 一条几十秒后到达的杂散 PlayAnim 不得凭它放出 juice。
+        acceptGateCast(START);
+        advanceMs(CastFovController.ANIM_TOKEN_TTL_MS + 1);
+
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "令牌已过期 → 零震动");
+        assertBaseline("令牌已过期 → 零 FOV");
+    }
+
+    @Test
+    void animTokenStillLiveJustBeforeTtlExpiry() {
+        // TTL 边界另一侧（off-by-one）：heaven_gate 的 release 在引导第 140t（7s）才发，
+        // 窗口内必须仍然有效。
+        acceptGateCast(START);
+        advanceMs(CastFovController.ANIM_TOKEN_TTL_MS);
+
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6, "TTL 边界之内令牌仍有效");
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("脉冲 decay 完毕");
+    }
+
+    // ---- 路由接线：真实 VfxEventRouter → onAnimPlayed → 令牌门 → juice ----
+
+    /** 只回定值的动画 bridge（单测无 PlayerAnimator 环境；本文件只关心 ok/decline 两分支）。 */
+    private record StubAnimBridge(boolean played) implements VfxEventAnimationBridge {
+        @Override
+        public boolean playAnim(UUID target, Identifier animId, int priority, OptionalInt fadeIn) {
+            return played;
+        }
+
+        @Override
+        public boolean playAnimInline(
+            UUID target, Identifier animId, String animJson, int priority, OptionalInt fadeIn) {
+            return played;
+        }
+
+        @Override
+        public boolean stopAnim(UUID target, Identifier animId, OptionalInt fadeOut) {
+            return played;
+        }
+    }
+
+    /** 走真实 {@code bong:vfx_event} play_anim 报文 + 真实 {@link VfxEventRouter}。 */
+    private VfxEventRouter.RouteResult routePlayAnim(
+        boolean bridgePlayed, UUID target, String animId
+    ) {
+        String json = "{\"v\":1,\"type\":\"play_anim\",\"target_player\":\"" + target
+            + "\",\"anim_id\":\"" + animId + "\",\"priority\":1000,\"fade_in_ticks\":3}";
+        return new VfxEventRouter(new StubAnimBridge(bridgePlayed))
+            .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+    }
+
+    @Test
+    void routerForwardsPlayAnimToJuiceOnlyWhenBridgeActuallyPlayed() {
+        acceptGateCast(START);   // 令牌就位，唯一变量是 bridge 有没有真播出
+
+        // bridge 拒付（玩家不在线 / 动画未注册 / 层没停下来）→ 画面上没有这段动画。
+        VfxEventRouter.RouteResult miss =
+            routePlayAnim(false, LOCAL_PLAYER, "bong:sword_heaven_gate_release");
+        assertTrue(miss.isBridgeMiss(), "bridge 返回 false 应转 bridgeMiss");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "动画没播出来就震屏 = juice 与画面脱节，正是本条 juice 要避免的");
+        assertBaseline("bridge 拒付时 FOV 也不许动");
+
+        // bridge 播出 + 有令牌 → juice 触发。
+        VfxEventRouter.RouteResult ok =
+            routePlayAnim(true, LOCAL_PLAYER, "bong:sword_heaven_gate_release");
+        assertTrue(ok.isHandled(), "bridge 播出应 handled: " + ok.logMessage());
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6,
+            "真播出 + 已 accepted → juice 必须触发（否则 heaven_gate 劈下没有反馈）");
+
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("路由驱动的脉冲同样 decay 回基准");
+    }
+
+    @Test
+    void routerDoesNotForwardJuiceForRemotePlayers() {
+        acceptGateCast(START);   // 本地令牌就位，唯一变量是动画目标是别人
+        VfxEventRouter.RouteResult ok =
+            routePlayAnim(true, OTHER_PLAYER, "bong:sword_heaven_gate_release");
+        assertTrue(ok.isHandled(), "远端玩家的动画照常派发给 bridge");
+
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "远端玩家的施法动画不得触发本地 juice");
+        assertBaseline("远端玩家的施法动画不得打本地 FOV");
+    }
+
+    @Test
+    void routerDrivenAnimWithoutAcceptedCastFiresNothing() {
+        // 路由链是通的（isHandled），但服务端从未确认过施法 → 令牌门挡住，零 juice。
+        VfxEventRouter.RouteResult ok =
+            routePlayAnim(true, LOCAL_PLAYER, "bong:sword_heaven_gate_release");
+        assertTrue(ok.isHandled(), "前提校验：路由本身是通的（否则本用例假绿）");
+
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "路由通但无 accepted 令牌 → 零震动");
+        assertBaseline("路由通但无 accepted 令牌 → 零 FOV");
+    }
+
+    @Test
+    void newGateCastSupersedesOldTokenAndItsFiredFlags() {
+        // 连续两次 heaven_gate：第二次的权威 CASTING 取代旧令牌，release 照常触发
+        //（幂等是**按令牌**的一次性，不是「这辈子只许震一次」）。
+        acceptGateCast(START);
+        releaseAnim();
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("第一次 release 走完");
+
+        acceptGateCast(START + 30_000);
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6, "第二次施法的 release 照常触发");
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("第二次脉冲 decay 完毕");
     }
 }

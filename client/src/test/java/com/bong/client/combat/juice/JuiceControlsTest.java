@@ -3,6 +3,14 @@ package com.bong.client.combat.juice;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.bong.client.combat.CastStateStore;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
+import com.bong.client.network.CastSyncHandler;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
+
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,6 +36,8 @@ class JuiceControlsTest {
         CastFovController.resetForTests();
         CameraShakeController.resetForTests();
         JuiceControls.resetControlsForTests();
+        CastStateStore.resetForTests();
+        SkillBarStore.resetForTests();
         feedback.clear();
         CastFovController.setClockForTest(() -> now[0]);
         CastFovController.setLocalPlayerPredicateForTest(id -> true);
@@ -39,6 +49,19 @@ class JuiceControlsTest {
         CastFovController.resetForTests();
         CameraShakeController.resetForTests();
         JuiceControls.resetControlsForTests();
+        CastStateStore.resetForTests();
+        SkillBarStore.resetForTests();
+    }
+
+    /** server cast_sync 消费（真实 {@link CastSyncHandler} 入口）。 */
+    private static void castSync(String phase, int slot, long startedAt, String outcome) {
+        String json = "{\"v\":1,\"type\":\"cast_sync\",\"phase\":\"" + phase + "\",\"slot\":" + slot
+            + ",\"duration_ms\":2000,\"started_at_ms\":" + startedAt
+            + ",\"outcome\":\"" + outcome + "\"}";
+        ServerPayloadParseResult parsed =
+            ServerDataEnvelope.parse(json, json.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(parsed.isSuccess(), parsed.errorMessage());
+        new CastSyncHandler().handle(parsed.envelope());
     }
 
     /** 按下 n 次的 wasPressed 队列（vanilla 语义：取到 false 为止）。 */
@@ -134,10 +157,20 @@ class JuiceControlsTest {
 
     @Test
     void cyclingToOffCancelsInFlightJuice() {
-        CastFovController.onAnimPlayed(
-            new java.util.UUID(1L, 2L), com.bong.client.animation.BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
+        // 走完整真实链路把一发 juice 打出去：技能栏预测 → 服务端权威 cast_sync{casting}
+        // 武装 → cast_sync{complete} 触发。不能直接调 onAnimPlayed——那条路径现在要求
+        // 一枚由权威 CASTING 武装的令牌（review finding A/B）。
+        int slot = 3;
+        long startedAt = 1_700_000_000_000L;
+        SkillBarStore.updateSlot(slot,
+            SkillBarEntry.skill("baomai.full_power_release", "全力", 2000, 0, ""));
+        CastStateStore.addTransitionListener(CastFovController::onCastState);
+        CastStateStore.beginSkillBarCast(slot, 2000, startedAt);
+        castSync("casting", slot, startedAt, "none");
+        castSync("complete", slot, startedAt, "completed");
+
         long fire = now[0];
-        now[0] += 4 * 50;   // FOV punch 半程达峰
+        now[0] += 3 * 50;   // FOV punch（7t）半程达峰
         assertTrue(CastFovController.fovDelta() > 0.0, "关档前 FOV 脉冲有非零偏移");
         assertTrue(!CameraShakeController.activeOffsets(fire).isZero(), "关档前震动在播");
 

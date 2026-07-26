@@ -199,67 +199,11 @@ public class VfxEventRouterTest {
         assertTrue(result.logMessage().contains("IllegalStateException"), result.logMessage());
     }
 
-    // ---- plan-fpv-cast-av-v1 P3：play_anim → 动画事件驱动 juice 的路由接线 ----
-
-    /**
-     * 接线契约：play_anim 被 bridge 真正播出（{@code ok == true}）时，才把动画事件转给
-     * {@link com.bong.client.combat.juice.CastFovController#onAnimPlayed}——heaven_gate 的
-     * 蓄力渐强 / 释放震动靠它与劈下那一刻对齐。
-     */
-    @Test
-    void playAnimDispatchesJuiceOnlyWhenBridgeActuallyPlayed() {
-        com.bong.client.combat.juice.CastFovController.resetForTests();
-        com.bong.client.combat.juice.CameraShakeController.resetForTests();
-        try {
-            // 本地玩家判定 seam：让 fixture 的目标玩家算作本地玩家。
-            com.bong.client.combat.juice.CastFovController.setLocalPlayerPredicateForTest(
-                FIXTURE_UUID::equals);
-            String json = playAnimJson("bong:sword_heaven_gate_release", 1000, 3);
-
-            // bridge 拒付（玩家不在线 / 动画未注册 / 层没停下来）→ 画面上没有这段动画。
-            VfxEventRouter declined = new VfxEventRouter(new RecordingBridge(false));
-            VfxEventRouter.RouteResult missResult = declined.route(json, jsonLen(json));
-            assertTrue(missResult.isBridgeMiss(), "bridge 返回 false 应转 bridgeMiss");
-            assertTrue(
-                com.bong.client.combat.juice.CameraShakeController
-                    .activeOffsets(System.currentTimeMillis()).isZero(),
-                "动画没播出来就震屏 = juice 与画面脱节，正是本条 juice 要避免的");
-
-            // bridge 播出 → juice 触发。
-            VfxEventRouter played = new VfxEventRouter(new RecordingBridge(true));
-            VfxEventRouter.RouteResult okResult = played.route(json, jsonLen(json));
-            assertTrue(okResult.isHandled(), "bridge 播出应 handled: " + okResult.logMessage());
-            assertFalse(
-                com.bong.client.combat.juice.CameraShakeController
-                    .activeOffsets(System.currentTimeMillis()).isZero(),
-                "动画真播出来时 juice 必须触发（否则 heaven_gate 劈下没有震感）");
-        } finally {
-            com.bong.client.combat.juice.CastFovController.resetForTests();
-            com.bong.client.combat.juice.CameraShakeController.resetForTests();
-        }
-    }
-
-    @Test
-    void playAnimDoesNotDispatchJuiceForRemotePlayers() {
-        com.bong.client.combat.juice.CastFovController.resetForTests();
-        com.bong.client.combat.juice.CameraShakeController.resetForTests();
-        try {
-            // 非本地玩家：别人放大招不该震我的相机。
-            com.bong.client.combat.juice.CastFovController.setLocalPlayerPredicateForTest(id -> false);
-            String json = playAnimJson("bong:sword_heaven_gate_release", 1000, 3);
-
-            VfxEventRouter router = new VfxEventRouter(new RecordingBridge(true));
-            assertTrue(router.route(json, jsonLen(json)).isHandled());
-
-            assertTrue(
-                com.bong.client.combat.juice.CameraShakeController
-                    .activeOffsets(System.currentTimeMillis()).isZero(),
-                "远端玩家的施法动画不得触发本地 juice");
-        } finally {
-            com.bong.client.combat.juice.CastFovController.resetForTests();
-            com.bong.client.combat.juice.CameraShakeController.resetForTests();
-        }
-    }
+    // plan-fpv-cast-av-v1 P3：play_anim → 动画事件驱动 juice 的路由接线测试已移到
+    // com.bong.client.combat.juice.CastFovControllerTest（router* 三例）。原因：juice 现在要求
+    // 一枚由权威 CASTING 武装的令牌，武装要用 CastStateStore/SkillBarStore/CastSyncHandler 的
+    // 完整 harness 与包内 transition listener——放在本包只能靠后门武装，或退化成无区分力的
+    // 「两边都零」断言（假绿）。那三例仍然走真实 VfxEventRouter，接线覆盖没有丢。
 
     // ---- plan-skill-av-relink-v1 P3：P1 接线清单 → 路由契约（动画链客户端闭环） ----
 

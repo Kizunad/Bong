@@ -42,7 +42,8 @@ import java.util.Set;
  * <p><b>heaven_gate 例外</b>：{@code sword_path.heaven_gate} 的 cast 条时长（cast_ticks=80=4s）
  * 与真实引导窗（到 140t=7s 才 emit release）错开 3s，走 CastState 驱动会让 juice 在举剑蓄力
  * 中途触发、而非劈下那一刻。故它**不在本表**，改由 {@link CastFovController#onAnimPlayed}
- * 动画事件驱动（charge 动画→渐强 / release 动画→最大+FOV），与画面严格对齐。
+ * 动画事件驱动（charge 动画→渐强 / release 动画→最大+FOV），与画面严格对齐。该路径的
+ * accepted 门控**不打折**：令牌由 heaven_gate 的权威 CASTING 武装，动画事件只是触发时刻。
  */
 public final class CastJuiceProfiles {
     /** 抖动强度三档（映射 §P3 表「强/中/弱」；peak 幅度 = 2·intensity 度，见 CameraShakeController）。 */
