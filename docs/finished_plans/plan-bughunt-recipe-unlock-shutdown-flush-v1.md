@@ -66,28 +66,23 @@
 - `server/tests/shutdown_signal.rs`：真实子进程通过生产 `build_server_app()` 注册链路在 ready 后接收 `kill -INT` 与 `kill -TERM`，验证正常退出、600 tick 前未提前落盘、JSON hydrate、版本、解锁和无 `.tmp` 残留。
 - `scripts/lib/bong-server-lifecycle.sh`、`scripts/{start,stop,dev-reload}.sh`：完整生命周期事务由同一 `flock` 串行；ownership record 以 PID、`/proc/<pid>/stat` starttime、canonical executable 和 `/proc/<pid>/exe` device/inode image identity 验证。标准停服按 TERM→有界等待→身份复核→KILL 处理，未验证记录或任意 tmux 窗口 pane 后代中的未记录 server 会 fail closed，绝不按 server 名称杀进程。
 - `scripts/test-server-lifecycle.sh`、`scripts/test-dev-reload-disown.sh`、`scripts/smoke-test-e2e.sh`：锁住优雅 TERM、KILL 升级、malformed/foreign record fail-closed、跨锁串行、可执行文件置换、跨 tmux 窗口 pane 后代 server 检测、相对 `CARGO_TARGET_DIR`、无 name-based kill 与 detached launch record 契约。
-- `scripts/e2e-redis.sh` + `scripts/lib/bong-server-lifecycle.sh`（新增 `bong_server_stash_persistence` / `bong_server_restore_persistence`）：优雅关服刷盘变可达后，`stop_server` 发出的 SIGTERM 会让 e2e 阶段的普通 server 在退出前把运行期 zone 快照（被 100 NPC seed 消耗过的 spirit_qi）写入 `server/data/bong.db`；而 north-rift 专用 preview server 与它共用同一个相对 cwd 持久化路径，`terrain_north_rift_scorch_zone_identity` 场景断言的是 `zones.json` 的 pristine 权威身份数值。修复在专用 preview server 起服前把开发者本地 `server/data/bong.db{,-wal,-shm}` 挪到 `$RUN_DIR/north-rift-db-stash`，场景通过或脚本任意路径退出（含 `cleanup` trap 兜底）后还原。**语义是清单驱动而非"stash 目录里还有没有该文件"反推**：`stash` 成功后在 `stash_dir` 内写一份 `stashed-files` 清单，逐行记录本次真正搬走的文件名；`restore` 对每个后缀先查清单——清单里没有的一律视为专用 server 自造垃圾直接删除，清单里有的则优先从 stash 拿回，stash 里已经没有但 `data_dir` 里已存在就判定为"上一次调用已经正确还原过"并原样保留、绝不误删。`stash_dir` 存在但清单缺失/不可读时整体 fail closed（一个文件都不碰，返回非零交人工排查），全部处理完才删除 `stash_dir`。这条语义专门堵住了首版实现（`82a42efff`）里"restore 中途失败后重试会把已经正确还原的真实存档当成'没备份过'误删"的对抗验证 blocker——首版只按"stash 里还有没有文件"反推、没有清单区分"从没备份过"与"已被上一次调用还原走"两种状态，`cleanup` trap 的无条件二次 restore 调用会在 e2e 因其他原因失败退出时触发这条路径吞掉开发者本地存档。`scripts/test-server-lifecycle.sh` 补齐真实文件级回归（三文件 stash/restore 内容对拍、仅 `bong.db` 场景下"精确还原"删除 preview 新造 `-wal`、空目录/缺失 stash_dir 的 no-op、部分失败后重试不误删已还原文件、清单缺失时 fail closed 不碰任何文件）。
+- `scripts/e2e-redis.sh` + `scripts/lib/bong-server-lifecycle.sh`：north-rift 专用 preview server 启动前，在私有 runtime transaction authority 下独占锁定 canonical `server/data`，把 `bong.db{,-wal,-shm}` 作为同一快照移入 stash。V3 `stashed-files` manifest 对每个原始文件同时记录 SHA-256 与 `device:inode`；manifest、durable READY handoff、每笔 move 前后和 restore preflight/commit 均重新对拍，部分 restore 重试能识别已回到 data-dir 的原始 inode，绝不把已恢复文件当 preview 垃圾删除。stash 前还会对 source 与实际 stash leaf 做 `st_dev` 预检，跨设备时在 manifest/READY/首笔 move 前 fail closed，原始 SQLite 文件一个不动。只有进程树停止和 25565 端口释放都确认后才 restore；child 枚举或进程检查不确定时写 durable FAILED handoff、保留 stash、严禁 restore。
 
 ### 关键 commit
 
+- `8fe7f696d`（2026-07-26）`修复生命周期三态与持久化事务边界`：补齐 PID/进程树/tmux 三态传播、FD/path/inode 防护、私有事务 authority、V3 manifest、stop-confirmed restore gate、kill-tree 叶节点和跨设备 stash 预检。
+- `419f46d79`（2026-07-26）`修复 e2e 持久化还原部分失败误删`。
+- `82a42efff`（2026-07-26）`修复 e2e 专用 preview server 持久化继承`。
 - `79b2c87e8`（2026-07-24）`修复配方解锁关服窗口丢失`。
 - `c4ca31f54`（2026-07-25）`修复服务端信号关服刷盘`。
 - `402fb6651`（2026-07-25）`修复服务端停服进程归属`。
-- 本次提交：补齐生产 builder signal probe、非 Unix Ctrl-C 初次 poll 状态机、可执行 image identity 与全事务 lifecycle lock；commit hash 以本节归档提交后记录为准。
 
 ### 测试结果
 
-- `cd server && cargo test craft::unlock`：54 passed。
-- `cd server && cargo test shutdown`：7 passed。
-- `cd server && cargo test --test shutdown_signal`：2 passed（真实 SIGINT/SIGTERM，经生产 builder）。
-- `cd server && cargo test --test full_app_startup`：1 passed。
-- `cd server && cargo clippy --all-targets -- -D warnings`：通过。
-- `cd server && cargo test`：11,890 个库测试、11 个 binary 测试、全部 integration tests 通过；5 个既有 doc-test ignored。
-- `bash scripts/test-server-lifecycle.sh` 与 `bash scripts/test-dev-reload-disown.sh`：通过。
-- `bash scripts/smoke-test-e2e.sh`：本地两次在 release 编译尚未完成时由执行环境向 `rustc` 发送 SIGTERM，harness 因此报 missing world bootstrap anchor，未到 server 启动或本 plan 的 shutdown 路径；交由推送后的 CI 隔离环境重新执行，不能记为本地通过。
-- north-rift 持久化隔离修复的本地 shell 门禁（首版 `82a42efff` + 对抗返工版）：`bash -n scripts/e2e-redis.sh`、`bash -n scripts/lib/bong-server-lifecycle.sh`、`bash -n scripts/test-server-lifecycle.sh`（均 EXIT:0）、`bash scripts/test-server-lifecycle.sh`（EXIT:0，含 stash/restore 三文件 round-trip、仅 `bong.db`、空目录/缺失 stash_dir no-op、部分失败重试、清单缺失 fail closed 等回归）、`bash scripts/test-dev-reload-disown.sh`（EXIT:0）。
-- 对抗返工验证：新增的"部分失败后重试"回归用例在返工前（旧 `82a42efff` 实现，靠"stash 里还有没有文件"反推）确认能撞红（`second restore call ... must NOT delete the real bong.db`），换成清单驱动实现后转绿——锁住了本轮对抗验证抓到的真实 blocker，而不是只做静态检查。
-- `cd server && cargo fmt --check`：仅报告未触及的 `server/src/network/vfx_animation_trigger.rs:3252` 基线格式差异；本 plan 改动的 Rust 文件已执行 `rustfmt`。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（合并 `origin/main` 后 HEAD `00421fd57`）：通过；11,964 个库测试、11 个 binary 测试、`full_app_startup` 1 个、`shutdown_signal` 2 个、Tarkov backpack integration 4 个均通过，5 个既有 doc-test ignored。
+- `bash -n scripts/lib/bong-server-lifecycle.sh scripts/e2e-redis.sh scripts/start.sh scripts/stop.sh scripts/test-server-lifecycle.sh scripts/test-dev-reload-disown.sh`、`bash scripts/test-server-lifecycle.sh`、`bash scripts/test-dev-reload-disown.sh`、`git diff --check`（合并主线前后各一次）：全部通过；shell 输出中的 `FAIL:` 为负向 fail-closed fixture 的预期诊断。
+- lifecycle 饱和回归覆盖：kill-tree 叶节点 `pgrep=1` 必须收到 TERM；`pgrep=0` 空 child 在信号前拒绝；跨设备 stash 在 READY/move 前拒绝且源文件不动；同设备三文件 round-trip；V3 digest+inode swap 检测；partial restore retry；unexpected entry；data-dir rename/symlink replacement；并发 transaction；PID record FD/path swap；TERM 等待和 SIGKILL 前身份检查的 status 2；tmux no-server 与 permission/unknown failure；E2E stop 未确认时 restore 调用次数为 0。
+- protected assertions：`server/zones.json` 的 `north_waste_east_scorch.spirit_qi = 0.290146` 未修改；`terrain_north_rift_scorch_zone_identity` 仍断言 `0.290146 ± 0.001`。
 
 ### 跨仓库核验
 
@@ -96,5 +91,4 @@
 ### 遗留 / 后续
 
 - `stop.sh` 中 Tiandao 与 Redis 的既有 name-based/process ownership 语义不在本 plan 范围；本次只消除 server 的宽泛 kill。
-- `cargo fmt --check` 仍会报告未触及的 `server/src/network/vfx_animation_trigger.rs` 基线格式差异；本计划未将其纳入改动。
-- CI 已在 `dff53c735` 上复现并定位 e2e `north-rift dedicated preview bot` 阶段的失败根因：优雅关服刷盘变可达后，`terrain_north_rift_scorch_zone_identity` 场景一直隐式依赖"上一台 server 被硬杀所以不落盘"的前提，本次已在 `scripts/e2e-redis.sh` + `scripts/lib/bong-server-lifecycle.sh` 补上 north-rift 专用 preview server 的持久化隔离（见「落地清单」）。本次修复待新 HEAD 的 CI e2e 复验；未取得 CI 通过前不得把本 plan 视为最终门禁全绿。
+- PR #1261 已推送 HEAD `00421fd57` 并重新触发独立 `/review`；最终 CI e2e、`/review` 和 CodeRabbit 收敛结果在 merge gate 中核验，不以旧 HEAD 结果代替。
