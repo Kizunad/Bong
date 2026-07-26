@@ -70,6 +70,7 @@
 
 ### 关键 commit
 
+- `81a41f0c7`（2026-07-26）`修复 E2E 停服契约断言`：让 bot protocol 预检锁定共享 lifecycle helper 委托、成功后才清 PID、未确认停服禁止 restore 的 fail-closed 契约，不再钉死已抽取的 kill/wait/port 实现细节。
 - `8fe7f696d`（2026-07-26）`修复生命周期三态与持久化事务边界`：补齐 PID/进程树/tmux 三态传播、FD/path/inode 防护、私有事务 authority、V3 manifest、stop-confirmed restore gate、kill-tree 叶节点和跨设备 stash 预检。
 - `419f46d79`（2026-07-26）`修复 e2e 持久化还原部分失败误删`。
 - `82a42efff`（2026-07-26）`修复 e2e 专用 preview server 持久化继承`。
@@ -80,6 +81,7 @@
 ### 测试结果
 
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（合并 `origin/main` 后 HEAD `00421fd57`）：通过；11,964 个库测试、11 个 binary 测试、`full_app_startup` 1 个、`shutdown_signal` 2 个、Tarkov backpack integration 4 个均通过，5 个既有 doc-test ignored。
+- `python3 scripts/bot/test_protocol.py`：通过，130 个纯协议/脚本契约测试全绿；north-rift harness 预检验证 `stop_server` 委托共享 helper，且 cleanup 仅在停服确认后允许 finalize restore。
 - `bash -n scripts/lib/bong-server-lifecycle.sh scripts/e2e-redis.sh scripts/start.sh scripts/stop.sh scripts/test-server-lifecycle.sh scripts/test-dev-reload-disown.sh`、`bash scripts/test-server-lifecycle.sh`、`bash scripts/test-dev-reload-disown.sh`、`git diff --check`（合并主线前后各一次）：全部通过；shell 输出中的 `FAIL:` 为负向 fail-closed fixture 的预期诊断。
 - lifecycle 饱和回归覆盖：kill-tree 叶节点 `pgrep=1` 必须收到 TERM；`pgrep=0` 空 child 在信号前拒绝；跨设备 stash 在 READY/move 前拒绝且源文件不动；同设备三文件 round-trip；V3 digest+inode swap 检测；partial restore retry；unexpected entry；data-dir rename/symlink replacement；并发 transaction；PID record FD/path swap；TERM 等待和 SIGKILL 前身份检查的 status 2；tmux no-server 与 permission/unknown failure；E2E stop 未确认时 restore 调用次数为 0。
 - protected assertions：`server/zones.json` 的 `north_waste_east_scorch.spirit_qi = 0.290146` 未修改；`terrain_north_rift_scorch_zone_identity` 仍断言 `0.290146 ± 0.001`。
@@ -91,4 +93,4 @@
 ### 遗留 / 后续
 
 - `stop.sh` 中 Tiandao 与 Redis 的既有 name-based/process ownership 语义不在本 plan 范围；本次只消除 server 的宽泛 kill。
-- PR #1261 已推送 HEAD `00421fd57` 并重新触发独立 `/review`；最终 CI e2e、`/review` 和 CodeRabbit 收敛结果在 merge gate 中核验，不以旧 HEAD 结果代替。
+- PR #1261 的每个新 HEAD 都独立触发 `/review`，并以对应 HEAD 的 CI e2e、`/review` 与 CodeRabbit 收敛结果作为 merge gate，不以旧 HEAD 结果代替。
