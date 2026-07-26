@@ -333,7 +333,7 @@ fn tick_player_persistence_timer(mut timer: ResMut<PlayerStateAutosaveTimer>) {
     timer.ticks += 1;
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn despawn_disconnected_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
