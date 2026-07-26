@@ -28,6 +28,15 @@ public final class JuiceControls {
     private static final String CATEGORY = "category.bong-client.combat";
     private static final String KEY_TRANSLATION = "key.bong-client.juice_multiplier_cycle";
 
+    /**
+     * 动作栏回显的翻译 key（en_us / zh_cn 双份）。<b>不写死中文</b>——英文客户端也得看懂
+     * （review finding H）。百分比档位走 {@link #FEEDBACK_LEVEL_KEY}，参数是已格式化的整数
+     * 百分数字符串（lang 里的 {@code %%} 渲染成字面 {@code %}）；关闭档单独一条 key，因为
+     * 「0%」容易被玩家当成显示 bug。
+     */
+    static final String FEEDBACK_OFF_KEY = "message.bong-client.juice_multiplier.off";
+    static final String FEEDBACK_LEVEL_KEY = "message.bong-client.juice_multiplier.level";
+
     private static KeyBinding cycleKey;
     private static boolean registered;
 
@@ -53,14 +62,14 @@ public final class JuiceControls {
             message -> {
                 if (client.player != null) {
                     // true = 动作栏瞬态回显（先例 InspectScreenBootstrap / LingtianActionScreen）。
-                    client.player.sendMessage(Text.literal(message), true);
+                    client.player.sendMessage(message, true);
                 }
             }
         );
     }
 
     static int consumeInstalledCyclePresses(
-        boolean playerPresent, boolean screenOpen, Consumer<String> feedback
+        boolean playerPresent, boolean screenOpen, Consumer<Text> feedback
     ) {
         return consumeCyclePresses(
             playerPresent,
@@ -81,7 +90,7 @@ public final class JuiceControls {
      * @return 本次<b>生效</b>的切档次数（被门控时恒为 0，即便排空了若干按键）
      */
     static int consumeCyclePresses(
-        boolean playerPresent, boolean screenOpen, BooleanSupplier wasPressed, Consumer<String> feedback
+        boolean playerPresent, boolean screenOpen, BooleanSupplier wasPressed, Consumer<Text> feedback
     ) {
         boolean gated = !playerPresent || screenOpen;
         int consumed = 0;
@@ -98,11 +107,17 @@ public final class JuiceControls {
         return consumed;
     }
 
-    /** 动作栏文案：0 明写「关闭」（百分比 0% 容易被当成显示 bug）。 */
-    static String describe(float multiplier) {
+    /**
+     * 动作栏文案：0 明写「关闭」（百分比 0% 容易被当成显示 bug）。
+     *
+     * <p>百分数用 {@link Locale#ROOT} 格式化成整数字符串再交给翻译层——数字形态不进 lang，
+     * 免得两份 lang 各写一套格式化规则漂移。
+     */
+    static Text describe(float multiplier) {
         return multiplier <= 0f
-            ? "施法震感：关闭"
-            : String.format(Locale.ROOT, "施法震感：%.0f%%", multiplier * 100f);
+            ? Text.translatable(FEEDBACK_OFF_KEY)
+            : Text.translatable(
+                FEEDBACK_LEVEL_KEY, String.format(Locale.ROOT, "%.0f", multiplier * 100f));
     }
 
     static KeyBinding installCycleKey(UnaryOperator<KeyBinding> registrar) {

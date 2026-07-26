@@ -26,5 +26,7 @@
   "key.bong-client.mineral_sense": "Sense Mineral Vein",
   "category.bong-client.social": "Bong Social",
   "key.bong-client.spirit_niche_mark_coordinate": "Sense Spirit Niche (Gaze + Mark)",
-  "key.bong-client.juice_multiplier_cycle": "Cycle Cast Juice Intensity"
+  "key.bong-client.juice_multiplier_cycle": "Cycle Cast Juice Intensity",
+  "message.bong-client.juice_multiplier.off": "Cast Shake: Off",
+  "message.bong-client.juice_multiplier.level": "Cast Shake: %s%%"
 }

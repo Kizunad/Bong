@@ -10,6 +10,9 @@ import com.bong.client.network.CastSyncHandler;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerPayloadParseResult;
 
+import net.minecraft.text.Text;
+import net.minecraft.text.TranslatableTextContent;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,7 +29,7 @@ import org.junit.jupiter.api.Test;
  * ——单测环境没有 GLFW / MinecraftClient。断言落在外部可观察量：配置值与回显文案。
  */
 class JuiceControlsTest {
-    private final List<String> feedback = new ArrayList<>();
+    private final List<Text> feedback = new ArrayList<>();
     /** 注入时钟：脉冲在 t=0 偏移天然为 0，需推进到半程才能证明取消前真有值。 */
     private final long[] now = {10_000_000L};
 
@@ -83,7 +86,8 @@ class JuiceControlsTest {
         int consumed = JuiceControls.consumeCyclePresses(true, false, presses(1), feedback::add);
         assertEquals(1, consumed, "消费一次按键");
         assertEquals(1.5f, JuiceConfig.juiceMultiplier(), 1e-9f, "默认 1.0 → 下一档 1.5");
-        assertEquals(List.of("施法震感：150%"), feedback, "每次切换都回显新档位");
+        assertEquals(1, feedback.size(), "每次切换都回显新档位");
+        assertFeedback(feedback.get(0), JuiceControls.FEEDBACK_LEVEL_KEY, "150");
     }
 
     @Test
@@ -96,8 +100,7 @@ class JuiceControlsTest {
         }
         assertEquals(0f, JuiceConfig.juiceMultiplier(), 1e-9f, "连按可达「关闭」档");
         assertTrue(pressed < 10, "档位表有限，不该按满 10 次还到不了关闭");
-        assertEquals("施法震感：关闭", feedback.get(feedback.size() - 1),
-            "关闭档明写「关闭」而不是 0%（0% 容易被当成显示 bug）");
+        assertFeedback(feedback.get(feedback.size() - 1), JuiceControls.FEEDBACK_OFF_KEY);
     }
 
     // ---- 边界：多次按键 / 零次 ----
@@ -179,13 +182,45 @@ class JuiceControlsTest {
 
     // ---- 回显文案 ----
 
+    /**
+     * 断言回显是**翻译 key + 参数**，不是把中文文案固化成业务契约（review finding H）：
+     * 文案改字、加语言都不该让测试红；key/参数变了才该红。
+     */
+    private static void assertFeedback(Text actual, String expectedKey, String... expectedArgs) {
+        assertTrue(actual.getContent() instanceof TranslatableTextContent,
+            "动作栏回显必须是 translatable（英文客户端不能看到硬编码中文），实际内容类型 "
+                + actual.getContent().getClass().getSimpleName());
+        TranslatableTextContent content = (TranslatableTextContent) actual.getContent();
+        assertEquals(expectedKey, content.getKey(), "翻译 key 不符");
+        assertEquals(List.of((Object[]) expectedArgs), List.of(content.getArgs()),
+            "翻译参数不符（百分数由代码按 Locale.ROOT 格式化后传入，不进 lang）");
+    }
+
     @Test
-    void describeCoversOffAndScaledLevels() {
-        assertEquals("施法震感：关闭", JuiceControls.describe(0f));
-        assertEquals("施法震感：关闭", JuiceControls.describe(-1f), "负值同样按关闭显示");
-        assertEquals("施法震感：50%", JuiceControls.describe(0.5f));
-        assertEquals("施法震感：100%", JuiceControls.describe(1.0f));
-        assertEquals("施法震感：150%", JuiceControls.describe(1.5f));
+    void describeUsesTranslationKeysForOffAndScaledLevels() {
+        assertFeedback(JuiceControls.describe(0f), JuiceControls.FEEDBACK_OFF_KEY);
+        assertFeedback(JuiceControls.describe(-1f), JuiceControls.FEEDBACK_OFF_KEY);
+        assertFeedback(JuiceControls.describe(0.5f), JuiceControls.FEEDBACK_LEVEL_KEY, "50");
+        assertFeedback(JuiceControls.describe(1.0f), JuiceControls.FEEDBACK_LEVEL_KEY, "100");
+        assertFeedback(JuiceControls.describe(1.5f), JuiceControls.FEEDBACK_LEVEL_KEY, "150");
+    }
+
+    @Test
+    void bothLangFilesDeclareEveryFeedbackKey() throws Exception {
+        // 只用 key 不落 lang = 玩家看到裸 key。双份 lang 都必须有，且百分比档带 %s 占位。
+        for (String lang : List.of("en_us", "zh_cn")) {
+            java.nio.file.Path file = java.nio.file.Path.of(
+                "src/main/resources/assets/bong-client/lang/" + lang + ".json");
+            com.google.gson.JsonObject json = com.google.gson.JsonParser
+                .parseString(java.nio.file.Files.readString(file)).getAsJsonObject();
+            assertTrue(json.has(JuiceControls.FEEDBACK_OFF_KEY),
+                lang + ".json 缺 " + JuiceControls.FEEDBACK_OFF_KEY);
+            assertTrue(json.has(JuiceControls.FEEDBACK_LEVEL_KEY),
+                lang + ".json 缺 " + JuiceControls.FEEDBACK_LEVEL_KEY);
+            String level = json.get(JuiceControls.FEEDBACK_LEVEL_KEY).getAsString();
+            assertTrue(level.contains("%s"),
+                lang + ".json 的百分比档文案必须含 %s 占位（否则档位数字显示不出来）：" + level);
+        }
     }
 
     // ---- 接线：按键 → 配置 → 控制器（关档立即复位在播 juice） ----
