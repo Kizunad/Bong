@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-server-lifecycle.sh"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 TASK_ID="task-13"
 SCRIPT_TAG="e2e-redis"
@@ -30,6 +31,7 @@ FAIL=0
 CURRENT_STAGE="init"
 REDIS_PID=""
 SERVER_PID=""
+NORTH_RIFT_DB_STASH=""
 REDIS_SUB_PID=""
 REDIS_PROVIDER=""
 REDIS_SERVER_BIN=""
@@ -886,6 +888,14 @@ cleanup() {
 
   stop_server || true
 
+  # 兜底：无论 north-rift 阶段是正常收尾还是中途 finalize_failure 退出，
+  # 都要把之前 stash 出去的开发者本地 bong.db 精确还原回来，不能让专用
+  # preview server 写脏的运行期存档留在原地。restore 自身幂等（第二次
+  # 调用会落进 stash_dir 已不存在的 no-op 分支），可放心 || true。
+  if [ -n "$NORTH_RIFT_DB_STASH" ]; then
+    bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH" || true
+  fi
+
   if [ -n "$REDIS_PID" ] && kill -0 "$REDIS_PID" 2>/dev/null; then
     kill_tree "$REDIS_PID"
     wait "$REDIS_PID" 2>/dev/null || true
@@ -1042,6 +1052,18 @@ if ! stop_server; then
   finalize_failure "north-rift-preview" "ordinary server stopped but port 25565 stayed occupied"
 fi
 
+# 优雅关服（SIGTERM → AppExit → Last）现在真正可达，上面 stop_server 会让
+# 普通 e2e server 在退出前把运行期 zone 快照（被 100 NPC seed 消耗过的
+# spirit_qi）刷进 server/data/bong.db。但下面这台专用 preview server 与
+# 普通 server 共用同一个相对 cwd 持久化路径，而 terrain_north_rift_scorch_
+# zone_identity 场景断言的是 zones.json 的 pristine 权威身份数值——必须先
+# 把开发者本地真实存档挪走，让专用 preview server 从干净持久化状态启动，
+# 场景通过 / 脚本退出后再原样还原，不能影响本机开发者的真实存档。
+NORTH_RIFT_DB_STASH="$RUN_DIR/north-rift-db-stash"
+if ! bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+  finalize_failure "north-rift-preview" "failed to stash local server/data/bong.db before dedicated preview server"
+fi
+
 (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
@@ -1101,6 +1123,10 @@ if ! stop_server; then
   finalize_failure \
     "north-rift-preview" \
     "dedicated preview bot passed but server did not release port 25565"
+fi
+
+if ! bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+  finalize_failure "north-rift-preview" "failed to restore local server/data/bong.db after dedicated preview server"
 fi
 pass "north-rift dedicated preview server cleanup"
 

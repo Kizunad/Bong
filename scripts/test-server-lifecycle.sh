@@ -208,4 +208,121 @@ done
 
 [ ! -e "$BONG_SERVER_PID_FILE" ] || fail "no-record stop must leave no record"
 bong_server_stop_managed || fail "missing record was not a no-op"
+
+# --- north-rift dedicated preview server 持久化 stash/restore 回归 ---
+# 优雅关服刷盘可达后，e2e-redis.sh 的 north-rift 阶段必须先把开发者本地
+# server/data/bong.db{,-wal,-shm} 挪走再起专用 preview server，跑完精确
+# 还原，绝不允许把专用 server 写脏的存档留给开发者，也绝不允许"精确还原"
+# 语义打折（该删的没删、该拷回的没拷回）。
+
+persistence_root="$TEST_ROOT/persistence"
+data_dir="$persistence_root/data"
+stash_dir="$persistence_root/stash"
+mkdir -p "$data_dir"
+printf 'original-db\n' > "$data_dir/bong.db"
+printf 'original-wal\n' > "$data_dir/bong.db-wal"
+printf 'original-shm\n' > "$data_dir/bong.db-shm"
+
+bong_server_stash_persistence "$data_dir" "$stash_dir" \
+    || fail "stash must succeed when data_dir holds all three persistence files"
+[ ! -e "$data_dir/bong.db" ] || fail "stash must remove bong.db from data_dir"
+[ ! -e "$data_dir/bong.db-wal" ] || fail "stash must remove bong.db-wal from data_dir"
+[ ! -e "$data_dir/bong.db-shm" ] || fail "stash must remove bong.db-shm from data_dir"
+[ "$(cat "$stash_dir/bong.db")" = "original-db" ] \
+    || fail "stash must preserve bong.db content byte-for-byte in stash_dir, expected 'original-db' because the source file was moved not copied-and-mutated"
+[ "$(cat "$stash_dir/bong.db-wal")" = "original-wal" ] \
+    || fail "stash must preserve bong.db-wal content byte-for-byte in stash_dir"
+[ "$(cat "$stash_dir/bong.db-shm")" = "original-shm" ] \
+    || fail "stash must preserve bong.db-shm content byte-for-byte in stash_dir"
+
+# 模拟专用 preview server 在 data_dir 里新造了一份内容不同的 bong.db
+printf 'preview-created-db\n' > "$data_dir/bong.db"
+
+bong_server_restore_persistence "$data_dir" "$stash_dir" \
+    || fail "restore must succeed after a stash + preview-server-write cycle"
+[ "$(cat "$data_dir/bong.db")" = "original-db" ] \
+    || fail "restore must overwrite the preview-created bong.db with the pre-stash original because restore is authoritative, not a merge"
+[ "$(cat "$data_dir/bong.db-wal")" = "original-wal" ] \
+    || fail "restore must bring back bong.db-wal exactly as it was before stash"
+[ "$(cat "$data_dir/bong.db-shm")" = "original-shm" ] \
+    || fail "restore must bring back bong.db-shm exactly as it was before stash"
+[ ! -d "$stash_dir" ] \
+    || fail "restore must remove the now-empty stash_dir so a repeated cleanup-trap restore call falls into the safe no-op branch instead of re-deleting what it just restored"
+
+# 只有 bong.db（无 -wal/-shm）时的精确还原语义
+solo_root="$TEST_ROOT/persistence-solo"
+solo_data="$solo_root/data"
+solo_stash="$solo_root/stash"
+mkdir -p "$solo_data"
+printf 'solo-original-db\n' > "$solo_data/bong.db"
+
+bong_server_stash_persistence "$solo_data" "$solo_stash" \
+    || fail "stash must succeed when only bong.db exists (no -wal/-shm present)"
+[ ! -e "$solo_data/bong.db" ] || fail "stash must remove the lone bong.db from data_dir"
+[ "$(cat "$solo_stash/bong.db")" = "solo-original-db" ] \
+    || fail "stash must preserve the lone bong.db content in stash_dir"
+[ ! -e "$solo_stash/bong.db-wal" ] \
+    || fail "stash must not fabricate a bong.db-wal in stash_dir when none ever existed in data_dir"
+[ ! -e "$solo_stash/bong.db-shm" ] \
+    || fail "stash must not fabricate a bong.db-shm in stash_dir when none ever existed in data_dir"
+
+# 模拟专用 preview server 只造出了 -wal，没有触碰 bong.db 本体
+printf 'preview-created-wal\n' > "$solo_data/bong.db-wal"
+
+bong_server_restore_persistence "$solo_data" "$solo_stash" \
+    || fail "restore must succeed for the lone-bong.db stash"
+[ "$(cat "$solo_data/bong.db")" = "solo-original-db" ] \
+    || fail "restore must bring back the lone bong.db with its exact original content"
+[ ! -e "$solo_data/bong.db-wal" ] \
+    || fail "restore must delete a preview-server-created bong.db-wal that was never part of the stash, because restore is an exact-state rollback not an additive merge"
+[ ! -e "$solo_data/bong.db-shm" ] \
+    || fail "restore must not leave a bong.db-shm that was never part of the stash"
+
+# 空 data_dir 的 stash 必须是成功的 no-op
+empty_root="$TEST_ROOT/persistence-empty"
+empty_data="$empty_root/data"
+empty_stash="$empty_root/stash"
+mkdir -p "$empty_data"
+bong_server_stash_persistence "$empty_data" "$empty_stash" \
+    || fail "stash on an empty data_dir must succeed as a no-op instead of failing when there is nothing to move"
+[ -z "$(ls -A "$empty_data" 2>/dev/null)" ] \
+    || fail "stash on an empty data_dir must not fabricate any file in data_dir"
+
+# stash_dir 不存在时 restore 必须是成功的 no-op，且不得触碰 data_dir
+missing_stash_root="$TEST_ROOT/persistence-missing-stash"
+missing_stash_data="$missing_stash_root/data"
+missing_stash_dir="$missing_stash_root/stash"
+mkdir -p "$missing_stash_data"
+printf 'untouched\n' > "$missing_stash_data/bong.db"
+bong_server_restore_persistence "$missing_stash_data" "$missing_stash_dir" \
+    || fail "restore must succeed as a no-op when stash_dir does not exist"
+[ "$(cat "$missing_stash_data/bong.db")" = "untouched" ] \
+    || fail "restore no-op (missing stash_dir) must leave pre-existing data_dir files untouched"
+
+# 幂等回归：对齐 e2e-redis.sh 的真实调用模式（阶段末尾 restore 一次 +
+# cleanup trap 兜底再 restore 一次），第二次调用绝不能把第一次刚还原回去
+# 的文件当成"专用 server 残留"误删——否则每次成功的 e2e 跑完都会悄悄清空
+# 开发者本地存档。
+double_root="$TEST_ROOT/persistence-double-restore"
+double_data="$double_root/data"
+double_stash="$double_root/stash"
+mkdir -p "$double_data"
+printf 'double-original\n' > "$double_data/bong.db"
+bong_server_stash_persistence "$double_data" "$double_stash" \
+    || fail "stash must succeed for the double-restore idempotency fixture"
+bong_server_restore_persistence "$double_data" "$double_stash" \
+    || fail "first restore of the double-restore fixture must succeed"
+bong_server_restore_persistence "$double_data" "$double_stash" \
+    || fail "second (idempotent) restore call must not error"
+[ "$(cat "$double_data/bong.db")" = "double-original" ] \
+    || fail "second (idempotent) restore call must not delete the file the first restore just brought back, expected 'double-original' still present"
+
+restore_occurrences="$(grep -c 'bong_server_restore_persistence' "$ROOT/scripts/e2e-redis.sh" || true)"
+grep -Fq 'bong_server_stash_persistence' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e-redis.sh north-rift stage must call bong_server_stash_persistence before starting the dedicated preview server"
+[ "${restore_occurrences:-0}" -ge 2 ] \
+    || fail "e2e-redis.sh must call bong_server_restore_persistence both at the end of the north-rift stage and inside the cleanup trap, found ${restore_occurrences:-0}"
+grep -Fq 'source "$ROOT/scripts/lib/bong-server-lifecycle.sh"' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e-redis.sh must source bong-server-lifecycle.sh to reach the stash/restore helpers"
+
 echo "PASS: managed PID lifecycle validates identity, TERM/KILL, stale records, and no name-based server kills"

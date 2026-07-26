@@ -297,3 +297,61 @@ _bong_server_stop_managed() {
 bong_server_stop_managed() {
     bong_server_with_lock _bong_server_stop_managed
 }
+
+# 把 <data_dir>/bong.db{,-wal,-shm} 中存在的文件挪到 <stash_dir>/，用于在
+# 另起一台共用 cwd/持久化路径的专用 server（如 north-rift preview）之前，
+# 把开发者本地真实存档暂时移出去，避免被专用 server 的 hydrate/flush 读写。
+# 幂等：源文件已不在 data_dir（例如已经 stash 过一次）时视为成功 no-op。
+bong_server_stash_persistence() {
+    local data_dir="${1:-}"
+    local stash_dir="${2:-}"
+    local suffix source_file
+
+    [ -n "$data_dir" ] || return 1
+    [ -n "$stash_dir" ] || return 1
+    [ -d "$data_dir" ] || return 1
+
+    mkdir -p -- "$stash_dir" || return 1
+
+    for suffix in "" "-wal" "-shm"; do
+        source_file="$data_dir/bong.db$suffix"
+        if [ -e "$source_file" ]; then
+            mv -- "$source_file" "$stash_dir/bong.db$suffix" || return 1
+        fi
+    done
+
+    return 0
+}
+
+# bong_server_stash_persistence 的逆操作：把 stash_dir 里的 bong.db{,-wal,-shm}
+# 精确还原回 data_dir——stash 里没有的那个后缀会把 data_dir 里对应文件删掉
+# （清掉专用 server 自己新造的残留），保证还原成 stash 那一刻的精确状态。
+# 幂等：stash_dir 不存在时视为成功 no-op；一次成功还原后会清空并删除
+# stash_dir 本身，使重复调用（例如"阶段末尾 + cleanup trap 兜底"两次调用）
+# 天然落入这个 no-op 分支，不会在第二次调用时把刚还原回去的文件当"专用
+# server 残留"误删。
+bong_server_restore_persistence() {
+    local data_dir="${1:-}"
+    local stash_dir="${2:-}"
+    local suffix stash_file data_file
+
+    [ -n "$data_dir" ] || return 1
+    [ -n "$stash_dir" ] || return 1
+
+    [ -d "$stash_dir" ] || return 0
+
+    mkdir -p -- "$data_dir" || return 1
+
+    for suffix in "" "-wal" "-shm"; do
+        stash_file="$stash_dir/bong.db$suffix"
+        data_file="$data_dir/bong.db$suffix"
+        if [ -e "$stash_file" ]; then
+            mv -f -- "$stash_file" "$data_file" || return 1
+        else
+            rm -f -- "$data_file" || return 1
+        fi
+    done
+
+    rm -rf -- "$stash_dir" 2>/dev/null || true
+    return 0
+}

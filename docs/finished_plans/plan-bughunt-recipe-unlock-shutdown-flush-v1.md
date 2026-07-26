@@ -66,6 +66,7 @@
 - `server/tests/shutdown_signal.rs`：真实子进程通过生产 `build_server_app()` 注册链路在 ready 后接收 `kill -INT` 与 `kill -TERM`，验证正常退出、600 tick 前未提前落盘、JSON hydrate、版本、解锁和无 `.tmp` 残留。
 - `scripts/lib/bong-server-lifecycle.sh`、`scripts/{start,stop,dev-reload}.sh`：完整生命周期事务由同一 `flock` 串行；ownership record 以 PID、`/proc/<pid>/stat` starttime、canonical executable 和 `/proc/<pid>/exe` device/inode image identity 验证。标准停服按 TERM→有界等待→身份复核→KILL 处理，未验证记录或任意 tmux 窗口 pane 后代中的未记录 server 会 fail closed，绝不按 server 名称杀进程。
 - `scripts/test-server-lifecycle.sh`、`scripts/test-dev-reload-disown.sh`、`scripts/smoke-test-e2e.sh`：锁住优雅 TERM、KILL 升级、malformed/foreign record fail-closed、跨锁串行、可执行文件置换、跨 tmux 窗口 pane 后代 server 检测、相对 `CARGO_TARGET_DIR`、无 name-based kill 与 detached launch record 契约。
+- `scripts/e2e-redis.sh` + `scripts/lib/bong-server-lifecycle.sh`（新增 `bong_server_stash_persistence` / `bong_server_restore_persistence`）：优雅关服刷盘变可达后，`stop_server` 发出的 SIGTERM 会让 e2e 阶段的普通 server 在退出前把运行期 zone 快照（被 100 NPC seed 消耗过的 spirit_qi）写入 `server/data/bong.db`；而 north-rift 专用 preview server 与它共用同一个相对 cwd 持久化路径，`terrain_north_rift_scorch_zone_identity` 场景断言的是 `zones.json` 的 pristine 权威身份数值。修复在专用 preview server 起服前把开发者本地 `server/data/bong.db{,-wal,-shm}` 挪到 `$RUN_DIR/north-rift-db-stash`，场景通过或脚本任意路径退出（含 `cleanup` trap 兜底）后精确还原，二者均幂等可重入。`scripts/test-server-lifecycle.sh` 补齐真实文件级回归（三文件 stash/restore 内容对拍、仅 `bong.db` 场景下"精确还原"删除 preview 新造 `-wal`、空目录/缺失 stash_dir 的 no-op、双重 restore 调用幂等不误删）。
 
 ### 关键 commit
 
@@ -84,6 +85,7 @@
 - `cd server && cargo test`：11,890 个库测试、11 个 binary 测试、全部 integration tests 通过；5 个既有 doc-test ignored。
 - `bash scripts/test-server-lifecycle.sh` 与 `bash scripts/test-dev-reload-disown.sh`：通过。
 - `bash scripts/smoke-test-e2e.sh`：本地两次在 release 编译尚未完成时由执行环境向 `rustc` 发送 SIGTERM，harness 因此报 missing world bootstrap anchor，未到 server 启动或本 plan 的 shutdown 路径；交由推送后的 CI 隔离环境重新执行，不能记为本地通过。
+- north-rift 持久化隔离修复的本地 shell 门禁：`bash -n scripts/e2e-redis.sh`、`bash -n scripts/lib/bong-server-lifecycle.sh`、`bash -n scripts/test-server-lifecycle.sh`（均 EXIT:0）、`bash scripts/test-server-lifecycle.sh`（EXIT:0，含新增 stash/restore 回归）、`bash scripts/test-dev-reload-disown.sh`（EXIT:0）。
 - `cd server && cargo fmt --check`：仅报告未触及的 `server/src/network/vfx_animation_trigger.rs:3252` 基线格式差异；本 plan 改动的 Rust 文件已执行 `rustfmt`。
 
 ### 跨仓库核验
@@ -93,5 +95,5 @@
 ### 遗留 / 后续
 
 - `stop.sh` 中 Tiandao 与 Redis 的既有 name-based/process ownership 语义不在本 plan 范围；本次只消除 server 的宽泛 kill。
-- 本地 smoke e2e 的 release build 被执行环境 SIGTERM 两次，CI 必须在新 HEAD 上重新确认完整 e2e；未取得 CI 通过前不得把本 plan 视为最终门禁全绿。
 - `cargo fmt --check` 仍会报告未触及的 `server/src/network/vfx_animation_trigger.rs` 基线格式差异；本计划未将其纳入改动。
+- CI 已在 `dff53c735` 上复现并定位 e2e `north-rift dedicated preview bot` 阶段的失败根因：优雅关服刷盘变可达后，`terrain_north_rift_scorch_zone_identity` 场景一直隐式依赖"上一台 server 被硬杀所以不落盘"的前提，本次已在 `scripts/e2e-redis.sh` + `scripts/lib/bong-server-lifecycle.sh` 补上 north-rift 专用 preview server 的持久化隔离（见「落地清单」）。本次修复待新 HEAD 的 CI e2e 复验；未取得 CI 通过前不得把本 plan 视为最终门禁全绿。
