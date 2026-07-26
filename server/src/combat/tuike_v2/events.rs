@@ -3,6 +3,13 @@ use valence::prelude::{bevy_ecs, Entity, Event};
 
 use super::state::FalseSkinTier;
 
+/// 蜕壳（蜕皮爆发）签名 recipe——单一真源，供生产 emit（主动施法 `skills::cast_shed` 与被动掉壳
+/// 统一走 `FalseSkinSheddedEvent.visual.sound_recipe_id`，由
+/// `network::audio_trigger::emit_tuike_v2_audio_triggers` 发出）与
+/// `audio::each_signature_skill_*` 运行时消费契约测试共同引用，避免 emit 站点另写字面量造成
+/// 映射漂移假绿。
+pub(crate) const SHED_SKIN_BURST_RECIPE: &str = "shed_skin_burst";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TuikeSkillId {
@@ -54,7 +61,7 @@ impl TuikeSkillVisual {
                 } else {
                     "bong:false_skin_shed_burst"
                 },
-                sound_recipe_id: "shed_skin_burst",
+                sound_recipe_id: SHED_SKIN_BURST_RECIPE,
                 icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_shed.png",
             },
             TuikeSkillId::TransferTaint => Self {

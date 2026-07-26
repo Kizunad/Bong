@@ -98,14 +98,14 @@ class FaunaModelDisguiseTest {
     // ── 渲染状态机契约（SpiderDisguiseHandler 状态 → 贴图选择逻辑） ──────────────
 
     /**
-     * 直接验证贴图选择函数 selectTexture，它是 FaunaModel.getTextureResource 内部逻辑的
-     * 纯函数抽取，不依赖 FaunaEntity 实例（避免 MC 注册表 bootstrap）。
+     * 调**生产**的 {@link FaunaModel#selectTexture}（{@code getTextureResource} 的纯函数核，
+     * 不依赖 FaunaEntity 实例，避免 MC 注册表 bootstrap）。
+     *
+     * <p>plan-devour-rat-model P2 起改为直调生产函数——此前这里是一份"影子实现"，
+     * 生产分支漂走时测试仍会全绿。
      */
     private static Identifier selectTextureForAshSpider(int entityId) {
-        if (SpiderDisguiseHandler.isDisguised(entityId)) {
-            return FaunaModel.ASH_SPIDER_DISGUISE_TEXTURE;
-        }
-        return FaunaVisualKind.ASH_SPIDER.textureId();
+        return FaunaModel.selectTexture(FaunaVisualKind.ASH_SPIDER, entityId);
     }
 
     @Test

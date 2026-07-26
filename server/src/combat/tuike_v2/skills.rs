@@ -170,7 +170,12 @@ pub fn cast_shed(
             18,
             34,
         );
-        emit_audio(world, "shed_skin_burst", pos);
+        // 蜕壳签名音效不再内联发（plan-fpv-cast-av-v1 P5 emit 架构统一）：主动施法与被动 / 维护
+        // 掉壳统一由 `shed_outer_layer` 发的 `FalseSkinSheddedEvent` 驱动
+        // `network::audio_trigger::emit_tuike_v2_audio_triggers` 发声。删掉的内联那条 recipe 相同
+        // 但路由不同（听者锚点 + 不过 dedup），改成空间化 + 走 dedup 是**有意的行为变化**——
+        // 具体听感差异与取舍见 plan「P5 emit 架构统一」条，状态转换由
+        // `audio_trigger::tests::shed_signature_dedup_collides_within_window_and_recovers_after` 锁。
         emit_anim(world, caster, "bong:tuike_shed_burst");
     }
 

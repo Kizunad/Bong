@@ -51,6 +51,12 @@ public final class BongParticles {
     public static final DefaultParticleType HU_GU_STRIPE         = FabricParticleTypes.simple();
     // plan-shield-block-v1 §P3 — 木盾破碎碎屑粒子贴图
     public static final DefaultParticleType WOOD_DEBRIS           = FabricParticleTypes.simple();
+    // 战斗血渍三件套：主血泊（4 variant 不规则血摊）、卫星血点（3 variant 小血珠）、
+    // 甩出的拖尾血道（2 variant）。专用贴图——早先复用 lingqi_ripple 环形贴图，
+    // 染红后地上画出来是"红色同心圆"。
+    public static final DefaultParticleType BLOOD_SPLAT           = FabricParticleTypes.simple();
+    public static final DefaultParticleType BLOOD_DROP            = FabricParticleTypes.simple();
+    public static final DefaultParticleType BLOOD_STREAK          = FabricParticleTypes.simple();
 
     // SpriteProvider 缓存，由 Factory 注册回调注入，VfxPlayer 通过它取 sprite。
     public static volatile SpriteProvider swordQiTrailSprites;
@@ -79,6 +85,10 @@ public final class BongParticles {
     public static volatile SpriteProvider huGuStripeSprites;
     // plan-shield-block-v1 §P3 — 木盾破碎碎屑贴图 sprite provider
     public static volatile SpriteProvider woodDebrisSprites;
+    // 血渍贴图 sprite provider（多 variant，getSprite(random) 逐个血点随机取形状）
+    public static volatile SpriteProvider bloodSplatSprites;
+    public static volatile SpriteProvider bloodDropSprites;
+    public static volatile SpriteProvider bloodStreakSprites;
 
     private BongParticles() {
     }
@@ -111,6 +121,9 @@ public final class BongParticles {
         reg("hu_gu_stripe",         HU_GU_STRIPE);
         // plan-shield-block-v1 §P3
         reg("wood_debris",          WOOD_DEBRIS);
+        reg("blood_splat",          BLOOD_SPLAT);
+        reg("blood_drop",           BLOOD_DROP);
+        reg("blood_streak",         BLOOD_STREAK);
     }
 
     /** Client 侧：注册 Factory，抓住 SpriteProvider 引用。 */
@@ -142,6 +155,10 @@ public final class BongParticles {
         pfr.register(HU_GU_STRIPE,         provider -> { huGuStripeSprites        = provider; return ribbonFactory(provider); });
         // plan-shield-block-v1 §P3 — 木盾破碎碎屑（sprite billboard）
         pfr.register(WOOD_DEBRIS,           provider -> { woodDebrisSprites         = provider; return spriteFactory(provider); });
+        // 战斗血渍（贴地 decal，长宽/朝向由 LegWoundBloodDecalPlayer 逐个指定）
+        pfr.register(BLOOD_SPLAT,           provider -> { bloodSplatSprites         = provider; return groundDecalFactory(provider); });
+        pfr.register(BLOOD_DROP,            provider -> { bloodDropSprites          = provider; return groundDecalFactory(provider); });
+        pfr.register(BLOOD_STREAK,          provider -> { bloodStreakSprites        = provider; return groundDecalFactory(provider); });
     }
 
     private static void reg(String id, DefaultParticleType type) {
