@@ -438,6 +438,54 @@ class CastFovControllerTest {
         assertBaseline("teardown 幂等");
     }
 
+    // ---- 切世界 teardown（plan §P3 teardown 契约三条之一：断线 / 切世界 / 玩家死亡）----
+
+    @Test
+    void worldSwitchUnloadingLocalPlayerResetsMidPulse() {
+        // 切维度 / 换服：vanilla 不重建 ClientPlayNetworkHandler，DISCONNECT 不触发；
+        // Fabric 在 onPlayerRespawn/onGameJoin/clearWorld 对旧世界全量 emit ENTITY_UNLOAD。
+        CastFovController.setLocalPlayerEntityPredicateForTest(entity -> true);  // 卸载的是本地玩家实体
+        predict(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertTrue(fov() > 0.0, "脉冲进行中");
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动进行中");
+
+        CastFovController.onEntityUnload(null);  // 真实 ENTITY_UNLOAD 回调转发的方法
+        assertBaseline("切世界 → FOV 立即复位基准");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "切世界 → 抖动也停");
+    }
+
+    @Test
+    void worldSwitchClearsPendingSoLateCompleteDoesNotRefire() {
+        CastFovController.setLocalPlayerEntityPredicateForTest(entity -> true);
+        predict(HEAVY_SLOT, START);              // 武装 pending，尚未 release
+        CastFovController.onEntityUnload(null);  // 切世界
+
+        serverSync("complete", HEAVY_SLOT, START, "completed");  // 旧世界的迟到 complete
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("切世界清 pending 后，迟到的 complete 不得重新触发 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+    }
+
+    @Test
+    void unloadingNonLocalEntityDoesNotTearDownJuice() {
+        // 远端玩家 / 怪物离开视野也会 emit ENTITY_UNLOAD——不能把本地 juice 一起拆了。
+        CastFovController.setLocalPlayerEntityPredicateForTest(entity -> false);
+        predict(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        double before = fov();
+        assertTrue(before > 0.0, "脉冲进行中");
+
+        CastFovController.onEntityUnload(null);  // 非本地玩家实体卸载
+        assertEquals(before, fov(), 1e-9, "非本地玩家实体卸载不得复位本地 juice");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("脉冲照常自然 decay 回基准");
+    }
+
     @Test
     void teardownClearsPendingSoLaterReleaseDoesNotFire() {
         predict(HEAVY_SLOT, START);          // 武装 pending

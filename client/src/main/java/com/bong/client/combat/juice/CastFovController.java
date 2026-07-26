@@ -6,9 +6,12 @@ import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.store.DeathStateStore;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.Entity;
 import net.minecraft.util.Identifier;
 
 import java.util.Map;
@@ -83,6 +86,23 @@ public final class CastFovController {
         CastStateStore.addListener(CastFovController::onCastState);
         ClientTickEvents.END_CLIENT_TICK.register(client -> tick());
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> teardown());
+        // 切世界（跨维度 / 换服）：vanilla 不重建 ClientPlayNetworkHandler，只发 PlayerRespawn
+        // 换掉 ClientWorld，故 DISCONNECT / JOIN 都**不触发**。Fabric 在 onPlayerRespawn、
+        // onGameJoin、clearWorld 三处对**旧世界**全量 emit ENTITY_UNLOAD，本地玩家实体被卸载
+        // 即「旧世界整体拆除」——这是 1.20.1 Fabric API 里能覆盖切世界的唯一现成钩子
+        //（该版本无 ClientWorldEvents）。
+        ClientEntityEvents.ENTITY_UNLOAD.register((entity, world) -> onEntityUnload(entity));
+    }
+
+    /**
+     * 实体从 {@code ClientWorld} 卸载。<b>本地玩家实体</b>被卸载 = 旧世界整体拆除（切维度 /
+     * 换服 / 断线）→ 立即 {@link #teardown()}：否则跨世界后旧脉冲会继续叠 FOV、旧 pending 会
+     * 被迟到的 complete 触发，juice 跨世界残留。远端玩家/怪物的卸载（走 stopTracking）不动 juice。
+     */
+    static void onEntityUnload(Entity entity) {
+        if (localPlayerEntityPredicate.isLocalPlayerEntity(entity)) {
+            teardown();
+        }
     }
 
     /**
@@ -207,6 +227,22 @@ public final class CastFovController {
 
     private static volatile LocalPlayerPredicate localPlayerPredicate =
         CastFovController::isLocalPlayerFromClient;
+
+    /**
+     * 卸载实体是否本地玩家的判定 seam（单测无法构造 {@code ClientPlayerEntity}——需要完整
+     * world/registry 环境，且本仓库 client 测试无 mock 框架）。
+     */
+    @FunctionalInterface
+    public interface LocalPlayerEntityPredicate {
+        boolean isLocalPlayerEntity(Entity entity);
+    }
+
+    /**
+     * 生产判定：{@code ClientWorld} 里唯一的 {@link ClientPlayerEntity} 就是本地玩家
+     *（远端玩家是 {@code OtherClientPlayerEntity}）。{@code instanceof} 天然 null-safe。
+     */
+    private static volatile LocalPlayerEntityPredicate localPlayerEntityPredicate =
+        entity -> entity instanceof ClientPlayerEntity;
 
     /**
      * 动画事件驱动 juice 入口（{@code VfxEventRouter} 在 PlayAnim 分支调）：只对**本地玩家
@@ -360,6 +396,11 @@ public final class CastFovController {
         localPlayerPredicate = p == null ? CastFovController::isLocalPlayerFromClient : p;
     }
 
+    /** ENTITY_UNLOAD 本地玩家实体判定 seam（单测注入，免构造 ClientPlayerEntity）。 */
+    static void setLocalPlayerEntityPredicateForTest(LocalPlayerEntityPredicate p) {
+        localPlayerEntityPredicate = p == null ? (e -> e instanceof ClientPlayerEntity) : p;
+    }
+
     static void resetForTests() {
         pulse = null;
         synchronized (LOCK) {
@@ -369,6 +410,7 @@ public final class CastFovController {
         multiplier = 1.0f;
         clock = System::currentTimeMillis;
         localPlayerPredicate = CastFovController::isLocalPlayerFromClient;
+        localPlayerEntityPredicate = entity -> entity instanceof ClientPlayerEntity;
     }
 
     /** FOV 脉冲：峰值 + 时长；{@code sin} 半弧「收缩回弹」（progress 0→peak→0，终点归基准）。 */
