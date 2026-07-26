@@ -38,18 +38,26 @@
 
 **决议**：
 1. **重试已充分，不实施 P1 GHCR/ECR mirror**。
-2. 依据：`gh run list --workflow=e2e.yml --limit 25 --json conclusion,databaseId,createdAt` 拉取近 25 次 e2e run（`createdAt` 2026-07-25T16:27:45Z ~ 2026-07-26T14:04:19Z），其中仅 2 次 `conclusion=="failure"`（databaseId `30202576976`、`30202432895`）。对这 2 次分别跑 `gh run view <id> --json jobs --jq '.jobs[] | .steps[] | select(.conclusion=="failure") | .name'`，唯一失败 step 均为 `Bot e2e stage (protocol-level player scenarios)`——**零次**失败发生在 `Pre-pull Redis image with retry` 或 `Bring up Redis test service` 步骤。P0（3 次 attempt + `attempt*10` 秒线性退避 + 末尾兜底再拉一次，落地于 `d668ae85b` #575，2026-06-15）以来，redis 镜像拉取超时未再复现为可观测 CI 失败。
-3. P1 不进入实施队列；若未来 e2e 历史重新出现 redis-pull 相关失败，须凭新的实测数据另立评估（不在本 plan 复活范围内）。
+2. 依据（**2026-07-27 复核时已把样本从 25 次扩到 100 次，并显式标注窗口边界**）：`gh run list --workflow=e2e.yml --limit 100` 取到的 100 次 run 覆盖 **2026-07-22 ~ 2026-07-26**，其中 6 次 `conclusion=="failure"`。逐个跑 `gh run view <id> --json jobs --jq '.jobs[] | .steps[] | select(.conclusion=="failure") | .name'`，失败 step 分布为：`Bot e2e stage (protocol-level player scenarios)` ×3、`Smoke/E2E stage (Task 13 harness)` ×2、`Server stage (cargo test)` ×1——**零次**发生在 `Pre-pull Redis image with retry` 或 `Bring up Redis test service`。
+3. **证据边界（不作过度外推）**：上述窗口只有约 5 天，**不覆盖 P0（`d668ae85b` #575，2026-06-15）落地至今的全程**——GitHub 的 run 列表在本仓当前 run 密度下 100 条即回溯到 07-22，再往前需要分页翻历史，本次未做。因此本决议的成立范围是「**在已观测的 100 次 / 5 天窗口内，redis 拉取零失败**」，**不宣称**「P0 以来从未复现」。
+4. P1 不进入实施队列；若未来 e2e 历史重新出现 redis-pull 相关失败，须凭新的实测数据另立评估（不在本 plan 复活范围内）。
 
 **落点**：`.github/workflows/e2e.yml:104-114`（P0 实装）；本 plan §阶段总览 P1 行。
 
 ### #2 是否其他 CI job 也拉 Docker Hub 镜像
 
 **决议**：
-1. **无需扩面**。
-2. 依据：`grep -rn "docker compose\|docker pull\|image:" .github/workflows/*.yml` 仅 `e2e.yml` 命中（`pull redis` / `up -d redis` / `logs redis` / `down`）；`grep -rn "services:" -A 4 .github/workflows/*.yml` 全仓无匹配——没有任何 workflow 使用 GitHub Actions 托管的 `services:` 容器块（该机制会绕开显式 `docker compose pull` 自行拉镜像，需要单独加固）。全仓对 Docker Hub 的实时依赖点只有 `e2e.yml` 的 redis 拉取一处，已被 P0 覆盖。
+1. **本 plan 的 P0/P1 范围不扩面，但「全仓只有一处 Docker Hub 依赖」这个说法是错的**——2026-07-27 复核时把搜索面从 `.github/workflows/*.yml` 扩到全仓，找到多处此前漏掉的拉取点，逐一登记于下，并把 CI 路径上仍无重试的那处列入「遗留 / 后续」。
+2. **初版依据的缺陷（诚实记录）**：初版只跑了 `grep -rn "docker compose\|docker pull\|image:" .github/workflows/*.yml` 与 `grep -rn "services:" .github/workflows/*.yml`，据此下了「全仓对 Docker Hub 的实时依赖点只有 e2e.yml 一处」的结论。**workflow 目录的 grep 覆盖不了被 workflow 调用的 shell 脚本**，结论宽于证据。
+3. **全仓实际拉取点**（`grep -rIn -E "docker (compose|pull|run|build)|^\s*image:\s*\S|FROM " .` 排除 `.git/target/build/node_modules/.gradle`，并 `find` 全部 Dockerfile / compose 文件）：
+   - `.github/workflows/e2e.yml:104-117` —— **已被 P0 重试覆盖**
+   - `scripts/bot-e2e.sh:138-139` —— `docker compose ... up -d redis --wait` 兜底路径，**在 CI 路径上**（`e2e.yml:151` 直接 `bash scripts/bot-e2e.sh`），**无重试**
+   - `scripts/e2e-redis.sh:792`、`scripts/e2e-offscreen-war.sh:1458`、`scripts/smoke-offscreen-war.sh:121`、`scripts/e2e-chat-signal-window.sh:94` —— 各自 `docker run ... redis:7-alpine`，本地 harness 用，无重试
+   - `library-web/Dockerfile:1,26`（`node:20-alpine` / `nginx:alpine`）、`library-web/docker-compose.yml:40`（`cloudflare/cloudflared:latest`）—— 静态站点部署侧，不在 e2e gate 路径
+   - `grep -rn "services:\|container:" .github/workflows/` 仍为 0 命中——**这一条初版没错**，确无 GitHub Actions 托管容器块。
+4. **为何仍不扩进本 plan**：本 plan 的 P0 交付物原文限定为「e2e CI 的 *Bring up Redis test service* 步」，P1 为「镜像源韧性 / mirror」；上述其余拉取点从立项起就不在两阶段范围内。**但它们是真实的、未被覆盖的同类风险**，故不以「无需扩面」结案，改为登记进 Finish Evidence 的「遗留 / 后续」，供后续 plan 认领。
 
-**落点**：`.github/workflows/*.yml`（全量 grep 结果，无第二处命中）；本 plan §阶段总览。
+**落点**：`.github/workflows/e2e.yml:104-117`（P0 覆盖面）；`scripts/bot-e2e.sh:138-139`（CI 路径上未覆盖，遗留）；本 plan Finish Evidence「遗留 / 后续」。
 
 ---
 
@@ -83,4 +91,6 @@ worldgen-v4 + skeleton 实现期多个 PR 的 e2e Docker Hub flake 频发（#561
 **遗留 / 后续**：
 
 - P1（GHCR/ECR mirror 或 actions cache 预拉）已撤回不实施（§N.1 #1）；若未来 e2e 历史重新出现 redis-pull 相关失败，需凭新实测数据另立新 plan/骨架评估，不在本 plan 复活范围内。
-- §N #2（其他 CI job 是否也拉 Docker Hub）已确认无需扩面（§N.1 #2），无后续动作。
+- **§N #2 复核改判（2026-07-27）**：初版结论「全仓只有 e2e.yml 一处 Docker Hub 依赖 → 无需扩面」**是错的**，因为 grep 只覆盖了 `.github/workflows/*.yml`、漏掉被 workflow 调用的 shell 脚本。全仓实际拉取点见 §N.1 #2 第 3 条。其中**唯一在 CI gate 路径上却仍无重试**的是 `scripts/bot-e2e.sh:138-139` 的 `docker compose ... up -d redis --wait` 兜底（由 `e2e.yml:151` 调用）——本 plan P0/P1 原文范围不含它，故不在本 plan 内实施，**登记为后续认领项**：给该兜底路径补同款重试（或让它复用 e2e.yml 已预拉的镜像）。
+- 其余拉取点（`scripts/e2e-redis.sh:792` / `scripts/e2e-offscreen-war.sh:1458` / `scripts/smoke-offscreen-war.sh:121` / `scripts/e2e-chat-signal-window.sh:94` 的 `docker run redis:7-alpine`）是本地 harness 路径，不影响 PR gate，优先级低于上一条。
+- `library-web/` 的 `Dockerfile` / `docker-compose.yml`（`node:20-alpine` / `nginx:alpine` / `cloudflare/cloudflared:latest`）属静态站点部署侧，与 e2e gate 无关，仅登记不认领。
