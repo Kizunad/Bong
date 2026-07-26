@@ -129,8 +129,43 @@ class JuiceControlsTest {
     @Test
     void ignoresPressesWhileScreenOpen() {
         int consumed = JuiceControls.consumeCyclePresses(true, true, presses(2), feedback::add);
-        assertEquals(0, consumed, "GUI 打开时不消费（在输入框里打字不该改配置）");
+        assertEquals(0, consumed, "GUI 打开时不切档（在输入框里打字不该改配置）");
         assertEquals(JuiceConfig.DEFAULT_JUICE_MULTIPLIER, JuiceConfig.juiceMultiplier(), 1e-9f);
+    }
+
+    @Test
+    void pressesDuringScreenAreDiscardedNotDeferredToAfterClose() {
+        // review finding G：wasPressed 是**累积队列**。门控期间若不读队列，按键只是攒着，
+        // 关掉界面后的下一 tick 会被补消费 → 倍率延迟连跳。用**同一个有状态队列** supplier
+        // 跨两次调用（先 screenOpen=true 再 false），断言配置全程不变。
+        java.util.function.BooleanSupplier sharedQueue = presses(3);
+
+        assertEquals(0, JuiceControls.consumeCyclePresses(true, true, sharedQueue, feedback::add),
+            "GUI 打开期间不切档");
+        assertEquals(JuiceConfig.DEFAULT_JUICE_MULTIPLIER, JuiceConfig.juiceMultiplier(), 1e-9f,
+            "GUI 打开期间配置不变");
+
+        assertEquals(0, JuiceControls.consumeCyclePresses(true, false, sharedQueue, feedback::add),
+            "关掉 GUI 后旧按键必须已被丢弃，不得补触发");
+        assertEquals(JuiceConfig.DEFAULT_JUICE_MULTIPLIER, JuiceConfig.juiceMultiplier(), 1e-9f,
+            "关掉 GUI 后配置仍是默认值（若攒着补消费，这里会跳到 0.5 甚至更远）");
+        assertTrue(feedback.isEmpty(), "被丢弃的按键不得回显");
+
+        // 反证：队列已空 ≠ 通道坏了——新按键照常生效。
+        assertEquals(1, JuiceControls.consumeCyclePresses(true, false, presses(1), feedback::add));
+        assertEquals(1.5f, JuiceConfig.juiceMultiplier(), 1e-9f, "关闭 GUI 后的新按键照常切档");
+    }
+
+    @Test
+    void pressesWithNoPlayerAreDiscardedNotDeferred() {
+        // 同一条队列语义在「无玩家」门控上也成立（登录中 / 切世界瞬间按到的键不许攒着）。
+        java.util.function.BooleanSupplier sharedQueue = presses(2);
+
+        assertEquals(0, JuiceControls.consumeCyclePresses(false, false, sharedQueue, feedback::add));
+        assertEquals(0, JuiceControls.consumeCyclePresses(true, false, sharedQueue, feedback::add),
+            "玩家就位后旧按键必须已被丢弃");
+        assertEquals(JuiceConfig.DEFAULT_JUICE_MULTIPLIER, JuiceConfig.juiceMultiplier(), 1e-9f);
+        assertTrue(feedback.isEmpty(), "被丢弃的按键不得回显");
     }
 
     // ---- 错误分支：无回显 sink ----

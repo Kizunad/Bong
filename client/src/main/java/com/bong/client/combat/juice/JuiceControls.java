@@ -72,18 +72,23 @@ public final class JuiceControls {
 
     /**
      * 消费本 tick 累积的按键（{@code wasPressed} 是队列语义，必须循环取干净，否则连按丢档）。
-     * 无玩家 / 有 GUI 打开时不消费——避免在输入框里打字触发。
      *
-     * @return 本次消费的按键次数
+     * <p><b>无玩家 / GUI 打开时仍然把队列排空，只是不改配置、不回显</b>：
+     * {@code KeyBinding.wasPressed} 是**累积队列**，早退（不读队列）只是把按键攒着——
+     * 玩家在输入框里按到的键会在关掉界面后的下一 tick 被补消费，倍率延迟连跳几档
+     * （review finding G）。「避免在输入框里打字触发」的正确实现是**丢弃**，不是攒着。
+     *
+     * @return 本次<b>生效</b>的切档次数（被门控时恒为 0，即便排空了若干按键）
      */
     static int consumeCyclePresses(
         boolean playerPresent, boolean screenOpen, BooleanSupplier wasPressed, Consumer<String> feedback
     ) {
-        if (!playerPresent || screenOpen) {
-            return 0;
-        }
+        boolean gated = !playerPresent || screenOpen;
         int consumed = 0;
         while (wasPressed.getAsBoolean()) {
+            if (gated) {
+                continue;  // 排空丢弃：不改配置、不回显
+            }
             float next = JuiceConfig.cycleJuiceMultiplier();
             if (feedback != null) {
                 feedback.accept(describe(next));
