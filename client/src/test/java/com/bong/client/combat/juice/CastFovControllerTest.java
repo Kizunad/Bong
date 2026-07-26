@@ -1304,6 +1304,95 @@ class CastFovControllerTest {
         assertBaseline("天门脉冲 decay 完毕");
     }
 
+    // ---- 连续同招施法：动画事件按到达序归属，不得串用令牌（review blocker ②）----
+
+    @Test
+    void lateReleaseAnimOfEarlierCastDoesNotStealTheNextCastsToken() {
+        // heaven_gate 的 cast 条 4s 就走完，release 动画要到引导第 140t（7s）才发——这 3s 里
+        // 完全可能已经武装了下一次同招施法的令牌。生产序列：
+        //   CASTING(A) → CASTING(B) → A 的 release 动画 → B 的 release 动画
+        // 旧实现只留**单枚**令牌：CASTING(B) 顶掉 A 的令牌，随后 A 的 release 动画因为 animId
+        // 相同而消费掉 **B** 的令牌、把 B 提前记成 FIRED；B 真正劈下那一刻反而静默无 juice。
+        // 两次施法必须各拿各的：动画只有 (target_player, anim_id)，归属靠到达序（见 animTokens）。
+        acceptGateCast(START);              // A
+        acceptGateCast(START + 3000);       // B（A 的 release 动画尚未到达）
+
+        releaseAnim();                      // A 先起手 → A 先劈下
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "第一条 release 动画属于先起手的 A");
+        assertNull(CastFovController.terminalStateForTest(GATE_SLOT, START + 3000),
+            "B 还没劈下，不得被 A 的迟到动画顺手记成 FIRED（那正是串用令牌的症状）");
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6, "A 自己的 release 照常触发");
+
+        // 让 A 的两个通道都走完，B 若触发一定看得见，不会被 A 的残留掩盖成「反正非零」。
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("A 的脉冲已走完");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "A 的抖动已走完");
+
+        releaseAnim();                      // B 劈下
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START + 3000),
+            "B 落自己的 FIRED 终态");
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6,
+            "B 的令牌没被 A 的迟到动画吃掉 → B 真正劈下那一刻必须有 juice");
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "B 的抖动同样有");
+
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("B 的脉冲 decay 完毕");
+    }
+
+    @Test
+    void animReleaseCountNeverExceedsAcceptedCastCount() {
+        // 授权强度不因「按到达序归属」而打折：N 条 release 动画最多消费 N 枚**已 accepted**
+        // 的令牌。两次施法 + 三条 release 动画 → 第三条拿不到令牌，一定 no-op。
+        acceptGateCast(START);
+        acceptGateCast(START + 3000);
+        releaseAnim();
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        releaseAnim();
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("两次施法的 juice 都已走完");
+
+        releaseAnim();   // 第三条：无令牌可消费
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("多出来的 release 动画拿不到令牌 → 零 FOV");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "同样零抖动");
+    }
+
+    @Test
+    void animTokenQueueIsBoundedAndReleaseDequeuesItsToken() {
+        // 有界是硬要求（同 TERMINAL_MEMORY）：无界队列会随会话时长单调增长。
+        for (int i = 0; i <= CastFovController.ANIM_TOKEN_CAPACITY; i++) {
+            acceptGateCast(START + i * 1000L);
+        }
+        assertEquals(CastFovController.ANIM_TOKEN_CAPACITY,
+            CastFovController.animTokenCountForTest(),
+            "在飞令牌数必须钳在 ANIM_TOKEN_CAPACITY");
+
+        releaseAnim();
+        assertEquals(CastFovController.ANIM_TOKEN_CAPACITY - 1,
+            CastFovController.animTokenCountForTest(),
+            "release 消费即整枚出队（留在队里就是泄漏，杂散动画在 TTL 内还有得可消费）");
+
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("脉冲 decay 完毕");
+    }
+
+
+
+
+
+
+
+
     @Test
     void newGateCastSupersedesOldTokenAndItsFiredFlags() {
         // 连续两次 heaven_gate：第二次的权威 CASTING 取代旧令牌，release 照常触发

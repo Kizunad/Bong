@@ -14,6 +14,8 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.Identifier;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -222,17 +224,7 @@ public final class CastFovController {
         }
         AnimDrivenJuice animJuice = animDrivenJuice(skillId);
         if (animJuice != null) {
-            // 令牌只被**另一次动画事件驱动的施法**取代，不被无关招式的 CASTING 顶掉：
-            // heaven_gate 的 cast 条 4s 就走完（服务端随即 remove Casting），而 release 动画要到
-            // 引导第 140t（7s）才发——中间这 3s 玩家放任何别的招都会带来一条权威 CASTING，
-            // 若那也算 supersession，天门劈下那一刻会静默丢掉 juice。该令牌的结束条件只有：
-            // 自己的 release 消费掉 / 同身份 INTERRUPT / teardown / TTL 过期 / 另一次动画驱动施法。
-            if (animToken != null && !animToken.id.equals(id)) {
-                animToken = null;
-            }
-            if (animToken == null) {
-                animToken = new AnimCastToken(id, animJuice, now);  // 同身份重复 CASTING：幂等
-            }
+            armAnimToken(id, animJuice, now);
             return;  // 该招不由 COMPLETE 触发，只发令牌
         }
         if (pending != null) {
@@ -270,9 +262,10 @@ public final class CastFovController {
         if (pending != null && pending.id().equals(id)) {
             pending = null;
         }
-        if (animToken != null && animToken.id.equals(id)) {
-            animToken = null;  // 取消后迟到的 charge/release 动画不再授权（review finding A）
-        }
+        // 取消后迟到的 charge/release 动画不再授权（review finding A）。只摘**同身份**那一枚：
+        // 队列里别的在飞施法不受牵连（与 pending 同口径）。被取消的施法服务端不会再 emit 它的
+        // 动画，故直接摘除不会让后续事件的到达序错位。
+        animTokens.removeIf(token -> token.id.equals(id));
     }
 
     /** 终态先到者胜：已 FIRED 的身份不因一条迟到的打断被改写成 VOIDED（LOCK 内调用）。 */
@@ -310,7 +303,7 @@ public final class CastFovController {
     // CRESCENDO 渐强震动；release 动画（劈下）起播 → SUSTAIN 最大震动 + FOV punch。
     //
     // ⚠️ 动画事件只是**触发时刻**信号，不是授权。授权凭据仍是权威 CASTING 武装出来的
-    // AnimCastToken（见 #animToken）——bridge 播出成功只证明「这段动画播了」，不证明
+    // AnimCastToken（见 #animTokens）——bridge 播出成功只证明「这段动画播了」，不证明
     // 「这次施法被服务端 accepted / 尚未被取消 / 尚未触发过」。
 
     /** 蓄力段动画 → 渐强震动（CRESCENDO：0→peak 爬满后维持）。 */
@@ -371,25 +364,73 @@ public final class CastFovController {
     static final long ANIM_TOKEN_TTL_MS = 15_000L;
 
     /**
-     * 当前 heaven_gate 施法的动画 juice 令牌（LOCK 保护）。由**权威 CASTING** 武装，
-     * charge/release 动画各自一次性消费；INTERRUPT / teardown 按身份作废；异身份的权威
-     * CASTING 取代（supersession）；超过 {@link #ANIM_TOKEN_TTL_MS} 视为过期。
+     * 在飞的动画 juice 令牌<b>队列</b>（LOCK 保护，队首 = 最早武装）。由**权威 CASTING** 武装，
+     * charge/release 动画各自一次性消费；INTERRUPT / teardown 按身份作废；超过
+     * {@link #ANIM_TOKEN_TTL_MS} 视为过期；满 {@link #ANIM_TOKEN_CAPACITY} 时淘汰队首。
+     *
+     * <p><b>为什么是队列而不是单枚</b>（review：连续施法串用令牌）：heaven_gate 的 cast 条
+     * 4s 就走完，release 动画要到引导第 140t（7s）才发——这 3s 里完全可能已经武装了**下一次
+     * 同招施法**的令牌。单枚令牌下「新 CASTING 顶掉旧令牌」会让前一次施法的迟到 release 动画
+     * 消费掉后一次的令牌：juice 提前放在前一次劈下那一刻、后一次真正劈下时反而静默。队列让
+     * 两次施法各留一枚，按到达序各自消费。
+     *
+     * <p><b>归属判据是到达序，不是事件自带的身份</b>——{@code play_anim} 报文只有
+     * {@code target_player} + {@code anim_id}，wire 上**没有**可与 {@link AnimCastToken#id}
+     * 比对的 cast id/nonce（见 {@code VfxEventPayloadV1::PlayAnim}）。可用的真实不变量是
+     * <b>单条有序通道</b>：{@code cast_sync} 与 {@code vfx_event} 同走一条 TCP 连接，且客户端侧
+     * 都经 {@code BongNetworkHandler} 的 {@code client.execute} marshal 到同一线程队列，故
+     * 「第 N 条 release 动画」对应「第 N 枚仍在飞的令牌」。这不是编出来的身份，是通道本身的
+     * 顺序保证；<b>授权强度不打折</b>：N 条 release 动画最多消费 N 枚**已 accepted** 的令牌，
+     * 拿不到令牌就是 no-op。残余局限（诚实标注）：某次施法既不发 release 动画、也不发
+     * INTERRUPT/teardown 而是静默消失时，队首会滞留到 TTL，期间下一次施法的 release 动画会被
+     * 记到滞留那一枚的身份上——**触发时刻与画面仍然对齐、次数仍不超发**，只是终态归属会错位。
      */
-    private static AnimCastToken animToken = null;
+    private static final Deque<AnimCastToken> animTokens = new ArrayDeque<>();
 
-    /** 动画事件驱动 juice 的授权令牌：绑 cast identity + 两段各自的一次性消费标记。 */
+    /**
+     * 在飞令牌数上限（有界是硬要求，同 {@link #TERMINAL_MEMORY}）。满了淘汰队首并记 VOIDED。
+     * 4 远超实际需要：heaven_gate 的引导窗 7s，同时在飞 4 次同招施法在生产上不可能。
+     */
+    static final int ANIM_TOKEN_CAPACITY = 4;
+
+    /**
+     * 动画事件驱动 juice 的授权令牌：绑 cast identity + charge 段的一次性消费标记。
+     *
+     * <p><b>没有 {@code releaseFired}</b>——release 是该令牌的终点，消费即整枚出队
+     *（幂等由 {@link #terminals} 的 FIRED 跨令牌生命周期保证），留一个布尔在已出队的对象上
+     * 只会多一条无人读的状态。
+     */
     private static final class AnimCastToken {
         final Identity id;
         final AnimDrivenJuice juice;
         final long armedAtMs;
         boolean chargeFired;
-        boolean releaseFired;
 
         AnimCastToken(Identity id, AnimDrivenJuice juice, long armedAtMs) {
             this.id = id;
             this.juice = juice;
             this.armedAtMs = armedAtMs;
         }
+    }
+
+    /**
+     * 动画事件驱动招式的令牌武装（LOCK 内调用）：**按到达序入队**，不取代在飞令牌。
+     *
+     * <p>令牌不被无关招式的 CASTING 顶掉（那 3s 窗口里玩家放别的招是常态），也不被同为动画
+     * 驱动的下一次施法顶掉（那正是串用令牌的根因）。结束条件只有：自己的 release 消费掉 /
+     * 同身份 INTERRUPT / teardown / TTL 过期 / 容量淘汰。
+     */
+    private static void armAnimToken(Identity id, AnimDrivenJuice juice, long now) {
+        pruneExpiredAnimTokens(now);
+        for (AnimCastToken token : animTokens) {
+            if (token.id.equals(id)) {
+                return;  // 同身份重复 CASTING：幂等
+            }
+        }
+        while (animTokens.size() >= ANIM_TOKEN_CAPACITY) {
+            animTokens.removeFirst();
+        }
+        animTokens.addLast(new AnimCastToken(id, juice, now));
     }
 
     /** 本地玩家判定 seam（动画事件驱动的 juice 只对本地玩家自己的施法触发）。 */
@@ -421,11 +462,15 @@ public final class CastFovController {
      * 动画事件驱动 juice 入口（{@code VfxEventRouter} 在 PlayAnim 真正播出后调）。
      *
      * <p><b>动画事件只决定触发时刻，授权来自令牌</b>（review finding A）：必须先有一枚由
-     * 权威 CASTING 武装、未过期、未被作废的 {@link #animToken}，且该 animId 正是这枚令牌所属
-     * 招式的 charge / release 动画，才允许触发。charge 与 release 各自**一次性消费**
-     * （{@code chargeFired} / {@code releaseFired}），release 消费后 charge 也不再触发（不回退）。
+     * 权威 CASTING 武装、未过期、未被作废的 {@link #animTokens} 成员，且该 animId 正是这枚令牌
+     * 所属招式的 charge / release 动画，才允许触发。charge 一次性消费（{@code chargeFired}），
+     * release 消费即整枚出队 + 落 {@link Terminal#FIRED}，故 release 之后的迟到 charge 也不回退。
      * 于是：未 accepted 就来的 PlayAnim、重复 PlayAnim、reject/INTERRUPT/teardown 之后迟到的
      * PlayAnim，全部 no-op。
+     *
+     * <p><b>多枚令牌按到达序匹配</b>（review：连续施法串用令牌）：取**最早一枚**还欠这一段的
+     * 令牌，理由与归属判据见 {@link #animTokens}。一次施法的迟到 release 动画因此消费自己那枚，
+     * 不会把下一次施法的令牌吃掉。
      *
      * <p>非本地玩家（别人放大招不震我的相机）/ 非登记动画 / 无令牌 = no-op。两段共享
      * {@link CameraShakeController} 单通道，release 的 SUSTAIN 顶替 charge 的 CRESCENDO。
@@ -440,18 +485,26 @@ public final class CastFovController {
         // 倍率也在锁内读，与 fire() 同：否则「读到非 0」与「落地」之间被归 0 插进来，
         // 会绕过取消路径留下僵尸抖动。
         synchronized (LOCK) {
-            AnimCastToken token = liveAnimToken(now);
+            pruneExpiredAnimTokens(now);
+            AnimCastToken token = null;
+            boolean isCharge = false;
+            // 到达序匹配：取**最早一枚**还欠这一段的令牌（已 release 的整枚出队，故 release
+            // 天然落在队首那枚未完成的施法上）。别的招的动画两段 id 都对不上 → 拿不到令牌。
+            for (AnimCastToken candidate : animTokens) {
+                if (candidate.juice.releaseAnim().equals(animId)) {
+                    token = candidate;
+                    break;
+                }
+                if (candidate.juice.chargeAnim().equals(animId) && !candidate.chargeFired) {
+                    token = candidate;
+                    isCharge = true;
+                    break;
+                }
+            }
             if (token == null) {
-                return;  // 无已 accepted 的在飞施法 → 动画事件不授权任何 juice
-            }
-            AnimDrivenJuice juice = token.juice;
-            boolean isCharge = juice.chargeAnim().equals(animId);
-            boolean isRelease = juice.releaseAnim().equals(animId);
-            if (!isCharge && !isRelease) {
-                return;  // 该动画不属于持令牌的这一招 → 不得挪用
-            }
-            if (token.releaseFired || (isCharge && token.chargeFired)) {
-                return;  // 一次性消费：重复 charge / 重复 release / release 之后的迟到 charge
+                // 无已 accepted 的在飞施法 / 该动画不属于任何持令牌的招 / 该段已被消费过
+                //（重复 charge、重复 release、release 之后迟到的 charge）→ 一律 no-op。
+                return;
             }
             float scale = JuiceConfig.juiceMultiplier();
             if (scale <= 0f) {
@@ -459,14 +512,16 @@ public final class CastFovController {
             }
             if (isCharge) {
                 token.chargeFired = true;
-                triggerShake(juice.charge().peakIntensity() * scale,
-                    juice.charge().buildDurationTicks(), juice.charge().envelope(), now);
+                ChargeShake charge = token.juice.charge();
+                triggerShake(charge.peakIntensity() * scale, charge.buildDurationTicks(),
+                    charge.envelope(), now);
                 return;
             }
-            token.releaseFired = true;
-            // release 是这次施法的终点：落 FIRED 终态，之后同身份的权威 CASTING 也不再重开令牌。
+            // release 是这次施法的终点：整枚出队 + 落 FIRED 终态，之后同身份的权威 CASTING
+            // 也不再重开令牌。
+            animTokens.remove(token);
             markTerminal(token.id, Terminal.FIRED);
-            ReleaseBurst burst = juice.release();
+            ReleaseBurst burst = token.juice.release();
             if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
                 pulse = new Pulse(burst.fovPeakDegrees() * scale, burst.fovDurationTicks(), now);
             }
@@ -475,17 +530,10 @@ public final class CastFovController {
         }
     }
 
-    /** 当前可用令牌（LOCK 内调用）：过期即清掉并返回 null。 */
-    private static AnimCastToken liveAnimToken(long now) {
-        AnimCastToken token = animToken;
-        if (token == null) {
-            return null;
-        }
-        if (now - token.armedAtMs > ANIM_TOKEN_TTL_MS || now < token.armedAtMs) {
-            animToken = null;  // 过期（或时钟回跳）：不再授权
-            return null;
-        }
-        return token;
+    /** 清掉过期（或遇时钟回跳）的令牌（LOCK 内调用）：不再授权。 */
+    private static void pruneExpiredAnimTokens(long now) {
+        animTokens.removeIf(
+            token -> now - token.armedAtMs > ANIM_TOKEN_TTL_MS || now < token.armedAtMs);
     }
 
     /** 施法 juice 的抖动通道写入（LOCK 内调用；方向固定对角，见 {@link #CAST_SHAKE_DIR_X}）。 */
@@ -591,10 +639,10 @@ public final class CastFovController {
                 markTerminal(pending.id(), Terminal.VOIDED);
                 pending = null;
             }
-            if (animToken != null) {
-                markTerminal(animToken.id, Terminal.VOIDED);
-                animToken = null;  // teardown 后迟到的 charge/release 动画不再授权
+            for (AnimCastToken token : animTokens) {
+                markTerminal(token.id, Terminal.VOIDED);
             }
+            animTokens.clear();  // teardown 后迟到的 charge/release 动画不再授权
             // 死亡/断线也清抖动：蓄力 CRESCENDO 长达数秒，玩家已死不应继续震屏。
             CameraShakeController.clear();
         }
@@ -674,6 +722,17 @@ public final class CastFovController {
         }
     }
 
+    /**
+     * 在飞动画令牌数（只读查询 seam）。测试用它 pin 队列的**有界性**与「消费即出队」——
+     * 这两条是外部可观察行为（令牌泄漏会让杂散动画在 TTL 内一直有得可消费）的内部前提，
+     * 单靠 FOV/抖动读数看不出队列是不是在长。
+     */
+    static int animTokenCountForTest() {
+        synchronized (LOCK) {
+            return animTokens.size();
+        }
+    }
+
     /** ENTITY_UNLOAD 本地玩家实体判定 seam（单测注入，免构造 ClientPlayerEntity）。 */
     static void setLocalPlayerEntityPredicateForTest(LocalPlayerEntityPredicate p) {
         localPlayerEntityPredicate = p == null ? (e -> e instanceof ClientPlayerEntity) : p;
@@ -684,7 +743,7 @@ public final class CastFovController {
         synchronized (LOCK) {
             pulse = null;
             pending = null;
-            animToken = null;
+            animTokens.clear();
             terminals.clear();
         }
         JuiceConfig.resetForTests();
