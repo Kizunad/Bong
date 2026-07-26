@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `SpiritMice` 引怪 species 漂移 / tag-only 覆盖 | fix_pr | ⬜ |
+| P0 | `SpiritMice` 引怪 species 漂移 / tag-only 覆盖 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — `SpiritMice` 引怪 species 漂移 / tag-only 覆盖
 
@@ -35,3 +35,15 @@
 ## 审计来源
 
 bug-hunt 定点轮（当前 worktree / fauna-mob sidepaths，避开灰烬蛛伪装名牌泄漏与 fauna audio fade stop ignored）。本结论为 **report-only**：本次只新增 skeleton，不改源码；后续修复应单独出 fix PR。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+`SpiritMice` 引怪 species 漂移已由 b332e5749（2026-07-06，「修复白焰蓬引怪物种漂移」）修复：`server/src/botany/hazard.rs:283-294` 现对非 `MimicSpider` 分支改走 `spawn_beast_npc_of_kind_at` + `beast_kind_for_botany`，在 spawn 时一次性锁定 `EntityKind`/`FaunaVisualKind`/血量与 `FaunaTag`，不再是「先随机种类、后覆盖 tag」的两阶段写法。`hazard.rs:761-819` 新增测试锁定固定为 Rat。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/botany/hazard.rs`（`spawn_beast_npc_of_kind_at` + `beast_kind_for_botany` 消费点）
+- **关键 commit**：b332e5749（2026-07-06，「修复白焰蓬引怪物种漂移」）
+- **测试结果**：`hazard.rs:761-819` 测试锁定 spawn 结果为 Rat（entity kind/visual/hp/tag 全一致）；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：仅 server 侧命中（`botany::hazard::spawn_beast_npc_of_kind_at` / `beast_kind_for_botany`），属纯服务端 spawn 逻辑修复，无 client/agent 契约面
+- **遗留 / 后续**：无
