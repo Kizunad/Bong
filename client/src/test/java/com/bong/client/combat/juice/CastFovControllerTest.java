@@ -347,6 +347,10 @@ class CastFovControllerTest {
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
         assertEquals(HEAVY_FOV_PEAK * 0.5, fov(), 1e-6, "倍率 0.5 → 峰值减半");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("缩放脉冲同样 decay 回同一基准（缩放不改终点）");
     }
 
     @Test
@@ -410,6 +414,10 @@ class CastFovControllerTest {
 
         assertTrue(CameraShakeController.activeOffsets(fireNow + SHAKE_DURATION_MS + 50).isZero(),
             "抖动时长后自然归零");
+
+        advanceMs(SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("持续震动路径的 FOV 分量同样回基准");
     }
 
     @Test
@@ -550,6 +558,10 @@ class CastFovControllerTest {
         // 若仍是 charge crescendo（elapsed=2000ms 才涨到 ~28%）则仅 ~0.3°，据此区分。
         double mag = Math.abs(CameraShakeController.activeOffsets(releaseFire).yawDegrees());
         assertTrue(mag > 1.5, "release 的 SUSTAIN 最大震动顶替了 charge 的 CRESCENDO（|yaw|=" + mag + " > 1.5）");
+
+        advanceMs(12 * 50);   // release FOV punch 8t 走完
+        CastFovController.tick();
+        assertBaseline("charge→release 顶替路径的终点同样是单一基准 FOV");
     }
 
     @Test
