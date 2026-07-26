@@ -55,7 +55,11 @@ import java.util.function.LongSupplier;
  */
 public final class CastFovController {
     private static final AtomicBoolean BOOTSTRAPPED = new AtomicBoolean(false);
-    /** pending / voidedId 的互斥锁（cast 转换回调与 teardown 可能跨线程）。 */
+    /**
+     * pending / voidedId / pulse **以及 shake 通道写入**的互斥锁（cast 转换回调、动画事件、
+     * teardown、倍率变更可能分别落在网络线程与主线程）。两个 juice 通道的建立与清空都串行化
+     * 在这里，避免交错留下孤儿抖动。{@link CameraShakeController} 本身无锁，故不存在锁序倒置。
+     */
     private static final Object LOCK = new Object();
 
     /** 施法 release 抖动方向（自施法无攻击方向，取对角 → 偏航+俯仰混合抖动）。 */
@@ -259,33 +263,37 @@ public final class CastFovController {
         long now = clock.getAsLong();
         ChargeShake charge = CHARGE_ANIM_JUICE.get(animId);
         if (charge != null) {
-            CameraShakeController.triggerDirect(
-                charge.peakIntensity() * scale,
-                charge.buildDurationTicks(),
-                CAST_SHAKE_DIR_X,
-                CAST_SHAKE_DIR_Z,
-                false,
-                CameraShakeController.Envelope.CRESCENDO,
-                now
-            );
+            synchronized (LOCK) {
+                CameraShakeController.triggerDirect(
+                    charge.peakIntensity() * scale,
+                    charge.buildDurationTicks(),
+                    CAST_SHAKE_DIR_X,
+                    CAST_SHAKE_DIR_Z,
+                    false,
+                    CameraShakeController.Envelope.CRESCENDO,
+                    now
+                );
+            }
             return;
         }
         ReleaseBurst burst = RELEASE_ANIM_JUICE.get(animId);
         if (burst != null) {
-            if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
-                synchronized (LOCK) {
+            // 两个通道在同一临界区落地，与 teardown / onJuiceMultiplierChanged 的清空对称——
+            // 否则「清脉冲…清抖动」与「建脉冲…起抖动」交错时会漏下一条孤儿抖动。
+            synchronized (LOCK) {
+                if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
                     pulse = new Pulse(burst.fovPeakDegrees() * scale, burst.fovDurationTicks(), now);
                 }
+                CameraShakeController.triggerDirect(
+                    burst.shakeIntensity() * scale,
+                    burst.shakeDurationTicks(),
+                    CAST_SHAKE_DIR_X,
+                    CAST_SHAKE_DIR_Z,
+                    false,
+                    CameraShakeController.Envelope.SUSTAIN,
+                    now
+                );
             }
-            CameraShakeController.triggerDirect(
-                burst.shakeIntensity() * scale,
-                burst.shakeDurationTicks(),
-                CAST_SHAKE_DIR_X,
-                CAST_SHAKE_DIR_Z,
-                false,
-                CameraShakeController.Envelope.SUSTAIN,
-                now
-            );
         }
     }
 
@@ -298,7 +306,8 @@ public final class CastFovController {
     /**
      * 渲染线程每帧调（{@code MixinGameRenderer}）：当前加法 FOV 偏移（0 = 基准）。倍率已在
      * {@link #fire} 时刻烘焙进 {@link Pulse#peakDegrees}，此处不再乘——倍率调 0 靠
-     * {@link #setJuiceMultiplier} 真正清空脉冲，而不是把读数遮掉。
+     * {@link JuiceConfig#setJuiceMultiplier} → {@link #onJuiceMultiplierChanged} 真正清空脉冲，
+     * 而不是把读数遮掉。
      */
     public static double fovDelta() {
         Pulse p = pulse;
@@ -325,13 +334,15 @@ public final class CastFovController {
     /** 断线 / 切世界 / 死亡：立即复位基准 FOV + 清 pending + 清抖动（幂等，重复调用无副作用）。 */
     public static void teardown() {
         // pulse 清空与 fire() 写入同锁，避免死亡/断线 teardown 被随后落地的 fire 复活一帧。
+        // 抖动与脉冲同处一个临界区：两个通道的写入都串行化在 LOCK 上，否则网络线程的 fire
+        // 可能恰好落在「清脉冲」与「清抖动」之间，留下一条孤儿抖动。
         synchronized (LOCK) {
             pulse = null;
             pending = null;
             voidedId = null;
+            // 死亡/断线也清抖动：蓄力 CRESCENDO 长达数秒，玩家已死不应继续震屏。
+            CameraShakeController.clear();
         }
-        // 死亡/断线也清抖动：蓄力 CRESCENDO 长达数秒，玩家已死不应继续震屏。
-        CameraShakeController.clear();
     }
 
     /**
@@ -353,11 +364,11 @@ public final class CastFovController {
         if (value > 0f) {
             return;
         }
-        // pulse 清空与 fire() 写入同锁，避免关闭瞬间被随后落地的 fire 复活一帧。
+        // 两个通道同锁清空，避免关闭瞬间被随后落地的 fire 复活一帧、或留下孤儿抖动。
         synchronized (LOCK) {
             pulse = null;
+            CameraShakeController.clear();
         }
-        CameraShakeController.clear();
     }
 
     private static CastJuiceProfile resolveProfile(CastState state) {

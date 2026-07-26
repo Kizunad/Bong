@@ -35,7 +35,7 @@
 | P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
 | P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
 | P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 3/3 定稿：双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂**逐 tick** IK 合握，加密防插值脱手），关键帧残差 ≤0.55、中间帧最差 2.43 模型单位，t0=t20 收势闭合。剩余招式 FPV 变体待续 |
-| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ✅ 2026-07-26（纯 client，零 wire 变更；PR #1249）：`CastJuiceProfiles` 4 重型招注册表 + heaven_gate 两段走 `CastFovController.onAnimPlayed` 动画事件驱动 + `CastFovController` 生命周期状态机（identity 门控 arming/幂等 release/**按身份**作废的取消令牌/死亡·断线·**切世界** teardown）+ `JuiceConfig` 配置持有者 & `JuiceControls` keybind 可调入口（默认 1.0，0=关闭且进行中调 0 双通道立即取消）+ `MixinGameRenderer` 加法 FOV 合成；`CastFovControllerTest` 30 + `JuiceConfigTest` 8 + `JuiceControlsTest` 9 + `VfxEventRouterTest` juice 接线 2 例。**遗留**：倍率跨会话文件持久化（全仓 client 无配置文件层）见下 |
+| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ✅ 2026-07-26（纯 client，零 wire 变更；PR #1249）：`CastJuiceProfiles` 4 重型招注册表 + heaven_gate 两段走 `CastFovController.onAnimPlayed` 动画事件驱动 + `CastFovController` 生命周期状态机（identity 门控 arming/幂等 release/**按身份**作废的取消令牌/死亡·断线·**切世界** teardown）+ `JuiceConfig` 配置持有者 & `JuiceControls` keybind 可调入口（默认 1.0，0=关闭且进行中调 0 双通道立即取消）+ `MixinGameRenderer` 加法 FOV 合成；`CastFovControllerTest` 31 + `JuiceConfigTest` 10 + `JuiceControlsTest` 9 + `VfxEventRouterTest` juice 接线 2 例。**遗留**：倍率跨会话文件持久化（全仓 client 无配置文件层）见下 |
 | P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ✅ 2026-07-24（纯资产 + 管线，8 条 CC0 真 `.ogg` 落地；**9 条 server recipe 主层/前兆层换 `bong:` 事件**——8 招 signature + heaven_gate charge 前兆，heaven_gate release（`sword_manifest_strike`）+ charge（专属 `heaven_gate_charge`）均在 server 侧；resourcepack 纳入 `bong/sounds` + `bong/sounds.json` + sha1 同步；跨端契约测试 server 3 + client 12（heaven_gate signature pin 移到 server 侧后删了 client 对应用例），含**运行时消费 pin** 从生产映射取 recipe id + 经真实 registry 查找） |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |
 
@@ -70,8 +70,8 @@
 
 | 招式 | shake 幅度/时长 | FOV 脉冲 | 备注 |
 |---|---|---|---|
-| sword_path.heaven_gate（charge） | 强 0.8 / 160 tick CRESCENDO | — | **动画事件驱动**（非 CastState）：蓄力渐强，撑到 release 顶替 |
-| sword_path.heaven_gate（release） | 强 1.5 / 24 tick SUSTAIN | +12° 收缩回弹 8 tick | **动画事件驱动**：cast 条 4s 与真实引导窗 7s 错开，只有动画事件能对准劈下那一刻 |
+| sword_path.heaven_gate（charge） | 0.8 / 160 tick CRESCENDO | — | **动画事件驱动**（非 CastState）：蓄力渐强，撑到 release 顶替 |
+| sword_path.heaven_gate（release） | 1.5 / 24 tick SUSTAIN | +12° 收缩回弹 8 tick | **动画事件驱动**：cast 条 4s 与真实引导窗 7s 错开，只有动画事件能对准劈下那一刻 |
 | baomai.full_power_release | 强 / 20 tick SUSTAIN | +9° / 7 tick | 与力竭灰雾同步 |
 | woliu.turbulence_burst | 中 / 18 tick SUSTAIN | +6° / 6 tick | |
 | zhenmai.sever_chain | 中 / 14 tick SUSTAIN | — | 断链顿挫感 |
@@ -81,7 +81,8 @@
 > 数值为 2026-07-25 真机调校后的定稿（原表的「抖一下」短时长手感太轻，改 SUSTAIN
 > 持续震动 + 放大 FOV punch）。强/中/弱 = `CastJuiceProfiles.STRONG/MEDIUM/WEAK`
 > （1.2 / 0.85 / 0.5）。heaven_gate 两段已从 `CastJuiceProfiles`（CastState 驱动）
-> 移出，改由 `CastFovController.onAnimPlayed` 的动画事件驱动。
+> 移出，改由 `CastFovController.onAnimPlayed` 的动画事件驱动，其强度不走强/中/弱三档，
+> 直接写在 `CHARGE_ANIM_JUICE` / `RELEASE_ANIM_JUICE` 里（表中即原始数值）。
 
 - 复用 `CameraShakeController` 既有 mixin，不新建相机通道；FOV 走独立控制器（新建 `CastFovController`，与 shake 同帧调度）。
 - **`CastFovController` 生命周期契约（交付物，不许只交一个孤立类）**：

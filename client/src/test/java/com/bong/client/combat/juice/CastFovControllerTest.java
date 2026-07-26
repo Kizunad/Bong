@@ -193,6 +193,32 @@ class CastFovControllerTest {
     }
 
     @Test
+    void outOfOrderInterruptBlocksLaterLocalPredictOfSameCast() {
+        // 上一条用例走纯 server sync，CASTING 那步经 sourceFor 退化成 QUICK_SLOT、本来就
+        // 解析不出 profile——即便删掉 voidedId 机制它也照样绿。本例改用**本地预测**重新
+        // 起同一 identity（beginSkillBarCast 直接写 SKILL_BAR，绕开 sourceFor 退化），
+        // 让「取消令牌记住被作废身份」这条真正成为唯一挡住 juice 的机制。
+        serverSync("interrupt", HEAVY_SLOT, START, "interrupt_control");  // 打断先到
+
+        predict(HEAVY_SLOT, START);  // 同 identity 的 CASTING 后到（本地预测，SKILL_BAR）
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("已作废身份即便后来收到 CASTING 也不得武装 → release 不触发");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+
+        // 反证：换一个未被作废的身份，同样的本地预测 + release 必须正常触发，
+        // 证明上面的「不触发」来自作废记录，而不是这条路径整体就打不通。
+        predict(HEAVY_SLOT, START + 5000);
+        serverSync("complete", HEAVY_SLOT, START + 5000, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "未被作废的身份走同一路径应正常触发");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("脉冲 decay 完毕");
+    }
+
+    @Test
     void lateInterruptOfSupersededCastDoesNotKillTheLiveOne() {
         // 回归（PR #1249 review finding 1）：A 起 → B 取代 A → 迟到的 INTERRUPT(A) → COMPLETE(B)
         // **仍然**触发脉冲。旧实现 voidPending 无条件清 pending，迟到的旧打断会误杀新施法；
