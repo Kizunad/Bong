@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use valence::prelude::{bevy_ecs, App, AppExit, EventWriter, PreUpdate, ResMut, Resource};
+use valence::prelude::{App, AppExit, EventWriter, PreUpdate, ResMut, Resource};
 
 /// The OS interruption source forwarded by the listener thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,11 +21,14 @@ pub enum ShutdownSignal {
 }
 
 /// Receiver owned by ECS; the producer remains isolated in the listener thread.
-#[derive(Resource)]
 pub struct ShutdownSignalReceiver {
     receiver: Receiver<ShutdownSignal>,
     exit_emitted: bool,
 }
+
+// Avoid the derive macro's implicit `bevy_ecs` crate-path requirement: this
+// crate receives Resource through Valence's prelude, not as a direct dep.
+impl Resource for ShutdownSignalReceiver {}
 
 impl ShutdownSignalReceiver {
     #[cfg(test)]
@@ -224,8 +227,10 @@ mod tests {
     use super::*;
     use valence::prelude::{EventReader, Last, Resource};
 
-    #[derive(Resource, Default)]
+    #[derive(Default)]
     struct ExitEventsSeen(usize);
+
+    impl Resource for ExitEventsSeen {}
 
     fn observe_exit_in_last(mut seen: ResMut<ExitEventsSeen>, mut exits: EventReader<AppExit>) {
         seen.0 += exits.read().count();

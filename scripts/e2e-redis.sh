@@ -32,6 +32,9 @@ CURRENT_STAGE="init"
 REDIS_PID=""
 SERVER_PID=""
 NORTH_RIFT_DB_STASH=""
+PERSISTENCE_TRANSACTION_ACTIVE=0
+PERSISTENCE_STASH_ACTIVE=0
+PERSISTENCE_STASH_READY=0
 REDIS_SUB_PID=""
 REDIS_PROVIDER=""
 REDIS_SERVER_BIN=""
@@ -834,49 +837,24 @@ ensure_redis() {
   finalize_failure "redis" "Redis provider '$REDIS_PROVIDER' did not become healthy within 30s"
 }
 
-# 递归杀整棵进程树。SERVER_PID 是子 shell，直接 kill 只杀 shell 本身，
-# cargo run / bong-server 会变孤儿继续占 25565（实测 bash 不向子进程转发 SIGTERM），
-# 拖垮后续需要该端口的 stage（如 bot-e2e）。
+# The production helper lives in the lifecycle library so its child-enumeration
+# fail-closed contract is executable-testable without running the full e2e.
 kill_tree() {
-  local pid="$1"
-  local child
-  for child in $(pgrep -P "$pid" 2>/dev/null); do
-    kill_tree "$child"
-  done
-  kill "$pid" 2>/dev/null || true
-  # SIGTERM 被忽略/卡 syscall 时兜底 SIGKILL，保证端口真正释放
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "$pid" 2>/dev/null || return 0
-    sleep 0.2
-  done
-  kill -9 "$pid" 2>/dev/null || true
+  bong_server_kill_tree "$@"
 }
 
 port_open() {
-  python3 - "$1" <<'PY'
-import socket
-import sys
-
-try:
-    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1.0).close()
-except OSError:
-    sys.exit(1)
-PY
+  bong_server_port_is_open "$@"
 }
 
 stop_server() {
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill_tree "$SERVER_PID"
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
-  SERVER_PID=""
+  local pid="$SERVER_PID"
 
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if ! port_open 25565; then
-      return 0
-    fi
-    sleep 0.2
-  done
+  [ -n "$pid" ] || return 0
+  if bong_server_stop_process_tree_and_release_port "$pid" 25565; then
+    SERVER_PID=""
+    return 0
+  fi
   return 1
 }
 
@@ -886,14 +864,28 @@ cleanup() {
     wait "$REDIS_SUB_PID" 2>/dev/null || true
   fi
 
-  stop_server || true
+  STOP_SERVER_CONFIRMED=0
+  if stop_server; then
+    STOP_SERVER_CONFIRMED=1
+  else
+    echo "FAIL: preview server did not stop/release port; persistence restore is forbidden" >&2
+  fi
 
-  # 兜底：无论 north-rift 阶段是正常收尾还是中途 finalize_failure 退出，
-  # 都要把之前 stash 出去的开发者本地 bong.db 精确还原回来，不能让专用
-  # preview server 写脏的运行期存档留在原地。restore 自身幂等（第二次
-  # 调用会落进 stash_dir 已不存在的 no-op 分支），可放心 || true。
-  if [ -n "$NORTH_RIFT_DB_STASH" ]; then
-    bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH" || true
+  # 持久化 transaction 覆盖 stash → 专用 preview 停服 → restore 的整段。
+  # cleanup 绝不能先解锁：必须先停服，再还原；还原/完成失败则留下 durable
+  # handoff marker，之后的 e2e 会 fail closed 而不是覆盖开发者存档。
+  if [ "$PERSISTENCE_TRANSACTION_ACTIVE" -eq 1 ]; then
+    if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then
+      if bong_server_finalize_preview_persistence_after_stop \
+        "$ROOT/server/data" "$NORTH_RIFT_DB_STASH" "$STOP_SERVER_CONFIRMED"; then
+        PERSISTENCE_STASH_ACTIVE=0
+        PERSISTENCE_STASH_READY=0
+      fi
+    else
+      # No stash path was committed: pre-manifest/stale failure, safe to clear.
+      bong_server_persistence_transaction_complete || bong_server_persistence_transaction_release
+    fi
+    PERSISTENCE_TRANSACTION_ACTIVE=0
   fi
 
   if [ -n "$REDIS_PID" ] && kill -0 "$REDIS_PID" 2>/dev/null; then
@@ -1060,9 +1052,21 @@ fi
 # 把开发者本地真实存档挪走，让专用 preview server 从干净持久化状态启动，
 # 场景通过 / 脚本退出后再原样还原，不能影响本机开发者的真实存档。
 NORTH_RIFT_DB_STASH="$RUN_DIR/north-rift-db-stash"
-if ! bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
-  finalize_failure "north-rift-preview" "failed to stash local server/data/bong.db before dedicated preview server"
+if ! bong_server_persistence_transaction_begin "$ROOT/server/data"; then
+  finalize_failure "north-rift-preview" "failed to acquire exclusive server/data persistence transaction (or an unrecovered handoff exists)"
 fi
+PERSISTENCE_TRANSACTION_ACTIVE=1
+if ! bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+  # Helper creates the durable stash-path marker only after V2 manifest publish
+  # and validation, before its first move. A pre-publish/stale failure remains
+  # unready and cleanup only clears ACTIVE without touching that leaf.
+  if [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ]; then
+    PERSISTENCE_STASH_READY=1
+  fi
+  finalize_failure "north-rift-preview" "failed to atomically publish and stash local server/data/bong.db before dedicated preview server"
+fi
+PERSISTENCE_STASH_ACTIVE=1
+PERSISTENCE_STASH_READY=1
 
 (
   export PATH="$RUST_PATH"
@@ -1126,8 +1130,14 @@ if ! stop_server; then
 fi
 
 if ! bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
-  finalize_failure "north-rift-preview" "failed to restore local server/data/bong.db after dedicated preview server"
+  finalize_failure "north-rift-preview" "failed to restore local server/data/bong.db after dedicated preview server; durable handoff will remain"
 fi
+if ! bong_server_persistence_transaction_complete; then
+  finalize_failure "north-rift-preview" "restored local server/data/bong.db but could not clear the durable persistence handoff"
+fi
+PERSISTENCE_STASH_ACTIVE=0
+PERSISTENCE_STASH_READY=0
+PERSISTENCE_TRANSACTION_ACTIVE=0
 pass "north-rift dedicated preview server cleanup"
 
 CURRENT_STAGE="summary"

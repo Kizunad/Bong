@@ -48,6 +48,12 @@ fi
 if bong_server_tmux_has_unmanaged_server "$SESSION"; then
   echo "FAIL: tmux session '$SESSION' still owns an unrecorded bong-server; refusing HUP shutdown" >&2
   exit 1
+else
+  tmux_scan_status=$?
+  if [ "$tmux_scan_status" -eq 2 ]; then
+    echo "FAIL: could not verify tmux session '$SESSION'; refusing teardown" >&2
+    exit 1
+  fi
 fi
 
 # 杀掉旧会话

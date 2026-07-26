@@ -13,6 +13,12 @@ stop_bong_stack() {
     if bong_server_tmux_has_unmanaged_server bong; then
         echo "FAIL: tmux session 'bong' still owns an unrecorded bong-server; refusing HUP shutdown" >&2
         exit 1
+    else
+        tmux_scan_status=$?
+        if [ "$tmux_scan_status" -eq 2 ]; then
+            echo "FAIL: could not verify tmux session 'bong'; refusing teardown" >&2
+            exit 1
+        fi
     fi
 
     echo "Stopped managed bong-server"

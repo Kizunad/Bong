@@ -1,23 +1,153 @@
 #!/usr/bin/env bash
 
+bong_server_validate_real_directory() {
+    local directory="${1:-}"
+    [ -n "$directory" ] && [ -d "$directory" ] && [ ! -L "$directory" ]
+}
+
+bong_server_validate_secure_directory() {
+    local directory="${1:-}"
+    local expected_mode="${2:-700}"
+    local owner mode
+
+    [ -n "$directory" ] && [ -d "$directory" ] && [ ! -L "$directory" ] || return 1
+    owner="$(stat -Lc '%u' -- "$directory" 2>/dev/null)" || return 1
+    mode="$(stat -Lc '%a' -- "$directory" 2>/dev/null)" || return 1
+    [ "$owner" = "$UID" ] && [ "$mode" = "$expected_mode" ]
+}
+
+bong_server_runtime_dir() {
+    local parent candidate
+
+    if [ -n "${XDG_RUNTIME_DIR:-}" ] && bong_server_validate_secure_directory "$XDG_RUNTIME_DIR" 700; then
+        parent="$XDG_RUNTIME_DIR"
+        candidate="$parent/bong"
+    else
+        parent="/tmp"
+        candidate="/tmp/bong-${UID}"
+    fi
+    if [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; then
+        (umask 077 && mkdir -- "$candidate") || return 1
+    fi
+    if ! bong_server_validate_secure_directory "$candidate" 700; then
+        echo "FAIL: insecure bong runtime directory $candidate (requires non-symlink directory owned by uid $UID with mode 0700)" >&2
+        return 1
+    fi
+    printf '%s\n' "$candidate"
+}
+
 bong_server_pid_file() {
-    printf '%s\n' "${BONG_SERVER_PID_FILE:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/bong-server-${UID}.pid}"
+    if [ -n "${BONG_SERVER_PID_FILE:-}" ]; then
+        printf '%s\n' "$BONG_SERVER_PID_FILE"
+    else
+        printf '%s/bong-server.pid\n' "$(bong_server_runtime_dir)" || return 1
+    fi
+}
+
+bong_server_validate_pid_record_parent() {
+    local record="${1:-}" directory canonical lexical
+
+    [ -n "$record" ] || return 1
+    directory="$(dirname -- "$record")"
+    canonical="$(realpath -e -- "$directory" 2>/dev/null)" || return 1
+    lexical="$(realpath -ms -- "$directory" 2>/dev/null)" || return 1
+    [ "$canonical" = "$lexical" ] || return 1
+    bong_server_validate_secure_directory "$canonical" 700
+}
+
+# Test seams deliberately run after open / before the final unlink validation.
+# Production keeps them no-op; lifecycle tests replace them to prove that a
+# pathname replacement cannot turn a checked record into a signal authority.
+bong_server_after_record_open() {
+    :
+}
+
+bong_server_before_record_clear_remove() {
+    :
+}
+
+bong_server_validate_lock_file() {
+    local lock="${1:-}"
+    local owner mode links
+
+    [ -f "$lock" ] && [ ! -L "$lock" ] || return 1
+    owner="$(stat -Lc '%u' -- "$lock" 2>/dev/null)" || return 1
+    mode="$(stat -Lc '%a' -- "$lock" 2>/dev/null)" || return 1
+    links="$(stat -Lc '%h' -- "$lock" 2>/dev/null)" || return 1
+    [ "$owner" = "$UID" ] && [ "$mode" = "600" ] && [ "$links" = "1" ]
+}
+
+# PID records and advisory locks have the same trust boundary: they must be a
+# private, single-link regular file owned by this invocation's uid.
+bong_server_validate_pid_record_file() {
+    bong_server_validate_lock_file "${1:-}"
+}
+
+bong_server_validate_fd_secure_regular_file() {
+    local fd="${1:-}"
+    local owner mode links kind
+
+    [[ "$fd" =~ ^[0-9]+$ ]] || return 1
+    kind="$(stat -Lc '%F' -- "/proc/self/fd/$fd" 2>/dev/null)" || return 1
+    owner="$(stat -Lc '%u' -- "/proc/self/fd/$fd" 2>/dev/null)" || return 1
+    mode="$(stat -Lc '%a' -- "/proc/self/fd/$fd" 2>/dev/null)" || return 1
+    links="$(stat -Lc '%h' -- "/proc/self/fd/$fd" 2>/dev/null)" || return 1
+    [ "$kind" = "regular file" ] || [ "$kind" = "regular empty file" ]
+    [ "$owner" = "$UID" ] \
+        && [ "$mode" = "600" ] && [ "$links" = "1" ]
+}
+
+bong_server_path_identity() {
+    stat -Lc '%d:%i' -- "${1:-}" 2>/dev/null
+}
+
+bong_server_fd_matches_path() {
+    local fd="${1:-}" path="${2:-}" fd_identity path_identity
+    [[ "$fd" =~ ^[0-9]+$ ]] || return 1
+    fd_identity="$(bong_server_path_identity "/proc/self/fd/$fd")" || return 1
+    path_identity="$(bong_server_path_identity "$path")" || return 1
+    [ "$fd_identity" = "$path_identity" ]
 }
 
 bong_server_with_lock() {
-    local record lock directory fd status
+    local record lock directory fd status timeout
 
     if [ "${BONG_SERVER_LIFECYCLE_LOCK_DEPTH:-0}" -gt 0 ]; then
         "$@"
         return $?
     fi
+    timeout="${BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS:-10}"
+    [[ "$timeout" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+        echo "FAIL: BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS must be a non-negative number: $timeout" >&2
+        return 1
+    }
 
-    record="$(bong_server_pid_file)"
+    record="$(bong_server_pid_file)" || return 1
     directory="$(dirname -- "$record")"
-    mkdir -p -- "$directory" || return 1
+    # Both default and explicit records live in a private, real directory. Do
+    # not create override parents: callers must establish that trust boundary.
+    bong_server_validate_pid_record_parent "$record" || {
+        echo "FAIL: refusing lifecycle lock outside a secure real directory: $directory" >&2
+        return 1
+    }
     lock="${record}.lock"
-    exec {fd}>"$lock" || return 1
-    flock -x "$fd" || {
+    if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
+        (umask 077 && : >> "$lock") || return 1
+    fi
+    if ! bong_server_validate_lock_file "$lock"; then
+        echo "FAIL: insecure lifecycle lock $lock (requires regular non-symlink file owned by uid $UID with mode 0600)" >&2
+        return 1
+    fi
+    # Append mode intentionally never truncates an existing path. Validate both
+    # before and after opening so a substituted symlink/non-regular lock fails.
+    exec {fd}>>"$lock" || return 1
+    if ! bong_server_validate_lock_file "$lock" || ! bong_server_fd_matches_path "$fd" "$lock"; then
+        exec {fd}>&-
+        echo "FAIL: lifecycle lock changed or was substituted while opening: $lock" >&2
+        return 1
+    fi
+    flock -x -w "$timeout" "$fd" || {
+        echo "FAIL: timed out after ${timeout}s waiting for lifecycle lock $lock" >&2
         exec {fd}>&-
         return 1
     }
@@ -34,8 +164,23 @@ bong_server_process_is_running() {
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
-    state="$(ps -o stat= -p "$pid" 2>/dev/null)" || return 1
+    state="$(ps -o stat= -p "$pid" 2>/dev/null)" || {
+        kill -0 "$pid" 2>/dev/null || return 1
+        return 2
+    }
     [[ "$state" != Z* ]]
+}
+
+# Convert a failed /proc inspection into the lifecycle tri-state. A process that
+# disappeared while its metadata was read is ordinary absence; a still-live
+# process whose metadata could not be inspected is an unsafe failure.
+bong_server_process_inspection_failed() {
+    local pid="${1:-}" status
+
+    bong_server_process_is_running "$pid"
+    status=$?
+    [ "$status" -eq 1 ] && return 1
+    return 2
 }
 
 bong_server_process_starttime() {
@@ -79,28 +224,60 @@ bong_server_resolve_executable() {
 }
 
 bong_server_read_record() {
-    local record line key value
+    local record line key value fd record_identity opened_identity
     local pid="" starttime="" executable="" executable_identity=""
     local count=0
 
-    record="$(bong_server_pid_file)"
-    [ -f "$record" ] || return 1
-    while IFS= read -r line || [ -n "$line" ]; do
+    record="$(bong_server_pid_file)" || return 1
+    bong_server_validate_pid_record_parent "$record" || return 1
+    bong_server_validate_pid_record_file "$record" || return 1
+    record_identity="$(bong_server_path_identity "$record")" || return 1
+    exec {fd}<"$record" || return 1
+    bong_server_after_record_open "$record" "$fd"
+    # Revalidate the pathname after open. The pre-open check only rejects an
+    # initial bad path; this check rejects a symlink/file swap performed while
+    # open(2) followed the pathname.
+    if ! bong_server_validate_pid_record_file "$record" \
+        || ! bong_server_validate_fd_secure_regular_file "$fd" \
+        || ! bong_server_fd_matches_path "$fd" "$record"; then
+        exec {fd}<&-
+        return 1
+    fi
+    opened_identity="$(bong_server_path_identity "/proc/self/fd/$fd")" || {
+        exec {fd}<&-
+        return 1
+    }
+    [ "$opened_identity" = "$record_identity" ] || {
+        exec {fd}<&-
+        return 1
+    }
+    while IFS= read -r -u "$fd" line || [ -n "$line" ]; do
         case "$line" in
             pid=*) key=pid; value="${line#pid=}" ;;
             starttime=*) key=starttime; value="${line#starttime=}" ;;
             executable=*) key=executable; value="${line#executable=}" ;;
             executable_identity=*) key=executable_identity; value="${line#executable_identity=}" ;;
-            *) return 1 ;;
+            *) exec {fd}<&-; return 1 ;;
         esac
         case "$key" in
-            pid) [ -z "$pid" ] || return 1; pid="$value" ;;
-            starttime) [ -z "$starttime" ] || return 1; starttime="$value" ;;
-            executable) [ -z "$executable" ] || return 1; executable="$value" ;;
-            executable_identity) [ -z "$executable_identity" ] || return 1; executable_identity="$value" ;;
+            pid) [ -z "$pid" ] || { exec {fd}<&-; return 1; }; pid="$value" ;;
+            starttime) [ -z "$starttime" ] || { exec {fd}<&-; return 1; }; starttime="$value" ;;
+            executable) [ -z "$executable" ] || { exec {fd}<&-; return 1; }; executable="$value" ;;
+            executable_identity) [ -z "$executable_identity" ] || { exec {fd}<&-; return 1; }; executable_identity="$value" ;;
         esac
         count=$((count + 1))
-    done < "$record"
+    done
+    if ! bong_server_validate_pid_record_file "$record" \
+        || ! bong_server_validate_fd_secure_regular_file "$fd" \
+        || ! bong_server_fd_matches_path "$fd" "$record"; then
+        exec {fd}<&-
+        return 1
+    fi
+    opened_identity="$(bong_server_path_identity "/proc/self/fd/$fd")" || {
+        exec {fd}<&-
+        return 1
+    }
+    exec {fd}<&-
 
     [ "$count" -eq 4 ] || return 1
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
@@ -111,23 +288,71 @@ bong_server_read_record() {
     BONG_SERVER_RECORDED_STARTTIME="$starttime"
     BONG_SERVER_RECORDED_EXECUTABLE="$executable"
     BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY="$executable_identity"
+    BONG_SERVER_RECORDED_FILE_IDENTITY="$opened_identity"
 }
 
 bong_server_record_matches_process() {
-    local actual_starttime actual_executable_identity
+    local actual_starttime actual_executable_identity status
 
-    bong_server_process_is_running "$BONG_SERVER_RECORDED_PID" || return 1
-    actual_starttime="$(bong_server_process_starttime "$BONG_SERVER_RECORDED_PID")" || return 1
+    if bong_server_process_is_running "$BONG_SERVER_RECORDED_PID"; then
+        status=0
+    else
+        status=$?
+    fi
+    [ "$status" -eq 0 ] || return "$status"
+    actual_starttime="$(bong_server_process_starttime "$BONG_SERVER_RECORDED_PID")" || {
+        bong_server_process_inspection_failed "$BONG_SERVER_RECORDED_PID"
+        return $?
+    }
     [ "$actual_starttime" = "$BONG_SERVER_RECORDED_STARTTIME" ] || return 1
-    actual_executable_identity="$(bong_server_process_executable_identity "$BONG_SERVER_RECORDED_PID")" || return 1
+    actual_executable_identity="$(bong_server_process_executable_identity "$BONG_SERVER_RECORDED_PID")" || {
+        bong_server_process_inspection_failed "$BONG_SERVER_RECORDED_PID"
+        return $?
+    }
     [ "$actual_executable_identity" = "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" ]
 }
 
-bong_server_clear_record() {
-    local record
+bong_server_remove_secure_file_if_identity() {
+    local record="${1:-}" expected_identity="${2:-}" current_identity fd
 
-    record="$(bong_server_pid_file)"
+    [[ "$expected_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+    bong_server_validate_pid_record_parent "$record" || return 1
+    bong_server_validate_pid_record_file "$record" || return 1
+    exec {fd}<"$record" || return 1
+    bong_server_before_record_clear_remove "$record" "$fd"
+    if ! bong_server_validate_pid_record_parent "$record" \
+        || ! bong_server_validate_pid_record_file "$record" \
+        || ! bong_server_validate_fd_secure_regular_file "$fd" \
+        || ! bong_server_fd_matches_path "$fd" "$record"; then
+        exec {fd}<&-
+        return 1
+    fi
+    current_identity="$(bong_server_path_identity "/proc/self/fd/$fd")" || {
+        exec {fd}<&-
+        return 1
+    }
+    [ "$current_identity" = "$expected_identity" ] || {
+        exec {fd}<&-
+        return 1
+    }
+    # The private parent is rechecked immediately before unlink; an actor who
+    # cannot mutate that directory cannot exchange this checked pathname after
+    # the final identity comparison.
+    if ! bong_server_validate_pid_record_parent "$record" \
+        || ! bong_server_validate_pid_record_file "$record" \
+        || ! bong_server_fd_matches_path "$fd" "$record"; then
+        exec {fd}<&-
+        return 1
+    fi
+    exec {fd}<&-
     rm -f -- "$record"
+}
+
+bong_server_clear_record() {
+    local expected_identity="${1:-}" record
+
+    record="$(bong_server_pid_file)" || return 1
+    bong_server_remove_secure_file_if_identity "$record" "$expected_identity"
 }
 
 bong_server_clear_record_if_matches() {
@@ -143,14 +368,14 @@ bong_server_clear_record_if_matches() {
         && [ "$BONG_SERVER_RECORDED_STARTTIME" = "$expected_starttime" ] \
         && [ "$BONG_SERVER_RECORDED_EXECUTABLE" = "$expected_executable" ] \
         && [ "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" = "$expected_executable_identity" ]; then
-        bong_server_clear_record
+        bong_server_clear_record "$BONG_SERVER_RECORDED_FILE_IDENTITY"
     fi
 }
 
 _bong_server_write_record() {
     local pid="${1:-}"
     local expected_executable="${2:-}"
-    local record directory temporary starttime executable executable_identity
+    local record directory temporary starttime executable executable_identity fd published_identity
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     [ -n "$expected_executable" ] || return 1
@@ -161,35 +386,151 @@ _bong_server_write_record() {
     expected_executable="$(readlink -f -- "$expected_executable")" || return 1
     [ "$executable" = "$expected_executable" ] || return 1
 
-    record="$(bong_server_pid_file)"
+    record="$(bong_server_pid_file)" || return 1
     directory="$(dirname -- "$record")"
-    mkdir -p -- "$directory" || return 1
-    temporary="$(mktemp "$directory/.bong-server.pid.XXXXXX")" || return 1
+    bong_server_validate_pid_record_parent "$record" || {
+        echo "FAIL: refusing PID record publish outside a secure real directory: $directory" >&2
+        return 1
+    }
+    temporary="$(umask 077 && mktemp "$directory/.bong-server.pid.XXXXXX")" || return 1
+    chmod 600 -- "$temporary" || { rm -f -- "$temporary"; return 1; }
     if ! printf 'pid=%s\nstarttime=%s\nexecutable=%s\nexecutable_identity=%s\n' \
         "$pid" "$starttime" "$executable" "$executable_identity" > "$temporary"; then
         rm -f -- "$temporary"
         return 1
     fi
-    mv -f -- "$temporary" "$record"
+    bong_server_validate_pid_record_file "$temporary" || { rm -f -- "$temporary"; return 1; }
+    mv -f -- "$temporary" "$record" || return 1
+    exec {fd}<"$record" || return 1
+    if ! bong_server_validate_pid_record_parent "$record" \
+        || ! bong_server_validate_pid_record_file "$record" \
+        || ! bong_server_validate_fd_secure_regular_file "$fd" \
+        || ! bong_server_fd_matches_path "$fd" "$record"; then
+        exec {fd}<&-
+        echo "FAIL: PID record publish was substituted or has unsafe metadata: $record" >&2
+        return 1
+    fi
+    published_identity="$(bong_server_path_identity "/proc/self/fd/$fd")" || {
+        exec {fd}<&-
+        return 1
+    }
+    exec {fd}<&-
+    BONG_SERVER_RECORDED_FILE_IDENTITY="$published_identity"
 }
 
 bong_server_write_record() {
     bong_server_with_lock _bong_server_write_record "$@"
 }
 
+bong_server_kill_tree() {
+    local pid="${1:-}" children child status
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    # Command substitution drops trailing newlines, so append a private status
+    # delimiter. This preserves a status-0 blank child line as malformed input
+    # while still allowing pgrep's status-1 "no children" result to be empty.
+    children="$(
+        pgrep -P "$pid" 2>/dev/null
+        printf '\034%s' "$?"
+    )"
+    status="${children##*$'\034'}"
+    children="${children%$'\034'*}"
+    case "$status" in
+        0) [ -n "$children" ] || {
+            echo "FAIL: pgrep returned an empty child pid for $pid" >&2
+            return 1
+        } ;;
+        1) [ -z "$children" ] || {
+            echo "FAIL: pgrep returned child output with no-child status for pid $pid" >&2
+            return 1
+        } ;;
+        *)
+            echo "FAIL: could not enumerate children of pid $pid (pgrep status $status)" >&2
+            return 1
+            ;;
+    esac
+    if [ -n "$children" ]; then
+        while IFS= read -r child || [ -n "$child" ]; do
+            [ -n "$child" ] || { echo "FAIL: pgrep returned an empty child pid for $pid" >&2; return 1; }
+            bong_server_kill_tree "$child" || return 1
+        done < <(printf '%s' "$children")
+    fi
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 0.2
+    done
+    kill -9 "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 0.2
+    done
+    echo "FAIL: pid $pid survived SIGKILL" >&2
+    return 1
+}
+
+bong_server_port_is_open() {
+    local port="${1:-}"
+
+    [[ "$port" =~ ^[0-9]+$ ]] || return 1
+    python3 - "$port" <<'PY'
+import socket
+import sys
+
+try:
+    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1.0).close()
+except OSError:
+    sys.exit(1)
+PY
+}
+
+# E2E uses this exact helper before any persistence restore. A failed descendant
+# enumeration means teardown is unconfirmed even if the parent later exits.
+bong_server_stop_process_tree_and_release_port() {
+    local pid="${1:-}" port="${2:-25565}" tree_stopped=1 port_released=0
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$port" =~ ^[0-9]+$ ]] || return 1
+    if kill -0 "$pid" 2>/dev/null; then
+        if bong_server_kill_tree "$pid"; then
+            if ! wait "$pid" 2>/dev/null; then
+                kill -0 "$pid" 2>/dev/null && tree_stopped=0
+            fi
+        else
+            tree_stopped=0
+        fi
+    fi
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if ! bong_server_port_is_open "$port"; then
+            port_released=1
+            break
+        fi
+        sleep 0.2
+    done
+    [ "$tree_stopped" -eq 1 ] && [ "$port_released" -eq 1 ]
+}
+
 bong_server_wait_for_executable() {
     local pid="${1:-}"
     local expected_executable="${2:-}"
     local attempts="${3:-500}"
-    local actual_executable attempt
+    local actual_executable attempt status
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     [ -n "$expected_executable" ] || return 1
     [[ "$attempts" =~ ^[0-9]+$ ]] || return 1
     expected_executable="$(readlink -f -- "$expected_executable")" || return 1
     for ((attempt = 0; attempt < attempts; attempt++)); do
-        bong_server_process_is_running "$pid" || return 1
-        actual_executable="$(bong_server_process_executable "$pid")" || actual_executable=""
+        if bong_server_process_is_running "$pid"; then
+            status=0
+        else
+            status=$?
+        fi
+        [ "$status" -eq 0 ] || return "$status"
+        actual_executable="$(bong_server_process_executable "$pid")" || {
+            bong_server_process_inspection_failed "$pid"
+            return $?
+        }
         if [ "$actual_executable" = "$expected_executable" ]; then
             return 0
         fi
@@ -201,50 +542,133 @@ bong_server_wait_for_executable() {
 bong_server_wait_for_exit() {
     local pid="${1:-}"
     local grace_seconds="${2:-}"
-    local deadline
+    local deadline status
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     [[ "$grace_seconds" =~ ^[0-9]+$ ]] || return 1
     deadline=$((SECONDS + grace_seconds))
-    while bong_server_process_is_running "$pid"; do
+    while :; do
+        if bong_server_process_is_running "$pid"; then
+            status=0
+        else
+            status=$?
+        fi
+        case "$status" in
+            1) return 0 ;;
+            2) return 2 ;;
+        esac
         [ "$SECONDS" -lt "$deadline" ] || return 1
         sleep 0.05
     done
 }
 
 bong_server_process_tree_has_server() {
-    local pid="${1:-}"
-    local child executable executable_name command_line
+    local pid="${1:-}" child executable executable_name command_line children status child_status
 
-    bong_server_process_is_running "$pid" || return 1
-    executable="$(bong_server_process_executable "$pid")" || executable=""
-    executable_name="$(basename -- "$executable")"
-    command_line="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    # 0 = found; 1 = reliably absent; 2 = a live process could not be inspected.
+    # Recheck existence after every failed inspection: a process which naturally
+    # exited during inspection is safely absent, not an infrastructure error.
+    bong_server_process_is_running "$pid"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
+    executable="$(bong_server_process_executable "$pid")" || {
+        bong_server_process_is_running "$pid"; status=$?
+        [ "$status" -eq 1 ] && return 1
+        return 2
+    }
+    executable_name="$(basename -- "$executable")" || {
+        bong_server_process_is_running "$pid"; status=$?
+        [ "$status" -eq 1 ] && return 1
+        return 2
+    }
+    command_line="$(tr '\0' ' ' < "/proc/$pid/cmdline")" || {
+        bong_server_process_is_running "$pid"; status=$?
+        [ "$status" -eq 1 ] && return 1
+        return 2
+    }
     if [ "$executable_name" = bong-server ] \
         || [[ "$command_line" == *bong-server* ]]; then
         return 0
     fi
 
+    children="$(pgrep -P "$pid" 2>/dev/null)"
+    status=$?
+    case "$status" in
+        0) ;;
+        1) return 1 ;;
+        *)
+            bong_server_process_is_running "$pid"
+            status=$?
+            [ "$status" -eq 1 ] && return 1
+            return 2
+            ;;
+    esac
     while IFS= read -r child; do
-        bong_server_process_tree_has_server "$child" && return 0
-    done < <(pgrep -P "$pid" 2>/dev/null || true)
+        [ -n "$child" ] || {
+            bong_server_process_is_running "$pid"
+            status=$?
+            [ "$status" -eq 1 ] && return 1
+            return 2
+        }
+        bong_server_process_tree_has_server "$child"
+        child_status=$?
+        case "$child_status" in
+            0) return 0 ;;
+            1) ;;
+            *) return 2 ;;
+        esac
+    done <<< "$children"
     return 1
 }
 
+# Returns 0 when target session owns an unrecorded bong-server, 1 when the
+# session was enumerated successfully and contains none, 2 when tmux cannot be
+# queried. Callers must treat 2 as unsafe: it is not evidence that teardown is
+# harmless. `-s` scopes all windows to this session only (never `-a`).
 bong_server_tmux_has_unmanaged_server() {
-    local session="${1:-}"
-    local pane_pid
+    local session="${1:-}" sessions panes pane_pid status found=0 tmux_error
 
-    [ -n "$session" ] || return 1
+    [ -n "$session" ] || return 2
+    sessions="$(LC_ALL=C tmux list-sessions -F '#{session_name}' 2>&1)"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        # tmux uses status 1 for both expected no-server/no-socket absence and
+        # operational faults. Only its explicit absence diagnostics are safe.
+        if [ "$status" -eq 1 ] && [[ "$sessions" =~ (no[[:space:]]server[[:space:]]running|no[[:space:]]server[[:space:]]on|no[[:space:]]socket) ]]; then
+            return 1
+        fi
+        echo "FAIL: could not enumerate tmux sessions; refusing unsafe teardown: $sessions" >&2
+        return 2
+    fi
     while IFS= read -r pane_pid; do
-        bong_server_process_tree_has_server "$pane_pid" && return 0
-    done < <(tmux list-panes -a -t "$session" -F '#{pane_pid}' 2>/dev/null)
+        [ "$pane_pid" = "$session" ] && { found=1; break; }
+    done <<< "$sessions"
+    [ "$found" -eq 1 ] || return 1
+    panes="$(LC_ALL=C tmux list-panes -s -t "$session" -F '#{pane_pid}' 2>&1)"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        if [ "$status" -eq 1 ] && [[ "$panes" =~ (can.t[[:space:]]find[[:space:]]session|no[[:space:]]server[[:space:]]running|no[[:space:]]server[[:space:]]on|no[[:space:]]socket) ]]; then
+            return 1
+        fi
+        echo "FAIL: could not enumerate tmux session '$session' panes; refusing unsafe teardown: $panes" >&2
+        return 2
+    fi
+    while IFS= read -r pane_pid; do
+        [ -n "$pane_pid" ] || { echo "FAIL: tmux returned an uninspectable pane pid" >&2; return 2; }
+        bong_server_process_tree_has_server "$pane_pid"
+        status=$?
+        case "$status" in
+            0) return 0 ;;
+            1) ;;
+            *) echo "FAIL: could not inspect tmux pane process tree; refusing unsafe teardown" >&2; return 2 ;;
+        esac
+    done <<< "$panes"
     return 1
 }
 
 _bong_server_stop_managed() {
     local grace_seconds="${BONG_SERVER_STOP_GRACE_SECONDS:-10}"
-    local record pid starttime executable executable_identity
+    local record pid starttime executable executable_identity status
 
     [[ "$grace_seconds" =~ ^[0-9]+$ ]] || {
         echo "FAIL: BONG_SERVER_STOP_GRACE_SECONDS must be a non-negative integer: $grace_seconds" >&2
@@ -263,31 +687,85 @@ _bong_server_stop_managed() {
     starttime="$BONG_SERVER_RECORDED_STARTTIME"
     executable="$BONG_SERVER_RECORDED_EXECUTABLE"
     executable_identity="$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY"
-    if ! bong_server_process_is_running "$pid"; then
-        bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
-        return 0
+    if bong_server_process_is_running "$pid"; then
+        status=0
+    else
+        status=$?
     fi
-    if ! bong_server_record_matches_process; then
-        echo "FAIL: managed bong-server record no longer identifies pid $pid; refusing to signal an unverified process" >&2
-        return 2
-    fi
+    case "$status" in
+        1)
+            bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
+            return 0
+            ;;
+        2)
+            echo "FAIL: could not inspect managed bong-server pid $pid; preserving record and refusing signals" >&2
+            return 2
+            ;;
+    esac
+    bong_server_record_matches_process
+    status=$?
+    case "$status" in
+        0) ;;
+        1)
+            echo "FAIL: managed bong-server record no longer identifies pid $pid; refusing to signal an unverified process" >&2
+            return 2
+            ;;
+        *)
+            echo "FAIL: could not verify managed bong-server identity for pid $pid; preserving record and refusing signals" >&2
+            return 2
+            ;;
+    esac
 
     kill -TERM "$pid" 2>/dev/null || true
-    if bong_server_wait_for_exit "$pid" "$grace_seconds"; then
-        bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
-        return 0
+    bong_server_wait_for_exit "$pid" "$grace_seconds"
+    status=$?
+    case "$status" in
+        0)
+            bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
+            return 0
+            ;;
+        2)
+            echo "FAIL: could not inspect managed bong-server pid $pid while waiting after TERM; preserving record and refusing SIGKILL" >&2
+            return 2
+            ;;
+    esac
+    if bong_server_process_is_running "$pid"; then
+        status=0
+    else
+        status=$?
     fi
-    if ! bong_server_process_is_running "$pid"; then
-        bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
-        return 0
-    fi
-    if ! bong_server_record_matches_process; then
-        echo "FAIL: managed bong-server identity changed while waiting; refusing SIGKILL" >&2
-        return 2
-    fi
+    case "$status" in
+        1)
+            bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
+            return 0
+            ;;
+        2)
+            echo "FAIL: could not inspect managed bong-server pid $pid before SIGKILL; preserving record" >&2
+            return 2
+            ;;
+    esac
+    bong_server_record_matches_process
+    status=$?
+    case "$status" in
+        0) ;;
+        1)
+            echo "FAIL: managed bong-server identity changed while waiting; refusing SIGKILL" >&2
+            return 2
+            ;;
+        *)
+            echo "FAIL: could not verify managed bong-server identity before SIGKILL; preserving record" >&2
+            return 2
+            ;;
+    esac
 
     kill -KILL "$pid" 2>/dev/null || true
-    if ! bong_server_wait_for_exit "$pid" 2; then
+    bong_server_wait_for_exit "$pid" 2
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        if [ "$status" -eq 2 ]; then
+            echo "FAIL: could not inspect managed bong-server pid $pid after SIGKILL; preserving record" >&2
+            return 2
+        fi
         echo "FAIL: managed bong-server pid $pid did not exit after SIGKILL" >&2
         return 1
     fi
@@ -298,97 +776,448 @@ bong_server_stop_managed() {
     bong_server_with_lock _bong_server_stop_managed
 }
 
-# 把 <data_dir>/bong.db{,-wal,-shm} 中存在的文件挪到 <stash_dir>/，用于在
-# 另起一台共用 cwd/持久化路径的专用 server（如 north-rift preview）之前，
-# 把开发者本地真实存档暂时移出去，避免被专用 server 的 hydrate/flush 读写。
-# 搬完之后写一份清单 <stash_dir>/stashed-files，逐行记录本次真正搬走的
-# 文件名（"清单存在 ⇒ 搬运已完成"）——bong_server_restore_persistence 靠
-# 这份清单判定"这个后缀本来就该恢复"还是"这个后缀本来就不存在、纯属
-# 专用 server 造的垃圾"，而不是靠"stash 里还有没有这个文件"反推（那样
-# 会把"已经被上一次调用还原走"和"从来没备份过"这两种相反状态混为一谈）。
-# 幂等：源文件已不在 data_dir 且清单已存在时（例如已经 stash 过一次）视为
-# 成功 no-op，不覆盖已有清单。
-bong_server_stash_persistence() {
-    local data_dir="${1:-}"
-    local stash_dir="${2:-}"
-    local manifest_file suffix source_file
-    local -a moved=()
+# 这些文件属于同一个 SQLite 持久化快照。预览 e2e 必须先把开发者快照
+# 原子地发布清单，再移动文件；绝不能从一个已有 stash 目录恢复或继续写入。
+# 清单的 header 使合法空快照和截断/损坏的空文件可区分。
+BONG_SERVER_STASH_MANIFEST_HEADER="BONG_SERVER_PERSISTENCE_STASH_V3"
 
-    [ -n "$data_dir" ] || return 1
-    [ -n "$stash_dir" ] || return 1
-    [ -d "$data_dir" ] || return 1
-
-    mkdir -p -- "$stash_dir" || return 1
-
-    for suffix in "" "-wal" "-shm"; do
-        source_file="$data_dir/bong.db$suffix"
-        if [ -e "$source_file" ]; then
-            mv -- "$source_file" "$stash_dir/bong.db$suffix" || return 1
-            moved+=("bong.db$suffix")
-        fi
-    done
-
-    manifest_file="$stash_dir/stashed-files"
-    if [ ! -e "$manifest_file" ]; then
-        : > "$manifest_file" || return 1
-        if [ "${#moved[@]}" -gt 0 ]; then
-            printf '%s\n' "${moved[@]}" >> "$manifest_file" || return 1
-        fi
-    fi
-
-    return 0
+_bong_server_persistence_filename_is_valid() {
+    case "${1:-}" in
+        bong.db|bong.db-wal|bong.db-shm) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
-# bong_server_stash_persistence 的逆操作：依 <stash_dir>/stashed-files 清单
-# 把 bong.db{,-wal,-shm} 精确还原回 data_dir——清单里没记录的后缀是专用
-# server 自己造的垃圾，rm -f 掉；清单里记录过的后缀，stash 里还有就 mv -f
-# 拿回去，stash 里已经没有但 data_dir 里已经存在，说明是上一次（可能中途
-# 失败）的 restore 调用已经正确搬回去了，原样保留、绝不删除；两边都没有
-# 则是异常状态（例如上一次中途失败），直接报错，绝不静默当"没备份过"处理。
-#
-# 幂等 / 部分失败安全：即使某次 restore 调用在处理到一半时失败（例如某个
-# 非清单内的后缀因为被外部造成目录而 rm -f 报错），已经成功还原的文件也
-# 不会在下一次重试调用（如 cleanup trap 的无条件二次调用）里被误判成
-# "没备份过"而删掉——因为判定始终以清单为准，不看 stash_dir 里还剩什么。
-# stash_dir 存在但清单缺失/不可读时 fail closed：一个文件都不许碰，直接
-# 返回非零，把异常留给人工排查而不是猜测。全部处理完成后才 rm -rf
-# stash_dir；stash_dir 本不存在时视为成功 no-op。
-bong_server_restore_persistence() {
-    local data_dir="${1:-}"
-    local stash_dir="${2:-}"
-    local manifest_file suffix filename stash_file data_file
+_bong_server_sha256_file() {
+    local file="${1:-}" digest
+    [ -f "$file" ] && [ ! -L "$file" ] || return 1
+    digest="$(sha256sum -- "$file" 2>/dev/null)" || return 1
+    digest="${digest%% *}"
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+    printf '%s\n' "$digest"
+}
 
-    [ -n "$data_dir" ] || return 1
-    [ -n "$stash_dir" ] || return 1
+_bong_server_file_matches_digest() {
+    local file="${1:-}" expected="${2:-}" actual
+    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
+    actual="$(_bong_server_sha256_file "$file")" || return 1
+    [ "$actual" = "$expected" ]
+}
 
-    [ -d "$stash_dir" ] || return 0
+_bong_server_regular_file_identity() {
+    local file="${1:-}"
+    [ -f "$file" ] && [ ! -L "$file" ] || return 1
+    stat -Lc '%d:%i' -- "$file" 2>/dev/null
+}
 
-    manifest_file="$stash_dir/stashed-files"
-    if [ ! -f "$manifest_file" ] || [ ! -r "$manifest_file" ]; then
-        echo "FAIL: stash manifest missing or unreadable at $manifest_file; refusing to touch $data_dir without knowing which files were actually stashed (fail closed, no files removed)" >&2
+# Kept as a narrow seam so lifecycle tests can prove cross-device refusal even
+# on hosts without a second mount. Production reads stat(2)'s device number.
+bong_server_path_device() {
+    local path="${1:-}" device
+    device="$(stat -Lc '%d' -- "$path" 2>/dev/null)" || return 1
+    [[ "$device" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$device"
+}
+
+_bong_server_persistence_preflight_stash_devices() {
+    local data_dir="${1:-}" stash_dir="${2:-}" entry filename source_file stash_device source_device
+    shift 2 || return 1
+
+    stash_device="$(bong_server_path_device "$stash_dir")" || {
+        echo "FAIL: cannot determine stash directory device: $stash_dir" >&2
         return 1
-    fi
-
-    mkdir -p -- "$data_dir" || return 1
-
-    for suffix in "" "-wal" "-shm"; do
-        filename="bong.db$suffix"
-        stash_file="$stash_dir/$filename"
-        data_file="$data_dir/$filename"
-        if grep -Fxq -- "$filename" "$manifest_file"; then
-            if [ -e "$stash_file" ]; then
-                mv -f -- "$stash_file" "$data_file" || return 1
-            elif [ -e "$data_file" ]; then
-                : # 已被上一次（可能中途失败的）restore 调用还原过，原样保留
-            else
-                echo "FAIL: $filename was recorded as stashed but is missing from both $stash_dir and $data_dir; a previous restore likely failed partway through, refusing to proceed silently" >&2
-                return 1
-            fi
-        else
-            rm -f -- "$data_file" || return 1
+    }
+    for entry in "$@"; do
+        filename="${entry##* }"
+        _bong_server_persistence_filename_is_valid "$filename" || return 1
+        source_file="$data_dir/$filename"
+        source_device="$(bong_server_path_device "$source_file")" || {
+            echo "FAIL: cannot determine persistence source device: $source_file" >&2
+            return 1
+        }
+        if [ "$source_device" != "$stash_device" ]; then
+            echo "FAIL: persistence stash crosses devices ($source_file device $source_device, $stash_dir device $stash_device); refusing before READY or moves" >&2
+            return 1
         fi
     done
+}
 
-    rm -rf -- "$stash_dir" 2>/dev/null || true
-    return 0
+_bong_server_file_matches_snapshot() {
+    local file="${1:-}" expected_digest="${2:-}" expected_identity="${3:-}" identity
+    [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [[ "$expected_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+    identity="$(_bong_server_regular_file_identity "$file")" || return 1
+    [ "$identity" = "$expected_identity" ] || return 1
+    _bong_server_file_matches_digest "$file" "$expected_digest"
+}
+
+_bong_server_publish_stash_manifest() {
+    local stash_dir="${1:-}"
+    shift || return 1
+    local temporary manifest_file entry filename digest identity
+
+    [ -d "$stash_dir" ] && [ ! -L "$stash_dir" ] || return 1
+    manifest_file="$stash_dir/stashed-files"
+    [ ! -e "$manifest_file" ] && [ ! -L "$manifest_file" ] || {
+        echo "FAIL: stash manifest already exists at $manifest_file; refusing to overwrite recoverable evidence" >&2
+        return 1
+    }
+    temporary="$(mktemp "$stash_dir/.stashed-files.XXXXXX")" || return 1
+    {
+        printf '%s\n' "$BONG_SERVER_STASH_MANIFEST_HEADER"
+        for entry in "$@"; do
+            digest="${entry%% *}"
+            entry="${entry#* }"
+            identity="${entry%% *}"
+            filename="${entry#* }"
+            [ "$entry" = "$identity $filename" ] \
+                && _bong_server_persistence_filename_is_valid "$filename" \
+                && [[ "$digest" =~ ^[0-9a-f]{64}$ ]] \
+                && [[ "$identity" =~ ^[0-9]+:[0-9]+$ ]] || exit 1
+            printf '%s %s %s\n' "$digest" "$identity" "$filename"
+        done
+    } > "$temporary" || { rm -f -- "$temporary"; return 1; }
+    sync -f -- "$temporary" || { rm -f -- "$temporary"; return 1; }
+    mv -- "$temporary" "$manifest_file" || { rm -f -- "$temporary"; return 1; }
+    sync -f -- "$stash_dir" || return 1
+}
+
+# Strict V3 parser: global indexed arrays pair filenames with expected snapshots.
+_bong_server_read_stash_manifest() {
+    local manifest_file="${1:-}" line digest identity filename last_had_newline=1
+    local -A seen=()
+
+    BONG_SERVER_STASHED_FILES=()
+    BONG_SERVER_STASHED_DIGESTS=()
+    BONG_SERVER_STASHED_IDENTITIES=()
+    [ -f "$manifest_file" ] && [ ! -L "$manifest_file" ] && [ -r "$manifest_file" ] || return 1
+    exec {BONG_SERVER_MANIFEST_FD}<"$manifest_file" || return 1
+    if ! IFS= read -r line <&"$BONG_SERVER_MANIFEST_FD"; then
+        exec {BONG_SERVER_MANIFEST_FD}<&-; return 1
+    fi
+    [ "$line" = "$BONG_SERVER_STASH_MANIFEST_HEADER" ] || { exec {BONG_SERVER_MANIFEST_FD}<&-; return 1; }
+    while IFS= read -r line <&"$BONG_SERVER_MANIFEST_FD"; do
+        [[ "$line" =~ ^([0-9a-f]{64})\ ([0-9]+:[0-9]+)\ (bong\.db|bong\.db-wal|bong\.db-shm)$ ]] || { exec {BONG_SERVER_MANIFEST_FD}<&-; return 1; }
+        digest="${BASH_REMATCH[1]}"; identity="${BASH_REMATCH[2]}"; filename="${BASH_REMATCH[3]}"
+        [ -z "${seen[$filename]+x}" ] || { exec {BONG_SERVER_MANIFEST_FD}<&-; return 1; }
+        seen["$filename"]=1
+        BONG_SERVER_STASHED_FILES+=("$filename")
+        BONG_SERVER_STASHED_DIGESTS+=("$digest")
+        BONG_SERVER_STASHED_IDENTITIES+=("$identity")
+    done
+    [ -z "$line" ] || last_had_newline=0
+    exec {BONG_SERVER_MANIFEST_FD}<&-
+    [ "$last_had_newline" -eq 1 ]
+}
+
+_bong_server_manifest_digest_for_file() {
+    local wanted="${1:-}" index
+    for index in "${!BONG_SERVER_STASHED_FILES[@]}"; do
+        [ "${BONG_SERVER_STASHED_FILES[$index]}" = "$wanted" ] && {
+            printf '%s\n' "${BONG_SERVER_STASHED_DIGESTS[$index]}"
+            return 0
+        }
+    done
+    return 1
+}
+
+
+_bong_server_manifest_identity_for_file() {
+    local wanted="${1:-}" index
+    for index in "${!BONG_SERVER_STASHED_FILES[@]}"; do
+        [ "${BONG_SERVER_STASHED_FILES[$index]}" = "$wanted" ] && {
+            printf '%s\n' "${BONG_SERVER_STASHED_IDENTITIES[$index]}"
+            return 0
+        }
+    done
+    return 1
+}
+
+_bong_server_persistence_transaction_identity_ok() {
+    local current_data current_parent
+    [ -n "${BONG_SERVER_PERSISTENCE_DATA_DIR:-}" ] || return 1
+    bong_server_validate_real_directory "$BONG_SERVER_PERSISTENCE_DATA_DIR" || return 1
+    bong_server_validate_real_directory "$BONG_SERVER_PERSISTENCE_PARENT_DIR" || return 1
+    current_data="$(bong_server_path_identity "$BONG_SERVER_PERSISTENCE_DATA_DIR")" || return 1
+    current_parent="$(bong_server_path_identity "$BONG_SERVER_PERSISTENCE_PARENT_DIR")" || return 1
+    [ "$current_data" = "$BONG_SERVER_PERSISTENCE_DATA_IDENTITY" ] \
+        && [ "$current_parent" = "$BONG_SERVER_PERSISTENCE_PARENT_IDENTITY" ]
+}
+
+bong_server_persistence_transaction_state_dir() {
+    local data_dir="${1:-}" canonical_data_dir runtime_root state_root key state_dir
+
+    bong_server_validate_real_directory "$data_dir" || return 1
+    canonical_data_dir="$(readlink -f -- "$data_dir")" || return 1
+    runtime_root="$(bong_server_runtime_dir)" || return 1
+    state_root="$runtime_root/persistence-transactions"
+    if [ ! -e "$state_root" ] && [ ! -L "$state_root" ]; then
+        (umask 077 && mkdir -- "$state_root") || return 1
+    fi
+    bong_server_validate_secure_directory "$state_root" 700 || {
+        echo "FAIL: insecure persistence transaction state root $state_root" >&2
+        return 1
+    }
+    key="$(printf '%s' "$canonical_data_dir" | sha256sum)" || return 1
+    key="${key%% *}"
+    [[ "$key" =~ ^[0-9a-f]{64}$ ]] || return 1
+    state_dir="$state_root/$key"
+    if [ ! -e "$state_dir" ] && [ ! -L "$state_dir" ]; then
+        (umask 077 && mkdir -- "$state_dir") || return 1
+    fi
+    bong_server_validate_secure_directory "$state_dir" 700 || {
+        echo "FAIL: insecure persistence transaction state directory $state_dir" >&2
+        return 1
+    }
+    printf '%s\n' "$state_dir"
+}
+
+bong_server_persistence_transaction_begin() {
+    local data_dir="${1:-}" parent lock_file marker_file temporary fd data_identity parent_identity state_dir canonical_data_dir
+    bong_server_validate_real_directory "$data_dir" || {
+        echo "FAIL: persistence data directory must be a real non-symlink directory" >&2; return 1; }
+    [ -z "${BONG_SERVER_PERSISTENCE_LOCK_FD:-}" ] || { echo "FAIL: persistence transaction is already held by this shell" >&2; return 1; }
+    parent="$(dirname -- "$data_dir")"
+    bong_server_validate_real_directory "$parent" || { echo "FAIL: persistence parent must be a real non-symlink directory" >&2; return 1; }
+    canonical_data_dir="$(readlink -f -- "$data_dir")" || return 1
+    data_identity="$(bong_server_path_identity "$data_dir")" || return 1
+    parent_identity="$(bong_server_path_identity "$parent")" || return 1
+    state_dir="$(bong_server_persistence_transaction_state_dir "$data_dir")" || return 1
+    lock_file="$state_dir/transaction.lock"
+    marker_file="$state_dir/recovery-handoff"
+    if [ ! -e "$lock_file" ] && [ ! -L "$lock_file" ]; then (umask 077 && : >> "$lock_file") || return 1; fi
+    if ! bong_server_validate_lock_file "$lock_file"; then echo "FAIL: insecure persistence transaction lock $lock_file" >&2; return 1; fi
+    exec {fd}>>"$lock_file" || return 1
+    if ! bong_server_validate_fd_secure_regular_file "$fd" || ! bong_server_fd_matches_path "$fd" "$lock_file"; then
+        exec {fd}>&-; echo "FAIL: persistence transaction lock changed while opening" >&2; return 1
+    fi
+    flock -xn "$fd" || { echo "FAIL: persistence transaction lock is held for $data_dir; refusing to interleave database stash/restore" >&2; exec {fd}>&-; return 1; }
+    if [ -e "$marker_file" ] || [ -L "$marker_file" ]; then
+        echo "FAIL: persistence recovery handoff exists at $marker_file; refusing to overwrite an unrecovered stash" >&2
+        flock -u "$fd"; exec {fd}>&-; return 1
+    fi
+    temporary="$(umask 077 && mktemp "$state_dir/.recovery-handoff.XXXXXX")" || { flock -u "$fd"; exec {fd}>&-; return 1; }
+    chmod 600 -- "$temporary" || { rm -f -- "$temporary"; flock -u "$fd"; exec {fd}>&-; return 1; }
+    if ! printf 'version=3\nstate=ACTIVE\npid=%s\ndata_dir=%s\ndata_identity=%s\nparent_identity=%s\nstate_dir=%s\nstarted=%s\n' \
+        "$$" "$canonical_data_dir" "$data_identity" "$parent_identity" "$state_dir" "$(date -Iseconds)" > "$temporary" \
+        || ! sync -f -- "$temporary" || ! mv -- "$temporary" "$marker_file" || ! sync -f -- "$state_dir"; then
+        rm -f -- "$temporary"; flock -u "$fd"; exec {fd}>&-; return 1
+    fi
+    bong_server_validate_pid_record_file "$marker_file" || { flock -u "$fd"; exec {fd}>&-; return 1; }
+    BONG_SERVER_PERSISTENCE_MARKER_IDENTITY="$(bong_server_path_identity "$marker_file")" || { flock -u "$fd"; exec {fd}>&-; return 1; }
+    BONG_SERVER_PERSISTENCE_LOCK_FD="$fd"
+    BONG_SERVER_PERSISTENCE_DATA_DIR="$data_dir"
+    BONG_SERVER_PERSISTENCE_PARENT_DIR="$parent"
+    BONG_SERVER_PERSISTENCE_STATE_DIR="$state_dir"
+    BONG_SERVER_PERSISTENCE_DATA_IDENTITY="$data_identity"
+    BONG_SERVER_PERSISTENCE_PARENT_IDENTITY="$parent_identity"
+    BONG_SERVER_PERSISTENCE_MARKER_FILE="$marker_file"
+    BONG_SERVER_PERSISTENCE_STASH_READY=0
+    BONG_SERVER_PERSISTENCE_STASH_DIR=""
+}
+
+_bong_server_persistence_transaction_write_marker() {
+    local state="${1:-}" detail_key="${2:-}" detail_value="${3:-}" temporary
+    [ -n "${BONG_SERVER_PERSISTENCE_LOCK_FD:-}" ] && [ -n "$state" ] || return 1
+    _bong_server_persistence_transaction_identity_ok || return 1
+    temporary="$(umask 077 && mktemp "${BONG_SERVER_PERSISTENCE_STATE_DIR}/.recovery-handoff.XXXXXX")" || return 1
+    chmod 600 -- "$temporary" || { rm -f -- "$temporary"; return 1; }
+    if ! printf 'version=3\nstate=%s\npid=%s\ndata_dir=%s\ndata_identity=%s\nparent_identity=%s\nstate_dir=%s\nstash_dir=%s\ntimestamp=%s\n%s=%s\n' \
+        "$state" "$$" "$(readlink -f -- "$BONG_SERVER_PERSISTENCE_DATA_DIR")" "$BONG_SERVER_PERSISTENCE_DATA_IDENTITY" "$BONG_SERVER_PERSISTENCE_PARENT_IDENTITY" \
+        "$BONG_SERVER_PERSISTENCE_STATE_DIR" "${BONG_SERVER_PERSISTENCE_STASH_DIR:-}" "$(date -Iseconds)" "$detail_key" "$detail_value" > "$temporary" \
+        || ! sync -f -- "$temporary" || ! mv -f -- "$temporary" "$BONG_SERVER_PERSISTENCE_MARKER_FILE" || ! sync -f -- "$BONG_SERVER_PERSISTENCE_STATE_DIR"; then
+        rm -f -- "$temporary"; return 1
+    fi
+    bong_server_validate_pid_record_file "$BONG_SERVER_PERSISTENCE_MARKER_FILE" || return 1
+    BONG_SERVER_PERSISTENCE_MARKER_IDENTITY="$(bong_server_path_identity "$BONG_SERVER_PERSISTENCE_MARKER_FILE")"
+}
+
+bong_server_persistence_transaction_set_stash() {
+    local stash_dir="${1:-}"
+    [ -n "$stash_dir" ] && [ -d "$stash_dir" ] || return 1
+    BONG_SERVER_PERSISTENCE_STASH_DIR="$stash_dir"
+    _bong_server_persistence_transaction_write_marker "STASHED" "stash_dir" "$stash_dir" || return 1
+    BONG_SERVER_PERSISTENCE_STASH_READY=1
+}
+
+bong_server_persistence_transaction_mark_failed() {
+    local reason="${1:-unspecified failure}"
+    _bong_server_persistence_transaction_identity_ok || return 1
+    _bong_server_persistence_transaction_write_marker "FAILED" "reason" "$reason"
+}
+
+# A preview that did not prove shutdown/port release may still own SQLite files.
+# Deliberately do not call restore here: retain a FAILED durable handoff with
+# the stash path, then release only the advisory transaction lock.
+bong_server_persistence_transaction_abort_unconfirmed_preview_stop() {
+    local data_dir="${1:-}" stash_dir="${2:-}" reason="${3:-preview server stop was not confirmed}"
+    [ -n "${BONG_SERVER_PERSISTENCE_LOCK_FD:-}" ] \
+        && [ "$BONG_SERVER_PERSISTENCE_DATA_DIR" = "$data_dir" ] \
+        && [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ] \
+        && [ "${BONG_SERVER_PERSISTENCE_STASH_DIR:-}" = "$stash_dir" ] || return 1
+    bong_server_persistence_transaction_mark_failed "$reason" || return 1
+    bong_server_persistence_transaction_release
+}
+
+bong_server_abort_unconfirmed_preview_stop() {
+    local data_dir="${1:-}" stash_dir="${2:-}" reason="${3:-preview server stop was not confirmed}"
+
+    bong_server_persistence_transaction_abort_unconfirmed_preview_stop \
+        "$data_dir" "$stash_dir" "$reason"
+}
+
+bong_server_finalize_preview_persistence_after_stop() {
+    local data_dir="${1:-}" stash_dir="${2:-}" stop_confirmed="${3:-0}"
+
+    [ -n "$data_dir" ] && [ -n "$stash_dir" ] || return 1
+    case "$stop_confirmed" in
+        1)
+            if bong_server_restore_persistence "$data_dir" "$stash_dir"; then
+                if bong_server_persistence_transaction_complete; then
+                    return 0
+                fi
+                bong_server_persistence_transaction_mark_failed "restore completed but transaction handoff cleanup failed" || true
+                bong_server_persistence_transaction_release
+                return 1
+            fi
+            bong_server_persistence_transaction_mark_failed "cleanup restore failed; inspect $stash_dir" || true
+            bong_server_persistence_transaction_release
+            return 1
+            ;;
+        0)
+            # A failed process-tree inspection is indistinguishable from an
+            # unconfirmed stop: restoring SQLite here could race a live server.
+            bong_server_abort_unconfirmed_preview_stop \
+                "$data_dir" "$stash_dir" \
+                "preview server stop was not confirmed; restore forbidden; stash retained at $stash_dir"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+bong_server_persistence_transaction_release() {
+    local fd="${BONG_SERVER_PERSISTENCE_LOCK_FD:-}"
+    [ -n "$fd" ] || return 0
+    flock -u "$fd" || true; exec {fd}>&-
+    unset BONG_SERVER_PERSISTENCE_LOCK_FD BONG_SERVER_PERSISTENCE_DATA_DIR BONG_SERVER_PERSISTENCE_PARENT_DIR BONG_SERVER_PERSISTENCE_STATE_DIR BONG_SERVER_PERSISTENCE_DATA_IDENTITY BONG_SERVER_PERSISTENCE_PARENT_IDENTITY BONG_SERVER_PERSISTENCE_MARKER_FILE BONG_SERVER_PERSISTENCE_MARKER_IDENTITY BONG_SERVER_PERSISTENCE_STASH_READY BONG_SERVER_PERSISTENCE_STASH_DIR
+}
+
+bong_server_persistence_transaction_complete() {
+    [ -n "${BONG_SERVER_PERSISTENCE_LOCK_FD:-}" ] || return 1
+    _bong_server_persistence_transaction_identity_ok || return 1
+    # A READY transaction may only complete after restore consumed its durable
+    # leaf. Any failed V3 pre/post check leaves the manifest/stash in place;
+    # never erase the marker merely because a caller attempted completion.
+    if [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ] \
+        && [ -e "${BONG_SERVER_PERSISTENCE_STASH_DIR:-}" ]; then
+        echo "FAIL: persistence stash remains after incomplete restore; refusing to clear recovery marker" >&2
+        return 1
+    fi
+    bong_server_remove_secure_file_if_identity "$BONG_SERVER_PERSISTENCE_MARKER_FILE" "$BONG_SERVER_PERSISTENCE_MARKER_IDENTITY" || return 1
+    sync -f -- "$BONG_SERVER_PERSISTENCE_STATE_DIR" || return 1
+    bong_server_persistence_transaction_release
+}
+
+# A leaf is transaction-exclusive. V3 manifest + durable stash marker are both
+# completed before the first mv. Every move validates the original snapshot.
+bong_server_stash_persistence() {
+    local data_dir="${1:-}" stash_dir="${2:-}" suffix filename source_file digest identity
+    local -a snapshot=()
+    [ -n "$data_dir" ] && [ -n "$stash_dir" ] || return 1
+    [ -n "${BONG_SERVER_PERSISTENCE_LOCK_FD:-}" ] && [ "$BONG_SERVER_PERSISTENCE_DATA_DIR" = "$data_dir" ] || {
+        echo "FAIL: persistence stash requires the active matching transaction" >&2; return 1; }
+    _bong_server_persistence_transaction_identity_ok || { echo "FAIL: persistence transaction path identity changed; refusing stash" >&2; return 1; }
+    bong_server_validate_real_directory "$data_dir" || return 1
+    mkdir -p -- "$(dirname -- "$stash_dir")" || return 1
+    if ! mkdir -- "$stash_dir"; then
+        echo "FAIL: stash directory already exists or cannot be exclusively created: $stash_dir; refusing to move persistence files" >&2; return 1
+    fi
+    for suffix in "" "-wal" "-shm"; do
+        filename="bong.db$suffix"; source_file="$data_dir/$filename"
+        if [ -e "$source_file" ] || [ -L "$source_file" ]; then
+            digest="$(_bong_server_sha256_file "$source_file")" || { echo "FAIL: persistence source is not a regular digestible file: $source_file" >&2; return 1; }
+            identity="$(_bong_server_regular_file_identity "$source_file")" || { echo "FAIL: persistence source identity cannot be pinned: $source_file" >&2; return 1; }
+            snapshot+=("$digest $identity $filename")
+        fi
+    done
+    _bong_server_persistence_preflight_stash_devices "$data_dir" "$stash_dir" "${snapshot[@]}" || return 1
+    _bong_server_publish_stash_manifest "$stash_dir" "${snapshot[@]}" || return 1
+    _bong_server_read_stash_manifest "$stash_dir/stashed-files" || { echo "FAIL: newly published V3 stash manifest did not validate; refusing moves" >&2; return 1; }
+    if [ -n "${BONG_SERVER_PERSISTENCE_LOCK_FD:-}" ]; then
+        [ "$BONG_SERVER_PERSISTENCE_DATA_DIR" = "$data_dir" ] || { echo "FAIL: transaction data directory does not match stash source" >&2; return 1; }
+        bong_server_persistence_transaction_set_stash "$stash_dir" || { echo "FAIL: cannot durably record stash path before move; refusing moves" >&2; return 1; }
+    fi
+    for entry in "${snapshot[@]}"; do
+        digest="${entry%% *}"; entry="${entry#* }"; identity="${entry%% *}"; filename="${entry#* }"; source_file="$data_dir/$filename"
+        _bong_server_file_matches_snapshot "$source_file" "$digest" "$identity" || { echo "FAIL: persistence source changed before move: $source_file" >&2; return 1; }
+        mv -- "$source_file" "$stash_dir/$filename" || return 1
+        _bong_server_file_matches_snapshot "$stash_dir/$filename" "$digest" "$identity" || { echo "FAIL: moved stash file snapshot mismatch: $filename" >&2; return 1; }
+    done
+}
+
+bong_server_restore_persistence() {
+    local data_dir="${1:-}" stash_dir="${2:-}" manifest_file suffix filename stash_file data_file expected expected_identity entry entries find_status
+    local -A source_location=() pinned_identity=() data_candidate_identity=() data_candidate_digest=()
+    [ -n "$data_dir" ] && [ -n "$stash_dir" ] || return 1
+    [ -n "${BONG_SERVER_PERSISTENCE_LOCK_FD:-}" ] && [ "$BONG_SERVER_PERSISTENCE_DATA_DIR" = "$data_dir" ] \
+        && [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ] && [ "${BONG_SERVER_PERSISTENCE_STASH_DIR:-}" = "$stash_dir" ] || {
+        echo "FAIL: persistence restore requires its active READY transaction and matching stash path" >&2; return 1; }
+    _bong_server_persistence_transaction_identity_ok || { echo "FAIL: persistence transaction path identity changed; refusing restore" >&2; return 1; }
+    [ -d "$stash_dir" ] && [ ! -L "$stash_dir" ] || return 1
+    manifest_file="$stash_dir/stashed-files"
+    _bong_server_read_stash_manifest "$manifest_file" || { echo "FAIL: stash manifest is missing, malformed, or unreadable at $manifest_file; refusing to touch $data_dir (fail closed)" >&2; return 1; }
+    entries="$(find "$stash_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null)"; find_status=$?
+    [ "$find_status" -eq 0 ] || { echo "FAIL: cannot enumerate stash directory; refusing restore" >&2; return 1; }
+    while IFS= read -r entry; do
+        [ -z "$entry" ] && continue; [ "$entry" = stashed-files ] && continue
+        _bong_server_manifest_digest_for_file "$entry" >/dev/null || { echo "FAIL: unexpected stash entry $entry; refusing restore" >&2; return 1; }
+    done <<< "$entries"
+    # Preflight every leaf before mutating any one. Pin the candidate pathname's
+    # inode as well as the immutable V3 source inode to detect swaps at mv time.
+    for suffix in "" "-wal" "-shm"; do
+        filename="bong.db$suffix"; data_file="$data_dir/$filename"; stash_file="$stash_dir/$filename"
+        if [ -e "$data_file" ] || [ -L "$data_file" ]; then
+            data_candidate_identity["$filename"]="$(_bong_server_regular_file_identity "$data_file")" || { echo "FAIL: persistence target is not a regular file: $data_file" >&2; return 1; }
+            data_candidate_digest["$filename"]="$(_bong_server_sha256_file "$data_file")" || { echo "FAIL: cannot pin persistence target digest: $data_file" >&2; return 1; }
+        fi
+        if expected="$(_bong_server_manifest_digest_for_file "$filename")"; then
+            expected_identity="$(_bong_server_manifest_identity_for_file "$filename")" || return 1
+            if [ -e "$stash_file" ] || [ -L "$stash_file" ]; then
+                _bong_server_file_matches_snapshot "$stash_file" "$expected" "$expected_identity" || { echo "FAIL: stash snapshot mismatch for $filename" >&2; return 1; }
+                source_location["$filename"]="stash"; pinned_identity["$filename"]="$expected_identity"
+            elif [ -e "$data_file" ] || [ -L "$data_file" ]; then
+                _bong_server_file_matches_snapshot "$data_file" "$expected" "$expected_identity" || { echo "FAIL: partial restore snapshot mismatch for $filename" >&2; return 1; }
+                source_location["$filename"]="data"; pinned_identity["$filename"]="$expected_identity"
+            else
+                echo "FAIL: $filename is recorded but absent from stash and data" >&2; return 1
+            fi
+        fi
+    done
+    for suffix in "" "-wal" "-shm"; do
+        filename="bong.db$suffix"; stash_file="$stash_dir/$filename"; data_file="$data_dir/$filename"
+        if expected="$(_bong_server_manifest_digest_for_file "$filename")"; then
+            expected_identity="${pinned_identity[$filename]}"
+            if [ "${source_location[$filename]}" = stash ]; then
+                _bong_server_file_matches_snapshot "$stash_file" "$expected" "$expected_identity" || { echo "FAIL: stash source changed after preflight: $filename" >&2; return 1; }
+                if [ -n "${data_candidate_identity[$filename]+x}" ]; then
+                    _bong_server_file_matches_snapshot "$data_file" "${data_candidate_digest[$filename]}" "${data_candidate_identity[$filename]}" || { echo "FAIL: persistence target changed after preflight: $filename" >&2; return 1; }
+                elif [ -e "$data_file" ] || [ -L "$data_file" ]; then
+                    echo "FAIL: persistence target appeared after preflight: $filename" >&2; return 1
+                fi
+                mv -f -- "$stash_file" "$data_file" || return 1
+                _bong_server_file_matches_snapshot "$data_file" "$expected" "$expected_identity" || { echo "FAIL: restored snapshot mismatch after move: $filename" >&2; return 1; }
+            else
+                _bong_server_file_matches_snapshot "$data_file" "$expected" "$expected_identity" || { echo "FAIL: partial restore source changed after preflight: $filename" >&2; return 1; }
+            fi
+        else
+            if [ -n "${data_candidate_identity[$filename]+x}" ]; then
+                _bong_server_file_matches_snapshot "$data_file" "${data_candidate_digest[$filename]}" "${data_candidate_identity[$filename]}" || { echo "FAIL: persistence target changed before cleanup: $data_file" >&2; return 1; }
+                rm -f -- "$data_file" || return 1
+            elif [ -e "$data_file" ] || [ -L "$data_file" ]; then
+                echo "FAIL: persistence target appeared after preflight: $data_file" >&2; return 1
+            fi
+        fi
+    done
+    rm -f -- "$manifest_file" || return 1
+    rmdir -- "$stash_dir" || { echo "FAIL: stash directory unexpectedly nonempty after validated restore" >&2; return 1; }
 }
