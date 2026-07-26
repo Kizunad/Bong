@@ -3,6 +3,8 @@ package com.bong.client.combat.juice;
 public final class CameraShakeController {
     public static final Offsets ZERO = new Offsets(0f, 0f);
     private static volatile Shake active = Shake.none();
+    /** {@link #active} 的来源（所有权标记，与 {@link #active} 成对写）。 */
+    private static volatile Source activeSource = Source.NONE;
 
     /**
      * 抖动幅度包络：
@@ -13,6 +15,23 @@ public final class CameraShakeController {
      * </ul>
      */
     public enum Envelope { DECAY, SUSTAIN, CRESCENDO }
+
+    /**
+     * 当前在播抖动的<b>来源</b>——本控制器是命中 juice 与施法 juice 共用的单通道
+     *（last-write-wins），只靠 {@link #active} 分不出「现在震的是谁的」。
+     *
+     * <p>存在理由是**定向取消**：施法震感倍率调 0 只该停掉施法 juice 自己造的抖动，不该顺手
+     * 掐掉一条正在播的命中抖动（玩家点的是「施法震感：关闭」，不是「相机别震了」）。
+     * 死亡 / 断线 / 切世界的 {@link #clear()} 仍是无差别清场——那时整块画面都该安静。
+     */
+    public enum Source {
+        /** 无在播抖动。 */
+        NONE,
+        /** 命中 / 格挡 / 击杀等战斗结算 juice（{@link #trigger} 与 {@link #triggerDirect}）。 */
+        HIT,
+        /** 施法 juice（{@code CastFovController}，走 {@link #triggerCast}）。 */
+        CAST
+    }
 
     private CameraShakeController() {
     }
@@ -53,6 +72,27 @@ public final class CameraShakeController {
         float intensity, int durationTicks, double directionX, double directionZ, boolean reverse,
         Envelope envelope, long nowMs
     ) {
+        return trigger(intensity, durationTicks, directionX, directionZ, reverse, envelope,
+            Source.HIT, nowMs);
+    }
+
+    /**
+     * plan-fpv-cast-av-v1 P3 —— 施法 juice 的抖动入口：与命中抖动共用同一 {@link #active} 单通道
+     * （last-write-wins 不变），但把来源登记成 {@link Source#CAST}，于是「施法震感倍率调 0」
+     * 能只取消自己造的抖动（{@link #clearIfOwnedBy}），不误杀在播的命中抖动。
+     */
+    public static Shake triggerCast(
+        float intensity, int durationTicks, double directionX, double directionZ,
+        Envelope envelope, long nowMs
+    ) {
+        return trigger(intensity, durationTicks, directionX, directionZ, false, envelope,
+            Source.CAST, nowMs);
+    }
+
+    private static Shake trigger(
+        float intensity, int durationTicks, double directionX, double directionZ, boolean reverse,
+        Envelope envelope, Source source, long nowMs
+    ) {
         if (intensity <= 0f || durationTicks <= 0) {
             return Shake.none();
         }
@@ -66,14 +106,23 @@ public final class CameraShakeController {
             envelope == null ? Envelope.DECAY : envelope,
             Math.max(0L, nowMs)
         );
+        // 先写来源再写抖动：读侧 activeOffsets 只看 active，所有权只被取消路径读，
+        // 二者成对更新即可（两个字段都 volatile）。
+        activeSource = source;
         active = next;
         return next;
+    }
+
+    /** 当前在播抖动的来源（{@link Source#NONE} = 无）。 */
+    public static Source activeSource() {
+        return activeSource;
     }
 
     public static Offsets activeOffsets(long nowMs) {
         Shake shake = active;
         if (shake == null || !shake.activeAt(nowMs)) {
             active = Shake.none();
+            activeSource = Source.NONE;
             return ZERO;
         }
         return offsets(shake, nowMs);
@@ -120,10 +169,28 @@ public final class CameraShakeController {
     /** 死亡 / 断线 teardown：立即清空当前抖动（含蓄力 CRESCENDO），复位到无抖动。 */
     public static void clear() {
         active = Shake.none();
+        activeSource = Source.NONE;
+    }
+
+    /**
+     * <b>定向</b>取消：只在当前在播抖动确由 {@code owner} 创建时才清空，否则原样保留。
+     *
+     * <p>共用单通道的必要保护——施法震感倍率调 0 走这条，于是它不会顺手掐掉一条无关的命中
+     * 抖动（{@link #clear()} 那种无差别清场只属于死亡 / 断线 / 切世界）。
+     *
+     * @return 是否真的清了
+     */
+    public static boolean clearIfOwnedBy(Source owner) {
+        if (owner == null || owner == Source.NONE || activeSource != owner) {
+            return false;
+        }
+        clear();
+        return true;
     }
 
     public static void resetForTests() {
         active = Shake.none();
+        activeSource = Source.NONE;
     }
 
     public record Shake(

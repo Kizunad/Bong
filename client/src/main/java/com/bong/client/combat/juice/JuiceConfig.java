@@ -1,7 +1,14 @@
 package com.bong.client.combat.juice;
 
 /**
- * plan-fpv-cast-av-v1 §P3「可及性」—— 施法 juice 强度全局倍率的 <b>client 配置持有者</b>。
+ * plan-fpv-cast-av-v1 §P3「可及性」—— 施法 juice 强度总倍率的 <b>client 配置持有者</b>。
+ *
+ * <p><b>作用域 = 施法 juice</b>（玩家看到的名字就是「施法震感 / Cast Shake」，见
+ * {@code JuiceControls.FEEDBACK_*_KEY} 与两份 lang）：「全局」指**一个开关管所有招**，不是
+ * 「管全部 juice」。命中 / 格挡 / 击杀 juice（{@link CombatJuiceSystem}）走自己的 profile
+ * 表，**不**受本倍率门控——把它们也接进来会改动既有命中手感，属另一份 plan 的交付面，需
+ * owner 拍板后另开（plan §P3 已登记）。对应地，倍率调 0 只定向取消施法自己造的相机抖动
+ *（{@link CameraShakeController#clearIfOwnedBy}），不掐在播的命中抖动。
  *
  * <p>形态对齐仓库既有 client 配置约定（{@code com.bong.client.combat.HudConfig}：静态持有者 +
  * setter + {@code resetToDefaults}）。倍率不再藏在 {@link CastFovController} 的私有静态字段里：

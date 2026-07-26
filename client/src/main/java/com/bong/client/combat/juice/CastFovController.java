@@ -52,8 +52,9 @@ import java.util.function.LongSupplier;
  * 不授予任何触发权。**服务端拒绝 / 压根没接受的施法，本地计时到点也零 juice。**
  * <ul>
  *   <li>CASTING（仅权威）：按 identity 武装 pending（该招在 {@link CastJuiceProfiles} 有 profile
- *       才武装）；同 identity 重复 CASTING 幂等，异 identity 取代旧 pending（supersession）。
- *       预测来源的 CASTING 一律不武装。</li>
+ *       才武装）；同 identity 重复 CASTING 幂等，异 identity 取代旧 pending（supersession，
+ *       <b>被取代的旧 identity 同时落 {@link Terminal#VOIDED}</b>，否则一条迟到的同身份
+ *       CASTING 能把它重新武装）。预测来源的 CASTING 一律不武装。</li>
  *   <li>COMPLETE：identity 匹配 → 触发 FOV 脉冲 + shake，并把该 identity 记成
  *       {@link Terminal#FIRED}（同 identity 重复 release / 跨 IDLE 重放都不再触发）。</li>
  *   <li>INTERRUPT：把该 identity 记成 {@link Terminal#VOIDED}，但只清**同 identity** 的
@@ -214,8 +215,11 @@ public final class CastFovController {
         if (terminals.containsKey(id)) {
             return;  // 该身份已终态（FIRED 不重放 / VOIDED 不复活），含乱序打断早到与 teardown
         }
-        // supersession：异身份的新施法取代旧 pending（该通道只留最新一次施法）
+        // supersession：异身份的新施法取代旧 pending（该通道只留最新一次施法）。
+        // **被取代的身份必须落 VOIDED**：只置 null 的话，一条迟到/重传的同身份权威 CASTING
+        // 还能把它重新武装、随后的 COMPLETE 就放出一次本该已作废的 juice。
         if (pending != null && !pending.id().equals(id)) {
+            markTerminal(pending.id(), Terminal.VOIDED);
             pending = null;
         }
         String skillId = resolveSkillId(state);
@@ -428,7 +432,8 @@ public final class CastFovController {
             }
         }
         while (animTokens.size() >= ANIM_TOKEN_CAPACITY) {
-            animTokens.removeFirst();
+            // 淘汰也是**作废**：不落 VOIDED 的话被挤掉的身份还能被迟到 CASTING 重新武装。
+            markTerminal(animTokens.removeFirst().id, Terminal.VOIDED);
         }
         animTokens.addLast(new AnimCastToken(id, juice, now));
     }
@@ -506,12 +511,15 @@ public final class CastFovController {
                 //（重复 charge、重复 release、release 之后迟到的 charge）→ 一律 no-op。
                 return;
             }
+            // **先消费再看倍率**（与 CastState 路径的 release() 同序）：倍率 0 只该抑制视觉
+            // 输出，不该把事件当成没发生过——否则关闭期间到达的 release 事件不落终态，玩家把
+            // 倍率调回来后同一条事件重放就能放出一次早已过去的 juice。
             float scale = JuiceConfig.juiceMultiplier();
-            if (scale <= 0f) {
-                return;  // juice 全局关闭（不消费令牌：关闭期间的事件视为未发生）
-            }
             if (isCharge) {
                 token.chargeFired = true;
+                if (scale <= 0f) {
+                    return;  // juice 关闭：只跳过输出，令牌已消费
+                }
                 ChargeShake charge = token.juice.charge();
                 triggerShake(charge.peakIntensity() * scale, charge.buildDurationTicks(),
                     charge.envelope(), now);
@@ -521,6 +529,9 @@ public final class CastFovController {
             // 也不再重开令牌。
             animTokens.remove(token);
             markTerminal(token.id, Terminal.FIRED);
+            if (scale <= 0f) {
+                return;  // juice 关闭：只跳过输出，令牌与终态已落定
+            }
             ReleaseBurst burst = token.juice.release();
             if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
                 pulse = new Pulse(burst.fovPeakDegrees() * scale, burst.fovDurationTicks(), now);
@@ -530,18 +541,32 @@ public final class CastFovController {
         }
     }
 
-    /** 清掉过期（或遇时钟回跳）的令牌（LOCK 内调用）：不再授权。 */
+    /**
+     * 清掉过期（或遇时钟回跳）的令牌（LOCK 内调用）。
+     *
+     * <p>过期<b>也是作废</b>：不落 VOIDED 的话，同身份的迟到/重放权威 CASTING 能重开一枚
+     * flags 全新的令牌，让一条杂散动画二次放 juice。
+     */
     private static void pruneExpiredAnimTokens(long now) {
-        animTokens.removeIf(
-            token -> now - token.armedAtMs > ANIM_TOKEN_TTL_MS || now < token.armedAtMs);
+        animTokens.removeIf(token -> {
+            if (now - token.armedAtMs > ANIM_TOKEN_TTL_MS || now < token.armedAtMs) {
+                markTerminal(token.id, Terminal.VOIDED);
+                return true;
+            }
+            return false;
+        });
     }
 
-    /** 施法 juice 的抖动通道写入（LOCK 内调用；方向固定对角，见 {@link #CAST_SHAKE_DIR_X}）。 */
+    /**
+     * 施法 juice 的抖动通道写入（LOCK 内调用；方向固定对角，见 {@link #CAST_SHAKE_DIR_X}）。
+     * 走 {@link CameraShakeController#triggerCast} 而非通用入口——共享单通道要登记来源，
+     * 否则「施法震感调 0」会连在播的命中抖动一起掐掉。
+     */
     private static void triggerShake(
         float intensity, int durationTicks, CameraShakeController.Envelope envelope, long now
     ) {
-        CameraShakeController.triggerDirect(
-            intensity, durationTicks, CAST_SHAKE_DIR_X, CAST_SHAKE_DIR_Z, false, envelope, now);
+        CameraShakeController.triggerCast(
+            intensity, durationTicks, CAST_SHAKE_DIR_X, CAST_SHAKE_DIR_Z, envelope, now);
     }
 
     /**
@@ -626,8 +651,14 @@ public final class CastFovController {
      *
      * <p>残留缺口（诚实标注）：若某次施法的权威 CASTING 在 teardown **之后**才首次到达，
      * 本地没有任何凭据把它和「旧会话」区分开（wire 无 cast id / session id），它会被当成
-     * 新施法。死亡路径上这一帧的影响也被兜住：{@link #tick()} 在死亡界面可见期间**每 tick**
-     * 都 teardown，故最多存活 ≤1 tick。
+     * 新施法。**当前不可达**，两层理由：① 服务端在 cast 起手那一刻就发 {@code cast_sync
+     * {phase:casting}}，而死亡 / 换维度 / 断线的信号必然晚于它产生，同一条有序连接上先发先到，
+     * 故「旧施法的 CASTING 晚于 teardown 到达」在生产上排不出来；② 死亡路径上还有一层兜底：
+     * {@link #tick()} 在死亡界面可见期间**每 tick** 都 teardown，故即便真出现也最多存活 ≤1 tick。
+     * 若将来 cast_sync 改走独立/乱序通道（或引入重放），这条就变成可达，届时需要生命周期
+     * generation 门——但那要求「teardown 后必须先有新的本地预测才允许武装」，而
+     * {@code CastStateStore.beginCast} 在旧 CASTING 快照未自然回 IDLE 前是 no-op，现在加会
+     * 换来一个**可达**的假阴性（死亡复活后短窗内的真实施法被静默吞掉），故不做。
      */
     public static void teardown() {
         // pulse 清空与 fire() 写入同锁，避免死亡/断线 teardown 被随后落地的 fire 复活一帧。
@@ -660,8 +691,11 @@ public final class CastFovController {
      * <p>取消是<b>不可逆</b>的：恢复倍率只影响后续 release，旧脉冲已被清空、无从复活
      *（在播 juice 的强度是 {@link #fire} 时刻烘焙的，本来也不追溯）。幂等。
      *
-     * <p>抖动是与命中 juice 共享的单通道，故关 juice 时在播的命中抖动一并停——与
-     * {@link #teardown()} 同款取舍：玩家把 juice 关了就该立刻安静。
+     * <p><b>抖动只取消自己那一条</b>（review：共享通道缺所有权）：{@link CameraShakeController}
+     * 是命中 juice 与施法 juice 共用的单通道，而这个倍率玩家看到的名字是「施法震感 /
+     * Cast Shake」——无差别 {@code clear()} 会顺手掐掉一条正在播的**命中**抖动。故走定向取消
+     * {@link CameraShakeController#clearIfOwnedBy}，只在当前在播的确是施法 juice 造的时候才停。
+     * 死亡 / 断线 / 切世界的 {@link #teardown()} 仍是无差别清场（那时整块画面都该安静）。
      */
     public static void onJuiceMultiplierChanged(float value) {
         if (value > 0f) {
@@ -670,7 +704,7 @@ public final class CastFovController {
         // 两个通道同锁清空，避免关闭瞬间被随后落地的 fire 复活一帧、或留下孤儿抖动。
         synchronized (LOCK) {
             pulse = null;
-            CameraShakeController.clear();
+            CameraShakeController.clearIfOwnedBy(CameraShakeController.Source.CAST);
         }
     }
 

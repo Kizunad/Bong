@@ -1375,6 +1375,9 @@ class CastFovControllerTest {
         assertEquals(CastFovController.ANIM_TOKEN_CAPACITY,
             CastFovController.animTokenCountForTest(),
             "在飞令牌数必须钳在 ANIM_TOKEN_CAPACITY");
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "被容量淘汰的最早身份必须落 VOIDED，否则迟到 CASTING 能把它重新武装");
 
         releaseAnim();
         assertEquals(CastFovController.ANIM_TOKEN_CAPACITY - 1,
@@ -1386,12 +1389,142 @@ class CastFovControllerTest {
         assertBaseline("脉冲 decay 完毕");
     }
 
+    // ---- supersession / TTL 过期都必须落 VOIDED（review major：只清对象挡不住重新武装）----
 
+    @Test
+    void supersededPendingIdentityIsVoidedSoALateCastingCannotRearmIt() {
+        predictAndAccept(HEAVY_SLOT, START);                       // A 武装
+        serverSync("casting", HEAVY_SLOT, START + 5000, "none");   // B 取代 A（supersession）
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(HEAVY_SLOT, START),
+            "被取代的身份必须落 VOIDED，不能只把 pending 置 null");
 
+        serverSync("casting", HEAVY_SLOT, START, "none");           // A 的迟到 / 重传 CASTING
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("已被取代的 A 不得靠迟到 CASTING 复活并放出 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
 
+        // 反证：supersession 只作废旧身份，在飞的 B 不受牵连。
+        serverSync("complete", HEAVY_SLOT, START + 5000, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "B 的 release 照常触发");
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("B 的脉冲 decay 完毕");
+    }
 
+    @Test
+    void animTokenTtlExpiryVoidsTheIdentitySoAReplayedCastingCannotRearmIt() {
+        acceptGateCast(START);
+        advanceMs(CastFovController.ANIM_TOKEN_TTL_MS + 1);
+        releaseAnim();   // 过期令牌被惰性清掉（本身不触发）
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "TTL 过期 = 作废，不只是把令牌对象丢掉");
 
+        acceptGateCast(START);   // 同身份权威 CASTING 重放
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("过期作废的身份不得靠重放 CASTING 重开令牌再放一次 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+    }
 
+    // ---- 倍率 0 只抑制输出，不放过一次性消费（review major：恢复倍率后旧事件诈尸）----
+
+    @Test
+    void multiplierZeroStillConsumesTheAnimReleaseSoAReplayCannotFireLater() {
+        acceptGateCast(START);
+        JuiceConfig.setJuiceMultiplier(0.0f);
+        releaseAnim();   // 关闭档收到 release：该抑制的是输出，不是「当它没发生」
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "关闭期间的 release 仍要落 FIRED（与 CastState 路径「先消费 pending 再由 fire 抑制」同序）");
+
+        JuiceConfig.setJuiceMultiplier(1.0f);
+        releaseAnim();   // 同一条事件重传
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("恢复倍率后重放同一条 release 不得放出一次早已过去的 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+    }
+
+    @Test
+    void multiplierZeroStillConsumesTheAnimChargeSoARestoreDoesNotReplayIt() {
+        acceptGateCast(START);
+        JuiceConfig.setJuiceMultiplier(0.0f);
+        chargeAnim();    // 关闭档的蓄力动画
+        JuiceConfig.setJuiceMultiplier(1.0f);
+        chargeAnim();    // 同一条事件重传
+        advanceMs(20 * 50);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "蓄力段已在关闭期间被消费 → 恢复倍率后重放不得补一段渐强震动");
+        assertBaseline("FOV 同样保持基准");
+
+        // 反证：一次性消费是**分段**的，同一次施法的 release 仍照常触发。
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6, "charge 段被吃掉不影响 release 段");
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("脉冲 decay 完毕");
+    }
+
+    // ---- 共享 shake 通道的所有权（review major：关施法震感误清命中抖动）----
+
+    /** 命中 juice 的抖动入口（{@code CombatJuiceSystem} 走的通用重载，来源 = HIT）。 */
+    private void hitShake() {
+        CameraShakeController.triggerDirect(1.0f, 20, 1.0, 0.0, false, now[0]);
+    }
+
+    @Test
+    void turningCastShakeOffDoesNotCancelAnUnrelatedHitShake() {
+        // 玩家点的是「施法震感：关闭 / Cast Shake: Off」，不是「相机别震了」——共享单通道
+        // 上无差别 clear() 会顺手掐掉一条正在播的命中抖动。
+        hitShake();
+        assertEquals(CameraShakeController.Source.HIT, CameraShakeController.activeSource(),
+            "前提校验：在播的是命中抖动");
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "命中抖动进行中");
+
+        JuiceConfig.setJuiceMultiplier(0.0f);
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "关施法震感不得掐掉在播的命中抖动（共享通道要认所有权）");
+
+        // 反证：在播的确是**施法** juice 时，倍率调 0 照常立即停（plan §P3「进行中调 0 立即复位」）。
+        JuiceConfig.setJuiceMultiplier(1.0f);
+        acceptGateCast(START);
+        releaseAnim();
+        assertEquals(CameraShakeController.Source.CAST, CameraShakeController.activeSource(),
+            "前提校验：现在在播的是施法抖动");
+        JuiceConfig.setJuiceMultiplier(0.0f);
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "施法自己造的抖动照常被取消");
+        assertBaseline("FOV 同样立即复位");
+    }
+
+    @Test
+    void castMultiplierDoesNotGateHitJuiceWhichKeepsItsOwnStrength() {
+        // 作用域声明（plan §P3）：这个倍率只管**施法** juice。命中 / 格挡 / 击杀 juice 走自己
+        // 的 profile 表，关 0 之后照常按原强度触发——把它们也接进来会改既有命中手感，属另一
+        // 份 plan 的交付面，需 owner 拍板（登记在 plan §P3）。这条锁的是「当前语义」，不是
+        // 「理想语义」：真要改成全局开关，本用例必须先被有意识地改掉。
+        JuiceConfig.setJuiceMultiplier(0.0f);
+        hitShake();
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "施法震感关 0 不门控命中抖动（作用域是施法 juice，不是全部 juice）");
+    }
+
+    @Test
+    void deathTeardownStillSilencesEvenAnUnrelatedHitShake() {
+        // 与上面的定向取消相反：死亡 / 断线 / 切世界是无差别清场——玩家已死不该继续震屏。
+        hitShake();
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "命中抖动进行中");
+
+        CastFovController.teardown();
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "teardown 是无差别清场，命中抖动同样停");
+        assertEquals(CameraShakeController.Source.NONE, CameraShakeController.activeSource(),
+            "清场后来源回 NONE");
+    }
 
     @Test
     void newGateCastSupersedesOldTokenAndItsFiredFlags() {
