@@ -22,7 +22,8 @@ import java.util.Set;
  *   <tr><td>anqi.echo_fractal</td><td>弱 / 12t≈0.6s</td><td>—</td></tr>
  * </table>
  *
- * <p><b>⚠️ 服务端权威 CASTING 缺口（本表 4 招里 3 招当前拿不到 juice）</b>：
+ * <p><b>🚧 服务端权威 CASTING 缺口 —— 本表 4 招里 3 招在生产中拿不到 juice，这是 P3 的
+ * 未完成欠账（阻塞项），不是「已知限制」</b>（plan §P3「未完成欠账」节，P3 状态为 ⏳）：
  * {@link CastFovController} 按 plan §P3 门控硬约束只认服务端权威 {@code cast_sync{phase:casting}}
  * 作为 accepted 凭据（本地预测不算）。而服务端 {@code push_skill_cast_started_sync}
  * （{@code server/src/network/client_request_handler.rs}）在实体上没有 {@code Casting} 组件时
@@ -36,8 +37,11 @@ import java.util.Set;
  * 只有 {@code zhenmai.sever_chain}（{@code zhenmai_v2::insert_casting_snapshot}）与走动画事件
  * 路径的 {@code sword_path.heaven_gate}（{@code sword_path::skill_register::insert_casting}）
  * 会下发。本表条目**故意保留**：参数是 plan §P3 定稿，服务端补发权威 CASTING（或把这些瞬发招
- * 也接到动画事件驱动）后即刻生效——**那是服务端/跨端改动，不在本纯 client PR 范围**。
- * 不为了让它们「看起来能用」而放宽 accepted 门控。
+ * 也接到动画事件驱动）后即刻生效——**那是服务端/跨端改动，不在本纯 client PR 范围**，两条候选
+ * 路线待 plan owner 拍板（plan §P3「未完成欠账」列了各自代价与验收判据）。在链路补齐前这三条
+ * 是**生产不可达的死注册项**，本文件下方针对它们的测试只证明「客户端能正确消费一条服务端当前
+ * 不会生产的报文」，锁不住跨端真实契约。不为了让它们「看起来能用」而放宽 accepted 门控——那是
+ * 回退掉二轮修掉的 bug。
  *
  * <p><b>heaven_gate 例外</b>：{@code sword_path.heaven_gate} 的 cast 条时长（cast_ticks=80=4s）
  * 与真实引导窗（到 140t=7s 才 emit release）错开 3s，走 CastState 驱动会让 juice 在举剑蓄力

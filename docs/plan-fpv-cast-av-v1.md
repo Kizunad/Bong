@@ -35,7 +35,7 @@
 | P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
 | P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
 | P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 3/3 定稿：双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂**逐 tick** IK 合握，加密防插值脱手），关键帧残差 ≤0.55、中间帧最差 2.43 模型单位，t0=t20 收势闭合。剩余招式 FPV 变体待续 |
-| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ✅ 2026-07-26（纯 client，零 wire 变更；PR #1249）：`CastJuiceProfiles` 4 重型招注册表 + heaven_gate 两段走 `CastFovController.onAnimPlayed` 动画事件驱动（**授权仍是权威 CASTING 武装的 `AnimCastToken`**，动画只定触发时刻）+ `CastFovController` 生命周期状态机（**accepted 只认 `CastStateStore.Origin.SERVER_AUTHORITATIVE`**，本地预测降为候选；identity 门控 arming/按 identity 有界终态记录 `Terminal{FIRED,VOIDED}`/IDLE 不清场/死亡·断线·**切世界** teardown）+ `JuiceConfig` 配置持有者 & `JuiceControls` keybind 可调入口（默认 1.0，0=关闭且进行中调 0 双通道立即取消；动作栏回显走 `Text.translatable`）+ `MixinGameRenderer` 加法 FOV 合成；`CastFovControllerTest` 64 + `JuiceConfigTest` 11 + `JuiceControlsTest` 12。**三条 amendment 见下**（参数保留真机值 / 配置持久化不在范围 / P2 动画变更已 revert）；**遗留**：服务端权威 CASTING 缺口（3 招暂无 juice）+ 倍率跨会话文件持久化 |
+| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⏳ 基础设施已落（纯 client，零 wire 变更；PR #1249）：`CastJuiceProfiles` 4 重型招注册表 + heaven_gate 两段走 `CastFovController.onAnimPlayed` 动画事件驱动（**授权仍是权威 CASTING 武装的 `AnimCastToken`**，动画只定触发时刻；令牌为按到达序的有界队列，连续同招施法不串用）+ `CastFovController` 生命周期状态机（**accepted 只认 `CastStateStore.Origin.SERVER_AUTHORITATIVE`**，本地预测降为候选；identity 门控 arming/按 identity 有界终态记录 `Terminal{FIRED,VOIDED}`/supersession·TTL·容量淘汰均落 VOIDED/IDLE 不清场/死亡·断线·**切世界** teardown）+ `JuiceConfig` 配置持有者 & `JuiceControls` keybind 可调入口（默认 1.0，0=关闭且进行中调 0 双通道立即取消；动作栏回显走 `Text.translatable`）+ `MixinGameRenderer` 加法 FOV 合成；`CastFovControllerTest` 74 + `JuiceConfigTest` 11 + `JuiceControlsTest` 12。**三条 amendment 见下**（参数保留真机值 / 配置持久化不在范围 / P2 动画变更已 revert）。**阶段未完成——阻塞项见「§P3 未完成欠账」**：参数表 5 个 release 目标里 baomai/woliu/anqi 三招在生产中拿不到权威 CASTING，注册项不可达，P3 的主交付（重型招真实释放时有 shake/FOV）只兑现了 2 招 |
 | P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ✅ 2026-07-24（纯资产 + 管线，8 条 CC0 真 `.ogg` 落地；**9 条 server recipe 主层/前兆层换 `bong:` 事件**——8 招 signature + heaven_gate charge 前兆，heaven_gate release（`sword_manifest_strike`）+ charge（专属 `heaven_gate_charge`）均在 server 侧；resourcepack 纳入 `bong/sounds` + `bong/sounds.json` + sha1 同步；跨端契约测试 server 3 + client 12（heaven_gate signature pin 移到 server 侧后删了 client 对应用例），含**运行时消费 pin** 从生产映射取 recipe id + 经真实 registry 查找） |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |
 
@@ -109,7 +109,10 @@
 （cast_ticks=80=4s）与真实引导窗（`HeavenGateChanneling` 到 `HEAVEN_GATE_AOE_END=140`=7s 才 emit
 release）错开 3s，走 CastState 会在举剑蓄力中途触发而非劈下那一刻。**门控硬约束不打折**：第二条
 路径的授权仍是权威 CASTING 武装的 `AnimCastToken`（绑 cast identity，charge/release 各自一次性
-消费，reject/INTERRUPT/teardown/异身份 supersession/TTL 15s 过期均作废），动画事件只决定触发时刻。
+消费，reject/INTERRUPT/teardown/TTL 15s 过期/容量淘汰均作废并落 `VOIDED`），动画事件只决定触发
+时刻。**令牌是按到达序的有界队列**（`CastFovController.animTokens`，上限 `ANIM_TOKEN_CAPACITY=4`）
+而非单枚——单枚会让「新施法顶掉旧令牌」后，前一次施法的迟到 release 动画消费掉后一次的令牌
+（后一次真正劈下时静默）；归属判据与残余局限见上方「📌 P3 已登记但不阻塞的边界」首条。
 
 ### §P3 交付物 amendment（2026-07-26，用户拍板）
 
@@ -150,16 +153,21 @@ release）错开 3s，走 CastState 会在举剑蓄力中途触发而非劈下�
   - teardown：断线、切世界、玩家死亡时立即复位基准并清 pending 状态（并把在飞身份整批记 VOIDED，防迟到的旧 CASTING 重新武装）。**切世界**走 `ClientEntityEvents.ENTITY_UNLOAD` 上的本地玩家实体卸载——跨维度/换服时 vanilla 不重建 `ClientPlayNetworkHandler`，`ClientPlayConnectionEvents.DISCONNECT` 不触发，而 Fabric 在 `onPlayerRespawn`/`onGameJoin`/`clearWorld` 三处对旧世界全量 emit ENTITY_UNLOAD（1.20.1 无 `ClientWorldEvents`，这是唯一现成钩子）。
 - 可及性：juice 强度全局倍率进 client 配置（0 = 关闭），默认 1.0；**进行中把倍率调 0 立即复位**，不是只影响后续脉冲。
   - **落地**（PR #1249）：`JuiceConfig`（配置持有者，默认 1.0、钳位 NaN/负→0、上限 2.0、档位表 `{0, 0.5, 1.0, 1.5}`）+ `JuiceControls`（keybind `key.bong-client.juice_multiplier_cycle`，默认不绑键随玩家自绑，动作栏回显新档位走 `Text.translatable` + en_us/zh_cn 双份 lang；GUI 打开/无玩家时**排空并丢弃**按键队列，不攒着关界面后补触发；`BongClient` 接线）。写配置**直调** `CastFovController.onJuiceMultiplierChanged`（编译期保证不脱钩，不用可漏注册的 listener）。
-  - 「立即复位」= **两个通道都真停**：清 FOV 脉冲对象 + `CameraShakeController.clear()`，不是把 FOV 读数乘 0 遮起来（那样 shake 停不下来、脉冲状态还在、倍率调回来会诈尸）。倍率在 `fire`/`onAnimPlayed` 触发时刻烘焙进脉冲峰值与 shake 强度，故恢复倍率只影响**后续** release。
+  - 「立即复位」= **两个通道都真停**：清 FOV 脉冲对象 + `CameraShakeController.clearIfOwnedBy(Source.CAST)`，不是把 FOV 读数乘 0 遮起来（那样 shake 停不下来、脉冲状态还在、倍率调回来会诈尸）。抖动是与命中 juice 共享的单通道，故取消是**定向**的（只停施法自己造的那条，作用域理由见「📌 已登记但不阻塞的边界」第三条）；死亡/断线/切世界的 `teardown` 仍是无差别 `clear()`。倍率在 `fire`/`onAnimPlayed` 触发时刻烘焙进脉冲峰值与 shake 强度，故恢复倍率只影响**后续** release。
+  - **关闭档不放过一次性消费**：倍率 0 时动画事件仍先落 `chargeFired` / 出队 + `FIRED` 终态，再跳过视觉输出——与 CastState 路径 `release()` 的「先消费 pending，再由 `fire` 抑制输出」同序。否则关闭期间到达的 release 事件不落终态，恢复倍率后同一条事件重传即可放出一次早已过去的 juice。
   - **⚠️ 遗留：跨会话文件持久化未交付**——已由上方「§P3 交付物 amendment」正式收窄出本 plan 范围（owner 决策，非遗漏）。
-- 测试（饱和覆盖状态机，**从真实入口驱动，不直接调 controller 方法**）：参数表**测试侧字面量**逐招逐字段 pin（含注册集合精确相等、三档常量、动画段两组参数与包络）+ 状态转换全路径——正常 release 完整脉冲后自然回基准、**仅本地预测（缺权威 CASTING）零 juice**、server 拒绝不触发、晚到打断作废 pending juice、回执乱序（打断先于 started 到达 / `INTERRUPT(A)→INTERRUPT(B)→CASTING(A)` 不复活 / 迟到 `IDLE(A)` 不杀 B / 同身份跨 IDLE 重放只触发一次）、同 cast identity 重复 release 幂等、连续施法（前一脉冲 decay 中开新 cast）、重叠触发合成、倍率 0 进行中立即复位、死亡/切世界/断线复位 + teardown 后旧身份不可重新武装、动画事件路径的令牌门（无 accepted 零 juice / 重复 charge·release 各一次 / 取消·teardown 后迟到动画不触发 / TTL 两侧边界）、真实 `VfxEventRouter` 路由接线——每条路径末尾断言 FOV == 基准值。
+- 测试（饱和覆盖状态机，**从真实入口驱动，不直接调 controller 方法**）：参数表**测试侧字面量**逐招逐字段 pin（含注册集合精确相等、三档常量、动画段两组参数与包络）+ 状态转换全路径——正常 release 完整脉冲后自然回基准、**仅本地预测（缺权威 CASTING）零 juice**、server 拒绝不触发、晚到打断作废 pending juice、回执乱序（打断先于 started 到达 / `INTERRUPT(A)→INTERRUPT(B)→CASTING(A)` 不复活 / 迟到 `IDLE(A)` 不杀 B / 同身份跨 IDLE 重放只触发一次）、同 cast identity 重复 release 幂等、**supersession / TTL 过期 / 容量淘汰后旧身份落 VOIDED 且迟到 CASTING 不得复活**、连续施法（前一脉冲 decay 中开新 cast）、重叠触发合成、倍率 0 进行中立即复位、**倍率 0 期间的动画事件仍被一次性消费（恢复后重放不诈尸，charge/release 各一条）**、死亡/切世界/断线复位 + teardown 后旧身份不可重新武装、动画事件路径的令牌门（无 accepted 零 juice / 重复 charge·release 各一次 / 取消·teardown 后迟到动画不触发 / TTL 两侧边界 / **连续同招施法各拿各的令牌不串用** / **release 动画条数不得超过 accepted 施法数** / **队列有界且消费即出队**）、**共享 shake 通道所有权**（关施法震感不误清命中抖动 / teardown 无差别清场 / 命中 juice 不受本倍率门控）、真实 `VfxEventRouter` 路由接线——每条路径末尾断言 FOV == 基准值。
 
-### ⚠️ P3 遗留：服务端权威 CASTING 缺口（3 招暂无 juice）
+### 🚧 P3 未完成欠账（阻塞项）：三招无生产可达的权威 CASTING
 
-二轮返工把 accepted 门控收紧到「只认服务端权威 CASTING」后，实地核查服务端发现：
-`push_skill_cast_started_sync`（`server/src/network/client_request_handler.rs`）在实体上没有
-`Casting` 组件时直接 early-return，而下列 resolver **全程不插 `Casting`**（属瞬发招，resolver 内
-一次结算完，没有引导窗），故服务端**从不**为它们下发权威 `cast_sync{phase:casting}`：
+> **这是阻塞 P3 完成的欠账，不是「已知限制」。** P3 的主交付是「参数表里的重型招在**真实
+> 释放那一刻**拿到 shake/FOV」；参数表 5 个 release 目标中当前只有 2 个在生产里能拿到，故
+> 阶段状态保持 ⏳。三轮 review 四个 reviewer 一致以 blocker 提出，判断成立。
+
+**现状（代码实地核查，非推断）**：二轮返工把 accepted 门控收紧到「只认服务端权威 CASTING」
+后，实地核查服务端发现 `push_skill_cast_started_sync`（`server/src/network/client_request_handler.rs`）
+在实体上没有 `Casting` 组件时直接 early-return，而下列 resolver **全程不插 `Casting`**（属瞬发招，
+resolver 内一次结算完，没有引导窗），故服务端**从不**为它们下发权威 `cast_sync{phase:casting}`：
 
 | 招式 | resolver | 证据 |
 |---|---|---|
@@ -169,12 +177,58 @@ release）错开 3s，走 CastState 会在举剑蓄力中途触发而非劈下�
 
 只有 `zhenmai.sever_chain`（`combat::zhenmai_v2::insert_casting_snapshot`）与走动画事件路径的
 `sword_path.heaven_gate`（`sword_path::skill_register::insert_casting`，经 `apply_cast_costs`）会下发。
+即：`CastJuiceProfiles` 的 4 条注册项里 3 条是**生产不可达的死注册项**，`CastFovControllerTest`
+里 baomai 那组用例锁的是「客户端能正确消费一条服务端当前不会生产的报文」，锁不住跨端真实契约。
 
-**处置（本 PR 不放宽门控）**：`CastJuiceProfiles` 条目故意保留（参数是 plan 定稿，服务端补发权威
-CASTING 后即刻生效），并在类文档诚实标注。补发属**服务端/跨端改动**，不在本纯 client PR 范围。
-两条候选后续路线，需 owner 拍板：
-1. 服务端为这些瞬发招补发 `cast_sync{phase:casting}` + `{phase:complete}`（改动最小，但要确认「瞬发招要不要 cast 条」这一 gameplay 语义）；
-2. 把这三招也迁到动画事件驱动路径（它们各自都有服务端 emit 的签名动画，`emit_skill_av` 是同样权威的「服务端已执行」信号），代价是手感时序要重新真机调。
+**还要落什么（P3 完成的必要条件）**：为这三招接通生产可达的权威触发链，并补**从真实生产
+映射/emit 路径到客户端消费**的跨端契约测试（不是手工构造 casting JSON）。两条候选路线互斥，
+**需 owner 拍板，实施方不自选**：
+
+1. **服务端为瞬发招补发生命周期回执**：`cast_sync{phase:casting}` + `{phase:complete}`。改动最小，
+   但要先确认「瞬发招要不要 cast 条」这一 gameplay 语义——补发会让这三招在 HUD 上出现施法条。
+2. **迁到动画事件驱动路径**（heaven_gate 现走的那条）：三招各自都有服务端 emit 的签名动画，
+   `emit_skill_av` 是同样权威的「服务端已执行」信号。代价是手感时序要重新真机调；另需注意
+   本路径的令牌归属靠**到达序**（见下「动画事件与 cast identity」条），瞬发招连发时在飞令牌
+   会明显多于 heaven_gate，迁移时要一并复核该假设。
+
+**验收怎么算（三条全绿才算 P3 完成）**：
+- 五招（含 heaven_gate 两段）逐招有一条**生产链路**测试：从服务端真实 resolver / 映射函数
+  产出的信号出发（同 P4 的「运行时消费 pin」做法：recipe id 一律从生产映射取，不在测试里另抄
+  一份），到客户端 `CastFovController` 的 juice 产出，中途不手工构造 wire 报文；
+- `CastJuiceProfiles.skillIds()` 的注册集合与「生产可达集合」精确相等（有死注册项即撞红）；
+- 真机回归：五招各自释放瞬间可感（P5 的 juice 回归条目）。
+
+**本 PR 的处置**：不放宽 accepted 门控去凑「看起来能用」——那是回退掉二轮修掉的 bug。
+`CastJuiceProfiles` 条目保留（参数是 plan 定稿，链路补齐后即刻生效）并在类文档诚实标注，
+本 PR 交付的是**正确性修复 + 缺口如实登记**，P3 保持 ⏳。补链属**服务端/跨端改动**，不在本
+纯 client PR 范围。
+
+### 📌 P3 已登记但**不阻塞**的边界（三轮 review 逐条回应）
+
+以下三条经复核判定为「当前不可达 / 超出本阶段交付面」，已在代码注释与测试里锁住现状语义，
+登记在此以免下一轮 review 当成未回应：
+
+- **动画事件与 cast identity**：`VfxEventPayloadV1::PlayAnim` 只有 `target_player` + `anim_id`，
+  wire 上**没有** cast id/nonce。本 PR 不造假身份，改为按**到达序**归属——`cast_sync` 与
+  `vfx_event` 同走一条 TCP 连接、客户端侧又都经 `BongNetworkHandler` 的 `client.execute` marshal
+  到同一线程队列，故「第 N 条 release 动画」对应「第 N 枚在飞令牌」（`CastFovController.animTokens`
+  有界队列）。**授权强度不打折**：N 条 release 动画最多消费 N 枚已 accepted 的令牌。残余局限：
+  某次施法既不发 release 动画也不发 INTERRUPT/teardown 而静默消失时，队首滞留到 TTL，期间下一
+  次的 release 会记到滞留那枚身份上——触发时刻与画面仍对齐、次数仍不超发，只是终态归属错位。
+  要彻底闭合需在 `PlayAnim` 上加 cast identity 字段（server + schema + client 三端同步），属跨端
+  改动，与上方阻塞项的路线 2 一起拍板更划算。
+- **teardown 后首次迟到的旧 CASTING**：当前不可达——服务端在 cast 起手那一刻就发
+  `cast_sync{phase:casting}`，而死亡 / 换维度 / 断线的信号必然晚于它产生，同一条有序连接上先发
+  先到；死亡路径另有 `CastFovController.tick()` 每 tick 重复 teardown 兜底。**不加**生命周期
+  generation 门：`CastStateStore.beginCast` 在旧 CASTING 快照未自然回 IDLE 前是 no-op，加了会换来
+  一个**可达**的假阴性（死亡复活后短窗内的真实施法被静默吞掉），净负。论证写在 `teardown()` 注释。
+- **倍率的作用域 = 施法 juice**：玩家看到的名字就是「施法震感 / Cast Shake」（`en_us`/`zh_cn`
+  两份 lang 原文），「全局」指**一个开关管所有招**，不是「管全部 juice」。命中 / 格挡 / 击杀
+  juice（`CombatJuiceSystem`）走自己的 profile 表，不受本倍率门控；对应地倍率调 0 只**定向**取消
+  施法自己造的抖动（`CameraShakeController.clearIfOwnedBy(Source.CAST)`），不掐在播的命中抖动。
+  要升级成真·全局 juice 开关须同步改命中手感 + UI 命名，属另一份 plan 的交付面，**需 owner 拍板**；
+  现状已由 `castMultiplierDoesNotGateHitJuiceWhichKeepsItsOwnStrength` 锁成机器判据，改语义时该
+  用例必须被有意识地改掉。
 
 ## P4 — 签名音效资产化
 
