@@ -37,8 +37,8 @@ use std::marker::PhantomData;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned, Entity, Position,
-    Query, Res, ResMut, Resource, Update, With, Without,
+    bevy_ecs, App, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned, Entity,
+    Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
@@ -47,9 +47,6 @@ use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
-use crate::npc::navigator::{
-    is_safe_ground_landing_at, scan_ground_landing_from_chunk, GroundLandingScan,
-};
 use crate::npc::spawn::PoissonSpawnSampler;
 use crate::npc::spawn_rat::{spawn_rat_npc_at, RatBlackboard};
 use crate::qi_physics::{QiAccountId, WorldQiAccount};
@@ -438,6 +435,171 @@ pub fn should_recycle_ambient(nearest_player_planar_dist: f64) -> bool {
 // ---------------------------------------------------------------------------
 // 距离环采样 —— 复用 PoissonSpawnSampler 的自适应间距参数，环带范围为自研逻辑
 // ---------------------------------------------------------------------------
+
+/// Ambient-only outcome of scanning a loaded runtime column for a landing.
+///
+/// `Unsafe` is deliberately narrow: a standable support with liquid in its feet
+/// or head cell is authoritative runtime data that a stale raster must not
+/// override. Other columns without a safe support remain `Miss` so the ambient
+/// resolver may use its explicit fallback path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroundLandingScan {
+    Safe(i32),
+    Unsafe,
+    Miss,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroundLandingCheck {
+    Safe,
+    LiquidObstructed,
+    Miss,
+}
+
+/// Scan the standard ambient runtime window for the topmost safe footing.
+fn scan_ground_landing_from_chunk(
+    wx: i32,
+    wz: i32,
+    ref_y: i32,
+    layer: Option<&ChunkLayer>,
+) -> GroundLandingScan {
+    scan_ground_landing_from_chunk_range(wx, wz, ref_y - 16, ref_y + 4, layer)
+}
+
+fn scan_ground_landing_from_chunk_range(
+    wx: i32,
+    wz: i32,
+    bottom: i32,
+    top: i32,
+    layer: Option<&ChunkLayer>,
+) -> GroundLandingScan {
+    let Some(layer) = layer else {
+        return GroundLandingScan::Miss;
+    };
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+
+    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
+    if layer.chunk(chunk_pos).is_none() {
+        return GroundLandingScan::Miss;
+    }
+
+    let scan_top = top.min(max_y);
+    let scan_bottom = bottom.max(min_y);
+    if scan_bottom > scan_top {
+        return GroundLandingScan::Miss;
+    }
+
+    let mut liquid_obstructed = false;
+    for ground_y in (scan_bottom..=scan_top).rev() {
+        match classify_ground_landing_at(wx, wz, ground_y, layer) {
+            GroundLandingCheck::Safe => return GroundLandingScan::Safe(ground_y),
+            GroundLandingCheck::LiquidObstructed => liquid_obstructed = true,
+            GroundLandingCheck::Miss => {}
+        }
+    }
+
+    if liquid_obstructed {
+        GroundLandingScan::Unsafe
+    } else {
+        GroundLandingScan::Miss
+    }
+}
+
+/// Whether `ground_y` is a safe ambient landing in a loaded layer.
+///
+/// Support must block motion and be neither liquid, passthrough, nor leaves.
+/// Feet and head must both be readable, clear, non-liquid, and non-leaves.
+fn is_safe_ground_landing_at(wx: i32, wz: i32, ground_y: i32, layer: &ChunkLayer) -> bool {
+    classify_ground_landing_at(wx, wz, ground_y, layer) == GroundLandingCheck::Safe
+}
+
+fn classify_ground_landing_at(
+    wx: i32,
+    wz: i32,
+    ground_y: i32,
+    layer: &ChunkLayer,
+) -> GroundLandingCheck {
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
+    let Some(chunk) = layer.chunk(chunk_pos) else {
+        return GroundLandingCheck::Miss;
+    };
+    let local_x = wx.rem_euclid(16) as u32;
+    let local_z = wz.rem_euclid(16) as u32;
+    let block_at = |world_y: i32| {
+        (min_y..=max_y)
+            .contains(&world_y)
+            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
+    };
+    let (Some(support), Some(feet), Some(head)) = (
+        block_at(ground_y),
+        block_at(ground_y + 1),
+        block_at(ground_y + 2),
+    ) else {
+        return GroundLandingCheck::Miss;
+    };
+
+    if !is_strict_ground_support(support) {
+        return GroundLandingCheck::Miss;
+    }
+    if feet.is_liquid() || head.is_liquid() {
+        return GroundLandingCheck::LiquidObstructed;
+    }
+    if is_clear_for_ground(feet) && is_clear_for_ground(head) {
+        GroundLandingCheck::Safe
+    } else {
+        GroundLandingCheck::Miss
+    }
+}
+
+fn is_strict_ground_support(block: valence::prelude::BlockState) -> bool {
+    block.blocks_motion()
+        && !block.is_liquid()
+        && !is_ambient_passthrough_block(block)
+        && !is_ambient_leaf_block(block)
+}
+
+fn is_clear_for_ground(block: valence::prelude::BlockState) -> bool {
+    !block.blocks_motion() && !block.is_liquid() && !is_ambient_leaf_block(block)
+}
+
+// These explicit block sets intentionally mirror Navigator's legacy classifiers,
+// but remain private because this is an ambient admission contract, not navigation.
+fn is_ambient_passthrough_block(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::BlockState;
+
+    block == BlockState::GRASS
+        || block == BlockState::TALL_GRASS
+        || block == BlockState::FERN
+        || block == BlockState::LARGE_FERN
+        || block == BlockState::POPPY
+        || block == BlockState::DANDELION
+        || block == BlockState::DEAD_BUSH
+        || block == BlockState::LILY_PAD
+        || block == BlockState::SNOW
+        || block == BlockState::VINE
+        || block == BlockState::TORCH
+        || block == BlockState::WALL_TORCH
+        || block == BlockState::RAIL
+        || block == BlockState::REDSTONE_WIRE
+}
+
+fn is_ambient_leaf_block(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::BlockState;
+
+    block == BlockState::OAK_LEAVES
+        || block == BlockState::SPRUCE_LEAVES
+        || block == BlockState::BIRCH_LEAVES
+        || block == BlockState::JUNGLE_LEAVES
+        || block == BlockState::ACACIA_LEAVES
+        || block == BlockState::DARK_OAK_LEAVES
+        || block == BlockState::AZALEA_LEAVES
+        || block == BlockState::FLOWERING_AZALEA_LEAVES
+        || block == BlockState::CHERRY_LEAVES
+        || block == BlockState::MANGROVE_LEAVES
+}
 
 /// Result of consulting the live runtime column for an ambient spawn.
 ///
@@ -1137,6 +1299,113 @@ mod tests {
             }
         }
         (app, layer_entity)
+    }
+
+    #[test]
+    fn strict_ambient_landing_classifier_enforces_support_and_clearance_contract() {
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        for (case, extra_blocks, expected_safe) in [
+            ("solid support", vec![], true),
+            ("passthrough support", vec![(66, BlockState::GRASS)], false),
+            ("leaf support", vec![(66, BlockState::OAK_LEAVES)], false),
+            ("liquid support", vec![(66, water_level_one)], false),
+            ("solid feet", vec![(67, BlockState::STONE)], false),
+            ("solid head", vec![(68, BlockState::STONE)], false),
+            ("liquid feet", vec![(67, BlockState::WATER)], false),
+            ("liquid head", vec![(68, water_level_one)], false),
+            ("passthrough feet", vec![(67, BlockState::GRASS)], true),
+        ] {
+            let mut blocks = vec![(1, 66, 2, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((1, y, 2, block));
+            }
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            assert_eq!(
+                is_safe_ground_landing_at(1, 2, 66, layer),
+                expected_safe,
+                "{case}: ambient strict landing must classify support, feet, and head consistently"
+            );
+        }
+    }
+
+    #[test]
+    fn strict_ambient_landing_scan_distinguishes_safe_liquid_veto_and_miss() {
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        for (case, body_y, liquid) in [
+            ("default water feet", 67, BlockState::WATER),
+            ("default lava head", 68, BlockState::LAVA),
+            ("property water feet", 67, water_level_one),
+            ("property lava head", 68, lava_level_one),
+        ] {
+            let (app, layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 66, 2, BlockState::STONE), (1, body_y, 2, liquid)],
+            );
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            assert_eq!(
+                scan_ground_landing_from_chunk(1, 2, 80, Some(layer)),
+                GroundLandingScan::Unsafe,
+                "{case}: liquid body cell must be an authoritative ambient raster veto"
+            );
+        }
+
+        let (safe_app, safe_layer_entity) =
+            make_runtime_layer(&[(0, 0)], &[(1, 66, 2, BlockState::STONE)]);
+        let safe_layer = safe_app
+            .world()
+            .get::<ChunkLayer>(safe_layer_entity)
+            .unwrap();
+        assert_eq!(
+            scan_ground_landing_from_chunk(1, 2, 80, Some(safe_layer)),
+            GroundLandingScan::Safe(66)
+        );
+
+        let (empty_app, empty_layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let empty_layer = empty_app
+            .world()
+            .get::<ChunkLayer>(empty_layer_entity)
+            .unwrap();
+        assert_eq!(
+            scan_ground_landing_from_chunk(1, 2, 80, Some(empty_layer)),
+            GroundLandingScan::Miss,
+            "loaded empty column must remain eligible for the explicit raster path"
+        );
+        assert_eq!(
+            scan_ground_landing_from_chunk(32, 2, 80, Some(empty_layer)),
+            GroundLandingScan::Miss,
+            "missing chunk must report a scan miss"
+        );
+    }
+
+    #[test]
+    fn strict_ambient_landing_scan_keeps_lower_safe_support_after_liquid_veto() {
+        let (app, layer_entity) = make_runtime_layer(
+            &[(0, 0)],
+            &[
+                (1, 60, 2, BlockState::STONE),
+                (1, 66, 2, BlockState::STONE),
+                (1, 67, 2, BlockState::WATER),
+            ],
+        );
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        assert_eq!(
+            scan_ground_landing_from_chunk(1, 2, 76, Some(layer)),
+            GroundLandingScan::Safe(60),
+            "a liquid-obstructed upper support must not hide a lower safe ambient landing"
+        );
+    }
+
+    #[test]
+    fn strict_ambient_landing_rejects_layer_edges_and_missing_chunk() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 319, 2, BlockState::STONE)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let max_y = layer.min_y() + layer.height() as i32 - 1;
+        assert!(!is_safe_ground_landing_at(1, 2, max_y, layer));
+        assert!(!is_safe_ground_landing_at(1, 2, max_y - 1, layer));
+        assert!(!is_safe_ground_landing_at(32, 2, 66, layer));
     }
 
     #[test]

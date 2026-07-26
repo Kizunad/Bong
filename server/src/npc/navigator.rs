@@ -773,50 +773,15 @@ fn resolve_surface_y(wx: i32, wz: i32, terrain: Option<&TerrainProvider>) -> i32
         .unwrap_or(FALLBACK_SURFACE_Y as i32)
 }
 
-/// Outcome of scanning a loaded runtime column for an NPC landing.
-///
-/// `Unsafe` is intentionally narrow: a standable support whose feet or head cell
-/// contains liquid is authoritative runtime data that a stale raster must not
-/// override. Other columns without a safe support remain `Miss`, so callers may
-/// use their existing fallback path.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum GroundLandingScan {
-    Safe(i32),
-    Unsafe,
-    Miss,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GroundLandingCheck {
-    Safe,
-    LiquidObstructed,
-    Miss,
-}
-
 /// Scan the actual ChunkLayer downward (and slightly upward) from `ref_y` to
-/// find the topmost safe footing at `(wx, wz)`.
+/// find the topmost solid block at `(wx, wz)`.
 ///
 /// Unlike `resolve_surface_y` (which reads the heightmap), this sees **all**
 /// blocks including trees, structures, and decorations placed after terrain gen.
-pub(crate) fn scan_ground_landing_from_chunk(
-    wx: i32,
-    wz: i32,
-    ref_y: i32,
-    layer: Option<&ChunkLayer>,
-) -> GroundLandingScan {
-    scan_ground_landing_from_chunk_range(
-        wx,
-        wz,
-        ref_y - GROUND_SCAN_DEPTH,
-        ref_y + GROUND_SCAN_UP,
-        layer,
-    )
-}
-
-/// Compatibility wrapper for Navigator callers. This intentionally preserves the
-/// pre-ambient scan semantics, including layer-edge headroom treated as air and
-/// equality-based fluid classification.
-pub(crate) fn resolve_ground_y_from_chunk(
+///
+/// Returns `None` if the chunk is not loaded (caller should fall back to
+/// TerrainProvider).
+fn resolve_ground_y_from_chunk(
     wx: i32,
     wz: i32,
     ref_y: i32,
@@ -853,18 +818,19 @@ fn resolve_ground_y_from_chunk_range(
 
     let lx = wx.rem_euclid(16) as u32;
     let lz = wz.rem_euclid(16) as u32;
+
     let scan_top = top.min(max_y);
     let scan_bottom = bottom.max(min_y);
     if scan_bottom > scan_top {
         return None;
     }
 
-    // Preserve Navigator's historic contract: the layer top is open air for
-    // feet/head clearance, and any non-ground block is passable here.
+    // From scan_top downward, find first solid block with air/passable above.
     for y in (scan_bottom..=scan_top).rev() {
         let local_y = (y - min_y) as u32;
         let block = chunk.block_state(lx, local_y, lz);
         if is_solid_for_ground(block) {
+            // Verify there's room to stand (feet + head above must be passable).
             let above1 = if y < max_y {
                 chunk.block_state(lx, (y + 1 - min_y) as u32, lz)
             } else {
@@ -884,100 +850,6 @@ fn resolve_ground_y_from_chunk_range(
     None
 }
 
-fn scan_ground_landing_from_chunk_range(
-    wx: i32,
-    wz: i32,
-    bottom: i32,
-    top: i32,
-    layer: Option<&ChunkLayer>,
-) -> GroundLandingScan {
-    let Some(layer) = layer else {
-        return GroundLandingScan::Miss;
-    };
-    let min_y = layer.min_y();
-    let max_y = min_y + layer.height() as i32 - 1;
-
-    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
-    if layer.chunk(chunk_pos).is_none() {
-        return GroundLandingScan::Miss;
-    }
-
-    let scan_top = top.min(max_y);
-    let scan_bottom = bottom.max(min_y);
-    if scan_bottom > scan_top {
-        return GroundLandingScan::Miss;
-    }
-
-    let mut liquid_obstructed = false;
-    for ground_y in (scan_bottom..=scan_top).rev() {
-        match classify_ground_landing_at(wx, wz, ground_y, layer) {
-            GroundLandingCheck::Safe => return GroundLandingScan::Safe(ground_y),
-            GroundLandingCheck::LiquidObstructed => liquid_obstructed = true,
-            GroundLandingCheck::Miss => {}
-        }
-    }
-
-    if liquid_obstructed {
-        GroundLandingScan::Unsafe
-    } else {
-        GroundLandingScan::Miss
-    }
-}
-
-/// Whether `ground_y` is a safe NPC footing in a loaded layer.
-///
-/// The support block must stand on solid ground, while both feet and head cells
-/// must be readable, non-liquid, and clear. All three cells must be within the
-/// layer, so callers cannot treat missing headroom at its edge as air.
-pub(crate) fn is_safe_ground_landing_at(
-    wx: i32,
-    wz: i32,
-    ground_y: i32,
-    layer: &ChunkLayer,
-) -> bool {
-    classify_ground_landing_at(wx, wz, ground_y, layer) == GroundLandingCheck::Safe
-}
-
-fn classify_ground_landing_at(
-    wx: i32,
-    wz: i32,
-    ground_y: i32,
-    layer: &ChunkLayer,
-) -> GroundLandingCheck {
-    let min_y = layer.min_y();
-    let max_y = min_y + layer.height() as i32 - 1;
-    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
-    let Some(chunk) = layer.chunk(chunk_pos) else {
-        return GroundLandingCheck::Miss;
-    };
-    let local_x = wx.rem_euclid(16) as u32;
-    let local_z = wz.rem_euclid(16) as u32;
-    let block_at = |world_y: i32| {
-        (min_y..=max_y)
-            .contains(&world_y)
-            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
-    };
-    let (Some(support), Some(feet), Some(head)) = (
-        block_at(ground_y),
-        block_at(ground_y + 1),
-        block_at(ground_y + 2),
-    ) else {
-        return GroundLandingCheck::Miss;
-    };
-
-    if !is_strict_ground_support(support) {
-        return GroundLandingCheck::Miss;
-    }
-    if feet.is_liquid() || head.is_liquid() {
-        return GroundLandingCheck::LiquidObstructed;
-    }
-    if is_clear_for_ground(feet) && is_clear_for_ground(head) {
-        GroundLandingCheck::Safe
-    } else {
-        GroundLandingCheck::Miss
-    }
-}
-
 /// Whether a block counts as "solid ground" that an NPC can stand on.
 /// Excludes passthrough blocks (grass, flowers), fluids, and leaves
 /// (so NPCs don't try to walk on tree canopies).
@@ -995,17 +867,6 @@ fn is_solid_for_ground(block: BlockState) -> bool {
         return false;
     }
     true
-}
-
-fn is_strict_ground_support(block: BlockState) -> bool {
-    block.blocks_motion()
-        && !block.is_liquid()
-        && !is_passthrough_block(block)
-        && !is_leaf_block(block)
-}
-
-fn is_clear_for_ground(block: BlockState) -> bool {
-    !block.blocks_motion() && !block.is_liquid() && !is_leaf_block(block)
 }
 
 // ---------------------------------------------------------------------------
@@ -1510,253 +1371,6 @@ mod tests {
         }
         app.add_systems(Update, navigator_tick_system);
         (app, layer_entity)
-    }
-
-    fn make_landing_layer(blocks: &[(i32, i32, i32, BlockState)]) -> (App, Entity) {
-        use valence::prelude::{Chunk, UnloadedChunk};
-        use valence::testing::ScenarioSingleClient;
-
-        let scenario = ScenarioSingleClient::new();
-        let mut app = scenario.app;
-        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
-        let layer_entity = {
-            let world = app.world_mut();
-            let mut q = world.query_filtered::<Entity, With<ChunkLayer>>();
-            q.iter(world).next().unwrap()
-        };
-        let (min_y, height) = {
-            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
-            (layer.min_y(), layer.height())
-        };
-        let mut chunks = HashMap::new();
-        for &(world_x, world_y, world_z, block) in blocks {
-            let chunk = chunks
-                .entry((world_x.div_euclid(16), world_z.div_euclid(16)))
-                .or_insert_with(|| UnloadedChunk::with_height(height));
-            chunk.set_block_state(
-                world_x.rem_euclid(16) as u32,
-                (world_y - min_y) as u32,
-                world_z.rem_euclid(16) as u32,
-                block,
-            );
-        }
-        let mut layer = app.world_mut().get_mut::<ChunkLayer>(layer_entity).unwrap();
-        for ((chunk_x, chunk_z), chunk) in chunks {
-            layer.insert_chunk([chunk_x, chunk_z], chunk);
-        }
-        (app, layer_entity)
-    }
-
-    #[test]
-    fn strict_landing_helper_enforces_ambient_safety_contract() {
-        use valence::prelude::{PropName, PropValue};
-
-        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
-        for (case, extra_blocks, exact_safe) in [
-            ("solid support", vec![], true),
-            ("passthrough support", vec![(66, BlockState::GRASS)], false),
-            ("leaf support", vec![(66, BlockState::OAK_LEAVES)], false),
-            (
-                "default water support",
-                vec![(66, BlockState::WATER)],
-                false,
-            ),
-            ("water property support", vec![(66, water_level_one)], false),
-            ("solid feet", vec![(67, BlockState::STONE)], false),
-            ("solid head", vec![(68, BlockState::STONE)], false),
-            ("default water feet", vec![(67, BlockState::WATER)], false),
-            ("water property head", vec![(68, water_level_one)], false),
-            ("passthrough feet", vec![(67, BlockState::GRASS)], true),
-        ] {
-            let mut blocks = vec![(-1, 66, 17, BlockState::STONE)];
-            for (y, block) in extra_blocks {
-                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
-                blocks.push((-1, y, 17, block));
-            }
-            let (app, layer_entity) = make_landing_layer(&blocks);
-            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
-
-            assert_eq!(
-                is_safe_ground_landing_at(-1, 17, 66, layer),
-                exact_safe,
-                "{case}: strict ambient helper must classify support/feet/head consistently"
-            );
-        }
-    }
-
-    #[test]
-    fn landing_scan_distinguishes_safe_liquid_hazard_and_miss() {
-        use valence::prelude::{PropName, PropValue};
-
-        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
-        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
-        for (case, body_y, liquid) in [
-            ("default water feet", 67, BlockState::WATER),
-            ("default water head", 68, BlockState::WATER),
-            ("default lava feet", 67, BlockState::LAVA),
-            ("default lava head", 68, BlockState::LAVA),
-            ("water property feet", 67, water_level_one),
-            ("water property head", 68, water_level_one),
-            ("lava property feet", 67, lava_level_one),
-            ("lava property head", 68, lava_level_one),
-        ] {
-            let (app, layer_entity) =
-                make_landing_layer(&[(-1, 66, 17, BlockState::STONE), (-1, body_y, 17, liquid)]);
-            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
-            assert_eq!(
-                scan_ground_landing_from_chunk(-1, 17, 80, Some(layer)),
-                GroundLandingScan::Unsafe,
-                "{case}: liquid in the body cells must be an authoritative runtime hazard"
-            );
-            assert_eq!(
-                resolve_ground_y_from_chunk(-1, 17, 80, Some(layer)),
-                if liquid == BlockState::WATER || liquid == BlockState::LAVA {
-                    Some(66)
-                } else {
-                    Some(body_y)
-                },
-                "{case}: Navigator's legacy wrapper retains its equality-based fallback"
-            );
-        }
-
-        let (safe_app, safe_layer_entity) = make_landing_layer(&[(-1, 66, 17, BlockState::STONE)]);
-        let safe_layer = safe_app
-            .world()
-            .get::<ChunkLayer>(safe_layer_entity)
-            .unwrap();
-        assert_eq!(
-            scan_ground_landing_from_chunk(-1, 17, 80, Some(safe_layer)),
-            GroundLandingScan::Safe(66)
-        );
-
-        let (empty_app, empty_layer_entity) =
-            make_landing_layer(&[(-2, 66, 17, BlockState::STONE)]);
-        let empty_layer = empty_app
-            .world()
-            .get::<ChunkLayer>(empty_layer_entity)
-            .unwrap();
-        assert_eq!(
-            scan_ground_landing_from_chunk(-1, 17, 80, Some(empty_layer)),
-            GroundLandingScan::Miss,
-            "a loaded but empty target column must remain eligible for the caller's fallback"
-        );
-        assert_eq!(
-            scan_ground_landing_from_chunk(32, 17, 80, Some(empty_layer)),
-            GroundLandingScan::Miss,
-            "a missing chunk must be reported as a scan miss"
-        );
-        assert_eq!(
-            scan_ground_landing_from_chunk(-1, 17, 80, None),
-            GroundLandingScan::Miss
-        );
-    }
-
-    #[test]
-    fn landing_scan_continues_below_liquid_hazard_for_lower_safe_support() {
-        let (app, layer_entity) = make_landing_layer(&[
-            (-1, 60, 17, BlockState::STONE),
-            (-1, 66, 17, BlockState::STONE),
-            (-1, 67, 17, BlockState::WATER),
-        ]);
-        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
-
-        assert_eq!(
-            scan_ground_landing_from_chunk(-1, 17, 76, Some(layer)),
-            GroundLandingScan::Safe(60),
-            "an upper liquid-obstructed support must not hide a lower safe footing"
-        );
-    }
-
-    #[test]
-    fn landing_scan_rejects_non_strict_support_and_body_obstructions() {
-        for (case, blocks, expected) in [
-            (
-                "liquid support",
-                vec![(-1, 66, 17, BlockState::WATER)],
-                GroundLandingScan::Miss,
-            ),
-            (
-                "leaf support",
-                vec![(-1, 66, 17, BlockState::OAK_LEAVES)],
-                GroundLandingScan::Miss,
-            ),
-            (
-                "passthrough support",
-                vec![(-1, 66, 17, BlockState::GRASS)],
-                GroundLandingScan::Miss,
-            ),
-            (
-                "leaf body obstruction",
-                vec![
-                    (-1, 66, 17, BlockState::STONE),
-                    (-1, 67, 17, BlockState::OAK_LEAVES),
-                ],
-                GroundLandingScan::Miss,
-            ),
-        ] {
-            let (app, layer_entity) = make_landing_layer(&blocks);
-            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
-            assert_eq!(
-                scan_ground_landing_from_chunk(-1, 17, 80, Some(layer)),
-                expected,
-                "{case}: strict ambient scan distinguishes motion-blocking support and body cells"
-            );
-        }
-    }
-
-    #[test]
-    fn navigator_ground_scan_preserves_base_block_and_edge_semantics() {
-        use valence::prelude::{PropName, PropValue};
-
-        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
-        for (case, blocks, reference_y, expected) in [
-            (
-                "layer-top support treats out-of-bounds feet and head as air",
-                vec![(1, 319, 2, BlockState::STONE)],
-                319,
-                Some(319),
-            ),
-            (
-                "default water feet is not clear",
-                vec![(1, 66, 2, BlockState::STONE), (1, 67, 2, BlockState::WATER)],
-                80,
-                Some(66),
-            ),
-            (
-                "property water feet retains legacy equality-based support",
-                vec![(1, 66, 2, BlockState::STONE), (1, 67, 2, water_level_one)],
-                80,
-                Some(67),
-            ),
-            (
-                "leaves at feet retain legacy non-solid clearance",
-                vec![
-                    (1, 66, 2, BlockState::STONE),
-                    (1, 67, 2, BlockState::OAK_LEAVES),
-                ],
-                80,
-                Some(66),
-            ),
-        ] {
-            let (app, layer_entity) = make_landing_layer(&blocks);
-            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
-            assert_eq!(
-                resolve_ground_y_from_chunk(1, 2, reference_y, Some(layer)),
-                expected,
-                "{case}: Navigator must preserve the PR base resolver contract"
-            );
-        }
-    }
-
-    #[test]
-    fn strict_landing_helper_rejects_layer_edges_and_missing_chunk() {
-        let (app, layer_entity) = make_landing_layer(&[(1, 319, 2, BlockState::STONE)]);
-        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
-        let max_y = layer.min_y() + layer.height() as i32 - 1;
-
-        assert!(!is_safe_ground_landing_at(1, 2, max_y, layer));
-        assert!(!is_safe_ground_landing_at(1, 2, max_y - 1, layer));
-        assert!(!is_safe_ground_landing_at(32, 2, 66, layer));
     }
 
     fn spawn_idle_npc(app: &mut App, y: f64) -> Entity {
