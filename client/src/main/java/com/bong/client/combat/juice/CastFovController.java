@@ -181,15 +181,22 @@ public final class CastFovController {
      * 跨身份清场——A 被 B 取代后一条迟到的 IDLE(A) 会误杀 B，B 随后 release 静默无 juice。
      * 也没有必须靠 IDLE 兜的路径：生产上 IDLE 只有两个来源，① {@code CastStateStore.tick}
      * 在 COMPLETE/INTERRUPT 后 300ms 的淡出（此时该身份已是 FIRED/VOIDED 终态），②
-     * 服务端 {@code cast_sync{phase:idle}}——而服务端发 Idle 的 <b>4 个站点</b>
-     * （{@code client_request_handler.rs} 的 race gate / 经脉门两处 / 统一的
-     * {@code push_skill_cast_rejected_sync}）<b>无一例外都带非 NONE 的 outcome</b>
-     *（{@code RejectRaceMismatch} / {@code MeridianGated} / {@code reason.to_cast_outcome()}
-     * ——注意判据是「outcome 非 NONE」而不是「名字以 Reject 开头」，{@code MeridianGated}
-     * 不带该前缀但同样是施放前拒绝；服务端侧 {@code to_cast_outcome} 是无 catch-all 的全
-     * match 且有专测断言它从不映射到 NONE）。{@code CastSyncHandler} 见非 NONE outcome 即
-     * 合成成 INTERRUPT 走取消令牌，故服务端的 idle 不会以 IDLE 形态到这里。跨 IDLE 的幂等由
-     * {@link #terminals} 保证，不靠清场。
+     * 服务端 {@code cast_sync{phase:idle}}。
+     *
+     * <p>②<b>确实会以 IDLE 形态到达</b>，但同样无害——别把安全性挂在「它到不了」上：服务端发
+     * Idle 的 4 个站点（{@code client_request_handler.rs} 的 race gate / 经脉门两处 / 统一的
+     * {@code push_skill_cast_rejected_sync}）虽然都带非 NONE 的 outcome，但 client 侧
+     * {@code CastSyncHandler.parseOutcome} <b>没有 {@code reject_race_mismatch} 分支</b>
+     *（client 的 {@code CastOutcome} 枚举压根没有 race 变体），故 race gate 那一站会落回
+     * {@code default -> NONE}、被合成成 {@link CastState#idle()} 原样送到这里；另三站
+     *（{@code MeridianGated} ×2 + {@code reason.to_cast_outcome()}）才被合成成 INTERRUPT 走取消
+     * 令牌。<b>IDLE 到达无害的真正理由是 no-op 本身</b>：这几站全是**施放前**拒绝，client 从未
+     * 收到该次 cast 的 CASTING → 没有 pending / 令牌可杀；而 no-op 语义保证它也不会顺手误杀别的
+     * 在飞施法。跨 IDLE 的幂等由 {@link #terminals} 保证，不靠清场。
+     *
+     * <p>（附注，不在本 plan 范围：race gate 拒绝因此也拿不到技能警示 HUD 文案——
+     * {@code CastSyncHandler.publishWarningIfRejected} 只在 outcome 是拒绝时发流。那是
+     * plan-skill-warn-hud 的 client 解析缺口，与 juice 门控无关。）
      */
     static void onCastState(CastState state, CastStateStore.Origin origin) {
         if (state == null) {

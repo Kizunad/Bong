@@ -354,6 +354,31 @@ class CastFovControllerTest {
         assertBaseline("脉冲 decay 完毕");
     }
 
+    @Test
+    void authoritativeCastingWithoutSkillBarSourceNeverArms() {
+        // arming 时刻的 source 门（`resolveSkillId` 只给 SKILL_BAR 的 cast 解析 profile）：
+        // 快捷栏物品在同一 slot 施法时，没有 SKILL_BAR 预测快照可依，`CastSyncHandler.sourceFor`
+        // 退化成 QUICK_SLOT——此时哪怕技能栏那一格恰好放着重型招，也不得挪用它的 juice。
+        // 既有乱序用例都先发过 INTERRUPT，作废记录会**掩盖**这个门；本例是纯净的一发。
+        serverSync("casting", HEAVY_SLOT, START, "none");   // 无本地预测 → source 退化
+        assertEquals(CastState.Source.QUICK_SLOT, CastStateStore.snapshot().source(),
+            "前提校验：没有 SKILL_BAR 预测时权威回执被认成 QUICK_SLOT（否则本用例假绿）");
+
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("非技能栏施法不得拿到技能栏同一格重型招的 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+
+        // 反证：同一 slot 补上 SKILL_BAR 预测后照常触发 —— 挡的是 source，不是整条路径。
+        predictAndAccept(HEAVY_SLOT, START + 5000);
+        serverSync("complete", HEAVY_SLOT, START + 5000, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "带 SKILL_BAR 预测的同 slot 施法正常触发");
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("脉冲 decay 完毕");
+    }
+
     // ---- 状态机全路径（终点断言基准） ----
 
     @Test
@@ -1125,6 +1150,19 @@ class CastFovControllerTest {
     }
 
     @Test
+    void boundedMemoryConstantsPinTheirLiterals() {
+        // 与 ANIM_TOKEN_TTL_MS 同口径（见上一条）：有界性上限是契约值，**符号引用**的用例只能
+        // 证明「边界落在常量上」，证明不了常量取值对——常量和实现一起漂就会假绿（把 16 改 8、
+        // 4 改 2，其余用例全绿）。故按本文件参数表口径用字面量 pin。
+        assertEquals(16, CastFovController.TERMINAL_MEMORY,
+            "终态记录 LRU 上限定稿 16：乱序窗口是个位数施法的量级，16 远超实际需要；"
+                + "调小会让迟到回执落在被淘汰的身份上，复活防线出现窟窿");
+        assertEquals(4, CastFovController.ANIM_TOKEN_CAPACITY,
+            "在飞动画令牌上限定稿 4：heaven_gate 引导窗 7s，同时在飞 4 次同招在生产上不可能；"
+                + "调小会让正常连发被容量淘汰误作废");
+    }
+
+    @Test
     void animTokenExpiresAfterTtlSoStrayLateAnimDoesNotFire() {
         // release 动画因丢包/异常始终没来时令牌不能一直挂着：超过 TTL 视为过期，
         // 一条几十秒后到达的杂散 PlayAnim 不得凭它放出 juice。
@@ -1414,6 +1452,35 @@ class CastFovControllerTest {
         advanceMs(GATE_SHAKE_DURATION_MS + 50);
         CastFovController.tick();
         assertBaseline("脉冲 decay 完毕");
+    }
+
+    @Test
+    void teardownVoidsTheAnimTokenIdentitySoALateCastingCannotRearmIt() {
+        // 与 pending 半边的 teardownVoidsInFlightIdentitySoLateCastingCannotRearmIt 对称：
+        // teardown 只把在飞令牌**丢掉**不够——一条迟到 / 重传的**同身份**权威 CASTING 会重开
+        // 一枚令牌，随后的 release 动画就在死亡界面 / 新世界里放出 +12° punch + 24t 震屏。
+        // 既有 teardownVoidsAnimTokenSoLateReleaseAnimDoesNotFire 的反证用的是**新身份**，
+        // 锁不住这条：把 teardown 里给令牌落 VOIDED 的那一步删掉，它照样绿。
+        acceptGateCast(START);
+        CastFovController.teardown();          // 死亡 / 断线 / 切世界
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "teardown 必须把在飞的动画令牌身份整批记成 VOIDED");
+
+        acceptGateCast(START);                 // 旧会话迟到 / 重传的**同身份**权威 CASTING
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("teardown 后旧身份不得靠迟到 CASTING 重开令牌再放一次 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+
+        // 反证：teardown 之后**全新**施法照常拿到 juice（不能把玩家永久关停）。
+        acceptGateCast(START + 20_000);
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6, "teardown 后的新施法照常触发");
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("新脉冲 decay 完毕");
     }
 
     @Test
