@@ -508,8 +508,8 @@ fn scan_ground_landing_from_chunk_range(
 
 /// Whether `ground_y` is a safe ambient landing in a loaded layer.
 ///
-/// Support must block motion and be neither liquid, passthrough, nor leaves.
-/// Feet and head must both be readable, clear, non-liquid, and non-leaves.
+/// Support must block motion and be neither liquid/waterlogged, passthrough, nor leaves.
+/// Feet and head must both be readable, clear, non-liquid/waterlogged, and non-leaves.
 fn is_safe_ground_landing_at(wx: i32, wz: i32, ground_y: i32, layer: &ChunkLayer) -> bool {
     classify_ground_landing_at(wx, wz, ground_y, layer) == GroundLandingCheck::Safe
 }
@@ -544,7 +544,7 @@ fn classify_ground_landing_at(
     if !is_strict_ground_support(support) {
         return GroundLandingCheck::Miss;
     }
-    if feet.is_liquid() || head.is_liquid() {
+    if contains_ambient_liquid(feet) || contains_ambient_liquid(head) {
         return GroundLandingCheck::LiquidObstructed;
     }
     if is_clear_for_ground(feet) && is_clear_for_ground(head) {
@@ -554,15 +554,22 @@ fn classify_ground_landing_at(
     }
 }
 
+/// Whether a block has a liquid kind or carries water through a waterlogged state.
+fn contains_ambient_liquid(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::{PropName, PropValue};
+
+    block.is_liquid() || block.get(PropName::Waterlogged) == Some(PropValue::True)
+}
+
 fn is_strict_ground_support(block: valence::prelude::BlockState) -> bool {
     block.blocks_motion()
-        && !block.is_liquid()
+        && !contains_ambient_liquid(block)
         && !is_ambient_passthrough_block(block)
         && !is_ambient_leaf_block(block)
 }
 
 fn is_clear_for_ground(block: valence::prelude::BlockState) -> bool {
-    !block.blocks_motion() && !block.is_liquid() && !is_ambient_leaf_block(block)
+    !block.blocks_motion() && !contains_ambient_liquid(block) && !is_ambient_leaf_block(block)
 }
 
 // These explicit block sets intentionally mirror Navigator's legacy classifiers,
@@ -1418,6 +1425,163 @@ mod tests {
                 terrain.queried.get(),
                 Some((1, 2)),
                 "{case}: the passable raster must be consulted before runtime exact landing rejection"
+            );
+        }
+    }
+
+    fn waterlogged_non_leaf_fixtures() -> (BlockState, BlockState, BlockState, BlockState) {
+        let dry_stairs = BlockState::OAK_STAIRS.set(PropName::Waterlogged, PropValue::False);
+        let wet_stairs = dry_stairs.set(PropName::Waterlogged, PropValue::True);
+        let dry_rail = BlockState::RAIL.set(PropName::Waterlogged, PropValue::False);
+        let wet_rail = dry_rail.set(PropName::Waterlogged, PropValue::True);
+        (dry_stairs, wet_stairs, dry_rail, wet_rail)
+    }
+
+    #[test]
+    fn ambient_waterlogged_predicate_pins_property_api_and_non_leaf_fixtures() {
+        let (dry_stairs, wet_stairs, dry_rail, wet_rail) = waterlogged_non_leaf_fixtures();
+
+        assert_eq!(
+            BlockState::STONE.get(PropName::Waterlogged),
+            None,
+            "ordinary blocks without waterlogged must safely report None"
+        );
+        assert_eq!(
+            wet_stairs.get(PropName::Waterlogged),
+            Some(PropValue::True),
+            "oak stairs must retain waterlogged=true"
+        );
+        assert_eq!(
+            wet_rail.get(PropName::Waterlogged),
+            Some(PropValue::True),
+            "rail must retain waterlogged=true"
+        );
+        assert!(
+            !wet_stairs.is_liquid() && !wet_rail.is_liquid(),
+            "waterlogged non-leaf blocks are not Water/Lava BlockState kinds"
+        );
+        assert!(
+            wet_stairs.blocks_motion() && !wet_rail.blocks_motion(),
+            "stairs must exercise support while rail exercises non-motion clearance"
+        );
+        assert!(
+            !contains_ambient_liquid(BlockState::STONE)
+                && !contains_ambient_liquid(dry_stairs)
+                && !contains_ambient_liquid(dry_rail),
+            "missing or false waterlogged properties must not reject ordinary or dry blocks"
+        );
+        assert!(
+            is_strict_ground_support(dry_stairs) && is_clear_for_ground(dry_rail),
+            "waterlogged=false non-leaf states must preserve their respective support and clearance roles"
+        );
+        assert!(
+            contains_ambient_liquid(wet_stairs) && contains_ambient_liquid(wet_rail),
+            "waterlogged=true must be treated as liquid independently of block kind"
+        );
+    }
+
+    #[test]
+    fn ambient_waterlogged_non_leaf_rejects_each_exact_landing_cell() {
+        let (_, wet_stairs, _, wet_rail) = waterlogged_non_leaf_fixtures();
+        for (case, extra_blocks) in [
+            ("waterlogged stairs support", vec![(66, wet_stairs)]),
+            ("waterlogged rail feet", vec![(67, wet_rail)]),
+            ("waterlogged rail head", vec![(68, wet_rail)]),
+        ] {
+            let mut blocks = vec![(1, 66, 2, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((1, y, 2, block));
+            }
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert!(
+                !is_safe_ground_landing_at(1, 2, 66, layer),
+                "{case}: only the target landing cell differs; complete headroom prevents false-positive rejection"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_runtime_scan_and_resolution_veto_waterlogged_non_leaf_cells() {
+        let (_, wet_stairs, _, wet_rail) = waterlogged_non_leaf_fixtures();
+        for (case, extra_blocks, expected_scan) in [
+            (
+                "waterlogged stairs support",
+                vec![(66, wet_stairs)],
+                GroundLandingScan::Miss,
+            ),
+            (
+                "waterlogged rail feet",
+                vec![(67, wet_rail)],
+                GroundLandingScan::Unsafe,
+            ),
+            (
+                "waterlogged rail head",
+                vec![(68, wet_rail)],
+                GroundLandingScan::Unsafe,
+            ),
+        ] {
+            let mut blocks = vec![(1, 66, 2, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((1, y, 2, block));
+            }
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert_eq!(
+                scan_ground_landing_from_chunk(1, 2, 80, Some(layer)),
+                expected_scan,
+                "{case}: y=66 lies inside the 64..=84 standard runtime scan window"
+            );
+            assert_eq!(
+                resolve_ambient_ground_position::<FixtureSurface>(
+                    DVec3::new(1.5, 80.0, 2.5),
+                    Some(layer),
+                    None,
+                ),
+                None,
+                "{case}: runtime-only resolution must reject the waterlogged landing"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_loaded_raster_exact_revalidation_vetoes_waterlogged_non_leaf_cells() {
+        let (_, wet_stairs, _, wet_rail) = waterlogged_non_leaf_fixtures();
+        for (case, extra_blocks) in [
+            ("waterlogged stairs support", vec![(70, wet_stairs)]),
+            ("waterlogged rail feet", vec![(71, wet_rail)]),
+            ("waterlogged rail head", vec![(72, wet_rail)]),
+        ] {
+            let mut blocks = vec![(1, 70, 2, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((1, y, 2, block));
+            }
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: 70,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, 200.0, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: y=70 is outside the 184..=204 scan window, so exact loaded-raster revalidation must veto it"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                Some((1, 2)),
+                "{case}: passable raster must be queried before exact runtime landing veto"
             );
         }
     }
