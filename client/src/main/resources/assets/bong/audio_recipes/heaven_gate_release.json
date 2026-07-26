@@ -2,9 +2,9 @@
   "id": "heaven_gate_release",
   "layers": [
     {
-      "sound": "bong:skill.sword_path.heaven_gate",
+      "sound": "minecraft:entity.lightning_bolt.impact",
       "volume": 0.9,
-      "pitch": 1.0,
+      "pitch": 0.85,
       "delay_ticks": 0
     },
     {

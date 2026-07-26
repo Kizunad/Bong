@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            270,
+            271,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -221,7 +221,11 @@ mod tests {
              劈低频/刺高频差异化，无新音频文件) \
              plus 1 yixing_cast recipe (plan-race-system-v1 PR-5b 易形施法音效，\
              evoker.prepare_wololo + illusioner.mirror_move + amethyst_block.chime 三层\
-             变形类音色，无新音频文件)"
+             变形类音色，无新音频文件) \
+             plus 1 heaven_gate_charge recipe (plan-fpv-cast-av-v1 P4 天门蓄力专属配方——\
+             复用 release 的 bong:skill.sword_path.heaven_gate 签名 ogg 作 pitch 0.72/vol 0.4 \
+             前兆 L0 + amethyst 铺底；蓄力不再借用 sword_basics 共享的 sword_infuse，避免签名\
+             泄漏到普通注剑)"
         );
         assert!(
             registry.get("fauna_mundane_wither").is_some(),
@@ -604,53 +608,176 @@ mod tests {
             }
         }
         assert!(
-            bong_refs >= 7,
-            "server recipe 应至少含 7 条 bong: signature 引用（heaven_gate 在 client 侧另算），实际 {bong_refs}"
+            bong_refs >= 9,
+            "server recipe 应至少含 9 条 bong: signature L0 引用（9 招签名：sword_path.heaven_gate \
+             release + charge 前兆均在 server 侧、woliu/zhenmai/baomai/dugu/tuike/anqi/morph 各一），\
+             实际 {bong_refs}"
         );
     }
 
-    /// 逐项 pin：7 条 server signature recipe 的 **L0 主层** 确实换成了为它新建的 `bong:` 事件
-    /// 且 **pitch 复位 1.0**（plan §P4「把主层 sound id 从 minecraft: 换成 bong: 事件、pitch 复位」）。
-    /// 只查「任意层引用」不够——签名事件若被挪到不显著的铺底层，声音天花板依旧锁死却测试假绿；
-    /// 因此锁死 `layers[0].sound` 与 `layers[0].pitch`。heaven_gate 是 client 侧 recipe，由
-    /// `SignatureAudioContractTest` 覆盖（含 charge_2s 前兆层的 pitch=0.72/volume=0.4 pin）。
+    /// **运行时消费** pin：每个 signature 招式的 recipe id 一律**从生产映射取**（调真实映射函数
+    /// `sword_path_recipe_for_skill` / `baomai_recipe_for_skill` / `ZhenmaiSkillId::audio_recipe`，
+    /// 或引用生产 `pub(crate) const` 单一真源 `WOLIU_VOID_CORE_RECIPE` / `SHED_SKIN_BURST_RECIPE` /
+    /// `DUGU_POISON_SIGNATURE_RECIPE` / `YIXING_CAST_RECIPE` / `ANQI_ECHO_FRACTAL_RECIPE`——测试内不另
+    /// 抄一份 recipe id），再**经 `SoundRecipeRegistry` 真实加载 + 按 id 查找**该 recipe（运行时同一
+    /// 加载+查找链，非直读 JSON 文件），断言其 L0 主层：sound == 该招 `bong:` 签名事件（非铺底层/非
+    /// vanilla）、pitch 为设计值、volume ≥ 可听下限（防 volume≈0 静音假绿）、delay_ticks 落在设计
+    /// 窗口（常规招即响；天门蓄力签名须延迟到蓄力尾段 [临界60, 释放140) 才响=charge 尾程，既不在蓄力
+    /// 起始也不在释放后）。
+    ///
+    /// 招式改播别的 recipe / recipe 退回 vanilla / 签名挪到铺底层 / 静音 / 时序错位都撞红——这是
+    /// 招式→recipe 映射漂移与静默签名的回归门。
+    ///
+    /// 本 pin 校验的是**recipe 内容正确**；招式**是否真跑 emit 系统发出该 recipe**（防「删掉发声
+    /// 调用」这类 emit 断链）由**独立 emit-path 集成测试**覆盖——跑真实 emit 系统、断言实发的
+    /// `PlaySoundRecipeRequest.recipe_id`：`network::audio_trigger` 的
+    /// `sword_path_skills_emit_dedicated_recipes`（heaven_gate charge/release）、
+    /// `anqi_skills_emit_dedicated_recipes`（echo_fractal）、`baomai_full_power_release_emits_signature_recipe`、
+    /// `woliu_void_core_emits_signature_recipe`、`tuike_shed_passive_emits_signature_recipe`（被动蜕壳）、
+    /// `zhenmai_skills_emit_their_mapped_recipes`（五招含 sever_chain 签名）、
+    /// `dugu_reverse_emits_signature_recipe`（倒蚀签名），及 `body_plan::morph` 的 yixing emit 断言。
+    ///
+    /// P5 emit 架构统一后，原先内联在 cast 逻辑里的三处签名 emit（Pattern B：zhenmai
+    /// `emit_skill_feedback` / dugu `apply_reverse` / tuike 主动 `cast_shed`）已改为读 cast 事件的
+    /// 独立 `emit_*_audio_triggers` 系统（Pattern A），并各自补了**端到端** emit-path 门（真跑一次
+    /// 施法 + 真跑音效系统）：`combat::zhenmai_v2::tests::sever_chain_cast_emits_signature_recipe_end_to_end`、
+    /// `combat::dugu_v2::tests::reverse_cast_emits_signature_recipe_end_to_end`、
+    /// `combat::tuike_v2::tests::active_cast_shed_emits_signature_recipe_exactly_once_end_to_end`
+    /// —— 至此 9 招签名 emit-firing 全覆盖。
+    ///
+    /// 天门蓄力尾程窗口从生产相位常量 `HEAVEN_GATE_CHARGE_END`/`HEAVEN_GATE_AOE_END` 派生（非手写
+    /// 数字）——相位机改时序则本断言窗口跟着走，锁的是真实播放时序契约。
     #[test]
-    fn each_server_signature_recipe_swaps_l0_main_layer_to_its_bong_event() {
-        use std::path::Path;
+    fn each_signature_skill_actually_emitted_recipe_swaps_l0_to_its_bong_event() {
+        use crate::body_plan::morph::YIXING_CAST_RECIPE;
+        use crate::combat::baomai_v3::BaomaiSkillId;
+        use crate::combat::dugu_v2::skills::DUGU_POISON_SIGNATURE_RECIPE;
+        use crate::combat::tuike_v2::events::SHED_SKIN_BURST_RECIPE;
+        use crate::combat::woliu_v2::skills::WOLIU_VOID_CORE_RECIPE;
+        use crate::combat::zhenmai_v2::ZhenmaiSkillId;
+        use crate::network::audio_trigger::{
+            baomai_recipe_for_skill, sword_path_recipe_for_skill, ANQI_ECHO_FRACTAL_RECIPE,
+        };
+        use crate::sword_path::av_event::SwordPathSkillId;
+        use crate::sword_path::heaven_gate::{HEAVEN_GATE_AOE_END, HEAVEN_GATE_CHARGE_END};
 
-        let recipe_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/audio/recipes");
-        let pins = [
-            ("woliu_void_core", "bong:skill.woliu.void_core"),
-            ("zhenmai_sever_crack", "bong:skill.zhenmai.sever_chain"),
-            ("baomai_signature", "bong:skill.baomai.full_power_release"),
-            ("dugu_poison_signature", "bong:skill.dugu.infuse_poison"),
-            ("tuike_signature", "bong:skill.tuike.shed"),
-            ("anqi_echo_fractal", "bong:skill.anqi.echo_fractal"),
-            ("yixing_cast", "bong:skill.morph.yixing"),
+        /// 签名 L0 可听音量下限——低于此实机近静音。
+        const AUDIBLE_FLOOR: f32 = 0.1;
+        // 天门蓄力尾程窗口**从生产相位常量派生**（非手写数字，相位机改时序则本断言跟着走）：
+        // `heaven_gate_phase_system` 阶段 elapsed 0 蓄力 → CHARGE_END 临界 → CRITICAL_END 冲击波
+        // → AOE_END 释放。蓄力签名须落在 [CHARGE_END, AOE_END)：过了蓄力起始（不是 charge 开始就
+        // 播）、又在释放前（不是释放后甚至永不响）。
+        const CHARGE_TAIL_MIN: u32 = HEAVEN_GATE_CHARGE_END;
+        const CHARGE_TAIL_MAX: u32 = HEAVEN_GATE_AOE_END - 1;
+        // 常规招即响：允许极小铺垫但不得被延迟到听不见。
+        const INSTANT_MAX: u32 = 20;
+
+        let registry =
+            SoundRecipeRegistry::load_default().expect("default audio recipes should load");
+
+        // (从生产映射取到的 recipe id, 期望 L0 bong: 事件, 期望 L0 pitch, delay 下界, delay 上界)
+        let pins: [(&str, &str, f32, u32, u32); 9] = [
+            (
+                sword_path_recipe_for_skill(SwordPathSkillId::HeavenGateRelease),
+                "bong:skill.sword_path.heaven_gate",
+                1.0,
+                0,
+                INSTANT_MAX,
+            ),
+            (
+                // 天门蓄力尾程前兆：复用 release 的签名 ogg，pitch 0.72 压调 + delay 到尾段作预示。
+                sword_path_recipe_for_skill(SwordPathSkillId::HeavenGateCharge),
+                "bong:skill.sword_path.heaven_gate",
+                0.72,
+                CHARGE_TAIL_MIN,
+                CHARGE_TAIL_MAX,
+            ),
+            (
+                baomai_recipe_for_skill(BaomaiSkillId::FullPowerRelease),
+                "bong:skill.baomai.full_power_release",
+                1.0,
+                0,
+                INSTANT_MAX,
+            ),
+            (
+                ZhenmaiSkillId::SeverChain.audio_recipe(),
+                "bong:skill.zhenmai.sever_chain",
+                1.0,
+                0,
+                INSTANT_MAX,
+            ),
+            (
+                WOLIU_VOID_CORE_RECIPE,
+                "bong:skill.woliu.void_core",
+                1.0,
+                0,
+                INSTANT_MAX,
+            ),
+            (
+                SHED_SKIN_BURST_RECIPE,
+                "bong:skill.tuike.shed",
+                1.0,
+                0,
+                INSTANT_MAX,
+            ),
+            (
+                DUGU_POISON_SIGNATURE_RECIPE,
+                "bong:skill.dugu.infuse_poison",
+                1.0,
+                0,
+                INSTANT_MAX,
+            ),
+            (
+                YIXING_CAST_RECIPE,
+                "bong:skill.morph.yixing",
+                1.0,
+                0,
+                INSTANT_MAX,
+            ),
+            (
+                ANQI_ECHO_FRACTAL_RECIPE,
+                "bong:skill.anqi.echo_fractal",
+                1.0,
+                0,
+                INSTANT_MAX,
+            ),
         ];
-        for (recipe_id, expected_event) in pins {
-            let path = recipe_dir.join(format!("{recipe_id}.json"));
-            let raw = std::fs::read_to_string(&path)
-                .unwrap_or_else(|error| panic!("读 {} 失败: {error}", path.display()));
-            let recipe: serde_json::Value = serde_json::from_str(&raw).expect("recipe 合法 JSON");
-            let layers = recipe["layers"].as_array().expect("recipe 应有 layers");
-            let l0 = layers
+        for (recipe_id, expected_event, expected_pitch, delay_min, delay_max) in pins {
+            // 经真实 registry 加载 + 查找（运行时消费同一路径），非直读 JSON 文件。
+            let recipe = registry.get(recipe_id).unwrap_or_else(|| {
+                panic!(
+                    "生产映射取到的 signature recipe `{recipe_id}` 未在 SoundRecipeRegistry 注册\
+                     ——招式→recipe 映射指向了 registry 里不存在的 recipe，运行时会 fallback 静默"
+                )
+            });
+            let l0 = recipe
+                .layers
                 .first()
                 .unwrap_or_else(|| panic!("signature recipe {recipe_id} 至少应有 L0 主层"));
             assert_eq!(
-                l0.get("sound").and_then(|s| s.as_str()),
-                Some(expected_event),
-                "signature recipe {recipe_id} 的 **L0 主层** sound 应 == {expected_event}\
-                 （plan 要求主层 swap，非把签名挪到铺底层——挪走则声音天花板未打开却假绿）"
+                l0.sound, expected_event,
+                "招式实际 emit 的 recipe `{recipe_id}`（生产映射取得）的 L0 主层 sound 应 == \
+                 {expected_event}——签名挪到铺底层 / recipe 退回 vanilla / 映射改指向没接签名的 recipe \
+                 都会零签名音"
             );
-            let pitch = l0
-                .get("pitch")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or_else(|| panic!("signature recipe {recipe_id} 的 L0 应有 pitch"));
             assert!(
-                (pitch - 1.0).abs() < 1e-9,
-                "signature recipe {recipe_id} 的 L0 pitch 应复位 1.0（plan 要求；伪装音靠叠 pitch，\
-                 签名真音须原速），实际 {pitch}"
+                (l0.pitch - expected_pitch).abs() < 1e-6,
+                "signature recipe {recipe_id} 的 L0 pitch 应 == {expected_pitch}\
+                 （常规招原速 1.0；天门蓄力尾程压调 0.72），实际 {}",
+                l0.pitch
+            );
+            assert!(
+                l0.volume >= AUDIBLE_FLOOR,
+                "signature recipe {recipe_id} 的 L0 volume 应 >= {AUDIBLE_FLOOR}（可听下限）——\
+                 volume≈0 = 实机静音签名，即使 sound/pitch 正确也零签名音，实际 {}",
+                l0.volume
+            );
+            assert!(
+                l0.delay_ticks >= delay_min && l0.delay_ticks <= delay_max,
+                "signature recipe {recipe_id} 的 L0 delay_ticks 应落在 [{delay_min}, {delay_max}]——\
+                 常规招即响；天门蓄力签名须延迟到蓄力尾段 [临界60, 释放140) 才响（=charge 尾程，既不在\
+                 蓄力起始也不在释放后），实际 {}",
+                l0.delay_ticks
             );
         }
     }

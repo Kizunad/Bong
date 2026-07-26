@@ -1083,6 +1083,144 @@ fn reverse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
     );
 }
 
+/// plan-fpv-cast-av-v1 P5 emit 架构统一 —— **端到端 emit-path 门**：真跑一次倒蚀施法
+/// （`resolve_dugu_v2_skill(.., Reverse)`），再跑真实音效系统 `emit_dugu_v2_audio_triggers`，
+/// 断言实发的 `PlaySoundRecipeRequest.recipe_id` == 蛊道签名 `DUGU_POISON_SIGNATURE_RECIPE`
+/// （recipe id 引生产 const 单一真源，测试内不另抄）。
+///
+/// 重构前签名内联在 `apply_reverse` 里发（Pattern B）无独立门；现在锁整条链：
+/// cast 不发 `ReverseTriggeredEvent` / 音效系统没读它 / 系统没接线，任一处断都撞红。
+#[test]
+fn reverse_cast_emits_signature_recipe_end_to_end() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::combat::dugu_v2::skills::DUGU_POISON_SIGNATURE_RECIPE;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_dugu_v2_audio_triggers;
+    use valence::prelude::Update;
+
+    let mut app = setup_zone_credit_app(0.0);
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_event::<crate::combat::needle::QiNeedleChargedEvent>();
+    app.add_event::<crate::cultivation::dugu::DuguObfuscationDisruptedEvent>();
+    app.add_systems(Update, emit_dugu_v2_audio_triggers);
+
+    let void_caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
+    let victim = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    app.world_mut().entity_mut(victim).insert(TaintMark {
+        caster: void_caster,
+        intensity: 5.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 4.95,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        void_caster,
+        0,
+        Some(victim),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Reverse cast 应成功（前置不足会让本断言先撞红），实际={result:?}"
+    );
+    app.update();
+
+    let emitted: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .collect();
+    let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+    assert_eq!(
+        recipes,
+        vec![DUGU_POISON_SIGNATURE_RECIPE],
+        "倒蚀施法应经真实 emit 系统实发签名 {DUGU_POISON_SIGNATURE_RECIPE}（不多不少一条），实际 {recipes:?}"
+    );
+    // 路由与重构前内联 emit 逐字段一致：听者位置发声（无空间衰减）+ 以爆发中心（目标位置 x=1）
+    // 为圆心的 64 格广播。改成世界锚点 + recipe 的 MELEE 8 格会让实机几乎听不见（PR #1262 review）。
+    assert_eq!(
+        emitted[0].pos, None,
+        "签名应 pos=None（听者位置、无空间衰减），与重构前一致"
+    );
+    assert_eq!(
+        emitted[0].recipient,
+        crate::network::audio_event_emit::AudioRecipient::Radius {
+            origin: valence::prelude::DVec3::new(1.0, 64.0, 0.0),
+            radius: crate::network::audio_event_emit::AUDIO_BROADCAST_RADIUS,
+        },
+        "签名收听范围应是以爆发中心（目标位置）为圆心的 64 格广播"
+    );
+}
+
+/// **拒绝路径必须无声**（PR #1262 review 补门）：境界不足（非化虚）被 `Rejected` 的倒蚀，
+/// 既不许发 `ReverseTriggeredEvent`，跑完真实音效系统后也不许有任何 `PlaySoundRecipeRequest`。
+#[test]
+fn rejected_reverse_emits_no_audio_and_no_domain_event() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_dugu_v2_audio_triggers;
+    use valence::prelude::Update;
+
+    let mut app = setup_zone_credit_app(0.0);
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_event::<crate::combat::needle::QiNeedleChargedEvent>();
+    app.add_event::<crate::cultivation::dugu::DuguObfuscationDisruptedEvent>();
+    app.add_systems(Update, emit_dugu_v2_audio_triggers);
+
+    // 倒蚀要求化虚（Realm::Void）；通灵施法者必被拒（RealmTooLow）。
+    let low_caster = actor(&mut app, Realm::Spirit, 500.0, 500.0, 0.0);
+    let victim = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    app.world_mut().entity_mut(victim).insert(TaintMark {
+        caster: low_caster,
+        intensity: 5.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 4.95,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        low_caster,
+        0,
+        Some(victim),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Rejected { .. }),
+        "通灵境施倒蚀应被拒（RealmTooLow），实际={result:?}"
+    );
+    app.update();
+
+    let reverse_events: usize = {
+        let events = app.world().resource::<Events<ReverseTriggeredEvent>>();
+        events.iter_current_update_events().count()
+    };
+    assert_eq!(
+        reverse_events, 0,
+        "被拒绝的倒蚀不得发 ReverseTriggeredEvent"
+    );
+    let recipes: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .map(|event| event.recipe_id)
+        .collect();
+    assert!(
+        recipes.is_empty(),
+        "被拒绝的倒蚀不得有任何招式音（含签名），实际 {recipes:?}"
+    );
+}
+
 /// 守恒不变式：Eclipse 前后，zone_qi 增量 == returned_zone_qi（容差内）。
 ///
 /// 修法 ② 后 Eclipse.returned_zone_qi = rejected_qi × 0.99，仅覆盖被排斥立即散逸部分。

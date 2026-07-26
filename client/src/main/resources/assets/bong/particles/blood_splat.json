@@ -1,0 +1,8 @@
+{
+    "textures": [
+        "bong:particle/blood_splat_0",
+        "bong:particle/blood_splat_1",
+        "bong:particle/blood_splat_2",
+        "bong:particle/blood_splat_3"
+    ]
+}

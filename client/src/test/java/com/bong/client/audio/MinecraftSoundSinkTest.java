@@ -111,6 +111,29 @@ class MinecraftSoundSinkTest {
         assertEquals(1, hardStopped.size(), "重复硬停应为 no-op（映射已移除），不应再次回调");
     }
 
+    /**
+     * 硬停必须让**尚未开声的延迟层**也彻底哑掉：layer 的 delay_ticks 交给 vanilla
+     * `SoundSystem#soundsToPlay` 排队，`soundManager.stop()` 只能停已起声的 source，
+     * 排队中的实例到点仍会被取出播放。归零音量 + 标完成后，即便被取出也没有可听输出。
+     * 回归来源：心跳 loop 的 `entity.player.hurt` 层（delay_ticks=2）曾在重生收掉
+     * loop 之后还补响一声。
+     */
+    @Test
+    void hardStop_silencesPendingDelayedLayer() {
+        MinecraftSoundSink sink = new MinecraftSoundSink();
+        FadeableSoundInstance pendingDelayedLayer = instance();
+        sink.registerInstanceForTests(15L, pendingDelayedLayer);
+
+        sink.stopInternal(15L, 0, ignored -> { });
+
+        assertEquals(0.0f, pendingDelayedLayer.volumeForTests(), 1e-6f,
+            "期望硬停把延迟层音量归零，因为 delay 队列里的实例仍会被引擎取出播放"
+                + "（soundManager.stop 停不掉未起声的 source）；实际音量="
+                + pendingDelayedLayer.volumeForTests());
+        assertTrue(pendingDelayedLayer.isDone(),
+            "期望硬停后实例标记完成，这样被引擎取出时会立即摘除；实际 isDone=false");
+    }
+
     @Test
     void hardStop_stopsAllInstancesUnderSameId() {
         MinecraftSoundSink sink = new MinecraftSoundSink();

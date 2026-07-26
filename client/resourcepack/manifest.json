@@ -3,8 +3,8 @@
   "name": "bong-full",
   "version": "v1",
   "file": "bong-full-v1.zip",
-  "sha1": "7073b361dae7f8048fac50bd9fcca3e837f06602",
-  "size": 72501901,
+  "sha1": "f1bf1c43b0bb4813da0a2de4adc51dac9f3b382d",
+  "size": 72520879,
   "url_env": "BONG_RESOURCE_PACK_URL",
   "sha1_env": "BONG_RESOURCE_PACK_SHA1",
   "force_accept_default": false,
@@ -41,7 +41,7 @@
         "bong-client/textures/hud/effects",
         "bong-client/textures/gui/skill"
       ],
-      "file_count": 120
+      "file_count": 132
     },
     {
       "id": "audio",

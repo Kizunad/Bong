@@ -80,6 +80,14 @@ public final class MinecraftSoundSink implements SoundSink {
             List<FadeableSoundInstance> instances = activeByInstance.remove(instanceId);
             if (instances != null) {
                 for (FadeableSoundInstance instance : instances) {
+                    // 硬停要连**尚未开声的延迟层**一起掐掉：layer 的 delay_ticks 是交给
+                    // vanilla `SoundSystem#soundsToPlay` 排队的，`soundManager.stop()`
+                    // 只能停已起声的 source，排队中的实例到点仍会被取出播放。
+                    // 先把实例自身音量归零 + 标完成（beginFadeOut(0) 语义），这样即便引擎
+                    // 之后从延迟队列取出它，getVolume() 也是 0（无可听输出）且 isDone()
+                    // 为真会被立即摘除。实机症状：心跳 loop 的 entity.player.hurt 层
+                    // （delay_ticks=2）曾在重生收 loop 之后还补响一声。
+                    instance.beginFadeOut(0);
                     hardStopper.accept(instance);
                 }
             }
