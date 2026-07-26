@@ -1417,6 +1417,32 @@ class CastFovControllerTest {
     }
 
     @Test
+    void interruptingOneInFlightGateCastDoesNotDropTheOtherOnesToken() {
+        // 与 pending 半边的 lateInterruptOfSupersededCastDoesNotKillTheLiveOne 对称：取消令牌是
+        // **绑 identity** 的，不是「见到打断就清场」。队列里两枚令牌时，INTERRUPT(A) 只许摘 A
+        // 那一枚；把 removeIf 写成 clear() 会让 B 随后劈下静默无 juice，而别的用例照样全绿。
+        acceptGateCast(START);              // A
+        acceptGateCast(START + 3000);       // B
+        serverSync("interrupt", GATE_SLOT, START, "interrupt_movement");   // 只打断 A
+
+        releaseAnim();   // 队列里只剩 B 一枚 → 这条 release 归 B
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START), "被打断的 A 落 VOIDED");
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START + 3000),
+            "在飞的 B 不受牵连，照常落自己的 FIRED");
+
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6,
+            "打断 A 不得把 B 的令牌一起清掉 —— B 劈下那一刻必须有 juice");
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "B 的抖动同样有");
+
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("B 的脉冲 decay 完毕");
+    }
+
+    @Test
     void capacityEvictedIdentityCannotBeRearmedByALateCasting() {
         // 上一条用内部 seam 断言锁「淘汰即 VOIDED」；本条锁它的**可观察后果**，与 TTL 那条
         // （animTokenTtlExpiryVoids...）对称：淘汰若只是把令牌对象丢掉，被挤掉的身份就能被
