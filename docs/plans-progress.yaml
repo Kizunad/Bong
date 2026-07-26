@@ -1757,11 +1757,11 @@ plans:
   - 897
   blocking_on: []
   summary: BotanyHarvestRequest 改调 request_harvest_mode，4 条 pin（#897）；审计追认归档。
-- file: finished_plans/plan-race-system-v1.md
+- file: plan-race-system-v1.md
   group: cultivation-economy
   title: 种族 BodyPlan 通用化+固元易形功法
-  state: merged
-  percent: 100
+  state: active-implementing
+  percent: 80
   last_updated: '2026-07-26'
   pr_refs:
   - 1160
@@ -1775,7 +1775,7 @@ plans:
   - 1206
   - 1250
   blocking_on: []
-  summary: P0-P5 全落地（morph.rs/whale body_plan//race set/RaceChange 两阶段），#1250 回归修复收尾；文档从未同步 P4/P5，审计追认归档。
+  summary: P0-P4 落地（morph.rs/whale body_plan/race set/RaceChange 两阶段）+ P5 机制底盘（PR-6a/6b/6c）落地；欠 FinRing 消费链 / 2 条 bot 场景 / e2e / worldview 增补案 / 非人种族生产获得路径，此前被 #1278 误追认归档，已回退。
 - file: finished_plans/plan-season-phase-stale-client-v1.md
   group: infrastructure
   title: 季节跨相位客户端状态陈旧
