@@ -265,7 +265,19 @@
 
 #1250（2026-07-23）是一处经脉显示回归修复，与本 plan 主体交付判定无关，不作为证据引用。
 
-**遗留 / 后续**（承接 #1278 删掉的 Finish Evidence 里那条「status_snapshot 8 段 id 发散小 PR」——原措辞不准，此处按代码实况重写，不随归档回退一起丢账）：
+**遗留 / 后续**（承接 #1278 删掉的 Finish Evidence 里那条「status_snapshot 8 段 id 发散小 PR」——原措辞不准，此处按代码实况重写，不随归档回退一起丢账；**2026-07-27 纠正**：本段此前整段照抄了下方引用的 P0 期注释清单，未逐项核实其现状，见下方「纠错声明」）：
 
-- **legacy `BodyPart` 8 段与通用 `BodyPartId`（string）并存的残留耦合**。P0 只把 `Wound.location` 及其伤残后果消费点（`combat::arm_wound` / `movement::leg_wound` / 减速 / 眩晕 / 脱手）迁到 `BodyPartId`；`server/src/combat/components.rs:57-71` 的注释自陈「本轮**不**跟进迁移」的人形专属子系统仍以 legacy enum 工作：`CombatEvent.body_part` wire、`DerivedAttrs.defense_profile`（`components.rs:320` 的 `HashMap<(BodyPart, WoundKind), f32>`）、护甲 `body_coverage`、`DeadMeridianArmor.immune_regions`、`dugu::body_part_to_meridian`、状态效果 `BodyPartResist` / `BodyPartWeaken`、dandao 变异伤害倍率（经 `body_plan::id_to_legacy_body_part` 转换，非 8 段 id 返回 `None`）。
-- **不阻塞本 plan 归档**（P5 四项欠账才是阻塞项），但非人形构型在上述子系统里仍会退化：whale 的 `tail_fin` 之类 id 转 legacy 失败即走各消费点的兜底分支。真正需要非人形护甲 / 部位抗性 / 变异时，应另立 plan 收口，不要塞进本 plan 的 P5。
+- **纠错声明**：`server/src/combat/components.rs:57-71` 那条「仍以 legacy `BodyPart` 工作的人形专属子系统……本轮不跟进迁移」的注释写于 P0 review r2（BLOCKING-2 收口）阶段，是 **P0 期状态快照**；P1b/P1c 已把其中列出的部分子系统迁移为数据驱动，但该注释本身未随之更新（stale）。本 plan 此前一版把这条注释当作「当前仍未迁移」的现状清单整段照抄，未逐项核实——这是错误，以下按 2026-07-27 实测重写。
+- **P1 交付物已落地（wire 开放化 + 映射数据化，§P1 原文「交付物」bullet 3/5 对应）**：
+  - `CombatBodyPartV1`（wire）已开放为 string：`server/src/schema/combat_event.rs:9` `pub struct CombatBodyPartV1(pub String)`，注释自陈「plan-race-system-v1 P1c」
+  - `MeridianId`（wire）已开放为 string：`agent/packages/schema/src/cultivation.ts:58` `Type.String(...)`
+  - `dugu.rs` 经脉↔部位映射已数据化：`cultivation/dugu.rs:539` 的 `body_part_to_meridian` **函数签名保留**（既有调用点无需改写）但内部实现改为查询 `body_plan::dugu_injection_channel`（数据唯一真源 = `humanoid.json meridian_profile.dugu_injection`），不再是硬编码 match 表；注释自陈「plan-race-system-v1 P1b —— 私表退役」
+  - `dead_armor.rs` 经脉↔部位映射已数据化：`combat/baomai_v4/dead_armor.rs:213` 的 `meridian_to_body_part` 同样签名保留、内部改查 `body_plan::channel_body_part`（数据源 = `humanoid.json meridian_profile.channels[].body_part`）；注释自陈「plan-race-system-v1 P1b —— 私表退役」
+- **P4 交付物已落地（form 护甲 coverage 折算，§P4 原文「易形语义收敛」bullet 对应）**：form 形态所穿护甲的 `body_coverage` 经 `part_mapping` 折算回本体部位已实现并有专项测试：`server/src/combat/resolve.rs:3554` `morphed_target_gets_real_armor_mitigation_via_part_mapping_fold_back`
+- **剩余遗留收窄为**：以下均是 Rust **内部类型 / 字段**仍以 legacy `BodyPart` 作 key（非 wire——wire 层 `CombatBodyPartV1` 已如上确认是 string，`CombatEvent` 是纯战斗运行时事件结构体、从不上 wire），且均**不在 P1（wire 开放化 + dugu/dead_armor 映射数据化）或 P4（form 护甲 coverage 折算）任一交付物清单内**（对照 §P1/§P4 原文「交付物」段），因此不影响两阶段 ✅：
+  - `CombatEvent.body_part`（`combat/events.rs:204`，战斗内部事件结构体字段，非 wire）
+  - `DerivedAttrs.defense_profile`（`combat/components.rs:320`，`HashMap<(BodyPart, WoundKind), f32>`）
+  - `DeadMeridianArmor.immune_regions`（`combat/baomai_v4/dead_armor.rs:182`，`HashSet<BodyPart>`）
+  - 状态效果 `StatusEffectKind::BodyPartResist` / `BodyPartWeaken`（`combat/events.rs:146,148`，枚举变体参数类型）
+  - dandao 变异伤害倍率 `mutation_damage_multiplier_for_part`（`dandao/mutation.rs:249`，`part: BodyPart` 参数）
+  非人形构型在上述子系统里仍会退化：whale 的 `tail_fin` 之类 id 转 legacy 失败即走各消费点的兜底分支（`body_plan::id_to_legacy_body_part` 返回 `None`）。真正需要非人形护甲 / 部位抗性 / 变异时，应另立 plan 收口，不要塞进本 plan 的 P5。
