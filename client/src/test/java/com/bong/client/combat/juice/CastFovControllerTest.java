@@ -139,6 +139,27 @@ class CastFovControllerTest {
         assertEquals(4, CastJuiceProfiles.skillIds().size(), "CastState 驱动仅剩 4 个重型招");
     }
 
+    // ---- 生产接线（防孤岛：bootstrap 漏挂一行，整条 CastState 驱动会静默失效） ----
+
+    @Test
+    void bootstrapRegistersCastStateListenerSoProductionPathIsNotAnIsland() {
+        // 其余用例都是 setUp 手工挂 listener（单测无 Fabric 事件环境），于是 bootstrap() 本身
+        // 零覆盖——把 CastStateStore.addListener 那行删掉，整条 CastState 驱动 juice 会静默
+        // 变成孤岛而测试全绿。这里清空 listener 后走**真正的 bootstrap()**，再用真实入口驱动。
+        CastStateStore.resetForTests();   // 清掉 setUp 手工挂的 listener
+        CastFovController.bootstrap();    // 生产接线（幂等，AtomicBoolean 一次性）
+
+        predict(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6,
+            "bootstrap() 必须把 juice 挂上 CastStateStore，否则生产里根本收不到 cast 转换");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("经 bootstrap 接线的脉冲同样 decay 回基准");
+    }
+
     // ---- 状态机全路径（终点断言基准） ----
 
     @Test
