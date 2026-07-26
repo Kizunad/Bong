@@ -645,6 +645,28 @@ pub fn emit_botany_audio_triggers(
             1.0,
             0.0,
         );
+        // plan-gathering-tool-bind-v1 P1：草镰接通本职——持镰收割 vs 徒手割手的差异化 SFX。
+        if event.bare_hand_wound {
+            emit_play(
+                &mut audio,
+                "botany_bare_hand_wound",
+                event.client_entity,
+                origin,
+                None,
+                1.0,
+                0.0,
+            );
+        } else if event.required_tool_used {
+            emit_play(
+                &mut audio,
+                "cao_lian_harvest_swing",
+                event.client_entity,
+                origin,
+                None,
+                1.0,
+                0.0,
+            );
+        }
     }
 }
 

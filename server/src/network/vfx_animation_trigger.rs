@@ -653,6 +653,19 @@ pub fn emit_guangbo_ticao_visual_triggers(
     }
 }
 
+/// plan-gathering-tool-bind-v1 P1：草镰挥砍的草绿碎叶（`#7FA86A`，8 颗，8t）——
+/// 复用既有 `BOTANY_HARVEST_VFX`（client `BotanyHarvestBurstPlayer` 已注册，纯 payload
+/// 驱动 color/count/duration，无需新 event_id / 新 Java 类）。
+const CAO_LIAN_SWING_COLOR: &str = "#7FA86A";
+const CAO_LIAN_SWING_COUNT: u16 = 8;
+const CAO_LIAN_SWING_DURATION_TICKS: u16 = 8;
+
+/// plan-gathering-tool-bind-v1 P1：徒手割手的细红痕（`#C04848`，3 颗，8t）——同上复用
+/// `BOTANY_HARVEST_VFX`，仅参数不同。
+const BARE_HAND_WOUND_COLOR: &str = "#C04848";
+const BARE_HAND_WOUND_COUNT: u16 = 3;
+const BARE_HAND_WOUND_DURATION_TICKS: u16 = 8;
+
 pub fn emit_botany_harvest_visual_triggers(
     mut terminal: EventReader<HarvestTerminalEvent>,
     players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
@@ -673,15 +686,37 @@ pub fn emit_botany_harvest_visual_triggers(
         let Some(pos) = event.target_pos else {
             continue;
         };
+        let origin = valence::prelude::DVec3::new(pos[0], pos[1] + 0.45, pos[2]);
         emit_spawn_particle(
             &mut vfx_events,
             BOTANY_HARVEST_VFX,
-            valence::prelude::DVec3::new(pos[0], pos[1] + 0.45, pos[2]),
+            origin,
             botany_quality_color(event.spirit_quality),
             event.spirit_quality.clamp(0.5, 1.0),
             12,
             36,
         );
+        if event.bare_hand_wound {
+            emit_spawn_particle(
+                &mut vfx_events,
+                BOTANY_HARVEST_VFX,
+                origin,
+                BARE_HAND_WOUND_COLOR,
+                0.9,
+                BARE_HAND_WOUND_COUNT,
+                BARE_HAND_WOUND_DURATION_TICKS,
+            );
+        } else if event.required_tool_used {
+            emit_spawn_particle(
+                &mut vfx_events,
+                BOTANY_HARVEST_VFX,
+                origin,
+                CAO_LIAN_SWING_COLOR,
+                0.85,
+                CAO_LIAN_SWING_COUNT,
+                CAO_LIAN_SWING_DURATION_TICKS,
+            );
+        }
     }
 }
 
@@ -2213,6 +2248,8 @@ mod tests {
             gathering_quality: Some(crate::gathering::quality::GatheringQuality::Perfect),
             tool_used: Some("bao_chu".to_string()),
             overflow_to_ground: false,
+            bare_hand_wound: false,
+            required_tool_used: false,
         });
 
         app.update();

@@ -102,6 +102,31 @@ pub fn emit_botany_harvest_overflow_to_event_stream(
     }
 }
 
+/// plan-gathering-tool-bind-v1 P1：草镰接通本职——徒手割手时给玩家一条 event_stream
+/// 提示「叶缘割手」（World channel，非战斗但复用同一既有推送管线）。仅在
+/// `bare_hand_wound && completed && !interrupted` 时推送，遵循
+/// `feedback_hud_immersive_minimal`：持镰免伤的 happy path 不刷屏。
+pub fn emit_botany_harvest_wound_to_event_stream(
+    mut terminal: EventReader<HarvestTerminalEvent>,
+    mut clients: Query<(&Username, &mut Client)>,
+) {
+    let now_ms = current_unix_millis();
+    for ev in terminal.read() {
+        if !ev.bare_hand_wound || !ev.completed || ev.interrupted {
+            continue;
+        }
+        push_to_client_priority(
+            &mut clients,
+            ev.client_entity,
+            "botany-bare-hand-wound",
+            "叶缘割手",
+            EventChannelV1::World,
+            EventPriorityV1::P1Important,
+            now_ms,
+        );
+    }
+}
+
 fn push_to_client(
     clients: &mut Query<(&Username, &mut Client)>,
     entity: Entity,
@@ -232,6 +257,8 @@ mod tests {
             gathering_quality: None,
             tool_used: None,
             overflow_to_ground,
+            bare_hand_wound: false,
+            required_tool_used: false,
         }
     }
 
@@ -308,6 +335,108 @@ mod tests {
             pushes.len(),
             0,
             "interrupted terminal events must never push a botany-overflow event, even with overflow_to_ground mistakenly true"
+        );
+    }
+
+    /// plan-gathering-tool-bind-v1 P1 测试用 `HarvestTerminalEvent` 构造器（bare_hand_wound 变体）。
+    fn wound_terminal_event(
+        client_entity: Entity,
+        bare_hand_wound: bool,
+        completed: bool,
+        interrupted: bool,
+    ) -> HarvestTerminalEvent {
+        HarvestTerminalEvent {
+            client_entity,
+            session_id: "offline:Azure".to_string(),
+            target_id: "plant-1".to_string(),
+            target_name: "xue_se_mai_cao".to_string(),
+            plant_kind: "xue_se_mai_cao".to_string(),
+            mode: BotanyHarvestMode::Manual,
+            interrupted,
+            completed,
+            detail: "采得 1 株 · 灵气流出 0.008 · 叶缘割手".to_string(),
+            target_pos: Some([10.0, 64.0, 10.0]),
+            spirit_quality: 0.9,
+            duration_ticks: 40,
+            gathering_quality: None,
+            tool_used: None,
+            overflow_to_ground: false,
+            bare_hand_wound,
+            required_tool_used: false,
+        }
+    }
+
+    /// ① bare_hand_wound=true → client 收到 1 条 World/P1Important 推送「叶缘割手」。
+    #[test]
+    fn bare_hand_wound_terminal_event_pushes_world_channel_event_stream() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_systems(Update, emit_botany_harvest_wound_to_event_stream);
+
+        let (player, mut player_helper) = spawn_mock_client(&mut app, "Azure");
+        app.world_mut()
+            .send_event(wound_terminal_event(player, true, true, false));
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let pushes = collect_event_stream_pushes(&mut player_helper);
+        assert_eq!(
+            pushes.len(),
+            1,
+            "bare_hand_wound completion should push exactly one event_stream entry"
+        );
+        let push = &pushes[0];
+        assert_eq!(push.channel, EventChannelV1::World);
+        assert_eq!(push.priority, EventPriorityV1::P1Important);
+        assert_eq!(
+            push.text, "叶缘割手",
+            "pushed text should be 叶缘割手, got {:?}",
+            push.text
+        );
+    }
+
+    /// ② bare_hand_wound=false（持镰免伤 happy path）→ 无推送，不刷屏。
+    #[test]
+    fn tool_avoided_wound_terminal_event_does_not_push() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_systems(Update, emit_botany_harvest_wound_to_event_stream);
+
+        let (player, mut player_helper) = spawn_mock_client(&mut app, "Azure");
+        app.world_mut()
+            .send_event(wound_terminal_event(player, false, true, false));
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let pushes = collect_event_stream_pushes(&mut player_helper);
+        assert_eq!(
+            pushes.len(),
+            0,
+            "持镰免伤（bare_hand_wound=false）不应刷 event_stream"
+        );
+    }
+
+    /// ③ interrupted=true 时即使误设 bare_hand_wound=true 也不推送（防御性用例）。
+    #[test]
+    fn interrupted_terminal_event_never_pushes_wound_even_if_flag_mistakenly_set() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_systems(Update, emit_botany_harvest_wound_to_event_stream);
+
+        let (player, mut player_helper) = spawn_mock_client(&mut app, "Azure");
+        app.world_mut()
+            .send_event(wound_terminal_event(player, true, false, true));
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let pushes = collect_event_stream_pushes(&mut player_helper);
+        assert_eq!(
+            pushes.len(),
+            0,
+            "interrupted terminal events must never push a botany-bare-hand-wound event, even with bare_hand_wound mistakenly true"
         );
     }
 }
