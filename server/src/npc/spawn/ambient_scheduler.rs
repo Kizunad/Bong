@@ -1022,6 +1022,10 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         let AmbientCheckOutcome::ShouldSpawn { budget } = outcome else {
             continue;
         };
+        // `budget.pack_size_range`（多只群体刷新）不在本 plan 范围内消费，留给后续若立项；
+        // baseline（origin/main）同样从未消费该字段，本 plan 只改地表落点门禁与提交边界，
+        // 不改刷新数量语义。
+        let _ = budget.pack_size_range;
 
         let Some(spawn_pos) =
             sample_ambient_ring_position(zone.bounds, *player_pos, &alive_in_zone, spawn_seed)
@@ -1054,7 +1058,6 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
             // runtime 标准窗口与 raster fallback 都无法给出安全脚点、或 pool 拒绝时，
             // 只丢弃本次候选；helper 保证失败分支不挂 marker、不占 pending，scheduler
             // 下一轮自然重试。
-            let _ = budget.pack_size_range;
             continue;
         }
     }

@@ -76,7 +76,7 @@ type PlayerQuery<'w, 's> = Query<
 >;
 
 #[allow(clippy::too_many_arguments)]
-pub fn handle_ambient_spawn(
+fn handle_ambient_spawn(
     mut commands: Commands,
     mut events: EventReader<CommandResultEvent<AmbientSpawnCmd>>,
     mut players: PlayerQuery<'_, '_>,
