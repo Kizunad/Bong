@@ -6226,7 +6226,6 @@ pub fn persist_player_cultivation_bundle(
         poison_toxicity,
         digestion_load,
         None,
-        None,
     )
 }
 
@@ -6290,7 +6289,6 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
     poison_toxicity: Option<&crate::cultivation::poison_trait::PoisonToxicity>,
     digestion_load: Option<&crate::cultivation::poison_trait::DigestionLoad>,
     nourishment: Option<&crate::nourishment::Nourishment>,
-    nourishment_activity_window: Option<&crate::nourishment::tick::NourishmentActivityWindow>,
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
@@ -6322,11 +6320,6 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
         .transpose()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
         .or_else(|| existing_field("nourishment"));
-    let nourishment_activity_window = nourishment_activity_window
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
-        .or_else(|| existing_field("nourishment_activity_window"));
     let bundle = serde_json::json!({
         // plan-race-system-v1 P1a —— bump 1→2：`meridians`/`meridian_severed` 子字段
         // channel id 从 `MeridianId` PascalCase 枚举名换轨为 humanoid.json 声明的
@@ -6349,7 +6342,6 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
         "poison_toxicity": poison_toxicity,
         "digestion_load": digestion_load,
         "nourishment": nourishment,
-        "nourishment_activity_window": nourishment_activity_window,
     });
     let cultivation_json = serde_json::to_string(&bundle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -10457,12 +10449,6 @@ mod persistence_tests {
             satiety: 31.0,
             hydration: 47.0,
         };
-        let activity = crate::nourishment::tick::NourishmentActivityWindow {
-            idle_ticks: 100,
-            move_ticks: 70,
-            dash_ticks: 29,
-            had_qualifying_movement: false,
-        };
         let cultivation = Cultivation::default();
         let meridians = crate::cultivation::components::MeridianSystem::default();
         let qi_color = crate::cultivation::components::QiColor::default();
@@ -10493,7 +10479,6 @@ mod persistence_tests {
             None,
             None,
             Some(&nourishment),
-            Some(&activity),
         )
         .expect("initial bundle with non-default nourishment should persist");
 
@@ -10528,13 +10513,10 @@ mod persistence_tests {
             nourishment,
             "a legacy save must not replace existing satiety/hydration with null"
         );
-        assert_eq!(
-            serde_json::from_value::<crate::nourishment::tick::NourishmentActivityWindow>(
-                persisted["nourishment_activity_window"].clone(),
-            )
-            .expect("legacy writer must retain activity-window JSON"),
-            activity,
-            "a legacy save must not replace the partial sweep window with null"
+
+        assert!(
+            persisted.get("nourishment_activity_window").is_none(),
+            "legacy writer must leave session-only activity state absent from the persisted bundle"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -10555,12 +10537,6 @@ mod persistence_tests {
         let nourishment = crate::nourishment::Nourishment {
             satiety: 31.0,
             hydration: 47.0,
-        };
-        let activity = crate::nourishment::tick::NourishmentActivityWindow {
-            idle_ticks: 100,
-            move_ticks: 70,
-            dash_ticks: 29,
-            had_qualifying_movement: false,
         };
         let cultivation = Cultivation::default();
         let meridians = crate::cultivation::components::MeridianSystem::default();
@@ -10592,7 +10568,6 @@ mod persistence_tests {
             None,
             None,
             Some(&nourishment),
-            Some(&activity),
         )
         .expect("initial bundle should persist");
 

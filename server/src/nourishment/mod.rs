@@ -20,7 +20,6 @@ pub const NOURISH_IDLE_ACTIVITY_MULTIPLIER: f32 = 1.0;
 pub const NOURISH_MOVE_ACTIVITY_MULTIPLIER: f32 = 1.5;
 pub const NOURISH_DASH_ACTIVITY_MULTIPLIER: f32 = 3.0;
 pub const NOURISH_MOVEMENT_EPSILON_BLOCKS: f64 = 0.05;
-pub const NOURISH_MOVEMENT_LEASE_TICKS: u64 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NourishmentAxis {
@@ -190,19 +189,21 @@ pub fn nourishment_loss_multiplier(realm: Realm) -> f32 {
 }
 
 pub fn register(app: &mut App) {
+    app.insert_resource(tick::NourishmentSweepGate::default());
     app.add_event::<valence::movement::MovementEvent>();
     app.add_systems(
         Update,
         (
-            tick::attach_movement_tracker,
-            tick::attach_sweep_cursor,
+            tick::attach_activity_window,
             apply_deferred,
-            tick::record_movement_events,
-            tick::tick_nourishment,
+            tick::sample_activity
+                .after(crate::movement::tick_movement_actions)
+                .after(crate::movement::handle_movement_action_intents),
+            tick::tick_nourishment
+                .after(tick::sample_activity)
+                .before(crate::combat::lifecycle::handle_revival_action_intents),
         )
-            .chain()
-            .after(crate::movement::tick_movement_actions)
-            .after(crate::movement::handle_movement_action_intents),
+            .chain(),
     );
 }
 
@@ -385,26 +386,12 @@ mod tests {
         app.update();
 
         assert_eq!(
-            *app.world()
-                .get::<tick::NourishmentActivityWindow>(entity)
-                .expect("production nourishment register should retain an activity window"),
-            tick::NourishmentActivityWindow {
-                idle_ticks: 0,
-                move_ticks: 1,
-                dash_ticks: 0,
-                had_qualifying_movement: true,
-            },
-            "a qualifying MovementEvent must count as movement in the same production update"
-        );
-        assert_eq!(
             app.world()
-                .get::<tick::NourishmentMovementTracker>(entity)
-                .expect(
-                    "production register must attach the session tracker before consuming events"
-                )
-                .last_moved_at_tick(),
-            Some(31),
-            "the attached default tracker must be visible through deferred Commands and refreshed"
+                .get::<tick::NourishmentActivityWindow>(entity)
+                .expect("production nourishment register should retain an activity window")
+                .observed_flags(),
+            (true, false),
+            "a qualifying MovementEvent must count as movement in the same production update"
         );
     }
 
@@ -450,15 +437,11 @@ mod tests {
             "the real movement intent handler must accept the dash on this update"
         );
         assert_eq!(
-            *app.world()
+            app.world()
                 .get::<tick::NourishmentActivityWindow>(entity)
-                .expect("production nourishment register should retain an activity window"),
-            tick::NourishmentActivityWindow {
-                idle_ticks: 0,
-                move_ticks: 0,
-                dash_ticks: 1,
-                had_qualifying_movement: false,
-            },
+                .expect("production nourishment register should retain an activity window")
+                .observed_flags(),
+            (false, true),
             "nourishment must run after both movement systems so the dash starting tick counts as dash"
         );
     }

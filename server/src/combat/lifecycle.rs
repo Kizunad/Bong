@@ -1689,7 +1689,6 @@ fn queue_nourishment_cultivation_bundle_persist(
                 Some(unlocked_perceptions),
                 Some(insight_modifiers),
                 Some(nourishment),
-                Some(nourishment_activity),
             ) = (
                 world.get::<Username>(entity),
                 world.get::<Cultivation>(entity),
@@ -1703,7 +1702,6 @@ fn queue_nourishment_cultivation_bundle_persist(
                 world.get::<UnlockedPerceptions>(entity),
                 world.get::<InsightModifiers>(entity),
                 world.get::<Nourishment>(entity),
-                world.get::<NourishmentActivityWindow>(entity),
             )
             else {
                 tracing::warn!(
@@ -1734,7 +1732,6 @@ fn queue_nourishment_cultivation_bundle_persist(
                 world.get::<PoisonToxicity>(entity),
                 world.get::<DigestionLoad>(entity),
                 Some(nourishment),
-                Some(nourishment_activity),
             ) {
                 tracing::warn!(
                     "[bong][combat] failed to persist nourishment lifecycle reset for `{}`: {error}",
@@ -2513,28 +2510,21 @@ mod tests {
         )
     }
 
-    fn load_persisted_nourishment(
-        settings: &PersistenceSettings,
-        username: &str,
-    ) -> (Nourishment, NourishmentActivityWindow) {
+    fn load_persisted_nourishment(settings: &PersistenceSettings, username: &str) -> Nourishment {
         let bundle = crate::persistence::load_player_cultivation_bundle(settings, username)
             .expect("cultivation bundle reload should succeed")
             .expect("cultivation bundle should exist");
-        let nourishment = serde_json::from_value(
+        assert!(
+            bundle.get("nourishment_activity_window").is_none(),
+            "lifecycle persistence must not write session-only activity"
+        );
+        serde_json::from_value(
             bundle
                 .get("nourishment")
                 .cloned()
                 .expect("cultivation bundle should persist nourishment"),
         )
-        .expect("persisted nourishment should decode");
-        let activity_window = serde_json::from_value(
-            bundle
-                .get("nourishment_activity_window")
-                .cloned()
-                .expect("cultivation bundle should persist the activity window"),
-        )
-        .expect("persisted activity window should decode");
-        (nourishment, activity_window)
+        .expect("persisted nourishment should decode")
     }
 
     #[test]
@@ -3505,12 +3495,7 @@ mod tests {
             satiety: 37.0,
             hydration: 46.0,
         };
-        let expected_activity = NourishmentActivityWindow {
-            idle_ticks: 17,
-            move_ticks: 23,
-            dash_ticks: 31,
-            had_qualifying_movement: false,
-        };
+        let expected_activity = NourishmentActivityWindow::default();
         let entity = app
             .world_mut()
             .spawn((
@@ -3563,6 +3548,81 @@ mod tests {
                 .unwrap(),
             expected_activity,
             "stabilization must preserve every accumulated activity tick"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn nourishment_sweep_runs_before_revival_reset_on_the_same_boundary_tick() {
+        // plan-satiety-hydration-v1 §5：全局 CombatClock 扫荡必须排在
+        // handle_revival_action_intents 之前，否则一个恰好落在 200-tick 边界上的
+        // 正式复活会先被 revive_lifecycle 重置到 80/80，再被同一 Update 内的扫荡
+        // 顺手扣掉一份闲置损耗——玩家复活的瞬间饱食/水分就低于满值。
+        // 用一个远离 80/80 的复活前脏值验证:若顺序正确，扫荡只会处理复活前的旧值，
+        // 随后 revive_lifecycle 无条件覆写为精确的 spawn_default；若顺序颠倒，最终值
+        // 会是 80 减去一份闲置 sweep 损耗，与 spawn_default 精确相等的断言就会撞红。
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("nourishment-sweep-before-revival");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock {
+            tick: u64::from(crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS),
+        });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
+        crate::nourishment::register(&mut app);
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let (mut client_bundle, _helper) = create_mock_client("SweepBeforeRevival");
+        client_bundle.player.position = Position::new([1.0, 70.0, 1.0]);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation::default(),
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                Nourishment {
+                    satiety: 12.0,
+                    hydration: 8.0,
+                },
+                NourishmentActivityWindow::default(),
+            ))
+            .id();
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: u64::from(crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Alive,
+            "the Fortune decision must have revived the actor on this Update"
+        );
+        assert_eq!(
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            Nourishment::spawn_default(),
+            "the sweep must settle the pre-revival window first so revive_lifecycle's \
+             unconditional reset lands exactly on spawn_default with no trailing sweep \
+             deduction from this same Update"
+        );
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap(),
+            NourishmentActivityWindow::default(),
+            "revival must leave a fresh, empty session activity window"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -4559,12 +4619,7 @@ mod tests {
                 satiety: 7.0,
                 hydration: 8.0,
             },
-            NourishmentActivityWindow {
-                idle_ticks: 30,
-                move_ticks: 40,
-                dash_ticks: 50,
-                had_qualifying_movement: false,
-            },
+            NourishmentActivityWindow::default(),
         ));
 
         app.world_mut().send_event(DeathEvent {
@@ -4663,11 +4718,8 @@ mod tests {
         );
         assert_eq!(
             load_persisted_nourishment(&settings, "Ancestor"),
-            (
-                Nourishment::spawn_default(),
-                NourishmentActivityWindow::default()
-            ),
-            "formal Reincarnate must persist the reset axes and window in the same cultivation bundle"
+            Nourishment::spawn_default(),
+            "formal Reincarnate must persist reset axes without serializing session activity"
         );
         assert!(matches!(
             app.world()
@@ -5391,12 +5443,7 @@ mod tests {
                     satiety: 11.0,
                     hydration: 12.0,
                 },
-                NourishmentActivityWindow {
-                    idle_ticks: 20,
-                    move_ticks: 30,
-                    dash_ticks: 40,
-                    had_qualifying_movement: false,
-                },
+                NourishmentActivityWindow::default(),
             ))
             .id();
 
@@ -5507,11 +5554,8 @@ mod tests {
         assert_eq!(persisted_lifespan.offline_pause_tick, None);
         assert_eq!(
             load_persisted_nourishment(&settings, username.0.as_str()),
-            (
-                Nourishment::spawn_default(),
-                NourishmentActivityWindow::default()
-            ),
-            "CreateNewCharacter must persist reset nourishment and activity window immediately"
+            Nourishment::spawn_default(),
+            "CreateNewCharacter must persist reset nourishment without serializing session activity"
         );
 
         let _ = fs::remove_dir_all(root);
