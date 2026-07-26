@@ -316,6 +316,7 @@ pub fn register(app: &mut App) {
     app.add_event::<CoffinMenuReclaimRequest>();
     app.add_event::<CoffinBreakRequest>();
     app.add_event::<CoffinStateChanged>();
+    app.add_event::<SneakEvent>();
     app.add_systems(
         Update,
         (
@@ -344,13 +345,21 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        // Lifecycle exits remove CoffinComponent through Commands. Flush that removal before the
+        // pinning pass, otherwise the same Update can overwrite a committed revival/new-life
+        // spawn Position with coffin_player_position.
         (
-            pin_coffin_players.after(crate::cultivation::attach_cultivation_to_joined_clients),
-            emit_coffin_state_payloads
-                .after(crate::cultivation::attach_cultivation_to_joined_clients),
-            emit_coffin_state_to_joined_clients
-                .after(crate::cultivation::attach_cultivation_to_joined_clients),
-        ),
+            apply_deferred,
+            pin_coffin_players,
+            emit_coffin_state_payloads,
+            emit_coffin_state_to_joined_clients,
+        )
+            .chain()
+            .after(crate::cultivation::attach_cultivation_to_joined_clients)
+            .after(handle_coffin_leave_requests)
+            .after(handle_coffin_breaks)
+            .after(handle_coffin_menu_reclaim)
+            .after(crate::combat::lifecycle::handle_revival_action_intents),
     );
 }
 

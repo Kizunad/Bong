@@ -1,8 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use valence::entity::entity::Flags;
 use valence::prelude::{
-    Added, Client, Commands, Entity, EventReader, EventWriter, Events, GameMode, Position, Query,
-    Res, ResMut, Username, Without,
+    Added, Client, Commands, Entity, EntityLayerId, EventReader, EventWriter, Events, GameMode,
+    Position, Query, Res, ResMut, Username, VisibleChunkLayer, VisibleEntityLayers, Without,
 };
 
 use crate::alchemy::LearnedRecipes;
@@ -62,7 +63,7 @@ use crate::schema::spirit_eye::DeathInsightSpiritEyeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillSet;
 use crate::skin::NpcVisualProfile;
-use crate::world::dimension::DimensionKind;
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::spawn_tutorial::TutorialState;
 use crate::world::spirit_eye::SpiritEyeRegistry;
 use crate::world::zone::ZoneRegistry;
@@ -129,6 +130,13 @@ type NearDeathPersistenceQueryItem<'a> = (
     Option<&'a mut LifespanComponent>,
     Option<&'a mut PlayerState>,
     Option<&'a mut Position>,
+    (
+        Option<&'a mut EntityLayerId>,
+        Option<&'a mut VisibleChunkLayer>,
+        Option<&'a mut VisibleEntityLayers>,
+        Option<&'a mut CurrentDimension>,
+        Option<&'a mut Flags>,
+    ),
     Option<&'a Username>,
     Option<&'a NpcMarker>,
     Option<&'a NpcVisualProfile>,
@@ -777,6 +785,7 @@ pub fn near_death_tick(
         lifespan,
         player_state,
         position,
+        (_layer_id, _visible_chunk_layer, _visible_entity_layers, _current_dimension, _flags),
         _username,
         npc_marker,
         npc_visual_profile,
@@ -1039,9 +1048,12 @@ pub fn handle_revival_action_intents(
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
     mut clients: Query<&mut valence::prelude::Client>,
     mut vfx_events: EventWriter<VfxEventRequest>,
-    // P0 fix: coffin 清除参数（复活/新建时彻底清除 coffin 状态）
-    mut coffin_registry: Option<ResMut<crate::coffin::CoffinRegistry>>,
-    mut coffin_state_events: EventWriter<crate::coffin::CoffinStateChanged>,
+    // P0 fix: coffin 清除与 Overworld 运行时发布参数。
+    (mut coffin_registry, mut coffin_state_events, dimension_layers): (
+        Option<ResMut<crate::coffin::CoffinRegistry>>,
+        EventWriter<crate::coffin::CoffinStateChanged>,
+        Option<Res<DimensionLayers>>,
+    ),
 ) {
     for intent in intents.read() {
         let Ok((
@@ -1054,6 +1066,7 @@ pub fn handle_revival_action_intents(
             lifespan,
             player_state,
             position,
+            (layer_id, visible_chunk_layer, visible_entity_layers, current_dimension, flags),
             username,
             npc_marker,
             npc_visual_profile,
@@ -1128,6 +1141,12 @@ pub fn handle_revival_action_intents(
                         combat_state,
                         player_state,
                         position,
+                        layer_id,
+                        visible_chunk_layer,
+                        visible_entity_layers,
+                        current_dimension,
+                        flags,
+                        dimension_layers.as_deref(),
                         nourishment,
                         nourishment_activity,
                         qi_color,
@@ -1252,6 +1271,12 @@ pub fn handle_revival_action_intents(
                     lifespan,
                     player_state,
                     position,
+                    layer_id,
+                    visible_chunk_layer,
+                    visible_entity_layers,
+                    current_dimension,
+                    flags,
+                    dimension_layers.as_deref(),
                     wounds,
                     stamina,
                     combat_state,
@@ -1598,6 +1623,12 @@ fn revive_lifecycle(
     combat_state: Option<valence::prelude::Mut<'_, CombatState>>,
     player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
     position: Option<valence::prelude::Mut<'_, Position>>,
+    layer_id: Option<valence::prelude::Mut<'_, EntityLayerId>>,
+    visible_chunk_layer: Option<valence::prelude::Mut<'_, VisibleChunkLayer>>,
+    visible_entity_layers: Option<valence::prelude::Mut<'_, VisibleEntityLayers>>,
+    current_dimension: Option<valence::prelude::Mut<'_, CurrentDimension>>,
+    flags: Option<valence::prelude::Mut<'_, Flags>>,
+    dimension_layers: Option<&DimensionLayers>,
     nourishment: Option<valence::prelude::Mut<'_, Nourishment>>,
     nourishment_activity: Option<valence::prelude::Mut<'_, NourishmentActivityWindow>>,
     qi_color: &QiColor,
@@ -1744,6 +1775,18 @@ fn revive_lifecycle(
     }
     let _ = player_state;
     position.set(revived_position);
+    if let Some(mut flags) = flags {
+        flags.set_invisible(false);
+    }
+    publish_overworld_runtime(
+        entity,
+        commands,
+        layer_id,
+        visible_chunk_layer,
+        visible_entity_layers,
+        current_dimension,
+        dimension_layers,
+    );
 
     if let Some(mut nourishment) = nourishment {
         nourishment.reset_to_spawn();
@@ -1764,8 +1807,65 @@ fn revive_lifecycle(
     true
 }
 
+/// Publishes a committed lifecycle transition to the Overworld runtime state.
 ///
-/// 用于 revive / terminate / new_char 三条退出路径，确保任何离棺场景都不遗漏。
+/// This deliberately runs only after the SQLite transaction succeeds. Missing layer components
+/// are inserted through `Commands` so minimal test fixtures and production clients share one path.
+fn publish_overworld_runtime(
+    entity: Entity,
+    commands: &mut Commands,
+    layer_id: Option<valence::prelude::Mut<'_, EntityLayerId>>,
+    visible_chunk_layer: Option<valence::prelude::Mut<'_, VisibleChunkLayer>>,
+    visible_entity_layers: Option<valence::prelude::Mut<'_, VisibleEntityLayers>>,
+    current_dimension: Option<valence::prelude::Mut<'_, CurrentDimension>>,
+    dimension_layers: Option<&DimensionLayers>,
+) {
+    let Some(layers) = dimension_layers else {
+        return;
+    };
+    let overworld = layers.overworld;
+
+    match layer_id {
+        Some(mut layer_id) => {
+            let previous = layer_id.0;
+            layer_id.0 = overworld;
+            if let Some(mut visible_layers) = visible_entity_layers {
+                visible_layers.0.remove(&previous);
+                visible_layers.0.remove(&layers.tsy);
+                visible_layers.0.insert(overworld);
+            } else {
+                let mut visible_layers = VisibleEntityLayers::default();
+                visible_layers.0.insert(overworld);
+                commands.entity(entity).insert(visible_layers);
+            }
+        }
+        None => {
+            commands.entity(entity).insert(EntityLayerId(overworld));
+            if let Some(mut visible_layers) = visible_entity_layers {
+                visible_layers.0.clear();
+                visible_layers.0.insert(overworld);
+            } else {
+                let mut visible_layers = VisibleEntityLayers::default();
+                visible_layers.0.insert(overworld);
+                commands.entity(entity).insert(visible_layers);
+            }
+        }
+    }
+
+    if let Some(mut visible_chunk_layer) = visible_chunk_layer {
+        visible_chunk_layer.0 = overworld;
+    } else {
+        commands.entity(entity).insert(VisibleChunkLayer(overworld));
+    }
+    if let Some(mut current_dimension) = current_dimension {
+        current_dimension.0 = DimensionKind::Overworld;
+    } else {
+        commands
+            .entity(entity)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+    }
+}
+
 /// 仅当玩家确实在棺内（registry.clear_player 返回 Some）时才落持久化和事件，避免噪音。
 fn clear_coffin_runtime(
     entity: Entity,
@@ -1948,6 +2048,12 @@ fn reset_for_new_character(
     lifespan: Option<valence::prelude::Mut<'_, LifespanComponent>>,
     player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
     position: Option<valence::prelude::Mut<'_, Position>>,
+    layer_id: Option<valence::prelude::Mut<'_, EntityLayerId>>,
+    visible_chunk_layer: Option<valence::prelude::Mut<'_, VisibleChunkLayer>>,
+    visible_entity_layers: Option<valence::prelude::Mut<'_, VisibleEntityLayers>>,
+    current_dimension: Option<valence::prelude::Mut<'_, CurrentDimension>>,
+    flags: Option<valence::prelude::Mut<'_, Flags>>,
+    dimension_layers: Option<&DimensionLayers>,
     wounds: Option<valence::prelude::Mut<'_, Wounds>>,
     stamina: Option<valence::prelude::Mut<'_, Stamina>>,
     combat_state: Option<valence::prelude::Mut<'_, CombatState>>,
@@ -1956,10 +2062,10 @@ fn reset_for_new_character(
     skill_set: Option<valence::prelude::Mut<'_, SkillSet>>,
     nourishment: Option<valence::prelude::Mut<'_, Nourishment>>,
     nourishment_activity: Option<valence::prelude::Mut<'_, NourishmentActivityWindow>>,
-    tutorial_state: Option<&TutorialState>,
-    meridian_severed: Option<&MeridianSeveredPermanent>,
-    poison_toxicity: Option<&PoisonToxicity>,
-    digestion_load: Option<&DigestionLoad>,
+    _tutorial_state: Option<&TutorialState>,
+    _meridian_severed: Option<&MeridianSeveredPermanent>,
+    _poison_toxicity: Option<&PoisonToxicity>,
+    _digestion_load: Option<&DigestionLoad>,
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
     item_registry: Option<&crate::inventory::ItemRegistry>,
@@ -2033,7 +2139,9 @@ fn reset_for_new_character(
     let fresh_insight_quota = InsightQuota::default();
     let fresh_unlocked_perceptions = UnlockedPerceptions::default();
     let fresh_insight_modifiers = InsightModifiers::new();
-    let persisted_meridian_severed = meridian_severed.cloned().unwrap_or_default();
+    let fresh_meridian_severed = MeridianSeveredPermanent::default();
+    let fresh_poison_toxicity = PoisonToxicity::default();
+    let fresh_digestion_load = DigestionLoad::for_realm(reincarnation.spec.realm);
 
     if let Err(error) = persist_new_character_transition(
         persistence,
@@ -2057,10 +2165,10 @@ fn reset_for_new_character(
                 insight_quota: &fresh_insight_quota,
                 unlocked_perceptions: &fresh_unlocked_perceptions,
                 insight_modifiers: &fresh_insight_modifiers,
-                tutorial_state,
-                meridian_severed: &persisted_meridian_severed,
-                poison_toxicity,
-                digestion_load,
+                tutorial_state: None,
+                meridian_severed: &fresh_meridian_severed,
+                poison_toxicity: Some(&fresh_poison_toxicity),
+                digestion_load: Some(&fresh_digestion_load),
                 nourishment: &fresh_nourishment,
             },
         },
@@ -2091,6 +2199,18 @@ fn reset_for_new_character(
     if let Some(mut position) = position {
         position.set(spawn_position);
     }
+    if let Some(mut flags) = flags {
+        flags.set_invisible(false);
+    }
+    publish_overworld_runtime(
+        entity,
+        commands,
+        layer_id,
+        visible_chunk_layer,
+        visible_entity_layers,
+        current_dimension,
+        dimension_layers,
+    );
     if let Some(mut inventory) = inventory {
         *inventory = fresh_inventory.clone();
     } else {
@@ -2136,12 +2256,15 @@ fn reset_for_new_character(
         fresh_insight_quota,
         fresh_unlocked_perceptions,
         fresh_insight_modifiers,
+        fresh_meridian_severed,
+        fresh_poison_toxicity,
+        fresh_digestion_load,
         StatusEffects::default(),
         DerivedAttrs::default(),
         AntiCheatCounter::default(),
-        QuickSlotBindings::default(),
     ));
     entity_commands.insert((
+        QuickSlotBindings::default(),
         SkillBarBindings::default(),
         UnlockedStyles::default(),
         KnownTechniques::default(),
@@ -2149,6 +2272,7 @@ fn reset_for_new_character(
     ));
     commands
         .entity(entity)
+        .remove::<crate::world::spawn_tutorial::TutorialState>()
         .remove::<crate::combat::components::Casting>()
         .remove::<crate::cultivation::insight_flow::PendingInsightOffer>()
         .remove::<crate::cultivation::tribulation::TribulationState>()
@@ -2456,11 +2580,16 @@ mod tests {
         DeathCinematicRollV1, DeathCinematicZoneKindV1, DeathRollResultV1,
     };
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use crate::world::dimension::{CurrentDimension, DimensionLayers};
     use rusqlite::{params, Connection};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use valence::prelude::{App, Events, GameMode, IntoSystemConfigs, Update};
+    use valence::entity::entity::Flags;
+    use valence::prelude::{
+        App, EntityLayerId, Events, GameMode, IntoSystemConfigs, Update, VisibleChunkLayer,
+        VisibleEntityLayers,
+    };
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
@@ -2605,6 +2734,30 @@ mod tests {
             Some(&nourishment),
         )
         .expect("test setup must persist the pre-revival nourishment axes");
+    }
+
+    fn invisible_flags() -> Flags {
+        let mut flags = Flags::default();
+        flags.set_invisible(true);
+        flags
+    }
+
+    fn assert_visible(flags: &Flags, message: &str) {
+        assert!(!flags.invisible(), "{message}: flags={flags:?}");
+    }
+
+    fn tsy_runtime_layers(app: &mut App) -> DimensionLayers {
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        let layers = DimensionLayers { overworld, tsy };
+        app.insert_resource(layers);
+        layers
+    }
+
+    fn tsy_visibility(tsy: Entity) -> VisibleEntityLayers {
+        let mut visible = VisibleEntityLayers::default();
+        visible.0.insert(tsy);
+        visible
     }
 
     fn revival_action_test_app(settings: PersistenceSettings, tick: u64) -> App {
@@ -2890,6 +3043,14 @@ mod tests {
         assert!(coffin_registry.insert(coffin_lower, 300, crate::coffin::CoffinGrade::Jade));
         assert!(coffin_registry.set_occupied(coffin_lower, entity));
         app.insert_resource(coffin_registry);
+        let layers = tsy_runtime_layers(&mut app);
+        app.world_mut().entity_mut(entity).insert((
+            EntityLayerId(layers.tsy),
+            VisibleChunkLayer(layers.tsy),
+            tsy_visibility(layers.tsy),
+            CurrentDimension(DimensionKind::Tsy),
+            invisible_flags(),
+        ));
         app.update();
         let lifecycle_before = serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
             .expect("lifecycle snapshot should serialize");
@@ -2998,6 +3159,38 @@ mod tests {
             "failed revival persistence must not move the live entity"
         );
         assert_eq!(
+            app.world().get::<CurrentDimension>(entity).copied(),
+            Some(CurrentDimension(DimensionKind::Tsy)),
+            "failed revival persistence must not publish an Overworld dimension"
+        );
+        assert_eq!(
+            app.world()
+                .get::<EntityLayerId>(entity)
+                .map(|layer| layer.0),
+            Some(layers.tsy)
+        );
+        assert_eq!(
+            app.world()
+                .get::<VisibleChunkLayer>(entity)
+                .map(|layer| layer.0),
+            Some(layers.tsy),
+            "failed revival persistence must not replace TSY chunk visibility"
+        );
+        let failed_visible_layers = &app
+            .world()
+            .get::<VisibleEntityLayers>(entity)
+            .expect("precondition fixture has TSY entity visibility")
+            .0;
+        assert!(failed_visible_layers.contains(&layers.tsy));
+        assert!(!failed_visible_layers.contains(&layers.overworld));
+        assert!(
+            app.world()
+                .get::<Flags>(entity)
+                .expect("precondition fixture has flags")
+                .invisible(),
+            "failed revival persistence must not unhide the coffin occupant"
+        );
+        assert_eq!(
             *app.world().get::<Nourishment>(entity).unwrap(),
             nourishment_before,
             "failed revival persistence must not reset satiety or hydration"
@@ -3080,6 +3273,134 @@ mod tests {
             life_event_count, 0,
             "precommit failure must roll back the staged rebirth life_event"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reincarnate_commit_publishes_overworld_visibility_unhides_and_flushes_coffin_before_pin() {
+        let (settings, root) = persistence_settings("reincarnate-overworld-runtime-publication");
+        let data_dir = root.join("data");
+        let mut app = revival_action_test_app(settings.clone(), 701);
+        let layers = tsy_runtime_layers(&mut app);
+        app.insert_resource(
+            crate::inventory::load_item_registry().expect("coffin schedule requires item registry"),
+        );
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
+        app.add_event::<valence::prelude::SneakEvent>();
+        crate::coffin::register(&mut app);
+
+        let username = "ReviveFromTsyCoffin";
+        let spawn_anchor = [123.0, 72.0, -45.0];
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    spawn_anchor: Some(spawn_anchor),
+                    fortune_remaining: 1,
+                    ..Lifecycle::default()
+                },
+                cultivation: Cultivation::default(),
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+        let coffin_lower = valence::prelude::BlockPos::new(10, 64, 10);
+        app.world_mut().entity_mut(entity).insert((
+            EntityLayerId(layers.tsy),
+            VisibleChunkLayer(layers.tsy),
+            tsy_visibility(layers.tsy),
+            CurrentDimension(DimensionKind::Tsy),
+            invisible_flags(),
+            crate::coffin::CoffinComponent {
+                entered_at_tick: 700,
+                coffin_lower,
+                grade: crate::coffin::CoffinGrade::Jade,
+            },
+        ));
+        {
+            let mut coffins = app
+                .world_mut()
+                .resource_mut::<crate::coffin::CoffinRegistry>();
+            assert!(coffins.insert(coffin_lower, 650, crate::coffin::CoffinGrade::Jade));
+            assert!(coffins.set_occupied(coffin_lower, entity));
+        }
+        crate::player::state::save_player_slices_with_coffin(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username,
+            &PlayerState::default(),
+            [10.5, 64.05, 10.5],
+            DimensionKind::Tsy,
+            None,
+            None,
+            &SkillSet::default(),
+            Some(crate::coffin::CoffinGrade::Jade),
+            None,
+        )
+        .expect("test setup must persist a TSY coffin snapshot");
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 701,
+        });
+        app.update();
+
+        let actor = app.world().entity(entity);
+        assert_eq!(
+            actor.get::<Position>().expect("revived actor needs Position").get(),
+            Position::new(spawn_anchor).get(),
+            "the production coffin schedule must flush removal before pinning, preserving the committed revival spawn"
+        );
+        assert_eq!(
+            actor.get::<CurrentDimension>().copied(),
+            Some(CurrentDimension(DimensionKind::Overworld)),
+            "successful revival must publish the committed Overworld dimension"
+        );
+        assert_eq!(
+            actor.get::<EntityLayerId>().map(|layer| layer.0),
+            Some(layers.overworld)
+        );
+        assert_eq!(
+            actor.get::<VisibleChunkLayer>().map(|layer| layer.0),
+            Some(layers.overworld),
+            "successful revival must switch the visible chunk layer"
+        );
+        let visible = &actor
+            .get::<VisibleEntityLayers>()
+            .expect("successful revival must retain visible entity layers")
+            .0;
+        assert!(visible.contains(&layers.overworld));
+        assert!(
+            !visible.contains(&layers.tsy),
+            "successful revival must remove the stale TSY entity-layer visibility"
+        );
+        assert_visible(
+            actor.get::<Flags>().expect("actor should have flags"),
+            "revival must unhide coffin occupant",
+        );
+        assert!(actor.get::<crate::coffin::CoffinComponent>().is_none());
+        assert!(
+            !app.world()
+                .resource::<crate::coffin::CoffinRegistry>()
+                .player_in_coffin
+                .contains_key(&entity),
+            "successful revival must clear the coffin registry before publishing its exit"
+        );
+        let persisted = load_player_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username,
+        );
+        assert_eq!(persisted.last_dimension, DimensionKind::Overworld);
+        assert_eq!(persisted.position, spawn_anchor);
+        assert!(!persisted.in_coffin);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5956,7 +6277,9 @@ mod tests {
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
         app.add_event::<crate::coffin::CoffinStateChanged>();
+        app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
         app.add_systems(Update, handle_revival_action_intents);
+        crate::coffin::register(&mut app);
 
         let username = Username("Azure".to_string());
         let mut anticheat_counter = AntiCheatCounter::default();
@@ -6043,6 +6366,50 @@ mod tests {
                 NourishmentActivityWindow::default(),
             ))
             .id();
+        app.world_mut().entity_mut(entity).insert((
+            MeridianSeveredPermanent {
+                severed_meridians: [crate::cultivation::components::MeridianChannelId::new(
+                    "lung",
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            },
+            PoisonToxicity {
+                level: 88.0,
+                last_dose_tick: 777,
+                toxicity_tier_unlocked: true,
+                ..Default::default()
+            },
+            DigestionLoad {
+                current: 77.0,
+                capacity: 120.0,
+                digest_lock_until_tick: Some(900),
+                ..Default::default()
+            },
+            TutorialState::new(777),
+        ));
+        let layers = tsy_runtime_layers(&mut app);
+        app.world_mut().entity_mut(entity).insert((
+            EntityLayerId(layers.tsy),
+            VisibleChunkLayer(layers.tsy),
+            tsy_visibility(layers.tsy),
+            CurrentDimension(DimensionKind::Tsy),
+            invisible_flags(),
+            crate::coffin::CoffinComponent {
+                entered_at_tick: 700,
+                coffin_lower: valence::prelude::BlockPos::new(10, 64, 10),
+                grade: crate::coffin::CoffinGrade::Jade,
+            },
+        ));
+        let mut coffins = crate::coffin::CoffinRegistry::default();
+        assert!(coffins.insert(
+            valence::prelude::BlockPos::new(10, 64, 10),
+            700,
+            crate::coffin::CoffinGrade::Jade,
+        ));
+        assert!(coffins.set_occupied(valence::prelude::BlockPos::new(10, 64, 10), entity));
+        app.insert_resource(coffins);
 
         app.world_mut().send_event(RevivalActionIntent {
             entity,
@@ -6134,6 +6501,56 @@ mod tests {
             NourishmentActivityWindow::default(),
             "CreateNewCharacter must clear every accumulated activity tick"
         );
+        assert_eq!(
+            *entity_ref
+                .get::<MeridianSeveredPermanent>()
+                .expect("fresh character must publish a severed-meridian slice"),
+            MeridianSeveredPermanent::default(),
+            "new life must not inherit permanent meridian severance"
+        );
+        assert_eq!(
+            *entity_ref
+                .get::<PoisonToxicity>()
+                .expect("fresh character must publish toxicity"),
+            PoisonToxicity::default(),
+            "new life must not inherit poison toxicity"
+        );
+        assert_eq!(
+            *entity_ref
+                .get::<DigestionLoad>()
+                .expect("fresh character must publish digestion state"),
+            DigestionLoad::for_realm(Realm::Awaken),
+            "new life must use the Awaken digestion baseline"
+        );
+        assert!(
+            entity_ref.get::<TutorialState>().is_none(),
+            "new life must remove the old tutorial component so join attachment starts fresh"
+        );
+        assert_eq!(
+            entity_ref.get::<CurrentDimension>().copied(),
+            Some(CurrentDimension(DimensionKind::Overworld))
+        );
+        assert_eq!(
+            entity_ref.get::<EntityLayerId>().map(|layer| layer.0),
+            Some(layers.overworld)
+        );
+        assert_eq!(
+            entity_ref.get::<VisibleChunkLayer>().map(|layer| layer.0),
+            Some(layers.overworld)
+        );
+        let visible_layers = &entity_ref
+            .get::<VisibleEntityLayers>()
+            .expect("new life must retain visibility state")
+            .0;
+        assert!(visible_layers.contains(&layers.overworld));
+        assert!(!visible_layers.contains(&layers.tsy));
+        assert_visible(
+            entity_ref
+                .get::<Flags>()
+                .expect("new life retains entity flags"),
+            "new life must unhide coffin occupant",
+        );
+        assert!(entity_ref.get::<crate::coffin::CoffinComponent>().is_none());
 
         let persisted = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
@@ -6153,6 +6570,31 @@ mod tests {
             load_persisted_nourishment(&settings, username.0.as_str()),
             Nourishment::spawn_default(),
             "CreateNewCharacter must persist reset nourishment without serializing session activity"
+        );
+        let persisted_bundle =
+            crate::persistence::load_player_cultivation_bundle(&settings, username.0.as_str())
+                .expect("fresh cultivation bundle should reload")
+                .expect("fresh cultivation bundle must exist");
+        assert!(
+            persisted_bundle.get("tutorial_state").is_none()
+                || persisted_bundle["tutorial_state"].is_null()
+        );
+        assert_eq!(
+            serde_json::from_value::<MeridianSeveredPermanent>(
+                persisted_bundle["meridian_severed"].clone()
+            )
+            .expect("persisted severed slice must decode"),
+            MeridianSeveredPermanent::default()
+        );
+        assert_eq!(
+            serde_json::from_value::<PoisonToxicity>(persisted_bundle["poison_toxicity"].clone())
+                .expect("persisted toxicity slice must decode"),
+            PoisonToxicity::default()
+        );
+        assert_eq!(
+            serde_json::from_value::<DigestionLoad>(persisted_bundle["digestion_load"].clone())
+                .expect("persisted digestion slice must decode"),
+            DigestionLoad::for_realm(Realm::Awaken)
         );
 
         let _ = fs::remove_dir_all(root);
