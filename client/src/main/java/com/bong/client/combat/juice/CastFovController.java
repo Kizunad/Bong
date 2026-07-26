@@ -183,16 +183,22 @@ public final class CastFovController {
      * 在 COMPLETE/INTERRUPT 后 300ms 的淡出（此时该身份已是 FIRED/VOIDED 终态），②
      * 服务端 {@code cast_sync{phase:idle}}。
      *
-     * <p>②<b>确实会以 IDLE 形态到达</b>，但同样无害——别把安全性挂在「它到不了」上：服务端发
-     * Idle 的 4 个站点（{@code client_request_handler.rs} 的 race gate / 经脉门两处 / 统一的
-     * {@code push_skill_cast_rejected_sync}）虽然都带非 NONE 的 outcome，但 client 侧
-     * {@code CastSyncHandler.parseOutcome} <b>没有 {@code reject_race_mismatch} 分支</b>
-     *（client 的 {@code CastOutcome} 枚举压根没有 race 变体），故 race gate 那一站会落回
-     * {@code default -> NONE}、被合成成 {@link CastState#idle()} 原样送到这里；另三站
-     *（{@code MeridianGated} ×2 + {@code reason.to_cast_outcome()}）才被合成成 INTERRUPT 走取消
-     * 令牌。<b>IDLE 到达无害的真正理由是 no-op 本身</b>：这几站全是**施放前**拒绝，client 从未
-     * 收到该次 cast 的 CASTING → 没有 pending / 令牌可杀；而 no-op 语义保证它也不会顺手误杀别的
-     * 在飞施法。跨 IDLE 的幂等由 {@link #terminals} 保证，不靠清场。
+     * <p>②<b>确实会以 IDLE 形态到达</b>，但同样无害——别把安全性挂在「它到不了」上。判据是
+     * <b>client 侧能不能解析出 outcome</b>，不是服务端发了什么：服务端发 Idle 的 4 个站点
+     *（{@code client_request_handler.rs} 的 race gate / 经脉门两处 / 统一的
+     * {@code push_skill_cast_rejected_sync}）虽然都带非 NONE 的 outcome，但
+     * {@code CastSyncHandler.parseOutcome} 只认它列举的那几个字符串，解析不出的一律
+     * {@code default -> NONE} → 被当成无身份的 {@link CastState#idle()} 原样送到这里。当前唯一
+     * 解析不出的是 {@code reject_race_mismatch}（client 的 {@code CastOutcome} 枚举压根没有 race
+     * 变体），它有<b>两条</b>来源：race gate 那一站直接发 {@code RejectRaceMismatch}，以及
+     * {@code reason.to_cast_outcome()} 把 {@code CastRejectReason::RaceMismatch} 映射成同一个
+     *（剑道五招全标 {@code RaceGate::Humanoid}，故 heaven_gate 自己就能走到）。
+     *
+     * <p><b>IDLE 到达无害的真正理由是 no-op 本身</b>：这几站全是**施放前**拒绝，client 从未收到
+     * 该次 cast 的 CASTING → 没有 pending / 令牌可杀；而 no-op 语义保证它也不会顺手误杀别的在飞
+     * 施法。跨 IDLE 的幂等由 {@link #terminals} 保证，不靠清场。<b>所以这条设计不依赖「哪些
+     * outcome 能被解析」这个会漂的事实</b>——将来给 race 补上解析分支（那会让它改走 INTERRUPT）
+     * 也不影响本处正确性。
      *
      * <p>（附注，不在本 plan 范围：race gate 拒绝因此也拿不到技能警示 HUD 文案——
      * {@code CastSyncHandler.publishWarningIfRejected} 只在 outcome 是拒绝时发流。那是

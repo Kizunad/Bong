@@ -662,6 +662,25 @@ class CastFovControllerTest {
     }
 
     @Test
+    void castShakeMixesYawAndPitchSoItIsNotAFlatWobble() {
+        // 自施法没有攻击方向，故方向取**对角**（CAST_SHAKE_DIR_X/Z 都是 1）——目的就是让抖动
+        // 同时有偏航与俯仰分量（`MixinCamera` 把两者分别叠到相机 yaw / pitch 上）。任一分量被
+        // 写成 0，施法震动就退化成纯左右晃或纯上下晃——玩家直接看得出的手感回归，而所有幅度类
+        // 断言（都是**同分量**的前后比较，0 == 0 照过）全绿。
+        predictAndAccept(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        CameraShakeController.Offsets shake = CameraShakeController.activeOffsets(now[0]);
+        assertTrue(Math.abs(shake.yawDegrees()) > 0.0,
+            "施法抖动必须有偏航分量，实际 " + shake.yawDegrees());
+        assertTrue(Math.abs(shake.pitchDegrees()) > 0.0,
+            "施法抖动必须有俯仰分量（取对角方向的意义就在这里），实际 " + shake.pitchDegrees());
+
+        advanceMs(SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("混合方向抖动路径的终点同样是基准 FOV");
+    }
+
+    @Test
     void castShakeIsSustainedNotSingleJerk() {
         // 施法 release 的抖动是持续震动（fire 走 SUSTAIN 包络）：同相位 tick 上，平台段内
         // 幅度与起始一致（满幅维持），而非线性「抖一下」衰减到近半。
@@ -1150,6 +1169,18 @@ class CastFovControllerTest {
     }
 
     @Test
+    void heavenGateSkillIdPinsTheLiteralSharedWithTheServer() {
+        // 跨端契约常量：必须逐字等于 server `sword_path::skill_register::SWORD_PATH_HEAVEN_GATE_ID`
+        //（也等于 client `SkillBarEntry.id()` 里那个 id）。测试侧其余地方都是符号引用
+        // （GATE_SKILL = CastFovController.HEAVEN_GATE_SKILL_ID），常量一漂全部跟着漂 → 30+ 条
+        // 动画路径用例照样全绿，而生产里 `resolveSkillId` 拿到的真 skillId 查不到
+        // ANIM_DRIVEN_SKILLS → 令牌永不武装 → heaven_gate（P3 当前唯二生产可达招之一、且是唯一
+        // 动画驱动招）整招 juice 静默消失。故按契约常量口径用字面量 pin。
+        assertEquals("sword_path.heaven_gate", CastFovController.HEAVEN_GATE_SKILL_ID,
+            "heaven_gate skillId 必须逐字对齐 server SWORD_PATH_HEAVEN_GATE_ID");
+    }
+
+    @Test
     void boundedMemoryConstantsPinTheirLiterals() {
         // 与 ANIM_TOKEN_TTL_MS 同口径（见上一条）：有界性上限是契约值，**符号引用**的用例只能
         // 证明「边界落在常量上」，证明不了常量取值对——常量和实现一起漂就会假绿（把 16 改 8、
@@ -1452,6 +1483,45 @@ class CastFovControllerTest {
         advanceMs(GATE_SHAKE_DURATION_MS + 50);
         CastFovController.tick();
         assertBaseline("脉冲 decay 完毕");
+    }
+
+    @Test
+    void duplicateAuthoritativeCastingDoesNotPushASecondAnimToken() {
+        // 武装期幂等（pending 半边的对位是 duplicateReleaseIsIdempotent）：同身份的重复 / 重传
+        // 权威 CASTING 不得为**同一次** accepted 施法多压一枚令牌。多压了的话 release 消费掉第
+        // 一枚后第二枚会滞留到 TTL，窗口内任一条杂散 release 动画就能再放一次完整 juice——直接
+        // 打破 animTokens javadoc 声称的「N 条 release 动画最多消费 N 枚已 accepted 的令牌」。
+        acceptGateCast(START);
+        accept(GATE_SLOT, START);   // 同身份重复权威 CASTING（重传）
+        assertEquals(1, CastFovController.animTokenCountForTest(),
+            "同身份重复 CASTING 必须幂等，不许多压一枚令牌");
+
+        releaseAnim();              // 消费掉唯一那一枚
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("第一次 release 的脉冲已走完");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动也已走完");
+
+        releaseAnim();              // 杂散的第二条 release 动画
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("没有第二枚令牌可消费 → 杂散 release 动画不得再放一次 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+    }
+
+    @Test
+    void animTokenIsInvalidatedWhenTheClockJumpsBackwards() {
+        // 生产时钟是 System.currentTimeMillis（NTP 校时可回跳）。回跳后 now - armedAtMs 变负，
+        // 只判 `> TTL` 的实现会让令牌活过预定窗口；故 liveness 判据显式带 `now < armedAtMs` 一支，
+        // 且回跳作废与 TTL 过期同口径落 VOIDED。
+        acceptGateCast(START);
+        now[0] -= 1;   // 时钟往回拨（哪怕只 1ms）
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("时钟回跳 → 令牌失效，动画事件不得触发 FOV");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "回跳作废同样落 VOIDED（否则同身份重放 CASTING 能重开令牌）");
     }
 
     @Test
