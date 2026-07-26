@@ -1186,6 +1186,191 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertNotIn("BOT_E2E_KILL_STALE", self.source)
         self.assertIn("name: ${BONG_TEST_COMPOSE_PROJECT:-bong-test}", self.compose_source)
 
+    def _run_owned_fixture_runtime_case(
+        self, runner_mode: str, *, runner_exit: int = 0, tee_exit: int | None = None
+    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        """Run the real bot-e2e shell path against only test-owned fake processes."""
+        root = pathlib.Path(__file__).parents[2]
+        real_python = shutil.which("python3")
+        self.assertIsNotNone(real_python)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            fake_bin = temp / "bin"
+            fake_bin.mkdir()
+            runner_log = temp / "runner.log"
+            server_pid_file = temp / "server.pid"
+            listener_pid_file = temp / "listener.pid"
+            replacement_pid_file = temp / "replacement.pid"
+            redis_port = 39999
+            port = self._unused_local_port()
+            fake_python = fake_bin / "python3"
+            fake_python.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f"real_python={shlex.quote(real_python)}\n"
+                "if [[ \"${1:-}\" == *test_protocol.py ]]; then exit 0; fi\n"
+                "if [[ \"${1:-}\" == *make_novice_raster_fixture.py ]]; then\n"
+                "  mkdir -p \"$2\"\n"
+                "  : > \"$2/manifest.json\"\n"
+                "  printf '%s/manifest.json\\n' \"$2\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [[ \"${1:-}\" == *run_scenarios.py ]]; then\n"
+                f"  printf '%s\\n' \"$FAKE_RUNNER_MODE\" >> {shlex.quote(str(runner_log))}\n"
+                "  case \"$FAKE_RUNNER_MODE\" in\n"
+                "    success) exit 0 ;;\n"
+                "    runner-fail) exit \"$FAKE_RUNNER_EXIT\" ;;\n"
+                "    kill-server)\n"
+                "      kill -TERM \"$(cat \"$FAKE_SERVER_PID_FILE\")\"\n"
+                "      sleep 0.5\n"
+                "      exit 0\n"
+                "      ;;\n"
+                "    replace-listener)\n"
+                "      kill -TERM \"$(cat \"$FAKE_LISTENER_PID_FILE\")\"\n"
+                "      for _ in $(seq 1 100); do\n"
+                "        if ! \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "        then break; fi\n"
+                "        sleep 0.01\n"
+                "      done\n"
+                "      \"$real_python\" -u -c 'import socket, sys, time\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nfor _ in range(100):\n    try:\n        s.bind((\"127.0.0.1\", int(sys.argv[1])))\n        break\n    except OSError:\n        time.sleep(0.01)\nelse:\n    raise SystemExit(77)\ns.listen()\nwhile True:\n    conn, _ = s.accept()\n    conn.close()' \"$BOT_E2E_PORT\" </dev/null >/dev/null 2>&1 &\n"
+                f"      printf '%s\\n' \"$!\" > {shlex.quote(str(replacement_pid_file))}\n"
+                "      sleep 0.5\n"
+                "      exit 0\n"
+                "      ;;\n"
+                "    *) exit 78 ;;\n"
+                "  esac\n"
+                "fi\n"
+                "if [[ \"${1:-}\" == \"-\" && \"${2:-}\" == \"127.0.0.1\" && \"${3:-}\" == \"39999\" ]]; then exit 0; fi\n"
+                "exec \"$real_python\" \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+            (fake_bin / "docker").write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$*\" == *\" port redis 6379\" ]]; then printf '127.0.0.1:39999\\n'; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "docker").chmod(0o755)
+            (fake_bin / "cargo").write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f"real_python={shlex.quote(real_python)}\n"
+                f"printf '%s\\n' \"$$\" > {shlex.quote(str(server_pid_file))}\n"
+                "\"$real_python\" -u -c 'import socket, sys\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\ns.bind((\"127.0.0.1\", int(sys.argv[1])))\ns.listen()\nwhile True:\n    conn, _ = s.accept()\n    conn.close()' \"$BOT_E2E_PORT\" &\n"
+                "listener=$!\n"
+                f"printf '%s\\n' \"$listener\" > {shlex.quote(str(listener_pid_file))}\n"
+                "cleanup_listener() { kill \"$listener\" 2>/dev/null || true; wait \"$listener\" 2>/dev/null || true; exit 0; }\n"
+                "trap cleanup_listener TERM INT\n"
+                "for _ in $(seq 1 100); do\n"
+                "  \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY' && break\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.1):\n"
+                "    pass\n"
+                "PY\n"
+                "  sleep 0.01\n"
+                "done\n"
+                "printf '%s\\n' \"[bong][world] BOT_RASTER_FIXTURE_READY manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN\"\n"
+                "while true; do sleep 1; done\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "cargo").chmod(0o755)
+            if tee_exit is not None:
+                (fake_bin / "tee").write_text(
+                    f"#!/usr/bin/env bash\nexit {tee_exit}\n", encoding="utf-8"
+                )
+                (fake_bin / "tee").chmod(0o755)
+
+            env = os.environ.copy()
+            for name in (
+                "BOT_E2E_REUSE", "BOT_E2E_HOST", "BOT_E2E_PORT",
+                "BONG_TERRAIN_RASTER_PATH", "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "REDIS_URL", "BOT_E2E_AMBIENT_FIXTURE_OWNED",
+            ):
+                env.pop(name, None)
+            env.update(
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BOT_E2E_PORT": str(port),
+                    "FAKE_RUNNER_MODE": runner_mode,
+                    "FAKE_RUNNER_EXIT": str(runner_exit),
+                    "FAKE_SERVER_PID_FILE": str(server_pid_file),
+                    "FAKE_LISTENER_PID_FILE": str(listener_pid_file),
+                }
+            )
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            evidence_root = root / ".sisyphus/evidence/bot-e2e"
+            evidence_before = set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
+            runner_output = ""
+            try:
+                result = subprocess.run(
+                    ["bash", "scripts/bot-e2e.sh"],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+                runner_output = (
+                    runner_log.read_text(encoding="utf-8") if runner_log.exists() else ""
+                )
+            finally:
+                for pid_file in (server_pid_file, listener_pid_file, replacement_pid_file):
+                    if pid_file.exists():
+                        try:
+                            os.kill(int(pid_file.read_text(encoding="utf-8").strip()), 15)
+                        except ProcessLookupError:
+                            pass
+                if evidence_root.exists():
+                    for evidence_dir in set(evidence_root.glob("run.*")) - evidence_before:
+                        shutil.rmtree(evidence_dir, ignore_errors=True)
+            return result, runner_output
+
+    @staticmethod
+    def _unused_local_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+    def test_owned_fixture_runtime_watcher_accepts_successful_owned_runner(self):
+        result, runner_output = self._run_owned_fixture_runtime_case("success")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(runner_output.strip(), "success")
+
+    def test_owned_fixture_runtime_watcher_rejects_server_exit_during_runner(self):
+        result, runner_output = self._run_owned_fixture_runtime_case("kill-server")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(runner_output.strip(), "kill-server")
+        self.assertTrue(
+            "失去端口 ownership" in result.stderr or "ownership 不再成立" in result.stderr,
+            result.stderr,
+        )
+
+    def test_owned_fixture_runtime_watcher_rejects_replacement_listener(self):
+        result, runner_output = self._run_owned_fixture_runtime_case("replace-listener")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(runner_output.strip(), "replace-listener")
+        self.assertTrue(
+            "失去端口 ownership" in result.stderr or "ownership 不再成立" in result.stderr,
+            result.stderr,
+        )
+
+    def test_owned_fixture_runtime_preserves_runner_then_tee_failure_priority(self):
+        for runner_exit, tee_exit, expected in ((7, None, 7), (7, 9, 7), (0, 9, 9)):
+            with self.subTest(runner_exit=runner_exit, tee_exit=tee_exit):
+                mode = "runner-fail" if runner_exit else "success"
+                result, runner_output = self._run_owned_fixture_runtime_case(
+                    mode, runner_exit=runner_exit, tee_exit=tee_exit
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertTrue(runner_output.strip(), "runner must execute before its failure is judged")
+
 
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
     @classmethod
