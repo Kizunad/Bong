@@ -21,6 +21,16 @@ PORT="${BOT_E2E_PORT:-25565}"
 PROFILE="${BOT_E2E_PROFILE:-release}"
 REUSE="${BOT_E2E_REUSE:-0}"
 AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"
+# Ambient fixture ownership has three intentionally closed values: unset/default, generic 0,
+# and strict owned-fixture 1. Reject typos before creating files or starting tools.
+case "$AMBIENT_FIXTURE_MODE" in
+  ""|0|1) ;;
+  *)
+    echo "[bot-e2e] BOT_E2E_AMBIENT_FIXTURE_MODE 仅接受空值、0 或 1，实际为 $AMBIENT_FIXTURE_MODE" >&2
+    exit 2
+    ;;
+esac
+
 EVIDENCE_ROOT="$ROOT/.sisyphus/evidence/bot-e2e"
 EVIDENCE_DIR=""
 RUN_ID=""
@@ -74,10 +84,11 @@ fi
 # caller-supplied raster (or the historical generated novice fixture) but never claims ownership.
 if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then
   BOT_NOVICE_RASTER_DIR="$(mktemp -d "$EVIDENCE_DIR/novice-raster.XXXXXX")"
+  # The generator requires a token for every fixture. Generic mode uses a fresh token only to
+  # create valid raster metadata; it never exports the ambient witness ownership capability.
+  BOT_FIXTURE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
   if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
-    BOT_E2E_AMBIENT_FIXTURE_TOKEN="$(
-      python3 -c 'import secrets; print(secrets.token_hex(16))'
-    )"
+    BOT_E2E_AMBIENT_FIXTURE_TOKEN="$BOT_FIXTURE_TOKEN"
     BONG_TERRAIN_RASTER_PATH="$(
       python3 "$ROOT/scripts/bot/make_novice_raster_fixture.py" \
         "$BOT_NOVICE_RASTER_DIR" \
@@ -85,7 +96,9 @@ if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then
     )"
   else
     BONG_TERRAIN_RASTER_PATH="$(
-      python3 "$ROOT/scripts/bot/make_novice_raster_fixture.py" "$BOT_NOVICE_RASTER_DIR"
+      python3 "$ROOT/scripts/bot/make_novice_raster_fixture.py" \
+        "$BOT_NOVICE_RASTER_DIR" \
+        --fixture-token "$BOT_FIXTURE_TOKEN"
     )"
   fi
   export BONG_TERRAIN_RASTER_PATH
@@ -224,9 +237,9 @@ trap cleanup EXIT
 python3 "$ROOT/scripts/bot/test_protocol.py"
 
 # ---- redis ----
-# A caller-provided REDIS_URL is caller-owned in generic mode. Otherwise self-start receives
-# a private compose project/random port so cleanup cannot affect shared services.
-if [ "$REUSE" != "1" ] && [ -z "${REDIS_URL:-}" ]; then
+# Owned fixture evidence always receives an isolated Redis, even if CI/global environment exports
+# REDIS_URL. Generic mode preserves an explicit caller URL; otherwise it also uses a private run.
+if [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then
   REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"
   STARTED_REDIS=1
   echo "[bot-e2e] 启动本轮私有 Redis project: $REDIS_COMPOSE_PROJECT"

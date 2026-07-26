@@ -13,6 +13,8 @@ import json
 import os
 import pathlib
 import re
+import shutil
+import shlex
 import socket
 import struct
 import subprocess
@@ -761,6 +763,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
         fixture = self.source[fixture_start:fixture_end]
         self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
+        self.assertIn('BOT_FIXTURE_TOKEN="$(python3 -c', fixture)
+        self.assertIn('--fixture-token "$BOT_FIXTURE_TOKEN"', fixture)
         state_start = self.source.index('# Ambient-owned runs pin state')
         state_end = self.source.index('\nport_open() {', state_start)
         state = self.source[state_start:state_end]
@@ -772,8 +776,9 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         redis_start = self.source.index('# ---- redis ----')
         redis_end = self.source.index('\n# ---- server ----', redis_start)
         redis = self.source[redis_start:redis_end]
-        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${REDIS_URL:-}" ]; then', redis)
-        self.assertNotIn('export REDIS_URL=', redis.split('if [ "$REUSE" != "1" ] && [ -z "${REDIS_URL:-}" ]; then', 1)[0])
+        redis_guard = 'if [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
+        self.assertIn(redis_guard, redis)
+        self.assertNotIn('export REDIS_URL=', redis[:redis.index(redis_guard)])
 
     def test_owned_fixture_mode_keeps_private_runtime_and_exact_marker_gate(self):
         runtime_start = self.source.index('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
@@ -805,6 +810,10 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         root = pathlib.Path(__file__).parents[2]
         cases = (
             (
+                {"BOT_E2E_AMBIENT_FIXTURE_MODE": "bogus"},
+                "BOT_E2E_AMBIENT_FIXTURE_MODE 仅接受空值、0 或 1",
+            ),
+            (
                 {"BOT_E2E_AMBIENT_FIXTURE_MODE": "1", "BOT_E2E_REUSE": "1"},
                 "BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥",
             ),
@@ -823,9 +832,20 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "ambient fixture mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH",
             ),
         )
+        isolated = (
+            "BOT_E2E_AMBIENT_FIXTURE_MODE",
+            "BOT_E2E_REUSE",
+            "BOT_E2E_HOST",
+            "BOT_E2E_PORT",
+            "BONG_TERRAIN_RASTER_PATH",
+            "BONG_SPIRITWOOD_HARVESTED_PATH",
+            "REDIS_URL",
+        )
         for overrides, expected in cases:
             with self.subTest(overrides=overrides):
                 env = os.environ.copy()
+                for name in isolated:
+                    env.pop(name, None)
                 env.update(overrides)
                 result = subprocess.run(
                     ["bash", "scripts/bot-e2e.sh"],
@@ -837,6 +857,54 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(expected, result.stderr)
+
+    def test_generic_no_raster_generates_tokenized_fixture_before_tool_failure(self):
+        root = pathlib.Path(__file__).parents[2]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_bin = pathlib.Path(temp_dir) / "bin"
+            fake_bin.mkdir()
+            log_path = pathlib.Path(temp_dir) / "python.log"
+            real_python = shutil.which("python3")
+            (fake_bin / "python3").write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf '%s\\n' \"$*\" >> {shlex.quote(str(log_path))}\n"
+                "if [[ \"$1\" == *test_protocol.py ]]; then exit 0; fi\n"
+                "if [[ \"$1\" == *make_novice_raster_fixture.py ]]; then\n"
+                "  test \"$3\" = \"--fixture-token\" || exit 41\n"
+                "  test -n \"$4\" || exit 42\n"
+                "  printf '%s/manifest.json\\n' \"$2\"\n"
+                "  exit 0\n"
+                "fi\n"
+                f"exec {shlex.quote(real_python)} \"$@\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "python3").chmod(0o755)
+            (fake_bin / "docker").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            (fake_bin / "docker").chmod(0o755)
+            env = os.environ.copy()
+            for name in (
+                "BOT_E2E_AMBIENT_FIXTURE_MODE",
+                "BOT_E2E_REUSE",
+                "BOT_E2E_HOST",
+                "BOT_E2E_PORT",
+                "BONG_TERRAIN_RASTER_PATH",
+                "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "REDIS_URL",
+            ):
+                env.pop(name, None)
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            result = subprocess.run(
+                ["bash", "scripts/bot-e2e.sh"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--fixture-token", log_path.read_text(encoding="utf-8"))
+            self.assertNotIn("BOT_RASTER_FIXTURE_READY", result.stderr)
 
     def test_ci_selects_explicit_ambient_fixture_mode(self):
         bot_stage = self.workflow_source[self.workflow_source.index('Bot e2e stage'):]
@@ -1028,7 +1096,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         cleanup_start = self.source.index("cleanup() {")
         cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
         cleanup = self.source[cleanup_start:cleanup_end]
-        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${REDIS_URL:-}" ]; then', redis)
+        self.assertIn('if [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then', redis)
         for required in (
             'REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"',
             'BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0',
