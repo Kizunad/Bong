@@ -32,7 +32,7 @@
 
 ## P2 — CI gate 路径上其余 redis 拉取点韧性
 
-**现状**（`scripts/bot-e2e.sh:136-140`）：
+**现状**（`scripts/bot-e2e.sh:137-141`）：
 
 ```bash
 if ! port_open 127.0.0.1 6379; then
