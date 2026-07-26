@@ -1347,6 +1347,33 @@ class CastFovControllerTest {
     }
 
     @Test
+    void secondInFlightCastsChargeAnimGetsItsOwnCrescendoInsteadOfBeingSwallowed() {
+        // 到达序匹配的 **charge 半边**：队列里前一枚令牌已经把 charge 消费掉了，后一次施法的
+        // 蓄力动画必须落到**它自己**那一枚上。只看队首那一枚的实现会把这条事件当成「A 的重复
+        // charge」吞掉——B 的蓄力渐强震动整段丢失，而 release 半边的用例照样全绿。
+        acceptGateCast(START);              // A
+        chargeAnim();                       // A 的蓄力动画起播
+        advanceMs(2000);
+        double grownA = Math.abs(CameraShakeController.activeOffsets(now[0]).yawDegrees());
+        assertTrue(grownA > 0.0, "前提校验：A 的蓄力渐强已涨起来（" + grownA + "）");
+
+        acceptGateCast(START + 3000);       // B 起手（A 的 release 动画尚未到达）
+        chargeAnim();                       // B 的蓄力动画起播 —— 属于 B，不是 A 的重复事件
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "B 的蓄力是它自己那一段 CRESCENDO，起手从 0 涨；若被当成 A 的重复 charge 吞掉，"
+                + "读数会停在 A 的进度上（" + grownA + "）");
+
+        double laterB = Math.abs(
+            CameraShakeController.activeOffsets(now[0] + 40 * 50).yawDegrees());
+        assertTrue(laterB > 0.0,
+            "而且 B 的蓄力真的在渐强（防「起手为 0」被「压根没有抖动」蒙混过去），实际 " + laterB);
+
+        advanceMs(60 * 50);
+        CastFovController.tick();
+        assertBaseline("两枚令牌的蓄力段路径终点同样是基准 FOV");
+    }
+
+    @Test
     void animReleaseCountNeverExceedsAcceptedCastCount() {
         // 授权强度不因「按到达序归属」而打折：N 条 release 动画最多消费 N 枚**已 accepted**
         // 的令牌。两次施法 + 三条 release 动画 → 第三条拿不到令牌，一定 no-op。
