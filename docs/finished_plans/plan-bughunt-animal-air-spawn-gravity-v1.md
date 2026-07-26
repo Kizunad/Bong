@@ -2,7 +2,7 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：✅ 2026-07-26。最新已验证的功能代码候选是 `7a0afaf05bcb8692aefa30516d4148dde3dd4340`；其 authoritative slot 门禁已通过。最新 main 合并候选是 `f9b590a7aa7ad0779d643749126dc3e6facd2608`，仅将 docs/README 主线变更合入 7a0，未改变 server 代码树。P0/P1/P2 均已闭合；本次归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。PR 仍开放且未合并；本 docs-only 证据提交不得预先声称自身 GitHub E2E、CodeRabbit、`/review` 或 `CLEAN` 状态，push 后须以当时 PR body/status 的 exact HEAD 记录为准。
+**状态**：✅ 2026-07-26。最新已验证的功能代码候选是 `e4bb94a96d780218e79718516d438bf18d0b5d63`；它包含 ambient 非叶 `Waterlogged=True` 落点绕过的闭合修复，且 `662609339d69e14a06964b557497394fdeea03a5` 为其祖先、`origin/main` 未再前进。P0/P1/P2 均已闭合；本次归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。PR 仍开放且未合并；本 docs-only 证据提交不得预先声称自身 GitHub E2E、CodeRabbit、`/review` 或 `CLEAN` 状态，push 后须以当时 PR body/status 的 exact HEAD 记录为准。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
@@ -174,7 +174,7 @@ fn resolve_ambient_ground_position(
 1. 对 candidate X/Z/Y 使用 `floor` 得到 world block 坐标与 `ref_y`；在 ambient 内以 `ref_y - 16 .. ref_y + 4`（并按 layer 高度夹取）扫描严格落点；
 2. runtime loaded chunk 找到安全支撑 → `Some(x, ground_y + 1, z)`，不得再查询 raster；
 3. chunk 未加载 → 才允许直接采用 passable raster 的 `surface_y + 1`；
-4. loaded chunk 的严格扫描 miss → raster 只能提供候选支撑 Y，必须在 live `ChunkLayer` 精确复核 support/feet/head：支撑需非液体且 `blocks_motion()`，双格净空需非液体且不阻挡，三格都需位于 layer bounds；任一不满足即拒绝，禁止 stale raster、空气或属性液体绕过；
+4. loaded chunk 的严格扫描 miss → raster 只能提供候选支撑 Y，必须在 live `ChunkLayer` 精确复核 support/feet/head：三格均经统一 `contains_ambient_liquid` 判定，拒绝 Water/Lava kind 及任意 `Waterlogged=True` 属性态；support 还须 `blocks_motion()`，feet/head 不阻挡，三格均需位于 layer bounds；任一不满足即拒绝，禁止 stale raster、空气或水浸方块绕过；
 5. runtime 与 raster 均缺失/不安全 → `None`。禁止保留 candidate/player Y，也禁止根据结果是否“恰好等于输入”猜成功/失败。
 
 不复用 `snap_spawn_y_to_surface` 的 fail-open 返回值，也不复制 worldgen 高度公式。ambient 候选可以安全丢弃并等下一轮；保留错误玩家 Y 比少刷一只更坏。Navigator 的 legacy 扫描语义与 strict spawn admission 是可观察地不同的契约，强行共享规则源会回归 legacy caller；因此 ambient 私有实现由自身饱和测试锁住。
@@ -197,7 +197,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ### #5 Navigator 与邻接 caller 边界
 
-**决议**：本 PR 不修改 `server/src/npc/navigator.rs`：不改变 `navigator_tick_system`、idle/Dormant snap、深扫描 fallback、状态、caller、resolver 或测试，也不新增 `pub(crate)` Navigator API。功能候选 `7a0afaf05bcb8692aefa30516d4148dde3dd4340` 相对 `b398c4071042b091f1590989998568b49dce401e` 的 `server/src/npc/navigator.rs` diff 为空。严格 `GroundLandingScan`/分类/扫描及私有 resolver 只被 ambient 调用，ambient 自己拥有更严的 spawn admission 政策：运动支撑、液体/passthrough/叶方块拒绝，以及可读的 feet/head。Navigator legacy 语义保持原样；两者合同不同，强行共享会回归 legacy caller。也不修改兽潮、botany 吸引、教程鼠、繁衍、hydrate；它们是独立调用链的邻接风险，记录到 Finish Evidence 遗留。
+**决议**：本 PR 不修改 `server/src/npc/navigator.rs`：不改变 `navigator_tick_system`、idle/Dormant snap、深扫描 fallback、状态、caller、resolver 或测试，也不新增 `pub(crate)` Navigator API。历史功能候选 `7a0afaf05bcb8692aefa30516d4148dde3dd4340` 相对 `b398c4071042b091f1590989998568b49dce401e` 的 `server/src/npc/navigator.rs` diff 为空。严格 `GroundLandingScan`/分类/扫描及私有 resolver 只被 ambient 调用，ambient 自己拥有更严的 spawn admission 政策：运动支撑、液体/passthrough/叶方块拒绝，以及可读的 feet/head。Navigator legacy 语义保持原样；两者合同不同，强行共享会回归 legacy caller。也不修改兽潮、botany 吸引、教程鼠、繁衍、hydrate；它们是独立调用链的邻接风险，记录到 Finish Evidence 遗留。
 
 **落点**：`server/src/npc/spawn/ambient_scheduler.rs` 私有 strict resolver / 本 plan P0、P1 与非目标；`server/src/npc/navigator.rs` 无改动。
 
@@ -231,7 +231,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
   - ring candidate 解析成功后才调用 `config.pool_fn`；
   - 失败时 continue，不写 pending budget；
   - X/Z 保持 ring sample，Y 只来自 runtime `ground_y + 1` 或 fallback raster `surface_y + 1`，永不继承 candidate/player Y。
-- `server/src/npc/spawn/ambient_scheduler.rs` 私有持有 `GroundLandingScan::{Safe, Unsafe, Miss}` 与严格三格 runtime 分类：`Unsafe` 表示 live runtime 已发现可站支撑但 feet/head 含液体，形成 stale raster 不得绕过的 ambient 权威否决；普通窗口缺失保持 `Miss`，按 ambient 自己的 strict resolver 决定后续 fallback。`server/src/npc/navigator.rs` 无改动。
+- `server/src/npc/spawn/ambient_scheduler.rs` 私有持有 `GroundLandingScan::{Safe, Unsafe, Miss}` 与严格三格 runtime 分类：support、feet、head 均通过统一 `contains_ambient_liquid` 排除 Water/Lava kind 和任意 `Waterlogged=True`；`Unsafe` 表示 live runtime 已发现可站支撑但三格含液体或净空不安全，形成 stale raster 不得绕过的 ambient 权威否决；普通窗口缺失保持 `Miss`，按 ambient 自己的 strict resolver 决定后续 fallback。`server/src/npc/navigator.rs` 无改动。
 - `server/src/npc/spawn/ambient_scheduler.rs` 以 `AmbientRuntimeGround::{Safe, LoadedUnsafe, NeedsRaster { loaded_chunk }}` 映射共享三态；loaded scan miss 的 raster Y 仍须回到 live `ChunkLayer` 精确复核，mundane/threat 共用同一 resolver 和提交边界。
 - ring sampler 在 in-bounds 候选中保留既有按距离评分的 best-effort 最远 fallback；最小间距是偏好而非新增拒绝策略。
 - scheduler 仅维护 tick 前活体位置与 `pending_spawns_by_zone` 数量预算；不新增 same-tick 空间占位或 strict Poisson 提交政策。
@@ -266,7 +266,8 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `ambient_ground_position_unloaded_chunk_uses_passable_raster` / `without_raster_rejects_candidate`：unloaded runtime 的 fallback 与双源 fail-closed。
 - `ambient_ground_position_blocked_headroom_scans_farther_down` / `multi_layer_column_chooses_highest_safe_support`：双格净空与降序最高安全支撑。
 - `ambient_ground_position_negative_fractional_xz_routes_runtime_chunk_euclidean`：负数/小数 XZ 使用 floor + Euclidean chunk/local 坐标，输出保留原小数 X/Z。
-- `ambient_ground_position_liquid_runtime_and_impassable_raster_reject`：液体不算 runtime 支撑、不可走 raster 不得兜底。
+- `ambient_ground_position_liquid_runtime_and_impassable_raster_reject`：Water/Lava kind、非叶 `Waterlogged=True` 与不可走 raster 均不得形成 runtime 支撑或净空绕过。
+- `contains_ambient_liquid_*`：锁住无属性石头、`waterlogged=false`、水浸 Oak stairs support 与水浸 Rail feet/head；direct 三格分类、runtime scan/resolve 与 loaded-raster 精确复核均命中该统一谓词。
 
 ### scheduler / pool 生产集成测试
 
@@ -309,8 +310,8 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
   - `CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml ambient -- --test-threads=1`：`running 119 tests`，119 passed。
   - `cargo fmt --manifest-path server/Cargo.toml -- --check`、`git diff --check`、`python3 -m py_compile scripts/bot/scenarios/npc_ambient_surface_resolution.py` 与场景自动发现检查均通过。
 - gameplay merge `da3196a35684e54660d4dec739bc52fa2e38ffe4` 已完成 server `fmt + clippy -D warnings + cargo test`、schema/Tiandao、Java 17 client `test build`、确定性 ambient Bot 与隔离 runtime data 的 `smoke-test-e2e`；其后再次合并最新 `origin/main` 的 client/review-only 变化并复跑 Java 17 client 完整门禁。完整证据见 `## Finish Evidence`。
-- `scripts/bot-e2e.sh` 后续按 review 证据收紧为每轮私有 evidence、Redis Compose project、随机 Redis host port 与 private runtime CWD；`data/**`、craft/mineral/NPC state、SQLite backup 与 `../library-web/public/deceased/**` 均不再写 checkout。botany/forge 的 CWD-relative `assets/**` 通过只读 checkout symlink 提供；外部 raster/spiritwood state、已有 25565 listener 与 REUSE 无 listener 均 fail-closed，禁止全局 `pkill`。
-- 这不是无关 feature creep：唯一可执行的 repo caller `.github/workflows/e2e.yml` 传入 `BOT_E2E_RUN_TAG=ci`，不依赖被拒绝的外部 raster/state、固定 Redis 或无 listener 的 REUSE fallback；文档化的 REUSE 是 already-running server。self-start `--all` 本就运行 persistent scenarios，故 private CWD/Redis 防止 checkout/shared-state mutation。exact E2E `30192040493` 的 Smoke→Bot→Chat 成功证明该轮 owner-scoped 25565 handoff。
+- `scripts/bot-e2e.sh` 按两种显式模式执行：默认 **generic** 模式保留 caller 提供的 raster、spiritwood/state、Redis 与 `$ROOT/server` CWD；无 raster 时才传递高熵 fixture token。CI 选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 的 **owned** 模式，才创建私有 token/state、Redis Compose project/随机 host port 与 private runtime CWD，并以 strict marker、PID/listener ownership 验证 self-start。REUSE 使用既有 ordinary server、不得伪造 ownership，缺 listener fail-closed；cleanup 只清理本轮 owner 资源，不使用全局 `pkill`。
+- 外部输入 contract concern 已获确认并由两模式修复；而 global `REQUIRED_ENV` finding 仍被证伪：仅两个声明，皆为 hard prerequisite，受支持 caller 会提供它，runner 语义未作超出既有分支的改动。尚未在 generic caller inputs 下运行真实 Docker/server E2E，当前 Bot 证据仅覆盖协议合同、shell/static 检查与 fresh revalidator。
 
 ---
 
@@ -328,9 +329,9 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ### 落地清单
 
-- **P0**：`server/src/npc/spawn/ambient_scheduler.rs` 私有实现 runtime-first strict resolver 与 `AmbientRuntimeGround` tri-state；loaded runtime 明确不安全即拒绝，loaded scan miss 的 raster Y 必须回到 live `ChunkLayer` 验证 support/feet/head，双源失败不调用 pool、不占 pending budget。严格 `GroundLandingScan`/分类/扫描只被 ambient 调用，Navigator 保持主线原有状态、caller、resolver、测试和 legacy 语义；功能候选 `7a0afaf05bcb8692aefa30516d4148dde3dd4340` 相对 `b398c4071042b091f1590989998568b49dce401e` 的 `server/src/npc/navigator.rs` diff 为空。
-- **P1**：`npc::spawn::ambient_scheduler::tests` 覆盖 runtime/raster 优先级、unloaded fallback、负坐标、扫描窗口、双格净空、默认/属性液体、空气/非运动支撑、layer 边界、pool `None` 与预算副作用；叶方块严格拒绝以 property-insensitive `BlockKind` 覆盖既有全部 10 个叶类，测试锁住 default、Oak `distance=1`、`persistent`、`waterlogged` 与 Mangrove 属性态，另以运行时扫描和 loaded-raster 精确复核锁住该契约；并以真实 `ambient_scheduler_system::<M>` → mundane/threat pool → ECS `Position` 锁住两条生产链。
-- **P2**：`server/src/cmd/dev/ambient_spawn.rs`、`server/src/cmd/dev/mod.rs`、`server/src/cmd/mod.rs`、`server/src/cmd/registry_pin.rs` 提供 X/Z-only 的 deterministic one-shot；生产默认不向 Brigadier command tree 注册 `ambient_spawn` root，只有显式 `BONG_DEV_MODE` 才注册命令并安装私有 `AmbientSpawnDevAccess` capability，handler 对内部伪造 event 仍在 resolver/pool 前 fail-closed。命令 handler 与生产 `ambient_scheduler_system` 均只接受未标记 `Despawned` 的真实 `ChunkLayer`；raster 只能替代有效 live layer 内未加载 chunk 的 surface，不能替代 pool 的目标 layer。`scripts/bot-e2e.sh` 的自起服路径显式开启 dev mode，为每轮创建私有 fixture 目录并写入高熵 token；`TerrainProvider::load` 完整解析、验证并 mmap 所有 tile 后，server 才输出 canonical manifest path + token 的 `BOT_RASTER_FIXTURE_READY` marker，harness 同时对拍 exact marker、端口可连与 PID tree ownership 后才向 `scripts/bot/scenarios/npc_ambient_surface_resolution.py` 授予 ownership。场景在发命令前逐字节核验 `(5,3)` 的 `spans_count.bin` / `spans.bin` / `surface_id.bin` / `water_level.bin`，证明同 token fixture 的 support `y=72`、feet/head `y=73/74` 净空且无液体，再通过真实协议包验证 Cow/Rat 脚点 `y=73`，拒绝继承执行者 `y=152`。REUSE 模式不伪造 fixture ownership；REUSE 无 listener 时也不退化为缺少私有 runtime 的 self-start。self-start 为每轮独占 evidence、Redis Compose project/随机 host port 与 private runtime CWD，checkout `server/assets` 仅作 CWD-relative loader 的输入桥，所有相对持久化输出落在 evidence 内；运行前、运行中、运行后均校验 server/listener ownership，cleanup 只终止本轮进程树与本轮 Redis project。
+- **P0**：`server/src/npc/spawn/ambient_scheduler.rs` 私有实现 runtime-first strict resolver 与 `AmbientRuntimeGround` tri-state；loaded runtime 明确不安全即拒绝，loaded scan miss 的 raster Y 必须回到 live `ChunkLayer` 验证 support/feet/head，三格统一经私有 `contains_ambient_liquid` 拒绝 Water/Lava kind 与所有 `Waterlogged=True`，双源失败不调用 pool、不占 pending budget。严格 `GroundLandingScan`/分类/扫描只被 ambient 调用，Navigator 保持主线原有状态、caller、resolver、测试和 legacy 语义；功能候选 `e4bb94a96d780218e79718516d438bf18d0b5d63` 相对 `b398c4071042b091f1590989998568b49dce401e` 的 `server/src/npc/navigator.rs` diff 为空。
+- **P1**：`npc::spawn::ambient_scheduler::tests` 覆盖 runtime/raster 优先级、unloaded fallback、负坐标、扫描窗口、双格净空、默认/属性液体、空气/非运动支撑、layer 边界、pool `None` 与预算副作用；水浸闭合明确锁住无属性 stone、`waterlogged=false`、水浸 Oak stairs support 和水浸 Rail feet/head，并由 direct 三格分类、runtime scan/resolve 与 loaded-raster 精确复核共同覆盖；另以真实 `ambient_scheduler_system::<M>` → mundane/threat pool → ECS `Position` 锁住两条生产链。
+- **P2**：`server/src/cmd/dev/ambient_spawn.rs`、`server/src/cmd/dev/mod.rs`、`server/src/cmd/mod.rs`、`server/src/cmd/registry_pin.rs` 提供 X/Z-only 的 deterministic one-shot；生产默认不向 Brigadier command tree 注册 `ambient_spawn` root，只有显式 `BONG_DEV_MODE` 才注册命令并安装私有 `AmbientSpawnDevAccess` capability，handler 对内部伪造 event 仍在 resolver/pool 前 fail-closed。命令 handler 与生产 `ambient_scheduler_system` 均只接受未标记 `Despawned` 的真实 `ChunkLayer`；raster 只能替代有效 live layer 内未加载 chunk 的 surface，不能替代 pool 的目标 layer。`scripts/bot-e2e.sh` 的 **generic** 默认模式保留 caller raster/state/Redis 与 `$ROOT/server` CWD（无 raster 仅传高熵 fixture token）；CI 显式选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 的 **owned** 模式，才创建私有 token/state/Redis/private CWD，并严格核验 marker、PID 与 listener ownership。REUSE 仅接管 ordinary existing server、无 listener fail-closed；cleanup owner-safe，保留无全局 `pkill`。场景在发命令前逐字节核验 `(5,3)` 的 `spans_count.bin` / `spans.bin` / `surface_id.bin` / `water_level.bin`，证明同 token fixture 的 support `y=72`、feet/head `y=73/74` 净空且无液体，再通过真实协议包验证 Cow/Rat 脚点 `y=73`，拒绝继承执行者 `y=152`。generic caller-inputs 的真实 Docker/server E2E 尚未运行。
 
 ### 关键 commit
 
@@ -349,8 +350,11 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `fb5c4cf47`（2026-07-25）：合并最新 `origin/main`（`5828a5510`）；目标代码树包含本轮全部 hardening 与主线最新音频/client 变化，无冲突。
 - `53683f362`（2026-07-26）：dev handler 改为私有，并移动 pack unused statement；行为不变。
 - `b1ae488b8`（2026-07-26）：将 strict helper/tests 迁回 ambient scheduler；Navigator 恢复为 main。
-- `7a0afaf05bcb8692aefa30516d4148dde3dd4340`（2026-07-26）：按 `/review` 确认的语义问题收口；将 `resolve_ambient_ground_position` 收回 ambient 私有边界，并以 property-insensitive `BlockKind` 对既有全部 10 类叶方块做严格拒绝。饱和测试覆盖 default、Oak `distance=1`、`persistent`、`waterlogged`、Mangrove 属性态，以及 runtime scan 和 loaded-raster 精确复核。
-- `f9b590a7aa7ad0779d643749126dc3e6facd2608`（2026-07-26）：将最新 `origin/main` `662609339d69e14a06964b557497394fdeea03a5` 合入 7a0；该主线前进仅涉及 docs/README，与本 plan 文件及 server/Bot 代码均无重叠，合并干净。故 7a0 的 server 代码树和 slot gate 未变化；但 fresh exact-HEAD validator 与 post-push GitHub gates 仍是必须的后续门禁。
+- `7a0afaf05bcb8692aefa30516d4148dde3dd4340`（2026-07-26）：按历史 `/review` 的语义问题收口；将 `resolve_ambient_ground_position` 收回 ambient 私有边界，并以 property-insensitive `BlockKind` 对既有全部 10 类叶方块做严格拒绝。饱和测试覆盖 default、Oak `distance=1`、`persistent`、`waterlogged`、Mangrove 属性态，以及 runtime scan 和 loaded-raster 精确复核。
+- `f9b590a7aa7ad0779d643749126dc3e6facd2608`（2026-07-26）：历史 latest-main 合并候选；将 `662609339d69e14a06964b557497394fdeea03a5` 合入 7a0，带入 docs/README 主线变更，未改变 server 代码树。
+- `7e7c3ead20e4dc5ae8ff6169bf82bb327e552b2d`（2026-07-26）：将 Bot harness 收束为 explicit owned mode（CI 选择）与保留 caller 输入的 generic default；owned mode 保留私有 token/state/Redis/CWD、strict marker/PID ownership 和 owner-safe cleanup，REUSE 仅接管已有 ordinary server。
+- `81f57ea44978e07673a87a7430b5b95b322110ca`（2026-07-26）：generic 无 raster 传递高熵 fixture token，owned mode 即使继承 `REDIS_URL` 仍强制私有 Redis，并在启动前拒绝非法 mode 值。
+- `e4bb94a96d780218e79718516d438bf18d0b5d63`（2026-07-26）：修复 ambient 非叶水浸落点绕过；私有 `contains_ambient_liquid` 统一拒绝 Water/Lava kind 与 `Waterlogged=True`，覆盖 support、feet/head、direct 三格、runtime scan/resolve 与 loaded-raster 精确复核；isolated targeted test 2 passed / 0 failed / 12018 filtered。
 - `0f04aa2efe7af0eb63fd79b190f54a65156419b0`（2026-07-26）：此前 docs closure；其 exact-head GitHub E2E `30193835466` SUCCESS，Client/schema/agent/server/Smoke/Bot/Chat 均成功。此为历史 exact-head 证据，不是当前候选。
 - `b749b6cd0`（2026-07-26）：历史功能候选，已由后续 `7a0afaf05bcb8692aefa30516d4148dde3dd4340` 的可见性与叶属性态修复取代。
 - `f2451ed73`、`5c1c62fc0`、`f0df73b96`（2026-07-25）：历史候选曾统一 Navigator/ambient 安全落点规则源、引入 `GroundLandingScan` 三态；随后以 `b1ae488b8` 恢复原始私有 ambient 边界，避免改变 Navigator legacy caller 合同。
@@ -361,15 +365,23 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 ### 测试结果
 
-#### 当前功能 / latest-main 候选证据
+#### 当前功能候选 `e4bb94a96d780218e79718516d438bf18d0b5d63` 证据
+
+- **server 本地门禁**：`cargo fmt --check` PASS；`cargo clippy --all-targets -- -D warnings` PASS（4m17s）；完整 `cargo test` PASS：lib 12018 passed / 0 failed / 2 ignored，main 12 passed，full-app 1 passed，Tarkov 4 passed，doc 5 ignored。
+- **Bot 静态/协议门禁**：`bash -n scripts/bot-e2e.sh` PASS；`python3 scripts/bot/test_protocol.py` 153 passed / 0 failed。执行曾出现 `ResourceWarning`，但退出码为 0，未予隐去。
+- **Bot 无上下文 revalidator**：以 `81f57ea44978e07673a87a7430b5b95b322110ca` 审核，PASS、0 blocker / 0 major；其明确限制是未运行真实 Docker/server E2E，generic caller inputs 的真实端到端仍待补证。
+- **历史 exact-head E2E**：run `30198353661` 对前一 `0766` 候选 exact HEAD SUCCESS，Client/schema/agent/server/Smoke/Bot/Chat stages 全成功；它只是历史证据，不能替代 e4bb 或本 docs-only commit 的 exact-HEAD gate。
+- **历史 CodeRabbit / PR 状态**：`0766` 的 CodeRabbit status success、description `Review completed`，且当时 PR 为 `MERGEABLE/CLEAN`；均不适用于 e4bb 或本 docs-only commit。
+- **review 裁决**：comment `5083160080` / run `30198393271` 的 workflow 因 dedup skipped，但 primary adjacent trigger path 已产出完整评论。其一确认 non-leaf `Waterlogged=True` 可逃过 `BlockState::is_liquid()`，已由 e4bb 收口。其二确认 Bot generic caller external-input contract 被此前全局拒绝；已由 7e7c3ead2 / 81f57ea44 的两模式设计修复。该评论提出的 global `REQUIRED_ENV` fail-closed finding 经追踪仍被证伪：仅两个 hard-prerequisite declaration，supported caller 提供它，未作额外 runner semantic 改动。不得将更广的 Bot scope concern 描述为完全 refuted。
+
+#### 历史候选 7a0 / f9 证据（已被后续功能修复取代）
 
 - **功能代码候选 `7a0afaf05bcb8692aefa30516d4148dde3dd4340` 的 authoritative slot gates**：targeted Sonnet worktree `41 passed / 0 failed`；slot `cargo fmt --check` PASS；slot `cargo clippy --all-targets -- -D warnings` PASS（3m32s）；slot 完整 `cargo test` PASS：lib 12014 passed / 0 failed / 2 ignored，main 12 passed，full-app 1 passed，Tarkov 4 passed，doc 5 ignored。
-- **latest-main 合并候选 `f9b590a7aa7ad0779d643749126dc3e6facd2608`**：父提交为 7a0 与 `662609339d69e14a06964b557497394fdeea03a5`；后者相对 7a0 仅带入 docs/README，和 server/Bot/本 plan 文件无重叠，合并干净。因此 7a0 的 server 代码树与上述 slot gate 没有变化；仍不可把它们伪称为 f9 的 fresh validator 或 GitHub gate，f9 exact-HEAD validator 和 post-push GitHub gates 必须重新运行。
-- **review `30193915963`**：preflight 与 review jobs SUCCESS，finalize 因 `REQUEST_CHANGES` FAILURE；重复 run `30193921319` SKIPPED。初始 reviewer 的 infrastructure 524 不是代码 finding；最终 rerun 确认两项语义问题，均由 7a0 修复：`resolve_ambient_ground_position` 曾为 public、违背 ambient 私有边界；以完整 `BlockState` 相等判断叶子会漏过带 `distance` / `persistent` / `waterlogged` 等属性态的 leaves 并将其视为支撑。
-- **Bot finding 裁决**：经独立 caller/contract tracing 后 REFUTED，未改 Bot。全局 fail-closed `REQUIRED_ENV` 只被两个 scenario 声明；二者均已把它作为 hard prerequisite，唯一可执行的显式 caller 会提供该环境变量，runner tests 亦通过，故不会破坏受支持 Bot caller。
-- **历史 exact-head E2E**：`0f04aa2efe7af0eb63fd79b190f54a65156419b0` 的 E2E run `30193835466` SUCCESS，Client/schema/agent/server/Smoke/Bot/Chat stages 均 SUCCESS。它只证明 0f04，不能替代 7a0、f9 或本 docs-only commit 的 exact-HEAD gate。
-- **CodeRabbit**：0f04 状态 success，description 为 `Review rate limited`；这不是 approval，亦不能表述为 review fully passed。
-
+- **历史 latest-main 合并候选 `f9b590a7aa7ad0779d643749126dc3e6facd2608`**：父提交为 7a0 与 `662609339d69e14a06964b557497394fdeea03a5`；后者相对 7a0 仅带入 docs/README，和 server/Bot/本 plan 文件无重叠，合并干净。因此 7a0 的 server 代码树与上述 slot gate 没有变化；仍不可把它们伪称为 f9 的 fresh validator 或 GitHub gate。
+- **历史 review `30193915963`**：preflight 与 review jobs SUCCESS，finalize 因 `REQUEST_CHANGES` FAILURE；重复 run `30193921319` SKIPPED。初始 reviewer 的 infrastructure 524 不是代码 finding；最终 rerun 确认两项语义问题，均由 7a0 修复：`resolve_ambient_ground_position` 曾为 public、违背 ambient 私有边界；以完整 `BlockState` 相等判断叶子会漏过带 `distance` / `persistent` / `waterlogged` 等属性态的 leaves 并将其视为支撑。
+- **历史 Bot finding 裁决**：当时仅 `REQUIRED_ENV` global finding 被 refute；后续 review 已确认 generic external-input contract concern，不能沿用为“Bot finding 全部 refuted”。
+- **历史 exact-head E2E**：`0f04aa2efe7af0eb63fd79b190f54a65156419b0` 的 E2E run `30193835466` SUCCESS，Client/schema/agent/server/Smoke/Bot/Chat stages 均 SUCCESS。它只证明 0f04，不能替代后续任何 HEAD。
+- **历史 CodeRabbit**：0f04 status success，description 为 `Review rate limited`；这不是 approval，亦不能表述为 review fully passed。
 #### 历史候选 b749 证据（已被后续功能修复取代）
 
 - **server 本地门禁**：`cargo fmt --check` PASS；`cargo clippy --all-targets -- -D warnings` PASS；完整 `cargo test`：lib 12011 passed / 0 failed / 2 ignored，main 12/0/0，full-app 1/0/0，Tarkov 4/0/0，doc 0 passed / 5 ignored。
@@ -391,14 +403,14 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - **共享 Bot harness**：GitHub E2E run `30151469631` 对历史候选 `77d8ec7c93645648c1fe05681295017146d6d2df` 产出 31 pass / 1 skip / 0 fail；该 artifact 不是当前候选的 exact-head CI gate。
 - **历史证据边界**：`71e5ea3ab`、`da3196a35`、`7c4c068f8`、`77d8ec7c` 等旧树门禁只证明各自 SHA。`72b518685` 与 `f8141905` 为后续功能代码返工，已使此前 code gate、validator 与 E2E 对当前候选全部失效。
 
-**post-doc 外部门禁边界**：本 docs-only closure 不改代码。push 后 GitHub E2E、CodeRabbit 与 `/review` 必须绑定当时的 current HEAD；PR status 与 PR body 是权威的 post-commit record，避免将尚不存在的自指 SHA 嵌入本文件。
+**post-doc 外部门禁边界**：本 docs-only closure 不改代码。当前 docs commit 的 fresh exact-HEAD validator 仍是 push 前必需门禁；push 后 GitHub E2E、CodeRabbit、`/review` 与 PR `CLEAN` 状态必须绑定当时的 current HEAD。PR status 与 PR body 是权威的 post-commit record，避免将尚不存在的自指 SHA 嵌入本文件。
 
 ### 跨仓库核验
 
-- **server**：`resolve_ambient_ground_position`、`resolve_loaded_raster_landing`、`submit_ambient_spawn_candidate`、`submit_ambient_dev_spawn_once`、`AmbientSpawnCmd`、`AmbientSpawnDevAccess` 与 command graph pin 均落地；mundane/threat 共用同一 resolver 和提交边界，`BONG_DEV_MODE` 默认关闭命令树入口且 capability 拒绝伪造 event。
-- **bot**：`scripts/bot/make_novice_raster_fixture.py` 为每轮 manifest 写入 `ambient-surface-v1` token 与 support/feet/head 元数据；`scripts/bot-e2e.sh` 只为本轮自起 server 声明 ownership，REUSE 模式清除 ownership，且没有 listener 时 fail-closed。self-start 独占 evidence、Redis Compose project/随机端口与 private runtime CWD；checkout assets 只作为 botany/forge 输入桥，DB/backups/craft/mineral/spiritwood/NPC archive/亡者公开导出均留在本轮 evidence。`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 先核验同 token 的真实 tile 二进制，再走 `/tpzone`、`/ambient_spawn once`、`entity_spawn` 与位置 mirror，不依赖随机 ambient tick。
-- **client**：零代码改动；继续渲染 server 权威 `Position`，未加入 client gravity hack；Java 17 全门禁通过。
-- **agent/schema**：零代码改动、零 Redis/wire 变更；合并主线后 schema/Tiandao 全门禁通过。
+- **server**：`resolve_ambient_ground_position`、`resolve_loaded_raster_landing`、`submit_ambient_spawn_candidate`、`submit_ambient_dev_spawn_once`、`AmbientSpawnCmd`、`AmbientSpawnDevAccess` 与 command graph pin 均落地；mundane/threat 共用同一 resolver 和提交边界，`contains_ambient_liquid` 在 support、feet/head 统一拒绝 Water/Lava kind 与非叶 `Waterlogged=True`，`BONG_DEV_MODE` 默认关闭命令树入口且 capability 拒绝伪造 event。
+- **bot**：`scripts/bot/make_novice_raster_fixture.py` 为 owned mode fixture 写入 `ambient-surface-v1` token 与 support/feet/head 元数据；`scripts/bot-e2e.sh` 的 generic 默认模式保留 caller raster/state/Redis 和 `$ROOT/server` CWD，CI 显式选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 才启用 private fixture/Redis/CWD、strict marker/PID ownership 与 owner-safe cleanup。REUSE 仅使用已有 ordinary server，缺 listener fail-closed；无 global `pkill`。`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 先核验同 token 的真实 tile 二进制，再走 `/tpzone`、`/ambient_spawn once`、`entity_spawn` 与位置 mirror，不依赖随机 ambient tick；generic caller-inputs 的真实 Docker/server E2E 尚待执行。
+- **client**：零代码改动；继续渲染 server 权威 `Position`，未加入 client gravity hack；Java 17 全门禁为历史候选证据。
+- **agent/schema**：零代码改动、零 Redis/wire 变更；合并主线后的 schema/Tiandao 门禁为历史候选证据。
 
 ### 遗留 / 后续
 
