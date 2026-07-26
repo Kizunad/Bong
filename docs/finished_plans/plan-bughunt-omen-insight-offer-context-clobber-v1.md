@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | insight offer contextual 三轨被 agent 回包静默覆盖降级 | fix_pr | ⬜ |
+| P0 | insight offer contextual 三轨被 agent 回包静默覆盖降级 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — insight offer contextual 三轨被 agent 回包静默覆盖降级
 
@@ -40,3 +40,15 @@
 ## 审计来源
 
 bughunt AP 定点轮（限定 `omen/insight` 主路径：`server/src/cultivation/*insight*`、`server/src/network/*insight*`、`client/src/main/java/com/bong/client/insight/` 周边契约）。结论由主代理实地 Read/Grep 复核形成；当前 harness 未暴露 `multi_agent_v1.spawn_agent`，且本机 `codex` 子会话 provider reachability 失败，故两轮对抗裁决以可审计代码证据链手工固化在本 skeleton 中，未伪造 subagent 结果。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit `a9b0ca2f7`（2026-07-07，「修复 insight 机缘上下文被默认模板覆盖」）已修复本 bug：`server/src/cultivation/insight_flow.rs:158-179` 的 `ingest_agent_insight_offer` 改为调用 `fallback_for_context(trigger_id, qi_color, practice_log, quota, realm)`，不再无差别调用 `fallback_for(trigger_id)` 把 agent 回包路径降级为固定 `Mellow + 空 PracticeLog + Realm::Induce` 默认模板。agent-fed 路径与本地 fallback 路径现在共享同一份玩家当前上下文。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/cultivation/insight_flow.rs`（`ingest_agent_insight_offer` 改用 `fallback_for_context`）
+- **关键 commit**：`a9b0ca2f7`，2026-07-07，「修复 insight 机缘上下文被默认模板覆盖」
+- **测试结果**：证据未列出具体测试名；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件，未逐条核实 plan「验收抓手」中列出的 4 组 pin 测试是否全部落地。
+- **跨仓库核验**：纯 server 内部修复（`insight_flow.rs` 内 `ingest_agent_insight_offer` ↔ `fallback_for_context`），未涉及 agent runtime（`agent/packages/tiandao/src/insight-runtime.ts`）或 client 侧 symbol 变更。
+- **遗留 / 后续**：plan 原文「开放问题」#1 提到的「是否顺手扩 `InsightChoiceV1` schema 真正消费 agent 生成的 effect 参数」、#2「双 producer 主从/超时策略」这两项更彻底的契约收口，本次审计未核实是否已一并处理，留待后续如有需要再核查。
