@@ -264,3 +264,8 @@
 **P5 未落**（四项，详细欠账见下方 P5 段落清单）：FinRing 真实消费链、bot 场景（3 条只有 1 条）、worldview 增补案（P5 原文明写「归档前 land」的硬前置）、非人种族生产获得路径。
 
 #1250（2026-07-23）是一处经脉显示回归修复，与本 plan 主体交付判定无关，不作为证据引用。
+
+**遗留 / 后续**（承接 #1278 删掉的 Finish Evidence 里那条「status_snapshot 8 段 id 发散小 PR」——原措辞不准，此处按代码实况重写，不随归档回退一起丢账）：
+
+- **legacy `BodyPart` 8 段与通用 `BodyPartId`（string）并存的残留耦合**。P0 只把 `Wound.location` 及其伤残后果消费点（`combat::arm_wound` / `movement::leg_wound` / 减速 / 眩晕 / 脱手）迁到 `BodyPartId`；`server/src/combat/components.rs:57-71` 的注释自陈「本轮**不**跟进迁移」的人形专属子系统仍以 legacy enum 工作：`CombatEvent.body_part` wire、`DerivedAttrs.defense_profile`（`components.rs:320` 的 `HashMap<(BodyPart, WoundKind), f32>`）、护甲 `body_coverage`、`DeadMeridianArmor.immune_regions`、`dugu::body_part_to_meridian`、状态效果 `BodyPartResist` / `BodyPartWeaken`、dandao 变异伤害倍率（经 `body_plan::id_to_legacy_body_part` 转换，非 8 段 id 返回 `None`）。
+- **不阻塞本 plan 归档**（P5 四项欠账才是阻塞项），但非人形构型在上述子系统里仍会退化：whale 的 `tail_fin` 之类 id 转 legacy 失败即走各消费点的兜底分支。真正需要非人形护甲 / 部位抗性 / 变异时，应另立 plan 收口，不要塞进本 plan 的 P5。
