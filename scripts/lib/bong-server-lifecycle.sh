@@ -92,7 +92,7 @@ bong_server_validate_fd_secure_regular_file() {
     owner="$(stat -Lc '%u' -- "/proc/self/fd/$fd" 2>/dev/null)" || return 1
     mode="$(stat -Lc '%a' -- "/proc/self/fd/$fd" 2>/dev/null)" || return 1
     links="$(stat -Lc '%h' -- "/proc/self/fd/$fd" 2>/dev/null)" || return 1
-    [ "$kind" = "regular file" ] || [ "$kind" = "regular empty file" ]
+    { [ "$kind" = "regular file" ] || [ "$kind" = "regular empty file" ]; } || return 1
     [ "$owner" = "$UID" ] \
         && [ "$mode" = "600" ] && [ "$links" = "1" ]
 }
@@ -360,16 +360,43 @@ bong_server_clear_record_if_matches() {
     local expected_starttime="${2:-}"
     local expected_executable="${3:-}"
     local expected_executable_identity="${4:-}"
+    local record
 
-    if ! bong_server_read_record; then
+    record="$(bong_server_pid_file)" || return 2
+    bong_server_validate_pid_record_parent "$record" || return 2
+    if [ ! -e "$record" ] && [ ! -L "$record" ]; then
         return 0
     fi
-    if [ "$BONG_SERVER_RECORDED_PID" = "$expected_pid" ] \
-        && [ "$BONG_SERVER_RECORDED_STARTTIME" = "$expected_starttime" ] \
-        && [ "$BONG_SERVER_RECORDED_EXECUTABLE" = "$expected_executable" ] \
-        && [ "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" = "$expected_executable_identity" ]; then
-        bong_server_clear_record "$BONG_SERVER_RECORDED_FILE_IDENTITY"
+    bong_server_read_record || return 2
+    if [ "$BONG_SERVER_RECORDED_PID" != "$expected_pid" ] \
+        || [ "$BONG_SERVER_RECORDED_STARTTIME" != "$expected_starttime" ] \
+        || [ "$BONG_SERVER_RECORDED_EXECUTABLE" != "$expected_executable" ] \
+        || [ "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" != "$expected_executable_identity" ]; then
+        return 1
     fi
+    bong_server_clear_record "$BONG_SERVER_RECORDED_FILE_IDENTITY" || return 2
+}
+
+# An observed process exit is not a completed lifecycle operation until the
+# matching authority record is gone. A valid replacement (1) and an uncertain
+# read/remove failure (2) both preserve the pathname and fail the outer stop
+# closed so callers cannot continue into tmux teardown or relaunch.
+_bong_server_finish_managed_record_cleanup() {
+    local status
+
+    bong_server_clear_record_if_matches "$@"
+    status=$?
+    case "$status" in
+        0) return 0 ;;
+        1)
+            echo "FAIL: managed bong-server PID record was replaced after the process exited; preserving the replacement" >&2
+            return 2
+            ;;
+        *)
+            echo "FAIL: could not safely remove the exited managed bong-server PID record; preserving it for diagnosis" >&2
+            return 2
+            ;;
+    esac
 }
 
 _bong_server_write_record() {
@@ -508,6 +535,27 @@ bong_server_stop_process_tree_and_release_port() {
         sleep 0.2
     done
     [ "$tree_stopped" -eq 1 ] && [ "$port_released" -eq 1 ]
+}
+
+bong_server_confirm_port_released() {
+    local port="${1:-25565}"
+
+    [[ "$port" =~ ^[0-9]+$ ]] || return 1
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if ! bong_server_port_is_open "$port"; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    return 1
+}
+
+# A preview persistence transaction must exclude every production start/reload
+# path for its full stash -> preview -> stop -> restore interval. The only legal
+# order is lifecycle -> persistence; the e2e caller enters this wrapper before
+# opening the persistence transaction and never acquires lifecycle from inside it.
+bong_server_with_preview_persistence_lock() {
+    bong_server_with_lock "$@"
 }
 
 bong_server_wait_for_executable() {
@@ -694,8 +742,8 @@ _bong_server_stop_managed() {
     fi
     case "$status" in
         1)
-            bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
-            return 0
+            _bong_server_finish_managed_record_cleanup "$pid" "$starttime" "$executable" "$executable_identity"
+            return $?
             ;;
         2)
             echo "FAIL: could not inspect managed bong-server pid $pid; preserving record and refusing signals" >&2
@@ -721,8 +769,8 @@ _bong_server_stop_managed() {
     status=$?
     case "$status" in
         0)
-            bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
-            return 0
+            _bong_server_finish_managed_record_cleanup "$pid" "$starttime" "$executable" "$executable_identity"
+            return $?
             ;;
         2)
             echo "FAIL: could not inspect managed bong-server pid $pid while waiting after TERM; preserving record and refusing SIGKILL" >&2
@@ -736,8 +784,8 @@ _bong_server_stop_managed() {
     fi
     case "$status" in
         1)
-            bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
-            return 0
+            _bong_server_finish_managed_record_cleanup "$pid" "$starttime" "$executable" "$executable_identity"
+            return $?
             ;;
         2)
             echo "FAIL: could not inspect managed bong-server pid $pid before SIGKILL; preserving record" >&2
@@ -769,7 +817,7 @@ _bong_server_stop_managed() {
         echo "FAIL: managed bong-server pid $pid did not exit after SIGKILL" >&2
         return 1
     fi
-    bong_server_clear_record_if_matches "$pid" "$starttime" "$executable" "$executable_identity"
+    _bong_server_finish_managed_record_cleanup "$pid" "$starttime" "$executable" "$executable_identity"
 }
 
 bong_server_stop_managed() {
@@ -1014,6 +1062,7 @@ bong_server_persistence_transaction_begin() {
     BONG_SERVER_PERSISTENCE_MARKER_FILE="$marker_file"
     BONG_SERVER_PERSISTENCE_STASH_READY=0
     BONG_SERVER_PERSISTENCE_STASH_DIR=""
+    BONG_SERVER_PERSISTENCE_RESTORE_DURABLE=0
 }
 
 _bong_server_persistence_transaction_write_marker() {
@@ -1030,6 +1079,38 @@ _bong_server_persistence_transaction_write_marker() {
     fi
     bong_server_validate_pid_record_file "$BONG_SERVER_PERSISTENCE_MARKER_FILE" || return 1
     BONG_SERVER_PERSISTENCE_MARKER_IDENTITY="$(bong_server_path_identity "$BONG_SERVER_PERSISTENCE_MARKER_FILE")"
+}
+
+_bong_server_persistence_transaction_marker_has_state() {
+    local expected_state="${1:-}" line seen=0 fd marker_identity
+
+    [ -n "$expected_state" ] && [ -n "${BONG_SERVER_PERSISTENCE_MARKER_FILE:-}" ] || return 1
+    bong_server_validate_pid_record_file "$BONG_SERVER_PERSISTENCE_MARKER_FILE" || return 1
+    exec {fd}<"$BONG_SERVER_PERSISTENCE_MARKER_FILE" || return 1
+    if ! bong_server_validate_fd_secure_regular_file "$fd" \
+        || ! bong_server_fd_matches_path "$fd" "$BONG_SERVER_PERSISTENCE_MARKER_FILE"; then
+        exec {fd}<&-
+        return 1
+    fi
+    marker_identity="$(bong_server_path_identity "/proc/self/fd/$fd")" || {
+        exec {fd}<&-
+        return 1
+    }
+    [ "$marker_identity" = "$BONG_SERVER_PERSISTENCE_MARKER_IDENTITY" ] || {
+        exec {fd}<&-
+        return 1
+    }
+    while IFS= read -r -u "$fd" line || [ -n "$line" ]; do
+        case "$line" in
+            state=*)
+                [ "$seen" -eq 0 ] || { exec {fd}<&-; return 1; }
+                [ "${line#state=}" = "$expected_state" ] || { exec {fd}<&-; return 1; }
+                seen=1
+                ;;
+        esac
+    done
+    exec {fd}<&-
+    [ "$seen" -eq 1 ]
 }
 
 bong_server_persistence_transaction_set_stash() {
@@ -1076,6 +1157,11 @@ bong_server_finalize_preview_persistence_after_stop() {
                 if bong_server_persistence_transaction_complete; then
                     return 0
                 fi
+                if [ "${BONG_SERVER_PERSISTENCE_RESTORE_DURABLE:-0}" -eq 1 ] \
+                    && _bong_server_persistence_transaction_marker_has_state "RESTORED"; then
+                    echo "FAIL: restored persistence is durable but handoff cleanup is incomplete; preserving RESTORED for retry" >&2
+                    return 1
+                fi
                 bong_server_persistence_transaction_mark_failed "restore completed but transaction handoff cleanup failed" || true
                 bong_server_persistence_transaction_release
                 return 1
@@ -1099,20 +1185,79 @@ bong_server_persistence_transaction_release() {
     local fd="${BONG_SERVER_PERSISTENCE_LOCK_FD:-}"
     [ -n "$fd" ] || return 0
     flock -u "$fd" || true; exec {fd}>&-
-    unset BONG_SERVER_PERSISTENCE_LOCK_FD BONG_SERVER_PERSISTENCE_DATA_DIR BONG_SERVER_PERSISTENCE_PARENT_DIR BONG_SERVER_PERSISTENCE_STATE_DIR BONG_SERVER_PERSISTENCE_DATA_IDENTITY BONG_SERVER_PERSISTENCE_PARENT_IDENTITY BONG_SERVER_PERSISTENCE_MARKER_FILE BONG_SERVER_PERSISTENCE_MARKER_IDENTITY BONG_SERVER_PERSISTENCE_STASH_READY BONG_SERVER_PERSISTENCE_STASH_DIR
+    unset BONG_SERVER_PERSISTENCE_LOCK_FD BONG_SERVER_PERSISTENCE_DATA_DIR BONG_SERVER_PERSISTENCE_PARENT_DIR BONG_SERVER_PERSISTENCE_STATE_DIR BONG_SERVER_PERSISTENCE_DATA_IDENTITY BONG_SERVER_PERSISTENCE_PARENT_IDENTITY BONG_SERVER_PERSISTENCE_MARKER_FILE BONG_SERVER_PERSISTENCE_MARKER_IDENTITY BONG_SERVER_PERSISTENCE_STASH_READY BONG_SERVER_PERSISTENCE_STASH_DIR BONG_SERVER_PERSISTENCE_RESTORE_DURABLE
+}
+
+_bong_server_persistence_cleanup_restored_stash() {
+    local stash_dir="${BONG_SERVER_PERSISTENCE_STASH_DIR:-}" stash_parent manifest_file entries entry find_status
+
+    [ -n "$stash_dir" ] || return 0
+    stash_parent="$(dirname -- "$stash_dir")"
+    bong_server_validate_real_directory "$stash_parent" || return 1
+    if [ ! -e "$stash_dir" ] && [ ! -L "$stash_dir" ]; then
+        sync -f -- "$stash_parent" || {
+            echo "FAIL: could not durably sync persistence stash directory removal" >&2
+            return 1
+        }
+        return 0
+    fi
+    [ -d "$stash_dir" ] && [ ! -L "$stash_dir" ] || {
+        echo "FAIL: restored persistence stash path is not a real directory: $stash_dir" >&2
+        return 1
+    }
+    entries="$(find "$stash_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null)"
+    find_status=$?
+    [ "$find_status" -eq 0 ] || {
+        echo "FAIL: cannot enumerate restored persistence stash directory" >&2
+        return 1
+    }
+    while IFS= read -r entry; do
+        [ -z "$entry" ] && continue
+        [ "$entry" = stashed-files ] || {
+            echo "FAIL: unexpected restored persistence stash entry $entry; preserving RESTORED handoff" >&2
+            return 1
+        }
+    done <<< "$entries"
+    manifest_file="$stash_dir/stashed-files"
+    if [ -e "$manifest_file" ] || [ -L "$manifest_file" ]; then
+        [ -f "$manifest_file" ] && [ ! -L "$manifest_file" ] || {
+            echo "FAIL: restored persistence manifest is not a regular file; preserving RESTORED handoff" >&2
+            return 1
+        }
+        rm -f -- "$manifest_file" || return 1
+    fi
+    sync -f -- "$stash_dir" || {
+        echo "FAIL: could not durably sync restored stash evidence cleanup" >&2
+        return 1
+    }
+    rmdir -- "$stash_dir" || {
+        echo "FAIL: stash directory unexpectedly nonempty after validated restore" >&2
+        return 1
+    }
+    sync -f -- "$stash_parent" || {
+        echo "FAIL: could not durably sync persistence stash directory removal" >&2
+        return 1
+    }
 }
 
 bong_server_persistence_transaction_complete() {
     [ -n "${BONG_SERVER_PERSISTENCE_LOCK_FD:-}" ] || return 1
     _bong_server_persistence_transaction_identity_ok || return 1
-    # A READY transaction may only complete after restore consumed its durable
-    # leaf. Any failed V3 pre/post check leaves the manifest/stash in place;
-    # never erase the marker merely because a caller attempted completion.
-    if [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ] \
-        && [ -e "${BONG_SERVER_PERSISTENCE_STASH_DIR:-}" ]; then
-        echo "FAIL: persistence stash remains after incomplete restore; refusing to clear recovery marker" >&2
+    [ "${BONG_SERVER_PERSISTENCE_RESTORE_DURABLE:-0}" -eq 1 ] || {
+        if [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 0 ] \
+            && [ -z "${BONG_SERVER_PERSISTENCE_STASH_DIR:-}" ]; then
+            _bong_server_persistence_transaction_write_marker "RESTORED" "restored" "no-stash" || return 1
+            BONG_SERVER_PERSISTENCE_RESTORE_DURABLE=1
+        else
+            echo "FAIL: persistence transaction has no durable RESTORED state; refusing to clear recovery marker" >&2
+            return 1
+        fi
+    }
+    _bong_server_persistence_transaction_marker_has_state "RESTORED" || {
+        echo "FAIL: persistence recovery marker is not the verified RESTORED handoff; refusing completion" >&2
         return 1
-    fi
+    }
+    _bong_server_persistence_cleanup_restored_stash || return 1
     bong_server_remove_secure_file_if_identity "$BONG_SERVER_PERSISTENCE_MARKER_FILE" "$BONG_SERVER_PERSISTENCE_MARKER_IDENTITY" || return 1
     sync -f -- "$BONG_SERVER_PERSISTENCE_STATE_DIR" || return 1
     bong_server_persistence_transaction_release
@@ -1153,6 +1298,14 @@ bong_server_stash_persistence() {
         mv -- "$source_file" "$stash_dir/$filename" || return 1
         _bong_server_file_matches_snapshot "$stash_dir/$filename" "$digest" "$identity" || { echo "FAIL: moved stash file snapshot mismatch: $filename" >&2; return 1; }
     done
+    sync -f -- "$data_dir" || {
+        echo "FAIL: could not durably sync persistence data directory after stash" >&2
+        return 1
+    }
+    sync -f -- "$stash_dir" || {
+        echo "FAIL: could not durably sync persistence stash directory after stash" >&2
+        return 1
+    }
 }
 
 bong_server_restore_persistence() {
@@ -1163,6 +1316,13 @@ bong_server_restore_persistence() {
         && [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ] && [ "${BONG_SERVER_PERSISTENCE_STASH_DIR:-}" = "$stash_dir" ] || {
         echo "FAIL: persistence restore requires its active READY transaction and matching stash path" >&2; return 1; }
     _bong_server_persistence_transaction_identity_ok || { echo "FAIL: persistence transaction path identity changed; refusing restore" >&2; return 1; }
+    if [ "${BONG_SERVER_PERSISTENCE_RESTORE_DURABLE:-0}" -eq 1 ]; then
+        _bong_server_persistence_transaction_marker_has_state "RESTORED" || {
+            echo "FAIL: in-memory restored state does not match the durable recovery handoff" >&2
+            return 1
+        }
+        return 0
+    fi
     [ -d "$stash_dir" ] && [ ! -L "$stash_dir" ] || return 1
     manifest_file="$stash_dir/stashed-files"
     _bong_server_read_stash_manifest "$manifest_file" || { echo "FAIL: stash manifest is missing, malformed, or unreadable at $manifest_file; refusing to touch $data_dir (fail closed)" >&2; return 1; }
@@ -1218,6 +1378,14 @@ bong_server_restore_persistence() {
             fi
         fi
     done
-    rm -f -- "$manifest_file" || return 1
-    rmdir -- "$stash_dir" || { echo "FAIL: stash directory unexpectedly nonempty after validated restore" >&2; return 1; }
+    sync -f -- "$data_dir" || {
+        echo "FAIL: could not durably sync restored persistence data directory" >&2
+        return 1
+    }
+    sync -f -- "$stash_dir" || {
+        echo "FAIL: could not durably sync persistence stash directory after restore moves" >&2
+        return 1
+    }
+    _bong_server_persistence_transaction_write_marker "RESTORED" "restored" "durable" || return 1
+    BONG_SERVER_PERSISTENCE_RESTORE_DURABLE=1
 }

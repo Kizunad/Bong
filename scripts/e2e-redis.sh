@@ -33,7 +33,6 @@ REDIS_PID=""
 SERVER_PID=""
 NORTH_RIFT_DB_STASH=""
 PERSISTENCE_TRANSACTION_ACTIVE=0
-PERSISTENCE_STASH_ACTIVE=0
 PERSISTENCE_STASH_READY=0
 REDIS_SUB_PID=""
 REDIS_PROVIDER=""
@@ -850,12 +849,21 @@ port_open() {
 stop_server() {
   local pid="$SERVER_PID"
 
-  [ -n "$pid" ] || return 0
-  if bong_server_stop_process_tree_and_release_port "$pid" 25565; then
-    SERVER_PID=""
-    return 0
+  if [ -n "$pid" ]; then
+    if bong_server_stop_process_tree_and_release_port "$pid" 25565; then
+      SERVER_PID=""
+      return 0
+    fi
+    return 1
   fi
-  return 1
+  # Outside a READY transaction there are no stashed developer bytes to expose:
+  # an empty PID remains an ordinary no-op. Restore authorization is stricter and
+  # requires fresh shared-port evidence for this cleanup invocation.
+  if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then
+    bong_server_confirm_port_released 25565
+    return $?
+  fi
+  return 0
 }
 
 cleanup() {
@@ -878,7 +886,6 @@ cleanup() {
     if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then
       if bong_server_finalize_preview_persistence_after_stop \
         "$ROOT/server/data" "$NORTH_RIFT_DB_STASH" "$STOP_SERVER_CONFIRMED"; then
-        PERSISTENCE_STASH_ACTIVE=0
         PERSISTENCE_STASH_READY=0
       fi
     else
@@ -1040,105 +1047,118 @@ echo "=== [$TASK_ID][$SCRIPT_TAG][7/8] North-rift dedicated preview bot ==="
 # client 的 ViewDistance 提到 32。绝不能把该 env 塞进常规 bot --all server：
 # 先在上面的普通 release server 完成 100 NPC TPS gate，再完整停服；这里只另起
 # 一个无 rogue seed 的专用 release server，运行唯一 north-rift bot 后立即清理。
-if ! stop_server; then
-  finalize_failure "north-rift-preview" "ordinary server stopped but port 25565 stayed occupied"
-fi
-
-# 优雅关服（SIGTERM → AppExit → Last）现在真正可达，上面 stop_server 会让
-# 普通 e2e server 在退出前把运行期 zone 快照（被 100 NPC seed 消耗过的
-# spirit_qi）刷进 server/data/bong.db。但下面这台专用 preview server 与
-# 普通 server 共用同一个相对 cwd 持久化路径，而 terrain_north_rift_scorch_
-# zone_identity 场景断言的是 zones.json 的 pristine 权威身份数值——必须先
-# 把开发者本地真实存档挪走，让专用 preview server 从干净持久化状态启动，
-# 场景通过 / 脚本退出后再原样还原，不能影响本机开发者的真实存档。
-NORTH_RIFT_DB_STASH="$RUN_DIR/north-rift-db-stash"
-if ! bong_server_persistence_transaction_begin "$ROOT/server/data"; then
-  finalize_failure "north-rift-preview" "failed to acquire exclusive server/data persistence transaction (or an unrecovered handoff exists)"
-fi
-PERSISTENCE_TRANSACTION_ACTIVE=1
-if ! bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
-  # Helper creates the durable stash-path marker only after V2 manifest publish
-  # and validation, before its first move. A pre-publish/stale failure remains
-  # unready and cleanup only clears ACTIVE without touching that leaf.
-  if [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ]; then
-    PERSISTENCE_STASH_READY=1
+run_north_rift_preview() {
+  # The lifecycle lock spans ordinary-server stop through persistence restore.
+  # Production start/dev-reload use the same lock, so neither can open
+  # server/data while the preview transaction has moved its SQLite snapshot.
+  if ! stop_server; then
+    finalize_failure "north-rift-preview" "ordinary server stopped but port 25565 stayed occupied"
   fi
-  finalize_failure "north-rift-preview" "failed to atomically publish and stash local server/data/bong.db before dedicated preview server"
-fi
-PERSISTENCE_STASH_ACTIVE=1
-PERSISTENCE_STASH_READY=1
 
-(
-  export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  export BONG_ROGUE_SEED_COUNT=0
-  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-  export BONG_PREVIEW_MODE=1
-  cd "$ROOT/server"
-  cargo run --release
-) >"$NORTH_RIFT_SERVER_LOG" 2>&1 &
-SERVER_PID="$!"
-
-if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
-fi
-if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
-fi
-NORTH_RIFT_PORT_READY=0
-for _ in $(seq 1 50); do
-  if port_open 25565; then
-    NORTH_RIFT_PORT_READY=1
-    break
+  # Recheck under the lifecycle lock immediately before transaction begin. A
+  # listener with no PID authority is unsafe and must leave developer data intact.
+  if ! bong_server_confirm_port_released 25565; then
+    finalize_failure "north-rift-preview" "port 25565 is occupied before persistence stash; refusing to move live SQLite files"
   fi
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    break
+
+  # 优雅关服（SIGTERM → AppExit → Last）现在真正可达，上面 stop_server 会让
+  # 普通 e2e server 在退出前把运行期 zone 快照（被 100 NPC seed 消耗过的
+  # spirit_qi）刷进 server/data/bong.db。但下面这台专用 preview server 与
+  # 普通 server 共用同一个相对 cwd 持久化路径，而 terrain_north_rift_scorch_
+  # zone_identity 场景断言的是 zones.json 的 pristine 权威身份数值——必须先
+  # 把开发者本地真实存档挪走，让专用 preview server 从干净持久化状态启动，
+  # 场景通过 / 脚本退出后再原样还原，不能影响本机开发者的真实存档。
+  NORTH_RIFT_DB_STASH="$RUN_DIR/north-rift-db-stash"
+  if ! bong_server_persistence_transaction_begin "$ROOT/server/data"; then
+    finalize_failure "north-rift-preview" "failed to acquire exclusive server/data persistence transaction (or an unrecovered handoff exists)"
   fi
-  sleep 0.2
-done
-if [ "$NORTH_RIFT_PORT_READY" -ne 1 ]; then
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated preview server did not own port 25565; see $NORTH_RIFT_SERVER_LOG"
-fi
+  PERSISTENCE_TRANSACTION_ACTIVE=1
+  if ! bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+    # Helper creates the durable stash-path marker only after V3 manifest publish
+    # and validation, before its first move. A pre-publish/stale failure remains
+    # unready and cleanup only clears ACTIVE without touching that leaf.
+    if [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ]; then
+      PERSISTENCE_STASH_READY=1
+    fi
+    finalize_failure "north-rift-preview" "failed to atomically publish and stash local server/data/bong.db before dedicated preview server"
+  fi
+  PERSISTENCE_STASH_READY=1
 
-NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
-if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
-  python3 "$ROOT/scripts/bot/run_scenarios.py" \
-    --host 127.0.0.1 \
-    --port 25565 \
-    --run-tag "$NORTH_RIFT_RUN_TAG" \
-    --scenario terrain_north_rift_scorch_zone_identity \
-    >"$NORTH_RIFT_BOT_LOG" 2>&1; then
-  pass "north-rift preview_tp zone_info + ambient_zone bot"
-else
-  tail -n 80 "$NORTH_RIFT_BOT_LOG" || true
-  tail -n 80 "$NORTH_RIFT_SERVER_LOG" || true
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated north-rift protocol bot failed; see $NORTH_RIFT_BOT_LOG"
-fi
+  (
+    export PATH="$RUST_PATH"
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+    export BONG_ROGUE_SEED_COUNT=0
+    export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
+    export BONG_PREVIEW_MODE=1
+    cd "$ROOT/server"
+    cargo run --release
+  ) >"$NORTH_RIFT_SERVER_LOG" 2>&1 &
+  SERVER_PID="$!"
 
-if ! stop_server; then
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated preview bot passed but server did not release port 25565"
-fi
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
+  fi
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
+  fi
+  NORTH_RIFT_PORT_READY=0
+  for _ in $(seq 1 50); do
+    if port_open 25565; then
+      NORTH_RIFT_PORT_READY=1
+      break
+    fi
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      break
+    fi
+    sleep 0.2
+  done
+  if [ "$NORTH_RIFT_PORT_READY" -ne 1 ]; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated preview server did not own port 25565; see $NORTH_RIFT_SERVER_LOG"
+  fi
 
-if ! bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
-  finalize_failure "north-rift-preview" "failed to restore local server/data/bong.db after dedicated preview server; durable handoff will remain"
+  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+  if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
+    python3 "$ROOT/scripts/bot/run_scenarios.py" \
+      --host 127.0.0.1 \
+      --port 25565 \
+      --run-tag "$NORTH_RIFT_RUN_TAG" \
+      --scenario terrain_north_rift_scorch_zone_identity \
+      >"$NORTH_RIFT_BOT_LOG" 2>&1; then
+    pass "north-rift preview_tp zone_info + ambient_zone bot"
+  else
+    tail -n 80 "$NORTH_RIFT_BOT_LOG" || true
+    tail -n 80 "$NORTH_RIFT_SERVER_LOG" || true
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated north-rift protocol bot failed; see $NORTH_RIFT_BOT_LOG"
+  fi
+
+  if ! stop_server; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated preview bot passed but server did not release port 25565"
+  fi
+
+  if ! bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+    finalize_failure "north-rift-preview" "failed to restore local server/data/bong.db after dedicated preview server; durable handoff will remain"
+  fi
+  if ! bong_server_persistence_transaction_complete; then
+    finalize_failure "north-rift-preview" "restored local server/data/bong.db but could not clear the durable persistence handoff"
+  fi
+  PERSISTENCE_STASH_READY=0
+  PERSISTENCE_TRANSACTION_ACTIVE=0
+  pass "north-rift dedicated preview server cleanup"
+}
+
+if ! bong_server_with_preview_persistence_lock run_north_rift_preview; then
+  finalize_failure "north-rift-preview" "failed to hold lifecycle exclusion through north-rift preview persistence transaction"
 fi
-if ! bong_server_persistence_transaction_complete; then
-  finalize_failure "north-rift-preview" "restored local server/data/bong.db but could not clear the durable persistence handoff"
-fi
-PERSISTENCE_STASH_ACTIVE=0
-PERSISTENCE_STASH_READY=0
-PERSISTENCE_TRANSACTION_ACTIVE=0
-pass "north-rift dedicated preview server cleanup"
 
 CURRENT_STAGE="summary"
 echo ""

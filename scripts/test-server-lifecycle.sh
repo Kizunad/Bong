@@ -196,6 +196,56 @@ exec {pid_record_fd}<&-
 [ "$(cat "$BONG_SERVER_PID_FILE")" = "fd-replacement" ] || fail "open-path swap must preserve replacement record"
 rm -f -- "$BONG_SERVER_PID_FILE" "$BONG_SERVER_PID_FILE.opened"
 
+# Open-descriptor validation is an authority boundary in its own right. It must
+# accept only private, single-link regular files and reject every other FD kind.
+fd_validation_root="$TEST_ROOT/fd-validation"
+mkdir -p "$fd_validation_root"
+fd_empty="$fd_validation_root/empty"
+: > "$fd_empty"
+chmod 600 "$fd_empty"
+exec {fd_empty_handle}<"$fd_empty"
+bong_server_validate_fd_secure_regular_file "$fd_empty_handle" \
+    || fail "empty mode-0600 single-link regular FD must validate"
+exec {fd_empty_handle}<&-
+
+fd_nonempty="$fd_validation_root/nonempty"
+printf 'fd-bytes\n' > "$fd_nonempty"
+chmod 600 "$fd_nonempty"
+exec {fd_nonempty_handle}<"$fd_nonempty"
+bong_server_validate_fd_secure_regular_file "$fd_nonempty_handle" \
+    || fail "nonempty mode-0600 single-link regular FD must validate"
+exec {fd_nonempty_handle}<&-
+
+fd_fifo="$fd_validation_root/fifo"
+mkfifo -m 600 "$fd_fifo"
+exec {fd_fifo_handle}<>"$fd_fifo"
+if bong_server_validate_fd_secure_regular_file "$fd_fifo_handle"; then
+    fail "mode-0600 FIFO FD must not validate as a regular authority file"
+fi
+exec {fd_fifo_handle}>&-
+
+fd_permissive="$fd_validation_root/permissive"
+: > "$fd_permissive"
+chmod 644 "$fd_permissive"
+exec {fd_permissive_handle}<"$fd_permissive"
+if bong_server_validate_fd_secure_regular_file "$fd_permissive_handle"; then
+    fail "mode-0644 regular FD must be rejected"
+fi
+exec {fd_permissive_handle}<&-
+
+fd_hardlink="$fd_validation_root/hardlink"
+printf 'linked\n' > "$fd_hardlink"
+chmod 600 "$fd_hardlink"
+ln "$fd_hardlink" "$fd_hardlink.peer"
+exec {fd_hardlink_handle}<"$fd_hardlink"
+if bong_server_validate_fd_secure_regular_file "$fd_hardlink_handle"; then
+    fail "hardlinked regular FD must be rejected"
+fi
+exec {fd_hardlink_handle}<&-
+if bong_server_validate_fd_secure_regular_file 999999; then
+    fail "closed or invalid FD must be rejected"
+fi
+
 # The default runtime record gets the same metadata discipline as overrides.
 default_pid_runtime="$TEST_ROOT/default-pid-runtime"
 mkdir -p "$default_pid_runtime"
@@ -789,6 +839,150 @@ test_persistence_restore "$data_dir" "$stash_dir" \
     || fail "restore must bring back bong.db-shm exactly as it was before stash"
 [ ! -d "$stash_dir" ] \
     || fail "restore must remove the now-empty stash_dir so a repeated cleanup-trap restore call falls into the safe no-op branch instead of re-deleting what it just restored"
+
+# READY/STASHED is not completion evidence. Losing the stash path must retain the
+# durable handoff instead of converting absence into a false successful restore.
+missing_ready_root="$TEST_ROOT/persistence-ready-stash-missing"
+missing_ready_data="$missing_ready_root/data"
+missing_ready_stash="$missing_ready_root/stash"
+mkdir -p "$missing_ready_data"
+printf 'ready-stash-must-remain-recoverable\n' > "$missing_ready_data/bong.db"
+test_persistence_stash "$missing_ready_data" "$missing_ready_stash" \
+    || fail "READY-stash-missing fixture must create a durable stash"
+missing_ready_marker="$(transaction_state_dir "$missing_ready_data")/recovery-handoff"
+rm -rf -- "$missing_ready_stash"
+if bong_server_persistence_transaction_complete; then
+    fail "missing READY stash must not be mistaken for a completed restore"
+fi
+[ -f "$missing_ready_marker" ] || fail "missing READY stash must preserve recovery handoff"
+grep -Fqx 'state=STASHED' "$missing_ready_marker" \
+    || fail "missing READY stash must retain STASHED state for recovery"
+bong_server_persistence_transaction_release
+
+# Directory metadata must become durable before RESTORED is published. Inject a
+# failure at the data-directory sync and ensure complete cannot erase STASHED.
+sync_failure_root="$TEST_ROOT/persistence-restore-sync-failure"
+sync_failure_data="$sync_failure_root/data"
+sync_failure_stash="$sync_failure_root/stash"
+mkdir -p "$sync_failure_data"
+printf 'sync-failure-original\n' > "$sync_failure_data/bong.db"
+test_persistence_stash "$sync_failure_data" "$sync_failure_stash" \
+    || fail "restore sync-failure fixture must create a READY stash"
+printf 'sync-failure-preview\n' > "$sync_failure_data/bong.db"
+original_sync="$(declare -f sync 2>/dev/null || true)"
+sync() {
+    if [ "${1:-}" = -f ] && [ "${3:-}" = "$sync_failure_data" ]; then
+        return 1
+    fi
+    command sync "$@"
+}
+if bong_server_restore_persistence "$sync_failure_data" "$sync_failure_stash"; then
+    unset -f sync
+    fail "restore data-directory sync failure must not report success"
+fi
+unset -f sync
+sync_failure_marker="$(transaction_state_dir "$sync_failure_data")/recovery-handoff"
+grep -Fqx 'state=STASHED' "$sync_failure_marker" \
+    || fail "restore sync failure must retain STASHED recovery state"
+if bong_server_persistence_transaction_complete; then
+    fail "restore sync failure must not permit transaction completion"
+fi
+[ -f "$sync_failure_marker" ] || fail "restore sync failure must preserve recovery handoff"
+bong_server_persistence_transaction_release
+
+# A fully restored and durably synced transaction advances to RESTORED before
+# complete clears its marker.
+restored_state_root="$TEST_ROOT/persistence-restored-state"
+restored_state_data="$restored_state_root/data"
+restored_state_stash="$restored_state_root/stash"
+mkdir -p "$restored_state_data"
+printf 'restored-state-original\n' > "$restored_state_data/bong.db"
+test_persistence_stash "$restored_state_data" "$restored_state_stash" \
+    || fail "RESTORED-state fixture must create a READY stash"
+printf 'restored-state-preview\n' > "$restored_state_data/bong.db"
+bong_server_restore_persistence "$restored_state_data" "$restored_state_stash" \
+    || fail "RESTORED-state fixture restore must succeed"
+restored_state_marker="$(transaction_state_dir "$restored_state_data")/recovery-handoff"
+grep -Fqx 'state=RESTORED' "$restored_state_marker" \
+    || fail "successful durable restore must publish RESTORED before completion"
+[ -f "$restored_state_stash/stashed-files" ] \
+    || fail "RESTORED publication must precede destructive stash evidence cleanup"
+[ "${BONG_SERVER_PERSISTENCE_RESTORE_DURABLE:-0}" -eq 1 ] \
+    || fail "successful durable restore must set its in-memory completion guard"
+bong_server_persistence_transaction_complete \
+    || fail "durable RESTORED transaction must complete"
+[ ! -e "$restored_state_marker" ] || fail "completed RESTORED transaction must clear handoff"
+[ ! -e "$restored_state_stash" ] || fail "completed RESTORED transaction must remove stash evidence"
+
+# Completion owns destructive evidence cleanup after RESTORED is durable. A
+# transient stash-directory fsync failure must preserve RESTORED and be retryable
+# even though the manifest unlink already succeeded.
+cleanup_sync_root="$TEST_ROOT/persistence-restored-cleanup-sync"
+cleanup_sync_data="$cleanup_sync_root/data"
+cleanup_sync_stash="$cleanup_sync_root/stash"
+mkdir -p "$cleanup_sync_data"
+printf 'cleanup-sync-original\n' > "$cleanup_sync_data/bong.db"
+test_persistence_stash "$cleanup_sync_data" "$cleanup_sync_stash" \
+    || fail "RESTORED cleanup-sync fixture must create a READY stash"
+printf 'cleanup-sync-preview\n' > "$cleanup_sync_data/bong.db"
+bong_server_restore_persistence "$cleanup_sync_data" "$cleanup_sync_stash" \
+    || fail "RESTORED cleanup-sync fixture restore must succeed"
+cleanup_sync_marker="$(transaction_state_dir "$cleanup_sync_data")/recovery-handoff"
+sync() {
+    if [ "${1:-}" = -f ] && [ "${3:-}" = "$cleanup_sync_stash" ]; then
+        return 1
+    fi
+    command sync "$@"
+}
+if bong_server_persistence_transaction_complete; then
+    unset -f sync
+    fail "stash cleanup sync failure must not report transaction completion"
+fi
+unset -f sync
+grep -Fqx 'state=RESTORED' "$cleanup_sync_marker" \
+    || fail "stash cleanup sync failure must preserve RESTORED handoff"
+[ -d "$cleanup_sync_stash" ] \
+    || fail "stash cleanup sync failure must retain the directory for retry"
+[ ! -e "$cleanup_sync_stash/stashed-files" ] \
+    || fail "stash cleanup sync fixture must exercise retry after manifest unlink"
+bong_server_restore_persistence "$cleanup_sync_data" "$cleanup_sync_stash" \
+    || fail "durable RESTORED restore retry must not require the removed manifest"
+bong_server_persistence_transaction_complete \
+    || fail "RESTORED completion must retry after transient stash sync failure"
+[ ! -e "$cleanup_sync_marker" ] || fail "retried completion must clear RESTORED handoff"
+[ ! -e "$cleanup_sync_stash" ] || fail "retried completion must remove residual stash directory"
+
+# If rmdir succeeds but the stash-parent fsync fails, RESTORED must remain and a
+# second completion must durably confirm the already-absent directory.
+parent_sync_root="$TEST_ROOT/persistence-restored-parent-sync"
+parent_sync_data="$parent_sync_root/data"
+parent_sync_stash="$parent_sync_root/stash"
+mkdir -p "$parent_sync_data"
+printf 'parent-sync-original\n' > "$parent_sync_data/bong.db"
+test_persistence_stash "$parent_sync_data" "$parent_sync_stash" \
+    || fail "RESTORED parent-sync fixture must create a READY stash"
+printf 'parent-sync-preview\n' > "$parent_sync_data/bong.db"
+bong_server_restore_persistence "$parent_sync_data" "$parent_sync_stash" \
+    || fail "RESTORED parent-sync fixture restore must succeed"
+parent_sync_marker="$(transaction_state_dir "$parent_sync_data")/recovery-handoff"
+sync() {
+    if [ "${1:-}" = -f ] && [ "${3:-}" = "$parent_sync_root" ]; then
+        return 1
+    fi
+    command sync "$@"
+}
+if bong_server_persistence_transaction_complete; then
+    unset -f sync
+    fail "stash-parent sync failure must not report transaction completion"
+fi
+unset -f sync
+grep -Fqx 'state=RESTORED' "$parent_sync_marker" \
+    || fail "stash-parent sync failure must preserve RESTORED handoff"
+[ ! -e "$parent_sync_stash" ] \
+    || fail "stash-parent sync fixture must exercise retry after directory removal"
+bong_server_persistence_transaction_complete \
+    || fail "RESTORED completion must retry the stash-parent durability sync"
+[ ! -e "$parent_sync_marker" ] || fail "parent-sync retry must clear RESTORED handoff"
 
 # V3 identity pins rely on rename preserving an inode. Before publishing READY,
 # refuse a cross-device stash so mv cannot silently copy+unlink the source.
@@ -1396,9 +1590,130 @@ assert_inspection_failure_preserves_record ps
 assert_inspection_failure_preserves_record starttime
 assert_inspection_failure_preserves_record executable_identity
 
-# Once TERM has been sent, an inspection failure during the grace wait must stop
-# escalation: preserve the record and never send SIGKILL. Mock the wait seam so
-# the test targets its caller's status-2 contract deterministically.
+# Clear-after-exit has an explicit tri-state: exact authority removal succeeds,
+# a valid replacement is distinguishable, and uncertain reads/removals fail.
+clear_tristate_record="$TEST_ROOT/clear-tristate.pid"
+export BONG_SERVER_PID_FILE="$clear_tristate_record"
+clear_expected_pid=41001
+clear_expected_starttime=51001
+clear_expected_executable=/tmp/bong-clear-expected
+clear_expected_executable_identity=61:71
+write_clear_record() {
+    local pid="$1" starttime="$2" executable="$3" executable_identity="$4"
+    printf 'pid=%s\nstarttime=%s\nexecutable=%s\nexecutable_identity=%s\n' \
+        "$pid" "$starttime" "$executable" "$executable_identity" > "$clear_tristate_record"
+    chmod 600 "$clear_tristate_record"
+}
+
+bong_server_clear_record_if_matches \
+    "$clear_expected_pid" "$clear_expected_starttime" \
+    "$clear_expected_executable" "$clear_expected_executable_identity" \
+    || fail "missing PID record must be a safe clear no-op"
+write_clear_record "$clear_expected_pid" "$clear_expected_starttime" \
+    "$clear_expected_executable" "$clear_expected_executable_identity"
+bong_server_clear_record_if_matches \
+    "$clear_expected_pid" "$clear_expected_starttime" \
+    "$clear_expected_executable" "$clear_expected_executable_identity" \
+    || fail "exact matching PID record must be removed"
+[ ! -e "$clear_tristate_record" ] || fail "exact matching PID record clear must remove the pathname"
+
+write_clear_record 41002 51002 /tmp/bong-clear-replacement 62:72
+if bong_server_clear_record_if_matches \
+    "$clear_expected_pid" "$clear_expected_starttime" \
+    "$clear_expected_executable" "$clear_expected_executable_identity"; then
+    fail "valid replacement PID record must not report an exact clear"
+else
+    clear_status=$?
+fi
+[ "$clear_status" -eq 1 ] || fail "valid replacement PID record must return status 1, got $clear_status"
+[ -e "$clear_tristate_record" ] || fail "valid replacement PID record must be preserved"
+
+printf 'malformed\n' > "$clear_tristate_record"
+chmod 600 "$clear_tristate_record"
+if bong_server_clear_record_if_matches \
+    "$clear_expected_pid" "$clear_expected_starttime" \
+    "$clear_expected_executable" "$clear_expected_executable_identity"; then
+    fail "malformed PID record must not report a safe clear"
+else
+    clear_status=$?
+fi
+[ "$clear_status" -eq 2 ] || fail "malformed PID record clear must return status 2, got $clear_status"
+[ -e "$clear_tristate_record" ] || fail "malformed PID record must be preserved"
+
+write_clear_record "$clear_expected_pid" "$clear_expected_starttime" \
+    "$clear_expected_executable" "$clear_expected_executable_identity"
+original_clear_record="$(declare -f bong_server_clear_record)"
+bong_server_clear_record() { return 1; }
+if bong_server_clear_record_if_matches \
+    "$clear_expected_pid" "$clear_expected_starttime" \
+    "$clear_expected_executable" "$clear_expected_executable_identity"; then
+    eval "$original_clear_record"
+    fail "PID record unlink failure must not report success"
+else
+    clear_status=$?
+fi
+eval "$original_clear_record"
+[ "$clear_status" -eq 2 ] || fail "PID record unlink failure must return status 2, got $clear_status"
+[ -e "$clear_tristate_record" ] || fail "PID record unlink failure must preserve the record"
+
+# Every managed-stop branch that has observed target exit must propagate the
+# clear tri-state instead of allowing teardown/relaunch on a stale authority.
+original_process_is_running="$(declare -f bong_server_process_is_running)"
+eval "$(declare -f bong_server_read_record | sed '1s/^bong_server_read_record /bong_server_read_record_fixture_original /')"
+assert_exited_stop_cleanup_failure() {
+    local mode="$1" status read_calls=0
+
+    write_clear_record "$clear_expected_pid" "$clear_expected_starttime" \
+        "$clear_expected_executable" "$clear_expected_executable_identity"
+    bong_server_process_is_running() { return 1; }
+    case "$mode" in
+        read)
+            original_read_record="$(declare -f bong_server_read_record)"
+            bong_server_read_record() {
+                read_calls=$((read_calls + 1))
+                [ "$read_calls" -eq 1 ] && bong_server_read_record_fixture_original
+            }
+            ;;
+        replacement)
+            original_read_record="$(declare -f bong_server_read_record)"
+            bong_server_read_record() {
+                read_calls=$((read_calls + 1))
+                if [ "$read_calls" -eq 1 ]; then
+                    bong_server_read_record_fixture_original
+                    return $?
+                fi
+                BONG_SERVER_RECORDED_PID=41002
+                BONG_SERVER_RECORDED_STARTTIME=51002
+                BONG_SERVER_RECORDED_EXECUTABLE=/tmp/bong-clear-replacement
+                BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY=62:72
+                BONG_SERVER_RECORDED_FILE_IDENTITY="$(bong_server_path_identity "$clear_tristate_record")"
+            }
+            ;;
+        remove)
+            original_clear_record="$(declare -f bong_server_clear_record)"
+            bong_server_clear_record() { return 1; }
+            ;;
+        *) fail "unknown exited cleanup failure fixture: $mode" ;;
+    esac
+    if _bong_server_stop_managed; then
+        status=0
+    else
+        status=$?
+    fi
+    eval "$original_process_is_running"
+    case "$mode" in
+        read|replacement) eval "$original_read_record" ;;
+        remove) eval "$original_clear_record" ;;
+    esac
+    [ "$status" -eq 2 ] || fail "exited managed stop $mode cleanup failure must return 2, got $status"
+    [ -e "$clear_tristate_record" ] || fail "exited managed stop $mode cleanup failure must preserve the record"
+}
+assert_exited_stop_cleanup_failure read
+assert_exited_stop_cleanup_failure replacement
+assert_exited_stop_cleanup_failure remove
+unset -f bong_server_read_record_fixture_original
+rm -f -- "$clear_tristate_record"
+
 term_wait_marker="$TEST_ROOT/term-wait-inspection.marker"
 spawn_fixture ignore "$term_wait_marker"
 bong_server_write_record "$ACTIVE_PID" "$(command -v bash)" \
@@ -1496,6 +1811,76 @@ unset -f ps
 [ "$wait_exit_status" -eq 2 ] || fail "wait_for_exit inspection failure must return 2"
 kill -KILL "$wait_inspection_pid" 2>/dev/null || true
 wait "$wait_inspection_pid" 2>/dev/null || true
+
+# E2E's empty-PID restore gate is state-sensitive. With no READY stash it remains
+# a harmless no-op; with READY bytes it must freshly observe the shared port.
+extract_e2e_stop_server() {
+    python3 - "$ROOT/scripts/e2e-redis.sh" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+start = text.index("stop_server() {")
+end = text.index("\n}\n\ncleanup() {", start) + 2
+print(text[start:end])
+PY
+}
+eval "$(extract_e2e_stop_server)"
+SERVER_PID=""
+PERSISTENCE_STASH_READY=0
+port_probe_calls=0
+bong_server_confirm_port_released() { port_probe_calls=$((port_probe_calls + 1)); return 1; }
+stop_server || fail "empty PID without READY persistence must remain an ordinary no-op"
+[ "$port_probe_calls" -eq 0 ] || fail "ordinary empty-PID cleanup must not claim fresh port evidence"
+PERSISTENCE_STASH_READY=1
+if stop_server; then
+    fail "READY empty-PID cleanup must fail when port release cannot be confirmed"
+fi
+[ "$port_probe_calls" -eq 1 ] || fail "READY empty-PID cleanup must probe the shared port exactly once"
+bong_server_confirm_port_released() { port_probe_calls=$((port_probe_calls + 1)); return 0; }
+stop_server || fail "READY empty-PID cleanup must pass after fresh port-release evidence"
+[ "$port_probe_calls" -eq 2 ] || fail "READY closed-port cleanup must obtain fresh evidence"
+unset -f stop_server bong_server_confirm_port_released extract_e2e_stop_server
+PERSISTENCE_STASH_READY=0
+
+# The full preview transaction must hold the production lifecycle lock from the
+# pre-stash stop through restore, and competing production actions cannot enter.
+preview_lock_record="$TEST_ROOT/preview-lock.pid"
+export BONG_SERVER_PID_FILE="$preview_lock_record"
+preview_lock_entered="$TEST_ROOT/preview-lock-entered"
+preview_lock_release="$TEST_ROOT/preview-lock-release"
+production_side_effect="$TEST_ROOT/production-side-effect"
+preview_lock_holder_fn="$TEST_ROOT/preview-lock-holder.sh"
+cat > "$preview_lock_holder_fn" <<SCRIPT
+#!/usr/bin/env bash
+set -euo pipefail
+source "$ROOT/scripts/lib/bong-server-lifecycle.sh"
+export BONG_SERVER_PID_FILE="$preview_lock_record"
+hold_preview_transaction_lock() {
+    : > "$preview_lock_entered"
+    while [ ! -e "$preview_lock_release" ]; do sleep 0.01; done
+}
+bong_server_with_preview_persistence_lock hold_preview_transaction_lock
+SCRIPT
+chmod +x "$preview_lock_holder_fn"
+"$preview_lock_holder_fn" &
+preview_lock_holder=$!
+for _ in $(seq 1 100); do
+    [ -e "$preview_lock_entered" ] && break
+    sleep 0.01
+done
+[ -e "$preview_lock_entered" ] || fail "preview lifecycle fixture did not acquire lock"
+production_lifecycle_action() { : > "$production_side_effect"; }
+BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS=0 bong_server_with_lock production_lifecycle_action \
+    && fail "production lifecycle action must not enter during preview persistence interval"
+[ ! -e "$production_side_effect" ] \
+    || fail "contending production lifecycle action produced a side effect before preview release"
+: > "$preview_lock_release"
+wait "$preview_lock_holder" || fail "preview lifecycle lock holder failed"
+bong_server_with_lock production_lifecycle_action \
+    || fail "production lifecycle action must enter after preview releases lock"
+[ -e "$production_side_effect" ] \
+    || fail "production lifecycle action did not run after preview lock release"
+unset -f production_lifecycle_action
 
 # E2E's production stop helper and persistence handoff are executable without
 # launching the full Redis scenario. An uncertain child enumeration must leave

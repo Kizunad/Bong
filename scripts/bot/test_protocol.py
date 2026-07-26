@@ -712,10 +712,13 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
         helper_branch = stop_body.index(
             'if bong_server_stop_process_tree_and_release_port "$pid" 25565; then'
         )
+        empty_pid_port_check = stop_body.index(
+            "bong_server_confirm_port_released 25565", helper_branch
+        )
         clear_pid = stop_body.index('SERVER_PID=""', helper_branch)
         success_return = stop_body.index("return 0", clear_pid)
-        helper_fi = stop_body.index("\n  fi", success_return)
-        failure_return = stop_body.index("return 1", helper_fi)
+        failure_return = stop_body.index("return 1", success_return)
+        branch_end = stop_body.index("\n  fi", failure_return)
 
         self.assertLess(
             helper_branch,
@@ -723,11 +726,17 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
             "e2e stop_server 必须先由共享 helper 确认停树和端口释放，才能清空 PID",
         )
         self.assertLess(clear_pid, success_return)
-        self.assertLess(success_return, helper_fi)
+        self.assertLess(success_return, failure_return)
+        self.assertLess(failure_return, branch_end)
+        self.assertIn(
+            'if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then',
+            stop_body,
+            "只有 READY persistence cleanup 的空 PID 分支才必须获取新端口证据",
+        )
         self.assertLess(
-            helper_fi,
-            failure_return,
-            "共享 helper 失败时 stop_server 必须保留 PID 并返回失败",
+            stop_body.index('if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then'),
+            empty_pid_port_check,
+            "空 PID 的端口探测必须受 READY restore gate 约束",
         )
         self.assertEqual(
             stop_body.count('SERVER_PID=""'),
@@ -781,6 +790,39 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
             '"$STOP_SERVER_CONFIRMED"',
             finalize_call,
             "cleanup 必须把停服确认结果交给共享 finalize helper 决定 restore 或 durable abort",
+        )
+
+    def test_preview_persistence_interval_holds_shared_lifecycle_lock(self):
+        phase_start = self.source.index('CURRENT_STAGE="north-rift-preview"')
+        phase_end = self.source.index('CURRENT_STAGE="summary"', phase_start)
+        phase = self.source[phase_start:phase_end]
+        fn_start = phase.index("run_north_rift_preview() {")
+        fn_end = phase.index("\n}\n\nif ! bong_server_with_preview_persistence_lock", fn_start)
+        preview_body = phase[fn_start:fn_end]
+        lock_call = phase.index(
+            "bong_server_with_preview_persistence_lock run_north_rift_preview",
+            fn_end,
+        )
+
+        for required_step in (
+            "if ! stop_server; then",
+            "bong_server_confirm_port_released 25565",
+            'bong_server_persistence_transaction_begin "$ROOT/server/data"',
+            'bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"',
+            '--scenario terrain_north_rift_scorch_zone_identity',
+            'bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"',
+            "bong_server_persistence_transaction_complete",
+        ):
+            with self.subTest(step=required_step):
+                self.assertIn(
+                    required_step,
+                    preview_body,
+                    "preview lifecycle lock 的函数体必须覆盖完整 stash→run→restore 临界区",
+                )
+        self.assertGreater(
+            lock_call,
+            fn_end,
+            "完整 preview transaction 必须经生产 start/reload 共用的 lifecycle lock 调用",
         )
 
 
