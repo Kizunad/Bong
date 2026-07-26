@@ -18,7 +18,11 @@ use crate::npc::spawn_rat::RatBlackboard;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 const QI_SOURCE_SCAN_RANGE: f64 = 32.0;
-const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 0.8;
+/// 冲近到此距离内即视为"咬到"。**必须 ≥ navigator 的 `GOAL_REACH_XZ`（2 格）**：navigator 沿
+/// A* 路点走、到路径终点（离目标最多 2 格）就停（`navigator.rs` 路径耗尽即 stay-put），且鼠与
+/// 玩家有碰撞体到不了同格。取 0.8 时鼠停在 2 格外永远够不到 → "只跟着不咬"（实测）。取 2.0
+/// 让它从自然停距发起啄咬；仍 < harass "远距离不咬"测试用的 3.0，不破测试。
+const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 2.0;
 const QI_SOURCE_SPEED_FACTOR: f64 = 1.0;
 const REGROUP_SUCCESS_DISTANCE: f64 = 4.0;
 const REGROUP_SPEED_FACTOR: f64 = 1.05;
@@ -30,7 +34,8 @@ const MEDITATING_QI_SOURCE_WEIGHT: f32 = 3.0;
 /// 表达"贴身骚扰"而非通用 qi 源索敌。
 const PLAYER_HARASS_RANGE: f64 = 8.0;
 /// 冲近到此距离内即视为"咬到"，与 `QI_SOURCE_ARRIVAL_DISTANCE` 同量级但语义独立。
-const PLAYER_HARASS_ARRIVAL_DISTANCE: f64 = 0.8;
+/// 同样须 ≥ navigator 停距（见 `QI_SOURCE_ARRIVAL_DISTANCE` 注释），否则骚扰追而不咬。
+const PLAYER_HARASS_ARRIVAL_DISTANCE: f64 = 2.0;
 /// "冲近咬一口"比常规索敌更急——纳维游戏速度系数略高于 `QI_SOURCE_SPEED_FACTOR`。
 const PLAYER_HARASS_SPEED_FACTOR: f64 = 1.3;
 /// 咬完立即进入 20s 逃逸/游荡冷却（20 tick/s × 20s）。冷却期间
