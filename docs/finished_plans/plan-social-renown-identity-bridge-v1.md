@@ -8,8 +8,8 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | SocialRenown → ActiveIdentity 写侧桥接补齐 | fix_pr | ⬜ |
-| P1 | 身份反应 / Wanted / client state 一致性回归 | fix_pr | ⬜ |
+| P0 | SocialRenown → ActiveIdentity 写侧桥接补齐 | fix_pr | ✅ 2026-07-26 |
+| P1 | 身份反应 / Wanted / client state 一致性回归 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — SocialRenown → ActiveIdentity 写侧桥接补齐
 
@@ -71,3 +71,15 @@ bug-hunt AG（`network/schema/client-state/social-hud` 主路径，限定 worktr
 - `identity_panel_state` / reaction / wanted / NPC metadata 读 `PlayerIdentities.active()`：`server/src/network/identity_panel_emit.rs:64-83`、`server/src/identity/reaction.rs:119-147`、`server/src/identity/wanted_player_emit.rs:30-50`、`server/src/network/npc_metadata.rs:394-408`
 - client 两路分别消费：`client/src/main/java/com/bong/client/network/PlayerStateHandler.java:109-131`、`client/src/main/java/com/bong/client/network/IdentityPanelStateHandler.java:63-80`
 - 重连不自愈：`server/src/social/mod.rs:263-307`、`server/src/identity/mod.rs:292-329`、`server/src/persistence/identity.rs:56-140`
+
+## 验证结论（2026-07-26 整理审计追认）
+
+`apply_social_renown_deltas`（`server/src/social/mod.rs:1460-1533`）已改为桥接 `PlayerIdentities.active_mut()` 并调用 `save_player_identities`，堵住了 P0 描述的 live/持久化双轨分裂；对应修复已随 commit b43ba4b80（2026-07-06，PR #893）合入 origin/main。回归测试 `renown_delta_bridges_to_active_identity_only` 等覆盖了 online/offline/identity_id/wanted 各阶段，满足 P1 验收锚点要求。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/social/mod.rs:1460-1533`（`apply_social_renown_deltas` 桥接 `PlayerIdentities.active_mut()` + `save_player_identities`）
+- **关键 commit**：b43ba4b80（2026-07-06，桥接 SocialRenown → ActiveIdentity 写侧，PR #893 已 merge）
+- **测试结果**：`renown_delta_bridges_to_active_identity_only` 等 online/offline/identity_id/wanted 跨阶段回归；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server-only（`server/src/social/mod.rs`）
+- **遗留 / 后续**：无
