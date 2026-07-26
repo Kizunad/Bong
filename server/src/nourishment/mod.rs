@@ -203,7 +203,8 @@ pub fn register(app: &mut App) {
                 .after(tick::sample_activity)
                 .before(crate::combat::lifecycle::handle_revival_action_intents),
         )
-            .chain(),
+            .chain()
+            .after(crate::combat::debug::tick_combat_clock),
     );
 }
 
@@ -392,6 +393,100 @@ mod tests {
                 .observed_flags(),
             (true, false),
             "a qualifying MovementEvent must count as movement in the same production update"
+        );
+    }
+
+    #[test]
+    fn production_schedule_ticks_clock_before_sampling_and_settles_boundary_activity_once() {
+        use valence::movement::MovementEvent;
+        use valence::prelude::{DVec3, Look};
+
+        let mut app = valence::prelude::App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 199 });
+        app.add_systems(Update, crate::combat::debug::tick_combat_clock);
+        crate::nourishment::register(&mut app);
+
+        let (client_bundle, _helper) = valence::testing::create_mock_client("ClockBoundary");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                crate::movement::MovementState {
+                    action: crate::movement::MovementAction::Dashing,
+                    ..Default::default()
+                },
+                crate::cultivation::components::Cultivation::default(),
+                Nourishment::spawn_default(),
+                tick::NourishmentActivityWindow::default(),
+            ))
+            .id();
+        app.world_mut().send_event(MovementEvent {
+            client: entity,
+            position: DVec3::new(0.051, 64.0, 0.0),
+            old_position: DVec3::new(0.0, 64.0, 0.0),
+            look: Look::default(),
+            old_look: Look::default(),
+            on_ground: true,
+            old_on_ground: true,
+        });
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<crate::combat::CombatClock>().tick,
+            200
+        );
+        let boundary_nourishment = *app
+            .world()
+            .get::<Nourishment>(entity)
+            .expect("boundary player should retain nourishment");
+        let sweep_minutes = NOURISH_SWEEP_INTERVAL_TICKS as f32 / NOURISH_TICKS_PER_MINUTE;
+        let expected_dash_loss = (
+            NOURISH_SATIETY_LOSS_PER_MIN * sweep_minutes * NOURISH_DASH_ACTIVITY_MULTIPLIER,
+            NOURISH_HYDRATION_LOSS_PER_MIN * sweep_minutes * NOURISH_DASH_ACTIVITY_MULTIPLIER,
+        );
+        assert_eq!(
+            boundary_nourishment,
+            Nourishment::try_new(
+                NOURISH_SPAWN_VALUE - expected_dash_loss.0,
+                NOURISH_SPAWN_VALUE - expected_dash_loss.1,
+            )
+            .expect("finite dash boundary loss should stay valid"),
+            "the clock writer must advance to the boundary before dash-priority activity settles"
+        );
+        assert_eq!(
+            app.world()
+                .get::<tick::NourishmentActivityWindow>(entity)
+                .expect("boundary player should retain its activity window")
+                .observed_flags(),
+            (false, false),
+            "settlement must clear the just-ended window after consuming boundary activity"
+        );
+
+        app.world_mut()
+            .get_mut::<crate::movement::MovementState>(entity)
+            .expect("boundary player should retain movement state")
+            .action = crate::movement::MovementAction::None;
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<crate::combat::CombatClock>().tick,
+            201
+        );
+        assert_eq!(
+            *app.world()
+                .get::<Nourishment>(entity)
+                .expect("player nourishment should remain available"),
+            boundary_nourishment,
+            "tick 201 must not replay the tick-200 sweep"
+        );
+        assert_eq!(
+            app.world()
+                .get::<tick::NourishmentActivityWindow>(entity)
+                .expect("player activity window should remain available")
+                .observed_flags(),
+            (false, false),
+            "the next window must start clear after the boundary settlement"
         );
     }
 
