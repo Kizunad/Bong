@@ -54,9 +54,12 @@ public final class CastFovController {
     private static volatile LongSupplier clock = System::currentTimeMillis;
 
     /**
-     * 全局 juice 强度倍率（0 = 关闭），默认 1.0。**FOV 分量**每帧在 {@link #fovDelta()} 里乘它
-     * → 进行中调 0 时 FOV 即时归基准（持久可见分量，测试断言的对象）。**shake 分量**在
-     * {@link #fire} 触发时刻并入强度（走共享单通道无法追溯缩放；短抖动 ≤400ms 自然播完）。
+     * 全局 juice 强度倍率（0 = 关闭），默认 1.0。
+     *
+     * <p><b>两个通道对称地在 {@link #fire} 触发时刻把倍率并入</b>（{@link Pulse#peakDegrees} 与
+     * {@link CameraShakeController} 强度都是烘焙值）：倍率 0 时 {@link #fire} 直接不触发，
+     * 不留「被读数遮蔽但状态还活着」的残留脉冲。事后调大/调小只影响<b>后续</b> release，
+     * 不追溯在播 juice；调到 0 则走 {@link #setJuiceMultiplier} 的受控取消路径把两个通道都真停。
      */
     private static volatile float multiplier = 1.0f;
 
@@ -130,16 +133,24 @@ public final class CastFovController {
         pending = null;
     }
 
-    /** 触发 FOV 脉冲 + shake（同帧调度）。倍率在触发时刻并入 shake 强度（0 → 不触发）。 */
+    /**
+     * 触发 FOV 脉冲 + shake（同帧调度）。倍率在触发时刻并入<b>两个通道</b>（脉冲峰值 / shake
+     * 强度）；倍率 0 = 全局关闭 → 直接不触发，连脉冲对象都不建——否则会留下一个「读数被遮蔽
+     * 但还在时间窗内」的僵尸脉冲，玩家把倍率调回来时它会诈尸。
+     */
     private static void fire(CastJuiceProfile profile, long now) {
+        float scale = multiplier;
+        if (scale <= 0f) {
+            return;  // juice 全局关闭
+        }
         if (profile.hasFovPulse()) {
-            pulse = new Pulse(profile.fovPeakDegrees(), profile.fovDurationTicks(), now);
+            pulse = new Pulse(profile.fovPeakDegrees() * scale, profile.fovDurationTicks(), now);
         }
         if (profile.hasShake()) {
             // 施法 release = 持续震动（SUSTAIN 包络）：把大招的存在感撑满整个时长，
-            // 不是命中的「抖一下」线性衰减。倍率在触发时刻并入强度（0 → 不触发）。
+            // 不是命中的「抖一下」线性衰减。
             CameraShakeController.triggerDirect(
-                profile.shakeIntensity() * multiplier,
+                profile.shakeIntensity() * scale,
                 profile.shakeDurationTicks(),
                 CAST_SHAKE_DIR_X,
                 CAST_SHAKE_DIR_Z,
@@ -195,11 +206,15 @@ public final class CastFovController {
         if (targetPlayer == null || animId == null || !localPlayerPredicate.isLocal(targetPlayer)) {
             return;
         }
+        float scale = multiplier;
+        if (scale <= 0f) {
+            return;  // juice 全局关闭：与 fire() 同策，不留僵尸脉冲/抖动
+        }
         long now = clock.getAsLong();
         ChargeShake charge = CHARGE_ANIM_JUICE.get(animId);
         if (charge != null) {
             CameraShakeController.triggerDirect(
-                charge.peakIntensity() * multiplier,
+                charge.peakIntensity() * scale,
                 charge.buildDurationTicks(),
                 CAST_SHAKE_DIR_X,
                 CAST_SHAKE_DIR_Z,
@@ -213,11 +228,11 @@ public final class CastFovController {
         if (burst != null) {
             if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
                 synchronized (LOCK) {
-                    pulse = new Pulse(burst.fovPeakDegrees(), burst.fovDurationTicks(), now);
+                    pulse = new Pulse(burst.fovPeakDegrees() * scale, burst.fovDurationTicks(), now);
                 }
             }
             CameraShakeController.triggerDirect(
-                burst.shakeIntensity() * multiplier,
+                burst.shakeIntensity() * scale,
                 burst.shakeDurationTicks(),
                 CAST_SHAKE_DIR_X,
                 CAST_SHAKE_DIR_Z,
@@ -235,16 +250,13 @@ public final class CastFovController {
     }
 
     /**
-     * 渲染线程每帧调（{@code MixinGameRenderer}）：当前加法 FOV 偏移（0 = 基准）。倍率每帧并入 →
-     * 进行中把倍率调 0 立即复位到基准。
+     * 渲染线程每帧调（{@code MixinGameRenderer}）：当前加法 FOV 偏移（0 = 基准）。倍率已在
+     * {@link #fire} 时刻烘焙进 {@link Pulse#peakDegrees}，此处不再乘——倍率调 0 靠
+     * {@link #setJuiceMultiplier} 真正清空脉冲，而不是把读数遮掉。
      */
     public static double fovDelta() {
         Pulse p = pulse;
-        if (p == null) {
-            return 0.0;
-        }
-        double raw = p.offsetAt(clock.getAsLong());
-        return raw == 0.0 ? 0.0 : raw * multiplier;
+        return p == null ? 0.0 : p.offsetAt(clock.getAsLong());
     }
 
     /** client tick：死亡 teardown（§8.1 #3 死亡缺口）+ 过期脉冲清理回 idle。 */
@@ -277,11 +289,30 @@ public final class CastFovController {
     }
 
     /**
-     * 设全局 juice 强度倍率（0 = 关闭）。FOV 分量即时复位（{@link #fovDelta} 每帧乘它）；
-     * shake 分量下次 {@link #fire} 时并入（已在播的短抖动自然播完）。见 {@link #multiplier}。
+     * 设全局 juice 强度倍率（NaN / 负数 → 0 = 关闭）。
+     *
+     * <p>plan §P3「<b>进行中把倍率调 0 立即复位</b>，不是只影响后续脉冲」：转 0 时走与
+     * {@link #teardown()} 同一条<b>受控取消</b>路径——清当前 FOV 脉冲（回基准）<b>并且</b>
+     * {@link CameraShakeController#clear()} 停当前抖动。两个通道都真停，不是只把 FOV 读数
+     * 遮成 0 而让抖动继续、让脉冲状态苟活。
+     *
+     * <p>取消是<b>不可逆</b>的：恢复倍率只影响后续 release，旧脉冲已被清空、无从复活
+     *（在播 juice 的强度是 {@link #fire} 时刻烘焙的，本来也不追溯）。幂等。
+     *
+     * <p>抖动是与命中 juice 共享的单通道，故关 juice 时在播的命中抖动一并停——与
+     * {@link #teardown()} 同款取舍：玩家把 juice 关了就该立刻安静。
      */
     public static void setJuiceMultiplier(float value) {
-        multiplier = Float.isNaN(value) || value < 0f ? 0f : value;
+        float next = Float.isNaN(value) || value < 0f ? 0f : value;
+        multiplier = next;
+        if (next > 0f) {
+            return;
+        }
+        // pulse 清空与 fire() 写入同锁，避免关闭瞬间被随后落地的 fire 复活一帧。
+        synchronized (LOCK) {
+            pulse = null;
+        }
+        CameraShakeController.clear();
     }
 
     public static float juiceMultiplier() {
