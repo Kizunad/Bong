@@ -83,3 +83,15 @@ grep -ho "icon_texture: \"[^\"]*\"" server/src/cultivation/known_techniques.rs |
 grep -Rho "bong[-a-z]*:textures/gui/skill/[^\"]*\.png\|bong[-a-z]*:textures/gui/items/skill_scroll_[^\"]*\.png" server/src --exclude-dir=target | sort -u
 find client/src/main/resources/assets/bong/textures/gui/skill client/src/main/resources/assets/bong-client/textures/gui/skill client/src/main/resources/assets/bong-client/textures/gui/items -type f -name '*.png' | sort
 ```
+
+## 验证结论（2026-07-26 整理审计追认）
+
+本 plan 记录的技能图标缺失问题并未在本 plan 名下单独实施，而是被后续的 `plan-skill-av-relink-v1` 取代并实际交付：该 plan 通过 PR #1220（commit `9d2e29d08`，2026-07-18）把技能栏图标重链至 `skill_scroll` 单一真相源，一次性重链 33 个 `icon_texture`；PR #1222（commit `001bbe7d8`）补齐资产并完成归档，`docs/finished_plans/plan-skill-av-relink-v1.md` 已存在。2026-07-26 复核 `server/src/cultivation/known_techniques.rs`，49 个 `icon_texture` 路径实测 0 缺失，本 plan 记录的缺口已被完全消解。
+
+## Finish Evidence
+
+- **落地清单**：本 plan 自身未落地代码；实际交付落在 `plan-skill-av-relink-v1`（`docs/finished_plans/plan-skill-av-relink-v1.md`），涉及 `server/src/cultivation/known_techniques.rs`（icon_texture 单一真相源重链）+ client `assets/bong*/textures/gui/skill/` 图标资产
+- **关键 commit**：`9d2e29d08`（2026-07-18，PR #1220，技能栏图标重链至 skill_scroll 单一真相源 + 图标链防回归测试）、`001bbe7d8`（PR #1222，补资产+归档）
+- **测试结果**：实测 `known_techniques.rs` 49 个 icon_texture 路径 0 缺失；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server `known_techniques::TECHNIQUE_DEFINITIONS.icon_texture` ↔ client `assets/bong*/textures/gui/skill/*.png` 资产路径全量对齐（由 plan-skill-av-relink-v1 落地）
+- **遗留 / 后续**：无（已被 plan-skill-av-relink-v1 完全覆盖）
