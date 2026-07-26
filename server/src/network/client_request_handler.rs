@@ -12929,7 +12929,7 @@ mod tests {
                 skill_id: "burst_meridian.beng_quan".to_string(),
             },
         ));
-        skill_bar.set_cooldown(2, 100);
+        skill_bar.set_cooldown("burst_meridian.beng_quan", 100);
         let entity = app
             .world_mut()
             .spawn((
@@ -12994,15 +12994,51 @@ mod tests {
         assert!(matches!(bindings.slots[0], SkillSlot::Empty));
     }
 
+    /// bughunt skillbar-rebind-cooldown-reset 返工共用：一个只要不在冷却中就一定能
+    /// 把 `burst_meridian.beng_quan` 放出去的实体（Cultivation Induce+100 真元 +
+    /// RIGHT_ARM_MERIDIANS opened + Position + 已学会两条技能），镜像
+    /// `skill_bar_bind_skill_then_cast_starts_skillbar_cast`（本文件上方）验证过的
+    /// 配方——用来让「冷却中不产生 Casting」这类断言不再因为缺前置组件而空洞：
+    /// 必须证明"同一实体、不在冷却时确实能拿到 Casting"，才能说清"没拿到 Casting"
+    /// 是冷却门挡的，不是别的前置缺失挡的。
+    fn spawn_beng_quan_capable_entity(
+        app: &mut App,
+        skill_bar: SkillBarBindings,
+    ) -> valence::prelude::Entity {
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        // `ClientBundle` 自带 `Position`，与其它组件放进同一个 spawn 元组会因重复
+        // component 类型 panic（Bevy bundle 校验）——必须先单独 spawn client_bundle，
+        // 再用 `insert` 覆盖/追加其余组件（`insert` 允许覆盖既有 component，`spawn`
+        // 的 bundle 元组不允许同类型出现两次）。
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Induce,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            beng_quan_ready_meridians(),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            known(&["burst_meridian.beng_quan", "burst_meridian.tie_shan_kao"]),
+        ));
+        entity
+    }
+
     /// bughunt skillbar-rebind-cooldown-reset — 重新绑定同一槽位为**相同**技能绝不能清零冷
     /// 却，否则玩家可通过「施放高冷却大招 → 立刻把同一招式重新拖回原槽位 → 立刻再次施放」
-    /// 无限绕过任何走 `SkillBarBindings` 冷却的招式（含化虚终极技）。
+    /// 无限绕过任何走 `SkillBarBindings` 冷却的招式（含化虚终极技）。实体带全套前置组件
+    /// （见 `spawn_beng_quan_capable_entity`），与下方
+    /// `skill_bar_bind_same_skill_when_off_cooldown_produces_casting` 正向对照——
+    /// 唯一差异是冷却状态，从而排除"没 Casting 是因为缺组件"的空洞断言。
     #[test]
     fn skill_bar_bind_same_skill_does_not_reset_cooldown() {
         let mut app = App::new();
         register_request_app(&mut app);
 
-        let (client_bundle, _helper) = create_mock_client("Azure");
         let mut skill_bar = SkillBarBindings::default();
         assert!(skill_bar.set(
             2,
@@ -13011,17 +13047,8 @@ mod tests {
             },
         ));
         // 冷却设在 clock.tick(=0) 之后很远，模拟刚放完一记高冷却招式。
-        skill_bar.set_cooldown(2, 1_000);
-        let entity = app
-            .world_mut()
-            .spawn((
-                client_bundle,
-                skill_bar,
-                QuickSlotBindings::default(),
-                empty_inventory(),
-                known(&["burst_meridian.beng_quan"]),
-            ))
-            .id();
+        skill_bar.set_cooldown("burst_meridian.beng_quan", 1_000);
+        let entity = spawn_beng_quan_capable_entity(&mut app, skill_bar);
 
         // 玩家把同一招式重新拖回同一槽位——绑定内容完全没变。
         app.world_mut()
@@ -13042,15 +13069,17 @@ mod tests {
             SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
         ));
         assert_eq!(
-            bindings.cooldown_until_tick[2], 1_000,
+            bindings.cooldowns.get("burst_meridian.beng_quan").copied(),
+            Some(1_000),
             "重绑内容与原绑定相同——冷却必须原样保留，否则重复拖拽同一招式=无限缩短冷却"
         );
         assert!(
-            bindings.is_on_cooldown(2, 0),
+            bindings.is_on_cooldown("burst_meridian.beng_quan", 0),
             "冷却状态应保持——重绑同值不是重置冷却的合法手段"
         );
 
-        // 冷却仍未清空 → 再次尝试施放应仍被拒绝（不产生 Casting）。
+        // 冷却仍未清空 → 再次尝试施放应仍被拒绝（不产生 Casting）。此断言之所以不空洞，
+        // 是因为同一套实体前置组件在下方正向对照用例里已证明"不在冷却时确实会产生 Casting"。
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -13071,13 +13100,15 @@ mod tests {
         );
     }
 
-    /// 上一条用例的边界对照：换绑到**不同**技能时冷却清零是既有正常换绑体验，不受本修复影响。
+    /// 正向对照（opus verify 指出的空洞断言修复）：与上一条用例**完全相同**的实体前置
+    /// （Cultivation+MeridianSystem+Position+已学会），唯一差异是不在冷却中——必须
+    /// 产生 Casting。这条用例存在的意义就是证明上一条的"无 Casting"确实是冷却门挡的，
+    /// 而不是随便一个缺前置的实体本来就永远拿不到 Casting。
     #[test]
-    fn skill_bar_bind_different_skill_resets_cooldown() {
+    fn skill_bar_bind_same_skill_when_off_cooldown_produces_casting() {
         let mut app = App::new();
         register_request_app(&mut app);
 
-        let (client_bundle, _helper) = create_mock_client("Azure");
         let mut skill_bar = SkillBarBindings::default();
         assert!(skill_bar.set(
             2,
@@ -13085,19 +13116,70 @@ mod tests {
                 skill_id: "burst_meridian.beng_quan".to_string(),
             },
         ));
-        skill_bar.set_cooldown(2, 1_000);
-        let entity = app
-            .world_mut()
-            .spawn((
-                client_bundle,
-                skill_bar,
-                QuickSlotBindings::default(),
-                empty_inventory(),
-                known(&["burst_meridian.beng_quan", "burst_meridian.tie_shan_kao"]),
-            ))
-            .id();
+        // 故意不设冷却（默认 cooldowns map 为空）——同值重绑不应把"从未 cast 过"
+        // 变成"被清零过"以外的任何状态，就绪态应保持就绪。
+        let entity = spawn_beng_quan_capable_entity(&mut app, skill_bar);
 
-        // 换绑到另一招式——绑定内容确实变了，冷却照常清零。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            !app.world()
+                .get::<SkillBarBindings>(entity)
+                .unwrap()
+                .is_on_cooldown("burst_meridian.beng_quan", 0),
+            "同值重绑前本就未 cast 过，不应凭空产生冷却"
+        );
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 2,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "正向对照：同一套前置组件、不在冷却中时必须产生 Casting——否则说明上面\
+             「无 Casting」的断言是被缺前置组件挡住的空洞断言，而不是被冷却门挡住的"
+        );
+    }
+
+    /// bughunt skillbar-rebind-cooldown-reset 阻塞问题 A（往返换绑路径）——换绑到
+    /// **不同**技能，绝不能清零任何技能的冷却（旧行为"内容变化即清零"正是 A→B→A
+    /// 换绑能清空原技能冷却的入口）。冷却按 skill_id 归属后，换绑动作本身完全不再
+    /// 触碰任何 cooldowns entry；随后再换绑回原技能，原技能的冷却必须依然健在。
+    #[test]
+    fn skill_bar_bind_different_skill_never_touches_either_skills_cooldown() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(
+            2,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+        skill_bar.set_cooldown("burst_meridian.beng_quan", 1_000);
+        let entity = spawn_beng_quan_capable_entity(&mut app, skill_bar);
+
+        // 换绑到另一招式——绑定内容确实变了，但这不再是清零任何冷却的手段。
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -13107,17 +13189,123 @@ mod tests {
                     .to_vec()
                     .into_boxed_slice(),
             });
+        app.update();
 
+        {
+            let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+            assert!(matches!(
+                &bindings.slots[2],
+                SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.tie_shan_kao"
+            ));
+            assert!(
+                bindings.is_on_cooldown("burst_meridian.beng_quan", 0),
+                "换绑到不同技能不得清零 beng_quan 的冷却——这正是 A→B→A 换绑能清空原技能\
+                 冷却的攻击面，冷却按 skill_id 归属后必须与槽位内容变化完全解耦"
+            );
+            assert!(
+                !bindings.is_on_cooldown("burst_meridian.tie_shan_kao", 0),
+                "tie_shan_kao 从未被 cast 过，不应凭空产生冷却"
+            );
+        }
+
+        // A→B→A 收尾：再换绑回 beng_quan——冷却必须依然健在（往返换绑不是清零手段）。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
         app.update();
 
         let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
         assert!(matches!(
             &bindings.slots[2],
-            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.tie_shan_kao"
+            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
         ));
-        assert_eq!(
-            bindings.cooldown_until_tick[2], 0,
-            "换绑到不同技能应清零冷却——这是既有正常换绑体验，不是本 bug 的攻击面"
+        assert!(
+            bindings.is_on_cooldown("burst_meridian.beng_quan", 0),
+            "A→B→A 往返换绑收尾后，beng_quan 的冷却必须全程原样保留"
+        );
+    }
+
+    /// bughunt skillbar-rebind-cooldown-reset 阻塞问题 A 的另一半（清空→重绑路径）：
+    /// 客户端「右键清空 / 拖出槽外」发送 `binding: null`（`SkillBarBind{binding: None}`
+    /// → `SkillSlot::Empty`），随后把同一招式重新拖回——这条链路在 opus verify 里被
+    /// 明确点名为"净效果=两次点击、零代价绕过冷却"的等价路径，必须同样锁死。
+    #[test]
+    fn skill_bar_bind_clear_then_rebind_same_skill_does_not_reset_cooldown() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(
+            2,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+        skill_bar.set_cooldown("burst_meridian.beng_quan", 1_000);
+        let entity = spawn_beng_quan_capable_entity(&mut app, skill_bar);
+
+        // 右键清空 / 拖出槽外：binding=null → SkillSlot::Empty。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":null}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        {
+            let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+            assert!(matches!(bindings.slots[2], SkillSlot::Empty));
+            assert!(
+                bindings.is_on_cooldown("burst_meridian.beng_quan", 0),
+                "清空槽位不得清零 beng_quan 的冷却——否则「清空→重绑」两次点击即可绕过冷却"
+            );
+        }
+
+        // 把同一招式重新拖回原槽位。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+
+        let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+        assert!(
+            bindings.is_on_cooldown("burst_meridian.beng_quan", 0),
+            "清空→重绑完整走一遍后，beng_quan 的冷却仍必须原样保留"
+        );
+
+        // 冷却仍未清空 → 尝试施放应仍被拒绝。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 2,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "清空→重绑不是绕过冷却的合法手段，冷却仍在时不应产生 Casting"
         );
     }
 
@@ -14172,7 +14360,7 @@ fn handle_skill_bar_cast(
     if combat_params
         .skillbar_bindings_q
         .get(entity)
-        .map(|bindings| bindings.is_on_cooldown(slot, clock.tick))
+        .map(|bindings| bindings.is_on_cooldown(&skill_id, clock.tick))
         .unwrap_or(false)
     {
         tracing::debug!(
@@ -14768,11 +14956,22 @@ fn cancel_previous_cast(
                 );
             }
         }
+        // bughunt skillbar-rebind-cooldown-reset：SkillBarBindings 冷却按 skill_id
+        // 记账，用户主动切槽取消时同理必须用被取消 cast 的 skill_id（而非 slot）
+        // 写入冷却。缺 skill_id 是理论不可达的防御性分支（所有 SkillBar Casting
+        // 构造点都填了该字段）。
         CastSource::SkillBar => {
-            if let Ok(mut bindings) = combat_params.skillbar_bindings_q.get_mut(entity) {
-                bindings.set_cooldown(
-                    prev_slot,
-                    clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
+            if let Some(skill_id) = prev.skill_id.as_deref() {
+                if let Ok(mut bindings) = combat_params.skillbar_bindings_q.get_mut(entity) {
+                    bindings.set_cooldown(
+                        skill_id,
+                        clock.tick.saturating_add(CAST_INTERRUPT_COOLDOWN_TICKS),
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "[bong][network][cast] cancel_previous_cast: SkillBar prev Casting 缺 \
+                     skill_id (slot={prev_slot})，无法写入冷却"
                 );
             }
         }

@@ -97,14 +97,14 @@ pub fn declare_meridian_dependencies(dependencies: &mut SkillMeridianDependencie
 pub fn cast_beng_quan(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
     let Some(target) = target else {
         return rejected(CastRejectReason::InvalidTarget);
     };
     let now_tick = current_tick(world);
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, BaomaiSkillId::BengQuan.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some((caster_pos, target_pos)) = caster_target_positions(world, caster, target) else {
@@ -143,7 +143,7 @@ pub fn cast_beng_quan(
     set_slot_cooldown(
         world,
         caster,
-        slot,
+        BaomaiSkillId::BengQuan.as_str(),
         now_tick.saturating_add(beng_quan_cooldown_ticks(mastery)),
     );
     world.send_event(AttackIntent {
@@ -322,11 +322,16 @@ pub fn cast_full_power_release(
 pub fn cast_mountain_shake(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = current_tick(world);
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(
+        world,
+        caster,
+        BaomaiSkillId::MountainShake.as_str(),
+        now_tick,
+    ) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_deps(world, caster, BAOMAI_MOUNTAIN_SHAKE_SKILL_ID) {
@@ -352,7 +357,7 @@ pub fn cast_mountain_shake(
     set_slot_cooldown(
         world,
         caster,
-        slot,
+        BaomaiSkillId::MountainShake.as_str(),
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     let targets = targets_in_radius(world, caster, position, outcome.radius_blocks);
@@ -424,11 +429,11 @@ pub fn cast_mountain_shake(
 pub fn cast_blood_burn(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = current_tick(world);
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, BaomaiSkillId::BloodBurn.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_deps(world, caster, BAOMAI_BLOOD_BURN_SKILL_ID) {
@@ -485,7 +490,7 @@ pub fn cast_blood_burn(
     set_slot_cooldown(
         world,
         caster,
-        slot,
+        BaomaiSkillId::BloodBurn.as_str(),
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     world.send_event(BloodBurnEvent {
@@ -533,11 +538,11 @@ pub fn cast_blood_burn(
 pub fn cast_disperse(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = current_tick(world);
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, BaomaiSkillId::Disperse.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
@@ -595,7 +600,7 @@ pub fn cast_disperse(
     set_slot_cooldown(
         world,
         caster,
-        slot,
+        BaomaiSkillId::Disperse.as_str(),
         now_tick.saturating_add(profile.duration_ticks.max(20)),
     );
     world.send_event(DispersedQiEvent {
@@ -678,22 +683,22 @@ fn current_tick(world: &bevy_ecs::world::World) -> u64 {
 fn is_slot_on_cooldown(
     world: &bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     now_tick: u64,
 ) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
 fn set_slot_cooldown(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     until_tick: u64,
 ) {
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, until_tick);
+        bindings.set_cooldown(skill_id, until_tick);
     }
 }
 
@@ -795,7 +800,7 @@ fn apply_transcendence_window(
         Vec::new()
     };
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.cooldown_until_tick = [0; SkillBarBindings::SLOT_COUNT];
+        bindings.clear_all_cooldowns();
     }
     world.entity_mut(caster).insert(BodyTranscendence {
         started_at_tick: now_tick,

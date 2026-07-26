@@ -997,7 +997,15 @@ fn cast_don_adds_outer_skin_and_event() {
 #[test]
 fn cast_don_rejects_duplicate_outer_skin_without_cooldown_event_or_xp() {
     let (mut world, entity) = world_with_player(Realm::Void, 1000.0, FALSE_SKIN_ANCIENT_ITEM_ID);
-    assert_started(cast_don(&mut world, entity, 0, None));
+    let cooldown_ticks = assert_started(cast_don(&mut world, entity, 0, None));
+    // bughunt skillbar-rebind-cooldown-reset 返工：冷却现在按 skill_id 记账，与
+    // 传给 cast_don 的 slot 参数无关——「换个 slot 调用」不再能绕开冷却门。要让
+    // 第二次调用真正走到"重复外层假皮"判定（而不是先被冷却门拦下、断言错方向的
+    // CastRejectReason），必须先把 clock 推过第一次施放设下的冷却窗口。
+    let post_cooldown_tick = 100 + cooldown_ticks;
+    world.insert_resource(CombatClock {
+        tick: post_cooldown_tick,
+    });
     let don_events_before = world
         .resource::<Events<DonFalseSkinEvent>>()
         .get_reader()
@@ -1016,7 +1024,7 @@ fn cast_don_rejects_duplicate_outer_skin_without_cooldown_event_or_xp() {
     assert!(!world
         .get::<SkillBarBindings>(entity)
         .unwrap()
-        .is_on_cooldown(1, 100));
+        .is_on_cooldown(TuikeSkillId::Don.as_str(), post_cooldown_tick));
     assert_eq!(
         world
             .resource::<Events<DonFalseSkinEvent>>()

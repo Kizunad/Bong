@@ -239,7 +239,7 @@ pub fn resolve_beng_quan(
 
     if world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(BENG_QUAN_SKILL_ID, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -400,7 +400,7 @@ pub fn resolve_tie_shan_kao(
     let Some(now_tick) = combat_now_tick(world) else {
         return rejected(CastRejectReason::InvalidTarget);
     };
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, TIE_SHAN_KAO_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(caster_position) = world.get::<Position>(caster).map(|p| p.get()) else {
@@ -518,7 +518,7 @@ pub fn resolve_xue_beng_bu(
     let Some(now_tick) = combat_now_tick(world) else {
         return rejected(CastRejectReason::InvalidTarget);
     };
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, XUE_BENG_BU_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(caster_position) = world.get::<Position>(caster).map(|p| p.get()) else {
@@ -620,7 +620,7 @@ pub fn resolve_ni_mai_hu_ti(
     let Some(now_tick) = combat_now_tick(world) else {
         return rejected(CastRejectReason::InvalidTarget);
     };
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, NI_MAI_HU_TI_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(caster_position) = world.get::<Position>(caster).map(|p| p.get()) else {
@@ -723,12 +723,12 @@ fn combat_now_tick(world: &bevy_ecs::world::World) -> Option<u64> {
 fn is_slot_on_cooldown(
     world: &bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     now_tick: u64,
 ) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
 /// 境界门：低于要求境界返回 `Some(RealmTooLow)`，缺 Cultivation 也视作不达标。
@@ -1435,7 +1435,7 @@ mod tests {
         app.world_mut()
             .get_mut::<SkillBarBindings>(caster)
             .unwrap()
-            .set_cooldown(0, 11);
+            .set_cooldown(BENG_QUAN_SKILL_ID, 11);
         let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
@@ -1715,7 +1715,7 @@ mod tests {
         app.world_mut()
             .get_mut::<SkillBarBindings>(caster)
             .unwrap()
-            .set_cooldown(0, 11);
+            .set_cooldown(TIE_SHAN_KAO_SKILL_ID, 11);
         let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
 
         let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
@@ -1828,7 +1828,7 @@ mod tests {
         app.world_mut()
             .get_mut::<SkillBarBindings>(caster)
             .unwrap()
-            .set_cooldown(0, 11);
+            .set_cooldown(XUE_BENG_BU_SKILL_ID, 11);
 
         let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
 
@@ -1939,7 +1939,7 @@ mod tests {
         app.world_mut()
             .get_mut::<SkillBarBindings>(caster)
             .unwrap()
-            .set_cooldown(0, 11);
+            .set_cooldown(NI_MAI_HU_TI_SKILL_ID, 11);
 
         let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
 

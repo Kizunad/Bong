@@ -589,7 +589,7 @@ fn resolve_parry(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, PARRY_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if is_control_locked(world, caster) {
@@ -626,7 +626,7 @@ fn resolve_parry(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        PARRY_SKILL_ID,
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::Parry);
@@ -644,7 +644,7 @@ fn resolve_neutralize(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, NEUTRALIZE_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_meridian_dependencies(world, caster, NEUTRALIZE_SKILL_ID) {
@@ -688,7 +688,7 @@ fn resolve_neutralize(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        NEUTRALIZE_SKILL_ID,
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::Neutralize);
@@ -706,7 +706,7 @@ fn resolve_multipoint(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, MULTIPOINT_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if world.get::<MultiPointActive>(caster).is_some() {
@@ -743,7 +743,7 @@ fn resolve_multipoint(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        MULTIPOINT_SKILL_ID,
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::MultiPoint);
@@ -761,7 +761,7 @@ fn resolve_harden(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, HARDEN_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_meridian_dependencies(world, caster, HARDEN_SKILL_ID) {
@@ -821,7 +821,7 @@ fn resolve_harden(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        HARDEN_SKILL_ID,
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::HardenMeridian);
@@ -839,7 +839,7 @@ fn resolve_sever_chain(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, SEVER_CHAIN_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_meridian_dependencies(world, caster, SEVER_CHAIN_SKILL_ID) {
@@ -915,7 +915,7 @@ fn resolve_sever_chain(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        SEVER_CHAIN_SKILL_ID,
         now_tick.saturating_add(SEVER_CHAIN_COOLDOWN_TICKS),
     );
     record_practice(world, caster, ZhenmaiSkillId::SeverChain);
@@ -1118,22 +1118,22 @@ fn now_tick(world: &bevy_ecs::world::World) -> u64 {
 fn skill_on_cooldown(
     world: &bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     now_tick: u64,
 ) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
 fn set_skill_cooldown(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     until_tick: u64,
 ) {
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, until_tick);
+        bindings.set_cooldown(skill_id, until_tick);
     }
 }
 

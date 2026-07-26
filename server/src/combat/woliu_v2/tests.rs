@@ -973,7 +973,7 @@ fn resolve_rejects_qi_insufficient_without_cooldown() {
         .world()
         .get::<SkillBarBindings>(actor)
         .unwrap()
-        .is_on_cooldown(2, 10));
+        .is_on_cooldown(WoliuSkillId::Mouth.as_str(), 10));
 }
 
 #[test]
@@ -1020,7 +1020,7 @@ fn resolve_pull_rejects_missing_target_without_cooldown() {
         .world()
         .get::<SkillBarBindings>(actor)
         .unwrap()
-        .is_on_cooldown(1, 10));
+        .is_on_cooldown(WoliuSkillId::Pull.as_str(), 10));
 }
 
 #[test]
@@ -1053,7 +1053,7 @@ fn resolve_pull_rejects_target_without_position_before_cooldown() {
         .world()
         .get::<SkillBarBindings>(actor)
         .unwrap()
-        .is_on_cooldown(1, 10));
+        .is_on_cooldown(WoliuSkillId::Pull.as_str(), 10));
 }
 
 #[test]
@@ -1079,7 +1079,7 @@ fn resolve_pull_rejects_out_of_range_target_without_cooldown() {
         .world()
         .get::<SkillBarBindings>(actor)
         .unwrap()
-        .is_on_cooldown(1, 10));
+        .is_on_cooldown(WoliuSkillId::Pull.as_str(), 10));
 }
 
 #[test]
@@ -1105,7 +1105,7 @@ fn resolve_pull_rejects_zero_qi_target_without_cooldown() {
         .world()
         .get::<SkillBarBindings>(actor)
         .unwrap()
-        .is_on_cooldown(1, 10));
+        .is_on_cooldown(WoliuSkillId::Pull.as_str(), 10));
 }
 
 #[test]
@@ -1155,7 +1155,7 @@ fn resolve_mouth_rejects_out_of_range_target_without_cooldown() {
         .world()
         .get::<SkillBarBindings>(actor)
         .unwrap()
-        .is_on_cooldown(2, 10));
+        .is_on_cooldown(WoliuSkillId::Mouth.as_str(), 10));
 }
 
 #[test]
@@ -1180,7 +1180,7 @@ fn resolve_vacuum_palm_without_target_self_centers_and_casts() {
         app.world()
             .get::<SkillBarBindings>(actor)
             .unwrap()
-            .is_on_cooldown(1, 10),
+            .is_on_cooldown(WoliuSkillId::VacuumPalm.as_str(), 10),
         "释放真空掌应照常设冷却"
     );
 }
