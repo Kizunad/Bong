@@ -145,10 +145,12 @@ use crate::player::state::{
     PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
-use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
-use crate::qi_physics::ledger::AttritionOpKind;
+use crate::qi_physics::constants::{
+    QI_EPSILON, QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD, QI_ZONE_UNIT_CAPACITY,
+};
+use crate::qi_physics::ledger::{AttritionOpKind, QiAccountId, QiTransfer, QiTransferReason};
 use crate::qi_physics::qi_targeted_item_wear_fraction;
-use crate::qi_physics::AnqiContainerKind;
+use crate::qi_physics::{qi_release_to_zone, AnqiContainerKind};
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
@@ -908,9 +910,12 @@ pub fn handle_client_request_payloads(
                     &combat_params.unique_ids,
                     &mut alchemy_params.furnaces,
                     &alchemy_params.recipe_registry,
-                    alchemy_params.zones.as_deref(),
+                    alchemy_params.zones.as_deref_mut(),
                     alchemy_params.redis.as_deref(),
                     alchemy_params.vfx_events.as_deref_mut(),
+                    &mut commands,
+                    &combat_params.cultivations,
+                    alchemy_params.attrition_qi_transfers.as_deref_mut(),
                 );
             }
             ClientRequestV1::AlchemyOpenFurnace { furnace_pos, .. } => {
@@ -7188,7 +7193,14 @@ mod tests {
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
         app.world_mut().entity_mut(entity).insert((
-            crate::cultivation::components::Cultivation::default(),
+            // bughunt-alchemy-inject-qi-unfunded-mint-gate — inject_qi 现在真实扣款，
+            // 测试要走到 FlawedPill（而非因 qi_deficit 强制 Waste）必须有余量支付
+            // 下方 payload 里的 inject_qi qi:15.0。
+            crate::cultivation::components::Cultivation {
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
             PlayerState::default(),
             inventory_with_stack("ci_she_hao", 3),
         ));
@@ -7614,6 +7626,295 @@ mod tests {
         );
     }
 
+    // ── bughunt-alchemy-inject-qi-unfunded-mint-gate ────────────────────────
+    // 手动炼丹「注气」此前完全免费（session.qi_injected += amount 无任何真元
+    // 来源），下列用例锁住修复后的真实扣款/入账行为：happy path 满额入账、
+    // 真元不足整次拒绝（不做部分扣款）、qi_current==requested 边界、无
+    // Cultivation 组件的既定 fail-open 惯例、zone 满溢拆分守恒、坍缩 zone 拒绝
+    // 时不触碰玩家真元。
+
+    /// happy path：qi_current 充足 + 清空 zone → 扣玩家真元、zone 满额入账、
+    /// 恰发一条 AlchemyInject 审计转账。
+    #[test]
+    fn alchemy_inject_qi_debits_player_and_credits_empty_zone_in_full() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<QiTransfer>();
+        // 清空 spawn zone：ZoneRegistry::fallback() 默认 spirit_qi=0.9（room 仅
+        // ~5.0 raw），会把入账拆成 accepted+overflow，与本用例"满额入账"断言
+        // 冲突——满溢拆分场景见下方
+        // alchemy_inject_qi_zone_near_full_splits_into_overflow_and_conserves_qi。
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(Cultivation {
+            qi_current: 20.0,
+            qi_max: 20.0,
+            ..Default::default()
+        });
+        let furnace_entity = spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":8.0}"#);
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert!(
+            (cultivation.qi_current - 12.0).abs() < 1e-9,
+            "注气 8.0 应从玩家 qi_current 真实扣减：期望 20.0-8.0=12.0，实际 {}",
+            cultivation.qi_current
+        );
+
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        assert!(
+            (furnace.session.as_ref().unwrap().qi_injected - 8.0).abs() < 1e-9,
+            "扣款成功后干预仍应放行，session.qi_injected 应记满 8.0，实际 {:?}",
+            furnace.session
+        );
+
+        let zone = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap();
+        let expected_spirit_qi = 8.0 / QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (zone.spirit_qi - expected_spirit_qi).abs() < 1e-9,
+            "清空后的 zone room 远大于 debit，应满额吃下 8.0：期望 spirit_qi={expected_spirit_qi}，实际 {}",
+            zone.spirit_qi
+        );
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = transfers.get_reader();
+        let alchemy_transfers: Vec<_> = reader
+            .read(transfers)
+            .filter(|t| t.reason == QiTransferReason::AlchemyInject)
+            .collect();
+        assert_eq!(
+            alchemy_transfers.len(),
+            1,
+            "应恰有一条 AlchemyInject 审计转账（无满溢），实际 {alchemy_transfers:?}"
+        );
+        assert!(
+            (alchemy_transfers[0].amount - 8.0).abs() < 1e-9,
+            "审计转账金额应等于实际 debit 8.0，实际 {}",
+            alchemy_transfers[0].amount
+        );
+        assert_eq!(alchemy_transfers[0].to, QiAccountId::zone("spawn"));
+    }
+
+    /// 边界/错误分支：qi_current 不足请求量 → 整次拒绝（不做部分扣款），
+    /// 玩家真元与 session.qi_injected 均保持原样，回一条真元不足提示。
+    #[test]
+    fn alchemy_inject_qi_insufficient_player_qi_is_rejected_without_partial_debit() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(Cultivation {
+            qi_current: 3.0,
+            qi_max: 20.0,
+            ..Default::default()
+        });
+        let furnace_entity = spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":8.0}"#);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert!(
+            (cultivation.qi_current - 3.0).abs() < 1e-9,
+            "真元不足时不应扣款：期望 qi_current 保持 3.0，实际 {}",
+            cultivation.qi_current
+        );
+
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        assert_eq!(
+            furnace.session.as_ref().unwrap().qi_injected,
+            0.0,
+            "真元不足应整次拒绝注气（不做部分扣款），session.qi_injected 应保持 0.0，实际 {:?}",
+            furnace.session
+        );
+
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("真元不足")),
+            "应回一条真元不足的炼丹错误提示，实际 messages={messages:?}"
+        );
+    }
+
+    /// 边界：qi_current 恰等于请求量 → 放行整次注气，qi_current 精确归零
+    /// （不是"差一点点也拒绝"，也不是"归零后变负数"）。
+    #[test]
+    fn alchemy_inject_qi_exact_available_qi_boundary_succeeds_and_zeroes_out() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(Cultivation {
+            qi_current: 5.0,
+            qi_max: 20.0,
+            ..Default::default()
+        });
+        let furnace_entity = spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":5.0}"#);
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert!(
+            cultivation.qi_current.abs() < 1e-9,
+            "qi_current 恰等于请求量时应放行并精确扣到 0，实际 {}",
+            cultivation.qi_current
+        );
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        assert!(
+            (furnace.session.as_ref().unwrap().qi_injected - 5.0).abs() < 1e-9,
+            "边界值 qi_current==requested 应放行整次注气，实际 {:?}",
+            furnace.session
+        );
+    }
+
+    /// 既定 fail-open 惯例（与 `ItemEffect::QiRecovery` 分支同款）：实体完全没
+    /// 挂 `Cultivation` 组件时没有账户可扣，静默放行不阻断介入——真实玩家
+    /// spawn 时恒挂该组件，此分支理论不可达，本用例只是显式锁住该设计决策，
+    /// 防止未来被误改成"无 Cultivation 就报错/吞掉干预"的另一种回归。
+    #[test]
+    fn alchemy_inject_qi_without_cultivation_component_fails_open_matching_legacy_behavior() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        // 故意不插入 Cultivation。
+        let furnace_entity = spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":5.0}"#);
+        app.update();
+
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        assert!(
+            (furnace.session.as_ref().unwrap().qi_injected - 5.0).abs() < 1e-9,
+            "无 Cultivation 组件时应 fail-open 放行注气，实际 {:?}",
+            furnace.session
+        );
+    }
+
+    /// zone 满溢拆分：ZoneRegistry::fallback() 的 spawn zone 起手 spirit_qi=0.9
+    /// （50 cap 下仅 ~5.0 raw room），debit=8.0 会被 `qi_release_to_zone` 拆成
+    /// accepted+overflow。玩家侧扣款仍是完整 debit（真元已经"投入"这个抽象
+    /// 炼丹过程，zone 吃不下的部分走 overflow 账户而非退回玩家），
+    /// accepted+overflow 必须恰等于 debit——真元绝不凭空消失也绝不凭空创生。
+    #[test]
+    fn alchemy_inject_qi_zone_near_full_splits_into_overflow_and_conserves_qi() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<QiTransfer>();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(Cultivation {
+            qi_current: 20.0,
+            qi_max: 20.0,
+            ..Default::default()
+        });
+        spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":8.0}"#);
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert!(
+            (cultivation.qi_current - 12.0).abs() < 1e-9,
+            "玩家侧扣款应为完整 debit=8.0（zone 满溢与玩家扣费无关），期望 qi_current=12.0，实际 {}",
+            cultivation.qi_current
+        );
+
+        let zone = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap();
+        assert!(
+            (zone.spirit_qi - 1.0).abs() < 1e-9,
+            "zone 只有 5.0 raw room（0.9×50=45，cap=50），应封顶到 spirit_qi=1.0（50/50），实际 {}",
+            zone.spirit_qi
+        );
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = transfers.get_reader();
+        let alchemy_transfers: Vec<_> = reader
+            .read(transfers)
+            .filter(|t| t.reason == QiTransferReason::AlchemyInject)
+            .collect();
+        let accepted: f64 = alchemy_transfers
+            .iter()
+            .filter(|t| t.to.kind == crate::qi_physics::ledger::QiAccountKind::Zone)
+            .map(|t| t.amount)
+            .sum();
+        let overflow: f64 = alchemy_transfers
+            .iter()
+            .filter(|t| t.to.kind == crate::qi_physics::ledger::QiAccountKind::Overflow)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (accepted - 5.0).abs() < 1e-9,
+            "zone 接纳量应恰等于 room=5.0，实际 {accepted}"
+        );
+        assert!(
+            (overflow - 3.0).abs() < 1e-9,
+            "溢出量应恰等于 debit(8.0)-accepted(5.0)=3.0，实际 {overflow}"
+        );
+        assert!(
+            (accepted + overflow - 8.0).abs() < 1e-9,
+            "accepted+overflow 必须恰等于 debit=8.0（守恒不变式），实际 {}",
+            accepted + overflow
+        );
+    }
+
+    /// 状态前置分支：坍缩 zone 拒绝注气时不应触碰玩家 qi_current——拒绝发生
+    /// 在扣款判定之前，绝不能出现"介入被忽略但真元已经被扣走"的凭空消失。
+    #[test]
+    fn alchemy_inject_qi_collapsed_zone_does_not_debit_player_qi() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut("spawn")
+            .unwrap()
+            .active_events
+            .push(EVENT_REALM_COLLAPSE.to_string());
+        app.insert_resource(zones);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(Cultivation {
+            qi_current: 20.0,
+            qi_max: 20.0,
+            ..Default::default()
+        });
+        let furnace_entity = spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+
+        send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":8.0}"#);
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert!(
+            (cultivation.qi_current - 20.0).abs() < 1e-9,
+            "坍缩 zone 拒绝的注气不应扣玩家 qi_current，实际 {}",
+            cultivation.qi_current
+        );
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        assert_eq!(furnace.session.as_ref().unwrap().qi_injected, 0.0);
+    }
+
     #[test]
     fn alchemy_explode_tier_three_scales_backlash_above_tier_one() {
         let tier_one = scale_alchemy_explosion_damage(40.0, 1);
@@ -7684,7 +7985,14 @@ mod tests {
             let (client_bundle, _helper) = create_mock_client("Alchemist");
             let entity = app.world_mut().spawn(client_bundle).id();
             app.world_mut().entity_mut(entity).insert((
-                crate::cultivation::components::Cultivation::default(),
+                // bughunt-alchemy-inject-qi-unfunded-mint-gate — inject_qi qi:25.0
+                // 现在真实扣款，需要余量才能满足 qi_cost=25.0（否则 qi_deficit 强制
+                // Waste，本测试的 Good/Perfect 基线断言会失真）。
+                crate::cultivation::components::Cultivation {
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
                 PlayerState::default(),
                 // tui_gu_dan 需要 tui_gu_teng×2 + fauna.mutated_bone×1
                 PlayerInventory {
@@ -16020,9 +16328,18 @@ fn handle_alchemy_intervention(
     unique_ids: &Query<&UniqueId>,
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     registry: &RecipeRegistry,
-    zones: Option<&ZoneRegistry>,
+    zones: Option<&mut ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
+    // bughunt-alchemy-inject-qi-unfunded-mint-gate — `Intervention::InjectQi` 是
+    // `recipe.fire_profile.qi_cost` 硬性成功门槛（session.rs qi_deficit 判定，
+    // outcome.rs classify_precise 强制 Waste），此前完全免费凭空满足。
+    // 真实扣款需要玩家 `Cultivation.qi_current`（写回走 Commands，避免与本巨型
+    // system 内既有只读 `Query<&Cultivation>` 产生 Bevy 别名冲突，参照
+    // `ItemEffect::QiRecovery` 分支同一惯例）+ 逸散入炉所在 zone 的写权限。
+    commands: &mut Commands,
+    cultivations: &Query<&Cultivation>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -16030,7 +16347,7 @@ fn handle_alchemy_intervention(
     let player_id = canonical_player_id(username.0.as_str());
     let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
         if matches!(intervention, Intervention::InjectQi(_))
-            && furnace_zone_is_collapsed(furnace, zones)
+            && furnace_zone_is_collapsed(furnace, zones.as_deref())
         {
             tracing::debug!(
                 "[bong][network][alchemy] `{player_id}` inject_qi ignored: furnace is in collapsed zone"
@@ -16044,6 +16361,49 @@ fn handle_alchemy_intervention(
                 return;
             }
         };
+        // bughunt-alchemy-inject-qi-unfunded-mint-gate — 注气必须真实扣款才能放行：
+        // qi_current 不足直接拒绝整次注气（不做部分扣款，维持 session.qi_injected
+        // 不变）；足够则按「debit = 请求量」扣玩家 qi_current，逸散回炉所在 zone。
+        if let Intervention::InjectQi(raw_amount) = intervention {
+            let requested = raw_amount.max(0.0);
+            if requested > QI_EPSILON {
+                match cultivations.get(entity) {
+                    Ok(cultivation) => {
+                        let available = cultivation.qi_current.max(0.0);
+                        if available + QI_EPSILON < requested {
+                            send_alchemy_error(
+                                &mut client,
+                                &player_id,
+                                format!(
+                                    "真元不足：注气需要 {requested:.2}，当前仅剩 {available:.2}"
+                                ),
+                            );
+                            return;
+                        }
+                        let debit = requested.min(available);
+                        let mut new_cultivation = cultivation.clone();
+                        new_cultivation.qi_current = (new_cultivation.qi_current - debit).max(0.0);
+                        commands.entity(entity).insert(new_cultivation);
+                        credit_alchemy_inject_qi_to_zone(
+                            zones,
+                            furnace_pos,
+                            player_id.as_str(),
+                            debit,
+                            qi_transfers,
+                        );
+                    }
+                    Err(_) => {
+                        // 无 Cultivation 组件：真实玩家恒有此组件（spawn 时必挂），
+                        // 理论不可达；测试 mock/非常规实体场景与
+                        // `ItemEffect::QiRecovery` 同惯例——没有账户可扣就没有可信
+                        // 来源可付，静默跳过扣费，不阻断介入本身。
+                        tracing::debug!(
+                            "[bong][network][alchemy] `{player_id}` inject_qi funding skipped: no Cultivation"
+                        );
+                    }
+                }
+            }
+        }
         session.apply_intervention(intervention.clone());
         if let Some(events) = vfx_events {
             let (event_id, color, strength, count) = match intervention {
@@ -16219,6 +16579,107 @@ fn alchemy_furnace_origin(furnace_pos: (i32, i32, i32)) -> DVec3 {
         f64::from(furnace_pos.1) + 1.0,
         f64::from(furnace_pos.2) + 0.5,
     )
+}
+
+/// bughunt-alchemy-inject-qi-unfunded-mint-gate — 手动炼丹「注气」扣款的真元逸散归宿。
+///
+/// `debit` 是已经从玩家 `Cultivation.qi_current` 真实扣下的量（调用方保证 `debit > 0`
+/// 且 `debit` 不超过扣款前玩家可用真元）。zone 解析口径与 `check_alchemy_zone_qi`/
+/// `handle_alchemy_feed_slot` 一致：按 `furnace_pos` 找 Overworld zone，找不到 fallback
+/// `DEFAULT_SPAWN_ZONE_NAME`；两者都没有（ZoneRegistry 缺失，如部分单测场景）则整笔落
+/// overflow 账户。zone 命中但已满溢时经 `qi_release_to_zone` 的 cap/overflow 逻辑拆分
+/// （与 `release_attrition_to_zone`/`eclipse_zone_credit_tick` 同款），accepted+overflow
+/// 恒等于 `debit`，真元绝不凭空消失也绝不凭空创生。
+fn credit_alchemy_inject_qi_to_zone(
+    zones: Option<&mut ZoneRegistry>,
+    furnace_pos: (i32, i32, i32),
+    player_id: &str,
+    debit: f64,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+) {
+    if debit <= 0.0 {
+        return;
+    }
+    let from = QiAccountId::player(player_id.to_string());
+    let Some(zones) = zones else {
+        if let Some(events) = qi_transfers {
+            let overflow_to =
+                QiAccountId::overflow(format!("alchemy_inject_no_registry:{furnace_pos:?}"));
+            if let Ok(t) =
+                QiTransfer::new(from, overflow_to, debit, QiTransferReason::AlchemyInject)
+            {
+                events.send(t);
+            }
+        }
+        return;
+    };
+    let pos = valence::prelude::DVec3::new(
+        f64::from(furnace_pos.0),
+        f64::from(furnace_pos.1),
+        f64::from(furnace_pos.2),
+    );
+    // 单次显式 reborrow 成 `&ZoneRegistry`（Copy），避免对 `&mut ZoneRegistry` 直接
+    // 链式 `.find_zone().or_else(|| zones.find_zone_by_name(..))` 时闭包与外层调用
+    // 对同一 `&mut` 的重复只读借用产生歧义（同 check_alchemy_zone_qi 的只读版本，
+    // 但那边入参本就是 `&ZoneRegistry`，这里入参是 `&mut` 需要先落地一次 reborrow）。
+    let zones_ro: &ZoneRegistry = &*zones;
+    let zone_name = zones_ro
+        .find_zone(DimensionKind::Overworld, pos)
+        .or_else(|| zones_ro.find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME))
+        .map(|zone| zone.name.clone());
+    let Some(zone_name) = zone_name else {
+        if let Some(events) = qi_transfers {
+            let overflow_to =
+                QiAccountId::overflow(format!("alchemy_inject_no_zone:{furnace_pos:?}"));
+            if let Ok(t) =
+                QiTransfer::new(from, overflow_to, debit, QiTransferReason::AlchemyInject)
+            {
+                events.send(t);
+            }
+        }
+        return;
+    };
+    // 命中 name 后再取 &mut（避免与上面 find_zone 的只读借用冲突，同
+    // handle_alchemy_feed_slot AlchemyLoad 磨损分支的两段式查法）。
+    let Some(zone) = zones.find_zone_mut(&zone_name) else {
+        return; // 不可达：刚查到的 name 必然存在
+    };
+    let to = QiAccountId::zone(zone_name.clone());
+    let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+    match qi_release_to_zone(debit, from.clone(), to.clone(), zone_current, QI_ZONE_UNIT_CAPACITY) {
+        Ok(outcome) => {
+            zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            if let Some(events) = qi_transfers {
+                if outcome.accepted > QI_EPSILON {
+                    if let Ok(t) = QiTransfer::new(
+                        from.clone(),
+                        to,
+                        outcome.accepted,
+                        QiTransferReason::AlchemyInject,
+                    ) {
+                        events.send(t);
+                    }
+                }
+                if outcome.overflow > QI_EPSILON {
+                    let overflow_to =
+                        QiAccountId::overflow(format!("alchemy_inject_overflow:{zone_name}"));
+                    if let Ok(t) = QiTransfer::new(
+                        from,
+                        overflow_to,
+                        outcome.overflow,
+                        QiTransferReason::AlchemyInject,
+                    ) {
+                        events.send(t);
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            tracing::warn!(
+                "[bong][network][alchemy] inject_qi credit failed zone={zone_name} debit={debit}: {err:?}"
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

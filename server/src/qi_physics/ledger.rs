@@ -341,6 +341,26 @@ pub enum QiTransferReason {
     ///   - 这是真实 `WorldQiAccount::transfer`（非 audit-only），调用前需按
     ///     `apply_dormant_regen_with_multiplier` 范本同步 zone ledger 镜像。
     PseudoVeinSettle,
+    /// bughunt-alchemy-inject-qi-unfunded-mint-gate — 手动炼丹「注气」干预
+    /// （`Intervention::InjectQi`）消耗玩家真元，逸散回炼丹炉所在 zone。
+    ///
+    /// 修复旧版本缺陷：`handle_alchemy_intervention` 只做
+    /// `session.qi_injected += amount`，`amount` 完全没有真元来源——`qi_cost` 是
+    /// `classify_precise`（`alchemy/outcome.rs`）判定 `Waste` 前的硬性成功门槛，
+    /// 却可以无限免费满足，直接凭空创生真元。
+    ///
+    /// 守恒约束：
+    ///   - `cultivation.qi_current -= debit`（`debit = amount.min(qi_current.max(0.0))`，
+    ///     `qi_current < amount` 时整次注气直接拒绝，不做部分扣款）；
+    ///   - 同 tick 内经 `qi_release_to_zone` 把 `debit` 记入炼丹炉所在 zone（cap/overflow
+    ///     逻辑与 `AttritionTax`/`DuguReturnToZone` 同款，zone 满溢部分转入 overflow 账户，
+    ///     绝不凭空消失）；
+    ///   - `QiTransfer(from=player:<id>, to=zone:<name>|overflow:<label>,
+    ///     reason=AlchemyInject)` audit-only：直接改 `zone.spirit_qi`，**不**调
+    ///     `WorldQiAccount::transfer`（活体真元仍在 ECS，不镜像到 player ledger balance）；
+    ///   - AutoProfile 路径的 `FurnaceQiReserve`（`alchemy/auto_profile.rs`）是完全独立账户，
+    ///     不受本 reason 影响。
+    AlchemyInject,
 }
 
 /// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
