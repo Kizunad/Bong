@@ -428,6 +428,13 @@ pub enum ItemEffect {
     CombatPill {
         pill_item_id: String,
     },
+    /// plan-cultivation-pacing-v1 P1.4/P1.5 — 修炼节奏丹药（灵息丸/聚灵丹/...渡劫丹 + 2
+    /// flawed 变体）。`pill_item_id` 查 `alchemy::pill::cultivation_pill_spec` 得到
+    /// `CultivationPillSpec`，走 `alchemy::pill::consume_cultivation_pill` 注入丹毒 +
+    /// 挂载 `StatusEffects`（CultivationAcceleration/BreakthroughBoost/...）。
+    CultivationPill {
+        pill_item_id: String,
+    },
     /// plan-food-v1 P2 — 灵食消费：临时修炼加速。
     ///
     /// `bonus_factor`：加速比例（0.20 = +20% 修炼速度），挂 `CultivationAcceleration`。
@@ -3131,6 +3138,19 @@ fn parse_item_effect(
                 ));
             }
             Ok(ItemEffect::CombatPill { pill_item_id })
+        }
+        "cultivation_pill" => {
+            let pill_item_id = effect
+                .target
+                .filter(|target| !target.trim().is_empty())
+                .unwrap_or_else(|| item_id.to_string());
+            if crate::alchemy::pill::cultivation_pill_spec(&pill_item_id).is_none() {
+                return Err(format!(
+                    "{} item `{item_id}` effect `cultivation_pill` has unknown cultivation pill target `{pill_item_id}`",
+                    source_path.display()
+                ));
+            }
+            Ok(ItemEffect::CultivationPill { pill_item_id })
         }
         "food_regen" => {
             // plan-food-v1 P2 — bonus_factor 来自 magnitude，duration_ticks 来自专属字段。
@@ -6853,6 +6873,71 @@ mod tests {
     }
 
     #[test]
+    fn parse_item_effect_accepts_cultivation_pill_explicit_target() {
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "cultivation_pill".to_string(),
+                magnitude: 0.0,
+                target: Some("ling_xi_wan".to_string()),
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "ling_xi_wan",
+        )
+        .expect("cultivation_pill effect should parse");
+
+        assert_eq!(
+            effect,
+            ItemEffect::CultivationPill {
+                pill_item_id: "ling_xi_wan".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_cultivation_pill_defaults_target_to_item_id() {
+        // combat_pill/cultivation_pill 共用同一约定：省略 target 时回退到 item_id 自身。
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "cultivation_pill".to_string(),
+                magnitude: 0.0,
+                target: None,
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "ju_ling_dan",
+        )
+        .expect("cultivation_pill effect without target should default to item_id");
+
+        assert_eq!(
+            effect,
+            ItemEffect::CultivationPill {
+                pill_item_id: "ju_ling_dan".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_cultivation_pill_unknown_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "cultivation_pill".to_string(),
+                magnitude: 0.0,
+                target: Some("cultivation_pill_typo".to_string()),
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "cultivation_pill_unknown_target",
+        )
+        .expect_err("cultivation_pill effect should reject unknown target ids");
+
+        assert!(
+            error.contains("unknown cultivation pill target `cultivation_pill_typo`"),
+            "expected cultivation pill target validation error, got {error}"
+        );
+    }
+
+    #[test]
     fn parse_item_effect_accepts_wound_heal_missing_target_as_all_wounds() {
         let effect = parse_item_effect(
             ItemEffectToml {
@@ -7429,6 +7514,42 @@ mod tests {
                 "凡俗食物 `{mundane}` 不应有修炼加速 effect，实际 {:?}",
                 item.effect
             );
+        }
+    }
+
+    /// bughunt alchemy-cultivation-pill-no-effect — pills.toml 的 8 种修炼节奏丹药 +
+    /// 2 flawed 变体必须携带 `effect = { kind = "cultivation_pill", ... }`，否则玩家
+    /// 服用即被静默消耗且零效果（cast_emit.rs 拿不到 template.effect 就没有 dispatch 目标）。
+    #[test]
+    fn pills_toml_cultivation_pills_all_have_cultivation_pill_effect() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        for pill_id in [
+            "ling_xi_wan",
+            "ju_ling_dan",
+            "tong_mai_san",
+            "ning_yuan_dan",
+            "xi_sui_ye",
+            "po_jing_dan",
+            "kai_qiao_dan",
+            "du_jie_dan",
+            "ling_xi_wan_flawed",
+            "ju_ling_dan_flawed",
+        ] {
+            let item = registry
+                .get(pill_id)
+                .unwrap_or_else(|| panic!("pills.toml `{pill_id}` must be registered"));
+            match &item.effect {
+                Some(ItemEffect::CultivationPill { pill_item_id }) => {
+                    assert_eq!(
+                        pill_item_id, pill_id,
+                        "`{pill_id}`.effect.pill_item_id 应指回自身 id，实际 {pill_item_id}"
+                    );
+                }
+                other => panic!(
+                    "`{pill_id}`.effect 应为 CultivationPill{{pill_item_id: \"{pill_id}\"}}，实际 {other:?}"
+                ),
+            }
         }
     }
 

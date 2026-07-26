@@ -137,7 +137,7 @@ type CastTickQueryItem<'a> = (
     &'a PlayerState,
     &'a mut QuickSlotBindings,
     &'a mut SkillBarBindings,
-    Option<&'a StatusEffects>,
+    Option<&'a mut StatusEffects>,
     Option<&'a mut Cultivation>,
     Option<&'a mut MeridianSystem>,
     Option<&'a mut Contamination>,
@@ -148,6 +148,10 @@ struct CastItemEffectTargets<'a> {
     meridians: Option<Mut<'a, MeridianSystem>>,
     contamination: Option<Mut<'a, Contamination>>,
     wounds: Option<&'a mut Wounds>,
+    /// plan-cultivation-pacing-v1 P1.5 消费点 —— `CultivationPill` 需要直接可变访问
+    /// `StatusEffects` 才能调用 `alchemy::pill::consume_cultivation_pill`（挂载
+    /// buff 走 per-pill 堆叠 cap，非通用 `ApplyStatusEffectIntent`）。
+    status_effects: Option<Mut<'a, StatusEffects>>,
 }
 
 struct CastItemEffectContext<'a> {
@@ -198,7 +202,9 @@ pub fn tick_casts_or_interrupt(
     ) in &mut clients
     {
         // plan §4.3 控制中断（Stunned）—— 优先级最高：玩家根本动不了。
-        let stunned = status_effects.is_some_and(|se| {
+        // `.as_deref()` 只借用（不消费 `status_effects`）——本 tick 稍后 CultivationPill
+        // 分支需要同一个 `Option<Mut<StatusEffects>>` 的可变访问权。
+        let stunned = status_effects.as_deref().is_some_and(|se| {
             se.active
                 .iter()
                 .any(|e| e.kind == StatusEffectKind::Stunned && e.remaining_ticks > 0)
@@ -446,6 +452,7 @@ pub fn tick_casts_or_interrupt(
                         meridians,
                         contamination,
                         wounds: Some(&mut *wounds),
+                        status_effects,
                     },
                     &mut effect_intents,
                     CastItemEffectContext {
@@ -701,6 +708,14 @@ pub(crate) fn apply_item_effect(
                 "[bong][network][cast] CombatPill `{pill_item_id}` for `{username}` ({entity:?}) — handled by take_pill path"
             );
         }
+        ItemEffect::CultivationPill { pill_item_id } => {
+            // bughunt alchemy-cultivation-pill-no-effect：`apply_item_effect` 路径无
+            // `StatusEffects` 可写，真实消费走 `apply_cast_item_effect` 的专属分支
+            // （拿得到 `targets.status_effects`）。此处仅 log 兜底。
+            tracing::debug!(
+                "[bong][network][cast] CultivationPill `{pill_item_id}` for `{username}` ({entity:?}) — handled by cast_item_effect path"
+            );
+        }
         ItemEffect::FoodRegen {
             bonus_factor,
             duration_ticks,
@@ -727,7 +742,7 @@ pub(crate) fn apply_item_effect(
 
 fn apply_cast_item_effect(
     effect: &ItemEffect,
-    targets: CastItemEffectTargets<'_>,
+    mut targets: CastItemEffectTargets<'_>,
     effect_intents: &mut ParamSet<(
         EventWriter<ApplyStatusEffectIntent>,
         EventWriter<LifespanExtensionIntent>,
@@ -787,6 +802,59 @@ fn apply_cast_item_effect(
                 "[bong][network][cast] CombatPill for `{}` ({:?}) ignored on generic cast path",
                 context.username,
                 context.entity
+            );
+        }
+        // bughunt alchemy-cultivation-pill-no-effect — plan-cultivation-pacing-v1 P1.4/P1.5:
+        // 8 种修炼节奏丹药 + 2 flawed 变体，quick-slot cast 完成时在此真实注入丹毒 +
+        // 挂载 StatusEffects（复用已测试的 `alchemy::pill::consume_cultivation_pill`，
+        // 而非绕开 per-pill 堆叠 cap 的通用 `ApplyStatusEffectIntent`）。
+        ItemEffect::CultivationPill { pill_item_id } => {
+            let Some(spec) = crate::alchemy::pill::cultivation_pill_spec(pill_item_id) else {
+                tracing::warn!(
+                    "[bong][network][cast] CultivationPill `{pill_item_id}` for `{}` ({:?}) has no cultivation pill spec",
+                    context.username,
+                    context.entity
+                );
+                return;
+            };
+            let Some(contamination) = targets.contamination.as_deref_mut() else {
+                tracing::debug!(
+                    "[bong][network][cast] CultivationPill `{pill_item_id}` noop: entity {:?} `{}` has no Contamination",
+                    context.entity,
+                    context.username
+                );
+                return;
+            };
+            let Some(status_effects) = targets.status_effects.as_deref_mut() else {
+                tracing::debug!(
+                    "[bong][network][cast] CultivationPill `{pill_item_id}` noop: entity {:?} `{}` has no StatusEffects",
+                    context.entity,
+                    context.username
+                );
+                return;
+            };
+            if !crate::alchemy::pill::can_take_pill(contamination, spec.toxin_color) {
+                tracing::info!(
+                    "[bong][network][cast] CultivationPill `{pill_item_id}` blocked: entity {:?} `{}` same-color toxin ({:?}) at/over threshold",
+                    context.entity,
+                    context.username,
+                    spec.toxin_color
+                );
+                return;
+            }
+            let result = crate::alchemy::pill::consume_cultivation_pill(
+                &spec,
+                contamination,
+                status_effects,
+                context.issued_at_tick,
+            );
+            tracing::info!(
+                "[bong][network][cast] CultivationPill `{pill_item_id}` for `{}` ({:?}) — applied {} effect(s), toxin+={:.2}, blocked_by_cap={}",
+                context.username,
+                context.entity,
+                result.applied_effects.len(),
+                result.toxin_injected,
+                result.blocked_by_cap
             );
         }
         ItemEffect::FoodRegen {
@@ -1645,6 +1713,7 @@ mod tests {
                     meridians: None,
                     contamination: None,
                     wounds: None,
+                    status_effects: None,
                 },
                 &mut effect_intents,
                 CastItemEffectContext {
@@ -1675,6 +1744,254 @@ mod tests {
         assert_eq!(events[0].issued_at_tick, 42);
     }
 
+    // ── bughunt alchemy-cultivation-pill-no-effect：CultivationPill 真消费回归 ──
+    //
+    // 修炼节奏丹药（灵息丸/聚灵丹/.../渡劫丹 + 2 flawed 变体）此前只被
+    // `consume_one_stack` 扣库存，`apply_cast_item_effect` 没有对应 dispatch 分支，
+    // 服用后静默零效果。以下测试锁住真实消费路径：注入 Contamination + 挂载
+    // StatusEffects（走 `alchemy::pill::consume_cultivation_pill`）。
+
+    /// helper：构造带 Contamination + StatusEffects 组件的实体，跑一次
+    /// `apply_cast_item_effect(CultivationPill{pill_item_id}, ...)`，返回跑后 App
+    /// 供调用侧读回两个组件断言。
+    fn run_cultivation_pill_cast(
+        pill_item_id: &str,
+        seed_contamination: Contamination,
+    ) -> (App, Entity) {
+        let pill_item_id = pill_item_id.to_string();
+        let mut app = App::new();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<ConsumePoisonPillIntent>();
+        let entity = app
+            .world_mut()
+            .spawn((seed_contamination, StatusEffects::default()))
+            .id();
+
+        app.add_systems(
+            Update,
+            move |mut effect_intents: ParamSet<(
+                EventWriter<ApplyStatusEffectIntent>,
+                EventWriter<LifespanExtensionIntent>,
+                EventWriter<ConsumePoisonPillIntent>,
+            )>,
+                  mut query: Query<(&mut Contamination, &mut StatusEffects)>| {
+                let Ok((contamination, status_effects)) = query.get_mut(entity) else {
+                    return;
+                };
+                apply_cast_item_effect(
+                    &ItemEffect::CultivationPill {
+                        pill_item_id: pill_item_id.clone(),
+                    },
+                    CastItemEffectTargets {
+                        cultivation: None,
+                        meridians: None,
+                        contamination: Some(contamination),
+                        wounds: None,
+                        status_effects: Some(status_effects),
+                    },
+                    &mut effect_intents,
+                    CastItemEffectContext {
+                        issued_at_tick: 500,
+                        username: "Azure",
+                        entity: Entity::PLACEHOLDER,
+                        item_freshness: None,
+                        decay_profiles: None,
+                    },
+                );
+            },
+        );
+        app.update();
+        (app, entity)
+    }
+
+    /// happy path：灵息丸（正品）→ 1 条 Gentle 丹毒 0.15 + 1 条 CultivationAcceleration
+    /// magnitude=0.5 duration=36000（对齐 plan-cultivation-pacing-v1 §8.1 #1 数值表）。
+    #[test]
+    fn cast_cultivation_pill_applies_contamination_and_status_effect() {
+        let (app, entity) = run_cultivation_pill_cast("ling_xi_wan", Contamination::default());
+
+        let contamination = app
+            .world()
+            .get::<Contamination>(entity)
+            .expect("Contamination should remain attached");
+        assert_eq!(
+            contamination.entries.len(),
+            1,
+            "灵息丸服用后应注入 1 条丹毒记录，实际 {}",
+            contamination.entries.len()
+        );
+        assert!(
+            (contamination.entries[0].amount - 0.15).abs() < f64::EPSILON,
+            "灵息丸丹毒量应=0.15，实际 {}",
+            contamination.entries[0].amount
+        );
+        assert_eq!(
+            contamination.entries[0].color,
+            crate::cultivation::components::ColorKind::Gentle,
+            "灵息丸丹毒色应=Gentle，实际 {:?}",
+            contamination.entries[0].color
+        );
+
+        let status_effects = app
+            .world()
+            .get::<StatusEffects>(entity)
+            .expect("StatusEffects should remain attached");
+        assert_eq!(
+            status_effects.active.len(),
+            1,
+            "灵息丸应挂载 1 条 StatusEffect，实际 {}",
+            status_effects.active.len()
+        );
+        let effect = &status_effects.active[0];
+        assert_eq!(
+            effect.kind,
+            StatusEffectKind::CultivationAcceleration,
+            "灵息丸应挂载 CultivationAcceleration，实际 {:?}",
+            effect.kind
+        );
+        assert!(
+            (effect.magnitude - 0.5).abs() < f32::EPSILON,
+            "灵息丸（正品）CultivationAcceleration magnitude 应=0.5，实际 {}",
+            effect.magnitude
+        );
+        assert_eq!(
+            effect.remaining_ticks, 36_000,
+            "灵息丸 CultivationAcceleration duration 应=36000t，实际 {}",
+            effect.remaining_ticks
+        );
+    }
+
+    /// 次品缩放：ling_xi_wan_flawed 的 magnitude 应=正品×0.6=0.3（毒性/duration 不变）。
+    #[test]
+    fn cast_cultivation_pill_flawed_scales_magnitude_by_point6() {
+        let (app, entity) =
+            run_cultivation_pill_cast("ling_xi_wan_flawed", Contamination::default());
+
+        let contamination = app.world().get::<Contamination>(entity).unwrap();
+        assert!(
+            (contamination.entries[0].amount - 0.15).abs() < f64::EPSILON,
+            "次品灵息丸丹毒量与正品相同应=0.15（只有 magnitude 被 flawed 缩放，毒性不变），实际 {}",
+            contamination.entries[0].amount
+        );
+
+        let status_effects = app.world().get::<StatusEffects>(entity).unwrap();
+        assert_eq!(status_effects.active.len(), 1);
+        let effect = &status_effects.active[0];
+        assert!(
+            (effect.magnitude - 0.3).abs() < f32::EPSILON,
+            "次品灵息丸 CultivationAcceleration magnitude 应=0.5×0.6=0.3，实际 {}",
+            effect.magnitude
+        );
+        assert_eq!(
+            effect.remaining_ticks, 36_000,
+            "次品灵息丸 duration 应与正品相同=36000t，实际 {}",
+            effect.remaining_ticks
+        );
+    }
+
+    /// 边界：同色丹毒已达阈值（TOXIN_THRESHOLD=1.0）时 `can_take_pill` 应拦截——
+    /// 不追加丹毒、不挂载 StatusEffect（防止绕过 §2.2 丹毒阈值门）。
+    #[test]
+    fn cast_cultivation_pill_blocked_when_same_color_toxin_at_threshold() {
+        use crate::cultivation::components::{ColorKind, ContamSource};
+
+        let seeded = Contamination {
+            entries: vec![ContamSource {
+                amount: 1.0,
+                color: ColorKind::Gentle,
+                meridian_id: None,
+                attacker_id: None,
+                introduced_at: 0,
+            }],
+        };
+        let (app, entity) = run_cultivation_pill_cast("ling_xi_wan", seeded);
+
+        let contamination = app.world().get::<Contamination>(entity).unwrap();
+        assert_eq!(
+            contamination.entries.len(),
+            1,
+            "阈值命中应拒绝服用、不追加新丹毒记录，实际 {} 条",
+            contamination.entries.len()
+        );
+        assert!(
+            (contamination.entries[0].amount - 1.0).abs() < f64::EPSILON,
+            "阈值命中不应改变既有丹毒量，实际 {}",
+            contamination.entries[0].amount
+        );
+
+        let status_effects = app.world().get::<StatusEffects>(entity).unwrap();
+        assert!(
+            status_effects.active.is_empty(),
+            "阈值命中不应挂载任何 StatusEffect，实际 {} 条",
+            status_effects.active.len()
+        );
+    }
+
+    /// 错误分支：未知 pill_item_id（不在 `cultivation_pill_spec` 表中）应静默 no-op，
+    /// 不 panic、不修改 Contamination/StatusEffects。
+    #[test]
+    fn cast_cultivation_pill_unknown_id_is_noop_without_panic() {
+        let (app, entity) =
+            run_cultivation_pill_cast("not_a_real_cultivation_pill", Contamination::default());
+
+        let contamination = app.world().get::<Contamination>(entity).unwrap();
+        assert!(
+            contamination.entries.is_empty(),
+            "未知丹药 id 不应注入任何丹毒，实际 {} 条",
+            contamination.entries.len()
+        );
+        let status_effects = app.world().get::<StatusEffects>(entity).unwrap();
+        assert!(
+            status_effects.active.is_empty(),
+            "未知丹药 id 不应挂载任何 StatusEffect，实际 {} 条",
+            status_effects.active.len()
+        );
+    }
+
+    /// 状态转换：`targets.contamination`/`targets.status_effects` 缺失（实体没有对应
+    /// 组件）时应提前 return，不 panic。
+    #[test]
+    fn cast_cultivation_pill_missing_components_is_noop_without_panic() {
+        fn emit_for_test(
+            mut effect_intents: ParamSet<(
+                EventWriter<ApplyStatusEffectIntent>,
+                EventWriter<LifespanExtensionIntent>,
+                EventWriter<ConsumePoisonPillIntent>,
+            )>,
+        ) {
+            apply_cast_item_effect(
+                &ItemEffect::CultivationPill {
+                    pill_item_id: "ling_xi_wan".to_string(),
+                },
+                CastItemEffectTargets {
+                    cultivation: None,
+                    meridians: None,
+                    contamination: None,
+                    wounds: None,
+                    status_effects: None,
+                },
+                &mut effect_intents,
+                CastItemEffectContext {
+                    issued_at_tick: 1,
+                    username: "Azure",
+                    entity: Entity::PLACEHOLDER,
+                    item_freshness: None,
+                    decay_profiles: None,
+                },
+            );
+        }
+
+        let mut app = App::new();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<ConsumePoisonPillIntent>();
+        app.add_systems(Update, emit_for_test);
+
+        // 不应 panic —— 若函数在字段缺失时 unwrap，这里就会崩测试。
+        app.update();
+    }
+
     #[test]
     fn cast_lifespan_and_pressure_effects_emit_runtime_intents() {
         fn emit_for_test(
@@ -1694,6 +2011,7 @@ mod tests {
                     meridians: None,
                     contamination: None,
                     wounds: None,
+                    status_effects: None,
                 },
                 &mut effect_intents,
                 CastItemEffectContext {
@@ -1711,6 +2029,7 @@ mod tests {
                     meridians: None,
                     contamination: None,
                     wounds: None,
+                    status_effects: None,
                 },
                 &mut effect_intents,
                 CastItemEffectContext {
@@ -1822,6 +2141,7 @@ mod tests {
                         meridians: None,
                         contamination: None,
                         wounds: None,
+                        status_effects: None,
                     },
                     &mut effect_intents,
                     CastItemEffectContext {

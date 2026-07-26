@@ -16958,11 +16958,15 @@ fn handle_alchemy_take_pill(
 
     // plan-food-v1 P2 / plan-consumable-effects-v1：这些效果必须走 quick slot（cast_emit 路径）。
     // 在此处前置拒绝，避免 consume_item_instance_once 扣掉物品后 noop。
+    // bughunt alchemy-cultivation-pill-no-effect：CultivationPill 同理——真实消费需要
+    // 可变 `StatusEffects` 访问，本 handler 的 `CombatRequestParams` 未携带该 query，
+    // 唯一真消费入口是 cast_emit.rs 的 quick-slot 路径（见该文件 CultivationPill 分支）。
     if matches!(
         effect,
         ItemEffect::FoodRegen { .. }
             | ItemEffect::ComposureRestore { .. }
             | ItemEffect::WoundHeal { .. }
+            | ItemEffect::CultivationPill { .. }
     ) {
         tracing::debug!(
             "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected: effect must be consumed via quick slot"
@@ -17134,7 +17138,8 @@ fn handle_alchemy_take_pill(
         }
         ItemEffect::ComposureRestore { .. }
         | ItemEffect::WoundHeal { .. }
-        | ItemEffect::FoodRegen { .. } => {
+        | ItemEffect::FoodRegen { .. }
+        | ItemEffect::CultivationPill { .. } => {
             tracing::debug!(
                 "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` quick-slot-only effect reached pill dispatch after prevalidation"
             );
