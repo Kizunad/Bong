@@ -35,7 +35,7 @@
 | P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
 | P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
 | P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 3/3 定稿：双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂**逐 tick** IK 合握，加密防插值脱手），关键帧残差 ≤0.55、中间帧最差 2.43 模型单位，t0=t20 收势闭合。剩余招式 FPV 变体待续 |
-| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⏳（PR #1249 返工中）`CastJuiceProfiles` 重型招注册表 + `CastFovController` 生命周期状态机 + `CameraShakeController.triggerDirect` + `MixinGameRenderer` 加法 FOV 合成 |
+| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ✅ 2026-07-26（纯 client，零 wire 变更；PR #1249）：`CastJuiceProfiles` 4 重型招注册表 + heaven_gate 两段走 `CastFovController.onAnimPlayed` 动画事件驱动 + `CastFovController` 生命周期状态机（identity 门控 arming/幂等 release/**按身份**作废的取消令牌/死亡·断线·**切世界** teardown）+ `JuiceConfig` 配置持有者 & `JuiceControls` keybind 可调入口（默认 1.0，0=关闭且进行中调 0 双通道立即取消）+ `MixinGameRenderer` 加法 FOV 合成；`CastFovControllerTest` 30 + `JuiceConfigTest` 8 + `JuiceControlsTest` 9 + `VfxEventRouterTest` juice 接线 2 例。**遗留**：倍率跨会话文件持久化（全仓 client 无配置文件层）见下 |
 | P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ✅ 2026-07-24（纯资产 + 管线，8 条 CC0 真 `.ogg` 落地；**9 条 server recipe 主层/前兆层换 `bong:` 事件**——8 招 signature + heaven_gate charge 前兆，heaven_gate release（`sword_manifest_strike`）+ charge（专属 `heaven_gate_charge`）均在 server 侧；resourcepack 纳入 `bong/sounds` + `bong/sounds.json` + sha1 同步；跨端契约测试 server 3 + client 12（heaven_gate signature pin 移到 server 侧后删了 client 对应用例），含**运行时消费 pin** 从生产映射取 recipe id + 经真实 registry 查找） |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |
 
@@ -70,20 +70,31 @@
 
 | 招式 | shake 幅度/时长 | FOV 脉冲 | 备注 |
 |---|---|---|---|
-| sword_path.heaven_gate（release） | 强 / 8 tick | +6° 收缩回弹 4 tick | 蓄力段镜头微震随充能爬升 |
-| baomai.full_power_release | 强 / 6 tick | +4° | 与力竭灰雾同步 |
-| woliu.turbulence_burst | 中 / 6 tick | +3° | |
-| zhenmai.sever_chain | 中 / 4 tick | — | 断链顿挫感 |
-| anqi.echo_fractal（release） | 弱 / 3 tick | — | |
+| sword_path.heaven_gate（charge） | 强 0.8 / 160 tick CRESCENDO | — | **动画事件驱动**（非 CastState）：蓄力渐强，撑到 release 顶替 |
+| sword_path.heaven_gate（release） | 强 1.5 / 24 tick SUSTAIN | +12° 收缩回弹 8 tick | **动画事件驱动**：cast 条 4s 与真实引导窗 7s 错开，只有动画事件能对准劈下那一刻 |
+| baomai.full_power_release | 强 / 20 tick SUSTAIN | +9° / 7 tick | 与力竭灰雾同步 |
+| woliu.turbulence_burst | 中 / 18 tick SUSTAIN | +6° / 6 tick | |
+| zhenmai.sever_chain | 中 / 14 tick SUSTAIN | — | 断链顿挫感 |
+| anqi.echo_fractal（release） | 弱 / 12 tick SUSTAIN | — | |
 | 其余招式 | 无（默认零） | — | 沉浸式极简：juice 只给重型招 |
+
+> 数值为 2026-07-25 真机调校后的定稿（原表的「抖一下」短时长手感太轻，改 SUSTAIN
+> 持续震动 + 放大 FOV punch）。强/中/弱 = `CastJuiceProfiles.STRONG/MEDIUM/WEAK`
+> （1.2 / 0.85 / 0.5）。heaven_gate 两段已从 `CastJuiceProfiles`（CastState 驱动）
+> 移出，改由 `CastFovController.onAnimPlayed` 的动画事件驱动。
 
 - 复用 `CameraShakeController` 既有 mixin，不新建相机通道；FOV 走独立控制器（新建 `CastFovController`，与 shake 同帧调度）。
 - **`CastFovController` 生命周期契约（交付物，不许只交一个孤立类）**：
   - 状态机：`idle → pulse → decay → idle`，所有路径终点必须回到进入施法前的**单一基准 FOV**，复位幂等（重复复位无副作用）；
-  - 驱动路径唯一：由 `CastSyncHandler` 的 cast 状态转换回调驱动（started/accepted/release/reject/cancel），client tick 循环负责 decay 推进；bootstrap 注册位置跟随 `CombatJuiceSystem.bootstrap()` 先例（`BongClient.java:127`），cast 时序数据源为 `CastStateStore`（施法预测先例 `CombatHudBootstrap.java:48-49`）；
+  - 驱动路径：主路径由 `CastSyncHandler` 的 cast 状态转换回调驱动（started/accepted/release/reject/cancel），client tick 循环负责 decay 推进；bootstrap 注册位置跟随 `CombatJuiceSystem.bootstrap()` 先例（`BongClient.java:127`），cast 时序数据源为 `CastStateStore`（施法预测先例 `CombatHudBootstrap.java:48-49`）。**例外：heaven_gate 走第二条动画事件驱动路径**（`CastFovController.onAnimPlayed`，由 `VfxEventRouter` 在 play_anim **真正播出后**调）——它的 cast 条 4s 与真实引导窗 7s 错开 3s，走 CastState 会在举剑蓄力中途就触发而非劈下那一刻；两条路径共享同一 pulse / shake 单通道（last-write-wins）；
+  - **cast identity = `(slot, startedAtMs)`**，刻意不含 `source`：`source` 不是 wire 字段，`CastSyncHandler.sourceFor` 靠「当前快照是否正 CASTING 在同一 slot」推断，任何非 CASTING 快照落地后即退化成 QUICK_SLOT；写进身份会让「A 被 B 取代 → 迟到 INTERRUPT(A) → COMPLETE(B)」的 B 认不出自己的 pending。`source` 的门控作用保留在 arming 时刻（`resolveSkillId` 只给 SKILL_BAR 解析 profile）；
+  - **取消令牌按身份作废**：INTERRUPT 无条件记录 `voidedId`（防乱序打断被后到的同 identity CASTING 复活），但只清**同 identity** 的 pending——否则迟到/重传的旧打断会误杀在飞的新施法；
   - 与其他 FOV 修改源（原版疾跑/药水、shader）的合成规则显式声明（加法偏移量，不直写绝对 FOV）；
-  - teardown：断线、切世界、玩家死亡时立即复位基准并清 pending 状态。
+  - teardown：断线、切世界、玩家死亡时立即复位基准并清 pending 状态。**切世界**走 `ClientEntityEvents.ENTITY_UNLOAD` 上的本地玩家实体卸载——跨维度/换服时 vanilla 不重建 `ClientPlayNetworkHandler`，`ClientPlayConnectionEvents.DISCONNECT` 不触发，而 Fabric 在 `onPlayerRespawn`/`onGameJoin`/`clearWorld` 三处对旧世界全量 emit ENTITY_UNLOAD（1.20.1 无 `ClientWorldEvents`，这是唯一现成钩子）。
 - 可及性：juice 强度全局倍率进 client 配置（0 = 关闭），默认 1.0；**进行中把倍率调 0 立即复位**，不是只影响后续脉冲。
+  - **落地**（PR #1249）：`JuiceConfig`（配置持有者，默认 1.0、钳位 NaN/负→0、上限 2.0、档位表 `{0, 0.5, 1.0, 1.5}`）+ `JuiceControls`（keybind `key.bong-client.juice_multiplier_cycle`，默认不绑键随玩家自绑，动作栏回显新档位；`BongClient` 接线）。写配置**直调** `CastFovController.onJuiceMultiplierChanged`（编译期保证不脱钩，不用可漏注册的 listener）。
+  - 「立即复位」= **两个通道都真停**：清 FOV 脉冲对象 + `CameraShakeController.clear()`，不是把 FOV 读数乘 0 遮起来（那样 shake 停不下来、脉冲状态还在、倍率调回来会诈尸）。倍率在 `fire`/`onAnimPlayed` 触发时刻烘焙进脉冲峰值与 shake 强度，故恢复倍率只影响**后续** release。
+  - **⚠️ 遗留：跨会话文件持久化未交付**。本仓库 client 侧当前没有任何配置文件持久化层（无 `FabricLoader.getConfigDir()` 读写、无 owo config screen、无 ModMenu；`HudConfig` 自陈其 tunable 是「for future wiring into the external config file」）。本 PR 只交进程内持有者 + 默认值 + 真实运行时可调入口，**每次启动回到 1.0**。文件持久化需要先立 client 配置层（跨 tunable 的公共基建，不该为单个倍率现造一套），归后续 plan。
 - 测试（饱和覆盖状态机，**从真实 `CastSyncHandler` 入口驱动，不直接调 controller 方法**）：profile 注册表单测（每招参数 pin）+ 状态转换全路径——正常 release 完整脉冲后自然回基准、server 拒绝不触发、晚到打断作废 pending juice、回执乱序（打断先于 started 到达）、同 cast identity 重复 release 幂等、连续施法（前一脉冲 decay 中开新 cast）、重叠触发合成、倍率 0 进行中立即复位、死亡/切世界/断线复位——每条路径末尾断言 FOV == 基准值。
 
 ## P4 — 签名音效资产化

@@ -23,8 +23,16 @@ import java.util.function.LongSupplier;
  * plan-fpv-cast-av-v1 P3 —— 施法瞬间 juice：FOV 加法脉冲控制器 + cast 状态转换驱动的调度。
  *
  * <p><b>生命周期契约</b>（§P3）：状态机 {@code idle → pulse → decay → idle}，所有路径终点回到
- * 单一基准 FOV（加法偏移归零），复位幂等。驱动路径唯一 = {@link CastStateStore} 的状态转换回调
- * （由 {@code CastSyncHandler} / 本地预测 replace 触发）；client tick 推进 decay 与死亡 teardown。
+ * 单一基准 FOV（加法偏移归零），复位幂等。client tick 推进 decay 与死亡 teardown。
+ *
+ * <p><b>两条驱动路径</b>（都只产出同一个 {@link #pulse} / 共享 shake 单通道，last-write-wins）：
+ * <ol>
+ *   <li><b>cast 状态转换</b>——{@link CastStateStore} 的回调（由 {@code CastSyncHandler} /
+ *       本地预测 replace 触发），走下述 identity 门控。绝大多数重型招走这条。</li>
+ *   <li><b>动画事件</b>——{@link #onAnimPlayed}（{@code VfxEventRouter} 在 play_anim 真正播出后调）。
+ *       heaven_gate 专用：它的 cast 条与真实引导窗错开 3s，只有动画事件能对准劈下那一刻，详见
+ *       下方「动画事件驱动的 juice」段。</li>
+ * </ol>
  *
  * <p><b>门控</b>（§8.1 #3）：release juice 只绑**已 accepted（观测到 CASTING）的 cast identity**。
  * identity = {@code (slot, startedAtMs)} 二元组（{@link CastState} 无唯一 cast id；不含推断得来的
@@ -376,8 +384,12 @@ public final class CastFovController {
         clock = c == null ? System::currentTimeMillis : c;
     }
 
-    /** 动画事件驱动 juice 的本地玩家判定 seam（单测注入，免 MinecraftClient）。 */
-    static void setLocalPlayerPredicateForTest(LocalPlayerPredicate p) {
+    /**
+     * 动画事件驱动 juice 的本地玩家判定 seam（单测注入，免 MinecraftClient）。
+     * public 与 {@link CameraShakeController#resetForTests()} 同例——跨包的路由接线测试
+     *（{@code com.bong.client.network.VfxEventRouterTest}）要验 play_anim → juice 这条链。
+     */
+    public static void setLocalPlayerPredicateForTest(LocalPlayerPredicate p) {
         localPlayerPredicate = p == null ? CastFovController::isLocalPlayerFromClient : p;
     }
 
@@ -386,7 +398,8 @@ public final class CastFovController {
         localPlayerEntityPredicate = p == null ? (e -> e instanceof ClientPlayerEntity) : p;
     }
 
-    static void resetForTests() {
+    /** public 理由同 {@link #setLocalPlayerPredicateForTest}（跨包路由接线测试要复位 juice 状态）。 */
+    public static void resetForTests() {
         pulse = null;
         synchronized (LOCK) {
             pending = null;
