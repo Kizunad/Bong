@@ -199,6 +199,7 @@ use self::tribulation::{
 };
 use crate::body_plan::RaceId;
 use crate::coffin::{CoffinComponent, CoffinRegistry, CoffinStateChanged};
+use crate::combat::CombatClock;
 use crate::cultivation::components::Realm;
 use crate::nourishment::Nourishment;
 use crate::npc::possession::DuoSheIntentForwardSet;
@@ -217,6 +218,7 @@ use crate::tribulation::scorch_record::{
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tick};
+use crate::world::spawn_tutorial::{TutorialState, TutorialTelemetry};
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -582,6 +584,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<crate::inventory::InventoryInstanceIdAllocator>>,
     mut pending_narrations: Option<ResMut<crate::player::gameplay::PendingGameplayNarrations>>,
+    clock: Option<Res<CombatClock>>,
+    mut tutorial_telemetry: Option<ResMut<TutorialTelemetry>>,
     mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut coffin_state_events: Option<ResMut<Events<CoffinStateChanged>>>,
@@ -974,6 +978,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             };
             let fresh_skill_set = crate::skill::components::SkillSet::default();
             let fresh_lifespan = LifespanComponent::new(bundle.spec.lifespan_cap);
+            let fresh_tutorial_state =
+                TutorialState::new(clock.as_deref().map(|clock| clock.tick).unwrap_or_default());
             if let Err(error) = persist_new_character_transition(
                 &settings,
                 player_persistence,
@@ -996,7 +1002,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                         insight_quota: &insight_quota,
                         unlocked_perceptions: &unlocked_perceptions,
                         insight_modifiers: &insight_modifiers,
-                        tutorial_state: None,
+                        tutorial_state: Some(&fresh_tutorial_state),
                         meridian_severed: &severed_permanent,
                         poison_toxicity: Some(&poison_toxicity),
                         digestion_load: Some(&digestion_load),
@@ -1011,7 +1017,15 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 continue;
             }
             *allocator = staged_allocator;
-            Some((fresh_inventory, fresh_skill_set, fresh_lifespan))
+            if let Some(telemetry) = tutorial_telemetry.as_deref_mut() {
+                telemetry.started = telemetry.started.saturating_add(1);
+            }
+            Some((
+                fresh_inventory,
+                fresh_skill_set,
+                fresh_lifespan,
+                fresh_tutorial_state,
+            ))
         } else {
             None
         };
@@ -1063,10 +1077,17 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             entity_commands.insert(restored_juebi_runtime);
         }
 
-        if let (Some(bundle), Some((fresh_inventory, fresh_skill_set, fresh_lifespan))) =
-            (reincarnation, fresh_reincarnation_runtime)
+        if let (
+            Some(bundle),
+            Some((fresh_inventory, fresh_skill_set, fresh_lifespan, fresh_tutorial_state)),
+        ) = (reincarnation, fresh_reincarnation_runtime)
         {
-            entity_commands.insert((fresh_inventory, fresh_skill_set, fresh_lifespan));
+            entity_commands.insert((
+                fresh_inventory,
+                fresh_skill_set,
+                fresh_lifespan,
+                fresh_tutorial_state,
+            ));
 
             let target_position = Position::new(bundle.spec.spawn_pos);
             if let Some(position) = position.as_deref_mut() {
@@ -1653,6 +1674,7 @@ mod tests {
     use crate::player::state::PlayerState;
     use crate::skill::events::SkillCapChanged;
     use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+    use crate::world::spawn_tutorial::{TutorialHook, TutorialState, TutorialTelemetry};
     use std::collections::HashMap;
     use valence::prelude::{
         App, BlockPos, EntityLayerId, Events, IntoSystemConfigs, Position, Update,
@@ -1870,11 +1892,12 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn seed_cultivation_bundle(
+    fn seed_cultivation_bundle_with_tutorial(
         settings: &PersistenceSettings,
         username: &str,
         realm: Realm,
         life_record: &LifeRecord,
+        tutorial_state: Option<&TutorialState>,
     ) {
         crate::persistence::persist_player_cultivation_bundle(
             settings,
@@ -1892,12 +1915,22 @@ mod tests {
             &InsightQuota::default(),
             &UnlockedPerceptions::default(),
             &InsightModifiers::new(),
-            None,
+            tutorial_state,
             &MeridianSeveredPermanent::default(),
             None,
             None,
         )
         .expect("seeding cultivation bundle should succeed");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_cultivation_bundle(
+        settings: &PersistenceSettings,
+        username: &str,
+        realm: Realm,
+        life_record: &LifeRecord,
+    ) {
+        seed_cultivation_bundle_with_tutorial(settings, username, realm, life_record, None);
     }
 
     #[test]
@@ -2136,6 +2169,72 @@ mod tests {
     }
 
     #[test]
+    fn production_join_reincarnation_replaces_old_tutorial_before_join_hydration() {
+        let (settings, root) = temp_persistence_settings("reincarnate-join-tutorial-order");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let username = "TutorialReborn";
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, username)
+                .expect("seeding current_char_id should succeed");
+        let old_canonical_id =
+            crate::player::state::player_character_id(username, old_raw_id.as_str());
+        let mut old_tutorial = TutorialState::new(777);
+        old_tutorial.trigger(TutorialHook::CoffinOpened);
+        old_tutorial.completed_at_tick = Some(999);
+        seed_cultivation_bundle_with_tutorial(
+            &settings,
+            username,
+            Realm::Spirit,
+            &terminated_life_record(&old_canonical_id),
+            Some(&old_tutorial),
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence);
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        app.insert_resource(TutorialTelemetry::default());
+        app.add_systems(
+            Update,
+            (
+                attach_cultivation_to_joined_clients,
+                crate::world::spawn_tutorial::attach_tutorial_state_to_joined_clients
+                    .after(attach_cultivation_to_joined_clients),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client(username);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let tutorial = app
+            .world()
+            .get::<TutorialState>(entity)
+            .expect("join reincarnation must attach a fresh tutorial state in the commit frame");
+        assert_eq!(tutorial, &TutorialState::new(0));
+        assert_ne!(tutorial, &old_tutorial);
+        assert_eq!(
+            app.world().resource::<TutorialTelemetry>().started,
+            1,
+            "join reincarnation must count exactly one fresh tutorial start before hydration skips the entity"
+        );
+
+        let persisted = crate::persistence::load_player_cultivation_bundle(&settings, username)
+            .expect("reincarnated bundle should reload")
+            .expect("reincarnated bundle must exist");
+        assert_eq!(
+            serde_json::from_value::<TutorialState>(persisted["tutorial_state"].clone())
+                .expect("fresh tutorial state must persist"),
+            TutorialState::new(0)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_join_reincarnation_clears_tsy_and_coffin_runtime_after_commit() {
         let (settings, root) = temp_persistence_settings("reincarnate-join-runtime-cleanup");
         let player_persistence = player_state_persistence_for(&settings, &root);
@@ -2300,6 +2399,7 @@ mod tests {
             satiety: 17.0,
             hydration: 29.0,
         };
+        let old_tutorial = TutorialState::new(600);
         crate::persistence::persist_player_cultivation_bundle_with_nourishment(
             &settings,
             username,
@@ -2316,7 +2416,7 @@ mod tests {
             &InsightQuota::default(),
             &UnlockedPerceptions::default(),
             &InsightModifiers::new(),
-            None,
+            Some(&old_tutorial),
             &MeridianSeveredPermanent::default(),
             None,
             None,
@@ -2369,6 +2469,7 @@ mod tests {
         app.insert_resource(allocator);
         app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
         app.insert_resource(CoffinRegistry::default());
+        app.insert_resource(TutorialTelemetry::default());
         app.add_event::<CoffinStateChanged>();
         app.add_systems(Update, attach_cultivation_to_joined_clients);
 
@@ -2381,6 +2482,7 @@ mod tests {
                 client_bundle,
                 old_state.clone(),
                 old_lifespan.clone(),
+                old_tutorial.clone(),
                 CurrentDimension(DimensionKind::Tsy),
                 CoffinComponent {
                     entered_at_tick: 20,
@@ -2406,6 +2508,16 @@ mod tests {
         assert!(
             app.world().get::<Cultivation>(entity).is_none(),
             "failed join reincarnation must not attach a staged fresh cultivation state"
+        );
+        assert_eq!(
+            app.world().get::<TutorialState>(entity),
+            Some(&old_tutorial),
+            "failed join reincarnation must preserve the prior tutorial state"
+        );
+        assert_eq!(
+            app.world().resource::<TutorialTelemetry>().started,
+            0,
+            "failed join reincarnation must not count a tutorial that never committed"
         );
         assert!(
             app.world()

@@ -64,7 +64,7 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillSet;
 use crate::skin::NpcVisualProfile;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
-use crate::world::spawn_tutorial::TutorialState;
+use crate::world::spawn_tutorial::{TutorialState, TutorialTelemetry};
 use crate::world::spirit_eye::SpiritEyeRegistry;
 use crate::world::zone::ZoneRegistry;
 
@@ -163,6 +163,13 @@ type NearDeathPersistenceQueryItem<'a> = (
             Option<&'a DigestionLoad>,
         ),
     ),
+);
+
+type RevivalRuntimeResources<'w, 's> = (
+    Option<ResMut<'w, crate::coffin::CoffinRegistry>>,
+    EventWriter<'w, crate::coffin::CoffinStateChanged>,
+    Option<Res<'w, DimensionLayers>>,
+    Option<ResMut<'w, TutorialTelemetry>>,
 );
 
 struct DeathScreenContext<'a> {
@@ -1048,12 +1055,9 @@ pub fn handle_revival_action_intents(
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
     mut clients: Query<&mut valence::prelude::Client>,
     mut vfx_events: EventWriter<VfxEventRequest>,
-    // P0 fix: coffin 清除与 Overworld 运行时发布参数。
-    (mut coffin_registry, mut coffin_state_events, dimension_layers): (
-        Option<ResMut<crate::coffin::CoffinRegistry>>,
-        EventWriter<crate::coffin::CoffinStateChanged>,
-        Option<Res<DimensionLayers>>,
-    ),
+    // P0 fix: coffin 清除、Overworld 运行时发布与教程计数参数。
+    (mut coffin_registry, mut coffin_state_events, dimension_layers, mut tutorial_telemetry):
+        RevivalRuntimeResources<'_, '_>,
 ) {
     for intent in intents.read() {
         let Ok((
@@ -1289,6 +1293,7 @@ pub fn handle_revival_action_intents(
                     meridian_severed,
                     poison_toxicity,
                     digestion_load,
+                    tutorial_telemetry.as_deref_mut(),
                     player_persistence.as_deref(),
                     default_loadout.as_deref(),
                     item_registry.as_deref(),
@@ -2066,6 +2071,7 @@ fn reset_for_new_character(
     _meridian_severed: Option<&MeridianSeveredPermanent>,
     _poison_toxicity: Option<&PoisonToxicity>,
     _digestion_load: Option<&DigestionLoad>,
+    tutorial_telemetry: Option<&mut TutorialTelemetry>,
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
     item_registry: Option<&crate::inventory::ItemRegistry>,
@@ -2142,6 +2148,7 @@ fn reset_for_new_character(
     let fresh_meridian_severed = MeridianSeveredPermanent::default();
     let fresh_poison_toxicity = PoisonToxicity::default();
     let fresh_digestion_load = DigestionLoad::for_realm(reincarnation.spec.realm);
+    let fresh_tutorial_state = TutorialState::new(now_tick);
 
     if let Err(error) = persist_new_character_transition(
         persistence,
@@ -2165,7 +2172,7 @@ fn reset_for_new_character(
                 insight_quota: &fresh_insight_quota,
                 unlocked_perceptions: &fresh_unlocked_perceptions,
                 insight_modifiers: &fresh_insight_modifiers,
-                tutorial_state: None,
+                tutorial_state: Some(&fresh_tutorial_state),
                 meridian_severed: &fresh_meridian_severed,
                 poison_toxicity: Some(&fresh_poison_toxicity),
                 digestion_load: Some(&fresh_digestion_load),
@@ -2178,6 +2185,10 @@ fn reset_for_new_character(
             username.0
         );
         return false;
+    }
+
+    if let Some(telemetry) = tutorial_telemetry {
+        telemetry.started = telemetry.started.saturating_add(1);
     }
 
     *lifecycle = staged_lifecycle;
@@ -2264,6 +2275,7 @@ fn reset_for_new_character(
         AntiCheatCounter::default(),
     ));
     entity_commands.insert((
+        fresh_tutorial_state,
         QuickSlotBindings::default(),
         SkillBarBindings::default(),
         UnlockedStyles::default(),
@@ -2272,7 +2284,6 @@ fn reset_for_new_character(
     ));
     commands
         .entity(entity)
-        .remove::<crate::world::spawn_tutorial::TutorialState>()
         .remove::<crate::combat::components::Casting>()
         .remove::<crate::cultivation::insight_flow::PendingInsightOffer>()
         .remove::<crate::cultivation::tribulation::TribulationState>()
@@ -2705,6 +2716,7 @@ mod tests {
         .expect("persisted nourishment should decode")
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn seed_revival_nourishment_bundle(
         settings: &PersistenceSettings,
         username: &str,
@@ -2712,6 +2724,7 @@ mod tests {
         meridians: &MeridianSystem,
         contamination: &Contamination,
         life_record: &LifeRecord,
+        tutorial_state: Option<&TutorialState>,
         nourishment: Nourishment,
     ) {
         crate::persistence::persist_player_cultivation_bundle_with_nourishment(
@@ -2727,7 +2740,7 @@ mod tests {
             &crate::cultivation::insight::InsightQuota::default(),
             &crate::cultivation::insight_apply::UnlockedPerceptions::default(),
             &crate::cultivation::insight_apply::InsightModifiers::new(),
-            None,
+            tutorial_state,
             &crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
             None,
             None,
@@ -2891,6 +2904,7 @@ mod tests {
             &meridians,
             &contamination,
             &life_record,
+            None,
             persisted_nourishment,
         );
 
@@ -2993,6 +3007,7 @@ mod tests {
             &meridians,
             &contamination,
             &life_record,
+            None,
             persisted_nourishment,
         );
 
@@ -4454,6 +4469,7 @@ mod tests {
             &meridians,
             &contamination,
             &life_record,
+            None,
             Nourishment {
                 satiety: 12.0,
                 hydration: 8.0,
@@ -6261,6 +6277,7 @@ mod tests {
             settings.db_path(),
         ));
         app.insert_resource(CombatClock { tick: 800 });
+        app.insert_resource(TutorialTelemetry::default());
 
         let item_registry =
             crate::inventory::load_item_registry().expect("item registry should load");
@@ -6522,9 +6539,14 @@ mod tests {
             DigestionLoad::for_realm(Realm::Awaken),
             "new life must use the Awaken digestion baseline"
         );
-        assert!(
-            entity_ref.get::<TutorialState>().is_none(),
-            "new life must remove the old tutorial component so join attachment starts fresh"
+        let tutorial_state = entity_ref
+            .get::<TutorialState>()
+            .expect("fresh character must publish a new tutorial state immediately");
+        assert_eq!(tutorial_state, &TutorialState::new(800));
+        assert_eq!(
+            app.world().resource::<TutorialTelemetry>().started,
+            1,
+            "CreateNewCharacter must count exactly one fresh tutorial start after commit"
         );
         assert_eq!(
             entity_ref.get::<CurrentDimension>().copied(),
@@ -6575,9 +6597,10 @@ mod tests {
             crate::persistence::load_player_cultivation_bundle(&settings, username.0.as_str())
                 .expect("fresh cultivation bundle should reload")
                 .expect("fresh cultivation bundle must exist");
-        assert!(
-            persisted_bundle.get("tutorial_state").is_none()
-                || persisted_bundle["tutorial_state"].is_null()
+        assert_eq!(
+            serde_json::from_value::<TutorialState>(persisted_bundle["tutorial_state"].clone())
+                .expect("fresh tutorial state must persist"),
+            TutorialState::new(800)
         );
         assert_eq!(
             serde_json::from_value::<MeridianSeveredPermanent>(
@@ -6656,6 +6679,7 @@ mod tests {
             satiety: 23.0,
             hydration: 31.0,
         };
+        let old_tutorial_state = TutorialState::new(500);
         seed_revival_nourishment_bundle(
             &settings,
             username,
@@ -6663,6 +6687,7 @@ mod tests {
             &old_meridians,
             &old_contamination,
             &old_life_record,
+            Some(&old_tutorial_state),
             old_nourishment,
         );
         let persisted_bundle_before =
@@ -6672,6 +6697,7 @@ mod tests {
 
         let mut app = revival_action_test_app(settings.clone(), 800);
         app.insert_resource(player_persistence.clone());
+        app.insert_resource(TutorialTelemetry::default());
         let item_registry =
             crate::inventory::load_item_registry().expect("item registry should load");
         let default_loadout = crate::inventory::load_default_loadout(&item_registry)
@@ -6708,6 +6734,7 @@ mod tests {
             },
             old_lifespan,
             old_state.clone(),
+            old_tutorial_state.clone(),
         ));
         let coffin_lower = valence::prelude::BlockPos::new(10, 64, 10);
         let coffin_before = crate::coffin::CoffinComponent {
@@ -6771,6 +6798,16 @@ mod tests {
             *app.world().get::<Nourishment>(entity).unwrap(),
             old_nourishment,
             "precommit failure must not reset live nourishment"
+        );
+        assert_eq!(
+            app.world().get::<TutorialState>(entity),
+            Some(&old_tutorial_state),
+            "precommit failure must not publish a fresh tutorial state"
+        );
+        assert_eq!(
+            app.world().resource::<TutorialTelemetry>().started,
+            0,
+            "precommit failure must not count a tutorial that never committed"
         );
         assert_eq!(
             *app.world()
@@ -7164,6 +7201,7 @@ mod tests {
                 &meridians,
                 &contamination,
                 &life_record,
+                None,
                 Nourishment::spawn_default(),
             );
             spawn_revival_action_actor(
