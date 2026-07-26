@@ -79,3 +79,15 @@ Round 2 也否定了“把 overflow 退回 NPC `qi_current`”的修法，因为
 - accepted 部分若同时写 `zone.spirit_qi` 和 zone ledger，会在 telemetry 中双计。
 - overflow 账户命名需要稳定，避免每 tick 用不稳定 id 产生难以归并的 ledger 噪音。
 - 缺 `ZoneRegistry` 分支修复后可能暴露测试环境未插资源的问题；应把生产系统资源和单测最小 world 区分清楚。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit `269c89e6e`（2026-07-07，「修复 NPC 技能 overflow 真元落账」）已修复本 bug：`server/src/npc/npc_skill.rs:82-112` 新增 `credit_spent_qi_to_ledger`，把 NPC 技能扣除但 zone 未能接收的 overflow 部分经 `WorldQiAccount::set_balance` + `transfer` 真实落账到 ledger，不再只 `push` `Events<QiTransfer>` 审计事件；`route_spent_qi_to_overflow`（`:114-134`）在无 `NpcPatrol`、home zone 缺失、zone 满仓等分支下统一调用该 helper，堵住了 `summarize_world_qi()` 口径下真元凭空消失的缺口。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/npc/npc_skill.rs`（新增 `credit_spent_qi_to_ledger` + `route_spent_qi_to_overflow` 接入 `npc_heal_basic` / `npc_buff_speed` / `npc_buff_defense` 各 overflow 分支）
+- **关键 commit**：`269c89e6e`，2026-07-07，「修复 NPC 技能 overflow 真元落账」
+- **测试结果**：证据未列出具体测试名；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件，未逐条核实 plan「验收测试计划」中列出的 5 项单测/集成测试是否全部落地。
+- **跨仓库核验**：纯 server 内部真元账本修复（`npc_skill.rs` → `qi_physics::ledger::WorldQiAccount`），未涉及 client/agent 侧 symbol。
+- **遗留 / 后续**：plan 原文「风险」一节提到的「overflow 账户命名稳定性」「缺 `ZoneRegistry` 分支测试环境资源区分」等细节本次审计未逐一核实是否已收口，留待后续如有需要再核查。
