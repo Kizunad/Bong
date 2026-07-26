@@ -705,26 +705,82 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
         self.assertIn("BOT_E2E_NORTH_RIFT_PREVIEW=1", phase)
         self.assertIn("export BONG_ROGUE_SEED_COUNT=0", phase)
 
-    def test_stop_server_kills_tree_waits_and_verifies_port_release(self):
+    def test_stop_server_delegates_shared_lifecycle_and_cleanup_fails_closed(self):
         start = self.source.index("stop_server() {")
         end = self.source.index("\n}\n\ncleanup()", start)
         stop_body = self.source[start:end]
-        for required in (
-            'kill_tree "$SERVER_PID"',
-            'wait "$SERVER_PID"',
-            'SERVER_PID=""',
+        helper_branch = stop_body.index(
+            'if bong_server_stop_process_tree_and_release_port "$pid" 25565; then'
+        )
+        clear_pid = stop_body.index('SERVER_PID=""', helper_branch)
+        success_return = stop_body.index("return 0", clear_pid)
+        helper_fi = stop_body.index("\n  fi", success_return)
+        failure_return = stop_body.index("return 1", helper_fi)
+
+        self.assertLess(
+            helper_branch,
+            clear_pid,
+            "e2e stop_server 必须先由共享 helper 确认停树和端口释放，才能清空 PID",
+        )
+        self.assertLess(clear_pid, success_return)
+        self.assertLess(success_return, helper_fi)
+        self.assertLess(
+            helper_fi,
+            failure_return,
+            "共享 helper 失败时 stop_server 必须保留 PID 并返回失败",
+        )
+        self.assertEqual(
+            stop_body.count('SERVER_PID=""'),
+            1,
+            "SERVER_PID 只能在共享 helper 成功分支清空一次",
+        )
+        for legacy_detail in (
+            'kill_tree "$pid"',
+            'wait "$pid"',
             "port_open 25565",
-            "return 1",
         ):
-            with self.subTest(required=required):
-                self.assertIn(required, stop_body)
+            with self.subTest(legacy_detail=legacy_detail):
+                self.assertNotIn(
+                    legacy_detail,
+                    stop_body,
+                    "stop_server 不得重新内联共享 lifecycle helper 的停树/等待/端口逻辑",
+                )
 
         cleanup_start = self.source.index("cleanup() {")
         cleanup_end = self.source.index("\n}\n\ntrap cleanup EXIT", cleanup_start)
-        self.assertIn(
+        cleanup_body = self.source[cleanup_start:cleanup_end]
+        unconfirmed = cleanup_body.index("STOP_SERVER_CONFIRMED=0")
+        stop_if = cleanup_body.index("if stop_server; then", unconfirmed)
+        confirmed = cleanup_body.index("STOP_SERVER_CONFIRMED=1", stop_if)
+        stop_else = cleanup_body.index("\n  else", confirmed)
+        stop_fi = cleanup_body.index("\n  fi", stop_else)
+        finalize = cleanup_body.index(
+            "bong_server_finalize_preview_persistence_after_stop", stop_fi
+        )
+        finalize_end = cleanup_body.index("; then", finalize)
+        finalize_call = cleanup_body[finalize:finalize_end]
+
+        self.assertLess(unconfirmed, stop_if)
+        self.assertLess(
+            stop_if,
+            confirmed,
+            "cleanup 只能在 stop_server 成功分支标记停服已确认",
+        )
+        self.assertLess(confirmed, stop_else)
+        self.assertEqual(
+            cleanup_body.count("STOP_SERVER_CONFIRMED=1"),
+            1,
+            "cleanup 只能从 stop_server 成功分支产生唯一确认状态",
+        )
+        self.assertNotIn(
             "stop_server || true",
-            self.source[cleanup_start:cleanup_end],
-            "PASS/FAIL/异常退出都必须经 trap 回收当前 server tree",
+            cleanup_body,
+            "停服失败不能被吞掉，否则可能错误恢复仍被 preview server 占用的 SQLite",
+        )
+        self.assertIn(
+            '"$STOP_SERVER_CONFIRMED"',
+            finalize_call,
+            "cleanup 必须把停服确认结果交给共享 finalize helper 决定 restore 或 durable abort",
         )
 
 
