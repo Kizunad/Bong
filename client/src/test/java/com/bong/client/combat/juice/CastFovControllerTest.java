@@ -19,9 +19,12 @@ import com.bong.client.network.VfxEventAnimationBridge;
 import com.bong.client.network.VfxEventRouter;
 import net.minecraft.util.Identifier;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -160,32 +163,118 @@ class CastFovControllerTest {
         assertEquals(0.0, fov(), 1e-9, why + "：FOV 加法偏移必须回到基准 0");
     }
 
-    // ---- profile 注册表 pin ----
+    // ---- 参数表 pin（review finding E：测试侧字面量期望表，不与生产常量互相比对） ----
+
+    /**
+     * plan §P3 参数表的**测试侧字面量镜像**。刻意不引用 {@code CastJuiceProfiles.STRONG} 等
+     * 生产常量——那样常量和实现一起漂移时测试仍会绿（旧版就是这么假绿的）。改这张表 = 改
+     * plan 定稿参数，两边必须同时改，否则撞红。
+     *
+     * @param skillId 招式 id
+     * @param shakeIntensity 抖动强度
+     * @param shakeDurationTicks 抖动时长（tick）
+     * @param fovPeakDegrees FOV 峰值加法偏移（度，0 = 无脉冲）
+     * @param fovDurationTicks FOV 脉冲时长（tick，0 = 无脉冲）
+     */
+    private record ExpectedProfile(
+        String skillId,
+        float shakeIntensity,
+        int shakeDurationTicks,
+        float fovPeakDegrees,
+        int fovDurationTicks
+    ) {
+    }
+
+    /** plan §P3 表「强/中/弱」三档的字面量。 */
+    private static final List<ExpectedProfile> EXPECTED_PROFILES = List.of(
+        new ExpectedProfile("baomai.full_power_release", 1.2f, 20, 9.0f, 7),   // 强
+        new ExpectedProfile("woliu.turbulence_burst", 0.85f, 18, 6.0f, 6),     // 中
+        new ExpectedProfile("zhenmai.sever_chain", 0.85f, 14, 0f, 0),          // 中，无 FOV
+        new ExpectedProfile("anqi.echo_fractal", 0.5f, 12, 0f, 0));            // 弱，无 FOV
 
     @Test
-    void registryPinsCastStateSkillsAndOmitsHeavenGateAndOthers() {
-        CastJuiceProfile baomai = CastJuiceProfiles.get("baomai.full_power_release");
-        assertNotNull(baomai, "baomai 全力释放必须登记（CastState 驱动）");
-        assertEquals(CastJuiceProfiles.STRONG, baomai.shakeIntensity(), "baomai = 强抖动");
-        assertEquals(20, baomai.shakeDurationTicks(), "持续震动 ≈1.0s，不是抖一下");
-        assertEquals(9.0f, baomai.fovPeakDegrees(), 1e-6f);
-        assertEquals(7, baomai.fovDurationTicks());
+    void registryPinsEverySkillFieldByFieldWithLiteralExpectations() {
+        for (ExpectedProfile want : EXPECTED_PROFILES) {
+            CastJuiceProfile got = CastJuiceProfiles.get(want.skillId());
+            assertNotNull(got, want.skillId() + " 必须登记在 CastJuiceProfiles（plan §P3 参数表）");
+            assertEquals(want.skillId(), got.skillId(),
+                "profile 的 skillId 必须与查表键一致，否则注册表自相矛盾");
+            assertEquals(want.shakeIntensity(), got.shakeIntensity(), 1e-6f,
+                want.skillId() + " 抖动强度应为 plan §P3 定稿的 " + want.shakeIntensity()
+                    + "，实际 " + got.shakeIntensity() + "——数值漂移必须撞红");
+            assertEquals(want.shakeDurationTicks(), got.shakeDurationTicks(),
+                want.skillId() + " 抖动时长应为 " + want.shakeDurationTicks() + " tick，实际 "
+                    + got.shakeDurationTicks());
+            assertEquals(want.fovPeakDegrees(), got.fovPeakDegrees(), 1e-6f,
+                want.skillId() + " FOV 峰值应为 +" + want.fovPeakDegrees() + "°，实际 "
+                    + got.fovPeakDegrees());
+            assertEquals(want.fovDurationTicks(), got.fovDurationTicks(),
+                want.skillId() + " FOV 时长应为 " + want.fovDurationTicks() + " tick，实际 "
+                    + got.fovDurationTicks());
+            // 派生谓词与字面量自洽（hasShake/hasFovPulse 是消费侧真正读的东西）
+            assertEquals(want.shakeIntensity() > 0f && want.shakeDurationTicks() > 0,
+                got.hasShake(), want.skillId() + " hasShake 与字面量参数不自洽");
+            assertEquals(want.fovPeakDegrees() != 0f && want.fovDurationTicks() > 0,
+                got.hasFovPulse(), want.skillId() + " hasFovPulse 与字面量参数不自洽");
+        }
+    }
 
-        assertNotNull(CastJuiceProfiles.get("woliu.turbulence_burst"));
-        // sever_chain / echo_fractal 有 shake 无 FOV
-        CastJuiceProfile sever = CastJuiceProfiles.get("zhenmai.sever_chain");
-        assertNotNull(sever);
-        assertTrue(sever.hasShake(), "sever_chain 有 shake");
-        assertFalse(sever.hasFovPulse(), "sever_chain 无 FOV 脉冲（表中 —）");
-        assertFalse(CastJuiceProfiles.get("anqi.echo_fractal").hasFovPulse(), "echo_fractal 无 FOV");
+    @Test
+    void registrySetIsExactlyTheExpectedSkills() {
+        // 精确相等（不是 containsAll）：多登记一招 = 沉浸式极简被破，少一招 = 交付缺失。
+        assertEquals(
+            EXPECTED_PROFILES.stream().map(ExpectedProfile::skillId)
+                .collect(Collectors.toCollection(LinkedHashSet::new)),
+            new LinkedHashSet<>(CastJuiceProfiles.skillIds()),
+            "CastState 驱动的注册集合必须与 plan §P3 参数表精确相等");
 
         // heaven_gate 已从 CastState 驱动移除（cast 条 4s 与引导窗 7s 错开）→ 改动画事件驱动。
-        assertNull(CastJuiceProfiles.get("sword_path.heaven_gate"),
+        assertNull(CastJuiceProfiles.get(GATE_SKILL),
             "heaven_gate 不再走 CastState 驱动（改 onAnimPlayed 动画事件，见 animDriven* 测试）");
         // 沉浸式极简：普通招零 juice
         assertNull(CastJuiceProfiles.get("sword.cleave"), "普通招不登记 → 无 juice");
-        assertNull(CastJuiceProfiles.get(null));
-        assertEquals(4, CastJuiceProfiles.skillIds().size(), "CastState 驱动仅剩 4 个重型招");
+        assertNull(CastJuiceProfiles.get(null), "null skillId 不得炸，返回 null");
+    }
+
+    @Test
+    void namedIntensityTiersPinTheLiteralStrongMediumWeak() {
+        // 三档常量本身也 pin 字面量：它们是 plan §P3 表「强/中/弱」的唯一落地。
+        assertEquals(1.2f, CastJuiceProfiles.STRONG, 1e-6f, "STRONG = 强 = 1.2");
+        assertEquals(0.85f, CastJuiceProfiles.MEDIUM, 1e-6f, "MEDIUM = 中 = 0.85");
+        assertEquals(0.5f, CastJuiceProfiles.WEAK, 1e-6f, "WEAK = 弱 = 0.5");
+    }
+
+    @Test
+    void animDrivenJuiceParametersArePinnedFieldByField() {
+        // 动画事件驱动的两段参数经只读 seam 逐字段 pin（含包络——它决定「渐强」还是「满幅」，
+        // 改错了手感完全不同却不影响任何幅度断言）。
+        assertEquals(Set.of(GATE_SKILL), CastFovController.animDrivenSkillIds(),
+            "动画事件驱动的招式集合必须精确等于 {heaven_gate}");
+        assertEquals(BongAnimations.SWORD_HEAVEN_GATE_CHARGE,
+            CastFovController.chargeAnimId(GATE_SKILL), "charge 动画 id 契约");
+        assertEquals(BongAnimations.SWORD_HEAVEN_GATE_RELEASE,
+            CastFovController.releaseAnimId(GATE_SKILL), "release 动画 id 契约");
+
+        CastFovController.ChargeShake charge = CastFovController.chargeAnimJuice(GATE_SKILL);
+        assertNotNull(charge, "heaven_gate 必须有 charge 段 juice 参数");
+        assertEquals(0.8f, charge.peakIntensity(), 1e-6f, "charge 峰值强度 0.8");
+        assertEquals(60, charge.buildDurationTicks(),
+            "charge 渐强时长 60t = sword_heaven_gate_charge 动画自身 endTick（P2 revert 后跟随值）");
+        assertEquals(CameraShakeController.Envelope.CRESCENDO, charge.envelope(),
+            "charge 必须是 CRESCENDO 渐强，不是 SUSTAIN 满幅");
+
+        CastFovController.ReleaseBurst release = CastFovController.releaseAnimJuice(GATE_SKILL);
+        assertNotNull(release, "heaven_gate 必须有 release 段 juice 参数");
+        assertEquals(1.5f, release.shakeIntensity(), 1e-6f, "release 抖动强度 1.5（比 STRONG 还强）");
+        assertEquals(24, release.shakeDurationTicks(), "release 抖动时长 24t ≈1.2s");
+        assertEquals(12.0f, release.fovPeakDegrees(), 1e-6f, "release FOV punch +12°");
+        assertEquals(8, release.fovDurationTicks(), "release FOV 时长 8t");
+        assertEquals(CameraShakeController.Envelope.SUSTAIN, release.envelope(),
+            "release 必须是 SUSTAIN 满幅撑住，不是 CRESCENDO/DECAY");
+
+        assertNull(CastFovController.chargeAnimJuice("baomai.full_power_release"),
+            "非动画事件驱动的招不得有动画段参数");
+        assertNull(CastFovController.releaseAnimJuice(null), "null skillId 不得炸");
     }
 
     // ---- 生产接线（防孤岛：bootstrap 漏挂一行，整条 CastState 驱动会静默失效） ----

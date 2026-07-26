@@ -220,7 +220,7 @@ public final class CastFovController {
         if (skillId == null) {
             return;  // 非技能栏施法 / 空槽 → 无 juice
         }
-        AnimDrivenJuice animJuice = ANIM_DRIVEN_SKILLS.get(skillId);
+        AnimDrivenJuice animJuice = animDrivenJuice(skillId);
         if (animJuice != null) {
             if (animToken == null) {
                 animToken = new AnimCastToken(id, animJuice, now);  // 同身份重复 CASTING：幂等
@@ -488,15 +488,24 @@ public final class CastFovController {
             intensity, durationTicks, CAST_SHAKE_DIR_X, CAST_SHAKE_DIR_Z, false, envelope, now);
     }
 
+    /**
+     * 该招的动画事件驱动契约；未登记（或 {@code null}）返回 {@code null}。
+     * {@code Map.of} 的 {@code get(null)} 会抛 NPE，故显式挡 null——与
+     * {@link CastJuiceProfiles#get} 的 null-safe 口径一致。
+     */
+    private static AnimDrivenJuice animDrivenJuice(String skillId) {
+        return skillId == null ? null : ANIM_DRIVEN_SKILLS.get(skillId);
+    }
+
     /** heaven_gate 两段动画 juice 参数的只读查询 seam（测试逐字段 pin 用，不放宽封装）。 */
     static ChargeShake chargeAnimJuice(String skillId) {
-        AnimDrivenJuice juice = ANIM_DRIVEN_SKILLS.get(skillId);
+        AnimDrivenJuice juice = animDrivenJuice(skillId);
         return juice == null ? null : juice.charge();
     }
 
     /** 同 {@link #chargeAnimJuice}：release 段参数只读查询。 */
     static ReleaseBurst releaseAnimJuice(String skillId) {
-        AnimDrivenJuice juice = ANIM_DRIVEN_SKILLS.get(skillId);
+        AnimDrivenJuice juice = animDrivenJuice(skillId);
         return juice == null ? null : juice.release();
     }
 
@@ -507,13 +516,13 @@ public final class CastFovController {
 
     /** 该招登记的 charge / release 动画 id（测试 pin：动画↔招式的关联契约）。 */
     static Identifier chargeAnimId(String skillId) {
-        AnimDrivenJuice juice = ANIM_DRIVEN_SKILLS.get(skillId);
+        AnimDrivenJuice juice = animDrivenJuice(skillId);
         return juice == null ? null : juice.chargeAnim();
     }
 
     /** 同 {@link #chargeAnimId}：release 段动画 id。 */
     static Identifier releaseAnimId(String skillId) {
-        AnimDrivenJuice juice = ANIM_DRIVEN_SKILLS.get(skillId);
+        AnimDrivenJuice juice = animDrivenJuice(skillId);
         return juice == null ? null : juice.releaseAnim();
     }
 
