@@ -1245,6 +1245,27 @@ class CastFovControllerTest {
     }
 
     @Test
+    void firedIdentityCannotReopenAnAnimTokenAfterTtlClearedTheOldOne() {
+        // 上一条用内部 seam 断言锁 FIRED 终态；本条锁它的**可观察后果**——纯行为断言，
+        // 删掉动画 release 的 markTerminal 就会在这里放出整整第二发 juice：
+        // release 触发 → 令牌 TTL 过期 → 一条杂散动画让 liveAnimToken 惰性清空 animToken →
+        // 同身份的迟到权威 CASTING 若能重开一枚 flags 全新的令牌，下一条杂散 release 就二次触发。
+        acceptGateCast(START);
+        releaseAnim();
+        advanceMs(CastFovController.ANIM_TOKEN_TTL_MS + 1);   // 令牌过期，两个通道也早已走完
+        releaseAnim();                                        // 杂散动画：触发惰性清空
+        CastFovController.tick();
+        assertBaseline("过期后的杂散动画不触发，脉冲已回基准");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样已归零");
+
+        acceptGateCast(START);   // 同身份迟到权威 CASTING —— FIRED 终态必须挡住重开令牌
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("已 FIRED 的身份不得在令牌被 TTL 清空后重开并二次放 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不二次触发");
+    }
+
+    @Test
     void unrelatedCastDoesNotDropTheGateTokenBeforeItsReleaseAnim() {
         // heaven_gate 的 cast 条 4s 就走完，release 动画要到引导第 140t（7s）才发。中间这 3s
         // 玩家放别的招会带来一条权威 CASTING——那**不是**天门被取消，不得顶掉天门的令牌，
