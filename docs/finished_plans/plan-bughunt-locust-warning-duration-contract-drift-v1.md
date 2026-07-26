@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `locust_swarm_warning.duration_ticks` 被客户端静默丢弃 | fix_pr | ⬜ |
+| P0 | `locust_swarm_warning.duration_ticks` 被客户端静默丢弃 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — `locust_swarm_warning.duration_ticks` 被客户端静默丢弃
 
@@ -61,3 +61,15 @@
 ## 审计来源
 
 bug-hunt 定点轮（范围限定 `agent/packages/schema` / `server schema & network payload` / `client payload consumer`，显式避开 forge `step_state` contract drift）。证据来自静态代码链路复核：TypeBox 合同、sample、server producer、client handler、共享 Rust mirror 与现有 fixture 覆盖面交叉对账；结论为 **report-only**，先提交 skeleton 收口问题与修复面，再由后续 fix PR 单独落地。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit `69429cc16`（2026-07-06，「修复灵蝗潮预警时长契约漂移」）已修复本 bug：`client/src/main/java/com/bong/client/network/LocustSwarmWarningHandler.java:96-105` 的 `readDurationMillis` 改为读取 payload 的 `duration_ticks` 字段并按 `× 50ms` 转换成毫秒，只有字段缺失时才回退 `DEFAULT_DURATION_MILLIS = 6_500L`。toast 与 `pressure_jitter` 特效生命周期不再对所有蝗潮预警恒定 6.5 秒，而是跟随 server 下发的真实时长。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/java/com/bong/client/network/LocustSwarmWarningHandler.java`（`readDurationMillis` 新增字段读取 + tick→millis 转换 + 缺失回退分支）
+- **关键 commit**：`69429cc16`，2026-07-06，「修复灵蝗潮预警时长契约漂移」
+- **测试结果**：commit 同步扩充了 `LocustSwarmWarningHandler` 相关测试覆盖 `duration_ticks` 存在/缺失两条分支；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件。
+- **跨仓库核验**：server 侧 `server/src/network/mod.rs:2301-2317` 的 `locust_swarm_warning_payload()` 原本已下发 `duration_ticks`；client 侧 `LocustSwarmWarningHandler.java:96-105` 现已消费该字段，契约打通。
+- **遗留 / 后续**：plan 原文「开放问题」提到的共享 Rust `server/src/schema/client_payload.rs` 契约回归覆盖缺口、以及 `direction` 字段是否需要客户端消费，本次审计未逐一核实是否一并收口，留待后续如有需要再核查。
