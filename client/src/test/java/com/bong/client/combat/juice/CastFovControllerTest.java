@@ -191,6 +191,37 @@ class CastFovControllerTest {
     }
 
     @Test
+    void lateInterruptOfSupersededCastDoesNotKillTheLiveOne() {
+        // 回归（PR #1249 review finding 1）：A 起 → B 取代 A → 迟到的 INTERRUPT(A) → COMPLETE(B)
+        // **仍然**触发脉冲。旧实现 voidPending 无条件清 pending，迟到的旧打断会误杀新施法；
+        // 且旧 identity 含推断得来的 source，INTERRUPT 落地后 COMPLETE 会退化成 QUICK_SLOT 认不出自己。
+        predict(HEAVY_SLOT, START);                                   // 武装 A
+        serverSync("casting", HEAVY_SLOT, START + 5000, "none");      // B 取代 A（supersession）
+        serverSync("interrupt", HEAVY_SLOT, START, "interrupt_movement");  // 迟到/重传的 INTERRUPT(A)
+
+        serverSync("complete", HEAVY_SLOT, START + 5000, "completed");     // B 正常 release
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6,
+            "迟到的 INTERRUPT(A) 只作废 A，不得牵连在飞的 B —— B 的 release 必须照常触发脉冲");
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "B 的抖动同样照常触发");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("B 的脉冲 decay 完毕");
+    }
+
+    @Test
+    void lateInterruptStillVoidsItsOwnPending() {
+        // 身份匹配时照旧作废（取消令牌语义不能因为「只清同身份」而失效）。
+        predict(HEAVY_SLOT, START);
+        serverSync("casting", HEAVY_SLOT, START + 5000, "none");      // B 取代 A
+        serverSync("interrupt", HEAVY_SLOT, START + 5000, "interrupt_contam");  // 打断的正是 B
+        serverSync("complete", HEAVY_SLOT, START + 5000, "completed");          // 迟到的 complete
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("打断命中自己身份 → pending 作废，后续 complete 不触发");
+    }
+
+    @Test
     void duplicateReleaseIsIdempotent() {
         predict(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");

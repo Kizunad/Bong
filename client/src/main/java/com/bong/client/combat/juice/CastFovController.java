@@ -24,14 +24,15 @@ import java.util.function.LongSupplier;
  * （由 {@code CastSyncHandler} / 本地预测 replace 触发）；client tick 推进 decay 与死亡 teardown。
  *
  * <p><b>门控</b>（§8.1 #3）：release juice 只绑**已 accepted（观测到 CASTING）的 cast identity**。
- * identity = {@code (source, slot, startedAtMs)} 三元组（{@link CastState} 无唯一 cast id）。
+ * identity = {@code (slot, startedAtMs)} 二元组（{@link CastState} 无唯一 cast id；不含推断得来的
+ * source，理由见 {@link Identity}）。
  * <ul>
  *   <li>CASTING：按 identity 武装 pending（该招在 {@link CastJuiceProfiles} 有 profile 才武装）；
  *       同 identity 重复 CASTING 幂等，异 identity 取代旧 pending（supersession）。</li>
  *   <li>COMPLETE：identity 匹配且未触发过 → 触发 FOV 脉冲 + shake，标记已触发（同 identity 重复
  *       release 幂等）。</li>
- *   <li>INTERRUPT：作废 pending，并记录被作废 identity（防**乱序**——打断早于 CASTING 到达时，
- *       后到的同 identity CASTING 不再武装）。</li>
+ *   <li>INTERRUPT：只作废**同 identity** 的 pending（异 identity 的在飞 cast 不受牵连），并记录
+ *       被作废 identity（防**乱序**——打断早于 CASTING 到达时，后到的同 identity CASTING 不再武装）。</li>
  *   <li>IDLE：清 pending（施放前 NONE 拒绝 / 300ms 自回 idle）。</li>
  * </ul>
  * 施放前拒绝 client 从不收到 CASTING → 无 pending 可作废（对门控无害）。施法中非受击死亡 server
@@ -128,9 +129,20 @@ public final class CastFovController {
         fire(pending.profile, now);
     }
 
+    /**
+     * INTERRUPT：作废<b>该 identity 自己的</b> pending。
+     *
+     * <p>{@link #voidedId} 无条件记录（防乱序：打断早于 CASTING 到达时，后到的同 identity
+     * 不再武装）；但 {@link #pending} <b>只在身份匹配时</b>才清——否则 A 被 B 取代后，一条
+     * 迟到/重传的 {@code INTERRUPT(A)} 会顺手把 B 的 pending 误杀，B 随后 release 静默无 juice。
+     * 取消令牌是绑 identity 的，不是「见到打断就清场」。
+     */
     private static void voidPending(CastState state) {
-        voidedId = Identity.of(state);  // 记录被作废身份（取消令牌语义 + 防乱序复活）
-        pending = null;
+        Identity id = Identity.of(state);
+        voidedId = id;
+        if (pending != null && pending.id.equals(id)) {
+            pending = null;
+        }
     }
 
     /**
@@ -381,9 +393,22 @@ public final class CastFovController {
         }
     }
 
-    private record Identity(CastState.Source source, int slot, long startedAtMs) {
+    /**
+     * cast 身份 = {@code (slot, startedAtMs)}（{@link CastState} 无唯一 cast id）。
+     *
+     * <p><b>刻意不含 {@code source}</b>：source 不是 wire 字段，{@code CastSyncHandler.sourceFor}
+     * 靠「当前快照是否正 CASTING 在同一 slot」<b>推断</b>它，任何非 CASTING 快照（如一条迟到的
+     * INTERRUPT 落地后）都会让后续回执退化成 QUICK_SLOT。把这个会丢失的推断值写进身份，会让
+     * 「A 被 B 取代 → 迟到 INTERRUPT(A) → COMPLETE(B)」里的 COMPLETE(B) 认不出自己的 pending，
+     * 于是 juice 静默不触发。{@code (slot, startedAtMs)} 是权威 wire 字段，不受推断污染。
+     *
+     * <p>source 的门控作用保留在 <b>arming 时刻</b>：{@link #resolveSkillId} 只给 SKILL_BAR
+     * 的 cast 解析 profile，故 pending 天然只属于技能栏施法。同 slot 同毫秒起手的两次不同
+     * 来源施法在物理上不可能（玩家一次只能起一个 cast），身份不会撞。
+     */
+    private record Identity(int slot, long startedAtMs) {
         static Identity of(CastState s) {
-            return new Identity(s.source(), s.slot(), s.startedAtMs());
+            return new Identity(s.slot(), s.startedAtMs());
         }
     }
 
