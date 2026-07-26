@@ -1416,6 +1416,30 @@ class CastFovControllerTest {
         assertBaseline("脉冲 decay 完毕");
     }
 
+    @Test
+    void capacityEvictedIdentityCannotBeRearmedByALateCasting() {
+        // 上一条用内部 seam 断言锁「淘汰即 VOIDED」；本条锁它的**可观察后果**，与 TTL 那条
+        // （animTokenTtlExpiryVoids...）对称：淘汰若只是把令牌对象丢掉，被挤掉的身份就能被
+        // 一条迟到 / 重传的权威 CASTING 重新武装，再由一条 release 动画多放一次 juice。
+        for (int i = 0; i <= CastFovController.ANIM_TOKEN_CAPACITY; i++) {
+            acceptGateCast(START + i * 1000L);   // 第 CAPACITY+1 次把最早那枚挤出队
+        }
+        // 把队列里活着的令牌逐一消费干净，免得残留 juice 掩盖后面的断言。
+        for (int i = 0; i < CastFovController.ANIM_TOKEN_CAPACITY; i++) {
+            releaseAnim();
+            advanceMs(GATE_SHAKE_DURATION_MS + 50);
+            CastFovController.tick();
+        }
+        assertBaseline("在飞令牌都已消费完，FOV 回基准");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动也已走完");
+
+        acceptGateCast(START);   // 被淘汰身份的迟到 / 重传权威 CASTING
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("被容量淘汰 = 作废：迟到 CASTING 不得重开令牌再放一次 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+    }
+
     // ---- supersession / TTL 过期都必须落 VOIDED（review major：只清对象挡不住重新武装）----
 
     @Test
