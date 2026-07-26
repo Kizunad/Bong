@@ -1,6 +1,6 @@
-# plan-ci-redis-pull-resilience-v1（active）
+# plan-ci-redis-pull-resilience-v1
 
-> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：e2e CI 的 "Bring up Redis test service" 步频繁因 Docker Hub registry 超时失败（infra flake），加重试 / 预拉缓存 / GHCR mirror 提升 CI 韧性。
+> **归档（文档追认 + P1 撤回）2026-07-27**：P0（拉取重试）**早已实装**——`d668ae85b`「ci: 为 e2e Redis 镜像拉取加重试 (#575)」于 2026-06-15 落地 `.github/workflows/e2e.yml:104-114`，本 plan 文档当时未跟着更新阶段状态。本次归档 PR **不新写任何实装代码**，只是补文档追认既有代码 + 收口 §N 两个开放问题。P1（GHCR/ECR mirror）经 §N.1 #1 实测收口后**撤回，不实施**。
 
 > 立项动机：worldgen-v4 + 审阅 skeleton 连续多个 PR（#561/#562/#563）的 PR-event e2e run 在 "Bring up Redis test service"（`docker compose -f docker-compose.test.yml up -d redis --wait`）死于 `Error Get "https://registry-1.docker.io/v2/": net/http: request canceled ... Client.Timeout exceeded`。同 tip 的 workflow_dispatch e2e 常 success（Docker Hub 间歇性），但 PR check 红逼迫 --admin 合并，掩盖真实 gate。
 
@@ -8,8 +8,8 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | redis 镜像拉取加重试（docker compose pull 失败重试 N 次 + 退避） | ⬜ |
-| P1 | 镜像源韧性（GHCR/ECR mirror 或 actions cache 预拉 redis 镜像） | ⬜ |
+| P0 | redis 镜像拉取加重试（docker compose pull 失败重试 N 次 + 退避） | ✅ 2026-07-27（实装早于本 PR：`d668ae85b` #575，2026-06-15；本条为文档追认，见 Finish Evidence） |
+| P1 | 镜像源韧性（GHCR/ECR mirror 或 actions cache 预拉 redis 镜像） | ⬜ 撤回（2026-07-27，见 §N.1 #1：重试已充分，不实施） |
 
 ## 接入面 checklist
 
@@ -58,3 +58,29 @@
 ## 审计来源
 
 worldgen-v4 + skeleton 实现期多个 PR 的 e2e Docker Hub flake 频发（#561/#562/#563 实证）。**report-only**，CI infra 改进。
+
+## Finish Evidence
+
+**落地清单**：
+
+- P0：`.github/workflows/e2e.yml:104-114`「Pre-pull Redis image with retry」step（3 次 attempt + `attempt*10` 秒线性退避 + 循环耗尽后末尾兜底再拉一次），紧接其后的「Bring up Redis test service」（`:116-117`）实际消费该预拉结果。
+- P1：未实施，撤回（见 §N.1 #1 决议）。
+
+**关键 commit**：
+
+- `d668ae85b`「ci: 为 e2e Redis 镜像拉取加重试 (#575)」（2026-06-15）—— P0 唯一实装 commit，早于本次归档 PR；本次归档 PR 未对 `.github/workflows/e2e.yml` 或 `docker-compose.test.yml` 做任何修改。
+- 本次归档 PR 自身的 §N.1 决议 / 阶段状态 + Finish Evidence / `git mv` 三个 docs-only commit（hash 见 PR）。
+
+**测试结果**：
+
+- 本 PR 为**纯 docs 变更**，**未跑任何测试套件**（无 server/client/agent/worldgen 代码改动，不适用 `cargo test` / `./gradlew test` / `npm test`）。
+- P0 有效性验证方式（docs-only 场景下的替代证据）：`gh run list --workflow=e2e.yml --limit 25 --json conclusion,databaseId,createdAt` 统计近 25 次 e2e run（`createdAt` 2026-07-25T16:27:45Z ~ 2026-07-26T14:04:19Z），仅 2 次 `failure`（`30202576976`/`30202432895`），经 `gh run view <id> --json jobs --jq '...'` 核实两次失败 step 均为 `Bot e2e stage (protocol-level player scenarios)`，**零次**失败发生在 redis 拉取相关 step。
+
+**跨仓库核验**：
+
+- 本 plan 是纯 CI infra（`.github/workflows/e2e.yml`），不触 server/client/agent 运行时，**无跨仓库 symbol 核验项**。
+
+**遗留 / 后续**：
+
+- P1（GHCR/ECR mirror 或 actions cache 预拉）已撤回不实施（§N.1 #1）；若未来 e2e 历史重新出现 redis-pull 相关失败，需凭新实测数据另立新 plan/骨架评估，不在本 plan 复活范围内。
+- §N #2（其他 CI job 是否也拉 Docker Hub）已确认无需扩面（§N.1 #2），无后续动作。
