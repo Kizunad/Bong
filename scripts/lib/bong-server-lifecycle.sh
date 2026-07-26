@@ -301,11 +301,18 @@ bong_server_stop_managed() {
 # 把 <data_dir>/bong.db{,-wal,-shm} 中存在的文件挪到 <stash_dir>/，用于在
 # 另起一台共用 cwd/持久化路径的专用 server（如 north-rift preview）之前，
 # 把开发者本地真实存档暂时移出去，避免被专用 server 的 hydrate/flush 读写。
-# 幂等：源文件已不在 data_dir（例如已经 stash 过一次）时视为成功 no-op。
+# 搬完之后写一份清单 <stash_dir>/stashed-files，逐行记录本次真正搬走的
+# 文件名（"清单存在 ⇒ 搬运已完成"）——bong_server_restore_persistence 靠
+# 这份清单判定"这个后缀本来就该恢复"还是"这个后缀本来就不存在、纯属
+# 专用 server 造的垃圾"，而不是靠"stash 里还有没有这个文件"反推（那样
+# 会把"已经被上一次调用还原走"和"从来没备份过"这两种相反状态混为一谈）。
+# 幂等：源文件已不在 data_dir 且清单已存在时（例如已经 stash 过一次）视为
+# 成功 no-op，不覆盖已有清单。
 bong_server_stash_persistence() {
     local data_dir="${1:-}"
     local stash_dir="${2:-}"
-    local suffix source_file
+    local manifest_file suffix source_file
+    local -a moved=()
 
     [ -n "$data_dir" ] || return 1
     [ -n "$stash_dir" ] || return 1
@@ -317,36 +324,66 @@ bong_server_stash_persistence() {
         source_file="$data_dir/bong.db$suffix"
         if [ -e "$source_file" ]; then
             mv -- "$source_file" "$stash_dir/bong.db$suffix" || return 1
+            moved+=("bong.db$suffix")
         fi
     done
+
+    manifest_file="$stash_dir/stashed-files"
+    if [ ! -e "$manifest_file" ]; then
+        : > "$manifest_file" || return 1
+        if [ "${#moved[@]}" -gt 0 ]; then
+            printf '%s\n' "${moved[@]}" >> "$manifest_file" || return 1
+        fi
+    fi
 
     return 0
 }
 
-# bong_server_stash_persistence 的逆操作：把 stash_dir 里的 bong.db{,-wal,-shm}
-# 精确还原回 data_dir——stash 里没有的那个后缀会把 data_dir 里对应文件删掉
-# （清掉专用 server 自己新造的残留），保证还原成 stash 那一刻的精确状态。
-# 幂等：stash_dir 不存在时视为成功 no-op；一次成功还原后会清空并删除
-# stash_dir 本身，使重复调用（例如"阶段末尾 + cleanup trap 兜底"两次调用）
-# 天然落入这个 no-op 分支，不会在第二次调用时把刚还原回去的文件当"专用
-# server 残留"误删。
+# bong_server_stash_persistence 的逆操作：依 <stash_dir>/stashed-files 清单
+# 把 bong.db{,-wal,-shm} 精确还原回 data_dir——清单里没记录的后缀是专用
+# server 自己造的垃圾，rm -f 掉；清单里记录过的后缀，stash 里还有就 mv -f
+# 拿回去，stash 里已经没有但 data_dir 里已经存在，说明是上一次（可能中途
+# 失败）的 restore 调用已经正确搬回去了，原样保留、绝不删除；两边都没有
+# 则是异常状态（例如上一次中途失败），直接报错，绝不静默当"没备份过"处理。
+#
+# 幂等 / 部分失败安全：即使某次 restore 调用在处理到一半时失败（例如某个
+# 非清单内的后缀因为被外部造成目录而 rm -f 报错），已经成功还原的文件也
+# 不会在下一次重试调用（如 cleanup trap 的无条件二次调用）里被误判成
+# "没备份过"而删掉——因为判定始终以清单为准，不看 stash_dir 里还剩什么。
+# stash_dir 存在但清单缺失/不可读时 fail closed：一个文件都不许碰，直接
+# 返回非零，把异常留给人工排查而不是猜测。全部处理完成后才 rm -rf
+# stash_dir；stash_dir 本不存在时视为成功 no-op。
 bong_server_restore_persistence() {
     local data_dir="${1:-}"
     local stash_dir="${2:-}"
-    local suffix stash_file data_file
+    local manifest_file suffix filename stash_file data_file
 
     [ -n "$data_dir" ] || return 1
     [ -n "$stash_dir" ] || return 1
 
     [ -d "$stash_dir" ] || return 0
 
+    manifest_file="$stash_dir/stashed-files"
+    if [ ! -f "$manifest_file" ] || [ ! -r "$manifest_file" ]; then
+        echo "FAIL: stash manifest missing or unreadable at $manifest_file; refusing to touch $data_dir without knowing which files were actually stashed (fail closed, no files removed)" >&2
+        return 1
+    fi
+
     mkdir -p -- "$data_dir" || return 1
 
     for suffix in "" "-wal" "-shm"; do
-        stash_file="$stash_dir/bong.db$suffix"
-        data_file="$data_dir/bong.db$suffix"
-        if [ -e "$stash_file" ]; then
-            mv -f -- "$stash_file" "$data_file" || return 1
+        filename="bong.db$suffix"
+        stash_file="$stash_dir/$filename"
+        data_file="$data_dir/$filename"
+        if grep -Fxq -- "$filename" "$manifest_file"; then
+            if [ -e "$stash_file" ]; then
+                mv -f -- "$stash_file" "$data_file" || return 1
+            elif [ -e "$data_file" ]; then
+                : # 已被上一次（可能中途失败的）restore 调用还原过，原样保留
+            else
+                echo "FAIL: $filename was recorded as stashed but is missing from both $stash_dir and $data_dir; a previous restore likely failed partway through, refusing to proceed silently" >&2
+                return 1
+            fi
         else
             rm -f -- "$data_file" || return 1
         fi

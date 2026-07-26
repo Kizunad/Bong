@@ -317,6 +317,58 @@ bong_server_restore_persistence "$double_data" "$double_stash" \
 [ "$(cat "$double_data/bong.db")" = "double-original" ] \
     || fail "second (idempotent) restore call must not delete the file the first restore just brought back, expected 'double-original' still present"
 
+# 部分失败后重试回归（真实复现过的 blocker）：manifest 记录了 bong.db 被
+# stash 过；把 bong.db-wal 造成一个目录，让针对它的 rm -f 中途报错，逼
+# restore 在"已经正确 mv 回 bong.db"之后、"清理 bong.db-wal"之前失败退出。
+# cleanup trap 会无条件再调用一次 restore 兜底（被 || true 吞掉返回值）——
+# 旧实现在这第二次调用里会把 stash 里已经不在的 bong.db 误判成"从来没
+# 备份过的 preview 垃圾"直接删掉，把刚刚正确还原的真实存档吞掉。新实现
+# 靠清单判定"这个文件本来就该在"，第二次调用发现 data_dir 里已经有它就
+# 原样保留。
+partial_root="$TEST_ROOT/persistence-partial-failure"
+partial_data="$partial_root/data"
+partial_stash="$partial_root/stash"
+mkdir -p "$partial_data"
+printf 'real-developer-db\n' > "$partial_data/bong.db"
+
+bong_server_stash_persistence "$partial_data" "$partial_stash" \
+    || fail "stash must succeed before the partial-failure fixture forces a mid-loop restore failure"
+
+mkdir -p "$partial_data/bong.db-wal"
+
+if bong_server_restore_persistence "$partial_data" "$partial_stash"; then
+    fail "first restore must fail when a non-stashed file cannot be removed (bong.db-wal is a directory here), otherwise the mid-loop rm -f error is being silently swallowed"
+fi
+[ "$(cat "$partial_data/bong.db")" = "real-developer-db" ] \
+    || fail "even though the first restore call failed partway through (blocked on bong.db-wal), it must already have correctly restored bong.db before hitting that failure, expected 'real-developer-db'"
+
+bong_server_restore_persistence "$partial_data" "$partial_stash" || true
+[ "$(cat "$partial_data/bong.db")" = "real-developer-db" ] \
+    || fail "second restore call (mirroring cleanup trap's unconditional || true retry) must NOT delete the real bong.db that the first call already restored, expected 'real-developer-db' to survive but the file was mutated or removed"
+
+rm -rf -- "$partial_data/bong.db-wal"
+
+# 清单缺失时必须 fail closed：一个文件都不许删，宁可留残留交人工排查。
+manifest_missing_root="$TEST_ROOT/persistence-manifest-missing"
+manifest_missing_data="$manifest_missing_root/data"
+manifest_missing_stash="$manifest_missing_root/stash"
+mkdir -p "$manifest_missing_data"
+printf 'stashed-db\n' > "$manifest_missing_data/bong.db"
+
+bong_server_stash_persistence "$manifest_missing_data" "$manifest_missing_stash" \
+    || fail "stash must succeed for the manifest-missing fixture"
+rm -f -- "$manifest_missing_stash/stashed-files"
+
+printf 'unrelated-file-must-survive\n' > "$manifest_missing_data/unrelated.txt"
+
+if bong_server_restore_persistence "$manifest_missing_data" "$manifest_missing_stash"; then
+    fail "restore must fail closed when the stash manifest is missing/unreadable, not silently guess which files were stashed"
+fi
+[ "$(cat "$manifest_missing_data/unrelated.txt")" = "unrelated-file-must-survive" ] \
+    || fail "manifest-missing fail-closed restore must not touch any existing file in data_dir, expected 'unrelated.txt' untouched"
+[ -e "$manifest_missing_stash/bong.db" ] \
+    || fail "manifest-missing fail-closed restore must leave stash_dir contents alone for manual recovery"
+
 restore_occurrences="$(grep -c 'bong_server_restore_persistence' "$ROOT/scripts/e2e-redis.sh" || true)"
 grep -Fq 'bong_server_stash_persistence' "$ROOT/scripts/e2e-redis.sh" \
     || fail "e2e-redis.sh north-rift stage must call bong_server_stash_persistence before starting the dedicated preview server"
