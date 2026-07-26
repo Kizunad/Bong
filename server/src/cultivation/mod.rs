@@ -94,9 +94,11 @@ pub mod tribulation;
 pub mod tribulation_balance;
 pub mod void;
 
+use valence::entity::entity::Flags;
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Or,
-    Position, Query, Res, ResMut, Update, Username, Without,
+    Added, App, Client, Commands, Entity, EntityLayerId, EventReader, EventWriter, Events,
+    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Update, Username, VisibleChunkLayer,
+    VisibleEntityLayers, Without,
 };
 
 use self::breakthrough::{
@@ -196,23 +198,24 @@ use self::tribulation::{
     TribulationWaveCleared,
 };
 use crate::body_plan::RaceId;
+use crate::coffin::{CoffinComponent, CoffinRegistry, CoffinStateChanged};
 use crate::cultivation::components::Realm;
 use crate::nourishment::Nourishment;
 use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
-    load_active_tribulation, load_player_cultivation_bundle,
-    persist_player_cultivation_bundle_with_nourishment, release_ascension_quota_slot,
-    PersistenceSettings,
+    load_active_tribulation, load_player_cultivation_bundle, persist_new_character_transition,
+    release_ascension_quota_slot, NewCharacterPersistenceBundle, PersistenceSettings,
+    PlayerCultivationBundle,
 };
 use crate::player::state::{
-    canonical_player_id, load_current_character_id, player_character_id, save_player_slices,
-    PlayerState, PlayerStatePersistence,
+    canonical_player_id, load_current_character_id, player_character_id, PlayerState,
+    PlayerStatePersistence,
 };
 use crate::skill::events::SkillCapChanged;
 use crate::tribulation::scorch_record::{
     record_tribulation_scorch_system, TribulationScorchRecords,
 };
-use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tick};
 
 pub fn register(app: &mut App) {
@@ -554,6 +557,12 @@ type CultivationAttachQueryItem<'a> = (
     &'a Username,
     Option<&'a PlayerState>,
     Option<&'a LifespanComponent>,
+    Option<&'a mut EntityLayerId>,
+    Option<&'a mut VisibleChunkLayer>,
+    Option<&'a mut VisibleEntityLayers>,
+    Option<&'a mut Position>,
+    Option<&'a mut CurrentDimension>,
+    Option<&'a mut Flags>,
 );
 
 fn parse_persisted_tribulation_dimension(value: &str) -> Option<DimensionKind> {
@@ -573,13 +582,28 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<crate::inventory::InventoryInstanceIdAllocator>>,
     mut pending_narrations: Option<ResMut<crate::player::gameplay::PendingGameplayNarrations>>,
+    mut coffin_registry: Option<ResMut<CoffinRegistry>>,
+    dimension_layers: Option<Res<DimensionLayers>>,
+    mut coffin_state_events: Option<ResMut<Events<CoffinStateChanged>>>,
     // plan-race-system-v1 P0 —— 持久化 `Cultivation.race` 拒载执行点：`Option<Res<...>>`
     // 同 `body_plan::register()` 恒装载的既有约定（大量既有测试未插入该资源，缺失时
     // 无法校验，退回本函数原有"信任解码结果"行为，不是新的宽松分支）。
     race_registry: Option<Res<crate::body_plan::RaceRegistry>>,
-    joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
+    mut joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state, restored_lifespan) in &joined_clients {
+    for (
+        entity,
+        username,
+        player_state,
+        restored_lifespan,
+        mut layer_id,
+        mut visible_chunk_layer,
+        mut visible_entity_layers,
+        mut position,
+        mut current_dimension,
+        mut flags,
+    ) in &mut joined_clients
+    {
         let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
         {
             Ok(value) => value,
@@ -764,66 +788,37 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             );
         }
 
-        // plan-remains-suite P0：join 转世门。
-        //
-        // 根因：唯一的角色轮换入口是终结屏点「开启新生」→ `reset_for_new_character`，
-        // 但玩家从未成功点到过——于是每次 join 都用同一个已终结的 `current_char_id`
-        // 把 Terminated 状态的 life_record 原样水合上线，`combat::attach_combat_bundle_to_joined_clients`
-        // 又把 `Lifecycle.state` 无条件重置成 Alive（该组件从不持久化），寿元表继续按老角色算，
-        // 第一次 lifespan tick 就把玩家重新判定死亡 → natural_end 重放整条终结链
-        // → 每 join 一次世界里多一具假人（Remains_xxxx）。
-        //
-        // 判定源 = 水合完成后 life_record 的最后一条生平是否为 `Terminated`
-        // （不能用 `Lifecycle.state`：它每次 join 都被重置为 Alive，永远看不出"已终结"）。
-        // 命中后立即在本系统内完成转世：换 char_id + 按
-        // `character_select::rotate_to_new_character` 生成全新 cultivation / 寿元 /
-        // 库存 / 出生点，且**不重放死亡链**（不发 `PlayerTerminated`、不 spawn 遗骸、
-        // 不弹终结屏）。
+        // plan-remains-suite P0：join 转世门。只在本地 staged 新身份；真正持久化必须和
+        // fresh player slices、life record、cultivation+nourishment 在一个 IMMEDIATE transaction
+        // 内完成，成功后才允许把新角色组件插入 ECS。
         let reincarnation = if matches!(
             life_record.biography.last(),
             Some(BiographyEntry::Terminated { .. })
         ) {
-            match player_persistence.as_deref() {
-                Some(player_persistence) => {
-                    match self::character_select::rotate_to_new_character(
-                        player_persistence,
-                        username.0.as_str(),
-                    ) {
-                        Ok(bundle) => {
-                            tracing::info!(
-                                "[bong][cultivation] `{}` joined with a terminated character; reincarnating as {}",
-                                username.0,
-                                bundle.next_character_id,
-                            );
-                            canonical_id = bundle.next_character_id.clone();
-                            cultivation = Cultivation::default();
-                            meridians = MeridianSystem::default();
-                            qi_color = QiColor::default();
-                            karma = Karma::default();
-                            practice_log = PracticeLog::default();
-                            contamination = Contamination::default();
-                            life_record = LifeRecord::new(canonical_id.clone());
-                            insight_quota = InsightQuota::default();
-                            unlocked_perceptions = UnlockedPerceptions::default();
-                            insight_modifiers = InsightModifiers::new();
-                            Some(bundle.spec)
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                "[bong][cultivation] failed to rotate current_char_id for terminated `{}`: {error}; joining with the stale terminated record",
-                                username.0,
-                            );
-                            None
-                        }
-                    }
-                }
-                None => {
-                    tracing::warn!(
-                        "[bong][cultivation] `{}` joined with a terminated character but PlayerStatePersistence is unavailable; skipping the reincarnation gate",
-                        username.0,
-                    );
-                    None
-                }
+            if player_persistence.is_none()
+                || default_loadout.is_none()
+                || item_registry.is_none()
+                || inventory_allocator.is_none()
+            {
+                tracing::warn!(
+                    "[bong][cultivation] `{}` joined with a terminated character but atomic reincarnation resources are incomplete; leaving the terminated record untouched",
+                    username.0,
+                );
+                None
+            } else {
+                let bundle = self::character_select::prepare_new_character(username.0.as_str());
+                canonical_id = bundle.next_character_id.clone();
+                cultivation = Cultivation::default();
+                meridians = MeridianSystem::default();
+                qi_color = QiColor::default();
+                karma = Karma::default();
+                practice_log = PracticeLog::default();
+                contamination = Contamination::default();
+                life_record = LifeRecord::new(canonical_id.clone());
+                insight_quota = InsightQuota::default();
+                unlocked_perceptions = UnlockedPerceptions::default();
+                insight_modifiers = InsightModifiers::new();
+                Some(bundle)
             }
         } else {
             None
@@ -938,44 +933,88 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             }
         }
 
-        if reincarnation.is_some() {
-            // `severed_permanent` / `poison_toxicity` / `digestion_load` / `nourishment` 四个 hydration 块上面已经无条件从（终结前那具旧角色的）
-            // `persisted_bundle` 读过一轮——转世必须把它们也清成新角色的默认值，否则旧身体的
-            // 永久损伤、中毒进度、饥渴会原样附体到新生命上。
+        let is_reincarnating = reincarnation.is_some();
+        if is_reincarnating {
+            // 旧身体的永久损伤、中毒进度、消化负担与饥渴都不能附体到新生命。
             severed_permanent = MeridianSeveredPermanent::default();
             poison_toxicity = PoisonToxicity::default();
             digestion_load = DigestionLoad::for_realm(cultivation.realm);
             nourishment.reset_to_spawn();
+        }
 
-            // 立即落盘新的 cultivation bundle：`player_cultivation` 表按 username（非
-            // char_id）整行覆盖，不马上写回的话，玩家下一次 join 仍会读到刚才这份
-            // Terminated life_record，陷入"每次 join 都判定终结 → 重复转世"的抖动
-            // （幂等性依赖这一步）。
-            if let Err(error) = persist_player_cultivation_bundle_with_nourishment(
+        let fresh_reincarnation_runtime = if let Some(bundle) = reincarnation.as_ref() {
+            let (
+                Some(player_persistence),
+                Some(default_loadout),
+                Some(item_registry),
+                Some(allocator),
+            ) = (
+                player_persistence.as_deref(),
+                default_loadout.as_deref(),
+                item_registry.as_deref(),
+                inventory_allocator.as_deref_mut(),
+            )
+            else {
+                unreachable!("atomic reincarnation resources were checked before staging");
+            };
+            let mut staged_allocator = allocator.clone();
+            let fresh_inventory = match crate::inventory::instantiate_inventory_from_loadout(
+                &default_loadout.0,
+                &mut staged_allocator,
+                item_registry,
+            ) {
+                Ok(inventory) => inventory,
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][cultivation] refusing join reincarnation for `{}`: default loadout failed: {error}",
+                        username.0,
+                    );
+                    continue;
+                }
+            };
+            let fresh_skill_set = crate::skill::components::SkillSet::default();
+            let fresh_lifespan = LifespanComponent::new(bundle.spec.lifespan_cap);
+            if let Err(error) = persist_new_character_transition(
                 &settings,
+                player_persistence,
                 username.0.as_str(),
-                &cultivation,
-                &meridians,
-                &qi_color,
-                &karma,
-                &contamination,
-                &life_record,
-                &practice_log,
-                &insight_quota,
-                &unlocked_perceptions,
-                &insight_modifiers,
-                None,
-                &severed_permanent,
-                Some(&poison_toxicity),
-                Some(&digestion_load),
-                Some(&nourishment),
+                NewCharacterPersistenceBundle {
+                    current_char_id: bundle.current_char_id.as_str(),
+                    state: &PlayerState::default(),
+                    position: bundle.spec.spawn_pos,
+                    inventory: Some(&fresh_inventory),
+                    lifespan: &fresh_lifespan,
+                    skill_set: &fresh_skill_set,
+                    cultivation: PlayerCultivationBundle {
+                        cultivation: &cultivation,
+                        meridians: &meridians,
+                        qi_color: &qi_color,
+                        karma: &karma,
+                        contamination: &contamination,
+                        life_record: &life_record,
+                        practice_log: &practice_log,
+                        insight_quota: &insight_quota,
+                        unlocked_perceptions: &unlocked_perceptions,
+                        insight_modifiers: &insight_modifiers,
+                        tutorial_state: None,
+                        meridian_severed: &severed_permanent,
+                        poison_toxicity: Some(&poison_toxicity),
+                        digestion_load: Some(&digestion_load),
+                        nourishment: &nourishment,
+                    },
+                },
             ) {
                 tracing::warn!(
-                    "[bong][cultivation] failed to persist reincarnated cultivation bundle for `{}`: {error}",
+                    "[bong][cultivation] failed atomic join reincarnation for `{}`: {error}; leaving the terminated character untouched",
                     username.0,
                 );
+                continue;
             }
-        }
+            *allocator = staged_allocator;
+            Some((fresh_inventory, fresh_skill_set, fresh_lifespan))
+        } else {
+            None
+        };
 
         // plan-race-system-v1 P5/PR-6c —— `IntrinsicRace` 是本体种族的真源，join 首帧
         // 必须与刚水合出来的 `Cultivation.race` 同步落地，否则任何只查 `IntrinsicRace`
@@ -1011,7 +1050,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // 耗尽的 120/120，`restored_lifespan.is_none()` 在这条分支恒为 false（attach_player_state
         // 已经把它挂上了），若不加 `|| reincarnation.is_some()` 这份 exhausted 值会原样留在
         // ECS 上，下一次 lifespan tick 立刻把刚转世的新角色又判定老死——死循环重现。
-        if restored_lifespan.is_none() || reincarnation.is_some() {
+        if restored_lifespan.is_none() && !is_reincarnating {
             entity_commands.insert(default_lifespan.clone());
         }
         if let Some(restored_tribulation) = restored_tribulation {
@@ -1024,53 +1063,54 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             entity_commands.insert(restored_juebi_runtime);
         }
 
-        if let Some(spec) = reincarnation {
-            // 新角色 = 新出生：库存回默认 loadout、技能栏清空、出生点用 spec.spawn_pos。
-            let fresh_inventory = match (
-                default_loadout.as_deref(),
-                item_registry.as_deref(),
-                inventory_allocator.as_deref_mut(),
-            ) {
-                (Some(default_loadout), Some(item_registry), Some(inventory_allocator)) => {
-                    match crate::inventory::instantiate_inventory_from_loadout(
-                        &default_loadout.0,
-                        inventory_allocator,
-                        item_registry,
-                    ) {
-                        Ok(inventory) => Some(inventory),
-                        Err(error) => {
-                            tracing::warn!(
-                                "[bong][cultivation] failed to instantiate fresh loadout for reincarnated `{}`: {error}",
-                                username.0,
-                            );
-                            None
-                        }
-                    }
-                }
-                _ => None,
-            };
-            let fresh_skill_set = crate::skill::components::SkillSet::default();
-            if let Some(fresh_inventory) = fresh_inventory.clone() {
-                entity_commands.insert(fresh_inventory);
-            }
-            entity_commands.insert(fresh_skill_set.clone());
-            entity_commands.insert(Position::new(spec.spawn_pos));
+        if let (Some(bundle), Some((fresh_inventory, fresh_skill_set, fresh_lifespan))) =
+            (reincarnation, fresh_reincarnation_runtime)
+        {
+            entity_commands.insert((fresh_inventory, fresh_skill_set, fresh_lifespan));
 
-            if let Some(player_persistence) = player_persistence.as_deref() {
-                if let Err(error) = save_player_slices(
-                    player_persistence,
-                    username.0.as_str(),
-                    &PlayerState::default(),
-                    spec.spawn_pos,
-                    DimensionKind::default(),
-                    fresh_inventory.as_ref(),
-                    Some(&default_lifespan),
-                    &fresh_skill_set,
-                ) {
-                    tracing::warn!(
-                        "[bong][cultivation] failed to persist fresh player slices for reincarnated `{}`: {error}",
-                        username.0,
-                    );
+            let target_position = Position::new(bundle.spec.spawn_pos);
+            if let Some(position) = position.as_deref_mut() {
+                position.set(bundle.spec.spawn_pos);
+            } else {
+                entity_commands.insert(target_position);
+            }
+            if let Some(flags) = flags.as_deref_mut() {
+                flags.set_invisible(false);
+            }
+
+            if let Some(layers) = dimension_layers.as_deref() {
+                let overworld_layer = layers.overworld;
+                if let Some(layer_id) = layer_id.as_deref_mut() {
+                    let previous_layer = layer_id.0;
+                    if let Some(visible_entity_layers) = visible_entity_layers.as_deref_mut() {
+                        visible_entity_layers.0.remove(&previous_layer);
+                        visible_entity_layers.0.insert(overworld_layer);
+                    }
+                    layer_id.0 = overworld_layer;
+                } else if let Some(visible_entity_layers) = visible_entity_layers.as_deref_mut() {
+                    visible_entity_layers.0.insert(overworld_layer);
+                }
+                if let Some(visible_chunk_layer) = visible_chunk_layer.as_deref_mut() {
+                    visible_chunk_layer.0 = overworld_layer;
+                }
+            }
+            if let Some(current_dimension) = current_dimension.as_deref_mut() {
+                current_dimension.0 = DimensionKind::Overworld;
+            } else {
+                entity_commands.insert(CurrentDimension(DimensionKind::Overworld));
+            }
+
+            let was_in_coffin = coffin_registry
+                .as_deref_mut()
+                .and_then(|registry| registry.clear_player(entity))
+                .is_some();
+            entity_commands.remove::<CoffinComponent>();
+            if was_in_coffin {
+                if let Some(events) = coffin_state_events.as_deref_mut() {
+                    events.send(CoffinStateChanged {
+                        player: entity,
+                        grade: None,
+                    });
                 }
             }
 
@@ -1083,7 +1123,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             }
 
             tracing::info!(
-                "[bong][cultivation] reincarnated `{}` and attached fresh cultivation bundle to {entity:?}",
+                "[bong][cultivation] atomically reincarnated `{}` and attached fresh cultivation bundle to {entity:?}",
                 username.0,
             );
         } else {
@@ -1599,6 +1639,9 @@ mod tests {
     use super::*;
 
     use crate::body_plan::{RaceId, RaceRegistry};
+    use crate::coffin::{
+        CoffinComponent, CoffinEntity, CoffinGrade, CoffinRegistry, CoffinStateChanged,
+    };
     use crate::combat::components::Lifecycle;
     use crate::cultivation::components::{ColorKind, ContamSource};
     use crate::cultivation::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
@@ -1609,8 +1652,12 @@ mod tests {
     use crate::player::state::canonical_player_id;
     use crate::player::state::PlayerState;
     use crate::skill::events::SkillCapChanged;
-    use crate::world::dimension::DimensionKind;
-    use valence::prelude::App;
+    use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+    use std::collections::HashMap;
+    use valence::prelude::{
+        App, BlockPos, EntityLayerId, Events, IntoSystemConfigs, Position, Update,
+        VisibleChunkLayer, VisibleEntityLayers,
+    };
     use valence::testing::create_mock_client;
 
     fn temp_persistence_settings(test_name: &str) -> (PersistenceSettings, std::path::PathBuf) {
@@ -1801,6 +1848,25 @@ mod tests {
             tick: 50,
         });
         record
+    }
+
+    fn coffin_runtime_for_player(
+        player: Entity,
+        lower: BlockPos,
+        grade: CoffinGrade,
+    ) -> CoffinRegistry {
+        let coffin = CoffinEntity {
+            lower,
+            upper: BlockPos::new(lower.x + 1, lower.y, lower.z),
+            occupied_by: Some(player),
+            placed_at_tick: 20,
+            grade,
+            marker_entity: None,
+        };
+        CoffinRegistry {
+            coffins: HashMap::from([(coffin.lower, coffin), (coffin.upper, coffin)]),
+            player_in_coffin: HashMap::from([(player, lower)]),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2064,6 +2130,395 @@ mod tests {
         assert!(
             persisted.get("nourishment_activity_window").is_none(),
             "the immediate SQLite overwrite must not serialize session-only activity"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_join_reincarnation_clears_tsy_and_coffin_runtime_after_commit() {
+        let (settings, root) = temp_persistence_settings("reincarnate-join-runtime-cleanup");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let username = "CoffinJoin";
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, username)
+                .expect("seeding current_char_id should succeed");
+        let old_canonical_id =
+            crate::player::state::player_character_id(username, old_raw_id.as_str());
+        seed_cultivation_bundle(
+            &settings,
+            username,
+            Realm::Spirit,
+            &terminated_life_record(&old_canonical_id),
+        );
+
+        let old_lifespan = LifespanComponent {
+            born_at_tick: 10,
+            years_lived: LifespanCapTable::SPIRIT as f64,
+            cap_by_realm: LifespanCapTable::SPIRIT,
+            offline_pause_tick: None,
+        };
+        let coffin_position = [18.5, 73.05, -21.5];
+        crate::player::state::save_player_slices_with_coffin(
+            &player_persistence,
+            username,
+            &PlayerState::default(),
+            coffin_position,
+            DimensionKind::Tsy,
+            None,
+            Some(&old_lifespan),
+            &crate::skill::components::SkillSet::default(),
+            Some(CoffinGrade::Jade),
+            None,
+        )
+        .expect("seeding TSY coffin slices should succeed");
+
+        let mut app = App::new();
+        let overworld_layer = app.world_mut().spawn_empty().id();
+        let tsy_layer = app.world_mut().spawn_empty().id();
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        app.insert_resource(DimensionLayers {
+            overworld: overworld_layer,
+            tsy: tsy_layer,
+        });
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        app.insert_resource(CoffinRegistry::default());
+        app.add_event::<CoffinStateChanged>();
+        app.add_systems(
+            Update,
+            (
+                crate::player::attach_player_state_to_joined_clients,
+                crate::inventory::attach_inventory_to_joined_clients
+                    .after(crate::player::attach_player_state_to_joined_clients),
+                attach_cultivation_to_joined_clients
+                    .after(crate::player::attach_player_state_to_joined_clients)
+                    .after(crate::inventory::attach_inventory_to_joined_clients),
+            ),
+        );
+
+        let (mut client_bundle, _helper) = create_mock_client(username);
+        client_bundle.player.layer.0 = overworld_layer;
+        client_bundle.visible_chunk_layer.0 = overworld_layer;
+        client_bundle
+            .visible_entity_layers
+            .0
+            .insert(overworld_layer);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let coffin_lower = crate::coffin::coffin_lower_from_player_position(coffin_position);
+        app.insert_resource(coffin_runtime_for_player(
+            entity,
+            coffin_lower,
+            CoffinGrade::Jade,
+        ));
+
+        app.update();
+
+        let world = app.world();
+        let player = world.entity(entity);
+        let position = player
+            .get::<Position>()
+            .expect("reincarnated player should retain Position")
+            .get();
+        assert_ne!(
+            position,
+            valence::prelude::DVec3::from_array(coffin_position),
+            "successful join reincarnation must not leave the new body pinned at the old coffin"
+        );
+        assert_eq!(
+            player.get::<CurrentDimension>().copied(),
+            Some(CurrentDimension(DimensionKind::Overworld)),
+            "successful join reincarnation must move runtime dimension to Overworld"
+        );
+        assert_eq!(
+            player.get::<EntityLayerId>().unwrap().0,
+            overworld_layer,
+            "successful join reincarnation must move the entity replication layer to Overworld"
+        );
+        assert_eq!(
+            player.get::<VisibleChunkLayer>().unwrap().0,
+            overworld_layer,
+            "successful join reincarnation must move visible chunks to Overworld"
+        );
+        let visible_entities = &player.get::<VisibleEntityLayers>().unwrap().0;
+        assert!(visible_entities.contains(&overworld_layer));
+        assert!(!visible_entities.contains(&tsy_layer));
+        assert!(
+            !player
+                .get::<valence::entity::entity::Flags>()
+                .expect("mock client should carry entity flags")
+                .invisible(),
+            "successful join reincarnation must make the new body visible after leaving the old coffin"
+        );
+        assert!(
+            player.get::<CoffinComponent>().is_none(),
+            "successful join reincarnation must remove the inherited CoffinComponent"
+        );
+        {
+            let registry = app.world().resource::<CoffinRegistry>();
+            assert!(!registry.player_in_coffin.contains_key(&entity));
+            assert_eq!(
+                registry
+                    .lookup(coffin_lower)
+                    .and_then(|coffin| coffin.occupied_by),
+                None,
+                "successful join reincarnation must release the old coffin occupancy"
+            );
+        }
+        let state_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<CoffinStateChanged>>()
+            .drain()
+            .collect();
+        assert_eq!(state_events.len(), 1);
+        assert_eq!(state_events[0].player, entity);
+        assert_eq!(state_events[0].grade, None);
+
+        let persisted = crate::player::state::load_player_slices(&player_persistence, username);
+        assert_eq!(persisted.last_dimension, DimensionKind::Overworld);
+        assert!(!persisted.in_coffin);
+        assert_eq!(persisted.coffin_grade, None);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn join_reincarnation_precommit_failure_preserves_sqlite_ecs_and_allocator() {
+        let (settings, root) = temp_persistence_settings("reincarnate-join-precommit");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let username = "AtomicJoin";
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, username)
+                .expect("seeding current_char_id should succeed");
+        let old_canonical_id =
+            crate::player::state::player_character_id(username, old_raw_id.as_str());
+        let terminated_record = terminated_life_record(&old_canonical_id);
+        let persisted_nourishment = Nourishment {
+            satiety: 17.0,
+            hydration: 29.0,
+        };
+        crate::persistence::persist_player_cultivation_bundle_with_nourishment(
+            &settings,
+            username,
+            &Cultivation {
+                realm: Realm::Spirit,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            &terminated_record,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            None,
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+            Some(&persisted_nourishment),
+        )
+        .expect("seeding terminated bundle should succeed");
+        let persisted_bundle_before =
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("seeded bundle should load")
+                .expect("seeded bundle should exist");
+
+        let old_state = PlayerState {
+            karma: 0.35,
+            inventory_score: 0.65,
+        };
+        let old_position = [18.0, 73.0, -22.0];
+        let old_lifespan = LifespanComponent {
+            born_at_tick: 10,
+            years_lived: LifespanCapTable::SPIRIT as f64,
+            cap_by_realm: LifespanCapTable::SPIRIT,
+            offline_pause_tick: None,
+        };
+        crate::player::state::save_player_slices_with_coffin(
+            &player_persistence,
+            username,
+            &old_state,
+            old_position,
+            DimensionKind::Tsy,
+            None,
+            Some(&old_lifespan),
+            &crate::skill::components::SkillSet::default(),
+            Some(CoffinGrade::Jade),
+            None,
+        )
+        .expect("seeding prior player slices should succeed");
+        let shrine_before = [4.0, 66.0, 9.0];
+        crate::player::state::save_player_shrine_anchor_slice(
+            &player_persistence,
+            username,
+            Some(shrine_before),
+        )
+        .expect("seeding shrine should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.insert_resource(CoffinRegistry::default());
+        app.add_event::<CoffinStateChanged>();
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (mut client_bundle, _helper) = create_mock_client(username);
+        let coffin_lower = crate::coffin::coffin_lower_from_player_position(old_position);
+        client_bundle.player.position = Position::new(old_position);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                old_state.clone(),
+                old_lifespan.clone(),
+                CurrentDimension(DimensionKind::Tsy),
+                CoffinComponent {
+                    entered_at_tick: 20,
+                    coffin_lower,
+                    grade: CoffinGrade::Jade,
+                },
+            ))
+            .id();
+        app.insert_resource(coffin_runtime_for_player(
+            entity,
+            coffin_lower,
+            CoffinGrade::Jade,
+        ));
+        let allocator_before = format!(
+            "{:?}",
+            app.world()
+                .resource::<crate::inventory::InventoryInstanceIdAllocator>()
+        );
+        let _failpoint = crate::persistence::arm_fail_before_commit(settings.db_path());
+
+        app.update();
+
+        assert!(
+            app.world().get::<Cultivation>(entity).is_none(),
+            "failed join reincarnation must not attach a staged fresh cultivation state"
+        );
+        assert!(
+            app.world()
+                .get::<crate::inventory::PlayerInventory>(entity)
+                .is_none(),
+            "failed join reincarnation must not attach a staged fresh inventory"
+        );
+        assert_eq!(
+            *app.world().get::<PlayerState>(entity).unwrap(),
+            old_state,
+            "failed join reincarnation must preserve the restored player state"
+        );
+        assert_eq!(
+            app.world().get::<LifespanComponent>(entity).unwrap(),
+            &old_lifespan,
+            "failed join reincarnation must preserve the exhausted prior lifespan"
+        );
+        assert_eq!(
+            app.world().get::<CurrentDimension>(entity).copied(),
+            Some(CurrentDimension(DimensionKind::Tsy)),
+            "failed join reincarnation must preserve the old runtime dimension"
+        );
+        assert_eq!(
+            app.world().get::<Position>(entity).unwrap().get(),
+            valence::prelude::DVec3::from_array(old_position),
+            "failed join reincarnation must preserve the old runtime position"
+        );
+        assert_eq!(
+            app.world().get::<CoffinComponent>(entity),
+            Some(&CoffinComponent {
+                entered_at_tick: 20,
+                coffin_lower,
+                grade: CoffinGrade::Jade,
+            }),
+            "failed join reincarnation must preserve the inherited CoffinComponent"
+        );
+        {
+            let registry = app.world().resource::<CoffinRegistry>();
+            assert_eq!(registry.player_in_coffin.get(&entity), Some(&coffin_lower));
+            assert_eq!(
+                registry
+                    .lookup(coffin_lower)
+                    .and_then(|coffin| coffin.occupied_by),
+                Some(entity),
+                "failed join reincarnation must preserve old coffin occupancy"
+            );
+        }
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<CoffinStateChanged>>()
+                .drain()
+                .next()
+                .is_none(),
+            "failed join reincarnation must not emit a coffin leave event"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                app.world()
+                    .resource::<crate::inventory::InventoryInstanceIdAllocator>()
+            ),
+            allocator_before,
+            "failed join reincarnation must not consume inventory instance ids"
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<crate::player::gameplay::PendingGameplayNarrations>()
+                .drain()
+                .is_empty(),
+            "failed join reincarnation must not announce a new life that did not commit"
+        );
+
+        assert_eq!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("current_char_id should reload")
+                .expect("prior current_char_id should remain"),
+            old_raw_id,
+            "failed join reincarnation must roll back player_core.current_char_id"
+        );
+        let persisted_player_after =
+            crate::player::state::load_player_slices(&player_persistence, username);
+        assert_eq!(persisted_player_after.state, old_state);
+        assert_eq!(persisted_player_after.position, old_position);
+        assert_eq!(persisted_player_after.last_dimension, DimensionKind::Tsy);
+        assert!(persisted_player_after.in_coffin);
+        assert_eq!(persisted_player_after.coffin_grade, Some(CoffinGrade::Jade));
+        assert_eq!(
+            persisted_player_after
+                .lifespan
+                .expect("prior lifespan should remain"),
+            old_lifespan
+        );
+        assert_eq!(
+            crate::player::state::load_player_shrine_anchor_slice(&player_persistence, username)
+                .expect("shrine should reload"),
+            Some(shrine_before),
+            "failed join reincarnation must roll back shrine clearing"
+        );
+        assert_eq!(
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("cultivation bundle should reload")
+                .expect("terminated bundle should remain"),
+            persisted_bundle_before,
+            "failed join reincarnation must roll back cultivation and nourishment replacement"
+        );
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("sqlite should reopen after rollback");
+        let life_record_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM life_records", [], |row| row.get(0))
+            .expect("life_records count should query");
+        assert_eq!(
+            life_record_count, 0,
+            "failed join reincarnation must not leak a fresh life_records row"
         );
 
         let _ = std::fs::remove_dir_all(root);

@@ -44,12 +44,13 @@ use crate::nourishment::tick::NourishmentActivityWindow;
 use crate::nourishment::Nourishment;
 use crate::npc::spawn::NpcMarker;
 use crate::persistence::{
-    persist_near_death_transition, persist_player_cultivation_bundle_with_nourishment,
-    persist_revival_transition, persist_termination_transition,
+    persist_near_death_transition, persist_new_character_transition,
+    persist_revival_transition_with_bundle, persist_termination_transition,
     persist_termination_transition_with_death_context, release_ascension_quota_slot,
-    LifespanEventRecord, PersistenceSettings,
+    LifespanEventRecord, NewCharacterPersistenceBundle, PersistenceSettings,
+    PlayerCultivationBundle,
 };
-use crate::player::state::{save_player_slices, PlayerState, PlayerStatePersistence};
+use crate::player::state::{PlayerState, PlayerStatePersistence};
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::death_cinematic::DeathCinematicS2cV1;
 use crate::schema::death_insight::{
@@ -132,11 +133,27 @@ type NearDeathPersistenceQueryItem<'a> = (
     Option<&'a NpcMarker>,
     Option<&'a NpcVisualProfile>,
     Option<&'a mut PlayerInventory>,
-    Option<&'a mut SkillSet>,
     (
-        Option<&'a FaunaTag>,
-        Option<&'a mut Nourishment>,
-        Option<&'a mut NourishmentActivityWindow>,
+        (
+            Option<&'a mut SkillSet>,
+            (
+                Option<&'a FaunaTag>,
+                Option<&'a mut Nourishment>,
+                Option<&'a mut NourishmentActivityWindow>,
+            ),
+        ),
+        (
+            Option<&'a QiColor>,
+            Option<&'a Karma>,
+            Option<&'a PracticeLog>,
+            Option<&'a InsightQuota>,
+            Option<&'a UnlockedPerceptions>,
+            Option<&'a InsightModifiers>,
+            Option<&'a MeridianSeveredPermanent>,
+            Option<&'a TutorialState>,
+            Option<&'a PoisonToxicity>,
+            Option<&'a DigestionLoad>,
+        ),
     ),
 );
 
@@ -764,8 +781,7 @@ pub fn near_death_tick(
         npc_marker,
         npc_visual_profile,
         _inventory,
-        _skill_set,
-        (fauna_tag, _nourishment, _nourishment_activity),
+        ((_skill_set, (fauna_tag, _nourishment, _nourishment_activity)), _bundle),
     ) in &mut lifecycle_q
     {
         if lifecycle
@@ -1042,8 +1058,21 @@ pub fn handle_revival_action_intents(
             npc_marker,
             npc_visual_profile,
             inventory,
-            skill_set,
-            (_fauna_tag, nourishment, nourishment_activity),
+            (
+                (skill_set, (_fauna_tag, nourishment, nourishment_activity)),
+                (
+                    qi_color,
+                    karma,
+                    practice_log,
+                    insight_quota,
+                    unlocked_perceptions,
+                    insight_modifiers,
+                    meridian_severed,
+                    tutorial_state,
+                    poison_toxicity,
+                    digestion_load,
+                ),
+            ),
         )) = lifecycle_q.get_mut(intent.entity)
         else {
             continue;
@@ -1062,6 +1091,29 @@ pub fn handle_revival_action_intents(
                     || matches!(decision, RevivalDecision::Tribulation { chance } if roll_rebirth(clock.tick, entity, chance));
 
                 if survived {
+                    let (
+                        Some(qi_color),
+                        Some(karma),
+                        Some(practice_log),
+                        Some(insight_quota),
+                        Some(unlocked_perceptions),
+                        Some(insight_modifiers),
+                        Some(meridian_severed),
+                    ) = (
+                        qi_color,
+                        karma,
+                        practice_log,
+                        insight_quota,
+                        unlocked_perceptions,
+                        insight_modifiers,
+                        meridian_severed,
+                    )
+                    else {
+                        tracing::warn!(
+                            "[bong][combat] refusing revival for {entity:?}: cultivation bundle is incomplete"
+                        );
+                        continue;
+                    };
                     if revive_lifecycle(
                         entity,
                         clock.tick,
@@ -1078,13 +1130,22 @@ pub fn handle_revival_action_intents(
                         position,
                         nourishment,
                         nourishment_activity,
+                        qi_color,
+                        karma,
+                        practice_log,
+                        insight_quota,
+                        unlocked_perceptions,
+                        insight_modifiers,
+                        meridian_severed,
+                        tutorial_state,
+                        poison_toxicity,
+                        digestion_load,
                         &mut revived,
                         &mut quota_opened,
                         &mut commands,
                         coffin_registry.as_deref_mut(),
                         &mut coffin_state_events,
                         username,
-                        lifespan.as_deref(),
                         player_persistence.as_deref(),
                     ) {
                         commands
@@ -1180,7 +1241,7 @@ pub fn handle_revival_action_intents(
                 if lifecycle.state != LifecycleState::Terminated {
                     continue;
                 }
-                reset_for_new_character(
+                if reset_for_new_character(
                     entity,
                     &mut commands,
                     clock.tick,
@@ -1199,18 +1260,23 @@ pub fn handle_revival_action_intents(
                     skill_set,
                     nourishment,
                     nourishment_activity,
+                    tutorial_state,
+                    meridian_severed,
+                    poison_toxicity,
+                    digestion_load,
                     player_persistence.as_deref(),
                     default_loadout.as_deref(),
                     item_registry.as_deref(),
                     inventory_allocator.as_deref_mut(),
                     coffin_registry.as_deref_mut(),
                     &mut coffin_state_events,
-                );
-                commands
-                    .entity(entity)
-                    .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
-                hide_death_screen(&mut clients, entity);
-                hide_terminate_screen(&mut clients, entity);
+                ) {
+                    commands
+                        .entity(entity)
+                        .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
+                    hide_death_screen(&mut clients, entity);
+                    hide_terminate_screen(&mut clients, entity);
+                }
             }
         }
     }
@@ -1534,6 +1600,16 @@ fn revive_lifecycle(
     position: Option<valence::prelude::Mut<'_, Position>>,
     nourishment: Option<valence::prelude::Mut<'_, Nourishment>>,
     nourishment_activity: Option<valence::prelude::Mut<'_, NourishmentActivityWindow>>,
+    qi_color: &QiColor,
+    karma: &Karma,
+    practice_log: &PracticeLog,
+    insight_quota: &InsightQuota,
+    unlocked_perceptions: &UnlockedPerceptions,
+    insight_modifiers: &InsightModifiers,
+    meridian_severed: &MeridianSeveredPermanent,
+    tutorial_state: Option<&TutorialState>,
+    poison_toxicity: Option<&PoisonToxicity>,
+    digestion_load: Option<&DigestionLoad>,
     revived: &mut EventWriter<PlayerRevived>,
     quota_opened: &mut EventWriter<AscensionQuotaOpened>,
     // P0 fix: coffin 清除参数（复活后不应继续锁棺）
@@ -1541,9 +1617,20 @@ fn revive_lifecycle(
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
     coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
     coffin_username: Option<&Username>,
-    coffin_lifespan: Option<&crate::cultivation::lifespan::LifespanComponent>,
     coffin_player_persistence: Option<&PlayerStatePersistence>,
 ) -> bool {
+    let (Some(username), Some(player_persistence), Some(mut position)) =
+        (coffin_username, coffin_player_persistence, position)
+    else {
+        tracing::warn!(
+            "[bong][combat] refusing revival for {entity:?}: Username, PlayerStatePersistence, or Position is missing"
+        );
+        return false;
+    };
+    let revived_position = lifecycle
+        .spawn_anchor
+        .unwrap_or_else(crate::player::spawn_position);
+
     let mut staged_lifecycle = lifecycle.clone();
     if matches!(
         lifecycle.awaiting_decision,
@@ -1554,66 +1641,91 @@ fn revive_lifecycle(
     let weakened_multiplier = damaged_spawn_anchor_weakened_multiplier(lifecycle);
     staged_lifecycle.revive_with_weakened_multiplier(now_tick, weakened_multiplier);
 
-    let mut staged_cultivation = cultivation.as_ref().map(|value| (**value).clone());
-    let mut staged_meridians = meridians.as_ref().map(|value| (**value).clone());
-    let mut staged_contam = contam.as_ref().map(|value| (**value).clone());
-    let mut staged_life_record = life_record.as_ref().map(|value| (**value).clone());
-
-    if let (
-        Some(staged_cultivation),
-        Some(staged_meridians),
-        Some(staged_contam),
-        Some(staged_life_record),
-    ) = (
-        staged_cultivation.as_mut(),
-        staged_meridians.as_mut(),
-        staged_contam.as_mut(),
-        staged_life_record.as_mut(),
+    let (mut staged_cultivation, mut staged_meridians, mut staged_contam, mut staged_life_record) =
+        match (
+            cultivation.as_ref().map(|value| (**value).clone()),
+            meridians.as_ref().map(|value| (**value).clone()),
+            contam.as_ref().map(|value| (**value).clone()),
+            life_record.as_ref().map(|value| (**value).clone()),
+        ) {
+            (Some(cultivation), Some(meridians), Some(contamination), Some(life_record)) => {
+                (cultivation, meridians, contamination, life_record)
+            }
+            _ => {
+                tracing::warn!("[bong][combat] refusing revival for {entity:?}: required lifecycle bundle component is missing");
+                return false;
+            }
+        };
+    let staged_nourishment = Nourishment::spawn_default();
+    let prior_realm = staged_cultivation.realm;
+    apply_revive_penalty(
+        &mut staged_cultivation,
+        &mut staged_meridians,
+        &mut staged_contam,
+    );
+    staged_life_record.push(BiographyEntry::Rebirth {
+        prior_realm,
+        new_realm: staged_cultivation.realm,
+        tick: now_tick,
+    });
+    if let Err(error) = persist_revival_transition_with_bundle(
+        persistence,
+        player_persistence,
+        username.0.as_str(),
+        revived_position,
+        crate::persistence::PlayerCultivationBundle {
+            cultivation: &staged_cultivation,
+            meridians: &staged_meridians,
+            qi_color,
+            karma,
+            contamination: &staged_contam,
+            life_record: &staged_life_record,
+            practice_log,
+            insight_quota,
+            unlocked_perceptions,
+            insight_modifiers,
+            tutorial_state,
+            meridian_severed,
+            poison_toxicity,
+            digestion_load,
+            nourishment: &staged_nourishment,
+        },
     ) {
-        let prior_realm = staged_cultivation.realm;
-        apply_revive_penalty(staged_cultivation, staged_meridians, staged_contam);
-        staged_life_record.push(BiographyEntry::Rebirth {
-            prior_realm,
-            new_realm: staged_cultivation.realm,
-            tick: now_tick,
-        });
-        if let Err(error) = persist_revival_transition(persistence, staged_life_record) {
-            tracing::warn!(
-                "[bong][persistence] failed to persist revival transition for {}: {error}",
-                staged_life_record.character_id
-            );
-            return false;
-        }
-        if prior_realm == Realm::Void && staged_cultivation.realm != Realm::Void {
-            match release_ascension_quota_slot(persistence) {
-                Ok(release) if release.opened_slot => {
-                    quota_opened.send(AscensionQuotaOpened {
-                        occupied_slots: release.quota.occupied_slots,
-                    });
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        "[bong][combat] failed to release ascension quota after revive for {:?}: {error}",
-                        entity,
-                    );
-                }
+        tracing::warn!(
+            "[bong][persistence] failed to persist revival transition for {}: {error}",
+            staged_life_record.character_id
+        );
+        return false;
+    }
+    if prior_realm == Realm::Void && staged_cultivation.realm != Realm::Void {
+        match release_ascension_quota_slot(persistence) {
+            Ok(release) if release.opened_slot => {
+                quota_opened.send(AscensionQuotaOpened {
+                    occupied_slots: release.quota.occupied_slots,
+                });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][combat] failed to release ascension quota after revive for {:?}: {error}",
+                    entity,
+                );
             }
         }
     }
 
     lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining;
     lifecycle.revive_with_weakened_multiplier(now_tick, weakened_multiplier);
-    if let (Some(mut cultivation), Some(staged_cultivation)) = (cultivation, staged_cultivation) {
+    if let Some(mut cultivation) = cultivation {
         *cultivation = staged_cultivation;
     }
-    if let (Some(mut meridians), Some(staged_meridians)) = (meridians, staged_meridians) {
+    if let Some(mut meridians) = meridians {
         *meridians = staged_meridians;
     }
-    if let (Some(mut contam), Some(staged_contam)) = (contam, staged_contam) {
+    if let Some(mut contam) = contam {
         *contam = staged_contam;
     }
-    if let (Some(mut life_record), Some(staged_life_record)) = (life_record, staged_life_record) {
+    if let Some(mut life_record) = life_record {
         *life_record = staged_life_record;
     }
 
@@ -1631,14 +1743,7 @@ fn revive_lifecycle(
         combat_state.last_attack_at_tick = None;
     }
     let _ = player_state;
-    if let Some(mut position) = position {
-        // worldview §十二：重生位置优先灵龛（如有）> 世界出生点。
-        position.set(
-            lifecycle
-                .spawn_anchor
-                .unwrap_or_else(crate::player::spawn_position),
-        );
-    }
+    position.set(revived_position);
 
     if let Some(mut nourishment) = nourishment {
         nourishment.reset_to_spawn();
@@ -1653,98 +1758,37 @@ fn revive_lifecycle(
             .insert(NourishmentActivityWindow::default());
     }
 
-    // P0 fix: 清 coffin 状态（复活后不应继续锁棺）。统一走 clear_coffin_on_exit 四件套。
-    clear_coffin_on_exit(
-        entity,
-        commands,
-        coffin_registry,
-        coffin_state_events,
-        coffin_player_persistence,
-        coffin_username,
-        coffin_lifespan,
-    );
-    queue_nourishment_cultivation_bundle_persist(commands, entity, persistence.clone());
-
+    // SQLite 已在 revival transaction 内清除 in_coffin；此处只提交运行时副作用。
+    clear_coffin_runtime(entity, commands, coffin_registry, coffin_state_events);
     revived.send(PlayerRevived { entity });
     true
-}
-
-fn queue_nourishment_cultivation_bundle_persist(
-    commands: &mut valence::prelude::Commands,
-    entity: Entity,
-    settings: PersistenceSettings,
-) {
-    commands.add(
-        move |world: &mut valence::prelude::bevy_ecs::world::World| {
-            let (
-                Some(username),
-                Some(cultivation),
-                Some(meridians),
-                Some(qi_color),
-                Some(karma),
-                Some(contamination),
-                Some(life_record),
-                Some(practice_log),
-                Some(insight_quota),
-                Some(unlocked_perceptions),
-                Some(insight_modifiers),
-                Some(nourishment),
-            ) = (
-                world.get::<Username>(entity),
-                world.get::<Cultivation>(entity),
-                world.get::<MeridianSystem>(entity),
-                world.get::<QiColor>(entity),
-                world.get::<Karma>(entity),
-                world.get::<Contamination>(entity),
-                world.get::<LifeRecord>(entity),
-                world.get::<PracticeLog>(entity),
-                world.get::<InsightQuota>(entity),
-                world.get::<UnlockedPerceptions>(entity),
-                world.get::<InsightModifiers>(entity),
-                world.get::<Nourishment>(entity),
-            )
-            else {
-                tracing::warn!(
-                    "[bong][combat] skipped immediate nourishment persistence for {entity:?}: cultivation bundle is incomplete"
-                );
-                return;
-            };
-
-            let severed = world
-                .get::<MeridianSeveredPermanent>(entity)
-                .cloned()
-                .unwrap_or_default();
-            if let Err(error) = persist_player_cultivation_bundle_with_nourishment(
-                &settings,
-                username.0.as_str(),
-                cultivation,
-                meridians,
-                qi_color,
-                karma,
-                contamination,
-                life_record,
-                practice_log,
-                insight_quota,
-                unlocked_perceptions,
-                insight_modifiers,
-                world.get::<TutorialState>(entity),
-                &severed,
-                world.get::<PoisonToxicity>(entity),
-                world.get::<DigestionLoad>(entity),
-                Some(nourishment),
-            ) {
-                tracing::warn!(
-                    "[bong][combat] failed to persist nourishment lifecycle reset for `{}`: {error}",
-                    username.0,
-                );
-            }
-        },
-    );
 }
 
 ///
 /// 用于 revive / terminate / new_char 三条退出路径，确保任何离棺场景都不遗漏。
 /// 仅当玩家确实在棺内（registry.clear_player 返回 Some）时才落持久化和事件，避免噪音。
+fn clear_coffin_runtime(
+    entity: Entity,
+    commands: &mut valence::prelude::Commands,
+    coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
+    coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
+) -> bool {
+    let was_in_coffin = coffin_registry
+        .and_then(|registry| registry.clear_player(entity))
+        .is_some();
+    commands
+        .entity(entity)
+        .remove::<crate::coffin::CoffinComponent>();
+    if was_in_coffin {
+        coffin_state_events.send(crate::coffin::CoffinStateChanged {
+            player: entity,
+            grade: None,
+        });
+    }
+    was_in_coffin
+}
+
+/// Runtime + standalone persistence wrapper for exit paths that do not own a larger transaction.
 fn clear_coffin_on_exit(
     entity: Entity,
     commands: &mut valence::prelude::Commands,
@@ -1754,20 +1798,8 @@ fn clear_coffin_on_exit(
     username: Option<&Username>,
     lifespan: Option<&crate::cultivation::lifespan::LifespanComponent>,
 ) {
-    let was_in_coffin = if let Some(registry) = coffin_registry {
-        registry.clear_player(entity).is_some()
-    } else {
-        false
-    };
-    commands
-        .entity(entity)
-        .remove::<crate::coffin::CoffinComponent>();
-    if was_in_coffin {
+    if clear_coffin_runtime(entity, commands, coffin_registry, coffin_state_events) {
         crate::coffin::persist_in_coffin(player_persistence, username, lifespan, None);
-        coffin_state_events.send(crate::coffin::CoffinStateChanged {
-            player: entity,
-            grade: None,
-        });
     }
 }
 
@@ -1924,6 +1956,10 @@ fn reset_for_new_character(
     skill_set: Option<valence::prelude::Mut<'_, SkillSet>>,
     nourishment: Option<valence::prelude::Mut<'_, Nourishment>>,
     nourishment_activity: Option<valence::prelude::Mut<'_, NourishmentActivityWindow>>,
+    tutorial_state: Option<&TutorialState>,
+    meridian_severed: Option<&MeridianSeveredPermanent>,
+    poison_toxicity: Option<&PoisonToxicity>,
+    digestion_load: Option<&DigestionLoad>,
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
     item_registry: Option<&crate::inventory::ItemRegistry>,
@@ -1931,67 +1967,118 @@ fn reset_for_new_character(
     // P0 fix: coffin 清除参数（新建角色不应继承死亡前的棺状态）
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
     coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
-) {
-    // plan-remains-suite：轮换 char_id + 派生新角色 spec 的逻辑抽到
-    // `cultivation::character_select::rotate_to_new_character`，与 join 转世门
-    // （`cultivation::attach_cultivation_to_joined_clients`）共用同一份取值，
-    // 避免"新角色长什么样"在两处漂移。
-    let mut rotated_spec = None;
-    if let (Some(username), Some(player_persistence)) = (username, player_persistence) {
-        match crate::cultivation::character_select::rotate_to_new_character(
-            player_persistence,
-            username.0.as_str(),
-        ) {
-            Ok(bundle) => {
-                tracing::info!(
-                    "[bong][combat] rotated current_char_id for `{}` to {}",
-                    username.0,
-                    bundle.next_character_id
-                );
-                lifecycle.character_id = bundle.next_character_id;
-                rotated_spec = Some(bundle.spec);
-            }
-            Err(error) => {
-                tracing::warn!(
-                    "[bong][combat] failed to rotate current_char_id for `{}`: {error}",
-                    username.0
-                );
-            }
+) -> bool {
+    let (
+        Some(username),
+        Some(player_persistence),
+        Some(default_loadout),
+        Some(item_registry),
+        Some(inventory_allocator),
+    ) = (
+        username,
+        player_persistence,
+        default_loadout,
+        item_registry,
+        inventory_allocator,
+    )
+    else {
+        tracing::warn!(
+            "[bong][combat] refusing CreateNewCharacter for {entity:?}: persistence or default inventory resources are incomplete"
+        );
+        return false;
+    };
+
+    let reincarnation =
+        crate::cultivation::character_select::prepare_new_character(username.0.as_str());
+    let mut staged_lifecycle = lifecycle.clone();
+    staged_lifecycle.character_id = reincarnation.next_character_id.clone();
+    crate::cultivation::luck_pool::reset_for_new_life(&mut staged_lifecycle);
+    staged_lifecycle.last_death_tick = None;
+    staged_lifecycle.last_revive_tick = Some(now_tick);
+    staged_lifecycle.spawn_anchor = None;
+    staged_lifecycle.near_death_deadline_tick = None;
+    staged_lifecycle.awaiting_decision = None;
+    staged_lifecycle.revival_decision_deadline_tick = None;
+    staged_lifecycle.weakened_until_tick = None;
+    staged_lifecycle.state = LifecycleState::Alive;
+
+    let fresh_life_record = LifeRecord::new(staged_lifecycle.character_id.clone());
+    let fresh_death_registry = DeathRegistry::new(staged_lifecycle.character_id.clone());
+    let fresh_player_state = PlayerState::default();
+    let spawn_position = reincarnation.spec.spawn_pos;
+    let fresh_lifespan = LifespanComponent::new(reincarnation.spec.lifespan_cap);
+
+    let mut staged_inventory_allocator = inventory_allocator.clone();
+    let fresh_inventory = match instantiate_inventory_from_loadout(
+        &default_loadout.0,
+        &mut staged_inventory_allocator,
+        item_registry,
+    ) {
+        Ok(inventory) => inventory,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][combat] refusing CreateNewCharacter for {entity:?}: default loadout failed: {error}"
+            );
+            return false;
         }
+    };
+    let fresh_skill_set = SkillSet::default();
+    let fresh_nourishment = Nourishment::spawn_default();
+    let fresh_cultivation = Cultivation::default();
+    let fresh_meridians = MeridianSystem::default();
+    let fresh_qi_color = QiColor::default();
+    let fresh_karma = Karma::default();
+    let fresh_contamination = Contamination::default();
+    let fresh_practice_log = PracticeLog::default();
+    let fresh_insight_quota = InsightQuota::default();
+    let fresh_unlocked_perceptions = UnlockedPerceptions::default();
+    let fresh_insight_modifiers = InsightModifiers::new();
+    let persisted_meridian_severed = meridian_severed.cloned().unwrap_or_default();
+
+    if let Err(error) = persist_new_character_transition(
+        persistence,
+        player_persistence,
+        username.0.as_str(),
+        NewCharacterPersistenceBundle {
+            current_char_id: reincarnation.current_char_id.as_str(),
+            state: &fresh_player_state,
+            position: spawn_position,
+            inventory: Some(&fresh_inventory),
+            lifespan: &fresh_lifespan,
+            skill_set: &fresh_skill_set,
+            cultivation: PlayerCultivationBundle {
+                cultivation: &fresh_cultivation,
+                meridians: &fresh_meridians,
+                qi_color: &fresh_qi_color,
+                karma: &fresh_karma,
+                contamination: &fresh_contamination,
+                life_record: &fresh_life_record,
+                practice_log: &fresh_practice_log,
+                insight_quota: &fresh_insight_quota,
+                unlocked_perceptions: &fresh_unlocked_perceptions,
+                insight_modifiers: &fresh_insight_modifiers,
+                tutorial_state,
+                meridian_severed: &persisted_meridian_severed,
+                poison_toxicity,
+                digestion_load,
+                nourishment: &fresh_nourishment,
+            },
+        },
+    ) {
+        tracing::warn!(
+            "[bong][persistence] failed to persist fresh character transaction for `{}`: {error}",
+            username.0
+        );
+        return false;
     }
 
-    // plan-multi-life-v1 §0 O.4: per-life 运数。luck_pool::reset_for_new_life 同时
-    // 把 fortune 重置到 INITIAL_FORTUNE_PER_LIFE 并清零 death_count，
-    // 与 cultivation::luck_pool 单一数据源保持一致。
-    crate::cultivation::luck_pool::reset_for_new_life(lifecycle);
-    lifecycle.last_death_tick = None;
-    lifecycle.last_revive_tick = Some(now_tick);
-    // 新角色与前角色无机制关联；灵龛归属同样不继承。
-    lifecycle.spawn_anchor = None;
-    lifecycle.near_death_deadline_tick = None;
-    lifecycle.awaiting_decision = None;
-    lifecycle.revival_decision_deadline_tick = None;
-    lifecycle.weakened_until_tick = None;
-    lifecycle.state = LifecycleState::Alive;
-
+    *lifecycle = staged_lifecycle;
+    *inventory_allocator = staged_inventory_allocator;
     if let Some(mut life_record) = life_record {
-        *life_record = LifeRecord::new(lifecycle.character_id.clone());
+        *life_record = fresh_life_record;
     }
-
-    let default_player_state = PlayerState::default();
-    // plan-multi-life-v1 §2 / §3：新角色 spec 由 cultivation::character_select 唯一管理
-    // （spawn_pos = spawn_plain，realm = Awaken，lifespan = AWAKEN cap）。这里曾硬编
-    // MORTAL=80，与 attach_cultivation_to_joined_clients 路径用的 AWAKEN=120 数值漂移；
-    // 现统一从 spec 读，单一数据源。rotate_to_new_character 已经算过一份（用轮换后的新
-    // char_id 做 seed）；轮换失败（无 username/persistence）时才退回旧的直接派生。
-    let new_char_spec = rotated_spec.unwrap_or_else(|| {
-        crate::cultivation::character_select::next_character_spec_for_seed(&lifecycle.character_id)
-    });
-    let spawn_position = new_char_spec.spawn_pos;
-    let fresh_lifespan = LifespanComponent::new(new_char_spec.lifespan_cap);
-
     if let Some(mut death_registry) = death_registry {
-        *death_registry = DeathRegistry::new(lifecycle.character_id.clone());
+        *death_registry = fresh_death_registry;
     }
     if let Some(mut lifespan) = lifespan {
         *lifespan = fresh_lifespan.clone();
@@ -1999,27 +2086,15 @@ fn reset_for_new_character(
         commands.entity(entity).insert(fresh_lifespan.clone());
     }
     if let Some(mut player_state) = player_state {
-        *player_state = default_player_state.clone();
+        *player_state = fresh_player_state;
     }
     if let Some(mut position) = position {
         position.set(spawn_position);
     }
-    let mut persisted_inventory = None;
-    if let (Some(default_loadout), Some(item_registry), Some(inventory_allocator)) =
-        (default_loadout, item_registry, inventory_allocator)
-    {
-        let new_inventory = instantiate_inventory_from_loadout(
-            &default_loadout.0,
-            inventory_allocator,
-            item_registry,
-        )
-        .expect("default loadout should instantiate");
-        if let Some(mut inventory) = inventory {
-            *inventory = new_inventory.clone();
-        } else {
-            commands.entity(entity).insert(new_inventory.clone());
-        }
-        persisted_inventory = Some(new_inventory);
+    if let Some(mut inventory) = inventory {
+        *inventory = fresh_inventory.clone();
+    } else {
+        commands.entity(entity).insert(fresh_inventory);
     }
     if let Some(mut wounds) = wounds {
         *wounds = Wounds::default();
@@ -2031,14 +2106,14 @@ fn reset_for_new_character(
         *combat_state = CombatState::default();
     }
     if let Some(mut skill_set) = skill_set {
-        *skill_set = SkillSet::default();
+        *skill_set = fresh_skill_set;
     } else {
-        commands.entity(entity).insert(SkillSet::default());
+        commands.entity(entity).insert(fresh_skill_set);
     }
     if let Some(mut nourishment) = nourishment {
-        nourishment.reset_to_spawn();
+        *nourishment = fresh_nourishment;
     } else {
-        commands.entity(entity).insert(Nourishment::spawn_default());
+        commands.entity(entity).insert(fresh_nourishment);
     }
     if let Some(mut nourishment_activity) = nourishment_activity {
         nourishment_activity.reset();
@@ -2052,15 +2127,15 @@ fn reset_for_new_character(
     learned_recipes.learn("kai_mai_pill_v0".into());
     let mut entity_commands = commands.entity(entity);
     entity_commands.insert((
-        Cultivation::default(),
-        MeridianSystem::default(),
-        QiColor::default(),
-        Karma::default(),
-        PracticeLog::default(),
-        Contamination::default(),
-        crate::cultivation::insight::InsightQuota::default(),
-        crate::cultivation::insight_apply::UnlockedPerceptions::default(),
-        crate::cultivation::insight_apply::InsightModifiers::new(),
+        fresh_cultivation,
+        fresh_meridians,
+        fresh_qi_color,
+        fresh_karma,
+        fresh_practice_log,
+        fresh_contamination,
+        fresh_insight_quota,
+        fresh_unlocked_perceptions,
+        fresh_insight_modifiers,
         StatusEffects::default(),
         DerivedAttrs::default(),
         AntiCheatCounter::default(),
@@ -2079,43 +2154,14 @@ fn reset_for_new_character(
         .remove::<crate::cultivation::tribulation::TribulationState>()
         .remove::<crate::inventory::OverloadedMarker>();
 
-    if let (Some(username), Some(player_persistence)) = (username, player_persistence) {
-        if let Err(error) = save_player_slices(
-            player_persistence,
-            username.0.as_str(),
-            &default_player_state,
-            spawn_position,
-            DimensionKind::default(),
-            persisted_inventory.as_ref(),
-            Some(&fresh_lifespan),
-            &SkillSet::default(),
-        ) {
-            tracing::warn!(
-                "[bong][combat] failed to persist fresh character slices for `{}`: {error}",
-                username.0
-            );
-        }
-    }
+    clear_coffin_runtime(entity, commands, coffin_registry, coffin_state_events);
 
-    // P0 fix: 清 coffin 状态（新建角色不应继承死亡前的棺状态）。
-    // 仅当玩家确实在棺内（clear_player 返回 Some）时才发 CoffinStateChanged，避免噪音推送。
-    let was_in_coffin = if let Some(coffin_registry) = coffin_registry {
-        coffin_registry.clear_player(entity).is_some()
-    } else {
-        false
-    };
-    commands
-        .entity(entity)
-        .remove::<crate::coffin::CoffinComponent>();
-    if was_in_coffin {
-        // fresh_lifespan 已覆写 ECS 值（新角色寿元），以 None grade 落盘清棺+新角色寿元同帧落盘
-        crate::coffin::persist_in_coffin(player_persistence, username, Some(&fresh_lifespan), None);
-        coffin_state_events.send(crate::coffin::CoffinStateChanged {
-            player: entity,
-            grade: None,
-        });
-    }
-    queue_nourishment_cultivation_bundle_persist(commands, entity, persistence.clone());
+    tracing::info!(
+        "[bong][combat] rotated current_char_id for `{}` to {}",
+        username.0,
+        reincarnation.next_character_id
+    );
+    true
 }
 
 fn detect_zone_kind(
@@ -2401,7 +2447,9 @@ mod tests {
         persist_active_tribulation, ActiveTribulationRecord, DeceasedIndexEntry, DeceasedSnapshot,
         PersistenceSettings,
     };
-    use crate::player::state::player_character_id;
+    use crate::player::state::{
+        canonical_player_id, load_player_slices, player_character_id, save_player_slices,
+    };
     use crate::qi_physics::constants::QI_ZHENMAI_PREP_WINDOW_MS;
     use crate::schema::anticheat::ViolationKindV1;
     use crate::schema::death_cinematic::{
@@ -2561,7 +2609,15 @@ mod tests {
 
     fn revival_action_test_app(settings: PersistenceSettings, tick: u64) -> App {
         let mut app = App::new();
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            settings
+                .db_path()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+            settings.db_path(),
+        );
         app.insert_resource(settings);
+        app.insert_resource(player_persistence);
         app.insert_resource(CombatClock { tick });
         app.add_event::<valence::movement::MovementEvent>();
         app.add_event::<RevivalActionIntent>();
@@ -2593,7 +2649,7 @@ mod tests {
         app: &mut App,
         username: &str,
         state: RevivalActionActorState,
-    ) -> Entity {
+    ) -> (Entity, MockClientHelper) {
         let RevivalActionActorState {
             lifecycle,
             cultivation,
@@ -2602,7 +2658,7 @@ mod tests {
             life_record,
             nourishment,
         } = state;
-        let (client_bundle, _helper) = create_mock_client(username);
+        let (client_bundle, helper) = create_mock_client(username);
         let entity = app.world_mut().spawn_empty().id();
         app.world_mut().entity_mut(entity).insert(client_bundle);
         app.world_mut().entity_mut(entity).insert((
@@ -2647,6 +2703,7 @@ mod tests {
             crate::cultivation::insight::InsightQuota::default(),
             crate::cultivation::insight_apply::UnlockedPerceptions::default(),
             crate::cultivation::insight_apply::InsightModifiers::new(),
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
             NourishmentActivityWindow::default(),
             nourishment,
             MovementState {
@@ -2654,7 +2711,7 @@ mod tests {
                 ..Default::default()
             },
         ));
-        entity
+        (entity, helper)
     }
 
     #[test]
@@ -2685,7 +2742,7 @@ mod tests {
         );
 
         let mut app = revival_action_test_app(settings.clone(), 700);
-        let entity = spawn_revival_action_actor(
+        let (entity, _helper) = spawn_revival_action_actor(
             &mut app,
             username,
             RevivalActionActorState {
@@ -2760,7 +2817,7 @@ mod tests {
     }
 
     #[test]
-    fn reincarnate_persistence_failure_is_atomic_for_ecs_and_nourishment_bundle() {
+    fn reincarnate_precommit_failure_rolls_back_sqlite_and_ecs() {
         let (settings, root) = persistence_settings("reincarnate-persistence-atomicity");
         let username = "AtomicReincarnate";
         let cultivation = Cultivation {
@@ -2786,8 +2843,26 @@ mod tests {
             persisted_nourishment,
         );
 
+        let old_position = [12.0, 70.0, -4.0];
+        let old_lifespan = LifespanComponent::new(LifespanCapTable::AWAKEN);
+        let player_persistence =
+            PlayerStatePersistence::with_db_path(root.join("data"), settings.db_path());
+        crate::player::state::save_player_slices_with_coffin(
+            &player_persistence,
+            username,
+            &PlayerState::default(),
+            old_position,
+            DimensionKind::Tsy,
+            None,
+            Some(&old_lifespan),
+            &SkillSet::default(),
+            Some(crate::coffin::CoffinGrade::Jade),
+            None,
+        )
+        .expect("test setup must persist pre-revival player slices and coffin state");
+
         let mut app = revival_action_test_app(settings.clone(), 701);
-        let entity = spawn_revival_action_actor(
+        let (entity, mut helper) = spawn_revival_action_actor(
             &mut app,
             username,
             RevivalActionActorState {
@@ -2804,6 +2879,17 @@ mod tests {
                 nourishment: persisted_nourishment,
             },
         );
+        let coffin_lower = valence::prelude::BlockPos::new(10, 64, 10);
+        let coffin_before = crate::coffin::CoffinComponent {
+            entered_at_tick: 400,
+            coffin_lower,
+            grade: crate::coffin::CoffinGrade::Jade,
+        };
+        app.world_mut().entity_mut(entity).insert(coffin_before);
+        let mut coffin_registry = crate::coffin::CoffinRegistry::default();
+        assert!(coffin_registry.insert(coffin_lower, 300, crate::coffin::CoffinGrade::Jade));
+        assert!(coffin_registry.set_occupied(coffin_lower, entity));
+        app.insert_resource(coffin_registry);
         app.update();
         let lifecycle_before = serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
             .expect("lifecycle snapshot should serialize");
@@ -2832,13 +2918,7 @@ mod tests {
             "test setup must provide non-empty session activity before the persistence failure"
         );
 
-        let database_path = settings.db_path().to_path_buf();
-        let parked_database_path = root.join("parked-bong.db");
-        fs::rename(&database_path, &parked_database_path)
-            .expect("test setup must park the closed SQLite database");
-        fs::create_dir(&database_path).expect(
-            "a directory at the database path must make Connection::open fail deterministically",
-        );
+        let _failpoint = crate::persistence::arm_fail_before_commit(settings.db_path());
 
         app.world_mut().send_event(RevivalActionIntent {
             entity,
@@ -2848,12 +2928,23 @@ mod tests {
         app.update();
 
         let revived_event_count = app.world().resource::<Events<PlayerRevived>>().len();
-
-        fs::remove_dir(&database_path)
-            .expect("test teardown must remove the path used to force Connection::open failure");
-        fs::rename(&parked_database_path, &database_path)
-            .expect("test teardown must restore the parked SQLite database before verification");
         let persisted_after = load_persisted_nourishment(&settings, username);
+        let persisted_player_after = load_player_slices(&player_persistence, username);
+        let connection = Connection::open(settings.db_path()).expect("sqlite should reopen");
+        let life_record_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM life_records WHERE char_id = ?1",
+                [crate::player::state::canonical_player_id(username)],
+                |row| row.get(0),
+            )
+            .expect("life record count should query");
+        let life_event_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1",
+                [crate::player::state::canonical_player_id(username)],
+                |row| row.get(0),
+            )
+            .expect("life event count should query");
 
         assert_eq!(
             serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
@@ -2902,6 +2993,11 @@ mod tests {
             "failed revival persistence must not clear combat state"
         );
         assert_eq!(
+            app.world().get::<Position>(entity).unwrap().get(),
+            old_position.into(),
+            "failed revival persistence must not move the live entity"
+        );
+        assert_eq!(
             *app.world().get::<Nourishment>(entity).unwrap(),
             nourishment_before,
             "failed revival persistence must not reset satiety or hydration"
@@ -2919,7 +3015,70 @@ mod tests {
         );
         assert_eq!(
             persisted_after, persisted_nourishment,
-            "failed revival persistence must leave SQLite nourishment axes untouched"
+            "precommit failure must roll back the staged nourishment reset"
+        );
+        assert_eq!(
+            persisted_player_after.position, old_position,
+            "precommit failure must roll back the staged shrine/world-spawn position"
+        );
+        flush_client_packets(&mut app);
+        let server_payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            server_payloads.iter().all(|payload| !matches!(
+                payload.payload,
+                ServerDataPayloadV1::DeathScreen { visible: false, .. }
+                    | ServerDataPayloadV1::TerminateScreen { visible: false, .. }
+            )),
+            "failed revival persistence must not hide death or terminate UI"
+        );
+        assert_eq!(
+            app.world().get::<crate::coffin::CoffinComponent>(entity),
+            Some(&coffin_before),
+            "failed revival persistence must not remove the live CoffinComponent"
+        );
+        let coffin_registry_after = app.world().resource::<crate::coffin::CoffinRegistry>();
+        assert_eq!(
+            coffin_registry_after.player_in_coffin.get(&entity),
+            Some(&coffin_lower),
+            "failed revival persistence must retain the player-to-coffin registry index"
+        );
+        assert_eq!(
+            coffin_registry_after
+                .lookup(coffin_lower)
+                .expect("registered coffin should remain")
+                .occupied_by,
+            Some(entity),
+            "failed revival persistence must retain coffin occupancy"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<crate::coffin::CoffinStateChanged>>()
+                .drain()
+                .count(),
+            0,
+            "failed revival persistence must not emit CoffinStateChanged"
+        );
+        assert!(
+            persisted_player_after.in_coffin,
+            "precommit failure must retain the persisted coffin flag"
+        );
+        assert_eq!(
+            persisted_player_after.coffin_grade,
+            Some(crate::coffin::CoffinGrade::Jade),
+            "precommit failure must retain the persisted coffin grade"
+        );
+        assert_eq!(
+            persisted_player_after.last_dimension,
+            DimensionKind::Tsy,
+            "precommit failure must retain the persisted pre-revival dimension"
+        );
+        assert_eq!(
+            life_record_count, 0,
+            "precommit failure must roll back the staged life_records upsert"
+        );
+        assert_eq!(
+            life_event_count, 0,
+            "precommit failure must roll back the staged rebirth life_event"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -3962,7 +4121,32 @@ mod tests {
         // 会是 80 减去一份闲置 sweep 损耗，与 spawn_default 精确相等的断言就会撞红。
         let mut app = App::new();
         let (settings, root) = persistence_settings("nourishment-sweep-before-revival");
+        let username = "SweepBeforeRevival";
+        let cultivation = Cultivation::default();
+        let meridians = MeridianSystem::default();
+        let contamination = Contamination::default();
+        let life_record = LifeRecord::new(canonical_player_id(username));
+        seed_revival_nourishment_bundle(
+            &settings,
+            username,
+            &cultivation,
+            &meridians,
+            &contamination,
+            &life_record,
+            Nourishment {
+                satiety: 12.0,
+                hydration: 8.0,
+            },
+        );
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            settings
+                .db_path()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+            settings.db_path(),
+        );
         app.insert_resource(settings);
+        app.insert_resource(player_persistence);
         app.insert_resource(CombatClock {
             tick: u64::from(crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS),
         });
@@ -3975,26 +4159,26 @@ mod tests {
         crate::nourishment::register(&mut app);
         app.add_systems(Update, handle_revival_action_intents);
 
-        let (mut client_bundle, _helper) = create_mock_client("SweepBeforeRevival");
-        client_bundle.player.position = Position::new([1.0, 70.0, 1.0]);
-        let entity = app
-            .world_mut()
-            .spawn((
-                client_bundle,
-                Cultivation::default(),
-                Lifecycle {
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
                     fortune_remaining: 1,
                     ..Default::default()
                 },
-                Nourishment {
+                cultivation,
+                meridians,
+                contamination,
+                life_record,
+                nourishment: Nourishment {
                     satiety: 12.0,
                     hydration: 8.0,
                 },
-                NourishmentActivityWindow::default(),
-            ))
-            .id();
+            },
+        );
 
         app.world_mut().send_event(RevivalActionIntent {
             entity,
@@ -4035,7 +4219,15 @@ mod tests {
         // Reincarnate intent 因 `lifecycle.state != AwaitingRevival` 被静默丢弃，玩家永远点不中重生。
         let mut app = App::new();
         let (settings, root) = persistence_settings("death-loop-full-cycle");
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            settings
+                .db_path()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+            settings.db_path(),
+        );
         app.insert_resource(settings);
+        app.insert_resource(player_persistence);
         app.insert_resource(CombatClock { tick: 100 });
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
@@ -4070,6 +4262,18 @@ mod tests {
                 ..Default::default()
             },
         );
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation::default(),
+            MeridianSystem::default(),
+            Contamination::default(),
+            crate::cultivation::components::QiColor::default(),
+            crate::cultivation::components::Karma::default(),
+            crate::cultivation::color::PracticeLog::default(),
+            crate::cultivation::insight::InsightQuota::default(),
+            crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+            crate::cultivation::insight_apply::InsightModifiers::new(),
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+        ));
 
         // 首次死亡事件：Alive → NearDeath。
         app.world_mut().send_event(DeathEvent {
@@ -4954,7 +5158,15 @@ mod tests {
     fn life_events_are_append_only_and_atomic_with_state_updates() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("append-only-atomic");
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            settings
+                .db_path()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+            settings.db_path(),
+        );
         app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence);
         app.insert_resource(CombatClock { tick: 90 });
         app.insert_resource(CultivationClock { tick: 691 });
         app.add_event::<DeathEvent>();
@@ -5018,6 +5230,8 @@ mod tests {
                 hydration: 8.0,
             },
             NourishmentActivityWindow::default(),
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            Position::new([8.0, 66.0, 8.0]),
         ));
 
         app.world_mut().send_event(DeathEvent {
@@ -5134,7 +5348,6 @@ mod tests {
 
     #[test]
     fn void_revival_releases_ascension_quota() {
-        let mut app = App::new();
         let (settings, root) = persistence_settings("void-revival-release-quota");
         persist_active_tribulation(
             &settings,
@@ -5153,27 +5366,12 @@ mod tests {
         .expect("active DuXu should persist before quota setup");
         complete_tribulation_ascension(&settings, "offline:VoidWalker")
             .expect("quota setup should succeed");
-        app.insert_resource(settings.clone());
-        app.insert_resource(CombatClock { tick: 700 });
-        app.add_event::<RevivalActionIntent>();
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<AscensionQuotaOpened>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<crate::coffin::CoffinStateChanged>();
-        app.add_systems(Update, handle_revival_action_intents);
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Wounds {
-                    health_current: 1.0,
-                    health_max: 30.0,
-                    entries: Vec::new(),
-                },
-                Stamina::default(),
-                CombatState::default(),
-                Lifecycle {
+        let mut app = revival_action_test_app(settings.clone(), 700);
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            "VoidWalker",
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
                     character_id: "offline:VoidWalker".to_string(),
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
@@ -5181,17 +5379,18 @@ mod tests {
                     fortune_remaining: 1,
                     ..Default::default()
                 },
-                Cultivation {
+                cultivation: Cultivation {
                     realm: Realm::Void,
                     qi_current: 12.0,
                     qi_max: 240.0,
                     ..Default::default()
                 },
-                MeridianSystem::default(),
-                Contamination::default(),
-                LifeRecord::new("offline:VoidWalker"),
-            ))
-            .id();
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new("offline:VoidWalker"),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
 
         app.world_mut().send_event(RevivalActionIntent {
             entity,
@@ -5960,6 +6159,281 @@ mod tests {
     }
 
     #[test]
+    fn create_new_character_precommit_failure_rolls_back_sqlite_and_ecs() {
+        let (settings, root) = persistence_settings("create-new-character-precommit-rollback");
+        let data_dir = root.join("data");
+        let player_persistence =
+            PlayerStatePersistence::with_db_path(&data_dir, settings.db_path());
+        let username = "AtomicNewCharacter";
+        let old_state = PlayerState {
+            karma: 0.4,
+            inventory_score: 0.8,
+        };
+        let old_position = [99.0, 64.0, 99.0];
+        let old_lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+        let mut old_skill_set = SkillSet::default();
+        old_skill_set.skills.insert(
+            crate::skill::components::SkillId::Combat,
+            crate::skill::components::SkillEntry {
+                lv: 3,
+                xp: 70,
+                total_xp: 470,
+                last_action_at: 600,
+                recent_repeat_count: 1,
+            },
+        );
+        crate::player::state::save_player_slices_with_coffin(
+            &player_persistence,
+            username,
+            &old_state,
+            old_position,
+            DimensionKind::Tsy,
+            None,
+            Some(&old_lifespan),
+            &old_skill_set,
+            Some(crate::coffin::CoffinGrade::Jade),
+            None,
+        )
+        .expect("test setup must persist prior player slices and coffin state");
+        let current_char_id_before =
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("current character id should load")
+                .expect("current character id should exist");
+
+        let old_character_id = player_character_id(username, current_char_id_before.as_str());
+        let old_cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 7.0,
+            qi_max: 24.0,
+            ..Default::default()
+        };
+        let old_meridians = MeridianSystem::default();
+        let old_contamination = Contamination::default();
+        let old_life_record = LifeRecord::new(old_character_id.clone());
+        let old_nourishment = Nourishment {
+            satiety: 23.0,
+            hydration: 31.0,
+        };
+        seed_revival_nourishment_bundle(
+            &settings,
+            username,
+            &old_cultivation,
+            &old_meridians,
+            &old_contamination,
+            &old_life_record,
+            old_nourishment,
+        );
+        let persisted_bundle_before =
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("prior cultivation bundle should load")
+                .expect("prior cultivation bundle should exist");
+
+        let mut app = revival_action_test_app(settings.clone(), 800);
+        app.insert_resource(player_persistence.clone());
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        app.insert_resource(DefaultLoadout(default_loadout));
+        app.insert_resource(item_registry);
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        let (entity, mut helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: old_character_id.clone(),
+                    state: LifecycleState::Terminated,
+                    death_count: 9,
+                    fortune_remaining: 0,
+                    last_death_tick: Some(799),
+                    ..Default::default()
+                },
+                cultivation: old_cultivation,
+                meridians: old_meridians,
+                contamination: old_contamination,
+                life_record: old_life_record,
+                nourishment: old_nourishment,
+            },
+        );
+        app.world_mut().entity_mut(entity).insert((
+            DeathRegistry {
+                char_id: old_character_id,
+                death_count: 9,
+                last_death_tick: Some(799),
+                prev_death_tick: None,
+                last_death_zone: Some(ZoneDeathKind::Death),
+            },
+            old_lifespan,
+            old_state.clone(),
+        ));
+        let coffin_lower = valence::prelude::BlockPos::new(10, 64, 10);
+        let coffin_before = crate::coffin::CoffinComponent {
+            entered_at_tick: 500,
+            coffin_lower,
+            grade: crate::coffin::CoffinGrade::Jade,
+        };
+        app.world_mut().entity_mut(entity).insert(coffin_before);
+        let mut coffin_registry = crate::coffin::CoffinRegistry::default();
+        assert!(coffin_registry.insert(coffin_lower, 300, crate::coffin::CoffinGrade::Jade));
+        assert!(coffin_registry.set_occupied(coffin_lower, entity));
+        app.insert_resource(coffin_registry);
+        app.update();
+        let lifecycle_before = serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+            .expect("lifecycle snapshot should serialize");
+        let life_record_before =
+            serde_json::to_value(app.world().get::<LifeRecord>(entity).unwrap())
+                .expect("life record snapshot should serialize");
+        let activity_before = *app
+            .world()
+            .get::<NourishmentActivityWindow>(entity)
+            .unwrap();
+        let allocator_before = app
+            .world()
+            .resource::<InventoryInstanceIdAllocator>()
+            .clone();
+        let persisted_before = load_player_slices(&player_persistence, username);
+        assert!(persisted_before.inventory.is_none());
+        assert_eq!(
+            serde_json::to_value(&persisted_before.skill_set)
+                .expect("prior skill set should serialize"),
+            serde_json::to_value(&old_skill_set).expect("skill set fixture should serialize")
+        );
+        let _failpoint = crate::persistence::arm_fail_before_commit(settings.db_path());
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 800,
+        });
+        app.update();
+
+        assert_eq!(
+            serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+                .expect("lifecycle snapshot should serialize"),
+            lifecycle_before,
+            "precommit failure must leave the terminated lifecycle unchanged"
+        );
+        assert_eq!(
+            serde_json::to_value(app.world().get::<LifeRecord>(entity).unwrap())
+                .expect("life record snapshot should serialize"),
+            life_record_before,
+            "precommit failure must not replace the prior life record"
+        );
+        assert_eq!(
+            *app.world().get::<PlayerState>(entity).unwrap(),
+            old_state,
+            "precommit failure must not reset live player state"
+        );
+        assert_eq!(
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            old_nourishment,
+            "precommit failure must not reset live nourishment"
+        );
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap(),
+            activity_before,
+            "precommit failure must not clear session activity"
+        );
+        assert!(
+            app.world().get::<PlayerInventory>(entity).is_none(),
+            "precommit failure must not attach a fresh inventory"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                app.world().resource::<InventoryInstanceIdAllocator>()
+            ),
+            format!("{allocator_before:?}"),
+            "precommit failure must not consume inventory instance ids"
+        );
+        flush_client_packets(&mut app);
+        let server_payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            server_payloads.iter().all(|payload| !matches!(
+                payload.payload,
+                ServerDataPayloadV1::DeathScreen { visible: false, .. }
+                    | ServerDataPayloadV1::TerminateScreen { visible: false, .. }
+            )),
+            "failed new-character persistence must not hide death or terminate UI"
+        );
+        assert_eq!(
+            app.world().get::<crate::coffin::CoffinComponent>(entity),
+            Some(&coffin_before),
+            "failed new-character persistence must not remove the live CoffinComponent"
+        );
+        let coffin_registry_after = app.world().resource::<crate::coffin::CoffinRegistry>();
+        assert_eq!(
+            coffin_registry_after.player_in_coffin.get(&entity),
+            Some(&coffin_lower),
+            "failed new-character persistence must retain the player-to-coffin registry index"
+        );
+        assert_eq!(
+            coffin_registry_after
+                .lookup(coffin_lower)
+                .expect("registered coffin should remain")
+                .occupied_by,
+            Some(entity),
+            "failed new-character persistence must retain coffin occupancy"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<crate::coffin::CoffinStateChanged>>()
+                .drain()
+                .count(),
+            0,
+            "failed new-character persistence must not emit CoffinStateChanged"
+        );
+
+        let current_char_id_after =
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("current character id should reload")
+                .expect("current character id should remain");
+        assert_eq!(
+            current_char_id_after, current_char_id_before,
+            "precommit failure must roll back player_core.current_char_id"
+        );
+        let persisted_after =
+            crate::player::state::load_player_slices(&player_persistence, username);
+        assert_eq!(persisted_after.state, old_state);
+        assert_eq!(persisted_after.position, old_position);
+        assert_eq!(persisted_after.last_dimension, DimensionKind::Tsy);
+        assert!(
+            persisted_after.inventory.is_none(),
+            "precommit failure must roll back the staged fresh inventory slice"
+        );
+        assert_eq!(
+            serde_json::to_value(&persisted_after.skill_set)
+                .expect("rolled-back skill set should serialize"),
+            serde_json::to_value(&old_skill_set).expect("skill set fixture should serialize"),
+            "precommit failure must roll back the staged fresh skill slice"
+        );
+        assert!(persisted_after.in_coffin);
+        assert_eq!(
+            persisted_after.coffin_grade,
+            Some(crate::coffin::CoffinGrade::Jade)
+        );
+        assert_eq!(
+            persisted_after
+                .lifespan
+                .expect("prior lifespan should remain")
+                .cap_by_realm,
+            LifespanCapTable::MORTAL
+        );
+        assert_eq!(
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("cultivation bundle should reload")
+                .expect("cultivation bundle should remain"),
+            persisted_bundle_before,
+            "precommit failure must roll back the staged cultivation bundle"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn create_new_character_uses_distinct_character_ids_for_deceased_exports() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("new-character-deceased-unique");
@@ -6232,76 +6706,72 @@ mod tests {
 
     #[test]
     fn reincarnate_places_player_at_shrine_anchor_or_world_spawn() {
-        let mut app = App::new();
         let (settings, root) = persistence_settings("revive-spawn-anchor");
-        app.insert_resource(settings);
-        app.insert_resource(CombatClock { tick: 42 });
-        app.add_event::<RevivalActionIntent>();
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<AscensionQuotaOpened>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<crate::coffin::CoffinStateChanged>();
-        app.add_systems(Update, handle_revival_action_intents);
-
+        let mut app = revival_action_test_app(settings.clone(), 42);
         let shrine_anchor = [123.0, 45.0, -67.0];
 
-        let with_shrine = app
-            .world_mut()
-            .spawn((
-                Position::new([99.0, 64.0, 99.0]),
-                Lifecycle {
-                    state: LifecycleState::AwaitingRevival,
-                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
-                    spawn_anchor: Some(shrine_anchor),
-                    fortune_remaining: 1,
-                    ..Default::default()
+        let spawn_actor = |app: &mut App, username: &str, spawn_anchor: Option<[f64; 3]>| {
+            let cultivation = Cultivation::default();
+            let meridians = MeridianSystem::default();
+            let contamination = Contamination::default();
+            let life_record = LifeRecord::new(canonical_player_id(username));
+            seed_revival_nourishment_bundle(
+                &settings,
+                username,
+                &cultivation,
+                &meridians,
+                &contamination,
+                &life_record,
+                Nourishment::spawn_default(),
+            );
+            spawn_revival_action_actor(
+                app,
+                username,
+                RevivalActionActorState {
+                    lifecycle: Lifecycle {
+                        state: LifecycleState::AwaitingRevival,
+                        awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                        spawn_anchor,
+                        fortune_remaining: 1,
+                        ..Default::default()
+                    },
+                    cultivation,
+                    meridians,
+                    contamination,
+                    life_record,
+                    nourishment: Nourishment::spawn_default(),
                 },
-            ))
-            .id();
+            )
+        };
 
-        let without_shrine = app
-            .world_mut()
-            .spawn((
-                Position::new([99.0, 64.0, 99.0]),
-                Lifecycle {
-                    state: LifecycleState::AwaitingRevival,
-                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
-                    spawn_anchor: None,
-                    fortune_remaining: 1,
-                    ..Default::default()
-                },
-            ))
-            .id();
+        let (with_shrine, _with_shrine_helper) =
+            spawn_actor(&mut app, "ReviveAtShrine", Some(shrine_anchor));
+        let (without_shrine, _without_shrine_helper) =
+            spawn_actor(&mut app, "ReviveAtWorldSpawn", None);
 
-        app.world_mut().send_event(RevivalActionIntent {
-            entity: with_shrine,
-            action: RevivalActionKind::Reincarnate,
-            issued_at_tick: 42,
-        });
-        app.world_mut().send_event(RevivalActionIntent {
-            entity: without_shrine,
-            action: RevivalActionKind::Reincarnate,
-            issued_at_tick: 42,
-        });
+        for entity in [with_shrine, without_shrine] {
+            app.world_mut().send_event(RevivalActionIntent {
+                entity,
+                action: RevivalActionKind::Reincarnate,
+                issued_at_tick: 42,
+            });
+        }
         app.update();
 
-        let with_shrine_pos = app
-            .world()
-            .entity(with_shrine)
-            .get::<Position>()
-            .expect("position should exist")
-            .get();
-        assert_eq!(with_shrine_pos, Position::new(shrine_anchor).get());
-
-        let without_shrine_pos = app
-            .world()
-            .entity(without_shrine)
-            .get::<Position>()
-            .expect("position should exist")
-            .get();
         assert_eq!(
-            without_shrine_pos,
+            app.world()
+                .entity(with_shrine)
+                .get::<Position>()
+                .expect("position should exist")
+                .get(),
+            Position::new(shrine_anchor).get()
+        );
+        assert_eq!(
+            app.world()
+                .entity(without_shrine)
+                .get::<Position>()
+                .expect("position should exist")
+                .get(),
             Position::new(crate::player::spawn_position()).get()
         );
 
@@ -6310,23 +6780,15 @@ mod tests {
 
     #[test]
     fn damaged_spawn_anchor_doubles_revive_weakened_duration() {
-        let mut app = App::new();
         let (settings, root) = persistence_settings("revive-damaged-spawn-anchor");
-        app.insert_resource(settings);
-        app.insert_resource(CombatClock { tick: 42 });
-        app.add_event::<RevivalActionIntent>();
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<AscensionQuotaOpened>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<crate::coffin::CoffinStateChanged>();
-        app.add_systems(Update, handle_revival_action_intents);
+        let mut app = revival_action_test_app(settings, 42);
 
-        let damaged = app
-            .world_mut()
-            .spawn((
-                Position::new([99.0, 64.0, 99.0]),
-                Lifecycle {
+        let (damaged, _damaged_helper) = spawn_revival_action_actor(
+            &mut app,
+            "DamagedAnchor",
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id("DamagedAnchor"),
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
                     spawn_anchor: Some([11.0, 65.0, 10.0]),
@@ -6334,13 +6796,19 @@ mod tests {
                     fortune_remaining: 1,
                     ..Default::default()
                 },
-            ))
-            .id();
-        let intact = app
-            .world_mut()
-            .spawn((
-                Position::new([99.0, 64.0, 99.0]),
-                Lifecycle {
+                cultivation: Cultivation::default(),
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id("DamagedAnchor")),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+        let (intact, _intact_helper) = spawn_revival_action_actor(
+            &mut app,
+            "IntactAnchor",
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id("IntactAnchor"),
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
                     spawn_anchor: Some([12.0, 65.0, 10.0]),
@@ -6348,8 +6816,13 @@ mod tests {
                     fortune_remaining: 1,
                     ..Default::default()
                 },
-            ))
-            .id();
+                cultivation: Cultivation::default(),
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id("IntactAnchor")),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
 
         for entity in [damaged, intact] {
             app.world_mut().send_event(RevivalActionIntent {
@@ -6480,43 +6953,40 @@ mod tests {
     ///   - CoffinStateChanged 事件被发出 grade=None（期望：收到 1 条，因为玩家确实在棺内）
     #[test]
     fn revive_clears_coffin_component_and_registry_and_emits_state_changed() {
-        let mut app = App::new();
-        coffin_setup_base(&mut app, 500);
+        let (settings, root) = persistence_settings("coffin-clear-revive");
+        let mut app = revival_action_test_app(settings, 500);
 
-        let entity = app
-            .world_mut()
-            .spawn((
-                Wounds {
-                    health_current: 1.0,
-                    health_max: 30.0,
-                    entries: Vec::new(),
-                },
-                Stamina::default(),
-                CombatState::default(),
-                Lifecycle {
-                    character_id: "offline:CoffinRevive".to_string(),
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            "CoffinRevive",
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id("CoffinRevive"),
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
                     revival_decision_deadline_tick: Some(600),
                     fortune_remaining: 1,
                     ..Default::default()
                 },
-                Cultivation {
+                cultivation: Cultivation {
                     realm: Realm::Awaken,
                     qi_current: 10.0,
                     qi_max: 100.0,
                     ..Default::default()
                 },
-                MeridianSystem::default(),
-                Contamination::default(),
-                LifeRecord::new("offline:CoffinRevive"),
-                crate::coffin::CoffinComponent {
-                    entered_at_tick: 400,
-                    coffin_lower: valence::prelude::BlockPos::new(10, 64, 10),
-                    grade: crate::coffin::CoffinGrade::Mundane,
-                },
-            ))
-            .id();
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id("CoffinRevive")),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::coffin::CoffinComponent {
+                entered_at_tick: 400,
+                coffin_lower: valence::prelude::BlockPos::new(10, 64, 10),
+                grade: crate::coffin::CoffinGrade::Mundane,
+            });
 
         let registry = make_coffin_registry_with_player(entity);
         app.insert_resource(registry);
@@ -6561,6 +7031,8 @@ mod tests {
             "期望 CoffinStateChanged.grade=None（离棺），实际 {:?}",
             state_events[0].grade
         );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     /// 非入棺玩家复活：不误清、不误发 CoffinStateChanged。
@@ -6568,41 +7040,34 @@ mod tests {
     ///   - CoffinStateChanged 事件不发（期望：0 条，因为玩家本来不在棺内）
     #[test]
     fn revive_without_coffin_does_not_emit_coffin_state_changed() {
-        let mut app = App::new();
-        coffin_setup_base(&mut app, 500);
-        // 空 registry：无任何棺
+        let (settings, root) = persistence_settings("revive-without-coffin");
+        let mut app = revival_action_test_app(settings, 500);
         app.insert_resource(crate::coffin::CoffinRegistry::default());
 
-        let entity = app
-            .world_mut()
-            .spawn((
-                Wounds {
-                    health_current: 1.0,
-                    health_max: 30.0,
-                    entries: Vec::new(),
-                },
-                Stamina::default(),
-                CombatState::default(),
-                Lifecycle {
-                    character_id: "offline:NoCoffin".to_string(),
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            "NoCoffin",
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id("NoCoffin"),
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
                     revival_decision_deadline_tick: Some(600),
                     fortune_remaining: 1,
                     ..Default::default()
                 },
-                Cultivation {
+                cultivation: Cultivation {
                     realm: Realm::Awaken,
                     qi_current: 10.0,
                     qi_max: 100.0,
                     ..Default::default()
                 },
-                MeridianSystem::default(),
-                Contamination::default(),
-                LifeRecord::new("offline:NoCoffin"),
-                // 无 CoffinComponent
-            ))
-            .id();
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id("NoCoffin")),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
 
         app.world_mut().send_event(RevivalActionIntent {
             entity,
@@ -6611,6 +7076,11 @@ mod tests {
         });
         app.update();
 
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Alive,
+            "test must observe a completed revival before checking coffin side effects"
+        );
         // CoffinComponent 本来就没有，remove 幂等，entity 无异常
         assert!(
             app.world()
@@ -6632,6 +7102,8 @@ mod tests {
             "期望非棺内玩家复活不发 CoffinStateChanged（避免噪音推送），实际发出 {} 条",
             state_events.len()
         );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     /// 新建角色：coffin 状态同样清除（即便理论上新角色无 coffin，防止旧 entity 残留）。
@@ -6677,6 +7149,7 @@ mod tests {
                     ..Default::default()
                 },
                 LifeRecord::new("offline:CoffinNewChar"),
+                Username("CoffinNewChar".to_string()),
                 DeathRegistry::new("offline:CoffinNewChar"),
                 LifespanComponent {
                     born_at_tick: 0,
@@ -6744,46 +7217,43 @@ mod tests {
     /// 边界：入棺 → 复活 → 再入棺 → 再复活，两次循环均正常清除 coffin 状态。
     #[test]
     fn revive_enter_coffin_revive_cycle_clears_correctly() {
-        let mut app = App::new();
-        coffin_setup_base(&mut app, 100);
+        let (settings, root) = persistence_settings("coffin-revive-cycle");
+        let mut app = revival_action_test_app(settings, 100);
         app.insert_resource(crate::coffin::CoffinRegistry::default());
 
         // 第一轮：带 CoffinComponent 的玩家复活
         let lower = valence::prelude::BlockPos::new(5, 64, 5);
-        let entity = app
-            .world_mut()
-            .spawn((
-                Wounds {
-                    health_current: 1.0,
-                    health_max: 30.0,
-                    entries: Vec::new(),
-                },
-                Stamina::default(),
-                CombatState::default(),
-                Lifecycle {
-                    character_id: "offline:CycleTest".to_string(),
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            "CycleTest",
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id("CycleTest"),
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
                     revival_decision_deadline_tick: Some(200),
                     fortune_remaining: 3,
                     ..Default::default()
                 },
-                Cultivation {
+                cultivation: Cultivation {
                     realm: Realm::Awaken,
                     qi_current: 10.0,
                     qi_max: 100.0,
                     ..Default::default()
                 },
-                MeridianSystem::default(),
-                Contamination::default(),
-                LifeRecord::new("offline:CycleTest"),
-                crate::coffin::CoffinComponent {
-                    entered_at_tick: 50,
-                    coffin_lower: lower,
-                    grade: crate::coffin::CoffinGrade::Mundane,
-                },
-            ))
-            .id();
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id("CycleTest")),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::coffin::CoffinComponent {
+                entered_at_tick: 50,
+                coffin_lower: lower,
+                grade: crate::coffin::CoffinGrade::Mundane,
+            });
 
         {
             let mut reg = app
@@ -6843,6 +7313,7 @@ mod tests {
         }
 
         // 第二次复活
+        app.world_mut().resource_mut::<CombatClock>().tick = 200;
         app.world_mut().send_event(RevivalActionIntent {
             entity,
             action: RevivalActionKind::Reincarnate,
@@ -6865,6 +7336,8 @@ mod tests {
                 "第二次复活后 player_in_coffin 应为空（循环应正常清除）"
             );
         }
+
+        let _ = fs::remove_dir_all(root);
     }
 
     // ─────────── must_fix #1&#2: terminate 路径清 coffin（ECS + Registry + CoffinStateChanged）───────────
@@ -7074,23 +7547,9 @@ mod tests {
     /// 断言：load_player_slices(...).in_coffin == false（回读 SQLite，不依赖内存状态）
     #[test]
     fn revive_with_username_clears_sqlite_in_coffin() {
-        let mut app = App::new();
         let (settings, root) = persistence_settings("sqlite-coffin-revive");
         let data_dir = root.join("data");
-
-        app.insert_resource(settings.clone());
-        app.insert_resource(PlayerStatePersistence::with_db_path(
-            &data_dir,
-            settings.db_path(),
-        ));
-        app.insert_resource(CombatClock { tick: 500 });
-        app.add_event::<RevivalActionIntent>();
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<AscensionQuotaOpened>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<crate::coffin::CoffinStateChanged>();
-        app.add_systems(Update, handle_revival_action_intents);
+        let mut app = revival_action_test_app(settings.clone(), 500);
 
         let username = Username("SQLiteCoffinRevive".to_string());
         let lifespan = crate::cultivation::lifespan::LifespanComponent {
@@ -7120,18 +7579,12 @@ mod tests {
             "前置条件：SQLite in_coffin 应为 true（已写入），实际 false"
         );
 
-        // 构造带 Username + LifespanComponent 的玩家 entity
-        let entity = app
-            .world_mut()
-            .spawn((
-                Wounds {
-                    health_current: 1.0,
-                    health_max: 30.0,
-                    entries: Vec::new(),
-                },
-                Stamina::default(),
-                CombatState::default(),
-                Lifecycle {
+        // 构造完整原子复活 bundle，并附加棺材持久化切片
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username.0.as_str(),
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
                     character_id: "offline:SQLiteCoffinRevive".to_string(),
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
@@ -7139,24 +7592,26 @@ mod tests {
                     fortune_remaining: 1,
                     ..Default::default()
                 },
-                Cultivation {
+                cultivation: Cultivation {
                     realm: Realm::Awaken,
                     qi_current: 10.0,
                     qi_max: 100.0,
                     ..Default::default()
                 },
-                MeridianSystem::default(),
-                Contamination::default(),
-                LifeRecord::new("offline:SQLiteCoffinRevive"),
-                lifespan.clone(),
-                username.clone(),
-                crate::coffin::CoffinComponent {
-                    entered_at_tick: 400,
-                    coffin_lower: lower,
-                    grade: crate::coffin::CoffinGrade::Mundane,
-                },
-            ))
-            .id();
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new("offline:SQLiteCoffinRevive"),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+        app.world_mut().entity_mut(entity).insert((
+            lifespan.clone(),
+            crate::coffin::CoffinComponent {
+                entered_at_tick: 400,
+                coffin_lower: lower,
+                grade: crate::coffin::CoffinGrade::Mundane,
+            },
+        ));
 
         {
             let mut reg = crate::coffin::CoffinRegistry::default();

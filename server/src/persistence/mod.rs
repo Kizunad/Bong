@@ -209,6 +209,36 @@ pub struct LifespanEventRecord {
     pub source: String,
 }
 
+/// Complete durable cultivation slice. Lifecycle transitions construct this before mutating ECS so
+/// the SQLite write can be committed as one all-or-nothing unit.
+pub struct PlayerCultivationBundle<'a> {
+    pub cultivation: &'a Cultivation,
+    pub meridians: &'a crate::cultivation::components::MeridianSystem,
+    pub qi_color: &'a crate::cultivation::components::QiColor,
+    pub karma: &'a crate::cultivation::components::Karma,
+    pub contamination: &'a crate::cultivation::components::Contamination,
+    pub life_record: &'a LifeRecord,
+    pub practice_log: &'a crate::cultivation::color::PracticeLog,
+    pub insight_quota: &'a crate::cultivation::insight::InsightQuota,
+    pub unlocked_perceptions: &'a crate::cultivation::insight_apply::UnlockedPerceptions,
+    pub insight_modifiers: &'a crate::cultivation::insight_apply::InsightModifiers,
+    pub tutorial_state: Option<&'a crate::world::spawn_tutorial::TutorialState>,
+    pub meridian_severed: &'a crate::cultivation::meridian::severed::MeridianSeveredPermanent,
+    pub poison_toxicity: Option<&'a crate::cultivation::poison_trait::PoisonToxicity>,
+    pub digestion_load: Option<&'a crate::cultivation::poison_trait::DigestionLoad>,
+    pub nourishment: &'a crate::nourishment::Nourishment,
+}
+
+pub struct NewCharacterPersistenceBundle<'a> {
+    pub current_char_id: &'a str,
+    pub state: &'a crate::player::state::PlayerState,
+    pub position: [f64; 3],
+    pub inventory: Option<&'a crate::inventory::PlayerInventory>,
+    pub lifespan: &'a crate::cultivation::lifespan::LifespanComponent,
+    pub skill_set: &'a crate::skill::components::SkillSet,
+    pub cultivation: PlayerCultivationBundle<'a>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeceasedIndexEntry {
     pub char_id: String,
@@ -6269,6 +6299,279 @@ fn run_player_cultivation_bundle_read_hook(db_path: &Path, username: &str) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn upsert_player_cultivation_bundle_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    _settings_db_path: &Path,
+    username: &str,
+    cultivation: &crate::cultivation::components::Cultivation,
+    meridians: &crate::cultivation::components::MeridianSystem,
+    qi_color: &crate::cultivation::components::QiColor,
+    karma: &crate::cultivation::components::Karma,
+    contamination: &crate::cultivation::components::Contamination,
+    life_record: &crate::cultivation::life_record::LifeRecord,
+    practice_log: &crate::cultivation::color::PracticeLog,
+    insight_quota: &crate::cultivation::insight::InsightQuota,
+    unlocked_perceptions: &crate::cultivation::insight_apply::UnlockedPerceptions,
+    insight_modifiers: &crate::cultivation::insight_apply::InsightModifiers,
+    tutorial_state: Option<&crate::world::spawn_tutorial::TutorialState>,
+    meridian_severed: &crate::cultivation::meridian::severed::MeridianSeveredPermanent,
+    poison_toxicity: Option<&crate::cultivation::poison_trait::PoisonToxicity>,
+    digestion_load: Option<&crate::cultivation::poison_trait::DigestionLoad>,
+    nourishment: Option<&crate::nourishment::Nourishment>,
+    preserve_existing_nourishment: bool,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let existing_bundle = if preserve_existing_nourishment {
+        let existing_json = transaction
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                [username],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(io::Error::other)?;
+        let existing_bundle = existing_json
+            .map(|json| {
+                serde_json::from_str::<serde_json::Value>(&json)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+            })
+            .transpose()?;
+        #[cfg(test)]
+        run_player_cultivation_bundle_read_hook(_settings_db_path, username);
+        existing_bundle
+    } else {
+        None
+    };
+    let nourishment = nourishment
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .or_else(|| {
+            existing_bundle
+                .as_ref()
+                .and_then(|bundle| bundle.get("nourishment"))
+                .cloned()
+        });
+    let bundle = serde_json::json!({
+        "v": crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
+        "cultivation": cultivation,
+        "meridians": meridians,
+        "qi_color": qi_color,
+        "karma": karma,
+        "contamination": contamination,
+        "life_record": life_record,
+        "practice_log": practice_log,
+        "insight_quota": insight_quota,
+        "unlocked_perceptions": unlocked_perceptions,
+        "insight_modifiers": insight_modifiers,
+        "tutorial_state": tutorial_state,
+        "meridian_severed": meridian_severed,
+        "poison_toxicity": poison_toxicity,
+        "digestion_load": digestion_load,
+        "nourishment": nourishment,
+    });
+    let cultivation_json = serde_json::to_string(&bundle)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_cultivation (username, cultivation_json, schema_version, last_updated_wall)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                cultivation_json = excluded.cultivation_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![username, cultivation_json, CURRENT_SCHEMA_VERSION, wall_clock],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn persist_revival_transition_with_bundle(
+    settings: &PersistenceSettings,
+    player_persistence: &crate::player::state::PlayerStatePersistence,
+    username: &str,
+    revived_position: [f64; 3],
+    bundle: PlayerCultivationBundle<'_>,
+) -> io::Result<()> {
+    if settings.db_path() != player_persistence.db_path() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "persistence db paths differ for Reincarnate: lifecycle={} player={}",
+                settings.db_path().display(),
+                player_persistence.db_path().display()
+            ),
+        ));
+    }
+
+    let entry = latest_biography_entry(bundle.life_record)?;
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
+    upsert_life_record(&transaction, bundle.life_record, wall_clock)?;
+    append_life_event(
+        &transaction,
+        bundle.life_record.character_id.as_str(),
+        entry,
+        wall_clock,
+    )?;
+    crate::player::state::update_revival_player_slices_in_transaction(
+        &transaction,
+        username,
+        revived_position,
+        wall_clock,
+    )?;
+    upsert_player_cultivation_bundle_in_transaction(
+        &transaction,
+        settings.db_path(),
+        username,
+        bundle.cultivation,
+        bundle.meridians,
+        bundle.qi_color,
+        bundle.karma,
+        bundle.contamination,
+        bundle.life_record,
+        bundle.practice_log,
+        bundle.insight_quota,
+        bundle.unlocked_perceptions,
+        bundle.insight_modifiers,
+        bundle.tutorial_state,
+        bundle.meridian_severed,
+        bundle.poison_toxicity,
+        bundle.digestion_load,
+        Some(bundle.nourishment),
+        false,
+        wall_clock,
+    )?;
+    fail_before_commit_if_armed(settings.db_path())?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+pub fn persist_new_character_transition(
+    settings: &PersistenceSettings,
+    player_persistence: &crate::player::state::PlayerStatePersistence,
+    username: &str,
+    bundle: NewCharacterPersistenceBundle<'_>,
+) -> io::Result<()> {
+    if settings.db_path() != player_persistence.db_path() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "persistence db paths differ for CreateNewCharacter: lifecycle={} player={}",
+                settings.db_path().display(),
+                player_persistence.db_path().display()
+            ),
+        ));
+    }
+
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
+    crate::player::state::upsert_new_character_player_slices_in_transaction(
+        &transaction,
+        username,
+        bundle.current_char_id,
+        crate::player::state::NewCharacterPlayerSlices {
+            state: bundle.state,
+            position: bundle.position,
+            last_dimension: DimensionKind::default(),
+            inventory: bundle.inventory,
+            lifespan: bundle.lifespan,
+            skill_set: bundle.skill_set,
+        },
+        wall_clock,
+    )?;
+    upsert_life_record(&transaction, bundle.cultivation.life_record, wall_clock)?;
+    upsert_player_cultivation_bundle_in_transaction(
+        &transaction,
+        settings.db_path(),
+        username,
+        bundle.cultivation.cultivation,
+        bundle.cultivation.meridians,
+        bundle.cultivation.qi_color,
+        bundle.cultivation.karma,
+        bundle.cultivation.contamination,
+        bundle.cultivation.life_record,
+        bundle.cultivation.practice_log,
+        bundle.cultivation.insight_quota,
+        bundle.cultivation.unlocked_perceptions,
+        bundle.cultivation.insight_modifiers,
+        bundle.cultivation.tutorial_state,
+        bundle.cultivation.meridian_severed,
+        bundle.cultivation.poison_toxicity,
+        bundle.cultivation.digestion_load,
+        Some(bundle.cultivation.nourishment),
+        false,
+        wall_clock,
+    )?;
+    fail_before_commit_if_armed(settings.db_path())?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+#[cfg(test)]
+static FAIL_BEFORE_COMMIT_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+#[cfg(test)]
+static FAIL_BEFORE_COMMIT_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) struct FailBeforeCommitReset {
+    db_path: PathBuf,
+    _test_lock: MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for FailBeforeCommitReset {
+    fn drop(&mut self) {
+        FAIL_BEFORE_COMMIT_PATHS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.db_path);
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn arm_fail_before_commit(db_path: &Path) -> FailBeforeCommitReset {
+    let test_lock = FAIL_BEFORE_COMMIT_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_path = db_path.to_path_buf();
+    FAIL_BEFORE_COMMIT_PATHS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(db_path.clone());
+    FailBeforeCommitReset {
+        db_path,
+        _test_lock: test_lock,
+    }
+}
+
+pub(crate) fn fail_before_commit_if_armed(_db_path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_BEFORE_COMMIT_PATHS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(_db_path)
+    {
+        return Err(io::Error::other("test failpoint: before SQLite commit"));
+    }
+    Ok(())
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub fn persist_player_cultivation_bundle_with_nourishment(
@@ -6293,83 +6596,33 @@ pub fn persist_player_cultivation_bundle_with_nourishment(
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
     // Legacy cultivation writers omit nourishment slices. Keep the read, merge, and upsert in one
-    // IMMEDIATE transaction so an autosave cannot read a stale bundle then overwrite a concurrent
-    // nourishment reset or deferred flush with that stale slice.
+    // IMMEDIATE transaction so an autosave cannot overwrite a concurrent lifecycle reset.
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(io::Error::other)?;
-    let existing_bundle = transaction
-        .query_row(
-            "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
-            [username],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(io::Error::other)?
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok());
-    #[cfg(test)]
-    run_player_cultivation_bundle_read_hook(settings.db_path(), username);
-    let existing_field = |field: &str| {
-        existing_bundle
-            .as_ref()
-            .and_then(|bundle| bundle.get(field))
-            .cloned()
-    };
-    let nourishment = nourishment
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
-        .or_else(|| existing_field("nourishment"));
-    let bundle = serde_json::json!({
-        // plan-race-system-v1 P1a —— bump 1→2：`meridians`/`meridian_severed` 子字段
-        // channel id 从 `MeridianId` PascalCase 枚举名换轨为 humanoid.json 声明的
-        // snake_case `MeridianChannelId`（见
-        // `crate::cultivation::legacy_meridian_bundle`）。旧存档（v1 或缺失 `"v"`）
-        // 载入时在该模块显式迁移，此处只负责新写入必须标最新版本号。
-        "v": crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
-        "cultivation": cultivation,
-        "meridians": meridians,
-        "qi_color": qi_color,
-        "karma": karma,
-        "contamination": contamination,
-        "life_record": life_record,
-        "practice_log": practice_log,
-        "insight_quota": insight_quota,
-        "unlocked_perceptions": unlocked_perceptions,
-        "insight_modifiers": insight_modifiers,
-        "tutorial_state": tutorial_state,
-        "meridian_severed": meridian_severed,
-        "poison_toxicity": poison_toxicity,
-        "digestion_load": digestion_load,
-        "nourishment": nourishment,
-    });
-    let cultivation_json = serde_json::to_string(&bundle)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-
-    transaction
-        .execute(
-            "
-            INSERT INTO player_cultivation (
-                username,
-                cultivation_json,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT(username) DO UPDATE SET
-                cultivation_json = excluded.cultivation_json,
-                schema_version = excluded.schema_version,
-                last_updated_wall = excluded.last_updated_wall
-            ",
-            params![
-                username,
-                cultivation_json,
-                CURRENT_SCHEMA_VERSION,
-                wall_clock
-            ],
-        )
-        .map_err(io::Error::other)?;
-    transaction.commit().map_err(io::Error::other)?;
-    Ok(())
+    upsert_player_cultivation_bundle_in_transaction(
+        &transaction,
+        settings.db_path(),
+        username,
+        cultivation,
+        meridians,
+        qi_color,
+        karma,
+        contamination,
+        life_record,
+        practice_log,
+        insight_quota,
+        unlocked_perceptions,
+        insight_modifiers,
+        tutorial_state,
+        meridian_severed,
+        poison_toxicity,
+        digestion_load,
+        nourishment,
+        true,
+        wall_clock,
+    )?;
+    transaction.commit().map_err(io::Error::other)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -10517,6 +10770,55 @@ mod persistence_tests {
         assert!(
             persisted.get("nourishment_activity_window").is_none(),
             "legacy writer must leave session-only activity state absent from the persisted bundle"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_cultivation_writer_rejects_malformed_bundle_before_overwrite() {
+        let (settings, root) = persistence_settings("legacy-bundle-malformed-fail-closed");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("test database should bootstrap");
+        let connection = Connection::open(settings.db_path()).expect("test database should open");
+        connection
+            .execute(
+                "INSERT INTO player_cultivation (username, cultivation_json, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4)",
+                params!["Azure", "{malformed", CURRENT_SCHEMA_VERSION, current_unix_seconds()],
+            )
+            .expect("malformed setup row should persist");
+
+        let error = persist_player_cultivation_bundle(
+            &settings,
+            "Azure",
+            &Cultivation::default(),
+            &crate::cultivation::components::MeridianSystem::default(),
+            &crate::cultivation::components::QiColor::default(),
+            &crate::cultivation::components::Karma::default(),
+            &crate::cultivation::components::Contamination::default(),
+            &LifeRecord::new("malformed-legacy".to_string()),
+            &crate::cultivation::color::PracticeLog::default(),
+            &crate::cultivation::insight::InsightQuota::default(),
+            &crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+            &crate::cultivation::insight_apply::InsightModifiers::new(),
+            None,
+            &crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect_err("legacy writer must fail closed when the existing bundle is malformed");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let stored: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                ["Azure"],
+                |row| row.get(0),
+            )
+            .expect("malformed source row should remain readable as raw text");
+        assert_eq!(
+            stored, "{malformed",
+            "failed legacy save must not overwrite the malformed source bundle or erase nourishment"
         );
 
         let _ = fs::remove_dir_all(root);

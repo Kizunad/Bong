@@ -345,10 +345,11 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            pin_coffin_players,
-            emit_coffin_state_payloads,
+            pin_coffin_players.after(crate::cultivation::attach_cultivation_to_joined_clients),
+            emit_coffin_state_payloads
+                .after(crate::cultivation::attach_cultivation_to_joined_clients),
             emit_coffin_state_to_joined_clients
-                .after(crate::player::attach_player_state_to_joined_clients),
+                .after(crate::cultivation::attach_cultivation_to_joined_clients),
         ),
     );
 }

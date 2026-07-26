@@ -677,6 +677,231 @@ pub fn save_player_slices(
     Ok(persistence.db_path().to_path_buf())
 }
 
+pub(crate) struct NewCharacterPlayerSlices<'a> {
+    pub state: &'a PlayerState,
+    pub position: [f64; 3],
+    pub last_dimension: DimensionKind,
+    pub inventory: Option<&'a PlayerInventory>,
+    pub lifespan: &'a LifespanComponent,
+    pub skill_set: &'a SkillSet,
+}
+
+/// Writes every player-owned slice changed by CreateNewCharacter through the caller's transaction.
+/// The caller owns commit/rollback so `player_core`, inventory/lifespan/skills, shrine clearing, and
+/// the cultivation bundle cannot become visible independently.
+pub(crate) fn upsert_new_character_player_slices_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    current_char_id: &str,
+    slices: NewCharacterPlayerSlices<'_>,
+    last_updated_wall: i64,
+) -> io::Result<()> {
+    let normalized = slices.state.normalized();
+    let [pos_x, pos_y, pos_z] = slices.position;
+    let inventory_json = serialize_inventory_json(slices.inventory)?;
+    let skill_set_json = serialize_skill_set_json(slices.skill_set)?;
+    let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())?;
+    let prefs_json = default_ui_prefs_json()?;
+
+    transaction
+        .execute(
+            "
+            INSERT INTO player_core (
+                username, current_char_id, karma, inventory_score, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(username) DO UPDATE SET
+                current_char_id = excluded.current_char_id,
+                karma = excluded.karma,
+                inventory_score = excluded.inventory_score,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                current_char_id,
+                normalized.karma,
+                normalized.inventory_score,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_slow (
+                username, pos_x, pos_y, pos_z, last_dimension, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(username) DO UPDATE SET
+                pos_x = excluded.pos_x,
+                pos_y = excluded.pos_y,
+                pos_z = excluded.pos_z,
+                last_dimension = excluded.last_dimension,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                pos_x,
+                pos_y,
+                pos_z,
+                dimension_kind_to_sql(slices.last_dimension),
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    persist_player_inventory_json_in_transaction(
+        transaction,
+        username,
+        inventory_json.as_str(),
+        last_updated_wall,
+    )?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_skills (username, skill_set_json, schema_version, last_updated_wall)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                skill_set_json = excluded.skill_set_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                skill_set_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT OR IGNORE INTO player_known_techniques (
+                username, known_techniques_json, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ",
+            params![
+                username,
+                known_techniques_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT OR IGNORE INTO player_ui_prefs (
+                username, prefs_json, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ",
+            params![
+                username,
+                prefs_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_lifespan (
+                username, born_at_tick, years_lived, cap_by_realm, offline_pause_wall,
+                in_coffin, coffin_grade, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8)
+            ON CONFLICT(username) DO UPDATE SET
+                born_at_tick = excluded.born_at_tick,
+                years_lived = excluded.years_lived,
+                cap_by_realm = excluded.cap_by_realm,
+                offline_pause_wall = excluded.offline_pause_wall,
+                in_coffin = 0,
+                coffin_grade = excluded.coffin_grade,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                slices.lifespan.born_at_tick,
+                slices
+                    .lifespan
+                    .years_lived
+                    .min(slices.lifespan.cap_by_realm as f64),
+                slices.lifespan.cap_by_realm,
+                last_updated_wall,
+                CoffinGrade::default().as_db_str(),
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "DELETE FROM player_shrine WHERE username = ?1",
+            params![username],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// Persists the player-owned slices changed by Reincarnate through the lifecycle transaction.
+/// Position and the coffin flag must commit together with the Rebirth record and cultivation reset;
+/// otherwise a crash can revive the character while reconnect still loads the death location/coffin.
+pub(crate) fn update_revival_player_slices_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    position: [f64; 3],
+    last_updated_wall: i64,
+) -> io::Result<()> {
+    let [pos_x, pos_y, pos_z] = position;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_slow (
+                username, pos_x, pos_y, pos_z, last_dimension, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(username) DO UPDATE SET
+                pos_x = excluded.pos_x,
+                pos_y = excluded.pos_y,
+                pos_z = excluded.pos_z,
+                last_dimension = excluded.last_dimension,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                pos_x,
+                pos_y,
+                pos_z,
+                dimension_kind_to_sql(DimensionKind::default()),
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            UPDATE player_lifespan
+            SET in_coffin = 0,
+                coffin_grade = ?2,
+                schema_version = ?3,
+                last_updated_wall = ?4
+            WHERE username = ?1
+            ",
+            params![
+                username,
+                CoffinGrade::default().as_db_str(),
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn save_player_slices_with_coffin(
     persistence: &PlayerStatePersistence,
@@ -899,9 +1124,18 @@ pub fn rotate_current_character_id(
     persistence: &PlayerStatePersistence,
     username: &str,
 ) -> io::Result<String> {
+    let next_char_id = Uuid::now_v7().to_string();
+    set_current_character_id(persistence, username, next_char_id.as_str())?;
+    Ok(next_char_id)
+}
+
+pub fn set_current_character_id(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    current_char_id: &str,
+) -> io::Result<()> {
     let connection = open_player_connection(persistence)?;
     ensure_player_schema(&connection)?;
-    let next_char_id = Uuid::now_v7().to_string();
     let last_updated_wall = current_unix_seconds();
 
     connection
@@ -922,14 +1156,14 @@ pub fn rotate_current_character_id(
             ",
             params![
                 username,
-                next_char_id,
+                current_char_id,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
         )
         .map_err(io::Error::other)?;
 
-    Ok(next_char_id)
+    Ok(())
 }
 
 fn ensure_player_schema(connection: &Connection) -> io::Result<()> {
@@ -4128,6 +4362,57 @@ mod player_state_tests {
         );
 
         std::fs::remove_dir_all(data_dir).ok();
+    }
+
+    #[test]
+    fn revival_player_slices_reset_persisted_dimension_to_overworld() {
+        let (persistence, data_dir) = sqlite_persistence("revival-resets-dimension");
+        let username = "RevivedFromTsy";
+        save_player_slices(
+            &persistence,
+            username,
+            &PlayerState::default(),
+            [7.0, 88.0, -9.0],
+            DimensionKind::Tsy,
+            None,
+            Some(&LifespanComponent::new(LifespanCapTable::AWAKEN)),
+            &SkillSet::default(),
+        )
+        .expect("pre-revival TSY slices should persist");
+
+        let revived_position = [31.0, 72.0, 44.0];
+        let mut connection =
+            Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let transaction = connection
+            .transaction()
+            .expect("revival transaction should start");
+        update_revival_player_slices_in_transaction(
+            &transaction,
+            username,
+            revived_position,
+            current_unix_seconds(),
+        )
+        .expect("revival slices should stage");
+        transaction
+            .commit()
+            .expect("revival transaction should commit");
+
+        let loaded = load_player_slices(&persistence, username);
+        assert_eq!(
+            loaded.position, revived_position,
+            "revival must persist the selected shrine/world-spawn position"
+        );
+        assert_eq!(
+            loaded.last_dimension,
+            DimensionKind::Overworld,
+            "revival anchors are Overworld coordinates, so reconnect must not restore them inside TSY"
+        );
+        assert!(
+            !loaded.in_coffin,
+            "revival must clear the persisted coffin flag in the same transaction"
+        );
+
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[test]
