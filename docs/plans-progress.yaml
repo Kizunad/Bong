@@ -1775,7 +1775,7 @@ plans:
   - 1206
   - 1250
   blocking_on: []
-  summary: P0-P4 落地（morph.rs/whale body_plan/race set/RaceChange 两阶段）+ P5 机制底盘（PR-6a/6b/6c）落地；欠 FinRing 消费链 / 2 条 bot 场景 / e2e / worldview 增补案 / 非人种族生产获得路径，此前被 #1278 误追认归档，已回退。
+  summary: P0-P4 已落地（body_plan 底盘/经脉通用化/动态面板/RaceGate 三档/易形 morph.rs）；P5 已落机制底盘（/race set dev 命令+RaceChange 两阶段事务 #1204、突破配额+dugu 路由换轨 #1203、whale body_plan+IntrinsicRace 接线 #1206），仍欠 FinRing 消费链 / 2 条 bot 场景 / e2e / worldview 增补案 / 非人种族生产获得路径，此前被 #1278 误追认归档，已回退。
 - file: finished_plans/plan-season-phase-stale-client-v1.md
   group: infrastructure
   title: 季节跨相位客户端状态陈旧

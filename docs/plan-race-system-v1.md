@@ -122,12 +122,22 @@
 
 ## P5 — 非人种族玩家入口 + 飞鲸 MVP + 收口
 
-**⏳ 未完成欠账（2026-07-26 复核，供下一次 consume 直接认领）**：
+**⏳ 未完成欠账（2026-07-26 复核，2026-07-27 补充 #1 验收细化 + #4 措辞收窄，供下一次 consume 直接认领）**：
 
-1. **FinRing 真实消费链缺失**——现状：`grep -rn "FinRing\|fin_ring" server/src client/src agent/packages` 全仓 0 命中，`EquipSlotV1` 未新增该 enum 变体。要落：server 装备容器存储 FinRing 槽位 + `validate_equip_to` 槽位分支 + 自动卸装路径 + wire 编解码（proto `EquipSlotV1` 新增变体 → TS union → `EquipSlot.java` 三端镜像）；client 装备面板新槽位格 + 交互。验收：穿 / 拒（RaceMismatch）/ 卸 / 满背包掉落 / 持久化往返 5 条测试 + 1 条 bot e2e 真实穿卸。
+1. **FinRing 真实消费链缺失**——现状：`grep -rn "FinRing\|fin_ring" server/src client/src agent/packages` 全仓 0 命中，`EquipSlotV1`（`server/src/schema/inventory.rs:39-54`）未新增该 enum 变体。要落：
+   - server 装备容器存储 FinRing 槽位 + `validate_equip_to` 槽位分支 + 自动卸装路径 + wire 编解码：proto `EquipSlotV1` 新增变体 → TS union → `EquipSlot.java` 三端镜像，**新增变体需 pin**（proto 枚举数值 + TS union 字面量 + Java enum，同一 wire sample 三端解码对拍，防镜像漂移）
+   - **实际物品**：新增双侧鳍环物品模板（左 / 右各一，`ItemTemplate` TOML，`server/assets/items/`）+ 必要贴图 / 图标资源 + `wearer_race` / 对应 `EquipSlotV1::FinRing` 槽位配置（对齐下方 P5 whale 装备槽草案 bullet）——不能只落空槽位基础设施而没有可穿的实物
+   - client 装备面板新槽位格 + 交互
+   验收矩阵（固化，逐条断言）：① 鲸形穿鳍环成功 ② 鲸形穿人形护甲 `RaceMismatch` 拒绝 ③ 易形成人后可穿人形护甲成功 ④ 解除易形时鳍环不满足本体 gate 自动卸入背包 ⑤ 满背包时卸下的鳍环转 `dropped_loot` ⑥ 持久化往返（存档→重载装备状态不丢） ⑦ 真实 bot e2e 穿卸场景（非 mock）。
 2. **bot 场景 3 条只落 1 条**——现状：`scripts/bot/scenarios/` 下只有 `inventory_equip_wearer_race_reject.py`（对应①race gate 拒绝回执）。要落：② 易形 cast → morph payload 解码场景 ③ `body_plan_layout` 首帧解码场景，均接入 CI bot e2e stage。验收：三个场景脚本存在且被 e2e stage 引用、CI 绿。
 3. **worldview 增补案未执行**——现状：`grep -c "易形" docs/worldview.md` = 0；worldview.md 最后一次改动是 `e69132fdf`（#836，2026-07-03），早于本 plan 立项（2026-07-10），说明种族后天路径 / 易形正典化 / 「异兽化形」词条消歧从未写入正典。这是本段落原文明写的**归档前硬前置**（见下方遗留 bullet 原文「归档前 land」）。要落：单独 PR + 人工 review，写入 worldview.md §六（零出生论 scope 澄清，对齐 §8.1 #1 决议）。验收：该 PR 合并，本 plan 补引其 commit hash。
-4. **非人种族生产获得路径缺失**——现状：`grep -rn "commit_race_change" server/src --include=*.rs | grep -v race_change.rs` 唯一命中 `server/src/cmd/dev/race.rs`（dev-only 命令）；`grep -rn "秘法转生" server/src` 0 命中——玩家在生产环境没有任何非 dev 手段获得非人种族，下方「`/race set` dev 命令」不能顶替这条。要落：按 §8.1 #1 决议在「创建期选择」或「后天秘法转生」二者中定形式并接出真实生产入口（非 dev 命令）。验收：新增一条非 dev 触发路径 + 集成测试覆盖该路径下的 `RaceChange` 全链路。
+4. **非人种族生产获得路径缺失**——现状（2026-07-27 补充核验，按「字段写入点 / 事件构造函数唯一调用方 / 网络请求处理器 / 物品消费效果」四类入口逐类枚举，非仅 `commit_race_change` 单点 grep）：
+   - `Cultivation.race` 字段在生产代码里**唯一写入点**是 `server/src/cultivation/race_change.rs:257`（`commit_race_change` 函数体内）；`grep -rn "\.race\s*=" server/src --include=*.rs` 的第二个命中 `network/cultivation_detail_emit.rs:567` 在 `#[cfg(test)]` 测试模块内，非生产路径
+   - `commit_race_change` 的**唯一生产调用方**是 `server/src/cmd/dev/race.rs:88`（`/race set` dev 命令）；其余调用点（`race_change.rs:813/842/891/941/1195`）全部在该文件自身 `#[cfg(test)]` 测试模块内
+   - 网络请求处理器：`grep -rln "RaceChangeRequest\|ChangeRace\|change_race" server/src client/src agent/packages` 0 命中，无 client 发起的种族变更请求入口
+   - 物品消费效果：`grep -rn "race" server/src/inventory server/src/alchemy` 命中的均为 `wearer_race`（P3 装备 RaceGate 校验字段）与 `yixing_scroll`（P4 易形残卷）掉落逻辑注释，未见任何物品消费效果触发种族变更
+   - `grep -rn "秘法转生" server/src` 0 命中
+   以上四类入口均未发现非 dev 生产路径，但**未逐一走查角色创建 / 首次登录初始化流程本身**（如 `network/client_request_handler.rs` 的登录分支），故表述收窄为「已核验的四类入口中未发现非 dev 生产手段」，不作全仓绝对断言。要落：按 §8.1 #1 决议在「创建期选择」或「后天秘法转生」二者中定形式并接出真实生产入口（非 dev 命令）。验收：新增一条非 dev 触发路径 + 集成测试覆盖该路径下的 `RaceChange` 全链路。
 
 **交付物**：
 
