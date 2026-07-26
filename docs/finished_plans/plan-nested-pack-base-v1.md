@@ -2,7 +2,7 @@
 
 > **归档（被取代 / withdrawn）2026-07-26**：本 plan 的 P0-P5 **从未按本文档实施**。全部 6 个核心协议 symbol（`ItemInstance.sub_container` / `MAX_PACK_NEST_DEPTH` / `PackItemSession` / `PackContainerOpen`/`Move`/`Close` C2S 变体 / `SubContainerPanel.java`）在生产代码里**零命中**（证据见下方「替代关系与代码现实」）。与此同时，`plan-tarkov-backpack-v1`（`docs/finished_plans/plan-tarkov-backpack-v1.md`，✅ 2026-06-27 全阶段归档）沿着 `plan-layered-equip-v1` → `plan-backpack-equip-v1` 的既有穿戴槽血统，用完全不同的一套协议（`ContainerState.owner_instance_id` + 平展 `PlayerInventory.containers` + `pack_<instance_id>` 命名 + `InventoryMoveIntent` + `WornContainerPanel`/`PackContainerWindow`）交付了等价甚至更完整的「塔科夫式套包」玩家体验（连货整体卸下 / 双击开包 / 重量递归上卷 / 上身渲染 / 悬浮多窗）。**本 plan 提出的 session-based 嵌套子容器协议是被否决路线，不再是任何后续实施的依据；禁止独立消费。**
 >
-> 详见下方「替代关系与代码现实」「未覆盖能力与后续归属」「Finish Evidence」三节。原始设计正文（接入面 / P0-P5 详细交付物 / §8 开放问题 / §8.1 决议 / §10 实施工作流）已整体移除，完整旧草案由 **git 历史**保留（`git log --follow docs/plan-nested-pack-base-v1.md`，骨架首次提交见 `d74ddd379`/`575207504`，升 active 见 `7c3656758` 之前的版本历史）。
+> 详见下方「替代关系与代码现实」「未覆盖能力与后续归属」「Finish Evidence」三节。原始设计正文（接入面 / P0-P5 详细交付物 / §8 开放问题 / §8.1 决议 / §10 实施工作流）已整体移除，完整旧草案由 **git 历史**保留（`git log --follow docs/plan-nested-pack-base-v1.md`，骨架首次提交见 `575207504`/`d74ddd379`（2026-06-10，#467），升 active 见 `091ba0e8e`（2026-06-10，#476，skeleton 99 行 → active 204 行）。
 
 ## 阶段总览（历史记录，均未按本文档实施）
 
