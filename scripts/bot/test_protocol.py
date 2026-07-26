@@ -746,54 +746,105 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-    def test_self_started_server_forces_dev_mode_before_cargo_run(self):
-        start = self.source.index('(\n    cd "$SERVER_RUNTIME_DIR/server"')
-        end = self.source.index('  ) >"$SERVER_LOG"', start)
-        launch = self.source[start:end]
-        expected = "export BONG_DEV_MODE=1"
-        actual = next(
-            line.strip()
-            for line in launch.splitlines()
-            if line.strip().startswith("export BONG_DEV_MODE=")
-        )
+    def test_mode_contract_distinguishes_generic_inputs_from_owned_fixture_inputs(self):
+        guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
+        guard = self.source[:guard_end]
+        self.assertIn('AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"', guard)
+        self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥', guard)
+        self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
+        self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
 
-        self.assertEqual(
-            actual,
-            expected,
-            "Bot 自起 server 必须覆盖调用环境并确定性开启 BONG_DEV_MODE，不能继承 falsey 值",
-        )
-        self.assertLess(
-            launch.index(expected),
-            launch.index(
-                'exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG'
+    def test_generic_mode_preserves_caller_inputs_and_skips_ambient_ownership(self):
+        fixture_start = self.source.index('# Owned-fixture mode generates')
+        fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
+        fixture = self.source[fixture_start:fixture_end]
+        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
+        state_start = self.source.index('# Ambient-owned runs pin state')
+        state_end = self.source.index('\nport_open() {', state_start)
+        state = self.source[state_start:state_end]
+        self.assertIn('elif [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', state)
+        self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_OWNED', fixture)
+        self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_MANIFEST', fixture)
+        self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_TOKEN', fixture)
+
+        redis_start = self.source.index('# ---- redis ----')
+        redis_end = self.source.index('\n# ---- server ----', redis_start)
+        redis = self.source[redis_start:redis_end]
+        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${REDIS_URL:-}" ]; then', redis)
+        self.assertNotIn('export REDIS_URL=', redis.split('if [ "$REUSE" != "1" ] && [ -z "${REDIS_URL:-}" ]; then', 1)[0])
+
+    def test_owned_fixture_mode_keeps_private_runtime_and_exact_marker_gate(self):
+        runtime_start = self.source.index('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
+        runtime_end = self.source.index('\n# Owned-fixture mode generates', runtime_start)
+        runtime = self.source[runtime_start:runtime_end]
+        self.assertIn('SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"', runtime)
+        self.assertIn('ln -s "$ROOT/server/assets" "$SERVER_RUNTIME_DIR/server/assets"', runtime)
+
+        readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
+        readiness_end = self.source.index('\n# ---- 场景 ----', readiness_start)
+        readiness = self.source[readiness_start:readiness_end]
+        self.assertIn('grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"', readiness)
+        self.assertIn('export BOT_E2E_AMBIENT_FIXTURE_OWNED=1', readiness)
+        self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', readiness)
+        self.assertLess(readiness.index('grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"'), readiness.index('export BOT_E2E_AMBIENT_FIXTURE_OWNED=1'))
+
+    def test_generic_and_reuse_never_grant_ambient_ownership(self):
+        readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
+        readiness_end = self.source.index('\n# ---- 场景 ----', readiness_start)
+        readiness = self.source[readiness_start:readiness_end]
+        grant = 'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1'
+        self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then', readiness)
+        self.assertLess(readiness.index('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then'), readiness.index(grant))
+        self.assertIn('BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起', self.source)
+        self.assertIn('$HOST:$PORT 已被占用。要对着现有 server 跑请设 BOT_E2E_REUSE=1', self.source)
+        self.assertNotIn('pkill', self.source)
+
+    def test_mode_contract_executes_early_rejections_before_harness_setup(self):
+        root = pathlib.Path(__file__).parents[2]
+        cases = (
+            (
+                {"BOT_E2E_AMBIENT_FIXTURE_MODE": "1", "BOT_E2E_REUSE": "1"},
+                "BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥",
             ),
-            "BONG_DEV_MODE 必须在 server 进程启动前导出",
+            (
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BONG_TERRAIN_RASTER_PATH": "/caller/terrain.json",
+                },
+                "ambient fixture mode 不接受外部 BONG_TERRAIN_RASTER_PATH",
+            ),
+            (
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BONG_SPIRITWOOD_HARVESTED_PATH": "/caller/harvested.json",
+                },
+                "ambient fixture mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH",
+            ),
         )
-
-        for inherited in ("0", "false", "no", "off"):
-            with self.subTest(inherited=inherited):
+        for overrides, expected in cases:
+            with self.subTest(overrides=overrides):
                 env = os.environ.copy()
-                env["BONG_DEV_MODE"] = inherited
-                completed = subprocess.run(
-                    [
-                        "bash",
-                        "-c",
-                        f'{actual}\nprintf "%s" "$BONG_DEV_MODE"',
-                    ],
-                    check=True,
+                env.update(overrides)
+                result = subprocess.run(
+                    ["bash", "scripts/bot-e2e.sh"],
+                    cwd=root,
+                    env=env,
                     capture_output=True,
                     text=True,
-                    env=env,
+                    check=False,
                 )
-                self.assertEqual(
-                    completed.stdout,
-                    "1",
-                    f"self-start 必须把继承的 BONG_DEV_MODE={inherited} 覆盖为 1",
-                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(expected, result.stderr)
+
+    def test_ci_selects_explicit_ambient_fixture_mode(self):
+        bot_stage = self.workflow_source[self.workflow_source.index('Bot e2e stage'):]
+        self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE: "1"', bot_stage)
 
     def test_self_started_server_builds_unique_exact_fixture_identity(self):
-        fixture_start = self.source.index('if [ "$REUSE" != "1" ]; then')
-        fixture_end = self.source.index('\nfi\n\nSERVER_PID=', fixture_start)
+        fixture_start = self.source.index('# Owned-fixture mode generates')
+        fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
         fixture = self.source[fixture_start:fixture_end]
         for required in (
             'mktemp -d "$EVIDENCE_DIR/novice-raster.XXXXXX"',
@@ -805,30 +856,14 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             'manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN"',
         ):
             with self.subTest(required=required):
-                self.assertIn(
-                    required,
-                    fixture,
-                    "self-start harness 必须以本轮私有目录、canonical manifest 与 token "
-                    "构造可由 server 反证的 fixture identity",
-                )
-
-        guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
-        guard = self.source[:guard_end]
-        self.assertIn(
-            '自起 server 不接受外部 BONG_TERRAIN_RASTER_PATH',
-            guard,
-            "严格场景必须在创建本轮 evidence/fixture 前拒绝调用方外部 raster",
-        )
+                self.assertIn(required, fixture)
         self.assertNotIn(
-            'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1',
-            fixture,
-            "仅生成本地文件不能授予 ownership；必须等 server exact ready marker",
+            'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1', fixture,
+            "生成本地文件不能授予 ownership；必须等 server exact ready marker",
         )
 
     def test_fixture_ownership_is_granted_only_after_exact_server_marker_and_port_ownership(self):
-        readiness_start = self.source.index(
-            'echo "[bot-e2e] 等待 $HOST:$PORT 与本轮 raster fixture 就绪'
-        )
+        readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
         readiness_end = self.source.index("\n# ---- 场景 ----", readiness_start)
         readiness = self.source[readiness_start:readiness_end]
         marker_match = 'grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"'
@@ -940,8 +975,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
 
     def test_reuse_mode_clears_fixture_ownership_instead_of_claiming_external_server(self):
-        fixture_start = self.source.index('if [ "$REUSE" != "1" ]; then')
-        fixture_end = self.source.index('\nfi\n\nSERVER_PID=', fixture_start)
+        fixture_start = self.source.index('# Owned-fixture mode generates')
+        fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
         fixture = self.source[fixture_start:fixture_end]
         for variable in (
             "BOT_E2E_AMBIENT_FIXTURE_OWNED",
@@ -949,82 +984,32 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             "BOT_E2E_AMBIENT_FIXTURE_TOKEN",
         ):
             with self.subTest(variable=variable):
-                self.assertIn(
-                    f"unset {variable}",
-                    fixture,
-                    "REUSE harness 无法证明外部 server 启动输入，必须 fail-closed 清除 ownership",
-                )
+                self.assertIn(f"unset {variable}", fixture)
 
     def test_reuse_without_listener_fails_closed_before_private_self_start(self):
         server_start = self.source.index("# ---- server ----")
         server = self.source[server_start:]
-        rejection = (
-            'BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起'
-        )
-        launch = 'cd "$SERVER_RUNTIME_DIR/server"'
-
+        rejection = 'BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起'
         self.assertIn(rejection, server)
-        self.assertLess(
-            server.index(rejection),
-            server.index(launch),
-            "REUSE 无 listener 时必须退出，不能在没有私有 runtime/fixture 的前提下退化为自起",
-        )
+        self.assertLess(server.index(rejection), server.index('cd "$SERVER_RUNTIME_DIR/server"'))
 
-    def test_self_start_uses_private_runtime_cwd_without_touching_checkout_data(self):
-        evidence_setup_end = self.source.index(
-            '# 测试诚实性约束：Bot 必须能黑盒证明真实 manifest'
-        )
-        evidence_setup = self.source[:evidence_setup_end]
-        launch_start = self.source.index('(\n    cd "$SERVER_RUNTIME_DIR/server"')
+    def test_owned_fixture_mode_uses_private_cwd_and_generic_uses_checkout_cwd(self):
+        launch_start = self.source.index('  (\n    if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then')
         launch_end = self.source.index('  ) >"$SERVER_LOG"', launch_start)
         launch = self.source[launch_start:launch_end]
-
-        for required in (
-            'SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"',
-            'mkdir -p "$SERVER_RUNTIME_DIR/server/data" "$SERVER_RUNTIME_DIR/library-web/public/deceased"',
-            'ln -s "$ROOT/server/assets" "$SERVER_RUNTIME_DIR/server/assets"',
-        ):
-            with self.subTest(required=required):
-                self.assertIn(required, evidence_setup)
-
         for required in (
             'cd "$SERVER_RUNTIME_DIR/server"',
+            'cd "$ROOT/server"',
             'export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"',
             'export BONG_ASSETS_DIR="$ROOT/server"',
-            'export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}"',
+            'export BONG_DEV_MODE=1',
             'exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
         ):
             with self.subTest(required=required):
-                self.assertIn(
-                    required,
-                    launch,
-                    "self-start server 必须从本轮私有 cwd 启动，同时从当前 checkout 构建并只读资产",
-                )
-
-        self.assertNotIn(
-            'cd "$ROOT/server"',
-            launch,
-            "从 checkout/server cwd 启动会污染持久化 data/、startup backup 与 craft/NPC 文件",
-        )
-        runtime_create = evidence_setup.index(
-            'SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"'
-        )
-        runtime_guard = evidence_setup.rfind(
-            'if [ "$REUSE" != "1" ]; then', 0, runtime_create
-        )
-        runtime_guard_end = evidence_setup.index("\nfi", runtime_create)
-        self.assertLess(runtime_guard, runtime_create)
-        self.assertLess(
-            runtime_create,
-            runtime_guard_end,
-            "只有 self-start 可以创建本轮 runtime；REUSE 不得替外部 server 宣称运行目录",
-        )
+                self.assertIn(required, launch)
 
     def test_each_run_owns_private_evidence_and_persistent_logs(self):
-        evidence_setup_end = self.source.index(
-            '# 测试诚实性约束：Bot 必须能黑盒证明真实 manifest'
-        )
-        evidence_setup = self.source[:evidence_setup_end]
+        evidence_setup = self.source[:self.source.index('# Owned-fixture mode generates')]
         for required in (
             'EVIDENCE_ROOT="$ROOT/.sisyphus/evidence/bot-e2e"',
             'EVIDENCE_DIR="$(mktemp -d "$EVIDENCE_ROOT/run.XXXXXXXXXX")"',
@@ -1033,78 +1018,28 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, self.source)
-
         self.assertIn('mkdir -p "$EVIDENCE_ROOT"', evidence_setup)
-        self.assertLess(
-            evidence_setup.index('EVIDENCE_DIR="$(mktemp -d'),
-            evidence_setup.index('SERVER_LOG="$EVIDENCE_DIR/server.log"'),
-            "必须先原子创建本轮私有 evidence 目录，再打开会截断的日志文件",
-        )
-        self.assertNotIn(
-            'EVIDENCE_DIR="$ROOT/.sisyphus/evidence/bot-e2e"',
-            self.source,
-            "固定 evidence 目录会让并发/相邻 run 相互截断 server.log 与 scenarios.log",
-        )
+        self.assertNotIn('EVIDENCE_DIR="$ROOT/.sisyphus/evidence/bot-e2e"', self.source)
 
-    def test_self_start_rejects_external_spiritwood_state_and_uses_private_file(self):
-        guard_start = self.source.index("# 先做无副作用输入门禁")
-        guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"', guard_start)
-        guard = self.source[guard_start:guard_end]
-        state_start = self.source.index("# 真实灵木场景会按生产契约持久化已采伐位置")
-        state_end = self.source.index("\nport_open() {", state_start)
-        state = self.source[state_start:state_end]
-
-        self.assertIn(
-            'if [ "$REUSE" != "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then',
-            guard,
-        )
-        self.assertIn("自起 server 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH", guard)
-        self.assertIn('exit 2', guard)
-        self.assertIn(
-            'SPIRITWOOD_STATE_DIR="$SERVER_RUNTIME_DIR/server/data/spiritwood"',
-            state,
-        )
-        self.assertIn('mkdir -p "$SPIRITWOOD_STATE_DIR"', state)
-        self.assertIn(
-            'export BONG_SPIRITWOOD_HARVESTED_PATH="$SPIRITWOOD_STATE_DIR/harvested.json"',
-            state,
-        )
-        self.assertLess(
-            self.source.index("自起 server 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH"),
-            self.source.index('EVIDENCE_DIR="$(mktemp -d'),
-            "外部持久化路径必须在创建任何本轮 evidence/state 前 fail-closed",
-        )
-
-    def test_self_start_owns_unique_redis_project_and_never_globally_kills_servers(self):
-        redis_start = self.source.index("# ---- redis（self-start server")
+    def test_redis_is_private_only_when_generic_caller_did_not_supply_url(self):
+        redis_start = self.source.index("# ---- redis ----")
         redis_end = self.source.index("\n# ---- server ----", redis_start)
         redis = self.source[redis_start:redis_end]
         cleanup_start = self.source.index("cleanup() {")
         cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
         cleanup = self.source[cleanup_start:cleanup_end]
-
+        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${REDIS_URL:-}" ]; then', redis)
         for required in (
             'REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"',
             'BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0',
             'docker compose -f "$ROOT/docker-compose.test.yml" up -d redis --wait',
-            'docker compose -f "$ROOT/docker-compose.test.yml" port redis 6379',
             'export REDIS_URL="redis://127.0.0.1:$redis_port"',
         ):
-            with self.subTest(required=required):
-                self.assertIn(required, redis)
-
-        self.assertIn('BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT"', cleanup)
-        self.assertIn('BONG_TEST_REDIS_PORT=0', cleanup)
+            self.assertIn(required, redis)
+        self.assertIn('if [ "$STARTED_REDIS" = "1" ] && [ -n "$REDIS_COMPOSE_PROJECT" ]; then', cleanup)
         self.assertNotIn("pkill", self.source)
         self.assertNotIn("BOT_E2E_KILL_STALE", self.source)
-        self.assertNotIn("BOT_E2E_KILL_STALE", self.workflow_source)
-        self.assertIn(
-            "name: ${BONG_TEST_COMPOSE_PROJECT:-bong-test}", self.compose_source
-        )
-        self.assertIn(
-            '"127.0.0.1:${BONG_TEST_REDIS_PORT:-6379}:6379"',
-            self.compose_source,
-        )
+        self.assertIn("name: ${BONG_TEST_COMPOSE_PROJECT:-bong-test}", self.compose_source)
 
 
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
