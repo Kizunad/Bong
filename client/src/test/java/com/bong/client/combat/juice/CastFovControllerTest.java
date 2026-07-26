@@ -150,7 +150,7 @@ class CastFovControllerTest {
 
         // 脉冲中点（fire + 100ms = 半程）→ 接近峰值
         advanceMs(FOV_DURATION_MS / 2);
-        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "脉冲半程 = sin(π/2)·peak = +6°");
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "脉冲半程 = sin(π/2)·peak = +9°");
 
         // 脉冲结束后自然回基准
         advanceMs(FOV_DURATION_MS);
@@ -532,15 +532,28 @@ class CastFovControllerTest {
     }
 
     @Test
-    void idlePhaseAfterCompleteReturnsBaseline() {
+    void completeIsTerminalAndStaysAtBaselineAfterDecay() {
         predict(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS);
         CastFovController.tick();
-        // 300ms 后 CastStateStore 自回 idle（真实 tick 路径）
         CastState terminal = CastStateStore.snapshot();
         assertEquals(CastState.Phase.COMPLETE, terminal.phase(), "complete 终态");
         assertBaseline("脉冲结束后稳定在基准");
+    }
+
+    @Test
+    void idlePhaseClearsPendingSoLaterReleaseDoesNotFire() {
+        // IDLE 分支（枚举变体饱和）：cast 条 300ms 后自回 idle / 施放前 NONE 拒绝，
+        // 都以 phase="idle" + outcome="none" 落到 CastStateStore → 清 pending。
+        predict(HEAVY_SLOT, START);                       // 武装 pending
+        serverSync("idle", HEAVY_SLOT, START, "none");    // 真实 idle 回执
+        assertEquals(CastState.Phase.IDLE, CastStateStore.snapshot().phase(), "回到 idle 相");
+
+        serverSync("complete", HEAVY_SLOT, START, "completed");  // idle 之后的迟到 complete
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("idle 已清 pending → 之后的 release 不触发");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
     }
 
     // ---- 动画事件驱动 juice（heaven_gate：charge 渐强 / release 最大+FOV，与劈下对齐）----

@@ -56,9 +56,14 @@ import java.util.function.LongSupplier;
 public final class CastFovController {
     private static final AtomicBoolean BOOTSTRAPPED = new AtomicBoolean(false);
     /**
-     * pending / voidedId / pulse **以及 shake 通道写入**的互斥锁（cast 转换回调、动画事件、
-     * teardown、倍率变更可能分别落在网络线程与主线程）。两个 juice 通道的建立与清空都串行化
-     * 在这里，避免交错留下孤儿抖动。{@link CameraShakeController} 本身无锁，故不存在锁序倒置。
+     * pending / voidedId / pulse **以及 shake 通道写入**的互斥锁。两个 juice 通道的建立与
+     * 清空都串行化在这里，避免交错留下孤儿抖动。
+     *
+     * <p>网络侧回执当前由 {@code BongNetworkHandler} 经 {@code client.execute} 全部 marshal 到
+     * 客户端线程，故实际竞争极少；但渲染线程会并发读 {@link #pulse}（{@link #fovDelta()} 走
+     * volatile 无锁读），且这里是唯一保证「两通道原子成对」的地方，故仍显式加锁。
+     * {@link CameraShakeController} / {@link JuiceConfig} / {@link SkillBarStore} 均为无锁
+     * volatile 读写，锁内不调任何会再取监视器的东西，故不存在锁序倒置。
      */
     private static final Object LOCK = new Object();
 
@@ -256,14 +261,16 @@ public final class CastFovController {
         if (targetPlayer == null || animId == null || !localPlayerPredicate.isLocal(targetPlayer)) {
             return;
         }
-        float scale = JuiceConfig.juiceMultiplier();
-        if (scale <= 0f) {
-            return;  // juice 全局关闭：与 fire() 同策，不留僵尸脉冲/抖动
-        }
         long now = clock.getAsLong();
         ChargeShake charge = CHARGE_ANIM_JUICE.get(animId);
         if (charge != null) {
             synchronized (LOCK) {
+                // 倍率在锁内读，与 fire() 同：否则「读到非 0」与「落地」之间被归 0 插进来，
+                // 会绕过取消路径留下僵尸抖动。
+                float scale = JuiceConfig.juiceMultiplier();
+                if (scale <= 0f) {
+                    return;  // juice 全局关闭
+                }
                 CameraShakeController.triggerDirect(
                     charge.peakIntensity() * scale,
                     charge.buildDurationTicks(),
@@ -281,6 +288,10 @@ public final class CastFovController {
             // 两个通道在同一临界区落地，与 teardown / onJuiceMultiplierChanged 的清空对称——
             // 否则「清脉冲…清抖动」与「建脉冲…起抖动」交错时会漏下一条孤儿抖动。
             synchronized (LOCK) {
+                float scale = JuiceConfig.juiceMultiplier();
+                if (scale <= 0f) {
+                    return;  // juice 全局关闭
+                }
                 if (burst.fovPeakDegrees() > 0f && burst.fovDurationTicks() > 0) {
                     pulse = new Pulse(burst.fovPeakDegrees() * scale, burst.fovDurationTicks(), now);
                 }
@@ -411,8 +422,8 @@ public final class CastFovController {
 
     /** public 理由同 {@link #setLocalPlayerPredicateForTest}（跨包路由接线测试要复位 juice 状态）。 */
     public static void resetForTests() {
-        pulse = null;
         synchronized (LOCK) {
+            pulse = null;
             pending = null;
             voidedId = null;
         }
