@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | botany 采集模式请求错接旧 gather 主链 | fix_pr | ⬜ |
+| P0 | botany 采集模式请求错接旧 gather 主链 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — botany 采集模式请求错接旧 gather 主链
 
@@ -67,3 +67,15 @@
 ## 审计来源
 
 bughunt 线程 AH 定点轮（仅收窄 `server/src/botany/`、`client/src/main/java/com/bong/client/botany/` 及其直接 network/gameplay 接线）。已排除既有立项的“满包吞产出”“离线卧棺幽灵棺”等主题。外部子代理审查因隐私/网络审批被拒，当前结论基于仓内只读证据完成两轮人工反方裁决；先提交 skeleton plan 固化玩家影响、根因层次、修复面与验收抓手，再由后续 fix PR 单独落地。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+server `client_request_handler.rs` 的 `BotanyHarvestRequest` 分支已不再入队 `GameplayAction::Gather`，改为调用 `botany::harvest::request_harvest_mode` 更新既有 `HarvestSession`，堵住了模式切换错接旧 gather 奖励路径的问题。修复 commit 19f1eab8e（2026-07-06，PR #897）已合入 origin/main，4 条 pin 测试锁定该行为。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/network/client_request_handler.rs`（`BotanyHarvestRequest` 分支改调 `botany::harvest::request_harvest_mode`）
+- **关键 commit**：19f1eab8e（2026-07-06，修复 botany 采集模式请求错接旧 gather 主链，PR #897 已 merge）
+- **测试结果**：`botany_harvest_request_updates_existing_session_without_gather_enqueue` 等 4 条 pin；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server-only（`client_request_handler.rs` / `botany::harvest`）
+- **遗留 / 后续**：无

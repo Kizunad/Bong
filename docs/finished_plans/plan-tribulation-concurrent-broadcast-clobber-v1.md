@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 并发渡劫 broadcast/state 串台与误清空 | fix_pr | ⬜ |
+| P0 | 并发渡劫 broadcast/state 串台与误清空 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — 并发渡劫 broadcast/state 串台与误清空
 
@@ -38,3 +38,15 @@
 ## 审计来源
 
 bug-hunt 定点轮（仅收窄 `tribulation/omen` 主路径与其 client HUD bridge）。主代理人工复核了 `quota_limit=2` 的并发前提、server 多实例状态结构、client 单槽 `last-write-wins` 存储、以及 `settled -> clear()` 的全局副作用后保留该候选。当前结论是 **report-only**：先提交 skeleton plan，把玩法影响、根因路径、修复面与验收抓手固定，再由后续 fix PR 单独实现。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+client `TribulationBroadcastStore.java` 已改为多实例 keyed Map + 优先级择主显示，不再是单槽 last-write-wins；server 侧 `server/src/network/tribulation_broadcast_emit.rs:130-142` 的 `settled` 清空逻辑已改为按 entity 精确清除，只有 `active_broadcasts` 空时才全局 clear，堵住了误清空剩余天劫的问题。修复主 commit 0ac5be04e 加竞态补丁 33c635316（2026-07-06，PR #968）已合入 origin/main。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/java/com/bong/client/.../TribulationBroadcastStore.java`（多实例 keyed Map + 优先级择主显示）、`server/src/network/tribulation_broadcast_emit.rs:130-142`（settled 按 entity 精确清除，`active_broadcasts` 空才全局 clear）
+- **关键 commit**：0ac5be04e + 竞态补丁 33c635316（2026-07-06，修复并发渡劫 broadcast/state 串台与误清空，PR #968 已 merge）
+- **测试结果**：2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server（`tribulation_broadcast_emit.rs`）+ client（`TribulationBroadcastStore.java`）
+- **遗留 / 后续**：无

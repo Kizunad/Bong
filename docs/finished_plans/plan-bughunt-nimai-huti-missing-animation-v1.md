@@ -46,3 +46,15 @@
 ## 对抗复核结论
 
 对抗 subagent 两轮复核后结论：接受，但按 minor / plan_skeleton 处理。理由是 `anim_id: None` 到“无 PlayAnim”的链路硬，通用 HUD/粒子/SFX 不能替代每招独立 animation；降级原因是自然学习来源未证明，只能收窄为 dev-techniques / 已学账号可复现，且当前不是完全无反馈。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit `5d9bdd8fe`（2026-07-20，PR #1241 `skill-anim-fidelity` PR-5）已修复本 bug：`server/src/cultivation/burst_meridian.rs:98,699` 现在会发出 `NI_MAI_HU_TI_ANIM_ID`，`emit_burst_av` 不再以 `anim_id: None` 跳过 `PlayAnim`；client 侧新增专属动画资源 `ni_mai_hu_ti.json`。逆脉护体成功施放时玩家与旁观者能看到独立护体姿态，不再只剩粒子/SFX/HUD 反馈。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/cultivation/burst_meridian.rs`（`NI_MAI_HU_TI_ANIM_ID` 接入 `BurstAv`）、client `player_animation/` 下新增 `ni_mai_hu_ti.json`
+- **关键 commit**：`5d9bdd8fe`，2026-07-20，PR #1241「skill-anim-fidelity PR-5」
+- **测试结果**：证据引用测试锁定于 `:1973`（server 侧 pin 测试断言逆脉护体成功路径发出 `PlayAnim`）；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件。
+- **跨仓库核验**：server `burst_meridian.rs:98,699` emit `NI_MAI_HU_TI_ANIM_ID` → client `player_animation/ni_mai_hu_ti.json` 消费，animation 链路两端命中。
+- **遗留 / 后续**：plan 原文「修复计划骨架」中「审计 `NI_MAI_HU_TI_PARTICLE_ID` 是否仍需与崩拳区分」一项本次审计未逐一核实是否已收口，留待后续如有需要再核查；粒子/图标等其余 AV 差异化项目未在本次证据范围内逐条验证。

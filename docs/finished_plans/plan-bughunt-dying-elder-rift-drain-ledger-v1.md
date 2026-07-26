@@ -46,3 +46,15 @@
 
 - 第 1 轮 subagent 提出 heartbeat 伪灵脉候选；因与 #1000 同主题，按去重规则丢弃。
 - 第 2 轮 subagent 专门反驳本候选，结论为“成立”：`bb.qi_current` 不进 `summarize_world_qi`，`push_transfer_audit` 不改余额，未发现消费者补 rift balance，且与 #1020 死亡释放 overflow 非重复。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+垂死大能负压流失未进入 rift 账本已由 00fd9a33e（2026-07-13，「统一垂死大能真元权威与死亡守恒」）修复：`server/src/fauna/dying_elder.rs:1093-1204` 的 drain 路径改走 `transfer_external_qi_to_ledger` → `QiAccountId::rift(home_zone)` 真实落账（对应 `server/src/qi_physics/ledger.rs:493-530`），不再只是 `push_transfer_audit` 的 audit-only 记录；失败路径保留 qi 并重试，避免二次吞真元。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/fauna/dying_elder.rs`（`dying_elder_drain_system` drain 落账路径）、`server/src/qi_physics/ledger.rs`（`transfer_external_qi_to_ledger` / `QiAccountId::rift`）
+- **关键 commit**：00fd9a33e（2026-07-13，「统一垂死大能真元权威与死亡守恒」）
+- **测试结果**：证据未列出具体测试名；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：仅 server 侧命中（`fauna::dying_elder` / `qi_physics::ledger::transfer_external_qi_to_ledger`），属纯服务端真元守恒修复，无 client/agent 契约面
+- **遗留 / 后续**：无

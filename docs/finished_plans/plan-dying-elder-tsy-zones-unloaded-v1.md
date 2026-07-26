@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 垂死大能 spawn gate 永久命中空集合 | fix_pr | ⬜ |
+| P0 | 垂死大能 spawn gate 永久命中空集合 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — 垂死大能 spawn gate 永久命中空集合
 
@@ -38,3 +38,15 @@
 ## 审计来源
 
 bughunt 线程 AL，定向收窄 `server/src/fauna/` + `server/src/world/` 的 fauna 主路径接入。主代理先做代码级可达性复核，再做两轮默认怀疑式反证；结论为 **report-only**：先提交 skeleton-only PR 固化“正常运行时永不刷出”的死功能缺口，再由后续 fix PR 单独收口加载策略与回归面。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+修复已在 origin/main 落地：`server/src/world/zone.rs:225-244` 的 `ZoneRegistry::load()` 通过 `merge_tsy_blueprint_from_path` 合并 `zones.tsy.json`，使 TSY zone 在正式启动路径下真实进入 `ZoneRegistry`，`dying_elder_spawn_system` 的候选集不再永久为空。对应 commit b9974f212（2026-07-06，PR #898）已 merge；PR #1140（2026-07-07）进一步隔离 TSY 蓝图对主世界 heartbeat/event 污染，覆盖本 plan 开放问题 #2。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/world/zone.rs:225-244`（`ZoneRegistry::load()` / `merge_tsy_blueprint_from_path`）
+- **关键 commit**：b9974f212（2026-07-06，合并 zones.tsy.json 进正式 ZoneRegistry，PR #898）；PR #1140（2026-07-07，隔离 TSY 蓝图对主世界污染）
+- **测试结果**：证据素材未列具体测试名/数量；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server-only（`zone.rs` / `dying_elder.rs`）
+- **遗留 / 后续**：无

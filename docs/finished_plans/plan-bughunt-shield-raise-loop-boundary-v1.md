@@ -56,3 +56,15 @@
 ## 对抗复核结论
 
 两轮对抗后结论：接受为高置信、低到中等严重度的客户端战斗动画 bug。第一轮指出同类 PlayerAnimator loop 盲区，但涡流共振部分与 #1038 重合；第二轮收窄到 `shield_raise` 后确认不重复，且强调 `returnTick=3` 是合理反驳点，所以表述必须限定为“盾牌举盾 loop 保持姿态不闭合/边界跳变风险”，不得夸大为盾牌格挡功能不可用。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit 5d9bdd8fe（2026-07-20，PR #1241 skill-anim-fidelity PR-5）重写了 `client/src/main/resources/assets/bong/player_animation/shield_raise.json`，将 `endTick` 从 6 改为 18、`returnTick` 改为 6，并使 tick 18 与 tick 6 在所有姿态轴上逐字段一致，消除了本 plan 描述的循环边界跳变/回弹风险。归档 plan `docs/finished_plans/plan-skill-anim-fidelity-v1.md`（§361、§418）记录了该修复的闭合验证与 `<PROMISE>` 担保。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/resources/assets/bong/player_animation/shield_raise.json`（loop 边界重写）
+- **关键 commit**：5d9bdd8fe（2026-07-20，PR #1241「skill-anim-fidelity PR-5」）—— shield_raise.json 重写 endTick=18/returnTick=6，t18≡t6 全轴一致
+- **测试结果**：`finished_plans/plan-skill-anim-fidelity-v1.md` 记录的 loop 闭合验证已覆盖 shield_raise；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：client `shield_raise.json`（loop 资源）；server 侧 `emit_shield_raise_for_entity`/`emit_shield_stop_for_entity` 未改动，行为契约不变
+- **遗留 / 后续**：无

@@ -123,3 +123,15 @@
 - 本轮只做 bughunt，不修代码。
 - 本轮只新增 skeleton，不改源码与其他 docs。
 - 已与最近明确题目去重：这不是 `npc trade gate`、不是 `TSY sentinel`、不是 `social renown`、不是 `craft`、也不是 `tribulation`；核心是 **dormant/hydrate 对 NPC engagement state 的持久化缺口**。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit `0b9d7b440`（07-06）+ `2720f078c`（2026-07-07，「修复 NPC dormant 交互记忆丢失」）已修复本 bug：`NpcDormantSnapshot` 现已含 `memory` / `player_reputation` 字段（`server/src/npc/dormant/mod.rs:317-320`），`hydrate/mod.rs:322-437` 的 dehydrate 路径把 live ECS 上的 `NpcMemoryComponent` / `NpcPlayerReputation` 写入 snapshot，`hydrate/mod.rs:913-916` 的 spawn 路径把两者回插新实体，不再落入 `attach_*_components` 的默认空组件分支。同一 `char_id` 脱水再回来后不再重置为首次见面的默认态。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/npc/dormant/mod.rs`（`NpcDormantSnapshot` 增补 memory/player_reputation 字段）、`server/src/npc/hydrate/mod.rs`（dehydrate 写入 + spawn 回插两端）
+- **关键 commit**：`0b9d7b440`（2026-07-06）+ `2720f078c`（2026-07-07，「修复 NPC dormant 交互记忆丢失」）
+- **测试结果**：三条 roundtrip 测试落地（`hydrate/mod.rs:1252`、`:1315`、`:1360`），对应 plan 建议的 `dehydrate_snapshot_carries_npc_memory_and_player_reputation` / `hydrate_roundtrip_preserves_attack_memory_for_same_char_id` / `hydrate_roundtrip_preserves_trade_rep_tier` 一类断言；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件。
+- **跨仓库核验**：server 端闭环（`dormant/mod.rs` snapshot 字段 ↔ `hydrate/mod.rs` dehydrate/spawn 两端），是纯 server 内部持久化修复，未涉及 client/agent 侧 symbol 变更。
+- **遗留 / 后续**：plan 原文第四条测试建议 `threat_and_trade_semantics_survive_dormant_roundtrip`（brain threat / trade 折扣语义在 roundtrip 后的端到端一致性）本次审计未逐一核实是否已覆盖，留待后续如有需要再核查。

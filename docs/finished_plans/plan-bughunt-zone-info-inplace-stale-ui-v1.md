@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `zone_info` 同区变化不刷新，导致 world/ui 跨层 stale | fix_pr | ⬜ |
+| P0 | `zone_info` 同区变化不刷新，导致 world/ui 跨层 stale | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — `zone_info` 同区变化不刷新，导致 world/ui 跨层 stale
 
@@ -49,3 +49,15 @@
 ## 审计来源
 
 bug-hunt 定点轮（范围：`world/ui` 跨层链路，优先 `server world state -> client UI`）。方法：全仓 grep + 关键路径人工复核 + 现有测试证据交叉验证；未修改源码，仅新增 skeleton。当前结论为 **report-only**：高置信、可稳定复现、影响主链 UI，建议后续以 fix PR 收口 `zone_info` 的同区刷新语义。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit 12ac34676（2026-07-06「修复 zone_info 同区变化 UI 失活」）修复了本 bug：`server/src/network/mod.rs:2352-2439` 引入 `ZoneInfoRuntimeSnapshot` + `last_snapshot_by_entity`，把 `spirit_qi/danger_level/status/active_events/perception_text` 纳入变化检测，`runtime_changed` 时即便未跨 zone 边界也会重发 `zone_info`；测试 `:5506` 锁定该行为。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/network/mod.rs`（`ZoneInfoRuntimeSnapshot`、`last_snapshot_by_entity`、runtime_changed 重发逻辑）
+- **关键 commit**：12ac34676（2026-07-06，「修复 zone_info 同区变化 UI 失活」）
+- **测试结果**：`server/src/network/mod.rs:5506` 测试锁定同区 runtime 变化触发重发；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server `emit_zone_info_on_zone_transition`/`ZoneInfoRuntimeSnapshot`；client `ZoneInfoHandler`/`ZoneState`/`BongZoneHud`/`HudEnvironmentVariant`/`ZoneAtmosphereRenderer` 消费路径未改动，靠新的重发触达刷新
+- **遗留 / 后续**：开放问题 #1（`zone_info` 是否拆分“进入标题”与“运行态快照”两条协议）与 #2（`perception_text` tracker 语义）未在本次修复中收口，留待后续 PR

@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 季节跨相位时客户端 season state 陈旧 | fix_pr | ⬜ |
+| P0 | 季节跨相位时客户端 season state 陈旧 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — 季节跨相位时客户端 season state 陈旧
 
@@ -36,3 +36,15 @@
 ## 审计来源
 
 bug-hunt 定点轮（只收窄 `season / era / hud / state` 主路径）。本轮人工沿 `WorldSeasonState -> SeasonChangedEvent -> network emit -> client SeasonStateStore -> SeasonVisualController/HUD` 全链路核对，候选经过两轮默认怀疑式证伪后保留。当前结论是 **report-only**：先提交 skeleton plan，把玩家影响、断链点、修复面与验收抓手讲清，再由后续 fix PR 单独落地。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+修复已在 origin/main 落地：`server/src/network/mod.rs` 的 `publish_season_changed_events` 已改为对全部在线 `Client` 调用 `send_player_state_payload_to_client(reason="season_changed")`，堵住了季节跨相位时客户端 season state 只能靠无关 `Changed<PlayerState>/<Cultivation>` 偶然带出的陈旧问题。对应 commit 24d6104ab（2026-07-06，PR #885）已 merge，回归测试 `season_changed_event_emits_player_state_without_component_change` 锁定该行为。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/network/mod.rs`（`publish_season_changed_events` 对全部在线 Client 调 `send_player_state_payload_to_client(reason="season_changed")`）
+- **关键 commit**：24d6104ab（2026-07-06，修复季节跨相位客户端 season state 陈旧，PR #885 已 merge）
+- **测试结果**：`season_changed_event_emits_player_state_without_component_change`；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server-only（client 走既有 `player_state` 通道，无需改动）
+- **遗留 / 后续**：无

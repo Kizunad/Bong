@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 🔴 preview harness 强关 UI 与过渡层冲突，暂停菜单可永久卡屏 | fix_pr | ⬜ |
+| P0 | 🔴 preview harness 强关 UI 与过渡层冲突，暂停菜单可永久卡屏 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — 🔴 preview harness 强关 UI 与过渡层冲突，暂停菜单可永久卡屏
 
@@ -66,3 +66,15 @@
 ## 审计来源
 
 bughunt-loop-20260705-ar，范围只看 `server/src/preview`、`client/.../preview`、`client/.../ui` 及相关交互链；本轮未修改源码、未跑修复，只做静态搜索、链路核对、反方裁决和 skeleton 记录。结论为 **1 个高置信 preview/ui 真 bug**：preview harness 的强关 UI 逻辑与全局 screen transition 拦截互相冲突，`GameMenuScreen` 可被卡成永久遮挡层。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+修复已在 origin/main 落地，采用 plan 中的候选做法 A：`client PreviewSession.java:74` 改为调用 `ScreenTransitionController.cancelAndClose(client)`，绕开过渡层的 livelock，preview harness 强关屏幕不再与 `ScreenTransitionController` 的 fade 动画互相打断。对应 commit 236fe517c（2026-07-06，PR #903「修复 preview 强关界面绕过过渡层」）已 merge。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/java/com/bong/client/preview/PreviewSession.java:74`
+- **关键 commit**：236fe517c（2026-07-06，改调 ScreenTransitionController.cancelAndClose，PR #903）
+- **测试结果**：证据素材未列具体测试名/数量；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：client-only（`PreviewSession.java`）
+- **遗留 / 后续**：无

@@ -6,9 +6,9 @@
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | client tool 识别口径与 server 对齐 | ⬜ 2026-07-04 升 active |
-| P1 | 装备/快捷栏/提示文案回归 | ⬜ |
-| P2 | zhenfa 陷阱端到端可用性回归 | ⬜ |
+| P0 | client tool 识别口径与 server 对齐 | ✅ 2026-07-26 |
+| P1 | 装备/快捷栏/提示文案回归 | ✅ 2026-07-26 |
+| P2 | zhenfa 陷阱端到端可用性回归 | ✅ 2026-07-26 |
 
 ## 接入面
 
@@ -49,7 +49,7 @@
   - 尝试拖到 hotbar 即使 client 乐观放行，server 也会回 `forbidden_in_hotbar`
 - 结果不是"手感差"而是**内容不可用**：陷阱符/阵旗产出后无法稳定进入实际布阵/放置链路。
 
-## P0 client tool 识别口径与 server 对齐 ⬜
+## P0 client tool 识别口径与 server 对齐 ✅ 2026-07-26
 
 - 交付物：`client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java:46-64` `TOOL_TEMPLATE_IDS` 补 `warning_trap` / `blast_trap` / `slow_trap` / `array_flag` 四项，附行内注释说明来源（zhenfa.toml category=tool，`register_zhenfa_content_recipes`/`register_zhenfa_v2_recipes` 正常产出）。
 - 验收抓手：
@@ -58,7 +58,7 @@
   - `canPlaceIntoHotbar()` 对四种物品返回 `false`（与 server `forbidden_in_hotbar` 契约对齐）
 - 测试：`client/src/test/java/com/bong/client/inventory/InventoryEquipRulesTest.java` 新增 4 条 pin case（仿现有 118-126 行 `toolCanEquipMainHandButNotHotbarOrArmor` / 138-148 行 `stonePickaxeCanEquipBothHands` 模式）：`warningTrapCanEquipMainHandNotHotbar` / `blastTrapCanEquipMainHandNotHotbar` / `slowTrapCanEquipMainHandNotHotbar` / `arrayFlagCanEquipMainHandNotHotbar`，每条断言 `isTool` + `canEquip(MAIN_HAND)` + `!canPlaceIntoHotbar`。
 
-## P1 装备/快捷栏/提示文案回归 ⬜
+## P1 装备/快捷栏/提示文案回归 ✅ 2026-07-26
 
 - 校准 client 行为一致性：
   - `InspectScreen.isEquipSlotDropValid()`（3584 行）/ `quickEquipFromGrid()`（3617 行）无需改代码——均转调 `InventoryEquipRules.isTool/canEquip`，P0 补白名单后自动生效；本阶段只补回归测试锁住这条自动生效路径，防止未来重构改动调用链而悄悄脱钩
@@ -68,7 +68,7 @@
   - `InspectScreen` 不再把四种物品当普通可进 hotbar 的杂物（`canPlaceIntoHotbar` 回归覆盖）
 - 测试：`client/src/test/java/com/bong/client/inventory/InspectScreenPackOpenInteractionTest.java`（或同目录既有 InspectScreen 拖拽测试文件，视 P0 收尾时目录现状而定）补至少 1 条四种物品之一（`warning_trap`）拖拽装备槽成功 + hotbar 落点被拒的端到端 UI pin。
 
-## P2 zhenfa 陷阱端到端可用性回归 ⬜
+## P2 zhenfa 陷阱端到端可用性回归 ✅ 2026-07-26
 
 - 端到端锁定正常游玩链：
   - craft 产出 `warning_trap` / `blast_trap` / `slow_trap` / `array_flag`
@@ -104,3 +104,15 @@
 3. 右键世界交互链验证（原开放问题隐含的"确认右键布置读 mainHand 的分支链路"）：已核实 `MixinClientPlayerInteractionManagerAlchemy.bong$alchemyInteractBlock()`（90-116 行）读取 `InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND)` 作为 mainHand 快照，命中 `ClientInteractionItemResolver.zhenfaKindForItem(mainHand)` 即弹出 `ZhenfaLayoutScreen`——**该分支链路本身完整无缺口**，唯一断点是"物品能否先被装进 MAIN_HAND 槽"，即 §8.1 #1/#2 所修的白名单缺口。P2 无需改交互代码，只需回归测试锁住"装备成功后交互链可达"这一条件。
 
 **落点**：`client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java:46-64`（P0，array_flag 与三陷阱同批加入）/ `client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java:90-116`（验证锚点，本 PR 不改动此文件）/ plan §P0 / §P2。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+修复已在 origin/main 落地：client `InventoryEquipRules.TOOL_TEMPLATE_IDS` 补齐 `warning_trap` / `blast_trap` / `slow_trap` / `array_flag` 四项白名单，`server/src/inventory/mod.rs:7315-7320` 的 `required_tool` pin 同步收录，堵住了 plan 指出的"正常玩法可产出但 client 装备判定不识别"的缺口。对应 PR #861（2026-07-04，promote+决议）与 PR #962（2026-07-06，修复实装）均已 merge，`InspectScreenPackOpenInteractionTest` / `InventoryEquipRulesTest` 对应 pin 落地。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java:46-64`（`TOOL_TEMPLATE_IDS`）、`server/src/inventory/mod.rs:7315-7320`（`required_tool` pin）
+- **关键 commit/PR**：#861（2026-07-04，promote+决议）、#962（2026-07-06，修复已 merge）
+- **测试结果**：`InspectScreenPackOpenInteractionTest` / `InventoryEquipRulesTest` 对应 pin；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server+client（`InventoryEquipRules.java` / `inventory/mod.rs`）
+- **遗留 / 后续**：无

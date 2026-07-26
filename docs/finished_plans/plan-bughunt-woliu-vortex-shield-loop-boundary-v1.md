@@ -41,3 +41,15 @@
 - [ ] 修正 `woliu_vortex_shield.json` 的 loop 边界：tick 0 与 tick 18 对所有用到的 axis 闭合；若要保留摆动感，应在中间 tick 表达摆动，而不是依赖不闭合回环。
 - [ ] 用 `client/tools/render_animation.py` 或等价 headless 预览验证 `woliu_vortex_shield` 连续循环无身体/躯干/双臂跳变。
 - [ ] 增加或扩展 loop closure 校验，至少覆盖 `client/src/main/resources/assets/bong/player_animation/*.json` 中 `isLoop=true` 的战斗动画，防止同类资源回归。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit 5d9bdd8fed（2026-07-20，PR #1241「skill-anim-fidelity PR-5」）修复了本 bug：`woliu_vortex_shield.json` 的 `endTick` 从 18 改为 20，重写了 loop 边界 keyframe，tick 0 与 tick 20 在 body/torso/双臂全轴上逐字段一致，循环闭合生效，消除了原描述的回弹/衰减/跳变问题。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/resources/assets/bong/player_animation/woliu_vortex_shield.json`（loop 边界重写）
+- **关键 commit**：5d9bdd8fed（2026-07-20，PR #1241「skill-anim-fidelity PR-5」）—— endTick 18→20，tick0/tick20 全轴逐字段一致
+- **测试结果**：PR #1241 同批次的 loop 闭合断言覆盖该资源；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：client `woliu_vortex_shield.json`；server `WoliuSkillId::VortexShield` 的 `animation_id=bong:woliu_vortex_shield` 未改动，AV 三件套契约不变
+- **遗留 / 后续**：无

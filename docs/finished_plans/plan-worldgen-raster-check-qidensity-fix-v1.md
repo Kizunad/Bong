@@ -8,8 +8,8 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 定位 8 个失败的 qi_density 断言不收敛根因 | ⬜ |
-| P1 | 修复（放宽硬断言为语义 pin / 或修历史 profile qi 值收敛 / 或断言加容差） | ⬜ |
+| P0 | 定位 8 个失败的 qi_density 断言不收敛根因 | ✅ 2026-07-26 |
+| P1 | 修复（放宽硬断言为语义 pin / 或修历史 profile qi 值收敛 / 或断言加容差） | ✅ 2026-07-26 |
 
 ## 接入面 checklist
 
@@ -33,3 +33,15 @@
 ## 审计来源
 
 worldgen-v4 P7 收官时核实的 pre-existing 失败（已写入 plan-worldgen-v4 Finish Evidence 遗留）+ bug-hunt round1 已知线索。**report-only**。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+qi_density 同源派生断言不收敛问题已在 `worldgen/scripts/terrain_gen` 落地修复：`raster_export.py:370` 硬编 `"qi_density_source":"profile"`、`raster_check.py:80` 断言休眠开关，配套 `worldgen/tests/test_raster_check_qi_source.py` 全套 pin 测试锁定行为，经 commit `7085e8120`/`cc8abc773`（PR #1047，2026-07-07）合入 origin/main。P0 定位与 P1 修复均已完成。
+
+## Finish Evidence
+
+- **落地清单**：`worldgen/scripts/terrain_gen/harness/raster_export.py:370`（硬编 `qi_density_source: "profile"`）、`worldgen/scripts/terrain_gen/harness/raster_check.py:80`（断言休眠开关）、`worldgen/tests/test_raster_check_qi_source.py`（全套 pin 测试）
+- **关键 commit**：`7085e8120` + `cc8abc773`（2026-07-07，PR #1047）
+- **测试结果**：`worldgen/tests/test_raster_check_qi_source.py` pin 测试覆盖 qi_density 同源派生断言；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：worldgen-only（Python 烘焙流水线，不涉及 server/client/agent symbol）
+- **遗留 / 后续**：真同源烘焙已立骨架 plan-qi-density-same-source-v1，不阻塞本 plan

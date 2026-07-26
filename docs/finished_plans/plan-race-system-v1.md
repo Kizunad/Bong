@@ -14,8 +14,8 @@
 | P1 | 经脉系统通用化：`MeridianSystem` 去定长 + per-plan 拓扑与境界配额 + wire 开放化 | ✅ | 2026-07-12 |
 | P2 | 动态部位 / 经脉面板：server 下发布局元数据，client 剪影与经脉图数据驱动 | ✅ | 2026-07-13 |
 | P3 | 装备 / 功法种族三档匹配：`RaceGate` 三收拢点接线 + UI 反馈 | ✅ | 2026-07-13 |
-| P4 | 易形功法：固元残卷解锁、外观一对一互换、玩家渲染替换链路 | ⬜ | — |
-| P5 | 非人种族玩家入口 + 飞鲸 MVP 数据 + bot 场景 / e2e 收口 | ⬜ | — |
+| P4 | 易形功法：固元残卷解锁、外观一对一互换、玩家渲染替换链路 | ✅ | 2026-07-26 |
+| P5 | 非人种族玩家入口 + 飞鲸 MVP 数据 + bot 场景 / e2e 收口 | ✅ | 2026-07-26 |
 
 ## 接入面（docs/CLAUDE.md §二）
 
@@ -235,3 +235,15 @@
 - 预计 6 PR 序列化（单 plan 多 PR，不拆 plan）：PR-1 P0 底盘 → PR-2 P1 经脉 + wire → PR-3 P2 面板 → PR-4 P3 匹配 → PR-5 P4 易形（server+协议 与 client 渲染可再拆两只）→ PR-6 P5 收口；worldview 增补案独立 PR 人工 review，P5 归档前 land
 - 每 PR 走 consume-plan 通用流程 + push 前对峙自检 workflow；实施 subagent 全 sonnet，verify 用高档模型
 - 渲染 / 布局类交付（P2 humanoid layout、P4 渲染替换）适用 3 轮打磨 + `<PROMISE>` 担保
+
+## 验证结论（2026-07-26 整理审计追认）
+
+P4「易形」与 P5「非人种族玩家入口 + 飞鲸 MVP」已在 origin/main 落地：P4 机制底盘（`MorphState`/`cast_morph_yixing`，`server/src/body_plan/morph.rs`）随 P4 #1201/#1202（2026-07-13/14）交付；P5 `/race set` dev 命令（`server/src/cmd/dev/race.rs`）、`RaceChange` 两阶段事务（`server/src/cultivation/race_change.rs`）与飞鲸数据（`server/assets/body_plans/plans/whale.json`）随 P5 #1203/#1204/#1206（2026-07-14）交付，client 玩家渲染替换链路见 `daozhan/FakePlayerRendererMixin.java`。#1250（2026-07-23）另修复了一处经脉显示回归，不影响本 plan 主体交付判定。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/body_plan/morph.rs`（`MorphState` / `cast_morph_yixing`）、`server/assets/body_plans/plans/whale.json`、`server/src/cultivation/race_change.rs`、`server/src/cmd/dev/race.rs`（`/race set`）、client `daozhan/FakePlayerRendererMixin.java`
+- **关键 commit**：P0 #1160、P1 #1180、bugfix #1182、P2 #1184（2026-07-13，hud_anchors 双锚点组）、P3 #1198（2026-07-13，RaceGate）、P4 #1201/#1202（2026-07-13/14）、P5 #1203/#1204/#1206（2026-07-14，机制底盘 /race set + RaceChange 两阶段 + qi_physics prepare + meridian_mapping）、回归修复 #1250（2026-07-23，经脉显示）
+- **测试结果**：各阶段 PR 自带回归测试（详见对应 PR）；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server（`body_plan` / `cultivation::race_change` / `cmd::dev::race`）+ client（`daozhan/FakePlayerRendererMixin.java`），schema 经 race 相关 payload 双端对拍
+- **遗留 / 后续**：status_snapshot 8 段 id 发散小 PR（历史记录在案，未阻塞归档）
