@@ -541,11 +541,15 @@ fn classify_ground_landing_at(
         return GroundLandingCheck::Miss;
     };
 
-    // A motion-blocking liquid/waterlogged support is not merely an invalid
-    // foothold: it is authoritative loaded data that must veto raster fallback.
-    // Test liquid before the strict support predicate, whose normal rejection
-    // semantics intentionally cover non-motion blocks, passthrough, and leaves.
-    if support.blocks_motion() && contains_ambient_liquid(support) {
+    // A liquid/waterlogged structural support is not merely an invalid foothold:
+    // it is authoritative loaded data that must veto raster fallback. Preserve
+    // `Miss` for non-motion blocks, passthrough, and leaves, which are not
+    // structural landing candidates at all.
+    if support.blocks_motion()
+        && !is_ambient_passthrough_block(support)
+        && !is_ambient_leaf_block(support)
+        && contains_ambient_liquid(support)
+    {
         return GroundLandingCheck::LiquidObstructed;
     }
     if !is_strict_ground_support(support) {
@@ -1563,7 +1567,7 @@ mod tests {
             (
                 "waterlogged stairs support",
                 vec![(66, wet_stairs)],
-                GroundLandingScan::Miss,
+                GroundLandingScan::Unsafe,
             ),
             (
                 "waterlogged rail feet",
