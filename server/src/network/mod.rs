@@ -68,7 +68,11 @@ mod quickslot_config_emit_test;
 // plan-race-system-v1 P3c — 种族门元数据表（RaceGateMeta）构建 + join 首帧下发。
 pub mod morph_state_emit;
 pub mod race_gate_meta_emit;
+// plan-devour-rat-model P3 — 噬元鼠出招 → GeckoLib 实体招式动画
+pub mod rat_av_trigger;
 pub mod rat_phase_bridge;
+// plan-devour-rat-model P2 — 噬元鼠吸元档位 S2C CustomPayload（贴图变体 + emissive）
+pub mod rat_qi_tier_emit;
 pub mod redis_bridge;
 pub mod remains_sync_emit;
 pub mod resourcepack;
@@ -1132,6 +1136,10 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     elder_encounter_emit::register(app);
     // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装渲染 S2C payloads
     spider_disguise_emit::register(app);
+    // plan-devour-rat-model P2 — 噬元鼠吸元档位 S2C payloads（贴图变体 q0/q1/q2）
+    rat_qi_tier_emit::register(app);
+    // plan-devour-rat-model P3 — 噬元鼠咬击 → peck/claw/pounce 实体招式动画
+    rat_av_trigger::register(app);
 
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<morph_state_emit::MorphStateEmitState>();

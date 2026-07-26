@@ -46,9 +46,77 @@ public final class FaunaModel extends GeoModel<FaunaEntity> {
     public static final Identifier DAOZHAN_DISGUISE_PLAYER_TEXTURE =
         new Identifier("minecraft", "textures/entity/player/wide/steve.png");
 
+    /**
+     * plan-devour-rat-model P2 —— 噬元鼠吸元档位贴图前缀；实际路径为
+     * {@code <前缀>{0,1,2}.png}（尾脊蓝填充 0 / 半 / 全）。
+     */
+    public static final String DEVOUR_RAT_TIER_TEXTURE_PREFIX = "textures/entity/fauna/devour_rat_q";
+
+    /**
+     * emissive glow 贴图的后缀：在底图路径的 {@code .png} 前插入 {@code _glow}。
+     *
+     * <p>注意**不是** GeckoLib {@code AutoGlowingGeoLayer} 的 {@code _glowmask} 约定——
+     * 本仓库走自己的 {@link FaunaEmissiveGlowLayer}（{@code getEntityTranslucentEmissive}
+     * 整模重绘），glow 贴图直接给出要发光的颜色，而不是"从底图挖色"的掩码。
+     */
+    public static final String GLOW_TEXTURE_SUFFIX = "_glow";
+
+    private static final String PNG_SUFFIX = ".png";
+
     @Override
     public Identifier getModelResource(FaunaEntity entity) {
         return entity.visualKind().modelId();
+    }
+
+    /**
+     * plan-devour-rat-model P2 —— 噬元鼠按吸元档位取贴图变体。
+     *
+     * <p>档位越界一律夹到 {@code [0, TIER_MAX]}（见 {@link RatQiTierHandler#clampTier}），
+     * 脏值不能变成磁盘上不存在的 {@code devour_rat_q7.png} → missing texture 紫黑格。
+     */
+    public static Identifier devourRatTexture(int tier) {
+        return new Identifier(
+            "bong",
+            DEVOUR_RAT_TIER_TEXTURE_PREFIX + RatQiTierHandler.clampTier(tier) + PNG_SUFFIX
+        );
+    }
+
+    /**
+     * 底图 Identifier → 对应的 emissive glow 贴图 Identifier（{@code xxx.png} →
+     * {@code xxx_glow.png}）。
+     *
+     * <p>路径不以 {@code .png} 结尾时直接追加后缀——保证返回值恒为一个确定路径，
+     * 由 {@link FaunaVisualKind#hasEmissiveGlow()} 负责只对备齐 glow 资产的物种挂层。
+     */
+    public static Identifier glowTextureFor(Identifier base) {
+        String path = base.getPath();
+        String glowPath = path.endsWith(PNG_SUFFIX)
+            ? path.substring(0, path.length() - PNG_SUFFIX.length()) + GLOW_TEXTURE_SUFFIX + PNG_SUFFIX
+            : path + GLOW_TEXTURE_SUFFIX;
+        return new Identifier(base.getNamespace(), glowPath);
+    }
+
+    /**
+     * 贴图选择的纯函数核：只依赖 {@link FaunaVisualKind} + MC 协议 entity id
+     * （不碰 {@link FaunaEntity} 实例，故可在无 MC bootstrap 的纯 JUnit 里直测）。
+     *
+     * <p>{@link #getTextureResource} 是它的薄委托——测试直接锁这里，避免测试自己
+     * 抄一份"影子实现"而生产逻辑漂走。
+     */
+    public static Identifier selectTexture(FaunaVisualKind kind, int entityId) {
+        // 拟态灰烬蛛：伪装期返回 ash_block 贴图
+        if (kind == FaunaVisualKind.ASH_SPIDER && SpiderDisguiseHandler.isDisguised(entityId)) {
+            return ASH_SPIDER_DISGUISE_TEXTURE;
+        }
+        // 道伥：Mimicry 期返回玩家皮肤贴图（无名玩家外形）
+        if (kind == FaunaVisualKind.DAOXIANG && DaoZhanDisguiseHandler.isDisguised(entityId)) {
+            return DAOZHAN_DISGUISE_PLAYER_TEXTURE;
+        }
+        // 噬元鼠：按吸元档位选贴图变体（缺条目 = 0 档）
+        if (kind == FaunaVisualKind.DEVOUR_RAT) {
+            return devourRatTexture(RatQiTierHandler.tierOf(entityId));
+        }
+        return kind.textureId();
     }
 
     /**
@@ -63,24 +131,16 @@ public final class FaunaModel extends GeoModel<FaunaEntity> {
      * 返回 Steve 皮肤贴图（玩家外形占位）；
      * Reveal 后 {@link DaoZhanDisguiseHandler} 移除 entity_id，下一帧切回正常道伥贴图。
      *
+     * <p>plan-devour-rat-model P2：噬元鼠按服务端下发的吸元档位
+     * （{@link RatQiTierHandler}）选 {@code devour_rat_q{0,1,2}.png}——尾脊蓝填充随
+     * 吸到的真元量递增，配合 {@link FaunaEmissiveGlowLayer} 让蓝脊 + 红眼发光。
+     *
      * @param entity GeckoLib 渲染的 FaunaEntity 实体
      * @return 贴图资源 Identifier
      */
     @Override
     public Identifier getTextureResource(FaunaEntity entity) {
-        // 拟态灰烬蛛：伪装期返回 ash_block 贴图
-        if (entity.visualKind() == FaunaVisualKind.ASH_SPIDER
-                && SpiderDisguiseHandler.isDisguised(entity.getId())) {
-            return ASH_SPIDER_DISGUISE_TEXTURE;
-        }
-        // 道伥：Mimicry 期返回玩家皮肤贴图（无名玩家外形）
-        // plan-daozhan-v1 P1：GeckoLib 使用 Daoxiang 体型模型 + Steve 皮肤 → 近似"无名玩家"视觉
-        // WSLg 验收标注：外形为 Daoxiang 比例，P3 扩展为真实玩家比例 FakePlayerEntity 渲染
-        if (entity.visualKind() == FaunaVisualKind.DAOXIANG
-                && DaoZhanDisguiseHandler.isDisguised(entity.getId())) {
-            return DAOZHAN_DISGUISE_PLAYER_TEXTURE;
-        }
-        return entity.visualKind().textureId();
+        return selectTexture(entity.visualKind(), entity.getId());
     }
 
     @Override
