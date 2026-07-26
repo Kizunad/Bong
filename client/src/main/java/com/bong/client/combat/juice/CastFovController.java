@@ -14,6 +14,7 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.Identifier;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -49,12 +50,20 @@ import java.util.function.LongSupplier;
  *   <li>CASTING（仅权威）：按 identity 武装 pending（该招在 {@link CastJuiceProfiles} 有 profile
  *       才武装）；同 identity 重复 CASTING 幂等，异 identity 取代旧 pending（supersession）。
  *       预测来源的 CASTING 一律不武装。</li>
- *   <li>COMPLETE：identity 匹配且未触发过 → 触发 FOV 脉冲 + shake，标记已触发（同 identity 重复
- *       release 幂等）。</li>
- *   <li>INTERRUPT：只作废**同 identity** 的 pending（异 identity 的在飞 cast 不受牵连），并记录
- *       被作废 identity（防**乱序**——打断早于 CASTING 到达时，后到的同 identity CASTING 不再武装）。</li>
- *   <li>IDLE：清 pending（施放前 NONE 拒绝 / 300ms 自回 idle）。</li>
+ *   <li>COMPLETE：identity 匹配 → 触发 FOV 脉冲 + shake，并把该 identity 记成
+ *       {@link Terminal#FIRED}（同 identity 重复 release / 跨 IDLE 重放都不再触发）。</li>
+ *   <li>INTERRUPT：把该 identity 记成 {@link Terminal#VOIDED}，但只清**同 identity** 的
+ *       pending（异 identity 的在飞 cast 不受牵连）。</li>
+ *   <li>IDLE：<b>no-op</b>——{@link CastState#idle()} 是无身份单例（slot=-1、startedAtMs=0），
+ *       无法归属到任何 cast，无条件清场会让一条迟到的 IDLE 误杀在飞的施法。详见 {@link #onCastState}。</li>
  * </ul>
+ *
+ * <p><b>终态记录（{@link #terminals}）</b>：幂等与防复活不能只靠「当前 pending 里的一个 fired 标记
+ * + 一个单值 voidedId」——前者随 pending 一起被 supersession/IDLE 丢掉（同 identity 迟到 CASTING
+ * 能重建 pending 再触发第二次），后者被下一次 INTERRUPT 覆盖（{@code INTERRUPT(A)→INTERRUPT(B)→
+ * CASTING(A)} 让 A 复活）。故按 identity 存**有界**（LRU {@link #TERMINAL_MEMORY}）终态记录，
+ * 区分 FIRED / VOIDED，先到者胜（已 FIRED 的不因迟到打断被改写）。teardown 把当时在飞的身份
+ * 整批记成 VOIDED，故 teardown 之后迟到的旧 CASTING/COMPLETE 不再复活。
  * 施放前拒绝 client 从不收到 CASTING → 无 pending 可作废（对门控无害）。施法中非受击死亡 server
  * 静默移除 Casting 不发 cast_sync（§8.1 #3 唯一缺口）→ 由 {@link #tick()} 观测
  * {@link DeathStateStore} 死亡即 {@link #teardown()}，不依赖 server 回执。
@@ -65,8 +74,8 @@ import java.util.function.LongSupplier;
 public final class CastFovController {
     private static final AtomicBoolean BOOTSTRAPPED = new AtomicBoolean(false);
     /**
-     * pending / voidedId / pulse **以及 shake 通道写入**的互斥锁。两个 juice 通道的建立与
-     * 清空都串行化在这里，避免交错留下孤儿抖动。
+     * pending / {@link #terminals} / pulse **以及 shake 通道写入**的互斥锁。两个 juice 通道的
+     * 建立与清空都串行化在这里，避免交错留下孤儿抖动。
      *
      * <p>网络侧回执当前由 {@code BongNetworkHandler} 经 {@code client.execute} 全部 marshal 到
      * 客户端线程，故实际竞争极少；但渲染线程会并发读 {@link #pulse}（{@link #fovDelta()} 走
@@ -88,8 +97,29 @@ public final class CastFovController {
 
     /** 当前武装的 pending juice（LOCK 保护）。 */
     private static Pending pending = null;
-    /** 最近被作废的 cast identity（LOCK 保护；防乱序打断被后到 CASTING 复活）。 */
-    private static Identity voidedId = null;
+
+    /** cast identity 的终态：已触发过 / 已作废。两者都禁止该 identity 再次武装或触发。 */
+    enum Terminal { FIRED, VOIDED }
+
+    /**
+     * 终态记录容量（LRU 上限，LOCK 保护）。乱序窗口是网络重传/回执错序的量级（个位数施法），
+     * 16 条远超实际需要；有界是硬要求——无界 Map 会随会话时长单调增长。
+     *
+     * <p>package-private 供有界性测试引用，免得测试另抄一份 16（改容量时测试要跟着一起改）。
+     */
+    static final int TERMINAL_MEMORY = 16;
+
+    /**
+     * identity → 终态（LOCK 保护）。{@link LinkedHashMap} 访问序 + {@code removeEldestEntry}
+     * 做 LRU：满了先淘汰最久未被查询的身份（最不可能再有迟到回执的那个）。
+     */
+    private static final LinkedHashMap<Identity, Terminal> terminals =
+        new LinkedHashMap<>(TERMINAL_MEMORY * 2, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<Identity, Terminal> eldest) {
+                return size() > TERMINAL_MEMORY;
+            }
+        };
 
     private CastFovController() {
     }
@@ -130,6 +160,16 @@ public final class CastFovController {
      * 预测来源的 CASTING 只是候选（见类文档「accepted」段）。COMPLETE 不看来源：它只是**触发
      * 时刻**信号，权限来自那条已被权威武装的 pending；缺 pending（= 未 accepted 或已作废）
      * 一律 no-op，故「按键预测 → 本地计时到点 → COMPLETE」拿不到 juice。
+     *
+     * <p><b>IDLE 是 no-op</b>：{@link CastState#idle()} 是无身份单例（{@code slot=-1}、
+     * {@code startedAtMs=0}），无法归属到任何一次施法，因此「见 IDLE 就清 pending」必然是
+     * 跨身份清场——A 被 B 取代后一条迟到的 IDLE(A) 会误杀 B，B 随后 release 静默无 juice。
+     * 也没有必须靠 IDLE 兜的路径：生产上 IDLE 只有两个来源，① {@code CastStateStore.tick}
+     * 在 COMPLETE/INTERRUPT 后 300ms 的淡出（此时该身份已是 FIRED/VOIDED 终态），②
+     * 服务端 {@code cast_sync{phase:idle}}——而服务端的 idle 一律带 {@code Reject*} outcome
+     * （{@code push_skill_cast_rejected_sync} 等三处），{@code CastSyncHandler} 会把它合成
+     * 成 INTERRUPT 走取消令牌，不会以 IDLE 形态到这里。跨 IDLE 的幂等由 {@link #terminals}
+     * 保证，不靠清场。
      */
     static void onCastState(CastState state, CastStateStore.Origin origin) {
         if (state == null) {
@@ -144,18 +184,18 @@ public final class CastFovController {
                     }
                 }
                 case COMPLETE -> release(state, now);
-                case INTERRUPT -> voidPending(state);
-                case IDLE -> pending = null;
+                case INTERRUPT -> voidCast(state);
+                case IDLE -> { }  // 无身份，不清场（理由见方法文档）
             }
         }
     }
 
     private static void arm(CastState state) {
         Identity id = Identity.of(state);
-        if (id.equals(voidedId)) {
-            return;  // 乱序：该 cast 的打断早于 CASTING 到达 → 已作废，不武装
+        if (terminals.containsKey(id)) {
+            return;  // 该身份已终态（FIRED 不重放 / VOIDED 不复活），含乱序打断早到与 teardown
         }
-        if (pending != null && !pending.id.equals(id)) {
+        if (pending != null && !pending.id().equals(id)) {
             pending = null;  // supersession：新 cast 身份取代旧 pending
         }
         if (pending != null) {
@@ -168,27 +208,36 @@ public final class CastFovController {
     }
 
     private static void release(CastState state, long now) {
-        if (pending == null || !pending.id.equals(Identity.of(state)) || pending.fired) {
-            return;  // 无 pending / 身份不符 / 已触发过（幂等）
+        Identity id = Identity.of(state);
+        Pending armed = pending;
+        if (armed == null || !armed.id().equals(id)) {
+            return;  // 无 pending（未 accepted / 已作废 / 已触发过）或身份不符
         }
-        pending.fired = true;
-        fire(pending.profile, now);
+        // 消费掉 pending 并落 FIRED 终态：同 identity 的重复 / 乱序 / 跨 IDLE 重放都不再触发。
+        pending = null;
+        markTerminal(id, Terminal.FIRED);
+        fire(armed.profile(), now);
     }
 
     /**
-     * INTERRUPT：作废<b>该 identity 自己的</b> pending。
+     * INTERRUPT：把该 identity 记成 {@link Terminal#VOIDED}，并作废<b>该 identity 自己的</b> pending。
      *
-     * <p>{@link #voidedId} 无条件记录（防乱序：打断早于 CASTING 到达时，后到的同 identity
-     * 不再武装）；但 {@link #pending} <b>只在身份匹配时</b>才清——否则 A 被 B 取代后，一条
-     * 迟到/重传的 {@code INTERRUPT(A)} 会顺手把 B 的 pending 误杀，B 随后 release 静默无 juice。
-     * 取消令牌是绑 identity 的，不是「见到打断就清场」。
+     * <p>终态**无条件**记录（防乱序：打断早于 CASTING 到达时，后到的同 identity 不再武装）；
+     * 但 {@link #pending} <b>只在身份匹配时</b>才清——否则 A 被 B 取代后，一条迟到/重传的
+     * {@code INTERRUPT(A)} 会顺手把 B 的 pending 误杀，B 随后 release 静默无 juice。取消令牌
+     * 是绑 identity 的，不是「见到打断就清场」。
      */
-    private static void voidPending(CastState state) {
+    private static void voidCast(CastState state) {
         Identity id = Identity.of(state);
-        voidedId = id;
-        if (pending != null && pending.id.equals(id)) {
+        markTerminal(id, Terminal.VOIDED);
+        if (pending != null && pending.id().equals(id)) {
             pending = null;
         }
+    }
+
+    /** 终态先到者胜：已 FIRED 的身份不因一条迟到的打断被改写成 VOIDED（LOCK 内调用）。 */
+    private static void markTerminal(Identity id, Terminal terminal) {
+        terminals.putIfAbsent(id, terminal);
     }
 
     /**
@@ -368,15 +417,29 @@ public final class CastFovController {
         }
     }
 
-    /** 断线 / 切世界 / 死亡：立即复位基准 FOV + 清 pending + 清抖动（幂等，重复调用无副作用）。 */
+    /**
+     * 断线 / 切世界 / 死亡：立即复位基准 FOV + 清 pending + 清抖动（幂等，重复调用无副作用）。
+     *
+     * <p><b>在飞身份整批落 VOIDED 终态</b>：只清 pending 不够——teardown 之后一条迟到的
+     * 同 identity CASTING 会重新武装、随后的 COMPLETE 就能在死亡/换世界之后放出 juice。
+     * 把当时在飞的身份记进 {@link #terminals} 即封死这条路；全新施法有新的 startedAtMs，
+     * 不受影响。
+     *
+     * <p>残留缺口（诚实标注）：若某次施法的权威 CASTING 在 teardown **之后**才首次到达，
+     * 本地没有任何凭据把它和「旧会话」区分开（wire 无 cast id / session id），它会被当成
+     * 新施法。死亡路径上这一帧的影响也被兜住：{@link #tick()} 在死亡界面可见期间**每 tick**
+     * 都 teardown，故最多存活 ≤1 tick。
+     */
     public static void teardown() {
         // pulse 清空与 fire() 写入同锁，避免死亡/断线 teardown 被随后落地的 fire 复活一帧。
         // 抖动与脉冲同处一个临界区：两个通道的写入都串行化在 LOCK 上，否则网络线程的 fire
         // 可能恰好落在「清脉冲」与「清抖动」之间，留下一条孤儿抖动。
         synchronized (LOCK) {
             pulse = null;
-            pending = null;
-            voidedId = null;
+            if (pending != null) {
+                markTerminal(pending.id(), Terminal.VOIDED);
+                pending = null;
+            }
             // 死亡/断线也清抖动：蓄力 CRESCENDO 长达数秒，玩家已死不应继续震屏。
             CameraShakeController.clear();
         }
@@ -447,6 +510,19 @@ public final class CastFovController {
         localPlayerPredicate = p == null ? CastFovController::isLocalPlayerFromClient : p;
     }
 
+    /**
+     * 某 cast identity 的终态（只读查询 seam，{@link Identity} 是私有 record 故按二元组收参）。
+     * 测试用它 pin「触发过的记 FIRED、被打断的记 VOIDED」——两者都禁止再武装，但语义不同，
+     * 混淆会让「已 fire 的身份被一条迟到打断改写」这类回归悄悄溜过。
+     *
+     * @return 该身份的终态，未终态返回 {@code null}
+     */
+    static Terminal terminalStateForTest(int slot, long startedAtMs) {
+        synchronized (LOCK) {
+            return terminals.get(new Identity(slot, startedAtMs));
+        }
+    }
+
     /** ENTITY_UNLOAD 本地玩家实体判定 seam（单测注入，免构造 ClientPlayerEntity）。 */
     static void setLocalPlayerEntityPredicateForTest(LocalPlayerEntityPredicate p) {
         localPlayerEntityPredicate = p == null ? (e -> e instanceof ClientPlayerEntity) : p;
@@ -457,7 +533,7 @@ public final class CastFovController {
         synchronized (LOCK) {
             pulse = null;
             pending = null;
-            voidedId = null;
+            terminals.clear();
         }
         JuiceConfig.resetForTests();
         clock = System::currentTimeMillis;
@@ -506,14 +582,11 @@ public final class CastFovController {
         }
     }
 
-    private static final class Pending {
-        final Identity id;
-        final CastJuiceProfile profile;
-        boolean fired;
-
-        Pending(Identity id, CastJuiceProfile profile) {
-            this.id = id;
-            this.profile = profile;
-        }
+    /**
+     * 已由权威 CASTING 武装、等待 release 的 juice。<b>没有 {@code fired} 标记</b>——触发即被
+     * 消费掉（置 null）并在 {@link #terminals} 落 FIRED，幂等由那份跨 pending 生命周期的终态
+     * 记录保证；标记留在 pending 里会随 supersession/清场一起丢失（review finding C）。
+     */
+    private record Pending(Identity id, CastJuiceProfile profile) {
     }
 }

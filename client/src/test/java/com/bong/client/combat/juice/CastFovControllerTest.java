@@ -640,18 +640,142 @@ class CastFovControllerTest {
         assertBaseline("脉冲结束后稳定在基准");
     }
 
+    // ---- 跨 identity 乱序 / 跨 IDLE 幂等（review finding C：终态记录按身份、有界） ----
+
     @Test
-    void idlePhaseClearsPendingSoLaterReleaseDoesNotFire() {
-        // IDLE 分支（枚举变体饱和）：cast 条 300ms 后自回 idle / 施放前 NONE 拒绝，
-        // 都以 phase="idle" + outcome="none" 落到 CastStateStore → 清 pending。
-        predictAndAccept(HEAVY_SLOT, START);                       // 武装 pending
-        serverSync("idle", HEAVY_SLOT, START, "none");    // 真实 idle 回执
+    void idlePhaseDoesNotClearPendingBecauseItCarriesNoIdentity() {
+        // IDLE 分支（枚举变体饱和）：CastState.idle() 是 slot=-1/startedAtMs=0 的无身份单例，
+        // 无法归属到任何一次施法，故这里**不清场**——旧实现无条件 pending=null 才是
+        // 「迟到 IDLE 误杀在飞施法」的根因（见 lateIdleDoesNotKillTheLiveCast）。
+        predictAndAccept(HEAVY_SLOT, START);                   // 武装 pending
+        serverSync("idle", HEAVY_SLOT, START, "none");         // 无身份 idle 回执
         assertEquals(CastState.Phase.IDLE, CastStateStore.snapshot().phase(), "回到 idle 相");
 
-        serverSync("complete", HEAVY_SLOT, START, "completed");  // idle 之后的迟到 complete
+        serverSync("complete", HEAVY_SLOT, START, "completed");  // idle 之后 release 照常
         advanceMs(FOV_DURATION_MS / 2);
-        assertBaseline("idle 已清 pending → 之后的 release 不触发");
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6,
+            "IDLE 无身份、不作废任何东西 → 已 accepted 的 release 照常触发");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("脉冲 decay 完毕");
+    }
+
+    @Test
+    void lateIdleDoesNotKillTheLiveCast() {
+        // reviewer 逐条点名：CASTING(B) → 迟到 IDLE(A) → COMPLETE(B) 仍正常触发。
+        // 旧实现 `case IDLE -> pending = null` 会把 B 的 pending 误杀，B 随后静默无 juice。
+        predictAndAccept(HEAVY_SLOT, START);                          // A
+        serverSync("casting", HEAVY_SLOT, START + 5000, "none");      // B 取代 A
+        serverSync("idle", HEAVY_SLOT, START, "none");                // A 的迟到 idle
+
+        serverSync("complete", HEAVY_SLOT, START + 5000, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "迟到的 IDLE 不得牵连在飞的 B");
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "B 的抖动同样照常");
+
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("B 的脉冲 decay 完毕");
+    }
+
+    @Test
+    void twoInterruptsThenLateCastingOfTheFirstDoesNotResurrectIt() {
+        // reviewer 逐条点名：INTERRUPT(A) → INTERRUPT(B) → CASTING(A) 不得复活 A。
+        // 旧实现只存一个 voidedId，第二条 INTERRUPT 会把 A 的作废记录覆盖掉。
+        serverSync("interrupt", HEAVY_SLOT, START, "interrupt_control");          // 作废 A
+        serverSync("interrupt", HEAVY_SLOT, START + 5000, "interrupt_movement");  // 作废 B（覆盖点）
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(HEAVY_SLOT, START),
+            "A 的作废记录不得被 B 的打断挤掉");
+
+        predictAndAccept(HEAVY_SLOT, START);   // A 的权威 CASTING 迟到（预测先恢复 SKILL_BAR 快照）
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("A 已作废 → 迟到 CASTING 不得复活它");
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+    }
+
+    @Test
+    void sameIdentityReplayedAcrossIdleFiresExactlyOnce() {
+        // reviewer 逐条点名：COMPLETE(A) → IDLE → CASTING(A) → COMPLETE(A) 只触发一次。
+        // 旧实现的 fired 标记住在 pending 里，被 IDLE 清掉后同身份可重建 pending 再触发第二次。
+        predictAndAccept(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");   // 第一次触发
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(HEAVY_SLOT, START), "触发过的身份记 FIRED");
+
+        // 让第一发的**两个通道**都自然走完（shake 20t=1000ms 比 FOV 7t 长）——这样第二次若
+        // 真触发就一定看得见，而不是被第一发的残留掩盖成「反正非零」。
+        advanceMs(SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("第一发脉冲已走完");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "第一发抖动也已走完");
+
+        serverSync("idle", HEAVY_SLOT, START, "none");            // 300ms 淡出回 idle
+        predictAndAccept(HEAVY_SLOT, START);                     // 同身份 CASTING 重放
+        serverSync("complete", HEAVY_SLOT, START, "completed");   // 同身份 COMPLETE 重放
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("同一 cast identity 跨 IDLE 重放不得二次触发");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不二次触发");
+    }
+
+    @Test
+    void firedIdentityIsNotRewrittenByALateInterrupt() {
+        // 终态先到者胜：已触发的身份不因迟到的打断被改写成 VOIDED（两者都挡后续武装，但
+        // 语义不同——混淆会让「fire 后收打断」的记录失真）。
+        predictAndAccept(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        serverSync("interrupt", HEAVY_SLOT, START, "interrupt_movement");
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(HEAVY_SLOT, START),
+            "已 FIRED 的身份不得被迟到打断改写成 VOIDED");
+
+        advanceMs(FOV_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("脉冲照常 decay 回基准");
+    }
+
+    @Test
+    void terminalMemoryIsBoundedAndEvictsOldestIdentities() {
+        // 有界是硬要求（无界 Map 会随会话时长单调增长）：灌满容量 + 1 条后，最早那条被淘汰。
+        long oldest = START;
+        for (int i = 0; i <= CastFovController.TERMINAL_MEMORY; i++) {
+            serverSync("interrupt", HEAVY_SLOT, START + i * 1000L, "interrupt_movement");
+        }
+        assertNull(CastFovController.terminalStateForTest(HEAVY_SLOT, oldest),
+            "超出 LRU 容量后最早的身份被淘汰（终态记录必须有界）");
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(
+                HEAVY_SLOT, START + CastFovController.TERMINAL_MEMORY * 1000L),
+            "最近的身份仍在记录内");
+        assertBaseline("整段只有打断，无任何 juice");
+    }
+
+    @Test
+    void teardownVoidsInFlightIdentitySoLateCastingCannotRearmIt() {
+        // reviewer 逐条点名：teardown → 旧 CASTING/COMPLETE 不触发。只清 pending 不够——
+        // teardown 后迟到的同身份 CASTING 会重新武装，随后的 COMPLETE 就能在死亡后放出 juice。
+        predictAndAccept(HEAVY_SLOT, START);   // 在飞 pending
+        CastFovController.teardown();          // 死亡 / 断线 / 切世界
+        assertEquals(CastFovController.Terminal.VOIDED,
+            CastFovController.terminalStateForTest(HEAVY_SLOT, START),
+            "teardown 必须把在飞身份整批记成 VOIDED");
+
+        predictAndAccept(HEAVY_SLOT, START);   // 旧世界/旧会话迟到的 CASTING
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertBaseline("teardown 后旧身份的 CASTING/COMPLETE 都不得触发 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不触发");
+
+        // 反证：teardown 之后**全新**施法（新 startedAtMs）必须正常触发，不能把玩家永久关停。
+        predictAndAccept(HEAVY_SLOT, START + 20_000);
+        serverSync("complete", HEAVY_SLOT, START + 20_000, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK, fov(), 1e-6, "teardown 后的新施法照常触发");
+        advanceMs(FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("新脉冲 decay 完毕");
     }
 
     // ---- 动画事件驱动 juice（heaven_gate：charge 渐强 / release 最大+FOV，与劈下对齐）----
