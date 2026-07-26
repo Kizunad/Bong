@@ -146,6 +146,8 @@ pub fn tick_harvest_hazards(
     }
 }
 
+/// 返回本次调用是否有 `WoundOnBareHand` hazard 实际命中（即缺 required_tool 触发了伤）。
+/// plan-gathering-tool-bind-v1 P1：调用侧据此决定是否 emit 割手音效/粒子/HUD 事件流。
 pub fn apply_completion_hazards(
     kind_id: super::registry::BotanyPlantId,
     registry: &BotanyKindRegistry,
@@ -154,16 +156,17 @@ pub fn apply_completion_hazards(
     wounds: Option<&mut Wounds>,
     actual_tool: Option<ToolKind>,
     now_tick: u64,
-) {
+) -> bool {
     let Some(kind) = registry.get(kind_id) else {
-        return;
+        return false;
     };
     let Some(spec) = kind.v2_spec() else {
-        return;
+        return false;
     };
     let mut cultivation = cultivation;
     let mut contamination = contamination;
     let mut wounds = wounds;
+    let mut bare_hand_wound_applied = false;
     for hazard in spec.harvest_hazards {
         match hazard {
             HarvestHazard::ResonanceVision { composure_loss, .. } => {
@@ -177,6 +180,7 @@ pub fn apply_completion_hazards(
                 required_tool,
                 ..
             } if !has_required_tool(actual_tool, *required_tool) => {
+                bare_hand_wound_applied = true;
                 if let Some(wounds) = wounds.as_deref_mut() {
                     wounds.entries.push(Wound {
                         // humanoid-only boundary（P0 决议，本轮不迁移）：徒手采集划伤没有
@@ -202,6 +206,7 @@ pub fn apply_completion_hazards(
             _ => {}
         }
     }
+    bare_hand_wound_applied
 }
 
 pub fn attracts_mobs_hazards_for_kind(

@@ -138,6 +138,8 @@ fn send_structural_cancel_terminal(
         gathering_quality: None,
         tool_used: None,
         overflow_to_ground: false,
+        bare_hand_wound: false,
+        required_tool_used: false,
     });
 }
 
@@ -286,8 +288,14 @@ pub fn complete_harvest_for_player(
         }
     }
 
-    if let Some(required_tool) = required_tool_for(session.target_plant, kind_registry) {
-        if actual_tool == Some(required_tool) && gathering_tool.is_none() {
+    // plan-gathering-tool-bind-v1 P1：required_tool_used 与 tool_used（下方 gathering_tool
+    // 派生）是两套正交系统——required_tool 管受伤/耐久，gathering_tool 管采集速度/品质
+    // （§8.1 决议 #3）。这里只判定"required_tool 是否命中"，供 HUD/AV 消费。
+    let session_required_tool = required_tool_for(session.target_plant, kind_registry);
+    let required_tool_matched =
+        session_required_tool.is_some_and(|required_tool| actual_tool == Some(required_tool));
+    if let Some(required_tool) = session_required_tool {
+        if required_tool_matched && gathering_tool.is_none() {
             crate::tools::damage_main_hand_tool(
                 session.client_entity,
                 &mut inventory,
@@ -297,13 +305,14 @@ pub fn complete_harvest_for_player(
         }
     }
 
+    let mut bare_hand_wound = false;
     if let Ok((cultivation, _skill_set, contamination, wounds)) =
         harvest_hazards.get_mut(session.client_entity)
     {
         let mut cultivation = cultivation;
         let mut contamination = contamination;
         let mut wounds = wounds;
-        super::hazard::apply_completion_hazards(
+        bare_hand_wound = super::hazard::apply_completion_hazards(
             session.target_plant,
             kind_registry,
             cultivation.as_deref_mut(),
@@ -364,7 +373,7 @@ pub fn complete_harvest_for_player(
         .display_prefix()
         .map(|p| format!("{} · {}", p, session.target_plant.as_str()))
         .unwrap_or_else(|| session.target_plant.as_str().to_string());
-    let detail = if overflow_to_ground {
+    let mut detail = if overflow_to_ground {
         format!(
             "采得 1 株 · 背包已满，已放置于地面 · 灵气流出 {:.3}",
             kind.growth_cost
@@ -372,6 +381,9 @@ pub fn complete_harvest_for_player(
     } else {
         format!("采得 1 株 · 灵气流出 {:.3}", kind.growth_cost)
     };
+    if bare_hand_wound {
+        detail.push_str(" · 叶缘割手");
+    }
     terminal_events.send(HarvestTerminalEvent {
         client_entity: session.client_entity,
         session_id: session.player_id.clone(),
@@ -388,6 +400,8 @@ pub fn complete_harvest_for_player(
         gathering_quality: Some(gathering_quality),
         tool_used: gathering_tool.map(|tool| tool.item_id.to_string()),
         overflow_to_ground,
+        bare_hand_wound,
+        required_tool_used: required_tool_matched,
     });
     Ok(())
 }
@@ -550,6 +564,8 @@ pub fn enforce_harvest_session_constraints(
             gathering_quality: None,
             tool_used: None,
             overflow_to_ground: false,
+            bare_hand_wound: false,
+            required_tool_used: false,
         });
     }
 }
@@ -609,6 +625,8 @@ pub fn release_disconnected_harvest_sessions(
             gathering_quality: None,
             tool_used: None,
             overflow_to_ground: false,
+            bare_hand_wound: false,
+            required_tool_used: false,
         });
     }
 }
@@ -1899,6 +1917,9 @@ mod tests {
             (BotanyPlantId::XuePoLian, "bing_jia_shou_tao"),
             (BotanyPlantId::JiaoMaiTeng, "dun_qi_jia"),
             (BotanyPlantId::LingJingXu, "gua_dao"),
+            // plan-gathering-tool-bind-v1 P1 §8.1 决议 #4：草镰接通本职——持镰免伤+耐久递减。
+            (BotanyPlantId::DuanJiCi, "cao_lian"),
+            (BotanyPlantId::XueSeMaiCao, "cao_lian"),
         ] {
             let mut app = make_app_with_combat_events();
             app.insert_resource(load_item_registry().expect("item registry should load"));
@@ -2059,6 +2080,180 @@ mod tests {
         assert_eq!(
             contamination.entries[0].attacker_id.as_deref(),
             Some("botany_v2_hazard")
+        );
+    }
+
+    #[test]
+    fn bare_hand_harvest_of_cao_lian_gated_plants_causes_laceration_wound() {
+        // plan-gathering-tool-bind-v1 P1："徒手 Laceration 命中"——DuanJiCi / XueSeMaiCao
+        // 徒手采集应各自命中一次 Cut(Laceration) 伤 + 对应 contamination，每株专属用例。
+        for plant_id in [BotanyPlantId::DuanJiCi, BotanyPlantId::XueSeMaiCao] {
+            let mut app = make_app_with_combat_events();
+            app.insert_resource(load_item_registry().expect("item registry should load"));
+            app.insert_resource(InventoryInstanceIdAllocator::default());
+            app.add_systems(Update, tick_harvest_sessions);
+
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let client_entity = app
+                .world_mut()
+                .spawn(client_bundle)
+                .insert(inventory_with_main_hand_tool(None))
+                .insert(Cultivation::default())
+                .insert(Contamination::default())
+                .insert(Wounds::default())
+                .id();
+            let target = plant_entity(&mut app, "spawn");
+
+            app.world_mut()
+                .resource_mut::<HarvestSessionStore>()
+                .upsert_session(HarvestSession {
+                    player_id: "offline:Azure".to_string(),
+                    client_entity,
+                    target_entity: Some(target),
+                    target_plant: plant_id,
+                    mode: BotanyHarvestMode::Manual,
+                    started_at_tick: 0,
+                    duration_ticks: 0,
+                    phase: BotanyPhase::InProgress,
+                    last_progress: 0.0,
+                    origin_position: [10.0, 64.0, 10.0],
+                });
+
+            app.update();
+
+            let wounds = app.world().get::<Wounds>(client_entity).unwrap();
+            let contamination = app.world().get::<Contamination>(client_entity).unwrap();
+            assert_eq!(
+                wounds.entries.len(),
+                1,
+                "{plant_id:?} 徒手采集应命中恰好 1 条伤（WoundOnBareHand），实际 {}",
+                wounds.entries.len()
+            );
+            assert_eq!(
+                wounds.entries[0].kind,
+                WoundKind::Cut,
+                "{plant_id:?} 徒手采集的伤类型应为 Cut（对应 WoundLevel::Laceration），实际 {:?}",
+                wounds.entries[0].kind
+            );
+            assert!(
+                (wounds.entries[0].severity - 0.28).abs() < 1e-6,
+                "{plant_id:?} Laceration severity 应为 0.28，实际 {}",
+                wounds.entries[0].severity
+            );
+            assert_eq!(
+                contamination.entries.len(),
+                1,
+                "{plant_id:?} 徒手采集应触发恰好 1 条 contamination"
+            );
+            assert!(
+                (contamination.entries[0].amount - 0.2).abs() < 1e-9,
+                "{plant_id:?} Laceration contamination amount 应为 0.2，实际 {}",
+                contamination.entries[0].amount
+            );
+        }
+    }
+
+    #[test]
+    fn cao_lian_broken_durability_counts_as_bare_hand_for_gated_plants() {
+        // plan-gathering-tool-bind-v1 P1："镰耐久归零后等同徒手"——durability=0.0 的草镰
+        // 应被 main_hand_tool_in_inventory 判定为 None，行为与不持工具一致：受伤 + 不再扣耐久。
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inventory_with_main_hand_tool_durability(
+                Some("cao_lian"),
+                0.0,
+            ))
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+
+        app.world_mut()
+            .resource_mut::<HarvestSessionStore>()
+            .upsert_session(HarvestSession {
+                player_id: "offline:Azure".to_string(),
+                client_entity,
+                target_entity: Some(target),
+                target_plant: BotanyPlantId::XueSeMaiCao,
+                mode: BotanyHarvestMode::Manual,
+                started_at_tick: 0,
+                duration_ticks: 0,
+                phase: BotanyPhase::InProgress,
+                last_progress: 0.0,
+                origin_position: [10.0, 64.0, 10.0],
+            });
+
+        app.update();
+
+        let wounds = app.world().get::<Wounds>(client_entity).unwrap();
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "耐久归零的草镰应等同徒手，触发 1 条伤"
+        );
+        assert_eq!(wounds.entries[0].kind, WoundKind::Cut);
+
+        let inventory = app.world().get::<PlayerInventory>(client_entity).unwrap();
+        let tool = inventory
+            .equipped
+            .get(EQUIP_SLOT_MAIN_HAND)
+            .and_then(|s| s.held.as_ref())
+            .unwrap();
+        assert_eq!(tool.durability, 0.0, "已经归零的耐久不应变负或被重置");
+
+        let durability_events = app
+            .world()
+            .resource::<Events<InventoryDurabilityChangedEvent>>();
+        assert_eq!(
+            durability_events.iter_current_update_events().count(),
+            0,
+            "耐久已归零的工具不应再触发 InventoryDurabilityChangedEvent"
+        );
+    }
+
+    #[test]
+    fn bare_hand_harvest_of_non_gated_plant_causes_no_wound_regression() {
+        // plan-gathering-tool-bind-v1 P1 回归锁："目标植物外徒手不受伤"——CiSheHao 是无
+        // v2_spec 的 v1 植物（required_tool_for 返回 None），加了 DuanJiCi/XueSeMaiCao 的
+        // required_tool 门槛之后，其余植物的徒手流程必须保持完全不受影响。
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inventory_with_main_hand_tool(None))
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let wounds = app.world().get::<Wounds>(client_entity).unwrap();
+        let contamination = app.world().get::<Contamination>(client_entity).unwrap();
+        assert!(
+            wounds.entries.is_empty(),
+            "CiSheHao 徒手采集不应受伤（无 required_tool hazard），实际 {:?}",
+            wounds.entries
+        );
+        assert!(
+            contamination.entries.is_empty(),
+            "CiSheHao 徒手采集不应触发 contamination，实际 {:?}",
+            contamination.entries
         );
     }
 

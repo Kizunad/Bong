@@ -267,6 +267,15 @@ pub struct HarvestTerminalEvent {
     /// 因为背包已满而 fallback 到地面掉落（`DroppedLootRegistry`）。仅在 `completed=true`
     /// 时可能为 true；`interrupted=true` 的终结事件恒为 false。
     pub overflow_to_ground: bool,
+    /// plan-gathering-tool-bind-v1 P1：本次收获目标带 `WoundOnBareHand` hazard，且玩家
+    /// 未持对应 `required_tool`（未装备/装错/耐久归零皆算），本次触发了徒手割手伤害。
+    /// 仅在 `completed=true` 时可能为 true；`interrupted=true` 的终结事件恒为 false。
+    pub bare_hand_wound: bool,
+    /// plan-gathering-tool-bind-v1 P1：本次收获目标带 `WoundOnBareHand` hazard，且玩家
+    /// 持对应 `required_tool` 成功免伤。**不是** `tool_used`——那个字段来自 gather_time
+    /// 加成工具系统（`GatheringToolKind`），与本字段的 `ToolKind` required_tool 系统正交
+    /// （§8.1 决议 #3）。仅在 `completed=true` 时可能为 true。
+    pub required_tool_used: bool,
 }
 
 /// botany-v2 `AttractsMobs` 真 spawn 请求。
