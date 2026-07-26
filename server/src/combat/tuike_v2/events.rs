@@ -3,10 +3,11 @@ use valence::prelude::{bevy_ecs, Entity, Event};
 
 use super::state::FalseSkinTier;
 
-/// 蜕壳（蜕皮爆发）签名 recipe——单一真源，供**两条生产 emit 路径**（主动施法
-/// `skills::cast_shed` 直发 + 被动 `FalseSkinSheddedEvent` 的 `TuikeSkillVisual.sound_recipe_id`）
-/// 与 `audio::each_signature_skill_*` 运行时消费契约测试共同引用，避免任一 emit 站点另写字面量
-/// 造成映射漂移假绿。
+/// 蜕壳（蜕皮爆发）签名 recipe——单一真源，供生产 emit（主动施法 `skills::cast_shed` 与被动掉壳
+/// 统一走 `FalseSkinSheddedEvent.visual.sound_recipe_id`，由
+/// `network::audio_trigger::emit_tuike_v2_audio_triggers` 发出）与
+/// `audio::each_signature_skill_*` 运行时消费契约测试共同引用，避免 emit 站点另写字面量造成
+/// 映射漂移假绿。
 pub(crate) const SHED_SKIN_BURST_RECIPE: &str = "shed_skin_burst";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

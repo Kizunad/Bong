@@ -1,0 +1,46 @@
+name: Review next (central shadow)
+
+# 中央 Claude Code review 的 shadow 入口：
+# - 仅可信成员在 PR 评论精确 `/review-next` 时触发。
+# - workflow_dispatch 用于 provider / reusable-workflow canary。
+# - 不替换现役 `/review`，不作为 merge gate。
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 要审核的 PR 号
+        required: true
+        type: number
+
+permissions: {}
+
+concurrency:
+  group: review-next-${{ github.event.issue.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  central-review-shadow:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request != null &&
+       github.event.comment.body == '/review-next' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+      issues: write
+    uses: Kizunad/review/.github/workflows/review.yml@7992dc9a2a2bdd7bea83d532aee0d232a5672c82
+    with:
+      pr_number: ${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
+      policy_path: .github/review-policy/bong.v1.json
+      review_base_url: ${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
+      shadow: true
+      max_diff_chars: 40000
+      max_shard_chars: 12000
+      worker_timeout_ms: 300000
+      circuit_manual_retry: ${{ github.event_name == 'workflow_dispatch' }}
+    secrets:
+      review_api_key: ${{ secrets.REVIEW_CLAUDE_API_KEY }}

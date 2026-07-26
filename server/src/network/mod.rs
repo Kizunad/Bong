@@ -378,14 +378,18 @@ pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
     );
 }
 
+/// network 层生产注册入口 = 外部 bridge bootstrap（有副作用）+ 纯 App 装配。
+///
+/// 拆成两段是为了让接线门禁测试能跑**真正的生产装配路径**：`register_app_wiring` 只做
+/// `insert_resource` / `add_systems` / `add_event`，不起线程、不碰 IO，测试可直接调用；
+/// 起 Redis bridge 线程那段单独关在 `bootstrap_redis_bridge` 里（PR #1262 review 要求）。
 pub fn register(app: &mut App) {
-    // Legacy mock bridge systems
-    app.add_systems(
-        Update,
-        (send_welcome_payload_on_join, process_bridge_messages),
-    );
+    bootstrap_redis_bridge(app);
+    register_app_wiring(app);
+}
 
-    // Redis bridge
+/// **唯一有外部副作用的一段**：起 Redis bridge 线程 + 装入 redis 相关资源。测试不调它。
+fn bootstrap_redis_bridge(app: &mut App) {
     let redis_url = redis_url_from_env();
     tracing::info!(
         "[bong][redis] configured redis endpoint: {}",
@@ -406,6 +410,19 @@ pub fn register(app: &mut App) {
             )
         });
     app.insert_resource(runtime_mirror_redis);
+}
+
+/// **纯 App 装配**（只 `insert_resource` / `add_systems` / `add_event`；无线程、无网络 / 文件 IO，
+/// 仅 `ResourcePackConfig::from_env` 读几个环境变量且无 panic 路径）——
+/// 生产由 `register` 调用，接线门禁测试也调用同一个它。于是「顶层把
+/// `audio_trigger::register(app)` 那行删掉」不再是测试照不到的死角。
+pub(crate) fn register_app_wiring(app: &mut App) {
+    // Legacy mock bridge systems
+    app.add_systems(
+        Update,
+        (send_welcome_payload_on_join, process_bridge_messages),
+    );
+
     app.insert_resource(WorldStateTimer::default());
     app.insert_resource(QiLedgerTimer::default());
     app.insert_resource(ZoneTransitionTracker::default());
@@ -834,32 +851,12 @@ pub fn register(app: &mut App) {
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
-    app.add_systems(Update, audio_trigger::tick_audio_dedup_clock);
+    // 全部 audio-trigger 系统的调度**唯一生产真源**在 `audio_trigger::register`——
+    // 生产与接线门禁测试共用同一份系统清单，测试里不许再抄一遍（PR #1262 review 要求）。
+    audio_trigger::register(app);
     app.add_systems(
         Update,
         (
-            audio_trigger::emit_combat_audio_triggers
-                .after(crate::combat::resolve::resolve_attack_intents),
-            audio_trigger::emit_npc_death_audio_triggers
-                .after(crate::combat::resolve::resolve_attack_intents),
-            audio_trigger::emit_cultivation_audio_triggers,
-            audio_trigger::emit_tribulation_audio_triggers,
-            audio_trigger::emit_alchemy_audio_triggers,
-            audio_trigger::emit_forge_audio_triggers,
-            audio_trigger::emit_botany_audio_triggers,
-            audio_trigger::emit_lingtian_audio_triggers,
-            audio_trigger::emit_woliu_v2_audio_triggers,
-            audio_trigger::emit_baomai_v3_audio_triggers,
-            audio_trigger::emit_tuike_v2_audio_triggers,
-            audio_trigger::emit_sword_path_audio_triggers,
-            // 暗器六招 cast → 专属音效（纯 cosmetic，复用 vanilla 音色 recipe）。
-            audio_trigger::emit_anqi_audio_triggers,
-            // 蛊道两招（凝针 / 灌毒蛊）cast → 专属音效（纯 cosmetic，复用 vanilla 音色 recipe）。
-            audio_trigger::emit_dugu_needle_audio_triggers,
-            audio_trigger::emit_skill_audio_triggers,
-            audio_trigger::emit_social_audio_triggers
-                .after(crate::cultivation::possession::process_duo_she_requests),
-            audio_trigger::emit_player_state_audio_triggers,
             // plan-sword-path-complete §B — 黑武士 boss action → VFX + 音效。
             heiwushi_av_trigger::emit_heiwushi_visual_triggers
                 .before(vfx_event_emit::emit_vfx_event_payloads),
@@ -867,15 +864,9 @@ pub fn register(app: &mut App) {
             npc_metadata::emit_npc_metadata_payloads,
         )
             .after(audio_trigger::tick_audio_dedup_clock)
-            .before(audio_event_emit::emit_audio_play_payloads),
-    );
-    // 绝灵涡流（woliu v1）开涡 / 反噬 → 音效（lifecycle 驱动，复用现有 recipe）。
-    // 单独一个 add_systems：上面的 audio tuple 已满 20 系统（Bevy 元组上限）。
-    app.add_systems(
-        Update,
-        audio_trigger::emit_woliu_v1_vortex_audio_triggers
-            .after(audio_trigger::tick_audio_dedup_clock)
-            .before(audio_event_emit::emit_audio_play_payloads),
+            .before(audio_event_emit::emit_audio_play_payloads)
+            // loop recipe 的收尾（如低血心跳血量回升）也要同帧下发，别拖到下一帧。
+            .before(audio_event_emit::emit_audio_stop_payloads),
     );
     app.add_systems(
         Update,
