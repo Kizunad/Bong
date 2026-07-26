@@ -74,3 +74,15 @@
 - 低风险：服务端已经在输出六类 skill，本修复是 agent schema 追平服务端事实。
 - 主要风险是 schema 复用路径可能改变 generated JSON 的结构形态，需要确认下游只依赖语义枚举而非手写比较 JSON 结构。
 - 若把 `SkillMilestoneSnapshotV1.skill` 直接改成 `SkillIdV1`，需避免引入循环 import；若存在循环风险，可先抽公共 skill id 原子或用本地测试保护。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit c108aa047（2026-07-07「对齐技能里程碑 schema 枚举」）修复了本 bug：`agent/packages/schema/src/cultivation.ts:9` 的 `SkillMilestoneSnapshotV1.skill` 已改为复用 `SkillIdV1` 六值 union（`herbalism / alchemy / forging / combat / mineral / cultivation`），`generated/world-state-v1.json:390-416` 同步重新生成，schema 与服务端真实运行态输出一致。
+
+## Finish Evidence
+
+- **落地清单**：`agent/packages/schema/src/cultivation.ts`（skill 字段复用 `SkillIdV1`）、`agent/packages/schema/generated/world-state-v1.json`（同步生成物）
+- **关键 commit**：c108aa047（2026-07-07，「对齐技能里程碑 schema 枚举」）
+- **测试结果**：`agent/packages/schema` 的 `schema.test.ts:3584`、`schema.test.ts:3608` 正反 pin 测试覆盖 combat/mineral/cultivation 通过与未知 skill 拒绝；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：agent `SkillMilestoneSnapshotV1`/`SkillIdV1`（schema 侧收敛）；server `server/src/schema/cultivation.rs:63-72` 输出的 combat/mineral/cultivation 已被 schema 接纳，无需服务端改动
+- **遗留 / 后续**：无
