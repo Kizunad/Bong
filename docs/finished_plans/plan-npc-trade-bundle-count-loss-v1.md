@@ -12,9 +12,9 @@
 |---|---|---|
 | P0 | 核心修复：服务端成交必须消费 live `NpcTradeInventory` offer，而不是只看静态 catalogue | ✅ 2026-07-11 |
 | P1 | 契约与 UI 对齐：`count` / `price_bone_coins` / 当前 offer subset 全链路锁定 | ✅ 2026-07-11 |
-| P2 | 饱和测试与完整 server 门禁 | [BLOCKED: `stable` Rust 1.96.1 下 `cargo clippy --all-targets -- -D warnings` 在全仓触发 69 条新 lint；见“过程验证与阻塞证据”] |
+| P2 | 饱和测试与完整 server 门禁 | ✅ 2026-07-26 |
 
-验收日期：未验收；P0/P1 已于 2026-07-11 完成，P2 等待独立 clippy 基线治理后重跑。
+验收日期：2026-07-26；P0/P1 已于 2026-07-11 完成，P2 当时 `[BLOCKED: stable Rust 1.96.1 全仓 clippy 基线]` 阻塞已由 PR #1170（2026-07-12「恢复 Rust 1.96 clippy 全门禁」）解除，撤回归档的理由不复存在。
 
 ## 接入面
 
@@ -195,4 +195,16 @@ bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bugh
 
 ### 遗留 / 后续
 
-- `[BLOCKED: stable Rust 1.96.1 全仓 clippy 基线]`。代码修复与交易测试已完成，但 P2 尚未满足强制完整门禁，因此本 plan 保持 active，不归档。
+- `[BLOCKED: stable Rust 1.96.1 全仓 clippy 基线]`（历史状态，已解除，见下方 2026-07-26 验证结论）。代码修复与交易测试于 2026-07-11 已完成，当时 P2 尚未满足强制完整门禁，因此本 plan 一度保持 active、不归档。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+P0/P1 核心修复（live offer 桥接 + 契约对齐）已于 2026-07-11 随 PR #1164（merge 7b1e13aa0）合入 origin/main，`npc_trade_request_*` 15 条 pin 测试通过。P2 当时唯一的归档阻塞——`stable` Rust 1.96.1 下全仓 `cargo clippy --all-targets -- -D warnings` 触发 69 条与本 PR 无关的新 lint——已由 PR #1170（2026-07-12「恢复 Rust 1.96 clippy 全门禁」）修复，全仓 clippy 基线漂移问题不复存在，撤回归档的理由已解除，本 plan 现可正式归档。07-11 后另有补强回归 commit 1438dde7e。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/network/client_request_handler.rs`（`NpcEngagementRequestParams.trade_inventories` 二次查询 live `NpcTradeInventory`，成交发货/结算改用匹配 offer 的 `count`/`price_bone_coins`）、`server/src/npc/trade.rs`（`NpcTradeInventory`/`TradeOffer`、`npc_trade_catalog_entry` 收窄为 alias-only）
+- **关键 commit**：c76504ec5（升格+决议）、6b767b1a（核心修复）、fe50f8a6（原子失败边界）、6df8c28be（当时撤回归档标注 clippy 阻塞，现已解除）——均 2026-07-11，PR #1164（merge 7b1e13aa0）；07-11 后补强回归 1438dde7e；归档阻塞解除见 PR #1170（2026-07-12）
+- **测试结果**：`npc_trade_request_* ` 15 passed；2026-07-11 当时全仓 `cargo test` 10943 passed / 1 无关 flake；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server-only（`client_request_handler.rs` / `npc/trade.rs`）
+- **遗留 / 后续**：无
