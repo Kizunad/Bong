@@ -57,16 +57,6 @@ public final class CastFovController {
     /** 时钟 seam：生产 = {@code System.currentTimeMillis}；单测注入可推进时钟。 */
     private static volatile LongSupplier clock = System::currentTimeMillis;
 
-    /**
-     * 全局 juice 强度倍率（0 = 关闭），默认 1.0。
-     *
-     * <p><b>两个通道对称地在 {@link #fire} 触发时刻把倍率并入</b>（{@link Pulse#peakDegrees} 与
-     * {@link CameraShakeController} 强度都是烘焙值）：倍率 0 时 {@link #fire} 直接不触发，
-     * 不留「被读数遮蔽但状态还活着」的残留脉冲。事后调大/调小只影响<b>后续</b> release，
-     * 不追溯在播 juice；调到 0 则走 {@link #setJuiceMultiplier} 的受控取消路径把两个通道都真停。
-     */
-    private static volatile float multiplier = 1.0f;
-
     /** 当前 FOV 脉冲（不可变；volatile 供渲染线程读）。null = idle（基准 FOV）。 */
     private static volatile Pulse pulse = null;
 
@@ -171,7 +161,7 @@ public final class CastFovController {
      * 但还在时间窗内」的僵尸脉冲，玩家把倍率调回来时它会诈尸。
      */
     private static void fire(CastJuiceProfile profile, long now) {
-        float scale = multiplier;
+        float scale = JuiceConfig.juiceMultiplier();
         if (scale <= 0f) {
             return;  // juice 全局关闭
         }
@@ -254,7 +244,7 @@ public final class CastFovController {
         if (targetPlayer == null || animId == null || !localPlayerPredicate.isLocal(targetPlayer)) {
             return;
         }
-        float scale = multiplier;
+        float scale = JuiceConfig.juiceMultiplier();
         if (scale <= 0f) {
             return;  // juice 全局关闭：与 fire() 同策，不留僵尸脉冲/抖动
         }
@@ -337,7 +327,8 @@ public final class CastFovController {
     }
 
     /**
-     * 设全局 juice 强度倍率（NaN / 负数 → 0 = 关闭）。
+     * 倍率变更传播（唯一调用方 {@link JuiceConfig#setJuiceMultiplier}，写入即调，不经 bootstrap
+     * 注册，避免漏注册变成静默孤岛）。
      *
      * <p>plan §P3「<b>进行中把倍率调 0 立即复位</b>，不是只影响后续脉冲」：转 0 时走与
      * {@link #teardown()} 同一条<b>受控取消</b>路径——清当前 FOV 脉冲（回基准）<b>并且</b>
@@ -350,10 +341,8 @@ public final class CastFovController {
      * <p>抖动是与命中 juice 共享的单通道，故关 juice 时在播的命中抖动一并停——与
      * {@link #teardown()} 同款取舍：玩家把 juice 关了就该立刻安静。
      */
-    public static void setJuiceMultiplier(float value) {
-        float next = Float.isNaN(value) || value < 0f ? 0f : value;
-        multiplier = next;
-        if (next > 0f) {
+    public static void onJuiceMultiplierChanged(float value) {
+        if (value > 0f) {
             return;
         }
         // pulse 清空与 fire() 写入同锁，避免关闭瞬间被随后落地的 fire 复活一帧。
@@ -361,10 +350,6 @@ public final class CastFovController {
             pulse = null;
         }
         CameraShakeController.clear();
-    }
-
-    public static float juiceMultiplier() {
-        return multiplier;
     }
 
     private static CastJuiceProfile resolveProfile(CastState state) {
@@ -407,7 +392,7 @@ public final class CastFovController {
             pending = null;
             voidedId = null;
         }
-        multiplier = 1.0f;
+        JuiceConfig.resetForTests();
         clock = System::currentTimeMillis;
         localPlayerPredicate = CastFovController::isLocalPlayerFromClient;
         localPlayerEntityPredicate = entity -> entity instanceof ClientPlayerEntity;

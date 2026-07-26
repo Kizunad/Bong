@@ -61,6 +61,7 @@ class CastFovControllerTest {
         SkillBarStore.resetForTests();
         DeathStateStore.resetForTests();
         CameraShakeController.resetForTests();
+        JuiceConfig.resetForTests();
         SkillBarStore.updateSlot(HEAVY_SLOT, SkillBarEntry.skill(HEAVY_SKILL, "全力", DURATION_MS, 0, ""));
         SkillBarStore.updateSlot(LIGHT_SLOT, SkillBarEntry.skill(LIGHT_SKILL, "竖劈", 1000, 0, ""));
         // 注册真实 cast 转换监听（生产由 bootstrap 挂；单测无 Fabric 事件环境，仅挂 listener）。
@@ -77,6 +78,7 @@ class CastFovControllerTest {
         SkillBarStore.resetForTests();
         DeathStateStore.resetForTests();
         CameraShakeController.resetForTests();
+        JuiceConfig.resetForTests();
     }
 
     // ---- 驱动辅助（真实入口） ----
@@ -278,7 +280,7 @@ class CastFovControllerTest {
         assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(),
             "抖动进行中（SUSTAIN 20t 远未播完）");
 
-        CastFovController.setJuiceMultiplier(0.0f);  // 进行中调 0
+        JuiceConfig.setJuiceMultiplier(0.0f);  // 进行中调 0
 
         // 通道 1：FOV 脉冲被真正清空（不是把读数遮成 0）
         assertBaseline("倍率 0 → FOV 立即复位（plan §P3「进行中把倍率调 0 立即复位」）");
@@ -294,11 +296,11 @@ class CastFovControllerTest {
         advanceMs(FOV_DURATION_MS / 2);
         assertTrue(fov() > 0.0, "脉冲进行中");
 
-        CastFovController.setJuiceMultiplier(0.0f);
+        JuiceConfig.setJuiceMultiplier(0.0f);
         assertBaseline("倍率 0 → 取消");
 
         // 恢复倍率时旧脉冲仍在其原时间窗内 —— 但它已被取消，不许诈尸。
-        CastFovController.setJuiceMultiplier(1.0f);
+        JuiceConfig.setJuiceMultiplier(1.0f);
         assertBaseline("恢复倍率只影响后续 release，不复活已取消的旧脉冲");
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同理不复活");
 
@@ -319,7 +321,7 @@ class CastFovControllerTest {
         advanceMs(2000);
         assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "蓄力震动进行中");
 
-        CastFovController.setJuiceMultiplier(0.0f);
+        JuiceConfig.setJuiceMultiplier(0.0f);
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
             "倍率 0 → 蓄力渐强震动立即停");
         assertBaseline("蓄力段无 FOV 分量，照样在基准");
@@ -327,20 +329,20 @@ class CastFovControllerTest {
 
     @Test
     void multiplierZeroSuppressesAnimDrivenRelease() {
-        CastFovController.setJuiceMultiplier(0.0f);
+        JuiceConfig.setJuiceMultiplier(0.0f);
         CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
         advanceMs(4 * 50);
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "倍率 0 → 动画事件震动不触发");
         assertBaseline("倍率 0 → 动画事件 FOV punch 不触发");
 
         // 关闭期间不留残留状态：恢复倍率后旧动画事件不会诈尸。
-        CastFovController.setJuiceMultiplier(1.0f);
+        JuiceConfig.setJuiceMultiplier(1.0f);
         assertBaseline("恢复倍率不复活关闭期间被抑制的动画 juice");
     }
 
     @Test
     void multiplierScalesPulseAmplitude() {
-        CastFovController.setJuiceMultiplier(0.5f);
+        JuiceConfig.setJuiceMultiplier(0.5f);
         predict(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         advanceMs(FOV_DURATION_MS / 2);
@@ -350,7 +352,7 @@ class CastFovControllerTest {
     @Test
     void bothChannelsBakeMultiplierAtFireTimeAndDoNotRetroScale() {
         // 两个通道对称：fire 时刻把倍率并入 shake 强度与 Pulse 峰值。
-        CastFovController.setJuiceMultiplier(0.5f);
+        JuiceConfig.setJuiceMultiplier(0.5f);
         predict(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         long fireNow = now[0];
@@ -358,7 +360,7 @@ class CastFovControllerTest {
         assertFalse(scaled.isZero(), "倍率 0.5 → shake 以缩放后强度触发（非零抖动）");
 
         // 触发后把倍率调**大**（非 0，故不走取消路径）：在播 juice 不追溯放大。
-        CastFovController.setJuiceMultiplier(1.0f);
+        JuiceConfig.setJuiceMultiplier(1.0f);
         CameraShakeController.Offsets afterChange = CameraShakeController.activeOffsets(fireNow);
         assertEquals(scaled.yawDegrees(), afterChange.yawDegrees(), 1e-9f,
             "shake 用触发时刻的倍率，事后调大不追溯");
@@ -374,7 +376,7 @@ class CastFovControllerTest {
 
     @Test
     void multiplierZeroAtFireSuppressesBothChannelsAndLeavesNoZombiePulse() {
-        CastFovController.setJuiceMultiplier(0.0f);
+        JuiceConfig.setJuiceMultiplier(0.0f);
         predict(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
@@ -382,7 +384,7 @@ class CastFovControllerTest {
         assertBaseline("倍率 0 时 FOV 也无脉冲");
 
         // 关闭期间 fire 不许偷偷建一个「被遮蔽」的脉冲：恢复倍率后它必须不在。
-        CastFovController.setJuiceMultiplier(1.0f);
+        JuiceConfig.setJuiceMultiplier(1.0f);
         advanceMs(FOV_DURATION_MS / 2);
         assertBaseline("恢复倍率不复活关闭期间被抑制的 release（无僵尸脉冲）");
     }
