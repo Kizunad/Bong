@@ -59,3 +59,15 @@
 
 - 当前会话没有可用的 subagent / delegate 工具可再开独立反方审查，本次按要求做了**人工两轮反方裁决**。
 - 结论基于源码交叉取证与既有 plan/测试契约，未做源码修改。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+修复已在 origin/main 落地：`client/src/main/java/com/bong/client/npc/NpcNametagRenderer.java:79-81` 在绘制前对 `spiderDisguised` 短路返回空标签，尊重 server 下发的 `NameVisible(false)` 隐藏契约，不再被 `NpcMetadata` 覆盖。对应 commit ebee9661e（2026-07-06，PR #912「修复拟态灰烬蛛伪装名牌泄漏」）已 merge。此为 client-only 修复，无需 server/agent 侧改动。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/java/com/bong/client/npc/NpcNametagRenderer.java:79-81`
+- **关键 commit**：ebee9661e（2026-07-06，修复拟态灰烬蛛伪装名牌泄漏，PR #912）
+- **测试结果**：证据素材未列具体测试名/数量；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：client-only（`NpcNametagRenderer.java`）
+- **遗留 / 后续**：无
