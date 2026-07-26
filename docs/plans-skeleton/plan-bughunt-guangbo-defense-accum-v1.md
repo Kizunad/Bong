@@ -55,28 +55,29 @@
 - 核验排除"设计如此"：同函数的 move_speed/jump 加成因 `attribute_aggregate_tick` 重置清单而幂等，`defense_profile` 是清单唯一漏项；`LIMB_DEFENSE_BONUS_MAX` 命名与文件头 doc comment（`body_conditioning.rs:2`「+0.5% 四肢防御」）均自证意图。
 - 与 `plan-bughunt-r10-findings-v1` P1 去重确认：r10 P1 修**熟练度增长断裂**（事件无生产者），本 plan 修**加成应用幂等性**——同模块两个独立缺陷，且存在上述落地顺序耦合。
 
-## Skeleton Fix Plan
+## Skeleton Fix Plan（路线已锁定，2026-07-26 立案决议，不留给实施者临场拍板）
 
-两条候选路线，由修复 subagent 第一性原理拍板（推荐 A）：
+**决议：走路线 A——limb 加成改独立字段，每 tick 无条件赋值。** 备选路线 B（`attribute_aggregate_tick` 重置清单补 `defense_profile` 清空 + `armor_sync` 去 `Changed` 过滤每 tick 重建）**已否决**：护甲矩阵每 tick 全玩家重建把懒重建语义改成热路径，且重置/重建双系统跨 tick 排序脆弱；仅当实施中发现 `defense_profile` 出现第三个生产写入方且无法归并时才允许回退路线 B，回退须在 PR body 写明理由。
 
-- **路线 A（推荐）——limb 加成改独立字段，幂等化**：
-  - [ ] `DerivedAttrs` 新增 `limb_defense_bonus: f32` 之类独立字段（或 `guangbo_limb_defense`），`apply_guangbo_ticao_bonuses` 每 tick **直写**（`=` 而非 `+=`）该字段，不再碰 `defense_profile`。
-  - [ ] `apply_armor_mitigation`（`resolve.rs:117-151`）消费时对四肢部位把 `defense_profile` 查表值与 `limb_defense_bonus` **相加后统一 `clamp(0.0, ARMOR_MITIGATION_CAP)`**（保持 `plan-layered-equip-v1` 写死的"resolve 侧最终唯一兜底"语义）。
-  - [ ] 优点：护甲重建保持 `Changed<PlayerInventory>` 懒惰语义不动；锻体加成天然幂等；两个数据源职责分离。
-- **路线 B——纳入每 tick 重置**：`attribute_aggregate_tick`（`status.rs:171-175`）重置清单补 `defense_profile` 清空 + `sync_armor_to_derived_attrs` 去掉 `Changed` 过滤每 tick 重建。改动更小但护甲矩阵每 tick 全玩家重建，且把懒重建语义改成热路径——仅当路线 A 与其他 `defense_profile` 写入方有冲突时才选。
-- [ ] 无论路线：不改 `LIMB_DEFENSE_BONUS_MAX = 0.005` 数值本身（设计代价曲线不动，只修幂等性）。
-- [ ] 检查 `defense_profile` 是否还有第三个写入方（核验时全仓只有 `armor_sync.rs:89` 与 `body_conditioning.rs:174` 两处生产写入，修复时复核一遍防新增）。
+路线 A 契约（实施按此逐条交付）：
+
+- [ ] `DerivedAttrs` 新增字段 `limb_defense_bonus: f32`，**默认值 0.0**——核验 `DerivedAttrs` 全部构造点（`Default` impl / 手工构造 / 测试桩）均取默认 0.0，不遗漏初始化。
+- [ ] `apply_guangbo_ticao_bonuses` 对该字段**每 tick 无条件赋值**：`attrs.limb_defense_bonus = guangbo_ticao_limb_defense(prof)`——未习得功法 / prof=0 / 功法被移除时**显式写 0.0**（不是"跳过不写"，跳过会保留上一 tick 陈旧加成）；彻底移除 `body_conditioning.rs:169-181` 对 `defense_profile` 的写入。
+- [ ] 消费逻辑：`apply_armor_mitigation`（`resolve.rs:117-151`）对 `LIMB_PARTS` 四肢部位改为 `defense_profile` 查表值（**缺 entry 按 0.0，不再 `?` 提前返回四肢分支**）与 `limb_defense_bonus` **相加后统一 `clamp(0.0, ARMOR_MITIGATION_CAP)`**（保持 `plan-layered-equip-v1` 写死的"resolve 侧最终唯一兜底"语义）；非四肢部位与现行为完全一致。
+- [ ] 行为边界：NPC 无 `KnownTechniques` → `limb_defense_bonus` 恒 0.0 且 `defense_profile` 恒空 → 减伤恒 0，与现状一致（NPC 穿甲减伤归 `plan-npc-combat-gear-v2`，本修复不得顺手改变 NPC 路径行为）。
+- [ ] 不改 `LIMB_DEFENSE_BONUS_MAX = 0.005` 数值本身（设计代价曲线不动，只修幂等性）。
+- [ ] 复核 `defense_profile` 生产写入方清单（核验时全仓仅 `armor_sync.rs:89` 与 `body_conditioning.rs:174` 两处；修复后应只剩 `armor_sync.rs:89` 一处，加一条"唯一写入方" grep pin 测试锁住）。
 
 ## 验收测试计划
 
 **server/ cargo test（`body_conditioning` + `armor_sync` 集成）**：
 
-- **多 tick 不增长（本 bug 的直接锁定，必须是真 App 多 tick 循环）**：构造 App 注册 `attribute_aggregate_tick` + `body_conditioning_aggregate`（+ 路线 A 时的 resolve 消费函数），KnownTechniques 挂 `body.guangbo_ticao` prof=1.0，跑 2 tick 与 200 tick 各取一次四肢有效减伤值，断言两者相等且等于 `guangbo_ticao_limb_defense(1.0)` 的单次期望值（取 const 引用组装期望，不写字面数）。失败信息写明「期望锻体加成幂等（+0.5%×prof），实际第 200 tick 漂移到 X」。
+- **多 tick 不增长（本 bug 的直接锁定，必须是真 App 多 tick 循环）**：构造 App 注册 `attribute_aggregate_tick` + `body_conditioning_aggregate` + resolve 消费函数，KnownTechniques 挂 `body.guangbo_ticao` prof=1.0，跑 2 tick 与 200 tick 各取一次四肢有效减伤值，断言两者相等且等于 `guangbo_ticao_limb_defense(1.0)` 的单次期望值（取 const 引用组装期望，不写字面数）。失败信息写明「期望锻体加成幂等（+0.5%×prof），实际第 200 tick 漂移到 X」。
 - happy path：prof=0.5 裸体四肢命中，减伤 == limb_def 期望值；躯干/头部命中不受 limb 加成影响。
 - 边界：穿满甲（护甲某肢体 entry 已 0.849）+ limb 加成，总减伤 clamp 到 `ARMOR_MITIGATION_CAP`（取 const 引用断言）。
-- 状态转换：换装触发 `Changed<PlayerInventory>` 重扫后，limb 加成仍正确存在（路线 A 天然通过；路线 B 需专门锁定）；`/technique remove` 卸掉功法后下一 tick 加成归零。
-- 错误分支：prof=0（r10 P1 现状）时 `defense_profile`/新字段完全不被触碰。
-- 回归：既有 `body_conditioning.rs:355-368` cap 单测保留；move_speed/jump 每 tick 幂等的既有行为不回归。
+- **状态转换（陈旧加成清零是本契约核心，逐条独立 case）**：① prof=1.0 跑若干 tick 后把熟练度降到 0 → 断言**下一 tick** `limb_defense_bonus == 0.0` 且四肢减伤回落到纯护甲值；② `/technique remove` 移除功法 → 下一 tick 字段归 0.0；③ 移除后重新习得（prof 从头累积）→ 加成从 0 重新生效无残留；④ 换装触发 `Changed<PlayerInventory>` 重扫与锻体赋值交错 → limb 加成仍正确叠在新护甲基线上。
+- 错误分支：从未习得功法的玩家，`limb_defense_bonus` 恒 0.0 且 `defense_profile` 不被 body_conditioning 触碰；NPC（无 KnownTechniques）路径行为与修复前逐位一致。
+- 回归：既有 `body_conditioning.rs:355-368` cap 单测保留（改写为对新字段断言）；move_speed/jump 每 tick 幂等的既有行为不回归。
 
 ## 风险
 
