@@ -194,7 +194,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            tick::attach_activity_window,
+            tick::attach_activity_window
+                .after(crate::cultivation::attach_cultivation_to_joined_clients),
             apply_deferred,
             tick::sample_activity
                 .after(crate::movement::tick_movement_actions)
@@ -211,6 +212,30 @@ pub fn register(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_persistence_settings(
+        test_name: &str,
+    ) -> (crate::persistence::PersistenceSettings, std::path::PathBuf) {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bong-nourishment-{test_name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos(),
+        ));
+        let settings = crate::persistence::PersistenceSettings::with_paths(
+            temp_root.join("data").join("bong.db"),
+            temp_root
+                .join("library-web")
+                .join("public")
+                .join("deceased"),
+            "nourishment-test",
+        );
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("nourishment test database should bootstrap");
+        (settings, temp_root)
+    }
 
     #[test]
     fn ticks_per_minute_is_derived_from_combat_clock_rate() {
@@ -491,9 +516,115 @@ mod tests {
     }
 
     #[test]
-    fn production_schedule_counts_dash_intent_as_dash_on_its_starting_tick() {
+    fn joining_on_boundary_hydrates_before_the_global_sweep_claim() {
+        let (settings, temp_root) = temp_persistence_settings("join-boundary");
+        let persisted_nourishment =
+            Nourishment::try_new(61.0, 41.0).expect("finite persisted nourishment should be valid");
+        crate::persistence::persist_player_cultivation_bundle_with_nourishment(
+            &settings,
+            "JoinAtBoundary",
+            &crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                ..Default::default()
+            },
+            &crate::cultivation::components::MeridianSystem::default(),
+            &crate::cultivation::components::QiColor::default(),
+            &crate::cultivation::components::Karma::default(),
+            &crate::cultivation::components::Contamination::default(),
+            &crate::cultivation::life_record::LifeRecord::new(
+                "player:join-at-boundary".to_string(),
+            ),
+            &crate::cultivation::color::PracticeLog::default(),
+            &crate::cultivation::insight::InsightQuota::default(),
+            &crate::cultivation::insight_apply::UnlockedPerceptions::default(),
+            &crate::cultivation::insight_apply::InsightModifiers::new(),
+            None,
+            &crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            None,
+            None,
+            Some(&persisted_nourishment),
+        )
+        .expect("persisted join nourishment should seed successfully");
+
         let mut app = valence::prelude::App::new();
-        app.insert_resource(crate::combat::CombatClock { tick: 17 });
+        app.insert_resource(settings);
+        app.insert_resource(crate::combat::CombatClock { tick: 199 });
+        app.add_systems(Update, crate::combat::debug::tick_combat_clock);
+        app.add_systems(
+            Update,
+            crate::cultivation::attach_cultivation_to_joined_clients,
+        );
+        crate::nourishment::register(&mut app);
+
+        let (client_bundle, _helper) = valence::testing::create_mock_client("JoinAtBoundary");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        assert!(
+            app.world().get::<Nourishment>(entity).is_none(),
+            "the regression must exercise real deferred join hydration rather than preinsert nourishment"
+        );
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<crate::combat::CombatClock>().tick,
+            200,
+            "the first joined update must land on the global sweep boundary"
+        );
+        assert!(
+            app.world()
+                .get::<crate::cultivation::components::Cultivation>(entity)
+                .is_some(),
+            "real cultivation join hydration must finish in the boundary update"
+        );
+        let sweep_minutes = NOURISH_SWEEP_INTERVAL_TICKS as f32 / NOURISH_TICKS_PER_MINUTE;
+        let expected_idle_loss = (
+            NOURISH_SATIETY_LOSS_PER_MIN * sweep_minutes,
+            NOURISH_HYDRATION_LOSS_PER_MIN * sweep_minutes,
+        );
+        let boundary_nourishment = *app
+            .world()
+            .get::<Nourishment>(entity)
+            .expect("real join hydration must attach persisted nourishment before settlement");
+        assert_eq!(
+            boundary_nourishment,
+            Nourishment::try_new(
+                persisted_nourishment.satiety - expected_idle_loss.0,
+                persisted_nourishment.hydration - expected_idle_loss.1,
+            )
+            .expect("idle boundary loss should remain finite"),
+            "a player hydrated on tick 200 must participate in that same global sweep"
+        );
+        assert_eq!(
+            app.world()
+                .get::<tick::NourishmentActivityWindow>(entity)
+                .expect("join hydration must attach the session-only activity window")
+                .observed_flags(),
+            (false, false),
+            "the idle join window must be clear after boundary settlement"
+        );
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<crate::combat::CombatClock>().tick,
+            201
+        );
+        assert_eq!(
+            *app.world()
+                .get::<Nourishment>(entity)
+                .expect("joined player nourishment should remain available"),
+            boundary_nourishment,
+            "tick 201 must not replay the already claimed tick-200 sweep"
+        );
+
+        drop(app);
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn production_schedule_advances_clock_before_dash_and_settles_it_on_the_boundary() {
+        let mut app = valence::prelude::App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 199 });
+        app.add_systems(Update, crate::combat::debug::tick_combat_clock);
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
         app.add_event::<valence::movement::MovementEvent>();
@@ -509,7 +640,10 @@ mod tests {
                 client_bundle,
                 crate::movement::MovementState::default(),
                 crate::combat::components::Stamina::default(),
-                crate::cultivation::components::Cultivation::default(),
+                crate::cultivation::components::Cultivation {
+                    realm: crate::cultivation::components::Realm::Awaken,
+                    ..Default::default()
+                },
                 Nourishment::spawn_default(),
                 tick::NourishmentActivityWindow::default(),
             ))
@@ -524,20 +658,69 @@ mod tests {
         app.update();
 
         assert_eq!(
-            app.world()
-                .get::<crate::movement::MovementState>(entity)
-                .expect("production movement register should retain movement state")
-                .action,
+            app.world().resource::<crate::combat::CombatClock>().tick,
+            200,
+            "the production clock writer must advance 199 to the sweep boundary"
+        );
+        let movement = app
+            .world()
+            .get::<crate::movement::MovementState>(entity)
+            .expect("production movement register should retain movement state");
+        assert_eq!(
+            movement.action,
             crate::movement::MovementAction::Dashing,
             "the real movement intent handler must accept the dash on this update"
+        );
+        assert_eq!(
+            movement.last_action_tick,
+            Some(200),
+            "movement must observe the advanced CombatClock rather than stale tick 199"
+        );
+        assert_eq!(
+            movement.active_until_tick,
+            200 + crate::movement::DASH_DURATION_TICKS,
+            "the dash window must be anchored to the advanced CombatClock"
+        );
+
+        let sweep_minutes = NOURISH_SWEEP_INTERVAL_TICKS as f32 / NOURISH_TICKS_PER_MINUTE;
+        let expected_dash_loss = (
+            NOURISH_SATIETY_LOSS_PER_MIN * sweep_minutes * NOURISH_DASH_ACTIVITY_MULTIPLIER,
+            NOURISH_HYDRATION_LOSS_PER_MIN * sweep_minutes * NOURISH_DASH_ACTIVITY_MULTIPLIER,
+        );
+        assert_eq!(
+            *app.world()
+                .get::<Nourishment>(entity)
+                .expect("boundary player should retain nourishment"),
+            Nourishment::try_new(
+                NOURISH_SPAWN_VALUE - expected_dash_loss.0,
+                NOURISH_SPAWN_VALUE - expected_dash_loss.1,
+            )
+            .expect("finite dash boundary loss should stay valid"),
+            "the boundary sweep must consume the dash accepted on the advanced tick"
         );
         assert_eq!(
             app.world()
                 .get::<tick::NourishmentActivityWindow>(entity)
                 .expect("production nourishment register should retain an activity window")
                 .observed_flags(),
-            (false, true),
-            "nourishment must run after both movement systems so the dash starting tick counts as dash"
+            (false, false),
+            "the boundary sweep must clear the dash flag after consuming it"
+        );
+
+        for _ in 0..crate::movement::DASH_DURATION_TICKS {
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<crate::combat::CombatClock>().tick,
+            200 + crate::movement::DASH_DURATION_TICKS
+        );
+        assert_eq!(
+            app.world()
+                .get::<crate::movement::MovementState>(entity)
+                .expect("movement state should survive dash expiry")
+                .action,
+            crate::movement::MovementAction::None,
+            "dash must end exactly at the duration boundary derived from tick 200"
         );
     }
 }

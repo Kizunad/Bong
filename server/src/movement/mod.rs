@@ -154,9 +154,14 @@ pub fn register(app: &mut App) {
             player_knockback::apply_pending_player_knockback_system,
             player_knockback::tick_active_player_knockback_system
                 .after(player_knockback::apply_pending_player_knockback_system),
-            tick_movement_actions.after(player_knockback::tick_active_player_knockback_system),
-            apply_movement_speed_system.after(crate::combat::status::attribute_aggregate_tick),
+            tick_movement_actions
+                .after(crate::combat::debug::tick_combat_clock)
+                .after(player_knockback::tick_active_player_knockback_system),
+            apply_movement_speed_system
+                .after(crate::combat::debug::tick_combat_clock)
+                .after(crate::combat::status::attribute_aggregate_tick),
             handle_movement_action_intents
+                .after(crate::combat::debug::tick_combat_clock)
                 .after(crate::network::client_request_handler::handle_client_request_payloads),
             emit_movement_state_payloads
                 .after(apply_movement_speed_system)
