@@ -12994,6 +12994,133 @@ mod tests {
         assert!(matches!(bindings.slots[0], SkillSlot::Empty));
     }
 
+    /// bughunt skillbar-rebind-cooldown-reset — 重新绑定同一槽位为**相同**技能绝不能清零冷
+    /// 却，否则玩家可通过「施放高冷却大招 → 立刻把同一招式重新拖回原槽位 → 立刻再次施放」
+    /// 无限绕过任何走 `SkillBarBindings` 冷却的招式（含化虚终极技）。
+    #[test]
+    fn skill_bar_bind_same_skill_does_not_reset_cooldown() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(
+            2,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+        // 冷却设在 clock.tick(=0) 之后很远，模拟刚放完一记高冷却招式。
+        skill_bar.set_cooldown(2, 1_000);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                skill_bar,
+                QuickSlotBindings::default(),
+                empty_inventory(),
+                known(&["burst_meridian.beng_quan"]),
+            ))
+            .id();
+
+        // 玩家把同一招式重新拖回同一槽位——绑定内容完全没变。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+        assert!(matches!(
+            &bindings.slots[2],
+            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+        ));
+        assert_eq!(
+            bindings.cooldown_until_tick[2], 1_000,
+            "重绑内容与原绑定相同——冷却必须原样保留，否则重复拖拽同一招式=无限缩短冷却"
+        );
+        assert!(
+            bindings.is_on_cooldown(2, 0),
+            "冷却状态应保持——重绑同值不是重置冷却的合法手段"
+        );
+
+        // 冷却仍未清空 → 再次尝试施放应仍被拒绝（不产生 Casting）。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 2,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "冷却未被清零，重复施放不应产生 Casting（否则等于绕过了冷却）"
+        );
+    }
+
+    /// 上一条用例的边界对照：换绑到**不同**技能时冷却清零是既有正常换绑体验，不受本修复影响。
+    #[test]
+    fn skill_bar_bind_different_skill_resets_cooldown() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        assert!(skill_bar.set(
+            2,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+        skill_bar.set_cooldown(2, 1_000);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                skill_bar,
+                QuickSlotBindings::default(),
+                empty_inventory(),
+                known(&["burst_meridian.beng_quan", "burst_meridian.tie_shan_kao"]),
+            ))
+            .id();
+
+        // 换绑到另一招式——绑定内容确实变了，冷却照常清零。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.tie_shan_kao"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
+        assert!(matches!(
+            &bindings.slots[2],
+            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.tie_shan_kao"
+        ));
+        assert_eq!(
+            bindings.cooldown_until_tick[2], 0,
+            "换绑到不同技能应清零冷却——这是既有正常换绑体验，不是本 bug 的攻击面"
+        );
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // plan-inventory-hint-panel-v1 P0 — 伪皮胸槽境界门控并入 InventoryMoveRejectReason::
     // RealmTooLow：拒绝走 enum（走 emit_inventory_move_rejected 下发结构化 payload），

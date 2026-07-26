@@ -539,12 +539,18 @@ impl SkillBarBindings {
         Some(&self.slots[slot as usize])
     }
 
+    /// 绑定/换绑 `slot`。仅当新绑定内容与旧值**不同**时才清零该槽冷却——
+    /// 重复绑定相同内容（例如玩家把同一招式重新拖回原槽位）不得作为冷却重置手段，
+    /// 否则可无限缩短任意招式冷却（bughunt skillbar-rebind-cooldown-reset）。
     pub fn set(&mut self, slot: u8, value: SkillSlot) -> bool {
         if slot as usize >= Self::SLOT_COUNT {
             return false;
         }
+        let changed = self.slots[slot as usize] != value;
         self.slots[slot as usize] = value;
-        self.cooldown_until_tick[slot as usize] = 0;
+        if changed {
+            self.cooldown_until_tick[slot as usize] = 0;
+        }
         true
     }
 
@@ -598,5 +604,97 @@ mod tests {
         assert_eq!(normalized.recover_per_sec, 0.0);
         assert_eq!(normalized.last_drain_tick, Some(12));
         assert_eq!(normalized.state, StaminaState::Exhausted);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // bughunt skillbar-rebind-cooldown-reset — `SkillBarBindings::set` 曾无条件清零冷却，
+    // 让「重新绑定同一槽位为相同内容」变成免费的冷却重置手段。
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn skill_bar_bindings_set_same_value_preserves_cooldown() {
+        let mut bindings = SkillBarBindings::default();
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+        bindings.set_cooldown(0, 500);
+
+        // 重新绑定完全相同的技能——绝不能把冷却清零。
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+
+        assert_eq!(
+            bindings.cooldown_until_tick[0], 500,
+            "同值重绑不是重置冷却的手段，冷却必须原样保留"
+        );
+        assert!(bindings.is_on_cooldown(0, 0));
+    }
+
+    #[test]
+    fn skill_bar_bindings_set_different_value_clears_cooldown() {
+        let mut bindings = SkillBarBindings::default();
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        ));
+        bindings.set_cooldown(0, 500);
+
+        // 换绑到不同技能——这是正常换绑体验，冷却照常清零。
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        ));
+
+        assert_eq!(
+            bindings.cooldown_until_tick[0], 0,
+            "绑定内容确实变化时应清零冷却——这不是本 bug 的攻击面"
+        );
+        assert!(!bindings.is_on_cooldown(0, 0));
+    }
+
+    #[test]
+    fn skill_bar_bindings_set_empty_to_value_clears_cooldown_boundary() {
+        // 边界：从默认 Empty（含 cooldown_until_tick=0 的初始态）绑定到具体值，
+        // changed 判定应为 true（Empty != Skill{..}），行为与历史一致——不应回归为 false。
+        let mut bindings = SkillBarBindings::default();
+        assert!(matches!(bindings.slots[0], SkillSlot::Empty));
+        assert_eq!(bindings.cooldown_until_tick[0], 0);
+
+        assert!(bindings.set(0, SkillSlot::Item { instance_id: 42 },));
+
+        assert!(matches!(
+            bindings.slots[0],
+            SkillSlot::Item { instance_id: 42 }
+        ));
+        assert_eq!(bindings.cooldown_until_tick[0], 0);
+    }
+
+    #[test]
+    fn skill_bar_bindings_set_out_of_range_returns_false_and_leaves_state_untouched() {
+        let mut bindings = SkillBarBindings::default();
+        bindings.set_cooldown(0, 500);
+
+        let ok = bindings.set(
+            SkillBarBindings::SLOT_COUNT as u8,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        );
+
+        assert!(!ok, "越界 slot 必须返回 false");
+        // 越界写入不应影响任何已有槽位状态（含冷却）。
+        assert_eq!(bindings.cooldown_until_tick[0], 500);
+        assert!(matches!(bindings.slots[0], SkillSlot::Empty));
     }
 }
