@@ -61,3 +61,15 @@
 - 测试侧尝试：
   - `server`: 已发起 `cargo test lingtian::`，但在本轮取证结束前仍处于长编译阶段，未拿到完成结果。
   - `client`: 定向 `gradlew test` 受沙箱限制失败，先后撞到只读 `~/.gradle` 与 daemon `java.net.SocketException: Operation not permitted`，因此本轮 client 证据以源码链路为主。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+灵田多区结算串默认区已由 2f2314199（2026-07-06，「修复灵田多区结算串默认区」，491 行 diff）修复：`server/src/lingtian/systems.rs:78-85` 新增 `plot_zone_key()` 统一 real-zone 解析，`start_replenish`/`replenish_completion`/`drain_qi`/`dye_contamination`/`zone_pressure`/`one_tick` 全部改用 `plot.zone` 而非硬编 `DEFAULT_ZONE`，消费端与写入端的 zone 口径不再分裂。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/lingtian/systems.rs`（`plot_zone_key()` + 六条消费链改用 `plot.zone`）
+- **关键 commit**：2f2314199（2026-07-06，「修复灵田多区结算串默认区」，491 行 diff）
+- **测试结果**：证据未列出具体测试名；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：仅 server 侧命中（`lingtian::systems::plot_zone_key`），属纯服务端多区结算修复，无 client/agent 契约面
+- **遗留 / 后续**：无
