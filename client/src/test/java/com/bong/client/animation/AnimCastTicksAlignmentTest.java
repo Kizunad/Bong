@@ -56,8 +56,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ——口径按 plan §8.1 #5 读作「allowlist 中<b>属于 P1-P4 重制清单</b>的条目清零」，
  * 明示归属外部 plan 的条目不计入但必须写明归属。
  *
- * <p>P6 收口（2026-07-21）后本表**余 1 条**：{@code woliu.vortex_resonance}
- * （归未消费骨架 plan-bughunt-woliu-resonance-loop-arm-decay-v1）。
+ * <p>plan-bughunt-woliu-resonance-loop-arm-decay-v1 归档（2026-07-23）后本表
+ * **清零**：{@code woliu.vortex_resonance} 循环闭合缺帧已修复并从 allowlist 删除。
  * {@code sword_path.heaven_gate} 已按 conventions §14.1 裁决移出，转由
  * {@link #FIXED_PHASE_CHARGE_SKILLS} 正向机械锁定。
  *
@@ -228,16 +228,11 @@ class AnimCastTicksAlignmentTest {
     // conventions §14.1 裁决为**改判据不改动画**，移出本表进
     // {@link #FIXED_PHASE_CHARGE_SKILLS} 定长相位充能型分类契约（正向机械锁
     // 取代豁免）。裁决理由见该表注释。
-    private static final Set<String> CAST_ALIGNMENT_ALLOWLIST = Set.of(
-        // vortex_resonance 时长模型达标（80t loop 对齐 cast=80），但 11 个轴
-        // endTick 无补帧/回绕跳变（库坑 #1 单帧衰减：双臂 10 轴末帧停在 t40 无
-        // t80 补帧，外加 torso.pitch t80=0.0 ≠ 回绕锚点 t40=-0.06）——**存量 bug
-        // 已登记归 plan-bughunt-woliu-resonance-loop-arm-decay-v1**（截至
-        // 2026-07-21 仍是 docs/plans-skeleton/ 下**未消费骨架**，P0 ⬜、无开放
-        // PR；本 plan §P3 明确全程零触碰以防重复修改，标准只防再犯），该 bugfix
-        // merge 后删本条目。**本 plan 收官时唯一余项**（§8.1 #5 口径：明示归属
-        // 外部 plan 的条目不计入 P1-P4 完成判据）。
-        "woliu.vortex_resonance");
+    // plan-bughunt-woliu-resonance-loop-arm-decay-v1 归档（2026-07-23）删 1 条：
+    // woliu.vortex_resonance——generator client/tools/gen_woliu_vortex_resonance.py
+    // 补齐双臂 endTick(80) 同值收尾帧 + torso.pitch tick0 同值起手帧，循环闭合
+    // 达标（loopSeamViolations 归零），棘轮强制同批删除。
+    private static final Set<String> CAST_ALIGNMENT_ALLOWLIST = Set.of();
 
     /**
      * 瞬发结算型 resolver 招（review r2 分类契约，plan 附录 A）：gameplay 在

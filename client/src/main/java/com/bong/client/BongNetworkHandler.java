@@ -2,6 +2,7 @@ package com.bong.client;
 
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.fauna.FaunaActionBridge;
+import com.bong.client.fauna.RatQiTierHandler;
 import com.bong.client.daozhan.DaoZhanDisguiseHandler;
 import com.bong.client.spider.SpiderDisguiseHandler;
 import com.bong.client.audio.SoundRecipePlayer;
@@ -53,6 +54,8 @@ import com.google.gson.JsonParser;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.network.PacketByteBuf;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
@@ -60,6 +63,9 @@ import net.minecraft.util.Util;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 
 public class BongNetworkHandler {
     public static final int EXPECTED_VERSION = ServerDataEnvelope.EXPECTED_VERSION;
@@ -110,6 +116,8 @@ public class BongNetworkHandler {
         // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装渲染 CustomPayload
         registerSpiderDisguiseEnterChannel();
         registerSpiderAmbushTriggerChannel();
+        // plan-devour-rat-model P2 — 噬元鼠吸元档位（贴图变体 + emissive）
+        registerRatQiTierChannel();
         // plan-daozhan-v1 P1 — 道伥伪装渲染 CustomPayload
         registerDaoZhanDisguiseEnterChannel();
         registerDaoZhanRevealChannel();
@@ -131,19 +139,39 @@ public class BongNetworkHandler {
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
+        // Fabric 在 ClientPlayNetworkHandler 构造末尾同步触发 INIT，早于任何 PLAY payload。
+        // 每个物理 handler 在这里取得不可变 token；JOIN 只激活，不得再次换代。
+        ClientPlayConnectionEvents.INIT.register(
+            (handler, client) -> ClientConnectionStatusStore.initializeSession(handler)
+        );
         ClientPlayConnectionEvents.DISCONNECT.register(
-            (handler, client) -> client.execute(BongNetworkHandler::clearClientStateOnDisconnect)
+            (handler, client) -> disconnectSession(
+                handler,
+                Util.getMeasuringTimeMs(),
+                BongNetworkHandler::clearClientStateOnDisconnect,
+                task -> runOnClientThread(client.isOnThread(), task, client::execute)
+            )
         );
         ClientPlayConnectionEvents.JOIN.register(
-            (handler, sender, client) -> client.execute(() -> {
-                ClientConnectionStatusStore.markConnected(Util.getMeasuringTimeMs());
-                // plan-combat-skill-feedback-bridges-v1 P1 — 初始化本玩家 wire id，
-                // 供 ResonanceLockHandler 区分 partner vs. self（格式：offline:<name>）。
-                if (client.player != null) {
-                    String localPlayerId = "offline:" + client.player.getName().getString();
-                    com.bong.client.combat.baomai.v4.ResonanceLockHandler.setLocalPlayerId(localPlayerId);
+            (handler, sender, client) -> {
+                // onGameJoin 已由 NetworkThreadUtils 切到 client thread；JOIN 回调本身处在
+                // GameJoin task 内。这里若再 client.execute，会因 ReentrantThreadExecutor
+                // 正在执行 task 而排到队尾，让已排队的首批 server_data 先于 activation 运行。
+                long joinedAtMs = Util.getMeasuringTimeMs();
+                boolean activated = joinSession(handler, joinedAtMs, () -> {
+                    // plan-combat-skill-feedback-bridges-v1 P1 — 初始化本玩家 wire id，
+                    // 供 ResonanceLockHandler 区分 partner vs. self（格式：offline:<name>）。
+                    if (client.player != null) {
+                        String localPlayerId = "offline:" + client.player.getName().getString();
+                        com.bong.client.combat.baomai.v4.ResonanceLockHandler.setLocalPlayerId(localPlayerId);
+                    }
+                });
+                if (!activated) {
+                    BongClient.LOGGER.error(
+                        "Ignoring ClientPlayConnectionEvents.JOIN for handler without INIT session token"
+                    );
                 }
-            })
+            }
         );
     }
 
@@ -243,62 +271,263 @@ public class BongNetworkHandler {
         });
     }
 
-    private static void registerServerDataChannel() {
-        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "server_data"), (client, handler, buf, responseSender) -> {
-            int readableBytes = buf.readableBytes();
-            byte[] bytes = new byte[readableBytes];
-            buf.readBytes(bytes);
+    /**
+     * JOIN 已在 GameJoin client task 内执行；activation 与依赖本地玩家身份的初始化必须同步完成，
+     * 不能再嵌套排队，否则队列里已有的 pre-JOIN payload 会在 token 激活前被误丢弃。
+     */
+    static boolean joinSession(Object handler, long joinedAtMs, Runnable afterActivation) {
+        if (!ClientConnectionStatusStore.activateSession(handler, joinedAtMs)) {
+            return false;
+        }
+        afterActivation.run();
+        return true;
+    }
 
-            markConnectionPayload();
+    /** client thread 上立即执行；其他线程只排一次，避免 MinecraftClient 重入 executor 再次延后。 */
+    static void runOnClientThread(
+        boolean onClientThread,
+        Runnable task,
+        Consumer<Runnable> clientExecutor
+    ) {
+        if (onClientThread) {
+            task.run();
+        } else {
+            clientExecutor.accept(task);
+        }
+    }
 
-            // P3: wire format is now protobuf. Use ProtoServerDataBridge to decode proto
-            // and convert back to legacy JSON for existing handlers.
-            // Fallback to raw JSON for payloads not yet migrated to proto (e.g. status_snapshot).
-            String jsonPayload;
-            com.bong.client.network.ProtoServerDataBridge.BridgeResult bridgeResult =
-                    com.bong.client.network.ProtoServerDataBridge.bridge(bytes);
-            if (bridgeResult.isSuccess()) {
-                jsonPayload = bridgeResult.legacyJson();
-            } else {
-                // Proto bridge failed — log the reason, then try legacy JSON fallback
-                // (for payloads like status_snapshot that still send raw JSON).
-                BongClient.LOGGER.warn("[bong][network] proto bridge failed: {}", bridgeResult.errorMessage());
-                jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
-            }
-
-            ServerDataRouter.RouteResult result = ROUTER.route(jsonPayload, readableBytes);
-
-            if (result.isParseError()) {
-                BongClient.LOGGER.error("Failed to parse bong:server_data payload: {}", result.logMessage());
-                return;
-            }
-
-            ServerDataDispatch dispatch = result.dispatch();
-            if (dispatch == null) {
-                BongClient.LOGGER.warn("Ignoring bong:server_data payload without dispatch result");
-                return;
-            }
-
-            if (result.isNoOp()) {
-                logNoOp(result);
-                return;
-            }
-
-            BongClient.LOGGER.info("Processed bong:server_data payload: {}", result.logMessage());
-            if (!dispatch.chatMessages().isEmpty()
-                || dispatch.narrationState().isPresent()
-                || dispatch.toastNarrationState().isPresent()
-                || dispatch.legacyMessage().isPresent()
-                || dispatch.playerStateViewModel().isPresent()
-                || dispatch.zoneState().isPresent()
-                || dispatch.visualEffectState().isPresent()
-                || dispatch.alertToast().isPresent()
-                || dispatch.realmCollapseHudState().isPresent()
-                || dispatch.uiOpenState().isPresent()
-                || dispatch.identityPanelState().isPresent()) {
-                client.execute(() -> applyDispatch(client, dispatch, result.envelope().type()));
+    /**
+     * DISCONNECT 的可测试 client-thread 原子边界。Fabric 从
+     * ClientPlayNetworkHandler.onDisconnected 调用该事件；该方法先完成 handler token 失效，
+     * 随后在同一 client-thread 顺序点清理全局 store。若调用方不在 client thread，executor
+     * 会把整个边界排入队列；旧 cleanup 不会脱离 token 判定单独悬到后续 session。
+     */
+    static void disconnectSession(
+        Object handler,
+        long disconnectedAtMs,
+        Runnable cleanupTask,
+        Consumer<Runnable> clientExecutor
+    ) {
+        clientExecutor.accept(() -> {
+            if (ClientConnectionStatusStore.invalidateSession(handler, disconnectedAtMs)) {
+                cleanupTask.run();
             }
         });
+    }
+
+    private static void registerServerDataChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier("bong", "server_data"),
+            BongNetworkHandler::receiveServerDataPayload
+        );
+    }
+
+    private static void receiveServerDataPayload(
+        net.minecraft.client.MinecraftClient client,
+        ClientPlayNetworkHandler handler,
+        PacketByteBuf buf,
+        net.fabricmc.fabric.api.networking.v1.PacketSender responseSender
+    ) {
+        boolean scheduled = receiveServerDataPayload(
+            handler,
+            buf,
+            client::execute,
+            (dispatch, envelopeType) -> applyDispatch(client, dispatch, envelopeType),
+            Util::getMeasuringTimeMs,
+            () -> {},
+            ROUTER,
+            com.bong.client.network.ProtoServerDataBridge::bridge
+        );
+        if (!scheduled) {
+            BongClient.LOGGER.error(
+                "Ignoring bong:server_data payload from handler without INIT session token"
+            );
+        }
+    }
+
+    /**
+     * Raw Fabric callback seam. The concrete handler's immutable token and receive timestamp
+     * are captured before the PacketByteBuf is inspected or copied.
+     */
+    static boolean receiveServerDataPayload(
+        ClientPlayNetworkHandler handler,
+        PacketByteBuf buf,
+        Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        LongSupplier receivedAtMs,
+        Runnable afterEnvelopeCapture,
+        ServerDataRouter router,
+        ServerDataPayloadBridge payloadBridge
+    ) {
+        ClientConnectionStatusStore.SessionToken sessionToken =
+            ClientConnectionStatusStore.sessionToken(handler).orElse(null);
+        if (sessionToken == null) {
+            return false;
+        }
+        long capturedReceivedAtMs = receivedAtMs.getAsLong();
+        afterEnvelopeCapture.run();
+
+        int readableBytes = buf.readableBytes();
+        byte[] bytes = new byte[readableBytes];
+        buf.readBytes(bytes);
+        return dispatchServerDataPayload(
+            bytes,
+            router,
+            clientExecutor,
+            dispatchApplier,
+            capturedReceivedAtMs,
+            sessionToken,
+            payloadBridge
+        );
+    }
+
+    /**
+     * {@code bong:server_data} 的可测试调度边界。
+     *
+     * <p>production receiver 只在 Netty thread 做四件事：按传入的具体
+     * ClientPlayNetworkHandler 捕获 INIT token、捕获 receivedAt、复制 buffer、排入单一
+     * client-thread task。token 与时间必须先于任何 buffer access 捕获，防止旧 callback
+     * 在重连后把旧 bytes 错绑到新 session。未注册 handler fail closed，连 buffer 都不读。
+     * 后续 bridge、route、handler/store/listener side effect 与最终 dispatch 全在该 task 内；
+     * JOIN 只激活同一 token，因此 pre-JOIN 首包会在 JOIN task 之后 exactly once 落地；
+     * DISCONNECT 后 stale token 整段 no-op。</p>
+     *
+     * @return true iff handler 已在 INIT 注册且 payload task 已入队
+     */
+    static boolean dispatchServerDataPayload(
+        Object handler,
+        byte[] bytes,
+        ServerDataRouter router,
+        Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier
+    ) {
+        return dispatchServerDataPayload(
+            handler,
+            bytes,
+            router,
+            clientExecutor,
+            dispatchApplier,
+            Util.getMeasuringTimeMs(),
+            com.bong.client.network.ProtoServerDataBridge::bridge
+        );
+    }
+
+    /** 可注入收包时刻与 bridge 的测试缝；token 仍必须从传入 handler 的 INIT 注册表捕获。 */
+    static boolean dispatchServerDataPayload(
+        Object handler,
+        byte[] bytes,
+        ServerDataRouter router,
+        Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        long receivedAtMs,
+        ServerDataPayloadBridge payloadBridge
+    ) {
+        ClientConnectionStatusStore.SessionToken sessionToken =
+            ClientConnectionStatusStore.sessionToken(handler).orElse(null);
+        if (sessionToken == null) {
+            return false;
+        }
+        return dispatchServerDataPayload(
+            bytes,
+            router,
+            clientExecutor,
+            dispatchApplier,
+            receivedAtMs,
+            sessionToken,
+            payloadBridge
+        );
+    }
+
+    private static boolean dispatchServerDataPayload(
+        byte[] bytes,
+        ServerDataRouter router,
+        Consumer<Runnable> clientExecutor,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        long receivedAtMs,
+        ClientConnectionStatusStore.SessionToken sessionToken,
+        ServerDataPayloadBridge payloadBridge
+    ) {
+        clientExecutor.accept(() -> processServerDataPayload(
+            bytes,
+            router,
+            dispatchApplier,
+            receivedAtMs,
+            sessionToken,
+            payloadBridge
+        ));
+        return true;
+    }
+
+    @FunctionalInterface
+    interface ServerDataPayloadBridge {
+        com.bong.client.network.ProtoServerDataBridge.BridgeResult bridge(byte[] bytes);
+    }
+
+    private static void processServerDataPayload(
+        byte[] bytes,
+        ServerDataRouter router,
+        BiConsumer<ServerDataDispatch, String> dispatchApplier,
+        long receivedAtMs,
+        ClientConnectionStatusStore.SessionToken sessionToken,
+        ServerDataPayloadBridge payloadBridge
+    ) {
+        // task 执行时 token 必须仍是当前已 JOIN 激活的 session。JOIN 在 GameJoin task 内
+        // 同步 activation，因此排在该 task 后的 pre-JOIN payload 会看到 active token；
+        // DISCONNECT 的 invalidate + cleanup 与 payload 共用 client-thread 顺序，不会中途切断 route。
+        if (!ClientConnectionStatusStore.isActiveSession(sessionToken)) {
+            return;
+        }
+        ClientConnectionStatusStore.markPayloadReceived(receivedAtMs, sessionToken);
+
+        int readableBytes = bytes.length;
+
+        // P3: wire format is now protobuf. Use ProtoServerDataBridge to decode proto
+        // and convert back to legacy JSON for existing handlers.
+        // Fallback to raw JSON for payloads not yet migrated to proto (e.g. status_snapshot).
+        String jsonPayload;
+        com.bong.client.network.ProtoServerDataBridge.BridgeResult bridgeResult =
+                payloadBridge.bridge(bytes);
+        if (bridgeResult.isSuccess()) {
+            jsonPayload = bridgeResult.legacyJson();
+        } else {
+            // Proto bridge failed — log the reason, then try legacy JSON fallback
+            // (for payloads like status_snapshot that still send raw JSON).
+            BongClient.LOGGER.warn("[bong][network] proto bridge failed: {}", bridgeResult.errorMessage());
+            jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+        }
+
+        ServerDataRouter.RouteResult result = router.route(jsonPayload, readableBytes);
+
+        if (result.isParseError()) {
+            BongClient.LOGGER.error("Failed to parse bong:server_data payload: {}", result.logMessage());
+            return;
+        }
+
+        ServerDataDispatch dispatch = result.dispatch();
+        if (dispatch == null) {
+            BongClient.LOGGER.warn("Ignoring bong:server_data payload without dispatch result");
+            return;
+        }
+
+        if (result.isNoOp()) {
+            logNoOp(result);
+            return;
+        }
+
+        BongClient.LOGGER.info("Processed bong:server_data payload: {}", result.logMessage());
+        if (!dispatch.chatMessages().isEmpty()
+            || dispatch.narrationState().isPresent()
+            || dispatch.toastNarrationState().isPresent()
+            || dispatch.legacyMessage().isPresent()
+            || dispatch.playerStateViewModel().isPresent()
+            || dispatch.zoneState().isPresent()
+            || dispatch.visualEffectState().isPresent()
+            || dispatch.alertToast().isPresent()
+            || dispatch.realmCollapseHudState().isPresent()
+            || dispatch.uiOpenState().isPresent()
+            || dispatch.identityPanelState().isPresent()) {
+            dispatchApplier.accept(dispatch, result.envelope().type());
+        }
     }
 
     private static void registerLocustSwarmWarningChannel() {
@@ -646,6 +875,37 @@ public class BongNetworkHandler {
         );
     }
 
+    // ── plan-devour-rat-model P2 — 噬元鼠吸元档位 CustomPayload channel ─────────
+
+    /**
+     * 注册 {@code bong:rat_qi_tier} channel。
+     * payload JSON → {@link RatQiTierHandler#handleSync} → 全量替换「entity id → 吸元档位」表。
+     *
+     * <p>服务端每 20 tick 全量 broadcast（仅含视距内、{@code tier > 0} 的鼠）；
+     * client 全量替换，缺席即 0 档。{@code FaunaModel.selectTexture} 每帧查表选
+     * {@code devour_rat_q{0,1,2}.png}。
+     */
+    private static void registerRatQiTierChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier(RatQiTierHandler.CHANNEL_NAMESPACE, RatQiTierHandler.CHANNEL_PATH),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    boolean handled = RatQiTierHandler.handleSync(jsonPayload, readableBytes);
+                    if (handled) {
+                        BongClient.LOGGER.debug("Processed bong:rat_qi_tier ({} bytes)", readableBytes);
+                    } else {
+                        BongClient.LOGGER.warn("Ignoring bong:rat_qi_tier payload (parse failed)");
+                    }
+                });
+            }
+        );
+    }
+
     // ── plan-daozhan-v1 P1 — daozhan disguise CustomPayload channels ────────────
 
     /**
@@ -866,7 +1126,6 @@ public class BongNetworkHandler {
         TsyDeathVfxStore.reset();
         com.bong.client.hud.CoffinStateStore.clear();
         com.bong.client.gathering.GatheringSessionStore.clearOnDisconnect();
-        ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
         com.bong.client.audio.MusicStateMachine.instance().clear();
         MutationVisualState.reset();
         com.bong.client.combat.baomai.v4.CrackReadingHudStateStore.clear();
@@ -875,6 +1134,9 @@ public class BongNetworkHandler {
         com.bong.client.visual.VoidErosionVisualStore.reset();
         // plan-fauna-mimic-spider-v1 P2 — 断线时清理伪装蛛列表
         SpiderDisguiseHandler.clearOnDisconnect();
+        // plan-devour-rat-model P2 — 断线时清理噬元鼠吸元档位表
+        // （entity id 会被下个 session 重新分配给别的实体，留着会串档）
+        RatQiTierHandler.clearOnDisconnect();
         // plan-daozhan-v1 P1 — 断线时清理道伥伪装列表
         DaoZhanDisguiseHandler.clearOnDisconnect();
         // plan-fauna-stitched-beast-v1 P3 — 断线时清理幻觉层状态

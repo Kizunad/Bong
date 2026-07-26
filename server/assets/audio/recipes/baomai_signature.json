@@ -2,9 +2,9 @@
   "id": "baomai_signature",
   "layers": [
     {
-      "sound": "minecraft:entity.warden.sonic_boom",
+      "sound": "bong:skill.baomai.full_power_release",
       "volume": 0.25,
-      "pitch": 0.5,
+      "pitch": 1.0,
       "delay_ticks": 0
     }
   ],

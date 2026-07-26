@@ -142,6 +142,127 @@ public class SoundRecipePlayerTest {
         assertEquals(42L, sink.stoppedInstanceId);
     }
 
+    /**
+     * 重生残留受伤音回归：`heartbeat_low_hp` 第二层是 `minecraft:entity.player.hurt`，
+     * server 发这条 loop 时带 payload flag `hp_below_20`，play() 会把它注册成 sticky flag。
+     * 若 sticky 优先于内置 hp 谓词，while_flag 就永真 —— 血量回满（含重生回到 20%）后
+     * 心跳仍每秒重放一次受伤音。这里锁住「hp flag 跟真实血量走」。
+     */
+    @Test
+    void hpFlagFollowsCombatHudStateInsteadOfStickyOwnedFlag() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(
+            sink,
+            SoundRecipePlayer::defaultFlagActiveForTests
+        );
+        // 死亡/濒死：hp 0% → 心跳条件成立
+        CombatHudStateStore.replace(CombatHudState.create(0.0f, 1.0f, 1.0f, DerivedAttrFlags.none()));
+
+        player.play(playPayloadWithFlag(recipeWithLoop(), "hp_below_20"));
+        player.tick();
+        assertEquals(2, sink.played.size(), "低血期间心跳应持续重放");
+
+        // 重生：血量回到 REVIVE_HEALTH_FRACTION = 20%（阈值边界，不再算低血）
+        CombatHudStateStore.replace(CombatHudState.create(0.2f, 1.0f, 1.0f, DerivedAttrFlags.none()));
+        player.tick();
+
+        assertEquals(
+            0,
+            player.activeLoopCountForTests(),
+            "期望重生（hp 回到 20%）后心跳 loop 被摘掉，因为 hp_below_20 必须按真实血量判定"
+                + "而不是被 payload 自注册的 sticky flag 短路成永真；实际 loop 仍活着"
+                + "（= 玩家重生后每秒仍听到 entity.player.hurt）"
+        );
+        assertEquals(42L, sink.stoppedInstanceId, "摘 loop 时应对同一 instance 发 stop");
+        assertFalse(
+            EnvironmentAudioLoopState.isActive("hp_below_20"),
+            "期望摘 loop 时把自注册的 hp_below_20 flag 一起撤掉，否则下一条 loop 又会读到 sticky 永真"
+        );
+        int playedAfterRevive = sink.played.size();
+        player.tick();
+        assertEquals(
+            playedAfterRevive,
+            sink.played.size(),
+            "期望重生之后不再有任何心跳重放（一次都不许），实际又响了"
+        );
+    }
+
+    /**
+     * 同一治法要覆盖 recipe 自带的 `while_flag`（server 不带 payload flag 时用它）。
+     */
+    @Test
+    void recipeWhileFlagHpBelow30FollowsCombatHudState() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(
+            sink,
+            SoundRecipePlayer::defaultFlagActiveForTests
+        );
+        CombatHudStateStore.replace(CombatHudState.create(0.1f, 1.0f, 1.0f, DerivedAttrFlags.none()));
+
+        // recipeWithLoop() 的 while_flag = hp_below_30，且不带 payload flag → 无 sticky 注册
+        player.play(playPayload(recipeWithLoop(), 1.0f, 0.0f));
+        player.tick();
+        assertEquals(2, sink.played.size(), "hp 10% < 30% 时 loop 应重放");
+
+        CombatHudStateStore.replace(CombatHudState.create(0.5f, 1.0f, 1.0f, DerivedAttrFlags.none()));
+        player.tick();
+
+        assertEquals(0, player.activeLoopCountForTests(), "hp 回到 50% 后 loop 应停");
+        assertEquals(42L, sink.stoppedInstanceId);
+    }
+
+    /**
+     * 反向锁：**没有**内置谓词的 flag（环境雾堤 / fauna 压迫 hum）仍由 server 的
+     * play…stop 配对拥有生命周期，不能被这次改动顺手改成"立刻停"。
+     */
+    @Test
+    void unknownFlagLoopStillOwnedByServerLifetimeUnderDefaultProvider() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(
+            sink,
+            SoundRecipePlayer::defaultFlagActiveForTests
+        );
+
+        player.play(playPayloadWithFlag(recipeWithLoop(), "fauna_fuya_pressure:42"));
+        player.tick();
+        player.tick();
+
+        assertEquals(
+            1,
+            player.activeLoopCountForTests(),
+            "期望无内置谓词的 flag 仍靠 sticky 注册维持 loop（生命周期归 server stop），实际被误停"
+        );
+        assertEquals(4, sink.played.size(), "sticky flag 期间 loop 应持续重放");
+
+        player.stop(new AudioEventPayload.StopSoundRecipe(42, 0));
+        assertEquals(0, player.activeLoopCountForTests());
+        assertFalse(EnvironmentAudioLoopState.isActive("fauna_fuya_pressure:42"));
+    }
+
+    /**
+     * server 侧显式 stop（本次修复新增的重生收尾路径）必须能收掉心跳 loop，
+     * 即使此刻血量仍低（濒死中被强制停）。
+     */
+    @Test
+    void serverStopEndsHeartbeatLoopEvenWhileHpStillLow() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(
+            sink,
+            SoundRecipePlayer::defaultFlagActiveForTests
+        );
+        CombatHudStateStore.replace(CombatHudState.create(0.0f, 1.0f, 1.0f, DerivedAttrFlags.none()));
+        player.play(playPayloadWithFlag(recipeWithLoop(), "hp_below_20"));
+        player.tick();
+
+        player.stop(new AudioEventPayload.StopSoundRecipe(42, 0));
+
+        assertEquals(0, player.activeLoopCountForTests(), "server stop 后 loop 必须消失");
+        assertEquals(0, sink.stoppedFadeOutTicks, "硬停不该带淡出尾音");
+        int playedAtStop = sink.played.size();
+        player.tick();
+        assertEquals(playedAtStop, sink.played.size(), "stop 之后不许再有重放");
+    }
+
     @Test
     void replacingSameLoopInstanceStopsPreviousSound() {
         RecordingSink sink = new RecordingSink();

@@ -23,7 +23,7 @@ const GH_TIMEOUT_MS = intEnv("REVIEW_GH_TIMEOUT_MS", 30_000, 1_000);
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
 const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
 const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
-const RESPONSES_BASE_URL = process.env.REVIEW_CODEX_BASE_URL || "https://oai.sb";
+const RESPONSES_BASE_URL = process.env.REVIEW_CODEX_BASE_URL || "https://api.claudeopus.world";
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
 const CIRCUIT_MARKER = "bong-review-circuit";
@@ -898,6 +898,201 @@ export function extractResponsesOutputText(payload) {
   return chunks.join("\n");
 }
 
+const MAX_RESPONSES_SSE_EVENT_BYTES = 4 * 1024 * 1024;
+const MAX_RESPONSES_SSE_TOTAL_DATA_BYTES = 16 * 1024 * 1024;
+const MAX_RESPONSES_SSE_BUFFER_BYTES = MAX_RESPONSES_SSE_EVENT_BYTES * 2;
+const responsesSseEncoder = new TextEncoder();
+
+function responsesSseError(message) {
+  return new Error(`Responses SSE ${message}`);
+}
+
+function responseErrorDetail(payload, fallback) {
+  const error = payload?.error || payload?.response?.error;
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (error && typeof error === "object") {
+    const detail = error.message || error.code || error.type;
+    if (detail) return String(detail);
+  }
+  const incompleteReason = payload?.response?.incomplete_details?.reason || payload?.incomplete_details?.reason;
+  return incompleteReason ? String(incompleteReason) : fallback;
+}
+
+function reduceResponsesSseEvent(state, event) {
+  const data = String(event?.data ?? "");
+  if (data === "[DONE]") return state;
+  if (!data.trim()) return state;
+
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch {
+    throw responsesSseError("事件 data 不是合法 JSON。");
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.type !== "string" || !payload.type) {
+    throw responsesSseError("事件必须是带非空 type 的 JSON 对象。");
+  }
+  const eventName = String(event?.event || "");
+  if (eventName && eventName !== "message" && eventName !== payload.type) {
+    throw responsesSseError(`event 字段与 type 不一致：${eventName} != ${payload.type}`);
+  }
+
+  switch (payload.type) {
+    case "response.output_text.delta":
+      if (typeof payload.delta !== "string") throw responsesSseError("output_text.delta 缺少字符串 delta。");
+      state.deltaText += payload.delta;
+      return state;
+    case "response.completed": {
+      if (!payload.response || typeof payload.response !== "object" || Array.isArray(payload.response)) {
+        throw responsesSseError("response.completed 缺少 response 信封。");
+      }
+      state.stdout = extractResponsesOutputText(payload.response) || state.deltaText;
+      state.completed = true;
+      return state;
+    }
+    case "response.failed":
+      state.failure = responseErrorDetail(payload, "response.failed");
+      state.terminal = true;
+      return state;
+    case "response.incomplete":
+      state.failure = responseErrorDetail(payload, "response.incomplete");
+      state.terminal = true;
+      return state;
+    case "error":
+      state.failure = responseErrorDetail(payload, "Responses provider error");
+      state.terminal = true;
+      return state;
+    default:
+      return state;
+  }
+}
+
+async function consumeResponsesSse(body, state = {}) {
+  if (!body || typeof body.getReader !== "function") throw responsesSseError("响应缺少可读 body。");
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let buffer = "";
+  let bufferBytes = 0;
+  let scanOffset = 0;
+  let eventName = "";
+  let dataLines = [];
+  let dataBytes = 0;
+  let totalDataBytes = 0;
+  let stopped = false;
+  const streamState = state;
+  streamState.deltaText ??= "";
+  streamState.stdout ??= "";
+  streamState.completed ??= false;
+  streamState.terminal ??= false;
+  streamState.failure ??= "";
+
+  const resetEvent = () => {
+    eventName = "";
+    dataLines = [];
+    dataBytes = 0;
+  };
+  const dispatch = () => {
+    if (!eventName && dataLines.length === 0) return;
+    const event = { event: eventName, data: dataLines.join("\n") };
+    resetEvent();
+    reduceResponsesSseEvent(streamState, event);
+  };
+  const processLine = (line) => {
+    if (line === "") {
+      dispatch();
+      return;
+    }
+    if (line.startsWith(":")) return;
+    const colon = line.indexOf(":");
+    const field = colon < 0 ? line : line.slice(0, colon);
+    let value = colon < 0 ? "" : line.slice(colon + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+    if (field === "event") {
+      eventName = value;
+    } else if (field === "data") {
+      const valueBytes = responsesSseEncoder.encode(value).byteLength + 1;
+      dataBytes += valueBytes;
+      totalDataBytes += valueBytes;
+      if (dataBytes > MAX_RESPONSES_SSE_EVENT_BYTES) throw responsesSseError("单个事件超过大小上限。");
+      if (totalDataBytes > MAX_RESPONSES_SSE_TOTAL_DATA_BYTES) throw responsesSseError("累计事件数据超过大小上限。");
+      dataLines.push(value);
+    }
+  };
+  const processText = (text) => {
+    buffer += text;
+    bufferBytes += responsesSseEncoder.encode(text).byteLength;
+    while (true) {
+      let end = -1;
+      let separatorLength = 0;
+      for (let index = scanOffset; index < buffer.length; index += 1) {
+        const char = buffer[index];
+        if (char === "\n") {
+          end = index;
+          separatorLength = 1;
+          break;
+        }
+        if (char === "\r") {
+          if (index + 1 === buffer.length) {
+            scanOffset = index;
+            break;
+          }
+          end = index;
+          separatorLength = buffer[index + 1] === "\n" ? 2 : 1;
+          break;
+        }
+      }
+      if (end < 0) {
+        if (bufferBytes > MAX_RESPONSES_SSE_BUFFER_BYTES) {
+          throw responsesSseError("未完成 frame 超过大小上限。");
+        }
+        return;
+      }
+      const line = buffer.slice(0, end);
+      const consumed = buffer.slice(0, end + separatorLength);
+      buffer = buffer.slice(end + separatorLength);
+      bufferBytes -= responsesSseEncoder.encode(consumed).byteLength;
+      scanOffset = 0;
+      processLine(line);
+      if (streamState.completed || streamState.terminal) return;
+    }
+  };
+
+  try {
+    while (!streamState.completed && !streamState.terminal) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw responsesSseError("收到非字节 chunk。");
+      processText(decoder.decode(value, { stream: true }));
+    }
+    if (!streamState.completed && !streamState.terminal) {
+      processText(decoder.decode());
+      if (!streamState.completed && !streamState.terminal) {
+        if (buffer.length > 0) {
+          if (buffer.endsWith("\r")) {
+            processLine(buffer.slice(0, -1));
+          } else {
+            processLine(buffer);
+          }
+        }
+        if (!streamState.completed && !streamState.terminal) {
+          throw responsesSseError("stream disconnected before completion");
+        }
+      }
+    }
+    return streamState;
+  } finally {
+    if (!streamState.completed && !streamState.terminal) stopped = true;
+    if (stopped || streamState.completed || streamState.terminal) {
+      try {
+        await reader.cancel();
+      } catch {
+        /* The provider may already have closed the stream. */
+      }
+    }
+    reader.releaseLock();
+  }
+}
+
 export async function requestResponses(prompt, timeoutMs, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const apiKey = options.apiKey ?? process.env.REVIEW_CODEX_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
@@ -907,42 +1102,66 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
   );
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const streamState = {
+    deltaText: "",
+    stdout: "",
+    completed: false,
+    terminal: false,
+    failure: "",
+  };
   try {
     const response = await fetchImpl(endpoint, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        Accept: "text/event-stream",
       },
       body: JSON.stringify({
         model: options.model || MODEL,
         input: prompt,
         reasoning: { effort: "high" },
         store: false,
+        stream: true,
       }),
       signal: controller.signal,
     });
-    const raw = await response.text();
-    let payload = null;
-    try {
-      payload = raw ? JSON.parse(raw) : null;
-    } catch {
-      /* HTTP error text or malformed provider response is reported below. */
-    }
-    const output = extractResponsesOutputText(payload);
     if (!response.ok) {
+      const raw = await response.text();
+      let payload = null;
+      try {
+        payload = raw ? JSON.parse(raw) : null;
+      } catch {
+        /* HTTP error text or malformed provider response is reported below. */
+      }
+      const output = extractResponsesOutputText(payload);
       const detail = payload?.error?.message || raw || response.statusText || "unknown provider error";
       return { code: response.status, signal: null, stdout: output, stderr: `HTTP ${response.status}: ${detail}` };
     }
-    if (!payload) return { code: 1, signal: null, stdout: "", stderr: "Responses 返回了无法解析的 JSON。" };
-    return { code: 0, signal: null, stdout: output, stderr: output ? "" : "Responses 未返回 output_text。" };
+
+    const state = await consumeResponsesSse(response.body, streamState);
+    const output = state.stdout || state.deltaText || "";
+    if (state.failure) return { code: 1, signal: null, stdout: output, stderr: state.failure };
+    if (!state.completed) return { code: 1, signal: null, stdout: output, stderr: "Responses SSE stream disconnected before completion" };
+    return {
+      code: 0,
+      signal: null,
+      stdout: output,
+      stderr: output ? "" : "Responses 未返回 output_text。",
+    };
   } catch (error) {
     const timedOut = error?.name === "AbortError" || controller.signal.aborted;
-    return { code: timedOut ? 124 : 1, signal: timedOut ? "SIGTERM" : null, stdout: "", stderr: error?.message || String(error) };
+    return {
+      code: timedOut ? 124 : 1,
+      signal: timedOut ? "SIGTERM" : null,
+      stdout: streamState.stdout || streamState.deltaText || "",
+      stderr: error?.message || String(error),
+    };
   } finally {
     clearTimeout(timer);
   }
 }
+
 
 function codexExecutionFailureJson(label, failure) {
   return JSON.stringify({
@@ -1021,7 +1240,7 @@ export function codexRetryDelayMs(result, attempt, configuredMs = CODEX_RETRY_MS
 }
 
 export function isRetryableCodexFailure(result) {
-  if (result?.code === 124) return true;
+  if ([429, 503, 524].includes(Number(result?.code)) || result?.code === 124) return true;
   const log = `${result?.stderr || ""}\n${result?.stdout || ""}`;
   return /(429|503|too many requests|service unavailable|temporarily unavailable|upstream_(?:error|400)|stream disconnected|connection (?:reset|closed)|timed? out|timeout)/i.test(
     log,
@@ -1077,7 +1296,7 @@ export function renderComment(context, firstRound, finalRound, gate) {
 
 ${passLine}：${gate.label}${tieNote}
 
-> 引擎：4 个 Codex reviewer，模型 \`${MODEL}\`，reasoning high，base_url 默认 \`https://oai.sb\`。
+> 引擎：4 个 Codex reviewer，模型 \`${MODEL}\`，reasoning high，base_url 默认 \`https://api.claudeopus.world\`。
 > 触发：PR 首次创建自动跑；后续提交不自动跑，需要评论 \`/review\` 复审。
 ${context.plan ? `> Plan：\`${context.plan.name}\`${context.plan.path ? ` (${context.plan.path})` : "（未找到文件）"}` : "> Plan：未检测到 plan"}
 ${context.diffTruncated ? `> Diff 已截断至 ${MAX_DIFF} 字符，reviewer 可继续用只读工具查仓库。` : ""}
