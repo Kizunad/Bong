@@ -587,18 +587,21 @@ fn is_ambient_passthrough_block(block: valence::prelude::BlockState) -> bool {
 }
 
 fn is_ambient_leaf_block(block: valence::prelude::BlockState) -> bool {
-    use valence::prelude::BlockState;
+    use valence::prelude::BlockKind;
 
-    block == BlockState::OAK_LEAVES
-        || block == BlockState::SPRUCE_LEAVES
-        || block == BlockState::BIRCH_LEAVES
-        || block == BlockState::JUNGLE_LEAVES
-        || block == BlockState::ACACIA_LEAVES
-        || block == BlockState::DARK_OAK_LEAVES
-        || block == BlockState::AZALEA_LEAVES
-        || block == BlockState::FLOWERING_AZALEA_LEAVES
-        || block == BlockState::CHERRY_LEAVES
-        || block == BlockState::MANGROVE_LEAVES
+    matches!(
+        block.to_kind(),
+        BlockKind::OakLeaves
+            | BlockKind::SpruceLeaves
+            | BlockKind::BirchLeaves
+            | BlockKind::JungleLeaves
+            | BlockKind::AcaciaLeaves
+            | BlockKind::DarkOakLeaves
+            | BlockKind::AzaleaLeaves
+            | BlockKind::FloweringAzaleaLeaves
+            | BlockKind::CherryLeaves
+            | BlockKind::MangroveLeaves
+    )
 }
 
 /// Result of consulting the live runtime column for an ambient spawn.
@@ -677,7 +680,7 @@ fn resolve_loaded_raster_landing(
 /// A loaded support whose support/feet/head block is any water or lava state is an authoritative
 /// veto. Both sources missing or unsafe rejects the candidate; the sampled/player Y is never
 /// preserved.
-pub fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
+fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
     candidate: DVec3,
     layer: Option<&ChunkLayer>,
     terrain: Option<&P>,
@@ -1299,6 +1302,124 @@ mod tests {
             }
         }
         (app, layer_entity)
+    }
+
+    fn property_variant_leaf_fixtures() -> [(&'static str, BlockState); 4] {
+        let oak_natural = BlockState::OAK_LEAVES
+            .set(PropName::Distance, PropValue::_1)
+            .set(PropName::Persistent, PropValue::False)
+            .set(PropName::Waterlogged, PropValue::False);
+        let oak_persistent = oak_natural.set(PropName::Persistent, PropValue::True);
+        let oak_waterlogged = oak_natural.set(PropName::Waterlogged, PropValue::True);
+        let mangrove_natural = BlockState::MANGROVE_LEAVES
+            .set(PropName::Distance, PropValue::_1)
+            .set(PropName::Persistent, PropValue::False)
+            .set(PropName::Waterlogged, PropValue::False);
+
+        [
+            ("oak distance=1", oak_natural),
+            ("oak persistent=true", oak_persistent),
+            ("oak waterlogged=true", oak_waterlogged),
+            ("mangrove distance=1", mangrove_natural),
+        ]
+    }
+
+    #[test]
+    fn ambient_leaf_classifier_ignores_leaf_state_properties() {
+        let fixtures = property_variant_leaf_fixtures();
+        let oak_natural = fixtures[0].1;
+        let oak_persistent = fixtures[1].1;
+        let oak_waterlogged = fixtures[2].1;
+        let mangrove_natural = fixtures[3].1;
+
+        assert_ne!(
+            oak_natural,
+            BlockState::OAK_LEAVES,
+            "oak distance=1 must be a non-default state, not the old equality-only fixture"
+        );
+        assert!(
+            oak_natural.blocks_motion() && !oak_natural.is_liquid(),
+            "oak distance=1 must be motion-blocking and non-liquid so the leaf-kind gate is decisive"
+        );
+        assert_ne!(
+            oak_persistent, oak_natural,
+            "persistent=true must retain a distinct oak leaf state"
+        );
+        assert_ne!(
+            oak_waterlogged, oak_natural,
+            "waterlogged=true must retain a distinct oak leaf state"
+        );
+        assert!(
+            !oak_waterlogged.is_liquid(),
+            "waterlogged leaves are not liquid BlockStates; leaf-kind rejection must still veto them"
+        );
+        assert_ne!(
+            mangrove_natural,
+            BlockState::MANGROVE_LEAVES,
+            "mangrove distance=1 must cover a non-default listed leaf species"
+        );
+
+        assert!(
+            is_ambient_leaf_block(BlockState::OAK_LEAVES),
+            "default oak leaves must remain rejected"
+        );
+        for (case, leaf) in fixtures {
+            assert!(
+                is_ambient_leaf_block(leaf),
+                "{case}: all listed leaf kinds must be rejected independently of state properties"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_runtime_scan_rejects_property_variant_leaf_support() {
+        for (case, leaf) in property_variant_leaf_fixtures() {
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 66, 2, leaf)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert_eq!(
+                scan_ground_landing_from_chunk(1, 2, 80, Some(layer)),
+                GroundLandingScan::Miss,
+                "{case}: runtime scan must not treat a property-variant leaf as support"
+            );
+            assert_eq!(
+                resolve_ambient_ground_position::<FixtureSurface>(
+                    DVec3::new(1.5, 80.0, 2.5),
+                    Some(layer),
+                    None,
+                ),
+                None,
+                "{case}: runtime-only landing resolution must reject property-variant leaf support"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_loaded_raster_revalidation_rejects_property_variant_leaf_support() {
+        for (case, leaf) in property_variant_leaf_fixtures() {
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 70, 2, leaf)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: 70,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, 200.0, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: loaded exact raster revalidation must veto a passable raster leaf landing"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                Some((1, 2)),
+                "{case}: the passable raster must be consulted before runtime exact landing rejection"
+            );
+        }
     }
 
     #[test]
