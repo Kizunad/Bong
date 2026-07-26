@@ -8,9 +8,9 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | social 暴露后匿名可见性不 live 刷新 | ⬜ |
+| P0 | social 暴露后匿名可见性不 live 刷新 | ✅ 2026-07-26 |
 
-验收日期：P0 验收后填 `YYYY-MM-DD`（当前升 active：2026-07-06）。
+验收日期：P0 验收 2026-07-26（当前升 active：2026-07-06）。
 
 ## P0 — social 暴露后匿名可见性不 live 刷新
 
@@ -49,3 +49,15 @@
 ## 审计来源
 
 bughunt 线程 AM，范围限定 `server/src/world/`、`server/src/social/`、`client/src/main/java/com/bong/client/social/`、`client/src/main/java/com/bong/client/state/` 与相邻网络接线。原 bughunt PR 只提交 skeleton；本 active plan 负责验证候选并完成最小正确修复或提交不属实结论。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+commit 43771a45c（2026-07-07「修复 social 暴露后匿名 live 刷新断链」，含 1105b5c4a）修复了本 bug：`apply_social_exposures` 在暴露落地后补发 `ServerDataPayloadV1::SocialAnonymity`，`server/src/social/mod.rs:3975-4014` 的双测试断言了 chat/trade/death 暴露链路的 live 刷新在同 tick 生效，而非见证者不会过度暴露。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/social/mod.rs`（`apply_social_exposures` 补发 `SocialAnonymity`）
+- **关键 commit**：43771a45c（2026-07-07，「修复 social 暴露后匿名 live 刷新断链」），含 1105b5c4a
+- **测试结果**：`server/src/social/mod.rs:3975-4014` 双测试断言 live refresh；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：server `apply_social_exposures`/`ServerDataPayloadV1::SocialAnonymity`；client `SocialServerDataHandler.handleAnonymity`/`SocialStateStore` 消费路径未改动，契约不变
+- **遗留 / 后续**：开放问题 #1（`display_name` 语义是否订正为 identity display name）与 #2（其他 player-facing UI 是否也应消费同一份 live anonymity 刷新）未在本次修复中收口，留待后续 PR
