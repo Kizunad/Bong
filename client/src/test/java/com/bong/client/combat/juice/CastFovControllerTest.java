@@ -1106,6 +1106,24 @@ class CastFovControllerTest {
         assertBaseline("新脉冲 decay 完毕");
     }
 
+    /**
+     * heaven_gate 真实 release 时刻的客户端镜像：`heaven_gate_phase_system` 在
+     * {@code elapsed ≥ HEAVEN_GATE_AOE_END = 140} tick 才 emit release 动画。
+     */
+    private static final long HEAVEN_GATE_RELEASE_TICK_MS = 140 * 50L;
+
+    @Test
+    void animTokenTtlLiteralCoversTheHeavenGateReleaseWindow() {
+        // TTL 是契约值不是随手常数，且其余 TTL 用例都**引用常量本身**（边界测试只能证明
+        // 「边界在 TTL 上」，不能证明 TTL 取值对）——常量与实现同漂就会假绿。故按本文件参数表
+        // 同一口径用字面量 pin：TTL 掉到 release 窗（7s）以下会静默吃掉真实施法劈下那一刻的
+        // juice，而所有现有用例照样全绿。
+        assertEquals(15_000L, CastFovController.ANIM_TOKEN_TTL_MS, "TTL 定稿 15s");
+        assertTrue(CastFovController.ANIM_TOKEN_TTL_MS > HEAVEN_GATE_RELEASE_TICK_MS,
+            "TTL 必须宽于 heaven_gate release 窗（140t=" + HEAVEN_GATE_RELEASE_TICK_MS
+                + "ms）并留 RTT/卡顿余量，实际 " + CastFovController.ANIM_TOKEN_TTL_MS + "ms");
+    }
+
     @Test
     void animTokenExpiresAfterTtlSoStrayLateAnimDoesNotFire() {
         // release 动画因丢包/异常始终没来时令牌不能一直挂着：超过 TTL 视为过期，
