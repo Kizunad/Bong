@@ -2,7 +2,7 @@
 
 > **一句话主题**：修复 `ambient_scheduler` 在玩家周围采样凡兽/威胁兽时把玩家当前 Y 原样当作实体脚点、且未查询 runtime surface 的生产断链；让 ambient mundane + threat 在进入 pool 前共用一次地表解析，地表不可用时跳过候选，禁止再 fail-open 到空中 Y。
 
-**状态**：✅ 2026-07-26。此次实现前的权威代码/docs HEAD 是 `c390346c94620bd3286e6d158bc9669e8543b3fc`（其功能代码候选为 `88c8f25f8c1eea8abc7c91c36acfd5ba01b407b7`）；`662609339d69e14a06964b557497394fdeea03a5` 为功能候选祖先。P0/P1/P2 均已闭合；本次归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。PR 仍开放且未合并；本 docs-only 证据提交不得预先声称自身 GitHub E2E、CodeRabbit、`/review` 或 `CLEAN` 状态，push 后须以当时 PR body/status 的 exact HEAD 记录为准。
+**状态**：✅ 2026-07-26。此次实现前的权威代码/docs HEAD 是 `c390346c94620bd3286e6d158bc9669e8543b3fc`（其功能代码候选为 `88c8f25f8c1eea8abc7c91c36acfd5ba01b407b7`）；`662609339d69e14a06964b557497394fdeea03a5` 为功能候选祖先。P0/P1/P2 均已闭合；本次归档文件依 BugFix review 返工契约原地更新，不重复 promotion 或归档移动。PR 仍开放且未合并；本次测试与证据更新不得预先声称其新 HEAD 的 GitHub E2E、CodeRabbit、`/review` 或 `CLEAN` 状态，push 后须以当时 PR body/status 的 exact HEAD 记录为准。
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
@@ -358,7 +358,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - `88c8f25f8c1eea8abc7c91c36acfd5ba01b407b7`（2026-07-26）：收束水浸 veto 边界；仅结构性、非叶、非 passthrough 支撑映射 `LoadedUnsafe`，property-variant waterlogged leaf 保持 `Miss`。
 - `e4bb94a96d780218e79718516d438bf18d0b5d63`（2026-07-26）：修复 ambient 非叶水浸落点绕过；私有 `contains_ambient_liquid` 统一拒绝 Water/Lava kind 与 `Waterlogged=True`，覆盖 support、feet/head、direct 三格、runtime scan/resolve 与 loaded-raster 精确复核；isolated targeted test 2 passed / 0 failed / 12018 filtered。
 - `c390346c94620bd3286e6d158bc9669e8543b3fc`（2026-07-27）：刷新此前功能代码候选的 docs evidence；其 GitHub exact-head E2E `30213880323` 已 SUCCESS（Smoke/E2E step 19、Bot step 20、`npc_ambient_surface_resolution` PASS，Bot summary total=33 / pass=32 / skip=1 / fail=0，Chat PASS），且 CodeRabbit Review completed、当时 PR 为 `MERGEABLE` / `CLEAN`。这是 c390 的历史精确证据，不能预支给后续 watcher 测试提交。
-- 本次 review 返工（c390 之后）：comment `5084794862` 的“缺 owned Bot/Smoke 证据”finding 为评论生成与 exact-head E2E 完成之间的 race，已由上述 c390 exact E2E refute/closed；同评论的 watcher 仅源码字符串 pin finding 为 CONFIRMED→FIXED。`scripts/bot/test_protocol.py` 现以 fake cargo/runner、动态 localhost 端口和仅本测试 PID cleanup 实际执行 `scripts/bot-e2e.sh` 的 owned 路径，覆盖 ownership 保持的 runner 成功、runner 阻塞期间 owned server 退出、监听端口被非 `SERVER_PID` 树进程接管，以及 runner/tee 原退出码优先级。新 HEAD push 后必须重跑 GitHub gate、CodeRabbit、`/review` 与 CLEAN 核验。
+- 本次 review follow-up：原 server-exit fake runner 只在 `TERM` fake cargo shell 后固定 sleep，可能在 shell 仍处于 sleep 时让 runner 返回，watcher 因 stop 文件而写 `complete`。现改为 runner 在退出前以有限轮询同时确认 fake `SERVER_PID` 已不存在、端口连接已消失，并通过 runtime-watch `status=lost` 同步 handshake；replacement listener 同样先确认 replacement 已接管端口再等待 `lost`。因此 fault injection 不依赖固定 sleep，超时返回专用非零；新 HEAD push 后仍必须重跑 GitHub gate、CodeRabbit、`/review` 与 CLEAN 核验。
 - `b749b6cd0`（2026-07-26）：历史功能候选，已由后续 `7a0afaf05bcb8692aefa30516d4148dde3dd4340` 的可见性与叶属性态修复取代。
 - `f2451ed73`、`5c1c62fc0`、`f0df73b96`（2026-07-25）：历史候选曾统一 Navigator/ambient 安全落点规则源、引入 `GroundLandingScan` 三态；随后以 `b1ae488b8` 恢复原始私有 ambient 边界，避免改变 Navigator legacy caller 合同。
 - `1cd990838`、`18f5bad7f`、`84927434a`、`c2280e304`（2026-07-25）：修复 Bot dedicated 场景执行语义、runner/tee 失败传播、真实 pipeline 合同回归与显式缺 env 假绿。
@@ -378,7 +378,7 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 
 - **权威代码树**：`662609339d69e14a06964b557497394fdeea03a5` 是 `88c` 的祖先；权威 slot porcelain clean。
 - **server 本地门禁**：`cargo fmt --check` PASS；`cargo clippy --all-targets -- -D warnings` PASS；完整 `cargo test` exit 0：lib 12019 passed / 0 failed / 2 ignored，main 12 passed，full-app 1 passed，Tarkov 4 passed，doc 5 ignored。
-- **Bot 静态/协议门禁**：`bash -n scripts/bot-e2e.sh` PASS；`python3 scripts/bot/test_protocol.py` 158 passed / 0 failed、exit 0。新增 4 条可执行 owned watcher 合同：成功完整路径、owned server 退出、replacement listener 以及 runner/tee 退出码优先级（矩阵 3 态）；执行仍出现非失败 `ResourceWarning`，未予隐去。
+- **Bot 静态/协议门禁**：`bash -n scripts/bot-e2e.sh` PASS；`python3 scripts/bot/test_protocol.py` 158 passed / 0 failed、exit 0。owned watcher 的成功完整路径、server-exit、replacement listener 和 runner/tee 退出码优先级均为可执行合同；server-exit 与 replacement 的 fault runner 在返回前以有限轮询同步等待 runtime watcher 写入 `lost`，而非固定 sleep。两项失效定向测试各连续运行 3 次均 PASS；执行仍出现非失败 `ResourceWarning`，未予隐去。
 - **ambient 定向**：`cargo test ... ambient_ -- --test-threads=1` 138 passed / 0 failed / 11883 filtered；状态转换 pin 覆盖 waterlogged structural support → `LiquidObstructed` → `LoadedUnsafe`，raster `SurfaceProvider` 查询计数为 0。
 - **fresh 无上下文 validator**：目标 `88c`，PASS、0 blocker / 0 major。
 - **review 裁决**：comment `5083912427` 的两个去重 major 均为 CONFIRMED→FIXED：水浸结构支撑的权威 veto 与 generic 默认 Redis listener 复用均已落地；但该评论针对旧 HEAD `83b` 且为 `REQUEST_CHANGES`，push 后必须对新 exact HEAD 重发 `/review`，不得预称复审通过。
@@ -413,12 +413,12 @@ runtime/raster 都不能给出安全脚点时跳过本次 spawn；loaded runtime
 - **共享 Bot harness**：GitHub E2E run `30151469631` 对历史候选 `77d8ec7c93645648c1fe05681295017146d6d2df` 产出 31 pass / 1 skip / 0 fail；该 artifact 不是当前候选的 exact-head CI gate。
 - **历史证据边界**：`71e5ea3ab`、`da3196a35`、`7c4c068f8`、`77d8ec7c` 等旧树门禁只证明各自 SHA。`72b518685` 与 `f8141905` 为后续功能代码返工，已使此前 code gate、validator 与 E2E 对当前候选全部失效。
 
-**post-doc 外部门禁边界**：本 docs-only closure 不改代码。当前 docs commit 的 fresh exact-HEAD validator 仍是 push 前必需门禁；push 后 GitHub E2E、CodeRabbit、`/review` 与 PR `CLEAN` 状态必须绑定当时的 current HEAD。PR status 与 PR body 是权威的 post-commit record，避免将尚不存在的自指 SHA 嵌入本文件。
+**post-update 外部门禁边界**：本次 follow-up 修改测试与证据，当前新 HEAD 的 fresh exact-HEAD validator 仍是 push 前必需门禁；push 后 GitHub E2E、CodeRabbit、`/review` 与 PR `CLEAN` 状态必须绑定当时的 current HEAD。PR status 与 PR body 是权威的 post-commit record，避免将尚不存在的自指 SHA 嵌入本文件。
 
 ### 跨仓库核验
 
 - **server**：`resolve_ambient_ground_position`、`resolve_loaded_raster_landing`、`submit_ambient_spawn_candidate`、`submit_ambient_dev_spawn_once`、`AmbientSpawnCmd`、`AmbientSpawnDevAccess` 与 command graph pin 均落地；mundane/threat 共用同一 resolver 和提交边界。`ac8b2c5` / `88c8f25` 将仅结构性、非叶、非 passthrough 的 Water/Lava 或 `Waterlogged=True` support 映射为 `LiquidObstructed` / `LoadedUnsafe`，并使 leaf 保持 `Miss`；`BONG_DEV_MODE` 默认关闭命令树入口且 capability 拒绝伪造 event。
-- **bot**：`scripts/bot/make_novice_raster_fixture.py` 为 owned mode fixture 写入 `ambient-surface-v1` token 与 support/feet/head 元数据；`ac8b2c5` 后 `scripts/bot-e2e.sh` 的 generic self-start 保留 caller raster/state/Redis 与 `$ROOT/server` CWD，显式 `REDIS_URL` 原样保留，未显式时先采用 caller `127.0.0.1:6379` listener、缺失才自起私有 Compose Redis。CI 显式选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 才启用 private fixture/Redis/CWD、strict marker/PID ownership 与 owner-safe cleanup。REUSE 仅使用已有 ordinary server，缺 listener fail-closed；无 global `pkill`。除 Redis fake-tool 合同外，`scripts/bot/test_protocol.py` 通过真实 `bot-e2e.sh` 生产主路径、fake cargo/runner、动态 localhost listener/PID tree 覆盖 watcher 的 complete、owned server exit、replacement listener lost 与 runner/tee exit priority；cleanup 只终止测试自产 PID。`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 先核验同 token 的真实 tile 二进制，再走 `/tpzone`、`/ambient_spawn once`、`entity_spawn` 与位置 mirror，不依赖随机 ambient tick。
+- **bot**：`scripts/bot/make_novice_raster_fixture.py` 为 owned mode fixture 写入 `ambient-surface-v1` token 与 support/feet/head 元数据；`ac8b2c5` 后 `scripts/bot-e2e.sh` 的 generic self-start 保留 caller raster/state/Redis 与 `$ROOT/server` CWD，显式 `REDIS_URL` 原样保留，未显式时先采用 caller `127.0.0.1:6379` listener、缺失才自起私有 Compose Redis。CI 显式选择 `BOT_E2E_AMBIENT_FIXTURE_MODE=1` 才启用 private fixture/Redis/CWD、strict marker/PID ownership 与 owner-safe cleanup。REUSE 仅使用已有 ordinary server，缺 listener fail-closed；无 global `pkill`。除 Redis fake-tool 合同外，`scripts/bot/test_protocol.py` 通过真实 `bot-e2e.sh` 生产主路径、fake cargo/runner、动态 localhost listener/PID tree 覆盖 watcher 的 complete、owned server exit、replacement listener lost 与 runner/tee exit priority；server-exit 先同步确认 parent PID 消失、端口关闭并等待 watcher `lost`，replacement listener 先同步确认接管端口并等待同一 `lost` handshake，任何有限轮询超时均专用非零。cleanup 只终止测试自产 PID。`scripts/bot/scenarios/npc_ambient_surface_resolution.py` 先核验同 token 的真实 tile 二进制，再走 `/tpzone`、`/ambient_spawn once`、`entity_spawn` 与位置 mirror，不依赖随机 ambient tick。
 - **client**：零代码改动；继续渲染 server 权威 `Position`，未加入 client gravity hack；Java 17 全门禁为历史候选证据。
 - **agent/schema**：零代码改动、零 Redis/wire 变更；合并主线后的 schema/Tiandao 门禁为历史候选证据。
 

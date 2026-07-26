@@ -1218,17 +1218,43 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "fi\n"
                 "if [[ \"${1:-}\" == *run_scenarios.py ]]; then\n"
                 f"  printf '%s\\n' \"$FAKE_RUNNER_MODE\" >> {shlex.quote(str(runner_log))}\n"
+                "  wait_watcher_lost() {\n"
+                "    local status\n"
+                "    for _ in $(seq 1 200); do\n"
+                "      status=$(find \"$FAKE_EVIDENCE_ROOT\" -path '*/runtime-watch.*/status' -type f -print -quit)\n"
+                "      test -n \"$status\" && test \"$(cat \"$status\" 2>/dev/null || true)\" = lost && return 0\n"
+                "      sleep 0.01\n"
+                "    done\n"
+                "    return 1\n"
+                "  }\n"
                 "  case \"$FAKE_RUNNER_MODE\" in\n"
                 "    success) exit 0 ;;\n"
                 "    runner-fail) exit \"$FAKE_RUNNER_EXIT\" ;;\n"
                 "    kill-server)\n"
                 "      kill -TERM \"$(cat \"$FAKE_SERVER_PID_FILE\")\"\n"
-                "      sleep 0.5\n"
+                "      for _ in $(seq 1 200); do\n"
+                "        if ! kill -0 \"$(cat \"$FAKE_SERVER_PID_FILE\")\" 2>/dev/null \\\n"
+                "          && ! \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "        then break; fi\n"
+                "        sleep 0.01\n"
+                "      done\n"
+                "      if kill -0 \"$(cat \"$FAKE_SERVER_PID_FILE\")\" 2>/dev/null \\\n"
+                "        || \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "      then exit 79; fi\n"
+                "      wait_watcher_lost || exit 80\n"
                 "      exit 0\n"
                 "      ;;\n"
                 "    replace-listener)\n"
                 "      kill -TERM \"$(cat \"$FAKE_LISTENER_PID_FILE\")\"\n"
-                "      for _ in $(seq 1 100); do\n"
+                "      for _ in $(seq 1 200); do\n"
                 "        if ! \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
                 "import socket, sys\n"
                 "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
@@ -1239,7 +1265,16 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "      done\n"
                 "      \"$real_python\" -u -c 'import socket, sys, time\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nfor _ in range(100):\n    try:\n        s.bind((\"127.0.0.1\", int(sys.argv[1])))\n        break\n    except OSError:\n        time.sleep(0.01)\nelse:\n    raise SystemExit(77)\ns.listen()\nwhile True:\n    conn, _ = s.accept()\n    conn.close()' \"$BOT_E2E_PORT\" </dev/null >/dev/null 2>&1 &\n"
                 f"      printf '%s\\n' \"$!\" > {shlex.quote(str(replacement_pid_file))}\n"
-                "      sleep 0.5\n"
+                "      for _ in $(seq 1 200); do\n"
+                "        if \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "        then break; fi\n"
+                "        sleep 0.01\n"
+                "      done\n"
+                "      wait_watcher_lost || exit 80\n"
                 "      exit 0\n"
                 "      ;;\n"
                 "    *) exit 78 ;;\n"
@@ -1286,6 +1321,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 )
                 (fake_bin / "tee").chmod(0o755)
 
+            evidence_root = root / ".sisyphus/evidence/bot-e2e"
             env = os.environ.copy()
             for name in (
                 "BOT_E2E_REUSE", "BOT_E2E_HOST", "BOT_E2E_PORT",
@@ -1301,10 +1337,10 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     "FAKE_RUNNER_EXIT": str(runner_exit),
                     "FAKE_SERVER_PID_FILE": str(server_pid_file),
                     "FAKE_LISTENER_PID_FILE": str(listener_pid_file),
+                    "FAKE_EVIDENCE_ROOT": str(evidence_root),
                 }
             )
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
-            evidence_root = root / ".sisyphus/evidence/bot-e2e"
             evidence_before = set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
             runner_output = ""
             try:
