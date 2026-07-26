@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 统一交互键 `G` 的 TSY 搜刮候选/派发改回准星语义 | fix_pr | ⬜ |
+| P0 | 统一交互键 `G` 的 TSY 搜刮候选/派发改回准星语义 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 — 统一交互键 `G` 的 TSY 搜刮候选/派发改回准星语义
 
@@ -33,3 +33,15 @@
 ## 审计来源
 
 bug-hunt 线程 AJ（限定 `movement/interaction` 主路径，基线 `origin/main@fb41c96a4`）。本轮只收窄 `client/src/main/java/com/bong/client/input/`、`client/src/main/java/com/bong/client/interaction/`、`client/src/main/java/com/bong/client/movement/`、`client/src/main/java/com/bong/client/tsy/` 与 `server/src/network/client_request_handler.rs` 的交互接线；结论为 **report-only**：先提交 skeleton plan 固化玩家影响、证据链与修复抓手，再由后续 fix PR 单独落地。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+修复已在 origin/main 落地：`client/src/main/java/com/bong/client/tsy/TsyContainerSearchIntentHandler.java:16-96` 的 `candidate()` / `dispatch()` 改为读取 `client.crosshairTarget`，并通过 `dispatchEntityIdForVisualHit` 校验发包目标与候选实体一致，恢复了与其他 interaction handler 一致的"准星命中"语义，不再被 3 格内最近容器自动吸附截胡。对应 commit d6a84a77f、e300ff151（2026-07-06，PR #895）已 merge。
+
+## Finish Evidence
+
+- **落地清单**：`client/src/main/java/com/bong/client/tsy/TsyContainerSearchIntentHandler.java:16-96`
+- **关键 commit**：d6a84a77f、e300ff151（2026-07-06，改回准星命中语义，PR #895）
+- **测试结果**：证据素材未列具体测试名/数量；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：client-only（`TsyContainerSearchIntentHandler.java`）
+- **遗留 / 后续**：无
