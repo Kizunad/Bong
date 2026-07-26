@@ -1,5 +1,6 @@
 package com.bong.client.combat.juice;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,6 +64,21 @@ class JuiceConfigTest {
         assertEquals(0f, JuiceConfig.setJuiceMultiplier(-1.0f), 1e-9f, "负倍率 → 0");
         assertEquals(0f, JuiceConfig.setJuiceMultiplier(-0.0001f), 1e-9f, "负的极小值同样 → 0");
         assertEquals(0f, JuiceConfig.setJuiceMultiplier(Float.NEGATIVE_INFINITY), 1e-9f, "负无穷 → 0");
+    }
+
+    /**
+     * 契约常量的**字面量** pin（与 `CastFovControllerTest.EXPECTED_PROFILES` 同口径）：本文件其余
+     * 断言都拿常量自比，常量和实现一起漂移时全绿——上限被悄悄改成 10.0 会让手滑设个大数直接把
+     * 画面震飞，档位表中间档被改则玩家的可选档位静默变样，两者都不该无声通过。
+     */
+    @Test
+    void publicConfigConstantsArePinnedToLiterals() {
+        assertEquals(1.0f, JuiceConfig.DEFAULT_JUICE_MULTIPLIER, 1e-9f, "plan §P3「默认 1.0」");
+        assertEquals(2.0f, JuiceConfig.MAX_JUICE_MULTIPLIER, 1e-9f,
+            "倍率上限定稿 2.0（再高会把画面震飞）");
+        assertArrayEquals(new float[] {0.0f, 0.5f, 1.0f, 1.5f}, JuiceConfig.cycleLevels(), 1e-9f,
+            "keybind 档位表定稿 {0, 0.5, 1.0, 1.5}——0 是 plan 要求玩家可达的「关闭」档，"
+                + "中间档漂了玩家的可选强度就静默变样");
     }
 
     @Test
