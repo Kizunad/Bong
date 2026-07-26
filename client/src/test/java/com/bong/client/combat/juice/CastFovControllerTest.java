@@ -1217,6 +1217,55 @@ class CastFovControllerTest {
     }
 
     @Test
+    void animReleaseRecordsFiredTerminalForItsIdentity() {
+        // release 消费令牌时必须落 FIRED 终态：① 之后同身份的迟到打断不得把记录改写成 VOIDED；
+        // ② TTL 过期清掉令牌后，一条同身份的迟到权威 CASTING 不得重开一枚 flags 全新的令牌
+        //    让杂散 release 动画二次放 juice。
+        acceptGateCast(START);
+        releaseAnim();
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "动画路径的 release 同样要给该 identity 落 FIRED 终态");
+
+        serverSync("interrupt", GATE_SLOT, START, "interrupt_movement");
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "已 FIRED 的动画路径身份不得被迟到打断改写成 VOIDED");
+
+        // 两个通道走完 → 基准；随后同身份的迟到 CASTING + release 动画不得二次触发。
+        advanceMs(GATE_SHAKE_DURATION_MS + 50);
+        CastFovController.tick();
+        assertBaseline("第一次 release 走完");
+
+        acceptGateCast(START);   // 同身份迟到 CASTING（终态已 FIRED → 不得重开令牌）
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertBaseline("已 FIRED 的身份不得靠迟到 CASTING 重开令牌再放一次 juice");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "抖动同样不二次触发");
+    }
+
+    @Test
+    void unrelatedCastDoesNotDropTheGateTokenBeforeItsReleaseAnim() {
+        // heaven_gate 的 cast 条 4s 就走完，release 动画要到引导第 140t（7s）才发。中间这 3s
+        // 玩家放别的招会带来一条权威 CASTING——那**不是**天门被取消，不得顶掉天门的令牌，
+        // 否则劈下那一刻静默丢 juice。
+        acceptGateCast(START);
+        predictAndAccept(HEAVY_SLOT, START + 4000);   // 3s 窗口里插一发 baomai
+        serverSync("complete", HEAVY_SLOT, START + 4000, "completed");
+        advanceMs(SHAKE_DURATION_MS + 50);            // 让 baomai 的两个通道走完
+        CastFovController.tick();
+        assertBaseline("baomai 的脉冲已走完");
+
+        releaseAnim();   // 天门劈下
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6,
+            "无关招式的 accepted 不得顶掉天门令牌 —— 劈下那一刻仍须有 juice");
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("天门脉冲 decay 完毕");
+    }
+
+    @Test
     void newGateCastSupersedesOldTokenAndItsFiredFlags() {
         // 连续两次 heaven_gate：第二次的权威 CASTING 取代旧令牌，release 照常触发
         //（幂等是**按令牌**的一次性，不是「这辈子只许震一次」）。

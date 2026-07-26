@@ -120,7 +120,10 @@ public final class CastFovController {
 
     /**
      * identity → 终态（LOCK 保护）。{@link LinkedHashMap} 访问序 + {@code removeEldestEntry}
-     * 做 LRU：满了先淘汰最久未被查询的身份（最不可能再有迟到回执的那个）。
+     * 做 LRU：满了先淘汰最久未被**写入或 get** 的身份（最不可能再有迟到回执的那个）。
+     *
+     * <p>注意 {@code containsKey} <b>不</b>刷新访问序（只有 {@code get}/{@code put} 系列会），
+     * 故 {@link #arm} 的终态查询不会把老身份「续命」。这对有界性无影响，实际逐出顺序≈写入序。
      */
     private static final LinkedHashMap<Identity, Terminal> terminals =
         new LinkedHashMap<>(TERMINAL_MEMORY * 2, 0.75f, true) {
@@ -209,12 +212,9 @@ public final class CastFovController {
         if (terminals.containsKey(id)) {
             return;  // 该身份已终态（FIRED 不重放 / VOIDED 不复活），含乱序打断早到与 teardown
         }
-        // supersession：异身份的新施法取代旧 pending / 旧令牌（两条通道都只留最新一次施法）
+        // supersession：异身份的新施法取代旧 pending（该通道只留最新一次施法）
         if (pending != null && !pending.id().equals(id)) {
             pending = null;
-        }
-        if (animToken != null && !animToken.id.equals(id)) {
-            animToken = null;
         }
         String skillId = resolveSkillId(state);
         if (skillId == null) {
@@ -222,6 +222,14 @@ public final class CastFovController {
         }
         AnimDrivenJuice animJuice = animDrivenJuice(skillId);
         if (animJuice != null) {
+            // 令牌只被**另一次动画事件驱动的施法**取代，不被无关招式的 CASTING 顶掉：
+            // heaven_gate 的 cast 条 4s 就走完（服务端随即 remove Casting），而 release 动画要到
+            // 引导第 140t（7s）才发——中间这 3s 玩家放任何别的招都会带来一条权威 CASTING，
+            // 若那也算 supersession，天门劈下那一刻会静默丢掉 juice。该令牌的结束条件只有：
+            // 自己的 release 消费掉 / 同身份 INTERRUPT / teardown / TTL 过期 / 另一次动画驱动施法。
+            if (animToken != null && !animToken.id.equals(id)) {
+                animToken = null;
+            }
             if (animToken == null) {
                 animToken = new AnimCastToken(id, animJuice, now);  // 同身份重复 CASTING：幂等
             }
