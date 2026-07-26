@@ -18402,41 +18402,50 @@ cols = 4
     }
 
     #[test]
-    fn herb_bundle_decays_identically_to_single_herb_on_shared_fresh_herb_v1_profile() {
-        // plan-gathering-tool-bind-v1 §8.1 决议 #2："捆 vs 单株衰减对照"——决议明确不派生
-        // bundled_herb_v1，herb_bundle 与任何挂 fresh_herb_v1 的单株鲜草共享完全相同的衰减
-        // 公式/曲线。这条测试锁住"批量存放不减损耗"这个决策：如果未来有人偷偷给 herb_bundle
-        // 加一个数量相关的衰减折扣，这里会撞红。
+    fn herb_bundle_decays_identically_regardless_of_stack_count() {
+        // plan-gathering-tool-bind-v1 §8.1 决议 #2 复核（PR #1293 review 修正）：上一版
+        // 把"捆 vs 单株"两个样本都固定成同一份手写 `Freshness::new(0, 0.80, profile)`
+        // 再喂进同一个纯函数——这是同输入自比较，恒真、什么都没有测出来。
         //
-        // 注意：fresh_herb_v1 走 `DecayFormula::Linear`——每 tick 扣的是固定绝对量
-        // (decay_per_tick)，不是固定比例。因此 current/initial 的"比例"天然会随 initial_qi
-        // 不同而不同（这是 Linear 公式本身的数学性质：pressure_delta = initial_qi 全额参与，
-        // 扣掉的绝对量与 initial_qi 无关，比例自然分化），与"是否批量存放"无关。比较必须固定
-        // initial_qi 才有意义，否则会把"Linear 公式的固有非比例特性"误判成"批量折扣 bug"
-        // （旧版本此处对比 0.80 vs 0.85 两个不同 initial_qi，在 tick=12000 会得到
-        // ratio=0.7917 vs 0.8039 的假阳性——这是数学期望内的分化，不是 bug）。
+        // 本仓库里"捆"与"单株"的真实区别不是 initial_qi（herb_bundle 模板的
+        // spirit_quality_initial 恒为 0.80，不管装了几株——见
+        // herb_bundle_freshness_ignores_stack_count），而是 `ItemInstance.stack_count`。
+        // 所以有判别力的对照必须固定 profile/initial_qi、只变 stack_count，并且要走生产
+        // `runtime_instance_from_template` 链路（不是手搓 Freshness）：如果未来有人在这条
+        // 链路上给批量物品加了"stack_count 越大衰减越慢"的折扣，这里必须撞红——
+        // 已用假实现验证过（临时给 initial_qi 加 stack_count 相关的加成，本测试确实失败；
+        // 验证后已还原，不留在正式代码里）。
         use crate::shelflife::registry::build_default_registry;
-        use crate::shelflife::{compute::compute_current_qi, DecayProfileId, Freshness};
+        use crate::shelflife::{compute::compute_current_qi, DecayProfileId};
 
+        let item_registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
         let profile_registry = build_default_registry();
+        let tpl = item_registry
+            .get("herb_bundle")
+            .expect("herb_bundle must be in registry — check workbench_materials.toml");
         let profile = profile_registry
             .get(&DecayProfileId::new("fresh_herb_v1"))
             .expect("fresh_herb_v1 must exist in the production DecayProfileRegistry");
 
-        // "捆"：herb_bundle 的 spirit_quality_initial=0.80（workbench_materials.toml）。
-        let bundle = Freshness::new(0, 0.80, profile);
-        // "单株"：同一 initial_qi 的假想单株鲜草——固定 initial_qi 才能单独隔离"是否批量存放"
-        // 这一个变量；"单株" vs "捆"在这里的唯一区别只应该是叙事标签，不应体现在计算输入上。
-        let single = Freshness::new(0, 0.80, profile);
+        // "单株"：stack_count=1；"捆"：stack_count=50——两者都经真实生产入口构造。
+        let single = runtime_instance_from_template(tpl, 1, 1, 0);
+        let bundle = runtime_instance_from_template(tpl, 2, 50, 0);
+        let single_freshness = single
+            .freshness
+            .expect("herb_bundle instance must carry Freshness (shelflife_profile is set)");
+        let bundle_freshness = bundle
+            .freshness
+            .expect("herb_bundle instance must carry Freshness (shelflife_profile is set)");
 
-        for elapsed_ticks in [0_u64, 12_000, 36_000, 72_000, 200_000] {
-            let bundle_current = compute_current_qi(&bundle, profile, elapsed_ticks, 1.0);
-            let single_current = compute_current_qi(&single, profile, elapsed_ticks, 1.0);
+        for elapsed_ticks in [0_u64, 12_000, 36_000, 57_600, 200_000] {
+            let single_current = compute_current_qi(&single_freshness, profile, elapsed_ticks, 1.0);
+            let bundle_current = compute_current_qi(&bundle_freshness, profile, elapsed_ticks, 1.0);
             assert_eq!(
-                bundle_current, single_current,
-                "在 tick={elapsed_ticks} 时，捆与单株（相同 initial_qi=0.80，共享 fresh_herb_v1）\
-                 应输出完全相同的 current_qi；若此处不等，说明有人给批量物品加了未经决议的\
-                 衰减折扣"
+                single_current, bundle_current,
+                "在 tick={elapsed_ticks} 时，stack_count=1（单株）与 stack_count=50（捆）经由\
+                 生产 runtime_instance_from_template 构造的实例应输出完全相同的 current_qi；\
+                 若此处不等，说明有人给批量存放加了未经决议的衰减折扣"
             );
         }
     }
@@ -18532,6 +18541,92 @@ cols = 4
             TrackState::Spoiled,
             "远超过期时间后 TrackState 仍应为 Spoiled"
         );
+    }
+
+    #[test]
+    fn herb_bundle_expiry_drives_production_spoil_check_consumption_path() {
+        // plan-gathering-tool-bind-v1 P0："过期行为（腐坏产物）分支"（PR #1293 review 修正）：
+        // 上一版只调 compute_track_state 断言 Spoiled，没有走任何"过期之后会怎样"的生产分支。
+        //
+        // fresh_herb_v1 是 `DecayProfile::Spoil`。variant.rs 的生产 sweep
+        // （apply_variant_switch_with_season_and_container）对 Spoil 路径的 Spoiled 状态
+        // 明确"不切 item ID，走 NBT"——只有 Decay（ling_shi/bone_coin）和 Age→Spoil
+        // 迁移（chen_jiu→chen_cu）会切 item ID。herb_bundle 腐败后不会变成另一个 item
+        // template，所以"腐坏产物"在这个系统里的真实含义不是"变成另一件东西"，而是
+        // `shelflife::consume::spoil_check` 返回的消费判定（Safe/Warn 触发 contam
+        // 警告/CriticalBlock 拒绝消费）——这正是 food.rs::consume_food 的 Spoil 分支
+        // 已经在用的生产入口。这里直接用 herb_bundle 的真实 registry 模板 + 生产
+        // runtime_instance_from_template 构造实例，驱动 spoil_check 走过 Safe→Warn→
+        // CriticalBlock 三段，锁住这条真实存在的过期消费路径。
+        use crate::shelflife::consume::{spoil_check, SpoilCheckOutcome};
+        use crate::shelflife::registry::build_default_registry;
+        use crate::shelflife::DecayProfileId;
+
+        let item_registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let profile_registry = build_default_registry();
+        let tpl = item_registry
+            .get("herb_bundle")
+            .expect("herb_bundle must be in registry — check workbench_materials.toml");
+        let profile = profile_registry
+            .get(&DecayProfileId::new("fresh_herb_v1"))
+            .expect("fresh_herb_v1 must exist in the production DecayProfileRegistry");
+        let instance = runtime_instance_from_template(tpl, 1, 1, 0);
+        let freshness = instance
+            .freshness
+            .expect("herb_bundle instance must carry Freshness (shelflife_profile is set)");
+
+        // current(t) = max(0, 0.80 - t/72000)（Linear，见 fresh_herb_profile()）。
+        // spoil_threshold=0.01 在 t=56880 处被跨越；0.1×threshold=0.001 在 t=57528 处
+        // 被跨越；current 在 t=57600 触底为 0。三个采样点都留了充足余量，不卡边界。
+
+        // t=0：current=0.80 ≥ threshold=0.01 → Safe。
+        match spoil_check(&freshness, profile, 0, 1.0) {
+            SpoilCheckOutcome::Safe { current_qi } => {
+                assert!(
+                    (current_qi - 0.80).abs() < 1e-4,
+                    "t=0 时 herb_bundle 应处于 Safe 且 current_qi=initial_qi=0.80，实际 {current_qi}"
+                );
+            }
+            other => panic!("t=0 时 herb_bundle 的 spoil_check 应为 Safe，实际 {other:?}"),
+        }
+
+        // t=57_200：current≈0.00556，介于 [0.001, 0.01) → Warn（触发 contam 警告，非拒绝消费）。
+        match spoil_check(&freshness, profile, 57_200, 1.0) {
+            SpoilCheckOutcome::Warn {
+                current_qi,
+                spoil_threshold,
+            } => {
+                assert!(
+                    (spoil_threshold - 0.01).abs() < 1e-4,
+                    "spoil_threshold 应为 fresh_herb_v1 注册的 0.01，实际 {spoil_threshold}"
+                );
+                assert!(
+                    current_qi < spoil_threshold && current_qi > 0.0,
+                    "Warn 分支 current_qi 应严格小于 threshold 且未触底，实际 {current_qi}"
+                );
+            }
+            other => panic!(
+                "t=57_200（跨过 spoil_threshold 但未到 0.1×threshold）herb_bundle 应进入 Warn，\
+                 实际 {other:?}"
+            ),
+        }
+
+        // t=60_000（已触底 current=0）：远低于 0.1×threshold=0.001 → CriticalBlock（拒绝自动消费）。
+        match spoil_check(&freshness, profile, 60_000, 1.0) {
+            SpoilCheckOutcome::CriticalBlock {
+                current_qi,
+                spoil_threshold,
+            } => {
+                assert!(
+                    current_qi < 0.1 * spoil_threshold,
+                    "CriticalBlock 分支 current_qi 应低于 0.1×threshold，实际 {current_qi}"
+                );
+            }
+            other => panic!(
+                "t=60_000（远超过期阈值）herb_bundle 应进入 CriticalBlock 拒绝消费，实际 {other:?}"
+            ),
+        }
     }
 
     #[test]
