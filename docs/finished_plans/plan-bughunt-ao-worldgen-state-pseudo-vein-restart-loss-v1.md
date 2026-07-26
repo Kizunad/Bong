@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 伪灵脉 runtime zone 重启丢失 | fix_pr | ⬜ |
+| P0 | 伪灵脉 runtime zone 重启丢失 | fix_pr | ✅ 2026-07-26 |
 
 ## P0 - 伪灵脉 runtime zone 重启丢失
 
@@ -53,3 +53,15 @@
 ## 审计来源
 
 bughunt AO（2026-07-05，`bughunt-loop-20260705-ao-worldgen-state`，scope 限定 `worldgen/state` 主路径）。本轮选择 report-only：只新增 skeleton，不修代码。结论来自对 `server/src/world/heartbeat.rs`、`server/src/world/zone.rs`、`server/src/persistence/mod.rs` 的实地交叉核对，并补两轮反方证伪后保留。
+
+## 验证结论（2026-07-26 整理审计追认）
+
+伪灵脉 runtime zone 重启丢失已由 merge 836702993（2026-07-07，「修复伪灵脉 runtime zone 重启丢失」，分支头 582300094）修复：`server/src/persistence/mod.rs` 新增 `HeartbeatPseudoVeinRecord`（:496-504）持久化 zone_id/dimension/bounds/active_events 等完整生命周期字段，`hydrate_heartbeat_pseudo_veins`（:785-808）在启动 bootstrap 中重建 runtime zone 并回填 `WorldHeartbeat.active_pseudo_veins`，不再是纯内存清零。后续又有 7b8c2fef7 等 10 个 commit 做加固。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/persistence/mod.rs`（`HeartbeatPseudoVeinRecord` 结构 + `hydrate_heartbeat_pseudo_veins` 启动 hydrate）、`server/src/world/heartbeat.rs`（runtime zone 重建消费点）
+- **关键 commit**：merge 836702993（2026-07-07，「修复伪灵脉 runtime zone 重启丢失」，分支头 582300094）+ 后续加固 7b8c2fef7 等 10 commit
+- **测试结果**：证据未列出具体测试名；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
+- **跨仓库核验**：仅 server 侧命中（`persistence::mod::HeartbeatPseudoVeinRecord` / `hydrate_heartbeat_pseudo_veins`），属纯服务端运行时状态修复，无 client/agent 契约面
+- **遗留 / 后续**：无
