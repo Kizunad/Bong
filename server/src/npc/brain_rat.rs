@@ -18,11 +18,14 @@ use crate::npc::spawn_rat::RatBlackboard;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 const QI_SOURCE_SCAN_RANGE: f64 = 32.0;
-/// 冲近到此距离内即视为"咬到"。**必须 ≥ navigator 的 `GOAL_REACH_XZ`（2 格）**：navigator 沿
-/// A* 路点走、到路径终点（离目标最多 2 格）就停（`navigator.rs` 路径耗尽即 stay-put），且鼠与
-/// 玩家有碰撞体到不了同格。取 0.8 时鼠停在 2 格外永远够不到 → "只跟着不咬"（实测）。取 2.0
-/// 让它从自然停距发起啄咬；仍 < harass "远距离不咬"测试用的 3.0，不破测试。
-const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 2.0;
+/// 冲近到此**水平（XZ）距离**内即视为"咬到"。判定用 [`xz_distance`] 而非 3D 欧氏——
+/// 玩家跳起/在坡上时 Y 差不该让鼠够不到。
+///
+/// **阈值须覆盖 navigator 的实际停距**：navigator 的到达判据是 floored 坐标上的 Chebyshev-2
+/// （`GOAL_REACH_XZ=2`，`navigator.rs`），一旦"到达"就路径耗尽 stay-put、鼠不再靠近。对角逼近
+/// 时最近可停在 (2,2) 格 → XZ 欧氏 2√2≈2.83；取 0.8 或 2.0 都还够不到（对角/跳起仍"跟而不咬"）。
+/// 取 2.9 覆盖该对角最坏停距；仍 < harass "远距离不咬"测试用的 4.0，不破测试。
+const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 2.9;
 const QI_SOURCE_SPEED_FACTOR: f64 = 1.0;
 const REGROUP_SUCCESS_DISTANCE: f64 = 4.0;
 const REGROUP_SPEED_FACTOR: f64 = 1.05;
@@ -33,9 +36,9 @@ const MEDITATING_QI_SOURCE_WEIGHT: f32 = 3.0;
 /// 玩家 harass 起评的最大距离（格）。比 `QI_SOURCE_SCAN_RANGE`（32）近得多——
 /// 表达"贴身骚扰"而非通用 qi 源索敌。
 const PLAYER_HARASS_RANGE: f64 = 8.0;
-/// 冲近到此距离内即视为"咬到"，与 `QI_SOURCE_ARRIVAL_DISTANCE` 同量级但语义独立。
-/// 同样须 ≥ navigator 停距（见 `QI_SOURCE_ARRIVAL_DISTANCE` 注释），否则骚扰追而不咬。
-const PLAYER_HARASS_ARRIVAL_DISTANCE: f64 = 2.0;
+/// 冲近到此**水平（XZ）距离**内即视为"咬到"，与 `QI_SOURCE_ARRIVAL_DISTANCE` 同量级但语义独立。
+/// 同样用 XZ 距离 + 覆盖 navigator 对角停距（见 `QI_SOURCE_ARRIVAL_DISTANCE` 注释），否则骚扰追而不咬。
+const PLAYER_HARASS_ARRIVAL_DISTANCE: f64 = 2.9;
 /// "冲近咬一口"比常规索敌更急——纳维游戏速度系数略高于 `QI_SOURCE_SPEED_FACTOR`。
 const PLAYER_HARASS_SPEED_FACTOR: f64 = 1.3;
 /// 咬完立即进入 20s 逃逸/游荡冷却（20 tick/s × 20s）。冷却期间
@@ -362,7 +365,7 @@ fn seek_qi_source_action_system(
                     continue;
                 };
                 blackboard.last_pressure_target = Some(source.position);
-                if position.get().distance(source.position) <= QI_SOURCE_ARRIVAL_DISTANCE {
+                if xz_distance(position.get(), source.position) <= QI_SOURCE_ARRIVAL_DISTANCE {
                     bites.send(RatBiteEvent {
                         rat: *actor,
                         target: source.entity,
@@ -418,7 +421,7 @@ fn harass_bite_action_system(
                     *state = ActionState::Success;
                     continue;
                 };
-                if position.get().distance(target_position) <= PLAYER_HARASS_ARRIVAL_DISTANCE {
+                if xz_distance(position.get(), target_position) <= PLAYER_HARASS_ARRIVAL_DISTANCE {
                     bites.send(RatBiteEvent {
                         rat: *actor,
                         target,
@@ -704,6 +707,57 @@ mod tests {
     }
 
     #[test]
+    fn seek_qi_source_bites_at_navigator_diagonal_stop_and_ignores_elevation() {
+        // 回归：咬距曾用 3D 欧氏 ≤2.0，对角逼近时鼠停在 navigator 的 Chebyshev-2 停点
+        // (2,2)→XZ 2√2≈2.83 > 2.0 永远够不到；玩家跳起/抬高的 Y 差也把 3D 距离推过阈值。
+        // 现用 XZ 距离 ≤2.9：此处 qi 源在 XZ 2.83（对角最坏停距内）且抬高 6 格，应照咬。
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
+        app.add_systems(Update, seek_qi_source_action_system);
+        let rat = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                RatBlackboard {
+                    home_chunk: crate::fauna::rat_phase::chunk_pos_from_world(DVec3::ZERO),
+                    home_zone: "spawn".to_string(),
+                    group_id: RatGroupId(7),
+                    last_pressure_target: None,
+                    recently_drained: Vec::new(),
+                    drained_qi: 0.0,
+                    harass_cooldown_until_tick: 0,
+                },
+                Navigator::new(),
+            ))
+            .id();
+        // XZ = sqrt(2^2 + 2^2) = 2.828 ≤ 2.9；Y 抬高 6 格（3D 距离 ≈ 6.6，旧实现够不到）。
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([2.0, 70.0, 2.0]),
+                cultivation(5.0),
+                MeditatingState { since_tick: 1 },
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, SeekQiSourceAction));
+
+        app.update();
+
+        let event = app
+            .world()
+            .resource::<Events<RatBiteEvent>>()
+            .iter_current_update_events()
+            .next()
+            .copied()
+            .expect("对角停距内(XZ 2.83)且抬高的 qi 源应触发咬击（XZ 判定忽略 Y）");
+        assert_eq!(event.target, target);
+        assert_eq!(event.qi_steal, 1);
+    }
+
+    #[test]
     fn seek_qi_source_action_filters_targets_by_dimension() {
         let mut app = App::new();
         app.add_event::<RatBiteEvent>();
@@ -954,10 +1008,10 @@ mod tests {
                 Navigator::new(),
             ))
             .id();
-        // 在 harass 起评范围内(<=8)但超出咬击到达距离(>0.8)——应冲近而非直接咬。
+        // 在 harass 起评范围内(<=8)但超出咬击到达距离(XZ >2.9)——应冲近而非直接咬。
         app.world_mut().spawn((
             ClientMarker,
-            Position::new([3.0, 64.0, 0.0]),
+            Position::new([4.0, 64.0, 0.0]),
             cultivation(5.0),
         ));
         app.world_mut()
@@ -967,7 +1021,7 @@ mod tests {
 
         assert!(
             app.world().resource::<Events<RatBiteEvent>>().is_empty(),
-            "rat still rushing in (distance 3.0 > arrival 0.8) must not have bitten yet"
+            "rat still rushing in (XZ distance 4.0 > arrival 2.9) must not have bitten yet"
         );
         let navigator = app
             .world()
@@ -1145,7 +1199,7 @@ mod tests {
         let rat = spawn_harass_rat_with_phase(&mut app, Some(RatPhase::Gregarious));
         app.world_mut().spawn((
             ClientMarker,
-            Position::new([3.0, 64.0, 0.0]),
+            Position::new([4.0, 64.0, 0.0]),
             cultivation(5.0),
         ));
         app.world_mut()
@@ -1155,7 +1209,7 @@ mod tests {
 
         assert!(
             drain_attack_av(&app).is_empty(),
-            "距离 3.0 > 到达距离 0.8，鼠还在冲刺，不该播招式动画，实际 {:?}",
+            "XZ 距离 4.0 > 到达距离 2.9，鼠还在冲刺，不该播招式动画，实际 {:?}",
             drain_attack_av(&app)
         );
     }
