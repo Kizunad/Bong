@@ -67,7 +67,7 @@
 - 触发：client 本地 `CastStateStore` 已知 cast 起止（`push_skill_cast_started_sync` 下发 duration），release 时刻本地推断（§8 #3 拍板数据源）。
 - **门控硬约束**（无论 §8 #3 选哪条数据源）：release juice 必须绑定**已确认 accepted 的 cast identity**——`CastStateStore` 中该次施法处于 accepted 且未被拒绝/打断才触发；server 拒绝（`reject_*` 回执）、打断、取消回执到达时作废对应 pending juice（取消令牌语义）。本地计时器到点但确认缺失/已作废 → 不触发。同一 cast identity 的 release juice 幂等（重复回执/乱序不二次触发）。
   - **落地口径（PR #1249 二轮返工收口）**：「accepted」= `CastStateStore.Origin.SERVER_AUTHORITATIVE` 的 CASTING，即 `CastSyncHandler` → `CastStateStore.replace` 落地的服务端回执。`SkillBarKeyRouter` 按键那一刻写的 CASTING 是**本地乐观预测**，只作候选（它的作用是让 `CastSyncHandler.sourceFor` 把随后的权威回执认成 SKILL_BAR），**不授予任何触发权**。COMPLETE / 动画事件都只是「触发时刻」信号，权限一律来自已被权威武装的 pending / 令牌。
-  - 幂等与防复活按 identity 存**有界**终态记录（`CastFovController.Terminal{FIRED, VOIDED}`，LRU 上限 `TERMINAL_MEMORY=16`），先到者胜；teardown 把在飞身份整批记 VOIDED。`IDLE` **不清场**——`CastState.idle()` 是 slot=-1/startedAtMs=0 的无身份单例，无条件清场会让迟到的 IDLE 误杀在飞施法；生产上服务端的 idle 一律带 `Reject*` outcome、被 `CastSyncHandler` 合成成 INTERRUPT 走取消令牌，不以 IDLE 形态到达。
+  - 幂等与防复活按 identity 存**有界**终态记录（`CastFovController.Terminal{FIRED, VOIDED}`，LRU 上限 `TERMINAL_MEMORY=16`），先到者胜；teardown 把在飞身份整批记 VOIDED。`IDLE` **不清场**——`CastState.idle()` 是 slot=-1/startedAtMs=0 的无身份单例，无条件清场会让迟到的 IDLE 误杀在飞施法；生产上服务端发 Idle 的 4 个站点（race gate / 经脉门两处 / 统一的 `push_skill_cast_rejected_sync`）无一例外都带**非 NONE** 的 outcome（`RejectRaceMismatch` / `MeridianGated` / `reason.to_cast_outcome()`——判据是「outcome 非 NONE」而非「名字带 `Reject` 前缀」，`MeridianGated` 无该前缀但同为施放前拒绝），被 `CastSyncHandler` 合成成 INTERRUPT 走取消令牌，不以 IDLE 形态到达。
 
 ### §P3 参数 amendment（2026-07-26，真机调参，用户拍板保留）
 
