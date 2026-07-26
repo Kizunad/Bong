@@ -180,6 +180,12 @@ pub struct Navigator {
     /// Used for exponential backoff so unreachable goals don't spam every tick.
     consecutive_path_failures: u32,
 
+    /// 上次寻路时当前位置是否已在目标的到达容差内（floored Chebyshev-`GOAL_REACH_XZ`）。
+    /// 即"A* 认为已到达、无法再靠近"——近战 brain（如噬元鼠咬击）用它判"够得着了就动手"，
+    /// 不必用一个能覆盖 navigator 松散停距的大攻击半径（停距受子方块偏心 + NODE_REACH 收尾放大，
+    /// 纯距离阈值闭合不了）。纯读记录，不改移动逻辑。
+    reached_goal: bool,
+
     /// Per-mob penalty overrides. E.g. an aquatic mob could set Water → 0.
     path_type_overrides: HashMap<PathType, f32>,
 }
@@ -196,6 +202,7 @@ impl Default for Navigator {
             stuck_check_ticks: 0,
             force_next_repath: false,
             consecutive_path_failures: 0,
+            reached_goal: false,
             path_type_overrides: HashMap::new(),
         }
     }
@@ -219,13 +226,27 @@ impl Navigator {
         self.current_goal = Some(NavigatorGoal { destination, speed });
         if dest_changed {
             self.consecutive_path_failures = 0;
+            // 新目标 → 尚未到达，下一 tick 由寻路重新判定。
+            self.reached_goal = false;
             // Force repath on next tick.
             self.repath_countdown = 0;
         }
     }
 
+    /// 上次寻路时是否已在目标到达容差内（A* 认为无法再靠近）。近战 brain 用它判"够得着"。
+    pub fn has_reached_goal(&self) -> bool {
+        self.reached_goal
+    }
+
+    /// 测试专用：直接标记"已到达"，免在单测里跑完整 navigator_tick_system。
+    #[cfg(test)]
+    pub fn force_reached_goal_for_test(&mut self, reached: bool) {
+        self.reached_goal = reached;
+    }
+
     /// Stop navigating and clear the current path.
     pub fn stop(&mut self) {
+        self.reached_goal = false;
         self.current_goal = None;
         self.path.clear();
         self.path_index = 0;
@@ -398,6 +419,8 @@ pub fn navigator_tick_system(
         let needs_repath = nav.repath_countdown == 0 || destination_moved || path_exhausted;
         if needs_repath && should_repath_in_bucket(entity, tick, nav.force_next_repath) {
             let computed_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
+            // 记录"是否已在到达容差内"，供近战 brain 判"够得着了就动手"（见 Navigator::reached_goal）。
+            nav.reached_goal = computed_path.reached_goal;
             if !computed_path.reached_goal {
                 let dx = (current_pos.x.floor() as i32).abs_diff(goal.destination.x.floor() as i32);
                 let dz = (current_pos.z.floor() as i32).abs_diff(goal.destination.z.floor() as i32);

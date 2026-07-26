@@ -18,14 +18,14 @@ use crate::npc::spawn_rat::RatBlackboard;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 const QI_SOURCE_SCAN_RANGE: f64 = 32.0;
-/// 冲近到此**水平（XZ）距离**内即视为"咬到"。判定用 [`xz_distance`] 而非 3D 欧氏——
-/// 玩家跳起/在坡上时 Y 差不该让鼠够不到。
+/// 咬击的**贴脸即咬**水平（XZ）距离：够这么近就直接咬（快鼠扑咬）。判定用 [`xz_distance`]
+/// 而非 3D 欧氏——玩家跳起/在坡上时 Y 差不该让鼠够不到。
 ///
-/// **阈值须覆盖 navigator 的实际停距**：navigator 的到达判据是 floored 坐标上的 Chebyshev-2
-/// （`GOAL_REACH_XZ=2`，`navigator.rs`），一旦"到达"就路径耗尽 stay-put、鼠不再靠近。对角逼近
-/// 时最近可停在 (2,2) 格 → XZ 欧氏 2√2≈2.83；取 0.8 或 2.0 都还够不到（对角/跳起仍"跟而不咬"）。
-/// 取 2.9 覆盖该对角最坏停距；仍 < harass "远距离不咬"测试用的 4.0，不破测试。
-const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 2.9;
+/// 注意这**不是**唯一咬击条件：真正闭合"跟而不咬"的是 `navigator.has_reached_goal()`——
+/// navigator 一旦判"已到达、无法再靠近"（floored Chebyshev-`GOAL_REACH_XZ`）鼠就咬，不看残余
+/// 距离。因为 navigator 停距受子方块偏心 + NODE_REACH 收尾放大（对角逼近可停在 ~3.5–4 格外），
+/// 纯放大攻击半径既闭合不了、又会和"远距离不咬"语义打架。故此常量只管"贴脸速咬"这一支。
+const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 1.5;
 const QI_SOURCE_SPEED_FACTOR: f64 = 1.0;
 const REGROUP_SUCCESS_DISTANCE: f64 = 4.0;
 const REGROUP_SPEED_FACTOR: f64 = 1.05;
@@ -36,9 +36,9 @@ const MEDITATING_QI_SOURCE_WEIGHT: f32 = 3.0;
 /// 玩家 harass 起评的最大距离（格）。比 `QI_SOURCE_SCAN_RANGE`（32）近得多——
 /// 表达"贴身骚扰"而非通用 qi 源索敌。
 const PLAYER_HARASS_RANGE: f64 = 8.0;
-/// 冲近到此**水平（XZ）距离**内即视为"咬到"，与 `QI_SOURCE_ARRIVAL_DISTANCE` 同量级但语义独立。
-/// 同样用 XZ 距离 + 覆盖 navigator 对角停距（见 `QI_SOURCE_ARRIVAL_DISTANCE` 注释），否则骚扰追而不咬。
-const PLAYER_HARASS_ARRIVAL_DISTANCE: f64 = 2.9;
+/// 骚扰咬击的**贴脸即咬**水平距离，与 `QI_SOURCE_ARRIVAL_DISTANCE` 同义（见其注释）；同样配合
+/// `navigator.has_reached_goal()` 作为主闭合条件，此常量只管"贴脸速咬"这一支。
+const PLAYER_HARASS_ARRIVAL_DISTANCE: f64 = 1.5;
 /// "冲近咬一口"比常规索敌更急——纳维游戏速度系数略高于 `QI_SOURCE_SPEED_FACTOR`。
 const PLAYER_HARASS_SPEED_FACTOR: f64 = 1.3;
 /// 咬完立即进入 20s 逃逸/游荡冷却（20 tick/s × 20s）。冷却期间
@@ -365,7 +365,10 @@ fn seek_qi_source_action_system(
                     continue;
                 };
                 blackboard.last_pressure_target = Some(source.position);
-                if xz_distance(position.get(), source.position) <= QI_SOURCE_ARRIVAL_DISTANCE {
+                // 贴脸速咬 或 navigator 已把鼠送到极限（无法再靠近）——后者才是闭合"跟而不咬"的关键。
+                if xz_distance(position.get(), source.position) <= QI_SOURCE_ARRIVAL_DISTANCE
+                    || navigator.has_reached_goal()
+                {
                     bites.send(RatBiteEvent {
                         rat: *actor,
                         target: source.entity,
@@ -421,7 +424,10 @@ fn harass_bite_action_system(
                     *state = ActionState::Success;
                     continue;
                 };
-                if xz_distance(position.get(), target_position) <= PLAYER_HARASS_ARRIVAL_DISTANCE {
+                // 贴脸速咬 或 navigator 已到达极限（闭合"追而不咬"）。
+                if xz_distance(position.get(), target_position) <= PLAYER_HARASS_ARRIVAL_DISTANCE
+                    || navigator.has_reached_goal()
+                {
                     bites.send(RatBiteEvent {
                         rat: *actor,
                         target,
@@ -706,15 +712,7 @@ mod tests {
         assert_eq!(event.qi_steal, 1);
     }
 
-    #[test]
-    fn seek_qi_source_bites_at_navigator_diagonal_stop_and_ignores_elevation() {
-        // 回归：咬距曾用 3D 欧氏 ≤2.0，对角逼近时鼠停在 navigator 的 Chebyshev-2 停点
-        // (2,2)→XZ 2√2≈2.83 > 2.0 永远够不到；玩家跳起/抬高的 Y 差也把 3D 距离推过阈值。
-        // 现用 XZ 距离 ≤2.9：此处 qi 源在 XZ 2.83（对角最坏停距内）且抬高 6 格，应照咬。
-        let mut app = App::new();
-        app.add_event::<RatBiteEvent>();
-        app.add_event::<RatAttackAvEvent>();
-        app.add_systems(Update, seek_qi_source_action_system);
+    fn seek_qi_source_spawn_rat(app: &mut App, reached_goal: bool) -> Entity {
         let rat = app
             .world_mut()
             .spawn((
@@ -732,11 +730,28 @@ mod tests {
                 Navigator::new(),
             ))
             .id();
-        // XZ = sqrt(2^2 + 2^2) = 2.828 ≤ 2.9；Y 抬高 6 格（3D 距离 ≈ 6.6，旧实现够不到）。
+        app.world_mut()
+            .get_mut::<Navigator>(rat)
+            .unwrap()
+            .force_reached_goal_for_test(reached_goal);
+        rat
+    }
+
+    #[test]
+    fn seek_qi_source_bites_when_navigator_arrived_even_at_offcenter_elevated_target() {
+        // 回归（对抗复验抓的真实最坏几何）：navigator 到达判据是 floored Chebyshev-2，鼠停在
+        // goal-node 方块中心 (0.5,0.5)，而目标可位于其方块远半边 (2.99,2.99) → XZ≈4.2、且抬高
+        // → 任何"放大攻击半径"的数值方案都闭合不了。正解：navigator 判"已到达"即咬，不看残余距离。
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
+        app.add_systems(Update, seek_qi_source_action_system);
+        let rat = seek_qi_source_spawn_rat(&mut app, true); // navigator 已到达极限
+                                                            // 目标偏心 (2.99, y, 2.99) + 抬高 6 格：XZ≈4.2 远超任何合理攻击半径，纯靠 has_reached_goal 命中。
         let target = app
             .world_mut()
             .spawn((
-                Position::new([2.0, 70.0, 2.0]),
+                Position::new([2.99, 70.0, 2.99]),
                 cultivation(5.0),
                 MeditatingState { since_tick: 1 },
             ))
@@ -752,9 +767,33 @@ mod tests {
             .iter_current_update_events()
             .next()
             .copied()
-            .expect("对角停距内(XZ 2.83)且抬高的 qi 源应触发咬击（XZ 判定忽略 Y）");
+            .expect("navigator 已到达极限（无法再靠近）时应咬，无论残余 XZ/Y 距离");
         assert_eq!(event.target, target);
         assert_eq!(event.qi_steal, 1);
+    }
+
+    #[test]
+    fn seek_qi_source_does_not_bite_while_still_approaching() {
+        // 反向：navigator 未到达 且 未贴脸（XZ 2.0 > 1.5 速咬距）→ 不该咬，应继续冲近。
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
+        app.add_systems(Update, seek_qi_source_action_system);
+        let rat = seek_qi_source_spawn_rat(&mut app, false); // 仍在路上
+        app.world_mut().spawn((
+            Position::new([2.0, 64.0, 0.0]),
+            cultivation(5.0),
+            MeditatingState { since_tick: 1 },
+        ));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, SeekQiSourceAction));
+
+        app.update();
+
+        assert!(
+            app.world().resource::<Events<RatBiteEvent>>().is_empty(),
+            "navigator 未到达且 XZ 2.0 > 1.5 速咬距，鼠应继续冲近而非咬"
+        );
     }
 
     #[test]
@@ -1008,7 +1047,7 @@ mod tests {
                 Navigator::new(),
             ))
             .id();
-        // 在 harass 起评范围内(<=8)但超出咬击到达距离(XZ >2.9)——应冲近而非直接咬。
+        // 在 harass 起评范围内(<=8)但超出贴脸速咬距(XZ >1.5)且 navigator 未到达——应冲近而非直接咬。
         app.world_mut().spawn((
             ClientMarker,
             Position::new([4.0, 64.0, 0.0]),
@@ -1021,7 +1060,7 @@ mod tests {
 
         assert!(
             app.world().resource::<Events<RatBiteEvent>>().is_empty(),
-            "rat still rushing in (XZ distance 4.0 > arrival 2.9) must not have bitten yet"
+            "rat still rushing in (XZ 4.0 > 1.5 close-bite AND navigator not arrived) must not have bitten yet"
         );
         let navigator = app
             .world()
@@ -1209,7 +1248,7 @@ mod tests {
 
         assert!(
             drain_attack_av(&app).is_empty(),
-            "XZ 距离 4.0 > 到达距离 2.9，鼠还在冲刺，不该播招式动画，实际 {:?}",
+            "XZ 4.0 > 1.5 速咬距 且 navigator 未到达，鼠还在冲刺，不该播招式动画，实际 {:?}",
             drain_attack_av(&app)
         );
     }
