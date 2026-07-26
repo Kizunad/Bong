@@ -5,12 +5,13 @@ pub mod state;
 
 use self::state::{
     canonical_player_id, load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_known_techniques_slice, save_player_lifespan_slice_with_coffin,
-    save_player_skill_slice, save_player_slices_with_coffin, save_player_slow_slice, PlayerState,
-    PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_known_techniques_slice, save_player_lifecycle_slice,
+    save_player_lifespan_slice_with_coffin, save_player_skill_slice,
+    save_player_slices_with_coffin, save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer,
+    PlayerStatePersistence,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
-use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
+use crate::combat::components::{Lifecycle, UnlockedStyles, TICKS_PER_SECOND};
 use crate::combat::woliu_v2::erosion::VoidErosion;
 use crate::craft::CraftSession;
 use crate::cultivation::color::PracticeLog;
@@ -344,6 +345,7 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&KnownTechniques>,
         Option<&CoffinComponent>,
         Option<&CraftSession>,
+        Option<&Lifecycle>,
     )>,
     cultivation_bundle: Query<(
         &Cultivation,
@@ -382,6 +384,7 @@ pub(crate) fn despawn_disconnected_clients(
             known_techniques,
             coffin,
             craft_session,
+            lifecycle,
         )) = core_players.get(entity)
         {
             let last_dimension = current_dimension
@@ -464,6 +467,19 @@ pub(crate) fn despawn_disconnected_clients(
                     );
                 }
             }
+            // bughunt player-lifecycle-relog-death-consequence-wipe：断线必须落盘死亡/
+            // 复活状态机，否则重连时 attach_combat_bundle_to_joined_clients 只能盲插
+            // Lifecycle::default()，把 NearDeath/AwaitingRevival 玩家重置成满状态新角色。
+            if let Some(lifecycle) = lifecycle {
+                if let Err(error) =
+                    save_player_lifecycle_slice(&persistence, username.0.as_str(), lifecycle)
+                {
+                    tracing::warn!(
+                        "[bong][player] failed to save lifecycle state for disconnected client `{}`: {error}",
+                        username.0,
+                    );
+                }
+            }
         } else {
             tracing::warn!(
                 "[bong][player] disconnected client entity {entity:?} had no username/PlayerState/Position to persist before cleanup"
@@ -498,6 +514,7 @@ fn flush_connected_players_on_shutdown(
             Option<&KnownTechniques>,
             Option<&CoffinComponent>,
             Option<&CraftSession>,
+            Option<&Lifecycle>,
         ),
         With<Client>,
     >,
@@ -534,6 +551,7 @@ fn flush_connected_players_on_shutdown(
         known_techniques,
         coffin,
         craft_session,
+        lifecycle,
     ) in &players
     {
         let last_dimension = current_dimension
@@ -612,6 +630,19 @@ fn flush_connected_players_on_shutdown(
             ) {
                 tracing::warn!(
                     "[bong][player] failed to save known techniques during shutdown flush for `{}`: {error}",
+                    username.0,
+                );
+            }
+        }
+        // bughunt player-lifecycle-relog-death-consequence-wipe：关服时同样要落盘死亡/
+        // 复活状态机（同 despawn_disconnected_clients 的写路径），否则重启后重连会命中
+        // 老档缺失行、回退到 Lifecycle::default() 抹掉关服前的濒死/待复活状态。
+        if let Some(lifecycle) = lifecycle {
+            if let Err(error) =
+                save_player_lifecycle_slice(&persistence, username.0.as_str(), lifecycle)
+            {
+                tracing::warn!(
+                    "[bong][player] failed to save lifecycle state during shutdown flush for `{}`: {error}",
                     username.0,
                 );
             }
@@ -1318,6 +1349,91 @@ mod tests {
         let _ = fs::remove_dir_all(&data_dir);
     }
 
+    fn read_lifecycle_json(db_path: &PathBuf) -> String {
+        let connection = Connection::open(db_path).expect("sqlite db should open");
+        connection
+            .query_row(
+                "SELECT lifecycle_json FROM player_lifecycle WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_lifecycle row should exist")
+    }
+
+    #[test]
+    fn disconnect_flush_persists_lifecycle_state_before_cleanup() {
+        // bughunt player-lifecycle-relog-death-consequence-wipe：断线必须把死亡/复活
+        // 状态机落盘（同 disconnect_auto_releases_morph_state_before_persist_snapshot 的
+        // RemovedComponents<Client> 触发模式），否则重连时
+        // attach_combat_bundle_to_joined_clients 只能盲插 Lifecycle::default()，把
+        // AwaitingRevival + fortune_remaining=0 的濒死玩家重置成满状态新角色，完全绕过
+        // 渡劫概率判定与永久终结风险。
+        use crate::combat::components::{LifecycleState, RevivalDecision};
+
+        let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-disconnect-flush");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-lifecycle-disconnect-flush",
+        ));
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([1.0, 70.0, 1.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            karma: 0.0,
+            inventory_score: 0.0,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            character_id: "offline:Azure:char-1".to_string(),
+            death_count: 4,
+            fortune_remaining: 0,
+            last_death_tick: Some(1_000),
+            last_revive_tick: Some(500),
+            spawn_anchor: Some([9.0, 64.0, -3.0]),
+            spawn_anchor_damaged: true,
+            near_death_deadline_tick: None,
+            awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.2 }),
+            revival_decision_deadline_tick: Some(1_600),
+            weakened_until_tick: None,
+            state: LifecycleState::AwaitingRevival,
+        });
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        let lifecycle_json = read_lifecycle_json(&db_path);
+        let persisted: Lifecycle =
+            serde_json::from_str(&lifecycle_json).expect("persisted lifecycle_json should decode");
+
+        assert_eq!(persisted.character_id, "offline:Azure:char-1");
+        assert_eq!(persisted.death_count, 4);
+        assert_eq!(
+            persisted.fortune_remaining, 0,
+            "断线前 fortune_remaining=0（运气已耗尽）必须原样落盘，不能被写路径悄悄补回默认值 3"
+        );
+        assert_eq!(
+            persisted.state,
+            LifecycleState::AwaitingRevival,
+            "断线前的 AwaitingRevival 决策窗口状态必须落盘，不能丢失/降级"
+        );
+        assert_eq!(
+            persisted.awaiting_decision,
+            Some(RevivalDecision::Tribulation { chance: 0.2 }),
+            "待决策的渡劫结果（含永久终结风险）必须原样落盘"
+        );
+        assert_eq!(persisted.revival_decision_deadline_tick, Some(1_600));
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
     #[test]
     fn shutdown_flush_persists_connected_player_slices_without_disconnect() {
         let (persistence, data_dir, db_path) = sqlite_persistence("shutdown-flush");
@@ -1366,6 +1482,64 @@ mod tests {
             app.world().get::<Client>(entity).is_some(),
             "shutdown flush should persist while the player is still connected"
         );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn shutdown_flush_persists_lifecycle_state_without_disconnect() {
+        // bughunt player-lifecycle-relog-death-consequence-wipe：关服时的 flush 路径
+        // （flush_connected_players_on_shutdown）与断线路径共享同一个漏洞面，必须同样
+        // 落盘 Lifecycle，否则重启后重连会命中老档缺失行、回退到 Lifecycle::default()
+        // 抹掉关服前的濒死/待复活状态。这里专注 NearDeath 分支（AwaitingRevival +
+        // RevivalDecision 已由 disconnect_flush_persists_lifecycle_state_before_cleanup
+        // 覆盖，避免重复断言）。
+        use crate::combat::components::LifecycleState;
+
+        let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-shutdown-flush");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::default();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-lifecycle-shutdown-flush",
+        ));
+        app.add_systems(Last, flush_connected_players_on_shutdown);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([64.0, 80.0, -12.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            karma: 0.0,
+            inventory_score: 0.0,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            state: LifecycleState::NearDeath,
+            fortune_remaining: 1,
+            near_death_deadline_tick: Some(2_000),
+            awaiting_decision: None,
+            ..Lifecycle::default()
+        });
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        let lifecycle_json = read_lifecycle_json(&db_path);
+        let persisted: Lifecycle =
+            serde_json::from_str(&lifecycle_json).expect("persisted lifecycle_json should decode");
+
+        assert_eq!(
+            persisted.state,
+            LifecycleState::NearDeath,
+            "关服前的 NearDeath 濒死状态必须落盘"
+        );
+        assert_eq!(persisted.fortune_remaining, 1);
+        assert_eq!(persisted.near_death_deadline_tick, Some(2_000));
+        assert_eq!(persisted.awaiting_decision, None);
 
         let _ = fs::remove_dir_all(&data_dir);
     }

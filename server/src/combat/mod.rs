@@ -51,8 +51,8 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::{
-    canonical_player_id, load_current_character_id, load_player_shrine_anchor_slice,
-    player_character_id, PlayerStatePersistence,
+    canonical_player_id, load_current_character_id, load_player_lifecycle_slice,
+    load_player_shrine_anchor_slice, player_character_id, PlayerStatePersistence,
 };
 
 use self::anticheat::{
@@ -113,6 +113,35 @@ fn attach_combat_bundle_to_joined_clients(
             })
             .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
             .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
+
+        // bughunt player-lifecycle-relog-death-consequence-wipe：断线重连必须复用上次落盘
+        // 的死亡/复活状态机（state / fortune_remaining / awaiting_decision / 各 deadline
+        // tick），不能盲插 Lifecycle::default()——否则濒死 (NearDeath) / 待复活
+        // (AwaitingRevival) 玩家断线重连即可白嫖满状态"新角色"，完全绕过渡劫概率判定
+        // 与每角色仅 3 次的运气消耗（fortune_remaining）。deadline 均为绝对 tick 值，
+        // 全服 CombatClock 离线期间照常推进，恢复后 near_death_tick /
+        // auto_confirm_revival_decisions 会在下一 tick 自然按已过期的 deadline 继续结算，
+        // 无需在这里重放决策逻辑。character_id 不匹配（老档 / 已转生到新角色）时视为
+        // "无可复用的存档"，回退默认值。
+        let persisted_lifecycle = persistence.and_then(|persistence| {
+            load_player_lifecycle_slice(persistence, username.0.as_str())
+                .ok()
+                .flatten()
+        });
+        let lifecycle = match persisted_lifecycle {
+            Some(mut loaded) if loaded.character_id == character_id => {
+                // spawn_anchor 由独立的 player_shrine 表维护、可能比 Lifecycle JSON 快照更
+                // 新，这里始终以刚查出的权威值覆盖，避免读到断连时刻的过期灵龛坐标。
+                loaded.spawn_anchor = spawn_anchor;
+                loaded
+            }
+            _ => Lifecycle {
+                character_id: character_id.clone(),
+                spawn_anchor,
+                ..Default::default()
+            },
+        };
+
         commands.entity(entity).insert((
             Wounds::default(),
             Stamina::default(),
@@ -125,11 +154,7 @@ fn attach_combat_bundle_to_joined_clients(
             carrier::CarrierStore::default(),
             anqi_v2::ContainerSlot::default(),
             player_attack::PlayerAttackCooldown::default(),
-            Lifecycle {
-                character_id,
-                spawn_anchor,
-                ..Default::default()
-            },
+            lifecycle,
         ));
     }
 }

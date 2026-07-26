@@ -577,6 +577,31 @@ pub fn save_player_shrine_anchor_slice(
     Ok(persistence.db_path().to_path_buf())
 }
 
+/// bughunt player-lifecycle-relog-death-consequence-wipe：读回断线前持久化的死亡/复活
+/// 状态机（`state`/`fortune_remaining`/`awaiting_decision`/各 deadline tick）。
+/// `None` = 该用户名从未落过盘（首次登录，或 pre-v39 老档），调用方应回退到
+/// `Lifecycle::default()` 而非当作"读取失败"处理。
+pub fn load_player_lifecycle_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<crate::combat::components::Lifecycle>> {
+    let connection = open_player_connection(persistence)?;
+    load_player_lifecycle_from_sqlite(&connection, username)
+}
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe：断线/关服 flush 时把当前
+/// `Lifecycle` 组件整份落盘，让重连不再盲插 `Lifecycle::default()`（否则濒死/待复活玩家
+/// 会被静默重置成满运气次数的"新角色"，绕过渡劫概率判定与永久终结风险）。
+pub fn save_player_lifecycle_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    lifecycle: &crate::combat::components::Lifecycle,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_lifecycle_slice_in_sqlite(&mut connection, username, lifecycle)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
 pub fn save_player_state(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -1882,6 +1907,35 @@ fn load_player_known_techniques_from_sqlite(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+/// bughunt player-lifecycle-relog-death-consequence-wipe：`None` = 未落过盘（vs. 老档 /
+/// 首次登录），调用方要能区分"从未持久化"和"反序列化失败"（后者仍走 `Err` fail-loud，
+/// 不静默吞成 `None` 掩盖坏数据）。
+fn load_player_lifecycle_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<crate::combat::components::Lifecycle>> {
+    let lifecycle_json: Option<String> = connection
+        .query_row(
+            "
+            SELECT lifecycle_json
+            FROM player_lifecycle
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some(lifecycle_json) = lifecycle_json else {
+        return Ok(None);
+    };
+
+    serde_json::from_str::<crate::combat::components::Lifecycle>(&lifecycle_json)
+        .map(Some)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
 fn persist_player_core_slice_in_sqlite(
     connection: &mut Connection,
     username: &str,
@@ -2095,6 +2149,45 @@ fn persist_player_known_techniques_slice_in_sqlite(
             params![
                 username,
                 known_techniques_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe：整份 `Lifecycle` 组件镜像进
+/// `player_lifecycle.lifecycle_json`（同 known_techniques 的单 JSON 列模式），覆盖
+/// state/fortune_remaining/awaiting_decision/各 deadline tick —— 调用方（断线清理 /
+/// 关服 flush）必须传入断连那一刻的真实组件值，不得传入尚未跑过状态转换的陈旧快照。
+fn persist_player_lifecycle_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    lifecycle: &crate::combat::components::Lifecycle,
+) -> io::Result<()> {
+    let lifecycle_json = serde_json::to_string(lifecycle)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_lifecycle (
+                username,
+                lifecycle_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                lifecycle_json = excluded.lifecycle_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                lifecycle_json,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -4151,6 +4244,229 @@ mod player_state_tests {
             .and_then(serde_json::Value::as_f64)
             .expect("dash proficiency should persist");
         assert!((proficiency - 0.42).abs() < 1e-6);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // ── bughunt player-lifecycle-relog-death-consequence-wipe ──
+    //
+    // `Lifecycle`（死亡/复活状态机）此前从未落盘：断线重连时
+    // `attach_combat_bundle_to_joined_clients` 只能盲插 `Lifecycle::default()`，把
+    // NearDeath/AwaitingRevival 玩家的 fortune_remaining（每角色仅 3 次）与
+    // awaiting_decision（含永久终结风险的 Tribulation 判定）全部抹回满状态"新角色"。
+    // 下面几个测试锁住 `save_player_lifecycle_slice`/`load_player_lifecycle_slice` 的
+    // round-trip 保真度，覆盖状态机全部 4 个变体 + RevivalDecision 两个变体 +
+    // fortune_remaining=0 边界 + "从未落盘" 与 "覆盖旧行" 两个存在性分支。
+    use crate::combat::components::{Lifecycle, LifecycleState, RevivalDecision};
+
+    fn sample_lifecycle_awaiting_revival_zero_fortune() -> Lifecycle {
+        Lifecycle {
+            character_id: "offline:Azure:char-1".to_string(),
+            death_count: 4,
+            fortune_remaining: 0,
+            last_death_tick: Some(1_000),
+            last_revive_tick: Some(500),
+            spawn_anchor: Some([9.0, 64.0, -3.0]),
+            spawn_anchor_damaged: true,
+            near_death_deadline_tick: None,
+            awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.2 }),
+            revival_decision_deadline_tick: Some(1_600),
+            weakened_until_tick: None,
+            state: LifecycleState::AwaitingRevival,
+        }
+    }
+
+    #[test]
+    fn player_lifecycle_slice_missing_row_returns_none_not_error() {
+        // 首次登录 / pre-v39 老档：该用户名从未落过 player_lifecycle 行。调用方
+        // （attach_combat_bundle_to_joined_clients）要能区分"没有存档"（Ok(None)，回退
+        // Default）与"读取失败"（Err，同样回退但走告警日志），这里锁住前者。
+        let (persistence, data_dir) = sqlite_persistence("lifecycle-missing-row");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+            .expect("missing row should not be an I/O error");
+
+        assert!(
+            loaded.is_none(),
+            "从未 save 过的用户名必须读回 None，不能凭空造出一个 Lifecycle"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifecycle_slice_roundtrips_awaiting_revival_with_zero_fortune() {
+        // 核心回归锁：断线时 fortune_remaining=0 且有一个待决策的 Tribulation（可能永久
+        // 终结角色），重连后必须原样读回同一状态，而不是被写/读路径的任何一端悄悄
+        // 补回默认值 3 / Alive。
+        let (persistence, data_dir) = sqlite_persistence("lifecycle-roundtrip-awaiting");
+        let lifecycle = sample_lifecycle_awaiting_revival_zero_fortune();
+
+        save_player_lifecycle_slice(&persistence, "Azure", &lifecycle)
+            .expect("lifecycle slice should persist");
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+            .expect("lifecycle slice should load")
+            .expect("lifecycle row should exist after save");
+
+        assert_eq!(loaded.character_id, lifecycle.character_id);
+        assert_eq!(loaded.death_count, lifecycle.death_count);
+        assert_eq!(
+            loaded.fortune_remaining, 0,
+            "fortune_remaining=0（运气已耗尽）是这个 bug 最关键的边界，必须原样往返"
+        );
+        assert_eq!(loaded.last_death_tick, lifecycle.last_death_tick);
+        assert_eq!(loaded.last_revive_tick, lifecycle.last_revive_tick);
+        assert_eq!(loaded.spawn_anchor, lifecycle.spawn_anchor);
+        assert_eq!(loaded.spawn_anchor_damaged, lifecycle.spawn_anchor_damaged);
+        assert_eq!(
+            loaded.near_death_deadline_tick,
+            lifecycle.near_death_deadline_tick
+        );
+        assert_eq!(
+            loaded.awaiting_decision,
+            Some(RevivalDecision::Tribulation { chance: 0.2 }),
+            "待决策的渡劫结果（含永久终结风险）必须原样往返"
+        );
+        assert_eq!(
+            loaded.revival_decision_deadline_tick,
+            lifecycle.revival_decision_deadline_tick
+        );
+        assert_eq!(loaded.weakened_until_tick, lifecycle.weakened_until_tick);
+        assert_eq!(loaded.state, LifecycleState::AwaitingRevival);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifecycle_slice_roundtrips_alive_default_fortune() {
+        // A→A 状态转换 pin：健康在线玩家的常规 Lifecycle（Alive + 满运气次数）也要能
+        // round-trip，不只是濒死分支。
+        let (persistence, data_dir) = sqlite_persistence("lifecycle-roundtrip-alive");
+        let lifecycle = Lifecycle::default();
+        assert_eq!(lifecycle.state, LifecycleState::Alive);
+        assert_eq!(lifecycle.fortune_remaining, 3);
+
+        save_player_lifecycle_slice(&persistence, "Azure", &lifecycle)
+            .expect("lifecycle slice should persist");
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+            .expect("lifecycle slice should load")
+            .expect("lifecycle row should exist after save");
+
+        assert_eq!(loaded.state, LifecycleState::Alive);
+        assert_eq!(loaded.fortune_remaining, 3);
+        assert_eq!(loaded.awaiting_decision, None);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn player_lifecycle_slice_roundtrips_all_state_variants() {
+        // enum 变体 pin：LifecycleState 的全部 4 个变体各至少一条专属往返用例。
+        for state in [
+            LifecycleState::Alive,
+            LifecycleState::NearDeath,
+            LifecycleState::AwaitingRevival,
+            LifecycleState::Terminated,
+        ] {
+            let (persistence, data_dir) =
+                sqlite_persistence(&format!("lifecycle-state-variant-{state:?}"));
+            let lifecycle = Lifecycle {
+                state,
+                ..Lifecycle::default()
+            };
+
+            save_player_lifecycle_slice(&persistence, "Azure", &lifecycle)
+                .expect("lifecycle slice should persist");
+            let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+                .expect("lifecycle slice should load")
+                .expect("lifecycle row should exist after save");
+
+            assert_eq!(loaded.state, state, "LifecycleState::{state:?} 未原样往返");
+
+            let _ = fs::remove_dir_all(&data_dir);
+        }
+    }
+
+    #[test]
+    fn player_lifecycle_slice_roundtrips_both_revival_decision_variants() {
+        // enum 变体 pin：RevivalDecision 的 Fortune / Tribulation 两个变体各一条专属用例
+        // （两者语义天差地别：can_terminate() 只有 Tribulation 为 true）。
+        for decision in [
+            RevivalDecision::Fortune { chance: 0.8 },
+            RevivalDecision::Tribulation { chance: 0.1 },
+        ] {
+            let (persistence, data_dir) =
+                sqlite_persistence(&format!("lifecycle-decision-variant-{decision:?}"));
+            let lifecycle = Lifecycle {
+                state: LifecycleState::AwaitingRevival,
+                awaiting_decision: Some(decision),
+                revival_decision_deadline_tick: Some(42),
+                ..Lifecycle::default()
+            };
+
+            save_player_lifecycle_slice(&persistence, "Azure", &lifecycle)
+                .expect("lifecycle slice should persist");
+            let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+                .expect("lifecycle slice should load")
+                .expect("lifecycle row should exist after save");
+
+            assert_eq!(
+                loaded.awaiting_decision,
+                Some(decision),
+                "RevivalDecision::{decision:?} 未原样往返"
+            );
+            assert_eq!(
+                loaded.awaiting_decision.map(|d| d.can_terminate()),
+                Some(decision.can_terminate()),
+                "RevivalDecision::{decision:?} 的 can_terminate() 语义（是否携带永久终结\
+                 风险）在往返后必须保持一致"
+            );
+
+            let _ = fs::remove_dir_all(&data_dir);
+        }
+    }
+
+    #[test]
+    fn player_lifecycle_slice_overwrite_replaces_previous_row_not_duplicates() {
+        // ON CONFLICT(username) DO UPDATE：同一用户名二次 save 必须覆盖而非新增/保留旧值，
+        // 否则重连读到的是"某一次历史断线"而不是"最后一次断线"的状态。
+        let (persistence, data_dir) = sqlite_persistence("lifecycle-overwrite");
+
+        let first = Lifecycle {
+            state: LifecycleState::NearDeath,
+            fortune_remaining: 2,
+            near_death_deadline_tick: Some(100),
+            ..Lifecycle::default()
+        };
+        save_player_lifecycle_slice(&persistence, "Azure", &first)
+            .expect("first lifecycle slice should persist");
+
+        let second = sample_lifecycle_awaiting_revival_zero_fortune();
+        save_player_lifecycle_slice(&persistence, "Azure", &second)
+            .expect("second lifecycle slice should overwrite");
+
+        let loaded = load_player_lifecycle_slice(&persistence, "Azure")
+            .expect("lifecycle slice should load")
+            .expect("lifecycle row should exist after save");
+
+        assert_eq!(
+            loaded.state,
+            LifecycleState::AwaitingRevival,
+            "第二次 save 必须覆盖第一次的 NearDeath，不能残留旧状态"
+        );
+        assert_eq!(loaded.fortune_remaining, 0);
+
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let row_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM player_lifecycle WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("row count query should succeed");
+        assert_eq!(row_count, 1, "覆盖保存不能在 player_lifecycle 里堆出重复行");
 
         let _ = fs::remove_dir_all(&data_dir);
     }
