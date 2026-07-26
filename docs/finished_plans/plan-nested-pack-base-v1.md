@@ -60,7 +60,7 @@
 1. **随身子包容器化**（把若干 `category = "misc"` 物品升级为 `category = "container"` + `accept` filter / freshness 行为）——**归属 `docs/plan-container-filter-and-completion-v1.md`**（active plan，其 P3 阶段负责冻结随身 `ContainerSpec` 的确切集合与各自 filter）。**本归档不复述该集合的具体成员**：该 plan 正在被 PR #1260（分支 `docs/rebase-container-filter-owner-v1-r4`）重基，容器名单、filter 与 freshness 归属以那份 plan 合入后的正文为唯一权威，不以本文件为准。
    - **依赖引用脱节已由 PR #1260 承接**：`plan-container-filter-and-completion-v1.md` 在 origin/main 上的旧正文显式依赖本 plan 提供的 `sub_container` / `PackContainerOpen/Move/Close` / `SubContainerPanel`，并写着「本 plan 全部 merge 到 main 后才开」；这些 symbol 现已证实**从未存在**。该脱节正是 PR #1260 的核心交付物（把接入面改绑 `owner_instance_id` / `InventoryMoveIntent` / `WornContainerPanel` / `PackContainerWindow` 一线），**不是本归档遗留的开放待办**。**本次归档范围明确不包含改动 `plan-container-filter-and-completion-v1.md`**；若 PR #1260 最终未合入，则该重基需求回落为开放待办。
 2. **可拖拽 root overlay 浮窗基建**（本 plan 原 P4 §8 #5 点名的最高风险项）——若后续仍有需要独立可拖拽浮窗（非套包场景）的 UI 需求，`PackContainerWindow`（`extends DraggableContainer<FlowLayout>`）已提供了可复用的拖拽窗口基类，**不需要另起 plan 从零验证可行性**；若有新场景需要则应在对应 UI plan 里直接引用 `DraggableContainer`，不得再假称「塔科夫已覆盖」等价于「所有浮窗需求已覆盖」。
-3. **`water_skin` 灌装实装**——已移出套包 scope，归属 `docs/plans-skeleton/plan-satiety-hydration-v1.md:114`（饱食度/水分双轴生存系统骨架，2026-07-18 已立骨架，尚未升 active）。该骨架文档已明确记录 `water_skin_filled` 需要从零接线（TOML 注册 + 消费链 + icon），不存在捷径。
+3. **`water_skin` 灌装实装**——已移出套包 scope，归属 `docs/plans-skeleton/plan-satiety-hydration-v1.md:114`（饱食度/水分双轴生存系统骨架，2026-07-18 已立骨架；截至本次归档在 origin/main 上仍为 skeleton，其升 active + P0 实装由在跑的 PR #1259（`auto/plan-satiety-hydration-v1-pr1`）承接）。该骨架文档已明确记录 `water_skin_filled` 需要从零接线（TOML 注册 + 消费链 + icon），不存在捷径。
 4. **worldview §九:808 转移税**（「inventory 操作扣灵气纯度 1-5%」）——**已在 `docs/plans-skeleton/reminder.md:31` 找到对应条目**：「§808 转移税另立 plan 待办（2026-06-10 甩锅消解后遗留）」，明写两个套包族 plan 均已划出 scope，另立 plan 时需先扩 `qi_physics` 定义扣减率常数 + ledger 归还路径，不可自拍 1-5% 数值。该 reminder 条目继续由 `reminder.md` 管理，本次归档不改动它。
 
 ---
@@ -90,5 +90,5 @@
 - **遗留 / 后续**：
   1. 随身子包容器化 → 归 `docs/plan-container-filter-and-completion-v1.md`（active，P3 阶段冻结确切容器集合）。该 plan 旧正文对本 plan 从未存在 symbol 的依赖引用，已由 PR #1260（`docs/rebase-container-filter-owner-v1-r4`）承接重基，**不作为本归档的开放待办**；本次归档范围不含改动该文件。
   2. 可拖拽 root overlay 浮窗基建 → `PackContainerWindow`（`extends DraggableContainer<FlowLayout>`）已提供可复用基类，新场景直接复用，不必另立 spike plan。
-  3. `water_skin` 灌装实装 → 归 `docs/plans-skeleton/plan-satiety-hydration-v1.md:114`（骨架，未升 active）。
+  3. `water_skin` 灌装实装 → 归 `docs/plans-skeleton/plan-satiety-hydration-v1.md:114`（归档时在 origin/main 上仍为骨架；升 active + P0 由在跑的 PR #1259 承接）。
   4. worldview §九:808 转移税 → 见 `docs/plans-skeleton/reminder.md:31`，继续由该 reminder 条目管理，另立 plan 时需先扩 `qi_physics`。
