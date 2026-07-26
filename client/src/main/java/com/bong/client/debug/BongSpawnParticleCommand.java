@@ -109,6 +109,9 @@ public final class BongSpawnParticleCommand {
         sb.append(reportSprite("qi_aura",             BongParticles.qiAuraSprites,            client));
         sb.append(reportSprite("rune_char",           BongParticles.runeCharSprites,          client));
         sb.append(reportSprite("enlightenment_dust",  BongParticles.enlightenmentDustSprites, client));
+        sb.append(reportSprite("blood_splat",         BongParticles.bloodSplatSprites,        client));
+        sb.append(reportSprite("blood_drop",          BongParticles.bloodDropSprites,         client));
+        sb.append(reportSprite("blood_streak",        BongParticles.bloodStreakSprites,       client));
         ctx.getSource().sendFeedback(Text.literal(sb.toString()));
         return 1;
     }
