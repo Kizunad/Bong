@@ -1761,8 +1761,8 @@ plans:
   group: cultivation-economy
   title: 种族 BodyPlan 通用化+固元易形功法
   state: active-implementing
-  percent: 80
-  last_updated: '2026-07-26'
+  percent: 65
+  last_updated: '2026-07-27'
   pr_refs:
   - 1160
   - 1180
@@ -1775,7 +1775,7 @@ plans:
   - 1206
   - 1250
   blocking_on: []
-  summary: P0-P4 已落地（body_plan 底盘/经脉通用化/动态面板/RaceGate 三档/易形 morph.rs）；P5 已落机制底盘（/race set dev 命令+RaceChange 两阶段事务 #1204、突破配额+dugu 路由换轨 #1203、whale body_plan+IntrinsicRace 接线 #1206），仍欠 FinRing 消费链 / 2 条 bot 场景 / e2e / worldview 增补案 / 非人种族生产获得路径，此前被 #1278 误追认归档，已回退。
+  summary: P1-P3 已逐项核验落地（经脉通用化/动态面板/RaceGate 三档）；P0（战斗部位消费点改造范围收窄是否构成正式 amendment）与 P4（易形功法，14 项交付物 11 项落地，2 项确认缺口：FormAnchor 门控无生产收拢点集成测试、易形态名牌/队友标识经反编译确认未保留）本轮逐项核验后改回 ⏳；P5 已落机制底盘（/race set dev 命令+RaceChange 两阶段事务 #1204、突破配额+dugu 路由换轨 #1203、whale body_plan+IntrinsicRace 接线 #1206），仍欠 FinRing 消费链 / 2 条 bot 场景 / e2e / worldview 增补案 / 非人种族生产获得路径，此前被 #1278 误追认归档，已回退。
 - file: finished_plans/plan-season-phase-stale-client-v1.md
   group: infrastructure
   title: 季节跨相位客户端状态陈旧
