@@ -39,6 +39,13 @@
 - **跌出后无人修复**：全仓 `state = StaminaState::ShieldBlocking` 唯一生产赋值点是 `combat/shield_block.rs:325`（新举盾路径）；幂等重举盾分支（`:293-310`）只刷新 status 后 `continue`，不重设 state。
 - **连锁后果**：drain 从熟练度盾耗 2~3/s（`ShieldDrainOverride`，`shield_block.rs:112`）跳成 `COMBAT_DRAIN_PER_SEC` 5/s（`lifecycle.rs:289`）；低体力叙事静音（`shield_block.rs:525`）；放盾不复位（`shield_block.rs:370-374` guard 不成立）→ 状态卡 Combat 直到战斗窗口过期。期间 `ShieldBlock` 组件仍在、减伤照常——不是自洽的「受击打断」设计，是保护漏装。
 
+### 扣费两类契约（全 plan 权威定义，P0 仲裁表与 P3-c 守恒测试共用）
+
+体力流出只有两类，任何 spend 路径必须归入其一，**两类的余额不足语义不同且互不冲突**：
+
+- **`try_spend`（主动消费，可拒绝）**：普攻发起 gate、剑基础四招、剑道五招、气针、暗器、dash、举盾开始。契约：产生任何招式事件/效果**之前**预检余额，`current < cost` → 拒绝且零扣费、零事件、零效果；成功路径原子扣**恰好一次**。
+- **`force_drain`（被动/持续，不可拒绝）**：受击扣费（`resolve.rs:1062`）、`stamina_tick` 各状态 drain。契约：无预检、clamp 到 0（伤害/持续效果照常结算），扣至 `<= 0` 走 Exhausted 转换（见仲裁表）。
+
 ### P0 状态仲裁表（修复的唯一权威语义，fix PR 不得偏离）
 
 保护 guard 的准确形状：**仅当扣费后 `current > 0` 时保护 ShieldBlocking/Exhausted 不被覆写成 Combat；扣费后 `current <= 0` 时照常写入 Exhausted**（即耗尽转换永不被保护阻断）。ShieldBlock/ShieldDrainOverride 组件的移除**唯一责任方**保持既有 `force_lower_shield_on_stamina_exhausted`（`shield_block.rs:455-495`，Physics set 内 `.after(stamina_tick)`，同 tick 闭合），扣费点不自行拆盾。
@@ -59,9 +66,11 @@
 - 写点 A：`movement/mod.rs:179-186` `sync_stamina_regen_from_realm`（每帧、`With<Client>`）按境界写 2.0~6.0（`:808-816`，醒灵/引气 2.0 → 化虚 6.0）。
 - 写点 B：`combat/status.rs:355-361` `combat_pill_stamina_status_tick`（每 4 tick、无 filter）无丹药 buff 时强制写回 5.0（`status.rs:149`）。
 - 两写点各有 epsilon 守卫但写不同值 → 每帧互相改写；写点 A 游离于 `CombatSystemSet` 之外（`movement/mod.rs:153`），与 B 和 `stamina_tick` 均无序 → 读值取决于调度器仲裁。
-- **修法（唯一方案，无备选）**：`recover_per_sec` 收敛为**唯一写入者**——单一聚合系统按 `stamina_regen_rate(realm) × pill_recov_mult × crash_mult ×（预留 satiety 乘数位）` 计算最终值并带 epsilon 守卫写入；`sync_stamina_regen_from_realm` **删除**；status 系统只维护自己的 modifier 数据（buff 增删），**不再直接写 recover_per_sec**。境界 baseline 是聚合函数的输入而非另一个写入者。~~仅把写点 A 移进 CombatSystemSet 排序~~——排序只能固定最后写入者、消不掉双写与 Changed 抖动，**明确否决，不作为可选修法**。
+- **修法（唯一方案，无备选）**：`recover_per_sec` 收敛为**唯一运行期写入者**——新聚合系统（工作名 `aggregate_stamina_recovery`）按 `stamina_regen_rate(realm) × pill_recov_mult × crash_mult ×（预留 satiety 乘数位）` 计算最终值并带 epsilon 守卫写入；`sync_stamina_regen_from_realm` **删除**；status 系统只维护自己的 modifier 数据（buff 增删），**不再直接写 recover_per_sec**。~~仅把写点 A 移进 CombatSystemSet 排序~~——**明确否决，不作为可选修法**。
+- **调度契约（运行接线交付物）**：聚合系统注册进 `CombatSystemSet::Physics` 且 `.before(lifecycle::stamina_tick)`（对齐既有 `combat/mod.rs:340-342` 约束模式）；status modifier 增删系统 `.before(聚合系统)`——modifier 变更、聚合、消费三步在同 tick 内定序完成。
+- **「唯一写入点」的 grep 验收口径**：指**运行期**写入点唯一（聚合系统一处）；初始化/重置类赋值不算运行期写入者，豁免清单显式枚举：`Stamina::default()` 构造、join bundle 插入（`combat/mod.rs:116-133`）、revive/new_character/`/reset`（`lifecycle.rs:1505-1508`、`:1819-1821`、`cmd/dev/reset.rs:202-204`）。豁免清单外新增写入点 = 验收失败。
 - **P1-d 拍板项（decision）**：NPC 的 baseline——进同一聚合函数按 NPC realm 分级，还是保持常数 5.0（写明设计依据）。
-- 测试：6 境界最终值 pin；buff 加入 → 生效、buff 撤销 → 回境界 baseline（不是回 5.0 常数）；多 buff 乘数叠加；稳态（值不变时）不重复标 Changed；NPC baseline 按拍板结论 pin。
+- 测试（**走真实 App schedule，不测抽出的纯函数**）：6 境界最终值 pin；buff 加入当 tick 生效、buff 撤销当 tick 回境界 baseline（不是回 5.0 常数）、crash 切换当 tick 的 recover_per_sec 与实际恢复量断言；多 buff 乘数叠加；稳态（值不变时）不重复标 Changed；NPC baseline 按拍板结论 pin。
 
 ## P2 — 🔴 5Hz 伪心跳 + join 首帧权威契约（高危，已亲验，必须捆绑修）
 
@@ -78,16 +87,20 @@
 
 ### P2 join 首帧权威契约
 
-- **权威首帧 = `combat_hud_state`**（唯一渲染数值源）：新增显式 join resync 系统（挂 client join/`Added<Client>` 路径，与 `network/mod.rs:978-988` 既有 join hydration 同模式），**不经 `Changed` filter** 直接推一份当前 `hp/qi/stamina_percent + derived` 全量帧；`movement_state` 首帧由既有 `Added<MovementState>`（`movement/mod.rs:170-177`）覆盖；`status_snapshot` 首帧并入同一 join resync 系统显式触发。
+- **触发源（显式，不隐含在 `Added<T>` 上）**：新增单一 join resync 系统，消费与 `network/mod.rs:978-988` 既有 join hydration（inventory/dropped_loot 的 emit_join_* 系列）**同一个 join 检测源**——该源在 valence 连接模型下对首连与重连一视同仁（每次连接都是新 client 实体），fix PR 须在 plan promotion 时把具体事件/组件 symbol 钉进本节。该系统**一次性显式推送全部三条通道**的权威首帧，均不经 `Changed` filter。
+- **三通道首帧各自的断言**（不只 combat_hud_state）：① `combat_hud_state` 全量帧（`hp/qi/stamina_percent + derived`，权威数值源）；② `movement_state` 全量帧（既有 `Added<MovementState>`（`movement/mod.rs:170-177`）已覆盖，e2e 仍须显式断言收到）；③ `status_snapshot` 当前 status 全集（并入 join resync 显式触发，不依赖 `Changed<StatusEffects>` 碰巧命中）。
 - **顺序无关化（而非锁顺序）**：client 侧 `CombatHudState.create()` 不再硬编码 `active=true`（`CombatHudState.java:39-52`），改为**继承当前 snapshot 的 active**——`derived_attrs_sync` 先到/后到都不能把清空态复活成 active+全满。
 - **幂等**：client store 为无条件覆盖语义，重复快照天然幂等；join resync 重复触发不产生额外可观察状态，测试锁死。
+- **e2e 场景钉死**：仅客户端断线重连（server 侧玩家 ECS 数据不发生任何体力变化）→ 分别断言三条通道各收到恰好一次权威首帧、HUD 渲染真值非 EMPTY 常量；该场景在伪心跳守卫（`lifecycle.rs:282-283` epsilon 化）**开启**状态下运行，证明首帧不再寄生伪心跳。
 - 伪心跳修复本体：`lifecycle.rs:282-283` 加 epsilon 守卫（对齐同文件 `status.rs:355-361` 风格），`Changed<Stamina>` 回归真变化驱动。
 
 ## P3 — 防御扣费拍板 + 三态拍板 + 扣费守恒（中）
 
 - **P3-a 拍板**：被击方无条件扣 `DEBUG_ATTACK_STAMINA_COST(12.0) * decay`（`resolve.rs:154` 定义、`:1062` 主路径消费、`:4894-4897` 测试 pin），近身满额为攻方 `ATTACK_STAMINA_COST` 3.0 的 4 倍且带 `DEBUG_` 前缀。拍板：是设计（受击掉体力）→ 常量改名 + 数值依据入 plan；是调试遗留 → 下调/移除并更新 pin 测试（失败信息写明设计依据）。
-- **P3-b 拍板**：`Walking/Jogging/Sprinting` 三态生产零赋值（仅测试 `world/furniture.rs:608,639`）→ `SPRINT/JOG_DRAIN_PER_SEC`（`lifecycle.rs:74-75`）不可达、`Stamina::normalized()` Sprinting 分支（`components.rs:159-161`）死路、`world/furniture.rs:242` 灵韵「须 Idle」门形同虚设。拍板：接真实移动状态机（冲刺/疾跑真实进入对应态）or 删态清常量 + furniture 门改按真实移动速度判定。
-- **P3-c 修复（扣费守恒，非拍板）**：剑基础 `spend_stamina`（`sword_basics.rs:810-822`）补余额预检，统一到 `skill_register.rs:846-853` 模式（余额不足 → 拒绝进 InRecovery，不产生任何招式效果/事件/扣费）；dash clamp（`movement/mod.rs:720`）顺手统一为双向。**守恒测试四件套**（对全部 spend 路径逐一）：余额恰好等于成本 → 成功且扣至 0；余额低于成本 → 拒绝且无伤害/无事件/零扣费；成功路径恰好扣一次；任何路径 `current` 永不为负。
+- **P3-b 拍板**：`Walking/Jogging/Sprinting` 三态生产零赋值（仅测试 `world/furniture.rs:608,639`）→ `SPRINT/JOG_DRAIN_PER_SEC`（`lifecycle.rs:74-75`）不可达、`Stamina::normalized()` Sprinting 分支（`components.rs:159-161`）死路、`world/furniture.rs:242` 灵韵「须 Idle」门形同虚设。两个分支的前置条件不对称：
+  - **接线分支的硬前置**：接真实移动状态机会新增 StaminaState 写入方，**必须先把三态并入 P0 仲裁表扩展版**（至少覆盖：移动中格挡、移动中进战斗、Exhausted 期间有移动输入、停止移动回落——每格写明终值与执行方）+ 真实调度转换 pin，才允许动代码；不建仲裁不许选此分支。
+  - **删除分支**：enum 三变体 + drain 常量 + `normalized()` 分支 + 相关测试 + furniture `state != Idle` 条件全链删除（furniture 门改按真实移动速度判定），全链清单进验收。
+- **P3-c 修复（扣费守恒，非拍板）**：按「扣费两类契约」（见 P0 前置节）逐路径归类并修复：剑基础 `spend_stamina`（`sword_basics.rs:810-822`）属 `try_spend` 却无预检 → 统一到 `skill_register.rs:846-853` 模式（余额不足 → 拒绝进 InRecovery，零效果/事件/扣费）；dash clamp（`movement/mod.rs:720`）顺手统一为双向。**守恒测试按两类分别断言**：`try_spend` 类——余额恰好等于成本成功且扣至 0、低于成本拒绝且无伤害/事件/扣费、成功恰好扣一次；`force_drain` 类——不足时 clamp 至 0 且伤害/持续效果照常、归零触发 Exhausted 转换（对齐 P0 仲裁表）；两类共同——`current` 永不为负。
 
 ## P4 — 阈值语义拍板 + movement 死负载字段拍板（中，decision 先行）
 
@@ -106,9 +119,9 @@
 
 - **P5-a**：combat_hud_state schema 四件套——TypeBox 定义 + generated JSON schema + 正反 sample（含 `stamina_percent` 0 / 1 / 越界负样本）+ Rust roundtrip（对齐 movement_state 的 `server_data.rs:5963` 模式）。它是唯一渲染数值源却零 schema 覆盖，且不在 `plan-bughunt-server-data-s2c-schema-union-drift-v1` §6 清单内。
 - **P5-b**：死字段三项逐项拍板（接线 or 删除，各自独立 commit）：`last_drain_tick`（6 写 0 读：`lifecycle.rs:150`、`movement/mod.rs:721`、`sword_basics.rs:821`、`carrier.rs:815`、`resolve.rs:1064`、`skill_register.rs:938`）；`ShieldSpec.stamina_drain_per_s`（`inventory/mod.rs:221-231` 注释自认 P4 承诺未兑现——接进 `shield_block_profile` or 删配置字段）；`technique_proficiency.stamina_cost_mult`（`technique_proficiency.rs:102`）。
-- **P5-c 修复**：HuGuSan 删除对 `stamina.max` 的直写（`client_request_handler.rs:16284-16290`），max 计算归一到 status 聚合链单一口径；测试锁「服药后跨 4 tick max 不回跳」。
-- **P5-d 修复**：`StaminaRecovBoost` magnitude 双语义拆解（`status.rs:367-397`）——拆两个 StatusEffectKind or 加显式字段；`alchemy/pill.rs:685-707` 配方连动；正反 pin 测试锁两种效果不再靠数值大小分流。
-- **P5-e 拍板**：体力持久化 or 有意重连重置（`combat/mod.rs:116-133`），与血条审计持久化方案联动决议并记录；若持久化 → 往返测试 + 不出现未声明的体力增生；若有意重置 → 决策记录留档即可。
+- **P5-c 修复**：HuGuSan 删除对 `stamina.max` 的直写（`client_request_handler.rs:16284-16290`），max 计算归一到 status 聚合链单一口径（producer：服药 push StatusEffect → 聚合写入者按 status 计算 max）。测试**同时证明不回跳与药效未丢**：服药后 max 达聚合口径预期值、跨多个 status tick 保持、与 `StaminaCrash` 叠加口径唯一、效果过期回 baseline 100——单锁「不回跳」会让「把药效整个删掉」也通过，不允许。
+- **P5-d 修复**：`StaminaRecovBoost` magnitude 双语义拆解（`status.rs:367-397`）。**方案收窄为唯一方向：不改 wire 状态名**——`status_snapshot` 是裸 JSON、client 侧 `ExhaustedGreyOverlay` 等硬依赖 id 字符串（`status_snapshot_emit.rs:83` 兜底生成），拆新 StatusEffectKind = 跨端 wire 迁移，风险/成本不成比例，**否决**；改为 `ActiveStatusEffect` 加显式语义字段（如 `mode: MaxBoost | RecovMult`）在 server 端分流，wire 名与 client 消费零变更。`alchemy/pill.rs:685-707` 配方连动；正反 pin 测试锁两种效果不再靠数值大小分流。
+- **P5-e 拍板**：体力持久化 or 有意重连重置（`combat/mod.rs:116-133`），与血条审计持久化方案联动决议并记录。**两个分支都不豁免测试**：若持久化 → 往返测试 + 不出现未声明的体力增生；若有意重置 → pin 测试把重置钉成显式契约（重连后 `current == max`、`state == Idle`、无残留 stamina modifier），防未来引入持久化时行为静默漂移。
 - **P5-f**：验收 = P5-b 三项每项都有「接线 PR」或「删除 commit」着落，不留纯写不读。
 
 ## 两轮反方裁决（高危三项）
@@ -122,8 +135,8 @@
 ## 验收口径
 
 - **P0**：状态仲裁表全场景表驱动测试绿（攻击者/受击者 × 4 态 × 3 余额边界，走真实调度）；格挡中连续受击 state 恒 ShieldBlocking 且 drain 恒走 override（2~3/s）；扣至 0 同 tick 进 Exhausted 并由 force_lower 拆盾；普通非格挡攻防双方仍进 Combat（反误伤回归）；放盾回 Idle；低体力叙事在格挡受击中正常触发。
-- **P1**：`recover_per_sec` 全仓唯一写入点（grep 可验）；6 境界 pin；buff 加入/撤销/叠加后最终值正确且撤销回境界 baseline；稳态不标 Changed；NPC baseline 拍板结论 + 对应测试。
-- **P2**：满体力静止玩家的 `Stamina` 不再每 4 tick 标 Changed；断线重连后经**显式 join resync**（非伪心跳）收到 combat_hud_state 权威首帧（e2e 断言伪心跳守卫开启状态下仍补帧）；`derived_attrs` 先到/后到两种排列均不出现 active+全满假帧；重复快照幂等。
-- **P3**：P3-a/P3-b 拍板结论落档（常量改名或删除 + 测试随决议更新且失败信息写明依据）；furniture 门语义与注释一致；**P3-c 守恒四件套对全部 spend 路径逐一绿**（恰好等于成本成功、不足拒绝零副作用、只扣一次、永不为负）。
+- **P1**：`recover_per_sec` 运行期写入点全仓唯一（grep 可验，初始化/重置豁免清单外零新增写入点）；聚合系统按调度契约注册且顺序断言在测试内；6 境界 pin；真实 schedule 下 buff 加入/撤销/crash 切换当 tick 的值与恢复量正确、撤销回境界 baseline；稳态不标 Changed；NPC baseline 拍板结论 + 对应测试。
+- **P2**：满体力静止玩家的 `Stamina` 不再每 4 tick 标 Changed；「仅客户端断线重连、server 数据不变」e2e 在伪心跳守卫开启下**三条通道各收到恰好一次权威首帧**且 HUD 渲染真值；join resync 重复触发幂等；`derived_attrs` 先到/后到两种排列均不出现 active+全满假帧。
+- **P3**：P3-a 拍板结论落档（常量改名或删除 + 测试随决议更新且失败信息写明依据）；P3-b 按分支落地——接线分支须先交付 P0 仲裁表扩展版 + 交叉转换 pin（移动中格挡/进战斗/Exhausted 移动输入/停止回落），删除分支须全链清单核销；furniture 门语义与注释一致；**P3-c 守恒测试按 try_spend / force_drain 两类分别绿**（try_spend：恰好等于成本成功、不足拒绝零副作用、只扣一次；force_drain：clamp 至 0 + 效果照常 + Exhausted 转换；共同：永不为负）。
 - **P4**：P4-a 阈值语义表拍板落档，共享的用权威常量、有意分级的具名并各自边界 pin（等于/略高/略低 × 不同 stamina_max）；P4-b 字段去留拍板后单方向落地（删则全链 + 反向 sample，留则唯一消费者 + 契约测试）；P4-c 缺失组件契约测试绿。
-- **P5**：P5-a 四件套齐且负样本在；P5-b 三项各有着落 commit；P5-c 跨 4 tick max 稳定；P5-d 两语义拆解 pin；P5-e 决策记录（+若持久化则往返测试）。
+- **P5**：P5-a 四件套齐且负样本在；P5-b 三项各有着落 commit；P5-c 不回跳 + 药效未丢双向断言（预期值/跨 tick 保持/叠加口径/过期回归）；P5-d 显式字段方案 pin 且 wire 名零变更（client 零改动可验）；P5-e 两分支均有测试（持久化→往返 + 无增生；有意重置→重置契约 pin），决策记录落档。
