@@ -4,7 +4,7 @@ import net.minecraft.entity.EntityDimensions;
 import net.minecraft.util.Identifier;
 
 public enum FaunaVisualKind {
-    DEVOUR_RAT("devour_rat", 126, 0.6f, 0.5f, 0.65f, 0.25f, "devour_rat"),
+    DEVOUR_RAT("devour_rat", 126, 0.4f, 0.3f, 0.65f, 0.2f, "devour_rat"),
     ASH_SPIDER("ash_spider", 127, 0.9f, 0.45f, 0.75f, 0.22f, null),
     HYBRID_BEAST("hybrid_beast", 128, 1.2f, 1.4f, 0.95f, 0.45f, null),
     VOID_DISTORTED("void_distorted", 129, 1.2f, 1.5f, 1.05f, 0.5f, null),
@@ -86,6 +86,36 @@ public enum FaunaVisualKind {
             return "animation.bong." + animPath + ".idle";
         }
         return "animation.fauna.idle";
+    }
+
+    /**
+     * 该物种移动时的 walk 动画名；{@code null} 表示未接入移动动画（controller 退回 idle）。
+     *
+     * <p>目前只有噬元鼠接入 idle↔walk↔run 三态移动动画（其动画文件含 {@code .walk}/{@code .run}
+     * key，由 {@code FaunaRenderBootstrapTest} 资源校验锁住）。其它物种虽有些也带 walk 资产，
+     * 但 controller 从未驱动过，为免 T-Pose 风险暂不接入——后续物种逐一验证动画质量后再放开。
+     */
+    public String walkAnimationName() {
+        return this == DEVOUR_RAT ? "animation.bong." + animPath + ".walk" : null;
+    }
+
+    /**
+     * 该物种奔跑时的 run 动画名；{@code null} 表示无 run（controller 退回 walk/idle）。
+     * 仅噬元鼠接入。
+     */
+    public String runAnimationName() {
+        return this == DEVOUR_RAT ? "animation.bong." + animPath + ".run" : null;
+    }
+
+    /**
+     * 该物种是否用**客户端自算的移动朝向**渲染（而非引擎下发的 yaw）。
+     *
+     * <p>fauna 服务端是 {@code MarkerEntityBundle}，marker 旋转不下发 → 引擎 yaw 恒 0、模型不跟
+     * 移动。对声明此项的物种，{@link FaunaRenderer} 改用 {@link FaunaEntity#movementYaw()}
+     * （按位移反解）驱动朝向。目前只有噬元鼠接入；其余 fauna 维持原状（多为静止/游荡，暂无需求）。
+     */
+    public boolean facesMovementDirection() {
+        return this == DEVOUR_RAT;
     }
 
     /**
