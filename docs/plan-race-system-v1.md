@@ -15,7 +15,7 @@
 | P2 | 动态部位 / 经脉面板：server 下发布局元数据，client 剪影与经脉图数据驱动 | ✅ | 2026-07-13 |
 | P3 | 装备 / 功法种族三档匹配：`RaceGate` 三收拢点接线 + UI 反馈 | ✅ | 2026-07-13 |
 | P4 | 易形功法：固元残卷解锁、外观一对一互换、玩家渲染替换链路 | ✅ | 2026-07-26 |
-| P5 | 非人种族玩家入口 + 飞鲸 MVP 数据 + bot 场景 / e2e 收口 | ✅ | 2026-07-26 |
+| P5 | 非人种族玩家入口 + 飞鲸 MVP 数据 + bot 场景 / e2e 收口 | ⏳ | — |
 
 ## 接入面（docs/CLAUDE.md §二）
 
@@ -121,6 +121,13 @@
 - **测试**：morph 状态机全转换（学→cast→active→手动解除 / 死亡解除 / 下线解除 / 重复 cast 幂等）；gate 矩阵（未习得 / 境界不足 / 经脉断 / 非法 pair 全拒）；payload 双端 sample + proto_min bot 解码；渲染 harness：morph 玩家截图（TPV 兽形 + 名牌保留）；qi 扣费锁 ledger 契约（断言玩家→zone 转账记录的方向与精确金额 + 守恒断言；覆盖余额不足不转账 / 施放失败不转账 / 成功仅记一次 / 重复请求幂等）
 
 ## P5 — 非人种族玩家入口 + 飞鲸 MVP + 收口
+
+**⏳ 未完成欠账（2026-07-26 复核，供下一次 consume 直接认领）**：
+
+1. **FinRing 真实消费链缺失**——现状：`grep -rn "FinRing\|fin_ring" server/src client/src agent/packages` 全仓 0 命中，`EquipSlotV1` 未新增该 enum 变体。要落：server 装备容器存储 FinRing 槽位 + `validate_equip_to` 槽位分支 + 自动卸装路径 + wire 编解码（proto `EquipSlotV1` 新增变体 → TS union → `EquipSlot.java` 三端镜像）；client 装备面板新槽位格 + 交互。验收：穿 / 拒（RaceMismatch）/ 卸 / 满背包掉落 / 持久化往返 5 条测试 + 1 条 bot e2e 真实穿卸。
+2. **bot 场景 3 条只落 1 条**——现状：`scripts/bot/scenarios/` 下只有 `inventory_equip_wearer_race_reject.py`（对应①race gate 拒绝回执）。要落：② 易形 cast → morph payload 解码场景 ③ `body_plan_layout` 首帧解码场景，均接入 CI bot e2e stage。验收：三个场景脚本存在且被 e2e stage 引用、CI 绿。
+3. **worldview 增补案未执行**——现状：`grep -c "易形" docs/worldview.md` = 0；worldview.md 最后一次改动是 `e69132fdf`（#836，2026-07-03），早于本 plan 立项（2026-07-10），说明种族后天路径 / 易形正典化 / 「异兽化形」词条消歧从未写入正典。这是本段落原文明写的**归档前硬前置**（见下方遗留 bullet 原文「归档前 land」）。要落：单独 PR + 人工 review，写入 worldview.md §六（零出生论 scope 澄清，对齐 §8.1 #1 决议）。验收：该 PR 合并，本 plan 补引其 commit hash。
+4. **非人种族生产获得路径缺失**——现状：`grep -rn "commit_race_change" server/src --include=*.rs | grep -v race_change.rs` 唯一命中 `server/src/cmd/dev/race.rs`（dev-only 命令）；`grep -rn "秘法转生" server/src` 0 命中——玩家在生产环境没有任何非 dev 手段获得非人种族，下方「`/race set` dev 命令」不能顶替这条。要落：按 §8.1 #1 决议在「创建期选择」或「后天秘法转生」二者中定形式并接出真实生产入口（非 dev 命令）。验收：新增一条非 dev 触发路径 + 集成测试覆盖该路径下的 `RaceChange` 全链路。
 
 **交付物**：
 
@@ -236,14 +243,24 @@
 - 每 PR 走 consume-plan 通用流程 + push 前对峙自检 workflow；实施 subagent 全 sonnet，verify 用高档模型
 - 渲染 / 布局类交付（P2 humanoid layout、P4 渲染替换）适用 3 轮打磨 + `<PROMISE>` 担保
 
-## 验证结论（2026-07-26 整理审计追认）
+## 复核结论（2026-07-26）
 
-P4「易形」与 P5「非人种族玩家入口 + 飞鲸 MVP」已在 origin/main 落地：P4 机制底盘（`MorphState`/`cast_morph_yixing`，`server/src/body_plan/morph.rs`）随 P4 #1201/#1202（2026-07-13/14）交付；P5 `/race set` dev 命令（`server/src/cmd/dev/race.rs`）、`RaceChange` 两阶段事务（`server/src/cultivation/race_change.rs`）与飞鲸数据（`server/assets/body_plans/plans/whale.json`）随 P5 #1203/#1204/#1206（2026-07-14）交付，client 玩家渲染替换链路见 `daozhan/FakePlayerRendererMixin.java`。#1250（2026-07-23）另修复了一处经脉显示回归，不影响本 plan 主体交付判定。
+**本 plan 曾被 #1278（`e2a2158b5`，「plan 整理审计」）单方面追认归档，本 PR 回退**。归档前该 commit 的父提交（`e2a2158b5^`）里 P4/P5 阶段总览仍是 `⬜ | —`，审计 diff 只有 14 行：把两行状态翻 `✅`、加一段「验证结论」、`git mv` 进 `finished_plans/`——**没有拿 P5 段落自己写的「交付物」清单逐条核对代码**。失效模式：审计以「P5 有 commit 落地（PR-6a/6b/6c）」为完成判据，但那三个 PR 只交付了 P5 清单里的**机制底盘**一部分，清单里另外四项（见下）在 origin/main 上一行代码、一个文件都不存在。
 
-## Finish Evidence
+**P0–P4 落地实况**（本次复核未改动这五阶段的 ✅，抓手改为核验过的正确文件）：
+- P0 种族 / 构型底盘：`server/src/body_plan/`（`BodyPlanRegistry` 等）+ `server/assets/body_plans/plans/humanoid.json`（#1160）
+- P1 经脉系统通用化：`MeridianSystem` 去定长 + wire 开放化（#1180，#1182 bughunt 修复）
+- P2 动态部位 / 经脉面板：`BodyPlanLayoutV1` payload（#1184）
+- P3 装备 / 功法种族三档匹配：`RaceGate`（#1198）
+- P4 易形功法：`server/src/body_plan/morph.rs`（`MorphState` / `cast_morph_yixing`，#1201）+ client `client/src/main/java/com/bong/client/mixin/MixinMorphedPlayerRenderer.java`（已注册于 `bong-client.mixins.json:19`，#1202）
 
-- **落地清单**：`server/src/body_plan/morph.rs`（`MorphState` / `cast_morph_yixing`）、`server/assets/body_plans/plans/whale.json`、`server/src/cultivation/race_change.rs`、`server/src/cmd/dev/race.rs`（`/race set`）、client `daozhan/FakePlayerRendererMixin.java`
-- **关键 commit**：P0 #1160、P1 #1180、bugfix #1182、P2 #1184（2026-07-13，hud_anchors 双锚点组）、P3 #1198（2026-07-13，RaceGate）、P4 #1201/#1202（2026-07-13/14）、P5 #1203/#1204/#1206（2026-07-14，机制底盘 /race set + RaceChange 两阶段 + qi_physics prepare + meridian_mapping）、回归修复 #1250（2026-07-23，经脉显示）
-- **测试结果**：各阶段 PR 自带回归测试（详见对应 PR）；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
-- **跨仓库核验**：server（`body_plan` / `cultivation::race_change` / `cmd::dev::race`）+ client（`daozhan/FakePlayerRendererMixin.java`），schema 经 race 相关 payload 双端对拍
-- **遗留 / 后续**：status_snapshot 8 段 id 发散小 PR（历史记录在案，未阻塞归档）
+**注意**：#1278 归档时把 P4 client 渲染证据引成了 `client/src/main/java/com/bong/client/daozhan/FakePlayerRendererMixin.java`——那是 #436（道伥，2026-06-08，早于本 plan 立项 2026-07-10）留下的**未注册占位**，不属于本 plan 交付物，与 P0 调研摘要 §0「四大空白」里点名的「未注册空占位」是同一个文件。本次复核已在上面改引正确文件。
+
+**P5 已落**（机制底盘部分）：
+- PR-6a #1204：`/race set` dev 命令 + `RaceChange` 两阶段事务（`server/src/cultivation/race_change.rs`）+ qi_physics prepare + meridian_mapping
+- PR-6b #1203：突破配额 + dugu 经脉路由换轨（非人构型通用化）
+- PR-6c #1206：`server/assets/body_plans/plans/whale.json` + `IntrinsicRace` 接线 + 投射物半径派生
+
+**P5 未落**（四项，详细欠账见下方 P5 段落清单）：FinRing 真实消费链、bot 场景（3 条只有 1 条）、worldview 增补案（P5 原文明写「归档前 land」的硬前置）、非人种族生产获得路径。
+
+#1250（2026-07-23）是一处经脉显示回归修复，与本 plan 主体交付判定无关，不作为证据引用。
