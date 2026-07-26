@@ -89,16 +89,22 @@
 **交付物**：
 
 - **P1-a 原语复核**：逐点核验上表"原语"列（mutation 类型 / 执行时机 / 伤型 / 来源归因 / 附带事件），修正初判，形成收编基线——这是后续语义等价测试的对照物。
-- **P1-b 事件与 payload**：新模块 `server/src/combat/damage_entry.rs`，`ExternalDamageRequest { target, payload, source, mitigation_policy }`，其中 `payload` 是**tagged enum `ExternalDamagePayload { HpDelta { amount }, WoundApplication { part, kind, severity, bleed, contam } }`**——两类原语分型表达，不做有损归一；`source` 为可审计枚举标签（ZhenfaWard / TribulationAoe / SwordParryReflect / ...，逐旁路一变体）。
+- **P1-b 事件与 payload**：新模块 `server/src/combat/damage_entry.rs`，`ExternalDamageRequest { target, payload, source, attribution, mitigation_policy }`：
+  - `payload` 是**tagged enum `ExternalDamagePayload { HpDelta { amount }, WoundApplication { part, kind, severity, bleed, contam } }`**——两类原语分型表达，不做有损归一
+  - `source` 为可审计枚举标签（ZhenfaWard / TribulationAoe / SwordParryReflect / ...，逐旁路一变体）
+  - **`attribution: DamageAttribution { instigator: Option<Entity>, .. }` 归因结构**——死亡归因必须不变：P1-a 基线逐源记录**现有**归因去向（死亡事件当前归谁），迁移后逐源映射；自伤类（#5/#10/#11/#14/#17）`instigator = 自身`，无实体环境伤 `None`（source 枚举保留类别），施害者已 despawn 以 `None` + source 表示。WoundApplication 类保留原 Wound 携带的归因字段
+  - **重复请求语义拍板：累计**——同 payload 两次 emit = 两次独立伤害（Bevy Events 天然语义，不引入 request_id 去重）；测试名与断言固定为"两次相同请求造成两次伤害"
 - **P1-c 完整加载链（显式交付，不是"注册一下"）**：
   - `server/src/combat/mod.rs` 增 `pub mod damage_entry;` + `app.add_event::<ExternalDamageRequest>()`（现有事件注册区，参照 `combat/mod.rs:225` `GuangboTicaoPracticeEvent` 先例）
   - 新 `CombatSystemSet::ExternalDamageApply` 集合，消费 system `apply_external_damage_requests` 注册其中；**调度契约：所有 producer 集合 `.before(CombatSystemSet::ExternalDamageApply)`，`CombatSystemSet::ExternalDamageApply.before(死亡/濒死判定所在集合)`**——同 tick 内 emit→消费→死亡判定一气呵成，伤害不得延后一帧
-  - producer 分布在 zhenfa / tribulation / alchemy / npc / network handler 等不同 schedule 位置——P1-a 复核时逐 producer 标注其当前集合并确认可满足上述排序；**确无法同 tick 的 producer（如 exclusive Commands 场景 #1）单独列例外表**，写明其延迟一帧语义与理由，不得静默延帧
+  - producer 分布在 zhenfa / tribulation / alchemy / npc / network handler 等不同 schedule 位置——P1-a 复核时逐 producer 标注其当前集合并确认可满足上述排序；Commands 型 producer（如 #1 剑格反伤）在消费前显式 `apply_deferred` 接线，接不进的**单列延帧例外表**：其现状本就是延迟语义，收编后写死"下一 update 生效"独立契约 + 独立测试，**不混入同 tick 验收、不宣称同 tick 等价**
+  - **同 tick 多请求顺序与致死仲裁**：producer 集合显式串行排序（zhenfa→tribulation→流派→npc→handler 固定拓扑，写进 SystemSet 配置），同一 target 的多请求按事件到达序结算；**首个把 HP 压到 0 的请求获得击杀归因**，其后请求照常结算（HP 已 0 clamp）——跨两个不同 producer 的顺序 + 死亡来源各一条 pin 测试
 - **P1-d 收编语义 = 不改数值**：各源现有伤害量、是否吃甲全部保持现行为（`mitigation_policy: None` 起步），只收口写入路径 + 统一 `is_damageable` GameMode 门 + 统一审计 emit；"旁路吃不吃减伤链"留 §8 #3 逐源拍板，避免一次 PR 同时改结构与平衡。#11/#13 的既有 wrapper 门语义合并进入口后删 wrapper（不留双入口）。
 - **测试（语义等价按原语分型，不只比最终 HP）**：
   - 真实 `CombatPlugin` App 集成测试：producer emit → **同一 update 内** HP/Wounds 变化可见；致死伤害恰好触发一次死亡事件；零请求 no-op；同 tick 多请求按顺序结算
-  - 每旁路源：creative-mode 免伤 case + 收编前后同输入等价 case——HpDelta 类断言最终 HP + 来源审计标签；WoundApplication 类（#1/#13）额外断言 Wounds 内容（part/kind/severity）逐字段一致 + 死亡归因不变
-  - `damage_entry` 模块自身：无效 target / 已死亡 target / 重复请求 / 两帧连续伤害顺序全覆盖
+  - 每旁路源：creative-mode 免伤 case + 收编前后同输入等价 case——HpDelta 类断言最终 HP + 来源审计标签 + 归因实体；WoundApplication 类（#1/#13）额外断言 Wounds 内容（part/kind/severity）逐字段一致 + 死亡归因不变
+  - 归因 pin：两个**不同施害实体**以同一 source 类别先后致死打击同一目标 → killer 归因落在实际致死的那个实体，不混淆
+  - `damage_entry` 模块自身：无效 target / 已死亡 target / 重复请求（累计语义）/ 两帧连续伤害顺序全覆盖
 
 ## P2 — 攻击侧真元守恒
 
@@ -111,10 +117,17 @@
 **交付物**：
 
 - **P2-a qi_invest 回灌**：`resolve.rs:641-644` 扣费后调 `death_hooks::release_qi_amount_to_zone(attacker, qi_invest, ..., "attack_qi_invest")`（复用 `:1108` 截脉先例的完整传参形态，缺 Position/Zone 时自动走 overflow 兜底，不新写查 zone 逻辑）。守恒口径：攻方 `qi_current` 减量 == zone/overflow 增量，`assert_conservation` 期初期末对拍。
-- **P2-b NpcMelee 铸造收敛（决议已拍板，唯一方案，不留沉降槽方案）**：**没有真实借方就没有真元伤害**——把 `AttackSource::NpcMelee` 从 `source_uses_prepaid_qi` 白名单移除，NpcMelee 走与玩家完全相同的现场扣费分支：`qi_invest` 先 clamp 到攻方 `cultivation.qi_current` 可扣额（NPC 当前恒 0 → qi_invest 归 0，**攻击退化为纯物理伤害**），扣多少、回灌 zone 多少，全程与 P2-a 同一条 ledger 路径。**明确否决"沉降槽/被追踪账户"方案**：只记录铸造量的去向不能替代来源扣账，无法用期初期末余额证明守恒。NPC 真元伤害强度的恢复路径 = `plan-npc-realm-distribution-v1` 给 NPC 配真实 `qi_current` 后自动生效（本 plan 落地的扣费分支届时无需再改）；若 NPC 纯物理强度需要数值补偿，归 NPC 战斗 plan 调 `attack_power`，不在本 plan 用真元账外补。
-- **P2-c prepaid 白名单核账**：逐变体列出 `AttackSource` 全枚举 + `source_uses_prepaid_qi` match 分支，对每个 prepaid source 标注其 cast 阶段预扣位置 file:line 及预扣真元的 ledger 去向（**预扣后是否回灌 zone 是必核项**——预扣但蒸发 = 与 qi_invest 同类缺口，发现即纳入本阶段修复）；命中 / 未命中 / cast 取消 / 无效目标四条路径的转移终点逐一写明。
+- **P2-b NpcMelee 铸造收敛（决议已拍板，唯一方案，不留沉降槽方案）**：**没有真实借方就没有真元伤害**——把 `AttackSource::NpcMelee` 从 `source_uses_prepaid_qi` 白名单移除，NpcMelee 走与玩家完全相同的现场扣费分支。**clamp 位置在 intent 生成侧而非结算侧**：NpcMelee 的 `AttackIntent` 由 server 权威构造（NPC brain / melee 攻击组装处），构造时即 `qi_invest = qi_invest.min(cultivation.qi_current)`（NPC 当前恒 0 → qi_invest 归 0，**攻击退化为纯物理伤害**）——这样反作弊门 `resolve.rs:468-470` 的语义完全不动（它的职责是抓**客户端**投超额，玩家路径行为不变），NpcMelee intent 也不会被它提前拒绝。扣多少、回灌 zone 多少，全程与 P2-a 同一条 ledger 路径。**明确否决"沉降槽/被追踪账户"方案**：只记录铸造量的去向不能替代来源扣账，无法用期初期末余额证明守恒。NPC 真元伤害强度的恢复路径 = `plan-npc-realm-distribution-v1` 给 NPC 配真实 `qi_current` 后自动生效（本 plan 落地的扣费分支届时无需再改）；若 NPC 纯物理强度需要数值补偿，归 NPC 战斗 plan 调 `attack_power`，不在本 plan 用真元账外补。
+- **P2-c 攻击真元账务状态机（分路径写死，不用统一"源减去向增"模板）**——现场扣费模型（qi_invest 类）下：
+  | 路径 | 账务 | 断言 |
+  |------|------|------|
+  | 扣费前拒绝（无效目标 / 反作弊 QiInvestExceeded / intent 校验失败） | **双方零变化、零 QiTransfer** | 攻方 qi_current 不变 + 事件流仅 violation |
+  | 正常结算（**命中与未命中同账**） | 现场扣 `qi_invest` → **全额 `ReleaseToZone("attack_qi_invest")`**——真元做功后逸散回环境，命中与否只影响伤害结果不影响账务 | 攻方减量 == zone/overflow 增量 + `assert_conservation` |
+  | prepaid source cast 取消 / 打断 | 按 **P2-c 核账现状**逐源记录：既有实现有退款/释放则 pin 现状；预扣后取消即蒸发 = 与 qi_invest 同类缺口，**发现即纳入本阶段修复** | 逐源专属断言（退款 reason 或 ReleaseToZone） |
+  | prepaid source 正常施放 | 预扣位置 file:line + 预扣真元 ledger 去向逐源核账（**预扣但无去向 = 蒸发，纳入修复**） | 逐变体 `assert_conservation` |
+  逐变体列出 `AttackSource` 全枚举 + `source_uses_prepaid_qi` match 分支作为上表的核账底册。
 - NPC 截脉门（防御侧对称）只登记 §8 #5，本 plan 不实施——依赖 NPC 真元预算结构。
-- 测试：镜像 `jiemai_parry_emits_qi_transfer_for_conservation` 写 `attack_qi_invest_emits_qi_transfer_for_conservation`（覆盖命中/未命中/取消/无效目标四分支，逐条断言源账户减量+去向账户增量+`assert_conservation` 总量）；NpcMelee 场景断言 qi_invest 被 clamp 至 0、无任何 QiTransfer、伤害为纯物理量；`source_uses_prepaid_qi` 用**穷举 match 的枚举 pin 测试**（新增 AttackSource 变体时编译期强制表态），不写"N 个"计数断言。
+- 测试：镜像 `jiemai_parry_emits_qi_transfer_for_conservation` 写 `attack_qi_invest_emits_qi_transfer_for_conservation`（按上表分路径独立 case，各自断言该路径的借贷双方 + QiTransfer reason + `assert_conservation`，**不复用统一模板**）；NpcMelee 场景用 **qi_current=0、构造侧原始 qi_invest>0 的真实 resolve 路径**断言：intent 不被反作弊门拒绝、结算时 qi_invest==0、零 QiTransfer、物理伤害照常结算；`source_uses_prepaid_qi` 用**穷举 match 的枚举 pin 测试**（新增 AttackSource 变体时编译期强制表态），不写"N 个"计数断言。
 
 ## P3 — 防御失败反馈闭环（server + schema + client，A/V 内联）
 
@@ -128,8 +141,12 @@
 **交付物**：
 
 - **P3-a `DefenseKind` 扩两个失败变体**（暂名 `ShieldBlockOffAngle` / `ShieldGuardBroken`，命名实施时定；**破盾不在内**，见上）：
-  - server emit 点：`ShieldBlockOffAngle` 在盾格 FOV 检查失败分支（`resolve.rs:1231-1440` 盾格块内 fov 不通过路径）；`ShieldGuardBroken` 在 `force_lower_shield_on_stamina_exhausted`（`shield_block.rs:471`）施加 ParryRecovery 处——各一个**唯一** emit 点
-  - 跨端链：proto `combat_event` 枚举 → `agent/packages/schema/src/server-data.ts` 镜像 + samples 正反对拍 → client `combat_event` handler 每变体独立分发；SFX/VFX 落地走 `plan-bughunt-shield-feedback-network-thread-ui-v1` 的主线程结论
+  - server emit 点：`ShieldBlockOffAngle` 在盾格 FOV 检查失败分支（`resolve.rs:1231-1440` 盾格块内 fov 不通过路径）；`ShieldGuardBroken` 见下条因果绑定——各一个**唯一** emit 点
+  - **饱和 SystemParam 接线方案（拍板，可编译）**：resolve 内的新 emit（OffAngle 与 P3-b 的 ParrySuccess）**全部走既有第 15 参 `CombatResolveEventWriters` SystemParam bucket 加字段**——`#[derive(SystemParam)]` struct 内加 writer 不占顶层 16 元上限（`resolve.rs:311-323` 的上限约束只对顶层 tuple），不重构参数表、不后置桥接
+  - **`ShieldGuardBroken` 因果绑定（防误报）**：emit 不挂在"进入 Exhausted"这个结果态上——绑定到**盾格 drain 把体力从 >0 扣过耗尽阈值的真实结算点**（`ShieldDrainOverride` 扣减处标记 `exhaustion cause`，`force_lower_shield_on_stamina_exhausted` 消费该 cause 判定）；**负向测试**：举盾期间因非格挡来源（其他技能/状态）耗尽体力 → 只强制放盾，**不发** `ShieldGuardBroken`
+  - **wire pin**：proto `combat_event` 的 DefenseKind 枚举——既有变体数值全部保持，两个新变体分配**显式、不复用、不重排**的 tag；golden encode/decode pin 测试锁二进制；**未知枚举值降级行为写死**：client 安全忽略 + log warn（不 crash 不误播），TypeBox/客户端各配一条未知值负向样例
+  - 跨端链：proto → `agent/packages/schema/src/server-data.ts` 镜像 + samples 正反对拍 → client `combat_event` handler 每变体独立分发；SFX/VFX 落地走 `plan-bughunt-shield-feedback-network-thread-ui-v1` 的主线程结论
+  - **A/V registry 加载链（交付物，不止表现参数）**：两个 `bong:vfx_event` ID（`shield_block_off_angle` / `shield_guard_broken`）在 client VfxPlayer 注册表登记（各配 VfxPlayer 类，按 `VfxBootstrap` 既有注册模式）；三组 audio_recipe 落 `client/src/main/resources/assets/bong/sounds/recipes/`（或既有 recipe 目录同址）JSON 文件 + 启动加载点；新增资源纳入 resourcepack manifest（**同步 `resourcepack.rs` sha1/size**）。测试：启动期 registry 按 ID 解析成功、未知/缺失 ID 走确定失败分支（撞红不静默）、e2e 从收到 payload 断言到 recipe/VFX 定义解析非空——不是只断言收到 payload
 - **P3-b `ParrySuccessEvent` 语义矫正（决议：挪 emit 至真实成功点，不拆双事件——本仓不写兼容层）**：
   - 实施第一步**全仓枚举该事件的生产者与消费者**（核验已见 producer `zhenmai_v2.rs:533` + 桥 `zhenmai_v2_event_bridge.rs:36`，是否还有 HUD/VFX/成就等其他 reader 以 grep 为准），逐消费者确认其需要的是"施法姿态"还是"真实挡下"语义；若发现确有依赖施法瞬间反馈的消费者，其姿态反馈改由既有 cast/animation 通道承担，不保留假 success emit
   - emit 挪到 `resolve.rs:1150` `jiemai_success = true` 处；`resolve_parry`（`zhenmai_v2.rs:505`）不再 emit
@@ -156,9 +173,12 @@
 
 **交付物**（目标不是"把两份手抄改对"，而是**消灭第二份手抄**）：
 
-- **P4-a 单一机器可读契约（本阶段核心）**：新增 committed manifest `server/assets/combat/mundane_armor_manifest.json`——全部 7 种材质 × 4 slot = 28 件的 `material / item_id / slot / defense / durability` 全字段；server 侧 Rust 单测断言 manifest 与 `mundane.rs` 注册表（含 `register_mundane_armors` 程序生成件）**逐字段一致**（任一侧改动不同步即撞红——manifest 成为跨端权威快照）；client 侧 `ArmorTintRegistry` 的 defense/durability/item 集合**从该 manifest 资源加载**（gradle 资源同步或直接读仓内相对路径，实施时二选一），Java 侧只保留 client-only 的 tint 色表
+- **P4-a 单一权威 + 确定性生成（本阶段核心，拍板：Rust 注册表是唯一可编辑源，manifest 是生成物不是第三份手抄）**：
+  - committed manifest `server/assets/combat/mundane_armor_manifest.json`（7 材质 × 4 slot = 28 件的 `material / item_id / slot / defense / durability` 全字段）**由 Rust 从 `MundaneArmorMaterial::ALL` 确定性生成**——提供生成入口（`cargo test` 内一致性单测：不一致即撞红并打印期望 JSON 供直接覆写，或专用 `--features regen` 入口，实施二选一），**禁止手改 manifest**（生成一致性门禁就是防手改门禁）
+  - client 加载路径（拍板，**删除"读仓库相对路径"选项**——发布 jar 里不存在仓库）：Gradle `processResources` 任务把 manifest 复制进 client 固定资源路径（如 `assets/bong/data/mundane_armor_manifest.json`），运行时经 classpath/resource manager 加载；**缺失或解析失败显式报错，不回退旧手抄数据**；Java 侧只保留 client-only 的 tint 色表
+  - 发布产物测试：对构建出的 jar 断言 manifest 资源存在且 `ArmorTintRegistry` 用生产 loader 完成 28 件全量加载（不允许测试直接读仓库路径）
 - **P4-b 数据修复先行**（manifest 落地前的第一 commit，立即止血）：`ArmorTintRegistry.java` 补 `straw`（defense 1.5 / durability 40 对齐 `mundane.rs:63/:75`；tint 建议 `#C9B26B` 枯黄草编，与既有 6 tint 肉眼区分度校验）+ iron 修为 12/280
-- **P4-c 对拍测试全量化**：`ArmorProfileStoreCrossCheckTest` 重写为 manifest 驱动——遍历 manifest 全 28 件逐字段（item_id/defense/durability/slot）对拍 client 加载结果，**双向**：manifest 有而 client 无 → 红；client 有而 manifest/server JSON profile 均无 → 红（现有 4 条孤儿 `cloth_robe`/`fake_spirit_hide`/`spirit_weave_robe`/`iron_plate_chest` 先 grep `server/assets/items/` 确认物品是否存在——不存在删条目，存在补 server profile，预期是删）；**不做 Java 解析 Rust 源码的对拍**（manifest 就是为此存在）
+- **P4-c 对拍测试全量化**：`ArmorProfileStoreCrossCheckTest` 重写为 manifest 驱动（经生产 loader 从 classpath 读，不读仓库路径）——遍历 manifest 全 28 件逐字段（item_id/defense/durability/slot）对拍 client 加载结果，**双向**：manifest 有而 client 无 → 红；client 有而 manifest/server JSON profile 均无 → 红（现有 4 条孤儿 `cloth_robe`/`fake_spirit_hide`/`spirit_weave_robe`/`iron_plate_chest` 先 grep `server/assets/items/` 确认物品是否存在——不存在删条目，存在补 server profile，预期是删）；**不做 Java 解析 Rust 源码的对拍**（manifest 就是为此存在）
 - `ArmorTintRegistryTest.java:23-24/:37` 断言同步 6→7 材质、24→28 件、"7 套凡物甲 7 个可区分 tint"
 - straw 4 件 icon 资产核验：已存在则接线即可；缺失标 `[BLOCKED: 需 /gen-image item 生成 armor_straw_{helmet,chestplate,leggings,boots}]`；**若新增任何 client 纹理资产，必须同步 `resourcepack.rs` + committed manifest 的 sha1/size**
 - 测试：straw 4 件 `createLeatherArmorStack` 非 EMPTY + tooltip 三行非空；iron tooltip 数值对拍 manifest；manifest↔`mundane.rs` Rust 侧一致性单测；CrossCheck 双向各一条专属失败注入 case（临时多加/删条目断言撞红）
