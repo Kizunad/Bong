@@ -363,7 +363,7 @@ class CastFovControllerTest {
 
     @Test
     void multiplierZeroCancelsAnimDrivenChargeShake() {
-        // 蓄力 CRESCENDO 长达 160t（8s）——「倍率只遮 FOV 读数」的实现会让它一路震到底。
+        // 蓄力 CRESCENDO 长达 60t（3s）——「倍率只遮 FOV 读数」的实现会让它一路震到底。
         CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_CHARGE);
         advanceMs(2000);
         assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(), "蓄力震动进行中");
@@ -614,8 +614,8 @@ class CastFovControllerTest {
 
         CastFovController.onAnimPlayed(LOCAL_PLAYER, BongAnimations.SWORD_HEAVEN_GATE_RELEASE);
         long releaseFire = now[0];
-        // 顶替生效：新 shake 起手 elapsed=0，SUSTAIN 满幅 → |yaw| 落在 max（≈2.1°）区间；
-        // 若仍是 charge crescendo（elapsed=2000ms 才涨到 ~28%）则仅 ~0.3°，据此区分。
+        // 顶替生效：新 shake 起手 elapsed=0，SUSTAIN 满幅 → |yaw| ≈ 2.12°；
+        // 若仍是 charge crescendo（elapsed=2000ms 于 60t 窗内只涨到 74%）则仅 ≈0.84°，据此区分。
         double mag = Math.abs(CameraShakeController.activeOffsets(releaseFire).yawDegrees());
         assertTrue(mag > 1.5, "release 的 SUSTAIN 最大震动顶替了 charge 的 CRESCENDO（|yaw|=" + mag + " > 1.5）");
 

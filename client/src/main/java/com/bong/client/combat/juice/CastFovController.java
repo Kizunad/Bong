@@ -218,9 +218,16 @@ public final class CastFovController {
         float shakeIntensity, int shakeDurationTicks, float fovPeakDegrees, int fovDurationTicks) {
     }
 
-    /** 蓄力渐强震动 buildDuration=160t：ramp 到峰值 ~144t，覆盖 release(140t)+RTT 余量。 */
+    /**
+     * 蓄力渐强震动 buildDuration=60t：对齐 {@code sword_heaven_gate_charge} 动画自身的
+     * {@code endTick=60}（{@code stopTick=64}）——震感跟着**在播的蓄力动画**渐强，动画淡出即止。
+     *
+     * <p>不取 release(140t) 那么长：charge 动画只播 0→60t，之后淡回默认站姿；把震感撑到 140t
+     * 会让「画面上没有蓄力动作了却还在震」，违背本条 juice「与画面严格对齐」的前提。charge
+     * 动画时长本身归 P2（动画资产阶段），本 plan P3 只跟随它取值。
+     */
     private static final Map<Identifier, ChargeShake> CHARGE_ANIM_JUICE = Map.of(
-        BongAnimations.SWORD_HEAVEN_GATE_CHARGE, new ChargeShake(0.8f, 160));
+        BongAnimations.SWORD_HEAVEN_GATE_CHARGE, new ChargeShake(0.8f, 60));
 
     /** release 最大震动 24t（≈1.2s SUSTAIN）+ FOV +12°/8t punch。 */
     private static final Map<Identifier, ReleaseBurst> RELEASE_ANIM_JUICE = Map.of(
