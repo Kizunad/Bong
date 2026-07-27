@@ -522,7 +522,7 @@ public class BongNetworkHandlerTest {
     // ──────────────────────────────────────────────────────────────────────
 
     @Test
-    void bongNetworkHandlerRegistersDisconnectWiringThatClearsDuguV2HudStateStore() throws Exception {
+    void bongNetworkHandlerRegistersDisconnectWiringThroughTheSessionStoreRegistry() throws Exception {
         java.nio.file.Path testClasses = java.nio.file.Path.of("").toAbsolutePath().normalize();
         java.nio.file.Path clientRoot;
         if (java.nio.file.Files.isDirectory(testClasses.resolve("src"))) {
@@ -538,7 +538,7 @@ public class BongNetworkHandlerTest {
         assertTrue(
             java.nio.file.Files.exists(handlerSrc),
             "BongNetworkHandler.java 必须存在于 " + handlerSrc.toAbsolutePath()
-                + "，否则无法核验毒蛊 v2 HUD 断线接线；实际 exists=false"
+                + "，否则无法核验统一 Store 断线清理接线；实际 exists=false"
         );
         String src = java.nio.file.Files.readString(handlerSrc);
 
@@ -558,31 +558,54 @@ public class BongNetworkHandlerTest {
 
         assertTrue(
             disconnectBlock.contains("clearClientStateOnDisconnect"),
-            "期望 DISCONNECT 注册块路由到 BongNetworkHandler.clearClientStateOnDisconnect()（统一断线"
-                + "清理 helper），否则毒蛊 v2 等所有跨 session store 清理都不会在真实断线时执行；"
-                + "实际：注册块内未找到该 helper 调用"
+            "期望 DISCONNECT 注册块路由到 BongNetworkHandler.clearClientStateOnDisconnect()；"
+                + "否则 registry 和非 Store hook 都不会在真实断线时执行"
         );
 
         int clearHelperStart = src.indexOf("static void clearClientStateOnDisconnect()");
-        assertTrue(
-            clearHelperStart >= 0,
-            "期望 BongNetworkHandler.clearClientStateOnDisconnect() helper 存在（断线清理逻辑从 Fabric"
-                + "回调中抽出的统一入口），实际：源码中未找到方法定义"
-        );
+        assertTrue(clearHelperStart >= 0, "统一断线清理 helper 必须存在");
         int clearHelperEnd = src.indexOf("private static void logNoOp", clearHelperStart);
-        assertTrue(
-            clearHelperEnd > clearHelperStart,
-            "期望 clearClientStateOnDisconnect() 之后存在 logNoOp(...) 用于圈定清理 helper 范围，"
-                + "实际 clearHelperEnd=" + clearHelperEnd
-        );
+        assertTrue(clearHelperEnd > clearHelperStart, "必须能精确圈定统一断线清理 helper 范围");
         String clearHelper = src.substring(clearHelperStart, clearHelperEnd);
 
+        String registryCall = "SessionScopedStoreRegistry.clearAllOnDisconnect()";
+        assertEquals(
+            clearHelper.indexOf(registryCall),
+            clearHelper.lastIndexOf(registryCall),
+            "统一 helper 必须恰好调用一次 session Store registry，避免漏清或重复清理"
+        );
         assertTrue(
+            clearHelper.contains(registryCall),
+            "统一 helper 必须调用 SessionScopedStoreRegistry.clearAllOnDisconnect()"
+        );
+
+        List<String> nonStoreHooks = List.of(
+            "NpcDialogueBubbleRenderer.clear()",
+            "MusicStateMachine.instance().clear()",
+            "MutationVisualState.reset()",
+            "SpiderDisguiseHandler.clearOnDisconnect()",
+            "RatQiTierHandler.clearOnDisconnect()",
+            "DaoZhanDisguiseHandler.clearOnDisconnect()",
+            "EraAmbianceState.reset()",
+            "BongToast.clearOnDisconnect()"
+        );
+        int previousIndex = clearHelper.indexOf(registryCall);
+        for (String hook : nonStoreHooks) {
+            int hookIndex = clearHelper.indexOf(hook);
+            assertTrue(
+                hookIndex > previousIndex,
+                "非 Store hook 必须保留且维持既有相对顺序；未按序找到 " + hook
+            );
+            previousIndex = hookIndex;
+        }
+
+        assertFalse(
             clearHelper.contains("DuguV2HudStateStore.clearOnDisconnect()"),
-            "期望 clearClientStateOnDisconnect() 调用 DuguV2HudStateStore.clearOnDisconnect()——server 的"
-                + " dugu_v2_* bridge 没有 join/disconnect reset payload，revealRisk 无 expiry、selfRevealed"
-                + " 是 sticky merge，漏掉这条调用会让上一局毒蛊 v2 HUD 跨 session 无限残留"
-                + "（plan-bughunt-dugu-v2-hud-disconnect-bleed-v1）；实际：清理 helper 内未找到该调用"
+            "DuguV2HudStateStore 应由 registry adapter 清理，helper 不得保留重复 direct call"
+        );
+        assertFalse(
+            clearHelper.contains("TiandaoPresenceStore.clear()"),
+            "TiandaoPresenceStore 应由 registry adapter 清理，helper 不得保留重复 direct call"
         );
     }
 

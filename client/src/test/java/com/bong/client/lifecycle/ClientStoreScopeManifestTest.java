@@ -18,6 +18,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ClientStoreScopeManifestTest {
     private static final String LIFECYCLE_INTERFACE =
         "com.bong.client.lifecycle.SessionScopedStore";
+    private static final List<String> P1_REGISTERED_STORES = List.of(
+        "com.bong.client.state.RealmCollapseHudStateStore",
+        "com.bong.client.npc.NpcMetadataStore",
+        "com.bong.client.npc.NpcLodStore",
+        "com.bong.client.npc.NpcMoodStore",
+        "com.bong.client.tsy.TsyBossHealthStore",
+        "com.bong.client.tsy.TsyDeathVfxStore",
+        "com.bong.client.hud.CoffinStateStore",
+        "com.bong.client.gathering.GatheringSessionStore",
+        "com.bong.client.combat.baomai.v4.CrackReadingHudStateStore",
+        "com.bong.client.combat.baomai.v4.ResonanceLockHudStateStore",
+        "com.bong.client.visual.VoidErosionVisualStore",
+        "com.bong.client.fauna.HallucinationLayerStore",
+        "com.bong.client.dying_elder.DyingElderEncounterStore",
+        "com.bong.client.tiandao.TiandaoPresenceStore",
+        "com.bong.client.hud.BongHudStateStore",
+        "com.bong.client.hud.SearchHudStateStore",
+        "com.bong.client.agentui.AgentUiStore",
+        "com.bong.client.combat.store.HalfStepRechallengeStore",
+        "com.bong.client.coffin.TutorialCoffinPosStore",
+        "com.bong.client.inventory.state.RemainsStore",
+        "com.bong.client.inventory.state.DroppedItemStore",
+        "com.bong.client.craft.CraftStore",
+        "com.bong.client.identity.IdentityPanelStateStore",
+        "com.bong.client.combat.store.FalseSkinHudStateStore",
+        "com.bong.client.hud.DuguV2HudStateStore"
+    );
 
     @Test
     void everyProductionStoreHasExactlyOneExplicitScope() throws IOException {
@@ -100,23 +127,29 @@ class ClientStoreScopeManifestTest {
     }
 
     @Test
-    void p0RegistryIsEmptyAndWithinRegistryManagedSessionScope() {
+    void p1RegistryMatchesTheVerifiedMigrationSetAndScope() {
+        List<String> registeredFqcns = SessionScopedStoreRegistry.registeredFqcnsForTests();
         assertEquals(
-            List.of(),
-            SessionScopedStoreRegistry.registeredFqcnsForTests(),
-            "P0 registry 必须为空，保证本阶段只冻结框架而不改变既有生产断线行为；P1 首次迁移时再显式更新此 pin"
+            P1_REGISTERED_STORES,
+            registeredFqcns,
+            "P1 registry 必须严格按旧 helper 的 Store 相对顺序登记已核验的 25 个 adapter；"
+                + "漏项、错绑 Class 或顺序漂移都需要逐 Store 行为复核"
         );
 
-        Set<String> registered = new HashSet<>(SessionScopedStoreRegistry.registeredFqcnsForTests());
+        Set<String> registered = new HashSet<>(registeredFqcns);
         assertEquals(
             registered.size(),
-            SessionScopedStoreRegistry.registeredFqcnsForTests().size(),
+            registeredFqcns.size(),
             "registry 不得重复登记同一 FQCN，否则断线会重复清理同一 Store"
         );
         assertTrue(
             ClientStoreScopeManifest.registryManagedSessionStores().containsAll(registered),
-            "P0 registry 只允许登记 manifest 中由全局 registry 管理的 session Store；P3 再收紧为全集相等，实际越界="
+            "P1 registry 只允许登记 manifest 中由全局 registry 管理的 session Store；P3 再收紧为全集相等，实际越界="
                 + difference(registered, ClientStoreScopeManifest.registryManagedSessionStores())
+        );
+        assertFalse(
+            registered.contains("com.bong.client.ui.ClientConnectionStatusStore"),
+            "ClientConnectionStatusStore 必须继续由 invalidateSession(handler, now) 管理，不能进入无参 registry"
         );
     }
 
