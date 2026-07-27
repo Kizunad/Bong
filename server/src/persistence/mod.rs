@@ -54,6 +54,7 @@ use crate::world::heartbeat::{
 
 #[allow(dead_code)]
 pub mod identity;
+pub mod slice;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
