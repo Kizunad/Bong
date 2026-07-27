@@ -55,6 +55,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.List;
+import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -94,22 +95,35 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         );
 
         adapter.seed().run();
-        TiandaoPresenceState sentinel = activeTiandaoPresence();
-        if (adapter.storeType() != TiandaoPresenceStore.class) {
-            TiandaoPresenceStore.replace(sentinel);
-        }
+        Map<Class<?>, StoreWitness> witnesses = storeWitnesses();
+        witnesses.entrySet().stream()
+            .filter(entry -> entry.getKey() != adapter.storeType())
+            .forEach(entry -> entry.getValue().seed().run());
         assertFalse(adapter.isCleared().getAsBoolean(), "测试前必须建立目标 Store 的旧 session 状态：" + adapter);
+        witnesses.entrySet().stream()
+            .filter(entry -> entry.getKey() != adapter.storeType())
+            .forEach(entry -> assertFalse(
+                entry.getValue().isCleared().getAsBoolean(),
+                "测试前必须建立非目标 Store 的旁观状态：" + entry.getKey().getSimpleName()
+            ));
 
         handle.clearOnDisconnect();
 
         assertTrue(adapter.isCleared().getAsBoolean(), "声明 handle 必须清掉其自身 Store：" + adapter);
-        if (adapter.storeType() != TiandaoPresenceStore.class) {
-            assertEquals(
-                sentinel,
-                TiandaoPresenceStore.snapshot(),
-                "单 handle 不得依赖整表执行补偿，也不得误清旁观 Store：" + adapter
-            );
-        }
+        witnesses.entrySet().stream()
+            .filter(entry -> entry.getKey() != adapter.storeType())
+            .forEach(entry -> assertFalse(
+                entry.getValue().isCleared().getAsBoolean(),
+                "单 handle 只能清声明 Store，不得误清旁观 Store："
+                    + adapter + " -> " + entry.getKey().getSimpleName()
+            ));
+    }
+
+    private static Map<Class<?>, StoreWitness> storeWitnesses() {
+        return productionAdapters().collect(java.util.stream.Collectors.toUnmodifiableMap(
+            ProductionAdapterCase::storeType,
+            adapter -> new StoreWitness(adapter.seed(), adapter.isCleared())
+        ));
     }
 
     private static Stream<ProductionAdapterCase> productionAdapters() {
@@ -222,6 +236,9 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             0.9,
             1_000L
         );
+    }
+
+    private record StoreWitness(Runnable seed, BooleanSupplier isCleared) {
     }
 
     private record ProductionAdapterCase(
