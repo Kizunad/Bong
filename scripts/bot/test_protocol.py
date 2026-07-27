@@ -371,6 +371,74 @@ class ServerDataDecodeTest(unittest.TestCase):
             "production protobuf zone_info 应完整解出标量、repeated 与 optional 字段",
         )
 
+    def test_proto_breakthrough_cinematic_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_breakthrough_cinematic_bytes())
+
+        expected = {
+            "v": 1,
+            "type": "breakthrough_cinematic",
+            "actor_id": "offline:Break",
+            "phase": "prelude",
+            "phase_tick": 0,
+            "phase_duration_ticks": 60,
+            "realm_from": "awaken",
+            "realm_to": "induce",
+            "result": "success",
+            "interrupted": False,
+            "world_pos": [-240.5, 72.0, -160.25],
+            "visible_radius_blocks": 96.0,
+            "global": False,
+            "distant_billboard": True,
+            "particle_density": 0.75,
+            "season_overlay": "calm",
+            "style": "awaken_induce",
+            "at_tick": 4242,
+        }
+        self.assertEqual(
+            {key: decoded[key] for key in expected},
+            expected,
+            "production protobuf field 71 必须完整解出突破 cinematic 数值与视觉身份",
+        )
+        self.assertAlmostEqual(decoded["intensity"], 0.35, places=6)
+
+    def test_bot_dispatch_emits_decoded_breakthrough_cinematic_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_breakthrough_cinematic_bytes()
+        )
+
+        bot._dispatch(body)
+
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(
+            decoded_events[0].data["payload_type"],
+            "breakthrough_cinematic",
+            "真实 Bot reader 必须把 envelope field 71 暴露成结构化观察事件",
+        )
+        self.assertEqual(decoded_events[0].data["payload"]["realm_to"], "induce")
+
+    def test_breakthrough_cinematic_wrong_envelope_wire_type_is_not_dispatched(self):
+        self.assertIsNone(
+            proto_min.decode_server_data_envelope(
+                _pb_varint(proto_min.SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD, 1)
+            ),
+            "oneof field 71 的 varint 不得冒充 BreakthroughCinematic message",
+        )
+
+    def test_breakthrough_cinematic_truncated_message_returns_none_publicly(self):
+        malformed = (
+            _pb_key(proto_min.SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD, 2)
+            + _pb_raw_varint(4)
+            + b"ab"
+        )
+        self.assertIsNone(
+            decode_server_data_payload(malformed),
+            "截断的 field 71 必须 fail closed，而不是让 Bot reader 产出假 cinematic",
+        )
+
     def test_proto_inventory_snapshot_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_inventory_snapshot_bytes())
 
@@ -1073,10 +1141,18 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             'export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"',
             'export BONG_ASSETS_DIR="$ROOT/server"',
             'export BONG_DEV_MODE=1',
-            'exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
         ):
             with self.subTest(required=required):
                 self.assertIn(required, launch)
+        self.assertIn(
+            'exec "$ROOT/scripts/build-token.sh" cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
+            launch,
+        )
+        self.assertNotIn(
+            'exec cargo run --locked',
+            launch,
+            "bot-e2e 自起 server 必须经过全机共享 cargo counting token",
+        )
 
     def test_each_run_owns_private_evidence_and_persistent_logs(self):
         evidence_setup = self.source[:self.source.index('# Owned-fixture mode generates')]
@@ -2329,6 +2405,31 @@ def _server_data_narration_bytes() -> bytes:
         + _pb_string(3, "narration")
     )
     return _pb_message(3, _pb_message(1, target) + _pb_message(1, broadcast))
+
+
+def _server_data_breakthrough_cinematic_bytes() -> bytes:
+    cinematic = (
+        _pb_string(1, "offline:Break")
+        + _pb_string(2, "prelude")
+        + _pb_varint(3, 0)
+        + _pb_varint(4, 60)
+        + _pb_string(5, "awaken")
+        + _pb_string(6, "induce")
+        + _pb_string(7, "success")
+        + _pb_varint(8, 0)
+        + _pb_fixed64(9, -240.5)
+        + _pb_fixed64(10, 72.0)
+        + _pb_fixed64(11, -160.25)
+        + _pb_fixed64(12, 96.0)
+        + _pb_varint(13, 0)
+        + _pb_varint(14, 1)
+        + _pb_fixed32(15, 0.75)
+        + _pb_fixed32(16, 0.35)
+        + _pb_string(17, "calm")
+        + _pb_string(18, "awaken_induce")
+        + _pb_varint(19, 4242)
+    )
+    return _pb_message(proto_min.SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD, cinematic)
 
 
 def _server_data_inventory_event_moved_bytes() -> bytes:

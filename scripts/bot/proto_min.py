@@ -26,6 +26,8 @@ SERVER_DATA_PLAYER_STATE_FIELD = 5
 PLAYER_STATE_SPIRIT_QI_FIELD = 3
 PLAYER_STATE_SPIRIT_QI_MAX_FIELD = 11
 
+SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
+
 
 class ProtoDecodeError(ValueError):
     pass
@@ -70,6 +72,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _inventory_move_rejected(value)
         if field == 51:
             return _combat_event_floater(value)
+        if field == SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD:
+            return _breakthrough_cinematic(value)
         if field == 80:
             return _inventory_event(value)
         if field == 81:
@@ -713,6 +717,35 @@ def _combat_event_floater(data: bytes) -> dict[str, Any]:
     return {"v": 1, "type": "combat_event", "events": events}
 
 
+def _breakthrough_cinematic(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "breakthrough_cinematic",
+        "actor_id": _string(fields, 1),
+        "phase": _string(fields, 2),
+        "phase_tick": _varint(fields, 3),
+        "phase_duration_ticks": _varint(fields, 4),
+        "realm_from": _string(fields, 5),
+        "realm_to": _string(fields, 6),
+        "result": _string(fields, 7),
+        "interrupted": bool(_varint(fields, 8)),
+        "world_pos": [
+            _double(fields, 9),
+            _double(fields, 10),
+            _double(fields, 11),
+        ],
+        "visible_radius_blocks": _double(fields, 12),
+        "global": bool(_varint(fields, 13)),
+        "distant_billboard": bool(_varint(fields, 14)),
+        "particle_density": _float32(fields, 15),
+        "intensity": _float32(fields, 16),
+        "season_overlay": _string(fields, 17),
+        "style": _string(fields, 18),
+        "at_tick": _varint(fields, 19),
+    }
+
+
 FORGE_STEP_NAMES = {
     0: "unspecified",
     1: "billet",
@@ -892,6 +925,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     29: "lumber_progress",
     30: "gathering_session",
     31: "lingtian_session",
+    71: "breakthrough_cinematic",
     81: "dropped_loot_sync",
     119: "loot_container_open",
     120: "loot_container_update",
