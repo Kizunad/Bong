@@ -90,7 +90,7 @@
 
 - **P1-a 原语复核**：逐点核验上表"原语"列（mutation 类型 / 执行时机 / 伤型 / 来源归因 / 附带事件），修正初判，形成收编基线——这是后续语义等价测试的对照物。
 - **P1-b 事件与 payload**：新模块 `server/src/combat/damage_entry.rs`，`ExternalDamageRequest { target, payload, source, attribution, mitigation_policy }`：
-  - `payload` 是**tagged enum `ExternalDamagePayload { HpDelta { amount }, WoundApplication { part, kind, severity, bleed, contam } }`**——两类原语分型表达，不做有损归一
+  - `payload` 是**tagged enum `ExternalDamagePayload { HpDelta { amount }, WoundApplication { part, kind, severity, bleed, contam } }`**——两类原语分型表达，不做有损归一；**数值合法域锁死**：`amount` 语义为正向伤害量（>0 且有限，构造与消费边界双侧拒绝 NaN/∞/负值/零——治疗有自己的路径，不走本入口），WoundApplication 各数值字段同样限定 >0 有限 + 合法枚举，非法 payload 走确定错误分支并有专属负向测试；WoundApplication 字段集以 P1-a 复核出的 canonical `Wound` 完整字段为准补齐（含归因随载字段），不足以逐字段还原即扩 payload，不做有损压缩
   - `source` 为可审计枚举标签（ZhenfaWard / TribulationAoe / SwordParryReflect / ...，逐旁路一变体）
   - **`attribution: DamageAttribution { instigator: Option<Entity>, .. }` 归因结构**——死亡归因必须不变：P1-a 基线逐源记录**现有**归因去向（死亡事件当前归谁），迁移后逐源映射；自伤类（#5/#10/#11/#14/#17）`instigator = 自身`，无实体环境伤 `None`（source 枚举保留类别），施害者已 despawn 以 `None` + source 表示。WoundApplication 类保留原 Wound 携带的归因字段
   - **重复请求语义拍板：累计**——同 payload 两次 emit = 两次独立伤害（Bevy Events 天然语义，不引入 request_id 去重）；测试名与断言固定为"两次相同请求造成两次伤害"
@@ -123,8 +123,10 @@
   |------|------|------|
   | 扣费前拒绝（无效目标 / 反作弊 QiInvestExceeded / intent 校验失败） | **双方零变化、零 QiTransfer** | 攻方 qi_current 不变 + 事件流仅 violation |
   | 正常结算（**命中与未命中同账**） | 现场扣 `qi_invest` → **全额 `ReleaseToZone("attack_qi_invest")`**——真元做功后逸散回环境，命中与否只影响伤害结果不影响账务 | 攻方减量 == zone/overflow 增量 + `assert_conservation` |
-  | prepaid source cast 取消 / 打断 | 按 **P2-c 核账现状**逐源记录：既有实现有退款/释放则 pin 现状；预扣后取消即蒸发 = 与 qi_invest 同类缺口，**发现即纳入本阶段修复** | 逐源专属断言（退款 reason 或 ReleaseToZone） |
-  | prepaid source 正常施放 | 预扣位置 file:line + 预扣真元 ledger 去向逐源核账（**预扣但无去向 = 蒸发，纳入修复**） | 逐变体 `assert_conservation` |
+  | prepaid source cast 取消 / 打断 | 按 **P2-c 核账现状**逐源记录：既有实现有退款/释放则 pin 现状；预扣后取消即蒸发 = 与 qi_invest 同类缺口，**登记入核账产出清单** | 逐源专属断言（退款 reason 或 ReleaseToZone） |
+  | prepaid source 正常施放 | 预扣位置 file:line + 预扣真元 ledger 去向逐源核账（**预扣但无去向 = 蒸发，登记入核账产出清单**） | 逐变体 `assert_conservation` |
+
+  **范围界定**：P2 的既定修复只有两项已核验缺口（P2-a qi_invest 回灌、P2-b NpcMelee 收敛）；P2-c 核账是**审计交付物**，其产出清单在 §8.1 收口时逐项拍板"纳入本 plan 修 / 另立 plan"——不做未经界定的全量 prepaid 修复承诺。
   逐变体列出 `AttackSource` 全枚举 + `source_uses_prepaid_qi` match 分支作为上表的核账底册。
 - NPC 截脉门（防御侧对称）只登记 §8 #5，本 plan 不实施——依赖 NPC 真元预算结构。
 - 测试：镜像 `jiemai_parry_emits_qi_transfer_for_conservation` 写 `attack_qi_invest_emits_qi_transfer_for_conservation`（按上表分路径独立 case，各自断言该路径的借贷双方 + QiTransfer reason + `assert_conservation`，**不复用统一模板**）；NpcMelee 场景用 **qi_current=0、构造侧原始 qi_invest>0 的真实 resolve 路径**断言：intent 不被反作弊门拒绝、结算时 qi_invest==0、零 QiTransfer、物理伤害照常结算；`source_uses_prepaid_qi` 用**穷举 match 的枚举 pin 测试**（新增 AttackSource 变体时编译期强制表态），不写"N 个"计数断言。
@@ -212,7 +214,16 @@
 9. **`damage_mul` 激活策略**：数值 owner 是谁（combat 域内自决 vs 等武器/流派 plan 统一定伤型曲线）；先接线保 1.0 的第一步无争议。
 10. **`iframe_success` 死参数处置**：推荐直接删除（含 `:39` 死分支），dodge/iframe 作为 feature 单独立 plan 时再设计完整接口；保留死参数违反本仓"不留兼容层/死代码"约定。
 
-> 转 active 前按 docs/CLAUDE.md §五收口成 §8.1 决议（Explore agent 并行核查 + 文件:行号双锚点）。
+以下 #11-#16 来自 PR #1283 三轮对抗 review（4×gpt-5.6-sol）的实现级契约要求——各 finding 原文均以"转 active 前"为门，正是本节相位；每条决议必须按 §五模式带 file:line 双锚点：
+
+11. **致死归因交接载体（P1，blocker 级）**：`DamageAttribution` 是瞬态请求字段，damage_entry 消费后死亡系统拿什么判 killer——一次性 `FatalDamageEvent`（HP 首次从正压到 0 时 emit）vs tick-local `PendingDeathAttribution` component 二选一；先 Explore 核查死亡管线**现有**归因载体（`resolve.rs:1675` 正典路径今天怎么把 killer 传给死亡事件），能复用即复用，选型须含消费者与清理生命周期。
+12. **17 producer 的 Schedule/flush 普查（P1，blocker 级）**：逐源列 ScheduleLabel / SystemSet / Commands flush 边界，外加三列"同 system 写后读取 / 返回值依赖 / 附带事件时序"（直写→事件化的语义等价以此为判据）；跨 Schedule 无法同 tick 的源进延帧例外表；若类别级 SystemSet 排序不足以给出致死仲裁需要的确定总序，改逐 producer chain 或带稳定排序键的暂存队列。
+13. **DefenseKind server 事件→proto envelope 桥接（P3）**：普查现有 combat_event 桥接文件与转换函数（`weapon_equipped_emit.rs` / `zhenmai_v2_event_bridge.rs` 同族），新变体的 reader/match 臂/注册点以具体 file:function 列为 PR-4 交付物。
+14. **ShieldGuardBroken cause 载体与生命周期（P3）**：盾格 drain 跨阈值标记的承载形态——tick-local event（带 defender + 命中/请求标识）vs 一次性 component；创建/消费/清理 system 与调度顺序、one-shot 语义（防陈旧误报与重复 emit）。
+15. **`armor.toml` 所有权（P4）**：`server/assets/items/armor.toml` 的 defense/durability 描述与 `mundane.rs` 是并存的第二份运行时数据——单源化必须收编：Rust 权威表确定性生成 armor.toml 相关字段 / 删除 toml 冗余字段改运行时查表 / manifest 同时喂两端，三选一并配防漂门禁。
+16. **client 启动加载点（P4 + P3 A/V）**：`ArmorTintRegistry` manifest loader 与新增 audio_recipe/VFX 注册的真实接入点——具体 bootstrap 类或 ResourceManager reload listener 的 file:line、调用顺序、线程与失败策略。
+
+> 转 active 前按 docs/CLAUDE.md §五收口成 §8.1 决议（Explore agent 并行核查 + 文件:行号双锚点）——**#11/#12 为 blocker 级，未收口不得开 P1**。
 
 ## §10 实施工作流
 

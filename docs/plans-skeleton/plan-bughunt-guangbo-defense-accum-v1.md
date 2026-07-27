@@ -66,7 +66,7 @@
 - [ ] 消费逻辑：`apply_armor_mitigation`（`resolve.rs:117-151`）对 `LIMB_PARTS` 四肢部位改为 `defense_profile` 查表值（**缺 entry 按 0.0，不再 `?` 提前返回四肢分支**）与 `limb_defense_bonus` **相加后统一 `clamp(0.0, ARMOR_MITIGATION_CAP)`**（保持 `plan-layered-equip-v1` 写死的"resolve 侧最终唯一兜底"语义）；非四肢部位与现行为完全一致。
 - [ ] 行为边界：NPC 无 `KnownTechniques` → `limb_defense_bonus` 恒 0.0 且 `defense_profile` 恒空 → 减伤恒 0，与现状一致（NPC 穿甲减伤归 `plan-npc-combat-gear-v2`，本修复不得顺手改变 NPC 路径行为）。
 - [ ] 不改 `LIMB_DEFENSE_BONUS_MAX = 0.005` 数值本身（设计代价曲线不动，只修幂等性）。
-- [ ] 复核 `defense_profile` 生产写入方清单（核验时全仓仅 `armor_sync.rs:89` 与 `body_conditioning.rs:174` 两处；修复后应只剩 `armor_sync.rs:89` 一处，加一条"唯一写入方" grep pin 测试锁住）。
+- [ ] 复核 `defense_profile` 生产写入方清单（核验时全仓仅 `armor_sync.rs:89` 与 `body_conditioning.rs:174` 两处；修复后应只剩 `armor_sync.rs:89` 一处）。唯一写入约束用**所有权收口**而非 grep 文本 pin（脆弱门禁）：`defense_profile` 写路径收敛为 armor_sync 模块受控接口（字段模块私有或 `pub(crate)` setter），编译期防新增写入方。
 
 ## 验收测试计划
 
