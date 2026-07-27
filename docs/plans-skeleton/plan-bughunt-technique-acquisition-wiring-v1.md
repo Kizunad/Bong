@@ -31,7 +31,7 @@
 **交付物**：
 - schema：`TechniqueLearnedV1 { technique_id, display_name, learn_source }` + 正反 sample + pin 测试（六个 `LearnSource` 变体逐一对拍）
 - server emitter system：消费 `TechniqueLearnedEvent` → **只定向发给学习者 client**；注册点写死在 `cultivation::register`（`server/src/cultivation/mod.rs:216`）或 network emit 层既有 schedule（实施时二选一并在 plan 更新落点）
-- client handler：按 `learn_source` 路由——`Observe` → `TechniqueObserveHud.showObservedLearned`；`Mentor` → 师承专属 toast；`Scroll` / `CombatInsight` 既有反馈不回退
+- client handler：按 `learn_source` **六变体穷尽路由**——`Observe` → `TechniqueObserveHud.showObservedLearned`；`Mentor` → 师承专属 toast；`DyingMaster` → 同 Mentor 路由（运行态归 dying-master plan，但 wire 值经本桥即可出现，不留空）；`Scroll` → 既有残卷反馈，本桥不重复弹；`CombatInsight` → 既有领悟反馈，本桥不重复弹；`DevCommand` → 静默（仅面板刷新，不发玩家叙事）；未知 learn_source 字符串 → 静默忽略 + 日志（前向兼容）
 - 测试：payload 双端对拍逐变体 pin；emitter 定向不广播；client 路由分支逐变体断言；残卷/首击领悟两条既有路径接上后行为不变（回归）
 
 ## P1 — 观摩偷师接线（M1）⬜
@@ -61,5 +61,5 @@
 ## 开放问题（P0 决策门前需收口）
 
 - **#1（审查 S1，需用户拍板）cast 时是否查 `required_realm`——「学会不忘」vs「跌境封招」**。现状证据：技能栏 cast 入口检查 拥有/race/form-anchor/经脉，唯独不查 realm；全仓仅丹道用 `CastRejectReason::RealmTooLow`（`server/src/dandao/skills.rs:217,223`），枚举变体存在但几乎无人消费；同时仓内存在主动跌境机制（heaven_gate 跌境 / RealmRegressed），跌境后仍可施放化虚级招式。拍「跌境封招」→ 统一入口加 realm 门 + HUD 拒绝理由；拍「学会不忘」→ 明文注释口径并处理 RealmTooLow 的孤儿语义。
-- **#2 观摩免费习得的经济边界**：会不会击穿残卷流通价值（worldview.md L1113 道统遗物稀缺）——是否要求目标功法品阶上限 / 观摩仅得极低初始熟练度。
+- **#2 观摩免费习得的经济边界**：会不会击穿残卷流通价值（worldview.md L1113 道统遗物稀缺）——是否要求目标功法品阶上限 / 观摩仅得极低初始熟练度；观摩对 NPC 施法（npc.\* 前缀）的 eligibility 与 [[plan-bughunt-technique-proficiency-growth-v1]] 开放问题 #2 的 npc.\* allowlist **共用同一决议**，不各自维护排除逻辑。
 - **#3 观摩/传功成功时刻的 A/V 规格**：粒子基类/数量/lifetime、SFX recipe、narration 文案示例——转 active 前按 docs/CLAUDE.md §四 视听精度要求补齐，不允许"学会时冒个光"一笔带过。

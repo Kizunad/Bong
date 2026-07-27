@@ -58,7 +58,7 @@
 
 **交付物 B —— snapshot 节流（与 A 同 PR，不得拆）**：
 - `techniques_snapshot_emit.rs:14` 熟练度微变不再触发全量 snapshot（差分或脏位掩码，具体机制实施定）；**全量 snapshot 的确定性触发器保留并写明**：join/重连、功法增删、开面板请求（如无既有请求链则新增 C2S）——这是 P1 一致性契约的兜底面
-- 负载测试：连续 N 次命中只产生阈值 payload，不逐击全量序列化 49 条 description
+- 负载测试（**P0 口径只断言 snapshot 抑制**）：连续 N 次命中不逐击触发全量 snapshot、全量序列化次数有明确上界；「只产生阈值 payload」的断言属 P1（阈值 emitter 在 P1 交付，P1 依赖 P0 的 `TechniqueProficiencyGained` 内部事件），P0 不引用 P1 才存在的输出
 
 **验收**：逐 id「权威事件 → proficiency 上升恰好一次」集成测试（共享事件源的组可参数化）；上限 clamp；练满 `TechniqueMasteredEvent`；负载测试绿。
 
@@ -69,7 +69,8 @@
 **交付物**：
 - 发射 system：消费 `TechniqueProficiencyGained`（P0 的唯一权威源，自带 old/new，阈值判断不需要前值缓存）→ 跨整数百分比阈值才发、**定向发给该玩家**；注册点写死（network emit 层既有 schedule，实施时落点写进 plan 更新）
 - **客户端一致性契约（唯一权威同步协议）**：阈值 payload **携带权威新 proficiency 值**；client handler 除 toast 外**同步更新本地功法面板状态模型**——面板打开期间的增量以阈值 payload 为准（分辨率=整数百分比），全量以 P0 的确定性 snapshot 触发器（join/重连/功法增删/开面板）为准；阈值以下变化允许面板暂留旧值、开面板/重连必收敛，最大陈旧窗口 = 距上次阈值 <1 个百分点
-- 测试：未跨阈值不发；恰好跨阈值发一次；一次增长跨多个阈值只发最新值；乱序/重复 payload 客户端收敛（以携带值为准，非增量累加）；面板常驻打开时连续增长的显示收敛；重连后 snapshot 收敛
+- **增量合并规则（乱序收敛的成立前提）**：gameplay 熟练度单调不减（唯一合法降值路径 = dev 命令/重置，**不走增量、只走全量 snapshot 覆盖语义**）→ client 对阈值 payload 取 `max(local, incoming)`，旧包晚到天然不回退；全量 snapshot 为覆盖语义，可承载合法降值
+- 测试：未跨阈值不发；恰好跨阈值发一次；一次增长跨多个阈值只发最新值；乱序/重复 payload 按 max 合并不回退（含「新值先到、旧值后到」显式用例）；dev 降值经 snapshot 覆盖后旧增量不再回写；面板常驻打开时连续增长的显示收敛；重连后 snapshot 收敛
 
 ## P2 — 防回归 ⬜
 
@@ -89,4 +90,4 @@
 - **#1 各流派增长速率数值**：范本 sword 每命中 +0.008；转 active 前按 docs/CLAUDE.md §五 用 Explore 收口逐流派数值，不拍脑袋。
 - **#2 npc.\* 前缀 3 招是否显式排除**：疑似 NPC 专属，不该出现在玩家增长清单与玩家 snapshot；顺带处理 snapshot 对未知 id 的静默丢弃（审查 m4，`techniques_snapshot_emit.rs:44-47` filter_map 丢弃 + DB 永久占位）。
 - **#3 `known_woliu_proficiency` fallback 0.5 与习得初值 0.0 不一致**（审查 m2，`combat/woliu_v2/skills.rs:1618` `unwrap_or(0.5)`——无 entry 的施放者比刚学会的更强）：口径统一并入本 plan P0 还是单独小修。
-- **#4 逐流派定「施放成功」还是「命中确认」口径**：挂施放会开对空气白挥刷熟练度的口子；范本中 sword 挂命中、dash 挂动作完成。转 active 时逐流派写死（本条收口后 P0 交付物 A 的"权威事件"列才可实施）。
+- **#4 逐流派定「施放成功」还是「命中确认」口径**：挂施放会开对空气白挥刷熟练度的口子；范本中 sword 挂命中、dash 挂动作完成。口径决议须同时定**记账单位**（每 cast / 每命中目标 / 每段 / 每持续 tick）与幂等键（cast_id/hit_id），AOE 多目标、多段、持续伤害的期望增量随之写死。转 active 时逐流派收口（本条收口后 P0 交付物 A 的"权威事件"列才可实施）。
