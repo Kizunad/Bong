@@ -51,8 +51,8 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::{
-    canonical_player_id, load_current_character_id, load_player_shrine_anchor_slice,
-    player_character_id, PlayerStatePersistence,
+    canonical_player_id, load_current_character_id, load_player_lifecycle_slice,
+    load_player_shrine_anchor_slice, player_character_id, PlayerStatePersistence,
 };
 
 use self::anticheat::{
@@ -97,7 +97,15 @@ fn attach_combat_bundle_to_joined_clients(
         JoinedClientsWithoutCombatBundleFilter,
     >,
     player_persistence: Option<valence::prelude::Res<PlayerStatePersistence>>,
+    combat_clock: Option<valence::prelude::Res<CombatClock>>,
 ) {
+    // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）：
+    // `CombatClock` 每次进程重启都从 0 重新计数，读档时必须把这个"当前 tick"传给
+    // `load_player_lifecycle_slice`，用于把落盘时刻记录的绝对 tick deadline 折算到当前
+    // tick 空间（见 `player::state::translate_lifecycle_deadline_tick_across_restart`）。
+    // 缺省（未注册 CombatClock 资源的最小化测试 app）时按 0 处理，与生产环境启动瞬间的
+    // 真实初值一致。
+    let current_combat_clock_tick = combat_clock.as_deref().map_or(0, |clock| clock.tick);
     for (entity, username) in &joined_clients {
         let persistence = player_persistence.as_deref();
         let spawn_anchor = persistence.and_then(|persistence| {
@@ -113,6 +121,53 @@ fn attach_combat_bundle_to_joined_clients(
             })
             .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
             .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
+
+        // bughunt player-lifecycle-relog-death-consequence-wipe：断线重连必须复用上次落盘
+        // 的死亡/复活状态机（state / fortune_remaining / awaiting_decision / 各 deadline
+        // tick），不能盲插 Lifecycle::default()——否则濒死 (NearDeath) / 待复活
+        // (AwaitingRevival) 玩家断线重连即可白嫖满状态"新角色"，完全绕过渡劫概率判定
+        // 与每角色仅 3 次的运气消耗（fortune_remaining）。deadline 均为绝对 tick 值，
+        // `load_player_lifecycle_slice` 已经按 `current_combat_clock_tick` 把它们折算到
+        // 当前 tick 空间（跨重启也不例外），near_death_tick /
+        // auto_confirm_revival_decisions 会在下一 tick 自然按折算后的 deadline 继续结算，
+        // 无需在这里重放决策逻辑。character_id 不匹配（老档 / 已转生到新角色）时视为
+        // "无可复用的存档"，回退默认值。
+        let persisted_lifecycle = persistence.and_then(|persistence| {
+            match load_player_lifecycle_slice(
+                persistence,
+                username.0.as_str(),
+                current_combat_clock_tick,
+            ) {
+                Ok(lifecycle) => lifecycle,
+                Err(error) => {
+                    // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求
+                    // 4）：反序列化失败（坏行/损坏 JSON）不能静默吞掉——那样会悄悄回退到
+                    // Lifecycle::default() 满状态，与本 bug 同一失效类（濒死/待复活状态被
+                    // 无声抹除）。这里必须 warn! 留痕，再回退默认值（回退本身是唯一可行的
+                    // 兜底：拒绝加入服务器同样不可接受）。
+                    tracing::warn!(
+                        "[bong][combat][lifecycle] failed to load persisted Lifecycle for `{}`, \
+                         falling back to Lifecycle::default(): {error}",
+                        username.0,
+                    );
+                    None
+                }
+            }
+        });
+        let lifecycle = match persisted_lifecycle {
+            Some(mut loaded) if loaded.character_id == character_id => {
+                // spawn_anchor 由独立的 player_shrine 表维护、可能比 Lifecycle JSON 快照更
+                // 新，这里始终以刚查出的权威值覆盖，避免读到断连时刻的过期灵龛坐标。
+                loaded.spawn_anchor = spawn_anchor;
+                loaded
+            }
+            _ => Lifecycle {
+                character_id: character_id.clone(),
+                spawn_anchor,
+                ..Default::default()
+            },
+        };
+
         commands.entity(entity).insert((
             Wounds::default(),
             Stamina::default(),
@@ -125,11 +180,7 @@ fn attach_combat_bundle_to_joined_clients(
             carrier::CarrierStore::default(),
             anqi_v2::ContainerSlot::default(),
             player_attack::PlayerAttackCooldown::default(),
-            Lifecycle {
-                character_id,
-                spawn_anchor,
-                ..Default::default()
-            },
+            lifecycle,
         ));
     }
 }
@@ -300,6 +351,18 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 2）：断线时正
+    // 处于 AwaitingRevival 的角色重连后必须重新收到死亡屏/DeathCinematic，不能静默"裸奔"
+    // 在这个阻断攻防、又会被 auto_confirm_revival_decisions 强制结算的状态里。独立
+    // add_systems 调用是为了不撑爆上面那个已经 20 项、贴着 Bevy 0.14 tuple-arity 上限的
+    // 元组（见文件内既有 "Separate add_systems call to stay below Bevy 0.14 tuple-arity
+    // limits" 注释）。
+    app.add_systems(
+        Update,
+        lifecycle::reemit_death_screen_for_reconnected_awaiting_revival_clients
+            .in_set(CombatSystemSet::Intent)
+            .after(attach_combat_bundle_to_joined_clients),
     );
     app.add_systems(
         Update,
