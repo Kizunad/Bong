@@ -150,6 +150,12 @@ jobs:
           BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
         run: bash scripts/bot-e2e.sh
 
+      - name: Bot fallback-flat e2e stage (spawn distribution coverage)
+        env:
+          BOT_E2E_RUN_TAG: ci
+          BOT_E2E_FALLBACK_MODE: "1"
+        run: bash scripts/bot-e2e.sh
+
       - name: Bot chat timestamp → Tiandao window e2e
         env:
           CHAT_WINDOW_E2E_PROFILE: release
