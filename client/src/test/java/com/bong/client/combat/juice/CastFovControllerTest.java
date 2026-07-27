@@ -42,6 +42,17 @@ import org.junit.jupiter.api.Test;
  * 它的作用是让 {@code CastSyncHandler.sourceFor} 把随后的权威回执认成 SKILL_BAR；真正武装
  * pending 的是 {@link #accept}（权威 {@code cast_sync{phase:casting}}）。只 predict 不 accept 的
  * 路径必须零 juice，见 {@link #localPredictionAloneNeverArmsSoTimerCompleteIsSilent()}。
+ *
+ * <p><b>动画事件驱动路径的测试入口分工</b>（PR #1249 三轮返工，回应 reviewer C/D「假绿」指控）：
+ * {@code routerDriven*}/{@code router*} 系列用例经真实 {@link VfxEventRouter#route} 消费一条
+ * 真实 {@code play_anim} JSON 报文，锁住「解析 → bridge 成功门控 → 路由 →
+ * {@link CastFovController#onAnimPlayed}」这条生产链路确实是通的（至少覆盖 charge→release 完整
+ * 周期一次，见 {@code routerDrivenChargeThenReleaseCycleConsumesTokenAndRecordsFiredTerminal}）。
+ * 其余动画路径边界用例（TTL / 容量 / 乱序 / 多令牌串用 / 终态记录等组合爆炸）为保持可读性仍用
+ * {@link #chargeAnim()}/{@link #releaseAnim()} 直调 {@code onAnimPlayed}——这是路由器在 bridge
+ * 返回 {@code true} 时唯一会做的事（见 {@code VfxEventRouter.route} 的 {@code PlayAnim} 分支），
+ * 故直调与经路由到达同一断言目标；只有「路由本身是否真的把事件送到这里」这件事必须由真实入口
+ * 证明，不能靠直调假设。
  */
 class CastFovControllerTest {
     private static final int HEAVY_SLOT = 3;
@@ -1320,6 +1331,40 @@ class CastFovControllerTest {
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
             "路由通但无 accepted 令牌 → 零震动");
         assertBaseline("路由通但无 accepted 令牌 → 零 FOV");
+    }
+
+    @Test
+    void routerDrivenChargeThenReleaseCycleConsumesTokenAndRecordsFiredTerminal() {
+        // C/D 指控的核心：既有 chargeAnim()/releaseAnim() 直调 CastFovController.onAnimPlayed，
+        // 绕开了真实 VfxEventRouter.route(...) 的「解析 → bridge 成功门控 → 路由 → controller」
+        // 链路——wire 报文没有 cast identity 这件事因此在测试里永远暴露不出来（见类顶注释「动画
+        // 事件驱动路径的测试入口分工」段）。本用例逐段走真实入口，锁住动画路径的核心转换：
+        // charge → release → 令牌消费 → 终态，不只是孤立的一段。
+        acceptGateCast(START);
+
+        VfxEventRouter.RouteResult chargeResult =
+            routePlayAnim(true, LOCAL_PLAYER, "bong:sword_heaven_gate_charge");
+        assertTrue(chargeResult.isHandled(), "charge 段真实路由应 handled: " + chargeResult.logMessage());
+        advanceMs(2000);
+        assertFalse(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "真实路由驱动的 charge 段必须触发蓄力渐强震动（证明 route → onAnimPlayed 链路是通的）");
+
+        VfxEventRouter.RouteResult releaseResult =
+            routePlayAnim(true, LOCAL_PLAYER, "bong:sword_heaven_gate_release");
+        assertTrue(releaseResult.isHandled(), "release 段真实路由应 handled: " + releaseResult.logMessage());
+        assertEquals(CastFovController.Terminal.FIRED,
+            CastFovController.terminalStateForTest(GATE_SLOT, START),
+            "真实路由驱动的 release 必须落 FIRED 终态——令牌消费的可观察后果，不是只有直调"
+                + " onAnimPlayed 才有的行为");
+        assertEquals(0, CastFovController.animTokenCountForTest(),
+            "release 消费即整枚出队，真实路由路径下队列同样不许残留");
+
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK, fov(), 1e-6, "真实路由驱动的 release FOV punch 必须触发");
+
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("真实路由驱动路径的脉冲同样 decay 回基准");
     }
 
     @Test
