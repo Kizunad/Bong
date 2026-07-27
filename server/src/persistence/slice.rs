@@ -945,7 +945,11 @@ impl PersistedRevisionFence {
     /// in `DurableWriteRequest`; serialized adapters receive the same values for
     /// auditability. A failed or stale write never advances the fence and never
     /// yields a receipt that could clear dirty state.
-    pub fn commit<T, E>(
+    /// This stays crate-private so external consumers cannot turn an arbitrary
+    /// `Ok(())` callback into a durable receipt. Production adapters live inside
+    /// the persistence crate boundary and remain responsible for reporting storage
+    /// success only after the serialized write or revision CAS commits.
+    pub(crate) fn commit<T, E>(
         &mut self,
         permit: SliceWritePermit<'_, T>,
         snapshot: DirtySnapshot,
