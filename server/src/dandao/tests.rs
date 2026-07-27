@@ -1161,8 +1161,31 @@ mod boss_spawn_integration {
     use super::super::boss::{BaolongwangBoss, BossPhase};
     use super::super::boss_spawn::{BaolongwangMarker, BOSS_HOME_ZONE};
     use crate::cultivation::components::Cultivation;
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::ledger::{QiAccountId, QiTransferReason, WorldQiAccount};
-    use valence::prelude::{App, Position};
+    use crate::world::dimension::DimensionKind;
+    use crate::world::zone::{Zone, ZoneRegistry};
+    use valence::prelude::{App, DVec3, Position};
+
+    /// 暴龙王巢穴 zone fixture（与 `boss_spawn::boss_spawn_tests::baolongwang_zone_fixture`
+    /// 同款范式，独立复制一份保持测试模块自包含）：只有 `spirit_qi` 可变，其余占位最小值。
+    fn baolongwang_zone_fixture(spirit_qi: f64) -> Zone {
+        Zone {
+            name: BOSS_HOME_ZONE.to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (
+                DVec3::new(-50.0, -80.0, -50.0),
+                DVec3::new(50.0, -20.0, 50.0),
+            ),
+            spirit_qi,
+            danger_level: 5,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+        }
+    }
 
     /// App 级集成测试：boss_spawn::register 注册的系统在真实 App 中端到端运行。
     /// 覆盖链路：spawn boss + player → 运行 drain system → 验证 QiTransfer 事件 + zone 余额增加。
@@ -1178,6 +1201,11 @@ mod boss_spawn_integration {
         let mut account = WorldQiAccount::default();
         account.set_balance(zone_id.clone(), 0.0).unwrap();
         app.insert_resource(account);
+        // baolongwang_qi_drain_aura_system 现在需要 ZoneRegistry 才会吸取（field authority
+        // 同步写回 zone.spirit_qi，见 c79bc03e）；不插入会在 find_zone_mut 处整 tick 早退。
+        app.insert_resource(ZoneRegistry {
+            zones: vec![baolongwang_zone_fixture(0.0)],
+        });
 
         // Spawn boss（Rage 阶段，激活吸取）
         let _boss = app
@@ -1262,6 +1290,13 @@ mod boss_spawn_integration {
         let mut account = WorldQiAccount::default();
         account.set_balance(zone_id.clone(), initial_zone).unwrap();
         app.insert_resource(account);
+        // 显式插入 ZoneRegistry：本测试要锁住的是 Expel 阶段跳过吸取的分支，
+        // 不能靠 ZoneRegistry 缺失早退凑巧得出同样的"不扣真元"结果。
+        app.insert_resource(ZoneRegistry {
+            zones: vec![baolongwang_zone_fixture(
+                initial_zone / QI_ZONE_UNIT_CAPACITY,
+            )],
+        });
 
         let _boss = app
             .world_mut()
