@@ -66,7 +66,7 @@ test('consumer CI checks out and tests the exact central workflow contract', asy
     yaml.includes(`[[ "$(git -C _central-contract rev-parse HEAD)" == '${centralSha}' ]]`),
     'consumer CI must verify the checked-out central OID',
   );
-  assert.match(yaml, /npm --prefix _central-contract test/);
+  assert.match(yaml, /(?:\n\s+cd _central-contract\n\s+npm test\n)/);
   assert.doesNotMatch(yaml, /repository: Kizunad\/review[\s\S]*?ref: (?:main|master|v?\d|[0-9a-f]{1,39})\b/);
 });
 

@@ -44,12 +44,13 @@ jobs:
           check-latest: false
       - name: Validate central review consumer contract
         shell: bash
-        env:
-          CENTRAL_REVIEW_CONTRACT_DIR: _central-contract
         run: |
           set -euo pipefail
           [[ "$(git -C _central-contract rev-parse HEAD)" == '417e55e55737b8fe42803b97f85b59fce8bbfb2a' ]]
           node --check .github/scripts/review-consumer.test.mjs
-          node --test .github/scripts/review-consumer.test.mjs
-          npm --prefix _central-contract test
+          CENTRAL_REVIEW_CONTRACT_DIR=_central-contract node --test .github/scripts/review-consumer.test.mjs
+          (
+            cd _central-contract
+            npm test
+          )
           git diff --check
