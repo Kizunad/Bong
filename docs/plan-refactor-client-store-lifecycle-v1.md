@@ -19,7 +19,7 @@
 
 ## 阶段
 
-- ⏳ P0 设计收口 + 吸收清单验真：以 FQCN manifest 对 108 个生产 `*Store.java` 做会话态 / 持久配置态 / 纯常量表分类；冻结 `SessionScopedStore`、显式静态 adapter registry 与源码扫描强制，不使用构造器自注册或运行时反射。P0 只落框架、分类和门禁，不改变既有 Store 的断线行为。
+- ✅ 2026-07-27 P0 设计收口 + 吸收清单验真：以 FQCN manifest 对 108 个生产 `*Store.java` 做会话态 / 持久配置态 / 纯常量表分类；冻结 `SessionScopedStore`、显式静态 adapter registry 与源码扫描强制，不使用构造器自注册或运行时反射。P0 只落框架、分类和门禁，不改变既有 Store 的断线行为。
 - ⬜ P1 在册 Store 平移：把当前 `clearClientStateOnDisconnect()` 中已存在的 Store 清理逐项迁入 registry；断线 helper 改为调用 registry 一次。非 Store 的 renderer / handler / ambience 等生命周期 hook 继续由 helper 显式拥有，P1 不借重构删除它们。
 - ⬜ P2 裸奔状态收编：按 P0 manifest 显式接入 Freshness、`combat/store/`、炼丹 / 锻造 / 灵田 / 灵宝 / TSY / 医道等会话态 Store、玩家动画层缓存，并为灵田等循环音效提供“活动实例 + 延迟层 + 派生 flag”同边界硬停。
 - ⬜ P3 全量强制 + 删旧：统一**生产生命周期入口**为 `clearOnDisconnect()`（不把清 listener / test seam 的 `resetForTests` 当生产清理）；删除手工 Store 清单；源码扫描强制“生产 `*Store.java` 必须恰好有一种分类，session 类必须以强类型 handle 登记”，新增漏分类或漏登记即红。
@@ -50,7 +50,7 @@
 **决议**：
 1. P0 manifest 以 production source root 下的 FQCN 为唯一键，覆盖 P0 基线的全部 108 个业务 `*Store.java`；每个业务文件必须恰好落入 session-scoped、persistent-config、constant 三类之一。新增的 `SessionScopedStore.java` 接口虽匹配文件后缀，但作为 lifecycle infrastructure 由 source guard 单独显式排除，不能被误计为第 109 个业务 Store；registry / catalog 类自身不以 `*Store.java` 命名。
 2. 当前明确例外是 `HudLayoutPreferenceStore`（persistent-config，断线保留用户 HUD 偏好）和 `ArmorProfileStore`（constant，固定护甲 profile 表）。106 个 session-scoped Store 中，`ClientConnectionStatusStore` 是 token-gated 连接状态机：它由 `invalidateSession(handler, disconnectedAtMs)` 在 registry 之前按 handler 精确失活，不得再被无参全局 clear；其余业务 Store 必须在 P3 前全部有生产 clear 并登记。
-3. 测试以 `Files.walk` 扫描 `client/src/main/java/com/bong/client`，用排序后的相对路径 / FQCN 比较“发现集 = manifest 三类并集”，并断言分类互斥、session 集 = registry 集；不只硬编码数量 108，也不扫描 test / gametest / build-generated。
+3. 测试以 `Files.walk` 扫描 `client/src/main/java/com/bong/client`，用排序后的相对路径 / FQCN 比较“发现集 = manifest 三类并集”，并断言分类互斥、registry-managed session 集 = registry 集；不只硬编码数量 108，也不扫描 test / gametest / build-generated。
 
 **落点**：`client/src/main/java/com/bong/client/hud/HudLayoutPreferenceStore.java:15-51`；`client/src/main/java/com/bong/client/combat/ArmorProfileStore.java:45-86`；`client/src/test/java/com/bong/client/BongNetworkHandlerTest.java:560-575`；plan P0/P3。
 
