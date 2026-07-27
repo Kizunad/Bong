@@ -27,6 +27,7 @@ use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::PlayerState;
 use crate::schema::server_data::{CoffinGradeV1, CoffinStateV1, ServerDataPayloadV1, ServerDataV1};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 pub const MUNDANE_COFFIN_ITEM_ID: &str = "mundane_coffin";
 /// Legacy constant kept for backward compat; use `CoffinGrade::Mundane.lifespan_factor()` in new code.
 #[allow(dead_code)]
@@ -431,13 +432,21 @@ fn handle_coffin_place_requests(
             Option<&Cultivation>,
             &mut PlayerInventory,
             &Position,
+            Option<&CurrentDimension>,
         ),
         With<Client>,
     >,
 ) {
     for event in events.read() {
-        let Ok((username, mut client, player_state, cultivation, mut inventory, position)) =
-            players.get_mut(event.player)
+        let Ok((
+            username,
+            mut client,
+            player_state,
+            cultivation,
+            mut inventory,
+            position,
+            dimension,
+        )) = players.get_mut(event.player)
         else {
             tracing::warn!(
                 "[bong][coffin] place rejected: player {:?} has no inventory/client state",
@@ -445,6 +454,18 @@ fn handle_coffin_place_requests(
             );
             continue;
         };
+
+        // plan-bughunt-coffin-dimension-gate-v1：棺注册表/marker 恒定挂在主世界，异维玩家
+        // 靠裸坐标数值巧合不得操作。维度组件缺失同样 fail-closed 拒绝。
+        if !coffin_requires_overworld(dimension) {
+            tracing::warn!(
+                "[bong][coffin] place rejected for `{}`: player not in overworld (dimension={:?})",
+                username.0,
+                dimension
+            );
+            client.send_chat_message(COFFIN_DIMENSION_REJECTION_MESSAGE);
+            continue;
+        }
 
         if !coffin_target_is_close(position, event.pos) {
             tracing::warn!(
@@ -578,6 +599,8 @@ fn handle_coffin_enter_requests(
             Option<&Username>,
             Option<&LifespanComponent>,
             Option<&CoffinComponent>,
+            &mut Client,
+            Option<&CurrentDimension>,
         ),
         With<Client>,
     >,
@@ -601,11 +624,24 @@ fn handle_coffin_enter_requests(
             continue;
         }
 
-        let Ok((mut position, flags, username, lifespan, current_coffin)) =
+        let Ok((mut position, flags, username, lifespan, current_coffin, mut client, dimension)) =
             players.get_mut(event.player)
         else {
             continue;
         };
+
+        // plan-bughunt-coffin-dimension-gate-v1：进棺目标恒在主世界，异维玩家靠裸坐标数值
+        // 巧合不得钻入。维度组件缺失同样 fail-closed 拒绝。
+        if !coffin_requires_overworld(dimension) {
+            tracing::warn!(
+                "[bong][coffin] enter rejected: player {:?} not in overworld (dimension={:?})",
+                event.player,
+                dimension
+            );
+            client.send_chat_message(COFFIN_DIMENSION_REJECTION_MESSAGE);
+            continue;
+        }
+
         if current_coffin.is_some() || !coffin_target_is_close(&position, event.pos) {
             continue;
         }
@@ -723,6 +759,7 @@ fn handle_coffin_breaks(
             Option<&mut Position>,
             Option<&mut Flags>,
             Option<&LifespanComponent>,
+            Option<&CurrentDimension>,
         ),
         With<Client>,
     >,
@@ -737,9 +774,25 @@ fn handle_coffin_breaks(
         if players.get(event.player).is_err() {
             continue;
         }
+        // plan-bughunt-coffin-dimension-gate-v1：破坏目标恒在主世界，异维玩家靠裸坐标数值
+        // 巧合不得破坏。维度组件缺失同样 fail-closed 拒绝。放在近距校验之前，避免异维玩家
+        // 单靠数值凑近就绕过维度隔离。
+        if let Ok((.., dimension)) = players.get(event.player) {
+            if !coffin_requires_overworld(dimension) {
+                tracing::warn!(
+                    "[bong][coffin] break rejected: player {:?} not in overworld (dimension={:?})",
+                    event.player,
+                    dimension
+                );
+                if let Ok((_, _, mut client, ..)) = players.get_mut(event.player) {
+                    client.send_chat_message(COFFIN_DIMENSION_REJECTION_MESSAGE);
+                }
+                continue;
+            }
+        }
         // 近距校验（与放置 / 进棺 / 回收一致），防远程破坏。
         // 玩家无 Position 则跳过校验（测试容忍；生产 ClientBundle 恒带 Position）。
-        if let Ok((.., Some(position), _, _)) = players.get(event.player) {
+        if let Ok((.., Some(position), _, _, _)) = players.get(event.player) {
             if !coffin_target_is_close(position, event.pos) {
                 tracing::warn!(
                     "[bong][coffin] break rejected: player {:?} too far from {:?}",
@@ -758,7 +811,8 @@ fn handle_coffin_breaks(
 
         if let Some(occupant) = coffin.occupied_by {
             commands.entity(occupant).remove::<CoffinComponent>();
-            if let Ok((_, username, _, _, _, position, flags, lifespan)) = players.get_mut(occupant)
+            if let Ok((_, username, _, _, _, position, flags, lifespan, _)) =
+                players.get_mut(occupant)
             {
                 if let Some(mut position) = position {
                     position.set(coffin_exit_position(coffin.lower));
@@ -849,6 +903,7 @@ fn handle_coffin_menu_reclaim(
             Option<&mut Position>,
             Option<&mut Flags>,
             Option<&LifespanComponent>,
+            Option<&CurrentDimension>,
         ),
         With<Client>,
     >,
@@ -863,6 +918,21 @@ fn handle_coffin_menu_reclaim(
         if players.get(event.player).is_err() {
             continue;
         }
+        // plan-bughunt-coffin-dimension-gate-v1：回收目标恒在主世界，异维玩家靠裸坐标数值
+        // 巧合不得回收。维度组件缺失同样 fail-closed 拒绝。放在 registry 查找之前。
+        if let Ok((.., dimension)) = players.get(event.player) {
+            if !coffin_requires_overworld(dimension) {
+                tracing::warn!(
+                    "[bong][coffin] reclaim rejected: player {:?} not in overworld (dimension={:?})",
+                    event.player,
+                    dimension
+                );
+                if let Ok((_, _, mut client, ..)) = players.get_mut(event.player) {
+                    client.send_chat_message(COFFIN_DIMENSION_REJECTION_MESSAGE);
+                }
+                continue;
+            }
+        }
         let Some(coffin) = registry.lookup(event.pos) else {
             tracing::warn!(
                 "[bong][coffin] reclaim rejected: no registered coffin at {:?}",
@@ -871,7 +941,7 @@ fn handle_coffin_menu_reclaim(
             continue;
         };
         // 近距校验（与放置 / 进棺一致），防远程回收。玩家无 Position 则跳过校验（测试容忍）。
-        if let Ok((.., Some(position), _, _)) = players.get(event.player) {
+        if let Ok((.., Some(position), _, _, _)) = players.get(event.player) {
             if !coffin_target_is_close(position, coffin.lower) {
                 tracing::warn!(
                     "[bong][coffin] reclaim rejected: player {:?} too far from {:?}",
@@ -891,7 +961,8 @@ fn handle_coffin_menu_reclaim(
         // 占用者弹出（与破坏一致）。
         if let Some(occupant) = coffin.occupied_by {
             commands.entity(occupant).remove::<CoffinComponent>();
-            if let Ok((_, username, _, _, _, position, flags, lifespan)) = players.get_mut(occupant)
+            if let Ok((_, username, _, _, _, position, flags, lifespan, _)) =
+                players.get_mut(occupant)
             {
                 if let Some(mut position) = position {
                     position.set(coffin_exit_position(coffin.lower));
@@ -1222,6 +1293,18 @@ fn coffin_target_is_close(position: &Position, target: BlockPos) -> bool {
     );
     position.get().distance_squared(target_center) <= COFFIN_INTERACT_MAX_DISTANCE_SQ
 }
+
+/// plan-bughunt-coffin-dimension-gate-v1 — 普通延寿棺的 `CoffinRegistry` / marker 恒定挂在
+/// 主世界 `OverworldLayer`；place / enter / break / menu_reclaim 四条链路都必须校验玩家
+/// 当前维度是主世界，否则裸坐标数值巧合就能跨维操作主世界的棺。`CurrentDimension` 组件缺失
+/// 时 fail-closed 拒绝（不得隐式当作主世界处理，对齐 `supply_coffin::authority` 的先例）。
+fn coffin_requires_overworld(dimension: Option<&CurrentDimension>) -> bool {
+    matches!(dimension, Some(CurrentDimension(DimensionKind::Overworld)))
+}
+
+/// 拒绝反馈复用仓库既有的 `client.send_chat_message` 回执惯例（对齐
+/// `supply_coffin::interact::open_authority_rejection_message`），不另造第二套反馈机制。
+const COFFIN_DIMENSION_REJECTION_MESSAGE: &str = "§c[棺] 你不在主世界，无法操作延寿棺。";
 
 /// plan-coffin-tiers-v1 P2 — marker 渲染实体的 spawn 坐标。棺横跨 lower→upper（x+1），
 /// marker 取两格中心（lower.x + 1.0）让 GeckoLib 模型居中覆盖整张棺，y 贴地。
@@ -1917,6 +2000,11 @@ mod tests {
         app.world_mut()
             .entity_mut(client_entity)
             .insert(empty_player_inventory());
+        // plan-bughunt-coffin-dimension-gate-v1：这些 helper 构造的场景默认代表「玩家在
+        // 主世界操作主世界的棺」这一 happy path；跨维拒绝场景由各测试显式覆盖/移除该组件。
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Overworld));
 
         // 注册被测系统（裸加，无 .after 约束）。
         app.add_systems(Update, handle_coffin_breaks);
@@ -1945,6 +2033,11 @@ mod tests {
         app.world_mut()
             .entity_mut(client_entity)
             .insert(empty_player_inventory());
+        // plan-bughunt-coffin-dimension-gate-v1：这些 helper 构造的场景默认代表「玩家在
+        // 主世界操作主世界的棺」这一 happy path；跨维拒绝场景由各测试显式覆盖/移除该组件。
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Overworld));
 
         app.add_systems(Update, handle_coffin_menu_reclaim);
 
@@ -2321,6 +2414,11 @@ mod tests {
         app.world_mut()
             .entity_mut(client_entity)
             .insert(empty_player_inventory());
+        // plan-bughunt-coffin-dimension-gate-v1：这些 helper 构造的场景默认代表「玩家在
+        // 主世界操作主世界的棺」这一 happy path；跨维拒绝场景由各测试显式覆盖/移除该组件。
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Overworld));
 
         app.add_systems(valence::prelude::Update, handle_coffin_menu_reclaim);
 
@@ -2972,5 +3070,492 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    // ───────────── plan-bughunt-coffin-dimension-gate-v1 — 维度门禁回归 ─────────────
+    //
+    // 四类请求（place / enter / break / menu_reclaim）在异维玩家 + 裸坐标数值巧合命中
+    // 主世界棺位时必须拒绝（含 CurrentDimension 组件缺失的 fail-closed 分支）；
+    // 同维度 + 近距时必须放行——只测拒绝不够，必须证明门禁没有连正常操作一起拦掉。
+
+    fn collect_chat_messages(helper: &mut MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
+
+    /// 构造 handle_coffin_place_requests 测试场景：玩家背包已持有一个 `mundane_coffin`
+    /// 物品实例（返回其 item_instance_id），layer 实体打上 `OverworldLayer` 标记。
+    fn app_with_place_system_holding_coffin() -> (App, Entity, u64, MockClientHelper) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let client_entity = scenario.client;
+        let layer_entity = scenario.layer;
+        let helper = scenario.helper;
+
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let mut inventory = empty_player_inventory();
+        let receipt = add_item_to_player_inventory(
+            &mut inventory,
+            &item_registry,
+            &mut allocator,
+            MUNDANE_COFFIN_ITEM_ID,
+            1,
+            0,
+        )
+        .expect("granting mundane_coffin should succeed");
+        let item_instance_id = receipt.instance_id;
+
+        app.add_event::<CoffinPlaceRequest>();
+        app.insert_resource(CoffinRegistry::default());
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+
+        app.world_mut()
+            .entity_mut(layer_entity)
+            .insert(OverworldLayer);
+        app.world_mut().entity_mut(client_entity).insert(inventory);
+        // `handle_coffin_place_requests` 的玩家查询要求 `&PlayerState`（非 Option），缺了会在
+        // 取玩家那步就整条早退——那样连维度分支都进不去，拒绝侧用例会因为「压根没跑到门禁」
+        // 而假绿，放行侧则永远注册不上。必须显式补上。
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(PlayerState::default());
+        // 默认场景 = 玩家在主世界（happy path）；跨维测试显式覆盖/移除该组件。
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        app.add_systems(Update, handle_coffin_place_requests);
+
+        (app, client_entity, item_instance_id, helper)
+    }
+
+    #[test]
+    fn ecs_coffin_place_allowed_in_overworld_near_target() {
+        // 放行侧：主世界 + 近距 → 棺应成功注册，随身棺材物品被消费。
+        let (mut app, client_entity, item_instance_id, _helper) =
+            app_with_place_system_holding_coffin();
+        let target = BlockPos::new(0, 0, 0);
+
+        app.world_mut().send_event(CoffinPlaceRequest {
+            player: client_entity,
+            pos: target,
+            item_instance_id,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(target)
+                .is_some(),
+            "主世界 + 近距放置应成功注册棺于 {target:?}，但 registry 中找不到"
+        );
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(client_entity)
+            .expect("client should carry PlayerInventory");
+        assert!(
+            inventory_item_by_instance(inventory, item_instance_id).is_none(),
+            "放置成功后随身棺材物品实例应被消费，但仍能在背包中找到"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_place_rejected_in_tsy_same_numeric_pos() {
+        // 拒绝侧：坍缩渊玩家 + 与主世界棺位数值相同的坐标 → 必须拒绝，且带 chat 反馈。
+        let (mut app, client_entity, item_instance_id, mut helper) =
+            app_with_place_system_holding_coffin();
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+        let target = BlockPos::new(0, 0, 0);
+
+        app.world_mut().send_event(CoffinPlaceRequest {
+            player: client_entity,
+            pos: target,
+            item_instance_id,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(target)
+                .is_none(),
+            "坍缩渊玩家靠裸坐标数值巧合不得在主世界注册棺，但 registry 中找到了 {target:?}"
+        );
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(client_entity)
+            .expect("client should carry PlayerInventory");
+        assert!(
+            inventory_item_by_instance(inventory, item_instance_id).is_some(),
+            "维度拒绝必须发生在消费物品之前，随身棺材物品应仍在背包中"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度拒绝必须下发 chat 反馈；实际 messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_place_rejected_missing_dimension() {
+        // fail-closed：CurrentDimension 组件缺失时同样拒绝，不得隐式当作主世界处理。
+        let (mut app, client_entity, item_instance_id, mut helper) =
+            app_with_place_system_holding_coffin();
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<CurrentDimension>();
+        let target = BlockPos::new(0, 0, 0);
+
+        app.world_mut().send_event(CoffinPlaceRequest {
+            player: client_entity,
+            pos: target,
+            item_instance_id,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(target)
+                .is_none(),
+            "缺失 CurrentDimension 时应 fail-closed 拒绝，但棺仍被注册于 {target:?}"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度组件缺失同样必须下发拒绝 chat 反馈；实际 messages={messages:?}"
+        );
+    }
+
+    /// 构造 handle_coffin_enter_requests 测试场景：registry 中已注册一口未占用的
+    /// mundane 棺，坐标紧贴 ScenarioSingleClient 玩家默认原点。
+    fn app_with_enter_system_and_registered_coffin() -> (App, Entity, BlockPos, MockClientHelper) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let client_entity = scenario.client;
+        let helper = scenario.helper;
+        let lower = BlockPos::new(0, 0, 0);
+
+        app.add_event::<CoffinEnterRequest>();
+        app.add_event::<CoffinStateChanged>();
+        app.add_event::<PlaySoundRecipeRequest>();
+
+        let mut registry = CoffinRegistry::default();
+        registry.insert(lower, 0, CoffinGrade::Mundane);
+        app.insert_resource(registry);
+
+        // 默认场景 = 玩家在主世界（happy path）；跨维测试显式覆盖/移除该组件。
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        app.add_systems(Update, handle_coffin_enter_requests);
+
+        (app, client_entity, lower, helper)
+    }
+
+    #[test]
+    fn ecs_coffin_enter_allowed_in_overworld_near_target() {
+        // 放行侧：主世界 + 近距 → 玩家应成功进棺（registry 标记占用 + CoffinComponent 挂载）。
+        let (mut app, client_entity, lower, _helper) =
+            app_with_enter_system_and_registered_coffin();
+
+        app.world_mut().send_event(CoffinEnterRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .unwrap()
+                .occupied_by,
+            Some(client_entity),
+            "主世界 + 近距进棺应成功标记 registry 占用，但未生效"
+        );
+        assert!(
+            app.world().get::<CoffinComponent>(client_entity).is_some(),
+            "主世界 + 近距进棺后玩家实体应挂载 CoffinComponent"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_enter_rejected_in_tsy_same_numeric_pos() {
+        // 拒绝侧：坍缩渊玩家 + 与主世界棺位数值相同的坐标 → 必须拒绝，且带 chat 反馈。
+        let (mut app, client_entity, lower, mut helper) =
+            app_with_enter_system_and_registered_coffin();
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+
+        app.world_mut().send_event(CoffinEnterRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .unwrap()
+                .occupied_by
+                .is_none(),
+            "坍缩渊玩家靠裸坐标数值巧合不得进入主世界棺，但 registry 显示已被占用"
+        );
+        assert!(
+            app.world().get::<CoffinComponent>(client_entity).is_none(),
+            "维度拒绝后玩家实体不应挂载 CoffinComponent"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度拒绝必须下发 chat 反馈；实际 messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_enter_rejected_missing_dimension() {
+        // fail-closed：CurrentDimension 组件缺失时同样拒绝，不得隐式当作主世界处理。
+        let (mut app, client_entity, lower, mut helper) =
+            app_with_enter_system_and_registered_coffin();
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<CurrentDimension>();
+
+        app.world_mut().send_event(CoffinEnterRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .unwrap()
+                .occupied_by
+                .is_none(),
+            "缺失 CurrentDimension 时应 fail-closed 拒绝，但 registry 显示已被占用"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度组件缺失同样必须下发拒绝 chat 反馈；实际 messages={messages:?}"
+        );
+    }
+
+    /// app_with_break_system 的变体：同时返回 MockClientHelper，供 chat 反馈断言使用。
+    fn app_with_break_system_and_helper() -> (App, Entity, MockClientHelper) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let client_entity = scenario.client;
+        let helper = scenario.helper;
+
+        app.add_event::<CoffinBreakRequest>();
+        app.add_event::<CoffinStateChanged>();
+        app.add_event::<PlaySoundRecipeRequest>();
+
+        app.insert_resource(CoffinRegistry::default());
+        let mut craft = CraftRegistry::new();
+        register_craft_recipes(&mut craft).expect("coffin recipes should register");
+        app.insert_resource(craft);
+
+        app.insert_resource(make_coffin_item_registry());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(empty_player_inventory());
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        app.add_systems(Update, handle_coffin_breaks);
+
+        (app, client_entity, helper)
+    }
+
+    #[test]
+    fn ecs_coffin_break_rejected_in_tsy_same_numeric_pos_with_chat_feedback() {
+        // 拒绝侧：坍缩渊玩家 + 与主世界棺位数值相同的坐标 → 必须拒绝，且带 chat 反馈。
+        // （放行侧已由既有 `ecs_coffin_break_despawns_marker_and_grants_partial_materials`
+        // 覆盖：该测试场景现在默认玩家在主世界，是本门禁的放行回归。）
+        let (mut app, client_entity, mut helper) = app_with_break_system_and_helper();
+        let lower = BlockPos::new(0, 0, 0);
+        let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+
+        app.world_mut().send_event(CoffinBreakRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .is_some(),
+            "坍缩渊玩家靠裸坐标数值巧合不得破坏主世界棺，但 registry 中已找不到 {lower:?}"
+        );
+        assert!(
+            app.world().get_entity(marker).is_some(),
+            "维度拒绝后 marker 实体应仍存在（{marker:?}）"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度拒绝必须下发 chat 反馈；实际 messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_break_rejected_missing_dimension() {
+        // fail-closed：CurrentDimension 组件缺失时同样拒绝，不得隐式当作主世界处理。
+        let (mut app, client_entity, mut helper) = app_with_break_system_and_helper();
+        let lower = BlockPos::new(0, 0, 0);
+        let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<CurrentDimension>();
+
+        app.world_mut().send_event(CoffinBreakRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .is_some(),
+            "缺失 CurrentDimension 时应 fail-closed 拒绝，但棺已被破坏移除"
+        );
+        assert!(
+            app.world().get_entity(marker).is_some(),
+            "缺失 CurrentDimension 时应 fail-closed 拒绝，但 marker 实体已被 despawn"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度组件缺失同样必须下发拒绝 chat 反馈；实际 messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_reclaim_rejected_in_tsy_same_numeric_pos_with_chat_feedback() {
+        // 拒绝侧：坍缩渊玩家 + 与主世界棺位数值相同的坐标 → 必须拒绝，且带 chat 反馈。
+        // （放行侧已由既有 `ecs_coffin_menu_reclaim_despawns_marker_and_grants_full_materials`
+        // 覆盖：该测试场景现在默认玩家在主世界，是本门禁的放行回归。）
+        let (mut app, client_entity, mut helper) = app_with_reclaim_system_and_helper();
+        let lower = BlockPos::new(0, 0, 0);
+        let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+
+        app.world_mut().send_event(CoffinMenuReclaimRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .is_some(),
+            "坍缩渊玩家靠裸坐标数值巧合不得回收主世界棺，但 registry 中已找不到 {lower:?}"
+        );
+        assert!(
+            app.world().get_entity(marker).is_some(),
+            "维度拒绝后 marker 实体应仍存在（{marker:?}）"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度拒绝必须下发 chat 反馈；实际 messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_reclaim_rejected_missing_dimension() {
+        // fail-closed：CurrentDimension 组件缺失时同样拒绝，不得隐式当作主世界处理。
+        let (mut app, client_entity, mut helper) = app_with_reclaim_system_and_helper();
+        let lower = BlockPos::new(0, 0, 0);
+        let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<CurrentDimension>();
+
+        app.world_mut().send_event(CoffinMenuReclaimRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .is_some(),
+            "缺失 CurrentDimension 时应 fail-closed 拒绝，但棺已被回收移除"
+        );
+        assert!(
+            app.world().get_entity(marker).is_some(),
+            "缺失 CurrentDimension 时应 fail-closed 拒绝，但 marker 实体已被 despawn"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度组件缺失同样必须下发拒绝 chat 反馈；实际 messages={messages:?}"
+        );
     }
 }

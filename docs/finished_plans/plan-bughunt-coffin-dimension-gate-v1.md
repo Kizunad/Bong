@@ -58,9 +58,61 @@
 
 ## 修复方向
 
-- 在普通延寿棺 C2S 入口或事件消费端强制读取玩家 `CurrentDimension`。
-- 需要操作 `OverworldLayer` / `CoffinRegistry` 的请求必须要求玩家当前维度为主世界；否则拒绝并下发反馈。
-- 回归测试应覆盖 `coffin_place`、`coffin_enter`、`coffin_break`、`coffin_menu_reclaim` 四类请求在非主世界同裸坐标附近被拒绝。
+- [x] 在普通延寿棺 C2S 入口或事件消费端强制读取玩家 `CurrentDimension`。
+      **落地**：选**事件消费端**（非网络层入口）——服务端本就持有权威维度，客户端上报的维度不可信；
+      且消费端能统一覆盖非 UI 来源（bot / 伪造 payload / 陈旧菜单）。四个 handler 的玩家查询各补
+      `Option<&CurrentDimension>`（`server/src/coffin/mod.rs` place/enter/break/menu_reclaim）。
+- [x] 需要操作 `OverworldLayer` / `CoffinRegistry` 的请求必须要求玩家当前维度为主世界；否则拒绝并下发反馈。
+      **落地**：`coffin_requires_overworld`（`server/src/coffin/mod.rs:1301-1303`）=
+      `matches!(dimension, Some(CurrentDimension(DimensionKind::Overworld)))`，组件缺失落 `_` 分支
+      → **fail-closed 拒绝**（不隐式当作主世界）。四条链路的校验均在**产生副作用之前**（place 在
+      消费物品 / `registry.insert` 之前；enter 在 `set_occupied` 之前；break 在 `remove_by_pos` 之前；
+      menu_reclaim 在 `lookup` 之前）。拒绝复用既有 `client.send_chat_message` 回执惯例，未另造通道。
+      **未复用 `player/home_return.rs:96 fn is_overworld`**：那个是 fail-open（`unwrap_or_default()`
+      缺失时当主世界）且模块私有，复用会把 fail-open 语义带进安全门禁。
+- [x] 回归测试应覆盖 `coffin_place`、`coffin_enter`、`coffin_break`、`coffin_menu_reclaim` 四类请求在非主世界同裸坐标附近被拒绝。
+      **落地**：四类各配**三侧**共 12 条——放行（主世界 + 近距）/ 跨维拒绝（Tsy + 同裸坐标）/
+      维度组件缺失拒绝；拒绝侧一并断言 chat 回执。**只测拒绝不足以证明门禁正确**，故补齐放行侧。
+
+## Finish Evidence
+
+**落地清单**
+
+- 维度门禁实现 + 四链路接线：`server/src/coffin/mod.rs`（`coffin_requires_overworld` +
+  `handle_coffin_place_requests` / `handle_coffin_enter_requests` / `handle_coffin_breaks` /
+  `handle_coffin_menu_reclaim` 的玩家查询与前置校验）
+- 回归测试：`server/src/coffin/mod.rs` `mod tests` 内 12 条 `ecs_coffin_*`（place/enter/break/reclaim
+  × allowed / rejected_in_tsy_same_numeric_pos / rejected_missing_dimension）
+
+**关键 commit**
+
+- `172d6614a`（2026-07-27）修复普通延寿棺跨维裸坐标门禁：四条 C2S 链路强制主世界校验
+
+**测试结果**
+
+- `cargo test --lib coffin` → **235 passed / 0 failed**（含既有 coffin 用例，无回归）
+- 全量 `cargo test` → **11962 passed**；`cargo fmt --check` RC=0；`cargo clippy --all-targets -- -D warnings` RC=0
+- **判别力自检**：把 `coffin_requires_overworld` 改为恒 `true`（门禁失效）后，**8 条拒绝用例全部撞红、
+  8 条非拒绝用例保持绿**；还原后全绿。证明这批用例真正依赖门禁而非空转
+- **对抗验证**：无上下文 read-only validator 对 HEAD `172d6614a` 复核 **PASS**，独立复现同一组 8 红/8 绿
+
+**跨仓库核验**
+
+- server：`coffin_requires_overworld` / `CurrentDimension` / `DimensionKind::Overworld` /
+  `COFFIN_DIMENSION_REJECTION_MESSAGE`
+- client / agent：**无改动**。本修复刻意不给 payload 增加维度字段——客户端上报的维度不可作为授权依据，
+  服务端权威维度已足够；`ClientRequestProtocol.java:440-485` 四类 payload 维持只编码 `x/y/z`
+
+**遗留 / 后续**
+
+- 本 plan 只覆盖**普通延寿棺**。物资棺 `supply_coffin` 另有 `supply_coffin::authority` 的
+  session/source 双维度比对逻辑（含 `SupplyCoffinAuthorityFailure::MissingPlayerDimension`），
+  语义更复杂、不在本 plan 范围，未合并为同一实现。
+- 修复期间发现的测试脆弱点（非本 plan 引入、已在本轮修掉）：`handle_coffin_place_requests` 的玩家
+  查询要求 `&PlayerState`（非 Option，与 break/reclaim 的 `Option<&PlayerState>` 不一致），测试
+  harness 漏插该组件会让整条 place 链路在取玩家那步早退——从而使「断言未注册」型的拒绝用例被喂成
+  假绿。同类隐患已核查 enter/break/reclaim 三条（复用 `ScenarioSingleClient` 完整 ClientBundle，
+  不存在）。四条链路对 `PlayerState` 必需性不一致本身可作为后续统一口径的候选。
 
 ## 对抗审查
 
