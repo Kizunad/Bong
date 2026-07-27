@@ -2,21 +2,21 @@
 
 > 所属总纲：`plan-refactor-master-v1.md`。一句话：拆掉 16324 行的 `persistence/mod.rs` 巨石，建统一的持久化 Slice 框架——载入失败守护（绝不空表覆盖）、关服强制 flush registry、相对 tick 基准、autosave 竞态互斥——把“重启丢档/断线丢档/载入清零”整簇缺陷从根上消灭。
 
-## 现状证据（2026-07-27 P0 复核）
+## 现状证据（2026-07-28 P0 复核）
 
-- 当前 `server/src/persistence/mod.rs` 为 16325 行，生产区有 **51 次** `CREATE TABLE` SQL、对应 **49 个**去重表名；`persistence/identity.rs` 再委托创建 `player_identities`，所以当前 v38 基线合计 **52 次生产 DDL、50 个独立表**。原侦察的“53”混入了口径漂移；只有把 #1289 尚未合入的 v39 `player_lifecycle` 计入，才是 53 次生产 DDL、51 个独立表。
-- 当前迁移链是 v1–v38（`CURRENT_USER_VERSION = 38`），并非已落地的 v1–v39。`agent_world_model` 仍是版本链外的 schema ensure；`tribulations_active` 与 `player_lifespan` 各有一次兼容性重复建表。
+- `origin/main` 已含 #1289 的 v39 `player_lifecycle`：当前生产基线为 **53 次生产 DDL、51 个独立表**，`CURRENT_USER_VERSION = 39`。原侦察的“53”现已成立；P0 普查表在玩家核心 Slice 中纳入 `player_lifecycle`。
+- `agent_world_model` 仍是版本链外的 schema ensure；`tribulations_active` 与 `player_lifespan` 各有一次兼容性重复建表。
 - 覆盖参差：SQLite 已承载玩家、NPC、社交、zone、heartbeat、qi runtime 等状态；ActiveEvents、TiandaoAttention、长期状态效果等仍有纯内存缺口。JSON 域的 mineral/spiritwood 已有 hydrate/节流保存，但缺关服 flush 或损坏保护，不能表述成“完全无 persistence”。
-- #1261 recipe unlock shutdown flush 与 #1288 KnownTechniques load guard 已代码闭环；#1282、#1290、#1294 只合入报告/skeleton，不能因 PR 状态为 merged 就标记缺陷已修。#1289、#1259 仍开放且共同修改 `persistence/mod.rs`、`player/state.rs`、`player/mod.rs`、`combat/lifecycle.rs`，其合入前不重排这些文件。
+- #1289 已于 2026-07-28 合入，Lifecycle persistence 的文件避让解除；#1259 仍开放且修改 `persistence/mod.rs`、`player/state.rs`、`player/mod.rs`、`combat/lifecycle.rs`，其合入前继续避让这些精确文件。
 - 绝对 runtime tick 已确认造成重启漂移：mineral `respawn_at_tick`、void action `ready_at_tick` 会把旧进程 uptime 带入新进程；heartbeat pseudo-vein 的 observed age + pending elapsed + wall anchor 是可复用的正向范式。
 - 关服链路已由 `shutdown.rs` 在 `PreUpdate` 发出一次 `AppExit::Success`，同帧 `Last` 可落盘；目前 player、recipe unlock、zone runtime 等各自消费事件，没有统一顺序、错误隔离和汇总报告。
 
-## P0 表域普查（当前 v38 基线）
+## P0 表域普查（当前 v39 基线）
 
 | 目标域 | 当前表 | 后续拆分落点 |
 |---|---|---|
 | bootstrap / 运维 | `bootstrap_events` | `persistence/bootstrap.rs` |
-| 玩家核心 Slice | `player_core`、`player_slow`、`inventories`、`player_ui_prefs`、`player_lifespan`、`player_skills`、`player_shrine`、`player_cultivation`、`player_known_techniques`、`player_craft_sessions`、`player_identities`、`dropped_loot` | `persistence/player/{core,position,inventory,ui_prefs,lifespan,skills,shrine,cultivation,techniques,craft_session,identity}.rs`；保留 `player/state.rs` facade 与跨表 transaction |
+| 玩家核心 Slice | `player_core`、`player_slow`、`inventories`、`player_ui_prefs`、`player_lifespan`、`player_lifecycle`、`player_skills`、`player_shrine`、`player_cultivation`、`player_known_techniques`、`player_craft_sessions`、`player_identities`、`dropped_loot` | `persistence/player/{core,position,inventory,ui_prefs,lifespan,lifecycle,skills,shrine,cultivation,techniques,craft_session,identity}.rs`；保留 `player/state.rs` facade 与跨表 transaction |
 | 生死与公共档案 | `life_records`、`life_events`、`death_registry`、`lifespan_events`、`deceased_snapshots`、`epitaphs` | `persistence/{life,deceased_archive,epitaph}.rs` |
 | NPC / 势力 / 离屏 | `npc_state`、`npc_digests`、`factions`、`reputation`、`membership`、`relationships`、`archetype_registry`、`npc_deceased_index`、`pending_dormant_relics` | `persistence/npc/{runtime,faction,archetypes,archive,dormant_relics}.rs` |
 | 渡劫 / 身份 / 化虚 | `tribulations_active`、`ascension_quota`、`legacy_letterbox`、`void_action_cooldowns`、`high_renown_milestones` | `persistence/{tribulation,void_state,social_milestones}.rs`；`player_identities` 继续由现有 `identity.rs` 承载 |
@@ -25,7 +25,7 @@
 | 社交 | `social_anonymity`、`social_relationships`、`social_exposures`、`social_renown`、`social_spirit_niches`、`social_faction_memberships`、`social_faction_reputations` | `persistence/social.rs` |
 | 待确认消费者 | `spirit_treasure_world`、`spirit_treasure_dialogue_log` | 先标 orphan candidate；确认生产 consumer 后再迁往 `persistence/spirit_treasure.rs`，不得仅凭 schema 存在宣称已接线 |
 
-迁移拆分只允许机械移动且保持版本、顺序、transaction 与失败行为。v13 legacy cultivation backfill、v21/v23 缺表/缺列兼容、v30 faction 数据映射、v34 qi unknown/fail-closed、v35 heartbeat 保守回填、v38 overflow 初始化，以及待合入的 v39 Lifecycle rebase 都是 load-bearing migration，禁止行为级 squash。
+迁移拆分只允许机械移动且保持版本、顺序、transaction 与失败行为。v13 legacy cultivation backfill、v21/v23 缺表/缺列兼容、v30 faction 数据映射、v34 qi unknown/fail-closed、v35 heartbeat 保守回填、v38 overflow 初始化，以及 v39 Lifecycle rebase 都是 load-bearing migration，禁止行为级 squash。
 
 ## 接入面
 
@@ -37,8 +37,8 @@
 
 ## 阶段
 
-- ⏳ P0 设计收口 + contract pins：完成 50 表归域与吸收清单验真；在 `server/src/persistence/slice.rs` 冻结 descriptor-based Slice contract、load guard、shutdown registry、tick rebase 与 dirty revision；不迁移生产 slice。
-- ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；等 #1289/#1259 合入后，将 KnownTechniques/Lifecycle 平移为首批宿主。
+- ⏳ P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；在 `server/src/persistence/slice.rs` 冻结 descriptor-based Slice contract、load guard、shutdown registry、同 tick save-before-load、注入时钟、tick rebase 与 domain-bound dirty receipt；不迁移生产 slice。
+- ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；等 #1259 合入后，将 KnownTechniques/Lifecycle 平移为首批宿主。
 - ⬜ P2 载入守护推广：全部玩家 slice（core/position/inventory/SkillSet/Wounds/长期 buff/身份键等）收编；聚合 writer 按 `WriteSet` omit 被阻断 slice。
 - ⬜ P3 关服 flush + tick rebase 批次：shutdown registry 逐域替换旧 `Last` hook；绝对 deadline 改相对基准；autosave/事件写入按 write authority + revision/CAS 串行化。
 - ⬜ P4 遗漏运行态补持久化批次：ActiveEvents、TiandaoAttention、长期 consumable/buff、realm taint、season override、supply cooldown、灵眼等逐个补 Slice；业务生命周期修复留在各自领域。
@@ -49,7 +49,7 @@
 ### R3 直接吸收
 
 - **仍缺、作为框架/迁移宿主**：active-events-restart-loss、mineral-respawn-tick-restart-drift、realm-taint-restart-amnesia、season-override-restart、spiritwood-shutdown-flush、status-effects-consumable-persistence（仅长期 consumable/buff）、supply-coffin-cooldown-restart-rollback、tiandao-attention-persistence、zone-influence-shutdown-flush（已有 hydrate/节流，范围仅为最终 flush）、dormant-redis-dirty-ack（异步 ACK/失败重脏）、coffin-autosave-inflight-race、identity-persist-key-mismatch、mineral-exhausted-log-corrupt-revival、spirit-eye-runtime-persistence、voidaction-cooldown-runtime-tick-restart。
-- **merged plan only、代码仍缺**：wounds-relog-full-heal（#1282）、player-slice-load-failure-clears（#1290）、shelflife-clock-restart-freshness（#1294）。Wounds/Lifecycle 等 #1289 合入后再迁移。
+- **merged plan only、代码仍缺**：wounds-relog-full-heal（#1282）、player-slice-load-failure-clears（#1290）、shelflife-clock-restart-freshness（#1294）。Wounds/Lifecycle 生产接线已随 #1289 落地，但要等 #1259 解除精确文件避让后再迁入 Slice 框架。
 - **代码已闭环、P5 只归档**：recipe-unlock-shutdown-flush（#1261）。KnownTechniques #1288 不是清单项，但作为 load guard 基线。
 
 ### R3 只提供 persistence adapter/原语，业务修复拆回领域 owner
@@ -66,7 +66,7 @@
 ## 文件所有权与边界
 
 - 独占：`server/src/persistence/**`、`player/state.rs` + `player/mod.rs` 的 autosave/载入区段、各域持久化接线点。
-- P0 冻结区：#1289/#1259 合入前，不重构 `server/src/persistence/mod.rs`、`server/src/player/state.rs`、`server/src/player/mod.rs`、`server/src/combat/lifecycle.rs`；P0 对 `persistence/mod.rs` 只允许增加模块声明。
+- P0 冻结区：#1289 已合入；#1259 合入前继续避让 `server/src/persistence/mod.rs`、`server/src/player/state.rs`、`server/src/player/mod.rs`、`server/src/combat/lifecycle.rs` 的生产主体。P0 对 `persistence/mod.rs` 仍只允许增加模块声明。
 - 不碰：session 业务逻辑（R1 经钩子接入）、qi 语义（R5）、`client_request_handler.rs`（R4）。已有 craft/inventory/cultivation/ledger/dropped-loot 跨表 transaction 不得拆成多连接写入。
 - 不引入：全局 `rusqlite::Connection` Resource、`Mutex<Connection>`、异步全局 writer、所有时间统一 wall-clock、或新旧 shutdown hook 双注册。
 
@@ -99,7 +99,7 @@
 
 **决议**：
 1. 统一三态为 `SliceLoad<T, E> = Missing | Loaded(T) | Failed(E)`。只有连接成功、查询成功且确认无行才是 `Missing`；连接/SQL/解码/校验失败一律是 `Failed`。
-2. `Missing` 与 `Loaded` 可写；`Failed` 即使为维持会话创建 runtime default，也必须携带 `WriteBlocked` guard。即时 Changed、周期 autosave、disconnect、shutdown、export 与聚合 transaction 全部消费同一 guard；新会话成功重载才恢复写资格。
+2. `Missing` 与 `Loaded` 可写；`Failed` 即使为维持会话创建 runtime default，也必须携带 `WriteBlocked` provenance。即时 Changed、周期 autosave、disconnect、shutdown、export 与聚合 transaction 全部只能通过 `GuardedSlice::write_permit` 取得不可直接构造的 writer permit；公开 API 不提供丢弃 load provenance 的拆解入口，新会话成功重载才恢复写资格。
 3. 默认体验为**按 slice 降级**：展示/非关键 slice 可只读运行；core、inventory、craft、lifespan/Lifecycle、cultivation/qi 等高价值或跨 slice mutation 在依赖集读取失败时拒绝可变 gameplay。关键世界账本使用 `RefuseStartup`。自动回滚整库备份不进入在线加载路径，只保留人工审计恢复。
 
 **落点**：`server/src/player/state.rs:173-182`、`server/src/player/mod.rs:221-272,470-486,629-645`（KnownTechniques 正向范式）；`server/src/player/state.rs:434-573`（待推广 fallback）；plan §阶段 P2、§bot 验收场景 #3。
@@ -125,8 +125,8 @@
 ### #5 Autosave 竞态：write authority + dirty revision/CAS
 
 **决议**：
-1. 每个 `WriteDomain` 的 mutation 递增 `DirtyRevision`；writer 捕获 `(snapshot, revision)`。写失败永不清 dirty；写成功也只有在当前 revision 仍等于捕获值时才能 ack clean。
-2. revision 只保护内存 dirty acknowledgement，不能单独阻止旧 snapshot 晚到覆盖数据库。每个 domain 还必须选择单一串行 writer，或把 persisted revision 纳入 SQL CAS/单调拒绝。
+1. 每个 `WriteDomain` 的 mutation 递增 `DirtyRevision`；`DirtyTracker` 只能凭同一 `WriteBinding(domain + authority)` 的 write permit 产生 snapshot。写失败不产生 receipt、永不清 dirty；writer 成功后由 `PersistedRevisionFence::commit` 产生不可直接构造的 domain-bound `DurableWriteReceipt`，tracker 仅消费匹配当前 revision 的 receipt 才能 ack clean。
+2. revision 只保护内存 dirty acknowledgement，不能单独阻止旧 snapshot 晚到覆盖数据库。registry 对同一 domain 强制唯一 authority 和一致 ordering；每个 domain 选择单一串行 writer，或由 `DurableWriteRequest` 把 expected persisted revision 纳入 SQL CAS/单调拒绝。
 3. 字段写权威必须明确：事件拥有的字段不得被周期快照重新断言。跨 inventory/session/cultivation/ledger/dropped-loot 的原子 checkpoint 保持领域 transaction，不拆散。
 
 **落点**：`server/src/coffin/mod.rs:656-666`、`server/src/player/mod.rs:773-805`、`server/src/player/state.rs:670-697,780-830`；plan §阶段 P3。
@@ -134,8 +134,26 @@
 ### #6 迁移链与 P0 范围：不 squash，只落纯契约
 
 **决议**：
-1. 不重置 `PRAGMA user_version`，不删除 v1–v38（以及待合入 v39）legacy upgrade path，不把行为迁移 squash 成一份 fresh schema。未来可额外生成新库 baseline，但旧库升级链、升级前备份和 fixture 必须长期保留。
-2. P0 只新增 `server/src/persistence/slice.rs` 与 contract-pin tests，并在 `persistence/mod.rs` 增加模块声明；不迁移生产 hook、不修改 schema、不拆巨石、不触碰 #1289/#1259 的玩家/Lifecycle 接线。
-3. P0 pins 覆盖：registry ID 校验与稳定排序；无 shutdown 请求不调用；失败隔离；load 三态和 default+blocked；deadline 两种 offline policy 与边界；dirty snapshot 后再 mutation 时旧 ack 不得清 dirty；低 revision 不得覆盖高 revision。
+1. 不重置 `PRAGMA user_version`，不删除 v1–v39 legacy upgrade path，不把行为迁移 squash 成一份 fresh schema。未来可额外生成新库 baseline，但旧库升级链、升级前备份和 fixture 必须长期保留。
+2. P0 只新增 `server/src/persistence/slice.rs` 与 contract-pin tests，并在 `persistence/mod.rs` 增加模块声明；不迁移生产 hook、不修改 schema、不拆巨石。#1289 已合入；#1259 的玩家/饱食度接线继续避让。
+3. P0 pins 覆盖：registry ID/authority/ordering 校验与稳定排序；无 shutdown 请求不调用；失败隔离；load 三态、`RefuseStartup` 与不可伪造 write permit；deadline 两种 offline policy 与边界；domain-bound dirty snapshot + durable receipt；同 tick save-before-load；注入时钟。
 
-**落点**：`server/src/persistence/mod.rs:57-59,1083-2352`；plan §P0 表域普查、§阶段 P0、§文件所有权与边界。
+**落点**：`server/src/persistence/mod.rs:57-62,1083-2386`；plan §P0 表域普查、§阶段 P0、§文件所有权与边界。
+
+### #7 同 tick 断线保存 / 重连载入顺序：保存先于载入（#1289 review 继承项）
+
+**决议**：
+1. 同一持久化主体在同一 schedule tick 内出现 disconnect 与 reconnect 时，必须同步完成旧实体的 disconnect save，成功后才允许新实体 hydrate；保存失败则跳过载入并保留失败，禁止从旧 durable row 重建后继续运行。
+2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部保存成功后，才开始任何 `hydrate`。入口用稳定 `handoff_key` 绑定主体；任一保存失败都会跳过整个载入阶段。
+3. P1/P2 真实玩家接线必须使用该 handoff 入口，不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设。
+
+**落点**：`server/src/persistence/slice.rs:124-149,191-203,446-532,1342-1408` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
+
+### #8 时间 / deadline 测试：只用注入时钟（#1289 review 继承项）
+
+**决议**：
+1. Slice dispatcher 不直接读取 wall clock；统一消费 `SliceClock` 注入的 `runtime_tick` 与 `wall_unix_millis`。测试使用 `FixedClock`，精确固定边界两侧的毫秒值。
+2. deadline rebase helper继续接受显式时间参数；contract pins 禁止调用 `SystemTime::now()`、`Instant::now()` 或依赖测试执行恰好未跨秒的 exact assertion。
+3. 生产 adapter 在调用边界采样一次时间后注入；同一 dispatch 内复用该快照，避免一次操作跨秒得到不一致字段。
+
+**落点**：`server/src/persistence/slice.rs:133-150,407-425,468-485,1022-1049,1052-1064,1590-1631` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper 与 `FixedClock` contract pins；plan §阶段 P0/P3、§bot 验收场景 #4。
