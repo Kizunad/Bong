@@ -1386,6 +1386,56 @@ mod tests {
         );
     }
 
+    // ── plan-gathering-tool-bind-v1 P0 — herb_bundle 配方唯一性回归（旧红旗 R1）──
+
+    #[test]
+    fn herb_bundle_recipe_registered_exactly_once() {
+        // plan-gathering-tool-bind-v1 §8.1 决议 #1：`workbench.process.herb_bundle` 只有
+        // register_processing 里的一条真实定义，另一处（spot_checks 表）只是校验用例，
+        // 不是第二个注册点。pin 住"注册表里只有一条"，防止有人在别处抄一份重复定义。
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let matches: Vec<_> = registry
+            .iter()
+            .filter(|r| r.id.as_str() == "workbench.process.herb_bundle")
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "workbench.process.herb_bundle 应恰好命中 1 条注册记录，实际 {}（旧红旗 R1：\
+             若此处 >1，说明存在重复注册点，HashMap 语义会把重复吞成假阳性 len()==1）",
+            matches.len()
+        );
+    }
+
+    #[test]
+    fn re_registering_herb_bundle_recipe_id_is_rejected_as_duplicate() {
+        // 期望：CraftRegistry::register 对 `workbench.process.herb_bundle` 重复 id 返回
+        // DuplicateId 而不是静默覆盖 —— 这是 R1 真正的防线：即使未来有人手滑在别处又写一份
+        // 同 id 配方，注册期就会硬报错而不是被吃掉、也不会 panic。
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let duplicate = CraftRecipe {
+            id: RecipeId::new("workbench.process.herb_bundle"),
+            category: CraftCategory::Misc,
+            display_name: "重复灵草束".into(),
+            materials: vec![("spirit_grass".into(), 5)],
+            qi_cost: 0.0,
+            time_ticks: 10 * 20,
+            output: ("herb_bundle".into(), 1),
+            requirements: CraftRequirements::default(),
+            unlock_sources: vec![],
+            station: WORKBENCH,
+        };
+        let err = registry
+            .register(duplicate)
+            .expect_err("重复 id 必须被拒绝，因为 register_workbench_recipes 已注册过一次");
+        assert!(
+            matches!(&err, RegistryError::DuplicateId(id) if id.as_str() == "workbench.process.herb_bundle"),
+            "期望 DuplicateId(\"workbench.process.herb_bundle\")，实际 {err:?}"
+        );
+    }
+
     #[test]
     fn workbench_self_recipe_is_handcraft() {
         let mut registry = CraftRegistry::new();

@@ -53,11 +53,11 @@ pub fn declare_meridian_dependencies(dependencies: &mut SkillMeridianDependencie
 pub fn cast_don(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if on_cooldown(world, caster, slot, now_tick) {
+    if on_cooldown(world, caster, TuikeSkillId::Don.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
@@ -95,7 +95,7 @@ pub fn cast_don(
         attrs.tuike_layers = layers_after;
     }
 
-    set_cooldown(world, caster, slot, now_tick, 20);
+    set_cooldown(world, caster, TuikeSkillId::Don.as_str(), now_tick, 20);
     emit_if_present(
         world,
         DonFalseSkinEvent {
@@ -131,11 +131,11 @@ pub fn cast_don(
 pub fn cast_shed(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if on_cooldown(world, caster, slot, now_tick) {
+    if on_cooldown(world, caster, TuikeSkillId::Shed.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let has_stack = world
@@ -157,7 +157,13 @@ pub fn cast_shed(
         return rejected(CastRejectReason::InvalidTarget);
     };
 
-    set_cooldown(world, caster, slot, now_tick, ACTIVE_SHED_COOLDOWN_TICKS);
+    set_cooldown(
+        world,
+        caster,
+        TuikeSkillId::Shed.as_str(),
+        now_tick,
+        ACTIVE_SHED_COOLDOWN_TICKS,
+    );
     record_practice(world, caster, TuikeSkillId::Shed, 2);
 
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
@@ -188,11 +194,16 @@ pub fn cast_shed(
 pub fn cast_transfer_taint(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if on_cooldown(world, caster, slot, now_tick) {
+    if on_cooldown(
+        world,
+        caster,
+        TuikeSkillId::TransferTaint.as_str(),
+        now_tick,
+    ) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
@@ -277,7 +288,13 @@ pub fn cast_transfer_taint(
     );
 
     let cooldown_ticks = transfer_cooldown_ticks(outcome.permanent_absorbed);
-    set_cooldown(world, caster, slot, now_tick, cooldown_ticks);
+    set_cooldown(
+        world,
+        caster,
+        TuikeSkillId::TransferTaint.as_str(),
+        now_tick,
+        cooldown_ticks,
+    );
     record_practice(world, caster, TuikeSkillId::TransferTaint, 1);
 
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
@@ -380,21 +397,26 @@ fn now_tick(world: &bevy_ecs::world::World) -> u64 {
         .unwrap_or_default()
 }
 
-fn on_cooldown(world: &bevy_ecs::world::World, caster: Entity, slot: u8, now_tick: u64) -> bool {
+fn on_cooldown(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    skill_id: &str,
+    now_tick: u64,
+) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
 fn set_cooldown(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     now_tick: u64,
     duration: u64,
 ) {
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, now_tick.saturating_add(duration));
+        bindings.set_cooldown(skill_id, now_tick.saturating_add(duration));
     }
 }
 

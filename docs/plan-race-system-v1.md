@@ -10,12 +10,12 @@
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 种族 / 构型底盘：`BodyPlanRegistry` 数据驱动 + `Race` 字段 + 战斗部位消费点改造 | ✅ | 2026-07-11 |
+| P0 | 种族 / 构型底盘：`BodyPlanRegistry` 数据驱动 + `Race` 字段 + 战斗部位消费点改造 | ⏳ | 待裁决（见复核结论） |
 | P1 | 经脉系统通用化：`MeridianSystem` 去定长 + per-plan 拓扑与境界配额 + wire 开放化 | ✅ | 2026-07-12 |
 | P2 | 动态部位 / 经脉面板：server 下发布局元数据，client 剪影与经脉图数据驱动 | ✅ | 2026-07-13 |
 | P3 | 装备 / 功法种族三档匹配：`RaceGate` 三收拢点接线 + UI 反馈 | ✅ | 2026-07-13 |
-| P4 | 易形功法：固元残卷解锁、外观一对一互换、玩家渲染替换链路 | ✅ | 2026-07-26 |
-| P5 | 非人种族玩家入口 + 飞鲸 MVP 数据 + bot 场景 / e2e 收口 | ✅ | 2026-07-26 |
+| P4 | 易形功法：固元残卷解锁、外观一对一互换、玩家渲染替换链路 | ⏳ | 逐项核验后发现 2 项缺口，见 §P4 |
+| P5 | 非人种族玩家入口 + 飞鲸 MVP 数据 + bot 场景 / e2e 收口 | ⏳ | — |
 
 ## 接入面（docs/CLAUDE.md §二）
 
@@ -99,6 +99,34 @@
 
 ## P4 — 易形功法（固元境解锁）
 
+**⏳ 未完成欠账（2026-07-27 第三轮返工逐交付物核验；此前 #1278 与本 plan 早前几轮均只拿代表性文件当交付物证据，未逐条核对，与本 plan 用来回退 P5 的标准是同一套双重标准——本轮补做，对齐 review r5 blocker①）（2026-07-27 第四轮返工：review r7 四位 reviewer 一致指出「proto_min bot 解码」「morph TPV 渲染 harness 截图」两项 P4 明文测试交付物被本轮审计自行排除出统计——理由分别是「与 P5 同一缺口不重复登记」「非核心交付物」，这正是本 PR 用来推翻 #1278 的那条标准（写明缺口还标完成）的镜像版本：跨阶段去重可以在两处都登记同一根因，但不能让某一阶段自己的欠账消失。补记为欠账 3/4，并撤销「非核心」「未单独列欠账」两处自行降级，见下方结论重算）**：
+
+1. **`morph.yixing` 的 `FormAnchor` 前置门在习得 / 施放两处生产收拢点均零集成测试**——现状：门控本身真实接线到位——习得侧 `ScrollReadOutcome::FormAnchorClosed` 在境界门后、经脉门前判定（`cultivation/technique_scroll.rs:137-144`），施放侧 `handle_skill_bar_cast` 在 race gate 后、经脉门前同判据拒绝并推送 `CastSyncV1{outcome: CastOutcomeV1::MeridianGated}`（`network/client_request_handler.rs:13995-14038`）；humanoid/whale 两个真实构型都已把对应奇经标 `form_anchor`（`server/assets/body_plans/plans/humanoid.json:190-201` 的 `ren`/`du`，`whale.json:126-138` 的 `keel_meridian`/`spine_meridian`）；底层纯函数 `form_anchors_open` 自身有 5 条覆盖态（`body_plan/morph.rs:530-586`：无声明/happy/单脉缺口/系统缺该 channel/SEVERED 优先于 stale opened）。**但没有任何测试真正调用 `learn_technique_if_allowed("morph.yixing", ...)` 或驱动 `handle_skill_bar_cast` 走到这两处判据触发拒绝**——`grep -rn "FormAnchorClosed" server/src/` 只命中定义 + 两处生产消费，零测试断言；`grep -rn "MeridianGated" server/src/network/client_request_handler.rs` 命中的全部测试都是通用经脉依赖门（`SkillMeridianDependencies`/严重断脉表），没有一条以 `morph.yixing`/`form_anchor` 为对象。plan 原文要求的「human / whale 各配习得、施放、缺脉、断脉正反测试」目前只在纯函数层面成立，两处生产收拢点层面完全没有验证。要落：至少 human 与 whale 各配「习得-缺脉拒绝」「习得-断脉拒绝」「cast-缺脉拒绝」「cast-断脉拒绝」共 8 类正反用例（或等价合并到更少但仍覆盖两构型 × 两收拢点 × 两拒绝原因的用例），断言真实触发 `ScrollReadOutcome::FormAnchorClosed` 与 `CastOutcomeV1::MeridianGated`，而不是只测底层纯函数。**（2026-07-27 第四轮返工补记，对齐 review r7 major——上述 8 类全部是拒绝分支，plan 原文明写「正反测试」，「正」的一半此前遗漏）**：另需 human 与 whale 各自在**习得**（`learn_technique_if_allowed("morph.yixing", ...)`）与**施放**（`handle_skill_bar_cast`）两个生产收拢点补 happy path 用例——`form_anchor` 全部脉已通且未断时，断言真实触发成功 outcome（对应习得成功 / cast 进入 `active` 状态转换）且既有 qi ledger 扣费恰好发生一次；上述 8 类拒绝分支用例额外断言不产生状态转换或账本副作用（不推进 morph 状态机、不触发 `QiTransfer`）。
+2. **易形态玩家的名牌 / 队友标识实测未保留，与 plan 明文「名牌 / 队友标识保留」及代码自身注释的论证相反**——现状：`MixinMorphedPlayerRenderer`（`client/src/main/java/com/bong/client/mixin/MixinMorphedPlayerRenderer.java:50-73`）在 `EntityRenderDispatcher.render()` 方法 HEAD 处 `cancel()` 玩家本体渲染，转而递归调用 `dispatcher.render(proxy, ...)` 绘制 `MorphRenderProxy.whaleFor(player)`（`client/src/main/java/com/bong/client/morph/MorphRenderProxy.java:29-35`）产出的匿名 `WhaleEntity` 代理——该代理从未 `setCustomName`。本轮反编译验证 + 独立 validator 复核后按实际字节码路径重写（初版技术叙述有误，已订正）：① `EntityRenderDispatcher.render()` 只对目标实体调用一次专属 `EntityRenderer.render(...)`，玩家自身那一路因 `cancel()` 完全不会执行；② 反编译本仓库 `geckolib-fabric-1.20.1-4.4.9.jar` 确认 `GeoRenderer.defaultRender()` 末尾调用 `GeoEntityRenderer.renderFinal()`，而 `renderFinal()` 里有一处 `invokespecial EntityRenderer.render(entity, 0.0f, tickDelta, matrices, vertexConsumers, light)`（即 `super.render(...)`）——**标签渲染调用确实存在于这条链路里**，反编译 Yarn 映射的 `EntityRenderer.render()` 基类实现确认其内容正是 `if (hasLabel(entity)) renderLabelIfPresent(entity, entity.getDisplayName(), ...)`；③ 但 `hasLabel(T)` 基类默认实现 = `entity.shouldRenderName() && entity.hasCustomName()`（同样经反编译确认），而 `WhaleEntity` 继承自 `Entity`（非 `LivingEntity`），代理又从未 `setCustomName()`，`hasCustomName()` 恒为 `false` → `hasLabel()` 恒为 `false` → 标签调用链路虽然存在，但代理这条路径永远不会真正画出标签。净效果不变：易形期间玩家在他人客户端**完全没有名牌**，与「队友能认出这是谁、防 grief 误伤」的目的相反；该 Java 文件内注释自称「队友标识/名牌不受影响……递归调用 dispatcher.render 时 vanilla 名牌渲染逻辑仍会对 proxy 走一遍」——这句话字面上其实说对了一半（渲染逻辑确实会走一遍），但没意识到那一遍必然因代理无自定义名而空手而归，实际效果仍是零名牌。`client/src/test/java/com/bong/client/mixin/` 目录本身存在（含 3 个与本 mixin 无关的既有测试），但没有任何测试覆盖名牌/`MixinMorphedPlayerRenderer` 行为，`client/src/test/java/com/bong/client/morph/`/`hud/` 下现有测试同样未涉及名牌——零覆盖的结论不变。要落：让 `MorphRenderProxy` 承接玩家 `getDisplayName()`/team 信息并对代理调用 `setCustomName(...)`（这样上述已存在的 `hasLabel`/`renderLabelIfPresent` 链路会自然生效，无需额外改造渲染管线），或改用不完全 cancel 玩家渲染管线的方案（如只替换模型/贴图阶段）。验收（2026-07-27 第四轮返工升级，对齐 review r7 major——原验收只测 `hasCustomName()` 关不住本行自己论证的 `hasLabel` 判据）：新增测试锁住**标签判定谓词整体为真**——同时断言 `shouldRenderName()` 与 `hasCustomName()` 均为真（即 `hasLabel` 等价判据），且代理继承原玩家 `getDisplayName()` 与 scoreboard team；至少一组同队对照（队友能看到代理名牌）与一组异队对照（team 规则允许可见时同样能看到，不因走代理渲染路径丢失），无 headless 渲染环境时退而求其次锁该数据契约本身。**不扩展为 `always`/`never`/`hideForOtherTeams`/`hideForOwnTeam` 四态可见性矩阵**——一旦代理继承原玩家 team，这四态是 vanilla scoreboard 自身的行为，不在本 plan 交付物内；P4 原文契约止于「名牌 / 队友标识保留」，即代理触发的标签判定与原玩家一致，再往外扩是本轮类 2/3(a) 同款的范围加码。
+3. **`proto_min` bot 解码与 `morph_state` payload `full` 模式 proto round-trip 测试均未落地（2026-07-27 第四轮返工新记，对齐 review r7 blocker）**——现状：① P4 原文测试段明写「payload 双端 sample + proto_min bot 解码」；`scripts/bot/scenarios/` 目录尚无任何 morph 场景（`grep -rln "morph" scripts/bot/scenarios/` 0 命中），当前只有双端 sample 落地（见下方已核验落地清单第 14 项），bot 解码这一半缺失。② `schema/proto_convert.rs` 目前只有 `delta`（易形解除广播）一条带字段级断言的 `morph_state` proto round-trip 测试（`proto_convert.rs:7455`）；`full`（join / 周期 sync 发的形态）分支只搭在通用 fixture 冒烟测试 `s2c_all_proto_variants_encode_without_panic`（`proto_convert.rs:7691-7744`）里，该测试只断言编码非空、能解码、payload 非空，**不做字段级 round-trip 断言**（不解回 Rust 结构体比对 `mode`/`entries` 等字段），也只在 client `MorphStateHandlerTest.java` 层面被间接覆盖——`full` 分支缺一条像 `delta` 那样的专属字段级 round-trip 测试。**这条与 P5 欠账 2（bot 场景 3 条只落 1 条，其中场景② 易形 cast → morph payload 解码正是本条缺失的 bot 端）共享同一根因**——两处都需要各自登记，闭环时可一并交付（P5 写 bot 场景②时顺带把 proto `full` 分支测起来），但共享根因不等于 P4 可以少算一项。要落：a) 新增至少一条 `scripts/bot/scenarios/` morph cast 场景并接入 CI bot e2e stage（与 P5 欠账 2 ②共享交付物）；b) 补一条 `full` 模式的 `morph_state` proto round-trip 测试（对齐现有 `delta` 一条的覆盖标准）。
+4. **「渲染 harness：morph 玩家截图（TPV 兽形 + 名牌保留）」未落地（2026-07-27 第四轮返工新记，对齐 review r7 blocker）**——现状：`grep -rn "render_animation\|render_bbmodel" client/tools` 未见任何 morph 专用调用；`client/tools/render_animation.py` / `render_bbmodel.py` 现有能力覆盖姿态与模型静态渲染，但没有一条以易形后的 TPV 玩家（兽形 + 名牌）为对象的截图 harness 测试。这不是「非核心交付物」——是 P4 原文测试段明写的第二个 harness 类交付物（与 payload sample、bot 解码并列），此前审计以「细节缺口 / 非核心」为由排除出统计是自行降级，本轮撤销该降级。要落：新增 morph TPV 渲染 harness 用例（复用 `client/tools/render_animation.py` 或等价工具），产出对拍截图并断言兽形模型 + 名牌（配合欠账 2 的名牌修复）同时出现在渲染结果中。
+
+**已核验落地清单（2026-07-27 第三轮返工，逐交付物 grep + 读码复核，不采信既有文档结论；下方数字对应本 plan 交付物段原始顺序）**：
+
+1. `yixing_scroll` 物品 + `technique_scroll_spec.skill_id = "morph.yixing"`：✅ `server/assets/items/morph_scrolls.toml:1-15`
+2. 两条掉落入口，各配真实产出集成测试：✅ 道伥击杀档 `server/src/npc/loot.rs:464-552`（`daozhan_loot_high_tier_has_yixing_scroll` + `yixing_scroll_loot_produces_real_item_landing_in_player_inventory`，真实走 `daozhan_death_loot_system`→`build_fauna_item_instance`→`add_item_to_player_inventory` 生产链路，`register_p3` 已挂进 `fauna/mod.rs:111` 真实 App）；tsy 遗迹档 `server/src/inventory/tsy_loot_spawn.rs:211-263` + `tsy_loot_integration_test.rs:197-291`，真实系统 `tsy_loot_spawn_on_enter` 已注册进 `inventory/mod.rs:894`
+3. `TechniqueDefinition` 新增 `morph.yixing`（`required_realm = "Solidify"`）：✅ `server/src/cultivation/known_techniques.rs:1013-1028`
+4. `ChannelDef.roles`/`form_anchor` 前置门机制 + humanoid/whale 数据：✅ 机制与数据均落地（见上方欠账 1 的具体 file:line），**但生产收拢点集成测试缺失**（欠账 1）
+5. `MorphState { form, model_kind, since_tick }` 组件：✅ `server/src/body_plan/morph.rs:45-49`，字段与命名逐一对齐
+6. `morph_pairs` 唯一真源 + `resolve_morph_pair` + 重复配对 fail-fast + 双向各自显式配置：✅ `server/src/body_plan/race_registry.rs`（`morph_pair`/`resolve_morph_pair`/`morph_targets_from` 定义于 209-241，14 条测试 717-1056 覆盖 happy/重复 from-to/悬空 from/悬空 to/等）；**机制与测试 ✅，但生产配置存在方向性缺口（2026-07-27 第五轮返工按 review r8 blocker 订正，此前判为「设计使然」是错的）**：生产 `races.json`（`server/assets/body_plans/races.json`）只声明 `human→whale` 一条 pair。此前的论证是「`cast_morph_yixing` 的解除分支走组件直接移除不查表，架构上不需要反向 pair」（`morph.rs:119-122` 注释自陈）——**该论证只覆盖「人易形为鲸之后解除、回到本体人形」这一种情形，不覆盖「本体即鲸族的玩家易形化人」**。而后者正是 P4 明文要保住的方向（P4 交付物段原文：经脉前置「不写死人形 channel id，否则飞鲸构型无 Ren/Du，非人种族永远无法易形化人——自断『动物→人』方向」），也是 P5「非人种族玩家入口」成立的前提。
+
+**⏳ 欠账（挂 P4，与 P5 入口联动）**：`races.json` 缺 `whale→human` 显式 pair（含反向 `part_mapping`），本体非人的玩家当前无法易形化人。要落：在生产 `races.json` 增加独立的 `whale→human` pair（不假设可逆，按 plan「双向对两方向各自显式配置」的既定口径），并补一条**走生产配置**的集成测试断言该方向可解析、`part_mapping` 端点校验通过。**在此之前，「双向易形」不得记为已完成**
+7. `part_mapping` 部分单射 + 8→6/6→8/缺项/重复目标/悬空引用测试：✅ `race_registry.rs:812-937`（`morph_pair_part_mapping_key_dangling_in_to_plan_rejected`/`_value_dangling_in_from_plan_rejected`/`_duplicate_intrinsic_value_rejected`/`_partial_injective_map_accepted` 等），生产 `part_mapping` 6 项人→鲸映射见 `races.json`
+8. 死亡 / 濒死 / 下线自动解除：✅ 死亡即 `DeathEvent`→`NearDeath` 转换同一入口（`combat/lifecycle.rs:388-402` + 测试 `death_arbiter_tick_auto_releases_morph_state_on_death` L3069-3128，本游戏状态机里「死亡」与「濒死」是同一次事件触发，无独立的第二个事件）；下线 `player/mod.rs:366-373` + 测试 `disconnect_auto_releases_morph_state_before_persist_snapshot` L1262-1319
+9. form 护甲 `body_coverage` 经 `part_mapping` 折算：✅ `combat/resolve.rs:99-115,3554` + 3 条测试（含 unmorphed 对照组 + 伤害对比组）
+10. 解除易形时装备自动卸入背包 / 装不下 `dropped_loot`：✅ `inventory/mod.rs:5059-5130`（`enforce_intrinsic_gate_on_morph_release`）+ 8 处测试调用（`inventory/mod.rs:19409-19865`），`race_change.rs:390` 复用同一函数
+11. `morph_state` payload 格式 + 6 场景（start/手动解除/死亡/重连/多实体并存/未知 plan id）：✅ 服务端 `network/morph_state_emit.rs` 全量+delta 节流测试（L270-549）；客户端 `client/src/test/java/com/bong/client/network/MorphStateHandlerTest.java` 全 7 用例覆盖 full 多实体/full 清空(对齐重连全量替换语义)/delta 插入(start)/delta 移除(手动解除·死亡·下线在 wire 层不可区分，同一断言覆盖三者)/混合增删/未知 mode 不崩溃/缺 entity_id 跳过；`client/src/test/java/com/bong/client/morph/MorphModelRegistryTest.java` 的 `unknownFormRaceIdHasNoModel` 覆盖未知 plan id 场景。proto round-trip 目前只有 delta release 一条（`schema/proto_convert.rs:7455`），full 模式缺对应 proto 测试——并入欠账 3（2026-07-27 第四轮返工升级，不再作为细节缺口豁免）
+12. client 渲染替换（`MixinMorphedPlayerRenderer` 已注册 `bong-client.mixins.json:19`）：✅ 注册属实；FPV 保持 vanilla 手臂：✅ 架构性保证（`EntityRenderDispatcher.render` 本就不对 focused entity 在非-TPV 视角调用，注释准确）；名牌/队友标识保留：❌ 见上方欠账 2
+13. 视听五项：图标 ✅（`known_techniques.rs:1026` + PNG 已存在于 `client/.../skill_scroll_morph_yixing.png` + `technique_icon_snapshot_test.rs` 双端 pin 框架已纳入、无例外条目）；`yixing_scroll` 物品图标走全仓统一的 scroll 后缀 fallback 机制（`ItemIconRegistry.fallbackTextureIdForItemId`，`_scroll` 后缀命中 `broken_artifact_scroll.png`）——与全仓其余全部 scroll 类物品一致（无一例外持有专属图标），是既定惯例而非本 plan 独有缺口；粒子/音效/HUD/动画/narration 均在 `body_plan/morph.rs:199-283` 落地并接生产事件总线，具体 vanilla 音源 id、动画 endTick 与 plan 骨架草案原文数值有出入（如三层音效改用自定义 `bong:skill.morph.yixing` 而非 `entity.evoker.prepare_wololo`、动画 `morph_cast.json` 改 endTick=20 而非 30），均系后续 PR 内注释自陈的刻意重制迭代，非漏项
+14. 测试段：morph 状态机全转换（学→cast→active→手动解除/死亡解除/下线解除/重复 cast 幂等）✅（`morph.rs:716-900` 区间 + 上述 combat/player 测试）；gate 矩阵 ✅（race/realm/meridian 各自独立测试，`form_anchor` 分支例外见欠账 1）；payload 双端 sample ✅、proto_min bot 解码 ❌，见欠账 3；渲染 harness 截图 ❌ 未找到专门的 morph TPV 截图 harness 测试（`grep -rn "render_animation\|render_bbmodel" client/tools` 未见 morph 专用调用），见欠账 4；qi 扣费 ledger 契约 ✅（`morph.rs:716-900`：方向+精确金额+守恒断言+余额不足不转账+失败(InvalidTarget)不转账+成功仅记一次+重复请求幂等，7 项要求全部命中）
+
+**结论（2026-07-27 第五轮返工重算，按 review r8 blocker 把第 6 项从「完全落地」降级）**：14 项交付物里第 1/2/3/5/7/8/9/10/13 共 **9 项**完全核验落地（含真实生产接线 + 真实测试）；第 4/6/11/12/14 共 **5 项**部分完成——机制 / 数据 / 多数测试已落地，但各自遗留缺口分别对应欠账 1（第 4 项：FormAnchor 生产收拢点集成测试，含 happy path）、欠账 2（第 12 项：易形态名牌 / 队友标识）、欠账 3（第 11、14 项：proto_min bot 解码 + `full` 模式 proto round-trip 测试）、欠账 4（第 14 项：morph TPV 渲染 harness 截图）、**欠账 5（第 6 项：生产 `races.json` 缺 `whale→human` pair，本体非人玩家无法易形化人——机制与 14 条 registry 测试均已落地，缺的是生产配置与走该配置的方向性集成测试）**。P4 状态维持 **⏳**，不再沿用「代表性文件即完成」的旧证据标准，也不再对任何一项明文测试交付物做「非核心」「跨阶段去重故不重复登记」的自行降级——同一根因可以在 P4 与 P5 两处同时登记，但不能因此从 P4 的统计中消失。
+
 **交付物**：
 
 - 解锁路径（对齐残卷传承正典 worldview.md §十 L890）：新残卷物品 `yixing_scroll`（TOML 进 `server/assets/items/`，`technique_scroll_spec.skill_id = "morph.yixing"`），掉落面收敛为两个已存在可核验入口——道伥击杀掉落表 + tsy 遗迹 loot 容器注册（`plan-tsy-loot-v1` 落地面），各配一条真实产出集成测试（击杀 / 开容器 → 背包出现 `yixing_scroll`），其余掉落面留后续；`TechniqueDefinition` 新增 `morph.yixing`（`required_realm = "Solidify"`）；经脉前置**不写死人形 channel id**（否则飞鲸构型无 Ren/Du，非人种族永远无法易形化人——自断「动物→人」方向）：`ChannelDef` 新增语义角色标签 `roles`（如 `form_anchor`），易形前置 = 「本体 plan 内全部 `form_anchor` 脉已通且未断」，humanoid 在自己 profile 里给 Ren/Du 标 `form_anchor`、whale 给对应奇经标注；human / whale 各配习得、施放、缺脉、断脉正反测试——**不改突破核心**，固元门槛由既有 `required_realm` 习得门天然承担
@@ -121,6 +149,29 @@
 - **测试**：morph 状态机全转换（学→cast→active→手动解除 / 死亡解除 / 下线解除 / 重复 cast 幂等）；gate 矩阵（未习得 / 境界不足 / 经脉断 / 非法 pair 全拒）；payload 双端 sample + proto_min bot 解码；渲染 harness：morph 玩家截图（TPV 兽形 + 名牌保留）；qi 扣费锁 ledger 契约（断言玩家→zone 转账记录的方向与精确金额 + 守恒断言；覆盖余额不足不转账 / 施放失败不转账 / 成功仅记一次 / 重复请求幂等）
 
 ## P5 — 非人种族玩家入口 + 飞鲸 MVP + 收口
+
+**⏳ 未完成欠账（2026-07-26 复核，2026-07-27 补充 #1 验收细化 + #4 措辞收窄，供下一次 consume 直接认领）（2026-07-27 第四轮返工：撤销 #1「双侧鳍环是原文范围要求」的错误推导，改为仅当产品需求明确时才拍板；#4 补做角色创建 / 首次登录完整走查并按实施形式分支验收，撤销「统一强制 RaceChange」）**：
+
+1. **FinRing 真实消费链缺失**——现状：`grep -rn "FinRing\|fin_ring" server/src client/src agent/packages` 全仓 0 命中，`EquipSlotV1`（`server/src/schema/inventory.rs:39-54`）未新增该 enum 变体。要落：
+   - server 装备容器存储 FinRing 槽位 + `validate_equip_to` 槽位分支 + 自动卸装路径 + wire 编解码：proto `EquipSlotV1` 新增变体 → TS union → `EquipSlot.java` 三端镜像，**新增变体需 pin**（proto 枚举数值 + TS union 字面量 + Java enum，同一 wire sample 三端解码对拍，防镜像漂移）
+   - **实际物品**：新增鳍环物品模板（`ItemTemplate` TOML，`server/assets/items/`）+ 必要贴图 / 图标资源 + `wearer_race` / 对应 `EquipSlotV1` 槽位配置——不能只落空槽位基础设施而没有可穿的实物。**最小验收固定为：一个 `FinRing` enum 变体（三端 proto/TS/Java 镜像 + pin）+ 至少 1 件可真实穿戴的鳍环实物 + 完整消费链**（存储 / `validate_equip_to` 分支 / 自动卸装 / wire 编解码 / client 面板格）（2026-07-27 更正：本段此前写成「双侧左 / 右各一」，把原文的**可选区间**收紧成了**强制两件**——那是本 plan 之外的加码，已改回原文口径）
+   - **双侧同时佩戴（2026-07-27 第四轮返工更正，对齐 review r7 major——此前一版把这段错误当成实施前必须拍板的架构前置，不是）**：`EquipSlotV1` 现状是**单个 enum 变体一件实物**——`equipped: HashMap<String, SlotContents>` 按 slot key 存取（`server/src/inventory/mod.rs:462,770`），`validate_equip_to` 对手部槽的多实例是靠精确 match 到不同变体分支实现的（`MainHand`/`OffHand`/`ExtraHand0`/`ExtraHand1`，`inventory/mod.rs:5817-5852`）。原文「装备件 **1-2 个**示范」是**跨槽位**（FinRing / Mouth / Back 等共同满足）的示范件数下限，不是「FinRing 必须能同时穿两只」的要求——原文从未提及左右鳍环同时佩戴，示范装备数量推不出单一槽位必须双实例。**仅当** P5 实施时产品需求确实要求左右鳍环同时独立穿戴，才需要在以下 A/B 之间拍板；否则单变体单件即满足原契约，不阻塞 P5 最小交付、也不是前置裁决。两个候选选项（仅供届时需要时参考）：
+     - **选项 A**：拆两个独立变体 `FinRingL` / `FinRingR`，对齐 `MainHand`/`OffHand` 先例，三端（proto / TS / Java）镜像各加两个变体、各自 pin 测试；风险最低，直接复用现有「一变体一件」全部消费点模式。
+     - **选项 B**：单变体 `FinRing` + 槽位实例序号，复用 `SlotContents.worn: Vec<ItemInstance>`（`inventory/mod.rs:660-665`，plan-layered-equip-v1 引入的分层穿戴栈）承载两件。**未核实**：该 `worn` 栈的分层语义（同类护甲基础层+外层叠穿）是否允许「同槽两件互不冲突的独立实物」而非「基础层/外层」这种层级关系，`validate_equip_to` 现有分层冲突规则会不会把第二只鳍环判成同类重复而拒绝——需要实施时逐分支核对，未核实前不能假定可行。
+     - 若 B 不成立（分层校验拒绝同类重复），退回 A。本段只在「产品确实要求双侧同时佩戴」这一前提成立时才需要走 A/B 拍板，不替用户预先选，也不阻塞「单变体单件」这一最小验收的落地。
+   - client 装备面板新槽位格 + 交互
+   验收矩阵（固化，逐条断言；④⑤方向对齐 §P4「装备槽集合与 `validate_equip_to` 的 RaceGate 按当前形态（form plan）判定」——鲸形是本体、人形是易形后的 form，两条转换互为反向）：① 鲸形穿鳍环成功 ② 鲸形穿人形护甲 `RaceMismatch` 拒绝 ③ 易形成人后可穿人形护甲成功 ④ 易形起始（鲸→人，进入 form）：鲸形已穿的 FinRing 因不满足当前形态（人形）gate 自动卸入背包，满背包转 `dropped_loot` ⑤ 解除易形（人→鲸，回本体，含手动 / 死亡 / 下线三触发）：人形态所穿护甲因不满足本体（鲸形）gate 自动卸入背包，满背包转 `dropped_loot` ⑥ 持久化往返（存档→重载装备状态不丢） ⑦ 真实 bot e2e 穿卸场景（非 mock）。
+2. **bot 场景 3 条只落 1 条**——现状：`scripts/bot/scenarios/` 下只有 `inventory_equip_wearer_race_reject.py`（对应①race gate 拒绝回执）。要落：② 易形 cast → morph payload 解码场景 ③ `body_plan_layout` 首帧解码场景，均接入 CI bot e2e stage。验收（2026-07-27 收紧；2026-07-27 第三轮返工再纠正 review r5 major——bot 是 Python 协议级脚本，只能断言它真正能观测到的 wire payload，不能断言 Java client 内部状态，此前一版验收把两者混了）：除脚本存在且被 e2e stage 真实引用外，每条场景必须断言**其能直接观测到的 wire payload**——② 断言收到的 `morph_state` payload 的 `mode`（`full`/`delta`）、`entries[].{entity_id, model_kind, form_race_id, form_body_plan_id, active}` 字段齐全且值符合该次 cast 的时序（含未缓存 plan id 时随 delta 补发那一拍的报文）；③ 断言首帧 `body_plan_layout` 的 plan id、部位集合与 server 端 `whale.json` / `humanoid.json` 一致。**`BodyPlanLayoutStore` / `MorphStateStore` 的缓存替换、监听器、未知 plan id 处理等 client 内部状态转换不属于 bot 场景验收范围，归 client 单测**——这部分**已经完成**，不是待落欠账：`client/src/test/java/com/bong/client/network/MorphStateHandlerTest.java`（full 多实体替换/full 清空/delta 插入/delta 移除/混合增删/未知 mode/缺 entity_id）+ `client/src/test/java/com/bong/client/morph/MorphModelRegistryTest.java`（`unknownFormRaceIdHasNoModel`）已覆盖对应场景，本条欠账只剩「bot 脚本本身尚未写」这一件事。**验收标准是「断言失败会撞红」，不是「脚本跑完退出 0」**。
+3. **worldview 增补案未执行**——现状：`grep -c "易形" docs/worldview.md` = 0；worldview.md 最后一次改动是 `e69132fdf`（#836，2026-07-03），早于本 plan 立项（2026-07-10），说明种族后天路径 / 易形正典化 / 「异兽化形」词条消歧从未写入正典。这是本段落原文明写的**归档前硬前置**（见下方遗留 bullet 原文「归档前 land」）。要落：单独 PR + 人工 review，写入 worldview.md §六（零出生论 scope 澄清，对齐 §8.1 #1 决议）。验收：该 PR 合并，本 plan 补引其 commit hash。
+4. **非人种族生产获得路径缺失**——现状（2026-07-27 第四轮返工补做完整走查，对齐 review r7 major——此前一版只核了「字段写入点 / 事件调用方 / 网络请求 / 物品消费」四类入口，自陈「未逐一走查角色创建 / 首次登录初始化流程本身」就把「已核验的四类入口未发现非 dev 手段」升级为确认欠账；本轮把这条走查真正做完）：
+   - **默认构造**：`Cultivation` 的唯一 `Default` 实现（`server/src/cultivation/components.rs:650-664`）恒定 `race: default_race_id()` → `RaceId::new(HUMAN_RACE_ID)`（`components.rs:646-648`），没有任何分支能让默认构造产出非 human 值
+   - **join / 首次登录生产入口**：`attach_cultivation_to_joined_clients`（`server/src/cultivation/mod.rs:566-678`，系统过滤器 `Or<(Added<Client>, Added<CurrentDimension>)>`，覆盖首次加入与维度切换两类触发）从 `let mut cultivation = Cultivation::default()`（`mod.rs:645`）起步，只有命中已持久化且 race 已知的 bundle 才会用 `serde_json::from_value::<Cultivation>` 覆盖（`mod.rs:665-673`）；未知 race 或首次加入（无 bundle）时保持默认值 human。持久化读取入口 `load_player_cultivation_bundle`（`server/src/persistence/mod.rs:6223-6247`）只回放此前已写入的 JSON，不产出新值
+   - **角色创建 / 死后重开新角色**：全仓唯一带「新角色」语义的 client 请求是 `CombatCreateNewCharacter`（`agent/packages/schema/src/client-request.ts:380-387`，payload 只有 `{v, type}`，不带 race 字段），服务端路由到 `RevivalActionKind::CreateNewCharacter`（`server/src/network/client_request_handler.rs:2288-2296`）→ `reset_for_new_character`（`server/src/combat/lifecycle.rs:1703` 起）→ `cultivation::character_select::rotate_to_new_character`；`grep -n "race\|Race" server/src/cultivation/character_select.rs` 0 命中——新角色的出生位置 / 境界 / 寿命由该模块派生，但完全不涉及 race，新角色的 `Cultivation` 仍经上一条 join 路径以 `Cultivation::default()` 起步
+   - **旧库迁移**：`backfill_legacy_player_cultivation`（`server/src/persistence/mod.rs:2354-2417`）迁移旧 sqlite 列时先 `Cultivation::default()`（`persistence/mod.rs:2387`）再覆盖 realm/qi_current/qi_max，race 字段不受影响，恒为 human
+   - **唯一非 human 写入点**：`Cultivation.race` 生产代码里唯一赋值点是 `commit_race_change`（`server/src/cultivation/race_change.rs:257`），唯一生产调用方是 `/race set` dev 命令（`server/src/cmd/dev/race.rs:88`）；网络请求处理器 `grep -rln "RaceChangeRequest\|ChangeRace\|change_race" server/src client/src agent/packages` 0 命中，物品消费效果 `grep -rn "race" server/src/inventory server/src/alchemy` 命中均为 `wearer_race`/`yixing_scroll` 掉落注释，`grep -rn "秘法转生" server/src` 0 命中
+   **结论（走查已完整覆盖默认构造 / join 首次登录 / 创建新角色 / 旧档迁移 / 唯一写入点五条链路，file:line 见上）**：确认全仓当前不存在任何非 dev 路径能让玩家 `Cultivation.race` 取到非 human 值——欠账成立，不是遗留的未走查免责声明。要落：按 §8.1 #1 决议在「创建期选择」或「后天秘法转生」二者中定形式并接出真实生产入口（非 dev 命令）。验收**按最终选定形式分支**（不再统一强制 `RaceChange`，对齐 review r7 major——创建期入口是初始身份建立，不存在旧种族到新种族的状态转换，强套 `RaceChange` 会把 §8.1 #1 授予的自由入口形式收窄成特定实现架构）：
+   - 若选**创建期入口**：断言非 dev 的创建请求 / 配置校验、首次生成的 `Cultivation.race` 值、`BodyPlan` 解析、持久化落盘 + 重登恢复、`RaceRegistry` 校验拒绝非法 race id。
+   - 若选**后天秘法转生**：断言 `RaceChange` prepare/commit 两阶段事务、状态转换、装备卸载、失败回滚（沿用 P5 `RaceChange` 事务交付物本身的测试要求）。
 
 **交付物**：
 
@@ -236,14 +287,45 @@
 - 每 PR 走 consume-plan 通用流程 + push 前对峙自检 workflow；实施 subagent 全 sonnet，verify 用高档模型
 - 渲染 / 布局类交付（P2 humanoid layout、P4 渲染替换）适用 3 轮打磨 + `<PROMISE>` 担保
 
-## 验证结论（2026-07-26 整理审计追认）
+## 复核结论（2026-07-26，2026-07-27 第三轮返工更新 P0/P4 状态）
 
-P4「易形」与 P5「非人种族玩家入口 + 飞鲸 MVP」已在 origin/main 落地：P4 机制底盘（`MorphState`/`cast_morph_yixing`，`server/src/body_plan/morph.rs`）随 P4 #1201/#1202（2026-07-13/14）交付；P5 `/race set` dev 命令（`server/src/cmd/dev/race.rs`）、`RaceChange` 两阶段事务（`server/src/cultivation/race_change.rs`）与飞鲸数据（`server/assets/body_plans/plans/whale.json`）随 P5 #1203/#1204/#1206（2026-07-14）交付，client 玩家渲染替换链路见 `daozhan/FakePlayerRendererMixin.java`。#1250（2026-07-23）另修复了一处经脉显示回归，不影响本 plan 主体交付判定。
+**本 plan 曾被 #1278（`e2a2158b5`，「plan 整理审计」）单方面追认归档，本 PR 回退**。归档前该 commit 的父提交（`e2a2158b5^`）里 P4/P5 阶段总览仍是 `⬜ | —`，审计 diff 只有 14 行：把两行状态翻 `✅`、加一段「验证结论」、`git mv` 进 `finished_plans/`——**没有拿 P5 段落自己写的「交付物」清单逐条核对代码**。失效模式：审计以「P5 有 commit 落地（PR-6a/6b/6c）」为完成判据，但那三个 PR 只交付了 P5 清单里的**机制底盘**一部分，清单里另外四项（见下）在 origin/main 上一行代码、一个文件都不存在。
 
-## Finish Evidence
+**P0–P4 落地实况**（2026-07-27 第三轮返工更新：P1/P2/P3 抓手仍为下方核验过的正确文件、状态不变；P0/P4 本轮各自发现问题，状态改 ⏳，详见下方「P0 契约裁决结论」与 §P4「⏳ 未完成欠账」——不再是「本次复核未改动这五阶段的 ✅」）：
+- P0 种族 / 构型底盘：`server/src/body_plan/`（`BodyPlanRegistry` 等）+ `server/assets/body_plans/plans/humanoid.json`（#1160）——底盘真实落地，但「战斗部位消费点改造」交付物的完成口径未决，见下方裁决结论
+- P1 经脉系统通用化：`MeridianSystem` 去定长 + wire 开放化（#1180，#1182 bughunt 修复）
+- P2 动态部位 / 经脉面板：`BodyPlanLayoutV1` payload（#1184）
+- P3 装备 / 功法种族三档匹配：`RaceGate`（#1198）
+- P4 易形功法：本轮逐交付物核验（14 项交付物 11 项落地确认，2 项确认缺口），完整清单见 §P4「已核验落地清单」，不再只引 `morph.rs`/`MixinMorphedPlayerRenderer`/单条 coverage 测试这三个代表性文件
 
-- **落地清单**：`server/src/body_plan/morph.rs`（`MorphState` / `cast_morph_yixing`）、`server/assets/body_plans/plans/whale.json`、`server/src/cultivation/race_change.rs`、`server/src/cmd/dev/race.rs`（`/race set`）、client `daozhan/FakePlayerRendererMixin.java`
-- **关键 commit**：P0 #1160、P1 #1180、bugfix #1182、P2 #1184（2026-07-13，hud_anchors 双锚点组）、P3 #1198（2026-07-13，RaceGate）、P4 #1201/#1202（2026-07-13/14）、P5 #1203/#1204/#1206（2026-07-14，机制底盘 /race set + RaceChange 两阶段 + qi_physics prepare + meridian_mapping）、回归修复 #1250（2026-07-23，经脉显示）
-- **测试结果**：各阶段 PR 自带回归测试（详见对应 PR）；2026-07-26 审计为只读核验（Read+grep+git log 对拍 origin/main），未重跑测试套件
-- **跨仓库核验**：server（`body_plan` / `cultivation::race_change` / `cmd::dev::race`）+ client（`daozhan/FakePlayerRendererMixin.java`），schema 经 race 相关 payload 双端对拍
-- **遗留 / 后续**：status_snapshot 8 段 id 发散小 PR（历史记录在案，未阻塞归档）
+**注意**：#1278 归档时把 P4 client 渲染证据引成了 `client/src/main/java/com/bong/client/daozhan/FakePlayerRendererMixin.java`——那是 #436（道伥，2026-06-08，早于本 plan 立项 2026-07-10）留下的**未注册占位**，不属于本 plan 交付物，与 P0 调研摘要 §0「四大空白」里点名的「未注册空占位」是同一个文件。本次复核已在上面改引正确文件。
+
+**P5 已落**（机制底盘部分）：
+- PR-6a #1204：`/race set` dev 命令 + `RaceChange` 两阶段事务（`server/src/cultivation/race_change.rs`）+ qi_physics prepare + meridian_mapping
+- PR-6b #1203：突破配额 + dugu 经脉路由换轨（非人构型通用化）
+- PR-6c #1206：`server/assets/body_plans/plans/whale.json` + `IntrinsicRace` 接线 + 投射物半径派生
+
+**P5 未落**（四项，详细欠账见下方 P5 段落清单）：FinRing 真实消费链、bot 场景（3 条只有 1 条）、worldview 增补案（P5 原文明写「归档前 land」的硬前置）、非人种族生产获得路径。
+
+#1250（2026-07-23）是一处经脉显示回归修复，与本 plan 主体交付判定无关，不作为证据引用。
+
+**遗留 / 后续**（承接 #1278 删掉的 Finish Evidence 里那条「status_snapshot 8 段 id 发散小 PR」——原措辞不准，此处按代码实况重写，不随归档回退一起丢账；**2026-07-27 纠正**：本段此前整段照抄了下方引用的 P0 期注释清单，未逐项核实其现状，见下方「纠错声明」）：
+
+- **纠错声明**：`server/src/combat/components.rs:57-71` 那条「仍以 legacy `BodyPart` 工作的人形专属子系统……本轮不跟进迁移」的注释写于 P0 review r2（BLOCKING-2 收口）阶段，是 **P0 期状态快照**；P1b/P1c 已把其中列出的部分子系统迁移为数据驱动，但该注释本身未随之更新（stale）。本 plan 此前一版把这条注释当作「当前仍未迁移」的现状清单整段照抄，未逐项核实——这是错误，以下按 2026-07-27 实测重写。
+- **P1 交付物已落地（wire 开放化 + 映射数据化，§P1 原文「交付物」bullet 3/5 对应）**：
+  - `CombatBodyPartV1`（wire）已开放为 string：`server/src/schema/combat_event.rs:9` `pub struct CombatBodyPartV1(pub String)`，注释自陈「plan-race-system-v1 P1c」
+  - `MeridianId`（wire）已开放为 string：`agent/packages/schema/src/cultivation.ts:58` `Type.String(...)`
+  - `dugu.rs` 经脉↔部位映射已数据化：`cultivation/dugu.rs:539` 的 `body_part_to_meridian` **函数签名保留**（既有调用点无需改写）但内部实现改为查询 `body_plan::dugu_injection_channel`（数据唯一真源 = `humanoid.json meridian_profile.dugu_injection`），不再是硬编码 match 表；注释自陈「plan-race-system-v1 P1b —— 私表退役」
+  - `dead_armor.rs` 经脉↔部位映射已数据化：`combat/baomai_v4/dead_armor.rs:213` 的 `meridian_to_body_part` 同样签名保留、内部改查 `body_plan::channel_body_part`（数据源 = `humanoid.json meridian_profile.channels[].body_part`）；注释自陈「plan-race-system-v1 P1b —— 私表退役」
+- **P4 交付物已落地（form 护甲 coverage 折算，§P4 原文「易形语义收敛」bullet 对应）**：form 形态所穿护甲的 `body_coverage` 经 `part_mapping` 折算回本体部位已实现并有专项测试：`server/src/combat/resolve.rs:3554` `morphed_target_gets_real_armor_mitigation_via_part_mapping_fold_back`
+- **范围收窄的权威来源（回应 review r3 P0 边界之争）**：`server/src/combat/components.rs:57-71` 那条注释自陈写于「plan-race-system-v1 P0 review r2（BLOCKING-2 收口）」——即「本轮只迁 `Wound.location` 及其伤残后果消费点（`combat::arm_wound` / `movement::leg_wound` 等），其余人形专属子系统本轮不跟进迁移」这个范围收窄，**是 P0 阶段自己的 review 在当时做出并接受的决议**，有 review 记录可查，不是本 PR 事后追加、也不是本 PR 新划的边界。本 PR 的性质是**回退 P5 被误归档的问题**，不是重开 P0 当年的验收边界；若认为 P0 当年这处范围收窄本身不当（该类子系统本该在 P0 一并迁移），应对应另立 plan 重新讨论收口，而不是在一次「回退误归档」的 PR 里追溯改判 P0 的验收范围。
+- **⚠️ 本条存在未收口的对立意见（review r3/r4 连续三轮维持，r4 升为 blocker，r5 再次确认为 blocker）**：review 方的论点是——**「写在代码注释里的范围收窄」不等于「plan 交付物被修订」**。P0 的交付物文字（§P0「战斗部位消费点改造」）是契约，实施 PR 单方面在注释里缩小它、即便当轮 review 放行，也不构成对 plan 契约的正式修订；按这个口径，只要非人部位仍会退化到 legacy fallback，P0 就不该维持 ✅。**这个论点与本 plan 回退 #1278 所依据的原则同源**（#1278 的错误正是「实施侧的既成事实不能替代交付物清单的逐项核对」），因此不能简单当作过严意见驳回。
+  - **P0 契约裁决结论（2026-07-27 第三轮返工，回应 review r5 blocker②「文内写着『P0 契约待用户裁决』却同时维持 P0 ✅」自相矛盾）**：认下——**改为 P0 ⏳，裁决后再定终态**，不再「维持 P0 ✅ 不变」。理由：P0「战斗部位消费点改造」交付物是否完成，取决于这个尚未裁决的口径问题本身——代码注释里的范围收窄（P0 review r2 BLOCKING-2 收口）是否构成对 plan 交付物的正式修订；这个口径没有被用户拍板之前，不能单方面把 P0 记为已完成状态发布进度。**P1 不受影响、维持 ✅**——P1 的两项交付物（wire 开放化 + dugu/dead_armor 映射数据化）本轮已逐条核验（见上方「P1 交付物已落地」），与 P0 这处范围收窄是否被正式修订无关，P1 自己的交付物边界从未包含下方五类遗留内部类型。
+  - **待用户裁决的二选一（保留不变）**：(a) 认可 P0 当年的范围收窄，则应把它从代码注释**升格为本 plan 的正式 amendment 段落**（写明收窄内容、发生在 P0 review r2、以及未覆盖子系统的清单），让契约与实现一致，P0 可改回 ✅；(b) 不认可，则下方五类消费点需要在 P0 范围内补齐迁移（或另立 plan 收口），P0 在此之前维持 ⏳。**裁决前不要再由 agent 单方面改动 P0 的状态**（本轮 ✅→⏳ 是执行用户在本次返工任务里的显式指示，不是 agent 自行改判；此后的状态变化仍需同样的显式授权）。
+- **P0 待确认欠账**：以下均是 Rust **内部类型 / 字段**仍以 legacy `BodyPart` 作 key（非 wire——wire 层 `CombatBodyPartV1` 已如上确认是 string，`CombatEvent` 是纯战斗运行时事件结构体、从不上 wire），且均**不在 P1（wire 开放化 + dugu/dead_armor 映射数据化）或 P4（form 护甲 coverage 折算）任一交付物清单内**（对照 §P1/§P4 原文「交付物」段，P1/P4 本身的交付物边界不受影响）：
+  - `CombatEvent.body_part`（`combat/events.rs:204`，战斗内部事件结构体字段，非 wire）
+  - `DerivedAttrs.defense_profile`（`combat/components.rs:320`，`HashMap<(BodyPart, WoundKind), f32>`）
+  - `DeadMeridianArmor.immune_regions`（`combat/baomai_v4/dead_armor.rs:182`，`HashSet<BodyPart>`）
+  - 状态效果 `StatusEffectKind::BodyPartResist` / `BodyPartWeaken`（`combat/events.rs:146,148`，枚举变体参数类型）
+  - dandao 变异伤害倍率 `mutation_damage_multiplier_for_part`（`dandao/mutation.rs:249`，`part: BodyPart` 参数）
+  非人形构型在上述子系统里仍会退化：whale 的 `tail_fin` 之类 id 转 legacy 失败即走各消费点的兜底分支（`body_plan::id_to_legacy_body_part` 返回 `None`）。这五项是否需要在 P0 范围内补齐迁移，取决于上方裁决结论——裁决前登记为 P0 待确认欠账，不再是「不影响 P0 ✅」的旁注。

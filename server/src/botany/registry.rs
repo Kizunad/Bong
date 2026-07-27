@@ -170,14 +170,28 @@ const ENV_DUAN_JI_CI: &[EnvLock] = &[
         radius: 1,
     },
 ];
-const HAZARD_DUAN_JI_CI: &[HarvestHazard] = &[HarvestHazard::ResonanceVision {
-    duration_secs: 3,
-    composure_loss: 0.05,
-}];
+const HAZARD_DUAN_JI_CI: &[HarvestHazard] = &[
+    HarvestHazard::ResonanceVision {
+        duration_secs: 3,
+        composure_loss: 0.05,
+    },
+    // plan-gathering-tool-bind-v1 §8.1 决议 #4：断戟刺锐叶割手，草镰接通本职。
+    HarvestHazard::WoundOnBareHand {
+        wound: WoundLevel::Laceration,
+        required_tool: Some(ToolKind::CaoLian),
+    },
+];
 const ENV_XUE_SE_MAI_CAO: &[EnvLock] = &[EnvLock::RuinDensity { min: 0.2 }];
-const HAZARD_XUE_SE_MAI_CAO: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
-    dispersal_chance: 0.4,
-}];
+const HAZARD_XUE_SE_MAI_CAO: &[HarvestHazard] = &[
+    HarvestHazard::DispersalOnFail {
+        dispersal_chance: 0.4,
+    },
+    // plan-gathering-tool-bind-v1 §8.1 决议 #4：血色麦草丛生锐叶割手，草镰接通本职。
+    HarvestHazard::WoundOnBareHand {
+        wound: WoundLevel::Laceration,
+        required_tool: Some(ToolKind::CaoLian),
+    },
+];
 const ENV_YUN_DING_LAN: &[EnvLock] = &[EnvLock::SkyIslandMask {
     min: 0.2,
     surface: SkyIsleSurface::Top,
@@ -1733,6 +1747,78 @@ mod tests {
             (kind.growth_cost - 0.008).abs() < f32::EPSILON,
             "XueSeMaiCao growth_cost should be 0.008, got {}",
             kind.growth_cost
+        );
+    }
+
+    #[test]
+    fn duan_ji_ci_gains_wound_on_bare_hand_hazard_requiring_cao_lian() {
+        // plan-gathering-tool-bind-v1 §8.1 决议 #4：断戟刺锐叶割手，草镰接通本职。
+        // "叠加"而非"替换"——原有 ResonanceVision 必须还在，新 hazard 是追加的。
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::DuanJiCi)
+            .expect("DuanJiCi should be registered");
+        let spec = kind.v2_spec().expect("DuanJiCi should be a v2 kind");
+        assert!(
+            spec.harvest_hazards
+                .iter()
+                .any(|h| matches!(h, HarvestHazard::ResonanceVision { .. })),
+            "DuanJiCi should keep its original ResonanceVision hazard (叠加不是替换); got {:?}",
+            spec.harvest_hazards
+        );
+        assert!(
+            spec.harvest_hazards.iter().any(|h| matches!(
+                h,
+                HarvestHazard::WoundOnBareHand {
+                    wound: WoundLevel::Laceration,
+                    required_tool: Some(ToolKind::CaoLian),
+                }
+            )),
+            "DuanJiCi should gain WoundOnBareHand{{Laceration, CaoLian}}; got {:?}",
+            spec.harvest_hazards
+        );
+    }
+
+    #[test]
+    fn xue_se_mai_cao_gains_wound_on_bare_hand_hazard_requiring_cao_lian() {
+        // plan-gathering-tool-bind-v1 §8.1 决议 #4：血色麦草丛生锐叶割手，草镰接通本职。
+        // "叠加"而非"替换"——原有 DispersalOnFail 必须还在。
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::XueSeMaiCao)
+            .expect("XueSeMaiCao should be registered");
+        let spec = kind.v2_spec().expect("XueSeMaiCao should be a v2 kind");
+        assert!(
+            spec.harvest_hazards
+                .iter()
+                .any(|h| matches!(h, HarvestHazard::DispersalOnFail { .. })),
+            "XueSeMaiCao should keep its original DispersalOnFail hazard (叠加不是替换); got {:?}",
+            spec.harvest_hazards
+        );
+        assert!(
+            spec.harvest_hazards.iter().any(|h| matches!(
+                h,
+                HarvestHazard::WoundOnBareHand {
+                    wound: WoundLevel::Laceration,
+                    required_tool: Some(ToolKind::CaoLian),
+                }
+            )),
+            "XueSeMaiCao should gain WoundOnBareHand{{Laceration, CaoLian}}; got {:?}",
+            spec.harvest_hazards
+        );
+    }
+
+    #[test]
+    fn spirit_grass_does_not_gain_wound_on_bare_hand_hazard() {
+        // plan-gathering-tool-bind-v1 §8.1 决议 #4 明确不选 spirit_grass——最基础灵草
+        // 不应设工具门槛。回归锁：spirit_grass 是 v1（无 v2_spec），必须继续如此。
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::SpiritGrass)
+            .expect("SpiritGrass should be registered");
+        assert!(
+            kind.v2_spec().is_none(),
+            "SpiritGrass must remain a v1 kind (no harvest_hazards) per §8.1 决议 #4"
         );
     }
 

@@ -10,5 +10,8 @@
   "category.bong-client.mineral": "Bong 矿物",
   "key.bong-client.mineral_sense": "神识感矿脉",
   "category.bong-client.social": "Bong 社交",
-  "key.bong-client.spirit_niche_mark_coordinate": "神识感灵龛（凝视+标记）"
+  "key.bong-client.spirit_niche_mark_coordinate": "神识感灵龛（凝视+标记）",
+  "key.bong-client.juice_multiplier_cycle": "切换施法震感强度",
+  "message.bong-client.juice_multiplier.off": "施法震感：关闭",
+  "message.bong-client.juice_multiplier.level": "施法震感：%s%%"
 }

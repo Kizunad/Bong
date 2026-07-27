@@ -82,8 +82,17 @@ echo "run_dir: $RUN_DIR"
 echo "log_file: $LOG_FILE"
 
 echo ""
+CURRENT_STAGE="server-lifecycle"
+echo "=== [$TASK_ID][$SCRIPT_TAG][0/7] Managed server lifecycle regression ==="
+if bash "$ROOT/scripts/test-server-lifecycle.sh"; then
+  pass "managed server PID lifecycle"
+else
+  finalize_failure "server-lifecycle" "managed server lifecycle regression failed"
+fi
+
+echo ""
 CURRENT_STAGE="dev-reload-detach"
-echo "=== [$TASK_ID][$SCRIPT_TAG][0/6] Dev reload detach regression ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][1/7] Dev reload detach regression ==="
 if bash "$ROOT/scripts/test-dev-reload-disown.sh"; then
   pass "dev-reload detached process lifecycle"
 else

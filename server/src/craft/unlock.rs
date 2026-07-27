@@ -26,7 +26,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{ResMut, Resource};
+use valence::prelude::{AppExit, EventReader, ResMut, Resource};
 
 use super::events::{InsightTrigger, UnlockEventSource};
 use super::recipe::{RecipeId, UnlockSource};
@@ -279,6 +279,27 @@ pub fn tick_recipe_unlock_flush(mut state: ResMut<RecipeUnlockState>) {
     }
 }
 
+/// 关服 system — 仅在本帧收到 [`AppExit`] 时强制刷盘。
+///
+/// 挂进 `Last`，与运行期 `Update` 的 600 tick 节流互补。具体 dirty no-op、
+/// 原子 tmp + rename、失败后保留 dirty/旧文件语义统一由 [`RecipeUnlockState::flush`]
+/// 提供，关服路径不复制持久化策略。
+pub fn flush_recipe_unlocks_on_shutdown(
+    mut state: ResMut<RecipeUnlockState>,
+    mut app_exit: EventReader<AppExit>,
+) {
+    if app_exit.read().next().is_none() {
+        return;
+    }
+
+    if let Err(error) = state.flush() {
+        tracing::warn!(
+            target: "bong::craft",
+            "recipe unlock shutdown flush failed: {error}"
+        );
+    }
+}
+
 /// 三渠道解锁尝试结果 — 调用方根据返回值决定是否广播 RecipeUnlockedEvent。
 ///
 /// 当前 API 形态下 `unlock_via_*` 直接接收 `&CraftRecipe`，调用方负责
@@ -507,6 +528,7 @@ pub fn find_recipes_unlockable_by_material<'a>(
 mod tests {
     use super::super::recipe::{CraftCategory, CraftRecipe, CraftRequirements};
     use super::*;
+    use valence::prelude::{App, AppExit, Last, Update};
 
     fn recipe_with_sources(sources: Vec<UnlockSource>) -> CraftRecipe {
         CraftRecipe {
@@ -693,6 +715,15 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("bong-craft-recipe-unlocks-{stamp}-{name}.json"))
+    }
+
+    fn app_with_unlock_flush_systems(state: RecipeUnlockState) -> App {
+        let mut app = App::new();
+        app.add_event::<AppExit>();
+        app.insert_resource(state);
+        app.add_systems(Update, tick_recipe_unlock_flush);
+        app.add_systems(Last, flush_recipe_unlocks_on_shutdown);
+        app
     }
 
     #[test]
@@ -1167,6 +1198,138 @@ mod tests {
             state.is_dirty(),
             "a failed flush must leave dirty=true because Bob's unlock is not yet safely on \
              disk"
+        );
+
+        let _ = fs::remove_dir_all(&tmp_path);
+        let _ = fs::remove_file(&path);
+    }
+
+    // ── shutdown flush: externally observable persistence contract ──────────
+
+    #[test]
+    fn app_exit_flushes_dirty_recipe_unlocks_without_waiting_interval() {
+        let path = unique_tmp_path("shutdown_dirty_immediate");
+        let mut app = app_with_unlock_flush_systems(
+            RecipeUnlockState::default()
+                .with_path(&path)
+                .with_flush_interval(600),
+        );
+        let recipe = RecipeId::new("craft.example.shutdown_only");
+        app.world_mut()
+            .resource_mut::<RecipeUnlockState>()
+            .unlock("offline:Alice", recipe.clone());
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        assert!(
+            path.exists(),
+            "AppExit must persist a dirty recipe unlock immediately even though the 600-tick \n             runtime throttle has not elapsed"
+        );
+        let restored = RecipeUnlockState::hydrated_from_path(&path);
+        assert!(
+            restored.is_unlocked("offline:Alice", &recipe),
+            "a restart after AppExit must hydrate Alice's newly unlocked recipe from disk"
+        );
+        assert!(
+            !app.world().resource::<RecipeUnlockState>().is_dirty(),
+            "a successful shutdown flush must leave no unpersisted recipe unlock state"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn app_exit_flush_noops_when_recipe_unlock_state_clean() {
+        let path = unique_tmp_path("shutdown_clean_noop");
+        let mut app = app_with_unlock_flush_systems(
+            RecipeUnlockState::default()
+                .with_path(&path)
+                .with_flush_interval(600),
+        );
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        assert!(
+            !path.exists(),
+            "AppExit with a clean unlock state must not create an empty persistence file"
+        );
+        assert!(
+            !app.world().resource::<RecipeUnlockState>().is_dirty(),
+            "a clean shutdown no-op must leave the state clean"
+        );
+    }
+
+    #[test]
+    fn dirty_state_without_app_exit_is_not_flushed_before_throttle_boundary() {
+        let path = unique_tmp_path("shutdown_absent_throttled");
+        let mut app = app_with_unlock_flush_systems(
+            RecipeUnlockState::default()
+                .with_path(&path)
+                .with_flush_interval(600),
+        );
+        let recipe = RecipeId::new("craft.example.not_yet_due");
+        app.world_mut()
+            .resource_mut::<RecipeUnlockState>()
+            .unlock("offline:Alice", recipe);
+
+        app.update();
+
+        assert!(
+            !path.exists(),
+            "without AppExit, a dirty state at tick 1 of 600 must remain throttled instead of \n             being flushed by the shutdown hook"
+        );
+        assert!(
+            app.world().resource::<RecipeUnlockState>().is_dirty(),
+            "the still-throttled unlock must remain dirty so a later runtime or shutdown flush \n             can persist it"
+        );
+    }
+
+    #[test]
+    fn app_exit_flush_failure_keeps_dirty_and_preserves_existing_file() {
+        let path = unique_tmp_path("shutdown_failure_atomic");
+        let old_recipe = RecipeId::new("craft.example.already_persisted");
+        let new_recipe = RecipeId::new("craft.example.pending_at_shutdown");
+
+        let mut state = RecipeUnlockState::default()
+            .with_path(&path)
+            .with_flush_interval(600);
+        state.unlock("offline:Alice", old_recipe.clone());
+        state.flush().expect("setup: baseline flush should succeed");
+        let original_bytes = fs::read(&path).expect("setup: baseline file must exist");
+
+        let tmp_path = path.with_extension("tmp");
+        fs::create_dir_all(&tmp_path).expect("setup: directory must block the shutdown tmp write");
+        state.unlock("offline:Alice", new_recipe.clone());
+
+        let mut app = app_with_unlock_flush_systems(state);
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        assert_eq!(
+            fs::read(&path)
+                .expect("the last valid unlock file must survive a failed shutdown flush"),
+            original_bytes,
+            "a shutdown write failure must preserve the previous recipe_unlocks.json bytes exactly"
+        );
+        let restored = RecipeUnlockState::hydrated_from_path(&path);
+        assert!(
+            restored.is_unlocked("offline:Alice", &old_recipe),
+            "hydrate after the failed shutdown flush must still recover the prior valid unlock"
+        );
+        assert!(
+            !restored.is_unlocked("offline:Alice", &new_recipe),
+            "hydrate must not invent the pending unlock when its tmp write failed"
+        );
+        let live_state = app.world().resource::<RecipeUnlockState>();
+        assert!(
+            live_state.is_unlocked("offline:Alice", &new_recipe),
+            "the pending unlock must remain available in memory after the failed flush"
+        );
+        assert!(
+            live_state.is_dirty(),
+            "a failed AppExit flush must keep dirty=true so the loss is not reported as persisted"
         );
 
         let _ = fs::remove_dir_all(&tmp_path);

@@ -16,7 +16,7 @@
 #   - skeleton            骨架 plan（在 plans-skeleton/ 或尚未开工）
 #   - finished            已归档（在 finished 分组）
 
-generated_at: '2026-07-26'
+generated_at: '2026-07-27'
 project: Bong
 groups:
 - id: tsy
@@ -1488,15 +1488,16 @@ plans:
   - 581
   blocking_on: []
   summary: P0 已落地（resolve.rs:1644 should_block_contamination 拦截）；P1 文档背离修正未做。状态标记与代码一致。
-- file: plan-gathering-tool-bind-v1.md
-  group: gameplay-npc
+- file: finished_plans/plan-gathering-tool-bind-v1.md
+  group: finished
   title: 草药捆保鲜挂载 + 草镰采集接通
-  state: active-design
-  percent: 0
-  last_updated: '2026-06-14'
-  pr_refs: []
+  state: finished
+  percent: 100
+  last_updated: '2026-07-27'
+  pr_refs:
+  - 1293
   blocking_on: []
-  summary: 'PR #558 只做 promote+决议收口（docs-only）；P0/P1 代码零落地（workbench_materials.toml 无 shelflife 字段），文档 ⬜ 如实。'
+  summary: P0（herb_bundle 挂 fresh_herb_v1）+ P1（cao_lian required_tool 接通 DuanJiCi/XueSeMaiCao）+ 视听接线全部落地，对抗验证 PASS，已归档；PR #1293 review 返工修正 P0 测试判别力/草镰专属反馈越界/挥镰弧线。
 - file: plan-nested-pack-base-v1.md
   group: gameplay-npc
   title: 塔科夫式套包（物品内嵌子容器）
@@ -1644,18 +1645,18 @@ plans:
   - 1126
   blocking_on: []
   summary: server/src/world 无 anomaly_raster/AnomalyKind 任何痕迹；#1126 只落地问题报告，P0-P3 未开工。
-- file: plan-bughunt-craft-refund-full-inventory-loss-v1.md
+- file: finished_plans/plan-bughunt-craft-refund-full-inventory-loss-v1.md
   group: gameplay-npc
-  title: 满包退款吞材料修复，P4 回归缺口
-  state: active-implementing
-  percent: 90
-  last_updated: '2026-07-19'
+  title: 满包退款吞材料修复
+  state: merged
+  percent: 100
+  last_updated: '2026-07-27'
   pr_refs:
   - 1039
   - 1142
   - 1232
   blocking_on: []
-  summary: 入包/落地/回滚/持久化已落地且测试覆盖；P4 no_containers 定向回归确未写，归档门未满足。
+  summary: 入包/落地/回滚/持久化已落地；P4 no_containers 定向回归 refund_structural_error_does_not_mask_config_bug 已补齐，判别力经放宽 fallback 判据撞红验证，2026-07-27 归档。
 - file: plan-bughunt-dying-elder-give-dan-server-gate-v1.md
   group: gameplay-npc
   title: 给丹 C2S 缺距离/维度权威校验
@@ -1757,12 +1758,12 @@ plans:
   - 897
   blocking_on: []
   summary: BotanyHarvestRequest 改调 request_harvest_mode，4 条 pin（#897）；审计追认归档。
-- file: finished_plans/plan-race-system-v1.md
+- file: plan-race-system-v1.md
   group: cultivation-economy
   title: 种族 BodyPlan 通用化+固元易形功法
-  state: merged
-  percent: 100
-  last_updated: '2026-07-26'
+  state: active-implementing
+  percent: 60
+  last_updated: '2026-07-27'
   pr_refs:
   - 1160
   - 1180
@@ -1775,7 +1776,7 @@ plans:
   - 1206
   - 1250
   blocking_on: []
-  summary: P0-P5 全落地（morph.rs/whale body_plan//race set/RaceChange 两阶段），#1250 回归修复收尾；文档从未同步 P4/P5，审计追认归档。
+  summary: P1-P3 已逐项核验落地（经脉通用化/动态面板/RaceGate 三档）；P0（战斗部位消费点改造范围收窄是否构成正式 amendment）与 P4（易形功法，14 项交付物 9 项完全落地、5 项部分完成：FormAnchor 门控无生产收拢点集成测试且缺 happy path、易形态名牌/队友标识经反编译确认未保留、proto_min bot 解码缺失、morph TPV 渲染 harness 截图缺失、生产 races.json 缺 whale→human pair 致本体非人玩家无法易形化人）本轮逐项核验后改回 ⏳；P5 已落机制底盘（/race set dev 命令+RaceChange 两阶段事务 #1204、突破配额+dugu 路由换轨 #1203、whale body_plan+IntrinsicRace 接线 #1206），仍欠 FinRing 消费链（最小验收=单变体+1件实物） / 2 条 bot 场景 / e2e / worldview 增补案 / 非人种族生产获得路径（已完整走查角色创建/首次登录/新角色/旧档迁移四条链路，确认无非 dev 入口），此前被 #1278 误追认归档，已回退。
 - file: finished_plans/plan-season-phase-stale-client-v1.md
   group: infrastructure
   title: 季节跨相位客户端状态陈旧

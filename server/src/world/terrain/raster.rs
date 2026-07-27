@@ -405,6 +405,9 @@ pub struct TerrainProvider {
     placement_index: HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>,
     /// Total number of authored placement blocks loaded (for startup logging).
     placement_block_count: usize,
+    /// Test-only provenance metadata from Bot-owned raster manifests. Production
+    /// manifests omit it; when present it is validated before any ready marker is emitted.
+    bot_fixture: Option<BotRasterFixture>,
 }
 
 impl Resource for TerrainProvider {}
@@ -531,6 +534,45 @@ struct RasterManifest {
     global_decoration_palette: Vec<ManifestDecoration>,
     #[serde(default)]
     fossil_bboxes: Vec<ManifestFossilBbox>,
+    #[serde(default)]
+    bot_fixture: Option<ManifestBotFixture>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManifestBotFixture {
+    kind: String,
+    token: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BotRasterFixture {
+    pub kind: String,
+    pub token: String,
+}
+
+fn validate_bot_fixture(
+    fixture: Option<ManifestBotFixture>,
+    manifest_path: &Path,
+) -> Result<Option<BotRasterFixture>, String> {
+    let Some(fixture) = fixture else {
+        return Ok(None);
+    };
+    let valid_kind = fixture.kind == "ambient-surface-v1";
+    let valid_token = (16..=128).contains(&fixture.token.len())
+        && fixture
+            .token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+    if !valid_kind || !valid_token {
+        return Err(format!(
+            "terrain raster manifest {} has invalid bot_fixture metadata",
+            manifest_path.display()
+        ));
+    }
+    Ok(Some(BotRasterFixture {
+        kind: fixture.kind,
+        token: fixture.token,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -708,6 +750,7 @@ impl TerrainProvider {
             fossil_bboxes: Vec::new(),
             placement_index: HashMap::new(),
             placement_block_count: 0,
+            bot_fixture: None,
         }
     }
 
@@ -823,6 +866,7 @@ impl TerrainProvider {
         })?;
 
         validate_manifest_version(manifest.version, manifest_path)?;
+        let bot_fixture = validate_bot_fixture(manifest.bot_fixture, manifest_path)?;
 
         let tile_area = (manifest.tile_size as usize)
             .checked_mul(manifest.tile_size as usize)
@@ -945,6 +989,7 @@ impl TerrainProvider {
             fossil_bboxes,
             placement_index,
             placement_block_count,
+            bot_fixture,
         })
     }
 
@@ -968,6 +1013,15 @@ impl TerrainProvider {
     /// Total authored placement blocks loaded from the sidecar (for logging).
     pub fn placement_block_count(&self) -> usize {
         self.placement_block_count
+    }
+
+    pub fn bot_fixture(&self) -> Option<&BotRasterFixture> {
+        self.bot_fixture.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_bot_fixture_for_tests(&mut self, fixture: BotRasterFixture) {
+        self.bot_fixture = Some(fixture);
     }
 
     /// Look up a decoration by its global id (0 → None).
@@ -1620,6 +1674,7 @@ mod tests {
             fossil_bboxes: Vec::new(),
             placement_index: HashMap::new(),
             placement_block_count: 0,
+            bot_fixture: None,
         };
 
         RasterFixture {
@@ -1937,6 +1992,54 @@ mod tests {
             "a manifest with no `version` field must fail to deserialize (no default), \
              so a missing version can never be mistaken for a supported one"
         );
+    }
+
+    #[test]
+    fn bot_fixture_metadata_is_optional_and_validated_before_ready_use() {
+        let base = r#"{
+            "version": 2,
+            "tile_size": 1,
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["minecraft:stone"],
+            "biome_palette": ["minecraft:plains"],
+            "tiles": []
+        }"#;
+        let ordinary: RasterManifest =
+            serde_json::from_str(base).expect("production manifest without bot_fixture must parse");
+        assert!(
+            validate_bot_fixture(ordinary.bot_fixture, Path::new("manifest.json"))
+                .expect("absent fixture metadata must remain compatible")
+                .is_none()
+        );
+
+        let with_fixture = base.replace(
+            "\n        }",
+            ",\n            \"bot_fixture\": {\"kind\":\"ambient-surface-v1\",\"token\":\"0123456789abcdef\"}\n        }",
+        );
+        let fixture_manifest: RasterManifest = serde_json::from_str(&with_fixture)
+            .expect("valid bot_fixture metadata must deserialize");
+        let fixture =
+            validate_bot_fixture(fixture_manifest.bot_fixture, Path::new("manifest.json"))
+                .expect("valid bot fixture must pass validation")
+                .expect("fixture must remain present");
+        assert_eq!(fixture.kind, "ambient-surface-v1");
+        assert_eq!(fixture.token, "0123456789abcdef");
+
+        for (kind, token) in [
+            ("other", "0123456789abcdef"),
+            ("ambient-surface-v1", "short"),
+            ("ambient-surface-v1", "0123456789abcde\n"),
+            ("ambient-surface-v1", "0123456789abcde!"),
+        ] {
+            let fixture = ManifestBotFixture {
+                kind: kind.to_string(),
+                token: token.to_string(),
+            };
+            assert!(
+                validate_bot_fixture(Some(fixture), Path::new("manifest.json")).is_err(),
+                "invalid fixture kind/token must fail before any ready marker: kind={kind:?} token={token:?}"
+            );
+        }
     }
 
     #[test]
@@ -2638,6 +2741,7 @@ mod tests {
             fossil_bboxes: Vec::new(),
             placement_index: HashMap::new(),
             placement_block_count: 0,
+            bot_fixture: None,
         };
         RasterFixture {
             provider: Some(provider),
@@ -2708,6 +2812,7 @@ mod tests {
             fossil_bboxes: Vec::new(),
             placement_index: HashMap::new(),
             placement_block_count: 0,
+            bot_fixture: None,
         };
         RasterFixture {
             provider: Some(provider),

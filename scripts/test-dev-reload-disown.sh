@@ -6,6 +6,7 @@ DEV_RELOAD="$ROOT/scripts/dev-reload.sh"
 TEST_TMP_PARENT="${TMPDIR:-$ROOT/.sisyphus/tmp}"
 mkdir -p "$TEST_TMP_PARENT"
 TEST_ROOT="$(mktemp -d "$TEST_TMP_PARENT/bong-dev-reload-disown.XXXXXX")"
+export BONG_SERVER_PID_FILE="$TEST_ROOT/managed-server.pid"
 STUB_SCRIPT="$TEST_ROOT/server-stub.sh"
 LAUNCHER_SCRIPT="$TEST_ROOT/launcher.sh"
 LAUNCHER_STDIN="$TEST_ROOT/launcher.stdin"
@@ -130,6 +131,11 @@ case "$TEST_MODE" in
         else
             printf 'mismatch\n' > "$SERVER_PID_MATCH_FILE"
         fi
+        if [ -f "$BONG_SERVER_PID_FILE" ]; then
+            printf 'recorded\n' > "$SERVER_RECORD_STATE_FILE"
+        else
+            printf 'missing\n' > "$SERVER_RECORD_STATE_FILE"
+        fi
         if job_table_contains "$child_pid"; then
             printf 'present\n' > "$JOB_TABLE_STATE_FILE"
         else
@@ -160,6 +166,7 @@ run_hup_case() {
     local launcher_log="$case_root/launcher.log"
     local server_log="$case_root/server.log"
     local server_pid_match_file="$case_root/server-pid-match"
+    local server_record_state_file="$case_root/server-record-state"
     local job_table_state_file="$case_root/job-table-state"
     local spawned_launcher_pid
     local launcher_pgid
@@ -173,6 +180,7 @@ run_hup_case() {
     export LAUNCHER_PID_FILE="$launcher_pid_file"
     export READY_FILE="$ready_file"
     export SERVER_PID_MATCH_FILE="$server_pid_match_file"
+    export SERVER_RECORD_STATE_FILE="$server_record_state_file"
     export JOB_TABLE_STATE_FILE="$job_table_state_file"
     export BONG_SERVER_WORKDIR="$TEST_ROOT"
     export BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
@@ -190,9 +198,12 @@ run_hup_case() {
     wait_for_file "$ready_file" "$mode child readiness"
     if [ "$mode" = detached ]; then
         wait_for_file "$server_pid_match_file" "production SERVER_PID assignment"
+        wait_for_file "$server_record_state_file" "managed server PID record"
         wait_for_file "$job_table_state_file" "production job-table detach state"
         grep -Fxq matched "$server_pid_match_file" \
             || fail "production SERVER_PID must equal launch_detached_job DETACHED_PID"
+        grep -Fxq recorded "$server_record_state_file" \
+            || fail "successful production launch must atomically create a managed PID record"
         grep -Fxq detached "$job_table_state_file" \
             || fail "production launch must remove the live server pid from Bash's job table"
     fi
@@ -250,6 +261,25 @@ run_hup_case attached false
 run_hup_case detached true
 
 source "$DEV_RELOAD"
+
+original_stop_managed="$(declare -f bong_server_stop_managed)"
+managed_stop_status=0
+bong_server_stop_managed() { return "$managed_stop_status"; }
+for managed_stop_status in 0 "$BONG_SERVER_STOP_FORCED"; do
+    stop_managed_server_before_reload \
+        || fail "dev-reload must permit replacement after safe stop status $managed_stop_status"
+done
+for managed_stop_status in 1 2; do
+    if stop_managed_server_before_reload 2> "$TEST_ROOT/reload-stop-$managed_stop_status.err"; then
+        fail "dev-reload accepted unsafe managed stop status $managed_stop_status"
+    else
+        reload_stop_result=$?
+    fi
+    [ "$reload_stop_result" -eq "$managed_stop_status" ] \
+        || fail "dev-reload flattened managed stop status $managed_stop_status"
+done
+unset -f bong_server_stop_managed
+eval "$original_stop_managed"
 
 NO_COMMAND_LOG="$TEST_ROOT/no-command.err"
 if launch_detached_job 2> "$NO_COMMAND_LOG"; then

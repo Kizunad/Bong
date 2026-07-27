@@ -199,6 +199,12 @@ public class VfxEventRouterTest {
         assertTrue(result.logMessage().contains("IllegalStateException"), result.logMessage());
     }
 
+    // plan-fpv-cast-av-v1 P3：play_anim → 动画事件驱动 juice 的路由接线测试已移到
+    // com.bong.client.combat.juice.CastFovControllerTest（router* 三例）。原因：juice 现在要求
+    // 一枚由权威 CASTING 武装的令牌，武装要用 CastStateStore/SkillBarStore/CastSyncHandler 的
+    // 完整 harness 与包内 transition listener——放在本包只能靠后门武装，或退化成无区分力的
+    // 「两边都零」断言（假绿）。那三例仍然走真实 VfxEventRouter，接线覆盖没有丢。
+
     // ---- plan-skill-av-relink-v1 P3：P1 接线清单 → 路由契约（动画链客户端闭环） ----
 
     /**

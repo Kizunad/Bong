@@ -158,7 +158,7 @@ pub fn start_charge_fn(
     let now_tick = current_tick(world);
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(FULL_POWER_CHARGE_SKILL_ID, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -215,14 +215,14 @@ pub fn release_full_power_fn(
 pub fn release_full_power_with_exhaust(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     target: Option<Entity>,
     exhaust_multiplier: Option<f64>,
 ) -> CastResult {
     let now_tick = current_tick(world);
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(FULL_POWER_RELEASE_SKILL_ID, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -255,7 +255,7 @@ pub fn release_full_power_with_exhaust(
     if let Some(mut bindings) = world.get_mut::<crate::combat::components::SkillBarBindings>(caster)
     {
         bindings.set_cooldown(
-            slot,
+            FULL_POWER_RELEASE_SKILL_ID,
             now_tick.saturating_add(FULL_POWER_RELEASE_COOLDOWN_TICKS),
         );
     }

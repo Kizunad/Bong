@@ -13,8 +13,11 @@ import json
 import os
 import pathlib
 import re
+import shutil
+import shlex
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -55,6 +58,12 @@ from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     _set_qi_and_wait,
     _set_qi_max_and_wait,
     _snapshot_after_server_tick_fence,
+)
+from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
+    FIXTURE_MANIFEST_ENV,
+    FIXTURE_OWNED_ENV,
+    FIXTURE_TOKEN_ENV,
+    _assert_raster_fixture_contract,
 )
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
@@ -181,10 +190,26 @@ class DiggingActionTest(unittest.TestCase):
 
 
 class NoviceRasterFixtureTest(unittest.TestCase):
+    TOKEN = "unit-test-ambient-fixture-token"
+
+    def _generate(self, root: pathlib.Path) -> pathlib.Path:
+        return make_novice_raster_fixture.generate(root, self.TOKEN)
+
+    def _contract_env(self, manifest_path: pathlib.Path, token: str | None = None):
+        return mock.patch.dict(
+            os.environ,
+            {
+                FIXTURE_OWNED_ENV: "1",
+                FIXTURE_MANIFEST_ENV: str(manifest_path),
+                FIXTURE_TOKEN_ENV: self.TOKEN if token is None else token,
+            },
+            clear=False,
+        )
+
     def test_fixture_exposes_deterministic_spiritwood_seed_without_changing_poi_tile(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
-            manifest_path = make_novice_raster_fixture.generate(root)
+            manifest_path = self._generate(root)
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
             self.assertEqual(
@@ -213,6 +238,52 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             spirit_biomes = (root / "tile_5_5" / "biome_id.bin").read_bytes()
             seed_index = (1519 - 5 * 256) * 256 + (1292 - 5 * 256)
             self.assertEqual(spirit_biomes[seed_index], 4)
+
+    def test_fixture_pins_ambient_support_air_and_no_water_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["bot_fixture"],
+                {
+                    "kind": "ambient-surface-v1",
+                    "token": self.TOKEN,
+                    "surface_y": 72,
+                    "support": "grass_block",
+                    "feet_y": 73,
+                    "head_y": 74,
+                },
+            )
+            with self._contract_env(manifest_path):
+                _assert_raster_fixture_contract()
+
+    def test_ambient_fixture_contract_rejects_stale_token_and_missing_ownership(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            with self._contract_env(manifest_path, token="wrong-token"):
+                with self.assertRaises(BotAssertionError, msg="stale token must not pin a prior fixture"):
+                    _assert_raster_fixture_contract()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    FIXTURE_OWNED_ENV: "0",
+                    FIXTURE_MANIFEST_ENV: str(manifest_path),
+                    FIXTURE_TOKEN_ENV: self.TOKEN,
+                },
+                clear=False,
+            ):
+                with self.assertRaises(BotAssertionError, msg="reuse/no-ownership must fail closed"):
+                    _assert_raster_fixture_contract()
+
+    def test_fixture_generator_requires_explicit_token(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(TypeError):
+                make_novice_raster_fixture.generate(pathlib.Path(temp_dir))
+
+            with self.assertRaises(ValueError):
+                make_novice_raster_fixture.generate(pathlib.Path(temp_dir), " ")
 
 
 class ChatTextTest(unittest.TestCase):
@@ -665,9 +736,721 @@ class NorthRiftScenarioContractTest(unittest.TestCase):
         )
 
 
+class BotE2eDevModeContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        root = pathlib.Path(__file__).parents[2]
+        cls.source = (root / "scripts/bot-e2e.sh").read_text(encoding="utf-8")
+        cls.compose_source = (root / "docker-compose.test.yml").read_text(
+            encoding="utf-8"
+        )
+        cls.workflow_source = (root / ".github/workflows/e2e.yml").read_text(
+            encoding="utf-8"
+        )
+
+    def test_mode_contract_distinguishes_generic_inputs_from_owned_fixture_inputs(self):
+        guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
+        guard = self.source[:guard_end]
+        self.assertIn('AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"', guard)
+        self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥', guard)
+        self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
+        self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
+
+    def test_generic_mode_preserves_caller_inputs_and_skips_ambient_ownership(self):
+        fixture_start = self.source.index('# Owned-fixture mode generates')
+        fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
+        fixture = self.source[fixture_start:fixture_end]
+        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
+        self.assertIn('BOT_FIXTURE_TOKEN="$(python3 -c', fixture)
+        self.assertIn('--fixture-token "$BOT_FIXTURE_TOKEN"', fixture)
+        state_start = self.source.index('# Ambient-owned runs pin state')
+        state_end = self.source.index('\nport_open() {', state_start)
+        state = self.source[state_start:state_end]
+        self.assertIn('elif [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', state)
+        self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_OWNED', fixture)
+        self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_MANIFEST', fixture)
+        self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_TOKEN', fixture)
+
+        redis_start = self.source.index('# ---- redis ----')
+        redis_end = self.source.index('\n# ---- server ----', redis_start)
+        redis = self.source[redis_start:redis_end]
+        redis_guard = 'if [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
+        self.assertIn(redis_guard, redis)
+        self.assertNotIn('export REDIS_URL=', redis[:redis.index(redis_guard)])
+
+    def test_owned_fixture_mode_keeps_private_runtime_and_exact_marker_gate(self):
+        runtime_start = self.source.index('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
+        runtime_end = self.source.index('\n# Owned-fixture mode generates', runtime_start)
+        runtime = self.source[runtime_start:runtime_end]
+        self.assertIn('SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"', runtime)
+        self.assertIn('ln -s "$ROOT/server/assets" "$SERVER_RUNTIME_DIR/server/assets"', runtime)
+
+        readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
+        readiness_end = self.source.index('\n# ---- 场景 ----', readiness_start)
+        readiness = self.source[readiness_start:readiness_end]
+        self.assertIn('grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"', readiness)
+        self.assertIn('export BOT_E2E_AMBIENT_FIXTURE_OWNED=1', readiness)
+        self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', readiness)
+        self.assertLess(readiness.index('grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"'), readiness.index('export BOT_E2E_AMBIENT_FIXTURE_OWNED=1'))
+
+    def test_generic_and_reuse_never_grant_ambient_ownership(self):
+        readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
+        readiness_end = self.source.index('\n# ---- 场景 ----', readiness_start)
+        readiness = self.source[readiness_start:readiness_end]
+        grant = 'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1'
+        self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then', readiness)
+        self.assertLess(readiness.index('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then'), readiness.index(grant))
+        self.assertIn('BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起', self.source)
+        self.assertIn('$HOST:$PORT 已被占用。要对着现有 server 跑请设 BOT_E2E_REUSE=1', self.source)
+        self.assertNotIn('pkill', self.source)
+
+    def test_mode_contract_executes_early_rejections_before_harness_setup(self):
+        root = pathlib.Path(__file__).parents[2]
+        cases = (
+            (
+                {"BOT_E2E_AMBIENT_FIXTURE_MODE": "bogus"},
+                "BOT_E2E_AMBIENT_FIXTURE_MODE 仅接受空值、0 或 1",
+            ),
+            (
+                {"BOT_E2E_AMBIENT_FIXTURE_MODE": "1", "BOT_E2E_REUSE": "1"},
+                "BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥",
+            ),
+            (
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BONG_TERRAIN_RASTER_PATH": "/caller/terrain.json",
+                },
+                "ambient fixture mode 不接受外部 BONG_TERRAIN_RASTER_PATH",
+            ),
+            (
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BONG_SPIRITWOOD_HARVESTED_PATH": "/caller/harvested.json",
+                },
+                "ambient fixture mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH",
+            ),
+        )
+        isolated = (
+            "BOT_E2E_AMBIENT_FIXTURE_MODE",
+            "BOT_E2E_REUSE",
+            "BOT_E2E_HOST",
+            "BOT_E2E_PORT",
+            "BONG_TERRAIN_RASTER_PATH",
+            "BONG_SPIRITWOOD_HARVESTED_PATH",
+            "REDIS_URL",
+        )
+        for overrides, expected in cases:
+            with self.subTest(overrides=overrides):
+                env = os.environ.copy()
+                for name in isolated:
+                    env.pop(name, None)
+                env.update(overrides)
+                result = subprocess.run(
+                    ["bash", "scripts/bot-e2e.sh"],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(expected, result.stderr)
+
+    def test_generic_no_raster_generates_tokenized_fixture_before_tool_failure(self):
+        root = pathlib.Path(__file__).parents[2]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_bin = pathlib.Path(temp_dir) / "bin"
+            fake_bin.mkdir()
+            log_path = pathlib.Path(temp_dir) / "python.log"
+            real_python = shutil.which("python3")
+            (fake_bin / "python3").write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf '%s\\n' \"$*\" >> {shlex.quote(str(log_path))}\n"
+                "if [[ \"$1\" == *test_protocol.py ]]; then exit 0; fi\n"
+                "if [[ \"$1\" == *make_novice_raster_fixture.py ]]; then\n"
+                "  test \"$3\" = \"--fixture-token\" || exit 41\n"
+                "  test -n \"$4\" || exit 42\n"
+                "  printf '%s/manifest.json\\n' \"$2\"\n"
+                "  exit 0\n"
+                "fi\n"
+                f"exec {shlex.quote(real_python)} \"$@\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "python3").chmod(0o755)
+            (fake_bin / "docker").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            (fake_bin / "docker").chmod(0o755)
+            (fake_bin / "cargo").write_text("#!/usr/bin/env bash\nexit 46\n", encoding="utf-8")
+            (fake_bin / "cargo").chmod(0o755)
+            env = os.environ.copy()
+            for name in (
+                "BOT_E2E_AMBIENT_FIXTURE_MODE",
+                "BOT_E2E_REUSE",
+                "BOT_E2E_HOST",
+                "BOT_E2E_PORT",
+                "BONG_TERRAIN_RASTER_PATH",
+                "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "REDIS_URL",
+            ):
+                env.pop(name, None)
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            result = subprocess.run(
+                ["bash", "scripts/bot-e2e.sh"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--fixture-token", log_path.read_text(encoding="utf-8"))
+            self.assertNotIn("BOT_RASTER_FIXTURE_READY", result.stderr)
+
+    def test_ci_selects_explicit_ambient_fixture_mode(self):
+        bot_stage = self.workflow_source[self.workflow_source.index('Bot e2e stage'):]
+        self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE: "1"', bot_stage)
+
+    def test_self_started_server_builds_unique_exact_fixture_identity(self):
+        fixture_start = self.source.index('# Owned-fixture mode generates')
+        fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
+        fixture = self.source[fixture_start:fixture_end]
+        for required in (
+            'mktemp -d "$EVIDENCE_DIR/novice-raster.XXXXXX"',
+            '--fixture-token "$BOT_E2E_AMBIENT_FIXTURE_TOKEN"',
+            'export BOT_E2E_AMBIENT_FIXTURE_TOKEN',
+            'export BOT_E2E_AMBIENT_FIXTURE_MANIFEST="$BONG_TERRAIN_RASTER_PATH"',
+            "pathlib.Path(sys.argv[1]).resolve(strict=True)",
+            'BOT_RASTER_READY_PAYLOAD="[bong][world] BOT_RASTER_FIXTURE_READY '
+            'manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, fixture)
+        self.assertNotIn(
+            'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1', fixture,
+            "生成本地文件不能授予 ownership；必须等 server exact ready marker",
+        )
+
+    def test_fixture_ownership_is_granted_only_after_exact_server_marker_and_port_ownership(self):
+        readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
+        readiness_end = self.source.index("\n# ---- 场景 ----", readiness_start)
+        readiness = self.source[readiness_start:readiness_end]
+        marker_match = 'grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"'
+        ownership = 'export BOT_E2E_AMBIENT_FIXTURE_OWNED=1'
+
+        self.assertIn(marker_match, readiness)
+        self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', readiness)
+        self.assertIn('port_open "$HOST" "$PORT"', readiness)
+        self.assertIn(ownership, readiness)
+        self.assertLess(
+            readiness.index(marker_match),
+            readiness.index(ownership),
+            "必须先由 server 日志对拍 canonical manifest+token，再允许场景声明 ownership",
+        )
+        self.assertLess(
+            self.source.index(ownership, readiness_start),
+            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py" --all'),
+            "场景只可在本轮 server fixture identity 与端口 ownership 同时成立后运行",
+        )
+
+    def test_bot_e2e_pipeline_propagates_runner_then_tee_status(self) -> None:
+        scenario_start = self.source.index("set +e\n", self.source.index("# ---- 场景 ----"))
+        scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
+        pipeline = self.source[scenario_start:scenario_end]
+        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
+  python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1'''
+        sink = 'tee "$SCENARIOS_LOG"'
+        self.assertEqual(
+            pipeline.count(runner),
+            1,
+            "场景块必须仅含一个 canonical runner，避免测试替换到错误命令",
+        )
+        self.assertEqual(
+            pipeline.count(sink),
+            1,
+            "场景块必须仅含一个 canonical sink，避免测试替换到错误管道",
+        )
+
+        for runner_code, tee_code, expected in (
+            (7, 0, 7),
+            (7, 9, 7),
+            (0, 9, 9),
+            (0, 0, 0),
+        ):
+            with self.subTest(runner_code=runner_code, tee_code=tee_code):
+                executable = pipeline.replace(
+                    runner,
+                    f"bash -c 'exit {runner_code}'",
+                    1,
+                ).replace(
+                    sink,
+                    f"bash -c 'exit {tee_code}'",
+                    1,
+                )
+                result = subprocess.run(
+                    ["bash", "-c", f'{executable}\nexit "$EXIT_CODE"'],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    expected,
+                    "真实 bot-e2e status block 必须优先传播 runner 失败，并传播独立 sink 失败",
+                )
+
+    def test_fixture_runtime_ownership_is_rechecked_during_and_after_scenarios(self) -> None:
+        helper_start = self.source.index("self_started_fixture_runtime_is_current() {")
+        helper_end = self.source.index("\n}\n", helper_start)
+        helper = self.source[helper_start:helper_end]
+        for required in (
+            'kill -0 "$SERVER_PID"',
+            'grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"',
+            'port_open "$HOST" "$PORT"',
+            'port_owned_by_tree "$SERVER_PID" "$PORT"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(
+                    required,
+                    helper,
+                    "fixture runtime helper 必须重新绑定活 server、exact marker 与当前 listener",
+                )
+
+        scenario_start = self.source.index("# ---- 场景 ----")
+        scenario = self.source[scenario_start:]
+        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py" --all'
+        self.assertIn('while true; do', scenario)
+        self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
+        self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
+        self.assertIn('echo complete >"$RUNTIME_WATCH_LOG"', scenario)
+        self.assertIn('pipeline_status=("${PIPESTATUS[@]}")', scenario)
+        self.assertIn('EXIT_CODE=${pipeline_status[0]}', scenario)
+        self.assertIn('EXIT_CODE=${pipeline_status[1]}', scenario)
+        self.assertIn('wait "$WATCH_PID"', scenario)
+        self.assertGreaterEqual(
+            scenario.count("self_started_fixture_runtime_is_current"),
+            2,
+            "场景前和场景后都必须重验 server/fixture ownership，不能把一次 readiness 当永久授权",
+        )
+        self.assertLess(
+            scenario.index("self_started_fixture_runtime_is_current"),
+            scenario.index(runner),
+            "运行 Bot 前必须重新验证本轮 server 仍持有 listener",
+        )
+        self.assertGreater(
+            scenario.rindex("self_started_fixture_runtime_is_current"),
+            scenario.index(runner),
+            "Bot 结束后必须再次验证本轮 server 仍是证据主体",
+        )
+
+    def test_reuse_mode_clears_fixture_ownership_instead_of_claiming_external_server(self):
+        fixture_start = self.source.index('# Owned-fixture mode generates')
+        fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
+        fixture = self.source[fixture_start:fixture_end]
+        for variable in (
+            "BOT_E2E_AMBIENT_FIXTURE_OWNED",
+            "BOT_E2E_AMBIENT_FIXTURE_MANIFEST",
+            "BOT_E2E_AMBIENT_FIXTURE_TOKEN",
+        ):
+            with self.subTest(variable=variable):
+                self.assertIn(f"unset {variable}", fixture)
+
+    def test_reuse_without_listener_fails_closed_before_private_self_start(self):
+        server_start = self.source.index("# ---- server ----")
+        server = self.source[server_start:]
+        rejection = 'BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起'
+        self.assertIn(rejection, server)
+        self.assertLess(server.index(rejection), server.index('cd "$SERVER_RUNTIME_DIR/server"'))
+
+    def test_owned_fixture_mode_uses_private_cwd_and_generic_uses_checkout_cwd(self):
+        launch_start = self.source.index('  (\n    if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then')
+        launch_end = self.source.index('  ) >"$SERVER_LOG"', launch_start)
+        launch = self.source[launch_start:launch_end]
+        for required in (
+            'cd "$SERVER_RUNTIME_DIR/server"',
+            'cd "$ROOT/server"',
+            'export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"',
+            'export BONG_ASSETS_DIR="$ROOT/server"',
+            'export BONG_DEV_MODE=1',
+            'exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, launch)
+
+    def test_each_run_owns_private_evidence_and_persistent_logs(self):
+        evidence_setup = self.source[:self.source.index('# Owned-fixture mode generates')]
+        for required in (
+            'EVIDENCE_ROOT="$ROOT/.sisyphus/evidence/bot-e2e"',
+            'EVIDENCE_DIR="$(mktemp -d "$EVIDENCE_ROOT/run.XXXXXXXXXX")"',
+            'SERVER_LOG="$EVIDENCE_DIR/server.log"',
+            'SCENARIOS_LOG="$EVIDENCE_DIR/scenarios.log"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, self.source)
+        self.assertIn('mkdir -p "$EVIDENCE_ROOT"', evidence_setup)
+        self.assertNotIn('EVIDENCE_DIR="$ROOT/.sisyphus/evidence/bot-e2e"', self.source)
+
+    def test_redis_adopts_default_listener_or_starts_owned_private_instance(self):
+        redis_start = self.source.index("# ---- redis ----")
+        redis_end = self.source.index("\n# ---- server ----", redis_start)
+        redis = self.source[redis_start:redis_end]
+        cleanup_start = self.source.index("cleanup() {")
+        cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
+        cleanup = self.source[cleanup_start:cleanup_end]
+
+        adopt_guard = 'if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then'
+        private_guard = 'elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
+        self.assertIn(adopt_guard, redis)
+        self.assertIn('沿用调用方默认 Redis 127.0.0.1:6379', redis)
+        self.assertIn(private_guard, redis)
+        self.assertLess(redis.index(adopt_guard), redis.index(private_guard))
+        self.assertNotIn('export REDIS_URL=', redis[:redis.index(private_guard)])
+        self.assertIn('if [ "$STARTED_REDIS" = "1" ] && [ -n "$REDIS_COMPOSE_PROJECT" ]; then', cleanup)
+
+        root = pathlib.Path(__file__).parents[2]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_bin = pathlib.Path(temp_dir) / "bin"
+            fake_bin.mkdir()
+            log_path = pathlib.Path(temp_dir) / "tools.log"
+            real_python = shutil.which("python3")
+            (fake_bin / "python3").write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf 'python3 %s\\n' \"$*\" >> {shlex.quote(str(log_path))}\n"
+                "if [[ \"$1\" == *test_protocol.py ]]; then exit 0; fi\n"
+                "if [[ \"$1\" == *make_novice_raster_fixture.py ]]; then printf '%s/manifest.json\\n' \"$2\"; exit 0; fi\n"
+                "if [[ \"$1\" == '-' ]] && [[ \"$2\" == '127.0.0.1' ]] && [[ \"$3\" == '6379' ]]; then exit \"${FAKE_DEFAULT_REDIS_OPEN:-1}\"; fi\n"
+                f"exec {shlex.quote(real_python)} \"$@\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "python3").chmod(0o755)
+            (fake_bin / "docker").write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf 'docker %s\\n' \"$*\" >> {shlex.quote(str(log_path))}\n"
+                "exit 47\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "docker").chmod(0o755)
+            (fake_bin / "cargo").write_text("#!/usr/bin/env bash\nexit 46\n", encoding="utf-8")
+            (fake_bin / "cargo").chmod(0o755)
+
+            base_env = os.environ.copy()
+            for name in (
+                "BOT_E2E_AMBIENT_FIXTURE_MODE", "BOT_E2E_REUSE", "BOT_E2E_HOST",
+                "BOT_E2E_PORT", "BONG_TERRAIN_RASTER_PATH",
+                "BONG_SPIRITWOOD_HARVESTED_PATH", "REDIS_URL",
+            ):
+                base_env.pop(name, None)
+            base_env["PATH"] = f"{fake_bin}{os.pathsep}{base_env['PATH']}"
+
+            adopted = base_env | {"FAKE_DEFAULT_REDIS_OPEN": "0"}
+            adopted_result = subprocess.run(
+                ["bash", "scripts/bot-e2e.sh"], cwd=root, env=adopted,
+                capture_output=True, text=True, check=False, timeout=20,
+            )
+            adopted_tools = log_path.read_text(encoding="utf-8")
+            self.assertIn("沿用调用方默认 Redis 127.0.0.1:6379", adopted_result.stdout)
+            self.assertNotIn("docker ", adopted_tools)
+            self.assertNotIn("REDIS_URL=", adopted_tools)
+            self.assertNotIn("down -v", adopted_tools)
+
+            log_path.unlink()
+            private = base_env | {"FAKE_DEFAULT_REDIS_OPEN": "1"}
+            private_result = subprocess.run(
+                ["bash", "scripts/bot-e2e.sh"], cwd=root, env=private,
+                capture_output=True, text=True, check=False, timeout=20,
+            )
+            private_tools = log_path.read_text(encoding="utf-8")
+            self.assertEqual(private_result.returncode, 47, private_result.stderr)
+            self.assertIn("docker compose", private_tools)
+            self.assertIn("up -d redis --wait", private_tools)
+
+    def test_redis_is_private_only_when_generic_caller_did_not_supply_url(self):
+        redis_start = self.source.index("# ---- redis ----")
+        redis_end = self.source.index("\n# ---- server ----", redis_start)
+        redis = self.source[redis_start:redis_end]
+        cleanup_start = self.source.index("cleanup() {")
+        cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
+        cleanup = self.source[cleanup_start:cleanup_end]
+        self.assertIn('if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then', redis)
+        self.assertIn('elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then', redis)
+        for required in (
+            'REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"',
+            'BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0',
+            'docker compose -f "$ROOT/docker-compose.test.yml" up -d redis --wait',
+            'export REDIS_URL="redis://127.0.0.1:$redis_port"',
+        ):
+            self.assertIn(required, redis)
+        self.assertIn('if [ "$STARTED_REDIS" = "1" ] && [ -n "$REDIS_COMPOSE_PROJECT" ]; then', cleanup)
+        self.assertNotIn("pkill", self.source)
+        self.assertNotIn("BOT_E2E_KILL_STALE", self.source)
+        self.assertIn("name: ${BONG_TEST_COMPOSE_PROJECT:-bong-test}", self.compose_source)
+
+    def _run_owned_fixture_runtime_case(
+        self, runner_mode: str, *, runner_exit: int = 0, tee_exit: int | None = None
+    ) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
+        """Run the real bot-e2e shell path against only test-owned fake processes."""
+        root = pathlib.Path(__file__).parents[2]
+        real_python = shutil.which("python3")
+        self.assertIsNotNone(real_python)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            fake_bin = temp / "bin"
+            fake_bin.mkdir()
+            runner_log = temp / "runner.log"
+            runner_result_file = temp / "runner-result"
+            server_pid_file = temp / "server.pid"
+            listener_pid_file = temp / "listener.pid"
+            replacement_pid_file = temp / "replacement.pid"
+            replacement_ready_file = temp / "replacement-ready"
+            watcher_status_file = temp / "watcher-status"
+            redis_port = 39999
+            port = self._unused_local_port()
+            fake_python = fake_bin / "python3"
+            fake_python.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f"real_python={shlex.quote(real_python)}\n"
+                "if [[ \"${1:-}\" == *test_protocol.py ]]; then exit 0; fi\n"
+                "if [[ \"${1:-}\" == *make_novice_raster_fixture.py ]]; then\n"
+                "  mkdir -p \"$2\"\n"
+                "  : > \"$2/manifest.json\"\n"
+                "  printf '%s/manifest.json\\n' \"$2\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [[ \"${1:-}\" == *run_scenarios.py ]]; then\n"
+                f"  printf '%s\\n' \"$FAKE_RUNNER_MODE\" >> {shlex.quote(str(runner_log))}\n"
+                "  wait_watcher_lost() {\n"
+                "    local status\n"
+                "    for _ in $(seq 1 200); do\n"
+                "      status=$(find \"$FAKE_EVIDENCE_ROOT\" -path '*/runtime-watch.*/status' -type f -print -quit)\n"
+                "      if test -n \"$status\" && test \"$(cat \"$status\" 2>/dev/null || true)\" = lost; then\n"
+                "        printf 'watcher-lost-observed\\n' > \"$FAKE_RUNNER_RESULT_FILE\"\n"
+                "        return 0\n"
+                "      fi\n"
+                "      sleep 0.01\n"
+                "    done\n"
+                "    printf 'watcher-lost-timeout\\n' > \"$FAKE_RUNNER_RESULT_FILE\"\n"
+                "    return 1\n"
+                "  }\n"
+                "  port_owned_by_pid() {\n"
+                "    kill -0 \"$1\" 2>/dev/null || return 1\n"
+                "    \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY' || return 1\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "    lsof -nP -iTCP:\"$BOT_E2E_PORT\" -sTCP:LISTEN -Fp 2>/dev/null | grep -q \"p$1\"\n"
+                "  }\n"
+                "  case \"$FAKE_RUNNER_MODE\" in\n"
+                "    success) printf 'runner-complete\\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 0 ;;\n"
+                "    runner-fail) printf 'runner-failed\\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit \"$FAKE_RUNNER_EXIT\" ;;\n"
+                "    kill-server)\n"
+                "      kill -TERM \"$(cat \"$FAKE_SERVER_PID_FILE\")\"\n"
+                "      for _ in $(seq 1 200); do\n"
+                "        if ! kill -0 \"$(cat \"$FAKE_SERVER_PID_FILE\")\" 2>/dev/null \\\n"
+                "          && ! \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "        then break; fi\n"
+                "        sleep 0.01\n"
+                "      done\n"
+                "      if kill -0 \"$(cat \"$FAKE_SERVER_PID_FILE\")\" 2>/dev/null \\\n"
+                "        || \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "      then printf 'fault-setup-timeout\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 79; fi\n"
+                "      wait_watcher_lost || { printf 'watcher-lost-timeout\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 80; }\n"
+                "      exit 0\n"
+                "      ;;\n"
+                "    replace-listener)\n"
+                "      kill -TERM \"$(cat \"$FAKE_LISTENER_PID_FILE\")\"\n"
+                "      for _ in $(seq 1 200); do\n"
+                "        if ! \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY'\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
+                "    pass\n"
+                "PY\n"
+                "        then break; fi\n"
+                "        sleep 0.01\n"
+                "      done\n"
+                "      \"$real_python\" -u -c 'import os, socket, sys, time\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nfor _ in range(100):\n    try:\n        s.bind((\"127.0.0.1\", int(sys.argv[1])))\n        break\n    except OSError:\n        time.sleep(0.01)\nelse:\n    raise SystemExit(77)\ns.listen()\nopen(sys.argv[2], \"w\").write(str(os.getpid()))\nwhile True:\n    conn, _ = s.accept()\n    conn.close()' \"$BOT_E2E_PORT\" \"$FAKE_REPLACEMENT_READY_FILE\" </dev/null >/dev/null 2>&1 &\n"
+                f"      printf '%s\\n' \"$!\" > {shlex.quote(str(replacement_pid_file))}\n"
+                "      for _ in $(seq 1 200); do\n"
+                "        test -s \"$FAKE_REPLACEMENT_READY_FILE\" && port_owned_by_pid \"$(cat \"$FAKE_REPLACEMENT_READY_FILE\")\" && break\n"
+                "        sleep 0.01\n"
+                "      done\n"
+                "      test -s \"$FAKE_REPLACEMENT_READY_FILE\" && port_owned_by_pid \"$(cat \"$FAKE_REPLACEMENT_READY_FILE\")\" || { printf 'replacement-owner-timeout\\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 81; }\n"
+                "      wait_watcher_lost || exit 80\n"
+                "      exit 0\n"
+                "      ;;\n"
+                "    *) printf 'invalid-mode\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 78 ;;\n"
+                "  esac\n"
+                "fi\n"
+                "if [[ \"${1:-}\" == \"-\" && \"${2:-}\" == \"127.0.0.1\" && \"${3:-}\" == \"39999\" ]]; then exit 0; fi\n"
+                "exec \"$real_python\" \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+            (fake_bin / "docker").write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$*\" == *\" port redis 6379\" ]]; then printf '127.0.0.1:39999\\n'; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "docker").chmod(0o755)
+            (fake_bin / "cargo").write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f"real_python={shlex.quote(real_python)}\n"
+                f"printf '%s\\n' \"$$\" > {shlex.quote(str(server_pid_file))}\n"
+                "\"$real_python\" -u -c 'import socket, sys\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\ns.bind((\"127.0.0.1\", int(sys.argv[1])))\ns.listen()\nwhile True:\n    conn, _ = s.accept()\n    conn.close()' \"$BOT_E2E_PORT\" &\n"
+                "listener=$!\n"
+                f"printf '%s\\n' \"$listener\" > {shlex.quote(str(listener_pid_file))}\n"
+                "cleanup_listener() { kill \"$listener\" 2>/dev/null || true; wait \"$listener\" 2>/dev/null || true; exit 0; }\n"
+                "trap cleanup_listener TERM INT\n"
+                "for _ in $(seq 1 100); do\n"
+                "  \"$real_python\" - \"$BOT_E2E_PORT\" <<'PY' && break\n"
+                "import socket, sys\n"
+                "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.1):\n"
+                "    pass\n"
+                "PY\n"
+                "  sleep 0.01\n"
+                "done\n"
+                "printf '%s\\n' \"[bong][world] BOT_RASTER_FIXTURE_READY manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN\"\n"
+                "while true; do sleep 1; done\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "cargo").chmod(0o755)
+            if tee_exit is not None:
+                (fake_bin / "tee").write_text(
+                    f"#!/usr/bin/env bash\nexit {tee_exit}\n", encoding="utf-8"
+                )
+                (fake_bin / "tee").chmod(0o755)
+
+            evidence_root = root / ".sisyphus/evidence/bot-e2e"
+            env = os.environ.copy()
+            for name in (
+                "BOT_E2E_REUSE", "BOT_E2E_HOST", "BOT_E2E_PORT",
+                "BONG_TERRAIN_RASTER_PATH", "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "REDIS_URL", "BOT_E2E_AMBIENT_FIXTURE_OWNED",
+            ):
+                env.pop(name, None)
+            env.update(
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BOT_E2E_PORT": str(port),
+                    "FAKE_RUNNER_MODE": runner_mode,
+                    "FAKE_RUNNER_EXIT": str(runner_exit),
+                    "FAKE_SERVER_PID_FILE": str(server_pid_file),
+                    "FAKE_LISTENER_PID_FILE": str(listener_pid_file),
+                    "FAKE_EVIDENCE_ROOT": str(evidence_root),
+                    "FAKE_RUNNER_RESULT_FILE": str(runner_result_file),
+                    "FAKE_REPLACEMENT_READY_FILE": str(replacement_ready_file),
+                    "BOT_E2E_WATCH_STATUS_EVIDENCE_PATH": str(watcher_status_file),
+                }
+            )
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            evidence_before = set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
+            runner_output = ""
+            runner_result = ""
+            watcher_status = ""
+            try:
+                result = subprocess.run(
+                    ["bash", "scripts/bot-e2e.sh"],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+                runner_output = (
+                    runner_log.read_text(encoding="utf-8") if runner_log.exists() else ""
+                )
+                runner_result = (
+                    runner_result_file.read_text(encoding="utf-8")
+                    if runner_result_file.exists()
+                    else ""
+                )
+                watcher_status = (
+                    watcher_status_file.read_text(encoding="utf-8")
+                    if watcher_status_file.exists()
+                    else ""
+                )
+            finally:
+                for pid_file in (server_pid_file, listener_pid_file, replacement_pid_file):
+                    if pid_file.exists():
+                        try:
+                            os.kill(int(pid_file.read_text(encoding="utf-8").strip()), 15)
+                        except ProcessLookupError:
+                            pass
+                if evidence_root.exists():
+                    for evidence_dir in set(evidence_root.glob("run.*")) - evidence_before:
+                        shutil.rmtree(evidence_dir, ignore_errors=True)
+            return result, runner_output, runner_result, watcher_status
+
+    @staticmethod
+    def _unused_local_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+    def test_owned_fixture_runtime_watcher_accepts_successful_owned_runner(self):
+        result, runner_output, runner_result, watcher_status = (
+            self._run_owned_fixture_runtime_case("success")
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(runner_output.strip(), "success")
+        self.assertEqual(runner_result.strip(), "runner-complete")
+        self.assertEqual(watcher_status.strip(), "complete")
+
+    def test_owned_fixture_runtime_watcher_rejects_server_exit_during_runner(self):
+        result, runner_output, runner_result, watcher_status = (
+            self._run_owned_fixture_runtime_case("kill-server")
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(runner_output.strip(), "kill-server")
+        self.assertEqual(runner_result.strip(), "watcher-lost-observed")
+        self.assertEqual(watcher_status.strip(), "lost")
+        self.assertIn("失去端口 ownership", result.stderr)
+
+    def test_owned_fixture_runtime_watcher_rejects_replacement_listener(self):
+        result, runner_output, runner_result, watcher_status = (
+            self._run_owned_fixture_runtime_case("replace-listener")
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(runner_output.strip(), "replace-listener")
+        self.assertEqual(runner_result.strip(), "watcher-lost-observed")
+        self.assertEqual(watcher_status.strip(), "lost")
+        self.assertIn("失去端口 ownership", result.stderr)
+
+    def test_owned_fixture_runtime_preserves_runner_then_tee_failure_priority(self):
+        for runner_exit, tee_exit, expected in ((7, None, 7), (7, 9, 7), (0, 9, 9)):
+            with self.subTest(runner_exit=runner_exit, tee_exit=tee_exit):
+                mode = "runner-fail" if runner_exit else "success"
+                result, runner_output, runner_result, watcher_status = (
+                    self._run_owned_fixture_runtime_case(
+                        mode, runner_exit=runner_exit, tee_exit=tee_exit
+                    )
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertTrue(runner_output.strip())
+                self.assertEqual(
+                    runner_result.strip(),
+                    "runner-failed" if runner_exit else "runner-complete",
+                )
+                self.assertEqual(watcher_status.strip(), "complete")
+
+
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         cls.source = (
             pathlib.Path(__file__).parents[2] / "scripts/e2e-redis.sh"
         ).read_text(encoding="utf-8")
@@ -691,40 +1474,180 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
         phase = self.source[phase_start:phase_end]
 
         self.assertEqual(
-            self.source.count("export BONG_PREVIEW_MODE=1"),
+            self.source.count('start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1'),
             1,
-            "preview env 只能出现在 dedicated north-rift server phase",
+            "preview mode 只能传给 dedicated north-rift server launch",
         )
         first_stop = phase.index("if ! stop_server;")
-        preview_env = phase.index("export BONG_PREVIEW_MODE=1")
+        preview_env = phase.index(
+            'start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1'
+        )
         scenario = phase.index("--scenario terrain_north_rift_scorch_zone_identity")
         second_stop = phase.index("if ! stop_server;", first_stop + 1)
         self.assertLess(first_stop, preview_env, "必须先停普通 100 NPC server 再开 preview")
         self.assertLess(preview_env, scenario, "专用 server 激活 preview 后才能运行真实 bot")
         self.assertLess(scenario, second_stop, "唯一场景结束后必须立即 stop_server")
         self.assertIn("BOT_E2E_NORTH_RIFT_PREVIEW=1", phase)
-        self.assertIn("export BONG_ROGUE_SEED_COUNT=0", phase)
+        self.assertIn(
+            'BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ]',
+            self.source,
+            "dedicated preview launch 必须显式禁用 rogue seed",
+        )
 
-    def test_stop_server_kills_tree_waits_and_verifies_port_release(self):
+    def test_stop_server_delegates_shared_lifecycle_and_cleanup_fails_closed(self):
         start = self.source.index("stop_server() {")
         end = self.source.index("\n}\n\ncleanup()", start)
         stop_body = self.source[start:end]
-        for required in (
-            'kill_tree "$SERVER_PID"',
-            'wait "$SERVER_PID"',
-            'SERVER_PID=""',
-            "port_open 25565",
-            "return 1",
+        helper_branch = stop_body.index(
+            "if bong_server_stop_owned_process_group_and_release_port"
+        )
+        empty_pid_port_check = stop_body.index(
+            "bong_server_confirm_port_released 25565", helper_branch
+        )
+        clear_pid = stop_body.index('SERVER_PID=""', helper_branch)
+        success_return = stop_body.index("return 0", clear_pid)
+        capture_status = stop_body.index("stop_status=$?", success_return)
+        failure_return = stop_body.index('return "$stop_status"', capture_status)
+        branch_end = stop_body.index("\n  fi", failure_return)
+
+        self.assertLess(
+            helper_branch,
+            clear_pid,
+            "e2e stop_server 必须先由共享 helper 确认停树和端口释放，才能清空 PID",
+        )
+        self.assertLess(clear_pid, success_return)
+        self.assertLess(success_return, capture_status)
+        self.assertLess(capture_status, failure_return)
+        self.assertLess(failure_return, branch_end)
+        self.assertIn(
+            'return "$stop_status"',
+            stop_body,
+            "共享 helper 的 forced/uncertain 状态必须原样传播，不能压平为普通失败",
+        )
+        self.assertIn(
+            'if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then',
+            stop_body,
+            "只有 READY persistence cleanup 的空 PID 分支才必须获取新端口证据",
+        )
+        self.assertLess(
+            stop_body.index('if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then'),
+            empty_pid_port_check,
+            "空 PID 的端口探测必须受 READY restore gate 约束",
+        )
+        self.assertEqual(
+            stop_body.count('SERVER_PID=""'),
+            1,
+            "SERVER_PID 只能在共享 helper 成功分支清空一次",
+        )
+        self.assertEqual(
+            stop_body.count('SERVER_PGID=""'),
+            1,
+            "SERVER_PGID 只能在整组确认退出后清空一次",
+        )
+        for authority_var, local_name in (
+            ("SERVER_OWNER_STARTTIME", "owner_starttime"),
+            ("SERVER_OWNER_EXECUTABLE_IDENTITY", "owner_executable_identity"),
         ):
-            with self.subTest(required=required):
-                self.assertIn(required, stop_body)
+            with self.subTest(authority=authority_var):
+                self.assertIn(
+                    f'local {local_name}="${authority_var}"',
+                    stop_body,
+                    "stop_server 必须把 pinned supervisor 身份传给共享 helper",
+                )
+                self.assertEqual(
+                    stop_body.count(f'{authority_var}=""'),
+                    1,
+                    "supervisor authority 只能在整组确认退出后清空",
+                )
+        self.assertIn('if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then', stop_body)
+        self.assertLess(
+            stop_body.index('if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then'),
+            helper_branch,
+            "authority 尚未完整固定时必须先 fail closed，不能扫描裸 PGID",
+        )
+        self.assertNotIn("authority_path=", self.source)
+        self.assertNotIn("setsid --fork", self.source)
+        self.assertIn("bong-process-group-supervisor.py", self.source)
+        for legacy_detail in (
+            'kill_tree "$pid"',
+            'wait "$pid"',
+            "port_open 25565",
+        ):
+            with self.subTest(legacy_detail=legacy_detail):
+                self.assertNotIn(
+                    legacy_detail,
+                    stop_body,
+                    "stop_server 不得重新内联共享 lifecycle helper 的停树/等待/端口逻辑",
+                )
 
         cleanup_start = self.source.index("cleanup() {")
         cleanup_end = self.source.index("\n}\n\ntrap cleanup EXIT", cleanup_start)
-        self.assertIn(
+        cleanup_body = self.source[cleanup_start:cleanup_end]
+        unconfirmed = cleanup_body.index("STOP_SERVER_CONFIRMED=0")
+        stop_if = cleanup_body.index("if stop_server; then", unconfirmed)
+        confirmed = cleanup_body.index("STOP_SERVER_CONFIRMED=1", stop_if)
+        stop_else = cleanup_body.index("\n  else", confirmed)
+        stop_fi = cleanup_body.index("\n  fi", stop_else)
+        finalize = cleanup_body.index(
+            "bong_server_finalize_preview_persistence_after_stop", stop_fi
+        )
+        finalize_end = cleanup_body.index("; then", finalize)
+        finalize_call = cleanup_body[finalize:finalize_end]
+
+        self.assertLess(unconfirmed, stop_if)
+        self.assertLess(
+            stop_if,
+            confirmed,
+            "cleanup 只能在 stop_server 成功分支标记停服已确认",
+        )
+        self.assertLess(confirmed, stop_else)
+        self.assertEqual(
+            cleanup_body.count("STOP_SERVER_CONFIRMED=1"),
+            1,
+            "cleanup 只能从 stop_server 成功分支产生唯一确认状态",
+        )
+        self.assertNotIn(
             "stop_server || true",
-            self.source[cleanup_start:cleanup_end],
-            "PASS/FAIL/异常退出都必须经 trap 回收当前 server tree",
+            cleanup_body,
+            "停服失败不能被吞掉，否则可能错误恢复仍被 preview server 占用的 SQLite",
+        )
+        self.assertIn(
+            '"$STOP_SERVER_CONFIRMED"',
+            finalize_call,
+            "cleanup 必须把停服确认结果交给共享 finalize helper 决定 restore 或 durable abort",
+        )
+
+    def test_preview_persistence_interval_holds_shared_lifecycle_lock(self):
+        phase_start = self.source.index('CURRENT_STAGE="north-rift-preview"')
+        phase_end = self.source.index('CURRENT_STAGE="summary"', phase_start)
+        phase = self.source[phase_start:phase_end]
+        fn_start = phase.index("run_north_rift_preview() {")
+        fn_end = phase.index("\n}\n\nif ! bong_server_with_preview_persistence_lock", fn_start)
+        preview_body = phase[fn_start:fn_end]
+        lock_call = phase.index(
+            "bong_server_with_preview_persistence_lock run_north_rift_preview",
+            fn_end,
+        )
+
+        for required_step in (
+            "if ! stop_server; then",
+            "bong_server_confirm_port_released 25565",
+            'bong_server_persistence_transaction_begin "$ROOT/server/data"',
+            'bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"',
+            '--scenario terrain_north_rift_scorch_zone_identity',
+            'bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"',
+            "bong_server_persistence_transaction_complete",
+        ):
+            with self.subTest(step=required_step):
+                self.assertIn(
+                    required_step,
+                    preview_body,
+                    "preview lifecycle lock 的函数体必须覆盖完整 stash→run→restore 临界区",
+                )
+        self.assertGreater(
+            lock_call,
+            fn_end,
+            "完整 preview transaction 必须经生产 start/reload 共用的 lifecycle lock 调用",
         )
 
 
@@ -1661,7 +2584,7 @@ class RunnerLogicTest(unittest.TestCase):
             "runner SKIP 提示与场景执行门必须引用同一个显式环境变量",
         )
 
-    def test_all_explicitly_skips_dedicated_scenario_without_calling_run(self):
+    def test_all_skips_north_rift_even_when_preview_env_is_present(self):
         run = mock.Mock()
         scenario = types.SimpleNamespace(
             DESCRIPTION="dedicated",
@@ -1678,6 +2601,7 @@ class RunnerLogicTest(unittest.TestCase):
                 return_value={"terrain_north_rift_scorch_zone_identity": scenario},
             ),
             mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {NORTH_RIFT_REQUIRED_ENV: "1"}, clear=False),
             mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
             redirect_stdout(output),
         ):
@@ -1687,6 +2611,137 @@ class RunnerLogicTest(unittest.TestCase):
         run.assert_not_called()
         self.assertIn("SKIP", output.getvalue())
         self.assertIn("skip=1", output.getvalue())
+
+    def test_all_runs_ambient_only_when_fixture_ownership_is_declared(self):
+        run = mock.Mock()
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="owned fixture",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=FIXTURE_OWNED_ENV,
+            RUN_IN_ALL_WHEN_ENV=FIXTURE_OWNED_ENV,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"npc_ambient_surface_resolution": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {FIXTURE_OWNED_ENV: "1"}, clear=False),
+            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        run.assert_called_once()
+        self.assertIn("PASS", output.getvalue())
+        self.assertIn("pass=1", output.getvalue())
+
+    def test_all_skips_ambient_without_fixture_ownership(self):
+        run = mock.Mock()
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="owned fixture",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=FIXTURE_OWNED_ENV,
+            RUN_IN_ALL_WHEN_ENV=FIXTURE_OWNED_ENV,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"npc_ambient_surface_resolution": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {FIXTURE_OWNED_ENV: "0"}, clear=False),
+            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        run.assert_not_called()
+        self.assertIn("SKIP", output.getvalue())
+
+    def test_explicit_scenario_without_required_env_fails_closed(self):
+        run = mock.Mock()
+        required_env = "BOT_E2E_TEST_DEDICATED"
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="dedicated",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=required_env,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"terrain_north_rift_scorch_zone_identity": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {required_env: "0"}, clear=False),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "run_scenarios.py",
+                    "--scenario",
+                    "terrain_north_rift_scorch_zone_identity",
+                ],
+            ),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 1, "显式场景缺 REQUIRED_ENV 必须以非零退出")
+        run.assert_not_called()
+        self.assertIn("ERROR", output.getvalue())
+        self.assertIn(f"需 {required_env}=1", output.getvalue())
+
+    def test_explicit_scenario_with_required_env_runs_normally(self):
+        run = mock.Mock()
+        required_env = "BOT_E2E_TEST_DEDICATED"
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="dedicated",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=required_env,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"terrain_north_rift_scorch_zone_identity": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {required_env: "1"}, clear=False),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "run_scenarios.py",
+                    "--scenario",
+                    "terrain_north_rift_scorch_zone_identity",
+                ],
+            ),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0, "满足 REQUIRED_ENV 的显式场景应保留正常 PASS 语义")
+        run.assert_called_once()
+        self.assertIn("PASS", output.getvalue())
+        self.assertIn("pass=1", output.getvalue())
 
     def test_scenarios_do_not_reuse_literal_bot_tags(self):
         owners: dict[str, str] = {}
