@@ -1,6 +1,6 @@
 # plan-bughunt-craft-refund-full-inventory-loss-v1
 
-> **active bughunt plan（归档审计发现 P4 验收缺口）**。一句话主题：修复 `craft` 显式取消或产物入包失败后的材料退款在背包已满时只记录日志、却不入包、不落地且删除 `CraftSession`，导致应返材料永久丢失的问题。
+> **已归档 bughunt plan**。一句话主题：修复 `craft` 显式取消或产物入包失败后的材料退款在背包已满时只记录日志、却不入包、不落地且删除 `CraftSession`，导致应返材料永久丢失的问题。
 
 ## 当前状态
 
@@ -10,9 +10,7 @@
 | P1 | 接入满包地面兜底 | `DroppedLootRegistry`、`InventoryInstanceIdAllocator`、`refund_ground_context`、`add_item_to_player_inventory_or_ground`；玩家位置与 `CurrentDimension` 原样进入落地点 | ✅ 2026-07-12 |
 | P2 | 按实际结果回报退款数 | `apply_craft_cancel_intents` 将 `CraftFailedEvent.material_returned` 改写为实际入包数 + 实际落地数；成功持久化后才发布事件并删除 session | ✅ 2026-07-12 |
 | P3 | 闭环 finalize、持久化与重连 | `tick_craft_sessions`、`persist_dirty_craft_sessions`、`save_player_craft_checkpoint`、`hydrate_durable_inventory_state`、玩家 join/disconnect/shutdown 恢复与保存 | ✅ 2026-07-12 |
-| P4 | 饱和回归与生产 Bot 验收 | 满包、mixed、缺 registry、unknown template、allocator、持久化、重连及 Bot 链路已有覆盖；仍缺原 plan 点名的 `no containers` 结构错误定向回归 | ⏳ |
-
-> **归档门未满足**：运行时代码中，`server/src/inventory/mod.rs::add_item_to_player_inventory_or_ground` 仅对 `inventory full:` fallback，`add_item_to_player_inventory_inner` 在 `carried_container_candidate_indices(...).is_empty()` 时返回 `player inventory has no containers`；因此 `no containers` 保持为结构错误。craft 退款 helper / cancel / finalize 的 clone staging 与 error 分支从代码上会回滚并保留 `CraftSession`。但原 plan 明确要求以定向测试锁死 `no containers` 不会被当作满包掉落成功；截至 PR #1142 final head 及当前 `origin/main`，没有命中该输入的专属回归。因此 P4 不能标记完成，本 plan 不能迁入 `finished_plans/`。
+| P4 | 饱和回归与生产 Bot 验收 | 满包、mixed、缺 registry、unknown template、allocator、持久化、重连及 Bot 链路已有覆盖；`no containers` 结构错误定向回归 `refund_structural_error_does_not_mask_config_bug` 已补齐 | ✅ 2026-07-27 |
 
 ## Bug 摘要
 
@@ -43,7 +41,7 @@
 
 ## 开放问题（历史回填）
 
-原 active plan 未在实施前按现行模板单列开放问题；归档审计从最终实现反推并记录以下四个历史决策门。§1.1-§4.1 的设计决策均已收口，但 P4 仍有一项明确验收缺口：`no containers` 结构错误尚无定向回归锁住“不得按满包转成地面掉落”的契约。
+原 active plan 未在实施前按现行模板单列开放问题；归档审计从最终实现反推并记录以下四个历史决策门。§1.1-§4.1 的设计决策均已收口；P4 曾有一项明确验收缺口——`no containers` 结构错误缺定向回归锁住“不得按满包转成地面掉落”的契约——已由 `refund_structural_error_does_not_mask_config_bug` 补齐（2026-07-27）。
 
 - 背包已满时，退款应落地还是保留 pending refund？
 - mixed manifest 遇到后项结构错误时，已成功前项是否允许部分提交？
@@ -56,7 +54,7 @@
 
 **结论 / 实施方案**：退款项必须“入包或落地”；只允许库存容量不足走既有 `add_item_to_player_inventory_or_ground`，不得只写日志后丢弃。
 
-**边界条件**：unknown template、`player inventory has no containers`、instance ID 越界/碰撞等结构错误不能伪装成掉落成功。`no containers` 的实现分类已存在，但 P4 专属测试尚未补齐。
+**边界条件**：unknown template、`player inventory has no containers`、instance ID 越界/碰撞等结构错误不能伪装成掉落成功。`no containers` 的实现分类已存在，P4 专属测试 `refund_structural_error_does_not_mask_config_bug` 已补齐。
 
 **落点**：`server/src/network/craft_emit.rs:156-226`（`refund_ground_context`、`grant_refund_manifest_to_inventory_or_ground`）/ 本 plan P0-P1。
 
@@ -64,7 +62,7 @@
 
 **结论 / 实施方案**：inventory、allocator、dropped-loot registry 全部 clone staging；manifest 任一结构错误即整批不发布，并把实际返还数清零，防止重试复制前项或遗留部分掉落。
 
-**边界条件**：满包且 registry 可用是正常 fallback；缺 registry、unknown template、`no containers`、allocator 边界和已有 drop ID 碰撞均是可诊断错误。现有测试覆盖除 `no containers` 外的列举分支；该缺口见 P4。
+**边界条件**：满包且 registry 可用是正常 fallback；缺 registry、unknown template、`no containers`、allocator 边界和已有 drop ID 碰撞均是可诊断错误。现有测试已覆盖列举的全部分支，含 P4 补齐的 `no containers`。
 
 **落点**：`server/src/network/craft_emit.rs:170-226` 及 `refund_manifest_*` 回归 / 本 plan P0-P1、P4。
 
@@ -92,16 +90,13 @@
 - **finalize**：`finalize_failure_refund_full_inventory_drops_to_ground_without_bone_coin_drift`。
 - **persistence / reconnect / idempotency**：`duplicate_start_intents_same_frame_consume_materials_only_once`、`duplicate_cancel_intents_same_frame_refund_only_once`、`inventory_and_craft_session_roundtrip_and_clear_atomically`、`durable_craft_drop_roundtrips_seeds_allocator_and_stays_deleted_after_pickup`、`disconnect_flush_persists_latest_player_slices_before_cleanup`、`shutdown_flush_persists_connected_player_slices_without_disconnect`。
 - **协议级生产链路**：`production_craft_cancel_full_inventory_refund.py` 验证同帧双 cancel 只退款一次、两份 durable drop 跨重连存活并可逐份拾取；`production_craft_disconnect_resume.py` 验证 session 断线暂停、同值恢复、取消后 exactly-once 退款且再次重连 inactive。
+- **结构错误专属回归（P4 补齐）**：`refund_structural_error_does_not_mask_config_bug`——Part A 直击生产退款入口 `grant_refund_manifest_to_inventory_or_ground`，锁死 `no containers` 结构错误不会被 `inventory full:` fallback 判据误判为满包成功；Part B 走真实 `CraftCancelIntent → apply_craft_cancel_intents` 生产系统，把 `no containers` 玩家与同批次真正满包玩家对照处理，证明两者在同一入口下被正确区分。
 
-## P4 未完成验收门
+## P4 验收门收口记录（历史回填）
 
-原 active plan 的 `refund_structural_error_does_not_mask_config_bug` 明确点名 `unknown template / no containers`。当前实现已经具备正确分类和保留凭证的代码形状，但测试只锁住了 unknown template 等相邻分支，尚不能用等价推断替代一条直接构造 `PlayerInventory.containers.is_empty()` 的定向回归。
+原 active plan 的 `refund_structural_error_does_not_mask_config_bug` 明确点名 `unknown template / no containers`。归档审计发现的原始归档门是：至少新增一条命中真实退款发放路径的 `no containers` 回归，断言错误包含 `player inventory has no containers`、实际返还计数为 0、不创建 `DroppedLootEntry`、且 inventory、allocator、registry 的 staged 变化均不发布。
 
-**原 plan 的硬性归档门**：至少新增一条命中真实退款发放路径的 `no containers` 回归，断言错误包含 `player inventory has no containers`，实际返还计数为 0，不创建 `DroppedLootEntry`，且 inventory、allocator、registry 的 staged 变化均不发布。该回归只需直接证明“结构错误不会被当作 `inventory full:` 后落地成功”的原始契约；原 plan 没有规定必须在 helper、cancel、finalize 三个层级分别新增专属测试。
-
-**本次审计的非阻塞加固建议**：若后续实现 PR 希望进一步锁住运行链状态转换，可补 cancel 与 finalize 可达链用例，验证 terminal outcome 不发送且 `CraftSession` 保留重试；这两项是审计建议，不是原 plan 已点名的 P4 强制交付物，也不应在上述定向回归完成后单独阻塞归档。
-
-本归档审计的原始授权禁止修改产品代码/测试，因此这里只恢复 active 状态并如实记录原始门禁；后续实现 PR 补齐上述 `no containers` 定向回归并通过 server 完整 gate、fresh exact-HEAD validator 后，才可重新归档。
+**收口结果（2026-07-27）**：`refund_structural_error_does_not_mask_config_bug` 已落地并通过上述全部断言，同时补了原 plan 未强制要求的加固——Part B 走真实 `CraftCancelIntent → apply_craft_cancel_intents` 生产系统而非底层 helper 单测，与同批次真正满包的对照玩家一起处理，证明两种错误在生产系统层面也被正确区分。判别力已实测验证：临时放宽 `server/src/inventory/mod.rs::add_item_to_player_inventory_or_ground` 的 fallback 判据（从只匹配 `inventory full:` 前缀放宽为匹配任意错误）后，该测试确实撞红（`material_returned` 断言 `left=1 right=0`），验证后已还原判据本身不变。P4 归档门满足，本 plan 迁入 `finished_plans/`。
 
 ## 当前核验证据
 
@@ -117,4 +112,21 @@
 - **历史 review / CI 事实**：CodeRabbit 三轮分别发布 3、2、7 条 actionable comments；前两轮代码/测试项已在后续提交处理，最终 7 条均为 plan 可核验性与生命周期问题（接入面、实现 symbol、措辞、纯 server A/V 声明、决议、exact SHA/CI、归档），由本 active 文档保留审计事实。Review Action runs [29191618111](https://github.com/Kizunad/Bong/actions/runs/29191618111)、[29214122629](https://github.com/Kizunad/Bong/actions/runs/29214122629) 因 reviewer HTTP 400 safety filter 降级，[29214126756](https://github.com/Kizunad/Bong/actions/runs/29214126756) 因 circuit preflight skipped 降级；workflow 评论均明确标为 infrastructure failure、不是代码 finding。
 - **跨仓库核验**：server `CraftSessionPersistenceDirty` / `save_player_craft_checkpoint` / `DroppedLootRegistry` / `CraftOutcomeV1::Failed.material_returned`；wire `craft_session_state` / `dropped_loot_sync` / `material_returned`；Bot 对三者解码并走真实 server 场景。PR #1142 未修改 client、agent 或 proto/schema 定义。
 - **重复 skeleton 处置**：`docs/plans-skeleton/plan-bughunt-craft-refund-full-inventory-loss-v1.md` 与被 PR #1142 消费的原 active 文档拥有同一 bug 摘要、证据、触发路径、反方裁决、P0-P4、验收和风险；skeleton 仅保留“未实施/只立骨架”的旧状态，没有 active 主文档未覆盖的额外交付物。因此保留本 active 主文档，仅删除同 basename 的滞后重复 skeleton。
-- **遗留 / 后续**：本 plan 唯一阻塞项是 P4 的 `no containers` 定向结构错误回归；补齐并通过门禁后才可归档。cancel/finalize 专属可达链测试可作为非阻塞加固建议。相邻的 UI close/cancel 语义属于 `plan-craft-close-pause-loss-v1`；未来若改变 craft outcome 或 dropped-loot wire，须继续维持“实际返还计数 + durable exactly-once”契约。
+- **遗留 / 后续**：P4 的 `no containers` 定向结构错误回归已于 2026-07-27 补齐（详见下方 `## Finish Evidence`），本 plan 已无阻塞项。cancel/finalize 专属可达链测试仍可作为非阻塞加固建议，不属于本 plan 范围。相邻的 UI close/cancel 语义属于 `plan-craft-close-pause-loss-v1`；未来若改变 craft outcome 或 dropped-loot wire，须继续维持“实际返还计数 + durable exactly-once”契约。
+
+## Finish Evidence
+
+- **落地清单**：
+  - P0-P3（满包地面兜底、按实际结果回报退款数、finalize/持久化/重连闭环）已由 PR [#1142](https://github.com/Kizunad/Bong/pull/1142) 于 2026-07-13 落地，详见上方「当前核验证据」，本轮未改动。
+  - P4：`server/src/network/craft_emit.rs` 新增 `#[test] fn refund_structural_error_does_not_mask_config_bug`（`mod tests` 内，174 行）。Part A 直击生产退款入口 `grant_refund_manifest_to_inventory_or_ground`，断言 `no containers` 结构错误 `material_returned == 0`、错误文案原样透传含 `player inventory has no containers`、`dropped_loot` 为空、`revision` 不变（整批回滚）、allocator 未消耗 id。Part B 走真实 `CraftCancelIntent → apply_craft_cancel_intents` 生产系统，将 `no containers` 玩家与同批次真正满包的对照玩家一起处理，断言只有满包玩家产生 `Failed` 事件与 `DroppedLootEntry`、`no containers` 玩家 `CraftSession` 被保留可重试。
+  - `server/src/inventory/mod.rs`（`add_item_to_player_inventory_or_ground` 的 fallback 判据）本轮**未改动**——判别力自检临时放宽后已还原，`git diff` 确认最终 diff 中不含该文件。
+- **关键 commit**：
+  - `5c25dc34d6e720d947e016943810246ea2e43afa`（2026-07-27）：补 P4 `no containers` 定向回归测试。
+  - 本条目所在的归档 commit（同日）：`git mv` 迁入 `finished_plans/` 并写入本 Finish Evidence，纯文档改动，无代码变更。
+- **测试结果**：
+  - 判别力自检：临时把 `add_item_to_player_inventory_or_ground` 的 fallback 判据从「仅匹配 `inventory full:` 前缀」放宽为「任意错误都 fallback」后，`cargo test refund_structural` 撞红——`assertion left == right failed: ... 实际=1 / left: 1 / right: 0`（`material_returned` 断言，`craft_emit.rs:2444`），证明测试非空转；验证后已还原判据，`git diff -- server/src/inventory/mod.rs` 为空。
+  - 还原后 `cargo test refund_structural` → `1 passed; 0 failed`。
+  - `cargo fmt --check` → 0（本轮改动前已确认）；`cargo clippy --all-targets -- -D warnings` → 0（本轮改动前已确认，测试新增未触发新 warning）。
+  - 对抗验证：无上下文、read-only validator 对 HEAD `5c25dc34d6e720d947e016943810246ea2e43afa` 首步 `git rev-parse HEAD` 对拍一致后给出 **PASS**，核实测试直击生产入口、Part B 真走 ECS 系统而非底层 mock、对照组真占满格子、commit 未夹带运行时代码改动。
+- **跨仓库核验**：本轮只改 `server/src/network/craft_emit.rs` 测试代码，未涉及 client / agent / proto / schema；与 P0-P3 落地时确认的跨仓库契约（`craft_session_state` tag 22、`dropped_loot_sync` tag 81、`CraftOutcomeFailed.material_returned` field 5）保持不变，无需重新核验。
+- **遗留 / 后续**：本 plan 全部阶段已闭环，无遗留阻塞项。cancel/finalize 专属可达链测试（验证 terminal outcome 不发送且 `CraftSession` 保留重试）为非阻塞加固建议，未来如有精力可补充，不阻塞本次归档。

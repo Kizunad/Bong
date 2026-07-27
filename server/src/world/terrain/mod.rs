@@ -540,6 +540,87 @@ fn log_tick_rate(server: Res<Server>, mut probe: ResMut<TickRateProbe>) {
     probe.last_log_instant = now;
 }
 
+pub fn bot_raster_fixture_ready_payload(
+    manifest_path: &std::path::Path,
+    provider: &TerrainProvider,
+) -> Result<Option<String>, String> {
+    let Some(fixture) = provider.bot_fixture() else {
+        return Ok(None);
+    };
+    let canonical_manifest = std::fs::canonicalize(manifest_path).map_err(|error| {
+        format!(
+            "failed to canonicalize Bot raster fixture manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    Ok(Some(format!(
+        "[bong][world] BOT_RASTER_FIXTURE_READY manifest={} token={}",
+        canonical_manifest.display(),
+        fixture.token
+    )))
+}
+
+#[cfg(test)]
+mod bot_fixture_ready_tests {
+    use super::*;
+    use crate::world::terrain::raster::BotRasterFixture;
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn ready_payload_uses_canonical_manifest_path_and_exact_token() {
+        let root =
+            std::env::temp_dir().join(format!("bong-bot-raster-ready-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("create ready payload fixture dir");
+        let manifest = root.join("manifest.json");
+        fs::write(&manifest, "{}\n").expect("write ready payload fixture manifest");
+        let mut provider = TerrainProvider::empty_for_tests();
+        provider.set_bot_fixture_for_tests(BotRasterFixture {
+            kind: "ambient-surface-v1".to_string(),
+            token: "0123456789abcdef".to_string(),
+        });
+
+        let payload = bot_raster_fixture_ready_payload(&manifest, &provider)
+            .expect("canonical manifest must yield readiness")
+            .expect("fixture provider must yield payload");
+        let canonical = fs::canonicalize(&manifest).expect("fixture manifest canonical path");
+        assert_eq!(
+            payload,
+            format!(
+                "[bong][world] BOT_RASTER_FIXTURE_READY manifest={} token=0123456789abcdef",
+                canonical.display()
+            )
+        );
+
+        fs::remove_file(&manifest).expect("remove fixture manifest");
+        fs::remove_dir(&root).expect("remove fixture dir");
+    }
+
+    #[test]
+    fn ordinary_provider_emits_no_bot_fixture_ready_payload() {
+        let provider = TerrainProvider::empty_for_tests();
+        assert_eq!(
+            bot_raster_fixture_ready_payload(Path::new("does-not-need-to-exist"), &provider)
+                .expect("ordinary provider must not canonicalize a nonexistent path"),
+            None
+        );
+    }
+
+    #[test]
+    fn fixture_provider_rejects_noncanonicalizable_manifest_path() {
+        let mut provider = TerrainProvider::empty_for_tests();
+        provider.set_bot_fixture_for_tests(BotRasterFixture {
+            kind: "ambient-surface-v1".to_string(),
+            token: "0123456789abcdef".to_string(),
+        });
+        assert!(
+            bot_raster_fixture_ready_payload(Path::new("missing-fixture-manifest.json"), &provider)
+                .is_err(),
+            "fixture readiness must fail closed when server cannot canonicalize its loaded manifest identity"
+        );
+    }
+}
+
 pub fn spawn_raster_world(
     commands: &mut Commands,
     server: &Server,
@@ -557,6 +638,11 @@ pub fn spawn_raster_world(
         provider.placement_block_count(),
         config.manifest_path.display()
     );
+    if let Some(payload) = bot_raster_fixture_ready_payload(&config.manifest_path, &provider)
+        .unwrap_or_else(|error| panic!("failed to bind Bot raster fixture readiness: {error}"))
+    {
+        tracing::info!("{payload}");
+    }
 
     if let Some((_, _, dim)) = dimensions
         .iter_mut()

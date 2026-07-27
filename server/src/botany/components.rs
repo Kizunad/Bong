@@ -4,6 +4,7 @@ use valence::prelude::{bevy_ecs, Component, Entity, Event, Resource};
 
 use super::registry::{BotanyPlantId, FaunaKind, PlantVariant};
 use crate::gathering::quality::GatheringQuality;
+use crate::tools::ToolKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BotanyHarvestMode {
@@ -267,6 +268,22 @@ pub struct HarvestTerminalEvent {
     /// 因为背包已满而 fallback 到地面掉落（`DroppedLootRegistry`）。仅在 `completed=true`
     /// 时可能为 true；`interrupted=true` 的终结事件恒为 false。
     pub overflow_to_ground: bool,
+    /// plan-gathering-tool-bind-v1 P1：本次收获目标带 `WoundOnBareHand` hazard，且玩家
+    /// 未持对应 `required_tool`（未装备/装错/耐久归零皆算），本次触发了徒手割手伤害。
+    /// 仅在 `completed=true` 时可能为 true；`interrupted=true` 的终结事件恒为 false。
+    pub bare_hand_wound: bool,
+    /// plan-gathering-tool-bind-v1 P1：本次收获目标带 `WoundOnBareHand` hazard，且玩家
+    /// 持对应 `required_tool` 成功免伤。**不是** `tool_used`——那个字段来自 gather_time
+    /// 加成工具系统（`GatheringToolKind`），与本字段的 `ToolKind` required_tool 系统正交
+    /// （§8.1 决议 #3）。仅在 `completed=true` 时可能为 true。
+    pub required_tool_used: bool,
+    /// plan-gathering-tool-bind-v1 P1（PR #1293 review 修正）：目标植物 `WoundOnBareHand`
+    /// hazard 声明的 `required_tool`（不管本次是否命中/免伤都填，仅当植物无此 hazard 时
+    /// 为 `None`）。`bare_hand_wound` / `required_tool_used` 只是"任意 required_tool
+    /// 是否命中"的通用布尔值——仓库里已有 DunQiJia/GuaDao/BingJiaShouTao 三类既有
+    /// required_tool 草本，下游 SFX/VFX/HUD 消费方必须靠这个字段甄别"这次到底是不是
+    /// 草镰"，不能把任意 required_tool 命中/割手都当成草镰专属反馈来放。
+    pub required_tool_kind: Option<ToolKind>,
 }
 
 /// botany-v2 `AttractsMobs` 真 spawn 请求。

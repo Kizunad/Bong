@@ -44,6 +44,7 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
+use crate::tools::ToolKind;
 
 const ANIM_SWORD_SLASH_DOWN: &str = "bong:sword_slash_down";
 const ANIM_SWORD_STAB: &str = "bong:sword_stab";
@@ -653,6 +654,19 @@ pub fn emit_guangbo_ticao_visual_triggers(
     }
 }
 
+/// plan-gathering-tool-bind-v1 P1：草镰挥砍的草绿碎叶（`#7FA86A`，8 颗，8t）——
+/// 复用既有 `BOTANY_HARVEST_VFX`（client `BotanyHarvestBurstPlayer` 已注册，纯 payload
+/// 驱动 color/count/duration，无需新 event_id / 新 Java 类）。
+const CAO_LIAN_SWING_COLOR: &str = "#7FA86A";
+const CAO_LIAN_SWING_COUNT: u16 = 8;
+const CAO_LIAN_SWING_DURATION_TICKS: u16 = 8;
+
+/// plan-gathering-tool-bind-v1 P1：徒手割手的细红痕（`#C04848`，3 颗，8t）——同上复用
+/// `BOTANY_HARVEST_VFX`，仅参数不同。
+const BARE_HAND_WOUND_COLOR: &str = "#C04848";
+const BARE_HAND_WOUND_COUNT: u16 = 3;
+const BARE_HAND_WOUND_DURATION_TICKS: u16 = 8;
+
 pub fn emit_botany_harvest_visual_triggers(
     mut terminal: EventReader<HarvestTerminalEvent>,
     players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
@@ -673,15 +687,56 @@ pub fn emit_botany_harvest_visual_triggers(
         let Some(pos) = event.target_pos else {
             continue;
         };
+        let origin = valence::prelude::DVec3::new(pos[0], pos[1] + 0.45, pos[2]);
         emit_spawn_particle(
             &mut vfx_events,
             BOTANY_HARVEST_VFX,
-            valence::prelude::DVec3::new(pos[0], pos[1] + 0.45, pos[2]),
+            origin,
             botany_quality_color(event.spirit_quality),
             event.spirit_quality.clamp(0.5, 1.0),
             12,
             36,
         );
+        // PR #1293 review 修正：required_tool_used/bare_hand_wound 是任意 required_tool
+        // 草本的通用信号，仓库里已有 DunQiJia/GuaDao/BingJiaShouTao 三类既有 required_tool
+        // 草本——必须额外限定 required_tool_kind == CaoLian，否则这些既有草本也会错误播放
+        // 草镰专属粒子。
+        let is_cao_lian = event.required_tool_kind == Some(ToolKind::CaoLian);
+        if event.bare_hand_wound && is_cao_lian {
+            emit_spawn_particle(
+                &mut vfx_events,
+                BOTANY_HARVEST_VFX,
+                origin,
+                BARE_HAND_WOUND_COLOR,
+                0.9,
+                BARE_HAND_WOUND_COUNT,
+                BARE_HAND_WOUND_DURATION_TICKS,
+            );
+        } else if event.required_tool_used && is_cao_lian {
+            // plan-gathering-tool-bind-v1 P1 视听规格"沿挥镰弧线"：方向取"玩家→采集目标"
+            // 的水平向量（挥镰动作正是朝目标挥出），client BotanyHarvestBurstPlayer 消费
+            // 后把粒子约束到该方向的扇形范围内，而非全向 360° 随机 burst。
+            let direction =
+                players
+                    .get(event.client_entity)
+                    .ok()
+                    .and_then(|(player_position, _)| {
+                        let player_pos = player_position.get();
+                        let dx = origin.x - player_pos.x;
+                        let dz = origin.z - player_pos.z;
+                        (dx * dx + dz * dz > 1e-6).then_some([dx, 0.0, dz])
+                    });
+            emit_spawn_particle_with_direction(
+                &mut vfx_events,
+                BOTANY_HARVEST_VFX,
+                origin,
+                direction,
+                CAO_LIAN_SWING_COLOR,
+                0.85,
+                CAO_LIAN_SWING_COUNT,
+                CAO_LIAN_SWING_DURATION_TICKS,
+            );
+        }
     }
 }
 
@@ -1622,12 +1677,39 @@ fn emit_spawn_particle(
     count: u16,
     duration_ticks: u16,
 ) {
+    emit_spawn_particle_with_direction(
+        vfx_events,
+        event_id,
+        origin,
+        None,
+        color,
+        strength,
+        count,
+        duration_ticks,
+    );
+}
+
+/// 同 `emit_spawn_particle`，但可携带方向向量（未归一，客户端按需处理）——
+/// plan-gathering-tool-bind-v1 P1：草镰挥砍粒子借此表达"沿挥镰弧线"（client
+/// `BotanyHarvestBurstPlayer` 消费 direction 时把粒子约束到该方向的扇形范围内，
+/// 而非全向 360° 随机 burst）。
+#[allow(clippy::too_many_arguments)]
+fn emit_spawn_particle_with_direction(
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    event_id: &'static str,
+    origin: valence::prelude::DVec3,
+    direction: Option<[f64; 3]>,
+    color: &'static str,
+    strength: f32,
+    count: u16,
+    duration_ticks: u16,
+) {
     vfx_events.send(VfxEventRequest::new(
         origin,
         VfxEventPayloadV1::SpawnParticle {
             event_id: event_id.to_string(),
             origin: [origin.x, origin.y, origin.z],
-            direction: None,
+            direction,
             color: Some(color.to_string()),
             strength: Some(strength.clamp(0.0, 1.0)),
             count: Some(count),
@@ -2213,6 +2295,9 @@ mod tests {
             gathering_quality: Some(crate::gathering::quality::GatheringQuality::Perfect),
             tool_used: Some("bao_chu".to_string()),
             overflow_to_ground: false,
+            bare_hand_wound: false,
+            required_tool_used: false,
+            required_tool_kind: None,
         });
 
         app.update();
@@ -2226,6 +2311,186 @@ mod tests {
             } => {
                 assert_eq!(color.as_deref(), Some("#FFDD22"));
                 assert_eq!(*strength, Some(0.95));
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    // ── plan-gathering-tool-bind-v1 P1（PR #1293 review 修正）：草镰专属粒子必须严格限定
+    // required_tool_kind == CaoLian，并验证"沿挥镰弧线"方向确实被填充 ──
+
+    fn cao_lian_harvest_terminal_event(
+        client_entity: valence::prelude::Entity,
+        bare_hand_wound: bool,
+        required_tool_used: bool,
+        required_tool_kind: Option<ToolKind>,
+    ) -> HarvestTerminalEvent {
+        HarvestTerminalEvent {
+            client_entity,
+            session_id: "offline:Azure".to_string(),
+            target_id: "plant-1".to_string(),
+            target_name: "xue_se_mai_cao".to_string(),
+            plant_kind: "xue_se_mai_cao".to_string(),
+            mode: crate::botany::components::BotanyHarvestMode::Manual,
+            interrupted: false,
+            completed: true,
+            detail: "done".to_string(),
+            target_pos: Some([10.0, 64.0, 10.0]),
+            spirit_quality: 0.9,
+            duration_ticks: 40,
+            gathering_quality: None,
+            tool_used: None,
+            overflow_to_ground: false,
+            bare_hand_wound,
+            required_tool_used,
+            required_tool_kind,
+        }
+    }
+
+    #[test]
+    fn cao_lian_harvest_swing_burst_carries_player_to_target_direction() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_botany_harvest_visual_triggers);
+        // 玩家在 [7,64,10]，目标植物在 target_pos=[10,64,10] —— 挥砍方向应为 +X（水平）。
+        let player = spawn_player(&mut app, "Azure", [7.0, 64.0, 10.0]);
+
+        app.world_mut().send_event(cao_lian_harvest_terminal_event(
+            player,
+            false,
+            true,
+            Some(ToolKind::CaoLian),
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        // spawn_player 带完整动画目标组件，emit_play_for_entity 的采割蹲姿动画也会命中
+        // （不同于其它测试用的 spawn_empty），所以是 蹲姿动画 + 基础采集 burst + 草镰
+        // 专属挥砍 burst 共 3 条；只关心序列里最后一条 SpawnParticle。
+        let last = emitted
+            .last()
+            .expect("持草镰完成采集应至少发出草镰专属挥砍 burst");
+        match &last.payload {
+            VfxEventPayloadV1::SpawnParticle {
+                color,
+                count,
+                direction,
+                ..
+            } => {
+                assert_eq!(color.as_deref(), Some(CAO_LIAN_SWING_COLOR));
+                assert_eq!(*count, Some(CAO_LIAN_SWING_COUNT));
+                let dir = direction
+                    .expect("草镰挥砍粒子必须携带方向以表达 plan P1 视听规格的'沿挥镰弧线'");
+                assert!(
+                    dir[0] > 0.0 && dir[1] == 0.0,
+                    "方向应为玩家→目标的水平向量（此处应指向 +X），实际 {dir:?}"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cao_lian_bare_hand_wound_emits_red_streak_without_direction() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_botany_harvest_visual_triggers);
+        let player = spawn_player(&mut app, "Azure", [7.0, 64.0, 10.0]);
+
+        app.world_mut().send_event(cao_lian_harvest_terminal_event(
+            player,
+            true,
+            false,
+            Some(ToolKind::CaoLian),
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        let last = emitted
+            .last()
+            .expect("草镰目标草本徒手割手应至少发出红色细痕 burst");
+        match &last.payload {
+            VfxEventPayloadV1::SpawnParticle { color, count, .. } => {
+                assert_eq!(color.as_deref(), Some(BARE_HAND_WOUND_COLOR));
+                assert_eq!(*count, Some(BARE_HAND_WOUND_COUNT));
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 回归：既有 DunQiJia 门槛草本持工具完成采集，不得播放草镰专属绿色挥砍粒子——
+    /// required_tool_used 只是"任意 required_tool 命中"的通用信号。
+    #[test]
+    fn non_cao_lian_required_tool_harvest_does_not_emit_cao_lian_burst() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_botany_harvest_visual_triggers);
+        let player = spawn_player(&mut app, "Azure", [7.0, 64.0, 10.0]);
+
+        app.world_mut().send_event(cao_lian_harvest_terminal_event(
+            player,
+            false,
+            true,
+            Some(ToolKind::DunQiJia),
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        // 蹲姿动画 + 基础采集 burst 共 2 条；不应再追加草镰专属绿色挥砍 burst。
+        assert_eq!(
+            emitted.len(),
+            2,
+            "既有 DunQiJia 门槛草本不属于本 plan 范围，不应追加草镰专属挥砍 burst，实际 {} 条",
+            emitted.len()
+        );
+        let last = emitted.last().unwrap();
+        match &last.payload {
+            VfxEventPayloadV1::SpawnParticle { color, .. } => {
+                assert_ne!(
+                    color.as_deref(),
+                    Some(CAO_LIAN_SWING_COLOR),
+                    "最后一条粒子不应是草镰专属挥砍色"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 回归：既有 DunQiJia 门槛草本徒手割手，不得播放草镰专属红色细痕粒子。
+    #[test]
+    fn non_cao_lian_bare_hand_wound_does_not_emit_red_streak() {
+        let mut app = App::new();
+        app.add_event::<HarvestTerminalEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_botany_harvest_visual_triggers);
+        let player = spawn_player(&mut app, "Azure", [7.0, 64.0, 10.0]);
+
+        app.world_mut().send_event(cao_lian_harvest_terminal_event(
+            player,
+            true,
+            false,
+            Some(ToolKind::DunQiJia),
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "既有 DunQiJia 门槛草本的徒手割手不属于本 plan 范围，不应追加草镰专属红色细痕 burst，实际 {} 条",
+            emitted.len()
+        );
+        let last = emitted.last().unwrap();
+        match &last.payload {
+            VfxEventPayloadV1::SpawnParticle { color, .. } => {
+                assert_ne!(
+                    color.as_deref(),
+                    Some(BARE_HAND_WOUND_COLOR),
+                    "最后一条粒子不应是草镰专属割手红色"
+                );
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
