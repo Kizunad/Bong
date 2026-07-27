@@ -13,10 +13,10 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-07-26 · 共 170 份 plan_
+_自动生成于 2026-07-27 · 共 170 份 plan_
 
 ```text
-总进度  ██████████████████████████░░░░  88.0%
+总进度  ██████████████████████████░░░░  87.9%
 ```
 
 **分布**：`merged` 138 · `wip` 17 · `design` 9 · `skeleton` 3 · `done` 3
@@ -87,7 +87,7 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 �
 | `merged` | **世界灵气预算化虚名额** <br/><sub>`finished_plans/plan-void-quota-v1.md`</sub> | `████████████` 100% | #159 | 2026-06-08 |
 | `merged` | **灵田专项** <br/><sub>`finished_plans/plan-lingtian-v1.md`</sub> | `███████████░`  88% | #26 #127 #115 | 2026-06-08 |
 | `merged` | **灵田季节天气消费层** <br/><sub>`finished_plans/plan-lingtian-weather-v1.md`</sub> | `██████████░░`  85% | #154 | 2026-06-08 |
-| `wip` | **种族 BodyPlan 通用化+固元易形功法** <br/><sub>`plan-race-system-v1.md`</sub> | `████████░░░░`  65% | #1160 #1180 #1184 #1198 #1201 #1202 #1203 #1204 #1206 #1250 | 2026-07-27 |
+| `wip` | **种族 BodyPlan 通用化+固元易形功法** <br/><sub>`plan-race-system-v1.md`</sub> | `███████░░░░░`  60% | #1160 #1180 #1184 #1198 #1201 #1202 #1203 #1204 #1206 #1250 | 2026-07-27 |
 | `wip` | **渡虚劫系统性平衡矩阵校准** <br/><sub>`plan-tribulation-balance-v1.md`</sub> | `██████░░░░░░`  50% | #533 #560 | 2026-06-14 |
 | `design` | **半步化虚 buff 运营数值校准** <br/><sub>`plan-halfstep-buff-calibration-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-06-08 |
 
