@@ -48,8 +48,8 @@
 
 **交付物**：
 
-1. **字段模块私有化**（r2 blocker 收口——server 是单 crate，`pub(crate)` 不构成任何边界，**不采用**）：`Wounds.health_current` 改为定义模块（combat/components.rs）**严格私有**字段；同批收窄构造面——移除可指定血量的公开构造路径：`Default` 改为语义构造器 `Wounds::full()`（满血）+ `Wounds::restore_from_persist(current, max, entries)`（仅 persistence 恢复用，`pub(crate)` 收窄到 crate 且实现里 clamp 合法域）+ `#[cfg(test)] set_health_for_test`。受控 API：`health()` / `health_max()` 读、`settle_damage(...)`（唯一扣血）、`heal(...)`（唯一加血）、lifecycle 钳血/revive 的语义方法。**诚实边界声明**：外部模块**直写字段与字段构造**由编译器拒绝（trybuild compile-fail 测试各一条锁死）；Bevy ECS 的整体组件替换（`commands.insert(Wounds)`）无法被类型系统禁止——该面由构造器语义收窄（只能构造满血/持久化恢复两种合法值，无法构造任意血量）+ 源码守卫 + review 三层兜住，plan 不声称"整体替换编译期不可表达"。
-2. **唯一结算核心** `server/src/combat/damage.rs`：私有核心函数持有完整语义（clamp、`was_alive` 捕获、致死发 `DeathEvent`）；对外仅两个薄适配——直通版（供已持有 `&mut Wounds` + `EventWriter<DeathEvent>` 的 system，签名显式收 `is_damageable` 前置结果，杜绝"拿不到实体上下文却声称做守卫"的含糊）与 deferred 版（供 `commands.add` 闭包，内部自查 GameMode）。`emit_death_event_if_lethal` 迁入 damage 模块收窄为私有实现，woliu（combat/woliu_v2/skills.rs:692-711）、dugu（combat/dugu_v2/skills.rs:615-630）两个既有用户同批迁移。
+1. **字段模块私有化 + 双层所有权（r2/r3 blocker 收口）**：`Wounds.health_current` 改为定义模块（combat/components.rs）**严格私有**字段（server 是单 crate，`pub(crate)` 不构成边界，**不采用**）。**mutation 原语与字段共置**（r3 收口——严格私有字段与兄弟模块核心不可同时成立）：字段模块持有唯一扣血原语 `Wounds::settle_damage(amount) -> DamageOutcome { was_alive, became_lethal, applied }`（`#[must_use]`，内含 clamp 与 was_alive 捕获）与唯一加血原语 `heal(...)`；`combat::damage` 模块是**唯一事件适配层**——GameMode 校验 + 调 `settle_damage` + 按 `DamageOutcome.became_lethal` 发 `DeathEvent`，两层合起来才是 canonical 结算路径。同批收窄构造面：`Default` 改为语义构造器 `Wounds::full()`（满血）+ `Wounds::restore_from_persist(...)`（仅 persistence 恢复用；**诚实声明**：单 crate 内其调用面靠源码守卫白名单约束而非编译期边界）+ `#[cfg(test)] set_health_for_test`。**边界诚实声明**：外部模块直写字段/字段构造由编译器拒绝（trybuild compile-fail 各一条锁死）；`settle_damage` 绕过 damage 适配层直调、`restore_from_persist` 越权调用、Bevy ECS 整体组件替换（`commands.insert(Wounds)`）三者无法被类型系统禁止——由构造器语义收窄（只能构造满血/持久化恢复两种合法值）+ 源码守卫白名单（见 #4）+ `#[must_use]` 警告三层兜住，plan 不声称这三面"编译期不可表达"。
+2. **事件适配层** `server/src/combat/damage.rs`：对外仅两个薄适配——直通版（供已持有 `&mut Wounds` + `EventWriter<DeathEvent>` 的 system，签名显式收 `is_damageable` 前置结果，杜绝"拿不到实体上下文却声称做守卫"的含糊）与 deferred 版（供 `commands.add` 闭包，内部自查 GameMode）；两适配共享同一 `settle_damage` 原语。`emit_death_event_if_lethal` 迁入 damage 模块收窄为私有实现，woliu（combat/woliu_v2/skills.rs:692-711）、dugu（combat/dugu_v2/skills.rs:615-630）两个既有用户同批迁移。
 3. 八条漏发路径全部迁移到唯一入口（cause 字符串建议）：
 
 | 路径 | file:line | cause |
@@ -63,7 +63,7 @@
 | 服丹异种真元排斥（-10.0，兼缺 GameMode 守卫） | network/client_request_handler.rs:15908 | `foreign_qi_rejection` |
 | 骷髅妖撞墙自伤（精英怪自撞成不可击杀木桩） | npc/skull_fiend.rs:826 | `wall_impact` |
 
-4. **守卫为兜底线**：`test_coverage_guards.rs` 源码扫描守卫覆盖"整体组件替换/`restore_from_persist` 越权调用/`set_health_for_test` 泄漏到非 test"三类模式，明列覆盖写法，守卫本身配正反样例测试（构造应命中/不应命中的代码样本，证明不漏检不误报）。
+4. **守卫为兜底线**：`test_coverage_guards.rs` 源码扫描守卫覆盖"整体组件替换/`restore_from_persist` 越权调用/`settle_damage` 在 damage 适配层白名单之外的直调/`set_health_for_test` 泄漏到非 test"四类模式，明列覆盖写法，守卫本身配正反样例测试（构造应命中/不应命中的代码样本，证明不漏检不误报）。
 5. **结算核心契约矩阵**（r2 收口，表驱动测试全交付）：正伤害非致死→只扣血不发事件；恰好归零 & overkill→钳 0 且**仅发一次** DeathEvent；已死（0 血）输入→不改血不发事件；`is_damageable=false`→不改血不发事件；零/负伤害→no-op；deferred 目标不存在 / 缺 `Wounds` / 缺 `GameMode`→安全 no-op 无部分写入；**直通与 deferred 对全矩阵每组输入等价 pin**。另：8 条路径各一条致死单测（打到 0 → DeathEvent → NearDeath/Terminated）；woliu/dugu 迁移后既有测试全绿。
 6. bot 场景：`scripts/bot/scenarios/` 新增暗器致死观察场景（远程投掷打死 NPC → 断言死亡链事件可观察 + NPC despawn），锁"远程武器致死必走死亡链"。
 
@@ -98,10 +98,10 @@
 
 **交付物**：
 
-1. **死亡计数单一权威 + 原子提交**（r2 收口）：`DeathRegistry.death_count` 为 canonical；`Lifecycle.death_count` 降级为运行时派生值——加载时从 registry 对齐，运行期收敛为 registry 先行、lifecycle 跟随（同一 system 内顺序写）。**原子性沿用既有 staged-persist-then-commit 模式**（lifecycle.rs:514-529 先例）：计数与死态转换并入同一 sqlite 事务，持久化成功才提交运行时转换，失败则运行时不推进 + 每 20 tick 退避重试（与 §7#6 同机制）。测试：注入写失败→断线重连计数/运数/死态不回退（校验点是**重连后加载值**而非内存值）、写失败→进程重启后恢复重试、重复提交幂等、不一致数据加载按 `max` 修复并 warn。（顺带收掉审计 S8 三处自增点漂移。）
+1. **死亡计数单一权威 + 原子提交**（r2 收口）：`DeathRegistry.death_count` 为 canonical；`Lifecycle.death_count` 降级为运行时派生值——加载时从 registry 对齐，运行期收敛为 registry 先行、lifecycle 跟随（同一 system 内顺序写）。**原子性沿用既有 staged-persist-then-commit 模式**（lifecycle.rs:514-529 先例）：计数与死态转换并入同一 sqlite 事务，持久化成功才提交运行时转换，失败则运行时不推进 + 进程存活期内每 20 tick 退避重试。**失败语义诚实收窄**（r3 收口——不引入 durable outbox）：本 plan 承诺"事务失败零部分提交 + 进程内退避重试"；若进程在重试成功前崩溃，该次致死转换随内存丢失、实体恢复到转换前持久化状态（与服务器崩溃丢 tick 的既有全局语义一致），**不承诺跨进程恢复重试**。测试：注入写失败→断线重连计数/运数/死态不回退（校验点是**重连后加载值**而非内存值，加载值=转换前状态，自洽）、重试成功后加载值推进、重复提交幂等、不一致数据加载按 `max` 修复并 warn。（顺带收掉审计 S8 三处自增点漂移。）
 2. **deadline 持久化用 UTC 墙钟**（r2 收口——`CombatClock` 是进程内存计数器，绝对 tick 跨服务器重启不可解释）：持久化 `near_death_deadline_utc_ms` / `revival_decision_deadline_utc_ms`（写侧 `persist_near_death_transition` 补列 + 旧行迁移），加载时 `remaining = max(0, deadline_utc - now_utc)` 换算剩余 tick 重建内存 deadline——离线时间计入窗口、跨重启语义一致；时钟回拨防御：`remaining` 上界 clamp 到对应窗口常量（不因回拨异常延长）。旧 schema 缺列兜底 `now + 对应窗口` **仅限一次性迁移**，恢复后立即回写，杜绝重连刷窗口。测试：窗口将尽/已过期两种记录在**服务器重启前后**的恢复、反复重连不获得新窗口、已过期重连立即推进状态机、时钟回拨 clamp、损坏值降级；
-3. join 时 NearDeath/AwaitingRevival 恢复：重进对应状态；`weakened_until_tick`（同步迁移为 UTC 语义）未过期 → 重挂剩余时长的 `Weakened` 状态（依赖 §7#1，闭环"持久字段↔运行时状态"双向同步）；
-4. **死亡屏可靠交付**（r2 收口——只在进入 tick 发一次，同会话丢包即永久黑屏，join 重发只覆盖重连场景）：AwaitingRevival 期间**限频幂等重发**死亡屏 payload（每 100 tick，幂等键 = character_id + death_number + decision deadline，client 既有渲染对同键重复包幂等），状态离开即停发。测试：同会话首包丢弃（不重连）后仍在下个重发周期收到、重复包不叠加副作用、离开 AwaitingRevival 后停发、join 恢复场景重发；
+3. **join 加载接线（调用点与顺序显式，r3 收口）**：落点 = `attach_combat_bundle_to_joined_clients`（combat/mod.rs:93-133）——把现在无条件插 `Lifecycle::default()` 的位置改为"先 `load_death_registry` + Lifecycle 死态/deadline/运数回读 → 构造组件插入 → 过期 deadline 立即推进状态机"，且必须先于既有 join 转世门（cultivation/mod.rs:756-790）取到已恢复的 LifeRecord/Lifecycle（两处 system 顺序用 `.before/.after` 显式锁定）。缺行→现行 default 语义；损坏行→default + warn（测试各一条）。`weakened_until_tick`（同步迁移为 UTC 语义）未过期 → 重挂剩余时长的 `Weakened` 状态（依赖 §7#1，闭环"持久字段↔运行时状态"双向同步）；
+4. **死亡屏可靠交付**（r2 收口——只在进入 tick 发一次，同会话丢包即永久黑屏，join 重发只覆盖重连场景）：AwaitingRevival 期间**限频幂等重发**死亡屏 payload（每 100 tick，幂等键 = character_id + death_number + decision deadline），状态离开即停发。**client 幂等核验是本项交付物**（r3 收口）：实施首日核 client `DeathScreenHandler`/`DeathStateStore`（client/.../combat/handler/DeathScreenHandler.java:42 → DeathStateStore → CombatScreenOpener 轮询 visible）对同键重复包是否天然幂等（store 覆写同值 = 幂等则给锚点+pin 测试锁定；不幂等则补 client 去重，该 PR 升为跨端过 `cd client && ./gradlew test build` 门禁）。测试：同会话首包丢弃（不重连）后仍在下个重发周期收到、同键重复包不叠加副作用（client pin）、新 death_number 包正常切换、离开 AwaitingRevival 后停发、join 恢复场景重发；
 5. **Alive 伤情范围**：按 §10#3 决议执行。选项 A（血量+伤口落盘）则本阶段加 `wounds` 持久化 schema + 版本迁移 + Alive 残血/流血/无伤三类重连测试；选项 B（不落盘）则**本 plan 标题范围即不含 Alive 洗白**，在 §9 登记遗留 + 立后续骨架（选 B 时该骨架文件是 P3 交付物之一），且 P3 完成声明里明确写"Alive 残血重连恢复满血为已知未修"；
 6. 测试汇总：三态重连恢复 pin ×3（NearDeath 续原窗口 / AwaitingRevival 重见死亡屏且 deadline 不重置 / Terminated 走既有转世门不回归）；fortune 不因重连重置；death_number 跨会话连续（劫数期可达性回归）。
 
@@ -120,14 +120,16 @@
 9. **硬编码 0.05 两处**：resolve.rs:2080（切磋保底）、tribulation.rs:4095（渡劫善后）改引 `NEAR_DEATH_HEALTH_FRACTION`（components.rs:22）；
 10. **同函数双时间源**：handle_revival_action_intents 内 Terminate 分支用 `intent.issued_at_tick`（lifecycle.rs:1034）而 Reincarnate 用 `clock.tick`（:955），统一 clock.tick。
 
+**P4 逐项契约测试矩阵**（r3 收口，除各项已列测试外）：#3 血炼对 Alive/NearDeath/AwaitingRevival/Terminated 四前态各一条（仅 Alive 走死亡链、其余被拒且 death_count 不动）；#5 流血/充能 × {Alive, NearDeath, AwaitingRevival, Terminated} 全矩阵 pin；#7 `at_tick` 与 CombatClock 一致 + deadline 不被拉长 pin；#9 两调用点跟随常量变化的守卫（改常量测试即红）；#10 Terminate/Reincarnate 同时钟源 + 过期/重复 intent 分支。
+
 ## §8 P5 — 治疗侧记账与 client 防御 ⬜
 
 1. **过量治疗记账**：`apply_wound_heal` 回血按 `delta × changed`（每条伤口满额计），而非实际 severity 削减总量（pill.rs:429-443，`.max(0.0)` 截断后仍满计）——N 条微伤 + 一张绷带可虚增回血。改为累计实际削减量，**HP 换算显式走 §4#1 的唯一换算函数**（HP 量纲直接累计；归一量纲 ×health_max）——公式对 §10#1 两个选项都成立，配不同 health_max 下同比例伤口的记账守恒测试；
 2. **retain 误删**：`entries.retain(|w| severity >= 0.05)`（pill.rs:441）连未被本次治疗触及的微伤口一并清除。改为仅清本次触及且归零者（阈值引常量）；
 3. **npc_heal_basic 弃 target**：签名收 `_target` 却恒治 caster（npc/npc_skill.rs:308/334-337），治疗型 NPC 无法救人。语义按 §10#8 决议（依据现有 AI 选招调用方核实），交付含 caster/友方 target/非法目标三分支测试；
-4. **Wounds.entries 守恒合并上限**（r2 收口——淘汰丢弃会凭空消灭 severity/流血，违背伤情守恒，**不采用**）：唯一策略 = **同部位同类型合并**：合并键 `(location, kind)`，severity 累计（上界 clamp 到该量纲合法域）、`bleeding_per_sec` 累计、`created_at_tick` 取最新、`inflicted_by` 取最新非空；cap 常量声明，达 cap 时新伤并入既有同键条目而非新增，无同键可并时并入该部位聚合条目——**任何路径不静默删除仍有 severity/bleeding 的伤口**。测试：cap-1/cap/cap+1 各一条、合并前后总 severity+总 bleeding 守恒 pin、重伤条目不被合并吞掉功能后果（断肢/减速标记保留）、快照条目数有界；
+4. **Wounds.entries 守恒合并上限**（r2/r3 收口——淘汰丢弃会凭空消灭 severity/流血，违背伤情守恒，**不采用**；单条上界 clamp 与总量守恒数学互斥，**也不采用**）：唯一策略 = **同部位同类型合并**：合并键 `(location, kind)`，severity 与 `bleeding_per_sec` **无上界累计**（存储量不截断——上界语义只存在于派生效果消费处：断肢判定/减速档位等读取时按各自阈值饱和，存储与消费分离）、`created_at_tick` 取最新、`inflicted_by` 取最新非空；cap 常量声明，达 cap 时新伤并入既有同键条目而非新增，无同键可并时并入该部位聚合条目——**任何路径不静默删除、不截断仍有 severity/bleeding 的伤口量**。测试：cap-1/cap/cap+1 各一条、合并前后总 severity+总 bleeding 严格守恒 pin（含累计值超过单条派生阈值的场景）、重伤条目不被合并吞掉功能后果（断肢/减速标记保留）、快照条目数有界；
 5. **续命/急救不对称**：`apply_life_extension` 血拉 50% 但伤口+流血原封不动（yidao.rs:956-957，对比急救 :901 清 bleeding）→ 救回来大概率再次流血倒地。对齐清 bleeding；顺带补 :956 上界 clamp；
-6. **client NaN 整包冻结**（client Java 改动）：`CombatHudStateHandler` 任一字段非法即整包 noOp，qi/体力条一起卡死在陈旧快照（client CombatHudStateHandler.java:23-28）。改逐字段降级 + 日志；server 侧 `combat_hud_state_emit.rs:56` 对 NaN 补 `is_finite` 防线（clamp 不拦 NaN）。
+6. **client NaN 整包冻结**（client Java 改动）：`CombatHudStateHandler` 任一字段非法即整包 noOp，qi/体力条一起卡死在陈旧快照（client CombatHudStateHandler.java:23-28）。**逐字段降级规则显式**（r3 收口）：坏字段（null/非有限/越界）保留该字段旧值不覆盖 + 限频日志（同字段 5s 内只记一次），其余合法字段照常更新。server 侧 `combat_hud_state_emit.rs:56` 补 `is_finite` 防线（clamp 不拦 NaN），非有限输入替换为 0.0 并 warn。测试：表驱动覆盖 NaN/+∞/-∞/越界/合法边界各字段——坏字段保旧值、其余字段更新、日志限频不风暴；server pin 永不 emit 非有限值。
 
 测试：治疗记账 pin（实际削减量=回血量，双量纲选项各一）、retain 白名单 pin、合并守恒 pin（见 #4）、续命清 bleeding pin、client handler 单字段坏值不冻结其余（`cd client && ./gradlew test` 门禁）。
 
@@ -142,7 +144,7 @@
 
 ## §10 开放问题（转 active 前按 docs/CLAUDE.md §五 收口成 §10.1 决议）
 
-1. **severity 统一量纲方向**（P1 前置，P5#1 记账公式同源依赖）：A. 统一 HP 量纲——阈值侧全部换算（`is_severed_like ≥ 0.85` → `≥ SEVERED_THRESHOLD_HP`，`wound_grade_delta` 0.25/档 → N HP/档，腿/头阈值同步），生产点少改；B. 统一 0..1 归一——resolve 侧 `severity: damage / health_max`，消费侧不动但 resolve/快照/浮字全要过一遍 + client 显示校准。**推荐 A**：resolve 是最大生产者且 wire `wounds_snapshot.severity` 已按其量纲下发。两选项都必须落 §4#1 的唯一换算函数。
+1. **severity 统一量纲：已定 HP 量纲**（P1/P5#1 依据；r3 收口——原候选 B"0..1 归一"需要 client 显示校准与 wire 契约迁移、把 P1 拖成跨端阶段而无对等收益，**删除**）：阈值侧全部换算（`is_severed_like ≥ 0.85` → `≥ SEVERED_THRESHOLD_HP`，`wound_grade_delta` 0.25/档 → N HP/档，腿/头阈值同步）。剩余待决仅数值标定：`SEVERED_THRESHOLD_HP` 与各档换算的具体初值（转 active 决议给出，含与现有 resolve 伤害分布的对照依据）。落 §4#1 的唯一换算函数（HP 量纲下即恒等，仍显式定义供 P5 记账引用）。
 2. **流血衰减形态**（P2 前置）：衰减曲线（推荐线性归零，速率常量初值定标为"重伤约 60-90s 自止"，实施时按 P1 决议后的 severity 量纲换算）vs 结痂阈值（severity 低于 X 才开始衰减）vs 仅解锁回血不衰减。**推荐线性衰减**——最简单可 pin，丹药/绷带仍有加速价值。
 3. **Alive 伤情重连范围**（P3 前置，**直接决定本 plan 完成声明的范围**）：A. 血量+伤口落盘（版本化 schema+迁移+三类重连测试，彻底堵"退登洗白"，成本：schema/迁移/低血踢出时序）；B. 不落盘（只堵死态逃逸+运数刷新，Alive 洗白登记遗留+立后续骨架）。**推荐 B**——P2 修完后重登止血刚需已消失，Alive 洗白危害降为"省一次治疗"，而 A 的 schema 迁移面配不上 v1 的收口节奏；选 B 则标题范围按 §9 诚实声明。
 4. **stabilized 免死代价**（P4#2 前置；候选仅含有代价方案——零代价与本 plan 的正典违例判定互斥，不设为选项）：A. 挂 Weakened 减益（**推荐**——濒死被救是 neardeath-ux 的核心玩法，降境/扣运数会废掉救援体验）；B. 扣半点运数（0.5 粒度需扩 fortune 表示，成本高）。
