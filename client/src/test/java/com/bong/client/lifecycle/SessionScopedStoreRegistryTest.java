@@ -31,6 +31,57 @@ class SessionScopedStoreRegistryTest {
     }
 
     @Test
+    void repeatedCallsRemainIndependentAndNeverBecomeOneShot() {
+        List<String> calls = new ArrayList<>();
+        List<SessionStoreHandle> handles = List.of(
+            handle(FirstStore.class, () -> calls.add("first")),
+            handle(SecondStore.class, () -> calls.add("second")),
+            handle(ThirdStore.class, () -> calls.add("third"))
+        );
+
+        SessionScopedStoreRegistry.clearAllOnDisconnect(handles, failure -> {
+            throw new AssertionError("正常清理不应产生 failure：" + failure.fqcn());
+        });
+        SessionScopedStoreRegistry.clearAllOnDisconnect(handles, failure -> {
+            throw new AssertionError("第二个 session 的正常清理不应产生 failure：" + failure.fqcn());
+        });
+
+        assertEquals(
+            List.of("first", "second", "third", "first", "second", "third"),
+            calls,
+            "registry 不得保存跨调用 one-shot 状态；每个 session 都必须独立按声明顺序完整清理"
+        );
+    }
+
+    @Test
+    void failedCallCannotPoisonNextSessionClear() {
+        List<String> calls = new ArrayList<>();
+        List<SessionScopedStoreRegistry.StoreClearFailure> failures = new ArrayList<>();
+        int[] firstStoreAttempts = {0};
+        List<SessionStoreHandle> handles = List.of(
+            handle(FirstStore.class, () -> {
+                calls.add("first");
+                if (firstStoreAttempts[0]++ == 0) {
+                    throw new IllegalStateException("first session broken");
+                }
+            }),
+            handle(SecondStore.class, () -> calls.add("second")),
+            handle(ThirdStore.class, () -> calls.add("third"))
+        );
+
+        SessionScopedStoreRegistry.clearAllOnDisconnect(handles, failures::add);
+        SessionScopedStoreRegistry.clearAllOnDisconnect(handles, failures::add);
+
+        assertEquals(
+            List.of("first", "second", "third", "first", "second", "third"),
+            calls,
+            "前一 session 的 Store failure 不得持久化为完成、跳过或失败状态污染下一轮清理"
+        );
+        assertEquals(1, failures.size(), "仅首轮真实失败应上报，第二轮成功不得重放旧 failure");
+        assertEquals(FirstStore.class.getName(), failures.get(0).fqcn());
+    }
+
+    @Test
     void runtimeFailureIsReportedAndDoesNotBlockLaterHandles() {
         List<String> calls = new ArrayList<>();
         RuntimeException expected = new IllegalStateException("broken store");
@@ -265,7 +316,10 @@ class SessionScopedStoreRegistryTest {
             exception.getMessage().contains(DuplicateStore.class.getName()),
             "重复登记失败应指出具体 FQCN，实际=" + exception.getMessage()
         );
-        assertTrue(calls.isEmpty(), "重复 key 必须在任何清理副作用前 fail-fast");
+        assertTrue(
+            calls.isEmpty(),
+            "重复 key 必须在任何清理副作用前 fail-fast，实际=" + calls
+        );
     }
 
     @Test

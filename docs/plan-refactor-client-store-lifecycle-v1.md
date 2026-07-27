@@ -122,7 +122,7 @@ bot 是协议级客户端，测不了 client 内存——本轨主验收是 clie
 
 ### §10.1 适用边界
 
-本 plan 是纯 client 生命周期逻辑重构，不产出 NBT、worldgen layout、模型或贴图，因此不适用视觉资产 3 轮打磨与 `<PROMISE>`。每个 PR 仍须 atomic commit、饱和行为测试和精确最终 HEAD 证据。
+本 plan 是纯 client 生命周期逻辑重构，不产出 NBT、worldgen layout、模型或贴图，因此不适用视觉资产 3 轮打磨与 `<PROMISE>`。每个逻辑单元必须使用中文 atomic commit，agent 产生的每个 commit 都必须包含真实执行模型 ID 的 `Model:` trailer；每个 PR 仍须饱和行为测试和精确最终 HEAD 证据。
 
 ### §10.2 多 PR 依赖顺序
 
@@ -140,9 +140,9 @@ bot 是协议级客户端，测不了 client 内存——本轨主验收是 clie
 2. `git fetch origin` 后紧邻 `git merge origin/main`；merge 带入任何变更即对新 HEAD 重跑本阶段全部验证。
 3. 使用 Java 17 串行执行 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`，不得以定向测试替代完整 gate。
 4. 对最终完整 SHA 启动 fresh-context、read-only 对抗 validator；任何后续 HEAD 变化都使旧 PASS 失效。
-5. push 后确认 PR head 精确等于已验证 SHA，独立评论 `/review`，等待该 HEAD 的 e2e 与 CodeRabbit；blocker / major 必须返工并从步骤 2 重跑。
+5. push 后确认 PR head 精确等于已验证 SHA，独立评论 `/review`，等待并通过该 HEAD 对应的 e2e 与 CodeRabbit；任何根据 review finding 产生的新 HEAD 都必须从步骤 2 重跑，并重新独立评论 `/review`、等待该新 HEAD 的 e2e 与 CodeRabbit re-review，旧 HEAD 的通过证据不得复用。blocker / major 必须返工直到新 HEAD 收敛。
 6. review 收敛并 merge 后才释放下一阶段；归档 PR 追加 `## Finish Evidence`，包含阶段落点、commit、测试结果、跨仓库核验及遗留项。
 
 ### §10.4 单次 consume-plan 全自动到 merge
 
-用户提交一次 `/consume-plan plan-refactor-client-store-lifecycle-v1` 后，调度方按 §10.2 串行完成 PR-1 至 PR-5：每个 PR 使用独立实施 / 返工上下文，自动执行 §10.3 门禁、等待 review、修复真 finding 并 merge；除必须由用户裁决的产品方向或不可逆操作外不中途回问。终态为计划全部阶段 `✅ YYYY-MM-DD`、`## Finish Evidence` 完整，并迁入 `docs/finished_plans/plan-refactor-client-store-lifecycle-v1.md`。
+用户提交一次 `/consume-plan plan-refactor-client-store-lifecycle-v1` 后，调度方按 §10.2 串行完成 PR-1 至 PR-5：每个 PR 使用独立实施 / 返工上下文，自动执行 §10.3 门禁、等待 review、修复真 finding；每次修复产生新 HEAD 后自动重新独立评论 `/review`，并等待该新 HEAD 对应的 e2e 与 CodeRabbit re-review 通过后才 merge，绝不复用旧 HEAD 证据。除必须由用户裁决的产品方向或不可逆操作外不中途回问。终态为计划全部阶段 `✅ YYYY-MM-DD`、`## Finish Evidence` 完整，并迁入 `docs/finished_plans/plan-refactor-client-store-lifecycle-v1.md`。
