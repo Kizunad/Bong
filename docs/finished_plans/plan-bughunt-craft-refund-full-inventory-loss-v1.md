@@ -1,6 +1,6 @@
 # plan-bughunt-craft-refund-full-inventory-loss-v1
 
-> **active bughunt plan（归档审计发现 P4 验收缺口）**。一句话主题：修复 `craft` 显式取消或产物入包失败后的材料退款在背包已满时只记录日志、却不入包、不落地且删除 `CraftSession`，导致应返材料永久丢失的问题。
+> **已归档 bughunt plan**。一句话主题：修复 `craft` 显式取消或产物入包失败后的材料退款在背包已满时只记录日志、却不入包、不落地且删除 `CraftSession`，导致应返材料永久丢失的问题。
 
 ## 当前状态
 
