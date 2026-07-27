@@ -3218,7 +3218,7 @@ mod tests {
     #[test]
     fn ecs_coffin_place_rejected_missing_dimension() {
         // fail-closed：CurrentDimension 组件缺失时同样拒绝，不得隐式当作主世界处理。
-        let (mut app, client_entity, item_instance_id, _helper) =
+        let (mut app, client_entity, item_instance_id, mut helper) =
             app_with_place_system_holding_coffin();
         app.world_mut()
             .entity_mut(client_entity)
@@ -3239,6 +3239,13 @@ mod tests {
                 .lookup(target)
                 .is_none(),
             "缺失 CurrentDimension 时应 fail-closed 拒绝，但棺仍被注册于 {target:?}"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度组件缺失同样必须下发拒绝 chat 反馈；实际 messages={messages:?}"
         );
     }
 
@@ -3338,7 +3345,7 @@ mod tests {
     #[test]
     fn ecs_coffin_enter_rejected_missing_dimension() {
         // fail-closed：CurrentDimension 组件缺失时同样拒绝，不得隐式当作主世界处理。
-        let (mut app, client_entity, lower, _helper) =
+        let (mut app, client_entity, lower, mut helper) =
             app_with_enter_system_and_registered_coffin();
         app.world_mut()
             .entity_mut(client_entity)
@@ -3359,6 +3366,13 @@ mod tests {
                 .occupied_by
                 .is_none(),
             "缺失 CurrentDimension 时应 fail-closed 拒绝，但 registry 显示已被占用"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度组件缺失同样必须下发拒绝 chat 反馈；实际 messages={messages:?}"
         );
     }
 
@@ -3435,7 +3449,7 @@ mod tests {
     #[test]
     fn ecs_coffin_break_rejected_missing_dimension() {
         // fail-closed：CurrentDimension 组件缺失时同样拒绝，不得隐式当作主世界处理。
-        let (mut app, client_entity) = app_with_break_system();
+        let (mut app, client_entity, mut helper) = app_with_break_system_and_helper();
         let lower = BlockPos::new(0, 0, 0);
         let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
         app.world_mut()
@@ -3459,6 +3473,13 @@ mod tests {
         assert!(
             app.world().get_entity(marker).is_some(),
             "缺失 CurrentDimension 时应 fail-closed 拒绝，但 marker 实体已被 despawn"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度组件缺失同样必须下发拒绝 chat 反馈；实际 messages={messages:?}"
         );
     }
 
@@ -3504,7 +3525,7 @@ mod tests {
     #[test]
     fn ecs_coffin_reclaim_rejected_missing_dimension() {
         // fail-closed：CurrentDimension 组件缺失时同样拒绝，不得隐式当作主世界处理。
-        let (mut app, client_entity) = app_with_reclaim_system();
+        let (mut app, client_entity, mut helper) = app_with_reclaim_system_and_helper();
         let lower = BlockPos::new(0, 0, 0);
         let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
         app.world_mut()
@@ -3528,6 +3549,13 @@ mod tests {
         assert!(
             app.world().get_entity(marker).is_some(),
             "缺失 CurrentDimension 时应 fail-closed 拒绝，但 marker 实体已被 despawn"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("主世界")),
+            "维度组件缺失同样必须下发拒绝 chat 反馈；实际 messages={messages:?}"
         );
     }
 }
