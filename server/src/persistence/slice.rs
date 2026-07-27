@@ -4,7 +4,7 @@
 //! descriptors and state machines below pin the invariants that later migrations
 //! must preserve without changing the existing SQLite ownership model.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use valence::prelude::{Resource, World};
 
@@ -455,6 +455,7 @@ pub struct ReconnectHandoffFailure {
 pub struct ReconnectHandoffReport {
     pub saves_attempted: usize,
     pub saves_completed: usize,
+    pub blocked_saves: Vec<SliceId>,
     pub loads_attempted: usize,
     pub loads_completed: usize,
     pub failures: Vec<ReconnectHandoffFailure>,
@@ -463,8 +464,8 @@ pub struct ReconnectHandoffReport {
 /// Enforces all disconnect saves before any same-tick reconnect hydrate.
 ///
 /// Hooks run synchronously in registry order through exclusive `World` access.
-/// Hydration is skipped entirely when any disconnect save fails, so a reconnect
-/// cannot combine freshly loaded slices with stale durable rows from failed saves.
+/// Hydration is skipped entirely when any disconnect save fails or is blocked,
+/// so a reconnect cannot combine freshly loaded slices with stale durable rows.
 pub fn dispatch_reconnect_handoff(
     world: &mut World,
     handoff_key: impl Into<String>,
@@ -496,7 +497,10 @@ pub fn dispatch_reconnect_handoff(
             handoff_key: handoff_key.clone(),
         };
         match save(world, &context) {
-            Ok(_) => report.saves_completed += 1,
+            Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
+                report.saves_completed += 1;
+            }
+            Ok(SliceRunOutcome::SkippedBlocked) => report.blocked_saves.push(descriptor.id),
             Err(error) => report.failures.push(ReconnectHandoffFailure {
                 slice_id: descriptor.id,
                 error,
@@ -504,7 +508,7 @@ pub fn dispatch_reconnect_handoff(
         }
     }
 
-    if !report.failures.is_empty() {
+    if !report.blocked_saves.is_empty() || !report.failures.is_empty() {
         return report;
     }
 
@@ -567,12 +571,35 @@ impl<E> SliceActivationError<E> {
     }
 }
 
+/// Opaque identity shared only by state derived from one guarded subject.
+#[derive(Debug, Clone)]
+struct SliceSubject(Arc<()>);
+
+impl SliceSubject {
+    fn new() -> Self {
+        Self(Arc::new(()))
+    }
+
+    fn is_same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl PartialEq for SliceSubject {
+    fn eq(&self, other: &Self) -> bool {
+        self.is_same(other)
+    }
+}
+
+impl Eq for SliceSubject {}
+
 /// Runtime value plus the write barrier implied by its load result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct GuardedSlice<T, E> {
     value: T,
     load_state: SliceLoadState<E>,
     binding: WriteBinding,
+    subject: SliceSubject,
 }
 
 impl<T, E> SliceLoad<T, E> {
@@ -592,11 +619,13 @@ impl<T, E> SliceLoad<T, E> {
                 value: on_missing(),
                 load_state: SliceLoadState::Missing,
                 binding: descriptor.write_binding,
+                subject: SliceSubject::new(),
             }),
             Self::Loaded(value) => Ok(GuardedSlice {
                 value,
                 load_state: SliceLoadState::Loaded,
                 binding: descriptor.write_binding,
+                subject: SliceSubject::new(),
             }),
             Self::Failed(error) if descriptor.load_failure == LoadFailurePolicy::RefuseStartup => {
                 Err(SliceActivationError {
@@ -610,6 +639,7 @@ impl<T, E> SliceLoad<T, E> {
                     value,
                     load_state: SliceLoadState::Failed(error),
                     binding: descriptor.write_binding,
+                    subject: SliceSubject::new(),
                 })
             }
         }
@@ -649,6 +679,7 @@ impl std::error::Error for SliceWriteBlocked {}
 pub struct SliceWritePermit<'a, T> {
     value: &'a T,
     binding: WriteBinding,
+    subject: SliceSubject,
     outlet: WriteOutlet,
 }
 
@@ -671,16 +702,53 @@ impl<T, E> GuardedSlice<T, E> {
         &self.value
     }
 
-    pub fn value_mut(&mut self) -> &mut T {
-        &mut self.value
-    }
-
     pub fn load_state(&self) -> &SliceLoadState<E> {
         &self.load_state
     }
 
     pub const fn binding(&self) -> WriteBinding {
         self.binding
+    }
+
+    /// Restores dirty acknowledgement state for this exact guarded subject.
+    pub fn dirty_tracker_at(&self, revision: DirtyRevision) -> DirtyTracker {
+        DirtyTracker {
+            binding: self.binding,
+            subject: self.subject.clone(),
+            current: revision,
+            acknowledged: revision,
+        }
+    }
+
+    /// Restores the durable revision fence for this exact guarded subject.
+    pub fn persisted_revision_fence_at(
+        &self,
+        ordering: WriteOrdering,
+        persisted: DirtyRevision,
+    ) -> PersistedRevisionFence {
+        PersistedRevisionFence {
+            binding: self.binding,
+            subject: self.subject.clone(),
+            ordering,
+            persisted,
+        }
+    }
+
+    /// Applies one mutation only after proving the tracker belongs to this subject.
+    ///
+    /// Revision overflow and wrong-subject errors are reported before the closure
+    /// receives mutable access, so an untrackable mutation can never occur.
+    pub fn mutate<R>(
+        &mut self,
+        tracker: &mut DirtyTracker,
+        mutate: impl FnOnce(&mut T) -> R,
+    ) -> Result<(DirtyRevision, R), GuardedSliceMutationError> {
+        tracker.ensure_subject(self.binding, &self.subject)?;
+        let revision = tracker
+            .mark_dirty()
+            .map_err(|_| GuardedSliceMutationError::RevisionExhausted)?;
+        let result = mutate(&mut self.value);
+        Ok((revision, result))
     }
 
     pub fn write_permit(
@@ -693,6 +761,7 @@ impl<T, E> GuardedSlice<T, E> {
         Ok(SliceWritePermit {
             value: &self.value,
             binding: self.binding,
+            subject: self.subject.clone(),
             outlet,
         })
     }
@@ -713,18 +782,19 @@ impl DirtyRevision {
 }
 
 /// Snapshot minted only by the tracker bound to the guarded slice's writer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DirtySnapshot {
     binding: WriteBinding,
+    subject: SliceSubject,
     revision: DirtyRevision,
 }
 
 impl DirtySnapshot {
-    pub const fn binding(self) -> WriteBinding {
+    pub const fn binding(&self) -> WriteBinding {
         self.binding
     }
 
-    pub const fn revision(self) -> DirtyRevision {
+    pub const fn revision(&self) -> DirtyRevision {
         self.revision
     }
 }
@@ -772,60 +842,116 @@ impl fmt::Display for WriteBindingMismatch {
 impl std::error::Error for WriteBindingMismatch {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardedSliceMutationError {
+    WrongBinding(WriteBindingMismatch),
+    WrongSubject,
+    RevisionExhausted,
+}
+
+impl fmt::Display for GuardedSliceMutationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WrongBinding(error) => error.fmt(formatter),
+            Self::WrongSubject => formatter.write_str("dirty tracker belongs to another subject"),
+            Self::RevisionExhausted => {
+                formatter.write_str("persistence dirty revision exhausted u64")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GuardedSliceMutationError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotProvenanceError {
+    WrongBinding(WriteBindingMismatch),
+    WrongSubject,
+}
+
+impl fmt::Display for SnapshotProvenanceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WrongBinding(error) => error.fmt(formatter),
+            Self::WrongSubject => formatter.write_str("write permit belongs to another subject"),
+        }
+    }
+}
+
+impl std::error::Error for SnapshotProvenanceError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirtyAcknowledgement {
     Acknowledged,
     Stale,
     WrongBinding(WriteBindingMismatch),
+    WrongSubject,
 }
 
 /// In-memory dirty acknowledgement state for one write domain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DirtyTracker {
     binding: WriteBinding,
+    subject: SliceSubject,
     current: DirtyRevision,
     acknowledged: DirtyRevision,
 }
 
 impl DirtyTracker {
-    /// Restores the in-memory tracker at the durable revision observed during hydrate.
-    pub const fn clean_at(binding: WriteBinding, revision: DirtyRevision) -> Self {
-        Self {
-            binding,
-            current: revision,
-            acknowledged: revision,
-        }
-    }
-
-    pub const fn binding(self) -> WriteBinding {
+    pub const fn binding(&self) -> WriteBinding {
         self.binding
     }
 
-    pub fn mark_dirty(&mut self) -> Result<DirtyRevision, RevisionExhausted> {
+    fn ensure_subject(
+        &self,
+        binding: WriteBinding,
+        subject: &SliceSubject,
+    ) -> Result<(), GuardedSliceMutationError> {
+        if binding != self.binding {
+            return Err(GuardedSliceMutationError::WrongBinding(
+                WriteBindingMismatch {
+                    expected: self.binding,
+                    actual: binding,
+                },
+            ));
+        }
+        if !self.subject.is_same(subject) {
+            return Err(GuardedSliceMutationError::WrongSubject);
+        }
+        Ok(())
+    }
+
+    fn mark_dirty(&mut self) -> Result<DirtyRevision, RevisionExhausted> {
         let next = self.current.0.checked_add(1).ok_or(RevisionExhausted)?;
         self.current = DirtyRevision(next);
         Ok(self.current)
     }
 
-    pub fn is_dirty(self) -> bool {
+    pub fn is_dirty(&self) -> bool {
         self.current != self.acknowledged
     }
 
-    pub fn current_revision(self) -> DirtyRevision {
+    pub fn current_revision(&self) -> DirtyRevision {
         self.current
     }
 
     pub fn begin_snapshot<T>(
-        self,
+        &self,
         permit: &SliceWritePermit<'_, T>,
-    ) -> Result<Option<DirtySnapshot>, WriteBindingMismatch> {
+    ) -> Result<Option<DirtySnapshot>, SnapshotProvenanceError> {
         if permit.binding != self.binding {
-            return Err(WriteBindingMismatch {
-                expected: self.binding,
-                actual: permit.binding,
-            });
+            return Err(SnapshotProvenanceError::WrongBinding(
+                WriteBindingMismatch {
+                    expected: self.binding,
+                    actual: permit.binding,
+                },
+            ));
         }
-        Ok(self.is_dirty().then_some(DirtySnapshot {
+        if !permit.subject.is_same(&self.subject) {
+            return Err(SnapshotProvenanceError::WrongSubject);
+        }
+        Ok(self.is_dirty().then(|| DirtySnapshot {
             binding: self.binding,
+            subject: self.subject.clone(),
             revision: self.current,
         }))
     }
@@ -837,6 +963,9 @@ impl DirtyTracker {
                 expected: self.binding,
                 actual: receipt.binding,
             });
+        }
+        if !receipt.subject.is_same(&self.subject) {
+            return DirtyAcknowledgement::WrongSubject;
         }
         if receipt.revision != self.current {
             return DirtyAcknowledgement::Stale;
@@ -886,6 +1015,7 @@ impl<T> DurableWriteRequest<'_, T> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct DurableWriteReceipt {
     binding: WriteBinding,
+    subject: SliceSubject,
     revision: DirtyRevision,
 }
 
@@ -902,6 +1032,7 @@ impl DurableWriteReceipt {
 #[derive(Debug, PartialEq, Eq)]
 pub enum DurableCommitError<E> {
     WrongBinding(WriteBindingMismatch),
+    WrongSubject,
     StaleRevision {
         persisted: DirtyRevision,
         attempted: DirtyRevision,
@@ -910,51 +1041,47 @@ pub enum DurableCommitError<E> {
 }
 
 /// Durable revision fence and receipt minter for one registered write authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct PersistedRevisionFence {
     binding: WriteBinding,
+    subject: SliceSubject,
     ordering: WriteOrdering,
     persisted: DirtyRevision,
 }
 
-impl PersistedRevisionFence {
-    /// Restores the durable fence from the revision stored alongside the slice.
-    pub const fn new(
-        binding: WriteBinding,
-        ordering: WriteOrdering,
-        persisted: DirtyRevision,
-    ) -> Self {
-        Self {
-            binding,
-            ordering,
-            persisted,
-        }
+/// Capability issued only inside persistence after a durable transaction commits.
+pub(in crate::persistence) mod durable_writer {
+    #[derive(Debug)]
+    pub struct Capability {
+        _private: (),
     }
 
-    pub const fn binding(self) -> WriteBinding {
+    #[allow(dead_code)]
+    pub(in crate::persistence) const fn acquire() -> Capability {
+        Capability { _private: () }
+    }
+}
+
+impl PersistedRevisionFence {
+    pub const fn binding(&self) -> WriteBinding {
         self.binding
     }
 
-    pub fn persisted_revision(self) -> DirtyRevision {
+    pub fn persisted_revision(&self) -> DirtyRevision {
         self.persisted
     }
 
-    /// Executes the writer adapter and mints a receipt only after it reports success.
+    /// Executes the writer adapter and mints a receipt only after it returns the
+    /// persistence-private proof produced after its storage transaction or CAS.
     ///
-    /// CAS adapters receive both the expected durable revision and the new revision
-    /// in `DurableWriteRequest`; serialized adapters receive the same values for
-    /// auditability. A failed or stale write never advances the fence and never
-    /// yields a receipt that could clear dirty state.
-    /// This stays crate-private so external consumers cannot turn an arbitrary
-    /// `Ok(())` callback into a durable receipt. Production adapters live inside
-    /// the persistence crate boundary and remain responsible for reporting storage
-    /// success only after the serialized write or revision CAS commits.
+    /// Subject checks happen before the adapter runs, so one player's permit or
+    /// snapshot can never advance another player's durable fence.
     #[allow(dead_code)]
-    pub(crate) fn commit<T, E>(
+    pub(in crate::persistence) fn commit<T, E>(
         &mut self,
         permit: SliceWritePermit<'_, T>,
         snapshot: DirtySnapshot,
-        write: impl FnOnce(DurableWriteRequest<'_, T>) -> Result<(), E>,
+        write: impl FnOnce(DurableWriteRequest<'_, T>) -> Result<durable_writer::Capability, E>,
     ) -> Result<DurableWriteReceipt, DurableCommitError<E>> {
         if permit.binding != self.binding {
             return Err(DurableCommitError::WrongBinding(WriteBindingMismatch {
@@ -968,6 +1095,12 @@ impl PersistedRevisionFence {
                 actual: snapshot.binding,
             }));
         }
+        if !permit.subject.is_same(&self.subject)
+            || !snapshot.subject.is_same(&self.subject)
+            || !permit.subject.is_same(&snapshot.subject)
+        {
+            return Err(DurableCommitError::WrongSubject);
+        }
         if snapshot.revision <= self.persisted {
             return Err(DurableCommitError::StaleRevision {
                 persisted: self.persisted,
@@ -975,7 +1108,7 @@ impl PersistedRevisionFence {
             });
         }
 
-        write(DurableWriteRequest {
+        let _capability = write(DurableWriteRequest {
             value: permit.value,
             binding: self.binding,
             expected_persisted_revision: self.persisted,
@@ -988,6 +1121,7 @@ impl PersistedRevisionFence {
         self.persisted = snapshot.revision;
         Ok(DurableWriteReceipt {
             binding: self.binding,
+            subject: self.subject.clone(),
             revision: snapshot.revision,
         })
     }
@@ -1315,6 +1449,7 @@ mod tests {
     struct HandoffTrace {
         events: Vec<(SliceRunReason, u64, u64, String)>,
         fail_save: bool,
+        block_save: bool,
     }
 
     impl Resource for HandoffTrace {}
@@ -1329,6 +1464,8 @@ mod tests {
         ));
         if trace.fail_save {
             Err(SliceRunError::new("disconnect save failed"))
+        } else if trace.block_save {
+            Ok(SliceRunOutcome::SkippedBlocked)
         } else {
             Ok(SliceRunOutcome::Flushed)
         }
@@ -1372,6 +1509,7 @@ mod tests {
             ReconnectHandoffReport {
                 saves_attempted: 2,
                 saves_completed: 2,
+                blocked_saves: Vec::new(),
                 loads_attempted: 2,
                 loads_completed: 2,
                 failures: Vec::new(),
@@ -1402,9 +1540,33 @@ mod tests {
         let report = dispatch_reconnect_handoff(&mut world, "offline:test", &clock);
         assert_eq!(report.saves_attempted, 2);
         assert_eq!(report.saves_completed, 0);
+        assert!(report.blocked_saves.is_empty());
         assert_eq!(report.loads_attempted, 0);
         assert_eq!(report.loads_completed, 0);
         assert_eq!(report.failures.len(), 2);
+        assert_eq!(world.resource::<HandoffTrace>().events.len(), 2);
+        assert!(world
+            .resource::<HandoffTrace>()
+            .events
+            .iter()
+            .all(|event| event.0 == SliceRunReason::DisconnectSave));
+
+        world.resource_mut::<HandoffTrace>().events.clear();
+        world.resource_mut::<HandoffTrace>().fail_save = false;
+        world.resource_mut::<HandoffTrace>().block_save = true;
+        let report = dispatch_reconnect_handoff(&mut world, "offline:test", &clock);
+        assert_eq!(report.saves_attempted, 2);
+        assert_eq!(report.saves_completed, 0);
+        assert_eq!(
+            report.blocked_saves,
+            vec![
+                SliceId::new("player.handoff_first"),
+                SliceId::new("player.handoff_second"),
+            ]
+        );
+        assert_eq!(report.loads_attempted, 0);
+        assert_eq!(report.loads_completed, 0);
+        assert!(report.failures.is_empty());
         assert_eq!(world.resource::<HandoffTrace>().events.len(), 2);
         assert!(world
             .resource::<HandoffTrace>()
@@ -1481,25 +1643,97 @@ mod tests {
     }
 
     #[test]
-    fn failed_durable_write_and_stale_receipt_never_clear_dirty_state() {
-        let descriptor = basic_descriptor("player.dirty", 10);
-        let guarded = SliceLoad::<u32, &str>::Loaded(9)
+    fn mutation_and_durable_receipts_remain_bound_to_one_guarded_subject() {
+        let descriptor = basic_descriptor("player.subject", 10);
+        let mut first = SliceLoad::<u32, &str>::Loaded(9)
             .activate(&descriptor, || 0, |_| 0)
             .unwrap();
-        let mut tracker = DirtyTracker::clean_at(TEST_BINDING, DirtyRevision::default());
-        let mut fence = PersistedRevisionFence::new(
-            TEST_BINDING,
-            WriteOrdering::Serialized,
-            DirtyRevision::default(),
+        let mut second = SliceLoad::<u32, &str>::Loaded(9)
+            .activate(&descriptor, || 0, |_| 0)
+            .unwrap();
+        let mut first_tracker = first.dirty_tracker_at(DirtyRevision::default());
+        let mut second_tracker = second.dirty_tracker_at(DirtyRevision::default());
+        let mut first_fence =
+            first.persisted_revision_fence_at(WriteOrdering::Serialized, DirtyRevision::default());
+
+        let (revision, ()) = first
+            .mutate(&mut first_tracker, |value| *value = 10)
+            .unwrap();
+        assert_eq!(revision, DirtyRevision::new(1));
+        assert_eq!(*first.value(), 10);
+        assert!(first_tracker.is_dirty());
+
+        let mut wrong_subject_closure_called = false;
+        assert_eq!(
+            second.mutate(&mut first_tracker, |_| {
+                wrong_subject_closure_called = true;
+            }),
+            Err(GuardedSliceMutationError::WrongSubject)
+        );
+        assert!(!wrong_subject_closure_called);
+        assert_eq!(*second.value(), 9);
+
+        let second_permit = second.write_permit(WriteOutlet::Autosave).unwrap();
+        assert_eq!(
+            first_tracker.begin_snapshot(&second_permit),
+            Err(SnapshotProvenanceError::WrongSubject)
         );
 
-        tracker.mark_dirty().unwrap();
+        second
+            .mutate(&mut second_tracker, |value| *value = 11)
+            .unwrap();
+        let second_permit = second.write_permit(WriteOutlet::Autosave).unwrap();
+        let second_snapshot = second_tracker
+            .begin_snapshot(&second_permit)
+            .unwrap()
+            .unwrap();
+        let mut wrong_subject_writer_called = false;
+        assert_eq!(
+            first_fence.commit(second_permit, second_snapshot, |_request| {
+                wrong_subject_writer_called = true;
+                Ok::<_, &str>(durable_writer::acquire())
+            }),
+            Err(DurableCommitError::WrongSubject)
+        );
+        assert!(!wrong_subject_writer_called);
+        assert_eq!(first_fence.persisted_revision(), DirtyRevision::default());
+
+        let first_permit = first.write_permit(WriteOutlet::Autosave).unwrap();
+        let first_snapshot = first_tracker
+            .begin_snapshot(&first_permit)
+            .unwrap()
+            .unwrap();
+        let first_receipt = first_fence
+            .commit(first_permit, first_snapshot, |_request| {
+                Ok::<_, &str>(durable_writer::acquire())
+            })
+            .unwrap();
+        assert_eq!(
+            second_tracker.acknowledge(first_receipt),
+            DirtyAcknowledgement::WrongSubject
+        );
+        assert!(second_tracker.is_dirty());
+    }
+
+    #[test]
+    fn failed_durable_write_and_stale_receipt_never_clear_dirty_state() {
+        let descriptor = basic_descriptor("player.dirty", 10);
+        let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
+            .activate(&descriptor, || 0, |_| 0)
+            .unwrap();
+        let mut tracker = guarded.dirty_tracker_at(DirtyRevision::default());
+        let mut fence = guarded
+            .persisted_revision_fence_at(WriteOrdering::Serialized, DirtyRevision::default());
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
         let first_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
         let first = tracker.begin_snapshot(&first_permit).unwrap().unwrap();
-        tracker.mark_dirty().unwrap();
+        guarded.mutate(&mut tracker, |value| *value = 11).unwrap();
         let failed_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
         let failed = tracker.begin_snapshot(&failed_permit).unwrap().unwrap();
-        let result = fence.commit(failed_permit, failed, |_request| Err("disk unavailable"));
+        let result = fence.commit(failed_permit, failed, |_request| {
+            Err::<durable_writer::Capability, _>("disk unavailable")
+        });
         assert_eq!(
             result,
             Err(DurableCommitError::WriteFailed("disk unavailable"))
@@ -1508,7 +1742,9 @@ mod tests {
 
         let stale_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
         let stale_receipt = fence
-            .commit(stale_permit, first, |_request| Ok::<_, &str>(()))
+            .commit(stale_permit, first, |_request| {
+                Ok::<_, &str>(durable_writer::acquire())
+            })
             .unwrap();
         assert_eq!(
             tracker.acknowledge(stale_receipt),
@@ -1519,7 +1755,9 @@ mod tests {
         let latest_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
         let latest = tracker.begin_snapshot(&latest_permit).unwrap().unwrap();
         let receipt = fence
-            .commit(latest_permit, latest, |_request| Ok::<_, &str>(()))
+            .commit(latest_permit, latest, |_request| {
+                Ok::<_, &str>(durable_writer::acquire())
+            })
             .unwrap();
         assert_eq!(
             tracker.acknowledge(receipt),
@@ -1535,27 +1773,47 @@ mod tests {
             WriteAuthority::new("test.other.writer"),
         );
         let descriptor = basic_descriptor("player.bound", 10);
-        let guarded = SliceLoad::<u32, &str>::Loaded(9)
+        let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
             .activate(&descriptor, || 0, |_| 0)
             .unwrap();
+        let other_descriptor = SliceDescriptor {
+            write_binding: OTHER_BINDING,
+            ..basic_descriptor("player.other", 20)
+        };
+        let other = SliceLoad::<u32, &str>::Loaded(9)
+            .activate(&other_descriptor, || 0, |_| 0)
+            .unwrap();
+        let mut wrong_tracker = other.dirty_tracker_at(DirtyRevision::default());
+        let mut wrong_subject_mutation_called = false;
+        assert!(matches!(
+            guarded.mutate(&mut wrong_tracker, |_| {
+                wrong_subject_mutation_called = true;
+            }),
+            Err(GuardedSliceMutationError::WrongBinding(
+                WriteBindingMismatch {
+                    expected: OTHER_BINDING,
+                    actual: TEST_BINDING,
+                }
+            ))
+        ));
+        assert!(!wrong_subject_mutation_called);
         let permit = guarded.write_permit(WriteOutlet::Shutdown).unwrap();
-        let mut wrong_tracker = DirtyTracker::clean_at(OTHER_BINDING, DirtyRevision::default());
-        wrong_tracker.mark_dirty().unwrap();
-        assert_eq!(
-            wrong_tracker.begin_snapshot(&permit).unwrap_err(),
-            WriteBindingMismatch {
-                expected: OTHER_BINDING,
-                actual: TEST_BINDING,
-            }
-        );
+        assert!(matches!(
+            wrong_tracker.begin_snapshot(&permit),
+            Err(SnapshotProvenanceError::WrongBinding(
+                WriteBindingMismatch {
+                    expected: OTHER_BINDING,
+                    actual: TEST_BINDING,
+                }
+            ))
+        ));
 
-        let mut tracker = DirtyTracker::clean_at(TEST_BINDING, DirtyRevision::new(41));
-        let mut fence = PersistedRevisionFence::new(
-            TEST_BINDING,
+        let mut tracker = guarded.dirty_tracker_at(DirtyRevision::new(41));
+        let mut fence = guarded.persisted_revision_fence_at(
             WriteOrdering::PersistedRevisionCas,
             DirtyRevision::new(41),
         );
-        tracker.mark_dirty().unwrap();
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
         let permit = guarded.write_permit(WriteOutlet::Shutdown).unwrap();
         let snapshot = tracker.begin_snapshot(&permit).unwrap().unwrap();
         let receipt = fence
@@ -1567,7 +1825,7 @@ mod tests {
                 );
                 assert_eq!(request.write_revision(), DirtyRevision::new(42));
                 assert_eq!(request.ordering(), WriteOrdering::PersistedRevisionCas);
-                Ok::<_, &str>(())
+                Ok::<_, &str>(durable_writer::acquire())
             })
             .unwrap();
         assert_eq!(fence.persisted_revision(), DirtyRevision::new(42));
@@ -1579,14 +1837,28 @@ mod tests {
     }
 
     #[test]
-    fn dirty_revision_overflow_fails_without_wrapping_clean_state() {
+    fn dirty_revision_overflow_rejects_mutation_without_changing_value() {
+        let descriptor = basic_descriptor("player.overflow", 10);
+        let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
+            .activate(&descriptor, || 0, |_| 0)
+            .unwrap();
         let mut tracker = DirtyTracker {
             binding: TEST_BINDING,
+            subject: guarded.subject.clone(),
             current: DirtyRevision::new(u64::MAX),
             acknowledged: DirtyRevision::new(u64::MAX - 1),
         };
+        let mut closure_called = false;
 
-        assert_eq!(tracker.mark_dirty(), Err(RevisionExhausted));
+        assert_eq!(
+            guarded.mutate(&mut tracker, |value| {
+                closure_called = true;
+                *value = 10;
+            }),
+            Err(GuardedSliceMutationError::RevisionExhausted)
+        );
+        assert!(!closure_called);
+        assert_eq!(*guarded.value(), 9);
         assert!(tracker.is_dirty());
         assert_eq!(tracker.current_revision(), DirtyRevision::new(u64::MAX));
     }
