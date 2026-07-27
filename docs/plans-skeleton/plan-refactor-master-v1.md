@@ -1,0 +1,108 @@
+# plan-refactor-master-v1 — Client/Server 大重构总纲（重构计划族 R1-R10）
+
+一句话：230+ 份点状 bughunt/feature plan 背后反复出现的是 **8 个系统性根因**（session 生命周期各写各的、持久化各漏各的、qi 账本可绕、C2S 无门禁、S2C 双轨散装、client store 断线裸奔、UI 无基类、AV 无单一事实源）。本计划族用 9 条重构轨道一次性把根因变成**共享基础设施**，以协议级 bot e2e 为主验收门，代码目标是干净直接无面条（拆 3 个 2 万行级 god file）。
+
+> 撰写依据：2026-07-27 五路侦察（server/client 结构地图、84 active plan、146 skeleton、16 开放 PR 全量盘点）。各轨道 skeleton 文件见 §2 表。
+
+## 0. 范围与铁律
+
+- **只重构 `server/` + `client/`**。`agent/`、`worldgen/`、`library-web/` 不动，相关 plan 独立保留（§6.11-6.12）。
+- 对外契约（Redis IPC、proto schema）原则上不动形状；确需变更走 buf breaking + samples 同步，agent 侧只做被动 regenerate。**不写兼容层**——切换一次到位，删旧路径。
+- 真元守恒律、worldview 正典、招式 A/V 差异化红线全部继续生效。
+- **测试方针（用户 2026-07-27 指示，仅限重构轨道，覆盖根 CLAUDE.md「饱和化测试」节）**：
+  1. **bot e2e 场景是主验收门**——每条轨道自带 3-8 个 `scripts/bot/scenarios/` 场景，先于/伴随重构落地；
+  2. 单测只保留**契约 pin**：schema sample 对拍、守恒断言、状态机转换、注册表强制扫描；
+  3. 与被删实现绑定的旧单测允许随代码删除；不要求饱和覆盖；
+  4. feature plan（非重构轨）不适用本条，仍按根 CLAUDE.md。
+- 代码风格：巨型 match/god function 拆注册表；复制粘贴生命周期抽共享框架；仓库既有范式「集中注册表 + 显式映射」保留（可 grep 性优先，不引入注解扫描/反射魔法）。
+
+## 1. 基线：先清空在飞 PR（重构动核心文件前必须 merge/close）
+
+| PR | 内容 | 对重构的影响 |
+|---|---|---|
+| #1287 | 冷却按 skill_id 全局重构（14 resolver + network 三文件） | R9/R4 基线，先 merge |
+| #1289 | Lifecycle 持久化 + v39 迁移（**e2e 红，需先查清**） | R3 首批宿主；与 #1259 同改 `combat/lifecycle.rs`，注意 auto-merge 叠字段坑 |
+| #1288 | KnownTechniques 载入守护 | R3 载入守护先例 |
+| #1259 | satiety P0（新 `nourishment/` 模块 + lifecycle 大改） | R3/R5 基线；PR-2~5 与重构窗口协调（§5.6 冻结窗口） |
+| #1261 | recipe 关服 flush + `scripts/` 生命周期重写 | R3 吸收对象；**全部 tmux 会话改用新脚本** |
+| #1292/#1296/#1299 | carrier NaN / BossDrain zone-shadow / coffin 维度门禁 | R5/R4 吸收清单里标注"已闭环只归档" |
+| #1282/#1290/#1294/#1253 | 新 skeleton ×10（Wounds 重连满血、player-slice 载入守护、炼丹锻器种植 ×7、block-break 集成层） | 已并入各轨吸收清单 / §6.10 |
+| #1281/#1291/#1275 | race/ci-redis 归档回退、nested-pack WITHDRAWN | docs 基线，覆盖矩阵按其终态 |
+| #1249 | fpv-cast-av P3（client juice） | R9 不吸收 fpv plan，契约对齐 |
+
+多个 PR 的 `finalize` check 呈规律性 FAILURE（#1294/#1292/#1289/#1287/#1275/#1253）——疑似 review 工作流基建噪音，P0 核实一次，别当代码问题追。
+
+## 2. 轨道总览
+
+| 轨 | plan 文件 | 核心产出 | 主要文件域 | 吸收 plan 数 |
+|---|---|---|---|---|
+| R1 | `plan-refactor-server-session-v1` | server 统一 InteractionSession 框架 | `server/src/session/`（新）+ 7 域 session.rs | ~13 |
+| R2 | `plan-refactor-client-store-lifecycle-v1` | client SessionScopedStore + 强制登记 | 108 个 `*Store.java` + 断线清理清单 | ~16 |
+| R3 | `plan-refactor-persistence-slices-v1` | 持久化 Slice 框架 + persistence 巨石拆分 | `server/src/persistence/**` + autosave | ~25 |
+| R4 | `plan-refactor-c2s-gate-v1` | C2S 声明式门禁 + handler 巨石拆分 | `client_request_handler.rs` + `network/gate/` | ~24 |
+| R5 | `plan-refactor-qi-ledger-v1` | qi 账本架构强制化（字段收私有） | `qi_physics/**` + 全仓直写点 | ~20 |
+| R6 | `plan-refactor-wire-s2c-v1` | emit builder + client 双轨归一 + 作用域广播 | `network/*_emit.rs`、`proto_convert.rs`、client `network/` | ~12 |
+| R7 | `plan-refactor-client-ui-base-v1` | Screen 基类 + InspectScreen 拆解 + 输入/线程纪律 | client Screen/hud/keybind | ~17 |
+| R9 | `plan-refactor-cast-av-contract-v1` | cast_sync 契约 + SkillAvBinding 单一事实源 | server cast/AV emit + client cast store | ~13 |
+| R10 | `plan-refactor-inventory-core-v1` | inventory 巨石拆分 + InventoryTxn 事务 | `server/src/inventory/**` | ~7 |
+| V | `plan-bot-e2e-coverage-v1`（既有 skeleton 直接促升，不另立） | bot 场景 P1-P6 扩容 + CI 假绿修复 + build token 脚本 | `scripts/bot/**`、CI | ~9 |
+| 基建 | `plan-registry-datafication-v1`（既有 skeleton 直接促升） | 硬编码配方/功法/方块表迁数据 + fail-fast | 三张表 | 自身 |
+
+## 3. 波次与依赖
+
+- **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。
+- **Wave 1**：R6（R2 合入后）、R7（R2 合入后）、R1（R3 P1 合入后）。
+- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）。
+- 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
+- R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
+
+## 4. 文件所有权矩阵（防并行打架，冲突时以本表为准）
+
+- `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast/AV emit+skill 注册=R9。
+- client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；channel 注册区段+桥+router=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；combat cast store=R9。
+- 任何轨道碰他轨文件：只允许"消费对方冻结后的 API"，不允许改对方独占文件；接缝 API 归被依赖方定义。
+
+## 5. 工作流（GPT tmux 多会话）
+
+1. **一轨 = 一个 tmux 会话**（claude-code 映射的 gpt-5.6-sol-xhigh，多轮迭代，可自 spawn subagent）。10+ 会话时：9 轨 + V + registry-datafication + 若干近完成收尾会话。
+2. **认领**：沿用 bugfix 原子 claim——分支 `refactor/<plan-basename>`，create-ref API 创建即认领（201 到手 / 422 甄别）；促升 skeleton→active 在自己分支内完成（每轨一次 `git mv`）。
+3. **编译并发治理（硬约束）**：cargo build/test 全局并发 **≤2**、gradle **≤1**（历史 3 并行 cargo OOM + 塞盘 444G 实录）。V 轨 P0 先落地 `scripts/build-token.sh`（flock 计数令牌，包住 cargo/gradle 调用），**所有会话必须经它跑构建**；写代码不受限。
+4. **磁盘纪律**：常驻 slot/worktree 复用热缓存，严禁每任务新建 worktree 堆积；`bash scripts/wt-janitor.sh` 周期巡检。
+5. **merge 纪律**：push 前 `git fetch origin && git merge origin/main`（紧邻执行）→ 受影响栈门禁重跑（auto-merge 叠字段 E0062/E0415 坑）→ 才 push。多轨同文件（见 §4）互相盯 in-flight PR。
+6. **冻结窗口**：feature plan（satiety PR-2~5、fpv P4/P5、dense-fog 等）触碰重构独占文件时，等对应轨道当前批次合入后再动；反向同理。由跑总纲的调度会话协调。
+7. **每 PR**：中文 commit + `Model:` trailer（真实模型 id）→ `gh pr create`（标题/body 带 plan basename）→ 评论 `/review` → 等 e2e 绿 + CodeRabbit。重构 PR 的验收证据 = bot 场景绿 + 契约 pin 绿。
+8. **调度会话**（可选第 11+ 个 tmux）：盯全族 in-flight PR 的 review 返工、波次放行、冻结窗口协调——只调度不写码，对齐 BugFix 工作流主干职责。
+
+## 6. 覆盖矩阵（全量 plan → 归属；短名省略 plan-/plan-bughunt- 前缀与 -v1 后缀）
+
+> 各轨道文件内的「吸收清单」是权威明细；本节只列**不进 9 条轨道**的部分，保证 84 active + 146 skeleton + 在飞新增 10 全部有归属。促升任何一轨时，P0 必须跑一次「覆盖审计」：枚举 docs 两目录全部 plan 文件 diff 本矩阵，新增 skeleton 即时归类。
+
+- **6.1-6.9 已入轨**：见 R1-R10 各文件吸收清单（合计 ~130 份）。
+- **6.10 V 轨（bot 骨干 + 测试诚实性）**：bot-e2e-coverage（促升本体）、bot-combat-server-data-type-false-positive、bot-multibot-chat-visibility、bot-multibot-entity-spawn-visibility、e2e-command-anchor-rejected、task13-mutation-qi-zero-green、proto-breaking-check-shallow-skip（深检部分，与 R6 P4 联动）；已知 server 侧缺口「fallback 平台 centered on origin 非 spawn」一并修。
+- **6.11 Agent 轨（本次不重构，独立保留逐个消费）**：active——anticheat-tiandao-drop、niche-guardian-redis-dispatch、npc-combat-relic-schema-drift、pseudo-vein-agent-deadwire、war-participate-agent-command-drift、tiandao-schema-dist-start、server-data-s2c-schema-union-drift 的 TS 侧；skeleton——agent-ui-tiandao-revelation-vfx-flag-loss、alchemy-start-intervention-agent-drop、anqi-carrier-charged-agent-narration、arbiter-cjk-redaction-bypass、heart-demon-late-pregen-fallback、narration-target-prefix-routing、poi-novice-tiandao-narration-drain、technique-feedback-bridge、tiandao-agent-ui-click-context-loss、tsy-agent-ui-wrong-player-routing、tsy-enter-exit-agent-silent-drop、worldmodel-rollback-stub、rebirth-tiandao-bridge-gap、tsy-discovery-ui-target-fallback、player-chat-list-unbounded。
+- **6.12 Worldgen 轨（独立保留）**：active——anomaly-raster-runtime-consumer、baolongwang-poi-consumer-gap、raster-check-required-layers、spirit-eye-raster-candidate-disconnect、structure-manifest-loot-consumer、tribulation-scorch-mineral-node-gap、worldgen-pipeline-root-cwd、worldgen-raster-check-cli-noop；skeleton——animal-air-spawn-gravity、spawn-safe-y-surface-drift、spawn-tutorial-poi-y-drift、sword-sea-zone-overlap、tsy-start-raster-env-gap、tsy-y-strata-overlay、worldgen-uint8-maximum-blend、zone-ecology-global-refuge、qi-density-same-source。
+- **6.13 接线拍板轨（module-wiring-gaps-v2 为决策菜单，人工拍板后逐个拆实施 plan；重构后接线成本大降）**：module-wiring-gaps-v2、forge-lingtian-processing-deadpath、poi-trespass-refusal-runtime-gap、silent-signal-runtime-bridge、social-runtime-bridge-gap、k2-identity-social-renown-bridge、war-emergent-group-reputation-gap、npc-combat-gear-v2、social-anonymity-live-refresh-gap、unconsumed-event-feedback、zhenfa-array-flag-e2e-wiring、woliu-dying-master-runtime-gap。
+- **6.14 Feature 轨（独立，注意 §5.6 冻结窗口）**：active——beast-horde、client-login-ux、container-filter-and-completion、gameplay-journey、gathering-tool-bind、halfstep-buff-calibration、iris-integration、nested-pack（已 WITHDRAWN）、social-v2、sou-da-che、satiety-hydration（在飞）、ci-redis-pull-resilience（#1291 返工中）；skeleton——ancient-relic-payoff、bonecoin-wallet-bridge、craft-chain-items、dandao-mutation-gameplay、dazuo、first-technique-grant、lootcrate、neardeath-ux、newbie-30min-hooks-audit、block-break-integration（#1253，基建 skeleton，建议 Wave 2 后评估与 R4 关系）。
+- **6.15 近完成独立收尾（Wave 0 清场，重构不吞）**：craft-refund-full-inventory-loss（余 P4）、dead-armor-contamination-wiring、dense-fog、fpv-cast-av、life-record-epitaph、tribulation-balance。
+- **6.16 Round bundle 拆散复核（不整体消费）**：r1-mechanical-fixes（1/7）、r2-findings、r6-findings、r7-findings、r8-modifier-orphan-audit（2/6）、skeleton r8/r9/r10-findings——由调度会话安排一次性拆散：每条 finding 归入对应轨吸收清单或标独立域修复，原 bundle 归档并留映射表。
+- **6.17 孤立域修复（量少不并簇，随缘消费）**：alchemy-freshness-feed、gathering-mineral-origin-position-break、zone-atmosphere-zoneid-profile-mismatch、zone-environment-audio-loop-fallback（音效映射数据部分）、lingtian-quality-accum-harvest（#1294 在飞）。
+
+## 7. 促升与归档机制（被吸收 plan 的出口）
+
+- 各轨 P0「吸收清单验真」：逐个复读被吸收 plan，第一性验真仍是真缺陷才吸收；已被在飞 PR 修掉的标「已闭环只归档」；验伪的写结论证据。
+- 被吸收 plan 的归档：对应轨道的修复 PR merge 后，**每轨一个 docs-only 批量归档 PR**——每份被吸收 plan 补 `## Finish Evidence`（指向重构 PR + bot 场景 + 验真结论）后 `git mv` 入 `finished_plans/`。这是对「一个 PR 只动一个 plan」的**总纲授权例外**，仅限归档、不改其他内容。
+- 覆盖审计脚本化：枚举 `docs/plan-*.md` + `docs/plans-skeleton/*.md` 与本矩阵 diff，未归属项报红（V 轨 P0 顺手落地）。
+
+## 8. 计划族完成定义
+
+1. 9 条轨道全部归档（各自 bot 场景常绿 + 吸收 plan 全部归档/验伪结案）；
+2. 三个 2 万行级 god file（inventory/mod.rs、client_request_handler.rs、persistence/mod.rs）不复存在，最大单文件 < 3000 行；
+3. `qi_current` 裸写编译不过；client 无未登记的会话态 store；113 C2S 变体全部有显式 GateSpec/no_gate 声明；28 旁路 channel 收编或豁免登记；
+4. bot 场景数从 ~30 增至 ≥80，CI e2e 是唯一主门禁且无已知假绿。
+
+## 9. 开放问题（总纲级，pre-P0 收口）
+
+1. **R8 编号空缺说明**：V 轨复用既有 `plan-bot-e2e-coverage-v1`，不占新编号——确认促升时版本号沿用 v1 还是升 v2（其 P0 已完成，建议原版本续写）。
+2. 调度会话由谁跑（用户手动 / 一个常驻 claude 会话）；波次放行的判定权归属。
+3. build token 的并发上限是否可按本机内存实测上调（默认 cargo≤2/gradle≤1）。
+4. #1289 e2e 红的根因（自称 agent npm 依赖问题）需在基线阶段查实。
