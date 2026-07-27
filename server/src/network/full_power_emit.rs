@@ -355,6 +355,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 75.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
 
         app.update();
@@ -501,6 +502,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 150.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
 
         app.update();
