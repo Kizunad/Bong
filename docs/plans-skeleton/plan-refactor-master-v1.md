@@ -61,6 +61,8 @@
 - `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast/AV emit+skill 注册=R9。
 - client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；channel 注册区段+桥+router=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；combat cast store=R9。
 - 任何轨道碰他轨文件：只允许"消费对方冻结后的 API"，不允许改对方独占文件；接缝 API 归被依赖方定义。
+- **一次性 pre-R3 P1 窄例外**：尽管 `persistence/**` 默认属 R3，`npc-deceased-archive-db-open-rollback` 在 R3 P1 尚未迁移或修改 `persist_npc_deceased_archive` 前，独占该函数的 file↔SQLite 补偿原子性及其同地回归测试，且仅可开一个 focused PR。R3 P0 可冻结接口但不得并改该 symbol；若 R3 P1 先触及它，例外立即失效，由 R3 接管同一故障矩阵，focused plan 只写 handoff/Finish Evidence，不得双线实施。
+- **R5 文件所有权不例外**：`distance-decay-calibration` 与 `scatter-bead-ledger-account-cleanup` 可拥有问题规格、领域调用方和验收，但不得修改 `server/src/qi_physics/**`；所需常数、纯计算 helper 或账本 close/release API 由 R5 冻结并落地，focused plan 只消费该 API。P0 可并行取证，implementation 必须等 R5 对应 API 合入，禁止双线改 qi_physics 文件。
 
 ## 5. 工作流（GPT tmux 多会话）
 
@@ -85,6 +87,7 @@
 - **6.14 Feature 轨（独立，注意 §5.6 冻结窗口）**：active——beast-horde、client-login-ux、container-filter-and-completion、gameplay-journey、gathering-tool-bind、halfstep-buff-calibration、iris-integration、nested-pack（已 WITHDRAWN）、social-v2、sou-da-che、satiety-hydration（在飞）、ci-redis-pull-resilience（#1291 返工中）；skeleton——ancient-relic-payoff、bonecoin-wallet-bridge、craft-chain-items、dandao-mutation-gameplay、dazuo、first-technique-grant、lootcrate、neardeath-ux、newbie-30min-hooks-audit、block-break-integration（#1253，基建 skeleton，建议 Wave 2 后评估与 R4 关系）。
 - **6.15 近完成独立收尾（Wave 0 清场，重构不吞）**：craft-refund-full-inventory-loss（余 P4）、dead-armor-contamination-wiring、dense-fog、fpv-cast-av、life-record-epitaph、tribulation-balance。
 - **6.16 Round bundle 拆散复核（✅ 2026-07-28，不整体消费）**：r1/r2/r6/r7/r8-modifier-audit/r8/r9/r10 已逐 finding 第一性验真、登记唯一 owner 并归档 mapping；60 个 finding mapping rows 中，25 行 independent-domain（含 r8 bundle/audit 的来源重复）归入 10 份 focused successor + 既有 container P2，r10 #1/#2 两行 shutdown flush 由 R3 P3 精确吸收，32 行已修与 1 行退役项仅保留祖先 commit/PR 证据。本轮是 §7 授权的 docs-only 批量归档例外，不宣称 successor 已实施。
+- **6.16a Round bundle focused successors（短名；每项唯一 implementation owner）**：`npc-deceased-archive-db-open-rollback`（r1 P6；§4 pre-R3 P1 窄例外）、`dandao-pill-rush-dead-realm-guard`、`breakthrough-freeze-factor-align`、`modifier-effect-consumer-completion`、`duxu-juebi-quota-marker-lifecycle`、`botany-drag-release-lifecycle`、`distance-decay-calibration`（规格/combat 验收 owner；`qi_physics/**` 由 R5）、`tsy-collapse-hostile-cleanup`、`scatter-bead-ledger-account-cleanup`（zhenfa lifecycle owner；`qi_physics/**` 由 R5）、`shield-break-state-cleanup`。r10 #1/#2 仍仅由 R3 P3 吸收，不计入以上十个 focused owner；Freeze 仍仅由既有 `container-filter-and-completion` P2 实施。
 - **6.17 孤立域修复（量少不并簇，随缘消费）**：alchemy-freshness-feed、gathering-mineral-origin-position-break、zone-atmosphere-zoneid-profile-mismatch、zone-environment-audio-loop-fallback（音效映射数据部分）、lingtian-quality-accum-harvest（#1294 在飞）。
 
 ## 7. 促升与归档机制（被吸收 plan 的出口）

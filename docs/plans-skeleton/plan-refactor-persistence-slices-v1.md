@@ -35,6 +35,7 @@ skeleton：coffin-autosave-inflight-race、identity-persist-key-mismatch、miner
 ## 文件所有权与边界
 
 - 独占：`server/src/persistence/**`、`player/state.rs`+`player/mod.rs` 的 autosave/载入区段、各域的持久化接线点（新增表定义）。
+- 上述独占的唯一例外是 master §4 的 pre-R3 P1 `npc-deceased-archive-db-open-rollback`：R3 P0 不改 `persist_npc_deceased_archive`；若 R3 P1 先触及该 symbol，则例外失效并由 R3 接管 focused 故障矩阵，不能并行实施。
 - 不碰：session 业务逻辑（R1 经钩子接入）、qi 语义（R5）、`client_request_handler.rs`（R4）。
 - 依赖：基线等 #1288/#1289/#1259/#1261 merge；R1 P2 依赖本轨 P1。**本轨是 Wave 0 的锚，最优先动工。**
 

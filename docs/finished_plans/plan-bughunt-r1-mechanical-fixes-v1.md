@@ -14,13 +14,13 @@
 
 | Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | 文档动作 |
 |---|---|---|---|---|
-| P0 Forge Done session 无界增长 | `server/src/forge/mod.rs:1179-1187` 已注册延迟清理，`session.rs:110-152` 记录完成龄 | `already-fixed/invalid`（already-fixed） | commit `b118c467a` / PR #599 | 仅归档 |
+| P0 Forge Done session 无界增长 | `server/src/forge/mod.rs:1179-1187` 已注册延迟清理，`server/src/forge/session.rs:109-153` 记录完成龄 | `already-fixed/invalid`（already-fixed） | commit `b118c467a` / PR #599 | 仅归档 |
 | P1 NPC skill 缺 zone 时吞 qi | `server/src/npc/npc_skill.rs:114-149` 已由 `route_spent_qi_to_overflow` 写 overflow | `already-fixed/invalid`（already-fixed） | commit `269c89e6e` / PR #1043 | 仅归档 |
-| P2 crater center 每 chunk 全扫 | `server/src/world/terrain/giant_sword.rs:948-969` 已缓存，`:1344-1429` 有一致性测试 | `already-fixed/invalid`（already-fixed） | commit `02b646056` / PR #595 | 仅归档 |
-| P3 TSY collapse route 重复注册 | `client/.../ServerDataRouter.java:193` 当前只注册一次 | `already-fixed/invalid`（already-fixed） | commit `4478c6ff5` / PR #576 | 仅归档 |
-| P4 quota release 并发丢更新 | `server/src/persistence/mod.rs:3338-3358` 已使用 IMMEDIATE transaction，`:10703-10763` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `230b9b784` / PR #590 | 仅归档 |
-| P5 ascension completion 并发丢更新 | `server/src/persistence/mod.rs:3158-3181` 已使用 IMMEDIATE transaction，`:10573-10650` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `1f5d30580` / PR #585 | 仅归档 |
-| P6 NPC deceased archive DB-open rollback | `server/src/persistence/mod.rs:4413-4449` 先写 bundle；`:4429` DB-open 与 transaction-open 在补偿闭包外，早退仍绕过 `rollback_file` | `independent-domain-fix` | `docs/plans-skeleton/plan-bughunt-npc-deceased-archive-db-open-rollback-v1.md` | 新建 focused skeleton，唯一 owner |
+| P2 crater center 每 chunk 全扫 | `server/src/world/terrain/giant_sword.rs:948-969` 已缓存，`server/src/world/terrain/giant_sword.rs:1344-1448` 有一致性测试 | `already-fixed/invalid`（already-fixed） | commit `02b646056` / PR #595 | 仅归档 |
+| P3 TSY collapse route 重复注册 | `client/src/main/java/com/bong/client/network/ServerDataRouter.java:193` 当前只注册一次 | `already-fixed/invalid`（already-fixed） | commit `4478c6ff5` / PR #576 | 仅归档 |
+| P4 quota release 并发丢更新 | `server/src/persistence/mod.rs:3338-3358` 已使用 IMMEDIATE transaction，`server/src/persistence/mod.rs:10703-10782` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `230b9b784` / PR #590 | 仅归档 |
+| P5 ascension completion 并发丢更新 | `server/src/persistence/mod.rs:3158-3181` 已使用 IMMEDIATE transaction，`server/src/persistence/mod.rs:10573-10664` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `1f5d30580` / PR #585 | 仅归档 |
+| P6 NPC deceased archive DB-open rollback | `server/src/persistence/mod.rs:4413-4449` 先写 bundle；`server/src/persistence/mod.rs:4429-4447` 的 DB-open 与 transaction-open 在补偿闭包外，早退仍绕过 `rollback_file` | `independent-domain-fix` | `docs/plans-skeleton/plan-bughunt-npc-deceased-archive-db-open-rollback-v1.md` | 新建 focused skeleton，唯一 owner |
 
 ## Finish Evidence
 

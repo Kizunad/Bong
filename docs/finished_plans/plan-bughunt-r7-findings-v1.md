@@ -15,13 +15,13 @@
 | Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | 文档动作 |
 |---|---|---|---|---|
 | #3 `qi_regen_mul` | `server/src/cultivation/insight_apply.rs:25,127` 仍只有定义/写入，无 regen production consumer | `independent-domain-fix` | `plan-bughunt-modifier-effect-consumer-completion-v1.md` P3 | 统一 successor |
-| #4 `next_breakthrough_bonus` | `insight_apply.rs:27,159` 写入；breakthrough 主循环仍不读 | `independent-domain-fix` | 同上 P3 | 统一 successor |
-| #5 `vortex_backfire_resist_mul` | `insight_apply.rs:36,178` 写入；woliu backfire 主循环不读 | `independent-domain-fix` | 同上 P3 | 统一 successor |
-| #6 `vortex_delta_bonus_add` | `insight_apply.rs:38,184` 写入；vortex delta 仍取 realm 基值 | `independent-domain-fix` | 同上 P3 | 统一 successor |
-| #7 `vortex_flow_speed_mul` | `insight_apply.rs:40,190` 写入；无 production flow-speed consumer | `independent-domain-fix` | 同上 P3 | 统一 successor |
-| #9 AgentUiStore close 泄漏 | `client/.../AgentUiScreen.java:252,266` 两条关闭路径都调用 `AgentUiStore.clearIfActive` | `already-fixed/invalid`（already-fixed） | `f6d422250` / PR #709 | 仅归档 |
-| #10 Botany LEFT RELEASE stale drag | `client/.../MixinMouse.java:101` screen-open 早退，`:116` 才调用 `BotanyDragState`，仍可漏收 release | `independent-domain-fix` | `docs/plans-skeleton/plan-bughunt-botany-drag-release-lifecycle-v1.md` | 新建唯一 focused owner |
-| #2 duplicate skill registration | `server/src/cultivation/skill_registry.rs:85-92` 当前 duplicate registration assert fail-closed，`:200-214` 有专属 panic test，旧静默覆盖路径已删除 | `already-fixed/invalid`（already-fixed） | `fca6cdb30` / PR #711 | 仅归档 |
+| #4 `next_breakthrough_bonus` | `server/src/cultivation/insight_apply.rs:27,159` 写入；breakthrough 主循环仍不读 | `independent-domain-fix` | 同上 P3 | 统一 successor |
+| #5 `vortex_backfire_resist_mul` | `server/src/cultivation/insight_apply.rs:36,178` 写入；woliu backfire 主循环不读 | `independent-domain-fix` | 同上 P3 | 统一 successor |
+| #6 `vortex_delta_bonus_add` | `server/src/cultivation/insight_apply.rs:38,184` 写入；vortex delta 仍取 realm 基值 | `independent-domain-fix` | 同上 P3 | 统一 successor |
+| #7 `vortex_flow_speed_mul` | `server/src/cultivation/insight_apply.rs:40,190` 写入；无 production flow-speed consumer | `independent-domain-fix` | 同上 P3 | 统一 successor |
+| #9 AgentUiStore close 泄漏 | `client/src/main/java/com/bong/client/agentui/AgentUiScreen.java:252,266` 两条关闭路径都调用 `AgentUiStore.clearIfActive` | `already-fixed/invalid`（already-fixed） | `f6d422250` / PR #709 | 仅归档 |
+| #10 Botany LEFT RELEASE stale drag | `client/src/main/java/com/bong/client/mixin/MixinMouse.java:99-118` 的 screen-open 早退先于 `BotanyDragState.onLeftButton`，仍可漏收 release | `independent-domain-fix` | `docs/plans-skeleton/plan-bughunt-botany-drag-release-lifecycle-v1.md` | 新建唯一 focused owner |
+| #2 duplicate skill registration | `server/src/cultivation/skill_registry.rs:85-92` 当前 duplicate registration assert fail-closed，`server/src/cultivation/skill_registry.rs:200-215` 有专属 panic test，旧静默覆盖路径已删除 | `already-fixed/invalid`（already-fixed） | `fca6cdb30` / PR #711 | 仅归档 |
 | #7chat PLAYER_CHAT 注释 | `agent/packages/schema/src/channels.ts:7-10` 当前注明 LRANGE/LTRIM batch drain | `already-fixed/invalid`（already-fixed） | `15a34ba4e` / PR #708 | 仅归档 |
 | #8 Agent UI error union | `agent/packages/schema/src/payloads/agent-ui.ts:99-110` 已含 `invalid_command`、`xml_sanitize_failed` | `already-fixed/invalid`（already-fixed） | `ac998e6fa` / PR #707 | 仅归档 |
 

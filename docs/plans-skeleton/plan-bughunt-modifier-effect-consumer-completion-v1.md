@@ -7,11 +7,11 @@
 | 阶段 | 交付物 | 状态 |
 |---|---|---|
 | P0 | canonical 字段/效果清单 + producer/consumer/owner 矩阵 | ⬜ |
-| P1 | alchemy effect 极性与污染消费闭环 | ⬜ |
+| P1 | 最小 anti-orphan manifest/gate + alchemy effect 极性与污染消费闭环 | ⬜ |
 | P2 | 活茧伤口档次 + 茧灵 effective flow | ⬜ |
 | P3 | Insight 正向/负向字段按 gameplay loop 分批接线 | ⬜ |
 | P4 | `jump_height_multiplier` server/client 权威闭环 | ⬜ |
-| P5 | anti-orphan manifest/lint + 全栈 gate | ⬜ |
+| P5 | manifest 全量覆盖、lint 强化与全栈 gate | ⬜ |
 
 ## 接入面
 
@@ -35,7 +35,7 @@
 1. **Alchemy**：`ContaminationBoost` 已生产/持久化/HUD 展示，但 `contamination_tick` 不读；`JinZhongDan` 的 negative slot 当前放入正向 `QiRegenBoost`，现有回气 consumer 会把“负面”变成真实增益。
 2. **Iron cocoon**：`bruise_threshold_multiplier`、`fracture_downgrade_chance`、`cut_pierce_downgrade`、`scar_forged_flow_bonus`。
 3. **Insight**：`qi_regen_mul`、`next_breakthrough_bonus`、`vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`、`hunyuan_threshold_mul`、`chaotic_tolerance_add/loss`、`overload_tolerance_add`、`opposite_color_efficiency_penalty`、`main_color_efficiency_penalty`、`qi_volatility_add`、`shock_sensitivity_add`、`overload_fragility_add`、`reaction_window_penalty`、`breakthrough_failure_penalty_mul`、`sense_exposure_add`、`meridian_heal_slowdown_mul`。
-4. **Observe partial chain**：`observe_chance_bonus` 已被 `technique_observe.rs::evaluate_observe_attempt` 读取，但该 helper 无 production caller；必须接真实 observe 入口或明确退役，不能标已修。
+4. **Observe partial chain**：`observe_chance_bonus` 当前仅有声明/默认值（`server/src/cultivation/insight_apply.rs:34,81`），没有 effect 写入；`server/src/cultivation/technique_observe.rs:64-87` 的 `observe_learn_chance` 会读取它，但 `server/src/cultivation/technique_observe.rs:90-134` 的 `evaluate_observe_attempt` 调用点仅在 tests（`server/src/cultivation/technique_observe.rs:253,280,315`），没有 production caller。必须同时接真实 producer 与 observe 入口，或明确退役，不能把 helper-level read 标成已修。
 5. **Jump**：`jump_height_multiplier` 已由广播体操 proficiency 生产；`move_speed_multiplier` 兄弟字段已生效，但 jump 无 server/client runtime consumer 或 wire 字段。
 
 ## 当前证据（origin/main @ c625d5a5）
@@ -48,12 +48,13 @@
 
 ## 设计门与验收
 
-1. 每项必须以“同一 gameplay loop，写入前后可观察差分”验收；只测 struct 数值、helper 或 schema 不算完成。
-2. 活茧伤口降级要冻结作用点、deterministic RNG 与 wound kind/grade 一致性；`scar_forged_flow_bonus` 只能进入 effective rate，不得永久改 `Meridian.flow_rate`。
-3. Insight 按回气/突破、颜色/混元、过载/经脉、感知/反应四组拆 atomic PR；所有负向 cost 也必须真实可感知。
-4. Jump 必须先拍板权威端；若跨端，server emit→proto/JSON bridge→client store→jump consumer→断线 reset 同 PR 闭环。
-5. P5 manifest 对 `DerivedAttrs`、`InsightModifiers`、非展示 `StatusEffectKind` 逐字段记录至少一个 production consumer 或带 owner/reason 的 `planned_no_consumer`；新增只有 default/write/test 的字段时 gate 必须红。
-6. 按触栈运行完整 server gate；涉及 schema/client 时重建 schema dist 并使用 Java 17 运行 client gate；补对应 bot/e2e 场景。
+1. **anti-orphan 前置门（继承 r8 audit 决议）**：P1-P4 的 implementation 不得在不存在 checked-in consumer manifest 和“新增字段只出现在 default/write/test 时必红”的最小 gate 时开始。优先先完成 P5；唯一例外是 P1 的首个 PR 可同包交付覆盖当前字段的最小 manifest/gate。后续 P1-P4 每个字段接线 PR 必须同步更新并通过该 gate；完整 lint 可在 P5 继续强化。manifest 不替代同一 gameplay loop 的可观察差分验收，`planned_no_consumer` 仍须有 owner/reason。
+2. 每项必须以“同一 gameplay loop，写入前后可观察差分”验收；只测 struct 数值、helper 或 schema 不算完成。
+3. 活茧伤口降级要冻结作用点、deterministic RNG 与 wound kind/grade 一致性；`scar_forged_flow_bonus` 只能进入 effective rate，不得永久改 `Meridian.flow_rate`。
+4. Insight 按回气/突破、颜色/混元、过载/经脉、感知/反应四组拆 atomic PR；所有负向 cost 也必须真实可感知。
+5. Jump 必须先拍板权威端；若跨端，server emit→proto/JSON bridge→client store→jump consumer→断线 reset 同 PR 闭环。
+6. P5 manifest 对 `DerivedAttrs`、`InsightModifiers`、非展示 `StatusEffectKind` 逐字段记录至少一个 production consumer 或带 owner/reason 的 `planned_no_consumer`；新增只有 default/write/test 的字段时 gate 必须红。
+7. 按触栈运行完整 server gate；涉及 schema/client 时重建 schema dist 并使用 Java 17 运行 client gate；补对应 bot/e2e 场景。
 
 ## 去重边界
 

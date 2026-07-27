@@ -32,5 +32,5 @@
 
 ## 边界
 
-- 不吸收进 R3 的 slice/flush/tick-rebase 批次：本缺陷是单个“文件 + DB”复合事务的补偿原子性，先以 focused fix 独立闭环。
+- **pre-R3 P1 窄例外**：本 plan 是 `persist_npc_deceased_archive` file+DB 补偿原子性及同地失败矩阵的唯一 owner，而非第二条 persistence track；仅在 R3 P1 尚未迁移/改写该 symbol 时实施。R3 P0 只冻结接口；若 R3 P1 先触及该 symbol，则本 plan 停止独立实施、由 R3 接管同一验收矩阵，禁止双 PR。
 - 不扩展为通用分布式事务框架，不改 archive schema，不处理 SIGKILL/断电后的 fsync 保证。
