@@ -262,6 +262,25 @@ run_hup_case detached true
 
 source "$DEV_RELOAD"
 
+original_stop_managed="$(declare -f bong_server_stop_managed)"
+managed_stop_status=0
+bong_server_stop_managed() { return "$managed_stop_status"; }
+for managed_stop_status in 0 "$BONG_SERVER_STOP_FORCED"; do
+    stop_managed_server_before_reload \
+        || fail "dev-reload must permit replacement after safe stop status $managed_stop_status"
+done
+for managed_stop_status in 1 2; do
+    if stop_managed_server_before_reload 2> "$TEST_ROOT/reload-stop-$managed_stop_status.err"; then
+        fail "dev-reload accepted unsafe managed stop status $managed_stop_status"
+    else
+        reload_stop_result=$?
+    fi
+    [ "$reload_stop_result" -eq "$managed_stop_status" ] \
+        || fail "dev-reload flattened managed stop status $managed_stop_status"
+done
+unset -f bong_server_stop_managed
+eval "$original_stop_managed"
+
 NO_COMMAND_LOG="$TEST_ROOT/no-command.err"
 if launch_detached_job 2> "$NO_COMMAND_LOG"; then
     fail "launch accepted an empty command"

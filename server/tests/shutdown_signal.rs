@@ -4,12 +4,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use bong_server::craft::{load_recipe_unlock_log, RecipeId};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static SERVER_PROBE_MUTEX: Mutex<()> = Mutex::new(());
 
 struct TempRoot {
     path: PathBuf,
@@ -75,7 +77,7 @@ impl Drop for ChildGuard {
 }
 
 fn wait_for_ready(child: &mut ChildGuard, ready_path: &Path, stderr_path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if ready_path.exists() {
             return;
@@ -93,14 +95,14 @@ fn wait_for_ready(child: &mut ChildGuard, ready_path: &Path, stderr_path: &Path)
         }
         assert!(
             Instant::now() < deadline,
-            "shutdown signal probe did not create readiness file within 10s: {}",
+            "shutdown signal probe did not create readiness file within 30s: {}",
             ready_path.display()
         );
         thread::sleep(Duration::from_millis(10));
     }
 }
 
-fn spawn_probe(root: &TempRoot) -> (ChildGuard, PathBuf) {
+fn spawn_probe(root: &TempRoot) -> (ChildGuard, PathBuf, PathBuf, PathBuf) {
     let unlock_path = root.path.join("data/craft/recipe_unlocks.json");
     let ready_path = root.path.join("probe.ready");
     let stderr_path = root.path.join("probe.stderr");
@@ -120,14 +122,21 @@ fn spawn_probe(root: &TempRoot) -> (ChildGuard, PathBuf) {
             .expect("spawn shutdown signal probe binary");
     let mut child = ChildGuard::new(child);
     wait_for_ready(&mut child, &ready_path, &stderr_path);
-    (child, unlock_path)
+    (child, unlock_path, ready_path, stderr_path)
 }
 
 fn assert_signal_flushes_dirty_unlock(signal: &str, label: &str) {
+    let _server_guard = SERVER_PROBE_MUTEX
+        .lock()
+        .expect("shutdown signal server probe mutex should not be poisoned");
     let root = TempRoot::new(label);
-    let (mut child, unlock_path) = spawn_probe(&root);
+    let (mut child, unlock_path, ready_path, stderr_path) = spawn_probe(&root);
     let tmp_path = unlock_path.with_extension("tmp");
 
+    assert!(
+        ready_path.exists(),
+        "probe readiness marker must be visible before the test sends {signal}"
+    );
     assert!(
         !unlock_path.exists() && !tmp_path.exists(),
         "probe must remain below its 600-tick runtime flush interval before receiving {signal}"
@@ -142,7 +151,9 @@ fn assert_signal_flushes_dirty_unlock(signal: &str, label: &str) {
     let exit = child.wait_with_timeout(Duration::from_secs(10));
     assert!(
         exit.success(),
-        "shutdown probe must exit normally after SIG{signal}; status={exit}"
+        "shutdown probe must exit normally after SIG{signal}; status={exit}\nstderr:\n{}",
+        fs::read_to_string(&stderr_path)
+            .unwrap_or_else(|error| format!("<read stderr failed: {error}>"))
     );
     assert!(
         unlock_path.exists(),

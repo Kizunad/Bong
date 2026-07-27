@@ -31,6 +31,12 @@ FAIL=0
 CURRENT_STAGE="init"
 REDIS_PID=""
 SERVER_PID=""
+SERVER_PGID=""
+SERVER_OWNER_STARTTIME=""
+SERVER_OWNER_EXECUTABLE_IDENTITY=""
+SERVER_AUTHORITY_UNCERTAIN=0
+SERVER_STARTUP_CONTROL_FD=""
+SERVER_STARTUP_READY_FD=""
 NORTH_RIFT_DB_STASH=""
 PERSISTENCE_TRANSACTION_ACTIVE=0
 PERSISTENCE_STASH_READY=0
@@ -846,15 +852,170 @@ port_open() {
   bong_server_port_is_open "$@"
 }
 
-stop_server() {
-  local pid="$SERVER_PID"
+start_server_process_group() {
+  local log_file="$1" preview_mode="$2" actual_pgid="" cargo_target owner_pid=""
+  local owner_starttime="" owner_executable_identity="" supervisor="" ready_line="" committed_line=""
+  local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
 
-  if [ -n "$pid" ]; then
-    if bong_server_stop_process_tree_and_release_port "$pid" 25565; then
-      SERVER_PID=""
-      return 0
-    fi
+  cargo_target="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  supervisor="${BONG_E2E_SUPERVISOR:-$ROOT/scripts/lib/bong-process-group-supervisor.py}"
+  local server_directory="${BONG_E2E_SERVER_DIRECTORY:-$ROOT/server}"
+  SERVER_PID=""
+  SERVER_PGID=""
+  SERVER_OWNER_STARTTIME=""
+  SERVER_OWNER_EXECUTABLE_IDENTITY=""
+  SERVER_STARTUP_CONTROL_FD=""
+  SERVER_STARTUP_READY_FD=""
+  SERVER_AUTHORITY_UNCERTAIN=1
+  coproc BONG_SERVER_SUPERVISOR {
+    exec env \
+      PATH="$RUST_PATH" \
+      CARGO_TARGET_DIR="$cargo_target" \
+      BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ] && printf '0' || printf '%s' "${BONG_ROGUE_SEED_COUNT:-100}")" \
+      BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}" \
+      BONG_PREVIEW_MODE="$preview_mode" \
+      python3 "$supervisor" "$server_directory" \
+      2>"$log_file"
+  }
+  owner_pid=""
+  ready_fd="${BONG_SERVER_SUPERVISOR[0]}"
+  control_fd="${BONG_SERVER_SUPERVISOR[1]}"
+  SERVER_STARTUP_READY_FD="$ready_fd"
+  SERVER_STARTUP_CONTROL_FD="$control_fd"
+
+  if ! IFS= read -r -t 5 -u "$ready_fd" ready_line \
+    || [[ "$ready_line" != 'READY pid='[0-9]* ]]; then
+    exec {control_fd}>&-
+    exec {ready_fd}<&-
+    # Do not wait on an unpinned startup PID: it can outlive a failed protocol
+    # transaction and is never authority. The supervisor receives EOF and rolls
+    # its own private group back.
+    SERVER_STARTUP_CONTROL_FD=""
+    SERVER_STARTUP_READY_FD=""
+    echo "FAIL: server supervisor did not publish startup rollback readiness" >&2
     return 1
+  fi
+  # READY is emitted by the post-setsid supervisor itself and carries that exact
+  # PID, avoiding Bash coproc wrapper ambiguity. The following identity snapshot
+  # still pins starttime, executable inode, and PGID before C is sent.
+  owner_pid="${ready_line#READY pid=}"
+  [[ "$owner_pid" =~ ^[0-9]+$ ]] || {
+    exec {control_fd}>&-
+    exec {ready_fd}<&-
+    SERVER_STARTUP_CONTROL_FD=""
+    SERVER_STARTUP_READY_FD=""
+    echo "FAIL: server supervisor readiness line carried an invalid owner PID" >&2
+    return 1
+  }
+
+  for _ in $(seq 1 500); do
+    if bong_server_process_is_running "$owner_pid"; then
+      actual_pgid="$(ps -o pgid= -p "$owner_pid" 2>/dev/null || true)"
+      actual_pgid="${actual_pgid//[[:space:]]/}"
+      if [ "$actual_pgid" = "$owner_pid" ]; then
+        owner_snapshot="$(bong_server_process_starttime_and_group "$owner_pid" 2>/dev/null || true)"
+        read -r owner_starttime actual_pgid <<< "$owner_snapshot"
+        owner_executable_identity="$(
+          bong_server_process_executable_identity "$owner_pid" 2>/dev/null || true
+        )"
+        if [ "$actual_pgid" = "$owner_pid" ] \
+          && [[ "$owner_starttime" =~ ^[0-9]+$ ]] \
+          && [[ "$owner_executable_identity" =~ ^[0-9]+:[0-9]+$ ]]; then
+          if ! printf C >&"$control_fd"; then
+            break
+          fi
+          # C is one-way control. Close the write end immediately so no process
+          # can mistake a still-open control channel for uncommitted authority.
+          exec {control_fd}>&-
+          control_fd=""
+          SERVER_STARTUP_CONTROL_FD=""
+          if [ -n "${BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK:-}" ]; then
+            "$BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK" "$owner_pid"
+          fi
+          if IFS= read -r -t 5 -u "$ready_fd" committed_line \
+            && [ "$committed_line" = COMMITTED ]; then
+            if [ -n "${BONG_E2E_TEST_AFTER_ACK_HOOK:-}" ]; then
+              "$BONG_E2E_TEST_AFTER_ACK_HOOK" "$owner_pid"
+            fi
+            if bong_server_pinned_process_group_status \
+              "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid"; then
+              exec {ready_fd}<&-
+              SERVER_STARTUP_READY_FD=""
+              SERVER_PID="$owner_pid"
+              SERVER_PGID="$actual_pgid"
+              SERVER_OWNER_STARTTIME="$owner_starttime"
+              SERVER_OWNER_EXECUTABLE_IDENTITY="$owner_executable_identity"
+              SERVER_AUTHORITY_UNCERTAIN=0
+              return 0
+            fi
+          fi
+          break
+        fi
+      fi
+    else
+      break
+    fi
+    sleep 0.01
+  done
+
+  # Never publish partial authority. If the full pre-C candidate still pins, its
+  # owner-bound stop helper may clean it. A changed/dead/uninspectable candidate
+  # is deliberately left for diagnosis: numeric PGID teardown would be unsafe.
+  [ -n "$control_fd" ] && exec {control_fd}>&-
+  exec {ready_fd}<&-
+  SERVER_STARTUP_CONTROL_FD=""
+  SERVER_STARTUP_READY_FD=""
+  if [ -n "$owner_starttime" ] && [ -n "$owner_executable_identity" ] \
+    && [ -n "$actual_pgid" ] \
+    && bong_server_pinned_process_group_status \
+      "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid"; then
+    if bong_server_stop_owned_process_group_and_release_port \
+      "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid" 25565; then
+      cleanup_status=0
+    else
+      cleanup_status=$?
+    fi
+  fi
+  # A bounded wait reaps a normal rollback/cleanup owner without accidentally
+  # turning an unpinned PID into authority. Never wait indefinitely here.
+  if [ "$cleanup_status" -eq 0 ]; then
+    echo "FAIL: server supervisor commit acknowledgement failed; pinned rollback completed" >&2
+  else
+    echo "FAIL: server supervisor commit acknowledgement failed; authority was not published" >&2
+  fi
+  return 1
+}
+
+stop_server() {
+  local pid="$SERVER_PID" pgid="$SERVER_PGID"
+  local owner_starttime="$SERVER_OWNER_STARTTIME"
+  local owner_executable_identity="$SERVER_OWNER_EXECUTABLE_IDENTITY"
+  local stop_status
+
+  if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then
+    echo "FAIL: server process-group authority is uncertain; refusing teardown or restore" >&2
+    return 1
+  fi
+
+  if [ -n "$pid" ] || [ -n "$pgid" ] \
+    || [ -n "$owner_starttime" ] || [ -n "$owner_executable_identity" ]; then
+    if [ -z "$pid" ] || [ -z "$pgid" ] \
+      || [ -z "$owner_starttime" ] || [ -z "$owner_executable_identity" ]; then
+      echo "FAIL: incomplete server process-group authority (pid=${pid:-missing}, pgid=${pgid:-missing})" >&2
+      return 1
+    fi
+    if bong_server_stop_owned_process_group_and_release_port \
+        "$pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 25565; then
+      SERVER_PID=""
+      SERVER_PGID=""
+      SERVER_OWNER_STARTTIME=""
+      SERVER_OWNER_EXECUTABLE_IDENTITY=""
+      SERVER_AUTHORITY_UNCERTAIN=0
+      return 0
+    else
+      stop_status=$?
+    fi
+    return "$stop_status"
   fi
   # Outside a READY transaction there are no stashed developer bytes to expose:
   # an empty PID remains an ordinary no-op. Restore authorization is stricter and
@@ -938,18 +1099,9 @@ fi
 echo ""
 CURRENT_STAGE="server"
 echo "=== [$TASK_ID][$SCRIPT_TAG][3/8] Server startup ==="
-(
-  export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  # NPC perf v1：e2e 默认恢复 100 rogue seed，并用 TickRateProbe 日志作为
-  # CI 回归门禁。低负载调试可手动覆盖 BONG_ROGUE_SEED_COUNT=0。
-  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-100}"
-  # CI 无 MINESKIN_API_KEY，跳过皮肤预取（NPC 回退 villager 实体）。
-  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-  cd "$ROOT/server"
-  cargo run --release
-) >"$SERVER_LOG" 2>&1 &
-SERVER_PID="$!"
+if ! start_server_process_group "$SERVER_LOG" 0; then
+  finalize_failure "server" "failed to establish dedicated server process group; see $SERVER_LOG"
+fi
 
 if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
   pass "server world bootstrap"
@@ -1084,16 +1236,11 @@ run_north_rift_preview() {
   fi
   PERSISTENCE_STASH_READY=1
 
-  (
-    export PATH="$RUST_PATH"
-    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-    export BONG_ROGUE_SEED_COUNT=0
-    export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-    export BONG_PREVIEW_MODE=1
-    cd "$ROOT/server"
-    cargo run --release
-  ) >"$NORTH_RIFT_SERVER_LOG" 2>&1 &
-  SERVER_PID="$!"
+  if ! start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1; then
+    finalize_failure \
+      "north-rift-preview" \
+      "failed to establish dedicated preview server process group; see $NORTH_RIFT_SERVER_LOG"
+  fi
 
   if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
     finalize_failure \
@@ -1106,20 +1253,49 @@ run_north_rift_preview() {
       "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
   fi
   NORTH_RIFT_PORT_READY=0
+  NORTH_RIFT_LISTENER_INSPECTION_FAILED=0
   for _ in $(seq 1 50); do
-    if port_open 25565; then
-      NORTH_RIFT_PORT_READY=1
+    if bong_server_owned_process_group_owns_ipv4_listener \
+        "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+        "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID" 25565; then
+      listener_status=0
+    else
+      listener_status=$?
+    fi
+    if [ "$listener_status" -ne 0 ] && [ "$listener_status" -ne 1 ]; then
+      NORTH_RIFT_LISTENER_INSPECTION_FAILED=1
       break
     fi
-    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    if [ "$listener_status" -eq 0 ] && port_open 25565; then
+      if bong_server_owned_process_group_owns_ipv4_listener \
+          "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+          "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID" 25565; then
+        NORTH_RIFT_PORT_READY=1
+        break
+      else
+        listener_status=$?
+      fi
+      if [ "$listener_status" -ne 1 ]; then
+        NORTH_RIFT_LISTENER_INSPECTION_FAILED=1
+        break
+      fi
+    fi
+    if ! bong_server_pinned_process_group_status \
+        "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+        "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID"; then
       break
     fi
     sleep 0.2
   done
   if [ "$NORTH_RIFT_PORT_READY" -ne 1 ]; then
+    if [ "$NORTH_RIFT_LISTENER_INSPECTION_FAILED" -eq 1 ]; then
+      listener_failure="dedicated preview server listener ownership became uninspectable"
+    else
+      listener_failure="dedicated preview server did not prove ownership of port 25565"
+    fi
     finalize_failure \
       "north-rift-preview" \
-      "dedicated preview server did not own port 25565; see $NORTH_RIFT_SERVER_LOG"
+      "$listener_failure; see $NORTH_RIFT_SERVER_LOG"
   fi
 
   NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"

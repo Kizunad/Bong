@@ -59,15 +59,89 @@ kill_marker="$TEST_ROOT/kill.marker"
 spawn_fixture ignore "$kill_marker"
 bong_server_write_record "$ACTIVE_PID" "$(command -v bash)" \
     || fail "could not record TERM-ignoring fixture"
-BONG_SERVER_STOP_GRACE_SECONDS=0 bong_server_stop_managed \
-    || fail "TERM-ignoring managed stop failed"
+if BONG_SERVER_STOP_GRACE_SECONDS=0 bong_server_stop_managed; then
+    fail "TERM-ignoring managed stop must report forced shutdown"
+else
+    forced_stop_status=$?
+fi
+[ "$forced_stop_status" -eq "$BONG_SERVER_STOP_FORCED" ] \
+    || fail "TERM-ignoring managed stop must return forced status $BONG_SERVER_STOP_FORCED, got $forced_stop_status"
 [ ! -f "$kill_marker" ] || fail "TERM-ignoring fixture unexpectedly handled TERM"
 if kill -0 "$ACTIVE_PID" 2>/dev/null; then
     fail "TERM-ignoring fixture survived KILL escalation"
 fi
-[ ! -e "$BONG_SERVER_PID_FILE" ] || fail "KILL escalation did not remove PID record"
+[ ! -e "$BONG_SERVER_PID_FILE" ] || fail "forced KILL cleanup did not remove PID record"
 wait "$ACTIVE_PID" 2>/dev/null || true
 ACTIVE_PID=""
+
+# Replacement callers may continue only after identity-safe forced cleanup has
+# removed both the exact process and its authority record. The degraded outcome
+# stays visible as a warning; all other non-zero statuses remain fail-closed.
+original_stop_managed="$(declare -f bong_server_stop_managed)"
+replacement_stop_status=0
+bong_server_stop_managed() { return "$replacement_stop_status"; }
+replacement_stop_log="$TEST_ROOT/replacement-stop.log"
+replacement_stop_status=0
+bong_server_stop_managed_for_replacement "test replacement" 2> "$replacement_stop_log" \
+    || fail "graceful managed stop must authorize replacement"
+[ ! -s "$replacement_stop_log" ] \
+    || fail "graceful replacement stop must not emit a degraded warning"
+replacement_stop_status="$BONG_SERVER_STOP_FORCED"
+bong_server_stop_managed_for_replacement "test replacement" 2> "$replacement_stop_log" \
+    || fail "identity-safe forced cleanup must authorize replacement"
+grep -Fq 'AppExit/Last persistence is unconfirmed' "$replacement_stop_log" \
+    || fail "forced replacement stop must expose the unproven AppExit/Last outcome"
+for replacement_stop_status in 1 2; do
+    if bong_server_stop_managed_for_replacement "test replacement" 2> "$replacement_stop_log"; then
+        fail "managed stop status $replacement_stop_status must not authorize replacement"
+    else
+        replacement_result=$?
+    fi
+    [ "$replacement_result" -eq "$replacement_stop_status" ] \
+        || fail "replacement stop must preserve unsafe status $replacement_stop_status"
+    grep -Fq "status=$replacement_stop_status" "$replacement_stop_log" \
+        || fail "unsafe replacement refusal must report status $replacement_stop_status"
+done
+unset -f bong_server_stop_managed
+eval "$original_stop_managed"
+
+# If TERM wins the race immediately before KILL delivery, a reliable pinned
+# absence is still a forced outcome; an explicit signal-helper status 1 while the
+# identity remains alive is inconsistent and must fail closed as inspection error.
+original_pidfd_signal="$(declare -f bong_server_pidfd_signal)"
+original_wait_for_pinned_exit="$(declare -f bong_server_wait_for_pinned_process_exit)"
+original_pinned_status="$(declare -f bong_server_pinned_process_status)"
+pidfd_signal_calls=0
+bong_server_pidfd_signal() {
+    pidfd_signal_calls=$((pidfd_signal_calls + 1))
+    [ "$pidfd_signal_calls" -eq 1 ] && return 0
+    return 1
+}
+bong_server_wait_for_pinned_process_exit() {
+    [ "${4:-}" -eq 0 ] && return 1
+    return 0
+}
+bong_server_pinned_process_status() { return 1; }
+if bong_server_stop_pinned_process 424242 1 1:1 0 2; then
+    fail "pre-KILL process disappearance must remain a forced stop outcome"
+else
+    pinned_race_status=$?
+fi
+[ "$pinned_race_status" -eq "$BONG_SERVER_STOP_FORCED" ] \
+    || fail "pre-KILL disappearance must return forced status"
+pidfd_signal_calls=0
+bong_server_pinned_process_status() { return 0; }
+if bong_server_stop_pinned_process 424242 1 1:1 0 2; then
+    fail "signal status 1 for a still-live pinned identity must fail closed"
+else
+    pinned_race_status=$?
+fi
+[ "$pinned_race_status" -eq 2 ] \
+    || fail "inconsistent KILL absence must return inspection status 2"
+unset -f bong_server_pidfd_signal bong_server_wait_for_pinned_process_exit bong_server_pinned_process_status
+eval "$original_pidfd_signal"
+eval "$original_wait_for_pinned_exit"
+eval "$original_pinned_status"
 
 printf 'malformed\n' > "$BONG_SERVER_PID_FILE"
 if bong_server_stop_managed; then
@@ -85,6 +159,12 @@ if bong_server_read_record; then
     fail "PID record symlink must be rejected before parsing"
 fi
 [ "$(cat "$pid_victim")" = "pid-victim-content" ] || fail "PID record symlink must not alter victim"
+rm -f -- "$BONG_SERVER_PID_FILE"
+ln -s "$TEST_ROOT/missing-pid-record-target" "$BONG_SERVER_PID_FILE"
+if bong_server_stop_managed; then
+    fail "dangling PID record symlink must fail closed rather than look absent"
+fi
+[ -L "$BONG_SERVER_PID_FILE" ] || fail "dangling PID record symlink must remain for diagnosis"
 rm -f -- "$BONG_SERVER_PID_FILE"
 printf 'pid=1\nstarttime=1\nexecutable=/bin/bash\nexecutable_identity=1:1\n' > "$BONG_SERVER_PID_FILE"
 chmod 644 "$BONG_SERVER_PID_FILE"
@@ -647,18 +727,62 @@ if bong_server_with_lock true; then
     fail "lifecycle lock with unsafe mode must be rejected"
 fi
 chmod 600 "$lock_path"
+lock_timeout_ready="$TEST_ROOT/lock-timeout-holder.ready"
 (
     source "$ROOT/scripts/lib/bong-server-lifecycle.sh"
     export BONG_SERVER_PID_FILE="$lock_override"
-    BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS=1 bong_server_with_lock sleep 1
+    hold_timeout_lock() {
+        : > "$lock_timeout_ready"
+        sleep 1
+    }
+    BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS=1 bong_server_with_lock hold_timeout_lock
 ) &
 lock_timeout_holder=$!
-sleep 0.05
+for _ in $(seq 1 100); do
+    [ -e "$lock_timeout_ready" ] && break
+    sleep 0.01
+done
+[ -e "$lock_timeout_ready" ] || fail "lock timeout holder did not acquire the lifecycle lock"
 if BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS=0 bong_server_with_lock true; then
     fail "bounded lifecycle lock with zero timeout must reject contention instead of waiting forever"
 fi
 wait "$lock_timeout_holder" || fail "lock timeout holder unexpectedly failed"
 
+# Externally supplied depth/FD variables are not reentrancy authority. A forged
+# depth must still contend on the real lock rather than entering its callback.
+forged_lock_entered="$TEST_ROOT/forged-lock-entered"
+(
+    source "$ROOT/scripts/lib/bong-server-lifecycle.sh"
+    export BONG_SERVER_PID_FILE="$lock_override"
+    hold_forged_lock() {
+        : > "$forged_lock_entered"
+        sleep 0.3
+    }
+    BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS=1 bong_server_with_lock hold_forged_lock
+) &
+forged_lock_holder=$!
+for _ in $(seq 1 100); do
+    [ -e "$forged_lock_entered" ] && break
+    sleep 0.01
+done
+[ -e "$forged_lock_entered" ] || fail "forged-depth lock holder did not acquire the lifecycle lock"
+if BONG_SERVER_LIFECYCLE_LOCK_DEPTH=1 \
+    BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS=0 \
+    bong_server_with_lock true; then
+    wait "$forged_lock_holder" || true
+    fail "forged lifecycle depth must not bypass flock contention"
+fi
+wait "$forged_lock_holder" || fail "forged-depth lock holder unexpectedly failed"
+
+# A genuine same-shell nested call reuses only the verified open lock descriptor
+# and therefore succeeds without deadlocking.
+nested_lock_marker="$TEST_ROOT/nested-lock.marker"
+nested_lock_inner() { printf nested > "$nested_lock_marker"; }
+nested_lock_outer() { bong_server_with_lock nested_lock_inner; }
+BONG_SERVER_PID_FILE="$lock_override" bong_server_with_lock nested_lock_outer \
+    || fail "verified same-shell lifecycle lock nesting must succeed"
+[ "$(cat "$nested_lock_marker")" = nested ] \
+    || fail "verified nested lifecycle lock callback did not run"
 
 relative_root="$TEST_ROOT/relative-target"
 mkdir -p "$relative_root/target/release"
@@ -1719,24 +1843,26 @@ spawn_fixture ignore "$term_wait_marker"
 bong_server_write_record "$ACTIVE_PID" "$(command -v bash)" \
     || fail "TERM-wait inspection fixture could not create a managed record"
 original_wait_for_exit="$(declare -f bong_server_wait_for_exit)"
+original_pidfd_signal="$(declare -f bong_server_pidfd_signal)"
 bong_server_wait_for_exit() { return 2; }
-kill() {
-    if [ "${1:-}" = -TERM ] && [ "${2:-}" = "$ACTIVE_PID" ]; then
+bong_server_pidfd_signal() {
+    if [ "${4:-}" = TERM ] && [ "${1:-}" = "$ACTIVE_PID" ]; then
         printf TERM > "$term_wait_marker"
+        return 0
     fi
-    command kill "$@"
+    return 2
 }
 if BONG_SERVER_STOP_GRACE_SECONDS=1 bong_server_stop_managed; then
-    unset -f kill
+    eval "$original_pidfd_signal"
     eval "$original_wait_for_exit"
     fail "TERM-wait inspection failure must fail closed"
 else
     term_wait_status=$?
 fi
-unset -f kill
+eval "$original_pidfd_signal"
 eval "$original_wait_for_exit"
 [ "$term_wait_status" -eq 2 ] || fail "TERM-wait inspection failure must return 2"
-[ -e "$term_wait_marker" ] || fail "TERM-wait inspection failure must deliver TERM"
+[ -e "$term_wait_marker" ] || fail "TERM-wait inspection failure must deliver TERM through pidfd seam"
 kill -0 "$ACTIVE_PID" 2>/dev/null || fail "TERM-wait inspection failure must preserve live fixture"
 [ -e "$BONG_SERVER_PID_FILE" ] || fail "TERM-wait inspection failure must preserve PID record"
 kill -KILL "$ACTIVE_PID" 2>/dev/null || true
@@ -1826,8 +1952,20 @@ PY
 }
 eval "$(extract_e2e_stop_server)"
 SERVER_PID=""
-PERSISTENCE_STASH_READY=0
+SERVER_PGID=""
+SERVER_OWNER_STARTTIME=""
+SERVER_OWNER_EXECUTABLE_IDENTITY=""
+SERVER_AUTHORITY_UNCERTAIN=0
 port_probe_calls=0
+SERVER_AUTHORITY_UNCERTAIN=1
+PERSISTENCE_STASH_READY=1
+if stop_server; then
+    fail "READY cleanup must fail closed when launch authority is uncertain"
+fi
+[ "$port_probe_calls" -eq 0 ] || fail "uncertain launch authority must not fall back to a port probe"
+SERVER_AUTHORITY_UNCERTAIN=0
+PERSISTENCE_STASH_READY=0
+original_confirm_port_released="$(declare -f bong_server_confirm_port_released)"
 bong_server_confirm_port_released() { port_probe_calls=$((port_probe_calls + 1)); return 1; }
 stop_server || fail "empty PID without READY persistence must remain an ordinary no-op"
 [ "$port_probe_calls" -eq 0 ] || fail "ordinary empty-PID cleanup must not claim fresh port evidence"
@@ -1839,7 +1977,27 @@ fi
 bong_server_confirm_port_released() { port_probe_calls=$((port_probe_calls + 1)); return 0; }
 stop_server || fail "READY empty-PID cleanup must pass after fresh port-release evidence"
 [ "$port_probe_calls" -eq 2 ] || fail "READY closed-port cleanup must obtain fresh evidence"
-unset -f stop_server bong_server_confirm_port_released extract_e2e_stop_server
+# A force-stopped group is cleanup evidence only, never restore authorization.
+eval "$(extract_e2e_stop_server)"
+SERVER_PID=424242
+SERVER_PGID=424242
+SERVER_OWNER_STARTTIME=1
+SERVER_OWNER_EXECUTABLE_IDENTITY=1:1
+SERVER_AUTHORITY_UNCERTAIN=0
+PERSISTENCE_STASH_READY=1
+original_group_stop="$(declare -f bong_server_stop_owned_process_group_and_release_port)"
+bong_server_stop_owned_process_group_and_release_port() { return "$BONG_SERVER_STOP_FORCED"; }
+if stop_server; then
+    fail "force-stopped preview group must not authorize persistence restore"
+fi
+[ "$SERVER_PID" = 424242 ] && [ "$SERVER_PGID" = 424242 ] \
+    || fail "force-stopped preview group must preserve published authority for diagnosis"
+[ "$SERVER_OWNER_STARTTIME" = 1 ] \
+    && [ "$SERVER_OWNER_EXECUTABLE_IDENTITY" = 1:1 ] \
+    || fail "force-stopped preview group must preserve owner pins"
+eval "$original_group_stop"
+unset -f stop_server extract_e2e_stop_server
+eval "$original_confirm_port_released"
 PERSISTENCE_STASH_READY=0
 
 # The full preview transaction must hold the production lifecycle lock from the
@@ -1917,3 +2075,764 @@ grep -Fqx 'state=FAILED' "$e2e_stop_marker" || fail "unconfirmed e2e stop marker
     || fail "unconfirmed e2e stop must retain the stash unchanged"
 kill -KILL "$e2e_stop_pid" 2>/dev/null || true
 wait "$e2e_stop_pid" 2>/dev/null || true
+
+# E2E stop authority is a persistent, pinned session leader. Graceful children
+# must finish on TERM before the helper removes that non-reusable group owner.
+# Any business child that needs KILL is a distinct forced outcome.
+process_group_marker="$TEST_ROOT/process-group-descendant-term.marker"
+process_group_ready="$TEST_ROOT/process-group-descendant.ready"
+process_group_fixture="$TEST_ROOT/process-group-fixture.py"
+cat > "$process_group_fixture" <<'PY'
+import os
+import signal
+import sys
+import time
+
+marker, ready = sys.argv[1:]
+os.setsid()
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+child = os.fork()
+if child:
+    with open(ready, "w", encoding="utf-8") as handle:
+        handle.write(str(child))
+    while True:
+        time.sleep(1)
+
+def terminate(*_args):
+    with open(marker, "w", encoding="utf-8") as handle:
+        handle.write("TERM")
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, terminate)
+while True:
+    time.sleep(1)
+PY
+python3 "$process_group_fixture" "$process_group_marker" "$process_group_ready" &
+process_group_owner=$!
+for _ in $(seq 1 100); do
+    [ -e "$process_group_ready" ] && break
+    sleep 0.01
+done
+[ -e "$process_group_ready" ] || fail "owned process-group fixture did not publish its descendant"
+process_group_owner_starttime="$(bong_server_process_starttime "$process_group_owner")"
+process_group_owner_identity="$(bong_server_process_executable_identity "$process_group_owner")"
+process_group_pgid="$(ps -o pgid= -p "$process_group_owner" 2>/dev/null | tr -d '[:space:]')"
+[ "$process_group_pgid" = "$process_group_owner" ] \
+    || fail "owned fixture supervisor must be its process-group leader"
+bong_server_port_is_open() { return 1; }
+bong_server_stop_owned_process_group_and_release_port \
+    "$process_group_owner" "$process_group_owner_starttime" \
+    "$process_group_owner_identity" "$process_group_pgid" 25565 \
+    || fail "owned process-group stop must terminate graceful descendants and supervisor"
+unset -f bong_server_port_is_open
+[ -e "$process_group_marker" ] \
+    || fail "owned process-group stop did not deliver TERM to its descendant"
+if bong_server_process_group_members "$process_group_pgid" >/dev/null; then
+    fail "owned process-group stop left a non-zombie member alive"
+fi
+
+# The executable group helper must report status 3 when a real child ignores
+# TERM and is killed. That forced result must preserve E2E authority and deny
+# persistence restore through the same caller/finalizer contracts used by preview.
+forced_group_marker="$TEST_ROOT/process-group-forced.marker"
+forced_group_ready="$TEST_ROOT/process-group-forced.ready"
+forced_group_fixture="$TEST_ROOT/process-group-forced-fixture.py"
+cat > "$forced_group_fixture" <<'PY'
+import os
+import signal
+import sys
+import time
+
+marker, ready = sys.argv[1:]
+os.setsid()
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+child = os.fork()
+if child:
+    with open(ready, "w", encoding="utf-8") as handle:
+        handle.write(str(child))
+    while True:
+        time.sleep(1)
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(marker, "w", encoding="utf-8") as handle:
+    handle.write("ready")
+while True:
+    time.sleep(1)
+PY
+python3 "$forced_group_fixture" "$forced_group_marker" "$forced_group_ready" &
+forced_group_owner=$!
+for _ in $(seq 1 100); do
+    [ -s "$forced_group_ready" ] && [ -e "$forced_group_marker" ] && break
+    sleep 0.01
+done
+[ -s "$forced_group_ready" ] && [ -e "$forced_group_marker" ] \
+    || fail "forced process-group fixture did not publish its live descendant"
+forced_group_owner_starttime="$(bong_server_process_starttime "$forced_group_owner")"
+forced_group_owner_identity="$(bong_server_process_executable_identity "$forced_group_owner")"
+forced_group_pgid="$(ps -o pgid= -p "$forced_group_owner" 2>/dev/null | tr -d '[:space:]')"
+[ "$forced_group_pgid" = "$forced_group_owner" ] \
+    || fail "forced fixture supervisor must be its process-group leader"
+bong_server_port_is_open() { return 1; }
+if bong_server_stop_owned_process_group_and_release_port \
+    "$forced_group_owner" "$forced_group_owner_starttime" \
+    "$forced_group_owner_identity" "$forced_group_pgid" 25565; then
+    forced_group_status=0
+else
+    forced_group_status=$?
+fi
+unset -f bong_server_port_is_open
+[ "$forced_group_status" -eq "$BONG_SERVER_STOP_FORCED" ] \
+    || fail "TERM-ignoring process-group child must produce forced stop status"
+if bong_server_process_group_members "$forced_group_pgid" >/dev/null; then
+    fail "forced process-group cleanup left a non-zombie member alive"
+fi
+
+forced_stop_data="$TEST_ROOT/forced-stop-preview/data"
+forced_stop_stash="$TEST_ROOT/forced-stop-preview/stash"
+mkdir -p "$forced_stop_data"
+printf 'developer-db\n' > "$forced_stop_data/bong.db"
+bong_server_persistence_transaction_begin "$forced_stop_data" "$forced_stop_stash" \
+    || fail "forced stop persistence fixture could not begin transaction"
+bong_server_stash_persistence "$forced_stop_data" "$forced_stop_stash" \
+    || fail "forced stop persistence fixture could not stash developer data"
+SERVER_PID="$forced_group_owner"
+SERVER_PGID="$forced_group_pgid"
+SERVER_OWNER_STARTTIME="$forced_group_owner_starttime"
+SERVER_OWNER_EXECUTABLE_IDENTITY="$forced_group_owner_identity"
+SERVER_AUTHORITY_UNCERTAIN=0
+STOP_SERVER_CONFIRMED=0
+restore_called=0
+original_group_stop="$(declare -f bong_server_stop_owned_process_group_and_release_port)"
+bong_server_restore_persistence() { restore_called=1; return 0; }
+bong_server_stop_owned_process_group_and_release_port() { return "$BONG_SERVER_STOP_FORCED"; }
+stop_server_fixture="$TEST_ROOT/e2e-stop-server-fixture.sh"
+python3 - "$ROOT/scripts/e2e-redis.sh" > "$stop_server_fixture" <<'PY_STOP_SERVER'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.index("stop_server() {")
+end = text.index("\n}\n\ncleanup() {", start) + 2
+print(text[start:end])
+PY_STOP_SERVER
+# shellcheck source=/dev/null
+source "$stop_server_fixture"
+if stop_server; then
+    fail "forced process-group stop must not authorize E2E shutdown success"
+else
+    forced_caller_status=$?
+fi
+[ "$forced_caller_status" -eq "$BONG_SERVER_STOP_FORCED" ] \
+    || fail "E2E stop caller must preserve forced process-group status"
+[ "$SERVER_PID" = "$forced_group_owner" ] && [ "$SERVER_PGID" = "$forced_group_pgid" ] \
+    && [ "$SERVER_OWNER_STARTTIME" = "$forced_group_owner_starttime" ] \
+    && [ "$SERVER_OWNER_EXECUTABLE_IDENTITY" = "$forced_group_owner_identity" ] \
+    || fail "forced E2E stop must preserve all process-group authority pins"
+bong_server_finalize_preview_persistence_after_stop \
+    "$forced_stop_data" "$forced_stop_stash" "$STOP_SERVER_CONFIRMED" \
+    || fail "forced E2E stop must write a durable failed recovery handoff"
+[ "$restore_called" -eq 0 ] \
+    || fail "forced E2E stop must not restore persistence"
+forced_stop_handoff="$(transaction_state_dir "$forced_stop_data")/recovery-handoff"
+grep -Fqx 'state=FAILED' "$forced_stop_handoff" \
+    || fail "forced E2E stop must retain a FAILED recovery handoff"
+[ "$(cat "$forced_stop_stash/bong.db")" = "developer-db" ] \
+    || fail "forced E2E stop must leave the developer database in its stash"
+unset -f bong_server_restore_persistence \
+    bong_server_stop_owned_process_group_and_release_port stop_server
+eval "$original_group_stop"
+
+# A dead/reused or uninspectable owner invalidates the numeric PGID before any
+# enumeration or signal, preventing a same-number foreign group from being killed.
+original_pinned_process_status="$(declare -f bong_server_pinned_process_status)"
+original_process_group_members="$(declare -f bong_server_process_group_members)"
+original_pidfd_signal="$(declare -f bong_server_pidfd_signal)"
+for owner_status in 1 2; do
+    group_enumerations=0
+    group_signals=0
+    bong_server_pinned_process_status() { return "$owner_status"; }
+    bong_server_process_group_members() { group_enumerations=$((group_enumerations + 1)); printf '999999\n'; }
+    bong_server_pidfd_signal() { group_signals=$((group_signals + 1)); return 0; }
+    if bong_server_stop_owned_process_group_and_release_port \
+        424242 1 1:1 424242 25565; then
+        fail "owner status $owner_status must invalidate process-group authority"
+    fi
+    [ "$group_enumerations" -eq 0 ] \
+        || fail "invalid owner status $owner_status must refuse group enumeration"
+    [ "$group_signals" -eq 0 ] \
+        || fail "invalid owner status $owner_status must refuse all signals"
+done
+unset -f bong_server_pinned_process_status bong_server_process_group_members bong_server_pidfd_signal
+eval "$original_pinned_process_status"
+eval "$original_process_group_members"
+eval "$original_pidfd_signal"
+
+# Readiness evidence is a private single-line PID assertion. Missing is status 1;
+# malformed or symlinked evidence is status 2.
+readiness_dir="$TEST_ROOT/readiness"
+mkdir "$readiness_dir"
+chmod 700 "$readiness_dir"
+readiness_path="$readiness_dir/server.ready"
+if bong_server_read_ready_pid "$readiness_path" >/dev/null; then
+    fail "missing readiness path must not report success"
+else
+    readiness_status=$?
+fi
+[ "$readiness_status" -eq 1 ] || fail "missing readiness path must return status 1"
+printf 'pid=4242\n' > "$readiness_path"
+chmod 600 "$readiness_path"
+[ "$(bong_server_read_ready_pid "$readiness_path")" = 4242 ] \
+    || fail "valid readiness evidence must return its PID"
+printf 'pid=4242\nextra=1\n' > "$readiness_path"
+if bong_server_read_ready_pid "$readiness_path" >/dev/null; then
+    fail "multi-line readiness evidence must fail closed"
+else
+    readiness_status=$?
+fi
+[ "$readiness_status" -eq 2 ] || fail "multi-line readiness evidence must return status 2"
+rm -f "$readiness_path"
+ln -s /dev/null "$readiness_path"
+if bong_server_read_ready_pid "$readiness_path" >/dev/null; then
+    fail "readiness symlink must fail closed"
+else
+    readiness_status=$?
+fi
+[ "$readiness_status" -eq 2 ] || fail "readiness symlink must return status 2"
+rm -f "$readiness_path"
+
+# Startup authority is transactional: the supervisor alone reads the control
+# pipe, rolls back every uncommitted process-group peer on EOF, and retains its
+# pinned owner identity after commit until owner-bound teardown. The focused
+# executable protocol suite covers invalid bytes, exact ACK, fd0 isolation,
+# stopped/no-ACK, malformed/EOF ACK, and post-ACK identity loss.
+"$ROOT/scripts/test-listener-owner.sh"
+"$ROOT/scripts/test-supervisor-protocol.sh"
+"$ROOT/scripts/test-tmux-shutdown-order.sh"
+supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
+supervisor_fixture_dir="$TEST_ROOT/supervisor-fixture"
+supervisor_fixture_bin="$supervisor_fixture_dir/bin"
+supervisor_fixture_marker="$supervisor_fixture_dir/cargo.marker"
+supervisor_fixture_term_marker="$supervisor_fixture_dir/term.marker"
+supervisor_fixture_descendant="$supervisor_fixture_dir/descendant.pid"
+supervisor_fixture_cargo="$supervisor_fixture_bin/cargo"
+mkdir -p "$supervisor_fixture_bin" "$supervisor_fixture_dir/server"
+cat > "$supervisor_fixture_cargo" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${SUPERVISOR_FIXTURE_MARKER:?}"
+: "${SUPERVISOR_FIXTURE_TERM_MARKER:?}"
+: "${SUPERVISOR_FIXTURE_DESCENDANT:?}"
+if IFS= read -r -t 0.2 _; then
+    printf 'control-stdin-leaked\n' > "$SUPERVISOR_FIXTURE_MARKER"
+    exit 41
+fi
+trap 'kill "$(cat "$SUPERVISOR_FIXTURE_DESCENDANT")" 2>/dev/null || true; exit 0' TERM
+(
+    trap '' TERM
+    while :; do sleep 1; done
+) &
+printf '%s\n' "$!" > "$SUPERVISOR_FIXTURE_DESCENDANT"
+printf 'started\n' > "$SUPERVISOR_FIXTURE_MARKER"
+while :; do sleep 1; done
+SCRIPT
+chmod +x "$supervisor_fixture_cargo"
+
+start_supervisor_fixture() {
+    local control_fd ready_fd ready_line
+
+    coproc LIFECYCLE_SUPERVISOR_FIXTURE {
+        exec env \
+            PATH="$supervisor_fixture_bin:$PATH" \
+            SUPERVISOR_FIXTURE_MARKER="$supervisor_fixture_marker" \
+            SUPERVISOR_FIXTURE_TERM_MARKER="$supervisor_fixture_term_marker" \
+            SUPERVISOR_FIXTURE_DESCENDANT="$supervisor_fixture_descendant" \
+            python3 "$supervisor" "$supervisor_fixture_dir/server" \
+            2>"$supervisor_fixture_dir/supervisor.log"
+    }
+    SUPERVISOR_FIXTURE_PID="$LIFECYCLE_SUPERVISOR_FIXTURE_PID"
+    ready_fd="${LIFECYCLE_SUPERVISOR_FIXTURE[0]}"
+    control_fd="${LIFECYCLE_SUPERVISOR_FIXTURE[1]}"
+    SUPERVISOR_FIXTURE_READY_FD="$ready_fd"
+    SUPERVISOR_FIXTURE_CONTROL_FD="$control_fd"
+    IFS= read -r -t 5 -u "$ready_fd" ready_line \
+        || fail "startup supervisor fixture did not publish READY"
+    [[ "$ready_line" = 'READY pid='[0-9]* ]] \
+        || fail "startup supervisor fixture published malformed READY"
+    SUPERVISOR_FIXTURE_OWNER_PID="${ready_line#READY pid=}"
+    for _ in $(seq 1 100); do
+        [ -s "$supervisor_fixture_descendant" ] && break
+        sleep 0.01
+    done
+    [ -s "$supervisor_fixture_descendant" ] \
+        || fail "startup supervisor fixture did not publish its descendant"
+}
+
+read_supervisor_ack() {
+    local acknowledgement=""
+    IFS= read -r -t 5 -u "$SUPERVISOR_FIXTURE_READY_FD" acknowledgement \
+        || return 1
+    [ "$acknowledgement" = COMMITTED ]
+}
+
+assert_supervisor_rollback() {
+    local owner="$1" pgid="$2" descendant="$3"
+    eval "exec ${SUPERVISOR_FIXTURE_CONTROL_FD}>&-" 2>/dev/null || true
+    eval "exec ${SUPERVISOR_FIXTURE_READY_FD}<&-" 2>/dev/null || true
+    wait "$owner" 2>/dev/null && fail "uncommitted supervisor must report a nonzero exit"
+    for _ in $(seq 1 100); do
+        if ! kill -0 "$descendant" 2>/dev/null; then
+            break
+        fi
+        descendant_state="$(ps -o stat= -p "$descendant" 2>/dev/null | tr -d '[:space:]')"
+        [[ "$descendant_state" = Z* ]] && break
+        sleep 0.01
+    done
+    if kill -0 "$descendant" 2>/dev/null; then
+        descendant_state="$(ps -o stat= -p "$descendant" 2>/dev/null | tr -d '[:space:]')"
+        [[ "$descendant_state" = Z* ]] \
+            || fail "uncommitted supervisor left a live group peer after rollback"
+    fi
+    if bong_server_process_group_members "$pgid" >/dev/null; then
+        fail "uncommitted supervisor left a non-zombie group member alive"
+    fi
+}
+
+start_supervisor_fixture
+rollback_owner="$SUPERVISOR_FIXTURE_OWNER_PID"
+rollback_pgid="$(ps -o pgid= -p "$rollback_owner" 2>/dev/null | tr -d '[:space:]')"
+[ "$rollback_pgid" = "$rollback_owner" ] \
+    || fail "startup rollback supervisor must own its process group"
+rollback_descendant="$(cat "$supervisor_fixture_descendant")"
+assert_supervisor_rollback "$rollback_owner" "$rollback_pgid" "$rollback_descendant"
+[ ! -f "$supervisor_fixture_term_marker" ] \
+    || fail "TERM-ignoring rollback descendant unexpectedly handled TERM"
+[ "$(cat "$supervisor_fixture_marker")" = started ] \
+    || fail "cargo child inherited and consumed the supervisor control pipe"
+
+rm -f -- "$supervisor_fixture_marker" "$supervisor_fixture_term_marker" \
+    "$supervisor_fixture_descendant"
+start_supervisor_fixture
+committed_owner="$SUPERVISOR_FIXTURE_OWNER_PID"
+committed_pgid="$(ps -o pgid= -p "$committed_owner" 2>/dev/null | tr -d '[:space:]')"
+committed_starttime="$(bong_server_process_starttime "$committed_owner")"
+committed_identity="$(bong_server_process_executable_identity "$committed_owner")"
+printf C >&"$SUPERVISOR_FIXTURE_CONTROL_FD" \
+    || fail "startup supervisor fixture could not commit authority"
+read_supervisor_ack || fail "startup supervisor fixture did not flush exact COMMITTED ACK"
+exec {SUPERVISOR_FIXTURE_CONTROL_FD}>&-
+exec {SUPERVISOR_FIXTURE_READY_FD}<&-
+sleep 0.1
+kill -0 "$committed_owner" 2>/dev/null \
+    || fail "committed startup supervisor relinquished its pinned owner identity"
+bong_server_port_is_open() { return 1; }
+if bong_server_stop_owned_process_group_and_release_port \
+    "$committed_owner" "$committed_starttime" "$committed_identity" \
+    "$committed_pgid" 25565; then
+    committed_stop_status=0
+else
+    committed_stop_status=$?
+fi
+[ "$committed_stop_status" -eq "$BONG_SERVER_STOP_FORCED" ] \
+    || fail "committed startup fixture must report forced cleanup when its TERM-ignoring descendant is killed"
+unset -f bong_server_port_is_open
+[ "$(cat "$supervisor_fixture_marker")" = started ] \
+    || fail "committed cargo child inherited and consumed the supervisor control pipe"
+
+# The executable supervisor protocol has one reader and exact acknowledgement;
+# static pins also prevent future e2e changes from publishing pre-ACK authority.
+grep -Fq 'stdin=subprocess.DEVNULL' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
+    || fail "cargo must retain /dev/null stdin before and after commit"
+grep -Fq 'close_fds=True' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
+    || fail "cargo must not inherit protocol descriptors"
+grep -Fq 'sys.stdout.buffer.write(b"COMMITTED\n")' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
+    || fail "supervisor must emit exact COMMITTED acknowledgement"
+
+# Production startup must never HUP an unverified pane. Before identity pinning,
+# cleanup preserves tmux; after pinning it can only destroy the session after the
+# pinned TERM/wait/KILL helper confirms the exact process is gone.
+start_cleanup_fixture="$TEST_ROOT/start-cleanup-fixture.sh"
+python3 - "$ROOT/scripts/start.sh" > "$start_cleanup_fixture" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.index("cleanup_pinned_server_or_preserve_tmux() {")
+end = text.index("\n}\nfor _ in", start) + 2
+print(text[start:end])
+PY
+# shellcheck source=/dev/null
+source "$start_cleanup_fixture"
+server_ready_path="$TEST_ROOT/start-cleanup.ready"
+SESSION=bong-cleanup-fixture
+server_pid=424242
+server_starttime=1
+server_executable_identity=1:1
+server_identity_pinned=0
+tmux_kill_calls=0
+pinned_stop_calls=0
+tmux() { [ "${1:-}" = kill-session ] && tmux_kill_calls=$((tmux_kill_calls + 1)); }
+bong_server_stop_pinned_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return 0; }
+if cleanup_pinned_server_or_preserve_tmux "identity pin failed"; then
+    fail "unverified production startup cleanup must fail closed"
+fi
+[ "$pinned_stop_calls" -eq 0 ] \
+    || fail "unverified production startup cleanup must not signal a guessed PID"
+[ "$tmux_kill_calls" -eq 0 ] \
+    || fail "unverified production startup cleanup must preserve tmux instead of HUP"
+server_identity_pinned=1
+cleanup_pinned_server_or_preserve_tmux "readiness failed" \
+    || fail "verified production startup cleanup should accept a safe pinned stop"
+[ "$pinned_stop_calls" -eq 1 ] \
+    || fail "verified production startup cleanup must use pinned TERM/wait/KILL"
+[ "$tmux_kill_calls" -eq 1 ] \
+    || fail "verified production startup cleanup may destroy tmux only after graceful stop"
+bong_server_stop_pinned_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return "$BONG_SERVER_STOP_FORCED"; }
+if cleanup_pinned_server_or_preserve_tmux "forced shutdown"; then
+    fail "force-stopped startup cleanup must not authorize tmux teardown"
+fi
+[ "$tmux_kill_calls" -eq 1 ] \
+    || fail "force-stopped startup cleanup must preserve tmux"
+bong_server_stop_pinned_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return 2; }
+if cleanup_pinned_server_or_preserve_tmux "inspection failed"; then
+    fail "uninspectable pinned startup cleanup must fail closed"
+fi
+[ "$tmux_kill_calls" -eq 1 ] \
+    || fail "uninspectable pinned startup cleanup must preserve tmux"
+unset -f cleanup_pinned_server_or_preserve_tmux tmux bong_server_stop_pinned_process
+
+# The three production entrypoints must execute the same tri-state contract, not
+# merely mention it in static text. Start/reload may replace after status 3 while
+# preserving 1/2; stop completes non-server teardown and returns status 3 so an
+# operator can observe that AppExit/Last was not proven.
+source "$ROOT/scripts/dev-reload.sh"
+production_managed_status=0
+bong_server_stop_managed() { return "$production_managed_status"; }
+for production_managed_status in 0 "$BONG_SERVER_STOP_FORCED"; do
+    stop_managed_server_before_reload \
+        || fail "dev-reload must continue after safe stop status $production_managed_status"
+done
+for production_managed_status in 1 2; do
+    if stop_managed_server_before_reload 2> "$TEST_ROOT/dev-reload-stop-$production_managed_status.log"; then
+        fail "dev-reload must fail closed on managed stop status $production_managed_status"
+    else
+        production_result=$?
+    fi
+    [ "$production_result" -eq "$production_managed_status" ] \
+        || fail "dev-reload must preserve managed stop status $production_managed_status"
+done
+
+start_stop_fixture="$TEST_ROOT/start-stop-fixture.sh"
+python3 - "$ROOT/scripts/start.sh" > "$start_stop_fixture" <<'PY_START_STOP'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.index("stop_managed_server_before_start() {")
+end = text.index("\n}\n\nstart_bong_stack()", start) + 2
+print(text[start:end])
+PY_START_STOP
+# shellcheck source=/dev/null
+source "$start_stop_fixture"
+for production_managed_status in 0 "$BONG_SERVER_STOP_FORCED"; do
+    stop_managed_server_before_start \
+        || fail "start.sh must continue after safe stop status $production_managed_status"
+done
+for production_managed_status in 1 2; do
+    if stop_managed_server_before_start 2> "$TEST_ROOT/start-stop-$production_managed_status.log"; then
+        fail "start.sh must fail closed on managed stop status $production_managed_status"
+    else
+        production_result=$?
+    fi
+    [ "$production_result" -eq "$production_managed_status" ] \
+        || fail "start.sh must preserve managed stop status $production_managed_status"
+done
+unset -f stop_managed_server_before_start
+
+# shellcheck source=/dev/null
+source "$ROOT/scripts/stop.sh"
+original_production_stop_managed="$(declare -f bong_server_stop_managed)"
+original_production_tmux_scan="$(declare -f bong_server_tmux_has_unmanaged_server)"
+production_managed_status=0
+stop_teardown_log="$TEST_ROOT/production-stop-teardown.log"
+: > "$stop_teardown_log"
+bong_server_stop_managed() { return "$production_managed_status"; }
+bong_server_tmux_has_unmanaged_server() { return 1; }
+tmux() { printf 'tmux\n' >> "$stop_teardown_log"; return 0; }
+pkill() { printf 'pkill\n' >> "$stop_teardown_log"; return 0; }
+redis-cli() { printf 'redis\n' >> "$stop_teardown_log"; return 0; }
+for production_managed_status in 0 "$BONG_SERVER_STOP_FORCED"; do
+    : > "$stop_teardown_log"
+    if stop_bong_stack > /dev/null 2> "$TEST_ROOT/production-stop-$production_managed_status.log"; then
+        production_result=0
+    else
+        production_result=$?
+    fi
+    [ "$production_result" -eq "$production_managed_status" ] \
+        || fail "stop.sh must return managed stop status $production_managed_status after teardown"
+    [ "$(wc -l < "$stop_teardown_log")" -eq 3 ] \
+        || fail "stop.sh must complete tmux/agent/Redis teardown after safe status $production_managed_status"
+done
+for production_managed_status in 1 2; do
+    : > "$stop_teardown_log"
+    if stop_bong_stack > /dev/null 2> "$TEST_ROOT/production-stop-$production_managed_status.log"; then
+        fail "stop.sh must fail closed on managed stop status $production_managed_status"
+    else
+        production_result=$?
+    fi
+    [ "$production_result" -eq "$production_managed_status" ] \
+        || fail "stop.sh must preserve unsafe managed stop status $production_managed_status"
+    [ ! -s "$stop_teardown_log" ] \
+        || fail "stop.sh must not teardown tmux/agent/Redis after unsafe status $production_managed_status"
+done
+production_managed_status="$BONG_SERVER_STOP_FORCED"
+: > "$stop_teardown_log"
+if run_stop_bong_stack > /dev/null 2> "$TEST_ROOT/production-stop-wrapper.log"; then
+    fail "stop.sh wrapper must expose forced shutdown as non-zero"
+else
+    production_result=$?
+fi
+[ "$production_result" -eq "$BONG_SERVER_STOP_FORCED" ] \
+    || fail "stop.sh wrapper must preserve forced status $BONG_SERVER_STOP_FORCED"
+grep -Fq 'Done (managed bong-server required forced shutdown)' "$TEST_ROOT/production-stop-wrapper.log" \
+    || fail "stop.sh wrapper must report the forced completion outcome"
+unset -f bong_server_stop_managed bong_server_tmux_has_unmanaged_server tmux pkill redis-cli \
+    stop_bong_stack run_stop_bong_stack stop_managed_server_before_reload
+eval "$original_production_stop_managed"
+eval "$original_production_tmux_scan"
+
+# The production startup bind gate must reject a reachable listener owned by a
+# foreign process; only the exact pinned server may authorize PID publication.
+start_port_gate_fixture="$TEST_ROOT/start-port-gate-fixture.sh"
+python3 - "$ROOT/scripts/start.sh" > "$start_port_gate_fixture" <<'PY_START_PORT'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.index("port_ready=0")
+end = text.index("\nif [ \"$port_ready\" -ne 1 ]; then", start)
+print(text[start:end])
+PY_START_PORT
+server_pid=424242
+server_starttime=1
+server_executable_identity=1:1
+listener_owner_marker="$TEST_ROOT/start-port-owner.calls"
+port_probe_marker="$TEST_ROOT/start-port-probe.calls"
+: > "$listener_owner_marker"
+: > "$port_probe_marker"
+sleep() { :; }
+bong_server_pinned_process_owns_ipv4_listener() {
+    printf x >> "$listener_owner_marker"
+    return 1
+}
+bong_server_port_is_open() { printf x >> "$port_probe_marker"; return 0; }
+bong_server_pinned_process_status() { return 0; }
+# shellcheck source=/dev/null
+source "$start_port_gate_fixture"
+[ "$port_ready" -eq 0 ] \
+    || fail "reachable foreign listener must not satisfy production startup bind gate"
+[ "$(wc -c < "$listener_owner_marker")" -eq 500 ] \
+    || fail "production startup must perform exact listener ownership checks"
+[ "$(wc -c < "$port_probe_marker")" -eq 0 ] \
+    || fail "foreign ownership failure must short-circuit the generic connect probe"
+
+: > "$listener_owner_marker"
+: > "$port_probe_marker"
+bong_server_pinned_process_owns_ipv4_listener() {
+    printf x >> "$listener_owner_marker"
+    return 2
+}
+# shellcheck source=/dev/null
+source "$start_port_gate_fixture"
+[ "$port_ready" -eq 0 ] \
+    || fail "uninspectable listener ownership must not satisfy production startup"
+[ "$listener_inspection_failed" -eq 1 ] \
+    || fail "uninspectable first ownership check must remain distinguishable from no owner"
+[ "$(wc -c < "$listener_owner_marker")" -eq 1 ] \
+    || fail "uninspectable first ownership check must fail closed immediately"
+[ "$(wc -c < "$port_probe_marker")" -eq 0 ] \
+    || fail "uninspectable ownership must not reach the generic connect probe"
+
+: > "$listener_owner_marker"
+: > "$port_probe_marker"
+bong_server_pinned_process_owns_ipv4_listener() {
+    local calls
+    printf x >> "$listener_owner_marker"
+    calls="$(wc -c < "$listener_owner_marker")"
+    [ "$calls" -eq 1 ] && return 0
+    return 2
+}
+# shellcheck source=/dev/null
+source "$start_port_gate_fixture"
+[ "$port_ready" -eq 0 ] \
+    || fail "uninspectable post-connect ownership recheck must not publish authority"
+[ "$listener_inspection_failed" -eq 1 ] \
+    || fail "uninspectable ownership recheck must fail closed"
+[ "$(wc -c < "$listener_owner_marker")" -eq 2 ] \
+    || fail "production startup must recheck ownership after connect"
+[ "$(wc -c < "$port_probe_marker")" -eq 1 ] \
+    || fail "post-connect inspection fixture must probe the owned port exactly once"
+
+: > "$listener_owner_marker"
+: > "$port_probe_marker"
+bong_server_pinned_process_owns_ipv4_listener() {
+    local calls
+    printf x >> "$listener_owner_marker"
+    calls="$(wc -c < "$listener_owner_marker")"
+    [ "$calls" -eq 2 ] && return 1
+    return 0
+}
+# shellcheck source=/dev/null
+source "$start_port_gate_fixture"
+[ "$port_ready" -eq 1 ] \
+    || fail "transient post-connect ownership loss must retry until a stable owner is proven"
+[ "$listener_inspection_failed" -eq 0 ] \
+    || fail "reliable ownership loss must not be misclassified as inspection failure"
+[ "$(wc -c < "$listener_owner_marker")" -eq 4 ] \
+    || fail "stable startup authority requires ownership-connect-ownership after retry"
+[ "$(wc -c < "$port_probe_marker")" -eq 2 ] \
+    || fail "ownership race retry must perform a fresh connect probe"
+
+: > "$listener_owner_marker"
+: > "$port_probe_marker"
+bong_server_pinned_process_owns_ipv4_listener() {
+    printf x >> "$listener_owner_marker"
+    return 0
+}
+# shellcheck source=/dev/null
+source "$start_port_gate_fixture"
+[ "$port_ready" -eq 1 ] \
+    || fail "stable exact listener ownership must satisfy production startup"
+[ "$listener_inspection_failed" -eq 0 ] \
+    || fail "stable listener ownership must not report inspection failure"
+[ "$(wc -c < "$listener_owner_marker")" -eq 2 ] \
+    || fail "successful startup must bracket connect with two ownership checks"
+[ "$(wc -c < "$port_probe_marker")" -eq 1 ] \
+    || fail "successful startup must connect exactly once between ownership checks"
+unset -f sleep bong_server_pinned_process_owns_ipv4_listener \
+    bong_server_port_is_open bong_server_pinned_process_status
+
+# The persistence-sensitive preview bind gate has the same three-state contract:
+# reliable absence may retry, inspection failure must stop, and connect is always
+# bracketed by exact process-group ownership checks.
+preview_port_gate_fixture="$TEST_ROOT/preview-port-gate-fixture.sh"
+python3 - "$ROOT/scripts/e2e-redis.sh" > "$preview_port_gate_fixture" <<'PY_PREVIEW_PORT'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.index("  NORTH_RIFT_PORT_READY=0")
+end = text.index("\n  if [ \"$NORTH_RIFT_PORT_READY\" -ne 1 ]; then", start)
+print(text[start:end])
+PY_PREVIEW_PORT
+SERVER_PID=424242
+SERVER_OWNER_STARTTIME=1
+SERVER_OWNER_EXECUTABLE_IDENTITY=1:1
+SERVER_PGID=424242
+preview_listener_marker="$TEST_ROOT/preview-port-owner.calls"
+preview_probe_marker="$TEST_ROOT/preview-port-probe.calls"
+: > "$preview_listener_marker"
+: > "$preview_probe_marker"
+sleep() { :; }
+bong_server_owned_process_group_owns_ipv4_listener() {
+    printf x >> "$preview_listener_marker"
+    return 2
+}
+port_open() { printf x >> "$preview_probe_marker"; return 0; }
+bong_server_pinned_process_group_status() { return 0; }
+# shellcheck source=/dev/null
+source "$preview_port_gate_fixture"
+[ "$NORTH_RIFT_PORT_READY" -eq 0 ] \
+    || fail "uninspectable preview listener ownership must not satisfy readiness"
+[ "$NORTH_RIFT_LISTENER_INSPECTION_FAILED" -eq 1 ] \
+    || fail "preview listener inspection failure must remain distinguishable"
+[ "$(wc -c < "$preview_listener_marker")" -eq 1 ] \
+    || fail "preview listener inspection failure must stop immediately"
+[ "$(wc -c < "$preview_probe_marker")" -eq 0 ] \
+    || fail "uninspectable preview ownership must not reach connect"
+
+: > "$preview_listener_marker"
+: > "$preview_probe_marker"
+bong_server_owned_process_group_owns_ipv4_listener() {
+    local calls
+    printf x >> "$preview_listener_marker"
+    calls="$(wc -c < "$preview_listener_marker")"
+    [ "$calls" -eq 1 ] && return 0
+    return 2
+}
+# shellcheck source=/dev/null
+source "$preview_port_gate_fixture"
+[ "$NORTH_RIFT_PORT_READY" -eq 0 ] \
+    || fail "uninspectable preview ownership recheck must not satisfy readiness"
+[ "$NORTH_RIFT_LISTENER_INSPECTION_FAILED" -eq 1 ] \
+    || fail "preview ownership recheck inspection failure must fail closed"
+[ "$(wc -c < "$preview_listener_marker")" -eq 2 ] \
+    || fail "preview connect must be followed by an ownership recheck"
+[ "$(wc -c < "$preview_probe_marker")" -eq 1 ] \
+    || fail "preview recheck fixture must connect exactly once"
+
+: > "$preview_listener_marker"
+: > "$preview_probe_marker"
+bong_server_owned_process_group_owns_ipv4_listener() {
+    printf x >> "$preview_listener_marker"
+    return 0
+}
+# shellcheck source=/dev/null
+source "$preview_port_gate_fixture"
+[ "$NORTH_RIFT_PORT_READY" -eq 1 ] \
+    || fail "stable exact process-group listener ownership must satisfy preview readiness"
+[ "$NORTH_RIFT_LISTENER_INSPECTION_FAILED" -eq 0 ] \
+    || fail "stable preview ownership must not report inspection failure"
+[ "$(wc -c < "$preview_listener_marker")" -eq 2 ] \
+    || fail "successful preview readiness must bracket connect with ownership checks"
+[ "$(wc -c < "$preview_probe_marker")" -eq 1 ] \
+    || fail "successful preview readiness must connect exactly once"
+unset -f sleep bong_server_owned_process_group_owns_ipv4_listener \
+    port_open bong_server_pinned_process_group_status
+
+grep -Fq 'app.add_systems(PostStartup, server_readiness::publish_if_requested_from_env);' "$ROOT/server/src/main.rs" \
+    || fail "production readiness must run after all Startup systems complete"
+if python3 - "$ROOT/server/src/main.rs" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.index("fn run_server() {")
+end = text.index("\n}", start)
+raise SystemExit("server_readiness::publish_if_requested_from_env" in text[start:end])
+PY
+then
+    :
+else
+    fail "run_server must not publish readiness before the Bevy startup schedules"
+fi
+grep -Fq "export BONG_SERVER_READY_PATH='\$server_ready_path'" "$ROOT/scripts/start.sh" \
+    || fail "start.sh must pass a private readiness path to the production server"
+grep -Fq 'ready_pid="$(bong_server_read_ready_pid "$server_ready_path")"' "$ROOT/scripts/start.sh" \
+    || fail "start.sh must validate readiness evidence before publishing PID authority"
+grep -Fq 'bong_server_pinned_process_owns_ipv4_listener \' "$ROOT/scripts/start.sh" \
+    || fail "start.sh must prove the exact pinned server owns port 25565"
+grep -Fq 'bong_server_port_is_open 25565' "$ROOT/scripts/start.sh" \
+    || fail "start.sh must verify the owned Valence listener accepts connections"
+grep -Fq 'bong_server_stop_owned_process_group_and_release_port' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e stop must bind group teardown to pinned supervisor identity"
+grep -Fq 'bong-process-group-supervisor.py' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e server launch must use the persistent process-group supervisor"
+! grep -Fq 'setsid --fork' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e launch must not recover authority through a replaceable pathname"
+grep -Fq 'bong_server_stop_pinned_process \' "$ROOT/scripts/start.sh" \
+    || fail "production startup cleanup must delegate to the pinned TERM/wait/KILL helper"
+grep -Fq 'cleanup_pinned_server_or_preserve_tmux \' "$ROOT/scripts/start.sh" \
+    || fail "readiness and record failure paths must use safe pinned cleanup"
+grep -Fq 'preserving tmux for diagnosis' "$ROOT/scripts/start.sh" \
+    || fail "uninspectable startup failures must preserve tmux instead of sending HUP"
+grep -Fq 'coproc BONG_SERVER_SUPERVISOR' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e launch must hold an uncommitted supervisor control pipe"
+grep -Fq 'printf C >&"$control_fd"' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e launch must commit supervisor authority only after identity pinning"
+grep -Fq '[ "$committed_line" = COMMITTED ]' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e launch must require an exact COMMITTED acknowledgement"
+grep -Fq 'bong_server_pinned_process_group_status' "$ROOT/scripts/e2e-redis.sh" \
+    || fail "e2e launch must re-pin owner identity after COMMITTED"
+grep -Fq 'if command != b"C":' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
+    || fail "supervisor must roll back when startup authority is not committed"
+grep -Fq 'sys.stdout.buffer.write(b"COMMITTED\n")' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
+    || fail "supervisor must publish the COMMITTED acknowledgement"
+
+"$ROOT/scripts/test-process-group-snapshot.sh" \
+    || fail "process-group snapshot regression must pass before lifecycle suite succeeds"
+
+printf 'PASS: server lifecycle ownership, pidfd signaling, process groups, readiness, locks, and persistence handoff are fail-closed\n'

@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 
+# Capture the library directory while this file is sourced. Function-time
+# BASH_SOURCE may point at a test/caller frame after declare/eval replacement.
+BONG_SERVER_LIFECYCLE_LIBRARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Environment values are not lock authority. Sourcing this library resets the
+# private reentrancy state; only bong_server_with_lock may populate it after a
+# verified flock succeeds in this shell process.
+unset BONG_SERVER_LIFECYCLE_LOCK_DEPTH BONG_SERVER_LIFECYCLE_LOCK_FD BONG_SERVER_LIFECYCLE_LOCK_PATH BONG_SERVER_LIFECYCLE_LOCK_IDENTITY
+BONG_SERVER_LIFECYCLE_LOCK_OWNER_BASHPID=""
+
+BONG_SERVER_STOP_FORCED=3
+
 bong_server_validate_real_directory() {
     local directory="${1:-}"
     [ -n "$directory" ] && [ -d "$directory" ] && [ ! -L "$directory" ]
@@ -109,10 +121,23 @@ bong_server_fd_matches_path() {
     [ "$fd_identity" = "$path_identity" ]
 }
 
-bong_server_with_lock() {
-    local record lock directory fd status timeout
+_bong_server_lifecycle_lock_is_held_here() {
+    local fd="${BONG_SERVER_LIFECYCLE_LOCK_FD:-}" path="${BONG_SERVER_LIFECYCLE_LOCK_PATH:-}"
+    local expected_identity="${BONG_SERVER_LIFECYCLE_LOCK_IDENTITY:-}" actual_identity
 
-    if [ "${BONG_SERVER_LIFECYCLE_LOCK_DEPTH:-0}" -gt 0 ]; then
+    [ "${BONG_SERVER_LIFECYCLE_LOCK_OWNER_BASHPID:-}" = "$BASHPID" ] || return 1
+    [[ "$fd" =~ ^[0-9]+$ ]] && [ -n "$path" ] && [[ "$expected_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+    bong_server_validate_lock_file "$path" || return 1
+    bong_server_validate_fd_secure_regular_file "$fd" || return 1
+    bong_server_fd_matches_path "$fd" "$path" || return 1
+    actual_identity="$(bong_server_path_identity "/proc/self/fd/$fd")" || return 1
+    [ "$actual_identity" = "$expected_identity" ]
+}
+
+bong_server_with_lock() {
+    local record lock directory fd status timeout lock_identity
+
+    if _bong_server_lifecycle_lock_is_held_here; then
         "$@"
         return $?
     fi
@@ -151,8 +176,18 @@ bong_server_with_lock() {
         exec {fd}>&-
         return 1
     }
-    BONG_SERVER_LIFECYCLE_LOCK_DEPTH=1 "$@"
+    lock_identity="$(bong_server_path_identity "/proc/self/fd/$fd")" || {
+        flock -u "$fd" || true
+        exec {fd}>&-
+        return 1
+    }
+    BONG_SERVER_LIFECYCLE_LOCK_FD="$fd"
+    BONG_SERVER_LIFECYCLE_LOCK_PATH="$lock"
+    BONG_SERVER_LIFECYCLE_LOCK_IDENTITY="$lock_identity"
+    BONG_SERVER_LIFECYCLE_LOCK_OWNER_BASHPID="$BASHPID"
+    "$@"
     status=$?
+    unset BONG_SERVER_LIFECYCLE_LOCK_FD BONG_SERVER_LIFECYCLE_LOCK_PATH BONG_SERVER_LIFECYCLE_LOCK_IDENTITY BONG_SERVER_LIFECYCLE_LOCK_OWNER_BASHPID
     flock -u "$fd"
     exec {fd}>&-
     return "$status"
@@ -183,18 +218,36 @@ bong_server_process_inspection_failed() {
     return 2
 }
 
-bong_server_process_starttime() {
-    local pid="${1:-}"
-    local stat rest
+# Keep stat parsing separate so callers and tests can verify that a `) ` inside
+# comm cannot be mistaken for the final comm delimiter.
+bong_server_parse_stat_starttime_and_group() {
+    local stat="${1:-}" rest
     local -a fields
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-    IFS= read -r stat < "/proc/$pid/stat" || return 1
-    rest="${stat#*) }"
+    # `##` takes the longest match, therefore stripping through the last `) `.
+    rest="${stat##*) }"
     [ "$rest" != "$stat" ] || return 1
     read -r -a fields <<< "$rest"
     [ "${#fields[@]}" -ge 20 ] || return 1
-    printf '%s\n' "${fields[19]}"
+    printf '%s %s\n' "${fields[19]}" "${fields[2]}"
+}
+
+# Reads the two identity fields from one /proc stat snapshot. The pgrp pin is
+# needed for process-group teardown: a numeric PID alone can be reused outside
+# the group between enumeration and signal delivery.
+bong_server_process_starttime_and_group() {
+    local pid="${1:-}" stat
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    { IFS= read -r stat < "/proc/$pid/stat"; } 2>/dev/null || return 1
+    bong_server_parse_stat_starttime_and_group "$stat"
+}
+
+bong_server_process_starttime() {
+    local snapshot
+
+    snapshot="$(bong_server_process_starttime_and_group "${1:-}")" || return 1
+    printf '%s\n' "${snapshot%% *}"
 }
 
 bong_server_process_executable() {
@@ -312,6 +365,183 @@ bong_server_record_matches_process() {
     [ "$actual_executable_identity" = "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" ]
 }
 
+bong_server_pidfd_signal() {
+    local pid="${1:-}" expected_starttime="${2:-}" expected_executable_identity="${3:-}" signal_name="${4:-}"
+    local expected_pgrp="${5:-}"
+    local -a pidfd_args
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 2
+    [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
+    [[ "$expected_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+    [ -z "$expected_pgrp" ] || [[ "$expected_pgrp" =~ ^[0-9]+$ ]] || return 2
+    case "$signal_name" in TERM|KILL) ;; *) return 2 ;; esac
+    [ -n "${BONG_SERVER_LIFECYCLE_LIBRARY_DIR:-}" ] || return 2
+    pidfd_args=("$pid" "$expected_starttime" "$expected_executable_identity" "$signal_name")
+    [ -z "$expected_pgrp" ] || pidfd_args+=("$expected_pgrp")
+    python3 "$BONG_SERVER_LIFECYCLE_LIBRARY_DIR/bong-pidfd-signal.py" "${pidfd_args[@]}"
+}
+
+# 0 means the exact pinned process owns a matching IPv4 LISTEN socket; 1 means
+# reliable absence/mismatch, and 2 means inspection was unavailable or malformed.
+bong_server_pinned_process_owns_ipv4_listener() {
+    local pid="${1:-}" expected_starttime="${2:-}" expected_executable_identity="${3:-}"
+    local port="${4:-}" expected_pgrp="${5:-}"
+    local -a owner_args
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 2
+    [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
+    [[ "$expected_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+    [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 2
+    [ -z "$expected_pgrp" ] || [[ "$expected_pgrp" =~ ^[0-9]+$ ]] || return 2
+    [ -n "${BONG_SERVER_LIFECYCLE_LIBRARY_DIR:-}" ] || return 2
+    owner_args=("$pid" "$expected_starttime" "$expected_executable_identity" "$port")
+    [ -z "$expected_pgrp" ] || owner_args+=("$expected_pgrp")
+    python3 "$BONG_SERVER_LIFECYCLE_LIBRARY_DIR/bong-listener-owner.py" "${owner_args[@]}"
+}
+
+# 0 = the pinned process still matches; 1 = it is reliably gone/reused;
+# 2 = a live process could not be inspected. Callers must fail closed on 2.
+bong_server_pinned_process_status() {
+    local pid="${1:-}" expected_starttime="${2:-}" expected_executable_identity="${3:-}"
+    local actual_starttime actual_executable_identity status
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 2
+    [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
+    [[ "$expected_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+    if bong_server_process_is_running "$pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    [ "$status" -eq 0 ] || return "$status"
+    actual_starttime="$(bong_server_process_starttime "$pid")" || {
+        bong_server_process_inspection_failed "$pid"
+        return $?
+    }
+    [ "$actual_starttime" = "$expected_starttime" ] || return 1
+    actual_executable_identity="$(bong_server_process_executable_identity "$pid")" || {
+        bong_server_process_inspection_failed "$pid"
+        return $?
+    }
+    [ "$actual_executable_identity" = "$expected_executable_identity" ]
+}
+
+# Like bong_server_pinned_process_status, but also pins the /proc stat process
+# group from one snapshot. 0 means every authority field still matches; 1 means
+# gone/reused/mismatched; 2 means inspection failed and callers must fail closed.
+bong_server_pinned_process_group_status() {
+    local pid="${1:-}" expected_starttime="${2:-}" expected_executable_identity="${3:-}"
+    local expected_pgid="${4:-}" snapshot actual_starttime actual_pgid actual_executable_identity status
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 2
+    [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
+    [[ "$expected_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+    [[ "$expected_pgid" =~ ^[0-9]+$ ]] || return 2
+    if bong_server_process_is_running "$pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    [ "$status" -eq 0 ] || return "$status"
+    snapshot="$(bong_server_process_starttime_and_group "$pid")" || {
+        bong_server_process_inspection_failed "$pid"
+        return $?
+    }
+    read -r actual_starttime actual_pgid <<< "$snapshot"
+    [ "$actual_starttime" = "$expected_starttime" ] || return 1
+    [ "$actual_pgid" = "$expected_pgid" ] || return 1
+    actual_executable_identity="$(bong_server_process_executable_identity "$pid")" || {
+        bong_server_process_inspection_failed "$pid"
+        return $?
+    }
+    [ "$actual_executable_identity" = "$expected_executable_identity" ]
+}
+
+bong_server_wait_for_pinned_process_exit() {
+    local pid="${1:-}" expected_starttime="${2:-}" expected_executable_identity="${3:-}"
+    local grace_seconds="${4:-}" deadline status
+
+    [[ "$grace_seconds" =~ ^[0-9]+$ ]] || return 2
+    deadline=$((SECONDS + grace_seconds))
+    while :; do
+        if bong_server_pinned_process_status \
+            "$pid" "$expected_starttime" "$expected_executable_identity"; then
+            status=0
+        else
+            status=$?
+        fi
+        case "$status" in
+            1) return 0 ;;
+            2) return 2 ;;
+        esac
+        [ "$SECONDS" -lt "$deadline" ] || return 1
+        sleep 0.05
+    done
+}
+
+# Stop a process whose immutable identity has already been pinned. Status 0 means
+# TERM was delivered and the exact process exited within its grace period. Status
+# 3 means identity-safe KILL cleanup completed, so AppExit/Last is not proven; 1
+# means it remained alive after KILL, and 2 means identity or signaling uncertainty.
+bong_server_stop_pinned_process() {
+    local pid="${1:-}" expected_starttime="${2:-}" expected_executable_identity="${3:-}"
+    local grace_seconds="${4:-10}" kill_grace_seconds="${5:-2}" status
+
+    [[ "$grace_seconds" =~ ^[0-9]+$ ]] || return 2
+    [[ "$kill_grace_seconds" =~ ^[0-9]+$ ]] || return 2
+    if bong_server_pidfd_signal \
+        "$pid" "$expected_starttime" "$expected_executable_identity" TERM; then
+        status=0
+    else
+        status=$?
+    fi
+    case "$status" in
+        1) return 1 ;;
+        2) return 2 ;;
+    esac
+
+    if bong_server_wait_for_pinned_process_exit \
+        "$pid" "$expected_starttime" "$expected_executable_identity" "$grace_seconds"; then
+        return 0
+    else
+        status=$?
+    fi
+    case "$status" in
+        2) return 2 ;;
+        1) ;;
+        *) return 2 ;;
+    esac
+
+    if bong_server_pidfd_signal \
+        "$pid" "$expected_starttime" "$expected_executable_identity" KILL; then
+        status=0
+    else
+        status=$?
+    fi
+    case "$status" in
+        1)
+            if bong_server_pinned_process_status \
+                "$pid" "$expected_starttime" "$expected_executable_identity"; then
+                return 2
+            else
+                status=$?
+            fi
+            case "$status" in
+                1) return "$BONG_SERVER_STOP_FORCED" ;;
+                *) return 2 ;;
+            esac
+            ;;
+        2) return 2 ;;
+    esac
+    if bong_server_wait_for_pinned_process_exit \
+        "$pid" "$expected_starttime" "$expected_executable_identity" "$kill_grace_seconds"; then
+        return "$BONG_SERVER_STOP_FORCED"
+    else
+        status=$?
+    fi
+    return "$status"
+}
+
 bong_server_remove_secure_file_if_identity() {
     local record="${1:-}" expected_identity="${2:-}" current_identity fd
 
@@ -397,6 +627,37 @@ _bong_server_finish_managed_record_cleanup() {
             return 2
             ;;
     esac
+}
+
+bong_server_read_ready_pid() {
+    local ready_path="${1:-}" directory fd line extra
+
+    [ -n "$ready_path" ] || return 2
+    if [ ! -e "$ready_path" ] && [ ! -L "$ready_path" ]; then
+        return 1
+    fi
+    directory="$(dirname -- "$ready_path")"
+    bong_server_validate_secure_directory "$directory" 700 || return 2
+    if ! { exec {fd}<"$ready_path"; } 2>/dev/null; then
+        return 2
+    fi
+    if ! bong_server_validate_lock_file "$ready_path" \
+        || ! bong_server_validate_fd_secure_regular_file "$fd" \
+        || ! bong_server_fd_matches_path "$fd" "$ready_path"; then
+        exec {fd}<&-
+        return 2
+    fi
+    IFS= read -r line <&"$fd" || {
+        exec {fd}<&-
+        return 2
+    }
+    if IFS= read -r extra <&"$fd"; then
+        exec {fd}<&-
+        return 2
+    fi
+    exec {fd}<&-
+    [[ "$line" =~ ^pid=([0-9]+)$ ]] || return 2
+    printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 _bong_server_write_record() {
@@ -535,6 +796,211 @@ bong_server_stop_process_tree_and_release_port() {
         sleep 0.2
     done
     [ "$tree_stopped" -eq 1 ] && [ "$port_released" -eq 1 ]
+}
+
+# Emits `pid starttime executable_identity` captured while the PID is still in
+# the requested process group. A later signal must use these pins, never inspect
+# the PID for the first time after this snapshot: that would accept a recycled,
+# foreign process under the old numeric PID.
+bong_server_process_group_members() {
+    local pgid="${1:-}" pid member_pgid state found=0 process_table
+    local snapshot starttime snapshot_pgrp executable_identity status
+
+    [[ "$pgid" =~ ^[0-9]+$ ]] || return 2
+    process_table="$(ps -e -o pid=,pgid=,stat= 2>/dev/null)" || return 2
+    while read -r pid member_pgid state; do
+        [ -z "$pid$member_pgid$state" ] && continue
+        [ -n "$pid" ] && [ -n "$member_pgid" ] && [ -n "$state" ] || {
+            echo "FAIL: ps returned malformed process-group membership" >&2
+            return 2
+        }
+        [ "$member_pgid" = "$pgid" ] || continue
+        [[ "$state" = Z* ]] && continue
+        snapshot="$(bong_server_process_starttime_and_group "$pid")" || {
+            bong_server_process_inspection_failed "$pid"
+            status=$?
+            [ "$status" -eq 1 ] && continue
+            return 2
+        }
+        read -r starttime snapshot_pgrp <<< "$snapshot"
+        [[ "$starttime" =~ ^[0-9]+$ ]] && [ "$snapshot_pgrp" = "$pgid" ] || continue
+        executable_identity="$(bong_server_process_executable_identity "$pid")" || {
+            bong_server_process_inspection_failed "$pid"
+            status=$?
+            [ "$status" -eq 1 ] && continue
+            return 2
+        }
+        [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+        printf '%s %s %s\n' "$pid" "$starttime" "$executable_identity"
+        found=1
+    done <<< "$process_table"
+    [ "$found" -eq 1 ]
+}
+
+# Verify that at least one exact, frozen member of an owned process group holds
+# the requested IPv4 listener. The persistent owner is revalidated before the
+# scan and before accepting a member, so a recycled numeric PGID is never trust.
+bong_server_owned_process_group_owns_ipv4_listener() {
+    local owner_pid="${1:-}" owner_starttime="${2:-}" owner_executable_identity="${3:-}"
+    local pgid="${4:-}" port="${5:-}" members status pid starttime executable_identity
+
+    bong_server_pinned_process_group_status \
+        "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$pgid" || return $?
+    members="$(bong_server_process_group_members "$pgid")"
+    status=$?
+    case "$status" in
+        0) ;;
+        1) return 1 ;;
+        *) return 2 ;;
+    esac
+    while read -r pid starttime executable_identity; do
+        [ -n "$pid$starttime$executable_identity" ] || continue
+        [ "$pid" = "$owner_pid" ] && continue
+        bong_server_pinned_process_group_status \
+            "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$pgid" || return 2
+        if bong_server_pinned_process_owns_ipv4_listener \
+            "$pid" "$starttime" "$executable_identity" "$port" "$pgid"; then
+            return 0
+        else
+            status=$?
+        fi
+        [ "$status" -eq 1 ] || return 2
+    done <<< "$members"
+    return 1
+}
+
+# E2E servers run below a persistent session leader whose PID/starttime/executable
+# are pinned before use. The leader cannot be replaced while any old group member
+# remains, so checking it immediately before every scan closes numeric-PGID reuse.
+bong_server_stop_owned_process_group_and_release_port() {
+    local owner_pid="${1:-}" owner_starttime="${2:-}" owner_executable_identity="${3:-}"
+    local pgid="${4:-}" port="${5:-25565}" current_pgid members status pid starttime executable_identity
+    local forced_stop=0 forced_children=0
+
+    [[ "$owner_pid" =~ ^[0-9]+$ ]] || return 2
+    [[ "$owner_starttime" =~ ^[0-9]+$ ]] || return 2
+    [[ "$owner_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+    [ "$pgid" = "$owner_pid" ] || {
+        echo "FAIL: preview process-group owner must also be group leader" >&2
+        return 2
+    }
+    [[ "$port" =~ ^[0-9]+$ ]] || return 2
+    current_pgid="$(ps -o pgid= -p "$BASHPID" 2>/dev/null)" || return 2
+    current_pgid="${current_pgid//[[:space:]]/}"
+    [ "$pgid" != "$current_pgid" ] || {
+        echo "FAIL: refusing to stop the caller's own process group $pgid" >&2
+        return 2
+    }
+
+    bong_server_pinned_process_status \
+        "$owner_pid" "$owner_starttime" "$owner_executable_identity" || {
+        status=$?
+        echo "FAIL: preview process-group owner identity is absent or uncertain" >&2
+        [ "$status" -eq 2 ] && return 2
+        return 1
+    }
+    members="$(bong_server_process_group_members "$pgid")"
+    status=$?
+    case "$status" in
+        0) ;;
+        1) members="" ;;
+        *) echo "FAIL: could not enumerate owned preview process group $pgid" >&2; return 2 ;;
+    esac
+    while read -r pid starttime executable_identity; do
+        [ -n "$pid$starttime$executable_identity" ] || continue
+        [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$starttime" =~ ^[0-9]+$ ]] \
+            && [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+        [ "$pid" = "$owner_pid" ] && continue
+        bong_server_pinned_process_status \
+            "$owner_pid" "$owner_starttime" "$owner_executable_identity" || return 2
+        bong_server_pidfd_signal "$pid" "$starttime" "$executable_identity" TERM "$pgid"
+        status=$?
+        case "$status" in 0|1) ;; *) return 2 ;; esac
+    done <<< "$members"
+
+    if bong_server_wait_for_owned_process_group_children \
+        "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 10; then
+        status=0
+    else
+        status=$?
+    fi
+    if [ "$status" -ne 0 ]; then
+        [ "$status" -eq 1 ] || return "$status"
+        bong_server_pinned_process_status \
+            "$owner_pid" "$owner_starttime" "$owner_executable_identity" || return 2
+        members="$(bong_server_process_group_members "$pgid")"
+        status=$?
+        case "$status" in
+            0) ;;
+            1) members="" ;;
+            *) return 2 ;;
+        esac
+        forced_children=0
+        while read -r pid starttime executable_identity; do
+            [ -n "$pid$starttime$executable_identity" ] || continue
+            [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$starttime" =~ ^[0-9]+$ ]] \
+                && [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
+            [ "$pid" = "$owner_pid" ] && continue
+            bong_server_pinned_process_status \
+                "$owner_pid" "$owner_starttime" "$owner_executable_identity" || return 2
+            bong_server_pidfd_signal "$pid" "$starttime" "$executable_identity" KILL "$pgid"
+            status=$?
+            case "$status" in
+                0) forced_children=1 ;;
+                1) ;;
+                *) return 2 ;;
+            esac
+        done <<< "$members"
+        bong_server_wait_for_owned_process_group_children \
+            "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 2 || return $?
+        if [ "$forced_children" -eq 1 ]; then
+            forced_stop=1
+        fi
+    fi
+
+    bong_server_pidfd_signal \
+        "$owner_pid" "$owner_starttime" "$owner_executable_identity" KILL
+    status=$?
+    case "$status" in
+        0|1) ;;
+        *) echo "FAIL: could not safely stop preview process-group owner" >&2; return 2 ;;
+    esac
+    bong_server_wait_for_pinned_process_exit \
+        "$owner_pid" "$owner_starttime" "$owner_executable_identity" 2 || return $?
+    wait "$owner_pid" 2>/dev/null || true
+    bong_server_confirm_port_released "$port" || return $?
+    [ "$forced_stop" -eq 0 ] || return "$BONG_SERVER_STOP_FORCED"
+}
+
+bong_server_wait_for_owned_process_group_children() {
+    local owner_pid="${1:-}" owner_starttime="${2:-}" owner_executable_identity="${3:-}"
+    local pgid="${4:-}" grace_seconds="${5:-}" deadline members status pid found_child
+
+    [[ "$grace_seconds" =~ ^[0-9]+$ ]] || return 2
+    deadline=$((SECONDS + grace_seconds))
+    while :; do
+        bong_server_pinned_process_status \
+            "$owner_pid" "$owner_starttime" "$owner_executable_identity" || return 2
+        members="$(bong_server_process_group_members "$pgid")"
+        status=$?
+        case "$status" in
+            0)
+                found_child=0
+                while read -r pid _; do
+                    [ -n "$pid" ] || continue
+                    if [ "$pid" != "$owner_pid" ]; then
+                        found_child=1
+                        break
+                    fi
+                done <<< "$members"
+                [ "$found_child" -eq 0 ] && return 0
+                ;;
+            1) return 2 ;;
+            *) return 2 ;;
+        esac
+        [ "$SECONDS" -lt "$deadline" ] || return 1
+        sleep 0.05
+    done
 }
 
 bong_server_confirm_port_released() {
@@ -723,7 +1189,7 @@ _bong_server_stop_managed() {
         return 1
     }
     record="$(bong_server_pid_file)"
-    if [ ! -e "$record" ]; then
+    if [ ! -e "$record" ] && [ ! -L "$record" ]; then
         return 0
     fi
     if ! bong_server_read_record; then
@@ -764,7 +1230,19 @@ _bong_server_stop_managed() {
             ;;
     esac
 
-    kill -TERM "$pid" 2>/dev/null || true
+    bong_server_pidfd_signal "$pid" "$starttime" "$executable_identity" TERM
+    status=$?
+    case "$status" in
+        0) ;;
+        1)
+            _bong_server_finish_managed_record_cleanup "$pid" "$starttime" "$executable" "$executable_identity"
+            return $?
+            ;;
+        *)
+            echo "FAIL: could not deliver identity-safe SIGTERM to managed bong-server pid $pid; preserving record" >&2
+            return 2
+            ;;
+    esac
     bong_server_wait_for_exit "$pid" "$grace_seconds"
     status=$?
     case "$status" in
@@ -806,7 +1284,24 @@ _bong_server_stop_managed() {
             ;;
     esac
 
-    kill -KILL "$pid" 2>/dev/null || true
+    bong_server_pidfd_signal "$pid" "$starttime" "$executable_identity" KILL
+    status=$?
+    case "$status" in
+        0) ;;
+        1)
+            if _bong_server_finish_managed_record_cleanup \
+                "$pid" "$starttime" "$executable" "$executable_identity"; then
+                return "$BONG_SERVER_STOP_FORCED"
+            else
+                status=$?
+            fi
+            return "$status"
+            ;;
+        *)
+            echo "FAIL: could not deliver identity-safe SIGKILL to managed bong-server pid $pid; preserving record" >&2
+            return 2
+            ;;
+    esac
     bong_server_wait_for_exit "$pid" 2
     status=$?
     if [ "$status" -ne 0 ]; then
@@ -817,11 +1312,41 @@ _bong_server_stop_managed() {
         echo "FAIL: managed bong-server pid $pid did not exit after SIGKILL" >&2
         return 1
     fi
-    _bong_server_finish_managed_record_cleanup "$pid" "$starttime" "$executable" "$executable_identity"
+    if _bong_server_finish_managed_record_cleanup \
+        "$pid" "$starttime" "$executable" "$executable_identity"; then
+        return "$BONG_SERVER_STOP_FORCED"
+    else
+        status=$?
+    fi
+    return "$status"
 }
 
 bong_server_stop_managed() {
     bong_server_with_lock _bong_server_stop_managed
+}
+
+# Restart/start callers may proceed after status 3 only because that status proves
+# the exact managed process is gone and its authority record was safely removed.
+# AppExit/Last is still unproven, so make the degraded shutdown visible instead of
+# flattening it into either ordinary success or an ownership failure.
+bong_server_stop_managed_for_replacement() {
+    local operation="${1:-managed server replacement}" status
+
+    if bong_server_stop_managed; then
+        return 0
+    else
+        status=$?
+    fi
+    case "$status" in
+        "$BONG_SERVER_STOP_FORCED")
+            echo "WARN: managed bong-server required identity-safe SIGKILL; AppExit/Last persistence is unconfirmed; continuing $operation because the exact process is gone and its authority record was safely cleared" >&2
+            return 0
+            ;;
+        *)
+            echo "FAIL: managed bong-server stop did not complete safely (status=$status); refusing $operation" >&2
+            return "$status"
+            ;;
+    esac
 }
 
 # 这些文件属于同一个 SQLite 持久化快照。预览 e2e 必须先把开发者快照

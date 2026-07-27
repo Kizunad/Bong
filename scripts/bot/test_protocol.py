@@ -691,33 +691,40 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
         phase = self.source[phase_start:phase_end]
 
         self.assertEqual(
-            self.source.count("export BONG_PREVIEW_MODE=1"),
+            self.source.count('start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1'),
             1,
-            "preview env 只能出现在 dedicated north-rift server phase",
+            "preview mode 只能传给 dedicated north-rift server launch",
         )
         first_stop = phase.index("if ! stop_server;")
-        preview_env = phase.index("export BONG_PREVIEW_MODE=1")
+        preview_env = phase.index(
+            'start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1'
+        )
         scenario = phase.index("--scenario terrain_north_rift_scorch_zone_identity")
         second_stop = phase.index("if ! stop_server;", first_stop + 1)
         self.assertLess(first_stop, preview_env, "必须先停普通 100 NPC server 再开 preview")
         self.assertLess(preview_env, scenario, "专用 server 激活 preview 后才能运行真实 bot")
         self.assertLess(scenario, second_stop, "唯一场景结束后必须立即 stop_server")
         self.assertIn("BOT_E2E_NORTH_RIFT_PREVIEW=1", phase)
-        self.assertIn("export BONG_ROGUE_SEED_COUNT=0", phase)
+        self.assertIn(
+            'BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ]',
+            self.source,
+            "dedicated preview launch 必须显式禁用 rogue seed",
+        )
 
     def test_stop_server_delegates_shared_lifecycle_and_cleanup_fails_closed(self):
         start = self.source.index("stop_server() {")
         end = self.source.index("\n}\n\ncleanup()", start)
         stop_body = self.source[start:end]
         helper_branch = stop_body.index(
-            'if bong_server_stop_process_tree_and_release_port "$pid" 25565; then'
+            "if bong_server_stop_owned_process_group_and_release_port"
         )
         empty_pid_port_check = stop_body.index(
             "bong_server_confirm_port_released 25565", helper_branch
         )
         clear_pid = stop_body.index('SERVER_PID=""', helper_branch)
         success_return = stop_body.index("return 0", clear_pid)
-        failure_return = stop_body.index("return 1", success_return)
+        capture_status = stop_body.index("stop_status=$?", success_return)
+        failure_return = stop_body.index('return "$stop_status"', capture_status)
         branch_end = stop_body.index("\n  fi", failure_return)
 
         self.assertLess(
@@ -726,8 +733,14 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
             "e2e stop_server 必须先由共享 helper 确认停树和端口释放，才能清空 PID",
         )
         self.assertLess(clear_pid, success_return)
-        self.assertLess(success_return, failure_return)
+        self.assertLess(success_return, capture_status)
+        self.assertLess(capture_status, failure_return)
         self.assertLess(failure_return, branch_end)
+        self.assertIn(
+            'return "$stop_status"',
+            stop_body,
+            "共享 helper 的 forced/uncertain 状态必须原样传播，不能压平为普通失败",
+        )
         self.assertIn(
             'if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then',
             stop_body,
@@ -743,6 +756,35 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
             1,
             "SERVER_PID 只能在共享 helper 成功分支清空一次",
         )
+        self.assertEqual(
+            stop_body.count('SERVER_PGID=""'),
+            1,
+            "SERVER_PGID 只能在整组确认退出后清空一次",
+        )
+        for authority_var, local_name in (
+            ("SERVER_OWNER_STARTTIME", "owner_starttime"),
+            ("SERVER_OWNER_EXECUTABLE_IDENTITY", "owner_executable_identity"),
+        ):
+            with self.subTest(authority=authority_var):
+                self.assertIn(
+                    f'local {local_name}="${authority_var}"',
+                    stop_body,
+                    "stop_server 必须把 pinned supervisor 身份传给共享 helper",
+                )
+                self.assertEqual(
+                    stop_body.count(f'{authority_var}=""'),
+                    1,
+                    "supervisor authority 只能在整组确认退出后清空",
+                )
+        self.assertIn('if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then', stop_body)
+        self.assertLess(
+            stop_body.index('if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then'),
+            helper_branch,
+            "authority 尚未完整固定时必须先 fail closed，不能扫描裸 PGID",
+        )
+        self.assertNotIn("authority_path=", self.source)
+        self.assertNotIn("setsid --fork", self.source)
+        self.assertIn("bong-process-group-supervisor.py", self.source)
         for legacy_detail in (
             'kill_tree "$pid"',
             'wait "$pid"',

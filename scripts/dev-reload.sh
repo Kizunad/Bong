@@ -226,7 +226,19 @@ launch_bong_server() {
     fi
 }
 
-# Tests source this file to exercise the exact production detach helper.
+stop_managed_server_before_reload() {
+    local status
+
+    if bong_server_stop_managed_for_replacement "server rebuild and relaunch"; then
+        return 0
+    else
+        status=$?
+    fi
+    echo "FAIL: previous server could not be stopped safely; refusing rebuild and relaunch" >&2
+    return "$status"
+}
+
+# Tests source this file to exercise the exact production detach and stop helpers.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
 fi
@@ -317,7 +329,7 @@ restart_bong_server() {
 # Cargo may atomically replace the executable. Stop while its exact PID/starttime
 # record is still valid so a normal SIGTERM reaches the AppExit bridge.
 echo "==> [3/5] Stopping previous server..."
-bong_server_stop_managed
+stop_managed_server_before_reload || return $?
 
 # --- Step 4: Rebuild server ---
 echo "==> [4/5] Building server..."

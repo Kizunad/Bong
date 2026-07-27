@@ -11,8 +11,9 @@ use std::time::Duration;
 use bong_server::{
     alchemy, audio, body_plan, botany, cmd, coffin, combat, craft, cultivation, dandao,
     death_lifecycle, economy, fauna, forge, gathering, identity, inventory, lingtian, mineral,
-    movement, network, npc, persistence, player, preview, qi_physics, shader, shelflife, shutdown,
-    skill, skin, social, spiritwood, supply_coffin, sword_path, tools, world, zhenfa,
+    movement, network, npc, persistence, player, preview, qi_physics, server_readiness, shader,
+    shelflife, shutdown, skill, skin, social, spiritwood, supply_coffin, sword_path, tools, world,
+    zhenfa,
 };
 
 use crossbeam_channel::unbounded;
@@ -135,6 +136,7 @@ fn build_server_app() -> App {
     network::register(&mut app);
     persistence::register(&mut app);
     preview::register(&mut app);
+    app.add_systems(PostStartup, server_readiness::publish_if_requested_from_env);
 
     app
 }
@@ -156,6 +158,15 @@ fn run_shutdown_signal_probe() {
 
     let mut app = build_server_app();
     app.insert_resource(unlock_state);
+
+    // The first update runs PreStartup/Startup/PostStartup before PreUpdate. Do
+    // not publish signal readiness until that potentially slow startup frame has
+    // completed; otherwise an immediate TERM can sit queued behind Startup long
+    // enough for the pinned lifecycle helper to classify the stop as forced.
+    app.update();
+    if app.should_exit().is_some() {
+        return;
+    }
 
     let mut ready_file = std::fs::File::create(&ready_path).unwrap_or_else(|error| {
         panic!("write shutdown signal probe readiness file failed: {error}")
