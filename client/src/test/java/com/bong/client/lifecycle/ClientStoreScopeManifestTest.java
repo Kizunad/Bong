@@ -52,6 +52,27 @@ class ClientStoreScopeManifestTest {
     }
 
     @Test
+    void connectionStatusStoreRemainsTokenManagedOutsideTheGlobalRegistry() {
+        assertEquals(
+            Set.of("com.bong.client.ui.ClientConnectionStatusStore"),
+            ClientStoreScopeManifest.externallyManagedSessionStores(),
+            "连接状态 Store 必须由 handler token 精确失活，不能被无参全局 registry 清理"
+        );
+        assertFalse(
+            ClientStoreScopeManifest.registryManagedSessionStores().contains(
+                "com.bong.client.ui.ClientConnectionStatusStore"
+            ),
+            "ClientConnectionStatusStore 必须在 registry clear 之前由 invalidateSession(handler, now) 管理"
+        );
+        assertTrue(
+            ClientStoreScopeManifest.sessionScopedStores().containsAll(
+                ClientStoreScopeManifest.externallyManagedSessionStores()
+            ),
+            "externally managed 列表只能是 session-scoped Store 的子集"
+        );
+    }
+
+    @Test
     void persistentPreferenceAndConstantLookupStayOutOfSessionScope() {
         assertEquals(
             Set.of("com.bong.client.hud.HudLayoutPreferenceStore"),
@@ -86,9 +107,9 @@ class ClientStoreScopeManifestTest {
             "registry 不得重复登记同一 FQCN，否则断线会重复清理同一 Store"
         );
         assertTrue(
-            ClientStoreScopeManifest.sessionScopedStores().containsAll(registered),
-            "P0 registry 只允许登记 manifest 已分类为 session-scoped 的 Store；P3 再收紧为全集相等，实际越界="
-                + difference(registered, ClientStoreScopeManifest.sessionScopedStores())
+            ClientStoreScopeManifest.registryManagedSessionStores().containsAll(registered),
+            "P0 registry 只允许登记 manifest 中由全局 registry 管理的 session Store；P3 再收紧为全集相等，实际越界="
+                + difference(registered, ClientStoreScopeManifest.registryManagedSessionStores())
         );
     }
 

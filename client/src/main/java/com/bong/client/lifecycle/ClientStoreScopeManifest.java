@@ -6,6 +6,10 @@ import java.util.List;
 import java.util.Set;
 
 public final class ClientStoreScopeManifest {
+    private static final Set<String> EXTERNALLY_MANAGED_SESSION_STORES = Set.of(
+        "com.bong.client.ui.ClientConnectionStatusStore"
+    );
+
     private static final Set<String> PERSISTENT_CONFIG_STORES = Set.of(
         "com.bong.client.hud.HudLayoutPreferenceStore"
     );
@@ -128,6 +132,16 @@ public final class ClientStoreScopeManifest {
 
     public static Set<String> sessionScopedStores() {
         return SESSION_SCOPED_STORES;
+    }
+
+    public static Set<String> externallyManagedSessionStores() {
+        return EXTERNALLY_MANAGED_SESSION_STORES;
+    }
+
+    public static Set<String> registryManagedSessionStores() {
+        LinkedHashSet<String> stores = new LinkedHashSet<>(SESSION_SCOPED_STORES);
+        stores.removeAll(EXTERNALLY_MANAGED_SESSION_STORES);
+        return Collections.unmodifiableSet(stores);
     }
 
     public static Set<String> persistentConfigStores() {
