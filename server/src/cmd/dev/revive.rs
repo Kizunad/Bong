@@ -49,9 +49,7 @@ pub fn handle_revive(
         if let Some(mut wounds) = wounds {
             wounds.health_current = wounds.health_max.max(1.0);
         }
-        revived.send(PlayerRevived {
-            entity: event.executor,
-        });
+        revived.send(PlayerRevived::legacy_or_dev_pending(event.executor));
         tracing::warn!("[dev-cmd] force revive self at tick {tick}");
         client.send_chat_message("[dev] revive self queued PlayerRevived");
     }

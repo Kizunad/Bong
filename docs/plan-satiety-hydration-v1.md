@@ -60,7 +60,7 @@ pub fn band_of(value: f32) -> NourishBand   // 阈值见下表，边界闭开约
 **周期消耗**（`tick.rs`，仿 `shelflife/sweep.rs` 每 200 tick = 10s 扫一次）：
 
 - `NOURISH_SATIETY_LOSS_PER_MIN = 0.8`、`NOURISH_HYDRATION_LOSS_PER_MIN = 1.2`（静止基准；醒灵 80→20 分别约 75 / 50 分钟，塔科夫式「水比饭掉得快」）
-- 活动乘数：该 sweep 窗口内有水平位移 ×1.5，`MovementState.action == Dashing` ×3.0
+- 活动窗口与全局 200-tick sweep 同步：`MovementEvent` 在两个 sweep 边界之间按 entity 聚合全部水平 segment（不是 20-tick 租约，也不以最终净位移抵消往返移动）；任一 segment 合计严格 `> NOURISH_MOVEMENT_EPSILON_BLOCKS` 即按有水平活动 ×1.5。窗口内任一观测为 `MovementState.action == Dashing` 时 Dash 优先覆盖普通移动，活动乘数取 ×3.0；每个 sweep 结算后只清活动标记，并保留单调 `CombatClock` 观测 tick，duplicate / regressed tick 不得污染下一窗口
 - 境界乘数由纯函数 `nourishment_loss_multiplier(Realm)` 给出：醒灵 1.00、引气 0.95、凝脉 0.90、固元 0.85、通灵 0.80、化虚 0.75；化虚静止 80→20 分别约 100 / 66.7 分钟，仍不存在辟谷或零消耗
 - 每轴实际扣减 = `base_loss × activity_multiplier × realm_multiplier`；境界乘数只作用于周期消耗，不改食水恢复、Critical 掉血或呕吐扣减
 - clamp 到 0 不为负；上述数值是 v1 初始基线，P4 只能按 §8.1 #5 的同步校准契约调整
@@ -90,7 +90,7 @@ pub fn band_of(value: f32) -> NourishBand   // 阈值见下表，边界闭开约
 
 - `server/src/nourishment/{mod,tick,effects,vomit}.rs`：`Nourishment` / `NourishBand` / `band_of` / 常数表；sweep system 注册进主 schedule
 - **持久化**：仿 `DigestionLoad` 模板（`cultivation/poison_trait/components.rs`）——`persist_player_cultivation_bundle`（`persistence/mod.rs:6153`）bundle 加 `"nourishment"` 键；`cultivation/mod.rs:910` hydration 段加解码块；autosave / disconnect / shutdown query 与 cultivation 转世即时保存全部带上组件
-- **出生与生命周期重置**：join hydration 无存档时插入 80/80；正式复活在 `revive_lifecycle` 成功并 emit `PlayerRevived` 后重置 80/80；创建新角色/转世在 `reset_for_new_character` 独立路径重置 80/80。死亡瞬间、NearDeath 自救、登录、断线重连与普通持久化恢复均不得免费重置（§8.1 #3）
+- **出生与生命周期重置**：join hydration 无存档时插入 80/80；正式复活把 80/80、处罚后的 cultivation bundle（含 `qi_current = 0`）、`LifeRecord`、棺材切片、化虚配额释放，以及同额真元的 `zones_runtime` 入账或 `pending_inflow_account` overflow 纳入同一个 SQLite transaction。提交成功后才同步发布 runtime zone / ledger audit、双轴并清空 session-only 活动窗口，最后 emit `PlayerRevived` 作为「完整复活状态已对消费者可见」的 completion event；复活前须具备可持久化的完整 cultivation sibling bundle、`DimensionLayers`，且正额真元回流须具备 `ZoneRegistry` / `WorldQiAccount`，缺失或 precommit 失败时保持 durable/runtime 旧状态、不发 `QiTransfer` / completion event 并允许显式重试。创建新角色/转世在 `reset_for_new_character` 独立路径重置 80/80，并遵守同样的 commit-before-runtime-publication 与缺依赖 fail-closed 契约。死亡瞬间、NearDeath 自救、登录、断线重连与普通持久化恢复均不得免费重置（§8.1 #3）
 - **dev 命令**：`/nourish set satiety|hydration <value>`、`/nourish show`（brigadier，dev-only 直写绕过消耗，对齐 `/qi set` 模式；CLAUDE.md dev 命令表更新交人工，本 plan 不改 CLAUDE.md）
 - **饱和测试**：五带边界逐点 pin（120.0/100.0/100.01/60.0/40.0/20.0/0.0，含 off-by-one）、消耗 clamp 0、活动与六境界乘数、持久化 roundtrip、断线重连保留、正式复活重置、新角色/转世重置、NearDeath 自救不重置、`band_of` 全带专属 case
 
@@ -177,8 +177,8 @@ hydration = 15.0
 
 **决议**：
 1. 正式复活成功后重置 80/80；创建新角色/转世也重置 80/80，但两者是两条独立生命周期接线。
-2. 正式复活在 `revive_lifecycle` 完整成功并 emit `PlayerRevived` 后处理；新角色路径在 `reset_for_new_character` 处理。死亡瞬间、`PlayerTerminated`、登录、断线重连和普通持久化恢复都不重置。
-3. NearDeath 自救不得免费恢复 80/80，并须有专门测试。若实现发现某类自救也发送 `PlayerRevived`，必须按 revival action/reason 收窄，而非泛监听后无条件重置。
+2. 正式复活把 durable nourishment 重置、处罚后的 `qi_current = 0`、accepted zone runtime 或 `pending_inflow_account` overflow、棺材切片和化虚配额释放纳入同一 revival transaction；提交后先发布 runtime zone / ledger、80/80 并清空活动窗口，再 emit `PlayerRevived` 作为完成事件。完整 cultivation sibling bundle、`DimensionLayers` 任一缺失，或正额真元回流缺 `ZoneRegistry` / `WorldQiAccount` 时 fail-closed；precommit 失败须同时回滚玩家、zone、pending inflow、quota、nourishment 和 life event，且不发布 `QiTransfer` / completion event，修复依赖后可显式重试。新角色路径在 `reset_for_new_character` 处理并同样坚持 commit-before-runtime-publication。死亡瞬间、`PlayerTerminated`、登录、断线重连和普通持久化恢复都不重置。
+3. NearDeath 自救不得免费恢复 80/80，并须有专门测试；只有正式 `Reincarnate` transition 成功才 emit 此处的 completion event，不得把稳定 NearDeath 自救泛化成正式复活。
 
 **落点**：`server/src/combat/lifecycle.rs:revive_lifecycle`、`server/src/combat/lifecycle.rs:reset_for_new_character`、`server/src/cultivation/death_hooks.rs:PlayerRevived` / plan §4 持久化与生命周期重置。
 

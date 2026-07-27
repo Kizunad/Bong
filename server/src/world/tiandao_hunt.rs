@@ -1314,7 +1314,7 @@ impl TryFrom<TiandaoResponseLevel> for TiandaoHuntResponseLevelV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::components::Wounds;
+    use crate::combat::components::{Lifecycle, Wounds};
     use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, DeathEvent};
     use crate::combat::CombatClock;
     use crate::cultivation::color::PracticeLog;
@@ -1484,6 +1484,10 @@ mod tests {
                 Wounds::default(),
                 Contamination::default(),
                 MeridianSystem::default(),
+                Lifecycle {
+                    character_id: "offline:Alice".to_string(),
+                    ..Default::default()
+                },
                 TiandaoAttention {
                     level: 20.0,
                     response: TiandaoResponseLevel::Watch,

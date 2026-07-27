@@ -227,7 +227,7 @@ mod tests {
             .id();
         app.world_mut()
             .resource_mut::<Events<PlayerRevived>>()
-            .send(PlayerRevived { entity });
+            .send(PlayerRevived::legacy_or_dev_pending(entity));
 
         app.update();
         flush_client_packets(&mut app);

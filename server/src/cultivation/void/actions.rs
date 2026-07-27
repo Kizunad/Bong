@@ -277,6 +277,7 @@ pub fn resolve_void_action_intents(
                 if kind == VoidActionKind::ExplodeZone {
                     events.juebi_triggers.send(JueBiTriggerEvent {
                         entity: intent.caster,
+                        character_id: Some(actor_id.clone()),
                         source: JueBiTriggerSource::VoidActionExplodeZone,
                         delay_ticks: JUEBI_VOID_ACTION_DELAY_TICKS,
                         triggered_at_tick: now_tick,

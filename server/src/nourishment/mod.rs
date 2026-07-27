@@ -394,7 +394,10 @@ mod tests {
             .spawn((
                 client_bundle,
                 crate::movement::MovementState::default(),
-                crate::cultivation::components::Cultivation::default(),
+                crate::cultivation::components::Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
                 Nourishment::spawn_default(),
                 tick::NourishmentActivityWindow::default(),
             ))
@@ -440,7 +443,10 @@ mod tests {
                     action: crate::movement::MovementAction::Dashing,
                     ..Default::default()
                 },
-                crate::cultivation::components::Cultivation::default(),
+                crate::cultivation::components::Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
                 Nourishment::spawn_default(),
                 tick::NourishmentActivityWindow::default(),
             ))

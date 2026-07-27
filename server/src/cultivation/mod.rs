@@ -373,8 +373,8 @@ pub fn register(app: &mut App) {
             contamination_tick.after(qi_regen_and_zone_drain_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
             // plan §4 死亡/重生钩子
-            on_player_revived,
-            on_player_terminated,
+            on_player_revived.after(crate::combat::lifecycle::handle_revival_action_intents),
+            on_player_terminated.after(crate::combat::lifecycle::handle_revival_action_intents),
             // plan §11-5 业力
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
             void_realm_karma_pressure_tick.after(karma_weight_decay_tick),
@@ -436,7 +436,10 @@ pub fn register(app: &mut App) {
             // plan §3.2 渡劫：单独分组，避免 Bevy 0.14 tuple arity 上限。
             start_du_xu_request_system,
             schedule_juebi_triggers_system,
-            start_due_juebi_triggers_system.after(schedule_juebi_triggers_system),
+            start_due_juebi_triggers_system
+                .after(schedule_juebi_triggers_system)
+                .after(attach_cultivation_to_joined_clients)
+                .after(crate::combat::lifecycle::handle_revival_action_intents),
             start_tribulation_system.after(start_du_xu_request_system),
             tribulation_phase_tick_system
                 .after(start_tribulation_system)
@@ -480,7 +483,10 @@ pub fn register(app: &mut App) {
         (
             track_tribulation_metrics_system.after(juebi_settlement_system),
             track_quota_full_duration_system,
-            dispatch_rechallenge_on_quota_opened_system.after(track_quota_full_duration_system),
+            dispatch_rechallenge_on_quota_opened_system
+                .after(track_quota_full_duration_system)
+                .after(attach_cultivation_to_joined_clients)
+                .after(crate::combat::lifecycle::handle_revival_action_intents),
         ),
     );
     app.add_systems(
@@ -557,7 +563,7 @@ type CultivationAttachFilter = (
 type CultivationAttachQueryItem<'a> = (
     Entity,
     &'a Username,
-    Option<&'a PlayerState>,
+    Option<&'a mut PlayerState>,
     Option<&'a LifespanComponent>,
     Option<&'a mut EntityLayerId>,
     Option<&'a mut VisibleChunkLayer>,
@@ -589,6 +595,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut coffin_state_events: Option<ResMut<Events<CoffinStateChanged>>>,
+    mut pending_juebi_triggers: Option<ResMut<PendingJueBiTriggers>>,
+    mut halfstep_queue: Option<ResMut<HalfStepRechallengeQueue>>,
     // plan-race-system-v1 P0 —— 持久化 `Cultivation.race` 拒载执行点：`Option<Res<...>>`
     // 同 `body_plan::register()` 恒装载的既有约定（大量既有测试未插入该资源，缺失时
     // 无法校验，退回本函数原有"信任解码结果"行为，不是新的宽松分支）。
@@ -598,7 +606,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     for (
         entity,
         username,
-        player_state,
+        mut player_state,
         restored_lifespan,
         mut layer_id,
         mut visible_chunk_layer,
@@ -795,6 +803,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // plan-remains-suite P0：join 转世门。只在本地 staged 新身份；真正持久化必须和
         // fresh player slices、life record、cultivation+nourishment 在一个 IMMEDIATE transaction
         // 内完成，成功后才允许把新角色组件插入 ECS。
+        let previous_character_id = canonical_id.clone();
         let reincarnation = if matches!(
             life_record.biography.last(),
             Some(BiographyEntry::Terminated { .. })
@@ -803,9 +812,12 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 || default_loadout.is_none()
                 || item_registry.is_none()
                 || inventory_allocator.is_none()
+                || dimension_layers.is_none()
+                || pending_juebi_triggers.is_none()
+                || halfstep_queue.is_none()
             {
                 tracing::warn!(
-                    "[bong][cultivation] `{}` joined with a terminated character but atomic reincarnation resources are incomplete; leaving the terminated record untouched",
+                    "[bong][cultivation] `{}` joined with a terminated character but atomic reincarnation or world-layer resources are incomplete; leaving the terminated record untouched",
                     username.0,
                 );
                 None
@@ -976,6 +988,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                     continue;
                 }
             };
+            let fresh_player_state = PlayerState::default();
             let fresh_skill_set = crate::skill::components::SkillSet::default();
             let fresh_lifespan = LifespanComponent::new(bundle.spec.lifespan_cap);
             let fresh_tutorial_state =
@@ -985,8 +998,9 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 player_persistence,
                 username.0.as_str(),
                 NewCharacterPersistenceBundle {
+                    previous_character_id: previous_character_id.as_str(),
                     current_char_id: bundle.current_char_id.as_str(),
-                    state: &PlayerState::default(),
+                    state: &fresh_player_state,
                     position: bundle.spec.spawn_pos,
                     inventory: Some(&fresh_inventory),
                     lifespan: &fresh_lifespan,
@@ -1021,6 +1035,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 telemetry.started = telemetry.started.saturating_add(1);
             }
             Some((
+                fresh_player_state,
                 fresh_inventory,
                 fresh_skill_set,
                 fresh_lifespan,
@@ -1060,10 +1075,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             crate::nourishment::tick::NourishmentActivityWindow::default(),
             intrinsic_race,
         ));
-        // 转世必须无条件换掉寿元组件——`restored_lifespan` 里躺着的是刚才那个已终结角色
-        // 耗尽的 120/120，`restored_lifespan.is_none()` 在这条分支恒为 false（attach_player_state
-        // 已经把它挂上了），若不加 `|| reincarnation.is_some()` 这份 exhausted 值会原样留在
-        // ECS 上，下一次 lifespan tick 立刻把刚转世的新角色又判定老死——死循环重现。
+        // 普通登录仅在持久化寿元缺失时补默认值；转世的新寿元由下方 fresh runtime
+        // bundle 在事务成功后覆盖，避免同一 flush 内重复插入 LifespanComponent。
         if restored_lifespan.is_none() && !is_reincarnating {
             entity_commands.insert(default_lifespan.clone());
         }
@@ -1079,9 +1092,20 @@ pub(crate) fn attach_cultivation_to_joined_clients(
 
         if let (
             Some(bundle),
-            Some((fresh_inventory, fresh_skill_set, fresh_lifespan, fresh_tutorial_state)),
+            Some((
+                fresh_player_state,
+                fresh_inventory,
+                fresh_skill_set,
+                fresh_lifespan,
+                fresh_tutorial_state,
+            )),
         ) = (reincarnation, fresh_reincarnation_runtime)
         {
+            if let Some(player_state) = player_state.as_deref_mut() {
+                *player_state = fresh_player_state;
+            } else {
+                entity_commands.insert(fresh_player_state);
+            }
             entity_commands.insert((
                 fresh_inventory,
                 fresh_skill_set,
@@ -1099,27 +1123,65 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 flags.set_invisible(false);
             }
 
-            if let Some(layers) = dimension_layers.as_deref() {
-                let overworld_layer = layers.overworld;
-                if let Some(layer_id) = layer_id.as_deref_mut() {
+            let layers = dimension_layers
+                .as_deref()
+                .expect("atomic reincarnation checked DimensionLayers before commit");
+            let overworld_layer = layers.overworld;
+            match layer_id.as_deref_mut() {
+                Some(layer_id) => {
                     let previous_layer = layer_id.0;
-                    if let Some(visible_entity_layers) = visible_entity_layers.as_deref_mut() {
-                        visible_entity_layers.0.remove(&previous_layer);
-                        visible_entity_layers.0.insert(overworld_layer);
-                    }
                     layer_id.0 = overworld_layer;
-                } else if let Some(visible_entity_layers) = visible_entity_layers.as_deref_mut() {
-                    visible_entity_layers.0.insert(overworld_layer);
+                    match visible_entity_layers.as_deref_mut() {
+                        Some(visible_layers) => {
+                            visible_layers.0.remove(&previous_layer);
+                            visible_layers.0.remove(&layers.tsy);
+                            visible_layers.0.insert(overworld_layer);
+                        }
+                        None => {
+                            let mut visible_layers = VisibleEntityLayers::default();
+                            visible_layers.0.insert(overworld_layer);
+                            entity_commands.insert(visible_layers);
+                        }
+                    }
                 }
-                if let Some(visible_chunk_layer) = visible_chunk_layer.as_deref_mut() {
-                    visible_chunk_layer.0 = overworld_layer;
+                None => {
+                    entity_commands.insert(EntityLayerId(overworld_layer));
+                    match visible_entity_layers.as_deref_mut() {
+                        Some(visible_layers) => {
+                            visible_layers.0.clear();
+                            visible_layers.0.insert(overworld_layer);
+                        }
+                        None => {
+                            let mut visible_layers = VisibleEntityLayers::default();
+                            visible_layers.0.insert(overworld_layer);
+                            entity_commands.insert(visible_layers);
+                        }
+                    }
                 }
+            }
+            if let Some(visible_chunk_layer) = visible_chunk_layer.as_deref_mut() {
+                visible_chunk_layer.0 = overworld_layer;
+            } else {
+                entity_commands.insert(VisibleChunkLayer(overworld_layer));
             }
             if let Some(current_dimension) = current_dimension.as_deref_mut() {
                 current_dimension.0 = DimensionKind::Overworld;
             } else {
                 entity_commands.insert(CurrentDimension(DimensionKind::Overworld));
             }
+
+            pending_juebi_triggers
+                .as_deref_mut()
+                .expect("atomic reincarnation checked PendingJueBiTriggers before commit")
+                .cancel_for_character(entity, previous_character_id.as_str());
+            halfstep_queue
+                .as_deref_mut()
+                .expect("atomic reincarnation checked HalfStepRechallengeQueue before commit")
+                .remove_character(entity, previous_character_id.as_str());
+            entity_commands
+                .remove::<crate::craft::CraftSession>()
+                .remove::<crate::network::craft_emit::CraftSessionPersistenceDirty>()
+                .insert(crate::network::craft_emit::CraftSessionStateDirty);
 
             let was_in_coffin = coffin_registry
                 .as_deref_mut()
@@ -1702,6 +1764,24 @@ mod tests {
         (settings, temp_root)
     }
 
+    fn insert_reincarnation_cleanup_resources(app: &mut App) {
+        app.insert_resource(PendingJueBiTriggers::default());
+        app.insert_resource(HalfStepRechallengeQueue::default());
+    }
+
+    fn persisted_test_craft_session(username: &str) -> crate::craft::CraftSession {
+        crate::craft::CraftSession {
+            recipe_id: crate::craft::RecipeId::new("craft.test.previous_life"),
+            started_at_tick: 10,
+            remaining_ticks: 37,
+            total_ticks: 40,
+            owner_player_id: canonical_player_id(username),
+            qi_paid: 0.0,
+            quantity_total: 3,
+            completed_count: 1,
+        }
+    }
+
     #[test]
     fn joined_clients_receive_canonical_player_character_id() {
         let mut app = App::new();
@@ -1841,6 +1921,15 @@ mod tests {
             temp_root.join("data"),
             settings.db_path(),
         )
+    }
+
+    fn insert_test_dimension_layers(app: &mut App) -> DimensionLayers {
+        let layers = DimensionLayers {
+            overworld: app.world_mut().spawn_empty().id(),
+            tsy: app.world_mut().spawn_empty().id(),
+        };
+        app.insert_resource(layers);
+        layers
     }
 
     fn inventory_test_resources() -> (
@@ -1984,6 +2073,16 @@ mod tests {
             seeded_bundle.get("nourishment_activity_window").is_none(),
             "session-only activity must never be seeded into the cultivation bundle"
         );
+        let old_player_state = PlayerState {
+            karma: 0.4,
+            inventory_score: 0.8,
+        };
+        crate::player::state::save_player_core_slice(
+            &player_persistence,
+            "Azure",
+            &old_player_state,
+        )
+        .expect("seeding the terminated character's player core should succeed");
         // 老角色寿元耗尽（Spirit cap 满）——复现"ECS 本 session 挂着旧值又立刻老死"的坑：
         // 转世门必须无条件覆写它，不能指望这份 exhausted 值自然被替换掉。
         let exhausted_lifespan = LifespanComponent {
@@ -1998,8 +2097,17 @@ mod tests {
             &exhausted_lifespan,
         )
         .expect("seeding exhausted lifespan should succeed");
+        let old_craft_session = persisted_test_craft_session("Azure");
+        crate::player::state::save_player_inventory_and_craft_session_slices(
+            &player_persistence,
+            "Azure",
+            None,
+            Some(&old_craft_session),
+        )
+        .expect("seeding the terminated character's craft session should succeed");
 
         let mut app = App::new();
+        insert_test_dimension_layers(&mut app);
         app.insert_resource(settings.clone());
         app.insert_resource(player_persistence.clone());
         let (default_loadout, item_registry, allocator) = inventory_test_resources();
@@ -2007,26 +2115,69 @@ mod tests {
         app.insert_resource(item_registry);
         app.insert_resource(allocator);
         app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
-        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        insert_reincarnation_cleanup_resources(&mut app);
+        app.insert_resource(CombatClock { tick: 50 });
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<HalfStepRechallengeTriggerEvent>();
+        app.add_systems(
+            Update,
+            (
+                attach_cultivation_to_joined_clients,
+                dispatch_rechallenge_on_quota_opened_system
+                    .after(attach_cultivation_to_joined_clients),
+            ),
+        );
 
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app
             .world_mut()
             .spawn((
                 client_bundle,
-                PlayerState {
-                    karma: 0.0,
-                    inventory_score: 0.0,
-                },
+                old_player_state.clone(),
                 // 生产链路里 `attach_player_state_to_joined_clients` 会先把这份 exhausted
                 // lifespan 挂上；这里手动模拟那一步，复现"restored_lifespan 已经 Some"
                 // 的真实时序，而不是让测试绕过这条风险路径。
                 exhausted_lifespan.clone(),
+                old_craft_session.clone(),
+                crate::network::craft_emit::CraftSessionPersistenceDirty,
+                crate::network::craft_emit::CraftSessionStateDirty,
             ))
             .id();
+        app.world_mut()
+            .resource_mut::<PendingJueBiTriggers>()
+            .schedule_for_character(
+                &JueBiTriggerEvent {
+                    entity,
+                    character_id: Some(old_canonical_id.clone()),
+                    source: JueBiTriggerSource::VoidQuotaExceeded,
+                    triggered_at_tick: 10,
+                    delay_ticks: 200,
+                    epicenter: None,
+                },
+                old_canonical_id.clone(),
+            );
+        app.world_mut()
+            .resource_mut::<HalfStepRechallengeQueue>()
+            .enqueue(crate::cultivation::tribulation::HalfStepRechallengeEntry {
+                char_id: old_canonical_id.clone(),
+                entity,
+                entered_at: 10,
+                rechallenge_window_until: 10_000,
+                is_dormant: false,
+                buff_applied: true,
+            });
+        app.world_mut()
+            .send_event(AscensionQuotaOpened { occupied_slots: 3 });
 
         app.update();
 
+        assert_eq!(
+            app.world()
+                .get::<PlayerState>(entity)
+                .expect("reincarnated client should retain PlayerState"),
+            &PlayerState::default(),
+            "join-time reincarnation must replace the terminated character's runtime player core before autosave can publish it again"
+        );
         let reincarnated_nourishment = *app
             .world()
             .get::<Nourishment>(entity)
@@ -2050,6 +2201,42 @@ mod tests {
                 .expect("reincarnated client should have a fresh nourishment activity window"),
             crate::nourishment::tick::NourishmentActivityWindow::default(),
             "join-time reincarnation must start a fresh session activity window"
+        );
+        assert!(
+            app.world()
+                .get::<crate::craft::CraftSession>(entity)
+                .is_none(),
+            "join-time reincarnation must remove the terminated character's active craft session"
+        );
+        assert!(
+            app.world()
+                .get::<crate::network::craft_emit::CraftSessionPersistenceDirty>(entity)
+                .is_none(),
+            "join-time reincarnation must clear stale craft persistence dirty state before a later flush can restore the old session"
+        );
+        assert!(
+            app.world()
+                .get::<crate::network::craft_emit::CraftSessionStateDirty>(entity)
+                .is_some(),
+            "join-time reincarnation must request an inactive craft-session payload so the client drops old progress UI"
+        );
+        assert!(
+            app.world().resource::<PendingJueBiTriggers>().is_empty(),
+            "join-time reincarnation must cancel delayed JueBi work owned by the terminated character"
+        );
+        assert!(
+            app.world()
+                .resource::<HalfStepRechallengeQueue>()
+                .is_empty(),
+            "join-time reincarnation must remove the terminated character from the HalfStep FIFO"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+                .drain()
+                .count(),
+            0,
+            "a quota opening in the reincarnation frame must not dispatch a HalfStep retry for the terminated identity"
         );
 
         let cultivation = app
@@ -2132,6 +2319,55 @@ mod tests {
         assert_eq!(narrations.len(), 1, "转世应给玩家恰好一条提示 narration");
         assert_eq!(narrations[0].target.as_deref(), Some("Azure"));
 
+        // 幂等性前提：落盘的 player core 与 cultivation bundle 都必须属于新角色。
+        // 生产 autosave 直接写 ECS PlayerState；这里用同一持久化 helper 再写一次，证明旧值
+        // 不会在事务成功后的下一次 core flush 中反向污染新角色行。
+        let persisted_player =
+            crate::player::state::load_player_slices(&player_persistence, "Azure");
+        assert_eq!(
+            persisted_player.state,
+            PlayerState::default(),
+            "join-time reincarnation transaction must immediately replace the terminated character's durable player core"
+        );
+        assert!(
+            persisted_player.craft_session.is_none(),
+            "join-time reincarnation transaction must delete the terminated character's durable craft session"
+        );
+        let runtime_player_state = app
+            .world()
+            .get::<PlayerState>(entity)
+            .expect("reincarnated client should retain PlayerState")
+            .clone();
+        crate::player::state::save_player_core_slice(
+            &player_persistence,
+            "Azure",
+            &runtime_player_state,
+        )
+        .expect("simulated production core autosave should succeed");
+        let runtime_inventory = app
+            .world()
+            .get::<crate::inventory::PlayerInventory>(entity)
+            .expect("reincarnated client should have a fresh inventory")
+            .clone();
+        crate::player::state::save_player_inventory_and_craft_session_slices(
+            &player_persistence,
+            "Azure",
+            Some(&runtime_inventory),
+            app.world().get::<crate::craft::CraftSession>(entity),
+        )
+        .expect("simulated production inventory/session flush should succeed");
+        let persisted_after_flush =
+            crate::player::state::load_player_slices(&player_persistence, "Azure");
+        assert_eq!(
+            persisted_after_flush.state,
+            PlayerState::default(),
+            "the first core autosave after reincarnation must not restore the terminated character's karma or inventory score"
+        );
+        assert!(
+            persisted_after_flush.craft_session.is_none(),
+            "the first inventory/session flush after reincarnation must not restore the terminated character's craft session"
+        );
+
         // 幂等性前提：落盘的 cultivation bundle 也必须是新的（不是 Terminated），
         // 否则玩家断线重连时"下一次 join"仍会再次误判终结。
         let persisted = crate::persistence::load_player_cultivation_bundle(&settings, "Azure")
@@ -2190,6 +2426,7 @@ mod tests {
         );
 
         let mut app = App::new();
+        insert_test_dimension_layers(&mut app);
         app.insert_resource(settings.clone());
         app.insert_resource(player_persistence);
         let (default_loadout, item_registry, allocator) = inventory_test_resources();
@@ -2197,6 +2434,7 @@ mod tests {
         app.insert_resource(item_registry);
         app.insert_resource(allocator);
         app.insert_resource(TutorialTelemetry::default());
+        insert_reincarnation_cleanup_resources(&mut app);
         app.add_systems(
             Update,
             (
@@ -2286,6 +2524,7 @@ mod tests {
         app.insert_resource(item_registry);
         app.insert_resource(allocator);
         app.insert_resource(CoffinRegistry::default());
+        insert_reincarnation_cleanup_resources(&mut app);
         app.add_event::<CoffinStateChanged>();
         app.add_systems(
             Update,
@@ -2300,13 +2539,17 @@ mod tests {
         );
 
         let (mut client_bundle, _helper) = create_mock_client(username);
-        client_bundle.player.layer.0 = overworld_layer;
-        client_bundle.visible_chunk_layer.0 = overworld_layer;
-        client_bundle
-            .visible_entity_layers
-            .0
-            .insert(overworld_layer);
+        client_bundle.player.layer.0 = tsy_layer;
+        client_bundle.visible_chunk_layer.0 = tsy_layer;
+        client_bundle.visible_entity_layers.0.clear();
+        client_bundle.visible_entity_layers.0.insert(tsy_layer);
         let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .remove::<EntityLayerId>()
+            .remove::<VisibleChunkLayer>();
+        assert!(app.world().get::<EntityLayerId>(entity).is_none());
+        assert!(app.world().get::<VisibleChunkLayer>(entity).is_none());
         let coffin_lower = crate::coffin::coffin_lower_from_player_position(coffin_position);
         app.insert_resource(coffin_runtime_for_player(
             entity,
@@ -2385,6 +2628,60 @@ mod tests {
     }
 
     #[test]
+    fn join_reincarnation_without_dimension_layers_rejects_before_commit() {
+        let (settings, root) = temp_persistence_settings("reincarnate-join-no-layers");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let username = "LayerlessJoin";
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, username)
+                .expect("seeding current_char_id should succeed");
+        let old_canonical_id =
+            crate::player::state::player_character_id(username, old_raw_id.as_str());
+        seed_cultivation_bundle(
+            &settings,
+            username,
+            Realm::Spirit,
+            &terminated_life_record(&old_canonical_id),
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client(username);
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        assert_eq!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("current_char_id should reload"),
+            Some(old_raw_id),
+            "missing DimensionLayers must reject before rotating the durable identity"
+        );
+        let life_record = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("the terminated record should remain hydrated");
+        assert!(matches!(
+            life_record.biography.last(),
+            Some(BiographyEntry::Terminated { .. })
+        ));
+        assert!(
+            app.world()
+                .get::<crate::inventory::PlayerInventory>(entity)
+                .is_none(),
+            "missing DimensionLayers must reject before publishing fresh inventory runtime"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn join_reincarnation_precommit_failure_preserves_sqlite_ecs_and_allocator() {
         let (settings, root) = temp_persistence_settings("reincarnate-join-precommit");
         let player_persistence = player_state_persistence_for(&settings, &root);
@@ -2452,6 +2749,14 @@ mod tests {
             None,
         )
         .expect("seeding prior player slices should succeed");
+        let old_craft_session = persisted_test_craft_session(username);
+        crate::player::state::save_player_inventory_and_craft_session_slices(
+            &player_persistence,
+            username,
+            None,
+            Some(&old_craft_session),
+        )
+        .expect("seeding prior craft session should succeed");
         let shrine_before = [4.0, 66.0, 9.0];
         crate::player::state::save_player_shrine_anchor_slice(
             &player_persistence,
@@ -2461,6 +2766,7 @@ mod tests {
         .expect("seeding shrine should succeed");
 
         let mut app = App::new();
+        insert_test_dimension_layers(&mut app);
         app.insert_resource(settings.clone());
         app.insert_resource(player_persistence.clone());
         let (default_loadout, item_registry, allocator) = inventory_test_resources();
@@ -2470,6 +2776,7 @@ mod tests {
         app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
         app.insert_resource(CoffinRegistry::default());
         app.insert_resource(TutorialTelemetry::default());
+        insert_reincarnation_cleanup_resources(&mut app);
         app.add_event::<CoffinStateChanged>();
         app.add_systems(Update, attach_cultivation_to_joined_clients);
 
@@ -2489,6 +2796,9 @@ mod tests {
                     coffin_lower,
                     grade: CoffinGrade::Jade,
                 },
+                old_craft_session.clone(),
+                crate::network::craft_emit::CraftSessionPersistenceDirty,
+                crate::network::craft_emit::CraftSessionStateDirty,
             ))
             .id();
         app.insert_resource(coffin_runtime_for_player(
@@ -2496,6 +2806,29 @@ mod tests {
             coffin_lower,
             CoffinGrade::Jade,
         ));
+        app.world_mut()
+            .resource_mut::<PendingJueBiTriggers>()
+            .schedule_for_character(
+                &JueBiTriggerEvent {
+                    entity,
+                    character_id: Some(old_canonical_id.clone()),
+                    source: JueBiTriggerSource::VoidQuotaExceeded,
+                    triggered_at_tick: 10,
+                    delay_ticks: 200,
+                    epicenter: None,
+                },
+                old_canonical_id.clone(),
+            );
+        app.world_mut()
+            .resource_mut::<HalfStepRechallengeQueue>()
+            .enqueue(crate::cultivation::tribulation::HalfStepRechallengeEntry {
+                char_id: old_canonical_id.clone(),
+                entity,
+                entered_at: 10,
+                rechallenge_window_until: 10_000,
+                is_dormant: false,
+                buff_applied: true,
+            });
         let allocator_before = format!(
             "{:?}",
             app.world()
@@ -2529,6 +2862,26 @@ mod tests {
             *app.world().get::<PlayerState>(entity).unwrap(),
             old_state,
             "failed join reincarnation must preserve the restored player state"
+        );
+        assert_eq!(
+            app.world().get::<crate::craft::CraftSession>(entity),
+            Some(&old_craft_session),
+            "failed join reincarnation must preserve the terminated character's active craft session"
+        );
+        assert!(
+            app.world()
+                .get::<crate::network::craft_emit::CraftSessionPersistenceDirty>(entity)
+                .is_some(),
+            "failed join reincarnation must preserve pending craft persistence work"
+        );
+        assert!(
+            !app.world().resource::<PendingJueBiTriggers>().is_empty(),
+            "failed join reincarnation must preserve delayed JueBi work for the unchanged character"
+        );
+        assert_eq!(
+            app.world().resource::<HalfStepRechallengeQueue>().len(),
+            1,
+            "failed join reincarnation must preserve the unchanged character's HalfStep FIFO entry"
         );
         assert_eq!(
             app.world().get::<LifespanComponent>(entity).unwrap(),
@@ -2600,6 +2953,11 @@ mod tests {
         let persisted_player_after =
             crate::player::state::load_player_slices(&player_persistence, username);
         assert_eq!(persisted_player_after.state, old_state);
+        assert_eq!(
+            persisted_player_after.craft_session.as_ref(),
+            Some(&old_craft_session),
+            "failed join reincarnation must roll back durable craft-session deletion"
+        );
         assert_eq!(persisted_player_after.position, old_position);
         assert_eq!(persisted_player_after.last_dimension, DimensionKind::Tsy);
         assert!(persisted_player_after.in_coffin);
@@ -2654,6 +3012,7 @@ mod tests {
 
         // 第一次 join：应触发转世。
         let mut app1 = App::new();
+        insert_test_dimension_layers(&mut app1);
         app1.insert_resource(settings.clone());
         app1.insert_resource(player_persistence.clone());
         {
@@ -2662,6 +3021,7 @@ mod tests {
             app1.insert_resource(item_registry);
             app1.insert_resource(allocator);
         }
+        insert_reincarnation_cleanup_resources(&mut app1);
         app1.add_systems(Update, attach_cultivation_to_joined_clients);
         let (client_bundle, _helper) = create_mock_client("Azure");
         app1.world_mut().spawn(client_bundle);
@@ -2731,6 +3091,7 @@ mod tests {
         seed_cultivation_bundle(&settings, "Azure", Realm::Spirit, &life_record);
 
         let mut app = App::new();
+        insert_test_dimension_layers(&mut app);
         app.insert_resource(settings.clone());
         app.insert_resource(player_persistence.clone());
         let (default_loadout, item_registry, allocator) = inventory_test_resources();

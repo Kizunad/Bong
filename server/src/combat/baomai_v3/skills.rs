@@ -587,6 +587,9 @@ pub fn cast_disperse(
         if cultivation.realm == Realm::Void && recent_count >= 3 {
             world.send_event(JueBiTriggerEvent {
                 entity: caster,
+                character_id: world
+                    .get::<crate::combat::components::Lifecycle>(caster)
+                    .map(|lifecycle| lifecycle.character_id.clone()),
                 source: JueBiTriggerSource::BaomaiDisperse,
                 delay_ticks: 0,
                 triggered_at_tick: now_tick,

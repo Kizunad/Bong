@@ -439,6 +439,8 @@ pub struct ZhenfaInstance {
     pub kind: ZhenfaKind,
     pub owner: Entity,
     pub owner_player_id: String,
+    /// Immutable life identity at placement; differs from account-level owner_player_id after reincarnation.
+    pub owner_character_id: String,
     pub pos: [i32; 3],
     pub carrier: ZhenfaCarrierKind,
     pub qi_invest_ratio: f64,
@@ -1597,6 +1599,7 @@ fn handle_zhenfa_place_requests(
 
         let Ok((
             username,
+            lifecycle,
             unique_id,
             mut cultivation,
             qi_color,
@@ -1792,6 +1795,9 @@ fn handle_zhenfa_place_requests(
         };
         let duration_ticks =
             zhenfa_instance_duration_ticks(req.kind, base_duration_ticks, qi_color, specialist);
+        // The array may resolve after the owner has begun a new life; preserve the exact
+        // life identity that placed it rather than the account-level canonical player id.
+        let owner_character_id = lifecycle.character_id.clone();
         let owner_player_id = canonical_player_id(username.0.as_str());
         let anchor_entity = commands
             .spawn((
@@ -1814,6 +1820,7 @@ fn handle_zhenfa_place_requests(
             kind: req.kind,
             owner: req.player,
             owner_player_id: owner_player_id.clone(),
+            owner_character_id,
             pos: req.pos,
             carrier: req.carrier,
             qi_invest_ratio: invest_ratio,
@@ -2777,6 +2784,7 @@ type ZhenfaDamageTarget<'a> = (
 
 type ZhenfaPlacePlayer<'a> = (
     &'a Username,
+    &'a Lifecycle,
     // plan-skill-av-relink-v1 P1 — 落阵成功 rune_draw 动画的 target_player uuid。
     &'a UniqueId,
     &'a mut Cultivation,
@@ -3321,6 +3329,7 @@ fn tick_zhenfa_registry(
             release_zhenfa_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, &instance);
             events.juebi_events.send(JueBiTriggerEvent {
                 entity: owner,
+                character_id: Some(instance.owner_character_id.clone()),
                 source: JueBiTriggerSource::ZhenfaDeceptionExposed,
                 delay_ticks: 0,
                 triggered_at_tick: now,
@@ -4685,6 +4694,10 @@ mod tests {
         app.world_mut()
             .spawn((
                 Username(name.to_string()),
+                Lifecycle {
+                    character_id: format!("character:{name}"),
+                    ..Default::default()
+                },
                 UniqueId::default(),
                 Position::new(pos),
                 Cultivation {
@@ -5631,6 +5644,7 @@ mod tests {
             kind: ZhenfaKind::Lingju,
             owner,
             owner_player_id: "offline:Alice".to_string(),
+            owner_character_id: "offline:Alice".to_string(),
             pos: [0, 64, 0],
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
             qi_invest_ratio: 0.30,
@@ -5676,6 +5690,7 @@ mod tests {
                 kind: ZhenfaKind::Trap,
                 owner,
                 owner_player_id: "player:owner".to_string(),
+                owner_character_id: "player:owner".to_string(),
                 pos: [1, 64, 0],
                 carrier: ZhenfaCarrierKind::CommonStone,
                 qi_invest_ratio: 0.2,
@@ -7510,6 +7525,7 @@ mod tests {
                 kind: ZhenfaKind::BlastTrap,
                 owner,
                 owner_player_id: "offline:Alice".to_string(),
+                owner_character_id: "offline:Alice".to_string(),
                 pos: [2, 64, 2],
                 carrier: ZhenfaCarrierKind::CommonStone,
                 qi_invest_ratio: 0.6,
@@ -8555,6 +8571,7 @@ mod tests {
             kind: ZhenfaKind::Ward,
             owner: Entity::from_raw(1),
             owner_player_id: "offline:Azure".to_string(),
+            owner_character_id: "offline:Azure".to_string(),
             pos: [1, 64, 1],
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.5,
@@ -8594,6 +8611,7 @@ mod tests {
                 kind: ZhenfaKind::Trap,
                 owner: Entity::from_raw(1),
                 owner_player_id: "offline:Azure".to_string(),
+                owner_character_id: "offline:Azure".to_string(),
                 pos: [1, 64, 1],
                 carrier: ZhenfaCarrierKind::LingqiBlock,
                 qi_invest_ratio: 0.5,

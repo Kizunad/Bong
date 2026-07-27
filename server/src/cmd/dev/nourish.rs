@@ -5,7 +5,9 @@ use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{App, Client, EventReader, Query, Update};
 
-use crate::nourishment::{band_of, Nourishment, NourishmentAxis, NourishmentValueError};
+use crate::nourishment::{
+    band_of, Nourishment, NourishmentAxis, NourishmentValueError, NOURISH_MAX_VALUE,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NourishCmd {
@@ -91,10 +93,12 @@ pub fn handle_nourish(
             }
             NourishCmd::Show => {
                 client.send_chat_message(format!(
-                    "[dev] nourish satiety={:.1}/120 ({:?}) hydration={:.1}/120 ({:?})",
+                    "[dev] nourish satiety={:.1}/{:.0} ({:?}) hydration={:.1}/{:.0} ({:?})",
                     nourishment.satiety,
+                    NOURISH_MAX_VALUE,
                     band_of(nourishment.satiety),
                     nourishment.hydration,
+                    NOURISH_MAX_VALUE,
                     band_of(nourishment.hydration),
                 ));
             }
@@ -107,8 +111,7 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use valence::prelude::{Entity, Events};
-    use valence::protocol::packets::play::{CommandExecutionC2s, GameMessageS2c};
-    use valence::protocol::{Bounded, FixedBitSet, VarInt};
+    use valence::protocol::packets::play::GameMessageS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
     fn setup_command_app() -> App {
@@ -124,15 +127,13 @@ mod tests {
         app
     }
 
-    fn execute_command(app: &mut App, helper: &mut MockClientHelper, command: &str) {
-        helper.send(&CommandExecutionC2s {
-            command: Bounded(command),
-            timestamp: 0,
-            salt: 0,
-            argument_signatures: Vec::new(),
-            message_count: VarInt(0),
-            acknowledgement: FixedBitSet::default(),
-        });
+    fn execute_command(app: &mut App, executor: Entity, command: &str) {
+        app.world_mut()
+            .resource_mut::<Events<valence::command::CommandExecutionEvent>>()
+            .send(valence::command::CommandExecutionEvent {
+                command: command.to_string(),
+                executor,
+            });
         app.update();
     }
 
@@ -191,13 +192,14 @@ mod tests {
         };
         app.world_mut().entity_mut(player).insert(initial);
 
-        execute_command(&mut app, &mut helper, "nourish show");
+        execute_command(&mut app, player, "nourish show");
 
         let chats = flush_and_collect_chat(&mut app, &mut helper);
+        let expected = format!(
+            "[dev] nourish satiety=120.0/{NOURISH_MAX_VALUE:.0} (Overfull) hydration=20.0/{NOURISH_MAX_VALUE:.0} (Critical)"
+        );
         assert!(
-            chats.iter().any(|text| {
-                text == "[dev] nourish satiety=120.0/120 (Overfull) hydration=20.0/120 (Critical)"
-            }),
+            chats.iter().any(|text| text == &expected),
             "/nourish show must report both axes through the production C2S command path, actual: {chats:?}"
         );
         assert_eq!(
@@ -208,14 +210,44 @@ mod tests {
     }
 
     #[test]
+    fn command_integration_nourish_set_routes_both_axis_literals() {
+        let mut app = setup_command_app();
+        let (bundle, _helper) = create_mock_client("Alice");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Nourishment::spawn_default());
+
+        execute_command(&mut app, player, "nourish set satiety 25.5");
+        assert_eq!(
+            *app.world().get::<Nourishment>(player).unwrap(),
+            Nourishment {
+                satiety: 25.5,
+                hydration: 80.0,
+            },
+            "the production command graph must route the satiety literal without mutating hydration"
+        );
+
+        execute_command(&mut app, player, "nourish set hydration 45.25");
+        assert_eq!(
+            *app.world().get::<Nourishment>(player).unwrap(),
+            Nourishment {
+                satiety: 25.5,
+                hydration: 45.25,
+            },
+            "the production command graph must route the hydration literal without mutating satiety"
+        );
+    }
+
+    #[test]
     fn command_integration_nourish_set_unknown_literal_does_not_mutate() {
         let mut app = setup_command_app();
-        let (bundle, mut helper) = create_mock_client("Alice");
+        let (bundle, _helper) = create_mock_client("Alice");
         let player = app.world_mut().spawn(bundle).id();
         let initial = Nourishment::spawn_default();
         app.world_mut().entity_mut(player).insert(initial);
 
-        execute_command(&mut app, &mut helper, "nourish set food 10");
+        execute_command(&mut app, player, "nourish set food 10");
 
         assert_eq!(
             *app.world().get::<Nourishment>(player).unwrap(),

@@ -346,11 +346,13 @@ pub fn epitaph_generation_system(
 /// 在 cultivation::register 中调用（在 on_player_terminated 之后以确保 Lifecycle 已更新）。
 pub fn register(app: &mut valence::prelude::App) {
     app.init_resource::<WorldEpitaphRegistry>();
-    // EpitaphGenerationSystem 需要在 on_player_terminated 之后执行，
-    // 确保 Lifecycle/LifeRecord 处于终死亡后状态。
+    // EpitaphGenerationSystem 在 lifecycle handler 和终结清算后执行。
+    // 同帧 CreateNewCharacter 已由 lifecycle handler 延至下一 Update，故此处仍读取旧生命。
     app.add_systems(
         valence::prelude::Update,
-        epitaph_generation_system.after(super::death_hooks::on_player_terminated),
+        epitaph_generation_system
+            .after(super::death_hooks::on_player_terminated)
+            .after(crate::combat::lifecycle::handle_revival_action_intents),
     );
 }
 

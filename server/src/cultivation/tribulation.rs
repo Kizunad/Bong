@@ -266,9 +266,13 @@ impl JueBiTriggerSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, Event)]
+#[derive(Debug, Clone, Event)]
 pub struct JueBiTriggerEvent {
     pub entity: Entity,
+    /// Character identity captured by the producer while the causal life is still current.
+    /// `None` is reserved for non-player producers, which must be rejected by the scheduler
+    /// rather than rebound to a later life on the same ECS entity.
+    pub character_id: Option<String>,
     pub source: JueBiTriggerSource,
     pub delay_ticks: u64,
     pub triggered_at_tick: u64,
@@ -278,6 +282,7 @@ pub struct JueBiTriggerEvent {
 #[derive(Debug, Clone)]
 struct PendingJueBiTrigger {
     entity: Entity,
+    character_id: String,
     source: JueBiTriggerSource,
     trigger_at_tick: u64,
     epicenter: Option<[f64; 3]>,
@@ -286,6 +291,31 @@ struct PendingJueBiTrigger {
 #[derive(Debug, Default, Resource)]
 pub struct PendingJueBiTriggers {
     pending: Vec<PendingJueBiTrigger>,
+}
+
+impl PendingJueBiTriggers {
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    pub fn schedule_for_character(
+        &mut self,
+        event: &JueBiTriggerEvent,
+        character_id: impl Into<String>,
+    ) {
+        self.pending.push(PendingJueBiTrigger {
+            entity: event.entity,
+            character_id: character_id.into(),
+            source: event.source,
+            trigger_at_tick: event.triggered_at_tick.saturating_add(event.delay_ticks),
+            epicenter: event.epicenter,
+        });
+    }
+
+    pub fn cancel_for_character(&mut self, entity: Entity, character_id: &str) {
+        self.pending
+            .retain(|trigger| trigger.entity != entity && trigger.character_id != character_id);
+    }
 }
 
 #[derive(Debug, Clone, Event)]
@@ -724,6 +754,11 @@ impl HalfStepRechallengeQueue {
         self.queue.retain(|e| e.entity != target);
     }
 
+    pub fn remove_character(&mut self, entity: Entity, character_id: &str) {
+        self.remove_entity(entity);
+        self.remove_char_id(character_id);
+    }
+
     /// 清理一个 char_id 的所有 entry（dormant NPC 用，没有 entity 句柄）。
     pub fn remove_char_id(&mut self, target: &str) {
         self.queue.retain(|e| e.char_id != target);
@@ -1143,14 +1178,33 @@ fn begin_juebi_phase(
 pub fn schedule_juebi_triggers_system(
     mut events: EventReader<JueBiTriggerEvent>,
     mut pending: ResMut<PendingJueBiTriggers>,
+    lifecycles: Query<&Lifecycle>,
 ) {
     for event in events.read() {
-        pending.pending.push(PendingJueBiTrigger {
-            entity: event.entity,
-            source: event.source,
-            trigger_at_tick: event.triggered_at_tick.saturating_add(event.delay_ticks),
-            epicenter: event.epicenter,
-        });
+        let Some(character_id) = event.character_id.as_deref() else {
+            tracing::warn!(
+                "[bong][cultivation] JueBi trigger ignored for {:?}; producer did not capture character identity",
+                event.entity,
+            );
+            continue;
+        };
+        let Ok(lifecycle) = lifecycles.get(event.entity) else {
+            tracing::warn!(
+                "[bong][cultivation] JueBi trigger ignored for {:?}; Lifecycle is missing",
+                event.entity,
+            );
+            continue;
+        };
+        if lifecycle.character_id != character_id {
+            tracing::info!(
+                "[bong][cultivation] stale JueBi trigger ignored for {:?}: emitted character={} current character={}",
+                event.entity,
+                character_id,
+                lifecycle.character_id,
+            );
+            continue;
+        }
+        pending.schedule_for_character(event, character_id);
     }
 }
 
@@ -1181,6 +1235,23 @@ pub fn start_due_juebi_triggers_system(
         else {
             continue;
         };
+        if lifecycle.character_id != item.character_id {
+            tracing::info!(
+                "[bong][cultivation] stale JueBi trigger ignored for {:?}: scheduled character={} current character={}",
+                item.entity,
+                item.character_id,
+                lifecycle.character_id,
+            );
+            continue;
+        }
+        if lifecycle.state != LifecycleState::Alive {
+            tracing::info!(
+                "[bong][cultivation] JueBi trigger ignored for {:?}; lifecycle is {:?}",
+                item.entity,
+                lifecycle.state,
+            );
+            continue;
+        }
         if active.is_some() {
             tracing::warn!(
                 "[bong][cultivation] JueBi trigger ignored for {:?}; active tribulation already exists",
@@ -2271,6 +2342,7 @@ pub fn dispatch_rechallenge_on_quota_opened_system(
     mut queue: ResMut<HalfStepRechallengeQueue>,
     mut triggers: EventWriter<HalfStepRechallengeTriggerEvent>,
     clock: Res<CombatClock>,
+    lifecycles: Query<&Lifecycle>,
 ) {
     let event_count = events.read().count();
     for _ in 0..event_count {
@@ -2286,6 +2358,27 @@ pub fn dispatch_rechallenge_on_quota_opened_system(
                     clock.tick,
                 );
                 continue; // 过窗，继续取下一个
+            }
+            if !entry.is_dormant {
+                let Ok(lifecycle) = lifecycles.get(entry.entity) else {
+                    tracing::info!(
+                        "[bong][cultivation] HalfStep rechallenge entry {} has no live Lifecycle, dropping",
+                        entry.char_id,
+                    );
+                    continue;
+                };
+                if lifecycle.state != LifecycleState::Alive
+                    || lifecycle.character_id != entry.char_id
+                {
+                    tracing::info!(
+                        "[bong][cultivation] stale HalfStep rechallenge entry {} ignored for {:?}: lifecycle={:?} character={}",
+                        entry.char_id,
+                        entry.entity,
+                        lifecycle.state,
+                        lifecycle.character_id,
+                    );
+                    continue;
+                }
             }
             triggers.send(HalfStepRechallengeTriggerEvent {
                 char_id: entry.char_id,
@@ -7186,6 +7279,7 @@ mod tests {
             .id();
         app.world_mut().send_event(JueBiTriggerEvent {
             entity,
+            character_id: Some(char_id.to_string()),
             source: JueBiTriggerSource::VoidActionExplodeZone,
             delay_ticks: 0,
             triggered_at_tick: 40,
@@ -7208,6 +7302,213 @@ mod tests {
             .expect("JueBi trigger should persist active row");
         assert_eq!(active.kind, "jue_bi");
         assert_eq!(active.epicenter, [12.0, 66.0, -3.0]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn due_juebi_for_terminated_character_is_discarded_without_side_effects() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-trigger-terminated-character");
+        let char_id = "offline:Terminated";
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 40 });
+        app.insert_resource(PendingJueBiTriggers::default());
+        app.add_event::<JueBiTriggerEvent>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_systems(
+            Update,
+            (
+                schedule_juebi_triggers_system,
+                start_due_juebi_triggers_system.after(schedule_juebi_triggers_system),
+            ),
+        );
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    state: LifecycleState::Terminated,
+                    ..Default::default()
+                },
+                Username("Terminated".to_string()),
+                Position::new([12.0, 66.0, -3.0]),
+            ))
+            .id();
+        app.world_mut().send_event(JueBiTriggerEvent {
+            entity,
+            character_id: Some(char_id.to_string()),
+            source: JueBiTriggerSource::DuguReverse,
+            delay_ticks: 0,
+            triggered_at_tick: 40,
+            epicenter: None,
+        });
+
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(entity).is_none(),
+            "a due JueBi must not start on a Terminated character"
+        );
+        assert!(
+            app.world().resource::<PendingJueBiTriggers>().is_empty(),
+            "the due terminated trigger must be consumed rather than retained"
+        );
+        assert_eq!(
+            app.world().resource::<Events<JueBiTriggeredEvent>>().len(),
+            0,
+            "a terminated character must not publish JueBiTriggeredEvent"
+        );
+        assert!(
+            load_active_tribulation(&settings, char_id)
+                .expect("active tribulation query should succeed")
+                .is_none(),
+            "a terminated character must not persist an active JueBi row"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn event_before_scheduler_is_not_rebound_to_a_fresh_character() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-event-time-identity");
+        let prior_character_id = "offline:Prior";
+        let fresh_character_id = "offline:Fresh";
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 40 });
+        app.insert_resource(PendingJueBiTriggers::default());
+        app.add_event::<JueBiTriggerEvent>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_systems(
+            Update,
+            (
+                schedule_juebi_triggers_system,
+                start_due_juebi_triggers_system.after(schedule_juebi_triggers_system),
+            ),
+        );
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: prior_character_id.to_string(),
+                    ..Default::default()
+                },
+                Username("Azure".to_string()),
+                Position::new([12.0, 66.0, -3.0]),
+            ))
+            .id();
+
+        // The producer observed the old life, then the ECS entity was reused before the
+        // scheduler consumed the event. A scheduler-time Lifecycle lookup must not bind this
+        // event to the fresh life.
+        app.world_mut().send_event(JueBiTriggerEvent {
+            entity,
+            character_id: Some(prior_character_id.to_string()),
+            source: JueBiTriggerSource::DuguReverse,
+            delay_ticks: 0,
+            triggered_at_tick: 40,
+            epicenter: None,
+        });
+        app.world_mut()
+            .get_mut::<Lifecycle>(entity)
+            .expect("test entity must retain lifecycle")
+            .character_id = fresh_character_id.to_string();
+
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(entity).is_none(),
+            "an old-life event consumed after entity reuse must not start JueBi on the fresh life"
+        );
+        assert!(
+            app.world().resource::<PendingJueBiTriggers>().is_empty(),
+            "a stale event-before-scheduler trigger must be discarded rather than queued"
+        );
+        assert_eq!(
+            app.world().resource::<Events<JueBiTriggeredEvent>>().len(),
+            0,
+            "a stale event-before-scheduler trigger must not publish JueBiTriggeredEvent"
+        );
+        assert!(
+            load_active_tribulation(&settings, fresh_character_id)
+                .expect("active tribulation query should succeed")
+                .is_none(),
+            "a stale event-before-scheduler trigger must not persist JueBi for the fresh life"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delayed_juebi_trigger_does_not_cross_character_identity() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-trigger-stale-character");
+        let prior_character_id = "offline:Prior";
+        let fresh_character_id = "offline:Fresh";
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 40 });
+        app.insert_resource(PendingJueBiTriggers::default());
+        app.add_event::<JueBiTriggerEvent>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_systems(
+            Update,
+            (
+                schedule_juebi_triggers_system,
+                start_due_juebi_triggers_system.after(schedule_juebi_triggers_system),
+            ),
+        );
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: prior_character_id.to_string(),
+                    ..Default::default()
+                },
+                Username("Azure".to_string()),
+                Position::new([12.0, 66.0, -3.0]),
+            ))
+            .id();
+        app.world_mut().send_event(JueBiTriggerEvent {
+            entity,
+            character_id: Some(prior_character_id.to_string()),
+            source: JueBiTriggerSource::DuguReverse,
+            delay_ticks: 5,
+            triggered_at_tick: 40,
+            epicenter: None,
+        });
+        app.update();
+        assert!(
+            !app.world().resource::<PendingJueBiTriggers>().is_empty(),
+            "precondition: the prior character must own a delayed trigger"
+        );
+
+        app.world_mut()
+            .get_mut::<Lifecycle>(entity)
+            .expect("lifecycle should remain attached")
+            .character_id = fresh_character_id.to_string();
+        app.world_mut().resource_mut::<CombatClock>().tick = 45;
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(entity).is_none(),
+            "a delayed trigger scheduled for the prior character must not start JueBi on the fresh character"
+        );
+        assert!(
+            app.world().resource::<PendingJueBiTriggers>().is_empty(),
+            "the stale delayed trigger must be consumed rather than retained forever"
+        );
+        assert_eq!(
+            app.world().resource::<Events<JueBiTriggeredEvent>>().len(),
+            0,
+            "a stale delayed trigger must not publish a JueBiTriggeredEvent"
+        );
+        assert!(
+            load_active_tribulation(&settings, fresh_character_id)
+                .expect("active tribulation query should succeed")
+                .is_none(),
+            "a stale delayed trigger must not persist an active row for the fresh character"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -9218,6 +9519,11 @@ mod tests {
                     ..Default::default()
                 },
                 LifespanComponent::new(initial_lifespan_cap),
+                Lifecycle {
+                    character_id: "halfstep_test_char".to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
             ))
             .id()
     }
@@ -10149,6 +10455,155 @@ mod tests {
             .world()
             .resource::<HalfStepRechallengeQueue>()
             .is_empty());
+    }
+
+    #[test]
+    fn dispatch_drops_invalid_live_entries_and_continues_to_next() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        let stale = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "stale_char".to_string(),
+                state: LifecycleState::Terminated,
+                ..Default::default()
+            })
+            .id();
+        let fresh = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "fresh_char".to_string(),
+                state: LifecycleState::Alive,
+                ..Default::default()
+            })
+            .id();
+        let mut queue = app.world_mut().resource_mut::<HalfStepRechallengeQueue>();
+        queue.enqueue(HalfStepRechallengeEntry {
+            char_id: "stale_char".to_string(),
+            entity: stale,
+            entered_at: 1,
+            rechallenge_window_until: 200,
+            is_dormant: false,
+            buff_applied: true,
+        });
+        queue.enqueue(HalfStepRechallengeEntry {
+            char_id: "fresh_char".to_string(),
+            entity: fresh,
+            entered_at: 2,
+            rechallenge_window_until: 200,
+            is_dormant: false,
+            buff_applied: true,
+        });
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+
+        app.update();
+
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(
+            triggers.len(),
+            1,
+            "invalid head must not consume the quota-open dispatch"
+        );
+        assert_eq!(
+            triggers[0].entity, fresh,
+            "dispatcher must continue past Terminated head"
+        );
+        assert!(app
+            .world()
+            .resource::<HalfStepRechallengeQueue>()
+            .is_empty());
+    }
+
+    #[test]
+    fn dispatch_drops_missing_and_mismatched_lifecycle_entries_before_valid_entry() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        let missing = app.world_mut().spawn_empty().id();
+        let mismatched = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "current_character".to_string(),
+                state: LifecycleState::Alive,
+                ..Default::default()
+            })
+            .id();
+        let valid = app
+            .world_mut()
+            .spawn(Lifecycle {
+                character_id: "valid_character".to_string(),
+                state: LifecycleState::Alive,
+                ..Default::default()
+            })
+            .id();
+        let mut queue = app.world_mut().resource_mut::<HalfStepRechallengeQueue>();
+        for (char_id, entity, entered_at) in [
+            ("missing_character", missing, 1),
+            ("scheduled_character", mismatched, 2),
+            ("valid_character", valid, 3),
+        ] {
+            queue.enqueue(HalfStepRechallengeEntry {
+                char_id: char_id.to_string(),
+                entity,
+                entered_at,
+                rechallenge_window_until: 200,
+                is_dormant: false,
+                buff_applied: true,
+            });
+        }
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+
+        app.update();
+
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(
+            triggers.len(),
+            1,
+            "missing and identity-mismatched live entries must not consume the quota-open dispatch"
+        );
+        assert_eq!(
+            triggers[0].entity, valid,
+            "dispatcher must continue past entries without Lifecycle and entries for another character"
+        );
+        assert!(
+            app.world()
+                .resource::<HalfStepRechallengeQueue>()
+                .is_empty(),
+            "all consumed stale entries and the dispatched valid entry must leave the FIFO"
+        );
+    }
+
+    #[test]
+    fn dispatch_preserves_dormant_entry_without_runtime_lifecycle() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        let dormant = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<HalfStepRechallengeQueue>()
+            .enqueue(HalfStepRechallengeEntry {
+                char_id: "dormant_char".to_string(),
+                entity: dormant,
+                entered_at: 1,
+                rechallenge_window_until: 200,
+                is_dormant: true,
+                buff_applied: false,
+            });
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+
+        app.update();
+
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].entity, dormant);
+        assert!(
+            triggers[0].is_dormant,
+            "dormant hydrate-on-trigger path must remain valid"
+        );
     }
 
     #[test]

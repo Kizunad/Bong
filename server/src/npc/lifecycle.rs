@@ -577,7 +577,8 @@ pub fn register(app: &mut App) {
                 update_npc_registry,
                 age_npcs,
                 process_npc_retire_requests,
-                handle_npc_terminated,
+                handle_npc_terminated
+                    .after(crate::combat::lifecycle::handle_revival_action_intents),
                 emit_npc_despawn_notices.after(handle_npc_terminated),
             ),
         );

@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use valence::entity::entity::Flags;
 use valence::prelude::{
     Added, Client, Commands, Entity, EntityLayerId, EventReader, EventWriter, Events, GameMode,
-    Position, Query, Res, ResMut, Username, VisibleChunkLayer, VisibleEntityLayers, Without,
+    Local, Position, Query, Res, ResMut, Username, VisibleChunkLayer, VisibleEntityLayers, Without,
 };
 
 use crate::alchemy::LearnedRecipes;
@@ -47,11 +47,15 @@ use crate::npc::spawn::NpcMarker;
 use crate::persistence::{
     persist_near_death_transition, persist_new_character_transition,
     persist_revival_transition_with_bundle, persist_termination_transition,
-    persist_termination_transition_with_death_context, release_ascension_quota_slot,
-    LifespanEventRecord, NewCharacterPersistenceBundle, PersistenceSettings,
-    PlayerCultivationBundle,
+    persist_termination_transition_with_death_context, LifespanEventRecord,
+    NewCharacterPersistenceBundle, PersistenceSettings, PlayerCultivationBundle, ZoneRuntimeRecord,
 };
 use crate::player::state::{PlayerState, PlayerStatePersistence};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{
+    pending_inflow_account, qi_release_to_zone, transfer_external_qi_to_ledger, QiAccountId,
+    QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::death_cinematic::DeathCinematicS2cV1;
 use crate::schema::death_insight::{
@@ -165,11 +169,16 @@ type NearDeathPersistenceQueryItem<'a> = (
     ),
 );
 
-type RevivalRuntimeResources<'w, 's> = (
+type RevivalRuntimeResources<'w> = (
     Option<ResMut<'w, crate::coffin::CoffinRegistry>>,
     EventWriter<'w, crate::coffin::CoffinStateChanged>,
     Option<Res<'w, DimensionLayers>>,
+    Option<ResMut<'w, ZoneRegistry>>,
+    Option<ResMut<'w, WorldQiAccount>>,
+    Option<ResMut<'w, Events<QiTransfer>>>,
     Option<ResMut<'w, TutorialTelemetry>>,
+    Option<ResMut<'w, crate::cultivation::tribulation::PendingJueBiTriggers>>,
+    Option<ResMut<'w, crate::cultivation::tribulation::HalfStepRechallengeQueue>>,
 );
 
 struct DeathScreenContext<'a> {
@@ -1048,6 +1057,7 @@ pub fn handle_revival_action_intents(
     item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut intents: EventReader<RevivalActionIntent>,
+    mut deferred_creates: Local<Vec<RevivalActionIntent>>,
     mut revived: EventWriter<PlayerRevived>,
     mut terminated: EventWriter<PlayerTerminated>,
     mut quota_opened: EventWriter<AscensionQuotaOpened>,
@@ -1056,10 +1066,29 @@ pub fn handle_revival_action_intents(
     mut clients: Query<&mut valence::prelude::Client>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     // P0 fix: coffin 清除、Overworld 运行时发布与教程计数参数。
-    (mut coffin_registry, mut coffin_state_events, dimension_layers, mut tutorial_telemetry):
-        RevivalRuntimeResources<'_, '_>,
+    (
+        mut coffin_registry,
+        mut coffin_state_events,
+        dimension_layers,
+        mut zones,
+        mut qi_account,
+        mut qi_transfers,
+        mut tutorial_telemetry,
+        mut pending_juebi_triggers,
+        mut halfstep_queue,
+    ): RevivalRuntimeResources<'_>,
 ) {
+    // A fresh CreateNewCharacter must cross an Update boundary so all consumers of a
+    // same-frame termination settle the old life before this entity publishes a new one.
+    let mut executable = std::mem::take(&mut *deferred_creates);
     for intent in intents.read() {
+        if intent.action == RevivalActionKind::CreateNewCharacter {
+            deferred_creates.push(intent.clone());
+        } else {
+            executable.push(intent.clone());
+        }
+    }
+    for intent in executable {
         let Ok((
             (entity, mut lifecycle, wounds, stamina, combat_state),
             cultivation,
@@ -1108,29 +1137,6 @@ pub fn handle_revival_action_intents(
                     || matches!(decision, RevivalDecision::Tribulation { chance } if roll_rebirth(clock.tick, entity, chance));
 
                 if survived {
-                    let (
-                        Some(qi_color),
-                        Some(karma),
-                        Some(practice_log),
-                        Some(insight_quota),
-                        Some(unlocked_perceptions),
-                        Some(insight_modifiers),
-                        Some(meridian_severed),
-                    ) = (
-                        qi_color,
-                        karma,
-                        practice_log,
-                        insight_quota,
-                        unlocked_perceptions,
-                        insight_modifiers,
-                        meridian_severed,
-                    )
-                    else {
-                        tracing::warn!(
-                            "[bong][combat] refusing revival for {entity:?}: cultivation bundle is incomplete"
-                        );
-                        continue;
-                    };
                     if revive_lifecycle(
                         entity,
                         clock.tick,
@@ -1151,6 +1157,9 @@ pub fn handle_revival_action_intents(
                         current_dimension,
                         flags,
                         dimension_layers.as_deref(),
+                        zones.as_deref_mut(),
+                        qi_account.as_deref_mut(),
+                        qi_transfers.as_deref_mut(),
                         nourishment,
                         nourishment_activity,
                         qi_color,
@@ -1289,10 +1298,6 @@ pub fn handle_revival_action_intents(
                     skill_set,
                     nourishment,
                     nourishment_activity,
-                    tutorial_state,
-                    meridian_severed,
-                    poison_toxicity,
-                    digestion_load,
                     tutorial_telemetry.as_deref_mut(),
                     player_persistence.as_deref(),
                     default_loadout.as_deref(),
@@ -1300,6 +1305,8 @@ pub fn handle_revival_action_intents(
                     inventory_allocator.as_deref_mut(),
                     coffin_registry.as_deref_mut(),
                     &mut coffin_state_events,
+                    pending_juebi_triggers.as_deref_mut(),
+                    halfstep_queue.as_deref_mut(),
                 ) {
                     commands
                         .entity(entity)
@@ -1315,9 +1322,9 @@ pub fn handle_revival_action_intents(
 pub fn auto_confirm_revival_decisions(
     clock: Res<CombatClock>,
     mut revival_tx: EventWriter<RevivalActionIntent>,
-    lifecycle_q: Query<(Entity, &Lifecycle)>,
+    mut lifecycle_q: Query<(Entity, &mut Lifecycle)>,
 ) {
-    for (entity, lifecycle) in &lifecycle_q {
+    for (entity, mut lifecycle) in &mut lifecycle_q {
         if lifecycle.state != LifecycleState::AwaitingRevival {
             continue;
         }
@@ -1332,6 +1339,10 @@ pub fn auto_confirm_revival_decisions(
             action: RevivalActionKind::Reincarnate,
             issued_at_tick: clock.tick,
         });
+        // Auto-confirm is one-shot. If the following lifecycle transaction cannot commit, keep the
+        // player on the death screen for an explicit retry instead of enqueueing the same intent and
+        // warning every tick forever.
+        lifecycle.revival_decision_deadline_tick = None;
     }
 }
 
@@ -1613,6 +1624,94 @@ fn lifecycle_includes_current_death(lifecycle: &Lifecycle) -> bool {
     )
 }
 
+struct StagedRevivalQiRelease {
+    zones: ZoneRegistry,
+    qi_account: WorldQiAccount,
+    zone_runtime: Option<ZoneRuntimeRecord>,
+    transfers: Vec<QiTransfer>,
+}
+
+fn stage_revival_qi_release(
+    entity: Entity,
+    amount: f64,
+    character_id: &str,
+    revived_position: [f64; 3],
+    zones: Option<&ZoneRegistry>,
+    qi_account: Option<&WorldQiAccount>,
+) -> Result<Option<StagedRevivalQiRelease>, String> {
+    if amount <= QI_EPSILON {
+        return Ok(None);
+    }
+    let mut staged_zones = zones
+        .cloned()
+        .ok_or_else(|| "ZoneRegistry resource is missing".to_string())?;
+    let mut staged_qi_account = qi_account
+        .cloned()
+        .ok_or_else(|| "WorldQiAccount resource is missing".to_string())?;
+    let from = if character_id.trim().is_empty() {
+        QiAccountId::player(format!("entity:{entity:?}"))
+    } else {
+        QiAccountId::player(character_id.to_string())
+    };
+    let revived_position = valence::prelude::DVec3::from_array(revived_position);
+    let mut zone_runtime = None;
+    let mut transfers = Vec::new();
+    let mut overflow = amount;
+
+    if let Some(zone_name) = staged_zones
+        .find_zone(DimensionKind::Overworld, revived_position)
+        .map(|zone| zone.name.clone())
+    {
+        let zone = staged_zones
+            .find_zone_mut(zone_name.as_str())
+            .ok_or_else(|| format!("revival zone `{zone_name}` disappeared while staging"))?;
+        let outcome = qi_release_to_zone(
+            amount,
+            from.clone(),
+            QiAccountId::zone(zone.name.clone()),
+            zone.spirit_qi * QI_ZONE_UNIT_CAPACITY,
+            QI_ZONE_UNIT_CAPACITY,
+        )
+        .map_err(|error| format!("invalid revival qi release: {error}"))?;
+        zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
+        zone_runtime = Some(ZoneRuntimeRecord {
+            zone_id: zone.name.clone(),
+            spirit_qi: zone.spirit_qi,
+            danger_level: zone.danger_level,
+        });
+        if let Some(transfer) = outcome.transfer {
+            staged_qi_account.push_transfer_audit(transfer.clone());
+            transfers.push(transfer);
+        }
+        overflow = outcome.overflow;
+    } else {
+        tracing::warn!(
+            "[bong][combat] revival qi for {entity:?} has no spawn zone; stage it in pending inflow"
+        );
+    }
+
+    if overflow > QI_EPSILON {
+        let transfer = transfer_external_qi_to_ledger(
+            &mut staged_qi_account,
+            from,
+            pending_inflow_account(),
+            overflow,
+            QiTransferReason::ReleaseToZone,
+        )
+        .map_err(|error| format!("failed to stage revival qi overflow: {error}"))?;
+        if let Some(transfer) = transfer {
+            transfers.push(transfer);
+        }
+    }
+
+    Ok(Some(StagedRevivalQiRelease {
+        zones: staged_zones,
+        qi_account: staged_qi_account,
+        zone_runtime,
+        transfers,
+    }))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn revive_lifecycle(
     entity: Entity,
@@ -1634,15 +1733,18 @@ fn revive_lifecycle(
     current_dimension: Option<valence::prelude::Mut<'_, CurrentDimension>>,
     flags: Option<valence::prelude::Mut<'_, Flags>>,
     dimension_layers: Option<&DimensionLayers>,
+    zones: Option<&mut ZoneRegistry>,
+    qi_account: Option<&mut WorldQiAccount>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
     nourishment: Option<valence::prelude::Mut<'_, Nourishment>>,
     nourishment_activity: Option<valence::prelude::Mut<'_, NourishmentActivityWindow>>,
-    qi_color: &QiColor,
-    karma: &Karma,
-    practice_log: &PracticeLog,
-    insight_quota: &InsightQuota,
-    unlocked_perceptions: &UnlockedPerceptions,
-    insight_modifiers: &InsightModifiers,
-    meridian_severed: &MeridianSeveredPermanent,
+    qi_color: Option<&QiColor>,
+    karma: Option<&Karma>,
+    practice_log: Option<&PracticeLog>,
+    insight_quota: Option<&InsightQuota>,
+    unlocked_perceptions: Option<&UnlockedPerceptions>,
+    insight_modifiers: Option<&InsightModifiers>,
+    meridian_severed: Option<&MeridianSeveredPermanent>,
     tutorial_state: Option<&TutorialState>,
     poison_toxicity: Option<&PoisonToxicity>,
     digestion_load: Option<&DigestionLoad>,
@@ -1663,6 +1765,20 @@ fn revive_lifecycle(
         );
         return false;
     };
+    let Some(dimension_layers) = dimension_layers else {
+        tracing::warn!(
+            "[bong][combat] refusing revival for {entity:?}: DimensionLayers resource is missing"
+        );
+        return false;
+    };
+    let (Some(mut nourishment), Some(mut nourishment_activity)) =
+        (nourishment, nourishment_activity)
+    else {
+        tracing::warn!(
+            "[bong][combat] refusing revival for {entity:?}: Nourishment or NourishmentActivityWindow is missing"
+        );
+        return false;
+    };
     let revived_position = lifecycle
         .spawn_anchor
         .unwrap_or_else(crate::player::spawn_position);
@@ -1677,24 +1793,66 @@ fn revive_lifecycle(
     let weakened_multiplier = damaged_spawn_anchor_weakened_multiplier(lifecycle);
     staged_lifecycle.revive_with_weakened_multiplier(now_tick, weakened_multiplier);
 
-    let (mut staged_cultivation, mut staged_meridians, mut staged_contam, mut staged_life_record) =
-        match (
-            cultivation.as_ref().map(|value| (**value).clone()),
-            meridians.as_ref().map(|value| (**value).clone()),
-            contam.as_ref().map(|value| (**value).clone()),
-            life_record.as_ref().map(|value| (**value).clone()),
-        ) {
-            (Some(cultivation), Some(meridians), Some(contamination), Some(life_record)) => {
-                (cultivation, meridians, contamination, life_record)
-            }
-            _ => {
-                tracing::warn!("[bong][combat] refusing revival for {entity:?}: required lifecycle bundle component is missing");
-                return false;
-            }
-        };
+    let (
+        mut staged_cultivation,
+        mut staged_meridians,
+        mut staged_contam,
+        mut staged_life_record,
+        staged_qi_color,
+        staged_karma,
+        staged_practice_log,
+        staged_insight_quota,
+        staged_unlocked_perceptions,
+        staged_insight_modifiers,
+        staged_meridian_severed,
+    ) = match (
+        cultivation.as_ref().map(|value| (**value).clone()),
+        meridians.as_ref().map(|value| (**value).clone()),
+        contam.as_ref().map(|value| (**value).clone()),
+        life_record.as_ref().map(|value| (**value).clone()),
+        qi_color.cloned(),
+        karma.cloned(),
+        practice_log.cloned(),
+        insight_quota.cloned(),
+        unlocked_perceptions.cloned(),
+        insight_modifiers.cloned(),
+        meridian_severed.cloned(),
+    ) {
+        (
+            Some(cultivation),
+            Some(meridians),
+            Some(contamination),
+            Some(life_record),
+            Some(qi_color),
+            Some(karma),
+            Some(practice_log),
+            Some(insight_quota),
+            Some(unlocked_perceptions),
+            Some(insight_modifiers),
+            Some(meridian_severed),
+        ) => (
+            cultivation,
+            meridians,
+            contamination,
+            life_record,
+            qi_color,
+            karma,
+            practice_log,
+            insight_quota,
+            unlocked_perceptions,
+            insight_modifiers,
+            meridian_severed,
+        ),
+        _ => {
+            tracing::error!(
+                "[bong][combat] refusing revival for {entity:?}: complete cultivation lifecycle bundle is missing"
+            );
+            return false;
+        }
+    };
     let staged_nourishment = Nourishment::spawn_default();
     let prior_realm = staged_cultivation.realm;
-    apply_revive_penalty(
+    let released_qi = apply_revive_penalty(
         &mut staged_cultivation,
         &mut staged_meridians,
         &mut staged_contam,
@@ -1704,49 +1862,81 @@ fn revive_lifecycle(
         new_realm: staged_cultivation.realm,
         tick: now_tick,
     });
-    if let Err(error) = persist_revival_transition_with_bundle(
+    let staged_qi_release = match stage_revival_qi_release(
+        entity,
+        released_qi,
+        staged_life_record.character_id.as_str(),
+        revived_position,
+        zones.as_deref(),
+        qi_account.as_deref(),
+    ) {
+        Ok(staged) => staged,
+        Err(error) => {
+            tracing::error!(
+                "[bong][combat] refusing revival for {entity:?}: qi release cannot be staged atomically: {error}"
+            );
+            return false;
+        }
+    };
+    let release_void_quota = prior_realm == Realm::Void && staged_cultivation.realm != Realm::Void;
+    let revival_outcome = match persist_revival_transition_with_bundle(
         persistence,
         player_persistence,
         username.0.as_str(),
         revived_position,
+        release_void_quota,
+        staged_qi_release
+            .as_ref()
+            .and_then(|release| release.zone_runtime.as_ref()),
+        staged_qi_release
+            .as_ref()
+            .map(|release| &release.qi_account),
         crate::persistence::PlayerCultivationBundle {
             cultivation: &staged_cultivation,
             meridians: &staged_meridians,
-            qi_color,
-            karma,
+            qi_color: &staged_qi_color,
+            karma: &staged_karma,
             contamination: &staged_contam,
             life_record: &staged_life_record,
-            practice_log,
-            insight_quota,
-            unlocked_perceptions,
-            insight_modifiers,
+            practice_log: &staged_practice_log,
+            insight_quota: &staged_insight_quota,
+            unlocked_perceptions: &staged_unlocked_perceptions,
+            insight_modifiers: &staged_insight_modifiers,
             tutorial_state,
-            meridian_severed,
+            meridian_severed: &staged_meridian_severed,
             poison_toxicity,
             digestion_load,
             nourishment: &staged_nourishment,
         },
     ) {
-        tracing::warn!(
-            "[bong][persistence] failed to persist revival transition for {}: {error}",
-            staged_life_record.character_id
-        );
-        return false;
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][persistence] failed to persist revival transition for {}: {error}",
+                staged_life_record.character_id
+            );
+            return false;
+        }
+    };
+    if let Some(release) = revival_outcome.quota_release {
+        if release.opened_slot {
+            quota_opened.send(AscensionQuotaOpened {
+                occupied_slots: release.quota.occupied_slots,
+            });
+        }
     }
-    if prior_realm == Realm::Void && staged_cultivation.realm != Realm::Void {
-        match release_ascension_quota_slot(persistence) {
-            Ok(release) if release.opened_slot => {
-                quota_opened.send(AscensionQuotaOpened {
-                    occupied_slots: release.quota.occupied_slots,
-                });
+    if let Some(staged_release) = staged_qi_release {
+        *zones.expect("staged revival qi release requires ZoneRegistry") = staged_release.zones;
+        *qi_account.expect("staged revival qi release requires WorldQiAccount") =
+            staged_release.qi_account;
+        if let Some(qi_transfers) = qi_transfers {
+            for transfer in staged_release.transfers {
+                qi_transfers.send(transfer);
             }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(
-                    "[bong][combat] failed to release ascension quota after revive for {:?}: {error}",
-                    entity,
-                );
-            }
+        } else if !staged_release.transfers.is_empty() {
+            tracing::warn!(
+                "[bong][combat] committed revival qi release for {entity:?} without QiTransfer event resource"
+            );
         }
     }
 
@@ -1790,25 +1980,17 @@ fn revive_lifecycle(
         visible_chunk_layer,
         visible_entity_layers,
         current_dimension,
-        dimension_layers,
+        Some(dimension_layers),
     );
-
-    if let Some(mut nourishment) = nourishment {
-        nourishment.reset_to_spawn();
-    } else {
-        commands.entity(entity).insert(Nourishment::spawn_default());
-    }
-    if let Some(mut nourishment_activity) = nourishment_activity {
-        nourishment_activity.reset();
-    } else {
-        commands
-            .entity(entity)
-            .insert(NourishmentActivityWindow::default());
-    }
 
     // SQLite 已在 revival transaction 内清除 in_coffin；此处只提交运行时副作用。
     clear_coffin_runtime(entity, commands, coffin_registry, coffin_state_events);
-    revived.send(PlayerRevived { entity });
+
+    // 正式复活的运行时状态必须在完成事件对外可见前全部发布。消费者看到
+    // `PlayerRevived` 时，双轴、session-only 活动窗口和真元回流都已原子提交。
+    nourishment.reset_to_spawn();
+    nourishment_activity.reset();
+    revived.send(PlayerRevived::formal_penalty_applied(entity, released_qi));
     true
 }
 
@@ -1826,17 +2008,18 @@ fn publish_overworld_runtime(
     dimension_layers: Option<&DimensionLayers>,
 ) {
     let Some(layers) = dimension_layers else {
+        tracing::warn!(
+            "[bong][combat] refusing Overworld runtime publication for {entity:?}: DimensionLayers resource is missing"
+        );
         return;
     };
     let overworld = layers.overworld;
 
     match layer_id {
         Some(mut layer_id) => {
-            let previous = layer_id.0;
             layer_id.0 = overworld;
             if let Some(mut visible_layers) = visible_entity_layers {
-                visible_layers.0.remove(&previous);
-                visible_layers.0.remove(&layers.tsy);
+                visible_layers.0.clear();
                 visible_layers.0.insert(overworld);
             } else {
                 let mut visible_layers = VisibleEntityLayers::default();
@@ -2067,10 +2250,6 @@ fn reset_for_new_character(
     skill_set: Option<valence::prelude::Mut<'_, SkillSet>>,
     nourishment: Option<valence::prelude::Mut<'_, Nourishment>>,
     nourishment_activity: Option<valence::prelude::Mut<'_, NourishmentActivityWindow>>,
-    _tutorial_state: Option<&TutorialState>,
-    _meridian_severed: Option<&MeridianSeveredPermanent>,
-    _poison_toxicity: Option<&PoisonToxicity>,
-    _digestion_load: Option<&DigestionLoad>,
     tutorial_telemetry: Option<&mut TutorialTelemetry>,
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
@@ -2079,23 +2258,37 @@ fn reset_for_new_character(
     // P0 fix: coffin 清除参数（新建角色不应继承死亡前的棺状态）
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
     coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
+    pending_juebi_triggers: Option<&mut crate::cultivation::tribulation::PendingJueBiTriggers>,
+    halfstep_queue: Option<&mut crate::cultivation::tribulation::HalfStepRechallengeQueue>,
 ) -> bool {
+    let previous_character_id = lifecycle.character_id.clone();
     let (
         Some(username),
         Some(player_persistence),
         Some(default_loadout),
         Some(item_registry),
         Some(inventory_allocator),
+        Some(pending_juebi_triggers),
+        Some(halfstep_queue),
     ) = (
         username,
         player_persistence,
         default_loadout,
         item_registry,
         inventory_allocator,
+        pending_juebi_triggers,
+        halfstep_queue,
     )
     else {
         tracing::warn!(
-            "[bong][combat] refusing CreateNewCharacter for {entity:?}: persistence or default inventory resources are incomplete"
+            "[bong][combat] refusing CreateNewCharacter for {entity:?}: persistence, default inventory, or reincarnation queue resources are incomplete"
+        );
+        return false;
+    };
+
+    let Some(dimension_layers) = dimension_layers else {
+        tracing::warn!(
+            "[bong][combat] refusing CreateNewCharacter for {entity:?}: DimensionLayers resource is missing"
         );
         return false;
     };
@@ -2155,6 +2348,7 @@ fn reset_for_new_character(
         player_persistence,
         username.0.as_str(),
         NewCharacterPersistenceBundle {
+            previous_character_id: previous_character_id.as_str(),
             current_char_id: reincarnation.current_char_id.as_str(),
             state: &fresh_player_state,
             position: spawn_position,
@@ -2193,25 +2387,42 @@ fn reset_for_new_character(
 
     *lifecycle = staged_lifecycle;
     *inventory_allocator = staged_inventory_allocator;
-    if let Some(mut life_record) = life_record {
-        *life_record = fresh_life_record;
+    match life_record {
+        Some(mut life_record) => *life_record = fresh_life_record,
+        None => {
+            commands.entity(entity).insert(fresh_life_record);
+        }
     }
-    if let Some(mut death_registry) = death_registry {
-        *death_registry = fresh_death_registry;
+    match death_registry {
+        Some(mut death_registry) => *death_registry = fresh_death_registry,
+        None => {
+            commands.entity(entity).insert(fresh_death_registry);
+        }
     }
-    if let Some(mut lifespan) = lifespan {
-        *lifespan = fresh_lifespan.clone();
-    } else {
-        commands.entity(entity).insert(fresh_lifespan.clone());
+    match lifespan {
+        Some(mut lifespan) => *lifespan = fresh_lifespan,
+        None => {
+            commands.entity(entity).insert(fresh_lifespan);
+        }
     }
-    if let Some(mut player_state) = player_state {
-        *player_state = fresh_player_state;
+    match player_state {
+        Some(mut player_state) => *player_state = fresh_player_state,
+        None => {
+            commands.entity(entity).insert(fresh_player_state);
+        }
     }
-    if let Some(mut position) = position {
-        position.set(spawn_position);
+    match position {
+        Some(mut position) => position.set(spawn_position),
+        None => {
+            commands
+                .entity(entity)
+                .insert(Position::new(spawn_position));
+        }
     }
     if let Some(mut flags) = flags {
         flags.set_invisible(false);
+    } else {
+        commands.entity(entity).insert(Flags::default());
     }
     publish_overworld_runtime(
         entity,
@@ -2220,21 +2431,31 @@ fn reset_for_new_character(
         visible_chunk_layer,
         visible_entity_layers,
         current_dimension,
-        dimension_layers,
+        Some(dimension_layers),
     );
-    if let Some(mut inventory) = inventory {
-        *inventory = fresh_inventory.clone();
-    } else {
-        commands.entity(entity).insert(fresh_inventory);
+    match inventory {
+        Some(mut inventory) => *inventory = fresh_inventory,
+        None => {
+            commands.entity(entity).insert(fresh_inventory);
+        }
     }
-    if let Some(mut wounds) = wounds {
-        *wounds = Wounds::default();
+    match wounds {
+        Some(mut wounds) => *wounds = Wounds::default(),
+        None => {
+            commands.entity(entity).insert(Wounds::default());
+        }
     }
-    if let Some(mut stamina) = stamina {
-        *stamina = Stamina::default();
+    match stamina {
+        Some(mut stamina) => *stamina = Stamina::default(),
+        None => {
+            commands.entity(entity).insert(Stamina::default());
+        }
     }
-    if let Some(mut combat_state) = combat_state {
-        *combat_state = CombatState::default();
+    match combat_state {
+        Some(mut combat_state) => *combat_state = CombatState::default(),
+        None => {
+            commands.entity(entity).insert(CombatState::default());
+        }
     }
     if let Some(mut skill_set) = skill_set {
         *skill_set = fresh_skill_set;
@@ -2282,11 +2503,30 @@ fn reset_for_new_character(
         KnownTechniques::default(),
         learned_recipes,
     ));
+    pending_juebi_triggers.cancel_for_character(entity, previous_character_id.as_str());
+    halfstep_queue.remove_character(entity, previous_character_id.as_str());
+
     commands
         .entity(entity)
+        .remove::<crate::craft::CraftSession>()
+        .remove::<crate::network::craft_emit::CraftSessionPersistenceDirty>()
+        .insert(crate::network::craft_emit::CraftSessionStateDirty)
         .remove::<crate::combat::components::Casting>()
+        .remove::<crate::combat::woliu_v2::state::VortexV2State>()
+        .remove::<crate::combat::woliu_v2::state::PassiveVortex>()
+        .remove::<crate::combat::woliu_v2::state::TurbulenceExposure>()
         .remove::<crate::cultivation::insight_flow::PendingInsightOffer>()
         .remove::<crate::cultivation::tribulation::TribulationState>()
+        .remove::<crate::cultivation::tribulation::TribulationOriginDimension>()
+        .remove::<crate::cultivation::tribulation::JueBiAfterDuXuQuota>()
+        .remove::<crate::cultivation::tribulation::JueBiRuntimeContext>()
+        .remove::<crate::cultivation::tribulation::JueBiAftershockDebuff>()
+        .remove::<crate::cultivation::tribulation::JueBiPressureCollapse>()
+        .remove::<crate::cultivation::tribulation::JueBiLawDisruption>()
+        .remove::<crate::cultivation::tribulation::JueBiNullified>()
+        .remove::<crate::cultivation::tribulation::PendingHeartDemonOffer>()
+        .remove::<crate::cultivation::tribulation::HeartDemonResolution>()
+        .remove::<crate::cultivation::tribulation::HalfStepState>()
         .remove::<crate::inventory::OverloadedMarker>();
 
     clear_coffin_runtime(entity, commands, coffin_registry, coffin_state_events);
@@ -2579,8 +2819,9 @@ mod tests {
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::persistence::{
         bootstrap_sqlite, complete_tribulation_ascension, load_ascension_quota,
-        persist_active_tribulation, ActiveTribulationRecord, DeceasedIndexEntry, DeceasedSnapshot,
-        PersistenceSettings,
+        load_pending_inflow_balance, load_runtime_qi_account_balances, load_zone_runtime_snapshot,
+        persist_active_tribulation, persist_zone_runtime_snapshot, ActiveTribulationRecord,
+        DeceasedIndexEntry, DeceasedSnapshot, PersistenceSettings,
     };
     use crate::player::state::{
         canonical_player_id, load_player_slices, player_character_id, save_player_slices,
@@ -2590,7 +2831,9 @@ mod tests {
     use crate::schema::death_cinematic::{
         DeathCinematicRollV1, DeathCinematicZoneKindV1, DeathRollResultV1,
     };
-    use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use crate::schema::server_data::{
+        HeartDemonOfferV1, ServerDataPayloadV1, ServerDataV1,
+    };
     use crate::world::dimension::{CurrentDimension, DimensionLayers};
     use rusqlite::{params, Connection};
     use std::fs;
@@ -2773,6 +3016,28 @@ mod tests {
         visible
     }
 
+    #[derive(Debug, Default)]
+    struct RevivalObservation {
+        snapshots: Vec<(Entity, Nourishment, NourishmentActivityWindow)>,
+    }
+
+    impl valence::prelude::Resource for RevivalObservation {}
+
+    fn observe_revival_completion(
+        mut events: EventReader<PlayerRevived>,
+        states: Query<(&Nourishment, &NourishmentActivityWindow)>,
+        mut observation: ResMut<RevivalObservation>,
+    ) {
+        for event in events.read() {
+            let (nourishment, activity) = states
+                .get(event.entity)
+                .expect("PlayerRevived must expose a complete post-revival nourishment state");
+            observation
+                .snapshots
+                .push((event.entity, *nourishment, *activity));
+        }
+    }
+
     fn revival_action_test_app(settings: PersistenceSettings, tick: u64) -> App {
         let mut app = App::new();
         let player_persistence = PlayerStatePersistence::with_db_path(
@@ -2785,20 +3050,26 @@ mod tests {
         app.insert_resource(settings);
         app.insert_resource(player_persistence);
         app.insert_resource(CombatClock { tick });
+        app.insert_resource(crate::cultivation::tribulation::PendingJueBiTriggers::default());
+        app.insert_resource(crate::cultivation::tribulation::HalfStepRechallengeQueue::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<valence::movement::MovementEvent>();
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
         app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(
             Update,
             (
-                crate::nourishment::tick::sample_activity,
+                crate::nourishment::tick::sample_activity.before(handle_revival_action_intents),
                 handle_revival_action_intents,
             ),
         );
+        tsy_runtime_layers(&mut app);
         app
     }
 
@@ -2862,6 +3133,8 @@ mod tests {
             Position::new([12.0, 70.0, -4.0]),
             Username(username.to_string()),
         ));
+        let mut activity_window = NourishmentActivityWindow::default();
+        activity_window.observe(1, 0.0, true);
         app.world_mut().entity_mut(entity).insert((
             crate::cultivation::components::QiColor::default(),
             crate::cultivation::components::Karma::default(),
@@ -2870,7 +3143,7 @@ mod tests {
             crate::cultivation::insight_apply::UnlockedPerceptions::default(),
             crate::cultivation::insight_apply::InsightModifiers::new(),
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
-            NourishmentActivityWindow::default(),
+            activity_window,
             nourishment,
             MovementState {
                 action: MovementAction::Dashing,
@@ -2878,6 +3151,48 @@ mod tests {
             },
         ));
         (entity, helper)
+    }
+
+    #[test]
+    fn auto_confirm_revival_decision_is_enqueued_once() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<RevivalActionIntent>();
+        app.add_systems(Update, auto_confirm_revival_decisions);
+        let entity = app
+            .world_mut()
+            .spawn(Lifecycle {
+                state: LifecycleState::AwaitingRevival,
+                awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                revival_decision_deadline_tick: Some(100),
+                ..Default::default()
+            })
+            .id();
+
+        app.update();
+        let first_attempts: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<RevivalActionIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(first_attempts.len(), 1);
+        assert_eq!(first_attempts[0].entity, entity);
+        assert_eq!(first_attempts[0].action, RevivalActionKind::Reincarnate);
+        assert_eq!(
+            app.world()
+                .get::<Lifecycle>(entity)
+                .expect("lifecycle should remain attached")
+                .revival_decision_deadline_tick,
+            None,
+            "auto-confirm must consume its deadline before a potentially failing revival transaction"
+        );
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<Events<RevivalActionIntent>>().len(),
+            0,
+            "a failed or delayed revival handler must not receive the same auto-confirm every tick"
+        );
     }
 
     #[test]
@@ -2984,13 +3299,85 @@ mod tests {
     }
 
     #[test]
+    fn reincarnate_without_dimension_layers_rejects_before_persistence() {
+        let (settings, root) = persistence_settings("reincarnate-missing-dimension-layers");
+        let username = "LayerlessRevival";
+        let cultivation = Cultivation::default();
+        let meridians = MeridianSystem::default();
+        let contamination = Contamination::default();
+        let life_record = LifeRecord::new(canonical_player_id(username));
+        let nourishment = Nourishment {
+            satiety: 27.0,
+            hydration: 38.0,
+        };
+        seed_revival_nourishment_bundle(
+            &settings,
+            username,
+            &cultivation,
+            &meridians,
+            &contamination,
+            &life_record,
+            None,
+            nourishment,
+        );
+        let mut app = revival_action_test_app(settings.clone(), 700);
+        app.world_mut().remove_resource::<DimensionLayers>();
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                cultivation,
+                meridians,
+                contamination,
+                life_record,
+                nourishment,
+            },
+        );
+        let lifecycle_before = serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+            .expect("lifecycle snapshot should serialize");
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 700,
+        });
+        app.update();
+
+        assert_eq!(
+            serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+                .expect("lifecycle snapshot should serialize"),
+            lifecycle_before,
+            "missing world layers must reject revival before publishing an Alive lifecycle"
+        );
+        assert_eq!(
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            nourishment,
+            "missing world layers must not reset live nourishment"
+        );
+        assert_eq!(
+            load_persisted_nourishment(&settings, username),
+            nourishment,
+            "missing world layers must reject before writing the revival transaction"
+        );
+        assert_eq!(app.world().resource::<Events<PlayerRevived>>().len(), 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn reincarnate_precommit_failure_rolls_back_sqlite_and_ecs() {
         let (settings, root) = persistence_settings("reincarnate-persistence-atomicity");
         let username = "AtomicReincarnate";
         let cultivation = Cultivation {
-            realm: Realm::Induce,
+            realm: Realm::Void,
             qi_current: 7.0,
-            qi_max: 24.0,
+            qi_max: 240.0,
             ..Default::default()
         };
         let meridians = MeridianSystem::default();
@@ -3009,6 +3396,30 @@ mod tests {
             &life_record,
             None,
             persisted_nourishment,
+        );
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id(username),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 3,
+                waves_total: 3,
+                started_tick: 10,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active DuXu should persist before rollback setup");
+        complete_tribulation_ascension(&settings, canonical_player_id(username).as_str())
+            .expect("rollback setup should occupy one ascension quota slot");
+        assert_eq!(
+            load_ascension_quota(&settings)
+                .expect("quota should load before failed revival")
+                .occupied_slots,
+            1,
+            "precondition: Void revival must begin with one occupied slot"
         );
 
         let old_position = [12.0, 70.0, -4.0];
@@ -3030,6 +3441,15 @@ mod tests {
         .expect("test setup must persist pre-revival player slices and coffin state");
 
         let mut app = revival_action_test_app(settings.clone(), 701);
+        let zones_before = app.world().resource::<ZoneRegistry>().clone();
+        persist_zone_runtime_snapshot(&settings, &zones_before)
+            .expect("test setup must persist the pre-revival zone snapshot");
+        let spawn_qi_before = zones_before
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback registry must include spawn")
+            .spirit_qi;
+        let pending_inflow_before = load_pending_inflow_balance(&settings)
+            .expect("fresh pending inflow balance should be known");
         let (entity, mut helper) = spawn_revival_action_actor(
             &mut app,
             username,
@@ -3104,6 +3524,18 @@ mod tests {
         app.update();
 
         let revived_event_count = app.world().resource::<Events<PlayerRevived>>().len();
+        assert_eq!(
+            app.world().resource::<Events<AscensionQuotaOpened>>().len(),
+            0,
+            "failed Void revival must not publish AscensionQuotaOpened"
+        );
+        assert_eq!(
+            load_ascension_quota(&settings)
+                .expect("quota should reload after failed revival")
+                .occupied_slots,
+            1,
+            "the revival transaction failpoint must roll back the staged Void quota release"
+        );
         let persisted_after = load_persisted_nourishment(&settings, username);
         let persisted_player_after = load_player_slices(&player_persistence, username);
         let connection = Connection::open(settings.db_path()).expect("sqlite should reopen");
@@ -3121,6 +3553,30 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("life event count should query");
+        let runtime_spawn_qi_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("runtime spawn zone should remain available")
+            .spirit_qi;
+        let runtime_pending_after = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .balance(&pending_inflow_account());
+        let runtime_audit_count = app.world().resource::<WorldQiAccount>().transfers().len();
+        let emitted_qi_transfers = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .count();
+        let persisted_spawn_qi_after = load_zone_runtime_snapshot(&settings)
+            .expect("zone snapshot should reload after rollback")
+            .into_iter()
+            .find(|zone| zone.zone_id == crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("persisted spawn zone should survive rollback")
+            .spirit_qi;
+        let persisted_pending_after = load_pending_inflow_balance(&settings)
+            .expect("pending inflow should reload after rollback");
 
         assert_eq!(
             serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
@@ -3287,6 +3743,553 @@ mod tests {
         assert_eq!(
             life_event_count, 0,
             "precommit failure must roll back the staged rebirth life_event"
+        );
+        assert_eq!(
+            runtime_spawn_qi_after, spawn_qi_before,
+            "precommit failure must not publish the staged runtime zone inflow"
+        );
+        assert_eq!(
+            persisted_spawn_qi_after, spawn_qi_before,
+            "precommit failure must roll back the durable zone inflow"
+        );
+        assert_eq!(
+            runtime_pending_after, pending_inflow_before,
+            "precommit failure must not publish staged pending inflow"
+        );
+        assert_eq!(
+            persisted_pending_after, pending_inflow_before,
+            "precommit failure must roll back durable pending inflow"
+        );
+        assert_eq!(
+            runtime_audit_count, 0,
+            "precommit failure must not publish staged ledger audit entries"
+        );
+        assert_eq!(
+            emitted_qi_transfers, 0,
+            "precommit failure must not emit QiTransfer completion events"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reincarnate_commits_qi_release_before_completion_consumer() {
+        let (settings, root) = persistence_settings("reincarnate-qi-commit-before-consumer");
+        let username = "DurableQiRevival";
+        let released_qi = 7.0;
+        let spawn_anchor = [8.0, 66.0, 8.0];
+        let mut app = revival_action_test_app(settings.clone(), 703);
+        {
+            let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+            zones
+                .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+                .expect("fallback registry must include spawn")
+                .spirit_qi = 0.2;
+        }
+        let unrelated_runtime_account = crate::qi_physics::ledger::dying_elder_dan_excess_account();
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(unrelated_runtime_account.clone(), 12.5)
+            .expect("unrelated runtime balance fixture should be valid");
+        let spawn_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback registry must include spawn")
+            .spirit_qi;
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    spawn_anchor: Some(spawn_anchor),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                cultivation: Cultivation {
+                    qi_current: released_qi,
+                    ..Default::default()
+                },
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: Nourishment {
+                    satiety: 13.0,
+                    hydration: 17.0,
+                },
+            },
+        );
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 703,
+        });
+        app.update();
+
+        let expected_zone_qi = spawn_qi_before + released_qi / QI_ZONE_UNIT_CAPACITY;
+        let runtime_zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("runtime spawn zone should remain available")
+            .spirit_qi;
+        assert!(
+            (runtime_zone_qi - expected_zone_qi).abs() < f64::EPSILON,
+            "runtime zone must receive exactly the qi removed from cultivation: expected={expected_zone_qi}, actual={runtime_zone_qi}"
+        );
+        let persisted_zone_qi = load_zone_runtime_snapshot(&settings)
+            .expect("committed zone snapshot should reload")
+            .into_iter()
+            .find(|zone| zone.zone_id == crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("revival transaction must persist the accepted spawn-zone inflow")
+            .spirit_qi;
+        assert!(
+            (persisted_zone_qi - expected_zone_qi).abs() < f64::EPSILON,
+            "durable zone state must already conserve qi without running PlayerRevived consumers"
+        );
+        let cultivation_after = app.world().get::<Cultivation>(entity).unwrap();
+        assert_eq!(cultivation_after.qi_current, 0.0);
+        let persisted_bundle =
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("committed cultivation bundle should reload")
+                .expect("revival must persist a cultivation bundle");
+        let persisted_cultivation: Cultivation = serde_json::from_value(
+            persisted_bundle
+                .get("cultivation")
+                .cloned()
+                .expect("bundle must contain cultivation"),
+        )
+        .expect("persisted cultivation should decode");
+        assert_eq!(persisted_cultivation.qi_current, 0.0);
+        assert_eq!(
+            load_pending_inflow_balance(&settings)
+                .expect("pending inflow should remain durably known"),
+            0.0,
+            "a zone with sufficient capacity must not receive duplicate pending inflow"
+        );
+        assert_eq!(
+            load_runtime_qi_account_balances(&settings)
+                .expect("runtime qi balances should reload")
+                .into_iter()
+                .find(|(account, _)| *account == unrelated_runtime_account)
+                .expect("unrelated persistent runtime account must remain present")
+                .1,
+            12.5,
+            "revival persistence must preserve other runtime qi authority balances"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&pending_inflow_account()), 0.0);
+        assert_eq!(ledger.transfers().len(), 1);
+        assert_eq!(ledger.transfers()[0].amount, released_qi);
+        assert_eq!(
+            ledger.transfers()[0].to,
+            QiAccountId::zone(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        );
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 1);
+        assert_eq!(app.world().resource::<Events<PlayerRevived>>().len(), 1);
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Alive
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reincarnate_routes_full_zone_and_unknown_zone_qi_to_durable_pending_inflow() {
+        for (case, spawn_anchor, fill_spawn_zone) in [
+            ("full-zone", [8.0, 66.0, 8.0], true),
+            ("unknown-zone", [1_000_000.0, 66.0, 1_000_000.0], false),
+        ] {
+            let (settings, root) = persistence_settings(case);
+            let username = format!("PendingQi{case}");
+            let released_qi = 7.5;
+            let mut app = revival_action_test_app(settings.clone(), 703);
+            let spawn_qi_before = {
+                let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+                let spawn = zones
+                    .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+                    .expect("fallback registry must include spawn");
+                if fill_spawn_zone {
+                    spawn.spirit_qi = 1.0;
+                }
+                spawn.spirit_qi
+            };
+            let (entity, _helper) = spawn_revival_action_actor(
+                &mut app,
+                username.as_str(),
+                RevivalActionActorState {
+                    lifecycle: Lifecycle {
+                        character_id: canonical_player_id(username.as_str()),
+                        state: LifecycleState::AwaitingRevival,
+                        awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                        spawn_anchor: Some(spawn_anchor),
+                        fortune_remaining: 1,
+                        ..Default::default()
+                    },
+                    cultivation: Cultivation {
+                        qi_current: released_qi,
+                        ..Default::default()
+                    },
+                    meridians: MeridianSystem::default(),
+                    contamination: Contamination::default(),
+                    life_record: LifeRecord::new(canonical_player_id(username.as_str())),
+                    nourishment: Nourishment::spawn_default(),
+                },
+            );
+
+            app.world_mut().send_event(RevivalActionIntent {
+                entity,
+                action: RevivalActionKind::Reincarnate,
+                issued_at_tick: 703,
+            });
+            app.update();
+
+            assert_eq!(
+                app.world()
+                    .resource::<ZoneRegistry>()
+                    .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi,
+                spawn_qi_before,
+                "{case}: a full or non-matching zone must not absorb any qi"
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<WorldQiAccount>()
+                    .balance(&pending_inflow_account()),
+                released_qi,
+                "{case}: runtime pending inflow must receive the complete released amount"
+            );
+            assert_eq!(
+                load_pending_inflow_balance(&settings)
+                    .expect("committed pending inflow should reload"),
+                released_qi,
+                "{case}: pending inflow must be durable in the same commit as qi_current=0"
+            );
+            let ledger = app.world().resource::<WorldQiAccount>();
+            assert_eq!(ledger.transfers().len(), 1, "case={case}");
+            assert_eq!(ledger.transfers()[0].to, pending_inflow_account());
+            assert_eq!(ledger.transfers()[0].amount, released_qi);
+            assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 1);
+            assert_eq!(
+                app.world().get::<Cultivation>(entity).unwrap().qi_current,
+                0.0
+            );
+            assert_eq!(
+                app.world().get::<Lifecycle>(entity).unwrap().state,
+                LifecycleState::Alive
+            );
+
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn reincarnate_with_positive_qi_requires_zone_and_ledger_resources() {
+        for missing in ["zone", "ledger"] {
+            let (settings, root) = persistence_settings(missing);
+            let username = format!("MissingQiAuthority{missing}");
+            let mut app = revival_action_test_app(settings.clone(), 703);
+            match missing {
+                "zone" => {
+                    app.world_mut().remove_resource::<ZoneRegistry>();
+                }
+                "ledger" => {
+                    app.world_mut().remove_resource::<WorldQiAccount>();
+                }
+                _ => unreachable!(),
+            }
+            let (entity, _helper) = spawn_revival_action_actor(
+                &mut app,
+                username.as_str(),
+                RevivalActionActorState {
+                    lifecycle: Lifecycle {
+                        character_id: canonical_player_id(username.as_str()),
+                        state: LifecycleState::AwaitingRevival,
+                        awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                        spawn_anchor: Some([8.0, 66.0, 8.0]),
+                        fortune_remaining: 1,
+                        ..Default::default()
+                    },
+                    cultivation: Cultivation {
+                        qi_current: 3.0,
+                        ..Default::default()
+                    },
+                    meridians: MeridianSystem::default(),
+                    contamination: Contamination::default(),
+                    life_record: LifeRecord::new(canonical_player_id(username.as_str())),
+                    nourishment: Nourishment {
+                        satiety: 12.0,
+                        hydration: 16.0,
+                    },
+                },
+            );
+
+            app.world_mut().send_event(RevivalActionIntent {
+                entity,
+                action: RevivalActionKind::Reincarnate,
+                issued_at_tick: 703,
+            });
+            app.update();
+
+            assert_eq!(
+                app.world().get::<Lifecycle>(entity).unwrap().state,
+                LifecycleState::AwaitingRevival,
+                "missing {missing} authority must fail closed before publishing revival"
+            );
+            assert_eq!(
+                app.world().get::<Cultivation>(entity).unwrap().qi_current,
+                3.0
+            );
+            assert_eq!(
+                *app.world().get::<Nourishment>(entity).unwrap(),
+                Nourishment {
+                    satiety: 12.0,
+                    hydration: 16.0,
+                }
+            );
+            assert_eq!(app.world().resource::<Events<PlayerRevived>>().len(), 0);
+            assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+            assert!(
+                crate::persistence::load_player_cultivation_bundle(&settings, username.as_str())
+                    .expect("rejected bundle lookup should succeed")
+                    .is_none(),
+                "missing {missing} authority must reject before writing the cultivation bundle"
+            );
+
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn reincarnate_at_qi_epsilon_does_not_require_release_resources() {
+        let (settings, root) = persistence_settings("reincarnate-epsilon-no-release");
+        let username = "EpsilonQiRevival";
+        let mut app = revival_action_test_app(settings.clone(), 703);
+        app.world_mut().remove_resource::<ZoneRegistry>();
+        app.world_mut().remove_resource::<WorldQiAccount>();
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                cultivation: Cultivation {
+                    qi_current: QI_EPSILON,
+                    ..Default::default()
+                },
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 703,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Alive,
+            "epsilon-level qi is an explicit no-op release and must not require absent authorities"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            0.0
+        );
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+        assert_eq!(app.world().resource::<Events<PlayerRevived>>().len(), 1);
+        assert_eq!(
+            load_pending_inflow_balance(&settings)
+                .expect("fresh pending balance should remain known"),
+            0.0
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn player_revived_observer_sees_reset_nourishment_and_activity() {
+        let (settings, root) = persistence_settings("revival-completion-observation");
+        let username = "ObservedRevival";
+        let mut app = revival_action_test_app(settings, 704);
+        app.init_resource::<RevivalObservation>();
+        app.add_systems(
+            Update,
+            observe_revival_completion.after(handle_revival_action_intents),
+        );
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                cultivation: Cultivation::default(),
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: Nourishment {
+                    satiety: 9.0,
+                    hydration: 11.0,
+                },
+            },
+        );
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 704,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<RevivalObservation>().snapshots,
+            vec![(
+                entity,
+                Nourishment::spawn_default(),
+                NourishmentActivityWindow::default(),
+            )],
+            "a same-tick completion observer must see committed 80/80 axes and an empty activity window"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn revival_rejects_incomplete_cultivation_bundle_then_allows_explicit_retry() {
+        let (settings, root) = persistence_settings("revival-rejects-incomplete-bundle");
+        let username = "SparseRevival";
+        let initial_nourishment = Nourishment {
+            satiety: 14.0,
+            hydration: 19.0,
+        };
+        let mut app = revival_action_test_app(settings.clone(), 702);
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    revival_decision_deadline_tick: None,
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                cultivation: Cultivation::default(),
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: initial_nourishment,
+            },
+        );
+        let life_record_before = serde_json::to_value(
+            app.world()
+                .get::<LifeRecord>(entity)
+                .expect("life record fixture should exist"),
+        )
+        .expect("life record fixture should serialize");
+        app.world_mut()
+            .entity_mut(entity)
+            .remove::<QiColor>()
+            .remove::<Karma>()
+            .remove::<PracticeLog>()
+            .remove::<InsightQuota>()
+            .remove::<UnlockedPerceptions>()
+            .remove::<InsightModifiers>()
+            .remove::<MeridianSeveredPermanent>();
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 702,
+        });
+        app.update();
+
+        let entity_ref = app.world().entity(entity);
+        assert_eq!(
+            entity_ref.get::<Lifecycle>().unwrap().state,
+            LifecycleState::AwaitingRevival,
+            "an incomplete cultivation bundle must keep the player awaiting an explicit retry"
+        );
+        assert_eq!(
+            *entity_ref.get::<Nourishment>().unwrap(),
+            initial_nourishment,
+            "rejected revival must not publish the staged 80/80 reset"
+        );
+        assert_eq!(
+            serde_json::to_value(entity_ref.get::<LifeRecord>().unwrap())
+                .expect("rejected life record should serialize"),
+            life_record_before,
+            "rejected revival must not append a rebirth biography entry"
+        );
+        assert_eq!(
+            app.world().resource::<Events<PlayerRevived>>().len(),
+            0,
+            "rejected revival must not emit its completion event"
+        );
+        assert!(
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("bundle lookup should succeed")
+                .is_none(),
+            "rejected revival must not persist default siblings over missing ECS state"
+        );
+
+        app.world_mut().entity_mut(entity).insert((
+            QiColor::default(),
+            Karma::default(),
+            PracticeLog::default(),
+            InsightQuota::default(),
+            UnlockedPerceptions::default(),
+            InsightModifiers::new(),
+            MeridianSeveredPermanent::default(),
+        ));
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 703,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Alive,
+            "restoring the complete bundle must allow an explicit retry to finish revival"
+        );
+        assert_eq!(
+            *app.world().get::<Nourishment>(entity).unwrap(),
+            Nourishment::spawn_default(),
+            "successful retry must publish the committed 80/80 reset"
+        );
+        assert_eq!(
+            app.world().resource::<Events<PlayerRevived>>().len(),
+            1,
+            "successful retry must emit exactly one completion event"
+        );
+        assert!(
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("bundle reload should succeed")
+                .is_some(),
+            "successful retry must persist the complete revival bundle"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -4487,6 +5490,7 @@ mod tests {
         app.insert_resource(CombatClock {
             tick: u64::from(crate::nourishment::NOURISH_SWEEP_INTERVAL_TICKS),
         });
+        tsy_runtime_layers(&mut app);
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
@@ -4566,6 +5570,7 @@ mod tests {
         app.insert_resource(settings);
         app.insert_resource(player_persistence);
         app.insert_resource(CombatClock { tick: 100 });
+        tsy_runtime_layers(&mut app);
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
@@ -4610,6 +5615,8 @@ mod tests {
             crate::cultivation::insight_apply::UnlockedPerceptions::default(),
             crate::cultivation::insight_apply::InsightModifiers::new(),
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            Nourishment::spawn_default(),
+            NourishmentActivityWindow::default(),
         ));
 
         // 首次死亡事件：Alive → NearDeath。
@@ -5506,6 +6513,9 @@ mod tests {
         app.insert_resource(player_persistence);
         app.insert_resource(CombatClock { tick: 90 });
         app.insert_resource(CultivationClock { tick: 691 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiAccount::default());
+        tsy_runtime_layers(&mut app);
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
@@ -5750,6 +6760,69 @@ mod tests {
             .collect();
         assert_eq!(quota_events.len(), 1);
         assert_eq!(quota_events[0].occupied_slots, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn void_revival_with_zero_quota_does_not_emit_quota_opened() {
+        let (settings, root) = persistence_settings("void-revival-zero-quota");
+        assert_eq!(
+            load_ascension_quota(&settings)
+                .expect("empty quota should load")
+                .occupied_slots,
+            0,
+            "precondition: this boundary case must begin with no occupied slot"
+        );
+        let mut app = revival_action_test_app(settings.clone(), 700);
+        let username = "UncountedVoidWalker";
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                cultivation: Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 12.0,
+                    qi_max: 240.0,
+                    ..Default::default()
+                },
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 700,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().realm,
+            Realm::Spirit,
+            "Void revival must still complete when the stored quota is already saturated at zero"
+        );
+        assert_eq!(
+            load_ascension_quota(&settings)
+                .expect("quota should reload")
+                .occupied_slots,
+            0
+        );
+        assert_eq!(
+            app.world().resource::<Events<AscensionQuotaOpened>>().len(),
+            0,
+            "saturating 0 -> 0 must not announce a quota slot that was never opened"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6278,6 +7351,7 @@ mod tests {
         ));
         app.insert_resource(CombatClock { tick: 800 });
         app.insert_resource(TutorialTelemetry::default());
+        let layers = tsy_runtime_layers(&mut app);
 
         let item_registry =
             crate::inventory::load_item_registry().expect("item registry should load");
@@ -6287,6 +7361,8 @@ mod tests {
         // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
         app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(crate::cultivation::tribulation::PendingJueBiTriggers::default());
+        app.insert_resource(crate::cultivation::tribulation::HalfStepRechallengeQueue::default());
 
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
@@ -6295,14 +7371,28 @@ mod tests {
         app.add_event::<VfxEventRequest>();
         app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
-        app.add_systems(Update, handle_revival_action_intents);
+        app.add_systems(
+            Update,
+            (
+                handle_revival_action_intents,
+                crate::cultivation::death_hooks::on_player_terminated
+                    .after(handle_revival_action_intents),
+            ),
+        );
         crate::coffin::register(&mut app);
+        app.add_event::<crate::combat::woliu_v2::events::VortexBackfireEventV2>();
+        app.add_event::<crate::cultivation::tribulation::JueBiTriggerEvent>();
+        app.add_systems(
+            Update,
+            crate::combat::woliu_v2::tick::heart_active_backfire_tick
+                .after(handle_revival_action_intents),
+        );
 
         let username = Username("Azure".to_string());
         let mut anticheat_counter = AntiCheatCounter::default();
         anticheat_counter
             .record_violation(ViolationKindV1::ReachExceeded, "reach: previous character");
-        let _ = save_player_slices(
+        save_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
             &PlayerState {
@@ -6314,6 +7404,46 @@ mod tests {
             None,
             None,
             &SkillSet::default(),
+        )
+        .expect("pre-existing player slices should persist");
+        let inherited_craft_session = crate::craft::CraftSession {
+            recipe_id: crate::craft::RecipeId::new("craft.test.previous_life"),
+            started_at_tick: 10,
+            remaining_ticks: 37,
+            total_ticks: 40,
+            owner_player_id: canonical_player_id(username.0.as_str()),
+            qi_paid: 0.0,
+            quantity_total: 3,
+            completed_count: 1,
+        };
+        crate::player::state::save_player_inventory_and_craft_session_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+            None,
+            Some(&inherited_craft_session),
+        )
+        .expect("pre-existing craft session should persist");
+        let inherited_techniques = KnownTechniques {
+            entries: vec![crate::cultivation::known_techniques::KnownTechnique {
+                id: "movement.dash".to_string(),
+                proficiency: 0.93,
+                active: true,
+            }],
+        };
+        crate::player::state::save_player_known_techniques_slice(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+            &inherited_techniques,
+        )
+        .expect("pre-existing known techniques should persist");
+        assert_eq!(
+            load_player_slices(
+                &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+                username.0.as_str(),
+            )
+            .known_techniques,
+            inherited_techniques,
+            "precondition: the prior life must own a non-default technique slice"
         );
 
         let entity = app
@@ -6381,43 +7511,169 @@ mod tests {
                     hydration: 12.0,
                 },
                 NourishmentActivityWindow::default(),
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 1_000.0,
+                    qi_max: 1_000.0,
+                    ..Default::default()
+                },
             ))
             .id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(MeridianSystem::default());
         app.world_mut().entity_mut(entity).insert((
-            MeridianSeveredPermanent {
-                severed_meridians: [crate::cultivation::components::MeridianChannelId::new(
-                    "lung",
-                )]
-                .into_iter()
-                .collect(),
-                ..Default::default()
-            },
-            PoisonToxicity {
-                level: 88.0,
-                last_dose_tick: 777,
-                toxicity_tier_unlocked: true,
-                ..Default::default()
-            },
-            DigestionLoad {
-                current: 77.0,
-                capacity: 120.0,
-                digest_lock_until_tick: Some(900),
-                ..Default::default()
-            },
-            TutorialState::new(777),
+            inherited_craft_session.clone(),
+            crate::network::craft_emit::CraftSessionPersistenceDirty,
+            crate::network::craft_emit::CraftSessionStateDirty,
         ));
-        let layers = tsy_runtime_layers(&mut app);
-        app.world_mut().entity_mut(entity).insert((
-            EntityLayerId(layers.tsy),
-            VisibleChunkLayer(layers.tsy),
-            tsy_visibility(layers.tsy),
-            CurrentDimension(DimensionKind::Tsy),
-            invisible_flags(),
-            crate::coffin::CoffinComponent {
-                entered_at_tick: 700,
-                coffin_lower: valence::prelude::BlockPos::new(10, 64, 10),
-                grade: crate::coffin::CoffinGrade::Jade,
+        app.world_mut()
+            .entity_mut(entity)
+            .remove::<Wounds>()
+            .remove::<Stamina>()
+            .remove::<CombatState>()
+            .remove::<LifeRecord>()
+            .remove::<DeathRegistry>()
+            .remove::<LifespanComponent>()
+            .remove::<PlayerState>()
+            .remove::<Position>();
+        let prior_character_id = app
+            .world()
+            .get::<Lifecycle>(entity)
+            .expect("prior lifecycle should exist")
+            .character_id
+            .clone();
+        crate::persistence::persist_active_tribulation(
+            &settings,
+            &crate::persistence::ActiveTribulationRecord {
+                char_id: prior_character_id.clone(),
+                kind: "jue_bi".to_string(),
+                source: "dugu_reverse".to_string(),
+                origin_dimension: Some("tsy".to_string()),
+                wave_current: 0,
+                waves_total: 3,
+                started_tick: 700,
+                epicenter: [99.0, 64.0, 99.0],
+                intensity: 1.75,
             },
+        )
+        .expect("precondition: prior active tribulation should persist");
+        app.world_mut()
+            .resource_mut::<crate::cultivation::tribulation::PendingJueBiTriggers>()
+            .schedule_for_character(
+                &crate::cultivation::tribulation::JueBiTriggerEvent {
+                    entity,
+                    character_id: Some(prior_character_id.clone()),
+                    source: crate::cultivation::tribulation::JueBiTriggerSource::DuguReverse,
+                    delay_ticks: 30,
+                    triggered_at_tick: 799,
+                    epicenter: None,
+                },
+                prior_character_id.clone(),
+            );
+        app.world_mut()
+            .resource_mut::<crate::cultivation::tribulation::HalfStepRechallengeQueue>()
+            .enqueue(crate::cultivation::tribulation::HalfStepRechallengeEntry {
+                char_id: prior_character_id.clone(),
+                entity,
+                entered_at: 500,
+                rechallenge_window_until: 900,
+                is_dormant: false,
+                buff_applied: true,
+            });
+        app.world_mut().entity_mut(entity).insert((
+            crate::cultivation::tribulation::TribulationState {
+                kind: crate::cultivation::tribulation::TribulationKind::JueBi,
+                phase: crate::cultivation::tribulation::TribulationPhase::Omen,
+                epicenter: [99.0, 64.0, 99.0],
+                wave_current: 0,
+                waves_total: 3,
+                started_tick: 700,
+                phase_started_tick: 700,
+                next_wave_tick: 800,
+                participants: vec![prior_character_id.clone()],
+                failed: false,
+            },
+            crate::cultivation::tribulation::TribulationOriginDimension(DimensionKind::Tsy),
+            crate::cultivation::tribulation::JueBiAfterDuXuQuota {
+                occupied_slots: 4,
+                quota_limit: 4,
+                total_world_qi: 100.0,
+                quota_k: 0.04,
+            },
+            crate::cultivation::tribulation::JueBiRuntimeContext {
+                source: crate::cultivation::tribulation::JueBiTriggerSource::DuguReverse,
+                intensity: 1.75,
+            },
+            crate::cultivation::tribulation::JueBiAftershockDebuff {
+                until_tick: 1_000,
+                rhythm_multiplier: 0.5,
+            },
+            crate::cultivation::tribulation::JueBiPressureCollapse {
+                epicenter: valence::prelude::BlockPos::new(99, 64, 99),
+                phase_start_tick: 700,
+                distance: 0.0,
+            },
+            crate::cultivation::tribulation::JueBiLawDisruption {
+                epicenter: valence::prelude::BlockPos::new(99, 64, 99),
+                distance: 0.0,
+                seed: 42,
+            },
+            crate::cultivation::tribulation::HeartDemonResolution {
+                outcome: crate::cultivation::life_record::HeartDemonOutcome::Obsession,
+                choice_idx: Some(1),
+                tick: 710,
+                next_wave_multiplier: 1.25,
+            },
+            crate::cultivation::tribulation::HalfStepState {
+                entered_at: 500,
+                rechallenge_window_until: 900,
+                buff_applied: true,
+            },
+        ));
+        app.world_mut().entity_mut(entity).insert((
+            crate::cultivation::tribulation::PendingHeartDemonOffer {
+                trigger_id: "heart_demon:prior".to_string(),
+                payload: HeartDemonOfferV1 {
+                    offer_id: "prior-life-offer".to_string(),
+                    trigger_id: "heart_demon:prior".to_string(),
+                    trigger_label: "心魔照见".to_string(),
+                    realm_label: "渡虚劫 · 心魔".to_string(),
+                    composure: 0.2,
+                    quota_remaining: 0,
+                    quota_total: 1,
+                    expires_at_ms: 900,
+                    choices: Vec::new(),
+                },
+            },
+            crate::cultivation::tribulation::JueBiNullified {
+                entered_tick: 720,
+                accumulated_null_time: 3.5,
+            },
+            crate::combat::woliu_v2::state::VortexV2State {
+                active_skill_kind: crate::combat::woliu_v2::events::WoliuSkillId::Heart,
+                heart_passive_enabled: true,
+                lethal_radius: 4.0,
+                influence_radius: 8.0,
+                turbulence_radius: 10.0,
+                turbulence_intensity: 1.0,
+                backfire_level: None,
+                // The second update publishes a fresh Lifecycle::Alive. Keep the old Heart
+                // state eligible at that exact tick so this regression only passes when the
+                // lifecycle transaction's deferred cleanup is applied before the Heart tick.
+                started_at_tick: 200,
+                active_until_tick: 900,
+                cooldown_until_tick: 1_000,
+            },
+            crate::combat::woliu_v2::state::PassiveVortex {
+                enabled: true,
+                toggled_at_tick: 700,
+            },
+            crate::combat::woliu_v2::state::TurbulenceExposure::new(
+                Entity::from_raw(777),
+                1.0,
+                900,
+            ),
         ));
         let mut coffins = crate::coffin::CoffinRegistry::default();
         assert!(coffins.insert(
@@ -6428,12 +7684,40 @@ mod tests {
         assert!(coffins.set_occupied(valence::prelude::BlockPos::new(10, 64, 10), entity));
         app.insert_resource(coffins);
 
+        // This test isolates fresh-life publication from termination consumers. The lifecycle
+        // already begins Terminated, so the deferred CreateNewCharacter transaction alone must
+        // remove old Woliu state before Heart can observe the new Alive lifecycle.
         app.world_mut().send_event(RevivalActionIntent {
             entity,
             action: RevivalActionKind::CreateNewCharacter,
             issued_at_tick: 800,
         });
         app.update();
+        assert_eq!(
+            app.world()
+                .get::<Lifecycle>(entity)
+                .expect("terminated lifecycle must remain available until deferred new-character publication")
+                .state,
+            LifecycleState::Terminated,
+            "fresh CreateNewCharacter must defer one update before publishing a new lifecycle"
+        );
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<Events<crate::combat::woliu_v2::events::VortexBackfireEventV2>>()
+                .iter_current_update_events()
+                .count(),
+            0,
+            "fresh character publication must apply Woliu cleanup before the Heart backfire tick",
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<crate::cultivation::tribulation::JueBiTriggerEvent>>()
+                .iter_current_update_events()
+                .count(),
+            0,
+            "fresh character must not inherit an old Heart vortex and enqueue JueBi work",
+        );
 
         let entity_ref = app.world().entity(entity);
         let lifecycle = entity_ref
@@ -6460,12 +7744,24 @@ mod tests {
         let learned = entity_ref
             .get::<LearnedRecipes>()
             .expect("learned recipes should be reattached for new character");
+        let known_techniques = entity_ref
+            .get::<KnownTechniques>()
+            .expect("known techniques should be reset for new character");
         let inventory = entity_ref
             .get::<PlayerInventory>()
             .expect("inventory should be reinitialized for new character");
         let anticheat_counter = entity_ref
             .get::<AntiCheatCounter>()
             .expect("anticheat counter should remain attached");
+        let wounds = entity_ref
+            .get::<Wounds>()
+            .expect("missing wounds must be backfilled after commit");
+        let stamina = entity_ref
+            .get::<Stamina>()
+            .expect("missing stamina must be backfilled after commit");
+        let combat_state = entity_ref
+            .get::<CombatState>()
+            .expect("missing combat state must be backfilled after commit");
 
         assert_eq!(lifecycle.state, LifecycleState::Alive);
         let connection = Connection::open(settings.db_path()).expect("db should open");
@@ -6489,6 +7785,22 @@ mod tests {
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
         assert_eq!(lifespan.years_lived, 0.0);
         assert_eq!(player_state, &PlayerState::default());
+        assert_eq!(
+            serde_json::to_value(wounds).expect("wounds should serialize"),
+            serde_json::to_value(Wounds::default()).expect("default wounds should serialize"),
+            "missing Wounds must be published as the fresh-life default after commit"
+        );
+        assert_eq!(
+            serde_json::to_value(stamina).expect("stamina should serialize"),
+            serde_json::to_value(Stamina::default()).expect("default stamina should serialize"),
+            "missing Stamina must be published as the fresh-life default after commit"
+        );
+        assert_eq!(
+            serde_json::to_value(combat_state).expect("combat state should serialize"),
+            serde_json::to_value(CombatState::default())
+                .expect("default combat state should serialize"),
+            "missing CombatState must be published as the fresh-life default after commit"
+        );
         let expected_spawn = crate::cultivation::character_select::next_character_spec_for_seed(
             &lifecycle.character_id,
         )
@@ -6499,6 +7811,11 @@ mod tests {
         assert_eq!(cultivation.qi_max, 10.0);
         assert_eq!(meridians.opened_count(), 0);
         assert_eq!(learned.ids, vec!["kai_mai_pill_v0".to_string()]);
+        assert_eq!(
+            known_techniques,
+            &KnownTechniques::default(),
+            "new life must not inherit the previous character's technique slice"
+        );
         assert!(inventory.revision.0 >= 1);
         assert_eq!(anticheat_counter.reach_violations, 0);
         assert_eq!(anticheat_counter.cooldown_violations, 0);
@@ -6517,6 +7834,22 @@ mod tests {
                 .expect("fresh character should retain activity window"),
             NourishmentActivityWindow::default(),
             "CreateNewCharacter must clear every accumulated activity tick"
+        );
+        assert!(
+            entity_ref.get::<crate::craft::CraftSession>().is_none(),
+            "CreateNewCharacter must not carry an active craft session into the new life"
+        );
+        assert!(
+            entity_ref
+                .get::<crate::network::craft_emit::CraftSessionPersistenceDirty>()
+                .is_none(),
+            "CreateNewCharacter must clear stale craft persistence work after the reset transaction commits"
+        );
+        assert!(
+            entity_ref
+                .get::<crate::network::craft_emit::CraftSessionStateDirty>()
+                .is_some(),
+            "CreateNewCharacter must request an inactive craft-session payload for the client"
         );
         assert_eq!(
             *entity_ref
@@ -6573,6 +7906,115 @@ mod tests {
             "new life must unhide coffin occupant",
         );
         assert!(entity_ref.get::<crate::coffin::CoffinComponent>().is_none());
+        for (name, missing) in [
+            (
+                "TribulationState",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::TribulationState>()
+                    .is_none(),
+            ),
+            (
+                "TribulationOriginDimension",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::TribulationOriginDimension>()
+                    .is_none(),
+            ),
+            (
+                "JueBiAfterDuXuQuota",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::JueBiAfterDuXuQuota>()
+                    .is_none(),
+            ),
+            (
+                "JueBiRuntimeContext",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::JueBiRuntimeContext>()
+                    .is_none(),
+            ),
+            (
+                "JueBiAftershockDebuff",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::JueBiAftershockDebuff>()
+                    .is_none(),
+            ),
+            (
+                "JueBiPressureCollapse",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::JueBiPressureCollapse>()
+                    .is_none(),
+            ),
+            (
+                "JueBiLawDisruption",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::JueBiLawDisruption>()
+                    .is_none(),
+            ),
+            (
+                "PendingHeartDemonOffer",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::PendingHeartDemonOffer>()
+                    .is_none(),
+            ),
+            (
+                "HeartDemonResolution",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::HeartDemonResolution>()
+                    .is_none(),
+            ),
+            (
+                "JueBiNullified",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::JueBiNullified>()
+                    .is_none(),
+            ),
+            (
+                "HalfStepState",
+                entity_ref
+                    .get::<crate::cultivation::tribulation::HalfStepState>()
+                    .is_none(),
+            ),
+            (
+                "VortexV2State",
+                entity_ref
+                    .get::<crate::combat::woliu_v2::state::VortexV2State>()
+                    .is_none(),
+            ),
+            (
+                "PassiveVortex",
+                entity_ref
+                    .get::<crate::combat::woliu_v2::state::PassiveVortex>()
+                    .is_none(),
+            ),
+            (
+                "TurbulenceExposure",
+                entity_ref
+                    .get::<crate::combat::woliu_v2::state::TurbulenceExposure>()
+                    .is_none(),
+            ),
+        ] {
+            assert!(
+                missing,
+                "new life must not inherit the previous character's `{name}` runtime state"
+            );
+        }
+        assert!(
+            app.world()
+                .resource::<crate::cultivation::tribulation::PendingJueBiTriggers>()
+                .is_empty(),
+            "new life must cancel delayed JueBi triggers scheduled for the prior character"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::cultivation::tribulation::HalfStepRechallengeQueue>()
+                .is_empty(),
+            "new life must remove the prior character from the HalfStep rechallenge queue"
+        );
+        assert!(
+            crate::persistence::load_active_tribulation(&settings, prior_character_id.as_str())
+                .expect("prior active tribulation query should succeed")
+                .is_none(),
+            "new-character transaction must delete the prior character's active tribulation row"
+        );
 
         let persisted = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
@@ -6580,7 +8022,16 @@ mod tests {
         );
         assert_eq!(persisted.state, PlayerState::default());
         assert_eq!(persisted.position, expected_spawn);
+        assert_eq!(
+            persisted.known_techniques,
+            KnownTechniques::default(),
+            "new-character transaction must overwrite the prior SQLite technique row immediately"
+        );
         assert!(persisted.inventory.is_some());
+        assert!(
+            persisted.craft_session.is_none(),
+            "new-character transaction must delete the previous life's durable craft session"
+        );
         let persisted_lifespan = persisted.lifespan.expect("fresh lifespan should persist");
         assert_eq!(persisted_lifespan.born_at_tick, 0);
         // plan-multi-life-v1 §2：持久化的 lifespan 同样为 AWAKEN cap
@@ -6624,6 +8075,323 @@ mod tests {
     }
 
     #[test]
+    fn same_batch_terminate_and_create_settles_old_life_before_new_character() {
+        let (settings, root) = persistence_settings("same-batch-terminate-create");
+        let username = "TerminateThenCreate";
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id(username),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 3,
+                waves_total: 3,
+                started_tick: 10,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("old Void life must occupy a quota slot before the transition");
+        complete_tribulation_ascension(&settings, canonical_player_id(username).as_str())
+            .expect("old Void life quota setup must succeed");
+
+        let mut app = revival_action_test_app(settings.clone(), 800);
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        app.insert_resource(DefaultLoadout(default_loadout));
+        app.insert_resource(item_registry);
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(crate::inventory::DroppedLootRegistry::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        app.add_event::<crate::qi_physics::QiTransfer>();
+        app.add_systems(
+            Update,
+            crate::cultivation::death_hooks::on_player_terminated
+                .after(handle_revival_action_intents),
+        );
+
+        let old_qi = 12.0;
+        let old_inventory = crate::inventory::PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: crate::inventory::InventoryRevision(7),
+            containers: vec![crate::inventory::ContainerState {
+                quick_access: false,
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 1,
+                cols: 1,
+                items: vec![crate::inventory::PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: crate::inventory::ItemInstance {
+                        instance_id: 9_001,
+                        template_id: "rat_tail".to_string(),
+                        display_name: "旧身遗物".to_string(),
+                        grid_w: 1,
+                        grid_h: 1,
+                        weight: 0.2,
+                        rarity: crate::inventory::ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 1.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                        alchemy: None,
+                        lingering_owner_qi: None,
+                    },
+                }],
+                owner_instance_id: None,
+            }],
+            equipped: std::collections::HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        };
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Tribulation { chance: 1.0 }),
+                    ..Default::default()
+                },
+                cultivation: Cultivation {
+                    realm: Realm::Void,
+                    qi_current: old_qi,
+                    qi_max: 240.0,
+                    ..Default::default()
+                },
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+        app.world_mut().entity_mut(entity).insert(old_inventory);
+        app.add_systems(
+            Update,
+            crate::inventory::apply_termination_drop_on_terminate
+                .after(handle_revival_action_intents),
+        );
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 800,
+        });
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Terminate,
+            issued_at_tick: 800,
+        });
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Terminated,
+            "same-frame Terminate must run before CreateNewCharacter is deferred"
+        );
+        assert!(
+            app.world().get::<Cultivation>(entity).is_none(),
+            "old cultivation must be consumed by PlayerTerminated before new-life publication"
+        );
+        assert_eq!(
+            load_ascension_quota(&settings)
+                .expect("quota should load after old-life termination")
+                .occupied_slots,
+            0,
+            "old Void quota must be released before the fresh character can replace its entity"
+        );
+        assert!(
+            app.world()
+                .get::<crate::inventory::PlayerInventory>(entity)
+                .expect("old inventory remains published until the deferred fresh life")
+                .containers
+                .iter()
+                .all(|container| container.items.is_empty()),
+            "old PlayerTerminated consumer must drain the old inventory before the fresh life can publish"
+        );
+        let released: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<crate::qi_physics::QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            released.iter().map(|transfer| transfer.amount).sum::<f64>(),
+            old_qi,
+            "old life qi must be released exactly once before new-character publication"
+        );
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Alive,
+            "the deferred fresh character must publish only after old-life settlement"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().realm,
+            Realm::Awaken,
+            "new life must receive its independent default cultivation state"
+        );
+        assert!(
+            app.world()
+                .get::<crate::inventory::PlayerInventory>(entity)
+                .expect("fresh life must publish a replacement inventory")
+                .containers
+                .iter()
+                .any(|container| !container.items.is_empty()),
+            "the old termination event must not drain the fresh inventory on the following Update"
+        );
+        assert_eq!(
+            load_ascension_quota(&settings)
+                .expect("quota should remain released after new-life publication")
+                .occupied_slots,
+            0,
+            "new-life publication must not re-occupy the settled old Void quota"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fresh_create_new_character_executes_on_the_following_update() {
+        let (settings, root) = persistence_settings("create-new-character-one-frame-defer");
+        let username = "DeferredNewLife";
+        let mut app = revival_action_test_app(settings.clone(), 800);
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        app.insert_resource(DefaultLoadout(default_loadout));
+        app.insert_resource(item_registry);
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::Terminated,
+                    ..Default::default()
+                },
+                cultivation: Cultivation::default(),
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 800,
+        });
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Terminated,
+            "a fresh CreateNewCharacter must defer exactly one update"
+        );
+        app.update();
+        assert_eq!(
+            app.world().get::<Lifecycle>(entity).unwrap().state,
+            LifecycleState::Alive,
+            "the deferred CreateNewCharacter must execute on the following update"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_new_character_without_dimension_layers_rejects_before_persistence() {
+        let (settings, root) = persistence_settings("new-character-missing-dimension-layers");
+        let player_persistence =
+            PlayerStatePersistence::with_db_path(root.join("data"), settings.db_path());
+        let username = "LayerlessNewLife";
+        let mut app = revival_action_test_app(settings.clone(), 800);
+        app.insert_resource(player_persistence.clone());
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        app.insert_resource(DefaultLoadout(default_loadout));
+        app.insert_resource(item_registry);
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.world_mut().remove_resource::<DimensionLayers>();
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: canonical_player_id(username),
+                    state: LifecycleState::Terminated,
+                    fortune_remaining: 0,
+                    ..Default::default()
+                },
+                cultivation: Cultivation::default(),
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(canonical_player_id(username)),
+                nourishment: Nourishment {
+                    satiety: 22.0,
+                    hydration: 33.0,
+                },
+            },
+        );
+        let lifecycle_before = serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+            .expect("lifecycle snapshot should serialize");
+        let allocator_before = format!(
+            "{:?}",
+            app.world().resource::<InventoryInstanceIdAllocator>()
+        );
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 800,
+        });
+        app.update();
+        app.update();
+
+        assert_eq!(
+            serde_json::to_value(app.world().get::<Lifecycle>(entity).unwrap())
+                .expect("lifecycle snapshot should serialize"),
+            lifecycle_before
+        );
+        assert!(
+            app.world().get::<PlayerInventory>(entity).is_none(),
+            "missing world layers must reject before publishing a fresh inventory"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                app.world().resource::<InventoryInstanceIdAllocator>()
+            ),
+            allocator_before,
+            "missing world layers must reject before consuming inventory ids"
+        );
+        assert!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("current character lookup should succeed")
+                .is_none(),
+            "missing world layers must reject before rotating player_core.current_char_id"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn create_new_character_precommit_failure_rolls_back_sqlite_and_ecs() {
         let (settings, root) = persistence_settings("create-new-character-precommit-rollback");
         let data_dir = root.join("data");
@@ -6660,12 +8428,44 @@ mod tests {
             None,
         )
         .expect("test setup must persist prior player slices and coffin state");
+        let old_craft_session = crate::craft::CraftSession {
+            recipe_id: crate::craft::RecipeId::new("craft.test.rollback_previous_life"),
+            started_at_tick: 10,
+            remaining_ticks: 37,
+            total_ticks: 40,
+            owner_player_id: canonical_player_id(username),
+            qi_paid: 0.0,
+            quantity_total: 3,
+            completed_count: 1,
+        };
+        crate::player::state::save_player_inventory_and_craft_session_slices(
+            &player_persistence,
+            username,
+            None,
+            Some(&old_craft_session),
+        )
+        .expect("test setup must persist the prior craft session");
         let current_char_id_before =
             crate::player::state::load_current_character_id(&player_persistence, username)
                 .expect("current character id should load")
                 .expect("current character id should exist");
 
         let old_character_id = player_character_id(username, current_char_id_before.as_str());
+        crate::persistence::persist_active_tribulation(
+            &settings,
+            &crate::persistence::ActiveTribulationRecord {
+                char_id: old_character_id.clone(),
+                kind: "jue_bi".to_string(),
+                source: "dugu_reverse".to_string(),
+                origin_dimension: Some("tsy".to_string()),
+                wave_current: 2,
+                waves_total: 3,
+                started_tick: 700,
+                epicenter: [99.0, 64.0, 99.0],
+                intensity: 1.75,
+            },
+        )
+        .expect("precondition: prior active tribulation should persist");
         let old_cultivation = Cultivation {
             realm: Realm::Induce,
             qi_current: 7.0,
@@ -6726,7 +8526,7 @@ mod tests {
         );
         app.world_mut().entity_mut(entity).insert((
             DeathRegistry {
-                char_id: old_character_id,
+                char_id: old_character_id.clone(),
                 death_count: 9,
                 last_death_tick: Some(799),
                 prev_death_tick: None,
@@ -6735,7 +8535,101 @@ mod tests {
             old_lifespan,
             old_state.clone(),
             old_tutorial_state.clone(),
+            crate::cultivation::tribulation::TribulationOriginDimension(DimensionKind::Tsy),
+            crate::cultivation::tribulation::JueBiRuntimeContext {
+                source: crate::cultivation::tribulation::JueBiTriggerSource::DuguReverse,
+                intensity: 1.75,
+            },
+            old_craft_session.clone(),
+            crate::network::craft_emit::CraftSessionPersistenceDirty,
+            crate::network::craft_emit::CraftSessionStateDirty,
         ));
+        app.world_mut().entity_mut(entity).insert((
+            crate::cultivation::tribulation::TribulationState {
+                kind: crate::cultivation::tribulation::TribulationKind::JueBi,
+                phase: crate::cultivation::tribulation::TribulationPhase::HeartDemon,
+                epicenter: [99.0, 64.0, 99.0],
+                wave_current: 2,
+                waves_total: 3,
+                started_tick: 700,
+                phase_started_tick: 710,
+                next_wave_tick: 800,
+                participants: vec![old_character_id.clone()],
+                failed: false,
+            },
+            crate::cultivation::tribulation::JueBiAfterDuXuQuota {
+                occupied_slots: 4,
+                quota_limit: 4,
+                total_world_qi: 100.0,
+                quota_k: 0.04,
+            },
+            crate::cultivation::tribulation::JueBiAftershockDebuff {
+                until_tick: 1_000,
+                rhythm_multiplier: 0.5,
+            },
+            crate::cultivation::tribulation::JueBiPressureCollapse {
+                epicenter: valence::prelude::BlockPos::new(99, 64, 99),
+                phase_start_tick: 700,
+                distance: 0.0,
+            },
+            crate::cultivation::tribulation::JueBiLawDisruption {
+                epicenter: valence::prelude::BlockPos::new(99, 64, 99),
+                distance: 0.0,
+                seed: 42,
+            },
+            crate::cultivation::tribulation::PendingHeartDemonOffer {
+                trigger_id: "heart_demon:prior".to_string(),
+                payload: HeartDemonOfferV1 {
+                    offer_id: "prior-life-offer".to_string(),
+                    trigger_id: "heart_demon:prior".to_string(),
+                    trigger_label: "心魔照见".to_string(),
+                    realm_label: "渡虚劫 · 心魔".to_string(),
+                    composure: 0.2,
+                    quota_remaining: 0,
+                    quota_total: 1,
+                    expires_at_ms: 900,
+                    choices: Vec::new(),
+                },
+            },
+            crate::cultivation::tribulation::HeartDemonResolution {
+                outcome: crate::cultivation::life_record::HeartDemonOutcome::Obsession,
+                choice_idx: Some(1),
+                tick: 710,
+                next_wave_multiplier: 1.25,
+            },
+            crate::cultivation::tribulation::HalfStepState {
+                entered_at: 500,
+                rechallenge_window_until: 900,
+                buff_applied: true,
+            },
+            crate::cultivation::tribulation::JueBiNullified {
+                entered_tick: 720,
+                accumulated_null_time: 3.5,
+            },
+        ));
+        app.world_mut()
+            .resource_mut::<crate::cultivation::tribulation::PendingJueBiTriggers>()
+            .schedule_for_character(
+                &crate::cultivation::tribulation::JueBiTriggerEvent {
+                    entity,
+                    character_id: Some(old_character_id.clone()),
+                    source: crate::cultivation::tribulation::JueBiTriggerSource::DuguReverse,
+                    delay_ticks: 30,
+                    triggered_at_tick: 799,
+                    epicenter: None,
+                },
+                old_character_id.clone(),
+            );
+        app.world_mut()
+            .resource_mut::<crate::cultivation::tribulation::HalfStepRechallengeQueue>()
+            .enqueue(crate::cultivation::tribulation::HalfStepRechallengeEntry {
+                char_id: old_character_id.clone(),
+                entity,
+                entered_at: 500,
+                rechallenge_window_until: 900,
+                is_dormant: false,
+                buff_applied: true,
+            });
         let coffin_lower = valence::prelude::BlockPos::new(10, 64, 10);
         let coffin_before = crate::coffin::CoffinComponent {
             entered_at_tick: 500,
@@ -6764,6 +8658,11 @@ mod tests {
         let persisted_before = load_player_slices(&player_persistence, username);
         assert!(persisted_before.inventory.is_none());
         assert_eq!(
+            persisted_before.craft_session.as_ref(),
+            Some(&old_craft_session),
+            "precondition: the previous life's durable craft session must exist"
+        );
+        assert_eq!(
             serde_json::to_value(&persisted_before.skill_set)
                 .expect("prior skill set should serialize"),
             serde_json::to_value(&old_skill_set).expect("skill set fixture should serialize")
@@ -6775,6 +8674,7 @@ mod tests {
             action: RevivalActionKind::CreateNewCharacter,
             issued_at_tick: 800,
         });
+        app.update();
         app.update();
 
         assert_eq!(
@@ -6795,6 +8695,17 @@ mod tests {
             "precommit failure must not reset live player state"
         );
         assert_eq!(
+            app.world().get::<crate::craft::CraftSession>(entity),
+            Some(&old_craft_session),
+            "precommit failure must preserve the previous life's active craft session"
+        );
+        assert!(
+            app.world()
+                .get::<crate::network::craft_emit::CraftSessionPersistenceDirty>(entity)
+                .is_some(),
+            "precommit failure must preserve pending craft persistence work"
+        );
+        assert_eq!(
             *app.world().get::<Nourishment>(entity).unwrap(),
             old_nourishment,
             "precommit failure must not reset live nourishment"
@@ -6803,6 +8714,100 @@ mod tests {
             app.world().get::<TutorialState>(entity),
             Some(&old_tutorial_state),
             "precommit failure must not publish a fresh tutorial state"
+        );
+        assert_eq!(
+            app.world()
+                .get::<crate::cultivation::tribulation::TribulationOriginDimension>(entity)
+                .expect("prior tribulation origin should remain")
+                .0,
+            DimensionKind::Tsy,
+            "precommit failure must not clear the prior tribulation origin"
+        );
+        let juebi_context = app
+            .world()
+            .get::<crate::cultivation::tribulation::JueBiRuntimeContext>(entity)
+            .expect("prior JueBi context should remain");
+        assert_eq!(
+            juebi_context.source,
+            crate::cultivation::tribulation::JueBiTriggerSource::DuguReverse,
+            "precommit failure must not clear the prior JueBi trigger source"
+        );
+        assert_eq!(
+            juebi_context.intensity, 1.75,
+            "precommit failure must not clear the prior JueBi intensity"
+        );
+        for (name, retained) in [
+            (
+                "TribulationState",
+                app.world()
+                    .get::<crate::cultivation::tribulation::TribulationState>(entity)
+                    .is_some(),
+            ),
+            (
+                "JueBiAfterDuXuQuota",
+                app.world()
+                    .get::<crate::cultivation::tribulation::JueBiAfterDuXuQuota>(entity)
+                    .is_some(),
+            ),
+            (
+                "JueBiAftershockDebuff",
+                app.world()
+                    .get::<crate::cultivation::tribulation::JueBiAftershockDebuff>(entity)
+                    .is_some(),
+            ),
+            (
+                "JueBiPressureCollapse",
+                app.world()
+                    .get::<crate::cultivation::tribulation::JueBiPressureCollapse>(entity)
+                    .is_some(),
+            ),
+            (
+                "JueBiLawDisruption",
+                app.world()
+                    .get::<crate::cultivation::tribulation::JueBiLawDisruption>(entity)
+                    .is_some(),
+            ),
+            (
+                "PendingHeartDemonOffer",
+                app.world()
+                    .get::<crate::cultivation::tribulation::PendingHeartDemonOffer>(entity)
+                    .is_some(),
+            ),
+            (
+                "HeartDemonResolution",
+                app.world()
+                    .get::<crate::cultivation::tribulation::HeartDemonResolution>(entity)
+                    .is_some(),
+            ),
+            (
+                "HalfStepState",
+                app.world()
+                    .get::<crate::cultivation::tribulation::HalfStepState>(entity)
+                    .is_some(),
+            ),
+            (
+                "JueBiNullified",
+                app.world()
+                    .get::<crate::cultivation::tribulation::JueBiNullified>(entity)
+                    .is_some(),
+            ),
+        ] {
+            assert!(
+                retained,
+                "precommit failure must not clear prior `{name}` runtime state"
+            );
+        }
+        assert!(
+            !app.world()
+                .resource::<crate::cultivation::tribulation::PendingJueBiTriggers>()
+                .is_empty(),
+            "precommit failure must not cancel delayed JueBi triggers for the prior character"
+        );
+        assert!(
+            !app.world()
+                .resource::<crate::cultivation::tribulation::HalfStepRechallengeQueue>()
+                .is_empty(),
+            "precommit failure must not remove the prior character from the HalfStep queue"
         );
         assert_eq!(
             app.world().resource::<TutorialTelemetry>().started,
@@ -6877,6 +8882,11 @@ mod tests {
         let persisted_after =
             crate::player::state::load_player_slices(&player_persistence, username);
         assert_eq!(persisted_after.state, old_state);
+        assert_eq!(
+            persisted_after.craft_session.as_ref(),
+            Some(&old_craft_session),
+            "precommit failure must roll back durable craft-session deletion"
+        );
         assert_eq!(persisted_after.position, old_position);
         assert_eq!(persisted_after.last_dimension, DimensionKind::Tsy);
         assert!(
@@ -6908,6 +8918,12 @@ mod tests {
             persisted_bundle_before,
             "precommit failure must roll back the staged cultivation bundle"
         );
+        assert!(
+            crate::persistence::load_active_tribulation(&settings, old_character_id.as_str())
+                .expect("prior active tribulation query should succeed")
+                .is_some(),
+            "precommit failure must roll back deletion of the prior active tribulation row"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6923,6 +8939,7 @@ mod tests {
             settings.db_path(),
         ));
         app.insert_resource(CombatClock { tick: 800 });
+        tsy_runtime_layers(&mut app);
 
         let item_registry =
             crate::inventory::load_item_registry().expect("item registry should load");
@@ -6932,6 +8949,8 @@ mod tests {
         // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
         app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(crate::cultivation::tribulation::PendingJueBiTriggers::default());
+        app.insert_resource(crate::cultivation::tribulation::HalfStepRechallengeQueue::default());
 
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
@@ -6981,6 +9000,7 @@ mod tests {
             issued_at_tick: 800,
         });
         app.update();
+        app.update();
         let first_character_id = app
             .world()
             .entity(entity)
@@ -7004,6 +9024,7 @@ mod tests {
             action: RevivalActionKind::CreateNewCharacter,
             issued_at_tick: 801,
         });
+        app.update();
         app.update();
         let second_character_id = app
             .world()
@@ -7601,6 +9622,7 @@ mod tests {
             settings.db_path(),
         ));
         app.insert_resource(CombatClock { tick: 800 });
+        tsy_runtime_layers(&mut app);
         let item_registry =
             crate::inventory::load_item_registry().expect("item registry should load");
         let default_loadout = crate::inventory::load_default_loadout(&item_registry)
@@ -7609,6 +9631,8 @@ mod tests {
         // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
         app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(crate::cultivation::tribulation::PendingJueBiTriggers::default());
+        app.insert_resource(crate::cultivation::tribulation::HalfStepRechallengeQueue::default());
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
@@ -7655,6 +9679,7 @@ mod tests {
             action: RevivalActionKind::CreateNewCharacter,
             issued_at_tick: 800,
         });
+        app.update();
         app.update();
 
         // CoffinComponent 应已从 entity 移除（新建角色不继承旧棺状态）

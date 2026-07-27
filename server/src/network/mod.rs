@@ -934,7 +934,10 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             craft_emit::apply_craft_cancel_intents.after(craft_emit::apply_craft_start_intents),
             craft_emit::apply_unlock_intents
                 .after(client_request_handler::handle_client_request_payloads),
-            craft_emit::tick_craft_sessions.after(craft_emit::apply_craft_cancel_intents),
+            craft_emit::tick_craft_sessions
+                .after(craft_emit::apply_craft_cancel_intents)
+                .after(crate::cultivation::attach_cultivation_to_joined_clients)
+                .after(crate::combat::lifecycle::handle_revival_action_intents),
             craft_emit::persist_dirty_craft_sessions
                 .after(craft_emit::apply_craft_start_intents)
                 .after(craft_emit::apply_craft_cancel_intents)

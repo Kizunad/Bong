@@ -1,7 +1,9 @@
 use valence::entity::Look;
 use valence::prelude::{App, DVec3, Entity, Events, Position, Startup, Update};
 
-use crate::combat::components::{SkillBarBindings, Wounds, TICKS_PER_SECOND};
+use crate::combat::components::{
+    Lifecycle, LifecycleState, SkillBarBindings, Wounds, TICKS_PER_SECOND,
+};
 use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, DeathEvent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
@@ -127,6 +129,7 @@ fn spawn_actor(app: &mut App, realm: Realm, qi_current: f64) -> Entity {
                 ..Default::default()
             },
             MeridianSystem::default(),
+            Lifecycle::default(),
             SkillBarBindings::default(),
             Position::new([8.0, 66.0, 8.0]),
             CurrentDimension(DimensionKind::Overworld),
@@ -1778,6 +1781,49 @@ fn void_heart_tribulation_waits_for_runtime_active_duration() {
         .next()
         .expect("void heart should enqueue JueBi trigger");
     assert_eq!(juebi.source, JueBiTriggerSource::WoliuVortexHeart);
+}
+
+#[test]
+fn void_heart_backfire_ignores_non_alive_lifecycle() {
+    let started_at = 100;
+    let mut app = app(started_at);
+    app.add_systems(Update, super::tick::heart_active_backfire_tick);
+    let actor = spawn_actor(&mut app, Realm::Void, 1_000.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+    app.world_mut().entity_mut(actor).insert(Lifecycle {
+        state: LifecycleState::Terminated,
+        ..Default::default()
+    });
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 4, None, WoliuSkillId::Heart);
+    assert!(matches!(result, CastResult::Started { .. }));
+
+    app.world_mut().resource_mut::<CombatClock>().tick = started_at + 30 * TICKS_PER_SECOND;
+    app.update();
+
+    assert!(
+        app.world()
+            .get::<VortexV2State>(actor)
+            .is_some_and(|state| state.backfire_level.is_none()),
+        "terminated actors must not mutate old Woliu state into a backfire"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<Events<VortexBackfireEventV2>>()
+            .iter_current_update_events()
+            .filter(|event| event.cause == BackfireCauseV2::VoidHeartTribulation)
+            .count(),
+        0,
+        "terminated actors must not emit a Void-heart backfire"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<Events<JueBiTriggerEvent>>()
+            .iter_current_update_events()
+            .count(),
+        0,
+        "terminated actors must not enqueue JueBi work"
+    );
 }
 
 #[test]

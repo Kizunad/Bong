@@ -778,9 +778,13 @@ pub(crate) fn upsert_new_character_player_slices_in_transaction(
     transaction
         .execute(
             "
-            INSERT OR IGNORE INTO player_known_techniques (
+            INSERT INTO player_known_techniques (
                 username, known_techniques_json, schema_version, last_updated_wall
             ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                known_techniques_json = excluded.known_techniques_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
             ",
             params![
                 username,
@@ -843,6 +847,7 @@ pub(crate) fn upsert_new_character_player_slices_in_transaction(
             params![username],
         )
         .map_err(io::Error::other)?;
+    persist_player_craft_session_in_transaction(transaction, username, None, last_updated_wall)?;
     Ok(())
 }
 
@@ -4368,7 +4373,7 @@ mod player_state_tests {
     fn revival_player_slices_reset_persisted_dimension_to_overworld() {
         let (persistence, data_dir) = sqlite_persistence("revival-resets-dimension");
         let username = "RevivedFromTsy";
-        save_player_slices(
+        save_player_slices_with_coffin(
             &persistence,
             username,
             &PlayerState::default(),
@@ -4377,8 +4382,14 @@ mod player_state_tests {
             None,
             Some(&LifespanComponent::new(LifespanCapTable::AWAKEN)),
             &SkillSet::default(),
+            Some(CoffinGrade::Jade),
+            None,
         )
-        .expect("pre-revival TSY slices should persist");
+        .expect("pre-revival TSY coffin slices should persist");
+        assert!(
+            load_player_slices(&persistence, username).in_coffin,
+            "precondition: revival must begin with a persisted coffin flag"
+        );
 
         let revived_position = [31.0, 72.0, 44.0];
         let mut connection =

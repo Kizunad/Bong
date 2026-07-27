@@ -451,7 +451,8 @@ mod tests {
                 Position::new([0.0, 64.0, 0.0]),
             ))
             .id();
-        app.world_mut().send_event(PlayerRevived { entity: player });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(player));
         app.update();
 
         let world = app.world_mut();
@@ -493,7 +494,8 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(PlayerRevived { entity: player });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(player));
         app.update();
 
         // 应 spawn CorpseEmbalmed
@@ -570,7 +572,8 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerRevived { entity: player });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(player));
         app.update();
         let world = app.world_mut();
         let mut corpses = world.query::<&CorpseEmbalmed>();
@@ -603,7 +606,7 @@ mod tests {
             ))
             .id();
         app.world_mut()
-            .send_event(PlayerRevived { entity: player_a });
+            .send_event(PlayerRevived::legacy_or_dev_pending(player_a));
         app.update();
 
         // 玩家 B：单独 inventory + 位置贴近死亡点

@@ -1,7 +1,8 @@
 //! 死亡对外契约（plan §4）— 修炼侧只 emit 致死触发，生死判定由战斗 plan 收口。
 //!
-//! 另外提供 `PlayerRevived` 监听：战斗 plan 完成重生后发事件，本 plan
-//! 应用境界-1、qi=0、composure=0.3、contam 清空、LIFO 关脉等惩罚。
+//! 另外提供 `PlayerRevived` 监听：正式复活事务已原子完成处罚与真元回流，
+//! 本 hook 只发布技能上限；legacy/dev 入口才在这里应用境界-1、qi=0、
+//! composure=0.3、contam 清空、LIFO 关脉等完整惩罚并结算回流。
 //! `PlayerTerminated` 也有监听 hook，停止该实体的所有修炼 tick（通过
 //! 移除 Cultivation Component 实现）。
 
@@ -17,6 +18,7 @@ use super::life_record::{BiographyEntry, LifeRecord};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use super::tick::CultivationClock;
 use super::tribulation::AscensionQuotaOpened;
+use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
@@ -45,9 +47,34 @@ pub struct CultivationDeathTrigger {
     pub context: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlayerRevivePenalty {
+    /// 正式复活事务已经原子完成处罚与真元回流；金额仅用于完成事件审计。
+    FormalPenaltyApplied { released_qi: f64 },
+    /// 开发命令等旧入口只恢复 lifecycle，仍由修炼 hook 应用完整处罚。
+    LegacyOrDevPending,
+}
+
 #[derive(Debug, Clone, Event)]
 pub struct PlayerRevived {
     pub entity: Entity,
+    pub penalty: PlayerRevivePenalty,
+}
+
+impl PlayerRevived {
+    pub fn formal_penalty_applied(entity: Entity, released_qi: f64) -> Self {
+        Self {
+            entity,
+            penalty: PlayerRevivePenalty::FormalPenaltyApplied { released_qi },
+        }
+    }
+
+    pub fn legacy_or_dev_pending(entity: Entity) -> Self {
+        Self {
+            entity,
+            penalty: PlayerRevivePenalty::LegacyOrDevPending,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Event)]
@@ -124,19 +151,26 @@ pub fn on_player_revived(
         Option<&CurrentDimension>,
     )>,
 ) {
-    let now = clock.tick;
     for ev in events.read() {
-        if let Ok((mut c, mut ms, mut cn, mut life, position, current_dimension)) =
-            players.get_mut(ev.entity)
+        if let Ok((
+            mut cultivation,
+            mut meridians,
+            mut contamination,
+            mut life,
+            position,
+            current_dimension,
+        )) = players.get_mut(ev.entity)
         {
-            if matches!(
-                life.biography.last(),
-                Some(BiographyEntry::Rebirth { tick, .. }) if *tick == now
-            ) {
-                continue;
-            }
-            let prior = c.realm;
-            let released_qi = apply_revive_penalty(&mut c, &mut ms, &mut cn);
+            let (released_qi, legacy_prior_realm) = match ev.penalty {
+                PlayerRevivePenalty::FormalPenaltyApplied { .. } => (0.0, None),
+                PlayerRevivePenalty::LegacyOrDevPending => {
+                    let prior_realm = cultivation.realm;
+                    let released_qi =
+                        apply_revive_penalty(&mut cultivation, &mut meridians, &mut contamination);
+                    (released_qi, Some(prior_realm))
+                }
+            };
+
             release_qi_amount_to_zone(
                 ev.entity,
                 released_qi,
@@ -147,28 +181,38 @@ pub fn on_player_revived(
                 qi_transfers.as_deref_mut(),
                 "revive_penalty",
             );
-            if prior == Realm::Void && c.realm != Realm::Void {
-                match release_ascension_quota_slot(&settings) {
-                    Ok(release) if release.opened_slot => {
-                        quota_opened.send(AscensionQuotaOpened {
-                            occupied_slots: release.quota.occupied_slots,
-                        });
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        tracing::warn!(
-                            "[bong][cultivation] failed to release ascension quota after revive for {:?}: {error}",
-                            ev.entity,
-                        );
+
+            if let Some(prior_realm) = legacy_prior_realm {
+                if prior_realm == Realm::Void && cultivation.realm != Realm::Void {
+                    match release_ascension_quota_slot(&settings) {
+                        Ok(release) if release.opened_slot => {
+                            quota_opened.send(AscensionQuotaOpened {
+                                occupied_slots: release.quota.occupied_slots,
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                "[bong][cultivation] failed to release ascension quota after revive for {:?}: {error}",
+                                ev.entity,
+                            );
+                        }
                     }
                 }
+                life.push(BiographyEntry::Rebirth {
+                    prior_realm,
+                    new_realm: cultivation.realm,
+                    tick: clock.tick,
+                });
+                tracing::info!(
+                    "[bong][cultivation] applied legacy/dev revive penalty to {:?}: realm {:?} -> {:?}",
+                    ev.entity,
+                    prior_realm,
+                    cultivation.realm
+                );
             }
-            life.push(BiographyEntry::Rebirth {
-                prior_realm: prior,
-                new_realm: c.realm,
-                tick: now,
-            });
-            let new_cap = super::breakthrough::skill_cap_for_realm(c.realm);
+
+            let new_cap = super::breakthrough::skill_cap_for_realm(cultivation.realm);
             for skill in SkillId::ALL {
                 skill_cap_events.send(SkillCapChanged {
                     char_entity: ev.entity,
@@ -176,16 +220,11 @@ pub fn on_player_revived(
                     new_cap,
                 });
             }
-            tracing::info!(
-                "[bong][cultivation] applied revive penalty to {:?}: realm {:?} -> {:?}",
-                ev.entity,
-                prior,
-                c.realm
-            );
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn on_player_terminated(
     settings: Res<PersistenceSettings>,
     mut commands: Commands,
@@ -193,6 +232,7 @@ pub fn on_player_terminated(
     mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    lifecycles: Query<&Lifecycle>,
     players: Query<TerminatedPlayerQueryItem<'_>>,
 ) {
     let mut processed_entities = std::collections::HashSet::new();
@@ -200,6 +240,16 @@ pub fn on_player_terminated(
         if !processed_entities.insert(ev.entity) {
             tracing::warn!(
                 "[bong][cultivation] skip duplicate PlayerTerminated for {:?} in same update",
+                ev.entity,
+            );
+            continue;
+        }
+        if lifecycles
+            .get(ev.entity)
+            .is_ok_and(|lifecycle| lifecycle.state != LifecycleState::Terminated)
+        {
+            tracing::warn!(
+                "[bong][cultivation] skip stale PlayerTerminated for {:?}: lifecycle already moved to a new state",
                 ev.entity,
             );
             continue;
@@ -540,7 +590,8 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(entity));
         app.update();
 
         let life = app
@@ -553,6 +604,71 @@ mod tests {
             life.biography.last(),
             Some(BiographyEntry::Rebirth { tick: 42, .. })
         ));
+    }
+
+    #[test]
+    fn formal_revive_completion_does_not_reapply_penalty_or_qi_release() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<PlayerRevived>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_revived);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 0.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord {
+                    character_id: canonical_player_id("Formal"),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Rebirth {
+                        prior_realm: Realm::Induce,
+                        new_realm: Realm::Awaken,
+                        tick: 7,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerRevived::formal_penalty_applied(entity, 8.0));
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        let life = app.world().get::<LifeRecord>(entity).unwrap();
+        assert_eq!(
+            cultivation.realm,
+            Realm::Awaken,
+            "formal completion must not apply a second realm penalty"
+        );
+        assert_eq!(
+            life.biography.len(),
+            1,
+            "formal completion must not append a second rebirth entry"
+        );
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            transfers.is_empty(),
+            "formal completion must not repeat the qi release already committed by the revival transaction"
+        );
+        assert_eq!(
+            app.world().resource::<Events<SkillCapChanged>>().len(),
+            SkillId::ALL.len(),
+            "formal completion must still republish each skill cap"
+        );
     }
 
     #[test]
@@ -594,7 +710,8 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(entity));
         app.update();
 
         let after = app
@@ -614,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn revived_hook_skips_when_rebirth_already_recorded_for_tick() {
+    fn legacy_revive_applies_penalty_even_when_rebirth_shares_the_current_tick() {
         let mut app = App::new();
         app.insert_resource(PersistenceSettings::default());
         app.insert_resource(CultivationClock { tick: 42 });
@@ -642,16 +759,13 @@ mod tests {
                         new_realm: Realm::Awaken,
                         tick: 42,
                     }],
-                    insights_taken: Vec::new(),
-                    death_insights: Vec::new(),
-                    skill_milestones: Vec::new(),
-                    spirit_root_first: None,
                     ..LifeRecord::default()
                 },
             ))
             .id();
 
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(entity));
         app.update();
 
         let cultivation = app
@@ -663,8 +777,58 @@ mod tests {
             .get::<LifeRecord>(entity)
             .expect("life record should remain attached");
 
-        assert_eq!(cultivation.realm, Realm::Induce);
-        assert_eq!(life.biography.len(), 1);
+        assert_eq!(
+            cultivation.realm,
+            Realm::Awaken,
+            "legacy/dev events must apply their explicit penalty instead of consulting clock coincidence"
+        );
+        assert_eq!(cultivation.qi_current, 0.0);
+        assert_eq!(
+            life.biography.len(),
+            2,
+            "legacy/dev events must record their own rebirth even when another entry has the same tick"
+        );
+        assert!(matches!(
+            life.biography.last(),
+            Some(BiographyEntry::Rebirth {
+                prior_realm: Realm::Induce,
+                new_realm: Realm::Awaken,
+                tick: 42,
+            })
+        ));
+    }
+
+    #[test]
+    fn stale_terminated_event_does_not_strip_new_character_cultivation() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                Cultivation::default(),
+                MeridianSystem::default(),
+                Contamination::default(),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+
+        app.update();
+
+        assert!(
+            app.world().get::<Cultivation>(entity).is_some(),
+            "a delayed terminal event from the previous owner must not strip the replacement character"
+        );
+        assert!(app.world().get::<MeridianSystem>(entity).is_some());
+        assert!(app.world().get::<Contamination>(entity).is_some());
     }
 
     #[test]

@@ -2,7 +2,7 @@ use valence::prelude::{
     Commands, DVec3, Entity, EventWriter, Position, Query, Res, ResMut, With, Without,
 };
 
-use crate::combat::components::TICKS_PER_SECOND;
+use crate::combat::components::{Lifecycle, LifecycleState, TICKS_PER_SECOND};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
@@ -220,6 +220,15 @@ type TurbulenceTargetItem<'a> = (
 
 type TurbulenceFieldItem<'a> = (Entity, &'a TurbulenceField);
 
+type HeartActiveBackfireItem<'a> = (
+    Entity,
+    &'a mut VortexV2State,
+    &'a Cultivation,
+    &'a mut MeridianSystem,
+    Option<&'a CurrentDimension>,
+    &'a Lifecycle,
+);
+
 pub fn update_turbulence_exposure_tick(
     clock: Res<CombatClock>,
     mut commands: Commands,
@@ -268,18 +277,13 @@ pub fn update_turbulence_exposure_tick(
 
 pub fn heart_active_backfire_tick(
     clock: Res<CombatClock>,
-    mut states: Query<(
-        Entity,
-        &mut VortexV2State,
-        &Cultivation,
-        &mut MeridianSystem,
-        Option<&CurrentDimension>,
-    )>,
+    mut states: Query<HeartActiveBackfireItem<'_>>,
     mut events: EventWriter<VortexBackfireEventV2>,
     mut juebi_triggers: EventWriter<JueBiTriggerEvent>,
 ) {
-    for (entity, mut state, cultivation, mut meridians, dimension) in &mut states {
-        if state.active_skill_kind != WoliuSkillId::Heart
+    for (entity, mut state, cultivation, mut meridians, dimension, lifecycle) in &mut states {
+        if lifecycle.state != LifecycleState::Alive
+            || state.active_skill_kind != WoliuSkillId::Heart
             || cultivation.realm != Realm::Void
             || state.backfire_level.is_some()
             || dimension_kind(dimension) == DimensionKind::Tsy
@@ -301,6 +305,7 @@ pub fn heart_active_backfire_tick(
         });
         juebi_triggers.send(JueBiTriggerEvent {
             entity,
+            character_id: Some(lifecycle.character_id.clone()),
             source: JueBiTriggerSource::WoliuVortexHeart,
             delay_ticks: VOID_HEART_TRIBULATION_TICKS,
             triggered_at_tick: clock.tick,

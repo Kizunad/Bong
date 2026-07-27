@@ -884,7 +884,8 @@ pub fn register(app: &mut App) {
         Update,
         (
             apply_death_drop_on_revive,
-            apply_termination_drop_on_terminate,
+            apply_termination_drop_on_terminate
+                .after(crate::combat::lifecycle::handle_revival_action_intents),
             handle_remains_interactions,
             handle_remains_loot_intents,
             freshness::freshness_tick_system,
@@ -12054,7 +12055,8 @@ cols = 4
                 Position::new([0.0, 64.0, 0.0]),
             ))
             .id();
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(entity));
         app.update();
 
         let events = app.world().resource::<Events<DroppedItemEvent>>();
@@ -12094,7 +12096,8 @@ cols = 4
             });
         }
 
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(entity));
         app.update();
 
         let inv = app.world().get::<PlayerInventory>(entity).unwrap();
@@ -12165,7 +12168,8 @@ cols = 4
             ))
             .id();
 
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(entity));
         app.update();
 
         assert!(

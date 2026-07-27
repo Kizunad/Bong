@@ -230,6 +230,7 @@ pub struct PlayerCultivationBundle<'a> {
 }
 
 pub struct NewCharacterPersistenceBundle<'a> {
+    pub previous_character_id: &'a str,
     pub current_char_id: &'a str,
     pub state: &'a crate::player::state::PlayerState,
     pub position: [f64; 3],
@@ -516,6 +517,11 @@ pub struct AscensionQuotaRecord {
 pub struct AscensionQuotaRelease {
     pub quota: AscensionQuotaRecord,
     pub opened_slot: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RevivalTransitionOutcome {
+    pub quota_release: Option<AscensionQuotaRelease>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -3365,6 +3371,17 @@ pub fn try_complete_tribulation_ascension(
     })
 }
 
+fn release_ascension_quota_slot_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    wall_clock: i64,
+) -> io::Result<AscensionQuotaRelease> {
+    let mut quota = load_ascension_quota_from_transaction(transaction)?;
+    let opened_slot = quota.occupied_slots > 0;
+    quota.occupied_slots = quota.occupied_slots.saturating_sub(1);
+    upsert_ascension_quota(transaction, &quota, wall_clock)?;
+    Ok(AscensionQuotaRelease { quota, opened_slot })
+}
+
 pub fn release_ascension_quota_slot(
     settings: &PersistenceSettings,
 ) -> io::Result<AscensionQuotaRelease> {
@@ -3380,12 +3397,9 @@ pub fn release_ascension_quota_slot(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(io::Error::other)?;
-    let mut quota = load_ascension_quota_from_transaction(&transaction)?;
-    let opened_slot = quota.occupied_slots > 0;
-    quota.occupied_slots = quota.occupied_slots.saturating_sub(1);
-    upsert_ascension_quota(&transaction, &quota, wall_clock)?;
+    let release = release_ascension_quota_slot_in_transaction(&transaction, wall_clock)?;
     transaction.commit().map_err(io::Error::other)?;
-    Ok(AscensionQuotaRelease { quota, opened_slot })
+    Ok(release)
 }
 
 pub fn persist_zone_runtime_snapshot(
@@ -6218,7 +6232,6 @@ fn load_agent_eras_from_connection(connection: &Connection) -> io::Result<Vec<Ag
     Ok(records)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub fn persist_player_cultivation_bundle(
     settings: &PersistenceSettings,
@@ -6395,8 +6408,11 @@ pub fn persist_revival_transition_with_bundle(
     player_persistence: &crate::player::state::PlayerStatePersistence,
     username: &str,
     revived_position: [f64; 3],
+    release_void_quota: bool,
+    zone_runtime: Option<&ZoneRuntimeRecord>,
+    qi_ledger: Option<&WorldQiAccount>,
     bundle: PlayerCultivationBundle<'_>,
-) -> io::Result<()> {
+) -> io::Result<RevivalTransitionOutcome> {
     if settings.db_path() != player_persistence.db_path() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -6449,8 +6465,23 @@ pub fn persist_revival_transition_with_bundle(
         false,
         wall_clock,
     )?;
+    if let Some(zone_runtime) = zone_runtime {
+        upsert_zone_runtime(&transaction, zone_runtime, wall_clock)?;
+    }
+    if let Some(qi_ledger) = qi_ledger {
+        upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
+    }
+    let quota_release = if release_void_quota {
+        Some(release_ascension_quota_slot_in_transaction(
+            &transaction,
+            wall_clock,
+        )?)
+    } else {
+        None
+    };
     fail_before_commit_if_armed(settings.db_path())?;
-    transaction.commit().map_err(io::Error::other)
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(RevivalTransitionOutcome { quota_release })
 }
 
 pub fn persist_new_character_transition(
@@ -6512,6 +6543,12 @@ pub fn persist_new_character_transition(
         false,
         wall_clock,
     )?;
+    transaction
+        .execute(
+            "DELETE FROM tribulations_active WHERE char_id = ?1",
+            params![bundle.previous_character_id],
+        )
+        .map_err(io::Error::other)?;
     fail_before_commit_if_armed(settings.db_path())?;
     transaction.commit().map_err(io::Error::other)
 }
@@ -6572,7 +6609,6 @@ pub(crate) fn fail_before_commit_if_armed(_db_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub fn persist_player_cultivation_bundle_with_nourishment(
     settings: &PersistenceSettings,
@@ -10881,9 +10917,9 @@ mod persistence_tests {
             .canonicalize()
             .expect("test database path should canonicalize");
         let hook: PlayerCultivationBundleReadHook = Arc::new(move |db_path, username| {
-            let observed_db_path = db_path
-                .canonicalize()
-                .expect("hook database path should canonicalize");
+            let Some(observed_db_path) = db_path.canonicalize().ok() else {
+                return;
+            };
             if observed_db_path != expected_db_path || username != "Azure" {
                 return;
             }

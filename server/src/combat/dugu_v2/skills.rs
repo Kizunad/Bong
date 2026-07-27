@@ -548,6 +548,9 @@ fn apply_reverse(
         world,
         JueBiTriggerEvent {
             entity: caster,
+            character_id: world
+                .get::<crate::combat::components::Lifecycle>(caster)
+                .map(|lifecycle| lifecycle.character_id.clone()),
             source: JueBiTriggerSource::DuguReverse,
             delay_ticks: JUEBI_REVERSE_DELAY_TICKS,
             triggered_at_tick: now_tick,

@@ -18,15 +18,17 @@ use super::{
 };
 
 /// Per-session activity observed since the previous global nourishment sweep.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Component)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Component)]
 pub struct NourishmentActivityWindow {
     last_observed_tick: Option<u64>,
+    horizontal_distance_since_sweep: f64,
     had_qualifying_movement: bool,
     had_dash: bool,
 }
 
 impl NourishmentActivityWindow {
-    fn observe(&mut self, tick: u64, qualifying_movement: bool, dashing: bool) {
+    /// Records activity on a strictly newer CombatClock tick.
+    pub(crate) fn observe(&mut self, tick: u64, horizontal_distance: f64, dashing: bool) {
         if self
             .last_observed_tick
             .is_some_and(|last_tick| tick <= last_tick)
@@ -34,7 +36,11 @@ impl NourishmentActivityWindow {
             return;
         }
         self.last_observed_tick = Some(tick);
-        self.had_qualifying_movement |= qualifying_movement;
+        if horizontal_distance.is_finite() && horizontal_distance > 0.0 {
+            self.horizontal_distance_since_sweep += horizontal_distance;
+            self.had_qualifying_movement |=
+                has_qualifying_horizontal_movement(self.horizontal_distance_since_sweep);
+        }
         self.had_dash |= dashing;
     }
 
@@ -49,6 +55,7 @@ impl NourishmentActivityWindow {
     }
 
     fn clear_flags_after_sweep(&mut self) {
+        self.horizontal_distance_since_sweep = 0.0;
         self.had_qualifying_movement = false;
         self.had_dash = false;
     }
@@ -100,6 +107,10 @@ fn horizontal_distance(event: &MovementEvent) -> f64 {
     delta_x.hypot(delta_z)
 }
 
+fn has_qualifying_horizontal_movement(distance: f64) -> bool {
+    distance > NOURISH_MOVEMENT_EPSILON_BLOCKS
+}
+
 /// Samples each client's events and accepted movement state at most once per monotonic CombatClock
 /// tick. Event segments are summed per entity so fragmented and reverse travel both count.
 pub fn sample_activity(
@@ -120,11 +131,12 @@ pub fn sample_activity(
     }
 
     for (entity, mut activity, movement_state) in &mut players {
-        let qualifying_movement = horizontal_distances
+        let horizontal_distance = horizontal_distances
             .get(&entity)
-            .is_some_and(|distance| *distance > NOURISH_MOVEMENT_EPSILON_BLOCKS);
+            .copied()
+            .unwrap_or_default();
         let dashing = movement_state.is_some_and(|state| state.action == MovementAction::Dashing);
-        activity.observe(clock.tick, qualifying_movement, dashing);
+        activity.observe(clock.tick, horizontal_distance, dashing);
     }
 }
 
@@ -347,6 +359,79 @@ mod tests {
     }
 
     #[test]
+    fn movement_window_accumulates_across_ticks_with_strict_threshold_and_resets() {
+        let mut app = app_at(197);
+        let entity = player(&mut app, "CrossTickFragments");
+        let half_epsilon = NOURISH_MOVEMENT_EPSILON_BLOCKS / 2.0;
+
+        app.world_mut()
+            .send_event(movement_event(entity, [0.0; 3], [half_epsilon, 0.0, 0.0]));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap()
+                .observed_flags(),
+            (false, false),
+            "the first sub-epsilon segment must remain below the window threshold"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 198;
+        app.world_mut()
+            .send_event(movement_event(entity, [0.0; 3], [half_epsilon, 0.0, 0.0]));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap()
+                .observed_flags(),
+            (false, false),
+            "cross-tick segments totaling exactly epsilon must not qualify"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 199;
+        app.world_mut()
+            .send_event(movement_event(entity, [0.0; 3], [0.001, 0.0, 0.0]));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap()
+                .observed_flags(),
+            (true, false),
+            "all horizontal segments in the 200-tick window must accumulate across ticks"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 200;
+        app.update();
+        let (moving_loss, _) = sweep_losses(
+            NourishmentActivityWindow {
+                had_qualifying_movement: true,
+                ..Default::default()
+            },
+            1.0,
+        );
+        assert!(
+            (app.world().get::<Nourishment>(entity).unwrap().satiety - (80.0 - moving_loss)).abs()
+                < 1e-6,
+            "the boundary must settle the accumulated cross-tick movement"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 201;
+        app.world_mut()
+            .send_event(movement_event(entity, [0.0; 3], [0.03, 0.0, 0.0]));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap()
+                .observed_flags(),
+            (false, false),
+            "the completed sweep must clear accumulated distance before the next window"
+        );
+    }
+
+    #[test]
     fn exactly_epsilon_vertical_and_zero_do_not_qualify() {
         for (old, new) in [
             ([0.0, 0.0, 0.0], [0.05, 0.0, 0.0]),
@@ -368,9 +453,24 @@ mod tests {
     }
 
     #[test]
+    fn horizontal_movement_threshold_is_strictly_above_epsilon() {
+        assert!(!has_qualifying_horizontal_movement(
+            NOURISH_MOVEMENT_EPSILON_BLOCKS
+        ));
+        assert!(has_qualifying_horizontal_movement(
+            NOURISH_MOVEMENT_EPSILON_BLOCKS + 1.0e-12
+        ));
+    }
+
+    #[test]
     fn dash_has_priority_and_duplicate_or_regressed_ticks_cannot_pollute() {
         let mut app = app_at(42);
         let entity = player(&mut app, "Dash");
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<NourishmentActivityWindow>()
+            .unwrap()
+            .reset();
         app.world_mut()
             .entity_mut(entity)
             .get_mut::<MovementState>()
@@ -388,6 +488,11 @@ mod tests {
         );
         app.world_mut()
             .entity_mut(entity)
+            .get_mut::<NourishmentActivityWindow>()
+            .unwrap()
+            .clear_flags_after_sweep();
+        app.world_mut()
+            .entity_mut(entity)
             .get_mut::<MovementState>()
             .unwrap()
             .action = MovementAction::None;
@@ -400,7 +505,8 @@ mod tests {
                 .get::<NourishmentActivityWindow>(entity)
                 .unwrap()
                 .observed_flags(),
-            (true, true)
+            (false, false),
+            "a regressed clock tick must not populate an empty activity window"
         );
     }
 }
