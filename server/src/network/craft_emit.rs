@@ -2412,6 +2412,180 @@ mod tests {
         assert_eq!(entry.dimension, DimensionKind::Tsy);
     }
 
+    /// plan-bughunt-craft-refund-full-inventory-loss-v1 P4 — `no containers` 是配置/结构
+    /// 错误（`carried_container_candidate_indices(...).is_empty()`），绝不能被
+    /// `add_item_to_player_inventory_or_ground` 当作 `inventory full:` 满包成功 fallback 到
+    /// 地面掉落。Part A 直接命中生产退款入口 `grant_refund_manifest_to_inventory_or_ground`
+    /// 断言精确错误文案；Part B 走真实 `CraftCancelIntent → apply_craft_cancel_intents`
+    /// 生产系统，与同批次真正满包的对照玩家一起处理，证明两种错误在同一入口下被正确区分。
+    #[test]
+    fn refund_structural_error_does_not_mask_config_bug() {
+        // ── Part A：直接命中生产退款入口，锁死精确错误文案与整批回滚 ──────────
+        let registry = registry_with_templates(&[("fan_tie", 64)]);
+        let mut inventory_no_containers = inv_with(&[]);
+        inventory_no_containers.containers.clear();
+        let original_revision = inventory_no_containers.revision;
+        let mut allocator = InventoryInstanceIdAllocator::new(70);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory_no_containers,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            vec![("fan_tie".to_string(), 1)],
+            1,
+            RefundGroundTarget {
+                pos: [0.0, 64.0, 0.0],
+                dimension: DimensionKind::Overworld,
+            },
+        );
+
+        assert_eq!(
+            summary.material_returned, 0,
+            "no containers 是结构错误而非满包成功，绝不能虚报已返还，实际={}",
+            summary.material_returned
+        );
+        assert_eq!(
+            summary.errors.len(),
+            1,
+            "应保留唯一结构错误供调用方诊断，实际={:?}",
+            summary.errors
+        );
+        assert!(
+            summary.errors[0].contains("player inventory has no containers"),
+            "no containers 必须原样透传为结构错误，不能被 `inventory full:` fallback 判据吞掉，实际={:?}",
+            summary.errors
+        );
+        assert!(
+            dropped_loot.entries.is_empty(),
+            "no containers 结构错误绝不能产生 DroppedLootEntry——否则配置 bug 会被掩盖成『满包已掉地上』"
+        );
+        assert!(
+            inventory_no_containers.containers.is_empty(),
+            "no containers 分支不应凭空补写容器"
+        );
+        assert_eq!(
+            inventory_no_containers.revision, original_revision,
+            "结构错误必须整批回滚：clone staging 不得发布，revision 不能变化"
+        );
+        assert_eq!(
+            allocator.next_id().unwrap(),
+            70,
+            "结构错误分支必须在触发前就失败，不能消耗有效 instance id"
+        );
+
+        // ── Part B：真实 CraftCancelIntent → apply_craft_cancel_intents 生产系统，
+        //    no containers 玩家与真正满包玩家同批处理，验证两者被正确区分 ──────────
+        let recipe = make_recipe(
+            "craft.test.refund_structural_error",
+            &[("fan_tie", 2)],
+            vec![],
+        );
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 789);
+        app.add_systems(Update, apply_craft_cancel_intents);
+
+        let mut inventory_no_containers_ecs = inv_with(&[]);
+        inventory_no_containers_ecs.containers.clear();
+        let ecs_original_revision = inventory_no_containers_ecs.revision;
+        let player_no_containers = app
+            .world_mut()
+            .spawn(inventory_no_containers_ecs)
+            .insert(Position::new([1.0, 65.0, 1.0]))
+            .insert(CraftSession {
+                recipe_id: RecipeId::new("craft.test.refund_structural_error"),
+                started_at_tick: 700,
+                remaining_ticks: 20,
+                total_ticks: 40,
+                owner_player_id: canonical_player_id("Azure"),
+                qi_paid: 0.0,
+                quantity_total: 1,
+                completed_count: 0,
+            })
+            .id();
+
+        // 对照组：真正的满包（有容器、格子占满），同一入口必须走地面掉落成功。
+        let mut inventory_full = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory_full, 1, 1);
+        let player_full = app
+            .world_mut()
+            .spawn(inventory_full)
+            .insert(Position::new([2.0, 65.0, 2.0]))
+            .insert(CraftSession {
+                recipe_id: RecipeId::new("craft.test.refund_structural_error"),
+                started_at_tick: 700,
+                remaining_ticks: 20,
+                total_ticks: 40,
+                owner_player_id: canonical_player_id("Bob"),
+                qi_paid: 0.0,
+                quantity_total: 1,
+                completed_count: 0,
+            })
+            .id();
+
+        app.world_mut().send_event(CraftCancelIntent {
+            caster: player_no_containers,
+        });
+        app.world_mut().send_event(CraftCancelIntent {
+            caster: player_full,
+        });
+        app.update();
+
+        let failed = current_failed_events(&app);
+        assert_eq!(
+            failed.len(),
+            1,
+            "两个 caster 里只有真正满包的对照组应完成退款事务并发布 Failed(PlayerCancelled)，\
+             no containers 那个绝不能被误判成功，实际事件={:?}",
+            failed
+        );
+        assert_eq!(
+            failed[0].caster, player_full,
+            "唯一发布的 Failed 事件必须属于满包对照组玩家，不能是 no containers 结构错误玩家"
+        );
+        assert_eq!(
+            failed[0].material_returned, 1,
+            "满包对照组按 70% 取整应实际返还 1 个材料"
+        );
+
+        assert!(
+            app.world().get::<CraftSession>(player_no_containers).is_some(),
+            "no containers 结构错误退款事务未提交，必须保留 CraftSession 作为可重试凭证，不能被误删"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player_full).is_none(),
+            "满包对照组退款成功提交后 session 应正常结束"
+        );
+
+        let inventory_after = app
+            .world()
+            .get::<PlayerInventory>(player_no_containers)
+            .unwrap();
+        assert_eq!(
+            inventory_after.revision, ecs_original_revision,
+            "no containers 分支的 clone staging 绝不能发布到真实 PlayerInventory"
+        );
+        assert!(
+            inventory_after.containers.is_empty(),
+            "no containers 分支不应被结构错误路径意外补写容器"
+        );
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(
+            dropped.entries.len(),
+            1,
+            "只有满包对照组的退款才允许落地，no containers 绝不能贡献 DroppedLootEntry，实际={:?}",
+            dropped.entries
+        );
+        let entry = dropped.entries.values().next().unwrap();
+        assert_eq!(
+            entry.world_pos,
+            [2.0, 65.0, 2.0],
+            "唯一的地面掉落必须来自满包对照组玩家坐标，证明 no containers 玩家没有偷偷贡献掉落"
+        );
+        assert_eq!(entry.item.template_id, "fan_tie");
+    }
+
     #[test]
     fn duplicate_cancel_intents_same_frame_refund_only_once() {
         let recipe = make_recipe(

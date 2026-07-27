@@ -19,7 +19,7 @@ _自动生成于 2026-07-26 · 共 170 份 plan_
 总进度  ███████████████████████████░░░  88.8%
 ```
 
-**分布**：`merged` 139 · `wip` 16 · `design` 8 · `skeleton` 3 · `done` 4
+**分布**：`merged` 140 · `wip` 15 · `design` 8 · `skeleton` 3 · `done` 4
 
 ### 坍缩渊（TSY）
 
@@ -100,6 +100,7 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 35 份 · 组均 8
 | `merged` | **灰烬蛛伪装态名牌泄漏** <br/><sub>`finished_plans/plan-ash-spider-disguise-nametag-leak-v1.md`</sub> | `████████████` 100% | #912 | 2026-07-26 |
 | `merged` | **方块生命周期（破坏获取→入背包→放置）** <br/><sub>`finished_plans/plan-block-lifecycle-v1.md`</sub> | `████████████` 100% | — | 2026-06 |
 | `merged` | **botany 采集模式错接旧 gather 链路** <br/><sub>`finished_plans/plan-botany-harvest-mode-request-misroute-v1.md`</sub> | `████████████` 100% | #897 | 2026-07-26 |
+| `merged` | **满包退款吞材料修复** <br/><sub>`finished_plans/plan-bughunt-craft-refund-full-inventory-loss-v1.md`</sub> | `████████████` 100% | #1039 #1142 #1232 | 2026-07-27 |
 | `merged` | **手搓消耗品空壳消杀（11 个产出物补齐使用闭环）** <br/><sub>`finished_plans/plan-consumable-effects-v1.md`</sub> | `████████████` 100% | #483 | 2026-06-10 |
 | `merged` | **垂死的大能遭遇** <br/><sub>`finished_plans/plan-dying-elder-v1.md`</sub> | `████████████` 100% | — | 2026-06 |
 | `merged` | **具名散修势力扩展** <br/><sub>`finished_plans/plan-faction-expansion-v1.md`</sub> | `████████████` 100% | #504 #508 #568 | 2026-06-29 |
@@ -122,7 +123,6 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 35 份 · 组均 8
 | `merged` | **无墙领地影响力博弈** <br/><sub>`finished_plans/plan-territory-v1.md`</sub> | `████████████` 100% | — | 2026-06 |
 | `merged` | **坍缩渊撤离压迫感** <br/><sub>`finished_plans/plan-tsy-raceout-v1.md`</sub> | `████████████` 100% | #151 | 2026-06-08 |
 | `merged` | **zhenfa 陷阱阵旗手槽装备门缺口** <br/><sub>`finished_plans/plan-zhenfa-trap-client-equip-gate-v1.md`</sub> | `████████████` 100% | #861 #962 | 2026-07-26 |
-| `wip` | **满包退款吞材料修复，P4 回归缺口** <br/><sub>`plan-bughunt-craft-refund-full-inventory-loss-v1.md`</sub> | `███████████░`  90% | #1039 #1142 #1232 | 2026-07-19 |
 | `wip` | **搜打撤循环风险节拍与情感曲线** <br/><sub>`plan-sou-da-che-v1.md`</sub> | `██████████░░`  80% | #509 #536 #540 #555 #556 #563 | 2026-06-16 |
 | `design` | **普通人→化虚 100h 主线总线** <br/><sub>`plan-gameplay-journey-v1.md`</sub> | `███████░░░░░`  55% | — | 2026-06-09 |
 | `wip` | **兽潮大迁徙：Flow Field 批量野兽迁移** <br/><sub>`plan-beast-horde-v1.md`</sub> | `██████░░░░░░`  50% | #535 #542 | 2026-06-13 |
