@@ -369,7 +369,24 @@ public final class CastFovController {
         Identifier chargeAnim, Identifier releaseAnim, ChargeShake charge, ReleaseBurst release) {
     }
 
-    /** 走动画事件驱动的招（skillId → 契约）。当前仅 heaven_gate（理由见上方段注释）。 */
+    /**
+     * 走动画事件驱动的招（skillId → 契约）。当前仅 heaven_gate（理由见上方段注释）。
+     *
+     * <p><b>⚠️ 隐含前提，扩员前必读</b>（review PR #1249 三轮 reviewer C/D，confidence 99）：
+     * {@link #onAnimPlayed} 按<b>到达序</b>而非 cast identity 匹配令牌——wire 上的 {@code PlayAnim}
+     * 只有 {@code target_player}/{@code anim_id}，没有可比对的 cast id/nonce（见类文档「两条驱动
+     * 路径」段与下方匹配循环注释）。到达序匹配 ≡ 按身份匹配，<b>仅当同一玩家同一时刻至多一枚
+     * 本表招式的令牌在飞</b>——当前该前提成立，只因为两条同时成立：① 本表当前是单元素集，只有
+     * heaven_gate 一招；② heaven_gate 是化虚禁招、一次性（server {@code cooldown_ticks = u32::MAX}，
+     * 见 {@code server/src/cultivation/known_techniques.rs}
+     * {@code ::sword_path_heaven_gate_marks_one_shot_cooldown} 那条 pin），同一玩家不可能有第二枚
+     * heaven_gate 令牌同时在飞。<b>往这个 Map 加第二招（或任何冷却短于 {@link #ANIM_TOKEN_TTL_MS}
+     * 的招）会立刻打破这条前提</b>：A 的重复 charge/release 事件会消费 B 的令牌，把 B 错误记成
+     * {@code FIRED}，B 真正劈下那一刻反而静默无 juice。集合大小由
+     * {@code CastFovControllerTest#animDrivenSkillSetMustStayASingletonBecauseArrivalOrderMatchingRequiresAtMostOneSkillInFlight}
+     * 钉死为精确单元素集——加第二招该测试必撞红；扩员前必须先给 wire 加 cast identity（server +
+     * schema + client 三端同步）或另选一个不依赖「至多一枚在飞」的匹配不变量。
+     */
     private static final Map<String, AnimDrivenJuice> ANIM_DRIVEN_SKILLS = Map.of(
         HEAVEN_GATE_SKILL_ID,
         new AnimDrivenJuice(
@@ -513,6 +530,10 @@ public final class CastFovController {
             boolean isCharge = false;
             // 到达序匹配：取**最早一枚**还欠这一段的令牌（已 release 的整枚出队，故 release
             // 天然落在队首那枚未完成的施法上）。别的招的动画两段 id 都对不上 → 拿不到令牌。
+            //
+            // ⚠️ 到达序匹配 ≡ 按身份匹配的前提（同一时刻至多一枚本表招式的令牌在飞）见
+            // ANIM_DRIVEN_SKILLS 字段文档 + CastFovControllerTest 的集合 pin；当前只因该集合是
+            // 单元素集 {heaven_gate}（一次性禁招）才成立，任何扩员都可能打破它。
             for (AnimCastToken candidate : animTokens) {
                 if (candidate.juice.releaseAnim().equals(animId)) {
                     token = candidate;

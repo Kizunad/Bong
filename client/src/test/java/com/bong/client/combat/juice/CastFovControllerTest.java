@@ -245,11 +245,30 @@ class CastFovControllerTest {
     }
 
     @Test
+    void animDrivenSkillSetMustStayASingletonBecauseArrivalOrderMatchingRequiresAtMostOneSkillInFlight() {
+        // review PR #1249 三轮 reviewer C/D（confidence 99）：onAnimPlayed 按到达序而非 cast
+        // identity 匹配令牌（wire PlayAnim 无 identity 字段）。到达序匹配 ≡ 按身份匹配，仅当
+        // 同一玩家同一时刻至多一枚 ANIM_DRIVEN_SKILLS 招式的令牌在飞——当前成立只因为该集合是
+        // 单元素集 {heaven_gate}，且 heaven_gate 是化虚禁招、一次性（server cooldown_ticks =
+        // u32::MAX，见 server/src/cultivation/known_techniques.rs::
+        // sword_path_heaven_gate_marks_one_shot_cooldown 的 pin），同一玩家不可能有第二枚
+        // heaven_gate 令牌同时在飞。
+        //
+        // 这条前提是**隐含**的——本测试不是靠自己撑住它，而是靠自己撞红逼加招的人回去读
+        // ANIM_DRIVEN_SKILLS 字段文档：往这个集合加第二招（或任何冷却短于 ANIM_TOKEN_TTL_MS 的
+        // 招）会让 A 的重复 charge/release 事件消费 B 的令牌、把 B 错误记成 FIRED，B 真正劈下
+        // 那一刻反而静默无 juice——这与「同招连续两次施法各拿各的令牌」
+        //（lateReleaseAnimOfEarlierCastDoesNotStealTheNextCastsToken 那组用例）是不同的 bug 面：
+        // 那组测的是「同一招内的到达序」，本测试守的是「跨招共用到达序判据」的适用范围。
+        assertEquals(Set.of(GATE_SKILL), CastFovController.animDrivenSkillIds(),
+            "动画事件驱动的招式集合当前必须精确等于单元素集 {heaven_gate}——多一招就打破"
+                + "「到达序匹配 ≡ 按身份匹配」的隐含前提，见 ANIM_DRIVEN_SKILLS 字段文档");
+    }
+
+    @Test
     void animDrivenJuiceParametersArePinnedFieldByField() {
         // 动画事件驱动的两段参数经只读 seam 逐字段 pin（含包络——它决定「渐强」还是「满幅」，
-        // 改错了手感完全不同却不影响任何幅度断言）。
-        assertEquals(Set.of(GATE_SKILL), CastFovController.animDrivenSkillIds(),
-            "动画事件驱动的招式集合必须精确等于 {heaven_gate}");
+        // 改错了手感完全不同却不影响任何幅度断言）。集合大小的 pin 见上一条专门测试。
         assertEquals(BongAnimations.SWORD_HEAVEN_GATE_CHARGE,
             CastFovController.chargeAnimId(GATE_SKILL), "charge 动画 id 契约");
         assertEquals(BongAnimations.SWORD_HEAVEN_GATE_RELEASE,
