@@ -1,10 +1,10 @@
-name: bong-test
+name: ${BONG_TEST_COMPOSE_PROJECT:-bong-test}
 
 services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:${BONG_TEST_REDIS_PORT:-6379}:6379"
     command:
       - redis-server
       - --save

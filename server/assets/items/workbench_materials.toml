@@ -147,6 +147,10 @@ grid_h = 1
 base_weight = 0.5
 rarity = "common"
 spirit_quality_initial = 0.80
+# plan-gathering-tool-bind-v1 P0 §8.1 决议 #2：直接挂已存在的 fresh_herb_v1，
+# 不派生 bundled_herb_v1（避免本 plan 自定保鲜数值）。
+shelflife_profile = "fresh_herb_v1"
+shelflife_track = "spoil"
 description = "灵草扎束延缓散灵，批量存放减损耗。"
 
 # ═══════════════════════════════════════════════════════════════════════════
